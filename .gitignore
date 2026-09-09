@@ -1,0 +1,39 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+.yarn/
+.yarn-cache/
+
+# Bun
+.bun/
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# TypeScript and build outputs
+*.tsbuildinfo
+dist/
+build/
+out/
+coverage/
+
+# Cloudflare Wrangler
+.wrangler/
+.dev.vars
+
+# Obsidian development artifacts
+.obsidian/plugins/obsidian-ai-bridge/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Editors and IDEs
+.idea/
+.vscode/
+*.iml
+*.swp
+*.swo

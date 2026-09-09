@@ -1,0 +1,6 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "obsidian-ai-bridge-worker",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-09"
+}

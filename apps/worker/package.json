@@ -1,0 +1,18 @@
+{
+  "name": "@obsidian-ai-bridge/worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc --noEmit -p tsconfig.json",
+    "dev": "wrangler dev"
+  },
+  "dependencies": {
+    "@obsidian-ai-bridge/core": "workspace:*",
+    "@obsidian-ai-bridge/protocol": "workspace:*"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260908.1",
+    "wrangler": "^4.129.1"
+  }
+}

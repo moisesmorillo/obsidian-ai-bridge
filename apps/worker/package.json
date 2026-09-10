@@ -5,6 +5,7 @@
   "type": "module",
   "dependencies": {
     "@hono/zod-openapi": "^1.6.3",
+    "@logtape/logtape": "2.3.4",
     "@obsidian-ai-bridge/core": "workspace:*",
     "@obsidian-ai-bridge/protocol": "workspace:*",
     "@scalar/hono-api-reference": "^0.12.1",

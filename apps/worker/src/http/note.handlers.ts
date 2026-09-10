@@ -1,10 +1,6 @@
 import {
   decodeNotePath,
-  deleteNote,
-  listNotes,
   NotePayloadTooLargeError,
-  readNote,
-  writeNote,
 } from "@obsidian-ai-bridge/core";
 import type {
   HealthResponse,
@@ -19,45 +15,44 @@ import {
   createPayloadTooLargeResponse,
   createUnsupportedMediaTypeResponse,
 } from "@worker/http/api-responses";
-import type { HandlerDependencies } from "@worker/http/handlers.types";
+import type { WorkerContext } from "@worker/http/hono.types";
 import { HTTP_STATUS } from "@worker/http/http.constants";
 import { readNoteBody } from "@worker/http/note-body";
 import { isSupportedNoteContentType } from "@worker/http/note-content-type";
-import type { Context } from "hono";
 
 /** Decodes the route parameter without allowing it to escape the item route. */
-function decodeRequestNotePath(context: Context) {
+function decodeRequestNotePath(context: WorkerContext) {
   const encodedPath = context.req.param("path");
   return encodedPath === undefined ? undefined : decodeNotePath(encodedPath);
 }
 
 /** Handles the unauthenticated liveness endpoint. */
 export function createHealthHandler() {
-  return (context: Context) => {
+  return (context: WorkerContext) => {
     const response: HealthResponse = { status: "ok" };
     return createJsonResponse(context, response, HTTP_STATUS.ok);
   };
 }
 
 /** Handles authenticated note-list requests. */
-export function createListNotesHandler(dependencies: HandlerDependencies) {
-  return async (context: Context) => {
+export function createListNotesHandler() {
+  return async (context: WorkerContext) => {
     const response: NoteListResponse = {
-      notes: [...(await listNotes(dependencies.repository))],
+      notes: await context.var.noteService.list(),
     };
     return createJsonResponse(context, response, HTTP_STATUS.ok);
   };
 }
 
 /** Handles reads for canonical base64url note identifiers. */
-export function createGetNoteHandler(dependencies: HandlerDependencies) {
-  return async (context: Context) => {
+export function createGetNoteHandler() {
+  return async (context: WorkerContext) => {
     const path = decodeRequestNotePath(context);
     if (path === undefined) {
       return createBadRequestResponse(context, "invalid_path");
     }
 
-    const content = await readNote(dependencies.repository, path);
+    const content = await context.var.noteService.read(path);
     if (content === null) {
       return createNotFoundResponse(context);
     }
@@ -67,8 +62,8 @@ export function createGetNoteHandler(dependencies: HandlerDependencies) {
 }
 
 /** Handles bounded UTF-8 Markdown and plain-text note writes. */
-export function createPutNoteHandler(dependencies: HandlerDependencies) {
-  return async (context: Context) => {
+export function createPutNoteHandler() {
+  return async (context: WorkerContext) => {
     const path = decodeRequestNotePath(context);
     if (path === undefined) {
       return createBadRequestResponse(context, "invalid_path");
@@ -86,11 +81,7 @@ export function createPutNoteHandler(dependencies: HandlerDependencies) {
     }
 
     try {
-      const result = await writeNote(
-        dependencies.repository,
-        path,
-        body.content,
-      );
+      const result = await context.var.noteService.write(path, body.content);
       const response: NoteWriteResponse = { path, stored: true };
       return createJsonResponse(
         context,
@@ -107,27 +98,27 @@ export function createPutNoteHandler(dependencies: HandlerDependencies) {
 }
 
 /** Handles idempotent note deletion for canonical identifiers. */
-export function createDeleteNoteHandler(dependencies: HandlerDependencies) {
-  return async (context: Context) => {
+export function createDeleteNoteHandler() {
+  return async (context: WorkerContext) => {
     const path = decodeRequestNotePath(context);
     if (path === undefined) {
       return createBadRequestResponse(context, "invalid_path");
     }
 
-    await deleteNote(dependencies.repository, path);
+    await context.var.noteService.delete(path);
     return new Response(null, { status: HTTP_STATUS.noContent });
   };
 }
 
 /** Retains the M1 invalid-path response for hierarchical item URLs. */
 export function createInvalidPathHandler() {
-  return (context: Context) =>
+  return (context: WorkerContext) =>
     createBadRequestResponse(context, "invalid_path");
 }
 
 /** Preserves the not-found result for unsupported methods on valid note IDs. */
 export function createUnsupportedNoteMethodHandler() {
-  return (context: Context) => {
+  return (context: WorkerContext) => {
     const path = decodeRequestNotePath(context);
     if (path === undefined) {
       return createBadRequestResponse(context, "invalid_path");

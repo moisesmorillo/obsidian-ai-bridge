@@ -1,6 +1,10 @@
-import { AUTHORIZATION_HEADER } from "@worker/auth/auth.constants";
+import {
+  AUTHENTICATION_RESULT_KIND,
+  AUTHORIZATION_HEADER,
+} from "@worker/auth/auth.constants";
 import type { AuthenticationResult } from "@worker/auth/auth.types";
-import { parseBearerHeader } from "@worker/auth/bearer-header";
+import { parseAuthorizationHeader } from "@worker/auth/authorization-header";
+import { parseBearerCredentials } from "@worker/auth/bearer-credentials";
 import { hasMatchingToken } from "@worker/auth/token-comparison";
 
 /** Authenticates a request header against the configured bearer token. */
@@ -9,15 +13,17 @@ export async function authenticateRequest(
   expectedToken: string | undefined,
 ): Promise<AuthenticationResult> {
   if (expectedToken === undefined || expectedToken === "") {
-    return { kind: "unauthenticated" };
+    return { kind: AUTHENTICATION_RESULT_KIND.unauthenticated };
   }
 
-  const parsedHeader = parseBearerHeader(headers.get(AUTHORIZATION_HEADER));
+  const parsedHeader = parseBearerCredentials(
+    parseAuthorizationHeader(headers.get(AUTHORIZATION_HEADER)),
+  );
   if (parsedHeader.kind !== "bearer") {
-    return { kind: "unauthenticated" };
+    return { kind: AUTHENTICATION_RESULT_KIND.unauthenticated };
   }
 
   return (await hasMatchingToken(parsedHeader.token, expectedToken))
-    ? { kind: "authenticated" }
-    : { kind: "unauthenticated" };
+    ? { kind: AUTHENTICATION_RESULT_KIND.authenticated }
+    : { kind: AUTHENTICATION_RESULT_KIND.unauthenticated };
 }

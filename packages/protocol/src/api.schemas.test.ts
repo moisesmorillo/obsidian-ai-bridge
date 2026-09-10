@@ -5,7 +5,6 @@ import {
   noteWriteResponseSchema,
   PROTOCOL_VERSION,
   protocolEnvelopeSchema,
-  protocolVersion,
 } from "@obsidian-ai-bridge/protocol";
 import { describe, expect, it } from "vitest";
 
@@ -29,8 +28,7 @@ describe("protocol schemas", () => {
     });
   });
 
-  it("retains the legacy protocol version export", () => {
-    expect(protocolVersion).toBe(PROTOCOL_VERSION);
+  it("validates envelopes using the current protocol version", () => {
     expect(
       protocolEnvelopeSchema.parse({
         protocolVersion: PROTOCOL_VERSION,

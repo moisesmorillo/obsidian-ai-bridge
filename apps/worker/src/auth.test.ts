@@ -1,5 +1,6 @@
 import { authenticateRequest } from "@worker/auth/authenticate-request";
-import { parseBearerHeader } from "@worker/auth/bearer-header";
+import { parseAuthorizationHeader } from "@worker/auth/authorization-header";
+import { parseBearerCredentials } from "@worker/auth/bearer-credentials";
 import { hasMatchingToken } from "@worker/auth/token-comparison";
 import { describe, expect, it } from "vitest";
 
@@ -11,21 +12,35 @@ function headersWithAuthorization(value?: string): Headers {
   return headers;
 }
 
-describe("parseBearerHeader", () => {
-  it("parses a case-insensitive bearer scheme", () => {
-    expect(parseBearerHeader("bearer secret-token")).toEqual({
-      kind: "bearer",
-      token: "secret-token",
+describe("parseAuthorizationHeader", () => {
+  it("parses generic scheme and credentials", () => {
+    expect(parseAuthorizationHeader("bearer secret-token")).toEqual({
+      kind: "credentials",
+      scheme: "bearer",
+      credentials: "secret-token",
     });
   });
 
   it.each([
     [null, "missing"],
     ["Bearer", "malformed"],
-    ["Basic secret-token", "unsupported_scheme"],
     ["Bearer one two", "malformed"],
   ] as const)("classifies %s headers", (header, kind) => {
-    expect(parseBearerHeader(header)).toMatchObject({ kind });
+    expect(parseAuthorizationHeader(header)).toMatchObject({ kind });
+  });
+});
+
+describe("parseBearerCredentials", () => {
+  it("accepts Bearer credentials and rejects another scheme", () => {
+    expect(
+      parseBearerCredentials(parseAuthorizationHeader("bearer secret-token")),
+    ).toEqual({
+      kind: "bearer",
+      token: "secret-token",
+    });
+    expect(
+      parseBearerCredentials(parseAuthorizationHeader("Basic secret-token")),
+    ).toEqual({ kind: "unsupported_scheme" });
   });
 });
 

@@ -9,12 +9,24 @@ export interface R2StoredObject extends R2ObjectMetadata {
   text(): Promise<string>;
 }
 
-/** Paginated R2 listing shape consumed by the vault storage adapter. */
-export interface R2ListResult {
+/** Fields shared by every paginated R2 listing result. */
+interface R2ListResultBase {
   readonly objects: readonly R2ObjectMetadata[];
-  readonly truncated: boolean;
-  readonly cursor?: string;
 }
+
+/** Terminal page returned by an R2 listing operation. */
+export interface R2CompleteListResult extends R2ListResultBase {
+  readonly truncated: false;
+}
+
+/** Continuation page returned by an R2 listing operation. */
+export interface R2TruncatedListResult extends R2ListResultBase {
+  readonly truncated: true;
+  readonly cursor: string;
+}
+
+/** Paginated R2 listing shape consumed by the vault storage adapter. */
+export type R2ListResult = R2CompleteListResult | R2TruncatedListResult;
 
 /** R2 binding subset used by the vault storage adapter. */
 export interface R2BucketPort {

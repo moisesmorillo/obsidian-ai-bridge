@@ -4,6 +4,12 @@ export const NOTES_ROUTE = `${API_PREFIX}/notes`;
 export const OPENAPI_ROUTE = "/openapi.json";
 export const API_REFERENCE_ROUTE = "/docs";
 
+/** HTTP header names consumed by the Worker transport. */
+export const HTTP_HEADER = {
+  contentLength: "Content-Length",
+  contentType: "Content-Type",
+} as const;
+
 export const CACHE_CONTROL_HEADER = "Cache-Control";
 export const CACHE_CONTROL_NO_STORE = "no-store";
 export const MARKDOWN_CONTENT_TYPE = "text/markdown; charset=utf-8";

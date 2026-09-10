@@ -3,6 +3,7 @@ import {
   encodeNotePath,
   MAX_NOTE_SIZE_BYTES,
   normalizeNotePath,
+  VaultNoteService,
 } from "@obsidian-ai-bridge/core";
 import {
   apiErrorResponseSchema,
@@ -97,7 +98,11 @@ function makeRequest(
 
 function app(repository: VaultRepository, logger = new TestLogger()) {
   return {
-    application: createWorkerApp({ repository, token: TOKEN, logger }),
+    application: createWorkerApp({
+      logger,
+      resolveNoteService: () => new VaultNoteService(repository),
+      resolveToken: () => TOKEN,
+    }),
     logger,
   };
 }

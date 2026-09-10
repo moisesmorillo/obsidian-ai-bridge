@@ -16,5 +16,4 @@ export type {
 export {
   API_ERROR_CODES,
   PROTOCOL_VERSION,
-  protocolVersion,
 } from "@protocol/protocol.constants";

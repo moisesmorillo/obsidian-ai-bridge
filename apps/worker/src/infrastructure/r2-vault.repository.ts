@@ -4,10 +4,14 @@ import {
   MAX_NOTE_SIZE_BYTES,
   StoredNoteTooLargeError,
 } from "@obsidian-ai-bridge/core";
-import { R2_NOTE_CONTENT_TYPE } from "@worker/infrastructure/r2.constants";
-import type { R2BucketPort } from "@worker/infrastructure/r2.types";
-
-const VAULT_OBJECT_PREFIX = "vault/";
+import {
+  R2_NOTE_CONTENT_TYPE,
+  VAULT_OBJECT_PREFIX,
+} from "@worker/infrastructure/r2.constants";
+import type {
+  R2BucketPort,
+  R2ListResult,
+} from "@worker/infrastructure/r2.types";
 
 /** R2 implementation of the vault repository port. */
 export class R2VaultRepository implements VaultRepository {
@@ -15,34 +19,21 @@ export class R2VaultRepository implements VaultRepository {
 
   async list(): Promise<readonly NotePath[]> {
     const paths = new Set<NotePath>();
-    let cursor: string | undefined;
+    let page: R2ListResult | undefined = await this.bucket.list({
+      prefix: VAULT_OBJECT_PREFIX,
+    });
 
-    while (true) {
-      const result = await this.bucket.list({
-        prefix: VAULT_OBJECT_PREFIX,
-        ...(cursor === undefined ? {} : { cursor }),
-      });
-
-      for (const object of result.objects) {
-        if (
-          !object.key.startsWith(VAULT_OBJECT_PREFIX) ||
-          object.size > MAX_NOTE_SIZE_BYTES
-        ) {
-          continue;
-        }
-
-        const rawPath = object.key.slice(VAULT_OBJECT_PREFIX.length);
-        if (isNormalizedNotePath(rawPath)) {
-          paths.add(rawPath);
-        }
-      }
-
-      if (!result.truncated) {
-        return [...paths];
-      }
-
-      cursor = result.cursor;
+    while (page !== undefined) {
+      this.addValidPaths(paths, page);
+      page = page.truncated
+        ? await this.bucket.list({
+            prefix: VAULT_OBJECT_PREFIX,
+            cursor: page.cursor,
+          })
+        : undefined;
     }
+
+    return [...paths];
   }
 
   async exists(path: NotePath): Promise<boolean> {
@@ -74,5 +65,22 @@ export class R2VaultRepository implements VaultRepository {
   /** Adds the non-public R2 key namespace after core has validated the path. */
   private objectKey(path: NotePath): string {
     return `${VAULT_OBJECT_PREFIX}${path}`;
+  }
+
+  /** Adds safe and in-limit paths from one untrusted R2 listing page. */
+  private addValidPaths(paths: Set<NotePath>, page: R2ListResult): void {
+    for (const object of page.objects) {
+      if (
+        !object.key.startsWith(VAULT_OBJECT_PREFIX) ||
+        object.size > MAX_NOTE_SIZE_BYTES
+      ) {
+        continue;
+      }
+
+      const rawPath = object.key.slice(VAULT_OBJECT_PREFIX.length);
+      if (isNormalizedNotePath(rawPath)) {
+        paths.add(rawPath);
+      }
+    }
   }
 }

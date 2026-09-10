@@ -7,12 +7,8 @@ export {
   normalizeNotePath,
 } from "@core/note-path/note-path";
 export type { NotePath } from "@core/note-path/note-path.types";
-export {
-  deleteNote,
-  listNotes,
-  readNote,
-  writeNote,
-} from "@core/vault/note-service";
+export { VaultNoteService } from "@core/vault/note-service";
+export type { NoteService } from "@core/vault/note-service.types";
 export { MAX_NOTE_SIZE_BYTES } from "@core/vault/vault.constants";
 export {
   NotePayloadTooLargeError,

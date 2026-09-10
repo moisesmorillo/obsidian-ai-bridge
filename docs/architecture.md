@@ -54,8 +54,8 @@ apps/worker/src/
 ├── env/                           Cloudflare binding types
 ├── http/                          Controllers, HTTP errors, responses, OpenAPI routes
 ├── infrastructure/                R2 vault repository adapter and R2 port subset
-├── logging/                       Structured logging port and Cloudflare console adapter
-└── index.ts                       Cloudflare entrypoint and dependency construction
+├── logging/                       Structured LogTape adapter and request logging middleware
+└── index.ts                       One-time Worker application assembly and dependency construction
 ```
 
 `packages/core` contains the repository port, note application services, path invariants, and domain errors. `packages/protocol` contains shared Zod-backed API response and error-code contracts. Hono, Cloudflare bindings, R2, Scalar, and HTTP status mapping remain in `apps/worker`.
@@ -64,7 +64,7 @@ apps/worker/src/
 
 ### Cloudflare Worker
 
-The Worker is the remote HTTP/API boundary for M1. `index.ts` constructs R2 and logging adapters; `app.ts` composes Hono middleware, controllers, OpenAPI, and Scalar. HTTP controllers validate transport input and delegate vault operations to `packages/core`. It does not contain vault business rules.
+The Worker is the remote HTTP/API boundary for M1. `index.ts` constructs the Hono app and long-lived LogTape dependency once per isolate. Request middleware resolves environment-specific authentication and creates application services from the active R2 binding; `app.ts` composes typed Hono middleware, controllers, OpenAPI, and Scalar. HTTP controllers validate transport input and delegate vault operations to `packages/core`. They do not contain vault business rules.
 
 ### Cloudflare R2
 

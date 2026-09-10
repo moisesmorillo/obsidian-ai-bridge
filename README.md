@@ -66,6 +66,7 @@ mise run install
 | Task | Purpose |
 | --- | --- |
 | `mise run check` | Run Biome formatting, linting, assists, type checking, unit tests, and Worker bundle validation. |
+| `mise run lint` | Run type-aware Oxlint semantic checks, including deprecated API detection. |
 | `mise run test` | Run Vitest unit tests. |
 | `mise run typecheck` | Type-check all workspaces. |
 | `mise run build` | Bundle the Worker with Wrangler in dry-run mode. |
@@ -83,7 +84,7 @@ mise exec -- bunx wrangler r2 bucket create obsidian-ai-bridge-dev --config apps
 mise exec -- bunx wrangler secret put OBSIDIAN_BRIDGE_TOKEN --config apps/worker/wrangler.jsonc
 ```
 
-For local `wrangler dev`, add `OBSIDIAN_BRIDGE_TOKEN` to the ignored `apps/worker/.dev.vars` file, then start the Worker. Wrangler is run with Node.js because its local `workerd` proxy does not respond reliably when launched through Bun:
+For local `wrangler dev`, set `OBSIDIAN_BRIDGE_TOKEN` in the ignored `mise.local.toml`, then start the Worker. `mise` supplies the variable to Wrangler; do not create or commit `apps/worker/.dev.vars`. Wrangler is run with Node.js because its local `workerd` proxy does not respond reliably when launched through Bun:
 
 ```bash
 mise run dev

@@ -14,6 +14,10 @@ run = "bunx biome format --write ."
 description = "Check Biome formatting, linting, and configured assists"
 run = "bunx biome check ."
 
+[tasks.lint]
+description = "Run type-aware Oxlint semantic checks"
+run = "bunx oxlint --type-aware --deny-warnings ."
+
 [tasks.typecheck]
 description = "Type-check every workspace"
 run = "bunx tsc --noEmit -p tsconfig.json"
@@ -40,4 +44,4 @@ run = "node apps/worker/node_modules/wrangler/bin/wrangler.js dev --config apps/
 
 [tasks.check]
 description = "Run the complete repository validation pipeline"
-depends = ["biome:check", "typecheck", "test", "build"]
+depends = ["biome:check", "lint", "typecheck", "test", "build"]

@@ -1,59 +1,97 @@
 import { MAX_NOTE_SIZE_BYTES } from "@obsidian-ai-bridge/core";
-import type { NoteBodyResult } from "@worker/http/note-body.types";
+import { HTTP_HEADER } from "@worker/http/http.constants";
+import {
+  NOTE_BODY_RESULT_KIND,
+  type NoteBodyResult,
+} from "@worker/http/note-body.types";
 
-/** Reads a request body within the note limit and rejects malformed UTF-8. */
-export async function readNoteBody(request: Request): Promise<NoteBodyResult> {
-  const contentLength = request.headers.get("Content-Length");
-  if (contentLength !== null) {
-    const declaredLength = Number(contentLength);
-    if (
-      Number.isSafeInteger(declaredLength) &&
-      declaredLength > MAX_NOTE_SIZE_BYTES
-    ) {
-      return { kind: "too_large" };
-    }
+/** Parses a valid non-negative Content-Length header without rejecting malformed hints. */
+function parseDeclaredContentLength(value: string | null): number | undefined {
+  if (value === null) {
+    return undefined;
   }
 
-  if (request.body === null) {
-    return { kind: "ok", content: "" };
-  }
+  const length = Number(value);
+  return Number.isSafeInteger(length) && length >= 0 ? length : undefined;
+}
 
-  const reader = request.body.getReader();
+/** Reads a stream until completion or until its byte limit is exceeded. */
+async function readBoundedStream(
+  stream: ReadableStream<Uint8Array>,
+): Promise<Uint8Array[] | undefined> {
+  const reader = stream.getReader();
   const chunks: Uint8Array[] = [];
   let totalBytes = 0;
 
   try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) {
-        break;
-      }
-
-      totalBytes += value.byteLength;
+    let nextChunk = await reader.read();
+    while (!nextChunk.done) {
+      totalBytes += nextChunk.value.byteLength;
       if (totalBytes > MAX_NOTE_SIZE_BYTES) {
         await reader.cancel().catch(() => undefined);
-        return { kind: "too_large" };
+        return undefined;
       }
 
-      chunks.push(value);
+      chunks.push(nextChunk.value);
+      nextChunk = await reader.read();
     }
   } finally {
     reader.releaseLock();
   }
 
+  return chunks;
+}
+
+/** Joins ordered byte chunks without exposing stream implementation details. */
+function joinByteChunks(chunks: readonly Uint8Array[]): Uint8Array {
+  const totalBytes = chunks.reduce(
+    (total, chunk) => total + chunk.byteLength,
+    0,
+  );
   const bodyBytes = new Uint8Array(totalBytes);
   let offset = 0;
+
   for (const chunk of chunks) {
     bodyBytes.set(chunk, offset);
     offset += chunk.byteLength;
   }
 
+  return bodyBytes;
+}
+
+/** Decodes UTF-8 strictly so invalid byte sequences do not become replacement characters. */
+function decodeUtf8(bytes: Uint8Array): string | undefined {
   try {
-    return {
-      kind: "ok",
-      content: new TextDecoder("utf-8", { fatal: true }).decode(bodyBytes),
-    };
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
   } catch {
-    return { kind: "invalid_encoding" };
+    return undefined;
   }
+}
+
+/**
+ * Reads and validates a raw note request body without trusting Content-Length.
+ *
+ * @param request - Fetch request whose body may contain raw Markdown or plain text.
+ * @returns Valid text or a typed body failure preserving M1 payload semantics.
+ */
+export async function readNoteBody(request: Request): Promise<NoteBodyResult> {
+  const declaredLength = parseDeclaredContentLength(
+    request.headers.get(HTTP_HEADER.contentLength),
+  );
+  if (declaredLength !== undefined && declaredLength > MAX_NOTE_SIZE_BYTES) {
+    return { kind: NOTE_BODY_RESULT_KIND.tooLarge };
+  }
+  if (request.body === null) {
+    return { kind: NOTE_BODY_RESULT_KIND.ok, content: "" };
+  }
+
+  const chunks = await readBoundedStream(request.body);
+  if (chunks === undefined) {
+    return { kind: NOTE_BODY_RESULT_KIND.tooLarge };
+  }
+
+  const content = decodeUtf8(joinByteChunks(chunks));
+  return content === undefined
+    ? { kind: NOTE_BODY_RESULT_KIND.invalidEncoding }
+    : { kind: NOTE_BODY_RESULT_KIND.ok, content };
 }

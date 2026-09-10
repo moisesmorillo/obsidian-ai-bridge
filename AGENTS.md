@@ -89,6 +89,21 @@ If an external library forces weakly typed input at a boundary, isolate it insid
 
 Do not use `as SomeType` merely to silence the compiler.
 
+### Framework types
+
+Do not rely on framework generic defaults when they introduce `any` or otherwise weaken application types.
+
+For Hono and other typed frameworks, define and use explicit bindings, variables, context, middleware, handler, and application types. Framework services must be injected through typed context variables or another explicit composition boundary.
+
+### Deprecated APIs and warnings
+
+Treat editor, compiler, linter, and dependency deprecation diagnostics as failures unless an explicit compatibility decision documents why a deprecated API must remain.
+
+- New deprecated API usage is prohibited.
+- Internal code must not use a deprecated compatibility API.
+- CI must detect deprecated TypeScript API usage with type-aware static analysis.
+- A green type check is not sufficient when an editor still reports a warning.
+
 ### Imports
 
 Do not use relative imports for project modules.
@@ -245,6 +260,8 @@ Protocol values, limits, routes, media types, header names, statuses, retry valu
 
 For closed sets, use an idiomatic strongly typed representation such as an enum or an `as const` object plus union type.
 
+Semantic literals must have one authoritative representation. Do not introduce disconnected copies of protocol codes, result discriminators, authentication states, headers, media types, or routes.
+
 Do not extract purely syntactic or trivial literals when naming them adds no semantic value.
 
 ## Documentation and comments
@@ -296,6 +313,10 @@ In TypeScript, use concise TSDoc for named:
 Documentation should describe the contract, purpose, invariants, side effects, failure modes, or important semantics.
 
 Do not create verbose documentation that simply repeats the symbol name or TypeScript signature.
+
+Use TSDoc quality appropriate to the declaration. Document exported declarations and non-trivial internal declarations, including semantic constants, closed sets, schemas, interfaces, types, classes, constructors, and meaningful methods.
+
+Use `@param`, `@returns`, `@throws`, `@example`, `@remarks`, and `@see` when they clarify a function or method contract. Do not add redundant JSDoc type annotations to TypeScript source. Automated documentation linting is a minimum guard; manual review must still assess whether the documentation explains behavior and invariants.
 
 ## Errors
 
@@ -354,6 +375,8 @@ Responsible for:
 - status codes.
 
 Handlers must remain thin.
+
+Handlers depend on application services or use cases, never repository ports or infrastructure adapters directly. They must not pass repositories into business functions.
 
 ### Application services / use cases
 
@@ -473,6 +496,8 @@ Keep the logging abstraction portable and mockable.
 
 Do not add a large logging dependency unless it provides clear value over a small project abstraction.
 
+Prefer an established structured logging library compatible with the target runtime over a bespoke logger implementation. Logging adapters must use route templates rather than raw URLs when a URL could expose user-controlled identifiers.
+
 ## Testing
 
 Use Vitest.
@@ -533,6 +558,18 @@ Do not assume that separate formatter and linter invocations cover Biome assists
 Use an appropriate Biome `check`/`ci` workflow so editor diagnostics and CI remain aligned.
 
 A repository should not be considered clean when the editor reports project-configured diagnostics that CI ignores.
+
+Complement Biome with fast type-aware semantic linting when TypeScript or editor diagnostics cover rules Biome cannot enforce. Avoid duplicating checks already strongly enforced by Biome or TypeScript. Static analysis should enforce deprecated API use, unsafe typing, documentation completeness, console usage, and complexity where practical.
+
+The canonical validation pipeline must have zero unexplained warnings. It must fail when a deprecated API is introduced.
+
+## Decomposition and iteration
+
+Functions must have one conceptual responsibility, not merely a small line count. File decomposition must follow cohesive concepts rather than arbitrary symbol counts.
+
+Centralize duplicated policy, such as response headers, error mappings, normalization, and authentication rules, in one focused abstraction.
+
+Avoid unconditional `while (true)` loops unless the condition cannot be expressed clearly and the reason is documented. Model continuation state so impossible states are unrepresentable where practical.
 
 ## GitHub Actions
 

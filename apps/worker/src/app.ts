@@ -1,8 +1,12 @@
 import { OpenAPIHono } from "@hono/zod-openapi";
 import { Scalar } from "@scalar/hono-api-reference";
-import type { WorkerDependencies } from "@worker/app.types";
+import type { WorkerAppDependencies } from "@worker/app.types";
 import { createErrorResponse } from "@worker/http/api-responses";
 import { createAuthenticationMiddleware } from "@worker/http/authentication.middleware";
+import type {
+  WorkerApplication,
+  WorkerHonoEnvironment,
+} from "@worker/http/hono.types";
 import {
   API_PREFIX,
   API_REFERENCE_ROUTE,
@@ -26,25 +30,31 @@ import {
   openApiConfiguration,
   putNoteRoute,
 } from "@worker/http/openapi.routes";
+import { createRequestDependenciesMiddleware } from "@worker/http/request-dependencies.middleware";
 import { createRequestLoggingMiddleware } from "@worker/logging/request-logging.middleware";
 
 /** Builds the complete Hono transport adapter from infrastructure-agnostic ports. */
-export function createWorkerApp(dependencies: WorkerDependencies): OpenAPIHono {
-  const app = new OpenAPIHono();
-  const handlerDependencies = { repository: dependencies.repository };
+export function createWorkerApp(
+  dependencies: WorkerAppDependencies,
+): WorkerApplication {
+  const app = new OpenAPIHono<WorkerHonoEnvironment>();
 
   app.use(createRequestLoggingMiddleware(dependencies.logger));
-  app.use(API_PREFIX, createAuthenticationMiddleware(dependencies.token));
+  app.use(createRequestDependenciesMiddleware(dependencies.resolveNoteService));
+  app.use(
+    API_PREFIX,
+    createAuthenticationMiddleware(dependencies.resolveToken),
+  );
   app.use(
     `${API_PREFIX}/*`,
-    createAuthenticationMiddleware(dependencies.token),
+    createAuthenticationMiddleware(dependencies.resolveToken),
   );
 
   app.openapi(healthRoute, createHealthHandler());
-  app.openapi(listNotesRoute, createListNotesHandler(handlerDependencies));
-  app.openapi(getNoteRoute, createGetNoteHandler(handlerDependencies));
-  app.openapi(putNoteRoute, createPutNoteHandler(handlerDependencies));
-  app.openapi(deleteNoteRoute, createDeleteNoteHandler(handlerDependencies));
+  app.openapi(listNotesRoute, createListNotesHandler());
+  app.openapi(getNoteRoute, createGetNoteHandler());
+  app.openapi(putNoteRoute, createPutNoteHandler());
+  app.openapi(deleteNoteRoute, createDeleteNoteHandler());
   app.all(`${NOTES_ROUTE}/:path`, createUnsupportedNoteMethodHandler());
   app.all(`${NOTES_ROUTE}/*`, createInvalidPathHandler());
 

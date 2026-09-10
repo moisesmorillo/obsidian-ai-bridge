@@ -1,13 +1,10 @@
 import {
-  deleteNote,
-  listNotes,
   MAX_NOTE_SIZE_BYTES,
   type NotePath,
   NotePayloadTooLargeError,
   normalizeNotePath,
-  readNote,
+  VaultNoteService,
   type VaultRepository,
-  writeNote,
 } from "@obsidian-ai-bridge/core";
 import { describe, expect, it, vi } from "vitest";
 
@@ -30,15 +27,22 @@ function repository(): VaultRepository {
   };
 }
 
-describe("writeNote", () => {
+describe("VaultNoteService", () => {
   it("rejects payloads larger than the byte limit", async () => {
-    const vault = repository();
+    const write = vi.fn().mockResolvedValue(undefined);
+    const vault: VaultRepository = {
+      ...repository(),
+      write,
+    };
     const path = validPath("Alpha.md");
 
     await expect(
-      writeNote(vault, path, "a".repeat(MAX_NOTE_SIZE_BYTES + 1)),
+      new VaultNoteService(vault).write(
+        path,
+        "a".repeat(MAX_NOTE_SIZE_BYTES + 1),
+      ),
     ).rejects.toBeInstanceOf(NotePayloadTooLargeError);
-    expect(vault.write).not.toHaveBeenCalled();
+    expect(write).not.toHaveBeenCalled();
   });
 });
 
@@ -46,18 +50,22 @@ describe("vault note services", () => {
   it("delegates reads and deletes and sorts listed paths", async () => {
     const alpha = validPath("Alpha.md");
     const zeta = validPath("Zeta.md");
+    const read = vi.fn().mockResolvedValue("content");
+    const remove = vi.fn().mockResolvedValue(undefined);
     const vault: VaultRepository = {
       list: vi.fn().mockResolvedValue([zeta, alpha]),
       exists: vi.fn().mockResolvedValue(false),
-      read: vi.fn().mockResolvedValue("content"),
+      read,
       write: vi.fn().mockResolvedValue(undefined),
-      delete: vi.fn().mockResolvedValue(undefined),
+      delete: remove,
     };
 
-    await expect(listNotes(vault)).resolves.toEqual([alpha, zeta]);
-    await expect(readNote(vault, alpha)).resolves.toBe("content");
-    await expect(deleteNote(vault, alpha)).resolves.toBeUndefined();
-    expect(vault.read).toHaveBeenCalledWith(alpha);
-    expect(vault.delete).toHaveBeenCalledWith(alpha);
+    const service = new VaultNoteService(vault);
+
+    await expect(service.list()).resolves.toEqual([alpha, zeta]);
+    await expect(service.read(alpha)).resolves.toBe("content");
+    await expect(service.delete(alpha)).resolves.toBeUndefined();
+    expect(read).toHaveBeenCalledWith(alpha);
+    expect(remove).toHaveBeenCalledWith(alpha);
   });
 });

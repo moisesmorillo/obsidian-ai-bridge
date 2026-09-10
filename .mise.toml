@@ -20,7 +20,11 @@ run = "bunx oxlint --type-aware --deny-warnings ."
 
 [tasks.typecheck]
 description = "Type-check every workspace"
-run = "bunx tsc --noEmit -p tsconfig.json"
+run = """
+bunx tsc --noEmit -p tsconfig.json
+bunx tsc --noEmit -p apps/obsidian-plugin/tsconfig.json
+bunx tsc --noEmit -p apps/obsidian-plugin/tests/artifact/tsconfig.json
+"""
 
 [tasks.test]
 description = "Run the fast Vitest test suite"
@@ -31,16 +35,24 @@ description = "Run Vitest with V8 coverage and enforce thresholds"
 run = "node node_modules/vitest/vitest.mjs run --coverage"
 
 [tasks.build]
-description = "Build the Worker and Obsidian plugin scaffold without deploying"
-depends = ["worker:build", "plugin:build"]
+description = "Build the Worker and smoke-check the packaged Obsidian plugin without deploying"
+depends = ["worker:build", "plugin:smoke"]
 
 [tasks."worker:build"]
 description = "Bundle the Cloudflare Worker without deploying it"
 run = "node apps/worker/node_modules/wrangler/bin/wrangler.js deploy --dry-run --config apps/worker/wrangler.jsonc"
 
 [tasks."plugin:build"]
-description = "Bundle the Obsidian plugin scaffold"
-run = "bun build apps/obsidian-plugin/src/main.ts --outdir apps/obsidian-plugin/dist --external obsidian"
+description = "Bundle the local-only plugin as browser-compatible CommonJS and stage its manifest"
+run = """
+bun build apps/obsidian-plugin/src/main.ts --target browser --format cjs --outdir apps/obsidian-plugin/dist --external obsidian
+cp apps/obsidian-plugin/manifest.json apps/obsidian-plugin/dist/manifest.json
+"""
+
+[tasks."plugin:smoke"]
+description = "Load the packaged plugin with an isolated Obsidian host double"
+depends = ["plugin:build"]
+run = "node node_modules/vitest/vitest.mjs run --config apps/obsidian-plugin/vitest.smoke.config.ts"
 
 [tasks.dev]
 description = "Run the Worker with Wrangler local development"

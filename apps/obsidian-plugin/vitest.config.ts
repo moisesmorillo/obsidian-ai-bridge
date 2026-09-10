@@ -12,6 +12,6 @@ export default defineProject({
   },
   test: {
     name: "obsidian-plugin",
-    include: ["tests/**/*.test.ts"],
+    include: ["tests/unit/**/*.test.ts", "tests/integration/**/*.test.ts"],
   },
 });

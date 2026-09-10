@@ -12,7 +12,8 @@ packages/protocol      Shared protocol contracts and serialization definitions
 ```
 
 M1 is complete: an authenticated HTTP Worker API backed by Cloudflare R2 plus the
-engineering-quality foundation. The Obsidian plugin remains a type-only scaffold.
+engineering-quality foundation. M2 now implements a local-only read-only Obsidian
+inspection plugin; final semantic review and milestone completion remain pending.
 See the [verified current state](current-state.md) for source/configuration evidence,
 [roadmap](roadmap.md) for execution order and open decisions, and
 [ADR 0001](decisions/0001-worker-r2-foundation.md) for the durable foundation.
@@ -82,13 +83,44 @@ and idempotent. Neither operation supplies sync conflict protection or recovery.
 
 ### Obsidian plugin
 
-The current `PluginScaffold` is only an interface, not a loadable `Plugin` class.
-It has no settings, commands, persistence, vault or network behavior. The
-[NEXT M2 spec](milestones/m2-obsidian-read-only-local-adapter.md) introduces a
-read-only local port/service and official Obsidian adapter, not a mutation-capable
-implementation of M1's remote `VaultRepository`. Host APIs and lifecycle stay in
-the plugin; platform-independent application types/policy stay in core. This is
-planned architecture, not implemented behavior.
+`AiBridgePlugin` is a default-exported `Plugin` subclass. Enabling composes the
+local service/adapter and registers two host-owned palette commands, with no scan,
+read, network or persistence. Both commands share an ephemeral busy state; unload
+invalidates in-flight UI and closes owned modals/notices. Host reads are not
+cancellable. Results show metadata as text, never note content or raw exceptions.
+
+```text
+Plugin commands / metadata-only modal and notices
+    |
+LocalInspectionService in packages/core
+    |
+ReadOnlyLocalVault port + shared local eligibility policy
+    |
+ObsidianLocalVault / official saved-file host bridge
+    |
+Vault.getFiles / getAbstractFileByPath + TFile / Vault.read
+```
+
+Core owns closed typed results, literal path/size policy and lexical sorting. The
+local port is separate from mutation-capable M1 `VaultRepository`. The adapter
+supplies the exact host configuration directory, enumerates metadata without
+reading bodies, and resolves/reads the active captured saved path once. Shared
+policy rejects unsupported, excluded, invalid and oversized files in order;
+1 MiB bounds both metadata and measured UTF-8 text. Dot-prefixed segments and the
+configuration subtree are private regardless of M1 remote path acceptance.
+
+Pre/post object identity, path, size and mtime checks reject observed changes.
+They are best-effort evidence, not an atomic snapshot or future write revision.
+The service discards transient content before returning metadata. No editor save,
+raw filesystem, settings, logging, mutation or Worker integration is present.
+
+Bun stages browser-target CommonJS `main.js` plus the unchanged manifest. The
+bundle exposes `module.exports.default` with only `obsidian` external; no Node
+runtime shim is needed. A separate Vitest artifact suite evaluates this generated
+bundle against an isolated host double in canonical `build`/`check`. Source
+unit/integration tests remain covered independently. See
+[development instructions and official API/version evidence](plugin-development.md)
+for install/removal and the explicit absence of real desktop/mobile host tests.
 
 ### Future MCP adapter
 
@@ -116,7 +148,7 @@ and defers full reconciliation/import/deletions to M4.
 
 ## Explicitly deferred
 
-- M2: Obsidian runtime and read-only local vault access.
+- M2: Final semantic review and completion transition (implementation is present).
 - M3: Remote client, opt-in selection/settings and safe explicit publishing.
 - M4: Synchronization direction, conflicts, remote-to-local writes, deletion/
   tombstones, reconciliation and offline state.

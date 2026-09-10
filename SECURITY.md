@@ -13,8 +13,26 @@ end-to-end encryption, per-client permission model or production security claim.
 Keep tokens in ignored local configuration or the Worker secret mechanism, never
 in committed files or diagnostics. Do not log note content, concrete note paths,
 credentials or raw failures. Configuration is not evidence of deployed resources.
-The plugin currently has no vault/network behavior; the next milestone is local
-read-only inspection, not permission to upload or modify a vault.
+The M2 plugin performs only deliberate local read-only inspection through official
+Obsidian APIs. Enabling alone does not enumerate/read notes. Commands show exact
+paths and byte metadata as text, never note bodies; failures are sanitized and no
+plugin diagnostic logging is added. Eligibility requires literal safe lowercase
+`.md` paths at most 1 MiB, excludes dot-prefixed path segments and the host's
+configuration subtree, and never authorizes future upload. The plugin has no
+network calls, settings/token storage, persistence, editor saves, watchers or
+vault mutation. Installation and Obsidian's enabled-plugin configuration are
+explicit host/developer actions, not product writes.
+
+Saved reads check size before access, actual UTF-8 length after access, and
+identity/path/size/mtime changes around the await. This is not an atomic snapshot:
+same-size edits with indistinguishable timestamps can evade detection. Unload
+suppresses late results but cannot cancel host reads. Paths shown in deliberate
+local UI remain sensitive; avoid sharing private result screenshots.
+
+Use only a [disposable development vault](docs/plugin-development.md) for manual
+installation. Build/host-double checks verify the CommonJS artifact without Node
+runtime dependencies, but no real desktop/mobile host test or production safety
+claim is made. M2 remains active pending final review/completion.
 
 See [architecture](docs/architecture.md) for invariants and the
 [roadmap](docs/roadmap.md) for safe publishing, reconciliation and hardening gates.

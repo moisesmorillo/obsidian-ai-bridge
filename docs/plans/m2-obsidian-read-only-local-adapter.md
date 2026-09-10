@@ -215,5 +215,51 @@ below; do not mark the milestone complete based on an intermediate slice.
   desktop/mobile session was exercised. Independent reviewer gate remains required.
   Host-loadable CommonJS packaging/artifact smoke and final current-state docs
   remain slices 4/5; the current bundle check is not a real-host compatibility claim.
-- Slice 4: pending.
+- Slice 4: implemented browser-target CommonJS packaging with unchanged manifest
+  staging alongside `main.js`. Supervisor-approved export convention follows the
+  official sample: `module.exports.default` is the Plugin subclass, not a custom
+  bare-constructor footer. Only `obsidian` remains external; the generated 19-module
+  bundle is 15,193 bytes (Bun reports 15.19 KB), and staged manifest is 261 bytes.
+  Source manifest identity/minimum/non-desktop declaration are unchanged.
+  Added a dedicated Vitest artifact suite (1 file / 3 tests) loading the actual
+  generated CommonJS bundle in an isolated VM realm with no Node globals and only
+  host-double `obsidian` resolution. It verifies exact manifest staging, external
+  dependencies/default class, inert load, both metadata commands, saved UTF-8 read,
+  unload/re-enable cleanup and suppression of late in-flight results. The artifact
+  suite imports no source entry; source tests/coverage remain independent.
+  `plugin:smoke` rebuilds first; canonical `build`/`check` include it without deploy.
+  Supervisor approved dev-only `@types/node` major 24 (locked 24.13.4, plus its
+  `undici-types` dependency) so the fs/VM test boundary is strictly typechecked.
+  Dynamic VM exports are immediately narrowed/validated, never unchecked-cast.
+  A dedicated artifact tsconfig is included in canonical typecheck; production
+  plugin typechecking also runs separately with only Obsidian ambient types.
+  `tsc --listFiles` confirmed that production plugin check includes no Node types.
+  No production source, Worker/protocol behavior, runtime dependency, network,
+  settings/persistence, local mutation or M3 implementation was added.
+  Added disposable-vault build/install/enable/commands/unload/update/removal
+  instructions and synchronized README, architecture, current-state and SECURITY
+  to actual local-only M2 behavior. Official public API declarations at revision
+  `83ce5767ab107e888079e9a673ce4c3153db1ff2` (package 1.4.11) establish availability
+  of all used host surfaces before minimum 1.5.0; installed official 1.13.1 types
+  confirm signatures and non-deprecation. Official sample CommonJS configuration
+  and installation tutorial are linked in `docs/plugin-development.md`.
+  TDD red smoke failed on absent staged manifest as expected. Final `mise install`,
+  `mise run install`, `mise run build`, `mise run plugin:smoke` and `mise run check`
+  passed after fixing introduced formatting and restricted-name diagnostics.
+  Additional `mise run typecheck`, `mise run lint` and `git diff --check` passed.
+  Source validation: 21 files / 250 tests; artifact validation: 1 file / 3 tests.
+  Global coverage unchanged: statements 96.74% (476/492), branches 93.75% (195/208),
+  functions 95.96% (119/124), lines 97.04% (459/473); all plugin production behavior
+  remains 100%, with unchanged thresholds and source inclusion. Worker dry-run
+  remains 1029.93 KiB / gzip 174.88 KiB; Wrangler's available-update notice is not
+  a compiler/linter/deprecation diagnostic and no version upgrade was in scope.
+  Post-validation writer semantic/security review found no blockers: no runtime
+  source changes, Node imports confined to artifact tests, typed external boundary,
+  explicit task ordering, public host APIs, no private cross-package imports,
+  no added content/logging/mutation/persistence behavior and no unnecessary runtime
+  dependency. Configured diagnostics are clean; no separate editor, real desktop/
+  mobile host, installed vault or deployment was exercised. Automated host-double
+  checks are not real-host compatibility evidence; best-effort race limitations
+  remain documented. Independent semantic review and M2 completion/roadmap/spec
+  transition remain slice 5; M2 is intentionally still active/uncompleted.
 - Slice 5 / final acceptance: pending.

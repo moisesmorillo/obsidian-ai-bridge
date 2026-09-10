@@ -2,7 +2,7 @@
 
 A secure bridge between Obsidian and remote AI or agent clients.
 
-> **Status:** Milestone 1 / experimental. The authenticated Worker API can store Markdown notes in Cloudflare R2.
+> **Status:** M1 complete / experimental. The authenticated Worker API stores Markdown in R2; the plugin is still a type-only scaffold. **NEXT:** [M2 — Obsidian read-only local-vault adapter](docs/milestones/m2-obsidian-read-only-local-adapter.md).
 
 ## Motivation
 
@@ -37,7 +37,7 @@ The plugin is intended to adapt Obsidian's official APIs. The Worker will provid
 - Authentication uses one bearer token; there are no users or device identities.
 - There is no synchronization, conflict detection, tombstone, search, MCP, D1, Durable Objects, Workers AI, or Vectorize support.
 
-## Planned components
+## Workspace components
 
 - `apps/worker` — Cloudflare Worker adapter and infrastructure integration.
 - `apps/obsidian-plugin` — Obsidian integration and local vault adapter.
@@ -124,19 +124,20 @@ apps/
 packages/
 ├── core/
 └── protocol/
-docs/
-├── api.md
-└── architecture.md
+docs/                   Architecture, API, current-state audit, roadmap,
+                        milestone specifications and decision records
 ```
 
-## Roadmap
+## Project memory and next work
 
-1. Operate and refine the M1 Worker API without changing its security invariants.
-2. Add the Obsidian adapter and local vault operations.
-3. Define synchronization and conflict semantics.
-4. Evaluate an MCP adapter after the REST boundary is established.
-
-Dates and feature commitments are intentionally not set while the architecture is being validated.
+Start with [AGENTS.md](AGENTS.md), [architecture](docs/architecture.md), the
+[canonical roadmap and agent onboarding](docs/roadmap.md), then the
+[active M2 specification](docs/milestones/m2-obsidian-read-only-local-adapter.md).
+The roadmap defines the useful product end state, milestone exit criteria and
+unresolved decisions. The [current-state audit](docs/current-state.md) links facts
+to source/configuration; [API documentation](docs/api.md) describes the implemented
+remote contract. Inspect relevant source/tests before coding; implement only the
+active milestone. Dates are intentionally not assigned.
 
 ## Security
 

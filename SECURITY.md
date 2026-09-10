@@ -2,6 +2,24 @@
 
 Security and data safety are priorities for this project. The repository is in early development and does not yet provide a complete secure bridge or production-ready synchronization behavior.
 
+## Current trust and data-safety boundary
+
+M1 uses one bearer token granting all remote note operations in one R2 namespace.
+PUT can unconditionally replace a note; DELETE immediately removes it without a
+tombstone or application recovery. This is not safe automatic synchronization.
+The Worker/cloud operator can read stored note text; there is no application-level
+end-to-end encryption, per-client permission model or production security claim.
+
+Keep tokens in ignored local configuration or the Worker secret mechanism, never
+in committed files or diagnostics. Do not log note content, concrete note paths,
+credentials or raw failures. Configuration is not evidence of deployed resources.
+The plugin currently has no vault/network behavior; the next milestone is local
+read-only inspection, not permission to upload or modify a vault.
+
+See [architecture](docs/architecture.md) for invariants and the
+[roadmap](docs/roadmap.md) for safe publishing, reconciliation and hardening gates.
+No future conflict or deletion flow may silently discard user data.
+
 ## Reporting a vulnerability
 
 Please submit security reports privately through **GitHub Security Advisories** for this repository. Include enough detail to reproduce the issue, its impact, and any suggested mitigation.

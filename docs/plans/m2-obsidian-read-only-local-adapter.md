@@ -117,7 +117,29 @@ below; do not mark the milestone complete based on an intermediate slice.
 - Baseline validation after tooling correction: `mise run check` passed;
   15 files / 105 tests, statements 95.16%, branches 90.29%, functions 94.31%,
   lines 95.69%. Worker dry-run and existing plugin scaffold bundle passed.
-- Slice 1: pending.
+- Slice 1: implemented core-only local eligibility, closed outcomes, the
+  `ReadOnlyLocalVault` port and metadata-only `LocalInspectionService`, with public
+  exports and two new unit suites (59 new cases; 17 files / 164 tests total).
+  Literal names are preserved; unsupported/excluded/invalid path checks precede
+  size policy. Supervisor-confirmed clarification: negative, fractional,
+  non-finite or unsafe-integer size metadata on otherwise eligible files yields
+  `unavailable`; enumeration must fail unavailable, not invent a skip category.
+  Earlier path-policy skip reasons still win. The adapter receives this policy
+  through core exports and supplies the exact configuration-directory input.
+  TDD red run failed on absent exports as expected; final `mise run test`,
+  `mise run typecheck`, `mise run lint` and `mise run biome:check` passed after
+  resolving new TSDoc/format/import-order diagnostics. `mise install` and the
+  additional complete `mise run check` passed (including both non-deploying
+  bundles and coverage). Global coverage: statements 95.73%, branches 92.12%,
+  functions 94.73%, lines 96.14%; new local behavior has 100% across all four.
+  Post-check writer semantic review found no blockers: core imports stay inward,
+  no unchecked casts/weak typing, no new dependencies or host/HTTP objects,
+  unchanged M1 policy, closed failures, no content in service outputs, no runtime
+  logging/network/persistence/mutation, and bounded straightforward control flow.
+  Configured diagnostics are clean; no separate editor or real-host session was
+  exercised. Independent reviewer gate remains required. Adapter/commands and
+  host race/UTF-8 measurement enforcement remain for later slices, not claimed
+  by this core-only completion.
 - Slice 2: pending.
 - Slice 3: pending.
 - Slice 4: pending.

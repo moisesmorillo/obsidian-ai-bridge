@@ -2,7 +2,7 @@
 
 A secure bridge between Obsidian and remote AI or agent clients.
 
-> **Status:** Experimental. M1 provides authenticated Worker/R2 storage. M2 now implements a local-only, read-only Obsidian inspection plugin; final semantic review and milestone completion are pending. **Active / NEXT:** [M2 — Obsidian read-only local-vault adapter](docs/milestones/m2-obsidian-read-only-local-adapter.md).
+> **Status:** M2 complete / experimental. The plugin provides local-only, read-only inspection; the independent M1 Worker provides authenticated R2 storage. **NEXT (planning only):** [M3 — Remote bridge client and explicit publishing](docs/milestones/m3-remote-bridge-client-and-publishing.md).
 
 ## Motivation
 
@@ -146,8 +146,10 @@ docs/                   Architecture, API, current-state audit, roadmap,
 
 Start with [AGENTS.md](AGENTS.md), [architecture](docs/architecture.md), the
 [canonical roadmap and agent onboarding](docs/roadmap.md), then the
-[active M2 specification](docs/milestones/m2-obsidian-read-only-local-adapter.md).
-The roadmap defines the useful product end state, milestone exit criteria and
+[active M3 planning handoff](docs/milestones/m3-remote-bridge-client-and-publishing.md).
+M3 requires specification refinement and an implementation plan before coding;
+[M2 completion and slice evidence](docs/plans/m2-obsidian-read-only-local-adapter.md)
+record the implemented baseline. The roadmap defines the useful product end state, milestone exit criteria and
 unresolved decisions. The [current-state audit](docs/current-state.md) links facts
 to source/configuration; [API documentation](docs/api.md) describes the implemented
 remote contract. Inspect relevant source/tests before coding; implement only the

@@ -1,6 +1,8 @@
 # M2 implementation plan — read-only local inspection
 
-**Status: ready for sequential implementation.** Created from the approved
+**Status: COMPLETE — implemented in sequential slices and semantically reviewed.**
+Publication and the canonical milestone transition occur through the completion PR.
+Created from the approved
 [M2 specification](../milestones/m2-obsidian-read-only-local-adapter.md).
 The [roadmap](../roadmap.md) owns scope/status; [AGENTS.md](../../AGENTS.md)
 owns engineering rules. This plan was absent in the M1 checkout and is added
@@ -106,6 +108,9 @@ below; do not mark the milestone complete based on an intermediate slice.
   against `main`, reporting local validation, review and limitations. Never deploy.
 
 ## Evidence ledger
+
+Entries below describe each slice at its own handoff; later entries supersede
+its pending work/review notes. Slice 5 records final acceptance.
 
 - Planning baseline: clean `main` at `635d24a`; active M2 spec exists, but
   `docs/plans/` did not. Work branch: `feat/m2-local-inspection`.
@@ -262,4 +267,24 @@ below; do not mark the milestone complete based on an intermediate slice.
   checks are not real-host compatibility evidence; best-effort race limitations
   remain documented. Independent semantic review and M2 completion/roadmap/spec
   transition remain slice 5; M2 is intentionally still active/uncompleted.
-- Slice 5 / final acceptance: pending.
+- Slice 5 / final acceptance: completed independent semantic/security review of
+  `635d24a..2e74b23` after the automated gate. No defects found; verdict OK with
+  notes limited to untested real desktop/mobile/editor environments and the
+  documented best-effort/non-cancellable host boundary. Parent review inspected
+  production policy/service/adapter/lifecycle/UI, integration negative assertions,
+  generated-artifact harness, task/type boundaries, configured manifest schema and
+  exact diff; agreed with the review. No concrete findings were deferred.
+  Verified no changes under `apps/worker`, `packages/protocol`, or existing core
+  `note-path`/`vault` modules. No new ADR is required: the implementation preserves
+  the approved read-only M2 architecture and existing decisions.
+  Updated M2 acceptance/evidence, README, current-state, architecture and plugin
+  development status. The roadmap marks M2 COMPLETE and M3 NEXT, with a detailed
+  planning-only handoff that requires unresolved product/concurrency decisions
+  and a new implementation plan before M3 production code. Transition is canonical
+  on merge; no M3 production implementation, deployment or vault install occurred.
+  Final `mise install`, `mise run install`, `mise run check` and `git diff --check`
+  passed on the completion changes: 250 source tests plus 3 artifact tests,
+  statements 96.74%, branches 93.75%, functions 95.96%, lines 97.04%. Both bundles
+  passed; Worker execution was dry-run only. All local documentation file links
+  resolve. Final command outcomes and review limitations are reported in the
+  completion PR.

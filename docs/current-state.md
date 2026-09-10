@@ -1,7 +1,9 @@
 # Verified current state
 
-This snapshot includes M1 and the implemented M2 local-inspection slices on
-`feat/m2-local-inspection`; M2 final semantic review/completion remain pending.
+This snapshot records the completed M2 local-inspection implementation and M1
+foundation. M2 source/tooling through `2e74b23` passed independent semantic review;
+the completion PR records final validation and makes the transition canonical
+when merged. M3 is planning only, with no remote plugin client implemented.
 M1 behavior is unchanged from the baseline audited at `22d3ee0` (PR #4).
 This is not a claim about a deployed environment or installed Obsidian host.
 [Roadmap](roadmap.md) owns milestone status; [architecture](architecture.md) owns

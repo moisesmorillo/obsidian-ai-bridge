@@ -12,8 +12,10 @@ packages/protocol      Shared protocol contracts and serialization definitions
 ```
 
 M1 is complete: an authenticated HTTP Worker API backed by Cloudflare R2 plus the
-engineering-quality foundation. M2 now implements a local-only read-only Obsidian
-inspection plugin; final semantic review and milestone completion remain pending.
+engineering-quality foundation. M2 is complete: a local-only read-only Obsidian
+inspection plugin with source tests, artifact checks and semantic review. M3 is
+[planning only](milestones/m3-remote-bridge-client-and-publishing.md); there is no
+connection between the plugin and Worker yet.
 See the [verified current state](current-state.md) for source/configuration evidence,
 [roadmap](roadmap.md) for execution order and open decisions, and
 [ADR 0001](decisions/0001-worker-r2-foundation.md) for the durable foundation.
@@ -148,8 +150,8 @@ and defers full reconciliation/import/deletions to M4.
 
 ## Explicitly deferred
 
-- M2: Final semantic review and completion transition (implementation is present).
-- M3: Remote client, opt-in selection/settings and safe explicit publishing.
+- M3 (NEXT, planning only): Remote client, opt-in selection/settings and safe
+  explicit publishing; product and conditional-mutation decisions remain open.
 - M4: Synchronization direction, conflicts, remote-to-local writes, deletion/
   tombstones, reconciliation and offline state.
 - M5: Operational readiness, resource limits and authentication evolution.

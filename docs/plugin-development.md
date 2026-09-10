@@ -1,8 +1,8 @@
 # Read-only local plugin development
 
-M2 implements explicit local inspection, not a connection to the Worker. Its final
-semantic review and milestone transition remain pending; see the
-[plan evidence](plans/m2-obsidian-read-only-local-adapter.md). No credentials,
+M2 is complete and implements explicit local inspection, not a connection to the
+Worker. See the [validation and semantic review evidence](plans/m2-obsidian-read-only-local-adapter.md).
+No credentials,
 Cloudflare resources or existing vault installation are needed.
 
 ## Build and automated artifact check

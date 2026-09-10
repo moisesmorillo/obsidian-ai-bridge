@@ -32,7 +32,8 @@ local UI remain sensitive; avoid sharing private result screenshots.
 Use only a [disposable development vault](docs/plugin-development.md) for manual
 installation. Build/host-double checks verify the CommonJS artifact without Node
 runtime dependencies, but no real desktop/mobile host test or production safety
-claim is made. M2 remains active pending final review/completion.
+claim is made. M2 is complete; M3 remains planning-only until selection, credential
+handling and server-enforced safe publishing are explicitly specified.
 
 See [architecture](docs/architecture.md) for invariants and the
 [roadmap](docs/roadmap.md) for safe publishing, reconciliation and hardening gates.

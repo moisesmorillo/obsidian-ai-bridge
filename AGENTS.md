@@ -191,6 +191,18 @@ Avoid unnecessary nesting.
 
 Do not apply this mechanically when an `else` genuinely improves clarity.
 
+Prefer declarative control flow over long imperative conditional chains.
+Use exhaustive `switch` or equivalent typed pattern matching for closed
+discriminated unions. Simple readable `if` statements are preferred over
+unnecessary abstractions; do not remove conditionals merely to satisfy a
+functional-programming style preference.
+
+### Fallible pipelines
+
+For multi-step fallible pipelines, prefer explicit typed result states over
+implicit fallthrough, sentinel values, or loosely related booleans when doing so
+improves clarity and exhaustiveness.
+
 ### Loops and termination
 
 Avoid unconditional loops such as:
@@ -620,6 +632,36 @@ End-to-end tests are not the default strategy.
 Do not introduce E2E tests unless a concrete risk cannot reasonably be covered by unit or focused integration tests.
 
 Prefer unit coverage first.
+
+### Test layout
+
+Production `src/` trees should contain production source only.
+
+For this repository, tests live in dedicated `tests/` trees outside `src/`.
+
+Use `tests/unit/` for isolated behavioral tests and `tests/integration/` for
+tests that intentionally compose multiple application layers.
+
+Do not label integration tests as E2E unless they exercise real external system
+boundaries.
+
+Follow an established repository test-layout convention consistently. When
+defining a new convention, prefer a dedicated test tree when it improves
+navigation and makes test scope explicit.
+
+### Coverage
+
+Behavioral test coverage must be measured.
+
+Coverage is a regression signal, not proof of test quality.
+
+Track lines, statements, functions, and branches.
+
+Coverage configuration must include relevant production source even when a file
+is not imported by any test.
+
+Thresholds should prevent regression from an established baseline rather than
+incentivize meaningless tests.
 
 ## Static analysis
 

@@ -140,7 +140,42 @@ below; do not mark the milestone complete based on an intermediate slice.
   exercised. Independent reviewer gate remains required. Adapter/commands and
   host race/UTF-8 measurement enforcement remain for later slices, not claimed
   by this core-only completion.
-- Slice 2: pending.
+- Slice 2: implemented the narrowly typed saved-file host boundary, official
+  Obsidian API bridge and `ObsidianLocalVault` adapter. Metadata enumeration
+  reads no bodies and preserves core skip precedence; exact reads enforce local
+  exclusions, pre-read size/finite timestamp validation, one saved-file read,
+  measured UTF-8 size and post-read object/path/size/mtime equality. Observed
+  changes return `changed_during_read` before post-read payload classification;
+  equality preserves the prevalidated path/size policy. Failures expose no content,
+  path or raw exception. The adapter's `policy` is shared with the service during
+  future command composition. No commands/runtime UI, mutation, network,
+  persistence, dependencies, Worker or protocol changes were introduced.
+  Registered the plugin Vitest project and named test-support alias; added a
+  strongly typed mutable host fake and two unit suites (51 new cases; 19 files /
+  215 tests total). Cases cover metadata-only enumeration/skip counts, custom
+  directory boundaries, exact percent/space/Unicode identities, missing/folder
+  paths, empty/exact/oversized ASCII and multibyte bodies, misleading/invalid
+  metadata, deferred disappearance/replacement/rename/edit/size races, host
+  exceptions, sanitized results, unchanged saved files and no alternative reads.
+  Initial discovery needed the core alias in the plugin project; the subsequent
+  TDD red run failed on the absent adapter as expected. Final `mise run test`,
+  `mise run typecheck`, `mise run lint`, `mise run biome:check` and `mise run
+  coverage` passed after resolving introduced type, documentation and formatting
+  diagnostics. Additional `mise install` and complete `mise run check` passed,
+  including unchanged non-deploying bundles. Coverage: statements 96.20%, branches
+  93.15%, functions 95.19%, lines 96.56%; both new production implementation
+  modules have 100% across all four metrics, with unchanged global thresholds.
+  Post-check writer semantic/security review found no blockers: public core
+  imports only, no weak typing/casts, shared policy rather than duplicate rules,
+  primitive pre-await evidence, typed sanitized failures, no sensitive logging,
+  no runtime filesystem/network/settings/mutation capability and no new dependency.
+  Installed official types confirm `getFiles`/`read`/`TFile` since 0.9.7,
+  `configDir` since 0.11.1 and `getAbstractFileByPath` since 0.11.11; the latter
+  avoids `getFileByPath` (1.5.7), preserving the manifest's 1.5.0 minimum.
+  Configured diagnostics are clean; no separate editor, desktop/mobile host or
+  installed-vault test was exercised. Metadata remains best-effort, not atomic
+  read/write concurrency evidence. Independent reviewer gate remains required;
+  command/lifecycle integration and loadable artifact checks remain later slices.
 - Slice 3: pending.
 - Slice 4: pending.
 - Slice 5 / final acceptance: pending.

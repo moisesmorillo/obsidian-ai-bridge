@@ -5,6 +5,7 @@ import {
   noteListResponseSchema,
   noteWriteResponseSchema,
 } from "@obsidian-ai-bridge/protocol";
+import { AUTHENTICATION_SCHEME } from "@worker/auth/auth.constants";
 import {
   HEALTH_ROUTE,
   HTTP_STATUS,
@@ -15,7 +16,10 @@ import {
   PLAIN_TEXT_MEDIA_TYPE,
 } from "@worker/http/http.constants";
 
+/** OpenAPI security requirement shared by authenticated note routes. */
 const bearerSecurity = [{ bearerAuth: [] }];
+
+/** OpenAPI parameter schema for canonical encoded note identifiers. */
 const notePathParameters = z.object({
   path: z.string().min(1).openapi({
     description:
@@ -23,10 +27,12 @@ const notePathParameters = z.object({
     example: "SG9tZWxhYi9ETlMvVGVjaG5pdGl1bS5tZA",
   }),
 });
+/** Shared JSON error content declaration for OpenAPI responses. */
 const errorContent = {
   [JSON_CONTENT_TYPE]: { schema: apiErrorResponseSchema },
 };
 
+/** OpenAPI route definition for the unauthenticated health endpoint. */
 export const healthRoute = createRoute({
   method: "get",
   path: HEALTH_ROUTE,
@@ -44,6 +50,7 @@ export const healthRoute = createRoute({
   tags: ["system"],
 });
 
+/** OpenAPI route definition for listing authenticated notes. */
 export const listNotesRoute = createRoute({
   method: "get",
   path: NOTES_ROUTE,
@@ -66,6 +73,7 @@ export const listNotesRoute = createRoute({
   tags: ["notes"],
 });
 
+/** OpenAPI route definition for reading one authenticated note. */
 export const getNoteRoute = createRoute({
   method: "get",
   path: `${NOTES_ROUTE}/{path}`,
@@ -97,6 +105,7 @@ export const getNoteRoute = createRoute({
   tags: ["notes"],
 });
 
+/** OpenAPI route definition for creating or replacing one note. */
 export const putNoteRoute = createRoute({
   method: "put",
   path: `${NOTES_ROUTE}/{path}`,
@@ -146,6 +155,7 @@ export const putNoteRoute = createRoute({
   tags: ["notes"],
 });
 
+/** OpenAPI route definition for idempotently deleting one note. */
 export const deleteNoteRoute = createRoute({
   method: "delete",
   path: `${NOTES_ROUTE}/{path}`,
@@ -170,12 +180,16 @@ export const deleteNoteRoute = createRoute({
   tags: ["notes"],
 });
 
+/** OpenAPI document metadata and security-scheme configuration for M1. */
 export const openApiConfiguration = {
   openapi: "3.1.0",
   info: { title: "AI Bridge M1 API", version: "0.1.0" },
   components: {
     securitySchemes: {
-      bearerAuth: { scheme: "bearer", type: "http" },
+      bearerAuth: {
+        scheme: AUTHENTICATION_SCHEME.bearer.toLowerCase(),
+        type: "http",
+      },
     },
   },
 } as const;

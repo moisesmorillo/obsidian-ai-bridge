@@ -1,6 +1,7 @@
 import {
   AUTHENTICATION_SCHEME,
   AUTHORIZATION_PARSE_RESULT_KIND,
+  BEARER_CREDENTIALS_RESULT_KIND,
 } from "@worker/auth/auth.constants";
 import type {
   AuthorizationHeaderParseResult,
@@ -22,8 +23,11 @@ export function parseBearerCredentials(
   if (
     result.scheme.toLowerCase() !== AUTHENTICATION_SCHEME.bearer.toLowerCase()
   ) {
-    return { kind: "unsupported_scheme" };
+    return { kind: BEARER_CREDENTIALS_RESULT_KIND.unsupportedScheme };
   }
 
-  return { kind: "bearer", token: result.credentials };
+  return {
+    kind: BEARER_CREDENTIALS_RESULT_KIND.bearer,
+    token: result.credentials,
+  };
 }

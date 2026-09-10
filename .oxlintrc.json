@@ -5,7 +5,24 @@
     "typeAware": true
   },
   "rules": {
+    "jsdoc/require-param": [
+      "error",
+      {
+        "checkConstructors": false,
+        "checkDestructured": false,
+        "ignoreWhenAllParamsMissing": false,
+        "interfaceExemptsParamsCheck": true
+      }
+    ],
     "jsdoc/require-param-description": "error",
+    "jsdoc/require-returns": [
+      "error",
+      {
+        "checkConstructors": false,
+        "forceRequireReturn": false,
+        "forceReturnsWithAsync": false
+      }
+    ],
     "jsdoc/require-returns-description": "error",
     "jsdoc/require-throws-description": "error",
     "no-console": "error",

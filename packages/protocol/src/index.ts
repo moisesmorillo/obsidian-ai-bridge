@@ -14,6 +14,8 @@ export type {
   ProtocolEnvelope,
 } from "@protocol/api.types";
 export {
+  API_ERROR_CODE,
   API_ERROR_CODES,
+  HEALTH_STATUS,
   PROTOCOL_VERSION,
 } from "@protocol/protocol.constants";

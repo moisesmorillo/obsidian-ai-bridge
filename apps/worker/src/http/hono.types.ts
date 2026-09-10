@@ -5,12 +5,16 @@ import type { Context, MiddlewareHandler } from "hono";
 
 /** Context variables injected before request handlers execute. */
 export interface WorkerContextVariables {
+  /** Application service resolved from the active environment bindings. */
   readonly noteService: NoteService;
 }
 
 /** Explicit Hono environment for the Cloudflare Worker transport adapter. */
 export interface WorkerHonoEnvironment {
+  /** Cloudflare bindings available to transport middleware. */
   readonly Bindings: WorkerEnv;
+
+  /** Request-scoped services available through the Hono context. */
   readonly Variables: WorkerContextVariables;
 }
 

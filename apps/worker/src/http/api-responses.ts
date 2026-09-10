@@ -1,122 +1,154 @@
-import type {
-  ApiErrorCode,
-  ApiErrorResponse,
-  HealthResponse,
-  NoteListResponse,
-  NoteWriteResponse,
-} from "@obsidian-ai-bridge/protocol";
 import {
-  AUTHENTICATION_SCHEME,
-  WWW_AUTHENTICATE_HEADER,
-} from "@worker/auth/auth.constants";
+  API_ERROR_CODE,
+  type ApiErrorCode,
+} from "@obsidian-ai-bridge/protocol";
 import {
   createApiErrorResponse,
   getApiErrorDefinition,
 } from "@worker/http/api-errors";
+import type { JsonResponseBody } from "@worker/http/api-responses.types";
+import type { WorkerContext } from "@worker/http/hono.types";
+import { HTTP_STATUS } from "@worker/http/http.constants";
 import {
-  CACHE_CONTROL_HEADER,
-  CACHE_CONTROL_NO_STORE,
-  HTTP_STATUS,
-  JSON_RESPONSE_CONTENT_TYPE,
-  MARKDOWN_CONTENT_TYPE,
-} from "@worker/http/http.constants";
-import type { Context } from "hono";
+  createApiErrorResponseHeaders,
+  createJsonResponseHeaders,
+  createNoteContentResponseHeaders,
+} from "@worker/http/http-response-headers";
 
-type JsonResponseBody =
-  | ApiErrorResponse
-  | HealthResponse
-  | NoteListResponse
-  | NoteWriteResponse;
-
-/** Creates an uncached JSON response with the stable M1 media type. */
+/**
+ * Creates an uncached JSON response with the stable M1 media type.
+ *
+ * @param context - Typed Worker request context used to serialize the body.
+ * @param body - Protocol or transport response body.
+ * @param status - Successful HTTP status for the response.
+ * @returns The serialized JSON response.
+ */
 export function createJsonResponse<
   Body extends JsonResponseBody,
   Status extends 200 | 201,
->(context: Context, body: Body, status: Status) {
-  return context.json(body, status, {
-    [CACHE_CONTROL_HEADER]: CACHE_CONTROL_NO_STORE,
-    "Content-Type": JSON_RESPONSE_CONTENT_TYPE,
-  });
+>(context: WorkerContext, body: Body, status: Status) {
+  return context.json(body, status, createJsonResponseHeaders());
 }
 
-/** Maps a stable error code to the public M1 error envelope and status. */
+/**
+ * Maps a stable error code to the public M1 error envelope and status.
+ *
+ * @param code - Protocol error code selected by the transport boundary.
+ * @returns A sanitized JSON error response with the mapped status.
+ */
 export function createErrorResponse(code: ApiErrorCode): Response {
   const definition = getApiErrorDefinition(code);
-  const headers = new Headers({
-    [CACHE_CONTROL_HEADER]: CACHE_CONTROL_NO_STORE,
-    "Content-Type": JSON_RESPONSE_CONTENT_TYPE,
-  });
-
-  if (code === "unauthorized") {
-    headers.set(WWW_AUTHENTICATE_HEADER, AUTHENTICATION_SCHEME.bearer);
-  }
 
   return new Response(JSON.stringify(createApiErrorResponse(code)), {
     status: definition.status,
-    headers,
+    headers: createApiErrorResponseHeaders(code),
   });
 }
 
-/** Serializes an API error with a status that may carry a response body. */
+/**
+ * Serializes an API error through a typed Worker context.
+ *
+ * @param context - Typed Worker request context used to serialize the body.
+ * @param code - Protocol error code selected by the transport boundary.
+ * @param status - HTTP error status associated with the handler branch.
+ * @returns The serialized JSON error response.
+ */
 function createTypedErrorResponse<Status extends 400 | 401 | 404 | 413 | 415>(
-  context: Context,
+  context: WorkerContext,
   code: ApiErrorCode,
   status: Status,
 ) {
-  return context.json(createApiErrorResponse(code), status, {
-    [CACHE_CONTROL_HEADER]: CACHE_CONTROL_NO_STORE,
-    "Content-Type": JSON_RESPONSE_CONTENT_TYPE,
-  });
+  return context.json(
+    createApiErrorResponse(code),
+    status,
+    createApiErrorResponseHeaders(code),
+  );
 }
 
-/** Creates a 400 response for path and request-body validation failures. */
+/**
+ * Creates a 400 response for path and request-body validation failures.
+ *
+ * @param context - Typed Worker request context used to serialize the response.
+ * @param code - Specific protocol error explaining the validation failure.
+ * @returns The mapped bad-request response.
+ */
 export function createBadRequestResponse(
-  context: Context,
-  code: "invalid_path" | "invalid_body",
+  context: WorkerContext,
+  code: typeof API_ERROR_CODE.invalidPath | typeof API_ERROR_CODE.invalidBody,
 ) {
   return createTypedErrorResponse(context, code, HTTP_STATUS.badRequest);
 }
 
-/** Creates a 401 response with the required bearer-authentication challenge. */
-export function createUnauthorizedResponse(context: Context) {
+/**
+ * Creates a 401 response with the required bearer-authentication challenge.
+ *
+ * @param context - Typed Worker request context used to serialize the response.
+ * @returns The authentication challenge response.
+ */
+export function createUnauthorizedResponse(context: WorkerContext) {
   return context.json(
-    createApiErrorResponse("unauthorized"),
+    createApiErrorResponse(API_ERROR_CODE.unauthorized),
     HTTP_STATUS.unauthorized,
-    {
-      [CACHE_CONTROL_HEADER]: CACHE_CONTROL_NO_STORE,
-      "Content-Type": JSON_RESPONSE_CONTENT_TYPE,
-      [WWW_AUTHENTICATE_HEADER]: AUTHENTICATION_SCHEME.bearer,
-    },
+    createApiErrorResponseHeaders(API_ERROR_CODE.unauthorized),
   );
 }
 
-/** Creates a 404 response that does not reveal implementation details. */
-export function createNotFoundResponse(context: Context) {
-  return createTypedErrorResponse(context, "not_found", HTTP_STATUS.notFound);
-}
-
-/** Creates a 413 response for note payloads above the configured limit. */
-export function createPayloadTooLargeResponse(context: Context) {
+/**
+ * Creates a 404 response that does not reveal implementation details.
+ *
+ * @param context - Typed Worker request context used to serialize the response.
+ * @returns The not-found response.
+ */
+export function createNotFoundResponse(context: WorkerContext) {
   return createTypedErrorResponse(
     context,
-    "payload_too_large",
+    API_ERROR_CODE.notFound,
+    HTTP_STATUS.notFound,
+  );
+}
+
+/**
+ * Creates a 413 response for note payloads above the configured limit.
+ *
+ * @param context - Typed Worker request context used to serialize the response.
+ * @returns The payload-too-large response.
+ */
+export function createPayloadTooLargeResponse(context: WorkerContext) {
+  return createTypedErrorResponse(
+    context,
+    API_ERROR_CODE.payloadTooLarge,
     HTTP_STATUS.payloadTooLarge,
   );
 }
 
-/** Creates a 415 response for request bodies outside the raw-text contract. */
-export function createUnsupportedMediaTypeResponse(context: Context) {
+/**
+ * Creates a 415 response for request bodies outside the raw-text contract.
+ *
+ * @param context - Typed Worker request context used to serialize the response.
+ * @returns The unsupported-media-type response.
+ */
+export function createUnsupportedMediaTypeResponse(context: WorkerContext) {
   return createTypedErrorResponse(
     context,
-    "unsupported_media_type",
+    API_ERROR_CODE.unsupportedMediaType,
     HTTP_STATUS.unsupportedMediaType,
   );
 }
 
-/** Creates the established plain-text note response. */
-export function createNoteContentResponse(context: Context, content: string) {
-  return context.text(content, HTTP_STATUS.ok, {
-    [CACHE_CONTROL_HEADER]: CACHE_CONTROL_NO_STORE,
-    "Content-Type": MARKDOWN_CONTENT_TYPE,
-  });
+/**
+ * Creates the established plain-text note response.
+ *
+ * @param context - Typed Worker request context used to serialize the response.
+ * @param content - Note content returned without adding transport markup.
+ * @returns The Markdown content response.
+ */
+export function createNoteContentResponse(
+  context: WorkerContext,
+  content: string,
+) {
+  return context.text(
+    content,
+    HTTP_STATUS.ok,
+    createNoteContentResponseHeaders(),
+  );
 }

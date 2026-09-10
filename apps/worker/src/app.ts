@@ -1,4 +1,5 @@
 import { OpenAPIHono } from "@hono/zod-openapi";
+import { API_ERROR_CODE } from "@obsidian-ai-bridge/protocol";
 import { Scalar } from "@scalar/hono-api-reference";
 import type { WorkerAppDependencies } from "@worker/app.types";
 import { createErrorResponse } from "@worker/http/api-responses";
@@ -33,7 +34,12 @@ import {
 import { createRequestDependenciesMiddleware } from "@worker/http/request-dependencies.middleware";
 import { createRequestLoggingMiddleware } from "@worker/logging/request-logging.middleware";
 
-/** Builds the complete Hono transport adapter from infrastructure-agnostic ports. */
+/**
+ * Builds the complete Hono transport adapter from infrastructure-agnostic ports.
+ *
+ * @param dependencies - Long-lived ports used to resolve request services and logging.
+ * @returns A typed Hono application with M1 routes and error boundaries installed.
+ */
 export function createWorkerApp(
   dependencies: WorkerAppDependencies,
 ): WorkerApplication {
@@ -60,8 +66,8 @@ export function createWorkerApp(
 
   app.doc(OPENAPI_ROUTE, openApiConfiguration);
   app.get(API_REFERENCE_ROUTE, Scalar({ url: OPENAPI_ROUTE }));
-  app.notFound(() => createErrorResponse("not_found"));
-  app.onError(() => createErrorResponse("internal_error"));
+  app.notFound(() => createErrorResponse(API_ERROR_CODE.notFound));
+  app.onError(() => createErrorResponse(API_ERROR_CODE.internalError));
 
   return app;
 }

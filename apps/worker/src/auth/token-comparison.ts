@@ -1,6 +1,12 @@
 const TOKEN_DIGEST_ALGORITHM = "SHA-256";
 
-/** Compares byte arrays without exiting on their first differing byte. */
+/**
+ * Compares byte arrays without exiting on their first differing byte.
+ *
+ * @param left - First digest to compare.
+ * @param right - Second digest to compare.
+ * @returns Whether both byte arrays have equal length and contents.
+ */
 function constantTimeEqual(left: Uint8Array, right: Uint8Array): boolean {
   let difference = left.length ^ right.length;
   const longestLength = Math.max(left.length, right.length);
@@ -12,7 +18,12 @@ function constantTimeEqual(left: Uint8Array, right: Uint8Array): boolean {
   return difference === 0;
 }
 
-/** Creates a fixed-length Web Crypto digest for token comparison. */
+/**
+ * Creates a fixed-length Web Crypto digest for token comparison.
+ *
+ * @param value - Token text to hash.
+ * @returns The SHA-256 digest of the token.
+ */
 async function sha256(value: string): Promise<Uint8Array> {
   const bytes = new TextEncoder().encode(value);
   return new Uint8Array(
@@ -20,7 +31,13 @@ async function sha256(value: string): Promise<Uint8Array> {
   );
 }
 
-/** Compares credentials through fixed-length SHA-256 digests without early exits. */
+/**
+ * Compares credentials through fixed-length SHA-256 digests without early exits.
+ *
+ * @param providedToken - Credential supplied by the request.
+ * @param expectedToken - Credential configured by the Worker.
+ * @returns Whether the digests match.
+ */
 export async function hasMatchingToken(
   providedToken: string,
   expectedToken: string,

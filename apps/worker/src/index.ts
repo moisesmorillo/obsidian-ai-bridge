@@ -15,4 +15,5 @@ const worker = createWorkerApp({
   resolveToken: (environment) => environment.OBSIDIAN_BRIDGE_TOKEN,
 });
 
+/** Fully assembled Worker application exported to the Cloudflare runtime. */
 export default worker;

@@ -284,6 +284,9 @@ Use dedicated modules for:
 Do not interpret this as requiring one file per symbol. Group closely related definitions by concern.
 
 Prefer `*.types.ts` or other explicit TypeScript modules for domain and application types.
+Files named `*.types.ts` MUST contain type-level declarations only. Runtime constants
+and enum-like runtime values belong in `*.constants.ts` unless co-location is
+technically required and documented.
 
 Reserve `.d.ts` for actual ambient declarations, module augmentation, external declarations, or global runtime typing. Do not use ambient declarations merely to avoid explicit imports.
 
@@ -351,6 +354,10 @@ Inline comments are appropriate when they explain a non-obvious `why`, invariant
 ### Documentation comments
 
 TypeScript code uses TSDoc-style documentation comments. Documentation is part of the code contract, not decoration.
+
+All exported/public declarations MUST have useful TSDoc.
+Non-trivial internal declarations MUST also be documented. Documentation quality
+matters more than merely having a comment block.
 
 Meaningful named declarations should have useful documentation, including:
 
@@ -713,6 +720,10 @@ The review must inspect:
 - editor warnings.
 
 Do not treat passing tests as evidence that the architecture or code quality is correct.
+
+A corrective review is not complete until every explicitly listed review finding is
+either fixed or explicitly documented in the PR as intentionally deferred with a
+technical justification.
 
 ## Completion criteria
 

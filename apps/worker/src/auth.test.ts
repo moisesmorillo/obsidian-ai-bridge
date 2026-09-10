@@ -1,3 +1,8 @@
+import {
+  AUTHENTICATION_RESULT_KIND,
+  AUTHORIZATION_PARSE_RESULT_KIND,
+  BEARER_CREDENTIALS_RESULT_KIND,
+} from "@worker/auth/auth.constants";
 import { authenticateRequest } from "@worker/auth/authenticate-request";
 import { parseAuthorizationHeader } from "@worker/auth/authorization-header";
 import { parseBearerCredentials } from "@worker/auth/bearer-credentials";
@@ -15,32 +20,37 @@ function headersWithAuthorization(value?: string): Headers {
 describe("parseAuthorizationHeader", () => {
   it("parses generic scheme and credentials", () => {
     expect(parseAuthorizationHeader("bearer secret-token")).toEqual({
-      kind: "credentials",
+      kind: AUTHORIZATION_PARSE_RESULT_KIND.credentials,
       scheme: "bearer",
       credentials: "secret-token",
     });
   });
 
   it.each([
-    [null, "missing"],
-    ["Bearer", "malformed"],
-    ["Bearer one two", "malformed"],
+    [null, AUTHORIZATION_PARSE_RESULT_KIND.missing],
+    ["", AUTHORIZATION_PARSE_RESULT_KIND.malformed],
+    ["   ", AUTHORIZATION_PARSE_RESULT_KIND.malformed],
+    ["Bearer", AUTHORIZATION_PARSE_RESULT_KIND.malformed],
+    ["Bearer one two", AUTHORIZATION_PARSE_RESULT_KIND.malformed],
   ] as const)("classifies %s headers", (header, kind) => {
     expect(parseAuthorizationHeader(header)).toMatchObject({ kind });
   });
 });
 
 describe("parseBearerCredentials", () => {
-  it("accepts Bearer credentials and rejects another scheme", () => {
+  it.each([
+    ["Bearer secret-token", BEARER_CREDENTIALS_RESULT_KIND.bearer],
+    ["bEaReR secret-token", BEARER_CREDENTIALS_RESULT_KIND.bearer],
+  ] as const)("accepts %s", (header, kind) => {
     expect(
-      parseBearerCredentials(parseAuthorizationHeader("bearer secret-token")),
-    ).toEqual({
-      kind: "bearer",
-      token: "secret-token",
-    });
+      parseBearerCredentials(parseAuthorizationHeader(header)),
+    ).toMatchObject({ kind });
+  });
+
+  it("rejects an unsupported scheme", () => {
     expect(
       parseBearerCredentials(parseAuthorizationHeader("Basic secret-token")),
-    ).toEqual({ kind: "unsupported_scheme" });
+    ).toEqual({ kind: BEARER_CREDENTIALS_RESULT_KIND.unsupportedScheme });
   });
 });
 
@@ -62,15 +72,15 @@ describe("authenticateRequest", () => {
         headersWithAuthorization("Bearer secret-token"),
         "secret-token",
       ),
-    ).resolves.toEqual({ kind: "authenticated" });
+    ).resolves.toEqual({ kind: AUTHENTICATION_RESULT_KIND.authenticated });
     await expect(
       authenticateRequest(headersWithAuthorization(), "secret-token"),
-    ).resolves.toEqual({ kind: "unauthenticated" });
+    ).resolves.toEqual({ kind: AUTHENTICATION_RESULT_KIND.unauthenticated });
     await expect(
       authenticateRequest(
         headersWithAuthorization("Basic secret-token"),
         "secret-token",
       ),
-    ).resolves.toEqual({ kind: "unauthenticated" });
+    ).resolves.toEqual({ kind: AUTHENTICATION_RESULT_KIND.unauthenticated });
   });
 });

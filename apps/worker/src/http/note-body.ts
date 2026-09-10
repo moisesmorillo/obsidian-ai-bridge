@@ -1,11 +1,14 @@
 import { MAX_NOTE_SIZE_BYTES } from "@obsidian-ai-bridge/core";
 import { HTTP_HEADER } from "@worker/http/http.constants";
-import {
-  NOTE_BODY_RESULT_KIND,
-  type NoteBodyResult,
-} from "@worker/http/note-body.types";
+import { NOTE_BODY_RESULT_KIND } from "@worker/http/note-body.constants";
+import type { NoteBodyResult } from "@worker/http/note-body.types";
 
-/** Parses a valid non-negative Content-Length header without rejecting malformed hints. */
+/**
+ * Parses a non-negative Content-Length header without treating it as authoritative.
+ *
+ * @param value - Raw header value, or `null` when no length was declared.
+ * @returns A safe numeric hint, or `undefined` when the hint is absent or malformed.
+ */
 function parseDeclaredContentLength(value: string | null): number | undefined {
   if (value === null) {
     return undefined;
@@ -15,7 +18,12 @@ function parseDeclaredContentLength(value: string | null): number | undefined {
   return Number.isSafeInteger(length) && length >= 0 ? length : undefined;
 }
 
-/** Reads a stream until completion or until its byte limit is exceeded. */
+/**
+ * Reads a stream until completion or until its byte limit is exceeded.
+ *
+ * @param stream - Request body stream to consume.
+ * @returns Ordered chunks, or `undefined` when the configured byte limit is exceeded.
+ */
 async function readBoundedStream(
   stream: ReadableStream<Uint8Array>,
 ): Promise<Uint8Array[] | undefined> {
@@ -42,7 +50,12 @@ async function readBoundedStream(
   return chunks;
 }
 
-/** Joins ordered byte chunks without exposing stream implementation details. */
+/**
+ * Joins ordered byte chunks without exposing stream implementation details.
+ *
+ * @param chunks - Byte chunks yielded by a request body stream.
+ * @returns One contiguous byte array containing the chunks in order.
+ */
 function joinByteChunks(chunks: readonly Uint8Array[]): Uint8Array {
   const totalBytes = chunks.reduce(
     (total, chunk) => total + chunk.byteLength,
@@ -59,7 +72,12 @@ function joinByteChunks(chunks: readonly Uint8Array[]): Uint8Array {
   return bodyBytes;
 }
 
-/** Decodes UTF-8 strictly so invalid byte sequences do not become replacement characters. */
+/**
+ * Decodes UTF-8 strictly so invalid byte sequences do not become replacement characters.
+ *
+ * @param bytes - Body bytes expected to contain UTF-8 text.
+ * @returns Decoded text, or `undefined` when the sequence is malformed.
+ */
 function decodeUtf8(bytes: Uint8Array): string | undefined {
   try {
     return new TextDecoder("utf-8", { fatal: true }).decode(bytes);

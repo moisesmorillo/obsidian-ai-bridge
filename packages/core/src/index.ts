@@ -1,5 +1,5 @@
-export type { Identifier } from "@core/identifier";
-export { createIdentifier } from "@core/identifier";
+export { createIdentifier } from "@core/identifier/identifier";
+export type { Identifier } from "@core/identifier/identifier.types";
 export {
   decodeNotePath,
   encodeNotePath,

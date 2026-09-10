@@ -1,11 +1,14 @@
 import {
   API_ERROR_CODES,
+  HEALTH_STATUS,
   PROTOCOL_VERSION,
 } from "@protocol/protocol.constants";
 import { z } from "zod";
 
 /** Runtime schema and OpenAPI source for a successful health response. */
-export const healthResponseSchema = z.object({ status: z.literal("ok") });
+export const healthResponseSchema = z.object({
+  status: z.literal(HEALTH_STATUS.ok),
+});
 
 /** Runtime schema and OpenAPI source for a list of normalized note paths. */
 export const noteListResponseSchema = z.object({ notes: z.array(z.string()) });

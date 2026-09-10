@@ -58,7 +58,7 @@ apps/worker/src/
 └── index.ts                       One-time Worker application assembly and dependency construction
 ```
 
-`packages/core` contains the repository port, note application services, path invariants, and domain errors. `packages/protocol` contains shared Zod-backed API response and error-code contracts. Hono, Cloudflare bindings, R2, Scalar, and HTTP status mapping remain in `apps/worker`.
+`packages/core` contains the repository port, note application service, path invariants, and domain errors. Note-path validation and base64url conversion are separated under `packages/core/src/note-path/`; identifier validation has its own typed/constants/implementation modules. `packages/protocol` contains shared Zod-backed API response and error-code contracts. Hono, Cloudflare bindings, R2, Scalar, and HTTP status mapping remain in `apps/worker`.
 
 ## Platform roles
 

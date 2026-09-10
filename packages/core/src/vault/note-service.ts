@@ -12,21 +12,34 @@ import type { VaultRepository } from "@core/vault/vault-repository.port";
  */
 export class VaultNoteService implements NoteService {
   /**
+   * Creates a note service over a storage port.
+   *
    * @param repository - Storage port used to persist normalized note paths and content.
    */
   constructor(private readonly repository: VaultRepository) {}
 
-  /** @returns Normalized note paths sorted in lexical order. */
+  /**
+   * Lists notes in deterministic lexical order.
+   *
+   * @returns A sorted copy of normalized paths returned by the repository.
+   */
   async list(): Promise<NotePath[]> {
     return [...(await this.repository.list())].sort();
   }
 
-  /** @param path - Validated note path to read. @returns The note content, or `null` if absent. */
+  /**
+   * Reads a note through the storage port.
+   *
+   * @param path - Validated note path to read.
+   * @returns The note content, or `null` when it is absent.
+   */
   read(path: NotePath): Promise<string | null> {
     return this.repository.read(path);
   }
 
   /**
+   * Validates size and stores UTF-8 note content.
+   *
    * @param path - Validated note path to write.
    * @param content - UTF-8 text content to store.
    * @returns Whether the write created a new note.
@@ -42,7 +55,12 @@ export class VaultNoteService implements NoteService {
     return { created };
   }
 
-  /** @param path - Validated note path to delete. */
+  /**
+   * Deletes a note through the storage port.
+   *
+   * @param path - Validated note path to delete.
+   * @returns A promise that settles after the repository applies its delete semantics.
+   */
   delete(path: NotePath): Promise<void> {
     return this.repository.delete(path);
   }

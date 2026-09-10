@@ -1,10 +1,12 @@
-import {
-  MARKDOWN_MEDIA_TYPE,
-  PLAIN_TEXT_MEDIA_TYPE,
-} from "@worker/http/http.constants";
+import { SUPPORTED_NOTE_MEDIA_TYPES } from "@worker/http/http.constants";
 import { parseMediaType } from "@worker/http/media-type";
 
-/** Checks whether a request declares one of the raw-text note media types. */
+/**
+ * Checks whether a request declares one of the raw-text note media types.
+ *
+ * @param contentType - Raw Content-Type header value.
+ * @returns Whether the request is compatible with the note body contract.
+ */
 export function isSupportedNoteContentType(
   contentType: string | null | undefined,
 ): boolean {
@@ -13,7 +15,7 @@ export function isSupportedNoteContentType(
     return true;
   }
 
-  return (
-    mediaType === MARKDOWN_MEDIA_TYPE || mediaType === PLAIN_TEXT_MEDIA_TYPE
+  return SUPPORTED_NOTE_MEDIA_TYPES.some(
+    (supportedMediaType) => supportedMediaType === mediaType,
   );
 }

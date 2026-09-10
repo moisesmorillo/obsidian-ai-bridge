@@ -2,10 +2,12 @@ import {
   decodeNotePath,
   NotePayloadTooLargeError,
 } from "@obsidian-ai-bridge/core";
-import type {
-  HealthResponse,
-  NoteListResponse,
-  NoteWriteResponse,
+import {
+  API_ERROR_CODE,
+  HEALTH_STATUS,
+  type HealthResponse,
+  type NoteListResponse,
+  type NoteWriteResponse,
 } from "@obsidian-ai-bridge/protocol";
 import {
   createBadRequestResponse,
@@ -16,25 +18,39 @@ import {
   createUnsupportedMediaTypeResponse,
 } from "@worker/http/api-responses";
 import type { WorkerContext } from "@worker/http/hono.types";
-import { HTTP_STATUS } from "@worker/http/http.constants";
+import { HTTP_HEADER, HTTP_STATUS } from "@worker/http/http.constants";
 import { readNoteBody } from "@worker/http/note-body";
+import { NOTE_BODY_RESULT_KIND } from "@worker/http/note-body.constants";
 import { isSupportedNoteContentType } from "@worker/http/note-content-type";
 
-/** Decodes the route parameter without allowing it to escape the item route. */
+/**
+ * Decodes the route parameter without allowing it to escape the item route.
+ *
+ * @param context - Typed request context containing the encoded route segment.
+ * @returns The validated note path, or `undefined` when the identifier is invalid.
+ */
 function decodeRequestNotePath(context: WorkerContext) {
   const encodedPath = context.req.param("path");
   return encodedPath === undefined ? undefined : decodeNotePath(encodedPath);
 }
 
-/** Handles the unauthenticated liveness endpoint. */
+/**
+ * Creates the handler for the unauthenticated liveness endpoint.
+ *
+ * @returns A handler that returns the stable health response.
+ */
 export function createHealthHandler() {
   return (context: WorkerContext) => {
-    const response: HealthResponse = { status: "ok" };
+    const response: HealthResponse = { status: HEALTH_STATUS.ok };
     return createJsonResponse(context, response, HTTP_STATUS.ok);
   };
 }
 
-/** Handles authenticated note-list requests. */
+/**
+ * Creates the handler for authenticated note-list requests.
+ *
+ * @returns A handler that delegates note enumeration to the request service.
+ */
 export function createListNotesHandler() {
   return async (context: WorkerContext) => {
     const response: NoteListResponse = {
@@ -44,12 +60,16 @@ export function createListNotesHandler() {
   };
 }
 
-/** Handles reads for canonical base64url note identifiers. */
+/**
+ * Creates the handler for reads addressed by canonical base64url note identifiers.
+ *
+ * @returns A handler that maps invalid identifiers and absent notes to API errors.
+ */
 export function createGetNoteHandler() {
   return async (context: WorkerContext) => {
     const path = decodeRequestNotePath(context);
     if (path === undefined) {
-      return createBadRequestResponse(context, "invalid_path");
+      return createBadRequestResponse(context, API_ERROR_CODE.invalidPath);
     }
 
     const content = await context.var.noteService.read(path);
@@ -61,23 +81,30 @@ export function createGetNoteHandler() {
   };
 }
 
-/** Handles bounded UTF-8 Markdown and plain-text note writes. */
+/**
+ * Creates the handler for bounded UTF-8 Markdown and plain-text note writes.
+ *
+ * @returns A handler that validates transport input before invoking the note service.
+ * @throws Rethrows unexpected service failures for the application error boundary.
+ */
 export function createPutNoteHandler() {
   return async (context: WorkerContext) => {
     const path = decodeRequestNotePath(context);
     if (path === undefined) {
-      return createBadRequestResponse(context, "invalid_path");
+      return createBadRequestResponse(context, API_ERROR_CODE.invalidPath);
     }
-    if (!isSupportedNoteContentType(context.req.header("Content-Type"))) {
+    if (
+      !isSupportedNoteContentType(context.req.header(HTTP_HEADER.contentType))
+    ) {
       return createUnsupportedMediaTypeResponse(context);
     }
 
     const body = await readNoteBody(context.req.raw);
-    if (body.kind === "too_large") {
+    if (body.kind === NOTE_BODY_RESULT_KIND.tooLarge) {
       return createPayloadTooLargeResponse(context);
     }
-    if (body.kind === "invalid_encoding") {
-      return createBadRequestResponse(context, "invalid_body");
+    if (body.kind === NOTE_BODY_RESULT_KIND.invalidEncoding) {
+      return createBadRequestResponse(context, API_ERROR_CODE.invalidBody);
     }
 
     try {
@@ -97,12 +124,16 @@ export function createPutNoteHandler() {
   };
 }
 
-/** Handles idempotent note deletion for canonical identifiers. */
+/**
+ * Creates the handler for idempotent note deletion.
+ *
+ * @returns A handler that delegates one validated delete operation and returns 204.
+ */
 export function createDeleteNoteHandler() {
   return async (context: WorkerContext) => {
     const path = decodeRequestNotePath(context);
     if (path === undefined) {
-      return createBadRequestResponse(context, "invalid_path");
+      return createBadRequestResponse(context, API_ERROR_CODE.invalidPath);
     }
 
     await context.var.noteService.delete(path);
@@ -110,18 +141,26 @@ export function createDeleteNoteHandler() {
   };
 }
 
-/** Retains the M1 invalid-path response for hierarchical item URLs. */
+/**
+ * Creates the fallback handler for hierarchical item URLs.
+ *
+ * @returns A handler that preserves the M1 invalid-path response.
+ */
 export function createInvalidPathHandler() {
   return (context: WorkerContext) =>
-    createBadRequestResponse(context, "invalid_path");
+    createBadRequestResponse(context, API_ERROR_CODE.invalidPath);
 }
 
-/** Preserves the not-found result for unsupported methods on valid note IDs. */
+/**
+ * Creates the fallback handler for unsupported methods on valid note IDs.
+ *
+ * @returns A handler that preserves invalid-path and not-found semantics.
+ */
 export function createUnsupportedNoteMethodHandler() {
   return (context: WorkerContext) => {
     const path = decodeRequestNotePath(context);
     if (path === undefined) {
-      return createBadRequestResponse(context, "invalid_path");
+      return createBadRequestResponse(context, API_ERROR_CODE.invalidPath);
     }
 
     return createNotFoundResponse(context);

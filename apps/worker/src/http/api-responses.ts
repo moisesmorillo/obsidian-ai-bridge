@@ -9,6 +9,10 @@ import {
 import type { JsonResponseBody } from "@worker/http/api-responses.types";
 import type { WorkerContext } from "@worker/http/hono.types";
 import { HTTP_STATUS } from "@worker/http/http.constants";
+import type {
+  ClientErrorStatus,
+  SuccessfulJsonStatus,
+} from "@worker/http/http.types";
 import {
   createApiErrorResponseHeaders,
   createJsonResponseHeaders,
@@ -25,7 +29,7 @@ import {
  */
 export function createJsonResponse<
   Body extends JsonResponseBody,
-  Status extends 200 | 201,
+  Status extends SuccessfulJsonStatus,
 >(context: WorkerContext, body: Body, status: Status) {
   return context.json(body, status, createJsonResponseHeaders());
 }
@@ -53,7 +57,7 @@ export function createErrorResponse(code: ApiErrorCode): Response {
  * @param status - HTTP error status associated with the handler branch.
  * @returns The serialized JSON error response.
  */
-function createTypedErrorResponse<Status extends 400 | 401 | 404 | 413 | 415>(
+function createTypedErrorResponse<Status extends ClientErrorStatus>(
   context: WorkerContext,
   code: ApiErrorCode,
   status: Status,
@@ -86,10 +90,10 @@ export function createBadRequestResponse(
  * @returns The authentication challenge response.
  */
 export function createUnauthorizedResponse(context: WorkerContext) {
-  return context.json(
-    createApiErrorResponse(API_ERROR_CODE.unauthorized),
+  return createTypedErrorResponse(
+    context,
+    API_ERROR_CODE.unauthorized,
     HTTP_STATUS.unauthorized,
-    createApiErrorResponseHeaders(API_ERROR_CODE.unauthorized),
   );
 }
 

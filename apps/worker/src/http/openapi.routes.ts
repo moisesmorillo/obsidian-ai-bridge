@@ -16,8 +16,13 @@ import {
   PLAIN_TEXT_MEDIA_TYPE,
 } from "@worker/http/http.constants";
 
+/**
+ * OpenAPI security-scheme identifier shared by requirements and component definitions.
+ */
+const OPENAPI_BEARER_SECURITY_SCHEME = "bearerAuth";
+
 /** OpenAPI security requirement shared by authenticated note routes. */
-const bearerSecurity = [{ bearerAuth: [] }];
+const bearerSecurity = [{ [OPENAPI_BEARER_SECURITY_SCHEME]: [] }];
 
 /** OpenAPI parameter schema for canonical encoded note identifiers. */
 const notePathParameters = z.object({
@@ -186,7 +191,7 @@ export const openApiConfiguration = {
   info: { title: "AI Bridge M1 API", version: "0.1.0" },
   components: {
     securitySchemes: {
-      bearerAuth: {
+      [OPENAPI_BEARER_SECURITY_SCHEME]: {
         scheme: AUTHENTICATION_SCHEME.bearer.toLowerCase(),
         type: "http",
       },

@@ -73,7 +73,7 @@ mise run install
 | `mise run format` | Apply Biome formatting. |
 | `mise run dev` | Run local Worker development through Wrangler. |
 
-Use the ignored `mise.local.toml` for credentials, machine-specific settings, or local overrides. Start from `mise.local.toml.example`; never commit the local file or tokens.
+Use `.mise.toml` for shared non-sensitive configuration. Use the ignored `mise.local.toml` for credentials, machine-specific settings, or local overrides. Start from `mise.local.toml.example`; never commit the local file or tokens. The repository does not use `.env` files.
 
 ## Local Worker development
 

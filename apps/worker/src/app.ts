@@ -6,6 +6,7 @@ import { createErrorResponse } from "@worker/http/api-responses";
 import { createAuthenticationMiddleware } from "@worker/http/authentication.middleware";
 import type {
   WorkerApplication,
+  WorkerBasePath,
   WorkerHonoEnvironment,
 } from "@worker/http/hono.types";
 import {
@@ -33,6 +34,7 @@ import {
 } from "@worker/http/openapi.routes";
 import { createRequestDependenciesMiddleware } from "@worker/http/request-dependencies.middleware";
 import { createRequestLoggingMiddleware } from "@worker/logging/request-logging.middleware";
+import type { BlankSchema } from "hono/types";
 
 /**
  * Builds the complete Hono transport adapter from infrastructure-agnostic ports.
@@ -43,7 +45,11 @@ import { createRequestLoggingMiddleware } from "@worker/logging/request-logging.
 export function createWorkerApp(
   dependencies: WorkerAppDependencies,
 ): WorkerApplication {
-  const app = new OpenAPIHono<WorkerHonoEnvironment>();
+  const app = new OpenAPIHono<
+    WorkerHonoEnvironment,
+    BlankSchema,
+    WorkerBasePath
+  >();
 
   app.use(createRequestLoggingMiddleware(dependencies.logger));
   app.use(createRequestDependenciesMiddleware(dependencies.resolveNoteService));

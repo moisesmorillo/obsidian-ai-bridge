@@ -28,11 +28,11 @@ Add behavioral Vitest coverage for behavior changes. Before opening a pull reque
 mise run check
 ```
 
-This runs Biome formatting checks, linting, configured assists, type checking, unit tests, and builds. Use `mise run format`, `mise run typecheck`, `mise run test`, or `mise run build` for focused work. Put local tokens and machine-specific overrides in ignored `mise.local.toml`.
+This runs Biome formatting checks, linting, configured assists, type checking, unit tests, and builds. Use `mise run format`, `mise run typecheck`, `mise run test`, or `mise run build` for focused work. Put shared non-sensitive configuration in `.mise.toml`; put local tokens and machine-specific overrides in ignored `mise.local.toml`. The repository does not use `.env` files.
 
 ## Coding style
 
-Use explicit, idiomatic TypeScript and modern web APIs where practical. Prefer small functions, precise names, strong types, and package boundaries over clever abstractions. Use comments for non-obvious constraints and TSDoc when public API documentation provides real value.
+Use explicit, idiomatic TypeScript and modern web APIs where practical. Prefer small functions, precise names, strong types, and package boundaries over clever abstractions. Use comments for non-obvious constraints. Follow the stricter TSDoc policy in [AGENTS.md](AGENTS.md): every exported/public declaration needs useful TSDoc, and non-trivial internal declarations must also be documented.
 
 ## Commits
 

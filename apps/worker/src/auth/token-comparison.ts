@@ -1,4 +1,4 @@
-const TOKEN_DIGEST_ALGORITHM = "SHA-256";
+import { TOKEN_DIGEST_ALGORITHM } from "@worker/auth/auth.constants";
 
 /**
  * Compares byte arrays without exiting on their first differing byte.

@@ -7,10 +7,7 @@ node_modules/
 # Bun
 .bun/
 
-# Environment files
-.env
-.env.*
-!.env.example
+# Local mise configuration
 mise.local.toml
 
 # TypeScript and build outputs

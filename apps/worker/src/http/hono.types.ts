@@ -2,6 +2,7 @@ import type { OpenAPIHono } from "@hono/zod-openapi";
 import type { NoteService } from "@obsidian-ai-bridge/core";
 import type { WorkerEnv } from "@worker/env/env.types";
 import type { Context, MiddlewareHandler } from "hono";
+import type { BlankInput, BlankSchema } from "hono/types";
 
 /** Context variables injected before request handlers execute. */
 export interface WorkerContextVariables {
@@ -18,11 +19,30 @@ export interface WorkerHonoEnvironment {
   readonly Variables: WorkerContextVariables;
 }
 
-/** Hono context whose bindings and injected services are fully typed. */
-export type WorkerContext = Context<WorkerHonoEnvironment>;
+/** Concrete route-path type used by Worker transport contexts and middleware. */
+export type WorkerRoutePath = string;
 
-/** Hono middleware bound to the Worker environment and context variables. */
-export type WorkerMiddleware = MiddlewareHandler<WorkerHonoEnvironment>;
+/** Root base path used when constructing Worker Hono applications. */
+export type WorkerBasePath = "/";
 
-/** Hono OpenAPI application bound to the Worker environment. */
-export type WorkerApplication = OpenAPIHono<WorkerHonoEnvironment>;
+/** Hono context whose bindings, path, and input are fully typed. */
+export type WorkerContext = Context<
+  WorkerHonoEnvironment,
+  WorkerRoutePath,
+  BlankInput
+>;
+
+/** Hono middleware bound to the Worker environment, path, input, and response. */
+export type WorkerMiddleware = MiddlewareHandler<
+  WorkerHonoEnvironment,
+  WorkerRoutePath,
+  BlankInput,
+  Response
+>;
+
+/** Hono OpenAPI application bound to the Worker environment and root route schema. */
+export type WorkerApplication = OpenAPIHono<
+  WorkerHonoEnvironment,
+  BlankSchema,
+  WorkerBasePath
+>;

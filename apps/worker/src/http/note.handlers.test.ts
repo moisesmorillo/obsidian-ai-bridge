@@ -9,13 +9,17 @@ import {
   API_ERROR_CODE,
   apiErrorResponseSchema,
 } from "@obsidian-ai-bridge/protocol";
-import type { WorkerHonoEnvironment } from "@worker/http/hono.types";
+import type {
+  WorkerBasePath,
+  WorkerHonoEnvironment,
+} from "@worker/http/hono.types";
 import {
   createDeleteNoteHandler,
   createGetNoteHandler,
   createPutNoteHandler,
 } from "@worker/http/note.handlers";
 import { Hono } from "hono";
+import type { BlankSchema } from "hono/types";
 import { describe, expect, it, vi } from "vitest";
 
 function normalizedPath(value: string): NotePath {
@@ -56,8 +60,10 @@ function mockNoteService(): {
   };
 }
 
-function application(noteService: NoteService): Hono<WorkerHonoEnvironment> {
-  const app = new Hono<WorkerHonoEnvironment>();
+function application(
+  noteService: NoteService,
+): Hono<WorkerHonoEnvironment, BlankSchema, WorkerBasePath> {
+  const app = new Hono<WorkerHonoEnvironment, BlankSchema, WorkerBasePath>();
   app.use("*", (context, next) => {
     context.set("noteService", noteService);
     return next();

@@ -1,32 +1,18 @@
-const identifierPattern = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
-
+export { createIdentifier } from "@core/identifier/identifier";
+export type { Identifier } from "@core/identifier/identifier.types";
 export {
   decodeNotePath,
   encodeNotePath,
   isNormalizedNotePath,
   normalizeNotePath,
-} from "./note-path";
-export type { NotePath } from "./note-path";
+} from "@core/note-path/note-path";
+export type { NotePath } from "@core/note-path/note-path.types";
+export { VaultNoteService } from "@core/vault/note-service";
+export type { NoteService } from "@core/vault/note-service.types";
+export { MAX_NOTE_SIZE_BYTES } from "@core/vault/vault.constants";
 export {
-  deleteNote,
-  listNotes,
-  MAX_NOTE_SIZE_BYTES,
   NotePayloadTooLargeError,
-  readNote,
-  writeNote,
-} from "./vault";
-export type { VaultRepository } from "./vault";
-
-export type Identifier = string & {
-  readonly __brand: "Identifier";
-};
-
-export function createIdentifier(value: string): Identifier | undefined {
-  const normalizedValue = value.trim().toLowerCase();
-
-  if (!identifierPattern.test(normalizedValue)) {
-    return undefined;
-  }
-
-  return normalizedValue as Identifier;
-}
+  StoredNoteTooLargeError,
+} from "@core/vault/vault.errors";
+export type { WriteNoteResult } from "@core/vault/vault.types";
+export type { VaultRepository } from "@core/vault/vault-repository.port";

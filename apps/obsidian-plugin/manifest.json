@@ -1,6 +1,6 @@
 {
-  "id": "obsidian-ai-bridge",
-  "name": "Obsidian AI Bridge",
+  "id": "ai-bridge",
+  "name": "AI Bridge",
   "version": "0.1.0",
   "minAppVersion": "1.5.0",
   "description": "An experimental foundation for a secure bridge between Obsidian and remote AI clients.",

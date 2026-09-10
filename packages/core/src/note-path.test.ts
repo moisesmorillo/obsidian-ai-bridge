@@ -1,11 +1,20 @@
-import { describe, expect, it } from "vitest";
 import {
   decodeNotePath,
   encodeNotePath,
   isNormalizedNotePath,
-  normalizeNotePath,
   type NotePath,
+  normalizeNotePath,
 } from "@obsidian-ai-bridge/core";
+import { describe, expect, it } from "vitest";
+
+function validPath(value: string): NotePath {
+  const path = normalizeNotePath(value);
+  if (path === undefined) {
+    throw new Error(`Invalid test path: ${value}`);
+  }
+
+  return path;
+}
 
 describe("normalizeNotePath", () => {
   it.each(["Homelab/DNS/Technitium.md", "Career/Applications/Company.md"])(
@@ -23,10 +32,8 @@ describe("normalizeNotePath", () => {
   });
 
   it("round-trips nested paths through the URL-safe identifier", () => {
-    const path = normalizeNotePath("Homelab/DNS/Technitium.md");
-
-    expect(path).toBeDefined();
-    const encodedPath = encodeNotePath(path as NotePath);
+    const path = validPath("Homelab/DNS/Technitium.md");
+    const encodedPath = encodeNotePath(path);
     expect(encodedPath).not.toMatch(/[./\\]/);
     expect(decodeNotePath(encodedPath)).toBe(path);
   });

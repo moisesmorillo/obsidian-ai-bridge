@@ -1,0 +1,79 @@
+import { OpenAPIHono } from "@hono/zod-openapi";
+import { API_ERROR_CODE } from "@obsidian-ai-bridge/protocol";
+import { Scalar } from "@scalar/hono-api-reference";
+import type { WorkerAppDependencies } from "@worker/app.types";
+import { createErrorResponse } from "@worker/http/api-responses";
+import { createAuthenticationMiddleware } from "@worker/http/authentication.middleware";
+import type {
+  WorkerApplication,
+  WorkerBasePath,
+  WorkerHonoEnvironment,
+} from "@worker/http/hono.types";
+import {
+  API_PREFIX,
+  API_REFERENCE_ROUTE,
+  NOTES_ROUTE,
+  OPENAPI_ROUTE,
+} from "@worker/http/http.constants";
+import {
+  createDeleteNoteHandler,
+  createGetNoteHandler,
+  createHealthHandler,
+  createInvalidPathHandler,
+  createListNotesHandler,
+  createPutNoteHandler,
+  createUnsupportedNoteMethodHandler,
+} from "@worker/http/note.handlers";
+import {
+  deleteNoteRoute,
+  getNoteRoute,
+  healthRoute,
+  listNotesRoute,
+  openApiConfiguration,
+  putNoteRoute,
+} from "@worker/http/openapi.routes";
+import { createRequestDependenciesMiddleware } from "@worker/http/request-dependencies.middleware";
+import { createRequestLoggingMiddleware } from "@worker/logging/request-logging.middleware";
+import type { BlankSchema } from "hono/types";
+
+/**
+ * Builds the complete Hono transport adapter from infrastructure-agnostic ports.
+ *
+ * @param dependencies - Long-lived ports used to resolve request services and logging.
+ * @returns A typed Hono application with M1 routes and error boundaries installed.
+ */
+export function createWorkerApp(
+  dependencies: WorkerAppDependencies,
+): WorkerApplication {
+  const app = new OpenAPIHono<
+    WorkerHonoEnvironment,
+    BlankSchema,
+    WorkerBasePath
+  >();
+
+  app.use(createRequestLoggingMiddleware(dependencies.logger));
+  app.use(createRequestDependenciesMiddleware(dependencies.resolveNoteService));
+  app.use(
+    API_PREFIX,
+    createAuthenticationMiddleware(dependencies.resolveToken),
+  );
+  app.use(
+    `${API_PREFIX}/*`,
+    createAuthenticationMiddleware(dependencies.resolveToken),
+  );
+
+  app.openapi(healthRoute, createHealthHandler());
+  app.openapi(listNotesRoute, createListNotesHandler());
+  app.openapi(getNoteRoute, createGetNoteHandler());
+  app.openapi(putNoteRoute, createPutNoteHandler());
+  app.openapi(deleteNoteRoute, createDeleteNoteHandler());
+  app.all(`${NOTES_ROUTE}/:path`, createUnsupportedNoteMethodHandler());
+  app.all(`${NOTES_ROUTE}/*`, createInvalidPathHandler());
+
+  app.doc(OPENAPI_ROUTE, openApiConfiguration);
+  app.get(API_REFERENCE_ROUTE, Scalar({ url: OPENAPI_ROUTE }));
+  app.notFound(() => createErrorResponse(API_ERROR_CODE.notFound));
+  app.onError(() => createErrorResponse(API_ERROR_CODE.internalError));
+
+  return app;
+}

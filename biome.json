@@ -1,7 +1,13 @@
 {
   "$schema": "https://biomejs.dev/schemas/2.5.12/schema.json",
   "files": {
-    "includes": ["**", "!bun.lock", "!**/dist", "!**/node_modules"]
+    "includes": [
+      "**",
+      "!bun.lock",
+      "!**/.wrangler",
+      "!**/dist",
+      "!**/node_modules"
+    ]
   },
   "formatter": {
     "enabled": true,

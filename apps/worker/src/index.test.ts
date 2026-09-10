@@ -1,20 +1,25 @@
+import type { NotePath, VaultRepository } from "@obsidian-ai-bridge/core";
 import {
-  MAX_NOTE_SIZE_BYTES,
   encodeNotePath,
+  MAX_NOTE_SIZE_BYTES,
   normalizeNotePath,
-  type NotePath,
-  type VaultRepository,
+  VaultNoteService,
 } from "@obsidian-ai-bridge/core";
+import {
+  apiErrorResponseSchema,
+  healthResponseSchema,
+  noteListResponseSchema,
+  noteWriteResponseSchema,
+} from "@obsidian-ai-bridge/protocol";
+import { createWorkerApp } from "@worker/app";
+import type { Logger } from "@worker/logging/logger.types";
 import { describe, expect, it } from "vitest";
-import { handleRequest } from "./index";
 
 class InMemoryVaultRepository implements VaultRepository {
-  private readonly notes = new Map<string, string>();
+  private readonly notes = new Map<NotePath, string>();
 
   list(): Promise<readonly NotePath[]> {
-    return Promise.resolve(
-      [...this.notes.keys()].map((path) => normalizeNotePath(path) as NotePath),
-    );
+    return Promise.resolve([...this.notes.keys()]);
   }
 
   exists(path: NotePath): Promise<boolean> {
@@ -36,24 +41,37 @@ class InMemoryVaultRepository implements VaultRepository {
   }
 }
 
-const token = "secret-token";
+class TestLogger implements Logger {
+  readonly entries: Parameters<Logger["info"]>[] = [];
 
-function noteRoute(path: string): string {
-  const normalizedPath = normalizeNotePath(path);
-  if (normalizedPath === undefined) {
+  info(entry: Parameters<Logger["info"]>[0]): void {
+    this.entries.push([entry]);
+  }
+}
+
+const TOKEN = "secret-token";
+
+function normalizedPath(path: string): NotePath {
+  const normalized = normalizeNotePath(path);
+  if (normalized === undefined) {
     throw new Error(`Invalid test path: ${path}`);
   }
 
-  return `/api/v1/notes/${encodeNotePath(normalizedPath)}`;
+  return normalized;
+}
+
+function noteRoute(path: string): string {
+  return `/api/v1/notes/${encodeNotePath(normalizedPath(path))}`;
 }
 
 function makeRequest(
   path: string,
   options: {
-    method?: string;
-    body?: string;
-    contentType?: string;
-    authorization?: string;
+    readonly method?: string;
+    readonly body?: BodyInit;
+    readonly contentType?: string;
+    readonly authorization?: string;
+    readonly contentLength?: string;
   } = {},
 ): Request {
   const headers = new Headers();
@@ -62,6 +80,9 @@ function makeRequest(
   }
   if (options.contentType !== undefined) {
     headers.set("Content-Type", options.contentType);
+  }
+  if (options.contentLength !== undefined) {
+    headers.set("Content-Length", options.contentLength);
   }
 
   const init: RequestInit = {
@@ -75,42 +96,42 @@ function makeRequest(
   return new Request(`https://example.test${path}`, init);
 }
 
-function handler(repository: VaultRepository): Promise<Response> {
-  return handleRequest(makeRequest("/health"), {
-    repository,
-    token,
-    logger: () => undefined,
-  });
+function app(repository: VaultRepository, logger = new TestLogger()) {
+  return {
+    application: createWorkerApp({
+      logger,
+      resolveNoteService: () => new VaultNoteService(repository),
+      resolveToken: () => TOKEN,
+    }),
+    logger,
+  };
 }
 
 async function request(
   repository: VaultRepository,
   path: string,
-  options: {
-    method?: string;
-    body?: string;
-    contentType?: string;
-    authorization?: string;
-  } = {},
+  options: Parameters<typeof makeRequest>[1] = {},
 ): Promise<Response> {
-  return handleRequest(makeRequest(path, options), {
-    repository,
-    token,
-    logger: () => undefined,
-  });
+  return app(repository).application.fetch(makeRequest(path, options));
 }
 
 async function errorCode(response: Response): Promise<string> {
-  const body = (await response.json()) as { error: { code: string } };
-  return body.error.code;
+  return apiErrorResponseSchema.parse(await response.json()).error.code;
 }
 
 describe("Worker API", () => {
   it("returns an unauthenticated health response", async () => {
-    const response = await handler(new InMemoryVaultRepository());
+    const response = await app(new InMemoryVaultRepository()).application.fetch(
+      makeRequest("/health"),
+    );
 
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ status: "ok" });
+    expect(response.headers.get("Content-Type")).toBe(
+      "application/json; charset=utf-8",
+    );
+    expect(healthResponseSchema.parse(await response.json())).toEqual({
+      status: "ok",
+    });
   });
 
   it("creates and reads a note", async () => {
@@ -124,7 +145,7 @@ describe("Worker API", () => {
       authorization: "Bearer secret-token",
     });
     expect(putResponse.status).toBe(201);
-    expect(await putResponse.json()).toEqual({
+    expect(noteWriteResponseSchema.parse(await putResponse.json())).toEqual({
       path: "Homelab/DNS/Technitium.md",
       stored: true,
     });
@@ -173,7 +194,9 @@ describe("Worker API", () => {
       authorization: "Bearer secret-token",
     });
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ notes: ["Alpha.md", "Zeta.md"] });
+    expect(noteListResponseSchema.parse(await response.json())).toEqual({
+      notes: ["Alpha.md", "Zeta.md"],
+    });
   });
 
   it("deletes notes idempotently", async () => {
@@ -247,6 +270,20 @@ describe("Worker API", () => {
     expect(await errorCode(response)).toBe("invalid_path");
   });
 
+  it("returns 404 for unsupported methods on a valid note identifier", async () => {
+    const response = await request(
+      new InMemoryVaultRepository(),
+      noteRoute("Alpha.md"),
+      {
+        method: "POST",
+        authorization: "Bearer secret-token",
+      },
+    );
+
+    expect(response.status).toBe(404);
+    expect(await errorCode(response)).toBe("not_found");
+  });
+
   it("rejects unsupported media types", async () => {
     const response = await request(
       new InMemoryVaultRepository(),
@@ -278,16 +315,106 @@ describe("Worker API", () => {
     expect(await errorCode(response)).toBe("payload_too_large");
   });
 
-  it("returns 404 for a missing note", async () => {
+  it("rejects a declared oversized payload before reading it", async () => {
     const response = await request(
       new InMemoryVaultRepository(),
-      noteRoute("Missing.md"),
+      noteRoute("Alpha.md"),
       {
+        method: "PUT",
+        body: "small",
+        contentLength: String(MAX_NOTE_SIZE_BYTES + 1),
         authorization: "Bearer secret-token",
       },
     );
 
+    expect(response.status).toBe(413);
+    expect(await errorCode(response)).toBe("payload_too_large");
+  });
+
+  it("rejects malformed UTF-8 payloads", async () => {
+    const response = await request(
+      new InMemoryVaultRepository(),
+      noteRoute("Alpha.md"),
+      {
+        method: "PUT",
+        body: new Uint8Array([0xc3, 0x28]),
+        authorization: "Bearer secret-token",
+      },
+    );
+
+    expect(response.status).toBe(400);
+    expect(await errorCode(response)).toBe("invalid_body");
+  });
+
+  it("returns 404 for a missing note", async () => {
+    const response = await request(
+      new InMemoryVaultRepository(),
+      noteRoute("Missing.md"),
+      { authorization: "Bearer secret-token" },
+    );
+
     expect(response.status).toBe(404);
     expect(await errorCode(response)).toBe("not_found");
+  });
+
+  it("sanitizes unexpected repository failures", async () => {
+    const repository: VaultRepository = {
+      list: async () => [],
+      exists: async () => false,
+      read: async () => {
+        throw new Error("storage credential details");
+      },
+      write: async () => undefined,
+      delete: async () => undefined,
+    };
+
+    const response = await request(repository, noteRoute("Alpha.md"), {
+      authorization: "Bearer secret-token",
+    });
+
+    expect(response.status).toBe(500);
+    const responseBody = await response.text();
+    expect(
+      apiErrorResponseSchema.parse(JSON.parse(responseBody)).error.code,
+    ).toBe("internal_error");
+    expect(responseBody).not.toContain("storage credential details");
+  });
+
+  it("exposes the generated OpenAPI document and Scalar reference", async () => {
+    const { application } = app(new InMemoryVaultRepository());
+
+    const document = await application.fetch(makeRequest("/openapi.json"));
+    const reference = await application.fetch(makeRequest("/docs"));
+
+    expect(document.status).toBe(200);
+    expect(await document.text()).toContain("/api/v1/notes/{path}");
+    expect(reference.status).toBe(200);
+    expect(reference.headers.get("Content-Type")).toContain("text/html");
+    expect(await reference.text()).toContain("scalar");
+  });
+
+  it("logs request metadata without credentials or note content", async () => {
+    const logger = new TestLogger();
+    const { application } = app(new InMemoryVaultRepository(), logger);
+
+    await application.fetch(
+      makeRequest(noteRoute("Alpha.md"), {
+        method: "PUT",
+        body: "sensitive note content",
+        authorization: "Bearer secret-token",
+      }),
+    );
+
+    expect(logger.entries).toHaveLength(1);
+    expect(logger.entries[0]?.[0]).toMatchObject({
+      operation: "http_request",
+      method: "PUT",
+      route: "/api/v1/notes/:path",
+      status: 201,
+    });
+    expect(JSON.stringify(logger.entries)).not.toContain("secret-token");
+    expect(JSON.stringify(logger.entries)).not.toContain(
+      "sensitive note content",
+    );
   });
 });

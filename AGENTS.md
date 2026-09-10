@@ -60,6 +60,24 @@ The README must document:
 - the standard `mise run ...` workflow;
 - the purpose of `mise.local.toml`.
 
+## Quality gate
+
+A green CI pipeline is necessary but not sufficient.
+
+Modified code must have zero unexplained:
+
+- compiler diagnostics;
+- linter diagnostics;
+- editor diagnostics;
+- deprecation warnings;
+- configured assist diagnostics.
+
+APIs marked `@deprecated` must not be used unless an explicit compatibility requirement documents why the deprecated API is unavoidable. Internal code must not depend on a deprecated compatibility API.
+
+Whenever tooling can reliably enforce an engineering rule, prefer automated enforcement in `mise run check` over relying exclusively on agent instructions.
+
+Framework types must be parameterized when their defaults introduce weak typing such as implicit `any`.
+
 ## TypeScript
 
 Use strict TypeScript.
@@ -88,6 +106,12 @@ Prefer:
 If an external library forces weakly typed input at a boundary, isolate it inside the adapter, validate it immediately, and convert it into a strong application type before it can propagate.
 
 Do not use `as SomeType` merely to silence the compiler.
+
+### Framework types
+
+Do not rely on framework generic defaults when they introduce `any` or otherwise weaken application types.
+
+For Hono and other typed frameworks, define and use explicit bindings, variables, context, middleware, handler, and application types. Framework services must be injected through typed context variables or another explicit composition boundary.
 
 ### Imports
 
@@ -167,21 +191,37 @@ Avoid unnecessary nesting.
 
 Do not apply this mechanically when an `else` genuinely improves clarity.
 
-## Functions and responsibilities
+### Loops and termination
 
-A function must not have responsibilities beyond what its name promises.
+Avoid unconditional loops such as:
 
-If a function:
+```ts
+while (true) {
+  // ...
+}
+```
 
-- parses input;
-- validates input;
-- applies business rules;
-- performs persistence;
-- formats transport responses;
+when the actual termination condition can be modeled explicitly.
 
-it likely contains multiple responsibilities and should be decomposed.
+Prefer:
 
-Extract cohesive functions or utilities when doing so improves:
+- condition-driven loops;
+- iterators;
+- async iterators;
+- typed pagination state;
+- generators;
+
+when they make termination and invariants clearer.
+
+An unconditional loop is acceptable only when it genuinely produces the clearest implementation and its termination invariant is explicit and safe.
+
+## Responsibility boundaries
+
+Single Responsibility Principle refers to conceptual responsibility, not function length. A short function can still have too many responsibilities.
+
+Parsing syntax, validating input, applying domain policy, authenticating credentials, performing persistence, transforming data, and formatting transport responses are distinct responsibilities unless there is a compelling reason to combine them.
+
+A function must not have responsibilities beyond what its name promises. Extract cohesive functions or modules when doing so improves:
 
 - readability;
 - reuse;
@@ -190,11 +230,29 @@ Extract cohesive functions or utilities when doing so improves:
 - complexity;
 - separation of concerns.
 
-Do not extract trivial functions merely to reduce line count.
+Do not extract trivial functions merely to reduce line count. Prefer low cyclomatic complexity. Functions, methods, classes, modules, and files should remain small enough to understand without mentally simulating many branches or unrelated states.
 
-Prefer low cyclomatic complexity.
+Handlers and controllers depend on application services or use cases. They must not depend directly on repository implementations and should normally not depend directly on repository ports.
 
-Functions, methods, classes, modules, and files should remain small enough to understand without mentally simulating many branches or unrelated states.
+Application services depend on repository ports. Infrastructure adapters implement repository ports. Framework-specific objects must remain at transport or infrastructure boundaries.
+
+## Duplication
+
+Avoid duplicated policy, not merely duplicated lines.
+
+Shared behavior such as:
+
+- common response headers;
+- media-type normalization;
+- error mappings;
+- authentication schemes;
+- limits;
+- route semantics;
+- serialization rules;
+
+must have one cohesive source of truth.
+
+Extract shared abstractions when they represent the same concept. Do not introduce generic helpers solely to reduce textual duplication.
 
 ## File organization
 
@@ -226,14 +284,34 @@ Use dedicated modules for:
 Do not interpret this as requiring one file per symbol. Group closely related definitions by concern.
 
 Prefer `*.types.ts` or other explicit TypeScript modules for domain and application types.
+Files named `*.types.ts` MUST contain type-level declarations only. Runtime constants
+and enum-like runtime values belong in `*.constants.ts` unless co-location is
+technically required and documented.
 
 Reserve `.d.ts` for actual ambient declarations, module augmentation, external declarations, or global runtime typing. Do not use ambient declarations merely to avoid explicit imports.
 
-## Constants and literals
+## Semantic source of truth
 
-Do not use magic numbers or magic strings when the literal has semantic meaning.
+Domain, application, and protocol states must have one authoritative typed definition.
 
-Prefer:
+Do not scatter repeated raw strings for concepts such as:
+
+```text
+authenticated
+unauthenticated
+invalid
+not_found
+ok
+pending
+```
+
+through business and transport code.
+
+Prefer a strongly typed constant object, enum, discriminated union, or schema as the source of truth, and derive related types from it when practical.
+
+HTTP header names, media types, protocol values, application result kinds, externally visible state values, limits, routes, statuses, retry values, and timeouts are semantic values, not arbitrary strings or numbers. Name them and keep one authoritative representation.
+
+For example:
 
 ```ts
 const MAX_POOL_SIZE = 10;
@@ -241,13 +319,9 @@ const MAX_NOTE_SIZE_BYTES = 1024 * 1024;
 const AUTHENTICATION_TYPE_BEARER = "bearer";
 ```
 
-Protocol values, limits, routes, media types, header names, statuses, retry values, timeouts, and other meaningful literals should normally be named.
+Do not create meaningless constants for syntax-only or trivial literals.
 
-For closed sets, use an idiomatic strongly typed representation such as an enum or an `as const` object plus union type.
-
-Do not extract purely syntactic or trivial literals when naming them adds no semantic value.
-
-## Documentation and comments
+## Documentation quality
 
 Code should explain itself through:
 
@@ -279,23 +353,48 @@ Inline comments are appropriate when they explain a non-obvious `why`, invariant
 
 ### Documentation comments
 
-Use the language-standard documentation format for named code constructs.
+TypeScript code uses TSDoc-style documentation comments. Documentation is part of the code contract, not decoration.
 
-In TypeScript, use concise TSDoc for named:
+All exported/public declarations MUST have useful TSDoc.
+Non-trivial internal declarations MUST also be documented. Documentation quality
+matters more than merely having a comment block.
+
+Meaningful named declarations should have useful documentation, including:
 
 - functions;
 - methods;
 - classes;
+- constructors where relevant;
 - interfaces;
+- interface members with non-obvious semantics;
 - type aliases;
-- enums;
-- repositories;
-- services;
-- reusable domain abstractions.
+- enums and enum-like closed sets;
+- schemas;
+- repositories and ports;
+- services and use cases;
+- semantic constants;
+- important configuration and definition objects.
 
-Documentation should describe the contract, purpose, invariants, side effects, failure modes, or important semantics.
+Document exported declarations and non-trivial internal declarations. Documentation must explain purpose, contract, invariants, behavior, side effects, failure modes, units, security constraints, or usage.
 
-Do not create verbose documentation that simply repeats the symbol name or TypeScript signature.
+Function and method documentation should use the appropriate TSDoc constructs when useful:
+
+- `@param` to explain parameter semantics and constraints;
+- `@returns` to explain result semantics;
+- `@throws` to document expected failure types and conditions;
+- `@example` for non-obvious or reusable APIs;
+- `@remarks` for important invariants or deeper behavior;
+- `@see` for relevant related contracts.
+
+Do not repeat TypeScript type annotations inside documentation merely to duplicate the signature. Avoid low-value comments such as:
+
+```ts
+/** Handles a request. */
+```
+
+when the function contract contains meaningful semantics that should be documented.
+
+Semantic constants and closed sets must document what they represent and whether they are protocol-stable or internally configurable.
 
 ## Errors
 
@@ -353,7 +452,7 @@ Responsible for:
 - transport-level validation;
 - status codes.
 
-Handlers must remain thin.
+Handlers must remain thin and must not pass repositories into business functions.
 
 ### Application services / use cases
 
@@ -442,6 +541,8 @@ Prefer deriving validation and API documentation from shared strongly typed sche
 
 ## Logging and observability
 
+Application logging must use an established structured logging library compatible with the target runtime. For TypeScript Edge and Cloudflare applications, prefer a runtime-portable structured logger.
+
 Do not use direct application-level:
 
 - `console.log`;
@@ -449,29 +550,27 @@ Do not use direct application-level:
 - `console.error`;
 - `console.debug`.
 
-Use a centralized structured logger or logging abstraction.
+Do not build a project-specific logging framework when a mature lightweight library provides the required behavior. Project-specific code may provide a thin integration or adapter when necessary for:
 
-Logs should be machine-readable and enriched with useful structured context where applicable, for example:
+- dependency injection;
+- context enrichment;
+- privacy;
+- redaction;
+- testing.
+
+Logs must be machine-readable and enriched with useful structured context where applicable, for example:
 
 - request ID;
 - method;
-- route;
+- registered route template;
 - status;
 - duration;
 - operation;
 - error code.
 
-Never log:
+Never log secrets, credentials, raw authorization headers, vault content, request bodies, or other sensitive user data.
 
-- authentication tokens;
-- secrets;
-- credentials;
-- vault content;
-- sensitive request bodies.
-
-Keep the logging abstraction portable and mockable.
-
-Do not add a large logging dependency unless it provides clear value over a small project abstraction.
+Prefer registered route templates over concrete request URLs when route parameters can contain sensitive information.
 
 ## Testing
 
@@ -522,17 +621,31 @@ Do not introduce E2E tests unless a concrete risk cannot reasonably be covered b
 
 Prefer unit coverage first.
 
-## Biome and static validation
+## Static analysis
 
-The project validation pipeline must cover all configured Biome diagnostics, including assist actions.
+Biome remains responsible for formatting, supported lint rules, and assists. The validation pipeline must cover every configured Biome diagnostic, including actions such as `organizeImports`.
 
-If `organizeImports` or another assist action is enabled, CI must detect violations.
+Do not assume separate formatter and linter invocations cover Biome assists. Use an appropriate Biome `check` or `ci` workflow so editor diagnostics and CI remain aligned.
 
-Do not assume that separate formatter and linter invocations cover Biome assists.
+Use complementary type-aware static analysis when TypeScript or Biome cannot enforce an important rule. Avoid duplicating checks already strongly enforced by Biome or TypeScript.
 
-Use an appropriate Biome `check`/`ci` workflow so editor diagnostics and CI remain aligned.
+The validation pipeline must fail on deprecated API usage. Static analysis should also enforce unsafe typing, documentation completeness, direct console usage, and complexity where practical.
 
-A repository should not be considered clean when the editor reports project-configured diagnostics that CI ignores.
+Semantic linting must be part of:
+
+```bash
+mise run lint
+```
+
+and the canonical:
+
+```bash
+mise run check
+```
+
+Prefer modern, fast TypeScript-aware tooling over introducing a legacy ESLint stack solely for one rule.
+
+Documentation linting should be automated where practical, but automated presence checks never replace manual documentation-quality review.
 
 ## GitHub Actions
 
@@ -587,6 +700,30 @@ Treat vault paths, HTTP input, remote content, persisted metadata, and plugin in
 Never leak implementation details, stack traces, credentials, tokens, or sensitive content through API responses or logs.
 
 Security-sensitive responsibilities should be decomposed into small, independently testable units.
+
+## Review requirement
+
+Before declaring a refactor complete, perform a manual semantic review after automated validation succeeds.
+
+The review must inspect:
+
+- responsibility boundaries;
+- weak or implicit typing;
+- deprecated APIs;
+- documentation quality;
+- semantic magic literals;
+- duplicated policy;
+- architecture direction;
+- unnecessary dependencies;
+- unbounded control flow;
+- security-sensitive behavior;
+- editor warnings.
+
+Do not treat passing tests as evidence that the architecture or code quality is correct.
+
+A corrective review is not complete until every explicitly listed review finding is
+either fixed or explicitly documented in the PR as intentionally deferred with a
+technical justification.
 
 ## Completion criteria
 

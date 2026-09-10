@@ -1,6 +1,11 @@
 # M2 — Obsidian read-only local-vault adapter
 
-**Status: NEXT — implementation-ready planning specification; not implemented.**
+**Status: COMPLETE — implemented and validated; transition canonical on merge.**
+
+Implementation followed the [sequential M2 plan](../plans/m2-obsidian-read-only-local-adapter.md).
+[Completion evidence](#completion-evidence) records checks, review and host-test
+limitations. [M3](m3-remote-bridge-client-and-publishing.md) is NEXT for planning
+only; no remote publishing implementation is included.
 
 Depends on M1. [Roadmap](../roadmap.md) owns sequence and status;
 [AGENTS.md](../../AGENTS.md) owns engineering rules. This specification makes new,
@@ -291,28 +296,60 @@ Vitest discovery and verify new tests actually execute through mise tasks.
 
 ## Acceptance criteria / Definition of Done
 
-- [ ] Default plugin class replaces the type-only scaffold; manifest identity is
+- [x] Default plugin class replaces the type-only scaffold; manifest identity is
   preserved; no new network, settings, sync or vault mutation feature exists.
-- [ ] Both commands implement the exact observable behavior above, including empty,
+- [x] Both commands implement the exact observable behavior above, including empty,
   no-active, busy, failure and unload cases; enabling alone performs no inspection.
-- [ ] Core read-only contract/service and Obsidian adapter have the prescribed
+- [x] Core read-only contract/service and Obsidian adapter have the prescribed
   separation, strong types, useful TSDoc and alias/public-package imports.
-- [ ] Eligibility and literal path handling use shared invariants without widening
+- [x] Eligibility and literal path handling use shared invariants without widening
   M1 behavior; exclusions are applied before reads and covered by tests.
-- [ ] Pre/post size checks and changed-file handling are tested; no truncation,
+- [x] Pre/post size checks and changed-file handling are tested; no truncation,
   implicit save, alternate-file read or automatic retry occurs.
-- [ ] Note bodies never appear in UI/logs/persisted state; paths render as text
+- [x] Note bodies never appear in UI/logs/persisted state; paths render as text
   only in explicit local results; unexpected errors are sanitized.
-- [ ] Plugin unit and integration tests execute in the canonical Vitest projects;
+- [x] Plugin unit and integration tests execute in the canonical Vitest projects;
   coverage thresholds remain enforced with all relevant production source included.
-- [ ] Reproducible host-loadable artifacts pass the focused artifact smoke check;
+- [x] Reproducible host-loadable artifacts pass the focused artifact smoke check;
   disposable-vault installation instructions and host-test limitations are recorded.
-- [ ] `mise install`, `mise run install` and `mise run check` pass, editor diagnostics
+- [x] `mise install`, `mise run install` and `mise run check` pass, editor diagnostics
   are clean, and post-validation semantic/security review is recorded in the PR.
-- [ ] README, current-state and architecture docs describe the actual plugin;
+- [x] README, current-state and architecture docs describe the actual plugin;
   this spec records completion evidence; roadmap marks M2 complete only when all
   criteria pass, then promotes M3 and links its spec (or clearly requires its
   planning before code). No M3 production implementation is included.
+
+## Completion evidence
+
+- Sequential implementation commits: core `7225d93`, adapter `388d2f2`, commands
+  `44ecada`, packaging/docs `2e74b23`; the [plan ledger](../plans/m2-obsidian-read-only-local-adapter.md#evidence-ledger)
+  records TDD and per-slice validation. No Worker, protocol or existing core
+  path/vault implementation was changed.
+- `mise install`, `mise run install`, `mise run test`, `mise run coverage`,
+  `mise run typecheck`, `mise run lint`, `mise run biome:check`, `mise run build`,
+  `mise run plugin:smoke` and `mise run check` passed. Source tests: **21 files /
+  250 tests**; generated artifact: **1 file / 3 tests**. Global coverage:
+  statements **96.74%**, branches **93.75%**, functions **95.96%**, lines **97.04%**;
+  new M2 behavior is 100% across all four. Thresholds/source inclusion are unchanged.
+- The packaged browser/CommonJS entry exposes `module.exports.default` and requires
+  only `obsidian`; its unchanged manifest is staged alongside it. The artifact
+  suite loads these generated files, not the source entry. Official minimum-API
+  and export-shape evidence plus disposable-vault instructions are in
+  [plugin development](../plugin-development.md).
+- After passing checks, independent read-only semantic/security review of
+  `635d24a..2e74b23` found no defects (verdict: OK with verification-limit notes).
+  Parent review agreed on responsibilities, inward dependencies, strong types,
+  non-deprecated APIs, useful TSDoc, shared policy/semantic values, bounded control
+  flow, privacy, race checks, absence of mutation/network/persistence, lifecycle
+  and artifact tests. No concrete review findings were deferred.
+- Compiler, type-aware lint, Biome formatting/lint/assists and production-only
+  plugin typechecking are clean. The unchanged manifest was inspected against
+  the configured editor JSON schema. No separate editor session or real Obsidian
+  desktop/mobile runtime was exercised; these are verification limits, not claims
+  of tested host integration. No deployment or vault installation occurred.
+- The roadmap promotes M3 to NEXT with a planning-only handoff. Selection/consent,
+  settings/credentials, remote association and server-enforced safe publishing
+  remain unresolved; M2 eligibility and stat evidence authorize none of them.
 
 ## Final deliverable
 

@@ -1,7 +1,11 @@
 # Verified current state
 
-This is the M1 baseline audited against merged commit `22d3ee0` (PR #4), not a
-claim about a deployed environment. Update this snapshot when capabilities change.
+This snapshot records the completed M2 local-inspection implementation and M1
+foundation. M2 source/tooling through `2e74b23` passed independent semantic review;
+the completion PR records final validation and makes the transition canonical
+when merged. M3 is planning only, with no remote plugin client implemented.
+M1 behavior is unchanged from the baseline audited at `22d3ee0` (PR #4).
+This is not a claim about a deployed environment or installed Obsidian host.
 [Roadmap](roadmap.md) owns milestone status; [architecture](architecture.md) owns
 boundaries; [API](api.md) describes the HTTP contract.
 
@@ -19,8 +23,10 @@ boundaries; [API](api.md) describes the HTTP contract.
 | API documentation | OpenAPI 3.1 generated through `@hono/zod-openapi`; shared Zod response schemas; public Scalar HTML reference. Runtime path and byte validation is stricter than the broad OpenAPI string schemas. The PUT document requires a body and names supported media types, while runtime also accepts no body/header. | `apps/worker/src/http/openapi.routes.ts`, HTTP unit/integration tests |
 | Responses | Stable typed error codes mapped to sanitized HTTP errors. JSON API/health/error and Markdown content responses use `Cache-Control: no-store`; this is not a claim about Scalar/OpenAPI or the bodyless DELETE response. Unsupported methods on valid note identifiers return 404, not 405. | `apps/worker/src/http/api-*`, `http-response-headers.ts`, `note.handlers.ts` |
 | Logging | LogTape 2.3.4 JSON-lines console sink via a thin injected adapter; completed-request events include operation, method, registered route template (or `unknown`), status and duration in milliseconds. No request IDs, per-client audit trail or error-code field yet. Application events do not include tokens, bodies, concrete note paths or raw exceptions. | `apps/worker/src/logging/`, logging and Worker tests |
-| Plugin | `src/main.ts` exports only a type-level `PluginScaffold`. There is no default `Plugin` subclass, lifecycle, command, settings UI, vault access, network behavior, persisted state or plugin test project. Manifest ID is `ai-bridge`, minimum host version `1.5.0`, `isDesktopOnly: false`; those declarations are not host compatibility test evidence. Current bundle task validates the scaffold only. | `apps/obsidian-plugin/`, root Vitest configuration |
-| Core | Public branded identifier/path utilities, `NoteService`/`VaultNoteService`, `VaultRepository`, size limit and typed payload/storage errors. No Obsidian, Hono, Cloudflare or filesystem implementations. The repository port includes mutation operations; it is not a read-only local adapter contract. | `packages/core/src/`, package exports |
+| Plugin | Default `AiBridgePlugin` registers exactly two explicit commands. List displays sorted saved-note metadata/skip counts without body reads; active inspection captures the saved path, reads once and displays only UTF-8 bytes/path with saved-file guidance. Shared busy state, sanitized failures and unload/re-enable suppression are tested. No enabling scan/read, network, settings/persistence, logging, editor save or vault mutation. Manifest remains `ai-bridge`, minimum `1.5.0`, non-desktop-only. | `apps/obsidian-plugin/src/{main.ts,inspection/,infrastructure/}`, dedicated plugin unit/integration suites |
+| Local safety | Shared literal `.md` path and 1 MiB policy; dot-prefixed/configuration-directory exclusions; pre-read metadata and post-read UTF-8 bound; exact lookup and pre/post object/path/mtime/size checks. No path repair/URI decoding, content UI or atomic snapshot claim. | `packages/core/src/local-vault/`, plugin adapter tests |
+| Plugin artifact | Browser-target CommonJS exposes `module.exports.default`, only `obsidian` external; stages unchanged manifest. Artifact suite checks actual generated files, inert load, commands and lifecycle in an isolated host-double realm without Node globals. No real desktop/mobile host was tested. | `.mise.toml`, `apps/obsidian-plugin/tests/artifact/`, [API/version and installation evidence](plugin-development.md) |
+| Core | Public branded identifier/path utilities, `NoteService`/`VaultNoteService`, `VaultRepository`, size limit and typed payload/storage errors. No Obsidian, Hono, Cloudflare or filesystem implementations. The remote repository port retains mutation operations. Separate public `ReadOnlyLocalVault`, `LocalInspectionService`, closed local results and eligibility policy support M2 without platform imports or mutation methods. | `packages/core/src/`, package exports |
 | Protocol | Zod schemas and inferred DTOs for health, note lists, write acknowledgments, errors, and a reserved version `0.1` metadata envelope. List/write path fields are plain schema strings, not domain validation. The reserved envelope is not wrapped around current REST responses and is not a sync protocol. | `packages/protocol/src/` |
 
 ## Tooling and validation baseline
@@ -28,11 +34,14 @@ boundaries; [API](api.md) describes the HTTP contract.
 - `.mise.toml` pins Bun **1.4.2** and Node.js **24.21.0**. Bun owns the workspace
   dependency graph and `bun.lock`; `mise run install` installs it frozen.
 - Tasks: `install`, `format`, `biome:check`, `lint`, `typecheck`, `test`, `coverage`,
-  `build`, `worker:build`, `plugin:build`, `dev`, `check`. Use `mise run <task>`.
-  `mise install` installs tools, not workspace dependencies.
+  `build`, `worker:build`, `plugin:build`, `plugin:smoke`, `dev`, `check`. Use `mise run <task>`.
+  `mise install` installs tools, not workspace dependencies. Dev-only
+  `@types/node` 24.13.4 supports artifact tests; it adds no plugin runtime module.
 - `check` depends on Biome check (formatting, recommended lint and organize-import
   assists), type-aware Oxlint with denied warnings, TypeScript, coverage and both
-  builds. It runs the test suite through coverage rather than twice.
+  builds including artifact smoke. It runs source tests through coverage rather
+  than twice. `typecheck` checks the root suite, the production plugin separately
+  with only Obsidian ambient types, and the dedicated artifact test tsconfig.
 - TypeScript is strict with unchecked-index and exact-optional checks. Shared
   `@core/*`, `@protocol/*`, `@worker/*`, `@obsidian-plugin/*` aliases cover internal
   imports; cross-package consumers use public `@obsidian-ai-bridge/*` exports.
@@ -40,13 +49,16 @@ boundaries; [API](api.md) describes the HTTP contract.
   prohibition, direct-console prohibition and configured documentation rules.
   These checks do **not** prove all architecture/TSDoc requirements in
   [AGENTS.md](../AGENTS.md); manual semantic review remains mandatory.
-- Vitest **5**: **15 files / 105 tests** in the audited M1 suite, confirmed by
-  `mise run check` during this documentation handoff. This is a baseline, not a
-  fixed target for future work.
+- Vitest **5**: **21 source test files / 250 tests**, plus **1 artifact file /
+  3 smoke tests** in the dedicated build task. The unchanged M1 baseline had
+  15 files / 105 tests. Exact slice validation is recorded in the
+  [implementation plan](plans/m2-obsidian-read-only-local-adapter.md).
 - Worker unit tests live under `apps/worker/tests/unit/` (auth, HTTP, R2 adapter,
   logging). `apps/worker/tests/integration/worker.test.ts` composes Hono, the real
   core service and an in-memory repository. Core and protocol tests live under
-  their own `tests/unit/`. R2 uses a typed fake; no test exercises live Cloudflare
+  their own `tests/unit/`. Plugin unit tests isolate host/UI behavior; its focused
+  integration suite composes commands, core service and official adapter over
+  in-memory files. R2 uses a typed fake; no test exercises live Cloudflare
   or an installed Obsidian host. These are not E2E tests.
 - V8 provider `@vitest/coverage-v8` **5.0.0**, run under Node through `coverage`.
   Root `vitest.config.ts` includes `apps/*/src/**/*.ts` and
@@ -54,10 +66,13 @@ boundaries; [API](api.md) describes the HTTP contract.
   `*.types.ts`, build/output and Wrangler state. Reports: text, JSON summary, LCOV.
   Global thresholds: **lines 95%, statements 95%, functions 94%, branches 90%**.
   Coverage is a regression signal, not proof of test quality.
-- Root Vitest projects currently include shared packages and Worker only. M2 must
-  register the plugin test project, not just create unexecuted test files.
+- Root Vitest projects include shared packages, Worker and plugin. Source coverage
+  is statements **96.74%**, branches **93.75%**, functions **95.96%**, lines
+  **97.04%**; plugin behavior has 100% across all four. Artifact tests are separate
+  from source coverage, run after packaging and never replace behavioral coverage.
 - Worker build uses Node + Wrangler **4.130.0** `deploy --dry-run`; plugin build
-  uses Bun with `obsidian` external. `build` does not deploy. `dev` runs the local
+  uses Bun browser-target CommonJS with `obsidian` external, stages the manifest
+  and runs `plugin:smoke`. `build` does not deploy. `dev` runs the local
   Worker through Node because of the documented Bun/workerd proxy limitation.
 - `.github/workflows/ci.yml`: pushes to `main` and pull requests run the
   **Quality checks** job on Ubuntu, installing tools with mise, then
@@ -76,7 +91,7 @@ selection rules, retries, offline queue or initial-sync state. The separate
 existence check and put are not atomic concurrency protection. Never use them as
 such in a future sync client.
 
-There is no search, MCP, AI inference, attachment mirroring or plugin runtime.
+There is no search, MCP, AI inference, attachment mirroring or remote plugin client.
 No D1, Durable Objects, queues, Vectorize, Workers AI or external database is part
 of the product architecture. Generated local emulator artifacts are not evidence
 that such services were selected.

@@ -1,0 +1,11 @@
+{
+  "extends": "../../../../tsconfig.base.json",
+  "compilerOptions": {
+    "types": ["node", "obsidian"],
+    "paths": {
+      "@obsidian-plugin-tests/*": ["../*"],
+      "@obsidian-plugin-manifest": ["../../manifest.json"]
+    }
+  },
+  "include": ["*.ts"]
+}

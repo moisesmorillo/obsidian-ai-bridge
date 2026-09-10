@@ -176,6 +176,44 @@ below; do not mark the milestone complete based on an intermediate slice.
   installed-vault test was exercised. Metadata remains best-effort, not atomic
   read/write concurrency evidence. Independent reviewer gate remains required;
   command/lifecycle integration and loadable artifact checks remain later slices.
-- Slice 3: pending.
+- Slice 3: replaced the scaffold with the default `AiBridgePlugin` class and
+  thin read-only composition. Exactly two host-owned command definitions are
+  copied before registration (Obsidian qualifies their IDs). Active inspection
+  captures the literal path synchronously at invocation; both commands share one
+  busy state, release it in `finally`, and suppress late success/failure UI by
+  enable-lifetime identity after unload or re-enable. Unload releases session/UI
+  references and closes owned notices/modals without promising read cancellation.
+  The list modal shows sorted exact text paths, byte metadata, eligible/skipped
+  totals and every skip category, including explicit empty results. Active notices
+  show only path/measured UTF-8 bytes and saved-file guidance; all closed failures
+  and unexpected exceptions have sanitized text. Closing a modal clears its
+  metadata and rendered text. No core/adapter, Worker/protocol, dependency,
+  configuration, packaging, network, settings, persistence or mutation change.
+  Added mocked-host unit and focused command/service/official-adapter integration
+  suites (35 new cases; 21 files / 250 tests total). Tests cover registration,
+  inert load/unload, every result, captured identity, both overlap directions,
+  recovery, changed-file races, oversized actual UTF-8 text, exact untrusted text
+  rendering, metadata disposal and late success/rejection suppression. Negative
+  assertions cover host/global network APIs, direct logging, settings, saved-file
+  mutation, raw-adapter access, editor saves, cached reads, timers and watchers;
+  integration snapshots preserve saved files/content apart from explicit simulated
+  external races. The host fake models `load`/`unload` hooks, ID qualification and
+  `addCommand`-registered disposers rather than clearing all commands on unload;
+  unrelated registrations survive, and UI clearing is the product's responsibility.
+  The TDD red run failed on the absent default class as expected. Final `mise run
+  test`, `mise run coverage`, `mise run typecheck`, `mise run lint` and `mise run
+  biome:check` passed after correcting introduced TSDoc/import/format diagnostics.
+  Additional `mise install` and complete `mise run check` passed, including the
+  existing non-deploying bundles. Global coverage: statements 96.74%, branches
+  93.75%, functions 95.96%, lines 97.04%; all new plugin production behavior has
+  100% across the four metrics, with unchanged thresholds/source inclusion.
+  Post-check writer semantic/security review found no blockers: platform APIs
+  remain in the plugin, public core imports/internal aliases and strong types
+  are preserved, eligibility/sorting stay in existing core/adapter policy, no raw
+  bodies/errors reach UI, and no new logging, network, persistence or mutation
+  exists. Configured diagnostics are clean; no separate editor or real Obsidian
+  desktop/mobile session was exercised. Independent reviewer gate remains required.
+  Host-loadable CommonJS packaging/artifact smoke and final current-state docs
+  remain slices 4/5; the current bundle check is not a real-host compatibility claim.
 - Slice 4: pending.
 - Slice 5 / final acceptance: pending.

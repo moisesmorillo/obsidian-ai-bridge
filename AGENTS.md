@@ -13,6 +13,34 @@
 - Never commit credentials, tokens, secrets, or machine-specific configuration.
 - Optimize for maintainability, readability, testability, portability, and low operational complexity.
 
+## Repository execution protocol
+
+Before feature work:
+
+1. Read `README.md`, `AGENTS.md`, `docs/architecture.md`, and `docs/roadmap.md`.
+2. Identify the single milestone marked `NEXT` and read its linked specification
+   under `docs/milestones/`, then inspect the relevant source and tests.
+3. Implement only that milestone. If its specification is not implementation-ready,
+   create/refine it before writing production code. Document material product or
+   architectural ambiguity and seek clarification rather than guessing.
+4. Preserve completed milestone invariants. Repository state beats conversation
+   assumptions; current code beats stale documentation. Record discrepancies and
+   correct docs, but never silently reinterpret a completed decision. Use
+   `docs/decisions/README.md` for consequential architectural changes.
+5. Keep tests, coverage, documentation and architecture notes synchronized during
+   implementation. Follow the canonical installation/validation tasks below and
+   perform semantic review after automated checks pass; green CI alone is not done.
+6. On completion, update the milestone spec/status and evidence, `docs/roadmap.md`,
+   affected current-state/architecture/API docs, ADRs and operational instructions.
+   Only then mark the following eligible milestone `NEXT` and update active-spec
+   links. Refine its detailed spec before production implementation; do not start
+   later-milestone code in the completion PR. Transitions are canonical when merged.
+
+The roadmap owns execution order and unresolved decisions. Do not infer deployed
+resources, credentials or vault installations from configuration, or deploy merely
+to validate work. If no next milestone remains, propose a roadmap update rather
+than inventing product scope.
+
 ## Tooling and development environment
 
 `mise` is the canonical entry point for project tooling and tasks.
@@ -31,7 +59,7 @@ Do not document or rely on direct `bun run ...`, `vitest ...`, `biome ...`, or s
 
 ### mise responsibilities
 
-Use `mise.toml` for:
+Use `.mise.toml` for:
 
 - runtime and tool versions;
 - project tasks;
@@ -49,7 +77,7 @@ Use `mise.local.toml` for:
 
 Language-native dependency files such as `package.json` remain responsible for actual application and development dependencies.
 
-Avoid duplicating task orchestration between `mise.toml` and language-native script files. `mise` should be the project task runner.
+Avoid duplicating task orchestration between `.mise.toml` and language-native script files. `mise` should be the project task runner.
 
 The README must document:
 

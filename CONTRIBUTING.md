@@ -13,6 +13,15 @@ mise run install
 
 Use `mise run ...` for project tasks. Bun remains the package manager; do not add npm, Yarn, or pnpm lockfiles.
 
+## Choosing work
+
+Read [AGENTS.md](AGENTS.md), [architecture](docs/architecture.md), the
+[canonical roadmap](docs/roadmap.md) and the specification linked by its `NEXT`
+milestone, then inspect the relevant source/tests. Keep feature PRs within that
+milestone; unresolved architecture-affecting decisions need a documented proposal
+before implementation. Follow the roadmap's completion/transition protocol and
+[ADR convention](docs/decisions/README.md) for durable decisions.
+
 ## Branches and pull requests
 
 - Create a focused branch from the default branch.
@@ -33,6 +42,12 @@ mise run check
 ```
 
 `test` is the fast normal suite, `coverage` runs the suite with coverage enforcement, and `check` is the complete quality gate. Use `mise run format`, `mise run typecheck`, or `mise run build` for other focused work. Put shared non-sensitive configuration in `.mise.toml`; put local tokens and machine-specific overrides in ignored `mise.local.toml`. The repository does not use `.env` files.
+
+A passing check/CI is necessary, not sufficient. Complete the active spec's
+acceptance checklist and the manual semantic/security review in AGENTS.md after
+automated validation. Preserve coverage thresholds, verify editor diagnostics,
+and include evidence and any explicitly justified deferrals in the PR. Builds
+are non-deploying; deployment is not a validation step.
 
 ## Coding style
 

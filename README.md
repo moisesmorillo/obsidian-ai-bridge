@@ -65,13 +65,22 @@ mise run install
 
 | Task | Purpose |
 | --- | --- |
-| `mise run check` | Run Biome formatting, linting, assists, type checking, unit tests, and both application bundle validations. |
+| `mise run check` | Run Biome formatting, linting, assists, type checking, coverage-enforced tests, and both application bundle validations. |
 | `mise run lint` | Run type-aware Oxlint semantic checks, including deprecated API detection. |
-| `mise run test` | Run Vitest unit tests. |
+| `mise run test` | Run the fast Vitest test suite without coverage. |
+| `mise run coverage` | Run the Vitest suite with V8 coverage and enforce global thresholds. |
 | `mise run typecheck` | Type-check all workspaces. |
 | `mise run build` | Bundle the Worker with Wrangler in dry-run mode and build the Obsidian plugin scaffold. |
 | `mise run format` | Apply Biome formatting. |
 | `mise run dev` | Run local Worker development through Wrangler. |
+
+`mise run test` is the fast normal developer test command. `mise run coverage`
+runs the same suite with coverage reporting and threshold enforcement, while
+`mise run check` is the complete quality gate.
+
+Tests live in dedicated `tests/` trees outside production `src/` trees. Isolated
+behavior belongs under `tests/unit/`; tests that intentionally compose multiple
+application layers belong under `tests/integration/`.
 
 Use `.mise.toml` for shared non-sensitive configuration. Use the ignored `mise.local.toml` for credentials, machine-specific settings, or local overrides. Start from `mise.local.toml.example`; never commit the local file or tokens. The repository does not use `.env` files.
 

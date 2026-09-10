@@ -6,6 +6,6 @@ export default defineProject({
   resolve: { alias: { "@protocol": protocolSource } },
   test: {
     name: "protocol",
-    include: ["src/**/*.test.ts"],
+    include: ["tests/**/*.test.ts"],
   },
 });

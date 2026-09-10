@@ -22,13 +22,17 @@ Use `mise run ...` for project tasks. Bun remains the package manager; do not ad
 
 ## Testing and validation
 
-Add behavioral Vitest coverage for behavior changes. Before opening a pull request, run:
+Add behavioral Vitest coverage for behavior changes. Tests live in dedicated `tests/` trees outside production `src/` trees. Use `tests/unit/` for isolated behavior and `tests/integration/` for tests that intentionally compose multiple application layers; do not label those tests E2E unless they exercise real external system boundaries.
+
+Use these focused validation tasks:
 
 ```bash
+mise run test
+mise run coverage
 mise run check
 ```
 
-This runs Biome formatting checks, linting, configured assists, type checking, unit tests, and builds. Use `mise run format`, `mise run typecheck`, `mise run test`, or `mise run build` for focused work. Put shared non-sensitive configuration in `.mise.toml`; put local tokens and machine-specific overrides in ignored `mise.local.toml`. The repository does not use `.env` files.
+`test` is the fast normal suite, `coverage` runs the suite with coverage enforcement, and `check` is the complete quality gate. Use `mise run format`, `mise run typecheck`, or `mise run build` for other focused work. Put shared non-sensitive configuration in `.mise.toml`; put local tokens and machine-specific overrides in ignored `mise.local.toml`. The repository does not use `.env` files.
 
 ## Coding style
 

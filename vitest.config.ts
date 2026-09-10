@@ -12,6 +12,25 @@ export default defineConfig({
     },
   },
   test: {
+    coverage: {
+      provider: "v8",
+      reporter: ["text", "json-summary", "lcov"],
+      include: ["apps/*/src/**/*.ts", "packages/*/src/**/*.ts"],
+      exclude: [
+        "**/*.d.ts",
+        "**/*.types.ts",
+        "**/dist/**",
+        "**/build/**",
+        "**/out/**",
+        "**/.wrangler/**",
+      ],
+      thresholds: {
+        lines: 95,
+        statements: 95,
+        functions: 94,
+        branches: 90,
+      },
+    },
     projects: ["packages/*/vitest.config.ts", "apps/worker/vitest.config.ts"],
   },
 });

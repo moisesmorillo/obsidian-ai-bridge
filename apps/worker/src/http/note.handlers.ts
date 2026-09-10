@@ -100,11 +100,19 @@ export function createPutNoteHandler() {
     }
 
     const body = await readNoteBody(context.req.raw);
-    if (body.kind === NOTE_BODY_RESULT_KIND.tooLarge) {
-      return createPayloadTooLargeResponse(context);
-    }
-    if (body.kind === NOTE_BODY_RESULT_KIND.invalidEncoding) {
-      return createBadRequestResponse(context, API_ERROR_CODE.invalidBody);
+    switch (body.kind) {
+      case NOTE_BODY_RESULT_KIND.tooLarge:
+        return createPayloadTooLargeResponse(context);
+      case NOTE_BODY_RESULT_KIND.invalidEncoding:
+        return createBadRequestResponse(context, API_ERROR_CODE.invalidBody);
+      case NOTE_BODY_RESULT_KIND.ok:
+        break;
+      default: {
+        const unexpectedBody: never = body;
+        throw new Error(
+          `Unexpected note-body result: ${String(unexpectedBody)}`,
+        );
+      }
     }
 
     try {

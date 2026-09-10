@@ -23,8 +23,12 @@ description = "Type-check every workspace"
 run = "bunx tsc --noEmit -p tsconfig.json"
 
 [tasks.test]
-description = "Run Vitest unit tests"
+description = "Run the fast Vitest test suite"
 run = "bunx vitest run"
+
+[tasks.coverage]
+description = "Run Vitest with V8 coverage and enforce thresholds"
+run = "node node_modules/vitest/vitest.mjs run --coverage"
 
 [tasks.build]
 description = "Build the Worker and Obsidian plugin scaffold without deploying"
@@ -44,4 +48,4 @@ run = "node apps/worker/node_modules/wrangler/bin/wrangler.js dev --config apps/
 
 [tasks.check]
 description = "Run the complete repository validation pipeline"
-depends = ["biome:check", "lint", "typecheck", "test", "build"]
+depends = ["biome:check", "lint", "typecheck", "coverage", "build"]

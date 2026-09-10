@@ -6,6 +6,6 @@ export default defineProject({
   resolve: { alias: { "@core": coreSource } },
   test: {
     name: "core",
-    include: ["src/**/*.test.ts"],
+    include: ["tests/**/*.test.ts"],
   },
 });

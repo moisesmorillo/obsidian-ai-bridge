@@ -40,7 +40,7 @@ R2VaultRepository in apps/worker
 Cloudflare R2 binding
 ```
 
-The Worker validates the bearer token, request media type, body size, and note path before invoking core operations. R2 objects use the `vault/<normalized-path>` layout. Listing follows R2 cursors and returns only safe Markdown paths without the internal prefix.
+The Worker validates the bearer token, request media type, body size, and note identifier before invoking core operations. Core decodes and validates the base64url identifier into a normalized note path. R2 objects use the `vault/<normalized-path>` layout. Listing follows R2 cursors and returns only safe Markdown paths without the internal prefix.
 
 ## Platform roles
 

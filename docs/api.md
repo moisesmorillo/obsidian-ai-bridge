@@ -8,6 +8,8 @@ Authorization: Bearer <token>
 
 The token is configured as the `OBSIDIAN_BRIDGE_TOKEN` Wrangler secret. The API accepts Markdown paths ending in `.md` and stores them in R2 under `vault/`. Paths are validated before storage; traversal, absolute paths, backslashes, null bytes, malformed encoding, and dot segments are rejected.
 
+The `:path` segment in note item routes is a canonical base64url encoding of the normalized UTF-8 note path, without padding. For example, `Homelab/DNS/Technitium.md` is addressed as `/api/v1/notes/SG9tZWxhYi9ETlMvVGVjaG5pdGl1bS5tZA`. This keeps vault path separators and dot segments out of the URL path parsed by the Fetch runtime.
+
 ## Endpoints
 
 ### `GET /health`

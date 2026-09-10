@@ -94,6 +94,8 @@ Wrangler provides local R2 emulation for the binding during local development. T
 | PUT | `/api/v1/notes/:path` | Bearer token |
 | DELETE | `/api/v1/notes/:path` | Bearer token |
 
+For note item routes, `:path` is a canonical base64url-encoded note path. See [docs/api.md](docs/api.md) for the encoding example.
+
 ## Repository structure
 
 ```text

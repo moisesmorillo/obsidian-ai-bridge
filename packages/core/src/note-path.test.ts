@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  decodeNotePath,
+  encodeNotePath,
   isNormalizedNotePath,
   normalizeNotePath,
+  type NotePath,
 } from "@obsidian-ai-bridge/core";
 
 describe("normalizeNotePath", () => {
@@ -18,6 +21,22 @@ describe("normalizeNotePath", () => {
     expect(isNormalizedNotePath("100%aa.md")).toBe(true);
     expect(isNormalizedNotePath("encoded%2Fname.md")).toBe(false);
   });
+
+  it("round-trips nested paths through the URL-safe identifier", () => {
+    const path = normalizeNotePath("Homelab/DNS/Technitium.md");
+
+    expect(path).toBeDefined();
+    const encodedPath = encodeNotePath(path as NotePath);
+    expect(encodedPath).not.toMatch(/[./\\]/);
+    expect(decodeNotePath(encodedPath)).toBe(path);
+  });
+
+  it.each(["", "not-base64!", "Li4vc2VjcmV0Lm1k", "SGVsbG8"])(
+    "rejects an invalid URL-safe note identifier: %s",
+    (encodedPath) => {
+      expect(decodeNotePath(encodedPath)).toBeUndefined();
+    },
+  );
 
   it.each([
     "../secret.md",

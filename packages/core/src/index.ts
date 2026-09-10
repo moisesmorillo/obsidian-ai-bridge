@@ -1,6 +1,11 @@
 const identifierPattern = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
-export { isNormalizedNotePath, normalizeNotePath } from "./note-path";
+export {
+  decodeNotePath,
+  encodeNotePath,
+  isNormalizedNotePath,
+  normalizeNotePath,
+} from "./note-path";
 export type { NotePath } from "./note-path";
 export {
   deleteNote,

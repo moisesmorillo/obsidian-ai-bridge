@@ -1,9 +1,9 @@
 /// <reference types="@cloudflare/workers-types" />
 
 import {
+  decodeNotePath,
   deleteNote,
   listNotes,
-  normalizeNotePath,
   NotePayloadTooLargeError,
   readNote,
   writeNote,
@@ -72,27 +72,20 @@ function errorResponse(
   return jsonResponse(body, status, additionalHeaders);
 }
 
-function rawPathname(request: Request): string {
-  // Validate the serialized target before URL.pathname can canonicalize dot segments.
-  const originEnd = request.url.indexOf("://");
-  const pathStart = request.url.indexOf(
-    "/",
-    originEnd === -1 ? 0 : originEnd + 3,
-  );
-  const pathWithQuery = pathStart === -1 ? "/" : request.url.slice(pathStart);
-  const queryStart = pathWithQuery.search(/[?#]/);
-  return queryStart === -1 ? pathWithQuery : pathWithQuery.slice(0, queryStart);
+function pathname(request: Request): string {
+  // Base64url identifiers contain no path separators or dot segments to normalize.
+  return new URL(request.url).pathname;
 }
 
 function routeLabel(request: Request): string {
-  const pathname = rawPathname(request);
-  if (pathname === "/health") {
+  const requestPathname = pathname(request);
+  if (requestPathname === "/health") {
     return "/health";
   }
-  if (pathname === notesPath) {
+  if (requestPathname === notesPath) {
     return notesPath;
   }
-  if (pathname.startsWith(`${notesPath}/`)) {
+  if (requestPathname.startsWith(`${notesPath}/`)) {
     return `${notesPath}/:path`;
   }
   return "unknown";
@@ -112,21 +105,26 @@ function isSupportedContentType(contentType: string | null): boolean {
 }
 
 function pathFromRequest(pathname: string): NotePath | undefined {
-  return normalizeNotePath(pathname.slice(`${notesPath}/`.length));
+  const encodedPath = pathname.slice(`${notesPath}/`.length);
+  if (encodedPath.includes("/")) {
+    return undefined;
+  }
+
+  return decodeNotePath(encodedPath);
 }
 
 async function dispatchRequest(
   request: Request,
   dependencies: RequestHandlerDependencies,
 ): Promise<Response> {
-  const pathname = rawPathname(request);
+  const requestPathname = pathname(request);
 
-  if (pathname === "/health" && request.method === "GET") {
+  if (requestPathname === "/health" && request.method === "GET") {
     const body: HealthResponse = { status: "ok" };
     return jsonResponse(body, 200);
   }
 
-  if (!isApiPath(pathname)) {
+  if (!isApiPath(requestPathname)) {
     return errorResponse(
       "not_found",
       "The requested resource was not found.",
@@ -140,14 +138,14 @@ async function dispatchRequest(
     });
   }
 
-  if (pathname === notesPath && request.method === "GET") {
+  if (requestPathname === notesPath && request.method === "GET") {
     const body: NoteListResponse = {
       notes: await listNotes(dependencies.repository),
     };
     return jsonResponse(body, 200);
   }
 
-  if (!pathname.startsWith(`${notesPath}/`)) {
+  if (!requestPathname.startsWith(`${notesPath}/`)) {
     return errorResponse(
       "not_found",
       "The requested resource was not found.",
@@ -155,7 +153,7 @@ async function dispatchRequest(
     );
   }
 
-  const path = pathFromRequest(pathname);
+  const path = pathFromRequest(requestPathname);
   if (path === undefined) {
     return errorResponse("invalid_path", "The note path is invalid.", 400);
   }

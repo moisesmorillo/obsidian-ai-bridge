@@ -1,5 +1,6 @@
 import {
   MAX_NOTE_SIZE_BYTES,
+  encodeNotePath,
   normalizeNotePath,
   type NotePath,
   type VaultRepository,
@@ -36,6 +37,15 @@ class InMemoryVaultRepository implements VaultRepository {
 }
 
 const token = "secret-token";
+
+function noteRoute(path: string): string {
+  const normalizedPath = normalizeNotePath(path);
+  if (normalizedPath === undefined) {
+    throw new Error(`Invalid test path: ${path}`);
+  }
+
+  return `/api/v1/notes/${encodeNotePath(normalizedPath)}`;
+}
 
 function makeRequest(
   path: string,
@@ -105,7 +115,7 @@ describe("Worker API", () => {
 
   it("creates and reads a note", async () => {
     const repository = new InMemoryVaultRepository();
-    const path = "/api/v1/notes/Homelab/DNS/Technitium.md";
+    const path = noteRoute("Homelab/DNS/Technitium.md");
 
     const putResponse = await request(repository, path, {
       method: "PUT",
@@ -131,7 +141,7 @@ describe("Worker API", () => {
 
   it("returns 200 when replacing an existing note", async () => {
     const repository = new InMemoryVaultRepository();
-    const path = "/api/v1/notes/Career/Applications/Company.md";
+    const path = noteRoute("Career/Applications/Company.md");
     const options = {
       method: "PUT",
       contentType: "text/plain",
@@ -148,12 +158,12 @@ describe("Worker API", () => {
 
   it("lists stored note paths without the vault prefix", async () => {
     const repository = new InMemoryVaultRepository();
-    await request(repository, "/api/v1/notes/Zeta.md", {
+    await request(repository, noteRoute("Zeta.md"), {
       method: "PUT",
       body: "zeta",
       authorization: "Bearer secret-token",
     });
-    await request(repository, "/api/v1/notes/Alpha.md", {
+    await request(repository, noteRoute("Alpha.md"), {
       method: "PUT",
       body: "alpha",
       authorization: "Bearer secret-token",
@@ -168,7 +178,7 @@ describe("Worker API", () => {
 
   it("deletes notes idempotently", async () => {
     const repository = new InMemoryVaultRepository();
-    const path = "/api/v1/notes/Alpha.md";
+    const path = noteRoute("Alpha.md");
 
     await request(repository, path, {
       method: "PUT",
@@ -207,7 +217,7 @@ describe("Worker API", () => {
   it("rejects invalid note paths", async () => {
     const response = await request(
       new InMemoryVaultRepository(),
-      "/api/v1/notes/Homelab/%252e%252e/secret.md",
+      "/api/v1/notes/Li4vc2VjcmV0Lm1k",
       { authorization: "Bearer secret-token" },
     );
 
@@ -215,19 +225,23 @@ describe("Worker API", () => {
     expect(await errorCode(response)).toBe("invalid_path");
   });
 
-  it("rejects dot traversal in the serialized request target", async () => {
-    const rawRequest = makeRequest("/api/v1/notes/secret.md", {
-      authorization: "Bearer secret-token",
-    });
-    Object.defineProperty(rawRequest, "url", {
-      value: "https://example.test/api/v1/notes/Homelab/%2e%2e/secret.md",
-    });
+  it("rejects hierarchical paths instead of treating them as note identifiers", async () => {
+    const response = await request(
+      new InMemoryVaultRepository(),
+      "/api/v1/notes/Homelab/DNS/Technitium.md",
+      { authorization: "Bearer secret-token" },
+    );
 
-    const response = await handleRequest(rawRequest, {
-      repository: new InMemoryVaultRepository(),
-      token,
-      logger: () => undefined,
-    });
+    expect(response.status).toBe(400);
+    expect(await errorCode(response)).toBe("invalid_path");
+  });
+
+  it("rejects malformed note identifiers", async () => {
+    const response = await request(
+      new InMemoryVaultRepository(),
+      "/api/v1/notes/not-base64!",
+      { authorization: "Bearer secret-token" },
+    );
 
     expect(response.status).toBe(400);
     expect(await errorCode(response)).toBe("invalid_path");
@@ -236,7 +250,7 @@ describe("Worker API", () => {
   it("rejects unsupported media types", async () => {
     const response = await request(
       new InMemoryVaultRepository(),
-      "/api/v1/notes/Alpha.md",
+      noteRoute("Alpha.md"),
       {
         method: "PUT",
         body: "{}",
@@ -252,7 +266,7 @@ describe("Worker API", () => {
   it("rejects oversized note payloads", async () => {
     const response = await request(
       new InMemoryVaultRepository(),
-      "/api/v1/notes/Alpha.md",
+      noteRoute("Alpha.md"),
       {
         method: "PUT",
         body: "a".repeat(MAX_NOTE_SIZE_BYTES + 1),
@@ -267,7 +281,7 @@ describe("Worker API", () => {
   it("returns 404 for a missing note", async () => {
     const response = await request(
       new InMemoryVaultRepository(),
-      "/api/v1/notes/Missing.md",
+      noteRoute("Missing.md"),
       {
         authorization: "Bearer secret-token",
       },

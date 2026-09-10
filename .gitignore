@@ -12,6 +12,10 @@ node_modules/
 .env.*
 mise.local.toml
 
+# Pi runtime artifacts (project configuration and resources remain trackable)
+.pi/delegate/
+.pi/tasks/
+
 # TypeScript and build outputs
 *.tsbuildinfo
 dist/

@@ -1,11 +1,13 @@
-const maximumDangerCheckPasses = 4;
-const dangerousEncodedCharacterPattern = /%(?:2e|2f|5c|00)/i;
-const base64UrlPattern = /^[A-Za-z0-9_-]+$/;
+import {
+  BASE64_CHUNK_SIZE,
+  BASE64URL_PATTERN,
+  DANGEROUS_ENCODED_CHARACTER_PATTERN,
+  MARKDOWN_FILE_EXTENSION,
+  MAX_DANGEROUS_ENCODING_PASSES,
+} from "@core/note-path/note-path.constants";
+import type { NotePath } from "@core/note-path/note-path.types";
 
-export type NotePath = string & {
-  readonly __brand: "NotePath";
-};
-
+/** Validates decoded path segments and platform-sensitive path forms. */
 function isSafeDecodedPath(value: string): boolean {
   if (
     value.length === 0 ||
@@ -13,23 +15,25 @@ function isSafeDecodedPath(value: string): boolean {
     value.includes("\\") ||
     value.startsWith("/") ||
     /^[A-Za-z]:/.test(value) ||
-    !value.endsWith(".md")
+    !value.endsWith(MARKDOWN_FILE_EXTENSION)
   ) {
     return false;
   }
 
-  const segments = value.split("/");
-  return !segments.some(
-    (segment) => segment.length === 0 || segment === "." || segment === "..",
-  );
+  return !value
+    .split("/")
+    .some(
+      (segment) => segment.length === 0 || segment === "." || segment === "..",
+    );
 }
 
+/** Detects encoded traversal forms across a bounded number of decode passes. */
 function containsDangerousEncoding(value: string): boolean {
   let candidate = value;
 
-  for (let pass = 0; pass < maximumDangerCheckPasses; pass += 1) {
+  for (let pass = 0; pass < MAX_DANGEROUS_ENCODING_PASSES; pass += 1) {
     if (
-      dangerousEncodedCharacterPattern.test(candidate) ||
+      DANGEROUS_ENCODED_CHARACTER_PATTERN.test(candidate) ||
       candidate
         .split(/[\\/]/)
         .some((segment) => segment === "." || segment === "..")
@@ -54,6 +58,12 @@ function containsDangerousEncoding(value: string): boolean {
   return true;
 }
 
+/** Brands a string after the caller has established the note-path invariant. */
+function createNotePath(value: string): NotePath {
+  return value as NotePath;
+}
+
+/** Normalizes a relative Markdown path while rejecting traversal and encoded bypasses. */
 export function normalizeNotePath(value: string): NotePath | undefined {
   if (value.length === 0 || value.includes("\0") || value.includes("\\")) {
     return undefined;
@@ -69,36 +79,39 @@ export function normalizeNotePath(value: string): NotePath | undefined {
   if (
     decodedPath.length === 0 ||
     containsDangerousEncoding(value) ||
-    containsDangerousEncoding(decodedPath)
+    containsDangerousEncoding(decodedPath) ||
+    !isSafeDecodedPath(decodedPath)
   ) {
     return undefined;
   }
 
-  if (!isSafeDecodedPath(decodedPath)) {
-    return undefined;
-  }
-
-  return decodedPath as NotePath;
+  return createNotePath(decodedPath);
 }
 
+/** Narrows a string that is already a normalized vault path. */
 export function isNormalizedNotePath(value: string): value is NotePath {
   return !containsDangerousEncoding(value) && isSafeDecodedPath(value);
 }
 
+/** Converts bytes to an ASCII-compatible string accepted by `btoa`. */
 function bytesToBinary(bytes: Uint8Array): string {
   let binary = "";
 
-  for (let offset = 0; offset < bytes.length; offset += 0x8000) {
-    binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
+  for (let offset = 0; offset < bytes.length; offset += BASE64_CHUNK_SIZE) {
+    binary += String.fromCharCode(
+      ...bytes.subarray(offset, offset + BASE64_CHUNK_SIZE),
+    );
   }
 
   return binary;
 }
 
+/** Converts an `atob` result into bytes before fatal UTF-8 decoding. */
 function binaryToBytes(binary: string): Uint8Array {
   return Uint8Array.from(binary, (character) => character.charCodeAt(0));
 }
 
+/** Encodes a normalized note path as its canonical unpadded base64url identifier. */
 export function encodeNotePath(path: NotePath): string {
   return btoa(bytesToBinary(new TextEncoder().encode(path)))
     .replaceAll("+", "-")
@@ -106,8 +119,9 @@ export function encodeNotePath(path: NotePath): string {
     .replace(/=+$/, "");
 }
 
+/** Decodes only canonical base64url identifiers that represent a safe note path. */
 export function decodeNotePath(value: string): NotePath | undefined {
-  if (!base64UrlPattern.test(value) || value.length % 4 === 1) {
+  if (!BASE64URL_PATTERN.test(value) || value.length % 4 === 1) {
     return undefined;
   }
 
@@ -130,5 +144,7 @@ export function decodeNotePath(value: string): NotePath | undefined {
     return undefined;
   }
 
-  return encodeNotePath(decodedPath) === value ? decodedPath : undefined;
+  return encodeNotePath(decodedPath) === value
+    ? createNotePath(decodedPath)
+    : undefined;
 }

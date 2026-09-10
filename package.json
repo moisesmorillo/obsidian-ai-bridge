@@ -8,15 +8,6 @@
     "apps/*",
     "packages/*"
   ],
-  "scripts": {
-    "build": "bun run --workspaces build",
-    "test": "vitest run",
-    "typecheck": "tsc --noEmit -p tsconfig.json",
-    "lint": "biome lint .",
-    "format": "biome format --write .",
-    "format:check": "biome format .",
-    "check": "bun run format:check && bun run lint && bun run typecheck && bun run test && bun run build"
-  },
   "devDependencies": {
     "@biomejs/biome": "^2.5.12",
     "typescript": "^7.0.2",

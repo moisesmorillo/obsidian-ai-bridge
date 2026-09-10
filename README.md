@@ -32,6 +32,7 @@ The plugin is intended to adapt Obsidian's official APIs. The Worker will provid
 ## Current limitations
 
 - The Obsidian plugin has no vault or network behavior yet.
+- The plugin ID is `ai-bridge`; existing development installs under the former `obsidian-ai-bridge` directory must be reinstalled under the new ID. The scaffold has no persisted plugin state.
 - Notes must be Markdown files and are limited to 1 MiB.
 - Authentication uses one bearer token; there are no users or device identities.
 - There is no synchronization, conflict detection, tombstone, search, MCP, D1, Durable Objects, Workers AI, or Vectorize support.
@@ -43,43 +44,49 @@ The plugin is intended to adapt Obsidian's official APIs. The Worker will provid
 - `packages/core` — platform-independent domain and application logic.
 - `packages/protocol` — shared contracts, schemas, API types, and serialization definitions.
 
-## Prerequisites
+## Development
 
-- [mise](https://mise.jdx.dev/) for the repository toolchain.
-- Bun 1.4.2, installed through the committed `.mise.toml` configuration.
-
-Install the declared toolchain with:
+[mise](https://mise.jdx.dev/installing-mise.html) is required. Install it using the official instructions, then verify it is available:
 
 ```bash
-mise install
+mise --version
 ```
 
-## Local setup
+From a clean clone, install the committed Bun and Node.js toolchains and locked workspace dependencies:
 
 ```bash
 git clone https://github.com/moisesmorillo/obsidian-ai-bridge.git
 cd obsidian-ai-bridge
 mise install
-bun install --frozen-lockfile
-bun run check
+mise run install
 ```
 
-The repository uses Biome for formatting and linting, TypeScript for type checking, and Vitest for tests.
+`mise` is the canonical task runner. The normal workflow is:
+
+| Task | Purpose |
+| --- | --- |
+| `mise run check` | Run Biome formatting, linting, assists, type checking, unit tests, and Worker bundle validation. |
+| `mise run test` | Run Vitest unit tests. |
+| `mise run typecheck` | Type-check all workspaces. |
+| `mise run build` | Bundle the Worker with Wrangler in dry-run mode. |
+| `mise run format` | Apply Biome formatting. |
+| `mise run dev` | Run local Worker development through Wrangler. |
+
+Use the ignored `mise.local.toml` for credentials, machine-specific settings, or local overrides. Start from `mise.local.toml.example`; never commit the local file or tokens.
 
 ## Local Worker development
 
 The Worker uses a `VAULT_BUCKET` R2 binding configured for `obsidian-ai-bridge-dev`. Create the Cloudflare bucket once before using a remote deployment or remote R2 development session:
 
 ```bash
-cd apps/worker
-bunx wrangler r2 bucket create obsidian-ai-bridge-dev
-bunx wrangler secret put OBSIDIAN_BRIDGE_TOKEN
+mise exec -- bunx wrangler r2 bucket create obsidian-ai-bridge-dev --config apps/worker/wrangler.jsonc
+mise exec -- bunx wrangler secret put OBSIDIAN_BRIDGE_TOKEN --config apps/worker/wrangler.jsonc
 ```
 
-For local `wrangler dev`, add `OBSIDIAN_BRIDGE_TOKEN` to the ignored `apps/worker/.dev.vars` file, then start the Worker:
+For local `wrangler dev`, add `OBSIDIAN_BRIDGE_TOKEN` to the ignored `apps/worker/.dev.vars` file, then start the Worker. Wrangler is run with Node.js because its local `workerd` proxy does not respond reliably when launched through Bun:
 
 ```bash
-bun run dev
+mise run dev
 ```
 
 Wrangler provides local R2 emulation for the binding during local development. The API details are in [docs/api.md](docs/api.md).
@@ -93,6 +100,8 @@ Wrangler provides local R2 emulation for the binding during local development. T
 | GET | `/api/v1/notes/:path` | Bearer token |
 | PUT | `/api/v1/notes/:path` | Bearer token |
 | DELETE | `/api/v1/notes/:path` | Bearer token |
+| GET | `/openapi.json` | None |
+| GET | `/docs` | None |
 
 For note item routes, `:path` is a canonical base64url-encoded note path. See [docs/api.md](docs/api.md) for the encoding example.
 
@@ -101,7 +110,7 @@ For note item routes, `:path` is a canonical base64url-encoded note path. See [d
 ```text
 apps/
 ├── obsidian-plugin/
-└── worker/
+└── worker/              Hono HTTP adapter and Cloudflare R2 integration
 packages/
 ├── core/
 └── protocol/

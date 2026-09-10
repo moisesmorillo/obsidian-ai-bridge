@@ -8,8 +8,5 @@
       "types": "./src/index.ts",
       "import": "./src/index.ts"
     }
-  },
-  "scripts": {
-    "build": "tsc --noEmit -p tsconfig.json"
   }
 }

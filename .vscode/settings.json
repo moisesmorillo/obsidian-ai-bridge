@@ -1,0 +1,8 @@
+{
+  "json.schemas": [
+    {
+      "fileMatch": ["apps/obsidian-plugin/manifest.json"],
+      "url": "./schemas/obsidian-plugin-manifest.schema.json"
+    }
+  ]
+}

@@ -11,6 +11,7 @@ node_modules/
 .env
 .env.*
 !.env.example
+mise.local.toml
 
 # TypeScript and build outputs
 *.tsbuildinfo
@@ -24,7 +25,7 @@ coverage/
 .dev.vars
 
 # Obsidian development artifacts
-.obsidian/plugins/obsidian-ai-bridge/
+.obsidian/plugins/ai-bridge/
 
 # macOS
 .DS_Store
@@ -33,7 +34,8 @@ coverage/
 
 # Editors and IDEs
 .idea/
-.vscode/
+.vscode/*
+!.vscode/settings.json
 *.iml
 *.swp
 *.swo

@@ -29,9 +29,11 @@ packages/core
 ## M1 request flow
 
 ```text
-Worker HTTP adapter
+Hono routes and middleware
     |
-packages/core note operations and path validation
+HTTP handlers and response/error mapping
+    |
+packages/core note application services and path validation
     |
 VaultRepository contract
     |
@@ -40,17 +42,33 @@ R2VaultRepository in apps/worker
 Cloudflare R2 binding
 ```
 
-The Worker validates the bearer token, request media type, body size, and note identifier before invoking core operations. Core decodes and validates the base64url identifier into a normalized note path. R2 objects use the `vault/<normalized-path>` layout. Listing follows R2 cursors and returns only safe Markdown paths without the internal prefix.
+The Worker authenticates API requests, validates media type, payload size, UTF-8, and the canonical note identifier before invoking core operations. Core decodes and validates the base64url identifier into a normalized note path. R2 objects use the `vault/<normalized-path>` layout. Listing follows R2 cursors and returns only safe Markdown paths without the internal prefix.
+
+## Worker structure
+
+```text
+apps/worker/src/
+├── app.ts                         Hono assembly, middleware, and routes
+├── app.types.ts                   Dependency contract for the transport adapter
+├── auth/                          Bearer parsing, scheme validation, token comparison
+├── env/                           Cloudflare binding types
+├── http/                          Controllers, HTTP errors, responses, OpenAPI routes
+├── infrastructure/                R2 vault repository adapter and R2 port subset
+├── logging/                       Structured logging port and Cloudflare console adapter
+└── index.ts                       Cloudflare entrypoint and dependency construction
+```
+
+`packages/core` contains the repository port, note application services, path invariants, and domain errors. `packages/protocol` contains shared Zod-backed API response and error-code contracts. Hono, Cloudflare bindings, R2, Scalar, and HTTP status mapping remain in `apps/worker`.
 
 ## Platform roles
 
 ### Cloudflare Worker
 
-The Worker is the remote HTTP/API boundary for M1. It validates requests, coordinates core operations, and connects the `VAULT_BUCKET` binding to the shared repository contract. It does not contain vault business rules.
+The Worker is the remote HTTP/API boundary for M1. `index.ts` constructs R2 and logging adapters; `app.ts` composes Hono middleware, controllers, OpenAPI, and Scalar. HTTP controllers validate transport input and delegate vault operations to `packages/core`. It does not contain vault business rules.
 
 ### Cloudflare R2
 
-R2 stores Markdown notes under `vault/<normalized-path>`. The configured development bucket is `obsidian-ai-bridge-dev`; it must be created with `bunx wrangler r2 bucket create obsidian-ai-bridge-dev` before remote use. The Worker accesses it only through its binding and does not use S3 credentials.
+R2 stores Markdown notes under `vault/<normalized-path>`. The configured development bucket is `obsidian-ai-bridge-dev`; it must be created with `mise exec -- bunx wrangler r2 bucket create obsidian-ai-bridge-dev --config apps/worker/wrangler.jsonc` before remote use. The Worker accesses it only through its binding and does not use S3 credentials.
 
 ### Obsidian plugin
 

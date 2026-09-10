@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
 import { createIdentifier } from "@obsidian-ai-bridge/core";
+import { describe, expect, it } from "vitest";
 
 describe("createIdentifier", () => {
   it("normalizes a valid identifier", () => {

@@ -12,6 +12,8 @@ The `:path` segment in note item routes is a canonical base64url encoding of the
 
 ## Endpoints
 
+The generated OpenAPI 3.1 document is available at `GET /openapi.json`. Interactive Scalar documentation is available at `GET /docs`.
+
 ### `GET /health`
 
 Returns `200` with:

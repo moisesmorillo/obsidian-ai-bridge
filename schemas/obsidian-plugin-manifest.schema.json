@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Obsidian Plugin Manifest",
+  "description": "Official Obsidian plugin manifest fields. This intentionally does not include Chrome extension manifest_version.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "name",
+    "version",
+    "minAppVersion",
+    "description",
+    "author",
+    "isDesktopOnly"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^(?!.*obsidian)[a-z0-9]+(?:-[a-z0-9]+)*$",
+      "description": "Community plugin ID. It must not contain the reserved word Obsidian."
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!.*Obsidian).+$",
+      "description": "Display name. It must not include Obsidian."
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$"
+    },
+    "minAppVersion": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$"
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1
+    },
+    "author": {
+      "type": "string",
+      "minLength": 1
+    },
+    "authorUrl": {
+      "type": "string",
+      "format": "uri"
+    },
+    "fundingUrl": {
+      "type": "string",
+      "format": "uri"
+    },
+    "isDesktopOnly": {
+      "type": "boolean"
+    }
+  }
+}

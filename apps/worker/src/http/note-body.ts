@@ -1,10 +1,7 @@
 import { MAX_NOTE_SIZE_BYTES } from "@obsidian-ai-bridge/core";
+import type { NoteBodyResult } from "@worker/http/note-body.types";
 
-export type NoteBodyResult =
-  | { readonly kind: "ok"; readonly content: string }
-  | { readonly kind: "too_large" }
-  | { readonly kind: "invalid_encoding" };
-
+/** Reads a request body within the note limit and rejects malformed UTF-8. */
 export async function readNoteBody(request: Request): Promise<NoteBodyResult> {
   const contentLength = request.headers.get("Content-Length");
   if (contentLength !== null) {

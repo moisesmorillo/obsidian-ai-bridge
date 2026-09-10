@@ -4,14 +4,14 @@ Thank you for helping improve `obsidian-ai-bridge`. The project is experimental,
 
 ## Development setup
 
-Install [mise](https://mise.jdx.dev/), then install the repository's pinned Bun version:
+Install [mise](https://mise.jdx.dev/installing-mise.html), verify it with `mise --version`, then install the repository's pinned Bun version and dependencies:
 
 ```bash
 mise install
-bun install --frozen-lockfile
+mise run install
 ```
 
-Use Bun for package installation, scripts, and workspace commands. Do not add npm, Yarn, or pnpm lockfiles.
+Use `mise run ...` for project tasks. Bun remains the package manager; do not add npm, Yarn, or pnpm lockfiles.
 
 ## Branches and pull requests
 
@@ -25,10 +25,10 @@ Use Bun for package installation, scripts, and workspace commands. Do not add np
 Add behavioral Vitest coverage for behavior changes. Before opening a pull request, run:
 
 ```bash
-bun run check
+mise run check
 ```
 
-This runs formatting checks, linting, type checking, tests, and builds. Individual commands are also available in `package.json`.
+This runs Biome formatting checks, linting, configured assists, type checking, unit tests, and builds. Use `mise run format`, `mise run typecheck`, `mise run test`, or `mise run build` for focused work. Put local tokens and machine-specific overrides in ignored `mise.local.toml`.
 
 ## Coding style
 

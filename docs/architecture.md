@@ -11,7 +11,7 @@ packages/core          Platform-independent domain and application logic
 packages/protocol      Shared protocol contracts and serialization definitions
 ```
 
-The current implementation contains only scaffold code and a small core utility test. No network, vault, storage, authentication, or synchronization behavior is implemented.
+Milestone 1 implements an authenticated HTTP Worker API backed by Cloudflare R2. The Obsidian plugin remains a scaffold.
 
 ## Package boundaries
 
@@ -26,15 +26,31 @@ packages/core
 
 `packages/core` remains platform-independent. It must not depend on Cloudflare APIs, Obsidian APIs, HTTP frameworks, or filesystem implementations. Transport and platform concerns belong in the application adapters.
 
-## Planned platform roles
+## M1 request flow
+
+```text
+Worker HTTP adapter
+    |
+packages/core note operations and path validation
+    |
+VaultRepository contract
+    |
+R2VaultRepository in apps/worker
+    |
+Cloudflare R2 binding
+```
+
+The Worker validates the bearer token, request media type, body size, and note path before invoking core operations. R2 objects use the `vault/<normalized-path>` layout. Listing follows R2 cursors and returns only safe Markdown paths without the internal prefix.
+
+## Platform roles
 
 ### Cloudflare Worker
 
-The Worker will eventually be the remote HTTP/API boundary. It is expected to validate requests, coordinate application logic, and connect platform bindings to the shared packages. Its adapter has no product behavior yet.
+The Worker is the remote HTTP/API boundary for M1. It validates requests, coordinates core operations, and connects the `VAULT_BUCKET` binding to the shared repository contract. It does not contain vault business rules.
 
 ### Cloudflare R2
 
-R2 is planned for durable object storage associated with the bridge. Bindings, data models, retention, and access rules are intentionally deferred.
+R2 stores Markdown notes under `vault/<normalized-path>`. The configured development bucket is `obsidian-ai-bridge-dev`; it must be created with `bunx wrangler r2 bucket create obsidian-ai-bridge-dev` before remote use. The Worker accesses it only through its binding and does not use S3 credentials.
 
 ### Obsidian plugin
 
@@ -42,13 +58,11 @@ The plugin will eventually use official Obsidian APIs to connect local vault ope
 
 ### Future MCP adapter
 
-MCP is planned as a future adapter for agent clients. It is not implemented, and no MCP-specific dependency or contract is included in this scaffold.
+MCP is planned as a future adapter for agent clients. It is not implemented, and no MCP-specific dependency or contract is included in M1.
 
 ## Explicitly deferred
 
-- Authentication and authorization.
-- REST endpoints and request handling.
-- R2 persistence and migrations.
-- Vault reads, writes, and path handling.
+- Obsidian vault access and plugin behavior.
 - Synchronization, conflict detection, and conflict resolution.
 - MCP transport and tool definitions.
+- Search, D1, Durable Objects, Workers AI, and Vectorize.

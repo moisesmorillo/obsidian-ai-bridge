@@ -8,7 +8,7 @@ export const manifest: PluginManifest = {
   id: "ai-bridge",
   name: "AI Bridge",
   version: "0.0.0",
-  minAppVersion: "1.5.0",
+  minAppVersion: "1.13.0",
   description: "Local inspection test",
   author: "Test",
   isDesktopOnly: false,

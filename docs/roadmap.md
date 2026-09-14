@@ -54,15 +54,15 @@ New infrastructure requires a concrete need and [ADR](decisions/README.md).
 **M2 — Obsidian read-only local-vault adapter — COMPLETE**, merged at `b300726`
 (PR #7). The plugin supports explicit metadata-only local inspection. M1's independent
 authenticated Worker/R2 API is unchanged; there is no connected mirror, remote
-plugin client or production-readiness claim. M3 is NEXT with an implementation-ready
-design. Slice 0 now qualifies the pinned local conditional-storage runtime and host
-declarations, but implements no mirror,
-v2 API, credentials, state or autosync behavior.
+plugin client or production-readiness claim. M3 is NEXT with an implementation-ready design. Slice 0 qualifies the pinned local
+conditional-storage runtime and host declarations. Slice 1 raises the plugin baseline
+to 1.13.0 and adds shared typed contracts, but implements no mirror, v2 API,
+credentials, state owner or autosync behavior.
 
 See [current-state evidence](current-state.md), [architecture](architecture.md),
 [implemented API](api.md), [M2 completion](milestones/m2-obsidian-read-only-local-adapter.md#completion-evidence)
 and [M2 plan](plans/m2-obsidian-read-only-local-adapter.md). Current tests cover
-250 source and 3 artifact cases; no deployed Worker or real Obsidian desktop/mobile
+260 source and 3 artifact cases; no deployed Worker or real Obsidian desktop/mobile
 host was exercised. New M3 test requirements are not existing coverage.
 
 ## Milestone table
@@ -98,7 +98,8 @@ production code. Dependencies include all previous milestones.
   source tests, artifact checks and disposable-vault instructions.
 - **Non-goals/retained risks:** no network/settings/token/state persistence, watchers,
   local writes/deletes, remote client or MCP. Reads are best-effort, not atomic;
-  no real-host compatibility test. Manifest currently remains 1.5.0.
+  no real-host compatibility test. The M2 artifact used 1.5.0; M3 Slice 1 now raises
+  the current plugin baseline to 1.13.0 without changing those commands.
 - **Exit met:** [completed spec](milestones/m2-obsidian-read-only-local-adapter.md)
   records all acceptance items, coverage and independent semantic review.
 - **Boundary preserved:** inspection alone is not mirror opt-in. M3 adds whole-mirror

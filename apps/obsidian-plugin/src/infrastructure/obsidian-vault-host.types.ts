@@ -29,7 +29,7 @@ export interface ObsidianVaultHost<File extends ObsidianFile> {
   read(file: File): Promise<string>;
 }
 
-/** Official APIs available before the manifest's Obsidian 1.5.0 minimum. */
+/** Official APIs retained by the M3 plugin's Obsidian 1.13.0 minimum. */
 export type ObsidianReadOnlyVault = Pick<
   Vault,
   "configDir" | "getFiles" | "getAbstractFileByPath" | "read"

@@ -10,6 +10,7 @@
     }
   },
   "dependencies": {
+    "@obsidian-ai-bridge/core": "workspace:*",
     "zod": "^4.6.1"
   }
 }

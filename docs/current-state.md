@@ -3,14 +3,14 @@
 This snapshot records the completed M2 local-inspection implementation and M1
 foundation. M2 source/tooling through `2e74b23` passed independent semantic review;
 the completion PR records final validation and makes the transition canonical
-when merged. M2 is now merged at `b300726` (PR #7). M3 has completed only
-[Slice 0 platform qualification](qualification/m3-slice-0-platform-primitives.md),
-with no remote plugin client or v2 production behavior implemented. Its [accepted design decisions](plans/m3-design-decisions.md)
+when merged. M2 is now merged at `b300726` (PR #7). M3 has completed [Slice 0 platform qualification](qualification/m3-slice-0-platform-primitives.md)
+and Slice 1's modern plugin baseline/shared typed contracts, with no remote plugin
+client or v2 production behavior implemented. Its [accepted design decisions](plans/m3-design-decisions.md)
 and [sequential plan](plans/m3-remote-bridge-client-and-publishing.md) are documentation,
 not implemented capabilities. The approved product is an automatic whole eligible
 Markdown mirror with recoverable runtime deletion/rename, per-path state and one
-designated writer—not selected/manual publishing. M3 targets Obsidian 1.13.0/native
-SecretStorage; this docs-only PR leaves the current 1.5.0 manifest unchanged.
+designated writer—not selected/manual publishing. M3 Slice 1 sets the plugin manifest baseline to Obsidian 1.13.0 for future native
+SecretStorage/declarative settings; it adds neither settings nor credentials.
 M1 behavior is unchanged from the baseline audited at `22d3ee0` (PR #4).
 This is not a claim about a deployed environment or installed Obsidian host.
 [Roadmap](roadmap.md) owns milestone status; [architecture](architecture.md) owns
@@ -30,11 +30,11 @@ boundaries; [API](api.md) describes the HTTP contract.
 | API documentation | OpenAPI 3.1 generated through `@hono/zod-openapi`; shared Zod response schemas; public Scalar HTML reference. Runtime path and byte validation is stricter than the broad OpenAPI string schemas. The PUT document requires a body and names supported media types, while runtime also accepts no body/header. | `apps/worker/src/http/openapi.routes.ts`, HTTP unit/integration tests |
 | Responses | Stable typed error codes mapped to sanitized HTTP errors. JSON API/health/error and Markdown content responses use `Cache-Control: no-store`; this is not a claim about Scalar/OpenAPI or the bodyless DELETE response. Unsupported methods on valid note identifiers return 404, not 405. | `apps/worker/src/http/api-*`, `http-response-headers.ts`, `note.handlers.ts` |
 | Logging | LogTape 2.3.4 JSON-lines console sink via a thin injected adapter; completed-request events include operation, method, registered route template (or `unknown`), status and duration in milliseconds. No request IDs, per-client audit trail or error-code field yet. Application events do not include tokens, bodies, concrete note paths or raw exceptions. | `apps/worker/src/logging/`, logging and Worker tests |
-| Plugin | Default `AiBridgePlugin` registers exactly two explicit commands. List displays sorted saved-note metadata/skip counts without body reads; active inspection captures the saved path, reads once and displays only UTF-8 bytes/path with saved-file guidance. Plugin-instance serialization survives unload/re-enable until pending work settles, while enable-lifetime identity suppresses stale UI. Sanitized failures are tested. No enabling scan/read, network, settings/persistence, logging, editor save or vault mutation. Manifest remains `ai-bridge`, minimum `1.5.0`, non-desktop-only. | `apps/obsidian-plugin/src/{main.ts,inspection/,infrastructure/}`, dedicated plugin unit/integration suites |
+| Plugin | Default `AiBridgePlugin` registers exactly two explicit commands. List displays sorted saved-note metadata/skip counts without body reads; active inspection captures the saved path, reads once and displays only UTF-8 bytes/path with saved-file guidance. Plugin-instance serialization survives unload/re-enable until pending work settles, while enable-lifetime identity suppresses stale UI. Sanitized failures are tested. No enabling scan/read, network, settings/persistence, logging, editor save or vault mutation. Manifest remains `ai-bridge`, minimum `1.13.0`, non-desktop-only. | `apps/obsidian-plugin/src/{main.ts,inspection/,infrastructure/}`, dedicated plugin unit/integration suites |
 | Local safety | Shared literal `.md` path and 1 MiB policy; dot-prefixed/configuration-directory exclusions; pre-read metadata and post-read UTF-8 bound; exact lookup and pre/post object/path/mtime/size checks. No path repair/URI decoding, content UI or atomic snapshot claim. | `packages/core/src/local-vault/`, plugin adapter tests |
 | Plugin artifact | Browser-target CommonJS exposes `module.exports.default`, only `obsidian` external; stages unchanged manifest. Artifact suite checks actual generated files, inert load, commands and lifecycle in an isolated host-double realm without Node globals. No real desktop/mobile host was tested. | `.mise.toml`, `apps/obsidian-plugin/tests/artifact/`, [API/version and installation evidence](plugin-development.md) |
-| Core | Public branded identifier/path utilities, `NoteService`/`VaultNoteService`, `VaultRepository`, size limit and typed payload/storage errors. No Obsidian, Hono, Cloudflare or filesystem implementations. The remote repository port retains mutation operations. Separate public `ReadOnlyLocalVault`, `LocalInspectionService`, closed local results and eligibility policy support M2 without platform imports or mutation methods. | `packages/core/src/`, package exports |
-| Protocol | Zod schemas and inferred DTOs for health, note lists, write acknowledgments, errors, and a reserved version `0.1` metadata envelope. List/write path fields are plain schema strings, not domain validation. The reserved envelope is not wrapped around current REST responses and is not a sync protocol. | `packages/protocol/src/` |
+| Core | Public branded identifier/path utilities, `NoteService`/`VaultNoteService`, `VaultRepository`, size limit and typed payload/storage errors. Slice 1 adds platform-independent M3 UUID-v4 IDs, ETags, digests, closed current/recovery/intent/effect contracts and capability-focused conditional-note/recovery ports. No Obsidian, Hono, Cloudflare, HTTP, filesystem or protocol dependency. Separate public `ReadOnlyLocalVault`, `LocalInspectionService`, closed local results and eligibility policy support M2 without platform imports or mutation methods. | `packages/core/src/`, package exports |
+| Protocol | Zod schemas and inferred DTOs for M1 health, note lists, write acknowledgments, errors, and a reserved version `0.1` metadata envelope. Slice 1 adds strict bounded M3 identity, NotePath, precondition, receipt, current-state, recovery, intent, effect and pagination DTO schemas using public core predicates. No v2 route consumes these schemas yet; the reserved envelope is not wrapped around current REST responses and is not a sync protocol. | `packages/protocol/src/` |
 
 ## Tooling and validation baseline
 
@@ -57,7 +57,7 @@ boundaries; [API](api.md) describes the HTTP contract.
   prohibition, direct-console prohibition and configured documentation rules.
   These checks do **not** prove all architecture/TSDoc requirements in
   [AGENTS.md](../AGENTS.md); manual semantic review remains mandatory.
-- Vitest **5**: **21 source test files / 250 tests**, plus **1 artifact file /
+- Vitest **5**: **23 source test files / 260 tests**, plus **1 artifact file /
   3 smoke tests** in the dedicated build task. The unchanged M1 baseline had
   15 files / 105 tests. Exact slice validation is recorded in the
   [implementation plan](plans/m2-obsidian-read-only-local-adapter.md).
@@ -77,8 +77,8 @@ boundaries; [API](api.md) describes the HTTP contract.
   Global thresholds: **lines 95%, statements 95%, functions 94%, branches 90%**.
   Coverage is a regression signal, not proof of test quality.
 - Root Vitest projects include shared packages, Worker and plugin. Source coverage
-  is statements **96.75%**, branches **93.75%**, functions **95.96%**, lines
-  **97.04%**; plugin behavior has 100% across all four. Artifact tests are separate
+  is statements **96.54%**, branches **93.33%**, functions **95.77%**, lines
+  **96.93%**; plugin behavior has 100% across all four. Artifact tests are separate
   from source coverage, run after packaging and never replace behavioral coverage.
 - The Worker declares Miniflare **5.20260908.0-alpha** directly for its storage
   qualification task, exactly matching Wrangler **4.130.0** and workerd

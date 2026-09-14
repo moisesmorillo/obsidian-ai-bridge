@@ -1,7 +1,7 @@
 # M3 — Automatic eligible-Markdown remote mirror
 
-**Status: NEXT — implementation-ready design; Slice 0 platform qualification
-complete, with no M3 production implementation.**
+**Status: NEXT — Slice 0 platform qualification and Slice 1 modern baseline/shared
+typed contracts complete; no M3 production mirror implementation.**
 
 The maintainer's clarification replaces the selected-note/manual-publishing proposal
 at `e35bd90`. M2 is COMPLETE at merged `b300726` (PR #7); M3 is the single NEXT
@@ -11,8 +11,9 @@ rules; [decisions/evidence](../plans/m3-design-decisions.md) and the
 [sequential plan](../plans/m3-remote-bridge-client-and-publishing.md) are companions.
 Implementation readiness means product/design choices are resolved and testable.
 The narrow [Slice 0 qualification](../qualification/m3-slice-0-platform-primitives.md)
-now proves the pinned local workerd storage predicates and records declaration-only
-host availability; later implementation and real-host checks have not passed.
+proves the pinned local workerd storage predicates and records declaration-only host
+availability. Slice 1 raises the plugin minimum to 1.13.0 and provides typed core/
+protocol contracts only; later implementation and real-host checks have not passed.
 
 ## Objective and authority
 
@@ -80,8 +81,8 @@ No database, DO, queue service, election, Node/Electron runtime or new UI framew
 1.11.4), modern declarative settings (1.13.0) and official vault-local storage APIs
 (since 1.8.7). No deprecated display() fallback or historical-version accommodation.
 Implementation slice 1 changes the manifest, artifact expectations and install docs
-together. The current M2 manifest remains 1.5.0 in this documentation-only PR;
-it is not evidence that the M3 API set works on 1.5.0.
+together. Slice 1 sets the current manifest to 1.13.0; this is a declared host
+baseline, not evidence that the future M3 runtime behavior works in a real host.
 
 Settings expose endpoint, secret reference via native SecretComponent, device ID,
 server association/designation status, device-local **Enable mirror** and **Pause**.

@@ -19,6 +19,7 @@
 - The PR title is release-significant: `main` accepts squash merges only, and GitHub uses the PR title as the resulting commit subject. Set or update the title before completion when the delivered semantic change differs from the initial title.
 - Use descriptive subjects such as `feat(plugin): add native secret settings`; never use vague titles such as `update`, `changes`, `M3 slice 2`, or `fix stuff`. A milestone or slice name is not a Conventional Commit type.
 - Mark a genuine breaking change with `type(scope)!:` in the PR title and, when useful, a `BREAKING CHANGE:` footer in the PR body. The squash body preserves that footer for Release Please.
+- Release Please authenticates through a dedicated GitHub App scoped to this repository. The workflow creates a short-lived installation token from `RELEASE_PLEASE_APP_ID` and `RELEASE_PLEASE_APP_PRIVATE_KEY`; never expose or commit the private key, and do not use a long-lived personal PAT.
 - Branch commits SHOULD also follow Conventional Commits when practical, but they are not a merge gate. Never rewrite already-shared history solely to polish intermediate commits when the final squash path is compliant.
 
 ## Repository execution protocol

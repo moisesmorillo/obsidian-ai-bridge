@@ -42,12 +42,12 @@ configured default strategy produces `0.1.0 →
 0.1.1` for `fix` and `0.1.x → 0.2.0` for `feat`; a genuine breaking change at a
 pre-1.0 version produces the default major bump (`0.1.x → 1.0.0`).
 
-Before merging this configuration, a maintainer must add the repository Actions
-secret `RELEASE_PLEASE_TOKEN`: a fine-grained token or GitHub App installation token
-with repository **Contents**, **Issues**, and **Pull requests** read/write access.
-The default `GITHUB_TOKEN` cannot trigger the required PR workflows for a
-Release Please-created PR, so it is intentionally not used. Never put that token in
-repository files or logs.
+Release Please authenticates with a dedicated GitHub App that is installed only for
+this repository. At runtime, the workflow creates a short-lived installation token
+from the repository secrets `RELEASE_PLEASE_APP_ID` and
+`RELEASE_PLEASE_APP_PRIVATE_KEY`, then passes it directly to Release Please. Do not
+expose or commit the private key; long-lived personal PATs are not used. Release PRs
+created with the App token trigger this repository's required PR workflows.
 
 ## Testing and validation
 

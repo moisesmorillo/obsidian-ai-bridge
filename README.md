@@ -2,7 +2,7 @@
 
 A secure bridge between Obsidian and remote AI or agent clients.
 
-> **Status:** M2 complete / experimental. The plugin provides local-only, read-only inspection; the independent M1 Worker provides authenticated R2 storage. **NEXT (design ready, not implemented):** [M3 — Automatic eligible-Markdown remote mirror](docs/milestones/m3-remote-bridge-client-and-publishing.md).
+> **Status:** M2 complete / experimental. The plugin provides local-only, read-only inspection; the independent M1 Worker provides authenticated R2 storage. **NEXT:** [M3 — Automatic eligible-Markdown remote mirror](docs/milestones/m3-remote-bridge-client-and-publishing.md); Slice 0 platform qualification is complete, with no production mirror behavior implemented.
 
 ## Motivation
 
@@ -74,6 +74,7 @@ mise run install
 | `mise run check` | Run Biome formatting, linting, assists, type checking, coverage-enforced tests, and both application bundle validations. |
 | `mise run lint` | Run type-aware Oxlint semantic checks, including deprecated API detection. |
 | `mise run test` | Run the fast Vitest test suite without coverage. |
+| `mise run worker:storage-test` | Qualify conditional R2 semantics in the pinned local workerd runtime. |
 | `mise run coverage` | Run the Vitest suite with V8 coverage and enforce global thresholds. |
 | `mise run typecheck` | Type-check all workspaces. |
 | `mise run build` | Bundle the Worker with Wrangler in dry-run mode, stage the CommonJS plugin/manifest and run artifact smoke tests. |
@@ -155,11 +156,14 @@ Start with [AGENTS.md](AGENTS.md), [architecture](docs/architecture.md), the
 The [approved decision brief](docs/plans/m3-design-decisions.md) and
 [sequential plan](docs/plans/m3-remote-bridge-client-and-publishing.md) specify
 automatic bootstrap/saved-file events, per-path state, safe conditional mutations,
-recoverable runtime deletes/renames and explicit single-writer handoff. There is
+recoverable runtime deletes/renames and explicit single-writer handoff. The
+[Slice 0 qualification](docs/qualification/m3-slice-0-platform-primitives.md)
+proves required predicates in the pinned local workerd runtime and records host
+declaration availability without claiming real desktop/mobile testing. There is
 no per-note selection model. M3 targets Obsidian **1.13.0** and native SecretStorage;
 the current M2 manifest remains 1.5.0 until implementation. Product choices are
-resolved; implementation/platform qualification remain to be done. No v2 API,
-credential/state storage or autosync is implemented by this documentation work;
+resolved; production implementation and real-host qualification remain. No v2 API,
+credential/state storage or autosync is implemented by this Slice 0 work;
 [M2 completion and slice evidence](docs/plans/m2-obsidian-read-only-local-adapter.md)
 record the implemented baseline. The roadmap defines the useful product end state, milestone exit criteria and
 unresolved decisions. The [current-state audit](docs/current-state.md) links facts

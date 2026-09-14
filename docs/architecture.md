@@ -13,9 +13,9 @@ packages/protocol      Shared protocol contracts and serialization definitions
 
 M1 is complete: an authenticated HTTP Worker API backed by Cloudflare R2 plus the
 engineering-quality foundation. M2 is complete: a local-only read-only Obsidian
-inspection plugin with source tests, artifact checks and semantic review. M3 is
-[planning only](milestones/m3-remote-bridge-client-and-publishing.md); there is no
-connection between the plugin and Worker yet.
+inspection plugin with source tests, artifact checks and semantic review. M3 has
+completed only its [Slice 0 platform qualification](qualification/m3-slice-0-platform-primitives.md);
+there is no production M3 behavior or connection between the plugin and Worker yet.
 See the [verified current state](current-state.md) for source/configuration evidence,
 [roadmap](roadmap.md) for execution order and open decisions, and
 [ADR 0001](decisions/0001-worker-r2-foundation.md) for the durable foundation.
@@ -199,7 +199,8 @@ loopback opt-in and bounded Fetch/CORS, without old-host/requestUrl fallbacks.
 
 These are accepted architectural decisions, **not current behavior**. M1 remains
 unconditional, M2 remains local-only, and the current manifest remains 1.5.0 until
-implementation. This PR changes no production code/configuration/dependencies.
+implementation. Slice 0 adds only a pinned local workerd qualification task, a
+declaration-only host check and evidence; it changes no production composition.
 
 ## Explicitly deferred
 

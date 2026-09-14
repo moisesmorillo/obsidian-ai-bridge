@@ -1,7 +1,8 @@
 # M3 implementation plan — automatic eligible-Markdown mirror
 
-**Status: implementation-ready design; no production slice begun.** PR #8 remains
-planning/documentation only. M2 merged at `b300726` (PR #7); M3 is the single NEXT
+**Status: implementation-ready design; Slice 0 qualification complete, with no M3
+production behavior implemented.** PR #8 remains planning/documentation only. M2
+merged at `b300726` (PR #7); M3 is the single NEXT
 milestone. [Spec](../milestones/m3-remote-bridge-client-and-publishing.md),
 [approved decisions/evidence](m3-design-decisions.md) and accepted design ADRs
 [0002](../decisions/0002-conditional-remote-note-mutation.md),
@@ -49,6 +50,12 @@ fix/review it rather than silently use old APIs or invent a new product policy.
   remote bucket or deployment to qualify it.
 - **Validation/acceptance:** `mise install`, `mise run install`, the new runtime
   task and `mise run check`; prerequisite evidence for A4/A6/A10.
+- **Implemented evidence:** [Slice 0 platform qualification](../qualification/m3-slice-0-platform-primitives.md)
+  records the pinned local workerd tests and compile-time host API inspection. The
+  runtime task proves current/recovery create-only, ETag CAS, failed-write, distinct
+  embedded-revision validator and stored-upload-time behavior. Official Obsidian
+  1.13.1 and browser declarations expose the planned APIs, but no real desktop or
+  mobile host has been exercised. No production mirror/API/host behavior was added.
 
 ## 1. Modern baseline and shared typed contracts
 

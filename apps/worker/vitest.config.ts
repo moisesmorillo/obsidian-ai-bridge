@@ -12,6 +12,6 @@ export default defineProject({
   },
   test: {
     name: "worker",
-    include: ["tests/**/*.test.ts"],
+    include: ["tests/{integration,unit}/**/*.test.ts"],
   },
 });

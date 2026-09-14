@@ -155,9 +155,12 @@ and the installation steps above together; this docs-only PR leaves the current
 M2 minimum 1.5.0 unchanged. Do not add deprecated/older-host fallbacks.
 
 The [official evidence](plans/m3-design-decisions.md#primary-source-evidence-and-qualification-limits)
-establishes SecretStorage since 1.11.4, vault-local storage since 1.8.7 and modern
-settings since 1.13.0. It does not establish desktop/mobile Fetch streaming/abort/
-CORS behavior in a real WebView, exact autosave timing or iCloud hydration completion.
+and completed [Slice 0 declaration qualification](qualification/m3-slice-0-platform-primitives.md)
+establish SecretStorage since 1.11.4, vault-local storage since 1.8.7 and modern
+settings since 1.13.0. The checked declarations also expose Fetch/abort/stream
+primitives, but no host runtime invoked them. This does not establish desktop/mobile
+Fetch streaming/abort/CORS behavior in a real WebView, exact autosave timing or
+iCloud hydration completion.
 Those require feature detection, focused doubles/runtime tests and honestly recorded
 host qualification in implementation. The app.secretStorage reference is host-native,
 not a documented OS keychain. Only the secret's name goes in data.json; no plaintext

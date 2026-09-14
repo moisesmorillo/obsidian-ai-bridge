@@ -14,6 +14,10 @@ import {
   tombstoneMutationResponseSchema,
 } from "@obsidian-ai-bridge/protocol";
 import { createWorkerApp } from "@worker/app";
+import {
+  toOpenApiV2RoutePath,
+  V2_ROUTE_POLICY,
+} from "@worker/http/v2-route-policy";
 import type { Logger } from "@worker/logging/logger.types";
 import {
   createTestMirrorServices,
@@ -41,6 +45,17 @@ function encodedPath(value: string): string {
 
 function noteRoute(value: string, version = "v2"): string {
   return `/api/${version}/notes/${encodedPath(value)}`;
+}
+
+/**
+ * Resolves one shared v2 route shape to a concrete canonical test URL.
+ *
+ * @param routePath - Hono route shape from the shared policy.
+ * @param id - Canonical recovery identity for parameter substitution.
+ * @returns Concrete route containing canonical note/recovery identifiers.
+ */
+function concreteV2Route(routePath: string, id: string): string {
+  return routePath.replace(":path", encodedPath("Alpha.md")).replace(":id", id);
 }
 
 function operationId(sequence: number): string {
@@ -240,6 +255,35 @@ describe("Worker v2 API", () => {
       mutationAcknowledgementSchema.parse(await recreated.json()).receipt
         .action,
     ).toBe("recreate");
+  });
+
+  it("maps malformed recovery proof to 500 without tombstoning the live head", async () => {
+    const bucket = new MemoryMirrorBucket();
+    const { app } = application(bucket);
+    const created = await createNote(app, 917, "still live");
+    const deletionSequence = 918;
+    bucket.seed(`recovery/${operationId(deletionSequence)}`, "{}", {
+      bridgeFormat: "2",
+    });
+
+    const response = await app.fetch(
+      request(noteRoute("Alpha.md"), {
+        method: "DELETE",
+        headers: mutationHeaders(deletionSequence, {
+          ifMatch: `"m3-${created.acknowledgement.revision}"`,
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(500);
+    expect(await errorCode(response)).toBe(API_ERROR_CODE.internalError);
+    const current = await app.fetch(
+      request(noteRoute("Alpha.md"), {
+        headers: { Authorization: `Bearer ${TOKEN}` },
+      }),
+    );
+    expect(current.status).toBe(200);
+    expect(await current.text()).toBe("still live");
   });
 
   it("accepts explicit empty content and rejects missing media or invalid conditions", async () => {
@@ -1002,6 +1046,22 @@ describe("Worker v2 API", () => {
           expect(contract.security).toEqual([{ bearerAuth: [] }]);
       }
     }
+    const policySurface = Object.values(V2_ROUTE_POLICY)
+      .map((definition) => ({
+        path: toOpenApiV2RoutePath(definition.path),
+        methods: [...definition.methods].sort(),
+      }))
+      .sort((left, right) => left.path.localeCompare(right.path));
+    const openApiSurface = Object.entries(document.paths)
+      .filter(([path]) => path.startsWith("/api/v2/"))
+      .map(([path, pathContract]) => ({
+        path,
+        methods: Object.keys(pathContract)
+          .map((method) => method.toUpperCase())
+          .sort(),
+      }))
+      .sort((left, right) => left.path.localeCompare(right.path));
+    expect(openApiSurface).toEqual(policySurface);
 
     const put = required(required(document.paths["/api/v2/notes/{path}"]).put);
     expect(put.requestBody?.required).toBe(false);
@@ -1299,20 +1359,26 @@ describe("Worker v2 reviewed transport boundaries", () => {
     });
     const id = operationId(901);
     const routes = [
-      ["/api/v2/mirror", ["GET"]],
-      ["/api/v2/notes", ["GET"]],
-      [noteRoute("Alpha.md"), ["GET", "PUT", "DELETE"]],
-      [`${noteRoute("Alpha.md")}/state`, ["GET"]],
-      ["/api/v2/recovery", ["GET"]],
-      [`/api/v2/recovery/${id}`, ["GET"]],
-      [`/api/v2/recovery/${id}/content`, ["GET"]],
-      [`/api/v2/recovery/${id}/seal`, ["POST"]],
-      [`/api/v2/recovery/${id}/purge`, ["POST"]],
+      [V2_ROUTE_POLICY.mirror, "/api/v2/mirror", ["GET"]],
+      [V2_ROUTE_POLICY.notes, "/api/v2/notes", ["GET"]],
+      [V2_ROUTE_POLICY.note, noteRoute("Alpha.md"), ["GET", "PUT", "DELETE"]],
+      [V2_ROUTE_POLICY.noteState, `${noteRoute("Alpha.md")}/state`, ["GET"]],
+      [V2_ROUTE_POLICY.recovery, "/api/v2/recovery", ["GET"]],
+      [V2_ROUTE_POLICY.recoveryItem, `/api/v2/recovery/${id}`, ["GET"]],
+      [
+        V2_ROUTE_POLICY.recoveryContent,
+        `/api/v2/recovery/${id}/content`,
+        ["GET"],
+      ],
+      [V2_ROUTE_POLICY.recoverySeal, `/api/v2/recovery/${id}/seal`, ["POST"]],
+      [V2_ROUTE_POLICY.recoveryPurge, `/api/v2/recovery/${id}/purge`, ["POST"]],
     ] as const;
     const completeHeaders =
       "Authorization, Content-Type, If-Match, If-None-Match, Bridge-Operation-Id, Bridge-Association-Id, Bridge-Writer-Id";
-    for (const [path, methods] of routes) {
-      for (const method of methods) {
+    for (const [definition, path, expectedMethods] of routes) {
+      expect(concreteV2Route(definition.path, id)).toBe(path);
+      expect(definition.methods).toEqual(expectedMethods);
+      for (const method of definition.methods) {
         const response = await app.fetch(
           request(path, {
             method: "OPTIONS",
@@ -1325,7 +1391,7 @@ describe("Worker v2 reviewed transport boundaries", () => {
         );
         expect(response.status, `${method} ${path}`).toBe(204);
         expect(response.headers.get("Access-Control-Allow-Methods")).toBe(
-          methods.join(", "),
+          definition.methods.join(", "),
         );
         expect(response.headers.get("Access-Control-Allow-Headers")).toBe(
           completeHeaders,
@@ -1335,8 +1401,111 @@ describe("Worker v2 reviewed transport boundaries", () => {
         ).toBeNull();
         expect(response.headers.get("Cache-Control")).toBe("no-store");
       }
+
+      const disallowedMethod = definition.methods.some(
+        (method) => method === "POST",
+      )
+        ? "GET"
+        : "POST";
+      const rejected = await app.fetch(
+        request(path, {
+          method: "OPTIONS",
+          headers: {
+            Origin: "app://obsidian.md",
+            "Access-Control-Request-Method": disallowedMethod,
+          },
+        }),
+      );
+      expect(rejected.status, `${disallowedMethod} ${path}`).toBe(400);
+      const unsupported = await app.fetch(
+        request(path, {
+          method: disallowedMethod,
+          headers: { Authorization: `Bearer ${TOKEN}` },
+        }),
+      );
+      expect(unsupported.status, `${disallowedMethod} ${path}`).toBe(404);
+      expect(unsupported.headers.get("Access-Control-Allow-Origin")).toBeNull();
+
+      if (definition.methods.some((method) => method === "GET")) {
+        const unauthenticatedHead = await app.fetch(
+          request(path, { method: "HEAD" }),
+        );
+        expect(unauthenticatedHead.status, `HEAD ${path}`).toBe(401);
+        expect(
+          unauthenticatedHead.headers.get("Access-Control-Allow-Origin"),
+        ).toBeNull();
+        const authenticatedHead = await app.fetch(
+          request(path, {
+            method: "HEAD",
+            headers: { Authorization: `Bearer ${TOKEN}` },
+          }),
+        );
+        expect(authenticatedHead.status, `HEAD ${path}`).toBe(404);
+        expect(
+          authenticatedHead.headers.get("Access-Control-Allow-Origin"),
+        ).toBeNull();
+      }
     }
     expect(resolutions).toBe(0);
+    const unknown = await app.fetch(
+      request("/api/v2/unknown", {
+        method: "OPTIONS",
+        headers: {
+          Origin: "app://obsidian.md",
+          "Access-Control-Request-Method": "GET",
+        },
+      }),
+    );
+    expect(unknown.status).toBe(401);
+    expect(unknown.headers.get("Access-Control-Allow-Origin")).toBeNull();
+    expect(resolutions).toBe(0);
+    expect(bucket.getCount).toBe(0);
+    expect(bucket.putKeys).toHaveLength(0);
+  });
+
+  it("authenticates and rejects encoded static route aliases without CORS or services", async () => {
+    const bucket = new MemoryMirrorBucket();
+    let resolutions = 0;
+    const app = createWorkerApp({
+      logger: new TestLogger(),
+      resolveMirrorServices: () => {
+        resolutions += 1;
+        return createTestMirrorServices(bucket);
+      },
+      resolveToken: () => TOKEN,
+    });
+    const aliases = [
+      "/%61pi/v2/mirror",
+      "/api/%762/mirror",
+      "/api/v2/%6dirror",
+      "/api/v2/%6eotes",
+      "/api/v2/%72ecovery",
+    ] as const;
+
+    for (const path of aliases) {
+      const preflight = await app.fetch(
+        request(path, {
+          method: "OPTIONS",
+          headers: {
+            Origin: "app://obsidian.md",
+            "Access-Control-Request-Method": "GET",
+          },
+        }),
+      );
+      expect(preflight.status, `OPTIONS ${path}`).toBe(401);
+      expect(preflight.headers.get("Access-Control-Allow-Origin")).toBeNull();
+
+      const response = await app.fetch(
+        request(path, {
+          headers: { Authorization: `Bearer ${TOKEN}` },
+        }),
+      );
+      expect(response.status, `GET ${path}`).toBe(404);
+      expect(response.headers.get("Access-Control-Allow-Origin")).toBeNull();
+    }
+    expect(resolutions).toBe(0);
+    expect(bucket.getCount).toBe(0);
+    expect(bucket.putKeys).toHaveLength(0);
   });
 
   it.each([

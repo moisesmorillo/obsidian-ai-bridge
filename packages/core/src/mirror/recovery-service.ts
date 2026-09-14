@@ -166,7 +166,7 @@ export class RecoveryService {
         confirmed: existing,
       };
     } catch {
-      return { kind: MUTATION_EFFECT_CERTAINTY.definitelyRefused };
+      return { kind: MUTATION_EFFECT_CERTAINTY.notDispatched };
     }
   }
 

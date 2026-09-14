@@ -14,11 +14,8 @@ import {
   API_REFERENCE_ROUTE,
   API_V2_PREFIX,
   HEALTH_ROUTE,
-  MIRROR_ROUTE,
   NOTES_ROUTE,
   OPENAPI_ROUTE,
-  RECOVERY_ROUTE,
-  V2_NOTES_ROUTE,
 } from "@worker/http/http.constants";
 import {
   createDeleteNoteHandler,
@@ -63,6 +60,8 @@ import {
   createSealRecoveryHandler,
 } from "@worker/http/v2.handlers";
 import { createV2CorsMiddleware } from "@worker/http/v2-cors.middleware";
+import { V2_ROUTE_POLICY } from "@worker/http/v2-route-policy";
+import { createV2RoutePolicyGuardMiddleware } from "@worker/http/v2-route-policy.middleware";
 import { createRequestLoggingMiddleware } from "@worker/logging/request-logging.middleware";
 import type { BlankSchema } from "hono/types";
 
@@ -85,9 +84,6 @@ export function createWorkerApp(
   app.use(API_V2_PREFIX, createV2CorsMiddleware());
   app.use(`${API_V2_PREFIX}/*`, createV2CorsMiddleware());
   app.use(
-    createRequestDependenciesMiddleware(dependencies.resolveMirrorServices),
-  );
-  app.use(
     API_PREFIX,
     createAuthenticationMiddleware(dependencies.resolveToken),
   );
@@ -102,6 +98,11 @@ export function createWorkerApp(
   app.use(
     `${API_V2_PREFIX}/*`,
     createAuthenticationMiddleware(dependencies.resolveToken),
+  );
+  app.use(API_V2_PREFIX, createV2RoutePolicyGuardMiddleware());
+  app.use(`${API_V2_PREFIX}/*`, createV2RoutePolicyGuardMiddleware());
+  app.use(
+    createRequestDependenciesMiddleware(dependencies.resolveMirrorServices),
   );
 
   [
@@ -134,23 +135,23 @@ export function createWorkerApp(
   app.all(`${NOTES_ROUTE}/:path`, createUnsupportedNoteMethodHandler());
   app.all(`${NOTES_ROUTE}/*`, createInvalidPathHandler());
 
-  app.get(MIRROR_ROUTE, createGetMirrorHandler());
-  app.get(V2_NOTES_ROUTE, createListV2NotesHandler());
-  app.get(`${V2_NOTES_ROUTE}/:path/state`, createGetV2NoteStateHandler());
-  app.get(`${V2_NOTES_ROUTE}/:path`, createGetV2NoteHandler());
-  app.put(`${V2_NOTES_ROUTE}/:path`, createPutV2NoteHandler());
-  app.delete(`${V2_NOTES_ROUTE}/:path`, createDeleteV2NoteHandler());
-  app.all(
-    `${V2_NOTES_ROUTE}/:path/state`,
-    createUnsupportedNoteMethodHandler(),
+  app.get(V2_ROUTE_POLICY.mirror.path, createGetMirrorHandler());
+  app.get(V2_ROUTE_POLICY.notes.path, createListV2NotesHandler());
+  app.get(V2_ROUTE_POLICY.noteState.path, createGetV2NoteStateHandler());
+  app.get(V2_ROUTE_POLICY.note.path, createGetV2NoteHandler());
+  app.put(V2_ROUTE_POLICY.note.path, createPutV2NoteHandler());
+  app.delete(V2_ROUTE_POLICY.note.path, createDeleteV2NoteHandler());
+  app.all(V2_ROUTE_POLICY.noteState.path, createUnsupportedNoteMethodHandler());
+  app.all(V2_ROUTE_POLICY.note.path, createUnsupportedNoteMethodHandler());
+  app.all(`${V2_ROUTE_POLICY.notes.path}/*`, createInvalidPathHandler());
+  app.get(V2_ROUTE_POLICY.recovery.path, createListRecoveryHandler());
+  app.get(
+    V2_ROUTE_POLICY.recoveryContent.path,
+    createGetRecoveryContentHandler(),
   );
-  app.all(`${V2_NOTES_ROUTE}/:path`, createUnsupportedNoteMethodHandler());
-  app.all(`${V2_NOTES_ROUTE}/*`, createInvalidPathHandler());
-  app.get(RECOVERY_ROUTE, createListRecoveryHandler());
-  app.get(`${RECOVERY_ROUTE}/:id/content`, createGetRecoveryContentHandler());
-  app.get(`${RECOVERY_ROUTE}/:id`, createGetRecoveryHandler());
-  app.post(`${RECOVERY_ROUTE}/:id/seal`, createSealRecoveryHandler());
-  app.post(`${RECOVERY_ROUTE}/:id/purge`, createPurgeRecoveryHandler());
+  app.get(V2_ROUTE_POLICY.recoveryItem.path, createGetRecoveryHandler());
+  app.post(V2_ROUTE_POLICY.recoverySeal.path, createSealRecoveryHandler());
+  app.post(V2_ROUTE_POLICY.recoveryPurge.path, createPurgeRecoveryHandler());
 
   app.doc(OPENAPI_ROUTE, openApiConfiguration);
   app.get(API_REFERENCE_ROUTE, Scalar({ url: OPENAPI_ROUTE }));

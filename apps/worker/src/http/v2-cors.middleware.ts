@@ -7,12 +7,13 @@ import {
   CACHE_CONTROL_NO_STORE,
   HTTP_HEADER,
   HTTP_STATUS,
-  MIRROR_ROUTE,
-  RECOVERY_ROUTE,
   V2_CORS_ALLOWED_HEADERS,
   V2_CORS_EXPOSED_HEADERS,
-  V2_NOTES_ROUTE,
 } from "@worker/http/http.constants";
+import {
+  resolveV2RouteMethods,
+  type V2RouteMethod,
+} from "@worker/http/v2-route-policy";
 
 const ALLOWED_HEADER_NAMES = new Set(
   V2_CORS_ALLOWED_HEADERS.map((header) => header.toLowerCase()),
@@ -34,29 +35,6 @@ function applyCorsHeaders(response: Response): Response {
 }
 
 /**
- * Resolves registered methods for one exact v2 route shape.
- *
- * @param pathname - URL pathname without query data.
- * @returns Exact allowed methods, or `undefined` for an unknown route.
- */
-function registeredMethods(pathname: string): readonly string[] | undefined {
-  if (pathname === MIRROR_ROUTE || pathname === V2_NOTES_ROUTE) return ["GET"];
-  if (pathname === RECOVERY_ROUTE) return ["GET"];
-  if (/^\/api\/v2\/notes\/[^/]+\/state$/.test(pathname)) return ["GET"];
-  if (/^\/api\/v2\/notes\/[^/]+$/.test(pathname)) {
-    return ["GET", "PUT", "DELETE"];
-  }
-  if (/^\/api\/v2\/recovery\/[^/]+\/content$/.test(pathname)) {
-    return ["GET"];
-  }
-  if (/^\/api\/v2\/recovery\/[^/]+\/(seal|purge)$/.test(pathname)) {
-    return ["POST"];
-  }
-  if (/^\/api\/v2\/recovery\/[^/]+$/.test(pathname)) return ["GET"];
-  return undefined;
-}
-
-/**
  * Validates comma-separated requested browser header names.
  *
  * @param value - Access-Control-Request-Headers value.
@@ -68,6 +46,31 @@ function requestedHeadersAreAllowed(value: string | null): boolean {
   return (
     names.every((name) => name !== "" && ALLOWED_HEADER_NAMES.has(name)) &&
     new Set(names).size === names.length
+  );
+}
+
+/**
+ * Validates the complete metadata required by one registered preflight.
+ *
+ * @param headers - Untrusted request headers.
+ * @param methods - Exact methods allowed for the matched public route shape.
+ * @returns Whether origin, method, and requested-header metadata are accepted.
+ */
+function isValidPreflightRequest(
+  headers: Headers,
+  methods: readonly V2RouteMethod[],
+): boolean {
+  const origin = headers.get(HTTP_HEADER.origin);
+  if (origin === null || origin.trim() === "") return false;
+
+  const requestedMethod = headers.get(HTTP_HEADER.accessControlRequestMethod);
+  if (requestedMethod === null) return false;
+  if (!methods.some((method) => method === requestedMethod.toUpperCase())) {
+    return false;
+  }
+
+  return requestedHeadersAreAllowed(
+    headers.get(HTTP_HEADER.accessControlRequestHeaders),
   );
 }
 
@@ -88,22 +91,9 @@ export function createV2CorsMiddleware(): WorkerMiddleware {
       return;
     }
 
-    const methods = registeredMethods(pathname);
+    const methods = resolveV2RouteMethods(pathname);
     if (context.req.method === "OPTIONS" && methods !== undefined) {
-      const origin = context.req.header(HTTP_HEADER.origin);
-      const requestedMethod = context.req.header(
-        HTTP_HEADER.accessControlRequestMethod,
-      );
-      const requestedHeaders = context.req.header(
-        HTTP_HEADER.accessControlRequestHeaders,
-      );
-      if (
-        origin === undefined ||
-        origin.trim() === "" ||
-        requestedMethod === undefined ||
-        !methods.includes(requestedMethod.toUpperCase()) ||
-        !requestedHeadersAreAllowed(requestedHeaders ?? null)
-      ) {
+      if (!isValidPreflightRequest(context.req.raw.headers, methods)) {
         return applyCorsHeaders(
           createErrorResponse(API_ERROR_CODE.invalidRequest),
         );
@@ -124,7 +114,10 @@ export function createV2CorsMiddleware(): WorkerMiddleware {
     }
 
     await next();
-    if (methods === undefined || !methods.includes(context.req.method)) {
+    if (
+      methods === undefined ||
+      !methods.some((method) => method === context.req.method)
+    ) {
       return context.res;
     }
     return applyCorsHeaders(context.res);

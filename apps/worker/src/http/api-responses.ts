@@ -25,6 +25,7 @@ import {
  * @param context - Typed Worker request context used to serialize the body.
  * @param body - Protocol or transport response body.
  * @param status - Successful HTTP status for the response.
+ * @param etag - Optional strong application ETag emitted when provided.
  * @returns The serialized JSON response.
  */
 export function createJsonResponse<
@@ -147,6 +148,7 @@ export function createUnsupportedMediaTypeResponse(context: WorkerContext) {
  *
  * @param context - Typed Worker request context used to serialize the response.
  * @param content - Note content returned without adding transport markup.
+ * @param metadata - Optional ETag and note format emitted as response headers.
  * @returns The Markdown content response.
  */
 export function createNoteContentResponse(

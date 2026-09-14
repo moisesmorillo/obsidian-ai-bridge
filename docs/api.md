@@ -79,7 +79,7 @@ Registered v2 routes support narrow credential-free CORS. Responses use `Access-
 
 `Authorization`, `Content-Type`, `If-Match`, `If-None-Match`, `Bridge-Operation-Id`, `Bridge-Association-Id`, `Bridge-Writer-Id`.
 
-State/recovery item routes advertise GET only, maintenance routes POST only, and the note item route GET/PUT/DELETE. Unknown v2 OPTIONS requests remain bearer-protected. V2 errors also carry the CORS response headers.
+State/recovery item routes advertise GET only, maintenance routes POST only, and the note item route GET/PUT/DELETE. Unknown v2 OPTIONS requests remain bearer-protected. Errors for declared v2 route/method combinations carry the same CORS response headers. Unknown routes, noncanonical static-segment aliases, and undeclared methods (including HEAD) do not.
 
 ## Retained v1 compatibility
 

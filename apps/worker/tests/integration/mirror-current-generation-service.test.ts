@@ -593,7 +593,7 @@ async function confirmedTombstone(
 }
 
 describe("recoverable tombstone and recovery lifecycle", () => {
-  it("keeps the live head when recovery preparation cannot be proven", async () => {
+  it("keeps the live head when malformed recovery prevents duplicate proof", async () => {
     const bucket = new MemoryMirrorBucket();
     const { current } = serviceSet(bucket);
     const live = await confirmedCreate(current, 30, "source");
@@ -602,7 +602,7 @@ describe("recoverable tombstone and recovery lifecycle", () => {
     const result = await current.tombstone(tombstoneRequest(31, live.revision));
 
     expect(result).toEqual({
-      kind: MUTATION_EFFECT_CERTAINTY.definitelyRefused,
+      kind: MUTATION_EFFECT_CERTAINTY.notDispatched,
       stage: TOMBSTONE_WORKFLOW_STAGE_KIND.recoveryPreparation,
     });
     await expect(current.read(PATH)).resolves.toBe("source");

@@ -18,6 +18,10 @@ run = "bunx biome check ."
 description = "Run type-aware Oxlint semantic checks"
 run = "bunx oxlint --type-aware --deny-warnings ."
 
+[tasks.commitlint]
+description = "Validate a Conventional Commit message from standard input"
+run = "bunx commitlint"
+
 [tasks.typecheck]
 description = "Type-check every workspace"
 run = """

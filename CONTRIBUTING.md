@@ -26,8 +26,28 @@ before implementation. Follow the roadmap's completion/transition protocol and
 
 - Create a focused branch from the default branch.
 - Keep pull requests small and explain the reason for the change.
+- Title every pull request with a Conventional Commit using one of: `feat`, `fix`, `docs`, `refactor`, `test`, `build`, `ci`, `chore`, `perf`, or `revert`. Scopes are optional but encouraged, for example `feat(plugin): add mirror state persistence`.
+- `main` receives squash merges only, using the PR title as the resulting commit subject. Update the title if the delivered change's semantic type changes; avoid vague titles such as `update`, `changes`, or milestone names.
+- Mark a genuine breaking change with `!` in the Conventional Commit title (for example, `feat(api)!: retire v1 mutations`). A `BREAKING CHANGE:` footer in the PR body is also preserved in the squash commit.
 - Update architecture or other documentation when a change affects an established boundary.
 - Do not include secrets, real vault content, or generated local artifacts.
+
+## Releases
+
+Release Please runs only after commits land on `main`. It reads the Conventional
+squash commit subject and PR body, tracks this single product from
+`.release-please-manifest.json` at `0.1.0`, updates the root `package.json`
+version, and opens a release PR rather than directly tagging a release. The
+configured default strategy produces `0.1.0 →
+0.1.1` for `fix` and `0.1.x → 0.2.0` for `feat`; a genuine breaking change at a
+pre-1.0 version produces the default major bump (`0.1.x → 1.0.0`).
+
+Before merging this configuration, a maintainer must add the repository Actions
+secret `RELEASE_PLEASE_TOKEN`: a fine-grained token or GitHub App installation token
+with repository **Contents**, **Issues**, and **Pull requests** read/write access.
+The default `GITHUB_TOKEN` cannot trigger the required PR workflows for a
+Release Please-created PR, so it is intentionally not used. Never put that token in
+repository files or logs.
 
 ## Testing and validation
 
@@ -55,12 +75,14 @@ Use explicit, idiomatic TypeScript and modern web APIs where practical. Prefer s
 
 ## Commits
 
-Write concise imperative commit messages, for example:
+Use Conventional Commit messages for branch commits when practical, for example:
 
 ```text
-Add protocol envelope types
+feat(protocol): add mirror envelope types
 ```
 
+The PR title is the required release input; intermediate branch commits are not a
+merge gate and should not require rewriting shared history solely for wording.
 Keep unrelated changes in separate commits when practical.
 
 ## Issues

@@ -55,7 +55,9 @@ New infrastructure requires a concrete need and [ADR](decisions/README.md).
 (PR #7). The plugin supports explicit metadata-only local inspection. M1's independent
 authenticated Worker/R2 API is unchanged; there is no connected mirror, remote
 plugin client or production-readiness claim. M3 is NEXT with an implementation-ready
-**design**, not implemented functionality. This PR changes documentation only.
+design. Slice 0 now qualifies the pinned local conditional-storage runtime and host
+declarations, but implements no mirror,
+v2 API, credentials, state or autosync behavior.
 
 See [current-state evidence](current-state.md), [architecture](architecture.md),
 [implemented API](api.md), [M2 completion](milestones/m2-obsidian-read-only-local-adapter.md#completion-evidence)
@@ -105,7 +107,8 @@ production code. Dependencies include all previous milestones.
 
 ### M3 — Automatic eligible-Markdown remote mirror
 
-**NEXT — implementation-ready design; implementation not started.**
+**NEXT — implementation-ready design; Slice 0 qualification complete, production
+implementation not started.**
 [Specification](milestones/m3-remote-bridge-client-and-publishing.md),
 [approved decisions/evidence](plans/m3-design-decisions.md),
 [sequential test-first plan](plans/m3-remote-bridge-client-and-publishing.md) and
@@ -130,8 +133,11 @@ PR, deploy, or mark M3 complete merely because decisions are resolved.
   v2-only mutations and retirement of **both** unsafe v1 PUT and DELETE. Legacy
   raw objects remain readable but are not silently adopted. Real path schemas and
   runtime/OpenAPI media/empty-body agreement are part of this change.
-- **Safety/qualification:** prove exact race windows and local runtime predicates
-  before automatic mutation; unsupported host primitives fail closed. No abort =
+- **Safety/qualification:** [Slice 0](qualification/m3-slice-0-platform-primitives.md)
+  proves the required conditional predicates in the pinned local workerd runtime
+  and records declaration-only host availability. Exact production race windows
+  and real desktop/mobile host behavior remain unqualified; unsupported host
+  primitives fail closed. No abort =
   rollback assumption, refresh-and-overwrite, body queue or Plugin-instance-only
   lock. Same-runtime owner survives replacement/re-enable; restart uses ledger.
 - **Exit:** detailed A1–A11 checklist, observed automatic full eligible behavior,

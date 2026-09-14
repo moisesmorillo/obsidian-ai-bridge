@@ -1,6 +1,7 @@
 # M3 decisions — automatic eligible-Markdown mirror
 
-**Status: maintainer decisions resolved; implementation design. No M3 code exists.**
+**Status: maintainer decisions resolved; implementation design. Slice 0 adds only
+platform qualification; no M3 production behavior exists.**
 
 This replaces the proposal in PR #8 at `e35bd90`. That proposal drifted from the
 product by coupling mirror scope to per-note consent, making manual publishing
@@ -172,8 +173,9 @@ used shallow temporary clones, not repeated per-file API requests:
   binding reads/writes/deletes strongly consistent; unconditional competing writes
   still last-writer-wins. Caches/custom domains do not replace direct binding CAS.
 - [Historical wildcard issue](https://github.com/cloudflare/workerd/issues/2572),
-  closed: use constructed Headers for absence checks; require pinned local runtime
-  regression tests rather than assume a fake proves platform semantics.
+  closed: use constructed Headers for absence checks. The completed
+  [Slice 0 qualification](../qualification/m3-slice-0-platform-primitives.md) now
+  pins that local runtime regression instead of assuming a fake proves platform semantics.
 
 No real host, iCloud event trace, deployment, bucket or credentials were exercised.
 Tests must not invent a reliable delete-origin flag, exact autosave interval,

@@ -131,9 +131,10 @@ this is not cryptographic protection from a malicious operator.
   its unsafe write/delete handlers by mistake.
 
 Exact deferred/barrier tests must exercise these windows through handlers, core
-and the real R2 adapter, with a controllable storage double; focused local
-Miniflare/workerd tests additionally verify actual wildcard/ETag/null semantics.
-Mocks alone do not prove an upstream platform contract. No deployment is a test.
+and the real R2 adapter, with a controllable storage double. The completed
+[Slice 0 qualification](../qualification/m3-slice-0-platform-primitives.md) verifies
+actual wildcard/ETag/null behavior in pinned local Miniflare/workerd. Mocks alone
+do not prove an upstream platform contract. No deployment is a test.
 
 ## Consequences
 

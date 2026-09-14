@@ -30,6 +30,10 @@ bunx tsc --noEmit -p apps/obsidian-plugin/tests/artifact/tsconfig.json
 description = "Run the fast Vitest test suite"
 run = "bunx vitest run"
 
+[tasks."worker:storage-test"]
+description = "Qualify conditional R2 behavior in the pinned local workerd runtime"
+run = "node node_modules/vitest/vitest.mjs run --config apps/worker/vitest.storage.config.ts"
+
 [tasks.coverage]
 description = "Run Vitest with V8 coverage and enforce thresholds"
 run = "node node_modules/vitest/vitest.mjs run --coverage"
@@ -60,4 +64,4 @@ run = "node apps/worker/node_modules/wrangler/bin/wrangler.js dev --config apps/
 
 [tasks.check]
 description = "Run the complete repository validation pipeline"
-depends = ["biome:check", "lint", "typecheck", "coverage", "build"]
+depends = ["biome:check", "lint", "typecheck", "coverage", "worker:storage-test", "build"]

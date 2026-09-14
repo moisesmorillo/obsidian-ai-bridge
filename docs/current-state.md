@@ -3,8 +3,9 @@
 This snapshot records the completed M2 local-inspection implementation and M1
 foundation. M2 source/tooling through `2e74b23` passed independent semantic review;
 the completion PR records final validation and makes the transition canonical
-when merged. M2 is now merged at `b300726` (PR #7). M3 is planning only, with no
-remote plugin client implemented. Its [accepted design decisions](plans/m3-design-decisions.md)
+when merged. M2 is now merged at `b300726` (PR #7). M3 has completed only
+[Slice 0 platform qualification](qualification/m3-slice-0-platform-primitives.md),
+with no remote plugin client or v2 production behavior implemented. Its [accepted design decisions](plans/m3-design-decisions.md)
 and [sequential plan](plans/m3-remote-bridge-client-and-publishing.md) are documentation,
 not implemented capabilities. The approved product is an automatic whole eligible
 Markdown mirror with recoverable runtime deletion/rename, per-path state and one
@@ -40,7 +41,8 @@ boundaries; [API](api.md) describes the HTTP contract.
 - `.mise.toml` pins Bun **1.4.2** and Node.js **24.21.0**. Bun owns the workspace
   dependency graph and `bun.lock`; `mise run install` installs it frozen.
 - Tasks: `install`, `format`, `biome:check`, `lint`, `typecheck`, `test`, `coverage`,
-  `build`, `worker:build`, `plugin:build`, `plugin:smoke`, `dev`, `check`. Use `mise run <task>`.
+  `worker:storage-test`, `build`, `worker:build`, `plugin:build`, `plugin:smoke`,
+  `dev`, `check`. Use `mise run <task>`.
   `mise install` installs tools, not workspace dependencies. Dev-only
   `@types/node` 24.13.4 supports artifact tests; it adds no plugin runtime module.
 - `check` depends on Biome check (formatting, recommended lint and organize-import
@@ -64,8 +66,10 @@ boundaries; [API](api.md) describes the HTTP contract.
   core service and an in-memory repository. Core and protocol tests live under
   their own `tests/unit/`. Plugin unit tests isolate host/UI behavior; its focused
   integration suite composes commands, core service and official adapter over
-  in-memory files. R2 uses a typed fake; no test exercises live Cloudflare
-  or an installed Obsidian host. These are not E2E tests.
+  in-memory files. Slice 0 additionally runs 6 tests through an ephemeral local
+  Miniflare/workerd R2 binding and compiles official host declaration assertions.
+  No test exercises deployed Cloudflare or an installed Obsidian host. These are
+  not E2E tests.
 - V8 provider `@vitest/coverage-v8` **5.0.0**, run under Node through `coverage`.
   Root `vitest.config.ts` includes `apps/*/src/**/*.ts` and
   `packages/*/src/**/*.ts`, including unimported source; excludes `.d.ts`,
@@ -76,6 +80,10 @@ boundaries; [API](api.md) describes the HTTP contract.
   is statements **96.75%**, branches **93.75%**, functions **95.96%**, lines
   **97.04%**; plugin behavior has 100% across all four. Artifact tests are separate
   from source coverage, run after packaging and never replace behavioral coverage.
+- The Worker declares Miniflare **5.20260908.0-alpha** directly for its storage
+  qualification task, exactly matching Wrangler **4.130.0** and workerd
+  **1.20260908.1**. The task runs under Node and is part of `check`; it uses no
+  persistent emulator storage, account, bucket or token.
 - Worker build uses Node + Wrangler **4.130.0** `deploy --dry-run`; plugin build
   uses Bun browser-target CommonJS with `obsidian` external, stages the manifest
   and runs `plugin:smoke`. `build` does not deploy. `dev` runs the local

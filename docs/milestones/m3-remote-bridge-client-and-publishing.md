@@ -1,6 +1,7 @@
 # M3 — Automatic eligible-Markdown remote mirror
 
-**Status: NEXT — implementation-ready design; no M3 production implementation.**
+**Status: NEXT — implementation-ready design; Slice 0 platform qualification
+complete, with no M3 production implementation.**
 
 The maintainer's clarification replaces the selected-note/manual-publishing proposal
 at `e35bd90`. M2 is COMPLETE at merged `b300726` (PR #7); M3 is the single NEXT
@@ -8,8 +9,10 @@ milestone. Historical filenames remain as stable links, not product terminology.
 [Roadmap](../roadmap.md) owns scope/order; [AGENTS.md](../../AGENTS.md) owns engineering
 rules; [decisions/evidence](../plans/m3-design-decisions.md) and the
 [sequential plan](../plans/m3-remote-bridge-client-and-publishing.md) are companions.
-Implementation readiness means product/design choices are resolved and testable,
-not that host/R2 qualification or future implementation checks have already passed.
+Implementation readiness means product/design choices are resolved and testable.
+The narrow [Slice 0 qualification](../qualification/m3-slice-0-platform-primitives.md)
+now proves the pinned local workerd storage predicates and records declaration-only
+host availability; later implementation and real-host checks have not passed.
 
 ## Objective and authority
 
@@ -506,9 +509,11 @@ forbidden side effects, not just mock method names.
 Canonical `mise install`, `mise run install`, `mise run check` plus focused plan tasks.
 Keep V8 production inclusion (including unimported source) and thresholds:
 lines/statements 95%, functions 94%, branches 90%. Review risk-sensitive coverage.
-Local Miniflare/workerd verifies actual conditional Headers wildcard/ETag/null,
-receipt/tombstone primitives; barrier doubles prove exact interleavings through
-handler→service→R2 adapter. Neither constitutes a deployed Cloudflare test.
+The completed Slice 0 local Miniflare/workerd task verifies actual conditional
+Headers wildcard/ETag/null, distinct revision-bearing validators and stored upload
+timestamps for representative current/recovery keys. Future barrier doubles must
+prove exact interleavings through handler→service→R2 adapter. Neither constitutes
+a deployed Cloudflare test.
 
 Proportional generated CommonJS tests exercise actual bundle modern settings/secret
 reference storage, no Node dependencies, bootstrap/event-driven conditional mutation,

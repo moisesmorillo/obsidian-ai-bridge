@@ -14,7 +14,7 @@ import {
   MARKDOWN_CONTENT_TYPE,
 } from "@worker/http/http.constants";
 
-/** Common cache policy applied to every body-bearing M1 response. */
+/** Common cache policy applied to every body-bearing API response. */
 const COMMON_RESPONSE_HEADERS = {
   [CACHE_CONTROL_HEADER]: CACHE_CONTROL_NO_STORE,
 };
@@ -51,11 +51,20 @@ export function createApiErrorResponseHeaders(code: ApiErrorCode) {
 /**
  * Builds headers for a Markdown note-content response.
  *
- * @returns Cache and Markdown media-type headers.
+ * @param metadata - Optional application ETag and public note-format marker.
+ * @returns Cache, Markdown media-type, and optional generation headers.
  */
-export function createNoteContentResponseHeaders() {
+export function createNoteContentResponseHeaders(
+  metadata: { readonly etag?: string; readonly noteFormat?: string } = {},
+) {
   return {
     ...COMMON_RESPONSE_HEADERS,
     [HTTP_HEADER.contentType]: MARKDOWN_CONTENT_TYPE,
+    ...(metadata.etag === undefined
+      ? {}
+      : { [HTTP_HEADER.etag]: metadata.etag }),
+    ...(metadata.noteFormat === undefined
+      ? {}
+      : { [HTTP_HEADER.noteFormat]: metadata.noteFormat }),
   };
 }

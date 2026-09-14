@@ -90,7 +90,7 @@ function decodeUtf8(bytes: Uint8Array): string | undefined {
  * Reads and validates a raw note request body without trusting Content-Length.
  *
  * @param request - Fetch request whose body may contain raw Markdown or plain text.
- * @returns Valid text or a typed body failure preserving M1 payload semantics.
+ * @returns Valid text or a typed body failure preserving the established payload semantics.
  */
 export async function readNoteBody(request: Request): Promise<NoteBodyResult> {
   const declaredLength = parseDeclaredContentLength(

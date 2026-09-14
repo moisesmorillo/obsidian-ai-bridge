@@ -17,8 +17,8 @@ describe("parseMediaType", () => {
 
 describe("isSupportedNoteContentType", () => {
   it.each([
-    [null, true],
-    ["", true],
+    [null, false],
+    ["", false],
     ["text/markdown", true],
     ["TEXT/MARKDOWN; charset=utf-8", true],
     [" text/plain ; charset=utf-8 ", true],

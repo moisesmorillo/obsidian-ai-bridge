@@ -1,7 +1,7 @@
 # M3 implementation plan — automatic eligible-Markdown mirror
 
-**Status: implementation-ready design; Slice 0 qualification complete, with no M3
-production behavior implemented.** PR #8 remains planning/documentation only. M2
+**Status: Worker Slice 2A–2C implemented; Slice 3 is the next internal M3 work.
+No connected user-visible mirror behavior.** PR #8 remains planning/documentation only. M2
 merged at `b300726` (PR #7); M3 is the single NEXT
 milestone. [Spec](../milestones/m3-remote-bridge-client-and-publishing.md),
 [approved decisions/evidence](m3-design-decisions.md) and accepted design ADRs
@@ -89,6 +89,10 @@ fix/review it rather than silently use old APIs or invent a new product policy.
 
 ## 2. Coherent Worker current-generation and recovery transition
 
+This plan slice is checkpointed as 2A storage/codecs/CAS, 2B application policy,
+and 2C HTTP/OpenAPI/v1 retirement. It is not complete until 2C exposes the compatible
+surface and retires unsafe v1 mutations; intermediate checkpoints are not rollout-safe.
+
 - **Objective/dependency:** deliver safe remote primitives as a coherent change
   before plugin autosync. Inspect app/index/dependency middleware, core vault
   service/port, R2 adapter/codec types, handlers/OpenAPI/auth/error/logging tests.
@@ -122,6 +126,23 @@ fix/review it rather than silently use old APIs or invent a new product policy.
 - **Validation/acceptance:** runtime storage harness, focused suites, coverage,
   build/OpenAPI and canonical check; A4/A6/A9 server. No deployment, migration,
   scheduled cleanup, plugin sync, database or extra storage authority.
+- **Implemented checkpoint evidence:** Slice 2A adds strict format-2 current/recovery
+  codecs and delete-free create/CAS R2 adapters. Slice 2B composes them under core
+  current-generation and recovery services: recognized-absence create, exact live
+  update/tombstone recreation, recovery-first tombstone, tombstone-upload-derived
+  30-day sealing, metadata inspection, prepared/unexpired content retrieval with
+  expiry withholding, bounded lists and sealed-expiry CAS purge to content-free
+  markers. Slice 2C composes those real services/adapters into authenticated public
+  v2 mirror/current/recovery routes, strict conditional/designation/media/body input,
+  exact application ETags/results, method-specific CORS, semantic OpenAPI, separate
+  recovery metadata/content reads, envelope-aware v1 reads and authenticated 410 v1
+  mutation retirement. Focused HTTP/composed tests cover current/recovery flows,
+  parser negatives, no-mutation guards, CORS, v1 compatibility and OpenAPI. No
+  deployment, plugin settings/state/client or autosync is included. Slice 2C local
+  evidence: 31 source files/362 tests at statements 95.79%, branches 92.49%,
+  functions 98.03%, lines 95.94%; the 8-case pinned workerd storage task also passes.
+  Canonical check/build evidence was repeated after corrective semantic review; no
+  account, bucket or deployment was used.
 
 ## 3. Device-local configuration, state owner and handoff model
 

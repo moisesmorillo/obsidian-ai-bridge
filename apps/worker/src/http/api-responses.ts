@@ -20,22 +20,26 @@ import {
 } from "@worker/http/http-response-headers";
 
 /**
- * Creates an uncached JSON response with the stable M1 media type.
+ * Creates an uncached JSON response with the stable API media type.
  *
  * @param context - Typed Worker request context used to serialize the body.
  * @param body - Protocol or transport response body.
  * @param status - Successful HTTP status for the response.
+ * @param etag - Optional strong application ETag emitted when provided.
  * @returns The serialized JSON response.
  */
 export function createJsonResponse<
   Body extends JsonResponseBody,
   Status extends SuccessfulJsonStatus,
->(context: WorkerContext, body: Body, status: Status) {
-  return context.json(body, status, createJsonResponseHeaders());
+>(context: WorkerContext, body: Body, status: Status, etag?: string) {
+  return context.json(body, status, {
+    ...createJsonResponseHeaders(),
+    ...(etag === undefined ? {} : { ETag: etag }),
+  });
 }
 
 /**
- * Maps a stable error code to the public M1 error envelope and status.
+ * Maps a stable error code to the public API error envelope and status.
  *
  * @param code - Protocol error code selected by the transport boundary.
  * @returns A sanitized JSON error response with the mapped status.
@@ -144,15 +148,20 @@ export function createUnsupportedMediaTypeResponse(context: WorkerContext) {
  *
  * @param context - Typed Worker request context used to serialize the response.
  * @param content - Note content returned without adding transport markup.
+ * @param metadata - Optional ETag and note format emitted as response headers.
  * @returns The Markdown content response.
  */
 export function createNoteContentResponse(
   context: WorkerContext,
   content: string,
+  metadata: {
+    readonly etag?: string;
+    readonly noteFormat?: string;
+  } = {},
 ) {
   return context.text(
     content,
     HTTP_STATUS.ok,
-    createNoteContentResponseHeaders(),
+    createNoteContentResponseHeaders(metadata),
   );
 }

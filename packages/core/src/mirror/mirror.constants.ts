@@ -1,12 +1,20 @@
+/** Unanchored canonical UUID-v4 source shared by identity and ETag patterns. */
+const UUID_V4_PATTERN_SOURCE =
+  "[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}";
+
 /** Canonical lowercase UUID-v4 syntax for all M3 opaque identities. */
-export const UUID_V4_PATTERN =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+export const UUID_V4_PATTERN = new RegExp(`^${UUID_V4_PATTERN_SOURCE}$`);
 
 /** Canonical lowercase hexadecimal representation of a SHA-256 content digest. */
 export const CONTENT_SHA_256_PATTERN = /^[0-9a-f]{64}$/;
 
 /** Prefix inside the strong application ETag for an M3 current generation. */
 export const APPLICATION_ETAG_PREFIX = "m3-";
+
+/** Canonical strong application ETag syntax exposed by the M3 HTTP protocol. */
+export const APPLICATION_ETAG_PATTERN = new RegExp(
+  `^"${APPLICATION_ETAG_PREFIX}${UUID_V4_PATTERN_SOURCE}"$`,
+);
 
 /** Closed M3 mutations against a current note generation. */
 export const MUTATION_ACTION = {
@@ -52,6 +60,43 @@ export const MUTATION_EFFECT_CERTAINTY = {
   confirmed: "confirmed",
   unknown: "unknown",
 } as const;
+
+/** Closed stages that locate certainty within the recoverable tombstone workflow. */
+export const TOMBSTONE_WORKFLOW_STAGE_KIND = {
+  current: "current",
+  recoveryPreparation: "recovery-preparation",
+  tombstone: "tombstone",
+  complete: "complete",
+} as const;
+
+/** Closed current-content retrieval outcomes preserving one observed generation. */
+export const CURRENT_CONTENT_RESULT_KIND = {
+  absent: "absent",
+  legacy: "legacy",
+  live: "live",
+  tombstone: "tombstone",
+} as const;
+
+/** Closed recovery-content retrieval outcomes for application callers. */
+export const RECOVERY_CONTENT_RESULT_KIND = {
+  missing: "missing",
+  recoverable: "recoverable",
+  expired: "expired",
+  purged: "purged",
+} as const;
+
+/** Closed semantic outcomes for explicit recovery maintenance transport mapping. */
+export const RECOVERY_MAINTENANCE_RESULT_KIND = {
+  missing: "missing",
+  preconditionFailed: "precondition-failed",
+  conflict: "conflict",
+  notDispatched: MUTATION_EFFECT_CERTAINTY.notDispatched,
+  confirmed: MUTATION_EFFECT_CERTAINTY.confirmed,
+  unknown: MUTATION_EFFECT_CERTAINTY.unknown,
+} as const;
+
+/** Exact 30-day recovery window measured from a confirmed tombstone upload. */
+export const RECOVERY_RETENTION_MILLISECONDS = 30 * 24 * 60 * 60 * 1000;
 
 /** Maximum opaque cursor length accepted by the M3 API. */
 export const MAX_MIRROR_CURSOR_LENGTH = 4096;

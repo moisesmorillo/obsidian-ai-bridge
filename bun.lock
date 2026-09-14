@@ -37,6 +37,7 @@
         "@obsidian-ai-bridge/protocol": "workspace:*",
         "@scalar/hono-api-reference": "^0.12.1",
         "hono": "^4.13.7",
+        "zod": "^4.6.1",
       },
       "devDependencies": {
         "@cloudflare/workers-types": "5.20260910.1",
@@ -52,6 +53,7 @@
       "name": "@obsidian-ai-bridge/protocol",
       "version": "0.1.0",
       "dependencies": {
+        "@obsidian-ai-bridge/core": "workspace:*",
         "zod": "^4.6.1",
       },
     },

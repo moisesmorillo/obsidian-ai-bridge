@@ -39,11 +39,12 @@ decisions, not an invented historical rationale.
 | Record | Status | Scope |
 | --- | --- | --- |
 | [0001 — Worker/R2 foundation and inward boundaries](0001-worker-r2-foundation.md) | Accepted (implemented M1 baseline) | Minimal topology, trust boundary, transport/storage separation and canonical addressing |
-| [0002 — Conditional current-generation remote mutation](0002-conditional-remote-note-mutation.md) | Accepted (M3 design, not implemented) | Fresh envelope revisions/R2 CAS, exact receipts, safe v2 and v1 PUT/DELETE retirement |
-| [0003 — Single-writer mirror association and per-path state](0003-publishing-association-and-local-state.md) | Accepted (M3 design, not implemented) | Whole opt-in, device-local ACK/uncertainty ledger, lifecycle ownership and explicit handoff |
-| [0004 — Recoverable runtime removals and local renames](0004-recoverable-mirror-deletions.md) | Accepted (M3 design, not implemented) | Event deletion authority, separate 30-day recovery, permanent heads/purge markers, destination-first rename |
+| [0002 — Conditional current-generation remote mutation](0002-conditional-remote-note-mutation.md) | Accepted (Worker contract implemented) | Fresh envelope revisions/R2 CAS, exact receipts, safe v2 and v1 PUT/DELETE retirement |
+| [0003 — Single-writer mirror association and per-path state](0003-publishing-association-and-local-state.md) | Accepted (Worker guard implemented; plugin state pending) | Whole opt-in, device-local ACK/uncertainty ledger, lifecycle ownership and explicit handoff |
+| [0004 — Recoverable runtime removals and local renames](0004-recoverable-mirror-deletions.md) | Accepted (Worker recovery implemented; plugin lifecycle pending) | Event deletion authority, separate 30-day recovery, permanent heads/purge markers, destination-first rename |
 
-ADR 0001 records implemented facts. ADRs 0002–0004 record the maintainer-approved
-M3 direction, not completed code or proof of runtime qualification. This unmerged
+ADR 0001 records implemented facts. ADRs 0002–0004 combine the maintainer-approved
+M3 direction with explicit status text identifying the implemented Worker subset and
+remaining plugin work; none claims a connected mirror or deployment. This unmerged
 PR revises its previously Proposed records; it does not silently rewrite an accepted
 merged decision. See the [decision brief](../plans/m3-design-decisions.md).

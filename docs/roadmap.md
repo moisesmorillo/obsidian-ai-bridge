@@ -53,16 +53,19 @@ New infrastructure requires a concrete need and [ADR](decisions/README.md).
 
 **M2 — Obsidian read-only local-vault adapter — COMPLETE**, merged at `b300726`
 (PR #7). The plugin supports explicit metadata-only local inspection. M1's independent
-authenticated Worker/R2 API is unchanged; there is no connected mirror, remote
-plugin client or production-readiness claim. M3 is NEXT with an implementation-ready design. Slice 0 qualifies the pinned local
+authenticated Worker/R2 foundation remains; Worker Slice 2 now adds safe v2 routes
+and retires v1 mutations. There is no connected mirror, remote plugin client or
+production-readiness claim. M3 is NEXT with an implementation-ready design. Slice 0 qualifies the pinned local
 conditional-storage runtime and host declarations. Slice 1 raises the plugin baseline
-to 1.13.0 and adds shared typed contracts, but implements no mirror, v2 API,
-credentials, state owner or autosync behavior.
+to 1.13.0 and adds shared typed contracts. Worker Slice 2A–2C implements private conditional storage, application current/
+recovery transitions, public safe v2 HTTP/OpenAPI/CORS, envelope-aware v1 reads and
+v1 mutation retirement, but no plugin credentials, state owner, remote client or
+autosync behavior.
 
 See [current-state evidence](current-state.md), [architecture](architecture.md),
 [implemented API](api.md), [M2 completion](milestones/m2-obsidian-read-only-local-adapter.md#completion-evidence)
-and [M2 plan](plans/m2-obsidian-read-only-local-adapter.md). Current tests cover
-260 source and 3 artifact cases; no deployed Worker or real Obsidian desktop/mobile
+and [M2 plan](plans/m2-obsidian-read-only-local-adapter.md). Current test counts
+and coverage evidence are recorded in [current-state](current-state.md); no deployed Worker or real Obsidian desktop/mobile
 host was exercised. New M3 test requirements are not existing coverage.
 
 ## Milestone table
@@ -84,9 +87,10 @@ production code. Dependencies include all previous milestones.
 - **Implemented:** Hono HTTP, single-token auth, canonical path validation, 1 MiB
   bound, typed core service/port, R2, Zod/OpenAPI/Scalar, sanitized LogTape, strict
   tools and coverage-enforced dedicated tests.
-- **Non-goals/retained risks:** no plugin sync, conditional writes, recovery or
-  production guarantees; unconditional remote PUT/DELETE, whole-list scaling and
-  runtime/OpenAPI permissiveness remain current limitations, not safe sync semantics.
+- **Historical non-goals/retained risks:** M1 had no plugin sync, conditional writes,
+  recovery or production guarantees. Current Worker Slice 2 retires unconditional v1
+  mutations and adds conditional v2/recovery; plugin sync and production guarantees
+  remain absent.
 - **Exit met:** canonical check, tests, manual semantic review and API/architecture
   documentation accompany the merged foundation. M3 deliberately changes its remote
   mutation contract without rewriting these implemented historical facts.
@@ -108,13 +112,12 @@ production code. Dependencies include all previous milestones.
 
 ### M3 — Automatic eligible-Markdown remote mirror
 
-**NEXT — implementation-ready design; Slice 0 qualification complete, production
-implementation not started.**
+**NEXT — Worker Slice 2 complete; Slice 3 is the next internal M3 work. No user-visible mirror.**
 [Specification](milestones/m3-remote-bridge-client-and-publishing.md),
 [approved decisions/evidence](plans/m3-design-decisions.md),
 [sequential test-first plan](plans/m3-remote-bridge-client-and-publishing.md) and
-accepted-design ADRs 0002–0004 define the behavior. Do not implement in this planning
-PR, deploy, or mark M3 complete merely because decisions are resolved.
+accepted-design ADRs 0002–0004 define the behavior. Do not deploy or mark M3 complete
+merely because the server-side storage and application checkpoints are implemented.
 
 - **Scope:** whole eligible scope/opt-in; modern SecretStorage/settings with M3 host
   minimum 1.13.0; HTTPS/exact loopback; Fetch/CORS; bootstrap and saved Vault events;

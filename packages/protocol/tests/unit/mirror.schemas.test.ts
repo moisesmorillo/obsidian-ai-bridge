@@ -5,12 +5,14 @@ import {
   currentNoteStateSchema,
   mirrorAssociationIdSchema,
   mirrorCursorSchema,
+  mirrorDescriptionSchema,
   mutationAcknowledgementSchema,
   mutationResultSchema,
   notePageSchema,
   operationReceiptSchema,
   recoveryPageSchema,
   recoverySnapshotStateSchema,
+  tombstoneMutationResponseSchema,
   unresolvedMutationIntentSchema,
 } from "@obsidian-ai-bridge/protocol";
 import { describe, expect, it } from "vitest";
@@ -47,6 +49,18 @@ const tombstoneReceipt = {
 };
 
 describe("M3 mirror protocol schemas", () => {
+  it("validates the Worker capability description", () => {
+    expect(
+      mirrorDescriptionSchema.parse({
+        protocol: "obsidian-ai-bridge-mirror-v2",
+        associationId: ASSOCIATION_ID,
+        writerId: WRITER_ID,
+        maxNoteSizeBytes: 1_048_576,
+        maxPageSize: 50,
+        recoveryRetentionSeconds: 2_592_000,
+      }),
+    ).toMatchObject({ protocol: "obsidian-ai-bridge-mirror-v2" });
+  });
   it("validates canonical identities, digests, ETags, and bounded cursors", () => {
     expect(mirrorAssociationIdSchema.parse(ASSOCIATION_ID)).toBe(
       ASSOCIATION_ID,
@@ -289,6 +303,48 @@ describe("M3 mirror protocol schemas", () => {
         precondition: { kind: "matching-revision", revision: PARENT_REVISION },
         mutationAttempts: 4,
         evidenceAttempts: 0,
+      }).success,
+    ).toBe(false);
+  });
+
+  it("validates confirmed tombstone transport results without recovery plaintext", () => {
+    const response = {
+      acknowledgement: {
+        path: "note.md",
+        revision: REVISION,
+        receipt: tombstoneReceipt,
+      },
+      recovery: {
+        kind: "prepared",
+        id: OPERATION_ID,
+        associationId: ASSOCIATION_ID,
+        path: "note.md",
+        revision: RECOVERY_ID,
+        sourceRevision: PARENT_REVISION,
+        contentSha256: SHA_256,
+      },
+      sealing: { kind: "not-dispatched" },
+    };
+    expect(tombstoneMutationResponseSchema.parse(response)).toEqual(response);
+    expect(
+      tombstoneMutationResponseSchema.safeParse({
+        ...response,
+        recovery: { ...response.recovery, content: "private" },
+      }).success,
+    ).toBe(false);
+    expect(
+      tombstoneMutationResponseSchema.safeParse({
+        ...response,
+        acknowledgement: {
+          ...response.acknowledgement,
+          receipt: updateReceipt,
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      tombstoneMutationResponseSchema.safeParse({
+        ...response,
+        recovery: { ...response.recovery, path: "other.md" },
       }).success,
     ).toBe(false);
   });

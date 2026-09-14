@@ -2,10 +2,11 @@
 
 ## Status
 
-**Accepted — maintainer-approved M3 design; not implemented.** Supersedes this
-unmerged PR's per-note/manual/global-interlock proposal. The maintainer approved
-full eligible scope, native SecretStorage, automatic one-way mirroring and one
-explicitly designated writer device. The filename is retained for existing links.
+**Accepted — Worker designation guard implemented in Slice 2C; plugin state/handoff
+remain unimplemented.** Supersedes this unmerged PR's per-note/manual/global-interlock
+proposal. The Worker validates static association/writer UUIDs and guards every v2
+mutation; native SecretStorage, local state ownership, automatic mirroring and handoff
+remain later M3 work. The filename is retained for existing links.
 
 ## Context
 

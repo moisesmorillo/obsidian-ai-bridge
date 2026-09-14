@@ -12,7 +12,7 @@ export function isSupportedNoteContentType(
 ): boolean {
   const mediaType = parseMediaType(contentType);
   if (mediaType === undefined) {
-    return true;
+    return false;
   }
 
   return SUPPORTED_NOTE_MEDIA_TYPES.some(

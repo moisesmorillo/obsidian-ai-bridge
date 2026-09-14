@@ -6,6 +6,8 @@ import {
   createMirrorOperationId,
   createMirrorWriterId,
   createRecoverySnapshotId,
+  formatApplicationEtag,
+  parseApplicationEtag,
 } from "@obsidian-ai-bridge/core";
 import { describe, expect, it } from "vitest";
 
@@ -20,7 +22,12 @@ describe("M3 mirror identifiers", () => {
     expect(createApplicationRevision(UUID_V4)).toBe(UUID_V4);
     expect(createRecoverySnapshotId(UUID_V4)).toBe(UUID_V4);
     expect(createContentSha256(SHA_256)).toBe(SHA_256);
-    expect(createApplicationEtag(`"m3-${UUID_V4}"`)).toBe(`"m3-${UUID_V4}"`);
+    const revision = createApplicationRevision(UUID_V4);
+    if (revision === undefined) throw new Error("Invalid revision fixture");
+    const etag = formatApplicationEtag(revision);
+    expect(etag).toBe(`"m3-${UUID_V4}"`);
+    expect(createApplicationEtag(etag)).toBe(etag);
+    expect(parseApplicationEtag(etag)).toBe(revision);
   });
 
   it("rejects malformed, non-v4, and noncanonical values", () => {
@@ -39,9 +46,15 @@ describe("M3 mirror identifiers", () => {
     ).toBeUndefined();
     expect(createContentSha256(SHA_256.toUpperCase())).toBeUndefined();
     expect(createContentSha256("a3".repeat(31))).toBeUndefined();
-    expect(createApplicationEtag(`W/"m3-${UUID_V4}"`)).toBeUndefined();
-    expect(
-      createApplicationEtag(`"m3-${UUID_V4}", "m3-${UUID_V4}"`),
-    ).toBeUndefined();
+    for (const value of [
+      `W/"m3-${UUID_V4}"`,
+      "*",
+      `"m3-${UUID_V4}", "m3-${UUID_V4}"`,
+      '"m3-not-a-revision"',
+      `"other-${UUID_V4}"`,
+    ]) {
+      expect(createApplicationEtag(value)).toBeUndefined();
+      expect(parseApplicationEtag(value)).toBeUndefined();
+    }
   });
 });

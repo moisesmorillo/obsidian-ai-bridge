@@ -4,11 +4,14 @@ Security and data safety are priorities for this project. The repository is in e
 
 ## Current trust and data-safety boundary
 
-M1 uses one bearer token granting all remote note operations in one R2 namespace.
-PUT can unconditionally replace a note; DELETE immediately removes it without a
-tombstone or application recovery. This is not safe automatic synchronization.
-The Worker/cloud operator can read stored note text; there is no application-level
-end-to-end encryption, per-client permission model or production security claim.
+The Worker uses one bearer token granting all remote note operations in one R2
+namespace. Authenticated v1 PUT and DELETE are retired with storage-free 410
+responses. Worker Slice 2 implements conditional v2 generations, recovery-first
+tombstones, 30-day recovery sealing and conditional purge markers without native
+R2 DELETE or unconditional mutation capability. This server subset is still not a
+connected or production-ready synchronization system. The Worker/cloud operator can
+read stored note text; there is no application-level end-to-end encryption,
+per-client permission model or production security claim.
 
 Keep tokens in ignored local configuration or the Worker secret mechanism, never
 in committed files or diagnostics. Do not log note content, concrete note paths,
@@ -33,11 +36,13 @@ remain sensitive; avoid sharing private result screenshots.
 Use only a [disposable development vault](docs/plugin-development.md) for manual
 installation. Build/host-double checks verify the CommonJS artifact without Node
 runtime dependencies, but no real desktop/mobile host test or production safety
-claim is made. M2 is complete; M3 remains design-only. Its
-[approved decisions](docs/plans/m3-design-decisions.md) do not make the current
-unconditional API safe or imply that any M3 capability is implemented.
+claim is made. M2 is complete. M3 Worker Slice 2 is implemented, but plugin
+credentials, local state ownership, automatic saved-event processing, retries,
+rename handling and writer handoff remain unimplemented. The
+[approved decisions](docs/plans/m3-design-decisions.md) distinguish that server
+subset from the future connected mirror.
 
-## Accepted M3 safety model — not implemented
+## Accepted M3 safety model — partially implemented on the Worker
 
 The user opts into the whole eligible Markdown mirror; there is no per-note
 selection model. Eligibility controls mirror scope, **not API/MCP authorization**.
@@ -53,9 +58,9 @@ or safe multi-process store. HTTPS is default; exact loopback HTTP needs explici
 development opt-in. Fetch denies redirects/cookies, supports abort and bounded
 reads/deadlines; no less-safe requestUrl or old-version fallback.
 
-Fresh server revisions/R2 CAS and retired v1 PUT/DELETE protect updates, removals
-and recreation. A post-bootstrap runtime delete for an already-associated eligible
-path authorizes a recoverable tombstone, including possible iCloud/external activity;
+The implemented Worker uses fresh server revisions/R2 CAS and retired v1 PUT/DELETE
+to protect updates, removals and recreation. The plugin does not use this API yet.
+A post-bootstrap runtime delete for an already-associated eligible path authorizes a recoverable tombstone, including possible iCloud/external activity;
 it does **not** prove human intent. Startup/list/scan absence never authorizes delete.
 Separate recovery content is stored before tombstone, kept for 30 days and survives
 recreation. Failed sealing can over-retain. Expired content is conditionally replaced

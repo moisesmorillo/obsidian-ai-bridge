@@ -1,50 +1,78 @@
 import {
-  isApplicationEtag,
-  isContentSha256,
+  APPLICATION_ETAG_PATTERN,
+  BASE64URL_PATTERN,
+  CONTENT_SHA_256_PATTERN,
+  decodeNotePath,
   isNormalizedNotePath,
-  isUuidV4,
   MAX_MIRROR_CURSOR_LENGTH,
   MAX_MIRROR_PAGE_SIZE,
   MAX_MUTATION_ATTEMPTS,
   MAX_MUTATION_EVIDENCE_ATTEMPTS,
+  MAX_NOTE_SIZE_BYTES,
   MUTATION_ACTION,
+  MUTATION_EFFECT_CERTAINTY,
+  RECOVERY_RETENTION_MILLISECONDS,
+  RECOVERY_SNAPSHOT_STATE_KIND,
+  UUID_V4_PATTERN,
 } from "@obsidian-ai-bridge/core";
+import { MIRROR_PROTOCOL_ID } from "@protocol/protocol.constants";
 import { z } from "zod";
 
 /** Validates a canonical UUID-v4 mirror association identity. */
 export const mirrorAssociationIdSchema = z
   .string()
-  .refine(isUuidV4, "Expected a canonical lowercase UUID-v4 association ID.");
+  .regex(
+    UUID_V4_PATTERN,
+    "Expected a canonical lowercase UUID-v4 association ID.",
+  );
 
 /** Validates a canonical UUID-v4 designated mirror-writer identity. */
 export const mirrorWriterIdSchema = z
   .string()
-  .refine(isUuidV4, "Expected a canonical lowercase UUID-v4 writer ID.");
+  .regex(UUID_V4_PATTERN, "Expected a canonical lowercase UUID-v4 writer ID.");
 
 /** Validates a canonical UUID-v4 idempotency identity for one mirror operation. */
 export const mirrorOperationIdSchema = z
   .string()
-  .refine(isUuidV4, "Expected a canonical lowercase UUID-v4 operation ID.");
+  .regex(
+    UUID_V4_PATTERN,
+    "Expected a canonical lowercase UUID-v4 operation ID.",
+  );
 
 /** Validates a canonical UUID-v4 application current-generation revision. */
 export const applicationRevisionSchema = z
   .string()
-  .refine(isUuidV4, "Expected a canonical lowercase UUID-v4 revision.");
+  .regex(UUID_V4_PATTERN, "Expected a canonical lowercase UUID-v4 revision.");
 
 /** Validates a canonical UUID-v4 recovery snapshot identity. */
 export const recoverySnapshotIdSchema = z
   .string()
-  .refine(isUuidV4, "Expected a canonical lowercase UUID-v4 recovery ID.");
+  .regex(
+    UUID_V4_PATTERN,
+    "Expected a canonical lowercase UUID-v4 recovery ID.",
+  );
 
 /** Validates a canonical lowercase hexadecimal SHA-256 content digest. */
 export const contentSha256Schema = z
   .string()
-  .refine(isContentSha256, "Expected a lowercase hexadecimal SHA-256 digest.");
+  .regex(
+    CONTENT_SHA_256_PATTERN,
+    "Expected a lowercase hexadecimal SHA-256 digest.",
+  );
 
 /** Validates the only strong ETag format accepted for M3 current generations. */
 export const applicationEtagSchema = z
   .string()
-  .refine(isApplicationEtag, "Expected one strong M3 application ETag.");
+  .regex(APPLICATION_ETAG_PATTERN, "Expected one strong M3 application ETag.");
+
+/** Validates a canonical unpadded base64url route identifier for one safe NotePath. */
+export const encodedNotePathSchema = z
+  .string()
+  .regex(BASE64URL_PATTERN, "Expected canonical unpadded base64url syntax.")
+  .refine(
+    (value) => decodeNotePath(value) !== undefined,
+    "Expected a canonical identifier for a normalized Markdown note path.",
+  );
 
 /** Reuses the canonical core NotePath predicate without URI repair or a duplicate rule set. */
 export const notePathSchema = z
@@ -208,27 +236,68 @@ export const unresolvedMutationIntentSchema = z.union([
     .strict(),
 ]);
 
-/** Validated metadata acknowledgment for the current generation actually stored. */
-export const mutationAcknowledgementSchema = z
+/** Absence-only creation acknowledgement returned with HTTP 201. */
+export const createMutationAcknowledgementSchema = z
   .object({
     path: notePathSchema,
     revision: applicationRevisionSchema,
-    receipt: operationReceiptSchema,
+    receipt: createOperationReceiptSchema,
+  })
+  .strict();
+
+/** Matching live-update or tombstone-recreation acknowledgement returned with HTTP 200. */
+export const matchingContentMutationAcknowledgementSchema = z
+  .object({
+    path: notePathSchema,
+    revision: applicationRevisionSchema,
+    receipt: updateOperationReceiptSchema,
   })
   .strict()
-  .superRefine((acknowledgement, context) => {
-    if (
-      acknowledgement.receipt.precondition.kind === "matching-revision" &&
-      acknowledgement.revision === acknowledgement.receipt.precondition.revision
-    ) {
-      context.addIssue({
-        code: "custom",
-        message:
-          "A stored generation revision must be fresh relative to its precondition.",
-        path: ["revision"],
-      });
-    }
-  });
+  .superRefine(validateFreshAcknowledgement);
+
+/** Recoverable tombstone acknowledgement that cannot claim a content action. */
+export const tombstoneMutationAcknowledgementSchema = z
+  .object({
+    path: notePathSchema,
+    revision: applicationRevisionSchema,
+    receipt: tombstoneOperationReceiptSchema,
+  })
+  .strict()
+  .superRefine(validateFreshAcknowledgement);
+
+/** Validated metadata acknowledgement for the exact current generation stored. */
+export const mutationAcknowledgementSchema = z.union([
+  createMutationAcknowledgementSchema,
+  matchingContentMutationAcknowledgementSchema,
+  tombstoneMutationAcknowledgementSchema,
+]);
+
+/**
+ * Rejects a matching mutation that reuses its parent application revision.
+ *
+ * @param acknowledgement - Matching acknowledgement being validated.
+ * @param context - Zod refinement context receiving invariant failures.
+ */
+function validateFreshAcknowledgement(
+  acknowledgement: {
+    readonly revision: string;
+    readonly receipt: {
+      readonly precondition: { readonly revision: string };
+    };
+  },
+  context: z.RefinementCtx,
+): void {
+  if (
+    acknowledgement.revision === acknowledgement.receipt.precondition.revision
+  ) {
+    context.addIssue({
+      code: "custom",
+      message:
+        "A stored generation revision must be fresh relative to its precondition.",
+      path: ["revision"],
+    });
+  }
+}
 
 /** Recognized absence is explicit state, not permission to overwrite an unknown object. */
 const absentCurrentNoteStateSchema = z
@@ -333,22 +402,22 @@ const recoverySnapshotBaseSchema = z
   .strict();
 
 /** Prepared recovery material cannot advertise a deadline before sealing. */
-const preparedRecoverySnapshotStateSchema = recoverySnapshotBaseSchema
-  .extend({ kind: z.literal("prepared") })
+export const preparedRecoverySnapshotStateSchema = recoverySnapshotBaseSchema
+  .extend({ kind: z.literal(RECOVERY_SNAPSHOT_STATE_KIND.prepared) })
   .strict();
 
 /** Sealed recovery material has an immutable RFC 3339 retention deadline. */
-const sealedRecoverySnapshotStateSchema = recoverySnapshotBaseSchema
+export const sealedRecoverySnapshotStateSchema = recoverySnapshotBaseSchema
   .extend({
-    kind: z.literal("sealed"),
+    kind: z.literal(RECOVERY_SNAPSHOT_STATE_KIND.sealed),
     recoverUntil: z.iso.datetime({ offset: true }),
   })
   .strict();
 
 /** Purged recovery material retains only identity/retention metadata, never content. */
-const purgedRecoverySnapshotStateSchema = recoverySnapshotBaseSchema
+export const purgedRecoverySnapshotStateSchema = recoverySnapshotBaseSchema
   .extend({
-    kind: z.literal("purged"),
+    kind: z.literal(RECOVERY_SNAPSHOT_STATE_KIND.purged),
     recoverUntil: z.iso.datetime({ offset: true }),
   })
   .strict();
@@ -407,15 +476,87 @@ export const recoveryPageSchema = z
     }
   });
 
-/** Closed client-observable effect certainty for a conditional note mutation. */
-export const mutationResultSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("not-dispatched") }).strict(),
-  z.object({ kind: z.literal("definitely-refused") }).strict(),
+/** Authenticated Worker capabilities and static cooperating-writer designation. */
+export const mirrorDescriptionSchema = z
+  .object({
+    protocol: z.literal(MIRROR_PROTOCOL_ID),
+    associationId: mirrorAssociationIdSchema,
+    writerId: mirrorWriterIdSchema,
+    maxNoteSizeBytes: z.literal(MAX_NOTE_SIZE_BYTES),
+    maxPageSize: z.literal(MAX_MIRROR_PAGE_SIZE),
+    recoveryRetentionSeconds: z.literal(RECOVERY_RETENTION_MILLISECONDS / 1000),
+  })
+  .strict();
+
+/** Recovery-sealing result returned with a confirmed tombstone acknowledgement. */
+const tombstoneSealingResultSchema = z.discriminatedUnion("kind", [
+  z
+    .object({ kind: z.literal(MUTATION_EFFECT_CERTAINTY.notDispatched) })
+    .strict(),
+  z
+    .object({ kind: z.literal(MUTATION_EFFECT_CERTAINTY.definitelyRefused) })
+    .strict(),
   z
     .object({
-      kind: z.literal("confirmed"),
+      kind: z.literal(MUTATION_EFFECT_CERTAINTY.confirmed),
+      recovery: sealedRecoverySnapshotStateSchema,
+    })
+    .strict(),
+  z.object({ kind: z.literal(MUTATION_EFFECT_CERTAINTY.unknown) }).strict(),
+]);
+
+/** Exact confirmed recoverable-deletion result without recovery plaintext. */
+export const tombstoneMutationResponseSchema = z
+  .object({
+    acknowledgement: tombstoneMutationAcknowledgementSchema,
+    recovery: preparedRecoverySnapshotStateSchema,
+    sealing: tombstoneSealingResultSchema,
+  })
+  .strict()
+  .superRefine((response, context) => {
+    const { acknowledgement, recovery } = response;
+    if (
+      acknowledgement.path !== recovery.path ||
+      acknowledgement.receipt.associationId !== recovery.associationId ||
+      acknowledgement.receipt.operationId !== recovery.id ||
+      acknowledgement.receipt.precondition.revision !== recovery.sourceRevision
+    ) {
+      context.addIssue({
+        code: "custom",
+        message:
+          "A tombstone acknowledgement and prepared recovery must describe one deletion.",
+      });
+    }
+    if (
+      response.sealing.kind === MUTATION_EFFECT_CERTAINTY.confirmed &&
+      (response.sealing.recovery.id !== recovery.id ||
+        response.sealing.recovery.path !== recovery.path ||
+        response.sealing.recovery.associationId !== recovery.associationId ||
+        response.sealing.recovery.sourceRevision !== recovery.sourceRevision ||
+        response.sealing.recovery.contentSha256 !== recovery.contentSha256)
+    ) {
+      context.addIssue({
+        code: "custom",
+        message:
+          "Confirmed sealing metadata must identify the prepared deletion recovery.",
+        path: ["sealing"],
+      });
+    }
+  });
+
+/** Closed client-observable effect certainty for a conditional note mutation. */
+export const mutationResultSchema = z.discriminatedUnion("kind", [
+  z
+    .object({ kind: z.literal(MUTATION_EFFECT_CERTAINTY.notDispatched) })
+    .strict(),
+  z
+    .object({ kind: z.literal(MUTATION_EFFECT_CERTAINTY.definitelyRefused) })
+    .strict(),
+  z
+    .object({
+      kind: z.literal(MUTATION_EFFECT_CERTAINTY.confirmed),
       acknowledgement: mutationAcknowledgementSchema,
     })
     .strict(),
-  z.object({ kind: z.literal("unknown") }).strict(),
+  z.object({ kind: z.literal(MUTATION_EFFECT_CERTAINTY.unknown) }).strict(),
 ]);

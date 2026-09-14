@@ -1,7 +1,7 @@
 # M3 — Automatic eligible-Markdown remote mirror
 
-**Status: NEXT — Slice 0 platform qualification and Slice 1 modern baseline/shared
-typed contracts complete; no M3 production mirror implementation.**
+**Status: NEXT — Worker Slice 2A–2C implemented; Slice 3 is next. No connected
+user-visible M3 mirror.**
 
 The maintainer's clarification replaces the selected-note/manual-publishing proposal
 at `e35bd90`. M2 is COMPLETE at merged `b300726` (PR #7); M3 is the single NEXT
@@ -13,7 +13,9 @@ Implementation readiness means product/design choices are resolved and testable.
 The narrow [Slice 0 qualification](../qualification/m3-slice-0-platform-primitives.md)
 proves the pinned local workerd storage predicates and records declaration-only host
 availability. Slice 1 raises the plugin minimum to 1.13.0 and provides typed core/
-protocol contracts only; later implementation and real-host checks have not passed.
+protocol contracts. Worker Slice 2A–2C adds private conditional-storage adapters, tested application
+current/recovery transitions, and authenticated v2 HTTP/OpenAPI/CORS with v1 mutation
+retirement. Plugin configuration/state/client/autosync and real-host checks have not passed.
 
 ## Objective and authority
 
@@ -39,7 +41,8 @@ D1-D full eligible scope, D2 SecretStorage/modern baseline, D3 HTTPS/exact loopb
 D4 revision-envelope CAS and D6 Fetch are approved. The maintainer additionally
 approved runtime deletion authority (including possible iCloud/external activity),
 30-day recovery and one designated writer. No material product choice remains.
-Accepted ADRs describe **design, not implemented code**:
+Accepted ADRs describe the complete design; Worker Slice 2A–2C is implemented,
+while plugin/state/autosync work remains:
 
 - [0002](../decisions/0002-conditional-remote-note-mutation.md): conditional current
   generations, receipts, v2 and retirement of unsafe v1 PUT/DELETE.
@@ -378,7 +381,8 @@ server computes content hashes and new revisions. The strong ETag is
 | PUT /api/v2/notes/:path | Absent create or matching live update/tombstone recreation; 201 or 200 JSON ACK with exact path/revision/receipt and ETag |
 | DELETE /api/v2/notes/:path | Matching live generation only; empty body; 200 JSON tombstone ACK and recovery status, 412 on stale/wrong/missing state; no hard delete |
 | GET /api/v2/recovery?cursor=… | Bounded metadata pages, including unsealed/expired/purged status; not proof every prepared copy became an authoritative deletion |
-| GET /api/v2/recovery/:id | Validated metadata + text for unsealed/unexpired snapshot; 410 after sealed expiry/purge; 404 unknown; no local restoration |
+| GET /api/v2/recovery/:id | Validated metadata only for prepared/sealed/purged recovery; 404 unknown; no local restoration |
+| GET /api/v2/recovery/:id/content | Text for prepared/unexpired sealed recovery; 410 after sealed expiry/purge; 404 unknown |
 | POST /api/v2/recovery/:id/seal | Explicit maintenance of an unsealed snapshot, matching recovery revision; verify the still-current matching tombstone's uploaded time, then CAS seal; 200, or 409 if proof is unavailable, 412 stale |
 | POST /api/v2/recovery/:id/purge | Explicit maintenance; matching recovery revision and expiry required; CAS to content-free marker; 200 ACK or 412/409 refusal; already-purged identity idempotent |
 | V1 PUT and DELETE on upgraded Worker | Authenticated 410 mutation_api_retired; no body/storage mutation |

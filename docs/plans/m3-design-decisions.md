@@ -1,7 +1,7 @@
 # M3 decisions — automatic eligible-Markdown mirror
 
-**Status: maintainer decisions resolved; implementation design. Slice 0 adds only
-platform qualification; no M3 production behavior exists.**
+**Status: maintainer decisions resolved; Worker Slice 2A–2C implemented. Public v2
+server routes exist, but no connected user-visible M3 mirror exists.**
 
 This replaces the proposal in PR #8 at `e35bd90`. That proposal drifted from the
 product by coupling mirror scope to per-note consent, making manual publishing
@@ -26,7 +26,10 @@ selected or implemented. No new exclusion feature is needed in M3.
 
 ## Decision record
 
-“Accepted” means maintainer-approved design, not production implementation.
+“Accepted” means maintainer-approved design, not necessarily complete production
+implementation. Slice 2A–2C now realizes private storage/application transitions and
+the public authenticated v2 transport with v1 mutation retirement; plugin, state-owner
+and autosync work remains.
 Engineering defaults below are bounded implementation choices, not new product
 permissions. The [spec](../milestones/m3-remote-bridge-client-and-publishing.md),
 [plan](m3-remote-bridge-client-and-publishing.md) and ADRs are normative together.
@@ -148,9 +151,9 @@ used shallow temporary clones, not repeated per-file API requests:
   No deleteSecret API is declared; disconnect does not delete a shared host secret.
 - [Settings guide](https://docs.obsidian.md/Plugins/User+interface/Settings): modern
   declarative settings require 1.13.0. Installed official types mark display()
-  deprecated. Use the modern API without a legacy fallback. The current M2 manifest
-  remains 1.5.0 **until implementation slice 1 changes manifest and artifact tests**;
-  this docs-only PR does not mislabel that artifact as an M3 client.
+  deprecated. Use the modern API without a legacy fallback. The pre-Slice-1 M2
+  artifact used 1.5.0; Slice 1 raised the current manifest and artifact tests to
+  1.13.0 without adding an M3 client.
 - [Mobile guide](https://docs.obsidian.md/Plugins/Getting+started/Mobile+development):
   Node/Electron APIs unavailable on mobile. Public docs do not certify Fetch/abort/
   streaming/CORS behavior across every desktop/mobile WebView. Required primitives

@@ -259,17 +259,21 @@ export interface ConditionalCreateRequest {
   readonly content: string;
 }
 
-/** Matching-revision content mutation request for an existing live or tombstone state. */
+/** Matching-revision content mutation request for an existing live generation. */
 export interface ConditionalUpdateRequest {
-  readonly action:
-    | typeof MUTATION_ACTION.update
-    | typeof MUTATION_ACTION.recreate;
+  readonly action: typeof MUTATION_ACTION.update;
   readonly associationId: MirrorAssociationId;
   readonly writerId: MirrorWriterId;
   readonly operationId: MirrorOperationId;
   readonly path: NotePath;
   readonly precondition: MatchingRevisionPrecondition;
   readonly content: string;
+}
+
+/** Matching-revision content mutation request for an existing tombstone generation. */
+export interface ConditionalRecreateRequest
+  extends Omit<ConditionalUpdateRequest, "action"> {
+  readonly action: typeof MUTATION_ACTION.recreate;
 }
 
 /** Matching-revision recoverable deletion request with no local body copy. */
@@ -286,6 +290,7 @@ export interface ConditionalTombstoneRequest {
 export type ConditionalMutationRequest =
   | ConditionalCreateRequest
   | ConditionalUpdateRequest
+  | ConditionalRecreateRequest
   | ConditionalTombstoneRequest;
 
 /** Request to prepare immutable recovery material before tombstoning its source generation. */
@@ -300,16 +305,13 @@ export interface RecoveryPreparationRequest {
   readonly content: string;
 }
 
-/** Conditional request to seal a prepared recovery snapshot using proven tombstone evidence. */
+/** Application request to seal a prepared snapshot from proven current tombstone evidence. */
 export interface RecoverySealRequest {
   readonly id: RecoverySnapshotId;
   readonly associationId: MirrorAssociationId;
   readonly writerId: MirrorWriterId;
   readonly operationId: MirrorOperationId;
   readonly expectedRevision: ApplicationRevision;
-  readonly tombstoneRevision: ApplicationRevision;
-  /** RFC 3339 instant derived from the stored tombstone upload time. */
-  readonly recoverUntil: string;
 }
 
 /** Conditional request to replace expired sealed recovery content with a retained marker. */

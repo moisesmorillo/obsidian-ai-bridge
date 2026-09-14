@@ -273,6 +273,53 @@ describe.each([
 );
 
 describe("workerd R2 current-generation evidence", () => {
+  it("linearizes two concurrently dispatched create-only writes so exactly one wins", async () => {
+    const key = "vault/concurrent-create.md";
+    const candidates = [
+      revisionEnvelope(FIRST_REVISION),
+      revisionEnvelope(SECOND_REVISION),
+    ];
+
+    const responses = await Promise.all(
+      candidates.map((body) => create(key, body)),
+    );
+    const storedBody = await (await get(key)).text();
+
+    expect(
+      responses
+        .map((response) => response.status)
+        .sort((left, right) => left - right),
+    ).toEqual([200, 412]);
+    expect(candidates).toContain(storedBody);
+  });
+
+  it("linearizes two CAS attempts from the same observation and preserves the winner", async () => {
+    const key = "vault/concurrent-cas.md";
+    const initialResponse = await create(key, revisionEnvelope(FIRST_REVISION));
+    const initial = storedMetadata(initialResponse);
+    const candidates = [
+      revisionEnvelope(SECOND_REVISION),
+      JSON.stringify({
+        format: 2,
+        kind: "tombstone",
+        revision: "33333333-3333-4333-8333-333333333333",
+      }),
+    ];
+
+    const responses = await Promise.all(
+      candidates.map((body) => compareAndSwap(key, body, initial.etag)),
+    );
+    const storedResponse = await get(key);
+
+    expect(
+      responses
+        .map((response) => response.status)
+        .sort((left, right) => left - right),
+    ).toEqual([200, 412]);
+    expect(candidates).toContain(await storedResponse.text());
+    expect(storedMetadata(storedResponse).etag).not.toBe(initial.etag);
+  });
+
   it("changes the storage generation and validator for same note text with a fresh embedded revision", async () => {
     const key = "vault/same-text.md";
     const firstResponse = await create(key, revisionEnvelope(FIRST_REVISION));

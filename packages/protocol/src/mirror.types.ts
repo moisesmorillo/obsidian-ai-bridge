@@ -7,6 +7,7 @@ import type {
   currentNoteStateSchema,
   mirrorAssociationIdSchema,
   mirrorCursorSchema,
+  mirrorDescriptionSchema,
   mirrorOperationIdSchema,
   mirrorWriterIdSchema,
   mutationAcknowledgementSchema,
@@ -17,6 +18,7 @@ import type {
   recoveryPageSchema,
   recoverySnapshotIdSchema,
   recoverySnapshotStateSchema,
+  tombstoneMutationResponseSchema,
   unresolvedMutationIntentSchema,
 } from "@protocol/mirror.schemas";
 import type { z } from "zod";
@@ -44,6 +46,9 @@ export type NotePathDto = z.infer<typeof notePathSchema>;
 
 /** Wire representation of a bounded opaque page cursor. */
 export type MirrorCursorDto = z.infer<typeof mirrorCursorSchema>;
+
+/** Wire representation of the authenticated Worker mirror capability description. */
+export type MirrorDescriptionDto = z.infer<typeof mirrorDescriptionSchema>;
 
 /** Wire representation of a closed conditional mutation requirement. */
 export type ConditionalMutationPreconditionDto = z.infer<
@@ -83,6 +88,11 @@ export type RecoveryPageDto = z.infer<typeof recoveryPageSchema>;
 /** Wire representation of a content-free unresolved per-path M3 intent. */
 export type UnresolvedMutationIntentDto = z.infer<
   typeof unresolvedMutationIntentSchema
+>;
+
+/** Wire representation of a confirmed recoverable tombstone transition. */
+export type TombstoneMutationResponseDto = z.infer<
+  typeof tombstoneMutationResponseSchema
 >;
 
 /** Wire representation of closed mutation effect certainty. */

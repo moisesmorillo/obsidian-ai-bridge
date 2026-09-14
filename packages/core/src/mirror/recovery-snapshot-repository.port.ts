@@ -1,28 +1,38 @@
 import type {
-  RecoveryMutationResult,
-  RecoveryPreparationRequest,
-  RecoveryPurgeRequest,
-  RecoverySealRequest,
+  MutationEffectResult,
   RecoverySnapshotId,
-  RecoverySnapshotState,
 } from "@core/mirror/mirror.types";
+import type {
+  ObservedPreparedRecoveryGeneration,
+  PreparedRecoveryGenerationCandidate,
+  RecoveryGenerationObservation,
+  RecoveryGenerationObservationPage,
+} from "@core/mirror/mirror-storage.types";
 
 /**
- * Storage-agnostic recovery capability separate from current-note mutation.
+ * Storage-agnostic recovery capability separate from current-note mutation policy.
  *
- * Implementations preserve prepared material on uncertain or refused transitions;
- * they never use physical deletion as a recovery-state transition.
+ * Implementations expose create-only preparation and generation-bound CAS; native
+ * deletion and unconditional replacement are intentionally unrepresentable.
  */
 export interface RecoverySnapshotRepository {
-  /** @returns Validated recovery metadata, or `null` only when its identity is absent. */
-  read(id: RecoverySnapshotId): Promise<RecoverySnapshotState | null>;
+  /** @returns Exact validated recovery data, or `null` only when its key is absent. */
+  read(id: RecoverySnapshotId): Promise<RecoveryGenerationObservation | null>;
 
-  /** Prepares recovery material before the corresponding current head is tombstoned. */
-  prepare(request: RecoveryPreparationRequest): Promise<RecoveryMutationResult>;
+  /**
+   * Creates prepared recovery material only when its exact identity is absent.
+   *
+   * @returns The exact prepared generation and its CAS capability on confirmation.
+   */
+  create(
+    candidate: PreparedRecoveryGenerationCandidate,
+  ): Promise<MutationEffectResult<ObservedPreparedRecoveryGeneration>>;
 
-  /** Seals a prepared snapshot only with the supplied matching recovery generation. */
-  seal(request: RecoverySealRequest): Promise<RecoveryMutationResult>;
-
-  /** Replaces only an eligible expired recovery body with its retained purged marker. */
-  purge(request: RecoveryPurgeRequest): Promise<RecoveryMutationResult>;
+  /**
+   * Scans one bounded page of recovery objects and strips plaintext from metadata.
+   *
+   * @param cursor - Opaque storage continuation supplied by a previous page.
+   * @returns Validated recovery metadata and optional continuation.
+   */
+  list(cursor?: string): Promise<RecoveryGenerationObservationPage>;
 }

@@ -1,15 +1,15 @@
 import type { ApiErrorCode } from "@obsidian-ai-bridge/protocol";
 import type { HTTP_STATUS } from "@worker/http/http.constants";
 
-/** HTTP status codes used by the M1 transport. */
+/** HTTP status codes used by the Worker transport. */
 export type HttpStatus = (typeof HTTP_STATUS)[keyof typeof HTTP_STATUS];
 
-/** Successful M1 statuses that serialize a JSON response body. */
+/** Successful Worker statuses that serialize a JSON response body. */
 export type SuccessfulJsonStatus =
   | (typeof HTTP_STATUS)["ok"]
   | (typeof HTTP_STATUS)["created"];
 
-/** HTTP statuses used for public M1 API error envelopes. */
+/** HTTP statuses used for public API error envelopes. */
 export type ApiErrorStatus = Exclude<
   HttpStatus,
   SuccessfulJsonStatus | (typeof HTTP_STATUS)["noContent"]

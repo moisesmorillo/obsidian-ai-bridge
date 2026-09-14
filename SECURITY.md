@@ -26,8 +26,9 @@ explicit host/developer actions, not product writes.
 Saved reads check size before access, actual UTF-8 length after access, and
 identity/path/size/mtime changes around the await. This is not an atomic snapshot:
 same-size edits with indistinguishable timestamps can evade detection. Unload
-suppresses late results but cannot cancel host reads. Paths shown in deliberate
-local UI remain sensitive; avoid sharing private result screenshots.
+suppresses late results but cannot cancel host reads; re-enabled commands remain
+excluded until that pending operation settles. Paths shown in deliberate local UI
+remain sensitive; avoid sharing private result screenshots.
 
 Use only a [disposable development vault](docs/plugin-development.md) for manual
 installation. Build/host-double checks verify the CommonJS artifact without Node

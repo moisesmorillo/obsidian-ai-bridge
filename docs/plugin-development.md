@@ -35,7 +35,7 @@ Vitest smoke suite reads the actual generated files and evaluates `main.js` in
 an isolated CommonJS realm with only `obsidian` module resolution and standard
 web `TextEncoder`, not Node globals. It verifies manifest identity/staging,
 external imports, the default class, both commands, inert enabling, saved-file
-inspection, unload/re-enable and suppression of late results. This build-boundary
+inspection, cross-enable serialization and suppression of late results. This build-boundary
 suite is separate from the source tests/coverage and imports no source entry.
 Its strictly typed test harness uses Node's built-in filesystem/VM APIs with a
 dev-only `@types/node` 24 dependency (locked at 24.13.4), matching the pinned Node
@@ -88,7 +88,8 @@ notes. These are manual developer actions, never tasks performed by the plugin.
    fail safely and unexpected failures have generic retry notices. Retry is manual.
    Disable AI Bridge while a result modal is open: owned modals/notices close and
    commands disappear. An in-flight host read cannot be cancelled, but its late
-   result must not produce UI. Re-enable to register one fresh pair of commands.
+   result must not produce UI. Re-enable to register one fresh pair of commands;
+   if prior host work is still pending, they report busy until it settles.
 
 No Worker needs to be running, and offline use has identical behavior. Paths are
 sensitive metadata displayed only by deliberate local commands; do not share

@@ -87,9 +87,11 @@ and idempotent. Neither operation supplies sync conflict protection or recovery.
 
 `AiBridgePlugin` is a default-exported `Plugin` subclass. Enabling composes the
 local service/adapter and registers two host-owned palette commands, with no scan,
-read, network or persistence. Both commands share an ephemeral busy state; unload
-invalidates in-flight UI and closes owned modals/notices. Host reads are not
-cancellable. Results show metadata as text, never note content or raw exceptions.
+read, network or persistence. A plugin-instance in-flight exclusion serializes both
+commands across unload/re-enable until the active operation settles. Enable-lifetime
+session identity suppresses stale UI, and unload closes owned modals/notices without
+claiming that host reads are cancellable. Results show metadata as text, never note
+content or raw exceptions.
 
 ```text
 Plugin commands / metadata-only modal and notices

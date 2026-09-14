@@ -12,6 +12,8 @@ import { Plugin } from "obsidian";
 /** Local-only composition and command lifecycle; enabling performs no inspection or persistence. */
 export default class AiBridgePlugin extends Plugin {
   private session: InspectionSession | undefined;
+  /** Excludes overlapping work for this plugin instance, across enable lifetimes. */
+  private inspectionInFlight = false;
 
   /** Composes read-only capabilities and registers exactly two host-owned palette commands. */
   override onload(): void {
@@ -21,7 +23,6 @@ export default class AiBridgePlugin extends Plugin {
     this.session = {
       inspector: new LocalInspectionService(vault, vault.policy),
       ui: new LocalInspectionUi(this.app),
-      busy: false,
     };
     this.addCommand({
       ...InspectionCommand.list,
@@ -44,7 +45,7 @@ export default class AiBridgePlugin extends Plugin {
     });
   }
 
-  /** Invalidates in-flight UI and releases owned state; the host disposes addCommand registrations. */
+  /** Invalidates enable-lifetime UI/state; the host disposes addCommand registrations. */
   override onunload(): void {
     const session = this.session;
     this.session = undefined;
@@ -52,7 +53,7 @@ export default class AiBridgePlugin extends Plugin {
   }
 
   /**
-   * Serializes both commands and suppresses results from an unloaded enable lifetime.
+   * Serializes plugin-instance work across enable lifetimes while suppressing stale UI.
    * The operation runs synchronously up to its first await, capturing active identity
    * at invocation rather than looking up the active pane after the saved-file read.
    *
@@ -65,18 +66,18 @@ export default class AiBridgePlugin extends Plugin {
   ): Promise<void> {
     const session = this.session;
     if (session === undefined) return;
-    if (session.busy) {
+    if (this.inspectionInFlight) {
       session.ui.showBusy();
       return;
     }
-    session.busy = true;
+    this.inspectionInFlight = true;
     try {
       const result = await operation(session.inspector);
       if (this.session === session) present(session.ui, result);
     } catch {
       if (this.session === session) session.ui.showUnavailable();
     } finally {
-      session.busy = false;
+      this.inspectionInFlight = false;
     }
   }
 }

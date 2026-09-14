@@ -65,10 +65,12 @@ pane while awaiting a read must not redirect the operation to the new file.
 The read targets the **saved vault file**, not an editor buffer; tell the user to
 save and retry if they need unsaved changes included. Do not force-save editors.
 
-Permit only one inspection at a time; another invocation reports busy rather than
-starting overlapping work. Release that state on every outcome. On unload, stop
-new work and suppress late UI results from in-flight work; do not promise that a
-host read is cancellable when it is not. Host-managed registrations must not leak.
+Permit only one inspection at a time for a plugin instance, including across
+unload/re-enable while prior host work remains pending. Another invocation in the
+current enable lifetime reports busy rather than starting overlapping work. Release
+the operation exclusion only when that operation settles. On unload, release the
+presentation session and suppress late UI results without claiming that a host read
+is cancellable. Host-managed registrations must not leak.
 
 ## Architecture
 
@@ -218,7 +220,7 @@ neither. Worker single-token limitations do not apply to a local-only command.
 | Missing/renamed/changed file during operation | Fail safely with missing/changed outcome as observed; do not retarget or silently retry |
 | Host read/enumeration rejects unexpectedly | Sanitized unavailable/runtime result; no raw exception, no empty-success masquerade |
 | Another command is running | Busy feedback, no overlapping read/list operation |
-| Plugin unload during an await | Discard result, suppress late UI, release ephemeral state |
+| Plugin unload during an await | Discard result and release presentation state; retain operation exclusion until host work settles |
 
 Network unavailable, Worker unavailable, remote authentication failure and malformed
 HTTP responses are deliberately **not applicable**: there is no network code to
@@ -329,19 +331,20 @@ Vitest discovery and verify new tests actually execute through mise tasks.
   `mise run typecheck`, `mise run lint`, `mise run biome:check`, `mise run build`,
   `mise run plugin:smoke` and `mise run check` passed. Source tests: **21 files /
   250 tests**; generated artifact: **1 file / 3 tests**. Global coverage:
-  statements **96.74%**, branches **93.75%**, functions **95.96%**, lines **97.04%**;
+  statements **96.75%**, branches **93.75%**, functions **95.96%**, lines **97.04%**;
   new M2 behavior is 100% across all four. Thresholds/source inclusion are unchanged.
 - The packaged browser/CommonJS entry exposes `module.exports.default` and requires
   only `obsidian`; its unchanged manifest is staged alongside it. The artifact
   suite loads these generated files, not the source entry. Official minimum-API
   and export-shape evidence plus disposable-vault instructions are in
   [plugin development](../plugin-development.md).
-- After passing checks, independent read-only semantic/security review of
-  `635d24a..2e74b23` found no defects (verdict: OK with verification-limit notes).
-  Parent review agreed on responsibilities, inward dependencies, strong types,
-  non-deprecated APIs, useful TSDoc, shared policy/semantic values, bounded control
-  flow, privacy, race checks, absence of mutation/network/persistence, lifecycle
-  and artifact tests. No concrete review findings were deferred.
+- After passing checks, the initial independent read-only semantic/security review
+  of `635d24a..2e74b23` reported no defects. A later fresh review of the current PR
+  head found that the enable-lifetime busy flag allowed a second operation after
+  unload/re-enable while a non-cancellable read remained pending. The correction
+  keeps operation exclusion on the plugin instance until settlement while retaining
+  enable-lifetime identity for UI suppression; source and generated-artifact
+  regression coverage exercises the corrected lifecycle.
 - Compiler, type-aware lint, Biome formatting/lint/assists and production-only
   plugin typechecking are clean. The unchanged manifest was inspected against
   the configured editor JSON schema. No separate editor session or real Obsidian

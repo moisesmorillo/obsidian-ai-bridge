@@ -227,13 +227,17 @@ describe("AiBridgePlugin commands and lifecycle", () => {
   });
 
   it.each([false, true])(
-    "suppresses late list completion (reject=%s), ignores stale callbacks and allows re-enable",
+    "serializes across re-enable and suppresses stale list completion (reject=%s)",
     async (reject) => {
       const pending = Promise.withResolvers<LocalListResult>();
       const list = vi
         .spyOn(LocalInspectionService.prototype, "list")
         .mockReturnValueOnce(pending.promise)
         .mockResolvedValue(emptyList);
+      const read = vi.spyOn(
+        LocalInspectionService.prototype,
+        "inspectActivePath",
+      );
       const plugin = loadPlugin();
       const retained = command("inspect-local-notes");
       const task = retained();
@@ -242,14 +246,22 @@ describe("AiBridgePlugin commands and lifecycle", () => {
       expect(list).toHaveBeenCalledTimes(1);
       expect(host.commands.size).toBe(0);
       plugin.load();
+      await command("inspect-active-note")();
+      const currentNotice = host.notices.at(-1);
+      const readCallsBeforeSettle = read.mock.calls.length;
       if (reject) pending.reject(new Error("PRIVATE BODY secret/path.md"));
       else pending.resolve(emptyList);
       await task;
-      expect(host.notices).toEqual([]);
+      expect(list).toHaveBeenCalledTimes(1);
+      expect(readCallsBeforeSettle).toBe(0);
+      expect(currentNotice?.message).toBe("An inspection is already running.");
+      expect(host.notices).toEqual([currentNotice]);
       expect(host.modals.size).toBe(0);
       await command("inspect-local-notes")();
+      expect(list).toHaveBeenCalledTimes(2);
       expect(host.modals.size).toBe(1);
       plugin.unload();
+      expect(currentNotice?.hidden).toBe(true);
     },
   );
 

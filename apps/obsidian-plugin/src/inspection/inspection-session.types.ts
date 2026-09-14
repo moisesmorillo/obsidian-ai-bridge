@@ -5,6 +5,4 @@ import type { LocalInspectionUi } from "@obsidian-plugin/inspection/local-inspec
 export interface InspectionSession {
   readonly inspector: LocalInspector;
   readonly ui: LocalInspectionUi;
-  /** Shared by both commands, never a domain failure or persistent state. */
-  busy: boolean;
 }

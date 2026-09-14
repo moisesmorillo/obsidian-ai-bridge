@@ -26,8 +26,9 @@ with maintainer authorization before production changes.
   evidence. Capture primitive path/mtime/size values before awaiting, then compare
   exact object identity and fresh lookup/stat values afterward. Observed changes
   fail safely; this is not an atomic snapshot or a write revision.
-- Commands capture the active path at invocation, serialize work with an ephemeral
-  busy state, and suppress results after unload. Render only metadata as text.
+- Commands capture the active path at invocation. Plugin-instance in-flight state
+  serializes work across unload/re-enable until settlement; enable-lifetime session
+  identity suppresses stale presentation. Render only metadata as text.
 - Use official compatible Obsidian APIs and a small strongly typed host fake.
   Do not introduce a UI framework or a runtime dependency to simplify tests.
 

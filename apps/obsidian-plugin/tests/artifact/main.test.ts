@@ -143,7 +143,7 @@ describe("packaged Obsidian main.js", () => {
     expect(obsidian.host.commands.size).toBe(0);
   });
 
-  it("suppresses late UI from an in-flight bundled command after unload", async () => {
+  it("serializes a pending read across unload and re-enable without stale UI", async () => {
     const plugin = loadArtifact();
     const file = new TFile();
     file.path = "active.md";
@@ -155,11 +155,25 @@ describe("packaged Obsidian main.js", () => {
     const inspect = command("ai-bridge:inspect-active-note");
     const work = inspect();
     plugin.unload();
+    await inspect();
+    plugin.load();
+    await command("ai-bridge:inspect-local-notes")();
+    const currentNotice = obsidian.host.notices.at(-1);
+    const listCallsBeforeSettle =
+      obsidian.host.vault.getFiles.mock.calls.length;
+    const modalCountBeforeSettle = obsidian.host.modals.size;
     pending.resolve("");
     await work;
-    await inspect();
-    expect(obsidian.host.notices).toEqual([]);
-    expect(obsidian.host.commands.size).toBe(0);
     expect(obsidian.host.vault.read).toHaveBeenCalledTimes(1);
+    expect(listCallsBeforeSettle).toBe(0);
+    expect(modalCountBeforeSettle).toBe(0);
+    expect(currentNotice?.message).toBe("An inspection is already running.");
+    expect(obsidian.host.notices).toEqual([currentNotice]);
+    expect(obsidian.host.modals.size).toBe(0);
+    await command("ai-bridge:inspect-local-notes")();
+    expect(obsidian.host.vault.getFiles).toHaveBeenCalledTimes(1);
+    expect(obsidian.host.modals.size).toBe(1);
+    plugin.unload();
+    expect(currentNotice?.hidden).toBe(true);
   });
 });

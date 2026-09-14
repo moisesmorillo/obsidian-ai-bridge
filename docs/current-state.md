@@ -3,7 +3,10 @@
 This snapshot records the completed M2 local-inspection implementation and M1
 foundation. M2 source/tooling through `2e74b23` passed independent semantic review;
 the completion PR records final validation and makes the transition canonical
-when merged. M3 is planning only, with no remote plugin client implemented.
+when merged. M2 is now merged at `b300726` (PR #7). M3 is planning only, with no
+remote plugin client implemented. Its [design proposal and approval gates](plans/m3-design-decisions.md)
+and [sequential plan](plans/m3-remote-bridge-client-and-publishing.md) are documentation,
+not implemented capabilities or accepted product policy.
 M1 behavior is unchanged from the baseline audited at `22d3ee0` (PR #4).
 This is not a claim about a deployed environment or installed Obsidian host.
 [Roadmap](roadmap.md) owns milestone status; [architecture](architecture.md) owns

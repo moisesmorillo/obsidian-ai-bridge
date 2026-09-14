@@ -150,6 +150,25 @@ replacement or deletion. M1's unconditional remote CRUD is not safe automatic
 synchronization. The roadmap requires a safe mutation contract before M3 publishes
 and defers full reconciliation/import/deletions to M4.
 
+## M3 architectural proposal — approval pending
+
+The [decision brief](plans/m3-design-decisions.md),
+[detailed specification](milestones/m3-remote-bridge-client-and-publishing.md) and
+[sequential plan](plans/m3-remote-bridge-client-and-publishing.md) propose a typed
+core publishing service over the existing read-only local port, a new remote port
+and a non-content state-store port. Plugin HTTP and settings adapters implement
+those ports; UI never fetches directly. Proposed ADRs
+[0002](decisions/0002-conditional-remote-note-mutation.md) and
+[0003](decisions/0003-publishing-association-and-local-state.md) cover R2 atomic
+conditional publishing and conservative exact-path association/state.
+
+The recommended safety prerequisite includes a single-object internal revision
+envelope, v2-only plugin writes and retirement of v1 PUT on the upgraded Worker.
+This would change M1 storage/writer compatibility and must be explicitly approved;
+it is **not current behavior**. Individual consent, session credentials, endpoint
+policy and Fetch/CORS/platform qualification also await maintainer decisions.
+No production source, runtime configuration or dependency change is part of planning.
+
 ## Explicitly deferred
 
 - M3 (NEXT, planning only): Remote client, opt-in selection/settings and safe

@@ -38,7 +38,8 @@ decisions, not an invented historical rationale.
 | Record | Status | Scope |
 | --- | --- | --- |
 | [0001 — Worker/R2 foundation and inward boundaries](0001-worker-r2-foundation.md) | Accepted (implemented M1 baseline) | Minimal topology, trust boundary, transport/storage separation and canonical addressing |
+| [0002 — Conditional remote note mutation](0002-conditional-remote-note-mutation.md) | Proposed (M3; approval pending) | Single-object revision envelope/R2 CAS, v2 write contract and unsafe v1 writer retirement |
+| [0003 — Publishing association and conservative local state](0003-publishing-association-and-local-state.md) | Proposed (M3; approval pending) | Exact-path consent/baselines, no automatic adoption, non-content uncertainty interlock |
 
-Only one initial record is needed: it preserves consequential facts already in
-code, not a retrospective ADR for every historical PR. Sync/auth evolution
-records will be added when those decisions are actually made.
+ADR 0001 records implemented facts. The M3 proposals are not accepted decisions
+or implementation authorization; see the [maintainer decision brief](../plans/m3-design-decisions.md).

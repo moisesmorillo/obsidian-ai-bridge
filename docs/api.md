@@ -105,5 +105,22 @@ JSON API/health/error and Markdown content responses include
 or the bodyless DELETE response. M1 responses do not use the protocol package's
 reserved metadata envelope or include sync revisions.
 
+## Proposed M3 change — not implemented or approved
+
+The [M3 specification](milestones/m3-remote-bridge-client-and-publishing.md) and
+[ADR 0002](decisions/0002-conditional-remote-note-mutation.md) propose authenticated
+v2 list/read/conditional PUT over the same namespace, single-object revision
+storage, and retirement of v1 PUT with 410 on the upgraded Worker. A v2 client
+must never fall back to the old v1 writer: old servers ignore precondition headers.
+Legacy raw notes would remain readable, not automatically adopted/converted.
+
+The proposal requires supported Content-Type on v2 PUT while treating a missing
+stream as valid empty text; OpenAPI would explicitly document that combination.
+It adds shared real NotePath response validation, 412/428 outcomes, revision
+headers and approved CORS behavior. These are **pending maintainer compatibility
+and security decisions**, not routes or guarantees available from current code.
+Do not send real content using the proposed API until it is implemented/validated;
+do not deploy or migrate storage as part of this planning PR.
+
 See [current state](current-state.md), [architecture](architecture.md) and the
 [roadmap](roadmap.md) for evidence, safety boundaries and deferred capabilities.

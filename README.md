@@ -146,8 +146,11 @@ docs/                   Architecture, API, current-state audit, roadmap,
 
 Start with [AGENTS.md](AGENTS.md), [architecture](docs/architecture.md), the
 [canonical roadmap and agent onboarding](docs/roadmap.md), then the
-[active M3 planning handoff](docs/milestones/m3-remote-bridge-client-and-publishing.md).
-M3 requires specification refinement and an implementation plan before coding;
+[active M3 design proposal](docs/milestones/m3-remote-bridge-client-and-publishing.md).
+The [decision brief](docs/plans/m3-design-decisions.md) and
+[sequential plan](docs/plans/m3-remote-bridge-client-and-publishing.md) remain
+blocked on maintainer choices; M3 is not implementation-ready. No proposed v2 API,
+credentials or publishing behavior is implemented by this planning work;
 [M2 completion and slice evidence](docs/plans/m2-obsidian-read-only-local-adapter.md)
 record the implemented baseline. The roadmap defines the useful product end state, milestone exit criteria and
 unresolved decisions. The [current-state audit](docs/current-state.md) links facts

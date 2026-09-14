@@ -109,20 +109,26 @@ start production code. Dependencies include all earlier milestones unless noted.
 
 ### M3 — Remote bridge client and explicit publishing
 
-**NEXT, planning only:** refine the [M3 handoff specification](milestones/m3-remote-bridge-client-and-publishing.md)
-and create its implementation plan before production code. The unresolved
-choices below are not implicitly authorized by M2 completion.
+**NEXT, planning only — maintainer decisions pending:** the
+[M3 design specification](milestones/m3-remote-bridge-client-and-publishing.md),
+[decision brief](plans/m3-design-decisions.md) and
+[sequential implementation plan](plans/m3-remote-bridge-client-and-publishing.md)
+now describe a recommended design. They are **not implementation-ready** until
+D1–D6 are approved or replaced and dependent documents synchronized. Proposed
+ADRs 0002/0003 do not imply approval. M2 completion authorizes none of these choices.
 
 - **Objective/scope:** A typed remote adapter over the existing REST boundary;
   opt-in connection settings, response validation, selected local-to-remote
   publishing and remote inspection. Display per-operation outcomes and divergence.
 - **Non-goals:** Automatic bidirectional sync, local note mutation, delete
   propagation, background queues, MCP or new infrastructure by default.
-- **Decisions before implementation:** Selection/default exclusion policy;
-  Worker URL/HTTPS and credential storage UX; initial mirror association and
-  existing-remote-content policy; explicit triggering; timeouts, cancellation and
-  bounded retry; minimum remote revision/precondition contract. Reconcile the M1
-  runtime/OpenAPI gap and validate returned paths beyond string schemas.
+- **Decisions before implementation:** D1 individual versus set/folder consent;
+  D2 session credentials versus native storage/minimum host; D3 HTTPS/development
+  exception; D4 envelope revisions/R2 CAS and v2 writer transition with v1 PUT
+  retirement; D5 exact-path association and conservative uncertain-attempt state;
+  D6 Fetch/CORS/platform qualification and operation bounds. These are recommendations,
+  not accepted policy. Reconcile runtime/OpenAPI permissiveness and validate returned
+  paths beyond string schemas. The decision brief records options and evidence.
 - **Safety gate/risks:** M1 GET-then-PUT cannot prevent a race. Before publishing
   to an existing or apparently absent path, specify and test server-enforced
   conditional mutation or another demonstrated safe approach. Do not implement
@@ -209,10 +215,10 @@ maintainer clarification or a documented proposal, not an agent's silent guess.
 
 | Decision required | Earliest milestone | Boundary until resolved |
 | --- | --- | --- |
-| Which notes/folders are mirrored, opt-in defaults, exclusions and selection UX | M3 | M2 inspection never authorizes uploading anything |
-| Endpoint configuration, HTTPS/local-dev exceptions, token entry/storage UX | M3 | No connection settings or secrets in M2 |
-| Initial sync/remote association, safe existing-content handling and conditional writes | M3 | No automatic upload or unconditional overwrite loop |
-| Manual trigger UX, cancellation, bounded network timeouts/retries | M3 | M2 commands are local only; no scheduler |
+| Selection/trigger granularity and consent persistence (D1) | M3 | Individual active-note publishing recommended; maintainer approval pending; M2 eligibility is never consent |
+| Endpoint/HTTPS policy and credential storage/minimum host (D2/D3) | M3 | Session token and explicit loopback exception proposed, not implemented/approved |
+| Conditional generation safety, writer compatibility and association (D4/D5) | M3 | Proposed R2 envelope CAS, v2-only client and v1 PUT retirement; no adoption or silent overwrite |
+| Transport/CORS/platform policy and cancellation/retry bounds (D6) | M3 | Fetch/no redirects recommended; host qualification and approval required; no scheduler |
 | Primary synchronization direction and remote-to-local import authority | M4 | M3 publishes outward only; no local writes |
 | Conflict state, resolution UX and revision/baseline persistence | M4 | M3 detects/refuses unsafe replacement; does not merge |
 | Remote/local deletes, tombstones, retention/recovery and renames | M4 | No absence-driven propagation; existing API DELETE remains destructive |
@@ -234,9 +240,10 @@ Read in order:
 3. [docs/architecture.md](architecture.md)
 4. [docs/roadmap.md](roadmap.md) (this file)
 5. The specification linked by the `NEXT` milestone, currently the
-   [M3 planning handoff](milestones/m3-remote-bridge-client-and-publishing.md).
-6. Its corresponding plan under `docs/plans/`. M3 has no implementation plan yet:
-   resolve/refine its specification and create that plan before production code.
+   [M3 design proposal](milestones/m3-remote-bridge-client-and-publishing.md).
+6. Its corresponding [M3 sequential plan](plans/m3-remote-bridge-client-and-publishing.md)
+   and [decision brief](plans/m3-design-decisions.md). Resolve maintainer gates
+   before production code; a proposed plan is not implementation authorization.
    The completed [M2 plan](plans/m2-obsidian-read-only-local-adapter.md) is evidence,
    not authorization to skip M3 decisions.
 

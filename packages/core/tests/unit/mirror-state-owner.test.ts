@@ -16,7 +16,10 @@ import {
   type MirrorStateStore,
   MUTATION_ACTION,
   type MutationAcknowledgement,
+  markHandoffDrained,
   normalizeNotePath,
+  pauseForHandoff,
+  prepareHandoffExport,
   type UpdateOperationReceipt,
 } from "@obsidian-ai-bridge/core";
 import { describe, expect, it, vi } from "vitest";
@@ -380,6 +383,39 @@ describe("MirrorStateOwner", () => {
           store,
         ),
     ).toThrow("Invalid initial");
+  });
+
+  it("does not publish drained handoff state when its save fails", async () => {
+    const store = new FakeStateStore();
+    const initial = activeState();
+    const clean: MirrorDeviceState = {
+      ...initial,
+      paths: initial.paths.map((entry) => ({
+        ...entry,
+        unresolvedMutation: null,
+      })),
+    };
+    const owner = new MirrorStateOwner(clean, store);
+    expect(
+      (await owner.transition((state) => pauseForHandoff(state))).kind,
+    ).toBe("committed");
+    store.save.mockResolvedValueOnce({
+      kind: "failed",
+      reason: MIRROR_STATE_STORE_FAILURE.quotaOrStorageError,
+    });
+    const drain = await owner.transition((state) => {
+      const result = markHandoffDrained(state);
+      return result.kind === "drained" ? result.state : undefined;
+    });
+
+    expect(drain.kind).toBe("save-failed");
+    expect(owner.snapshot().state.lifecycle.kind).toBe(
+      MIRROR_DEVICE_LIFECYCLE_KIND.handoffDraining,
+    );
+    expect(prepareHandoffExport(owner.snapshot().state)).toMatchObject({
+      kind: "rejected",
+      reason: "not-drained",
+    });
   });
 
   it("denies hypothetical dispatch when durable intent creation cannot be saved", async () => {

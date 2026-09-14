@@ -65,10 +65,35 @@ export function isMirrorDeviceStateConsistent(
       ? [entry.acknowledgement.recoveryId]
       : [],
   );
-  if (hasDuplicate(recoveryIds)) return false;
+  const recoveryIdSet = new Set(recoveryIds);
   if (
-    state.stagedHandoff !== null &&
-    hasDuplicate(state.stagedHandoff.entries.map((entry) => entry.path))
+    recoveryIdSet.size !== recoveryIds.length ||
+    operationIds.some((operationId) => recoveryIdSet.has(operationId))
+  ) {
+    return false;
+  }
+  if (state.stagedHandoff !== null) {
+    const stagedRecoveryIds = state.stagedHandoff.entries.flatMap((entry) =>
+      entry.acknowledgement.kind === MIRROR_ACKNOWLEDGEMENT_KIND.tombstone
+        ? [entry.acknowledgement.recoveryId]
+        : [],
+    );
+    if (
+      hasDuplicate(state.stagedHandoff.entries.map((entry) => entry.path)) ||
+      hasDuplicate(stagedRecoveryIds)
+    ) {
+      return false;
+    }
+  }
+  if (
+    state.lifecycle.kind === MIRROR_DEVICE_LIFECYCLE_KIND.handoffDrained &&
+    (state.globalBlockReason !== null ||
+      state.paths.some(
+        (entry) =>
+          entry.unresolvedMutation !== null ||
+          entry.desired.kind !== MIRROR_DESIRED_STATE_KIND.none ||
+          entry.blockedReason !== null,
+      ))
   ) {
     return false;
   }
@@ -128,6 +153,12 @@ function validatePathInvariants(
   }
   if (entry.desired.kind === MIRROR_DESIRED_STATE_KIND.none) return true;
   if (!isNonNegativeSafeInteger(entry.desired.observationGeneration)) {
+    return false;
+  }
+  if (
+    entry.desired.kind === MIRROR_DESIRED_STATE_KIND.renameDeferred &&
+    entry.desired.counterpartPath === entry.path
+  ) {
     return false;
   }
   if (entry.desired.kind !== MIRROR_DESIRED_STATE_KIND.runtimeDelete)

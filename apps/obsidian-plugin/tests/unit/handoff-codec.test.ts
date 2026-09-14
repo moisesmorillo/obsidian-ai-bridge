@@ -108,6 +108,16 @@ describe("content-free handoff codec", () => {
         integrity,
       ),
     ).toEqual({ kind: "corrupt" });
+    const tombstone = record.entries[1] ?? neverValue();
+    expect(
+      await decodeHandoffRecord(
+        JSON.stringify({
+          ...raw,
+          entries: [tombstone, { ...tombstone, path: LIVE_PATH }],
+        }),
+        integrity,
+      ),
+    ).toEqual({ kind: "corrupt" });
     expect(
       await decodeHandoffRecord(
         JSON.stringify({ ...raw, associationId: "invalid" }),
@@ -163,7 +173,7 @@ describe("content-free handoff codec", () => {
     });
   });
 
-  it("refuses duplicate export payload paths before producing a checksum", async () => {
+  it("refuses duplicate export paths and tombstone recovery IDs", async () => {
     const duplicate: HandoffPayload = {
       ...payload(),
       entries: [
@@ -174,6 +184,14 @@ describe("content-free handoff codec", () => {
     await expect(createHandoffRecord(duplicate, integrity)).rejects.toThrow(
       "Duplicate",
     );
+    const tombstone = payload().entries[1] ?? neverValue();
+    const duplicateRecovery: HandoffPayload = {
+      ...payload(),
+      entries: [tombstone, { ...tombstone, path: LIVE_PATH }],
+    };
+    await expect(
+      createHandoffRecord(duplicateRecovery, integrity),
+    ).rejects.toThrow("recovery ID");
   });
 
   it("detects changed transferred metadata instead of trusting a stale checksum", async () => {

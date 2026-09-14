@@ -17,9 +17,9 @@ import {
   MIRROR_ACKNOWLEDGEMENT_KIND,
   MIRROR_DESIRED_STATE_KIND,
   MIRROR_DEVICE_LIFECYCLE_KIND,
-  MIRROR_PAUSE_REASON,
   type MirrorDeviceState,
   MUTATION_ACTION,
+  markHandoffDrained,
   normalizeNotePath,
   pauseForHandoff,
   prepareHandoffExport,
@@ -157,6 +157,31 @@ describe("writer activation policy", () => {
     });
   });
 
+  it("refuses readiness and activation while device-local state is globally blocked", () => {
+    const blockedActive: MirrorDeviceState = {
+      ...activeState(),
+      globalBlockReason: "configuration-unavailable",
+    };
+    expect(evaluateWriterReadiness(blockedActive, designation())).toEqual({
+      kind: "not-ready",
+      reason: WRITER_ACTIVATION_FAILURE.globallyBlocked,
+    });
+    const blockedDisabled: MirrorDeviceState = {
+      ...createDisabledMirrorState(DEVICE_ID),
+      globalBlockReason: "persistence-failed",
+    };
+    expect(
+      activateIsolatedAssociation(blockedDisabled, {
+        ...designation(),
+        explicitWholeMirrorConsent: true,
+        isolatedEmptyAssociationConfirmed: true,
+      }),
+    ).toMatchObject({
+      kind: "rejected",
+      reason: WRITER_ACTIVATION_FAILURE.globallyBlocked,
+    });
+  });
+
   it("activates only a locally explicit writer for a proven isolated empty association", () => {
     const rejected = activateIsolatedAssociation(
       createDisabledMirrorState(DEVICE_ID),
@@ -219,7 +244,7 @@ describe("handoff policy", () => {
         },
       ],
     };
-    expect(prepareHandoffExport(withIntent)).toMatchObject({
+    expect(markHandoffDrained(withIntent)).toMatchObject({
       kind: "rejected",
       reason: "unresolved-mutation",
     });
@@ -236,7 +261,7 @@ describe("handoff policy", () => {
         },
       })),
     };
-    expect(prepareHandoffExport(withRename)).toMatchObject({
+    expect(markHandoffDrained(withRename)).toMatchObject({
       kind: "rejected",
       reason: "unsettled-desired-state",
     });
@@ -255,7 +280,14 @@ describe("handoff policy", () => {
         blockedReason: null,
       })),
     };
-    const exported = prepareHandoffExport(state);
+    expect(prepareHandoffExport(state)).toMatchObject({
+      kind: "rejected",
+      reason: "not-drained",
+    });
+    const drained = markHandoffDrained(state);
+    expect(drained.kind).toBe("drained");
+    if (drained.kind !== "drained") throw new Error("Expected drained state.");
+    const exported = prepareHandoffExport(drained.state);
     expect(exported).toEqual({
       kind: "prepared",
       payload: {
@@ -267,12 +299,24 @@ describe("handoff policy", () => {
     expect(JSON.stringify(exported)).not.toMatch(
       /deviceId|activation|secret|token|body|content"/i,
     );
-    expect(state.lifecycle).toMatchObject({
-      reason: MIRROR_PAUSE_REASON.handoff,
-    });
+    expect(drained.state.lifecycle.kind).toBe(
+      MIRROR_DEVICE_LIFECYCLE_KIND.handoffDrained,
+    );
   });
 
-  it("rejects wrong-association import and never overwrites active state", () => {
+  it("rejects duplicate recovery import, wrong association, and active overwrite", () => {
+    const record = handoffRecord();
+    const tombstone = required(record.entries[1]);
+    expect(
+      stageHandoffImport(
+        createDisabledMirrorState(DEVICE_ID),
+        {
+          ...record,
+          entries: [tombstone, { ...tombstone, path: LIVE_PATH }],
+        },
+        { associationId: ASSOCIATION_ID, origin: ORIGIN },
+      ),
+    ).toMatchObject({ kind: "rejected", reason: "invalid-record" });
     expect(
       stageHandoffImport(
         createDisabledMirrorState(DEVICE_ID),
@@ -289,6 +333,29 @@ describe("handoff policy", () => {
         origin: ORIGIN,
       }),
     ).toMatchObject({ kind: "rejected", reason: "incompatible-lifecycle" });
+  });
+
+  it("preserves unrelated global blocks through staging and refuses activation", () => {
+    const blocked: MirrorDeviceState = {
+      ...createDisabledMirrorState(DEVICE_ID),
+      globalBlockReason: "configuration-unavailable",
+    };
+    const imported = stageHandoffImport(blocked, handoffRecord(), {
+      associationId: ASSOCIATION_ID,
+      origin: ORIGIN,
+    });
+    expect(imported.kind).toBe("staged");
+    if (imported.kind !== "staged") throw new Error("Expected staged handoff.");
+    expect(imported.state.globalBlockReason).toBe("configuration-unavailable");
+    expect(
+      activateStagedHandoff(imported.state, {
+        ...designation(),
+        explicitWholeMirrorConsent: true,
+      }),
+    ).toMatchObject({
+      kind: "rejected",
+      reason: WRITER_ACTIVATION_FAILURE.globallyBlocked,
+    });
   });
 
   it("keeps live and tombstone ACKs staged until exact local alignment", () => {
@@ -333,7 +400,7 @@ describe("handoff policy", () => {
       }),
     ).toMatchObject({
       kind: "rejected",
-      reason: WRITER_ACTIVATION_FAILURE.handoffNotAligned,
+      reason: WRITER_ACTIVATION_FAILURE.globallyBlocked,
     });
 
     const liveAligned = required(
@@ -342,14 +409,35 @@ describe("handoff policy", () => {
     const tombstoneAligned = required(
       alignHandoffTombstonePath(liveAligned, TOMBSTONE_PATH, true, 2),
     );
-    const changed = required(
+    const liveInvalidated = required(
       invalidateHandoffAlignment(tombstoneAligned, LIVE_PATH, 3),
+    );
+    const changed = required(
+      invalidateHandoffAlignment(liveInvalidated, TOMBSTONE_PATH, 3),
     );
     expect(changed.stagedHandoff?.entries[0]?.localAlignment).toBe(
       HANDOFF_ALIGNMENT_KIND.pending,
     );
-    const realigned = required(
+    expect(
+      alignHandoffLivePath(changed, LIVE_PATH, LIVE_HASH, 2),
+    ).toBeUndefined();
+    expect(
+      alignHandoffTombstonePath(changed, TOMBSTONE_PATH, true, 2),
+    ).toBeUndefined();
+    expect(
+      activateStagedHandoff(changed, {
+        ...designation(),
+        explicitWholeMirrorConsent: true,
+      }),
+    ).toMatchObject({
+      kind: "rejected",
+      reason: WRITER_ACTIVATION_FAILURE.handoffNotAligned,
+    });
+    const liveRealigned = required(
       alignHandoffLivePath(changed, LIVE_PATH, LIVE_HASH, 3),
+    );
+    const realigned = required(
+      alignHandoffTombstonePath(liveRealigned, TOMBSTONE_PATH, true, 3),
     );
     const remoteLive = required(
       verifyHandoffRemotePath(
@@ -450,22 +538,26 @@ describe("closed activation and handoff refusal branches", () => {
     });
   });
 
-  it("requires a real clean handoff pause and omits unassociated entries", () => {
+  it("requires an explicit clean drained transition and omits unassociated entries", () => {
     expect(
       pauseForHandoff(createDisabledMirrorState(DEVICE_ID)),
     ).toBeUndefined();
     expect(prepareHandoffExport(activeState())).toMatchObject({
-      reason: "not-paused-for-handoff",
+      reason: "not-drained",
     });
-    const paused = required(pauseForHandoff(activeState()));
+    const draining = required(pauseForHandoff(activeState()));
+    const unchangedAfterAbortOrRead = draining;
+    expect(prepareHandoffExport(unchangedAfterAbortOrRead)).toMatchObject({
+      reason: "not-drained",
+    });
     expect(
-      prepareHandoffExport({
-        ...paused,
+      markHandoffDrained({
+        ...draining,
         globalBlockReason: "state-unavailable",
       }),
     ).toMatchObject({ reason: "globally-blocked" });
     const unassociated: MirrorDeviceState = {
-      ...paused,
+      ...draining,
       paths: [
         {
           path: LIVE_PATH,
@@ -476,12 +568,15 @@ describe("closed activation and handoff refusal branches", () => {
         },
       ],
     };
-    expect(prepareHandoffExport(unassociated)).toMatchObject({
+    const drained = markHandoffDrained(unassociated);
+    expect(drained.kind).toBe("drained");
+    if (drained.kind !== "drained") throw new Error("Expected drained state.");
+    expect(prepareHandoffExport(drained.state)).toMatchObject({
       kind: "prepared",
       payload: { entries: [] },
     });
     expect(
-      prepareHandoffExport({
+      markHandoffDrained({
         ...unassociated,
         paths: unassociated.paths.map((entry) => ({
           ...entry,

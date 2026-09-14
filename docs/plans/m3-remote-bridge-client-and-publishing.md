@@ -160,8 +160,9 @@ surface and retires unsafe v1 mutations; intermediate checkpoints are not rollou
   only verified ACK metadata without device activation/ID/secrets; import wrong
   origin/association/revision fails. Keep iCloud hydration pending during import:
   stale local text cannot overwrite a newer transferred live ACK or resurrect a
-  transferred tombstone. Stage baselines until local hash/absence alignment, invalidate
-  changed observations, and block mismatches. Lost-device reset cannot reuse old keys.
+  transferred tombstone. Stage baselines until local hash/absence alignment, reject
+  late evidence older than the current observation generation, invalidate changed
+  observations, and block mismatches. Lost-device reset cannot reuse old keys.
 - **Steps:** strict boundary codecs, disabled initial state, whole-mirror opt-in,
   HTTPS/exact-loopback pre-canonical validation, serialized configuration changes,
   pause/drain/reset and explicitly transferred handoff metadata. Never add a synced
@@ -172,8 +173,10 @@ surface and retires unsafe v1 mutations; intermediate checkpoints are not rollou
   No Vault watchers/UI activation or remote-to-local writes yet.
 - **Implemented evidence:** Slice 3 adds closed core device/lifecycle/per-path state,
   finite unresolved-intent budgets, compare-and-transition serialized ownership,
-  explicit isolated-association activation, readiness and paused/drained handoff
-  policy. Strict Obsidian boundary codecs distinguish missing/corrupt/future state,
+  explicit isolated-association activation/readiness and distinct durable handoff
+  draining/drained states. Pause only enters draining; a separate quiescence-checked
+  transition enters drained, and only drained state can export. Strict Obsidian
+  boundary codecs distinguish missing/corrupt/future state,
   reject duplicate/invalid/inconsistent/bounded data and never clear failures.
   `data.json` represents endpoint preferences and a native secret reference only;
   App local storage owns device identity, activation, ACK/intent/evidence ledger and

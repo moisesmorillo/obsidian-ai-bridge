@@ -163,9 +163,20 @@ const lifecycleSchema = z.discriminatedUnion("kind", [
       ...bindingFields,
       reason: z.enum([
         MIRROR_PAUSE_REASON.manual,
-        MIRROR_PAUSE_REASON.handoff,
         MIRROR_PAUSE_REASON.persistenceFailure,
       ]),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal(MIRROR_DEVICE_LIFECYCLE_KIND.handoffDraining),
+      ...bindingFields,
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal(MIRROR_DEVICE_LIFECYCLE_KIND.handoffDrained),
+      ...bindingFields,
     })
     .strict(),
   z
@@ -249,13 +260,53 @@ const deviceStateSchema = z
     if (hasDuplicate(state.paths.map((entry) => entry.path))) {
       context.addIssue({ code: "custom", message: "Duplicate path entry." });
     }
+    const operationIds = state.paths.flatMap((entry) =>
+      entry.unresolvedMutation === null
+        ? []
+        : [entry.unresolvedMutation.intent.operationId],
+    );
+    const recoveryIds = state.paths.flatMap((entry) =>
+      entry.acknowledgement.kind === MIRROR_ACKNOWLEDGEMENT_KIND.tombstone
+        ? [entry.acknowledgement.recoveryId]
+        : [],
+    );
+    const recoveryIdSet = new Set(recoveryIds);
     if (
-      state.stagedHandoff !== null &&
-      hasDuplicate(state.stagedHandoff.entries.map((entry) => entry.path))
+      hasDuplicate(operationIds) ||
+      recoveryIdSet.size !== recoveryIds.length ||
+      operationIds.some((operationId) => recoveryIdSet.has(operationId))
     ) {
       context.addIssue({
         code: "custom",
-        message: "Duplicate staged path entry.",
+        message: "Duplicate or colliding operation/recovery ID.",
+      });
+    }
+    if (state.stagedHandoff !== null) {
+      const stagedRecoveryIds = state.stagedHandoff.entries.flatMap((entry) =>
+        entry.acknowledgement.kind === MIRROR_ACKNOWLEDGEMENT_KIND.tombstone
+          ? [entry.acknowledgement.recoveryId]
+          : [],
+      );
+      if (
+        hasDuplicate(state.stagedHandoff.entries.map((entry) => entry.path)) ||
+        hasDuplicate(stagedRecoveryIds)
+      ) {
+        context.addIssue({
+          code: "custom",
+          message: "Duplicate staged path or recovery ID.",
+        });
+      }
+    }
+    if (
+      state.paths.some(
+        (entry) =>
+          entry.desired.kind === MIRROR_DESIRED_STATE_KIND.renameDeferred &&
+          entry.desired.counterpartPath === entry.path,
+      )
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: "Rename counterpart must differ from its source path.",
       });
     }
   });
@@ -393,6 +444,8 @@ function projectLifecycle(lifecycle: MirrorDeviceLifecycle): LifecycleDto {
     case MIRROR_DEVICE_LIFECYCLE_KIND.disabled:
       return { kind: lifecycle.kind };
     case MIRROR_DEVICE_LIFECYCLE_KIND.active:
+    case MIRROR_DEVICE_LIFECYCLE_KIND.handoffDraining:
+    case MIRROR_DEVICE_LIFECYCLE_KIND.handoffDrained:
     case MIRROR_DEVICE_LIFECYCLE_KIND.handoffStaged:
       return {
         kind: lifecycle.kind,

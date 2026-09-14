@@ -312,8 +312,10 @@ Worker static association/writer identity mismatch disables non-writer autosync;
 the bearer remains privileged and IDs are not authorization secrets. One writer
 host/process per vault is the supported operating constraint, on any supported OS.
 
-Handoff: pause/drain old device; resolve every intent and rename dependency; explicitly
-export content-free ACK ledger; operator disables old writer, changes designation
+Handoff: pausing the old device durably enters `handoff-draining`; resolve every
+intent, blocker and rename dependency, then persist a separate quiescence-checked
+`handoff-drained` transition before content-free ACK export. Pause, abort, timeout or
+an old-state read never marks drained. The operator then disables the old writer, changes designation
 and rotates bearer; new device imports/verifies same-association baselines and
 bootstraps. Imported ACKs are staged, not active write baselines: before activation,
 verify each live path's saved local SHA-256 equals the transferred sent hash and

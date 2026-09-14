@@ -3,6 +3,8 @@ export const MIRROR_DEVICE_LIFECYCLE_KIND = {
   disabled: "disabled",
   active: "active",
   paused: "paused",
+  handoffDraining: "handoff-draining",
+  handoffDrained: "handoff-drained",
   handoffStaged: "handoff-staged",
 } as const;
 
@@ -59,7 +61,6 @@ export const MIRROR_PATH_BLOCK_REASON = {
 /** Durable reasons for pausing one explicitly bound writer. */
 export const MIRROR_PAUSE_REASON = {
   manual: "manual",
-  handoff: "handoff",
   persistenceFailure: "persistence-failure",
 } as const;
 

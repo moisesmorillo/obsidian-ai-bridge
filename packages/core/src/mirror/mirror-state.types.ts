@@ -122,6 +122,16 @@ export interface PausedMirrorLifecycle extends MirrorBinding {
   readonly reason: (typeof MIRROR_PAUSE_REASON)[keyof typeof MIRROR_PAUSE_REASON];
 }
 
+/** Handoff intake is closed while previously admitted work is still draining. */
+export interface HandoffDrainingMirrorLifecycle extends MirrorBinding {
+  readonly kind: typeof MIRROR_DEVICE_LIFECYCLE_KIND.handoffDraining;
+}
+
+/** Durable proof that handoff quiescence checks completed after intake closed. */
+export interface HandoffDrainedMirrorLifecycle extends MirrorBinding {
+  readonly kind: typeof MIRROR_DEVICE_LIFECYCLE_KIND.handoffDrained;
+}
+
 /** Imported baseline is staged and grants no writer authority. */
 export interface HandoffStagedMirrorLifecycle extends MirrorBinding {
   readonly kind: typeof MIRROR_DEVICE_LIFECYCLE_KIND.handoffStaged;
@@ -132,6 +142,8 @@ export type MirrorDeviceLifecycle =
   | DisabledMirrorLifecycle
   | ActiveMirrorLifecycle
   | PausedMirrorLifecycle
+  | HandoffDrainingMirrorLifecycle
+  | HandoffDrainedMirrorLifecycle
   | HandoffStagedMirrorLifecycle;
 
 /** Sanitized global blocker persisted without raw errors or responses. */

@@ -214,7 +214,7 @@ tombstone-timestamp sealing, conditional purge, public authenticated v2 routes,
 method-specific CORS, static writer designation checks, generated OpenAPI and
 envelope-aware v1 reads. V1 PUT/DELETE are retired with 410. Slice 3 adds core-owned
 closed device/per-path state, serialized compare-and-transition persistence, explicit
-activation and staged handoff policy. Obsidian adapters keep preferences/secret
+activation, durable handoff-draining/drained lifecycle states and staged import policy. Obsidian adapters keep preferences/secret
 references in data.json, the bearer in native SecretStorage, and device identity,
 activation and the bounded content-free ledger in App local storage. A package Symbol
 retains the owner only within one JavaScript host. There is still no settings UI,

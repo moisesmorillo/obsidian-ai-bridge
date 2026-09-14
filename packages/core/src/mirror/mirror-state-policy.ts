@@ -10,7 +10,6 @@ import {
   MIRROR_DESIRED_STATE_KIND,
   MIRROR_DEVICE_LIFECYCLE_KIND,
   MIRROR_GLOBAL_BLOCK_REASON,
-  MIRROR_PAUSE_REASON,
 } from "@core/mirror/mirror-state.constants";
 import type {
   HandoffPayload,
@@ -31,6 +30,7 @@ export const WRITER_ACTIVATION_FAILURE = {
   associationMismatch: "association-mismatch",
   designationMismatch: "designation-mismatch",
   originMismatch: "origin-mismatch",
+  globallyBlocked: "globally-blocked",
   incompatibleLifecycle: "incompatible-lifecycle",
   associationNotProvenEmpty: "association-not-proven-empty",
   handoffNotAligned: "handoff-not-aligned",
@@ -42,7 +42,8 @@ export type WriterActivationFailure =
 
 /** Closed export refusal reasons proving meaningful handoff quiescence. */
 export const HANDOFF_EXPORT_FAILURE = {
-  notPausedForHandoff: "not-paused-for-handoff",
+  notDraining: "not-draining",
+  notDrained: "not-drained",
   globallyBlocked: "globally-blocked",
   unresolvedMutation: "unresolved-mutation",
   unsettledDesiredState: "unsettled-desired-state",
@@ -120,6 +121,9 @@ export function evaluateWriterReadiness(
     } {
   if (state === null)
     return notReady(WRITER_ACTIVATION_FAILURE.missingLocalState);
+  if (state.globalBlockReason !== null) {
+    return notReady(WRITER_ACTIVATION_FAILURE.globallyBlocked);
+  }
   if (state.lifecycle.kind !== MIRROR_DEVICE_LIFECYCLE_KIND.active) {
     return notReady(WRITER_ACTIVATION_FAILURE.incompatibleLifecycle);
   }
@@ -177,16 +181,15 @@ export function activateIsolatedAssociation(
         associationId: request.associationId,
         origin: request.origin,
       },
-      globalBlockReason: null,
     },
   };
 }
 
 /**
- * Durably pauses an active writer for handoff without dropping path evidence.
+ * Durably closes new intake and starts draining an active writer for handoff.
  *
  * @param state - Current device state.
- * @returns Paused state, or `undefined` when this device is not active.
+ * @returns Draining state, or `undefined` when this device is not active.
  */
 export function pauseForHandoff(
   state: MirrorDeviceState,
@@ -197,10 +200,41 @@ export function pauseForHandoff(
   return {
     ...state,
     lifecycle: {
-      kind: MIRROR_DEVICE_LIFECYCLE_KIND.paused,
+      kind: MIRROR_DEVICE_LIFECYCLE_KIND.handoffDraining,
       associationId: state.lifecycle.associationId,
       origin: state.lifecycle.origin,
-      reason: MIRROR_PAUSE_REASON.handoff,
+    },
+  };
+}
+
+/**
+ * Marks handoff drained only after the durable ledger is observably quiescent.
+ *
+ * A pause, aborted request, timeout, or state read cannot call this transition
+ * implicitly. The returned state must itself be persisted before export is allowed.
+ *
+ * @param state - Durable draining state after pending work processing.
+ * @returns Drained state or the first typed quiescence refusal.
+ */
+export function markHandoffDrained(
+  state: MirrorDeviceState,
+):
+  | { readonly kind: "drained"; readonly state: MirrorDeviceState }
+  | { readonly kind: "rejected"; readonly reason: HandoffExportFailure } {
+  if (state.lifecycle.kind !== MIRROR_DEVICE_LIFECYCLE_KIND.handoffDraining) {
+    return { kind: "rejected", reason: HANDOFF_EXPORT_FAILURE.notDraining };
+  }
+  const failure = handoffQuiescenceFailure(state);
+  if (failure !== undefined) return { kind: "rejected", reason: failure };
+  return {
+    kind: "drained",
+    state: {
+      ...state,
+      lifecycle: {
+        kind: MIRROR_DEVICE_LIFECYCLE_KIND.handoffDrained,
+        associationId: state.lifecycle.associationId,
+        origin: state.lifecycle.origin,
+      },
     },
   };
 }
@@ -208,7 +242,7 @@ export function pauseForHandoff(
 /**
  * Produces content-free export metadata only after durable quiescence checks.
  *
- * @param state - Paused old-writer state.
+ * @param state - Durably drained old-writer state.
  * @returns Checksum-ready payload or the first meaningful quiescence refusal.
  */
 export function prepareHandoffExport(state: MirrorDeviceState):
@@ -217,35 +251,11 @@ export function prepareHandoffExport(state: MirrorDeviceState):
       readonly kind: "rejected";
       readonly reason: HandoffExportFailure;
     } {
-  if (
-    state.lifecycle.kind !== MIRROR_DEVICE_LIFECYCLE_KIND.paused ||
-    state.lifecycle.reason !== MIRROR_PAUSE_REASON.handoff
-  ) {
-    return {
-      kind: "rejected",
-      reason: HANDOFF_EXPORT_FAILURE.notPausedForHandoff,
-    };
+  if (state.lifecycle.kind !== MIRROR_DEVICE_LIFECYCLE_KIND.handoffDrained) {
+    return { kind: "rejected", reason: HANDOFF_EXPORT_FAILURE.notDrained };
   }
-  if (state.globalBlockReason !== null) {
-    return { kind: "rejected", reason: HANDOFF_EXPORT_FAILURE.globallyBlocked };
-  }
-  for (const pathState of state.paths) {
-    if (pathState.unresolvedMutation !== null) {
-      return {
-        kind: "rejected",
-        reason: HANDOFF_EXPORT_FAILURE.unresolvedMutation,
-      };
-    }
-    if (pathState.desired.kind !== MIRROR_DESIRED_STATE_KIND.none) {
-      return {
-        kind: "rejected",
-        reason: HANDOFF_EXPORT_FAILURE.unsettledDesiredState,
-      };
-    }
-    if (pathState.blockedReason !== null) {
-      return { kind: "rejected", reason: HANDOFF_EXPORT_FAILURE.blockedPath };
-    }
-  }
+  const failure = handoffQuiescenceFailure(state);
+  if (failure !== undefined) return { kind: "rejected", reason: failure };
   return {
     kind: "prepared",
     payload: {
@@ -285,7 +295,8 @@ export function stageHandoffImport(
   if (
     record.entries.length > MAX_MIRROR_TRACKED_PATHS ||
     new Set(record.entries.map((entry) => entry.path)).size !==
-      record.entries.length
+      record.entries.length ||
+    hasDuplicateRecoveryIds(record.entries)
   ) {
     return { kind: "rejected", reason: HANDOFF_IMPORT_FAILURE.invalidRecord };
   }
@@ -319,7 +330,6 @@ export function stageHandoffImport(
         associationId: record.associationId,
         origin: record.origin,
       },
-      globalBlockReason: null,
       stagedHandoff: {
         associationId: record.associationId,
         origin: record.origin,
@@ -375,7 +385,10 @@ export function alignHandoffLivePath(
   observationGeneration: number,
 ): MirrorDeviceState | undefined {
   return updateStagedEntry(state, path, (entry) => {
-    if (entry.acknowledgement.kind !== MIRROR_ACKNOWLEDGEMENT_KIND.live) {
+    if (
+      entry.acknowledgement.kind !== MIRROR_ACKNOWLEDGEMENT_KIND.live ||
+      !isCurrentObservationGeneration(entry, observationGeneration)
+    ) {
       return undefined;
     }
     return {
@@ -405,7 +418,10 @@ export function alignHandoffTombstonePath(
   observationGeneration: number,
 ): MirrorDeviceState | undefined {
   return updateStagedEntry(state, path, (entry) => {
-    if (entry.acknowledgement.kind !== MIRROR_ACKNOWLEDGEMENT_KIND.tombstone) {
+    if (
+      entry.acknowledgement.kind !== MIRROR_ACKNOWLEDGEMENT_KIND.tombstone ||
+      !isCurrentObservationGeneration(entry, observationGeneration)
+    ) {
       return undefined;
     }
     return {
@@ -432,7 +448,12 @@ export function invalidateHandoffAlignment(
   observationGeneration: number,
 ): MirrorDeviceState | undefined {
   return updateStagedEntry(state, path, (entry) => {
-    if (observationGeneration <= entry.observationGeneration) return undefined;
+    if (
+      !Number.isSafeInteger(observationGeneration) ||
+      observationGeneration <= entry.observationGeneration
+    ) {
+      return undefined;
+    }
     return {
       ...entry,
       localAlignment: HANDOFF_ALIGNMENT_KIND.pending,
@@ -496,7 +517,6 @@ export function activateStagedHandoff(
         associationId: request.associationId,
         origin: request.origin,
       },
-      globalBlockReason: null,
       paths: state.stagedHandoff.entries.map(handoffEntryToPathState),
       stagedHandoff: null,
     },
@@ -517,6 +537,9 @@ function activationEvidenceFailure(
   state: MirrorDeviceState,
   request: HandoffActivationRequest,
 ): WriterActivationFailure | undefined {
+  if (state.globalBlockReason !== null) {
+    return WRITER_ACTIVATION_FAILURE.globallyBlocked;
+  }
   if (!request.explicitWholeMirrorConsent)
     return WRITER_ACTIVATION_FAILURE.notExplicit;
   if (!request.secretAvailable) return WRITER_ACTIVATION_FAILURE.secretMissing;
@@ -524,6 +547,50 @@ function activationEvidenceFailure(
     return WRITER_ACTIVATION_FAILURE.designationMismatch;
   }
   return undefined;
+}
+
+function handoffQuiescenceFailure(
+  state: MirrorDeviceState,
+): HandoffExportFailure | undefined {
+  if (state.globalBlockReason !== null) {
+    return HANDOFF_EXPORT_FAILURE.globallyBlocked;
+  }
+  for (const pathState of state.paths) {
+    if (pathState.unresolvedMutation !== null) {
+      return HANDOFF_EXPORT_FAILURE.unresolvedMutation;
+    }
+    if (pathState.desired.kind !== MIRROR_DESIRED_STATE_KIND.none) {
+      return HANDOFF_EXPORT_FAILURE.unsettledDesiredState;
+    }
+    if (pathState.blockedReason !== null) {
+      return HANDOFF_EXPORT_FAILURE.blockedPath;
+    }
+  }
+  return undefined;
+}
+
+function hasDuplicateRecoveryIds(
+  entries: readonly {
+    readonly acknowledgement: TransferableAcknowledgement;
+  }[],
+): boolean {
+  const recoveryIds = entries.flatMap((entry) =>
+    entry.acknowledgement.kind === MIRROR_ACKNOWLEDGEMENT_KIND.tombstone
+      ? [entry.acknowledgement.recoveryId]
+      : [],
+  );
+  return new Set(recoveryIds).size !== recoveryIds.length;
+}
+
+function isCurrentObservationGeneration(
+  entry: StagedHandoffEntry,
+  observationGeneration: number,
+): boolean {
+  return (
+    Number.isSafeInteger(observationGeneration) &&
+    observationGeneration >= 0 &&
+    observationGeneration >= entry.observationGeneration
+  );
 }
 
 function handoffEntryToPathState(entry: StagedHandoffEntry): MirrorPathState {

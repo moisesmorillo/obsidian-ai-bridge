@@ -80,6 +80,17 @@ const handoffRecordSchema = z
     if (new Set(paths).size !== paths.length) {
       context.addIssue({ code: "custom", message: "Duplicate handoff path." });
     }
+    const recoveryIds = record.entries.flatMap((entry) =>
+      entry.acknowledgement.kind === MIRROR_ACKNOWLEDGEMENT_KIND.tombstone
+        ? [entry.acknowledgement.recoveryId]
+        : [],
+    );
+    if (new Set(recoveryIds).size !== recoveryIds.length) {
+      context.addIssue({
+        code: "custom",
+        message: "Duplicate handoff recovery ID.",
+      });
+    }
   });
 const handoffHeaderSchema = z
   .object({
@@ -254,6 +265,14 @@ function canonicalPayload(payload: HandoffPayload): {
     });
   if (new Set(entries.map((entry) => entry.path)).size !== entries.length) {
     throw new Error("Duplicate handoff path.");
+  }
+  const recoveryIds = entries.flatMap((entry) =>
+    entry.acknowledgement.kind === MIRROR_ACKNOWLEDGEMENT_KIND.tombstone
+      ? [entry.acknowledgement.recoveryId]
+      : [],
+  );
+  if (new Set(recoveryIds).size !== recoveryIds.length) {
+    throw new Error("Duplicate handoff recovery ID.");
   }
   const canonical: HandoffPayload = {
     origin,

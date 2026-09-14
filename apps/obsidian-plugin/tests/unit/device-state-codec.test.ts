@@ -34,8 +34,14 @@ const ASSOCIATION_ID = required(
 const OPERATION_ID = required(
   createMirrorOperationId("33333333-3333-4333-8333-333333333333"),
 );
+const OTHER_OPERATION_ID = required(
+  createMirrorOperationId("66666666-6666-4666-8666-666666666666"),
+);
 const REVISION = required(
   createApplicationRevision("44444444-4444-4444-8444-444444444444"),
+);
+const OTHER_REVISION = required(
+  createApplicationRevision("55555555-5555-4555-8555-555555555555"),
 );
 const HASH = required(createContentSha256("ab".repeat(32)));
 const PATH = required(normalizeNotePath("notes/example.md"));
@@ -257,7 +263,7 @@ describe("device-local mirror state codec", () => {
               action: MUTATION_ACTION.recreate,
               associationId: ASSOCIATION_ID,
               writerId: DEVICE_ID,
-              operationId: OPERATION_ID,
+              operationId: OTHER_OPERATION_ID,
               path: PATH,
               precondition: { kind: "matching-revision", revision: REVISION },
               contentSha256: HASH,
@@ -284,6 +290,23 @@ describe("device-local mirror state codec", () => {
       },
       new WebCryptoHandoffIntegrity(),
     );
+    const draining: MirrorDeviceState = {
+      ...state(),
+      lifecycle: {
+        kind: MIRROR_DEVICE_LIFECYCLE_KIND.handoffDraining,
+        associationId: ASSOCIATION_ID,
+        origin: "https://bridge.example",
+      },
+    };
+    const drained: MirrorDeviceState = {
+      ...state(),
+      lifecycle: {
+        kind: MIRROR_DEVICE_LIFECYCLE_KIND.handoffDrained,
+        associationId: ASSOCIATION_ID,
+        origin: "https://bridge.example",
+      },
+      paths: [],
+    };
     const staged: MirrorDeviceState = {
       ...state(),
       lifecycle: {
@@ -307,7 +330,14 @@ describe("device-local mirror state codec", () => {
         ],
       },
     };
-    for (const candidate of [disabled, createIntent, recreate, staged]) {
+    for (const candidate of [
+      disabled,
+      createIntent,
+      recreate,
+      draining,
+      drained,
+      staged,
+    ]) {
       expect(
         await decodeMirrorDeviceState(encodeMirrorDeviceState(candidate)),
       ).toEqual({
@@ -315,6 +345,19 @@ describe("device-local mirror state codec", () => {
         state: candidate,
       });
     }
+    expect(
+      await decodeMirrorDeviceState(
+        JSON.stringify({
+          ...rawState(),
+          lifecycle: {
+            kind: MIRROR_DEVICE_LIFECYCLE_KIND.paused,
+            associationId: ASSOCIATION_ID,
+            origin: "https://bridge.example",
+            reason: "handoff",
+          },
+        }),
+      ),
+    ).toEqual({ kind: "corrupt" });
     const runtimeDelete: MirrorDeviceState = {
       ...state(),
       paths: state().paths.map((entry) => ({
@@ -334,6 +377,84 @@ describe("device-local mirror state codec", () => {
       kind: "valid",
       state: runtimeDelete,
     });
+  });
+
+  it("rejects persisted intents whose precondition is not the current ACK", async () => {
+    const raw = rawState();
+    const path = required(raw.paths[0]);
+    const unresolved = required(path.unresolvedMutation);
+    expect(
+      await decodeMirrorDeviceState(
+        JSON.stringify({
+          ...raw,
+          paths: [
+            {
+              ...path,
+              unresolvedMutation: {
+                ...unresolved,
+                intent: {
+                  ...unresolved.intent,
+                  precondition: {
+                    kind: "matching-revision",
+                    revision: OTHER_REVISION,
+                  },
+                },
+              },
+            },
+          ],
+        }),
+      ),
+    ).toEqual({ kind: "corrupt" });
+  });
+
+  it("rejects operation/recovery collisions and self-referential renames", async () => {
+    const raw = rawState();
+    const path = required(raw.paths[0]);
+    const unresolved = required(path.unresolvedMutation);
+    expect(
+      await decodeMirrorDeviceState(
+        JSON.stringify({
+          ...raw,
+          paths: [
+            {
+              ...path,
+              acknowledgement: {
+                kind: MIRROR_ACKNOWLEDGEMENT_KIND.tombstone,
+                revision: REVISION,
+                recoveryId: OPERATION_ID,
+              },
+              unresolvedMutation: {
+                ...unresolved,
+                intent: {
+                  ...unresolved.intent,
+                  action: MUTATION_ACTION.recreate,
+                  operationId: OPERATION_ID,
+                },
+              },
+            },
+          ],
+        }),
+      ),
+    ).toEqual({ kind: "corrupt" });
+    expect(
+      await decodeMirrorDeviceState(
+        JSON.stringify({
+          ...raw,
+          paths: [
+            {
+              ...path,
+              unresolvedMutation: null,
+              desired: {
+                kind: MIRROR_DESIRED_STATE_KIND.renameDeferred,
+                observationGeneration: 1,
+                counterpartPath: PATH,
+                phase: "destination-required",
+              },
+            },
+          ],
+        }),
+      ),
+    ).toEqual({ kind: "corrupt" });
   });
 
   it("projects every nested variant without structurally assignable private fields", () => {

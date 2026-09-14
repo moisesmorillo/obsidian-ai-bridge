@@ -177,6 +177,106 @@ describe("mirror device state invariants", () => {
         },
       }),
     ).toBe(false);
+    const tombstone = {
+      acknowledgement: {
+        kind: MIRROR_ACKNOWLEDGEMENT_KIND.tombstone,
+        revision: REVISION,
+        recoveryId: OPERATION,
+      },
+      localAlignment: "pending" as const,
+      remoteVerification: "pending" as const,
+      observationGeneration: 0,
+    };
+    expect(
+      isMirrorDeviceStateConsistent({
+        ...stagedState,
+        stagedHandoff: {
+          ...staged,
+          entries: [
+            { ...tombstone, path: PATH },
+            { ...tombstone, path: OTHER_PATH },
+          ],
+        },
+      }),
+    ).toBe(false);
+  });
+
+  it("requires matching-revision intents to target the current acknowledged revision", () => {
+    const base = livePath();
+    const unresolved = required(base.unresolvedMutation);
+    for (const action of [
+      MUTATION_ACTION.update,
+      MUTATION_ACTION.tombstone,
+    ] as const) {
+      const intent =
+        action === MUTATION_ACTION.update
+          ? {
+              action,
+              associationId: ASSOCIATION,
+              writerId: DEVICE,
+              operationId: OPERATION,
+              path: PATH,
+              precondition: {
+                kind: "matching-revision" as const,
+                revision: OTHER_REVISION,
+              },
+              contentSha256: HASH,
+              mutationAttempts: 1,
+              evidenceAttempts: 0,
+            }
+          : {
+              action,
+              associationId: ASSOCIATION,
+              writerId: DEVICE,
+              operationId: OPERATION,
+              path: PATH,
+              precondition: {
+                kind: "matching-revision" as const,
+                revision: OTHER_REVISION,
+              },
+              mutationAttempts: 1,
+              evidenceAttempts: 0,
+            };
+      expect(
+        isMirrorDeviceStateConsistent(
+          state({
+            ...base,
+            unresolvedMutation: { ...unresolved, intent },
+          }),
+        ),
+      ).toBe(false);
+    }
+    expect(
+      isMirrorDeviceStateConsistent(
+        state({
+          ...base,
+          acknowledgement: {
+            kind: MIRROR_ACKNOWLEDGEMENT_KIND.tombstone,
+            revision: REVISION,
+            recoveryId: OPERATION,
+          },
+          unresolvedMutation: {
+            ...unresolved,
+            intent: {
+              action: MUTATION_ACTION.recreate,
+              associationId: ASSOCIATION,
+              writerId: DEVICE,
+              operationId: required(
+                createMirrorOperationId("66666666-6666-4666-8666-666666666666"),
+              ),
+              path: PATH,
+              precondition: {
+                kind: "matching-revision",
+                revision: OTHER_REVISION,
+              },
+              contentSha256: HASH,
+              mutationAttempts: 1,
+              evidenceAttempts: 0,
+            },
+          },
+        }),
+      ),
+    ).toBe(false);
   });
 
   it("rejects wrong intent path/writer/association and acknowledgement-action combinations", () => {
@@ -331,6 +431,51 @@ describe("mirror device state invariants", () => {
         ),
       ).toBe(false);
     }
+  });
+
+  it("rejects recovery/operation collisions and self-referential renames", () => {
+    const base = livePath();
+    const unresolved = required(base.unresolvedMutation);
+    expect(
+      isMirrorDeviceStateConsistent(
+        state({
+          ...base,
+          acknowledgement: {
+            kind: MIRROR_ACKNOWLEDGEMENT_KIND.tombstone,
+            revision: REVISION,
+            recoveryId: OPERATION,
+          },
+          unresolvedMutation: {
+            ...unresolved,
+            intent: {
+              action: MUTATION_ACTION.recreate,
+              associationId: ASSOCIATION,
+              writerId: DEVICE,
+              operationId: OPERATION,
+              path: PATH,
+              precondition: { kind: "matching-revision", revision: REVISION },
+              contentSha256: HASH,
+              mutationAttempts: 1,
+              evidenceAttempts: 0,
+            },
+          },
+        }),
+      ),
+    ).toBe(false);
+    expect(
+      isMirrorDeviceStateConsistent(
+        state({
+          ...base,
+          unresolvedMutation: null,
+          desired: {
+            kind: MIRROR_DESIRED_STATE_KIND.renameDeferred,
+            observationGeneration: 1,
+            counterpartPath: PATH,
+            phase: "destination-required",
+          },
+        }),
+      ),
+    ).toBe(false);
   });
 
   it("rejects mismatched runtime-delete revision/association", () => {

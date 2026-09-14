@@ -2,7 +2,7 @@
 
 A secure bridge between Obsidian and remote AI or agent clients.
 
-> **Status:** M1 complete / experimental. The authenticated Worker API stores Markdown in R2; the plugin is still a type-only scaffold. **NEXT:** [M2 — Obsidian read-only local-vault adapter](docs/milestones/m2-obsidian-read-only-local-adapter.md).
+> **Status:** M2 complete / experimental. The plugin provides local-only, read-only inspection; the independent M1 Worker provides authenticated R2 storage. **NEXT (planning only):** [M3 — Remote bridge client and explicit publishing](docs/milestones/m3-remote-bridge-client-and-publishing.md).
 
 ## Motivation
 
@@ -20,7 +20,7 @@ Cloudflare Worker
 Cloudflare R2
 ```
 
-The plugin is intended to adapt Obsidian's official APIs. The Worker will provide the remote transport and integrate with R2 for durable object storage. MCP is planned as a future adapter, not an implemented feature.
+This diagram is the intended bridge, not a connected system today. The plugin uses official Obsidian APIs for explicit local inspection only; it makes no Worker calls. The independent Worker provides remote transport and R2 storage. MCP is planned, not implemented.
 
 ## Goals
 
@@ -31,8 +31,9 @@ The plugin is intended to adapt Obsidian's official APIs. The Worker will provid
 
 ## Current limitations
 
-- The Obsidian plugin has no vault or network behavior yet.
-- The plugin ID is `ai-bridge`; existing development installs under the former `obsidian-ai-bridge` directory must be reinstalled under the new ID. The scaffold has no persisted plugin state.
+- The plugin explicitly lists eligible saved-note metadata and inspects the active saved note; it never shows note bodies, mutates notes, makes network requests or persists settings. Enabling alone performs no inspection.
+- Local eligibility excludes dot-prefixed segments and the host configuration directory; literal paths are not URI-decoded. Inspection is not upload consent. Reads use best-effort change detection, not atomic snapshots or editor buffers.
+- The plugin ID is `ai-bridge`. See [disposable-vault installation/removal and compatibility evidence](docs/plugin-development.md). No real Obsidian desktop/mobile host has been tested.
 - Notes must be Markdown files and are limited to 1 MiB.
 - Authentication uses one bearer token; there are no users or device identities.
 - There is no synchronization, conflict detection, tombstone, search, MCP, D1, Durable Objects, Workers AI, or Vectorize support.
@@ -70,7 +71,8 @@ mise run install
 | `mise run test` | Run the fast Vitest test suite without coverage. |
 | `mise run coverage` | Run the Vitest suite with V8 coverage and enforce global thresholds. |
 | `mise run typecheck` | Type-check all workspaces. |
-| `mise run build` | Bundle the Worker with Wrangler in dry-run mode and build the Obsidian plugin scaffold. |
+| `mise run build` | Bundle the Worker with Wrangler in dry-run mode, stage the CommonJS plugin/manifest and run artifact smoke tests. |
+| `mise run plugin:smoke` | Rebuild the plugin and load the actual bundle with an isolated Obsidian host double. |
 | `mise run format` | Apply Biome formatting. |
 | `mise run dev` | Run local Worker development through Wrangler. |
 
@@ -83,6 +85,18 @@ behavior belongs under `tests/unit/`; tests that intentionally compose multiple
 application layers belong under `tests/integration/`.
 
 Use `.mise.toml` for shared non-sensitive configuration. Use the ignored `mise.local.toml` for credentials, machine-specific settings, or local overrides. Start from `mise.local.toml.example`; never commit the local file or tokens. The repository does not use `.env` files.
+
+## Local plugin development
+
+After installation, run `mise run plugin:smoke`. The generated
+`apps/obsidian-plugin/dist/main.js` and `manifest.json` can be deliberately copied
+into a **disposable** development vault; see the complete
+[install, command, unload and removal instructions](docs/plugin-development.md).
+The commands are **AI Bridge: Inspect local Markdown notes** and
+**AI Bridge: Inspect active Markdown note**. Results show paths/byte metadata only.
+Active inspection reads saved text; save and retry for unsaved changes. No Worker,
+credentials or deployment are needed. The automated smoke check is not a real-host
+or mobile compatibility test.
 
 ## Local Worker development
 
@@ -132,8 +146,10 @@ docs/                   Architecture, API, current-state audit, roadmap,
 
 Start with [AGENTS.md](AGENTS.md), [architecture](docs/architecture.md), the
 [canonical roadmap and agent onboarding](docs/roadmap.md), then the
-[active M2 specification](docs/milestones/m2-obsidian-read-only-local-adapter.md).
-The roadmap defines the useful product end state, milestone exit criteria and
+[active M3 planning handoff](docs/milestones/m3-remote-bridge-client-and-publishing.md).
+M3 requires specification refinement and an implementation plan before coding;
+[M2 completion and slice evidence](docs/plans/m2-obsidian-read-only-local-adapter.md)
+record the implemented baseline. The roadmap defines the useful product end state, milestone exit criteria and
 unresolved decisions. The [current-state audit](docs/current-state.md) links facts
 to source/configuration; [API documentation](docs/api.md) describes the implemented
 remote contract. Inspect relevant source/tests before coding; implement only the

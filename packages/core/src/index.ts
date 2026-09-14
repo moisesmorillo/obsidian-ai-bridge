@@ -1,6 +1,35 @@
 export { createIdentifier } from "@core/identifier/identifier";
 export type { Identifier } from "@core/identifier/identifier.types";
 export {
+  evaluateLocalNote,
+  evaluateLocalNotePath,
+  evaluateLocalNoteSize,
+} from "@core/local-vault/local-eligibility";
+export { LocalInspectionService } from "@core/local-vault/local-inspection-service";
+export type { LocalInspector } from "@core/local-vault/local-inspection-service.types";
+export {
+  LocalInspectionKind,
+  LocalSkipReason,
+  LocalVaultFailureReason,
+} from "@core/local-vault/local-vault.constants";
+export type {
+  LocalActiveInspectionResult,
+  LocalEligibilityPolicy,
+  LocalFailure,
+  LocalListResult,
+  LocalNoteEligibility,
+  LocalNoteEntry,
+  LocalPathEligibility,
+  LocalPathFailureReason,
+  LocalReadFailureReason,
+  LocalReadResult,
+  LocalSizeEligibility,
+  LocalSkippedCounts,
+  LocalSkipReasonCode,
+  LocalVaultFailureReasonCode,
+} from "@core/local-vault/local-vault.types";
+export type { ReadOnlyLocalVault } from "@core/local-vault/read-only-local-vault.port";
+export {
   decodeNotePath,
   encodeNotePath,
   isNormalizedNotePath,

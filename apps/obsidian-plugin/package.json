@@ -9,6 +9,7 @@
     "@obsidian-ai-bridge/protocol": "workspace:*"
   },
   "devDependencies": {
+    "@types/node": "^24",
     "obsidian": "^1.13.1"
   }
 }

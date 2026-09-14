@@ -9,7 +9,8 @@
       "@core/*": ["./packages/core/src/*"],
       "@protocol/*": ["./packages/protocol/src/*"],
       "@worker/*": ["./apps/worker/src/*"],
-      "@obsidian-plugin/*": ["./apps/obsidian-plugin/src/*"]
+      "@obsidian-plugin/*": ["./apps/obsidian-plugin/src/*"],
+      "@obsidian-plugin-tests/*": ["./apps/obsidian-plugin/tests/*"]
     },
     "strict": true,
     "noEmit": true,

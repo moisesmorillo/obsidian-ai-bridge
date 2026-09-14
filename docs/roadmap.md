@@ -45,15 +45,19 @@ and a [decision record](decisions/README.md).
 
 ## Current state
 
-**M1 — Worker API foundation and engineering quality — COMPLETE.** The
-experimental authenticated HTTP API stores Markdown in R2; the plugin remains a
-type-only scaffold. Completion means the bounded M1 foundation, not production
-readiness or a functioning Obsidian bridge.
+**M2 — Obsidian read-only local-vault adapter — COMPLETE.** The plugin supports
+explicit metadata-only local inspection through official Obsidian APIs. M1's
+independent authenticated Worker/R2 API remains unchanged; there is no connected
+mirror, remote plugin client or production-readiness claim.
 
 See [verified current state](current-state.md) for source evidence, limitations,
-105-test baseline, coverage thresholds, tooling and CI; [architecture](architecture.md)
-for boundaries; [API](api.md) for exact endpoints. This planning handoff implements
-no M2 behavior and asserts no deployment or installed Obsidian environment.
+250 source tests plus 3 artifact tests, coverage, tooling and CI;
+[architecture](architecture.md) for boundaries; [API](api.md) for unchanged endpoints.
+[M2 completion evidence](milestones/m2-obsidian-read-only-local-adapter.md#completion-evidence)
+and its [sequential plan](plans/m2-obsidian-read-only-local-adapter.md) record
+validation and independent semantic/security review. No deployment or real
+Obsidian desktop/mobile installation was exercised. M3 is NEXT for planning only;
+this completion transition becomes canonical when merged.
 
 ## Milestone table
 
@@ -63,8 +67,8 @@ start production code. Dependencies include all earlier milestones unless noted.
 | ID | Milestone | Status | User-visible outcome | Dependency |
 | --- | --- | --- | --- | --- |
 | M1 | Worker API foundation and engineering quality | COMPLETE | Authenticated remote Markdown CRUD/listing with R2 and an enforced quality gate | None |
-| M2 | Obsidian read-only local-vault adapter | NEXT | Load the plugin and explicitly inspect eligible local notes without modifying or sending them | M1 |
-| M3 | Remote bridge client and explicit publishing | PLANNED | Deliberately publish selected notes and inspect remote state with clear, safe failure behavior | M2 |
+| M2 | Obsidian read-only local-vault adapter | COMPLETE | Load the plugin and explicitly inspect eligible local notes without modifying or sending them | M1 |
+| M3 | Remote bridge client and explicit publishing | NEXT | Deliberately publish selected notes and inspect remote state with clear, safe failure behavior | M2 |
 | M4 | Safe reconciliation, conflicts and deletions | PLANNED | Reconcile local/remote changes without silent data loss; review divergent and deleted notes | M3 |
 | M5 | Operational and security readiness | PLANNED | Operate and recover a bounded personal bridge with documented limits and trust assumptions | M4 |
 | M6 | MCP adapter | PLANNED | Use the same authorized bridge operations from MCP-capable agents | M5 |
@@ -95,14 +99,19 @@ start production code. Dependencies include all earlier milestones unless noted.
   watchers/schedulers, local writes/deletes, remote client, sync or MCP.
 - **Risks:** Confusing local literal paths with URL decoding, changed files during
   reads, sensitive UI/log output, untested host packaging and accidental mutation.
-- **Exit criteria:** Every checklist item in the
-  [implementation-ready specification](milestones/m2-obsidian-read-only-local-adapter.md)
-  is met, local-only/read-only guarantees are tested, plugin tests run in the
-  canonical gate, bundle compatibility is verified, and handoff docs are updated.
+- **Exit criteria met:** The [completed specification](milestones/m2-obsidian-read-only-local-adapter.md)
+  records all acceptance items, 250 source/3 artifact passing tests, unchanged
+  coverage thresholds and independent semantic review with no defects found.
+  Local-only/read-only guarantees and generated CommonJS packaging are tested;
+  host compatibility evidence and untested real-host limitations are documented.
 - **Decisions deferred:** Eligibility for local inspection is **not** consent to
   mirror. Remote selection/settings begin in M3; conflict/import policy in M4.
 
 ### M3 — Remote bridge client and explicit publishing
+
+**NEXT, planning only:** refine the [M3 handoff specification](milestones/m3-remote-bridge-client-and-publishing.md)
+and create its implementation plan before production code. The unresolved
+choices below are not implicitly authorized by M2 completion.
 
 - **Objective/scope:** A typed remote adapter over the existing REST boundary;
   opt-in connection settings, response validation, selected local-to-remote
@@ -224,8 +233,12 @@ Read in order:
 2. [AGENTS.md](../AGENTS.md)
 3. [docs/architecture.md](architecture.md)
 4. [docs/roadmap.md](roadmap.md) (this file)
-5. The specification linked by the `NEXT` milestone, currently
-   [M2](milestones/m2-obsidian-read-only-local-adapter.md).
+5. The specification linked by the `NEXT` milestone, currently the
+   [M3 planning handoff](milestones/m3-remote-bridge-client-and-publishing.md).
+6. Its corresponding plan under `docs/plans/`. M3 has no implementation plan yet:
+   resolve/refine its specification and create that plan before production code.
+   The completed [M2 plan](plans/m2-obsidian-read-only-local-adapter.md) is evidence,
+   not authorization to skip M3 decisions.
 
 Then inspect the relevant source, tests, `.mise.toml`, coverage and CI, plus
 [CONTRIBUTING.md](../CONTRIBUTING.md) and [SECURITY.md](../SECURITY.md). Use

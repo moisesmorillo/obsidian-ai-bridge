@@ -31,6 +31,6 @@ export default defineConfig({
         branches: 90,
       },
     },
-    projects: ["packages/*/vitest.config.ts", "apps/worker/vitest.config.ts"],
+    projects: ["packages/*/vitest.config.ts", "apps/*/vitest.config.ts"],
   },
 });

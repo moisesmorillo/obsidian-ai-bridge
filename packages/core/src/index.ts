@@ -124,6 +124,7 @@ export {
   isApplicationEtag,
   isContentSha256,
   isUuidV4,
+  parseApplicationEtag,
 } from "@core/mirror/mirror-identifiers";
 export type {
   AbsentCurrentGenerationObservation,

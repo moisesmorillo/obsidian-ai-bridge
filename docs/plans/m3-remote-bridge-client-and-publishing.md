@@ -139,8 +139,8 @@ surface and retires unsafe v1 mutations; intermediate checkpoints are not rollou
   mutation retirement. Focused HTTP/composed tests cover current/recovery flows,
   parser negatives, no-mutation guards, CORS, v1 compatibility and OpenAPI. No
   deployment, plugin settings/state/client or autosync is included. Slice 2C local
-  evidence: 31 source files/360 tests at statements 95.48%, branches 92.09%,
-  functions 97.93%, lines 95.63%; the 8-case pinned workerd storage task also passes.
+  evidence: 31 source files/360 tests at statements 95.58%, branches 92.20%,
+  functions 97.95%, lines 95.73%; the 8-case pinned workerd storage task also passes.
   Canonical check/build evidence was repeated after corrective semantic review; no
   account, bucket or deployment was used.
 

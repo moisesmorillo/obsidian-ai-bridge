@@ -81,8 +81,8 @@ boundaries; [API](api.md) describes the HTTP contract.
   Global thresholds: **lines 95%, statements 95%, functions 94%, branches 90%**.
   Coverage is a regression signal, not proof of test quality.
 - Root Vitest projects include shared packages, Worker and plugin. Slice 2C source
-  coverage is statements **95.48%**, branches **92.09%**, functions **97.93%**, lines
-  **95.63%**; thresholds and production inclusion remain enforced. Artifact tests are separate
+  coverage is statements **95.58%**, branches **92.20%**, functions **97.95%**, lines
+  **95.73%**; thresholds and production inclusion remain enforced. Artifact tests are separate
   from source coverage, run after packaging and never replace behavioral coverage.
 - The Worker declares Miniflare **5.20260908.0-alpha** directly for its storage
   qualification task, exactly matching Wrangler **4.130.0** and workerd

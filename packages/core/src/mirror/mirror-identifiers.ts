@@ -1,4 +1,5 @@
 import {
+  APPLICATION_ETAG_PATTERN,
   APPLICATION_ETAG_PREFIX,
   CONTENT_SHA_256_PATTERN,
   UUID_V4_PATTERN,
@@ -12,6 +13,9 @@ import type {
   MirrorWriterId,
   RecoverySnapshotId,
 } from "@core/mirror/mirror.types";
+
+/** Opening delimiter and protocol prefix shared by ETag formatting and parsing. */
+const APPLICATION_ETAG_REVISION_PREFIX = `"${APPLICATION_ETAG_PREFIX}`;
 
 /**
  * Validates canonical lowercase UUID-v4 syntax without treating the identity as authorization.
@@ -113,7 +117,25 @@ export function createContentSha256(value: string): ContentSha256 | undefined {
 export function formatApplicationEtag(
   revision: ApplicationRevision,
 ): ApplicationEtag {
-  return `"${APPLICATION_ETAG_PREFIX}${revision}"` as ApplicationEtag;
+  return `${APPLICATION_ETAG_REVISION_PREFIX}${revision}"` as ApplicationEtag;
+}
+
+/**
+ * Parses one canonical strong M3 application ETag to its generation identity.
+ *
+ * Weak validators, wildcards, lists, alternate prefixes, and malformed revisions
+ * have no application-generation representation.
+ *
+ * @param value - Untrusted HTTP ETag candidate.
+ * @returns The validated application revision, or `undefined` for any other syntax.
+ */
+export function parseApplicationEtag(
+  value: string,
+): ApplicationRevision | undefined {
+  if (!APPLICATION_ETAG_PATTERN.test(value)) return undefined;
+  return createApplicationRevision(
+    value.slice(APPLICATION_ETAG_REVISION_PREFIX.length, -1),
+  );
 }
 
 /**
@@ -125,10 +147,7 @@ export function formatApplicationEtag(
 export function createApplicationEtag(
   value: string,
 ): ApplicationEtag | undefined {
-  const prefix = `"${APPLICATION_ETAG_PREFIX}`;
-  if (!value.startsWith(prefix) || !value.endsWith('"')) return undefined;
-  const revision = value.slice(prefix.length, -1);
-  if (createApplicationRevision(revision) === undefined) return undefined;
+  if (parseApplicationEtag(value) === undefined) return undefined;
   return value as ApplicationEtag;
 }
 

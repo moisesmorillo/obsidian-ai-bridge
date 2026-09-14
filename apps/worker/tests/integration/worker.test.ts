@@ -1,4 +1,6 @@
 import {
+  createMirrorAssociationId,
+  createMirrorWriterId,
   encodeNotePath,
   normalizeNotePath,
   RECOVERY_RETENTION_MILLISECONDS,
@@ -29,6 +31,14 @@ import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
 const TOKEN = "secret-token";
+const OTHER_DESIGNATION = {
+  associationId: required(
+    createMirrorAssociationId("33333333-3333-4333-8333-333333333333"),
+  ),
+  writerId: required(
+    createMirrorWriterId("44444444-4444-4444-8444-444444444444"),
+  ),
+};
 
 class TestLogger implements Logger {
   readonly entries: Parameters<Logger["info"]>[] = [];
@@ -70,11 +80,15 @@ function required<Value>(value: Value | undefined): Value {
 function mutationHeaders(
   sequence: number,
   condition: { readonly ifMatch?: string; readonly ifNoneMatch?: string },
+  identity = {
+    associationId: TEST_ASSOCIATION_ID,
+    writerId: TEST_WRITER_ID,
+  },
 ): Headers {
   const headers = new Headers({
     Authorization: `Bearer ${TOKEN}`,
-    "Bridge-Association-Id": TEST_ASSOCIATION_ID,
-    "Bridge-Writer-Id": TEST_WRITER_ID,
+    "Bridge-Association-Id": identity.associationId,
+    "Bridge-Writer-Id": identity.writerId,
     "Bridge-Operation-Id": operationId(sequence),
   });
   if (condition.ifMatch !== undefined)
@@ -255,6 +269,141 @@ describe("Worker v2 API", () => {
       mutationAcknowledgementSchema.parse(await recreated.json()).receipt
         .action,
     ).toBe("recreate");
+  });
+
+  it("refuses a cross-association update before conditional storage dispatch", async () => {
+    const bucket = new MemoryMirrorBucket();
+    const { app } = application(bucket);
+    const created = await createNote(app, 900, "association A live");
+    const storedBefore = bucket.body("vault/Alpha.md");
+    const attemptsBefore = bucket.putKeys.length;
+    const otherApp = application(bucket, {
+      designation: OTHER_DESIGNATION,
+    }).app;
+    const otherHeaders = mutationHeaders(
+      901,
+      { ifMatch: `"m3-${created.acknowledgement.revision}"` },
+      OTHER_DESIGNATION,
+    );
+    otherHeaders.set("Content-Type", "text/plain");
+
+    const refused = await otherApp.fetch(
+      request(noteRoute("Alpha.md"), {
+        method: "PUT",
+        headers: otherHeaders,
+        body: "association B update",
+      }),
+    );
+
+    expect(refused.status).toBe(412);
+    expect(await errorCode(refused)).toBe(API_ERROR_CODE.preconditionFailed);
+    expect(bucket.body("vault/Alpha.md")).toBe(storedBefore);
+    expect(bucket.putKeys).toHaveLength(attemptsBefore);
+
+    const sameHeaders = mutationHeaders(902, {
+      ifMatch: `"m3-${created.acknowledgement.revision}"`,
+    });
+    sameHeaders.set("Content-Type", "text/plain");
+    const sameAssociation = await app.fetch(
+      request(noteRoute("Alpha.md"), {
+        method: "PUT",
+        headers: sameHeaders,
+        body: "association A update",
+      }),
+    );
+    expect(sameAssociation.status).toBe(200);
+  });
+
+  it("refuses a cross-association tombstone before recovery preparation", async () => {
+    const bucket = new MemoryMirrorBucket();
+    const { app } = application(bucket);
+    const created = await createNote(app, 903, "association A live");
+    const storedBefore = bucket.body("vault/Alpha.md");
+    const attemptsBefore = bucket.putKeys.length;
+    const otherApp = application(bucket, {
+      designation: OTHER_DESIGNATION,
+    }).app;
+
+    const refused = await otherApp.fetch(
+      request(noteRoute("Alpha.md"), {
+        method: "DELETE",
+        headers: mutationHeaders(
+          904,
+          { ifMatch: `"m3-${created.acknowledgement.revision}"` },
+          OTHER_DESIGNATION,
+        ),
+      }),
+    );
+
+    expect(refused.status).toBe(412);
+    expect(await errorCode(refused)).toBe(API_ERROR_CODE.preconditionFailed);
+    expect(bucket.body("vault/Alpha.md")).toBe(storedBefore);
+    expect(bucket.putKeys).toHaveLength(attemptsBefore);
+    expect(bucket.body(`recovery/${operationId(904)}`)).toBeUndefined();
+
+    const sameAssociation = await app.fetch(
+      request(noteRoute("Alpha.md"), {
+        method: "DELETE",
+        headers: mutationHeaders(905, {
+          ifMatch: `"m3-${created.acknowledgement.revision}"`,
+        }),
+      }),
+    );
+    expect(sameAssociation.status).toBe(200);
+  });
+
+  it("refuses a cross-association recreation before conditional storage dispatch", async () => {
+    const bucket = new MemoryMirrorBucket();
+    const { app } = application(bucket);
+    const created = await createNote(app, 906, "association A live");
+    const removed = await app.fetch(
+      request(noteRoute("Alpha.md"), {
+        method: "DELETE",
+        headers: mutationHeaders(907, {
+          ifMatch: `"m3-${created.acknowledgement.revision}"`,
+        }),
+      }),
+    );
+    const tombstone = tombstoneMutationResponseSchema.parse(
+      await removed.json(),
+    );
+    const storedBefore = bucket.body("vault/Alpha.md");
+    const attemptsBefore = bucket.putKeys.length;
+    const otherApp = application(bucket, {
+      designation: OTHER_DESIGNATION,
+    }).app;
+    const otherHeaders = mutationHeaders(
+      908,
+      { ifMatch: `"m3-${tombstone.acknowledgement.revision}"` },
+      OTHER_DESIGNATION,
+    );
+    otherHeaders.set("Content-Type", "text/plain");
+
+    const refused = await otherApp.fetch(
+      request(noteRoute("Alpha.md"), {
+        method: "PUT",
+        headers: otherHeaders,
+        body: "association B recreation",
+      }),
+    );
+
+    expect(refused.status).toBe(412);
+    expect(await errorCode(refused)).toBe(API_ERROR_CODE.preconditionFailed);
+    expect(bucket.body("vault/Alpha.md")).toBe(storedBefore);
+    expect(bucket.putKeys).toHaveLength(attemptsBefore);
+
+    const sameHeaders = mutationHeaders(909, {
+      ifMatch: `"m3-${tombstone.acknowledgement.revision}"`,
+    });
+    sameHeaders.set("Content-Type", "text/plain");
+    const sameAssociation = await app.fetch(
+      request(noteRoute("Alpha.md"), {
+        method: "PUT",
+        headers: sameHeaders,
+        body: "association A recreation",
+      }),
+    );
+    expect(sameAssociation.status).toBe(200);
   });
 
   it("maps malformed recovery proof to 500 without tombstoning the live head", async () => {

@@ -36,4 +36,54 @@ describe("protocol schemas", () => {
       }),
     ).toEqual({ protocolVersion: PROTOCOL_VERSION, requestId: "request-1" });
   });
+
+  it.each([
+    ["health", healthResponseSchema, { status: "ok", unexpected: true }],
+    [
+      "note list",
+      noteListResponseSchema,
+      { notes: ["Alpha.md"], unexpected: true },
+    ],
+    [
+      "note write",
+      noteWriteResponseSchema,
+      { path: "Alpha.md", stored: true, unexpected: true },
+    ],
+    [
+      "API error envelope",
+      apiErrorResponseSchema,
+      {
+        error: {
+          code: "invalid_path",
+          message: "The note path is invalid.",
+        },
+        unexpected: true,
+      },
+    ],
+    [
+      "API error body",
+      apiErrorResponseSchema,
+      {
+        error: {
+          code: "invalid_path",
+          message: "The note path is invalid.",
+          unexpected: true,
+        },
+      },
+    ],
+    [
+      "protocol envelope",
+      protocolEnvelopeSchema,
+      {
+        protocolVersion: PROTOCOL_VERSION,
+        requestId: "request-1",
+        unexpected: true,
+      },
+    ],
+  ])(
+    "rejects unknown fields in the closed %s contract",
+    (_name, schema, value) => {
+      expect(schema.safeParse(value).success).toBe(false);
+    },
+  );
 });

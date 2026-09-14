@@ -82,10 +82,13 @@ R2 stores current objects under `vault/<normalized-path>` and recovery objects u
 Configuration names a development bucket but does not prove a remote resource exists;
 setup instructions are in the [README](../README.md#local-worker-development).
 Reachable mutations use create-only or exact-observed-generation conditional PUT;
-current tombstones and purged recovery markers are retained, and no reachable v1/v2
-mutation calls native R2 DELETE. V2 pages scan at most 50 objects and keep cursors
-opaque. The old unconditional repository remains historical test coverage but is no
-longer composed into HTTP mutation routes.
+application policy also refuses mutation when an established generation's receipt
+belongs to another association. Current tombstones and purged recovery markers are
+retained, and no reachable v1/v2 mutation calls native R2 DELETE. This continuity
+check is not bucket adoption: ADR 0003's safe reset remains a separately provisioned
+isolated empty bucket/namespace with a new association and credentials. V2 pages scan
+at most 50 objects and keep cursors opaque. The old unconditional repository remains
+historical test coverage but is no longer composed into HTTP mutation routes.
 
 ### Obsidian plugin
 

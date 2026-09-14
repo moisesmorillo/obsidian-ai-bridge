@@ -215,7 +215,7 @@ export class CurrentGenerationService {
     }
     if (
       observed.kind !== CURRENT_NOTE_STATE_KIND.live ||
-      observed.state.revision !== request.precondition.revision
+      !this.matchesExistingGeneration(observed.state, request)
     ) {
       return {
         kind: MUTATION_EFFECT_CERTAINTY.definitelyRefused,
@@ -324,7 +324,7 @@ export class CurrentGenerationService {
       }
       if (
         observed.kind !== requiredKind ||
-        observed.state.revision !== request.precondition.revision
+        !this.matchesExistingGeneration(observed.state, request)
       ) {
         return { kind: MUTATION_EFFECT_CERTAINTY.definitelyRefused };
       }
@@ -350,6 +350,29 @@ export class CurrentGenerationService {
     } catch {
       return { kind: MUTATION_EFFECT_CERTAINTY.notDispatched };
     }
+  }
+
+  /**
+   * Verifies that an established generation belongs to the requesting association.
+   *
+   * Association continuity is application policy: a matching revision from another
+   * association never authorizes mutation or recovery preparation.
+   *
+   * @param state - Observed live or tombstone generation targeted by the mutation.
+   * @param request - Matching-revision mutation carrying the active association.
+   * @returns Whether both revision and association identify the expected generation.
+   */
+  private matchesExistingGeneration(
+    state: Extract<CurrentNoteState, { readonly kind: "live" | "tombstone" }>,
+    request:
+      | ConditionalUpdateRequest
+      | ConditionalRecreateRequest
+      | ConditionalTombstoneRequest,
+  ): boolean {
+    return (
+      state.revision === request.precondition.revision &&
+      state.receipt.associationId === request.associationId
+    );
   }
 
   /**

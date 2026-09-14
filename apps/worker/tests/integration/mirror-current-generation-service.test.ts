@@ -43,6 +43,9 @@ const ASSOCIATION_ID = required(
 const WRITER_ID = required(
   createMirrorWriterId("22222222-2222-4222-8222-222222222222"),
 );
+const OTHER_ASSOCIATION_ID = required(
+  createMirrorAssociationId("33333333-3333-4333-8333-333333333333"),
+);
 const PATH = required(normalizeNotePath("Service/Note.md"));
 
 function required<Value>(value: Value | undefined): Value {
@@ -77,10 +80,11 @@ function updateRequest(
   sequence: number,
   content: string,
   revision: string,
+  associationId = ASSOCIATION_ID,
 ): ConditionalUpdateRequest {
   return {
     action: MUTATION_ACTION.update,
-    associationId: ASSOCIATION_ID,
+    associationId,
     writerId: WRITER_ID,
     operationId: operationId(sequence),
     path: PATH,
@@ -264,10 +268,11 @@ function services(bucket: MemoryMirrorBucket) {
 function tombstoneRequest(
   sequence: number,
   revision: string,
+  associationId = ASSOCIATION_ID,
 ): ConditionalTombstoneRequest {
   return {
     action: MUTATION_ACTION.tombstone,
-    associationId: ASSOCIATION_ID,
+    associationId,
     writerId: WRITER_ID,
     operationId: operationId(sequence),
     path: PATH,
@@ -386,6 +391,38 @@ describe("CurrentGenerationService", () => {
     await expect(
       services(malformedBucket).create(createRequest(8, "replace")),
     ).resolves.toEqual({ kind: MUTATION_EFFECT_CERTAINTY.notDispatched });
+  });
+
+  it("refuses a cross-association update before mutation dispatch", async () => {
+    const bucket = new MemoryMirrorBucket();
+    const service = services(bucket);
+    const created = await confirmedCreate(
+      service,
+      90,
+      "owned by association A",
+    );
+    const storedBefore = bucket.snapshot();
+    const attemptsBefore = bucket.putAttempts.length;
+
+    await expect(
+      service.update(
+        updateRequest(
+          91,
+          "association B candidate",
+          created.revision,
+          OTHER_ASSOCIATION_ID,
+        ),
+      ),
+    ).resolves.toEqual({
+      kind: MUTATION_EFFECT_CERTAINTY.definitelyRefused,
+    });
+
+    expect(bucket.snapshot()).toEqual(storedBefore);
+    expect(bucket.putAttempts).toHaveLength(attemptsBefore);
+    const sameAssociation = await service.update(
+      updateRequest(92, "same association candidate", created.revision),
+    );
+    expect(sameAssociation.kind).toBe(MUTATION_EFFECT_CERTAINTY.confirmed);
   });
 
   it("lets one of two updates observed at A commit B and refuses the stale competitor", async () => {
@@ -593,6 +630,36 @@ async function confirmedTombstone(
 }
 
 describe("recoverable tombstone and recovery lifecycle", () => {
+  it("refuses a cross-association tombstone before recovery preparation", async () => {
+    const bucket = new MemoryMirrorBucket();
+    const { current, recovery } = serviceSet(bucket);
+    const live = await confirmedCreate(current, 93, "owned by association A");
+    const prepareForDeletion = vi.spyOn(recovery, "prepareForDeletion");
+    const storedBefore = bucket.snapshot();
+    const attemptsBefore = bucket.putAttempts.length;
+
+    await expect(
+      current.tombstone(
+        tombstoneRequest(94, live.revision, OTHER_ASSOCIATION_ID),
+      ),
+    ).resolves.toEqual({
+      kind: MUTATION_EFFECT_CERTAINTY.definitelyRefused,
+      stage: TOMBSTONE_WORKFLOW_STAGE_KIND.current,
+    });
+
+    expect(prepareForDeletion).not.toHaveBeenCalled();
+    expect(bucket.snapshot()).toEqual(storedBefore);
+    expect(bucket.putAttempts).toHaveLength(attemptsBefore);
+    const sameAssociation = await current.tombstone(
+      tombstoneRequest(95, live.revision),
+    );
+    expect(sameAssociation).toMatchObject({
+      kind: MUTATION_EFFECT_CERTAINTY.confirmed,
+      stage: TOMBSTONE_WORKFLOW_STAGE_KIND.complete,
+    });
+    expect(prepareForDeletion).toHaveBeenCalledOnce();
+  });
+
   it("keeps the live head when malformed recovery prevents duplicate proof", async () => {
     const bucket = new MemoryMirrorBucket();
     const { current } = serviceSet(bucket);
@@ -915,6 +982,47 @@ describe("recoverable tombstone and recovery lifecycle", () => {
       kind: RECOVERY_CONTENT_RESULT_KIND.recoverable,
       content: "recoverable",
     });
+  });
+
+  it("refuses a cross-association recreation before mutation dispatch", async () => {
+    const bucket = new MemoryMirrorBucket();
+    const { current } = serviceSet(bucket);
+    const deleted = await confirmedTombstone(current, 96, 97);
+    const storedBefore = bucket.snapshot();
+    const attemptsBefore = bucket.putAttempts.length;
+
+    await expect(
+      current.recreate({
+        action: MUTATION_ACTION.recreate,
+        associationId: OTHER_ASSOCIATION_ID,
+        writerId: WRITER_ID,
+        operationId: operationId(98),
+        path: PATH,
+        precondition: {
+          kind: CONDITIONAL_MUTATION_PRECONDITION_KIND.matchingRevision,
+          revision: deleted.acknowledgement.revision,
+        },
+        content: "association B candidate",
+      }),
+    ).resolves.toEqual({
+      kind: MUTATION_EFFECT_CERTAINTY.definitelyRefused,
+    });
+
+    expect(bucket.snapshot()).toEqual(storedBefore);
+    expect(bucket.putAttempts).toHaveLength(attemptsBefore);
+    const sameAssociation = await current.recreate({
+      action: MUTATION_ACTION.recreate,
+      associationId: ASSOCIATION_ID,
+      writerId: WRITER_ID,
+      operationId: operationId(99),
+      path: PATH,
+      precondition: {
+        kind: CONDITIONAL_MUTATION_PRECONDITION_KIND.matchingRevision,
+        revision: deleted.acknowledgement.revision,
+      },
+      content: "same association candidate",
+    });
+    expect(sameAssociation.kind).toBe(MUTATION_EFFECT_CERTAINTY.confirmed);
   });
 
   it("recreates from the exact tombstone without modifying its recovery snapshot", async () => {

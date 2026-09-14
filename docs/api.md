@@ -63,6 +63,13 @@ Conditions are strict:
 - A stale generation or wrong recognized target state is `412 precondition_failed`.
 - Unknown/not-dispatched storage effects are sanitized `500`, never reported as `412`.
 
+A matching-revision update, recreation or tombstone additionally requires the
+existing live/tombstone receipt to belong to the request association. A mismatch is
+`412 precondition_failed` before any current or recovery write. This continuity
+check does not make an arbitrary populated bucket safe for another association.
+The accepted reset remains a separately provisioned isolated empty bucket/namespace,
+new association and new credentials; never repoint a reset association at old keys.
+
 PUT derives update versus recreation from the recognized live/tombstone action contract, then delegates the exact transition to application policy. It requires an explicit `text/markdown` or `text/plain` media type, case-insensitively with parameters. The body is streamed and strictly decoded as UTF-8 up to 1 MiB independently of `Content-Length`; explicit supported content type with no stream or zero bytes means valid empty text. Unsupported/missing content type is 415, malformed UTF-8 is 400, and oversize is 413. DELETE, seal, and purge accept only an empty body.
 
 DELETE first creates/proves recovery content, then CAS-replaces the exact live head with a permanent tombstone, then independently attempts sealing. Its JSON response includes the exact tombstone acknowledgement, metadata for the prepared recovery generation, and the independent sealing certainty/generation. A sealing failure never rolls back a confirmed tombstone.

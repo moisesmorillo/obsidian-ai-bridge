@@ -104,7 +104,7 @@ The final Slice 0 tree passed:
 
 - `mise install` with the pinned Bun 1.4.2 and Node.js 24.21.0 already installed;
 - `mise run install` using the frozen `bun.lock`;
-- `mise run worker:storage-test`: 1 runtime file and 6 tests;
+- `mise run worker:storage-test`: 1 runtime file and 8 parametrized test cases;
 - `mise run check`: Biome, type-aware Oxlint/deprecation checks, all TypeScript
   configurations, 21 source files / 250 tests, coverage, Worker dry-run build and
   3 packaged-plugin smoke tests;

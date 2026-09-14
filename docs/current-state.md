@@ -24,7 +24,7 @@ boundaries; [API](api.md) describes the HTTP contract.
 | Area | Verified behavior | Primary evidence |
 | --- | --- | --- |
 | Worker | Typed Hono/OpenAPI app assembled once per isolate; request middleware resolves the note service and bearer secret from bindings. Handlers call application services, not repositories. | `apps/worker/src/{index,app,app.types}.ts`, `src/http/` |
-| M3 Worker | Private tagged live/tombstone/recovery codecs; create-only and exact-observed-generation R2 CAS; core current/recovery policy; authenticated public v2 mirror/current/recovery routes; strict IDs/conditions/media/stream bounds; application ETags; separate recovery metadata/content; method-specific CORS; envelope-aware v1 reads and 410 v1 mutation retirement. | `packages/core/src/mirror/`, `apps/worker/src/{composition,http,infrastructure}/`, focused storage/service/HTTP/composed tests |
+| M3 Worker | Private tagged live/tombstone/recovery codecs; create-only and exact-observed-generation R2 CAS; core current/recovery policy with existing-generation association continuity; authenticated public v2 mirror/current/recovery routes; strict IDs/conditions/media/stream bounds; application ETags; separate recovery metadata/content; method-specific CORS; envelope-aware v1 reads and 410 v1 mutation retirement. | `packages/core/src/mirror/`, `apps/worker/src/{composition,http,infrastructure}/`, focused storage/service/HTTP/composed tests |
 | Routes | Public health/OpenAPI/Scalar; authenticated envelope-aware v1 GET/list plus retired PUT/DELETE; authenticated paginated v2 mirror/current/state/recovery metadata/content and POST maintenance routes. Both API prefixes and unknown descendants are protected; registered v2 OPTIONS is storage-free. | `apps/worker/src/app.ts`, `src/http/{v2.handlers,v2-cors.middleware,openapi.routes}.ts` |
 | Authentication | One `OBSIDIAN_BRIDGE_TOKEN`; missing/empty configuration fails closed. Bearer scheme is case-insensitive; malformed, missing, unsupported or wrong credentials yield sanitized 401 with `WWW-Authenticate: Bearer`. Comparison hashes both tokens with SHA-256 and compares fixed-length digests without early exit. | `apps/worker/src/auth/`, `src/http/authentication.middleware.ts` |
 | Persistence | `VAULT_BUCKET` binding, keys `vault/<normalized-path>`, Markdown HTTP metadata. V2 listing exposes bounded 50-object pages with opaque cursors; retained v1 aggregates at most 1,000 such pages. Both filter unsafe/non-Markdown/oversized untagged legacy/out-of-namespace keys; tagged malformed or oversized objects fail sanitized. | `apps/worker/src/infrastructure/`, `packages/core/src/vault/note-service.ts` |
@@ -38,7 +38,7 @@ boundaries; [API](api.md) describes the HTTP contract.
 | Local safety | Shared literal `.md` path and 1 MiB policy; dot-prefixed/configuration-directory exclusions; pre-read metadata and post-read UTF-8 bound; exact lookup and pre/post object/path/mtime/size checks. No path repair/URI decoding, content UI or atomic snapshot claim. | `packages/core/src/local-vault/`, plugin adapter tests |
 | Plugin artifact | Browser-target CommonJS exposes `module.exports.default`, only `obsidian` external; stages unchanged manifest. Artifact suite checks actual generated files, inert load, commands and lifecycle in an isolated host-double realm without Node globals. No real desktop/mobile host was tested. | `.mise.toml`, `apps/obsidian-plugin/tests/artifact/`, [API/version and installation evidence](plugin-development.md) |
 | Core | Public branded identifier/path utilities, `NoteService`/`VaultNoteService`, `VaultRepository`, size limit and typed payload/storage errors. M3 adds platform-independent UUID-v4 IDs, ETags, digests, closed current/recovery/intent/effect contracts, generation-bound conditional ports, current-generation orchestration and recovery lifecycle policy with an injected clock. No Obsidian, Hono, Cloudflare, HTTP, filesystem or protocol dependency. Separate public `ReadOnlyLocalVault`, `LocalInspectionService`, closed local results and eligibility policy support M2 without platform imports or mutation methods. | `packages/core/src/`, package exports |
-| Protocol | Zod schemas and inferred DTOs for health, errors, retained v1 responses, and strict bounded M3 identity, NotePath, precondition, receipt, current-state, recovery, intent, capability/result and pagination contracts. V2 handlers/OpenAPI consume these sources; the reserved version `0.1` envelope remains unused rather than being silently repurposed. | `packages/protocol/src/` |
+| Protocol | Strict Zod schemas and inferred DTOs for health, errors, retained v1 responses, and bounded M3 identity, NotePath, precondition, receipt, current-state, recovery, intent, capability/result and pagination contracts. V2 handlers/OpenAPI consume these sources; the reserved version `0.1` envelope remains unused rather than being silently repurposed. | `packages/protocol/src/` |
 
 ## Tooling and validation baseline
 
@@ -61,7 +61,7 @@ boundaries; [API](api.md) describes the HTTP contract.
   prohibition, direct-console prohibition and configured documentation rules.
   These checks do **not** prove all architecture/TSDoc requirements in
   [AGENTS.md](../AGENTS.md); manual semantic review remains mandatory.
-- Vitest **5**: **31 source test files / 362 tests**, plus **1 artifact file /
+- Vitest **5**: **31 source test files / 374 tests**, plus **1 artifact file /
   3 smoke tests** in the dedicated build task. The unchanged M1 baseline had
   15 files / 105 tests. Exact slice validation is recorded in the
   [implementation plan](plans/m2-obsidian-read-only-local-adapter.md).
@@ -80,9 +80,9 @@ boundaries; [API](api.md) describes the HTTP contract.
   `*.types.ts`, build/output and Wrangler state. Reports: text, JSON summary, LCOV.
   Global thresholds: **lines 95%, statements 95%, functions 94%, branches 90%**.
   Coverage is a regression signal, not proof of test quality.
-- Root Vitest projects include shared packages, Worker and plugin. Slice 2C source
-  coverage is statements **95.79%**, branches **92.49%**, functions **98.03%**, lines
-  **95.94%**; thresholds and production inclusion remain enforced. Artifact tests are separate
+- Root Vitest projects include shared packages, Worker and plugin. Current source
+  coverage is statements **95.79%**, branches **92.51%**, functions **98.03%**, lines
+  **95.95%**; thresholds and production inclusion remain enforced. Artifact tests are separate
   from source coverage, run after packaging and never replace behavioral coverage.
 - The Worker declares Miniflare **5.20260908.0-alpha** directly for its storage
   qualification task, exactly matching Wrangler **4.130.0** and workerd

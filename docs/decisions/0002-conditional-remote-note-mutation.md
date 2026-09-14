@@ -1,155 +1,168 @@
-# ADR 0002 — Conditional remote note mutation
+# ADR 0002 — Conditional current-generation remote mutation
 
 ## Status
 
-**Proposed.** Requires maintainer approval of D4 in the
-[M3 decision brief](../plans/m3-design-decisions.md). Not implemented and not an
-accepted replacement of the M1 behavior recorded in ADR 0001. This proposal
-changes storage representation and external writer compatibility deliberately.
+**Accepted — maintainer-approved M3 design; not implemented.** The maintainer
+approved versioned envelopes, fresh server revisions, R2 CAS and a safe v2 contract,
+then approved automatic mirroring and recoverable deletion. This revision incorporates
+those requirements and the [recovery contract](0004-recoverable-mirror-deletions.md).
+Acceptance is not a claim that M1 already implements conditional writes.
 
 ## Context
 
-M1's existence check followed by unconditional R2 PUT loses concurrent edits.
-R2 supports atomic conditional PUT using an object's ETag or HTTP conditions,
-returning null without a write on failed conditions. R2 upload `version` is unique
-but cannot be a write predicate. SHA-256 checksums validate incoming bytes, not
-the object being replaced. A separate application metadata object is not atomic
-with the note body. A raw-body ETag can repeat on same-text replacement or
-remove/recreate; that is insufficient as a distinct publishing generation.
-
-Old M1 servers ignore conditional headers. Checking capabilities and then sending
-to their existing PUT route is not sufficient against a server downgrade between
-requests. No prior M1 writer is known to be deployed; configuration is not evidence
-that it is safe to break an actual installation without an upgrade procedure.
+M1 uses existence-check → unconditional PUT and destructive DELETE. Strongly
+consistent storage does not make that sequence atomic. R2 offers conditional PUT,
+not conditional DELETE on the Worker binding. Its upload version is unique but not
+an available predicate; a raw-body ETag may repeat across same-text replacements.
+Keeping the old mutation route available would undermine autosync and tombstones.
 
 ## Decision
 
-Subject to approval, implement these M3 safety prerequisites:
+### One authoritative current object
 
-1. Add authenticated `/api/v2/notes` list/read and conditional PUT item routes,
-   retaining canonical base64url path addressing. All versions share the existing
-   `vault/<NotePath>` keys. The upgraded Worker rejects **every v1 PUT with 410**,
-   never writing. V1 read/list remain compatible. No v2 delete is introduced;
-   existing v1 DELETE is still explicitly destructive external-client behavior.
-   An old Worker has no v2 mutation route and cannot silently honor an unsafe PUT.
-2. Persist each new successful write as a single adapter-private UTF-8 JSON object
-   with exactly `format: 1`, `revision` (fresh server-generated UUID v4), and
-   `content` (note text). Set customMetadata `bridgeFormat: "1"` to identify the
-   codec. The marker is a format discriminator, **not** the revision predicate.
-   Fresh server randomness is generated for every storage write attempt and kept
-   inside the stored body, not just custom metadata. No caller-supplied revision.
-3. Validate marker, exact envelope schema, revision syntax and decoded content
-   byte length. Envelope read bound is `6 * MAX_NOTE_SIZE_BYTES + 256` bytes, then
-   the actual decoded UTF-8 content must still be at most 1 MiB. The factor covers
-   JSON escaping of control bytes; validate encoded bytes before storing as well.
-   Incoming HTTP bodies retain the original 1 MiB limit. Private R2 HTTP metadata
-   describes JSON envelopes; API responses still return raw Markdown, not JSON
-   envelope bytes. List eligibility for envelopes uses decoded content size, not
-   a naive 1 MiB physical-object filter. This adds bounded per-object reads to
-   listing; whole-list scale remains an explicit limitation, not a free operation.
-4. Untagged existing objects are **legacy raw Markdown**, never inferred to be
-   envelopes from their content. Keep them readable/listable under the original
-   size bound. Unknown markers, malformed envelopes or oversized storage yield
-   sanitized storage failure, not absence or a writable empty note. M3 does not
-   convert/adopt legacy objects automatically and offers no legacy replacement
-   through v2. A legacy path blocks first publishing even if text matches exactly.
-5. V2 GET returns raw content plus a strong application ETag
-   `"m3-<revision-uuid>"` for a revisioned object, from the same retrieved object
-   as the content. Legacy reads are explicitly marked legacy and have no writable
-   revision. This ETag identifies application representation generation; it is
-   not an advertised body checksum or the R2 upload version.
-6. V2 PUT accepts exactly one supported precondition:
-   - `If-None-Match: *`: create only. Execute R2 put with a freshly constructed
-     `Headers` containing `If-None-Match: *`. Success is 201, null is 412.
-   - `If-Match: "m3-<revision-uuid>"`: update only. Retrieve/validate the object,
-     require its application revision to equal the supplied revision, then R2 put
-     with `onlyIf: { etagMatches: observedObject.etag }`. Success is 200, null is
-     412. Missing or legacy object and revision mismatch are 412, never create.
-   Missing precondition is 428; both headers, weak validators, lists, wildcard
-   If-Match, unsupported syntax/date conditions are rejected as 400. No bypass
-   option. Construct adapter-owned conditions, never forward arbitrary headers.
-7. Success returns validated path, stored=true, revision, and the same ETag as the
-   stored envelope. Do not HEAD again to derive success revision or created status:
-   another writer may already have advanced it. GET is observational; it never
-   grants the plugin a new replacement baseline by itself.
-8. Keep all storage details private to the Worker adapter. Core receives typed
-   `absent | matching(revision)` requirements and `stored | precondition_failed`
-   outcomes, not R2 types, HTTP headers or magic string errors.
+Keep adapter-private `vault/<NotePath>` addressing, one current object per path.
+New objects have customMetadata `bridgeFormat: "2"` and an exact versioned JSON
+body, one of:
 
-### Safety argument and exact harmful interleavings
+- **Live:** format=2, kind=live, fresh server UUID-v4 revision, last-operation receipt,
+  and UTF-8 note content.
+- **Tombstone:** format=2, kind=tombstone, fresh server UUID-v4 revision,
+  last-operation receipt, deleted live revision and recovery snapshot ID.
 
-The linearization point is R2's conditional put, not the preliminary read.
-Assume the documented conditional operation is atomic, storage validators
-correctly distinguish changed envelope bytes, server nonces do not collide, and
-all ordinary API writes go through the upgraded Worker. Storage/Worker operators
-and malicious token holders are not adversaries excluded by this single-token
-experimental trust model. The token still permits destructive external DELETE.
+Every accepted mutation attempt generates a new revision **inside the stored body**;
+custom metadata alone is not the predicate. All ordinary mutations preserve the
+current object key, including removal/recreation. A tombstone is never expired by
+lifecycle or physically deleted by an application note endpoint. Recovery snapshots
+are separate objects; they are not competing authoritative note heads.
 
-- **Create/create:** both requests reach R2 with absence conditions while absent.
-  Only one can atomically insert; the other returns 412 and leaves the winner.
-- **Known update / remote edit:** publisher reads envelope A and its storage ETag.
-  Editor commits B before publisher's conditional put. B contains a fresh nonce,
-  even if note text equals A. Publisher's storage predicate fails; B survives.
-- **Concurrent updates both read A:** one CAS succeeds; the other's observed ETag
-  fails. There is no get-then-unconditional fallback after null.
-- **Remove/recreate:** an updater of A cannot create an absent object. A recreated
-  envelope has another revision/ETag, including with identical text; stale A fails.
-  If DELETE occurs after a successful publish, it can still delete the result.
-  M3 does not claim protection from an independently authorized destructive API.
-- **Ambiguous update failure:** repeat only the same original content and matching
-  revision. If first attempt committed, its new revision prevents replay overwriting
-  that or any later generation. Replay may return 412, not recoverable success.
-  If neither committed, one may succeed. Never use a freshly read precondition.
-  **Ambiguous create is not replayed by the plugin:** create→delete makes absence
-  true again, so an absence predicate alone cannot prove historical non-commit.
-  Generic concurrent-create safety does not imply durable create idempotency.
-- **Old server:** plugin v2 requests receive a refusal on the old implementation;
-  no fallback to v1 PUT, even after a 404 or malformed capability response.
+A last-operation receipt contains the validated operation UUID, association UUID,
+action (create/update/recreate/tombstone), original parent revision or absent,
+and content SHA-256 for content mutations. The server computes the hash from bytes;
+a caller does not choose the new revision. UUIDs are opaque operation identities,
+not permissions. Receipts allow evidence-based recovery of **our own persisted
+intent**, not arbitrary adoption of a path with equal content.
 
-This provides per-object safety, not transactions across notes, retained history,
-exactly-once delivery or cryptographic protection against a malicious storage
-operator. Random revision and R2 ETag assumptions are explicit; do not call a
-hash/checksum collision impossible or claim database-grade global sequencing.
+Untagged pre-M3 raw objects remain legacy Markdown: read/list under M1's size
+policy, never recognize JSON-looking raw text as an envelope. Unknown markers,
+invalid schema/UTF-8/metadata and oversized objects fail as storage errors, not
+absence. M3 does not convert or automatically adopt legacy paths. There are no
+deployed format-1 M3 envelopes to migrate from the prior unimplemented proposal.
+
+Envelope bytes are bounded by `6 * MAX_NOTE_SIZE_BYTES + 4096`; decoded content
+remains <=1 MiB. The factor covers JSON escaping; fixed metadata schemas bound
+IDs/receipts. Tombstone metadata has a 4096-byte bound. Validate stored and actual
+read bytes as well as declared size. Normal HTTP note content remains raw Markdown;
+storage JSON never leaks as a note. V2 lists page over at most 50 storage entries
+per request, decode sequentially, omit tombstones, and may return an empty page with
+a continuation. Core/transport do not see R2 cursors/metadata implementation details.
+
+### Conditional protocol
+
+Use authenticated `/api/v2` routes; old Workers do not implement them. There is
+**no fallback to v1** after missing capability, 404, timeout or malformed response.
+Upgraded Worker v1 PUT and DELETE return authenticated 410 `mutation_api_retired`,
+without mutation. V1 raw reads/listing remain, decoding live envelopes and hiding
+tombstones. No destructive v1 bypass or mixed old/new writer rollout is supported.
+
+Every v2 note mutation carries operation/association/writer IDs, validated against
+the [designation contract](0003-publishing-association-and-local-state.md), plus:
+
+| Operation | Required condition | Storage action | Success |
+| --- | --- | --- | --- |
+| First create | If-None-Match: * | R2 put with a constructed Headers containing If-None-Match: * | 201 live |
+| Update | One strong If-Match: "m3-<revision>" | GET/validate expected live revision, then put onlyIf.etagMatches = exact observed storage ETag | 200 live |
+| Recreate after acknowledged tombstone | One strong If-Match of that tombstone | Same observed-object CAS, producing fresh live revision | 200 live |
+| Delete live generation | One strong If-Match of expected live revision | Prepare recovery, then same observed-object CAS to tombstone; **not bucket.delete** | 200 tombstone |
+
+Core uses absent/matching typed requirements; HTTP parsing and R2 conditions stay
+in adapters. Missing precondition = 428, unsupported/both/weak/list/date/wildcard
+update conditions = 400, stale/missing/legacy or wrong-state target = 412. R2 null
+conditional result = 412 and no current-object write. No replace-any option.
+
+Read current content and revision from **one** R2 GET. A strong application ETag is
+`"m3-<revision>"`, not the R2 upload version or a body checksum. Successful ACKs
+return the generation actually stored, not a subsequent HEAD's possibly newer
+revision. Normal GET returns 404 for missing/tombstoned notes. Authenticated state
+inspection distinguishes absent/legacy/live/tombstone and exposes validated receipts
+without content; normal listing and future MCP note resources exclude tombstones.
+
+### Ambiguous operations and retries
+
+A valid success ACK, or state response with receipt matching the **entire persisted
+intent** (connection/association/path/action/operation ID/original condition/hash),
+can advance a local baseline. Equal text, a different receipt or merely reading the
+latest revision cannot. If another mutation has replaced the receipt, fail closed
+as divergence; M3 does not reconstruct arbitrary history to adopt it.
+
+Retries use the same operation ID, original precondition and exact bytes. The
+server still returns 412 for an already-committed replay; the client checks receipts
+instead of treating 412 as success. Create retries are now safe against ordinary
+API create→delete because deletion leaves a permanent current tombstone: absence
+never becomes true again. This deliberately replaces the earlier manual-publishing
+proposal's hard-delete assumption. Physical operator removal/old Worker writes are
+outside the supported contract and must not occur in an active association.
+
+If a restart cannot reconstruct the exact attempted content from a saved local
+file with matching hash, do not send a different body under the same operation.
+Inspect for our receipt; otherwise leave that path blocked. The
+[specification](../milestones/m3-remote-bridge-client-and-publishing.md) bounds
+attempts/evidence requests and keeps other paths progressing.
+
+### Safety argument
+
+R2 conditional PUT is the linearization point. Assume its documented predicate
+is atomic, validators distinguish changed envelope bytes, server UUIDs do not
+collide, and current keys are mutated only through this contract. R2/Worker operators
+and compromised privileged bearers are within the experimental trust boundary;
+this is not cryptographic protection from a malicious operator.
+
+- Two absent creates reach the storage boundary together: one inserts, one fails.
+- Publisher observes A; independent editor commits B before publisher's put:
+  B's new body revision changes the storage validator, so publisher's CAS fails.
+- Same text A→B still changes generation; same-text ABA cannot reuse a baseline.
+- A deletion of X races an update to Y: only one CAS of X wins; Y is never silently
+  tombstoned using X. A stale tombstone retry cannot delete a recreated generation.
+- Aborted request commits late while identical original-condition retry runs:
+  at most one current generation can be installed. The stored receipt proves which
+  intended mutation occurred. Client abort is not server rollback.
+- New local path meets an existing live, legacy or tombstone object: absence fails;
+  no silent association. A known path unexpectedly physically missing also blocks.
+- Old v1 mutations are retired; new-client requests against old code cannot invoke
+  its unsafe write/delete handlers by mistake.
+
+Exact deferred/barrier tests must exercise these windows through handlers, core
+and the real R2 adapter, with a controllable storage double; focused local
+Miniflare/workerd tests additionally verify actual wildcard/ETag/null semantics.
+Mocks alone do not prove an upstream platform contract. No deployment is a test.
 
 ## Consequences
 
-No new database, Durable Object, coordinator, queue or multi-object commit is
-needed. M4 can build reconciliation on distinct generations, but history, merge,
-tombstones and recovery are not implemented. Lost ACK/local metadata may leave a
-note safely blocked; refusal is preferable to invented success/adoption.
+M3 gains safe one-way automatic mutation, not retained history for every edit,
+remote-to-local authority or transactions across paths. Single-note current state
+needs no database, Durable Object, queue service or leader election. Recovery-copy
+preparation can leave retained orphans; it cannot make a failed head CAS succeed.
 
-This is a breaking experimental API writer change. Document upgrade to v2,
-conditions, raw legacy read-only behavior and the 410 response. Existing v1 reader
-payloads remain raw Markdown. Never run old Worker code against envelope data:
-it would expose JSON bodies and allow unguarded replacement. Any future upgrade
-must quiesce/drain all old writers and in-flight old Worker requests before enabling
-envelope writes; mixed-version/zero-downtime rollout is not promised. No automated data
-migration, deployment or rollback is authorized by planning. Operational docs must
-require backup/operator approval before any future migration or deployment.
-
-A local Miniflare/workerd integration check is required to validate wildcard and
-matching-ETag behavior against the pinned runtime, in addition to deterministic
-barrier-controlled adapter tests. A fake that itself implements the desired CAS
-algorithm is insufficient platform evidence. Local emulator evidence is not a
-claim about a tested deployed Cloudflare environment.
+This is a breaking experimental writer API/storage transition. Future operator
+upgrade must stop and safely drain old writers before enabling envelope mutations;
+old Worker rollback over envelopes is unsupported. Unknown deployed resources are
+not assumed. Restoring a stale bucket snapshot into an active association is also
+unsupported: use a new association/reset procedure, never pretend restored UUIDs
+are new generations. Planning/validation does not deploy, migrate or restore data.
 
 ## Alternatives
 
-- Raw Markdown ETag CAS is smaller and protects differing text, but needs explicit
-  product acceptance of content-equivalence/ABA rather than generation identity.
-- Unique ID only in custom metadata plus an ETag check does not close the ABA
-  window. SHA-256 read/compare followed by unconditional put is still unsafe.
-- R2 version comparisons are not exposed as atomic predicates by current APIs.
-- Coordinator/database or immutable blobs plus a separate head introduce more
-  persistence/commit states than a single envelope requires.
-- Keeping v1 unconditional writes in the same namespace undermines the guarantee.
-  A separate v2 namespace could retain them but creates a migration and two mirrors.
+Raw-content ETags alone admit same-text ABA. A nonce only in custom metadata is not
+conditionable. R2 version and SHA-256 options are not current-object CAS predicates.
+Native delete/lifecycle cannot supply conditional recoverable note deletion. A DB,
+coordinator or complete immutable edit history is disproportionate to these
+single-head operations. Keeping v1 mutation access would invalidate the guarantee.
 
 ## Evidence / related documents
 
-- [Platform sources and alternatives](../plans/m3-design-decisions.md#verified-platform-evidence).
-- `apps/worker/src/infrastructure/{r2.types.ts,r2-vault.repository.ts}` and tests;
-  `packages/core/src/vault/{note-service.ts,vault-repository.port.ts}`.
-- [M3 specification](../milestones/m3-remote-bridge-client-and-publishing.md),
-  [implementation plan](../plans/m3-remote-bridge-client-and-publishing.md),
-  [ADR 0001](0001-worker-r2-foundation.md), [ADR 0003](0003-publishing-association-and-local-state.md).
+[Primary platform evidence](../plans/m3-design-decisions.md#primary-source-evidence-and-qualification-limits),
+[ADR 0001](0001-worker-r2-foundation.md),
+[ADR 0003](0003-publishing-association-and-local-state.md),
+[ADR 0004](0004-recoverable-mirror-deletions.md),
+[M3 spec](../milestones/m3-remote-bridge-client-and-publishing.md).
+Current unsafe source: Worker `infrastructure/r2-vault.repository.ts`, core
+`vault/note-service.ts`, Worker `http/note.handlers.ts` and their tests.

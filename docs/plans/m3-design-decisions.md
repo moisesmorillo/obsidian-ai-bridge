@@ -1,187 +1,190 @@
-# M3 design decisions — maintainer review required
+# M3 decisions — automatic eligible-Markdown mirror
 
-**Status: proposal, not implementation authorization.** Baseline: merged M2 at
-`b300726` (PR #7), clean `main` when research began. M2 is COMPLETE, M3 is the
-single NEXT milestone, and no M3 production code exists. The
-[specification](../milestones/m3-remote-bridge-client-and-publishing.md) and
-[sequential plan](m3-remote-bridge-client-and-publishing.md) describe the recommended
-branch of this design. They remain blocked until the choices below are approved.
-No approval has been inferred from the request to perform planning.
+**Status: maintainer decisions resolved; implementation design. No M3 code exists.**
 
-## Decision authority
+This replaces the proposal in PR #8 at `e35bd90`. That proposal drifted from the
+product by coupling mirror scope to per-note consent, making manual publishing
+primary, and postponing automatic changes/deletions to M4. Those are not the
+product requirements. Historical filenames containing “publishing” remain only to
+preserve links; their current titles and contracts describe automatic mirroring.
 
-**Technical conclusions supported by repository constraints:** eligibility is not
-consent; deny excluded paths even when selected; use the existing literal
-`NotePath` predicate and 1 MiB UTF-8 bound; never GET-then-unconditionally-PUT;
-preconditions must be applied atomically by storage; do not automatically adopt
-existing notes; no core platform imports; validate remote/persisted inputs; retain
-operation exclusion through actual settlement, separately from UI lifetime; no
-local mutation, remote deletion, automatic retries or background work is needed.
-A database is not justified by single-object conditional publishing.
+## Authoritative product definition
 
-**Maintainer decisions:** the selection/trigger product surface, credential
-persistence and minimum host version, endpoint development policy, compatibility
-break for existing API writers, stronger per-write identity/storage format, and
-transport/platform support policy. Recommended constants are proposals, not
-observed operational limits. Approval must identify options, not merely say that
-CI passed.
+A user opts into a **private personal mirror of all eligible Markdown notes**.
+The designated Obsidian device automatically reflects local saved creates, changes,
+approved runtime removals and renames into Worker/R2. iCloud continues to synchronize
+the working vault between devices. R2 is a remote mirror/API persistence layer, not
+the sole authority, complete backup or replacement for iCloud.
 
-## D1 — selection and trigger granularity
+Eligibility determines mirror scope, **not REST/MCP authorization**. Future MCP
+adapts authorized Worker/application operations; it never accesses R2 directly or
+treats inclusion in the mirror as permission. Local-to-remote is the M3 authority
+direction; a changed remote revision causes divergence, not local replacement or
+an autosync overwrite. Future NAS replication/remote authority is possible but not
+selected or implemented. No new exclusion feature is needed in M3.
 
-| Option | Correctness / data loss / security | UX / complexity / persistence | Compatibility / testing / M4 |
-| --- | --- | --- | --- |
-| **A: persistent individual paths; publish active selected note only (recommended)** | Every send requires selection plus per-operation confirmation; M2 eligibility grants nothing. Hard exclusions always win. No bulk path expansion. Revocation stops future sends, never deletes remote content. | Two deliberate actions initially; tedious for many notes but understandable. Persist exact paths separately from revision baselines; confirmation names endpoint and path each time. | Reuses M2 captured saved-file reads. Test path replacement, revocation during read, empty selection and no enumeration-to-upload loop. M4 can add reviewed sets without changing existing consent meaning. |
-| B: persistent individual paths with reviewed selected-set publishing | Safe with frozen manifest, final authorization checks and no implicit additions. More exposure per mistaken confirmation; partial successes cannot be rolled back. | Faster bulk use; requires per-note progress, bounded set size, cancellation of remaining entries and batch stop policy. Same path persistence plus ephemeral manifest. | Additional overlapping/revocation/partial-failure tests. Useful M4 batch orchestration, but not a prerequisite for M3. |
-| C: folder rules (optionally individual exceptions) | Future files may gain consent without ever being seen; excludes and overlapping rule precedence become security policy. Frozen explicit expansion each run is safer than persistent recursive authority. | Convenient large-vault UX; highest rule/revocation complexity; persist rules and exceptions, not just paths. | More migration, rename and rule-expansion tests; preselects M4 semantics too early. Not recommended in M3. |
+## Decision record
 
-**Approve D1-A?** Empty by default; select one active eligible note explicitly;
-revoke via a selected-path management dialog, including missing notes; no folder,
-select-all, tag or frontmatter rules. Selection never follows a rename. A different
-file later occupying a selected path still requires fresh publish confirmation;
-M3 does not claim durable local file identity. Retain non-consent revision metadata
-on deselection so reselecting cannot turn a known update into an unsafe create.
+“Accepted” means maintainer-approved design, not production implementation.
+Engineering defaults below are bounded implementation choices, not new product
+permissions. The [spec](../milestones/m3-remote-bridge-client-and-publishing.md),
+[plan](m3-remote-bridge-client-and-publishing.md) and ADRs are normative together.
 
-## D2 — credential persistence and host compatibility
+| ID | Accepted decision | Consequences |
+| --- | --- | --- |
+| D1-D | Full eligible Markdown mirror; whole-mirror opt-in | No per-note selected state, folder/tag/frontmatter rules, select-all machinery or primary manual publish command. Retain literal NotePath, lowercase .md, dot/config exclusions and 1 MiB UTF-8 bound. |
+| D2 | Native SecretStorage; modern host baseline | M3 minimum Obsidian 1.13.0 for declarative settings, including existing SecretStorage since 1.11.4. Persist a secret reference, never plaintext token. No old-host fallback or keychain claim. |
+| D3 | HTTPS with explicit exact-loopback HTTP development opt-in | Only literal localhost, 127.0.0.1, [::1]; no LAN/DNS/suffix/numeric-encoding expansion. Rebinding is explicit and paused. |
+| D4 | Single current-object envelope, fresh server generation and R2 conditional PUT | Storage CAS is the linearization point. New v2 routes; retire unsafe v1 PUT **and DELETE** so neither can overwrite/remove current live/tombstone generations. No DB/DO required. |
+| D5, revised | Per-path synchronization state, not publishing selection | Acknowledged revision/hash, at most one unresolved intent per path, coalesced desired state and durable deletion/rename evidence. No second local copy of note text. A blocked path does not block unrelated paths. |
+| D6 | Standards Fetch | redirect:error, credentials:omit, AbortController, bounded streaming/deadlines, explicit CORS; no requestUrl/Node/Electron fallback. |
+| D7 | Runtime deletion authority, option A | An observed post-bootstrap delete for an already-associated eligible path may remove it from the active mirror. This may be iCloud/external activity; it is not proof of human intent. No scan-difference deletes or confirmations. |
+| D8 | Application recovery, 30 days | Archive content before CAS tombstone; retain current tombstones; normal note reads/listing hide deletion. Recovery copies survive recreation. No native R2 trash/versioning claim. |
+| D9 | One designated writer device | Explicit operator-configured identity and device-local activation/state; no iCloud ledger coordination, election or leases. Any supported device can be writer. Handoff drains old work and transfers verified non-content baselines explicitly. |
 
-| Option | Correctness / data loss / security | UX / complexity / persistence | Compatibility / testing / M4 |
-| --- | --- | --- | --- |
-| **A: session-only token (recommended minimum M3)** | No token in plugin data or syncable settings; still readable by host/other privileged plugins while used. Removing a token cannot retract an already dispatched request. No keychain claim. | Re-enter after disable/restart. Password-style transient entry, explicit Set/Remove; never refill/reveal a stored value. Endpoint/selection/metadata persist, token does not. Smallest sensitive persistence surface. | Preserves minimum 1.5.0 using commands/modals rather than deprecated settings-tab display. Test missing/removed token, unload and poisoned diagnostics. M4 can add approved secret references through schema migration. |
-| B: native SecretStorage reference | Avoids plaintext token in plugin data.json, but official docs describe vault-keyed local storage accessible by plugins, not isolation from the host or a documented OS keychain. Removing our reference does not delete a shared secret. | Native select/create secret UX; rotate in host secret manager. Persist reference only. Distinguish disconnect from revocation at Worker and deletion of shared host secret. | SecretStorage requires 1.11.4+. Prefer an explicit newer minimum (1.13.0 for modern declarative settings), or feature-gate with session-only fallback. Test unavailable API, missing shared entry, rotation, shared-reference removal. Useful later, requires maintainer compatibility preference. |
-| C: opt-in plaintext token in plugin data.json | Cross-platform but vulnerable to settings sync, backups and filesystem/other-plugin access. Never make this the silent fallback for B. | Lowest repeated-entry friction; requires prominent plaintext warning, opt-in and erase/rotation paths. Persist secret separately modeled from non-secret state, though same file is not separate protection. | Compatible with 1.5.0; tests must inspect serialized bytes/removal and failed saves. Carries avoidable sensitive migration/recovery burden into M4. Not recommended. |
+## Technical conclusions and rejected alternatives
 
-**Approve D2-A, or choose B with an explicit minimum/fallback?** Installed Obsidian
-1.13.1 types mark `SettingTab.display()` deprecated since 1.13.0. The recommended
-1.5.0-compatible design uses an explicit connection modal command, not that API.
-Do not copy the docs' unchecked `Object.assign` settings example. No need to
-introduce a compatibility lint suppression or raise the manifest incidentally.
+### Autosync and lifecycle
 
-## D3 — endpoint trust and local development
+Use Vault create/modify/delete/rename events, not editor-change or filesystem polling.
+Wait for onLayoutReady, register event handlers **before** bootstrap enumeration,
+then reconcile observations. Create events also occur at vault load; bootstrap
+absence and pre-bootstrap deletion observations never authorize remote deletion.
+Saved reads reuse M2's exact-file/pre/post checks plus event-generation checks and
+SHA-256 comparison. No fixed Obsidian autosave cadence is assumed from undocumented
+implementation details.
 
-| Option | Correctness / data loss / security | UX / complexity / persistence | Compatibility / testing / M4 |
-| --- | --- | --- | --- |
-| A: HTTPS only | Prevents plaintext transport, not sending to a malicious user-configured server. Reject credentials/query/fragment in URLs; never probe automatically. | Simplest rule; local Wrangler requires a deliberate TLS setup. Persist canonical origin only. | Works with hosted Worker. Test invalid/insecure URLs and redirects. No M4 protocol impact. |
-| **B: HTTPS plus explicit exact-loopback HTTP opt-in (recommended)** | Default HTTPS; insecure exception only for literal localhost, 127.0.0.1 or [::1], with separate warning and disposable token. No arbitrary private networks, suffix matches or DNS-derived exceptions. Local software is trusted for development. | Compatible with current local Wrangler workflow. Persist development permission bound to the chosen origin; reset on origin change. | Test alternate IPv4 spellings, userinfo, lookalikes, encoded hostnames and redirects. Mobile loopback is the device itself; not LAN development. M4 inherits no insecure default. |
+Coalesce latest desired state, not every event: 750 ms quiet time, 5 s maximum
+coalescing wait, 5 s deletion grace, two running path jobs globally, one per path.
+Remote inventory traversal also has a finite page budget; endless new cursors are
+not cured merely by cycle detection. Incomplete inventory never implies absence.
+Continuous instability may postpone a read; maximum wait is not a snapshot guarantee.
+Use finite retry/evidence budgets per persisted intent, with no reset from every
+modify event or re-enable. Separate actual operation settlement, coordinator lifetime
+and presentation lifetime. A runtime-owned vault coordinator survives replacement
+Plugin instances in the same JavaScript host; restart uses the durable ledger.
 
-**Approve D3-B?** Restrict base URL to an origin (optional trailing `/`), not
-arbitrary reverse-proxy prefixes; default port canonicalization is allowed, path
-repair is not. HTTPS on nonstandard ports is allowed. Changing destination clears
-token and selections and requires explicit disconnect/reset confirmation; metadata
-must never be silently rebound to another destination. Same URL with a replacement
-bucket is caught by per-note revision checks, not assumed to be the same mirror.
+One global unresolved record would stall an entire vault on a single conflict;
+a general durable content job queue would duplicate vault data and replay stale
+work. Per-path intent interlocks plus rescanning current saved state are sufficient.
+Only destructive lifecycle evidence and rename prerequisites need durable event
+semantics; create/modify histories collapse into current desired state.
 
-## D4 — server safety, identity strength and old clients
+### Safe mutation and recovery
 
-| Option | Correctness / data loss / security | UX / complexity / persistence | Compatibility / testing / M4 |
-| --- | --- | --- | --- |
-| A: raw Markdown + R2 content ETag CAS | Atomically protects different content, but identical-body writes and delete/recreate can reuse the validator (ABA). A unique ID only in customMetadata cannot fix the check-to-put race. Requires explicit acceptance of content-equivalence instead of per-write identity. | Smallest storage change; ambiguous retries must refuse association unless separately proven. Store acknowledged validator locally. | Existing raw objects remain natural. Test same-body ABA as a limitation, not pretend ETag is R2 version. Leaves M4 migration if distinct history/identity is needed. Not recommended for the stronger association requirement. |
-| **B: one versioned storage envelope per note, fresh server revision inside its body, R2 ETag CAS (recommended)** | Compare application revision from one GET, then CAS that exact object's storage ETag. Every accepted write changes body identity even when note text is identical. No separate metadata transaction. First publish only creates absent paths. Conditional failure never writes. | Small adapter codec and two-stage guarded update, no DB. Persist envelope at the existing note key and acknowledged opaque revision locally. Fail closed on legacy/unknown format for publishing. | Consequential storage/API migration. Old raw notes remain readable but cannot be adopted by plugin. Must close unconditional PUT access to this namespace. Test identical-body replacement, delete/recreate, dropped ACK, old client, and real local R2 conditional semantics. Stronger foundation for M4 without merging/importing history. |
-| C: coordinator plus revision state (e.g. Durable Object) | Can serialize stronger transactions if every writer participates, but an R2 side path still bypasses it. No demonstrated multi-object transaction requirement in M3. | More infrastructure, state, failure/rollback and deployment complexity. | Requires new dependency/ADR, migration and coordinator crash tests. Potential M4 need is not justification today. |
+Raw-text ETags can repeat on same-body writes; R2's unique upload version is not a
+conditional predicate. A fresh revision inside the stored envelope makes each
+current generation different, including same-text updates and tombstones. The
+[conditional ADR](../decisions/0002-conditional-remote-note-mutation.md) defines
+original-precondition retries and exact operation receipts. A GET of arbitrary
+latest state is never update authority; a matching receipt for our persisted
+operation is acknowledgment evidence, not automatic adoption.
 
-**Approve D4-B and the compatibility break?** Proposed [ADR 0002](../decisions/0002-conditional-remote-note-mutation.md)
-introduces `/api/v2/notes` over the **same** namespace: conditional PUT requires a
-precondition (428 otherwise), and upgraded Worker v1 PUT returns 410 without a
-write. The plugin must use v2: an old Worker ignores conditional headers on v1 PUT,
-so even a separate capability probe would leave a downgrade race. Unknown v2
-routes on the old Worker refuse instead of writing. Do not retain a legacy
-unconditional route into the same namespace. Existing authenticated v1 DELETE
-remains explicitly destructive external-client behavior, never called by the
-plugin; no delete/recovery safety is claimed. A separate protected namespace could
-preserve old writers but creates two divergent collections and migration/list
-semantics. Prefer a documented experimental writer upgrade with v1 reads retained.
-Deployment/rollback must not put an old Worker back in front of envelope objects;
-planning and validation never deploy.
+Native physical DELETE cannot implement required revision protection on the Worker
+binding. Tombstoning with conditional PUT is technically dominant. Native lifecycle
+rules expire whole objects and cannot act as a recoverable deletion transition.
+Bucket locks on current objects would block normal edits. See
+[ADR 0004](../decisions/0004-recoverable-mirror-deletions.md): prepare recovery copy,
+CAS tombstone, seal recovery deadline; failures retain data rather than roll back.
+GETs stay read-only; explicit designated conditional maintenance may seal from a
+still-current matching tombstone, never an assumed timestamp or read-side bypass.
 
-A SHA-256 checksum alone is not a storage predicate. `R2Object.version` is unique
-but not accepted by `onlyIf`. A HEAD/existence check only for response status is
-also not atomic create classification. See the ADR for the exact safety argument,
-residual validator assumptions and preservation of raw legacy objects.
+Recovery alternatives considered: native version history is unavailable in the
+current documented R2 API; inline-only tombstone content would lose recovery on
+recreation; full immutable history plus a head/database adds unnecessary history.
+A separate deletion snapshot is the minimum additional persistence. Thirty days,
+rather than 90 days or indefinite normal retention, is the maintainer's choice.
+Uncertain/unsealed snapshots may over-retain: do not purge them using an assumed
+commit time. Cleanup CAS-replaces expired recovery content with a small purged
+marker so late retries cannot recreate it; there is no unsafe physical DELETE.
+It is explicit, bounded and application-controlled in M3, not a blanket lifecycle
+rule or a new scheduled service.
 
-## D5 — mirror association and uncertainty persistence
+### Rename and writer ownership
 
-| Option | Correctness / data loss / security | UX / complexity / persistence | Compatibility / testing / M4 |
-| --- | --- | --- | --- |
-| **A: one configured namespace, exact paths, acknowledged per-note baselines; refuse uncertain adoption (recommended)** | Connection confirmation is not authority to replace existing paths. Initial create absent only; update only from successful publishing ACK. Even matching remote text never authorizes adoption. Lost metadata sacrifices availability, not existing content. | Dedicated personal Worker/bucket expectation; easy to explain. Persist origin, selections and last validated revision, with at most one unresolved-attempt metadata record. No vault-content copy or DB. Explicit blocked state after ambiguous failure; retry is bounded and manual. | Preserves `vault/<path>` layout. Test copied/reset state, same URL new bucket, lost ACK, failed save, remote absence and stale revision. M4 owns reviewed adoption/recovery; baseline schema is deliberately versioned. |
-| B: explicit vault-ID namespaces | Separates independently configured vaults by construction, but does not replace consent or CAS; copied plugin data can copy vault IDs. | Better multiple-vault UX at the price of API route/list migration and identity reset/import policy. Persist vault ID on both sides. | Requires broader protocol/Worker changes and multi-vault tests; introduces M4/M5 identity product surface early. |
-| C: explicit reviewed adoption of existing remote notes | Can be safe if both content and current revision are reviewed and committed conditionally, but equal text alone is insufficient. | Convenient recovery/first use; needs trustworthy comparison and review UX, not a hidden checkbox. Persist association evidence. | Starts conflict/adoption resolution work deferred to M4; substantial review/race testing. Not recommended in M3. |
+An explicit local rename is a two-path workflow, not unrelated delete/create.
+Create/acknowledge the eligible destination first, then conditionally tombstone the
+source. Collision, ambiguity, a newer local lifecycle event or remote divergence
+prevents source cleanup. Compound/overlapping renames may defer cleanup visibly;
+M3 does not need an atomic multi-object rename transaction. Rename out of eligibility
+removes the associated old mirror path recoverably without reading/uploading the
+excluded destination. Startup-discovered path differences are not rename evidence.
 
-**Approve D5-A and conservative blocked recovery?** An unresolved attempt record is
-a safety interlock, not a durable offline queue: contains path, prior revision or
-absence condition, attempted content SHA-256, and no body; it never causes a send
-on load. A response lost after remote commit may leave the note blocked until M4
-or deliberate operator recovery outside the plugin. Do not claim seamless crash
-recovery. An ambiguous known-revision update may be retried once with the same prior
-matching condition and exact in-memory payload; never GET the latest revision and
-use it as new write authorization. An ambiguous create cannot be replayed: a prior
-create followed by an independent delete makes absence true again, and M3 has no
-history/tombstone proving that replay would not resurrect it. Clearing
-local state cannot remove remote objects; future first-create still refuses them.
+The maintainer chose one writer instead of multiple active devices. Use an explicit
+static Worker association/writer identity check plus device-local activation, not a
+synced boolean. This guards cooperating plugin instances; the existing bearer is
+still privileged and a writer ID is not a secret or a scoped authorization scheme.
+No lease clock or leader election. A new writer is not enabled until old requests
+are safely settled/fenced by completed conditional generations and its ledger is
+clean. Imported baselines also require observed matching local hashes/tombstone
+absence before activation: stale iCloud text is not a new edit or recreation.
+If that cannot be established, handoff is blocked, not guessed. See
+[ADR 0003](../decisions/0003-publishing-association-and-local-state.md).
 
-## D6 — transport, cancellation and network bounds
+## Primary-source evidence and qualification limits
 
-| Option | Correctness / data loss / security | UX / complexity / persistence | Compatibility / testing / M4 |
-| --- | --- | --- | --- |
-| **A: standards Fetch adapter, redirect:error, AbortController; narrowly specified Worker CORS (recommended, compatibility qualification required)** | Explicit no-redirect policy prevents forwarding bearer/body to another URL. Abort stops client waiting, not an already committed Worker/R2 mutation. Streaming byte limits are possible. No cookies. | Timeout/cancel has a real client transport signal. Adds CORS surface; CORS is not authorization. No new persisted network work. | Need desktop/mobile runtime qualification; no Node/Electron fallback. Test redirect denial, CORS preflight, exposed revision header, abort and delayed commit. M4 can reuse typed adapter, not pretend abort is rollback. |
-| B: official Obsidian requestUrl | Avoids CORS and is host-provided, but published API has no abort, redirect policy, stream limit or final-URL property. A Promise.race timeout does not release in-flight ownership. Cannot establish a strict no-redirect guarantee from current declarations. | Host-friendly transport; timeout is only a UI deadline, potentially indefinite busy state until host settles. Fully buffers replies. | Requires a separately approved endpoint/redirect trust policy and demonstrated host redirect behavior before token-bearing publishing. Test host settlement after timeout/unload/re-enable and never claim network cancellation. Not a transparent fallback to A. |
+Official sources were fetched/researched in this session. Broad Obsidian research
+used shallow temporary clones, not repeated per-file API requests:
 
-**Approve D6-A and its CORS/qualification scope?** Proposed bounds: one foreground
-operation and one request at a time per plugin instance; 30-second request/body
-read deadline; zero automatic retries; manual retry after a retryable failure
-only with unchanged payload/precondition and renewed consent. Inspection reads can
-be retried manually. For ambiguous writes, status remains unknown even after an
-abort. Ambiguous creates have no retry action; only known-revision updates may use
-the one explicit original-condition replay. No batch means no cross-note
-rollback/partial batch semantics; a successful
-remote write followed by failed metadata persistence is still partial completion.
-No real host transport compatibility has been tested in this planning session.
-
-## Verified platform evidence
-
-Repository reads: Worker repository/service/handlers/OpenAPI and their tests;
-protocol schemas/tests; plugin entry/local adapter/host bridge and lifecycle
-unit/integration tests; core path/eligibility/port and tests; M2 spec/plan;
-`.mise.toml`, Vitest/V8, CI. Current source confirms unconditional M1 PUT, plain
-schema-string response paths, missing body/content-type permissiveness, and
-plugin-instance (not merely enable-session) M2 exclusion.
-
-Public sources consulted (documentation snapshots are evidence, not approval):
-
-- [Cloudflare Workers R2 reference](https://developers.cloudflare.com/r2/api/workers/workers-api-reference/):
-  `put` with `onlyIf` returns null without storing on failed condition; supports
-  `Headers` or `R2Conditional`; unique upload version has no corresponding
-  conditional field. SHA-256 options verify received bytes, not current revision.
+- [Obsidian API at cc174432](https://github.com/obsidianmd/obsidian-api/blob/cc1744324150c632416857c98964f87b1574a5fc/obsidian.d.ts):
+  Vault lifecycle callbacks contain file (and oldPath for rename), no human/iCloud
+  origin flag. Vault.read reads saved disk content; editor-change is a distinct
+  editor/programmatic-change event. SecretStorage is since 1.11.4;
+  App.loadLocalStorage/saveLocalStorage are vault-local host storage since 1.8.7;
+  onExternalSettingsChange explicitly mentions externally/sync-modified data.json.
+- [Official event guide](https://github.com/obsidianmd/obsidian-developer-docs/blob/c56c7e770ba25dd0ea392aacf4588f9425970d36/en/Plugins/Events.md)
+  requires registered event cleanup on unload. It does not promise cancellation of
+  asynchronous work already started or the identity of recreated Plugin instances.
+- [Load-time guide](https://docs.obsidian.md/plugins/guides/load-time): create events
+  enumerate existing files at initialization; register after onLayoutReady. Neither
+  layout-ready nor elapsed debounce proves iCloud has finished downloading a vault.
+- [Vault guide](https://docs.obsidian.md/Plugins/Vault): external filesystem changes
+  can precede host notifications/cache invalidation. read rather than cachedRead
+  preserves M2's best-effort freshness; neither gives an atomic remote-write snapshot.
+- [Secret guide](https://docs.obsidian.md/plugins/guides/secret-storage): native
+  secrets are local storage keyed to the vault, shared by plugin references; plugin
+  data.json is plaintext. No OS-keychain isolation/encryption guarantee established.
+  No deleteSecret API is declared; disconnect does not delete a shared host secret.
+- [Settings guide](https://docs.obsidian.md/Plugins/User+interface/Settings): modern
+  declarative settings require 1.13.0. Installed official types mark display()
+  deprecated. Use the modern API without a legacy fallback. The current M2 manifest
+  remains 1.5.0 **until implementation slice 1 changes manifest and artifact tests**;
+  this docs-only PR does not mislabel that artifact as an M3 client.
+- [Mobile guide](https://docs.obsidian.md/Plugins/Getting+started/Mobile+development):
+  Node/Electron APIs unavailable on mobile. Public docs do not certify Fetch/abort/
+  streaming/CORS behavior across every desktop/mobile WebView. Required primitives
+  are feature-detected, failures pause sync, and focused real-host qualification
+  remains a test gate, not a product choice or a reason for transport fallback.
+- [R2 Workers reference](https://developers.cloudflare.com/r2/api/workers/workers-api-reference/):
+  conditional PUT returns null without storing; accepts Headers/R2Conditional;
+  delete(key|keys) has no conditional parameter; upload version is not a predicate.
+  SHA-256 put options are incoming integrity checks, not comparison to old content.
+- [R2 S3 compatibility](https://developers.cloudflare.com/r2/api/s3/api/): bucket
+  Get/PutVersioning unsupported. Do not treat the upload version field as historical
+  retrieval or assume a native trash facility.
+- [R2 lifecycles](https://developers.cloudflare.com/r2/buckets/object-lifecycles/):
+  whole-object expiration, typically removed within 24 hours after expiration;
+  not exact-time physical deletion, conditional tombstoning or recovery.
+- [R2 bucket locks](https://developers.cloudflare.com/r2/buckets/bucket-locks/):
+  prevent overwrite/delete, apply by prefix, override lifecycle expiration. They
+  are not mutable-note history and are not selected for the current namespace.
 - [R2 consistency](https://developers.cloudflare.com/r2/reference/consistency/):
-  strong binding reads/writes; unconditional simultaneous writes remain
-  last-writer-wins. Strong consistency alone is not CAS.
-- [Historical wildcard parsing issue](https://github.com/cloudflare/workerd/issues/2572)
-  (closed): object-shaped wildcard was once parsed as a literal. Use constructed
-  `Headers` with `If-None-Match: *`, and require local runtime contract tests, not
-  a fake that assumes wildcard behavior. No claim that the closed bug persists.
-- Installed `@cloudflare/workers-types` 5.20260910.1, `index.d.ts` R2Bucket,
-  R2Object, R2Conditional and R2PutOptions match those signatures. The repository's
-  narrower `r2.types.ts` does not expose them yet. Wrangler 4.130.0 declares
-  Miniflare `5.20260908.0-alpha`; a direct test dependency must be explicitly
-  version-aligned/locked if added, not imported through transitive internals.
-- [Official secret guide](https://github.com/obsidianmd/obsidian-developer-docs/blob/c56c7e770ba25dd0ea392aacf4588f9425970d36/en/Plugins/Guides/Store%20secrets.md):
-  plaintext `data.json` risk; native store is local storage keyed to a vault and
-  shares secret references between plugins. No OS keychain/encryption guarantee
-  was established. Installed 1.13.1 declarations mark SecretStorage since 1.11.4;
-  no `deleteSecret` method is declared. Do not invent that removal API.
-- [Official settings guide](https://github.com/obsidianmd/obsidian-developer-docs/blob/c56c7e770ba25dd0ea392aacf4588f9425970d36/en/Plugins/User%20interface/Settings.md):
-  loadData/saveData use plugin `data.json`; current declarative settings require
-  1.13.0. Installed types deprecate SettingTab.display since 1.13.0, with documented
-  older-host fallback. The repository forbids incidental deprecated API usage.
-- [Official API declarations](https://github.com/obsidianmd/obsidian-api/blob/cc1744324150c632416857c98964f87b1574a5fc/obsidian.d.ts):
-  requestUrl bypasses CORS; RequestUrlParam exposes neither signal nor redirect
-  control. Plugin data APIs return/accept weak library types: validate immediately
-  inside the adapter, not across core.
-- [Mobile development](https://github.com/obsidianmd/obsidian-developer-docs/blob/c56c7e770ba25dd0ea392aacf4588f9425970d36/en/Plugins/Getting%20started/Mobile%20development.md):
-  no Node/Electron APIs on mobile. Non-desktop manifest is intent, not evidence
-  that a new Fetch/CORS integration works on all hosts.
+  binding reads/writes/deletes strongly consistent; unconditional competing writes
+  still last-writer-wins. Caches/custom domains do not replace direct binding CAS.
+- [Historical wildcard issue](https://github.com/cloudflare/workerd/issues/2572),
+  closed: use constructed Headers for absence checks; require pinned local runtime
+  regression tests rather than assume a fake proves platform semantics.
 
-## Approval record
+No real host, iCloud event trace, deployment, bucket or credentials were exercised.
+Tests must not invent a reliable delete-origin flag, exact autosave interval,
+cloud-download-complete signal, storage fsync, physical purge deadline or distributed
+writer fence that these sources do not provide. The approved operating/trust model
+and conservative failure states account for those limits.
 
-Pending: **D1-A, D2-A (or B with minimum/fallback), D3-B, D4-B including v1 writer
-break/storage migration, D5-A conservative recovery, D6-A CORS and platform gate**.
-No maintainer choice has been recorded. If any recommendation changes, revise
-its dependent spec/ADR/plan slices and rerun semantic review before declaring
-implementation readiness. M3 remains NEXT, planning only; M4 remains PLANNED.
+## Remaining decisions
+
+**No unresolved material M3 product decision.** Implementation must qualify the
+specified platform primitives and satisfy deterministic safety tests before wiring
+automatic mutation. A failed qualification pauses that slice and requires technical
+remediation/review; it does not authorize reverting to the rejected product model.
+M3 remains NEXT, not COMPLETE; M4 and MCP are not implemented here.

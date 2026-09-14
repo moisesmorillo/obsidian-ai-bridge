@@ -106,6 +106,16 @@ Whenever tooling can reliably enforce an engineering rule, prefer automated enfo
 
 Framework types must be parameterized when their defaults introduce weak typing such as implicit `any`.
 
+## Obsidian host compatibility
+
+Prefer modern supported official Obsidian APIs. Do not preserve historical host
+versions by adding deprecated or less-safe fallback paths without an explicit
+compatibility requirement. Raise the manifest minimum, artifact tests and developer
+instructions together when a milestone introduces newer APIs. M3's accepted target
+is 1.13.0 (native SecretStorage and declarative settings); a documentation-only plan
+does not change the current M2 artifact's 1.5.0 manifest. API declarations are
+availability evidence, not proof of actual desktop/mobile runtime compatibility.
+
 ## TypeScript
 
 Use strict TypeScript.

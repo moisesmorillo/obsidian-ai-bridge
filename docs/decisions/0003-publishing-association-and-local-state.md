@@ -1,121 +1,196 @@
-# ADR 0003 — Publishing association and conservative local state
+# ADR 0003 — Single-writer mirror association and per-path state
 
 ## Status
 
-**Proposed.** Depends on approval of M3 decisions D1/D3/D5 and
-[ADR 0002](0002-conditional-remote-note-mutation.md). No accepted product policy
-or persisted M3 state exists yet.
+**Accepted — maintainer-approved M3 design; not implemented.** Supersedes this
+unmerged PR's per-note/manual/global-interlock proposal. The maintainer approved
+full eligible scope, native SecretStorage, automatic one-way mirroring and one
+explicitly designated writer device. The filename is retained for existing links.
 
 ## Context
 
-M2 eligibility and stat evidence are neither publishing consent nor durable note
-identity. M1 exposes one token-wide namespace. Existing paths may belong to an
-unrelated vault or client. A GET returning equal text cannot establish ownership.
-Obsidian plugin data persistence offers no documented transactional/CAS contract
-across plugins, devices or processes. Retaining note bodies just to make retry
-convenient would add an unnecessary sensitive local copy.
+iCloud is the device-to-device working-vault synchronization mechanism, not a
+transactional store for mirror baselines. Copying plugin data.json between devices
+cannot coordinate writers or preserve independently changing ACK ledgers. An
+unresolved global single-note slot is disproportionate for automatic whole-vault
+work. Conversely, a durable queue of note bodies duplicates sensitive vault data.
 
 ## Decision
 
-Subject to approval:
+### Whole-mirror opt-in and designation
 
-- Support one configured Worker origin representing one personal remote namespace,
-  mapping each unchanged literal local `NotePath` to that same remote path. No
-  vault UUID, prefix remapping, database or per-user authorization. User confirms
-  this destination explicitly; no background connection or implicit association.
-- Persist individual selection paths independently of per-note remote baselines.
-  Default selection is empty. Every manual active-note publish additionally
-  confirms path and origin. No folders, select-all, automatic rename tracking or
-  selection inferred from inspection, remote listing, filename similarity or text.
-- A note without a baseline uses conditional create only. An existing remote
-  object, including identical or legacy text, refuses association. A note with a
-  baseline uses only its last validated successful publishing revision. Ordinary
-  inspection never advances it; remote missing never converts it to create.
-- Persist schema-versioned non-content state via a narrow plugin-state port and
-  Obsidian loadData/saveData adapter. Use validated DTOs and a single application
-  state owner serializing entire read-current/apply/persist transitions, not just
-  disk calls with stale precomputed snapshots. No unchecked merging. Token is
-  session-only under recommended D2-A and never enters that DTO. The local state is a convenience/safety record, not trustworthy
-  remote authority or isolation against other plugins/host software.
-- Before a PUT, persist a single unresolved-attempt record containing exact path,
-  origin, original `absent | matching(revision)` precondition and SHA-256 of the
-  bytes to send. It is a crash safety interlock, not a replayable offline queue:
-  no body, timer, wakeup, automatic request or startup reconciliation. If saving
-  this record fails or its durability is uncertain, do not send.
-- After a valid success response, save the returned revision as that path's
-  baseline and clear the unresolved record in the same serialized settings write.
-  Only then show fully recorded success. If this save fails, show remote-stored /
-  local-state-unrecorded and keep publishing blocked. Do not roll back the remote
-  note. A later UI lifetime must not silently inherit a late success.
-- A typed definite no-write response on the only dispatched attempt allows clearing
-  the unresolved record, once host work settles and saving succeeds. A transport
-  failure, malformed success, timeout, cancellation after dispatch or 5xx is
-  ambiguous: retain the record. If any earlier attempt was ambiguous, a later 412
-  is not proof that the earlier attempt did not commit; keep blocked.
-- While still in the same foreground enable lifetime, offer one explicit retry
-  of a **known-revision update** after an ambiguous retryable failure, only after
-  the underlying client request settles and only with the original in-memory bytes
-  and original matching precondition. Never replay an ambiguous create: a prior
-  create may have committed and then been independently deleted, making absence
-  true again. Avoid resurrecting it through a retry without tombstone/history.
-  Require fresh consent, unchanged connection/token generation and selection.
-  Do not reread a newer local body and substitute it. A successful replay may
-  resolve state; a 412 is conflict/unknown, never inferred success. After unload
-  or restart, release content and do not reconstruct/replay the attempt from the
-  digest. Report unresolved previous publishing; no automatic adoption/recovery.
-- Revoking selection never deletes remote content or baselines. Persist revocation
-  before reporting it complete; deny further sends immediately in memory. If
-  persistence fails, block publishing and warn that restart may restore older
-  selection. Already dispatched work may commit; explicitly say so. Cancellation
-  and token removal are not remote rollback. Require reselect plus a fresh manual
-  confirmation before any future publishing.
-- Disconnect/reset clears selection and token immediately, stops new dispatch,
-  then clears non-content connection/baseline/attempt state after in-flight work
-  settles. Require a warning that existing remote content remains and cannot be
-  automatically re-associated. If persistence fails, stay blocked; never claim
-  durable erase. Changing origin is this reset followed by explicit setup, not
-  rebinding old revisions. Reset does not make an occupied remote path writable.
+One local activation enables the whole eligible Markdown mirror, not individual
+paths. Newly installed/non-writer devices default to disabled. Keep endpoint and
+SecretStorage reference preferences in plugin data.json; store writer activation,
+device UUID and mirror ledger via official App.loadLocalStorage/saveLocalStorage,
+which are vault-specific **host local storage**, not files in the iCloud vault.
+Validate both stores, and never use copied data.json to designate a writer.
+Host local storage is not a keychain or an fsync/transaction guarantee. Detectable
+quota/corruption/storage failures must fail closed. Restoration of otherwise valid
+historical state is not automatically detectable: it requires explicit paused
+revalidation, not a claim that schema checking proves absence of rollback.
+
+The Worker has explicit non-secret operator configuration for one
+`MIRROR_ASSOCIATION_ID` and `MIRROR_WRITER_ID`. Missing/malformed configuration
+disables v2 mutations. An authenticated `/api/v2/mirror` describes the association,
+configured writer, protocol/retention capabilities. The plugin displays its own
+device UUID for operator setup; no platform name or filesystem path is an identity.
+Any supported desktop/mobile device can be chosen.
+
+To activate: configure HTTPS/development origin and SecretStorage reference,
+explicitly acknowledge full eligible scope, and verify that the authenticated
+Worker association and writer IDs equal the intended association and this device's
+local ID. Record that binding and enable on this device only. Autosync is disabled
+on mismatch; no automatic election or attempt to change the Worker designation.
+Every v2 mutation carries both IDs and the bearer; Worker rejects mismatch as 403
+before storage. Token is retrieved at dispatch, never persisted outside SecretStorage.
+
+The static ID guard prevents accidental cooperating non-writer instances sending
+mutations. **It is not a new secret, lease, distributed fence or permission scope**:
+the current bearer remains privileged, and a malicious holder could impersonate
+an ID. Trusted non-plugin clients using that privileged contract can still change
+remote generations; plugin CAS detects that divergence. Future scoped read/write/
+MCP authorization belongs at Worker/auth, not in mirror eligibility or device names.
+
+### Per-path state, not a content queue
+
+Core owns a closed versioned per-path state machine. Persist, for each tracked path:
+
+- last ACK: unassociated, live(revision, content SHA-256), or
+  tombstone(revision, recovery snapshot ID);
+- at most one unresolved mutation: operation UUID/action, original precondition,
+  attempted content hash when applicable, association identity, consumed retry/
+  evidence budget and phase; no body;
+- coalesced desired state: dirty-present, runtime-delete evidence, or rename
+  prerequisite/deferred-cleanup state; destructive evidence includes observation
+  generation, post-bootstrap authority and the prior acknowledged association;
+- sanitized blocked reason where operator attention is needed. No arbitrary error
+  text, selected flags, retained note bodies or one record per keystroke.
+
+Create/modify work is reconstructible from the current vault and acknowledged hash;
+startup rescans it rather than replaying a historic text queue. Destructive intent
+is not reconstructible from absence: persist runtime delete/rename evidence before
+any corresponding mutation. Multiple paths may be unresolved; only that path and
+its rename dependencies block. Authentication, designation, connection or state-store
+failure pauses the whole coordinator. Retained state is proportional to tracked
+paths plus unresolved rename prerequisites, not the number of ordinary edit events.
+
+Every mutation intent is persisted before dispatch. Save an ACK and its sent hash
+before releasing a path for the next generation. A changed local file during a
+request stays dirty; the ACK is for the bytes actually sent, not newly read text.
+A failed ACK save is confirmed remote effect / local-state-unrecorded: pause all
+new mutations until local persistence is sound, then retain/reconcile the same intent.
+No rollback DELETE or success notice pretending the state was recorded.
+
+One application state owner serializes complete read-current/apply/persist transitions
+across path jobs and preference updates. Serializing writes of stale snapshots is
+not sufficient. External data.json changes pause/revalidate configuration; they do
+not replace the local ledger or reactivate a writer. No cross-process transaction
+or safe arbitrary restoration of browser storage is claimed.
+
+### Re-enable/restart and uncertainty
+
+A host-runtime-owned, versioned coordinator registry keyed by the actual vault/App
+identity owns jobs, path reservations, loaded ledger and persistence exclusion.
+It outlives individual Plugin instances and UI sessions in that JavaScript runtime,
+including same-runtime bundle reload. The registry is a small plugin adapter boundary
+on globalThis under a package-specific Symbol; validate the registry contract and
+refuse an incompatible existing owner instead of replacing it while work is pending.
+It is not a cross-device/process lock, and never exposes note bodies/tokens as UI
+or serializable registry diagnostics. Core has no global host dependency.
+
+Unload detaches event/UI ownership, stops timers/new dispatch and requests Fetch
+abort. Keep reservations until actual local read/network/persistence settlement;
+abort does not undo a Worker mutation. A replacement Plugin attaches to this owner
+and cannot reset exclusions. Delayed onLayoutReady callbacks check their enable
+identity before registering anything. An old completion may settle its exact
+ledger intent through the owner, never write a stale whole-state snapshot or show
+UI through a new session. Connection changes wait for the same drain barrier.
+
+A process restart creates a new coordinator only after loading the persisted ledger.
+Inspect unresolved operations for exact own receipts. If retrying is allowed,
+reconstruct only bytes whose hash matches the original persisted intent and retain
+its original precondition/operation ID. Otherwise block that path visibly. Startup
+absence never creates a deletion intent. Retry budgets survive restart, repeated
+notifications and re-enable. Lost/corrupt state cannot safely recreate associations
+from equal remote text or new GET revisions.
+
+### Safe writer handoff
+
+No concurrent automatic takeover, election or lease:
+
+1. On the old device, **Pause for handoff** stops new admission, detaches event
+   intake and drains already accepted queued/started work and persistence. An
+   unsatisfied dirty/delete/rename intent prevents a clean export. No admission of
+   new events during the handoff pause; later changes are checked by the new writer's
+   bootstrap, not silently claimed as delivered. Paused/missed removals are not
+   reconstructed from absence.
+2. Every dispatched operation must have a recorded outcome, or evidence that a
+   completed original-condition generation makes every delayed duplicate unable
+   to mutate. Client abort/timeout, a quiet interval, or a GET still showing the
+   prior revision is not enough. Unresolved mutations/rename cleanup block handoff;
+   read-only reports explain which paths need attention. Do not erase them to pass.
+3. Export a validated **content-free handoff record**: schema/association/origin,
+   acknowledged per-path states and integrity checksum. Exclude device activation,
+   device ID, tokens and secret references. Pause remains durable on the old device.
+   Export/import is explicit user-controlled metadata transfer, never iCloud locking
+   or background ingestion of a shared file. No local note writes are needed.
+4. The operator disables the old installation, changes Worker designation to the
+   new device ID and rotates the bearer, updating trusted clients deliberately.
+   Configuration alone cannot retract old requests, hence the preceding drain.
+   This is a separately authorized operator action, never validation deployment.
+5. The new device configures its own SecretStorage reference, explicitly imports
+   the handoff record and verifies association/designation with the Worker. Verify
+   each transferred ACK against current remote state; mismatch is divergence, not
+   permission to adopt latest. Imports remain **staged** until local saved hashes
+   also equal transferred live ACK hashes and transferred tombstones are locally
+   absent. Missing/different local state blocks activation: iCloud may still be
+   hydrating or hold stale content, not a new edit or deliberate recreation. Observe
+   events during this verification and invalidate changed observations. Do not fix
+   a mismatch by adopting a newer revision or blindly overwriting either side.
+   After this alignment gate, activate/bootstrap normal work. Subsequent runtime
+   events follow ordinary M3 policy; missing scans never gain delete authority.
+   Old device stays disabled.
+
+If the old device/ledger is lost or cannot be made quiescent, **do not take over the
+same association automatically**. Preserve it for M4/operator recovery. The safe
+reset option is an explicitly provisioned new empty bucket/association with new
+credentials and designation, leaving the old namespace untouched; old requests
+must have no route to the new storage. Never point a reset association at the same
+keys and pretend old pending writes disappeared. Do not provision resources merely
+to validate this plan.
+
+Ordinary endpoint change follows pause/drain then new setup; clear local activation
+and secret reference, preserve/export old unresolved metadata rather than silently
+forget it. No automatic transfer of ACKs between origins. A verified handoff within
+the same association is the only M3 baseline import. A changed URL/bucket without
+that explicit procedure is unassociated and create-only, not adopted by scanning.
 
 ## Consequences
 
-The remote conditional predicate remains authoritative even with stale/copied
-local metadata. A lost, corrupted or rolled-back settings file can cause safe
-refusal or loss of convenient association, not permission to overwrite an unknown
-remote revision. Restored selections still require an explicit per-note publish
-confirmation. This design does not promise tamper resistance, fsync guarantees,
-multiple-process settings consistency or content recovery after a crash.
-
-There is only one active operation and one unresolved record per plugin instance.
-An unresolved record blocks further publishing globally until resolved or explicitly
-reset, rather than accumulating a durable queue. M2 local inspection remains
-available after pending work settles and any retained retry dialog closes.
-Remote inspection is manual and
-read-only; it reports current state without repairing baselines.
-
-Settings contain sensitive paths, endpoint and content fingerprints, though no
-note text. Backups/sync can copy them. Treat them as private; do not log them.
-M4 must migrate this schema before adding adoption/recovery or reconciliation,
-not reinterpret deselection as deletion or digest equality as consent.
+The writer's availability bounds remote freshness; other devices continue using
+iCloud normally. Local storage quota/crash loss can require explicit recovery;
+plaintext note content is not duplicated locally. Device-local IDs can be copied by
+host backup or malicious software; exactly-one-writer is a documented operating
+constraint plus static guard, not a security isolation/leader-election guarantee.
+Multiple Obsidian processes simultaneously writing the same local ledger are not
+supported. The operator must run one writer host for that vault; process-wide crash
+recovery uses server CAS/receipts rather than invented cancellation guarantees.
 
 ## Alternatives
 
-- Vault-ID namespaces help multiple vaults but require namespace/list migration and
-  copied-ID/reset policy without being necessary for conditional path safety.
-- Automatic adoption of equal content confuses text equality with intent and may
-  associate unrelated files. Reviewed adoption belongs to M4.
-- Durable content queue would improve retry convenience but violates M3 scope and
-  adds a sensitive local copy. This proposal deliberately trades availability for
-  conservative refusal after ambiguous outcomes.
-- No unresolved-attempt record is simpler, but loses clear crash/partial-save
-  reporting and permits a new attempt to obscure the uncertainty of a prior send.
-- Persisting native secret references is a separate D2 choice, not a hidden field
-  added to this metadata model. Plaintext token persistence is not recommended.
+Multiple active devices were declined for M3. A synced selected-note list is both
+the wrong product and unsafe coordination. Leases/leader election/database are not
+needed for explicit designation. A global unresolved slot stalls unrelated notes;
+a durable body queue stores unnecessary plaintext and stale edits. Handing off by
+copying data.json or refreshing every remote revision would silently reopen
+association/conflict decisions reserved for M4.
 
 ## Evidence / related documents
 
-- `apps/obsidian-plugin/src/main.ts` and plugin lifecycle regression tests;
-  `src/infrastructure/obsidian-local-vault.ts` and M2 saved-file evidence limits.
-- [M3 decision brief](../plans/m3-design-decisions.md),
-  [specification and persistence table](../milestones/m3-remote-bridge-client-and-publishing.md#state-and-persistence),
-  [plan](../plans/m3-remote-bridge-client-and-publishing.md).
-- [Official settings/secret API evidence](../plans/m3-design-decisions.md#verified-platform-evidence).
+[Approved decisions and API evidence](../plans/m3-design-decisions.md),
+[conditional ADR](0002-conditional-remote-note-mutation.md),
+[recovery ADR](0004-recoverable-mirror-deletions.md),
+[M3 state model](../milestones/m3-remote-bridge-client-and-publishing.md#state-and-persistence).
+M2's current main.ts and lifecycle tests serialize only a Plugin instance; M3 must
+extend ownership, not assume those tests already prove instance-replacement safety.

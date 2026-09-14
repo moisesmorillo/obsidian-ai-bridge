@@ -1,520 +1,551 @@
-# M3 — Remote bridge client and explicit publishing
+# M3 — Automatic eligible-Markdown remote mirror
 
-**Status: NEXT — design proposal; NOT implementation-ready pending maintainer decisions.**
+**Status: NEXT — implementation-ready design; no M3 production implementation.**
 
-M2 is COMPLETE and merged at `b300726` (PR #7). Repository inspection confirms
-M3 is the single NEXT milestone. This planning-only change contains no production
-implementation. The [decision brief](../plans/m3-design-decisions.md) gives viable
-options, trade-offs, recommendations and platform evidence; the
-[sequential plan](../plans/m3-remote-bridge-client-and-publishing.md) is gated by
-those approvals. The [roadmap](../roadmap.md) owns order; [AGENTS.md](../../AGENTS.md)
-owns engineering rules. M3 must not be marked COMPLETE by this planning PR.
+The maintainer's clarification replaces the selected-note/manual-publishing proposal
+at `e35bd90`. M2 is COMPLETE at merged `b300726` (PR #7); M3 is the single NEXT
+milestone. Historical filenames remain as stable links, not product terminology.
+[Roadmap](../roadmap.md) owns scope/order; [AGENTS.md](../../AGENTS.md) owns engineering
+rules; [decisions/evidence](../plans/m3-design-decisions.md) and the
+[sequential plan](../plans/m3-remote-bridge-client-and-publishing.md) are companions.
+Implementation readiness means product/design choices are resolved and testable,
+not that host/R2 qualification or future implementation checks have already passed.
 
-## Readiness gate and decision authority
+## Objective and authority
 
-The requirements explicitly supplied by the roadmap/maintainer are authoritative:
-explicit consent distinct from eligibility, outward publishing only, server-enforced
-conditional safety, validated typed boundaries, bounded lifecycle behavior, privacy,
-no silent adoption/overwrite and no M4 implementation.
+After whole-mirror opt-in on one designated supported device, automatically mirror
+**all eligible saved Markdown notes** to a private Worker/R2 namespace. Bootstrap
+and subsequent local create/modify/delete/rename events drive bounded one-way
+synchronization. iCloud remains device-to-device working-vault synchronization.
+R2 is a remote mirror/API persistence layer, not the sole authoritative store or a
+complete backup. Local saved Obsidian state is the normal M3 mutation source;
+independent remote changes cause divergence, never silent overwrite or local import.
 
-**Everything labeled recommended below is conditional design, not an accepted
-product decision.** Approve or replace D1–D6 in the decision brief before coding:
+Mirror scope is **not** REST/MCP authorization. Retain valid literal NotePath,
+lowercase .md, dot/config exclusions and 1 MiB UTF-8 limit. There is no selected
+state, per-note upload permission, folder/tag/frontmatter rule or additional
+exclusion feature. The user authorizes the mirror as a whole. M2's independent
+local inspections neither enable mirroring nor grant remote-client permissions.
+Future MCP reuses authorized Worker/application operations, never direct R2 access.
+Future NAS replication/stronger remote authority are possibilities, not M3 features.
 
-| Gate | Recommended decision | Why approval is needed |
-| --- | --- | --- |
-| D1 | Persistent individual selection; publish only the active selected note with a confirmation every time | Product granularity and persistence of consent |
-| D2 | Session-only token; preserve 1.5.0 minimum; connection command/modal, not deprecated settings-tab API | Credential persistence convenience versus security/host compatibility |
-| D3 | HTTPS origin, explicit exact-loopback HTTP development exception | Insecure-development policy and configuration UX |
-| D4 | Versioned note envelopes with R2 CAS; new v2 routes and reject v1 writes | Consequential storage change and deliberate experimental writer compatibility break |
-| D5 | Single configured namespace, per-path acknowledged baselines, no adoption; unresolved-attempt interlock | Association/reset semantics and conservative loss of retry convenience after crash |
-| D6 | Fetch with redirect denial/abort and Worker CORS; platform qualification gate | New CORS surface and host/mobile transport support policy |
+## Accepted decisions and architecture
 
-[ADR 0002](../decisions/0002-conditional-remote-note-mutation.md) and
-[ADR 0003](../decisions/0003-publishing-association-and-local-state.md) are Proposed.
-Their approval through review is not implied by this document. If a choice changes,
-update dependent contracts/tests/slices before asserting readiness. The remaining
-sections form one coherent recommended design, not a menu for implementers to mix.
+D1-D full eligible scope, D2 SecretStorage/modern baseline, D3 HTTPS/exact loopback,
+D4 revision-envelope CAS and D6 Fetch are approved. The maintainer additionally
+approved runtime deletion authority (including possible iCloud/external activity),
+30-day recovery and one designated writer. No material product choice remains.
+Accepted ADRs describe **design, not implemented code**:
 
-## Objective and user-visible behavior
-
-Connect explicit local publishing to the Worker while preserving both local notes
-and unrecognized/concurrent remote content. A user configures a destination and
-session token, selects an eligible saved note, confirms a single publish, and sees
-a sanitized outcome. Remote inspection is deliberate and metadata-only in UI.
-Neither enabling the plugin, selection, entering credentials nor inspecting local
-notes sends any network request or authorizes another note.
-
-### Recommended command and configuration surface
-
-Keep M2's two local inspection commands and their saved-file/metadata-only behavior.
-Add the following host-owned commands; UI callbacks delegate to application services:
-
-| Command ID | Label / behavior |
-| --- | --- |
-| `configure-bridge` | Configure remote bridge: explicit modal to validate/set origin, development exception and session token; Set/Cancel, Remove token and Disconnect/reset actions. No automatic connection check. |
-| `select-active-note` | Select active note for publishing: capture path, validate eligibility, confirm exact path and destination, persist one path. No note-body read or network. Already selected is an explicit no-op. |
-| `manage-publishing-selection` | Show only explicitly selected paths as text, with individual Remove and explicit Remove all selections. This is not a vault picker or select-all action; missing paths remain removable. No body reads or network. |
-| `publish-active-note` | Capture active path; require loaded valid state, token and explicit selection; confirm exact path/origin and saved-file semantics. Publish that one note, not an enumerated set. |
-| `inspect-remote-notes` | Explicit authenticated list; validate every returned path; show text paths only, without changing selection/baselines. All-or-nothing validation, not a misleading partial list. |
-| `inspect-active-remote-note` | Capture and validate local eligible path, read its remote counterpart explicitly, show path/bytes and legacy/known/diverged/missing metadata. Discard content before UI. Selection is not needed for this read, but it grants no publish authority. |
-
-No token is displayed outside the transient masked input while the user enters it.
-Never prefill, reveal, copy, toast or log its value. Clear input on submission/close;
-retain only the active session credential provider reference. A mask is UX, not
-protection from the trusted host. Set validates a nonempty bearer credential without
-CR/LF/control characters and rejects rather than silently trimming token bytes.
-Worker authentication remains the authority on whether it is valid. No credential
-fingerprint, token prefix or raw response/error is exposed as a diagnostic.
-Removing/replacing the session token does not revoke it at the Worker. Revocation
-requires an explicitly authorized operator rotation of the Worker secret, after
-which each client needs the new token; entering it never resumes a pending send.
-
-A single-note progress dialog has preparing/reading/sending/recording/terminal
-states and Cancel. A retryable ambiguous known-revision update may enter an
-awaiting-retry-decision phase; it is not terminal and holds the original snapshot
-and operation ownership until Retry, Close or unload. Terminal means content is
-released. Ambiguous creates never offer replay. Show created, updated, refused
-conflict, missing/unassociated,
-failed-before-send, cancelled-before-send, unknown-remote-outcome or remote-stored /
-local-state-unrecorded distinctly. Never say "synced", "rolled back" or "cancelled
-remotely". Progress is phase-based, not invented byte-upload percentages.
-
-### Consent and local safety
-
-- Default empty selection; only explicit per-note selection creates consent.
-  Reuse local exclusions (every dot-prefixed segment and the host configuration
-  directory), literal path contract and metadata/actual UTF-8 size limit.
-- Selection is not frontmatter, a folder rule, M2 eligibility or remote presence.
-  No bulk expansion, directory recursion for publishing or automatic future files.
-- Recheck selection and cancellation after every await before dispatch, and apply
-  the existing read-only local adapter's pre/post checks. Revocation before send
-  prevents it; revocation after dispatch cannot retract it and is reported honestly.
-- Selection belongs to exact path, not an invented persistent TFile ID. It never
-  follows renames. The per-publish confirmation remains necessary if a different
-  file occupies the same path; M3 does not watch or reconcile replacements.
-- Read saved text once after confirmation. No editor force-save, cached editor
-  buffer or local create/write/delete/rename. Publish the returned snapshot; edits
-  after the read may remain local. Same-size/same-mtime changes may escape M2's
-  best-effort detection. No "latest local version" or atomic snapshot claim.
-- No note-body previews/rendering/logging. UI paths use textContent/text APIs,
-  not HTML/Markdown. Local and remote names remain sensitive metadata.
-
-## Endpoint and transport policy
-
-Recommended origin input accepts only an absolute HTTP(S) origin with optional
-trailing slash; reject URL credentials, query, fragment, non-root paths and other
-schemes. Do not concatenate unchecked URL strings. Normalize host case/default
-port using the URL API, but do not silently repair malformed input or accept
-alternate numeric IPv4 encodings as a loopback exception. Explicitly validate the
-input host spelling before URL canonicalization for development exceptions.
-
-HTTPS is default. HTTP is permitted only after explicit development opt-in bound
-to exact `localhost`, `127.0.0.1` or `[::1]` and origin/port; never LAN ranges,
-localhost suffixes, DNS resolution or a global insecure toggle. Tell the user to
-use a disposable token. On a phone, loopback is that phone. Wrong destination can
-receive content even over TLS: endpoint trust and confirmation remain necessary.
-
-The HTTP adapter uses standard Fetch, `credentials: omit`, `redirect: error`, no
-cookies and no token in URLs. No requestUrl/Node/Electron fallback. Reject redirects
-rather than following a token/body-bearing request. A configured server/operator is
-trusted with plaintext note contents; TLS is not end-to-end encryption.
-
-Recommended Worker v2 CORS: public OPTIONS only for registered v2 list/item routes,
-allow GET/PUT/OPTIONS and the Authorization, Content-Type, If-Match and If-None-Match
-headers; `Access-Control-Allow-Origin: *` with **no** credentials support. Expose
-ETag and `Bridge-Note-Format` on v2 responses, including error paths. Actual list,
-read and write requests remain bearer-authenticated; do not exempt arbitrary v2
-routes or methods. No CORS change to v1 mutation authorization. Bearer access, not
-CORS/origin, is the security boundary; a hostile website without a token gains no
-note access. This enables token-equipped browser clients too and is an explicit
-D6 approval item. No origin is inferred from one untested desktop host.
-
-Verify Fetch/AbortController/streaming/UTF-8 decode availability on the intended
-minimum desktop/mobile hosts before claiming remote-client compatibility. Missing
-capabilities fail unavailable with local M2 still usable; never downgrade transport
-silently. Generated host-double tests prove packaging, not real-host CORS behavior.
-If the host cannot support this contract, stop and revise D6 rather than leak
-secrets through an unexamined requestUrl redirect policy.
-
-## Architecture and typed boundaries
+- [0002](../decisions/0002-conditional-remote-note-mutation.md): conditional current
+  generations, receipts, v2 and retirement of unsafe v1 PUT/DELETE.
+- [0003](../decisions/0003-publishing-association-and-local-state.md): per-path state,
+  runtime ownership, device designation, pause/reset/handoff.
+- [0004](../decisions/0004-recoverable-mirror-deletions.md): event authority,
+  recovery preparation/tombstone/sealing/purge and local rename workflow.
 
 ```text
-Obsidian commands / text-only modals / session lifecycle
+Obsidian lifecycle events / settings / metadata-only health UI
     ↓
-Core publishing and remote inspection application services
+Core MirrorSynchronizer / reconciliation planner / state owner
     ↓
-ReadOnlyLocalVault + RemoteBridge + PublishingStateStore ports
+ReadOnlyLocalVault + local event port + RemoteBridge + MirrorStateStore
     ↓
-Obsidian saved-file adapter + HTTP remote adapter + plugin-data adapter
+Obsidian saved-file/events adapter + Fetch adapter + host-local state adapter
     ↓
-Worker v2 handlers → core note service → conditional repository port → R2 adapter
+Worker handlers → core conditional note/recovery services → R2 adapters
 ```
 
-- `packages/core`: semantic state/result constants, validated path/revision types,
-  consent policy, publishing orchestration and narrow remote/state ports. No fetch,
-  Request/Response, HTTP statuses, Hono, R2, Obsidian, storage JSON codecs or tokens.
-  Inject a credential-bound remote adapter at composition; don't pass credentials
-  through domain objects. Core compares an opaque connection identity; parsing
-  HTTP origins belongs to the configuration adapter. Keep M2 read-only port
-  separate from remote storage CRUD.
-- `packages/protocol`: authoritative wire routes/headers/error codes, request and
-  response DTO schemas. Depend inward on public core path predicate/types where
-  necessary; add an explicit workspace dependency rather than duplicate path
-  validation or import private source. Core must not import protocol back.
-- Plugin infrastructure: official saved-file reads; immediately validate weak
-  loadData/JSON/host inputs and return strong types. HTTP adapter owns URL building,
-  token injection, cancellation signal translation, media/byte/schema validation
-  and sanitized status mappings. It has **no local mutation capability**.
-- Plugin UI/lifecycle owns presentation identity, configuration entry, session
-  credential provider and cancellation intent; application services own publishing
-  decisions. Shared operation coordination owns the work exclusion. Neither UI
-  nor handlers receive repositories or directly invoke fetch/R2.
-- Worker handlers parse transport preconditions/body and format typed outcomes;
-  core coordinates conditional note operations; R2 adapter owns envelope codec,
-  conditional primitives and storage error translation. Replace unsafe write port
-  usage rather than adding an unused safe method beside an accidentally reachable
-  unconditional path. Preserve public exports/internal aliases and useful TSDoc.
+Core owns typed path/revision/hash/intent/desired-state/outcome contracts, scheduling
+policy, reconciliation and persistence orchestration. It imports no Obsidian,
+Fetch/HTTP/Hono, R2 or storage JSON implementation. It uses opaque connection
+identity, not parsed URLs or tokens. Separate existing local read-only port from
+mutation-capable remote storage and the remote-client port. Local events carry
+validated primitive evidence, not TFile/App references.
 
-### Port contracts (semantic shapes, not production declarations)
+Plugin adapters own official host subscriptions/saved reads/local storage and
+transport. UI is thin; no command/event callback calls fetch, handles Worker DTOs
+or accesses repository implementations. Protocol owns shared wire schemas/constants
+and validates NotePath through public core exports, with no core→protocol cycle.
+Worker handlers parse/format HTTP; application services implement conditional state
+transitions; R2 adapter owns envelopes, metadata, predicates and recovery snapshots.
+No database, DO, queue service, election, Node/Electron runtime or new UI framework.
 
-- `RemoteBridge.list(control)` → validated unique NotePath array or remote failure.
-- `RemoteBridge.read(path, control)` → missing, legacy(content, sizeBytes),
-  revisioned(content, sizeBytes, revision), or remote failure. Validate bytes before
-  returning content; UI service removes it. Missing is not a delete instruction.
-- `RemoteBridge.publish(path, content, absent | matching(revision), control)` →
-  stored(path, created|updated, revision), precondition_failed, or remote failure.
-  No unconditional write method and no delete/import capability. Successful path
-  must equal the requested path; create/update status must match the precondition.
-- `PublishingStateStore.load/save` → validated versioned snapshot or typed
-  unavailable/invalid-state result. Application code receives domain state, not
-  Obsidian's weak JSON type. One serialized persistence owner; failure never
-  masquerades as successful defaults/erase.
-- Operation control is a small platform-independent cancellation/deadline contract,
-  mapped to AbortController by the adapter. It must expose actual settlement
-  separately if UI deadline completion can precede underlying work. Never hide a
-  pending host operation behind a fulfilled race promise.
+## Minimum version, configuration and user experience
 
-### Closed failures and mappings
+**M3 minimum Obsidian 1.13.0**, non-desktop-only. Use native SecretStorage (since
+1.11.4), modern declarative settings (1.13.0) and official vault-local storage APIs
+(since 1.8.7). No deprecated display() fallback or historical-version accommodation.
+Implementation slice 1 changes the manifest, artifact expectations and install docs
+together. The current M2 manifest remains 1.5.0 in this documentation-only PR;
+it is not evidence that the M3 API set works on 1.5.0.
 
-| Application outcome | Adapter evidence / required behavior |
+Settings expose endpoint, secret reference via native SecretComponent, device ID,
+server association/designation status, device-local **Enable mirror** and **Pause**.
+First activation explains full eligible scope, iCloud/external delete authority,
+30-day recovery and plaintext trust at host/Worker. No per-note or per-delete
+confirmation. A non-writer defaults disabled and cannot activate on server mismatch.
+Enabling a new unconfigured plugin only loads settings/registers UI. A previously
+activated designated writer resumes automatically after validation/layout readiness.
+
+Native secret contents are not plugin settings: persist only their reference;
+retrieve through SecretStorage immediately before dispatch. Never prefill/reveal,
+copy, log or echo values/errors containing a token. The native store is vault-local
+host storage shared by plugin references, not a documented OS keychain or isolation
+from the trusted host/other privileged plugins. Disconnect/removing our reference
+pauses this plugin, not a server revocation or deletion of a shared secret. Worker
+secret rotation is an explicit operator action; shared-secret deletion happens in
+host management, not an invented deleteSecret API. No automatic retries triggered
+just by rotating/re-entering a token. Official APIs provide no documented secret
+change event to assume: validate each dispatch; UI refresh/resume also rechecks.
+
+Primary UX is automatic synchronization. Operational commands:
+
+| Command | Behavior |
 | --- | --- |
-| authentication_failed | 401, even if proxy error body is malformed; never expose returned message |
-| authorization_failed | 403 from an intermediary/future server; M3 Worker has no scoped authorization distinction |
-| network_unavailable | Fetch rejection not attributable to explicit abort/deadline; no raw exception |
-| timed_out / cancelled | Explicit local deadline/intent; after dispatch outcome may also be remotely unknown |
-| remote_missing | Valid GET 404; cannot authorize deletion or recreation of an associated note |
-| precondition_failed | PUT 412; never refresh baseline and overwrite |
-| protocol_incompatible | v2 unavailable (e.g. PUT 404), unsupported format/version/precondition protocol; no v1 fallback |
-| malformed_response | Invalid JSON/schema/UTF-8, absent or mismatched success revision, wrong media type, invalid/mismatched returned path or unexpected success status |
-| contract_violation | Invalid local path/payload, observed incoming/outgoing size bound, remote 400/413/415/428; distinguish programmer/protocol error from transient outage |
-| server_failed | 5xx; writes may have committed before response failure |
-| rate_limited | 429 from intermediary; no automatic retry or Retry-After scheduling |
-| state_unavailable / invalid_state | Settings load/save failure, unknown schema or malformed persisted values; fail closed without overwriting the stored file |
+| Show mirror status | Metadata-only phase, last completed work, pending/blocked counts and per-path sanitized outcomes; no note bodies |
+| Check mirror now | Bounded positive rescan/current-state inspection; never remote-minus-local deletion |
+| Retry mirror failures | Explicitly resume a finite budget for retryable original intents; no force overwrite or baseline refresh |
+| Pause / resume mirror | Stop admission and request cancellation; show actual draining/unknown state; resume reconciles automatically |
+| Prepare writer handoff | Drain, refuse unresolved work, export validated content-free ledger for explicit transfer |
 
-Domain/application result discriminants have one typed source; HTTP mappings stay
-in adapters. Track publish effect separately: not_dispatched, definitely_refused,
-confirmed_stored or unknown. Malformed/failed transport after dispatch is never
-proof of non-commit. Error JSON is validated when available, but status classification
-of 401/403/5xx does not require echoing untrusted error strings. Unsupported status
-and wrong success media type must not become success.
+Keep M2's two inspection commands and metadata-only behavior. Recovery is discoverable
+through an authenticated recovery API and documented operator retrieval, not plugin
+local-note writes. UI paths render as text; excluded destinations and raw errors are
+not diagnostic output. Health distinguishes disabled/non-writer, initializing,
+bootstrapping, catching-up, observing, retry-wait, draining, blocked/diverged and
+state-unavailable. “Observing” means no pending local work, not continuous proof that
+an external remote client has made no edit. Events continue to be observed while
+individual paths are blocked; unrelated paths can progress.
 
-## Remote protocol and server-enforced mutation
+## Endpoint, authentication and transport
 
-The full storage predicate/safety proof is [ADR 0002](../decisions/0002-conditional-remote-note-mutation.md).
-M3 explicitly includes this Worker/core/protocol work; it is not deferred to M4.
+Accept an absolute origin only (optional trailing slash); reject userinfo, query,
+fragment, non-root path and non-HTTP(S) schemes. Use URL parsing after explicit input
+checks, never path repair. HTTPS is default. HTTP requires a separate opt-in tied to
+exact literal localhost, 127.0.0.1 or [::1] and origin/port. Reject alternate numeric
+IPv4 spellings before URL canonicalization; no DNS-derived loopback/LAN/suffix rule.
+Use disposable development tokens; phone loopback means that phone. TLS does not
+make an incorrectly chosen server trustworthy.
 
-| Route | Recommended v2 contract |
-| --- | --- |
-| GET `/api/v2/notes` | 200 JSON `{notes: NotePath[]}`; shared runtime path predicate for every element; no revision/consent inferred from listing |
-| GET `/api/v2/notes/:path` | 200 raw UTF-8 Markdown; `Bridge-Note-Format: revisioned` plus `ETag: "m3-<uuid>"`, or `Bridge-Note-Format: legacy` without writable ETag; 404 if absent |
-| PUT `/api/v2/notes/:path` | Exactly one supported conditional header; explicit Markdown/plain-text content type; 201 create or 200 update; JSON `{path, stored:true, revision}` with matching ETag and revisioned format header |
-| OPTIONS registered v2 routes | Bodyless CORS preflight; no storage/service invocation |
-| PUT `/api/v1/notes/:path` on upgraded Worker | Authenticated 410 `write_api_retired`, no body/storage processing or mutation; no bypass header |
+Use Fetch with redirect:error, credentials:omit, AbortController, 30-second deadline
+including streamed response consumption and bounded actual bytes regardless of
+Content-Length. No requestUrl/Node/Electron fallback. A missing required browser API
+pauses sync with a typed unsupported-runtime outcome; tests/real-host qualification
+must check WebView behavior, not infer it from the manifest. Abort cancels client
+transport, not a committed/in-flight R2 operation.
 
-Other v1 read/list/DELETE behavior remains as documented except envelope decoding
-behind raw note reads/listing; no v2 DELETE. Protect `/api/v2` and descendants as
-well as v1. Preserve public health/Scalar/OpenAPI and sanitized content-free LogTape
-logs. V2 success/error responses use no-store. New stable codes include
-`precondition_failed` (412), `precondition_required` (428),
-`invalid_precondition` (400), and `write_api_retired` (410).
+Worker authenticates `/api/v2` and descendants (including unknown routes). V2 CORS
+applies only to registered routes/methods: GET, PUT, DELETE and POST where declared;
+OPTIONS validates requested method/headers without storage. Allow Origin `*` with
+no credential cookies, allow Authorization/Content-Type/If-Match/If-None-Match and
+Bridge-Operation-Id/Bridge-Association-Id/Bridge-Writer-Id headers; expose ETag and
+Bridge-Note-Format. Put CORS on v2 errors too. Bearer auth remains the authorization
+boundary; CORS and writer identity are not scoped access control. V1 remains protected.
+MCP permissions are separate future work; do not call full mirroring public exposure.
 
-Create uses `If-None-Match: *`; update uses exactly one strong
-`If-Match: "m3-<uuid>"`. No weak/multiple/date/wildcard-update/both-header semantics.
-Missing precondition is 428. Missing/changed/legacy update target returns 412, never
-creates. A failed R2 conditional put is 412 without altering object bytes/metadata.
-GET/HEAD before a write is not the safety mechanism; the R2 CAS is.
+## Bootstrap and event-driven synchronization
 
-Resolve M1 runtime/OpenAPI permissiveness rather than carry it into v2: require an
-explicit supported nonempty Content-Type for v2 PUT, case-insensitive with parameters;
-missing/empty/unsupported is 415. Empty text and absent request stream are the same
-zero-byte value with supported content type, both valid. OpenAPI requestBody is
-optional and explicitly documents this empty-body interpretation. UTF-8 validation
-and actual streamed 1 MiB bound remain mandatory regardless of Content-Length;
-exactly 1 MiB is accepted. Retired v1 PUT advertises only its retirement behavior.
-Schemas must document byte constraints without pretending maxLength is a UTF-8
-byte limit; custom runtime NotePath validation must also have useful OpenAPI
-constraint descriptions and invalid-path contract fixtures.
+1. Load/validate preferences and host-local ledger; no unchecked merge/defaulting
+   on corruption. Verify local activation, required runtime capabilities, token,
+   Worker association/writer identity and protocol before mutation.
+2. Wait for onLayoutReady. Check enable-lifetime identity in this deferred callback.
+   Attach create/modify/delete/rename listeners using registerEvent **before** taking
+   the initial metadata enumeration; retain immutable pre-event path/index data.
+3. Mark bootstrapping. Enumerate eligible metadata using the existing policy, merge
+   coalesced positive events received during enumeration, then mark metadata
+   bootstrap complete. A failed/incomplete enumeration never enables deletion
+   authority. This marker does not claim iCloud download completion.
+4. Queue bounded saved reads/state checks for eligible paths. Create unassociated
+   paths with absence-only mutation. For acknowledged paths, compare saved SHA-256
+   and inspect current remote state on bootstrap; unchanged content/revision means
+   no write. Different remote generation or missing associated state is divergence.
+   Inspect paginated remote paths to report unassociated entries, not adopt/delete.
+5. Delete/rename observations before the bootstrap boundary remain non-destructive;
+   observed absence is missing-unconfirmed. No algorithm subtracts local scan paths
+   from remote paths to decide removal. A later create/modify notification from
+   iCloud can supply positive work normally.
 
-Client response limits: 1 MiB actual streamed bytes for a raw note; 2 MiB for any
-JSON response, even if Content-Length lies or is absent. Abort/refuse over-limit
-or invalid UTF-8 without parsing/showing a partial body. List remains an all-at-once
-server operation: a valid larger list may be refused by this bounded client. This
-is an explicit experimental scale limit, not public pagination or M5 hardening.
-Validate schemas/paths, media types and matching revision/path/status combinations;
-never trust generics on response.json(). All constants live in cohesive semantic
-modules, not repeated strings in UI/tests/adapters.
+Use Vault create/modify, not editor-change. No network per keystroke, editor save,
+filesystem polling, cached editor buffer or exact autosave-interval assumption.
+Coalesce a path's latest desired state after 750 ms quiet time, with 5 s maximum
+coalescing wait. Read saved content with M2's pre/post identity/path/mtime/size and
+measured UTF-8 checks, plus the local event-generation counter around the await.
+If changed, discard and leave dirty. Same-size/indistinguishable-mtime changes can
+still escape host evidence: no atomic/latest-editor snapshot claim.
 
-### Association and harmful interleavings
+A hash equal to acknowledged sent content avoids a needless write unless there is
+an unresolved operation or known remote divergence. A modify during PUT marks a
+new desired generation; never overwrite the old intent/body. Record its actual ACK,
+then read latest saved state for the next update using that ACK. Stable queued
+paths are served fairly; a hot path cannot starve unrelated ready work.
 
-Only a validated publish success followed by successful local state persistence
-establishes a baseline. Remote inspection does not. First publish cannot adopt
-existing or equal text. Known baseline + remote missing refuses; no resurrection.
+## Bounded work, retry and lifecycle
 
-The server creates a fresh revision in each stored envelope. Updates compare the
-expected application revision and then CAS the exact observed R2 ETag. Two creates
-or two updaters paused at the storage boundary compete atomically; at most one wins.
-An edit committed after the publisher read but before its R2 put invalidates the
-predicate, including a same-content write. Delete/recreate of identical text has
-a fresh revision. See ADR 0002 for assumptions and the independently destructive
-v1 DELETE boundary. No last-writer-wins retry loop exists.
+- At most **two active path jobs globally**, one per path, and one client request
+  at a time per job. Each job holds at most one local note snapshot. Bootstrap/list/
+  evidence/maintenance requests share the same two-request limit; no hidden fanout.
+- Rename reserves both paths atomically in lexical order before awaiting, counts
+  as one job and does not deadlock with a job already owning either path. Folder
+  events expand metadata, not concurrent body reads/network calls.
+- A job keeps its slot/reservations through actual host/network/state settlement,
+  even after a UI timeout. Registry/coordinator ownership survives Plugin replacement
+  in the same runtime; presentation identity does not. No release in unload just
+  because an AbortSignal was sent. Late callbacks cannot register watchers, dispatch
+  new work, resurrect activation or show stale UI.
+- Deadline/control timers are bounded coalescing/retry timers, not perpetual polling.
+  On unload stop timers/admission, detach listeners, abort Fetch, keep in-flight
+  accounting and settle exact ledger intents. On restart read the ledger first.
+- Per intent: **three mutation attempts total** (initial + retries after 2 s and
+  10 s), and **three state-evidence requests total**. Persist consumed counters
+  before calls; re-enable/new modify events do not reset them. Evidence matching
+  our exact receipt resolves; other generations diverge. A still-original state is
+  not proof no old request is pending, but an exact original-condition retry is
+  safe under permanent heads. All counts are named/tested policy constants.
+- Standalone bootstrap/health/list reads have no automatic retry loop: a failed
+  required handshake pauses, and an incomplete inventory is reported. Explicit
+  Check/resume starts a fresh bounded read pass, never resets mutation budgets.
+- Transient network/timeout/5xx/429 may use that budget after actual settlement;
+  Retry-After is never an unbounded scheduler. Authentication/designation/config/
+  local-state errors pause globally. Invalid contracts and genuine precondition
+  divergence block the affected path, not retry with a newer remote revision.
+  Exhaustion is visible blocked state; explicit Retry grants a new finite budget
+  only for the same safely reconstructible intent, never permission to overwrite.
+- After process restart, first inspect unresolved receipts. Retry content only if
+  a fresh saved read hashes to the original request hash. If not, keep latest state
+  dirty and the old intent unresolved; do not store/reconstruct an old plaintext
+  body merely to keep a queue moving. Deletes have no local body to reconstruct.
+- A local operation that fails before dispatch is not sent. Any failure after
+  dispatch without valid ACK/evidence is unknown, not assumed failure or success.
+  A 412 following an earlier ambiguous attempt is not proof the earlier one failed.
+- Work before unload can have committed remotely. The owner records a known outcome
+  without stale UI; a failed ACK save pauses new mutations globally and retains the
+  original intent. Re-enable waits for that persistence owner, not a fresh empty flag.
 
 ## State and persistence
 
-Recommended initial plugin schema is version 1; M2 has no prior data to migrate.
-All state is validated on load. Missing file means configured=false/empty selection;
-malformed or future schema means blocked, not silent reset/default merge or save.
-Unknown fields are rejected in this version, with no automatic downgrade rewrite.
+Initial schema version 1; M2 has no persisted state to migrate. The prior PR's
+selected-note settings were never implemented. Known DTO versions are validated
+at the adapter boundary; malformed/future versions fail closed and are not silently
+rewritten. Unknown fields, invalid paths/revisions/IDs/digests, duplicate paths and
+invalid counters/times are rejected. All path states share one typed source.
 
-| Value / location | Purpose and authority | Lifecycle / removal / migration | Sensitivity / note content |
+| Persisted value/location | Purpose/authority | Lifecycle/reset/migration | Sensitivity/content |
 | --- | --- | --- | --- |
-| schemaVersion in plugin data.json | Decode local metadata, not authorization from arbitrary JSON | Explicit known-version parser; future versions blocked; no migration from invented M2 state | Non-secret; no content |
-| canonical origin + origin-bound dev permission in data.json | User-chosen destination, not proof of deployment/identity | Explicit setup; origin change requires disconnect/reset; no silent endpoint rebinding | Private configuration; no token/query/userinfo or content |
-| selected NotePath array in data.json | User consent record, always rechecked with exclusions and per-send confirmation | Empty default; explicit select/remove; no rename propagation; disconnect/reset clears | Sensitive path metadata; no content |
-| per-path acknowledged revision in data.json | Last confirmed publish baseline, never latest GET authority | Save only verified ACK; keep on deselection; reset clears locally with loss-of-association warning | Sensitive identity metadata; no content |
-| one unresolved attempt in data.json | Safety interlock: path/origin/original precondition/attempted SHA-256, not a queue | Save before dispatch; clear only after certain refusal or recorded success; ambiguous/restart stays blocked; reset explicitly forgets without remote delete | Sensitive paths/content fingerprint; **no body** |
-| token in session memory only | Bearer authorizes all remote operations; adapter alone attaches it | Explicit entry/replace/remove; unload/reset clears references; removal is not server revocation or secure memory erasure | Secret, never serialized/logged/displayed back |
-| active snapshot/control/retry budget in memory | One foreground operation; original bytes for at most one manual retry | Discard at terminal/closed result or unload; no restart replay; unresolved metadata remains if needed | Transient note content, never diagnostic/UI/persisted content |
-| R2 envelope format/revision/content | Authoritative current remote generation and body, one object atomic unit | Successful conditional writes only; no automatic legacy migration; v1 external deletion still possible | Remote note content readable by trusted operator; no credential |
-| R2 bridgeFormat marker | Distinguish envelope codec from raw legacy text | Written with same object, validated before decode; unknown values fail closed | Non-secret format metadata, not CAS authority |
+| data.json: schema, origin, origin-bound HTTP-dev permission, SecretStorage reference | User preferences, not writer election or per-path mutation authority | Explicit edits; external changes pause/revalidate; origin change drains/rebinds; no default merge on corruption | Private config/reference; no token or note body |
+| Native SecretStorage value | Host-managed bearer; privileged in current single-token model | Host rotation/deletion; disconnect only removes plugin reference; never invented secure erase | Secret; no plugin plaintext persistence |
+| Host vault-local storage: schema/device UUID/activation/association+origin binding | Device-local whole-mirror opt-in and static designation match | Disabled default; explicit activate/pause/handoff; loss cannot auto-reassociate | IDs/config, not a secret or cryptographic device identity |
+| Host-local per-path ACK | Last confirmed live revision+sent hash or tombstone revision+recovery ID | Only valid ACK/exact own receipt; retained across restart, local deletion and recreation; no arbitrary GET promotion | Sensitive paths/hashes, no note body |
+| Host-local unresolved intent per path | Original action/ID/precondition/hash, phase and retry/evidence budgets | Durable before dispatch; settle own intent only; never silently drop on unload/reset | Sensitive metadata, no request body |
+| Host-local desired/destructive/rename state | Latest dirty observation plus persisted post-bootstrap delete evidence and rename prerequisites/deferred cleanup | Positive scans reconstruct work; destructive absence never does; collapse edit events | Sensitive paths/event metadata, no body history |
+| Worker association/writer configuration | One explicitly designated cooperating writer for one namespace | Operator setup/handoff; missing config refuses mutations; never auto-elected | Non-secret IDs; separate bearer secret |
+| R2 current live/tombstone envelope+format marker | Authoritative current remote generation/receipt | Conditional mutations only; current keys never expire through application/lifecycle | Live note text or tombstone metadata; trusted operator plaintext |
+| R2 prepared/sealed recovery snapshot | Copy-before-tombstone, explicit 30-day window | Seal only from proven deletion timestamp; unsealed over-retains; survives current recreation | Remote recovery text and sensitive path metadata |
+| R2 purged recovery marker | Prevent expired content recreation by delayed duplicate preparations | CAS purge only after expiry; retain small marker, no physical delete in M3 | No body; identity/expiry metadata |
+| Explicit handoff export | Validated content-free ACK transfer within same association | Only after clean drain; excludes activation/device ID/secrets; import is explicit and verified | Sensitive path/hash ledger, not note text |
 
-One application state owner serializes complete read-current/apply/persist
-transitions, deriving each snapshot from the latest state when the transition
-runs. Merely serializing disk writes of earlier captured snapshots is insufficient:
-no independent UI save may overwrite a newly recorded baseline or revocation.
-Gate new publishes until settings load and earlier in-flight work settle. A failed pre-send save prevents dispatch;
-a failed post-ACK save is partial completion, not remote failure or success. No
-claim of fsync, cross-process CAS or atomic backup synchronization. Persisted state
-can be copied/tampered with by trusted host software; remote predicates remain
-authoritative. Per-send confirmation prevents restored selection alone sending data.
+Ephemeral only: saved snapshots, event counters/index, runtime coordinator registry,
+UI, signals/timers and current transport token reference. No note body in logs,
+UI, local storage, handoff record or data.json. Host local storage is outside the
+vault-file/iCloud mechanism, not guaranteed durable/transactional across processes.
+Quota/save/load failure pauses mutations. Do not silently move the ledger into a
+synced vault file or add a database to evade the failure.
 
-## Lifecycle, cancellation and retry
+The single state owner serializes read-current/apply/persist transitions across
+all jobs/settings actions; queued stale whole-state writes are forbidden. A token
+reference removal pauses admission immediately; pending remote effects remain
+observable. A data.json update never overwrites the host-local ACK ledger.
 
-Recommended limits: one foreground operation and one outstanding client request
-per plugin instance; 30 seconds per request including response streaming; zero
-automatic retries; at most one explicitly confirmed in-memory replay of an ambiguous
-known-revision update with unchanged original bytes/matching precondition. No batch,
-scheduler, watcher, queue, background health check, enabling scan or network on
-settings changes.
-Loading plugin metadata is permitted, not a vault scan or network side effect.
+## Association, deletion, recreation and rename
 
-Operation ownership and UI enable-lifetime identity are separate. Retain the
-operation guard through the **actual** saved-file/network/persistence settlement,
-not just a notice timeout. Re-enable on that instance reports busy while previous
-host work remains pending. Unload closes UI and clears credentials/content references
-when possible, signals cancellation, suppresses every stale UI callback and prevents
-further dispatch. It cannot cancel Vault.read or undo a submitted R2 write. Guarded
-persistence already in flight must settle before re-enabled state loads/saves;
-late success must not overwrite a new connection/selection snapshot.
+No acknowledged state: create only if remote path absent. Existing live/legacy/
+tombstone state is divergence, even if content equals local. Established live state:
+use last ACK revision; missing/changed remote state is not an invitation to create
+or adopt. Whole-mirror scope does not eliminate initial collision protection.
 
-Cancellation before dispatch means not sent. Cancellation/timeout after dispatch
-means remote outcome unknown until a valid response establishes otherwise; an abort
-is not a rollback. If a host/client test double ignores cancellation, show a deadline
-outcome but retain exclusion until settlement, and do not start another request.
-A hung host read can keep that instance busy indefinitely: safety over fabricated
-cancellation. Real host plugin recreation/module reload is a qualification case,
-not assumed to reuse the same instance. Persisted unresolved writes block new
-publishing after restart/recreation; remote CAS protects competing processes even
-where local-instance exclusion cannot. No process-global/device-global concurrency
-or shared-settings transaction guarantee is claimed.
+**Deletion authority is event-based**, not human-origin proof: approved post-bootstrap
+runtime delete of an already-acknowledged eligible path, including iCloud/external
+activity. Apply grace and exact-path absence checks, persist evidence, then use the
+recovery/CAS flow in ADR 0004. If a previous own update is pending, wait; only its
+verified ACK may advance the queued delete condition. Startup absence, unassociated
+paths and pending-first-create deletion never gain retroactive delete authority.
 
-Definite single-attempt 401/403/400/412/413/415/428 refusal is not retryable without
-addressing its cause; no automatic action. Network/timeout/5xx after dispatch may
-be ambiguous. An ambiguous create is never replayed: create followed by independent
-delete makes absence true again, and there is no M3 history proving that replay is
-not resurrection. A permitted explicit update retry retains original bytes/precondition,
-requires selection/session/destination unchanged and prior transport settled, and
-never promotes an observed remote revision. A replay 412 after earlier uncertainty
-is not proof of success or definite original refusal. After restart or snapshot
-release, do not rebuild a payload or adopt remote content from a matching hash;
-show unresolved previous publish and require explicit reset/operator recovery.
-Missing token/removal/rotation never schedules a pending request.
+Recovery snapshot must be durable **before** the current head becomes a tombstone.
+Seal 30 days from that stored tombstone's uploaded timestamp, not an earlier prepare
+clock. A sealing failure retains readable unsealed content; it does not undo an
+already confirmed tombstone. Normal note routes omit tombstones; recovery routes
+remain separate. Purge after expiry CAS-replaces recovery content with a marker,
+never current-head hard DELETE. No native trash/version history or exact physical
+cleanup promise. No blanket lifecycle policy on current/recovery keys.
 
-There is no cross-note partial batch because one invocation sends one note. Remote
-stored/local metadata failure is visible partial completion. Keep successful remote
-data; never issue compensating DELETE. One unresolved attempt blocks more publishing
-until resolved/reset; inspection remains possible once actual pending work settles
-and any awaiting-retry-decision dialog is closed.
-Full reconciliation/adoption/recovery is M4, not hidden behind Retry.
+A local recreation before an unsent delete cancels that removal. After dispatch,
+settle the original intent first. A confirmed tombstone plus eligible local creation
+uses If-Match of the acknowledged tombstone; stale deletes cannot affect the fresh
+live generation. Remote delete/recreate changes revisions even with identical text.
+Unresolved tombstones never become absence-based creates.
 
-## Tests required before implementation
+A runtime rename is create-destination → record ACK → recheck prerequisites →
+recoverably tombstone-source. Unknown destination commit/collision/newer event/
+remote conflict/failed ACK persistence prevents cleanup, with visible duplicate/
+deferred state. Rename out of eligibility removes only the previously associated
+eligible source, without reading/uploading the excluded destination. Compound or
+folder renames use the bounded, conservative ADR 0004 rules; no atomic two-key or
+full chain reconciliation claim. Missing/oversized/temporarily ineligible reads on
+modify do not silently delete previous remote content: report retained-stale/
+out-of-scope state until an eligible read or authorized lifecycle removal occurs.
 
-Use deterministic Vitest unit/integration tests, clocks, deferred promises and typed
-host/transport/storage doubles; no credentials, live vault or deployment. Extend
-existing dedicated tests trees, not production src. Tests must hold operations
-inside the harmful window while triggering competitors, and assert actual stored
-content/metadata and forbidden side effects, not only call counts.
+## Writer designation and handoff
 
-### A — selection/consent
+[ADR 0003](../decisions/0003-publishing-association-and-local-state.md) is normative.
+Device ID/activation/ledger live in host-local storage, not iCloud-synced data.json.
+Worker static association/writer identity mismatch disables non-writer autosync;
+the bearer remains privileged and IDs are not authorization secrets. One writer
+host/process per vault is the supported operating constraint, on any supported OS.
 
-- Unselected eligible note cannot read-for-publish or send; M2 list/active inspection
-  changes neither selection nor remote state. No select-all/enumeration upload path.
-- Select one, explicitly confirm/publish one; other eligible/selected notes untouched.
-- Revocation while saved read/confirmation/state save is pending prevents dispatch;
-  after dispatch reports possible completion, never remote delete. Failed revocation
-  persistence blocks publishing rather than reporting durable success.
-- Hard excluded/private/invalid/oversized paths remain unread/unpublishable even in
-  tampered selections; literal percent/Unicode/space names preserve exact identity.
-- Rename, missing file and selected-path replacement never retarget an operation or
-  auto-select a new path. Fresh confirmation is mandatory for path-based selection.
+Handoff: pause/drain old device; resolve every intent and rename dependency; explicitly
+export content-free ACK ledger; operator disables old writer, changes designation
+and rotates bearer; new device imports/verifies same-association baselines and
+bootstraps. Imported ACKs are staged, not active write baselines: before activation,
+verify each live path's saved local SHA-256 equals the transferred sent hash and
+each tombstoned path is locally absent, as well as the remote revision checks.
+Missing/different local data pauses handoff with a typed mismatch; it might be stale
+or partially hydrated iCloud state, not a new edit/recreation. Never refresh the
+baseline to bypass this gate. Observe events during verification and invalidate
+changed observations. After activation, normal saved events govern later changes.
+Abort, a timeout or “remote still looks old” is not quiescence. A completed
+conditional generation with matching receipt can make a delayed duplicate harmless.
+If clean handoff is impossible, block takeover. Safe reset provisions a separately
+authorized empty bucket/association without redirecting old requests into it;
+preserve old state for operator/M4 recovery. No leases/election/automatic takeover.
+A pause interval can miss local delete events; the new scan reports absence without
+inventing intent. Tell operators that such removals require later reconciliation.
 
-### B — configuration/persistence/secrets
+## Typed application ports and remote protocol
 
-- Invalid/insecure origin, credentials/query/fragment/base path, lookalike loopback,
-  alternative numeric host spellings; exact dev opt-in bound to origin and reset.
-- Missing/removed/rotated token and unload; no token in saved bytes, notices, logs,
-  raw errors, URLs, response parsing failures or refilled UI. No note-body logging.
-- Malformed/future settings, invalid path/revision/digest, interrupted saves,
-  duplicate entries and load rejection; fail closed, preserve on-disk invalid data.
-- Serialize selection/configuration/baseline writes. Pre-send save failure means
-  zero PUT; post-ACK failure means stored/unrecorded and blocked. Reset never deletes
-  remote data; new first create cannot overwrite it. Empty state never auto-sends.
+Semantic port contracts (names may follow repository conventions):
 
-### C — remote adapter/HTTP contracts
+- Local read-only list/read plus event subscription adapter emitting primitive
+  created/modified/deleted/renamed observations with bootstrap/session evidence.
+- RemoteBridge: describe association, paged list, content read, current-state read,
+  conditional put, conditional tombstone; returns domain revisions/receipts and
+  typed effect certainty. Recovery inspection/seal/purge uses a separate recovery port,
+  not added local mutation methods.
+- MirrorStateStore: load/store validated snapshots or typed failure; synchronous
+  host-local storage is wrapped at the adapter, not leaked into core. One application
+  state owner holds the canonical current state through complete transitions.
+- Operation control/clock/fingerprint seams support deterministic deadlines,
+  cancellation intent, actual settlement and SHA-256 of exact UTF-8 bytes. Framework
+  signal/request/response/host objects remain in adapters. Never unchecked-cast JSON.
 
-- Successful inspect/list/read and publish; legacy reads; matching path/revision/
-  status/media metadata; no raw content returned to UI. Shared real path schema.
-- Malformed JSON/schema/UTF-8, wrong content type, invalid or mismatched returned
-  path, malformed/missing ETag/format, incorrect stored flag/status and response
-  streaming above bounds with missing/lying Content-Length.
-- 401, 403, GET 404, PUT 404 incompatibility, 412, 428, 429, 5xx, network failure,
-  timeout, cancellation; malicious error strings discarded. No silent v1 fallback.
-- Redirect refusal before forwarding credentials/body; CORS preflight exact methods/
-  headers/routes, no credential cookies, actual requests authenticated, ETag exposed
-  even with custom Origin, failure/no-store behavior and unknown v2 route protection.
-- Generated OpenAPI and runtime agree on optional zero-byte stream plus required
-  supported media type, preconditions, retired v1 PUT, new errors and path contract.
+| Outcome | Meaning |
+| --- | --- |
+| success / confirmed-stored / confirmed-tombstone | Valid ACK or exact own receipt; persistence success is reported separately |
+| unauthenticated / forbidden-writer | 401 / 403; pause globally, no token/error echo |
+| network-unavailable / timed-out / cancelled | Local classification; after dispatch remote effect may be unknown |
+| missing / tombstoned / legacy | Distinct state observations; ordinary content read hides tombstones; none grants overwrite authority |
+| precondition-conflict / divergence | 412 or differing established state; preserve remote generation, no refresh-and-overwrite |
+| incompatible-protocol / unsupported-runtime | Old v2 absence/wrong capabilities/missing browser primitives; no fallback |
+| malformed-response / contract-violation | Bad schema/UTF-8/media/path/revision/receipt/status or request/response bound; never partial success |
+| server-failed / rate-limited | 5xx / 429; finite budget, effect may be unknown |
+| local-unavailable / unstable / excluded / oversized | Existing local policy/read evidence; no alternative file or destructive fallback |
+| state-unavailable / invalid-state | Pause mutations, retain evidence; no silent settings reset |
+| recovery-pending / expired / purged | Explicit retention lifecycle, not active-note status |
+| incomplete-inventory / handoff-local-mismatch | Bounded scan exhausted/failed, or new writer has not observed the transferred live/tombstone state; never adoption authority |
 
-### D — exact conditional safety (mandatory)
+Keep expected outcomes closed/exhaustive and semantic constants authoritative.
+Effects are not-dispatched, definitely-refused, confirmed or unknown; a later
+refusal does not negate an earlier ambiguous attempt. Validate known error schemas
+when available, but classify 401/403/5xx even when an intermediary body is malformed;
+never display remote error messages or stack traces.
 
-1. Absent path → 201 and recorded new revision. No separate existence classification.
-2. Pause **two absent creates immediately before R2 mutation**; release competing
-   atomic calls; exactly one succeeds, other 412; winner bytes/metadata untouched.
-3. Known A → successful update B; ACK returns B even if C commits before formatting
-   the response. A post-write HEAD must not accidentally acknowledge C.
-4. Pause publisher after reading A/ETag, commit remote editor B, resume publisher's
-   R2 conditional put → 412, B preserved. Run through handler → service → actual
-   R2 adapter with a barrier-controlled bucket double, not just a fake core port.
-5. Both updaters read A while each is pending; atomic winner only. Repeat with B
-   having identical note text to A; fresh envelope revision invalidates stale A.
-6. Delete/recreate same text between read and CAS; stale update refuses. Delete
-   without recreate also refuses, never upserts. Keep v1 deletion risk explicit.
-7. Commit an update but drop response; explicit original-matching-revision replay
-   refuses without altering the committed body. Separately drop before commit and
-   allow update replay to win safely. Keep first server attempt pending during
-   replay in the server test, despite client abort, and prove at most one succeeds.
-   For create→dropped ACK→external delete, assert **no plugin replay**; absence
-   becoming true again is not proof the earlier create never committed.
-8. Malformed successful ACK/local save failure/unload leaves unresolved interlock;
-   restart never sends/adopts automatically. After ambiguous attempt then 412, do
-   not clear uncertainty or use latest GET ETag as authorization.
-9. Existing legacy/equal/unrelated path before first publish refuses untouched;
-   malformed storage is failure, never absent. V1 PUT on upgraded Worker never
-   mutates; new plugin v2 against old Worker never invokes old unconditional write.
-10. Focused local Miniflare/workerd R2 contract tests verify real conditional
-    Headers wildcard, matching validators, null result and same-text envelopes.
-    Deterministic barrier tests cover exact ordering; local runtime tests establish
-    platform primitive behavior. Neither alone proves everything; no deployment.
+### V2 contract surface
 
-### E — lifecycle and negative capabilities
+All requests are bearer-authenticated except registered CORS preflight. Mutation
+requests also carry Bridge-Association-Id, Bridge-Writer-Id and Bridge-Operation-Id;
+server computes content hashes and new revisions. The strong ETag is
+`"m3-<uuid>"`. Keep canonical base64url NotePath item addressing and no-store.
 
-- Only one operation/request per instance. Keep local read/network/save pending,
-  unload then re-enable **before resolving it**; assert no second work starts,
-  stale UI stays suppressed and normal work resumes only after actual settlement.
-- Timeout/cancel with deliberately non-cooperative transport does not release work
-  exclusion. Worker commit after client abort is an unknown outcome, not rollback.
-- Credentials removed during read means no send; once in flight, removal cannot
-  falsely report remote cancellation. State writes cannot resurrect old destination.
-- Recreated-instance/restart with unresolved stored attempt blocks publishing;
-  record real-host lifecycle qualification limits, not a fake cross-process lock.
-- Assert no local create/write/delete/rename/save-editor, remote DELETE, watchers,
-  scheduled/background requests, M4 import/merge, note-body UI/logging, token output,
-  queue replay or automatic conflict handling. Keep M2 independent local commands.
+| Route | Contract |
+| --- | --- |
+| GET /api/v2/mirror | Protocol identifier, association/designated writer IDs, note limit and retention policy; no mutation |
+| GET /api/v2/notes?cursor=… | Live/legacy paths only, at most 50 scanned objects/page, opaque nextCursor or null; no implicit adoption |
+| GET /api/v2/notes/:path | Raw Markdown <=1 MiB; revisioned ETag/format or explicit legacy format; 404 for absent/tombstone |
+| GET /api/v2/notes/:path/state | Validated absent/legacy/live/tombstone metadata, path, revision/receipt/hash where applicable; no content; 200 for each recognized state |
+| PUT /api/v2/notes/:path | Absent create or matching live update/tombstone recreation; 201 or 200 JSON ACK with exact path/revision/receipt and ETag |
+| DELETE /api/v2/notes/:path | Matching live generation only; empty body; 200 JSON tombstone ACK and recovery status, 412 on stale/wrong/missing state; no hard delete |
+| GET /api/v2/recovery?cursor=… | Bounded metadata pages, including unsealed/expired/purged status; not proof every prepared copy became an authoritative deletion |
+| GET /api/v2/recovery/:id | Validated metadata + text for unsealed/unexpired snapshot; 410 after sealed expiry/purge; 404 unknown; no local restoration |
+| POST /api/v2/recovery/:id/seal | Explicit maintenance of an unsealed snapshot, matching recovery revision; verify the still-current matching tombstone's uploaded time, then CAS seal; 200, or 409 if proof is unavailable, 412 stale |
+| POST /api/v2/recovery/:id/purge | Explicit maintenance; matching recovery revision and expiry required; CAS to content-free marker; 200 ACK or 412/409 refusal; already-purged identity idempotent |
+| V1 PUT and DELETE on upgraded Worker | Authenticated 410 mutation_api_retired; no body/storage mutation |
 
-## Validation and generated artifacts
+All GETs are read-only. Recovery seal/purge carry the same identity/operation
+headers and designation check as note mutations; their application ETag identifies
+the fresh recovery generation. Seal is a no-op success for an already sealed
+matching snapshot, never permission to extend its deadline or restore purged text.
+A purge replay of the same operation against its purged receipt is a read-only idempotent ACK; a different stale predicate
+is refused. Missing recovery ID is 404, never automatic proof of a prior valid purge.
 
-Run canonical `mise install`, `mise run install`, `mise run check`; focused
-`mise run test`, `mise run coverage`, `mise run typecheck`, `mise run lint`,
-`mise run biome:check`, `mise run build`, `mise run plugin:smoke` per plan.
-V8 continues to include all apps/packages production source, including unimported
-new behavior; preserve global lines/statements 95%, functions 94%, branches 90%.
-Review risk-sensitive branches, not only global percentages.
+Resolve M1/OpenAPI permissiveness: v2 PUT requires explicit nonempty supported
+Content-Type (text/markdown or text/plain, case-insensitive, parameters accepted).
+Missing/empty/unsupported = 415. Zero bytes/no request stream with supported type
+is valid empty text; OpenAPI requestBody is optional and documents that meaning.
+Enforce streamed incoming UTF-8 and 1 MiB independent of Content-Length. Missing
+precondition = 428; invalid/both/list/weak/date/wildcard-update = 400; stale = 412.
+V1 OpenAPI documents retirement, not old permissive mutation. OpenAPI paths/schemas
+use actual shared NotePath validation and explain byte bounds, not false maxLength
+claims. The old reserved protocol envelope is not silently repurposed.
 
-Extend existing generated CommonJS host-double suite proportionally: validate the
-actual bundled schema/URL/credential/settings path, inert enable except settings
-load, one confirmed conditional publish through injected web transport, no Node
-runtime dependency, default export/manifest and unload/re-enable behavior. Do not
-clone every source test in the artifact suite. New core/adapter policy remains
-source-tested; Worker dry-run is packaging evidence, not R2 concurrency evidence.
-Add local R2 runtime integration to canonical mise tasks/CI, not manual deployment.
+Client streaming limits: raw note 1 MiB; metadata/ACK/list JSON 512 KiB;
+recovery-with-text JSON `6 * MAX_NOTE_SIZE_BYTES + 16384`. Validate decoded recovery
+content <=1 MiB too. Reject wrong success media type/status/path, malformed JSON,
+unknown closed format, ETag/body revision mismatch, bad cursor or receipt, invalid
+UTF-8, and actual bytes over bounds before accepting results. Cursors are bounded
+opaque strings of at most 4096 characters; the server never accepts a client
+storage prefix. Each inventory pass permits **1000 pages total**, including empty
+pages; duplicate/cyclic continuation is a protocol failure. Exhaustion with a
+remaining cursor returns incomplete-inventory and stops, never an automatic
+recursive restart or a complete/empty success. This inventory cap does not exclude
+local notes: positive per-path synchronization remains independent and CAS-protected.
+Full multi-page listing is observational, not an atomic vault snapshot.
 
-Inspect diagnostics/deprecations and configured editor schema; no editor/mobile/
-desktop claim without a real session. After full validation use the `code-review`
-skill for manual semantic/security review of all changed code, contracts, races,
-privacy, package boundaries, persistence and operational docs. Green CI alone is
-not completion. The planning PR also requires this skill on its documentation.
+## Required deterministic tests
 
-## Acceptance checklist
+All tests use dedicated tests/unit or tests/integration trees and injected host,
+network, storage, clocks and persistence. No real vault/tokens/deployment. Reproduce
+harmful orderings using deferred promises/barriers; resolving competitors before
+the tested race is not evidence. Assert actual winning bytes/revisions, ledger and
+forbidden side effects, not just mock method names.
 
-### Planning gate
+### Scope, bootstrap and saved events
 
-- [x] Establish actual M2/M3 state; inspect source/tests/configuration and official
-  R2/Obsidian capability evidence, including limitations.
-- [x] Provide alternatives and recommendations, architecture/state/protocol draft,
-  exact race/negative tests and gated sequential slices.
-- [ ] Maintainer resolves D1–D6; proposed ADRs accepted or replaced through review.
-- [ ] Remove conditional design ambiguity, synchronize all dependent documents and
-  record implementation-ready status only after the approval gate is satisfied.
+- Whole activation mirrors every eligible Markdown file; no selected state or
+  allow-list machinery; non-writer/unconfigured device sends nothing automatically.
+- Existing exclusions, lowercase extension, literal percent/Unicode/path contract,
+  actual byte limits; M2 local inspection neither activates nor changes scope.
+- onLayoutReady startup create events coalesce; event registration precedes metadata
+  scan; events during scan are merged; failed enumeration does not enable deletes.
+- Remote-minus-local/bootstrap/iCloud-transient absence causes no delete. A delete
+  observed before the boundary is not promoted later. Post-bootstrap associated
+  runtime delete is accepted without inventing a human-origin flag/confirmation.
+- Rapid repeated modify events produce one latest stable update; modify during read
+  invalidates that read; modify during PUT remains dirty and uses its actual ACK
+  for the next update. No per-editor-change request or forced save.
 
-### Implementation acceptance (all pending)
+### Conditional updates and ambiguous operations
 
-- [ ] A1: selection is explicit/empty-default/individual/revocable and separate from M2.
-- [ ] A2: connection/token behavior matches approved trust, persistence and HTTPS policy.
-- [ ] A3: existing/legacy/unrelated content is not adopted; baseline/reset semantics hold.
-- [ ] A4: conditional server/R2 primitives pass exact races, including same-text ABA.
-- [ ] A5: versioned API/old-server refusal and runtime/OpenAPI/path validation agree.
-- [ ] A6: typed remote failures, bounded payloads/timeouts and safe retry effects hold.
-- [ ] A7: serialized local state, partial saves and ambiguous/restart interlocks hold.
-- [ ] A8: bounded lifecycle/unload/re-enable and cancellation guarantees are truthful.
-- [ ] A9: no local mutation, delete propagation, secrets/content diagnostics or M4 scope.
-- [ ] A10: source coverage, generated/runtime checks, diagnostics and semantic/security
-  review pass; current-state/API/security/install/architecture docs synchronized.
-- [ ] A11: completion evidence and focused implementation PR created, no deployment;
-  only then transition M3 COMPLETE and M4 NEXT with planning handoff, never M4 code.
+- Two absent creates paused at storage commit: one wins. New local path versus
+  existing live/legacy/tombstone refuses without adoption even for equal text.
+- Two updates read A before either commits; exactly one CAS wins. Remote B committed
+  between publisher GET and R2 put survives, including B with the same text as A.
+- ACK derives from stored B even if C commits before response formatting.
+- Timeout/abort before dispatch versus after actual commit; lost ACK is unknown
+  until exact own receipt; wrong action/hash/parent/path/association/ID is not proof.
+- Keep aborted original server operation pending while exact retry runs: at most
+  one generation wins. Three-attempt/evidence budgets persist across restart/events;
+  unchanged prior state is not proof of cancellation. No latest-revision overwrite.
+- Restart with changed local bytes cannot substitute them for a pending original
+  intent; unchanged matching bytes may retry conditionally; other paths still run.
+- Remote success + ACK-store failure pauses new mutations, retains intent and does
+  not erase the already stored note or report fully recorded success.
 
-## Explicit non-goals and residual risks
+### Delete/recovery and rename
 
-No local note writes/import, conflict merging/resolution, automatic bidirectional
-sync, delete propagation/tombstones, rename synchronization, durable offline queue,
-watchers/schedulers, MCP, scoped identity/auth, search or new database. No content
-cache, automatic legacy migration or adoption/recovery hidden in Retry.
+- Delete X held before CAS; remote update Y commits; deletion refuses and Y survives.
+  Archive prepare failure/ambiguous save means no tombstone; CAS failure may leave
+  a labeled orphan; no compensating hard delete.
+- Commit tombstone then lose ACK or fail sealing; exact receipt resolves effect;
+  unsealed snapshot remains readable/unpurgeable. Seal uses actual tombstone upload
+  time so a delayed head CAS does not shorten the 30-day recovery guarantee.
+  All GETs are read-only; explicit seal authenticates/designates, requires a matching
+  recovery revision and proves the same current tombstone; missing proof refuses.
+- Delete→tombstone→local recreation retains recovery content, uses tombstone If-Match
+  and fresh revision. Stale delete/create retries cannot delete/resurrect a new head.
+- Runtime delete during own update waits for its evidence; arbitrary changed remote
+  revision blocks. Delete during first unacknowledged create cannot retroactively
+  gain authority; potentially committed orphan is visible.
+- Purge at deadline boundaries; unsealed/unexpired rejects; expired CAS purge leaves
+  marker; pending duplicate prepare/seal and two purgers cannot recreate content or
+  remove another generation. Current heads never enter cleanup/lifecycle expiry.
+- Rename while source PUT is pending reserves dependencies; lost destination ACK,
+  collision, failed persistence or remote source edit prevents source tombstone.
+  Source recreation, chained/overlapping/folder rename and excluded destination
+  exercise actual pending windows and safe visible deferred cleanup.
 
-Residuals: user-configured endpoint/host/other privileged plugins and cloud operator
-are trusted; one bearer still grants destructive external v1 DELETE; no E2EE,
-backup/history or production guarantee. Local saved reads are best-effort, settings
-are not transactional across devices, and lost ACK/state may block publishing.
-Whole-list server work is not paginated/bounded by client response limits. Per-write
-nonce/ETag safety rests on documented storage predicates and validator/randomness
-assumptions, not proof against malicious operators. Browser/host compatibility and
-actual deployment behavior remain untested until explicit qualification; never
-infer them from the manifest or configuration. An old Worker rollback over envelope
-data is unsupported and dangerous; future deployment needs operator authorization.
+### Lifecycle, identity, transport and negatives
+
+- Two job slots/one per path including bootstrap/evidence; overlapping rename path
+  reservations are deadlock-free; hot-path events don't starve others.
+- Keep local read/Fetch/state write pending, unload, create a **new Plugin instance**
+  and re-enable before settlement: no bypass of registry slots; no stale UI, late
+  watcher registration, activation or old-origin state overwrite. Test bundle reload
+  in the same realm, incompatible registry and actual process-restart ledger path.
+- Non-cooperative aborting transport retains slots until settled; no cancellation
+  claim for saved-file reads or in-flight Worker commits.
+- Invalid endpoint/dev lookalikes, missing/shared-secret removal/rotation, external
+  data.json modification, quota/corrupt state, designation mismatch and endpoint
+  changes pause appropriately; no raw secret in settings, notices, logs or errors.
+- Handoff refuses unresolved intents/rename dependencies; merely seeing old remote
+  state or timing out is insufficient. Clean exported ACKs exclude IDs/activation/
+  secrets; wrong association/import/remote mismatch refuses. New writer alone
+  activates; lost old device cannot silently take over the same namespace. Hold
+  iCloud hydration pending: old local live text cannot overwrite a transferred
+  newer ACK, nor a stale local file recreate a transferred tombstone; local matches
+  must be observed before activation, and changes during verification invalidate it.
+- 401/403/404/409/410/412/428/429/5xx, malformed JSON/schema/UTF-8/media/path/revision/
+  receipt/cursor, redirect denial, lying size, hanging stream and absent capabilities;
+  exact v2 CORS method/header/auth/no-store behavior; no v1/requestUrl fallback.
+  Endless distinct/empty cursors stop at the page budget without hiding incomplete
+  inventory or stalling positive per-path work; failed read passes don't self-restart.
+- No plugin local create/write/delete/rename, remote-to-local import, merge, agent
+  execution, note-body UI/logging, token diagnostics, physical R2 head deletion,
+  native-trash claims, scheduler polling or future NAS/sole-authority behavior.
+
+## Validation and acceptance
+
+Canonical `mise install`, `mise run install`, `mise run check` plus focused plan tasks.
+Keep V8 production inclusion (including unimported source) and thresholds:
+lines/statements 95%, functions 94%, branches 90%. Review risk-sensitive coverage.
+Local Miniflare/workerd verifies actual conditional Headers wildcard/ETag/null,
+receipt/tombstone primitives; barrier doubles prove exact interleavings through
+handler→service→R2 adapter. Neither constitutes a deployed Cloudflare test.
+
+Proportional generated CommonJS tests exercise actual bundle modern settings/secret
+reference storage, no Node dependencies, bootstrap/event-driven conditional mutation,
+replacement-instance/bundle-reload ownership, text-only UI and token/body negatives.
+Do not mechanically duplicate every policy unit test. Feature-detect standards
+APIs; record actual desktop/mobile qualification or its absence, not invented host
+support. No old-version fallback. Inspect compiler/lint/Biome assists/deprecations
+and configured editor diagnostics; do manual code-review skill review after green
+checks. Planning also receives that review before readiness is declared.
+
+- [ ] A1: whole eligible scope and opt-in, no per-note state; auth scope separate.
+- [ ] A2: modern SecretStorage/configuration/writer activation and privacy.
+- [ ] A3: bootstrap/event coalescing/stable reads, finite fair bounded autosync.
+- [ ] A4: conditional generations/receipts/legacy safety and v1 retirement proven.
+- [ ] A5: per-path ledger/partial saves/restart/finite uncertainty recovery.
+- [ ] A6: event-authorized tombstones, 30-day recovery and safe purge markers.
+- [ ] A7: bounded safe rename/recreation including harmful interleavings.
+- [ ] A8: runtime-owner lifecycle, designation and clean explicit handoff.
+- [ ] A9: typed validated v2/OpenAPI/transport/CORS/failures and negative capabilities.
+- [ ] A10: canonical/coverage/generated/runtime/diagnostics and semantic review pass;
+  docs/operational instructions match actual implementation and limitations.
+- [ ] A11: M3 completion evidence and implementation PR; only then M4 NEXT with its
+  planning spec, no M4 code or deployment. M3 is not COMPLETE in this planning PR.
+
+## Non-goals and residual risks
+
+No remote-to-local mutation, conflict merge/adoption UI, arbitrary historic edit
+recovery, bidirectional sync, multi-writer/election/leases, replayable plaintext
+queue, attachments, search, MCP, NAS replication or new storage authority. Event/
+debounce/retry scheduling is explicitly in M3; unbounded background polling is not.
+
+Trusted host/other plugins/Worker operator can access plaintext; one bearer remains
+privileged. Runtime iCloud/external delete events can temporarily hide notes, as
+approved. Bootstrap incompleteness cannot authorize deletion. Saved reads and local
+storage are not atomic/fsync guarantees; writer absence limits freshness; lost state,
+ambiguous receipts, compound renames and unsealed recovery can require attention.
+Recovery provides a 30-day window, not exact physical erasure or full backup. Small
+current/purged markers persist. Operator removal/old-code rollback/stale bucket
+restore violate active-association assumptions. No live resources, credentials,
+real-host testing or production readiness is inferred from configuration.

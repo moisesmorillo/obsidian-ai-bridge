@@ -111,7 +111,10 @@ below; do not mark the milestone complete based on an intermediate slice.
 ## Evidence ledger
 
 Entries below describe each slice at its own handoff; later entries supersede
-its pending work/review notes. Slice 5 records final acceptance.
+its pending work/review notes. Slice 5 records final acceptance. References above
+to unresolved M3 selection/publishing are historical, not current product direction;
+the maintainer-approved [M3 decisions](m3-design-decisions.md) now specify automatic
+whole eligible Markdown mirroring. No M2 implementation invariant is changed.
 
 - Planning baseline: clean `main` at `635d24a`; active M2 spec exists, but
   `docs/plans/` did not. Work branch: `feat/m2-local-inspection`.

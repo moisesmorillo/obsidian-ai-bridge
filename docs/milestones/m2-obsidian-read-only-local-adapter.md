@@ -361,4 +361,9 @@ platform-independent local read port/service, an Obsidian adapter, dedicated
 plugin tests and build/installation instructions. M1 remains unchanged. The
 completion PR includes test/build/coverage evidence and an explicit list of any
 host environments not tested. It hands off to M3 planning with mirror selection,
-remote settings and safe publishing still visibly undecided.
+remote settings and safe publishing still visibly undecided **at that historical
+handoff**. Those choices have since been resolved by the maintainer in the
+[current M3 decision record](../plans/m3-design-decisions.md): automatic whole
+eligible Markdown mirroring, recoverable lifecycle changes and one designated
+writer. The M2 completion evidence/invariants above are unchanged; use the current
+roadmap/spec, not this historical handoff, for M3 scope.

@@ -1,0 +1,28 @@
+name: Release Please
+
+on:
+  push:
+    branches: [main]
+
+permissions: {}
+
+jobs:
+  release-please:
+    name: Create release pull request
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create Release Please App token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ secrets.RELEASE_PLEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_PLEASE_APP_PRIVATE_KEY }}
+
+      - name: Create or update release pull request
+        id: release
+        uses: googleapis/release-please-action@v5
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          command: manifest
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json

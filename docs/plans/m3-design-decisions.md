@@ -27,9 +27,10 @@ selected or implemented. No new exclusion feature is needed in M3.
 ## Decision record
 
 “Accepted” means maintainer-approved design, not necessarily complete production
-implementation. Slice 2A–2C now realizes private storage/application transitions and
-the public authenticated v2 transport with v1 mutation retirement; plugin, state-owner
-and autosync work remains.
+implementation. Slice 2A–2C realizes private storage/application transitions and
+the public authenticated v2 transport with v1 mutation retirement. Slice 3 adds the
+uncomposed plugin configuration/device-state boundary, serialized core owner and
+handoff model; Fetch, settings UI and autosync work remain.
 Engineering defaults below are bounded implementation choices, not new product
 permissions. The [spec](../milestones/m3-remote-bridge-client-and-publishing.md),
 [plan](m3-remote-bridge-client-and-publishing.md) and ADRs are normative together.

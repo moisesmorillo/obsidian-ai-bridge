@@ -2,10 +2,12 @@
 
 ## Status
 
-**Accepted — Worker designation guard implemented in Slice 2C; plugin state/handoff
-remain unimplemented.** Supersedes this unmerged PR's per-note/manual/global-interlock
-proposal. The Worker validates static association/writer UUIDs and guards every v2
-mutation; native SecretStorage, local state ownership, automatic mirroring and handoff
+**Accepted — Worker designation guard implemented in Slice 2C; device-local state,
+serialized ownership and handoff model implemented in Slice 3.** Supersedes this
+unmerged PR's per-note/manual/global-interlock proposal. The Worker validates static
+association/writer UUIDs and guards every v2 mutation. Slice 3 adds strict uncomposed
+native-secret-reference/preferences and App-local state adapters plus core activation/
+handoff policy; settings UI, Fetch, automatic mirroring and remote handoff verification
 remain later M3 work. The filename is retained for existing links.
 
 ## Context

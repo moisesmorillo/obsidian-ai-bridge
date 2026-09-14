@@ -1,6 +1,6 @@
 # M3 — Automatic eligible-Markdown remote mirror
 
-**Status: NEXT — Worker Slice 2A–2C implemented; Slice 3 is next. No connected
+**Status: NEXT — Slices 0–3 implemented; Slice 4 is next. No connected
 user-visible M3 mirror.**
 
 The maintainer's clarification replaces the selected-note/manual-publishing proposal
@@ -15,7 +15,10 @@ proves the pinned local workerd storage predicates and records declaration-only 
 availability. Slice 1 raises the plugin minimum to 1.13.0 and provides typed core/
 protocol contracts. Worker Slice 2A–2C adds private conditional-storage adapters, tested application
 current/recovery transitions, and authenticated v2 HTTP/OpenAPI/CORS with v1 mutation
-retirement. Plugin configuration/state/client/autosync and real-host checks have not passed.
+retirement. Slice 3 adds uncomposed strict plugin configuration/host-local state
+adapters, a serialized core state owner, explicit writer activation and staged
+content-free handoff validation. Fetch/client/autosync/settings UI/Vault event wiring
+and real-host checks have not passed.
 
 ## Objective and authority
 
@@ -239,7 +242,7 @@ invalid counters/times are rejected. All path states share one typed source.
 
 | Persisted value/location | Purpose/authority | Lifecycle/reset/migration | Sensitivity/content |
 | --- | --- | --- | --- |
-| data.json: schema, origin, origin-bound HTTP-dev permission, SecretStorage reference | User preferences, not writer election or per-path mutation authority | Explicit edits; external changes pause/revalidate; origin change drains/rebinds; no default merge on corruption | Private config/reference; no token or note body |
+| data.json: schema, origin, exact canonical `loopbackHttpOrigin` permission, SecretStorage reference | User preferences, not writer election or per-path mutation authority | Explicit edits; the permission must equal the current HTTP loopback origin including port; external origin changes fail closed and require fresh consent; no default merge on corruption | Private config/reference; no token or note body |
 | Native SecretStorage value | Host-managed bearer; privileged in current single-token model | Host rotation/deletion; disconnect only removes plugin reference; never invented secure erase | Secret; no plugin plaintext persistence |
 | Host vault-local storage: schema/device UUID/activation/association+origin binding | Device-local whole-mirror opt-in and static designation match | Disabled default; explicit activate/pause/handoff; loss cannot auto-reassociate | IDs/config, not a secret or cryptographic device identity |
 | Host-local per-path ACK | Last confirmed live revision+sent hash or tombstone revision+recovery ID | Only valid ACK/exact own receipt; retained across restart, local deletion and recreation; no arbitrary GET promotion | Sensitive paths/hashes, no note body |

@@ -59,8 +59,10 @@ production-readiness claim. M3 is NEXT with an implementation-ready design. Slic
 conditional-storage runtime and host declarations. Slice 1 raises the plugin baseline
 to 1.13.0 and adds shared typed contracts. Worker Slice 2A–2C implements private conditional storage, application current/
 recovery transitions, public safe v2 HTTP/OpenAPI/CORS, envelope-aware v1 reads and
-v1 mutation retirement, but no plugin credentials, state owner, remote client or
-autosync behavior.
+v1 mutation retirement. Slice 3 adds strict uncomposed plugin configuration/native
+secret-reference boundaries, App-local state persistence, serialized transition
+ownership, explicit writer activation and staged handoff validation. It adds no
+Fetch client, autosync, settings UI or Vault event wiring.
 
 See [current-state evidence](current-state.md), [architecture](architecture.md),
 [implemented API](api.md), [M2 completion](milestones/m2-obsidian-read-only-local-adapter.md#completion-evidence)
@@ -112,7 +114,7 @@ production code. Dependencies include all previous milestones.
 
 ### M3 — Automatic eligible-Markdown remote mirror
 
-**NEXT — Worker Slice 2 complete; Slice 3 is the next internal M3 work. No user-visible mirror.**
+**NEXT — Slices 0–3 complete; Slice 4 is the next internal M3 work. No user-visible mirror.**
 [Specification](milestones/m3-remote-bridge-client-and-publishing.md),
 [approved decisions/evidence](plans/m3-design-decisions.md),
 [sequential test-first plan](plans/m3-remote-bridge-client-and-publishing.md) and

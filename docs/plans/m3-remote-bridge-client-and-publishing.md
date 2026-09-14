@@ -1,6 +1,6 @@
 # M3 implementation plan — automatic eligible-Markdown mirror
 
-**Status: Worker Slice 2A–2C implemented; Slice 3 is the next internal M3 work.
+**Status: Slices 0–3 implemented; Slice 4 is the next internal M3 work.
 No connected user-visible mirror behavior.** PR #8 remains planning/documentation only. M2
 merged at `b300726` (PR #7); M3 is the single NEXT
 milestone. [Spec](../milestones/m3-remote-bridge-client-and-publishing.md),
@@ -170,6 +170,19 @@ surface and retires unsafe v1 mutations; intermediate checkpoints are not rollou
   stale token-ref restoration or new keychain claim. Unknown data stays untouched.
 - **Validation/acceptance:** focused unit tests, coverage and check; A2/A5/A8 model.
   No Vault watchers/UI activation or remote-to-local writes yet.
+- **Implemented evidence:** Slice 3 adds closed core device/lifecycle/per-path state,
+  finite unresolved-intent budgets, compare-and-transition serialized ownership,
+  explicit isolated-association activation, readiness and paused/drained handoff
+  policy. Strict Obsidian boundary codecs distinguish missing/corrupt/future state,
+  reject duplicate/invalid/inconsistent/bounded data and never clear failures.
+  `data.json` represents endpoint preferences and a native secret reference only;
+  App local storage owns device identity, activation, ACK/intent/evidence ledger and
+  staged handoff metadata; native SecretStorage retains the bearer. Content-free
+  checksum-covered handoff imports remain staged until live hashes/tombstone absence
+  align, and changed observations invalidate alignment. A package Symbol retains
+  the state owner only within the same JavaScript host. The adapters/policy are not
+  composed into automatic behavior: no settings UI, Fetch, retries, Vault events,
+  dispatch, remote verification or local writes are added.
 
 ## 4. Typed bounded Fetch remote adapter
 

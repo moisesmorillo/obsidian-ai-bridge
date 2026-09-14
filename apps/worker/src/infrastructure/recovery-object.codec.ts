@@ -279,6 +279,7 @@ function validateTransitionedRecovery(
   if (
     object.revision === object.sourceRevision ||
     object.revision === object.previousRevision ||
+    object.revision === object.tombstoneRevision ||
     object.tombstoneRevision === object.sourceRevision
   ) {
     context.addIssue({

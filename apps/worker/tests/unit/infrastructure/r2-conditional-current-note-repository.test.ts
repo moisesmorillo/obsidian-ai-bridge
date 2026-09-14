@@ -1,12 +1,11 @@
 import {
   CONDITIONAL_MUTATION_PRECONDITION_KIND,
-  type ConditionalCreateRequest,
-  type ConditionalUpdateRequest,
   CURRENT_NOTE_STATE_KIND,
   createApplicationRevision,
+  createContentSha256,
   createMirrorAssociationId,
   createMirrorOperationId,
-  createMirrorWriterId,
+  type LiveCurrentGenerationCandidate,
   MAX_NOTE_SIZE_BYTES,
   MUTATION_ACTION,
   MUTATION_EFFECT_CERTAINTY,
@@ -17,6 +16,7 @@ import type {
   R2ConditionalObjectMetadata,
   R2ConditionalPutOptions,
   R2ConditionalStoredObject,
+  R2ListResult,
 } from "@worker/infrastructure/r2.types";
 import { R2ConditionalCurrentNoteRepository } from "@worker/infrastructure/r2-conditional-current-note.repository";
 import {
@@ -25,62 +25,44 @@ import {
   MAX_LIVE_CURRENT_OBJECT_BYTES,
 } from "@worker/infrastructure/storage-object.constants";
 import { STORED_OBJECT_DATA_ERROR_KIND } from "@worker/infrastructure/storage-object.errors";
+import { sha256Content } from "@worker/storage/storage-crypto";
 import { describe, expect, it } from "vitest";
 
 const ASSOCIATION_ID = required(
   createMirrorAssociationId("11111111-1111-4111-8111-111111111111"),
 );
-const WRITER_ID = required(
-  createMirrorWriterId("22222222-2222-4222-8222-222222222222"),
+const OPERATION_ID = required(
+  createMirrorOperationId("22222222-2222-4222-8222-222222222222"),
 );
 const PATH = required(normalizeNotePath("Current/Note.md"));
+const REVISION_A = required(
+  createApplicationRevision("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+);
+const REVISION_B = required(
+  createApplicationRevision("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"),
+);
 
 function required<Value>(value: Value | undefined): Value {
-  if (value === undefined) throw new Error("Invalid test fixture");
+  if (value === undefined) throw new Error("Invalid fixture");
   return value;
 }
 
-function operationId(sequence: number) {
-  return required(
-    createMirrorOperationId(
-      `00000000-0000-4000-8000-${sequence.toString().padStart(12, "0")}`,
-    ),
-  );
-}
-
-function createRequest(
-  sequence: number,
+async function liveCandidate(
   content: string,
-): ConditionalCreateRequest {
+  revision = REVISION_A,
+): Promise<LiveCurrentGenerationCandidate> {
+  const contentSha256 = await sha256Content(content);
   return {
-    action: MUTATION_ACTION.create,
-    associationId: ASSOCIATION_ID,
-    writerId: WRITER_ID,
-    operationId: operationId(sequence),
-    path: PATH,
-    precondition: {
-      kind: CONDITIONAL_MUTATION_PRECONDITION_KIND.absent,
+    kind: CURRENT_NOTE_STATE_KIND.live,
+    revision,
+    receipt: {
+      action: MUTATION_ACTION.create,
+      associationId: ASSOCIATION_ID,
+      operationId: OPERATION_ID,
+      precondition: { kind: CONDITIONAL_MUTATION_PRECONDITION_KIND.absent },
+      contentSha256,
     },
-    content,
-  };
-}
-
-function updateRequest(
-  sequence: number,
-  content: string,
-  revision: string,
-): ConditionalUpdateRequest {
-  const applicationRevision = required(createApplicationRevision(revision));
-  return {
-    action: MUTATION_ACTION.update,
-    associationId: ASSOCIATION_ID,
-    writerId: WRITER_ID,
-    operationId: operationId(sequence),
-    path: PATH,
-    precondition: {
-      kind: CONDITIONAL_MUTATION_PRECONDITION_KIND.matchingRevision,
-      revision: applicationRevision,
-    },
+    contentSha256,
     content,
   };
 }
@@ -90,23 +72,30 @@ interface MemoryGeneration {
   readonly metadata: R2ConditionalObjectMetadata;
 }
 
-class MemoryConditionalBucket implements R2ConditionalBucketPort {
-  readonly putOptions: R2ConditionalPutOptions[] = [];
-  deleteCalls = 0;
-  afterSuccessfulPut: (() => void) | undefined;
-  throwAfterSuccessfulPut = false;
-  throwOnGet = false;
-  returnInvalidMetadata = false;
-  private generation = 0;
+class MemoryBucket implements R2ConditionalBucketPort {
+  readonly options: R2ConditionalPutOptions[] = [];
+  throwOnPut = false;
+  invalidPutMetadata = false;
+  private sequence = 0;
   private readonly objects = new Map<string, MemoryGeneration>();
 
+  async list(options: {
+    readonly prefix: string;
+    readonly cursor?: string;
+    readonly limit?: number;
+  }): Promise<R2ListResult> {
+    const objects = [...this.objects.values()]
+      .map((entry) => entry.metadata)
+      .filter((entry) => entry.key.startsWith(options.prefix));
+    return { truncated: false, objects };
+  }
+
   async get(key: string): Promise<R2ConditionalStoredObject | null> {
-    if (this.throwOnGet) throw new Error("read unavailable");
-    const generation = this.objects.get(key);
-    if (generation === undefined) return null;
-    const bytes = new TextEncoder().encode(generation.body);
+    const stored = this.objects.get(key);
+    if (stored === undefined) return null;
+    const bytes = new TextEncoder().encode(stored.body);
     return {
-      ...generation.metadata,
+      ...stored.metadata,
       arrayBuffer: async () => bytes.buffer.slice(0),
     };
   }
@@ -116,7 +105,8 @@ class MemoryConditionalBucket implements R2ConditionalBucketPort {
     body: string,
     options: R2ConditionalPutOptions,
   ): Promise<R2ConditionalObjectMetadata | null> {
-    this.putOptions.push(options);
+    this.options.push(options);
+    if (this.throwOnPut) throw new Error("unknown write effect");
     const existing = this.objects.get(key);
     if (options.onlyIf instanceof Headers) {
       if (
@@ -128,331 +118,220 @@ class MemoryConditionalBucket implements R2ConditionalBucketPort {
     } else if (existing?.metadata.etag !== options.onlyIf.etagMatches) {
       return null;
     }
-
-    this.generation += 1;
+    this.sequence += 1;
     const metadata = {
       key,
       size: new TextEncoder().encode(body).byteLength,
-      etag: `storage-etag-${this.generation}`,
-      uploaded: new Date(`2027-01-01T00:00:0${this.generation}.000Z`),
+      etag: `etag-${this.sequence}`,
+      uploaded: new Date(`2027-01-01T00:00:0${this.sequence}.000Z`),
       customMetadata: options.customMetadata,
     };
     this.objects.set(key, { body, metadata });
-    this.afterSuccessfulPut?.();
-    if (this.throwAfterSuccessfulPut) {
-      throw new Error("binding failed after dispatch");
-    }
-    return this.returnInvalidMetadata ? { ...metadata, etag: "" } : metadata;
+    return this.invalidPutMetadata ? { ...metadata, etag: "" } : metadata;
   }
 
   seed(
     body: string,
     customMetadata: Readonly<Record<string, string>> = {},
   ): void {
-    this.generation += 1;
+    this.sequence += 1;
     this.objects.set(`vault/${PATH}`, {
       body,
       metadata: {
         key: `vault/${PATH}`,
         size: new TextEncoder().encode(body).byteLength,
-        etag: `storage-etag-${this.generation}`,
-        uploaded: new Date(`2027-01-01T00:00:0${this.generation}.000Z`),
+        etag: `etag-${this.sequence}`,
+        uploaded: new Date(`2027-01-01T00:00:0${this.sequence}.000Z`),
         customMetadata,
       },
     });
   }
 
-  snapshot(): MemoryGeneration | undefined {
-    return this.objects.get(`vault/${PATH}`);
-  }
-
   replaceMetadata(changes: Partial<R2ConditionalObjectMetadata>): void {
-    const stored = this.snapshot();
-    if (stored === undefined) throw new Error("Expected current fixture");
+    const stored = required(this.objects.get(`vault/${PATH}`));
     this.objects.set(`vault/${PATH}`, {
       body: stored.body,
       metadata: { ...stored.metadata, ...changes },
     });
   }
-
-  delete(): void {
-    this.deleteCalls += 1;
-  }
 }
 
 describe("R2ConditionalCurrentNoteRepository", () => {
-  it("classifies exact keys as absent or untagged legacy Markdown", async () => {
-    const bucket = new MemoryConditionalBucket();
+  it("classifies absence and untagged JSON-looking text as legacy", async () => {
+    const bucket = new MemoryBucket();
     const repository = new R2ConditionalCurrentNoteRepository(bucket);
-
-    await expect(repository.readCurrent(PATH)).resolves.toEqual({
+    await expect(repository.read(PATH)).resolves.toEqual({
       kind: CURRENT_NOTE_STATE_KIND.absent,
-      path: PATH,
+      state: { kind: CURRENT_NOTE_STATE_KIND.absent, path: PATH },
     });
 
-    bucket.seed(JSON.stringify({ format: 2, kind: "live" }));
-    await expect(repository.readCurrent(PATH)).resolves.toEqual({
+    const legacy = JSON.stringify({ format: 2, kind: "live" });
+    bucket.seed(legacy);
+    await expect(repository.read(PATH)).resolves.toEqual({
       kind: CURRENT_NOTE_STATE_KIND.legacy,
-      path: PATH,
+      state: { kind: CURRENT_NOTE_STATE_KIND.legacy, path: PATH },
+      content: legacy,
     });
   });
 
-  it("surfaces malformed and unsupported tagged objects as storage data errors", async () => {
-    const bucket = new MemoryConditionalBucket();
+  it("creates only on absence and returns metadata from the exact successful PUT", async () => {
+    const bucket = new MemoryBucket();
     const repository = new R2ConditionalCurrentNoteRepository(bucket);
+    const candidate = await liveCandidate("exact");
 
+    const created = await repository.create(PATH, candidate);
+    const refused = await repository.create(PATH, candidate);
+
+    expect(created).toMatchObject({
+      kind: MUTATION_EFFECT_CERTAINTY.confirmed,
+      confirmed: {
+        state: { revision: REVISION_A, receipt: candidate.receipt },
+        uploaded: new Date("2027-01-01T00:00:01.000Z"),
+      },
+    });
+    expect(refused).toEqual({
+      kind: MUTATION_EFFECT_CERTAINTY.definitelyRefused,
+    });
+    expect(bucket.options[0]?.onlyIf).toBeInstanceOf(Headers);
+  });
+
+  it("binds replacement to the observed R2 generation and safely refuses stale reuse", async () => {
+    const bucket = new MemoryBucket();
+    const repository = new R2ConditionalCurrentNoteRepository(bucket);
+    await repository.create(PATH, await liveCandidate("A"));
+    const observed = await repository.read(PATH);
+    if (observed.kind !== CURRENT_NOTE_STATE_KIND.live) {
+      throw new Error("Expected live observation");
+    }
+    const digest = await sha256Content("B");
+    const updated = await observed.replacement.writeLive({
+      kind: CURRENT_NOTE_STATE_KIND.live,
+      revision: REVISION_B,
+      receipt: {
+        action: MUTATION_ACTION.update,
+        associationId: ASSOCIATION_ID,
+        operationId: OPERATION_ID,
+        precondition: {
+          kind: CONDITIONAL_MUTATION_PRECONDITION_KIND.matchingRevision,
+          revision: REVISION_A,
+        },
+        contentSha256: digest,
+      },
+      contentSha256: digest,
+      content: "B",
+    });
+    const stale = await observed.replacement.writeLive(
+      await liveCandidate("stale"),
+    );
+
+    expect(updated.kind).toBe(MUTATION_EFFECT_CERTAINTY.confirmed);
+    expect(stale).toEqual({
+      kind: MUTATION_EFFECT_CERTAINTY.definitelyRefused,
+    });
+    expect(bucket.options.at(-1)?.onlyIf).toEqual({ etagMatches: "etag-1" });
+    const winner = await repository.read(PATH);
+    expect(winner).toMatchObject({
+      kind: CURRENT_NOTE_STATE_KIND.live,
+      content: "B",
+    });
+  });
+
+  it("stores a content-free tombstone through the exact observed CAS", async () => {
+    const bucket = new MemoryBucket();
+    const repository = new R2ConditionalCurrentNoteRepository(bucket);
+    await repository.create(PATH, await liveCandidate("source"));
+    const observed = await repository.read(PATH);
+    if (observed.kind !== CURRENT_NOTE_STATE_KIND.live) {
+      throw new Error("Expected live observation");
+    }
+
+    const result = await observed.replacement.writeTombstone({
+      kind: CURRENT_NOTE_STATE_KIND.tombstone,
+      revision: REVISION_B,
+      receipt: {
+        action: MUTATION_ACTION.tombstone,
+        associationId: ASSOCIATION_ID,
+        operationId: OPERATION_ID,
+        precondition: {
+          kind: CONDITIONAL_MUTATION_PRECONDITION_KIND.matchingRevision,
+          revision: REVISION_A,
+        },
+      },
+      deletedRevision: REVISION_A,
+      recoveryId: OPERATION_ID,
+    });
+
+    expect(result).toMatchObject({
+      kind: MUTATION_EFFECT_CERTAINTY.confirmed,
+      confirmed: { state: { kind: CURRENT_NOTE_STATE_KIND.tombstone } },
+    });
+    const stored = await repository.read(PATH);
+    expect(stored.kind).toBe(CURRENT_NOTE_STATE_KIND.tombstone);
+    expect(stored).not.toHaveProperty("content");
+  });
+
+  it("surfaces malformed, unsupported, oversized, and invalid generation metadata", async () => {
+    const bucket = new MemoryBucket();
+    const repository = new R2ConditionalCurrentNoteRepository(bucket);
     bucket.seed("{}", {
       [BRIDGE_STORAGE_FORMAT_METADATA_KEY]:
         BRIDGE_STORAGE_FORMAT_METADATA_VALUE,
     });
-    await expect(repository.readCurrent(PATH)).rejects.toMatchObject({
+    await expect(repository.read(PATH)).rejects.toMatchObject({
       kind: STORED_OBJECT_DATA_ERROR_KIND.malformed,
     });
-    await expect(
-      repository.mutate(
-        updateRequest(16, "candidate", "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
-      ),
-    ).rejects.toMatchObject({
-      kind: STORED_OBJECT_DATA_ERROR_KIND.malformed,
-    });
-    expect(bucket.putOptions).toHaveLength(0);
-
-    bucket.seed("# unknown", {
-      [BRIDGE_STORAGE_FORMAT_METADATA_KEY]: "99",
-    });
-    await expect(repository.readCurrent(PATH)).rejects.toMatchObject({
+    bucket.seed("legacy", { [BRIDGE_STORAGE_FORMAT_METADATA_KEY]: "99" });
+    await expect(repository.read(PATH)).rejects.toMatchObject({
       kind: STORED_OBJECT_DATA_ERROR_KIND.unsupportedFormat,
     });
-  });
-
-  it("rejects invalid or oversized observed R2 generation metadata", async () => {
-    const bucket = new MemoryConditionalBucket();
-    const repository = new R2ConditionalCurrentNoteRepository(bucket);
-    bucket.seed("# legacy");
-
-    bucket.replaceMetadata({ etag: "" });
-    await expect(repository.readCurrent(PATH)).rejects.toMatchObject({
-      kind: STORED_OBJECT_DATA_ERROR_KIND.malformed,
-    });
     bucket.replaceMetadata({
-      etag: "valid-again",
+      customMetadata: {},
+      etag: "",
       size: MAX_LIVE_CURRENT_OBJECT_BYTES + 1,
     });
-    await expect(repository.readCurrent(PATH)).rejects.toMatchObject({
-      kind: STORED_OBJECT_DATA_ERROR_KIND.tooLarge,
+    await expect(repository.read(PATH)).rejects.toMatchObject({
+      kind: STORED_OBJECT_DATA_ERROR_KIND.malformed,
     });
   });
 
-  it("reports a failed prerequisite read as not dispatched", async () => {
-    const bucket = new MemoryConditionalBucket();
-    bucket.throwOnGet = true;
+  it("preserves unknown PUT effects and rejects invalid candidates before dispatch", async () => {
+    const bucket = new MemoryBucket();
     const repository = new R2ConditionalCurrentNoteRepository(bucket);
-    const revision = required(
-      createApplicationRevision("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
-    );
-
+    bucket.throwOnPut = true;
     await expect(
-      repository.mutate(updateRequest(15, "candidate", revision)),
-    ).resolves.toEqual({ kind: MUTATION_EFFECT_CERTAINTY.notDispatched });
-    expect(bucket.putOptions).toHaveLength(0);
-  });
-
-  it("does not dispatch oversized content to R2", async () => {
-    const bucket = new MemoryConditionalBucket();
-    const repository = new R2ConditionalCurrentNoteRepository(bucket);
-
-    await expect(
-      repository.mutate(createRequest(14, "x".repeat(MAX_NOTE_SIZE_BYTES + 1))),
-    ).resolves.toEqual({ kind: MUTATION_EFFECT_CERTAINTY.notDispatched });
-    expect(bucket.putOptions).toHaveLength(0);
-  });
-
-  it("allows exactly one of two competing absent creates using If-None-Match wildcard", async () => {
-    const bucket = new MemoryConditionalBucket();
-    const repository = new R2ConditionalCurrentNoteRepository(bucket);
-
-    const results = await Promise.all([
-      repository.mutate(createRequest(1, "first")),
-      repository.mutate(createRequest(2, "second")),
-    ]);
-
-    expect(
-      results
-        .map((result) => result.kind)
-        .sort((left, right) => left.localeCompare(right)),
-    ).toEqual([
-      MUTATION_EFFECT_CERTAINTY.confirmed,
-      MUTATION_EFFECT_CERTAINTY.definitelyRefused,
-    ]);
-    expect(bucket.putOptions).toHaveLength(2);
-    for (const options of bucket.putOptions) {
-      expect(options.onlyIf).toBeInstanceOf(Headers);
-      if (options.onlyIf instanceof Headers) {
-        expect(options.onlyIf.get("If-None-Match")).toBe("*");
-      }
-      expect(options.customMetadata).toEqual({
-        [BRIDGE_STORAGE_FORMAT_METADATA_KEY]:
-          BRIDGE_STORAGE_FORMAT_METADATA_VALUE,
-      });
-      expect(options.httpMetadata.contentType).toBe(
-        "application/json; charset=utf-8",
-      );
-    }
-    await expect(repository.readCurrent(PATH)).resolves.toMatchObject({
-      kind: CURRENT_NOTE_STATE_KIND.live,
-    });
-    expect(bucket.deleteCalls).toBe(0);
-  });
-
-  it("uses the observed private R2 ETag for matching CAS and changes same-text generations", async () => {
-    const bucket = new MemoryConditionalBucket();
-    const repository = new R2ConditionalCurrentNoteRepository(bucket);
-    const created = await repository.mutate(createRequest(3, "same text"));
-    if (created.kind !== MUTATION_EFFECT_CERTAINTY.confirmed) {
-      throw new Error("Expected create confirmation");
-    }
-    const firstStorage = bucket.snapshot();
-
-    const updated = await repository.mutate(
-      updateRequest(4, "same text", created.confirmed.revision),
-    );
-    if (updated.kind !== MUTATION_EFFECT_CERTAINTY.confirmed) {
-      throw new Error("Expected update confirmation");
-    }
-    const secondStorage = bucket.snapshot();
-
-    expect(updated.confirmed.revision).not.toBe(created.confirmed.revision);
-    expect(secondStorage?.metadata.etag).not.toBe(firstStorage?.metadata.etag);
-    expect(secondStorage?.body).not.toBe(firstStorage?.body);
-    expect(bucket.putOptions.at(-1)?.onlyIf).toEqual({
-      etagMatches: firstStorage?.metadata.etag,
-    });
-  });
-
-  it("conditionally tombstones a live generation and recreates only from that tombstone", async () => {
-    const bucket = new MemoryConditionalBucket();
-    const repository = new R2ConditionalCurrentNoteRepository(bucket);
-    const created = await repository.mutate(createRequest(10, "recoverable"));
-    if (created.kind !== MUTATION_EFFECT_CERTAINTY.confirmed) {
-      throw new Error("Expected create confirmation");
-    }
-
-    const tombstoned = await repository.mutateStored({
-      action: MUTATION_ACTION.tombstone,
-      associationId: ASSOCIATION_ID,
-      writerId: WRITER_ID,
-      operationId: operationId(11),
-      path: PATH,
-      precondition: {
-        kind: CONDITIONAL_MUTATION_PRECONDITION_KIND.matchingRevision,
-        revision: created.confirmed.revision,
-      },
-    });
-    if (tombstoned.kind !== MUTATION_EFFECT_CERTAINTY.confirmed) {
-      throw new Error("Expected tombstone confirmation");
-    }
-    const tombstoneAcknowledgement = tombstoned.confirmed.acknowledgement;
-    expect(tombstoned.confirmed.uploaded).toEqual(
-      bucket.snapshot()?.metadata.uploaded,
-    );
-    await expect(repository.readCurrent(PATH)).resolves.toMatchObject({
-      kind: CURRENT_NOTE_STATE_KIND.tombstone,
-      revision: tombstoneAcknowledgement.revision,
-      deletedRevision: created.confirmed.revision,
-      recoveryId: operationId(11),
-    });
-
-    const recreated = await repository.mutate({
-      action: MUTATION_ACTION.recreate,
-      associationId: ASSOCIATION_ID,
-      writerId: WRITER_ID,
-      operationId: operationId(12),
-      path: PATH,
-      precondition: {
-        kind: CONDITIONAL_MUTATION_PRECONDITION_KIND.matchingRevision,
-        revision: tombstoneAcknowledgement.revision,
-      },
-      content: "recoverable",
-    });
-
-    expect(recreated.kind).toBe(MUTATION_EFFECT_CERTAINTY.confirmed);
-    await expect(repository.readCurrent(PATH)).resolves.toMatchObject({
-      kind: CURRENT_NOTE_STATE_KIND.live,
-    });
-    expect(bucket.deleteCalls).toBe(0);
-  });
-
-  it("refuses stale CAS without changing winning bytes or metadata", async () => {
-    const bucket = new MemoryConditionalBucket();
-    const repository = new R2ConditionalCurrentNoteRepository(bucket);
-    const created = await repository.mutate(createRequest(5, "base"));
-    if (created.kind !== MUTATION_EFFECT_CERTAINTY.confirmed) {
-      throw new Error("Expected create confirmation");
-    }
-
-    const firstUpdate = await repository.mutate(
-      updateRequest(6, "winner", created.confirmed.revision),
-    );
-    expect(firstUpdate.kind).toBe(MUTATION_EFFECT_CERTAINTY.confirmed);
-    const winner = bucket.snapshot();
-
-    const stale = await repository.mutate(
-      updateRequest(7, "stale", created.confirmed.revision),
-    );
-
-    expect(stale).toEqual({
-      kind: MUTATION_EFFECT_CERTAINTY.definitelyRefused,
-    });
-    expect(bucket.snapshot()).toEqual(winner);
-    expect(bucket.putOptions).toHaveLength(2);
-  });
-
-  it("returns ACK storage metadata from the actual successful PUT without a later HEAD", async () => {
-    const bucket = new MemoryConditionalBucket();
-    const repository = new R2ConditionalCurrentNoteRepository(bucket);
-    bucket.afterSuccessfulPut = () => {
-      bucket.afterSuccessfulPut = undefined;
-      bucket.seed("later legacy overwrite");
-    };
-
-    const result = await repository.mutateStored(createRequest(8, "stored"));
-
-    if (result.kind !== MUTATION_EFFECT_CERTAINTY.confirmed) {
-      throw new Error("Expected stored confirmation");
-    }
-    expect(result.confirmed.uploaded).toEqual(
-      new Date("2027-01-01T00:00:01.000Z"),
-    );
-    expect(result.confirmed.storageEtag).toBe("storage-etag-1");
-    expect(bucket.snapshot()?.metadata.uploaded).toEqual(
-      new Date("2027-01-01T00:00:02.000Z"),
-    );
-  });
-
-  it("classifies a binding exception after write dispatch conservatively as unknown", async () => {
-    const bucket = new MemoryConditionalBucket();
-    bucket.throwAfterSuccessfulPut = true;
-    const repository = new R2ConditionalCurrentNoteRepository(bucket);
-
-    await expect(
-      repository.mutate(createRequest(9, "possibly stored")),
+      repository.create(PATH, await liveCandidate("unknown")),
     ).resolves.toEqual({
       kind: MUTATION_EFFECT_CERTAINTY.unknown,
     });
-    expect(bucket.snapshot()).toBeDefined();
-    expect(bucket.deleteCalls).toBe(0);
-  });
-
-  it("does not confirm a dispatched write when returned generation metadata is invalid", async () => {
-    const bucket = new MemoryConditionalBucket();
-    bucket.returnInvalidMetadata = true;
-    const repository = new R2ConditionalCurrentNoteRepository(bucket);
-
+    bucket.throwOnPut = false;
+    bucket.invalidPutMetadata = true;
     await expect(
-      repository.mutate(createRequest(13, "stored")),
+      repository.create(PATH, await liveCandidate("stored")),
     ).resolves.toEqual({
       kind: MUTATION_EFFECT_CERTAINTY.unknown,
     });
-    expect(bucket.snapshot()).toBeDefined();
+
+    const invalidDigest = required(createContentSha256("00".repeat(32)));
+    await expect(
+      new R2ConditionalCurrentNoteRepository(new MemoryBucket()).create(PATH, {
+        ...(await liveCandidate("x".repeat(MAX_NOTE_SIZE_BYTES + 1))),
+        contentSha256: invalidDigest,
+        receipt: {
+          ...(await liveCandidate("x")).receipt,
+          contentSha256: invalidDigest,
+        },
+      }),
+    ).resolves.toEqual({ kind: MUTATION_EFFECT_CERTAINTY.notDispatched });
+  });
+
+  it("lists recognized current metadata in a bounded storage page", async () => {
+    const bucket = new MemoryBucket();
+    const repository = new R2ConditionalCurrentNoteRepository(bucket);
+    await repository.create(PATH, await liveCandidate("listed"));
+
+    await expect(repository.list()).resolves.toMatchObject({
+      states: [{ kind: CURRENT_NOTE_STATE_KIND.live, path: PATH }],
+      nextCursor: null,
+    });
   });
 });

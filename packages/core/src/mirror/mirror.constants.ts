@@ -53,6 +53,25 @@ export const MUTATION_EFFECT_CERTAINTY = {
   unknown: "unknown",
 } as const;
 
+/** Closed stages that locate certainty within the recoverable tombstone workflow. */
+export const TOMBSTONE_WORKFLOW_STAGE_KIND = {
+  current: "current",
+  recoveryPreparation: "recovery-preparation",
+  tombstone: "tombstone",
+  complete: "complete",
+} as const;
+
+/** Closed recovery-content retrieval outcomes for application callers. */
+export const RECOVERY_CONTENT_RESULT_KIND = {
+  missing: "missing",
+  recoverable: "recoverable",
+  expired: "expired",
+  purged: "purged",
+} as const;
+
+/** Exact 30-day recovery window measured from a confirmed tombstone upload. */
+export const RECOVERY_RETENTION_MILLISECONDS = 30 * 24 * 60 * 60 * 1000;
+
 /** Maximum opaque cursor length accepted by the M3 API. */
 export const MAX_MIRROR_CURSOR_LENGTH = 4096;
 

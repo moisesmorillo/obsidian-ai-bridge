@@ -53,6 +53,18 @@ export interface R2ConditionalPutOptions {
  * Native delete and unconditional put have no representation in this capability.
  */
 export interface R2ConditionalBucketPort {
+  /**
+   * Lists one bounded page in a private namespace.
+   *
+   * @param options - Prefix, optional cursor, and maximum scanned object count.
+   * @returns One storage page with an opaque continuation when truncated.
+   */
+  list(options: {
+    readonly prefix: string;
+    readonly cursor?: string;
+    readonly limit?: number;
+  }): Promise<R2ListResult>;
+
   /** @returns The exact stored generation, or `null` only when its key is absent. */
   get(key: string): Promise<R2ConditionalStoredObject | null>;
 
@@ -103,6 +115,7 @@ export interface R2BucketPort {
   list(options: {
     readonly prefix: string;
     readonly cursor?: string;
+    readonly limit?: number;
   }): Promise<R2ListResult>;
 
   /**

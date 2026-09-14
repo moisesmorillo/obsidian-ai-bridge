@@ -1,17 +1,20 @@
 import {
   type ConditionalCurrentNoteRepository,
-  type ConditionalMutationRequest,
-  type ConditionalMutationResult,
-  type ContentOperationReceipt,
   CURRENT_NOTE_STATE_KIND,
+  type CurrentGenerationObservation,
+  type CurrentGenerationObservationPage,
+  type CurrentGenerationReplacement,
   type CurrentNoteState,
+  isNormalizedNotePath,
+  type LiveCurrentGenerationCandidate,
+  MAX_MIRROR_PAGE_SIZE,
   MAX_NOTE_SIZE_BYTES,
-  MUTATION_ACTION,
   MUTATION_EFFECT_CERTAINTY,
-  type MutationAcknowledgement,
   type MutationEffectResult,
   type NotePath,
-  type TombstoneOperationReceipt,
+  type StoredLiveCurrentGeneration,
+  type StoredTombstoneCurrentGeneration,
+  type TombstoneCurrentGenerationCandidate,
 } from "@obsidian-ai-bridge/core";
 import {
   type DecodedCurrentObject,
@@ -38,24 +41,7 @@ import {
   STORED_OBJECT_DATA_ERROR_KIND,
   StoredObjectDataError,
 } from "@worker/infrastructure/storage-object.errors";
-import {
-  generateApplicationRevision,
-  sha256Content,
-} from "@worker/storage/storage-crypto";
-
-/** Private evidence returned directly by the successful conditional R2 PUT. */
-export interface StoredCurrentGeneration {
-  /** Application acknowledgment derived from bytes sent in this PUT. */
-  readonly acknowledgement: MutationAcknowledgement;
-  /** Opaque validator for the actual stored generation, never an application revision. */
-  readonly storageEtag: string;
-  /** R2-assigned timestamp belonging to the actual stored generation. */
-  readonly uploaded: Date;
-}
-
-/** Closed conditional result retaining private successful-generation metadata. */
-export type StoredCurrentMutationResult =
-  MutationEffectResult<StoredCurrentGeneration>;
+import { sha256Content } from "@worker/storage/storage-crypto";
 
 interface ObservedCurrentObject {
   readonly decoded: DecodedCurrentObject;
@@ -66,8 +52,8 @@ interface ObservedCurrentObject {
 /**
  * R2 adapter for private M3 current-object codecs and atomic conditional writes.
  *
- * Application revisions are validated from envelopes. They are never used as R2
- * validators; matching mutations CAS only the ETag from the exact observed object.
+ * It owns envelope validation and R2 predicates only. Application policy supplies
+ * exact revisions, receipts, hashes, and allowed state transitions.
  */
 export class R2ConditionalCurrentNoteRepository
   implements ConditionalCurrentNoteRepository
@@ -76,227 +62,181 @@ export class R2ConditionalCurrentNoteRepository
   constructor(private readonly bucket: R2ConditionalBucketPort) {}
 
   /**
-   * Classifies one exact private current-object key without leaking content or R2 metadata.
+   * Reads one exact recognized generation with a private ETag-bound CAS capability.
    *
    * @param path - Validated application note path.
-   * @returns Explicit absent, legacy, live, or tombstone application state.
-   * @throws {StoredObjectDataError} When tagged persisted data is malformed or unsupported.
+   * @returns Recognized absence/legacy/live/tombstone observation.
+   * @throws {StoredObjectDataError} For malformed, oversized, or unsupported persisted data.
    */
-  async readCurrent(path: NotePath): Promise<CurrentNoteState> {
+  async read(path: NotePath): Promise<CurrentGenerationObservation> {
     const observed = await this.readObserved(path);
     if (observed === null) {
-      return { kind: CURRENT_NOTE_STATE_KIND.absent, path };
+      return {
+        kind: CURRENT_NOTE_STATE_KIND.absent,
+        state: { kind: CURRENT_NOTE_STATE_KIND.absent, path },
+      };
     }
 
     switch (observed.decoded.kind) {
       case CURRENT_NOTE_STATE_KIND.legacy:
-        return { kind: CURRENT_NOTE_STATE_KIND.legacy, path };
+        return {
+          kind: CURRENT_NOTE_STATE_KIND.legacy,
+          state: { kind: CURRENT_NOTE_STATE_KIND.legacy, path },
+          content: observed.decoded.content,
+        };
       case CURRENT_NOTE_STATE_KIND.live:
         return {
           kind: CURRENT_NOTE_STATE_KIND.live,
-          path,
-          revision: observed.decoded.revision,
-          receipt: observed.decoded.receipt,
-          contentSha256: observed.decoded.contentSha256,
+          state: this.liveState(path, observed.decoded),
+          content: observed.decoded.content,
+          uploaded: observed.uploaded,
+          replacement: this.replacement(path, observed.storageEtag),
         };
       case CURRENT_NOTE_STATE_KIND.tombstone:
         return {
           kind: CURRENT_NOTE_STATE_KIND.tombstone,
-          path,
-          revision: observed.decoded.revision,
-          receipt: observed.decoded.receipt,
-          deletedRevision: observed.decoded.deletedRevision,
-          recoveryId: observed.decoded.recoveryId,
+          state: this.tombstoneState(path, observed.decoded),
+          uploaded: observed.uploaded,
+          replacement: this.replacement(path, observed.storageEtag),
         };
     }
   }
 
   /**
-   * Applies one conditional mutation and hides successful R2 generation metadata.
+   * Writes one application-assembled live generation with create-only semantics.
    *
-   * @param request - Absence-only or exact application-revision mutation.
-   * @returns Slice 1 effect certainty with the exact application acknowledgment.
+   * @param path - Validated note path whose current key must be absent.
+   * @param candidate - Exact live envelope assembled by application policy.
+   * @returns Exact successful generation metadata or conservative certainty.
    */
-  async mutate(
-    request: ConditionalMutationRequest,
-  ): Promise<ConditionalMutationResult> {
-    const result = await this.mutateStored(request);
-    if (result.kind !== MUTATION_EFFECT_CERTAINTY.confirmed) {
-      return result;
-    }
+  async create(
+    path: NotePath,
+    candidate: LiveCurrentGenerationCandidate,
+  ): Promise<MutationEffectResult<StoredLiveCurrentGeneration>> {
+    const onlyIf = new Headers();
+    onlyIf.set(R2_IF_NONE_MATCH_HEADER, R2_ABSENCE_WILDCARD);
+    return this.writeLive(path, candidate, onlyIf);
+  }
 
+  /**
+   * Lists one bounded storage page and validates each current object sequentially.
+   *
+   * @param cursor - Opaque R2 continuation cursor.
+   * @returns Metadata states, including tombstones for application filtering.
+   */
+  async list(cursor?: string): Promise<CurrentGenerationObservationPage> {
+    const page = await this.bucket.list({
+      prefix: VAULT_OBJECT_PREFIX,
+      ...(cursor === undefined ? {} : { cursor }),
+      limit: MAX_MIRROR_PAGE_SIZE,
+    });
+    const states: CurrentNoteState[] = [];
+    for (const object of page.objects) {
+      if (!object.key.startsWith(VAULT_OBJECT_PREFIX)) continue;
+      const rawPath = object.key.slice(VAULT_OBJECT_PREFIX.length);
+      if (!isNormalizedNotePath(rawPath)) continue;
+      const observed = await this.read(rawPath);
+      if (observed.state.kind !== CURRENT_NOTE_STATE_KIND.absent) {
+        states.push(observed.state);
+      }
+    }
     return {
-      kind: MUTATION_EFFECT_CERTAINTY.confirmed,
-      confirmed: result.confirmed.acknowledgement,
+      states,
+      nextCursor: page.truncated ? page.cursor : null,
     };
   }
 
   /**
-   * Applies one conditional mutation while retaining direct successful-PUT evidence.
+   * Creates an ETag-bound capability that cannot be refreshed by its caller.
    *
-   * This private Worker boundary supports later recovery sealing without deriving
-   * tombstone time from a request clock or unrelated HEAD.
-   *
-   * @param request - Exact application mutation to encode and conditionally store.
-   * @returns Conservative effect certainty plus direct R2 metadata on confirmation.
+   * @param path - Exact application path bound to the observed key.
+   * @param storageEtag - Private validator from that exact observation.
+   * @returns Replacement capability permanently bound to the observed generation.
    */
-  async mutateStored(
-    request: ConditionalMutationRequest,
-  ): Promise<StoredCurrentMutationResult> {
+  private replacement(
+    path: NotePath,
+    storageEtag: string,
+  ): CurrentGenerationReplacement {
+    const onlyIf = { etagMatches: storageEtag };
+    return {
+      writeLive: (candidate) => this.writeLive(path, candidate, onlyIf),
+      writeTombstone: (candidate) =>
+        this.writeTombstone(path, candidate, onlyIf),
+    };
+  }
+
+  /**
+   * Encodes and CAS-writes one application-assembled live candidate.
+   *
+   * @param path - Exact application path for the private current key.
+   * @param candidate - Application-assembled live envelope.
+   * @param onlyIf - Atomic absence or observed-generation predicate.
+   * @returns Exact stored live metadata or conservative effect certainty.
+   */
+  private async writeLive(
+    path: NotePath,
+    candidate: LiveCurrentGenerationCandidate,
+    onlyIf: Headers | { readonly etagMatches: string },
+  ): Promise<MutationEffectResult<StoredLiveCurrentGeneration>> {
     try {
       if (
-        request.action !== MUTATION_ACTION.tombstone &&
-        new TextEncoder().encode(request.content).byteLength >
-          MAX_NOTE_SIZE_BYTES
+        new TextEncoder().encode(candidate.content).byteLength >
+          MAX_NOTE_SIZE_BYTES ||
+        (await sha256Content(candidate.content)) !== candidate.contentSha256
       ) {
         return { kind: MUTATION_EFFECT_CERTAINTY.notDispatched };
       }
-      if (request.action === MUTATION_ACTION.create) {
-        return await this.create(request);
-      }
-
-      const observed = await this.readObserved(request.path);
-      if (!this.matchesMutationTarget(observed, request)) {
-        return { kind: MUTATION_EFFECT_CERTAINTY.definitelyRefused };
-      }
-
-      const candidate = await this.encodeMatchingCandidate(request);
+      const encoded = encodeLiveCurrentObject(candidate);
       return await this.conditionalPut(
-        request.path,
-        candidate.encoded,
-        { etagMatches: observed.storageEtag },
-        candidate.acknowledgement,
-        candidate.maximumBytes,
+        path,
+        encoded,
+        onlyIf,
+        MAX_LIVE_CURRENT_OBJECT_BYTES,
+        (uploaded) => ({
+          state: this.liveState(path, candidate),
+          uploaded,
+        }),
       );
-    } catch (error) {
-      if (error instanceof StoredObjectDataError) throw error;
+    } catch {
       return { kind: MUTATION_EFFECT_CERTAINTY.notDispatched };
     }
   }
 
   /**
-   * Performs an absence-only create using an actual constructed Headers predicate.
+   * Encodes and CAS-writes one application-assembled tombstone candidate.
    *
-   * @param request - Validated create intent and exact Markdown content.
-   * @returns Conservative storage effect and direct metadata on confirmation.
+   * @param path - Exact application path for the private current key.
+   * @param candidate - Application-assembled content-free tombstone.
+   * @param onlyIf - Predicate bound to the observed live generation.
+   * @returns Exact stored tombstone metadata or conservative effect certainty.
    */
-  private async create(
-    request: Extract<ConditionalMutationRequest, { action: "create" }>,
-  ): Promise<StoredCurrentMutationResult> {
-    const revision = generateApplicationRevision();
-    const contentSha256 = await sha256Content(request.content);
-    const receipt: ContentOperationReceipt = {
-      action: request.action,
-      associationId: request.associationId,
-      operationId: request.operationId,
-      precondition: request.precondition,
-      contentSha256,
-    };
-    const acknowledgement = { path: request.path, revision, receipt };
-    const encoded = encodeLiveCurrentObject({
-      kind: CURRENT_NOTE_STATE_KIND.live,
-      revision,
-      receipt,
-      contentSha256,
-      content: request.content,
-    });
-    const onlyIf = new Headers();
-    onlyIf.set(R2_IF_NONE_MATCH_HEADER, R2_ABSENCE_WILDCARD);
-
-    return this.conditionalPut(
-      request.path,
-      encoded,
-      onlyIf,
-      acknowledgement,
-      MAX_LIVE_CURRENT_OBJECT_BYTES,
-    );
-  }
-
-  /**
-   * Encodes a matching live update, tombstone recreation, or live tombstone.
-   *
-   * @param request - Matching-revision mutation already checked against observed state.
-   * @returns Encoded candidate, application ACK, and representation byte bound.
-   */
-  private async encodeMatchingCandidate(
-    request: Exclude<ConditionalMutationRequest, { action: "create" }>,
-  ): Promise<{
-    readonly encoded: string;
-    readonly acknowledgement: MutationAcknowledgement;
-    readonly maximumBytes: number;
-  }> {
-    const revision = generateApplicationRevision();
-    if (request.action === MUTATION_ACTION.tombstone) {
-      const receipt: TombstoneOperationReceipt = {
-        action: request.action,
-        associationId: request.associationId,
-        operationId: request.operationId,
-        precondition: request.precondition,
-      };
-      return {
-        acknowledgement: { path: request.path, revision, receipt },
-        encoded: encodeTombstoneCurrentObject({
-          kind: CURRENT_NOTE_STATE_KIND.tombstone,
-          revision,
-          receipt,
-          deletedRevision: request.precondition.revision,
-          recoveryId: request.operationId,
+  private async writeTombstone(
+    path: NotePath,
+    candidate: TombstoneCurrentGenerationCandidate,
+    onlyIf: { readonly etagMatches: string },
+  ): Promise<MutationEffectResult<StoredTombstoneCurrentGeneration>> {
+    try {
+      const encoded = encodeTombstoneCurrentObject(candidate);
+      return await this.conditionalPut(
+        path,
+        encoded,
+        onlyIf,
+        MAX_TOMBSTONE_CURRENT_OBJECT_BYTES,
+        (uploaded) => ({
+          state: this.tombstoneState(path, candidate),
+          uploaded,
         }),
-        maximumBytes: MAX_TOMBSTONE_CURRENT_OBJECT_BYTES,
-      };
+      );
+    } catch {
+      return { kind: MUTATION_EFFECT_CERTAINTY.notDispatched };
     }
-
-    const contentSha256 = await sha256Content(request.content);
-    const receipt: ContentOperationReceipt = {
-      action: request.action,
-      associationId: request.associationId,
-      operationId: request.operationId,
-      precondition: request.precondition,
-      contentSha256,
-    };
-    return {
-      acknowledgement: { path: request.path, revision, receipt },
-      encoded: encodeLiveCurrentObject({
-        kind: CURRENT_NOTE_STATE_KIND.live,
-        revision,
-        receipt,
-        contentSha256,
-        content: request.content,
-      }),
-      maximumBytes: MAX_LIVE_CURRENT_OBJECT_BYTES,
-    };
-  }
-
-  /**
-   * Checks application state and revision before translating to the observed R2 ETag.
-   *
-   * @param observed - Exact decoded R2 generation, or absence.
-   * @param request - Matching application mutation requirement.
-   * @returns Whether this generation is the action's required state and revision.
-   */
-  private matchesMutationTarget(
-    observed: ObservedCurrentObject | null,
-    request: Exclude<ConditionalMutationRequest, { action: "create" }>,
-  ): observed is ObservedCurrentObject {
-    if (
-      observed === null ||
-      observed.decoded.kind === CURRENT_NOTE_STATE_KIND.legacy ||
-      observed.decoded.revision !== request.precondition.revision
-    ) {
-      return false;
-    }
-    if (request.action === MUTATION_ACTION.recreate) {
-      return observed.decoded.kind === CURRENT_NOTE_STATE_KIND.tombstone;
-    }
-
-    return observed.decoded.kind === CURRENT_NOTE_STATE_KIND.live;
   }
 
   /**
    * Reads and validates one exact R2 generation while retaining private CAS evidence.
    *
-   * @param path - Validated path whose exact current key is read once.
-   * @returns Absence or decoded content plus its private R2 validator/timestamp.
+   * @param path - Validated application path used to derive the private key.
+   * @returns Validated object plus private storage metadata, or exact absence.
    */
   private async readObserved(
     path: NotePath,
@@ -311,9 +251,8 @@ export class R2ConditionalCurrentNoteRepository
       throw new StoredObjectDataError(STORED_OBJECT_DATA_ERROR_KIND.tooLarge);
     }
 
-    const bytes = new Uint8Array(await object.arrayBuffer());
     const decoded = await decodeCurrentObject(
-      bytes,
+      new Uint8Array(await object.arrayBuffer()),
       object.customMetadata?.[BRIDGE_STORAGE_FORMAT_METADATA_KEY],
     );
     return {
@@ -324,29 +263,30 @@ export class R2ConditionalCurrentNoteRepository
   }
 
   /**
-   * Dispatches one R2 put and maps null/errors without claiming rollback.
+   * Dispatches one conditional R2 write and returns only its exact metadata.
    *
-   * @param path - Validated application path used to derive the private key.
-   * @param encoded - Exact candidate envelope bytes represented as text.
-   * @param onlyIf - Atomic absence or observed-R2-ETag predicate.
-   * @param acknowledgement - Application ACK for only this candidate generation.
-   * @param maximumBytes - Representation-specific encoded byte bound.
-   * @returns Conservative effect certainty and direct metadata on confirmation.
+   * @param path - Validated application path for the private key.
+   * @param encoded - Exact encoded envelope body.
+   * @param onlyIf - Atomic R2 predicate.
+   * @param maximumBytes - Representation-specific encoded byte limit.
+   * @param storedGeneration - Converts exact successful PUT metadata to application state.
+   * @returns Conservative effect certainty and exact generation metadata on confirmation.
    */
-  private async conditionalPut(
+  private async conditionalPut<Stored>(
     path: NotePath,
     encoded: string,
     onlyIf: Headers | { readonly etagMatches: string },
-    acknowledgement: MutationAcknowledgement,
     maximumBytes: number,
-  ): Promise<StoredCurrentMutationResult> {
+    storedGeneration: (uploaded: Date) => Stored,
+  ): Promise<MutationEffectResult<Stored>> {
     if (new TextEncoder().encode(encoded).byteLength > maximumBytes) {
       return { kind: MUTATION_EFFECT_CERTAINTY.notDispatched };
     }
 
     try {
+      const key = this.objectKey(path);
       const stored: R2ConditionalObjectMetadata | null = await this.bucket.put(
-        this.objectKey(path),
+        key,
         encoded,
         {
           onlyIf,
@@ -360,17 +300,12 @@ export class R2ConditionalCurrentNoteRepository
       if (stored === null) {
         return { kind: MUTATION_EFFECT_CERTAINTY.definitelyRefused };
       }
-      if (!isExactR2Generation(stored, this.objectKey(path))) {
+      if (!isExactR2Generation(stored, key)) {
         return { kind: MUTATION_EFFECT_CERTAINTY.unknown };
       }
-
       return {
         kind: MUTATION_EFFECT_CERTAINTY.confirmed,
-        confirmed: {
-          acknowledgement,
-          storageEtag: stored.etag,
-          uploaded: stored.uploaded,
-        },
+        confirmed: storedGeneration(stored.uploaded),
       };
     } catch {
       return { kind: MUTATION_EFFECT_CERTAINTY.unknown };
@@ -378,9 +313,50 @@ export class R2ConditionalCurrentNoteRepository
   }
 
   /**
-   * Adds the adapter-private current-object namespace to a validated note path.
+   * Converts a decoded/candidate live envelope to metadata-only application state.
    *
-   * @param path - Validated application note path.
+   * @param path - Validated application path.
+   * @param object - Decoded or newly assembled live envelope.
+   * @returns Metadata-only live state with exact persisted receipt.
+   */
+  private liveState(
+    path: NotePath,
+    object: LiveCurrentGenerationCandidate,
+  ): StoredLiveCurrentGeneration["state"] {
+    return {
+      kind: CURRENT_NOTE_STATE_KIND.live,
+      path,
+      revision: object.revision,
+      receipt: object.receipt,
+      contentSha256: object.contentSha256,
+    };
+  }
+
+  /**
+   * Converts a decoded/candidate tombstone envelope to metadata-only application state.
+   *
+   * @param path - Validated application path.
+   * @param object - Decoded or newly assembled tombstone envelope.
+   * @returns Metadata-only tombstone state with exact persisted receipt.
+   */
+  private tombstoneState(
+    path: NotePath,
+    object: TombstoneCurrentGenerationCandidate,
+  ): StoredTombstoneCurrentGeneration["state"] {
+    return {
+      kind: CURRENT_NOTE_STATE_KIND.tombstone,
+      path,
+      revision: object.revision,
+      receipt: object.receipt,
+      deletedRevision: object.deletedRevision,
+      recoveryId: object.recoveryId,
+    };
+  }
+
+  /**
+   * Adds the adapter-private current-object namespace to a validated path.
+   *
+   * @param path - Validated application path.
    * @returns Exact private R2 key.
    */
   private objectKey(path: NotePath): string {

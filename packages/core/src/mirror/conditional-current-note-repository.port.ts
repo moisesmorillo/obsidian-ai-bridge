@@ -1,26 +1,37 @@
+import type { MutationEffectResult } from "@core/mirror/mirror.types";
 import type {
-  ConditionalMutationRequest,
-  ConditionalMutationResult,
-  CurrentNoteState,
-} from "@core/mirror/mirror.types";
+  CurrentGenerationObservation,
+  CurrentGenerationObservationPage,
+  LiveCurrentGenerationCandidate,
+  StoredLiveCurrentGeneration,
+} from "@core/mirror/mirror-storage.types";
 import type { NotePath } from "@core/note-path/note-path.types";
 
 /**
- * Storage-agnostic current-generation capability for safe M3 note mutations.
+ * Storage-agnostic current-generation capability beneath application mutation policy.
  *
- * Implementations translate exact application preconditions to their storage CAS
- * primitive and never expose a replace-any operation.
+ * Reads retain opaque generation-bound replacement capabilities. Implementations
+ * expose no replace-any operation and keep storage validators private.
  */
 export interface ConditionalCurrentNoteRepository {
-  /** @returns The recognized current state, including absence and legacy blockers. */
-  readCurrent(path: NotePath): Promise<CurrentNoteState>;
+  /** @returns One exact recognized observation, including plaintext only for readable states. */
+  read(path: NotePath): Promise<CurrentGenerationObservation>;
 
   /**
-   * Applies one exact conditional request.
+   * Attempts an atomic create-only write for an application-assembled live generation.
    *
-   * @returns A closed effect result; callers must retain unknown outcomes for exact receipt evidence.
+   * @returns Exact successful storage metadata or conservative effect certainty.
    */
-  mutate(
-    request: ConditionalMutationRequest,
-  ): Promise<ConditionalMutationResult>;
+  create(
+    path: NotePath,
+    candidate: LiveCurrentGenerationCandidate,
+  ): Promise<MutationEffectResult<StoredLiveCurrentGeneration>>;
+
+  /**
+   * Scans one bounded storage page and validates every recognized current object.
+   *
+   * @param cursor - Opaque storage continuation supplied by a previous page.
+   * @returns Metadata states before application visibility filtering.
+   */
+  list(cursor?: string): Promise<CurrentGenerationObservationPage>;
 }

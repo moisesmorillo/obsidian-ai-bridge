@@ -1,7 +1,7 @@
 # M3 implementation plan — automatic eligible-Markdown mirror
 
-**Status: implementation-ready design; Slice 0 qualification complete, with no M3
-production behavior implemented.** PR #8 remains planning/documentation only. M2
+**Status: implementation in progress through Worker Slice 2B; no v2 transport or
+user-visible mirror behavior.** PR #8 remains planning/documentation only. M2
 merged at `b300726` (PR #7); M3 is the single NEXT
 milestone. [Spec](../milestones/m3-remote-bridge-client-and-publishing.md),
 [approved decisions/evidence](m3-design-decisions.md) and accepted design ADRs
@@ -89,6 +89,10 @@ fix/review it rather than silently use old APIs or invent a new product policy.
 
 ## 2. Coherent Worker current-generation and recovery transition
 
+This plan slice is checkpointed as 2A storage/codecs/CAS, 2B application policy,
+and 2C HTTP/OpenAPI/v1 retirement. It is not complete until 2C exposes the compatible
+surface and retires unsafe v1 mutations; intermediate checkpoints are not rollout-safe.
+
 - **Objective/dependency:** deliver safe remote primitives as a coherent change
   before plugin autosync. Inspect app/index/dependency middleware, core vault
   service/port, R2 adapter/codec types, handlers/OpenAPI/auth/error/logging tests.
@@ -122,6 +126,17 @@ fix/review it rather than silently use old APIs or invent a new product policy.
 - **Validation/acceptance:** runtime storage harness, focused suites, coverage,
   build/OpenAPI and canonical check; A4/A6/A9 server. No deployment, migration,
   scheduled cleanup, plugin sync, database or extra storage authority.
+- **Implemented checkpoint evidence:** Slice 2A adds strict format-2 current/recovery
+  codecs and delete-free create/CAS R2 adapters. Slice 2B composes them under core
+  current-generation and recovery services: recognized-absence create, exact live
+  update/tombstone recreation, recovery-first tombstone, tombstone-upload-derived
+  30-day sealing, metadata inspection, prepared/unexpired content retrieval with
+  expiry withholding, bounded lists and sealed-expiry CAS purge to content-free
+  markers. Deterministic integration tests hold competing creates/updates/tombstones/
+  purges at the storage boundary and prove same-text ABA, exact successful-generation
+  ACKs, exact seal/purge replay evidence, duplicate preparation evidence and all
+  required recovery failure orderings. Slice 2C HTTP/OpenAPI/CORS/designation and v1 mutation
+  retirement remain unimplemented; no route composes these services yet.
 
 ## 3. Device-local configuration, state owner and handoff model
 

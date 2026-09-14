@@ -2,7 +2,7 @@
 
 A secure bridge between Obsidian and remote AI or agent clients.
 
-> **Status:** M2 complete / experimental. The plugin provides local-only, read-only inspection; the independent M1 Worker provides authenticated R2 storage. **NEXT:** [M3 — Automatic eligible-Markdown remote mirror](docs/milestones/m3-remote-bridge-client-and-publishing.md); Slices 0–1 qualify platform primitives and establish shared contracts, with no production mirror behavior implemented.
+> **Status:** M2 complete / experimental. The plugin remains local-only and read-only; the public Worker remains the M1 API. **NEXT:** [M3 — Automatic eligible-Markdown remote mirror](docs/milestones/m3-remote-bridge-client-and-publishing.md). Slices 0–1 and Worker Slice 2A/2B now provide qualified storage primitives, shared contracts, and application transition services, but no v2 HTTP route or connected mirror exists.
 
 ## Motivation
 
@@ -162,9 +162,10 @@ proves required predicates in the pinned local workerd runtime and records host
 declaration availability without claiming real desktop/mobile testing. There is
 no per-note selection model. M3 Slice 1 raises the plugin baseline to Obsidian **1.13.0** for native
 SecretStorage and declarative settings, while preserving the existing M2 commands.
-It adds shared typed contracts only; production implementation and real-host
-qualification remain. No v2 API, credential/state storage or autosync is implemented;
-[M2 completion and slice evidence](docs/plans/m2-obsidian-read-only-local-adapter.md)
+Slice 1 adds shared typed contracts only. Worker Slice 2A/2B adds private format-2
+codecs, conditional R2 adapters and application current/recovery orchestration with
+race tests. No v2 HTTP API, credential/state storage, plugin client or autosync is
+implemented; [M2 completion and slice evidence](docs/plans/m2-obsidian-read-only-local-adapter.md)
 record the implemented baseline. The roadmap defines the useful product end state, milestone exit criteria and
 unresolved decisions. The [current-state audit](docs/current-state.md) links facts
 to source/configuration; [API documentation](docs/api.md) describes the implemented

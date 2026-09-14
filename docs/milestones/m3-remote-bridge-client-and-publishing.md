@@ -1,7 +1,7 @@
 # M3 — Automatic eligible-Markdown remote mirror
 
-**Status: NEXT — Slice 0 platform qualification and Slice 1 modern baseline/shared
-typed contracts complete; no M3 production mirror implementation.**
+**Status: NEXT — implemented through Worker Slice 2B; no v2 HTTP route or
+user-visible M3 mirror.**
 
 The maintainer's clarification replaces the selected-note/manual-publishing proposal
 at `e35bd90`. M2 is COMPLETE at merged `b300726` (PR #7); M3 is the single NEXT
@@ -13,7 +13,9 @@ Implementation readiness means product/design choices are resolved and testable.
 The narrow [Slice 0 qualification](../qualification/m3-slice-0-platform-primitives.md)
 proves the pinned local workerd storage predicates and records declaration-only host
 availability. Slice 1 raises the plugin minimum to 1.13.0 and provides typed core/
-protocol contracts only; later implementation and real-host checks have not passed.
+protocol contracts. Worker Slice 2A/2B adds private conditional-storage adapters and tested
+application current/recovery transitions. Slice 2C transport, later implementation,
+and real-host checks have not passed.
 
 ## Objective and authority
 
@@ -39,7 +41,8 @@ D1-D full eligible scope, D2 SecretStorage/modern baseline, D3 HTTPS/exact loopb
 D4 revision-envelope CAS and D6 Fetch are approved. The maintainer additionally
 approved runtime deletion authority (including possible iCloud/external activity),
 30-day recovery and one designated writer. No material product choice remains.
-Accepted ADRs describe **design, not implemented code**:
+Accepted ADRs describe the complete design; only the Slice 2A/2B storage and
+application subset is implemented:
 
 - [0002](../decisions/0002-conditional-remote-note-mutation.md): conditional current
   generations, receipts, v2 and retirement of unsafe v1 PUT/DELETE.

@@ -2,11 +2,11 @@
 
 ## Status
 
-**Accepted — maintainer-approved M3 design; not implemented.** The maintainer
-explicitly approved runtime deletion authority (including possible iCloud/external
-activity), separate recovery material, 30-day recovery and permanent current
-revision/tombstone protection. This record selects the minimum technical mechanism
-under [ADR 0002](0002-conditional-remote-note-mutation.md), not a general backup system.
+**Accepted — Worker storage/application subset implemented through Slice 2B.**
+Recovery-first tombstone orchestration, 30-day sealing and conditional purge markers
+exist below transport; runtime Obsidian delete/rename authority and REST recovery
+routes remain later slices. This record selects the minimum technical mechanism under
+[ADR 0002](0002-conditional-remote-note-mutation.md), not a general backup system.
 
 ## Context
 

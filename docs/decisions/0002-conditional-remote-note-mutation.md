@@ -2,11 +2,11 @@
 
 ## Status
 
-**Accepted — maintainer-approved M3 design; not implemented.** The maintainer
-approved versioned envelopes, fresh server revisions, R2 CAS and a safe v2 contract,
-then approved automatic mirroring and recoverable deletion. This revision incorporates
-those requirements and the [recovery contract](0004-recoverable-mirror-deletions.md).
-Acceptance is not a claim that M1 already implements conditional writes.
+**Accepted — partially implemented through Worker Slice 2B.** Private versioned
+envelopes, exact-receipt application services and R2 create/CAS adapters exist; the
+safe v2 transport and v1 mutation retirement remain Slice 2C. The maintainer approved
+this complete contract plus automatic mirroring and recoverable deletion. M1 HTTP
+behavior is still unchanged and must not be treated as conditionally safe.
 
 ## Context
 

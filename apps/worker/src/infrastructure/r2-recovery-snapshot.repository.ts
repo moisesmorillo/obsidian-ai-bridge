@@ -1,15 +1,22 @@
 import {
+  createRecoverySnapshotId,
+  MAX_MIRROR_PAGE_SIZE,
   MAX_NOTE_SIZE_BYTES,
   MUTATION_EFFECT_CERTAINTY,
   type MutationEffectResult,
+  type ObservedPreparedRecoveryGeneration,
+  type ObservedPurgedRecoveryGeneration,
+  type ObservedSealedRecoveryGeneration,
+  type PreparedRecoveryGenerationCandidate,
+  type PurgedRecoveryGenerationCandidate,
   RECOVERY_SNAPSHOT_STATE_KIND,
-  type RecoveryMutationResult,
-  type RecoveryPreparationRequest,
-  type RecoveryPurgeRequest,
-  type RecoverySealRequest,
+  type RecoveryGenerationObservation,
+  type RecoveryGenerationObservationPage,
+  type RecoveryGenerationReplacement,
   type RecoverySnapshotId,
   type RecoverySnapshotRepository,
   type RecoverySnapshotState,
+  type SealedRecoveryGenerationCandidate,
 } from "@obsidian-ai-bridge/core";
 import type {
   R2ConditionalBucketPort,
@@ -36,24 +43,7 @@ import {
   STORED_OBJECT_DATA_ERROR_KIND,
   StoredObjectDataError,
 } from "@worker/infrastructure/storage-object.errors";
-import {
-  generateApplicationRevision,
-  sha256Content,
-} from "@worker/storage/storage-crypto";
-
-/** Private metadata returned by the exact successful recovery-object PUT. */
-export interface StoredRecoveryGeneration {
-  /** Validated application recovery state derived from bytes written by this PUT. */
-  readonly state: RecoverySnapshotState;
-  /** Opaque R2 validator retained only for storage-level evidence. */
-  readonly storageEtag: string;
-  /** R2-assigned upload time for this exact successful generation. */
-  readonly uploaded: Date;
-}
-
-/** Closed recovery mutation result retaining private successful-PUT evidence. */
-export type StoredRecoveryMutationResult =
-  MutationEffectResult<StoredRecoveryGeneration>;
+import { sha256Content } from "@worker/storage/storage-crypto";
 
 interface ObservedRecoveryObject {
   readonly decoded: DecodedRecoveryObject;
@@ -64,8 +54,8 @@ interface ObservedRecoveryObject {
 /**
  * R2 adapter for create-only recovery preparation and exact lifecycle CAS.
  *
- * Purge replaces a sealed generation with a marker and never uses native delete.
- * Retention eligibility is deliberately owned by later application orchestration.
+ * Application policy supplies revisions, retention decisions, and transition
+ * candidates. This adapter owns only codecs, private keys, and R2 predicates.
  */
 export class R2RecoverySnapshotRepository
   implements RecoverySnapshotRepository
@@ -74,184 +64,188 @@ export class R2RecoverySnapshotRepository
   constructor(private readonly bucket: R2ConditionalBucketPort) {}
 
   /**
-   * Reads validated metadata for one recovery identity.
+   * Reads exact validated recovery data with an opaque generation-bound CAS capability.
    *
    * @param id - Deletion-operation-derived recovery identity.
-   * @returns Metadata state, or `null` only when the exact key is absent.
-   * @throws {StoredObjectDataError} When persisted recovery data is malformed or unsupported.
+   * @returns Validated recovery observation, or `null` only for exact absence.
+   * @throws {StoredObjectDataError} For malformed, unsupported, or oversized data.
    */
-  async read(id: RecoverySnapshotId): Promise<RecoverySnapshotState | null> {
+  async read(
+    id: RecoverySnapshotId,
+  ): Promise<RecoveryGenerationObservation | null> {
     const observed = await this.readObserved(id);
-    return observed === null ? null : this.toState(observed.decoded);
+    if (observed === null) return null;
+    return this.toObservation(observed.decoded, observed.storageEtag);
   }
 
   /**
-   * Creates recovery material only when its exact key is absent.
+   * Writes one application-assembled prepared generation with create-only semantics.
    *
-   * @param request - Exact source-generation snapshot and content.
-   * @returns Core effect certainty with metadata state on confirmation.
+   * @param candidate - Exact prepared recovery envelope.
+   * @returns Exact prepared observation on confirmation or conservative certainty.
    */
-  async prepare(
-    request: RecoveryPreparationRequest,
-  ): Promise<RecoveryMutationResult> {
-    return this.toApplicationResult(await this.prepareStored(request));
-  }
-
-  /**
-   * Replaces only the supplied prepared recovery generation with sealed content.
-   *
-   * @param request - Exact prepared revision and tombstone-derived evidence.
-   * @returns Core effect certainty with sealed metadata on confirmation.
-   */
-  async seal(request: RecoverySealRequest): Promise<RecoveryMutationResult> {
-    return this.toApplicationResult(await this.sealStored(request));
-  }
-
-  /**
-   * Replaces only the supplied sealed generation with a content-free marker.
-   *
-   * @param request - Exact sealed revision selected by application retention policy.
-   * @returns Core effect certainty with purged metadata on confirmation.
-   */
-  async purge(request: RecoveryPurgeRequest): Promise<RecoveryMutationResult> {
-    return this.toApplicationResult(await this.purgeStored(request));
-  }
-
-  /**
-   * Prepares recovery content while retaining metadata from the actual successful PUT.
-   *
-   * @param request - Exact source-generation snapshot and content.
-   * @returns Conservative effect certainty and direct stored metadata on confirmation.
-   */
-  async prepareStored(
-    request: RecoveryPreparationRequest,
-  ): Promise<StoredRecoveryMutationResult> {
+  async create(
+    candidate: PreparedRecoveryGenerationCandidate,
+  ): Promise<MutationEffectResult<ObservedPreparedRecoveryGeneration>> {
     try {
       if (
-        request.id !== request.operationId ||
-        new TextEncoder().encode(request.content).byteLength >
+        candidate.id !== candidate.operationId ||
+        new TextEncoder().encode(candidate.content).byteLength >
           MAX_NOTE_SIZE_BYTES ||
-        (await sha256Content(request.content)) !== request.contentSha256
+        (await sha256Content(candidate.content)) !== candidate.contentSha256
       ) {
         return { kind: MUTATION_EFFECT_CERTAINTY.notDispatched };
       }
-
-      const decoded = {
-        kind: RECOVERY_SNAPSHOT_STATE_KIND.prepared,
-        id: request.id,
-        associationId: request.associationId,
-        path: request.path,
-        revision: generateApplicationRevision(),
-        sourceRevision: request.sourceRevision,
-        contentSha256: request.contentSha256,
-        operationId: request.operationId,
-        content: request.content,
-      } as const;
       const onlyIf = new Headers();
       onlyIf.set(R2_IF_NONE_MATCH_HEADER, R2_ABSENCE_WILDCARD);
       return await this.conditionalPut(
-        request.id,
-        encodePreparedRecoveryObject(decoded),
+        candidate.id,
+        encodePreparedRecoveryObject(candidate),
         onlyIf,
-        this.toState(decoded),
+        (storageEtag) => ({
+          kind: RECOVERY_SNAPSHOT_STATE_KIND.prepared,
+          state: this.toState(candidate),
+          content: candidate.content,
+          replacement: this.replacement(candidate.id, storageEtag),
+        }),
       );
-    } catch (error) {
-      if (error instanceof StoredObjectDataError) throw error;
+    } catch {
       return { kind: MUTATION_EFFECT_CERTAINTY.notDispatched };
     }
   }
 
   /**
-   * Conditionally seals prepared content while retaining direct successful-PUT metadata.
+   * Lists one bounded page and fails closed on malformed recovery identities or data.
    *
-   * @param request - Exact prepared revision and proven tombstone deadline evidence.
-   * @returns Conservative effect certainty and direct stored metadata on confirmation.
+   * @param cursor - Opaque R2 continuation cursor.
+   * @returns Metadata-only recovery states and optional continuation.
    */
-  async sealStored(
-    request: RecoverySealRequest,
-  ): Promise<StoredRecoveryMutationResult> {
-    try {
-      const observed = await this.readObserved(request.id);
-      if (
-        observed === null ||
-        observed.decoded.kind !== RECOVERY_SNAPSHOT_STATE_KIND.prepared ||
-        observed.decoded.revision !== request.expectedRevision ||
-        observed.decoded.associationId !== request.associationId
-      ) {
-        return { kind: MUTATION_EFFECT_CERTAINTY.definitelyRefused };
+  async list(cursor?: string): Promise<RecoveryGenerationObservationPage> {
+    const page = await this.bucket.list({
+      prefix: RECOVERY_OBJECT_PREFIX,
+      ...(cursor === undefined ? {} : { cursor }),
+      limit: MAX_MIRROR_PAGE_SIZE,
+    });
+    const states: RecoverySnapshotState[] = [];
+    for (const object of page.objects) {
+      if (!object.key.startsWith(RECOVERY_OBJECT_PREFIX)) {
+        throw new StoredObjectDataError(
+          STORED_OBJECT_DATA_ERROR_KIND.malformed,
+        );
       }
-
-      const decoded = {
-        ...observed.decoded,
-        kind: RECOVERY_SNAPSHOT_STATE_KIND.sealed,
-        revision: generateApplicationRevision(),
-        operationId: request.operationId,
-        previousRevision: observed.decoded.revision,
-        tombstoneRevision: request.tombstoneRevision,
-        recoverUntil: request.recoverUntil,
-      } as const;
-      return await this.conditionalPut(
-        request.id,
-        encodeSealedRecoveryObject(decoded),
-        { etagMatches: observed.storageEtag },
-        this.toState(decoded),
+      const id = createRecoverySnapshotId(
+        object.key.slice(RECOVERY_OBJECT_PREFIX.length),
       );
-    } catch (error) {
-      if (error instanceof StoredObjectDataError) throw error;
-      return { kind: MUTATION_EFFECT_CERTAINTY.notDispatched };
+      if (id === undefined) {
+        throw new StoredObjectDataError(
+          STORED_OBJECT_DATA_ERROR_KIND.malformed,
+        );
+      }
+      const observed = await this.read(id);
+      if (observed !== null) states.push(observed.state);
     }
+    return { states, nextCursor: page.truncated ? page.cursor : null };
   }
 
   /**
-   * Conditionally purges sealed content without implementing retention-time policy.
+   * Creates a recovery CAS capability bound permanently to one observed R2 ETag.
    *
-   * @param request - Exact sealed revision already approved by application policy.
-   * @returns Conservative effect certainty and direct marker metadata on confirmation.
+   * @param id - Recovery identity bound to the private key.
+   * @param storageEtag - Private validator from the exact observed generation.
+   * @returns Seal/purge capability that cannot refresh its predicate.
    */
-  async purgeStored(
-    request: RecoveryPurgeRequest,
-  ): Promise<StoredRecoveryMutationResult> {
-    try {
-      const observed = await this.readObserved(request.id);
-      if (
-        observed === null ||
-        observed.decoded.kind !== RECOVERY_SNAPSHOT_STATE_KIND.sealed ||
-        observed.decoded.revision !== request.expectedRevision ||
-        observed.decoded.associationId !== request.associationId
-      ) {
-        return { kind: MUTATION_EFFECT_CERTAINTY.definitelyRefused };
-      }
+  private replacement(
+    id: RecoverySnapshotId,
+    storageEtag: string,
+  ): RecoveryGenerationReplacement {
+    const onlyIf = { etagMatches: storageEtag };
+    return {
+      seal: (candidate) => this.writeSealed(id, candidate, onlyIf),
+      purge: (candidate) => this.writePurged(id, candidate, onlyIf),
+    };
+  }
 
-      const decoded = {
-        kind: RECOVERY_SNAPSHOT_STATE_KIND.purged,
-        id: observed.decoded.id,
-        associationId: observed.decoded.associationId,
-        path: observed.decoded.path,
-        revision: generateApplicationRevision(),
-        sourceRevision: observed.decoded.sourceRevision,
-        contentSha256: observed.decoded.contentSha256,
-        operationId: request.operationId,
-        previousRevision: observed.decoded.revision,
-        tombstoneRevision: observed.decoded.tombstoneRevision,
-        recoverUntil: observed.decoded.recoverUntil,
-      } as const;
+  /**
+   * Encodes and CAS-writes one sealed recovery generation.
+   *
+   * @param id - Recovery identity bound to the observed key.
+   * @param candidate - Application-approved sealed envelope.
+   * @param onlyIf - Exact observed-generation predicate.
+   * @returns Exact sealed observation or conservative effect certainty.
+   */
+  private async writeSealed(
+    id: RecoverySnapshotId,
+    candidate: SealedRecoveryGenerationCandidate,
+    onlyIf: { readonly etagMatches: string },
+  ): Promise<MutationEffectResult<ObservedSealedRecoveryGeneration>> {
+    try {
+      if (
+        candidate.id !== id ||
+        new TextEncoder().encode(candidate.content).byteLength >
+          MAX_NOTE_SIZE_BYTES ||
+        (await sha256Content(candidate.content)) !== candidate.contentSha256
+      ) {
+        return { kind: MUTATION_EFFECT_CERTAINTY.notDispatched };
+      }
       return await this.conditionalPut(
-        request.id,
-        encodePurgedRecoveryObject(decoded),
-        { etagMatches: observed.storageEtag },
-        this.toState(decoded),
+        id,
+        encodeSealedRecoveryObject(candidate),
+        onlyIf,
+        (storageEtag) => ({
+          kind: RECOVERY_SNAPSHOT_STATE_KIND.sealed,
+          state: this.toState(candidate),
+          content: candidate.content,
+          operationId: candidate.operationId,
+          previousRevision: candidate.previousRevision,
+          tombstoneRevision: candidate.tombstoneRevision,
+          replacement: this.replacement(id, storageEtag),
+        }),
       );
-    } catch (error) {
-      if (error instanceof StoredObjectDataError) throw error;
+    } catch {
       return { kind: MUTATION_EFFECT_CERTAINTY.notDispatched };
     }
   }
 
   /**
-   * Reads one exact recovery generation and retains only private CAS evidence.
+   * Encodes and CAS-writes one content-free purged recovery marker.
+   *
+   * @param id - Recovery identity bound to the observed key.
+   * @param candidate - Application-approved purged marker.
+   * @param onlyIf - Exact observed-generation predicate.
+   * @returns Exact purged observation or conservative effect certainty.
+   */
+  private async writePurged(
+    id: RecoverySnapshotId,
+    candidate: PurgedRecoveryGenerationCandidate,
+    onlyIf: { readonly etagMatches: string },
+  ): Promise<MutationEffectResult<ObservedPurgedRecoveryGeneration>> {
+    try {
+      if (candidate.id !== id) {
+        return { kind: MUTATION_EFFECT_CERTAINTY.notDispatched };
+      }
+      return await this.conditionalPut(
+        id,
+        encodePurgedRecoveryObject(candidate),
+        onlyIf,
+        (storageEtag) => ({
+          kind: RECOVERY_SNAPSHOT_STATE_KIND.purged,
+          state: this.toState(candidate),
+          operationId: candidate.operationId,
+          previousRevision: candidate.previousRevision,
+          tombstoneRevision: candidate.tombstoneRevision,
+          replacement: this.replacement(id, storageEtag),
+        }),
+      );
+    } catch {
+      return { kind: MUTATION_EFFECT_CERTAINTY.notDispatched };
+    }
+  }
+
+  /**
+   * Reads one exact recovery generation and retains only private storage metadata.
    *
    * @param id - Recovery identity used to derive the exact private key.
-   * @returns Absence or decoded storage generation plus R2 validator/timestamp.
+   * @returns Validated envelope plus private CAS metadata, or exact absence.
    */
   private async readObserved(
     id: RecoverySnapshotId,
@@ -282,7 +276,6 @@ export class R2RecoverySnapshotRepository
     if (decoded.id !== id) {
       throw new StoredObjectDataError(STORED_OBJECT_DATA_ERROR_KIND.malformed);
     }
-
     return {
       decoded,
       storageEtag: object.etag,
@@ -291,20 +284,20 @@ export class R2RecoverySnapshotRepository
   }
 
   /**
-   * Dispatches one recovery PUT and preserves uncertainty after any binding throw.
+   * Dispatches one conditional write and preserves uncertainty after any binding throw.
    *
-   * @param id - Recovery identity used to derive the exact private key.
-   * @param encoded - Exact candidate recovery envelope represented as text.
-   * @param onlyIf - Atomic absence or observed-R2-ETag predicate.
-   * @param state - Core metadata belonging only to this candidate generation.
-   * @returns Conservative effect certainty and direct metadata on confirmation.
+   * @param id - Recovery identity for the private key.
+   * @param encoded - Exact encoded recovery envelope.
+   * @param onlyIf - Atomic absence or observed-generation predicate.
+   * @param observation - Converts exact successful PUT metadata to an observation.
+   * @returns Conservative certainty and exact observation on confirmation.
    */
-  private async conditionalPut(
+  private async conditionalPut<Observed>(
     id: RecoverySnapshotId,
     encoded: string,
     onlyIf: Headers | { readonly etagMatches: string },
-    state: RecoverySnapshotState,
-  ): Promise<StoredRecoveryMutationResult> {
+    observation: (storageEtag: string) => Observed,
+  ): Promise<MutationEffectResult<Observed>> {
     if (
       new TextEncoder().encode(encoded).byteLength > MAX_RECOVERY_OBJECT_BYTES
     ) {
@@ -312,8 +305,9 @@ export class R2RecoverySnapshotRepository
     }
 
     try {
+      const key = this.objectKey(id);
       const stored: R2ConditionalObjectMetadata | null = await this.bucket.put(
-        this.objectKey(id),
+        key,
         encoded,
         {
           onlyIf,
@@ -327,17 +321,12 @@ export class R2RecoverySnapshotRepository
       if (stored === null) {
         return { kind: MUTATION_EFFECT_CERTAINTY.definitelyRefused };
       }
-      if (!isExactR2Generation(stored, this.objectKey(id))) {
+      if (!isExactR2Generation(stored, key)) {
         return { kind: MUTATION_EFFECT_CERTAINTY.unknown };
       }
-
       return {
         kind: MUTATION_EFFECT_CERTAINTY.confirmed,
-        confirmed: {
-          state,
-          storageEtag: stored.etag,
-          uploaded: stored.uploaded,
-        },
+        confirmed: observation(stored.etag),
       };
     } catch {
       return { kind: MUTATION_EFFECT_CERTAINTY.unknown };
@@ -345,31 +334,70 @@ export class R2RecoverySnapshotRepository
   }
 
   /**
-   * Removes private successful-generation metadata at the core repository boundary.
+   * Converts a decoded generation into an application observation.
    *
-   * @param result - Internal result retaining R2 generation evidence.
-   * @returns Slice 1 recovery effect result without infrastructure metadata.
+   * @param decoded - Strictly validated private recovery envelope.
+   * @param storageEtag - Validator for exactly that stored generation.
+   * @returns Recovery data with a generation-bound CAS capability.
    */
-  private toApplicationResult(
-    result: StoredRecoveryMutationResult,
-  ): RecoveryMutationResult {
-    if (result.kind !== MUTATION_EFFECT_CERTAINTY.confirmed) {
-      return result;
+  private toObservation(
+    decoded: DecodedRecoveryObject,
+    storageEtag: string,
+  ): RecoveryGenerationObservation {
+    const replacement = this.replacement(decoded.id, storageEtag);
+    switch (decoded.kind) {
+      case RECOVERY_SNAPSHOT_STATE_KIND.prepared:
+        return {
+          kind: RECOVERY_SNAPSHOT_STATE_KIND.prepared,
+          state: this.toState(decoded),
+          content: decoded.content,
+          replacement,
+        };
+      case RECOVERY_SNAPSHOT_STATE_KIND.sealed:
+        return {
+          kind: RECOVERY_SNAPSHOT_STATE_KIND.sealed,
+          state: this.toState(decoded),
+          content: decoded.content,
+          operationId: decoded.operationId,
+          previousRevision: decoded.previousRevision,
+          tombstoneRevision: decoded.tombstoneRevision,
+          replacement,
+        };
+      case RECOVERY_SNAPSHOT_STATE_KIND.purged:
+        return {
+          kind: RECOVERY_SNAPSHOT_STATE_KIND.purged,
+          state: this.toState(decoded),
+          operationId: decoded.operationId,
+          previousRevision: decoded.previousRevision,
+          tombstoneRevision: decoded.tombstoneRevision,
+          replacement,
+        };
     }
-
-    return {
-      kind: MUTATION_EFFECT_CERTAINTY.confirmed,
-      confirmed: result.confirmed.state,
-    };
   }
 
-  /**
-   * Converts a private storage object to core metadata state without note content.
-   *
-   * @param decoded - Validated private recovery generation.
-   * @returns Corresponding content-free core recovery state.
-   */
-  private toState(decoded: DecodedRecoveryObject): RecoverySnapshotState {
+  /** Removes storage-only transition evidence and plaintext from recovery metadata. */
+  private toState(
+    decoded:
+      | Extract<DecodedRecoveryObject, { readonly kind: "prepared" }>
+      | PreparedRecoveryGenerationCandidate,
+  ): Extract<RecoverySnapshotState, { readonly kind: "prepared" }>;
+  private toState(
+    decoded:
+      | Extract<DecodedRecoveryObject, { readonly kind: "sealed" }>
+      | SealedRecoveryGenerationCandidate,
+  ): Extract<RecoverySnapshotState, { readonly kind: "sealed" }>;
+  private toState(
+    decoded:
+      | Extract<DecodedRecoveryObject, { readonly kind: "purged" }>
+      | PurgedRecoveryGenerationCandidate,
+  ): Extract<RecoverySnapshotState, { readonly kind: "purged" }>;
+  private toState(
+    decoded:
+      | DecodedRecoveryObject
+      | PreparedRecoveryGenerationCandidate
+      | SealedRecoveryGenerationCandidate
+      | PurgedRecoveryGenerationCandidate,
+  ): RecoverySnapshotState {
     const state = {
       id: decoded.id,
       associationId: decoded.associationId,
@@ -394,7 +422,7 @@ export class R2RecoverySnapshotRepository
   /**
    * Builds the adapter-private recovery key from its validated identity.
    *
-   * @param id - Validated recovery snapshot identity.
+   * @param id - Validated deletion-operation-derived identity.
    * @returns Exact private R2 recovery key.
    */
   private objectKey(id: RecoverySnapshotId): string {

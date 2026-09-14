@@ -56,8 +56,9 @@ New infrastructure requires a concrete need and [ADR](decisions/README.md).
 authenticated Worker/R2 API is unchanged; there is no connected mirror, remote
 plugin client or production-readiness claim. M3 is NEXT with an implementation-ready design. Slice 0 qualifies the pinned local
 conditional-storage runtime and host declarations. Slice 1 raises the plugin baseline
-to 1.13.0 and adds shared typed contracts, but implements no mirror, v2 API,
-credentials, state owner or autosync behavior.
+to 1.13.0 and adds shared typed contracts. Worker Slice 2A/2B implements private
+conditional storage and application current/recovery transitions, but no v2 route,
+credentials, state owner, plugin client or autosync behavior.
 
 See [current-state evidence](current-state.md), [architecture](architecture.md),
 [implemented API](api.md), [M2 completion](milestones/m2-obsidian-read-only-local-adapter.md#completion-evidence)
@@ -108,13 +109,12 @@ production code. Dependencies include all previous milestones.
 
 ### M3 — Automatic eligible-Markdown remote mirror
 
-**NEXT — implementation-ready design; Slice 0 qualification complete, production
-implementation not started.**
+**NEXT — implementation in progress through Worker Slice 2B; no user-visible mirror.**
 [Specification](milestones/m3-remote-bridge-client-and-publishing.md),
 [approved decisions/evidence](plans/m3-design-decisions.md),
 [sequential test-first plan](plans/m3-remote-bridge-client-and-publishing.md) and
-accepted-design ADRs 0002–0004 define the behavior. Do not implement in this planning
-PR, deploy, or mark M3 complete merely because decisions are resolved.
+accepted-design ADRs 0002–0004 define the behavior. Do not deploy or mark M3 complete
+merely because the server-side storage and application checkpoints are implemented.
 
 - **Scope:** whole eligible scope/opt-in; modern SecretStorage/settings with M3 host
   minimum 1.13.0; HTTPS/exact loopback; Fetch/CORS; bootstrap and saved Vault events;

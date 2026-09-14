@@ -13,10 +13,10 @@ packages/protocol      Shared protocol contracts and serialization definitions
 
 M1 is complete: an authenticated HTTP Worker API backed by Cloudflare R2 plus the
 engineering-quality foundation. M2 is complete: a local-only read-only Obsidian
-inspection plugin with source tests, artifact checks and semantic review. M3 has
-completed [Slice 0 platform qualification](qualification/m3-slice-0-platform-primitives.md)
-and Slice 1's modern plugin baseline/shared typed contracts; there is no production
-M3 behavior or connection between the plugin and Worker yet.
+inspection plugin with source tests, artifact checks and semantic review. M3 has completed [Slice 0 platform qualification](qualification/m3-slice-0-platform-primitives.md),
+Slice 1's modern plugin baseline/shared typed contracts, and Worker Slice 2A/2B's
+private conditional-storage adapters plus application transition services. No v2
+HTTP route or connection between the plugin and Worker exists yet.
 See the [verified current state](current-state.md) for source/configuration evidence,
 [roadmap](roadmap.md) for execution order and open decisions, and
 [ADR 0001](decisions/0001-worker-r2-foundation.md) for the durable foundation.
@@ -152,7 +152,7 @@ synchronization. The roadmap requires a safe mutation contract before M3 publish
 and includes automatic outward deletes/recovery/rename in M3. Full remote-to-local
 reconciliation remains M4.
 
-## M3 accepted design — not implemented
+## M3 accepted design and partial Worker foundation
 
 The [decisions/evidence](plans/m3-design-decisions.md),
 [specification](milestones/m3-remote-bridge-client-and-publishing.md) and
@@ -198,10 +198,14 @@ activation, and unresolved work blocks takeover. No election/leases or
 shared-file coordinator. M3 targets Obsidian 1.13.0/modern settings, HTTPS with exact
 loopback opt-in and bounded Fetch/CORS, without old-host/requestUrl fallbacks.
 
-These are accepted architectural decisions, **not current behavior**. M1 remains
-unconditional and M2 commands remain local-only. Slice 1 raises the current manifest
-to 1.13.0 and adds platform-independent core contracts plus strict protocol DTO
-schemas, but adds no settings, remote client, Worker v2 route or autosync composition.
+These remain the accepted end-to-end design rather than current user-visible
+behavior. M1 HTTP mutations remain unconditional and M2 commands remain local-only.
+Slice 1 raises the manifest to 1.13.0 and adds core/protocol contracts. Worker Slice
+2A/2B implements private format-2 codecs, create-only and observed-generation CAS,
+metadata reads, prepared/unexpired recovery-content reads and bounded listing, exact
+receipts, recoverable tombstone ordering, tombstone-timestamp sealing and conditional
+purge through core application services. No Hono v2 route composes them yet, and there is no settings, remote client,
+writer designation, v1 retirement or autosync composition.
 Slice 0 remains the pinned local workerd qualification task and declaration-only host
 check; neither slice establishes real-host behavior.
 

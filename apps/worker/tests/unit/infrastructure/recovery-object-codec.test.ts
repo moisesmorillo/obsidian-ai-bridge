@@ -223,6 +223,16 @@ describe("recovery-object storage codec", () => {
       tombstoneRevision: TOMBSTONE_REVISION,
       recoverUntil: RECOVER_UNTIL,
     });
+    const reusedTombstoneRevision = JSON.stringify({
+      format: BRIDGE_STORAGE_FORMAT,
+      ...preparedFixture(),
+      kind: RECOVERY_SNAPSHOT_STATE_KIND.sealed,
+      revision: TOMBSTONE_REVISION,
+      operationId: SEAL_OPERATION_ID,
+      previousRevision: PREPARED_REVISION,
+      tombstoneRevision: TOMBSTONE_REVISION,
+      recoverUntil: RECOVER_UNTIL,
+    });
     const staleTombstone = JSON.stringify({
       format: BRIDGE_STORAGE_FORMAT,
       ...preparedFixture(),
@@ -239,6 +249,9 @@ describe("recovery-object storage codec", () => {
     ).rejects.toMatchObject({ kind: STORED_OBJECT_DATA_ERROR_KIND.malformed });
     await expect(
       decodeRecoveryObject(bytes(reusedTransition)),
+    ).rejects.toMatchObject({ kind: STORED_OBJECT_DATA_ERROR_KIND.malformed });
+    await expect(
+      decodeRecoveryObject(bytes(reusedTombstoneRevision)),
     ).rejects.toMatchObject({ kind: STORED_OBJECT_DATA_ERROR_KIND.malformed });
     await expect(
       decodeRecoveryObject(bytes(staleTombstone)),

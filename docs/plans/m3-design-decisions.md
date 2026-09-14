@@ -1,7 +1,7 @@
 # M3 decisions — automatic eligible-Markdown mirror
 
-**Status: maintainer decisions resolved; implementation design. Slice 0 adds only
-platform qualification; no M3 production behavior exists.**
+**Status: maintainer decisions resolved; implementation in progress through Worker
+Slice 2B. No v2 route or user-visible M3 mirror exists.**
 
 This replaces the proposal in PR #8 at `e35bd90`. That proposal drifted from the
 product by coupling mirror scope to per-note consent, making manual publishing
@@ -26,7 +26,9 @@ selected or implemented. No new exclusion feature is needed in M3.
 
 ## Decision record
 
-“Accepted” means maintainer-approved design, not production implementation.
+“Accepted” means maintainer-approved design, not necessarily complete production
+implementation. Slice 2A/2B now realizes the private storage and application
+transition subset; transport, plugin, state-owner and autosync work remains.
 Engineering defaults below are bounded implementation choices, not new product
 permissions. The [spec](../milestones/m3-remote-bridge-client-and-publishing.md),
 [plan](m3-remote-bridge-client-and-publishing.md) and ADRs are normative together.

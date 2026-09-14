@@ -30,6 +30,7 @@ export type {
 } from "@core/local-vault/local-vault.types";
 export type { ReadOnlyLocalVault } from "@core/local-vault/read-only-local-vault.port";
 export type { ConditionalCurrentNoteRepository } from "@core/mirror/conditional-current-note-repository.port";
+export { CurrentGenerationService } from "@core/mirror/current-generation-service";
 export {
   APPLICATION_ETAG_PREFIX,
   CONDITIONAL_MUTATION_PRECONDITION_KIND,
@@ -42,7 +43,10 @@ export {
   MUTATION_ACTION,
   MUTATION_ACTIONS,
   MUTATION_EFFECT_CERTAINTY,
+  RECOVERY_CONTENT_RESULT_KIND,
+  RECOVERY_RETENTION_MILLISECONDS,
   RECOVERY_SNAPSHOT_STATE_KIND,
+  TOMBSTONE_WORKFLOW_STAGE_KIND,
   UUID_V4_PATTERN,
 } from "@core/mirror/mirror.constants";
 export type {
@@ -54,6 +58,7 @@ export type {
   ConditionalMutationPrecondition,
   ConditionalMutationRequest,
   ConditionalMutationResult,
+  ConditionalRecreateRequest,
   ConditionalTombstoneRequest,
   ConditionalUpdateRequest,
   ContentMutationAction,
@@ -92,6 +97,16 @@ export type {
   UnresolvedUpdateMutationIntent,
   UpdateOperationReceipt,
 } from "@core/mirror/mirror.types";
+export type {
+  ConfirmedTombstoneSealRequest,
+  ConfirmedTombstoneTransition,
+  CurrentContentMutationResult,
+  MirrorClock,
+  MirrorGenerationCryptography,
+  RecoveryContentResult,
+  RecoveryPreparationProofResult,
+  TombstoneMutationResult,
+} from "@core/mirror/mirror-application.types";
 export {
   createApplicationEtag,
   createApplicationRevision,
@@ -104,6 +119,29 @@ export {
   isContentSha256,
   isUuidV4,
 } from "@core/mirror/mirror-identifiers";
+export type {
+  AbsentCurrentGenerationObservation,
+  CurrentGenerationObservation,
+  CurrentGenerationObservationPage,
+  CurrentGenerationReplacement,
+  LegacyCurrentGenerationObservation,
+  LiveCurrentGenerationCandidate,
+  LiveCurrentGenerationObservation,
+  ObservedPreparedRecoveryGeneration,
+  ObservedPurgedRecoveryGeneration,
+  ObservedSealedRecoveryGeneration,
+  PreparedRecoveryGenerationCandidate,
+  PurgedRecoveryGenerationCandidate,
+  RecoveryGenerationObservation,
+  RecoveryGenerationObservationPage,
+  RecoveryGenerationReplacement,
+  SealedRecoveryGenerationCandidate,
+  StoredLiveCurrentGeneration,
+  StoredTombstoneCurrentGeneration,
+  TombstoneCurrentGenerationCandidate,
+  TombstoneCurrentGenerationObservation,
+} from "@core/mirror/mirror-storage.types";
+export { RecoveryService } from "@core/mirror/recovery-service";
 export type { RecoverySnapshotRepository } from "@core/mirror/recovery-snapshot-repository.port";
 export {
   decodeNotePath,

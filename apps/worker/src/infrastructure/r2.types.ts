@@ -17,6 +17,57 @@ export interface R2StoredObject extends R2ObjectMetadata {
   text(): Promise<string>;
 }
 
+/** Metadata returned for one successful private conditional R2 generation. */
+export interface R2ConditionalObjectMetadata extends R2ObjectMetadata {
+  /** Opaque R2 content validator used only for an exact subsequent storage CAS. */
+  readonly etag: string;
+
+  /** Upload time assigned to this exact successfully stored R2 generation. */
+  readonly uploaded: Date;
+
+  /** Adapter-private format discriminator and other bounded custom metadata. */
+  readonly customMetadata?: Readonly<Record<string, string>>;
+}
+
+/** Exact conditional R2 object body plus its private generation metadata. */
+export interface R2ConditionalStoredObject extends R2ConditionalObjectMetadata {
+  /** @returns The exact persisted object bytes without permissive text decoding. */
+  arrayBuffer(): Promise<ArrayBuffer>;
+}
+
+/** Put options admitted by M3 private conditional storage adapters. */
+export interface R2ConditionalPutOptions {
+  /** Atomic absence or exact observed-R2-ETag predicate. */
+  readonly onlyIf: Headers | { readonly etagMatches: string };
+
+  /** Private storage format marker written with the exact object generation. */
+  readonly customMetadata: Record<string, string>;
+
+  /** Private envelope media metadata. */
+  readonly httpMetadata: { readonly contentType: string };
+}
+
+/**
+ * R2 binding subset for create-only and exact compare-and-swap writes.
+ *
+ * Native delete and unconditional put have no representation in this capability.
+ */
+export interface R2ConditionalBucketPort {
+  /** @returns The exact stored generation, or `null` only when its key is absent. */
+  get(key: string): Promise<R2ConditionalStoredObject | null>;
+
+  /**
+   * Attempts one atomic conditional write.
+   *
+   * @returns Metadata for the actual stored generation, or `null` when refused.
+   */
+  put(
+    key: string,
+    content: string,
+    options: R2ConditionalPutOptions,
+  ): Promise<R2ConditionalObjectMetadata | null>;
+}
+
 /** Fields shared by every paginated R2 listing result. */
 interface R2ListResultBase {
   /** Objects returned by this listing page. */

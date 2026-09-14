@@ -1,4 +1,4 @@
-import { TOKEN_DIGEST_ALGORITHM } from "@worker/auth/auth.constants";
+import { sha256Bytes } from "@worker/storage/storage-crypto";
 
 /**
  * Compares byte arrays without exiting on their first differing byte.
@@ -19,19 +19,6 @@ function constantTimeEqual(left: Uint8Array, right: Uint8Array): boolean {
 }
 
 /**
- * Creates a fixed-length Web Crypto digest for token comparison.
- *
- * @param value - Token text to hash.
- * @returns The SHA-256 digest of the token.
- */
-async function sha256(value: string): Promise<Uint8Array> {
-  const bytes = new TextEncoder().encode(value);
-  return new Uint8Array(
-    await crypto.subtle.digest(TOKEN_DIGEST_ALGORITHM, bytes),
-  );
-}
-
-/**
  * Compares credentials through fixed-length SHA-256 digests without early exits.
  *
  * @param providedToken - Credential supplied by the request.
@@ -43,8 +30,8 @@ export async function hasMatchingToken(
   expectedToken: string,
 ): Promise<boolean> {
   const [providedDigest, expectedDigest] = await Promise.all([
-    sha256(providedToken),
-    sha256(expectedToken),
+    sha256Bytes(providedToken),
+    sha256Bytes(expectedToken),
   ]);
 
   return constantTimeEqual(providedDigest, expectedDigest);

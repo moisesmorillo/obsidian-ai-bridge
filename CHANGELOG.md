@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0](https://github.com/moisesmorillo/obsidian-ai-bridge/compare/v0.2.0...v0.3.0) (2026-09-14)
+
+
+### Features
+
+* **worker:** add conditional M3 storage API ([#13](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/13)) ([16a050c](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/16a050ceb06b366f29aef6fa7825f39d341a4365))
+
 ## [0.2.0](https://github.com/moisesmorillo/obsidian-ai-bridge/compare/v0.1.0...v0.2.0) (2026-09-14)
 
 

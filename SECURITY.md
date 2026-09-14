@@ -33,11 +33,44 @@ remain sensitive; avoid sharing private result screenshots.
 Use only a [disposable development vault](docs/plugin-development.md) for manual
 installation. Build/host-double checks verify the CommonJS artifact without Node
 runtime dependencies, but no real desktop/mobile host test or production safety
-claim is made. M2 is complete; M3 remains planning-only until selection, credential
-handling and server-enforced safe publishing are explicitly specified.
+claim is made. M2 is complete; M3 remains design-only. Its
+[approved decisions](docs/plans/m3-design-decisions.md) do not make the current
+unconditional API safe or imply that any M3 capability is implemented.
+
+## Accepted M3 safety model — not implemented
+
+The user opts into the whole eligible Markdown mirror; there is no per-note
+selection model. Eligibility controls mirror scope, **not API/MCP authorization**.
+Local saved changes drive automatic one-way mirroring from one designated device.
+Static writer IDs guard cooperating clients, not a malicious privileged bearer;
+iCloud/data.json is never a transactional writer coordinator. Handoff must drain
+and resolve old work before changing designation/credentials; abort is not rollback.
+
+M3 targets Obsidian 1.13.0 and native SecretStorage references, not plaintext tokens
+in data.json or a claim of OS-keychain protection. Device activation/per-path ledger
+use official host-local storage outside vault files; it is not an fsync guarantee
+or safe multi-process store. HTTPS is default; exact loopback HTTP needs explicit
+development opt-in. Fetch denies redirects/cookies, supports abort and bounded
+reads/deadlines; no less-safe requestUrl or old-version fallback.
+
+Fresh server revisions/R2 CAS and retired v1 PUT/DELETE protect updates, removals
+and recreation. A post-bootstrap runtime delete for an already-associated eligible
+path authorizes a recoverable tombstone, including possible iCloud/external activity;
+it does **not** prove human intent. Startup/list/scan absence never authorizes delete.
+Separate recovery content is stored before tombstone, kept for 30 days and survives
+recreation. Failed sealing can over-retain. Expired content is conditionally replaced
+with a small purged marker; authoritative heads/markers never lifecycle-expire in M3.
+No native R2 trash/versioning, exact physical erasure or complete backup claim.
+
+R2 remains a private mirror/API layer, not sole authority; iCloud is still working-
+vault device sync. Remote divergence blocks replacement; plugin never imports or
+writes local notes. Recovery REST retrieval is not automatic local restore. Trusted
+host/cloud operators still see plaintext, and operator deletion/stale restore or
+old-code rollback can violate the experimental active-association assumptions.
+No real resources/credentials or desktop/mobile qualification are inferred.
 
 See [architecture](docs/architecture.md) for invariants and the
-[roadmap](docs/roadmap.md) for safe publishing, reconciliation and hardening gates.
+[roadmap](docs/roadmap.md) for automatic mirroring, reconciliation and hardening gates.
 No future conflict or deletion flow may silently discard user data.
 
 ## Reporting a vulnerability

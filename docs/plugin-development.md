@@ -144,3 +144,77 @@ Metadata race checks are best-effort: same-size edits with indistinguishable
 mtime can evade detection. Listing is not an atomic snapshot and saved-file text
 is already decoded by Obsidian, not raw-byte UTF-8 validation. These limits must
 not be reused as write concurrency protection in later milestones.
+
+## M3 development target — design only, not the current artifact
+
+The [M3 spec](milestones/m3-remote-bridge-client-and-publishing.md) replaces selected
+manual publishing with an automatic mirror of **all eligible saved Markdown** after
+whole-mirror opt-in. Native SecretStorage and declarative settings require the
+accepted M3 minimum **1.13.0**. Implementation must raise manifest/artifact tests
+and the installation steps above together; this docs-only PR leaves the current
+M2 minimum 1.5.0 unchanged. Do not add deprecated/older-host fallbacks.
+
+The [official evidence](plans/m3-design-decisions.md#primary-source-evidence-and-qualification-limits)
+establishes SecretStorage since 1.11.4, vault-local storage since 1.8.7 and modern
+settings since 1.13.0. It does not establish desktop/mobile Fetch streaming/abort/
+CORS behavior in a real WebView, exact autosave timing or iCloud hydration completion.
+Those require feature detection, focused doubles/runtime tests and honestly recorded
+host qualification in implementation. The app.secretStorage reference is host-native,
+not a documented OS keychain. Only the secret's name goes in data.json; no plaintext
+fallback or invented shared-secret delete API.
+
+### Planned disposable setup and observation
+
+Do not execute these as current M2 capabilities or deploy merely to test a plan:
+
+1. Use a disposable 1.13.0+ vault and synthetic notes; qualify standards Fetch,
+   AbortController/streaming, modern settings and registered saved Vault events.
+2. Configure a separately authorized disposable v2 Worker association/designated
+   writer ID and secret. Local emulation is the automated test boundary, not proof
+   a remote bucket exists. Never run old v1 writers against revision envelopes.
+3. Select the native secret reference and HTTPS origin. HTTP requires explicit exact
+   loopback opt-in; phone loopback is the phone, not the desktop. No LAN exception.
+4. Explicitly enable the entire eligible mirror on the designated device. Native
+   host-local state stores activation/ACKs/uncertainty, not iCloud-synced data.json.
+   Other devices stay disabled even when plugin preferences sync.
+5. Verify layout-ready bootstrap and saved creates/modifies coalesce into bounded
+   work; saved deletes/renames propagate safely after bootstrap/association checks.
+   No per-note/per-delete confirmation. iCloud/external deletes may authorize remote
+   tombstones; initial/incomplete scans and missed events never do.
+6. Inspect metadata-only health. No note text/token in notices/logging. Check/retry/
+   pause are operational controls, not the primary publishing workflow. Preserve
+   M2 local inspection. Unknown effects, storage failures and divergence remain
+   visible; do not refresh revisions to force a send.
+
+### Planned recovery, pause and writer handoff
+
+A runtime removal archives remote content before conditional tombstone. Recovery
+REST list/read supports deliberate retrieval/export for 30 days; it is not plugin
+local-note restoration. Sealing failures may retain content longer, visibly;
+explicit designated seal maintenance needs proof from the still-current tombstone.
+GETs never repair metadata implicitly. Recreation leaves that archive intact. After expiry an explicit CAS purge removes
+archive content while retaining a safety marker; do not configure R2 lifecycle
+expiration on current heads/recovery keys or assume native trash/version history.
+
+Pause stops new admission and requests Fetch abort; actual reads/network/save work
+can still be pending. Disable/re-enable, a new Plugin instance or bundle reload in
+the same runtime must not reset the owning coordinator. Process restart loads the
+per-path ledger. No cancellation promise for host reads or committed Worker writes.
+
+For handoff, old writer pauses/drains and resolves all intents/rename prerequisites,
+exports validated content-free ACK metadata, then is disabled. Operator changes
+Worker designation/rotates bearer; new device stages/verifies that same-association
+ledger, including equal local saved hashes for live ACKs and local absence for
+tombstones. A mismatched/partially hydrated iCloud copy blocks activation, not a
+new update/recreation. Only then activate with its own native secret reference. Never copy
+activation/device identity or use iCloud data.json as a transaction. A pause may
+miss delete events; bootstrap reports those absences without inventing removal intent.
+If the old writer is unavailable/unresolved, takeover of the same association is
+blocked. A separately authorized new empty association is the safe reset option,
+leaving old pending work isolated. See [ADR 0003](decisions/0003-publishing-association-and-local-state.md).
+
+The existing M2 removal steps above have **no persisted state** to erase. Future M3
+uninstall/reset instructions must preserve unresolved metadata and account for
+host-local storage/shared secret references; deleting the plugin directory is not
+proof those are gone or that in-flight remote work was cancelled. Never erase a
+shared secret or old mirror merely to make a new writer appear clean.

@@ -148,18 +148,70 @@ Future local writes require explicit consent and conflict/recovery semantics;
 a failed operation, stale read or missing file must never trigger a silent
 replacement or deletion. M1's unconditional remote CRUD is not safe automatic
 synchronization. The roadmap requires a safe mutation contract before M3 publishes
-and defers full reconciliation/import/deletions to M4.
+and includes automatic outward deletes/recovery/rename in M3. Full remote-to-local
+reconciliation remains M4.
+
+## M3 accepted design — not implemented
+
+The [decisions/evidence](plans/m3-design-decisions.md),
+[specification](milestones/m3-remote-bridge-client-and-publishing.md) and
+[sequential plan](plans/m3-remote-bridge-client-and-publishing.md) define an automatic
+**all-eligible Markdown mirror**, with whole opt-in, not per-note selection. iCloud
+remains device-to-device vault sync; R2 is mirror/API persistence, not the sole
+authority or guaranteed backup. Mirror scope is independent of REST/MCP authorization.
+
+```text
+settings / official saved-vault events / health controls
+    ↓
+core synchronizer + reconciliation planner + serialized state owner
+    ↓
+read-only local / remote conditional / state / event ports
+    ↓
+Obsidian adapters + bounded Fetch adapter
+    ↓
+Worker handlers → core conditional services → R2 adapters
+```
+
+Bootstrap merges positive saved observations; post-bootstrap events drive bounded
+coalescing/retry. A two-slot scheduler and per-path intent ledger retain ACK revision/
+hash and unresolved/delete/rename metadata without another local text copy. One
+runtime-owned coordinator survives Plugin replacement/re-enable, distinct from UI
+sessions; process restart recovers persisted intent. Unknown effects do not refresh
+remote baselines or permit latest-revision overwrite.
+
+Accepted-design [ADR 0002](decisions/0002-conditional-remote-note-mutation.md) specifies
+fresh body-embedded revisions/receipts, R2 CAS, safe v2 and retirement of **v1 PUT and
+DELETE**. [ADR 0004](decisions/0004-recoverable-mirror-deletions.md) archives text before
+conditional tombstone, seals a 30-day window, retains heads and conditionally purges
+expired recovery bodies to small markers. No native trash/version history, unsafe
+cleanup DELETE or tombstone lifecycle expiration. Rename creates/acknowledges the
+destination before source cleanup; conflicts/ambiguity preserve versions.
+
+[ADR 0003](decisions/0003-publishing-association-and-local-state.md) defines one
+explicitly designated supported writer device. Activation/ledger live in official
+vault-local host storage, not iCloud-synced data.json; that file stores preferences
+and native SecretStorage reference only. Worker static IDs guard cooperating writers,
+not privileged bearer impersonation. Clean handoff drains old requests and transfers
+verified content-free ACKs; new local hashes/tombstone absence must align before
+activation, and unresolved work blocks takeover. No election/leases or
+shared-file coordinator. M3 targets Obsidian 1.13.0/modern settings, HTTPS with exact
+loopback opt-in and bounded Fetch/CORS, without old-host/requestUrl fallbacks.
+
+These are accepted architectural decisions, **not current behavior**. M1 remains
+unconditional, M2 remains local-only, and the current manifest remains 1.5.0 until
+implementation. This PR changes no production code/configuration/dependencies.
 
 ## Explicitly deferred
 
-- M3 (NEXT, planning only): Remote client, opt-in selection/settings and safe
-  explicit publishing; product and conditional-mutation decisions remain open.
-- M4: Synchronization direction, conflicts, remote-to-local writes, deletion/
-  tombstones, reconciliation and offline state.
-- M5: Operational readiness, resource limits and authentication evolution.
-- M6: MCP transport and tool definitions.
-- Outside this roadmap: search, attachments and AI inference. D1, Durable Objects,
-  queues, Workers AI, Vectorize and external databases are not selected dependencies.
+- M3 (NEXT, design ready): implementation/qualification of the complete automatic
+  outward mirror, including basic recovery and safe writer handoff.
+- M4: Remote-to-local authority, conflict resolution, adoption and richer restore UX.
+- M5: Broader operational readiness, abuse limits and scoped authentication evolution.
+- M6: Authorized MCP transport/tool definitions, never direct R2 access.
+- Outside this roadmap: search, attachments and AI inference. NAS replication or
+  stronger remote authority are possibilities, not selected infrastructure. D1,
+  Durable Objects, queues, Workers AI, Vectorize and external databases are not
+  selected dependencies.
 
 Future product choices remain visible in the [roadmap decision register](roadmap.md#unresolved-product-decisions).
 Use [ADRs](decisions/README.md) when resolving consequential choices; do not add

@@ -105,5 +105,36 @@ JSON API/health/error and Markdown content responses include
 or the bodyless DELETE response. M1 responses do not use the protocol package's
 reserved metadata envelope or include sync revisions.
 
+## Accepted M3 API design — not implemented
+
+The [M3 v2 contract](milestones/m3-remote-bridge-client-and-publishing.md#v2-contract-surface)
+and accepted-design [ADR 0002](decisions/0002-conditional-remote-note-mutation.md)
+specify a safe interface for automatic local→remote mirroring. Product decisions
+are resolved, but these are **not endpoints or guarantees in current code**.
+
+- Authenticated v2 association/designation description, paginated list, content
+  read and separate current-state inspection (including tombstones/own receipts).
+- Conditional create/update/recreation: If-None-Match:* or one strong If-Match of
+  the acknowledged application revision. Fresh server revisions inside envelopes
+  distinguish same-text generations. No get-then-unconditional-write or adoption.
+- Conditional DELETE is a recovery-before-tombstone PUT, not physical object
+  deletion. Normal note reads/listing hide tombstones. Separate recovery metadata/
+  text endpoints, explicit conditional sealing repair and expiry purge implement
+  the 30-day policy in
+  [ADR 0004](decisions/0004-recoverable-mirror-deletions.md); small safety markers remain.
+- V2 mutations require operation/association/writer IDs and the bearer. Static
+  writer designation is an operating guard, not scoped auth; mirror eligibility
+  likewise does not determine future REST/MCP permission.
+- Upgraded Worker retires **both v1 PUT and DELETE** with authenticated 410. V1
+  reads/listing decode live envelopes and omit tombstones; untagged legacy text
+  remains readable, not automatically adopted or converted. No v1 mutation fallback
+  when talking to an old server that ignores conditional headers.
+- Strict shared NotePath/receipt/revision schemas, explicit supported Content-Type
+  for v2 PUT and optional zero-byte body, 412/428 outcomes, bounded streamed bytes,
+  no-store and narrowly registered CORS match generated OpenAPI in implementation.
+
+Do not send content to an assumed v2 implementation, deploy, migrate, expire current
+R2 keys or run old Worker code over new envelopes as part of this planning PR.
+
 See [current state](current-state.md), [architecture](architecture.md) and the
 [roadmap](roadmap.md) for evidence, safety boundaries and deferred capabilities.

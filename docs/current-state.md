@@ -3,7 +3,13 @@
 This snapshot records the completed M2 local-inspection implementation and M1
 foundation. M2 source/tooling through `2e74b23` passed independent semantic review;
 the completion PR records final validation and makes the transition canonical
-when merged. M3 is planning only, with no remote plugin client implemented.
+when merged. M2 is now merged at `b300726` (PR #7). M3 is planning only, with no
+remote plugin client implemented. Its [accepted design decisions](plans/m3-design-decisions.md)
+and [sequential plan](plans/m3-remote-bridge-client-and-publishing.md) are documentation,
+not implemented capabilities. The approved product is an automatic whole eligible
+Markdown mirror with recoverable runtime deletion/rename, per-path state and one
+designated writer—not selected/manual publishing. M3 targets Obsidian 1.13.0/native
+SecretStorage; this docs-only PR leaves the current 1.5.0 manifest unchanged.
 M1 behavior is unchanged from the baseline audited at `22d3ee0` (PR #4).
 This is not a claim about a deployed environment or installed Obsidian host.
 [Roadmap](roadmap.md) owns milestone status; [architecture](architecture.md) owns
@@ -87,7 +93,7 @@ M1 is a remote storage API, **not synchronization**. A token holder can read,
 replace and permanently delete any accepted note in this one namespace. There
 are no per-user/device identities, permissions, vault namespaces, conditional
 writes, revisions, conflict detection, tombstones, remote-to-local writes,
-selection rules, retries, offline queue or initial-sync state. The separate
+automatic saved-event processing, per-path state, retries or initial-sync state. The separate
 existence check and put are not atomic concurrency protection. Never use them as
 such in a future sync client.
 
@@ -103,9 +109,11 @@ exists. Local secret configuration is ignored and must not become project memory
 
 The runtime/OpenAPI PUT permissiveness difference is a known contract gap, not a
 new implementation in this handoff. Resolve and test the documented client-facing
-contract in M3 before relying on generated clients. Broader operational limits,
-recovery and authentication evolution belong to M5; any prerequisite needed to
-prevent data loss in M3/M4 must be addressed in that earlier milestone.
+contract in M3 before relying on generated clients. M3's accepted design includes
+safe v2 mutations, paginated reads, 30-day deletion recovery, tombstone/purge markers,
+native secret references and explicit writer handoff. None exists in source yet.
+Broader operating limits/recovery automation and scoped authentication remain M5;
+prerequisites to safe M3/M4 behavior must not be postponed there.
 
 ## History that still matters
 

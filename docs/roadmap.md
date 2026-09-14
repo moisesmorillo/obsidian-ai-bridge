@@ -1,278 +1,232 @@
 # Project roadmap
 
-This is the canonical execution roadmap. It distinguishes implemented facts from
-planned product direction. Dates are intentionally not assigned. Engineering
-rules live in [AGENTS.md](../AGENTS.md), not in a parallel rule set here.
+This is the canonical execution roadmap: implemented facts, planned direction and
+unresolved choices are distinct. Dates are intentionally not assigned. Engineering
+rules live in [AGENTS.md](../AGENTS.md).
 
 ## Project end state
 
-`obsidian-ai-bridge` lets an Obsidian user deliberately expose selected Markdown
-notes to trusted remote AI/agent clients, while retaining control of the local
-vault. The useful product is:
+`obsidian-ai-bridge` maintains a **private personal mirror of all eligible Markdown
+notes** for authorized remote API/AI/agent access, while the user keeps the working
+Obsidian vault. This supersedes PR #8's selected-note/manual-publishing drift.
 
 ```text
-Obsidian → Obsidian plugin → Cloudflare Worker → Cloudflare R2
-                                  ↑
-                         Remote API clients
-                         Future MCP adapter
+iCloud ↔ working Obsidian vaults
+               |
+       one designated plugin writer
+               ↓
+        Cloudflare Worker ← authorized REST clients / future MCP adapter
+               ↓
+          private R2 mirror
 ```
 
-- Users can choose eligible content, initiate a bounded synchronization workflow,
-  see progress/failures/divergence, and retry safely from Obsidian.
-- R2 holds a remote mirror of selected Markdown text and only the metadata needed
-  for safe reconciliation. It is not a copy of the entire vault, its credentials,
-  Obsidian configuration, attachments or arbitrary files.
-- Trusted clients can list/read remote notes and perform explicitly authorized
-  changes through stable, validated APIs. Remote edits must not silently overwrite
-  local edits. Whether they are imported through explicit review or a bounded
-  bidirectional workflow is an M4 decision, not a present guarantee.
-- Synchronization is opt-in and observable. Divergence preserves both versions
-  until resolved; absence is not automatically interpreted as permission to
-  delete. Deletion propagation requires explicit semantics and a recovery policy.
-- The Worker is the remote authentication boundary; the plugin is the local-vault
-  access boundary. Secrets and note content never enter diagnostic logs. The
-  baseline trusts the Worker/cloud operator with note text; end-to-end encryption
-  and multi-tenant hosting are not implied.
-- MCP eventually adapts these established operations for agents. It does not
-  create a second persistence path, bypass permissions or execute vault content
-  as instructions.
+- The user opts into the entire eligible Markdown mirror. Saved local creates,
+  changes, eligible runtime removals and renames propagate automatically, with
+  bounded work, visible progress/divergence and operational retry/pause controls.
+  No per-note selection, folder/tag/frontmatter allow-list or manual-primary model.
+- Retain canonical literal NotePath, lowercase .md, dot/config exclusions and 1 MiB
+  UTF-8 limit. The mirror is not a backup of credentials, configuration, attachments
+  or arbitrary vault files. Eligibility determines scope, **not authorization**.
+- iCloud remains device-to-device sync. R2 is mirror/API persistence, not the sole
+  authority or complete guaranteed backup. The designated writer must be running
+  for freshness. NAS replication/stronger remote authority may be considered later,
+  but are not present requirements or implemented capabilities.
+- Local saved state is the normal M3 mutation source. Remote revision changes are
+  divergence, not permission to overwrite or import. M4 decides reviewed import
+  versus bounded bidirectionality and explicit conflict/adoption/restoration flows.
+- An observed post-bootstrap Obsidian delete event for an already-associated eligible
+  note authorizes recoverable mirror removal, including iCloud/external activity.
+  No human-provenance claim or per-delete confirmation. Startup/scan absence never
+  authorizes deletion; permanent revisioned heads prevent unsafe resurrection.
+- The Worker authenticates remote clients; the plugin accesses local vault data.
+  The host/Worker/cloud operator are trusted with plaintext. One bearer remains
+  privileged; mirror inclusion and writer IDs are not per-client permissions.
+- MCP will adapt established authorized operations, not bypass Worker/application
+  policy or access R2 directly. It never executes instructions found in notes.
 
-Out of scope for this roadmap: replacing Obsidian Sync, general file backup,
-attachments, search/indexing, embeddings, hosted AI inference, collaboration,
-arbitrary filesystem access, and SaaS multi-tenancy. No additional database or
-Cloudflare service is assumed. New infrastructure needs a concrete requirement
-and a [decision record](decisions/README.md).
+Outside this roadmap: replacing iCloud/Obsidian Sync, general file backup,
+attachments, search/indexing, embeddings/inference, collaboration, arbitrary
+filesystem access and SaaS multi-tenancy. No additional database/service is assumed.
+New infrastructure requires a concrete need and [ADR](decisions/README.md).
 
 ## Current state
 
-**M2 — Obsidian read-only local-vault adapter — COMPLETE.** The plugin supports
-explicit metadata-only local inspection through official Obsidian APIs. M1's
-independent authenticated Worker/R2 API remains unchanged; there is no connected
-mirror, remote plugin client or production-readiness claim.
+**M2 — Obsidian read-only local-vault adapter — COMPLETE**, merged at `b300726`
+(PR #7). The plugin supports explicit metadata-only local inspection. M1's independent
+authenticated Worker/R2 API is unchanged; there is no connected mirror, remote
+plugin client or production-readiness claim. M3 is NEXT with an implementation-ready
+**design**, not implemented functionality. This PR changes documentation only.
 
-See [verified current state](current-state.md) for source evidence, limitations,
-250 source tests plus 3 artifact tests, coverage, tooling and CI;
-[architecture](architecture.md) for boundaries; [API](api.md) for unchanged endpoints.
-[M2 completion evidence](milestones/m2-obsidian-read-only-local-adapter.md#completion-evidence)
-and its [sequential plan](plans/m2-obsidian-read-only-local-adapter.md) record
-validation and independent semantic/security review. No deployment or real
-Obsidian desktop/mobile installation was exercised. M3 is NEXT for planning only;
-this completion transition becomes canonical when merged.
+See [current-state evidence](current-state.md), [architecture](architecture.md),
+[implemented API](api.md), [M2 completion](milestones/m2-obsidian-read-only-local-adapter.md#completion-evidence)
+and [M2 plan](plans/m2-obsidian-read-only-local-adapter.md). Current tests cover
+250 source and 3 artifact cases; no deployed Worker or real Obsidian desktop/mobile
+host was exercised. New M3 test requirements are not existing coverage.
 
 ## Milestone table
 
-Exactly one milestone is `NEXT`. `PLANNED` rows are direction, not authorization to
-start production code. Dependencies include all earlier milestones unless noted.
+Exactly one milestone is `NEXT`. Later rows are direction, not permission to start
+production code. Dependencies include all previous milestones.
 
 | ID | Milestone | Status | User-visible outcome | Dependency |
 | --- | --- | --- | --- | --- |
-| M1 | Worker API foundation and engineering quality | COMPLETE | Authenticated remote Markdown CRUD/listing with R2 and an enforced quality gate | None |
-| M2 | Obsidian read-only local-vault adapter | COMPLETE | Load the plugin and explicitly inspect eligible local notes without modifying or sending them | M1 |
-| M3 | Remote bridge client and explicit publishing | NEXT | Deliberately publish selected notes and inspect remote state with clear, safe failure behavior | M2 |
-| M4 | Safe reconciliation, conflicts and deletions | PLANNED | Reconcile local/remote changes without silent data loss; review divergent and deleted notes | M3 |
-| M5 | Operational and security readiness | PLANNED | Operate and recover a bounded personal bridge with documented limits and trust assumptions | M4 |
-| M6 | MCP adapter | PLANNED | Use the same authorized bridge operations from MCP-capable agents | M5 |
+| M1 | Worker API foundation and engineering quality | COMPLETE | Authenticated remote Markdown CRUD/listing with R2 and enforced quality gate | None |
+| M2 | Obsidian read-only local-vault adapter | COMPLETE | Explicit local inspection without sending or changing notes | M1 |
+| M3 | Automatic eligible-Markdown remote mirror | NEXT | Whole eligible saved vault mirrors outward, including recoverable removals/renames, with one designated writer | M2 |
+| M4 | Remote-to-local reconciliation and conflict resolution | PLANNED | Review/adopt/resolve remote divergence and richer restoration without silent local data loss | M3 |
+| M5 | Operational and security readiness | PLANNED | Operate a bounded personal bridge with reviewed limits, permissions and runbooks | M4 |
+| M6 | MCP adapter | PLANNED | Same authorized operations for MCP-capable agents | M5 |
 
 ### M1 — Worker API foundation and engineering quality
 
-- **Objective/scope:** Versioned Hono HTTP transport, single-token authentication,
-  canonical path validation, 1 MiB text limit, typed core service/repository port,
-  R2 adapter, Zod/OpenAPI/Scalar, sanitized errors and LogTape; strict tooling,
-  dedicated unit/integration tests and coverage-enforced CI.
-- **Non-goals:** Plugin runtime, synchronization, concurrency protection,
-  permissions beyond the token, recovery and production readiness.
-- **Risks retained:** Unconditional remote replacement/deletion, single-token
-  blast radius, whole-list scaling, runtime/OpenAPI permissiveness gap. These
-  limitations do not become safe sync semantics merely because M1 is complete.
-- **Exit criteria met:** Implemented route/path/payload/storage/auth behavior is
-  covered by the existing suite; canonical `mise run check` validates formatting,
-  semantic lint, types, coverage and both bundles. Manual semantic review and API/
-  architecture docs accompany the merged engineering work.
+- **Implemented:** Hono HTTP, single-token auth, canonical path validation, 1 MiB
+  bound, typed core service/port, R2, Zod/OpenAPI/Scalar, sanitized LogTape, strict
+  tools and coverage-enforced dedicated tests.
+- **Non-goals/retained risks:** no plugin sync, conditional writes, recovery or
+  production guarantees; unconditional remote PUT/DELETE, whole-list scaling and
+  runtime/OpenAPI permissiveness remain current limitations, not safe sync semantics.
+- **Exit met:** canonical check, tests, manual semantic review and API/architecture
+  documentation accompany the merged foundation. M3 deliberately changes its remote
+  mutation contract without rewriting these implemented historical facts.
 
 ### M2 — Obsidian read-only local-vault adapter
 
-- **Objective/scope:** Replace the scaffold with a loadable plugin, a read-only
-  local port/application service and official Obsidian adapter. Explicit commands
-  inspect eligible note paths and read the active saved note, showing metadata
-  only. Add plugin tests, loadable build packaging and development instructions.
-- **Non-goals:** Network calls, token/settings persistence, mirror selection UX,
-  watchers/schedulers, local writes/deletes, remote client, sync or MCP.
-- **Risks:** Confusing local literal paths with URL decoding, changed files during
-  reads, sensitive UI/log output, untested host packaging and accidental mutation.
-- **Exit criteria met:** The [completed specification](milestones/m2-obsidian-read-only-local-adapter.md)
-  records all acceptance items, 250 source/3 artifact passing tests, unchanged
-  coverage thresholds and independent semantic review with no defects found.
-  Local-only/read-only guarantees and generated CommonJS packaging are tested;
-  host compatibility evidence and untested real-host limitations are documented.
-- **Decisions deferred:** Eligibility for local inspection is **not** consent to
-  mirror. Remote selection/settings begin in M3; conflict/import policy in M4.
+- **Implemented:** loadable CommonJS plugin, read-only local port/service and
+  official saved-vault adapter; two explicit metadata-only inspection commands,
+  source tests, artifact checks and disposable-vault instructions.
+- **Non-goals/retained risks:** no network/settings/token/state persistence, watchers,
+  local writes/deletes, remote client or MCP. Reads are best-effort, not atomic;
+  no real-host compatibility test. Manifest currently remains 1.5.0.
+- **Exit met:** [completed spec](milestones/m2-obsidian-read-only-local-adapter.md)
+  records all acceptance items, coverage and independent semantic review.
+- **Boundary preserved:** inspection alone is not mirror opt-in. M3 adds whole-mirror
+  activation and automatic behavior; it does not reinterpret an M2 inspection as
+  consent or change the local read-only command semantics.
 
-### M3 — Remote bridge client and explicit publishing
+### M3 — Automatic eligible-Markdown remote mirror
 
-**NEXT, planning only:** refine the [M3 handoff specification](milestones/m3-remote-bridge-client-and-publishing.md)
-and create its implementation plan before production code. The unresolved
-choices below are not implicitly authorized by M2 completion.
+**NEXT — implementation-ready design; implementation not started.**
+[Specification](milestones/m3-remote-bridge-client-and-publishing.md),
+[approved decisions/evidence](plans/m3-design-decisions.md),
+[sequential test-first plan](plans/m3-remote-bridge-client-and-publishing.md) and
+accepted-design ADRs 0002–0004 define the behavior. Do not implement in this planning
+PR, deploy, or mark M3 complete merely because decisions are resolved.
 
-- **Objective/scope:** A typed remote adapter over the existing REST boundary;
-  opt-in connection settings, response validation, selected local-to-remote
-  publishing and remote inspection. Display per-operation outcomes and divergence.
-- **Non-goals:** Automatic bidirectional sync, local note mutation, delete
-  propagation, background queues, MCP or new infrastructure by default.
-- **Decisions before implementation:** Selection/default exclusion policy;
-  Worker URL/HTTPS and credential storage UX; initial mirror association and
-  existing-remote-content policy; explicit triggering; timeouts, cancellation and
-  bounded retry; minimum remote revision/precondition contract. Reconcile the M1
-  runtime/OpenAPI gap and validate returned paths beyond string schemas.
-- **Safety gate/risks:** M1 GET-then-PUT cannot prevent a race. Before publishing
-  to an existing or apparently absent path, specify and test server-enforced
-  conditional mutation or another demonstrated safe approach. Do not implement
-  a naive overwrite loop and defer safety to M4. If the required protocol change
-  materially expands scope, revise this milestone before coding.
-- **Exit criteria:** A user explicitly selects and publishes notes to a configured
-  bridge; existing/concurrent remote changes cannot be silently lost; no local
-  writes/deletes occur; auth/network/malformed-response/partial-failure paths are
-  visible and tested; protocol/OpenAPI compatibility and secret handling are
-  documented; detailed M3 acceptance checklist and canonical gate pass.
-- **Deferred concerns:** Full reconciliation history, remote edit import, rename/
-  delete handling and durable offline work belong to M4. M5 handles operating
-  scale and auth evolution, not prerequisites to safe first use.
+- **Scope:** whole eligible scope/opt-in; modern SecretStorage/settings with M3 host
+  minimum 1.13.0; HTTPS/exact loopback; Fetch/CORS; bootstrap and saved Vault events;
+  bounded coalescing/concurrency/retries; per-path ACK/hash/uncertainty state;
+  safe conditional creates/updates/deletes/recreation/rename; health/pause/retry.
+- **Delete/recovery:** associated post-bootstrap runtime removals, never scan
+  difference; archive before CAS tombstone; 30-day recoverability; separate recovery
+  list/read and safe conditional expiry purge to retained markers. No native R2
+  trash/versioning/precise-erasure claim; no lifecycle expiry of authoritative heads.
+- **Writer/state:** one explicitly designated supported device, host-local activation
+  and ledger, static Worker ID guard, clean pause/drain/export/import handoff.
+  Staged imports require matching local hashes/tombstone absence before activation,
+  preventing stale iCloud data from overwriting/recreating remote state. No iCloud
+  transaction/election/leases; unresolved work blocks takeover. Lost-device
+  reset uses a new empty association without redirecting old requests into it.
+- **Remote prerequisite:** fresh body-embedded server revisions/receipts and R2 CAS;
+  v2-only mutations and retirement of **both** unsafe v1 PUT and DELETE. Legacy
+  raw objects remain readable but are not silently adopted. Real path schemas and
+  runtime/OpenAPI media/empty-body agreement are part of this change.
+- **Safety/qualification:** prove exact race windows and local runtime predicates
+  before automatic mutation; unsupported host primitives fail closed. No abort =
+  rollback assumption, refresh-and-overwrite, body queue or Plugin-instance-only
+  lock. Same-runtime owner survives replacement/re-enable; restart uses ledger.
+- **Exit:** detailed A1–A11 checklist, observed automatic full eligible behavior,
+  tested deletes/recovery/rename/restart/handoff, bounded typed failures and diagnostics,
+  canonical/coverage/artifact/platform gates and post-green semantic review; docs
+  reflect actual code. No remaining material M3 decision.
+- **Non-goals:** remote-to-local writes, merging/arbitrary adoption, richer restore
+  UX, multi-writer coordination, scheduled polling/cleanup, MCP or new infrastructure.
 
-### M4 — Safe reconciliation, conflicts and deletions
+### M4 — Remote-to-local reconciliation and conflict resolution
 
-- **Objective/scope:** Build on safe publishing to track change baselines,
-  detect divergence, preserve conflicting versions, and provide explicit recovery/
-  resolution flows. Define remote-to-local import, renames and deletion semantics
-  before enabling them.
-- **Non-goals:** Silent last-writer-wins, blanket remote authority over a vault,
-  collaborative real-time editing, attachments or a general sync replacement.
-- **Decisions before implementation:** Primary sync direction and source authority;
-  reviewed import versus bounded bidirectionality; revision/baseline metadata;
-  conflict representation and resolution UX; delete/tombstone retention and
-  recovery; renames; offline queue persistence, retries and interrupted-run
-  reconciliation; automatic triggers (if any). Record durable decisions as ADRs.
-- **Risks:** Data loss, resurrection of deleted notes, stale local reads, concurrent
-  clients, partial writes, crash recovery and unbounded retained metadata.
-- **Exit criteria:** Documented state transitions and deterministic scenario tests
-  cover concurrent edits, missing notes, deletes/renames, offline/restart and
-  partial failure; all permitted local writes are guarded and visible; conflicts
-  preserve recoverable content; absence alone causes no deletion; implemented
-  recovery can be exercised with fakes; protocol/docs and canonical gate pass.
-- **Deferred concerns:** Fleet/user identity and operating envelope remain M5;
-  MCP remains M6. Do not choose D1/queues/coordination services without a concrete
-  correctness need that existing Worker/R2 primitives cannot satisfy.
+- **Scope:** build on M3 baselines/tombstones/recovery to resolve divergence,
+  explicitly adopt existing/legacy paths, import remote changes safely and offer
+  richer conflict/restoration UX. Complex deferred rename/history reconciliation
+  belongs here, not a reason to postpone M3's ordinary local rename handling.
+- **Decisions:** reviewed import versus bounded bidirectionality, authority for each
+  permitted local mutation, conflict preservation/merge UI, remote deletion import,
+  recovery/adoption/reset workflows and any future cross-device expansion. M3's
+  outward triggers, ordinary tombstones, 30-day window and single-writer design are
+  already decided; do not reopen them implicitly.
+- **Risks/exit:** deterministic concurrent edit/delete/rename/offline/restart tests,
+  guarded local writes, preserved divergent versions and safe exercised restoration;
+  absence alone never silently deletes. Protocol/docs, quality gate and review pass.
+- **Non-goals:** silent last-writer-wins, blanket remote authority, collaboration,
+  attachments or replacement of working-vault sync. No new coordinator/store unless
+  a concrete accepted correctness need requires it.
 
 ### M5 — Operational and security readiness
 
-- **Objective/scope:** Define and validate the supported operating envelope for a
-  personal bridge: setup/upgrade/rollback/recovery runbooks, bounded resource use,
-  safe diagnostics, credential lifecycle and a reviewed threat model.
-- **Non-goals:** Claiming security certification, guaranteed scale, multi-tenant
-  SaaS or adding services merely for hypothetical future load.
-- **Decisions before implementation:** Single-token sufficiency versus scoped
-  read/write/delete clients or device identities; rotation/revocation/migration;
-  list pagination/rate/size limits and abuse handling; backup/recovery guarantees;
-  supported platforms/releases; log retention/redaction and public documentation
-  exposure. Earlier milestones must pull forward any prerequisite security fix.
-- **Risks:** Token compromise, operator error, misleading readiness claims,
-  unbounded lists/retries/storage and credential leakage in diagnostics.
-- **Exit criteria:** Limits and permissions match implementation; recovery and
-  credential lifecycle are tested/documented; supported setup/upgrade workflows
-  and residual risks are explicit; security review, canonical gate and semantic
-  review pass. Deployment is a separately authorized operator action, not a task
-  implied by milestone completion.
-- **Deferred concerns:** Agent-facing transport is M6; capabilities outside the
-  personal-bridge scope require a new roadmap decision.
+- **Scope:** supported operating envelope, threat model, setup/upgrade/rollback/
+  backup/recovery runbooks, abuse limits and credential lifecycle. M3 pulls forward
+  conditional safety, v2 pagination and basic recovery required for safe mirroring.
+- **Decisions:** scoped read/write/delete clients versus existing privileged bearer;
+  revocation/migration, broader quotas/abuse controls, releases/platform support,
+  recovery automation/retention operations and logging retention/public docs.
+- **Risks/exit:** truthful limits/permissions, tested runbooks/rotation/recovery,
+  bounded resources and reviewed secrets/diagnostics. No security certification,
+  SaaS scale or full-backup guarantee without concrete evidence.
+- Deployment is separately authorized, not implied by validation/completion.
 
 ### M6 — MCP adapter
 
-- **Objective/scope:** Expose the established authorized note operations through
-  a thin MCP adapter over the bridge, with discoverable tool contracts and safe
-  error mapping. Reuse application/protocol policy, not R2 access shortcuts.
-- **Non-goals:** A separate sync engine, unrestricted filesystem tools, executing
-  instructions found in notes, AI inference, search or bypassing permissions.
-- **Decisions before implementation:** Hosting/transport location, client auth
-  mapping, tool/resource surface, mutation confirmation and content-size limits.
-- **Risks:** Excessive agent privileges, prompt injection through note content,
-  divergence from REST contracts and accidental sensitive tool/log output.
-- **Exit criteria:** Supported MCP clients can exercise the documented permitted
-  operations; auth and mutation boundaries hold; content remains untrusted data;
-  contract/error/security tests and canonical gate pass; setup and capabilities
-  are documented without claiming untested client compatibility.
-- **Deferred concerns:** Any new product capability beyond adapting the existing
-  bridge needs an explicit roadmap revision, not an extra MCP-only feature.
+- **Scope:** thin MCP transport over established authorized application operations,
+  discoverable contracts and safe errors. No direct R2 shortcut or separate sync engine.
+- **Decisions:** hosting/transport, authentication/permission mapping, tool/resource
+  surface, confirmation and content limits. Mirror eligibility is not this policy.
+- **Risks/exit:** excessive agent privilege, prompt injection and sensitive output;
+  contract/auth/mutation tests, quality/semantic gates and actual supported-client
+  evidence. Notes remain untrusted data, never executable instructions.
+- No MCP-only inference/search/product expansion without a new roadmap decision.
 
 ## Unresolved product decisions
 
-These are open questions, not implicit requirements. Resolve them at the earliest
-listed milestone, before the affected code. A materially ambiguous decision needs
-maintainer clarification or a documented proposal, not an agent's silent guess.
+**None for M3.** Its accepted choices and primary-source limits are in the
+[decision brief](plans/m3-design-decisions.md). Required host/storage qualification
+is technical validation, not an excuse to revert to selected/manual publishing.
+Future questions remain open and must be resolved before affected code:
 
 | Decision required | Earliest milestone | Boundary until resolved |
 | --- | --- | --- |
-| Which notes/folders are mirrored, opt-in defaults, exclusions and selection UX | M3 | M2 inspection never authorizes uploading anything |
-| Endpoint configuration, HTTPS/local-dev exceptions, token entry/storage UX | M3 | No connection settings or secrets in M2 |
-| Initial sync/remote association, safe existing-content handling and conditional writes | M3 | No automatic upload or unconditional overwrite loop |
-| Manual trigger UX, cancellation, bounded network timeouts/retries | M3 | M2 commands are local only; no scheduler |
-| Primary synchronization direction and remote-to-local import authority | M4 | M3 publishes outward only; no local writes |
-| Conflict state, resolution UX and revision/baseline persistence | M4 | M3 detects/refuses unsafe replacement; does not merge |
-| Remote/local deletes, tombstones, retention/recovery and renames | M4 | No absence-driven propagation; existing API DELETE remains destructive |
-| Durable offline queue, restart behavior, automatic sync triggers | M4 | No hidden backlog or automatic background mutation |
-| Per-client permissions, token evolution and credential lifecycle | M5 | Single bearer grants the entire remote API; never describe it as scoped access |
-| Supported scale, public pagination, abuse controls, release/backup/operations policy | M5 | Experimental foundation, not production guarantees |
-| MCP hosting, transport, tools/resources and permission mapping | M6 | No MCP dependencies or contracts yet |
+| Remote-to-local authority, reviewed import versus bidirectionality | M4 | M3 is local→remote; remote divergence is not overwritten/imported |
+| Conflict/adoption/restoration UX and complex deferred histories | M4 | M3 preserves baselines/recovery and reports blockers; no merge or arbitrary adoption |
+| Any expansion beyond one designated writer | M4 or separately approved revision | No election/leases/shared-file transaction or automatic takeover |
+| Scoped API/MCP client permissions and credential evolution | M5 | Bearer remains privileged; device IDs/eligibility are not permissions |
+| Operating scale, abuse controls, release/backup/recovery automation | M5 | Experimental bridge; finite M3 bounds and basic recovery do not prove production readiness |
+| MCP hosting, transport, tools/resources and auth mapping | M6 | No MCP implementation or direct storage access |
 
-Milestone ordering never justifies deferring a known data-loss or security blocker.
-Move the needed decision forward explicitly and update the spec/roadmap before
-implementing it. Future rows are intentionally not implementation-level specs.
+Milestone order never justifies deferring a data-loss/security prerequisite. Move
+required decisions forward explicitly; surface material ambiguity rather than guess.
 
 ## Agent onboarding and execution
 
-Read in order:
+Read in order: [README](../README.md), [AGENTS](../AGENTS.md),
+[architecture](architecture.md), this roadmap, the single NEXT
+[M3 spec](milestones/m3-remote-bridge-client-and-publishing.md),
+[plan](plans/m3-remote-bridge-client-and-publishing.md) and
+[decisions](plans/m3-design-decisions.md). Inspect relevant source/tests/tooling/CI,
+[CONTRIBUTING](../CONTRIBUTING.md) and [SECURITY](../SECURITY.md).
+[current-state](current-state.md) is an evidence map, not a substitute for code.
 
-1. [README.md](../README.md)
-2. [AGENTS.md](../AGENTS.md)
-3. [docs/architecture.md](architecture.md)
-4. [docs/roadmap.md](roadmap.md) (this file)
-5. The specification linked by the `NEXT` milestone, currently the
-   [M3 planning handoff](milestones/m3-remote-bridge-client-and-publishing.md).
-6. Its corresponding plan under `docs/plans/`. M3 has no implementation plan yet:
-   resolve/refine its specification and create that plan before production code.
-   The completed [M2 plan](plans/m2-obsidian-read-only-local-adapter.md) is evidence,
-   not authorization to skip M3 decisions.
-
-Then inspect the relevant source, tests, `.mise.toml`, coverage and CI, plus
-[CONTRIBUTING.md](../CONTRIBUTING.md) and [SECURITY.md](../SECURITY.md). Use
-[current-state.md](current-state.md) as an evidence map, not a substitute for reads.
-Repository state beats chat assumptions; current code beats stale descriptions.
-Report discrepancies and correct docs rather than quietly changing completed
-behavior to fit a remembered conversation.
-
-Implement only `NEXT`. If its spec is absent or not implementation-ready, write/
-refine it first and surface material unresolved decisions. Follow
-[ADR guidance](decisions/README.md) for durable architectural choices.
+Repository state beats conversation assumptions; current code beats stale docs.
+Correct discrepancies explicitly without changing a completed invariant silently.
+Implement only NEXT after an implementation request. A planning PR does not itself
+implement/finish a milestone or authorize deployment. If a later spec is not ready,
+refine it and surface material decisions first; use [ADRs](decisions/README.md).
 
 ### Validation and milestone transition
 
-- Install with `mise install` and `mise run install`; use focused mise tasks while
-  working and run `mise run check` before completion. Never deploy as validation.
-- Add behavioral tests, keep coverage inclusion/thresholds intact, check editor
-  diagnostics, and perform the semantic/security review in `AGENTS.md` after the
-  automated gate succeeds. Link evidence and any justified deferrals in the PR.
-- Check the active spec's entire acceptance checklist. Green CI alone is not
-  milestone completion; unresolved exit criteria keep the milestone active.
-- In the completion PR, update the spec with status and validation evidence, this
-  roadmap, current-state/architecture/API docs as affected, ADRs and operational
-  instructions. Preserve completed milestone invariants.
-- Only after that completion evidence exists, mark the completed row `COMPLETE`
-  and the immediately following eligible row `NEXT` (exactly one). Draft/refine
-  the following milestone's detailed spec before any production implementation;
-  link it here and update README's active-spec link. A `NEXT` row without a ready
-  spec authorizes planning only. The transition becomes canonical when merged.
-- Do not begin the following milestone in the same implementation PR. After M6,
-  there is no automatic M7: document an explicit new objective with the maintainer.
-
-A future session can start with:
-
-> Continue according to the repository roadmap. Read AGENTS.md and the active
-> milestone spec first. Implement only NEXT, validate it completely, update the
-> roadmap/docs, and open a PR. Do not deploy.
+- `mise install`, `mise run install`, focused mise tasks, then `mise run check`.
+  Tests/coverage/build/diagnostics are necessary, not sufficient; no test deployment.
+- Perform the code-review semantic/security pass after green checks. Fix and
+  re-review all concrete findings; document bounded permitted deferrals explicitly.
+- Check all active acceptance items. In the implementation completion PR, update
+  spec/status/evidence, roadmap, current-state/architecture/API/ADRs/operations.
+- Only then mark M3 COMPLETE and the next eligible row NEXT (exactly one), refine
+  its spec and active links, and keep later production code out of the completion
+  PR. Transitions become canonical when merged; do not merge your own work here.
+- After M6 there is no inferred M7; propose an explicit new roadmap objective.

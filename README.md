@@ -2,11 +2,16 @@
 
 A secure bridge between Obsidian and remote AI or agent clients.
 
-> **Status:** M2 complete / experimental. The plugin provides local-only, read-only inspection; the independent M1 Worker provides authenticated R2 storage. **NEXT (planning only):** [M3 — Remote bridge client and explicit publishing](docs/milestones/m3-remote-bridge-client-and-publishing.md).
+> **Status:** M2 complete / experimental. The plugin provides local-only, read-only inspection; the independent M1 Worker provides authenticated R2 storage. **NEXT (design ready, not implemented):** [M3 — Automatic eligible-Markdown remote mirror](docs/milestones/m3-remote-bridge-client-and-publishing.md).
 
 ## Motivation
 
-Obsidian vaults are valuable local knowledge stores. The project will explore a carefully bounded way for remote AI and agent clients to interact with vault data without coupling domain logic to a specific transport or hosting platform.
+The intended product automatically mirrors **all eligible saved Markdown notes**
+from Obsidian to a private Worker/R2 service after whole-mirror opt-in. One designated
+device writes the mirror; iCloud remains device-to-device vault sync. Remote API and
+future MCP authorization are separate from mirror scope. R2 is not the sole source
+of truth or a guaranteed full backup; NAS replication/stronger remote authority are
+future possibilities, not implemented features.
 
 ## Architecture
 
@@ -146,8 +151,15 @@ docs/                   Architecture, API, current-state audit, roadmap,
 
 Start with [AGENTS.md](AGENTS.md), [architecture](docs/architecture.md), the
 [canonical roadmap and agent onboarding](docs/roadmap.md), then the
-[active M3 planning handoff](docs/milestones/m3-remote-bridge-client-and-publishing.md).
-M3 requires specification refinement and an implementation plan before coding;
+[active M3 design proposal](docs/milestones/m3-remote-bridge-client-and-publishing.md).
+The [approved decision brief](docs/plans/m3-design-decisions.md) and
+[sequential plan](docs/plans/m3-remote-bridge-client-and-publishing.md) specify
+automatic bootstrap/saved-file events, per-path state, safe conditional mutations,
+recoverable runtime deletes/renames and explicit single-writer handoff. There is
+no per-note selection model. M3 targets Obsidian **1.13.0** and native SecretStorage;
+the current M2 manifest remains 1.5.0 until implementation. Product choices are
+resolved; implementation/platform qualification remain to be done. No v2 API,
+credential/state storage or autosync is implemented by this documentation work;
 [M2 completion and slice evidence](docs/plans/m2-obsidian-read-only-local-adapter.md)
 record the implemented baseline. The roadmap defines the useful product end state, milestone exit criteria and
 unresolved decisions. The [current-state audit](docs/current-state.md) links facts

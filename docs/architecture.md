@@ -14,8 +14,9 @@ packages/protocol      Shared protocol contracts and serialization definitions
 M1 is complete: an authenticated HTTP Worker API backed by Cloudflare R2 plus the
 engineering-quality foundation. M2 is complete: a local-only read-only Obsidian
 inspection plugin with source tests, artifact checks and semantic review. M3 has
-completed only its [Slice 0 platform qualification](qualification/m3-slice-0-platform-primitives.md);
-there is no production M3 behavior or connection between the plugin and Worker yet.
+completed [Slice 0 platform qualification](qualification/m3-slice-0-platform-primitives.md)
+and Slice 1's modern plugin baseline/shared typed contracts; there is no production
+M3 behavior or connection between the plugin and Worker yet.
 See the [verified current state](current-state.md) for source/configuration evidence,
 [roadmap](roadmap.md) for execution order and open decisions, and
 [ADR 0001](decisions/0001-worker-r2-foundation.md) for the durable foundation.
@@ -198,9 +199,11 @@ shared-file coordinator. M3 targets Obsidian 1.13.0/modern settings, HTTPS with 
 loopback opt-in and bounded Fetch/CORS, without old-host/requestUrl fallbacks.
 
 These are accepted architectural decisions, **not current behavior**. M1 remains
-unconditional, M2 remains local-only, and the current manifest remains 1.5.0 until
-implementation. Slice 0 adds only a pinned local workerd qualification task, a
-declaration-only host check and evidence; it changes no production composition.
+unconditional and M2 commands remain local-only. Slice 1 raises the current manifest
+to 1.13.0 and adds platform-independent core contracts plus strict protocol DTO
+schemas, but adds no settings, remote client, Worker v2 route or autosync composition.
+Slice 0 remains the pinned local workerd qualification task and declaration-only host
+check; neither slice establishes real-host behavior.
 
 ## Explicitly deferred
 

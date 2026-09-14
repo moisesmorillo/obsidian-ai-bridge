@@ -83,7 +83,7 @@ describe("packaged Obsidian main.js", () => {
     );
     expect(JSON.parse(manifestText)).toMatchObject({
       id: "ai-bridge",
-      minAppVersion: "1.5.0",
+      minAppVersion: "1.13.0",
       isDesktopOnly: false,
     });
     const requires = [...bundle.matchAll(/require\(["']([^"']+)["']\)/g)].map(

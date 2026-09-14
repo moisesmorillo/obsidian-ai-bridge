@@ -78,6 +78,14 @@ fix/review it rather than silently use old APIs or invent a new product policy.
   import cycles, deprecated display(), weakening production Node isolation.
 - **Validation/acceptance:** focused/shared tests and canonical check/build;
   A1/A2/A4/A5/A6/A9 contracts only. No automatic work or enabled v2 routes yet.
+- **Implemented evidence:** Slice 1 raises `minAppVersion` and the generated-artifact
+  expectation to 1.13.0 while preserving the two M2 inspection commands. Core exports
+  UUID-v4 identities, strong application ETags, SHA-256 digest validation, conditional
+  requirements, closed current/recovery/intent/effect contracts and capability-focused
+  current-note/recovery ports. Protocol imports only public core predicates and adds
+  strict bounded v2 DTO schemas for those contracts. No Worker v2 handler, R2 adapter,
+  plugin settings/state/Fetch client/event wiring or autosync implementation is added.
+  Final check/review evidence is recorded in the Slice 1 implementation PR.
 
 ## 2. Coherent Worker current-generation and recovery transition
 

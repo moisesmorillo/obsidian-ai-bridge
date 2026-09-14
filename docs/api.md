@@ -129,9 +129,10 @@ are resolved, but these are **not endpoints or guarantees in current code**.
   reads/listing decode live envelopes and omit tombstones; untagged legacy text
   remains readable, not automatically adopted or converted. No v1 mutation fallback
   when talking to an old server that ignores conditional headers.
-- Strict shared NotePath/receipt/revision schemas, explicit supported Content-Type
-  for v2 PUT and optional zero-byte body, 412/428 outcomes, bounded streamed bytes,
-  no-store and narrowly registered CORS match generated OpenAPI in implementation.
+- Slice 1 implements strict shared NotePath/receipt/revision/conditional/recovery DTO
+  schemas and their public exports, but no route consumes them yet. Slice 2 must add
+  explicit v2 PUT content types/optional zero-byte body, 412/428 outcomes, bounded
+  streams, no-store and narrowly registered CORS together with generated OpenAPI.
 
 Do not send content to an assumed v2 implementation, deploy, migrate, expire current
 R2 keys or run old Worker code over new envelopes as part of this planning PR.

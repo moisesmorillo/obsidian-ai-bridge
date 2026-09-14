@@ -8,7 +8,7 @@ import { TFile } from "obsidian";
  * Restricts official host APIs to saved-file access without retaining the App.
  *
  * Uses getAbstractFileByPath (since 0.11.11), not getFileByPath (1.5.7),
- * to honor minAppVersion 1.5.0. Vault.read deliberately bypasses cached/editor text.
+ * under the M3 minAppVersion 1.13.0 baseline. Vault.read deliberately bypasses cached/editor text.
  *
  * @param vault - The host's vault, narrowed to read-only capabilities.
  * @returns A host boundary preserving TFile identity for lookup/read comparisons.

@@ -53,7 +53,7 @@ prove visual integration, real event timing or mobile compatibility.
 Do not develop in a personal/production vault. Use only synthetic, non-sensitive
 notes. These are manual developer actions, never tasks performed by the plugin.
 
-1. Create a new empty disposable vault in Obsidian **1.5.0 or newer**. Keep this
+1. Create a new empty disposable vault in Obsidian **1.13.0 or newer**. Keep this
    repository outside the vault. Note the vault's configuration directory (default
    `.obsidian`; use its actual name if customized).
 2. Run `mise run plugin:smoke` from the repository root. Close the disposable vault
@@ -111,7 +111,7 @@ screenshots containing private names. Eligibility is **not consent to upload**.
 
 ## Official API and minimum-version evidence
 
-The manifest remains `ai-bridge`, `minAppVersion: 1.5.0`, `isDesktopOnly: false`.
+The manifest is `ai-bridge`, `minAppVersion: 1.13.0`, `isDesktopOnly: false`.
 Compatibility was checked against installed official `obsidian` **1.13.1** types
 and public official API history, not inferred solely from that manifest:
 
@@ -145,14 +145,14 @@ mtime can evade detection. Listing is not an atomic snapshot and saved-file text
 is already decoded by Obsidian, not raw-byte UTF-8 validation. These limits must
 not be reused as write concurrency protection in later milestones.
 
-## M3 development target — design only, not the current artifact
+## M3 development baseline — contracts only
 
 The [M3 spec](milestones/m3-remote-bridge-client-and-publishing.md) replaces selected
 manual publishing with an automatic mirror of **all eligible saved Markdown** after
-whole-mirror opt-in. Native SecretStorage and declarative settings require the
-accepted M3 minimum **1.13.0**. Implementation must raise manifest/artifact tests
-and the installation steps above together; this docs-only PR leaves the current
-M2 minimum 1.5.0 unchanged. Do not add deprecated/older-host fallbacks.
+whole-mirror opt-in. Slice 1 raises the manifest, artifact expectation and installation
+baseline together to **1.13.0** for native SecretStorage and declarative settings.
+It does not add settings, credentials, network calls, autosync or any v2 Worker route.
+Do not add deprecated or older-host fallbacks.
 
 The [official evidence](plans/m3-design-decisions.md#primary-source-evidence-and-qualification-limits)
 and completed [Slice 0 declaration qualification](qualification/m3-slice-0-platform-primitives.md)

@@ -2,11 +2,10 @@
 
 ## Status
 
-**Accepted — partially implemented through Worker Slice 2B.** Private versioned
-envelopes, exact-receipt application services and R2 create/CAS adapters exist; the
-safe v2 transport and v1 mutation retirement remain Slice 2C. The maintainer approved
-this complete contract plus automatic mirroring and recoverable deletion. M1 HTTP
-behavior is still unchanged and must not be treated as conditionally safe.
+**Accepted — Worker server contract implemented through Slice 2C.** Private versioned
+envelopes, exact-receipt application services, R2 create/CAS adapters, authenticated
+safe v2 transport and v1 mutation retirement exist. The connected automatic plugin
+mirror remains later M3 work; no deployment is claimed.
 
 ## Context
 
@@ -165,5 +164,7 @@ single-head operations. Keeping v1 mutation access would invalidate the guarante
 [ADR 0003](0003-publishing-association-and-local-state.md),
 [ADR 0004](0004-recoverable-mirror-deletions.md),
 [M3 spec](../milestones/m3-remote-bridge-client-and-publishing.md).
-Current unsafe source: Worker `infrastructure/r2-vault.repository.ts`, core
-`vault/note-service.ts`, Worker `http/note.handlers.ts` and their tests.
+Historical M1 unsafe source remains in the uncomposed legacy repository/service for
+compatibility tests. Current HTTP mutation composition is the conditional v2 path in
+`apps/worker/src/{composition.ts,http/v2.handlers.ts}`; v1 mutation handlers are
+storage-free retirement responses.

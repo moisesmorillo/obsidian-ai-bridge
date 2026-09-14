@@ -2,10 +2,11 @@
 
 ## Status
 
-**Accepted — Worker storage/application subset implemented through Slice 2B.**
-Recovery-first tombstone orchestration, 30-day sealing and conditional purge markers
-exist below transport; runtime Obsidian delete/rename authority and REST recovery
-routes remain later slices. This record selects the minimum technical mechanism under
+**Accepted — Worker storage/application/REST subset implemented through Slice 2C.**
+Recovery-first tombstone orchestration, 30-day sealing, conditional purge markers,
+and separate recovery metadata/content plus explicit maintenance routes exist.
+Runtime Obsidian delete/rename authority remains later M3 work. This record selects
+the minimum technical mechanism under
 [ADR 0002](0002-conditional-remote-note-mutation.md), not a general backup system.
 
 ## Context
@@ -94,8 +95,9 @@ survives later head changes without an ever-growing history array in the current
 ### Recovery and cleanup semantics
 
 Normal v1/v2 note reads/listing (and future MCP note resources) hide tombstones.
-A separate authenticated recovery list/read surface makes snapshots discoverable
-and retrievable. Sealed content is recoverable for 30 days from the tombstone's
+A separate authenticated recovery list/metadata surface plus distinct read-only
+content endpoint makes snapshots discoverable and retrievable without placing text
+in metadata responses. Sealed content is recoverable for 30 days from the tombstone's
 stored upload time; return its explicit recoverUntil timestamp. No exact physical
 erasure time is promised. Unsealed material over-retains until safe proof/operator
 maintenance; this is visible, not a claim of a strict 30-day maximum retention.

@@ -14,9 +14,10 @@ packages/protocol      Shared protocol contracts and serialization definitions
 M1 is complete: an authenticated HTTP Worker API backed by Cloudflare R2 plus the
 engineering-quality foundation. M2 is complete: a local-only read-only Obsidian
 inspection plugin with source tests, artifact checks and semantic review. M3 has completed [Slice 0 platform qualification](qualification/m3-slice-0-platform-primitives.md),
-Slice 1's modern plugin baseline/shared typed contracts, and Worker Slice 2A/2B's
-private conditional-storage adapters plus application transition services. No v2
-HTTP route or connection between the plugin and Worker exists yet.
+Slice 1's modern plugin baseline/shared typed contracts, and Worker Slice 2A–2C's
+private conditional-storage adapters, application transition services, and public
+safe v2 HTTP/OpenAPI/CORS boundary with v1 mutation retirement. No connection
+between the plugin and Worker exists yet.
 See the [verified current state](current-state.md) for source/configuration evidence,
 [roadmap](roadmap.md) for execution order and open decisions, and
 [ADR 0001](decisions/0001-worker-r2-foundation.md) for the durable foundation.
@@ -72,17 +73,19 @@ apps/worker/src/
 
 ### Cloudflare Worker
 
-The Worker is the remote HTTP/API boundary for M1. `index.ts` constructs the Hono app and long-lived LogTape dependency once per isolate. Request middleware resolves environment-specific authentication and creates application services from the active R2 binding; `app.ts` composes typed Hono middleware, controllers, OpenAPI, and Scalar. HTTP controllers validate transport input and delegate vault operations to `packages/core`. They do not contain vault business rules.
+The Worker is the remote HTTP/API boundary. `index.ts` constructs the Hono app and long-lived LogTape dependency once per isolate. Request middleware resolves environment-specific authentication and creates current-generation/recovery application services from the active R2 binding; composition validates static non-secret association/writer UUIDs. `app.ts` composes typed Hono middleware, controllers, narrow v2 CORS, OpenAPI, and Scalar. HTTP controllers validate transport input and delegate transition policy to `packages/core`. They do not call R2 or implement CAS/recovery policy.
 
 ### Cloudflare R2
 
-R2 stores Markdown notes under `vault/<normalized-path>` through `VAULT_BUCKET`,
-without client S3 credentials. Configuration names a development bucket but does
-not prove a remote resource exists; setup instructions are in the
-[README](../README.md#local-worker-development). All pages are aggregated on list;
-unsafe/non-Markdown/oversized entries are filtered. Writes are unconditional,
-with a separate existence check for the response status; deletes are immediate
-and idempotent. Neither operation supplies sync conflict protection or recovery.
+R2 stores current objects under `vault/<normalized-path>` and recovery objects under
+`recovery/<operation-uuid>` through `VAULT_BUCKET`, without client S3 credentials.
+Configuration names a development bucket but does not prove a remote resource exists;
+setup instructions are in the [README](../README.md#local-worker-development).
+Reachable mutations use create-only or exact-observed-generation conditional PUT;
+current tombstones and purged recovery markers are retained, and no reachable v1/v2
+mutation calls native R2 DELETE. V2 pages scan at most 50 objects and keep cursors
+opaque. The old unconditional repository remains historical test coverage but is no
+longer composed into HTTP mutation routes.
 
 ### Obsidian plugin
 
@@ -133,9 +136,10 @@ MCP is planned as a future adapter for agent clients. It is not implemented, and
 
 ## Security and data-safety boundaries
 
-The Worker authenticates `/api/v1` and descendants with one bearer token; public
-health/OpenAPI/Scalar do not grant note access. The token grants every remote
-note operation in a single namespace, not scoped or per-device permissions.
+The Worker authenticates `/api/v1`, `/api/v2`, and descendants with one bearer
+token; public health/OpenAPI/Scalar do not grant note access. The token grants every
+remote note operation in a single namespace, not scoped or per-device permissions.
+Static v2 association/writer IDs guard cooperating clients but are not authentication.
 R2 holds readable note text: the Worker/cloud operator is trusted, and no
 application-level end-to-end encryption is implemented. Never infer production
 readiness, installed resources or credentials from repository configuration.
@@ -145,12 +149,12 @@ paths, the 1 MiB UTF-8 bound, sanitized errors and content-free structured
 LogTape request logs. Do not log concrete note paths or raw failures. JSON API
 and Markdown content responses are uncached via `no-store`.
 
-Future local writes require explicit consent and conflict/recovery semantics;
-a failed operation, stale read or missing file must never trigger a silent
-replacement or deletion. M1's unconditional remote CRUD is not safe automatic
-synchronization. The roadmap requires a safe mutation contract before M3 publishes
-and includes automatic outward deletes/recovery/rename in M3. Full remote-to-local
-reconciliation remains M4.
+Future automatic local publishing still requires explicit whole-mirror consent,
+local state ownership and conflict/recovery orchestration; a failed operation, stale
+read or missing file must never trigger silent replacement or deletion. Worker v2
+now provides the required conditional/recovery server contract and v1 mutations are
+retired, but no plugin client uses it yet. Automatic outward lifecycle/rename remains
+later M3 work; full remote-to-local reconciliation remains M4.
 
 ## M3 accepted design and partial Worker foundation
 
@@ -198,14 +202,15 @@ activation, and unresolved work blocks takeover. No election/leases or
 shared-file coordinator. M3 targets Obsidian 1.13.0/modern settings, HTTPS with exact
 loopback opt-in and bounded Fetch/CORS, without old-host/requestUrl fallbacks.
 
-These remain the accepted end-to-end design rather than current user-visible
-behavior. M1 HTTP mutations remain unconditional and M2 commands remain local-only.
-Slice 1 raises the manifest to 1.13.0 and adds core/protocol contracts. Worker Slice
-2A/2B implements private format-2 codecs, create-only and observed-generation CAS,
-metadata reads, prepared/unexpired recovery-content reads and bounded listing, exact
-receipts, recoverable tombstone ordering, tombstone-timestamp sealing and conditional
-purge through core application services. No Hono v2 route composes them yet, and there is no settings, remote client,
-writer designation, v1 retirement or autosync composition.
+These remain the accepted end-to-end design rather than a connected user-visible
+mirror; M2 commands remain local-only. Slice 1 raises the manifest to 1.13.0 and adds
+core/protocol contracts. Worker Slice 2A–2C implements private format-2 codecs,
+create-only and observed-generation CAS, metadata reads, prepared/unexpired recovery
+content, bounded pagination, exact receipts, recoverable tombstone ordering,
+tombstone-timestamp sealing, conditional purge, public authenticated v2 routes,
+method-specific CORS, static writer designation checks, generated OpenAPI and
+envelope-aware v1 reads. V1 PUT/DELETE are retired with 410. There is still no
+plugin settings/state owner, remote client, autosync or deployment claim.
 Slice 0 remains the pinned local workerd qualification task and declaration-only host
 check; neither slice establishes real-host behavior.
 

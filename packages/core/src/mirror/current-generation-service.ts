@@ -1,5 +1,6 @@
 import type { ConditionalCurrentNoteRepository } from "@core/mirror/conditional-current-note-repository.port";
 import {
+  CURRENT_CONTENT_RESULT_KIND,
   CURRENT_NOTE_STATE_KIND,
   MUTATION_EFFECT_CERTAINTY,
   TOMBSTONE_WORKFLOW_STAGE_KIND,
@@ -18,6 +19,7 @@ import type {
 } from "@core/mirror/mirror.types";
 import type {
   CurrentContentMutationResult,
+  CurrentContentResult,
   MirrorGenerationCryptography,
   RecoveryPreparationProofResult,
   TombstoneMutationResult,
@@ -56,19 +58,52 @@ export class CurrentGenerationService {
   }
 
   /**
+   * Reads one current generation while retaining metadata required by HTTP readers.
+   *
+   * @returns A closed one-read result without storage validators or replacement capability.
+   */
+  async readContent(path: NotePath): Promise<CurrentContentResult> {
+    const observed = await this.repository.read(path);
+    switch (observed.kind) {
+      case CURRENT_NOTE_STATE_KIND.absent:
+        return {
+          kind: CURRENT_CONTENT_RESULT_KIND.absent,
+          state: observed.state,
+        };
+      case CURRENT_NOTE_STATE_KIND.legacy:
+        return {
+          kind: CURRENT_CONTENT_RESULT_KIND.legacy,
+          state: observed.state,
+          content: observed.content,
+        };
+      case CURRENT_NOTE_STATE_KIND.live:
+        return {
+          kind: CURRENT_CONTENT_RESULT_KIND.live,
+          state: observed.state,
+          content: observed.content,
+        };
+      case CURRENT_NOTE_STATE_KIND.tombstone:
+        return {
+          kind: CURRENT_CONTENT_RESULT_KIND.tombstone,
+          state: observed.state,
+        };
+    }
+  }
+
+  /**
    * Reads normal note content while hiding tombstones as unavailable.
    *
    * @returns Legacy/live Markdown, or `null` for absent and tombstone states.
    */
   async read(path: NotePath): Promise<string | null> {
-    const observed = await this.repository.read(path);
-    switch (observed.kind) {
-      case CURRENT_NOTE_STATE_KIND.absent:
-      case CURRENT_NOTE_STATE_KIND.tombstone:
+    const result = await this.readContent(path);
+    switch (result.kind) {
+      case CURRENT_CONTENT_RESULT_KIND.absent:
+      case CURRENT_CONTENT_RESULT_KIND.tombstone:
         return null;
-      case CURRENT_NOTE_STATE_KIND.legacy:
-      case CURRENT_NOTE_STATE_KIND.live:
-        return observed.content;
+      case CURRENT_CONTENT_RESULT_KIND.legacy:
+      case CURRENT_CONTENT_RESULT_KIND.live:
+        return result.content;
     }
   }
 

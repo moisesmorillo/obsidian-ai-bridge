@@ -3,6 +3,7 @@ import {
   CURRENT_NOTE_STATE_KIND,
   MUTATION_EFFECT_CERTAINTY,
   RECOVERY_CONTENT_RESULT_KIND,
+  RECOVERY_MAINTENANCE_RESULT_KIND,
   RECOVERY_RETENTION_MILLISECONDS,
   RECOVERY_SNAPSHOT_STATE_KIND,
 } from "@core/mirror/mirror.constants";
@@ -21,6 +22,7 @@ import type {
   MirrorClock,
   MirrorGenerationCryptography,
   RecoveryContentResult,
+  RecoveryMaintenanceResult,
   RecoveryPreparationProofResult,
 } from "@core/mirror/mirror-application.types";
 import type {
@@ -208,28 +210,48 @@ export class RecoveryService {
    * @returns Confirmed sealed metadata or conservative refusal/certainty.
    */
   async seal(request: RecoverySealRequest): Promise<RecoveryMutationResult> {
+    return this.toMutationResult(await this.sealDetailed(request));
+  }
+
+  /**
+   * Seals recovery while preserving missing, stale, and proof-conflict outcomes.
+   *
+   * @param request - Exact prepared generation and mutation identity.
+   * @returns A transport-ready semantic outcome without exposing storage details.
+   */
+  async sealDetailed(
+    request: RecoverySealRequest,
+  ): Promise<RecoveryMaintenanceResult> {
     try {
       const recovery = await this.repository.read(request.id);
-      if (recovery?.kind === RECOVERY_SNAPSHOT_STATE_KIND.sealed) {
+      if (recovery === null) {
+        return { kind: RECOVERY_MAINTENANCE_RESULT_KIND.missing };
+      }
+      if (recovery.kind === RECOVERY_SNAPSHOT_STATE_KIND.sealed) {
         if (
           recovery.state.associationId === request.associationId &&
           recovery.previousRevision === request.expectedRevision &&
           recovery.operationId === request.operationId
         ) {
           return {
-            kind: MUTATION_EFFECT_CERTAINTY.confirmed,
+            kind: RECOVERY_MAINTENANCE_RESULT_KIND.confirmed,
             confirmed: recovery.state,
           };
         }
-        return { kind: MUTATION_EFFECT_CERTAINTY.definitelyRefused };
+        return {
+          kind: RECOVERY_MAINTENANCE_RESULT_KIND.preconditionFailed,
+        };
       }
       if (
-        recovery === null ||
-        recovery.kind !== RECOVERY_SNAPSHOT_STATE_KIND.prepared ||
         recovery.state.revision !== request.expectedRevision ||
         recovery.state.associationId !== request.associationId
       ) {
-        return { kind: MUTATION_EFFECT_CERTAINTY.definitelyRefused };
+        return {
+          kind: RECOVERY_MAINTENANCE_RESULT_KIND.preconditionFailed,
+        };
+      }
+      if (recovery.kind !== RECOVERY_SNAPSHOT_STATE_KIND.prepared) {
+        return { kind: RECOVERY_MAINTENANCE_RESULT_KIND.conflict };
       }
 
       const current = await this.currentRepository.read(recovery.state.path);
@@ -243,17 +265,19 @@ export class RecoveryService {
           recovery.state.sourceRevision ||
         current.state.receipt.associationId !== recovery.state.associationId
       ) {
-        return { kind: MUTATION_EFFECT_CERTAINTY.definitelyRefused };
+        return { kind: RECOVERY_MAINTENANCE_RESULT_KIND.conflict };
       }
 
-      return await this.sealObserved(
-        recovery,
-        current.state.revision,
-        current.uploaded,
-        request.operationId,
+      return this.toMaintenanceResult(
+        await this.sealObserved(
+          recovery,
+          current.state.revision,
+          current.uploaded,
+          request.operationId,
+        ),
       );
     } catch {
-      return { kind: MUTATION_EFFECT_CERTAINTY.notDispatched };
+      return { kind: RECOVERY_MAINTENANCE_RESULT_KIND.notDispatched };
     }
   }
 
@@ -265,28 +289,48 @@ export class RecoveryService {
    * @returns Confirmed content-free marker or conservative refusal/certainty.
    */
   async purge(request: RecoveryPurgeRequest): Promise<RecoveryMutationResult> {
+    return this.toMutationResult(await this.purgeDetailed(request));
+  }
+
+  /**
+   * Purges recovery while distinguishing missing, stale, and retention conflicts.
+   *
+   * @param request - Exact sealed generation and purge mutation identity.
+   * @returns A transport-ready semantic outcome without exposing storage details.
+   */
+  async purgeDetailed(
+    request: RecoveryPurgeRequest,
+  ): Promise<RecoveryMaintenanceResult> {
     try {
       const recovery = await this.repository.read(request.id);
-      if (recovery?.kind === RECOVERY_SNAPSHOT_STATE_KIND.purged) {
+      if (recovery === null) {
+        return { kind: RECOVERY_MAINTENANCE_RESULT_KIND.missing };
+      }
+      if (recovery.kind === RECOVERY_SNAPSHOT_STATE_KIND.purged) {
         if (
           recovery.state.associationId === request.associationId &&
           recovery.previousRevision === request.expectedRevision &&
           recovery.operationId === request.operationId
         ) {
           return {
-            kind: MUTATION_EFFECT_CERTAINTY.confirmed,
+            kind: RECOVERY_MAINTENANCE_RESULT_KIND.confirmed,
             confirmed: recovery.state,
           };
         }
-        return { kind: MUTATION_EFFECT_CERTAINTY.definitelyRefused };
+        return {
+          kind: RECOVERY_MAINTENANCE_RESULT_KIND.preconditionFailed,
+        };
       }
       if (
-        recovery === null ||
-        recovery.kind !== RECOVERY_SNAPSHOT_STATE_KIND.sealed ||
         recovery.state.revision !== request.expectedRevision ||
         recovery.state.associationId !== request.associationId
       ) {
-        return { kind: MUTATION_EFFECT_CERTAINTY.definitelyRefused };
+        return {
+          kind: RECOVERY_MAINTENANCE_RESULT_KIND.preconditionFailed,
+        };
+      }
+      if (recovery.kind !== RECOVERY_SNAPSHOT_STATE_KIND.sealed) {
+        return { kind: RECOVERY_MAINTENANCE_RESULT_KIND.conflict };
       }
 
       const deadline = Date.parse(recovery.state.recoverUntil);
@@ -296,7 +340,7 @@ export class RecoveryService {
         !Number.isFinite(now) ||
         now < deadline
       ) {
-        return { kind: MUTATION_EFFECT_CERTAINTY.definitelyRefused };
+        return { kind: RECOVERY_MAINTENANCE_RESULT_KIND.conflict };
       }
 
       const candidate = {
@@ -312,10 +356,11 @@ export class RecoveryService {
         tombstoneRevision: recovery.tombstoneRevision,
         recoverUntil: recovery.state.recoverUntil,
       } as const;
-      const result = await recovery.replacement.purge(candidate);
-      return this.toApplicationResult(result);
+      return this.toMaintenanceResult(
+        this.toApplicationResult(await recovery.replacement.purge(candidate)),
+      );
     } catch {
-      return { kind: MUTATION_EFFECT_CERTAINTY.notDispatched };
+      return { kind: RECOVERY_MAINTENANCE_RESULT_KIND.notDispatched };
     }
   }
 
@@ -383,6 +428,58 @@ export class RecoveryService {
       observed.state.contentSha256 === request.contentSha256 &&
       observed.content === request.content
     );
+  }
+
+  /**
+   * Converts a semantic maintenance result to the legacy certainty-only result.
+   *
+   * @param result - Detailed maintenance result.
+   * @returns Backward-compatible effect certainty and confirmed metadata.
+   */
+  private toMutationResult(
+    result: RecoveryMaintenanceResult,
+  ): RecoveryMutationResult {
+    switch (result.kind) {
+      case RECOVERY_MAINTENANCE_RESULT_KIND.missing:
+      case RECOVERY_MAINTENANCE_RESULT_KIND.preconditionFailed:
+      case RECOVERY_MAINTENANCE_RESULT_KIND.conflict:
+        return { kind: MUTATION_EFFECT_CERTAINTY.definitelyRefused };
+      case RECOVERY_MAINTENANCE_RESULT_KIND.notDispatched:
+        return { kind: MUTATION_EFFECT_CERTAINTY.notDispatched };
+      case RECOVERY_MAINTENANCE_RESULT_KIND.confirmed:
+        return {
+          kind: MUTATION_EFFECT_CERTAINTY.confirmed,
+          confirmed: result.confirmed,
+        };
+      case RECOVERY_MAINTENANCE_RESULT_KIND.unknown:
+        return { kind: MUTATION_EFFECT_CERTAINTY.unknown };
+    }
+  }
+
+  /**
+   * Converts storage certainty into detailed recovery-maintenance semantics.
+   *
+   * @param result - Storage-backed recovery transition result.
+   * @returns Detailed result preserving CAS refusal as a stale predicate.
+   */
+  private toMaintenanceResult(
+    result: RecoveryMutationResult,
+  ): RecoveryMaintenanceResult {
+    switch (result.kind) {
+      case MUTATION_EFFECT_CERTAINTY.definitelyRefused:
+        return {
+          kind: RECOVERY_MAINTENANCE_RESULT_KIND.preconditionFailed,
+        };
+      case MUTATION_EFFECT_CERTAINTY.notDispatched:
+        return { kind: RECOVERY_MAINTENANCE_RESULT_KIND.notDispatched };
+      case MUTATION_EFFECT_CERTAINTY.confirmed:
+        return {
+          kind: RECOVERY_MAINTENANCE_RESULT_KIND.confirmed,
+          confirmed: result.confirmed,
+        };
+      case MUTATION_EFFECT_CERTAINTY.unknown:
+        return { kind: RECOVERY_MAINTENANCE_RESULT_KIND.unknown };
+    }
   }
 
   /**

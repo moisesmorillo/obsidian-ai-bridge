@@ -32,9 +32,11 @@ export type { ReadOnlyLocalVault } from "@core/local-vault/read-only-local-vault
 export type { ConditionalCurrentNoteRepository } from "@core/mirror/conditional-current-note-repository.port";
 export { CurrentGenerationService } from "@core/mirror/current-generation-service";
 export {
+  APPLICATION_ETAG_PATTERN,
   APPLICATION_ETAG_PREFIX,
   CONDITIONAL_MUTATION_PRECONDITION_KIND,
   CONTENT_SHA_256_PATTERN,
+  CURRENT_CONTENT_RESULT_KIND,
   CURRENT_NOTE_STATE_KIND,
   MAX_MIRROR_CURSOR_LENGTH,
   MAX_MIRROR_PAGE_SIZE,
@@ -44,6 +46,7 @@ export {
   MUTATION_ACTIONS,
   MUTATION_EFFECT_CERTAINTY,
   RECOVERY_CONTENT_RESULT_KIND,
+  RECOVERY_MAINTENANCE_RESULT_KIND,
   RECOVERY_RETENTION_MILLISECONDS,
   RECOVERY_SNAPSHOT_STATE_KIND,
   TOMBSTONE_WORKFLOW_STAGE_KIND,
@@ -101,9 +104,11 @@ export type {
   ConfirmedTombstoneSealRequest,
   ConfirmedTombstoneTransition,
   CurrentContentMutationResult,
+  CurrentContentResult,
   MirrorClock,
   MirrorGenerationCryptography,
   RecoveryContentResult,
+  RecoveryMaintenanceResult,
   RecoveryPreparationProofResult,
   TombstoneMutationResult,
 } from "@core/mirror/mirror-application.types";
@@ -115,6 +120,7 @@ export {
   createMirrorOperationId,
   createMirrorWriterId,
   createRecoverySnapshotId,
+  formatApplicationEtag,
   isApplicationEtag,
   isContentSha256,
   isUuidV4,
@@ -149,6 +155,7 @@ export {
   isNormalizedNotePath,
   normalizeNotePath,
 } from "@core/note-path/note-path";
+export { BASE64URL_PATTERN } from "@core/note-path/note-path.constants";
 export type { NotePath } from "@core/note-path/note-path.types";
 export { VaultNoteService } from "@core/vault/note-service";
 export type { NoteService } from "@core/vault/note-service.types";

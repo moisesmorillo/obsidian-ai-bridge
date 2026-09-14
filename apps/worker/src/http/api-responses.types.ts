@@ -1,13 +1,33 @@
 import type {
+  CurrentNoteState,
+  MutationAcknowledgement,
+  NotePage,
+  RecoveryPage,
+  RecoverySnapshotState,
+} from "@obsidian-ai-bridge/core";
+import type {
   ApiErrorResponse,
   HealthResponse,
+  MirrorDescriptionDto,
   NoteListResponse,
+  NotePageDto,
   NoteWriteResponse,
+  RecoveryPageDto,
+  TombstoneMutationResponseDto,
 } from "@obsidian-ai-bridge/protocol";
 
 /** JSON response bodies serialized by the Worker transport. */
 export type JsonResponseBody =
   | ApiErrorResponse
+  | CurrentNoteState
   | HealthResponse
+  | MirrorDescriptionDto
+  | MutationAcknowledgement
   | NoteListResponse
-  | NoteWriteResponse;
+  | NotePage
+  | NotePageDto
+  | NoteWriteResponse
+  | RecoveryPage
+  | RecoveryPageDto
+  | RecoverySnapshotState
+  | TombstoneMutationResponseDto;

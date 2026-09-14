@@ -1,17 +1,17 @@
-import type { NoteServiceResolver } from "@worker/app.types";
+import type { MirrorServicesResolver } from "@worker/app.types";
 import type { WorkerMiddleware } from "@worker/http/hono.types";
 
 /**
- * Resolves the request-scoped application service from the active Cloudflare bindings.
+ * Resolves request-scoped mirror services from the active Cloudflare bindings.
  *
- * @param resolveNoteService - Factory that hides R2 and repository wiring from handlers.
- * @returns Typed middleware that makes `noteService` available through `context.var`.
+ * @param resolveMirrorServices - Factory hiding R2 and composition from handlers.
+ * @returns Middleware exposing the application services through typed context variables.
  */
 export function createRequestDependenciesMiddleware(
-  resolveNoteService: NoteServiceResolver,
+  resolveMirrorServices: MirrorServicesResolver,
 ): WorkerMiddleware {
   return async (context, next) => {
-    context.set("noteService", resolveNoteService(context.env));
+    context.set("mirrorServices", resolveMirrorServices(context.env));
     await next();
   };
 }

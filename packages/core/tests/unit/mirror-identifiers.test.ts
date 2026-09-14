@@ -6,6 +6,7 @@ import {
   createMirrorOperationId,
   createMirrorWriterId,
   createRecoverySnapshotId,
+  formatApplicationEtag,
 } from "@obsidian-ai-bridge/core";
 import { describe, expect, it } from "vitest";
 
@@ -20,6 +21,9 @@ describe("M3 mirror identifiers", () => {
     expect(createApplicationRevision(UUID_V4)).toBe(UUID_V4);
     expect(createRecoverySnapshotId(UUID_V4)).toBe(UUID_V4);
     expect(createContentSha256(SHA_256)).toBe(SHA_256);
+    const revision = createApplicationRevision(UUID_V4);
+    if (revision === undefined) throw new Error("Invalid revision fixture");
+    expect(formatApplicationEtag(revision)).toBe(`"m3-${UUID_V4}"`);
     expect(createApplicationEtag(`"m3-${UUID_V4}"`)).toBe(`"m3-${UUID_V4}"`);
   });
 

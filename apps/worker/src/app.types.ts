@@ -1,14 +1,39 @@
-import type { NoteService } from "@obsidian-ai-bridge/core";
+import type {
+  CurrentGenerationService,
+  MirrorAssociationId,
+  MirrorWriterId,
+  RecoveryService,
+} from "@obsidian-ai-bridge/core";
 import type { WorkerEnv } from "@worker/env/env.types";
 import type { Logger } from "@worker/logging/logger.types";
 
+/** Validated non-secret identity guard configured for one mirror namespace. */
+export interface MirrorDesignation {
+  /** Association accepted from cooperating mutation clients. */
+  readonly associationId: MirrorAssociationId;
+  /** Writer accepted from cooperating mutation clients. */
+  readonly writerId: MirrorWriterId;
+}
+
+/** Request-scoped M3 application services and optional validated designation. */
+export interface WorkerMirrorServices {
+  /** Current-generation inspection and mutation application service. */
+  readonly current: CurrentGenerationService;
+  /** Recovery inspection and maintenance application service. */
+  readonly recovery: RecoveryService;
+  /** Validated configuration, or `null` when mutation configuration fails closed. */
+  readonly designation: MirrorDesignation | null;
+}
+
 /**
- * Resolves a request-scoped application service from Cloudflare bindings.
+ * Resolves request-scoped mirror application services from Cloudflare bindings.
  *
  * @param environment - Active Worker bindings for the request.
- * @returns The transport-independent note service for those bindings.
+ * @returns Services backed by the active bucket and validated static designation.
  */
-export type NoteServiceResolver = (environment: WorkerEnv) => NoteService;
+export type MirrorServicesResolver = (
+  environment: WorkerEnv,
+) => WorkerMirrorServices;
 
 /**
  * Resolves the bearer token expected for an incoming API request.
@@ -20,17 +45,13 @@ export type AuthenticationTokenResolver = (
   environment: WorkerEnv,
 ) => string | undefined;
 
-/**
- * Long-lived dependencies used to assemble the Hono application graph once per isolate.
- *
- * Request-specific services are resolved by middleware, not while routes are registered.
- */
+/** Long-lived dependencies used to assemble the Worker transport once per isolate. */
 export interface WorkerAppDependencies {
   /** Structured logger used by request middleware. */
   readonly logger: Logger;
 
-  /** Factory that resolves the application service from current bindings. */
-  readonly resolveNoteService: NoteServiceResolver;
+  /** Factory resolving current-generation, recovery, and designation dependencies. */
+  readonly resolveMirrorServices: MirrorServicesResolver;
 
   /** Factory that resolves the expected authentication token from current bindings. */
   readonly resolveToken: AuthenticationTokenResolver;

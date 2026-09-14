@@ -60,37 +60,45 @@ export type DecodedCurrentObject =
   | DecodedLiveCurrentObject
   | DecodedTombstoneCurrentObject;
 
+/** Validates one canonical application revision read from private storage. */
 const applicationRevisionSchema = z.custom<ApplicationRevision>(
   (value) =>
     typeof value === "string" && createApplicationRevision(value) !== undefined,
 );
+/** Validates the association bound into one persisted mutation receipt. */
 const associationIdSchema = z.custom<CreateOperationReceipt["associationId"]>(
   (value) =>
     typeof value === "string" && createMirrorAssociationId(value) !== undefined,
 );
+/** Validates the idempotency identity retained by a persisted receipt. */
 const operationIdSchema = z.custom<CreateOperationReceipt["operationId"]>(
   (value) =>
     typeof value === "string" && createMirrorOperationId(value) !== undefined,
 );
+/** Validates the recovery identity referenced by a persisted tombstone. */
 const recoveryIdSchema = z.custom<RecoverySnapshotId>(
   (value) =>
     typeof value === "string" && createRecoverySnapshotId(value) !== undefined,
 );
+/** Validates the canonical digest retained with persisted live content. */
 const contentSha256Schema = z.custom<ContentSha256>(
   (value) =>
     typeof value === "string" && createContentSha256(value) !== undefined,
 );
+/** Persisted precondition proving an absence-only creation intent. */
 const absentPreconditionSchema = z
   .object({
     kind: z.literal(CONDITIONAL_MUTATION_PRECONDITION_KIND.absent),
   })
   .strict();
+/** Persisted precondition binding a mutation to one parent revision. */
 const matchingPreconditionSchema = z
   .object({
     kind: z.literal(CONDITIONAL_MUTATION_PRECONDITION_KIND.matchingRevision),
     revision: applicationRevisionSchema,
   })
   .strict();
+/** Persisted receipt for one confirmed absence-only creation. */
 const createReceiptSchema: z.ZodType<CreateOperationReceipt> = z
   .object({
     action: z.literal(MUTATION_ACTION.create),
@@ -100,6 +108,7 @@ const createReceiptSchema: z.ZodType<CreateOperationReceipt> = z
     contentSha256: contentSha256Schema,
   })
   .strict();
+/** Persisted receipt for one confirmed update or tombstone recreation. */
 const updateReceiptSchema: z.ZodType<UpdateOperationReceipt> = z
   .object({
     action: z.union([
@@ -112,6 +121,7 @@ const updateReceiptSchema: z.ZodType<UpdateOperationReceipt> = z
     contentSha256: contentSha256Schema,
   })
   .strict();
+/** Persisted receipt for one confirmed recovery-first tombstone. */
 const tombstoneReceiptSchema: z.ZodType<TombstoneOperationReceipt> = z
   .object({
     action: z.literal(MUTATION_ACTION.tombstone),
@@ -120,6 +130,7 @@ const tombstoneReceiptSchema: z.ZodType<TombstoneOperationReceipt> = z
     precondition: matchingPreconditionSchema,
   })
   .strict();
+/** Persisted live envelope, including receipt/hash agreement and fresh-parent invariants. */
 const liveObjectSchema: z.ZodType<DecodedLiveCurrentObject & { format: 2 }> = z
   .object({
     format: z.literal(BRIDGE_STORAGE_FORMAT),
@@ -150,6 +161,7 @@ const liveObjectSchema: z.ZodType<DecodedLiveCurrentObject & { format: 2 }> = z
       });
     }
   });
+/** Persisted tombstone envelope binding deletion, recovery, and receipt identities. */
 const tombstoneObjectSchema: z.ZodType<
   DecodedTombstoneCurrentObject & { format: 2 }
 > = z
@@ -174,10 +186,12 @@ const tombstoneObjectSchema: z.ZodType<
       });
     }
   });
+/** Closed set of tagged current-object representations accepted from storage. */
 const recognizedCurrentObjectSchema = z.union([
   liveObjectSchema,
   tombstoneObjectSchema,
 ]);
+/** Strict decoder that prevents malformed persisted bytes from becoming text. */
 const strictUtf8Decoder = new TextDecoder("utf-8", { fatal: true });
 
 /**

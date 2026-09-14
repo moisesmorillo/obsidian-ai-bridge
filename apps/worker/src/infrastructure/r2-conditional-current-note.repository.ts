@@ -69,7 +69,24 @@ export class R2ConditionalCurrentNoteRepository
    * @throws {StoredObjectDataError} For malformed, oversized, or unsupported persisted data.
    */
   async read(path: NotePath): Promise<CurrentGenerationObservation> {
-    const observed = await this.readObserved(path);
+    return this.readCurrent(path, false);
+  }
+
+  /**
+   * Reads one generation while optionally omitting oversized untagged legacy data.
+   *
+   * Listing retains M1 compatibility by filtering oversized raw objects. Direct
+   * reads and every tagged envelope remain strict sanitized failures.
+   *
+   * @param path - Validated application note path.
+   * @param filterOversizedLegacy - Whether list-only legacy filtering applies.
+   * @returns Recognized state or absence when a list-only legacy object is filtered.
+   */
+  private async readCurrent(
+    path: NotePath,
+    filterOversizedLegacy: boolean,
+  ): Promise<CurrentGenerationObservation> {
+    const observed = await this.readObserved(path, filterOversizedLegacy);
     if (observed === null) {
       return {
         kind: CURRENT_NOTE_STATE_KIND.absent,
@@ -135,7 +152,7 @@ export class R2ConditionalCurrentNoteRepository
       if (!object.key.startsWith(VAULT_OBJECT_PREFIX)) continue;
       const rawPath = object.key.slice(VAULT_OBJECT_PREFIX.length);
       if (!isNormalizedNotePath(rawPath)) continue;
-      const observed = await this.read(rawPath);
+      const observed = await this.readCurrent(rawPath, true);
       if (observed.state.kind !== CURRENT_NOTE_STATE_KIND.absent) {
         states.push(observed.state);
       }
@@ -240,6 +257,7 @@ export class R2ConditionalCurrentNoteRepository
    */
   private async readObserved(
     path: NotePath,
+    filterOversizedLegacy: boolean,
   ): Promise<ObservedCurrentObject | null> {
     const key = this.objectKey(path);
     const object = await this.bucket.get(key);
@@ -247,13 +265,22 @@ export class R2ConditionalCurrentNoteRepository
     if (!isExactR2Generation(object, key)) {
       throw new StoredObjectDataError(STORED_OBJECT_DATA_ERROR_KIND.malformed);
     }
+    const taggedFormat =
+      object.customMetadata?.[BRIDGE_STORAGE_FORMAT_METADATA_KEY];
+    if (
+      filterOversizedLegacy &&
+      taggedFormat === undefined &&
+      object.size > MAX_NOTE_SIZE_BYTES
+    ) {
+      return null;
+    }
     if (object.size > MAX_LIVE_CURRENT_OBJECT_BYTES) {
       throw new StoredObjectDataError(STORED_OBJECT_DATA_ERROR_KIND.tooLarge);
     }
 
     const decoded = await decodeCurrentObject(
       new Uint8Array(await object.arrayBuffer()),
-      object.customMetadata?.[BRIDGE_STORAGE_FORMAT_METADATA_KEY],
+      taggedFormat,
     );
     return {
       decoded,

@@ -1,12 +1,15 @@
 import type {
+  CURRENT_CONTENT_RESULT_KIND,
   MUTATION_EFFECT_CERTAINTY,
   RECOVERY_CONTENT_RESULT_KIND,
+  RECOVERY_MAINTENANCE_RESULT_KIND,
   TOMBSTONE_WORKFLOW_STAGE_KIND,
 } from "@core/mirror/mirror.constants";
 import type {
   ApplicationRevision,
   ConditionalMutationResult,
   ContentSha256,
+  CurrentNoteState,
   MirrorOperationId,
   MirrorWriterId,
   MutationAcknowledgement,
@@ -92,6 +95,27 @@ export type TombstoneMutationResult =
       readonly confirmed: ConfirmedTombstoneTransition;
     };
 
+/** One-read current content result that never leaks a tombstone body or CAS capability. */
+export type CurrentContentResult =
+  | {
+      readonly kind: typeof CURRENT_CONTENT_RESULT_KIND.absent;
+      readonly state: Extract<CurrentNoteState, { readonly kind: "absent" }>;
+    }
+  | {
+      readonly kind: typeof CURRENT_CONTENT_RESULT_KIND.legacy;
+      readonly state: Extract<CurrentNoteState, { readonly kind: "legacy" }>;
+      readonly content: string;
+    }
+  | {
+      readonly kind: typeof CURRENT_CONTENT_RESULT_KIND.live;
+      readonly state: Extract<CurrentNoteState, { readonly kind: "live" }>;
+      readonly content: string;
+    }
+  | {
+      readonly kind: typeof CURRENT_CONTENT_RESULT_KIND.tombstone;
+      readonly state: Extract<CurrentNoteState, { readonly kind: "tombstone" }>;
+    };
+
 /** Recovery retrieval states that never expose sealed content at or after expiry. */
 export type RecoveryContentResult =
   | { readonly kind: typeof RECOVERY_CONTENT_RESULT_KIND.missing }
@@ -117,6 +141,20 @@ export type RecoveryContentResult =
         { readonly kind: "purged" }
       >;
     };
+
+/** Detailed recovery-maintenance outcome used to preserve HTTP 404/409/412 semantics. */
+export type RecoveryMaintenanceResult =
+  | { readonly kind: typeof RECOVERY_MAINTENANCE_RESULT_KIND.missing }
+  | {
+      readonly kind: typeof RECOVERY_MAINTENANCE_RESULT_KIND.preconditionFailed;
+    }
+  | { readonly kind: typeof RECOVERY_MAINTENANCE_RESULT_KIND.conflict }
+  | { readonly kind: typeof RECOVERY_MAINTENANCE_RESULT_KIND.notDispatched }
+  | {
+      readonly kind: typeof RECOVERY_MAINTENANCE_RESULT_KIND.confirmed;
+      readonly confirmed: RecoverySnapshotState;
+    }
+  | { readonly kind: typeof RECOVERY_MAINTENANCE_RESULT_KIND.unknown };
 
 /** Public content mutation operation shape retained for service method documentation. */
 export type CurrentContentMutationResult = ConditionalMutationResult;

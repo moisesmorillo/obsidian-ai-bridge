@@ -2,7 +2,7 @@
 
 A secure bridge between Obsidian and remote AI or agent clients.
 
-> **Status:** M2 complete / experimental. The plugin remains local-only and read-only; the public Worker remains the M1 API. **NEXT:** [M3 — Automatic eligible-Markdown remote mirror](docs/milestones/m3-remote-bridge-client-and-publishing.md). Slices 0–1 and Worker Slice 2A/2B now provide qualified storage primitives, shared contracts, and application transition services, but no v2 HTTP route or connected mirror exists.
+> **Status:** M2 complete / experimental. The plugin remains local-only and read-only. **NEXT:** [M3 — Automatic eligible-Markdown remote mirror](docs/milestones/m3-remote-bridge-client-and-publishing.md). Slices 0–1 and Worker Slice 2A–2C now provide qualified storage primitives, shared contracts, safe public v2 Worker routes, and retired v1 mutations, but no connected plugin mirror exists.
 
 ## Motivation
 
@@ -41,7 +41,7 @@ This diagram is the intended bridge, not a connected system today. The plugin us
 - The plugin ID is `ai-bridge`. See [disposable-vault installation/removal and compatibility evidence](docs/plugin-development.md). No real Obsidian desktop/mobile host has been tested.
 - Notes must be Markdown files and are limited to 1 MiB.
 - Authentication uses one bearer token; there are no users or device identities.
-- There is no synchronization, conflict detection, tombstone, search, MCP, D1, Durable Objects, Workers AI, or Vectorize support.
+- The Worker now has conditional format-2 generations, tombstones, and recovery primitives, but there is still no connected synchronization client, local state owner, search, MCP, D1, Durable Objects, Workers AI, or Vectorize support.
 
 ## Workspace components
 
@@ -113,7 +113,7 @@ mise exec -- bunx wrangler r2 bucket create obsidian-ai-bridge-dev --config apps
 mise exec -- bunx wrangler secret put OBSIDIAN_BRIDGE_TOKEN --config apps/worker/wrangler.jsonc
 ```
 
-For local `wrangler dev`, set `OBSIDIAN_BRIDGE_TOKEN` under `[env]` in the ignored `mise.local.toml`, then start the Worker. Wrangler 4.130.0 declares this name through `secrets.required`; it loads the matching process environment value supplied by mise and warns when it is missing. Do not create or commit `apps/worker/.dev.vars`. Wrangler is run with Node.js because its local `workerd` proxy does not respond reliably when launched through Bun:
+For local `wrangler dev`, set `OBSIDIAN_BRIDGE_TOKEN` under `[env]` in the ignored `mise.local.toml`, then start the Worker. Wrangler 4.130.0 declares this name through `secrets.required`; it loads the matching process environment value supplied by mise and warns when it is missing. The committed development configuration also contains canonical non-secret `MIRROR_ASSOCIATION_ID` and `MIRROR_WRITER_ID` UUID-v4 examples; operators must deliberately replace them together when configuring their own namespace/designated writer. Invalid or missing IDs fail v2 mutations closed. Do not create or commit `apps/worker/.dev.vars`. Wrangler is run with Node.js because its local `workerd` proxy does not respond reliably when launched through Bun:
 
 ```bash
 mise run dev
@@ -121,19 +121,11 @@ mise run dev
 
 Wrangler provides local R2 emulation for the binding during local development. The API details are in [docs/api.md](docs/api.md).
 
-## M1 API
+## Worker API
 
-| Method | Path | Authentication |
-| --- | --- | --- |
-| GET | `/health` | None |
-| GET | `/api/v1/notes` | Bearer token |
-| GET | `/api/v1/notes/:path` | Bearer token |
-| PUT | `/api/v1/notes/:path` | Bearer token |
-| DELETE | `/api/v1/notes/:path` | Bearer token |
-| GET | `/openapi.json` | None |
-| GET | `/docs` | None |
+The Worker exposes public health/OpenAPI/Scalar routes, authenticated envelope-aware v1 reads, and authenticated conditional v2 mirror/current/recovery routes. Unsafe v1 PUT and DELETE now return `410 mutation_api_retired` without storage mutation. V2 note PUT/DELETE and recovery seal/purge require the configured association/writer IDs, one operation UUID, and the documented exact conditional header. Recovery metadata and content use distinct GET endpoints.
 
-For note item routes, `:path` is a canonical base64url-encoded note path. See [docs/api.md](docs/api.md) for the encoding example.
+For note item routes, `:path` is a canonical base64url-encoded note path. See [docs/api.md](docs/api.md) for the complete route/status/header contract and encoding example.
 
 ## Repository structure
 
@@ -162,10 +154,10 @@ proves required predicates in the pinned local workerd runtime and records host
 declaration availability without claiming real desktop/mobile testing. There is
 no per-note selection model. M3 Slice 1 raises the plugin baseline to Obsidian **1.13.0** for native
 SecretStorage and declarative settings, while preserving the existing M2 commands.
-Slice 1 adds shared typed contracts only. Worker Slice 2A/2B adds private format-2
-codecs, conditional R2 adapters and application current/recovery orchestration with
-race tests. No v2 HTTP API, credential/state storage, plugin client or autosync is
-implemented; [M2 completion and slice evidence](docs/plans/m2-obsidian-read-only-local-adapter.md)
+Slice 1 adds shared typed contracts only. Worker Slice 2A–2C adds private format-2
+codecs, conditional R2 adapters, application current/recovery orchestration, safe
+public v2 HTTP/OpenAPI/CORS, envelope-aware v1 reads and v1 mutation retirement.
+No plugin credential/state storage, remote client or autosync is implemented; [M2 completion and slice evidence](docs/plans/m2-obsidian-read-only-local-adapter.md)
 record the implemented baseline. The roadmap defines the useful product end state, milestone exit criteria and
 unresolved decisions. The [current-state audit](docs/current-state.md) links facts
 to source/configuration; [API documentation](docs/api.md) describes the implemented
@@ -174,7 +166,7 @@ active milestone. Dates are intentionally not assigned.
 
 ## Security
 
-This project handles potentially sensitive vault content. M1 is experimental and is not a production security boundary. See [SECURITY.md](SECURITY.md) for vulnerability reporting guidance.
+This project handles potentially sensitive vault content. The implemented Worker Slice 2 and local-only plugin remain experimental and are not a production security boundary. See [SECURITY.md](SECURITY.md) for vulnerability reporting guidance.
 
 ## Contributing
 

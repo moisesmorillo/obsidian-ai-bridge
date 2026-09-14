@@ -38,10 +38,11 @@ Core behavior can be tested without either platform, and the HTTP API can evolve
 without exposing R2 internals. Clients must encode note identifiers and validate
 untrusted paths; a base64 identifier is addressing, not encryption or authorization.
 
-Current writes are unconditional, deletes are destructive, listing aggregates all
-R2 pages, and credentials cover the whole namespace. These limitations are not
-concurrency, recovery, scale or production-security guarantees. Safe publishing,
-reconciliation and operational policies require future decisions in M3–M5.
+The implemented M1 baseline used unconditional writes, destructive deletes and
+whole-list aggregation, while credentials covered the whole namespace. Worker M3
+Slice 2 subsequently retired those v1 mutations and introduced conditional v2
+storage; its plugin client and synchronization remain future M3 work. Neither
+baseline is a concurrency, recovery, scale or production-security guarantee.
 
 ## Alternatives
 

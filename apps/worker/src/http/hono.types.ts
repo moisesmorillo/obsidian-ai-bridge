@@ -1,13 +1,13 @@
 import type { OpenAPIHono } from "@hono/zod-openapi";
-import type { NoteService } from "@obsidian-ai-bridge/core";
+import type { WorkerMirrorServices } from "@worker/app.types";
 import type { WorkerEnv } from "@worker/env/env.types";
 import type { Context, MiddlewareHandler } from "hono";
 import type { BlankInput, BlankSchema } from "hono/types";
 
 /** Context variables injected before request handlers execute. */
 export interface WorkerContextVariables {
-  /** Application service resolved from the active environment bindings. */
-  readonly noteService: NoteService;
+  /** M3 application services resolved from the active environment bindings. */
+  readonly mirrorServices: WorkerMirrorServices;
 }
 
 /** Explicit Hono environment for the Cloudflare Worker transport adapter. */

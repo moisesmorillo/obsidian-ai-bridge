@@ -334,4 +334,26 @@ describe("R2ConditionalCurrentNoteRepository", () => {
       nextCursor: null,
     });
   });
+
+  it("filters only oversized untagged legacy objects during listing", async () => {
+    const bucket = new MemoryBucket();
+    const repository = new R2ConditionalCurrentNoteRepository(bucket);
+    bucket.seed("x".repeat(MAX_NOTE_SIZE_BYTES + 1));
+
+    await expect(repository.list()).resolves.toEqual({
+      states: [],
+      nextCursor: null,
+    });
+    await expect(repository.read(PATH)).rejects.toMatchObject({
+      kind: STORED_OBJECT_DATA_ERROR_KIND.tooLarge,
+    });
+
+    bucket.seed("x".repeat(MAX_NOTE_SIZE_BYTES + 1), {
+      [BRIDGE_STORAGE_FORMAT_METADATA_KEY]:
+        BRIDGE_STORAGE_FORMAT_METADATA_VALUE,
+    });
+    await expect(repository.list()).rejects.toMatchObject({
+      kind: STORED_OBJECT_DATA_ERROR_KIND.malformed,
+    });
+  });
 });

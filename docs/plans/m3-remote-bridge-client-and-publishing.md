@@ -1,7 +1,7 @@
 # M3 implementation plan — automatic eligible-Markdown mirror
 
-**Status: implementation in progress through Worker Slice 2B; no v2 transport or
-user-visible mirror behavior.** PR #8 remains planning/documentation only. M2
+**Status: Worker Slice 2A–2C implemented; Slice 3 is the next internal M3 work.
+No connected user-visible mirror behavior.** PR #8 remains planning/documentation only. M2
 merged at `b300726` (PR #7); M3 is the single NEXT
 milestone. [Spec](../milestones/m3-remote-bridge-client-and-publishing.md),
 [approved decisions/evidence](m3-design-decisions.md) and accepted design ADRs
@@ -132,11 +132,17 @@ surface and retires unsafe v1 mutations; intermediate checkpoints are not rollou
   update/tombstone recreation, recovery-first tombstone, tombstone-upload-derived
   30-day sealing, metadata inspection, prepared/unexpired content retrieval with
   expiry withholding, bounded lists and sealed-expiry CAS purge to content-free
-  markers. Deterministic integration tests hold competing creates/updates/tombstones/
-  purges at the storage boundary and prove same-text ABA, exact successful-generation
-  ACKs, exact seal/purge replay evidence, duplicate preparation evidence and all
-  required recovery failure orderings. Slice 2C HTTP/OpenAPI/CORS/designation and v1 mutation
-  retirement remain unimplemented; no route composes these services yet.
+  markers. Slice 2C composes those real services/adapters into authenticated public
+  v2 mirror/current/recovery routes, strict conditional/designation/media/body input,
+  exact application ETags/results, method-specific CORS, semantic OpenAPI, separate
+  recovery metadata/content reads, envelope-aware v1 reads and authenticated 410 v1
+  mutation retirement. Focused HTTP/composed tests cover current/recovery flows,
+  parser negatives, no-mutation guards, CORS, v1 compatibility and OpenAPI. No
+  deployment, plugin settings/state/client or autosync is included. Slice 2C local
+  evidence: 31 source files/360 tests at statements 95.48%, branches 92.09%,
+  functions 97.93%, lines 95.63%; the 8-case pinned workerd storage task also passes.
+  Canonical check/build evidence was repeated after corrective semantic review; no
+  account, bucket or deployment was used.
 
 ## 3. Device-local configuration, state owner and handoff model
 

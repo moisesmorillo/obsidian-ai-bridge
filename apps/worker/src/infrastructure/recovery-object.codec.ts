@@ -69,29 +69,36 @@ export type DecodedRecoveryObject =
   | DecodedSealedRecoveryObject
   | DecodedPurgedRecoveryObject;
 
+/** Validates one canonical application revision read from recovery storage. */
 const applicationRevisionSchema = z.custom<ApplicationRevision>(
   (value) =>
     typeof value === "string" && createApplicationRevision(value) !== undefined,
 );
+/** Validates the association owning one persisted recovery generation. */
 const associationIdSchema = z.custom<MirrorAssociationId>(
   (value) =>
     typeof value === "string" && createMirrorAssociationId(value) !== undefined,
 );
+/** Validates the deletion operation retained by one recovery generation. */
 const operationIdSchema = z.custom<MirrorOperationId>(
   (value) =>
     typeof value === "string" && createMirrorOperationId(value) !== undefined,
 );
+/** Validates the identity of one persisted recovery lifecycle. */
 const recoveryIdSchema = z.custom<RecoverySnapshotId>(
   (value) =>
     typeof value === "string" && createRecoverySnapshotId(value) !== undefined,
 );
+/** Validates the canonical note path represented by recovery metadata. */
 const notePathSchema = z.custom<NotePath>(
   (value) => typeof value === "string" && isNormalizedNotePath(value),
 );
+/** Validates the canonical digest of retained or formerly retained content. */
 const contentSha256Schema = z.custom<ContentSha256>(
   (value) =>
     typeof value === "string" && createContentSha256(value) !== undefined,
 );
+/** Persisted identity/source fields shared by every recovery lifecycle generation. */
 const recoveryBaseShape = {
   format: z.literal(BRIDGE_STORAGE_FORMAT),
   id: recoveryIdSchema,
@@ -102,6 +109,7 @@ const recoveryBaseShape = {
   contentSha256: contentSha256Schema,
   operationId: operationIdSchema,
 };
+/** Prepared persisted snapshot whose identity equals its deletion operation. */
 const preparedRecoverySchema: z.ZodType<
   DecodedPreparedRecoveryObject & { format: 2 }
 > = z
@@ -122,12 +130,14 @@ const preparedRecoverySchema: z.ZodType<
       });
     }
   });
+/** Persisted proof fields shared by sealed content and purged markers. */
 const transitionedRecoveryShape = {
   ...recoveryBaseShape,
   previousRevision: applicationRevisionSchema,
   tombstoneRevision: applicationRevisionSchema,
   recoverUntil: z.iso.datetime({ offset: true }),
 };
+/** Sealed persisted snapshot with immutable tombstone-derived recovery deadline. */
 const sealedRecoverySchema: z.ZodType<
   DecodedSealedRecoveryObject & { format: 2 }
 > = z
@@ -138,6 +148,7 @@ const sealedRecoverySchema: z.ZodType<
   })
   .strict()
   .superRefine(validateTransitionedRecovery);
+/** Content-free persisted marker retaining the completed recovery transition proof. */
 const purgedRecoverySchema: z.ZodType<
   DecodedPurgedRecoveryObject & { format: 2 }
 > = z
@@ -147,11 +158,13 @@ const purgedRecoverySchema: z.ZodType<
   })
   .strict()
   .superRefine(validateTransitionedRecovery);
+/** Closed set of recovery object representations accepted from private storage. */
 const recoveryObjectSchema = z.union([
   preparedRecoverySchema,
   sealedRecoverySchema,
   purgedRecoverySchema,
 ]);
+/** Strict decoder that prevents malformed recovery bytes from becoming text. */
 const strictUtf8Decoder = new TextDecoder("utf-8", { fatal: true });
 
 /**

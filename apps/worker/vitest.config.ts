@@ -8,6 +8,7 @@ export default defineProject({
       "@core": `${workspaceRoot}/packages/core/src`,
       "@protocol": `${workspaceRoot}/packages/protocol/src`,
       "@worker": `${workspaceRoot}/apps/worker/src`,
+      "@worker-tests": `${workspaceRoot}/apps/worker/tests`,
     },
   },
   test: {

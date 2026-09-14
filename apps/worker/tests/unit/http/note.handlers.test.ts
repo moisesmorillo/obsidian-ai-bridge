@@ -1,163 +1,84 @@
-import {
-  encodeNotePath,
-  type NotePath,
-  NotePayloadTooLargeError,
-  type NoteService,
-  normalizeNotePath,
-} from "@obsidian-ai-bridge/core";
+import { encodeNotePath, normalizeNotePath } from "@obsidian-ai-bridge/core";
 import {
   API_ERROR_CODE,
   apiErrorResponseSchema,
 } from "@obsidian-ai-bridge/protocol";
-import type {
-  WorkerBasePath,
-  WorkerHonoEnvironment,
-} from "@worker/http/hono.types";
+import { createWorkerApp } from "@worker/app";
+import type { Logger } from "@worker/logging/logger.types";
 import {
-  createDeleteNoteHandler,
-  createGetNoteHandler,
-  createPutNoteHandler,
-} from "@worker/http/note.handlers";
-import { Hono } from "hono";
-import type { BlankSchema } from "hono/types";
-import { describe, expect, it, vi } from "vitest";
+  createTestMirrorServices,
+  MemoryMirrorBucket,
+} from "@worker-tests/support/mirror-test-kit";
+import { describe, expect, it } from "vitest";
 
-function normalizedPath(value: string): NotePath {
-  const path = normalizeNotePath(value);
-  if (path === undefined) {
-    throw new Error(`Invalid test path: ${value}`);
-  }
+const logger: Logger = { info: () => undefined };
 
-  return path;
-}
-
-function routeFor(path: string): string {
-  return `/notes/${encodeNotePath(normalizedPath(path))}`;
-}
-
-function mockNoteService(): {
-  readonly noteService: NoteService;
-  readonly read: ReturnType<typeof vi.fn<NoteService["read"]>>;
-  readonly write: ReturnType<typeof vi.fn<NoteService["write"]>>;
-  readonly delete: ReturnType<typeof vi.fn<NoteService["delete"]>>;
-} {
-  const read = vi.fn<NoteService["read"]>().mockResolvedValue(null);
-  const write = vi
-    .fn<NoteService["write"]>()
-    .mockResolvedValue({ created: false });
-  const remove = vi.fn<NoteService["delete"]>().mockResolvedValue(undefined);
-
-  return {
-    noteService: {
-      list: vi.fn<NoteService["list"]>().mockResolvedValue([]),
-      read,
-      write,
-      delete: remove,
-    },
-    read,
-    write,
-    delete: remove,
-  };
-}
-
-function application(
-  noteService: NoteService,
-): Hono<WorkerHonoEnvironment, BlankSchema, WorkerBasePath> {
-  const app = new Hono<WorkerHonoEnvironment, BlankSchema, WorkerBasePath>();
-  app.use("*", (context, next) => {
-    context.set("noteService", noteService);
-    return next();
+function application(bucket: MemoryMirrorBucket) {
+  return createWorkerApp({
+    logger,
+    resolveMirrorServices: () => createTestMirrorServices(bucket),
+    resolveToken: () => "token",
   });
-  app.get("/notes/:path", createGetNoteHandler());
-  app.put("/notes/:path", createPutNoteHandler());
-  app.delete("/notes/:path", createDeleteNoteHandler());
-  return app;
 }
 
-function request(path: string, init?: RequestInit): Request {
-  return new Request(`https://example.test${path}`, init);
+function route(value: string): string {
+  const path = normalizeNotePath(value);
+  if (path === undefined) throw new Error("Invalid fixture");
+  return `/api/v1/notes/${encodeNotePath(path)}`;
 }
 
-async function errorCode(response: Response): Promise<string> {
+async function code(response: Response): Promise<string> {
   return apiErrorResponseSchema.parse(await response.json()).error.code;
 }
 
-describe("note handlers", () => {
-  it("rejects an invalid path before calling the service", async () => {
-    const mock = mockNoteService();
-    const response = await application(mock.noteService).fetch(
-      request("/notes/not-base64!"),
-    );
-
-    expect(response.status).toBe(400);
-    expect(await errorCode(response)).toBe(API_ERROR_CODE.invalidPath);
-    expect(mock.read).not.toHaveBeenCalled();
-  });
-
-  it("maps a missing note to 404", async () => {
-    const mock = mockNoteService();
-    const response = await application(mock.noteService).fetch(
-      request(routeFor("Missing.md")),
-    );
-
-    expect(response.status).toBe(404);
-    expect(await errorCode(response)).toBe(API_ERROR_CODE.notFound);
-    expect(mock.read).toHaveBeenCalledOnce();
-  });
-
-  it.each([
-    [{ created: true }, 201],
-    [{ created: false }, 200],
-  ] as const)("maps a %j write result to %i", async (result, status) => {
-    const mock = mockNoteService();
-    mock.write.mockResolvedValue(result);
-
-    const response = await application(mock.noteService).fetch(
-      request(routeFor("Alpha.md"), { method: "PUT", body: "alpha" }),
-    );
-
-    expect(response.status).toBe(status);
-    expect(mock.write).toHaveBeenCalledOnce();
-  });
-
-  it("maps an oversized service error to 413", async () => {
-    const mock = mockNoteService();
-    mock.write.mockRejectedValue(new NotePayloadTooLargeError());
-
-    const response = await application(mock.noteService).fetch(
-      request(routeFor("Alpha.md"), { method: "PUT", body: "alpha" }),
-    );
-
-    expect(response.status).toBe(413);
-    expect(await errorCode(response)).toBe(API_ERROR_CODE.payloadTooLarge);
-  });
-
-  it("delegates deletion exactly once", async () => {
-    const mock = mockNoteService();
-    const path = normalizedPath("Alpha.md");
-
-    const response = await application(mock.noteService).fetch(
-      request(routeFor("Alpha.md"), { method: "DELETE" }),
-    );
-
-    expect(response.status).toBe(204);
-    expect(mock.delete).toHaveBeenCalledOnce();
-    expect(mock.delete).toHaveBeenCalledWith(path);
-  });
-
-  it("rejects unsupported media types before calling the service", async () => {
-    const mock = mockNoteService();
-
-    const response = await application(mock.noteService).fetch(
-      request(routeFor("Alpha.md"), {
-        method: "PUT",
-        body: "{}",
-        headers: { "Content-Type": "application/json" },
+describe("retained v1 note handlers", () => {
+  it("rejects malformed identifiers before reading storage", async () => {
+    const bucket = new MemoryMirrorBucket();
+    const response = await application(bucket).fetch(
+      new Request("https://example.test/api/v1/notes/not-base64!", {
+        headers: { Authorization: "Bearer token" },
       }),
     );
-
-    expect(response.status).toBe(415);
-    expect(await errorCode(response)).toBe(API_ERROR_CODE.unsupportedMediaType);
-    expect(mock.write).not.toHaveBeenCalled();
+    expect(response.status).toBe(400);
+    expect(await code(response)).toBe(API_ERROR_CODE.invalidPath);
+    expect(bucket.getCount).toBe(0);
   });
+
+  it("preserves hierarchical-path and unsupported-method fallback responses", async () => {
+    const bucket = new MemoryMirrorBucket();
+    const hierarchical = await application(bucket).fetch(
+      new Request("https://example.test/api/v1/notes/folder/note.md", {
+        headers: { Authorization: "Bearer token" },
+      }),
+    );
+    expect(hierarchical.status).toBe(400);
+    expect(await code(hierarchical)).toBe(API_ERROR_CODE.invalidPath);
+
+    const unsupported = await application(bucket).fetch(
+      new Request(`https://example.test${route("Alpha.md")}`, {
+        method: "POST",
+        headers: { Authorization: "Bearer token" },
+      }),
+    );
+    expect(unsupported.status).toBe(404);
+    expect(await code(unsupported)).toBe(API_ERROR_CODE.notFound);
+  });
+
+  it.each(["PUT", "DELETE"])(
+    "retires authenticated %s without reading or mutating storage",
+    async (method) => {
+      const bucket = new MemoryMirrorBucket();
+      const response = await application(bucket).fetch(
+        new Request(`https://example.test${route("Alpha.md")}`, {
+          method,
+          headers: { Authorization: "Bearer token" },
+          ...(method === "PUT" ? { body: "private" } : {}),
+        }),
+      );
+      expect(response.status).toBe(410);
+      expect(await code(response)).toBe(API_ERROR_CODE.mutationApiRetired);
+      expect(bucket.getCount).toBe(0);
+      expect(bucket.putKeys).toHaveLength(0);
+    },
+  );
 });

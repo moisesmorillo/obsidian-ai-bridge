@@ -105,6 +105,18 @@ export function createContentSha256(value: string): ContentSha256 | undefined {
 }
 
 /**
+ * Formats one validated application revision as the protocol's strong ETag.
+ *
+ * @param revision - Validated application generation identity.
+ * @returns The canonical quoted strong validator for that generation.
+ */
+export function formatApplicationEtag(
+  revision: ApplicationRevision,
+): ApplicationEtag {
+  return `"${APPLICATION_ETAG_PREFIX}${revision}"` as ApplicationEtag;
+}
+
+/**
  * Creates a strong M3 application ETag from one validated application revision.
  *
  * @param value - Untrusted HTTP ETag candidate.

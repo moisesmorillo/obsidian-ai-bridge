@@ -8,7 +8,9 @@ import {
   createMirrorOperationId,
   createMirrorWriterId,
   createRecoverySnapshotId,
+  encodeNotePath,
   formatApplicationEtag,
+  isNormalizedNotePath,
   MAX_NOTE_SIZE_BYTES,
   type MirrorAssociationId,
   type MirrorOperationId,
@@ -17,7 +19,7 @@ import {
   type MutationAcknowledgement,
   type NotePage,
   type NotePath,
-  normalizeNotePath,
+  RECOVERY_SNAPSHOT_STATE_KIND,
   REMOTE_BRIDGE_FAILURE,
   type RecoveryPage,
   type RecoveryPurgeRequest,
@@ -108,6 +110,7 @@ export class FetchRemoteBridge implements RemoteBridge {
   private readonly fetch: RemoteFetch | null | undefined;
   private readonly crypto: Crypto | null | undefined;
   private readonly deadlineMilliseconds: number;
+  private readonly responseSettlements = new WeakMap<Response, Promise<void>>();
 
   /** @param dependencies - Validated configuration and explicit platform seams. */
   constructor(private readonly dependencies: FetchRemoteBridgeDependencies) {
@@ -158,6 +161,9 @@ export class FetchRemoteBridge implements RemoteBridge {
   async readNote(
     path: NotePath,
   ): Promise<RemoteBridgeResult<RemoteNoteContent>> {
+    if (!this.isRuntimeSupported()) {
+      return failure(REMOTE_BRIDGE_FAILURE.unsupportedRuntime);
+    }
     return this.withResponse<RemoteNoteContent>(
       { method: "GET", path: notePathRoute(path) },
       async (response, signal) => {
@@ -191,6 +197,9 @@ export class FetchRemoteBridge implements RemoteBridge {
   async inspectNote(
     path: NotePath,
   ): Promise<RemoteBridgeResult<CurrentNoteState>> {
+    if (!this.isRuntimeSupported()) {
+      return failure(REMOTE_BRIDGE_FAILURE.unsupportedRuntime);
+    }
     return this.readJson(
       "GET",
       `${notePathRoute(path)}/state`,
@@ -212,6 +221,13 @@ export class FetchRemoteBridge implements RemoteBridge {
   async mutateNote(
     request: ConditionalMutationRequest,
   ): Promise<RemoteBridgeMutationResult<MutationAcknowledgement>> {
+    if (!this.isRuntimeSupported()) {
+      return {
+        kind: "failure",
+        failure: REMOTE_BRIDGE_FAILURE.unsupportedRuntime,
+        effect: "not-dispatched",
+      };
+    }
     const contentHash = await this.requestContentHash(request);
     if (contentHash.kind === "failure") return contentHash;
     const condition =
@@ -239,20 +255,12 @@ export class FetchRemoteBridge implements RemoteBridge {
           : { body: request.content }),
       },
       async (response, signal) => {
-        if (
-          response.status === 412 ||
-          response.status === 428 ||
-          response.status === 401 ||
-          response.status === 403
-        ) {
-          return mutationFailure(responseFailure(response, true));
-        }
         const expectedStatus =
           request.action === MUTATION_ACTION.create ? 201 : 200;
-        if (
-          response.status !== expectedStatus ||
-          !hasMediaType(response, REMOTE_RESPONSE_MEDIA_TYPE.json)
-        ) {
+        if (response.status !== expectedStatus) {
+          return mutationFailure(responseFailure(response, true));
+        }
+        if (!hasMediaType(response, REMOTE_RESPONSE_MEDIA_TYPE.json)) {
           return mutationFailure(
             failure(REMOTE_BRIDGE_FAILURE.incompatibleProtocol),
           );
@@ -408,19 +416,10 @@ export class FetchRemoteBridge implements RemoteBridge {
         },
       },
       async (response, signal) => {
-        if (
-          response.status === 412 ||
-          response.status === 401 ||
-          response.status === 403 ||
-          response.status === 409 ||
-          response.status === 404
-        ) {
+        if (response.status !== 200) {
           return mutationFailure(responseFailure(response, true));
         }
-        if (
-          response.status !== 200 ||
-          !hasMediaType(response, REMOTE_RESPONSE_MEDIA_TYPE.json)
-        ) {
+        if (!hasMediaType(response, REMOTE_RESPONSE_MEDIA_TYPE.json)) {
           return mutationFailure(
             failure(REMOTE_BRIDGE_FAILURE.incompatibleProtocol),
           );
@@ -432,10 +431,16 @@ export class FetchRemoteBridge implements RemoteBridge {
         );
         if (decoded.kind === "failure") return mutationFailure(decoded);
         const state = mapRecoveryState(decoded.value);
+        const expectedKind =
+          action === "seal"
+            ? RECOVERY_SNAPSHOT_STATE_KIND.sealed
+            : RECOVERY_SNAPSHOT_STATE_KIND.purged;
         if (
           state === undefined ||
+          state.kind !== expectedKind ||
           state.id !== request.id ||
           state.associationId !== request.associationId ||
+          state.revision === request.expectedRevision ||
           formatApplicationEtag(state.revision) !== response.headers.get("ETag")
         ) {
           return mutationFailure(
@@ -508,8 +513,15 @@ export class FetchRemoteBridge implements RemoteBridge {
         ? failure(REMOTE_BRIDGE_FAILURE.malformedResponse)
         : success(text);
     }
-    if (result.kind === "aborted")
+    if ("settlement" in result) {
+      this.responseSettlements.set(response, result.settlement);
+    }
+    if (result.kind === "aborted") {
       return failure(REMOTE_BRIDGE_FAILURE.timedOut);
+    }
+    if (result.kind === "stream-error") {
+      return failure(REMOTE_BRIDGE_FAILURE.networkUnavailable);
+    }
     return failure(REMOTE_BRIDGE_FAILURE.malformedResponse);
   }
 
@@ -530,8 +542,10 @@ export class FetchRemoteBridge implements RemoteBridge {
     try {
       return await consume(dispatched.response, dispatched.signal);
     } finally {
-      cancelResponse(dispatched.response);
-      dispatched.release();
+      this.releaseAfterResponseSettlement(
+        dispatched.response,
+        dispatched.release,
+      );
     }
   }
 
@@ -558,8 +572,10 @@ export class FetchRemoteBridge implements RemoteBridge {
     try {
       return await consume(dispatched.response, dispatched.signal);
     } finally {
-      cancelResponse(dispatched.response);
-      dispatched.release();
+      this.releaseAfterResponseSettlement(
+        dispatched.response,
+        dispatched.release,
+      );
     }
   }
 
@@ -569,6 +585,13 @@ export class FetchRemoteBridge implements RemoteBridge {
     readonly headers?: HeadersInit;
     readonly body?: BodyInit | null;
   }): Promise<DispatchResult> {
+    if (!this.isRuntimeSupported()) {
+      return {
+        kind: "failure",
+        failure: REMOTE_BRIDGE_FAILURE.unsupportedRuntime,
+        dispatched: false,
+      };
+    }
     let permit: Awaited<ReturnType<RemoteRequestAdmission["admit"]>>;
     try {
       permit = await this.dependencies.admission.admit();
@@ -595,11 +618,7 @@ export class FetchRemoteBridge implements RemoteBridge {
       permit.release();
     };
     const fetch = this.fetch;
-    if (
-      fetch === undefined ||
-      fetch === null ||
-      typeof AbortController === "undefined"
-    ) {
+    if (fetch === undefined || fetch === null) {
       release();
       return {
         kind: "failure",
@@ -658,6 +677,7 @@ export class FetchRemoteBridge implements RemoteBridge {
       });
       const raced = await raceFetchWithAbort(promise, controller.signal);
       if (raced.kind === "aborted") {
+        releaseAfterLateFetchSettlement(promise, release);
         return {
           kind: "failure",
           failure: REMOTE_BRIDGE_FAILURE.timedOut,
@@ -680,8 +700,37 @@ export class FetchRemoteBridge implements RemoteBridge {
         dispatched: true,
       };
     } finally {
-      if (fetchResult === undefined) release();
+      if (fetchResult === undefined && !controller.signal.aborted) release();
     }
+  }
+
+  /** @returns Whether every standards and host capability required by the adapter exists. */
+  private isRuntimeSupported(): boolean {
+    return (
+      this.fetch !== undefined &&
+      this.fetch !== null &&
+      typeof this.dependencies.secretStorage.getSecret === "function" &&
+      typeof AbortController !== "undefined" &&
+      typeof Headers !== "undefined" &&
+      typeof URL !== "undefined" &&
+      typeof TextDecoder !== "undefined" &&
+      typeof TextEncoder !== "undefined" &&
+      typeof btoa === "function"
+    );
+  }
+
+  /** Retains admission until response cancellation and body work actually settle. */
+  private releaseAfterResponseSettlement(
+    response: Response,
+    release: () => void,
+  ): void {
+    const bodySettlement = this.responseSettlements.get(response);
+    this.responseSettlements.delete(response);
+    const settlements = [cancelResponse(response)];
+    if (bodySettlement !== undefined) settlements.push(bodySettlement);
+    void Promise.all(settlements)
+      .finally(release)
+      .catch(() => undefined);
   }
 
   private async requestContentHash(
@@ -735,16 +784,6 @@ function notePathRoute(path: NotePath): string {
 
 function recoveryRoute(id: RecoverySnapshotId): string {
   return `/recovery/${id}`;
-}
-
-function encodeNotePath(path: NotePath): string {
-  const bytes = new TextEncoder().encode(path);
-  let binary = "";
-  for (const byte of bytes) binary += String.fromCharCode(byte);
-  return btoa(binary)
-    .replaceAll("+", "-")
-    .replaceAll("/", "_")
-    .replace(/=+$/, "");
 }
 
 function identityHeaders(
@@ -919,7 +958,7 @@ function mapRecoveryState(
 }
 
 function toNotePath(value: string): NotePath | undefined {
-  return normalizeNotePath(value);
+  return isNormalizedNotePath(value) ? value : undefined;
 }
 
 function acknowledgementMatchesRequest(
@@ -1014,8 +1053,23 @@ async function raceFetchWithAbort(
   });
 }
 
-function cancelResponse(response: Response): void {
-  void response.body?.cancel().catch(() => undefined);
+async function cancelResponse(response: Response): Promise<void> {
+  try {
+    await response.body?.cancel();
+  } catch {
+    return;
+  }
+}
+
+/** Retains a timed-out request permit until the original Fetch and late body settle. */
+function releaseAfterLateFetchSettlement(
+  promise: Promise<Response>,
+  release: () => void,
+): void {
+  void promise
+    .then(cancelResponse, () => undefined)
+    .finally(release)
+    .catch(() => undefined);
 }
 
 function toHex(bytes: Uint8Array): string {

@@ -13,9 +13,13 @@ describe("bounded response reader", () => {
       kind: "ok",
       bytes: new Uint8Array([49, 50, 51, 52]),
     });
-    await expect(
-      readBoundedResponseBytes(new Response("12345"), 4, controller.signal),
-    ).resolves.toEqual({ kind: "too-large" });
+    const oversized = await readBoundedResponseBytes(
+      new Response("12345"),
+      4,
+      controller.signal,
+    );
+    expect(oversized).toMatchObject({ kind: "too-large" });
+    if ("settlement" in oversized) await oversized.settlement;
   });
 
   it("counts chunked bytes and handles required missing bodies", async () => {
@@ -27,27 +31,31 @@ describe("bounded response reader", () => {
       },
     });
     const controller = new AbortController();
-    await expect(
-      readBoundedResponseBytes(new Response(stream), 4, controller.signal),
-    ).resolves.toEqual({ kind: "too-large" });
+    const oversized = await readBoundedResponseBytes(
+      new Response(stream),
+      4,
+      controller.signal,
+    );
+    expect(oversized).toMatchObject({ kind: "too-large" });
+    if ("settlement" in oversized) await oversized.settlement;
     await expect(
       readBoundedResponseBytes(new Response(null), 1, controller.signal),
     ).resolves.toEqual({ kind: "missing-body" });
   });
 
-  it("cancels a stream error without leaking its rejection", async () => {
+  it("distinguishes a stream error from a deadline abort", async () => {
     const stream = new ReadableStream<Uint8Array>({
       start(controller) {
         controller.error(new Error("intermediary failure"));
       },
     });
-    await expect(
-      readBoundedResponseBytes(
-        new Response(stream),
-        10,
-        new AbortController().signal,
-      ),
-    ).resolves.toEqual({ kind: "aborted" });
+    const result = await readBoundedResponseBytes(
+      new Response(stream),
+      10,
+      new AbortController().signal,
+    );
+    expect(result).toMatchObject({ kind: "stream-error" });
+    if ("settlement" in result) await result.settlement;
   });
 
   it("strictly rejects malformed UTF-8 and returns a deadline abort without waiting for a reader", async () => {
@@ -64,6 +72,8 @@ describe("bounded response reader", () => {
       controller.signal,
     );
     controller.abort();
-    await expect(pending).resolves.toEqual({ kind: "aborted" });
+    const result = await pending;
+    expect(result).toMatchObject({ kind: "aborted" });
+    if ("settlement" in result) await result.settlement;
   });
 });

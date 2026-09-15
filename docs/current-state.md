@@ -63,7 +63,7 @@ boundaries; [API](api.md) describes the HTTP contract.
   prohibition, direct-console prohibition and configured documentation rules.
   These checks do **not** prove all architecture/TSDoc requirements in
   [AGENTS.md](../AGENTS.md); manual semantic review remains mandatory.
-- Vitest **5**: **40 source test files / 489 tests**, plus **1 artifact file /
+- Vitest **5**: **40 source test files / 502 tests**, plus **1 artifact file /
   3 smoke tests** in the dedicated build task. The unchanged M1 baseline had
   15 files / 105 tests. Exact slice validation is recorded in the
   [implementation plan](plans/m2-obsidian-read-only-local-adapter.md).
@@ -83,7 +83,7 @@ boundaries; [API](api.md) describes the HTTP contract.
   Global thresholds: **lines 95%, statements 95%, functions 94%, branches 90%**.
   Coverage is a regression signal, not proof of test quality.
 - Root Vitest projects include shared packages, Worker and plugin. Current source
-  coverage is statements **95.01%**, branches **91.99%**, functions **98.44%**, lines
+  coverage is statements **95.06%**, branches **92.14%**, functions **98.06%**, lines
   **96.06%**; thresholds and production inclusion remain enforced. Artifact tests are separate
   from source coverage, run after packaging and never replace behavioral coverage.
 - The Worker declares Miniflare **5.20260908.0-alpha** directly for its storage

@@ -2,15 +2,18 @@
 export type BoundedResponseReadResult =
   | { readonly kind: "ok"; readonly bytes: Uint8Array }
   | { readonly kind: "missing-body" }
-  | { readonly kind: "too-large" }
-  | { readonly kind: "aborted" };
+  | {
+      readonly kind: "too-large" | "aborted" | "stream-error";
+      readonly settlement: Promise<void>;
+    };
 
 /**
  * Reads a response stream incrementally without trusting Content-Length.
  *
- * The reader is cancelled when a deadline wins so a non-cooperative stream cannot
- * retain adapter ownership indefinitely. Callers decode the resulting bytes with a
- * fatal UTF-8 decoder and never include the bytes in diagnostics.
+ * The reader is cancelled when a deadline wins. Early outcomes expose the
+ * cancellation settlement so callers can retain request admission until the host
+ * stream actually settles without delaying the bounded result. Callers decode the
+ * resulting bytes with a fatal UTF-8 decoder and never include them in diagnostics.
  *
  * @param response - Standards Response with an optional byte stream.
  * @param maximumBytes - Inclusive actual-byte limit for the body.
@@ -26,14 +29,15 @@ export async function readBoundedResponseBytes(
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
   let totalBytes = 0;
+  let settlement: Promise<void> | undefined;
 
   try {
     let done = false;
     while (!done) {
       const read = await raceWithAbort(reader.read(), signal);
-      if (read.kind === "aborted") {
-        cancelReader(reader);
-        return read;
+      if (read.kind === "aborted" || read.kind === "stream-error") {
+        settlement = cancelReader(reader);
+        return { kind: read.kind, settlement };
       }
       if (read.value.done) {
         done = true;
@@ -42,16 +46,13 @@ export async function readBoundedResponseBytes(
       const chunk = read.value.value;
       totalBytes += chunk.byteLength;
       if (totalBytes > maximumBytes) {
-        cancelReader(reader);
-        return { kind: "too-large" };
+        settlement = cancelReader(reader);
+        return { kind: "too-large", settlement };
       }
       chunks.push(chunk);
     }
-  } catch {
-    cancelReader(reader);
-    return signal.aborted ? { kind: "aborted" } : { kind: "missing-body" };
   } finally {
-    reader.releaseLock();
+    if (settlement === undefined) reader.releaseLock();
   }
 
   const bytes = new Uint8Array(totalBytes);
@@ -82,6 +83,7 @@ async function raceWithAbort<Value>(
 ): Promise<
   | { readonly kind: "value"; readonly value: Value }
   | { readonly kind: "aborted" }
+  | { readonly kind: "stream-error" }
 > {
   if (signal.aborted) return { kind: "aborted" };
   return new Promise((resolve) => {
@@ -90,12 +92,17 @@ async function raceWithAbort<Value>(
     void promise
       .then(
         (value) => resolve({ kind: "value", value }),
-        () => resolve({ kind: "aborted" }),
+        () => resolve({ kind: "stream-error" }),
       )
       .finally(() => signal.removeEventListener("abort", onAbort));
   });
 }
 
-function cancelReader(reader: ReadableStreamDefaultReader<Uint8Array>): void {
-  void reader.cancel().catch(() => undefined);
+function cancelReader(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+): Promise<void> {
+  return reader
+    .cancel()
+    .catch(() => undefined)
+    .finally(() => reader.releaseLock());
 }

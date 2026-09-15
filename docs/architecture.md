@@ -231,17 +231,24 @@ methods, accepted statuses, failures and dispatched effect certainty. It is unco
 there is still no settings UI, autosync, Vault event wiring or deployment claim.
 Slice 5 adds `MirrorSynchronizer`, a FIFO two-slot/one-path scheduler, bounded
 inventory traversal, positive-observation generations, quiet/max-wait coalescing,
-and finite durable mutation/evidence recovery. It uses `ReadOnlyLocalVault`,
-`RemoteBridge`, `MirrorStateOwner`, and injected time/hash/operation-ID seams without
-host callbacks or platform timers. Synchronization starts inactive and only a current
-successful handshake plus durable indexed bootstrap admission enables positive work;
-local, capacity, stale-state, or persistence failure remains explicitly inactive.
-Reporting inventory shares the two slots but does not hold the positive-work admission
-gate while pagination remains pending. The synchronizer persists intents and consumed
-budgets before calls, applies exact ACK/receipt evidence through the latest serialized
-owner state, keeps newer desired generations dirty, and suppresses wake deadlines
-while lifecycle/global/persistence admission is closed. Inventory is reporting-only
-and cannot authorize deletion. Delete/rename orchestration remains Slice 6; plugin
+and finite durable mutation/evidence recovery. The synchronizer is the public phase/
+scheduler facade: `MirrorBootstrapCoordinator` owns handshake, indexed durable batch
+admission and reporting-inventory coordination; `MirrorPathRuntime` owns ephemeral
+coalescing/retry deadlines; `MirrorPositiveReconciler` owns stable positive reads and
+new intent creation; and `MirrorIntentExecutor` applies the exhaustive typed intent/
+evidence/effect decisions in `mirror-intent-policy.ts`. Durable autosync ledger
+transformations and acknowledgement matching have focused semantic owners rather than
+living in the facade. These collaborators use `ReadOnlyLocalVault`, `RemoteBridge`,
+`MirrorStateOwner`, and injected time/hash/operation-ID seams without host callbacks
+or platform timers. Synchronization starts inactive and only a current successful
+handshake plus durable indexed bootstrap admission enables positive work; local,
+capacity, stale-state, or persistence failure remains explicitly inactive. Reporting
+inventory shares the two slots but does not hold the positive-work admission gate while
+pagination remains pending. Mutation policy persists intents and consumed budgets before
+calls, applies exact ACK/receipt evidence through the latest serialized owner state,
+keeps newer desired generations dirty, and suppresses wake deadlines while lifecycle/
+global/persistence admission is closed. Inventory is reporting-only and cannot
+authorize deletion. Delete/rename orchestration remains Slice 6; plugin
 Vault event/settings/runtime composition remains later work. Slice 0 remains the
 pinned local workerd qualification task and declaration-only host check; no slice
 establishes real-host behavior.

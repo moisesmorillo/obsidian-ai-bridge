@@ -254,9 +254,14 @@ surface and retires unsafe v1 mutations; intermediate checkpoints are not rollou
   verified remote equality; independent clients may modify between observations.
 - **Validation/acceptance:** deterministic core/port tests, coverage and check;
   A1/A3/A5 engine. Still no plugin automatic composition or manual publish primary.
-- **Implemented evidence:** Slice 5 adds a platform-independent `MirrorSynchronizer`,
-  FIFO two-slot/one-path scheduler, bounded 1,000-page reporting inventory and
-  injected monotonic time/hash/operation-ID seams. Synchronization starts inactive;
+- **Implemented evidence:** Slice 5 adds a platform-independent `MirrorSynchronizer`
+  phase/scheduler facade, FIFO two-slot/one-path scheduler, bounded 1,000-page reporting
+  inventory and injected monotonic time/hash/operation-ID seams. Focused core owners
+  separate handshake/durable bootstrap admission, ephemeral coalescing/retry timing,
+  stable positive reconciliation, ledger transformations and exact acknowledgement
+  matching. The unresolved-intent executor dispatches exhaustive typed decisions over
+  phase/counters, remote evidence, effect certainty and reconstruction requirements.
+  Synchronization starts inactive;
   only a current remote handshake and durably committed indexed local bootstrap batch
   enables positive work. Capacity, stale-state, local-enumeration, and persistence
   failures return explicit non-admitting outcomes. Reporting inventory shares the

@@ -96,6 +96,7 @@ export type {
   SealedRecoverySnapshotState,
   TombstoneCurrentNoteState,
   TombstoneOperationReceipt,
+  UnresolvedContentMutationIntent,
   UnresolvedCreateMutationIntent,
   UnresolvedMutationIntent,
   UnresolvedTombstoneMutationIntent,

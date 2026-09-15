@@ -1,6 +1,6 @@
 # M3 implementation plan — automatic eligible-Markdown mirror
 
-**Status: Slices 0–3 implemented; Slice 4 is the next internal M3 work.
+**Status: Slices 0–4 implemented; Slice 5 is the next internal M3 work.
 No connected user-visible mirror behavior.** PR #8 remains planning/documentation only. M2
 merged at `b300726` (PR #7); M3 is the single NEXT
 milestone. [Spec](../milestones/m3-remote-bridge-client-and-publishing.md),
@@ -211,6 +211,16 @@ surface and retires unsafe v1 mutations; intermediate checkpoints are not rollou
   mutation authority; 401/403 globally pause even with malformed intermediary body.
 - **Validation/acceptance:** focused test/coverage/build/check; A2/A9 transport.
   Retries/coalescing belong to core, no adapter retry loop or direct vault access.
+- **Implemented evidence:** Slice 4 adds the typed core `RemoteBridge` contract and
+  an uncomposed plugin standards-Fetch v2 adapter. It uses only `fetch` with
+  `redirect: "error"`, `credentials: "omit"`, canonical encoded note routes,
+  coordinator-provided admission, dispatch-time native SecretStorage reads, a
+  30-second full-operation deadline, bounded strict-UTF-8 response streaming, exact
+  schema/ETag/receipt checks, and conservative effect-certainty mapping. Focused
+  deterministic tests cover request construction, token rotation/removal, response
+  bounds/encoding/media/schema failures, exact acknowledgements, state/list/recovery
+  adaptation, deadline/body stalls and non-cooperative pending Fetch. The adapter
+  makes one attempt and is not composed into automatic runtime behavior.
 
 ## 5. Core bootstrap, coalescing and per-path autosync
 

@@ -235,6 +235,18 @@ export type {
 } from "@core/mirror/mirror-storage.types";
 export { RecoveryService } from "@core/mirror/recovery-service";
 export type { RecoverySnapshotRepository } from "@core/mirror/recovery-snapshot-repository.port";
+export { REMOTE_BRIDGE_FAILURE } from "@core/mirror/remote-bridge.constants";
+export type {
+  RemoteBridge,
+  RemoteBridgeDescription,
+  RemoteBridgeFailure,
+  RemoteBridgeMutationResult,
+  RemoteBridgeResult,
+  RemoteNoteContent,
+  RemoteRecoveryContent,
+  RemoteRequestAdmission,
+  RemoteRequestPermit,
+} from "@core/mirror/remote-bridge.types";
 export {
   decodeNotePath,
   encodeNotePath,

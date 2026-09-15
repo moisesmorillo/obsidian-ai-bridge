@@ -1,0 +1,20 @@
+/** Sanitized remote-transport outcomes that do not expose HTTP or platform details. */
+export const REMOTE_BRIDGE_FAILURE = {
+  unauthenticated: "unauthenticated",
+  forbidden: "forbidden",
+  preconditionFailed: "precondition-failed",
+  preconditionRequired: "precondition-required",
+  missing: "missing",
+  conflict: "conflict",
+  rateLimited: "rate-limited",
+  serverFailed: "server-failed",
+  incompatibleProtocol: "incompatible-protocol",
+  malformedResponse: "malformed-response",
+  unsupportedRuntime: "unsupported-runtime",
+  networkUnavailable: "network-unavailable",
+  timedOut: "timed-out",
+  cancelled: "cancelled",
+  admissionDenied: "admission-denied",
+  missingSecret: "missing-secret",
+  invalidConfiguration: "invalid-configuration",
+} as const;

@@ -36,11 +36,14 @@ remain sensitive; avoid sharing private result screenshots.
 Use only a [disposable development vault](docs/plugin-development.md) for manual
 installation. Build/host-double checks verify the CommonJS artifact without Node
 runtime dependencies, but no real desktop/mobile host test or production safety
-claim is made. M2 is complete. M3 Worker Slice 2 and device-local state Slice 3 are
-implemented. Slice 3 provides uncomposed strict preference/secret-reference and
-App-local state adapters, serialized transition ownership, activation and staged
-handoff validation; automatic saved-event processing, Fetch, retries, rename
-orchestration and remote handoff verification remain unimplemented. The
+claim is made. M2 is complete. M3 Worker Slice 2, device-local state Slice 3 and
+remote transport Slice 4 are implemented. Slice 3 provides uncomposed strict
+preference/secret-reference and App-local state adapters, serialized transition
+ownership, activation and staged handoff validation. Slice 4 provides an uncomposed
+typed Fetch adapter with just-in-time native-secret retrieval, bounded response
+streaming and conservative mutation-effect classification. Automatic saved-event
+processing, transport composition, retries, rename orchestration and remote handoff
+verification remain unimplemented. The
 [approved decisions](docs/plans/m3-design-decisions.md) distinguish that server
 subset from the future connected mirror.
 

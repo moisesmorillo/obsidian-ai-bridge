@@ -1198,7 +1198,9 @@ describe("Worker v2 API", () => {
     const policySurface = Object.values(V2_ROUTE_POLICY)
       .map((definition) => ({
         path: toOpenApiV2RoutePath(definition.path),
-        methods: [...definition.methods].sort(),
+        methods: Object.values(definition.operations).sort((left, right) =>
+          left.localeCompare(right),
+        ),
       }))
       .sort((left, right) => left.path.localeCompare(right.path));
     const openApiSurface = Object.entries(document.paths)
@@ -1207,7 +1209,7 @@ describe("Worker v2 API", () => {
         path,
         methods: Object.keys(pathContract)
           .map((method) => method.toUpperCase())
-          .sort(),
+          .sort((left, right) => left.localeCompare(right)),
       }))
       .sort((left, right) => left.path.localeCompare(right.path));
     expect(openApiSurface).toEqual(policySurface);
@@ -1526,8 +1528,9 @@ describe("Worker v2 reviewed transport boundaries", () => {
       "Authorization, Content-Type, If-Match, If-None-Match, Bridge-Operation-Id, Bridge-Association-Id, Bridge-Writer-Id";
     for (const [definition, path, expectedMethods] of routes) {
       expect(concreteV2Route(definition.path, id)).toBe(path);
-      expect(definition.methods).toEqual(expectedMethods);
-      for (const method of definition.methods) {
+      const operationMethods = Object.values(definition.operations);
+      expect(operationMethods).toEqual(expectedMethods);
+      for (const method of operationMethods) {
         const response = await app.fetch(
           request(path, {
             method: "OPTIONS",
@@ -1540,7 +1543,7 @@ describe("Worker v2 reviewed transport boundaries", () => {
         );
         expect(response.status, `${method} ${path}`).toBe(204);
         expect(response.headers.get("Access-Control-Allow-Methods")).toBe(
-          definition.methods.join(", "),
+          operationMethods.join(", "),
         );
         expect(response.headers.get("Access-Control-Allow-Headers")).toBe(
           completeHeaders,
@@ -1551,7 +1554,7 @@ describe("Worker v2 reviewed transport boundaries", () => {
         expect(response.headers.get("Cache-Control")).toBe("no-store");
       }
 
-      const disallowedMethod = definition.methods.some(
+      const disallowedMethod = operationMethods.some(
         (method) => method === "POST",
       )
         ? "GET"
@@ -1575,7 +1578,7 @@ describe("Worker v2 reviewed transport boundaries", () => {
       expect(unsupported.status, `${disallowedMethod} ${path}`).toBe(404);
       expect(unsupported.headers.get("Access-Control-Allow-Origin")).toBeNull();
 
-      if (definition.methods.some((method) => method === "GET")) {
+      if (operationMethods.some((method) => method === "GET")) {
         const unauthenticatedHead = await app.fetch(
           request(path, { method: "HEAD" }),
         );

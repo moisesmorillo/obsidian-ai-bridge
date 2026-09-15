@@ -2,13 +2,17 @@ import { createRoute, z } from "@hono/zod-openapi";
 import { APPLICATION_ETAG_PATTERN } from "@obsidian-ai-bridge/core";
 import {
   API_ERROR_CODE,
+  API_ROUTE_PARAMETER,
   applicationEtagSchema,
   BRIDGE_NOTE_FORMAT,
   BRIDGE_NOTE_FORMATS,
   createMutationAcknowledgementSchema,
   currentNoteStateSchema,
   encodedNotePathSchema,
+  HTTP_METHOD,
   healthResponseSchema,
+  MIRROR_API_V2_QUERY_PARAMETER,
+  MIRROR_API_V2_SEGMENT,
   matchingContentMutationAcknowledgementSchema,
   mirrorAssociationIdSchema,
   mirrorCursorSchema,
@@ -32,6 +36,7 @@ import {
   CACHE_CONTROL_HEADER,
   CACHE_CONTROL_NO_STORE,
   HEALTH_ROUTE,
+  HTTP_HEADER,
   HTTP_STATUS,
   JSON_CONTENT_TYPE,
   MARKDOWN_CONTENT_TYPE,
@@ -43,7 +48,29 @@ import {
 import {
   toOpenApiV2RoutePath,
   V2_ROUTE_POLICY,
+  type V2RouteMethod,
 } from "@worker/http/v2-route-policy";
+
+/**
+ * Converts one canonical route method to the lowercase OpenAPI representation.
+ *
+ * @param method - Method owned by the public v2 route policy.
+ * @returns Equivalent OpenAPI operation method.
+ */
+function toOpenApiMethod(
+  method: V2RouteMethod,
+): "delete" | "get" | "post" | "put" {
+  switch (method) {
+    case HTTP_METHOD.delete:
+      return "delete";
+    case HTTP_METHOD.get:
+      return "get";
+    case HTTP_METHOD.post:
+      return "post";
+    case HTTP_METHOD.put:
+      return "put";
+  }
+}
 
 /** OpenAPI security-scheme identifier shared by authenticated routes. */
 const OPENAPI_BEARER_SECURITY_SCHEME = "bearerAuth";
@@ -53,17 +80,19 @@ const bearerSecurity = [{ [OPENAPI_BEARER_SECURITY_SCHEME]: [] }];
 
 /** Canonical encoded note identifier parameter. */
 const notePathParameters = z.object({
-  path: encodedNotePathSchema.describe(
+  [API_ROUTE_PARAMETER.notePath]: encodedNotePathSchema.describe(
     "Literal canonical unpadded base64url identifier for a validated lowercase-.md NotePath; percent-encoded aliases are rejected.",
   ),
 });
 
 /** Canonical recovery UUID parameter. */
-const recoveryIdParameters = z.object({ id: recoverySnapshotIdSchema });
+const recoveryIdParameters = z.object({
+  [API_ROUTE_PARAMETER.recoveryId]: recoverySnapshotIdSchema,
+});
 
 /** Optional opaque pagination query. */
 const cursorQuery = z.object({
-  cursor: mirrorCursorSchema
+  [MIRROR_API_V2_QUERY_PARAMETER.cursor]: mirrorCursorSchema
     .optional()
     .describe(
       "Opaque continuation returned by the immediately preceding page.",
@@ -72,15 +101,15 @@ const cursorQuery = z.object({
 
 /** Mutation identity request headers shared by every v2 mutation. */
 const mutationIdentityHeaders = {
-  "Bridge-Association-Id": mirrorAssociationIdSchema,
-  "Bridge-Writer-Id": mirrorWriterIdSchema,
-  "Bridge-Operation-Id": mirrorOperationIdSchema,
+  [HTTP_HEADER.associationId]: mirrorAssociationIdSchema,
+  [HTTP_HEADER.writerId]: mirrorWriterIdSchema,
+  [HTTP_HEADER.operationId]: mirrorOperationIdSchema,
 };
 
 /** Matching application-generation and designation headers. */
 const matchingMutationHeaders = z.object({
   ...mutationIdentityHeaders,
-  "If-Match": applicationEtagSchema.describe(
+  [HTTP_HEADER.ifMatch]: applicationEtagSchema.describe(
     'Exactly one strong application ETag: "m3-<uuid-v4>".',
   ),
 });
@@ -97,12 +126,12 @@ const noteContentTypeHeader = z
 /** Closest OpenAPI parameter model for the runtime cross-header XOR requirement. */
 const putMutationHeaders = z.object({
   ...mutationIdentityHeaders,
-  "Content-Type": noteContentTypeHeader,
-  "If-None-Match": z.literal("*").optional().openapi({
+  [HTTP_HEADER.contentType]: noteContentTypeHeader,
+  [HTTP_HEADER.ifNoneMatch]: z.literal("*").optional().openapi({
     description:
       "Use alone for absence-only first creation; If-Match must be omitted.",
   }),
-  "If-Match": applicationEtagSchema
+  [HTTP_HEADER.ifMatch]: applicationEtagSchema
     .optional()
     .describe(
       "Use alone for an exact live/tombstone generation; If-None-Match must be omitted.",
@@ -127,7 +156,7 @@ const authenticationChallengeResponseHeader = {
 
 /** Strong application-generation response header. */
 const applicationEtagResponseHeader = {
-  ETag: {
+  [HTTP_HEADER.etag]: {
     schema: {
       type: "string",
       pattern: APPLICATION_ETAG_PATTERN.source,
@@ -138,7 +167,7 @@ const applicationEtagResponseHeader = {
 
 /** Public note-format response header for legacy or format-2 current notes. */
 const noteFormatResponseHeader = {
-  "Bridge-Note-Format": {
+  [HTTP_HEADER.noteFormat]: {
     schema: { type: "string", enum: BRIDGE_NOTE_FORMATS.slice() },
     description: "Public representation format.",
   },
@@ -146,7 +175,7 @@ const noteFormatResponseHeader = {
 
 /** Recovery content is always decoded from a validated format-2 snapshot. */
 const recoveryNoteFormatResponseHeader = {
-  "Bridge-Note-Format": {
+  [HTTP_HEADER.noteFormat]: {
     schema: { type: "string", enum: Array.of(BRIDGE_NOTE_FORMAT.current) },
     description: "Recovery content is always public format 2.",
   },
@@ -391,7 +420,7 @@ export const deleteNoteRoute = createRoute({
 
 /** Authenticated v2 mirror capability description. */
 export const getMirrorRoute = createRoute({
-  method: "get",
+  method: toOpenApiMethod(V2_ROUTE_POLICY.mirror.operations.describe),
   path: toOpenApiV2RoutePath(V2_ROUTE_POLICY.mirror.path),
   responses: {
     [HTTP_STATUS.ok]: {
@@ -410,7 +439,7 @@ export const getMirrorRoute = createRoute({
 
 /** Paginated v2 current-note inventory. */
 export const listV2NotesRoute = createRoute({
-  method: "get",
+  method: toOpenApiMethod(V2_ROUTE_POLICY.notes.operations.list),
   path: toOpenApiV2RoutePath(V2_ROUTE_POLICY.notes.path),
   request: { query: cursorQuery },
   responses: {
@@ -431,7 +460,7 @@ export const listV2NotesRoute = createRoute({
 
 /** V2 note content read. */
 export const getV2NoteRoute = createRoute({
-  method: "get",
+  method: toOpenApiMethod(V2_ROUTE_POLICY.note.operations.read),
   path: toOpenApiV2RoutePath(V2_ROUTE_POLICY.note.path),
   request: { params: notePathParameters },
   responses: {
@@ -457,7 +486,7 @@ export const getV2NoteRoute = createRoute({
 
 /** Metadata-only current state read. */
 export const getV2NoteStateRoute = createRoute({
-  method: "get",
+  method: toOpenApiMethod(V2_ROUTE_POLICY.noteState.operations.inspect),
   path: toOpenApiV2RoutePath(V2_ROUTE_POLICY.noteState.path),
   request: { params: notePathParameters },
   responses: {
@@ -481,7 +510,7 @@ export const getV2NoteStateRoute = createRoute({
 
 /** Conditional v2 content mutation. */
 export const putV2NoteRoute = createRoute({
-  method: "put",
+  method: toOpenApiMethod(V2_ROUTE_POLICY.note.operations.write),
   path: toOpenApiV2RoutePath(V2_ROUTE_POLICY.note.path),
   request: {
     params: notePathParameters,
@@ -538,7 +567,7 @@ export const putV2NoteRoute = createRoute({
 
 /** Recovery-first conditional tombstone mutation. */
 export const deleteV2NoteRoute = createRoute({
-  method: "delete",
+  method: toOpenApiMethod(V2_ROUTE_POLICY.note.operations.remove),
   path: toOpenApiV2RoutePath(V2_ROUTE_POLICY.note.path),
   request: { params: notePathParameters, headers: matchingMutationHeaders },
   responses: {
@@ -568,7 +597,7 @@ export const deleteV2NoteRoute = createRoute({
 
 /** Paginated metadata-only recovery inventory. */
 export const listRecoveryRoute = createRoute({
-  method: "get",
+  method: toOpenApiMethod(V2_ROUTE_POLICY.recovery.operations.list),
   path: toOpenApiV2RoutePath(V2_ROUTE_POLICY.recovery.path),
   request: { query: cursorQuery },
   responses: {
@@ -589,7 +618,7 @@ export const listRecoveryRoute = createRoute({
 
 /** Metadata-only recovery item. */
 export const getRecoveryRoute = createRoute({
-  method: "get",
+  method: toOpenApiMethod(V2_ROUTE_POLICY.recoveryItem.operations.inspect),
   path: toOpenApiV2RoutePath(V2_ROUTE_POLICY.recoveryItem.path),
   request: { params: recoveryIdParameters },
   responses: {
@@ -614,7 +643,7 @@ export const getRecoveryRoute = createRoute({
 
 /** Separate read-only recovery content endpoint. */
 export const getRecoveryContentRoute = createRoute({
-  method: "get",
+  method: toOpenApiMethod(V2_ROUTE_POLICY.recoveryContent.operations.read),
   path: toOpenApiV2RoutePath(V2_ROUTE_POLICY.recoveryContent.path),
   request: { params: recoveryIdParameters },
   responses: {
@@ -644,18 +673,24 @@ export const getRecoveryContentRoute = createRoute({
  * @param action - Recovery transition represented by the route.
  * @returns OpenAPI route definition for explicit seal or purge.
  */
-function recoveryMutationRoute(action: "seal" | "purge") {
-  const acknowledgementSchema =
-    action === "seal"
-      ? sealedRecoverySnapshotStateSchema
-      : purgedRecoverySnapshotStateSchema;
+function recoveryMutationRoute(
+  action:
+    | typeof MIRROR_API_V2_SEGMENT.seal
+    | typeof MIRROR_API_V2_SEGMENT.purge,
+) {
+  const isSeal = action === MIRROR_API_V2_SEGMENT.seal;
+  const acknowledgementSchema = isSeal
+    ? sealedRecoverySnapshotStateSchema
+    : purgedRecoverySnapshotStateSchema;
+  const method = isSeal
+    ? V2_ROUTE_POLICY.recoverySeal.operations.seal
+    : V2_ROUTE_POLICY.recoveryPurge.operations.purge;
+  const path = isSeal
+    ? V2_ROUTE_POLICY.recoverySeal.path
+    : V2_ROUTE_POLICY.recoveryPurge.path;
   return createRoute({
-    method: "post",
-    path: toOpenApiV2RoutePath(
-      action === "seal"
-        ? V2_ROUTE_POLICY.recoverySeal.path
-        : V2_ROUTE_POLICY.recoveryPurge.path,
-    ),
+    method: toOpenApiMethod(method),
+    path: toOpenApiV2RoutePath(path),
     request: { params: recoveryIdParameters, headers: matchingMutationHeaders },
     responses: {
       [HTTP_STATUS.ok]: {
@@ -679,19 +714,22 @@ function recoveryMutationRoute(action: "seal" | "purge") {
       [HTTP_STATUS.internalServerError]: errors.internalServerError,
     },
     security: bearerSecurity,
-    summary:
-      action === "seal"
-        ? "Seal prepared recovery"
-        : "Purge expired recovery content",
+    summary: isSeal
+      ? "Seal prepared recovery"
+      : "Purge expired recovery content",
     tags: ["v2 recovery"],
   });
 }
 
 /** Explicit recovery sealing route. */
-export const sealRecoveryRoute = recoveryMutationRoute("seal");
+export const sealRecoveryRoute = recoveryMutationRoute(
+  MIRROR_API_V2_SEGMENT.seal,
+);
 
 /** Explicit expired recovery purge route. */
-export const purgeRecoveryRoute = recoveryMutationRoute("purge");
+export const purgeRecoveryRoute = recoveryMutationRoute(
+  MIRROR_API_V2_SEGMENT.purge,
+);
 
 /** OpenAPI 3.1 metadata and bearer security configuration. */
 export const openApiConfiguration = {

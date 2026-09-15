@@ -4,6 +4,85 @@ export const PROTOCOL_VERSION = "0.1" as const;
 /** Capability identifier returned by the authenticated M3 Worker description. */
 export const MIRROR_PROTOCOL_ID = "obsidian-ai-bridge-mirror-v2" as const;
 
+/** Stable public URL prefix for the conditional mirror HTTP API. */
+export const MIRROR_API_V2_PREFIX = "/api/v2";
+
+/** Stable public route roots for the conditional mirror HTTP API. */
+export const MIRROR_API_V2_ROUTE = {
+  mirror: `${MIRROR_API_V2_PREFIX}/mirror`,
+  notes: `${MIRROR_API_V2_PREFIX}/notes`,
+  recovery: `${MIRROR_API_V2_PREFIX}/recovery`,
+} as const;
+
+/** Stable child-route segments shared by v2 clients and Worker route definitions. */
+export const MIRROR_API_V2_SEGMENT = {
+  content: "content",
+  purge: "purge",
+  seal: "seal",
+  state: "state",
+} as const;
+
+/** Stable route-parameter names shared by routers, handlers, and OpenAPI. */
+export const API_ROUTE_PARAMETER = {
+  notePath: "path",
+  recoveryId: "id",
+} as const;
+
+/** Stable query-parameter names shared by paginated v2 clients and schemas. */
+export const MIRROR_API_V2_QUERY_PARAMETER = {
+  cursor: "cursor",
+} as const;
+
+/** HTTP methods represented by the public API operation contracts. */
+export const HTTP_METHOD = {
+  delete: "DELETE",
+  get: "GET",
+  post: "POST",
+  put: "PUT",
+} as const;
+
+/** HTTP statuses used by the public API and remote response policy. */
+export const HTTP_STATUS_CODE = {
+  ok: 200,
+  created: 201,
+  noContent: 204,
+  badRequest: 400,
+  unauthorized: 401,
+  forbidden: 403,
+  notFound: 404,
+  conflict: 409,
+  gone: 410,
+  preconditionFailed: 412,
+  payloadTooLarge: 413,
+  unsupportedMediaType: 415,
+  preconditionRequired: 428,
+  rateLimited: 429,
+  internalServerError: 500,
+  badGateway: 502,
+} as const;
+
+/** Public HTTP headers shared by v2 clients, documentation, and the Worker. */
+export const MIRROR_HTTP_HEADER = {
+  associationId: "Bridge-Association-Id",
+  authorization: "Authorization",
+  contentType: "Content-Type",
+  etag: "ETag",
+  ifMatch: "If-Match",
+  ifNoneMatch: "If-None-Match",
+  noteFormat: "Bridge-Note-Format",
+  operationId: "Bridge-Operation-Id",
+  writerId: "Bridge-Writer-Id",
+} as const;
+
+/** Public media types used by v2 request and response representations. */
+export const MIRROR_MEDIA_TYPE = {
+  json: "application/json",
+  jsonUtf8: "application/json; charset=utf-8",
+  markdown: "text/markdown",
+  markdownUtf8: "text/markdown; charset=utf-8",
+  plainText: "text/plain",
+} as const;
+
 /** Public note representation markers exposed without private storage metadata. */
 export const BRIDGE_NOTE_FORMAT = {
   legacy: "legacy",

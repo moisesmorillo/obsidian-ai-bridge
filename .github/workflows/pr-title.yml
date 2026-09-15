@@ -28,4 +28,4 @@ jobs:
       - name: Validate pull request title
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
-        run: printf '%s\n' "$PR_TITLE" | bunx commitlint
+        run: printf '%s\n' "$PR_TITLE" | mise run commitlint

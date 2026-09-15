@@ -58,15 +58,7 @@ export class MirrorStateOwner {
 
   /** @returns The current committed state and compare-and-transition revision. */
   snapshot(): MirrorStateSnapshot {
-    return {
-      revision: this.revision,
-      state: this.state,
-      persistenceAvailable: this.persistenceAvailable,
-      mutationAdmissionAllowed:
-        this.persistenceAvailable &&
-        this.pendingTransitions === 0 &&
-        isDurableMutationAdmissionAllowed(this.state),
-    };
+    return this.createSnapshot(0);
   }
 
   /**
@@ -82,7 +74,7 @@ export class MirrorStateOwner {
   ): Promise<MirrorStateCommitResult> {
     return this.enqueue(async () => {
       if (expectedRevision !== this.revision) {
-        return { kind: "stale", snapshot: this.snapshot() };
+        return { kind: "stale", snapshot: this.settledOperationSnapshot() };
       }
       return this.apply(transition);
     });
@@ -128,8 +120,37 @@ export class MirrorStateOwner {
     return this.enqueue(async () => {
       const saved = await this.store.save(this.state);
       this.persistenceAvailable = saved.kind === "saved";
-      return this.snapshot();
+      return this.settledOperationSnapshot();
     });
+  }
+
+  /**
+   * Materializes the state that will be externally visible after the current
+   * serialized operation leaves the pending-transition count.
+   *
+   * @returns Post-settlement state with admission fenced only by later work.
+   */
+  private settledOperationSnapshot(): MirrorStateSnapshot {
+    return this.createSnapshot(1);
+  }
+
+  /**
+   * Creates a snapshot while excluding operations whose completion is represented
+   * by the returned result rather than by later pending work.
+   *
+   * @param settlingTransitions - Current operations to exclude from admission fencing.
+   * @returns Current state and admission derived from the adjusted pending count.
+   */
+  private createSnapshot(settlingTransitions: 0 | 1): MirrorStateSnapshot {
+    return {
+      revision: this.revision,
+      state: this.state,
+      persistenceAvailable: this.persistenceAvailable,
+      mutationAdmissionAllowed:
+        this.persistenceAvailable &&
+        this.pendingTransitions === settlingTransitions &&
+        isDurableMutationAdmissionAllowed(this.state),
+    };
   }
 
   private async apply(
@@ -137,7 +158,10 @@ export class MirrorStateOwner {
   ): Promise<MirrorStateCommitResult> {
     const next = transition(this.state);
     if (next === undefined || !isMirrorDeviceStateConsistent(next)) {
-      return { kind: "invalid-transition", snapshot: this.snapshot() };
+      return {
+        kind: "invalid-transition",
+        snapshot: this.settledOperationSnapshot(),
+      };
     }
     const saved = await this.store.save(next);
     if (saved.kind === "failed") {
@@ -145,12 +169,12 @@ export class MirrorStateOwner {
       return {
         kind: "save-failed",
         reason: saved.reason,
-        snapshot: this.snapshot(),
+        snapshot: this.settledOperationSnapshot(),
       };
     }
     this.state = next;
     this.revision += 1;
-    return { kind: "committed", snapshot: this.snapshot() };
+    return { kind: "committed", snapshot: this.settledOperationSnapshot() };
   }
 
   /**

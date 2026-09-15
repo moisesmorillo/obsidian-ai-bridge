@@ -67,13 +67,13 @@ apps/worker/src/
 └── index.ts                       One-time Worker application assembly and dependency construction
 ```
 
-`packages/core` contains the repository port, note application service, path invariants, and domain errors. Note-path validation and base64url conversion are separated under `packages/core/src/note-path/`; identifier validation has its own typed/constants/implementation modules. `packages/protocol` contains shared Zod-backed API response and error-code contracts. Hono, Cloudflare bindings, R2, Scalar, and HTTP status mapping remain in `apps/worker`.
+`packages/core` contains the repository port, note application service, path invariants, and domain errors. Note-path validation and base64url conversion are separated under `packages/core/src/note-path/`; identifier validation has its own typed/constants/implementation modules. `packages/protocol` contains shared Zod-backed API response and error-code contracts plus stable public HTTP methods/statuses and v2 route, segment, query, header and media-type constants consumed by Worker and plugin adapters. Hono route-parameter syntax, CORS policy, Cloudflare bindings, R2, Scalar, and Worker response construction remain in `apps/worker`.
 
 ## Platform roles
 
 ### Cloudflare Worker
 
-The Worker is the remote HTTP/API boundary. `index.ts` constructs the Hono app and long-lived LogTape dependency once per isolate. Request middleware resolves environment-specific authentication and creates current-generation/recovery application services from the active R2 binding; composition validates static non-secret association/writer UUIDs. `app.ts` composes typed Hono middleware, controllers, narrow v2 CORS, OpenAPI, and Scalar. HTTP controllers validate transport input and delegate transition policy to `packages/core`. They do not call R2 or implement CAS/recovery policy.
+The Worker is the remote HTTP/API boundary. `index.ts` constructs the Hono app and long-lived LogTape dependency once per isolate. Request middleware resolves environment-specific authentication and creates current-generation/recovery application services from the active R2 binding; composition validates static non-secret association/writer UUIDs. `app.ts` composes typed Hono middleware, controllers, narrow v2 CORS, OpenAPI, and Scalar. One named v2 route-operation policy owns each public path and HTTP method; Hono registration, CORS capability resolution, and OpenAPI consume that policy instead of restating it. HTTP controllers validate transport input and delegate transition policy to `packages/core`. They do not call R2 or implement CAS/recovery policy.
 
 ### Cloudflare R2
 
@@ -222,9 +222,11 @@ per-path whole-state persistence. Obsidian adapters keep preferences/secret refe
 in data.json, the bearer in native SecretStorage, and device identity,
 activation and the bounded content-free ledger in App local storage. A package Symbol
 retains the owner only within one JavaScript host. Slice 4 adds a core `RemoteBridge`
-capability contract and plugin standards-Fetch implementation with coordinator-owned
-admission, native bearer retrieval at dispatch, bounded strict UTF-8 streaming, v2
-DTO/ETag/receipt validation and conservative effect certainty. It is uncomposed:
+capability contract and plugin standards-Fetch implementation. The operation adapter
+owns request construction and response decoding, a dedicated dispatcher owns
+coordinator admission/native bearer/deadline/late body settlement, a DTO mapper owns
+protocol-to-domain validation, and one typed response-policy table owns operation
+methods, accepted statuses, failures and dispatched effect certainty. It is uncomposed:
 there is still no settings UI, autosync, Vault event wiring or deployment claim.
 Slice 0 remains the pinned local workerd qualification task and declaration-only host
 check; neither slice establishes real-host behavior.

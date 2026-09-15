@@ -12,14 +12,12 @@ import {
   normalizeNotePath,
   type RemoteRequestAdmission,
 } from "@obsidian-ai-bridge/core";
-import {
-  FetchRemoteBridge,
-  type RemoteFetch,
-} from "@obsidian-plugin/remote/fetch-remote-bridge";
+import { FetchRemoteBridge } from "@obsidian-plugin/remote/fetch-remote-bridge";
 import {
   MAX_REMOTE_METADATA_RESPONSE_BYTES,
   REMOTE_NOTE_REQUEST_CONTENT_TYPE,
 } from "@obsidian-plugin/remote/fetch-remote-bridge.constants";
+import type { RemoteFetch } from "@obsidian-plugin/remote/fetch-remote-bridge.types";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const ASSOCIATION = required(
@@ -791,8 +789,10 @@ describe("FetchRemoteBridge", () => {
   });
 
   it.each([
-    [404, "missing"],
-    [409, "conflict"],
+    [404, "incompatible-protocol"],
+    [409, "malformed-response"],
+    [412, "malformed-response"],
+    [428, "malformed-response"],
     [429, "rate-limited"],
     [500, "server-failed"],
     [418, "malformed-response"],
@@ -803,6 +803,37 @@ describe("FetchRemoteBridge", () => {
       failure,
     });
   });
+
+  it("treats note-mutation absence as an incompatible v2 route", async () => {
+    const note = adapter(async () => new Response("", { status: 404 }));
+    await expect(note.bridge.mutateNote(createRequest)).resolves.toEqual({
+      kind: "failure",
+      failure: "incompatible-protocol",
+      effect: "unknown",
+    });
+  });
+
+  it.each([
+    [404, "missing", "definitely-refused"],
+    [409, "conflict", "definitely-refused"],
+    [412, "precondition-failed", "definitely-refused"],
+    [428, "precondition-required", "definitely-refused"],
+    [418, "incompatible-protocol", "unknown"],
+  ])(
+    "classifies recovery mutation response %i as %s with %s effect",
+    async (status, failure, effect) => {
+      const recovery = adapter(async () => new Response("", { status }));
+      await expect(
+        recovery.bridge.sealRecovery({
+          id: RECOVERY,
+          associationId: ASSOCIATION,
+          writerId: WRITER,
+          operationId: OPERATION,
+          expectedRevision: REVISION,
+        }),
+      ).resolves.toEqual({ kind: "failure", failure, effect });
+    },
+  );
 
   it("sends exact update and tombstone conditions while rejecting a mismatched parent receipt", async () => {
     const updateRequest: ConditionalMutationRequest = {
@@ -1074,6 +1105,34 @@ describe("FetchRemoteBridge", () => {
       failure: "incompatible-protocol",
       effect: "not-dispatched",
     });
+  });
+
+  it("classifies local request construction failures as not dispatched", async () => {
+    const invalidHeaderFetch = vi.fn<RemoteFetch>();
+    const invalidHeader = adapter(invalidHeaderFetch, "token\ninvalid");
+    await expect(
+      invalidHeader.bridge.mutateNote(createRequest),
+    ).resolves.toEqual({
+      kind: "failure",
+      failure: "invalid-configuration",
+      effect: "not-dispatched",
+    });
+    expect(invalidHeaderFetch).not.toHaveBeenCalled();
+    expect(invalidHeader.requestAdmission.release).toHaveBeenCalledOnce();
+
+    const synchronousFailureFetch = vi.fn<RemoteFetch>(() => {
+      throw new Error("Fetch invocation failed before returning a promise.");
+    });
+    const synchronousFailure = adapter(synchronousFailureFetch);
+    await expect(
+      synchronousFailure.bridge.mutateNote(createRequest),
+    ).resolves.toEqual({
+      kind: "failure",
+      failure: "invalid-configuration",
+      effect: "not-dispatched",
+    });
+    expect(synchronousFailureFetch).toHaveBeenCalledOnce();
+    expect(synchronousFailure.requestAdmission.release).toHaveBeenCalledOnce();
   });
 
   it("maps network errors and invalid construction before dispatch without retaining a permit", async () => {

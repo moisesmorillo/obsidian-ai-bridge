@@ -134,7 +134,8 @@ surface and retires unsafe v1 mutations; intermediate checkpoints are not rollou
   expiry withholding, bounded lists and sealed-expiry CAS purge to content-free
   markers. Slice 2C composes those real services/adapters into authenticated public
   v2 mirror/current/recovery routes, strict conditional/designation/media/body input,
-  exact application ETags/results, method-specific CORS, semantic OpenAPI, separate
+  exact application ETags/results, and one named route-operation policy consumed by
+  Hono registration, method-specific CORS and semantic OpenAPI, plus separate
   recovery metadata/content reads, envelope-aware v1 reads and authenticated 410 v1
   mutation retirement. Focused HTTP/composed tests cover current/recovery flows,
   parser negatives, no-mutation guards, CORS, v1 compatibility and OpenAPI. No
@@ -216,8 +217,12 @@ surface and retires unsafe v1 mutations; intermediate checkpoints are not rollou
   `redirect: "error"`, `credentials: "omit"`, canonical encoded note routes,
   coordinator-provided admission, dispatch-time native SecretStorage reads, a
   30-second full-operation deadline, bounded strict-UTF-8 response streaming, exact
-  schema/ETag/receipt checks, and conservative effect-certainty mapping. Focused
-  deterministic tests cover request construction, token rotation/removal, response
+  schema/ETag/receipt checks, and conservative effect-certainty mapping. Public wire
+  methods/statuses/routes/segments/query/header/media values come from protocol-owned
+  constants. Dedicated operation, dispatch-lifecycle, DTO-mapping and typed response-
+  policy modules keep method/status/failure/effect decisions auditable without moving
+  HTTP concerns into core. Focused deterministic tests cover request construction,
+  token rotation/removal, response
   bounds/encoding/media/schema failures, exact acknowledgements, state/list/recovery
   adaptation, deadline/body stalls and non-cooperative pending Fetch. The adapter
   makes one attempt and is not composed into automatic runtime behavior.

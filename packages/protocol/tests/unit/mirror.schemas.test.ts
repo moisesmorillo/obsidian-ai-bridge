@@ -3,6 +3,10 @@ import {
   conditionalMutationPreconditionSchema,
   conditionalMutationRequestSchema,
   currentNoteStateSchema,
+  MIRROR_API_V2_PREFIX,
+  MIRROR_API_V2_ROUTE,
+  MIRROR_HTTP_HEADER,
+  MIRROR_MEDIA_TYPE,
   mirrorAssociationIdSchema,
   mirrorCursorSchema,
   mirrorDescriptionSchema,
@@ -49,6 +53,26 @@ const tombstoneReceipt = {
 };
 
 describe("M3 mirror protocol schemas", () => {
+  it("owns the stable public v2 routes, headers, and media types", () => {
+    expect(MIRROR_API_V2_PREFIX).toBe("/api/v2");
+    expect(MIRROR_API_V2_ROUTE).toEqual({
+      mirror: "/api/v2/mirror",
+      notes: "/api/v2/notes",
+      recovery: "/api/v2/recovery",
+    });
+    expect(MIRROR_HTTP_HEADER).toMatchObject({
+      associationId: "Bridge-Association-Id",
+      etag: "ETag",
+      ifMatch: "If-Match",
+      operationId: "Bridge-Operation-Id",
+    });
+    expect(MIRROR_MEDIA_TYPE).toMatchObject({
+      json: "application/json",
+      markdown: "text/markdown",
+      markdownUtf8: "text/markdown; charset=utf-8",
+    });
+  });
+
   it("validates the Worker capability description", () => {
     expect(
       mirrorDescriptionSchema.parse({

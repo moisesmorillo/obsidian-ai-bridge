@@ -19,6 +19,7 @@ import {
   type MutationAcknowledgement,
   type NotePage,
   type NotePath,
+  parseApplicationEtag,
   RECOVERY_SNAPSHOT_STATE_KIND,
   REMOTE_BRIDGE_FAILURE,
   type RecoveryPage,
@@ -37,6 +38,9 @@ import {
 import {
   BRIDGE_NOTE_FORMAT,
   currentNoteStateSchema,
+  MIRROR_API_V2_ROUTE,
+  MIRROR_HTTP_HEADER,
+  MIRROR_MEDIA_TYPE,
   mirrorDescriptionSchema,
   mutationAcknowledgementSchema,
   notePageSchema,
@@ -52,11 +56,9 @@ import {
 import {
   MAX_REMOTE_CONTENT_RESPONSE_BYTES,
   MAX_REMOTE_METADATA_RESPONSE_BYTES,
-  REMOTE_API_V2_PATH,
   REMOTE_FETCH_OPTIONS,
   REMOTE_NOTE_REQUEST_CONTENT_TYPE,
   REMOTE_REQUEST_DEADLINE_MILLISECONDS,
-  REMOTE_RESPONSE_MEDIA_TYPE,
 } from "@obsidian-plugin/remote/fetch-remote-bridge.constants";
 import type { z } from "zod";
 
@@ -125,26 +127,31 @@ export class FetchRemoteBridge implements RemoteBridge {
   }
 
   async describe(): Promise<RemoteBridgeResult<RemoteBridgeDescription>> {
-    return this.readJson("GET", "/mirror", mirrorDescriptionSchema, (dto) => {
-      const associationId = createMirrorAssociationId(dto.associationId);
-      const writerId = createMirrorWriterId(dto.writerId);
-      if (associationId === undefined || writerId === undefined)
-        return undefined;
-      return {
-        protocol: dto.protocol,
-        associationId,
-        writerId,
-        maxNoteSizeBytes: dto.maxNoteSizeBytes,
-        maxPageSize: dto.maxPageSize,
-        recoveryRetentionSeconds: dto.recoveryRetentionSeconds,
-      };
-    });
+    return this.readJson(
+      "GET",
+      MIRROR_API_V2_ROUTE.mirror,
+      mirrorDescriptionSchema,
+      (dto) => {
+        const associationId = createMirrorAssociationId(dto.associationId);
+        const writerId = createMirrorWriterId(dto.writerId);
+        if (associationId === undefined || writerId === undefined)
+          return undefined;
+        return {
+          protocol: dto.protocol,
+          associationId,
+          writerId,
+          maxNoteSizeBytes: dto.maxNoteSizeBytes,
+          maxPageSize: dto.maxPageSize,
+          recoveryRetentionSeconds: dto.recoveryRetentionSeconds,
+        };
+      },
+    );
   }
 
   async listNotes(cursor?: string): Promise<RemoteBridgeResult<NotePage>> {
     return this.readJson(
       "GET",
-      withCursor("/notes", cursor),
+      withCursor(MIRROR_API_V2_ROUTE.notes, cursor),
       notePageSchema,
       (dto) => {
         const notes: NotePath[] = [];
@@ -168,8 +175,8 @@ export class FetchRemoteBridge implements RemoteBridge {
       { method: "GET", path: notePathRoute(path) },
       async (response, signal) => {
         if (response.status === 404) return success({ kind: "missing" });
-        if (response.status !== 200) return responseFailure(response, false);
-        if (!hasMediaType(response, REMOTE_RESPONSE_MEDIA_TYPE.markdown)) {
+        if (response.status !== 200) return readResponseFailure(response);
+        if (!hasMediaType(response, MIRROR_MEDIA_TYPE.markdown)) {
           return failure(REMOTE_BRIDGE_FAILURE.malformedResponse);
         }
         const content = await this.readText(
@@ -178,10 +185,10 @@ export class FetchRemoteBridge implements RemoteBridge {
           signal,
         );
         if (content.kind === "failure") return content;
-        const format = response.headers.get("Bridge-Note-Format");
+        const format = response.headers.get(MIRROR_HTTP_HEADER.noteFormat);
         if (
           format === BRIDGE_NOTE_FORMAT.legacy &&
-          response.headers.get("ETag") === null
+          response.headers.get(MIRROR_HTTP_HEADER.etag) === null
         ) {
           return success({ kind: "legacy", content: content.value });
         }
@@ -209,7 +216,10 @@ export class FetchRemoteBridge implements RemoteBridge {
         if (
           state === undefined ||
           state.path !== path ||
-          !stateEtagMatches(state, response.headers.get("ETag"))
+          !stateEtagMatches(
+            state,
+            response.headers.get(MIRROR_HTTP_HEADER.etag),
+          )
         ) {
           return undefined;
         }
@@ -232,8 +242,12 @@ export class FetchRemoteBridge implements RemoteBridge {
     if (contentHash.kind === "failure") return contentHash;
     const condition =
       request.precondition.kind === "absent"
-        ? { "If-None-Match": "*" }
-        : { "If-Match": formatApplicationEtag(request.precondition.revision) };
+        ? { [MIRROR_HTTP_HEADER.ifNoneMatch]: "*" }
+        : {
+            [MIRROR_HTTP_HEADER.ifMatch]: formatApplicationEtag(
+              request.precondition.revision,
+            ),
+          };
     const headers = {
       ...identityHeaders(
         request.associationId,
@@ -243,7 +257,9 @@ export class FetchRemoteBridge implements RemoteBridge {
       ...condition,
       ...(request.action === MUTATION_ACTION.tombstone
         ? {}
-        : { "Content-Type": REMOTE_NOTE_REQUEST_CONTENT_TYPE }),
+        : {
+            [MIRROR_HTTP_HEADER.contentType]: REMOTE_NOTE_REQUEST_CONTENT_TYPE,
+          }),
     };
     return this.withMutationResponse<MutationAcknowledgement>(
       {
@@ -258,9 +274,9 @@ export class FetchRemoteBridge implements RemoteBridge {
         const expectedStatus =
           request.action === MUTATION_ACTION.create ? 201 : 200;
         if (response.status !== expectedStatus) {
-          return mutationFailure(responseFailure(response, true));
+          return mutationFailure(noteMutationResponseFailure(response));
         }
-        if (!hasMediaType(response, REMOTE_RESPONSE_MEDIA_TYPE.json)) {
+        if (!hasMediaType(response, MIRROR_MEDIA_TYPE.json)) {
           return mutationFailure(
             failure(REMOTE_BRIDGE_FAILURE.incompatibleProtocol),
           );
@@ -292,7 +308,7 @@ export class FetchRemoteBridge implements RemoteBridge {
             contentHash.value,
           ) ||
           formatApplicationEtag(acknowledgement.revision) !==
-            response.headers.get("ETag")
+            response.headers.get(MIRROR_HTTP_HEADER.etag)
         ) {
           return mutationFailure(
             failure(REMOTE_BRIDGE_FAILURE.malformedResponse),
@@ -308,7 +324,7 @@ export class FetchRemoteBridge implements RemoteBridge {
   ): Promise<RemoteBridgeResult<RecoveryPage>> {
     return this.readJson(
       "GET",
-      withCursor("/recovery", cursor),
+      withCursor(MIRROR_API_V2_ROUTE.recovery, cursor),
       recoveryPageSchema,
       (dto) => {
         const recoveries: RecoverySnapshotState[] = [];
@@ -331,9 +347,9 @@ export class FetchRemoteBridge implements RemoteBridge {
         if (response.status === 404) return success(null);
         if (
           response.status !== 200 ||
-          !hasMediaType(response, REMOTE_RESPONSE_MEDIA_TYPE.json)
+          !hasMediaType(response, MIRROR_MEDIA_TYPE.json)
         ) {
-          return responseFailure(response, false);
+          return readResponseFailure(response);
         }
         const decoded = await this.readJsonBody(
           response,
@@ -345,7 +361,8 @@ export class FetchRemoteBridge implements RemoteBridge {
         if (
           state === undefined ||
           state.id !== id ||
-          formatApplicationEtag(state.revision) !== response.headers.get("ETag")
+          formatApplicationEtag(state.revision) !==
+            response.headers.get(MIRROR_HTTP_HEADER.etag)
         ) {
           return failure(REMOTE_BRIDGE_FAILURE.malformedResponse);
         }
@@ -364,9 +381,9 @@ export class FetchRemoteBridge implements RemoteBridge {
         if (response.status === 410) return success({ kind: "unavailable" });
         if (
           response.status !== 200 ||
-          !hasMediaType(response, REMOTE_RESPONSE_MEDIA_TYPE.markdown)
+          !hasMediaType(response, MIRROR_MEDIA_TYPE.markdown)
         ) {
-          return responseFailure(response, false);
+          return readResponseFailure(response);
         }
         const content = await this.readText(
           response,
@@ -375,7 +392,7 @@ export class FetchRemoteBridge implements RemoteBridge {
         );
         if (content.kind === "failure") return content;
         if (
-          response.headers.get("Bridge-Note-Format") !==
+          response.headers.get(MIRROR_HTTP_HEADER.noteFormat) !==
             BRIDGE_NOTE_FORMAT.current ||
           responseRevision(response) === undefined
         ) {
@@ -412,14 +429,16 @@ export class FetchRemoteBridge implements RemoteBridge {
             request.writerId,
             request.operationId,
           ),
-          "If-Match": formatApplicationEtag(request.expectedRevision),
+          [MIRROR_HTTP_HEADER.ifMatch]: formatApplicationEtag(
+            request.expectedRevision,
+          ),
         },
       },
       async (response, signal) => {
         if (response.status !== 200) {
-          return mutationFailure(responseFailure(response, true));
+          return mutationFailure(recoveryMutationResponseFailure(response));
         }
-        if (!hasMediaType(response, REMOTE_RESPONSE_MEDIA_TYPE.json)) {
+        if (!hasMediaType(response, MIRROR_MEDIA_TYPE.json)) {
           return mutationFailure(
             failure(REMOTE_BRIDGE_FAILURE.incompatibleProtocol),
           );
@@ -441,7 +460,8 @@ export class FetchRemoteBridge implements RemoteBridge {
           state.id !== request.id ||
           state.associationId !== request.associationId ||
           state.revision === request.expectedRevision ||
-          formatApplicationEtag(state.revision) !== response.headers.get("ETag")
+          formatApplicationEtag(state.revision) !==
+            response.headers.get(MIRROR_HTTP_HEADER.etag)
         ) {
           return mutationFailure(
             failure(REMOTE_BRIDGE_FAILURE.malformedResponse),
@@ -461,9 +481,9 @@ export class FetchRemoteBridge implements RemoteBridge {
     return this.withResponse({ method, path }, async (response, signal) => {
       if (
         response.status !== 200 ||
-        !hasMediaType(response, REMOTE_RESPONSE_MEDIA_TYPE.json)
+        !hasMediaType(response, MIRROR_MEDIA_TYPE.json)
       ) {
-        return responseFailure(response, false);
+        return readResponseFailure(response);
       }
       const decoded = await this.readJsonBody(response, schema, signal);
       if (decoded.kind === "failure") return decoded;
@@ -650,10 +670,7 @@ export class FetchRemoteBridge implements RemoteBridge {
     }
     let url: URL;
     try {
-      url = new URL(
-        `${REMOTE_API_V2_PATH}${request.path}`,
-        this.dependencies.origin,
-      );
+      url = new URL(request.path, this.dependencies.origin);
     } catch {
       release();
       return {
@@ -665,9 +682,10 @@ export class FetchRemoteBridge implements RemoteBridge {
     const controller = new AbortController();
     timer = setTimeout(() => controller.abort(), this.deadlineMilliseconds);
     let fetchResult: Response | undefined;
+    let dispatched = false;
     try {
       const headers = new Headers(request.headers);
-      headers.set("Authorization", `Bearer ${bearer}`);
+      headers.set(MIRROR_HTTP_HEADER.authorization, `Bearer ${bearer}`);
       const promise = fetch(url, {
         ...REMOTE_FETCH_OPTIONS,
         method: request.method,
@@ -675,6 +693,7 @@ export class FetchRemoteBridge implements RemoteBridge {
         ...(request.body === undefined ? {} : { body: request.body }),
         signal: controller.signal,
       });
+      dispatched = true;
       const raced = await raceFetchWithAbort(promise, controller.signal);
       if (raced.kind === "aborted") {
         releaseAfterLateFetchSettlement(promise, release);
@@ -694,10 +713,12 @@ export class FetchRemoteBridge implements RemoteBridge {
     } catch {
       return {
         kind: "failure",
-        failure: controller.signal.aborted
-          ? REMOTE_BRIDGE_FAILURE.timedOut
-          : REMOTE_BRIDGE_FAILURE.networkUnavailable,
-        dispatched: true,
+        failure: dispatched
+          ? controller.signal.aborted
+            ? REMOTE_BRIDGE_FAILURE.timedOut
+            : REMOTE_BRIDGE_FAILURE.networkUnavailable
+          : REMOTE_BRIDGE_FAILURE.invalidConfiguration,
+        dispatched,
       };
     } finally {
       if (fetchResult === undefined && !controller.signal.aborted) release();
@@ -779,11 +800,11 @@ function withCursor(path: string, cursor: string | undefined): string {
 }
 
 function notePathRoute(path: NotePath): string {
-  return `/notes/${encodeNotePath(path)}`;
+  return `${MIRROR_API_V2_ROUTE.notes}/${encodeNotePath(path)}`;
 }
 
 function recoveryRoute(id: RecoverySnapshotId): string {
-  return `/recovery/${id}`;
+  return `${MIRROR_API_V2_ROUTE.recovery}/${id}`;
 }
 
 function identityHeaders(
@@ -792,23 +813,21 @@ function identityHeaders(
   operationId: MirrorOperationId,
 ): Record<string, string> {
   return {
-    "Bridge-Association-Id": associationId,
-    "Bridge-Writer-Id": writerId,
-    "Bridge-Operation-Id": operationId,
+    [MIRROR_HTTP_HEADER.associationId]: associationId,
+    [MIRROR_HTTP_HEADER.writerId]: writerId,
+    [MIRROR_HTTP_HEADER.operationId]: operationId,
   };
 }
 
 function hasMediaType(response: Response, expected: string): boolean {
-  const value = response.headers.get("Content-Type");
+  const value = response.headers.get(MIRROR_HTTP_HEADER.contentType);
   if (value === null) return false;
   return value.split(";", 1)[0]?.trim().toLowerCase() === expected;
 }
 
 function responseRevision(response: Response): ApplicationRevision | undefined {
-  const etag = response.headers.get("ETag");
-  if (etag === null || !etag.startsWith('"m3-') || !etag.endsWith('"'))
-    return undefined;
-  return createApplicationRevision(etag.slice(4, -1));
+  const etag = response.headers.get(MIRROR_HTTP_HEADER.etag);
+  return etag === null ? undefined : parseApplicationEtag(etag);
 }
 
 function stateEtagMatches(
@@ -985,28 +1004,77 @@ function acknowledgementMatchesRequest(
   );
 }
 
-function responseFailure(
+/**
+ * Classifies authentication, throttling, and server failures shared by all routes.
+ *
+ * @param response - Non-success response returned by Fetch.
+ * @returns A shared failure, or `undefined` when route semantics must decide.
+ */
+function commonResponseFailure(
   response: Response,
-  mutation: boolean,
-): RemoteBridgeFailureResult {
+): RemoteBridgeFailureResult | undefined {
   if (response.status === 401)
     return failure(REMOTE_BRIDGE_FAILURE.unauthenticated);
   if (response.status === 403) return failure(REMOTE_BRIDGE_FAILURE.forbidden);
+  if (response.status === 429)
+    return failure(REMOTE_BRIDGE_FAILURE.rateLimited);
+  if (response.status >= 500)
+    return failure(REMOTE_BRIDGE_FAILURE.serverFailed);
+  return undefined;
+}
+
+/**
+ * Classifies statuses that cannot be valid domain outcomes for a read operation.
+ *
+ * @param response - Non-success read response returned by Fetch.
+ * @returns Sanitized read failure with no mutation-effect claim.
+ */
+function readResponseFailure(response: Response): RemoteBridgeFailureResult {
+  const common = commonResponseFailure(response);
+  if (common !== undefined) return common;
+  return failure(
+    response.status === 404
+      ? REMOTE_BRIDGE_FAILURE.incompatibleProtocol
+      : REMOTE_BRIDGE_FAILURE.malformedResponse,
+  );
+}
+
+/**
+ * Classifies conditional note-mutation failures from the documented v2 route.
+ *
+ * @param response - Non-success note-mutation response returned by Fetch.
+ * @returns Sanitized failure preserving only valid note-route outcomes.
+ */
+function noteMutationResponseFailure(
+  response: Response,
+): RemoteBridgeFailureResult {
+  const common = commonResponseFailure(response);
+  if (common !== undefined) return common;
+  if (response.status === 412)
+    return failure(REMOTE_BRIDGE_FAILURE.preconditionFailed);
+  if (response.status === 428)
+    return failure(REMOTE_BRIDGE_FAILURE.preconditionRequired);
+  return failure(REMOTE_BRIDGE_FAILURE.incompatibleProtocol);
+}
+
+/**
+ * Classifies recovery-transition failures, including its domain-specific absence.
+ *
+ * @param response - Non-success recovery-mutation response returned by Fetch.
+ * @returns Sanitized failure preserving valid recovery-route outcomes.
+ */
+function recoveryMutationResponseFailure(
+  response: Response,
+): RemoteBridgeFailureResult {
+  const common = commonResponseFailure(response);
+  if (common !== undefined) return common;
   if (response.status === 404) return failure(REMOTE_BRIDGE_FAILURE.missing);
   if (response.status === 409) return failure(REMOTE_BRIDGE_FAILURE.conflict);
   if (response.status === 412)
     return failure(REMOTE_BRIDGE_FAILURE.preconditionFailed);
   if (response.status === 428)
     return failure(REMOTE_BRIDGE_FAILURE.preconditionRequired);
-  if (response.status === 429)
-    return failure(REMOTE_BRIDGE_FAILURE.rateLimited);
-  if (response.status >= 500)
-    return failure(REMOTE_BRIDGE_FAILURE.serverFailed);
-  return failure(
-    mutation
-      ? REMOTE_BRIDGE_FAILURE.incompatibleProtocol
-      : REMOTE_BRIDGE_FAILURE.malformedResponse,
-  );
+  return failure(REMOTE_BRIDGE_FAILURE.incompatibleProtocol);
 }
 
 function mutationFailure<Value>(

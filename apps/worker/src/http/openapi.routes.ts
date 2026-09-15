@@ -32,6 +32,7 @@ import {
   CACHE_CONTROL_HEADER,
   CACHE_CONTROL_NO_STORE,
   HEALTH_ROUTE,
+  HTTP_HEADER,
   HTTP_STATUS,
   JSON_CONTENT_TYPE,
   MARKDOWN_CONTENT_TYPE,
@@ -72,15 +73,15 @@ const cursorQuery = z.object({
 
 /** Mutation identity request headers shared by every v2 mutation. */
 const mutationIdentityHeaders = {
-  "Bridge-Association-Id": mirrorAssociationIdSchema,
-  "Bridge-Writer-Id": mirrorWriterIdSchema,
-  "Bridge-Operation-Id": mirrorOperationIdSchema,
+  [HTTP_HEADER.associationId]: mirrorAssociationIdSchema,
+  [HTTP_HEADER.writerId]: mirrorWriterIdSchema,
+  [HTTP_HEADER.operationId]: mirrorOperationIdSchema,
 };
 
 /** Matching application-generation and designation headers. */
 const matchingMutationHeaders = z.object({
   ...mutationIdentityHeaders,
-  "If-Match": applicationEtagSchema.describe(
+  [HTTP_HEADER.ifMatch]: applicationEtagSchema.describe(
     'Exactly one strong application ETag: "m3-<uuid-v4>".',
   ),
 });
@@ -97,12 +98,12 @@ const noteContentTypeHeader = z
 /** Closest OpenAPI parameter model for the runtime cross-header XOR requirement. */
 const putMutationHeaders = z.object({
   ...mutationIdentityHeaders,
-  "Content-Type": noteContentTypeHeader,
-  "If-None-Match": z.literal("*").optional().openapi({
+  [HTTP_HEADER.contentType]: noteContentTypeHeader,
+  [HTTP_HEADER.ifNoneMatch]: z.literal("*").optional().openapi({
     description:
       "Use alone for absence-only first creation; If-Match must be omitted.",
   }),
-  "If-Match": applicationEtagSchema
+  [HTTP_HEADER.ifMatch]: applicationEtagSchema
     .optional()
     .describe(
       "Use alone for an exact live/tombstone generation; If-None-Match must be omitted.",
@@ -127,7 +128,7 @@ const authenticationChallengeResponseHeader = {
 
 /** Strong application-generation response header. */
 const applicationEtagResponseHeader = {
-  ETag: {
+  [HTTP_HEADER.etag]: {
     schema: {
       type: "string",
       pattern: APPLICATION_ETAG_PATTERN.source,
@@ -138,7 +139,7 @@ const applicationEtagResponseHeader = {
 
 /** Public note-format response header for legacy or format-2 current notes. */
 const noteFormatResponseHeader = {
-  "Bridge-Note-Format": {
+  [HTTP_HEADER.noteFormat]: {
     schema: { type: "string", enum: BRIDGE_NOTE_FORMATS.slice() },
     description: "Public representation format.",
   },
@@ -146,7 +147,7 @@ const noteFormatResponseHeader = {
 
 /** Recovery content is always decoded from a validated format-2 snapshot. */
 const recoveryNoteFormatResponseHeader = {
-  "Bridge-Note-Format": {
+  [HTTP_HEADER.noteFormat]: {
     schema: { type: "string", enum: Array.of(BRIDGE_NOTE_FORMAT.current) },
     description: "Recovery content is always public format 2.",
   },

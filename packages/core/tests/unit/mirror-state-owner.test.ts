@@ -158,8 +158,12 @@ describe("MirrorStateOwner", () => {
     expect(store.save).toHaveBeenCalledTimes(1);
     pending.resolve({ kind: "saved" });
 
-    expect((await first).kind).toBe("committed");
-    expect((await competing).kind).toBe("stale");
+    const firstResult = await first;
+    const competingResult = await competing;
+    expect(firstResult.kind).toBe("committed");
+    expect(firstResult.snapshot.mutationAdmissionAllowed).toBe(false);
+    expect(competingResult.kind).toBe("stale");
+    expect(competingResult.snapshot.mutationAdmissionAllowed).toBe(true);
     expect(store.save).toHaveBeenCalledTimes(1);
   });
 
@@ -286,6 +290,19 @@ describe("MirrorStateOwner", () => {
     const stale = await owner.commit(oldRevision, () => activeState());
     expect(stale.kind).toBe("stale");
     expect(owner.snapshot().mutationAdmissionAllowed).toBe(false);
+  });
+
+  it("returns admission snapshots for the state after the current transition settles", async () => {
+    const owner = new MirrorStateOwner(activeState(), new FakeStateStore());
+
+    const persistence = await owner.verifyPersistence();
+    expect(persistence.mutationAdmissionAllowed).toBe(true);
+    expect(persistence).toEqual(owner.snapshot());
+
+    const transition = await owner.transition((state) => ({ ...state }));
+    expect(transition.kind).toBe("committed");
+    expect(transition.snapshot.mutationAdmissionAllowed).toBe(true);
+    expect(transition.snapshot).toEqual(owner.snapshot());
   });
 
   it("retains unresolved evidence and globally fences admission when an ACK save fails", async () => {

@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.1](https://github.com/moisesmorillo/obsidian-ai-bridge/compare/v0.5.0...v0.5.1) (2026-09-15)
+
+
+### Bug Fixes
+
+* **mirror:** correct reviewed state and transport semantics ([#20](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/20)) ([0b39432](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/0b39432b6f4707e94dbcd47659613ac2a9e5efea))
+
 ## [0.5.0](https://github.com/moisesmorillo/obsidian-ai-bridge/compare/v0.4.0...v0.5.0) (2026-09-15)
 
 

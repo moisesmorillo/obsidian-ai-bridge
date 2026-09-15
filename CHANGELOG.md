@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.4.0](https://github.com/moisesmorillo/obsidian-ai-bridge/compare/v0.3.0...v0.4.0) (2026-09-15)
+
+
+### Features
+
+* **plugin:** add device-local mirror state ([#17](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/17)) ([9b18375](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/9b18375f827a03082952f07326ec3dd401eca597))
+
+
+### Bug Fixes
+
+* **core:** enforce mirror association continuity ([#15](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/15)) ([fe82f4e](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/fe82f4e3a1253bf6ce7e98efd73bc8451dd07de2))
+
 ## [0.3.0](https://github.com/moisesmorillo/obsidian-ai-bridge/compare/v0.2.0...v0.3.0) (2026-09-14)
 
 

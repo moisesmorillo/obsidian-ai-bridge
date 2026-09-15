@@ -1,5 +1,4 @@
 import type {
-  ContentSha256,
   MirrorAssociationId,
   MirrorWriterId,
 } from "@core/mirror/mirror.types";
@@ -12,16 +11,18 @@ import {
   MIRROR_GLOBAL_BLOCK_REASON,
 } from "@core/mirror/mirror-state.constants";
 import type {
+  HandoffAlignmentInvalidation,
+  HandoffAlignmentSnapshot,
+  HandoffLocalObservation,
   HandoffPayload,
   HandoffRecord,
   MirrorDeviceState,
   MirrorOrigin,
   MirrorPathState,
+  StagedHandoff,
   StagedHandoffEntry,
   TransferableAcknowledgement,
 } from "@core/mirror/mirror-state.types";
-import type { NotePath } from "@core/note-path/note-path.types";
-
 /** Closed refusal reasons for designation/readiness and explicit activation. */
 export const WRITER_ACTIVATION_FAILURE = {
   missingLocalState: "missing-local-state",
@@ -346,120 +347,136 @@ export function stageHandoffImport(
 }
 
 /**
- * Records future remote-state verification without performing a network request.
+ * Applies one complete local-inventory and remote-verification handoff snapshot.
+ *
+ * Every staged path must occur exactly once in both evidence collections. The
+ * transition validates and indexes the collections once, rejects stale local
+ * generations atomically, and produces one state for one owner save.
  *
  * @param state - Current staged state.
- * @param path - Transferred path whose remote generation was inspected.
- * @param observed - Strictly validated remote live/tombstone metadata, or null for mismatch.
- * @returns Updated staged state, or `undefined` for an incompatible/path request.
+ * @param snapshot - Complete local and remote evidence for the staged baseline.
+ * @returns Updated staged state, or `undefined` when any evidence is incomplete,
+ * duplicated, stale, or incompatible with the transferred acknowledgement kind.
  */
-export function verifyHandoffRemotePath(
+export function alignStagedHandoff(
   state: MirrorDeviceState,
-  path: NotePath,
-  observed: TransferableAcknowledgement | null,
+  snapshot: HandoffAlignmentSnapshot,
 ): MirrorDeviceState | undefined {
-  return updateStagedEntry(state, path, (entry) => ({
-    ...entry,
-    remoteVerification: acknowledgementsEqual(entry.acknowledgement, observed)
+  const staged = requireStagedHandoff(state);
+  if (staged === undefined) return undefined;
+  if (
+    snapshot.local.length !== staged.entries.length ||
+    snapshot.remote.length !== staged.entries.length
+  ) {
+    return undefined;
+  }
+  const localByPath = new Map(
+    snapshot.local.map((observation) => [observation.path, observation]),
+  );
+  const remoteByPath = new Map(
+    snapshot.remote.map((observation) => [observation.path, observation]),
+  );
+  if (
+    localByPath.size !== snapshot.local.length ||
+    remoteByPath.size !== snapshot.remote.length
+  ) {
+    return undefined;
+  }
+  const entries: StagedHandoffEntry[] = [];
+  let hasMismatch = false;
+  for (const entry of staged.entries) {
+    const local = localByPath.get(entry.path);
+    const remote = remoteByPath.get(entry.path);
+    if (
+      local === undefined ||
+      remote === undefined ||
+      local.kind !== entry.acknowledgement.kind ||
+      !isCurrentObservationGeneration(entry, local.observationGeneration)
+    ) {
+      return undefined;
+    }
+    const localAlignment = localObservationMatches(entry, local)
       ? HANDOFF_ALIGNMENT_KIND.matched
-      : HANDOFF_ALIGNMENT_KIND.mismatch,
-  }));
-}
-
-/**
- * Records a saved-content observation for one transferred live acknowledgement.
- *
- * Tombstones never accept content observations. A mismatch remains staged and
- * blocked; it never turns stale local text into mutation authority.
- *
- * @param state - Current staged state.
- * @param path - Transferred path being checked.
- * @param contentSha256 - Digest of the current stable saved content.
- * @param observationGeneration - Local generation captured around the saved read.
- * @returns Updated staged state, or `undefined` for an incompatible/path-kind request.
- */
-export function alignHandoffLivePath(
-  state: MirrorDeviceState,
-  path: NotePath,
-  contentSha256: ContentSha256,
-  observationGeneration: number,
-): MirrorDeviceState | undefined {
-  return updateStagedEntry(state, path, (entry) => {
+      : HANDOFF_ALIGNMENT_KIND.mismatch;
+    const remoteVerification = acknowledgementsEqual(
+      entry.acknowledgement,
+      remote.acknowledgement,
+    )
+      ? HANDOFF_ALIGNMENT_KIND.matched
+      : HANDOFF_ALIGNMENT_KIND.mismatch;
     if (
-      entry.acknowledgement.kind !== MIRROR_ACKNOWLEDGEMENT_KIND.live ||
-      !isCurrentObservationGeneration(entry, observationGeneration)
+      localAlignment === HANDOFF_ALIGNMENT_KIND.mismatch ||
+      remoteVerification === HANDOFF_ALIGNMENT_KIND.mismatch
     ) {
-      return undefined;
+      hasMismatch = true;
     }
-    return {
+    entries.push({
       ...entry,
-      localAlignment:
-        entry.acknowledgement.contentSha256 === contentSha256
-          ? HANDOFF_ALIGNMENT_KIND.matched
-          : HANDOFF_ALIGNMENT_KIND.mismatch,
-      observationGeneration,
-    };
-  });
+      localAlignment,
+      remoteVerification,
+      observationGeneration: local.observationGeneration,
+    });
+  }
+  return updatedStagedState(state, staged, entries, hasMismatch);
 }
 
 /**
- * Records an exact local-absence observation for one transferred tombstone.
+ * Invalidates selected staged alignments from one collapsed local event batch.
  *
  * @param state - Current staged state.
- * @param path - Transferred tombstoned path being checked.
- * @param isAbsent - Whether the exact path was verified absent after host checks.
- * @param observationGeneration - Local event generation surrounding verification.
- * @returns Updated staged state, or `undefined` for an incompatible/path-kind request.
+ * @param invalidations - Unique paths with strictly newer local generations.
+ * @returns Updated state for one owner save, or `undefined` when the batch is
+ * empty, duplicated, stale, unknown, or incompatible with staged lifecycle.
  */
-export function alignHandoffTombstonePath(
+export function invalidateHandoffAlignments(
   state: MirrorDeviceState,
-  path: NotePath,
-  isAbsent: boolean,
-  observationGeneration: number,
+  invalidations: readonly HandoffAlignmentInvalidation[],
 ): MirrorDeviceState | undefined {
-  return updateStagedEntry(state, path, (entry) => {
+  const staged = requireStagedHandoff(state);
+  if (
+    staged === undefined ||
+    invalidations.length === 0 ||
+    invalidations.length > staged.entries.length
+  ) {
+    return undefined;
+  }
+  const generationByPath = new Map(
+    invalidations.map((entry) => [entry.path, entry.observationGeneration]),
+  );
+  if (generationByPath.size !== invalidations.length) return undefined;
+  const stagedByPath = new Map(
+    staged.entries.map((entry) => [entry.path, entry]),
+  );
+  for (const [path, observationGeneration] of generationByPath) {
+    const current = stagedByPath.get(path);
     if (
-      entry.acknowledgement.kind !== MIRROR_ACKNOWLEDGEMENT_KIND.tombstone ||
-      !isCurrentObservationGeneration(entry, observationGeneration)
-    ) {
-      return undefined;
-    }
-    return {
-      ...entry,
-      localAlignment: isAbsent
-        ? HANDOFF_ALIGNMENT_KIND.matched
-        : HANDOFF_ALIGNMENT_KIND.mismatch,
-      observationGeneration,
-    };
-  });
-}
-
-/**
- * Invalidates prior alignment when a newer local observation arrives.
- *
- * @param state - Current staged state.
- * @param path - Changed transferred path.
- * @param observationGeneration - Strictly newer local event generation.
- * @returns Updated state, or `undefined` when the path/generation is incompatible.
- */
-export function invalidateHandoffAlignment(
-  state: MirrorDeviceState,
-  path: NotePath,
-  observationGeneration: number,
-): MirrorDeviceState | undefined {
-  return updateStagedEntry(state, path, (entry) => {
-    if (
+      current === undefined ||
       !Number.isSafeInteger(observationGeneration) ||
-      observationGeneration <= entry.observationGeneration
+      observationGeneration <= current.observationGeneration
     ) {
       return undefined;
     }
-    return {
-      ...entry,
-      localAlignment: HANDOFF_ALIGNMENT_KIND.pending,
-      observationGeneration,
-    };
+  }
+  let hasMismatch = false;
+  const entries = staged.entries.map((entry) => {
+    const observationGeneration = generationByPath.get(entry.path);
+    const updated =
+      observationGeneration === undefined
+        ? entry
+        : {
+            ...entry,
+            localAlignment: HANDOFF_ALIGNMENT_KIND.pending,
+            observationGeneration,
+          };
+    if (
+      updated.localAlignment === HANDOFF_ALIGNMENT_KIND.mismatch ||
+      updated.remoteVerification === HANDOFF_ALIGNMENT_KIND.mismatch
+    ) {
+      hasMismatch = true;
+    }
+    return updated;
   });
+  return updatedStagedState(state, staged, entries, hasMismatch);
 }
 
 /**
@@ -603,44 +620,50 @@ function handoffEntryToPathState(entry: StagedHandoffEntry): MirrorPathState {
   };
 }
 
-function updateStagedEntry(
+function requireStagedHandoff(
   state: MirrorDeviceState,
-  path: NotePath,
-  update: (entry: StagedHandoffEntry) => StagedHandoffEntry | undefined,
-): MirrorDeviceState | undefined {
+): StagedHandoff | undefined {
   if (
     state.lifecycle.kind !== MIRROR_DEVICE_LIFECYCLE_KIND.handoffStaged ||
     state.stagedHandoff === null
   ) {
     return undefined;
   }
-  const index = state.stagedHandoff.entries.findIndex(
-    (entry) => entry.path === path,
+  return state.stagedHandoff;
+}
+
+function localObservationMatches(
+  entry: StagedHandoffEntry,
+  observation: HandoffLocalObservation,
+): boolean {
+  if (entry.acknowledgement.kind === MIRROR_ACKNOWLEDGEMENT_KIND.live) {
+    return (
+      observation.kind === MIRROR_ACKNOWLEDGEMENT_KIND.live &&
+      entry.acknowledgement.contentSha256 === observation.contentSha256
+    );
+  }
+  return (
+    observation.kind === MIRROR_ACKNOWLEDGEMENT_KIND.tombstone &&
+    observation.isAbsent
   );
-  if (index < 0) return undefined;
-  const current = state.stagedHandoff.entries[index];
-  if (current === undefined) return undefined;
-  const updated = update(current);
-  if (updated === undefined) return undefined;
-  const entries = state.stagedHandoff.entries.map((entry, entryIndex) =>
-    entryIndex === index ? updated : entry,
-  );
-  const hasMismatch = entries.some(
-    (entry) =>
-      entry.localAlignment === HANDOFF_ALIGNMENT_KIND.mismatch ||
-      entry.remoteVerification === HANDOFF_ALIGNMENT_KIND.mismatch,
-  );
+}
+
+function updatedStagedState(
+  state: MirrorDeviceState,
+  staged: StagedHandoff,
+  entries: readonly StagedHandoffEntry[],
+  hasMismatch: boolean,
+): MirrorDeviceState {
   return {
     ...state,
-    globalBlockReason: hasMismatch
-      ? MIRROR_GLOBAL_BLOCK_REASON.handoffMismatch
-      : state.globalBlockReason === MIRROR_GLOBAL_BLOCK_REASON.handoffMismatch
-        ? null
-        : state.globalBlockReason,
-    stagedHandoff: {
-      ...state.stagedHandoff,
-      entries,
-    },
+    globalBlockReason:
+      state.globalBlockReason !== null &&
+      state.globalBlockReason !== MIRROR_GLOBAL_BLOCK_REASON.handoffMismatch
+        ? state.globalBlockReason
+        : hasMismatch
+          ? MIRROR_GLOBAL_BLOCK_REASON.handoffMismatch
+          : null,
+    stagedHandoff: { ...staged, entries },
   };
 }
 

@@ -62,7 +62,7 @@ boundaries; [API](api.md) describes the HTTP contract.
   prohibition, direct-console prohibition and configured documentation rules.
   These checks do **not** prove all architecture/TSDoc requirements in
   [AGENTS.md](../AGENTS.md); manual semantic review remains mandatory.
-- Vitest **5**: **38 source test files / 452 tests**, plus **1 artifact file /
+- Vitest **5**: **38 source test files / 453 tests**, plus **1 artifact file /
   3 smoke tests** in the dedicated build task. The unchanged M1 baseline had
   15 files / 105 tests. Exact slice validation is recorded in the
   [implementation plan](plans/m2-obsidian-read-only-local-adapter.md).
@@ -82,8 +82,8 @@ boundaries; [API](api.md) describes the HTTP contract.
   Global thresholds: **lines 95%, statements 95%, functions 94%, branches 90%**.
   Coverage is a regression signal, not proof of test quality.
 - Root Vitest projects include shared packages, Worker and plugin. Current source
-  coverage is statements **95.65%**, branches **93.37%**, functions **98.43%**, lines
-  **96.12%**; thresholds and production inclusion remain enforced. Artifact tests are separate
+  coverage is statements **95.70%**, branches **93.41%**, functions **98.42%**, lines
+  **96.11%**; thresholds and production inclusion remain enforced. Artifact tests are separate
   from source coverage, run after packaging and never replace behavioral coverage.
 - The Worker declares Miniflare **5.20260908.0-alpha** directly for its storage
   qualification task, exactly matching Wrangler **4.130.0** and workerd
@@ -106,7 +106,8 @@ The Worker API is a remote storage boundary, **not synchronization**. A token ho
 remains privileged for this one namespace; static IDs are not scoped permissions.
 Safe conditional v2 routes now exist and unsafe v1 mutations are retired. Slice 3
 models and persists device-local configuration/state, activation and staged handoff,
-but does not compose them into runtime mirroring. There are no remote-to-local writes,
+including atomic indexed alignment batches, but does not compose them into runtime
+mirroring. There are no remote-to-local writes,
 Fetch client, automatic saved-event processing, settings UI, retry loop, remote
 handoff verification or initial-sync behavior. Never infer
 a connected mirror merely from the server surface.

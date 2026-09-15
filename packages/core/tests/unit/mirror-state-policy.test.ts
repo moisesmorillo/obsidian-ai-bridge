@@ -1,8 +1,7 @@
 import {
   activateIsolatedAssociation,
   activateStagedHandoff,
-  alignHandoffLivePath,
-  alignHandoffTombstonePath,
+  alignStagedHandoff,
   createApplicationRevision,
   createContentSha256,
   createDisabledMirrorState,
@@ -11,8 +10,9 @@ import {
   createMirrorWriterId,
   evaluateWriterReadiness,
   HANDOFF_ALIGNMENT_KIND,
+  type HandoffAlignmentSnapshot,
   type HandoffRecord,
-  invalidateHandoffAlignment,
+  invalidateHandoffAlignments,
   isDurableMutationAdmissionAllowed,
   MIRROR_ACKNOWLEDGEMENT_KIND,
   MIRROR_DESIRED_STATE_KIND,
@@ -24,7 +24,7 @@ import {
   pauseForHandoff,
   prepareHandoffExport,
   stageHandoffImport,
-  verifyHandoffRemotePath,
+  type TransferableAcknowledgement,
   WRITER_ACTIVATION_FAILURE,
 } from "@obsidian-ai-bridge/core";
 import { describe, expect, it } from "vitest";
@@ -347,8 +347,15 @@ describe("handoff policy", () => {
     expect(imported.kind).toBe("staged");
     if (imported.kind !== "staged") throw new Error("Expected staged handoff.");
     expect(imported.state.globalBlockReason).toBe("configuration-unavailable");
+    const aligned = required(
+      alignStagedHandoff(
+        imported.state,
+        handoffAlignmentSnapshot(STALE_HASH, false, 1),
+      ),
+    );
+    expect(aligned.globalBlockReason).toBe("configuration-unavailable");
     expect(
-      activateStagedHandoff(imported.state, {
+      activateStagedHandoff(aligned, {
         ...designation(),
         explicitWholeMirrorConsent: true,
       }),
@@ -358,7 +365,7 @@ describe("handoff policy", () => {
     });
   });
 
-  it("keeps live and tombstone ACKs staged until exact local alignment", () => {
+  it("aligns a complete handoff atomically and rejects stale snapshots", () => {
     const imported = stageHandoffImport(
       createDisabledMirrorState(DEVICE_ID),
       handoffRecord(),
@@ -381,20 +388,20 @@ describe("handoff policy", () => {
       reason: WRITER_ACTIVATION_FAILURE.handoffNotAligned,
     });
 
-    const staleLive = required(
-      alignHandoffLivePath(imported.state, LIVE_PATH, STALE_HASH, 1),
-    );
-    expect(staleLive.stagedHandoff?.entries[0]?.localAlignment).toBe(
-      HANDOFF_ALIGNMENT_KIND.mismatch,
-    );
-    const staleFileAtTombstone = required(
-      alignHandoffTombstonePath(staleLive, TOMBSTONE_PATH, false, 1),
-    );
-    expect(staleFileAtTombstone.stagedHandoff?.entries[1]?.localAlignment).toBe(
-      HANDOFF_ALIGNMENT_KIND.mismatch,
+    const mismatched = required(
+      alignStagedHandoff(
+        imported.state,
+        handoffAlignmentSnapshot(STALE_HASH, false, 1),
+      ),
     );
     expect(
-      activateStagedHandoff(staleFileAtTombstone, {
+      mismatched.stagedHandoff?.entries.map((entry) => entry.localAlignment),
+    ).toEqual([
+      HANDOFF_ALIGNMENT_KIND.mismatch,
+      HANDOFF_ALIGNMENT_KIND.mismatch,
+    ]);
+    expect(
+      activateStagedHandoff(mismatched, {
         ...designation(),
         explicitWholeMirrorConsent: true,
       }),
@@ -403,26 +410,17 @@ describe("handoff policy", () => {
       reason: WRITER_ACTIVATION_FAILURE.globallyBlocked,
     });
 
-    const liveAligned = required(
-      alignHandoffLivePath(staleFileAtTombstone, LIVE_PATH, LIVE_HASH, 2),
-    );
-    const tombstoneAligned = required(
-      alignHandoffTombstonePath(liveAligned, TOMBSTONE_PATH, true, 2),
-    );
-    const liveInvalidated = required(
-      invalidateHandoffAlignment(tombstoneAligned, LIVE_PATH, 3),
-    );
     const changed = required(
-      invalidateHandoffAlignment(liveInvalidated, TOMBSTONE_PATH, 3),
-    );
-    expect(changed.stagedHandoff?.entries[0]?.localAlignment).toBe(
-      HANDOFF_ALIGNMENT_KIND.pending,
+      invalidateHandoffAlignments(mismatched, [
+        { path: LIVE_PATH, observationGeneration: 2 },
+        { path: TOMBSTONE_PATH, observationGeneration: 2 },
+      ]),
     );
     expect(
-      alignHandoffLivePath(changed, LIVE_PATH, LIVE_HASH, 2),
-    ).toBeUndefined();
+      changed.stagedHandoff?.entries.map((entry) => entry.localAlignment),
+    ).toEqual([HANDOFF_ALIGNMENT_KIND.pending, HANDOFF_ALIGNMENT_KIND.pending]);
     expect(
-      alignHandoffTombstonePath(changed, TOMBSTONE_PATH, true, 2),
+      alignStagedHandoff(changed, handoffAlignmentSnapshot(LIVE_HASH, true, 1)),
     ).toBeUndefined();
     expect(
       activateStagedHandoff(changed, {
@@ -433,27 +431,11 @@ describe("handoff policy", () => {
       kind: "rejected",
       reason: WRITER_ACTIVATION_FAILURE.handoffNotAligned,
     });
-    const liveRealigned = required(
-      alignHandoffLivePath(changed, LIVE_PATH, LIVE_HASH, 3),
+
+    const aligned = required(
+      alignStagedHandoff(changed, handoffAlignmentSnapshot(LIVE_HASH, true, 2)),
     );
-    const realigned = required(
-      alignHandoffTombstonePath(liveRealigned, TOMBSTONE_PATH, true, 3),
-    );
-    const remoteLive = required(
-      verifyHandoffRemotePath(
-        realigned,
-        LIVE_PATH,
-        required(handoffRecord().entries[0]).acknowledgement,
-      ),
-    );
-    const remotelyVerified = required(
-      verifyHandoffRemotePath(
-        remoteLive,
-        TOMBSTONE_PATH,
-        required(handoffRecord().entries[1]).acknowledgement,
-      ),
-    );
-    const activated = activateStagedHandoff(remotelyVerified, {
+    const activated = activateStagedHandoff(aligned, {
       ...designation(),
       explicitWholeMirrorConsent: true,
     });
@@ -623,33 +605,75 @@ describe("closed activation and handoff refusal branches", () => {
     });
     if (imported.kind !== "staged") throw new Error("Expected staging.");
     const unknownPath = required(normalizeNotePath("notes/unknown.md"));
-    expect(
-      alignHandoffLivePath(activeState(), LIVE_PATH, LIVE_HASH, 1),
-    ).toBeUndefined();
-    expect(
-      verifyHandoffRemotePath(activeState(), LIVE_PATH, null),
-    ).toBeUndefined();
+    const complete = handoffAlignmentSnapshot(LIVE_HASH, true, 1);
+    expect(alignStagedHandoff(activeState(), complete)).toBeUndefined();
     const remoteMismatch = required(
-      verifyHandoffRemotePath(imported.state, LIVE_PATH, {
-        kind: MIRROR_ACKNOWLEDGEMENT_KIND.live,
-        revision: TOMBSTONE_REVISION,
-        contentSha256: LIVE_HASH,
-      }),
+      alignStagedHandoff(
+        imported.state,
+        handoffAlignmentSnapshot(LIVE_HASH, true, 1, {
+          kind: MIRROR_ACKNOWLEDGEMENT_KIND.live,
+          revision: TOMBSTONE_REVISION,
+          contentSha256: LIVE_HASH,
+        }),
+      ),
     );
     expect(remoteMismatch.stagedHandoff?.entries[0]?.remoteVerification).toBe(
       HANDOFF_ALIGNMENT_KIND.mismatch,
     );
     expect(
-      alignHandoffLivePath(imported.state, TOMBSTONE_PATH, LIVE_HASH, 1),
+      alignStagedHandoff(imported.state, {
+        ...complete,
+        local: [
+          {
+            kind: MIRROR_ACKNOWLEDGEMENT_KIND.tombstone,
+            path: LIVE_PATH,
+            isAbsent: true,
+            observationGeneration: 1,
+          },
+          required(complete.local[1]),
+        ],
+      }),
     ).toBeUndefined();
     expect(
-      alignHandoffTombstonePath(imported.state, LIVE_PATH, true, 1),
+      alignStagedHandoff(imported.state, {
+        ...complete,
+        local: [
+          { ...required(complete.local[0]), path: unknownPath },
+          required(complete.local[1]),
+        ],
+      }),
     ).toBeUndefined();
     expect(
-      alignHandoffLivePath(imported.state, unknownPath, LIVE_HASH, 1),
+      alignStagedHandoff(imported.state, {
+        ...complete,
+        remote: [required(complete.remote[0])],
+      }),
     ).toBeUndefined();
     expect(
-      invalidateHandoffAlignment(imported.state, LIVE_PATH, 0),
+      alignStagedHandoff(imported.state, {
+        ...complete,
+        remote: [required(complete.remote[0]), required(complete.remote[0])],
+      }),
+    ).toBeUndefined();
+    expect(
+      invalidateHandoffAlignments(activeState(), complete.local),
+    ).toBeUndefined();
+    expect(invalidateHandoffAlignments(imported.state, [])).toBeUndefined();
+    expect(
+      invalidateHandoffAlignments(imported.state, [
+        { path: LIVE_PATH, observationGeneration: 1 },
+        { path: LIVE_PATH, observationGeneration: 2 },
+      ]),
+    ).toBeUndefined();
+    expect(
+      invalidateHandoffAlignments(imported.state, [
+        { path: unknownPath, observationGeneration: 1 },
+      ]),
+    ).toBeUndefined();
+    expect(
+      invalidateHandoffAlignments(imported.state, [
+        { path: LIVE_PATH, observationGeneration: 0 },
+      ]),
     ).toBeUndefined();
     expect(
       activateStagedHandoff(activeState(), {
@@ -676,6 +700,39 @@ describe("closed activation and handoff refusal branches", () => {
     expect(isDurableMutationAdmissionAllowed(disabled)).toBe(false);
   });
 });
+
+function handoffAlignmentSnapshot(
+  liveHash: typeof LIVE_HASH,
+  tombstoneAbsent: boolean,
+  observationGeneration: number,
+  liveRemote: TransferableAcknowledgement | null = required(
+    handoffRecord().entries[0],
+  ).acknowledgement,
+  tombstoneRemote: TransferableAcknowledgement | null = required(
+    handoffRecord().entries[1],
+  ).acknowledgement,
+): HandoffAlignmentSnapshot {
+  return {
+    local: [
+      {
+        kind: MIRROR_ACKNOWLEDGEMENT_KIND.live,
+        path: LIVE_PATH,
+        contentSha256: liveHash,
+        observationGeneration,
+      },
+      {
+        kind: MIRROR_ACKNOWLEDGEMENT_KIND.tombstone,
+        path: TOMBSTONE_PATH,
+        isAbsent: tombstoneAbsent,
+        observationGeneration,
+      },
+    ],
+    remote: [
+      { path: LIVE_PATH, acknowledgement: liveRemote },
+      { path: TOMBSTONE_PATH, acknowledgement: tombstoneRemote },
+    ],
+  };
+}
 
 function required<Value>(value: Value | undefined): Value {
   if (value === undefined) throw new Error("Invalid fixture value.");

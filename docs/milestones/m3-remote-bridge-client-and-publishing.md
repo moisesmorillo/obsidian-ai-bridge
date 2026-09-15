@@ -318,12 +318,13 @@ intent, blocker and rename dependency, then persist a separate quiescence-checke
 an old-state read never marks drained. The operator then disables the old writer, changes designation
 and rotates bearer; new device imports/verifies same-association baselines and
 bootstraps. Imported ACKs are staged, not active write baselines: before activation,
-verify each live path's saved local SHA-256 equals the transferred sent hash and
-each tombstoned path is locally absent, as well as the remote revision checks.
-Missing/different local data pauses handoff with a typed mismatch; it might be stale
+apply one complete indexed evidence batch proving each live path's saved local SHA-256
+equals the transferred sent hash, each tombstoned path is locally absent, and every
+remote revision still matches. The serialized owner persists the resulting ledger once,
+not once per path. Missing/different local data pauses handoff with a typed mismatch; it might be stale
 or partially hydrated iCloud state, not a new edit/recreation. Never refresh the
 baseline to bypass this gate. Observe events during verification and invalidate
-changed observations. After activation, normal saved events govern later changes.
+changed observations in collapsed batches. After activation, normal saved events govern later changes.
 Abort, a timeout or “remote still looks old” is not quiescence. A completed
 conditional generation with matching receipt can make a delayed duplicate harmless.
 If clean handoff is impossible, block takeover. Safe reset provisions a separately

@@ -1,9 +1,12 @@
 import {
+  alignStagedHandoff,
   createApplicationRevision,
   createContentSha256,
   createMirrorAssociationId,
   createMirrorOperationId,
   createMirrorWriterId,
+  HANDOFF_ALIGNMENT_KIND,
+  MAX_MIRROR_TRACKED_PATHS,
   MAX_MUTATION_ATTEMPTS,
   MIRROR_ACKNOWLEDGEMENT_KIND,
   MIRROR_DESIRED_STATE_KIND,
@@ -384,6 +387,67 @@ describe("MirrorStateOwner", () => {
         ),
     ).toThrow("Invalid initial");
   });
+
+  it("aligns the maximum path batch with one state save", async () => {
+    const entries = Array.from(
+      { length: MAX_MIRROR_TRACKED_PATHS },
+      (_, index) => ({
+        path: required(normalizeNotePath(`notes/${index}.md`)),
+        acknowledgement: {
+          kind: MIRROR_ACKNOWLEDGEMENT_KIND.live,
+          revision: REVISION_A,
+          contentSha256: HASH,
+        },
+        localAlignment: HANDOFF_ALIGNMENT_KIND.pending,
+        remoteVerification: HANDOFF_ALIGNMENT_KIND.pending,
+        observationGeneration: 0,
+      }),
+    );
+    const state: MirrorDeviceState = {
+      deviceId: DEVICE_ID,
+      lifecycle: {
+        kind: MIRROR_DEVICE_LIFECYCLE_KIND.handoffStaged,
+        associationId: ASSOCIATION_ID,
+        origin: ORIGIN,
+      },
+      globalBlockReason: null,
+      paths: [],
+      stagedHandoff: {
+        associationId: ASSOCIATION_ID,
+        origin: ORIGIN,
+        checksum: HASH,
+        entries,
+      },
+    };
+    const store = new FakeStateStore();
+    const owner = new MirrorStateOwner(state, store);
+    const result = await owner.transition((current) =>
+      alignStagedHandoff(current, {
+        local: entries.map((entry) => ({
+          kind: MIRROR_ACKNOWLEDGEMENT_KIND.live,
+          path: entry.path,
+          contentSha256: HASH,
+          observationGeneration: 1,
+        })),
+        remote: entries.map((entry) => ({
+          path: entry.path,
+          acknowledgement: entry.acknowledgement,
+        })),
+      }),
+    );
+
+    expect(result.kind).toBe("committed");
+    expect(store.save).toHaveBeenCalledTimes(1);
+    expect(
+      owner
+        .snapshot()
+        .state.stagedHandoff?.entries.every(
+          (entry) =>
+            entry.localAlignment === HANDOFF_ALIGNMENT_KIND.matched &&
+            entry.remoteVerification === HANDOFF_ALIGNMENT_KIND.matched,
+        ),
+    ).toBe(true);
+  }, 15_000);
 
   it("does not publish drained handoff state when its save fails", async () => {
     const store = new FakeStateStore();

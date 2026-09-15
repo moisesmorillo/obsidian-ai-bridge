@@ -178,6 +178,45 @@ export interface StagedHandoffEntry extends HandoffBaselineEntry {
   readonly observationGeneration: number;
 }
 
+/** One saved live-content observation in an atomic handoff alignment snapshot. */
+export interface HandoffLiveLocalObservation {
+  readonly kind: typeof MIRROR_ACKNOWLEDGEMENT_KIND.live;
+  readonly path: NotePath;
+  readonly contentSha256: ContentSha256;
+  readonly observationGeneration: number;
+}
+
+/** One exact local-absence observation in an atomic handoff alignment snapshot. */
+export interface HandoffTombstoneLocalObservation {
+  readonly kind: typeof MIRROR_ACKNOWLEDGEMENT_KIND.tombstone;
+  readonly path: NotePath;
+  readonly isAbsent: boolean;
+  readonly observationGeneration: number;
+}
+
+/** Exact local evidence for one transferred acknowledgement. */
+export type HandoffLocalObservation =
+  | HandoffLiveLocalObservation
+  | HandoffTombstoneLocalObservation;
+
+/** Future remote comparison result for one transferred acknowledgement. */
+export interface HandoffRemoteObservation {
+  readonly path: NotePath;
+  readonly acknowledgement: TransferableAcknowledgement | null;
+}
+
+/** Complete local inventory and remote evidence applied in one durable transition. */
+export interface HandoffAlignmentSnapshot {
+  readonly local: readonly HandoffLocalObservation[];
+  readonly remote: readonly HandoffRemoteObservation[];
+}
+
+/** Newer local event evidence that invalidates staged alignment for selected paths. */
+export interface HandoffAlignmentInvalidation {
+  readonly path: NotePath;
+  readonly observationGeneration: number;
+}
+
 /** Imported baseline retained without granting activation until every entry aligns. */
 export interface StagedHandoff extends MirrorBinding {
   readonly entries: readonly StagedHandoffEntry[];

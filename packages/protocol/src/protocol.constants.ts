@@ -14,6 +14,53 @@ export const MIRROR_API_V2_ROUTE = {
   recovery: `${MIRROR_API_V2_PREFIX}/recovery`,
 } as const;
 
+/** Stable child-route segments shared by v2 clients and Worker route definitions. */
+export const MIRROR_API_V2_SEGMENT = {
+  content: "content",
+  purge: "purge",
+  seal: "seal",
+  state: "state",
+} as const;
+
+/** Stable route-parameter names shared by routers, handlers, and OpenAPI. */
+export const API_ROUTE_PARAMETER = {
+  notePath: "path",
+  recoveryId: "id",
+} as const;
+
+/** Stable query-parameter names shared by paginated v2 clients and schemas. */
+export const MIRROR_API_V2_QUERY_PARAMETER = {
+  cursor: "cursor",
+} as const;
+
+/** HTTP methods represented by the public API operation contracts. */
+export const HTTP_METHOD = {
+  delete: "DELETE",
+  get: "GET",
+  post: "POST",
+  put: "PUT",
+} as const;
+
+/** HTTP statuses used by the public API and remote response policy. */
+export const HTTP_STATUS_CODE = {
+  ok: 200,
+  created: 201,
+  noContent: 204,
+  badRequest: 400,
+  unauthorized: 401,
+  forbidden: 403,
+  notFound: 404,
+  conflict: 409,
+  gone: 410,
+  preconditionFailed: 412,
+  payloadTooLarge: 413,
+  unsupportedMediaType: 415,
+  preconditionRequired: 428,
+  rateLimited: 429,
+  internalServerError: 500,
+  badGateway: 502,
+} as const;
+
 /** Public HTTP headers shared by v2 clients, documentation, and the Worker. */
 export const MIRROR_HTTP_HEADER = {
   associationId: "Bridge-Association-Id",

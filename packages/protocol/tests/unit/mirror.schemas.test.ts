@@ -1,10 +1,15 @@
 import {
+  API_ROUTE_PARAMETER,
   applicationEtagSchema,
   conditionalMutationPreconditionSchema,
   conditionalMutationRequestSchema,
   currentNoteStateSchema,
+  HTTP_METHOD,
+  HTTP_STATUS_CODE,
   MIRROR_API_V2_PREFIX,
+  MIRROR_API_V2_QUERY_PARAMETER,
   MIRROR_API_V2_ROUTE,
+  MIRROR_API_V2_SEGMENT,
   MIRROR_HTTP_HEADER,
   MIRROR_MEDIA_TYPE,
   mirrorAssociationIdSchema,
@@ -59,6 +64,33 @@ describe("M3 mirror protocol schemas", () => {
       mirror: "/api/v2/mirror",
       notes: "/api/v2/notes",
       recovery: "/api/v2/recovery",
+    });
+    expect(API_ROUTE_PARAMETER).toEqual({
+      notePath: "path",
+      recoveryId: "id",
+    });
+    expect(MIRROR_API_V2_SEGMENT).toEqual({
+      content: "content",
+      purge: "purge",
+      seal: "seal",
+      state: "state",
+    });
+    expect(MIRROR_API_V2_QUERY_PARAMETER.cursor).toBe("cursor");
+    expect(HTTP_METHOD).toEqual({
+      delete: "DELETE",
+      get: "GET",
+      post: "POST",
+      put: "PUT",
+    });
+    expect(HTTP_STATUS_CODE).toMatchObject({
+      ok: 200,
+      created: 201,
+      notFound: 404,
+      gone: 410,
+      preconditionFailed: 412,
+      preconditionRequired: 428,
+      rateLimited: 429,
+      internalServerError: 500,
     });
     expect(MIRROR_HTTP_HEADER).toMatchObject({
       associationId: "Bridge-Association-Id",

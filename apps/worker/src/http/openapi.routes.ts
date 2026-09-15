@@ -2,6 +2,7 @@ import { createRoute, z } from "@hono/zod-openapi";
 import { APPLICATION_ETAG_PATTERN } from "@obsidian-ai-bridge/core";
 import {
   API_ERROR_CODE,
+  API_ROUTE_PARAMETER,
   applicationEtagSchema,
   BRIDGE_NOTE_FORMAT,
   BRIDGE_NOTE_FORMATS,
@@ -9,6 +10,8 @@ import {
   currentNoteStateSchema,
   encodedNotePathSchema,
   healthResponseSchema,
+  MIRROR_API_V2_QUERY_PARAMETER,
+  MIRROR_API_V2_SEGMENT,
   matchingContentMutationAcknowledgementSchema,
   mirrorAssociationIdSchema,
   mirrorCursorSchema,
@@ -54,17 +57,19 @@ const bearerSecurity = [{ [OPENAPI_BEARER_SECURITY_SCHEME]: [] }];
 
 /** Canonical encoded note identifier parameter. */
 const notePathParameters = z.object({
-  path: encodedNotePathSchema.describe(
+  [API_ROUTE_PARAMETER.notePath]: encodedNotePathSchema.describe(
     "Literal canonical unpadded base64url identifier for a validated lowercase-.md NotePath; percent-encoded aliases are rejected.",
   ),
 });
 
 /** Canonical recovery UUID parameter. */
-const recoveryIdParameters = z.object({ id: recoverySnapshotIdSchema });
+const recoveryIdParameters = z.object({
+  [API_ROUTE_PARAMETER.recoveryId]: recoverySnapshotIdSchema,
+});
 
 /** Optional opaque pagination query. */
 const cursorQuery = z.object({
-  cursor: mirrorCursorSchema
+  [MIRROR_API_V2_QUERY_PARAMETER.cursor]: mirrorCursorSchema
     .optional()
     .describe(
       "Opaque continuation returned by the immediately preceding page.",
@@ -645,15 +650,19 @@ export const getRecoveryContentRoute = createRoute({
  * @param action - Recovery transition represented by the route.
  * @returns OpenAPI route definition for explicit seal or purge.
  */
-function recoveryMutationRoute(action: "seal" | "purge") {
+function recoveryMutationRoute(
+  action:
+    | typeof MIRROR_API_V2_SEGMENT.seal
+    | typeof MIRROR_API_V2_SEGMENT.purge,
+) {
   const acknowledgementSchema =
-    action === "seal"
+    action === MIRROR_API_V2_SEGMENT.seal
       ? sealedRecoverySnapshotStateSchema
       : purgedRecoverySnapshotStateSchema;
   return createRoute({
     method: "post",
     path: toOpenApiV2RoutePath(
-      action === "seal"
+      action === MIRROR_API_V2_SEGMENT.seal
         ? V2_ROUTE_POLICY.recoverySeal.path
         : V2_ROUTE_POLICY.recoveryPurge.path,
     ),
@@ -681,7 +690,7 @@ function recoveryMutationRoute(action: "seal" | "purge") {
     },
     security: bearerSecurity,
     summary:
-      action === "seal"
+      action === MIRROR_API_V2_SEGMENT.seal
         ? "Seal prepared recovery"
         : "Purge expired recovery content",
     tags: ["v2 recovery"],
@@ -689,10 +698,14 @@ function recoveryMutationRoute(action: "seal" | "purge") {
 }
 
 /** Explicit recovery sealing route. */
-export const sealRecoveryRoute = recoveryMutationRoute("seal");
+export const sealRecoveryRoute = recoveryMutationRoute(
+  MIRROR_API_V2_SEGMENT.seal,
+);
 
 /** Explicit expired recovery purge route. */
-export const purgeRecoveryRoute = recoveryMutationRoute("purge");
+export const purgeRecoveryRoute = recoveryMutationRoute(
+  MIRROR_API_V2_SEGMENT.purge,
+);
 
 /** OpenAPI 3.1 metadata and bearer security configuration. */
 export const openApiConfiguration = {

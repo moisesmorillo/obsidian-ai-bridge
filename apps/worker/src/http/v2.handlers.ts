@@ -16,7 +16,10 @@ import {
 } from "@obsidian-ai-bridge/core";
 import {
   API_ERROR_CODE,
+  API_ROUTE_PARAMETER,
   BRIDGE_NOTE_FORMAT,
+  MIRROR_API_V2_QUERY_PARAMETER,
+  MIRROR_API_V2_SEGMENT,
   MIRROR_PROTOCOL_ID,
   type MirrorDescriptionDto,
   mirrorCursorSchema,
@@ -76,7 +79,9 @@ export function createGetMirrorHandler() {
  * @returns Valid cursor, `undefined` when absent, or `null` when malformed.
  */
 function parseCursor(context: WorkerContext): string | undefined | null {
-  const values = new URL(context.req.url).searchParams.getAll("cursor");
+  const values = new URL(context.req.url).searchParams.getAll(
+    MIRROR_API_V2_QUERY_PARAMETER.cursor,
+  );
   if (values.length === 0) return undefined;
   if (values.length !== 1) return null;
   const parsed = mirrorCursorSchema.safeParse(values[0]);
@@ -412,7 +417,8 @@ export function createListRecoveryHandler() {
 export function createGetRecoveryHandler() {
   return async (context: WorkerContext) => {
     const id = createRecoverySnapshotId(
-      literalRequestRouteParameter(context, "id") ?? "",
+      literalRequestRouteParameter(context, API_ROUTE_PARAMETER.recoveryId) ??
+        "",
     );
     if (id === undefined)
       return createErrorResponse(API_ERROR_CODE.invalidRequest);
@@ -431,7 +437,8 @@ export function createGetRecoveryHandler() {
 export function createGetRecoveryContentHandler() {
   return async (context: WorkerContext) => {
     const id = createRecoverySnapshotId(
-      literalRequestRouteParameter(context, "id") ?? "",
+      literalRequestRouteParameter(context, API_ROUTE_PARAMETER.recoveryId) ??
+        "",
     );
     if (id === undefined)
       return createErrorResponse(API_ERROR_CODE.invalidRequest);
@@ -457,10 +464,15 @@ export function createGetRecoveryContentHandler() {
  * @param action - Seal or purge application transition to invoke.
  * @returns A handler preserving 404, 409, 412, and effect-certainty semantics.
  */
-function createRecoveryMutationHandler(action: "seal" | "purge") {
+function createRecoveryMutationHandler(
+  action:
+    | typeof MIRROR_API_V2_SEGMENT.seal
+    | typeof MIRROR_API_V2_SEGMENT.purge,
+) {
   return async (context: WorkerContext) => {
     const id = createRecoverySnapshotId(
-      literalRequestRouteParameter(context, "id") ?? "",
+      literalRequestRouteParameter(context, API_ROUTE_PARAMETER.recoveryId) ??
+        "",
     );
     if (id === undefined)
       return createErrorResponse(API_ERROR_CODE.invalidRequest);
@@ -488,7 +500,7 @@ function createRecoveryMutationHandler(action: "seal" | "purge") {
       expectedRevision: condition.precondition.revision,
     };
     const result =
-      action === "seal"
+      action === MIRROR_API_V2_SEGMENT.seal
         ? await context.var.mirrorServices.recovery.sealDetailed(request)
         : await context.var.mirrorServices.recovery.purgeDetailed(request);
     switch (result.kind) {
@@ -514,10 +526,10 @@ function createRecoveryMutationHandler(action: "seal" | "purge") {
 
 /** @returns The explicit recovery-seal handler. */
 export function createSealRecoveryHandler() {
-  return createRecoveryMutationHandler("seal");
+  return createRecoveryMutationHandler(MIRROR_API_V2_SEGMENT.seal);
 }
 
 /** @returns The explicit recovery-purge handler. */
 export function createPurgeRecoveryHandler() {
-  return createRecoveryMutationHandler("purge");
+  return createRecoveryMutationHandler(MIRROR_API_V2_SEGMENT.purge);
 }

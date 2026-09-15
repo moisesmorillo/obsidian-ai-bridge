@@ -12,14 +12,12 @@ import {
   normalizeNotePath,
   type RemoteRequestAdmission,
 } from "@obsidian-ai-bridge/core";
-import {
-  FetchRemoteBridge,
-  type RemoteFetch,
-} from "@obsidian-plugin/remote/fetch-remote-bridge";
+import { FetchRemoteBridge } from "@obsidian-plugin/remote/fetch-remote-bridge";
 import {
   MAX_REMOTE_METADATA_RESPONSE_BYTES,
   REMOTE_NOTE_REQUEST_CONTENT_TYPE,
 } from "@obsidian-plugin/remote/fetch-remote-bridge.constants";
+import type { RemoteFetch } from "@obsidian-plugin/remote/fetch-remote-bridge.types";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const ASSOCIATION = required(

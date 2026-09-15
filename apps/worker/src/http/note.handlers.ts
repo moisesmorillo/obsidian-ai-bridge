@@ -5,6 +5,7 @@ import {
 } from "@obsidian-ai-bridge/core";
 import {
   API_ERROR_CODE,
+  API_ROUTE_PARAMETER,
   HEALTH_STATUS,
   type HealthResponse,
   type NoteListResponse,
@@ -34,7 +35,7 @@ const MAX_V1_LIST_PAGES = 1000;
  */
 export function literalRequestRouteParameter(
   context: WorkerContext,
-  name: "id" | "path",
+  name: (typeof API_ROUTE_PARAMETER)[keyof typeof API_ROUTE_PARAMETER],
 ): string | undefined {
   if (new URL(context.req.url).pathname.includes("%")) return undefined;
   return context.req.param(name);
@@ -49,7 +50,10 @@ export function literalRequestRouteParameter(
 export function decodeRequestNotePath(
   context: WorkerContext,
 ): NotePath | undefined {
-  const encodedPath = literalRequestRouteParameter(context, "path");
+  const encodedPath = literalRequestRouteParameter(
+    context,
+    API_ROUTE_PARAMETER.notePath,
+  );
   return encodedPath === undefined ? undefined : decodeNotePath(encodedPath);
 }
 

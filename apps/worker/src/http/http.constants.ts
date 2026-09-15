@@ -1,4 +1,5 @@
 import {
+  HTTP_STATUS_CODE,
   MIRROR_API_V2_PREFIX,
   MIRROR_API_V2_ROUTE,
   MIRROR_HTTP_HEADER,
@@ -99,20 +100,4 @@ export const SUPPORTED_NOTE_CONTENT_TYPE_PATTERN =
   /^\s*[Tt][Ee][Xx][Tt]\/(?:[Mm][Aa][Rr][Kk][Dd][Oo][Ww][Nn]|[Pp][Ll][Aa][Ii][Nn])\s*(?:;.*)?$/;
 
 /** HTTP status values used by the Worker transport. */
-export const HTTP_STATUS = {
-  ok: 200,
-  created: 201,
-  noContent: 204,
-  badRequest: 400,
-  unauthorized: 401,
-  forbidden: 403,
-  notFound: 404,
-  conflict: 409,
-  gone: 410,
-  preconditionFailed: 412,
-  payloadTooLarge: 413,
-  unsupportedMediaType: 415,
-  preconditionRequired: 428,
-  internalServerError: 500,
-  badGateway: 502,
-} as const;
+export const HTTP_STATUS = HTTP_STATUS_CODE;

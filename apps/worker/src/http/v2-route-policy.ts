@@ -1,11 +1,16 @@
 import {
+  API_ROUTE_PARAMETER,
+  HTTP_METHOD,
+  MIRROR_API_V2_SEGMENT,
+} from "@obsidian-ai-bridge/protocol";
+import {
   MIRROR_ROUTE,
   RECOVERY_ROUTE,
   V2_NOTES_ROUTE,
 } from "@worker/http/http.constants";
 
 /** HTTP methods represented by the public v2 route capability table. */
-export type V2RouteMethod = "GET" | "PUT" | "DELETE" | "POST";
+export type V2RouteMethod = (typeof HTTP_METHOD)[keyof typeof HTTP_METHOD];
 
 /** One public v2 route shape and its exact browser-visible method capability. */
 interface V2RouteDefinition {
@@ -20,21 +25,33 @@ interface V2RouteDefinition {
  * and CORS resolves preflight methods from the same definition.
  */
 export const V2_ROUTE_POLICY = {
-  mirror: { path: MIRROR_ROUTE, methods: ["GET"] },
-  notes: { path: V2_NOTES_ROUTE, methods: ["GET"] },
+  mirror: { path: MIRROR_ROUTE, methods: [HTTP_METHOD.get] },
+  notes: { path: V2_NOTES_ROUTE, methods: [HTTP_METHOD.get] },
   note: {
-    path: `${V2_NOTES_ROUTE}/:path`,
-    methods: ["GET", "PUT", "DELETE"],
+    path: `${V2_NOTES_ROUTE}/:${API_ROUTE_PARAMETER.notePath}`,
+    methods: [HTTP_METHOD.get, HTTP_METHOD.put, HTTP_METHOD.delete],
   },
-  noteState: { path: `${V2_NOTES_ROUTE}/:path/state`, methods: ["GET"] },
-  recovery: { path: RECOVERY_ROUTE, methods: ["GET"] },
-  recoveryItem: { path: `${RECOVERY_ROUTE}/:id`, methods: ["GET"] },
+  noteState: {
+    path: `${V2_NOTES_ROUTE}/:${API_ROUTE_PARAMETER.notePath}/${MIRROR_API_V2_SEGMENT.state}`,
+    methods: [HTTP_METHOD.get],
+  },
+  recovery: { path: RECOVERY_ROUTE, methods: [HTTP_METHOD.get] },
+  recoveryItem: {
+    path: `${RECOVERY_ROUTE}/:${API_ROUTE_PARAMETER.recoveryId}`,
+    methods: [HTTP_METHOD.get],
+  },
   recoveryContent: {
-    path: `${RECOVERY_ROUTE}/:id/content`,
-    methods: ["GET"],
+    path: `${RECOVERY_ROUTE}/:${API_ROUTE_PARAMETER.recoveryId}/${MIRROR_API_V2_SEGMENT.content}`,
+    methods: [HTTP_METHOD.get],
   },
-  recoverySeal: { path: `${RECOVERY_ROUTE}/:id/seal`, methods: ["POST"] },
-  recoveryPurge: { path: `${RECOVERY_ROUTE}/:id/purge`, methods: ["POST"] },
+  recoverySeal: {
+    path: `${RECOVERY_ROUTE}/:${API_ROUTE_PARAMETER.recoveryId}/${MIRROR_API_V2_SEGMENT.seal}`,
+    methods: [HTTP_METHOD.post],
+  },
+  recoveryPurge: {
+    path: `${RECOVERY_ROUTE}/:${API_ROUTE_PARAMETER.recoveryId}/${MIRROR_API_V2_SEGMENT.purge}`,
+    methods: [HTTP_METHOD.post],
+  },
 } as const satisfies Record<string, V2RouteDefinition>;
 
 const V2_ROUTE_DEFINITIONS = Object.values(V2_ROUTE_POLICY);

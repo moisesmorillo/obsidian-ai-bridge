@@ -255,61 +255,7 @@ const deviceStateSchema = z
     paths: z.array(pathStateSchema).max(MAX_MIRROR_TRACKED_PATHS),
     stagedHandoff: stagedHandoffSchema.nullable(),
   })
-  .strict()
-  .superRefine((state, context) => {
-    if (hasDuplicate(state.paths.map((entry) => entry.path))) {
-      context.addIssue({ code: "custom", message: "Duplicate path entry." });
-    }
-    const operationIds = state.paths.flatMap((entry) =>
-      entry.unresolvedMutation === null
-        ? []
-        : [entry.unresolvedMutation.intent.operationId],
-    );
-    const recoveryIds = state.paths.flatMap((entry) =>
-      entry.acknowledgement.kind === MIRROR_ACKNOWLEDGEMENT_KIND.tombstone
-        ? [entry.acknowledgement.recoveryId]
-        : [],
-    );
-    const recoveryIdSet = new Set(recoveryIds);
-    if (
-      hasDuplicate(operationIds) ||
-      recoveryIdSet.size !== recoveryIds.length ||
-      operationIds.some((operationId) => recoveryIdSet.has(operationId))
-    ) {
-      context.addIssue({
-        code: "custom",
-        message: "Duplicate or colliding operation/recovery ID.",
-      });
-    }
-    if (state.stagedHandoff !== null) {
-      const stagedRecoveryIds = state.stagedHandoff.entries.flatMap((entry) =>
-        entry.acknowledgement.kind === MIRROR_ACKNOWLEDGEMENT_KIND.tombstone
-          ? [entry.acknowledgement.recoveryId]
-          : [],
-      );
-      if (
-        hasDuplicate(state.stagedHandoff.entries.map((entry) => entry.path)) ||
-        hasDuplicate(stagedRecoveryIds)
-      ) {
-        context.addIssue({
-          code: "custom",
-          message: "Duplicate staged path or recovery ID.",
-        });
-      }
-    }
-    if (
-      state.paths.some(
-        (entry) =>
-          entry.desired.kind === MIRROR_DESIRED_STATE_KIND.renameDeferred &&
-          entry.desired.counterpartPath === entry.path,
-      )
-    ) {
-      context.addIssue({
-        code: "custom",
-        message: "Rename counterpart must differ from its source path.",
-      });
-    }
-  });
+  .strict();
 const stateHeaderSchema = z
   .object({
     format: z.literal(MIRROR_DEVICE_STATE_FORMAT),
@@ -766,10 +712,6 @@ function requireParsed<Value>(
   const parsed = parser(value);
   if (parsed === undefined) throw new Error("Invalid persisted identifier.");
   return parsed;
-}
-
-function hasDuplicate(values: readonly string[]): boolean {
-  return new Set(values).size !== values.length;
 }
 
 function byteLength(value: string): number {

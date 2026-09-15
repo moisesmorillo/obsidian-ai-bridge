@@ -1,6 +1,6 @@
 # M3 — Automatic eligible-Markdown remote mirror
 
-**Status: NEXT — Slices 0–3 implemented; Slice 4 is next. No connected
+**Status: NEXT — Slices 0–4 implemented; Slice 5 is next. No connected
 user-visible M3 mirror.**
 
 The maintainer's clarification replaces the selected-note/manual-publishing proposal
@@ -17,8 +17,9 @@ protocol contracts. Worker Slice 2A–2C adds private conditional-storage adapte
 current/recovery transitions, and authenticated v2 HTTP/OpenAPI/CORS with v1 mutation
 retirement. Slice 3 adds uncomposed strict plugin configuration/host-local state
 adapters, a serialized core state owner, explicit writer activation and staged
-content-free handoff validation. Fetch/client/autosync/settings UI/Vault event wiring
-and real-host checks have not passed.
+content-free handoff validation. Slice 4 adds an uncomposed typed bounded Fetch v2
+`RemoteBridge` adapter. Autosync/settings UI/Vault event wiring and real-host checks
+have not passed.
 
 ## Objective and authority
 

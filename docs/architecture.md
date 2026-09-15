@@ -15,8 +15,9 @@ M1 is complete: an authenticated HTTP Worker API backed by Cloudflare R2 plus th
 engineering-quality foundation. M2 is complete: a local-only read-only Obsidian
 inspection plugin with source tests, artifact checks and semantic review. M3 has completed [Slice 0 platform qualification](qualification/m3-slice-0-platform-primitives.md),
 Slice 1's modern plugin baseline/shared typed contracts, Worker Slice 2A–2C's
-conditional Worker boundary, and Slice 3's device-local state/configuration owner
-and handoff model. No connection between the plugin and Worker exists yet.
+conditional Worker boundary, Slice 3's device-local state/configuration owner and
+handoff model, and Slice 4's typed bounded Fetch `RemoteBridge` adapter. The adapter
+is not yet composed into plugin runtime behavior; no connected mirror exists.
 See the [verified current state](current-state.md) for source/configuration evidence,
 [roadmap](roadmap.md) for execution order and open decisions, and
 [ADR 0001](decisions/0001-worker-r2-foundation.md) for the durable foundation.
@@ -220,8 +221,11 @@ Alignment and invalidation consume indexed batches so bounded ledgers do not cau
 per-path whole-state persistence. Obsidian adapters keep preferences/secret references
 in data.json, the bearer in native SecretStorage, and device identity,
 activation and the bounded content-free ledger in App local storage. A package Symbol
-retains the owner only within one JavaScript host. There is still no settings UI,
-remote client, autosync, Vault event wiring or deployment claim.
+retains the owner only within one JavaScript host. Slice 4 adds a core `RemoteBridge`
+capability contract and plugin standards-Fetch implementation with coordinator-owned
+admission, native bearer retrieval at dispatch, bounded strict UTF-8 streaming, v2
+DTO/ETag/receipt validation and conservative effect certainty. It is uncomposed:
+there is still no settings UI, autosync, Vault event wiring or deployment claim.
 Slice 0 remains the pinned local workerd qualification task and declaration-only host
 check; neither slice establishes real-host behavior.
 

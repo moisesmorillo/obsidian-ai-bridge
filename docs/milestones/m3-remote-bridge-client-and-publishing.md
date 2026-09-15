@@ -1,6 +1,6 @@
 # M3 — Automatic eligible-Markdown remote mirror
 
-**Status: NEXT — Worker Slice 2A–2C implemented; Slice 3 is next. No connected
+**Status: NEXT — Slices 0–3 implemented; Slice 4 is next. No connected
 user-visible M3 mirror.**
 
 The maintainer's clarification replaces the selected-note/manual-publishing proposal
@@ -15,7 +15,10 @@ proves the pinned local workerd storage predicates and records declaration-only 
 availability. Slice 1 raises the plugin minimum to 1.13.0 and provides typed core/
 protocol contracts. Worker Slice 2A–2C adds private conditional-storage adapters, tested application
 current/recovery transitions, and authenticated v2 HTTP/OpenAPI/CORS with v1 mutation
-retirement. Plugin configuration/state/client/autosync and real-host checks have not passed.
+retirement. Slice 3 adds uncomposed strict plugin configuration/host-local state
+adapters, a serialized core state owner, explicit writer activation and staged
+content-free handoff validation. Fetch/client/autosync/settings UI/Vault event wiring
+and real-host checks have not passed.
 
 ## Objective and authority
 
@@ -239,7 +242,7 @@ invalid counters/times are rejected. All path states share one typed source.
 
 | Persisted value/location | Purpose/authority | Lifecycle/reset/migration | Sensitivity/content |
 | --- | --- | --- | --- |
-| data.json: schema, origin, origin-bound HTTP-dev permission, SecretStorage reference | User preferences, not writer election or per-path mutation authority | Explicit edits; external changes pause/revalidate; origin change drains/rebinds; no default merge on corruption | Private config/reference; no token or note body |
+| data.json: schema, origin, exact canonical `loopbackHttpOrigin` permission, SecretStorage reference | User preferences, not writer election or per-path mutation authority | Explicit edits; the permission must equal the current HTTP loopback origin including port; external origin changes fail closed and require fresh consent; no default merge on corruption | Private config/reference; no token or note body |
 | Native SecretStorage value | Host-managed bearer; privileged in current single-token model | Host rotation/deletion; disconnect only removes plugin reference; never invented secure erase | Secret; no plugin plaintext persistence |
 | Host vault-local storage: schema/device UUID/activation/association+origin binding | Device-local whole-mirror opt-in and static designation match | Disabled default; explicit activate/pause/handoff; loss cannot auto-reassociate | IDs/config, not a secret or cryptographic device identity |
 | Host-local per-path ACK | Last confirmed live revision+sent hash or tombstone revision+recovery ID | Only valid ACK/exact own receipt; retained across restart, local deletion and recreation; no arbitrary GET promotion | Sensitive paths/hashes, no note body |
@@ -309,16 +312,19 @@ Worker static association/writer identity mismatch disables non-writer autosync;
 the bearer remains privileged and IDs are not authorization secrets. One writer
 host/process per vault is the supported operating constraint, on any supported OS.
 
-Handoff: pause/drain old device; resolve every intent and rename dependency; explicitly
-export content-free ACK ledger; operator disables old writer, changes designation
+Handoff: pausing the old device durably enters `handoff-draining`; resolve every
+intent, blocker and rename dependency, then persist a separate quiescence-checked
+`handoff-drained` transition before content-free ACK export. Pause, abort, timeout or
+an old-state read never marks drained. The operator then disables the old writer, changes designation
 and rotates bearer; new device imports/verifies same-association baselines and
 bootstraps. Imported ACKs are staged, not active write baselines: before activation,
-verify each live path's saved local SHA-256 equals the transferred sent hash and
-each tombstoned path is locally absent, as well as the remote revision checks.
-Missing/different local data pauses handoff with a typed mismatch; it might be stale
+apply one complete indexed evidence batch proving each live path's saved local SHA-256
+equals the transferred sent hash, each tombstoned path is locally absent, and every
+remote revision still matches. The serialized owner persists the resulting ledger once,
+not once per path. Missing/different local data pauses handoff with a typed mismatch; it might be stale
 or partially hydrated iCloud state, not a new edit/recreation. Never refresh the
 baseline to bypass this gate. Observe events during verification and invalidate
-changed observations. After activation, normal saved events govern later changes.
+changed observations in collapsed batches. After activation, normal saved events govern later changes.
 Abort, a timeout or “remote still looks old” is not quiescence. A completed
 conditional generation with matching receipt can make a delayed duplicate harmless.
 If clean handoff is impossible, block takeover. Safe reset provisions a separately

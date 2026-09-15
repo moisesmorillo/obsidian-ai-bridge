@@ -5,9 +5,10 @@ foundation, and implemented M3 Worker Slice 2 subset. M2 source/tooling through
 `2e74b23` passed independent semantic review;
 the completion PR records final validation and makes the transition canonical
 when merged. M2 is now merged at `b300726` (PR #7). M3 has completed [Slice 0 platform qualification](qualification/m3-slice-0-platform-primitives.md),
-Slice 1's modern plugin baseline/shared typed contracts, and Worker Slice 2A–2C's
-private storage/application transitions plus public safe v2 HTTP/OpenAPI/CORS. There
-is still no remote plugin client or connected mirror. Its [accepted design decisions](plans/m3-design-decisions.md)
+Slice 1's modern plugin baseline/shared typed contracts, Worker Slice 2A–2C's
+private storage/application transitions plus public safe v2 HTTP/OpenAPI/CORS, and
+Slice 3's device-local state/configuration owner and staged handoff model. There is
+still no remote plugin client or connected mirror. Its [accepted design decisions](plans/m3-design-decisions.md)
 and [sequential plan](plans/m3-remote-bridge-client-and-publishing.md) remain broader
 than the implemented subset. The approved product is an automatic whole eligible
 Markdown mirror with recoverable runtime deletion/rename, per-path state and one
@@ -34,10 +35,10 @@ boundaries; [API](api.md) describes the HTTP contract.
 | API documentation | OpenAPI 3.1 generated through `@hono/zod-openapi`; shared Zod response schemas; public Scalar reference. It documents actual v2 security, IDs/conditions, optional empty PUT body with required explicit media type, pagination/state/recovery routes and statuses, plus v1 retirement. | `apps/worker/src/http/openapi.routes.ts`, semantic HTTP integration tests |
 | Responses | Stable typed error codes mapped to sanitized HTTP errors. Authenticated JSON/content/error responses use `Cache-Control: no-store`; registered v2 route/method responses and errors add narrow CORS. Revisioned generations expose strong application ETags, never R2 validators. | `apps/worker/src/http/api-*`, `http-response-headers.ts`, `v2.handlers.ts` |
 | Logging | LogTape 2.3.4 JSON-lines console sink via a thin injected adapter; completed-request events include operation, method, registered route template (or `unknown`), status and duration in milliseconds. No request IDs, per-client audit trail or error-code field yet. Application events do not include tokens, bodies, concrete note paths or raw exceptions. | `apps/worker/src/logging/`, logging and Worker tests |
-| Plugin | Default `AiBridgePlugin` registers exactly two explicit commands. List displays sorted saved-note metadata/skip counts without body reads; active inspection captures the saved path, reads once and displays only UTF-8 bytes/path with saved-file guidance. Plugin-instance serialization survives unload/re-enable until pending work settles, while enable-lifetime identity suppresses stale UI. Sanitized failures are tested. No enabling scan/read, network, settings/persistence, logging, editor save or vault mutation. Manifest remains `ai-bridge`, minimum `1.13.0`, non-desktop-only. | `apps/obsidian-plugin/src/{main.ts,inspection/,infrastructure/}`, dedicated plugin unit/integration suites |
+| Plugin | Default `AiBridgePlugin` still registers exactly two explicit commands and remains non-automatic. Slice 3 adds uncomposed strict endpoint/preferences, native-secret-reference and App-local state adapters, plus a same-JS-host runtime owner registry; no bearer or note body is serialized. List/active inspection behavior remains metadata-only. No enabling scan/read, network, settings UI, watcher, logging, editor save or vault mutation. Manifest remains `ai-bridge`, minimum `1.13.0`, non-desktop-only. | `apps/obsidian-plugin/src/{main.ts,inspection/,infrastructure/,configuration/,state/}`, dedicated plugin unit/integration suites |
 | Local safety | Shared literal `.md` path and 1 MiB policy; dot-prefixed/configuration-directory exclusions; pre-read metadata and post-read UTF-8 bound; exact lookup and pre/post object/path/mtime/size checks. No path repair/URI decoding, content UI or atomic snapshot claim. | `packages/core/src/local-vault/`, plugin adapter tests |
 | Plugin artifact | Browser-target CommonJS exposes `module.exports.default`, only `obsidian` external; stages unchanged manifest. Artifact suite checks actual generated files, inert load, commands and lifecycle in an isolated host-double realm without Node globals. No real desktop/mobile host was tested. | `.mise.toml`, `apps/obsidian-plugin/tests/artifact/`, [API/version and installation evidence](plugin-development.md) |
-| Core | Public branded identifier/path utilities, `NoteService`/`VaultNoteService`, `VaultRepository`, size limit and typed payload/storage errors. M3 adds platform-independent UUID-v4 IDs, ETags, digests, closed current/recovery/intent/effect contracts, generation-bound conditional ports, current-generation orchestration and recovery lifecycle policy with an injected clock. No Obsidian, Hono, Cloudflare, HTTP, filesystem or protocol dependency. Separate public `ReadOnlyLocalVault`, `LocalInspectionService`, closed local results and eligibility policy support M2 without platform imports or mutation methods. | `packages/core/src/`, package exports |
+| Core | Public branded identifier/path utilities, `NoteService`/`VaultNoteService`, `VaultRepository`, size limit and typed payload/storage errors. M3 adds platform-independent UUID-v4 IDs, ETags, digests, closed current/recovery/intent/effect contracts, generation-bound conditional ports, current-generation/recovery orchestration, and Slice 3's closed device/per-path ledger, serialized state owner, activation/readiness and staged handoff policy. Save failures conservatively fence mutation admission while preserving the last committed unresolved evidence. No Obsidian, Hono, Cloudflare, HTTP, filesystem or protocol dependency. Separate public `ReadOnlyLocalVault`, `LocalInspectionService`, closed local results and eligibility policy support M2 without platform imports or mutation methods. | `packages/core/src/`, package exports |
 | Protocol | Strict Zod schemas and inferred DTOs for health, errors, retained v1 responses, and bounded M3 identity, NotePath, precondition, receipt, current-state, recovery, intent, capability/result and pagination contracts. V2 handlers/OpenAPI consume these sources; the reserved version `0.1` envelope remains unused rather than being silently repurposed. | `packages/protocol/src/` |
 
 ## Tooling and validation baseline
@@ -61,7 +62,7 @@ boundaries; [API](api.md) describes the HTTP contract.
   prohibition, direct-console prohibition and configured documentation rules.
   These checks do **not** prove all architecture/TSDoc requirements in
   [AGENTS.md](../AGENTS.md); manual semantic review remains mandatory.
-- Vitest **5**: **31 source test files / 374 tests**, plus **1 artifact file /
+- Vitest **5**: **38 source test files / 453 tests**, plus **1 artifact file /
   3 smoke tests** in the dedicated build task. The unchanged M1 baseline had
   15 files / 105 tests. Exact slice validation is recorded in the
   [implementation plan](plans/m2-obsidian-read-only-local-adapter.md).
@@ -81,8 +82,8 @@ boundaries; [API](api.md) describes the HTTP contract.
   Global thresholds: **lines 95%, statements 95%, functions 94%, branches 90%**.
   Coverage is a regression signal, not proof of test quality.
 - Root Vitest projects include shared packages, Worker and plugin. Current source
-  coverage is statements **95.79%**, branches **92.51%**, functions **98.03%**, lines
-  **95.95%**; thresholds and production inclusion remain enforced. Artifact tests are separate
+  coverage is statements **95.70%**, branches **93.41%**, functions **98.42%**, lines
+  **96.11%**; thresholds and production inclusion remain enforced. Artifact tests are separate
   from source coverage, run after packaging and never replace behavioral coverage.
 - The Worker declares Miniflare **5.20260908.0-alpha** directly for its storage
   qualification task, exactly matching Wrangler **4.130.0** and workerd
@@ -103,9 +104,12 @@ boundaries; [API](api.md) describes the HTTP contract.
 
 The Worker API is a remote storage boundary, **not synchronization**. A token holder
 remains privileged for this one namespace; static IDs are not scoped permissions.
-Safe conditional v2 routes now exist and unsafe v1 mutations are retired, but there
-are no remote-to-local writes, automatic saved-event processing, plugin credential/
-state owner, per-path ledger, retries, handoff or initial-sync behavior. Never infer
+Safe conditional v2 routes now exist and unsafe v1 mutations are retired. Slice 3
+models and persists device-local configuration/state, activation and staged handoff,
+including atomic indexed alignment batches, but does not compose them into runtime
+mirroring. There are no remote-to-local writes,
+Fetch client, automatic saved-event processing, settings UI, retry loop, remote
+handoff verification or initial-sync behavior. Never infer
 a connected mirror merely from the server surface.
 
 There is no search, MCP, AI inference, attachment mirroring or remote plugin client.

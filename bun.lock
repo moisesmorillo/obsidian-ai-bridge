@@ -21,6 +21,7 @@
       "dependencies": {
         "@obsidian-ai-bridge/core": "workspace:*",
         "@obsidian-ai-bridge/protocol": "workspace:*",
+        "zod": "^4.6.1",
       },
       "devDependencies": {
         "@types/node": "^24",

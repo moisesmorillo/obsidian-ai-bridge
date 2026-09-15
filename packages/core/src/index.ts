@@ -100,6 +100,7 @@ export type {
   UnresolvedUpdateMutationIntent,
   UpdateOperationReceipt,
 } from "@core/mirror/mirror.types";
+export { applyMutationAcknowledgement } from "@core/mirror/mirror-acknowledgement";
 export type {
   ConfirmedTombstoneSealRequest,
   ConfirmedTombstoneTransition,
@@ -126,6 +127,90 @@ export {
   isUuidV4,
   parseApplicationEtag,
 } from "@core/mirror/mirror-identifiers";
+export {
+  HANDOFF_ALIGNMENT_KIND,
+  MAX_MIRROR_TRACKED_PATHS,
+  MIRROR_ACKNOWLEDGEMENT_KIND,
+  MIRROR_DESIRED_STATE_KIND,
+  MIRROR_DEVICE_LIFECYCLE_KIND,
+  MIRROR_DEVICE_STATE_VERSION,
+  MIRROR_GLOBAL_BLOCK_REASON,
+  MIRROR_MUTATION_PHASE,
+  MIRROR_PATH_BLOCK_REASON,
+  MIRROR_PAUSE_REASON,
+  MIRROR_RENAME_PHASE,
+} from "@core/mirror/mirror-state.constants";
+export type {
+  ActiveMirrorLifecycle,
+  DirtyPresentMirrorState,
+  DisabledMirrorLifecycle,
+  HandoffAlignmentInvalidation,
+  HandoffAlignmentSnapshot,
+  HandoffBaselineEntry,
+  HandoffDrainedMirrorLifecycle,
+  HandoffDrainingMirrorLifecycle,
+  HandoffLiveLocalObservation,
+  HandoffLocalObservation,
+  HandoffPayload,
+  HandoffRecord,
+  HandoffRemoteObservation,
+  HandoffStagedMirrorLifecycle,
+  HandoffTombstoneLocalObservation,
+  LiveAcknowledgement,
+  MirrorAcknowledgement,
+  MirrorBinding,
+  MirrorDesiredState,
+  MirrorDeviceLifecycle,
+  MirrorDeviceState,
+  MirrorGlobalBlockReason,
+  MirrorOrigin,
+  MirrorPathBlockReason,
+  MirrorPathState,
+  MirrorStateSnapshot,
+  MirrorUnresolvedMutation,
+  NoDesiredMirrorState,
+  PausedMirrorLifecycle,
+  RenameDeferredMirrorState,
+  RuntimeDeleteMirrorState,
+  StagedHandoff,
+  StagedHandoffEntry,
+  TombstoneAcknowledgement,
+  TransferableAcknowledgement,
+  UnassociatedAcknowledgement,
+} from "@core/mirror/mirror-state.types";
+export type { MirrorStateCommitResult } from "@core/mirror/mirror-state-owner";
+export { MirrorStateOwner } from "@core/mirror/mirror-state-owner";
+export type {
+  HandoffActivationRequest,
+  HandoffExportFailure,
+  HandoffImportFailure,
+  IsolatedAssociationActivationRequest,
+  WriterActivationFailure,
+  WriterDesignationEvidence,
+} from "@core/mirror/mirror-state-policy";
+export {
+  activateIsolatedAssociation,
+  activateStagedHandoff,
+  alignStagedHandoff,
+  createDisabledMirrorState,
+  evaluateWriterReadiness,
+  HANDOFF_EXPORT_FAILURE,
+  HANDOFF_IMPORT_FAILURE,
+  invalidateHandoffAlignments,
+  isDurableMutationAdmissionAllowed,
+  markHandoffDrained,
+  pauseForHandoff,
+  prepareHandoffExport,
+  stageHandoffImport,
+  WRITER_ACTIVATION_FAILURE,
+} from "@core/mirror/mirror-state-policy";
+export type {
+  MirrorStateSaveResult,
+  MirrorStateStore,
+  MirrorStateStoreFailure,
+} from "@core/mirror/mirror-state-store.port";
+export { MIRROR_STATE_STORE_FAILURE } from "@core/mirror/mirror-state-store.port";
+export { isMirrorDeviceStateConsistent } from "@core/mirror/mirror-state-validation";
 export type {
   AbsentCurrentGenerationObservation,
   CurrentGenerationObservation,

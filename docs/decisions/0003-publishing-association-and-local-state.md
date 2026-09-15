@@ -2,10 +2,12 @@
 
 ## Status
 
-**Accepted — Worker designation guard implemented in Slice 2C; plugin state/handoff
-remain unimplemented.** Supersedes this unmerged PR's per-note/manual/global-interlock
-proposal. The Worker validates static association/writer UUIDs and guards every v2
-mutation; native SecretStorage, local state ownership, automatic mirroring and handoff
+**Accepted — Worker designation guard implemented in Slice 2C; device-local state,
+serialized ownership and handoff model implemented in Slice 3.** Supersedes this
+unmerged PR's per-note/manual/global-interlock proposal. The Worker validates static
+association/writer UUIDs and guards every v2 mutation. Slice 3 adds strict uncomposed
+native-secret-reference/preferences and App-local state adapters plus core activation/
+handoff policy; settings UI, Fetch, automatic mirroring and remote handoff verification
 remain later M3 work. The filename is retained for existing links.
 
 ## Context
@@ -143,11 +145,13 @@ No concurrent automatic takeover, election or lease:
 5. The new device configures its own SecretStorage reference, explicitly imports
    the handoff record and verifies association/designation with the Worker. Verify
    each transferred ACK against current remote state; mismatch is divergence, not
-   permission to adopt latest. Imports remain **staged** until local saved hashes
-   also equal transferred live ACK hashes and transferred tombstones are locally
-   absent. Missing/different local state blocks activation: iCloud may still be
-   hydrating or hold stale content, not a new edit or deliberate recreation. Observe
-   events during this verification and invalidate changed observations. Do not fix
+   permission to adopt latest. Imports remain **staged** until one complete indexed
+   evidence batch proves local saved hashes equal transferred live ACK hashes,
+   transferred tombstones are locally absent, and remote ACKs still match. Apply that
+   batch through one serialized owner save rather than one whole-ledger save per path.
+   Missing/different local state blocks activation: iCloud may still be hydrating or
+   hold stale content, not a new edit or deliberate recreation. Observe events during
+   this verification and invalidate changed observations in collapsed batches. Do not fix
    a mismatch by adopting a newer revision or blindly overwriting either side.
    After this alignment gate, activate/bootstrap normal work. Subsequent runtime
    events follow ordinary M3 policy; missing scans never gain delete authority.

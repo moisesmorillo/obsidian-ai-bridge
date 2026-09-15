@@ -14,10 +14,9 @@ packages/protocol      Shared protocol contracts and serialization definitions
 M1 is complete: an authenticated HTTP Worker API backed by Cloudflare R2 plus the
 engineering-quality foundation. M2 is complete: a local-only read-only Obsidian
 inspection plugin with source tests, artifact checks and semantic review. M3 has completed [Slice 0 platform qualification](qualification/m3-slice-0-platform-primitives.md),
-Slice 1's modern plugin baseline/shared typed contracts, and Worker Slice 2A–2C's
-private conditional-storage adapters, application transition services, and public
-safe v2 HTTP/OpenAPI/CORS boundary with v1 mutation retirement. No connection
-between the plugin and Worker exists yet.
+Slice 1's modern plugin baseline/shared typed contracts, Worker Slice 2A–2C's
+conditional Worker boundary, and Slice 3's device-local state/configuration owner
+and handoff model. No connection between the plugin and Worker exists yet.
 See the [verified current state](current-state.md) for source/configuration evidence,
 [roadmap](roadmap.md) for execution order and open decisions, and
 [ADR 0001](decisions/0001-worker-r2-foundation.md) for the durable foundation.
@@ -152,9 +151,10 @@ paths, the 1 MiB UTF-8 bound, sanitized errors and content-free structured
 LogTape request logs. Do not log concrete note paths or raw failures. JSON API
 and Markdown content responses are uncached via `no-store`.
 
-Future automatic local publishing still requires explicit whole-mirror consent,
-local state ownership and conflict/recovery orchestration; a failed operation, stale
-read or missing file must never trigger silent replacement or deletion. Worker v2
+Future automatic local publishing still requires composing explicit whole-mirror
+consent, the implemented local state ownership primitives, and conflict/recovery
+orchestration; a failed operation, stale read or missing file must never trigger
+silent replacement or deletion. Worker v2
 now provides the required conditional/recovery server contract and v1 mutations are
 retired, but no plugin client uses it yet. Automatic outward lifecycle/rename remains
 later M3 work; full remote-to-local reconciliation remains M4.
@@ -200,8 +200,9 @@ explicitly designated supported writer device. Activation/ledger live in officia
 vault-local host storage, not iCloud-synced data.json; that file stores preferences
 and native SecretStorage reference only. Worker static IDs guard cooperating writers,
 not privileged bearer impersonation. Clean handoff drains old requests and transfers
-verified content-free ACKs; new local hashes/tombstone absence must align before
-activation, and unresolved work blocks takeover. No election/leases or
+verified content-free ACKs; one indexed local/remote evidence batch must align all new
+local hashes/tombstone absences through one state-owner save before activation, and
+unresolved work blocks takeover. No election/leases or
 shared-file coordinator. M3 targets Obsidian 1.13.0/modern settings, HTTPS with exact
 loopback opt-in and bounded Fetch/CORS, without old-host/requestUrl fallbacks.
 
@@ -212,8 +213,15 @@ create-only and observed-generation CAS, metadata reads, prepared/unexpired reco
 content, bounded pagination, exact receipts, recoverable tombstone ordering,
 tombstone-timestamp sealing, conditional purge, public authenticated v2 routes,
 method-specific CORS, static writer designation checks, generated OpenAPI and
-envelope-aware v1 reads. V1 PUT/DELETE are retired with 410. There is still no
-plugin settings/state owner, remote client, autosync or deployment claim.
+envelope-aware v1 reads. V1 PUT/DELETE are retired with 410. Slice 3 adds core-owned
+closed device/per-path state, serialized compare-and-transition persistence, explicit
+activation, durable handoff-draining/drained lifecycle states and staged import policy.
+Alignment and invalidation consume indexed batches so bounded ledgers do not cause
+per-path whole-state persistence. Obsidian adapters keep preferences/secret references
+in data.json, the bearer in native SecretStorage, and device identity,
+activation and the bounded content-free ledger in App local storage. A package Symbol
+retains the owner only within one JavaScript host. There is still no settings UI,
+remote client, autosync, Vault event wiring or deployment claim.
 Slice 0 remains the pinned local workerd qualification task and declaration-only host
 check; neither slice establishes real-host behavior.
 

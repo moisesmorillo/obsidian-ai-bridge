@@ -1,6 +1,6 @@
 # M3 implementation plan — automatic eligible-Markdown mirror
 
-**Status: Worker Slice 2A–2C implemented; Slice 3 is the next internal M3 work.
+**Status: Slices 0–3 implemented; Slice 4 is the next internal M3 work.
 No connected user-visible mirror behavior.** PR #8 remains planning/documentation only. M2
 merged at `b300726` (PR #7); M3 is the single NEXT
 milestone. [Spec](../milestones/m3-remote-bridge-client-and-publishing.md),
@@ -160,8 +160,10 @@ surface and retires unsafe v1 mutations; intermediate checkpoints are not rollou
   only verified ACK metadata without device activation/ID/secrets; import wrong
   origin/association/revision fails. Keep iCloud hydration pending during import:
   stale local text cannot overwrite a newer transferred live ACK or resurrect a
-  transferred tombstone. Stage baselines until local hash/absence alignment, invalidate
-  changed observations, and block mismatches. Lost-device reset cannot reuse old keys.
+  transferred tombstone. Stage baselines until one complete local hash/absence and
+  remote-verification snapshot aligns, reject late evidence older than the current
+  observation generation, batch invalidated observations, and block mismatches.
+  Lost-device reset cannot reuse old keys.
 - **Steps:** strict boundary codecs, disabled initial state, whole-mirror opt-in,
   HTTPS/exact-loopback pre-canonical validation, serialized configuration changes,
   pause/drain/reset and explicitly transferred handoff metadata. Never add a synced
@@ -170,6 +172,25 @@ surface and retires unsafe v1 mutations; intermediate checkpoints are not rollou
   stale token-ref restoration or new keychain claim. Unknown data stays untouched.
 - **Validation/acceptance:** focused unit tests, coverage and check; A2/A5/A8 model.
   No Vault watchers/UI activation or remote-to-local writes yet.
+- **Implemented evidence:** Slice 3 adds closed core device/lifecycle/per-path state,
+  finite unresolved-intent budgets, compare-and-transition serialized ownership,
+  explicit isolated-association activation/readiness and distinct durable handoff
+  draining/drained states. Pause only enters draining; a separate quiescence-checked
+  transition enters drained, and only drained state can export. Strict Obsidian
+  boundary codecs distinguish missing/corrupt/future state,
+  reject duplicate/invalid/inconsistent/bounded data and never clear failures.
+  `data.json` represents endpoint preferences and a native secret reference only;
+  App local storage owns device identity, activation, ACK/intent/evidence ledger and
+  staged handoff metadata; native SecretStorage retains the bearer. Content-free
+  checksum-covered handoff imports remain staged until a complete indexed local and
+  remote evidence batch aligns in one owner save; changed observations are invalidated
+  as a collapsed batch. A maximum-50,000-path core test guards linear traversal and a
+  single save. A package Symbol retains
+  the state owner only within the same JavaScript host. The adapters/policy are not
+  composed into automatic behavior: no settings UI, Fetch, retries, Vault events,
+  dispatch, remote verification or local writes are added. Final Slice 3 evidence is
+  79 focused tests and 38 source test files / 453 tests under the canonical check,
+  with 95.70% statements, 93.41% branches, 98.42% functions and 96.11% lines.
 
 ## 4. Typed bounded Fetch remote adapter
 
@@ -341,6 +362,7 @@ secrets/paths, exact interleavings, storage/HTTP compatibility, retention and ha
 | GET state inspection could seal recovery without the designated mutation contract | MAJOR | **fixed** — ADR 0004/spec/plan make all GETs read-only and require explicit conditional seal with identity checks and proven deletion timestamp |
 | Imported remote ACKs could let stale/partially hydrated iCloud data overwrite a live note or recreate a tombstone | MAJOR | **fixed** — ADR 0003/spec/plan stage imports until local hash/absence and remote revision alignment; accepted dirty/in-flight work blocks export; tests hold hydration and verification races open |
 | Completed M2 handoff text still sounded like current open selection decisions | MINOR | **fixed** — M2 spec/plan explicitly label historical handoff and link the accepted M3 direction, preserving original implementation evidence |
+| Per-path handoff alignment repeatedly scanned, validated and saved the whole bounded ledger | MAJOR | **fixed** — complete indexed local/remote evidence and collapsed invalidations are atomic core batches; the state owner performs one save, with a maximum-50,000-path regression test |
 | Local-state wording implied arbitrary valid historical restores were detectable | MINOR | **fixed** — ADR 0003 distinguishes detectable corruption/failure from undetectable valid rollback and requires explicit paused revalidation |
 
 Re-read each corrected contract and its exact planned regression after green checks;

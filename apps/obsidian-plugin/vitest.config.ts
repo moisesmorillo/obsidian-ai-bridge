@@ -6,6 +6,8 @@ export default defineProject({
   resolve: {
     alias: {
       "@core": new URL("../../packages/core/src", import.meta.url).pathname,
+      "@protocol": new URL("../../packages/protocol/src", import.meta.url)
+        .pathname,
       "@obsidian-plugin-tests": `${pluginRoot}tests`,
       "@obsidian-plugin": `${pluginRoot}src`,
     },

@@ -23,6 +23,14 @@ export const MIRROR_SYNCHRONIZER_PHASE = {
   inactive: "inactive",
 } as const;
 
+/** Closed reasons why local bootstrap work was not durably admitted. */
+export const MIRROR_BOOTSTRAP_INCOMPLETE_REASON = {
+  pathCapacityExceeded: "path-capacity-exceeded",
+  staleTransition: "stale-transition",
+  invalidTransition: "invalid-transition",
+  persistenceFailed: "persistence-failed",
+} as const;
+
 /** Closed reasons why a bounded remote inventory is incomplete. */
 export const MIRROR_INVENTORY_INCOMPLETE_REASON = {
   remoteFailure: "remote-failure",

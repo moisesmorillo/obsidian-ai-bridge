@@ -10,9 +10,11 @@ import {
   LocalInspectionKind,
   type LocalListResult,
   type LocalReadResult,
+  MAX_MIRROR_TRACKED_PATHS,
   MAX_MUTATION_ATTEMPTS,
   MAX_MUTATION_EVIDENCE_ATTEMPTS,
   MIRROR_ACKNOWLEDGEMENT_KIND,
+  MIRROR_BOOTSTRAP_INCOMPLETE_REASON,
   MIRROR_COALESCING_QUIET_PERIOD_MILLISECONDS,
   MIRROR_DESIRED_STATE_KIND,
   MIRROR_DEVICE_LIFECYCLE_KIND,
@@ -157,6 +159,86 @@ beforeEach(() => {
 });
 
 describe("MirrorSynchronizer bootstrap and coalescing", () => {
+  it("refuses dispatch before and during the admission-critical bootstrap", async () => {
+    const pendingList = Promise.withResolvers<LocalListResult>();
+    local.list.mockReturnValueOnce(pendingList.promise);
+    const synchronizer = createInactiveSynchronizer();
+
+    await synchronizer.observePresent(PATH_A);
+    runtime.now = MIRROR_COALESCING_QUIET_PERIOD_MILLISECONDS;
+    await synchronizer.synchronizeReady();
+    expect(remote.mutateNote).not.toHaveBeenCalled();
+    expect(synchronizer.currentPhase()).toBe("inactive");
+    expect(synchronizer.nextWakeAtMilliseconds()).toBeNull();
+
+    const bootstrap = synchronizer.bootstrap();
+    await vi.waitFor(() => expect(local.list).toHaveBeenCalledTimes(1));
+    await synchronizer.synchronizeReady();
+    expect(remote.mutateNote).not.toHaveBeenCalled();
+    expect(synchronizer.currentPhase()).toBe("bootstrapping");
+    expect(synchronizer.nextWakeAtMilliseconds()).toBeNull();
+
+    pendingList.resolve(listResult([PATH_A]));
+    await bootstrap;
+  });
+
+  it("keeps failed local and handshake bootstrap closed", async () => {
+    const localFailure = createInactiveSynchronizer();
+    await localFailure.observePresent(PATH_A);
+    local.list.mockResolvedValueOnce({
+      kind: LocalInspectionKind.failed,
+      reason: "unavailable",
+    });
+    expect(await localFailure.bootstrap()).toMatchObject({
+      kind: "local-incomplete",
+    });
+    await localFailure.synchronizeReady();
+    expect(remote.mutateNote).not.toHaveBeenCalled();
+    expect(localFailure.currentPhase()).toBe("inactive");
+    expect(localFailure.nextWakeAtMilliseconds()).toBeNull();
+
+    remote.describe.mockResolvedValueOnce({
+      kind: "failure",
+      failure: "unauthenticated",
+    });
+    const handshakeFailure = createInactiveSynchronizer();
+    await handshakeFailure.observePresent(PATH_B);
+    expect(await handshakeFailure.bootstrap()).toMatchObject({
+      kind: "inactive",
+    });
+    await handshakeFailure.synchronizeReady();
+    expect(remote.mutateNote).not.toHaveBeenCalled();
+    expect(handshakeFailure.nextWakeAtMilliseconds()).toBeNull();
+  });
+
+  it("reports a stale bootstrap transition when activation changes during enumeration", async () => {
+    const pendingList = Promise.withResolvers<LocalListResult>();
+    local.list.mockReturnValueOnce(pendingList.promise);
+    const owner = new MirrorStateOwner(activeState(), store);
+    const synchronizer = new MirrorSynchronizer(local, remote, owner, runtime);
+    const bootstrap = synchronizer.bootstrap();
+    await vi.waitFor(() => expect(local.list).toHaveBeenCalledTimes(1));
+    await owner.transition((state) => ({
+      ...state,
+      lifecycle: {
+        kind: MIRROR_DEVICE_LIFECYCLE_KIND.paused,
+        associationId: ASSOCIATION,
+        origin: "https://bridge.example",
+        reason: "manual",
+      },
+    }));
+    pendingList.resolve(listResult([PATH_A]));
+
+    await expect(bootstrap).resolves.toMatchObject({
+      kind: "state-incomplete",
+      eligiblePaths: [],
+      reason: MIRROR_BOOTSTRAP_INCOMPLETE_REASON.staleTransition,
+    });
+    expect(synchronizer.currentPhase()).toBe("inactive");
+    expect(synchronizer.nextWakeAtMilliseconds()).toBeNull();
+    expect(remote.mutateNote).not.toHaveBeenCalled();
+  });
+
   it("merges positive events received during enumeration and only reports remote extras", async () => {
     const pending = Promise.withResolvers<LocalListResult>();
     local.list.mockReturnValueOnce(pending.promise);
@@ -282,17 +364,116 @@ describe("MirrorSynchronizer bootstrap and coalescing", () => {
       kind: LocalInspectionKind.failed,
       reason: "unavailable",
     });
-    const synchronizer = createSynchronizer();
+    const synchronizer = createInactiveSynchronizer();
     expect(await synchronizer.bootstrap()).toMatchObject({
       kind: "local-incomplete",
       eligiblePaths: [],
       inventory: { kind: "complete" },
     });
+    expect(synchronizer.currentPhase()).toBe("inactive");
     expect(remote.mutateNote).not.toHaveBeenCalled();
   });
 
+  it("admits the exact path-capacity boundary with one indexed batch", async () => {
+    const paths = createCapacityPaths(MAX_MIRROR_TRACKED_PATHS);
+    local.list.mockResolvedValueOnce(listResult(paths));
+    const owner = new MirrorStateOwner(activeState(), store);
+    const synchronizer = new MirrorSynchronizer(local, remote, owner, runtime);
+
+    await expect(synchronizer.bootstrap()).resolves.toMatchObject({
+      kind: "complete",
+      eligiblePaths: paths,
+    });
+    expect(owner.snapshot().state.paths).toHaveLength(MAX_MIRROR_TRACKED_PATHS);
+  });
+
+  it("reports capacity overflow without claiming durable bootstrap admission", async () => {
+    const paths = createCapacityPaths(MAX_MIRROR_TRACKED_PATHS + 1);
+    local.list.mockResolvedValueOnce(listResult(paths));
+    const owner = new MirrorStateOwner(activeState(), store);
+    const synchronizer = new MirrorSynchronizer(local, remote, owner, runtime);
+
+    await expect(synchronizer.bootstrap()).resolves.toMatchObject({
+      kind: "state-incomplete",
+      eligiblePaths: [],
+      reason: MIRROR_BOOTSTRAP_INCOMPLETE_REASON.pathCapacityExceeded,
+    });
+    expect(owner.snapshot().state.paths).toEqual([]);
+    expect(synchronizer.currentPhase()).toBe("inactive");
+    expect(synchronizer.nextWakeAtMilliseconds()).toBeNull();
+  });
+
+  it("reports bootstrap persistence failure and keeps admission closed", async () => {
+    store.save.mockResolvedValueOnce({
+      kind: "failed",
+      reason: MIRROR_STATE_STORE_FAILURE.quotaOrStorageError,
+    });
+    const owner = new MirrorStateOwner(activeState(), store);
+    const synchronizer = new MirrorSynchronizer(local, remote, owner, runtime);
+
+    await expect(synchronizer.bootstrap()).resolves.toMatchObject({
+      kind: "state-incomplete",
+      eligiblePaths: [],
+      reason: MIRROR_BOOTSTRAP_INCOMPLETE_REASON.persistenceFailed,
+    });
+    expect(owner.snapshot().persistenceAvailable).toBe(false);
+    expect(synchronizer.currentPhase()).toBe("inactive");
+    expect(synchronizer.nextWakeAtMilliseconds()).toBeNull();
+    await synchronizer.synchronizeReady();
+    expect(remote.mutateNote).not.toHaveBeenCalled();
+  });
+
+  it("lets positive synchronization settle while reporting inventory remains pending", async () => {
+    const inventoryPage =
+      Promise.withResolvers<Awaited<ReturnType<RemoteBridge["listNotes"]>>>();
+    remote.listNotes.mockReturnValueOnce(inventoryPage.promise);
+    const synchronizer = createInactiveSynchronizer();
+    const bootstrap = synchronizer.bootstrap();
+    let bootstrapSettled = false;
+    void bootstrap.then(() => {
+      bootstrapSettled = true;
+    });
+
+    await vi.waitFor(() =>
+      expect(synchronizer.currentPhase()).toBe("observing"),
+    );
+    runtime.now = MIRROR_COALESCING_QUIET_PERIOD_MILLISECONDS;
+    const positive = synchronizer.synchronizeReady();
+    let positiveSettled = false;
+    void positive.then(() => {
+      positiveSettled = true;
+    });
+    await vi.waitFor(() => expect(remote.mutateNote).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(positiveSettled).toBe(true));
+    expect(bootstrapSettled).toBe(false);
+
+    inventoryPage.resolve({
+      kind: "success",
+      value: { notes: [], nextCursor: null },
+    });
+    await expect(bootstrap).resolves.toMatchObject({ kind: "complete" });
+  });
+
+  it("suppresses wake deadlines while a bootstrapped writer is paused", async () => {
+    const owner = new MirrorStateOwner(activeState(), store);
+    const synchronizer = new MirrorSynchronizer(local, remote, owner, runtime);
+    await bootstrapSynchronizer(synchronizer);
+    await synchronizer.observePresent(PATH_A);
+    expect(synchronizer.nextWakeAtMilliseconds()).toBe(750);
+    await owner.transition((state) => ({
+      ...state,
+      lifecycle: {
+        kind: MIRROR_DEVICE_LIFECYCLE_KIND.paused,
+        associationId: ASSOCIATION,
+        origin: "https://bridge.example",
+        reason: "manual",
+      },
+    }));
+    expect(synchronizer.nextWakeAtMilliseconds()).toBeNull();
+  });
+
   it("collapses rapid changes until quiet and sends only the latest saved bytes", async () => {
-    const synchronizer = createSynchronizer();
+    const synchronizer = await createSynchronizer();
     await synchronizer.observePresent(PATH_A);
     runtime.now = 500;
     local.read.mockResolvedValue(readResult("B"));
@@ -313,7 +494,7 @@ describe("MirrorSynchronizer bootstrap and coalescing", () => {
   it("invalidates a saved read when a newer local generation arrives", async () => {
     const read = Promise.withResolvers<LocalReadResult>();
     local.read.mockReturnValueOnce(read.promise);
-    const synchronizer = createSynchronizer();
+    const synchronizer = await createSynchronizer();
     await synchronizer.observePresent(PATH_A);
     runtime.now = MIRROR_COALESCING_QUIET_PERIOD_MILLISECONDS;
     const work = synchronizer.synchronizeReady();
@@ -330,7 +511,7 @@ describe("MirrorSynchronizer bootstrap and coalescing", () => {
     const hash = Promise.withResolvers<ContentSha256>();
     const hashContent = vi.fn(() => hash.promise);
     runtime.hashContent = hashContent;
-    const synchronizer = createSynchronizer();
+    const synchronizer = await createSynchronizer();
     await synchronizer.observePresent(PATH_A);
     runtime.now = 750;
     const work = synchronizer.synchronizeReady();
@@ -355,7 +536,7 @@ describe("MirrorSynchronizer bootstrap and coalescing", () => {
       readIndex += 1;
       return required(read).promise;
     });
-    const synchronizer = createSynchronizer();
+    const synchronizer = await createSynchronizer();
     await synchronizer.observePresent(PATH_A);
     await synchronizer.observePresent(PATH_B);
     await synchronizer.observePresent(pathC);
@@ -386,6 +567,7 @@ describe("MirrorSynchronizer bootstrap and coalescing", () => {
       return OPERATION_A;
     });
     const synchronizer = new MirrorSynchronizer(local, remote, owner, runtime);
+    await bootstrapSynchronizer(synchronizer);
     await synchronizer.observePresent(PATH_A);
     runtime.now = 750;
     await synchronizer.synchronizeReady();
@@ -401,6 +583,7 @@ describe("MirrorSynchronizer bootstrap and coalescing", () => {
     runtime.hashContent = hashContent;
     const owner = new MirrorStateOwner(activeState(), store);
     const synchronizer = new MirrorSynchronizer(local, remote, owner, runtime);
+    await bootstrapSynchronizer(synchronizer);
     await synchronizer.observePresent(PATH_A);
     runtime.now = 750;
     const work = synchronizer.synchronizeReady();
@@ -431,6 +614,7 @@ describe("MirrorSynchronizer bootstrap and coalescing", () => {
       settledOwner,
       runtime,
     );
+    await bootstrapSynchronizer(settled);
     await settled.synchronizeReady();
     expect(settled.nextWakeAtMilliseconds()).toBeNull();
     expect(local.read).not.toHaveBeenCalled();
@@ -458,6 +642,7 @@ describe("MirrorSynchronizer bootstrap and coalescing", () => {
       exhaustedOwner,
       runtime,
     );
+    await bootstrapSynchronizer(resumed);
     await resumed.synchronizeReady();
     expect(exhaustedOwner.snapshot().state.paths[0]?.blockedReason).toBe(
       "retry-exhausted",
@@ -465,7 +650,7 @@ describe("MirrorSynchronizer bootstrap and coalescing", () => {
   });
 
   it("bounds continuous coalescing and reports unavailable saved reads without mutation", async () => {
-    const synchronizer = createSynchronizer();
+    const synchronizer = await createSynchronizer();
     await synchronizer.observePresent(PATH_A);
     expect(synchronizer.nextWakeAtMilliseconds()).toBe(750);
     for (const now of [700, 1_400, 2_100, 2_800, 3_500, 4_200, 4_900]) {
@@ -494,6 +679,7 @@ describe("MirrorSynchronizer acknowledgement and divergence", () => {
     remote.mutateNote.mockReturnValueOnce(mutation.promise);
     const owner = new MirrorStateOwner(activeState(), store);
     const synchronizer = new MirrorSynchronizer(local, remote, owner, runtime);
+    await bootstrapSynchronizer(synchronizer);
     await synchronizer.observePresent(PATH_A);
     runtime.now = 750;
     const first = synchronizer.synchronizeReady();
@@ -532,7 +718,7 @@ describe("MirrorSynchronizer acknowledgement and divergence", () => {
   });
 
   it("starts a fresh coalescing window after a settled generation", async () => {
-    const synchronizer = createSynchronizer();
+    const synchronizer = await createSynchronizer();
     await synchronizer.observePresent(PATH_A);
     runtime.now = 750;
     await synchronizer.synchronizeReady();
@@ -591,7 +777,7 @@ describe("MirrorSynchronizer acknowledgement and divergence", () => {
       kind: "failure",
       failure: "network-unavailable",
     });
-    const synchronizer = createSynchronizer();
+    const synchronizer = createInactiveSynchronizer();
     expect(await synchronizer.bootstrap()).toMatchObject({
       inventory: { kind: "incomplete", reason: "remote-failure" },
     });
@@ -606,6 +792,7 @@ describe("MirrorSynchronizer acknowledgement and divergence", () => {
   it("blocks an unassociated collision and a failed bootstrap state inspection", async () => {
     const owner = new MirrorStateOwner(activeState(), store);
     const synchronizer = new MirrorSynchronizer(local, remote, owner, runtime);
+    await bootstrapSynchronizer(synchronizer);
     await synchronizer.observePresent(PATH_A);
     remote.inspectNote.mockResolvedValueOnce({
       kind: "success",
@@ -617,6 +804,7 @@ describe("MirrorSynchronizer acknowledgement and divergence", () => {
 
     const otherOwner = new MirrorStateOwner(activeState(), new FakeStore());
     const other = new MirrorSynchronizer(local, remote, otherOwner, runtime);
+    await bootstrapSynchronizer(other);
     await other.observePresent(PATH_B);
     remote.inspectNote.mockResolvedValueOnce({
       kind: "failure",
@@ -669,6 +857,7 @@ describe("MirrorSynchronizer acknowledgement and divergence", () => {
     runtime.operationIndex = 1;
     const owner = new MirrorStateOwner(tombstone, store);
     const synchronizer = new MirrorSynchronizer(local, remote, owner, runtime);
+    await bootstrapSynchronizer(synchronizer);
     await synchronizer.observePresent(PATH_A);
     runtime.now = 750;
     await synchronizer.synchronizeReady();
@@ -681,6 +870,39 @@ describe("MirrorSynchronizer acknowledgement and divergence", () => {
 });
 
 describe("MirrorSynchronizer uncertainty and durable budgets", () => {
+  it("blocks an intent-persisted retry when saved content no longer matches", async () => {
+    const state = stateWithUnresolved(1, 0);
+    const entry = required(state.paths[0]);
+    const owner = new MirrorStateOwner(
+      {
+        ...state,
+        paths: [
+          {
+            ...entry,
+            unresolvedMutation:
+              entry.unresolvedMutation === null
+                ? null
+                : {
+                    ...entry.unresolvedMutation,
+                    phase: "intent-persisted",
+                  },
+          },
+        ],
+      },
+      store,
+    );
+    const synchronizer = new MirrorSynchronizer(local, remote, owner, runtime);
+    await bootstrapSynchronizer(synchronizer);
+    local.read.mockResolvedValueOnce(readResult("B"));
+
+    await synchronizer.synchronizeReady();
+
+    expect(owner.snapshot().state.paths[0]?.blockedReason).toBe(
+      MIRROR_PATH_BLOCK_REASON.unresolvedEffect,
+    );
+    expect(remote.mutateNote).not.toHaveBeenCalled();
+  });
+
   it("discovers an exact own receipt after an ambiguous mutation", async () => {
     remote.mutateNote.mockResolvedValueOnce({
       kind: "failure",
@@ -689,6 +911,7 @@ describe("MirrorSynchronizer uncertainty and durable budgets", () => {
     });
     const owner = new MirrorStateOwner(activeState(), store);
     const synchronizer = new MirrorSynchronizer(local, remote, owner, runtime);
+    await bootstrapSynchronizer(synchronizer);
     await synchronizer.observePresent(PATH_A);
     runtime.now = 750;
     await synchronizer.synchronizeReady();
@@ -723,6 +946,7 @@ describe("MirrorSynchronizer uncertainty and durable budgets", () => {
       );
     const owner = new MirrorStateOwner(activeState(), store);
     const synchronizer = new MirrorSynchronizer(local, remote, owner, runtime);
+    await bootstrapSynchronizer(synchronizer);
     await synchronizer.observePresent(PATH_A);
     runtime.now = 750;
     await synchronizer.synchronizeReady();
@@ -756,6 +980,7 @@ describe("MirrorSynchronizer uncertainty and durable budgets", () => {
       );
     const owner = new MirrorStateOwner(activeState(), store);
     const synchronizer = new MirrorSynchronizer(local, remote, owner, runtime);
+    await bootstrapSynchronizer(synchronizer);
     await synchronizer.observePresent(PATH_A);
     runtime.now = 750;
     await synchronizer.synchronizeReady();
@@ -777,6 +1002,7 @@ describe("MirrorSynchronizer uncertainty and durable budgets", () => {
     });
     const owner = new MirrorStateOwner(activeState(), store);
     const synchronizer = new MirrorSynchronizer(local, remote, owner, runtime);
+    await bootstrapSynchronizer(synchronizer);
     await synchronizer.observePresent(PATH_A);
     runtime.now = 750;
     await synchronizer.synchronizeReady();
@@ -790,6 +1016,7 @@ describe("MirrorSynchronizer uncertainty and durable budgets", () => {
       forbiddenOwner,
       runtime,
     );
+    await bootstrapSynchronizer(forbidden);
     await forbidden.observePresent(PATH_B);
     remote.inspectNote.mockResolvedValueOnce({
       kind: "success",
@@ -805,11 +1032,13 @@ describe("MirrorSynchronizer uncertainty and durable budgets", () => {
     expect(forbiddenOwner.snapshot().state.globalBlockReason).toBe(
       "designation-mismatch",
     );
+    expect(forbidden.nextWakeAtMilliseconds()).toBeNull();
   });
 
   it("persists evidence consumption before a failed evidence request", async () => {
     const owner = new MirrorStateOwner(stateWithUnresolved(1, 0), store);
     const synchronizer = new MirrorSynchronizer(local, remote, owner, runtime);
+    await bootstrapSynchronizer(synchronizer);
     remote.inspectNote.mockResolvedValueOnce({
       kind: "failure",
       failure: "server-failed",
@@ -831,6 +1060,7 @@ describe("MirrorSynchronizer uncertainty and durable budgets", () => {
       store,
     );
     const synchronizer = new MirrorSynchronizer(local, remote, owner, runtime);
+    await bootstrapSynchronizer(synchronizer);
     remote.inspectNote.mockResolvedValueOnce({
       kind: "success",
       value: { kind: "absent", path: PATH_A },
@@ -853,6 +1083,7 @@ describe("MirrorSynchronizer uncertainty and durable budgets", () => {
         owner,
         runtime,
       );
+      await bootstrapSynchronizer(synchronizer);
       remote.inspectNote.mockResolvedValueOnce({
         kind: "success",
         value:
@@ -885,6 +1116,7 @@ describe("MirrorSynchronizer uncertainty and durable budgets", () => {
   it("blocks arbitrary evidence instead of accepting equal text or a different receipt", async () => {
     const owner = new MirrorStateOwner(stateWithUnresolved(1, 0), store);
     const synchronizer = new MirrorSynchronizer(local, remote, owner, runtime);
+    await bootstrapSynchronizer(synchronizer);
     expect(synchronizer.nextWakeAtMilliseconds()).toBe(0);
     remote.inspectNote.mockResolvedValueOnce({
       kind: "success",
@@ -900,6 +1132,7 @@ describe("MirrorSynchronizer uncertainty and durable budgets", () => {
       new FakeStore(),
     );
     const update = new MirrorSynchronizer(local, remote, updateOwner, runtime);
+    await bootstrapSynchronizer(update);
     remote.inspectNote.mockResolvedValueOnce({
       kind: "success",
       value: {
@@ -930,6 +1163,7 @@ describe("MirrorSynchronizer uncertainty and durable budgets", () => {
     });
     const owner = new MirrorStateOwner(activeState(), store);
     const synchronizer = new MirrorSynchronizer(local, remote, owner, runtime);
+    await bootstrapSynchronizer(synchronizer);
     await synchronizer.observePresent(PATH_A);
     runtime.now = 750;
     await synchronizer.synchronizeReady();
@@ -1011,6 +1245,7 @@ describe("MirrorSynchronizer uncertainty and durable budgets", () => {
   it("globally fences new mutations after confirmed ACK persistence failure and recovers via evidence", async () => {
     const owner = new MirrorStateOwner(activeState(), store);
     const synchronizer = new MirrorSynchronizer(local, remote, owner, runtime);
+    await bootstrapSynchronizer(synchronizer);
     await synchronizer.observePresent(PATH_A);
     runtime.now = 750;
     store.save.mockResolvedValueOnce({ kind: "saved" });
@@ -1022,6 +1257,7 @@ describe("MirrorSynchronizer uncertainty and durable budgets", () => {
     await synchronizer.synchronizeReady();
     expect(owner.snapshot().persistenceAvailable).toBe(false);
     expect(owner.snapshot().state.paths[0]?.unresolvedMutation).not.toBeNull();
+    expect(synchronizer.nextWakeAtMilliseconds()).toBeNull();
 
     await synchronizer.observePresent(PATH_B);
     await synchronizer.synchronizeReady();
@@ -1040,13 +1276,28 @@ describe("MirrorSynchronizer uncertainty and durable budgets", () => {
   });
 });
 
-function createSynchronizer(): MirrorSynchronizer {
+function createInactiveSynchronizer(): MirrorSynchronizer {
   return new MirrorSynchronizer(
     local,
     remote,
     new MirrorStateOwner(activeState(), store),
     runtime,
   );
+}
+
+async function createSynchronizer(): Promise<MirrorSynchronizer> {
+  const synchronizer = createInactiveSynchronizer();
+  await bootstrapSynchronizer(synchronizer);
+  return synchronizer;
+}
+
+async function bootstrapSynchronizer(
+  synchronizer: MirrorSynchronizer,
+): Promise<void> {
+  local.list.mockResolvedValueOnce(listResult([]));
+  await expect(synchronizer.bootstrap()).resolves.toMatchObject({
+    kind: "complete",
+  });
 }
 
 function activeState(): MirrorDeviceState {
@@ -1266,6 +1517,12 @@ function divergentState(
       precondition: { kind: "matching-revision", revision: REVISION_A },
     },
   };
+}
+
+function createCapacityPaths(count: number): readonly (typeof PATH_A)[] {
+  return Array.from({ length: count }, (_, index) =>
+    required(normalizeNotePath(`notes/capacity-${index}.md`)),
+  );
 }
 
 function required<Value>(value: Value | undefined): Value {

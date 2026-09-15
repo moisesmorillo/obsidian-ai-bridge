@@ -2,7 +2,10 @@ import type {
   ContentSha256,
   MirrorOperationId,
 } from "@core/mirror/mirror.types";
-import type { MIRROR_SYNCHRONIZER_PHASE } from "@core/mirror/mirror-autosync.constants";
+import type {
+  MIRROR_BOOTSTRAP_INCOMPLETE_REASON,
+  MIRROR_SYNCHRONIZER_PHASE,
+} from "@core/mirror/mirror-autosync.constants";
 import type { MirrorInventoryResult } from "@core/mirror/mirror-inventory";
 import type { RemoteBridgeFailure } from "@core/mirror/remote-bridge.types";
 import type { NotePath } from "@core/note-path/note-path.types";
@@ -21,6 +24,10 @@ export interface MirrorSynchronizerRuntime {
   createOperationId(): MirrorOperationId;
 }
 
+/** Closed reason why eligible bootstrap paths were not durably admitted. */
+export type MirrorBootstrapIncompleteReason =
+  (typeof MIRROR_BOOTSTRAP_INCOMPLETE_REASON)[keyof typeof MIRROR_BOOTSTRAP_INCOMPLETE_REASON];
+
 /** Bootstrap completion never implies destructive authority for scan absence. */
 export type MirrorBootstrapResult =
   | {
@@ -38,6 +45,12 @@ export type MirrorBootstrapResult =
       readonly kind: "local-incomplete";
       readonly eligiblePaths: readonly NotePath[];
       readonly inventory: MirrorInventoryResult;
+    }
+  | {
+      readonly kind: "state-incomplete";
+      readonly eligiblePaths: readonly NotePath[];
+      readonly inventory: MirrorInventoryResult;
+      readonly reason: MirrorBootstrapIncompleteReason;
     };
 
 /** One sanitized runtime outcome retained for status reporting without note text. */

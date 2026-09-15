@@ -8,6 +8,12 @@ export interface MirrorScheduledJob {
   readonly run: () => Promise<void>;
 }
 
+/** Internal queued job paired with its caller-visible settlement signal. */
+interface QueuedMirrorJob extends MirrorScheduledJob {
+  /** Resolves the caller-visible completion after the owned job settles. */
+  readonly resolveCompletion: () => void;
+}
+
 /**
  * FIFO bounded scheduler with one reservation per key and two global slots.
  *
@@ -16,7 +22,7 @@ export interface MirrorScheduledJob {
  * owns reservations through promise settlement; rejected jobs cannot leak slots.
  */
 export class FairMirrorScheduler {
-  private readonly queued: MirrorScheduledJob[] = [];
+  private readonly queued: QueuedMirrorJob[] = [];
   private readonly reserved = new Set<string>();
   private readonly idleWaiters = new Set<() => void>();
   private activeJobs = 0;
@@ -41,11 +47,22 @@ export class FairMirrorScheduler {
    * @returns Whether the job was admitted.
    */
   enqueue(job: MirrorScheduledJob): boolean {
-    if (this.reserved.has(job.key)) return false;
+    return this.enqueueAndWait(job) !== undefined;
+  }
+
+  /**
+   * Admits one job and exposes settlement of that job without waiting for unrelated work.
+   *
+   * @param job - Complete job and stable reservation identity.
+   * @returns Job settlement, or `undefined` when the key is already reserved.
+   */
+  enqueueAndWait(job: MirrorScheduledJob): Promise<void> | undefined {
+    if (this.reserved.has(job.key)) return undefined;
+    const completion = Promise.withResolvers<void>();
     this.reserved.add(job.key);
-    this.queued.push(job);
+    this.queued.push({ ...job, resolveCompletion: completion.resolve });
     this.drain();
-    return true;
+    return completion.promise;
   }
 
   /** @returns A promise resolved when all currently admitted jobs have settled. */
@@ -62,15 +79,16 @@ export class FairMirrorScheduler {
       if (job === undefined) break;
       this.activeJobs += 1;
       void job.run().then(
-        () => this.settle(job.key),
-        () => this.settle(job.key),
+        () => this.settle(job),
+        () => this.settle(job),
       );
     }
   }
 
-  private settle(key: string): void {
+  private settle(job: QueuedMirrorJob): void {
     this.activeJobs -= 1;
-    this.reserved.delete(key);
+    this.reserved.delete(job.key);
+    job.resolveCompletion();
     this.drain();
     if (this.activeJobs !== 0 || this.queued.length !== 0) return;
     for (const resolve of this.idleWaiters) resolve();

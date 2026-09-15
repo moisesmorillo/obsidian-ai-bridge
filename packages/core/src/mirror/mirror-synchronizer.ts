@@ -17,6 +17,7 @@ import type {
 import { applyMutationAcknowledgement } from "@core/mirror/mirror-acknowledgement";
 import {
   MAX_REMOTE_INVENTORY_PAGES,
+  MIRROR_BOOTSTRAP_INCOMPLETE_REASON,
   MIRROR_COALESCING_QUIET_PERIOD_MILLISECONDS,
   MIRROR_FINAL_MUTATION_RETRY_DELAY_MILLISECONDS,
   MIRROR_MAX_COALESCING_WAIT_MILLISECONDS,
@@ -31,6 +32,7 @@ import {
   MAX_MIRROR_TRACKED_PATHS,
   MIRROR_ACKNOWLEDGEMENT_KIND,
   MIRROR_DESIRED_STATE_KIND,
+  MIRROR_DEVICE_LIFECYCLE_KIND,
   MIRROR_GLOBAL_BLOCK_REASON,
   MIRROR_MUTATION_PHASE,
   MIRROR_PATH_BLOCK_REASON,
@@ -40,8 +42,12 @@ import type {
   MirrorPathState,
   MirrorStateSnapshot,
 } from "@core/mirror/mirror-state.types";
-import type { MirrorStateOwner } from "@core/mirror/mirror-state-owner";
 import type {
+  MirrorStateCommitResult,
+  MirrorStateOwner,
+} from "@core/mirror/mirror-state-owner";
+import type {
+  MirrorBootstrapIncompleteReason,
   MirrorBootstrapResult,
   MirrorPathJobOutcome,
   MirrorSynchronizerPhase,
@@ -50,6 +56,7 @@ import type {
 import { REMOTE_BRIDGE_FAILURE } from "@core/mirror/remote-bridge.constants";
 import type {
   RemoteBridge,
+  RemoteBridgeDescription,
   RemoteBridgeFailure,
 } from "@core/mirror/remote-bridge.types";
 import type { NotePath } from "@core/note-path/note-path.types";
@@ -64,6 +71,10 @@ interface PathRuntimeState {
   readonly bootstrapInspectionRequired: boolean;
 }
 
+type BootstrapPathMergeResult =
+  | { readonly kind: "merged"; readonly state: MirrorDeviceState }
+  | { readonly kind: "capacity-exceeded" };
+
 /**
  * Core-owned positive autosynchronization coordinator for M3 Slice 5.
  *
@@ -77,7 +88,8 @@ export class MirrorSynchronizer {
   private readonly outcomes = new Map<NotePath, MirrorPathJobOutcome>();
   private observationGeneration = 0;
   private inventory: MirrorInventoryResult | null = null;
-  private phase: MirrorSynchronizerPhase = MIRROR_SYNCHRONIZER_PHASE.observing;
+  private phase: MirrorSynchronizerPhase = MIRROR_SYNCHRONIZER_PHASE.inactive;
+  private bootstrapOperation: Promise<MirrorBootstrapResult> | null = null;
 
   /**
    * @param local - Saved-file read/list capability with M2 eligibility guarantees.
@@ -138,14 +150,25 @@ export class MirrorSynchronizer {
    * Performs one non-retrying local bootstrap and bounded reporting inventory.
    *
    * Positive events may call observePresent while enumeration is pending. The final
-   * batch preserves newer generations. Local failure and remote absence never create
-   * destructive evidence.
+   * batch preserves newer generations. Positive synchronization remains fail-closed
+   * until the handshake and indexed local batch commit; reporting inventory may still
+   * be pending afterward. Local failure and remote absence never create destructive
+   * evidence.
    *
    * @returns Explicit completion/incompleteness and unassociated remote reporting.
    */
-  async bootstrap(): Promise<MirrorBootstrapResult> {
+  bootstrap(): Promise<MirrorBootstrapResult> {
+    if (this.bootstrapOperation !== null) return this.bootstrapOperation;
+    const operation = this.runBootstrap().finally(() => {
+      if (this.bootstrapOperation === operation) this.bootstrapOperation = null;
+    });
+    this.bootstrapOperation = operation;
+    return operation;
+  }
+
+  private async runBootstrap(): Promise<MirrorBootstrapResult> {
     const initial = this.stateOwner.snapshot();
-    if (!initial.mutationAdmissionAllowed) {
+    if (!isBootstrapAdmissionCandidate(initial)) {
       this.phase = MIRROR_SYNCHRONIZER_PHASE.inactive;
       return { kind: "inactive", eligiblePaths: [], inventory: null };
     }
@@ -158,7 +181,7 @@ export class MirrorSynchronizer {
     }
     const lifecycle = this.stateOwner.snapshot().state.lifecycle;
     if (
-      lifecycle.kind !== "active" ||
+      lifecycle.kind !== MIRROR_DEVICE_LIFECYCLE_KIND.active ||
       lifecycle.associationId !== description.value.associationId ||
       this.stateOwner.snapshot().state.deviceId !== description.value.writerId
     ) {
@@ -175,45 +198,79 @@ export class MirrorSynchronizer {
       pagesRead: MAX_REMOTE_INVENTORY_PAGES,
       reason: "page-budget-exhausted",
     };
-    const bootstrapGeneration = this.nextGeneration();
-    this.scheduler.enqueue({
+    const inventoryCompletion = this.scheduler.enqueueAndWait({
       key: INVENTORY_RESERVATION_KEY,
       run: async () => {
         inventory = await inspectBoundedMirrorInventory(this.remote);
         this.inventory = inventory;
       },
     });
-    const local = await this.local.list();
-    if (local.kind === LocalInspectionKind.ok) {
-      const observedAt = this.runtime.nowMilliseconds();
-      const generations = local.entries.map((entry) => ({
-        path: entry.path,
-        generation: bootstrapGeneration,
-      }));
-      for (const entry of generations) {
-        const current = findPath(this.stateOwner.snapshot().state, entry.path);
-        this.recordRuntimeObservation(
-          entry.path,
-          entry.generation,
-          observedAt,
-          true,
-          current?.desired.kind !== MIRROR_DESIRED_STATE_KIND.dirtyPresent,
-        );
-      }
-      await this.stateOwner.transition((state) =>
-        mergeBootstrapPaths(state, generations),
-      );
+    if (inventoryCompletion === undefined) {
+      throw new Error("Mirror inventory reservation invariant failed.");
     }
-    await this.scheduler.whenIdle();
-    this.phase = MIRROR_SYNCHRONIZER_PHASE.observing;
-    const completedInventory = inventory;
+    const bootstrapGeneration = this.nextGeneration();
+    const local = await this.local.list();
     if (local.kind !== LocalInspectionKind.ok) {
+      this.phase = MIRROR_SYNCHRONIZER_PHASE.inactive;
+      await inventoryCompletion;
       return {
         kind: "local-incomplete",
         eligiblePaths: [],
-        inventory: completedInventory,
+        inventory,
       };
     }
+    const observedAt = this.runtime.nowMilliseconds();
+    const observations = local.entries.map((entry) => ({
+      path: entry.path,
+      generation: bootstrapGeneration,
+    }));
+    let reducerFailure: MirrorBootstrapIncompleteReason | undefined;
+    const admission = await this.stateOwner.transition((state) => {
+      if (!bootstrapIdentityMatches(state, description.value)) {
+        reducerFailure = MIRROR_BOOTSTRAP_INCOMPLETE_REASON.staleTransition;
+        return undefined;
+      }
+      const merged = mergeBootstrapPaths(state, observations);
+      if (merged.kind === "capacity-exceeded") {
+        reducerFailure =
+          MIRROR_BOOTSTRAP_INCOMPLETE_REASON.pathCapacityExceeded;
+        return undefined;
+      }
+      return merged.state;
+    });
+    const admissionFailure =
+      reducerFailure ??
+      bootstrapCommitFailure(admission) ??
+      (admission.snapshot.persistenceAvailable
+        ? undefined
+        : MIRROR_BOOTSTRAP_INCOMPLETE_REASON.persistenceFailed);
+    if (admissionFailure !== undefined) {
+      this.phase = MIRROR_SYNCHRONIZER_PHASE.inactive;
+      await inventoryCompletion;
+      return {
+        kind: "state-incomplete",
+        eligiblePaths: [],
+        inventory,
+        reason: admissionFailure,
+      };
+    }
+    const admittedPathByPath = new Map(
+      admission.snapshot.state.paths.map(
+        (entry) => [entry.path, entry] as const,
+      ),
+    );
+    for (const observation of observations) {
+      const current = admittedPathByPath.get(observation.path);
+      this.recordRuntimeObservation(
+        observation.path,
+        observation.generation,
+        observedAt,
+        true,
+        current?.desired.kind !== MIRROR_DESIRED_STATE_KIND.dirtyPresent,
+      );
+    }
+    this.phase = MIRROR_SYNCHRONIZER_PHASE.observing;
+    await inventoryCompletion;
     const associated = new Set(
       this.stateOwner
         .snapshot()
@@ -227,8 +284,8 @@ export class MirrorSynchronizer {
     return {
       kind: "complete",
       eligiblePaths: local.entries.map((entry) => entry.path),
-      inventory: completedInventory,
-      unassociatedRemotePaths: completedInventory.paths.filter(
+      inventory,
+      unassociatedRemotePaths: inventory.paths.filter(
         (path) => !associated.has(path),
       ),
     };
@@ -237,34 +294,38 @@ export class MirrorSynchronizer {
   /**
    * Returns the next finite coalescing or retry deadline for host timer composition.
    *
-   * `null` means no unblocked path needs a wake. The caller schedules one bounded
-   * host timer and invokes synchronizeReady; it must not poll.
+   * `null` means admission is closed or no unblocked path needs a wake. The caller
+   * schedules one bounded host timer and invokes synchronizeReady; it must not poll.
    *
    * @returns Earliest monotonic deadline in milliseconds, or no pending wake.
    */
   nextWakeAtMilliseconds(): number | null {
-    const deadlines = this.stateOwner
-      .snapshot()
-      .state.paths.flatMap((entry) => {
-        if (entry.blockedReason !== null) return [];
-        const runtime = this.pathRuntime.get(entry.path);
-        if (entry.unresolvedMutation !== null) {
-          return [runtime?.nextRetryAt ?? this.runtime.nowMilliseconds()];
-        }
-        if (
-          entry.desired.kind !== MIRROR_DESIRED_STATE_KIND.dirtyPresent ||
-          runtime === undefined
-        ) {
-          return [];
-        }
-        return [
-          Math.min(
-            runtime.lastObservedAt +
-              MIRROR_COALESCING_QUIET_PERIOD_MILLISECONDS,
-            runtime.firstObservedAt + MIRROR_MAX_COALESCING_WAIT_MILLISECONDS,
-          ),
-        ];
-      });
+    const snapshot = this.stateOwner.snapshot();
+    if (
+      this.phase !== MIRROR_SYNCHRONIZER_PHASE.observing ||
+      !snapshot.mutationAdmissionAllowed
+    ) {
+      return null;
+    }
+    const deadlines = snapshot.state.paths.flatMap((entry) => {
+      if (entry.blockedReason !== null) return [];
+      const runtime = this.pathRuntime.get(entry.path);
+      if (entry.unresolvedMutation !== null) {
+        return [runtime?.nextRetryAt ?? this.runtime.nowMilliseconds()];
+      }
+      if (
+        entry.desired.kind !== MIRROR_DESIRED_STATE_KIND.dirtyPresent ||
+        runtime === undefined
+      ) {
+        return [];
+      }
+      return [
+        Math.min(
+          runtime.lastObservedAt + MIRROR_COALESCING_QUIET_PERIOD_MILLISECONDS,
+          runtime.firstObservedAt + MIRROR_MAX_COALESCING_WAIT_MILLISECONDS,
+        ),
+      ];
+    });
     return deadlines.length === 0 ? null : Math.min(...deadlines);
   }
 
@@ -288,13 +349,14 @@ export class MirrorSynchronizer {
     const ready = state.state.paths
       .filter((entry) => this.isReady(entry, now))
       .toSorted((left, right) => left.path.localeCompare(right.path));
-    for (const entry of ready) {
-      this.scheduler.enqueue({
+    const completions = ready.flatMap((entry) => {
+      const completion = this.scheduler.enqueueAndWait({
         key: entry.path,
         run: () => this.runPath(entry.path),
       });
-    }
-    await this.scheduler.whenIdle();
+      return completion === undefined ? [] : [completion];
+    });
+    await Promise.all(completions);
   }
 
   /**
@@ -567,6 +629,7 @@ export class MirrorSynchronizer {
     generation: number,
   ): Promise<void> {
     const path = intent.path;
+    if (!this.stateOwner.snapshot().mutationAdmissionAllowed) return;
     if (intent.mutationAttempts >= MAX_MUTATION_ATTEMPTS) {
       await this.blockPath(path, MIRROR_PATH_BLOCK_REASON.retryExhausted);
       return;
@@ -728,6 +791,17 @@ export class MirrorSynchronizer {
     startNewCoalescingWindow: boolean,
   ): void {
     const current = this.pathRuntime.get(path);
+    if (
+      bootstrapInspectionRequired &&
+      current !== undefined &&
+      current.generation > generation
+    ) {
+      this.pathRuntime.set(path, {
+        ...current,
+        bootstrapInspectionRequired: true,
+      });
+      return;
+    }
     this.pathRuntime.set(path, {
       firstObservedAt: startNewCoalescingWindow
         ? now
@@ -760,24 +834,116 @@ export class MirrorSynchronizer {
   }
 }
 
+/**
+ * Checks durable prerequisites without treating unrelated queued owner work as failure.
+ *
+ * The serialized bootstrap reducer rechecks lifecycle and identity after older work.
+ * Persistence must already be available; a failed fence requires explicit verification.
+ *
+ * @param snapshot - Current durable owner view before remote bootstrap reads.
+ * @returns Whether a bootstrap attempt may proceed without enabling mutations.
+ */
+function isBootstrapAdmissionCandidate(snapshot: MirrorStateSnapshot): boolean {
+  return (
+    snapshot.persistenceAvailable &&
+    snapshot.state.lifecycle.kind === MIRROR_DEVICE_LIFECYCLE_KIND.active &&
+    snapshot.state.globalBlockReason === null
+  );
+}
+
+/**
+ * Confirms that serialized bootstrap admission still belongs to the handshake identity.
+ *
+ * @param state - Latest durable state when the bootstrap reducer executes.
+ * @param description - Validated remote identity established before enumeration.
+ * @returns Whether the writer remains active, unblocked, and identically designated.
+ */
+function bootstrapIdentityMatches(
+  state: MirrorDeviceState,
+  description: RemoteBridgeDescription,
+): boolean {
+  return (
+    state.lifecycle.kind === MIRROR_DEVICE_LIFECYCLE_KIND.active &&
+    state.globalBlockReason === null &&
+    state.lifecycle.associationId === description.associationId &&
+    state.deviceId === description.writerId
+  );
+}
+
+/**
+ * Converts every non-commit owner result into an explicit bootstrap refusal.
+ *
+ * @param result - Serialized durable admission result.
+ * @returns Sanitized bootstrap reason, or no failure after a durable commit.
+ */
+function bootstrapCommitFailure(
+  result: MirrorStateCommitResult,
+): MirrorBootstrapIncompleteReason | undefined {
+  switch (result.kind) {
+    case "committed":
+      return undefined;
+    case "stale":
+      return MIRROR_BOOTSTRAP_INCOMPLETE_REASON.staleTransition;
+    case "invalid-transition":
+      return MIRROR_BOOTSTRAP_INCOMPLETE_REASON.invalidTransition;
+    case "save-failed":
+      return MIRROR_BOOTSTRAP_INCOMPLETE_REASON.persistenceFailed;
+  }
+}
+
+/**
+ * Merges one complete local enumeration using one index and one array copy.
+ *
+ * @param state - Latest durable state after the handshake.
+ * @param observations - Eligible bootstrap paths sharing one scan generation.
+ * @returns Merged state or an explicit capacity refusal with no partial result.
+ */
 function mergeBootstrapPaths(
   state: MirrorDeviceState,
   observations: readonly {
     readonly path: NotePath;
     readonly generation: number;
   }[],
-): MirrorDeviceState | undefined {
-  let next: MirrorDeviceState | undefined = state;
+): BootstrapPathMergeResult {
+  const pathByPath = new Map(
+    state.paths.map((entry) => [entry.path, entry] as const),
+  );
   for (const observation of observations) {
-    if (next === undefined) return undefined;
-    next = upsertDirtyPath(
-      next,
-      observation.path,
-      observation.generation,
-      true,
-    );
+    const current = pathByPath.get(observation.path);
+    if (current === undefined) {
+      if (pathByPath.size >= MAX_MIRROR_TRACKED_PATHS) {
+        return { kind: "capacity-exceeded" };
+      }
+      pathByPath.set(observation.path, {
+        path: observation.path,
+        acknowledgement: { kind: MIRROR_ACKNOWLEDGEMENT_KIND.unassociated },
+        unresolvedMutation: null,
+        desired: {
+          kind: MIRROR_DESIRED_STATE_KIND.dirtyPresent,
+          observationGeneration: observation.generation,
+        },
+        blockedReason: null,
+      });
+      continue;
+    }
+    if (
+      current.desired.kind === MIRROR_DESIRED_STATE_KIND.dirtyPresent &&
+      current.desired.observationGeneration > observation.generation
+    ) {
+      continue;
+    }
+    pathByPath.set(observation.path, {
+      ...current,
+      desired: {
+        kind: MIRROR_DESIRED_STATE_KIND.dirtyPresent,
+        observationGeneration: observation.generation,
+      },
+    });
   }
-  return next;
+  return {
+    kind: "merged",
+    state: { ...state, paths: [...pathByPath.values()] },
+  };
 }
 
 function upsertDirtyPath(
@@ -886,7 +1052,8 @@ function createContentIntent(
 ):
   | Exclude<UnresolvedMutationIntent, { readonly action: "tombstone" }>
   | undefined {
-  if (device.lifecycle.kind !== "active") return undefined;
+  if (device.lifecycle.kind !== MIRROR_DEVICE_LIFECYCLE_KIND.active)
+    return undefined;
   const common = {
     associationId: device.lifecycle.associationId,
     writerId: device.deviceId,

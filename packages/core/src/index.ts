@@ -118,6 +118,7 @@ export type {
 export {
   MAX_ACTIVE_MIRROR_JOBS,
   MAX_REMOTE_INVENTORY_PAGES,
+  MIRROR_BOOTSTRAP_INCOMPLETE_REASON,
   MIRROR_COALESCING_QUIET_PERIOD_MILLISECONDS,
   MIRROR_FINAL_MUTATION_RETRY_DELAY_MILLISECONDS,
   MIRROR_INVENTORY_INCOMPLETE_REASON,
@@ -253,6 +254,7 @@ export type {
 } from "@core/mirror/mirror-storage.types";
 export { MirrorSynchronizer } from "@core/mirror/mirror-synchronizer";
 export type {
+  MirrorBootstrapIncompleteReason,
   MirrorBootstrapResult,
   MirrorPathJobOutcome,
   MirrorSynchronizerPhase,

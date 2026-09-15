@@ -256,19 +256,25 @@ surface and retires unsafe v1 mutations; intermediate checkpoints are not rollou
   A1/A3/A5 engine. Still no plugin automatic composition or manual publish primary.
 - **Implemented evidence:** Slice 5 adds a platform-independent `MirrorSynchronizer`,
   FIFO two-slot/one-path scheduler, bounded 1,000-page reporting inventory and
-  injected monotonic time/hash/operation-ID seams. Bootstrap verifies current remote
-  designation, merges positive observations made during enumeration, inspects
-  associated remote generations and never derives deletion from absence/inventory.
-  Positive events use 750 ms quiet/5 s maximum coalescing; stale reads and changes
-  during PUT preserve newer dirty generations. Durable intents and consumed
-  three-attempt/three-evidence budgets are saved before calls; exact ACKs/receipts
-  settle against the latest owner state, ambiguous effects require evidence, and
-  retries retain original ID/condition/hash/body reconstruction rules with 2 s/10 s
-  delays. Persistence failure fences all mutation admission until owner verification.
-  Deterministic tests cover bootstrap/read/PUT races, retry/restart budgets,
-  exact-receipt recovery, original-condition retries, ACK-save recovery, fairness,
-  concurrency and pathological cursors. No plugin timers/callbacks/settings,
-  delete/rename orchestration, durable body queue or remote-to-local write is added.
+  injected monotonic time/hash/operation-ID seams. Synchronization starts inactive;
+  only a current remote handshake and durably committed indexed local bootstrap batch
+  enables positive work. Capacity, stale-state, local-enumeration, and persistence
+  failures return explicit non-admitting outcomes. Reporting inventory shares the
+  two scheduler slots but can remain pending while admitted positive work settles,
+  and neither absence nor incompleteness grants deletion authority. Bootstrap merges
+  positive observations made during enumeration and inspects associated remote
+  generations. Positive events use 750 ms quiet/5 s maximum coalescing; stale reads
+  and changes during PUT preserve newer dirty generations. Durable intents and
+  consumed three-attempt/three-evidence budgets are saved before calls; exact ACKs/
+  receipts settle against the latest owner state, ambiguous effects require evidence,
+  and retries retain original ID/condition/hash/body reconstruction rules with
+  2 s/10 s delays. Persistence and lifecycle fences suppress both mutation admission
+  and wake deadlines until explicit recovery. Deterministic tests cover bootstrap/
+  read/PUT races, exact 50,000-path capacity and overflow, save/stale admission
+  failures, pending-inventory progress, retry/restart budgets, exact-receipt recovery,
+  original-condition retries, ACK-save recovery, fairness, concurrency and pathological
+  cursors. No plugin timers/callbacks/settings, delete/rename orchestration, durable
+  body queue or remote-to-local write is added.
 
 ## 6. Runtime deletion, recreation and rename orchestration
 

@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.0](https://github.com/moisesmorillo/obsidian-ai-bridge/compare/v0.4.0...v0.5.0) (2026-09-15)
+
+
+### Features
+
+* **plugin:** add typed remote bridge transport ([#18](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/18)) ([cd2ab71](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/cd2ab713a5a430055f6e718e080e9292150eb084))
+
 ## [0.4.0](https://github.com/moisesmorillo/obsidian-ai-bridge/compare/v0.3.0...v0.4.0) (2026-09-15)
 
 

@@ -12,10 +12,10 @@ import {
 /** HTTP methods represented by the public v2 route capability table. */
 export type V2RouteMethod = (typeof HTTP_METHOD)[keyof typeof HTTP_METHOD];
 
-/** One public v2 route shape and its exact browser-visible method capability. */
+/** One public v2 route shape and its named browser-visible operations. */
 interface V2RouteDefinition {
   readonly path: string;
-  readonly methods: readonly V2RouteMethod[];
+  readonly operations: Readonly<Record<string, V2RouteMethod>>;
 }
 
 /**
@@ -25,32 +25,45 @@ interface V2RouteDefinition {
  * and CORS resolves preflight methods from the same definition.
  */
 export const V2_ROUTE_POLICY = {
-  mirror: { path: MIRROR_ROUTE, methods: [HTTP_METHOD.get] },
-  notes: { path: V2_NOTES_ROUTE, methods: [HTTP_METHOD.get] },
+  mirror: {
+    path: MIRROR_ROUTE,
+    operations: { describe: HTTP_METHOD.get },
+  },
+  notes: {
+    path: V2_NOTES_ROUTE,
+    operations: { list: HTTP_METHOD.get },
+  },
   note: {
     path: `${V2_NOTES_ROUTE}/:${API_ROUTE_PARAMETER.notePath}`,
-    methods: [HTTP_METHOD.get, HTTP_METHOD.put, HTTP_METHOD.delete],
+    operations: {
+      read: HTTP_METHOD.get,
+      write: HTTP_METHOD.put,
+      remove: HTTP_METHOD.delete,
+    },
   },
   noteState: {
     path: `${V2_NOTES_ROUTE}/:${API_ROUTE_PARAMETER.notePath}/${MIRROR_API_V2_SEGMENT.state}`,
-    methods: [HTTP_METHOD.get],
+    operations: { inspect: HTTP_METHOD.get },
   },
-  recovery: { path: RECOVERY_ROUTE, methods: [HTTP_METHOD.get] },
+  recovery: {
+    path: RECOVERY_ROUTE,
+    operations: { list: HTTP_METHOD.get },
+  },
   recoveryItem: {
     path: `${RECOVERY_ROUTE}/:${API_ROUTE_PARAMETER.recoveryId}`,
-    methods: [HTTP_METHOD.get],
+    operations: { inspect: HTTP_METHOD.get },
   },
   recoveryContent: {
     path: `${RECOVERY_ROUTE}/:${API_ROUTE_PARAMETER.recoveryId}/${MIRROR_API_V2_SEGMENT.content}`,
-    methods: [HTTP_METHOD.get],
+    operations: { read: HTTP_METHOD.get },
   },
   recoverySeal: {
     path: `${RECOVERY_ROUTE}/:${API_ROUTE_PARAMETER.recoveryId}/${MIRROR_API_V2_SEGMENT.seal}`,
-    methods: [HTTP_METHOD.post],
+    operations: { seal: HTTP_METHOD.post },
   },
   recoveryPurge: {
     path: `${RECOVERY_ROUTE}/:${API_ROUTE_PARAMETER.recoveryId}/${MIRROR_API_V2_SEGMENT.purge}`,
-    methods: [HTTP_METHOD.post],
+    operations: { purge: HTTP_METHOD.post },
   },
 } as const satisfies Record<string, V2RouteDefinition>;
 
@@ -65,9 +78,10 @@ const V2_ROUTE_DEFINITIONS = Object.values(V2_ROUTE_POLICY);
 export function resolveV2RouteMethods(
   pathname: string,
 ): readonly V2RouteMethod[] | undefined {
-  return V2_ROUTE_DEFINITIONS.find((route) =>
-    matchesRouteShape(route.path, pathname),
-  )?.methods;
+  const route = V2_ROUTE_DEFINITIONS.find((definition) =>
+    matchesRouteShape(definition.path, pathname),
+  );
+  return route === undefined ? undefined : Object.values(route.operations);
 }
 
 /**

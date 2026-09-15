@@ -73,7 +73,7 @@ apps/worker/src/
 
 ### Cloudflare Worker
 
-The Worker is the remote HTTP/API boundary. `index.ts` constructs the Hono app and long-lived LogTape dependency once per isolate. Request middleware resolves environment-specific authentication and creates current-generation/recovery application services from the active R2 binding; composition validates static non-secret association/writer UUIDs. `app.ts` composes typed Hono middleware, controllers, narrow v2 CORS, OpenAPI, and Scalar. HTTP controllers validate transport input and delegate transition policy to `packages/core`. They do not call R2 or implement CAS/recovery policy.
+The Worker is the remote HTTP/API boundary. `index.ts` constructs the Hono app and long-lived LogTape dependency once per isolate. Request middleware resolves environment-specific authentication and creates current-generation/recovery application services from the active R2 binding; composition validates static non-secret association/writer UUIDs. `app.ts` composes typed Hono middleware, controllers, narrow v2 CORS, OpenAPI, and Scalar. One named v2 route-operation policy owns each public path and HTTP method; Hono registration, CORS capability resolution, and OpenAPI consume that policy instead of restating it. HTTP controllers validate transport input and delegate transition policy to `packages/core`. They do not call R2 or implement CAS/recovery policy.
 
 ### Cloudflare R2
 

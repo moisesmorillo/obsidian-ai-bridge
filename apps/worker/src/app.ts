@@ -135,23 +135,64 @@ export function createWorkerApp(
   app.all(`${NOTES_ROUTE}/:path`, createUnsupportedNoteMethodHandler());
   app.all(`${NOTES_ROUTE}/*`, createInvalidPathHandler());
 
-  app.get(V2_ROUTE_POLICY.mirror.path, createGetMirrorHandler());
-  app.get(V2_ROUTE_POLICY.notes.path, createListV2NotesHandler());
-  app.get(V2_ROUTE_POLICY.noteState.path, createGetV2NoteStateHandler());
-  app.get(V2_ROUTE_POLICY.note.path, createGetV2NoteHandler());
-  app.put(V2_ROUTE_POLICY.note.path, createPutV2NoteHandler());
-  app.delete(V2_ROUTE_POLICY.note.path, createDeleteV2NoteHandler());
+  app.on(
+    V2_ROUTE_POLICY.mirror.operations.describe,
+    V2_ROUTE_POLICY.mirror.path,
+    createGetMirrorHandler(),
+  );
+  app.on(
+    V2_ROUTE_POLICY.notes.operations.list,
+    V2_ROUTE_POLICY.notes.path,
+    createListV2NotesHandler(),
+  );
+  app.on(
+    V2_ROUTE_POLICY.noteState.operations.inspect,
+    V2_ROUTE_POLICY.noteState.path,
+    createGetV2NoteStateHandler(),
+  );
+  app.on(
+    V2_ROUTE_POLICY.note.operations.read,
+    V2_ROUTE_POLICY.note.path,
+    createGetV2NoteHandler(),
+  );
+  app.on(
+    V2_ROUTE_POLICY.note.operations.write,
+    V2_ROUTE_POLICY.note.path,
+    createPutV2NoteHandler(),
+  );
+  app.on(
+    V2_ROUTE_POLICY.note.operations.remove,
+    V2_ROUTE_POLICY.note.path,
+    createDeleteV2NoteHandler(),
+  );
   app.all(V2_ROUTE_POLICY.noteState.path, createUnsupportedNoteMethodHandler());
   app.all(V2_ROUTE_POLICY.note.path, createUnsupportedNoteMethodHandler());
   app.all(`${V2_ROUTE_POLICY.notes.path}/*`, createInvalidPathHandler());
-  app.get(V2_ROUTE_POLICY.recovery.path, createListRecoveryHandler());
-  app.get(
+  app.on(
+    V2_ROUTE_POLICY.recovery.operations.list,
+    V2_ROUTE_POLICY.recovery.path,
+    createListRecoveryHandler(),
+  );
+  app.on(
+    V2_ROUTE_POLICY.recoveryContent.operations.read,
     V2_ROUTE_POLICY.recoveryContent.path,
     createGetRecoveryContentHandler(),
   );
-  app.get(V2_ROUTE_POLICY.recoveryItem.path, createGetRecoveryHandler());
-  app.post(V2_ROUTE_POLICY.recoverySeal.path, createSealRecoveryHandler());
-  app.post(V2_ROUTE_POLICY.recoveryPurge.path, createPurgeRecoveryHandler());
+  app.on(
+    V2_ROUTE_POLICY.recoveryItem.operations.inspect,
+    V2_ROUTE_POLICY.recoveryItem.path,
+    createGetRecoveryHandler(),
+  );
+  app.on(
+    V2_ROUTE_POLICY.recoverySeal.operations.seal,
+    V2_ROUTE_POLICY.recoverySeal.path,
+    createSealRecoveryHandler(),
+  );
+  app.on(
+    V2_ROUTE_POLICY.recoveryPurge.operations.purge,
+    V2_ROUTE_POLICY.recoveryPurge.path,
+    createPurgeRecoveryHandler(),
+  );
 
   app.doc(OPENAPI_ROUTE, openApiConfiguration);
   app.get(API_REFERENCE_ROUTE, Scalar({ url: OPENAPI_ROUTE }));

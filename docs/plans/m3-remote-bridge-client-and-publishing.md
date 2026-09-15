@@ -134,7 +134,8 @@ surface and retires unsafe v1 mutations; intermediate checkpoints are not rollou
   expiry withholding, bounded lists and sealed-expiry CAS purge to content-free
   markers. Slice 2C composes those real services/adapters into authenticated public
   v2 mirror/current/recovery routes, strict conditional/designation/media/body input,
-  exact application ETags/results, method-specific CORS, semantic OpenAPI, separate
+  exact application ETags/results, and one named route-operation policy consumed by
+  Hono registration, method-specific CORS and semantic OpenAPI, plus separate
   recovery metadata/content reads, envelope-aware v1 reads and authenticated 410 v1
   mutation retirement. Focused HTTP/composed tests cover current/recovery flows,
   parser negatives, no-mutation guards, CORS, v1 compatibility and OpenAPI. No

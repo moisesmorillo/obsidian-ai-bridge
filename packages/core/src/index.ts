@@ -31,6 +31,8 @@ export type {
 export type { ReadOnlyLocalVault } from "@core/local-vault/read-only-local-vault.port";
 export type { ConditionalCurrentNoteRepository } from "@core/mirror/conditional-current-note-repository.port";
 export { CurrentGenerationService } from "@core/mirror/current-generation-service";
+export type { MirrorScheduledJob } from "@core/mirror/fair-mirror-scheduler";
+export { FairMirrorScheduler } from "@core/mirror/fair-mirror-scheduler";
 export {
   APPLICATION_ETAG_PATTERN,
   APPLICATION_ETAG_PREFIX,
@@ -114,6 +116,16 @@ export type {
   TombstoneMutationResult,
 } from "@core/mirror/mirror-application.types";
 export {
+  MAX_ACTIVE_MIRROR_JOBS,
+  MAX_REMOTE_INVENTORY_PAGES,
+  MIRROR_COALESCING_QUIET_PERIOD_MILLISECONDS,
+  MIRROR_FINAL_MUTATION_RETRY_DELAY_MILLISECONDS,
+  MIRROR_INVENTORY_INCOMPLETE_REASON,
+  MIRROR_MAX_COALESCING_WAIT_MILLISECONDS,
+  MIRROR_MUTATION_RETRY_DELAY_MILLISECONDS,
+  MIRROR_SYNCHRONIZER_PHASE,
+} from "@core/mirror/mirror-autosync.constants";
+export {
   createApplicationEtag,
   createApplicationRevision,
   createContentSha256,
@@ -127,6 +139,12 @@ export {
   isUuidV4,
   parseApplicationEtag,
 } from "@core/mirror/mirror-identifiers";
+export type {
+  CompleteMirrorInventory,
+  IncompleteMirrorInventory,
+  MirrorInventoryResult,
+} from "@core/mirror/mirror-inventory";
+export { inspectBoundedMirrorInventory } from "@core/mirror/mirror-inventory";
 export {
   HANDOFF_ALIGNMENT_KIND,
   MAX_MIRROR_TRACKED_PATHS,
@@ -233,6 +251,13 @@ export type {
   TombstoneCurrentGenerationCandidate,
   TombstoneCurrentGenerationObservation,
 } from "@core/mirror/mirror-storage.types";
+export { MirrorSynchronizer } from "@core/mirror/mirror-synchronizer";
+export type {
+  MirrorBootstrapResult,
+  MirrorPathJobOutcome,
+  MirrorSynchronizerPhase,
+  MirrorSynchronizerRuntime,
+} from "@core/mirror/mirror-synchronizer.types";
 export { RecoveryService } from "@core/mirror/recovery-service";
 export type { RecoverySnapshotRepository } from "@core/mirror/recovery-snapshot-repository.port";
 export { REMOTE_BRIDGE_FAILURE } from "@core/mirror/remote-bridge.constants";

@@ -7,9 +7,10 @@ the completion PR records final validation and makes the transition canonical
 when merged. M2 is now merged at `b300726` (PR #7). M3 has completed [Slice 0 platform qualification](qualification/m3-slice-0-platform-primitives.md),
 Slice 1's modern plugin baseline/shared typed contracts, Worker Slice 2A–2C's
 private storage/application transitions plus public safe v2 HTTP/OpenAPI/CORS, and
-Slice 3's device-local state/configuration owner and staged handoff model, and Slice
-4's typed bounded Fetch `RemoteBridge` adapter. The adapter is uncomposed, so there
-is still no connected mirror. Its [accepted design decisions](plans/m3-design-decisions.md)
+Slice 3's device-local state/configuration owner and staged handoff model, Slice
+4's typed bounded Fetch `RemoteBridge` adapter, and Slice 5's core-only bootstrap,
+coalescing, scheduling, and finite retry/evidence engine. The adapter and engine are
+uncomposed, so there is still no connected mirror. Its [accepted design decisions](plans/m3-design-decisions.md)
 and [sequential plan](plans/m3-remote-bridge-client-and-publishing.md) remain broader
 than the implemented subset. The approved product is an automatic whole eligible
 Markdown mirror with recoverable runtime deletion/rename, per-path state and one
@@ -39,7 +40,7 @@ boundaries; [API](api.md) describes the HTTP contract.
 | Plugin | Default `AiBridgePlugin` still registers exactly two explicit commands and remains non-automatic. Slice 3 adds uncomposed strict endpoint/preferences, native-secret-reference and App-local state adapters, plus a same-JS-host runtime owner registry; Slice 4 adds an uncomposed typed v2 Fetch adapter. Request/response orchestration, dispatch/admission/late-settlement lifetime, DTO/domain mapping, and operation method/status/failure/effect policy have dedicated semantic owners. Dispatch retrieves the bearer from native SecretStorage, uses coordinator-provided admission and bounded strict-UTF-8 response reads, and validates media/schema/ETag/receipts without persisting the bearer or note body. List/active inspection behavior remains metadata-only. No enabling scan/read, automatic network dispatch, settings UI, watcher, logging, editor save or vault mutation. Manifest remains `ai-bridge`, minimum `1.13.0`, non-desktop-only. | `apps/obsidian-plugin/src/{main.ts,inspection/,infrastructure/,configuration/,state/,remote/}`, dedicated plugin unit/integration suites |
 | Local safety | Shared literal `.md` path and 1 MiB policy; dot-prefixed/configuration-directory exclusions; pre-read metadata and post-read UTF-8 bound; exact lookup and pre/post object/path/mtime/size checks. No path repair/URI decoding, content UI or atomic snapshot claim. | `packages/core/src/local-vault/`, plugin adapter tests |
 | Plugin artifact | Browser-target CommonJS exposes `module.exports.default`, only `obsidian` external; stages unchanged manifest. Artifact suite checks actual generated files, inert load, commands and lifecycle in an isolated host-double realm without Node globals. No real desktop/mobile host was tested. | `.mise.toml`, `apps/obsidian-plugin/tests/artifact/`, [API/version and installation evidence](plugin-development.md) |
-| Core | Public branded identifier/path utilities, `NoteService`/`VaultNoteService`, `VaultRepository`, size limit and typed payload/storage errors. M3 adds platform-independent UUID-v4 IDs, ETags, digests, closed current/recovery/intent/effect contracts, generation-bound conditional ports, current-generation/recovery orchestration, and Slice 3's closed device/per-path ledger, serialized state owner, activation/readiness and staged handoff policy. Slice 4 adds a platform-independent `RemoteBridge` capability and sanitized remote failure/effect contracts; core still imports no Fetch or HTTP types. Save failures conservatively fence mutation admission while preserving the last committed unresolved evidence. No Obsidian, Hono, Cloudflare, HTTP, filesystem or protocol dependency. Separate public `ReadOnlyLocalVault`, `LocalInspectionService`, closed local results and eligibility policy support M2 without platform imports or mutation methods. | `packages/core/src/`, package exports |
+| Core | Public branded identifier/path utilities, `NoteService`/`VaultNoteService`, `VaultRepository`, size limit and typed payload/storage errors. M3 adds platform-independent UUID-v4 IDs, ETags, digests, closed current/recovery/intent/effect contracts, generation-bound conditional ports, current-generation/recovery orchestration, Slice 3's closed device/per-path ledger and serialized state owner, and Slice 4's `RemoteBridge`. Slice 5 adds `MirrorSynchronizer`, a fair two-slot/one-path scheduler, bounded reporting inventory, positive observation generations, 750 ms/5 s coalescing, exact-ACK/evidence reconciliation and durable three-attempt/three-evidence budgets. Save failures conservatively fence mutation admission while preserving unresolved evidence. Core still imports no Obsidian, Fetch/HTTP, Hono, Cloudflare, filesystem or protocol dependency. Separate public `ReadOnlyLocalVault`, `LocalInspectionService`, closed local results and eligibility policy support M2 without platform imports or mutation methods. | `packages/core/src/`, package exports |
 | Protocol | Strict Zod schemas and inferred DTOs for health, errors, retained v1 responses, and bounded M3 identity, NotePath, precondition, receipt, current-state, recovery, intent, capability/result and pagination contracts. Stable public HTTP methods/statuses and v2 route roots, child segments, query/header names and media types are also owned here and consumed by Worker/OpenAPI/plugin adapters; adapter-private route syntax, response classification and CORS policy remain outside. The reserved version `0.1` envelope remains unused rather than being silently repurposed. | `packages/protocol/src/` |
 
 ## Tooling and validation baseline
@@ -63,7 +64,7 @@ boundaries; [API](api.md) describes the HTTP contract.
   prohibition, direct-console prohibition and configured documentation rules.
   These checks do **not** prove all architecture/TSDoc requirements in
   [AGENTS.md](../AGENTS.md); manual semantic review remains mandatory.
-- Vitest **5**: **40 source test files / 502 tests**, plus **1 artifact file /
+- Vitest **5**: **44 source test files / 579 tests**, plus **1 artifact file /
   3 smoke tests** in the dedicated build task. The unchanged M1 baseline had
   15 files / 105 tests. Exact slice validation is recorded in the
   [implementation plan](plans/m2-obsidian-read-only-local-adapter.md).
@@ -83,8 +84,8 @@ boundaries; [API](api.md) describes the HTTP contract.
   Global thresholds: **lines 95%, statements 95%, functions 94%, branches 90%**.
   Coverage is a regression signal, not proof of test quality.
 - Root Vitest projects include shared packages, Worker and plugin. Current source
-  coverage is statements **95.06%**, branches **92.14%**, functions **98.06%**, lines
-  **96.06%**; thresholds and production inclusion remain enforced. Artifact tests are separate
+  coverage is statements **95.01%**, branches **91.74%**, functions **98.37%**, lines
+  **96.31%**; thresholds and production inclusion remain enforced. Artifact tests are separate
   from source coverage, run after packaging and never replace behavioral coverage.
 - The Worker declares Miniflare **5.20260908.0-alpha** directly for its storage
   qualification task, exactly matching Wrangler **4.130.0** and workerd
@@ -108,10 +109,13 @@ remains privileged for this one namespace; static IDs are not scoped permissions
 Safe conditional v2 routes now exist and unsafe v1 mutations are retired. Slice 3
 models and persists device-local configuration/state, activation and staged handoff,
 including atomic indexed alignment batches, but does not compose them into runtime
-mirroring. There are no remote-to-local writes, automatic saved-event processing,
-settings UI, retry loop, remote handoff verification or initial-sync behavior. Slice
-4's Fetch client is intentionally uncomposed and performs no automatic dispatch. Never infer
-a connected mirror merely from the server surface.
+mirroring. There are no remote-to-local writes, automatic plugin saved-event
+processing, settings UI, remote handoff verification, or connected initial sync.
+Slice 5 implements core bootstrap, positive-event coalescing, path scheduling and
+finite retry/evidence policy, but Slice 4's Fetch client and that engine remain
+intentionally uncomposed and perform no automatic plugin dispatch. Delete/rename
+orchestration is still Slice 6. Never infer a connected mirror merely from these
+core/server surfaces.
 
 There is no search, MCP, AI inference, attachment mirroring or composed remote plugin client.
 No D1, Durable Objects, queues, Vectorize, Workers AI or external database is part
@@ -130,8 +134,8 @@ parameters can express that dependency. Semantic document tests guard this
 surface. M3's accepted design includes
 safe v2 mutations, paginated reads, 30-day deletion recovery, tombstone/purge markers,
 native secret references and explicit writer handoff. The Worker storage/application/
-transport subset and typed uncomposed plugin Fetch client exist; automatic behavior
-does not.
+transport subset, typed uncomposed plugin Fetch client, and core Slice 5 reconciliation
+machinery exist; production/user-visible automatic behavior does not.
 Broader operating limits/recovery automation and scoped authentication remain M5;
 prerequisites to safe M3/M4 behavior must not be postponed there.
 

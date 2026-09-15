@@ -2,7 +2,7 @@
 
 A secure bridge between Obsidian and remote AI or agent clients.
 
-> **Status:** M2 complete / experimental. The plugin remains non-automatic and read-only. **NEXT:** [M3 — Automatic eligible-Markdown remote mirror](docs/milestones/m3-remote-bridge-client-and-publishing.md). Slices 0–4 provide qualified storage primitives, shared contracts, safe public v2 Worker routes, device-local state/configuration primitives, and an uncomposed typed bounded Fetch adapter, but no connected plugin mirror exists.
+> **Status:** M2 complete / experimental. The plugin remains non-automatic and read-only. **NEXT:** [M3 — Automatic eligible-Markdown remote mirror](docs/milestones/m3-remote-bridge-client-and-publishing.md). Slices 0–5 provide qualified storage primitives, shared contracts, safe public v2 Worker routes, device-local state/configuration, bounded Fetch transport, and independently testable core bootstrap/autosync machinery, but no connected plugin mirror exists.
 
 ## Motivation
 
@@ -41,7 +41,7 @@ This diagram is the intended bridge, not a connected system today. The plugin co
 - The plugin ID is `ai-bridge`. See [disposable-vault installation/removal and compatibility evidence](docs/plugin-development.md). No real Obsidian desktop/mobile host has been tested.
 - Notes must be Markdown files and are limited to 1 MiB.
 - Authentication uses one privileged bearer token; there are no users. Slice 3 device/writer UUIDs are operational safety identities, not an authorization boundary.
-- The Worker now has conditional format-2 generations, tombstones, and recovery primitives. Slice 4 adds an uncomposed typed Fetch `RemoteBridge` adapter with just-in-time native-secret retrieval, bounded response streaming and conservative effect translation. There is still no connected synchronization client, automatic sync, search, MCP, D1, Durable Objects, Workers AI, or Vectorize support.
+- The Worker has conditional format-2 generations, tombstones, and recovery primitives. Slice 4 adds an uncomposed typed Fetch `RemoteBridge`; Slice 5 adds core-only bootstrap, coalescing, fair path scheduling, finite retry/evidence recovery, and bounded inventory reporting. Neither is composed into plugin Vault callbacks, settings, or runtime timers. There is still no user-visible automatic sync, search, MCP, D1, Durable Objects, Workers AI, or Vectorize support.
 
 ## Workspace components
 
@@ -157,7 +157,7 @@ SecretStorage and declarative settings, while preserving the existing M2 command
 Slice 1 adds shared typed contracts only. Worker Slice 2A–2C adds private format-2
 codecs, conditional R2 adapters, application current/recovery orchestration, safe
 public v2 HTTP/OpenAPI/CORS, envelope-aware v1 reads and v1 mutation retirement.
-Slice 3 adds strict uncomposed plugin-data, native-secret-reference, App-local-state and handoff boundaries plus core activation/state-owner policy. Slice 4 adds a typed bounded v2 Fetch client but does not compose it into settings, watchers or autosync; [M2 completion and slice evidence](docs/plans/m2-obsidian-read-only-local-adapter.md)
+Slice 3 adds strict uncomposed plugin-data, native-secret-reference, App-local-state and handoff boundaries plus core activation/state-owner policy. Slice 4 adds a typed bounded v2 Fetch client. Slice 5 composes local-read/state/remote capabilities only inside independently testable core policy; it does not compose settings, watchers, runtime timers, or automatic plugin behavior; [M2 completion and slice evidence](docs/plans/m2-obsidian-read-only-local-adapter.md)
 record the earlier local-inspection baseline. The roadmap defines the useful product end state, milestone exit criteria and
 unresolved decisions. The [current-state audit](docs/current-state.md) links facts
 to source/configuration; [API documentation](docs/api.md) describes the implemented

@@ -63,8 +63,10 @@ v1 mutation retirement. Slice 3 adds strict uncomposed plugin configuration/nati
 secret-reference boundaries, App-local state persistence, serialized transition
 ownership, explicit writer activation and staged handoff validation. Slice 4 adds an
 uncomposed typed bounded v2 Fetch `RemoteBridge` adapter with dispatch-time native
-secret retrieval and conservative effect certainty. It adds no autosync, settings UI
-or Vault event wiring.
+secret retrieval and conservative effect certainty. Slice 5 adds independently
+testable core bootstrap, positive-event coalescing, fair two-slot path scheduling,
+finite mutation/evidence recovery and bounded inventory reporting. It adds no
+settings UI, plugin runtime timers, delete/rename orchestration, or Vault event wiring.
 
 See [current-state evidence](current-state.md), [architecture](architecture.md),
 [implemented API](api.md), [M2 completion](milestones/m2-obsidian-read-only-local-adapter.md#completion-evidence)
@@ -116,7 +118,7 @@ production code. Dependencies include all previous milestones.
 
 ### M3 — Automatic eligible-Markdown remote mirror
 
-**NEXT — Slices 0–4 complete; Slice 5 is the next internal M3 work. No user-visible mirror.**
+**NEXT — Slices 0–5 complete; Slice 6 is the next internal M3 work. No user-visible mirror.**
 [Specification](milestones/m3-remote-bridge-client-and-publishing.md),
 [approved decisions/evidence](plans/m3-design-decisions.md),
 [sequential test-first plan](plans/m3-remote-bridge-client-and-publishing.md) and

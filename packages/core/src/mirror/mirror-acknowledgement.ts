@@ -1,6 +1,11 @@
-import { MUTATION_ACTION } from "@core/mirror/mirror.constants";
+import {
+  CONDITIONAL_MUTATION_PRECONDITION_KIND,
+  CURRENT_NOTE_STATE_KIND,
+  MUTATION_ACTION,
+} from "@core/mirror/mirror.constants";
 import type {
   ConditionalMutationPrecondition,
+  CurrentNoteState,
   MutationAcknowledgement,
   OperationReceipt,
   UnresolvedMutationIntent,
@@ -39,7 +44,8 @@ export function applyMutationAcknowledgement(
   const intent = current.unresolvedMutation.intent;
   if (
     !receiptMatchesIntent(acknowledgement.receipt, intent) ||
-    (intent.precondition.kind === "matching-revision" &&
+    (intent.precondition.kind ===
+      CONDITIONAL_MUTATION_PRECONDITION_KIND.matchingRevision &&
       acknowledgement.revision === intent.precondition.revision)
   ) {
     return undefined;
@@ -51,6 +57,73 @@ export function applyMutationAcknowledgement(
   return { ...state, paths };
 }
 
+/**
+ * Checks whether a remote current state is the exact receipt for one durable intent.
+ *
+ * @param state - Validated remote current-state evidence.
+ * @param intent - Original persisted mutation identity and condition.
+ * @returns Whether the state proves that exact operation committed.
+ */
+export function currentStateHasExactIntentReceipt(
+  state: CurrentNoteState,
+  intent: UnresolvedMutationIntent,
+): boolean {
+  return (
+    (state.kind === CURRENT_NOTE_STATE_KIND.live ||
+      state.kind === CURRENT_NOTE_STATE_KIND.tombstone) &&
+    receiptMatchesIntent(state.receipt, intent)
+  );
+}
+
+/**
+ * Converts proven current-state evidence into acknowledgement input.
+ *
+ * @returns Acknowledgement for live/tombstone evidence, or none for absence/legacy.
+ */
+export function currentStateAcknowledgement(
+  state: CurrentNoteState,
+): MutationAcknowledgement | undefined {
+  if (
+    state.kind !== CURRENT_NOTE_STATE_KIND.live &&
+    state.kind !== CURRENT_NOTE_STATE_KIND.tombstone
+  ) {
+    return undefined;
+  }
+  return { path: state.path, revision: state.revision, receipt: state.receipt };
+}
+
+/**
+ * Checks current remote evidence against the path's last durable acknowledgement.
+ *
+ * @returns Whether bootstrap/reconciliation may safely retain the local baseline.
+ */
+export function currentStateMatchesPathAcknowledgement(
+  path: MirrorPathState,
+  observed: CurrentNoteState,
+): boolean {
+  switch (path.acknowledgement.kind) {
+    case MIRROR_ACKNOWLEDGEMENT_KIND.unassociated:
+      return observed.kind === CURRENT_NOTE_STATE_KIND.absent;
+    case MIRROR_ACKNOWLEDGEMENT_KIND.live:
+      return (
+        observed.kind === CURRENT_NOTE_STATE_KIND.live &&
+        observed.revision === path.acknowledgement.revision &&
+        observed.contentSha256 === path.acknowledgement.contentSha256
+      );
+    case MIRROR_ACKNOWLEDGEMENT_KIND.tombstone:
+      return (
+        observed.kind === CURRENT_NOTE_STATE_KIND.tombstone &&
+        observed.revision === path.acknowledgement.revision &&
+        observed.recoveryId === path.acknowledgement.recoveryId
+      );
+  }
+}
+
+/**
+ * Checks exact operation, action, precondition, and content identity.
+ *
+ * @returns Whether the receipt proves the exact durable intent.
+ */
 function receiptMatchesIntent(
   receipt: OperationReceipt,
   intent: UnresolvedMutationIntent,
@@ -77,8 +150,11 @@ function preconditionsEqual(
   right: ConditionalMutationPrecondition,
 ): boolean {
   if (left.kind !== right.kind) return false;
-  if (left.kind === "absent") return true;
-  return right.kind === "matching-revision" && left.revision === right.revision;
+  if (left.kind === CONDITIONAL_MUTATION_PRECONDITION_KIND.absent) return true;
+  return (
+    right.kind === CONDITIONAL_MUTATION_PRECONDITION_KIND.matchingRevision &&
+    left.revision === right.revision
+  );
 }
 
 function acknowledgedPathState(

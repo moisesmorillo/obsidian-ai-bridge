@@ -16,8 +16,9 @@ engineering-quality foundation. M2 is complete: a local-only read-only Obsidian
 inspection plugin with source tests, artifact checks and semantic review. M3 has completed [Slice 0 platform qualification](qualification/m3-slice-0-platform-primitives.md),
 Slice 1's modern plugin baseline/shared typed contracts, Worker Slice 2A–2C's
 conditional Worker boundary, Slice 3's device-local state/configuration owner and
-handoff model, and Slice 4's typed bounded Fetch `RemoteBridge` adapter. The adapter
-is not yet composed into plugin runtime behavior; no connected mirror exists.
+handoff model, Slice 4's typed bounded Fetch `RemoteBridge` adapter, and Slice 5's
+core-only bootstrap/reconciliation scheduler. These capabilities are not yet composed
+into plugin runtime behavior; no connected mirror exists.
 See the [verified current state](current-state.md) for source/configuration evidence,
 [roadmap](roadmap.md) for execution order and open decisions, and
 [ADR 0001](decisions/0001-worker-r2-foundation.md) for the durable foundation.
@@ -228,8 +229,29 @@ coordinator admission/native bearer/deadline/late body settlement, a DTO mapper 
 protocol-to-domain validation, and one typed response-policy table owns operation
 methods, accepted statuses, failures and dispatched effect certainty. It is uncomposed:
 there is still no settings UI, autosync, Vault event wiring or deployment claim.
-Slice 0 remains the pinned local workerd qualification task and declaration-only host
-check; neither slice establishes real-host behavior.
+Slice 5 adds `MirrorSynchronizer`, a FIFO two-slot/one-path scheduler, bounded
+inventory traversal, positive-observation generations, quiet/max-wait coalescing,
+and finite durable mutation/evidence recovery. The synchronizer is the public phase/
+scheduler facade: `MirrorBootstrapCoordinator` owns handshake, indexed durable batch
+admission and reporting-inventory coordination; `MirrorPathRuntime` owns ephemeral
+coalescing/retry deadlines; `MirrorPositiveReconciler` owns stable positive reads and
+new intent creation; and `MirrorIntentExecutor` applies the exhaustive typed intent/
+evidence/effect decisions in `mirror-intent-policy.ts`. Durable autosync ledger
+transformations and acknowledgement matching have focused semantic owners rather than
+living in the facade. These collaborators use `ReadOnlyLocalVault`, `RemoteBridge`,
+`MirrorStateOwner`, and injected time/hash/operation-ID seams without host callbacks
+or platform timers. Synchronization starts inactive and only a current successful
+handshake plus durable indexed bootstrap admission enables positive work; local,
+capacity, stale-state, or persistence failure remains explicitly inactive. Reporting
+inventory shares the two slots but does not hold the positive-work admission gate while
+pagination remains pending. Mutation policy persists intents and consumed budgets before
+calls, applies exact ACK/receipt evidence through the latest serialized owner state,
+keeps newer desired generations dirty, and suppresses wake deadlines while lifecycle/
+global/persistence admission is closed. Inventory is reporting-only and cannot
+authorize deletion. Delete/rename orchestration remains Slice 6; plugin
+Vault event/settings/runtime composition remains later work. Slice 0 remains the
+pinned local workerd qualification task and declaration-only host check; no slice
+establishes real-host behavior.
 
 ## Explicitly deferred
 

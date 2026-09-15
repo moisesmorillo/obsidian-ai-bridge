@@ -1,3 +1,4 @@
+import type { MUTATION_EFFECT_CERTAINTY } from "@core/mirror/mirror.constants";
 import type {
   ApplicationRevision,
   ConditionalMutationRequest,
@@ -26,11 +27,17 @@ export type RemoteBridgeResult<Value> =
 
 /** Result of a dispatched conditional mutation with conservative effect certainty. */
 export type RemoteBridgeMutationResult<Value> =
-  | { readonly kind: "confirmed"; readonly confirmed: Value }
+  | {
+      readonly kind: typeof MUTATION_EFFECT_CERTAINTY.confirmed;
+      readonly confirmed: Value;
+    }
   | {
       readonly kind: "failure";
       readonly failure: RemoteBridgeFailure;
-      readonly effect: "not-dispatched" | "definitely-refused" | "unknown";
+      readonly effect:
+        | typeof MUTATION_EFFECT_CERTAINTY.notDispatched
+        | typeof MUTATION_EFFECT_CERTAINTY.definitelyRefused
+        | typeof MUTATION_EFFECT_CERTAINTY.unknown;
     };
 
 /** Authenticated Worker capabilities needed before automatic mirror activation. */

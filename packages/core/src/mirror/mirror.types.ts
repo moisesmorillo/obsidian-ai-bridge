@@ -44,7 +44,10 @@ export type MutationAction =
   (typeof MUTATION_ACTION)[keyof typeof MUTATION_ACTION];
 
 /** Content-bearing mutation actions whose receipts carry a SHA-256 digest. */
-export type ContentMutationAction = Exclude<MutationAction, "tombstone">;
+export type ContentMutationAction = Exclude<
+  MutationAction,
+  typeof MUTATION_ACTION.tombstone
+>;
 
 /** Create-only requirement; it never authorizes overwriting an existing generation. */
 export interface AbsentPrecondition {
@@ -224,10 +227,14 @@ export interface UnresolvedTombstoneMutationIntent {
   readonly evidenceAttempts: number;
 }
 
+/** Content-bearing unresolved intent supported by positive autosynchronization. */
+export type UnresolvedContentMutationIntent =
+  | UnresolvedCreateMutationIntent
+  | UnresolvedUpdateMutationIntent;
+
 /** Closed per-path unresolved intent retained for exact evidence or safe retries. */
 export type UnresolvedMutationIntent =
-  | UnresolvedCreateMutationIntent
-  | UnresolvedUpdateMutationIntent
+  | UnresolvedContentMutationIntent
   | UnresolvedTombstoneMutationIntent;
 
 /** Effect certainty after a local mutation attempt, independent of UI/session lifetime. */

@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.6.0](https://github.com/moisesmorillo/obsidian-ai-bridge/compare/v0.5.1...v0.6.0) (2026-09-16)
+
+
+### Features
+
+* **core:** add bounded mirror autosync orchestration ([#22](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/22)) ([68bff5d](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/68bff5dc0319bb4ef3b34574498bc74d23ce995f))
+* **core:** add mirror lifecycle orchestration ([#24](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/24)) ([3d50a27](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/3d50a27d912e455cca3e348a8ad4f0fe21a6c0b4))
+
 ## [0.5.1](https://github.com/moisesmorillo/obsidian-ai-bridge/compare/v0.5.0...v0.5.1) (2026-09-15)
 
 

@@ -2,7 +2,7 @@
 
 A secure bridge between Obsidian and remote AI or agent clients.
 
-> **Status:** M2 complete; M3 remains experimental and incomplete. **NEXT:** [M3 Slice 8 — Artifact, operational and final semantic gates](docs/milestones/m3-remote-bridge-client-and-publishing.md). Slices 0–7 now compose the safe public v2 Worker, device-local state, bounded Fetch transport and core autosync/lifecycle engines into an automatic whole-eligible-Markdown Obsidian runtime with modern settings and one designated writer. This is not a deployment, personal-vault installation, real-host qualification, M3 completion, or remote-to-local synchronization claim.
+> **Status:** M2 complete; M3 remains experimental and incomplete. **NEXT:** [M3 Slice 8 — Artifact, operational and final semantic gates](docs/milestones/m3-remote-bridge-client-and-publishing.md). Slices 0–8 implementation and automated/operational gates are present; the separate authoritative final semantic review and milestone transition remain pending. This is not a deployment, personal-vault installation, real-host qualification, M3 completion, or remote-to-local synchronization claim.
 
 ## Motivation
 
@@ -25,7 +25,7 @@ Cloudflare Worker
 Cloudflare R2
 ```
 
-This diagram is the intended bridge, not a connected system today. The plugin composes only official Obsidian APIs for explicit local inspection; its typed Worker Fetch adapter is not composed into runtime behavior. The independent Worker provides remote transport and R2 storage. MCP is planned, not implemented.
+M3 Slices 0–7 now connect this outward path in the generated plugin: an explicitly activated designated writer observes official saved-file events and uses the conditional v2 Worker API. The system remains experimental and undeployed; it has no remote-to-local synchronization, MCP, production certification, or real Obsidian desktop/mobile qualification.
 
 ## Goals
 
@@ -36,12 +36,12 @@ This diagram is the intended bridge, not a connected system today. The plugin co
 
 ## Current limitations
 
-- The plugin explicitly lists eligible saved-note metadata and inspects the active saved note; it never shows note bodies, mutates notes, makes network requests or persists settings. Enabling alone performs no inspection.
-- Local eligibility excludes dot-prefixed segments and the host configuration directory; literal paths are not URI-decoded. Inspection is not upload consent. Reads use best-effort change detection, not atomic snapshots or editor buffers.
-- The plugin ID is `ai-bridge`. See [disposable-vault installation/removal and compatibility evidence](docs/plugin-development.md). No real Obsidian desktop/mobile host has been tested.
-- Notes must be Markdown files and are limited to 1 MiB.
-- Authentication uses one privileged bearer token; there are no users. Slice 3 device/writer UUIDs are operational safety identities, not an authorization boundary.
-- The Worker has conditional format-2 generations, tombstones, and recovery primitives. Slice 4 adds an uncomposed typed Fetch `RemoteBridge`; Slices 5–6 add core-only bootstrap, coalescing, fair path scheduling, finite retry/evidence recovery, bounded inventory reporting, and event-authorized deletion/recreation/rename orchestration. These are not composed into plugin Vault callbacks, settings, or runtime timers. There is still no user-visible automatic sync, remote-to-local behavior, search, MCP, D1, Durable Objects, Workers AI, or Vectorize support.
+- After explicit whole-scope consent, one configured designated writer automatically mirrors eligible saved Markdown outward. Unconfigured, disabled, and non-writer instances remain passive. M2 metadata-only inspection commands remain available and independent.
+- Local eligibility excludes dot-prefixed segments and the host configuration directory; literal paths are not URI-decoded. Reads use best-effort change detection, not atomic snapshots or editor buffers. Notes are limited to 1 MiB.
+- The plugin ID is `ai-bridge`. See [disposable-vault qualification guidance](docs/plugin-development.md). No real Obsidian desktop/mobile host or iCloud event trace has been tested.
+- Authentication uses one privileged bearer token; there are no users. Association/writer UUIDs are non-secret cooperating-writer guards, not authorization. Trusted host/plugin/Worker/cloud operators can read plaintext.
+- iCloud remains working-vault device sync. The plugin sees host events rather than a transactional iCloud log; missed/offline absences never grant deletion authority, so some deletions require later reconciliation.
+- M3 has no remote-to-local behavior, automatic takeover, conflict resolution, richer restore UI, scheduled cleanup, search, MCP, D1, Durable Objects, Workers AI, or Vectorize support. The [operator guide](docs/operations.md) describes setup, recovery, handoff, rotation, and rollback restrictions.
 
 ## Workspace components
 
@@ -95,14 +95,14 @@ Use `.mise.toml` for shared non-sensitive configuration. Use the ignored `mise.l
 ## Local plugin development
 
 After installation, run `mise run plugin:smoke`. The generated
-`apps/obsidian-plugin/dist/main.js` and `manifest.json` can be deliberately copied
-into a **disposable** development vault; see the complete
-[install, command, unload and removal instructions](docs/plugin-development.md).
-The commands are **AI Bridge: Inspect local Markdown notes** and
-**AI Bridge: Inspect active Markdown note**. Results show paths/byte metadata only.
-Active inspection reads saved text; save and retry for unsaved changes. No Worker,
-credentials or deployment are needed. The automated smoke check is not a real-host
-or mobile compatibility test.
+`apps/obsidian-plugin/dist/main.js` and `manifest.json` may be copied only into a
+**disposable** development vault; see the complete [qualification, configuration,
+unload and removal instructions](docs/plugin-development.md). M2 inspection commands
+remain metadata-only. M3 adds declarative connection/writer settings and automatic
+saved-event mirroring only after strict configuration, designation verification, and
+whole-scope consent. The automated artifact suite is not a real-host or mobile
+compatibility test; no Worker deployment or personal-vault installation is required
+for canonical validation.
 
 ## Local Worker development
 
@@ -157,7 +157,7 @@ SecretStorage and declarative settings, while preserving the existing M2 command
 Slice 1 adds shared typed contracts only. Worker Slice 2A–2C adds private format-2
 codecs, conditional R2 adapters, application current/recovery orchestration, safe
 public v2 HTTP/OpenAPI/CORS, envelope-aware v1 reads and v1 mutation retirement.
-Slice 3 adds strict uncomposed plugin-data, native-secret-reference, App-local-state and handoff boundaries plus core activation/state-owner policy. Slice 4 adds a typed bounded v2 Fetch client. Slices 5–6 compose local-read/state/remote capabilities only inside independently testable core policy, including bounded runtime deletion/recreation/rename workflows; they do not compose settings, watchers, runtime timers, or automatic plugin behavior; [M2 completion and slice evidence](docs/plans/m2-obsidian-read-only-local-adapter.md)
+Slice 3 adds strict plugin-data, native-secret-reference, App-local-state and handoff boundaries plus core activation/state-owner policy. Slice 4 adds a typed bounded v2 Fetch client; Slices 5–6 provide bounded core autosync and lifecycle policy; Slice 7 composes modern settings, official Vault events, layout-ready bootstrap, timers, Fetch, and same-realm runtime ownership. Slice 8 adds proportional generated-artifact qualification and the [M3 operator guide](docs/operations.md). [M2 completion and slice evidence](docs/plans/m2-obsidian-read-only-local-adapter.md)
 record the earlier local-inspection baseline. The roadmap defines the useful product end state, milestone exit criteria and
 unresolved decisions. The [current-state audit](docs/current-state.md) links facts
 to source/configuration; [API documentation](docs/api.md) describes the implemented
@@ -166,7 +166,7 @@ active milestone. Dates are intentionally not assigned.
 
 ## Security
 
-This project handles potentially sensitive vault content. The implemented Worker Slice 2 and local-only plugin remain experimental and are not a production security boundary. See [SECURITY.md](SECURITY.md) for vulnerability reporting guidance.
+This project handles potentially sensitive vault content. The connected outward M3 runtime remains experimental and is not a production security boundary or certification. See [SECURITY.md](SECURITY.md) and the [operator guide](docs/operations.md).
 
 ## Contributing
 

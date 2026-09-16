@@ -1,7 +1,8 @@
 # M3 implementation plan — automatic eligible-Markdown mirror
 
-**Status: Slices 0–7 implemented; Slice 8 artifact, operational and final
-semantic gates are next. M3 remains incomplete and undeployed.** PR #8 remains planning/documentation only. M2
+**Status: Slices 0–8 implementation and automated/operational gates are present;
+the separate authoritative final semantic review and milestone transition remain
+pending. M3 remains incomplete and undeployed.** PR #8 remains planning/documentation only. M2
 merged at `b300726` (PR #7); M3 is the single NEXT
 milestone. [Spec](../milestones/m3-remote-bridge-client-and-publishing.md),
 [approved decisions/evidence](m3-design-decisions.md) and accepted design ADRs
@@ -379,28 +380,35 @@ surface and retires unsafe v1 mutations; intermediate checkpoints are not rollou
 
 ## 8. Artifact, operational and final semantic gates
 
-- **Changes:** extend generated CommonJS smoke tests proportionally: modern settings
-  and native references, automatic saved event → exact conditional request, actual
-  runtime-registry instance/bundle replacement, no Node/token/body leakage. Keep
-  source coverage separate; do not copy every unit test into artifact tests.
-- **Operations/docs:** synchronize API/architecture/current-state/README/SECURITY/
-  plugin development with **implemented** behavior. Document empty association
-  setup, full scope, one-writer availability, safe upgrade/handoff/reset, independent
-  secret rotation, deletion recovery retrieval and conditional expiry purge. Explain
-  iCloud event uncertainty, unsealed over-retention and forbidden lifecycle/old-code
-  rollback. Setup/deployment remains a separate operator action.
-- **Validation:** `mise install`, `mise run install`, `mise run check`, local storage
-  runtime task, `git diff --check`, local documentation links and actual diff/secret
-  review. Inspect four coverage metrics, unchanged inclusion/thresholds, editor
-  schema/assists/type-aware deprecations; do not claim an editor/host run not performed.
-- **Semantic review:** load **code-review** skill and its PR/semantic/TypeScript
-  guidance after green checks. Examine boundaries/typing/TSDoc, state ownership,
-  all exact harmful interleavings, recovery expiry/late preparation, credentials,
-  downgrade/handoff and unsupported guarantees. Turn findings into regression tests,
-  fix and re-review every one; no unexplained BLOCKER/MAJOR or product ambiguity.
-- **Completion:** record real evidence for A1–A11. Only completed M3 implementation
-  permits M3 COMPLETE and M4 NEXT with a refined planning spec; transition canonical
-  when merged. Open the implementation PR, do not merge/deploy or start M4 code.
+- **Generated artifact implemented:** six tests evaluate only staged `main.js` and
+  `manifest.json` for the modern declarative SecretStorage surface, official Vault
+  saved-event/layout-ready wiring, a real packaged event→core→Fetch conditional v2
+  PUT, canonical path/identity/operation/precondition/media/body behavior, same-realm
+  in-flight owner reuse across fresh bundle evaluation, incompatible-registry
+  fail-closed behavior, and Node/fixture/secret/machine-path leakage negatives. They
+  remain separate from source coverage and do not duplicate policy unit suites.
+- **Operations/docs implemented:** README, SECURITY, architecture, current state,
+  API, plugin development, this plan/spec, roadmap, ADR operational notes, the new
+  [operator guide](../operations.md), and the planning-only
+  [M4 specification](../milestones/m4-remote-to-local-reconciliation-and-conflict-resolution.md)
+  now reflect actual Slices 0–7 behavior and explicit qualification limits. Setup,
+  one-writer availability, safe upgrade/handoff/reset, independent bearer rotation,
+  recovery list/read/seal/purge, iCloud uncertainty, unsealed over-retention, and
+  forbidden rollback/downgrade are documented without authorizing deployment.
+- **Validation evidence:** record the final `mise install`, `mise run install`,
+  `mise run check`, `mise run worker:storage-test`, generated artifact, documentation
+  link, `git diff --check`, coverage, diagnostics, and secret/diff results in the M3
+  acceptance section after the final implementation tree is green. If `check` already
+  invokes a task, report the repeated focused invocation honestly rather than as an
+  independent code path.
+- **Independent review pending by design:** this implementation session does not run
+  the authoritative final code-review skill. A fresh Sol High review must examine the
+  complete PR after green validation. A10 remains pending that verdict; A11 and the
+  M3→M4 transition remain pending A10.
+- **Completion boundary:** M3 stays NEXT and M4 stays PLANNED. Only after independent
+  APPROVE may a corrective/finalization commit mark M3 COMPLETE, mark M4 NEXT,
+  preserve exactly one NEXT milestone, update active links/PR evidence, and leave M4
+  production code untouched. Do not merge or deploy from this session.
 
 ## Planning revision evidence
 

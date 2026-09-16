@@ -1,7 +1,6 @@
 # M3 decisions — automatic eligible-Markdown mirror
 
-**Status: maintainer decisions resolved; M3 Slices 0–6 implemented. Public v2
-server routes and core autosync/lifecycle policy exist, but no connected user-visible M3 mirror exists.**
+**Status: maintainer decisions resolved; M3 Slices 0–8 implementation and automated/operational gates are present. The connected outward mirror remains experimental; final independent semantic review and the completion transition are pending.**
 
 This replaces the proposal in PR #8 at `e35bd90`. That proposal drifted from the
 product by coupling mirror scope to per-note consent, making manual publishing
@@ -33,8 +32,10 @@ uncomposed plugin configuration/device-state boundary, serialized core owner and
 handoff model; Slice 4 adds Fetch transport; Slice 5 adds core bootstrap/coalescing,
 fair scheduling and finite retry/evidence orchestration. Core Slice 6 implements
 event-authorized deletion, exact tombstone recreation, destination-first rename/
-deferred cleanup, and bounded observed-folder expansion. Settings UI, host event and
-timer composition remain Slice 7.
+deferred cleanup, and bounded observed-folder expansion. Slice 7 composes modern
+settings, native secret references, official host events/timers, Fetch, and same-realm
+ownership. Slice 8 qualifies the built artifact and records the operating contract
+without changing the accepted architecture.
 Engineering defaults below are bounded implementation choices, not new product
 permissions. The [spec](../milestones/m3-remote-bridge-client-and-publishing.md),
 [plan](m3-remote-bridge-client-and-publishing.md) and ADRs are normative together.
@@ -185,7 +186,8 @@ used shallow temporary clones, not repeated per-file API requests:
   [Slice 0 qualification](../qualification/m3-slice-0-platform-primitives.md) now
   pins that local runtime regression instead of assuming a fake proves platform semantics.
 
-No real host, iCloud event trace, deployment, bucket or credentials were exercised.
+No real host, personal vault, iCloud event trace, deployment, remote bucket or
+credentials were exercised.
 Tests must not invent a reliable delete-origin flag, exact autosave interval,
 cloud-download-complete signal, storage fsync, physical purge deadline or distributed
 writer fence that these sources do not provide. The approved operating/trust model

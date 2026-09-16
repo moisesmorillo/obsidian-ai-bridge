@@ -169,14 +169,17 @@ deletion, exact tombstone recreation, destination-first rename and bounded obser
 descendant folder expansion; the plugin invokes it only through primitive eligible
 saved-event evidence. Full remote-to-local reconciliation remains M4.
 
-## M3 accepted design and partial Worker foundation
+## M3 implemented outward-mirror architecture
 
 The [decisions/evidence](plans/m3-design-decisions.md),
-[specification](milestones/m3-remote-bridge-client-and-publishing.md) and
-[sequential plan](plans/m3-remote-bridge-client-and-publishing.md) define an automatic
-**all-eligible Markdown mirror**, with whole opt-in, not per-note selection. iCloud
-remains device-to-device vault sync; R2 is mirror/API persistence, not the sole
-authority or guaranteed backup. Mirror scope is independent of REST/MCP authorization.
+[specification](milestones/m3-remote-bridge-client-and-publishing.md),
+[sequential plan](plans/m3-remote-bridge-client-and-publishing.md), and
+[operator guide](operations.md) define the implemented automatic **all-eligible
+Markdown mirror**, with whole opt-in rather than per-note selection. iCloud remains
+device-to-device vault sync; R2 is mirror/API persistence, not the sole authority or
+guaranteed backup. Mirror scope is independent of REST/MCP authorization. Slice 8
+qualifies the built CommonJS composition and documents operations; it does not change
+this architecture or add M4 authority.
 
 ```text
 settings / official saved-vault events / health controls
@@ -216,9 +219,10 @@ unresolved work blocks takeover. No election/leases or
 shared-file coordinator. M3 targets Obsidian 1.13.0/modern settings, HTTPS with exact
 loopback opt-in and bounded Fetch/CORS, without old-host/requestUrl fallbacks.
 
-These remain the accepted end-to-end design rather than a connected user-visible
-mirror; M2 commands remain local-only. Slice 1 raises the manifest to 1.13.0 and adds
-core/protocol contracts. Worker Slice 2A–2C implements private format-2 codecs,
+This is now a connected experimental outward mirror when one designated writer is
+explicitly configured and activated; M2 commands remain independent local-only
+inspection. Slice 1 raises the manifest to 1.13.0 and adds core/protocol contracts.
+Worker Slice 2A–2C implements private format-2 codecs,
 create-only and observed-generation CAS, metadata reads, prepared/unexpired recovery
 content, bounded pagination, exact receipts, recoverable tombstone ordering,
 tombstone-timestamp sealing, conditional purge, public authenticated v2 routes,
@@ -290,8 +294,8 @@ establishes real-host behavior.
 
 ## Explicitly deferred
 
-- M3 (NEXT, design ready): implementation/qualification of the complete automatic
-  outward mirror, including basic recovery and safe writer handoff.
+- M3 (NEXT): Slice 8 artifact/operational validation is implemented on this branch;
+  final independent semantic review and the truthful completion transition remain.
 - M4: Remote-to-local authority, conflict resolution, adoption and richer restore UX.
 - M5: Broader operational readiness, abuse limits and scoped authentication evolution.
 - M6: Authorized MCP transport/tool definitions, never direct R2 access.

@@ -7,8 +7,9 @@ implemented in Slice 6.** Recovery-first tombstone orchestration, 30-day sealing
 conditional purge markers, and separate recovery metadata/content plus explicit
 maintenance routes exist. Core now persists post-bootstrap delete/rename authority,
 applies five-second grace and exact absence, reuses finite receipt/effect recovery,
-and enforces destination-first deferred rename cleanup. Obsidian callback/timer/runtime
-composition remains Slice 7. This record selects the minimum technical mechanism under
+and enforces destination-first deferred rename cleanup. Slice 7 composes official
+Obsidian callbacks/timers/runtime ownership; Slice 8 documents and artifact-qualifies
+the resulting operating boundary. This record selects the minimum technical mechanism under
 [ADR 0002](0002-conditional-remote-note-mutation.md), not a general backup system.
 
 ## Context
@@ -135,7 +136,10 @@ is asynchronous, not an implementation of safe application purge; do not configu
 it on these namespaces. Payloads can be removed after 30 days while small safety
 markers remain. Unsealed/orphan material over-retains for explicit maintenance.
 Future safe marker compaction is outside M3. Bucket operators remain trusted not to
-delete recovery early or restore stale generations into an active association.
+delete recovery early or restore stale generations into an active association. The
+[operator guide](../operations.md#deletion-and-recovery-operations) documents the
+separate list/metadata/content routes plus exact seal and purge predicates without
+claiming automatic restore or physical erasure.
 
 ### Rename/move
 

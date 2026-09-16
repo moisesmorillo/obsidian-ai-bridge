@@ -1,7 +1,7 @@
 # Verified current state
 
 This snapshot records the completed M2 local-inspection implementation, M1
-foundation, and implemented M3 Slices 0–7. M2 source/tooling through
+foundation, and implemented M3 Slices 0–8 (with final independent review pending). M2 source/tooling through
 `2e74b23` passed independent semantic review;
 the completion PR records final validation and makes the transition canonical
 when merged. M2 is now merged at `b300726` (PR #7). M3 has completed [Slice 0 platform qualification](qualification/m3-slice-0-platform-primitives.md),
@@ -11,8 +11,10 @@ Slice 3's device-local state/configuration owner and staged handoff model, Slice
 4's typed bounded Fetch `RemoteBridge` adapter, Slice 5's core-only bootstrap,
 coalescing, scheduling, and finite retry/evidence engine, Slice 6's core runtime
 deletion/recreation/rename orchestration, and Slice 7's official host/runtime/settings
-composition. The connected outward mirror is experimental and M3 remains incomplete
-pending Slice 8 artifact, operational and final semantic gates. Its [accepted design decisions](plans/m3-design-decisions.md)
+composition. Slice 8 now adds proportional generated-artifact qualification and the
+[operator runbook](operations.md). The connected outward mirror remains experimental
+and M3 remains incomplete pending the separate final semantic review and milestone
+transition. Its [accepted design decisions](plans/m3-design-decisions.md)
 and [sequential plan](plans/m3-remote-bridge-client-and-publishing.md) remain broader
 than the implemented subset. The approved product is an automatic whole eligible
 Markdown mirror with recoverable runtime deletion/rename, per-path state and one
@@ -42,7 +44,7 @@ boundaries; [API](api.md) describes the HTTP contract.
 | Logging | LogTape 2.3.4 JSON-lines console sink via a thin injected adapter; completed-request events include operation, method, registered route template (or `unknown`), status and duration in milliseconds. No request IDs, per-client audit trail or error-code field yet. Application events do not include tokens, bodies, concrete note paths or raw exceptions. | `apps/worker/src/logging/`, logging and Worker tests |
 | Plugin | `AiBridgePlugin` preserves the two M2 inspection commands and composes M3 through one enable-lifetime session attached to a versioned same-App-realm facade. Focused host owners govern listener epochs, configuration/connection admission, reconciliation progress and staged-handoff verification. Official saved Vault events register before layout readiness; every replacement listener gap gets a fresh positive-only scan while retained reservations/settlement survive and scan absence grants no delete authority. Positive admission refreshes the one-shot scheduler before reporting inventory settles. Staged handoff events advance durable generations and invalidate sampled metadata before atomic align/activate. Modern declarative settings persist only endpoint/loopback consent/native secret reference, display non-secret device/server designation, and require whole-scope/plaintext/deletion trust consent; dispatch retrieves the bearer from SecretStorage. Missing/failing Web Crypto fences mutation and wake scheduling while retaining dirty state for explicit recovery. Sanitized status and check/retry/pause/resume/handoff controls expose no body, token or raw transport error. Incompatible registries fail closed. No editor event, local vault mutation, remote-to-local write, capability fallback, deployment or real-host qualification. Manifest remains `ai-bridge`, minimum `1.13.0`, non-desktop-only. | `apps/obsidian-plugin/src/{main.ts,commands/,configuration/,events/,runtime/,status/,remote/,state/}`, dedicated plugin unit/integration/artifact suites |
 | Local safety | Shared literal `.md` path and 1 MiB policy; dot-prefixed/configuration-directory exclusions; pre-read metadata and post-read UTF-8 bound; exact lookup and pre/post object/path/mtime/size checks. No path repair/URI decoding, content UI or atomic snapshot claim. | `packages/core/src/local-vault/`, plugin adapter tests |
-| Plugin artifact | Browser-target CommonJS exposes `module.exports.default`, only `obsidian` external; stages unchanged manifest. Artifact suite checks actual generated files, inert load, commands and lifecycle in an isolated host-double realm without Node globals. No real desktop/mobile host was tested. | `.mise.toml`, `apps/obsidian-plugin/tests/artifact/`, [API/version and installation evidence](plugin-development.md) |
+| Plugin artifact | Browser-target CommonJS exposes `module.exports.default`, keeps only `obsidian` external, and stages the unchanged manifest. Six generated-artifact tests exercise modern declarative SecretStorage settings, official saved Vault event/layout-ready wiring, a real packaged event→core→Fetch v2 conditional PUT with canonical path/identity/operation headers, same-realm in-flight owner reuse across fresh bundle evaluation, incompatible-registry fail-closed behavior, M2 lifecycle continuity, and Node/fixture/secret/machine-path leakage negatives. No real desktop/mobile host was tested. | `.mise.toml`, `apps/obsidian-plugin/tests/artifact/main.test.ts`, [qualification and operating evidence](plugin-development.md) |
 | Core | Public branded identifier/path utilities, `NoteService`/`VaultNoteService`, `VaultRepository`, size limit and typed payload/storage errors. M3 adds platform-independent UUID-v4 IDs, ETags, digests, closed current/recovery/intent/effect contracts, generation-bound conditional ports, current-generation/recovery orchestration, Slice 3's closed device/per-path ledger and serialized state owner, and Slice 4's `RemoteBridge`. Slice 5 adds `MirrorSynchronizer`, a fair two-slot/one-path scheduler, bounded reporting inventory, positive observation generations, 750 ms/5 s coalescing, exact-ACK/evidence reconciliation and durable three-attempt/three-evidence budgets. Slice 6 adds durable event-only delete authority, five-second grace/exact absence, recovery-first tombstone execution through the same finite intent/evidence machinery, exact tombstone recreation, destination-first two-path rename with durable/deferred cleanup prerequisites, lexical reservations, and bounded pre-event folder-descendant expansion. Focused lifecycle planner, deletion executor, rename executor and durable transition owner keep policy out of the facade. Positive work starts fail-closed until a current handshake and one indexed durable bootstrap batch succeed; local/capacity/stale/persistence failures remain inactive. Reporting inventory may remain pending in one shared slot while positive work settles in the other. Lifecycle, global and persistence fences suppress mutation admission and wake deadlines while preserving unresolved evidence. Core still imports no Obsidian, Fetch/HTTP, Hono, Cloudflare, filesystem or protocol dependency. Separate public `ReadOnlyLocalVault`, `LocalInspectionService`, closed local results and eligibility policy support M2 without platform imports or mutation methods. | `packages/core/src/`, package exports |
 | Protocol | Strict Zod schemas and inferred DTOs for health, errors, retained v1 responses, and bounded M3 identity, NotePath, precondition, receipt, current-state, recovery, intent, capability/result and pagination contracts. Stable public HTTP methods/statuses and v2 route roots, child segments, query/header names and media types are also owned here and consumed by Worker/OpenAPI/plugin adapters; adapter-private route syntax, response classification and CORS policy remain outside. The reserved version `0.1` envelope remains unused rather than being silently repurposed. | `packages/protocol/src/` |
 
@@ -67,8 +69,8 @@ boundaries; [API](api.md) describes the HTTP contract.
   prohibition, direct-console prohibition and configured documentation rules.
   These checks do **not** prove all architecture/TSDoc requirements in
   [AGENTS.md](../AGENTS.md); manual semantic review remains mandatory.
-- Vitest **5**: **61 source test files / 752 tests**, plus the dedicated artifact
-  smoke suite executed by the build task. The unchanged M1 baseline had
+- Vitest **5**: **61 source test files / 752 tests**, plus **1 generated-artifact
+  file / 6 tests** executed by the build task. The unchanged M1 baseline had
   15 files / 105 tests. Exact slice validation is recorded in the
   [implementation plan](plans/m2-obsidian-read-only-local-adapter.md).
 - Worker unit tests live under `apps/worker/tests/unit/` (auth, HTTP, R2 adapter,
@@ -86,8 +88,8 @@ boundaries; [API](api.md) describes the HTTP contract.
   `*.types.ts`, build/output and Wrangler state. Reports: text, JSON summary, LCOV.
   Global thresholds: **lines 95%, statements 95%, functions 94%, branches 90%**.
   Coverage is a regression signal, not proof of test quality.
-- Root Vitest projects include shared packages, Worker and plugin. Current source
-  coverage is statements **95.05%**, branches **91.20%**, functions **98.36%**, lines
+- Root Vitest projects include shared packages, Worker and plugin. Slice 8 source
+  coverage is statements **95.01%**, branches **91.06%**, functions **98.38%**, lines
   **96.95%**; thresholds and production inclusion remain enforced. Artifact tests are separate
   from source coverage, run after packaging and never replace behavioral coverage.
 - The Worker declares Miniflare **5.20260908.0-alpha** directly for its storage
@@ -115,9 +117,10 @@ including atomic indexed alignment batches. Slices 5–6 implement core bootstra
 positive-event coalescing, path scheduling, finite retry/evidence policy and runtime
 deletion/recreation/rename orchestration; Slice 7 composes them with the Fetch client
 through official host callbacks, settings, timers and same-realm ownership. There are
-no remote-to-local writes. Slice 8 still must complete proportional generated-
-artifact, operational-documentation and final semantic gates before M3 can be marked
-complete. No M4 remote-to-local behavior exists.
+no remote-to-local writes. Slice 8's artifact and operational work is implemented,
+but its authoritative independent semantic review is intentionally pending; M3
+remains NEXT and cannot be marked complete until that review passes. No M4
+remote-to-local behavior exists.
 
 There is no search, MCP, AI inference, attachment mirroring or remote-to-local plugin client.
 No D1, Durable Objects, queues, Vectorize, Workers AI or external database is part
@@ -136,8 +139,11 @@ parameters can express that dependency. Semantic document tests guard this
 surface. M3's accepted design includes
 safe v2 mutations, paginated reads, 30-day deletion recovery, tombstone/purge markers,
 native secret references and explicit writer handoff. The Worker storage/application/transport surface, typed Fetch client and core
-reconciliation machinery now drive the experimental connected outward plugin runtime;
-this is not production readiness, deployment, real-host qualification or M3 completion.
+reconciliation machinery drive the experimental connected outward plugin runtime.
+The [operator guide](operations.md) records setup, one-writer availability,
+upgrade/handoff/reset, bearer rotation, recovery API use, iCloud uncertainty, and
+rollback prohibitions. This is not production readiness, deployment, real-host
+qualification or M3 completion.
 Broader operating limits/recovery automation and scoped authentication remain M5;
 prerequisites to safe M3/M4 behavior must not be postponed there.
 

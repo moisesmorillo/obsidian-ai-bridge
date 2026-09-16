@@ -1,22 +1,23 @@
-# Read-only local plugin development
+# Obsidian plugin development and qualification
 
-M2 is complete and implements explicit local inspection, not a connection to the
-Worker. See the [validation and semantic review evidence](plans/m2-obsidian-read-only-local-adapter.md).
-No credentials,
-Cloudflare resources or existing vault installation are needed.
+The current plugin preserves M2 metadata-only inspection and composes the
+experimental M3 one-way mirror. It targets Obsidian **1.13.0+**, uses only official
+host APIs and standards web primitives, and is not production certified. Canonical
+validation does not require a Worker deployment, real credentials, or installation in
+a vault.
 
-## Build and automated artifact check
+## Build and generated-artifact qualification
 
-From the repository root after the [development setup](../README.md#development):
+From the repository root after [development setup](../README.md#development):
 
 ```bash
-mise run build
 mise run plugin:smoke
+mise run build
 mise run check
 ```
 
-`plugin:build` uses Bun's browser target and CommonJS format, leaves `obsidian`
-external and copies the source manifest unchanged. Output is:
+`plugin:build` uses Bun's browser target and CommonJS format, leaves only `obsidian`
+external, and copies the source manifest unchanged:
 
 ```text
 apps/obsidian-plugin/dist/
@@ -24,200 +25,157 @@ apps/obsidian-plugin/dist/
 └── manifest.json
 ```
 
-The bundle exposes the default Plugin class as `module.exports.default`, matching
-the CommonJS namespace/default shape produced by the official sample plugin.
-There is no custom export footer, Node runtime shim or runtime dependency other
-than host-provided `obsidian`. Node is used only for development validation.
+The bundle exposes `module.exports.default`, matching the official sample plugin.
+There is no custom export footer, Node/Electron runtime shim, or runtime dependency
+other than host-provided `obsidian`. Node is used only by development validation.
 
-`plugin:smoke` depends on `plugin:build`; `build` includes the smoke check and the
-Worker's unchanged non-deploying dry-run. `check` includes `build`. The dedicated
-Vitest smoke suite reads the actual generated files and evaluates `main.js` in
-an isolated CommonJS realm with only `obsidian` module resolution and standard
-web `TextEncoder`, not Node globals. It verifies manifest identity/staging,
-external imports, the default class, both commands, inert enabling, saved-file
-inspection, cross-enable serialization and suppression of late results. This build-boundary
-suite is separate from the source tests/coverage and imports no source entry.
-Its strictly typed test harness uses Node's built-in filesystem/VM APIs with a
-dev-only `@types/node` 24 dependency (locked at 24.13.4), matching the pinned Node
-24 toolchain. A dedicated artifact `tsconfig.json` confines explicit Node types to
-the tooling boundary. Canonical `typecheck` also checks the production plugin
-separately with only Obsidian ambient types, so test-tool Node globals cannot mask
-accidental Node runtime usage. No runtime dependency is added to plugin source.
+`plugin:smoke` rebuilds and evaluates the **actual generated files** in isolated
+browser-like CommonJS realms. Its six proportional tests are separate from source
+coverage and do not import the production entrypoint. They prove packaging/runtime
+properties that source tests cannot:
 
-These checks use an in-memory host double. **No real Obsidian desktop or mobile
-host, installed vault, or separate editor session has been tested.** They do not
-prove visual integration, real event timing or mobile compatibility.
+- unchanged manifest identity, 1.13.0 minimum, CommonJS default class, and only the
+  `obsidian` external;
+- absence of Node globals/imports and fixture bearer/note/recovery content, private-key
+  markers, and machine-local path patterns in `main.js`;
+- unconfigured inert loading, both M2 commands, M3 operational commands, modern
+  declarative settings, native `SecretComponent`, official create/modify/delete/
+  rename listener registration, layout-ready integration, and cleanup;
+- an official saved-file event through the packaged plugin runtime, core engine,
+  `RemoteBridge`, and standards Fetch to one real conditional v2 PUT with canonical
+  base64url path, bearer, association/writer/operation headers, `If-None-Match: *`,
+  Markdown media type/body, and no v1 request;
+- a pending packaged reconciliation/mutation across a newly evaluated replacement
+  bundle in the same realm/App identity, proving owner reuse without a concurrent
+  duplicate bootstrap or mutation; the required positive-only listener-gap pass may
+  follow settlement; plus incompatible-registry fail-closed behavior;
+- retained M2 in-flight inspection exclusion and stale-UI suppression across re-enable.
 
-## Deliberate installation into a disposable vault
+The artifact realm provides standards `fetch`, Web Crypto, streams, abort, URL,
+encoding, and deterministic timers plus a typed Obsidian host double. It intentionally
+does not expose Node production globals. The artifact test TypeScript configuration
+alone receives Node filesystem/VM types; production plugin typechecking uses only the
+Obsidian/browser surface.
 
-Do not develop in a personal/production vault. Use only synthetic, non-sensitive
-notes. These are manual developer actions, never tasks performed by the plugin.
+These tests do **not** prove real Obsidian rendering, native secret behavior, WebView
+Fetch/CORS/abort timing, mobile compatibility, iCloud event ordering, background iOS
+execution, or deployed Worker/R2 behavior.
 
-1. Create a new empty disposable vault in Obsidian **1.13.0 or newer**. Keep this
-   repository outside the vault. Note the vault's configuration directory (default
-   `.obsidian`; use its actual name if customized).
-2. Run `mise run plugin:smoke` from the repository root. Close the disposable vault
-   before copying files. Create `<vault>/<config-directory>/plugins/ai-bridge/`
-   and copy **only** the generated `main.js` and `manifest.json` into it. Use a
-   fresh `ai-bridge` directory: do not overwrite an unknown existing installation.
-   Do not copy source, dependencies, a `package.json`, secrets or the entire repo.
-   No `styles.css` or `data.json` is generated or required.
-3. Reopen the disposable vault. In **Settings → Community plugins**, turn on
-   community plugins and enable **AI Bridge**. Enabling alone must not show
-   results, enumerate files, read notes or create plugin settings. Obsidian itself
-   may persist its enabled-plugin configuration; M2 does not call `saveData`.
-4. Create/save synthetic notes through Obsidian, for example `Hello.md` containing
-   `hello` (5 UTF-8 bytes if no newline) and a nested Unicode-named `.md` note.
-   Add a non-Markdown attachment if desired. The plugin never creates these files.
-5. Open the command palette and invoke **AI Bridge: Inspect local Markdown notes**.
-   Expect a read-only modal of eligible exact paths in lexical order, byte-size
-   metadata and eligible/skipped totals with four skip categories. A vault with
-   no eligible files shows an explicit empty result. Enumeration reads no bodies.
-6. Open `Hello.md` and invoke **AI Bridge: Inspect active Markdown note**. Expect
-   its exact path, measured UTF-8 bytes and saved-file guidance, **not note text**.
-   This reads the saved vault file once, not the editor buffer. Save and retry to
-   include unsaved edits; the command does not force-save. With no active file or
-   an unsupported file, expect a specific refusal, not another note's result.
-7. Only lowercase `.md` files with valid literal relative paths and at most 1 MiB
-   are eligible. Dot-prefixed path segments and the configured directory subtree
-   are excluded. Paths are never URI-decoded/repaired. Unsupported, excluded,
-   invalid and oversized files are skipped in that precedence order. Host APIs
-   may omit hidden/configuration files entirely; skipped counts cover only files
-   the host actually enumerates. No path/body from a skipped file is displayed.
-8. A second operation during an inspection reports busy; observed file changes
-   fail safely and unexpected failures have generic retry notices. Retry is manual.
-   Disable AI Bridge while a result modal is open: owned modals/notices close and
-   commands disappear. An in-flight host read cannot be cancelled, but its late
-   result must not produce UI. Re-enable to register one fresh pair of commands;
-   if prior host work is still pending, they report busy until it settles.
+## Source test boundaries
 
-No Worker needs to be running, and offline use has identical behavior. Paths are
-sensitive metadata displayed only by deliberate local commands; do not share
-screenshots containing private names. Eligibility is **not consent to upload**.
+Source unit and integration tests cover strict preferences/local-state codecs,
+SecretStorage dispatch, endpoint policy, Fetch response bounds, event adaptation,
+runtime/configuration/reconciliation/handoff ownership, core scheduler/lifecycle
+policy, status redaction, and complete Worker behavior. They remain in ordinary V8
+coverage. Generated-artifact tests remain build-boundary smoke and never replace or
+inflate source coverage.
 
-## Update and removal
+## Deliberate disposable-vault procedure
 
-- For another local build, disable AI Bridge first, close the disposable vault,
-  rebuild/smoke-check and replace only its two generated files. Reopen and enable
-  again. Restart Obsidian whenever the manifest changes, as the official tutorial
-  recommends. Do not run development copying against a real vault.
-- To remove, disable AI Bridge, close the disposable vault and remove only the
-  manually installed `ai-bridge` plugin directory using your file manager after
-  verifying its location. Reopen and confirm the commands are absent. M2 has no
-  persisted plugin state/cache to migrate or clean up and has not modified notes.
-- If an old experimental installation uses `obsidian-ai-bridge`, disable/remove
-  that old plugin directory deliberately before installing `ai-bridge`; do not
-  keep two installations enabled. Do not delete the vault configuration directory.
+This procedure documents a possible manual qualification; it was **not performed for
+M3 Slice 8**. Never use a personal or production vault. Use synthetic, non-sensitive
+notes and separately authorized disposable server resources if testing network
+behavior.
+
+1. Create a new empty disposable vault in Obsidian 1.13.0 or newer. Keep the
+   repository outside the vault. Record its actual configuration directory (normally
+   `.obsidian`).
+2. Run `mise run plugin:smoke`. Close the disposable vault, create
+   `<vault>/<config-directory>/plugins/ai-bridge/`, and copy only generated `main.js`
+   and `manifest.json`. Do not copy source, dependencies, repository configuration,
+   secrets, or the whole repository. No `styles.css` is generated.
+3. Reopen the vault, enable Community plugins, and enable **AI Bridge**. Initial load
+   provisions a non-secret device UUID in official host-local storage, registers the
+   two M2 commands, M3 settings/operational commands, status UI, and saved Vault
+   listeners. An unconfigured plugin remains passive: it does not scan or send notes.
+4. For local-only M2 inspection, create synthetic notes and run **AI Bridge: Inspect
+   local Markdown notes** or **AI Bridge: Inspect active Markdown note**. Results show
+   paths/byte metadata only, never note bodies. Active inspection reads saved text,
+   not an unsaved editor buffer; save and retry. It does not enable the mirror.
+5. Network qualification requires a separately authorized empty v2 association. Use
+   the complete [operator setup](operations.md#initial-setup-for-a-new-empty-association):
+   configure HTTPS (or explicit exact-loopback HTTP), select a native SecretStorage
+   reference, copy the displayed device UUID into Worker designation, verify
+   authenticated association/writer identity, acknowledge whole eligible scope and
+   plaintext/runtime-delete trust, then activate.
+6. Use only synthetic eligible lowercase `.md` notes of at most 1 MiB. Dot-prefixed
+   segments and the configuration subtree are excluded. Save/create/modify events
+   should drive bounded outward requests after layout-ready bootstrap. Do not infer
+   delete behavior from startup absence; only observed post-bootstrap events can grant
+   runtime delete authority.
+7. Inspect metadata-only status and authenticated Worker reads. Never put credentials
+   in screenshots, terminal transcripts, notes, or issue reports. Do not claim an
+   iCloud/mobile result unless that exact disposable trace was run and recorded.
+
+### M2 inspection behavior retained
+
+- List enumeration reads metadata only and sorts eligible paths lexically.
+- Active inspection reads the exact saved file once and reports measured UTF-8 bytes,
+  not content.
+- Unsupported/excluded/invalid/oversized files fail closed under the shared policy.
+- A second inspection in the same enable lifetime reports busy; unload suppresses
+  late UI but cannot cancel a host read.
+- Host reads/listing are best-effort snapshots. Same-size edits with indistinguishable
+  timestamps can evade race evidence.
+
+## Update, disable, and removal
+
+- Before updating, pause mirror admission and inspect pending/blocked state. Do not
+  discard unresolved ledger data. Disable the plugin, close the disposable vault,
+  rebuild/smoke-check, replace only `main.js` and `manifest.json`, and restart Obsidian
+  when the manifest changes.
+- Compatible same-realm replacement/re-enable reuses the runtime owner; a new process
+  loads host-local state. Listener gaps receive positive-only reconciliation and
+  absence never authorizes delete. Unsupported registry/state versions fail closed.
+- To remove a disposable installation, pause/drain first, disable AI Bridge, close the
+  vault, verify the path, and remove only its `ai-bridge` directory. Removing files
+  does not prove in-flight Worker requests were cancelled, revoke/delete a shared
+  native secret, or erase host-local state safely.
+- If an old experimental `obsidian-ai-bridge` directory exists, disable and remove it
+  deliberately before installing `ai-bridge`; never run both. Do not delete the whole
+  vault configuration directory.
+- Never downgrade to a plugin/Worker that does not understand M3 state and format-2
+  generations. Follow [rollback restrictions](operations.md#rollback-and-downgrade-restrictions).
 
 ## Official API and minimum-version evidence
 
-The manifest is `ai-bridge`, `minAppVersion: 1.13.0`, `isDesktopOnly: false`.
-Compatibility was checked against installed official `obsidian` **1.13.1** types
-and public official API history, not inferred solely from that manifest:
+The manifest is `ai-bridge`, `minAppVersion: 1.13.0`, and `isDesktopOnly: false`.
+Compatibility was checked against installed official `obsidian` **1.13.1**
+declarations and official source history, not inferred solely from the manifest:
 
-- [Official API declarations at 1.4.11](https://github.com/obsidianmd/obsidian-api/blob/83ce5767ab107e888079e9a673ce4c3153db1ff2/obsidian.d.ts)
-  and [that revision's package version](https://github.com/obsidianmd/obsidian-api/blob/83ce5767ab107e888079e9a673ce4c3153db1ff2/package.json)
-  establish pre-1.5.0 availability of every used host surface: `Plugin` construction,
-  `app`, `addCommand`, lifecycle hooks; `Vault.configDir`, `getFiles`,
-  `getAbstractFileByPath`, `read`; `TFile.path`/`stat`, `FileStats.size`/`mtime`;
-  `Workspace.getActiveFile`; `Modal` construction, `titleEl`/`contentEl`,
-  `open`/`close`, `onOpen`/`onClose`; `Notice` string construction/`hide`; and
-  `Node.empty`/`createEl` with the text option. `textContent` and `TextEncoder`
-  are standard web APIs, not Node integrations.
-- [Current official declarations](https://github.com/obsidianmd/obsidian-api/blob/master/obsidian.d.ts)
-  match installed signatures. Their `@since` evidence places `getFiles`, `read`,
-  `TFile` and `addCommand` at 0.9.7, `configDir` at 0.11.1 and
-  `getAbstractFileByPath` at 0.11.11. We deliberately do **not** use `getFileByPath`
-  (1.5.7). No used API is marked deprecated. Direct saved-file `read` instead of
-  `cachedRead` is the M2 freshness choice, not a raw-byte or atomic snapshot claim.
+- [Official current declarations](https://github.com/obsidianmd/obsidian-api/blob/master/obsidian.d.ts)
+  expose `Plugin`, `Vault` saved-file events, `Workspace.onLayoutReady`,
+  `App.secretStorage`, `SecretStorage`, `SecretComponent`,
+  `App.loadLocalStorage`/`saveLocalStorage`, modern declarative
+  `PluginSettingTab.getSettingDefinitions`, M2 saved reads, Modal/Notice, and
+  lifecycle cleanup. Slice 0 records exact declaration evidence in
+  [platform qualification](qualification/m3-slice-0-platform-primitives.md).
+- SecretStorage is declared since 1.11.4, vault-local App storage since 1.8.7, and
+  modern declarative settings since 1.13.0. Deprecated imperative `display()` is not
+  used and there is no old-host fallback.
+- [Official event guidance](https://docs.obsidian.md/Plugins/Events) requires event
+  cleanup. [Load-time guidance](https://docs.obsidian.md/plugins/guides/load-time)
+  explains initial create events and layout readiness, but does not make layout-ready
+  proof of iCloud hydration completion.
+- [Official SecretStorage guidance](https://docs.obsidian.md/plugins/guides/secret-storage)
+  describes shared vault-local secret references and plaintext `data.json`; it does
+  not establish OS-keychain isolation or a secret delete API.
 - [Official sample build configuration](https://github.com/obsidianmd/obsidian-sample-plugin/blob/f8667cee6b35a068b98fb717626893b911247ff6/esbuild.config.mjs)
-  specifies CommonJS with `obsidian` external; its default-exported Plugin entry
-  supplies the namespace/default convention. Our browser-target bundle does not
-  externalize Node builtins or require Electron.
-- [Official build/install tutorial](https://docs.obsidian.md/Plugins/Getting+started/Build+a+plugin)
-  requires a separate development vault, `main.js`, matching plugin directory/ID,
-  enabling through Community plugins and reload after code changes. The manual
-  procedure above follows those constraints without cloning dependencies into
-  a vault or relying on an installed host for canonical validation.
+  uses CommonJS with `obsidian` external. The plugin does not use Node/Electron or
+  `requestUrl` fallback.
+- [Official mobile guidance](https://docs.obsidian.md/Plugins/Getting+started/Mobile+development)
+  establishes that Node/Electron APIs are unavailable; it does not certify standards
+  Fetch streaming/abort/CORS behavior in every desktop/mobile WebView.
 
-Metadata race checks are best-effort: same-size edits with indistinguishable
-mtime can evade detection. Listing is not an atomic snapshot and saved-file text
-is already decoded by Obsidian, not raw-byte UTF-8 validation. These limits must
-not be reused as write concurrency protection in later milestones.
+Host declarations establish API availability, not runtime qualification. Slice 8 did
+not install into a vault. Real desktop/mobile, iCloud traces, native secret UI,
+host-local durability/rollback, WebView transport behavior, and deployed Worker/R2
+remain explicit residual qualification limits.
 
-## M3 development baseline — contracts only
+## Operating model
 
-The [M3 spec](milestones/m3-remote-bridge-client-and-publishing.md) replaces selected
-manual publishing with an automatic mirror of **all eligible saved Markdown** after
-whole-mirror opt-in. Slice 1 raises the manifest, artifact expectation and installation
-baseline together to **1.13.0** for native SecretStorage and declarative settings.
-It does not add settings, credentials, network calls, autosync or any v2 Worker route.
-Do not add deprecated or older-host fallbacks.
-
-The [official evidence](plans/m3-design-decisions.md#primary-source-evidence-and-qualification-limits)
-and completed [Slice 0 declaration qualification](qualification/m3-slice-0-platform-primitives.md)
-establish SecretStorage since 1.11.4, vault-local storage since 1.8.7 and modern
-settings since 1.13.0. The checked declarations also expose Fetch/abort/stream
-primitives, but no host runtime invoked them. This does not establish desktop/mobile
-Fetch streaming/abort/CORS behavior in a real WebView, exact autosave timing or
-iCloud hydration completion.
-Those require feature detection, focused doubles/runtime tests and honestly recorded
-host qualification in implementation. The app.secretStorage reference is host-native,
-not a documented OS keychain. Only the secret's name goes in data.json; no plaintext
-fallback or invented shared-secret delete API.
-
-### Planned disposable setup and observation
-
-Do not execute these as current M2 capabilities or deploy merely to test a plan:
-
-1. Use a disposable 1.13.0+ vault and synthetic notes; qualify standards Fetch,
-   AbortController/streaming, modern settings and registered saved Vault events.
-2. Configure a separately authorized disposable v2 Worker association/designated
-   writer ID and secret. Local emulation is the automated test boundary, not proof
-   a remote bucket exists. Never run old v1 writers against revision envelopes.
-3. Select the native secret reference and HTTPS origin. HTTP requires explicit exact
-   loopback opt-in; phone loopback is the phone, not the desktop. No LAN exception.
-4. Explicitly enable the entire eligible mirror on the designated device. Native
-   host-local state stores activation/ACKs/uncertainty, not iCloud-synced data.json.
-   Other devices stay disabled even when plugin preferences sync.
-5. Verify layout-ready bootstrap and saved creates/modifies coalesce into bounded
-   work; saved deletes/renames propagate safely after bootstrap/association checks.
-   No per-note/per-delete confirmation. iCloud/external deletes may authorize remote
-   tombstones; initial/incomplete scans and missed events never do.
-6. Inspect metadata-only health. No note text/token in notices/logging. Check/retry/
-   pause are operational controls, not the primary publishing workflow. Preserve
-   M2 local inspection. Unknown effects, storage failures and divergence remain
-   visible; do not refresh revisions to force a send.
-
-### Planned recovery, pause and writer handoff
-
-A runtime removal archives remote content before conditional tombstone. Recovery
-REST list/read supports deliberate retrieval/export for 30 days; it is not plugin
-local-note restoration. Sealing failures may retain content longer, visibly;
-explicit designated seal maintenance needs proof from the still-current tombstone.
-GETs never repair metadata implicitly. Recreation leaves that archive intact. After expiry an explicit CAS purge removes
-archive content while retaining a safety marker; do not configure R2 lifecycle
-expiration on current heads/recovery keys or assume native trash/version history.
-
-Pause stops new admission and requests Fetch abort; actual reads/network/save work
-can still be pending. Disable/re-enable, a new Plugin instance or bundle reload in
-the same runtime must not reset the owning coordinator. Process restart loads the
-per-path ledger. No cancellation promise for host reads or committed Worker writes.
-
-For handoff, old writer pauses/drains and resolves all intents/rename prerequisites,
-exports validated content-free ACK metadata, then is disabled. Operator changes
-Worker designation/rotates bearer; new device stages/verifies that same-association
-ledger, including equal local saved hashes for live ACKs and local absence for
-tombstones. A mismatched/partially hydrated iCloud copy blocks activation, not a
-new update/recreation. Only then activate with its own native secret reference. Never copy
-activation/device identity or use iCloud data.json as a transaction. A pause may
-miss delete events; bootstrap reports those absences without inventing removal intent.
-If the old writer is unavailable/unresolved, takeover of the same association is
-blocked. A separately authorized new empty association is the safe reset option,
-leaving old pending work isolated. See [ADR 0003](decisions/0003-publishing-association-and-local-state.md).
-
-The existing M2 removal steps above have **no persisted state** to erase. Future M3
-uninstall/reset instructions must preserve unresolved metadata and account for
-host-local storage/shared secret references; deleting the plugin directory is not
-proof those are gone or that in-flight remote work was cancelled. Never erase a
-shared secret or old mirror merely to make a new writer appear clean.
+The [M3 operator guide](operations.md) is authoritative for initial empty-association
+setup, one-writer availability, safe upgrade/re-enable, handoff/reset, independent
+bearer rotation, recovery list/read/seal/purge, iCloud uncertainty, and forbidden
+rollback/downgrade actions. It does not authorize deployment or claim production
+support.

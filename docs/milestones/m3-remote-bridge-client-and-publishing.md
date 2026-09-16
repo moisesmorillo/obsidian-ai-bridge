@@ -238,10 +238,11 @@ paths are served fairly; a hot path cannot starve unrelated ready work.
 
 ## State and persistence
 
-Initial schema version 1; M2 has no persisted state to migrate. The prior PR's
-selected-note settings were never implemented. Known DTO versions are validated
-at the adapter boundary; malformed/future versions fail closed and are not silently
-rewritten. Unknown fields, invalid paths/revisions/IDs/digests, duplicate paths and
+Current schema version 2; M2 has no persisted state to migrate. The prior PR's
+selected-note settings were never implemented. The incompatible prior device-state
+version 1 is classified as unsupported rather than migrated. Known DTO versions are
+validated at the adapter boundary; malformed/incompatible versions fail closed and
+are not silently rewritten. Unknown fields, invalid paths/revisions/IDs/digests, duplicate paths and
 invalid counters/times are rejected. All path states share one typed source.
 
 | Persisted value/location | Purpose/authority | Lifecycle/reset/migration | Sensitivity/content |

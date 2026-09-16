@@ -6,15 +6,12 @@ import type { ReadOnlyLocalVault } from "@core/local-vault/read-only-local-vault
 import { MUTATION_ACTION } from "@core/mirror/mirror.constants";
 import type { RecoverySnapshotId } from "@core/mirror/mirror.types";
 import { currentStateMatchesPathAcknowledgement } from "@core/mirror/mirror-acknowledgement";
-import {
-  findMirrorPath,
-  upsertDirtyPath,
-} from "@core/mirror/mirror-autosync-state";
+import { findMirrorPath } from "@core/mirror/mirror-autosync-state";
 import type { MirrorIntentExecutor } from "@core/mirror/mirror-intent-executor";
 import {
   destructiveEvidenceIdentity,
-  invalidateRenamePlansForPath,
   persistTombstoneIntent,
+  recordPositiveObservation,
 } from "@core/mirror/mirror-lifecycle-state";
 import type { MirrorPathRuntime } from "@core/mirror/mirror-path-runtime";
 import type { MirrorPathStatusWriter } from "@core/mirror/mirror-path-status";
@@ -104,9 +101,8 @@ export class MirrorDeletionExecutor {
     }
     const latest = findMirrorPath(this.stateOwner.snapshot().state, path);
     const latestDestructive = destructiveDesired(latest);
+    if (latest === undefined || latestDestructive === undefined) return;
     if (
-      latest === undefined ||
-      latestDestructive === undefined ||
       latest.acknowledgement.kind !== MIRROR_ACKNOWLEDGEMENT_KIND.live ||
       !currentStateMatchesPathAcknowledgement(latest, observed.value)
     ) {
@@ -142,11 +138,7 @@ export class MirrorDeletionExecutor {
   private async cancelForRecreation(path: NotePath): Promise<void> {
     const generation = this.pathRuntime.nextGeneration();
     const committed = await this.stateOwner.transition((state) =>
-      upsertDirtyPath(
-        invalidateRenamePlansForPath(state, path),
-        path,
-        generation,
-      ),
+      recordPositiveObservation(state, path, generation),
     );
     if (committed.kind !== "committed") return;
     this.pathRuntime.recordObservation(

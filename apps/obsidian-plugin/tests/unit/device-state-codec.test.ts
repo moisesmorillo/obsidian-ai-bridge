@@ -10,6 +10,7 @@ import {
   MIRROR_ACKNOWLEDGEMENT_KIND,
   MIRROR_DESIRED_STATE_KIND,
   MIRROR_DEVICE_LIFECYCLE_KIND,
+  MIRROR_DEVICE_STATE_VERSION,
   type MirrorDeviceState,
   MUTATION_ACTION,
   type NotePath,
@@ -132,22 +133,29 @@ describe("device-local mirror state codec", () => {
     ).resolves.toEqual({ kind: "valid", state: literalState });
   });
 
-  it.each([
-    "{",
-    "[]",
-    "null",
-    "{}",
-    JSON.stringify({ format: MIRROR_DEVICE_STATE_FORMAT, version: 0 }),
-  ])("rejects corrupt JSON/object state: %s", async (encoded) => {
-    expect(await decodeMirrorDeviceState(encoded)).toEqual({ kind: "corrupt" });
+  it.each(["{", "[]", "null", "{}"])(
+    "rejects corrupt JSON/object state: %s",
+    async (encoded) => {
+      expect(await decodeMirrorDeviceState(encoded)).toEqual({
+        kind: "corrupt",
+      });
+    },
+  );
+
+  it("classifies incompatible legacy state as unsupported", async () => {
+    expect(
+      await decodeMirrorDeviceState(
+        JSON.stringify({ format: MIRROR_DEVICE_STATE_FORMAT, version: 1 }),
+      ),
+    ).toEqual({ kind: "unsupported-version", version: 1 });
   });
 
   it("distinguishes an unsupported future version and rejects unknown fields", async () => {
     expect(
       await decodeMirrorDeviceState(
-        JSON.stringify({ format: MIRROR_DEVICE_STATE_FORMAT, version: 2 }),
+        JSON.stringify({ format: MIRROR_DEVICE_STATE_FORMAT, version: 3 }),
       ),
-    ).toEqual({ kind: "unsupported-version", version: 2 });
+    ).toEqual({ kind: "unsupported-version", version: 3 });
     const raw = rawState();
     expect(
       await decodeMirrorDeviceState(JSON.stringify({ ...raw, surprise: true })),
@@ -672,7 +680,7 @@ function rawState() {
   const current = state();
   return {
     format: MIRROR_DEVICE_STATE_FORMAT,
-    version: 1,
+    version: MIRROR_DEVICE_STATE_VERSION,
     deviceId: current.deviceId,
     lifecycle: current.lifecycle,
     globalBlockReason: current.globalBlockReason,

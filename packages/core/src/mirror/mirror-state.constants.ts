@@ -72,7 +72,7 @@ export const MIRROR_RENAME_PHASE = {
 } as const;
 
 /** Version of the core-owned durable device state contract. */
-export const MIRROR_DEVICE_STATE_VERSION = 1;
+export const MIRROR_DEVICE_STATE_VERSION = 2;
 
 /** Practical upper bound on tracked paths in one device-local ledger. */
 export const MAX_MIRROR_TRACKED_PATHS = 50_000;

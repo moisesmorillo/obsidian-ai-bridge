@@ -165,6 +165,8 @@ function acknowledgedPathState(
   acknowledgement: MutationAcknowledgement,
 ): MirrorPathState {
   if (acknowledgement.receipt.action === MUTATION_ACTION.tombstone) {
+    const hasNewerPositiveDesired =
+      current.desired.kind === MIRROR_DESIRED_STATE_KIND.dirtyPresent;
     return {
       ...current,
       acknowledgement: {
@@ -173,8 +175,10 @@ function acknowledgedPathState(
         recoveryId: acknowledgement.receipt.operationId,
       },
       unresolvedMutation: null,
-      desired: { kind: MIRROR_DESIRED_STATE_KIND.none },
-      blockedReason: null,
+      desired: hasNewerPositiveDesired
+        ? current.desired
+        : { kind: MIRROR_DESIRED_STATE_KIND.none },
+      blockedReason: hasNewerPositiveDesired ? current.blockedReason : null,
     };
   }
   return {

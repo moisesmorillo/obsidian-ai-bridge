@@ -1,4 +1,8 @@
 import {
+  destructiveEvidenceIdentity,
+  persistTombstoneIntent,
+} from "@core/mirror/mirror-lifecycle-state";
+import {
   type ApplicationRevision,
   type ConditionalMutationRequest,
   type ContentSha256,
@@ -919,6 +923,111 @@ describe("destination-first runtime rename", () => {
     ).toEqual([MUTATION_ACTION.create, MUTATION_ACTION.tombstone]);
   });
 
+  it("cancels delete inspection when a newer recreation arrives", async () => {
+    const { owner, synchronizer } = await activeSynchronizer();
+    local.contents.delete(PATH_A);
+    await synchronizer.observeDelete(PATH_A);
+    runtime.now = MIRROR_DELETION_GRACE_MILLISECONDS;
+    const inspection = Promise.withResolvers<CurrentNoteState>();
+    remote.inspectNote.mockImplementationOnce(async () => ({
+      kind: "success",
+      value: await inspection.promise,
+    }));
+
+    const work = synchronizer.synchronizeReady();
+    await vi.waitFor(() => expect(remote.inspectNote).toHaveBeenCalledTimes(1));
+    local.contents.set(PATH_A, "B");
+    await synchronizer.observePresent(PATH_A);
+    inspection.resolve(liveState(PATH_A, REVISION_A, HASH_A));
+    await work;
+
+    const entry = owner
+      .snapshot()
+      .state.paths.find((candidate) => candidate.path === PATH_A);
+    expect(entry?.desired.kind).toBe(MIRROR_DESIRED_STATE_KIND.dirtyPresent);
+    expect(entry?.blockedReason).toBeNull();
+    expect(remote.mutateNote).not.toHaveBeenCalled();
+
+    runtime.now += 750;
+    await synchronizer.synchronizeReady();
+    expect(
+      remote.mutateNote.mock.calls.map(([request]) => request.action),
+    ).toEqual([MUTATION_ACTION.update]);
+  });
+
+  it("cancels an unsent tombstone when positive evidence supersedes it", async () => {
+    const { owner, synchronizer } = await activeSynchronizer();
+    local.contents.delete(PATH_A);
+    await synchronizer.observeDelete(PATH_A);
+    const entry = required(
+      owner
+        .snapshot()
+        .state.paths.find((candidate) => candidate.path === PATH_A),
+    );
+    const evidenceId = required(destructiveEvidenceIdentity(entry));
+    const prepared = await owner.transition((state) =>
+      persistTombstoneIntent(
+        state,
+        PATH_A,
+        evidenceId,
+        runtime.createOperationId(),
+      ),
+    );
+    expect(prepared.kind).toBe("committed");
+
+    local.contents.set(PATH_A, "B");
+    await synchronizer.observePresent(PATH_A);
+    const superseded = owner
+      .snapshot()
+      .state.paths.find((candidate) => candidate.path === PATH_A);
+    expect(superseded?.unresolvedMutation).toBeNull();
+    expect(superseded?.desired.kind).toBe(
+      MIRROR_DESIRED_STATE_KIND.dirtyPresent,
+    );
+
+    runtime.now = 750;
+    await synchronizer.synchronizeReady();
+    expect(
+      remote.mutateNote.mock.calls.map(([request]) => request.action),
+    ).toEqual([MUTATION_ACTION.update]);
+  });
+
+  it("preserves recreation while a dispatched tombstone is unresolved", async () => {
+    const { owner, synchronizer } = await activeSynchronizer();
+    local.contents.delete(PATH_A);
+    await synchronizer.observeDelete(PATH_A);
+    runtime.now = MIRROR_DELETION_GRACE_MILLISECONDS;
+    const tombstoneResolution =
+      Promise.withResolvers<MutationAcknowledgement>();
+    remote.mutateNote.mockImplementationOnce(async () => ({
+      kind: "confirmed",
+      confirmed: await tombstoneResolution.promise,
+    }));
+
+    const work = synchronizer.synchronizeReady();
+    await vi.waitFor(() => expect(remote.mutateNote).toHaveBeenCalledTimes(1));
+    local.contents.set(PATH_A, "B");
+    await synchronizer.observePresent(PATH_A);
+    const request = required(remote.mutateNote.mock.calls[0]?.[0]);
+    tombstoneResolution.resolve(remote.confirm(request));
+    await work;
+
+    const settled = owner
+      .snapshot()
+      .state.paths.find((candidate) => candidate.path === PATH_A);
+    expect(settled?.acknowledgement.kind).toBe(
+      MIRROR_ACKNOWLEDGEMENT_KIND.tombstone,
+    );
+    expect(settled?.unresolvedMutation).toBeNull();
+    expect(settled?.desired.kind).toBe(MIRROR_DESIRED_STATE_KIND.dirtyPresent);
+
+    runtime.now += 750;
+    await synchronizer.synchronizeReady();
+    expect(
+      remote.mutateNote.mock.calls.map(([candidate]) => candidate.action),
+    ).toEqual([MUTATION_ACTION.tombstone, MUTATION_ACTION.recreate]);
+  });
+
   it("durably ACKs the destination before creating source cleanup intent", async () => {
     const { owner, synchronizer } = await activeSynchronizer();
     local.contents.delete(PATH_A);
@@ -1058,7 +1167,7 @@ describe("destination-first runtime rename", () => {
     const work = synchronizer.synchronizeReady();
     await vi.waitFor(() => expect(remote.mutateNote).toHaveBeenCalledTimes(1));
 
-    local.contents.set(PATH_A, "A");
+    local.contents.set(PATH_A, "B");
     await synchronizer.observePresent(PATH_A);
     const request = required(remote.mutateNote.mock.calls[0]?.[0]);
     destinationBarrier.resolve(remote.confirm(request));
@@ -1073,6 +1182,17 @@ describe("destination-first runtime rename", () => {
       owner.snapshot().state.paths.find((entry) => entry.path === PATH_A)
         ?.desired.kind,
     ).toBe(MIRROR_DESIRED_STATE_KIND.dirtyPresent);
+    expect(
+      owner.snapshot().state.paths.find((entry) => entry.path === PATH_A)
+        ?.blockedReason,
+    ).toBeNull();
+
+    runtime.now = MIRROR_DELETION_GRACE_MILLISECONDS + 750;
+    expect(synchronizer.nextWakeAtMilliseconds()).toBe(runtime.now);
+    await synchronizer.synchronizeReady();
+    expect(
+      remote.mutateNote.mock.calls.map(([candidate]) => candidate.action),
+    ).toEqual([MUTATION_ACTION.create, MUTATION_ACTION.update]);
   });
 
   it("invalidates stale cleanup on a chained second rename while destination PUT is pending", async () => {

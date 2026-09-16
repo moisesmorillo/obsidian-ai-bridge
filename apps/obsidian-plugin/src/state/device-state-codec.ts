@@ -48,7 +48,7 @@ export const MIRROR_DEVICE_STATE_FORMAT = "obsidian-ai-bridge-device-state";
 /** Maximum UTF-8 bytes accepted for one host-local device-state snapshot. */
 export const MAX_MIRROR_DEVICE_STATE_BYTES = 8 * 1024 * 1024;
 
-/** Strict host-local decode result; corrupt/future data is never treated as missing. */
+/** Strict host-local decode result; incompatible data is never treated as missing. */
 export type MirrorDeviceStateDecodeResult =
   | { readonly kind: "missing" }
   | { readonly kind: "valid"; readonly state: MirrorDeviceState }
@@ -321,7 +321,7 @@ export async function decodeMirrorDeviceState(
     return { kind: "corrupt" };
   }
   const header = stateHeaderSchema.safeParse(parsed);
-  if (header.success && header.data.version > MIRROR_DEVICE_STATE_VERSION) {
+  if (header.success && header.data.version !== MIRROR_DEVICE_STATE_VERSION) {
     return { kind: "unsupported-version", version: header.data.version };
   }
   const decoded = deviceStateSchema.safeParse(parsed);

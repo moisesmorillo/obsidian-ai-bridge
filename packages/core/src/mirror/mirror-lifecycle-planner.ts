@@ -1,7 +1,7 @@
 import { MIRROR_DELETION_GRACE_MILLISECONDS } from "@core/mirror/mirror-autosync.constants";
-import { upsertDirtyPath } from "@core/mirror/mirror-autosync-state";
 import {
   invalidateRenamePlansForPath,
+  recordPositiveObservation,
   recordRuntimeDeleteEvidence,
   recordRuntimeRenameEvidence,
 } from "@core/mirror/mirror-lifecycle-state";
@@ -159,11 +159,7 @@ export class MirrorLifecyclePlanner {
       .snapshot()
       .state.paths.find((entry) => entry.path === path);
     const committed = await this.stateOwner.transition((state) =>
-      upsertDirtyPath(
-        invalidateRenamePlansForPath(state, path),
-        path,
-        generation,
-      ),
+      recordPositiveObservation(state, path, generation),
     );
     if (committed.kind !== "committed") return false;
     this.pathRuntime.recordObservation(
@@ -246,8 +242,8 @@ export class MirrorLifecyclePlanner {
       if (destinationPath === null || destinationGeneration === null) {
         return invalidated;
       }
-      return upsertDirtyPath(
-        invalidateRenamePlansForPath(invalidated, destinationPath),
+      return recordPositiveObservation(
+        invalidated,
         destinationPath,
         destinationGeneration,
       );

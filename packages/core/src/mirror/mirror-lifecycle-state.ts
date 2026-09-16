@@ -8,6 +8,7 @@ import type {
   MirrorOperationId,
   UnresolvedTombstoneMutationIntent,
 } from "@core/mirror/mirror.types";
+import { upsertDirtyPath } from "@core/mirror/mirror-autosync-state";
 import {
   MAX_MIRROR_TRACKED_PATHS,
   MIRROR_ACKNOWLEDGEMENT_KIND,
@@ -40,6 +41,52 @@ export interface RuntimeRenameEvidenceInput {
   readonly destinationObservationGeneration: number | null;
   readonly renameId: MirrorOperationId;
   readonly graceDeadlineMilliseconds: number;
+}
+
+/**
+ * Records newer positive evidence while superseding obsolete lifecycle work.
+ *
+ * An unsent tombstone is removed because no remote effect exists yet. A dispatched
+ * or ambiguous tombstone remains until its exact effect is settled. Only a blocker
+ * owned by the superseded rename is cleared; divergence and other blockers remain.
+ *
+ * @param state - Current authoritative device state.
+ * @param path - Path with newer eligible positive evidence.
+ * @param generation - New positive observation generation.
+ * @returns Updated state, or no transition when the path bound is exhausted.
+ */
+export function recordPositiveObservation(
+  state: MirrorDeviceState,
+  path: NotePath,
+  generation: number,
+): MirrorDeviceState | undefined {
+  const upserted = upsertDirtyPath(
+    invalidateRenamePlansForPath(state, path),
+    path,
+    generation,
+  );
+  if (upserted === undefined) return undefined;
+  return updatePath(upserted, path, (entry) => ({
+    ...entry,
+    unresolvedMutation: isUnsentTombstone(entry)
+      ? null
+      : entry.unresolvedMutation,
+    blockedReason:
+      entry.blockedReason === MIRROR_PATH_BLOCK_REASON.renameDeferred
+        ? null
+        : entry.blockedReason,
+  }));
+}
+
+/** @returns Whether a tombstone has not yet been dispatched to the remote bridge. */
+function isUnsentTombstone(entry: MirrorPathState): boolean {
+  return (
+    entry.unresolvedMutation?.intent.action === MUTATION_ACTION.tombstone &&
+    entry.unresolvedMutation.intent.mutationAttempts === 0 &&
+    (entry.unresolvedMutation.phase ===
+      MIRROR_MUTATION_PHASE.recoveryPreparation ||
+      entry.unresolvedMutation.phase === MIRROR_MUTATION_PHASE.tombstoneCommit)
+  );
 }
 
 /**

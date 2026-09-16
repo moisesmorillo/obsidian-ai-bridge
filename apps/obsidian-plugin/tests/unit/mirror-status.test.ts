@@ -8,6 +8,7 @@ import {
   MIRROR_ACKNOWLEDGEMENT_KIND,
   MIRROR_DESIRED_STATE_KIND,
   MIRROR_DEVICE_LIFECYCLE_KIND,
+  MIRROR_GLOBAL_BLOCK_REASON,
   MIRROR_PATH_BLOCK_REASON,
   MIRROR_RENAME_PHASE,
   type MirrorPathState,
@@ -132,6 +133,32 @@ describe("mirror status mapping", () => {
     expect(status.lastOutcome?.kind).toBe("remote-failure");
     expect(formatMirrorOperationalStatus(status)).toContain(
       "retry.md: retry-exhausted",
+    );
+  });
+
+  it("formats sanitized unavailable identity and global runtime fencing", () => {
+    const disabled = createDisabledMirrorState(DEVICE);
+    const status = createMirrorOperationalStatus(
+      "configured",
+      {
+        revision: 2,
+        state: {
+          ...disabled,
+          globalBlockReason: MIRROR_GLOBAL_BLOCK_REASON.runtimeUnavailable,
+        },
+        persistenceAvailable: true,
+        mutationAdmissionAllowed: false,
+      },
+      null,
+      new Map(),
+      { kind: "unavailable" },
+    );
+
+    expect(formatMirrorOperationalStatus(status)).toContain(
+      "Server designation: unavailable",
+    );
+    expect(formatMirrorOperationalStatus(status)).toContain(
+      "Global block: runtime-unavailable",
     );
   });
 });

@@ -1,6 +1,7 @@
 import {
   activateIsolatedAssociation,
   activateStagedHandoff,
+  alignAndActivateStagedHandoff,
   alignStagedHandoff,
   createApplicationRevision,
   createContentSha256,
@@ -324,7 +325,11 @@ describe("handoff policy", () => {
           ...record,
           entries: [tombstone, { ...tombstone, path: LIVE_PATH }],
         },
-        { associationId: ASSOCIATION_ID, origin: ORIGIN },
+        {
+          associationId: ASSOCIATION_ID,
+          origin: ORIGIN,
+          initialObservationGeneration: 1,
+        },
       ),
     ).toMatchObject({ kind: "rejected", reason: "invalid-record" });
     expect(
@@ -334,6 +339,7 @@ describe("handoff policy", () => {
         {
           associationId: OTHER_ASSOCIATION_ID,
           origin: ORIGIN,
+          initialObservationGeneration: 1,
         },
       ),
     ).toMatchObject({ kind: "rejected", reason: "association-mismatch" });
@@ -341,6 +347,7 @@ describe("handoff policy", () => {
       stageHandoffImport(activeState(), handoffRecord(), {
         associationId: ASSOCIATION_ID,
         origin: ORIGIN,
+        initialObservationGeneration: 1,
       }),
     ).toMatchObject({ kind: "rejected", reason: "incompatible-lifecycle" });
   });
@@ -353,6 +360,7 @@ describe("handoff policy", () => {
     const imported = stageHandoffImport(blocked, handoffRecord(), {
       associationId: ASSOCIATION_ID,
       origin: ORIGIN,
+      initialObservationGeneration: 1,
     });
     expect(imported.kind).toBe("staged");
     if (imported.kind !== "staged") throw new Error("Expected staged handoff.");
@@ -375,6 +383,56 @@ describe("handoff policy", () => {
     });
   });
 
+  it("requires a real positive initial handoff observation generation", () => {
+    expect(
+      stageHandoffImport(
+        createDisabledMirrorState(DEVICE_ID),
+        handoffRecord(),
+        {
+          associationId: ASSOCIATION_ID,
+          origin: ORIGIN,
+          initialObservationGeneration: 0,
+        },
+      ),
+    ).toMatchObject({ kind: "rejected", reason: "invalid-record" });
+  });
+
+  it("aligns and activates one exact sampled generation atomically", () => {
+    const imported = stageHandoffImport(
+      createDisabledMirrorState(DEVICE_ID),
+      handoffRecord(),
+      {
+        associationId: ASSOCIATION_ID,
+        origin: ORIGIN,
+        initialObservationGeneration: 1,
+      },
+    );
+    if (imported.kind !== "staged") throw new Error("Expected staged handoff.");
+    const activation = {
+      ...designation(),
+      explicitWholeMirrorConsent: true,
+    };
+    expect(
+      alignAndActivateStagedHandoff(
+        imported.state,
+        handoffAlignmentSnapshot(LIVE_HASH, true, 1),
+        activation,
+      )?.state.lifecycle.kind,
+    ).toBe(MIRROR_DEVICE_LIFECYCLE_KIND.active);
+    const invalidated = invalidateHandoffAlignments(imported.state, [
+      { path: LIVE_PATH, observationGeneration: 2 },
+    ]);
+    expect(
+      invalidated === undefined
+        ? undefined
+        : alignAndActivateStagedHandoff(
+            invalidated,
+            handoffAlignmentSnapshot(LIVE_HASH, true, 1),
+            activation,
+          ),
+    ).toBeUndefined();
+  });
+
   it("aligns a complete handoff atomically and rejects stale snapshots", () => {
     const imported = stageHandoffImport(
       createDisabledMirrorState(DEVICE_ID),
@@ -382,6 +440,7 @@ describe("handoff policy", () => {
       {
         associationId: ASSOCIATION_ID,
         origin: ORIGIN,
+        initialObservationGeneration: 1,
       },
     );
     if (imported.kind !== "staged") throw new Error("Expected staged handoff.");
@@ -584,6 +643,7 @@ describe("closed activation and handoff refusal branches", () => {
       stageHandoffImport(disabled, handoffRecord(), {
         associationId: ASSOCIATION_ID,
         origin: "https://other.example",
+        initialObservationGeneration: 1,
       }),
     ).toMatchObject({ reason: "origin-mismatch" });
     expect(
@@ -606,12 +666,14 @@ describe("closed activation and handoff refusal branches", () => {
         {
           associationId: ASSOCIATION_ID,
           origin: ORIGIN,
+          initialObservationGeneration: 1,
         },
       ),
     ).toMatchObject({ reason: "existing-local-state" });
     const imported = stageHandoffImport(disabled, handoffRecord(), {
       associationId: ASSOCIATION_ID,
       origin: ORIGIN,
+      initialObservationGeneration: 1,
     });
     if (imported.kind !== "staged") throw new Error("Expected staging.");
     const unknownPath = required(normalizeNotePath("notes/unknown.md"));

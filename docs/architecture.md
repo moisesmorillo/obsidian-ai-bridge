@@ -267,13 +267,24 @@ recovery-first tombstone intent. Tombstone recreation verifies the exact acknowl
 generation. Renames reserve both paths lexically, persist the destination ACK before
 source cleanup, and retain invalidated/deferred plans rather than claiming atomicity.
 Folder expansion uses only pre-event tracked descendants under path boundaries and
-the global ledger bound. Slice 7 adds the thin host composition: a Promise-backed
-versioned `globalThis`/`Symbol` owner registry per App realm, immutable primitive Vault
-events before layout-ready bootstrap, generation-checked strict configuration, native
-secret-reference settings, request cancellation with settlement-held permits, one-shot
-earliest-deadline timers and sanitized operational UI. Replacement sessions never
-replace owner state; incompatible registry versions fail closed. No M4 remote-to-local
-behavior exists. Slice 0 remains the
+the global ledger bound. Slice 7 adds host composition behind a Promise-backed,
+versioned `globalThis`/`Symbol` owner registry per App realm. `MirrorRuntimeOwner`
+remains the facade while focused coordinators own observation attachment epochs,
+configuration/connection admission, non-destructive reconciliation progress and
+staged-handoff verification. Every listener gap receives a fresh layout-ready positive
+scan without replacing scheduler reservations or deriving delete authority from
+absence. Bootstrap positive admission notifies the current session before reporting
+inventory settles, allowing the free scheduler slot to run local work without polling.
+Staged handoff events advance durable positive generations and invalidate sampled
+metadata; alignment plus activation is one serialized transition, and events arriving
+while it commits are sequenced after that transition rather than discarded. Native
+secret-reference settings expose non-secret local/server designation and require the
+accepted whole-mirror/plaintext/deletion disclosure before activation. Request
+cancellation retains permits through settlement; one-shot timers stop after explicit
+runtime fencing, and Web Crypto capability/provider failure closes durable mutation
+admission while preserving dirty work for explicit recovery. Replacement sessions
+never replace owner state; incompatible registry versions fail closed. No M4
+remote-to-local behavior exists. Slice 0 remains the
 pinned local workerd qualification task and declaration-only host check; no slice
 establishes real-host behavior.
 

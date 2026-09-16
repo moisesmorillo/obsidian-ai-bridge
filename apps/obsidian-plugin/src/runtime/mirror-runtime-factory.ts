@@ -6,7 +6,11 @@ import {
 } from "@obsidian-ai-bridge/core";
 import { ObsidianLocalVault } from "@obsidian-plugin/infrastructure/obsidian-local-vault";
 import { createObsidianVaultHost } from "@obsidian-plugin/infrastructure/obsidian-vault-host";
-import { BrowserMirrorSynchronizerRuntime } from "@obsidian-plugin/runtime/mirror-runtime-cryptography";
+import {
+  BrowserMirrorSynchronizerRuntime,
+  hasMirrorRuntimeCryptography,
+  probeMirrorRuntimeCryptography,
+} from "@obsidian-plugin/runtime/mirror-runtime-cryptography";
 import { MirrorRuntimeOwner } from "@obsidian-plugin/runtime/mirror-runtime-owner";
 import { ObsidianMirrorStateStore } from "@obsidian-plugin/state/obsidian-mirror-state-store";
 import type { App, Vault } from "obsidian";
@@ -32,10 +36,7 @@ export async function createMirrorRuntimeOwner(
   app: MirrorRuntimeAppHost,
   vault: Vault,
 ): Promise<MirrorRuntimeOwner> {
-  if (
-    globalThis.crypto === undefined ||
-    typeof globalThis.crypto.randomUUID !== "function"
-  ) {
+  if (!hasMirrorRuntimeCryptography(globalThis.crypto)) {
     throw new Error("Required runtime cryptography is unavailable.");
   }
   const store = new ObsidianMirrorStateStore(app);
@@ -61,7 +62,8 @@ export async function createMirrorRuntimeOwner(
     stateOwner: new MirrorStateOwner(state, store),
     local,
     secretStorage: app.secretStorage,
-    runtime: new BrowserMirrorSynchronizerRuntime(),
+    runtime: new BrowserMirrorSynchronizerRuntime(globalThis.crypto),
     cryptography: globalThis.crypto,
+    probeRuntime: () => probeMirrorRuntimeCryptography(globalThis.crypto),
   });
 }

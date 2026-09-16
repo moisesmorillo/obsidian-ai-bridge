@@ -1,4 +1,14 @@
 import {
+  createDisabledMirrorState,
+  createMirrorAssociationId,
+  createMirrorWriterId,
+} from "@obsidian-ai-bridge/core";
+import { encodeMirrorPreferences } from "@obsidian-plugin/configuration/mirror-preferences";
+import {
+  encodeMirrorDeviceState,
+  MIRROR_DEVICE_STATE_STORAGE_KEY,
+} from "@obsidian-plugin/state/device-state-codec";
+import {
   host,
   resetHost,
   Setting,
@@ -89,6 +99,204 @@ describe("MirrorSettingsTab", () => {
     plugin.unload();
   });
 
+  it("renders copyable identity and the complete first-activation trust disclosure", async () => {
+    const plugin = await loadPluginReady();
+    const tab = [...host.settingsTabs][0];
+    if (tab === undefined) throw new Error("Expected settings tab.");
+    const identity = findDefinition(
+      tab.settingItems,
+      "Local device / writer ID",
+    );
+    if (identity.render === undefined)
+      throw new Error("Expected identity row.");
+    const identityRow = new Setting();
+    Reflect.apply(identity.render, undefined, [identityRow, {}]);
+    expect(identityRow.texts[0]?.value).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+    );
+    expect(identityRow.texts[0]?.inputEl.readOnly).toBe(true);
+
+    const consent = findDefinition(
+      tab.settingItems,
+      "Whole-mirror trust and deletion consent",
+    );
+    expect(consent.desc).toContain("whole eligible Markdown mirror");
+    expect(consent.desc).toContain("bearer-authenticated Worker");
+    expect(consent.desc).toContain("plaintext");
+    expect(consent.desc).toContain("30-day recovery");
+    plugin.unload();
+  });
+
+  it("verifies designation and requires consent before first activation", async () => {
+    const deviceId = required(
+      createMirrorWriterId("11111111-1111-4111-8111-111111111111"),
+    );
+    const associationId = required(
+      createMirrorAssociationId("22222222-2222-4222-8222-222222222222"),
+    );
+    host.localStorage.set(
+      MIRROR_DEVICE_STATE_STORAGE_KEY,
+      encodeMirrorDeviceState(createDisabledMirrorState(deviceId)),
+    );
+    host.loadData.mockResolvedValue(
+      encodeMirrorPreferences({
+        origin: "https://bridge.example",
+        loopbackHttpOrigin: null,
+        secretReference: "bridge-token",
+      }),
+    );
+    host.secrets.set("bridge-token", "PRIVATE");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: URL) =>
+        url.pathname.endsWith("/mirror")
+          ? json({
+              protocol: "obsidian-ai-bridge-mirror-v2",
+              associationId,
+              writerId: deviceId,
+              maxNoteSizeBytes: 1024 * 1024,
+              maxPageSize: 50,
+              recoveryRetentionSeconds: 2_592_000,
+            })
+          : json({ notes: [], nextCursor: null }),
+      ),
+    );
+    const plugin = await loadPluginReady();
+    host.becomeLayoutReady();
+    const tab = [...host.settingsTabs][0];
+    if (tab === undefined) throw new Error("Expected settings tab.");
+
+    const before = new Setting();
+    const activationBefore = findDefinition(
+      tab.getSettingDefinitions(),
+      "Enable whole eligible Markdown mirror",
+    );
+    if (activationBefore.render === undefined)
+      throw new Error("Expected activation row.");
+    Reflect.apply(activationBefore.render, undefined, [before, {}]);
+    expect(before.toggles[0]?.disabled).toBe(true);
+
+    const server = findDefinition(
+      tab.getSettingDefinitions(),
+      "Authenticated server identity",
+    );
+    if (server.action === undefined)
+      throw new Error("Expected verification action.");
+    Reflect.apply(server.action, undefined, [new TextElement(), 0]);
+    await vi.waitFor(() =>
+      expect(
+        findDefinition(
+          tab.getSettingDefinitions(),
+          "Authenticated server identity",
+        ).desc,
+      ).toContain("matches this device"),
+    );
+
+    const consent = findDefinition(
+      tab.getSettingDefinitions(),
+      "Whole-mirror trust and deletion consent",
+    );
+    if (consent.render === undefined) throw new Error("Expected consent row.");
+    const consentRow = new Setting();
+    Reflect.apply(consent.render, undefined, [consentRow, {}]);
+    consentRow.toggles[0]?.change?.(true);
+
+    const activation = findDefinition(
+      tab.getSettingDefinitions(),
+      "Enable whole eligible Markdown mirror",
+    );
+    if (activation.render === undefined)
+      throw new Error("Expected activation row.");
+    const activationRow = new Setting();
+    Reflect.apply(activation.render, undefined, [activationRow, {}]);
+    expect(activationRow.toggles[0]?.disabled).toBe(false);
+    activationRow.toggles[0]?.change?.(true);
+    await vi.waitFor(() =>
+      expect(JSON.stringify([...host.localStorage.values()])).toContain(
+        "active",
+      ),
+    );
+    expect(activationRow.errorMessage).toBeNull();
+    expect(JSON.stringify([...host.localStorage.values()])).not.toContain(
+      "PRIVATE",
+    );
+    plugin.unload();
+  });
+
+  it("keeps activation disabled when authenticated designation mismatches", async () => {
+    const deviceId = required(
+      createMirrorWriterId("11111111-1111-4111-8111-111111111111"),
+    );
+    const otherWriterId = required(
+      createMirrorWriterId("99999999-9999-4999-8999-999999999999"),
+    );
+    const associationId = required(
+      createMirrorAssociationId("22222222-2222-4222-8222-222222222222"),
+    );
+    host.localStorage.set(
+      MIRROR_DEVICE_STATE_STORAGE_KEY,
+      encodeMirrorDeviceState(createDisabledMirrorState(deviceId)),
+    );
+    host.loadData.mockResolvedValue(
+      encodeMirrorPreferences({
+        origin: "https://bridge.example",
+        loopbackHttpOrigin: null,
+        secretReference: "bridge-token",
+      }),
+    );
+    host.secrets.set("bridge-token", "PRIVATE");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        json({
+          protocol: "obsidian-ai-bridge-mirror-v2",
+          associationId,
+          writerId: otherWriterId,
+          maxNoteSizeBytes: 1024 * 1024,
+          maxPageSize: 50,
+          recoveryRetentionSeconds: 2_592_000,
+        }),
+      ),
+    );
+    const plugin = await loadPluginReady();
+    host.becomeLayoutReady();
+    const tab = [...host.settingsTabs][0];
+    if (tab === undefined) throw new Error("Expected settings tab.");
+    const server = findDefinition(
+      tab.getSettingDefinitions(),
+      "Authenticated server identity",
+    );
+    if (server.action === undefined)
+      throw new Error("Expected verification action.");
+    Reflect.apply(server.action, undefined, [new TextElement(), 0]);
+    await vi.waitFor(() =>
+      expect(
+        findDefinition(
+          tab.getSettingDefinitions(),
+          "Authenticated server identity",
+        ).desc,
+      ).toContain("does not match"),
+    );
+    const consent = findDefinition(
+      tab.getSettingDefinitions(),
+      "Whole-mirror trust and deletion consent",
+    );
+    if (consent.render === undefined) throw new Error("Expected consent row.");
+    const consentRow = new Setting();
+    Reflect.apply(consent.render, undefined, [consentRow, {}]);
+    consentRow.toggles[0]?.change?.(true);
+    const activation = findDefinition(
+      tab.getSettingDefinitions(),
+      "Enable whole eligible Markdown mirror",
+    );
+    if (activation.render === undefined)
+      throw new Error("Expected activation row.");
+    const activationRow = new Setting();
+    Reflect.apply(activation.render, undefined, [activationRow, {}]);
+    expect(activationRow.toggles[0]?.disabled).toBe(true);
+    plugin.unload();
+  });
+
   it("keeps activation, handoff, import, and status actions thin and sanitized", async () => {
     const plugin = await loadPluginReady();
     const tab = [...host.settingsTabs][0];
@@ -103,6 +311,7 @@ describe("MirrorSettingsTab", () => {
       throw new Error("Expected toggle row.");
     const activationRow = new Setting();
     Reflect.apply(activation.render, undefined, [activationRow, {}]);
+    expect(activationRow.toggles[0]?.disabled).toBe(true);
     activationRow.toggles[0]?.change?.(true);
     await vi.waitFor(() =>
       expect(activationRow.errorMessage).toContain("not changed"),
@@ -139,6 +348,18 @@ describe("MirrorSettingsTab", () => {
     plugin.unload();
   });
 });
+
+function json(value: object): Response {
+  return new Response(JSON.stringify(value), {
+    status: 200,
+    headers: { "content-type": "application/json" },
+  });
+}
+
+function required<Value>(value: Value | undefined): Value {
+  if (value === undefined) throw new Error("Invalid fixture value.");
+  return value;
+}
 
 function findDefinition(
   items: readonly SettingDefinitionItem[],

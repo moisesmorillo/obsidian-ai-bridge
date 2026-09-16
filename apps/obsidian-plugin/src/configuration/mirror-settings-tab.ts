@@ -2,7 +2,10 @@ import { MIRROR_DEVICE_LIFECYCLE_KIND } from "@obsidian-ai-bridge/core";
 import type { MirrorConfigurationController } from "@obsidian-plugin/configuration/mirror-configuration-controller";
 import { validateMirrorEndpoint } from "@obsidian-plugin/configuration/mirror-endpoint";
 import type { MirrorRuntimeOwner } from "@obsidian-plugin/runtime/mirror-runtime-owner";
-import { formatMirrorOperationalStatus } from "@obsidian-plugin/status/mirror-status";
+import {
+  formatMirrorOperationalStatus,
+  type MirrorOperationalStatus,
+} from "@obsidian-plugin/status/mirror-status";
 import {
   type App,
   type Plugin,
@@ -28,6 +31,7 @@ export interface MirrorSettingsPresentation {
  */
 export class MirrorSettingsTab extends PluginSettingTab {
   private attached = true;
+  private wholeMirrorConsentAccepted = false;
 
   /**
    * @param app - Official Obsidian App.
@@ -147,29 +151,75 @@ export class MirrorSettingsTab extends PluginSettingTab {
         heading: "Writer",
         items: [
           {
-            name: "Enable whole eligible Markdown mirror",
-            desc: "Activating confirms this is a newly provisioned empty association and authorizes automatic saved-note mirroring plus post-bootstrap runtime removals with 30-day recovery.",
+            name: "Local device / writer ID",
+            desc: "Configure this non-secret UUID as the Worker's designated MIRROR_WRITER_ID.",
             render: (setting) => {
-              const active =
-                this.owner.stateOwner.snapshot().state.lifecycle.kind ===
-                MIRROR_DEVICE_LIFECYCLE_KIND.active;
+              setting.addText((component) => {
+                component.setValue(this.owner.status().deviceId);
+                component.inputEl.readOnly = true;
+                return component;
+              });
+            },
+          },
+          {
+            name: "Authenticated server identity",
+            desc: formatServerIdentity(this.owner.status()),
+            action: () => {
+              void this.owner.verifyServerIdentity().then((result) => {
+                if (!this.attached) return;
+                this.presentation.showMessage(
+                  result.kind === "completed"
+                    ? "Server association and writer designation verified."
+                    : "Server identity could not be verified.",
+                );
+                this.update();
+              });
+            },
+          },
+          {
+            name: "Whole-mirror trust and deletion consent",
+            desc: "I understand that the bearer-authenticated Worker receives the whole eligible Markdown mirror in plaintext; the Worker/cloud operator and trusted host or privileged plugins can read it. Saved runtime deletions, including iCloud or external deletions observed after bootstrap, authorize remote tombstones with 30-day recovery.",
+            render: (setting) => {
               setting.addToggle((component) =>
-                component.setValue(active).onChange((enabled) => {
-                  const action = enabled
-                    ? this.enableWriter()
-                    : this.owner.pause();
-                  void action.then((result) => {
-                    if (!this.attached) return;
-                    if (result.kind !== "completed") {
-                      setting.setErrorMessage(
-                        "Writer state was not changed. Verify configuration and designation.",
-                      );
-                    } else {
-                      setting.setErrorMessage(null);
-                    }
+                component
+                  .setValue(this.wholeMirrorConsentAccepted)
+                  .onChange((accepted) => {
+                    this.wholeMirrorConsentAccepted = accepted;
+                    setting.setErrorMessage(null);
                     this.update();
-                  });
-                }),
+                  }),
+              );
+            },
+          },
+          {
+            name: "Enable whole eligible Markdown mirror",
+            desc: "First activation also confirms that this is a newly provisioned empty association. Activation remains unavailable until consent and server designation match.",
+            render: (setting) => {
+              const status = this.owner.status();
+              const lifecycle =
+                this.owner.stateOwner.snapshot().state.lifecycle.kind;
+              const active = lifecycle === MIRROR_DEVICE_LIFECYCLE_KIND.active;
+              const canEnable =
+                this.wholeMirrorConsentAccepted &&
+                status.serverIdentity.kind === "matched";
+              setting.addToggle((component) =>
+                component
+                  .setValue(active)
+                  .setDisabled(!active && !canEnable)
+                  .onChange((enabled) => {
+                    const action = enabled
+                      ? this.enableWriter(this.wholeMirrorConsentAccepted)
+                      : this.owner.pause();
+                    void action.then((result) => {
+                      if (!this.attached) return;
+                      setting.setErrorMessage(
+                        result.kind === "completed"
+                          ? null
+                          : "Writer state was not changed. Verify consent, configuration and designation.",
+                      );
+                      this.update();
+                    });
+                  }),
               );
             },
           },
@@ -215,15 +265,17 @@ export class MirrorSettingsTab extends PluginSettingTab {
               );
               setting.addButton((component) =>
                 component.setButtonText("Import").onClick(() => {
-                  void this.owner.importHandoff(encoded).then((result) => {
-                    if (!this.attached) return;
-                    this.presentation.showMessage(
-                      result.kind === "completed"
-                        ? "Handoff verified and writer activated."
-                        : "Handoff was not imported or activated.",
-                    );
-                    this.update();
-                  });
+                  void this.owner
+                    .importHandoff(encoded, this.wholeMirrorConsentAccepted)
+                    .then((result) => {
+                      if (!this.attached) return;
+                      this.presentation.showMessage(
+                        result.kind === "completed"
+                          ? "Handoff verified and writer activated."
+                          : "Handoff was not imported or activated.",
+                      );
+                      this.update();
+                    });
                 }),
               );
             },
@@ -238,15 +290,36 @@ export class MirrorSettingsTab extends PluginSettingTab {
     this.attached = false;
   }
 
-  /** @returns The only lifecycle-valid explicit enable transition. */
-  private enableWriter() {
+  /**
+   * @param explicitWholeMirrorConsent - Current explicit plaintext/scope consent.
+   * @returns The only lifecycle-valid explicit enable transition.
+   */
+  private enableWriter(explicitWholeMirrorConsent: boolean) {
     const lifecycle = this.owner.stateOwner.snapshot().state.lifecycle.kind;
     if (lifecycle === MIRROR_DEVICE_LIFECYCLE_KIND.disabled) {
-      return this.owner.activate();
+      return this.owner.activate(explicitWholeMirrorConsent);
     }
     if (lifecycle === MIRROR_DEVICE_LIFECYCLE_KIND.paused) {
       return this.owner.resume();
     }
     return Promise.resolve({ kind: "not-ready" } as const);
+  }
+}
+
+/**
+ * Formats authenticated identity metadata without exposing credentials or errors.
+ * @param status - Current sanitized runtime status.
+ * @returns Plain-text association and designation status.
+ */
+function formatServerIdentity(status: MirrorOperationalStatus): string {
+  switch (status.serverIdentity.kind) {
+    case "unknown":
+      return "Not verified. Use this action after configuring the endpoint and native secret reference.";
+    case "unavailable":
+      return "Authenticated server identity is unavailable.";
+    case "matched":
+      return `Association ${status.serverIdentity.associationId}; designated writer ${status.serverIdentity.designatedWriterId}; matches this device.`;
+    case "mismatch":
+      return `Association ${status.serverIdentity.associationId}; designated writer ${status.serverIdentity.designatedWriterId}; does not match local device ${status.deviceId}.`;
   }
 }

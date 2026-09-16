@@ -626,7 +626,7 @@ describe("device-local mirror state codec", () => {
           ...entry,
           localAlignment: "pending",
           remoteVerification: "pending",
-          observationGeneration: 0,
+          observationGeneration: 1,
         })),
       },
     };

@@ -3,9 +3,12 @@ import {
   MIRROR_DEVICE_LIFECYCLE_KIND,
   MIRROR_GLOBAL_BLOCK_REASON,
   MIRROR_PATH_BLOCK_REASON,
+  type MirrorAssociationId,
+  type MirrorGlobalBlockReason,
   type MirrorPathJobOutcome,
   type MirrorStateSnapshot,
   type MirrorSynchronizerPhase,
+  type MirrorWriterId,
   type NotePath,
 } from "@obsidian-ai-bridge/core";
 
@@ -20,6 +23,16 @@ export type MirrorWriterStatus =
   | "active-writer"
   | "inactive"
   | "designation-mismatch";
+
+/** Current authenticated server identity without credentials or raw response data. */
+export type MirrorServerIdentityStatus =
+  | { readonly kind: "unknown" }
+  | { readonly kind: "unavailable" }
+  | {
+      readonly kind: "matched" | "mismatch";
+      readonly associationId: MirrorAssociationId;
+      readonly designatedWriterId: MirrorWriterId;
+    };
 
 /** Sanitized per-path state exposed by status UI without content or raw errors. */
 export interface MirrorOperationalPathStatus {
@@ -36,9 +49,11 @@ export interface MirrorOperationalPathStatus {
 /** Complete text-safe operational status projection for one runtime owner. */
 export interface MirrorOperationalStatus {
   readonly configuration: MirrorConfigurationStatus;
+  readonly deviceId: MirrorWriterId;
+  readonly serverIdentity: MirrorServerIdentityStatus;
   readonly writer: MirrorWriterStatus;
   readonly bootstrap: MirrorSynchronizerPhase | "not-started";
-  readonly globalBlockReason: string | null;
+  readonly globalBlockReason: MirrorGlobalBlockReason | null;
   readonly persistenceFenced: boolean;
   readonly pendingPaths: number;
   readonly pathStatuses: readonly MirrorOperationalPathStatus[];
@@ -52,6 +67,7 @@ export interface MirrorOperationalStatus {
  * @param snapshot - Authoritative device-local state-owner snapshot.
  * @param phase - Core bootstrap/observation phase when composed.
  * @param outcomes - Sanitized core outcomes keyed by tracked path.
+ * @param serverIdentity - Current authenticated association/designation projection.
  * @returns UI-safe metadata containing no bearer, body, response, or exception text.
  */
 export function createMirrorOperationalStatus(
@@ -59,6 +75,7 @@ export function createMirrorOperationalStatus(
   snapshot: MirrorStateSnapshot,
   phase: MirrorSynchronizerPhase | null,
   outcomes: ReadonlyMap<NotePath, MirrorPathJobOutcome>,
+  serverIdentity: MirrorServerIdentityStatus = { kind: "unknown" },
 ): MirrorOperationalStatus {
   const pathStatuses = snapshot.state.paths.flatMap((entry) => {
     if (entry.blockedReason !== null) {
@@ -88,6 +105,8 @@ export function createMirrorOperationalStatus(
   const lastOutcome = [...outcomes.values()].at(-1) ?? null;
   return {
     configuration,
+    deviceId: snapshot.state.deviceId,
+    serverIdentity,
     writer,
     bootstrap: phase ?? "not-started",
     globalBlockReason: snapshot.state.globalBlockReason,
@@ -108,6 +127,8 @@ export function formatMirrorOperationalStatus(
 ): string {
   const lines = [
     `Configuration: ${status.configuration}`,
+    `Device ID: ${status.deviceId}`,
+    `Server designation: ${formatServerIdentity(status.serverIdentity)}`,
     `Writer: ${status.writer}`,
     `Bootstrap: ${status.bootstrap}`,
     `Pending or blocked paths: ${status.pendingPaths}`,
@@ -123,6 +144,19 @@ export function formatMirrorOperationalStatus(
     lines.push(`${path.path}: ${path.state}`);
   }
   return lines.join("\n");
+}
+
+function formatServerIdentity(status: MirrorServerIdentityStatus): string {
+  switch (status.kind) {
+    case "unknown":
+      return "unknown";
+    case "unavailable":
+      return "unavailable";
+    case "matched":
+      return `${status.associationId} / ${status.designatedWriterId} (match)`;
+    case "mismatch":
+      return `${status.associationId} / ${status.designatedWriterId} (mismatch)`;
+  }
 }
 
 function mapBlocked(

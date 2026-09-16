@@ -243,6 +243,7 @@ export class PluginSettingTab {
 /** Fluent text-control double used by modern declarative render definitions. */
 export class TextComponent {
   value = "";
+  readonly inputEl = { readOnly: false };
   change: ((value: string) => unknown) | null = null;
   /**
    * @param _placeholder - Input placeholder text.
@@ -275,6 +276,7 @@ export class TextAreaComponent extends TextComponent {}
 /** Fluent toggle-control double. */
 export class ToggleComponent {
   value = false;
+  disabled = false;
   change: ((value: boolean) => unknown) | null = null;
   /**
    * @param _tooltip - Toggle tooltip text.
@@ -289,6 +291,14 @@ export class ToggleComponent {
    */
   setValue(value: boolean): this {
     this.value = value;
+    return this;
+  }
+  /**
+   * @param disabled - Whether user interaction is unavailable.
+   * @returns This component.
+   */
+  setDisabled(disabled: boolean): this {
+    this.disabled = disabled;
     return this;
   }
   /**

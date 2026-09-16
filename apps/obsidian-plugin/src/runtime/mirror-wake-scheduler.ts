@@ -2,8 +2,10 @@
 export interface MirrorWakeSource {
   /** @returns Earliest finite monotonic deadline, or no admissible work. */
   nextWakeAtMilliseconds(): number | null;
-  /** Runs work that is ready at the current monotonic instant. */
-  synchronizeReady(): Promise<void>;
+  /** Runs work and explicitly reports whether future scheduling remains admissible. */
+  synchronizeReady(): Promise<
+    { readonly kind: "completed" } | { readonly kind: "fenced" }
+  >;
 }
 
 /** Injectable one-shot host timer mechanics for deterministic tests. */
@@ -57,13 +59,17 @@ export class MirrorWakeScheduler {
       this.running = true;
       void this.source
         .synchronizeReady()
-        .finally(() => {
+        .then((result) => {
           this.running = false;
           if (!this.attached) return;
           this.onSettled();
-          this.reconcile();
+          if (result.kind === "completed") this.reconcile();
         })
-        .catch(() => undefined);
+        .catch(() => {
+          this.running = false;
+          if (!this.attached) return;
+          this.onSettled();
+        });
     }, delay);
   }
 

@@ -28,6 +28,12 @@ export interface MirrorSynchronizerRuntime {
 export type MirrorBootstrapIncompleteReason =
   (typeof MIRROR_BOOTSTRAP_INCOMPLETE_REASON)[keyof typeof MIRROR_BOOTSTRAP_INCOMPLETE_REASON];
 
+/** Host-neutral progress observer for durable positive bootstrap admission. */
+export interface MirrorBootstrapProgressObserver {
+  /** Called once positive work is durable and may use free scheduler capacity. */
+  onPositiveAdmission(): void;
+}
+
 /** Bootstrap completion never implies destructive authority for scan absence. */
 export type MirrorBootstrapResult =
   | {

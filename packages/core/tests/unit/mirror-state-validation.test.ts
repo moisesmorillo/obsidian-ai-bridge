@@ -188,7 +188,7 @@ function stagedState(
       acknowledgement: LIVE_ACKNOWLEDGEMENT,
       localAlignment: "pending",
       remoteVerification: "pending",
-      observationGeneration: 0,
+      observationGeneration: 1,
     },
   ],
 ): MirrorDeviceState {
@@ -230,7 +230,7 @@ describe("mirror device state invariants", () => {
             acknowledgement: LIVE_ACKNOWLEDGEMENT,
             localAlignment: "pending",
             remoteVerification: "pending",
-            observationGeneration: 0,
+            observationGeneration: 1,
           })),
         ),
       ),
@@ -278,7 +278,7 @@ describe("mirror device state invariants", () => {
         },
       }),
     ).toBe(false);
-    for (const observationGeneration of [Number.NaN, 0.5, -1]) {
+    for (const observationGeneration of [Number.NaN, 0, 0.5, -1]) {
       expect(
         isMirrorDeviceStateConsistent(
           stagedState([
@@ -327,14 +327,14 @@ describe("mirror device state invariants", () => {
         acknowledgement: LIVE_ACKNOWLEDGEMENT,
         localAlignment: "pending",
         remoteVerification: "pending",
-        observationGeneration: 0,
+        observationGeneration: 1,
       },
       {
         path: PATH,
         acknowledgement: TOMBSTONE_ACKNOWLEDGEMENT,
         localAlignment: "pending",
         remoteVerification: "pending",
-        observationGeneration: 0,
+        observationGeneration: 1,
       },
     ]);
     const stagedDuplicateRecovery = stagedState([
@@ -343,14 +343,14 @@ describe("mirror device state invariants", () => {
         acknowledgement: TOMBSTONE_ACKNOWLEDGEMENT,
         localAlignment: "pending",
         remoteVerification: "pending",
-        observationGeneration: 0,
+        observationGeneration: 1,
       },
       {
         path: OTHER_PATH,
         acknowledgement: TOMBSTONE_ACKNOWLEDGEMENT,
         localAlignment: "pending",
         remoteVerification: "pending",
-        observationGeneration: 0,
+        observationGeneration: 1,
       },
     ]);
     for (const candidate of [

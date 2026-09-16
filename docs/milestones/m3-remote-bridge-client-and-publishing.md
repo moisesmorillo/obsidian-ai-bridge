@@ -22,10 +22,13 @@ content-free handoff validation. Slice 4 adds an uncomposed typed bounded Fetch 
 bounded fair scheduling, finite retry/evidence recovery and reporting inventory.
 Slice 6 completes the core runtime deletion, tombstone recreation, destination-first
 rename, deferred cleanup, two-path reservation and bounded folder-expansion policy.
-Slice 7 composes those engines into one same-realm runtime owner with official Vault
-events, layout-ready bootstrap, host-deadline timers, modern settings/native secret
-references, passive non-writers, sanitized controls/status and explicit metadata-only
-handoff. Final generated-artifact, operational-documentation and semantic gates remain;
+Slice 7 composes those engines behind one same-realm runtime facade with focused
+attachment-epoch, connection/admission, reconciliation-progress and staged-handoff
+owners. Official Vault events, per-listener-gap positive scans, early positive-admission
+scheduling, host-deadline timers, Web Crypto fencing, modern settings/native secret
+references, non-secret designation/consent UI, passive non-writers, sanitized controls/
+status and explicit metadata-only handoff are implemented. Final generated-artifact,
+operational-documentation and semantic gates remain;
 no real Obsidian desktop/mobile host has been exercised.
 
 ## Objective and authority

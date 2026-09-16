@@ -18,6 +18,7 @@ import type {
 } from "@core/mirror/mirror-state.types";
 import type { MirrorStateOwner } from "@core/mirror/mirror-state-owner";
 import type {
+  MirrorBootstrapProgressObserver,
   MirrorBootstrapResult,
   MirrorDeleteObservationResult,
   MirrorFolderRenameResult,
@@ -49,6 +50,8 @@ export class MirrorSynchronizer {
   private readonly renameExecutor: MirrorRenameExecutor;
   private phase: MirrorSynchronizerPhase = MIRROR_SYNCHRONIZER_PHASE.inactive;
   private bootstrapOperation: Promise<MirrorBootstrapResult> | null = null;
+  private readonly bootstrapObservers =
+    new Set<MirrorBootstrapProgressObserver>();
 
   /**
    * @param local - Saved-file read/list capability with M2 eligibility guarantees.
@@ -221,10 +224,24 @@ export class MirrorSynchronizer {
    *
    * @returns Explicit completion/incompleteness and unassociated remote reporting.
    */
-  bootstrap(): Promise<MirrorBootstrapResult> {
+  bootstrap(
+    observer?: MirrorBootstrapProgressObserver,
+  ): Promise<MirrorBootstrapResult> {
+    if (observer !== undefined) {
+      this.bootstrapObservers.add(observer);
+      if (
+        this.bootstrapOperation !== null &&
+        this.phase === MIRROR_SYNCHRONIZER_PHASE.observing
+      ) {
+        observer.onPositiveAdmission();
+      }
+    }
     if (this.bootstrapOperation !== null) return this.bootstrapOperation;
     const operation = this.runBootstrap().finally(() => {
-      if (this.bootstrapOperation === operation) this.bootstrapOperation = null;
+      if (this.bootstrapOperation === operation) {
+        this.bootstrapOperation = null;
+        this.bootstrapObservers.clear();
+      }
     });
     this.bootstrapOperation = operation;
     return operation;
@@ -238,6 +255,9 @@ export class MirrorSynchronizer {
       },
       () => {
         this.phase = MIRROR_SYNCHRONIZER_PHASE.observing;
+        for (const observer of this.bootstrapObservers) {
+          observer.onPositiveAdmission();
+        }
       },
     );
     if (result.kind !== "complete") {

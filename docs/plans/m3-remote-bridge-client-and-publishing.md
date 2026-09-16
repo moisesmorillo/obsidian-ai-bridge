@@ -362,10 +362,18 @@ surface and retires unsafe v1 mutations; intermediate checkpoints are not rollou
   retire stale connections and prevent late activation. One-shot host timers schedule
   only the earliest finite core deadline. Modern declarative settings store only the
   endpoint/loopback consent/native secret reference; native SecretStorage is read at
-  dispatch. Configured designated writers bootstrap and mirror saved events, while
+  dispatch. Non-secret device/server designation plus explicit whole-scope/plaintext/
+  deletion trust consent make first activation fail closed. Dedicated attachment-epoch,
+  configuration/admission, reconciliation-progress and staged-handoff owners keep the
+  same-realm facade from duplicating their state matrices. Replacement listener gaps
+  trigger fresh positive-only scans while old reservations settle; positive admission
+  schedules work before reporting inventory finishes. Staged events advance durable
+  generations and invalidate sampled handoff evidence before atomic align/activate.
+  Missing/failing Web Crypto durably fences mutation and one-shot wakes without losing
+  dirty work. Configured designated writers bootstrap and mirror saved events, while
   unconfigured, disabled and non-writer sessions remain passive. Text-only status,
   bounded check/retry/pause/resume and explicit content-free handoff controls preserve
-  the two M2 inspection commands. Focused harmful-interleaving, lifecycle, registry,
+  the two M2 inspection commands. Focused matrix/interleaving, lifecycle, registry,
   event, timer, settings, integration and artifact tests pass with no local mutation,
   deployment, personal-vault installation, capability fallback or M4 behavior.
 

@@ -12,8 +12,10 @@ import {
   MIRROR_MUTATION_PHASE,
   MIRROR_PATH_BLOCK_REASON,
   type MirrorDeviceState,
+  type MirrorPathState,
   MirrorStateOwner,
   type MirrorStateStore,
+  type NotePath,
   normalizeNotePath,
 } from "@obsidian-ai-bridge/core";
 import type { MirrorPreferences } from "@obsidian-plugin/configuration/mirror-preferences";
@@ -144,9 +146,11 @@ describe("MirrorRuntimeOwner composition", () => {
     await runtime.onLayoutReady("other-session");
     expect(runtime.nextWakeAtMilliseconds()).toBeNull();
     await expect(runtime.checkNow()).resolves.toEqual({ kind: "not-ready" });
-    await expect(runtime.activate()).resolves.toEqual({ kind: "not-ready" });
+    await expect(runtime.activate(true)).resolves.toEqual({
+      kind: "not-ready",
+    });
     await expect(runtime.resume()).resolves.toEqual({ kind: "not-ready" });
-    await expect(runtime.importHandoff("invalid")).resolves.toEqual({
+    await expect(runtime.importHandoff("invalid", true)).resolves.toEqual({
       kind: "not-ready",
     });
     await expect(runtime.prepareHandoff()).resolves.toEqual({
@@ -267,7 +271,9 @@ describe("MirrorRuntimeOwner composition", () => {
     activated.attach({ id: "active", onChanged: vi.fn() });
     await activated.applyConfiguration({ kind: "valid", preferences });
     await activated.onLayoutReady("active");
-    await expect(activated.activate()).resolves.toEqual({ kind: "completed" });
+    await expect(activated.activate(true)).resolves.toEqual({
+      kind: "completed",
+    });
     expect(activated.stateOwner.snapshot().state.lifecycle.kind).toBe(
       MIRROR_DEVICE_LIFECYCLE_KIND.active,
     );
@@ -278,7 +284,29 @@ describe("MirrorRuntimeOwner composition", () => {
     mismatched.attach({ id: "mismatch", onChanged: vi.fn() });
     await mismatched.applyConfiguration({ kind: "valid", preferences });
     await mismatched.onLayoutReady("mismatch");
-    await expect(mismatched.activate()).resolves.toEqual({ kind: "not-ready" });
+    await expect(mismatched.activate(true)).resolves.toEqual({
+      kind: "not-ready",
+    });
+  });
+
+  it("publishes sanitized association/designation status and refuses mismatch", async () => {
+    const runtime = owner(
+      vi.fn<RemoteFetch>(async () => description(OTHER_DEVICE_ID)),
+    );
+    runtime.attach({ id: "session", onChanged: vi.fn() });
+    await runtime.applyConfiguration({ kind: "valid", preferences });
+    await runtime.onLayoutReady("session");
+    await expect(runtime.verifyServerIdentity()).resolves.toEqual({
+      kind: "completed",
+    });
+    expect(runtime.status().serverIdentity).toEqual({
+      kind: "mismatch",
+      associationId: ASSOCIATION_ID,
+      designatedWriterId: OTHER_DEVICE_ID,
+    });
+    await expect(runtime.activate(true)).resolves.toEqual({
+      kind: "not-ready",
+    });
   });
 
   it("rejects an endpoint change that cannot resume the paused association", async () => {
@@ -335,7 +363,7 @@ describe("MirrorRuntimeOwner composition", () => {
     disabled.attach({ id: "session", onChanged: vi.fn() });
     await disabled.applyConfiguration({ kind: "valid", preferences });
     await disabled.onLayoutReady("session");
-    await expect(disabled.activate()).resolves.toEqual({ kind: "failed" });
+    await expect(disabled.activate(true)).resolves.toEqual({ kind: "failed" });
 
     const active = owner(fetch, true);
     active.attach({ id: "active", onChanged: vi.fn() });
@@ -397,8 +425,45 @@ describe("MirrorRuntimeOwner composition", () => {
     await importing.applyConfiguration({ kind: "valid", preferences });
     await importing.onLayoutReady("import");
     await expect(
-      importing.importHandoff(encodeHandoffRecord(validRecord)),
+      importing.importHandoff(encodeHandoffRecord(validRecord), true),
     ).resolves.toEqual({ kind: "failed" });
+  });
+
+  it("records unavailable authenticated server identity without exposing remote failure", async () => {
+    const runtime = owner(
+      vi.fn<RemoteFetch>(async () =>
+        json({ code: "INTERNAL", message: "PRIVATE RAW FAILURE" }, 503),
+      ),
+    );
+    runtime.attach({ id: "session", onChanged: vi.fn() });
+    await runtime.applyConfiguration({ kind: "valid", preferences });
+    await runtime.onLayoutReady("session");
+    await expect(runtime.verifyServerIdentity()).resolves.toEqual({
+      kind: "failed",
+    });
+    expect(runtime.status().serverIdentity).toEqual({ kind: "unavailable" });
+    expect(JSON.stringify(runtime.status())).not.toContain(
+      "PRIVATE RAW FAILURE",
+    );
+  });
+
+  it("leaves a handoff inactive when authenticated identity is unavailable", async () => {
+    const record = await liveHandoffRecord(requiredNotePath("live.md"));
+    const runtime = owner(
+      vi.fn<RemoteFetch>(async () =>
+        json({ code: "INTERNAL", message: "PRIVATE RAW FAILURE" }, 503),
+      ),
+    );
+    runtime.attach({ id: "session", onChanged: vi.fn() });
+    await runtime.applyConfiguration({ kind: "valid", preferences });
+    await runtime.onLayoutReady("session");
+    await expect(
+      runtime.importHandoff(encodeHandoffRecord(record), true),
+    ).resolves.toEqual({ kind: "not-ready" });
+    expect(runtime.status().serverIdentity).toEqual({ kind: "unavailable" });
+    expect(runtime.stateOwner.snapshot().state.lifecycle.kind).toBe(
+      MIRROR_DEVICE_LIFECYCLE_KIND.disabled,
+    );
   });
 
   it("rejects malformed handoff input after readiness is established", async () => {
@@ -411,7 +476,7 @@ describe("MirrorRuntimeOwner composition", () => {
     runtime.attach({ id: "session", onChanged: vi.fn() });
     await runtime.applyConfiguration({ kind: "valid", preferences });
     await runtime.onLayoutReady("session");
-    await expect(runtime.importHandoff("not-json")).resolves.toEqual({
+    await expect(runtime.importHandoff("not-json", true)).resolves.toEqual({
       kind: "failed",
     });
   });
@@ -493,11 +558,37 @@ describe("MirrorRuntimeOwner composition", () => {
     await runtime.applyConfiguration({ kind: "valid", preferences });
     await runtime.onLayoutReady("session");
     await expect(
-      runtime.importHandoff(encodeHandoffRecord(record)),
+      runtime.importHandoff(encodeHandoffRecord(record), true),
     ).resolves.toEqual({ kind: "completed" });
     expect(fetch).toHaveBeenCalledTimes(5);
     expect(JSON.stringify(runtime.stateOwner.snapshot())).not.toContain(
       "saved",
+    );
+  });
+
+  it("fences a runtime digest failure during staged handoff evidence", async () => {
+    const path = requiredNotePath("live.md");
+    const record = await liveHandoffRecord(path);
+    const runtime = owner(
+      vi.fn<RemoteFetch>(async (input) =>
+        input.pathname.endsWith("/mirror")
+          ? description()
+          : liveStateResponse(path),
+      ),
+      false,
+      new FakeVaultHost([fakeFile(path, "saved")]),
+      undefined,
+      async () => Promise.reject(new Error("PRIVATE PROVIDER FAILURE")),
+    );
+    runtime.attach({ id: "session", onChanged: vi.fn() });
+    await runtime.applyConfiguration({ kind: "valid", preferences });
+    await runtime.onLayoutReady("session");
+    await expect(
+      runtime.importHandoff(encodeHandoffRecord(record), true),
+    ).resolves.toEqual({ kind: "failed" });
+    expect(runtime.status().globalBlockReason).toBe("runtime-unavailable");
+    expect(JSON.stringify(runtime.status())).not.toContain(
+      "PRIVATE PROVIDER FAILURE",
     );
   });
 
@@ -534,7 +625,7 @@ describe("MirrorRuntimeOwner composition", () => {
     runtime.attach({ id: "session", onChanged: vi.fn() });
     await runtime.applyConfiguration({ kind: "valid", preferences });
     await runtime.onLayoutReady("session");
-    const importing = runtime.importHandoff(encodeHandoffRecord(record));
+    const importing = runtime.importHandoff(encodeHandoffRecord(record), true);
     await vi.waitFor(() => expect(vault.read).toHaveBeenCalledOnce());
 
     await runtime.applyConfiguration({
@@ -585,8 +676,9 @@ describe("MirrorRuntimeOwner composition", () => {
     await runtime.applyConfiguration({ kind: "valid", preferences });
     await runtime.onLayoutReady("session");
     await expect(
-      runtime.importHandoff(encodeHandoffRecord(record)),
+      runtime.importHandoff(encodeHandoffRecord(record), true),
     ).resolves.toEqual({ kind: "not-ready" });
+    expect(runtime.status().globalBlockReason).toBe("handoff-mismatch");
   });
 
   it("does not activate against a stale connection after secret removal while describe is pending", async () => {
@@ -596,7 +688,7 @@ describe("MirrorRuntimeOwner composition", () => {
     runtime.attach({ id: "a", onChanged: vi.fn() });
     await runtime.applyConfiguration({ kind: "valid", preferences });
     await runtime.onLayoutReady("a");
-    const activation = runtime.activate();
+    const activation = runtime.activate(true);
     await vi.waitFor(() => expect(fetch).toHaveBeenCalledOnce());
     const signal = fetch.mock.calls[0]?.[1].signal;
 
@@ -624,7 +716,7 @@ describe("MirrorRuntimeOwner composition", () => {
     runtime.attach({ id: "session", onChanged: vi.fn() });
     await runtime.applyConfiguration({ kind: "valid", preferences });
     await runtime.onLayoutReady("session");
-    const activation = runtime.activate();
+    const activation = runtime.activate(true);
     await vi.waitFor(() => expect(save).toHaveBeenCalledOnce());
 
     await runtime.applyConfiguration({
@@ -677,7 +769,7 @@ describe("MirrorRuntimeOwner composition", () => {
     await runtime.applyConfiguration({ kind: "valid", preferences });
     await runtime.onLayoutReady("session");
     const blocker = runtime.stateOwner.transition((current) => current);
-    const activation = runtime.activate();
+    const activation = runtime.activate(true);
     await vi.waitFor(() => expect(save).toHaveBeenCalledOnce());
     await runtime.applyConfiguration({
       kind: "valid",
@@ -716,7 +808,7 @@ describe("MirrorRuntimeOwner composition", () => {
       new WebCryptoHandoffIntegrity(),
     );
     const blocker = runtime.stateOwner.transition((current) => current);
-    const importing = runtime.importHandoff(encodeHandoffRecord(record));
+    const importing = runtime.importHandoff(encodeHandoffRecord(record), true);
     await vi.waitFor(() => expect(save).toHaveBeenCalledOnce());
     await runtime.applyConfiguration({
       kind: "valid",
@@ -784,7 +876,7 @@ describe("MirrorRuntimeOwner composition", () => {
     runtime.attach({ id: "session", onChanged: vi.fn() });
     await runtime.applyConfiguration({ kind: "valid", preferences });
     await runtime.onLayoutReady("session");
-    const importing = runtime.importHandoff(encodeHandoffRecord(record));
+    const importing = runtime.importHandoff(encodeHandoffRecord(record), true);
     await vi.waitFor(() => expect(vault.read).toHaveBeenCalledOnce());
     const blocker = runtime.stateOwner.transition((current) => current);
     pendingRead.resolve("saved");
@@ -805,7 +897,6 @@ describe("MirrorRuntimeOwner composition", () => {
     }>();
     const save = vi
       .fn<MirrorStateStore["save"]>()
-      .mockResolvedValueOnce({ kind: "saved" })
       .mockResolvedValueOnce({ kind: "saved" })
       .mockImplementationOnce(() => pendingActivation.promise)
       .mockResolvedValue({ kind: "saved" });
@@ -830,8 +921,8 @@ describe("MirrorRuntimeOwner composition", () => {
       },
       new WebCryptoHandoffIntegrity(),
     );
-    const importing = runtime.importHandoff(encodeHandoffRecord(record));
-    await vi.waitFor(() => expect(save).toHaveBeenCalledTimes(3));
+    const importing = runtime.importHandoff(encodeHandoffRecord(record), true);
+    await vi.waitFor(() => expect(save).toHaveBeenCalledTimes(2));
     await runtime.applyConfiguration({
       kind: "valid",
       preferences: { ...preferences, secretReference: "replacement-token" },
@@ -944,7 +1035,7 @@ describe("MirrorRuntimeOwner composition", () => {
       new WebCryptoHandoffIntegrity(),
     );
     await expect(
-      runtime.importHandoff(encodeHandoffRecord(record)),
+      runtime.importHandoff(encodeHandoffRecord(record), true),
     ).resolves.toEqual({ kind: "not-ready" });
   });
 
@@ -967,7 +1058,7 @@ describe("MirrorRuntimeOwner composition", () => {
       new WebCryptoHandoffIntegrity(),
     );
     await expect(
-      runtime.importHandoff(encodeHandoffRecord(record)),
+      runtime.importHandoff(encodeHandoffRecord(record), true),
     ).resolves.toEqual({ kind: "completed" });
     expect(runtime.stateOwner.snapshot().state.lifecycle.kind).toBe(
       MIRROR_DEVICE_LIFECYCLE_KIND.active,
@@ -989,6 +1080,324 @@ describe("MirrorRuntimeOwner composition", () => {
     await runtime.observeFolderRename("folder", null);
     expect(runtime.stateOwner.snapshot().state.paths).toEqual([]);
     expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      "create or modify",
+      (
+        runtime: MirrorRuntimeOwner,
+        path: ReturnType<typeof requiredNotePath>,
+      ) => runtime.observePresent(path),
+    ],
+    [
+      "delete",
+      (
+        runtime: MirrorRuntimeOwner,
+        path: ReturnType<typeof requiredNotePath>,
+      ) => runtime.observeDelete(path),
+    ],
+    [
+      "file rename",
+      (
+        runtime: MirrorRuntimeOwner,
+        path: ReturnType<typeof requiredNotePath>,
+      ) => runtime.observeRename(path, requiredNotePath("renamed.md")),
+    ],
+    [
+      "folder rename",
+      (runtime: MirrorRuntimeOwner) =>
+        runtime.observeFolderRename("folder", "renamed-folder"),
+    ],
+  ])(
+    "invalidates sampled staged handoff evidence for a %s event while the local read is pending",
+    async (_name, observe) => {
+      const path = requiredNotePath("folder/live.md");
+      const record = await liveHandoffRecord(path);
+      const pendingRead = Promise.withResolvers<string>();
+      const vault = new FakeVaultHost([fakeFile(path, "saved")]);
+      vault.read.mockReturnValue(pendingRead.promise);
+      const fetch = vi.fn<RemoteFetch>(async (input) =>
+        input.pathname.endsWith("/mirror")
+          ? description()
+          : liveStateResponse(path),
+      );
+      const runtime = owner(
+        fetch,
+        false,
+        vault,
+        undefined,
+        async () => CONTENT_HASH,
+      );
+      runtime.attach({ id: "session", onChanged: vi.fn() });
+      await runtime.applyConfiguration({ kind: "valid", preferences });
+      await runtime.onLayoutReady("session");
+      const importing = runtime.importHandoff(
+        encodeHandoffRecord(record),
+        true,
+      );
+      await vi.waitFor(() => expect(vault.read).toHaveBeenCalledOnce());
+
+      await observe(runtime, path);
+      pendingRead.resolve("saved");
+
+      await expect(importing).resolves.toEqual({ kind: "not-ready" });
+      const staged = runtime.stateOwner.snapshot().state.stagedHandoff;
+      expect(staged?.entries[0]).toMatchObject({
+        localAlignment: "pending",
+      });
+      expect(staged?.entries[0]?.observationGeneration).toBeGreaterThan(1);
+    },
+  );
+
+  it("invalidates staged evidence when a relevant event arrives during remote inspection", async () => {
+    const path = requiredNotePath("live.md");
+    const record = await liveHandoffRecord(path);
+    const pendingRemote = Promise.withResolvers<Response>();
+    const fetch = vi
+      .fn<RemoteFetch>()
+      .mockResolvedValueOnce(description())
+      .mockImplementationOnce(() => pendingRemote.promise);
+    const runtime = owner(
+      fetch,
+      false,
+      new FakeVaultHost([fakeFile(path, "saved")]),
+      undefined,
+      async () => CONTENT_HASH,
+    );
+    runtime.attach({ id: "session", onChanged: vi.fn() });
+    await runtime.applyConfiguration({ kind: "valid", preferences });
+    await runtime.onLayoutReady("session");
+    const importing = runtime.importHandoff(encodeHandoffRecord(record), true);
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
+
+    await runtime.observePresent(path);
+    pendingRemote.resolve(liveStateResponse(path));
+
+    await expect(importing).resolves.toEqual({ kind: "not-ready" });
+    expect(
+      runtime.stateOwner.snapshot().state.stagedHandoff?.entries[0]
+        ?.observationGeneration,
+    ).toBeGreaterThan(1);
+  });
+
+  it("does not invalidate unrelated staged evidence", async () => {
+    const path = requiredNotePath("live.md");
+    const record = await liveHandoffRecord(path);
+    const pendingRead = Promise.withResolvers<string>();
+    const vault = new FakeVaultHost([fakeFile(path, "saved")]);
+    vault.read.mockReturnValue(pendingRead.promise);
+    const fetch = vi.fn<RemoteFetch>(async (input) => {
+      if (input.pathname.endsWith("/mirror")) return description();
+      if (input.pathname.includes("/notes/")) return liveStateResponse(path);
+      return json({ notes: [], nextCursor: null });
+    });
+    const runtime = owner(
+      fetch,
+      false,
+      vault,
+      undefined,
+      async () => CONTENT_HASH,
+    );
+    runtime.attach({ id: "session", onChanged: vi.fn() });
+    await runtime.applyConfiguration({ kind: "valid", preferences });
+    await runtime.onLayoutReady("session");
+    const importing = runtime.importHandoff(encodeHandoffRecord(record), true);
+    await vi.waitFor(() => expect(vault.read).toHaveBeenCalledOnce());
+
+    await runtime.observePresent(requiredNotePath("unrelated.md"));
+    pendingRead.resolve("saved");
+
+    await expect(importing).resolves.toEqual({ kind: "completed" });
+    expect(runtime.stateOwner.snapshot().state.lifecycle.kind).toBe(
+      MIRROR_DEVICE_LIFECYCLE_KIND.active,
+    );
+  });
+
+  it("serializes events arriving during the atomic activation save after activation", async () => {
+    const path = requiredNotePath("live.md");
+    const record = await liveHandoffRecord(path);
+    const pendingActivation = Promise.withResolvers<{
+      readonly kind: "saved";
+    }>();
+    const save = vi
+      .fn<MirrorStateStore["save"]>()
+      .mockResolvedValueOnce({ kind: "saved" })
+      .mockImplementationOnce(() => pendingActivation.promise)
+      .mockResolvedValue({ kind: "saved" });
+    const fetch = vi.fn<RemoteFetch>(async (input) => {
+      if (input.pathname.endsWith("/mirror")) return description();
+      if (input.pathname.includes("/notes/")) return liveStateResponse(path);
+      return json({ notes: [], nextCursor: null });
+    });
+    const runtime = owner(
+      fetch,
+      false,
+      new FakeVaultHost([fakeFile(path, "saved")]),
+      { save },
+      async () => CONTENT_HASH,
+    );
+    runtime.attach({ id: "session", onChanged: vi.fn() });
+    await runtime.applyConfiguration({ kind: "valid", preferences });
+    await runtime.onLayoutReady("session");
+    const importing = runtime.importHandoff(encodeHandoffRecord(record), true);
+    await vi.waitFor(() => expect(save).toHaveBeenCalledTimes(2));
+    const observed = runtime.observePresent(path);
+    await Promise.resolve();
+    expect(save).toHaveBeenCalledTimes(2);
+
+    pendingActivation.resolve({ kind: "saved" });
+    await expect(observed).resolves.toBeUndefined();
+    await expect(importing).resolves.toEqual({ kind: "completed" });
+    expect(runtime.stateOwner.snapshot().state.paths[0]?.desired.kind).toBe(
+      MIRROR_DESIRED_STATE_KIND.dirtyPresent,
+    );
+  });
+
+  it("performs one fresh positive-only scan after every detached listener gap", async () => {
+    const source = requiredNotePath("source.md");
+    const destination = requiredNotePath("destination.md");
+    const initial: MirrorDeviceState = {
+      ...state(true),
+      paths: [associatedLivePath(source)],
+    };
+    const vault = new FakeVaultHost([fakeFile(source, "before")]);
+    const fetch = vi.fn<RemoteFetch>(async (input) =>
+      input.pathname.endsWith("/mirror")
+        ? description()
+        : json({ notes: [], nextCursor: null }),
+    );
+    const runtime = owner(
+      fetch,
+      initial,
+      vault,
+      undefined,
+      async () => CONTENT_HASH,
+    );
+    runtime.attach({ id: "first", onChanged: vi.fn() });
+    await runtime.applyConfiguration({ kind: "valid", preferences });
+    await runtime.onLayoutReady("first");
+    const firstGeneration =
+      runtime.stateOwner.snapshot().state.paths[0]?.desired;
+    expect(firstGeneration?.kind).toBe(MIRROR_DESIRED_STATE_KIND.dirtyPresent);
+
+    runtime.detach("first");
+    const sourceFile = vault.files.get(source);
+    if (sourceFile === undefined) throw new Error("Missing source fixture.");
+    sourceFile.content = "modified during gap";
+    sourceFile.stat = { size: sourceFile.content.length, mtime: 2000 };
+    runtime.attach({ id: "second", onChanged: vi.fn() });
+    await runtime.onLayoutReady("second");
+    const modifiedGeneration =
+      runtime.stateOwner.snapshot().state.paths[0]?.desired;
+    expect(modifiedGeneration).toMatchObject({ kind: "dirty-present" });
+    if (
+      firstGeneration?.kind !== MIRROR_DESIRED_STATE_KIND.dirtyPresent ||
+      modifiedGeneration?.kind !== MIRROR_DESIRED_STATE_KIND.dirtyPresent
+    ) {
+      throw new Error("Expected positive observations.");
+    }
+    expect(modifiedGeneration.observationGeneration).toBeGreaterThan(
+      firstGeneration.observationGeneration,
+    );
+
+    runtime.detach("second");
+    vault.files.delete(source);
+    vault.files.set(destination, fakeFile(destination, "renamed during gap"));
+    runtime.attach({ id: "third", onChanged: vi.fn() });
+    await runtime.onLayoutReady("third");
+    const paths = runtime.stateOwner.snapshot().state.paths;
+    expect(paths.find((entry) => entry.path === source)?.desired.kind).not.toBe(
+      MIRROR_DESIRED_STATE_KIND.runtimeDelete,
+    );
+    expect(
+      paths.find((entry) => entry.path === destination)?.desired.kind,
+    ).toBe(MIRROR_DESIRED_STATE_KIND.dirtyPresent);
+    expect(vault.getFiles).toHaveBeenCalledTimes(3);
+  });
+
+  it("fences an unexpected bootstrap capability failure", async () => {
+    const adapter = new ObsidianLocalVault(new FakeVaultHost());
+    const runtime = new MirrorRuntimeOwner({
+      stateOwner: new MirrorStateOwner(state(true), {
+        save: async () => ({ kind: "saved" }),
+      }),
+      local: {
+        list: async () => Promise.reject(new Error("PRIVATE HOST FAILURE")),
+        read: (path) => adapter.read(path),
+      },
+      secretStorage: { getSecret: () => "bearer" },
+      runtime: {
+        nowMilliseconds: () => 0,
+        hashContent: async () => CONTENT_HASH,
+        createOperationId: () => OPERATION_ID,
+      },
+      fetch: vi.fn<RemoteFetch>(async (input) =>
+        input.pathname.endsWith("/mirror")
+          ? description()
+          : json({ notes: [], nextCursor: null }),
+      ),
+      cryptography: globalThis.crypto,
+    });
+    runtime.attach({ id: "session", onChanged: vi.fn() });
+    await runtime.applyConfiguration({ kind: "valid", preferences });
+    await runtime.onLayoutReady("session");
+    expect(runtime.status().globalBlockReason).toBe("runtime-unavailable");
+    expect(JSON.stringify(runtime.status())).not.toContain(
+      "PRIVATE HOST FAILURE",
+    );
+  });
+
+  it("durably fences a digest failure without losing dirty work or retaining a hot wake", async () => {
+    const path = requiredNotePath("dirty.md");
+    const hashContent = vi
+      .fn<(content: string) => Promise<typeof CONTENT_HASH>>()
+      .mockRejectedValueOnce(new Error("provider failed"))
+      .mockResolvedValue(CONTENT_HASH);
+    let now = 0;
+    let runtimeAvailable = false;
+    const runtime = new MirrorRuntimeOwner({
+      stateOwner: new MirrorStateOwner(state(true), {
+        save: async () => ({ kind: "saved" }),
+      }),
+      local: new ObsidianLocalVault(
+        new FakeVaultHost([fakeFile(path, "saved")]),
+      ),
+      secretStorage: { getSecret: () => "bearer" },
+      runtime: {
+        nowMilliseconds: () => now,
+        hashContent,
+        createOperationId: () => OPERATION_ID,
+      },
+      fetch: vi.fn<RemoteFetch>(async (input) =>
+        input.pathname.endsWith("/mirror")
+          ? description()
+          : json({ notes: [], nextCursor: null }),
+      ),
+      cryptography: globalThis.crypto,
+      probeRuntime: async () => runtimeAvailable,
+    });
+    runtime.attach({ id: "session", onChanged: vi.fn() });
+    await runtime.applyConfiguration({ kind: "valid", preferences });
+    await runtime.onLayoutReady("session");
+    expect(runtime.nextWakeAtMilliseconds()).not.toBeNull();
+    now = 10_000;
+
+    const synchronization = await runtime.synchronizeReady();
+    expect(hashContent).toHaveBeenCalledOnce();
+    expect(synchronization).toEqual({ kind: "fenced" });
+    expect(runtime.status().globalBlockReason).toBe("runtime-unavailable");
+    expect(runtime.nextWakeAtMilliseconds()).toBeNull();
+    expect(runtime.stateOwner.snapshot().state.paths[0]?.desired.kind).toBe(
+      MIRROR_DESIRED_STATE_KIND.dirtyPresent,
+    );
+    await expect(runtime.checkNow()).resolves.toEqual({ kind: "failed" });
+    expect(runtime.status().globalBlockReason).toBe("runtime-unavailable");
+
+    runtimeAvailable = true;
+    await expect(runtime.checkNow()).resolves.toEqual({ kind: "completed" });
+    expect(runtime.status().globalBlockReason).toBeNull();
+    expect(runtime.nextWakeAtMilliseconds()).not.toBeNull();
   });
 
   it("settles then restarts one inherited bootstrap after replacement attachment", async () => {
@@ -1018,6 +1427,60 @@ describe("MirrorRuntimeOwner composition", () => {
     expect(runtime.status().bootstrap).toBe("observing");
   });
 });
+
+async function liveHandoffRecord(path: NotePath) {
+  return createHandoffRecord(
+    {
+      origin: preferences.origin ?? "",
+      associationId: ASSOCIATION_ID,
+      entries: [
+        {
+          path,
+          acknowledgement: {
+            kind: MIRROR_ACKNOWLEDGEMENT_KIND.live,
+            revision: REVISION_ID,
+            contentSha256: CONTENT_HASH,
+          },
+        },
+      ],
+    },
+    new WebCryptoHandoffIntegrity(),
+  );
+}
+
+function liveStateResponse(path: NotePath): Response {
+  return stateJson({
+    kind: "live",
+    path,
+    revision: REVISION_ID,
+    contentSha256: CONTENT_HASH,
+    receipt: {
+      action: "create",
+      associationId: ASSOCIATION_ID,
+      operationId: OPERATION_ID,
+      precondition: { kind: "absent" },
+      contentSha256: CONTENT_HASH,
+    },
+  });
+}
+
+function associatedLivePath(path: NotePath): MirrorPathState {
+  return {
+    path,
+    acknowledgement: {
+      kind: MIRROR_ACKNOWLEDGEMENT_KIND.live,
+      revision: REVISION_ID,
+      contentSha256: CONTENT_HASH,
+    },
+    unresolvedMutation: null,
+    desired: { kind: MIRROR_DESIRED_STATE_KIND.none },
+    blockedReason: null,
+  };
+}
+
+function requiredNotePath(path: string): NotePath {
+  return required(normalizeNotePath(path));
+}
 
 function json(value: object, status = 200): Response {
   return new Response(JSON.stringify(value), {

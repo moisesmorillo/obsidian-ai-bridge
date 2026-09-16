@@ -89,6 +89,12 @@ export interface HandoffActivationRequest extends WriterDesignationEvidence {
   readonly explicitWholeMirrorConsent: boolean;
 }
 
+/** Staging evidence plus the first real generation in a monotonic observation sequence. */
+export interface HandoffStageRequest
+  extends Pick<WriterDesignationEvidence, "associationId" | "origin"> {
+  readonly initialObservationGeneration: number;
+}
+
 /** @returns Disabled state for a newly generated device identity; no activation is inferred. */
 export function createDisabledMirrorState(
   deviceId: MirrorWriterId,
@@ -287,7 +293,7 @@ export function prepareHandoffExport(state: MirrorDeviceState):
 export function stageHandoffImport(
   state: MirrorDeviceState,
   record: HandoffRecord,
-  expected: Pick<WriterDesignationEvidence, "associationId" | "origin">,
+  expected: HandoffStageRequest,
 ):
   | { readonly kind: "staged"; readonly state: MirrorDeviceState }
   | {
@@ -295,6 +301,8 @@ export function stageHandoffImport(
       readonly reason: HandoffImportFailure;
     } {
   if (
+    !Number.isSafeInteger(expected.initialObservationGeneration) ||
+    expected.initialObservationGeneration <= 0 ||
     record.entries.length > MAX_MIRROR_TRACKED_PATHS ||
     new Set(record.entries.map((entry) => entry.path)).size !==
       record.entries.length ||
@@ -340,7 +348,7 @@ export function stageHandoffImport(
           ...entry,
           localAlignment: HANDOFF_ALIGNMENT_KIND.pending,
           remoteVerification: HANDOFF_ALIGNMENT_KIND.pending,
-          observationGeneration: 0,
+          observationGeneration: expected.initialObservationGeneration,
         })),
       },
     },
@@ -481,6 +489,32 @@ export function invalidateHandoffAlignments(
 }
 
 /**
+ * Atomically aligns sampled handoff evidence and activates only that exact generation.
+ *
+ * @param state - Current staged state at the serialized transition boundary.
+ * @param snapshot - Complete evidence carrying the sampled observation generations.
+ * @param request - Current designation and explicit consent evidence.
+ * @returns Activated state, or no transition when evidence became stale or invalid.
+ */
+export function alignAndActivateStagedHandoff(
+  state: MirrorDeviceState,
+  snapshot: HandoffAlignmentSnapshot,
+  request: HandoffActivationRequest,
+):
+  | {
+      readonly kind: "activated" | "not-activated";
+      readonly state: MirrorDeviceState;
+    }
+  | undefined {
+  const aligned = alignStagedHandoff(state, snapshot);
+  if (aligned === undefined) return undefined;
+  const activated = activateStagedHandoff(aligned, request);
+  return activated.kind === "activated"
+    ? { kind: "activated", state: activated.state }
+    : { kind: "not-activated", state: aligned };
+}
+
+/**
  * Activates a staged baseline only after every local observation and future remote
  * verification aligned, while current designation/secret evidence still matches.
  *
@@ -539,6 +573,43 @@ export function activateStagedHandoff(
       stagedHandoff: null,
     },
   };
+}
+
+/**
+ * Fences all mutation admission after a local runtime capability fails.
+ *
+ * Durable path intent and acknowledgement state are retained for explicit recovery.
+ *
+ * @param state - Current device-local state.
+ * @returns Runtime-fenced state, or the unchanged equivalent fence.
+ */
+export function fenceMirrorRuntime(
+  state: MirrorDeviceState,
+): MirrorDeviceState {
+  return state.globalBlockReason ===
+    MIRROR_GLOBAL_BLOCK_REASON.runtimeUnavailable
+    ? state
+    : {
+        ...state,
+        globalBlockReason: MIRROR_GLOBAL_BLOCK_REASON.runtimeUnavailable,
+      };
+}
+
+/**
+ * Clears only the local runtime-capability fence after an explicit successful probe.
+ *
+ * @param state - Current device-local state.
+ * @returns Recovered state, or no transition when another policy owns the block.
+ */
+export function recoverMirrorRuntime(
+  state: MirrorDeviceState,
+): MirrorDeviceState | undefined {
+  if (
+    state.globalBlockReason !== MIRROR_GLOBAL_BLOCK_REASON.runtimeUnavailable
+  ) {
+    return undefined;
+  }
+  return { ...state, globalBlockReason: null };
 }
 
 /**

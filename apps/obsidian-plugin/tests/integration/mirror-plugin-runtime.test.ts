@@ -179,6 +179,225 @@ describe("plugin automatic mirror composition", () => {
     plugin.unload();
   });
 
+  it("rescans and synchronizes a create missed during a detached listener gap", async () => {
+    const state: MirrorDeviceState = {
+      deviceId: DEVICE_ID,
+      lifecycle: {
+        kind: MIRROR_DEVICE_LIFECYCLE_KIND.active,
+        associationId: ASSOCIATION_ID,
+        origin: "https://bridge.example",
+      },
+      globalBlockReason: null,
+      paths: [],
+      stagedHandoff: null,
+    };
+    host.localStorage.set(
+      MIRROR_DEVICE_STATE_STORAGE_KEY,
+      encodeMirrorDeviceState(state),
+    );
+    host.loadData.mockResolvedValue(
+      encodeMirrorPreferences({
+        origin: "https://bridge.example",
+        loopbackHttpOrigin: null,
+        secretReference: "bridge-token",
+      }),
+    );
+    host.secrets.set("bridge-token", "PRIVATE-BEARER");
+    let now = 0;
+    const timers = new Map<number, () => void>();
+    let nextTimer = 1;
+    vi.stubGlobal("performance", { now: () => now });
+    vi.stubGlobal("window", {
+      setTimeout: (callback: () => void) => {
+        const handle = nextTimer++;
+        timers.set(handle, callback);
+        return handle;
+      },
+      clearTimeout: (handle: number) => timers.delete(handle),
+    });
+    const contentHash = await sha256(CONTENT);
+    const fetch = vi.fn(
+      async (url: URL, init: RequestInit): Promise<Response> => {
+        if (url.pathname.endsWith("/mirror")) {
+          return json({
+            protocol: "obsidian-ai-bridge-mirror-v2",
+            associationId: ASSOCIATION_ID,
+            writerId: DEVICE_ID,
+            maxNoteSizeBytes: 1024 * 1024,
+            maxPageSize: 50,
+            recoveryRetentionSeconds: 2_592_000,
+          });
+        }
+        if (url.pathname === "/api/v2/notes") {
+          return json({ notes: [], nextCursor: null });
+        }
+        if (url.pathname.endsWith("/state")) {
+          return json({ kind: "absent", path: PATH });
+        }
+        const operationId = new Headers(init.headers).get(
+          "Bridge-Operation-Id",
+        );
+        if (init.method === "PUT" && operationId !== null) {
+          return json(
+            {
+              path: PATH,
+              revision: REVISION,
+              receipt: {
+                action: "create",
+                associationId: ASSOCIATION_ID,
+                operationId,
+                precondition: { kind: "absent" },
+                contentSha256: contentHash,
+              },
+            },
+            201,
+            { ETag: formatApplicationEtag(REVISION) },
+          );
+        }
+        return json({ code: "not_found", message: "Not found" }, 404);
+      },
+    );
+    vi.stubGlobal("fetch", fetch);
+
+    const app = new App();
+    const first = new AiBridgePlugin(app, manifest);
+    await Promise.resolve(first.load());
+    host.becomeLayoutReady();
+    await vi.waitFor(() => expect(host.vault.getFiles).toHaveBeenCalledOnce());
+    first.unload();
+
+    addFile(PATH, CONTENT);
+    const replacement = new AiBridgePlugin(app, manifest);
+    await Promise.resolve(replacement.load());
+    await vi.waitFor(() =>
+      expect(host.vault.getFiles).toHaveBeenCalledTimes(2),
+    );
+    await vi.waitFor(() => expect(timers.size).toBe(1));
+    now = 10_000;
+    const callback = [...timers.values()][0];
+    timers.clear();
+    callback?.();
+    await vi.waitFor(() =>
+      expect(fetch.mock.calls.some(([, init]) => init.method === "PUT")).toBe(
+        true,
+      ),
+    );
+    expect(
+      fetch.mock.calls.filter(([, init]) => init.method === "PUT"),
+    ).toHaveLength(1);
+    replacement.unload();
+  });
+
+  it("schedules positive work at admission while reporting inventory remains pending", async () => {
+    const state: MirrorDeviceState = {
+      deviceId: DEVICE_ID,
+      lifecycle: {
+        kind: MIRROR_DEVICE_LIFECYCLE_KIND.active,
+        associationId: ASSOCIATION_ID,
+        origin: "https://bridge.example",
+      },
+      globalBlockReason: null,
+      paths: [],
+      stagedHandoff: null,
+    };
+    host.localStorage.set(
+      MIRROR_DEVICE_STATE_STORAGE_KEY,
+      encodeMirrorDeviceState(state),
+    );
+    host.loadData.mockResolvedValue(
+      encodeMirrorPreferences({
+        origin: "https://bridge.example",
+        loopbackHttpOrigin: null,
+        secretReference: "bridge-token",
+      }),
+    );
+    host.secrets.set("bridge-token", "PRIVATE-BEARER");
+    addFile(PATH, CONTENT);
+
+    let now = 0;
+    const timers = new Map<number, () => void>();
+    let nextTimer = 1;
+    vi.stubGlobal("performance", { now: () => now });
+    vi.stubGlobal("window", {
+      setTimeout: (callback: () => void) => {
+        const handle = nextTimer++;
+        timers.set(handle, callback);
+        return handle;
+      },
+      clearTimeout: (handle: number) => timers.delete(handle),
+    });
+    const inventory = Promise.withResolvers<Response>();
+    let inventorySettled = false;
+    const contentHash = await sha256(CONTENT);
+    const fetch = vi.fn(
+      async (url: URL, init: RequestInit): Promise<Response> => {
+        if (url.pathname.endsWith("/mirror")) {
+          return json({
+            protocol: "obsidian-ai-bridge-mirror-v2",
+            associationId: ASSOCIATION_ID,
+            writerId: DEVICE_ID,
+            maxNoteSizeBytes: 1024 * 1024,
+            maxPageSize: 50,
+            recoveryRetentionSeconds: 2_592_000,
+          });
+        }
+        if (url.pathname === "/api/v2/notes") {
+          return inventory.promise;
+        }
+        if (url.pathname.endsWith("/state")) {
+          return json({ kind: "absent", path: PATH });
+        }
+        const operationId = new Headers(init.headers).get(
+          "Bridge-Operation-Id",
+        );
+        if (init.method === "PUT" && operationId !== null) {
+          return json(
+            {
+              path: PATH,
+              revision: REVISION,
+              receipt: {
+                action: "create",
+                associationId: ASSOCIATION_ID,
+                operationId,
+                precondition: { kind: "absent" },
+                contentSha256: contentHash,
+              },
+            },
+            201,
+            { ETag: formatApplicationEtag(REVISION) },
+          );
+        }
+        return json({ code: "not_found", message: "Not found" }, 404);
+      },
+    );
+    vi.stubGlobal("fetch", fetch);
+
+    const plugin = new AiBridgePlugin(new App(), manifest);
+    await Promise.resolve(plugin.load());
+    host.becomeLayoutReady();
+    await vi.waitFor(() => expect(timers.size).toBe(1));
+    expect(inventorySettled).toBe(false);
+    now = 1_000;
+    const callback = [...timers.values()][0];
+    timers.clear();
+    callback?.();
+
+    await vi.waitFor(() =>
+      expect(fetch.mock.calls.some(([, init]) => init.method === "PUT")).toBe(
+        true,
+      ),
+    );
+    expect(inventorySettled).toBe(false);
+    inventory.resolve(json({ notes: [], nextCursor: null }));
+    inventorySettled = true;
+    await vi.waitFor(() =>
+      expect(
+        host.localStorage.get(MIRROR_DEVICE_STATE_STORAGE_KEY),
+      ).toBeDefined(),
+    );
+    plugin.unload();
+  });
+
   it("exports a quiescent metadata-only handoff through modern settings", async () => {
     const state: MirrorDeviceState = {
       deviceId: DEVICE_ID,

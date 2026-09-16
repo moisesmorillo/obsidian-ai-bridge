@@ -428,7 +428,8 @@ describe("MirrorSynchronizer bootstrap and coalescing", () => {
       Promise.withResolvers<Awaited<ReturnType<RemoteBridge["listNotes"]>>>();
     remote.listNotes.mockReturnValueOnce(inventoryPage.promise);
     const synchronizer = createInactiveSynchronizer();
-    const bootstrap = synchronizer.bootstrap();
+    const onPositiveAdmission = vi.fn();
+    const bootstrap = synchronizer.bootstrap({ onPositiveAdmission });
     let bootstrapSettled = false;
     void bootstrap.then(() => {
       bootstrapSettled = true;
@@ -437,6 +438,7 @@ describe("MirrorSynchronizer bootstrap and coalescing", () => {
     await vi.waitFor(() =>
       expect(synchronizer.currentPhase()).toBe("observing"),
     );
+    expect(onPositiveAdmission).toHaveBeenCalledOnce();
     runtime.now = MIRROR_COALESCING_QUIET_PERIOD_MILLISECONDS;
     const positive = synchronizer.synchronizeReady();
     let positiveSettled = false;

@@ -26,17 +26,38 @@ describe("createMirrorRuntimeOwner", () => {
     );
   });
 
-  it("rejects a non-v4 host identity", async () => {
-    const app = new App();
-    vi.stubGlobal(
-      "crypto",
-      new Proxy(globalThis.crypto, {
+  it.each(["subtle", "digest"])(
+    "fails closed without host crypto.%s",
+    async (missing) => {
+      const app = new App();
+      const subtle =
+        missing === "digest"
+          ? new Proxy(globalThis.crypto.subtle, {
+              get(target, property, receiver) {
+                if (property === "digest") return undefined;
+                return Reflect.get(target, property, receiver);
+              },
+            })
+          : undefined;
+      const cryptography = new Proxy(globalThis.crypto, {
         get(target, property, receiver) {
-          if (property === "randomUUID") return () => "invalid";
+          if (property === "subtle") return subtle;
           return Reflect.get(target, property, receiver);
         },
-      }),
-    );
+      });
+      vi.stubGlobal("crypto", cryptography);
+      await expect(createMirrorRuntimeOwner(app, app.vault)).rejects.toThrow(
+        "cryptography is unavailable",
+      );
+    },
+  );
+
+  it("rejects a non-v4 host identity", async () => {
+    const app = new App();
+    vi.stubGlobal("crypto", {
+      randomUUID: () => "invalid",
+      subtle: globalThis.crypto.subtle,
+    });
     await expect(createMirrorRuntimeOwner(app, app.vault)).rejects.toThrow(
       "identity is unavailable",
     );

@@ -417,7 +417,7 @@ describe("MirrorStateOwner", () => {
         },
         localAlignment: HANDOFF_ALIGNMENT_KIND.pending,
         remoteVerification: HANDOFF_ALIGNMENT_KIND.pending,
-        observationGeneration: 0,
+        observationGeneration: 1,
       }),
     );
     const state: MirrorDeviceState = {

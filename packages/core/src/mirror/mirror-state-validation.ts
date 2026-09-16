@@ -73,8 +73,10 @@ function validateLifecycleAndHandoff(state: MirrorDeviceState): boolean {
         state.paths.length === 0 &&
         stagedHandoff.associationId === lifecycle.associationId &&
         stagedHandoff.origin === lifecycle.origin &&
-        stagedHandoff.entries.every((entry) =>
-          isNonNegativeSafeInteger(entry.observationGeneration),
+        stagedHandoff.entries.every(
+          (entry) =>
+            Number.isSafeInteger(entry.observationGeneration) &&
+            entry.observationGeneration > 0,
         )
       );
   }

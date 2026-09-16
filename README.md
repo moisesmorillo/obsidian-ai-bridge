@@ -2,7 +2,7 @@
 
 A secure bridge between Obsidian and remote AI or agent clients.
 
-> **Status:** M2 complete / experimental. The plugin remains non-automatic and read-only. **NEXT:** [M3 — Automatic eligible-Markdown remote mirror](docs/milestones/m3-remote-bridge-client-and-publishing.md). Slices 0–6 provide qualified storage primitives, shared contracts, safe public v2 Worker routes, device-local state/configuration, bounded Fetch transport, and independently testable core bootstrap/autosync plus runtime deletion/recreation/rename orchestration, but no connected plugin mirror exists.
+> **Status:** M2 complete; M3 remains experimental and incomplete. **NEXT:** [M3 Slice 8 — Artifact, operational and final semantic gates](docs/milestones/m3-remote-bridge-client-and-publishing.md). Slices 0–7 now compose the safe public v2 Worker, device-local state, bounded Fetch transport and core autosync/lifecycle engines into an automatic whole-eligible-Markdown Obsidian runtime with modern settings and one designated writer. This is not a deployment, personal-vault installation, real-host qualification, M3 completion, or remote-to-local synchronization claim.
 
 ## Motivation
 

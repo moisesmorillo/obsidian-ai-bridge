@@ -1133,6 +1133,30 @@ describe("FetchRemoteBridge", () => {
     });
     expect(synchronousFailureFetch).toHaveBeenCalledOnce();
     expect(synchronousFailure.requestAdmission.release).toHaveBeenCalledOnce();
+
+    const abortedAdmission = admission();
+    const abortedBeforeFetch = new FetchRemoteBridge({
+      origin: "https://bridge.example",
+      secretStorage: { getSecret: () => "token" },
+      secretReference: "reference",
+      admission: abortedAdmission,
+      cancellation: {
+        register: (controller) => {
+          controller.abort();
+          return vi.fn();
+        },
+      },
+      fetch: synchronousFailureFetch,
+    });
+    await expect(abortedBeforeFetch.mutateNote(createRequest)).resolves.toEqual(
+      {
+        kind: "failure",
+        failure: "admission-denied",
+        effect: "not-dispatched",
+      },
+    );
+    expect(synchronousFailureFetch).toHaveBeenCalledOnce();
+    expect(abortedAdmission.release).toHaveBeenCalledOnce();
   });
 
   it("maps network errors and invalid construction before dispatch without retaining a permit", async () => {

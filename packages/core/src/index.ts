@@ -221,7 +221,9 @@ export {
   isDurableMutationAdmissionAllowed,
   markHandoffDrained,
   pauseForHandoff,
+  pauseMirrorWriter,
   prepareHandoffExport,
+  resumeMirrorWriter,
   stageHandoffImport,
   WRITER_ACTIVATION_FAILURE,
 } from "@core/mirror/mirror-state-policy";

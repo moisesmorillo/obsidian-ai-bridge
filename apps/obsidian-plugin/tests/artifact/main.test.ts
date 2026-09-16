@@ -32,6 +32,7 @@ function loadArtifact(): obsidian.Plugin {
     module,
     exports: module.exports,
     TextEncoder,
+    crypto: globalThis.crypto,
     require: (name: string) => {
       expect(name).toBe("obsidian");
       required.push(name);
@@ -58,7 +59,7 @@ function loadArtifact(): obsidian.Plugin {
   const plugin: unknown = Reflect.construct(pluginClass, [new App(), manifest]);
   if (!(plugin instanceof obsidian.Plugin))
     throw new Error("Expected a host Plugin instance");
-  plugin.load();
+  void plugin.load().catch(() => undefined);
   return plugin;
 }
 
@@ -96,7 +97,7 @@ describe("packaged Obsidian main.js", () => {
     );
   });
 
-  it("loads inertly, invokes both bundled commands, and disposes host registrations and metadata UI", async () => {
+  it("loads configuration without vault or network work, invokes both M2 commands, and disposes host registrations and metadata UI", async () => {
     const plugin = loadArtifact();
     expect(
       [...obsidian.host.commands].map(([id, entry]) => [id, entry.name]),
@@ -107,7 +108,7 @@ describe("packaged Obsidian main.js", () => {
     expect(obsidian.host.vault.getFiles).not.toHaveBeenCalled();
     expect(obsidian.host.vault.read).not.toHaveBeenCalled();
     expect(obsidian.host.getActiveFile).not.toHaveBeenCalled();
-    expect(obsidian.host.loadData).not.toHaveBeenCalled();
+    expect(obsidian.host.loadData).toHaveBeenCalledTimes(1);
     expect(obsidian.host.saveData).not.toHaveBeenCalled();
     expect(obsidian.host.modals.size).toBe(0);
     expect(obsidian.host.notices).toEqual([]);
@@ -137,7 +138,7 @@ describe("packaged Obsidian main.js", () => {
     expect(obsidian.host.notices.every((notice) => notice.hidden)).toBe(true);
     expect(obsidian.host.contents.get(file)).toBe("雪");
     expect(obsidian.host.saveData).not.toHaveBeenCalled();
-    plugin.load();
+    void plugin.load().catch(() => undefined);
     expect(obsidian.host.commands.size).toBe(2);
     plugin.unload();
     expect(obsidian.host.commands.size).toBe(0);
@@ -156,7 +157,7 @@ describe("packaged Obsidian main.js", () => {
     const work = inspect();
     plugin.unload();
     await inspect();
-    plugin.load();
+    void plugin.load().catch(() => undefined);
     await command("ai-bridge:inspect-local-notes")();
     const currentNotice = obsidian.host.notices.at(-1);
     const listCallsBeforeSettle =

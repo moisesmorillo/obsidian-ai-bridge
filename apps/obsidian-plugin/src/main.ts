@@ -7,20 +7,64 @@ import { createObsidianVaultHost } from "@obsidian-plugin/infrastructure/obsidia
 import { InspectionCommand } from "@obsidian-plugin/inspection/inspection.constants";
 import type { InspectionSession } from "@obsidian-plugin/inspection/inspection-session.types";
 import { LocalInspectionUi } from "@obsidian-plugin/inspection/local-inspection-ui";
-import { Plugin } from "obsidian";
+import { MirrorPluginSession } from "@obsidian-plugin/runtime/mirror-plugin-session";
+import { Notice, Plugin } from "obsidian";
 
-/** Local-only composition and command lifecycle; enabling performs no inspection or persistence. */
+/** Thin Obsidian composition entrypoint for M2 inspection and M3 runtime attachment. */
 export default class AiBridgePlugin extends Plugin {
-  private session: InspectionSession | undefined;
-  /** Excludes overlapping work for this plugin instance, across enable lifetimes. */
+  private inspectionSession: InspectionSession | undefined;
+  private mirrorSession: MirrorPluginSession | null = null;
+  private enableGeneration = 0;
+  /** Excludes overlapping M2 inspection work across enable lifetimes. */
   private inspectionInFlight = false;
 
-  /** Composes read-only capabilities and registers exactly two host-owned palette commands. */
-  override onload(): void {
+  /** Registers M2 commands, then composes strict M3 state/configuration ownership. */
+  override async onload(): Promise<void> {
+    const generation = ++this.enableGeneration;
+    this.registerInspectionCommands();
+    const mirrorSession = await MirrorPluginSession.create(
+      this,
+      () => this.enableGeneration === generation,
+    );
+    if (this.enableGeneration !== generation) {
+      mirrorSession?.detach();
+      return;
+    }
+    this.mirrorSession = mirrorSession;
+    if (mirrorSession === null) {
+      this.addCommand({
+        id: "show-mirror-status",
+        name: "Show mirror status",
+        callback: () =>
+          new Notice(
+            "AI Bridge mirror runtime is unavailable. Local inspection remains available.",
+          ),
+      });
+    }
+  }
+
+  /** Invalidates presentation/listeners/timers without discarding runtime settlement. */
+  override onunload(): void {
+    this.enableGeneration += 1;
+    const inspection = this.inspectionSession;
+    this.inspectionSession = undefined;
+    inspection?.ui.close();
+    this.mirrorSession?.detach();
+    this.mirrorSession = null;
+  }
+
+  /** Applies externally changed data.json through the same fail-closed owner path. */
+  override onExternalSettingsChange(): void {
+    const session = this.mirrorSession;
+    if (session === null) return;
+    void session.reloadExternalConfiguration().catch(() => undefined);
+  }
+
+  private registerInspectionCommands(): void {
     const vault = new ObsidianLocalVault(
       createObsidianVaultHost(this.app.vault),
     );
-    this.session = {
+    this.inspectionSession = {
       inspector: new LocalInspectionService(vault, vault.policy),
       ui: new LocalInspectionUi(this.app),
     };
@@ -45,26 +89,17 @@ export default class AiBridgePlugin extends Plugin {
     });
   }
 
-  /** Invalidates enable-lifetime UI/state; the host disposes addCommand registrations. */
-  override onunload(): void {
-    const session = this.session;
-    this.session = undefined;
-    session?.ui.close();
-  }
-
   /**
-   * Serializes plugin-instance work across enable lifetimes while suppressing stale UI.
-   * The operation runs synchronously up to its first await, capturing active identity
-   * at invocation rather than looking up the active pane after the saved-file read.
+   * Serializes M2 plugin-instance work while suppressing stale UI after unload.
    *
-   * @param operation - One service invocation, with host active-path capture if needed.
-   * @param present - Metadata-only UI result dispatch, never called after unload.
+   * @param operation - One local inspection service invocation.
+   * @param present - Metadata-only UI result dispatch.
    */
   private async inspect<Result>(
     operation: (inspector: LocalInspector) => Promise<Result>,
     present: (ui: LocalInspectionUi, result: Result) => void,
   ): Promise<void> {
-    const session = this.session;
+    const session = this.inspectionSession;
     if (session === undefined) return;
     if (this.inspectionInFlight) {
       session.ui.showBusy();
@@ -73,9 +108,9 @@ export default class AiBridgePlugin extends Plugin {
     this.inspectionInFlight = true;
     try {
       const result = await operation(session.inspector);
-      if (this.session === session) present(session.ui, result);
+      if (this.inspectionSession === session) present(session.ui, result);
     } catch {
-      if (this.session === session) session.ui.showUnavailable();
+      if (this.inspectionSession === session) session.ui.showUnavailable();
     } finally {
       this.inspectionInFlight = false;
     }

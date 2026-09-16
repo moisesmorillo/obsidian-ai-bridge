@@ -5,6 +5,7 @@ import {
   type LocalListResult,
   LocalVaultFailureReason,
 } from "@obsidian-ai-bridge/core";
+import AiBridgePlugin from "@obsidian-plugin/main";
 import {
   host,
   resetHost,
@@ -14,9 +15,12 @@ import {
   command,
   expectNoSideEffects,
   loadPlugin,
+  loadPluginReady,
+  manifest,
   modalText,
   sideEffectGuards,
 } from "@obsidian-plugin-tests/support/plugin-fixture";
+import { App, Plugin } from "obsidian";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock(
@@ -42,7 +46,87 @@ afterEach(() => {
 });
 
 describe("AiBridgePlugin commands and lifecycle", () => {
-  it("registers exactly two host-prefixed commands, stays inert, and lets the host dispose registrations", () => {
+  it("composes unconfigured M3 UI/events before layout while preserving passive behavior and M2 commands", async () => {
+    const guards = sideEffectGuards();
+    const plugin = await loadPluginReady();
+    expect([...host.commands.keys()]).toEqual([
+      "ai-bridge:inspect-local-notes",
+      "ai-bridge:inspect-active-note",
+      "ai-bridge:show-mirror-status",
+      "ai-bridge:check-mirror-now",
+      "ai-bridge:retry-mirror-failures",
+      "ai-bridge:pause-mirror",
+      "ai-bridge:resume-mirror",
+      "ai-bridge:prepare-writer-handoff",
+    ]);
+    expect(host.settingsTabs.size).toBe(1);
+    expect(host.statusBars.size).toBe(1);
+    expect(host.vault.on.mock.calls.map(([name]) => name)).toEqual([
+      "create",
+      "modify",
+      "delete",
+      "rename",
+    ]);
+    expect(host.vault.on.mock.invocationCallOrder.at(-1)).toBeLessThan(
+      host.onLayoutReady.mock.invocationCallOrder[0] ?? Number.MAX_SAFE_INTEGER,
+    );
+    host.becomeLayoutReady();
+    await Promise.resolve();
+    expect(host.vault.getFiles).not.toHaveBeenCalled();
+    expect(guards.fetch).not.toHaveBeenCalled();
+    await command("inspect-local-notes")();
+    expect(host.vault.getFiles).toHaveBeenCalledOnce();
+    plugin.unload();
+    expect(host.commands.size).toBe(0);
+    expect(host.settingsTabs.size).toBe(0);
+    expect(host.statusBars.size).toBe(0);
+    expect(
+      [...host.vaultListeners.values()].every(
+        (listeners) => listeners.size === 0,
+      ),
+    ).toBe(true);
+  });
+
+  it("suppresses late M3 composition after unload during initial data loading", async () => {
+    const pending = Promise.withResolvers<unknown>();
+    host.loadData.mockReturnValueOnce(pending.promise);
+    const plugin = new AiBridgePlugin(new App(), manifest);
+    const startLoad = () => plugin.load();
+    const loading = Promise.resolve(startLoad());
+    plugin.unload();
+    pending.resolve(null);
+    await loading;
+    expect(host.settingsTabs.size).toBe(0);
+    expect([...host.commands.keys()]).toEqual([]);
+  });
+
+  it("keeps the runtime available when the optional status bar host fails", async () => {
+    vi.spyOn(Plugin.prototype, "addStatusBarItem").mockImplementationOnce(
+      () => {
+        throw new Error("expected");
+      },
+    );
+    const plugin = await loadPluginReady();
+    expect(host.statusBars.size).toBe(0);
+    expect(host.settingsTabs.size).toBe(1);
+    await command("show-mirror-status")();
+    expect(modalText().join("\n")).toContain("Configuration: unconfigured");
+    plugin.unload();
+  });
+
+  it("reloads external configuration through the same fail-closed boundary", async () => {
+    const plugin = await loadPluginReady();
+    host.loadData.mockResolvedValueOnce({ schemaVersion: 99 });
+    plugin.onExternalSettingsChange();
+    await vi.waitFor(() => expect(host.loadData).toHaveBeenCalledTimes(2));
+    await command("show-mirror-status")();
+    expect(modalText().join("\n")).toContain("Configuration: invalid");
+    plugin.unload();
+    plugin.onExternalSettingsChange();
+    expect(host.loadData).toHaveBeenCalledTimes(2);
+  });
+
+  it("registers exactly two M2 commands synchronously, stays inert, and lets the host dispose registrations", () => {
     const guards = sideEffectGuards();
     const list = vi.spyOn(LocalInspectionService.prototype, "list");
     const read = vi.spyOn(

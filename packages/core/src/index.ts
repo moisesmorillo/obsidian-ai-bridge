@@ -205,6 +205,7 @@ export type {
   HandoffActivationRequest,
   HandoffExportFailure,
   HandoffImportFailure,
+  HandoffStageRequest,
   IsolatedAssociationActivationRequest,
   WriterActivationFailure,
   WriterDesignationEvidence,
@@ -212,16 +213,21 @@ export type {
 export {
   activateIsolatedAssociation,
   activateStagedHandoff,
+  alignAndActivateStagedHandoff,
   alignStagedHandoff,
   createDisabledMirrorState,
   evaluateWriterReadiness,
+  fenceMirrorRuntime,
   HANDOFF_EXPORT_FAILURE,
   HANDOFF_IMPORT_FAILURE,
   invalidateHandoffAlignments,
   isDurableMutationAdmissionAllowed,
   markHandoffDrained,
   pauseForHandoff,
+  pauseMirrorWriter,
   prepareHandoffExport,
+  recoverMirrorRuntime,
+  resumeMirrorWriter,
   stageHandoffImport,
   WRITER_ACTIVATION_FAILURE,
 } from "@core/mirror/mirror-state-policy";
@@ -257,6 +263,7 @@ export type {
 export { MirrorSynchronizer } from "@core/mirror/mirror-synchronizer";
 export type {
   MirrorBootstrapIncompleteReason,
+  MirrorBootstrapProgressObserver,
   MirrorBootstrapResult,
   MirrorDeleteObservationResult,
   MirrorFolderRenameResult,

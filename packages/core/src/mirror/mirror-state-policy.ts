@@ -9,6 +9,7 @@ import {
   MIRROR_DESIRED_STATE_KIND,
   MIRROR_DEVICE_LIFECYCLE_KIND,
   MIRROR_GLOBAL_BLOCK_REASON,
+  type MIRROR_PAUSE_REASON,
 } from "@core/mirror/mirror-state.constants";
 import type {
   HandoffAlignmentInvalidation,
@@ -86,6 +87,12 @@ export interface IsolatedAssociationActivationRequest
 /** Explicit request to activate an aligned imported handoff baseline. */
 export interface HandoffActivationRequest extends WriterDesignationEvidence {
   readonly explicitWholeMirrorConsent: boolean;
+}
+
+/** Staging evidence plus the first real generation in a monotonic observation sequence. */
+export interface HandoffStageRequest
+  extends Pick<WriterDesignationEvidence, "associationId" | "origin"> {
+  readonly initialObservationGeneration: number;
 }
 
 /** @returns Disabled state for a newly generated device identity; no activation is inferred. */
@@ -286,7 +293,7 @@ export function prepareHandoffExport(state: MirrorDeviceState):
 export function stageHandoffImport(
   state: MirrorDeviceState,
   record: HandoffRecord,
-  expected: Pick<WriterDesignationEvidence, "associationId" | "origin">,
+  expected: HandoffStageRequest,
 ):
   | { readonly kind: "staged"; readonly state: MirrorDeviceState }
   | {
@@ -294,6 +301,8 @@ export function stageHandoffImport(
       readonly reason: HandoffImportFailure;
     } {
   if (
+    !Number.isSafeInteger(expected.initialObservationGeneration) ||
+    expected.initialObservationGeneration <= 0 ||
     record.entries.length > MAX_MIRROR_TRACKED_PATHS ||
     new Set(record.entries.map((entry) => entry.path)).size !==
       record.entries.length ||
@@ -339,7 +348,7 @@ export function stageHandoffImport(
           ...entry,
           localAlignment: HANDOFF_ALIGNMENT_KIND.pending,
           remoteVerification: HANDOFF_ALIGNMENT_KIND.pending,
-          observationGeneration: 0,
+          observationGeneration: expected.initialObservationGeneration,
         })),
       },
     },
@@ -480,6 +489,32 @@ export function invalidateHandoffAlignments(
 }
 
 /**
+ * Atomically aligns sampled handoff evidence and activates only that exact generation.
+ *
+ * @param state - Current staged state at the serialized transition boundary.
+ * @param snapshot - Complete evidence carrying the sampled observation generations.
+ * @param request - Current designation and explicit consent evidence.
+ * @returns Activated state, or no transition when evidence became stale or invalid.
+ */
+export function alignAndActivateStagedHandoff(
+  state: MirrorDeviceState,
+  snapshot: HandoffAlignmentSnapshot,
+  request: HandoffActivationRequest,
+):
+  | {
+      readonly kind: "activated" | "not-activated";
+      readonly state: MirrorDeviceState;
+    }
+  | undefined {
+  const aligned = alignStagedHandoff(state, snapshot);
+  if (aligned === undefined) return undefined;
+  const activated = activateStagedHandoff(aligned, request);
+  return activated.kind === "activated"
+    ? { kind: "activated", state: activated.state }
+    : { kind: "not-activated", state: aligned };
+}
+
+/**
  * Activates a staged baseline only after every local observation and future remote
  * verification aligned, while current designation/secret evidence still matches.
  *
@@ -536,6 +571,118 @@ export function activateStagedHandoff(
       },
       paths: state.stagedHandoff.entries.map(handoffEntryToPathState),
       stagedHandoff: null,
+    },
+  };
+}
+
+/**
+ * Fences all mutation admission after a local runtime capability fails.
+ *
+ * Durable path intent and acknowledgement state are retained for explicit recovery.
+ *
+ * @param state - Current device-local state.
+ * @returns Runtime-fenced state, or the unchanged equivalent fence.
+ */
+export function fenceMirrorRuntime(
+  state: MirrorDeviceState,
+): MirrorDeviceState {
+  return state.globalBlockReason ===
+    MIRROR_GLOBAL_BLOCK_REASON.runtimeUnavailable
+    ? state
+    : {
+        ...state,
+        globalBlockReason: MIRROR_GLOBAL_BLOCK_REASON.runtimeUnavailable,
+      };
+}
+
+/**
+ * Clears only the local runtime-capability fence after an explicit successful probe.
+ *
+ * @param state - Current device-local state.
+ * @returns Recovered state, or no transition when another policy owns the block.
+ */
+export function recoverMirrorRuntime(
+  state: MirrorDeviceState,
+): MirrorDeviceState | undefined {
+  if (
+    state.globalBlockReason !== MIRROR_GLOBAL_BLOCK_REASON.runtimeUnavailable
+  ) {
+    return undefined;
+  }
+  return { ...state, globalBlockReason: null };
+}
+
+/**
+ * Durably pauses an active writer without discarding its ledger or unresolved work.
+ *
+ * @param state - Current device-local writer state.
+ * @param reason - Sanitized durable pause reason.
+ * @returns Paused state, the already equivalent pause, or `undefined` when the
+ * lifecycle cannot be paused by this operational control.
+ */
+export function pauseMirrorWriter(
+  state: MirrorDeviceState,
+  reason: (typeof MIRROR_PAUSE_REASON)[keyof typeof MIRROR_PAUSE_REASON],
+): MirrorDeviceState | undefined {
+  if (state.lifecycle.kind === MIRROR_DEVICE_LIFECYCLE_KIND.paused) {
+    return state.lifecycle.reason === reason ? state : undefined;
+  }
+  if (state.lifecycle.kind !== MIRROR_DEVICE_LIFECYCLE_KIND.active) {
+    return undefined;
+  }
+  return {
+    ...state,
+    lifecycle: {
+      kind: MIRROR_DEVICE_LIFECYCLE_KIND.paused,
+      associationId: state.lifecycle.associationId,
+      origin: state.lifecycle.origin,
+      reason,
+    },
+  };
+}
+
+/**
+ * Reactivates only the same paused binding after fresh secret and designation proof.
+ *
+ * The transition clears a remediated global blocker but never changes association,
+ * origin, device identity, acknowledgements, or unresolved intents. Callers must
+ * separately prove persistence availability before committing this transition.
+ *
+ * @param state - Current paused device-local state.
+ * @param evidence - Fresh remote designation and local secret availability evidence.
+ * @returns Resumed state or one sanitized refusal.
+ */
+export function resumeMirrorWriter(
+  state: MirrorDeviceState,
+  evidence: WriterDesignationEvidence,
+):
+  | { readonly kind: "resumed"; readonly state: MirrorDeviceState }
+  | { readonly kind: "rejected"; readonly reason: WriterActivationFailure } {
+  if (state.lifecycle.kind !== MIRROR_DEVICE_LIFECYCLE_KIND.paused) {
+    return rejected(WRITER_ACTIVATION_FAILURE.incompatibleLifecycle);
+  }
+  if (!evidence.secretAvailable) {
+    return rejected(WRITER_ACTIVATION_FAILURE.secretMissing);
+  }
+  if (state.lifecycle.origin !== evidence.origin) {
+    return rejected(WRITER_ACTIVATION_FAILURE.originMismatch);
+  }
+  if (state.lifecycle.associationId !== evidence.associationId) {
+    return rejected(WRITER_ACTIVATION_FAILURE.associationMismatch);
+  }
+  if (state.deviceId !== evidence.designatedWriterId) {
+    return rejected(WRITER_ACTIVATION_FAILURE.designationMismatch);
+  }
+  return {
+    kind: "resumed",
+    state: {
+      ...state,
+      lifecycle: {
+        kind: MIRROR_DEVICE_LIFECYCLE_KIND.active,
+        associationId: state.lifecycle.associationId,
+        origin: state.lifecycle.origin,
+      },
+      globalBlockReason: null,
     },
   };
 }

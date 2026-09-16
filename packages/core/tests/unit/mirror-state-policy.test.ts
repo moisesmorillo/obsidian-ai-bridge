@@ -1,6 +1,7 @@
 import {
   activateIsolatedAssociation,
   activateStagedHandoff,
+  alignAndActivateStagedHandoff,
   alignStagedHandoff,
   createApplicationRevision,
   createContentSha256,
@@ -17,12 +18,15 @@ import {
   MIRROR_ACKNOWLEDGEMENT_KIND,
   MIRROR_DESIRED_STATE_KIND,
   MIRROR_DEVICE_LIFECYCLE_KIND,
+  MIRROR_PAUSE_REASON,
   type MirrorDeviceState,
   MUTATION_ACTION,
   markHandoffDrained,
   normalizeNotePath,
   pauseForHandoff,
+  pauseMirrorWriter,
   prepareHandoffExport,
+  resumeMirrorWriter,
   stageHandoffImport,
   type TransferableAcknowledgement,
   WRITER_ACTIVATION_FAILURE,
@@ -321,7 +325,11 @@ describe("handoff policy", () => {
           ...record,
           entries: [tombstone, { ...tombstone, path: LIVE_PATH }],
         },
-        { associationId: ASSOCIATION_ID, origin: ORIGIN },
+        {
+          associationId: ASSOCIATION_ID,
+          origin: ORIGIN,
+          initialObservationGeneration: 1,
+        },
       ),
     ).toMatchObject({ kind: "rejected", reason: "invalid-record" });
     expect(
@@ -331,6 +339,7 @@ describe("handoff policy", () => {
         {
           associationId: OTHER_ASSOCIATION_ID,
           origin: ORIGIN,
+          initialObservationGeneration: 1,
         },
       ),
     ).toMatchObject({ kind: "rejected", reason: "association-mismatch" });
@@ -338,6 +347,7 @@ describe("handoff policy", () => {
       stageHandoffImport(activeState(), handoffRecord(), {
         associationId: ASSOCIATION_ID,
         origin: ORIGIN,
+        initialObservationGeneration: 1,
       }),
     ).toMatchObject({ kind: "rejected", reason: "incompatible-lifecycle" });
   });
@@ -350,6 +360,7 @@ describe("handoff policy", () => {
     const imported = stageHandoffImport(blocked, handoffRecord(), {
       associationId: ASSOCIATION_ID,
       origin: ORIGIN,
+      initialObservationGeneration: 1,
     });
     expect(imported.kind).toBe("staged");
     if (imported.kind !== "staged") throw new Error("Expected staged handoff.");
@@ -372,6 +383,56 @@ describe("handoff policy", () => {
     });
   });
 
+  it("requires a real positive initial handoff observation generation", () => {
+    expect(
+      stageHandoffImport(
+        createDisabledMirrorState(DEVICE_ID),
+        handoffRecord(),
+        {
+          associationId: ASSOCIATION_ID,
+          origin: ORIGIN,
+          initialObservationGeneration: 0,
+        },
+      ),
+    ).toMatchObject({ kind: "rejected", reason: "invalid-record" });
+  });
+
+  it("aligns and activates one exact sampled generation atomically", () => {
+    const imported = stageHandoffImport(
+      createDisabledMirrorState(DEVICE_ID),
+      handoffRecord(),
+      {
+        associationId: ASSOCIATION_ID,
+        origin: ORIGIN,
+        initialObservationGeneration: 1,
+      },
+    );
+    if (imported.kind !== "staged") throw new Error("Expected staged handoff.");
+    const activation = {
+      ...designation(),
+      explicitWholeMirrorConsent: true,
+    };
+    expect(
+      alignAndActivateStagedHandoff(
+        imported.state,
+        handoffAlignmentSnapshot(LIVE_HASH, true, 1),
+        activation,
+      )?.state.lifecycle.kind,
+    ).toBe(MIRROR_DEVICE_LIFECYCLE_KIND.active);
+    const invalidated = invalidateHandoffAlignments(imported.state, [
+      { path: LIVE_PATH, observationGeneration: 2 },
+    ]);
+    expect(
+      invalidated === undefined
+        ? undefined
+        : alignAndActivateStagedHandoff(
+            invalidated,
+            handoffAlignmentSnapshot(LIVE_HASH, true, 1),
+            activation,
+          ),
+    ).toBeUndefined();
+  });
+
   it("aligns a complete handoff atomically and rejects stale snapshots", () => {
     const imported = stageHandoffImport(
       createDisabledMirrorState(DEVICE_ID),
@@ -379,6 +440,7 @@ describe("handoff policy", () => {
       {
         associationId: ASSOCIATION_ID,
         origin: ORIGIN,
+        initialObservationGeneration: 1,
       },
     );
     if (imported.kind !== "staged") throw new Error("Expected staged handoff.");
@@ -581,6 +643,7 @@ describe("closed activation and handoff refusal branches", () => {
       stageHandoffImport(disabled, handoffRecord(), {
         associationId: ASSOCIATION_ID,
         origin: "https://other.example",
+        initialObservationGeneration: 1,
       }),
     ).toMatchObject({ reason: "origin-mismatch" });
     expect(
@@ -603,12 +666,14 @@ describe("closed activation and handoff refusal branches", () => {
         {
           associationId: ASSOCIATION_ID,
           origin: ORIGIN,
+          initialObservationGeneration: 1,
         },
       ),
     ).toMatchObject({ reason: "existing-local-state" });
     const imported = stageHandoffImport(disabled, handoffRecord(), {
       associationId: ASSOCIATION_ID,
       origin: ORIGIN,
+      initialObservationGeneration: 1,
     });
     if (imported.kind !== "staged") throw new Error("Expected staging.");
     const unknownPath = required(normalizeNotePath("notes/unknown.md"));
@@ -740,6 +805,35 @@ function handoffAlignmentSnapshot(
     ],
   };
 }
+
+describe("operational pause and resume policy", () => {
+  it("preserves the binding and ledger while paused, then requires fresh exact evidence", () => {
+    const active = activeState();
+    const paused = pauseMirrorWriter(active, MIRROR_PAUSE_REASON.manual);
+    expect(paused?.lifecycle).toEqual({
+      kind: MIRROR_DEVICE_LIFECYCLE_KIND.paused,
+      associationId: ASSOCIATION_ID,
+      origin: ORIGIN,
+      reason: MIRROR_PAUSE_REASON.manual,
+    });
+    if (paused === undefined) throw new Error("Expected paused state.");
+    expect(isDurableMutationAdmissionAllowed(paused)).toBe(false);
+    expect(
+      resumeMirrorWriter(
+        paused,
+        designation({ designatedWriterId: OTHER_DEVICE_ID }),
+      ),
+    ).toEqual({
+      kind: "rejected",
+      reason: WRITER_ACTIVATION_FAILURE.designationMismatch,
+    });
+    const resumed = resumeMirrorWriter(paused, designation());
+    expect(resumed.kind).toBe("resumed");
+    if (resumed.kind !== "resumed") throw new Error("Expected resumed state.");
+    expect(resumed.state.lifecycle).toEqual(active.lifecycle);
+    expect(isDurableMutationAdmissionAllowed(resumed.state)).toBe(true);
+  });
+});
 
 function required<Value>(value: Value | undefined): Value {
   if (value === undefined) throw new Error("Invalid fixture value.");

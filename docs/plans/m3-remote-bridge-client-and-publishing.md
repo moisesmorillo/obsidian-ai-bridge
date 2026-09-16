@@ -1,7 +1,7 @@
 # M3 implementation plan — automatic eligible-Markdown mirror
 
-**Status: Slices 0–6 implemented; Slice 7 is the next internal M3 work.
-No connected user-visible mirror behavior.** PR #8 remains planning/documentation only. M2
+**Status: Slices 0–7 implemented; Slice 8 artifact, operational and final
+semantic gates are next. M3 remains incomplete and undeployed.** PR #8 remains planning/documentation only. M2
 merged at `b300726` (PR #7); M3 is the single NEXT
 milestone. [Spec](../milestones/m3-remote-bridge-client-and-publishing.md),
 [approved decisions/evidence](m3-design-decisions.md) and accepted design ADRs
@@ -353,6 +353,29 @@ surface and retires unsafe v1 mutations; intermediate checkpoints are not rollou
   per-note consent state, local mutation, multi-writer takeover or capability fallback.
 - **Validation/acceptance:** focused host integration, coverage/typecheck/check;
   A1/A2/A3/A8/A9 end-user behavior. No installation into a personal vault.
+- **Implemented evidence:** Slice 7 registers official `create`/`modify`/`delete`/
+  `rename` listeners before layout-ready bootstrap and adapts only immutable eligible
+  primitive paths. One versioned `globalThis`/`Symbol` registry publishes a Promise-
+  backed owner per App realm, rejects incompatible owners and lets replacement plugin
+  sessions attach without replacing in-flight runtime state. A request gate aborts
+  host waits while retaining permits until real settlement; configuration generations
+  retire stale connections and prevent late activation. One-shot host timers schedule
+  only the earliest finite core deadline. Modern declarative settings store only the
+  endpoint/loopback consent/native secret reference; native SecretStorage is read at
+  dispatch. Non-secret device/server designation plus explicit whole-scope/plaintext/
+  deletion trust consent make first activation fail closed. Dedicated attachment-epoch,
+  configuration/admission, reconciliation-progress and staged-handoff owners keep the
+  same-realm facade from duplicating their state matrices. Replacement listener gaps
+  trigger fresh positive-only scans while old reservations settle; positive admission
+  schedules work before reporting inventory finishes. Staged events advance durable
+  generations and invalidate sampled handoff evidence before atomic align/activate.
+  Missing/failing Web Crypto durably fences mutation and one-shot wakes without losing
+  dirty work. Configured designated writers bootstrap and mirror saved events, while
+  unconfigured, disabled and non-writer sessions remain passive. Text-only status,
+  bounded check/retry/pause/resume and explicit content-free handoff controls preserve
+  the two M2 inspection commands. Focused matrix/interleaving, lifecycle, registry,
+  event, timer, settings, integration and artifact tests pass with no local mutation,
+  deployment, personal-vault installation, capability fallback or M4 behavior.
 
 ## 8. Artifact, operational and final semantic gates
 

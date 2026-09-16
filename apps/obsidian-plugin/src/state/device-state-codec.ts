@@ -251,7 +251,7 @@ const stagedHandoffSchema = z
             observationGeneration: z
               .number()
               .int()
-              .min(0)
+              .min(1)
               .max(Number.MAX_SAFE_INTEGER),
           })
           .strict(),
@@ -274,6 +274,7 @@ const deviceStateSchema = z
         MIRROR_GLOBAL_BLOCK_REASON.designationMismatch,
         MIRROR_GLOBAL_BLOCK_REASON.missingSecret,
         MIRROR_GLOBAL_BLOCK_REASON.handoffMismatch,
+        MIRROR_GLOBAL_BLOCK_REASON.runtimeUnavailable,
       ])
       .nullable(),
     paths: z.array(pathStateSchema).max(MAX_MIRROR_TRACKED_PATHS),

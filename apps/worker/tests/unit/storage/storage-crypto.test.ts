@@ -3,7 +3,9 @@ import {
   generateApplicationRevision,
   sha256Content,
 } from "@worker/storage/storage-crypto";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+afterEach(() => vi.unstubAllGlobals());
 
 describe("Worker storage cryptography", () => {
   it.each([
@@ -29,6 +31,44 @@ describe("Worker storage cryptography", () => {
       await expect(sha256Content(content)).resolves.toBe(expected);
     },
   );
+
+  it("rejects an invalid digest from the platform provider", async () => {
+    const subtle = new Proxy(globalThis.crypto.subtle, {
+      get(target, property, receiver) {
+        if (property === "digest") {
+          return async () => new Uint8Array(31).buffer;
+        }
+        return Reflect.get(target, property, receiver);
+      },
+    });
+    vi.stubGlobal(
+      "crypto",
+      new Proxy(globalThis.crypto, {
+        get(target, property, receiver) {
+          if (property === "subtle") return subtle;
+          return Reflect.get(target, property, receiver);
+        },
+      }),
+    );
+    await expect(sha256Content("content")).rejects.toThrow(
+      "invalid SHA-256 digest",
+    );
+  });
+
+  it("rejects an invalid revision from the platform provider", () => {
+    vi.stubGlobal(
+      "crypto",
+      new Proxy(globalThis.crypto, {
+        get(target, property, receiver) {
+          if (property === "randomUUID") return () => "invalid";
+          return Reflect.get(target, property, receiver);
+        },
+      }),
+    );
+    expect(() => generateApplicationRevision()).toThrow(
+      "invalid UUID-v4 revision",
+    );
+  });
 
   it("generates distinct canonical UUID-v4 application revisions", () => {
     const first = generateApplicationRevision();

@@ -303,7 +303,7 @@ describe("native secret and host-local state adapters", () => {
           ...entry,
           localAlignment: "pending",
           remoteVerification: "pending",
-          observationGeneration: 0,
+          observationGeneration: 1,
         })),
       },
     };

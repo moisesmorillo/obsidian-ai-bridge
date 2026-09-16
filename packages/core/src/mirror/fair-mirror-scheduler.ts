@@ -15,8 +15,10 @@ export interface MirrorScheduledJob {
 
 /** Internal queued job paired with its caller-visible settlement signal. */
 interface QueuedMirrorJob extends MirrorScheduledJob {
-  /** Resolves the caller-visible completion after the owned job settles. */
+  /** Resolves the caller-visible completion after successful owned settlement. */
   readonly resolveCompletion: () => void;
+  /** Rejects caller-visible completion while still releasing every reservation. */
+  readonly rejectCompletion: (reason: Error) => void;
 }
 
 /**
@@ -52,7 +54,10 @@ export class FairMirrorScheduler {
    * @returns Whether the job was admitted.
    */
   enqueue(job: MirrorScheduledJob): boolean {
-    return this.enqueueAndWait(job) !== undefined;
+    const completion = this.enqueueAndWait(job);
+    if (completion === undefined) return false;
+    void completion.catch(() => undefined);
+    return true;
   }
 
   /**
@@ -72,6 +77,7 @@ export class FairMirrorScheduler {
       ...job,
       reservationKeys,
       resolveCompletion: completion.resolve,
+      rejectCompletion: completion.reject,
     });
     this.drain();
     return completion.promise;
@@ -91,16 +97,17 @@ export class FairMirrorScheduler {
       if (job === undefined) break;
       this.activeJobs += 1;
       void job.run().then(
-        () => this.settle(job),
-        () => this.settle(job),
+        () => this.settle(job, null),
+        () => this.settle(job, new Error("Mirror scheduled job failed.")),
       );
     }
   }
 
-  private settle(job: QueuedMirrorJob): void {
+  private settle(job: QueuedMirrorJob, failure: Error | null): void {
     this.activeJobs -= 1;
     for (const key of normalizedReservationKeys(job)) this.reserved.delete(key);
-    job.resolveCompletion();
+    if (failure === null) job.resolveCompletion();
+    else job.rejectCompletion(failure);
     this.drain();
     if (this.activeJobs !== 0 || this.queued.length !== 0) return;
     for (const resolve of this.idleWaiters) resolve();

@@ -47,6 +47,7 @@ export const MIRROR_GLOBAL_BLOCK_REASON = {
   designationMismatch: "designation-mismatch",
   missingSecret: "missing-secret",
   handoffMismatch: "handoff-mismatch",
+  runtimeUnavailable: "runtime-unavailable",
 } as const;
 
 /** Sanitized path-local reasons retained without raw failures or note text. */

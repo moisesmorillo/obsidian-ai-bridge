@@ -79,15 +79,24 @@ describe("FairMirrorScheduler", () => {
     expect(scheduler.isReserved("b.md")).toBe(false);
   });
 
-  it("releases reservations after rejected jobs and resolves immediately when idle", async () => {
+  it("releases reservations and reports rejected jobs to waiting policy owners", async () => {
     const scheduler = new FairMirrorScheduler();
-    scheduler.enqueue({
+    const completion = scheduler.enqueueAndWait({
       key: "failed",
-      run: () => Promise.reject(new Error("sanitized by owner")),
+      run: () => Promise.reject(new Error("raw adapter failure")),
     });
-    await scheduler.whenIdle();
+    await expect(completion).rejects.toThrow("Mirror scheduled job failed");
     await scheduler.whenIdle();
     expect(scheduler.isReserved("failed")).toBe(false);
+
+    expect(
+      scheduler.enqueue({
+        key: "fire-and-forget",
+        run: () => Promise.reject(new Error("raw adapter failure")),
+      }),
+    ).toBe(true);
+    await scheduler.whenIdle();
+    expect(scheduler.isReserved("fire-and-forget")).toBe(false);
   });
 });
 

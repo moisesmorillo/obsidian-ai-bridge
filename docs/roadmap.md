@@ -120,7 +120,7 @@ production code. Dependencies include all previous milestones.
 
 ### M3 — Automatic eligible-Markdown remote mirror
 
-**NEXT — Slices 0–6 complete; Slice 7 is the next internal M3 work. No user-visible mirror.**
+**NEXT — Slices 0–7 complete; Slice 8 artifact, operational and final semantic gates remain. M3 is not complete or deployed.**
 [Specification](milestones/m3-remote-bridge-client-and-publishing.md),
 [approved decisions/evidence](plans/m3-design-decisions.md),
 [sequential test-first plan](plans/m3-remote-bridge-client-and-publishing.md) and

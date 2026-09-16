@@ -23,6 +23,7 @@ import type { RemoteHttpMethod } from "@obsidian-plugin/remote/remote-response-p
 type FetchRequestDispatcherDependencies = Pick<
   FetchRemoteBridgeDependencies,
   | "admission"
+  | "cancellation"
   | "deadlineMilliseconds"
   | "fetch"
   | "origin"
@@ -222,11 +223,13 @@ export class FetchRequestDispatcher {
       };
     }
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let unregisterCancellation: (() => void) | undefined;
     let released = false;
     const release = () => {
       if (released) return;
       released = true;
       if (timer !== undefined) clearTimeout(timer);
+      unregisterCancellation?.();
       permit.release();
     };
     const fetch = this.fetch;
@@ -272,6 +275,16 @@ export class FetchRequestDispatcher {
       };
     }
     const controller = new AbortController();
+    unregisterCancellation =
+      this.dependencies.cancellation?.register(controller);
+    if (controller.signal.aborted) {
+      release();
+      return {
+        kind: "failure",
+        failure: REMOTE_BRIDGE_FAILURE.admissionDenied,
+        dispatched: false,
+      };
+    }
     timer = setTimeout(() => controller.abort(), this.deadlineMilliseconds);
     let fetchResult: Response | undefined;
     let dispatched = false;
@@ -313,7 +326,12 @@ export class FetchRequestDispatcher {
         dispatched,
       };
     } finally {
-      if (fetchResult === undefined && !controller.signal.aborted) release();
+      if (
+        fetchResult === undefined &&
+        (!controller.signal.aborted || !dispatched)
+      ) {
+        release();
+      }
     }
   }
 

@@ -9,6 +9,7 @@ import {
   MIRROR_DESIRED_STATE_KIND,
   MIRROR_DEVICE_LIFECYCLE_KIND,
   MIRROR_GLOBAL_BLOCK_REASON,
+  type MIRROR_PAUSE_REASON,
 } from "@core/mirror/mirror-state.constants";
 import type {
   HandoffAlignmentInvalidation,
@@ -536,6 +537,81 @@ export function activateStagedHandoff(
       },
       paths: state.stagedHandoff.entries.map(handoffEntryToPathState),
       stagedHandoff: null,
+    },
+  };
+}
+
+/**
+ * Durably pauses an active writer without discarding its ledger or unresolved work.
+ *
+ * @param state - Current device-local writer state.
+ * @param reason - Sanitized durable pause reason.
+ * @returns Paused state, the already equivalent pause, or `undefined` when the
+ * lifecycle cannot be paused by this operational control.
+ */
+export function pauseMirrorWriter(
+  state: MirrorDeviceState,
+  reason: (typeof MIRROR_PAUSE_REASON)[keyof typeof MIRROR_PAUSE_REASON],
+): MirrorDeviceState | undefined {
+  if (state.lifecycle.kind === MIRROR_DEVICE_LIFECYCLE_KIND.paused) {
+    return state.lifecycle.reason === reason ? state : undefined;
+  }
+  if (state.lifecycle.kind !== MIRROR_DEVICE_LIFECYCLE_KIND.active) {
+    return undefined;
+  }
+  return {
+    ...state,
+    lifecycle: {
+      kind: MIRROR_DEVICE_LIFECYCLE_KIND.paused,
+      associationId: state.lifecycle.associationId,
+      origin: state.lifecycle.origin,
+      reason,
+    },
+  };
+}
+
+/**
+ * Reactivates only the same paused binding after fresh secret and designation proof.
+ *
+ * The transition clears a remediated global blocker but never changes association,
+ * origin, device identity, acknowledgements, or unresolved intents. Callers must
+ * separately prove persistence availability before committing this transition.
+ *
+ * @param state - Current paused device-local state.
+ * @param evidence - Fresh remote designation and local secret availability evidence.
+ * @returns Resumed state or one sanitized refusal.
+ */
+export function resumeMirrorWriter(
+  state: MirrorDeviceState,
+  evidence: WriterDesignationEvidence,
+):
+  | { readonly kind: "resumed"; readonly state: MirrorDeviceState }
+  | { readonly kind: "rejected"; readonly reason: WriterActivationFailure } {
+  if (state.lifecycle.kind !== MIRROR_DEVICE_LIFECYCLE_KIND.paused) {
+    return rejected(WRITER_ACTIVATION_FAILURE.incompatibleLifecycle);
+  }
+  if (!evidence.secretAvailable) {
+    return rejected(WRITER_ACTIVATION_FAILURE.secretMissing);
+  }
+  if (state.lifecycle.origin !== evidence.origin) {
+    return rejected(WRITER_ACTIVATION_FAILURE.originMismatch);
+  }
+  if (state.lifecycle.associationId !== evidence.associationId) {
+    return rejected(WRITER_ACTIVATION_FAILURE.associationMismatch);
+  }
+  if (state.deviceId !== evidence.designatedWriterId) {
+    return rejected(WRITER_ACTIVATION_FAILURE.designationMismatch);
+  }
+  return {
+    kind: "resumed",
+    state: {
+      ...state,
+      lifecycle: {
+        kind: MIRROR_DEVICE_LIFECYCLE_KIND.active,
+        associationId: state.lifecycle.associationId,
+        origin: state.lifecycle.origin,
+      },
+      globalBlockReason: null,
     },
   };
 }

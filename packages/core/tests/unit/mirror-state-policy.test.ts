@@ -17,12 +17,15 @@ import {
   MIRROR_ACKNOWLEDGEMENT_KIND,
   MIRROR_DESIRED_STATE_KIND,
   MIRROR_DEVICE_LIFECYCLE_KIND,
+  MIRROR_PAUSE_REASON,
   type MirrorDeviceState,
   MUTATION_ACTION,
   markHandoffDrained,
   normalizeNotePath,
   pauseForHandoff,
+  pauseMirrorWriter,
   prepareHandoffExport,
+  resumeMirrorWriter,
   stageHandoffImport,
   type TransferableAcknowledgement,
   WRITER_ACTIVATION_FAILURE,
@@ -740,6 +743,35 @@ function handoffAlignmentSnapshot(
     ],
   };
 }
+
+describe("operational pause and resume policy", () => {
+  it("preserves the binding and ledger while paused, then requires fresh exact evidence", () => {
+    const active = activeState();
+    const paused = pauseMirrorWriter(active, MIRROR_PAUSE_REASON.manual);
+    expect(paused?.lifecycle).toEqual({
+      kind: MIRROR_DEVICE_LIFECYCLE_KIND.paused,
+      associationId: ASSOCIATION_ID,
+      origin: ORIGIN,
+      reason: MIRROR_PAUSE_REASON.manual,
+    });
+    if (paused === undefined) throw new Error("Expected paused state.");
+    expect(isDurableMutationAdmissionAllowed(paused)).toBe(false);
+    expect(
+      resumeMirrorWriter(
+        paused,
+        designation({ designatedWriterId: OTHER_DEVICE_ID }),
+      ),
+    ).toEqual({
+      kind: "rejected",
+      reason: WRITER_ACTIVATION_FAILURE.designationMismatch,
+    });
+    const resumed = resumeMirrorWriter(paused, designation());
+    expect(resumed.kind).toBe("resumed");
+    if (resumed.kind !== "resumed") throw new Error("Expected resumed state.");
+    expect(resumed.state.lifecycle).toEqual(active.lifecycle);
+    expect(isDurableMutationAdmissionAllowed(resumed.state)).toBe(true);
+  });
+});
 
 function required<Value>(value: Value | undefined): Value {
   if (value === undefined) throw new Error("Invalid fixture value.");

@@ -1,24 +1,45 @@
 import {
+  createContentSha256,
   createDisabledMirrorState,
+  createMirrorOperationId,
   createMirrorWriterId,
   MirrorStateOwner,
   type MirrorStateStore,
 } from "@obsidian-ai-bridge/core";
+import { ObsidianLocalVault } from "@obsidian-plugin/infrastructure/obsidian-local-vault";
+import { MirrorRuntimeOwner } from "@obsidian-plugin/runtime/mirror-runtime-owner";
 import {
   acquireRuntimeMirrorCoordinator,
   MIRROR_RUNTIME_COORDINATOR_SYMBOL,
 } from "@obsidian-plugin/state/runtime-mirror-coordinator";
+import { FakeVaultHost } from "@obsidian-plugin-tests/support/fake-vault-host";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const DEVICE_ID = required(
   createMirrorWriterId("11111111-1111-4111-8111-111111111111"),
 );
+const OPERATION_ID = required(
+  createMirrorOperationId("22222222-2222-4222-8222-222222222222"),
+);
+const EMPTY_HASH = required(createContentSha256("0".repeat(64)));
 const store: MirrorStateStore = {
   save: async () => ({ kind: "saved" }),
 };
 
-function owner(): MirrorStateOwner {
-  return new MirrorStateOwner(createDisabledMirrorState(DEVICE_ID), store);
+function owner(): MirrorRuntimeOwner {
+  return new MirrorRuntimeOwner({
+    stateOwner: new MirrorStateOwner(
+      createDisabledMirrorState(DEVICE_ID),
+      store,
+    ),
+    local: new ObsidianLocalVault(new FakeVaultHost()),
+    secretStorage: { getSecret: () => null },
+    runtime: {
+      nowMilliseconds: () => 0,
+      hashContent: async () => EMPTY_HASH,
+      createOperationId: () => OPERATION_ID,
+    },
+  });
 }
 
 beforeEach(() => {
@@ -29,11 +50,18 @@ afterEach(() => {
 });
 
 describe("same-runtime mirror coordinator", () => {
-  it("retains one state owner across Plugin instance replacement for the same App identity", () => {
+  it("retains one owner across Plugin replacement and concurrent async acquisition", async () => {
     const app = {};
-    const factory = vi.fn(owner);
-    const first = acquireRuntimeMirrorCoordinator(app, factory);
-    const replacement = acquireRuntimeMirrorCoordinator(app, factory);
+    const pending = Promise.withResolvers<MirrorRuntimeOwner>();
+    const factory = vi.fn(() => pending.promise);
+    const firstPending = acquireRuntimeMirrorCoordinator(app, factory);
+    const replacementPending = acquireRuntimeMirrorCoordinator(app, factory);
+    const created = owner();
+    pending.resolve(created);
+    const [first, replacement] = await Promise.all([
+      firstPending,
+      replacementPending,
+    ]);
     expect(first.kind).toBe("acquired");
     expect(replacement.kind).toBe("acquired");
     if (first.kind !== "acquired" || replacement.kind !== "acquired") {
@@ -49,9 +77,29 @@ describe("same-runtime mirror coordinator", () => {
     );
   });
 
-  it("keeps separate App identities separate inside the same package registry", () => {
-    const first = acquireRuntimeMirrorCoordinator({}, owner);
-    const second = acquireRuntimeMirrorCoordinator({}, owner);
+  it("allows a later enable to retry after owner initialization rejects", async () => {
+    const app = {};
+    const created = owner();
+    const factory = vi
+      .fn<() => Promise<MirrorRuntimeOwner>>()
+      .mockRejectedValueOnce(new Error("PRIVATE initialization detail"))
+      .mockResolvedValueOnce(created);
+    await expect(
+      acquireRuntimeMirrorCoordinator(app, factory),
+    ).resolves.toEqual({ kind: "initialization-failed" });
+    await expect(
+      acquireRuntimeMirrorCoordinator(app, factory),
+    ).resolves.toEqual({ kind: "acquired", coordinator: created });
+    expect(factory).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps separate App identities separate inside the same package registry", async () => {
+    const first = await acquireRuntimeMirrorCoordinator({}, async () =>
+      owner(),
+    );
+    const second = await acquireRuntimeMirrorCoordinator({}, async () =>
+      owner(),
+    );
     expect(first.kind).toBe("acquired");
     expect(second.kind).toBe("acquired");
     if (first.kind !== "acquired" || second.kind !== "acquired") {
@@ -60,32 +108,32 @@ describe("same-runtime mirror coordinator", () => {
     expect(first.coordinator).not.toBe(second.coordinator);
   });
 
-  it("fails closed for an incompatible coordinator inside a compatible registry", () => {
+  it("fails closed for an incompatible coordinator inside a compatible registry", async () => {
     const app = {};
-    const coordinators = new WeakMap<object, object>();
-    coordinators.set(app, { version: 1, stateOwner: {} });
+    const coordinators = new WeakMap<object, Promise<object>>();
+    coordinators.set(app, Promise.resolve({ version: 1, stateOwner: {} }));
     Object.defineProperty(globalThis, MIRROR_RUNTIME_COORDINATOR_SYMBOL, {
       value: {
         format: "obsidian-ai-bridge-runtime-registry",
-        version: 1,
+        version: 2,
         coordinators,
       },
       configurable: true,
     });
-    expect(acquireRuntimeMirrorCoordinator(app, owner)).toEqual({
-      kind: "incompatible-existing-owner",
-    });
+    await expect(
+      acquireRuntimeMirrorCoordinator(app, async () => owner()),
+    ).resolves.toEqual({ kind: "incompatible-existing-owner" });
   });
 
-  it("fails closed instead of replacing an incompatible existing global owner", () => {
+  it("fails closed instead of replacing an incompatible existing global owner", async () => {
     const incompatible = { version: 999, privateState: "PRIVATE" };
     Object.defineProperty(globalThis, MIRROR_RUNTIME_COORDINATOR_SYMBOL, {
       value: incompatible,
       configurable: true,
     });
-    expect(acquireRuntimeMirrorCoordinator({}, owner)).toEqual({
-      kind: "incompatible-existing-owner",
-    });
+    await expect(
+      acquireRuntimeMirrorCoordinator({}, async () => owner()),
+    ).resolves.toEqual({ kind: "incompatible-existing-owner" });
     expect(
       Object.getOwnPropertyDescriptor(
         globalThis,

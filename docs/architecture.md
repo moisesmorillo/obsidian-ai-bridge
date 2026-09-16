@@ -17,9 +17,10 @@ inspection plugin with source tests, artifact checks and semantic review. M3 has
 Slice 1's modern plugin baseline/shared typed contracts, Worker Slice 2A–2C's
 conditional Worker boundary, Slice 3's device-local state/configuration owner and
 handoff model, Slice 4's typed bounded Fetch `RemoteBridge` adapter, Slice 5's
-core-only bootstrap/reconciliation scheduler, and Slice 6's runtime deletion,
-recreation, and rename orchestration. These capabilities are not yet composed
-into plugin runtime behavior; no connected mirror exists.
+core-only bootstrap/reconciliation scheduler, Slice 6's runtime deletion,
+recreation and rename orchestration, and Slice 7's official host/runtime/settings
+composition. The connected outward mirror is experimental; M3 remains incomplete
+pending Slice 8 artifact, operational and final semantic gates.
 See the [verified current state](current-state.md) for source/configuration evidence,
 [roadmap](roadmap.md) for execution order and open decisions, and
 [ADR 0001](decisions/0001-worker-r2-foundation.md) for the durable foundation.
@@ -94,24 +95,27 @@ historical test coverage but is no longer composed into HTTP mutation routes.
 
 ### Obsidian plugin
 
-`AiBridgePlugin` is a default-exported `Plugin` subclass. Enabling composes the
-local service/adapter and registers two host-owned palette commands, with no scan,
-read, network or persistence. A plugin-instance in-flight exclusion serializes both
-commands across unload/re-enable until the active operation settles. Enable-lifetime
-session identity suppresses stale UI, and unload closes owned modals/notices without
-claiming that host reads are cancellable. Results show metadata as text, never note
-content or raw exceptions.
+`AiBridgePlugin` is a default-exported `Plugin` subclass. Enabling synchronously
+registers the two M2 inspection commands, then loads strict preferences/device state
+and attaches one presentation/event/timer session to the versioned same-App-realm M3
+owner. Unconfigured, disabled and non-writer states remain passive. A configured
+active designated writer registers official saved Vault events before layout-ready
+bootstrap and automatically mirrors all eligible Markdown through the core scheduler
+and bounded Fetch adapter. The M2 in-flight exclusion remains independent. Session
+identity suppresses stale UI, and unload detaches callbacks, UI and timers while the
+owner retains admission reservations and durable settlement. Results show metadata
+as text, never note content or raw exceptions.
 
 ```text
-Plugin commands / metadata-only modal and notices
-    |
-LocalInspectionService in packages/core
-    |
-ReadOnlyLocalVault port + shared local eligibility policy
-    |
-ObsidianLocalVault / official saved-file host bridge
-    |
-Vault.getFiles / getAbstractFileByPath + TFile / Vault.read
+M2 inspection commands                 M3 settings / saved Vault events / timers
+    |                                      |
+LocalInspectionService                 same-realm MirrorRuntimeOwner
+    |                                      |
+ReadOnlyLocalVault                 core MirrorSynchronizer + state owner
+    |                                      |
+ObsidianLocalVault              Obsidian saved-read/state + bounded Fetch adapters
+    \______________________________________/
+                official Obsidian host APIs
 ```
 
 Core owns closed typed results, literal path/size policy and lexical sorting. The
@@ -124,8 +128,10 @@ configuration subtree are private regardless of M1 remote path acceptance.
 
 Pre/post object identity, path, size and mtime checks reject observed changes.
 They are best-effort evidence, not an atomic snapshot or future write revision.
-The service discards transient content before returning metadata. No editor save,
-raw filesystem, settings, logging, mutation or Worker integration is present.
+The inspection service discards transient content before returning metadata. M3
+settings use modern declarative definitions and native SecretStorage references;
+only dispatch-time adapter code reads the bearer. The plugin uses no editor events,
+raw filesystem APIs or local mutation capability.
 
 Bun stages browser-target CommonJS `main.js` plus the unchanged manifest. The
 bundle exposes `module.exports.default` with only `obsidian` external; no Node
@@ -154,14 +160,14 @@ paths, the 1 MiB UTF-8 bound, sanitized errors and content-free structured
 LogTape request logs. Do not log concrete note paths or raw failures. JSON API
 and Markdown content responses are uncached via `no-store`.
 
-Future automatic local publishing still requires composing explicit whole-mirror
-consent and the implemented state, synchronization, and lifecycle policy into the
-plugin runtime; a failed operation, stale read or missing file must never trigger
-silent replacement or deletion. Worker v2 provides the required conditional/recovery
-server contract and v1 mutations are retired. Core Slice 6 now owns event-authorized
-recovery-first deletion, exact tombstone recreation, destination-first rename and
-bounded observed-descendant folder expansion, but no plugin client invokes it yet.
-Full remote-to-local reconciliation remains M4.
+Slice 7 composes explicit whole-mirror consent with the implemented state,
+synchronization and lifecycle policy. A failed operation, stale read or missing scan
+entry still cannot trigger silent replacement or deletion; only post-bootstrap host
+events can admit deletion authority. Worker v2 provides the conditional/recovery
+server contract and v1 mutations remain retired. Core Slice 6 owns recovery-first
+deletion, exact tombstone recreation, destination-first rename and bounded observed-
+descendant folder expansion; the plugin invokes it only through primitive eligible
+saved-event evidence. Full remote-to-local reconciliation remains M4.
 
 ## M3 accepted design and partial Worker foundation
 
@@ -261,8 +267,13 @@ recovery-first tombstone intent. Tombstone recreation verifies the exact acknowl
 generation. Renames reserve both paths lexically, persist the destination ACK before
 source cleanup, and retain invalidated/deferred plans rather than claiming atomicity.
 Folder expansion uses only pre-event tracked descendants under path boundaries and
-the global ledger bound. Plugin Vault event/settings/runtime composition remains
-Slice 7; no user-visible automatic mirror or M4 remote-to-local behavior exists. Slice 0 remains the
+the global ledger bound. Slice 7 adds the thin host composition: a Promise-backed
+versioned `globalThis`/`Symbol` owner registry per App realm, immutable primitive Vault
+events before layout-ready bootstrap, generation-checked strict configuration, native
+secret-reference settings, request cancellation with settlement-held permits, one-shot
+earliest-deadline timers and sanitized operational UI. Replacement sessions never
+replace owner state; incompatible registry versions fail closed. No M4 remote-to-local
+behavior exists. Slice 0 remains the
 pinned local workerd qualification task and declaration-only host check; no slice
 establishes real-host behavior.
 

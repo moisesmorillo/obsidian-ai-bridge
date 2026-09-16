@@ -21,6 +21,13 @@ export function loadPlugin(): AiBridgePlugin {
   return plugin;
 }
 
+/** @returns A fully initialized product plugin for M3 composition assertions. */
+export async function loadPluginReady(): Promise<AiBridgePlugin> {
+  const plugin = new AiBridgePlugin(new App(), manifest);
+  await Promise.resolve(plugin.load());
+  return plugin;
+}
+
 /**
  * Seeds saved-file state directly, not through product mutation APIs.
  * @param path - Literal candidate, including invalid names for refusal tests.
@@ -93,12 +100,10 @@ export function expectNoSideEffects(
     ...guards.logs,
     host.request,
     host.requestUrl,
-    host.loadData,
     host.saveData,
     host.saveEditor,
     host.workspaceOn,
     host.registerInterval,
-    host.vault.on,
     host.vault.cachedRead,
     host.vault.create,
     host.vault.modify,

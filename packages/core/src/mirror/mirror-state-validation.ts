@@ -9,6 +9,7 @@ import {
   MIRROR_DESIRED_STATE_KIND,
   MIRROR_DEVICE_LIFECYCLE_KIND,
   MIRROR_MUTATION_PHASE,
+  MIRROR_RENAME_PHASE,
 } from "@core/mirror/mirror-state.constants";
 import type {
   MirrorDeviceState,
@@ -251,11 +252,31 @@ function validateDesiredState(
     case MIRROR_DESIRED_STATE_KIND.renameDeferred:
       return (
         isNonNegativeSafeInteger(desired.observationGeneration) &&
-        desired.counterpartPath !== entry.path
+        isNonNegativeSafeInteger(desired.graceDeadlineMilliseconds) &&
+        desired.sourcePath === entry.path &&
+        desired.destinationPath !== entry.path &&
+        (desired.destinationPath === null
+          ? desired.destinationObservationGeneration === null &&
+            desired.destinationAcknowledgedRevision === null
+          : isNonNegativeSafeInteger(
+              desired.destinationObservationGeneration ?? -1,
+            )) &&
+        (desired.phase === MIRROR_RENAME_PHASE.destinationRequired
+          ? desired.destinationPath !== null &&
+            desired.destinationAcknowledgedRevision === null
+          : true) &&
+        (desired.phase === MIRROR_RENAME_PHASE.sourceCleanupRequired
+          ? desired.destinationPath === null ||
+            desired.destinationAcknowledgedRevision !== null
+          : true) &&
+        entry.acknowledgement.kind === MIRROR_ACKNOWLEDGEMENT_KIND.live &&
+        desired.sourceExpectedRevision === entry.acknowledgement.revision &&
+        lifecycleMatchesAssociation(state, desired.associationId)
       );
     case MIRROR_DESIRED_STATE_KIND.runtimeDelete:
       return (
         isNonNegativeSafeInteger(desired.observationGeneration) &&
+        isNonNegativeSafeInteger(desired.graceDeadlineMilliseconds) &&
         entry.acknowledgement.kind === MIRROR_ACKNOWLEDGEMENT_KIND.live &&
         desired.expectedRevision === entry.acknowledgement.revision &&
         lifecycleMatchesAssociation(state, desired.associationId)

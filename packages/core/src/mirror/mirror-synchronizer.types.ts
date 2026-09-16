@@ -53,6 +53,28 @@ export type MirrorBootstrapResult =
       readonly reason: MirrorBootstrapIncompleteReason;
     };
 
+/** Result of attempting to persist one post-bootstrap runtime delete event. */
+export type MirrorDeleteObservationResult =
+  | { readonly kind: "accepted" }
+  | { readonly kind: "inactive" }
+  | { readonly kind: "no-authority" }
+  | { readonly kind: "persistence-failed" };
+
+/** Result of attempting to persist one runtime two-path rename plan. */
+export type MirrorRenameObservationResult =
+  | { readonly kind: "accepted" }
+  | { readonly kind: "inactive" }
+  | { readonly kind: "no-authority" }
+  | { readonly kind: "capacity-exceeded" }
+  | { readonly kind: "persistence-failed" };
+
+/** Bounded folder expansion summary; no body read or network fanout occurs here. */
+export interface MirrorFolderRenameResult {
+  readonly planned: number;
+  readonly deferred: number;
+  readonly knownDescendants: number;
+}
+
 /** One sanitized runtime outcome retained for status reporting without note text. */
 export type MirrorPathJobOutcome =
   | { readonly kind: "acknowledged"; readonly path: NotePath }
@@ -62,6 +84,17 @@ export type MirrorPathJobOutcome =
   | { readonly kind: "diverged"; readonly path: NotePath }
   | { readonly kind: "retry-wait"; readonly path: NotePath }
   | { readonly kind: "blocked"; readonly path: NotePath }
+  | { readonly kind: "deletion-cancelled"; readonly path: NotePath }
+  | {
+      readonly kind: "deletion-acknowledged";
+      readonly path: NotePath;
+      readonly recoveryStatus: "prepared" | "sealed" | "purged" | "unknown";
+    }
+  | { readonly kind: "rename-deferred"; readonly path: NotePath }
+  | {
+      readonly kind: "rename-destination-acknowledged";
+      readonly path: NotePath;
+    }
   | {
       readonly kind: "remote-failure";
       readonly path: NotePath;

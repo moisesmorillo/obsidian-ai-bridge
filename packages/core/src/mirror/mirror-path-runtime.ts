@@ -1,10 +1,14 @@
 import {
   MIRROR_COALESCING_QUIET_PERIOD_MILLISECONDS,
+  MIRROR_DELETION_GRACE_MILLISECONDS,
   MIRROR_FINAL_MUTATION_RETRY_DELAY_MILLISECONDS,
   MIRROR_MAX_COALESCING_WAIT_MILLISECONDS,
   MIRROR_MUTATION_RETRY_DELAY_MILLISECONDS,
 } from "@core/mirror/mirror-autosync.constants";
-import { MIRROR_DESIRED_STATE_KIND } from "@core/mirror/mirror-state.constants";
+import {
+  MIRROR_DESIRED_STATE_KIND,
+  MIRROR_RENAME_PHASE,
+} from "@core/mirror/mirror-state.constants";
 import type { MirrorPathState } from "@core/mirror/mirror-state.types";
 import type { NotePath } from "@core/note-path/note-path.types";
 
@@ -25,7 +29,60 @@ interface PathRuntimeState {
  */
 export class MirrorPathRuntime {
   private readonly pathState = new Map<NotePath, PathRuntimeState>();
+  private readonly destructiveGraceDeadlines = new Map<NotePath, number>();
   private observationGeneration = 0;
+
+  /**
+   * Rearms persisted destructive work conservatively after a process restart.
+   *
+   * Persisted monotonic timestamps cannot be compared across process clocks. A fresh
+   * synchronizer therefore waits one complete grace period before confirming absence.
+   *
+   * @param entries - Durable entries loaded by the synchronizer.
+   * @param now - Current process-local monotonic time.
+   */
+  initializeDestructiveGrace(
+    entries: readonly MirrorPathState[],
+    now: number,
+  ): void {
+    for (const entry of entries) {
+      if (
+        entry.desired.kind === MIRROR_DESIRED_STATE_KIND.runtimeDelete ||
+        entry.desired.kind === MIRROR_DESIRED_STATE_KIND.renameDeferred
+      ) {
+        this.destructiveGraceDeadlines.set(
+          entry.path,
+          now + MIRROR_DELETION_GRACE_MILLISECONDS,
+        );
+      }
+    }
+  }
+
+  /**
+   * Records the same-process deadline committed with fresh lifecycle evidence.
+   *
+   * @param path - Source path protected by grace.
+   * @param deadline - Persisted process-local monotonic deadline.
+   */
+  recordDestructiveGrace(path: NotePath, deadline: number): void {
+    this.destructiveGraceDeadlines.set(path, deadline);
+  }
+
+  /**
+   * Checks grace through the current process's restart-safe effective deadline.
+   *
+   * @param path - Source path protected by grace.
+   * @param persistedDeadline - Deadline captured with the durable evidence.
+   * @param now - Current process-local monotonic time.
+   * @returns Whether exact local absence may now be checked.
+   */
+  destructiveGraceElapsed(
+    path: NotePath,
+    persistedDeadline: number,
+    now: number,
+  ): boolean {
+    return now >= this.destructiveGraceDeadline(path, persistedDeadline, now);
+  }
 
   /** @returns A process-local strictly increasing observation generation. */
   nextGeneration(): number {
@@ -100,6 +157,24 @@ export class MirrorPathRuntime {
     if (entry.unresolvedMutation !== null) {
       return runtime === undefined || now >= runtime.nextRetryAt;
     }
+    if (entry.desired.kind === MIRROR_DESIRED_STATE_KIND.runtimeDelete) {
+      return this.destructiveGraceElapsed(
+        entry.path,
+        entry.desired.graceDeadlineMilliseconds,
+        now,
+      );
+    }
+    if (entry.desired.kind === MIRROR_DESIRED_STATE_KIND.renameDeferred) {
+      if (entry.desired.phase === MIRROR_RENAME_PHASE.invalidated) return false;
+      return (
+        entry.desired.phase === MIRROR_RENAME_PHASE.destinationRequired ||
+        this.destructiveGraceElapsed(
+          entry.path,
+          entry.desired.graceDeadlineMilliseconds,
+          now,
+        )
+      );
+    }
     if (entry.desired.kind !== MIRROR_DESIRED_STATE_KIND.dirtyPresent) {
       return false;
     }
@@ -121,6 +196,27 @@ export class MirrorPathRuntime {
       const runtime = this.pathState.get(entry.path);
       if (entry.unresolvedMutation !== null) {
         return [runtime?.nextRetryAt ?? now];
+      }
+      if (entry.desired.kind === MIRROR_DESIRED_STATE_KIND.runtimeDelete) {
+        return [
+          this.destructiveGraceDeadline(
+            entry.path,
+            entry.desired.graceDeadlineMilliseconds,
+            now,
+          ),
+        ];
+      }
+      if (entry.desired.kind === MIRROR_DESIRED_STATE_KIND.renameDeferred) {
+        if (entry.desired.phase === MIRROR_RENAME_PHASE.invalidated) return [];
+        return [
+          entry.desired.phase === MIRROR_RENAME_PHASE.destinationRequired
+            ? now
+            : this.destructiveGraceDeadline(
+                entry.path,
+                entry.desired.graceDeadlineMilliseconds,
+                now,
+              ),
+        ];
       }
       if (
         entry.desired.kind !== MIRROR_DESIRED_STATE_KIND.dirtyPresent ||
@@ -169,6 +265,28 @@ export class MirrorPathRuntime {
       bootstrapInspectionRequired:
         current?.bootstrapInspectionRequired ?? false,
     });
+  }
+
+  /**
+   * @param path - Source path protected by grace.
+   * @param persistedDeadline - Deadline captured with durable evidence.
+   * @param now - Current process-local monotonic time.
+   * @returns Current-process grace, conservatively initialized when absent.
+   */
+  private destructiveGraceDeadline(
+    path: NotePath,
+    persistedDeadline: number,
+    now: number,
+  ): number {
+    const existing = this.destructiveGraceDeadlines.get(path);
+    if (existing !== undefined) return existing;
+    const latestSafeDeadline = now + MIRROR_DELETION_GRACE_MILLISECONDS;
+    const effective =
+      persistedDeadline > now && persistedDeadline <= latestSafeDeadline
+        ? persistedDeadline
+        : latestSafeDeadline;
+    this.destructiveGraceDeadlines.set(path, effective);
+    return effective;
   }
 }
 

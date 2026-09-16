@@ -8,6 +8,7 @@ import {
   createRecoverySnapshotId,
   HANDOFF_ALIGNMENT_KIND,
   isMirrorDeviceStateConsistent,
+  isNormalizedNotePath,
   MAX_MIRROR_TRACKED_PATHS,
   MIRROR_ACKNOWLEDGEMENT_KIND,
   MIRROR_DESIRED_STATE_KIND,
@@ -24,7 +25,7 @@ import {
   type MirrorDeviceState,
   type MirrorPathState,
   MUTATION_ACTION,
-  normalizeNotePath,
+  type NotePath,
   type StagedHandoff,
   type TransferableAcknowledgement,
   type UnresolvedMutationIntent,
@@ -94,8 +95,14 @@ const desiredStateSchema = z.discriminatedUnion("kind", [
         .int()
         .min(0)
         .max(Number.MAX_SAFE_INTEGER),
+      evidenceId: z.string(),
       associationId: z.string(),
       expectedRevision: z.string(),
+      graceDeadlineMilliseconds: z
+        .number()
+        .int()
+        .min(0)
+        .max(Number.MAX_SAFE_INTEGER),
     })
     .strict(),
   z
@@ -106,10 +113,27 @@ const desiredStateSchema = z.discriminatedUnion("kind", [
         .int()
         .min(0)
         .max(Number.MAX_SAFE_INTEGER),
-      counterpartPath: z.string(),
+      renameId: z.string(),
+      associationId: z.string(),
+      sourcePath: z.string(),
+      destinationPath: z.string().nullable(),
+      sourceExpectedRevision: z.string(),
+      destinationObservationGeneration: z
+        .number()
+        .int()
+        .min(0)
+        .max(Number.MAX_SAFE_INTEGER)
+        .nullable(),
+      destinationAcknowledgedRevision: z.string().nullable(),
+      graceDeadlineMilliseconds: z
+        .number()
+        .int()
+        .min(0)
+        .max(Number.MAX_SAFE_INTEGER),
       phase: z.enum([
         MIRROR_RENAME_PHASE.destinationRequired,
         MIRROR_RENAME_PHASE.sourceCleanupRequired,
+        MIRROR_RENAME_PHASE.invalidated,
       ]),
     })
     .strict(),
@@ -458,14 +482,25 @@ function projectDesiredState(desired: MirrorDesiredState): DesiredStateDto {
       return {
         kind: desired.kind,
         observationGeneration: desired.observationGeneration,
+        evidenceId: desired.evidenceId,
         associationId: desired.associationId,
         expectedRevision: desired.expectedRevision,
+        graceDeadlineMilliseconds: desired.graceDeadlineMilliseconds,
       };
     case MIRROR_DESIRED_STATE_KIND.renameDeferred:
       return {
         kind: desired.kind,
         observationGeneration: desired.observationGeneration,
-        counterpartPath: desired.counterpartPath,
+        renameId: desired.renameId,
+        associationId: desired.associationId,
+        sourcePath: desired.sourcePath,
+        destinationPath: desired.destinationPath,
+        sourceExpectedRevision: desired.sourceExpectedRevision,
+        destinationObservationGeneration:
+          desired.destinationObservationGeneration,
+        destinationAcknowledgedRevision:
+          desired.destinationAcknowledgedRevision,
+        graceDeadlineMilliseconds: desired.graceDeadlineMilliseconds,
         phase: desired.phase,
       };
   }
@@ -558,7 +593,7 @@ function convertLifecycle(dto: LifecycleDto): MirrorDeviceLifecycle {
 }
 
 function convertPathState(dto: PathStateDto): MirrorPathState {
-  const path = requireParsed(dto.path, normalizeNotePath);
+  const path = requireParsed(dto.path, parsePersistedNotePath);
   return {
     path,
     acknowledgement: convertAcknowledgement(dto.acknowledgement),
@@ -603,6 +638,7 @@ function convertDesiredState(dto: DesiredStateDto): MirrorDesiredState {
   if (dto.kind === MIRROR_DESIRED_STATE_KIND.runtimeDelete) {
     return {
       ...dto,
+      evidenceId: requireParsed(dto.evidenceId, createMirrorOperationId),
       associationId: requireParsed(
         dto.associationId,
         createMirrorAssociationId,
@@ -615,7 +651,24 @@ function convertDesiredState(dto: DesiredStateDto): MirrorDesiredState {
   }
   return {
     ...dto,
-    counterpartPath: requireParsed(dto.counterpartPath, normalizeNotePath),
+    renameId: requireParsed(dto.renameId, createMirrorOperationId),
+    associationId: requireParsed(dto.associationId, createMirrorAssociationId),
+    sourcePath: requireParsed(dto.sourcePath, parsePersistedNotePath),
+    destinationPath:
+      dto.destinationPath === null
+        ? null
+        : requireParsed(dto.destinationPath, parsePersistedNotePath),
+    sourceExpectedRevision: requireParsed(
+      dto.sourceExpectedRevision,
+      createApplicationRevision,
+    ),
+    destinationAcknowledgedRevision:
+      dto.destinationAcknowledgedRevision === null
+        ? null
+        : requireParsed(
+            dto.destinationAcknowledgedRevision,
+            createApplicationRevision,
+          ),
   };
 }
 
@@ -628,7 +681,7 @@ function convertUnresolvedMutation(
   );
   const writerId = requireParsed(dto.writerId, createMirrorWriterId);
   const operationId = requireParsed(dto.operationId, createMirrorOperationId);
-  const path = requireParsed(dto.path, normalizeNotePath);
+  const path = requireParsed(dto.path, parsePersistedNotePath);
   if (dto.action === MUTATION_ACTION.create) {
     return {
       action: dto.action,
@@ -684,7 +737,7 @@ function convertStagedHandoff(dto: StagedHandoffDto): StagedHandoff {
     origin: requireParsed(dto.origin, parsePersistedMirrorOrigin),
     checksum: requireParsed(dto.checksum, createContentSha256),
     entries: dto.entries.map((entry) => ({
-      path: requireParsed(entry.path, normalizeNotePath),
+      path: requireParsed(entry.path, parsePersistedNotePath),
       acknowledgement: convertTransferableAcknowledgement(
         entry.acknowledgement,
       ),
@@ -703,6 +756,14 @@ function convertTransferableAcknowledgement(
     throw new Error("Unassociated acknowledgement is not transferable.");
   }
   return acknowledgement;
+}
+
+/**
+ * @param value - Persisted literal local path.
+ * @returns The path unchanged after validating its literal form.
+ */
+function parsePersistedNotePath(value: string): NotePath | undefined {
+  return isNormalizedNotePath(value) ? value : undefined;
 }
 
 function requireParsed<Value>(

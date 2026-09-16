@@ -10,7 +10,10 @@ import type {
   OperationReceipt,
   UnresolvedMutationIntent,
 } from "@core/mirror/mirror.types";
-import { MIRROR_ACKNOWLEDGEMENT_KIND } from "@core/mirror/mirror-state.constants";
+import {
+  MIRROR_ACKNOWLEDGEMENT_KIND,
+  MIRROR_DESIRED_STATE_KIND,
+} from "@core/mirror/mirror-state.constants";
 import type {
   MirrorDeviceState,
   MirrorPathState,
@@ -170,6 +173,7 @@ function acknowledgedPathState(
         recoveryId: acknowledgement.receipt.operationId,
       },
       unresolvedMutation: null,
+      desired: { kind: MIRROR_DESIRED_STATE_KIND.none },
       blockedReason: null,
     };
   }
@@ -181,6 +185,32 @@ function acknowledgedPathState(
       contentSha256: acknowledgement.receipt.contentSha256,
     },
     unresolvedMutation: null,
+    desired: advanceDestructiveEvidence(
+      current.desired,
+      acknowledgement.revision,
+    ),
     blockedReason: null,
   };
+}
+
+/**
+ * Advances destructive evidence only from the exact own predecessor ACK.
+ *
+ * @param desired - Current coalesced local lifecycle state.
+ * @param revision - Newly acknowledged own live revision.
+ * @returns Evidence bound to the new condition, or the unchanged positive state.
+ */
+function advanceDestructiveEvidence(
+  desired: MirrorPathState["desired"],
+  revision: MutationAcknowledgement["revision"],
+): MirrorPathState["desired"] {
+  switch (desired.kind) {
+    case MIRROR_DESIRED_STATE_KIND.runtimeDelete:
+      return { ...desired, expectedRevision: revision };
+    case MIRROR_DESIRED_STATE_KIND.renameDeferred:
+      return { ...desired, sourceExpectedRevision: revision };
+    case MIRROR_DESIRED_STATE_KIND.none:
+    case MIRROR_DESIRED_STATE_KIND.dirtyPresent:
+      return desired;
+  }
 }

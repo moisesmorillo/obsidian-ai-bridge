@@ -64,10 +64,11 @@ export const MIRROR_PAUSE_REASON = {
   persistenceFailure: "persistence-failure",
 } as const;
 
-/** Closed deferred rename phases modeled before runtime orchestration exists. */
+/** Closed durable phases for one destination-first rename cleanup plan. */
 export const MIRROR_RENAME_PHASE = {
   destinationRequired: "destination-required",
   sourceCleanupRequired: "source-cleanup-required",
+  invalidated: "invalidated",
 } as const;
 
 /** Version of the core-owned durable device state contract. */

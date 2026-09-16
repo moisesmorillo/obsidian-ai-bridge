@@ -106,4 +106,4 @@ The implemented codes cover `unauthorized`, `forbidden_writer`, `invalid_path`, 
 
 `GET /openapi.json` is generated as OpenAPI 3.1 and describes v1 retirement plus the actual v2 security, headers, optional empty PUT body, media types, pagination, current/recovery schemas, distinct metadata/content routes, and relevant statuses. `GET /docs` serves Scalar. These public documentation routes do not grant note access.
 
-This implementation is local/development evidence, not proof of a deployment, bucket, production operation, or connected Obsidian client. The plugin runtime still makes no Worker calls; Slice 4's typed Fetch adapter and Slice 5's core autosync policy are intentionally uncomposed, and Slice 6 is the next internal M3 work.
+This implementation is local/development evidence, not proof of a deployment, bucket, production operation, or connected Obsidian client. The plugin runtime still makes no Worker calls; Slice 4's typed Fetch adapter and Slices 5–6's core autosync/lifecycle policy are intentionally uncomposed, and Slice 7 host/runtime wiring is the next internal M3 work.

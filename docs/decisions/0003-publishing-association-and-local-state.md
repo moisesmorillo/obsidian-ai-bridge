@@ -7,8 +7,10 @@ serialized ownership and handoff model implemented in Slice 3.** Supersedes this
 unmerged PR's per-note/manual/global-interlock proposal. The Worker validates static
 association/writer UUIDs and guards every v2 mutation. Slice 3 adds strict uncomposed
 native-secret-reference/preferences and App-local state adapters plus core activation/
-handoff policy; settings UI, Fetch, automatic mirroring and remote handoff verification
-remain later M3 work. The filename is retained for existing links.
+handoff policy. Slice 4 implements uncomposed Fetch transport; Slices 5–6 implement
+uncomposed core bootstrap, positive sync and runtime lifecycle orchestration. Settings
+UI, host event/timer composition and remote handoff verification remain later M3
+work. The filename is retained for existing links.
 
 ## Context
 

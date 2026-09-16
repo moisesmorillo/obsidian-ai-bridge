@@ -1,9 +1,13 @@
 import {
+  CURRENT_NOTE_STATE_KIND,
   createMirrorAssociationId,
   createMirrorWriterId,
   encodeNotePath,
+  MUTATION_ACTION,
+  MUTATION_EFFECT_CERTAINTY,
   normalizeNotePath,
   RECOVERY_RETENTION_MILLISECONDS,
+  RECOVERY_SNAPSHOT_STATE_KIND,
 } from "@obsidian-ai-bridge/core";
 import {
   API_ERROR_CODE,
@@ -433,6 +437,59 @@ describe("Worker v2 API", () => {
     );
     expect(current.status).toBe(200);
     expect(await current.text()).toBe("still live");
+  });
+
+  it("keeps the live head when recovery preparation cannot be dispatched", async () => {
+    const bucket = new MemoryMirrorBucket();
+    const { app } = application(bucket);
+    const created = await createNote(app, 919, "A");
+    bucket.throwBeforePut = true;
+
+    const removed = await app.fetch(
+      request(noteRoute("Alpha.md"), {
+        method: "DELETE",
+        headers: mutationHeaders(920, {
+          ifMatch: `"m3-${created.acknowledgement.revision}"`,
+        }),
+      }),
+    );
+
+    expect(removed.status).toBe(500);
+    expect(JSON.parse(bucket.body("vault/Alpha.md") ?? "null").kind).toBe(
+      CURRENT_NOTE_STATE_KIND.live,
+    );
+    expect(bucket.body(`recovery/${operationId(920)}`)).toBeUndefined();
+  });
+
+  it("distinguishes confirmed tombstone from refused recovery sealing", async () => {
+    const bucket = new MemoryMirrorBucket();
+    const { app } = application(bucket);
+    const created = await createNote(app, 921, "A");
+    bucket.refusedPutCalls.add(4);
+
+    const removed = await app.fetch(
+      request(noteRoute("Alpha.md"), {
+        method: "DELETE",
+        headers: mutationHeaders(922, {
+          ifMatch: `"m3-${created.acknowledgement.revision}"`,
+        }),
+      }),
+    );
+    const deletion = tombstoneMutationResponseSchema.parse(
+      await removed.json(),
+    );
+
+    expect(removed.status).toBe(200);
+    expect(deletion.acknowledgement.receipt.action).toBe(
+      MUTATION_ACTION.tombstone,
+    );
+    expect(deletion.recovery.kind).toBe(RECOVERY_SNAPSHOT_STATE_KIND.prepared);
+    expect(deletion.sealing.kind).toBe(
+      MUTATION_EFFECT_CERTAINTY.definitelyRefused,
+    );
+    expect(JSON.parse(bucket.body("vault/Alpha.md") ?? "null").kind).toBe(
+      CURRENT_NOTE_STATE_KIND.tombstone,
+    );
   });
 
   it("accepts explicit empty content and rejects missing media or invalid conditions", async () => {

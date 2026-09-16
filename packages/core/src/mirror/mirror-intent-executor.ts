@@ -8,6 +8,7 @@ import type {
   ConditionalMutationRequest,
   UnresolvedContentMutationIntent,
   UnresolvedMutationIntent,
+  UnresolvedTombstoneMutationIntent,
 } from "@core/mirror/mirror.types";
 import { applyMutationAcknowledgement } from "@core/mirror/mirror-acknowledgement";
 import {
@@ -67,8 +68,12 @@ export class MirrorIntentExecutor {
   async grantRetry(path: NotePath): Promise<boolean> {
     const existing = requireIntent(this.stateOwner.snapshot(), path);
     if (existing === undefined) return false;
-    const reconstructed = await this.reconstructExactContent(existing);
-    if (reconstructed === undefined) return false;
+    if (
+      existing.action !== MUTATION_ACTION.tombstone &&
+      (await this.reconstructExactContent(existing)) === undefined
+    ) {
+      return false;
+    }
     const result = await this.stateOwner.transition((state) =>
       grantIntentRetry(state, existing),
     );
@@ -97,6 +102,13 @@ export class MirrorIntentExecutor {
         await this.inspectEvidence(path, unresolved.intent);
         return;
       case MIRROR_INTENT_RESUME_DECISION.attemptExactContent: {
+        if (unresolved.intent.action === MUTATION_ACTION.tombstone) {
+          await this.attemptTombstone(
+            unresolved.intent,
+            desiredGeneration(this.stateOwner.snapshot(), path),
+          );
+          return;
+        }
         const reconstructed = await this.reconstructExactContent(
           unresolved.intent,
         );
@@ -122,6 +134,27 @@ export class MirrorIntentExecutor {
     content: string,
     generation: number,
   ): Promise<void> {
+    await this.attemptRequest(
+      intent,
+      mutationRequest(intent, content),
+      generation,
+    );
+  }
+
+  /** Attempts one recovery-first tombstone under the shared finite effect policy. */
+  async attemptTombstone(
+    intent: UnresolvedTombstoneMutationIntent,
+    generation: number,
+  ): Promise<void> {
+    await this.attemptRequest(intent, intent, generation);
+  }
+
+  /** Executes one exact persisted request without creating a parallel retry engine. */
+  private async attemptRequest(
+    intent: UnresolvedMutationIntent,
+    request: ConditionalMutationRequest,
+    generation: number,
+  ): Promise<void> {
     const path = intent.path;
     if (!this.stateOwner.snapshot().mutationAdmissionAllowed) return;
     if (intent.mutationAttempts >= MAX_MUTATION_ATTEMPTS) {
@@ -133,9 +166,7 @@ export class MirrorIntentExecutor {
       consumeMutationAttempt(state, intent),
     );
     if (consumed.kind !== "committed") return;
-    const result = await this.remote.mutateNote(
-      mutationRequest(intent, content),
-    );
+    const result = await this.remote.mutateNote(request);
     const decision = decideMutationResult(result, intent);
     switch (decision.kind) {
       case MIRROR_MUTATION_RESULT_DECISION.acknowledge: {
@@ -209,6 +240,17 @@ export class MirrorIntentExecutor {
         await this.status.block(path, decision.reason);
         return;
       case MIRROR_INTENT_EVIDENCE_DECISION.retryExactContent: {
+        if (latest.action === MUTATION_ACTION.tombstone) {
+          await this.setPhase(path, MIRROR_MUTATION_PHASE.intentPersisted);
+          this.pathRuntime.scheduleRetry(
+            path,
+            desiredGeneration(this.stateOwner.snapshot(), path),
+            this.runtime.nowMilliseconds(),
+            latest.mutationAttempts,
+          );
+          this.status.record({ kind: "retry-wait", path });
+          return;
+        }
         const reconstructed = await this.reconstructExactContent(latest);
         if (reconstructed === undefined) {
           await this.status.block(

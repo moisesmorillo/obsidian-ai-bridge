@@ -4,6 +4,9 @@ export const MIRROR_COALESCING_QUIET_PERIOD_MILLISECONDS = 750;
 /** Maximum time a continuously changing path may wait before another saved read. */
 export const MIRROR_MAX_COALESCING_WAIT_MILLISECONDS = 5_000;
 
+/** Grace between durable runtime-removal evidence and exact local absence confirmation. */
+export const MIRROR_DELETION_GRACE_MILLISECONDS = 5_000;
+
 /** Maximum number of path, inventory, or evidence jobs owned by one synchronizer. */
 export const MAX_ACTIVE_MIRROR_JOBS = 2;
 

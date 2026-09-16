@@ -213,7 +213,7 @@ export function consumeEvidenceAttempt(
 /** @returns State with dispatch recorded, or no stale-intent transition. */
 export function consumeMutationAttempt(
   state: MirrorDeviceState,
-  expected: UnresolvedContentMutationIntent,
+  expected: UnresolvedMutationIntent,
 ): MirrorDeviceState | undefined {
   return updateExactIntent(state, expected, (entry) => ({
     ...entry,

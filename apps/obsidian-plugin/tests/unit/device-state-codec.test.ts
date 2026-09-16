@@ -4,6 +4,7 @@ import {
   createMirrorAssociationId,
   createMirrorOperationId,
   createMirrorWriterId,
+  isNormalizedNotePath,
   MAX_MUTATION_ATTEMPTS,
   MAX_MUTATION_EVIDENCE_ATTEMPTS,
   MIRROR_ACKNOWLEDGEMENT_KIND,
@@ -11,6 +12,7 @@ import {
   MIRROR_DEVICE_LIFECYCLE_KIND,
   type MirrorDeviceState,
   MUTATION_ACTION,
+  type NotePath,
   normalizeNotePath,
 } from "@obsidian-ai-bridge/core";
 import {
@@ -108,6 +110,26 @@ describe("device-local mirror state codec", () => {
         evidenceAttempts: MAX_MUTATION_EVIDENCE_ATTEMPTS,
       },
     });
+  });
+
+  it("round-trips literal local paths without URI decoding", async () => {
+    const literal = literalPath("notes/literal%20name.md");
+    const literalState: MirrorDeviceState = {
+      ...state(),
+      paths: [
+        {
+          ...required(state().paths[0]),
+          path: literal,
+          unresolvedMutation: null,
+          desired: { kind: MIRROR_DESIRED_STATE_KIND.none },
+          blockedReason: null,
+        },
+      ],
+    };
+
+    await expect(
+      decodeMirrorDeviceState(encodeMirrorDeviceState(literalState)),
+    ).resolves.toEqual({ kind: "valid", state: literalState });
   });
 
   it.each([
@@ -272,15 +294,31 @@ describe("device-local mirror state codec", () => {
             },
             phase: "dispatched",
           },
-          desired: {
-            kind: MIRROR_DESIRED_STATE_KIND.renameDeferred,
-            observationGeneration: 3,
-            counterpartPath: required(normalizeNotePath("notes/renamed.md")),
-            phase: "destination-required",
-          },
-          blockedReason: "rename-deferred",
+          desired: { kind: MIRROR_DESIRED_STATE_KIND.none },
+          blockedReason: null,
         },
       ],
+    };
+    const renameDeferred: MirrorDeviceState = {
+      ...state(),
+      paths: state().paths.map((entry) => ({
+        ...entry,
+        unresolvedMutation: null,
+        desired: {
+          kind: MIRROR_DESIRED_STATE_KIND.renameDeferred,
+          observationGeneration: 3,
+          renameId: OTHER_OPERATION_ID,
+          associationId: ASSOCIATION_ID,
+          sourcePath: PATH,
+          destinationPath: required(normalizeNotePath("notes/renamed.md")),
+          sourceExpectedRevision: REVISION,
+          destinationObservationGeneration: 4,
+          destinationAcknowledgedRevision: null,
+          graceDeadlineMilliseconds: 5_000,
+          phase: "destination-required",
+        },
+        blockedReason: null,
+      })),
     };
     const handoffRecord = await createHandoffRecord(
       {
@@ -334,6 +372,7 @@ describe("device-local mirror state codec", () => {
       disabled,
       createIntent,
       recreate,
+      renameDeferred,
       draining,
       drained,
       staged,
@@ -366,8 +405,10 @@ describe("device-local mirror state codec", () => {
         desired: {
           kind: MIRROR_DESIRED_STATE_KIND.runtimeDelete,
           observationGeneration: 9,
+          evidenceId: OTHER_OPERATION_ID,
           associationId: ASSOCIATION_ID,
           expectedRevision: REVISION,
+          graceDeadlineMilliseconds: 5_000,
         },
       })),
     };
@@ -638,6 +679,12 @@ function rawState() {
     paths: current.paths,
     stagedHandoff: current.stagedHandoff,
   };
+}
+
+function literalPath(value: string): NotePath {
+  if (!isNormalizedNotePath(value))
+    throw new Error(`Invalid local path: ${value}`);
+  return value;
 }
 
 function required<Value>(value: Value | undefined | null): Value {

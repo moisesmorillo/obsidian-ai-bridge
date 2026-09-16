@@ -577,14 +577,23 @@ describe("mirror device state invariants", () => {
       {
         kind: MIRROR_DESIRED_STATE_KIND.renameDeferred,
         observationGeneration: 1,
-        counterpartPath: OTHER_PATH,
+        renameId: OPERATION,
+        associationId: ASSOCIATION,
+        sourcePath: PATH,
+        destinationPath: OTHER_PATH,
+        sourceExpectedRevision: REVISION,
+        destinationObservationGeneration: 2,
+        destinationAcknowledgedRevision: null,
+        graceDeadlineMilliseconds: 5_000,
         phase: "destination-required",
       },
       {
         kind: MIRROR_DESIRED_STATE_KIND.runtimeDelete,
         observationGeneration: 1,
+        evidenceId: OPERATION,
         associationId: ASSOCIATION,
         expectedRevision: REVISION,
+        graceDeadlineMilliseconds: 5_000,
       },
     ] as const satisfies readonly MirrorDesiredState[];
     expect(isMirrorDeviceStateConsistent(state([pathWithoutMutation()]))).toBe(
@@ -613,7 +622,14 @@ describe("mirror device state invariants", () => {
           pathWithoutMutation(LIVE_ACKNOWLEDGEMENT, PATH, {
             kind: MIRROR_DESIRED_STATE_KIND.renameDeferred,
             observationGeneration: 1,
-            counterpartPath: PATH,
+            renameId: OPERATION,
+            associationId: ASSOCIATION,
+            sourcePath: OTHER_PATH,
+            destinationPath: PATH,
+            sourceExpectedRevision: REVISION,
+            destinationObservationGeneration: 2,
+            destinationAcknowledgedRevision: null,
+            graceDeadlineMilliseconds: 5_000,
             phase: "destination-required",
           }),
         ]),
@@ -625,8 +641,10 @@ describe("mirror device state invariants", () => {
     const runtimeDelete: MirrorDesiredState = {
       kind: MIRROR_DESIRED_STATE_KIND.runtimeDelete,
       observationGeneration: 1,
+      evidenceId: OPERATION,
       associationId: ASSOCIATION,
       expectedRevision: REVISION,
+      graceDeadlineMilliseconds: 5_000,
     };
     const runtimeDeletePath = pathWithoutMutation(
       LIVE_ACKNOWLEDGEMENT,

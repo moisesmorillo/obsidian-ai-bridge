@@ -1,6 +1,6 @@
 # M3 implementation plan — automatic eligible-Markdown mirror
 
-**Status: Slices 0–5 implemented; Slice 6 is the next internal M3 work.
+**Status: Slices 0–6 implemented; Slice 7 is the next internal M3 work.
 No connected user-visible mirror behavior.** PR #8 remains planning/documentation only. M2
 merged at `b300726` (PR #7); M3 is the single NEXT
 milestone. [Spec](../milestones/m3-remote-bridge-client-and-publishing.md),
@@ -305,6 +305,27 @@ surface and retires unsafe v1 mutations; intermediate checkpoints are not rollou
   human-provenance flag, per-delete confirmation or plugin-specific delete command.
 - **Validation/acceptance:** core and composed service/adapter tests, coverage/check;
   A6/A7 complete engine, including recovery-by-API guidance, not M4 restore UI.
+- **Implemented evidence:** Slice 6 extends `MirrorSynchronizer` with origin-agnostic
+  post-bootstrap delete and rename observations while preserving scan/inventory
+  non-authority. `MirrorLifecyclePlanner` owns durable evidence admission and bounded
+  pre-event folder expansion; `MirrorDeletionExecutor` owns five-second grace, exact
+  missing-file confirmation, predecessor settlement, remote-generation verification
+  and fresh recovery-first tombstone intents; process-local persisted deadlines are
+  conservatively rearmed for one full grace after restart. `MirrorRenameExecutor` owns destination
+  synchronization, durable ACK prerequisites, dependency rechecks and source cleanup.
+  Compact evidence identities/deadlines and invalidated/deferred rename plans persist
+  through `MirrorStateOwner`; no body or notification history is stored. Tombstones
+  reuse Slice 5's finite mutation/evidence engine, exact receipt recovery and original
+  condition. Exact acknowledged tombstones recreate through the existing positive
+  reconciler only after state verification. The scheduler reserves eligible rename
+  paths lexically in one job and retains both reservations through settlement. Tests
+  cover failed evidence saves/restart absence, grace cancellation, pending/ambiguous
+  updates and tombstones, destination collisions/unknown effects, source competitors,
+  source recreation, chain/overlap events, eligibility transitions, observed-only
+  folder expansion, boundary safety, capacity and duplicate events. Worker recovery
+  service tests continue to prove prepare/CAS/seal/purge distinctions. No plugin
+  callback, settings, timer, registry, layout-ready, local write, or M4 behavior is
+  composed.
 
 ## 7. Official host events, modern settings and runtime ownership
 

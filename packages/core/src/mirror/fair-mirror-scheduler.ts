@@ -2,8 +2,13 @@ import { MAX_ACTIVE_MIRROR_JOBS } from "@core/mirror/mirror-autosync.constants";
 
 /** One scheduler-owned unit whose promise represents actual resource settlement. */
 export interface MirrorScheduledJob {
-  /** Stable reservation identity; path jobs use the exact NotePath. */
+  /** Stable primary identity used for FIFO admission and caller diagnostics. */
   readonly key: string;
+  /**
+   * Complete reservation set. Multi-path work supplies lexical distinct paths;
+   * ordinary jobs omit this field and reserve only `key`.
+   */
+  readonly reservationKeys?: readonly string[];
   /** Runs at most once and settles only after all owned async work is released. */
   readonly run: () => Promise<void>;
 }
@@ -57,10 +62,17 @@ export class FairMirrorScheduler {
    * @returns Job settlement, or `undefined` when the key is already reserved.
    */
   enqueueAndWait(job: MirrorScheduledJob): Promise<void> | undefined {
-    if (this.reserved.has(job.key)) return undefined;
+    const reservationKeys = normalizedReservationKeys(job);
+    if (reservationKeys.some((key) => this.reserved.has(key))) return undefined;
     const completion = Promise.withResolvers<void>();
-    this.reserved.add(job.key);
-    this.queued.push({ ...job, resolveCompletion: completion.resolve });
+    reservationKeys.forEach((key) => {
+      this.reserved.add(key);
+    });
+    this.queued.push({
+      ...job,
+      reservationKeys,
+      resolveCompletion: completion.resolve,
+    });
     this.drain();
     return completion.promise;
   }
@@ -87,11 +99,30 @@ export class FairMirrorScheduler {
 
   private settle(job: QueuedMirrorJob): void {
     this.activeJobs -= 1;
-    this.reserved.delete(job.key);
+    for (const key of normalizedReservationKeys(job)) this.reserved.delete(key);
     job.resolveCompletion();
     this.drain();
     if (this.activeJobs !== 0 || this.queued.length !== 0) return;
     for (const resolve of this.idleWaiters) resolve();
     this.idleWaiters.clear();
   }
+}
+
+/** @returns Validated lexical reservations, falling back to the primary key. */
+function normalizedReservationKeys(job: MirrorScheduledJob): readonly string[] {
+  const keys = job.reservationKeys ?? [job.key];
+  if (
+    keys.length === 0 ||
+    !keys.includes(job.key) ||
+    new Set(keys).size !== keys.length ||
+    keys.some(
+      (key, index) =>
+        index > 0 && (keys[index - 1]?.localeCompare(key) ?? -1) > 0,
+    )
+  ) {
+    throw new Error(
+      "Mirror reservations must be distinct and lexically ordered.",
+    );
+  }
+  return [...keys];
 }

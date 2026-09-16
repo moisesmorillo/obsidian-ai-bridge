@@ -1,7 +1,7 @@
 # M3 decisions — automatic eligible-Markdown mirror
 
-**Status: maintainer decisions resolved; M3 Slices 0–5 implemented. Public v2
-server routes and core autosync policy exist, but no connected user-visible M3 mirror exists.**
+**Status: maintainer decisions resolved; M3 Slices 0–6 implemented. Public v2
+server routes and core autosync/lifecycle policy exist, but no connected user-visible M3 mirror exists.**
 
 This replaces the proposal in PR #8 at `e35bd90`. That proposal drifted from the
 product by coupling mirror scope to per-note consent, making manual publishing
@@ -31,8 +31,10 @@ implementation. Slice 2A–2C realizes private storage/application transitions a
 the public authenticated v2 transport with v1 mutation retirement. Slice 3 adds the
 uncomposed plugin configuration/device-state boundary, serialized core owner and
 handoff model; Slice 4 adds Fetch transport; Slice 5 adds core bootstrap/coalescing,
-fair scheduling and finite retry/evidence orchestration. Settings UI, host event/timer
-composition, and delete/rename autosync remain.
+fair scheduling and finite retry/evidence orchestration. Core Slice 6 implements
+event-authorized deletion, exact tombstone recreation, destination-first rename/
+deferred cleanup, and bounded observed-folder expansion. Settings UI, host event and
+timer composition remain Slice 7.
 Engineering defaults below are bounded implementation choices, not new product
 permissions. The [spec](../milestones/m3-remote-bridge-client-and-publishing.md),
 [plan](m3-remote-bridge-client-and-publishing.md) and ADRs are normative together.

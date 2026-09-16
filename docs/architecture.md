@@ -16,8 +16,9 @@ engineering-quality foundation. M2 is complete: a local-only read-only Obsidian
 inspection plugin with source tests, artifact checks and semantic review. M3 has completed [Slice 0 platform qualification](qualification/m3-slice-0-platform-primitives.md),
 Slice 1's modern plugin baseline/shared typed contracts, Worker Slice 2A–2C's
 conditional Worker boundary, Slice 3's device-local state/configuration owner and
-handoff model, Slice 4's typed bounded Fetch `RemoteBridge` adapter, and Slice 5's
-core-only bootstrap/reconciliation scheduler. These capabilities are not yet composed
+handoff model, Slice 4's typed bounded Fetch `RemoteBridge` adapter, Slice 5's
+core-only bootstrap/reconciliation scheduler, and Slice 6's runtime deletion,
+recreation, and rename orchestration. These capabilities are not yet composed
 into plugin runtime behavior; no connected mirror exists.
 See the [verified current state](current-state.md) for source/configuration evidence,
 [roadmap](roadmap.md) for execution order and open decisions, and
@@ -154,12 +155,13 @@ LogTape request logs. Do not log concrete note paths or raw failures. JSON API
 and Markdown content responses are uncached via `no-store`.
 
 Future automatic local publishing still requires composing explicit whole-mirror
-consent, the implemented local state ownership primitives, and conflict/recovery
-orchestration; a failed operation, stale read or missing file must never trigger
-silent replacement or deletion. Worker v2
-now provides the required conditional/recovery server contract and v1 mutations are
-retired, but no plugin client uses it yet. Automatic outward lifecycle/rename remains
-later M3 work; full remote-to-local reconciliation remains M4.
+consent and the implemented state, synchronization, and lifecycle policy into the
+plugin runtime; a failed operation, stale read or missing file must never trigger
+silent replacement or deletion. Worker v2 provides the required conditional/recovery
+server contract and v1 mutations are retired. Core Slice 6 now owns event-authorized
+recovery-first deletion, exact tombstone recreation, destination-first rename and
+bounded observed-descendant folder expansion, but no plugin client invokes it yet.
+Full remote-to-local reconciliation remains M4.
 
 ## M3 accepted design and partial Worker foundation
 
@@ -231,7 +233,10 @@ methods, accepted statuses, failures and dispatched effect certainty. It is unco
 there is still no settings UI, autosync, Vault event wiring or deployment claim.
 Slice 5 adds `MirrorSynchronizer`, a FIFO two-slot/one-path scheduler, bounded
 inventory traversal, positive-observation generations, quiet/max-wait coalescing,
-and finite durable mutation/evidence recovery. The synchronizer is the public phase/
+and finite durable mutation/evidence recovery. Slice 6 extends that core facade with
+post-bootstrap event admission and delegates deletion authority/grace, tombstone
+execution, destination-first rename prerequisites, deferred cleanup and bounded
+folder expansion to focused lifecycle owners. The synchronizer is the public phase/
 scheduler facade: `MirrorBootstrapCoordinator` owns handshake, indexed durable batch
 admission and reporting-inventory coordination; `MirrorPathRuntime` owns ephemeral
 coalescing/retry deadlines; `MirrorPositiveReconciler` owns stable positive reads and
@@ -248,8 +253,16 @@ pagination remains pending. Mutation policy persists intents and consumed budget
 calls, applies exact ACK/receipt evidence through the latest serialized owner state,
 keeps newer desired generations dirty, and suppresses wake deadlines while lifecycle/
 global/persistence admission is closed. Inventory is reporting-only and cannot
-authorize deletion. Delete/rename orchestration remains Slice 6; plugin
-Vault event/settings/runtime composition remains later work. Slice 0 remains the
+authorize deletion. Runtime deletion evidence is durable before dispatch, waits five
+seconds and requires exact local absence; a fresh process conservatively rearms the
+full grace because process-local monotonic timestamps are not cross-restart clocks.
+Own pending updates settle before a fresh
+recovery-first tombstone intent. Tombstone recreation verifies the exact acknowledged
+generation. Renames reserve both paths lexically, persist the destination ACK before
+source cleanup, and retain invalidated/deferred plans rather than claiming atomicity.
+Folder expansion uses only pre-event tracked descendants under path boundaries and
+the global ledger bound. Plugin Vault event/settings/runtime composition remains
+Slice 7; no user-visible automatic mirror or M4 remote-to-local behavior exists. Slice 0 remains the
 pinned local workerd qualification task and declaration-only host check; no slice
 establishes real-host behavior.
 

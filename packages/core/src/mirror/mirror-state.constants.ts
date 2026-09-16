@@ -64,14 +64,15 @@ export const MIRROR_PAUSE_REASON = {
   persistenceFailure: "persistence-failure",
 } as const;
 
-/** Closed deferred rename phases modeled before runtime orchestration exists. */
+/** Closed durable phases for one destination-first rename cleanup plan. */
 export const MIRROR_RENAME_PHASE = {
   destinationRequired: "destination-required",
   sourceCleanupRequired: "source-cleanup-required",
+  invalidated: "invalidated",
 } as const;
 
 /** Version of the core-owned durable device state contract. */
-export const MIRROR_DEVICE_STATE_VERSION = 1;
+export const MIRROR_DEVICE_STATE_VERSION = 2;
 
 /** Practical upper bound on tracked paths in one device-local ledger. */
 export const MAX_MIRROR_TRACKED_PATHS = 50_000;

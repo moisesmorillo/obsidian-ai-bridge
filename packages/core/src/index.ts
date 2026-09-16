@@ -121,6 +121,7 @@ export {
   MAX_REMOTE_INVENTORY_PAGES,
   MIRROR_BOOTSTRAP_INCOMPLETE_REASON,
   MIRROR_COALESCING_QUIET_PERIOD_MILLISECONDS,
+  MIRROR_DELETION_GRACE_MILLISECONDS,
   MIRROR_FINAL_MUTATION_RETRY_DELAY_MILLISECONDS,
   MIRROR_INVENTORY_INCOMPLETE_REASON,
   MIRROR_MAX_COALESCING_WAIT_MILLISECONDS,
@@ -257,7 +258,10 @@ export { MirrorSynchronizer } from "@core/mirror/mirror-synchronizer";
 export type {
   MirrorBootstrapIncompleteReason,
   MirrorBootstrapResult,
+  MirrorDeleteObservationResult,
+  MirrorFolderRenameResult,
   MirrorPathJobOutcome,
+  MirrorRenameObservationResult,
   MirrorSynchronizerPhase,
   MirrorSynchronizerRuntime,
 } from "@core/mirror/mirror-synchronizer.types";

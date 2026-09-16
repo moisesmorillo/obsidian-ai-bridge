@@ -2,6 +2,7 @@ import type {
   ApplicationRevision,
   ContentSha256,
   MirrorAssociationId,
+  MirrorOperationId,
   MirrorWriterId,
   RecoverySnapshotId,
   UnresolvedMutationIntent,
@@ -64,19 +65,33 @@ export interface DirtyPresentMirrorState {
   readonly observationGeneration: number;
 }
 
-/** Durable post-bootstrap deletion evidence for later Slice 6 orchestration. */
+/** Durable post-bootstrap delete authority captured before destructive work. */
 export interface RuntimeDeleteMirrorState {
   readonly kind: typeof MIRROR_DESIRED_STATE_KIND.runtimeDelete;
   readonly observationGeneration: number;
+  /** Fresh identity for this coalesced evidence, distinct from its later mutation. */
+  readonly evidenceId: MirrorOperationId;
   readonly associationId: MirrorAssociationId;
+  /** Live generation acknowledged when observed or advanced by an exact own update ACK. */
   readonly expectedRevision: ApplicationRevision;
+  /** Monotonic deadline after which exact local absence may be confirmed. */
+  readonly graceDeadlineMilliseconds: number;
 }
 
-/** Durable rename prerequisite/deferred cleanup metadata without a history. */
+/** Compact destination-first rename prerequisite and deferred source-cleanup plan. */
 export interface RenameDeferredMirrorState {
   readonly kind: typeof MIRROR_DESIRED_STATE_KIND.renameDeferred;
   readonly observationGeneration: number;
-  readonly counterpartPath: NotePath;
+  readonly renameId: MirrorOperationId;
+  readonly associationId: MirrorAssociationId;
+  readonly sourcePath: NotePath;
+  /** `null` records a rename out of eligibility without retaining the private destination. */
+  readonly destinationPath: NotePath | null;
+  readonly sourceExpectedRevision: ApplicationRevision;
+  readonly destinationObservationGeneration: number | null;
+  /** Exact durably persisted destination ACK required before source cleanup. */
+  readonly destinationAcknowledgedRevision: ApplicationRevision | null;
+  readonly graceDeadlineMilliseconds: number;
   readonly phase: (typeof MIRROR_RENAME_PHASE)[keyof typeof MIRROR_RENAME_PHASE];
 }
 

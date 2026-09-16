@@ -2,11 +2,13 @@
 
 ## Status
 
-**Accepted — Worker storage/application/REST subset implemented through Slice 2C.**
-Recovery-first tombstone orchestration, 30-day sealing, conditional purge markers,
-and separate recovery metadata/content plus explicit maintenance routes exist.
-Runtime Obsidian delete/rename authority remains later M3 work. This record selects
-the minimum technical mechanism under
+**Accepted — Worker subset implemented through Slice 2C; core runtime orchestration
+implemented in Slice 6.** Recovery-first tombstone orchestration, 30-day sealing,
+conditional purge markers, and separate recovery metadata/content plus explicit
+maintenance routes exist. Core now persists post-bootstrap delete/rename authority,
+applies five-second grace and exact absence, reuses finite receipt/effect recovery,
+and enforces destination-first deferred rename cleanup. Obsidian callback/timer/runtime
+composition remains Slice 7. This record selects the minimum technical mechanism under
 [ADR 0002](0002-conditional-remote-note-mutation.md), not a general backup system.
 
 ## Context

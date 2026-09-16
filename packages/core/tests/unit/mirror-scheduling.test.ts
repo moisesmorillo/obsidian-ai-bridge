@@ -50,6 +50,35 @@ describe("FairMirrorScheduler", () => {
     expect(scheduler.isReserved("a")).toBe(false);
   });
 
+  it("reserves both rename paths lexically through actual settlement", async () => {
+    const scheduler = new FairMirrorScheduler();
+    const barrier = Promise.withResolvers<void>();
+    const completion = scheduler.enqueueAndWait({
+      key: "a.md",
+      reservationKeys: ["a.md", "b.md"],
+      run: () => barrier.promise,
+    });
+
+    expect(completion).toBeDefined();
+    expect(scheduler.isReserved("a.md")).toBe(true);
+    expect(scheduler.isReserved("b.md")).toBe(true);
+    expect(
+      scheduler.enqueue({ key: "b.md", run: () => Promise.resolve() }),
+    ).toBe(false);
+    expect(() =>
+      scheduler.enqueue({
+        key: "b.md",
+        reservationKeys: ["b.md", "a.md"],
+        run: () => Promise.resolve(),
+      }),
+    ).toThrow("lexically ordered");
+
+    barrier.resolve();
+    await completion;
+    expect(scheduler.isReserved("a.md")).toBe(false);
+    expect(scheduler.isReserved("b.md")).toBe(false);
+  });
+
   it("releases reservations after rejected jobs and resolves immediately when idle", async () => {
     const scheduler = new FairMirrorScheduler();
     scheduler.enqueue({

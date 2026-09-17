@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.1](https://github.com/moisesmorillo/obsidian-ai-bridge/compare/v0.7.0...v0.7.1) (2026-09-17)
+
+
+### Testing
+
+* **plugin:** qualify M3 artifact and operations ([#27](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/27)) ([63b0599](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/63b059958ad3d033bba861108d083cb6f1826f92))
+
 ## [0.7.0](https://github.com/moisesmorillo/obsidian-ai-bridge/compare/v0.6.0...v0.7.0) (2026-09-16)
 
 

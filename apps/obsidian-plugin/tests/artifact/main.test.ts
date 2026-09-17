@@ -641,6 +641,7 @@ describe("packaged Obsidian main.js", () => {
     expect(listCallsBeforeSettle).toBe(0);
     expect(modalCountBeforeSettle).toBe(0);
     expect(currentNotice?.message).toBe("An inspection is already running.");
+    expect(obsidian.host.notices).toEqual([currentNotice]);
     expect(obsidian.host.modals.size).toBe(0);
     await command("ai-bridge:inspect-local-notes")();
     expect(obsidian.host.vault.getFiles).toHaveBeenCalledTimes(1);

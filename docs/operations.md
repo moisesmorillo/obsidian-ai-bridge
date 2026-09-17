@@ -34,29 +34,33 @@ isolated namespace. Do not point a new association at old keys and do not infer 
 committed development configuration means a remote resource exists.
 
 1. **Provision the Worker/R2 prerequisite separately.** Bind `VAULT_BUCKET` to the
-   intended empty bucket. Generate fresh canonical lowercase UUID-v4 values for
-   `MIRROR_ASSOCIATION_ID` and `MIRROR_WRITER_ID`. Configure a strong bearer through
-   the Worker secret `OBSIDIAN_BRIDGE_TOKEN`; never commit it to `wrangler.jsonc`,
-   `mise.local.toml.example`, plugin data, screenshots, or documentation. The values
-   committed in `apps/worker/wrangler.jsonc` are non-secret local-development
-   examples, not a deployed association.
-2. **Build and qualify before any manual installation.** Run the canonical tasks in
+   intended empty bucket and generate a fresh canonical lowercase UUID-v4 only for
+   `MIRROR_ASSOCIATION_ID`. Do not invent `MIRROR_WRITER_ID`; the plugin owns that
+   device identity. The values committed in `apps/worker/wrangler.jsonc` are
+   non-secret local-development examples, not a deployed association.
+2. **Build, qualify, and load the plugin passively.** Run the canonical tasks in
    [plugin development](plugin-development.md). If manually testing, use Obsidian
-   1.13.0+ and a disposable vault only. M3 has no real-host qualification yet.
-3. **Obtain the plugin device UUID.** Enable AI Bridge, open its settings, and copy
-   **Local device / writer ID**. This value is non-secret. Configure that exact value
-   as the Worker's `MIRROR_WRITER_ID`; configure the independently generated
-   association UUID as `MIRROR_ASSOCIATION_ID`.
-4. **Create/select the bearer in native SecretStorage.** Use Obsidian's native secret
-   management and select its reference under **Bearer secret reference**. `data.json`
-   stores only the reference. Host-local mirror state and the handoff ledger must not
-   contain the plaintext bearer either. Native SecretStorage is host-managed
-   vault-local secret storage, not a documented OS-keychain guarantee.
-5. **Configure the endpoint.** Enter an absolute origin with no userinfo, query,
-   fragment, or non-root path. HTTPS is required. Plain HTTP is allowed only after
-   explicit consent for the exact literal `localhost`, `127.0.0.1`, or `[::1]` origin
-   including its port. There is no LAN, DNS-name, suffix, alternate numeric-address,
-   or mobile-to-desktop loopback exception.
+   1.13.0+ and a disposable vault only. Enable AI Bridge while it is unconfigured and
+   keep the mirror inactive; passive loading provisions its device UUID without
+   sending note content. M3 has no real-host qualification yet.
+3. **Obtain the generated plugin device UUID.** Open AI Bridge settings and copy the
+   read-only **Local device / writer ID**. This value is non-secret and is the only
+   writer UUID to use for this device.
+4. **Configure the Worker identity.** Set `MIRROR_ASSOCIATION_ID` to the independently
+   generated association UUID and `MIRROR_WRITER_ID` to the exact plugin device UUID
+   from the previous step. A mismatch remains passive and fails mutation closed.
+5. **Configure the bearer and endpoint.** Set a strong bearer through the Worker
+   secret `OBSIDIAN_BRIDGE_TOKEN`; never commit it to `wrangler.jsonc`,
+   `mise.local.toml.example`, plugin data, screenshots, or documentation. Create or
+   select the corresponding native SecretStorage entry under **Bearer secret
+   reference**; `data.json` stores only the reference. Host-local mirror state and
+   handoff records must not contain the plaintext bearer. Enter an absolute endpoint
+   origin with no userinfo, query, fragment, or non-root path. HTTPS is required.
+   Plain HTTP is allowed only after explicit consent for the exact literal
+   `localhost`, `127.0.0.1`, or `[::1]` origin including its port. There is no LAN,
+   DNS-name, suffix, alternate numeric-address, or mobile-to-desktop loopback
+   exception. Native SecretStorage is host-managed vault-local secret storage, not a
+   documented OS-keychain guarantee.
 6. **Verify designation.** Use **Authenticated server identity** and confirm that the
    returned association matches the intended association and the designated writer
    equals the displayed local device UUID. A mismatch remains passive and fails
@@ -120,23 +124,27 @@ qualified.
 There is no automatic takeover and no iCloud-synchronized transactional ledger.
 Perform this sequence exactly:
 
-1. On the old writer, pause for handoff and drain accepted work.
-2. Prove there is no unresolved mutation intent, blocked path, persistence failure,
+1. On the future writer, build and load AI Bridge passively, obtain its generated
+   read-only **Local device / writer ID**, and keep its mirror inactive. Do not import
+   activation from the old writer or designate this device yet.
+2. On the old writer, pause for handoff and drain accepted work.
+3. Prove there is no unresolved mutation intent, blocked path, persistence failure,
    or deferred rename dependency. A timeout, client abort, quiet interval, or GET of
    the old revision is not proof of quiescence.
-3. Export the validated content-free handoff metadata. It contains association,
+4. Export the validated content-free handoff metadata. It contains association,
    origin, per-path ACK/hash or tombstone identifiers, and an integrity checksum; it
    excludes note bodies, bearer, secret reference, activation, and device ID.
-4. Disable the old writer. As a separately authorized server operation, change the
-   Worker's designated writer ID to the new device. Rotate the bearer independently;
-   designation does not revoke the old bearer.
-5. On the new device, configure the endpoint and its own native SecretStorage
-   reference, then explicitly import the same-association handoff metadata.
-6. Run staged local and remote verification. Every transferred live entry must match
+5. Disable the old writer. Only now, as a separately authorized server operation, set
+   the Worker's `MIRROR_WRITER_ID` to the already-known future-writer device ID.
+   Rotate the bearer independently; designation does not revoke the old bearer.
+6. On the future writer, configure the endpoint and its own native SecretStorage
+   reference, then explicitly import the same-association handoff metadata. Keep it
+   inactive for ordinary mirror mutations until verification succeeds.
+7. Run staged local and remote verification. Every transferred live entry must match
    the current saved local SHA-256 and exact remote revision; every transferred
    tombstone must be locally absent and remotely exact. Events arriving during this
    sample invalidate the evidence and require another complete batch.
-7. Activate only after the serialized alignment transition succeeds. Keep the old
+8. Activate only after the serialized alignment transition succeeds. Keep the old
    device disabled.
 
 If the old writer or ledger is lost, unresolved, or cannot be drained, do **not**

@@ -19,8 +19,11 @@ conditional Worker boundary, Slice 3's device-local state/configuration owner an
 handoff model, Slice 4's typed bounded Fetch `RemoteBridge` adapter, Slice 5's
 core-only bootstrap/reconciliation scheduler, Slice 6's runtime deletion,
 recreation and rename orchestration, and Slice 7's official host/runtime/settings
-composition. The connected outward mirror is experimental; M3 remains incomplete
-pending Slice 8 artifact, operational and final semantic gates.
+composition. Slice 8's generated-artifact qualification and operational documentation
+are implemented on this PR. The connected outward mirror remains experimental; M3
+is still NEXT and incomplete pending independent semantic review/A10 approval and the
+committed A11 milestone transition. M4 remains PLANNED. No deployment or real
+Obsidian desktop/mobile host qualification has occurred.
 See the [verified current state](current-state.md) for source/configuration evidence,
 [roadmap](roadmap.md) for execution order and open decisions, and
 [ADR 0001](decisions/0001-worker-r2-foundation.md) for the durable foundation.

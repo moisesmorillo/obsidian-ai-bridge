@@ -1,11 +1,13 @@
 # M3 — Automatic eligible-Markdown remote mirror
 
-**Status: NEXT — Slices 0–7 implemented; Slice 8 artifact, operational and
-final semantic gates remain. M3 is incomplete and not deployed.**
+**Status: COMPLETE — Slices 0–8 and A1–A11 are complete on PR #27. The
+M3→M4 transition becomes canonical when that PR is merged. M3 is not deployed or
+production-qualified.**
 
 The maintainer's clarification replaces the selected-note/manual-publishing proposal
-at `e35bd90`. M2 is COMPLETE at merged `b300726` (PR #7); M3 is the single NEXT
-milestone. Historical filenames remain as stable links, not product terminology.
+at `e35bd90`. M2 is COMPLETE at merged `b300726` (PR #7); M3 is COMPLETE on
+PR #27 and M4 is the single NEXT milestone. Historical filenames remain as stable
+links, not product terminology.
 [Roadmap](../roadmap.md) owns scope/order; [AGENTS.md](../../AGENTS.md) owns engineering
 rules; [decisions/evidence](../plans/m3-design-decisions.md) and the
 [sequential plan](../plans/m3-remote-bridge-client-and-publishing.md) are companions.
@@ -27,9 +29,11 @@ attachment-epoch, connection/admission, reconciliation-progress and staged-hando
 owners. Official Vault events, per-listener-gap positive scans, early positive-admission
 scheduling, host-deadline timers, Web Crypto fencing, modern settings/native secret
 references, non-secret designation/consent UI, passive non-writers, sanitized controls/
-status and explicit metadata-only handoff are implemented. Final generated-artifact,
-operational-documentation and semantic gates remain;
-no real Obsidian desktop/mobile host has been exercised.
+status and explicit metadata-only handoff are implemented. Slice 8 adds proportional
+generated-artifact qualification and synchronized operator/security/recovery
+runbooks. The independent final review identified three MINOR issues; corrective head
+`e97af36` fixed all three and its corrective review returned APPROVE with no open
+findings. No real Obsidian desktop/mobile host has been exercised.
 
 ## Objective and authority
 
@@ -55,8 +59,9 @@ D1-D full eligible scope, D2 SecretStorage/modern baseline, D3 HTTPS/exact loopb
 D4 revision-envelope CAS and D6 Fetch are approved. The maintainer additionally
 approved runtime deletion authority (including possible iCloud/external activity),
 30-day recovery and one designated writer. No material product choice remains.
-Accepted ADRs describe the complete design; Worker Slice 2A–2C is implemented,
-while plugin/state/autosync work remains:
+Accepted ADRs describe the complete design. Worker Slice 2A–2C, plugin/state/core
+Slices 3–6, host composition Slice 7, and artifact/operations Slice 8 are implemented;
+canonical validation and the final/corrective semantic reviews passed:
 
 - [0002](../decisions/0002-conditional-remote-note-mutation.md): conditional current
   generations, receipts, v2 and retirement of unsafe v1 PUT/DELETE.
@@ -547,19 +552,80 @@ support. No old-version fallback. Inspect compiler/lint/Biome assists/deprecatio
 and configured editor diagnostics; do manual code-review skill review after green
 checks. Planning also receives that review before readiness is declared.
 
-- [ ] A1: whole eligible scope and opt-in, no per-note state; auth scope separate.
-- [ ] A2: modern SecretStorage/configuration/writer activation and privacy.
-- [ ] A3: bootstrap/event coalescing/stable reads, finite fair bounded autosync.
-- [ ] A4: conditional generations/receipts/legacy safety and v1 retirement proven.
-- [ ] A5: per-path ledger/partial saves/restart/finite uncertainty recovery.
-- [ ] A6: event-authorized tombstones, 30-day recovery and safe purge markers.
-- [ ] A7: bounded safe rename/recreation including harmful interleavings.
-- [ ] A8: runtime-owner lifecycle, designation and clean explicit handoff.
-- [ ] A9: typed validated v2/OpenAPI/transport/CORS/failures and negative capabilities.
-- [ ] A10: canonical/coverage/generated/runtime/diagnostics and semantic review pass;
-  docs/operational instructions match actual implementation and limitations.
-- [ ] A11: M3 completion evidence and implementation PR; only then M4 NEXT with its
-  planning spec, no M4 code or deployment. M3 is not COMPLETE in this planning PR.
+### Slice 8 acceptance evidence
+
+`Implemented` below means repository code/tests/docs support the accepted behavior.
+It does not mean a real host, iCloud trace, deployment, or production environment was
+qualified. Final command counts/coverage and independent review evidence are recorded
+against the frozen implementation and reviewed corrective head.
+
+| Item | Status | Concrete evidence |
+| --- | --- | --- |
+| A1 — whole eligible scope/opt-in; no per-note state; auth separate | **Implemented** | Whole-scope activation/consent in `mirror-settings-tab.ts`; eligibility in `packages/core/src/local-vault/`; no selected state in device codecs/contracts; scope/configuration/runtime tests; [operator trust model](../operations.md#operating-model-and-trust-boundary). |
+| A2 — modern SecretStorage/configuration/writer activation/privacy | **Implemented** | Strict preferences and App-local state adapters, native `SecretComponent`, dispatch-time `getSecret`, designation/activation controller, status redaction tests, and generated-artifact modern-settings/request/leakage tests. Real native secret UI/storage remains unqualified. |
+| A3 — bootstrap/events/coalescing/stable reads/bounded fairness | **Implemented** | `MirrorSynchronizer`, bootstrap/path runtime/fair scheduler owners; core scheduling/synchronizer tests; plugin event/reconciliation/timer/integration tests; packaged saved-event→PUT test. Real Obsidian/iCloud timing remains unqualified. |
+| A4 — conditional generations/receipts/legacy safety/v1 retirement | **Implemented** | ADR 0002; Worker current/recovery services and R2 adapters; composed race/HTTP tests; pinned workerd conditional-storage qualification; v1 410 tests; artifact proves no v1 mutation fallback. No deployed R2 race was run. |
+| A5 — per-path ledger/partial saves/restart/finite uncertainty | **Implemented** | State schema/owner/policy/codec tests; intent/evidence policy and synchronizer restart/ACK-save tests; process restart reconstructs content-free state with finite three-attempt/three-evidence budgets. Host-local durability/fsync remains unqualified. |
+| A6 — event tombstones/30-day recovery/purge markers | **Implemented** | ADR 0004; lifecycle/deletion executor tests; Worker recovery prepare→CAS→seal/purge integration/storage tests; separate API/OpenAPI routes; [operator recovery guide](../operations.md#deletion-and-recovery-operations). No scheduled GC or hard-delete claim. |
+| A7 — bounded safe rename/recreation/interleavings | **Implemented** | `mirror-rename-executor.ts`, lifecycle policy/state, exact tombstone recreation, lexical reservation and folder-bound tests in `mirror-lifecycle.test.ts`/`mirror-synchronizer.test.ts`; deferred conflicts preserve versions. |
+| A8 — runtime owner/designation/clean handoff | **Implemented** | Versioned Promise-backed registry, attachment/configuration/staged-handoff owners and tests; generated same-realm replacement/incompatible-registry tests; content-free export/alignment integration tests; [exact handoff/reset sequence](../operations.md#safe-writer-handoff). |
+| A9 — typed v2/OpenAPI/transport/CORS/failures/negative capabilities | **Implemented** | Shared protocol schemas/constants, generated OpenAPI semantic assertions, one v2 route policy for Hono/CORS/OpenAPI, Worker HTTP matrices, bounded Fetch/response tests, capability failure fencing, and packaged exact request assertions. API audit found no behavior/doc drift after stale composition prose was corrected. |
+| A10 — canonical/coverage/generated/runtime/diagnostics/docs plus semantic review | **Complete** | Canonical validation, unchanged coverage thresholds, generated artifact qualification, pinned workerd storage qualification, diagnostics/tooling, synchronized operational/security docs, Markdown-link and secret/diff review all passed. The independent final review found exactly three MINOR issues; corrective head `e97af36` fixed them and passed CI, and the corrective `/skill:code-review` returned APPROVE with no actionable finding. No real-host, iCloud, deployment or production claim is included. |
+| A11 — completion PR/evidence then M4 NEXT, no M4 code/deployment | **Complete** | A1–A10 have repository evidence; PR #27 contains the atomic M3 COMPLETE / M4 NEXT transition and the refined [M4 planning specification](m4-remote-to-local-reconciliation-and-conflict-resolution.md), with no M4 production code or deployment. The transition becomes canonical when this PR is merged; no merge SHA is claimed. |
+
+### Slice 8 validation record
+
+The frozen implementation tree passed `mise install` (pinned Bun 1.4.2 and Node.js
+24.21.0 already installed), `mise run install` (frozen lockfile, no changes), and
+`mise run check`. The canonical check itself ran Biome formatting/lint/organize-import
+assists, type-aware Oxlint with denied warnings/deprecations, all TypeScript projects,
+source coverage, the pinned workerd storage task, Worker dry-run build, plugin package
+build, and generated-artifact smoke. Focused repeats are reported as repeats, not as
+independent validation paths.
+
+- Source tests: **61 files / 752 tests** passed. Generated artifact: **1 file / 6
+  tests** passed. Pinned workerd storage qualification: **1 file / 8 tests** passed.
+- V8 source coverage: statements **95.01%** (4214/4435), branches **91.06%**
+  (2680/2943), functions **98.38%** (972/988), lines **96.95%** (4010/4136).
+  Global thresholds remain statements/lines 95%, functions 94%, branches 90%; the
+  production include/exclude configuration is unchanged and artifact tests remain
+  separate.
+- Worker Wrangler 4.130.0 dry-run and the browser CommonJS package build passed
+  without deployment. Wrangler's 4.133.0 availability notice is informational, not
+  a diagnostic or reason to churn the lockfile.
+- Biome checked 247 files; Oxlint, deprecation checks, TypeScript, package builds, and
+  artifact execution ended with no unexplained diagnostic. The committed VS Code
+  manifest-schema association and schema were inspected; a bounded standard-library
+  validator checked required/additional/type/minLength/pattern/URI constraints. No
+  editor application session is claimed.
+- The repository has no native Markdown-link task. A temporary bounded Python checker
+  validated local file links and GitHub-style heading anchors across **21 Markdown
+  files**. `git diff --check` passed.
+- Manual tracked-diff/repository and generated-`main.js` scans checked bearer/private
+  key patterns, Worker secret assignments, fixture note/recovery text, and machine
+  paths. Matches were limited to intentional secret variable names/placeholders and
+  a unit-test literal; no credential, private key, personal vault path, note/recovery
+  body, or machine-local configuration entered the PR or generated artifact.
+- No real Obsidian desktop/mobile host, personal vault, iCloud trace, deployed
+  Worker/R2, remote bucket, production credential, or background iOS behavior was
+  exercised. These are explicit residual qualification limits.
+
+The independent final review of implementation head
+`076a1eb31c4c6fce875d6194007d1bb08b9f8b50` reported three MINOR findings: exact
+stale-Notice artifact evidence, writer-ID runbook ordering, and stale architecture
+status. Corrective head `e97af36b1f4d751bf65bcdffb22b0705526d1e73` resolved all
+three, passed the same canonical gate and exact-head CI, and the corrective review
+returned APPROVE with no open finding. This documentation-only transition introduces
+no implementation or M4 production behavior and is re-reviewed as part of the
+complete final PR before merge.
+
+Checklist state:
+
+- [x] A1–A9 have implemented repository evidence, subject to the explicit runtime
+  qualification limits above.
+- [x] A10 canonical, qualification, documentation and independent semantic gates pass.
+- [x] A11 is recorded in PR #27; the M3 COMPLETE / M4 NEXT transition becomes
+  canonical when merged, with no M4 production code or deployment.
 
 ## Non-goals and residual risks
 

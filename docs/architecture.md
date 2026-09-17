@@ -19,8 +19,13 @@ conditional Worker boundary, Slice 3's device-local state/configuration owner an
 handoff model, Slice 4's typed bounded Fetch `RemoteBridge` adapter, Slice 5's
 core-only bootstrap/reconciliation scheduler, Slice 6's runtime deletion,
 recreation and rename orchestration, and Slice 7's official host/runtime/settings
-composition. The connected outward mirror is experimental; M3 remains incomplete
-pending Slice 8 artifact, operational and final semantic gates.
+composition. Slice 8's generated-artifact qualification and operational documentation
+are implemented. The independent final review found three MINOR issues, corrective
+head `e97af36` resolved all three, and the corrective review returned APPROVE with no
+open findings. M3 is COMPLETE on PR #27, with the transition canonical when that PR
+is merged; M4 is NEXT for planning only. The connected outward mirror remains
+experimental and undeployed, with no real Obsidian desktop/mobile or iCloud runtime
+qualification.
 See the [verified current state](current-state.md) for source/configuration evidence,
 [roadmap](roadmap.md) for execution order and open decisions, and
 [ADR 0001](decisions/0001-worker-r2-foundation.md) for the durable foundation.
@@ -169,14 +174,17 @@ deletion, exact tombstone recreation, destination-first rename and bounded obser
 descendant folder expansion; the plugin invokes it only through primitive eligible
 saved-event evidence. Full remote-to-local reconciliation remains M4.
 
-## M3 accepted design and partial Worker foundation
+## M3 implemented outward-mirror architecture
 
 The [decisions/evidence](plans/m3-design-decisions.md),
-[specification](milestones/m3-remote-bridge-client-and-publishing.md) and
-[sequential plan](plans/m3-remote-bridge-client-and-publishing.md) define an automatic
-**all-eligible Markdown mirror**, with whole opt-in, not per-note selection. iCloud
-remains device-to-device vault sync; R2 is mirror/API persistence, not the sole
-authority or guaranteed backup. Mirror scope is independent of REST/MCP authorization.
+[specification](milestones/m3-remote-bridge-client-and-publishing.md),
+[sequential plan](plans/m3-remote-bridge-client-and-publishing.md), and
+[operator guide](operations.md) define the implemented automatic **all-eligible
+Markdown mirror**, with whole opt-in rather than per-note selection. iCloud remains
+device-to-device vault sync; R2 is mirror/API persistence, not the sole authority or
+guaranteed backup. Mirror scope is independent of REST/MCP authorization. Slice 8
+qualifies the built CommonJS composition and documents operations; it does not change
+this architecture or add M4 authority.
 
 ```text
 settings / official saved-vault events / health controls
@@ -216,9 +224,10 @@ unresolved work blocks takeover. No election/leases or
 shared-file coordinator. M3 targets Obsidian 1.13.0/modern settings, HTTPS with exact
 loopback opt-in and bounded Fetch/CORS, without old-host/requestUrl fallbacks.
 
-These remain the accepted end-to-end design rather than a connected user-visible
-mirror; M2 commands remain local-only. Slice 1 raises the manifest to 1.13.0 and adds
-core/protocol contracts. Worker Slice 2A–2C implements private format-2 codecs,
+This is now a connected experimental outward mirror when one designated writer is
+explicitly configured and activated; M2 commands remain independent local-only
+inspection. Slice 1 raises the manifest to 1.13.0 and adds core/protocol contracts.
+Worker Slice 2A–2C implements private format-2 codecs,
 create-only and observed-generation CAS, metadata reads, prepared/unexpired recovery
 content, bounded pagination, exact receipts, recoverable tombstone ordering,
 tombstone-timestamp sealing, conditional purge, public authenticated v2 routes,
@@ -290,9 +299,8 @@ establishes real-host behavior.
 
 ## Explicitly deferred
 
-- M3 (NEXT, design ready): implementation/qualification of the complete automatic
-  outward mirror, including basic recovery and safe writer handoff.
-- M4: Remote-to-local authority, conflict resolution, adoption and richer restore UX.
+- M4 (NEXT, planning only): Remote-to-local authority, conflict resolution, adoption,
+  reviewed remote deletion handling, bounded local mutation and richer restore UX.
 - M5: Broader operational readiness, abuse limits and scoped authentication evolution.
 - M6: Authorized MCP transport/tool definitions, never direct R2 access.
 - Outside this roadmap: search, attachments and AI inference. NAS replication or

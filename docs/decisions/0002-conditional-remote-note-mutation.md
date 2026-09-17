@@ -2,10 +2,11 @@
 
 ## Status
 
-**Accepted — Worker server contract implemented through Slice 2C.** Private versioned
+**Accepted — implemented and composed through M3 Slice 7.** Private versioned
 envelopes, exact-receipt application services, R2 create/CAS adapters, authenticated
-safe v2 transport and v1 mutation retirement exist. The connected automatic plugin
-mirror remains later M3 work; no deployment is claimed.
+safe v2 transport and v1 mutation retirement drive the experimental designated-writer
+plugin runtime. Slice 8 qualifies the packaged request path and documents operations;
+no deployment or production claim is made.
 
 ## Context
 
@@ -142,9 +143,10 @@ remote-to-local authority or transactions across paths. Single-note current stat
 needs no database, Durable Object, queue service or leader election. Recovery-copy
 preparation can leave retained orphans; it cannot make a failed head CAS succeed.
 
-This is a breaking experimental writer API/storage transition. Future operator
-upgrade must stop and safely drain old writers before enabling envelope mutations;
-old Worker rollback over envelopes is unsupported. Unknown deployed resources are
+This is a breaking experimental writer API/storage transition. Operators must stop
+and safely drain old writers before enabling envelope mutations; old Worker rollback
+over envelopes is unsupported. The [operator guide](../operations.md) records the
+required upgrade, handoff, reset, rotation, and downgrade restrictions. Unknown deployed resources are
 not assumed. Restoring a stale bucket snapshot into an active association is also
 unsupported: use a new association/reset procedure, never pretend restored UUIDs
 are new generations. Planning/validation does not deploy, migrate or restore data.

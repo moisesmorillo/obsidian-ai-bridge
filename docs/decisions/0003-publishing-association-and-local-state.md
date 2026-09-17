@@ -7,10 +7,11 @@ serialized ownership and handoff model implemented in Slice 3.** Supersedes this
 unmerged PR's per-note/manual/global-interlock proposal. The Worker validates static
 association/writer UUIDs and guards every v2 mutation. Slice 3 adds strict uncomposed
 native-secret-reference/preferences and App-local state adapters plus core activation/
-handoff policy. Slice 4 implements uncomposed Fetch transport; Slices 5–6 implement
-uncomposed core bootstrap, positive sync and runtime lifecycle orchestration. Settings
-UI, host event/timer composition and remote handoff verification remain later M3
-work. The filename is retained for existing links.
+handoff policy. Slice 4 implements Fetch transport; Slices 5–6 implement core bootstrap, positive
+sync and runtime lifecycle orchestration; Slice 7 composes settings, official host
+events/timers, transport, same-realm ownership and staged handoff verification.
+Slice 8 adds packaged qualification and the operational runbook. The filename is
+retained for existing links.
 
 ## Context
 
@@ -182,7 +183,9 @@ host backup or malicious software; exactly-one-writer is a documented operating
 constraint plus static guard, not a security isolation/leader-election guarantee.
 Multiple Obsidian processes simultaneously writing the same local ledger are not
 supported. The operator must run one writer host for that vault; process-wide crash
-recovery uses server CAS/receipts rather than invented cancellation guarantees.
+recovery uses server CAS/receipts rather than invented cancellation guarantees. The
+[operator guide](../operations.md) defines the exact drain/export/designate/rotate/
+verify/activate sequence and isolated-reset alternative.
 
 ## Alternatives
 

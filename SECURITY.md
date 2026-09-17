@@ -1,110 +1,125 @@
 # Security policy
 
-Security and data safety are priorities for this project. The repository is in early development and does not yet provide a complete secure bridge or production-ready synchronization behavior.
+Security and data safety are priorities. The repository is experimental and does not
+claim a production-ready bridge, security certification, complete backup, or supported
+production release.
 
-## Current trust and data-safety boundary
+## M3 trust and authorization boundary
 
-The Worker uses one bearer token granting all remote note operations in one R2
-namespace. Authenticated v1 PUT and DELETE are retired with storage-free 410
-responses. Worker Slice 2 implements conditional v2 generations, recovery-first
-tombstones, 30-day recovery sealing and conditional purge markers without native
-R2 DELETE or unconditional mutation capability. This server subset is still not a
-connected or production-ready synchronization system. The Worker/cloud operator can
-read stored note text; there is no application-level end-to-end encryption,
-per-client permission model or production security claim.
+The implemented outward mirror trusts the Obsidian host/plugin environment, the
+plugin runtime, Worker, Cloudflare/R2 operator, and authorized bearer holders with
+plaintext note content. There is no application-level end-to-end encryption. A local
+malicious or compromised privileged plugin/host is inside this trusted-host boundary;
+M3 does not claim isolation from it.
 
-Keep tokens in ignored local configuration or the Worker secret mechanism, never
-in committed files or diagnostics. Do not log note content, concrete note paths,
-credentials or raw failures. Configuration is not evidence of deployed resources.
-The M2 plugin performs only deliberate local read-only inspection through official
-Obsidian APIs. Enabling alone does not enumerate/read notes. Commands show exact
-paths and byte metadata as text, never note bodies; failures are sanitized and no
-plugin diagnostic logging is added. Eligibility requires literal safe lowercase
-`.md` paths at most 1 MiB, excludes dot-prefixed path segments and the host's
-configuration subtree, and never authorizes future upload. The plugin has no
-network calls, settings/token storage, persistence, editor saves, watchers or
-vault mutation. Installation and Obsidian's enabled-plugin configuration are
-explicit host/developer actions, not product writes.
+One `OBSIDIAN_BRIDGE_TOKEN` bearer is privileged for all remote operations in one
+namespace. Keep it in the Worker secret mechanism and Obsidian native SecretStorage,
+never committed configuration, `data.json`, host-local mirror state, handoff records,
+logs, notices, or screenshots. Native SecretStorage is a host-managed vault-local
+store, not a documented OS-keychain or isolation guarantee. Private R2 prevents
+public bucket access but does not make this bearer least-privilege.
 
-Saved reads check size before access, actual UTF-8 length after access, and
-identity/path/size/mtime changes around the await. This is not an atomic snapshot:
-same-size edits with indistinguishable timestamps can evade detection. Unload
-suppresses late results but cannot cancel host reads; re-enabled commands remain
-excluded until that pending operation settles. Paths shown in deliberate local UI
-remain sensitive; avoid sharing private result screenshots.
+`MIRROR_ASSOCIATION_ID`, `MIRROR_WRITER_ID`, plugin device UUIDs, and mirror
+eligibility are not authorization secrets or client permission scopes. Static IDs
+reduce accidental mutation by cooperating non-writer clients; a malicious privileged
+bearer can impersonate them. M5, not M3, owns any future scoped permission redesign.
 
-Use only a [disposable development vault](docs/plugin-development.md) for manual
-installation. Build/host-double checks verify the CommonJS artifact without Node
-runtime dependencies, but no real desktop/mobile host test or production safety
-claim is made. M2 is complete. M3 Worker Slice 2, device-local state Slice 3 and
-remote transport Slice 4 are implemented. Slice 3 provides uncomposed strict
-preference/secret-reference and App-local state adapters, serialized transition
-ownership, activation and staged handoff validation. Slice 4 provides an uncomposed
-typed Fetch adapter with just-in-time native-secret retrieval, bounded response
-streaming and conservative mutation-effect classification. Automatic saved-event
-processing, transport composition, retries, rename orchestration and remote handoff
-verification remain unimplemented. The
-[approved decisions](docs/plans/m3-design-decisions.md) distinguish that server
-subset from the future connected mirror.
+The user opts into the whole eligible Markdown mirror. Eligibility is limited to
+literal lowercase `.md` paths of at most 1 MiB, excluding dot-prefixed segments and
+the host configuration subtree. It does **not** grant remote-client permission.
+Attachments, plugin/Obsidian configuration, credentials, and arbitrary files are not
+mirrored. Note text is untrusted data: the plugin and Worker do not execute
+instructions found in notes.
 
-## Accepted M3 safety model — partially implemented on the Worker
+## Implemented data-safety boundary
 
-The user opts into the whole eligible Markdown mirror; there is no per-note
-selection model. Eligibility controls mirror scope, **not API/MCP authorization**.
-Local saved changes drive automatic one-way mirroring from one designated device.
-Static writer IDs guard cooperating clients, not a malicious privileged bearer;
-iCloud/data.json is never a transactional writer coordinator. Handoff must drain
-and resolve old work before changing designation/credentials; abort is not rollback.
+- The plugin uses official saved Vault events, native SecretStorage references,
+  modern declarative settings, host-local state, standards Fetch, and a versioned
+  same-realm runtime owner. Unsupported runtime capabilities, incompatible registry
+  or persisted-state versions, invalid configuration, missing secrets, designation
+  mismatch, and persistence failures fail closed.
+- Exactly one designated writer is supported. iCloud remains working-vault sync;
+  there is no election, lease, automatic takeover, shared transactional ledger, or
+  multi-writer claim. Writer availability controls mirror freshness.
+- Startup, scan, inventory, and listener-gap absence never authorize delete. An
+  observed post-bootstrap runtime delete for an already associated path can authorize
+  a tombstone after five seconds and an exact absence check, including possible
+  iCloud/external activity. Host events do not prove human intent.
+- Conditional format-2 revisions and receipts protect creates, updates, recreation,
+  and tombstones. V1 PUT and DELETE return storage-free `410 mutation_api_retired`.
+  There is no v1 mutation fallback or latest-revision force overwrite.
+- Deletion prepares recovery content before the tombstone CAS. The tombstone CAS is
+  the deletion linearization point. Recovery sealing establishes 30 days from the
+  stored tombstone upload time; sealing may fail after deletion and unsealed/orphan
+  content may over-retain. Seal failure never undoes a committed tombstone.
+- Expired sealed recovery content is removed only by explicit conditional replacement
+  with a content-free retained marker. This is not native R2 hard delete or exact
+  physical erasure. Tombstones/markers remain and M3 has no scheduled cleanup.
+- Runtime replacement in one compatible realm reuses the owner; process restart uses
+  the validated content-free ledger. Abort, unload, timeout, or UI disappearance is
+  not proof that a Worker operation rolled back.
 
-M3 targets Obsidian 1.13.0 and native SecretStorage references, not plaintext tokens
-in data.json or a claim of OS-keychain protection. Device activation/per-path ledger
-use official host-local storage outside vault files; it is not an fsync guarantee
-or safe multi-process store. HTTPS is default; exact loopback HTTP needs explicit
-development opt-in. Fetch denies redirects/cookies, supports abort and bounded
-reads/deadlines; no less-safe requestUrl or old-version fallback.
+Status/notices, structured application logs, plugin data, host-local state, and
+handoff exports intentionally exclude bearer plaintext and note bodies. Worker logs
+do not include concrete note paths, request bodies, raw authorization headers, raw
+exceptions, or storage envelopes. Plugin status is sanitized text and does not echo
+raw transport errors. Deliberate M2 inspection may display sensitive paths/byte
+metadata; do not share screenshots. These implemented redaction boundaries do not
+claim that arbitrary runtime user data can never exist transiently in memory.
 
-The implemented Worker uses fresh server revisions/R2 CAS and retired v1 PUT/DELETE
-to protect updates, removals and recreation. The plugin does not use this API yet.
-A post-bootstrap runtime delete for an already-associated eligible path authorizes a recoverable tombstone, including possible iCloud/external activity;
-it does **not** prove human intent. Startup/list/scan absence never authorizes delete.
-Separate recovery content is stored before tombstone, kept for 30 days and survives
-recreation. Failed sealing can over-retain. Expired content is conditionally replaced
-with a small purged marker; authoritative heads/markers never lifecycle-expire in M3.
-No native R2 trash/versioning, exact physical erasure or complete backup claim.
+## Operational security constraints
 
-R2 remains a private mirror/API layer, not sole authority; iCloud is still working-
-vault device sync. Remote divergence blocks replacement; plugin never imports or
-writes local notes. Recovery REST retrieval is not automatic local restore. Trusted
-host/cloud operators still see plaintext, and operator deletion/stale restore or
-old-code rollback can violate the experimental active-association assumptions.
-No real resources/credentials or desktop/mobile qualification are inferred.
+Use only a disposable, synthetic vault for manual development. No real Obsidian
+desktop/mobile host, personal vault, iCloud trace, deployed Worker/R2, background iOS
+behavior, or production environment is qualified by repository tests. Configuration
+is not evidence of deployed resources or credentials.
 
-See [architecture](docs/architecture.md) for invariants and the
-[roadmap](docs/roadmap.md) for automatic mirroring, reconciliation and hardening gates.
-No future conflict or deletion flow may silently discard user data.
+A safe handoff drains the old writer, preserves all unresolved evidence, exports only
+content-free ACK metadata, changes server designation, rotates the bearer
+independently, verifies local hashes/absences and remote revisions on the new device,
+and activates only after exact alignment. Events during verification invalidate the
+sample. A lost writer/ledger cannot safely take over the same association
+automatically; use a new isolated empty bucket/association/credentials while
+preserving old state for recovery.
+
+Do not run old plugin code against a current M3 state schema, restore stale local
+state as authority, re-enable an old writer after handoff without redesignation and
+credential handling, roll the Worker back over format-2 objects, re-enable v1
+mutations, discard unresolved intents, or redirect delayed old requests into a reset
+association. Pause, preserve evidence, upgrade forward, hand off, revalidate, or use
+an isolated reset. See the [operator guide](docs/operations.md) for exact setup,
+secret rotation, recovery API, handoff, and rollback procedures.
+
+## Residual limits
+
+Saved reads and host-local persistence are not atomic/fsync guarantees. Same-size
+edits with indistinguishable timestamps can evade best-effort local race evidence.
+Offline/listener-gap deletions may remain remotely live because absence cannot safely
+be promoted to delete authority. Ordering across iCloud devices is not globally
+transactional. Remote-to-local writes, conflict resolution, adoption, richer restore,
+multi-writer coordination, cleanup automation, scoped clients, and MCP are not M3
+capabilities. R2 is a private mirror/API layer, not the sole authority or a guaranteed
+complete backup.
 
 ## Reporting a vulnerability
 
-Please submit security reports privately through **GitHub Security Advisories** for this repository. Include enough detail to reproduce the issue, its impact, and any suggested mitigation.
-
-Please do not disclose a vulnerability publicly in an issue, discussion, pull request, or social media post before maintainers have had an opportunity to coordinate a response.
+Submit reports privately through **GitHub Security Advisories** for this repository.
+Include reproduction details, impact, and suggested mitigation when possible. Do not
+disclose a vulnerability in a public issue, discussion, pull request, or social media
+before maintainers can coordinate a response.
 
 ## Supported versions
 
-There are currently no supported production releases. The default branch is the only development line receiving security review while the project is experimental.
+There are no supported production releases. The default branch is the only
+development line receiving best-effort security review.
 
 | Version | Supported |
 | --- | --- |
-| Development branch | Yes, on a best-effort basis |
-| Published releases | None yet |
+| Development branch | Best effort |
+| Published production releases | None |
 
 ## Examples of security issues
 
-Please report issues such as:
-
-- Authentication or authorization bypasses.
-- Path traversal or unsafe vault path handling.
-- Exposure of remote vault content.
-- Leakage of tokens, credentials, or other secrets.
-- Unauthorized modification or deletion of vault or remote data.
-- Malicious or insufficiently validated synchronization payloads.
+Report authentication/authorization bypasses, path traversal, token or plaintext
+leakage, unsafe remote mutation/deletion, recovery-retention bypasses, registry/state
+fail-open behavior, and malformed input that escapes validated boundaries.

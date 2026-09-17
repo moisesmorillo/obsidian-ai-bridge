@@ -1,14 +1,16 @@
 # M3 implementation plan — automatic eligible-Markdown mirror
 
-**Status: Slices 0–7 implemented; Slice 8 artifact, operational and final
-semantic gates are next. M3 remains incomplete and undeployed.** PR #8 remains planning/documentation only. M2
-merged at `b300726` (PR #7); M3 is the single NEXT
-milestone. [Spec](../milestones/m3-remote-bridge-client-and-publishing.md),
+**Status: implementation plan complete; M3 Slices 0–8 and A1–A11 are complete on
+PR #27, with the transition canonical when merged. M3 remains experimental and
+undeployed; M4 is the single NEXT milestone and is planning-only.** PR #8 remains
+planning/documentation only. M2 merged at `b300726` (PR #7).
+[Spec](../milestones/m3-remote-bridge-client-and-publishing.md),
 [approved decisions/evidence](m3-design-decisions.md) and accepted design ADRs
 [0002](../decisions/0002-conditional-remote-note-mutation.md),
 [0003](../decisions/0003-publishing-association-and-local-state.md),
 [0004](../decisions/0004-recoverable-mirror-deletions.md) supersede the old selected-note
-proposal. No material product decision remains; acceptance is not implemented code.
+proposal. No material M3 product decision remains; completion evidence belongs to
+repository behavior and the milestone acceptance record, not this plan alone.
 
 ## Execution rules
 
@@ -379,28 +381,35 @@ surface and retires unsafe v1 mutations; intermediate checkpoints are not rollou
 
 ## 8. Artifact, operational and final semantic gates
 
-- **Changes:** extend generated CommonJS smoke tests proportionally: modern settings
-  and native references, automatic saved event → exact conditional request, actual
-  runtime-registry instance/bundle replacement, no Node/token/body leakage. Keep
-  source coverage separate; do not copy every unit test into artifact tests.
-- **Operations/docs:** synchronize API/architecture/current-state/README/SECURITY/
-  plugin development with **implemented** behavior. Document empty association
-  setup, full scope, one-writer availability, safe upgrade/handoff/reset, independent
-  secret rotation, deletion recovery retrieval and conditional expiry purge. Explain
-  iCloud event uncertainty, unsealed over-retention and forbidden lifecycle/old-code
-  rollback. Setup/deployment remains a separate operator action.
-- **Validation:** `mise install`, `mise run install`, `mise run check`, local storage
-  runtime task, `git diff --check`, local documentation links and actual diff/secret
-  review. Inspect four coverage metrics, unchanged inclusion/thresholds, editor
-  schema/assists/type-aware deprecations; do not claim an editor/host run not performed.
-- **Semantic review:** load **code-review** skill and its PR/semantic/TypeScript
-  guidance after green checks. Examine boundaries/typing/TSDoc, state ownership,
-  all exact harmful interleavings, recovery expiry/late preparation, credentials,
-  downgrade/handoff and unsupported guarantees. Turn findings into regression tests,
-  fix and re-review every one; no unexplained BLOCKER/MAJOR or product ambiguity.
-- **Completion:** record real evidence for A1–A11. Only completed M3 implementation
-  permits M3 COMPLETE and M4 NEXT with a refined planning spec; transition canonical
-  when merged. Open the implementation PR, do not merge/deploy or start M4 code.
+- **Generated artifact implemented:** six tests evaluate only staged `main.js` and
+  `manifest.json` for the modern declarative SecretStorage surface, official Vault
+  saved-event/layout-ready wiring, a real packaged event→core→Fetch conditional v2
+  PUT, canonical path/identity/operation/precondition/media/body behavior, same-realm
+  in-flight owner reuse across fresh bundle evaluation, incompatible-registry
+  fail-closed behavior, and Node/fixture/secret/machine-path leakage negatives. They
+  remain separate from source coverage and do not duplicate policy unit suites.
+- **Operations/docs implemented:** README, SECURITY, architecture, current state,
+  API, plugin development, this plan/spec, roadmap, ADR operational notes, the new
+  [operator guide](../operations.md), and the planning-only
+  [M4 specification](../milestones/m4-remote-to-local-reconciliation-and-conflict-resolution.md)
+  now reflect actual Slices 0–8 behavior and explicit qualification limits. Setup,
+  one-writer availability, safe upgrade/handoff/reset, independent bearer rotation,
+  recovery list/read/seal/purge, iCloud uncertainty, unsealed over-retention, and
+  forbidden rollback/downgrade are documented without authorizing deployment.
+- **Validation evidence:** record the final `mise install`, `mise run install`,
+  `mise run check`, `mise run worker:storage-test`, generated artifact, documentation
+  link, `git diff --check`, coverage, diagnostics, and secret/diff results in the M3
+  acceptance section after the final implementation tree is green. If `check` already
+  invokes a task, report the repeated focused invocation honestly rather than as an
+  independent code path.
+- **Independent review complete:** the final review of implementation head
+  `076a1eb` reported exactly three MINOR findings. Corrective commit `e97af36` fixed
+  all three, passed canonical validation and exact-head CI, and the corrective review
+  returned APPROVE with no open finding.
+- **Completion boundary fulfilled:** PR #27's documentation-only finalization marks
+  M3 COMPLETE and M4 NEXT, preserves exactly one canonical NEXT milestone, updates
+  active links/evidence, and contains no M4 production code. The transition becomes
+  canonical only when merged; no deployment or merge occurred here.
 
 ## Planning revision evidence
 
@@ -466,4 +475,5 @@ Real desktop/mobile, iCloud event traces and deployed Worker/R2 remain untested;
 source research is not runtime qualification. Supported single-writer operation,
 trusted plaintext host/operator, possible unsealed over-retention, retained small
 markers and blocked ambiguous paths remain explicit design limits, not hidden fixes.
-M3 remains NEXT; PR #8 remains draft, without implementation, deployment or merge.
+At that planning checkpoint, M3 remained NEXT; PR #8 remained draft, without
+implementation, deployment or merge. The roadmap owns current milestone status.

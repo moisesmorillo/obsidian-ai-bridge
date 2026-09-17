@@ -51,11 +51,14 @@ New infrastructure requires a concrete need and [ADR](decisions/README.md).
 
 ## Current state
 
-**M2 — Obsidian read-only local-vault adapter — COMPLETE**, merged at `b300726`
-(PR #7). The plugin supports explicit metadata-only local inspection. M1's independent
-authenticated Worker/R2 foundation remains; Worker Slice 2 now adds safe v2 routes
-and retires v1 mutations. There is no connected mirror, remote plugin client or
-production-readiness claim. M3 is NEXT with an implementation-ready design. Slice 0 qualifies the pinned local
+**M3 — Automatic eligible-Markdown remote mirror — COMPLETE on PR #27**, with the
+transition canonical when that PR is merged. M1 and M2 remain complete; M2 merged at
+`b300726` (PR #7) and its metadata-only inspection remains available. M3 Slices 0–8
+compose an experimental connected outward mirror, not a production-ready or
+remote-to-local system. Canonical validation passed, the final semantic review's three
+MINOR findings were corrected at `e97af36`, and the corrective review returned APPROVE
+with no open findings. M4 is the single NEXT milestone and remains planning-only.
+Slice 0 qualifies the pinned local
 conditional-storage runtime and host declarations. Slice 1 raises the plugin baseline
 to 1.13.0 and adds shared typed contracts. Worker Slice 2A–2C implements private conditional storage, application current/
 recovery transitions, public safe v2 HTTP/OpenAPI/CORS, envelope-aware v1 reads and
@@ -67,14 +70,19 @@ secret retrieval and conservative effect certainty. Slice 5 adds independently
 testable core bootstrap, positive-event coalescing, fair two-slot path scheduling,
 finite mutation/evidence recovery and bounded inventory reporting. Slice 6 adds
 core runtime deletion, exact tombstone recreation, destination-first rename and
-bounded folder expansion. Neither slice adds settings UI, plugin runtime timers,
-or Vault event wiring.
+bounded folder expansion. Slice 7 composes official Vault events, layout-ready
+bootstrap, runtime timers, modern SecretStorage/settings, Fetch, and same-realm
+ownership. Slice 8 adds proportional built-artifact qualification and the
+[operator guide](operations.md). No deployment, real desktop/mobile host, iCloud event
+trace, or background iOS behavior was qualified.
 
-See [current-state evidence](current-state.md), [architecture](architecture.md),
+See [M3 completion evidence](milestones/m3-remote-bridge-client-and-publishing.md#slice-8-acceptance-evidence),
+[current-state evidence](current-state.md), [architecture](architecture.md),
 [implemented API](api.md), [M2 completion](milestones/m2-obsidian-read-only-local-adapter.md#completion-evidence)
 and [M2 plan](plans/m2-obsidian-read-only-local-adapter.md). Current test counts
 and coverage evidence are recorded in [current-state](current-state.md); no deployed Worker or real Obsidian desktop/mobile
-host was exercised. New M3 test requirements are not existing coverage.
+host was exercised. M4's planned evidence requirements are not existing coverage or
+permission to start production implementation.
 
 ## Milestone table
 
@@ -85,8 +93,8 @@ production code. Dependencies include all previous milestones.
 | --- | --- | --- | --- | --- |
 | M1 | Worker API foundation and engineering quality | COMPLETE | Authenticated remote Markdown CRUD/listing with R2 and enforced quality gate | None |
 | M2 | Obsidian read-only local-vault adapter | COMPLETE | Explicit local inspection without sending or changing notes | M1 |
-| M3 | Automatic eligible-Markdown remote mirror | NEXT | Whole eligible saved vault mirrors outward, including recoverable removals/renames, with one designated writer | M2 |
-| M4 | Remote-to-local reconciliation and conflict resolution | PLANNED | Review/adopt/resolve remote divergence and richer restoration without silent local data loss | M3 |
+| M3 | Automatic eligible-Markdown remote mirror | COMPLETE | Whole eligible saved vault mirrors outward, including recoverable removals/renames, with one designated writer | M2 |
+| M4 | Remote-to-local reconciliation and conflict resolution | NEXT | Review/adopt/resolve remote divergence and richer restoration without silent local data loss | M3 |
 | M5 | Operational and security readiness | PLANNED | Operate a bounded personal bridge with reviewed limits, permissions and runbooks | M4 |
 | M6 | MCP adapter | PLANNED | Same authorized operations for MCP-capable agents | M5 |
 
@@ -120,7 +128,9 @@ production code. Dependencies include all previous milestones.
 
 ### M3 — Automatic eligible-Markdown remote mirror
 
-**NEXT — Slices 0–7 complete; Slice 8 artifact, operational and final semantic gates remain. M3 is not complete or deployed.**
+**COMPLETE — Slices 0–8, canonical/runtime/artifact/coverage/diagnostic gates,
+operational documentation, and final semantic review are complete on PR #27. The
+transition becomes canonical when the PR is merged; no deployment is implied.**
 [Specification](milestones/m3-remote-bridge-client-and-publishing.md),
 [approved decisions/evidence](plans/m3-design-decisions.md),
 [sequential test-first plan](plans/m3-remote-bridge-client-and-publishing.md) and
@@ -152,14 +162,20 @@ merely because the server-side storage and application checkpoints are implement
   primitives fail closed. No abort =
   rollback assumption, refresh-and-overwrite, body queue or Plugin-instance-only
   lock. Same-runtime owner survives replacement/re-enable; restart uses ledger.
-- **Exit:** detailed A1–A11 checklist, observed automatic full eligible behavior,
-  tested deletes/recovery/rename/restart/handoff, bounded typed failures and diagnostics,
-  canonical/coverage/artifact/platform gates and post-green semantic review; docs
-  reflect actual code. No remaining material M3 decision.
+- **Exit met:** A1–A11 are complete with tested delete/recovery/rename/restart/
+  handoff behavior, bounded typed failures, synchronized docs, 61 files / 752 source
+  tests, 6 artifact tests, 8 workerd storage tests, and coverage of 95.01% statements,
+  91.06% branches, 98.38% functions and 96.95% lines. The final review's three MINOR
+  findings were corrected and the corrective review approved `e97af36` with no open
+  findings. No remaining material M3 decision.
 - **Non-goals:** remote-to-local writes, merging/arbitrary adoption, richer restore
   UX, multi-writer coordination, scheduled polling/cleanup, MCP or new infrastructure.
 
 ### M4 — Remote-to-local reconciliation and conflict resolution
+
+**NEXT — planning/specification only.** The [refined planning specification](milestones/m4-remote-to-local-reconciliation-and-conflict-resolution.md)
+defines the decisions and evidence gates required before a separately authorized
+production implementation. M3 completion does not pre-authorize M4 code.
 
 - **Scope:** build on M3 baselines/tombstones/recovery to resolve divergence,
   explicitly adopt existing/legacy paths, import remote changes safely and offer
@@ -224,7 +240,8 @@ required decisions forward explicitly; surface material ambiguity rather than gu
 
 Read in order: [README](../README.md), [AGENTS](../AGENTS.md),
 [architecture](architecture.md), this roadmap, the single NEXT
-[M3 spec](milestones/m3-remote-bridge-client-and-publishing.md),
+[M4 specification](milestones/m4-remote-to-local-reconciliation-and-conflict-resolution.md),
+and the completed M3 [spec](milestones/m3-remote-bridge-client-and-publishing.md),
 [plan](plans/m3-remote-bridge-client-and-publishing.md) and
 [decisions](plans/m3-design-decisions.md). Inspect relevant source/tests/tooling/CI,
 [CONTRIBUTING](../CONTRIBUTING.md) and [SECURITY](../SECURITY.md).
@@ -244,7 +261,7 @@ refine it and surface material decisions first; use [ADRs](decisions/README.md).
   re-review all concrete findings; document bounded permitted deferrals explicitly.
 - Check all active acceptance items. In the implementation completion PR, update
   spec/status/evidence, roadmap, current-state/architecture/API/ADRs/operations.
-- Only then mark M3 COMPLETE and the next eligible row NEXT (exactly one), refine
-  its spec and active links, and keep later production code out of the completion
-  PR. Transitions become canonical when merged; do not merge your own work here.
+- PR #27 records the approved M3 A1–A11 evidence and atomically marks M3 COMPLETE
+  and M4 NEXT while keeping M4 production code out of the completion PR. This
+  transition becomes canonical when merged; do not merge your own work here.
 - After M6 there is no inferred M7; propose an explicit new roadmap objective.

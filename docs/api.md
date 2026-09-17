@@ -106,4 +106,10 @@ The implemented codes cover `unauthorized`, `forbidden_writer`, `invalid_path`, 
 
 `GET /openapi.json` is generated as OpenAPI 3.1 and describes v1 retirement plus the actual v2 security, headers, optional empty PUT body, media types, pagination, current/recovery schemas, distinct metadata/content routes, and relevant statuses. `GET /docs` serves Scalar. These public documentation routes do not grant note access.
 
-This implementation is local/development evidence, not proof of a deployment, bucket, production operation, or connected Obsidian client. The plugin runtime still makes no Worker calls; Slice 4's typed Fetch adapter and Slices 5–6's core autosync/lifecycle policy are intentionally uncomposed, and Slice 7 host/runtime wiring is the next internal M3 work.
+The generated plugin now composes this v2 surface for the explicitly activated
+designated writer. Artifact qualification proves a packaged saved-file event reaches a
+real conditional v2 PUT with canonical addressing and required identity/operation
+headers, with no v1 mutation fallback. This remains local host-double/development
+evidence—not proof of a deployment, remote bucket, real Obsidian host, iCloud event
+trace, or production operation. See the [operator guide](operations.md) for setup,
+recovery seal/purge requests, handoff, rotation, and downgrade restrictions.

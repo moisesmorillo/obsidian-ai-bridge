@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.0](https://github.com/moisesmorillo/obsidian-ai-bridge/compare/v0.6.0...v0.7.0) (2026-09-16)
+
+
+### Features
+
+* **plugin:** compose the M3 host mirror runtime ([#25](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/25)) ([5a55fdf](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/5a55fdfdb26a5c00eec5d79041f874a2411aa5e3))
+
 ## [0.6.0](https://github.com/moisesmorillo/obsidian-ai-bridge/compare/v0.5.1...v0.6.0) (2026-09-16)
 
 

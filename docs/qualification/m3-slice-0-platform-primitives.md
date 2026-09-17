@@ -3,7 +3,8 @@
 This record covers only M3 implementation-plan Slice 0. It qualifies the local
 storage runtime contract and records official host declaration availability before
 any mirror, v2 Worker API, settings, credentials, autosync, state machine, recovery
-service or production adapter is implemented. M3 remains `NEXT`.
+service or production adapter was implemented. At this Slice 0 checkpoint, M3
+remained `NEXT`; the [roadmap](../roadmap.md) owns current milestone status.
 
 ## Conditional R2 qualification
 

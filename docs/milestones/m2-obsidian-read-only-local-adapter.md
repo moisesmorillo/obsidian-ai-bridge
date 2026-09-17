@@ -1,11 +1,12 @@
 # M2 — Obsidian read-only local-vault adapter
 
-**Status: COMPLETE — implemented and validated; transition canonical on merge.**
+**Status: COMPLETE — implemented, validated and merged at `b300726` (PR #7).**
 
 Implementation followed the [sequential M2 plan](../plans/m2-obsidian-read-only-local-adapter.md).
 [Completion evidence](#completion-evidence) records checks, review and host-test
-limitations. [M3](m3-remote-bridge-client-and-publishing.md) is NEXT for planning
-only; no remote publishing implementation is included.
+limitations. At M2 completion, [M3](m3-remote-bridge-client-and-publishing.md) was
+promoted to NEXT for planning only; no remote publishing implementation was included
+in M2. The [roadmap](../roadmap.md) owns current milestone status.
 
 Depends on M1. [Roadmap](../roadmap.md) owns sequence and status;
 [AGENTS.md](../../AGENTS.md) owns engineering rules. This specification makes new,
@@ -350,7 +351,7 @@ Vitest discovery and verify new tests actually execute through mise tasks.
   the configured editor JSON schema. No separate editor session or real Obsidian
   desktop/mobile runtime was exercised; these are verification limits, not claims
   of tested host integration. No deployment or vault installation occurred.
-- The roadmap promotes M3 to NEXT with a planning-only handoff. Selection/consent,
+- At M2 completion, the roadmap promoted M3 to NEXT with a planning-only handoff. Selection/consent,
   settings/credentials, remote association and server-enforced safe publishing
   remain unresolved; M2 eligibility and stat evidence authorize none of them.
 

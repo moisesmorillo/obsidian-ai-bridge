@@ -1,7 +1,7 @@
 # M2 implementation plan — read-only local inspection
 
 **Status: COMPLETE — implemented in sequential slices and semantically reviewed.**
-Publication and the canonical milestone transition occur through the completion PR.
+Publication and the canonical milestone transition occurred through merged PR #7.
 Created from the approved
 [M2 specification](../milestones/m2-obsidian-read-only-local-adapter.md).
 The [roadmap](../roadmap.md) owns scope/status; [AGENTS.md](../../AGENTS.md)

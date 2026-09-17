@@ -1,12 +1,13 @@
 # M3 — Automatic eligible-Markdown remote mirror
 
-**Status: NEXT — Slices 0–8 implementation and automated/operational gates are
-present; the separate authoritative final semantic review and milestone transition
-remain pending. M3 is incomplete and not deployed.**
+**Status: COMPLETE — Slices 0–8 and A1–A11 are complete on PR #27. The
+M3→M4 transition becomes canonical when that PR is merged. M3 is not deployed or
+production-qualified.**
 
 The maintainer's clarification replaces the selected-note/manual-publishing proposal
-at `e35bd90`. M2 is COMPLETE at merged `b300726` (PR #7); M3 is the single NEXT
-milestone. Historical filenames remain as stable links, not product terminology.
+at `e35bd90`. M2 is COMPLETE at merged `b300726` (PR #7); M3 is COMPLETE on
+PR #27 and M4 is the single NEXT milestone. Historical filenames remain as stable
+links, not product terminology.
 [Roadmap](../roadmap.md) owns scope/order; [AGENTS.md](../../AGENTS.md) owns engineering
 rules; [decisions/evidence](../plans/m3-design-decisions.md) and the
 [sequential plan](../plans/m3-remote-bridge-client-and-publishing.md) are companions.
@@ -30,8 +31,9 @@ scheduling, host-deadline timers, Web Crypto fencing, modern settings/native sec
 references, non-secret designation/consent UI, passive non-writers, sanitized controls/
 status and explicit metadata-only handoff are implemented. Slice 8 adds proportional
 generated-artifact qualification and synchronized operator/security/recovery
-runbooks. The authoritative final semantic review remains pending; no real Obsidian
-desktop/mobile host has been exercised.
+runbooks. The independent final review identified three MINOR issues; corrective head
+`e97af36` fixed all three and its corrective review returned APPROVE with no open
+findings. No real Obsidian desktop/mobile host has been exercised.
 
 ## Objective and authority
 
@@ -59,7 +61,7 @@ approved runtime deletion authority (including possible iCloud/external activity
 30-day recovery and one designated writer. No material product choice remains.
 Accepted ADRs describe the complete design. Worker Slice 2A–2C, plugin/state/core
 Slices 3–6, host composition Slice 7, and artifact/operations Slice 8 are implemented;
-only the independent final review and completion transition remain:
+canonical validation and the final/corrective semantic reviews passed:
 
 - [0002](../decisions/0002-conditional-remote-note-mutation.md): conditional current
   generations, receipts, v2 and retirement of unsafe v1 PUT/DELETE.
@@ -554,8 +556,8 @@ checks. Planning also receives that review before readiness is declared.
 
 `Implemented` below means repository code/tests/docs support the accepted behavior.
 It does not mean a real host, iCloud trace, deployment, or production environment was
-qualified. Final command counts/coverage are recorded after the implementation tree
-is frozen; the independent review is deliberately outside this session.
+qualified. Final command counts/coverage and independent review evidence are recorded
+against the frozen implementation and reviewed corrective head.
 
 | Item | Status | Concrete evidence |
 | --- | --- | --- |
@@ -568,8 +570,8 @@ is frozen; the independent review is deliberately outside this session.
 | A7 — bounded safe rename/recreation/interleavings | **Implemented** | `mirror-rename-executor.ts`, lifecycle policy/state, exact tombstone recreation, lexical reservation and folder-bound tests in `mirror-lifecycle.test.ts`/`mirror-synchronizer.test.ts`; deferred conflicts preserve versions. |
 | A8 — runtime owner/designation/clean handoff | **Implemented** | Versioned Promise-backed registry, attachment/configuration/staged-handoff owners and tests; generated same-realm replacement/incompatible-registry tests; content-free export/alignment integration tests; [exact handoff/reset sequence](../operations.md#safe-writer-handoff). |
 | A9 — typed v2/OpenAPI/transport/CORS/failures/negative capabilities | **Implemented** | Shared protocol schemas/constants, generated OpenAPI semantic assertions, one v2 route policy for Hono/CORS/OpenAPI, Worker HTTP matrices, bounded Fetch/response tests, capability failure fencing, and packaged exact request assertions. API audit found no behavior/doc drift after stale composition prose was corrected. |
-| A10 — canonical/coverage/generated/runtime/diagnostics/docs plus semantic review | **PENDING independent final review** | Artifact/operational work is implemented. Canonical/runtime/coverage/diagnostic/link/secret evidence is recorded in the Slice 8 validation record after final runs. The authoritative fresh-session code-review verdict is intentionally pending, so A10 is not complete. |
-| A11 — completion PR/evidence then M4 NEXT, no M4 code/deployment | **PENDING A10 and transition** | This completion PR keeps M3 `NEXT` and M4 `PLANNED`; the [M4 planning specification](m4-remote-to-local-reconciliation-and-conflict-resolution.md) is documentation only. No M4 production code, deployment, personal-vault install, or merge occurred. |
+| A10 — canonical/coverage/generated/runtime/diagnostics/docs plus semantic review | **Complete** | Canonical validation, unchanged coverage thresholds, generated artifact qualification, pinned workerd storage qualification, diagnostics/tooling, synchronized operational/security docs, Markdown-link and secret/diff review all passed. The independent final review found exactly three MINOR issues; corrective head `e97af36` fixed them and passed CI, and the corrective `/skill:code-review` returned APPROVE with no actionable finding. No real-host, iCloud, deployment or production claim is included. |
+| A11 — completion PR/evidence then M4 NEXT, no M4 code/deployment | **Complete** | A1–A10 have repository evidence; PR #27 contains the atomic M3 COMPLETE / M4 NEXT transition and the refined [M4 planning specification](m4-remote-to-local-reconciliation-and-conflict-resolution.md), with no M4 production code or deployment. The transition becomes canonical when this PR is merged; no merge SHA is claimed. |
 
 ### Slice 8 validation record
 
@@ -608,15 +610,22 @@ independent validation paths.
   Worker/R2, remote bucket, production credential, or background iOS behavior was
   exercised. These are explicit residual qualification limits.
 
-The authoritative fresh-session semantic review remains pending, so this green
-record does not complete A10 or authorize A11.
+The independent final review of implementation head
+`076a1eb31c4c6fce875d6194007d1bb08b9f8b50` reported three MINOR findings: exact
+stale-Notice artifact evidence, writer-ID runbook ordering, and stale architecture
+status. Corrective head `e97af36b1f4d751bf65bcdffb22b0705526d1e73` resolved all
+three, passed the same canonical gate and exact-head CI, and the corrective review
+returned APPROVE with no open finding. This documentation-only transition introduces
+no implementation or M4 production behavior and is re-reviewed as part of the
+complete final PR before merge.
 
 Checklist state:
 
 - [x] A1–A9 have implemented repository evidence, subject to the explicit runtime
   qualification limits above.
-- [ ] A10 awaits the independent final semantic review.
-- [ ] A11 awaits A10 approval and the atomic M3 COMPLETE / M4 NEXT finalization.
+- [x] A10 canonical, qualification, documentation and independent semantic gates pass.
+- [x] A11 is recorded in PR #27; the M3 COMPLETE / M4 NEXT transition becomes
+  canonical when merged, with no M4 production code or deployment.
 
 ## Non-goals and residual risks
 

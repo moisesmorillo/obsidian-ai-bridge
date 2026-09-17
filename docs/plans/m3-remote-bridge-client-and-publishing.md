@@ -1,15 +1,16 @@
 # M3 implementation plan — automatic eligible-Markdown mirror
 
-**Status: Slices 0–8 implementation and automated/operational gates are present;
-the separate authoritative final semantic review and milestone transition remain
-pending. M3 remains incomplete and undeployed.** PR #8 remains planning/documentation only. M2
-merged at `b300726` (PR #7); M3 is the single NEXT
-milestone. [Spec](../milestones/m3-remote-bridge-client-and-publishing.md),
+**Status: implementation plan complete; M3 Slices 0–8 and A1–A11 are complete on
+PR #27, with the transition canonical when merged. M3 remains experimental and
+undeployed; M4 is the single NEXT milestone and is planning-only.** PR #8 remains
+planning/documentation only. M2 merged at `b300726` (PR #7).
+[Spec](../milestones/m3-remote-bridge-client-and-publishing.md),
 [approved decisions/evidence](m3-design-decisions.md) and accepted design ADRs
 [0002](../decisions/0002-conditional-remote-note-mutation.md),
 [0003](../decisions/0003-publishing-association-and-local-state.md),
 [0004](../decisions/0004-recoverable-mirror-deletions.md) supersede the old selected-note
-proposal. No material product decision remains; acceptance is not implemented code.
+proposal. No material M3 product decision remains; completion evidence belongs to
+repository behavior and the milestone acceptance record, not this plan alone.
 
 ## Execution rules
 
@@ -391,7 +392,7 @@ surface and retires unsafe v1 mutations; intermediate checkpoints are not rollou
   API, plugin development, this plan/spec, roadmap, ADR operational notes, the new
   [operator guide](../operations.md), and the planning-only
   [M4 specification](../milestones/m4-remote-to-local-reconciliation-and-conflict-resolution.md)
-  now reflect actual Slices 0–7 behavior and explicit qualification limits. Setup,
+  now reflect actual Slices 0–8 behavior and explicit qualification limits. Setup,
   one-writer availability, safe upgrade/handoff/reset, independent bearer rotation,
   recovery list/read/seal/purge, iCloud uncertainty, unsealed over-retention, and
   forbidden rollback/downgrade are documented without authorizing deployment.
@@ -401,14 +402,14 @@ surface and retires unsafe v1 mutations; intermediate checkpoints are not rollou
   acceptance section after the final implementation tree is green. If `check` already
   invokes a task, report the repeated focused invocation honestly rather than as an
   independent code path.
-- **Independent review pending by design:** this implementation session does not run
-  the authoritative final code-review skill. A fresh Sol High review must examine the
-  complete PR after green validation. A10 remains pending that verdict; A11 and the
-  M3→M4 transition remain pending A10.
-- **Completion boundary:** M3 stays NEXT and M4 stays PLANNED. Only after independent
-  APPROVE may a corrective/finalization commit mark M3 COMPLETE, mark M4 NEXT,
-  preserve exactly one NEXT milestone, update active links/PR evidence, and leave M4
-  production code untouched. Do not merge or deploy from this session.
+- **Independent review complete:** the final review of implementation head
+  `076a1eb` reported exactly three MINOR findings. Corrective commit `e97af36` fixed
+  all three, passed canonical validation and exact-head CI, and the corrective review
+  returned APPROVE with no open finding.
+- **Completion boundary fulfilled:** PR #27's documentation-only finalization marks
+  M3 COMPLETE and M4 NEXT, preserves exactly one canonical NEXT milestone, updates
+  active links/evidence, and contains no M4 production code. The transition becomes
+  canonical only when merged; no deployment or merge occurred here.
 
 ## Planning revision evidence
 
@@ -474,4 +475,5 @@ Real desktop/mobile, iCloud event traces and deployed Worker/R2 remain untested;
 source research is not runtime qualification. Supported single-writer operation,
 trusted plaintext host/operator, possible unsealed over-retention, retained small
 markers and blocked ambiguous paths remain explicit design limits, not hidden fixes.
-M3 remains NEXT; PR #8 remains draft, without implementation, deployment or merge.
+At that planning checkpoint, M3 remained NEXT; PR #8 remained draft, without
+implementation, deployment or merge. The roadmap owns current milestone status.

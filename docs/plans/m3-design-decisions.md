@@ -1,6 +1,6 @@
 # M3 decisions — automatic eligible-Markdown mirror
 
-**Status: maintainer decisions resolved; M3 Slices 0–8 implementation and automated/operational gates are present. The connected outward mirror remains experimental; final independent semantic review and the completion transition are pending.**
+**Status: maintainer decisions resolved and implemented; M3 Slices 0–8 and A1–A11 are COMPLETE on PR #27. The transition becomes canonical when that PR is merged. The connected outward mirror remains experimental and undeployed; M4 is NEXT for planning only.**
 
 This replaces the proposal in PR #8 at `e35bd90`. That proposal drifted from the
 product by coupling mirror scope to per-note consent, making manual publishing
@@ -199,4 +199,6 @@ and conservative failure states account for those limits.
 specified platform primitives and satisfy deterministic safety tests before wiring
 automatic mutation. A failed qualification pauses that slice and requires technical
 remediation/review; it does not authorize reverting to the rejected product model.
-M3 remains NEXT, not COMPLETE; M4 and MCP are not implemented here.
+M3 is COMPLETE on PR #27 after canonical validation and final/corrective semantic
+review; the transition becomes canonical when merged. M4 is NEXT for planning only,
+and no M4 production behavior or MCP transport is implemented here.

@@ -1,9 +1,9 @@
 # M4 — Remote-to-local reconciliation and conflict resolution
 
-**Status: PLANNED — not authorized for production implementation until M3 is COMPLETE
-and M4 is the single NEXT milestone.**
+**Status: NEXT — refined planning specification only. Production implementation
+requires a separate authorization after PR #27's M3→M4 transition becomes canonical.**
 
-This planning specification prepares the post-M3 transition without adding M4 code.
+This planning specification records the post-M3 work without adding M4 code.
 It builds on M3's accepted outward authority, conditional revisions, permanent
 current heads, recovery snapshots, one designated writer, and device-local ledger.
 It must not reinterpret or weaken those completed invariants.

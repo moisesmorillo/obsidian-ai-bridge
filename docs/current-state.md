@@ -1,22 +1,24 @@
 # Verified current state
 
-This snapshot records the completed M2 local-inspection implementation, M1
-foundation, and implemented M3 Slices 0–8 (with final independent review pending). M2 source/tooling through
-`2e74b23` passed independent semantic review;
-the completion PR records final validation and makes the transition canonical
-when merged. M2 is now merged at `b300726` (PR #7). M3 has completed [Slice 0 platform qualification](qualification/m3-slice-0-platform-primitives.md),
+This snapshot records the completed M1 foundation, M2 local-inspection adapter, and
+M3 Slices 0–8. M2 source/tooling through `2e74b23` passed independent semantic
+review and merged at `b300726` (PR #7). M3's completion PR #27 passed canonical
+validation and final semantic review; its three MINOR findings were corrected at
+`e97af36`, whose corrective review returned APPROVE with no open findings. M3 is
+COMPLETE on this PR and the M3→M4 transition becomes canonical when it is merged.
+M4 is the single NEXT milestone and remains planning-only. M3 completed [Slice 0 platform qualification](qualification/m3-slice-0-platform-primitives.md),
 Slice 1's modern plugin baseline/shared typed contracts, Worker Slice 2A–2C's
 private storage/application transitions plus public safe v2 HTTP/OpenAPI/CORS, and
 Slice 3's device-local state/configuration owner and staged handoff model, Slice
 4's typed bounded Fetch `RemoteBridge` adapter, Slice 5's core-only bootstrap,
 coalescing, scheduling, and finite retry/evidence engine, Slice 6's core runtime
 deletion/recreation/rename orchestration, and Slice 7's official host/runtime/settings
-composition. Slice 8 now adds proportional generated-artifact qualification and the
-[operator runbook](operations.md). The connected outward mirror remains experimental
-and M3 remains incomplete pending the separate final semantic review and milestone
-transition. Its [accepted design decisions](plans/m3-design-decisions.md)
-and [sequential plan](plans/m3-remote-bridge-client-and-publishing.md) remain broader
-than the implemented subset. The approved product is an automatic whole eligible
+composition. Slice 8 adds proportional generated-artifact qualification, synchronized
+operational/security documentation, and the [operator runbook](operations.md). The
+connected outward mirror remains experimental and undeployed. Its
+[accepted design decisions](plans/m3-design-decisions.md) and
+[sequential plan](plans/m3-remote-bridge-client-and-publishing.md) record the completed
+implementation and retained limits. The approved product is an automatic whole eligible
 Markdown mirror with recoverable runtime deletion/rename, per-path state and one
 designated writer—not selected/manual publishing. M3 Slice 1 set the plugin manifest baseline to Obsidian 1.13.0; Slice 7 now uses
 native SecretStorage references and modern declarative settings without persisting
@@ -117,10 +119,10 @@ including atomic indexed alignment batches. Slices 5–6 implement core bootstra
 positive-event coalescing, path scheduling, finite retry/evidence policy and runtime
 deletion/recreation/rename orchestration; Slice 7 composes them with the Fetch client
 through official host callbacks, settings, timers and same-realm ownership. There are
-no remote-to-local writes. Slice 8's artifact and operational work is implemented,
-but its authoritative independent semantic review is intentionally pending; M3
-remains NEXT and cannot be marked complete until that review passes. No M4
-remote-to-local behavior exists.
+no remote-to-local writes. Slice 8's artifact, operational, validation and semantic
+review gates passed; the corrective review of `e97af36` returned APPROVE. M3 is
+COMPLETE on PR #27, with that transition canonical when merged. M4 is NEXT for
+planning only, and no M4 remote-to-local behavior exists.
 
 There is no search, MCP, AI inference, attachment mirroring or remote-to-local plugin client.
 No D1, Durable Objects, queues, Vectorize, Workers AI or external database is part
@@ -142,8 +144,8 @@ native secret references and explicit writer handoff. The Worker storage/applica
 reconciliation machinery drive the experimental connected outward plugin runtime.
 The [operator guide](operations.md) records setup, one-writer availability,
 upgrade/handoff/reset, bearer rotation, recovery API use, iCloud uncertainty, and
-rollback prohibitions. This is not production readiness, deployment, real-host
-qualification or M3 completion.
+rollback prohibitions. M3 completion is an implementation/evidence milestone; it is
+not production readiness, deployment, or real-host qualification.
 Broader operating limits/recovery automation and scoped authentication remain M5;
 prerequisites to safe M3/M4 behavior must not be postponed there.
 

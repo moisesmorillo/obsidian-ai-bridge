@@ -2,7 +2,7 @@
 
 A secure bridge between Obsidian and remote AI or agent clients.
 
-> **Status:** M2 complete; M3 remains experimental and incomplete. **NEXT:** [M3 Slice 8 — Artifact, operational and final semantic gates](docs/milestones/m3-remote-bridge-client-and-publishing.md). Slices 0–8 implementation and automated/operational gates are present; the separate authoritative final semantic review and milestone transition remain pending. This is not a deployment, personal-vault installation, real-host qualification, M3 completion, or remote-to-local synchronization claim.
+> **Status:** M3 automatic eligible-Markdown mirroring is **COMPLETE** on PR #27; the transition becomes canonical when that PR is merged. **NEXT:** [M4 — Remote-to-local reconciliation and conflict resolution](docs/milestones/m4-remote-to-local-reconciliation-and-conflict-resolution.md), currently planning only. M3 remains experimental and undeployed, with no personal-vault installation, real-host/iCloud qualification, production-readiness, or remote-to-local claim.
 
 ## Motivation
 
@@ -25,7 +25,7 @@ Cloudflare Worker
 Cloudflare R2
 ```
 
-M3 Slices 0–7 now connect this outward path in the generated plugin: an explicitly activated designated writer observes official saved-file events and uses the conditional v2 Worker API. The system remains experimental and undeployed; it has no remote-to-local synchronization, MCP, production certification, or real Obsidian desktop/mobile qualification.
+Completed M3 connects this outward path in the generated plugin: an explicitly activated designated writer observes official saved-file events and uses the conditional v2 Worker API. The system remains experimental and undeployed; it has no remote-to-local synchronization, MCP, production certification, or real Obsidian desktop/mobile qualification.
 
 ## Goals
 
@@ -144,9 +144,10 @@ docs/                   Architecture, API, current-state audit, roadmap,
 
 Start with [AGENTS.md](AGENTS.md), [architecture](docs/architecture.md), the
 [canonical roadmap and agent onboarding](docs/roadmap.md), then the
-[active M3 design proposal](docs/milestones/m3-remote-bridge-client-and-publishing.md).
-The [approved decision brief](docs/plans/m3-design-decisions.md) and
-[sequential plan](docs/plans/m3-remote-bridge-client-and-publishing.md) specify
+[active M4 planning specification](docs/milestones/m4-remote-to-local-reconciliation-and-conflict-resolution.md).
+The completed [M3 specification](docs/milestones/m3-remote-bridge-client-and-publishing.md),
+[approved decision brief](docs/plans/m3-design-decisions.md), and
+[sequential plan](docs/plans/m3-remote-bridge-client-and-publishing.md) record
 automatic bootstrap/saved-file events, per-path state, safe conditional mutations,
 recoverable runtime deletes/renames and explicit single-writer handoff. The
 [Slice 0 qualification](docs/qualification/m3-slice-0-platform-primitives.md)

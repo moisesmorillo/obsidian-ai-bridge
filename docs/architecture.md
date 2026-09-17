@@ -20,10 +20,12 @@ handoff model, Slice 4's typed bounded Fetch `RemoteBridge` adapter, Slice 5's
 core-only bootstrap/reconciliation scheduler, Slice 6's runtime deletion,
 recreation and rename orchestration, and Slice 7's official host/runtime/settings
 composition. Slice 8's generated-artifact qualification and operational documentation
-are implemented on this PR. The connected outward mirror remains experimental; M3
-is still NEXT and incomplete pending independent semantic review/A10 approval and the
-committed A11 milestone transition. M4 remains PLANNED. No deployment or real
-Obsidian desktop/mobile host qualification has occurred.
+are implemented. The independent final review found three MINOR issues, corrective
+head `e97af36` resolved all three, and the corrective review returned APPROVE with no
+open findings. M3 is COMPLETE on PR #27, with the transition canonical when that PR
+is merged; M4 is NEXT for planning only. The connected outward mirror remains
+experimental and undeployed, with no real Obsidian desktop/mobile or iCloud runtime
+qualification.
 See the [verified current state](current-state.md) for source/configuration evidence,
 [roadmap](roadmap.md) for execution order and open decisions, and
 [ADR 0001](decisions/0001-worker-r2-foundation.md) for the durable foundation.
@@ -297,9 +299,8 @@ establishes real-host behavior.
 
 ## Explicitly deferred
 
-- M3 (NEXT): Slice 8 artifact/operational validation is implemented on this branch;
-  final independent semantic review and the truthful completion transition remain.
-- M4: Remote-to-local authority, conflict resolution, adoption and richer restore UX.
+- M4 (NEXT, planning only): Remote-to-local authority, conflict resolution, adoption,
+  reviewed remote deletion handling, bounded local mutation and richer restore UX.
 - M5: Broader operational readiness, abuse limits and scoped authentication evolution.
 - M6: Authorized MCP transport/tool definitions, never direct R2 access.
 - Outside this roadmap: search, attachments and AI inference. NAS replication or

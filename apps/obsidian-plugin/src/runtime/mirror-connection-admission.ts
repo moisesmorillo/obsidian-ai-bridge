@@ -249,6 +249,11 @@ export class MirrorConnectionAdmissionCoordinator {
   }
 }
 
+/**
+ * Compares readiness, origin and secret reference that govern connection reuse; no bearer value participates in identity.
+ *
+ * @returns Whether both configurations permit the same connection identity.
+ */
 function sameConnectionConfiguration(
   currentStatus: MirrorConfigurationStatus,
   current: MirrorPreferences | null,
@@ -262,6 +267,12 @@ function sameConnectionConfiguration(
   );
 }
 
+/**
+ * Maps strict preference outcomes to readiness, distinguishing missing defaults from invalid/unavailable configuration.
+ *
+ * @param decoded - Strict preference decode outcome.
+ * @returns The configuration readiness state without secret contents.
+ */
 function configurationFromDecode(
   decoded: MirrorPreferencesDecodeResult | { readonly kind: "unavailable" },
 ): {

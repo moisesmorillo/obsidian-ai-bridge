@@ -24,8 +24,9 @@ export type MirrorRuntimeAppHost = Pick<
 /**
  * Loads or provisions device-local state before constructing the runtime owner.
  *
- * Missing state receives one new UUID-v4 and is saved before publication. Corrupt,
- * future, unavailable, or unsaved state fails closed and remains untouched.
+ * Missing state receives one new UUID-v4 and is saved before publication. Loading
+ * may migrate valid v2 state. Corrupt, future, unavailable or unsuccessfully saved
+ * state prevents owner publication; host save failure does not prove no write occurred.
  *
  * @param app - Official App-local storage and SecretStorage capabilities.
  * @param vault - Official saved-file Vault capability.

@@ -38,6 +38,7 @@ import type { NotePath } from "@core/note-path/note-path.types";
  * derives authority from startup, inventory, or a failed local read.
  */
 export class MirrorDeletionExecutor {
+  /** Composes exact-read/grace checks with the shared durable intent executor; acquires no independent deletion authority. */
   constructor(
     private readonly local: ReadOnlyLocalVault,
     private readonly remote: RemoteBridge,
@@ -173,6 +174,7 @@ export class MirrorDeletionExecutor {
   }
 }
 
+/** Durable delete evidence or a rename whose destination prerequisite has reached source cleanup. */
 type DestructiveDesired =
   | RuntimeDeleteMirrorState
   | (RenameDeferredMirrorState & {

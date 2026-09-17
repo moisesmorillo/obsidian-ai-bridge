@@ -81,6 +81,11 @@ export async function inspectBoundedMirrorInventory(
   };
 }
 
+/**
+ * Returns a sorted copy of unique reporting paths without mutating the accumulated inventory.
+ *
+ * @returns Unique paths in lexical order.
+ */
 function sortedPaths(paths: ReadonlySet<NotePath>): readonly NotePath[] {
   return [...paths].toSorted((left, right) => left.localeCompare(right));
 }

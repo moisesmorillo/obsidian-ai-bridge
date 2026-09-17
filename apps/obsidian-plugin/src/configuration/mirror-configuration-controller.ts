@@ -97,6 +97,12 @@ export class MirrorConfigurationController {
     this.attached = false;
   }
 
+  /**
+   * Serializes preference operations while keeping later operations runnable after a predecessor rejects.
+   *
+   * @param operation - Deferred preference work to run after prior operations settle.
+   * @returns The queued operation's result or rejection.
+   */
   private enqueue(operation: () => Promise<void>): Promise<void> {
     const result = this.queue.then(operation);
     this.queue = result.catch(() => undefined);

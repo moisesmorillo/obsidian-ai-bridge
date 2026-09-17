@@ -91,6 +91,7 @@ export class FairMirrorScheduler {
     return new Promise((resolve) => this.idleWaiters.add(resolve));
   }
 
+  /** Starts queued jobs in FIFO order up to the global limit while retaining their pre-acquired path reservations. */
   private drain(): void {
     while (this.activeJobs < MAX_ACTIVE_MIRROR_JOBS && this.queued.length > 0) {
       const job = this.queued.shift();
@@ -103,6 +104,7 @@ export class FairMirrorScheduler {
     }
   }
 
+  /** Releases all job reservations after fulfillment/rejection, admits the next jobs and resolves waiters only at idle. */
   private settle(job: QueuedMirrorJob, failure: Error | null): void {
     this.activeJobs -= 1;
     for (const key of normalizedReservationKeys(job)) this.reserved.delete(key);

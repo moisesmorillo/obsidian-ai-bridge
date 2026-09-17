@@ -23,6 +23,7 @@ import type { NotePath } from "@core/note-path/note-path.types";
  * generations after every await because local observations can supersede a plan.
  */
 export class MirrorRenameExecutor {
+  /** Composes destination reconciliation and source deletion through shared owners; caller retains both path reservations. */
   constructor(
     private readonly stateOwner: MirrorStateOwner,
     private readonly reconciler: MirrorPositiveReconciler,

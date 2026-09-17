@@ -20,6 +20,7 @@ import {
 import type { WorkerContext } from "@worker/http/hono.types";
 import { HTTP_STATUS } from "@worker/http/http.constants";
 
+/** Finite aggregation budget for the legacy complete-list route; exhaustion fails rather than returning a misleading partial list. */
 const MAX_V1_LIST_PAGES = 1000;
 
 /**

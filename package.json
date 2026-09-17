@@ -4,6 +4,9 @@
   "private": true,
   "packageManager": "bun@1.4.2",
   "type": "module",
+  "imports": {
+    "#tools/*": "./tools/*.ts"
+  },
   "workspaces": [
     "apps/*",
     "packages/*"

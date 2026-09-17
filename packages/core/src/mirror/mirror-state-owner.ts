@@ -153,6 +153,12 @@ export class MirrorStateOwner {
     };
   }
 
+  /**
+   * Validates and saves a queued transition before publishing/revision advance; typed save failure retains prior state and fences admission.
+   *
+   * @param transition - Queued pure state transition evaluated against the latest published ledger.
+   * @returns The committed or rejected transition outcome.
+   */
   private async apply(
     transition: (current: MirrorDeviceState) => MirrorDeviceState | undefined,
   ): Promise<MirrorStateCommitResult> {

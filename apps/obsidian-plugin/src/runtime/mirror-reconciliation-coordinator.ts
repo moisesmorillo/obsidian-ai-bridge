@@ -34,6 +34,7 @@ export type MirrorReconciliationResult =
   | { readonly kind: "incomplete" }
   | { readonly kind: "stale" };
 
+/** In-flight bootstrap plus its captured host identity; replacement sessions wait for actual completion. */
 interface ActiveReconciliation extends MirrorReconciliationIdentity {
   readonly completion: Promise<MirrorReconciliationResult>;
 }
@@ -83,6 +84,11 @@ export class MirrorReconciliationCoordinator {
     this.completed = null;
   }
 
+  /**
+   * Records completion only for current bootstrap identity and guards progress/settlement callbacks against stale sessions.
+   *
+   * @returns The bootstrap outcome after current-identity completion bookkeeping.
+   */
   private async run(
     request: MirrorReconciliationRequest,
   ): Promise<MirrorReconciliationResult> {
@@ -106,6 +112,11 @@ export class MirrorReconciliationCoordinator {
   }
 }
 
+/**
+ * Captures only epoch/configuration/connection identity, without retaining callbacks or transport objects.
+ *
+ * @returns An immutable bootstrap identity projection.
+ */
 function identityOf(
   value: MirrorReconciliationIdentity,
 ): MirrorReconciliationIdentity {
@@ -116,6 +127,11 @@ function identityOf(
   };
 }
 
+/**
+ * Requires all host identity dimensions to match before joining or reusing a bootstrap result.
+ *
+ * @returns Whether all bootstrap identity dimensions match.
+ */
 function sameIdentity(
   left: MirrorReconciliationIdentity,
   right: MirrorReconciliationIdentity,

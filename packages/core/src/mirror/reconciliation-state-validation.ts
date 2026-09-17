@@ -57,6 +57,7 @@ import type {
 import { isNormalizedNotePath } from "@core/note-path/note-path";
 import { MAX_NOTE_SIZE_BYTES } from "@core/vault/vault.constants";
 
+/** Exact competing bytes derived from sampled evidence, never from a receipt's own claims. */
 interface RequiredPreservation {
   readonly originalPath: ReconciliationPreservationReceipt["originalPath"];
   readonly side: ReconciliationPreservationReceipt["side"];
@@ -183,6 +184,11 @@ export function reconciliationReviewSnapshotsEqual(
   );
 }
 
+/**
+ * Bounds sparse record counts, total receipts and all snapshot/reservation path references.
+ *
+ * @returns Whether all sparse-record and path-reference capacity limits hold.
+ */
 function validateCapacity(state: MirrorDeviceState): boolean {
   if (
     state.reconciliationReviews.length > MAX_RECONCILIATION_REVIEWS ||
@@ -206,6 +212,11 @@ function validateCapacity(state: MirrorDeviceState): boolean {
   );
 }
 
+/**
+ * Rejects M4 metadata before activation/staged handoff and active reservations after drain.
+ *
+ * @returns Whether this lifecycle permits the recorded M4 metadata and reservations.
+ */
 function validateLifecycle(state: MirrorDeviceState): boolean {
   const hasActiveOperation =
     state.reconciliationOperations.some(isActiveOperation);
@@ -225,6 +236,11 @@ function validateLifecycle(state: MirrorDeviceState): boolean {
   }
 }
 
+/**
+ * Keeps historical snapshots bound to this device and association/origin without requiring current lifecycle equality.
+ *
+ * @returns Whether the sample belongs to the current device and enabled binding.
+ */
 function validateSnapshotOwner(
   state: MirrorDeviceState,
   snapshot: ReconciliationReviewSnapshot,
@@ -243,6 +259,11 @@ function validateSnapshotOwner(
   );
 }
 
+/**
+ * Checks durable review identity and snapshot shape; a staged review must name an operation.
+ *
+ * @returns Whether review identity, status linkage and snapshot shape are valid.
+ */
 function validateReview(review: ReconciliationReview): boolean {
   return (
     review.retention === RECONCILIATION_REVIEW_RETENTION.durable &&
@@ -254,6 +275,11 @@ function validateReview(review: ReconciliationReview): boolean {
   );
 }
 
+/**
+ * Rejects malformed or duplicate sampled paths and snapshots missing their target; does not sample live state.
+ *
+ * @returns Whether the sample has valid unique paths and includes its target.
+ */
 function validateSnapshot(snapshot: ReconciliationReviewSnapshot): boolean {
   if (
     !validateRuntimeIdentity(snapshot.runtime) ||
@@ -274,6 +300,12 @@ function validateSnapshot(snapshot: ReconciliationReviewSnapshot): boolean {
   return paths.has(snapshot.targetPath);
 }
 
+/**
+ * Validates identity counters, writer IDs and lifecycle shape, not freshness against the running host.
+ *
+ * @param runtime - Persisted sampled runtime identity, not a live host observation.
+ * @returns Whether all sampled runtime identity fields are valid.
+ */
 function validateRuntimeIdentity(
   runtime: ReconciliationReviewSnapshot["runtime"],
 ): boolean {
@@ -288,6 +320,11 @@ function validateRuntimeIdentity(
   );
 }
 
+/**
+ * Checks the sampled lifecycle's binding and pause reason without granting activation authority.
+ *
+ * @returns Whether the sampled lifecycle variant has a valid binding and pause reason.
+ */
 function validateDeviceLifecycle(lifecycle: MirrorDeviceLifecycle): boolean {
   switch (lifecycle.kind) {
     case MIRROR_DEVICE_LIFECYCLE_KIND.disabled:
@@ -306,6 +343,13 @@ function validateDeviceLifecycle(lifecycle: MirrorDeviceLifecycle): boolean {
   }
 }
 
+/**
+ * Checks canonical association identity and bounded origin text; adapter decoding owns URL validation.
+ *
+ * @param associationId - Persisted association UUID.
+ * @param origin - Persisted origin text already subject to adapter URL validation.
+ * @returns Whether association syntax and origin length are admissible.
+ */
 function validateBinding(
   associationId: Parameters<typeof createMirrorAssociationId>[0],
   origin: string,
@@ -317,6 +361,11 @@ function validateBinding(
   );
 }
 
+/**
+ * Composes local, baseline, remote and M3 evidence checks for one literal path; does not classify divergence.
+ *
+ * @returns Whether all evidence components for the literal path are valid.
+ */
 function validatePathEvidence(
   snapshot: ReconciliationReviewSnapshot,
   evidence: ReconciliationPathEvidence,
@@ -333,6 +382,12 @@ function validatePathEvidence(
   return true;
 }
 
+/**
+ * Enforces stable positive-generation absence/live samples and bounded live bytes; unknown carries no exact evidence.
+ *
+ * @param evidence - Persisted local observation variant.
+ * @returns Whether the local observation meets its variant's evidence requirements.
+ */
 function validateLocalEvidence(
   evidence: ReconciliationPathEvidence["local"],
 ): boolean {
@@ -355,6 +410,11 @@ function validateLocalEvidence(
   }
 }
 
+/**
+ * Checks sampled remote lineage and receipt relationships; physical absence and legacy hashes never become revision evidence.
+ *
+ * @returns Whether remote evidence satisfies its variant's lineage and receipt requirements.
+ */
 function validateRemoteEvidence(
   snapshot: ReconciliationReviewSnapshot,
   evidence: ReconciliationPathEvidence["remote"],
@@ -389,6 +449,11 @@ function validateRemoteEvidence(
   }
 }
 
+/**
+ * Rejects foreign or malformed remote lineage relative to the snapshot's enabled binding.
+ *
+ * @returns Whether the remote association is canonical and matches the enabled binding.
+ */
 function validateRemoteAssociation(
   snapshot: ReconciliationReviewSnapshot,
   associationId: Parameters<typeof createMirrorAssociationId>[0],
@@ -400,6 +465,11 @@ function validateRemoteAssociation(
     : snapshot.runtime.lifecycle.associationId === associationId;
 }
 
+/**
+ * Binds live receipt action, association, operation and hash to sampled evidence with the matching create/update predicate.
+ *
+ * @returns Whether the live receipt matches the sampled content and original predicate.
+ */
 function validateContentReceipt(
   evidence: Extract<
     ReconciliationPathEvidence["remote"],
@@ -434,6 +504,12 @@ function validateContentReceipt(
   );
 }
 
+/**
+ * Validates baseline revision/hash or recovery identity without inferring association from equal content.
+ *
+ * @param acknowledgement - Persisted baseline variant to validate.
+ * @returns Whether the baseline's identifiers match its acknowledgement variant.
+ */
 function validateAcknowledgement(
   acknowledgement: ReconciliationPathEvidence["baseline"],
 ): boolean {
@@ -456,6 +532,11 @@ function validateAcknowledgement(
   }
 }
 
+/**
+ * Rejects simultaneous unresolved mutation and deferred history in one sample, then checks the represented M3 authority.
+ *
+ * @returns Whether sampled M3 authority is valid and mutually exclusive.
+ */
 function validateM3Evidence(
   snapshot: ReconciliationReviewSnapshot,
   evidence: ReconciliationPathEvidence,
@@ -474,6 +555,11 @@ function validateM3Evidence(
   );
 }
 
+/**
+ * Checks sampled M3 path/writer/binding, finite budgets and tombstone-only phases; strict decoding owns intent field syntax.
+ *
+ * @returns Whether the sampled unresolved intent has compatible ownership, phase and budgets.
+ */
 function validateUnresolvedMutation(
   snapshot: ReconciliationReviewSnapshot,
   evidence: ReconciliationPathEvidence,
@@ -503,6 +589,11 @@ function validateUnresolvedMutation(
   }
 }
 
+/**
+ * Validates sampled rename source, optional destination evidence, revisions and phase without reconstructing lost history.
+ *
+ * @returns Whether sampled rename identity, prerequisites and phase are valid.
+ */
 function validateDeferredHistory(
   snapshot: ReconciliationReviewSnapshot,
   evidence: ReconciliationPathEvidence,
@@ -532,6 +623,11 @@ function validateDeferredHistory(
   );
 }
 
+/**
+ * Binds selected recovery metadata to target and association; validates timestamp form, not expiry against a clock.
+ *
+ * @returns Whether selected recovery metadata has valid target, lineage and retention fields.
+ */
 function validateRecoveryEvidence(
   snapshot: ReconciliationReviewSnapshot,
 ): boolean {
@@ -561,6 +657,11 @@ function validateRecoveryEvidence(
   }
 }
 
+/**
+ * Checks one operation's identity, action/evidence/phase, unique reservations and evidence-bound receipts before cross-record validation.
+ *
+ * @returns Whether operation fields, reservations and receipts are internally valid.
+ */
 function validateOperationFields(operation: ReconciliationOperation): boolean {
   if (
     createMirrorOperationId(operation.operationId) !== operation.operationId ||
@@ -601,6 +702,11 @@ function validateOperationFields(operation: ReconciliationOperation): boolean {
   return validateOperationLifecycleEvidence(operation);
 }
 
+/**
+ * Requires a distinct successor ID only for a completed restore; all other states must leave the link null.
+ *
+ * @returns Whether successor identity is present exactly when required and is distinct.
+ */
 function validateSuccessorIdentity(
   operation: ReconciliationOperation,
 ): boolean {
@@ -618,6 +724,13 @@ function validateSuccessorIdentity(
   );
 }
 
+/**
+ * Refuses terminal restore without a different reviewed successor reserving the restored path.
+ * Its live sample must have a newer observation generation and the selected recovery hash;
+ * successor completion, not local restore alone, can release ordinary M3 ownership.
+ *
+ * @returns Whether a completed restore has the required reviewed successor, or needs none.
+ */
 function validateRestoreSuccessor(
   operation: ReconciliationOperation,
   operations: ReadonlyMap<string, ReconciliationOperation>,
@@ -659,6 +772,11 @@ function validateRestoreSuccessor(
   );
 }
 
+/**
+ * Enforces action-specific sampled local/remote/recovery prerequisites; it neither selects an action nor refreshes evidence.
+ *
+ * @returns Whether sampled evidence permits the recorded action.
+ */
 function validateActionEvidence(operation: ReconciliationOperation): boolean {
   const target = targetEvidence(operation.snapshot);
   if (target === undefined) return false;
@@ -721,6 +839,11 @@ function validateActionEvidence(operation: ReconciliationOperation): boolean {
   }
 }
 
+/**
+ * Rejects forbidden local/remote effect channels and phases, including mutating tombstone acceptance or non-restore restore fences.
+ *
+ * @returns Whether the recorded phase and effect channels are permitted for the action.
+ */
 function validateActionPhase(operation: ReconciliationOperation): boolean {
   const { kind } = operation.action;
   const phase = operation.phase;
@@ -778,6 +901,11 @@ function validateActionPhase(operation: ReconciliationOperation): boolean {
   return true;
 }
 
+/**
+ * Checks the permitted action matrix for an already classified review; unavailable or M3-owned work permits only defer.
+ *
+ * @returns Whether the action is permitted for the review classification.
+ */
 function validateClassificationAction(
   review: ReconciliationReview,
   operation: ReconciliationOperation,
@@ -824,6 +952,11 @@ function validateClassificationAction(
   }
 }
 
+/**
+ * Requires each action's explicit operator authority category; remote observations are never an authority source.
+ *
+ * @returns Whether the operation carries the required operator authority category.
+ */
 function validateOperationAuthority(
   operation: ReconciliationOperation,
 ): boolean {
@@ -859,6 +992,11 @@ function validateOperationAuthority(
   }
 }
 
+/**
+ * Enforces action-specific destination rules and exact sampled/reserved path coverage, including absent new destinations.
+ *
+ * @returns Whether destination and reservation coverage match the action's sampled paths.
+ */
 function validateOperationPaths(
   operation: ReconciliationOperation,
   trackedPaths: ReadonlySet<string>,
@@ -915,6 +1053,11 @@ function validateOperationPaths(
   return true;
 }
 
+/**
+ * Requires sampled local/remote absence, no baseline and no M3 work before a path can be a new destination.
+ *
+ * @returns Whether the sample permits a genuinely new destination.
+ */
 function isAbsentDestination(
   snapshot: ReconciliationReviewSnapshot,
   path: string,
@@ -929,6 +1072,11 @@ function isAbsentDestination(
   );
 }
 
+/**
+ * Rejects receipts not bound to this operation's generated path and evidence-derived side, revision and hash; performs no file I/O.
+ *
+ * @returns Whether the receipt is bound to the operation and required preservation identity.
+ */
 function validatePreservationReceipt(
   operation: ReconciliationOperation,
   receipt: ReconciliationPreservationReceipt,
@@ -954,6 +1102,13 @@ function validatePreservationReceipt(
   );
 }
 
+/**
+ * Owns the action-to-competing-bytes preservation matrix used for both receipt admission and effect fencing.
+ * An empty list means no preservation is required; undefined means the evidence cannot
+ * establish required bytes. Other validators enforce the action's evidence prerequisites.
+ *
+ * @returns Required preservation identities, an empty list when unnecessary, or undefined when evidence cannot establish them.
+ */
 function requiredPreservations(
   operation: ReconciliationOperation,
 ): readonly RequiredPreservation[] | undefined {
@@ -997,6 +1152,11 @@ function requiredPreservations(
   }
 }
 
+/**
+ * Derives the exact live local safety copy; local bytes have no application source revision.
+ *
+ * @returns One local copy requirement for live bytes, or undefined for non-live evidence.
+ */
 function localPreservations(
   evidence: ReconciliationPathEvidence,
 ): readonly RequiredPreservation[] | undefined {
@@ -1013,6 +1173,11 @@ function localPreservations(
   ];
 }
 
+/**
+ * Derives live revision-bound or legacy hash-only remote copies; absent, tombstoned or unavailable evidence supplies no bytes.
+ *
+ * @returns One remote copy requirement for live/legacy bytes, or undefined without those bytes.
+ */
 function remotePreservation(
   evidence: ReconciliationPathEvidence,
 ): readonly RequiredPreservation[] | undefined {
@@ -1042,6 +1207,11 @@ function remotePreservation(
   }
 }
 
+/**
+ * Distinguishes no-effect history retention from preservation/cleanup progress that requires an exact remote safety copy.
+ *
+ * @returns Whether deferred history has preservation or cleanup progress.
+ */
 function historyHasMaterialEffect(operation: ReconciliationOperation): boolean {
   return (
     operation.phase === RECONCILIATION_OPERATION_PHASE.preserving ||
@@ -1053,6 +1223,13 @@ function historyHasMaterialEffect(operation: ReconciliationOperation): boolean {
   );
 }
 
+/**
+ * Enforces phase/effect/proof consistency and verified preservation before effects may have started.
+ * Unknown effects retain evidence ownership; restored-pending-review keeps a local-only
+ * reservation even before dispatch. Receipt metadata is validated, not reverified on disk.
+ *
+ * @returns Whether phase, effect certainty and required preservation proofs are consistent.
+ */
 function validateOperationLifecycleEvidence(
   operation: ReconciliationOperation,
 ): boolean {
@@ -1150,6 +1327,13 @@ function validateOperationLifecycleEvidence(
   );
 }
 
+/**
+ * Requires a verified receipt matching every evidence-derived identity; vacuously accepts actions needing no copies.
+ *
+ * @param requirements - Evidence-derived copies required before effects.
+ * @param receipts - Persisted proof claims to match by complete identity.
+ * @returns Whether every requirement has a matching verified receipt.
+ */
 function requiredReceiptsVerified(
   requirements: readonly RequiredPreservation[],
   receipts: readonly ReconciliationPreservationReceipt[],
@@ -1166,6 +1350,11 @@ function requiredReceiptsVerified(
   );
 }
 
+/**
+ * Checks action-specific completion evidence, allowing equal-byte adoption and no-effect history completion without a write.
+ *
+ * @returns Whether the recorded effects satisfy action-specific completion requirements.
+ */
 function validateCompletedEffects(operation: ReconciliationOperation): boolean {
   const localConfirmed =
     operation.localEffect === MUTATION_EFFECT_CERTAINTY.confirmed;
@@ -1196,6 +1385,11 @@ function validateCompletedEffects(operation: ReconciliationOperation): boolean {
   }
 }
 
+/**
+ * Determines whether use-remote/adoption needs a local write rather than equal-byte association from the sampled target.
+ *
+ * @returns Whether sampled evidence requires a local content write.
+ */
 function requiredLocalEffect(operation: ReconciliationOperation): boolean {
   const target = targetEvidence(operation.snapshot);
   if (target === undefined) return false;
@@ -1209,6 +1403,11 @@ function requiredLocalEffect(operation: ReconciliationOperation): boolean {
   );
 }
 
+/**
+ * Rejects active M4 ownership over current unresolved M3 mutations/deletes; deferred rename allows only reviewed history.
+ *
+ * @returns Whether current M3 ownership permits the operation's active reservations.
+ */
 function validateM3Precedence(
   operation: ReconciliationOperation,
   pathStates: ReadonlyMap<string, MirrorPathState>,
@@ -1231,6 +1430,11 @@ function validateM3Precedence(
   return true;
 }
 
+/**
+ * Couples active, stale and completed operation phases to the linked durable review's status.
+ *
+ * @returns Whether the linked review status agrees with the operation phase.
+ */
 function validateReviewOperationLifecycle(
   review: ReconciliationReview,
   operation: ReconciliationOperation,
@@ -1244,6 +1448,11 @@ function validateReviewOperationLifecycle(
   return review.status === RECONCILIATION_REVIEW_STATUS.completed;
 }
 
+/**
+ * Checks reciprocal operation linkage and sampled M3 classification precedence without recomputing ordinary divergence.
+ *
+ * @returns Whether reciprocal linkage and sampled M3 classification precedence hold.
+ */
 function validateReviewRelationship(
   review: ReconciliationReview,
   operations: ReadonlyMap<string, ReconciliationOperation>,
@@ -1279,6 +1488,11 @@ function validateReviewRelationship(
   );
 }
 
+/**
+ * Keeps blocked, partial, unknown-effect and restored-pending-review operations active; only stale/completed release reservations.
+ *
+ * @returns Whether the operation still retains reservation ownership.
+ */
 function isActiveOperation(operation: ReconciliationOperation): boolean {
   return (
     operation.phase !== RECONCILIATION_OPERATION_PHASE.stale &&
@@ -1286,6 +1500,11 @@ function isActiveOperation(operation: ReconciliationOperation): boolean {
   );
 }
 
+/**
+ * Selects the immutable target sample; undefined is malformed/missing evidence, never an absence observation.
+ *
+ * @returns The immutable target sample, or undefined if missing.
+ */
 function targetEvidence(
   snapshot: ReconciliationReviewSnapshot,
 ): ReconciliationPathEvidence | undefined {
@@ -1294,6 +1513,11 @@ function targetEvidence(
   );
 }
 
+/**
+ * Selects an explicit destination sample or the original target for an in-place restore.
+ *
+ * @returns The selected destination sample, or undefined if missing.
+ */
 function destinationEvidence(
   operation: ReconciliationOperation,
 ): ReconciliationPathEvidence | undefined {
@@ -1304,6 +1528,13 @@ function destinationEvidence(
   );
 }
 
+/**
+ * Compares every runtime/epoch/configuration/writer and lifecycle field so byte equality cannot hide stale authority.
+ *
+ * @param left - Previously sampled runtime identity.
+ * @param right - Runtime identity being compared for decision staleness.
+ * @returns Whether every runtime identity dimension is equal.
+ */
 function runtimeIdentityEquals(
   left: ReconciliationReviewSnapshot["runtime"],
   right: ReconciliationReviewSnapshot["runtime"],
@@ -1318,6 +1549,11 @@ function runtimeIdentityEquals(
   );
 }
 
+/**
+ * Compares lifecycle kind, binding and pause reason rather than treating all enabled states as interchangeable.
+ *
+ * @returns Whether lifecycle kind, binding and pause reason match.
+ */
 function lifecycleEquals(
   left: MirrorDeviceLifecycle,
   right: MirrorDeviceLifecycle,
@@ -1345,6 +1581,11 @@ function lifecycleEquals(
   }
 }
 
+/**
+ * Requires the same path and complete local/baseline/remote/M3 sample; a missing peer is unequal.
+ *
+ * @returns Whether the complete path evidence matches an existing peer.
+ */
 function pathEvidenceEquals(
   left: ReconciliationPathEvidence,
   right: ReconciliationPathEvidence | undefined,
@@ -1359,6 +1600,13 @@ function pathEvidenceEquals(
   );
 }
 
+/**
+ * Includes stability, generation and byte size as well as hash, retaining same-text event invalidation.
+ *
+ * @param left - Previously sampled local evidence.
+ * @param right - Local evidence being compared for staleness.
+ * @returns Whether the complete local sample is unchanged.
+ */
 function localEvidenceEquals(
   left: ReconciliationPathEvidence["local"],
   right: ReconciliationPathEvidence["local"],
@@ -1383,6 +1631,13 @@ function localEvidenceEquals(
   }
 }
 
+/**
+ * Compares baseline kind and exact revision/hash or recovery identity, not just equal live bytes.
+ *
+ * @param left - Previously sampled baseline.
+ * @param right - Baseline being compared for staleness.
+ * @returns Whether the exact baseline identities match.
+ */
 function acknowledgementEquals(
   left: ReconciliationPathEvidence["baseline"],
   right: ReconciliationPathEvidence["baseline"],
@@ -1406,6 +1661,13 @@ function acknowledgementEquals(
   }
 }
 
+/**
+ * Compares full remote generation and receipt identity; legacy equality remains hash-only observation, not CAS authority.
+ *
+ * @param left - Previously sampled remote evidence.
+ * @param right - Remote evidence being compared for staleness.
+ * @returns Whether the complete remote observation is unchanged.
+ */
 function remoteEvidenceEquals(
   left: ReconciliationPathEvidence["remote"],
   right: ReconciliationPathEvidence["remote"],
@@ -1440,6 +1702,13 @@ function remoteEvidenceEquals(
   }
 }
 
+/**
+ * Requires the same content operation identity and original predicate in addition to the content hash.
+ *
+ * @param left - Previously sampled content receipt.
+ * @param right - Content receipt being compared for staleness.
+ * @returns Whether content receipt identity and predicate match.
+ */
 function contentReceiptEquals(
   left: Extract<
     ReconciliationPathEvidence["remote"],
@@ -1459,6 +1728,13 @@ function contentReceiptEquals(
   );
 }
 
+/**
+ * Requires the same deletion receipt identity and exact parent predicate without inventing content on a tombstone.
+ *
+ * @param left - Previously sampled tombstone receipt.
+ * @param right - Tombstone receipt being compared for staleness.
+ * @returns Whether deletion receipt identity and predicate match.
+ */
 function tombstoneReceiptEquals(
   left: Extract<
     ReconciliationPathEvidence["remote"],
@@ -1477,6 +1753,13 @@ function tombstoneReceiptEquals(
   );
 }
 
+/**
+ * Keeps absence predicates distinct from matching-revision predicates and compares the exact parent revision.
+ *
+ * @param left - Previously sampled mutation precondition.
+ * @param right - Precondition being compared for staleness.
+ * @returns Whether both original predicates match exactly.
+ */
 function preconditionEquals(
   left:
     | Extract<
@@ -1497,6 +1780,11 @@ function preconditionEquals(
   );
 }
 
+/**
+ * Detects any sampled unresolved-intent or deferred-history change that would invalidate M4 decision identity.
+ *
+ * @returns Whether all sampled M3 authority is unchanged.
+ */
 function m3EvidenceEquals(
   left: ReconciliationPathEvidence,
   right: ReconciliationPathEvidence,
@@ -1510,6 +1798,13 @@ function m3EvidenceEquals(
   );
 }
 
+/**
+ * Compares nullable M3 intent identity, phase, predicate and consumed budgets; a retry alone can stale a review.
+ *
+ * @param left - Previously sampled unresolved mutation.
+ * @param right - Mutation state being compared for staleness.
+ * @returns Whether the complete nullable intent state is unchanged.
+ */
 function unresolvedMutationEquals(
   left: MirrorUnresolvedMutation | null,
   right: MirrorUnresolvedMutation | null,
@@ -1533,6 +1828,13 @@ function unresolvedMutationEquals(
   );
 }
 
+/**
+ * Compares all rename generations, paths, prerequisites, grace and phase rather than inferring equivalent history.
+ *
+ * @param left - Previously sampled deferred history.
+ * @param right - Deferred history being compared for staleness.
+ * @returns Whether the complete nullable deferred history is unchanged.
+ */
 function deferredHistoryEquals(
   left: RenameDeferredMirrorState | null,
   right: RenameDeferredMirrorState | null,
@@ -1555,6 +1857,13 @@ function deferredHistoryEquals(
   );
 }
 
+/**
+ * Compares selected recovery lineage, revision, bytes and retention deadline; null means no selected snapshot.
+ *
+ * @param left - Previously selected recovery evidence.
+ * @param right - Recovery evidence being compared for staleness.
+ * @returns Whether the complete nullable recovery sample is unchanged.
+ */
 function recoveryEvidenceEquals(
   left: ReconciliationReviewSnapshot["recovery"],
   right: ReconciliationReviewSnapshot["recovery"],
@@ -1574,6 +1883,11 @@ function recoveryEvidenceEquals(
   );
 }
 
+/**
+ * Requires both channels to remain undispatched; definite refusal is not equivalent to never having dispatched.
+ *
+ * @returns Whether neither effect channel has been dispatched.
+ */
 function noEffects(operation: ReconciliationOperation): boolean {
   return (
     operation.localEffect === MUTATION_EFFECT_CERTAINTY.notDispatched &&
@@ -1581,6 +1895,11 @@ function noEffects(operation: ReconciliationOperation): boolean {
   );
 }
 
+/**
+ * Accepts only the closed persisted proof states; a verified label alone does not prove receipt identity.
+ *
+ * @returns Whether the persisted proof state belongs to the closed supported set.
+ */
 function validatePreservationProofState(
   receipt: ReconciliationPreservationReceipt,
 ): boolean {
@@ -1593,6 +1912,12 @@ function validatePreservationProofState(
   }
 }
 
+/**
+ * Accepts only finite timestamps in canonical ISO serialization; does not determine whether retention has expired.
+ *
+ * @param value - Persisted retention deadline text.
+ * @returns Whether the value is a canonical finite ISO instant.
+ */
 function isCanonicalInstant(value: string): boolean {
   const milliseconds = Date.parse(value);
   return (
@@ -1601,10 +1926,22 @@ function isCanonicalInstant(value: string): boolean {
   );
 }
 
+/**
+ * Validates nonzero epoch/version/generation counters without lossy integer representation.
+ *
+ * @param value - Persisted epoch, version or generation counter.
+ * @returns Whether the value is a positive safe integer.
+ */
 function isPositiveSafeInteger(value: number): boolean {
   return Number.isSafeInteger(value) && value > 0;
 }
 
+/**
+ * Validates exactly representable counters and millisecond values that may start at zero.
+ *
+ * @param value - Persisted counter or millisecond value.
+ * @returns Whether the value is a nonnegative safe integer.
+ */
 function isNonNegativeSafeInteger(value: number): boolean {
   return Number.isSafeInteger(value) && value >= 0;
 }

@@ -55,6 +55,7 @@ export type ReconciliationOperationPhase =
 export interface ReconciliationLocalAbsentEvidence {
   readonly kind: typeof RECONCILIATION_LOCAL_EVIDENCE_KIND.absent;
   readonly stability: typeof RECONCILIATION_LOCAL_STABILITY.stable;
+  /** Positive saved-observation generation within the snapshot's listener identity, not a filesystem revision. */
   readonly observationGeneration: number;
 }
 
@@ -62,7 +63,9 @@ export interface ReconciliationLocalAbsentEvidence {
 export interface ReconciliationLocalLiveEvidence {
   readonly kind: typeof RECONCILIATION_LOCAL_EVIDENCE_KIND.live;
   readonly stability: typeof RECONCILIATION_LOCAL_STABILITY.stable;
+  /** Positive saved-observation generation; same-text events can still invalidate a review. */
   readonly observationGeneration: number;
+  /** Measured UTF-8 bytes, bounded by the note-size policy rather than character count. */
   readonly byteSize: number;
   readonly contentSha256: ContentSha256;
 }
@@ -124,7 +127,9 @@ export type ReconciliationRemoteEvidence =
 
 /** Exact M3 work that takes precedence over a review for one sampled path. */
 export interface ReconciliationM3PathEvidence {
+  /** Exact unresolved M3 intent/phase/budgets, or null when none was sampled. */
   readonly unresolvedMutation: MirrorUnresolvedMutation | null;
+  /** Deferred rename evidence, or null; cannot coexist with unresolved mutation in a valid sample. */
   readonly deferredHistory: RenameDeferredMirrorState | null;
 }
 
@@ -139,8 +144,11 @@ export interface ReconciliationPathEvidence {
 
 /** Runtime and configuration authority captured by one immutable review snapshot. */
 export interface ReconciliationRuntimeIdentity {
+  /** Structural owner version captured by the review, not a persisted-format version. */
   readonly runtimeOwnerVersion: number;
+  /** Nonnegative configuration identity; a changed connection setting invalidates prior decisions. */
   readonly configurationGeneration: number;
+  /** Positive listener attachment identity; gaps must not reuse prior sampled authority. */
   readonly listenerEpoch: number;
   readonly deviceId: MirrorWriterId;
   readonly designatedWriterId: MirrorWriterId;
@@ -158,6 +166,7 @@ export interface ReconciliationReviewSnapshot {
   readonly runtime: ReconciliationRuntimeIdentity;
   readonly targetPath: NotePath;
   readonly paths: readonly ReconciliationPathEvidence[];
+  /** Exact selected recovery metadata, or null when this review has no recovery selection. */
   readonly recovery: ReconciliationRecoveryEvidence | null;
 }
 
@@ -263,11 +272,12 @@ export interface ReconciliationPathReservation {
 /** Exact content-free recovery generation selected for a local-first restore. */
 export type ReconciliationRecoveryEvidence = RecoverySnapshotState;
 
-/** Content-free proof that one exact competing side is durably preserved. */
+/** Content-free preservation identity and proof progress; only verified state claims a completed safety copy. */
 export interface ReconciliationPreservationReceipt {
   readonly operationId: MirrorOperationId;
   readonly originalPath: NotePath;
   readonly side: (typeof RECONCILIATION_PRESERVATION_SIDE)[keyof typeof RECONCILIATION_PRESERVATION_SIDE];
+  /** Exact live remote revision; null for local bytes or legacy remote bytes without generation identity. */
   readonly sourceRevision: ApplicationRevision | null;
   readonly contentSha256: ContentSha256;
   /** Generated excluded vault path; it can never be a remote-supplied path. */
@@ -284,11 +294,14 @@ export interface ReconciliationOperation {
   readonly phase: ReconciliationOperationPhase;
   /** Immutable copy of the exact review identity admitted for this operation. */
   readonly snapshot: ReconciliationReviewSnapshot;
+  /** Distinct alternate destination when selected; null uses the target and grants no implicit new-path authority. */
   readonly destinationPath: NotePath | null;
   readonly reservations: readonly ReconciliationPathReservation[];
   readonly preservationReceipts: readonly ReconciliationPreservationReceipt[];
-  /** Active reviewed operation that atomically takes over a completed restore fence. */
+  /** Reviewed successor linked at restore completion; it may later complete but must not be stale. */
   readonly successorOperationId: MirrorOperationId | null;
+  /** Local effect knowledge independent of phase; unknown is not permission to retry blindly. */
   readonly localEffect: MutationEffectCertainty;
+  /** Remote effect knowledge; a local-first restore must leave this undispatched. */
   readonly remoteEffect: MutationEffectCertainty;
 }

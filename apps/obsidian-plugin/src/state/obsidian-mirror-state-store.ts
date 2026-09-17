@@ -68,7 +68,8 @@ export class ObsidianMirrorStateStore implements MirrorStateStore {
   ) {}
 
   /**
-   * Loads current state or atomically crosses the deterministic version-2 migration fence.
+   * Loads current state or crosses the version-2 migration fence through same-key save and exact read-back.
+   * Host persistence is not a cross-process transaction or a rollback detector.
    *
    * @returns Strict version-3 load outcome; migration storage failures are unavailable.
    */
@@ -150,6 +151,11 @@ export class ObsidianMirrorStateStore implements MirrorStateStore {
     return this.saveEncoded(encoded);
   }
 
+  /**
+   * Refuses saving altered staged baselines; undefined means no integrity failure, not newly granted handoff authority.
+   *
+   * @returns A sanitized save failure, or undefined when integrity passes or is inapplicable.
+   */
   private async handoffIntegrityFailure(
     state: MirrorDeviceState,
   ): Promise<MirrorStateSaveResult | undefined> {
@@ -178,6 +184,11 @@ export class ObsidianMirrorStateStore implements MirrorStateStore {
     }
   }
 
+  /**
+   * Reads the existing host-local key without defaults or reset; missing host capability and read failures stay unavailable.
+   *
+   * @returns The untouched raw host value or a sanitized read failure.
+   */
   private async loadRaw(): Promise<
     | { readonly kind: "loaded"; readonly value: unknown }
     | { readonly kind: "unavailable" }
@@ -197,6 +208,12 @@ export class ObsidianMirrorStateStore implements MirrorStateStore {
     }
   }
 
+  /**
+   * Replaces the same local key once and sanitizes host failures; a failure cannot prove the write had no effect.
+   *
+   * @param encoded - Validated serialized snapshot to write to the device-local key.
+   * @returns Save confirmation or a sanitized unavailable/storage failure.
+   */
   private async saveEncoded(encoded: string): Promise<MirrorStateSaveResult> {
     if (this.host.saveLocalStorage === undefined) {
       return { kind: "failed", reason: MIRROR_STATE_STORE_FAILURE.unavailable };

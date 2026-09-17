@@ -20,7 +20,9 @@ export type MirrorEndpointResult =
   | { readonly kind: "valid"; readonly origin: MirrorOrigin }
   | { readonly kind: "invalid"; readonly reason: MirrorEndpointFailure };
 
+/** Lexical origin boundary checked before URL parsing can repair paths or authorities. */
 const ABSOLUTE_HTTP_ORIGIN_PATTERN = /^(https?):\/\/([^/?#]+)\/?$/;
+/** Literal development loopback authorities only; alternate numeric hosts and LAN names are not accepted. */
 const EXACT_LOOPBACK_AUTHORITY_PATTERN =
   /^(?:localhost|127\.0\.0\.1|\[::1\])(?::(?:0|[1-9][0-9]{0,4}))?$/;
 
@@ -99,6 +101,11 @@ export function parsePersistedMirrorOrigin(
   return parsed.origin;
 }
 
+/**
+ * Produces fixed endpoint feedback without returning the untrusted origin or URL exception.
+ *
+ * @returns A fixed invalid-endpoint result.
+ */
 function invalid(reason: MirrorEndpointFailure): MirrorEndpointResult {
   return { kind: "invalid", reason };
 }

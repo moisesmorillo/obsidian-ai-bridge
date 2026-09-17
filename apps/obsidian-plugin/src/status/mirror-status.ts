@@ -146,6 +146,11 @@ export function formatMirrorOperationalStatus(
   return lines.join("\n");
 }
 
+/**
+ * Formats only authenticated non-secret designation metadata and its comparison status.
+ *
+ * @returns Sanitized server identity display text.
+ */
 function formatServerIdentity(status: MirrorServerIdentityStatus): string {
   switch (status.kind) {
     case "unknown":
@@ -159,6 +164,12 @@ function formatServerIdentity(status: MirrorServerIdentityStatus): string {
   }
 }
 
+/**
+ * Maps durable blockers to UI states, presenting handoff mismatch as divergence without changing its durable reason.
+ *
+ * @param reason - Durable device-level block reason.
+ * @returns The corresponding sanitized UI state.
+ */
 function mapBlocked(
   reason: (typeof MIRROR_PATH_BLOCK_REASON)[keyof typeof MIRROR_PATH_BLOCK_REASON],
 ): MirrorOperationalPathStatus["state"] {

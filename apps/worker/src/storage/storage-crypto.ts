@@ -5,6 +5,7 @@ import {
   createContentSha256,
 } from "@obsidian-ai-bridge/core";
 
+/** Web Crypto algorithm required by protocol-stable content digests and fixed-length token comparison. */
 const SHA_256_ALGORITHM = "SHA-256";
 
 /**

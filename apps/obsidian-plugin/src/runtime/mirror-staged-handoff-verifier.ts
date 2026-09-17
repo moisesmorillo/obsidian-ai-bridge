@@ -211,11 +211,18 @@ export class MirrorStagedHandoffVerifier {
     return { kind: "completed" };
   }
 
+  /** Orders observations after an in-progress alignment/activation save instead of discarding events during commit. */
   private async awaitActivationCommit(): Promise<void> {
     const completion = this.activationCompletion;
     if (completion !== null) await completion;
   }
 
+  /**
+   * Consumes staged-lifecycle events and invalidates only transferred paths, never admitting ordinary outward work.
+   *
+   * @param paths - Eligible observed paths whose staged alignments may be invalidated.
+   * @returns Whether the event batch was consumed by staged handoff handling.
+   */
   private async invalidateObservedPaths(
     paths: readonly NotePath[],
   ): Promise<boolean> {
@@ -232,6 +239,7 @@ export class MirrorStagedHandoffVerifier {
     return true;
   }
 
+  /** Allocates fresh generations and persists one invalidation batch so prior local/remote alignment cannot activate stale state. */
   private async invalidateCurrentStagedPaths(
     paths: ReadonlySet<NotePath>,
   ): Promise<void> {
@@ -246,6 +254,13 @@ export class MirrorStagedHandoffVerifier {
     this.dependencies.onChanged();
   }
 
+  /**
+   * Samples local hash/exact absence and remote ACK metadata with captured staged generations; failure returns no activation batch.
+   *
+   * @param entries - Transferred baselines to sample at their captured generations.
+   * @param connection - Current remote/local verification binding.
+   * @returns A complete alignment snapshot, or null if sampling fails.
+   */
   private async collectEvidence(
     entries: readonly HandoffBaselineEntry[],
     connection: MirrorRuntimeConnection,
@@ -292,6 +307,11 @@ export class MirrorStagedHandoffVerifier {
     return { local, remote };
   }
 
+  /**
+   * Advances beyond all owner-issued generations and throws at safe-integer exhaustion rather than reusing stale identity.
+   *
+   * @returns A fresh safe monotonic observation generation.
+   */
   private allocateGeneration(): number {
     if (this.nextGeneration >= Number.MAX_SAFE_INTEGER) {
       throw new Error("Handoff observation generation exhausted.");
@@ -300,6 +320,11 @@ export class MirrorStagedHandoffVerifier {
     return this.nextGeneration;
   }
 
+  /**
+   * Selects injected or host cryptography for verifying the imported content-free handoff payload.
+   *
+   * @returns A handoff integrity adapter using the selected crypto provider.
+   */
   private integrity(): WebCryptoHandoffIntegrity {
     return this.dependencies.cryptography === undefined
       ? new WebCryptoHandoffIntegrity()
@@ -307,6 +332,11 @@ export class MirrorStagedHandoffVerifier {
   }
 }
 
+/**
+ * Finds the persisted staged maximum so the next allocation can advance beyond it.
+ *
+ * @returns The greatest staged generation, or zero without staged entries.
+ */
 function maximumStagedGeneration(stateOwner: MirrorStateOwner): number {
   return Math.max(
     0,
@@ -318,6 +348,11 @@ function maximumStagedGeneration(stateOwner: MirrorStateOwner): number {
   );
 }
 
+/**
+ * Captures the transferred path's current generation; null means it is no longer available for staged sampling.
+ *
+ * @returns The current staged generation, or null if unavailable.
+ */
 function currentGeneration(
   stateOwner: MirrorStateOwner,
   path: NotePath,
@@ -330,6 +365,11 @@ function currentGeneration(
   );
 }
 
+/**
+ * Projects revisioned remote state to verification evidence; absent/legacy cannot establish a transferable baseline.
+ *
+ * @returns A transferable acknowledgement, or null for absent/legacy state.
+ */
 function stateToAcknowledgement(
   state: CurrentNoteState,
 ): HandoffRemoteObservation["acknowledgement"] {

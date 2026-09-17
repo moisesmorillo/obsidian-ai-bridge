@@ -12,7 +12,7 @@ export type ApiErrorCode = z.infer<
   typeof apiErrorResponseSchema
 >["error"]["code"];
 
-/** Error envelope returned by the M1 HTTP API. */
+/** Shared sanitized error envelope used by retained v1 and conditional v2 HTTP routes. */
 export type ApiErrorResponse = z.infer<typeof apiErrorResponseSchema>;
 
 /** Health endpoint response. */
@@ -21,7 +21,7 @@ export type HealthResponse = z.infer<typeof healthResponseSchema>;
 /** Note listing response. */
 export type NoteListResponse = z.infer<typeof noteListResponseSchema>;
 
-/** Successful note write response. */
+/** Historical v1 write-success DTO; retired mutation routes no longer emit it. */
 export type NoteWriteResponse = z.infer<typeof noteWriteResponseSchema>;
 
 /** Metadata envelope reserved for future protocol messages. */

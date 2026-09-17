@@ -71,11 +71,13 @@ import {
 } from "@obsidian-plugin/remote/remote-response-policy";
 import type { z } from "zod";
 
+/** Sanitized read/decoding refusal without raw transport exceptions or mutation certainty. */
 type RemoteBridgeFailureResult = {
   readonly kind: "failure";
   readonly failure: (typeof REMOTE_BRIDGE_FAILURE)[keyof typeof REMOTE_BRIDGE_FAILURE];
 };
 
+/** Adapter route actions for conditional recovery maintenance, not content restoration. */
 type RecoveryMutationAction =
   | typeof MIRROR_API_V2_SEGMENT.seal
   | typeof MIRROR_API_V2_SEGMENT.purge;
@@ -101,6 +103,11 @@ export class FetchRemoteBridge implements RemoteBridge {
         : dependencies.crypto;
   }
 
+  /**
+   * Reads and validates server designation/capabilities; does not activate this device.
+   *
+   * @returns Validated server information or a sanitized read failure.
+   */
   async describe(): Promise<RemoteBridgeResult<RemoteBridgeDescription>> {
     return this.readJson(
       REMOTE_BRIDGE_OPERATION.read.describe,
@@ -123,6 +130,12 @@ export class FetchRemoteBridge implements RemoteBridge {
     );
   }
 
+  /**
+   * Reads one bounded reporting page with an opaque cursor; absence from a page grants no delete authority.
+   *
+   * @param cursor - Opaque continuation token, omitted for the first page.
+   * @returns One decoded note page or a sanitized failure.
+   */
   async listNotes(cursor?: string): Promise<RemoteBridgeResult<NotePage>> {
     return this.readJson(
       REMOTE_BRIDGE_OPERATION.read.listNotes,
@@ -132,6 +145,11 @@ export class FetchRemoteBridge implements RemoteBridge {
     );
   }
 
+  /**
+   * Reads bounded strict UTF-8 and distinguishes missing, legacy and revisioned content without adopting a baseline.
+   *
+   * @returns Decoded content state or a sanitized read failure.
+   */
   async readNote(
     path: NotePath,
   ): Promise<RemoteBridgeResult<RemoteNoteContent>> {
@@ -180,6 +198,11 @@ export class FetchRemoteBridge implements RemoteBridge {
     );
   }
 
+  /**
+   * Reads metadata and requires exact path plus application-ETag agreement with the decoded state.
+   *
+   * @returns Validated metadata or a sanitized read failure.
+   */
   async inspectNote(
     path: NotePath,
   ): Promise<RemoteBridgeResult<CurrentNoteState>> {
@@ -207,6 +230,11 @@ export class FetchRemoteBridge implements RemoteBridge {
     );
   }
 
+  /**
+   * Sends one conditional mutation and confirms only a path/receipt/hash/ETag match; malformed ACKs retain unknown effect.
+   *
+   * @returns Confirmed mutation evidence, definite refusal, or unknown effect.
+   */
   async mutateNote(
     request: ConditionalMutationRequest,
   ): Promise<RemoteBridgeMutationResult<MutationAcknowledgement>> {
@@ -311,6 +339,12 @@ export class FetchRemoteBridge implements RemoteBridge {
     );
   }
 
+  /**
+   * Decodes one bounded recovery metadata page, refusing the whole response if any entry fails domain conversion.
+   *
+   * @param cursor - Opaque continuation token, omitted for the first page.
+   * @returns One validated recovery page or a sanitized failure.
+   */
   async listRecovery(
     cursor?: string,
   ): Promise<RemoteBridgeResult<RecoveryPage>> {
@@ -330,6 +364,11 @@ export class FetchRemoteBridge implements RemoteBridge {
     );
   }
 
+  /**
+   * Reads exact recovery metadata with ID/ETag validation; a missing snapshot is successful null, not a transport failure.
+   *
+   * @returns Validated snapshot metadata, null for missing, or a sanitized failure.
+   */
   async inspectRecovery(
     id: RecoverySnapshotId,
   ): Promise<RemoteBridgeResult<RecoverySnapshotState | null>> {
@@ -373,6 +412,11 @@ export class FetchRemoteBridge implements RemoteBridge {
     );
   }
 
+  /**
+   * Reads bounded recoverable bytes or missing/unavailable status; never restores locally or changes retention.
+   *
+   * @returns Recoverable content, an explicit non-content state, or a sanitized failure.
+   */
   async readRecoveryContent(
     id: RecoverySnapshotId,
   ): Promise<RemoteBridgeResult<RemoteRecoveryContent>> {
@@ -420,18 +464,33 @@ export class FetchRemoteBridge implements RemoteBridge {
     );
   }
 
+  /**
+   * Makes one exact-revision recovery seal request through the shared maintenance decoder.
+   *
+   * @returns Confirmed seal evidence, definite refusal, or unknown effect.
+   */
   async sealRecovery(
     request: RecoverySealRequest,
   ): Promise<RemoteBridgeMutationResult<RecoverySnapshotState>> {
     return this.mutateRecovery(MIRROR_API_V2_SEGMENT.seal, request);
   }
 
+  /**
+   * Makes one exact-revision purge request; server policy owns expiry and retained-marker creation.
+   *
+   * @returns Confirmed purge evidence, definite refusal, or unknown effect.
+   */
   async purgeRecovery(
     request: RecoveryPurgeRequest,
   ): Promise<RemoteBridgeMutationResult<RecoverySnapshotState>> {
     return this.mutateRecovery(MIRROR_API_V2_SEGMENT.purge, request);
   }
 
+  /**
+   * Confirms maintenance only from the expected terminal kind, identity and fresh revision with matching ETag.
+   *
+   * @returns Confirmed terminal metadata, definite refusal, or unknown effect.
+   */
   private async mutateRecovery(
     action: RecoveryMutationAction,
     request: RecoverySealRequest | RecoveryPurgeRequest,
@@ -499,6 +558,11 @@ export class FetchRemoteBridge implements RemoteBridge {
     );
   }
 
+  /**
+   * Composes read status/media validation, bounded JSON decoding and domain mapping; no retry or effect authority.
+   *
+   * @returns The mapped domain value or a sanitized read failure.
+   */
   private async readJson<Dto, Value>(
     operation: RemoteReadOperation,
     path: string,
@@ -531,6 +595,11 @@ export class FetchRemoteBridge implements RemoteBridge {
     );
   }
 
+  /**
+   * Bounds metadata bytes and validates untrusted JSON with the supplied contract before any DTO escapes.
+   *
+   * @returns A schema-validated DTO or a bounded decoding failure.
+   */
   private async readJsonBody<Dto>(
     response: Response,
     schema: z.ZodType<Dto>,
@@ -559,6 +628,11 @@ export class FetchRemoteBridge implements RemoteBridge {
     return this.dispatcher.isRuntimeSupported();
   }
 
+  /**
+   * Size-checks and hashes outgoing UTF-8 before dispatch; tombstones have no body, and provider failures are undispatched.
+   *
+   * @returns A successful hash (empty string for bodyless tombstones), or an undispatched refusal.
+   */
   private async requestContentHash(
     request: ConditionalMutationRequest,
   ): Promise<
@@ -637,19 +711,41 @@ function recoveryMutationOperation(
   }
 }
 
+/**
+ * Escapes an opaque page cursor without interpreting or normalizing its server-owned value.
+ *
+ * @param path - Protocol route before query parameters.
+ * @param cursor - Opaque server continuation token, or undefined for the first page.
+ * @returns The route with an encoded cursor when supplied.
+ */
 function withCursor(path: string, cursor: string | undefined): string {
   if (cursor === undefined) return path;
   return `${path}?${MIRROR_API_V2_QUERY_PARAMETER.cursor}=${encodeURIComponent(cursor)}`;
 }
 
+/**
+ * Addresses a literal note through canonical base64url, never hierarchical URL path interpretation.
+ *
+ * @returns The canonical encoded note route.
+ */
 function notePathRoute(path: NotePath): string {
   return `${MIRROR_API_V2_ROUTE.notes}/${encodeNotePath(path)}`;
 }
 
+/**
+ * Addresses recovery metadata by its already-validated operation UUID.
+ *
+ * @returns The recovery metadata route for the validated ID.
+ */
 function recoveryRoute(id: RecoverySnapshotId): string {
   return `${MIRROR_API_V2_ROUTE.recovery}/${id}`;
 }
 
+/**
+ * Maps non-secret cooperating-writer and operation IDs to protocol headers; bearer authentication is dispatcher-owned.
+ *
+ * @returns Protocol identity headers, without bearer credentials.
+ */
 function identityHeaders(
   associationId: MirrorAssociationId,
   writerId: MirrorWriterId,
@@ -662,17 +758,32 @@ function identityHeaders(
   };
 }
 
+/**
+ * Compares the response's base media type case-insensitively while ignoring optional parameters.
+ *
+ * @returns Whether the base media type matches the required type.
+ */
 function hasMediaType(response: Response, expected: string): boolean {
   const value = response.headers.get(MIRROR_HTTP_HEADER.contentType);
   if (value === null) return false;
   return value.split(";", 1)[0]?.trim().toLowerCase() === expected;
 }
 
+/**
+ * Accepts only a canonical application ETag as revision evidence, never a raw storage validator.
+ *
+ * @returns The validated application revision, or undefined.
+ */
 function responseRevision(response: Response): ApplicationRevision | undefined {
   const etag = response.headers.get(MIRROR_HTTP_HEADER.etag);
   return etag === null ? undefined : parseApplicationEtag(etag);
 }
 
+/**
+ * Requires exact ETags for revisioned states and no ETag for absent/legacy observations.
+ *
+ * @returns Whether the validator agrees with the remote state variant.
+ */
 function stateEtagMatches(
   state: CurrentNoteState,
   etag: string | null,
@@ -686,16 +797,32 @@ function stateEtagMatches(
   return etag === null;
 }
 
+/**
+ * Wraps a decoded read value without implying any mutation was confirmed.
+ *
+ * @returns A successful read result carrying the decoded value.
+ */
 function success<Value>(value: Value): RemoteBridgeResult<Value> {
   return { kind: "success", value };
 }
 
+/**
+ * Creates a content-free read refusal from the closed remote failure vocabulary.
+ *
+ * @param failureKind - Sanitized remote failure category.
+ * @returns A typed read failure.
+ */
 function failure(
   failureKind: (typeof REMOTE_BRIDGE_FAILURE)[keyof typeof REMOTE_BRIDGE_FAILURE],
 ): RemoteBridgeFailureResult {
   return { kind: "failure", failure: failureKind };
 }
 
+/**
+ * Encodes digest bytes as lowercase, zero-padded hexadecimal for request/ACK hash comparison.
+ *
+ * @returns Canonical lowercase hexadecimal text.
+ */
 function toHex(bytes: Uint8Array): string {
   return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join(
     "",

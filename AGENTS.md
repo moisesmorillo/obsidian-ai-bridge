@@ -412,29 +412,55 @@ Inline comments are appropriate when they explain a non-obvious `why`, invariant
 
 ### Documentation comments
 
-TypeScript code uses TSDoc-style documentation comments. Documentation is part of the code contract, not decoration.
+Production TypeScript uses TSDoc as part of its maintainable contract. **Every named
+semantic declaration MUST have useful TSDoc regardless of visibility.** Internal,
+private, protected and `#private` declarations are not exempt, even for mechanical
+helpers where one concise useful sentence is sufficient.
 
-All exported/public declarations MUST have useful TSDoc.
-Non-trivial internal declarations MUST also be documented. Documentation quality
-matters more than merely having a comment block.
+This includes functions and named function bindings, classes, constructors, methods
+and accessors, interfaces, non-obvious interface/data members, type aliases (including
+unions, branded identifiers and architectural DTOs), enums and authoritative
+constant objects, runtime/persistence/protocol/configuration schemas, repositories,
+ports, services/use cases, semantic constants and important definition objects.
+A class-level comment does not document each method's distinct contract.
 
-Meaningful named declarations should have useful documentation, including:
+Anonymous callbacks/lambdas and purely inline anonymous object methods do not need
+separate TSDoc. Neither do ordinary local variables/destructuring, loop variables,
+parameters, literal values or individual schema-chain expressions. Generated/vendor
+code and output bundles are excluded. Named behavioral helpers remain in scope even
+inside another function; there is no general trivial/private-helper exemption.
 
-- functions;
-- methods;
-- classes;
-- constructors where relevant;
-- interfaces;
-- interface members with non-obvious semantics;
-- type aliases;
-- enums and enum-like closed sets;
-- schemas;
-- repositories and ports;
-- services and use cases;
-- semantic constants;
-- important configuration and definition objects.
+Documentation must capture the relevant responsibility, authority, invariants,
+pre/postconditions, effects, lifecycle/fencing, failure certainty, units, privacy or
+compatibility contract—not narrate syntax. Distinguish missing docs, semantically
+empty docs (such as `/** Converts state. */`) and useful docs. Frozen historical
+codecs must explain typed rehydration without repair, normalization, inferred newer
+evidence or reinterpretation. Validation helpers should identify their portion of
+the state/action/evidence matrix and distinguish checking from policy selection.
 
-Document exported declarations and non-trivial internal declarations. Documentation must explain purpose, contract, invariants, behavior, side effects, failure modes, units, security constraints, or usage.
+`mise run tsdoc:check` machine-enforces associated documentation **presence** under
+`apps/*/src/**/*.ts` and `packages/*/src/**/*.ts`, through `lint` and therefore `check`.
+The TypeScript AST checker covers named function declarations, direct arrow/function
+bindings (including named local helpers and class function properties), named function
+expressions, named classes and direct class bindings, constructors, class
+methods/accessors of every visibility, interfaces, interface/type method signatures,
+type aliases and enums. Each overload needs its own
+associated block. Documentation belongs immediately before the declaration, including
+its decorators/modifiers; another declaration or intervening non-doc comment does not
+transfer documentation. This gate has no debt baseline or symbol/file allowlist.
+
+The mechanical boundary deliberately does not guess whether ordinary value bindings,
+factory results, schema bindings, data properties or object-literal methods are
+semantic. Review must cover those symbols, semantic constants and named runtime
+schemas regardless of checker coverage. Declaration bodies and schema chains do not
+need comments on each expression. Presence is not proof of useful or accurate prose;
+semantic quality remains a mandatory manual review responsibility.
+
+Discovery excludes ambient `.d.ts`, `node_modules`, `vendor`, `generated`, `dist`,
+`build`, `out`, `.wrangler`, test/fixture directories (`tests`, `__tests__`, `fixtures`,
+`__fixtures__`), symlinks and files explicitly marked `@generated` in a leading
+comment. Test trees are outside the production roots. Generated markers must describe
+actual generated files, never waive handwritten-source debt.
 
 Function and method documentation should use the appropriate TSDoc constructs when useful:
 
@@ -718,7 +744,7 @@ Do not assume separate formatter and linter invocations cover Biome assists. Use
 
 Use complementary type-aware static analysis when TypeScript or Biome cannot enforce an important rule. Avoid duplicating checks already strongly enforced by Biome or TypeScript.
 
-The validation pipeline must fail on deprecated API usage. Static analysis should also enforce unsafe typing, documentation completeness, direct console usage, and complexity where practical.
+The validation pipeline must fail on deprecated API usage. Static analysis should also enforce unsafe typing, direct console usage, and complexity where practical. Production TSDoc presence is machine-enforced as specified in [Documentation comments](#documentation-comments); semantic accuracy and quality remain manual semantic-review obligations.
 
 Semantic linting must be part of:
 
@@ -734,7 +760,14 @@ mise run check
 
 Prefer modern, fast TypeScript-aware tooling over introducing a legacy ESLint stack solely for one rule.
 
-Documentation linting should be automated where practical, but automated presence checks never replace manual documentation-quality review.
+Oxlint owns existing JSDoc tag/content diagnostics; the focused TypeScript checker owns declaration presence. Passing either does not prove that documentation is useful or correct.
+
+Pinned Oxlint 1.82.0 has no `jsdoc/require-jsdoc` rule. The presence checker therefore
+uses the already-installed TypeScript 7 compiler AST/synchronous snapshot API, confined
+to `tools/tsdoc/` with fixture regression tests. These upstream entry points are
+explicitly unstable; verify the fixtures when upgrading TypeScript. The task runs
+under pinned Node because TypeScript's synchronous process-pipe API is incompatible
+with the pinned Bun runtime. This adds no dependency or application runtime code.
 
 ## GitHub Actions
 

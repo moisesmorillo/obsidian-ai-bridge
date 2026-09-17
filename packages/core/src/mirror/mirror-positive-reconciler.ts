@@ -27,6 +27,7 @@ import type { NotePath } from "@core/note-path/note-path.types";
  * owner handles only local read stability, baseline comparison, and new intent creation.
  */
 export class MirrorPositiveReconciler {
+  /** Connects stable saved reads and exact remote evidence to the shared intent/persistence owners without local mutation capability. */
   constructor(
     private readonly local: ReadOnlyLocalVault,
     private readonly remote: RemoteBridge,

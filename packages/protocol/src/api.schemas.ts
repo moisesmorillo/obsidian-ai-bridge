@@ -12,12 +12,12 @@ export const healthResponseSchema = z
   })
   .strict();
 
-/** Runtime schema and OpenAPI source for a list of normalized note paths. */
+/** Retained v1 list response shape; application path validation, not this string-array schema, guarantees normalized paths. */
 export const noteListResponseSchema = z
   .object({ notes: z.array(z.string()) })
   .strict();
 
-/** Runtime schema and OpenAPI source for a successful note write. */
+/** Historical v1 write-success shape retained for compatibility; current v1 mutation routes return retirement errors. */
 export const noteWriteResponseSchema = z
   .object({
     path: z.string(),
@@ -37,7 +37,7 @@ export const apiErrorResponseSchema = z
   })
   .strict();
 
-/** Runtime schema for protocol envelope metadata. */
+/** Reserved version-0.1 envelope metadata; not the current mirror-v2 HTTP response wrapper. */
 export const protocolEnvelopeSchema = z
   .object({
     protocolVersion: z.literal(PROTOCOL_VERSION),

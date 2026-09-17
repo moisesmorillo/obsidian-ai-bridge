@@ -34,6 +34,7 @@ export const REMOTE_RESPONSE_OUTCOME = {
   unavailable: "unavailable",
 } as const;
 
+/** Derives closed adapter vocabularies from their authoritative constant objects. */
 type ValueOf<Value> = Value[keyof Value];
 
 /** Read-only operation identities accepted by the response classifier. */
@@ -52,7 +53,9 @@ export type RemoteBridgeOperation =
 /** HTTP methods that can be dispatched by the remote bridge adapter. */
 export type RemoteHttpMethod = ValueOf<typeof HTTP_METHOD>;
 
+/** Accepted response meanings before body/DTO validation establishes a domain result. */
 type RemoteResponseOutcome = ValueOf<typeof REMOTE_RESPONSE_OUTCOME>;
+/** Failure certainty vocabulary inherited from the core mutation contract. */
 type RemoteMutationEffect = Extract<
   RemoteBridgeMutationResult<never>,
   { readonly kind: "failure" }
@@ -86,6 +89,7 @@ export type RemoteResponseClassification =
   | RemoteReadResponseFailure
   | RemoteMutationResponseFailure;
 
+/** One operation's method/status semantics, with exact accepted rows taking precedence over failure fallbacks. */
 interface RemoteOperationPolicy {
   readonly kind: "read" | "mutation";
   readonly method: RemoteHttpMethod;
@@ -98,6 +102,7 @@ interface RemoteOperationPolicy {
   readonly unexpectedFailure: RemoteBridgeFailure;
 }
 
+/** Exhaustive operation table preserving read-versus-mutation certainty at each key. */
 type RemoteOperationPolicyMap = Readonly<
   {
     readonly [Operation in RemoteReadOperation]: RemoteOperationPolicy & {
@@ -110,10 +115,12 @@ type RemoteOperationPolicyMap = Readonly<
   }
 >;
 
+/** A missing required metadata/list route signals protocol incompatibility rather than absent note content. */
 const READ_ROUTE_MISSING_FAILURE = {
   [HTTP_STATUS_CODE.notFound]: REMOTE_BRIDGE_FAILURE.incompatibleProtocol,
 } as const;
 
+/** Exact conditional-write refusals shared by note and recovery mutation routes. */
 const NOTE_MUTATION_FAILURES = {
   [HTTP_STATUS_CODE.preconditionFailed]:
     REMOTE_BRIDGE_FAILURE.preconditionFailed,
@@ -121,6 +128,7 @@ const NOTE_MUTATION_FAILURES = {
     REMOTE_BRIDGE_FAILURE.preconditionRequired,
 } as const;
 
+/** Recovery maintenance additionally treats missing snapshots and state conflicts as definite refusals. */
 const RECOVERY_MUTATION_FAILURES = {
   [HTTP_STATUS_CODE.notFound]: REMOTE_BRIDGE_FAILURE.missing,
   [HTTP_STATUS_CODE.conflict]: REMOTE_BRIDGE_FAILURE.conflict,
@@ -257,6 +265,7 @@ const REMOTE_OPERATION_POLICY: RemoteOperationPolicyMap = {
   },
 };
 
+/** Post-dispatch certainty policy: only explicit contract refusals prove no effect; transport/protocol uncertainty stays unknown. */
 const DISPATCHED_FAILURE_EFFECT: Readonly<
   Record<
     RemoteBridgeFailure,
@@ -314,14 +323,21 @@ export function classifyRemoteResponse(
   operation: RemoteReadOperation,
   status: number,
 ): AcceptedRemoteResponse | RemoteReadResponseFailure;
+/** Classifies a dispatched mutation response with conservative effect certainty on failure. */
 export function classifyRemoteResponse(
   operation: RemoteMutationOperation,
   status: number,
 ): AcceptedRemoteResponse | RemoteMutationResponseFailure;
+/** Classifies a dynamically selected operation while retaining its read/mutation result union. */
 export function classifyRemoteResponse(
   operation: RemoteBridgeOperation,
   status: number,
 ): RemoteResponseClassification;
+/**
+ * Applies exact accepted rows before failure classification; accepted status still requires operation-specific body validation.
+ *
+ * @returns The accepted row or sanitized response failure.
+ */
 export function classifyRemoteResponse(
   operation: RemoteBridgeOperation,
   status: number,

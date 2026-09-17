@@ -60,6 +60,7 @@ export default class AiBridgePlugin extends Plugin {
     void session.reloadExternalConfiguration().catch(() => undefined);
   }
 
+  /** Composes independent metadata-only M2 commands without granting whole-mirror consent or resetting in-flight exclusion. */
   private registerInspectionCommands(): void {
     const vault = new ObsidianLocalVault(
       createObsidianVaultHost(this.app.vault),

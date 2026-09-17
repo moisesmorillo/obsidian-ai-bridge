@@ -148,6 +148,11 @@ function receiptMatchesIntent(
   );
 }
 
+/**
+ * Requires the same absence or exact-revision predicate when binding a receipt to its durable intent.
+ *
+ * @returns Whether both predicates express the same original condition.
+ */
 function preconditionsEqual(
   left: ConditionalMutationPrecondition,
   right: ConditionalMutationPrecondition,
@@ -160,6 +165,11 @@ function preconditionsEqual(
   );
 }
 
+/**
+ * Settles an already matched ACK and unresolved intent together, preserving newer positive work and advancing own destructive prerequisites.
+ *
+ * @returns The settled path entry retaining any newer desired work.
+ */
 function acknowledgedPathState(
   current: MirrorPathState,
   acknowledgement: MutationAcknowledgement,

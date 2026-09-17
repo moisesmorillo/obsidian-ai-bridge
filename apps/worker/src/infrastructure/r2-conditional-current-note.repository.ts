@@ -43,6 +43,7 @@ import {
 } from "@worker/infrastructure/storage-object.errors";
 import { sha256Content } from "@worker/storage/storage-crypto";
 
+/** Adapter-private decoded generation plus its exact R2 predicate and commit timestamp; storage validators never cross the port. */
 interface ObservedCurrentObject {
   readonly decoded: DecodedCurrentObject;
   readonly storageEtag: string;

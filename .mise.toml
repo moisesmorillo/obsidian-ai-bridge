@@ -14,8 +14,13 @@ run = "bunx biome format --write ."
 description = "Check Biome formatting, linting, and configured assists"
 run = "bunx biome check ."
 
+[tasks."tsdoc:check"]
+description = "Check associated TSDoc presence across production TypeScript"
+run = "node tools/tsdoc/cli.ts"
+
 [tasks.lint]
-description = "Run type-aware Oxlint semantic checks"
+description = "Run TSDoc presence and type-aware Oxlint semantic checks"
+depends = ["tsdoc:check"]
 run = "bunx oxlint --type-aware --deny-warnings ."
 
 [tasks.commitlint]

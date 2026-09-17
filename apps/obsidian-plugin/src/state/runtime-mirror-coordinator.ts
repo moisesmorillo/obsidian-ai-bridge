@@ -17,6 +17,7 @@ export type RuntimeMirrorCoordinatorResult =
   | { readonly kind: "incompatible-existing-owner" }
   | { readonly kind: "initialization-failed" };
 
+/** Versioned same-realm App-to-owner promise registry; neither a cross-process lock nor persisted authority. */
 interface RuntimeCoordinatorRegistry {
   readonly format: "obsidian-ai-bridge-runtime-registry";
   readonly version: typeof MIRROR_RUNTIME_COORDINATOR_VERSION;
@@ -66,6 +67,11 @@ export async function acquireRuntimeMirrorCoordinator(
     : { kind: "incompatible-existing-owner" };
 }
 
+/**
+ * Reuses only a compatible own data-property registry and never invokes or overwrites an incompatible accessor/value.
+ *
+ * @returns A ready same-realm registry or an explicit incompatible-owner refusal.
+ */
 function acquireRegistry():
   | { readonly kind: "ready"; readonly registry: RuntimeCoordinatorRegistry }
   | { readonly kind: "incompatible-existing-owner" } {
@@ -93,6 +99,12 @@ function acquireRegistry():
   return { kind: "ready", registry };
 }
 
+/**
+ * Checks owner version and required callable surface across bundle replacement; does not prove behavioral or cross-realm compatibility.
+ *
+ * @param value - Untrusted prior bundle owner value.
+ * @returns Whether the value exposes the required versioned coordinator surface.
+ */
 function isRuntimeMirrorCoordinator(
   value: unknown,
 ): value is MirrorRuntimeOwner {
@@ -131,6 +143,12 @@ function isRuntimeMirrorCoordinator(
   );
 }
 
+/**
+ * Requires the exact registry format/version and same-realm WeakMap before reusing owner promises.
+ *
+ * @param value - Untrusted symbol-slot data value.
+ * @returns Whether the value is a compatible same-realm registry.
+ */
 function isRuntimeCoordinatorRegistry(
   value: unknown,
 ): value is RuntimeCoordinatorRegistry {

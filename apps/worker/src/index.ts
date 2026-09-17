@@ -7,6 +7,7 @@ import {
 
 await configureWorkerLogging();
 
+/** Isolate-lifetime app composition; request bindings supply services and the bearer without capturing environment secrets here. */
 const worker = createWorkerApp({
   logger: createWorkerLogger(),
   resolveMirrorServices: resolveWorkerMirrorServices,

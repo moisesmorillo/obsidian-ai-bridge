@@ -1,6 +1,6 @@
+import { MIRROR_HTTP_HEADER } from "@obsidian-ai-bridge/protocol";
 import {
   AUTHENTICATION_RESULT_KIND,
-  AUTHORIZATION_HEADER,
   BEARER_CREDENTIALS_RESULT_KIND,
 } from "@worker/auth/auth.constants";
 import type { AuthenticationResult } from "@worker/auth/auth.types";
@@ -24,7 +24,7 @@ export async function authenticateRequest(
   }
 
   const parsedHeader = parseBearerCredentials(
-    parseAuthorizationHeader(headers.get(AUTHORIZATION_HEADER)),
+    parseAuthorizationHeader(headers.get(MIRROR_HTTP_HEADER.authorization)),
   );
   if (parsedHeader.kind !== BEARER_CREDENTIALS_RESULT_KIND.bearer) {
     return { kind: AUTHENTICATION_RESULT_KIND.unauthenticated };

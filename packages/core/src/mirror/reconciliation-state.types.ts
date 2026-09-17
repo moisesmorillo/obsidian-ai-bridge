@@ -1,17 +1,26 @@
 import type {
   ApplicationRevision,
+  ContentOperationReceipt,
   ContentSha256,
   MirrorAssociationId,
   MirrorOperationId,
+  MirrorWriterId,
   MutationEffectCertainty,
-  RecoverySnapshotId,
+  RecoverySnapshotState,
+  TombstoneOperationReceipt,
 } from "@core/mirror/mirror.types";
-import type { MirrorAcknowledgement } from "@core/mirror/mirror-state.types";
+import type {
+  MirrorAcknowledgement,
+  MirrorDeviceLifecycle,
+  MirrorUnresolvedMutation,
+  RenameDeferredMirrorState,
+} from "@core/mirror/mirror-state.types";
 import type {
   RECONCILIATION_ACTION,
   RECONCILIATION_AUTHORITY_SOURCE,
   RECONCILIATION_CLASSIFICATION,
   RECONCILIATION_LOCAL_EVIDENCE_KIND,
+  RECONCILIATION_LOCAL_STABILITY,
   RECONCILIATION_OPERATION_PHASE,
   RECONCILIATION_PATH_REFERENCE_KIND,
   RECONCILIATION_PRESERVATION_PROOF_STATE,
@@ -42,22 +51,26 @@ export type ReconciliationReviewStatus =
 export type ReconciliationOperationPhase =
   (typeof RECONCILIATION_OPERATION_PHASE)[keyof typeof RECONCILIATION_OPERATION_PHASE];
 
-/** Exact local absence sampled under one observation generation. */
+/** Exact stable local absence sampled under one observation generation. */
 export interface ReconciliationLocalAbsentEvidence {
   readonly kind: typeof RECONCILIATION_LOCAL_EVIDENCE_KIND.absent;
+  readonly stability: typeof RECONCILIATION_LOCAL_STABILITY.stable;
   readonly observationGeneration: number;
 }
 
 /** Exact stable local live-content metadata without the sampled note body. */
 export interface ReconciliationLocalLiveEvidence {
   readonly kind: typeof RECONCILIATION_LOCAL_EVIDENCE_KIND.live;
+  readonly stability: typeof RECONCILIATION_LOCAL_STABILITY.stable;
   readonly observationGeneration: number;
+  readonly byteSize: number;
   readonly contentSha256: ContentSha256;
 }
 
 /** Non-authoritative local evidence that cannot admit a mutation. */
 export interface ReconciliationLocalUnknownEvidence {
   readonly kind: typeof RECONCILIATION_LOCAL_EVIDENCE_KIND.unknown;
+  readonly stability: typeof RECONCILIATION_LOCAL_STABILITY.unknown;
 }
 
 /** Content-free local evidence retained by a review or confirmed operation. */
@@ -77,20 +90,23 @@ export interface ReconciliationRemoteLegacyEvidence {
   readonly contentSha256: ContentSha256;
 }
 
-/** Exact format-2 live generation metadata from the current association. */
+/** Exact format-2 live generation metadata and immutable operation receipt. */
 export interface ReconciliationRemoteLiveEvidence {
   readonly kind: typeof RECONCILIATION_REMOTE_EVIDENCE_KIND.live;
   readonly associationId: MirrorAssociationId;
   readonly revision: ApplicationRevision;
   readonly contentSha256: ContentSha256;
+  readonly receipt: ContentOperationReceipt;
 }
 
-/** Exact format-2 tombstone metadata without recovery or note content. */
+/** Exact format-2 tombstone metadata and immutable deletion receipt. */
 export interface ReconciliationRemoteTombstoneEvidence {
   readonly kind: typeof RECONCILIATION_REMOTE_EVIDENCE_KIND.tombstone;
   readonly associationId: MirrorAssociationId;
   readonly revision: ApplicationRevision;
-  readonly recoveryId: RecoverySnapshotId;
+  readonly deletedRevision: ApplicationRevision;
+  readonly recoveryId: MirrorOperationId;
+  readonly receipt: TombstoneOperationReceipt;
 }
 
 /** Sanitized remote-unavailable evidence carrying no raw transport details. */
@@ -106,22 +122,52 @@ export type ReconciliationRemoteEvidence =
   | ReconciliationRemoteTombstoneEvidence
   | ReconciliationRemoteUnavailableEvidence;
 
-/** Exact content-free evidence tuple copied into an admitted operation. */
-export interface ReconciliationEvidence {
+/** Exact M3 work that takes precedence over a review for one sampled path. */
+export interface ReconciliationM3PathEvidence {
+  readonly unresolvedMutation: MirrorUnresolvedMutation | null;
+  readonly deferredHistory: RenameDeferredMirrorState | null;
+}
+
+/** Complete content-free local/baseline/remote identity for one reviewed path. */
+export interface ReconciliationPathEvidence {
+  readonly path: NotePath;
   readonly local: ReconciliationLocalEvidence;
   readonly baseline: MirrorAcknowledgement;
   readonly remote: ReconciliationRemoteEvidence;
+  readonly m3: ReconciliationM3PathEvidence;
+}
+
+/** Runtime and configuration authority captured by one immutable review snapshot. */
+export interface ReconciliationRuntimeIdentity {
+  readonly runtimeOwnerVersion: number;
+  readonly configurationGeneration: number;
+  readonly listenerEpoch: number;
+  readonly deviceId: MirrorWriterId;
+  readonly designatedWriterId: MirrorWriterId;
+  readonly lifecycle: MirrorDeviceLifecycle;
+}
+
+/**
+ * One authoritative content-free identity for review and operation authority.
+ *
+ * `paths` contains the target exactly once plus every source, destination, and
+ * collision path whose identity can make a later decision stale. Note bodies remain
+ * process-local and are never represented here.
+ */
+export interface ReconciliationReviewSnapshot {
+  readonly runtime: ReconciliationRuntimeIdentity;
+  readonly targetPath: NotePath;
+  readonly paths: readonly ReconciliationPathEvidence[];
+  readonly recovery: ReconciliationRecoveryEvidence | null;
 }
 
 /** Content-free metadata shared by ephemeral and durable review projections. */
 export interface ReconciliationReviewMetadata {
   readonly reviewId: MirrorOperationId;
-  readonly targetPath: NotePath;
-  readonly relatedPaths: readonly NotePath[];
   readonly classification: ReconciliationClassification;
   readonly status: ReconciliationReviewStatus;
-  readonly evidence: ReconciliationEvidence;
-  /** Operation admitted from this exact review, when one exists. */
+  readonly snapshot: ReconciliationReviewSnapshot;
+  /** Operation admitted from this exact immutable snapshot, when one exists. */
   readonly operationId: MirrorOperationId | null;
 }
 
@@ -131,7 +177,7 @@ export interface ReconciliationReview extends ReconciliationReviewMetadata {
 }
 
 /**
- * Process-local review sample that may carry bounded transient note text.
+ * Process-local review sample that may carry bounded transient target-note text.
  *
  * This type is deliberately absent from `MirrorDeviceState` and every persisted
  * codec. Closing the review session discards both sampled text values.
@@ -214,14 +260,10 @@ export interface ReconciliationPathReservation {
   readonly kind: (typeof RECONCILIATION_PATH_REFERENCE_KIND)[keyof typeof RECONCILIATION_PATH_REFERENCE_KIND];
 }
 
-/** Exact recovery snapshot identity selected for a local-first restore. */
-export interface ReconciliationRecoveryEvidence {
-  readonly recoveryId: RecoverySnapshotId;
-  readonly revision: ApplicationRevision;
-  readonly contentSha256: ContentSha256;
-}
+/** Exact content-free recovery generation selected for a local-first restore. */
+export type ReconciliationRecoveryEvidence = RecoverySnapshotState;
 
-/** Content-free proof that one competing side is reserved or durably preserved. */
+/** Content-free proof that one exact competing side is durably preserved. */
 export interface ReconciliationPreservationReceipt {
   readonly operationId: MirrorOperationId;
   readonly originalPath: NotePath;
@@ -240,12 +282,13 @@ export interface ReconciliationOperation {
   readonly authority: ReconciliationAuthoritySource;
   readonly action: ReconciliationAction;
   readonly phase: ReconciliationOperationPhase;
-  readonly sourcePath: NotePath;
+  /** Immutable copy of the exact review identity admitted for this operation. */
+  readonly snapshot: ReconciliationReviewSnapshot;
   readonly destinationPath: NotePath | null;
   readonly reservations: readonly ReconciliationPathReservation[];
-  readonly evidence: ReconciliationEvidence;
-  readonly recovery: ReconciliationRecoveryEvidence | null;
   readonly preservationReceipts: readonly ReconciliationPreservationReceipt[];
+  /** Active reviewed operation that atomically takes over a completed restore fence. */
+  readonly successorOperationId: MirrorOperationId | null;
   readonly localEffect: MutationEffectCertainty;
   readonly remoteEffect: MutationEffectCertainty;
 }

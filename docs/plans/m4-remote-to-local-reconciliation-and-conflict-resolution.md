@@ -74,17 +74,23 @@ and cross-field invariants in core.
 
 Implemented modules separate core contract types/constants, core cross-field
 validation, the frozen plugin v2 decoder, current v3 codec, deterministic migrator,
-and adapter startup persistence boundary. State/registry versions are 3. Focused tests
-cover every closed set, classification/action/phase and preservation compatibility,
-association/path relationships, strict/body-free codecs, migration fidelity across M3
-state variants, deterministic retry and exact
-read-back barriers, downgrade/registry refusal, handoff interaction, capacity overflow,
-and exact 50,000-path migration with empty sparse M4 collections.
+and adapter startup persistence boundary. State/registry versions are 3. The corrected
+contract uses one immutable content-free review snapshot for runtime/configuration/
+listener, per-path local/ACK/remote/M3, exact receipt, and recovery identity; operations
+copy and must exactly match that snapshot. The central validator derives required
+preservation side/revision/hash from sampled evidence, persists an active
+`restored-pending-review` fence, requires linked reviewed successor ownership before a
+restore becomes terminal, and excludes active reservations from ordinary M3
+scheduling. Focused tests cover every closed set, classification/action/phase and
+preservation compatibility, association/path relationships, stale-identity dimensions,
+strict/body-free codecs, migration fidelity across M3 state variants, deterministic
+retry and exact read-back barriers, downgrade/registry refusal, handoff interaction,
+capacity overflow, and exact 50,000-path migration with empty sparse M4 collections.
 
 The migration and state-relationship matrices are recorded in the milestone's
 [Slice 1 evidence](../milestones/m4-remote-to-local-reconciliation-and-conflict-resolution.md#slice-1-implementation-evidence).
-The final canonical source suite passes 64 files / 840 tests with 95.00% statements,
-90.54% branches, 98.40% functions, and 97.02% lines. The final diff contains no UI
+The final canonical source suite passes 64 files / 880 tests with 95.00% statements,
+91.35% branches, 98.47% functions, and 96.98% lines. The final diff contains no UI
 command/modal/settings action, local writer, Fetch/RemoteBridge or Worker/API/OpenAPI
 change, deployment configuration, timer, scan, or runtime M4 mutation capability.
 

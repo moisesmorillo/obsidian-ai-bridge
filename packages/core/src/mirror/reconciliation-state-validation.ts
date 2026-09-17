@@ -1,8 +1,16 @@
-import { MUTATION_EFFECT_CERTAINTY } from "@core/mirror/mirror.constants";
+import {
+  CONDITIONAL_MUTATION_PRECONDITION_KIND,
+  MAX_MUTATION_ATTEMPTS,
+  MAX_MUTATION_EVIDENCE_ATTEMPTS,
+  MUTATION_ACTION,
+  MUTATION_EFFECT_CERTAINTY,
+  RECOVERY_SNAPSHOT_STATE_KIND,
+} from "@core/mirror/mirror.constants";
 import {
   createApplicationRevision,
   createMirrorAssociationId,
   createMirrorOperationId,
+  createMirrorWriterId,
   createRecoverySnapshotId,
   isContentSha256,
 } from "@core/mirror/mirror-identifiers";
@@ -11,8 +19,17 @@ import {
   MIRROR_ACKNOWLEDGEMENT_KIND,
   MIRROR_DESIRED_STATE_KIND,
   MIRROR_DEVICE_LIFECYCLE_KIND,
+  MIRROR_MUTATION_PHASE,
+  MIRROR_PAUSE_REASON,
+  MIRROR_RENAME_PHASE,
 } from "@core/mirror/mirror-state.constants";
-import type { MirrorDeviceState } from "@core/mirror/mirror-state.types";
+import type {
+  MirrorDeviceLifecycle,
+  MirrorDeviceState,
+  MirrorPathState,
+  MirrorUnresolvedMutation,
+  RenameDeferredMirrorState,
+} from "@core/mirror/mirror-state.types";
 import {
   MAX_RECONCILIATION_OPERATIONS,
   MAX_RECONCILIATION_PRESERVATION_RECEIPTS,
@@ -21,6 +38,7 @@ import {
   RECONCILIATION_AUTHORITY_SOURCE,
   RECONCILIATION_CLASSIFICATION,
   RECONCILIATION_LOCAL_EVIDENCE_KIND,
+  RECONCILIATION_LOCAL_STABILITY,
   RECONCILIATION_OPERATION_PHASE,
   RECONCILIATION_PATH_REFERENCE_KIND,
   RECONCILIATION_PRESERVATION_PROOF_STATE,
@@ -30,19 +48,28 @@ import {
   RECONCILIATION_REVIEW_STATUS,
 } from "@core/mirror/reconciliation-state.constants";
 import type {
-  ReconciliationEvidence,
   ReconciliationOperation,
+  ReconciliationPathEvidence,
   ReconciliationPreservationReceipt,
   ReconciliationReview,
+  ReconciliationReviewSnapshot,
 } from "@core/mirror/reconciliation-state.types";
 import { isNormalizedNotePath } from "@core/note-path/note-path";
+import { MAX_NOTE_SIZE_BYTES } from "@core/vault/vault.constants";
+
+interface RequiredPreservation {
+  readonly originalPath: ReconciliationPreservationReceipt["originalPath"];
+  readonly side: ReconciliationPreservationReceipt["side"];
+  readonly sourceRevision: ReconciliationPreservationReceipt["sourceRevision"];
+  readonly contentSha256: ReconciliationPreservationReceipt["contentSha256"];
+}
 
 /**
  * Validates all cross-field M4 review, operation, reservation, and M3-precedence rules.
  *
  * The implementation indexes paths and identities once so validation remains linear
  * in tracked paths plus sparse M4 records. It validates metadata only; note bodies
- * are not part of the type or wire schema.
+ * are not part of the type or persisted schema.
  *
  * @param state - Candidate version-3 device state after strict field conversion.
  * @returns Whether its sparse M4 relationships are internally safe.
@@ -59,7 +86,7 @@ export function isReconciliationStateConsistent(
   for (const review of state.reconciliationReviews) {
     if (
       !validateReview(review) ||
-      !validateEvidenceAssociation(state, review.evidence) ||
+      !validateSnapshotOwner(state, review.snapshot) ||
       reviews.has(review.reviewId)
     ) {
       return false;
@@ -69,11 +96,11 @@ export function isReconciliationStateConsistent(
   for (const operation of state.reconciliationOperations) {
     if (
       !validateOperationFields(operation) ||
-      operations.has(operation.operationId)
+      operations.has(operation.operationId) ||
+      reviews.has(operation.operationId)
     ) {
       return false;
     }
-    if (reviews.has(operation.operationId)) return false;
     operations.set(operation.operationId, operation);
   }
   if (!validateLifecycle(state)) return false;
@@ -84,29 +111,76 @@ export function isReconciliationStateConsistent(
     if (
       review === undefined ||
       review.operationId !== operation.operationId ||
-      review.targetPath !== operation.sourcePath ||
-      !evidenceEquals(review.evidence, operation.evidence) ||
+      !reconciliationReviewSnapshotsEqual(
+        review.snapshot,
+        operation.snapshot,
+      ) ||
       !validateReviewOperationLifecycle(review, operation) ||
       !validateClassificationAction(review, operation) ||
       !validateOperationAuthority(operation) ||
-      !validateOperationPaths(operation, review, trackedPaths) ||
+      !validateOperationPaths(operation, trackedPaths) ||
+      !validateRestoreSuccessor(operation, operations) ||
       !validateM3Precedence(operation, pathStates)
     ) {
       return false;
     }
-    if (isActiveOperation(operation)) {
-      for (const reservation of operation.reservations) {
-        if (activelyReservedPaths.has(reservation.path)) return false;
-        activelyReservedPaths.add(reservation.path);
-      }
+    if (!isActiveOperation(operation)) continue;
+    for (const reservation of operation.reservations) {
+      if (activelyReservedPaths.has(reservation.path)) return false;
+      activelyReservedPaths.add(reservation.path);
     }
   }
 
   for (const review of state.reconciliationReviews) {
-    if (!validateReviewRelationship(review, operations, pathStates))
-      return false;
+    if (!validateReviewRelationship(review, operations)) return false;
   }
   return true;
+}
+
+/**
+ * Determines whether durable M4 ownership fences ordinary M3 work for one path.
+ *
+ * @param state - Current validated device state.
+ * @param path - Eligible path considered for ordinary M3 scheduling or admission.
+ * @returns Whether an active operation owns the path across restart and re-enable.
+ */
+export function isReconciliationPathReserved(
+  state: MirrorDeviceState,
+  path: string,
+): boolean {
+  return state.reconciliationOperations.some(
+    (operation) =>
+      isActiveOperation(operation) &&
+      operation.reservations.some((reservation) => reservation.path === path),
+  );
+}
+
+/**
+ * Compares every immutable authority and evidence dimension of two review snapshots.
+ *
+ * Future decision admission can use this pure comparison without an untyped runtime
+ * side channel. A changed epoch, receipt, size, path, M3 state, or lifecycle makes
+ * the snapshot stale even when note bytes remain equal.
+ *
+ * @param left - Previously sampled authoritative snapshot.
+ * @param right - Fresh candidate snapshot.
+ * @returns Whether both snapshots identify exactly the same decision authority.
+ */
+export function reconciliationReviewSnapshotsEqual(
+  left: ReconciliationReviewSnapshot,
+  right: ReconciliationReviewSnapshot,
+): boolean {
+  if (
+    left.targetPath !== right.targetPath ||
+    !runtimeIdentityEquals(left.runtime, right.runtime) ||
+    !recoveryEvidenceEquals(left.recovery, right.recovery) ||
+    left.paths.length !== right.paths.length
+  ) {
+    return false;
+  }
+  return left.paths.every((path, index) =>
+    pathEvidenceEquals(path, right.paths[index]),
+  );
 }
 
 function validateCapacity(state: MirrorDeviceState): boolean {
@@ -119,11 +193,12 @@ function validateCapacity(state: MirrorDeviceState): boolean {
   let receipts = 0;
   let pathReferences = 0;
   for (const review of state.reconciliationReviews) {
-    pathReferences += 1 + review.relatedPaths.length;
+    pathReferences += review.snapshot.paths.length;
   }
   for (const operation of state.reconciliationOperations) {
     receipts += operation.preservationReceipts.length;
-    pathReferences += operation.reservations.length;
+    pathReferences +=
+      operation.snapshot.paths.length + operation.reservations.length;
   }
   return (
     receipts <= MAX_RECONCILIATION_PRESERVATION_RECEIPTS &&
@@ -150,140 +225,217 @@ function validateLifecycle(state: MirrorDeviceState): boolean {
   }
 }
 
-function validateReview(review: ReconciliationReview): boolean {
-  if (
-    review.retention !== RECONCILIATION_REVIEW_RETENTION.durable ||
-    createMirrorOperationId(review.reviewId) !== review.reviewId ||
-    !isNormalizedNotePath(review.targetPath) ||
-    review.relatedPaths.length > MAX_MIRROR_TRACKED_PATHS
-  ) {
-    return false;
-  }
-  const paths = new Set<string>([review.targetPath]);
-  for (const path of review.relatedPaths) {
-    if (!isNormalizedNotePath(path) || paths.has(path)) return false;
-    paths.add(path);
-  }
-  if (!validateEvidence(review.evidence)) return false;
-  if (review.operationId !== null) {
-    return createMirrorOperationId(review.operationId) === review.operationId;
-  }
-  return review.status !== RECONCILIATION_REVIEW_STATUS.staged;
-}
-
-function validateOperationFields(operation: ReconciliationOperation): boolean {
-  if (
-    createMirrorOperationId(operation.operationId) !== operation.operationId ||
-    createMirrorOperationId(operation.reviewId) !== operation.reviewId ||
-    operation.operationId === operation.reviewId ||
-    !isNormalizedNotePath(operation.sourcePath) ||
-    (operation.destinationPath !== null &&
-      (!isNormalizedNotePath(operation.destinationPath) ||
-        operation.destinationPath === operation.sourcePath)) ||
-    operation.reservations.length === 0 ||
-    !validateEvidence(operation.evidence) ||
-    !validateRecovery(operation) ||
-    !validateActionEvidence(operation) ||
-    !validateActionPhase(operation)
-  ) {
-    return false;
-  }
-  const reserved = new Set<string>();
-  for (const reservation of operation.reservations) {
-    if (
-      !isNormalizedNotePath(reservation.path) ||
-      reserved.has(reservation.path)
-    ) {
-      return false;
-    }
-    reserved.add(reservation.path);
-  }
-  if (!reserved.has(operation.sourcePath)) return false;
-  if (
-    operation.destinationPath !== null &&
-    !reserved.has(operation.destinationPath)
-  ) {
-    return false;
-  }
-  const receiptSides = new Set<string>();
-  for (const receipt of operation.preservationReceipts) {
-    if (
-      !validatePreservationReceipt(operation, receipt) ||
-      receiptSides.has(receipt.side)
-    ) {
-      return false;
-    }
-    receiptSides.add(receipt.side);
-  }
-  return (
-    validatePreservationPolicy(operation, receiptSides) &&
-    validateOperationLifecycleEvidence(operation)
-  );
-}
-
-function validateEvidenceAssociation(
+function validateSnapshotOwner(
   state: MirrorDeviceState,
-  evidence: ReconciliationEvidence,
+  snapshot: ReconciliationReviewSnapshot,
 ): boolean {
   if (
-    evidence.remote.kind !== RECONCILIATION_REMOTE_EVIDENCE_KIND.live &&
-    evidence.remote.kind !== RECONCILIATION_REMOTE_EVIDENCE_KIND.tombstone
+    snapshot.runtime.deviceId !== state.deviceId ||
+    state.lifecycle.kind === MIRROR_DEVICE_LIFECYCLE_KIND.disabled ||
+    snapshot.runtime.lifecycle.kind === MIRROR_DEVICE_LIFECYCLE_KIND.disabled
   ) {
-    return true;
+    return false;
   }
   return (
-    state.lifecycle.kind !== MIRROR_DEVICE_LIFECYCLE_KIND.disabled &&
-    evidence.remote.associationId === state.lifecycle.associationId
+    snapshot.runtime.lifecycle.associationId ===
+      state.lifecycle.associationId &&
+    snapshot.runtime.lifecycle.origin === state.lifecycle.origin
   );
 }
 
-function validateEvidence(evidence: ReconciliationEvidence): boolean {
-  if (!validateAcknowledgement(evidence.baseline)) return false;
-  switch (evidence.local.kind) {
-    case RECONCILIATION_LOCAL_EVIDENCE_KIND.unknown:
-      break;
-    case RECONCILIATION_LOCAL_EVIDENCE_KIND.absent:
-      if (!isPositiveSafeInteger(evidence.local.observationGeneration)) {
-        return false;
-      }
-      break;
-    case RECONCILIATION_LOCAL_EVIDENCE_KIND.live:
-      if (
-        !isPositiveSafeInteger(evidence.local.observationGeneration) ||
-        !isContentSha256(evidence.local.contentSha256)
-      ) {
-        return false;
-      }
-      break;
+function validateReview(review: ReconciliationReview): boolean {
+  return (
+    review.retention === RECONCILIATION_REVIEW_RETENTION.durable &&
+    createMirrorOperationId(review.reviewId) === review.reviewId &&
+    validateSnapshot(review.snapshot) &&
+    (review.operationId === null
+      ? review.status !== RECONCILIATION_REVIEW_STATUS.staged
+      : createMirrorOperationId(review.operationId) === review.operationId)
+  );
+}
+
+function validateSnapshot(snapshot: ReconciliationReviewSnapshot): boolean {
+  if (
+    !validateRuntimeIdentity(snapshot.runtime) ||
+    !isNormalizedNotePath(snapshot.targetPath) ||
+    snapshot.paths.length === 0 ||
+    snapshot.paths.length > MAX_MIRROR_TRACKED_PATHS ||
+    !validateRecoveryEvidence(snapshot)
+  ) {
+    return false;
   }
-  switch (evidence.remote.kind) {
+  const paths = new Set<string>();
+  for (const evidence of snapshot.paths) {
+    if (!validatePathEvidence(snapshot, evidence) || paths.has(evidence.path)) {
+      return false;
+    }
+    paths.add(evidence.path);
+  }
+  return paths.has(snapshot.targetPath);
+}
+
+function validateRuntimeIdentity(
+  runtime: ReconciliationReviewSnapshot["runtime"],
+): boolean {
+  return (
+    isPositiveSafeInteger(runtime.runtimeOwnerVersion) &&
+    isNonNegativeSafeInteger(runtime.configurationGeneration) &&
+    isPositiveSafeInteger(runtime.listenerEpoch) &&
+    createMirrorWriterId(runtime.deviceId) === runtime.deviceId &&
+    createMirrorWriterId(runtime.designatedWriterId) ===
+      runtime.designatedWriterId &&
+    validateDeviceLifecycle(runtime.lifecycle)
+  );
+}
+
+function validateDeviceLifecycle(lifecycle: MirrorDeviceLifecycle): boolean {
+  switch (lifecycle.kind) {
+    case MIRROR_DEVICE_LIFECYCLE_KIND.disabled:
+      return true;
+    case MIRROR_DEVICE_LIFECYCLE_KIND.active:
+    case MIRROR_DEVICE_LIFECYCLE_KIND.handoffDraining:
+    case MIRROR_DEVICE_LIFECYCLE_KIND.handoffDrained:
+    case MIRROR_DEVICE_LIFECYCLE_KIND.handoffStaged:
+      return validateBinding(lifecycle.associationId, lifecycle.origin);
+    case MIRROR_DEVICE_LIFECYCLE_KIND.paused:
+      return (
+        validateBinding(lifecycle.associationId, lifecycle.origin) &&
+        (lifecycle.reason === MIRROR_PAUSE_REASON.manual ||
+          lifecycle.reason === MIRROR_PAUSE_REASON.persistenceFailure)
+      );
+  }
+}
+
+function validateBinding(
+  associationId: Parameters<typeof createMirrorAssociationId>[0],
+  origin: string,
+): boolean {
+  return (
+    createMirrorAssociationId(associationId) === associationId &&
+    origin.length > 0 &&
+    origin.length <= 2_048
+  );
+}
+
+function validatePathEvidence(
+  snapshot: ReconciliationReviewSnapshot,
+  evidence: ReconciliationPathEvidence,
+): boolean {
+  if (
+    !isNormalizedNotePath(evidence.path) ||
+    !validateLocalEvidence(evidence.local) ||
+    !validateAcknowledgement(evidence.baseline) ||
+    !validateRemoteEvidence(snapshot, evidence.remote) ||
+    !validateM3Evidence(snapshot, evidence)
+  ) {
+    return false;
+  }
+  return true;
+}
+
+function validateLocalEvidence(
+  evidence: ReconciliationPathEvidence["local"],
+): boolean {
+  switch (evidence.kind) {
+    case RECONCILIATION_LOCAL_EVIDENCE_KIND.unknown:
+      return evidence.stability === RECONCILIATION_LOCAL_STABILITY.unknown;
+    case RECONCILIATION_LOCAL_EVIDENCE_KIND.absent:
+      return (
+        evidence.stability === RECONCILIATION_LOCAL_STABILITY.stable &&
+        isPositiveSafeInteger(evidence.observationGeneration)
+      );
+    case RECONCILIATION_LOCAL_EVIDENCE_KIND.live:
+      return (
+        evidence.stability === RECONCILIATION_LOCAL_STABILITY.stable &&
+        isPositiveSafeInteger(evidence.observationGeneration) &&
+        isNonNegativeSafeInteger(evidence.byteSize) &&
+        evidence.byteSize <= MAX_NOTE_SIZE_BYTES &&
+        isContentSha256(evidence.contentSha256)
+      );
+  }
+}
+
+function validateRemoteEvidence(
+  snapshot: ReconciliationReviewSnapshot,
+  evidence: ReconciliationPathEvidence["remote"],
+): boolean {
+  switch (evidence.kind) {
     case RECONCILIATION_REMOTE_EVIDENCE_KIND.absent:
     case RECONCILIATION_REMOTE_EVIDENCE_KIND.unavailable:
       return true;
     case RECONCILIATION_REMOTE_EVIDENCE_KIND.legacy:
-      return isContentSha256(evidence.remote.contentSha256);
+      return isContentSha256(evidence.contentSha256);
     case RECONCILIATION_REMOTE_EVIDENCE_KIND.live:
       return (
-        createMirrorAssociationId(evidence.remote.associationId) ===
-          evidence.remote.associationId &&
-        createApplicationRevision(evidence.remote.revision) ===
-          evidence.remote.revision &&
-        isContentSha256(evidence.remote.contentSha256)
+        validateRemoteAssociation(snapshot, evidence.associationId) &&
+        createApplicationRevision(evidence.revision) === evidence.revision &&
+        isContentSha256(evidence.contentSha256) &&
+        validateContentReceipt(evidence)
       );
     case RECONCILIATION_REMOTE_EVIDENCE_KIND.tombstone:
       return (
-        createMirrorAssociationId(evidence.remote.associationId) ===
-          evidence.remote.associationId &&
-        createApplicationRevision(evidence.remote.revision) ===
-          evidence.remote.revision &&
-        createRecoverySnapshotId(evidence.remote.recoveryId) ===
-          evidence.remote.recoveryId
+        validateRemoteAssociation(snapshot, evidence.associationId) &&
+        createApplicationRevision(evidence.revision) === evidence.revision &&
+        createApplicationRevision(evidence.deletedRevision) ===
+          evidence.deletedRevision &&
+        createRecoverySnapshotId(evidence.recoveryId) === evidence.recoveryId &&
+        evidence.receipt.action === MUTATION_ACTION.tombstone &&
+        evidence.receipt.associationId === evidence.associationId &&
+        evidence.receipt.operationId === evidence.recoveryId &&
+        evidence.receipt.precondition.kind ===
+          CONDITIONAL_MUTATION_PRECONDITION_KIND.matchingRevision &&
+        evidence.receipt.precondition.revision === evidence.deletedRevision
       );
   }
 }
 
+function validateRemoteAssociation(
+  snapshot: ReconciliationReviewSnapshot,
+  associationId: Parameters<typeof createMirrorAssociationId>[0],
+): boolean {
+  if (createMirrorAssociationId(associationId) !== associationId) return false;
+  return snapshot.runtime.lifecycle.kind ===
+    MIRROR_DEVICE_LIFECYCLE_KIND.disabled
+    ? false
+    : snapshot.runtime.lifecycle.associationId === associationId;
+}
+
+function validateContentReceipt(
+  evidence: Extract<
+    ReconciliationPathEvidence["remote"],
+    { readonly kind: "live" }
+  >,
+): boolean {
+  const receipt = evidence.receipt;
+  if (
+    receipt.action !== MUTATION_ACTION.create &&
+    receipt.action !== MUTATION_ACTION.update &&
+    receipt.action !== MUTATION_ACTION.recreate
+  ) {
+    return false;
+  }
+  if (
+    receipt.associationId !== evidence.associationId ||
+    createMirrorOperationId(receipt.operationId) !== receipt.operationId ||
+    receipt.contentSha256 !== evidence.contentSha256
+  ) {
+    return false;
+  }
+  if (
+    receipt.precondition.kind === CONDITIONAL_MUTATION_PRECONDITION_KIND.absent
+  ) {
+    return receipt.action === MUTATION_ACTION.create;
+  }
+  return (
+    createApplicationRevision(receipt.precondition.revision) ===
+      receipt.precondition.revision &&
+    (receipt.action === MUTATION_ACTION.update ||
+      receipt.action === MUTATION_ACTION.recreate)
+  );
+}
+
 function validateAcknowledgement(
-  acknowledgement: ReconciliationEvidence["baseline"],
+  acknowledgement: ReconciliationPathEvidence["baseline"],
 ): boolean {
   switch (acknowledgement.kind) {
     case MIRROR_ACKNOWLEDGEMENT_KIND.unassociated:
@@ -304,33 +456,226 @@ function validateAcknowledgement(
   }
 }
 
-function validateRecovery(operation: ReconciliationOperation): boolean {
-  if (operation.action.kind !== RECONCILIATION_ACTION.restoreRecovery) {
-    return operation.recovery === null;
+function validateM3Evidence(
+  snapshot: ReconciliationReviewSnapshot,
+  evidence: ReconciliationPathEvidence,
+): boolean {
+  const unresolved = evidence.m3.unresolvedMutation;
+  const deferred = evidence.m3.deferredHistory;
+  if (unresolved !== null && deferred !== null) return false;
+  if (
+    unresolved !== null &&
+    !validateUnresolvedMutation(snapshot, evidence, unresolved)
+  ) {
+    return false;
   }
   return (
-    operation.recovery !== null &&
-    createRecoverySnapshotId(operation.recovery.recoveryId) ===
-      operation.recovery.recoveryId &&
-    createApplicationRevision(operation.recovery.revision) ===
-      operation.recovery.revision &&
-    isContentSha256(operation.recovery.contentSha256)
+    deferred === null || validateDeferredHistory(snapshot, evidence, deferred)
+  );
+}
+
+function validateUnresolvedMutation(
+  snapshot: ReconciliationReviewSnapshot,
+  evidence: ReconciliationPathEvidence,
+  unresolved: MirrorUnresolvedMutation,
+): boolean {
+  const intent = unresolved.intent;
+  if (
+    intent.path !== evidence.path ||
+    intent.writerId !== snapshot.runtime.deviceId ||
+    !isNonNegativeSafeInteger(intent.mutationAttempts) ||
+    intent.mutationAttempts > MAX_MUTATION_ATTEMPTS ||
+    !isNonNegativeSafeInteger(intent.evidenceAttempts) ||
+    intent.evidenceAttempts > MAX_MUTATION_EVIDENCE_ATTEMPTS ||
+    snapshot.runtime.lifecycle.kind === MIRROR_DEVICE_LIFECYCLE_KIND.disabled ||
+    intent.associationId !== snapshot.runtime.lifecycle.associationId
+  ) {
+    return false;
+  }
+  switch (unresolved.phase) {
+    case MIRROR_MUTATION_PHASE.intentPersisted:
+    case MIRROR_MUTATION_PHASE.dispatched:
+    case MIRROR_MUTATION_PHASE.evidenceRequired:
+      return true;
+    case MIRROR_MUTATION_PHASE.recoveryPreparation:
+    case MIRROR_MUTATION_PHASE.tombstoneCommit:
+      return intent.action === MUTATION_ACTION.tombstone;
+  }
+}
+
+function validateDeferredHistory(
+  snapshot: ReconciliationReviewSnapshot,
+  evidence: ReconciliationPathEvidence,
+  deferred: RenameDeferredMirrorState,
+): boolean {
+  return (
+    deferred.kind === MIRROR_DESIRED_STATE_KIND.renameDeferred &&
+    deferred.sourcePath === evidence.path &&
+    deferred.destinationPath !== evidence.path &&
+    isNonNegativeSafeInteger(deferred.observationGeneration) &&
+    isNonNegativeSafeInteger(deferred.graceDeadlineMilliseconds) &&
+    createMirrorOperationId(deferred.renameId) === deferred.renameId &&
+    snapshot.runtime.lifecycle.kind !== MIRROR_DEVICE_LIFECYCLE_KIND.disabled &&
+    deferred.associationId === snapshot.runtime.lifecycle.associationId &&
+    createApplicationRevision(deferred.sourceExpectedRevision) ===
+      deferred.sourceExpectedRevision &&
+    (deferred.destinationPath === null ||
+      isNormalizedNotePath(deferred.destinationPath)) &&
+    (deferred.destinationObservationGeneration === null ||
+      isNonNegativeSafeInteger(deferred.destinationObservationGeneration)) &&
+    (deferred.destinationAcknowledgedRevision === null ||
+      createApplicationRevision(deferred.destinationAcknowledgedRevision) ===
+        deferred.destinationAcknowledgedRevision) &&
+    (deferred.phase === MIRROR_RENAME_PHASE.destinationRequired ||
+      deferred.phase === MIRROR_RENAME_PHASE.sourceCleanupRequired ||
+      deferred.phase === MIRROR_RENAME_PHASE.invalidated)
+  );
+}
+
+function validateRecoveryEvidence(
+  snapshot: ReconciliationReviewSnapshot,
+): boolean {
+  const recovery = snapshot.recovery;
+  if (recovery === null) return true;
+  if (
+    createRecoverySnapshotId(recovery.id) !== recovery.id ||
+    createMirrorAssociationId(recovery.associationId) !==
+      recovery.associationId ||
+    !isNormalizedNotePath(recovery.path) ||
+    recovery.path !== snapshot.targetPath ||
+    createApplicationRevision(recovery.revision) !== recovery.revision ||
+    createApplicationRevision(recovery.sourceRevision) !==
+      recovery.sourceRevision ||
+    !isContentSha256(recovery.contentSha256) ||
+    snapshot.runtime.lifecycle.kind === MIRROR_DEVICE_LIFECYCLE_KIND.disabled ||
+    recovery.associationId !== snapshot.runtime.lifecycle.associationId
+  ) {
+    return false;
+  }
+  switch (recovery.kind) {
+    case RECOVERY_SNAPSHOT_STATE_KIND.prepared:
+      return true;
+    case RECOVERY_SNAPSHOT_STATE_KIND.sealed:
+    case RECOVERY_SNAPSHOT_STATE_KIND.purged:
+      return isCanonicalInstant(recovery.recoverUntil);
+  }
+}
+
+function validateOperationFields(operation: ReconciliationOperation): boolean {
+  if (
+    createMirrorOperationId(operation.operationId) !== operation.operationId ||
+    createMirrorOperationId(operation.reviewId) !== operation.reviewId ||
+    operation.operationId === operation.reviewId ||
+    !validateSnapshot(operation.snapshot) ||
+    (operation.destinationPath !== null &&
+      !isNormalizedNotePath(operation.destinationPath)) ||
+    operation.reservations.length === 0 ||
+    !validateSuccessorIdentity(operation) ||
+    !validateActionEvidence(operation) ||
+    !validateActionPhase(operation)
+  ) {
+    return false;
+  }
+  const reserved = new Set<string>();
+  for (const reservation of operation.reservations) {
+    if (
+      !isNormalizedNotePath(reservation.path) ||
+      reserved.has(reservation.path)
+    ) {
+      return false;
+    }
+    reserved.add(reservation.path);
+  }
+  if (!reserved.has(operation.snapshot.targetPath)) return false;
+  const receiptKeys = new Set<string>();
+  for (const receipt of operation.preservationReceipts) {
+    const key = `${receipt.originalPath}:${receipt.side}`;
+    if (
+      !validatePreservationReceipt(operation, receipt) ||
+      receiptKeys.has(key)
+    ) {
+      return false;
+    }
+    receiptKeys.add(key);
+  }
+  return validateOperationLifecycleEvidence(operation);
+}
+
+function validateSuccessorIdentity(
+  operation: ReconciliationOperation,
+): boolean {
+  if (operation.action.kind !== RECONCILIATION_ACTION.restoreRecovery) {
+    return operation.successorOperationId === null;
+  }
+  if (operation.phase !== RECONCILIATION_OPERATION_PHASE.completed) {
+    return operation.successorOperationId === null;
+  }
+  return (
+    operation.successorOperationId !== null &&
+    operation.successorOperationId !== operation.operationId &&
+    createMirrorOperationId(operation.successorOperationId) ===
+      operation.successorOperationId
+  );
+}
+
+function validateRestoreSuccessor(
+  operation: ReconciliationOperation,
+  operations: ReadonlyMap<string, ReconciliationOperation>,
+): boolean {
+  if (operation.action.kind !== RECONCILIATION_ACTION.restoreRecovery) {
+    return operation.successorOperationId === null;
+  }
+  if (operation.phase !== RECONCILIATION_OPERATION_PHASE.completed) {
+    return operation.successorOperationId === null;
+  }
+  const successor =
+    operation.successorOperationId === null
+      ? undefined
+      : operations.get(operation.successorOperationId);
+  if (
+    successor === undefined ||
+    successor.phase === RECONCILIATION_OPERATION_PHASE.stale
+  ) {
+    return false;
+  }
+  const restoredPath =
+    operation.destinationPath ?? operation.snapshot.targetPath;
+  const beforeRestore = destinationEvidence(operation);
+  const afterRestore = targetEvidence(successor.snapshot);
+  const recovery = operation.snapshot.recovery;
+  return (
+    successor.reviewId !== operation.reviewId &&
+    successor.snapshot.targetPath === restoredPath &&
+    successor.reservations.some(
+      (reservation) => reservation.path === restoredPath,
+    ) &&
+    beforeRestore !== undefined &&
+    beforeRestore.local.kind !== RECONCILIATION_LOCAL_EVIDENCE_KIND.unknown &&
+    afterRestore?.local.kind === RECONCILIATION_LOCAL_EVIDENCE_KIND.live &&
+    afterRestore.local.observationGeneration >
+      beforeRestore.local.observationGeneration &&
+    recovery !== null &&
+    afterRestore.local.contentSha256 === recovery.contentSha256
   );
 }
 
 function validateActionEvidence(operation: ReconciliationOperation): boolean {
-  const localKind = operation.evidence.local.kind;
-  const remoteKind = operation.evidence.remote.kind;
+  const target = targetEvidence(operation.snapshot);
+  if (target === undefined) return false;
+  const localKind = target.local.kind;
+  const remoteKind = target.remote.kind;
   switch (operation.action.kind) {
     case RECONCILIATION_ACTION.keepLocal:
       return (
         localKind === RECONCILIATION_LOCAL_EVIDENCE_KIND.live &&
-        remoteKind === RECONCILIATION_REMOTE_EVIDENCE_KIND.live
+        remoteKind === RECONCILIATION_REMOTE_EVIDENCE_KIND.live &&
+        operation.snapshot.recovery === null
       );
     case RECONCILIATION_ACTION.useRemote:
       return (
         localKind !== RECONCILIATION_LOCAL_EVIDENCE_KIND.unknown &&
-        remoteKind === RECONCILIATION_REMOTE_EVIDENCE_KIND.live
+        remoteKind === RECONCILIATION_REMOTE_EVIDENCE_KIND.live &&
+        operation.snapshot.recovery === null
       );
     case RECONCILIATION_ACTION.keepBoth:
       return (
@@ -338,15 +683,16 @@ function validateActionEvidence(operation: ReconciliationOperation): boolean {
         (remoteKind === RECONCILIATION_REMOTE_EVIDENCE_KIND.live ||
           (remoteKind === RECONCILIATION_REMOTE_EVIDENCE_KIND.tombstone &&
             operation.action.primarySide ===
-              RECONCILIATION_PRESERVATION_SIDE.remote))
+              RECONCILIATION_PRESERVATION_SIDE.remote)) &&
+        operation.snapshot.recovery === null
       );
     case RECONCILIATION_ACTION.adoptRevision:
       return (
         remoteKind === RECONCILIATION_REMOTE_EVIDENCE_KIND.live &&
         (localKind === RECONCILIATION_LOCAL_EVIDENCE_KIND.absent ||
           (localKind === RECONCILIATION_LOCAL_EVIDENCE_KIND.live &&
-            operation.evidence.local.contentSha256 ===
-              operation.evidence.remote.contentSha256))
+            target.local.contentSha256 === target.remote.contentSha256)) &&
+        operation.snapshot.recovery === null
       );
     case RECONCILIATION_ACTION.acceptTombstone:
       return (
@@ -359,10 +705,17 @@ function validateActionEvidence(operation: ReconciliationOperation): boolean {
         remoteKind === RECONCILIATION_REMOTE_EVIDENCE_KIND.tombstone
       );
     case RECONCILIATION_ACTION.restoreRecovery:
-      return localKind !== RECONCILIATION_LOCAL_EVIDENCE_KIND.unknown;
+      return (
+        operation.snapshot.recovery !== null &&
+        operation.snapshot.recovery.kind !==
+          RECOVERY_SNAPSHOT_STATE_KIND.purged &&
+        destinationEvidence(operation)?.local.kind !==
+          RECONCILIATION_LOCAL_EVIDENCE_KIND.unknown
+      );
     case RECONCILIATION_ACTION.forkLegacy:
       return remoteKind === RECONCILIATION_REMOTE_EVIDENCE_KIND.legacy;
     case RECONCILIATION_ACTION.resolveHistory:
+      return target.m3.deferredHistory !== null;
     case RECONCILIATION_ACTION.defer:
       return true;
   }
@@ -371,6 +724,9 @@ function validateActionEvidence(operation: ReconciliationOperation): boolean {
 function validateActionPhase(operation: ReconciliationOperation): boolean {
   const { kind } = operation.action;
   const phase = operation.phase;
+  if (phase === RECONCILIATION_OPERATION_PHASE.restoredPendingReview) {
+    return kind === RECONCILIATION_ACTION.restoreRecovery;
+  }
   if (kind === RECONCILIATION_ACTION.defer) {
     return (
       phase === RECONCILIATION_OPERATION_PHASE.completed && noEffects(operation)
@@ -387,16 +743,20 @@ function validateActionPhase(operation: ReconciliationOperation): boolean {
   }
   if (
     (kind === RECONCILIATION_ACTION.keepLocal ||
-      kind === RECONCILIATION_ACTION.recreateRemote) &&
-    phase === RECONCILIATION_OPERATION_PHASE.mutatingLocal
+      kind === RECONCILIATION_ACTION.recreateRemote ||
+      kind === RECONCILIATION_ACTION.resolveHistory) &&
+    (phase === RECONCILIATION_OPERATION_PHASE.mutatingLocal ||
+      operation.localEffect !== MUTATION_EFFECT_CERTAINTY.notDispatched)
   ) {
     return false;
   }
   if (
     (kind === RECONCILIATION_ACTION.useRemote ||
       kind === RECONCILIATION_ACTION.adoptRevision ||
-      kind === RECONCILIATION_ACTION.restoreRecovery) &&
-    phase === RECONCILIATION_OPERATION_PHASE.mutatingRemote
+      kind === RECONCILIATION_ACTION.restoreRecovery ||
+      kind === RECONCILIATION_ACTION.forkLegacy) &&
+    phase === RECONCILIATION_OPERATION_PHASE.mutatingRemote &&
+    kind !== RECONCILIATION_ACTION.forkLegacy
   ) {
     return false;
   }
@@ -429,7 +789,6 @@ function validateClassificationAction(
     case RECONCILIATION_CLASSIFICATION.unknownLocal:
     case RECONCILIATION_CLASSIFICATION.remoteUnavailable:
     case RECONCILIATION_CLASSIFICATION.unresolvedM3Effect:
-      return false;
     case RECONCILIATION_CLASSIFICATION.localAhead:
       return false;
     case RECONCILIATION_CLASSIFICATION.remoteAhead:
@@ -502,7 +861,6 @@ function validateOperationAuthority(
 
 function validateOperationPaths(
   operation: ReconciliationOperation,
-  review: ReconciliationReview,
   trackedPaths: ReadonlySet<string>,
 ): boolean {
   const requiresDestination =
@@ -513,29 +871,41 @@ function validateOperationPaths(
     operation.action.kind === RECONCILIATION_ACTION.restoreRecovery;
   if (requiresDestination && operation.destinationPath === null) return false;
   if (!permitsDestination && operation.destinationPath !== null) return false;
-  const allowedPaths = new Set<string>([
-    review.targetPath,
-    ...review.relatedPaths,
-    ...(operation.destinationPath === null ? [] : [operation.destinationPath]),
-  ]);
+  if (operation.destinationPath === operation.snapshot.targetPath) return false;
+
+  const snapshotPaths = new Set(
+    operation.snapshot.paths.map((evidence) => evidence.path),
+  );
   const reservedPaths = new Set(
     operation.reservations.map((reservation) => reservation.path),
   );
-  if (review.relatedPaths.some((path) => !reservedPaths.has(path)))
+  if (
+    operation.snapshot.paths.some(
+      (evidence) => !reservedPaths.has(evidence.path),
+    )
+  ) {
     return false;
+  }
+  if (
+    operation.destinationPath !== null &&
+    !snapshotPaths.has(operation.destinationPath)
+  ) {
+    return false;
+  }
   for (const reservation of operation.reservations) {
-    if (!allowedPaths.has(reservation.path)) return false;
+    if (!snapshotPaths.has(reservation.path)) return false;
     switch (reservation.kind) {
       case RECONCILIATION_PATH_REFERENCE_KIND.tracked:
         if (!trackedPaths.has(reservation.path)) return false;
         break;
       case RECONCILIATION_PATH_REFERENCE_KIND.reviewTarget:
-        if (reservation.path !== review.targetPath) return false;
+        if (reservation.path !== operation.snapshot.targetPath) return false;
         break;
       case RECONCILIATION_PATH_REFERENCE_KIND.newDestination:
         if (
           operation.destinationPath !== reservation.path ||
-          trackedPaths.has(reservation.path)
+          trackedPaths.has(reservation.path) ||
+          !isAbsentDestination(operation.snapshot, reservation.path)
         ) {
           return false;
         }
@@ -545,13 +915,27 @@ function validateOperationPaths(
   return true;
 }
 
+function isAbsentDestination(
+  snapshot: ReconciliationReviewSnapshot,
+  path: string,
+): boolean {
+  const evidence = snapshot.paths.find((candidate) => candidate.path === path);
+  return (
+    evidence?.local.kind === RECONCILIATION_LOCAL_EVIDENCE_KIND.absent &&
+    evidence.remote.kind === RECONCILIATION_REMOTE_EVIDENCE_KIND.absent &&
+    evidence.baseline.kind === MIRROR_ACKNOWLEDGEMENT_KIND.unassociated &&
+    evidence.m3.unresolvedMutation === null &&
+    evidence.m3.deferredHistory === null
+  );
+}
+
 function validatePreservationReceipt(
   operation: ReconciliationOperation,
   receipt: ReconciliationPreservationReceipt,
 ): boolean {
   if (
     receipt.operationId !== operation.operationId ||
-    receipt.originalPath !== operation.sourcePath ||
+    !isNormalizedNotePath(receipt.originalPath) ||
     !isContentSha256(receipt.contentSha256) ||
     !validatePreservationProofState(receipt)
   ) {
@@ -559,64 +943,134 @@ function validatePreservationReceipt(
   }
   const expectedPath = `.ai-bridge-conflicts/${operation.operationId}/${receipt.side}.md`;
   if (receipt.preservationPath !== expectedPath) return false;
-  if (receipt.side === RECONCILIATION_PRESERVATION_SIDE.local) {
-    return receipt.sourceRevision === null;
-  }
-  if (receipt.sourceRevision === null) {
-    return (
-      operation.evidence.remote.kind ===
-      RECONCILIATION_REMOTE_EVIDENCE_KIND.legacy
-    );
-  }
-  return (
-    createApplicationRevision(receipt.sourceRevision) ===
-      receipt.sourceRevision &&
-    (operation.evidence.remote.kind ===
-      RECONCILIATION_REMOTE_EVIDENCE_KIND.live ||
-      operation.evidence.remote.kind ===
-        RECONCILIATION_REMOTE_EVIDENCE_KIND.tombstone) &&
-    operation.evidence.remote.revision === receipt.sourceRevision
+  const requirements = requiredPreservations(operation);
+  if (requirements === undefined) return false;
+  return requirements.some(
+    (required) =>
+      required.originalPath === receipt.originalPath &&
+      required.side === receipt.side &&
+      required.sourceRevision === receipt.sourceRevision &&
+      required.contentSha256 === receipt.contentSha256,
   );
 }
 
-function validatePreservationPolicy(
+function requiredPreservations(
   operation: ReconciliationOperation,
-  receiptSides: ReadonlySet<string>,
-): boolean {
+): readonly RequiredPreservation[] | undefined {
+  const target = targetEvidence(operation.snapshot);
+  if (target === undefined) return undefined;
   switch (operation.action.kind) {
+    case RECONCILIATION_ACTION.keepLocal:
+      return remotePreservation(target);
+    case RECONCILIATION_ACTION.useRemote:
+      return target.local.kind === RECONCILIATION_LOCAL_EVIDENCE_KIND.live
+        ? localPreservations(target)
+        : [];
+    case RECONCILIATION_ACTION.keepBoth:
+      return operation.action.primarySide ===
+        RECONCILIATION_PRESERVATION_SIDE.local
+        ? remotePreservation(target)
+        : target.local.kind === RECONCILIATION_LOCAL_EVIDENCE_KIND.live
+          ? localPreservations(target)
+          : undefined;
     case RECONCILIATION_ACTION.adoptRevision:
     case RECONCILIATION_ACTION.acceptTombstone:
     case RECONCILIATION_ACTION.defer:
-      return receiptSides.size === 0;
-    case RECONCILIATION_ACTION.keepLocal:
-    case RECONCILIATION_ACTION.forkLegacy:
-      return onlyAllowedSide(
-        receiptSides,
-        RECONCILIATION_PRESERVATION_SIDE.remote,
-      );
-    case RECONCILIATION_ACTION.useRemote:
+      return [];
     case RECONCILIATION_ACTION.recreateRemote:
-    case RECONCILIATION_ACTION.restoreRecovery:
-      return onlyAllowedSide(
-        receiptSides,
-        RECONCILIATION_PRESERVATION_SIDE.local,
-      );
-    case RECONCILIATION_ACTION.keepBoth:
-      return onlyAllowedSide(
-        receiptSides,
-        operation.action.primarySide === RECONCILIATION_PRESERVATION_SIDE.local
-          ? RECONCILIATION_PRESERVATION_SIDE.remote
-          : RECONCILIATION_PRESERVATION_SIDE.local,
-      );
+      return target.local.kind === RECONCILIATION_LOCAL_EVIDENCE_KIND.live
+        ? localPreservations(target)
+        : undefined;
+    case RECONCILIATION_ACTION.restoreRecovery: {
+      const destination = destinationEvidence(operation);
+      if (destination === undefined) return undefined;
+      return destination.local.kind === RECONCILIATION_LOCAL_EVIDENCE_KIND.live
+        ? localPreservations(destination)
+        : [];
+    }
+    case RECONCILIATION_ACTION.forkLegacy:
+      return remotePreservation(target);
     case RECONCILIATION_ACTION.resolveHistory:
-      return true;
+      return historyHasMaterialEffect(operation)
+        ? remotePreservation(target)
+        : [];
   }
+}
+
+function localPreservations(
+  evidence: ReconciliationPathEvidence,
+): readonly RequiredPreservation[] | undefined {
+  if (evidence.local.kind !== RECONCILIATION_LOCAL_EVIDENCE_KIND.live) {
+    return undefined;
+  }
+  return [
+    {
+      originalPath: evidence.path,
+      side: RECONCILIATION_PRESERVATION_SIDE.local,
+      sourceRevision: null,
+      contentSha256: evidence.local.contentSha256,
+    },
+  ];
+}
+
+function remotePreservation(
+  evidence: ReconciliationPathEvidence,
+): readonly RequiredPreservation[] | undefined {
+  switch (evidence.remote.kind) {
+    case RECONCILIATION_REMOTE_EVIDENCE_KIND.live:
+      return [
+        {
+          originalPath: evidence.path,
+          side: RECONCILIATION_PRESERVATION_SIDE.remote,
+          sourceRevision: evidence.remote.revision,
+          contentSha256: evidence.remote.contentSha256,
+        },
+      ];
+    case RECONCILIATION_REMOTE_EVIDENCE_KIND.legacy:
+      return [
+        {
+          originalPath: evidence.path,
+          side: RECONCILIATION_PRESERVATION_SIDE.remote,
+          sourceRevision: null,
+          contentSha256: evidence.remote.contentSha256,
+        },
+      ];
+    case RECONCILIATION_REMOTE_EVIDENCE_KIND.absent:
+    case RECONCILIATION_REMOTE_EVIDENCE_KIND.tombstone:
+    case RECONCILIATION_REMOTE_EVIDENCE_KIND.unavailable:
+      return undefined;
+  }
+}
+
+function historyHasMaterialEffect(operation: ReconciliationOperation): boolean {
+  return (
+    operation.phase === RECONCILIATION_OPERATION_PHASE.preserving ||
+    operation.phase === RECONCILIATION_OPERATION_PHASE.mutatingRemote ||
+    operation.phase === RECONCILIATION_OPERATION_PHASE.evidenceRequired ||
+    operation.phase === RECONCILIATION_OPERATION_PHASE.partial ||
+    operation.remoteEffect !== MUTATION_EFFECT_CERTAINTY.notDispatched ||
+    operation.preservationReceipts.length > 0
+  );
 }
 
 function validateOperationLifecycleEvidence(
   operation: ReconciliationOperation,
 ): boolean {
+  const requirements = requiredPreservations(operation);
+  if (requirements === undefined) return false;
   const receipts = operation.preservationReceipts;
+  if (
+    receipts.some(
+      (receipt) =>
+        !requirements.some(
+          (required) =>
+            required.originalPath === receipt.originalPath &&
+            required.side === receipt.side,
+        ),
+    )
+  ) {
+    return false;
+  }
   const effects = [operation.localEffect, operation.remoteEffect];
   const hasUnknownEffect = effects.includes(MUTATION_EFFECT_CERTAINTY.unknown);
   const hasMaterialEffect = effects.some(
@@ -639,11 +1093,11 @@ function validateOperationLifecycleEvidence(
       phaseIsConsistent = noEffects(operation) && receipts.length === 0;
       break;
     case RECONCILIATION_OPERATION_PHASE.preserving:
-      phaseIsConsistent = noEffects(operation);
+      phaseIsConsistent = noEffects(operation) && requirements.length > 0;
       break;
     case RECONCILIATION_OPERATION_PHASE.mutatingLocal:
     case RECONCILIATION_OPERATION_PHASE.mutatingRemote:
-      phaseIsConsistent = receiptsVerified;
+      phaseIsConsistent = requiredReceiptsVerified(requirements, receipts);
       break;
     case RECONCILIATION_OPERATION_PHASE.evidenceRequired:
       phaseIsConsistent =
@@ -657,6 +1111,14 @@ function validateOperationLifecycleEvidence(
       break;
     case RECONCILIATION_OPERATION_PHASE.partial:
       phaseIsConsistent = receiptsVerified && hasMaterialEffect;
+      break;
+    case RECONCILIATION_OPERATION_PHASE.restoredPendingReview:
+      phaseIsConsistent =
+        operation.action.kind === RECONCILIATION_ACTION.restoreRecovery &&
+        (operation.localEffect === MUTATION_EFFECT_CERTAINTY.notDispatched ||
+          operation.localEffect === MUTATION_EFFECT_CERTAINTY.confirmed) &&
+        operation.remoteEffect === MUTATION_EFFECT_CERTAINTY.notDispatched &&
+        requiredReceiptsVerified(requirements, receipts);
       break;
     case RECONCILIATION_OPERATION_PHASE.stale:
       phaseIsConsistent = noEffects(operation) && receiptsVerified;
@@ -673,23 +1135,34 @@ function validateOperationLifecycleEvidence(
   }
   if (!phaseIsConsistent) return false;
 
-  const effectMayHaveStarted =
+  const materialEffectMayHaveStarted =
     operation.phase === RECONCILIATION_OPERATION_PHASE.mutatingLocal ||
     operation.phase === RECONCILIATION_OPERATION_PHASE.mutatingRemote ||
     operation.phase === RECONCILIATION_OPERATION_PHASE.partial ||
+    operation.phase === RECONCILIATION_OPERATION_PHASE.restoredPendingReview ||
     operation.phase === RECONCILIATION_OPERATION_PHASE.completed ||
     effects.some(
       (effect) => effect !== MUTATION_EFFECT_CERTAINTY.notDispatched,
     );
-  if (!effectMayHaveStarted) return true;
-  const requiredSide = requiredPreservationSide(operation);
   return (
-    requiredSide === null ||
+    !materialEffectMayHaveStarted ||
+    requiredReceiptsVerified(requirements, receipts)
+  );
+}
+
+function requiredReceiptsVerified(
+  requirements: readonly RequiredPreservation[],
+  receipts: readonly ReconciliationPreservationReceipt[],
+): boolean {
+  return requirements.every((required) =>
     receipts.some(
       (receipt) =>
-        receipt.side === requiredSide &&
+        receipt.originalPath === required.originalPath &&
+        receipt.side === required.side &&
+        receipt.sourceRevision === required.sourceRevision &&
+        receipt.contentSha256 === required.contentSha256 &&
         receipt.proofState === RECONCILIATION_PRESERVATION_PROOF_STATE.verified,
-    )
+    ),
   );
 }
 
@@ -700,12 +1173,12 @@ function validateCompletedEffects(operation: ReconciliationOperation): boolean {
     operation.remoteEffect === MUTATION_EFFECT_CERTAINTY.confirmed;
   switch (operation.action.kind) {
     case RECONCILIATION_ACTION.keepLocal:
-      return requiredPreservationSide(operation) === null || remoteConfirmed;
+      return remoteConfirmed;
     case RECONCILIATION_ACTION.useRemote:
     case RECONCILIATION_ACTION.adoptRevision:
       return requiredLocalEffect(operation) ? localConfirmed : true;
     case RECONCILIATION_ACTION.keepBoth:
-      return operation.evidence.remote.kind ===
+      return targetEvidence(operation.snapshot)?.remote.kind ===
         RECONCILIATION_REMOTE_EVIDENCE_KIND.tombstone
         ? localConfirmed
         : localConfirmed && remoteConfirmed;
@@ -716,83 +1189,42 @@ function validateCompletedEffects(operation: ReconciliationOperation): boolean {
     case RECONCILIATION_ACTION.forkLegacy:
       return localConfirmed && remoteConfirmed;
     case RECONCILIATION_ACTION.acceptTombstone:
-    case RECONCILIATION_ACTION.resolveHistory:
     case RECONCILIATION_ACTION.defer:
       return true;
+    case RECONCILIATION_ACTION.resolveHistory:
+      return noEffects(operation) || remoteConfirmed;
   }
 }
 
 function requiredLocalEffect(operation: ReconciliationOperation): boolean {
-  if (
-    operation.evidence.local.kind === RECONCILIATION_LOCAL_EVIDENCE_KIND.absent
-  ) {
+  const target = targetEvidence(operation.snapshot);
+  if (target === undefined) return false;
+  if (target.local.kind === RECONCILIATION_LOCAL_EVIDENCE_KIND.absent) {
     return true;
   }
   return (
-    operation.evidence.local.kind === RECONCILIATION_LOCAL_EVIDENCE_KIND.live &&
-    operation.evidence.remote.kind ===
-      RECONCILIATION_REMOTE_EVIDENCE_KIND.live &&
-    operation.evidence.local.contentSha256 !==
-      operation.evidence.remote.contentSha256
+    target.local.kind === RECONCILIATION_LOCAL_EVIDENCE_KIND.live &&
+    target.remote.kind === RECONCILIATION_REMOTE_EVIDENCE_KIND.live &&
+    target.local.contentSha256 !== target.remote.contentSha256
   );
-}
-
-function requiredPreservationSide(
-  operation: ReconciliationOperation,
-):
-  | (typeof RECONCILIATION_PRESERVATION_SIDE)[keyof typeof RECONCILIATION_PRESERVATION_SIDE]
-  | null {
-  const local = operation.evidence.local;
-  const remote = operation.evidence.remote;
-  switch (operation.action.kind) {
-    case RECONCILIATION_ACTION.keepLocal:
-      return local.kind === RECONCILIATION_LOCAL_EVIDENCE_KIND.live &&
-        remote.kind === RECONCILIATION_REMOTE_EVIDENCE_KIND.live &&
-        local.contentSha256 !== remote.contentSha256
-        ? RECONCILIATION_PRESERVATION_SIDE.remote
-        : null;
-    case RECONCILIATION_ACTION.useRemote:
-      return local.kind === RECONCILIATION_LOCAL_EVIDENCE_KIND.live &&
-        remote.kind === RECONCILIATION_REMOTE_EVIDENCE_KIND.live &&
-        local.contentSha256 !== remote.contentSha256
-        ? RECONCILIATION_PRESERVATION_SIDE.local
-        : null;
-    case RECONCILIATION_ACTION.keepBoth:
-      return remote.kind === RECONCILIATION_REMOTE_EVIDENCE_KIND.tombstone
-        ? RECONCILIATION_PRESERVATION_SIDE.local
-        : operation.action.primarySide ===
-            RECONCILIATION_PRESERVATION_SIDE.local
-          ? RECONCILIATION_PRESERVATION_SIDE.remote
-          : RECONCILIATION_PRESERVATION_SIDE.local;
-    case RECONCILIATION_ACTION.restoreRecovery:
-      return local.kind === RECONCILIATION_LOCAL_EVIDENCE_KIND.live &&
-        operation.recovery !== null &&
-        local.contentSha256 !== operation.recovery.contentSha256
-        ? RECONCILIATION_PRESERVATION_SIDE.local
-        : null;
-    case RECONCILIATION_ACTION.adoptRevision:
-    case RECONCILIATION_ACTION.acceptTombstone:
-    case RECONCILIATION_ACTION.recreateRemote:
-    case RECONCILIATION_ACTION.forkLegacy:
-    case RECONCILIATION_ACTION.resolveHistory:
-    case RECONCILIATION_ACTION.defer:
-      return null;
-  }
 }
 
 function validateM3Precedence(
   operation: ReconciliationOperation,
-  pathStates: ReadonlyMap<string, MirrorDeviceState["paths"][number]>,
+  pathStates: ReadonlyMap<string, MirrorPathState>,
 ): boolean {
   if (!isActiveOperation(operation)) return true;
   for (const reservation of operation.reservations) {
     const pathState = pathStates.get(reservation.path);
     if (pathState === undefined) continue;
     if (pathState.unresolvedMutation !== null) return false;
-    if (
-      pathState.desired.kind === MIRROR_DESIRED_STATE_KIND.renameDeferred &&
-      operation.action.kind !== RECONCILIATION_ACTION.resolveHistory
-    ) {
+    if (pathState.desired.kind === MIRROR_DESIRED_STATE_KIND.renameDeferred) {
+      if (operation.action.kind !== RECONCILIATION_ACTION.resolveHistory) {
+        return false;
+      }
+      continue;
+    }
+    if (pathState.desired.kind === MIRROR_DESIRED_STATE_KIND.runtimeDelete) {
       return false;
     }
   }
@@ -815,7 +1247,6 @@ function validateReviewOperationLifecycle(
 function validateReviewRelationship(
   review: ReconciliationReview,
   operations: ReadonlyMap<string, ReconciliationOperation>,
-  pathStates: ReadonlyMap<string, MirrorDeviceState["paths"][number]>,
 ): boolean {
   if (
     review.operationId !== null &&
@@ -823,15 +1254,11 @@ function validateReviewRelationship(
   ) {
     return false;
   }
-  const reviewedPathStates = [review.targetPath, ...review.relatedPaths]
-    .map((path) => pathStates.get(path))
-    .filter((pathState) => pathState !== undefined);
-  const hasUnresolved = reviewedPathStates.some(
-    (pathState) => pathState.unresolvedMutation !== null,
+  const hasUnresolved = review.snapshot.paths.some(
+    (path) => path.m3.unresolvedMutation !== null,
   );
-  const hasDeferredHistory = reviewedPathStates.some(
-    (pathState) =>
-      pathState.desired.kind === MIRROR_DESIRED_STATE_KIND.renameDeferred,
+  const hasDeferredHistory = review.snapshot.paths.some(
+    (path) => path.m3.deferredHistory !== null,
   );
   if (hasUnresolved) {
     return (
@@ -845,14 +1272,11 @@ function validateReviewRelationship(
       review.classification === RECONCILIATION_CLASSIFICATION.deferredHistory
     );
   }
-  if (
-    review.classification ===
-      RECONCILIATION_CLASSIFICATION.unresolvedM3Effect ||
-    review.classification === RECONCILIATION_CLASSIFICATION.deferredHistory
-  ) {
-    return false;
-  }
-  return true;
+  return (
+    review.classification !==
+      RECONCILIATION_CLASSIFICATION.unresolvedM3Effect &&
+    review.classification !== RECONCILIATION_CLASSIFICATION.deferredHistory
+  );
 }
 
 function isActiveOperation(operation: ReconciliationOperation): boolean {
@@ -862,22 +1286,85 @@ function isActiveOperation(operation: ReconciliationOperation): boolean {
   );
 }
 
-function evidenceEquals(
-  left: ReconciliationEvidence,
-  right: ReconciliationEvidence,
+function targetEvidence(
+  snapshot: ReconciliationReviewSnapshot,
+): ReconciliationPathEvidence | undefined {
+  return snapshot.paths.find(
+    (evidence) => evidence.path === snapshot.targetPath,
+  );
+}
+
+function destinationEvidence(
+  operation: ReconciliationOperation,
+): ReconciliationPathEvidence | undefined {
+  const destination =
+    operation.destinationPath ?? operation.snapshot.targetPath;
+  return operation.snapshot.paths.find(
+    (evidence) => evidence.path === destination,
+  );
+}
+
+function runtimeIdentityEquals(
+  left: ReconciliationReviewSnapshot["runtime"],
+  right: ReconciliationReviewSnapshot["runtime"],
 ): boolean {
   return (
+    left.runtimeOwnerVersion === right.runtimeOwnerVersion &&
+    left.configurationGeneration === right.configurationGeneration &&
+    left.listenerEpoch === right.listenerEpoch &&
+    left.deviceId === right.deviceId &&
+    left.designatedWriterId === right.designatedWriterId &&
+    lifecycleEquals(left.lifecycle, right.lifecycle)
+  );
+}
+
+function lifecycleEquals(
+  left: MirrorDeviceLifecycle,
+  right: MirrorDeviceLifecycle,
+): boolean {
+  if (left.kind !== right.kind) return false;
+  switch (left.kind) {
+    case MIRROR_DEVICE_LIFECYCLE_KIND.disabled:
+      return true;
+    case MIRROR_DEVICE_LIFECYCLE_KIND.paused:
+      return (
+        right.kind === MIRROR_DEVICE_LIFECYCLE_KIND.paused &&
+        left.associationId === right.associationId &&
+        left.origin === right.origin &&
+        left.reason === right.reason
+      );
+    case MIRROR_DEVICE_LIFECYCLE_KIND.active:
+    case MIRROR_DEVICE_LIFECYCLE_KIND.handoffDraining:
+    case MIRROR_DEVICE_LIFECYCLE_KIND.handoffDrained:
+    case MIRROR_DEVICE_LIFECYCLE_KIND.handoffStaged:
+      return (
+        right.kind === left.kind &&
+        left.associationId === right.associationId &&
+        left.origin === right.origin
+      );
+  }
+}
+
+function pathEvidenceEquals(
+  left: ReconciliationPathEvidence,
+  right: ReconciliationPathEvidence | undefined,
+): boolean {
+  return (
+    right !== undefined &&
+    left.path === right.path &&
     localEvidenceEquals(left.local, right.local) &&
     acknowledgementEquals(left.baseline, right.baseline) &&
-    remoteEvidenceEquals(left.remote, right.remote)
+    remoteEvidenceEquals(left.remote, right.remote) &&
+    m3EvidenceEquals(left, right)
   );
 }
 
 function localEvidenceEquals(
-  left: ReconciliationEvidence["local"],
-  right: ReconciliationEvidence["local"],
+  left: ReconciliationPathEvidence["local"],
+  right: ReconciliationPathEvidence["local"],
 ): boolean {
-  if (left.kind !== right.kind) return false;
+  if (left.kind !== right.kind || left.stability !== right.stability)
+    return false;
   switch (left.kind) {
     case RECONCILIATION_LOCAL_EVIDENCE_KIND.unknown:
       return true;
@@ -890,14 +1377,15 @@ function localEvidenceEquals(
       return (
         right.kind === RECONCILIATION_LOCAL_EVIDENCE_KIND.live &&
         left.observationGeneration === right.observationGeneration &&
+        left.byteSize === right.byteSize &&
         left.contentSha256 === right.contentSha256
       );
   }
 }
 
 function acknowledgementEquals(
-  left: ReconciliationEvidence["baseline"],
-  right: ReconciliationEvidence["baseline"],
+  left: ReconciliationPathEvidence["baseline"],
+  right: ReconciliationPathEvidence["baseline"],
 ): boolean {
   if (left.kind !== right.kind) return false;
   switch (left.kind) {
@@ -919,8 +1407,8 @@ function acknowledgementEquals(
 }
 
 function remoteEvidenceEquals(
-  left: ReconciliationEvidence["remote"],
-  right: ReconciliationEvidence["remote"],
+  left: ReconciliationPathEvidence["remote"],
+  right: ReconciliationPathEvidence["remote"],
 ): boolean {
   if (left.kind !== right.kind) return false;
   switch (left.kind) {
@@ -937,20 +1425,153 @@ function remoteEvidenceEquals(
         right.kind === RECONCILIATION_REMOTE_EVIDENCE_KIND.live &&
         left.associationId === right.associationId &&
         left.revision === right.revision &&
-        left.contentSha256 === right.contentSha256
+        left.contentSha256 === right.contentSha256 &&
+        contentReceiptEquals(left.receipt, right.receipt)
       );
     case RECONCILIATION_REMOTE_EVIDENCE_KIND.tombstone:
       return (
         right.kind === RECONCILIATION_REMOTE_EVIDENCE_KIND.tombstone &&
         left.associationId === right.associationId &&
         left.revision === right.revision &&
-        left.recoveryId === right.recoveryId
+        left.deletedRevision === right.deletedRevision &&
+        left.recoveryId === right.recoveryId &&
+        tombstoneReceiptEquals(left.receipt, right.receipt)
       );
   }
 }
 
-function onlyAllowedSide(sides: ReadonlySet<string>, allowed: string): boolean {
-  return sides.size === 0 || (sides.size === 1 && sides.has(allowed));
+function contentReceiptEquals(
+  left: Extract<
+    ReconciliationPathEvidence["remote"],
+    { readonly kind: "live" }
+  >["receipt"],
+  right: Extract<
+    ReconciliationPathEvidence["remote"],
+    { readonly kind: "live" }
+  >["receipt"],
+): boolean {
+  return (
+    left.action === right.action &&
+    left.associationId === right.associationId &&
+    left.operationId === right.operationId &&
+    left.contentSha256 === right.contentSha256 &&
+    preconditionEquals(left.precondition, right.precondition)
+  );
+}
+
+function tombstoneReceiptEquals(
+  left: Extract<
+    ReconciliationPathEvidence["remote"],
+    { readonly kind: "tombstone" }
+  >["receipt"],
+  right: Extract<
+    ReconciliationPathEvidence["remote"],
+    { readonly kind: "tombstone" }
+  >["receipt"],
+): boolean {
+  return (
+    left.action === right.action &&
+    left.associationId === right.associationId &&
+    left.operationId === right.operationId &&
+    preconditionEquals(left.precondition, right.precondition)
+  );
+}
+
+function preconditionEquals(
+  left:
+    | Extract<
+        ReconciliationPathEvidence["remote"],
+        { readonly kind: "live" }
+      >["receipt"]["precondition"]
+    | Extract<
+        ReconciliationPathEvidence["remote"],
+        { readonly kind: "tombstone" }
+      >["receipt"]["precondition"],
+  right: typeof left,
+): boolean {
+  if (left.kind !== right.kind) return false;
+  return (
+    left.kind === CONDITIONAL_MUTATION_PRECONDITION_KIND.absent ||
+    (right.kind === CONDITIONAL_MUTATION_PRECONDITION_KIND.matchingRevision &&
+      left.revision === right.revision)
+  );
+}
+
+function m3EvidenceEquals(
+  left: ReconciliationPathEvidence,
+  right: ReconciliationPathEvidence,
+): boolean {
+  return (
+    unresolvedMutationEquals(
+      left.m3.unresolvedMutation,
+      right.m3.unresolvedMutation,
+    ) &&
+    deferredHistoryEquals(left.m3.deferredHistory, right.m3.deferredHistory)
+  );
+}
+
+function unresolvedMutationEquals(
+  left: MirrorUnresolvedMutation | null,
+  right: MirrorUnresolvedMutation | null,
+): boolean {
+  if (left === null || right === null) return left === right;
+  const leftIntent = left.intent;
+  const rightIntent = right.intent;
+  return (
+    left.phase === right.phase &&
+    leftIntent.action === rightIntent.action &&
+    leftIntent.associationId === rightIntent.associationId &&
+    leftIntent.writerId === rightIntent.writerId &&
+    leftIntent.operationId === rightIntent.operationId &&
+    leftIntent.path === rightIntent.path &&
+    preconditionEquals(leftIntent.precondition, rightIntent.precondition) &&
+    leftIntent.mutationAttempts === rightIntent.mutationAttempts &&
+    leftIntent.evidenceAttempts === rightIntent.evidenceAttempts &&
+    (leftIntent.action === MUTATION_ACTION.tombstone ||
+      (rightIntent.action !== MUTATION_ACTION.tombstone &&
+        leftIntent.contentSha256 === rightIntent.contentSha256))
+  );
+}
+
+function deferredHistoryEquals(
+  left: RenameDeferredMirrorState | null,
+  right: RenameDeferredMirrorState | null,
+): boolean {
+  if (left === null || right === null) return left === right;
+  return (
+    left.kind === right.kind &&
+    left.observationGeneration === right.observationGeneration &&
+    left.renameId === right.renameId &&
+    left.associationId === right.associationId &&
+    left.sourcePath === right.sourcePath &&
+    left.destinationPath === right.destinationPath &&
+    left.sourceExpectedRevision === right.sourceExpectedRevision &&
+    left.destinationObservationGeneration ===
+      right.destinationObservationGeneration &&
+    left.destinationAcknowledgedRevision ===
+      right.destinationAcknowledgedRevision &&
+    left.graceDeadlineMilliseconds === right.graceDeadlineMilliseconds &&
+    left.phase === right.phase
+  );
+}
+
+function recoveryEvidenceEquals(
+  left: ReconciliationReviewSnapshot["recovery"],
+  right: ReconciliationReviewSnapshot["recovery"],
+): boolean {
+  if (left === null || right === null) return left === right;
+  return (
+    left.kind === right.kind &&
+    left.id === right.id &&
+    left.associationId === right.associationId &&
+    left.path === right.path &&
+    left.revision === right.revision &&
+    left.sourceRevision === right.sourceRevision &&
+    left.contentSha256 === right.contentSha256 &&
+    (left.kind === RECOVERY_SNAPSHOT_STATE_KIND.prepared ||
+      (right.kind !== RECOVERY_SNAPSHOT_STATE_KIND.prepared &&
+        left.recoverUntil === right.recoverUntil))
+  );
 }
 
 function noEffects(operation: ReconciliationOperation): boolean {
@@ -972,6 +1593,18 @@ function validatePreservationProofState(
   }
 }
 
+function isCanonicalInstant(value: string): boolean {
+  const milliseconds = Date.parse(value);
+  return (
+    Number.isFinite(milliseconds) &&
+    new Date(milliseconds).toISOString() === value
+  );
+}
+
 function isPositiveSafeInteger(value: number): boolean {
   return Number.isSafeInteger(value) && value > 0;
+}
+
+function isNonNegativeSafeInteger(value: number): boolean {
+  return Number.isSafeInteger(value) && value >= 0;
 }

@@ -188,29 +188,37 @@ still required before production implementation. M3 completion and this planning
 do not pre-authorize M4 code.
 
 - **Authority:** reviewed/manual reconciliation only. Remote divergence remains a
-  review item until an operator chooses an evidence-bound typed action. Open UI
-  decisions become stale on local/remote/lifecycle/session change; confirmed actions
-  persist content-free phases before effects. No automatic/hybrid bidirectionality.
+  review item until an operator chooses an evidence-bound typed action. One immutable
+  content-free snapshot closes runtime/configuration/listener, lifecycle, every path's
+  local/ACK/remote/M3 state, exact remote receipt and selected recovery identity; a
+  change in any dimension makes the decision stale. Confirmed actions persist the same
+  snapshot and content-free phases before effects. No automatic/hybrid
+  bidirectionality.
 - **Preservation/local mutation:** competing bytes are create-only and post-verified
   under the existing excluded `.ai-bridge-conflicts/<operation>/` namespace before
-  replacement. A dedicated narrow core port supports exact create, atomic replace,
-  and create-only preservation; the M3 read-only port stays unchanged. No plugin
-  local rename/delete or generic Vault capability.
+  replacement. The state-v3 validator derives the one required side/revision/hash
+  matrix from sampled evidence and rejects unbound or extra receipts. A dedicated
+  narrow core port supports exact create, atomic replace, and create-only preservation;
+  the M3 read-only port stays unchanged. No plugin local rename/delete or generic
+  Vault capability.
 - **Adoption/deletion/restore:** exact format-2 revisions can be explicitly adopted;
   legacy objects can only be preserved/forked to a different path because they lack
   conditionable generation identity. Remote tombstones allow absent-only adoption or
   live preserve/copy/recreate/defer choices; no plugin local delete/move. Recovery
-  restore is local-only first and remains
-  blocked pending a second remote decision.
+  restore is local-only first and retains an active `restored-pending-review`
+  reservation across restart/re-enable until a linked reviewed successor atomically
+  takes ownership and completes the second remote decision.
 - **State/API/writer:** Slice 1 now migrates device state deterministically from v2
   to incompatible v3, preserving every M3 intent/blocker, verifying the same-key write,
   and fencing downgrade/same-realm M3 ownership. Existing v2 Worker operations remain
   unchanged; no new API/infrastructure or mutation capability exists. One designated
   writer remains.
 - **Slice 1 evidence:** closed authority/classification/action/status/evidence/
-  preservation contracts, strict v3 codec/validation, frozen v2 decoder, migration
-  failure barriers, handoff/export fencing, registry version 3, and exact 50,000-path
-  sparse migration are covered. No later acceptance item is claimed complete.
+  preservation contracts, immutable stale-decision identity, evidence-bound receipt
+  matrix, restored-pending-review ownership transfer, restart-time M3 scheduling and
+  handoff/export fences, strict v3 codec/validation, frozen v2 decoder, migration
+  failure barriers, registry version 3, and exact 50,000-path sparse migration are
+  covered. No later acceptance item is claimed complete.
 - **Risks/exit:** the A1–A12 checklist requires exact barrier tests for concurrent
   edit/delete/rename/restore/restart, no silent overwrite/delete, generated artifact
   qualification, canonical diagnostics/coverage/docs, and independent review before

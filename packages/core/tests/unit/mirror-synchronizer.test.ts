@@ -29,8 +29,22 @@ import {
   MirrorSynchronizer,
   type MirrorSynchronizerRuntime,
   MUTATION_ACTION,
+  MUTATION_EFFECT_CERTAINTY,
   type MutationAcknowledgement,
   normalizeNotePath,
+  RECONCILIATION_ACTION,
+  RECONCILIATION_AUTHORITY_SOURCE,
+  RECONCILIATION_CLASSIFICATION,
+  RECONCILIATION_LOCAL_EVIDENCE_KIND,
+  RECONCILIATION_LOCAL_STABILITY,
+  RECONCILIATION_OPERATION_PHASE,
+  RECONCILIATION_PATH_REFERENCE_KIND,
+  RECONCILIATION_PRESERVATION_PROOF_STATE,
+  RECONCILIATION_PRESERVATION_SIDE,
+  RECONCILIATION_REMOTE_EVIDENCE_KIND,
+  RECONCILIATION_REVIEW_RETENTION,
+  RECONCILIATION_REVIEW_STATUS,
+  RECOVERY_SNAPSHOT_STATE_KIND,
   type ReadOnlyLocalVault,
   type RemoteBridge,
   type RemoteBridgeMutationResult,
@@ -669,6 +683,50 @@ describe("MirrorSynchronizer bootstrap and coalescing", () => {
     expect(synchronizer.outcome(PATH_A)?.kind).toBe("local-unavailable");
     expect(remote.mutateNote).not.toHaveBeenCalled();
     expect(synchronizer.nextWakeAtMilliseconds()).toBe(5_000);
+  });
+});
+
+describe("MirrorSynchronizer M4 path ownership", () => {
+  it("fences a restored path across restart and same-owner re-enable while unrelated M3 work continues", async () => {
+    const owner = new MirrorStateOwner(stateWithRestoreFence(), store);
+    const synchronizer = new MirrorSynchronizer(local, remote, owner, runtime);
+    local.read.mockImplementation(async (path) =>
+      readResult(path === PATH_A ? "A" : "B"),
+    );
+    await bootstrapSynchronizer(synchronizer);
+    await owner.transition((state) => ({
+      ...state,
+      lifecycle: {
+        kind: MIRROR_DEVICE_LIFECYCLE_KIND.paused,
+        associationId: ASSOCIATION,
+        origin: "https://bridge.example",
+        reason: "manual",
+      },
+    }));
+    await owner.transition((state) => ({
+      ...state,
+      lifecycle: {
+        kind: MIRROR_DEVICE_LIFECYCLE_KIND.active,
+        associationId: ASSOCIATION,
+        origin: "https://bridge.example",
+      },
+    }));
+
+    await synchronizer.synchronizeReady();
+
+    expect(remote.mutateNote).toHaveBeenCalledTimes(1);
+    expect(remote.mutateNote.mock.calls[0]?.[0]).toMatchObject({
+      path: PATH_B,
+    });
+    expect(owner.snapshot().state.paths).toContainEqual(
+      expect.objectContaining({
+        path: PATH_A,
+        desired: expect.objectContaining({
+          kind: MIRROR_DESIRED_STATE_KIND.dirtyPresent,
+        }),
+      }),
+    );
+    expect(synchronizer.nextWakeAtMilliseconds()).toBeNull();
   });
 });
 
@@ -1315,6 +1373,130 @@ function activeState(): MirrorDeviceState {
     stagedHandoff: null,
     reconciliationReviews: [],
     reconciliationOperations: [],
+  };
+}
+
+function stateWithRestoreFence(): MirrorDeviceState {
+  const snapshot = {
+    runtime: {
+      runtimeOwnerVersion: 3,
+      configurationGeneration: 1,
+      listenerEpoch: 1,
+      deviceId: DEVICE,
+      designatedWriterId: DEVICE,
+      lifecycle: activeState().lifecycle,
+    },
+    targetPath: PATH_A,
+    paths: [
+      {
+        path: PATH_A,
+        local: {
+          kind: RECONCILIATION_LOCAL_EVIDENCE_KIND.live,
+          stability: RECONCILIATION_LOCAL_STABILITY.stable,
+          observationGeneration: 1,
+          byteSize: 1,
+          contentSha256: HASH_A,
+        },
+        baseline: {
+          kind: MIRROR_ACKNOWLEDGEMENT_KIND.tombstone,
+          revision: REVISION_B,
+          recoveryId: OPERATION_C,
+        },
+        remote: {
+          kind: RECONCILIATION_REMOTE_EVIDENCE_KIND.tombstone,
+          associationId: ASSOCIATION,
+          revision: REVISION_B,
+          deletedRevision: REVISION_A,
+          recoveryId: OPERATION_C,
+          receipt: {
+            action: MUTATION_ACTION.tombstone,
+            associationId: ASSOCIATION,
+            operationId: OPERATION_C,
+            precondition: { kind: "matching-revision", revision: REVISION_A },
+          },
+        },
+        m3: { unresolvedMutation: null, deferredHistory: null },
+      },
+    ],
+    recovery: {
+      kind: RECOVERY_SNAPSHOT_STATE_KIND.prepared,
+      id: OPERATION_C,
+      associationId: ASSOCIATION,
+      path: PATH_A,
+      revision: REVISION_B,
+      sourceRevision: REVISION_A,
+      contentSha256: HASH_A,
+    },
+  } as const;
+  return {
+    ...activeState(),
+    paths: [
+      {
+        path: PATH_A,
+        acknowledgement: {
+          kind: MIRROR_ACKNOWLEDGEMENT_KIND.tombstone,
+          revision: REVISION_B,
+          recoveryId: OPERATION_C,
+        },
+        unresolvedMutation: null,
+        desired: {
+          kind: MIRROR_DESIRED_STATE_KIND.dirtyPresent,
+          observationGeneration: 1,
+        },
+        blockedReason: null,
+      },
+      {
+        path: PATH_B,
+        acknowledgement: { kind: MIRROR_ACKNOWLEDGEMENT_KIND.unassociated },
+        unresolvedMutation: null,
+        desired: {
+          kind: MIRROR_DESIRED_STATE_KIND.dirtyPresent,
+          observationGeneration: 1,
+        },
+        blockedReason: null,
+      },
+    ],
+    reconciliationReviews: [
+      {
+        retention: RECONCILIATION_REVIEW_RETENTION.durable,
+        reviewId: OPERATION_B,
+        classification: RECONCILIATION_CLASSIFICATION.remoteTombstoned,
+        status: RECONCILIATION_REVIEW_STATUS.staged,
+        snapshot,
+        operationId: OPERATION_A,
+      },
+    ],
+    reconciliationOperations: [
+      {
+        operationId: OPERATION_A,
+        reviewId: OPERATION_B,
+        authority: RECONCILIATION_AUTHORITY_SOURCE.recoveryRestoreDecision,
+        action: { kind: RECONCILIATION_ACTION.restoreRecovery },
+        phase: RECONCILIATION_OPERATION_PHASE.restoredPendingReview,
+        snapshot,
+        destinationPath: null,
+        reservations: [
+          {
+            path: PATH_A,
+            kind: RECONCILIATION_PATH_REFERENCE_KIND.tracked,
+          },
+        ],
+        preservationReceipts: [
+          {
+            operationId: OPERATION_A,
+            originalPath: PATH_A,
+            side: RECONCILIATION_PRESERVATION_SIDE.local,
+            sourceRevision: null,
+            contentSha256: HASH_A,
+            preservationPath: `.ai-bridge-conflicts/${OPERATION_A}/local.md`,
+            proofState: RECONCILIATION_PRESERVATION_PROOF_STATE.verified,
+          },
+        ],
+        successorOperationId: null,
+        localEffect: MUTATION_EFFECT_CERTAINTY.confirmed,
+        remoteEffect: MUTATION_EFFECT_CERTAINTY.notDispatched,
+      },
+    ],
   };
 }
 

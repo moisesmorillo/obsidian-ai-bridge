@@ -304,11 +304,22 @@ establishes real-host behavior.
 
 Core now owns closed authority, classification, action, lifecycle, evidence,
 reservation, effect, and preservation-receipt contracts plus linear cross-field
-validation. `MirrorDeviceState` version 3 retains every M3 field and adds only bounded
-sparse `reconciliationReviews` and `reconciliationOperations`; neither can represent
-note/recovery bodies or arbitrary payload records. Active M4 reservations cannot
-overlap, unresolved M3 effects take precedence, deferred rename state permits only an
-explicit history operation, and active operations prevent handoff drain/export.
+validation. One immutable `ReconciliationReviewSnapshot` binds runtime/configuration/
+listener identity, complete content-free per-path local/ACK/remote/M3 evidence, exact
+remote receipts, and selected recovery metadata; the admitted operation copies that
+same typed snapshot and strict validation requires exact equality. The preservation
+policy derives the required side, revision, and content hash from this evidence rather
+than trusting receipt claims. `MirrorDeviceState` version 3 retains every M3 field and
+adds only bounded sparse `reconciliationReviews` and `reconciliationOperations`;
+neither can represent note/recovery bodies or arbitrary payload records.
+
+Active M4 reservations cannot overlap, unresolved M3 effects take precedence,
+deferred rename state permits only an explicit history operation, and active
+operations prevent both handoff drain/export and ordinary M3 scheduling for their
+paths. A confirmed recovery restore enters the explicit active
+`restored-pending-review` phase. It can become terminal only when a linked reviewed
+successor operation atomically takes over the restored path; after that successor
+completes, ordinary M3 ownership may resume.
 
 The plugin adapter keeps an explicit frozen version-2 decoder separate from the strict
 version-3 writer. Startup detects the stored version before owner construction. A

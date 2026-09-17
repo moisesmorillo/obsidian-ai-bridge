@@ -9,12 +9,14 @@ import {
   MIRROR_DESIRED_STATE_KIND,
   MIRROR_DEVICE_LIFECYCLE_KIND,
   type MirrorDeviceState,
+  MUTATION_ACTION,
   MUTATION_EFFECT_CERTAINTY,
   normalizeNotePath,
   RECONCILIATION_ACTION,
   RECONCILIATION_AUTHORITY_SOURCE,
   RECONCILIATION_CLASSIFICATION,
   RECONCILIATION_LOCAL_EVIDENCE_KIND,
+  RECONCILIATION_LOCAL_STABILITY,
   RECONCILIATION_OPERATION_PHASE,
   RECONCILIATION_PATH_REFERENCE_KIND,
   RECONCILIATION_PRESERVATION_PROOF_STATE,
@@ -22,6 +24,7 @@ import {
   RECONCILIATION_REMOTE_EVIDENCE_KIND,
   RECONCILIATION_REVIEW_RETENTION,
   RECONCILIATION_REVIEW_STATUS,
+  RECOVERY_SNAPSHOT_STATE_KIND,
   type ReconciliationRemoteEvidence,
 } from "@obsidian-ai-bridge/core";
 import {
@@ -56,7 +59,6 @@ const RECOVERY = required(
 );
 const HASH = required(createContentSha256("ab".repeat(32)));
 const PATH = required(normalizeNotePath("notes/reviewed.md"));
-const RELATED_PATH = required(normalizeNotePath("notes/related.md"));
 
 function baseState(): MirrorDeviceState {
   return {
@@ -87,23 +89,48 @@ function baseState(): MirrorDeviceState {
 }
 
 function stateWithOperation(): MirrorDeviceState {
-  const evidence = {
-    local: {
-      kind: RECONCILIATION_LOCAL_EVIDENCE_KIND.live,
-      observationGeneration: 1,
-      contentSha256: HASH,
+  const snapshot = {
+    runtime: {
+      runtimeOwnerVersion: 3,
+      configurationGeneration: 1,
+      listenerEpoch: 1,
+      deviceId: DEVICE,
+      designatedWriterId: DEVICE,
+      lifecycle: baseState().lifecycle,
     },
-    baseline: {
-      kind: MIRROR_ACKNOWLEDGEMENT_KIND.live,
-      revision: REVISION,
-      contentSha256: HASH,
-    },
-    remote: {
-      kind: RECONCILIATION_REMOTE_EVIDENCE_KIND.live,
-      associationId: ASSOCIATION,
-      revision: REVISION,
-      contentSha256: HASH,
-    },
+    targetPath: PATH,
+    paths: [
+      {
+        path: PATH,
+        local: {
+          kind: RECONCILIATION_LOCAL_EVIDENCE_KIND.live,
+          stability: RECONCILIATION_LOCAL_STABILITY.stable,
+          observationGeneration: 1,
+          byteSize: 1,
+          contentSha256: HASH,
+        },
+        baseline: {
+          kind: MIRROR_ACKNOWLEDGEMENT_KIND.live,
+          revision: REVISION,
+          contentSha256: HASH,
+        },
+        remote: {
+          kind: RECONCILIATION_REMOTE_EVIDENCE_KIND.live,
+          associationId: ASSOCIATION,
+          revision: REVISION,
+          contentSha256: HASH,
+          receipt: {
+            action: MUTATION_ACTION.create,
+            associationId: ASSOCIATION,
+            operationId: RECOVERY,
+            precondition: { kind: "absent" },
+            contentSha256: HASH,
+          },
+        },
+        m3: { unresolvedMutation: null, deferredHistory: null },
+      },
+    ],
+    recovery: null,
   } as const;
   return {
     ...baseState(),
@@ -111,11 +138,9 @@ function stateWithOperation(): MirrorDeviceState {
       {
         retention: RECONCILIATION_REVIEW_RETENTION.durable,
         reviewId: REVIEW,
-        targetPath: PATH,
-        relatedPaths: [],
         classification: RECONCILIATION_CLASSIFICATION.bothChanged,
         status: RECONCILIATION_REVIEW_STATUS.staged,
-        evidence,
+        snapshot,
         operationId: OPERATION,
       },
     ],
@@ -126,7 +151,7 @@ function stateWithOperation(): MirrorDeviceState {
         authority: RECONCILIATION_AUTHORITY_SOURCE.reconciliationDecision,
         action: { kind: RECONCILIATION_ACTION.keepLocal },
         phase: RECONCILIATION_OPERATION_PHASE.preserving,
-        sourcePath: PATH,
+        snapshot,
         destinationPath: null,
         reservations: [
           {
@@ -134,8 +159,6 @@ function stateWithOperation(): MirrorDeviceState {
             kind: RECONCILIATION_PATH_REFERENCE_KIND.tracked,
           },
         ],
-        evidence,
-        recovery: null,
         preservationReceipts: [
           {
             operationId: OPERATION,
@@ -147,6 +170,7 @@ function stateWithOperation(): MirrorDeviceState {
             proofState: RECONCILIATION_PRESERVATION_PROOF_STATE.verified,
           },
         ],
+        successorOperationId: null,
         localEffect: MUTATION_EFFECT_CERTAINTY.notDispatched,
         remoteEffect: MUTATION_EFFECT_CERTAINTY.notDispatched,
       },
@@ -165,6 +189,85 @@ describe("version-3 device-state codec", () => {
     });
   });
 
+  it("round-trips a restored-pending-review restart fence and rejects an unowned terminal restore", async () => {
+    const state = stateWithOperation();
+    const baseSnapshot = required(state.reconciliationOperations[0]).snapshot;
+    const target = required(baseSnapshot.paths[0]);
+    const snapshot = {
+      ...baseSnapshot,
+      paths: [
+        {
+          ...target,
+          remote: {
+            kind: RECONCILIATION_REMOTE_EVIDENCE_KIND.tombstone,
+            associationId: ASSOCIATION,
+            revision: REVISION,
+            deletedRevision: REVISION,
+            recoveryId: RECOVERY,
+            receipt: {
+              action: MUTATION_ACTION.tombstone,
+              associationId: ASSOCIATION,
+              operationId: RECOVERY,
+              precondition: { kind: "matching-revision", revision: REVISION },
+            },
+          },
+        },
+      ],
+      recovery: {
+        kind: RECOVERY_SNAPSHOT_STATE_KIND.prepared,
+        id: RECOVERY,
+        associationId: ASSOCIATION,
+        path: PATH,
+        revision: REVISION,
+        sourceRevision: REVISION,
+        contentSha256: HASH,
+      },
+    } as const;
+    const fenced: MirrorDeviceState = {
+      ...state,
+      reconciliationReviews: [
+        {
+          ...required(state.reconciliationReviews[0]),
+          classification: RECONCILIATION_CLASSIFICATION.remoteTombstoned,
+          snapshot,
+        },
+      ],
+      reconciliationOperations: [
+        {
+          ...required(state.reconciliationOperations[0]),
+          authority: RECONCILIATION_AUTHORITY_SOURCE.recoveryRestoreDecision,
+          action: { kind: RECONCILIATION_ACTION.restoreRecovery },
+          phase: RECONCILIATION_OPERATION_PHASE.restoredPendingReview,
+          snapshot,
+          preservationReceipts: [
+            {
+              operationId: OPERATION,
+              originalPath: PATH,
+              side: RECONCILIATION_PRESERVATION_SIDE.local,
+              sourceRevision: null,
+              contentSha256: HASH,
+              preservationPath: `.ai-bridge-conflicts/${OPERATION}/local.md`,
+              proofState: RECONCILIATION_PRESERVATION_PROOF_STATE.verified,
+            },
+          ],
+          localEffect: MUTATION_EFFECT_CERTAINTY.confirmed,
+        },
+      ],
+    };
+    const encoded = encodeMirrorDeviceState(fenced);
+    await expect(decodeMirrorDeviceState(encoded)).resolves.toEqual({
+      kind: "valid",
+      state: fenced,
+    });
+
+    const unownedTerminal = JSON.parse(encoded);
+    unownedTerminal.reconciliationOperations[0].phase =
+      RECONCILIATION_OPERATION_PHASE.completed;
+    expect(
+      await decodeMirrorDeviceState(JSON.stringify(unownedTerminal)),
+    ).toEqual({ kind: "corrupt" });
+  });
+
   it.each<ReconciliationRemoteEvidence>([
     { kind: RECONCILIATION_REMOTE_EVIDENCE_KIND.absent },
     {
@@ -176,12 +279,26 @@ describe("version-3 device-state codec", () => {
       associationId: ASSOCIATION,
       revision: REVISION,
       contentSha256: HASH,
+      receipt: {
+        action: MUTATION_ACTION.create,
+        associationId: ASSOCIATION,
+        operationId: RECOVERY,
+        precondition: { kind: "absent" },
+        contentSha256: HASH,
+      },
     },
     {
       kind: RECONCILIATION_REMOTE_EVIDENCE_KIND.tombstone,
       associationId: ASSOCIATION,
       revision: REVISION,
+      deletedRevision: REVISION,
       recoveryId: RECOVERY,
+      receipt: {
+        action: MUTATION_ACTION.tombstone,
+        associationId: ASSOCIATION,
+        operationId: RECOVERY,
+        precondition: { kind: "matching-revision", revision: REVISION },
+      },
     },
     { kind: RECONCILIATION_REMOTE_EVIDENCE_KIND.unavailable },
   ])("round-trips remote evidence kind $kind", async (remote) => {
@@ -192,17 +309,34 @@ describe("version-3 device-state codec", () => {
         {
           retention: RECONCILIATION_REVIEW_RETENTION.durable,
           reviewId: REVIEW,
-          targetPath: PATH,
-          relatedPaths: [RELATED_PATH],
           classification: RECONCILIATION_CLASSIFICATION.remoteAhead,
           status: RECONCILIATION_REVIEW_STATUS.pending,
-          evidence: {
-            local: {
-              kind: RECONCILIATION_LOCAL_EVIDENCE_KIND.absent,
-              observationGeneration: 1,
+          snapshot: {
+            runtime: {
+              runtimeOwnerVersion: 3,
+              configurationGeneration: 1,
+              listenerEpoch: 1,
+              deviceId: DEVICE,
+              designatedWriterId: DEVICE,
+              lifecycle: state.lifecycle,
             },
-            baseline: { kind: MIRROR_ACKNOWLEDGEMENT_KIND.unassociated },
-            remote,
+            targetPath: PATH,
+            paths: [
+              {
+                path: PATH,
+                local: {
+                  kind: RECONCILIATION_LOCAL_EVIDENCE_KIND.absent,
+                  stability: RECONCILIATION_LOCAL_STABILITY.stable,
+                  observationGeneration: 1,
+                },
+                baseline: {
+                  kind: MIRROR_ACKNOWLEDGEMENT_KIND.unassociated,
+                },
+                remote,
+                m3: { unresolvedMutation: null, deferredHistory: null },
+              },
+            ],
+            recovery: null,
           },
           operationId: null,
         },
@@ -241,7 +375,8 @@ describe("version-3 device-state codec", () => {
 
     const malformed = JSON.parse(encodeMirrorDeviceState(stateWithOperation()));
     malformed.reconciliationOperations[0].operationId = "not-a-uuid";
-    malformed.reconciliationOperations[0].evidence.remote.revision = "bad";
+    malformed.reconciliationOperations[0].snapshot.paths[0].remote.revision =
+      "bad";
     malformed.reconciliationOperations[0].preservationReceipts[0].contentSha256 =
       "bad";
     expect(await decodeMirrorDeviceState(JSON.stringify(malformed))).toEqual({

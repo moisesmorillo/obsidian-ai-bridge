@@ -56,11 +56,16 @@ the evidence they consume at their own local atomic or remote CAS boundary; a ch
 committed after that boundary is a new divergence because no cross-system transaction
 exists.
 
-Read-only review snapshots do not survive as executable decisions. A process restart,
-listener epoch change, configuration generation change, or plugin runtime-owner
-version change invalidates open UI decisions. Once the operator confirms an action,
-its content-free intent and phase are persisted before the first mutation so restart
-can reconcile partial completion without replaying a stale UI click.
+Read-only review snapshots do not survive as executable decisions. One immutable,
+content-free snapshot binds runtime-owner version, configuration generation, listener
+epoch, device/designated writer, complete lifecycle, every involved path, stable local
+hash/size/generation, ACK and M3 work, exact remote receipt/state, and selected
+recovery metadata. Review and admitted operation use the same typed snapshot and must
+match exactly. A process restart, listener epoch change, configuration generation
+change, or plugin runtime-owner version change invalidates open UI decisions. Once the
+operator confirms an action, its content-free intent and phase are persisted before
+the first mutation so restart can reconcile partial completion without replaying a
+stale UI click.
 
 M4 retains one designated writer. Reviewed remote-to-local work does not require
 multiple active writers, elections, leases, or a shared transactional ledger.

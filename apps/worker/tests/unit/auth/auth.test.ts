@@ -1,3 +1,4 @@
+import { MIRROR_HTTP_HEADER } from "@obsidian-ai-bridge/protocol";
 import {
   AUTHENTICATION_RESULT_KIND,
   AUTHORIZATION_PARSE_RESULT_KIND,
@@ -12,7 +13,7 @@ import { describe, expect, it } from "vitest";
 function headersWithAuthorization(value?: string): Headers {
   const headers = new Headers();
   if (value !== undefined) {
-    headers.set("Authorization", value);
+    headers.set(MIRROR_HTTP_HEADER.authorization, value);
   }
   return headers;
 }

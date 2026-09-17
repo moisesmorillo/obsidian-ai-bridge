@@ -59,6 +59,7 @@ export const RECONCILIATION_OPERATION_PHASE = {
   mutatingRemote: "mutating-remote",
   evidenceRequired: "evidence-required",
   partial: "partial",
+  restoredPendingReview: "restored-pending-review",
   stale: "stale",
   blocked: "blocked",
   completed: "completed",
@@ -89,6 +90,12 @@ export const RECONCILIATION_PATH_REFERENCE_KIND = {
 export const RECONCILIATION_LOCAL_EVIDENCE_KIND = {
   absent: "absent",
   live: "live",
+  unknown: "unknown",
+} as const;
+
+/** Whether sampled local evidence is exact enough to authorize a reviewed decision. */
+export const RECONCILIATION_LOCAL_STABILITY = {
+  stable: "stable",
   unknown: "unknown",
 } as const;
 

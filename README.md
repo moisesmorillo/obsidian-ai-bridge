@@ -2,7 +2,7 @@
 
 A secure bridge between Obsidian and remote AI or agent clients.
 
-> **Status:** M3 automatic eligible-Markdown mirroring is **COMPLETE**; PR #27 merged at `63b0599` and made the M3→M4 transition canonical. **NEXT:** [M4 — Remote-to-local reconciliation and conflict resolution](docs/milestones/m4-remote-to-local-reconciliation-and-conflict-resolution.md). M4 Slice 1 now establishes closed content-free contracts, device-state v3, deterministic v2 migration, and downgrade/runtime fences only. No M4 review UI, local/remote mutation, scanning, timers, or other user-facing behavior is active. M3 remains experimental and undeployed, with no personal-vault installation, real-host/iCloud qualification, or production-readiness claim.
+> **Status:** M3 automatic eligible-Markdown mirroring is **COMPLETE**; PR #27 merged at `63b0599` and made the M3→M4 transition canonical. **NEXT:** [M4 — Remote-to-local reconciliation and conflict resolution](docs/milestones/m4-remote-to-local-reconciliation-and-conflict-resolution.md). M4 Slice 1 now establishes closed immutable content-free reconciliation identity, evidence-bound preservation and restore-fence contracts, device-state v3, deterministic v2 migration, and downgrade/runtime fences only. No M4 review UI, local/remote mutation, scanning, timers, or other user-facing behavior is active. M3 remains experimental and undeployed, with no personal-vault installation, real-host/iCloud qualification, or production-readiness claim.
 
 ## Motivation
 

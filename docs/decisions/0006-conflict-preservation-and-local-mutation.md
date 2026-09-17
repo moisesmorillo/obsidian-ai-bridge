@@ -51,8 +51,12 @@ and adopt an exact expected side hash as effect evidence. Any unrelated existing
 file/folder at that operation path, or mismatching side file, is a collision. The adapter never appends a suffix or
 overwrites.
 The application verifies the saved bytes after creation before recording
-preservation. Operators own eventual cleanup after the resolution is complete. M4
-does not automatically delete preservation artifacts.
+preservation. State validation derives every required receipt identity from the
+admitted action and immutable sampled evidence: operation UUID, original path, side,
+source revision/null relationship, generated preservation path, and exact content
+SHA-256 must all match. A syntactically valid receipt hash is never authority by
+itself. Operators own eventual cleanup after the resolution is complete. M4 does not
+automatically delete preservation artifacts.
 
 An explicit “keep both” action may additionally create the competitor at an
 operator-chosen **eligible** locally and remotely absent NotePath. The resolution

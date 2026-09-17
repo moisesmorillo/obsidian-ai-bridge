@@ -18,6 +18,10 @@ import type {
   MIRROR_PAUSE_REASON,
   MIRROR_RENAME_PHASE,
 } from "@core/mirror/mirror-state.constants";
+import type {
+  ReconciliationOperation,
+  ReconciliationReview,
+} from "@core/mirror/reconciliation-state.types";
 import type { NotePath } from "@core/note-path/note-path.types";
 
 /** Canonical remote-origin binding after strict adapter validation. */
@@ -238,13 +242,21 @@ export interface StagedHandoff extends MirrorBinding {
   readonly checksum: ContentSha256;
 }
 
-/** Complete core-owned durable state saved outside synced plugin data. */
-export interface MirrorDeviceState {
+/** Frozen M3 version-2 device state used only as deterministic migration input. */
+export interface MirrorDeviceStateV2 {
   readonly deviceId: MirrorWriterId;
   readonly lifecycle: MirrorDeviceLifecycle;
   readonly globalBlockReason: MirrorGlobalBlockReason | null;
   readonly paths: readonly MirrorPathState[];
   readonly stagedHandoff: StagedHandoff | null;
+}
+
+/** Current version-3 core-owned durable state saved outside synced plugin data. */
+export interface MirrorDeviceState extends MirrorDeviceStateV2 {
+  /** Sparse content-free review metadata; absent paths receive no placeholder. */
+  readonly reconciliationReviews: readonly ReconciliationReview[];
+  /** Sparse confirmed operations carrying restart evidence but never note bodies. */
+  readonly reconciliationOperations: readonly ReconciliationOperation[];
 }
 
 /** Version token and conservative runtime admission view published by the state owner. */

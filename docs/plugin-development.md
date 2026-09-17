@@ -134,8 +134,9 @@ behavior.
 - If an old experimental `obsidian-ai-bridge` directory exists, disable and remove it
   deliberately before installing `ai-bridge`; never run both. Do not delete the whole
   vault configuration directory.
-- Never downgrade to a plugin/Worker that does not understand M3 state and format-2
-  generations. Follow [rollback restrictions](operations.md#rollback-and-downgrade-restrictions).
+- Never downgrade to M3/version-2 plugin code after device-state version 3 is written,
+  and never downgrade a Worker that does not understand format-2 generations. Slice 1
+  has no reverse state migration. Follow [rollback restrictions](operations.md#rollback-and-downgrade-restrictions).
 
 ## Official API and minimum-version evidence
 

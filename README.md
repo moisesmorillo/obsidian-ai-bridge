@@ -2,7 +2,7 @@
 
 A secure bridge between Obsidian and remote AI or agent clients.
 
-> **Status:** M3 automatic eligible-Markdown mirroring is **COMPLETE**; PR #27 merged at `63b0599` and made the M3→M4 transition canonical. **NEXT:** [M4 — Remote-to-local reconciliation and conflict resolution](docs/milestones/m4-remote-to-local-reconciliation-and-conflict-resolution.md), with an implementation-ready reviewed-reconciliation specification but no production code. M3 remains experimental and undeployed, with no personal-vault installation, real-host/iCloud qualification, production-readiness, or remote-to-local claim.
+> **Status:** M3 automatic eligible-Markdown mirroring is **COMPLETE**; PR #27 merged at `63b0599` and made the M3→M4 transition canonical. **NEXT:** [M4 — Remote-to-local reconciliation and conflict resolution](docs/milestones/m4-remote-to-local-reconciliation-and-conflict-resolution.md). M4 Slice 1 now establishes closed content-free contracts, device-state v3, deterministic v2 migration, and downgrade/runtime fences only. No M4 review UI, local/remote mutation, scanning, timers, or other user-facing behavior is active. M3 remains experimental and undeployed, with no personal-vault installation, real-host/iCloud qualification, or production-readiness claim.
 
 ## Motivation
 
@@ -146,6 +146,8 @@ Start with [AGENTS.md](AGENTS.md), [architecture](docs/architecture.md), the
 [canonical roadmap and agent onboarding](docs/roadmap.md), then the
 [active M4 implementation-ready specification](docs/milestones/m4-remote-to-local-reconciliation-and-conflict-resolution.md)
 and [sequential plan](docs/plans/m4-remote-to-local-reconciliation-and-conflict-resolution.md).
+Slice 1 implements only the closed contracts and durable migration fence; later M4
+review, mutation, conflict, restore, history, and UI slices remain unimplemented.
 The completed [M3 specification](docs/milestones/m3-remote-bridge-client-and-publishing.md),
 [approved decision brief](docs/plans/m3-design-decisions.md), and
 [sequential plan](docs/plans/m3-remote-bridge-client-and-publishing.md) record

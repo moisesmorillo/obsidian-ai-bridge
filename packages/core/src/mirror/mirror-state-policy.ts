@@ -24,6 +24,7 @@ import type {
   StagedHandoffEntry,
   TransferableAcknowledgement,
 } from "@core/mirror/mirror-state.types";
+import { RECONCILIATION_OPERATION_PHASE } from "@core/mirror/reconciliation-state.constants";
 /** Closed refusal reasons for designation/readiness and explicit activation. */
 export const WRITER_ACTIVATION_FAILURE = {
   missingLocalState: "missing-local-state",
@@ -50,6 +51,7 @@ export const HANDOFF_EXPORT_FAILURE = {
   unresolvedMutation: "unresolved-mutation",
   unsettledDesiredState: "unsettled-desired-state",
   blockedPath: "blocked-path",
+  activeReconciliationOperation: "active-reconciliation-operation",
 } as const;
 
 /** Typed handoff export refusal. */
@@ -105,6 +107,8 @@ export function createDisabledMirrorState(
     globalBlockReason: null,
     paths: [],
     stagedHandoff: null,
+    reconciliationReviews: [],
+    reconciliationOperations: [],
   };
 }
 
@@ -718,6 +722,15 @@ function handoffQuiescenceFailure(
 ): HandoffExportFailure | undefined {
   if (state.globalBlockReason !== null) {
     return HANDOFF_EXPORT_FAILURE.globallyBlocked;
+  }
+  if (
+    state.reconciliationOperations.some(
+      (operation) =>
+        operation.phase !== RECONCILIATION_OPERATION_PHASE.completed &&
+        operation.phase !== RECONCILIATION_OPERATION_PHASE.stale,
+    )
+  ) {
+    return HANDOFF_EXPORT_FAILURE.activeReconciliationOperation;
   }
   for (const pathState of state.paths) {
     if (pathState.unresolvedMutation !== null) {

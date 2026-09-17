@@ -7,10 +7,14 @@ import {
   type MirrorStateStore,
 } from "@obsidian-ai-bridge/core";
 import { ObsidianLocalVault } from "@obsidian-plugin/infrastructure/obsidian-local-vault";
-import { MirrorRuntimeOwner } from "@obsidian-plugin/runtime/mirror-runtime-owner";
+import {
+  MIRROR_RUNTIME_OWNER_VERSION,
+  MirrorRuntimeOwner,
+} from "@obsidian-plugin/runtime/mirror-runtime-owner";
 import {
   acquireRuntimeMirrorCoordinator,
   MIRROR_RUNTIME_COORDINATOR_SYMBOL,
+  MIRROR_RUNTIME_COORDINATOR_VERSION,
 } from "@obsidian-plugin/state/runtime-mirror-coordinator";
 import { FakeVaultHost } from "@obsidian-plugin-tests/support/fake-vault-host";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -115,7 +119,7 @@ describe("same-runtime mirror coordinator", () => {
     Object.defineProperty(globalThis, MIRROR_RUNTIME_COORDINATOR_SYMBOL, {
       value: {
         format: "obsidian-ai-bridge-runtime-registry",
-        version: 2,
+        version: MIRROR_RUNTIME_COORDINATOR_VERSION,
         coordinators,
       },
       configurable: true,
@@ -123,6 +127,31 @@ describe("same-runtime mirror coordinator", () => {
     await expect(
       acquireRuntimeMirrorCoordinator(app, async () => owner()),
     ).resolves.toEqual({ kind: "incompatible-existing-owner" });
+    expect(MIRROR_RUNTIME_OWNER_VERSION).toBe(3);
+  });
+
+  it("refuses and preserves an M3 registry when M4 code enters the same realm", async () => {
+    const oldRegistry = {
+      format: "obsidian-ai-bridge-runtime-registry",
+      version: 2,
+      coordinators: new WeakMap(),
+    };
+    Object.defineProperty(globalThis, MIRROR_RUNTIME_COORDINATOR_SYMBOL, {
+      value: oldRegistry,
+      configurable: true,
+    });
+    const factory = vi.fn(async () => owner());
+    await expect(acquireRuntimeMirrorCoordinator({}, factory)).resolves.toEqual(
+      { kind: "incompatible-existing-owner" },
+    );
+    expect(factory).not.toHaveBeenCalled();
+    expect(
+      Object.getOwnPropertyDescriptor(
+        globalThis,
+        MIRROR_RUNTIME_COORDINATOR_SYMBOL,
+      )?.value,
+    ).toBe(oldRegistry);
+    expect(MIRROR_RUNTIME_COORDINATOR_VERSION).toBe(3);
   });
 
   it("fails closed instead of replacing an incompatible existing global owner", async () => {

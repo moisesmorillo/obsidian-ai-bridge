@@ -2,8 +2,9 @@
 
 ## Status
 
-**Accepted design for M4; not implemented.** Existing M3 remote contracts remain
-unchanged by this planning record.
+**Accepted; Slice 1 closed action/state contracts implemented.** Adoption, tombstone,
+restore, local mutation, and remote mutation behavior remain unimplemented. Existing
+M3 remote contracts are unchanged.
 
 ## Context
 

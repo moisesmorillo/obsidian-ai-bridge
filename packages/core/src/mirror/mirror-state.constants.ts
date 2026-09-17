@@ -72,8 +72,11 @@ export const MIRROR_RENAME_PHASE = {
   invalidated: "invalidated",
 } as const;
 
-/** Version of the core-owned durable device state contract. */
-export const MIRROR_DEVICE_STATE_VERSION = 2;
+/** Frozen historical M3 device-state version accepted only for migration. */
+export const MIRROR_DEVICE_STATE_V2_VERSION = 2;
+
+/** Version of the current core-owned durable device state contract. */
+export const MIRROR_DEVICE_STATE_VERSION = 3;
 
 /** Practical upper bound on tracked paths in one device-local ledger. */
 export const MAX_MIRROR_TRACKED_PATHS = 50_000;

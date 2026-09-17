@@ -13,8 +13,10 @@ import {
 } from "@core/mirror/mirror-state.constants";
 import type {
   MirrorDeviceState,
+  MirrorDeviceStateV2,
   MirrorPathState,
 } from "@core/mirror/mirror-state.types";
+import { isReconciliationStateConsistent } from "@core/mirror/reconciliation-state-validation";
 
 /**
  * Validates cross-field invariants of an already strongly typed device state.
@@ -27,6 +29,24 @@ import type {
  */
 export function isMirrorDeviceStateConsistent(
   state: MirrorDeviceState,
+): boolean {
+  return (
+    isMirrorDeviceStateV2Consistent(state) &&
+    isReconciliationStateConsistent(state)
+  );
+}
+
+/**
+ * Validates the frozen M3 version-2 semantic contract used by migration input.
+ *
+ * This function deliberately knows nothing about M4 fields and must remain stable
+ * while the current version-3 validator evolves.
+ *
+ * @param state - Strictly decoded historical version-2 device state.
+ * @returns Whether every M3 lifecycle, intent, evidence, and handoff invariant holds.
+ */
+export function isMirrorDeviceStateV2Consistent(
+  state: MirrorDeviceStateV2,
 ): boolean {
   return (
     validateStateCapacity(state) &&
@@ -43,7 +63,7 @@ export function isMirrorDeviceStateConsistent(
  * @param state - Candidate complete device-local state.
  * @returns Whether both ledger scopes fit the configured capacity.
  */
-function validateStateCapacity(state: MirrorDeviceState): boolean {
+function validateStateCapacity(state: MirrorDeviceStateV2): boolean {
   return (
     state.paths.length <= MAX_MIRROR_TRACKED_PATHS &&
     (state.stagedHandoff === null ||
@@ -57,7 +77,7 @@ function validateStateCapacity(state: MirrorDeviceState): boolean {
  * @param state - Candidate complete device-local state.
  * @returns Whether lifecycle and handoff payload relationships are consistent.
  */
-function validateLifecycleAndHandoff(state: MirrorDeviceState): boolean {
+function validateLifecycleAndHandoff(state: MirrorDeviceStateV2): boolean {
   const { lifecycle, stagedHandoff } = state;
   switch (lifecycle.kind) {
     case MIRROR_DEVICE_LIFECYCLE_KIND.disabled:
@@ -88,7 +108,7 @@ function validateLifecycleAndHandoff(state: MirrorDeviceState): boolean {
  * @param state - Candidate complete device-local state.
  * @returns Whether path, operation, and recovery identities are unambiguous.
  */
-function validateIdentifierUniqueness(state: MirrorDeviceState): boolean {
+function validateIdentifierUniqueness(state: MirrorDeviceStateV2): boolean {
   if (hasDuplicate(state.paths.map((entry) => entry.path))) return false;
   const operationIds = state.paths.flatMap((entry) =>
     entry.unresolvedMutation === null
@@ -126,7 +146,7 @@ function validateIdentifierUniqueness(state: MirrorDeviceState): boolean {
  * @param state - Candidate complete device-local state.
  * @returns Whether a drained lifecycle contains no pending or blocked work.
  */
-function validateDrainedState(state: MirrorDeviceState): boolean {
+function validateDrainedState(state: MirrorDeviceStateV2): boolean {
   if (state.lifecycle.kind !== MIRROR_DEVICE_LIFECYCLE_KIND.handoffDrained) {
     return true;
   }
@@ -149,7 +169,7 @@ function validateDrainedState(state: MirrorDeviceState): boolean {
  * @returns Whether mutation and desired-state invariants hold for the path.
  */
 function validatePathState(
-  state: MirrorDeviceState,
+  state: MirrorDeviceStateV2,
   entry: MirrorPathState,
 ): boolean {
   return (
@@ -167,7 +187,7 @@ function validatePathState(
  * @returns Whether the unresolved mutation remains safe and internally consistent.
  */
 function validateUnresolvedMutation(
-  state: MirrorDeviceState,
+  state: MirrorDeviceStateV2,
   entry: MirrorPathState,
 ): boolean {
   const unresolved = entry.unresolvedMutation;
@@ -242,7 +262,7 @@ function validateAcknowledgementAction(
  * @returns Whether the desired state carries valid evidence and authority.
  */
 function validateDesiredState(
-  state: MirrorDeviceState,
+  state: MirrorDeviceStateV2,
   entry: MirrorPathState,
 ): boolean {
   const { desired } = entry;
@@ -294,7 +314,7 @@ function validateDesiredState(
  * @returns Whether the lifecycle permits that exact association.
  */
 function lifecycleMatchesAssociation(
-  state: MirrorDeviceState,
+  state: MirrorDeviceStateV2,
   associationId: NonNullable<
     MirrorPathState["unresolvedMutation"]
   >["intent"]["associationId"],

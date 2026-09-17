@@ -23,8 +23,10 @@ composition. Slice 8's generated-artifact qualification and operational document
 are implemented. The independent final review found three MINOR issues, corrective
 head `e97af36` resolved all three, and the corrective review returned APPROVE with no
 open findings. M3 is COMPLETE; PR #27 merged at `63b0599` and made the transition
-canonical. M4 is NEXT with an implementation-ready reviewed-reconciliation design,
-but no M4 production behavior exists. The connected outward mirror remains
+canonical. M4 is NEXT. Slice 1 implements the closed reconciliation contracts,
+sparse device-state v3, deterministic v2 migration/read-back fence, and incompatible
+same-realm runtime version. It exposes no M4 review, scanning, local/remote mutation,
+timer, or user-facing behavior; Slices 2–8 remain unimplemented. The connected outward mirror remains
 experimental and undeployed, with no real Obsidian desktop/mobile or iCloud runtime
 qualification.
 See the [verified current state](current-state.md) for source/configuration evidence,
@@ -298,13 +300,35 @@ remote-to-local behavior exists. Slice 0 remains the
 pinned local workerd qualification task and declaration-only host check; no slice
 establishes real-host behavior.
 
+## M4 Slice 1 state boundary
+
+Core now owns closed authority, classification, action, lifecycle, evidence,
+reservation, effect, and preservation-receipt contracts plus linear cross-field
+validation. `MirrorDeviceState` version 3 retains every M3 field and adds only bounded
+sparse `reconciliationReviews` and `reconciliationOperations`; neither can represent
+note/recovery bodies or arbitrary payload records. Active M4 reservations cannot
+overlap, unresolved M3 effects take precedence, deferred rename state permits only an
+explicit history operation, and active operations prevent handoff drain/export.
+
+The plugin adapter keeps an explicit frozen version-2 decoder separate from the strict
+version-3 writer. Startup detects the stored version before owner construction. A
+valid v2 value is decoded, projected without inferred M4 work, validated, written once
+to the same key, loaded once, byte-compared to the canonical write, and strictly
+decoded before runtime publication. Any decode, migration, encoding, save, quota,
+read-back, integrity, or version failure remains unavailable/corrupt/unsupported and
+never publishes in-memory migrated state. A committed v3 write is safely recognized
+on the next startup even when the prior read-back failed. Runtime registry and owner
+structural versions are both 3, so M3 and M4 owners refuse same-realm reuse.
+
 ## Explicitly deferred
 
-- M4 (NEXT, implementation-ready planning only): reviewed/manual reconciliation,
+- M4 (NEXT; Slice 1 contracts/migration implemented): reviewed/manual reconciliation,
   exact revisioned adoption, archive-first conflicts, a separate bounded local
   mutation port, reviewed tombstones, local-first restore, deferred-history choices,
-  deterministic state-v2→v3 migration, existing v2 API, and the retained one-writer
-  model. Planned dependency flow is thin commands/modal → focused core review/action
+  the existing v2 API, and the retained one-writer model remain later-slice behavior.
+  Slice 1 contributes only state v3, frozen v2 decoding, deterministic same-key
+  migration/read-back, sparse content-free metadata contracts, validation, and runtime
+  downgrade fencing. Planned dependency flow is thin commands/modal → focused core review/action
   policy owners → `ReadOnlyLocalVault` + a separate `LocalReconciliationWriter` +
   existing `RemoteBridge`/state owner → Obsidian/Fetch adapters. Remote divergence
   remains a review item; no automatic import or cross-system atomicity is claimed.

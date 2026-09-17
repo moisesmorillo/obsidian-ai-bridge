@@ -1,8 +1,9 @@
 # M4 implementation plan — reviewed reconciliation and conflict resolution
 
-**Status: implementation-ready plan; no M4 production code is implemented.** M4
-remains the single `NEXT` milestone. Execute this plan only after a separate production
-implementation request. Do not deploy or install into a personal vault as validation.
+**Status: M4 Slice 1 implemented; Slices 2–8 remain planned.** M4 remains the
+single `NEXT` milestone. Slice 1 adds contracts and the state/migration fence only; it
+activates no M4 user behavior or mutation capability. Do not deploy or install into a
+personal vault as validation.
 
 [Specification](../milestones/m4-remote-to-local-reconciliation-and-conflict-resolution.md)
 and [ADRs 0005–0008](../decisions/README.md) are normative. Preserve every completed
@@ -29,7 +30,7 @@ slice target.
   Preserve production-source coverage inclusion and thresholds: 95% lines/statements,
   94% functions, 90% branches.
 
-## Slice 1 — Closed contracts, state v3, and migration fence
+## Slice 1 — Closed contracts, state v3, and migration fence — IMPLEMENTED
 
 ### Objective and prerequisites
 
@@ -71,9 +72,21 @@ and cross-field invariants in core.
 
 ### Completion evidence
 
-Focused core/plugin codec/migration/registry tests and canonical check pass. A diff
-proves no UI command, local writer, Fetch change, Worker/API change, deployment config,
-or runtime M4 mutation is composed.
+Implemented modules separate core contract types/constants, core cross-field
+validation, the frozen plugin v2 decoder, current v3 codec, deterministic migrator,
+and adapter startup persistence boundary. State/registry versions are 3. Focused tests
+cover every closed set, classification/action/phase and preservation compatibility,
+association/path relationships, strict/body-free codecs, migration fidelity across M3
+state variants, deterministic retry and exact
+read-back barriers, downgrade/registry refusal, handoff interaction, capacity overflow,
+and exact 50,000-path migration with empty sparse M4 collections.
+
+The migration and state-relationship matrices are recorded in the milestone's
+[Slice 1 evidence](../milestones/m4-remote-to-local-reconciliation-and-conflict-resolution.md#slice-1-implementation-evidence).
+The final canonical source suite passes 64 files / 840 tests with 95.00% statements,
+90.54% branches, 98.40% functions, and 97.02% lines. The final diff contains no UI
+command/modal/settings action, local writer, Fetch/RemoteBridge or Worker/API/OpenAPI
+change, deployment configuration, timer, scan, or runtime M4 mutation capability.
 
 ## Slice 2 — Read-only review engine and stale-decision policy
 

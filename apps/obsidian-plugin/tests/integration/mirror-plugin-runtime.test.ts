@@ -67,6 +67,8 @@ describe("plugin automatic mirror composition", () => {
       globalBlockReason: null,
       paths: [],
       stagedHandoff: null,
+      reconciliationReviews: [],
+      reconciliationOperations: [],
     };
     host.localStorage.set(
       MIRROR_DEVICE_STATE_STORAGE_KEY,
@@ -190,6 +192,8 @@ describe("plugin automatic mirror composition", () => {
       globalBlockReason: null,
       paths: [],
       stagedHandoff: null,
+      reconciliationReviews: [],
+      reconciliationOperations: [],
     };
     host.localStorage.set(
       MIRROR_DEVICE_STATE_STORAGE_KEY,
@@ -299,6 +303,8 @@ describe("plugin automatic mirror composition", () => {
       globalBlockReason: null,
       paths: [],
       stagedHandoff: null,
+      reconciliationReviews: [],
+      reconciliationOperations: [],
     };
     host.localStorage.set(
       MIRROR_DEVICE_STATE_STORAGE_KEY,
@@ -409,6 +415,8 @@ describe("plugin automatic mirror composition", () => {
       globalBlockReason: null,
       paths: [],
       stagedHandoff: null,
+      reconciliationReviews: [],
+      reconciliationOperations: [],
     };
     host.localStorage.set(
       MIRROR_DEVICE_STATE_STORAGE_KEY,
@@ -492,6 +500,8 @@ describe("plugin automatic mirror composition", () => {
       globalBlockReason: null,
       paths: [],
       stagedHandoff: null,
+      reconciliationReviews: [],
+      reconciliationOperations: [],
     };
     host.localStorage.set(
       MIRROR_DEVICE_STATE_STORAGE_KEY,

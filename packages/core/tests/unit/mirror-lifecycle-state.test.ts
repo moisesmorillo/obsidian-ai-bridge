@@ -543,6 +543,8 @@ function activeState(
     globalBlockReason: null,
     paths,
     stagedHandoff: null,
+    reconciliationReviews: [],
+    reconciliationOperations: [],
   };
 }
 

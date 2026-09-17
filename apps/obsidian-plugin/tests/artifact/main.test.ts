@@ -156,7 +156,7 @@ function configureActiveWriter(): void {
     STATE_KEY,
     JSON.stringify({
       format: "obsidian-ai-bridge-device-state",
-      version: 2,
+      version: 3,
       deviceId: DEVICE_ID,
       lifecycle: {
         kind: "active",
@@ -166,6 +166,8 @@ function configureActiveWriter(): void {
       globalBlockReason: null,
       paths: [],
       stagedHandoff: null,
+      reconciliationReviews: [],
+      reconciliationOperations: [],
     }),
   );
   obsidian.host.loadData.mockResolvedValue({

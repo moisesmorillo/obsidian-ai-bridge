@@ -269,7 +269,7 @@ No rollback path is claimed safe unless it has been tested. Use these alternativ
 
 | Unsafe action | Why it is unsafe | Safe response |
 | --- | --- | --- |
-| Run old plugin code that does not understand the current device-state schema against an active M3 writer | It may ignore or corrupt ACKs, intents, deletion evidence, or fences. | Pause, preserve state/evidence, and upgrade forward to compatible code. |
+| Run M3/version-2 plugin code after device-state v3 exists | Old code must reject v3; stripping sparse M4 fields or restoring v2 can discard partial authority/effects. | Preserve state/evidence, restart into compatible M4 code, allow only the built-in verified v2→v3 migration, and upgrade forward. |
 | Downgrade to v1 PUT/DELETE behavior | Unconditional mutation bypasses format-2 revisions, tombstones, and recovery. | Keep v1 mutations retired; upgrade Worker/client forward. |
 | Redirect delayed old-association requests into a reset association or reused bucket | Pending privileged requests could mutate the new namespace. | Use an isolated empty bucket/association/credentials and preserve old state. |
 | Delete unresolved ledger/intents to make a writer look healthy | Unknown remote effects and original conditions become unprovable. | Pause, inspect exact receipts, drain/recover, or retain the blocker for handoff/M4. |

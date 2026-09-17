@@ -2,8 +2,9 @@
 
 ## Status
 
-**Accepted design for M4; not implemented.** The decision preserves M3 behavior until
-a separately authorized implementation composes the new capability.
+**Accepted; Slice 1 preservation metadata contracts implemented.** No local mutation
+port, adapter, preservation effect, or user workflow is implemented yet; M3 behavior
+remains unchanged.
 
 ## Context
 

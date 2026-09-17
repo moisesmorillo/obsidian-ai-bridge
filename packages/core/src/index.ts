@@ -154,6 +154,7 @@ export {
   MIRROR_ACKNOWLEDGEMENT_KIND,
   MIRROR_DESIRED_STATE_KIND,
   MIRROR_DEVICE_LIFECYCLE_KIND,
+  MIRROR_DEVICE_STATE_V2_VERSION,
   MIRROR_DEVICE_STATE_VERSION,
   MIRROR_GLOBAL_BLOCK_REASON,
   MIRROR_MUTATION_PHASE,
@@ -183,6 +184,7 @@ export type {
   MirrorDesiredState,
   MirrorDeviceLifecycle,
   MirrorDeviceState,
+  MirrorDeviceStateV2,
   MirrorGlobalBlockReason,
   MirrorOrigin,
   MirrorPathBlockReason,
@@ -237,7 +239,10 @@ export type {
   MirrorStateStoreFailure,
 } from "@core/mirror/mirror-state-store.port";
 export { MIRROR_STATE_STORE_FAILURE } from "@core/mirror/mirror-state-store.port";
-export { isMirrorDeviceStateConsistent } from "@core/mirror/mirror-state-validation";
+export {
+  isMirrorDeviceStateConsistent,
+  isMirrorDeviceStateV2Consistent,
+} from "@core/mirror/mirror-state-validation";
 export type {
   AbsentCurrentGenerationObservation,
   CurrentGenerationObservation,
@@ -272,6 +277,51 @@ export type {
   MirrorSynchronizerPhase,
   MirrorSynchronizerRuntime,
 } from "@core/mirror/mirror-synchronizer.types";
+export {
+  MAX_RECONCILIATION_OPERATIONS,
+  MAX_RECONCILIATION_PRESERVATION_RECEIPTS,
+  MAX_RECONCILIATION_REVIEWS,
+  RECONCILIATION_ACTION,
+  RECONCILIATION_AUTHORITY_SOURCE,
+  RECONCILIATION_CLASSIFICATION,
+  RECONCILIATION_LOCAL_EVIDENCE_KIND,
+  RECONCILIATION_OPERATION_PHASE,
+  RECONCILIATION_PATH_REFERENCE_KIND,
+  RECONCILIATION_PRESERVATION_PROOF_STATE,
+  RECONCILIATION_PRESERVATION_SIDE,
+  RECONCILIATION_REMOTE_EVIDENCE_KIND,
+  RECONCILIATION_REVIEW_RETENTION,
+  RECONCILIATION_REVIEW_STATUS,
+} from "@core/mirror/reconciliation-state.constants";
+export type {
+  AcceptTombstoneReconciliationAction,
+  AdoptRevisionReconciliationAction,
+  DeferReconciliationAction,
+  EphemeralReconciliationReview,
+  ForkLegacyReconciliationAction,
+  KeepBothReconciliationAction,
+  KeepLocalReconciliationAction,
+  ReconciliationAction,
+  ReconciliationAuthoritySource,
+  ReconciliationClassification,
+  ReconciliationEvidence,
+  ReconciliationLocalEvidence,
+  ReconciliationOperation,
+  ReconciliationOperationPhase,
+  ReconciliationPathReservation,
+  ReconciliationPreservationReceipt,
+  ReconciliationRecoveryEvidence,
+  ReconciliationRemoteEvidence,
+  ReconciliationReview,
+  ReconciliationReviewMetadata,
+  ReconciliationReviewRetention,
+  ReconciliationReviewStatus,
+  RecreateRemoteReconciliationAction,
+  ResolveHistoryReconciliationAction,
+  RestoreRecoveryReconciliationAction,
+  UseRemoteReconciliationAction,
+} from "@core/mirror/reconciliation-state.types";
+export { isReconciliationStateConsistent } from "@core/mirror/reconciliation-state-validation";
 export { RecoveryService } from "@core/mirror/recovery-service";
 export type { RecoverySnapshotRepository } from "@core/mirror/recovery-snapshot-repository.port";
 export { REMOTE_BRIDGE_FAILURE } from "@core/mirror/remote-bridge.constants";

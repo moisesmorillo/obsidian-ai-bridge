@@ -6,6 +6,7 @@
     "module": "ESNext",
     "moduleResolution": "Bundler",
     "paths": {
+      "#tools/*": ["./tools/*"],
       "@core/*": ["./packages/core/src/*"],
       "@protocol/*": ["./packages/protocol/src/*"],
       "@worker/*": ["./apps/worker/src/*"],

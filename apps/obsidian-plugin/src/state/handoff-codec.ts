@@ -40,6 +40,7 @@ export type HandoffDecodeResult =
   | { readonly kind: "unsupported-version"; readonly version: number }
   | { readonly kind: "integrity-mismatch" };
 
+/** Strict transfer shape for established baselines; unassociated paths have no authority to export. */
 const transferableAcknowledgementSchema = z.discriminatedUnion("kind", [
   z
     .object({
@@ -56,6 +57,7 @@ const transferableAcknowledgementSchema = z.discriminatedUnion("kind", [
     })
     .strict(),
 ]);
+/** Bounded content-free transfer envelope rejecting duplicate paths/recovery IDs; checksum verification follows conversion. */
 const handoffRecordSchema = z
   .object({
     format: z.literal(HANDOFF_RECORD_FORMAT),
@@ -92,6 +94,7 @@ const handoffRecordSchema = z
       });
     }
   });
+/** Reads the transfer discriminator solely to distinguish future versions from corrupt current records. */
 const handoffHeaderSchema = z
   .object({
     format: z.literal(HANDOFF_RECORD_FORMAT),
@@ -99,7 +102,9 @@ const handoffHeaderSchema = z
   })
   .loose();
 
+/** Structurally validated transfer DTO, before canonical domain identifiers and checksum verification. */
 type HandoffRecordDto = z.infer<typeof handoffRecordSchema>;
+/** Serialized live/tombstone baseline subset accepted by the handoff boundary. */
 type TransferableAcknowledgementDto = z.infer<
   typeof transferableAcknowledgementSchema
 >;
@@ -234,6 +239,11 @@ export async function verifyHandoffPayloadChecksum(
   return (await integrity.digest(canonical.text)) === checksum;
 }
 
+/**
+ * Validates exact identifiers, rejects duplicate authority, and sorts paths into the stable checksum payload without staging evidence.
+ *
+ * @returns The canonical sorted payload and its checksum-ready JSON text.
+ */
 function canonicalPayload(payload: HandoffPayload): {
   readonly payload: HandoffPayload;
   readonly text: string;
@@ -291,6 +301,11 @@ function canonicalPayload(payload: HandoffPayload): {
   };
 }
 
+/**
+ * Projects only established ACK fields and rejects noncanonical identifiers before checksum serialization.
+ *
+ * @returns The canonical established-acknowledgement DTO.
+ */
 function projectAcknowledgement(
   acknowledgement: TransferableAcknowledgement,
 ): TransferableAcknowledgement {
@@ -323,6 +338,11 @@ function projectAcknowledgement(
   }
 }
 
+/**
+ * Rehydrates transfer identifiers and checksum; does not itself verify integrity or grant activation.
+ *
+ * @returns The rehydrated record pending checksum verification.
+ */
 function convertRecord(dto: HandoffRecordDto): HandoffRecord {
   const origin = requireParsed(dto.origin, parsePersistedMirrorOrigin);
   const associationId = requireParsed(
@@ -338,6 +358,12 @@ function convertRecord(dto: HandoffRecordDto): HandoffRecord {
   };
 }
 
+/**
+ * Converts an imported path through the handoff path parser and rehydrates its established baseline.
+ *
+ * @param dto - Schema-validated imported path and acknowledgement.
+ * @returns The rehydrated transfer entry.
+ */
 function convertEntry(
   dto: HandoffRecordDto["entries"][number],
 ): HandoffBaselineEntry {
@@ -347,6 +373,11 @@ function convertEntry(
   };
 }
 
+/**
+ * Rehydrates revision plus live hash or tombstone recovery ID from a validated transfer variant.
+ *
+ * @returns The validated live or tombstone acknowledgement.
+ */
 function convertAcknowledgement(
   dto: TransferableAcknowledgementDto,
 ): TransferableAcknowledgement {
@@ -365,6 +396,13 @@ function convertAcknowledgement(
   };
 }
 
+/**
+ * Returns a boundary parser's value or throws for corrupt handoff handling.
+ *
+ * @param value - Imported identifier text.
+ * @param parser - Boundary validator returning undefined for invalid syntax.
+ * @returns The validated identifier.
+ */
 function requireParsed<Value>(
   value: string,
   parser: (candidate: string) => Value | undefined,
@@ -374,6 +412,11 @@ function requireParsed<Value>(
   return parsed;
 }
 
+/**
+ * Refuses invalid or normalization-changing identifiers when serializing checksum-covered authority.
+ *
+ * @returns The validated identifier only when its literal spelling is unchanged.
+ */
 function requireExactParsed<Value extends string>(
   value: Value,
   parser: (candidate: string) => Value | undefined,
@@ -386,6 +429,12 @@ function requireExactParsed<Value extends string>(
   return parsed;
 }
 
+/**
+ * Measures UTF-8 bytes for the bounded handoff transfer encoding.
+ *
+ * @param value - Serialized handoff text.
+ * @returns Encoded handoff byte count.
+ */
 function byteLength(value: string): number {
   return new TextEncoder().encode(value).byteLength;
 }

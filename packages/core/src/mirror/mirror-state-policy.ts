@@ -198,7 +198,7 @@ export function activateIsolatedAssociation(
 }
 
 /**
- * Durably closes new intake and starts draining an active writer for handoff.
+ * Produces the handoff-draining transition that closes intake once the owner persists it.
  *
  * @param state - Current device state.
  * @returns Draining state, or `undefined` when this device is not active.
@@ -519,7 +519,7 @@ export function alignAndActivateStagedHandoff(
 }
 
 /**
- * Activates a staged baseline only after every local observation and future remote
+ * Activates a staged baseline only after every local observation and remote
  * verification aligned, while current designation/secret evidence still matches.
  *
  * @param state - Device with a staged imported baseline.
@@ -701,6 +701,11 @@ export function isDurableMutationAdmissionAllowed(
   );
 }
 
+/**
+ * Checks global fence, explicit consent, secret availability and writer designation before staged activation.
+ *
+ * @returns The first common activation refusal, or undefined.
+ */
 function activationEvidenceFailure(
   state: MirrorDeviceState,
   request: HandoffActivationRequest,
@@ -717,6 +722,11 @@ function activationEvidenceFailure(
   return undefined;
 }
 
+/**
+ * Refuses drain/export while global fences, active M4 reservations (including restores), or unsettled/blocked M3 work remain.
+ *
+ * @returns The first quiescence refusal, or undefined when drained.
+ */
 function handoffQuiescenceFailure(
   state: MirrorDeviceState,
 ): HandoffExportFailure | undefined {
@@ -746,6 +756,12 @@ function handoffQuiescenceFailure(
   return undefined;
 }
 
+/**
+ * Detects reused tombstone recovery identity across transferred baselines; live ACKs have no recovery ID.
+ *
+ * @param entries - Transferred path baselines to compare for duplicate recovery identity.
+ * @returns Whether tombstone recovery IDs are reused.
+ */
 function hasDuplicateRecoveryIds(
   entries: readonly {
     readonly acknowledgement: TransferableAcknowledgement;
@@ -759,6 +775,11 @@ function hasDuplicateRecoveryIds(
   return new Set(recoveryIds).size !== recoveryIds.length;
 }
 
+/**
+ * Rejects unsafe, negative or older alignment observations; equal or newer generations can participate in the staged policy.
+ *
+ * @returns Whether the observation is safe and at least as new as the staged generation.
+ */
 function isCurrentObservationGeneration(
   entry: StagedHandoffEntry,
   observationGeneration: number,
@@ -770,6 +791,11 @@ function isCurrentObservationGeneration(
   );
 }
 
+/**
+ * Materializes a verified transferred ACK as an idle ledger entry; callers must establish alignment before activation.
+ *
+ * @returns An idle path entry carrying the transferred acknowledgement.
+ */
 function handoffEntryToPathState(entry: StagedHandoffEntry): MirrorPathState {
   return {
     path: entry.path,
@@ -780,6 +806,11 @@ function handoffEntryToPathState(entry: StagedHandoffEntry): MirrorPathState {
   };
 }
 
+/**
+ * Returns staging metadata only when lifecycle and payload agree; otherwise there is no staged transition authority.
+ *
+ * @returns The staged payload, or undefined when lifecycle and payload disagree.
+ */
 function requireStagedHandoff(
   state: MirrorDeviceState,
 ): StagedHandoff | undefined {
@@ -792,6 +823,11 @@ function requireStagedHandoff(
   return state.stagedHandoff;
 }
 
+/**
+ * Matches live baseline bytes or exact tombstone absence; generation freshness is checked separately.
+ *
+ * @returns Whether the local observation matches the transferred baseline.
+ */
 function localObservationMatches(
   entry: StagedHandoffEntry,
   observation: HandoffLocalObservation,
@@ -808,6 +844,11 @@ function localObservationMatches(
   );
 }
 
+/**
+ * Replaces alignment evidence and updates only the handoff-mismatch fence, preserving unrelated global blockers.
+ *
+ * @returns Updated staged state with unrelated blockers retained.
+ */
 function updatedStagedState(
   state: MirrorDeviceState,
   staged: StagedHandoff,
@@ -827,6 +868,11 @@ function updatedStagedState(
   };
 }
 
+/**
+ * Requires exact remote kind/revision and hash/recovery identity for handoff verification; null cannot match.
+ *
+ * @returns Whether exact baseline identities match.
+ */
 function acknowledgementsEqual(
   expected: TransferableAcknowledgement,
   observed: TransferableAcknowledgement | null,
@@ -845,6 +891,11 @@ function acknowledgementsEqual(
   );
 }
 
+/**
+ * Returns a typed activation-readiness refusal without changing durable state.
+ *
+ * @returns A typed not-ready result.
+ */
 function notReady(reason: WriterActivationFailure): {
   readonly kind: "not-ready";
   readonly reason: WriterActivationFailure;
@@ -852,6 +903,11 @@ function notReady(reason: WriterActivationFailure): {
   return { kind: "not-ready", reason };
 }
 
+/**
+ * Returns the closed writer-activation rejection result without exposing external failures.
+ *
+ * @returns A typed rejected activation result.
+ */
 function rejected(reason: WriterActivationFailure): {
   readonly kind: "rejected";
   readonly reason: WriterActivationFailure;

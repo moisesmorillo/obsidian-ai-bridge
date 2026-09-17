@@ -20,6 +20,7 @@ import type {
 } from "@obsidian-plugin/remote/fetch-remote-bridge.types";
 import type { RemoteHttpMethod } from "@obsidian-plugin/remote/remote-response-policy";
 
+/** Narrow transport dependencies excluding operation-level content hashing and response policy. */
 type FetchRequestDispatcherDependencies = Pick<
   FetchRemoteBridgeDependencies,
   | "admission"
@@ -31,6 +32,7 @@ type FetchRequestDispatcherDependencies = Pick<
   | "secretStorage"
 >;
 
+/** Adapter-local relative route request; the dispatcher adds the current native bearer only at dispatch. */
 interface RemoteHttpRequest {
   readonly method: RemoteHttpMethod;
   readonly path: string;
@@ -38,11 +40,13 @@ interface RemoteHttpRequest {
   readonly body?: BodyInit | null;
 }
 
+/** Sanitized read failure shared by pre-response and body-decoding paths. */
 type RemoteBridgeFailureResult = Extract<
   RemoteBridgeResult<never>,
   { readonly kind: "failure" }
 >;
 
+/** Response ownership includes a settlement-bound release callback; failures record whether Fetch crossed dispatch. */
 type DispatchResult =
   | {
       readonly kind: "response";
@@ -225,6 +229,7 @@ export class FetchRequestDispatcher {
     let timer: ReturnType<typeof setTimeout> | undefined;
     let unregisterCancellation: (() => void) | undefined;
     let released = false;
+    /** Releases this permit once and retires its deadline/cancellation registration only after settlement. */
     const release = () => {
       if (released) return;
       released = true;
@@ -350,10 +355,21 @@ export class FetchRequestDispatcher {
   }
 }
 
+/**
+ * Wraps bounded decoded read data without exposing transport resource ownership.
+ *
+ * @returns A successful read result carrying the bounded value.
+ */
 function success<Value>(value: Value): RemoteBridgeResult<Value> {
   return { kind: "success", value };
 }
 
+/**
+ * Produces a sanitized read failure without attaching exceptions or bearer data.
+ *
+ * @param failureKind - Sanitized remote failure category.
+ * @returns A typed read failure.
+ */
 function failure(
   failureKind: RemoteBridgeFailureResult["failure"],
 ): RemoteBridgeFailureResult {
@@ -376,6 +392,11 @@ async function raceFetchWithAbort(
 > {
   if (signal.aborted) return { kind: "aborted" };
   return new Promise((resolve, reject) => {
+    /**
+     * Reports deadline observation without releasing the still-unsettled Fetch permit.
+     *
+     * @returns No value; resolves the racing promise with a deadline marker.
+     */
     const onAbort = () => resolve({ kind: "aborted" });
     signal.addEventListener("abort", onAbort, { once: true });
     void promise

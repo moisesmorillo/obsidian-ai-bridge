@@ -56,6 +56,7 @@ type BootstrapPathMergeResult =
 export class MirrorBootstrapCoordinator {
   private inventory: MirrorInventoryResult | null = null;
 
+  /** Connects read-only discovery and serialized admission to the existing scheduler and observation-generation owner. */
   constructor(
     private readonly local: ReadOnlyLocalVault,
     private readonly remote: RemoteBridge,

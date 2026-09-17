@@ -85,6 +85,7 @@ export type MirrorDeviceStateDecodeResult =
   | { readonly kind: "corrupt" }
   | { readonly kind: "unsupported-version"; readonly version: number };
 
+/** Strict serialized M3 baseline variants; revision/hash/ID branding follows shape validation. */
 const acknowledgementSchema = z.discriminatedUnion("kind", [
   z
     .object({ kind: z.literal(MIRROR_ACKNOWLEDGEMENT_KIND.unassociated) })
@@ -105,6 +106,7 @@ const acknowledgementSchema = z.discriminatedUnion("kind", [
     .strict(),
 ]);
 
+/** Persisted deferred-rename evidence shared by current desired state and immutable M4 samples. */
 const renameDeferredStateSchema = z
   .object({
     kind: z.literal(MIRROR_DESIRED_STATE_KIND.renameDeferred),
@@ -134,6 +136,7 @@ const renameDeferredStateSchema = z
   })
   .strict();
 
+/** Closed pending M3 work, preserving event generations, delete authority and destination prerequisites. */
 const desiredStateSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal(MIRROR_DESIRED_STATE_KIND.none) }).strict(),
   z
@@ -167,6 +170,7 @@ const desiredStateSchema = z.discriminatedUnion("kind", [
   renameDeferredStateSchema,
 ]);
 
+/** Persisted exact intent/budget and phase; no note body or renewed retry authority is encoded. */
 const unresolvedMutationStateSchema = z
   .object({
     intent: unresolvedMutationIntentSchema,
@@ -180,6 +184,7 @@ const unresolvedMutationStateSchema = z
   })
   .strict();
 
+/** Strict per-path M3 ledger retained by v3 without per-path M4 placeholders. */
 const pathStateSchema = z
   .object({
     path: z.string(),
@@ -198,10 +203,12 @@ const pathStateSchema = z
   })
   .strict();
 
+/** Serialized association/origin shape for enabled lifecycles; canonical origin validation belongs to conversion. */
 const bindingFields = {
   associationId: z.string(),
   origin: z.string().min(1).max(2048),
 };
+/** Closed persisted activation/pause/handoff variants; disabled carries no binding and paused retains its reason. */
 const lifecycleSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal(MIRROR_DEVICE_LIFECYCLE_KIND.disabled) }).strict(),
   z
@@ -240,6 +247,7 @@ const lifecycleSchema = z.discriminatedUnion("kind", [
     .strict(),
 ]);
 
+/** Established ACKs allowed in staged handoff; unassociated paths cannot transfer authority. */
 const transferableAcknowledgementSchema = z.discriminatedUnion("kind", [
   z
     .object({
@@ -256,6 +264,7 @@ const transferableAcknowledgementSchema = z.discriminatedUnion("kind", [
     })
     .strict(),
 ]);
+/** Bounded staged ACKs with checksum and local/remote alignment generations; decode also verifies payload integrity. */
 const stagedHandoffSchema = z
   .object({
     associationId: z.string(),
@@ -289,6 +298,7 @@ const stagedHandoffSchema = z
   })
   .strict();
 
+/** Content-free local sample: exact stable absence/live evidence has a generation; unknown cannot claim a hash. */
 const reconciliationLocalEvidenceSchema = z.discriminatedUnion("kind", [
   z
     .object({
@@ -322,6 +332,7 @@ const reconciliationLocalEvidenceSchema = z.discriminatedUnion("kind", [
     .strict(),
 ]);
 
+/** Persisted remote observations distinguish physical absence, legacy bytes and revisioned generations with exact receipts. */
 const reconciliationRemoteEvidenceSchema = z.discriminatedUnion("kind", [
   z
     .object({ kind: z.literal(RECONCILIATION_REMOTE_EVIDENCE_KIND.absent) })
@@ -358,6 +369,7 @@ const reconciliationRemoteEvidenceSchema = z.discriminatedUnion("kind", [
     .strict(),
 ]);
 
+/** One immutable path sample including baseline and M3 blockers; these are observations, not new mutation authority. */
 const reconciliationPathEvidenceSchema = z
   .object({
     path: z.string(),
@@ -373,6 +385,7 @@ const reconciliationPathEvidenceSchema = z
   })
   .strict();
 
+/** Selected recovery metadata including retention state, never recovery content; expiry policy is not evaluated by this schema. */
 const reconciliationRecoveryEvidenceSchema = z.discriminatedUnion("kind", [
   z
     .object({
@@ -411,6 +424,7 @@ const reconciliationRecoveryEvidenceSchema = z.discriminatedUnion("kind", [
     .strict(),
 ]);
 
+/** Persisted stale-decision identity across owner, configuration, listener, writer and full lifecycle dimensions. */
 const reconciliationRuntimeIdentitySchema = z
   .object({
     runtimeOwnerVersion: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
@@ -426,6 +440,7 @@ const reconciliationRuntimeIdentitySchema = z
   })
   .strict();
 
+/** Bounded immutable runtime/path/recovery sample copied into both review and admitted operation; equality is enforced in core. */
 const reconciliationReviewSnapshotSchema = z
   .object({
     runtime: reconciliationRuntimeIdentitySchema,
@@ -438,6 +453,7 @@ const reconciliationReviewSnapshotSchema = z
   })
   .strict();
 
+/** Closed operator action representation, with an explicit primary side only for keep-both. */
 const reconciliationActionSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal(RECONCILIATION_ACTION.keepLocal) }).strict(),
   z.object({ kind: z.literal(RECONCILIATION_ACTION.useRemote) }).strict(),
@@ -459,6 +475,7 @@ const reconciliationActionSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal(RECONCILIATION_ACTION.defer) }).strict(),
 ]);
 
+/** Durable content-free review record; classification/status and optional operation linkage require core relationship validation. */
 const reconciliationReviewSchema = z
   .object({
     retention: z.literal(RECONCILIATION_REVIEW_RETENTION.durable),
@@ -488,6 +505,7 @@ const reconciliationReviewSchema = z
   })
   .strict();
 
+/** Persisted path ownership role; core verifies tracked/target/new-destination claims against sampled and current state. */
 const reconciliationReservationSchema = z
   .object({
     path: z.string(),
@@ -499,6 +517,7 @@ const reconciliationReservationSchema = z
   })
   .strict();
 
+/** Preservation metadata only; core binds path, side, revision and hash to required sampled bytes rather than trusting claims. */
 const reconciliationPreservationReceiptSchema = z
   .object({
     operationId: z.string(),
@@ -519,6 +538,11 @@ const reconciliationPreservationReceiptSchema = z
   })
   .strict();
 
+/**
+ * Durable reviewed operation with exact snapshot, reservations, proof metadata and separate effect certainty.
+ * The restore phase and successor link preserve ownership across restart; core checks
+ * action/phase/evidence relationships after decoding. This schema creates no effects.
+ */
 const reconciliationOperationSchema = z
   .object({
     operationId: z.string(),
@@ -568,6 +592,7 @@ const reconciliationOperationSchema = z
   })
   .strict();
 
+/** Strict v3 host-local envelope with bounded sparse M4 collections; rejects unknown fields and all older/newer versions. */
 const deviceStateSchema = z
   .object({
     format: z.literal(MIRROR_DEVICE_STATE_FORMAT),
@@ -595,6 +620,7 @@ const deviceStateSchema = z
       .max(MAX_RECONCILIATION_OPERATIONS),
   })
   .strict();
+/** Reads format/version only for incompatibility reporting; accepting this header is not accepting the stored state. */
 const stateHeaderSchema = z
   .object({
     format: z.literal(MIRROR_DEVICE_STATE_FORMAT),
@@ -602,29 +628,43 @@ const stateHeaderSchema = z
   })
   .loose();
 
+/** Adapter-only v3 envelope after structural validation, before domain rehydration and consistency checks. */
 type DeviceStateDto = z.infer<typeof deviceStateSchema>;
+/** Serialized M3 path ledger retained inside v3, with identifiers still represented as strings. */
 type PathStateDto = z.infer<typeof pathStateSchema>;
+/** Persisted baseline variant used by both live ledger and sampled review evidence. */
 type AcknowledgementDto = z.infer<typeof acknowledgementSchema>;
+/** Serialized pending M3 work whose event/revision authority is preserved during conversion. */
 type DesiredStateDto = z.infer<typeof desiredStateSchema>;
+/** Serialized device lifecycle, also embedded verbatim in stale-decision identity. */
 type LifecycleDto = z.infer<typeof lifecycleSchema>;
+/** Adapter DTO for staged transferable baselines and their still-separate alignment evidence. */
 type StagedHandoffDto = z.infer<typeof stagedHandoffSchema>;
+/** Serialized established handoff baseline, excluding the unassociated variant. */
 type TransferableAcknowledgementDto = z.infer<
   typeof transferableAcknowledgementSchema
 >;
+/** Content-free path observation DTO retaining local, baseline, remote receipt and M3 evidence identity. */
 type ReconciliationPathEvidenceDto = z.infer<
   typeof reconciliationPathEvidenceSchema
 >;
+/** Selected recovery metadata DTO; null selection is represented by the enclosing snapshot, not this union. */
 type ReconciliationRecoveryEvidenceDto = z.infer<
   typeof reconciliationRecoveryEvidenceSchema
 >;
+/** Serialized immutable review identity shared by durable review and confirmed operation. */
 type ReconciliationReviewSnapshotDto = z.infer<
   typeof reconciliationReviewSnapshotSchema
 >;
+/** Adapter representation of owner/configuration/listener/writer/lifecycle identity before ID branding. */
 type ReconciliationRuntimeIdentityDto = z.infer<
   typeof reconciliationRuntimeIdentitySchema
 >;
+/** Durable review DTO linking sampled evidence to an optional admitted operation. */
 type ReconciliationReviewDto = z.infer<typeof reconciliationReviewSchema>;
+/** Persisted restart authority DTO containing phases, reservations and effect/proof metadata, never note bodies. */
 type ReconciliationOperationDto = z.infer<typeof reconciliationOperationSchema>;
+/** Serialized preservation claim awaiting identifier conversion and evidence-bound core validation. */
 type ReconciliationPreservationReceiptDto = z.infer<
   typeof reconciliationPreservationReceiptSchema
 >;
@@ -634,7 +674,7 @@ type ReconciliationPreservationReceiptDto = z.infer<
  *
  * @param stored - Untrusted host-local value.
  * @param integrity - Adapter-owned checksum capability for staged baselines.
- * @returns Missing, valid, corrupt, or unsupported-future outcome.
+ * @returns Missing, valid, corrupt, or unsupported-version outcome, including older formats.
  * @throws When staged-baseline integrity cannot be evaluated by the host.
  */
 export async function decodeMirrorDeviceState(
@@ -713,6 +753,11 @@ export function encodeMirrorDeviceState(state: MirrorDeviceState): string {
   return encoded;
 }
 
+/**
+ * Projects the core ledger into the v3 envelope for strict schema and round-trip validation before encoding.
+ *
+ * @returns The content-free v3 envelope projection.
+ */
 function projectDeviceState(state: MirrorDeviceState): DeviceStateDto {
   return {
     format: MIRROR_DEVICE_STATE_FORMAT,
@@ -744,6 +789,11 @@ function projectDeviceState(state: MirrorDeviceState): DeviceStateDto {
   };
 }
 
+/**
+ * Emits only the fields belonging to the current lifecycle variant, preserving binding and pause authority.
+ *
+ * @returns The exact lifecycle DTO variant.
+ */
 function projectLifecycle(lifecycle: MirrorDeviceLifecycle): LifecycleDto {
   switch (lifecycle.kind) {
     case MIRROR_DEVICE_LIFECYCLE_KIND.disabled:
@@ -767,6 +817,11 @@ function projectLifecycle(lifecycle: MirrorDeviceLifecycle): LifecycleDto {
   }
 }
 
+/**
+ * Serializes a path's ACK, pending work and blocker without clearing unresolved effects or storing content.
+ *
+ * @returns The restart-preserving path DTO.
+ */
 function projectPathState(state: MirrorPathState): PathStateDto {
   return {
     path: state.path,
@@ -783,6 +838,11 @@ function projectPathState(state: MirrorPathState): PathStateDto {
   };
 }
 
+/**
+ * Serializes baseline identity without turning unassociated paths into live or tombstoned ACKs.
+ *
+ * @returns The baseline DTO without inferred association.
+ */
 function projectAcknowledgement(
   acknowledgement: MirrorAcknowledgement,
 ): AcknowledgementDto {
@@ -804,6 +864,11 @@ function projectAcknowledgement(
   }
 }
 
+/**
+ * Emits the exact event generation and action-specific delete/rename evidence needed for restart.
+ *
+ * @returns The action-specific desired-work DTO.
+ */
 function projectDesiredState(desired: MirrorDesiredState): DesiredStateDto {
   switch (desired.kind) {
     case MIRROR_DESIRED_STATE_KIND.none:
@@ -841,6 +906,11 @@ function projectDesiredState(desired: MirrorDesiredState): DesiredStateDto {
   }
 }
 
+/**
+ * Preserves exact mutation identity, original predicate and consumed budgets in the content-free intent DTO.
+ *
+ * @returns The exact unresolved-intent DTO.
+ */
 function projectUnresolvedMutation(
   intent: UnresolvedMutationIntent,
 ): z.infer<typeof unresolvedMutationIntentSchema> {
@@ -884,6 +954,11 @@ function projectUnresolvedMutation(
   }
 }
 
+/**
+ * Emits established baseline metadata for staged handoff without local observation or device identity.
+ *
+ * @returns The established handoff acknowledgement DTO.
+ */
 function projectTransferableAcknowledgement(
   acknowledgement: TransferableAcknowledgement,
 ): TransferableAcknowledgementDto {
@@ -901,6 +976,11 @@ function projectTransferableAcknowledgement(
   };
 }
 
+/**
+ * Persists review identity/status and its sampled snapshot without refreshing observations or executing the decision.
+ *
+ * @returns The review DTO with its original sampled evidence.
+ */
 function projectReview(review: ReconciliationReview): ReconciliationReviewDto {
   return {
     retention: review.retention,
@@ -912,6 +992,11 @@ function projectReview(review: ReconciliationReview): ReconciliationReviewDto {
   };
 }
 
+/**
+ * Serializes restart ownership, restore successor linkage and separate local/remote effect certainty for strict validation.
+ *
+ * @returns The restart-preserving operation DTO.
+ */
 function projectOperation(
   operation: ReconciliationOperation,
 ): ReconciliationOperationDto {
@@ -936,6 +1021,11 @@ function projectOperation(
   };
 }
 
+/**
+ * Projects the complete immutable sample without dropping related paths, runtime identity or selected recovery metadata.
+ *
+ * @returns The complete reconciliation sample DTO.
+ */
 function projectReconciliationSnapshot(
   snapshot: ReconciliationReviewSnapshot,
 ): ReconciliationReviewSnapshotDto {
@@ -947,6 +1037,11 @@ function projectReconciliationSnapshot(
   };
 }
 
+/**
+ * Preserves every stale-decision runtime dimension, including full lifecycle rather than merely its kind.
+ *
+ * @returns The sampled runtime-identity DTO.
+ */
 function projectReconciliationRuntime(
   runtime: ReconciliationRuntimeIdentity,
 ): ReconciliationRuntimeIdentityDto {
@@ -960,6 +1055,11 @@ function projectReconciliationRuntime(
   };
 }
 
+/**
+ * Retains exact local/baseline/remote receipts and M3 blockers in the persisted sample, without synthesizing evidence.
+ *
+ * @returns The exact path-evidence DTO.
+ */
 function projectReconciliationPathEvidence(
   evidence: ReconciliationPathEvidence,
 ): ReconciliationPathEvidenceDto {
@@ -993,6 +1093,11 @@ function projectReconciliationPathEvidence(
   };
 }
 
+/**
+ * Emits the sampled receipt's original action/predicate/hash relationship; tombstones carry no content hash.
+ *
+ * @returns The action-specific receipt DTO.
+ */
 function projectOperationReceipt(
   receipt: OperationReceipt,
 ): z.infer<typeof operationReceiptSchema> {
@@ -1022,6 +1127,11 @@ function projectOperationReceipt(
   };
 }
 
+/**
+ * Rehydrates v3 identifiers while preserving ledger metadata; the caller must still enforce full consistency and handoff integrity.
+ *
+ * @returns Rehydrated state pending consistency and integrity validation.
+ */
 function convertDeviceState(dto: DeviceStateDto): MirrorDeviceState {
   return {
     deviceId: requireParsed(dto.deviceId, createMirrorWriterId),
@@ -1038,6 +1148,11 @@ function convertDeviceState(dto: DeviceStateDto): MirrorDeviceState {
   };
 }
 
+/**
+ * Rehydrates canonical binding identity without changing lifecycle authority or pause reason.
+ *
+ * @returns The lifecycle with validated branded binding identity.
+ */
 function convertLifecycle(dto: LifecycleDto): MirrorDeviceLifecycle {
   if (dto.kind === MIRROR_DEVICE_LIFECYCLE_KIND.disabled) return dto;
   const associationId = requireParsed(
@@ -1051,6 +1166,11 @@ function convertLifecycle(dto: LifecycleDto): MirrorDeviceLifecycle {
   return { kind: dto.kind, associationId, origin };
 }
 
+/**
+ * Rehydrates literal path and exact baseline/pending-work metadata, retaining unresolved phases and blockers.
+ *
+ * @returns The rehydrated path ledger entry.
+ */
 function convertPathState(dto: PathStateDto): MirrorPathState {
   const path = requireParsed(dto.path, parsePersistedNotePath);
   return {
@@ -1068,6 +1188,11 @@ function convertPathState(dto: PathStateDto): MirrorPathState {
   };
 }
 
+/**
+ * Restores branded baseline revision/hash or recovery ID; equal bytes do not establish a missing ACK.
+ *
+ * @returns The recorded acknowledgement with validated identifiers.
+ */
 function convertAcknowledgement(
   dto: AcknowledgementDto,
 ): MirrorAcknowledgement {
@@ -1087,6 +1212,11 @@ function convertAcknowledgement(
   };
 }
 
+/**
+ * Rehydrates pending work without refreshing event generations, grace deadlines or rename destination prerequisites.
+ *
+ * @returns The original desired-work variant with validated identifiers.
+ */
 function convertDesiredState(dto: DesiredStateDto): MirrorDesiredState {
   if (
     dto.kind === MIRROR_DESIRED_STATE_KIND.none ||
@@ -1131,6 +1261,11 @@ function convertDesiredState(dto: DesiredStateDto): MirrorDesiredState {
   };
 }
 
+/**
+ * Restores sampled deferred history using the desired-state converter and refuses any non-rename result.
+ *
+ * @returns The rehydrated deferred rename history.
+ */
 function convertDeferredHistory(
   dto: z.infer<typeof renameDeferredStateSchema>,
 ): RenameDeferredMirrorState {
@@ -1141,6 +1276,11 @@ function convertDeferredHistory(
   return converted;
 }
 
+/**
+ * Restores exact persisted intent identity and retry/evidence budgets without acquiring new mutation authority.
+ *
+ * @returns The original unresolved mutation with validated identifiers.
+ */
 function convertUnresolvedMutation(
   dto: z.infer<typeof unresolvedMutationIntentSchema>,
 ): UnresolvedMutationIntent {
@@ -1190,6 +1330,12 @@ function convertUnresolvedMutation(
   };
 }
 
+/**
+ * Requires and brands the original revision predicate; absence throws rather than becoming replacement authority.
+ *
+ * @param dto - Persisted content intent that must contain an original revision predicate.
+ * @returns The validated matching-revision precondition.
+ */
 function convertMatchingPrecondition(
   dto: z.infer<typeof unresolvedMutationIntentSchema>["precondition"],
 ): Exclude<ConditionalMutationPrecondition, { readonly kind: "absent" }> {
@@ -1200,6 +1346,11 @@ function convertMatchingPrecondition(
   };
 }
 
+/**
+ * Restores staged baselines/checksum/alignment evidence; payload verification remains the decoder's responsibility.
+ *
+ * @returns The rehydrated staged handoff supplied by the persisted variant.
+ */
 function convertStagedHandoff(dto: StagedHandoffDto): StagedHandoff {
   return {
     associationId: requireParsed(dto.associationId, createMirrorAssociationId),
@@ -1217,6 +1368,11 @@ function convertStagedHandoff(dto: StagedHandoffDto): StagedHandoff {
   };
 }
 
+/**
+ * Rehydrates review and operation IDs without treating persisted review status as a fresh UI decision.
+ *
+ * @returns The rehydrated persisted review.
+ */
 function convertReview(dto: ReconciliationReviewDto): ReconciliationReview {
   return {
     retention: dto.retention,
@@ -1231,6 +1387,11 @@ function convertReview(dto: ReconciliationReviewDto): ReconciliationReview {
   };
 }
 
+/**
+ * Restores phase, snapshot, reservations, preservation and successor identity without settling or replaying any effects.
+ *
+ * @returns The rehydrated operation without replay or effect settlement.
+ */
 function convertOperation(
   dto: ReconciliationOperationDto,
 ): ReconciliationOperation {
@@ -1261,6 +1422,11 @@ function convertOperation(
   };
 }
 
+/**
+ * Rehydrates all immutable snapshot dimensions; does not normalize, refresh or infer absent evidence.
+ *
+ * @returns The original snapshot with validated domain identifiers.
+ */
 function convertReconciliationSnapshot(
   dto: ReconciliationReviewSnapshotDto,
 ): ReconciliationReviewSnapshot {
@@ -1275,6 +1441,11 @@ function convertReconciliationSnapshot(
   };
 }
 
+/**
+ * Brands sampled writer/binding IDs while preserving owner version, configuration generation and listener epoch exactly.
+ *
+ * @returns The sampled runtime identity with validated identifiers.
+ */
 function convertReconciliationRuntime(
   dto: ReconciliationRuntimeIdentityDto,
 ): ReconciliationRuntimeIdentity {
@@ -1291,6 +1462,11 @@ function convertReconciliationRuntime(
   };
 }
 
+/**
+ * Rehydrates sampled evidence and rejects receipt action/type mismatches; cross-field authority checks remain in core.
+ *
+ * @returns The sampled path evidence with validated receipt variants.
+ */
 function convertReconciliationPathEvidence(
   dto: ReconciliationPathEvidenceDto,
 ): ReconciliationPathEvidence {
@@ -1387,6 +1563,11 @@ function convertReconciliationPathEvidence(
   };
 }
 
+/**
+ * Brands receipt identity and exact parent predicate, preserving the content-versus-tombstone distinction.
+ *
+ * @returns The action-specific operation receipt.
+ */
 function convertOperationReceipt(
   dto: z.infer<typeof operationReceiptSchema>,
 ): OperationReceipt {
@@ -1418,6 +1599,11 @@ function convertOperationReceipt(
   return receipt;
 }
 
+/**
+ * Rehydrates selected recovery identity and retention metadata without fetching bytes or deciding recoverability now.
+ *
+ * @returns The rehydrated selected recovery evidence.
+ */
 function convertReconciliationRecoveryEvidence(
   dto: ReconciliationRecoveryEvidenceDto,
 ): ReconciliationRecoveryEvidence {
@@ -1437,6 +1623,11 @@ function convertReconciliationRecoveryEvidence(
     : { kind: dto.kind, ...common, recoverUntil: dto.recoverUntil };
 }
 
+/**
+ * Rehydrates a preservation claim without promoting its proof state; core subsequently checks its evidence-derived identity.
+ *
+ * @returns The rehydrated preservation claim pending core validation.
+ */
 function convertPreservationReceipt(
   dto: ReconciliationPreservationReceiptDto,
 ): ReconciliationPreservationReceipt {
@@ -1454,6 +1645,11 @@ function convertPreservationReceipt(
   };
 }
 
+/**
+ * Restores an established handoff ACK and throws if conversion yields an unassociated baseline.
+ *
+ * @returns The established live or tombstone acknowledgement.
+ */
 function convertTransferableAcknowledgement(
   dto: TransferableAcknowledgementDto,
 ): TransferableAcknowledgement {
@@ -1472,6 +1668,13 @@ function parsePersistedNotePath(value: string): NotePath | undefined {
   return isNormalizedNotePath(value) ? value : undefined;
 }
 
+/**
+ * Applies a boundary parser or throws so invalid persisted identifiers become corrupt-state outcomes.
+ *
+ * @param value - Persisted identifier text.
+ * @param parser - Boundary validator returning undefined for invalid syntax.
+ * @returns The validated parser result.
+ */
 function requireParsed<Value>(
   value: string,
   parser: (candidate: string) => Value | undefined,
@@ -1481,6 +1684,12 @@ function requireParsed<Value>(
   return parsed;
 }
 
+/**
+ * Returns UTF-8 bytes for the persisted v3 snapshot capacity check.
+ *
+ * @param value - Serialized v3 snapshot text.
+ * @returns Encoded v3 snapshot byte count.
+ */
 function byteLength(value: string): number {
   return new TextEncoder().encode(value).byteLength;
 }

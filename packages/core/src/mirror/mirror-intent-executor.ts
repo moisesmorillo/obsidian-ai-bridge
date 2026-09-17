@@ -44,13 +44,14 @@ import type {
 import type { NotePath } from "@core/note-path/note-path.types";
 
 /**
- * Executes the durable unresolved-intent state machine for positive content mutations.
+ * Executes durable unresolved content and recovery-first tombstone intents.
  *
  * The executor consumes attempt/evidence budgets before remote calls, delegates every
  * decision row to `mirror-intent-policy`, and never substitutes newer content for an
  * existing operation identity.
  */
 export class MirrorIntentExecutor {
+  /** Shares persistence, finite scheduling and status owners across content and tombstone intent execution. */
   constructor(
     private readonly local: ReadOnlyLocalVault,
     private readonly remote: RemoteBridge,

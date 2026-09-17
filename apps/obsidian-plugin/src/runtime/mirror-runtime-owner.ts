@@ -589,6 +589,12 @@ export class MirrorRuntimeOwner {
     );
   }
 
+  /**
+   * Starts/joins M3 positive-only bootstrap for the current ready epoch and binding; this is not M4 reviewed reconciliation.
+   *
+   * @param force - Whether a previously completed identity should bootstrap again.
+   * @returns Whether bootstrap completed; false includes failed or unavailable readiness.
+   */
   private async startAutomaticReconciliation(force: boolean): Promise<boolean> {
     const attachmentEpoch = this.epochs.readyEpoch();
     const connection = this.admission.currentConnection();
@@ -609,6 +615,11 @@ export class MirrorRuntimeOwner {
       return false;
     }
     this.reconcileAdmission();
+    /**
+     * Rejects progress from a detached epoch, retired connection or no-longer-active lifecycle.
+     *
+     * @returns Whether the captured connection and epoch remain active.
+     */
     const isCurrent = () =>
       this.epochs.readyEpoch() === attachmentEpoch &&
       this.admission.isCurrent(connection) &&
@@ -637,6 +648,11 @@ export class MirrorRuntimeOwner {
     }
   }
 
+  /**
+   * Closes admission and pauses if configuration changed while activation committed; never leaves stale activation running.
+   *
+   * @returns Whether the connection was stale and admission was closed; false when still current.
+   */
   private async settleStaleActivation(
     connection: MirrorRuntimeConnection,
   ): Promise<boolean> {
@@ -647,12 +663,14 @@ export class MirrorRuntimeOwner {
     return true;
   }
 
+  /** Retires connection identity and bootstrap completion while preserving old in-flight settlement and pausing active state. */
   private async retireConnectionForConfigurationChange(): Promise<void> {
     this.admission.retireConnection();
     this.reconciliation.invalidate();
     await this.pauseForConfigurationChange();
   }
 
+  /** Durably pauses only an active writer; disabled and handoff lifecycle authority remain unchanged. */
   private async pauseForConfigurationChange(): Promise<void> {
     if (
       this.stateOwner.snapshot().state.lifecycle.kind !==
@@ -665,6 +683,11 @@ export class MirrorRuntimeOwner {
     );
   }
 
+  /**
+   * Allows initial connection or the existing durable origin only; settings cannot silently rebind an established mirror.
+   *
+   * @returns Whether the requested origin is allowed by the durable lifecycle.
+   */
   private canCreateConnection(origin: MirrorOrigin): boolean {
     const lifecycle = this.stateOwner.snapshot().state.lifecycle;
     return (
@@ -673,6 +696,7 @@ export class MirrorRuntimeOwner {
     );
   }
 
+  /** Composes Fetch and core synchronization behind generation-checked admission without replacing the durable state owner. */
   private createConnection(
     origin: MirrorOrigin,
     secretReference: string,
@@ -721,6 +745,11 @@ export class MirrorRuntimeOwner {
       : lifecycle.associationId;
   }
 
+  /**
+   * Checks the current native secret reference without exposing bearer bytes to the owner or status UI.
+   *
+   * @returns Whether the configured native secret currently exists.
+   */
   private secretAvailable(): boolean {
     const reference =
       this.admission.currentPreferences()?.secretReference ?? null;
@@ -731,6 +760,7 @@ export class MirrorRuntimeOwner {
     );
   }
 
+  /** Delegates request-gate readiness to the admission owner using current lifecycle, layout and secret evidence. */
   private reconcileAdmission(): void {
     this.admission.reconcileAdmission(
       this.stateOwner,
@@ -739,6 +769,7 @@ export class MirrorRuntimeOwner {
     );
   }
 
+  /** Immediately closes admission, invalidates bootstrap completion and persists a runtime blocker before notifying UI. */
   private async fenceRuntimeFailure(): Promise<void> {
     this.admission.fenceRuntime();
     this.reconciliation.invalidate();
@@ -746,6 +777,11 @@ export class MirrorRuntimeOwner {
     this.notify();
   }
 
+  /**
+   * Clears only the runtime-unavailable fence after the configured capability probe succeeds; preserves other blockers.
+   *
+   * @returns Whether runtime capability recovery succeeded or was unnecessary.
+   */
   private async recoverRuntimeIfNeeded(): Promise<boolean> {
     if (
       this.stateOwner.snapshot().state.globalBlockReason !==
@@ -764,6 +800,12 @@ export class MirrorRuntimeOwner {
     return true;
   }
 
+  /**
+   * Counts owner-lifetime work until actual promise settlement so handoff cannot drain during detached session work.
+   *
+   * @param operation - Owner-scoped asynchronous work counted through settlement.
+   * @returns The operation result, retaining rejection after work accounting settles.
+   */
   private async runOwnerOperation<Result>(
     operation: () => Promise<Result>,
   ): Promise<Result> {
@@ -776,6 +818,7 @@ export class MirrorRuntimeOwner {
     }
   }
 
+  /** Retains latest available content-free per-path outcomes for status without changing durable ACKs or blockers. */
   private captureOutcomes(synchronizer: MirrorSynchronizer): void {
     for (const entry of this.stateOwner.snapshot().state.paths) {
       const outcome = synchronizer.outcome(entry.path);
@@ -785,10 +828,16 @@ export class MirrorRuntimeOwner {
     }
   }
 
+  /** Notifies only the currently attached observation/presentation epoch. */
   private notify(): void {
     this.epochs.notify();
   }
 
+  /**
+   * Selects the injected or host Web Crypto provider for content-free handoff checksums.
+   *
+   * @returns A checksum integrity adapter using the selected crypto provider.
+   */
   private handoffIntegrity(): WebCryptoHandoffIntegrity {
     return this.dependencies.cryptography === undefined
       ? new WebCryptoHandoffIntegrity()

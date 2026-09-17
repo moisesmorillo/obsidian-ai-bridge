@@ -10,6 +10,7 @@ import type { NotePath } from "@core/note-path/note-path.types";
 
 /** Owns paired durable path status transitions and sanitized runtime outcomes. */
 export class MirrorPathStatusWriter {
+  /** Couples serialized ledger transitions to a content-free runtime outcome sink without owning retry policy. */
   constructor(
     private readonly stateOwner: MirrorStateOwner,
     private readonly setOutcome: (outcome: MirrorPathJobOutcome) => void,

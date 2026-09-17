@@ -45,6 +45,7 @@ import {
 } from "@worker/infrastructure/storage-object.errors";
 import { sha256Content } from "@worker/storage/storage-crypto";
 
+/** Adapter-private recovery envelope and R2 generation evidence used to construct an opaque conditional replacement capability. */
 interface ObservedRecoveryObject {
   readonly decoded: DecodedRecoveryObject;
   readonly storageEtag: string;
@@ -381,16 +382,24 @@ export class R2RecoverySnapshotRepository
       | Extract<DecodedRecoveryObject, { readonly kind: "prepared" }>
       | PreparedRecoveryGenerationCandidate,
   ): Extract<RecoverySnapshotState, { readonly kind: "prepared" }>;
+  /** Projects sealed recovery metadata including retention deadline, excluding plaintext and private transition evidence. */
   private toState(
     decoded:
       | Extract<DecodedRecoveryObject, { readonly kind: "sealed" }>
       | SealedRecoveryGenerationCandidate,
   ): Extract<RecoverySnapshotState, { readonly kind: "sealed" }>;
+  /** Projects retained purge-marker metadata without exposing adapter-only operation history. */
   private toState(
     decoded:
       | Extract<DecodedRecoveryObject, { readonly kind: "purged" }>
       | PurgedRecoveryGenerationCandidate,
   ): Extract<RecoverySnapshotState, { readonly kind: "purged" }>;
+  /**
+   * Maps all recovery variants to public metadata while retaining exact lineage/hash/revision and applicable deadline.
+   *
+   * @param decoded - Validated recovery object metadata without body bytes.
+   * @returns Public recovery metadata for the decoded storage variant.
+   */
   private toState(
     decoded:
       | DecodedRecoveryObject

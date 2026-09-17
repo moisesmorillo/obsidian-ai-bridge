@@ -34,7 +34,9 @@ export interface PluginDataHost {
   saveData(data: object): Promise<void>;
 }
 
+/** Bounded native SecretStorage reference name, never the bearer value itself. */
 const secretReferenceSchema = z.string().min(1).max(128);
+/** Closed synced preferences contract excluding device activation, ledger state and credentials. */
 const preferencesSchema = z
   .object({
     format: z.literal(MIRROR_PREFERENCES_FORMAT),
@@ -44,6 +46,7 @@ const preferencesSchema = z
     secretReference: secretReferenceSchema.nullable(),
   })
   .strict();
+/** Discriminator-only probe for future-format reporting; the full preference schema still owns acceptance. */
 const preferencesHeaderSchema = z
   .object({
     format: z.literal(MIRROR_PREFERENCES_FORMAT),
@@ -185,6 +188,12 @@ export class ObsidianPluginDataStore {
   }
 }
 
+/**
+ * Probes serializability for the preference byte bound; circular or unsupported values yield no encoding.
+ *
+ * @param value - Untrusted loaded preference value to probe.
+ * @returns JSON text, or undefined when serialization fails.
+ */
 function safeStringify(value: unknown): string | undefined {
   try {
     return JSON.stringify(value);
@@ -193,6 +202,12 @@ function safeStringify(value: unknown): string | undefined {
   }
 }
 
+/**
+ * Measures UTF-8 bytes for the synced preference capacity limit.
+ *
+ * @param value - Serialized preference text.
+ * @returns Encoded byte count, not JavaScript string length.
+ */
 function byteLength(value: string): number {
   return new TextEncoder().encode(value).byteLength;
 }

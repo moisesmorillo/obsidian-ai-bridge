@@ -82,6 +82,7 @@ export class ObsidianMirrorEvents {
     this.attached = false;
   }
 
+  /** Captures eligible saved-file presence only while attached; delegates authority and failure handling to the owner. */
   private onPresent(file: TAbstractFile): void {
     if (!this.attached || !(file instanceof TFile)) return;
     const path = eligiblePath(file.path, this.policy);
@@ -89,6 +90,7 @@ export class ObsidianMirrorEvents {
     void this.owner.observePresent(path).catch(() => undefined);
   }
 
+  /** Emits file absence or folder-removal observations; the core decides whether post-bootstrap deletion authority exists. */
   private onDelete(file: TAbstractFile): void {
     if (!this.attached) return;
     if (file instanceof TFile) {
@@ -106,6 +108,7 @@ export class ObsidianMirrorEvents {
     }
   }
 
+  /** Captures old/new identities and maps scope entry to presence, scope exit to null destination, without reading bodies. */
   private onRename(file: TAbstractFile, oldPathValue: string): void {
     if (!this.attached) return;
     const oldPath = `${oldPathValue}`;
@@ -135,6 +138,13 @@ export class ObsidianMirrorEvents {
   }
 }
 
+/**
+ * Rejects nonliteral or privacy-excluded event paths without repairing or URI-decoding them.
+ *
+ * @param value - Untrusted host event path.
+ * @param policy - Current vault privacy exclusions.
+ * @returns The eligible literal path, or null.
+ */
 function eligiblePath(
   value: string,
   policy: LocalEligibilityPolicy,
@@ -144,6 +154,13 @@ function eligiblePath(
   return result.kind === LocalInspectionKind.ok ? result.path : null;
 }
 
+/**
+ * Tests folder scope through a hypothetical Markdown descendant using the shared path/privacy policy.
+ *
+ * @param folder - Literal host folder path.
+ * @param policy - Current vault privacy exclusions.
+ * @returns Whether a Markdown child would be eligible.
+ */
 function eligibleFolder(
   folder: string,
   policy: LocalEligibilityPolicy,

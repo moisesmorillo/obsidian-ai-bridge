@@ -77,6 +77,11 @@ export function decodeStrictUtf8(bytes: Uint8Array): string | undefined {
   }
 }
 
+/**
+ * Returns the first stream/deadline outcome while leaving cancellation settlement to the caller.
+ *
+ * @returns The first read outcome or abort marker.
+ */
 async function raceWithAbort<Value>(
   promise: Promise<Value>,
   signal: AbortSignal,
@@ -87,6 +92,11 @@ async function raceWithAbort<Value>(
 > {
   if (signal.aborted) return { kind: "aborted" };
   return new Promise((resolve) => {
+    /**
+     * Resolves the bounded read as aborted without claiming the underlying stream has stopped.
+     *
+     * @returns No value; resolves the racing promise with an abort marker.
+     */
     const onAbort = () => resolve({ kind: "aborted" });
     signal.addEventListener("abort", onAbort, { once: true });
     void promise
@@ -98,6 +108,11 @@ async function raceWithAbort<Value>(
   });
 }
 
+/**
+ * Settles best-effort stream cancellation before releasing its lock; callers retain admission for this promise.
+ *
+ * @returns Settlement after cancellation is attempted and the lock is released.
+ */
 function cancelReader(
   reader: ReadableStreamDefaultReader<Uint8Array>,
 ): Promise<void> {

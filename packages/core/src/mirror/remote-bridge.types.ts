@@ -25,7 +25,7 @@ export type RemoteBridgeResult<Value> =
   | { readonly kind: "success"; readonly value: Value }
   | { readonly kind: "failure"; readonly failure: RemoteBridgeFailure };
 
-/** Result of a dispatched conditional mutation with conservative effect certainty. */
+/** Conditional mutation result retaining certainty both before dispatch and after possible remote effects. */
 export type RemoteBridgeMutationResult<Value> =
   | {
       readonly kind: typeof MUTATION_EFFECT_CERTAINTY.confirmed;
@@ -73,7 +73,7 @@ export interface RemoteRequestPermit {
 }
 
 /**
- * Narrow admission seam owned by the later runtime coordinator.
+ * Narrow admission seam owned by the same-realm runtime coordinator.
  *
  * Transport never creates a private request pool; it asks this capability before
  * every network attempt and releases the returned permit when its bounded work
@@ -86,23 +86,33 @@ export interface RemoteRequestAdmission {
 
 /** Platform-independent remote capability implemented by the plugin Fetch adapter. */
 export interface RemoteBridge {
+  /** Reads authenticated capabilities/designation without activating the caller. */
   describe(): Promise<RemoteBridgeResult<RemoteBridgeDescription>>;
+  /** Reads one bounded reporting page with an opaque cursor; inventory absence grants no deletion authority. */
   listNotes(cursor?: string): Promise<RemoteBridgeResult<NotePage>>;
+  /** Reads content while distinguishing legacy from revisioned live bytes; missing is not a tombstone. */
   readNote(path: NotePath): Promise<RemoteBridgeResult<RemoteNoteContent>>;
+  /** Reads exact current generation/receipt metadata, including retained tombstones, without advancing a baseline. */
   inspectNote(path: NotePath): Promise<RemoteBridgeResult<CurrentNoteState>>;
+  /** Attempts one original conditional request; failure certainty must not treat cancellation as rollback. */
   mutateNote(
     request: ConditionalMutationRequest,
   ): Promise<RemoteBridgeMutationResult<MutationAcknowledgement>>;
+  /** Reads one bounded metadata page without recovering content or changing retention. */
   listRecovery(cursor?: string): Promise<RemoteBridgeResult<RecoveryPage>>;
+  /** Reads recovery metadata; successful null means missing, distinct from unavailable transport. */
   inspectRecovery(
     id: RecoverySnapshotId,
   ): Promise<RemoteBridgeResult<RecoverySnapshotState | null>>;
+  /** Reads prepared/unexpired content or explicit missing/unavailable status; never restores a local note. */
   readRecoveryContent(
     id: RecoverySnapshotId,
   ): Promise<RemoteBridgeResult<RemoteRecoveryContent>>;
+  /** Requests exact-revision retention sealing; the remote service verifies the matching current tombstone. */
   sealRecovery(
     request: RecoverySealRequest,
   ): Promise<RemoteBridgeMutationResult<RecoverySnapshotState>>;
+  /** Requests conditional expiry purge to a retained marker, not native storage deletion. */
   purgeRecovery(
     request: RecoveryPurgeRequest,
   ): Promise<RemoteBridgeMutationResult<RecoverySnapshotState>>;

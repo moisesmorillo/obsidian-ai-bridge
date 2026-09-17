@@ -15,6 +15,7 @@ import {
   type V2RouteMethod,
 } from "@worker/http/v2-route-policy";
 
+/** Case-insensitive preflight lookup derived from the canonical browser request-header policy. */
 const ALLOWED_HEADER_NAMES = new Set(
   V2_CORS_ALLOWED_HEADERS.map((header) => header.toLowerCase()),
 );

@@ -66,6 +66,7 @@ export interface NoDesiredMirrorState {
 /** Positive saved-file evidence requiring a later stable read. */
 export interface DirtyPresentMirrorState {
   readonly kind: typeof MIRROR_DESIRED_STATE_KIND.dirtyPresent;
+  /** Monotonic saved-event identity; a later same-text event still invalidates older work. */
   readonly observationGeneration: number;
 }
 
@@ -91,10 +92,13 @@ export interface RenameDeferredMirrorState {
   readonly sourcePath: NotePath;
   /** `null` records a rename out of eligibility without retaining the private destination. */
   readonly destinationPath: NotePath | null;
+  /** Original acknowledged source generation, advanced only by matching own-operation evidence. */
   readonly sourceExpectedRevision: ApplicationRevision;
+  /** Destination observation to confirm before cleanup; null only for an excluded destination. */
   readonly destinationObservationGeneration: number | null;
   /** Exact durably persisted destination ACK required before source cleanup. */
   readonly destinationAcknowledgedRevision: ApplicationRevision | null;
+  /** Monotonic source-cleanup deadline; runtime restart policy rearms grace before dispatch. */
   readonly graceDeadlineMilliseconds: number;
   readonly phase: (typeof MIRROR_RENAME_PHASE)[keyof typeof MIRROR_RENAME_PHASE];
 }
@@ -190,7 +194,7 @@ export interface HandoffRecord extends HandoffPayload {
   readonly checksum: ContentSha256;
 }
 
-/** Local and future-remote verification evidence for one transferred acknowledgement. */
+/** Local and remote verification evidence for one transferred acknowledgement. */
 export interface StagedHandoffEntry extends HandoffBaselineEntry {
   readonly localAlignment: (typeof HANDOFF_ALIGNMENT_KIND)[keyof typeof HANDOFF_ALIGNMENT_KIND];
   readonly remoteVerification: (typeof HANDOFF_ALIGNMENT_KIND)[keyof typeof HANDOFF_ALIGNMENT_KIND];

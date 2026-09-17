@@ -67,6 +67,7 @@ export const V2_ROUTE_POLICY = {
   },
 } as const satisfies Record<string, V2RouteDefinition>;
 
+/** Derived route lookup view; V2_ROUTE_POLICY remains the sole method/path capability authority. */
 const V2_ROUTE_DEFINITIONS = Object.values(V2_ROUTE_POLICY);
 
 /**

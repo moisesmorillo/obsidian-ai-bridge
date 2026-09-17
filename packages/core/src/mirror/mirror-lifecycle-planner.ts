@@ -28,6 +28,7 @@ import type { NotePath } from "@core/note-path/note-path.types";
  * no API into this owner, so they cannot manufacture destructive evidence.
  */
 export class MirrorLifecyclePlanner {
+  /** Connects event authority to serialized state and owner-local generation/time seams without host event dependencies. */
   constructor(
     private readonly stateOwner: MirrorStateOwner,
     private readonly runtime: MirrorSynchronizerRuntime,
@@ -232,6 +233,11 @@ export class MirrorLifecyclePlanner {
     };
   }
 
+  /**
+   * Invalidates old cleanup dependencies and records only destination presence when the source lacks a live ACK.
+   *
+   * @returns A persistence/capacity refusal, or undefined after recording positive discovery.
+   */
   private async recordPositiveRenameDiscovery(
     sourcePath: NotePath,
     destinationPath: NotePath | null,

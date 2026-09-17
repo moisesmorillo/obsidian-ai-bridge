@@ -32,12 +32,13 @@ import type { RemoteBridge } from "@core/mirror/remote-bridge.types";
 import type { NotePath } from "@core/note-path/note-path.types";
 
 /**
- * Public core facade for M3 positive autosynchronization.
+ * Public core facade for M3 outward autosynchronization.
  *
  * The facade owns the global lifecycle phase and shared two-slot scheduler. Bootstrap,
- * coalescing, positive reconciliation, and unresolved-intent execution are delegated
- * to focused policy owners that share the same durable `MirrorStateOwner` authority.
- * It deliberately has no delete/rename authority or host callback knowledge.
+ * coalescing, positive reconciliation, runtime deletion, deferred rename and
+ * unresolved-intent execution are delegated to focused policy owners sharing
+ * durable `MirrorStateOwner` authority. It has no host callback knowledge and
+ * does not execute M4 reviewed reconciliation.
  */
 export class MirrorSynchronizer {
   private readonly scheduler = new FairMirrorScheduler();
@@ -294,7 +295,8 @@ export class MirrorSynchronizer {
   /**
    * Runs every path currently ready under coalescing or retry policy.
    *
-   * Jobs enter in lexical order for a stable scan and remain FIFO. At most two execute
+   * Rename plans enter first, then other work, with lexical ordering within each
+   * priority. Admitted jobs remain FIFO. At most two execute
    * globally, and duplicate reservations for one path are refused.
    *
    * @returns When all jobs admitted by this pass have settled.

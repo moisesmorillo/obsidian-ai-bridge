@@ -16,7 +16,11 @@ export default defineConfig({
     coverage: {
       provider: "v8",
       reporter: ["text", "json-summary", "lcov"],
-      include: ["apps/*/src/**/*.ts", "packages/*/src/**/*.ts"],
+      include: [
+        "apps/*/src/**/*.ts",
+        "packages/*/src/**/*.ts",
+        "tools/tsdoc/**/*.ts",
+      ],
       exclude: [
         "**/*.d.ts",
         "**/*.types.ts",
@@ -32,6 +36,10 @@ export default defineConfig({
         branches: 90,
       },
     },
-    projects: ["packages/*/vitest.config.ts", "apps/*/vitest.config.ts"],
+    projects: [
+      "packages/*/vitest.config.ts",
+      "apps/*/vitest.config.ts",
+      "tools/vitest.config.ts",
+    ],
   },
 });

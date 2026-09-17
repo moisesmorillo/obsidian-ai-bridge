@@ -331,10 +331,22 @@ function lifecycleMatchesAssociation(
   }
 }
 
+/**
+ * Detects duplicate path or operation identity within one historical ledger scope.
+ *
+ * @param values - Ledger identities within the scope being checked.
+ * @returns Whether an identity occurs more than once.
+ */
 function hasDuplicate(values: readonly string[]): boolean {
   return new Set(values).size !== values.length;
 }
 
+/**
+ * Accepts exactly representable nonnegative v2 counters and grace timestamps, preserving historical zero values.
+ *
+ * @param value - Persisted counter or grace timestamp.
+ * @returns Whether the value is a nonnegative safe integer.
+ */
 function isNonNegativeSafeInteger(value: number): boolean {
   return Number.isSafeInteger(value) && value >= 0;
 }

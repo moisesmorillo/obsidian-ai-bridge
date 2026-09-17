@@ -74,7 +74,7 @@ export function createMirrorOperationId(
 }
 
 /**
- * Creates a validated fresh application-generation revision.
+ * Validates application-generation revision syntax without generating or proving freshness.
  *
  * @param value - Untrusted revision candidate.
  * @returns The opaque revision, or `undefined` when it is not canonical UUID-v4 syntax.
@@ -139,7 +139,7 @@ export function parseApplicationEtag(
 }
 
 /**
- * Creates a strong M3 application ETag from one validated application revision.
+ * Validates an untrusted ETag as one canonical strong M3 application validator.
  *
  * @param value - Untrusted HTTP ETag candidate.
  * @returns The opaque ETag, or `undefined` when it is not one strong M3 validator.

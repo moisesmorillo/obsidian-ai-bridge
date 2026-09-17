@@ -46,6 +46,12 @@ export class MirrorStatusUi {
     this.modal = null;
   }
 
+  /**
+   * Replaces the session's prior modal with text-only status or explicit handoff metadata and releases its reference on close.
+   *
+   * @param title - Fixed presentation title.
+   * @param text - Text-only status or explicitly requested handoff metadata.
+   */
   private showModal(title: string, text: string): void {
     this.modal?.close();
     this.modal = new MirrorTextModal(this.app, title, text, () => {

@@ -72,7 +72,8 @@ mise run install
 | Task | Purpose |
 | --- | --- |
 | `mise run check` | Run Biome formatting, linting, assists, type checking, coverage-enforced tests, and both application bundle validations. |
-| `mise run lint` | Run type-aware Oxlint semantic checks, including deprecated API detection. |
+| `mise run lint` | Run TSDoc presence and type-aware Oxlint semantic checks, including deprecated API detection. |
+| `mise run tsdoc:check` | Check associated TSDoc presence across production TypeScript. |
 | `mise run test` | Run the fast Vitest test suite without coverage. |
 | `mise run worker:storage-test` | Qualify conditional R2 semantics in the pinned local workerd runtime. |
 | `mise run coverage` | Run the Vitest suite with V8 coverage and enforce global thresholds. |
@@ -84,7 +85,10 @@ mise run install
 
 `mise run test` is the fast normal developer test command. `mise run coverage`
 runs the same suite with coverage reporting and threshold enforcement, while
-`mise run check` is the complete quality gate.
+`mise run check` is the authoritative validation command. Production TypeScript uses
+TSDoc for named semantic declarations, including internals. The quality gate enforces
+documentation presence; semantic accuracy and usefulness remain review responsibilities.
+See [AGENTS.md](AGENTS.md#documentation-comments) for the policy and enforcement boundary.
 
 Tests live in dedicated `tests/` trees outside production `src/` trees. Isolated
 behavior belongs under `tests/unit/`; tests that intentionally compose multiple

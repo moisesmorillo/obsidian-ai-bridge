@@ -20,6 +20,7 @@ import type { Plugin } from "obsidian";
 export class MirrorPluginSession {
   private attached = true;
 
+  /** Retains one enable-lifetime set of presentation/listener/timer resources after same-realm owner acquisition. */
   private constructor(
     private readonly id: string,
     private readonly owner: MirrorRuntimeOwner,
@@ -149,10 +150,16 @@ export class MirrorPluginSession {
     this.owner.detach(this.id);
   }
 
+  /**
+   * Requires both local attachment and owner presentation identity before delivering UI or timer work.
+   *
+   * @returns Whether this attachment remains the owner's current presentation.
+   */
   private isCurrent(): boolean {
     return this.attached && this.owner.isAttached(this.id);
   }
 
+  /** Refreshes sanitized UI and one-shot scheduling only for the current session; does not restart owner state. */
   private refresh(): void {
     if (!this.isCurrent()) return;
     this.wake.reconcile();

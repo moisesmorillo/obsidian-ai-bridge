@@ -79,6 +79,7 @@ export class MirrorWakeScheduler {
     this.cancelScheduled();
   }
 
+  /** Cancels the pending host timeout only; an already-running core operation retains its own settlement. */
   private cancelScheduled(): void {
     if (this.handle === null) return;
     this.host.clearTimeout(this.handle);

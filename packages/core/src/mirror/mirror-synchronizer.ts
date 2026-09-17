@@ -27,6 +27,7 @@ import type {
   MirrorSynchronizerPhase,
   MirrorSynchronizerRuntime,
 } from "@core/mirror/mirror-synchronizer.types";
+import { isReconciliationPathReserved } from "@core/mirror/reconciliation-state-validation";
 import type { RemoteBridge } from "@core/mirror/remote-bridge.types";
 import type { NotePath } from "@core/note-path/note-path.types";
 
@@ -283,7 +284,9 @@ export class MirrorSynchronizer {
       return null;
     }
     return this.pathRuntime.nextWakeAtMilliseconds(
-      snapshot.state.paths,
+      snapshot.state.paths.filter(
+        (entry) => !isM3EntryReserved(snapshot, entry),
+      ),
       this.runtime.nowMilliseconds(),
     );
   }
@@ -309,6 +312,7 @@ export class MirrorSynchronizer {
       .filter(
         (entry) =>
           !this.scheduler.isReserved(entry.path) &&
+          !isM3EntryReserved(snapshot, entry) &&
           this.pathRuntime.isReady(entry, now),
       )
       .toSorted(
@@ -336,8 +340,9 @@ export class MirrorSynchronizer {
 
   /** Runs one scheduler-owned path through its current semantic policy owner. */
   private async runPath(path: NotePath): Promise<void> {
-    const entry = findMirrorPath(this.stateOwner.snapshot().state, path);
-    if (entry === undefined) return;
+    const snapshot = this.stateOwner.snapshot();
+    const entry = findMirrorPath(snapshot.state, path);
+    if (entry === undefined || isM3EntryReserved(snapshot, entry)) return;
     switch (entry.desired.kind) {
       case MIRROR_DESIRED_STATE_KIND.runtimeDelete:
         await this.deletionExecutor.run(path);
@@ -360,6 +365,19 @@ export class MirrorSynchronizer {
   async grantRetry(path: NotePath): Promise<boolean> {
     return this.intentExecutor.grantRetry(path);
   }
+}
+
+/** @returns Whether active M4 ownership reserves this source or rename destination. */
+function isM3EntryReserved(
+  snapshot: MirrorStateSnapshot,
+  entry: MirrorPathState,
+): boolean {
+  if (isReconciliationPathReserved(snapshot.state, entry.path)) return true;
+  return (
+    entry.desired.kind === MIRROR_DESIRED_STATE_KIND.renameDeferred &&
+    entry.desired.destinationPath !== null &&
+    isReconciliationPathReserved(snapshot.state, entry.desired.destinationPath)
+  );
 }
 
 /** @returns Scheduler priority that lets a rename own its destination reservation. */

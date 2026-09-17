@@ -90,11 +90,15 @@ changed, malformed, excluded, or oversized selection is refused.
 
 Restore is **local-only first**. An absent eligible destination may be created. An
 existing destination requires either a different path or prior verified preservation
-and an atomic conditional replacement. The path is durably marked
-`restored-pending-review` before the local write so its host event cannot silently
-publish it. Restore never changes the remote current head or baseline in the same
-operation. A later explicit review may recreate a tombstoned original or publish an
-alternate path with normal v2 conditions.
+and an atomic conditional replacement. The operation enters the durable active
+`restored-pending-review` phase before the local write so its path reservation
+survives restart/re-enable, blocks handoff, and
+keeps the host event out of ordinary M3 scheduling. Restore never changes the remote
+current head or baseline in the same operation. A later explicit review may recreate
+a tombstoned original or publish an alternate path with normal v2 conditions. The
+restore cannot become terminal without a linked reviewed successor operation taking
+over the restored path atomically; that successor's reviewed completion is what may
+release ordinary M3 ownership.
 
 After restart, a persisted restore intent is reconciled from the exact destination
 hash and preservation receipt. If the destination changed or the recovery bytes can

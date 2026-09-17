@@ -1,6 +1,3 @@
-/** HTTP header containing request authentication credentials. */
-export const AUTHORIZATION_HEADER = "Authorization";
-
 /** Authentication challenge header required for unauthenticated requests. */
 export const WWW_AUTHENTICATE_HEADER = "WWW-Authenticate";
 

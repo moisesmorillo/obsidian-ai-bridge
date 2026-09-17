@@ -1,5 +1,6 @@
 import {
   type ConditionalMutationPrecondition,
+  type ContentOperationReceipt,
   createApplicationRevision,
   createContentSha256,
   createMirrorAssociationId,
@@ -30,10 +31,12 @@ import {
   MUTATION_ACTION,
   MUTATION_EFFECT_CERTAINTY,
   type NotePath,
+  type OperationReceipt,
   RECONCILIATION_ACTION,
   RECONCILIATION_AUTHORITY_SOURCE,
   RECONCILIATION_CLASSIFICATION,
   RECONCILIATION_LOCAL_EVIDENCE_KIND,
+  RECONCILIATION_LOCAL_STABILITY,
   RECONCILIATION_OPERATION_PHASE,
   RECONCILIATION_PATH_REFERENCE_KIND,
   RECONCILIATION_PRESERVATION_PROOF_STATE,
@@ -41,15 +44,23 @@ import {
   RECONCILIATION_REMOTE_EVIDENCE_KIND,
   RECONCILIATION_REVIEW_RETENTION,
   RECONCILIATION_REVIEW_STATUS,
-  type ReconciliationEvidence,
+  RECOVERY_SNAPSHOT_STATE_KIND,
   type ReconciliationOperation,
+  type ReconciliationPathEvidence,
   type ReconciliationPreservationReceipt,
+  type ReconciliationRecoveryEvidence,
   type ReconciliationReview,
+  type ReconciliationReviewSnapshot,
+  type ReconciliationRuntimeIdentity,
+  type RenameDeferredMirrorState,
   type StagedHandoff,
   type TransferableAcknowledgement,
   type UnresolvedMutationIntent,
 } from "@obsidian-ai-bridge/core";
-import { unresolvedMutationIntentSchema } from "@obsidian-ai-bridge/protocol";
+import {
+  operationReceiptSchema,
+  unresolvedMutationIntentSchema,
+} from "@obsidian-ai-bridge/protocol";
 import { parsePersistedMirrorOrigin } from "@obsidian-plugin/configuration/mirror-endpoint";
 import {
   type HandoffIntegrity,
@@ -94,6 +105,35 @@ const acknowledgementSchema = z.discriminatedUnion("kind", [
     .strict(),
 ]);
 
+const renameDeferredStateSchema = z
+  .object({
+    kind: z.literal(MIRROR_DESIRED_STATE_KIND.renameDeferred),
+    observationGeneration: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+    renameId: z.string(),
+    associationId: z.string(),
+    sourcePath: z.string(),
+    destinationPath: z.string().nullable(),
+    sourceExpectedRevision: z.string(),
+    destinationObservationGeneration: z
+      .number()
+      .int()
+      .min(0)
+      .max(Number.MAX_SAFE_INTEGER)
+      .nullable(),
+    destinationAcknowledgedRevision: z.string().nullable(),
+    graceDeadlineMilliseconds: z
+      .number()
+      .int()
+      .min(0)
+      .max(Number.MAX_SAFE_INTEGER),
+    phase: z.enum([
+      MIRROR_RENAME_PHASE.destinationRequired,
+      MIRROR_RENAME_PHASE.sourceCleanupRequired,
+      MIRROR_RENAME_PHASE.invalidated,
+    ]),
+  })
+  .strict();
+
 const desiredStateSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal(MIRROR_DESIRED_STATE_KIND.none) }).strict(),
   z
@@ -124,57 +164,27 @@ const desiredStateSchema = z.discriminatedUnion("kind", [
         .max(Number.MAX_SAFE_INTEGER),
     })
     .strict(),
-  z
-    .object({
-      kind: z.literal(MIRROR_DESIRED_STATE_KIND.renameDeferred),
-      observationGeneration: z
-        .number()
-        .int()
-        .min(0)
-        .max(Number.MAX_SAFE_INTEGER),
-      renameId: z.string(),
-      associationId: z.string(),
-      sourcePath: z.string(),
-      destinationPath: z.string().nullable(),
-      sourceExpectedRevision: z.string(),
-      destinationObservationGeneration: z
-        .number()
-        .int()
-        .min(0)
-        .max(Number.MAX_SAFE_INTEGER)
-        .nullable(),
-      destinationAcknowledgedRevision: z.string().nullable(),
-      graceDeadlineMilliseconds: z
-        .number()
-        .int()
-        .min(0)
-        .max(Number.MAX_SAFE_INTEGER),
-      phase: z.enum([
-        MIRROR_RENAME_PHASE.destinationRequired,
-        MIRROR_RENAME_PHASE.sourceCleanupRequired,
-        MIRROR_RENAME_PHASE.invalidated,
-      ]),
-    })
-    .strict(),
+  renameDeferredStateSchema,
 ]);
+
+const unresolvedMutationStateSchema = z
+  .object({
+    intent: unresolvedMutationIntentSchema,
+    phase: z.enum([
+      MIRROR_MUTATION_PHASE.intentPersisted,
+      MIRROR_MUTATION_PHASE.dispatched,
+      MIRROR_MUTATION_PHASE.evidenceRequired,
+      MIRROR_MUTATION_PHASE.recoveryPreparation,
+      MIRROR_MUTATION_PHASE.tombstoneCommit,
+    ]),
+  })
+  .strict();
 
 const pathStateSchema = z
   .object({
     path: z.string(),
     acknowledgement: acknowledgementSchema,
-    unresolvedMutation: z
-      .object({
-        intent: unresolvedMutationIntentSchema,
-        phase: z.enum([
-          MIRROR_MUTATION_PHASE.intentPersisted,
-          MIRROR_MUTATION_PHASE.dispatched,
-          MIRROR_MUTATION_PHASE.evidenceRequired,
-          MIRROR_MUTATION_PHASE.recoveryPreparation,
-          MIRROR_MUTATION_PHASE.tombstoneCommit,
-        ]),
-      })
-      .strict()
-      .nullable(),
+    unresolvedMutation: unresolvedMutationStateSchema.nullable(),
     desired: desiredStateSchema,
     blockedReason: z
       .enum([
@@ -283,6 +293,7 @@ const reconciliationLocalEvidenceSchema = z.discriminatedUnion("kind", [
   z
     .object({
       kind: z.literal(RECONCILIATION_LOCAL_EVIDENCE_KIND.absent),
+      stability: z.literal(RECONCILIATION_LOCAL_STABILITY.stable),
       observationGeneration: z
         .number()
         .int()
@@ -293,16 +304,21 @@ const reconciliationLocalEvidenceSchema = z.discriminatedUnion("kind", [
   z
     .object({
       kind: z.literal(RECONCILIATION_LOCAL_EVIDENCE_KIND.live),
+      stability: z.literal(RECONCILIATION_LOCAL_STABILITY.stable),
       observationGeneration: z
         .number()
         .int()
         .min(1)
         .max(Number.MAX_SAFE_INTEGER),
+      byteSize: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
       contentSha256: z.string(),
     })
     .strict(),
   z
-    .object({ kind: z.literal(RECONCILIATION_LOCAL_EVIDENCE_KIND.unknown) })
+    .object({
+      kind: z.literal(RECONCILIATION_LOCAL_EVIDENCE_KIND.unknown),
+      stability: z.literal(RECONCILIATION_LOCAL_STABILITY.unknown),
+    })
     .strict(),
 ]);
 
@@ -322,6 +338,7 @@ const reconciliationRemoteEvidenceSchema = z.discriminatedUnion("kind", [
       associationId: z.string(),
       revision: z.string(),
       contentSha256: z.string(),
+      receipt: operationReceiptSchema,
     })
     .strict(),
   z
@@ -329,7 +346,9 @@ const reconciliationRemoteEvidenceSchema = z.discriminatedUnion("kind", [
       kind: z.literal(RECONCILIATION_REMOTE_EVIDENCE_KIND.tombstone),
       associationId: z.string(),
       revision: z.string(),
+      deletedRevision: z.string(),
       recoveryId: z.string(),
+      receipt: operationReceiptSchema,
     })
     .strict(),
   z
@@ -339,11 +358,83 @@ const reconciliationRemoteEvidenceSchema = z.discriminatedUnion("kind", [
     .strict(),
 ]);
 
-const reconciliationEvidenceSchema = z
+const reconciliationPathEvidenceSchema = z
   .object({
+    path: z.string(),
     local: reconciliationLocalEvidenceSchema,
     baseline: acknowledgementSchema,
     remote: reconciliationRemoteEvidenceSchema,
+    m3: z
+      .object({
+        unresolvedMutation: unresolvedMutationStateSchema.nullable(),
+        deferredHistory: renameDeferredStateSchema.nullable(),
+      })
+      .strict(),
+  })
+  .strict();
+
+const reconciliationRecoveryEvidenceSchema = z.discriminatedUnion("kind", [
+  z
+    .object({
+      kind: z.literal(RECOVERY_SNAPSHOT_STATE_KIND.prepared),
+      id: z.string(),
+      associationId: z.string(),
+      path: z.string(),
+      revision: z.string(),
+      sourceRevision: z.string(),
+      contentSha256: z.string(),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal(RECOVERY_SNAPSHOT_STATE_KIND.sealed),
+      id: z.string(),
+      associationId: z.string(),
+      path: z.string(),
+      revision: z.string(),
+      sourceRevision: z.string(),
+      contentSha256: z.string(),
+      recoverUntil: z.string(),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal(RECOVERY_SNAPSHOT_STATE_KIND.purged),
+      id: z.string(),
+      associationId: z.string(),
+      path: z.string(),
+      revision: z.string(),
+      sourceRevision: z.string(),
+      contentSha256: z.string(),
+      recoverUntil: z.string(),
+    })
+    .strict(),
+]);
+
+const reconciliationRuntimeIdentitySchema = z
+  .object({
+    runtimeOwnerVersion: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
+    configurationGeneration: z
+      .number()
+      .int()
+      .min(0)
+      .max(Number.MAX_SAFE_INTEGER),
+    listenerEpoch: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
+    deviceId: z.string(),
+    designatedWriterId: z.string(),
+    lifecycle: lifecycleSchema,
+  })
+  .strict();
+
+const reconciliationReviewSnapshotSchema = z
+  .object({
+    runtime: reconciliationRuntimeIdentitySchema,
+    targetPath: z.string(),
+    paths: z
+      .array(reconciliationPathEvidenceSchema)
+      .min(1)
+      .max(MAX_MIRROR_TRACKED_PATHS),
+    recovery: reconciliationRecoveryEvidenceSchema.nullable(),
   })
   .strict();
 
@@ -372,8 +463,6 @@ const reconciliationReviewSchema = z
   .object({
     retention: z.literal(RECONCILIATION_REVIEW_RETENTION.durable),
     reviewId: z.string(),
-    targetPath: z.string(),
-    relatedPaths: z.array(z.string()).max(MAX_MIRROR_TRACKED_PATHS),
     classification: z.enum([
       RECONCILIATION_CLASSIFICATION.aligned,
       RECONCILIATION_CLASSIFICATION.localAhead,
@@ -394,7 +483,7 @@ const reconciliationReviewSchema = z
       RECONCILIATION_REVIEW_STATUS.blocked,
       RECONCILIATION_REVIEW_STATUS.completed,
     ]),
-    evidence: reconciliationEvidenceSchema,
+    snapshot: reconciliationReviewSnapshotSchema,
     operationId: z.string().nullable(),
   })
   .strict();
@@ -449,28 +538,21 @@ const reconciliationOperationSchema = z
       RECONCILIATION_OPERATION_PHASE.mutatingRemote,
       RECONCILIATION_OPERATION_PHASE.evidenceRequired,
       RECONCILIATION_OPERATION_PHASE.partial,
+      RECONCILIATION_OPERATION_PHASE.restoredPendingReview,
       RECONCILIATION_OPERATION_PHASE.stale,
       RECONCILIATION_OPERATION_PHASE.blocked,
       RECONCILIATION_OPERATION_PHASE.completed,
     ]),
-    sourcePath: z.string(),
+    snapshot: reconciliationReviewSnapshotSchema,
     destinationPath: z.string().nullable(),
     reservations: z
       .array(reconciliationReservationSchema)
       .min(1)
       .max(MAX_MIRROR_TRACKED_PATHS),
-    evidence: reconciliationEvidenceSchema,
-    recovery: z
-      .object({
-        recoveryId: z.string(),
-        revision: z.string(),
-        contentSha256: z.string(),
-      })
-      .strict()
-      .nullable(),
     preservationReceipts: z
       .array(reconciliationPreservationReceiptSchema)
       .max(MAX_RECONCILIATION_PRESERVATION_RECEIPTS),
+    successorOperationId: z.string().nullable(),
     localEffect: z.enum([
       MUTATION_EFFECT_CERTAINTY.notDispatched,
       MUTATION_EFFECT_CERTAINTY.definitelyRefused,
@@ -529,7 +611,18 @@ type StagedHandoffDto = z.infer<typeof stagedHandoffSchema>;
 type TransferableAcknowledgementDto = z.infer<
   typeof transferableAcknowledgementSchema
 >;
-type ReconciliationEvidenceDto = z.infer<typeof reconciliationEvidenceSchema>;
+type ReconciliationPathEvidenceDto = z.infer<
+  typeof reconciliationPathEvidenceSchema
+>;
+type ReconciliationRecoveryEvidenceDto = z.infer<
+  typeof reconciliationRecoveryEvidenceSchema
+>;
+type ReconciliationReviewSnapshotDto = z.infer<
+  typeof reconciliationReviewSnapshotSchema
+>;
+type ReconciliationRuntimeIdentityDto = z.infer<
+  typeof reconciliationRuntimeIdentitySchema
+>;
 type ReconciliationReviewDto = z.infer<typeof reconciliationReviewSchema>;
 type ReconciliationOperationDto = z.infer<typeof reconciliationOperationSchema>;
 type ReconciliationPreservationReceiptDto = z.infer<
@@ -812,11 +905,9 @@ function projectReview(review: ReconciliationReview): ReconciliationReviewDto {
   return {
     retention: review.retention,
     reviewId: review.reviewId,
-    targetPath: review.targetPath,
-    relatedPaths: [...review.relatedPaths],
     classification: review.classification,
     status: review.status,
-    evidence: projectReconciliationEvidence(review.evidence),
+    snapshot: projectReconciliationSnapshot(review.snapshot),
     operationId: review.operationId,
   };
 }
@@ -830,29 +921,104 @@ function projectOperation(
     authority: operation.authority,
     action: { ...operation.action },
     phase: operation.phase,
-    sourcePath: operation.sourcePath,
+    snapshot: projectReconciliationSnapshot(operation.snapshot),
     destinationPath: operation.destinationPath,
     reservations: operation.reservations.map((reservation) => ({
       path: reservation.path,
       kind: reservation.kind,
     })),
-    evidence: projectReconciliationEvidence(operation.evidence),
-    recovery: operation.recovery === null ? null : { ...operation.recovery },
     preservationReceipts: operation.preservationReceipts.map((receipt) => ({
       ...receipt,
     })),
+    successorOperationId: operation.successorOperationId,
     localEffect: operation.localEffect,
     remoteEffect: operation.remoteEffect,
   };
 }
 
-function projectReconciliationEvidence(
-  evidence: ReconciliationEvidence,
-): ReconciliationEvidenceDto {
+function projectReconciliationSnapshot(
+  snapshot: ReconciliationReviewSnapshot,
+): ReconciliationReviewSnapshotDto {
   return {
+    runtime: projectReconciliationRuntime(snapshot.runtime),
+    targetPath: snapshot.targetPath,
+    paths: snapshot.paths.map(projectReconciliationPathEvidence),
+    recovery: snapshot.recovery === null ? null : { ...snapshot.recovery },
+  };
+}
+
+function projectReconciliationRuntime(
+  runtime: ReconciliationRuntimeIdentity,
+): ReconciliationRuntimeIdentityDto {
+  return {
+    runtimeOwnerVersion: runtime.runtimeOwnerVersion,
+    configurationGeneration: runtime.configurationGeneration,
+    listenerEpoch: runtime.listenerEpoch,
+    deviceId: runtime.deviceId,
+    designatedWriterId: runtime.designatedWriterId,
+    lifecycle: projectLifecycle(runtime.lifecycle),
+  };
+}
+
+function projectReconciliationPathEvidence(
+  evidence: ReconciliationPathEvidence,
+): ReconciliationPathEvidenceDto {
+  return {
+    path: evidence.path,
     local: { ...evidence.local },
     baseline: projectAcknowledgement(evidence.baseline),
-    remote: { ...evidence.remote },
+    remote:
+      evidence.remote.kind === RECONCILIATION_REMOTE_EVIDENCE_KIND.live ||
+      evidence.remote.kind === RECONCILIATION_REMOTE_EVIDENCE_KIND.tombstone
+        ? {
+            ...evidence.remote,
+            receipt: projectOperationReceipt(evidence.remote.receipt),
+          }
+        : { ...evidence.remote },
+    m3: {
+      unresolvedMutation:
+        evidence.m3.unresolvedMutation === null
+          ? null
+          : {
+              intent: projectUnresolvedMutation(
+                evidence.m3.unresolvedMutation.intent,
+              ),
+              phase: evidence.m3.unresolvedMutation.phase,
+            },
+      deferredHistory:
+        evidence.m3.deferredHistory === null
+          ? null
+          : { ...evidence.m3.deferredHistory },
+    },
+  };
+}
+
+function projectOperationReceipt(
+  receipt: OperationReceipt,
+): z.infer<typeof operationReceiptSchema> {
+  if (receipt.action === MUTATION_ACTION.create) {
+    return {
+      action: receipt.action,
+      associationId: receipt.associationId,
+      operationId: receipt.operationId,
+      precondition: { kind: receipt.precondition.kind },
+      contentSha256: receipt.contentSha256,
+    };
+  }
+  if (receipt.action === MUTATION_ACTION.tombstone) {
+    return {
+      action: receipt.action,
+      associationId: receipt.associationId,
+      operationId: receipt.operationId,
+      precondition: { ...receipt.precondition },
+    };
+  }
+  return {
+    action: receipt.action,
+    associationId: receipt.associationId,
+    operationId: receipt.operationId,
+    precondition: { ...receipt.precondition },
+    contentSha256: receipt.contentSha256,
   };
 }
 
@@ -965,6 +1131,16 @@ function convertDesiredState(dto: DesiredStateDto): MirrorDesiredState {
   };
 }
 
+function convertDeferredHistory(
+  dto: z.infer<typeof renameDeferredStateSchema>,
+): RenameDeferredMirrorState {
+  const converted = convertDesiredState(dto);
+  if (converted.kind !== MIRROR_DESIRED_STATE_KIND.renameDeferred) {
+    throw new Error("Expected deferred-history evidence.");
+  }
+  return converted;
+}
+
 function convertUnresolvedMutation(
   dto: z.infer<typeof unresolvedMutationIntentSchema>,
 ): UnresolvedMutationIntent {
@@ -1045,13 +1221,9 @@ function convertReview(dto: ReconciliationReviewDto): ReconciliationReview {
   return {
     retention: dto.retention,
     reviewId: requireParsed(dto.reviewId, createMirrorOperationId),
-    targetPath: requireParsed(dto.targetPath, parsePersistedNotePath),
-    relatedPaths: dto.relatedPaths.map((path) =>
-      requireParsed(path, parsePersistedNotePath),
-    ),
     classification: dto.classification,
     status: dto.status,
-    evidence: convertReconciliationEvidence(dto.evidence),
+    snapshot: convertReconciliationSnapshot(dto.snapshot),
     operationId:
       dto.operationId === null
         ? null
@@ -1068,7 +1240,7 @@ function convertOperation(
     authority: dto.authority,
     action: { ...dto.action },
     phase: dto.phase,
-    sourcePath: requireParsed(dto.sourcePath, parsePersistedNotePath),
+    snapshot: convertReconciliationSnapshot(dto.snapshot),
     destinationPath:
       dto.destinationPath === null
         ? null
@@ -1077,35 +1249,51 @@ function convertOperation(
       path: requireParsed(reservation.path, parsePersistedNotePath),
       kind: reservation.kind,
     })),
-    evidence: convertReconciliationEvidence(dto.evidence),
-    recovery:
-      dto.recovery === null
-        ? null
-        : {
-            recoveryId: requireParsed(
-              dto.recovery.recoveryId,
-              createRecoverySnapshotId,
-            ),
-            revision: requireParsed(
-              dto.recovery.revision,
-              createApplicationRevision,
-            ),
-            contentSha256: requireParsed(
-              dto.recovery.contentSha256,
-              createContentSha256,
-            ),
-          },
     preservationReceipts: dto.preservationReceipts.map(
       convertPreservationReceipt,
     ),
+    successorOperationId:
+      dto.successorOperationId === null
+        ? null
+        : requireParsed(dto.successorOperationId, createMirrorOperationId),
     localEffect: dto.localEffect,
     remoteEffect: dto.remoteEffect,
   };
 }
 
-function convertReconciliationEvidence(
-  dto: ReconciliationEvidenceDto,
-): ReconciliationEvidence {
+function convertReconciliationSnapshot(
+  dto: ReconciliationReviewSnapshotDto,
+): ReconciliationReviewSnapshot {
+  return {
+    runtime: convertReconciliationRuntime(dto.runtime),
+    targetPath: requireParsed(dto.targetPath, parsePersistedNotePath),
+    paths: dto.paths.map(convertReconciliationPathEvidence),
+    recovery:
+      dto.recovery === null
+        ? null
+        : convertReconciliationRecoveryEvidence(dto.recovery),
+  };
+}
+
+function convertReconciliationRuntime(
+  dto: ReconciliationRuntimeIdentityDto,
+): ReconciliationRuntimeIdentity {
+  return {
+    runtimeOwnerVersion: dto.runtimeOwnerVersion,
+    configurationGeneration: dto.configurationGeneration,
+    listenerEpoch: dto.listenerEpoch,
+    deviceId: requireParsed(dto.deviceId, createMirrorWriterId),
+    designatedWriterId: requireParsed(
+      dto.designatedWriterId,
+      createMirrorWriterId,
+    ),
+    lifecycle: convertLifecycle(dto.lifecycle),
+  };
+}
+
+function convertReconciliationPathEvidence(
+  dto: ReconciliationPathEvidenceDto,
+): ReconciliationPathEvidence {
   const local =
     dto.local.kind === RECONCILIATION_LOCAL_EVIDENCE_KIND.live
       ? {
@@ -1116,7 +1304,7 @@ function convertReconciliationEvidence(
           ),
         }
       : dto.local;
-  let remote: ReconciliationEvidence["remote"];
+  let remote: ReconciliationPathEvidence["remote"];
   switch (dto.remote.kind) {
     case RECONCILIATION_REMOTE_EVIDENCE_KIND.absent:
     case RECONCILIATION_REMOTE_EVIDENCE_KIND.unavailable:
@@ -1131,7 +1319,11 @@ function convertReconciliationEvidence(
         ),
       };
       break;
-    case RECONCILIATION_REMOTE_EVIDENCE_KIND.live:
+    case RECONCILIATION_REMOTE_EVIDENCE_KIND.live: {
+      const receipt = convertOperationReceipt(dto.remote.receipt);
+      if (receipt.action === MUTATION_ACTION.tombstone) {
+        throw new Error("Expected content receipt.");
+      }
       remote = {
         kind: dto.remote.kind,
         associationId: requireParsed(
@@ -1143,9 +1335,15 @@ function convertReconciliationEvidence(
           dto.remote.contentSha256,
           createContentSha256,
         ),
+        receipt,
       };
       break;
-    case RECONCILIATION_REMOTE_EVIDENCE_KIND.tombstone:
+    }
+    case RECONCILIATION_REMOTE_EVIDENCE_KIND.tombstone: {
+      const receipt = convertOperationReceipt(dto.remote.receipt);
+      if (receipt.action !== MUTATION_ACTION.tombstone) {
+        throw new Error("Expected tombstone receipt.");
+      }
       remote = {
         kind: dto.remote.kind,
         associationId: requireParsed(
@@ -1153,18 +1351,90 @@ function convertReconciliationEvidence(
           createMirrorAssociationId,
         ),
         revision: requireParsed(dto.remote.revision, createApplicationRevision),
+        deletedRevision: requireParsed(
+          dto.remote.deletedRevision,
+          createApplicationRevision,
+        ),
         recoveryId: requireParsed(
           dto.remote.recoveryId,
           createRecoverySnapshotId,
         ),
+        receipt,
       };
       break;
+    }
   }
   return {
+    path: requireParsed(dto.path, parsePersistedNotePath),
     local,
     baseline: convertAcknowledgement(dto.baseline),
     remote,
+    m3: {
+      unresolvedMutation:
+        dto.m3.unresolvedMutation === null
+          ? null
+          : {
+              intent: convertUnresolvedMutation(
+                dto.m3.unresolvedMutation.intent,
+              ),
+              phase: dto.m3.unresolvedMutation.phase,
+            },
+      deferredHistory:
+        dto.m3.deferredHistory === null
+          ? null
+          : convertDeferredHistory(dto.m3.deferredHistory),
+    },
   };
+}
+
+function convertOperationReceipt(
+  dto: z.infer<typeof operationReceiptSchema>,
+): OperationReceipt {
+  const associationId = requireParsed(
+    dto.associationId,
+    createMirrorAssociationId,
+  );
+  const operationId = requireParsed(dto.operationId, createMirrorOperationId);
+  if (dto.action === MUTATION_ACTION.create) {
+    return {
+      action: dto.action,
+      associationId,
+      operationId,
+      precondition: { kind: dto.precondition.kind },
+      contentSha256: requireParsed(dto.contentSha256, createContentSha256),
+    };
+  }
+  const precondition = convertMatchingPrecondition(dto.precondition);
+  if (dto.action === MUTATION_ACTION.tombstone) {
+    return { action: dto.action, associationId, operationId, precondition };
+  }
+  const receipt: ContentOperationReceipt = {
+    action: dto.action,
+    associationId,
+    operationId,
+    precondition,
+    contentSha256: requireParsed(dto.contentSha256, createContentSha256),
+  };
+  return receipt;
+}
+
+function convertReconciliationRecoveryEvidence(
+  dto: ReconciliationRecoveryEvidenceDto,
+): ReconciliationRecoveryEvidence {
+  const common = {
+    id: requireParsed(dto.id, createRecoverySnapshotId),
+    associationId: requireParsed(dto.associationId, createMirrorAssociationId),
+    path: requireParsed(dto.path, parsePersistedNotePath),
+    revision: requireParsed(dto.revision, createApplicationRevision),
+    sourceRevision: requireParsed(
+      dto.sourceRevision,
+      createApplicationRevision,
+    ),
+    contentSha256: requireParsed(dto.contentSha256, createContentSha256),
+  };
+  return dto.kind === RECOVERY_SNAPSHOT_STATE_KIND.prepared
+    ? { kind: dto.kind, ...common }
+    : { kind: dto.kind, ...common, recoverUntil: dto.recoverUntil };
 }
 
 function convertPreservationReceipt(

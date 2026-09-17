@@ -86,7 +86,8 @@ application service loads the authoritative durable state and revalidates eviden
 
 ### Evidence tuple
 
-A read-only `ReconciliationReviewSnapshot` has one UUID-v4 `reviewId` and binds:
+A read-only review has one UUID-v4 `reviewId` and one immutable
+`ReconciliationReviewSnapshot` that binds:
 
 - current association and canonical origin;
 - designated writer/device and lifecycle kind;
@@ -100,10 +101,14 @@ A read-only `ReconciliationReviewSnapshot` has one UUID-v4 `reviewId` and binds:
 - recovery identity/revision/status/hash/expiry where applicable;
 - configuration generation and runtime-owner version.
 
-Only metadata is durable. Sampled local/remote note bodies remain transient in the
-review session and are discarded on close/unload. A confirmed operation can later
-reconstruct bytes only from an exact local hash, exact revisioned remote generation,
-exact recovery snapshot, or a verified preservation artifact.
+`ReconciliationReviewSnapshot` is the single typed semantic owner of this immutable
+content-free identity. It stores one runtime identity plus complete evidence for the
+target and every related source/destination/collision path. An admitted operation
+copies the same snapshot, and strict validation requires exact equality across every
+authority dimension. Only metadata is durable. Sampled local/remote note bodies remain
+transient in the review session and are discarded on close/unload. A confirmed
+operation can later reconstruct bytes only from an exact local hash, exact revisioned
+remote generation, exact recovery snapshot, or a verified preservation artifact.
 
 ### Classifications
 
@@ -229,6 +234,26 @@ cleanup automation is outside M4.
 - Failed/colliding preservation stops the action. No mutation compensates by deleting
   another version.
 
+The state-v3 validator owns the complete pre-effect preservation matrix:
+
+| Action | Evidence-derived required preservation before a material effect |
+| --- | --- |
+| Keep local | Exact target remote live hash + revision as `remote` |
+| Use remote | Exact target local live hash as `local`; none only for exact local absence |
+| Keep both | Exact non-primary competitor; tombstone keep-both permits only remote primary and therefore preserves local |
+| Exact revision adoption | None; this action represents only local absence or explicit equal-byte association and cannot replace a competitor |
+| Accept tombstone | None; exact local absence and no material effect |
+| Recreate remote | Exact target local live hash as `local` |
+| Restore recovery | Exact selected destination local hash as `local` when occupied; none for exact absence |
+| Fork legacy | Exact target legacy hash with no source revision as `remote` |
+| Bounded history | Exact target remote live hash + revision before selected remote cleanup; a no-effect retain/defer completion requires none |
+| Defer | None |
+
+Every persisted receipt must match the operation UUID, original path, generated
+side-specific preservation path, required side, source revision/null relationship,
+and evidence-derived content hash. An extra receipt or any receipt whose source
+evidence cannot establish exact bytes is invalid.
+
 ### Live/live actions
 
 | Action | Authority and preservation | Ordered effects | Failure/restart/final baseline |
@@ -304,12 +329,16 @@ tombstone and supplies no deletion authority.
    Invalid, excluded, dot/config, occupied-folder, and oversized destinations refuse.
 4. If absent, create-only. If occupied, require a different path or explicit archive
    plus atomic compare-and-replace. No silent collision suffix.
-5. Persist `restored-pending-review` before the local mutation; consume the plugin's
-   own host event without granting ordinary outward authority.
-6. Verify destination bytes and persist the local effect. Do not mutate the remote
-   head or update its baseline.
+5. Persist the active `restored-pending-review` operation phase before the local
+   mutation; consume the plugin's own host event without granting ordinary outward
+   authority.
+6. Verify destination bytes and persist the local effect. The active reservation
+   survives restart/re-enable, blocks handoff, and excludes the path from ordinary M3
+   scheduling. Do not mutate the remote head or update its baseline.
 7. Present a new review: keep local/recreate remote, associate an exact live head,
-   publish an alternate absent path, or defer.
+   publish an alternate absent path, or defer. The restore may become terminal only
+   when the fresh reviewed successor operation is linked and takes over the same path
+   atomically. Completion of that successor may release ordinary M3 ownership.
 
 Prepared and unexpired sealed recovery are recoverable. Missing, changed, expired, or
 purged content is refused. Restore to an original path does not imply the current head
@@ -347,8 +376,8 @@ MirrorDeviceState
   + reconciliationReviews[]       # sparse, content-free sampled metadata/status
   + reconciliationOperations[]    # sparse durable confirmed actions
       authority/action/reserved paths
-      exact local/baseline/remote/recovery evidence
-      phase and preservation receipts
+      immutable runtime + per-path local/baseline/remote/M3/recovery snapshot
+      phase, exact evidence-bound preservation receipts, restore successor link
       local/remote effect certainty
       no note bodies, bearer, or raw errors
 ```
@@ -560,10 +589,11 @@ state, restart, and focused tests exist.
   arbitrary-record field exists.
 - Core validation indexes tracked paths, review/operation IDs, and active reservations
   once; it rejects duplicate IDs, overlapping active paths, unreserved related paths,
-  invalid tracked/new destinations, foreign-association evidence, incompatible
-  classification/action/authority/phase/effect/preservation combinations, impossible
-  review links/lifecycle, M3-effect precedence violations, deferred-history conflicts,
-  and capacity overflow.
+  invalid tracked/new destinations, foreign-association or incoherent exact-receipt
+  evidence, incompatible classification/action/authority/phase/effect/preservation
+  combinations, preservation hashes/revisions not derived from sampled bytes,
+  unowned terminal restores, impossible review/successor links, M3-effect precedence
+  violations, deferred-history conflicts, and capacity overflow.
 - `device-state-v2.codec.ts` is a frozen strict historical decoder. The current strict
   codec writes only version 3; each decoder refuses the other version.
 - Startup performs detect → strict decode → deterministic in-memory projection → v3
@@ -578,8 +608,8 @@ state, restart, and focused tests exist.
   handoff behavior and staged/draining/drained authority exactly.
 - Deterministic tests migrate exactly 50,000 M3 path entries within the unchanged
   8 MiB codec bound with empty M4 collections and no per-path placeholder growth.
-  Final canonical validation passes 64 source files / 840 tests at 95.00%
-  statements, 90.54% branches, 98.40% functions, and 97.02% lines, plus eight
+  Final canonical validation passes 64 source files / 880 tests at 95.00%
+  statements, 91.35% branches, 98.47% functions, and 96.98% lines, plus eight
   storage qualification tests and six generated-artifact tests.
 - No UI, commands, modals, settings actions, local writer/Obsidian mutation adapter,
   Fetch/RemoteBridge change, Worker/API/OpenAPI change, deployment configuration,
@@ -607,6 +637,9 @@ state, restart, and focused tests exist.
 | Deferred rename + non-history active M4 operation | Invalid; deferred history wins |
 | Deferred rename + exact history action | Valid contract state; no Slice 1 effect capability |
 | Overlapping active M4 reservations | Invalid |
+| Persisted restore intent or confirmed local effect + `restored-pending-review` | Active reservation fences M3 scheduling and handoff across restart |
+| Completed restore + no linked successor owner | Invalid |
+| Completed restore + linked reviewed successor on the restored path | Valid atomic ownership transfer; successor remains the fence until its reviewed completion |
 | Handoff-draining + active M4 operation | Migration-preserved but not drainable/exportable |
 | Handoff-drained + active M4 operation | Invalid/export-blocked |
 | Empty M4 collections + valid M3 lifecycle/handoff | Valid and behavior-preserving |

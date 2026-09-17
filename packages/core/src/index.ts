@@ -285,6 +285,7 @@ export {
   RECONCILIATION_AUTHORITY_SOURCE,
   RECONCILIATION_CLASSIFICATION,
   RECONCILIATION_LOCAL_EVIDENCE_KIND,
+  RECONCILIATION_LOCAL_STABILITY,
   RECONCILIATION_OPERATION_PHASE,
   RECONCILIATION_PATH_REFERENCE_KIND,
   RECONCILIATION_PRESERVATION_PROOF_STATE,
@@ -304,10 +305,11 @@ export type {
   ReconciliationAction,
   ReconciliationAuthoritySource,
   ReconciliationClassification,
-  ReconciliationEvidence,
   ReconciliationLocalEvidence,
+  ReconciliationM3PathEvidence,
   ReconciliationOperation,
   ReconciliationOperationPhase,
+  ReconciliationPathEvidence,
   ReconciliationPathReservation,
   ReconciliationPreservationReceipt,
   ReconciliationRecoveryEvidence,
@@ -315,13 +317,19 @@ export type {
   ReconciliationReview,
   ReconciliationReviewMetadata,
   ReconciliationReviewRetention,
+  ReconciliationReviewSnapshot,
   ReconciliationReviewStatus,
+  ReconciliationRuntimeIdentity,
   RecreateRemoteReconciliationAction,
   ResolveHistoryReconciliationAction,
   RestoreRecoveryReconciliationAction,
   UseRemoteReconciliationAction,
 } from "@core/mirror/reconciliation-state.types";
-export { isReconciliationStateConsistent } from "@core/mirror/reconciliation-state-validation";
+export {
+  isReconciliationPathReserved,
+  isReconciliationStateConsistent,
+  reconciliationReviewSnapshotsEqual,
+} from "@core/mirror/reconciliation-state-validation";
 export { RecoveryService } from "@core/mirror/recovery-service";
 export type { RecoverySnapshotRepository } from "@core/mirror/recovery-snapshot-repository.port";
 export { REMOTE_BRIDGE_FAILURE } from "@core/mirror/remote-bridge.constants";

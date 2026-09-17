@@ -22,14 +22,19 @@ valid snapshot.
 ## Decision
 
 M4 introduces device-state schema **version 3** under the existing
-`ai-bridge:mirror-device-state` key. Version 3 preserves every version-2 path entry
+`ai-bridge:mirror-device-state` key. The corrected Slice 1 contract retains version 3:
+no implemented runtime can create a non-empty M4 review/operation collection, so every
+reachable persisted v3 value and every v2→v3 migration remains unchanged and empty at
+this boundary. No new evidence is inferred during migration. Version 3 preserves every version-2 path entry
 unchanged and adds two sparse bounded top-level collections:
 
-- content-free review records with classification, review ID, reserved paths, sampled
-  local/baseline/remote evidence, and stale/open status;
-- active reconciliation operations with one operation ID, reserved paths, typed
-  authority/action, exact evidence, phase, preservation receipts, explicit
-  `restored-pending-review`/history blockers, and local/remote effect certainty.
+- content-free review records with classification, review ID, one immutable runtime/
+  configuration/listener and per-path local/baseline/remote/M3/recovery snapshot, and
+  stale/open status;
+- reconciliation operations with one operation ID, reserved paths, typed authority/
+  action, an exact copy of the immutable snapshot, phase, evidence-bound preservation
+  receipts, explicit `restored-pending-review`/history blockers, optional linked
+  reviewed successor ownership, and local/remote effect certainty.
 
 Neither collection contains a bearer, note body, remote response body, raw error, or
 body history. Their combined path references are bounded by the existing tracked-path

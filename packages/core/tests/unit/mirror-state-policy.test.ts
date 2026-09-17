@@ -32,6 +32,7 @@ import {
   RECONCILIATION_AUTHORITY_SOURCE,
   RECONCILIATION_CLASSIFICATION,
   RECONCILIATION_LOCAL_EVIDENCE_KIND,
+  RECONCILIATION_LOCAL_STABILITY,
   RECONCILIATION_OPERATION_PHASE,
   RECONCILIATION_PATH_REFERENCE_KIND,
   RECONCILIATION_REMOTE_EVIDENCE_KIND,
@@ -293,19 +294,48 @@ describe("handoff policy", () => {
   });
 
   it("blocks handoff drain/export while an M4 operation remains active", () => {
-    const evidence = {
-      local: {
-        kind: RECONCILIATION_LOCAL_EVIDENCE_KIND.live,
-        observationGeneration: 1,
-        contentSha256: LIVE_HASH,
+    const snapshot = {
+      runtime: {
+        runtimeOwnerVersion: 3,
+        configurationGeneration: 1,
+        listenerEpoch: 1,
+        deviceId: DEVICE_ID,
+        designatedWriterId: DEVICE_ID,
+        lifecycle: {
+          kind: MIRROR_DEVICE_LIFECYCLE_KIND.active,
+          associationId: ASSOCIATION_ID,
+          origin: ORIGIN,
+        },
       },
-      baseline: { kind: MIRROR_ACKNOWLEDGEMENT_KIND.unassociated },
-      remote: {
-        kind: RECONCILIATION_REMOTE_EVIDENCE_KIND.live,
-        associationId: ASSOCIATION_ID,
-        revision: LIVE_REVISION,
-        contentSha256: LIVE_HASH,
-      },
+      targetPath: LIVE_PATH,
+      paths: [
+        {
+          path: LIVE_PATH,
+          local: {
+            kind: RECONCILIATION_LOCAL_EVIDENCE_KIND.live,
+            stability: RECONCILIATION_LOCAL_STABILITY.stable,
+            observationGeneration: 1,
+            byteSize: 1,
+            contentSha256: LIVE_HASH,
+          },
+          baseline: { kind: MIRROR_ACKNOWLEDGEMENT_KIND.unassociated },
+          remote: {
+            kind: RECONCILIATION_REMOTE_EVIDENCE_KIND.live,
+            associationId: ASSOCIATION_ID,
+            revision: LIVE_REVISION,
+            contentSha256: LIVE_HASH,
+            receipt: {
+              action: MUTATION_ACTION.create,
+              associationId: ASSOCIATION_ID,
+              operationId: OPERATION_ID,
+              precondition: { kind: "absent" },
+              contentSha256: LIVE_HASH,
+            },
+          },
+          m3: { unresolvedMutation: null, deferredHistory: null },
+        },
+      ],
+      recovery: null,
     } as const;
     const active: MirrorDeviceState = {
       ...activeState(),
@@ -313,11 +343,9 @@ describe("handoff policy", () => {
         {
           retention: RECONCILIATION_REVIEW_RETENTION.durable,
           reviewId: REVIEW_ID,
-          targetPath: LIVE_PATH,
-          relatedPaths: [],
           classification: RECONCILIATION_CLASSIFICATION.bothChanged,
           status: RECONCILIATION_REVIEW_STATUS.staged,
-          evidence,
+          snapshot,
           operationId: OPERATION_ID,
         },
       ],
@@ -328,7 +356,7 @@ describe("handoff policy", () => {
           authority: RECONCILIATION_AUTHORITY_SOURCE.reconciliationDecision,
           action: { kind: RECONCILIATION_ACTION.keepLocal },
           phase: RECONCILIATION_OPERATION_PHASE.admitted,
-          sourcePath: LIVE_PATH,
+          snapshot,
           destinationPath: null,
           reservations: [
             {
@@ -336,9 +364,8 @@ describe("handoff policy", () => {
               kind: RECONCILIATION_PATH_REFERENCE_KIND.reviewTarget,
             },
           ],
-          evidence,
-          recovery: null,
           preservationReceipts: [],
+          successorOperationId: null,
           localEffect: MUTATION_EFFECT_CERTAINTY.notDispatched,
           remoteEffect: MUTATION_EFFECT_CERTAINTY.notDispatched,
         },

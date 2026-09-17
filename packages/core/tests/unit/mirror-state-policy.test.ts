@@ -11,6 +11,7 @@ import {
   createMirrorWriterId,
   evaluateWriterReadiness,
   HANDOFF_ALIGNMENT_KIND,
+  HANDOFF_EXPORT_FAILURE,
   type HandoffAlignmentSnapshot,
   type HandoffRecord,
   invalidateHandoffAlignments,
@@ -21,11 +22,21 @@ import {
   MIRROR_PAUSE_REASON,
   type MirrorDeviceState,
   MUTATION_ACTION,
+  MUTATION_EFFECT_CERTAINTY,
   markHandoffDrained,
   normalizeNotePath,
   pauseForHandoff,
   pauseMirrorWriter,
   prepareHandoffExport,
+  RECONCILIATION_ACTION,
+  RECONCILIATION_AUTHORITY_SOURCE,
+  RECONCILIATION_CLASSIFICATION,
+  RECONCILIATION_LOCAL_EVIDENCE_KIND,
+  RECONCILIATION_OPERATION_PHASE,
+  RECONCILIATION_PATH_REFERENCE_KIND,
+  RECONCILIATION_REMOTE_EVIDENCE_KIND,
+  RECONCILIATION_REVIEW_RETENTION,
+  RECONCILIATION_REVIEW_STATUS,
   resumeMirrorWriter,
   stageHandoffImport,
   type TransferableAcknowledgement,
@@ -47,6 +58,9 @@ const OTHER_ASSOCIATION_ID = required(
 );
 const OPERATION_ID = required(
   createMirrorOperationId("33333333-3333-4333-8333-333333333333"),
+);
+const REVIEW_ID = required(
+  createMirrorOperationId("77777777-7777-4777-8777-777777777777"),
 );
 const LIVE_REVISION = required(
   createApplicationRevision("44444444-4444-4444-8444-444444444444"),
@@ -275,6 +289,78 @@ describe("handoff policy", () => {
     expect(markHandoffDrained(withRename)).toMatchObject({
       kind: "rejected",
       reason: "unsettled-desired-state",
+    });
+  });
+
+  it("blocks handoff drain/export while an M4 operation remains active", () => {
+    const evidence = {
+      local: {
+        kind: RECONCILIATION_LOCAL_EVIDENCE_KIND.live,
+        observationGeneration: 1,
+        contentSha256: LIVE_HASH,
+      },
+      baseline: { kind: MIRROR_ACKNOWLEDGEMENT_KIND.unassociated },
+      remote: {
+        kind: RECONCILIATION_REMOTE_EVIDENCE_KIND.live,
+        associationId: ASSOCIATION_ID,
+        revision: LIVE_REVISION,
+        contentSha256: LIVE_HASH,
+      },
+    } as const;
+    const active: MirrorDeviceState = {
+      ...activeState(),
+      reconciliationReviews: [
+        {
+          retention: RECONCILIATION_REVIEW_RETENTION.durable,
+          reviewId: REVIEW_ID,
+          targetPath: LIVE_PATH,
+          relatedPaths: [],
+          classification: RECONCILIATION_CLASSIFICATION.bothChanged,
+          status: RECONCILIATION_REVIEW_STATUS.staged,
+          evidence,
+          operationId: OPERATION_ID,
+        },
+      ],
+      reconciliationOperations: [
+        {
+          operationId: OPERATION_ID,
+          reviewId: REVIEW_ID,
+          authority: RECONCILIATION_AUTHORITY_SOURCE.reconciliationDecision,
+          action: { kind: RECONCILIATION_ACTION.keepLocal },
+          phase: RECONCILIATION_OPERATION_PHASE.admitted,
+          sourcePath: LIVE_PATH,
+          destinationPath: null,
+          reservations: [
+            {
+              path: LIVE_PATH,
+              kind: RECONCILIATION_PATH_REFERENCE_KIND.reviewTarget,
+            },
+          ],
+          evidence,
+          recovery: null,
+          preservationReceipts: [],
+          localEffect: MUTATION_EFFECT_CERTAINTY.notDispatched,
+          remoteEffect: MUTATION_EFFECT_CERTAINTY.notDispatched,
+        },
+      ],
+    };
+    const draining = required(pauseForHandoff(active));
+    expect(markHandoffDrained(draining)).toEqual({
+      kind: "rejected",
+      reason: HANDOFF_EXPORT_FAILURE.activeReconciliationOperation,
+    });
+    expect(
+      prepareHandoffExport({
+        ...draining,
+        lifecycle: {
+          kind: MIRROR_DEVICE_LIFECYCLE_KIND.handoffDrained,
+          associationId: ASSOCIATION_ID,
+          origin: ORIGIN,
+        },
+      }),
+    ).toEqual({
+      kind: "rejected",
+      reason: HANDOFF_EXPORT_FAILURE.activeReconciliationOperation,
     });
   });
 

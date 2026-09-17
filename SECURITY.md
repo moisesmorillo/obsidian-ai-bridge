@@ -82,9 +82,11 @@ sample. A lost writer/ledger cannot safely take over the same association
 automatically; use a new isolated empty bucket/association/credentials while
 preserving old state for recovery.
 
-Do not run old plugin code against a current M3 state schema, restore stale local
-state as authority, re-enable an old writer after handoff without redesignation and
-credential handling, roll the Worker back over format-2 objects, re-enable v1
+Do not run old M3/version-2 plugin code against M4 device-state version 3. Slice 1
+migrates valid v2 in place only after a same-key save/read-back fence; there is no
+reverse migration, reset, or supported downgrade. Do not restore stale local state as
+authority, re-enable an old writer after handoff without redesignation and credential
+handling, roll the Worker back over format-2 objects, re-enable v1
 mutations, discard unresolved intents, or redirect delayed old requests into a reset
 association. Pause, preserve evidence, upgrade forward, hand off, revalidate, or use
 an isolated reset. See the [operator guide](docs/operations.md) for exact setup,

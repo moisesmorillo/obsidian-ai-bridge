@@ -2,8 +2,9 @@
 
 ## Status
 
-**Accepted design for M4; not implemented.** This record makes M4 implementation-ready
-without authorizing production code, deployment, or personal-vault installation.
+**Accepted; Slice 1 closed authority/state contracts implemented.** No review engine,
+operator UI, or reconciliation effect is implemented yet. This record does not
+authorize deployment or personal-vault installation.
 
 ## Context
 

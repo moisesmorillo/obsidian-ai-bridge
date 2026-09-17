@@ -1,4 +1,13 @@
+import {
+  createDisabledMirrorState,
+  createMirrorWriterId,
+  MIRROR_DEVICE_STATE_V2_VERSION,
+} from "@obsidian-ai-bridge/core";
 import { createMirrorRuntimeOwner } from "@obsidian-plugin/runtime/mirror-runtime-factory";
+import {
+  MIRROR_DEVICE_STATE_FORMAT,
+  MIRROR_DEVICE_STATE_STORAGE_KEY,
+} from "@obsidian-plugin/state/device-state-codec";
 import {
   host,
   resetHost,
@@ -71,6 +80,53 @@ describe("createMirrorRuntimeOwner", () => {
     await expect(createMirrorRuntimeOwner(app, app.vault)).rejects.toThrow(
       "state is unavailable",
     );
+  });
+
+  it("does not publish an owner or access the vault/network before migrated v3 read-back", async () => {
+    const app = new App();
+    const deviceId = createMirrorWriterId(
+      "11111111-1111-4111-8111-111111111111",
+    );
+    if (deviceId === undefined) throw new Error("Invalid fixture identity.");
+    const v2 = createDisabledMirrorState(deviceId);
+    host.localStorage.set(
+      MIRROR_DEVICE_STATE_STORAGE_KEY,
+      JSON.stringify({
+        format: MIRROR_DEVICE_STATE_FORMAT,
+        version: MIRROR_DEVICE_STATE_V2_VERSION,
+        deviceId: v2.deviceId,
+        lifecycle: v2.lifecycle,
+        globalBlockReason: v2.globalBlockReason,
+        paths: v2.paths,
+        stagedHandoff: v2.stagedHandoff,
+      }),
+    );
+    const barrier = Promise.withResolvers<void>();
+    host.saveLocalStorage.mockImplementationOnce(async (key, value) => {
+      await barrier.promise;
+      host.localStorage.set(key, value);
+    });
+    const fetch = vi.fn();
+    vi.stubGlobal("fetch", fetch);
+    let published = false;
+    const pending = createMirrorRuntimeOwner(app, app.vault).then((owner) => {
+      published = true;
+      return owner;
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(published).toBe(false);
+    expect(fetch).not.toHaveBeenCalled();
+    expect(host.vault.getAbstractFileByPath).not.toHaveBeenCalled();
+
+    barrier.resolve();
+    const owner = await pending;
+    expect(owner.stateOwner.snapshot().state.reconciliationReviews).toEqual([]);
+    expect(owner.stateOwner.snapshot().state.reconciliationOperations).toEqual(
+      [],
+    );
+    expect(host.saveLocalStorage).toHaveBeenCalledTimes(1);
+    expect(host.loadLocalStorage).toHaveBeenCalledTimes(2);
   });
 
   it("does not replace corrupt App-local state", async () => {

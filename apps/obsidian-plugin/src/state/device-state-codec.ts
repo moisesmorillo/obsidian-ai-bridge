@@ -10,6 +10,9 @@ import {
   isMirrorDeviceStateConsistent,
   isNormalizedNotePath,
   MAX_MIRROR_TRACKED_PATHS,
+  MAX_RECONCILIATION_OPERATIONS,
+  MAX_RECONCILIATION_PRESERVATION_RECEIPTS,
+  MAX_RECONCILIATION_REVIEWS,
   MIRROR_ACKNOWLEDGEMENT_KIND,
   MIRROR_DESIRED_STATE_KIND,
   MIRROR_DEVICE_LIFECYCLE_KIND,
@@ -25,7 +28,23 @@ import {
   type MirrorDeviceState,
   type MirrorPathState,
   MUTATION_ACTION,
+  MUTATION_EFFECT_CERTAINTY,
   type NotePath,
+  RECONCILIATION_ACTION,
+  RECONCILIATION_AUTHORITY_SOURCE,
+  RECONCILIATION_CLASSIFICATION,
+  RECONCILIATION_LOCAL_EVIDENCE_KIND,
+  RECONCILIATION_OPERATION_PHASE,
+  RECONCILIATION_PATH_REFERENCE_KIND,
+  RECONCILIATION_PRESERVATION_PROOF_STATE,
+  RECONCILIATION_PRESERVATION_SIDE,
+  RECONCILIATION_REMOTE_EVIDENCE_KIND,
+  RECONCILIATION_REVIEW_RETENTION,
+  RECONCILIATION_REVIEW_STATUS,
+  type ReconciliationEvidence,
+  type ReconciliationOperation,
+  type ReconciliationPreservationReceipt,
+  type ReconciliationReview,
   type StagedHandoff,
   type TransferableAcknowledgement,
   type UnresolvedMutationIntent,
@@ -260,6 +279,213 @@ const stagedHandoffSchema = z
   })
   .strict();
 
+const reconciliationLocalEvidenceSchema = z.discriminatedUnion("kind", [
+  z
+    .object({
+      kind: z.literal(RECONCILIATION_LOCAL_EVIDENCE_KIND.absent),
+      observationGeneration: z
+        .number()
+        .int()
+        .min(1)
+        .max(Number.MAX_SAFE_INTEGER),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal(RECONCILIATION_LOCAL_EVIDENCE_KIND.live),
+      observationGeneration: z
+        .number()
+        .int()
+        .min(1)
+        .max(Number.MAX_SAFE_INTEGER),
+      contentSha256: z.string(),
+    })
+    .strict(),
+  z
+    .object({ kind: z.literal(RECONCILIATION_LOCAL_EVIDENCE_KIND.unknown) })
+    .strict(),
+]);
+
+const reconciliationRemoteEvidenceSchema = z.discriminatedUnion("kind", [
+  z
+    .object({ kind: z.literal(RECONCILIATION_REMOTE_EVIDENCE_KIND.absent) })
+    .strict(),
+  z
+    .object({
+      kind: z.literal(RECONCILIATION_REMOTE_EVIDENCE_KIND.legacy),
+      contentSha256: z.string(),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal(RECONCILIATION_REMOTE_EVIDENCE_KIND.live),
+      associationId: z.string(),
+      revision: z.string(),
+      contentSha256: z.string(),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal(RECONCILIATION_REMOTE_EVIDENCE_KIND.tombstone),
+      associationId: z.string(),
+      revision: z.string(),
+      recoveryId: z.string(),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal(RECONCILIATION_REMOTE_EVIDENCE_KIND.unavailable),
+    })
+    .strict(),
+]);
+
+const reconciliationEvidenceSchema = z
+  .object({
+    local: reconciliationLocalEvidenceSchema,
+    baseline: acknowledgementSchema,
+    remote: reconciliationRemoteEvidenceSchema,
+  })
+  .strict();
+
+const reconciliationActionSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal(RECONCILIATION_ACTION.keepLocal) }).strict(),
+  z.object({ kind: z.literal(RECONCILIATION_ACTION.useRemote) }).strict(),
+  z
+    .object({
+      kind: z.literal(RECONCILIATION_ACTION.keepBoth),
+      primarySide: z.enum([
+        RECONCILIATION_PRESERVATION_SIDE.local,
+        RECONCILIATION_PRESERVATION_SIDE.remote,
+      ]),
+    })
+    .strict(),
+  z.object({ kind: z.literal(RECONCILIATION_ACTION.adoptRevision) }).strict(),
+  z.object({ kind: z.literal(RECONCILIATION_ACTION.acceptTombstone) }).strict(),
+  z.object({ kind: z.literal(RECONCILIATION_ACTION.recreateRemote) }).strict(),
+  z.object({ kind: z.literal(RECONCILIATION_ACTION.restoreRecovery) }).strict(),
+  z.object({ kind: z.literal(RECONCILIATION_ACTION.forkLegacy) }).strict(),
+  z.object({ kind: z.literal(RECONCILIATION_ACTION.resolveHistory) }).strict(),
+  z.object({ kind: z.literal(RECONCILIATION_ACTION.defer) }).strict(),
+]);
+
+const reconciliationReviewSchema = z
+  .object({
+    retention: z.literal(RECONCILIATION_REVIEW_RETENTION.durable),
+    reviewId: z.string(),
+    targetPath: z.string(),
+    relatedPaths: z.array(z.string()).max(MAX_MIRROR_TRACKED_PATHS),
+    classification: z.enum([
+      RECONCILIATION_CLASSIFICATION.aligned,
+      RECONCILIATION_CLASSIFICATION.localAhead,
+      RECONCILIATION_CLASSIFICATION.remoteAhead,
+      RECONCILIATION_CLASSIFICATION.bothChanged,
+      RECONCILIATION_CLASSIFICATION.remoteTombstoned,
+      RECONCILIATION_CLASSIFICATION.localMissing,
+      RECONCILIATION_CLASSIFICATION.legacyRemote,
+      RECONCILIATION_CLASSIFICATION.unknownLocal,
+      RECONCILIATION_CLASSIFICATION.remoteUnavailable,
+      RECONCILIATION_CLASSIFICATION.unresolvedM3Effect,
+      RECONCILIATION_CLASSIFICATION.deferredHistory,
+    ]),
+    status: z.enum([
+      RECONCILIATION_REVIEW_STATUS.pending,
+      RECONCILIATION_REVIEW_STATUS.staged,
+      RECONCILIATION_REVIEW_STATUS.stale,
+      RECONCILIATION_REVIEW_STATUS.blocked,
+      RECONCILIATION_REVIEW_STATUS.completed,
+    ]),
+    evidence: reconciliationEvidenceSchema,
+    operationId: z.string().nullable(),
+  })
+  .strict();
+
+const reconciliationReservationSchema = z
+  .object({
+    path: z.string(),
+    kind: z.enum([
+      RECONCILIATION_PATH_REFERENCE_KIND.tracked,
+      RECONCILIATION_PATH_REFERENCE_KIND.reviewTarget,
+      RECONCILIATION_PATH_REFERENCE_KIND.newDestination,
+    ]),
+  })
+  .strict();
+
+const reconciliationPreservationReceiptSchema = z
+  .object({
+    operationId: z.string(),
+    originalPath: z.string(),
+    side: z.enum([
+      RECONCILIATION_PRESERVATION_SIDE.local,
+      RECONCILIATION_PRESERVATION_SIDE.remote,
+    ]),
+    sourceRevision: z.string().nullable(),
+    contentSha256: z.string(),
+    preservationPath: z.string().min(1).max(512),
+    proofState: z.enum([
+      RECONCILIATION_PRESERVATION_PROOF_STATE.pending,
+      RECONCILIATION_PRESERVATION_PROOF_STATE.verified,
+      RECONCILIATION_PRESERVATION_PROOF_STATE.evidenceRequired,
+      RECONCILIATION_PRESERVATION_PROOF_STATE.blocked,
+    ]),
+  })
+  .strict();
+
+const reconciliationOperationSchema = z
+  .object({
+    operationId: z.string(),
+    reviewId: z.string(),
+    authority: z.enum([
+      RECONCILIATION_AUTHORITY_SOURCE.reconciliationDecision,
+      RECONCILIATION_AUTHORITY_SOURCE.adoptionDecision,
+      RECONCILIATION_AUTHORITY_SOURCE.tombstoneDecision,
+      RECONCILIATION_AUTHORITY_SOURCE.recoveryRestoreDecision,
+      RECONCILIATION_AUTHORITY_SOURCE.historyDecision,
+    ]),
+    action: reconciliationActionSchema,
+    phase: z.enum([
+      RECONCILIATION_OPERATION_PHASE.admitted,
+      RECONCILIATION_OPERATION_PHASE.preserving,
+      RECONCILIATION_OPERATION_PHASE.mutatingLocal,
+      RECONCILIATION_OPERATION_PHASE.mutatingRemote,
+      RECONCILIATION_OPERATION_PHASE.evidenceRequired,
+      RECONCILIATION_OPERATION_PHASE.partial,
+      RECONCILIATION_OPERATION_PHASE.stale,
+      RECONCILIATION_OPERATION_PHASE.blocked,
+      RECONCILIATION_OPERATION_PHASE.completed,
+    ]),
+    sourcePath: z.string(),
+    destinationPath: z.string().nullable(),
+    reservations: z
+      .array(reconciliationReservationSchema)
+      .min(1)
+      .max(MAX_MIRROR_TRACKED_PATHS),
+    evidence: reconciliationEvidenceSchema,
+    recovery: z
+      .object({
+        recoveryId: z.string(),
+        revision: z.string(),
+        contentSha256: z.string(),
+      })
+      .strict()
+      .nullable(),
+    preservationReceipts: z
+      .array(reconciliationPreservationReceiptSchema)
+      .max(MAX_RECONCILIATION_PRESERVATION_RECEIPTS),
+    localEffect: z.enum([
+      MUTATION_EFFECT_CERTAINTY.notDispatched,
+      MUTATION_EFFECT_CERTAINTY.definitelyRefused,
+      MUTATION_EFFECT_CERTAINTY.confirmed,
+      MUTATION_EFFECT_CERTAINTY.unknown,
+    ]),
+    remoteEffect: z.enum([
+      MUTATION_EFFECT_CERTAINTY.notDispatched,
+      MUTATION_EFFECT_CERTAINTY.definitelyRefused,
+      MUTATION_EFFECT_CERTAINTY.confirmed,
+      MUTATION_EFFECT_CERTAINTY.unknown,
+    ]),
+  })
+  .strict();
+
 const deviceStateSchema = z
   .object({
     format: z.literal(MIRROR_DEVICE_STATE_FORMAT),
@@ -279,6 +505,12 @@ const deviceStateSchema = z
       .nullable(),
     paths: z.array(pathStateSchema).max(MAX_MIRROR_TRACKED_PATHS),
     stagedHandoff: stagedHandoffSchema.nullable(),
+    reconciliationReviews: z
+      .array(reconciliationReviewSchema)
+      .max(MAX_RECONCILIATION_REVIEWS),
+    reconciliationOperations: z
+      .array(reconciliationOperationSchema)
+      .max(MAX_RECONCILIATION_OPERATIONS),
   })
   .strict();
 const stateHeaderSchema = z
@@ -296,6 +528,12 @@ type LifecycleDto = z.infer<typeof lifecycleSchema>;
 type StagedHandoffDto = z.infer<typeof stagedHandoffSchema>;
 type TransferableAcknowledgementDto = z.infer<
   typeof transferableAcknowledgementSchema
+>;
+type ReconciliationEvidenceDto = z.infer<typeof reconciliationEvidenceSchema>;
+type ReconciliationReviewDto = z.infer<typeof reconciliationReviewSchema>;
+type ReconciliationOperationDto = z.infer<typeof reconciliationOperationSchema>;
+type ReconciliationPreservationReceiptDto = z.infer<
+  typeof reconciliationPreservationReceiptSchema
 >;
 
 /**
@@ -407,6 +645,9 @@ function projectDeviceState(state: MirrorDeviceState): DeviceStateDto {
               observationGeneration: entry.observationGeneration,
             })),
           },
+    reconciliationReviews: state.reconciliationReviews.map(projectReview),
+    reconciliationOperations:
+      state.reconciliationOperations.map(projectOperation),
   };
 }
 
@@ -567,6 +808,54 @@ function projectTransferableAcknowledgement(
   };
 }
 
+function projectReview(review: ReconciliationReview): ReconciliationReviewDto {
+  return {
+    retention: review.retention,
+    reviewId: review.reviewId,
+    targetPath: review.targetPath,
+    relatedPaths: [...review.relatedPaths],
+    classification: review.classification,
+    status: review.status,
+    evidence: projectReconciliationEvidence(review.evidence),
+    operationId: review.operationId,
+  };
+}
+
+function projectOperation(
+  operation: ReconciliationOperation,
+): ReconciliationOperationDto {
+  return {
+    operationId: operation.operationId,
+    reviewId: operation.reviewId,
+    authority: operation.authority,
+    action: { ...operation.action },
+    phase: operation.phase,
+    sourcePath: operation.sourcePath,
+    destinationPath: operation.destinationPath,
+    reservations: operation.reservations.map((reservation) => ({
+      path: reservation.path,
+      kind: reservation.kind,
+    })),
+    evidence: projectReconciliationEvidence(operation.evidence),
+    recovery: operation.recovery === null ? null : { ...operation.recovery },
+    preservationReceipts: operation.preservationReceipts.map((receipt) => ({
+      ...receipt,
+    })),
+    localEffect: operation.localEffect,
+    remoteEffect: operation.remoteEffect,
+  };
+}
+
+function projectReconciliationEvidence(
+  evidence: ReconciliationEvidence,
+): ReconciliationEvidenceDto {
+  return {
+    local: { ...evidence.local },
+    baseline: projectAcknowledgement(evidence.baseline),
+    remote: { ...evidence.remote },
+  };
+}
+
 function convertDeviceState(dto: DeviceStateDto): MirrorDeviceState {
   return {
     deviceId: requireParsed(dto.deviceId, createMirrorWriterId),
@@ -577,6 +866,9 @@ function convertDeviceState(dto: DeviceStateDto): MirrorDeviceState {
       dto.stagedHandoff === null
         ? null
         : convertStagedHandoff(dto.stagedHandoff),
+    reconciliationReviews: dto.reconciliationReviews.map(convertReview),
+    reconciliationOperations:
+      dto.reconciliationOperations.map(convertOperation),
   };
 }
 
@@ -746,6 +1038,149 @@ function convertStagedHandoff(dto: StagedHandoffDto): StagedHandoff {
       remoteVerification: entry.remoteVerification,
       observationGeneration: entry.observationGeneration,
     })),
+  };
+}
+
+function convertReview(dto: ReconciliationReviewDto): ReconciliationReview {
+  return {
+    retention: dto.retention,
+    reviewId: requireParsed(dto.reviewId, createMirrorOperationId),
+    targetPath: requireParsed(dto.targetPath, parsePersistedNotePath),
+    relatedPaths: dto.relatedPaths.map((path) =>
+      requireParsed(path, parsePersistedNotePath),
+    ),
+    classification: dto.classification,
+    status: dto.status,
+    evidence: convertReconciliationEvidence(dto.evidence),
+    operationId:
+      dto.operationId === null
+        ? null
+        : requireParsed(dto.operationId, createMirrorOperationId),
+  };
+}
+
+function convertOperation(
+  dto: ReconciliationOperationDto,
+): ReconciliationOperation {
+  return {
+    operationId: requireParsed(dto.operationId, createMirrorOperationId),
+    reviewId: requireParsed(dto.reviewId, createMirrorOperationId),
+    authority: dto.authority,
+    action: { ...dto.action },
+    phase: dto.phase,
+    sourcePath: requireParsed(dto.sourcePath, parsePersistedNotePath),
+    destinationPath:
+      dto.destinationPath === null
+        ? null
+        : requireParsed(dto.destinationPath, parsePersistedNotePath),
+    reservations: dto.reservations.map((reservation) => ({
+      path: requireParsed(reservation.path, parsePersistedNotePath),
+      kind: reservation.kind,
+    })),
+    evidence: convertReconciliationEvidence(dto.evidence),
+    recovery:
+      dto.recovery === null
+        ? null
+        : {
+            recoveryId: requireParsed(
+              dto.recovery.recoveryId,
+              createRecoverySnapshotId,
+            ),
+            revision: requireParsed(
+              dto.recovery.revision,
+              createApplicationRevision,
+            ),
+            contentSha256: requireParsed(
+              dto.recovery.contentSha256,
+              createContentSha256,
+            ),
+          },
+    preservationReceipts: dto.preservationReceipts.map(
+      convertPreservationReceipt,
+    ),
+    localEffect: dto.localEffect,
+    remoteEffect: dto.remoteEffect,
+  };
+}
+
+function convertReconciliationEvidence(
+  dto: ReconciliationEvidenceDto,
+): ReconciliationEvidence {
+  const local =
+    dto.local.kind === RECONCILIATION_LOCAL_EVIDENCE_KIND.live
+      ? {
+          ...dto.local,
+          contentSha256: requireParsed(
+            dto.local.contentSha256,
+            createContentSha256,
+          ),
+        }
+      : dto.local;
+  let remote: ReconciliationEvidence["remote"];
+  switch (dto.remote.kind) {
+    case RECONCILIATION_REMOTE_EVIDENCE_KIND.absent:
+    case RECONCILIATION_REMOTE_EVIDENCE_KIND.unavailable:
+      remote = dto.remote;
+      break;
+    case RECONCILIATION_REMOTE_EVIDENCE_KIND.legacy:
+      remote = {
+        kind: dto.remote.kind,
+        contentSha256: requireParsed(
+          dto.remote.contentSha256,
+          createContentSha256,
+        ),
+      };
+      break;
+    case RECONCILIATION_REMOTE_EVIDENCE_KIND.live:
+      remote = {
+        kind: dto.remote.kind,
+        associationId: requireParsed(
+          dto.remote.associationId,
+          createMirrorAssociationId,
+        ),
+        revision: requireParsed(dto.remote.revision, createApplicationRevision),
+        contentSha256: requireParsed(
+          dto.remote.contentSha256,
+          createContentSha256,
+        ),
+      };
+      break;
+    case RECONCILIATION_REMOTE_EVIDENCE_KIND.tombstone:
+      remote = {
+        kind: dto.remote.kind,
+        associationId: requireParsed(
+          dto.remote.associationId,
+          createMirrorAssociationId,
+        ),
+        revision: requireParsed(dto.remote.revision, createApplicationRevision),
+        recoveryId: requireParsed(
+          dto.remote.recoveryId,
+          createRecoverySnapshotId,
+        ),
+      };
+      break;
+  }
+  return {
+    local,
+    baseline: convertAcknowledgement(dto.baseline),
+    remote,
+  };
+}
+
+function convertPreservationReceipt(
+  dto: ReconciliationPreservationReceiptDto,
+): ReconciliationPreservationReceipt {
+  return {
+    operationId: requireParsed(dto.operationId, createMirrorOperationId),
+    originalPath: requireParsed(dto.originalPath, parsePersistedNotePath),
+    side: dto.side,
+    sourceRevision:
+      dto.sourceRevision === null
+        ? null
+        : requireParsed(dto.sourceRevision, createApplicationRevision),
+    contentSha256: requireParsed(dto.contentSha256, createContentSha256),
+    preservationPath: dto.preservationPath,
+    proofState: dto.proofState,
   };
 }
 

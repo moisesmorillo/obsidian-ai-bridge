@@ -1,6 +1,8 @@
 import {
+  MIRROR_DEVICE_STATE_V2_VERSION,
   MIRROR_STATE_STORE_FAILURE,
   type MirrorDeviceState,
+  type MirrorDeviceStateV2,
   type MirrorStateSaveResult,
   type MirrorStateStore,
 } from "@obsidian-ai-bridge/core";
@@ -10,6 +12,8 @@ import {
   MIRROR_DEVICE_STATE_STORAGE_KEY,
   type MirrorDeviceStateDecodeResult,
 } from "@obsidian-plugin/state/device-state-codec";
+import { migrateMirrorDeviceStateV2ToV3 } from "@obsidian-plugin/state/device-state-migration";
+import { decodeMirrorDeviceStateV2 } from "@obsidian-plugin/state/device-state-v2.codec";
 import {
   type HandoffIntegrity,
   verifyHandoffPayloadChecksum,
@@ -21,73 +25,119 @@ export interface ObsidianLocalStorageHost {
   /** @param key - Package-specific host-local key. @returns Untrusted stored value. */
   loadLocalStorage?(key: string): unknown;
   /** @param key - Package-specific key. @param data - Serialized state or null. */
-  saveLocalStorage?(key: string, data: string | null): void;
+  saveLocalStorage?(key: string, data: string | null): void | Promise<void>;
 }
+
+/** Migration mechanics injected only at the startup persistence boundary. */
+export interface MirrorDeviceStateMigrationBoundary {
+  /** @param state - Validated frozen version-2 input. @returns Version-3 projection. */
+  migrate(state: MirrorDeviceStateV2): MirrorDeviceState;
+  /** @param state - Validated migrated state. @returns Canonical version-3 JSON. */
+  encode(state: MirrorDeviceState): string;
+}
+
+/** Production migration mechanics kept explicit for deterministic test substitution. */
+const DEFAULT_MIGRATION_BOUNDARY: MirrorDeviceStateMigrationBoundary = {
+  migrate: migrateMirrorDeviceStateV2ToV3,
+  encode: encodeMirrorDeviceState,
+};
+
+/** Strict startup load outcome, including host/migration persistence unavailability. */
+export type MirrorDeviceStateLoadResult =
+  | MirrorDeviceStateDecodeResult
+  | { readonly kind: "unavailable" };
 
 /**
  * Device-local state adapter backed only by App local storage.
  *
- * It never falls back to synced plugin data and never clears malformed/future data.
+ * Version-2 migration is completed and read-verified under the existing key before
+ * version-3 state is returned. The adapter never publishes an in-memory migration,
+ * falls back to synced plugin data, clears malformed data, or retries as version 2
+ * after a version-3 write.
  */
 export class ObsidianMirrorStateStore implements MirrorStateStore {
   /**
    * @param host - Official vault-local host storage capability.
    * @param integrity - Adapter-owned staged-handoff integrity capability.
+   * @param migration - Deterministic migration/encoding boundary.
    */
   constructor(
     private readonly host: ObsidianLocalStorageHost,
     private readonly integrity: HandoffIntegrity = new WebCryptoHandoffIntegrity(),
+    private readonly migration: MirrorDeviceStateMigrationBoundary = DEFAULT_MIGRATION_BOUNDARY,
   ) {}
 
-  /** @returns Strict load outcome, preserving unavailable separately from corrupt data. */
-  async load(): Promise<
-    MirrorDeviceStateDecodeResult | { readonly kind: "unavailable" }
-  > {
-    if (this.host.loadLocalStorage === undefined)
-      return { kind: "unavailable" };
+  /**
+   * Loads current state or atomically crosses the deterministic version-2 migration fence.
+   *
+   * @returns Strict version-3 load outcome; migration storage failures are unavailable.
+   */
+  async load(): Promise<MirrorDeviceStateLoadResult> {
+    const stored = await this.loadRaw();
+    if (stored.kind === "unavailable") return stored;
+
+    let current: MirrorDeviceStateDecodeResult;
     try {
-      return await decodeMirrorDeviceState(
-        this.host.loadLocalStorage(MIRROR_DEVICE_STATE_STORAGE_KEY),
+      current = await decodeMirrorDeviceState(stored.value, this.integrity);
+    } catch {
+      return { kind: "unavailable" };
+    }
+    if (
+      current.kind !== "unsupported-version" ||
+      current.version !== MIRROR_DEVICE_STATE_V2_VERSION
+    ) {
+      return current;
+    }
+
+    let historical: Awaited<ReturnType<typeof decodeMirrorDeviceStateV2>>;
+    try {
+      historical = await decodeMirrorDeviceStateV2(
+        stored.value,
         this.integrity,
       );
+    } catch {
+      return { kind: "unavailable" };
+    }
+    if (historical.kind !== "valid") return historical;
+
+    let migrated: MirrorDeviceState;
+    let encoded: string;
+    try {
+      migrated = this.migration.migrate(historical.state);
+      encoded = this.migration.encode(migrated);
+    } catch {
+      return { kind: "unavailable" };
+    }
+
+    const saved = await this.saveEncoded(encoded);
+    if (saved.kind !== "saved") return { kind: "unavailable" };
+
+    const readBack = await this.loadRaw();
+    if (
+      readBack.kind === "unavailable" ||
+      typeof readBack.value !== "string" ||
+      readBack.value !== encoded
+    ) {
+      return { kind: "unavailable" };
+    }
+    try {
+      const verified = await decodeMirrorDeviceState(
+        readBack.value,
+        this.integrity,
+      );
+      return verified.kind === "valid" ? verified : { kind: "unavailable" };
     } catch {
       return { kind: "unavailable" };
     }
   }
 
   /**
-   * @param state - Complete validated content-free state.
+   * @param state - Complete validated content-free version-3 state.
    * @returns Sanitized save result for the serialized core owner.
    */
   async save(state: MirrorDeviceState): Promise<MirrorStateSaveResult> {
-    if (state.stagedHandoff !== null) {
-      let checksumMatches: boolean;
-      try {
-        checksumMatches = await verifyHandoffPayloadChecksum(
-          {
-            associationId: state.stagedHandoff.associationId,
-            origin: state.stagedHandoff.origin,
-            entries: state.stagedHandoff.entries.map((entry) => ({
-              path: entry.path,
-              acknowledgement: entry.acknowledgement,
-            })),
-          },
-          state.stagedHandoff.checksum,
-          this.integrity,
-        );
-      } catch {
-        return {
-          kind: "failed",
-          reason: MIRROR_STATE_STORE_FAILURE.unavailable,
-        };
-      }
-      if (!checksumMatches) {
-        return {
-          kind: "failed",
-          reason: MIRROR_STATE_STORE_FAILURE.quotaOrStorageError,
-        };
-      }
-    }
+    const integrityFailure = await this.handoffIntegrityFailure(state);
+    if (integrityFailure !== undefined) return integrityFailure;
     let encoded: string;
     try {
       encoded = encodeMirrorDeviceState(state);
@@ -97,11 +147,65 @@ export class ObsidianMirrorStateStore implements MirrorStateStore {
         reason: MIRROR_STATE_STORE_FAILURE.quotaOrStorageError,
       };
     }
+    return this.saveEncoded(encoded);
+  }
+
+  private async handoffIntegrityFailure(
+    state: MirrorDeviceState,
+  ): Promise<MirrorStateSaveResult | undefined> {
+    if (state.stagedHandoff === null) return undefined;
+    try {
+      const valid = await verifyHandoffPayloadChecksum(
+        {
+          associationId: state.stagedHandoff.associationId,
+          origin: state.stagedHandoff.origin,
+          entries: state.stagedHandoff.entries.map((entry) => ({
+            path: entry.path,
+            acknowledgement: entry.acknowledgement,
+          })),
+        },
+        state.stagedHandoff.checksum,
+        this.integrity,
+      );
+      return valid
+        ? undefined
+        : {
+            kind: "failed",
+            reason: MIRROR_STATE_STORE_FAILURE.quotaOrStorageError,
+          };
+    } catch {
+      return { kind: "failed", reason: MIRROR_STATE_STORE_FAILURE.unavailable };
+    }
+  }
+
+  private async loadRaw(): Promise<
+    | { readonly kind: "loaded"; readonly value: unknown }
+    | { readonly kind: "unavailable" }
+  > {
+    if (this.host.loadLocalStorage === undefined) {
+      return { kind: "unavailable" };
+    }
+    try {
+      return {
+        kind: "loaded",
+        value: await this.host.loadLocalStorage(
+          MIRROR_DEVICE_STATE_STORAGE_KEY,
+        ),
+      };
+    } catch {
+      return { kind: "unavailable" };
+    }
+  }
+
+  private async saveEncoded(encoded: string): Promise<MirrorStateSaveResult> {
     if (this.host.saveLocalStorage === undefined) {
       return { kind: "failed", reason: MIRROR_STATE_STORE_FAILURE.unavailable };
     }
     try {
-      this.host.saveLocalStorage(MIRROR_DEVICE_STATE_STORAGE_KEY, encoded);
+      await this.host.saveLocalStorage(
+        MIRROR_DEVICE_STATE_STORAGE_KEY,
+        encoded,
+      );
       return { kind: "saved" };
     } catch {
       return {

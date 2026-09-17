@@ -306,6 +306,8 @@ describe("native secret and host-local state adapters", () => {
           observationGeneration: 1,
         })),
       },
+      reconciliationReviews: [],
+      reconciliationOperations: [],
     };
     const saveLocalStorage = vi.fn();
     const store = new ObsidianMirrorStateStore(

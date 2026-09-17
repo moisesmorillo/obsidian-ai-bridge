@@ -9,7 +9,7 @@ export const MIRROR_RUNTIME_COORDINATOR_SYMBOL = Symbol.for(
 );
 
 /** Current structural registry contract shared across same-realm bundle replacement. */
-export const MIRROR_RUNTIME_COORDINATOR_VERSION = 2;
+export const MIRROR_RUNTIME_COORDINATOR_VERSION = 3;
 
 /** Result of acquiring same-runtime ownership without replacing incompatible state. */
 export type RuntimeMirrorCoordinatorResult =

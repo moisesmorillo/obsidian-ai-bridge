@@ -1313,6 +1313,8 @@ function activeState(): MirrorDeviceState {
     globalBlockReason: null,
     paths: [],
     stagedHandoff: null,
+    reconciliationReviews: [],
+    reconciliationOperations: [],
   };
 }
 

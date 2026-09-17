@@ -1,9 +1,11 @@
 # M4 — Reviewed remote-to-local reconciliation and conflict resolution
 
-**Status: NEXT — implementation-ready specification; planning only.** M3 is COMPLETE.
-This document resolves M4's material design choices but does not authorize production
-code, deployment, or installation in a personal vault. A separate implementation PR
-must execute the [sequential plan](../plans/m4-remote-to-local-reconciliation-and-conflict-resolution.md).
+**Status: NEXT — Slice 1 implemented; no M4 user-facing behavior.** M3 is COMPLETE.
+The accepted design remains sequential. Slice 1 establishes only closed content-free
+contracts, device-state v3, deterministic v2 migration/read-back, downgrade fencing,
+and runtime registry compatibility. Slices 2–8 remain unimplemented. No review UI,
+reconciliation scanning/classification, local/remote mutation, conflict handling,
+restore/history execution, timer, deployment, or personal-vault installation is active.
 
 ## Objective
 
@@ -533,7 +535,7 @@ not count as interleaving evidence.
 The bounded test-first sequence is normative in the
 [M4 plan](../plans/m4-remote-to-local-reconciliation-and-conflict-resolution.md):
 
-1. closed contracts, state v3, strict migration, and runtime downgrade fence;
+1. **Implemented:** closed contracts, state v3, strict migration, and runtime downgrade fence;
 2. read-only evidence sampling and pure divergence/stale-decision policy;
 3. narrow local mutation adapter and verified preservation;
 4. revisioned adoption and live/live action orchestration;
@@ -546,9 +548,73 @@ The bounded test-first sequence is normative in the
 No slice exposes a user mutation before its preservation, stale validation, durable
 state, restart, and focused tests exist.
 
+## Slice 1 implementation evidence
+
+- Core exports closed typed authority, classification, review status, action, operation
+  phase, local/remote evidence, reservation, effect, recovery identity, and
+  preservation-receipt contracts. M3 saved-event authority remains M3-owned.
+- Device-state schema version 3 retains the M3 lifecycle, device/binding identity,
+  paths, ACKs, desired state, unresolved intents/phases/budgets, blockers, delete and
+  rename evidence, staged handoff, and global fences exactly. It adds only bounded
+  sparse `reconciliationReviews` and `reconciliationOperations`; no body/payload or
+  arbitrary-record field exists.
+- Core validation indexes tracked paths, review/operation IDs, and active reservations
+  once; it rejects duplicate IDs, overlapping active paths, unreserved related paths,
+  invalid tracked/new destinations, foreign-association evidence, incompatible
+  classification/action/authority/phase/effect/preservation combinations, impossible
+  review links/lifecycle, M3-effect precedence violations, deferred-history conflicts,
+  and capacity overflow.
+- `device-state-v2.codec.ts` is a frozen strict historical decoder. The current strict
+  codec writes only version 3; each decoder refuses the other version.
+- Startup performs detect → strict decode → deterministic in-memory projection → v3
+  validation/encode → one same-key save → one exact read-back comparison/strict decode
+  before constructing `MirrorStateOwner`. Load/decode/invariant/encode/save/quota/
+  read-back/integrity/version failures fail closed without reset or in-memory publish.
+  Valid untouched v2 retries; a committed v3 whose read-back failed loads as v3 next
+  startup.
+- Runtime owner and same-realm registry structural versions are both 3. M3 and M4
+  owners/registries refuse each other; compatible M4 replacements retain the owner.
+  Active M4 operations block handoff drain/export, while empty M4 state preserves M3
+  handoff behavior and staged/draining/drained authority exactly.
+- Deterministic tests migrate exactly 50,000 M3 path entries within the unchanged
+  8 MiB codec bound with empty M4 collections and no per-path placeholder growth.
+  Final canonical validation passes 64 source files / 840 tests at 95.00%
+  statements, 90.54% branches, 98.40% functions, and 97.02% lines, plus eight
+  storage qualification tests and six generated-artifact tests.
+- No UI, commands, modals, settings actions, local writer/Obsidian mutation adapter,
+  Fetch/RemoteBridge change, Worker/API/OpenAPI change, deployment configuration,
+  M4 timer, or reconciliation scan is introduced.
+
+### Migration decision matrix
+
+| Stored value / decode | Migration-validation-save-read-back | Registry compatibility | Result |
+| --- | --- | --- | --- |
+| Missing | Existing new-device v3 provisioning succeeds | Compatible/empty | Publish new disabled v3 owner |
+| Valid v2 | All stages and exact read-back succeed | Compatible/empty | Migrate once and publish v3 |
+| Valid v2 | Migration, validation, encode, save, quota, integrity, or read-back fails | Any | Fail closed; retry later if stored value remains v2 |
+| Save committed v3, read-back failed | Next startup strictly decodes v3 | Compatible/empty | Load v3; never reinterpret as v2 |
+| Valid v3 | No migration | Compatible/empty | Strict-load and publish v3 |
+| Valid v2/v3 | N/A | Existing incompatible M3/M4 registry/owner | Fail closed without replacement/reset |
+| Version 1, future, malformed, corrupt, or integrity mismatch | No migration/save | Any | Unsupported/corrupt/unavailable; stored value untouched where host save did not commit |
+
+### State relationship matrix
+
+| Lifecycle / M3 state / M4 state | Authoritative outcome |
+| --- | --- |
+| Disabled or handoff-staged + any M4 review/operation | Invalid |
+| Active/paused + no unresolved M3 effect + disjoint valid sparse M4 metadata | Valid |
+| Any active M4 operation + reserved path with unresolved M3 mutation | Invalid; M3 effect wins |
+| Deferred rename + non-history active M4 operation | Invalid; deferred history wins |
+| Deferred rename + exact history action | Valid contract state; no Slice 1 effect capability |
+| Overlapping active M4 reservations | Invalid |
+| Handoff-draining + active M4 operation | Migration-preserved but not drainable/exportable |
+| Handoff-drained + active M4 operation | Invalid/export-blocked |
+| Empty M4 collections + valid M3 lifecycle/handoff | Valid and behavior-preserving |
+
 ## Acceptance checklist
 
-No item is implemented by this planning PR.
+Slice 1 establishes the contract and migration prerequisites only. The end-to-end M4
+acceptance items remain incomplete until the later behavior slices are implemented.
 
 - [ ] **A1 — Authority and writer model:** Reviewed-only remote-to-local authority is
   typed end-to-end; one designated writer remains; no automatic import, last-writer-

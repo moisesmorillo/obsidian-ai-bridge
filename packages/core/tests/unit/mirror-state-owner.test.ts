@@ -96,6 +96,8 @@ function activeState(): MirrorDeviceState {
       },
     ],
     stagedHandoff: null,
+    reconciliationReviews: [],
+    reconciliationOperations: [],
   };
 }
 
@@ -344,6 +346,8 @@ describe("MirrorStateOwner", () => {
             origin: ORIGIN,
           },
           stagedHandoff: null,
+          reconciliationReviews: [],
+          reconciliationOperations: [],
         }))
       ).kind,
     ).toBe("invalid-transition");
@@ -435,6 +439,8 @@ describe("MirrorStateOwner", () => {
         checksum: HASH,
         entries,
       },
+      reconciliationReviews: [],
+      reconciliationOperations: [],
     };
     const store = new FakeStateStore();
     const owner = new MirrorStateOwner(state, store);

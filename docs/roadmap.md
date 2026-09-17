@@ -61,7 +61,10 @@ MINOR findings were corrected at `e97af36`, and the corrective review returned A
 with no open findings. M4 is the single NEXT milestone. Its reviewed-only authority,
 preservation, local mutation, adoption/tombstone/restore, migration, and one-writer
 decisions are now
-implementation-ready planning; no M4 production behavior exists.
+implementation-ready design. Slice 1 now implements the closed contracts, sparse
+state v3, deterministic v2 migration/read-back fence, downgrade refusal, and runtime
+registry compatibility fence. It exposes no M4 user-facing or mutation behavior;
+Slices 2–8 remain unimplemented.
 Slice 0 qualifies the pinned local
 conditional-storage runtime and host declarations. Slice 1 raises the plugin baseline
 to 1.13.0 and adds shared typed contracts. Worker Slice 2A–2C implements private conditional storage, application current/
@@ -177,7 +180,7 @@ merely because the server-side storage and application checkpoints are implement
 
 ### M4 — Remote-to-local reconciliation and conflict resolution
 
-**NEXT — implementation-ready specification; planning only.** The
+**NEXT — Slice 1 implemented; no user-facing M4 behavior.** The
 [specification](milestones/m4-remote-to-local-reconciliation-and-conflict-resolution.md),
 [test-first plan](plans/m4-remote-to-local-reconciliation-and-conflict-resolution.md),
 and accepted-design ADRs 0005–0008 resolve the material choices. A separate request is
@@ -199,9 +202,15 @@ do not pre-authorize M4 code.
   live preserve/copy/recreate/defer choices; no plugin local delete/move. Recovery
   restore is local-only first and remains
   blocked pending a second remote decision.
-- **State/API/writer:** device state migrates deterministically from v2 to incompatible
-  v3, preserving every M3 intent/blocker and fencing downgrade. Existing v2 Worker
-  operations suffice; no new API/infrastructure. One designated writer remains.
+- **State/API/writer:** Slice 1 now migrates device state deterministically from v2
+  to incompatible v3, preserving every M3 intent/blocker, verifying the same-key write,
+  and fencing downgrade/same-realm M3 ownership. Existing v2 Worker operations remain
+  unchanged; no new API/infrastructure or mutation capability exists. One designated
+  writer remains.
+- **Slice 1 evidence:** closed authority/classification/action/status/evidence/
+  preservation contracts, strict v3 codec/validation, frozen v2 decoder, migration
+  failure barriers, handoff/export fencing, registry version 3, and exact 50,000-path
+  sparse migration are covered. No later acceptance item is claimed complete.
 - **Risks/exit:** the A1–A12 checklist requires exact barrier tests for concurrent
   edit/delete/rename/restore/restart, no silent overwrite/delete, generated artifact
   qualification, canonical diagnostics/coverage/docs, and independent review before

@@ -54,7 +54,7 @@ export type {
 } from "@obsidian-plugin/runtime/mirror-observation-epoch";
 
 /** Version of the same-realm runtime-owner structural contract. */
-export const MIRROR_RUNTIME_OWNER_VERSION = 2;
+export const MIRROR_RUNTIME_OWNER_VERSION = 3;
 
 /** Construction dependencies retained behind plugin adapter boundaries. */
 export interface MirrorRuntimeOwnerDependencies {

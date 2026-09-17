@@ -2,8 +2,10 @@
 
 ## Status
 
-**Accepted design for M4; not implemented.** M3 device-state schema version 2 remains
-the executable current format until a separately authorized M4 implementation.
+**Accepted — implemented in M4 Slice 1.** Device-state v3, frozen v2 decoding,
+deterministic same-key migration/read-back, downgrade refusal, sparse validation, and
+runtime registry version 3 are executable. No later M4 reconciliation behavior is
+implemented.
 
 ## Context
 

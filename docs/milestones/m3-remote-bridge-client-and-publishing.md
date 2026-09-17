@@ -1,12 +1,12 @@
 # M3 — Automatic eligible-Markdown remote mirror
 
-**Status: COMPLETE — Slices 0–8 and A1–A11 are complete on PR #27. The
-M3→M4 transition becomes canonical when that PR is merged. M3 is not deployed or
-production-qualified.**
+**Status: COMPLETE — Slices 0–8 and A1–A11 completed in PR #27, merged at
+`63b0599`. The M3→M4 transition is canonical. M3 is not deployed or production-
+qualified.**
 
 The maintainer's clarification replaces the selected-note/manual-publishing proposal
-at `e35bd90`. M2 is COMPLETE at merged `b300726` (PR #7); M3 is COMPLETE on
-PR #27 and M4 is the single NEXT milestone. Historical filenames remain as stable
+at `e35bd90`. M2 is COMPLETE at merged `b300726` (PR #7); M3 is COMPLETE at
+merged `63b0599` (PR #27), and M4 is the single NEXT milestone. Historical filenames remain as stable
 links, not product terminology.
 [Roadmap](../roadmap.md) owns scope/order; [AGENTS.md](../../AGENTS.md) owns engineering
 rules; [decisions/evidence](../plans/m3-design-decisions.md) and the
@@ -571,7 +571,7 @@ against the frozen implementation and reviewed corrective head.
 | A8 — runtime owner/designation/clean handoff | **Implemented** | Versioned Promise-backed registry, attachment/configuration/staged-handoff owners and tests; generated same-realm replacement/incompatible-registry tests; content-free export/alignment integration tests; [exact handoff/reset sequence](../operations.md#safe-writer-handoff). |
 | A9 — typed v2/OpenAPI/transport/CORS/failures/negative capabilities | **Implemented** | Shared protocol schemas/constants, generated OpenAPI semantic assertions, one v2 route policy for Hono/CORS/OpenAPI, Worker HTTP matrices, bounded Fetch/response tests, capability failure fencing, and packaged exact request assertions. API audit found no behavior/doc drift after stale composition prose was corrected. |
 | A10 — canonical/coverage/generated/runtime/diagnostics/docs plus semantic review | **Complete** | Canonical validation, unchanged coverage thresholds, generated artifact qualification, pinned workerd storage qualification, diagnostics/tooling, synchronized operational/security docs, Markdown-link and secret/diff review all passed. The independent final review found exactly three MINOR issues; corrective head `e97af36` fixed them and passed CI, and the corrective `/skill:code-review` returned APPROVE with no actionable finding. No real-host, iCloud, deployment or production claim is included. |
-| A11 — completion PR/evidence then M4 NEXT, no M4 code/deployment | **Complete** | A1–A10 have repository evidence; PR #27 contains the atomic M3 COMPLETE / M4 NEXT transition and the refined [M4 planning specification](m4-remote-to-local-reconciliation-and-conflict-resolution.md), with no M4 production code or deployment. The transition becomes canonical when this PR is merged; no merge SHA is claimed. |
+| A11 — completion PR/evidence then M4 NEXT, no M4 code/deployment | **Complete** | A1–A10 have repository evidence; merged PR #27 (`63b0599`) contains the atomic M3 COMPLETE / M4 NEXT transition and the planning-only [M4 specification](m4-remote-to-local-reconciliation-and-conflict-resolution.md), with no M4 production code or deployment. |
 
 ### Slice 8 validation record
 
@@ -624,8 +624,8 @@ Checklist state:
 - [x] A1–A9 have implemented repository evidence, subject to the explicit runtime
   qualification limits above.
 - [x] A10 canonical, qualification, documentation and independent semantic gates pass.
-- [x] A11 is recorded in PR #27; the M3 COMPLETE / M4 NEXT transition becomes
-  canonical when merged, with no M4 production code or deployment.
+- [x] A11 is recorded in merged PR #27 (`63b0599`); the M3 COMPLETE / M4 NEXT
+  transition is canonical, with no M4 production code or deployment.
 
 ## Non-goals and residual risks
 

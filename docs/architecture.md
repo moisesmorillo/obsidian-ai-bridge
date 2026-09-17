@@ -22,8 +22,9 @@ recreation and rename orchestration, and Slice 7's official host/runtime/setting
 composition. Slice 8's generated-artifact qualification and operational documentation
 are implemented. The independent final review found three MINOR issues, corrective
 head `e97af36` resolved all three, and the corrective review returned APPROVE with no
-open findings. M3 is COMPLETE on PR #27, with the transition canonical when that PR
-is merged; M4 is NEXT for planning only. The connected outward mirror remains
+open findings. M3 is COMPLETE; PR #27 merged at `63b0599` and made the transition
+canonical. M4 is NEXT with an implementation-ready reviewed-reconciliation design,
+but no M4 production behavior exists. The connected outward mirror remains
 experimental and undeployed, with no real Obsidian desktop/mobile or iCloud runtime
 qualification.
 See the [verified current state](current-state.md) for source/configuration evidence,
@@ -299,8 +300,14 @@ establishes real-host behavior.
 
 ## Explicitly deferred
 
-- M4 (NEXT, planning only): Remote-to-local authority, conflict resolution, adoption,
-  reviewed remote deletion handling, bounded local mutation and richer restore UX.
+- M4 (NEXT, implementation-ready planning only): reviewed/manual reconciliation,
+  exact revisioned adoption, archive-first conflicts, a separate bounded local
+  mutation port, reviewed tombstones, local-first restore, deferred-history choices,
+  deterministic state-v2→v3 migration, existing v2 API, and the retained one-writer
+  model. Planned dependency flow is thin commands/modal → focused core review/action
+  policy owners → `ReadOnlyLocalVault` + a separate `LocalReconciliationWriter` +
+  existing `RemoteBridge`/state owner → Obsidian/Fetch adapters. Remote divergence
+  remains a review item; no automatic import or cross-system atomicity is claimed.
 - M5: Broader operational readiness, abuse limits and scoped authentication evolution.
 - M6: Authorized MCP transport/tool definitions, never direct R2 access.
 - Outside this roadmap: search, attachments and AI inference. NAS replication or

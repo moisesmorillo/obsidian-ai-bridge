@@ -1,8 +1,8 @@
 # M3 implementation plan — automatic eligible-Markdown mirror
 
-**Status: implementation plan complete; M3 Slices 0–8 and A1–A11 are complete on
-PR #27, with the transition canonical when merged. M3 remains experimental and
-undeployed; M4 is the single NEXT milestone and is planning-only.** PR #8 remains
+**Status: implementation plan complete; M3 Slices 0–8 and A1–A11 completed in
+merged PR #27 (`63b0599`). The transition is canonical. M3 remains experimental and
+undeployed; M4 is the single NEXT milestone.** PR #8 remains
 planning/documentation only. M2 merged at `b300726` (PR #7).
 [Spec](../milestones/m3-remote-bridge-client-and-publishing.md),
 [approved decisions/evidence](m3-design-decisions.md) and accepted design ADRs
@@ -408,8 +408,8 @@ surface and retires unsafe v1 mutations; intermediate checkpoints are not rollou
   returned APPROVE with no open finding.
 - **Completion boundary fulfilled:** PR #27's documentation-only finalization marks
   M3 COMPLETE and M4 NEXT, preserves exactly one canonical NEXT milestone, updates
-  active links/evidence, and contains no M4 production code. The transition becomes
-  canonical only when merged; no deployment or merge occurred here.
+  active links/evidence, and contains no M4 production code. PR #27 later merged at
+  `63b0599`, making the transition canonical; no deployment occurred.
 
 ## Planning revision evidence
 

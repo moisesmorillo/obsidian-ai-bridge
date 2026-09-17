@@ -4,9 +4,12 @@ This snapshot records the completed M1 foundation, M2 local-inspection adapter, 
 M3 Slices 0–8. M2 source/tooling through `2e74b23` passed independent semantic
 review and merged at `b300726` (PR #7). M3's completion PR #27 passed canonical
 validation and final semantic review; its three MINOR findings were corrected at
-`e97af36`, whose corrective review returned APPROVE with no open findings. M3 is
-COMPLETE on this PR and the M3→M4 transition becomes canonical when it is merged.
-M4 is the single NEXT milestone and remains planning-only. M3 completed [Slice 0 platform qualification](qualification/m3-slice-0-platform-primitives.md),
+`e97af36`, whose corrective review returned APPROVE with no open findings. PR #27
+merged at `63b0599`; M3 is COMPLETE and the M3→M4 transition is canonical.
+M4 is the single NEXT milestone. Its [implementation-ready planning specification](milestones/m4-remote-to-local-reconciliation-and-conflict-resolution.md),
+[sequential plan](plans/m4-remote-to-local-reconciliation-and-conflict-resolution.md),
+and ADRs 0005–0008 resolve the design, but no M4 production/test behavior is present.
+M3 completed [Slice 0 platform qualification](qualification/m3-slice-0-platform-primitives.md),
 Slice 1's modern plugin baseline/shared typed contracts, Worker Slice 2A–2C's
 private storage/application transitions plus public safe v2 HTTP/OpenAPI/CORS, and
 Slice 3's device-local state/configuration owner and staged handoff model, Slice
@@ -120,9 +123,16 @@ positive-event coalescing, path scheduling, finite retry/evidence policy and run
 deletion/recreation/rename orchestration; Slice 7 composes them with the Fetch client
 through official host callbacks, settings, timers and same-realm ownership. There are
 no remote-to-local writes. Slice 8's artifact, operational, validation and semantic
-review gates passed; the corrective review of `e97af36` returned APPROVE. M3 is
-COMPLETE on PR #27, with that transition canonical when merged. M4 is NEXT for
-planning only, and no M4 remote-to-local behavior exists.
+review gates passed; the corrective review of `e97af36` returned APPROVE. PR #27
+merged at `63b0599`; M3 is COMPLETE and the transition is canonical. M4 is NEXT with
+implementation-ready planning only, and no M4 remote-to-local or local-mutation
+behavior exists. The accepted M4 design is reviewed-only: exact format-2 revisions
+may be adopted, competing bytes must be preserved before replacement, remote
+tombstones require explicit choices without plugin local delete/move, recovery restore
+is local-only first, legacy same-path adoption remains prohibited, state v2 will
+migrate fail-closed to v3, the
+existing v2 API suffices, and one designated writer remains. These are planning
+contracts, not current operator instructions.
 
 There is no search, MCP, AI inference, attachment mirroring or remote-to-local plugin client.
 No D1, Durable Objects, queues, Vectorize, Workers AI or external database is part

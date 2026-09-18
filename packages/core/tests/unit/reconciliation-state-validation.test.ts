@@ -452,6 +452,7 @@ describe("M4 reconciliation state contracts", () => {
       ...durable,
       retention: RECONCILIATION_REVIEW_RETENTION.ephemeral,
       sessionId: OPERATION,
+      allowedActions: [],
       sampledLocalText: "transient local",
       sampledRemoteText: "transient remote",
     };

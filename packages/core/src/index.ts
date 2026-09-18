@@ -31,6 +31,10 @@ export type {
 export type { ReadOnlyLocalVault } from "@core/local-vault/read-only-local-vault.port";
 export type { ConditionalCurrentNoteRepository } from "@core/mirror/conditional-current-note-repository.port";
 export { CurrentGenerationService } from "@core/mirror/current-generation-service";
+export {
+  classifyReconciliation,
+  isReconciliationReviewable,
+} from "@core/mirror/divergence-classifier";
 export type { MirrorScheduledJob } from "@core/mirror/fair-mirror-scheduler";
 export { FairMirrorScheduler } from "@core/mirror/fair-mirror-scheduler";
 export {
@@ -144,10 +148,16 @@ export {
 } from "@core/mirror/mirror-identifiers";
 export type {
   CompleteMirrorInventory,
+  CompleteRecoveryInventory,
   IncompleteMirrorInventory,
+  IncompleteRecoveryInventory,
   MirrorInventoryResult,
+  RecoveryInventoryResult,
 } from "@core/mirror/mirror-inventory";
-export { inspectBoundedMirrorInventory } from "@core/mirror/mirror-inventory";
+export {
+  inspectBoundedMirrorInventory,
+  inspectBoundedRecoveryInventory,
+} from "@core/mirror/mirror-inventory";
 export {
   HANDOFF_ALIGNMENT_KIND,
   MAX_MIRROR_TRACKED_PATHS,
@@ -277,6 +287,27 @@ export type {
   MirrorSynchronizerPhase,
   MirrorSynchronizerRuntime,
 } from "@core/mirror/mirror-synchronizer.types";
+export {
+  allowedReconciliationActions,
+  isReconciliationActionAllowed,
+  reconciliationAuthorityForAction,
+} from "@core/mirror/reconciliation-decision-policy";
+export { ReconciliationObservationGenerationOwner } from "@core/mirror/reconciliation-observation";
+export type {
+  ReconciliationAdmissionRequest,
+  ReconciliationAdmissionResult,
+  ReconciliationAllowedAction,
+  ReconciliationDiscoveryResult,
+  ReconciliationObservationSource,
+  ReconciliationRemoteReader,
+  ReconciliationReviewDependencies,
+  ReconciliationReviewFailure,
+  ReconciliationReviewQuery,
+  ReconciliationReviewRequest,
+  ReconciliationReviewResult,
+  ReconciliationRuntimeIdentitySource,
+} from "@core/mirror/reconciliation-review.types";
+export { ReconciliationReviewService } from "@core/mirror/reconciliation-review-service";
 export {
   MAX_RECONCILIATION_OPERATIONS,
   MAX_RECONCILIATION_PRESERVATION_RECEIPTS,

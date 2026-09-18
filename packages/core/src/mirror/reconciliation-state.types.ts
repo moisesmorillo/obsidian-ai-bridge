@@ -195,6 +195,8 @@ export interface EphemeralReconciliationReview
   extends ReconciliationReviewMetadata {
   readonly retention: typeof RECONCILIATION_REVIEW_RETENTION.ephemeral;
   readonly sessionId: MirrorOperationId;
+  /** Action kinds derived from the exact snapshot; presentation must not invent buttons. */
+  readonly allowedActions: readonly ReconciliationAction["kind"][];
   readonly sampledLocalText: string | null;
   readonly sampledRemoteText: string | null;
 }

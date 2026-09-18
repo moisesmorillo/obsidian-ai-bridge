@@ -275,6 +275,11 @@ the same preservation and stale-decision owners.
 The complete tombstone matrix and restore workflow pass with exact byte/revision
 assertions. API/OpenAPI semantic tests confirm no wire drift. Canonical check passes.
 
+The [non-normative Slices 6–7 implementation preparation](m4-slices-6-7-implementation-preparation.md)
+records pre-Slice-4/5 handoff analysis, test matrices, dependencies, and contract gaps.
+Revalidate it against the final merged Slices 4–5; it does not amend this plan, the
+M4 specification, or accepted ADRs.
+
 ## Slice 6 — Deferred rename/history resolution
 
 ### Objective and prerequisites

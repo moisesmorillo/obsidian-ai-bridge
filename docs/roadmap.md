@@ -65,8 +65,10 @@ implementation-ready design. Slice 1 now implements the closed contracts, sparse
 state v3, deterministic v2 migration/read-back fence, downgrade refusal, and runtime
 registry compatibility fence. Slice 2 adds the core-only bounded read-only
 review/classification engine, ephemeral stale-bound reviews, allowed-action policy,
-and serialized content-free admission. It exposes no M4 user-facing or mutation
-behavior; Slices 3–8 remain unimplemented.
+and serialized content-free admission. Slice 3 adds uncomposed operation-authorized
+local create/replace and durable preservation primitives with explicit unknown-effect
+recovery. It exposes no M4 user-facing action or remote mutation behavior; Slices 4–8
+remain unimplemented.
 Slice 0 qualifies the pinned local
 conditional-storage runtime and host declarations. Slice 1 raises the plugin baseline
 to 1.13.0 and adds shared typed contracts. Worker Slice 2A–2C implements private conditional storage, application current/
@@ -182,7 +184,7 @@ merely because the server-side storage and application checkpoints are implement
 
 ### M4 — Remote-to-local reconciliation and conflict resolution
 
-**NEXT — Slices 1–2 implemented; no user-facing M4 behavior.** The
+**NEXT — Slices 1–3 implemented; no user-facing M4 behavior.** The
 [specification](milestones/m4-remote-to-local-reconciliation-and-conflict-resolution.md),
 [test-first plan](plans/m4-remote-to-local-reconciliation-and-conflict-resolution.md),
 and accepted-design ADRs 0005–0008 resolve the material choices. A separate request is
@@ -217,7 +219,9 @@ do not pre-authorize M4 code.
   deterministic classification, transient review bodies, stale refresh/observation
   fencing, allowed-action policy, and serialized content-free operation admission.
   Existing v2 Worker operations remain unchanged; no new API/infrastructure or mutation
-  capability exists. One designated writer remains.
+  capability exists. Slice 3 adds only the separate uncomposed local writer and
+  preservation services; action orchestration remains absent. One designated writer
+  remains.
 - **Slice 1 evidence:** closed authority/classification/action/status/evidence/
   preservation contracts, immutable stale-decision identity, evidence-bound receipt
   matrix, restored-pending-review ownership transfer, restart-time M3 scheduling and
@@ -227,9 +231,14 @@ do not pre-authorize M4 code.
 - **Slice 2 evidence:** bounded candidate/recovery inventory, exact local/remote
   sampling, precedence classification, action policy, ephemeral review lifecycle,
   same-text observation fencing, snapshot revalidation, reservation checks, and
-  serialized content-free admission are covered by focused unit tests. No local
-  writer, UI command, remote mutation, deployment, or personal-vault installation
-  is composed. No later acceptance item is claimed complete.
+  serialized content-free admission are covered by focused unit tests.
+- **Slice 3 evidence:** the narrow local writer permits only eligible create, exact
+  atomic replace, and fixed create-only preservation. Core services persist prepared
+  effects/pending receipts before dispatch, verify receipts after reread/hash, retain
+  unknown effects, and fence persistence failure. The official Obsidian adapter uses
+  lookup/create/createFolder/read/process only; no local delete/rename/move, generic
+  Vault, UI command, remote mutation, deployment, or personal-vault installation is
+  composed. No later acceptance item is claimed complete.
 - **Risks/exit:** the A1–A12 checklist requires exact barrier tests for concurrent
   edit/delete/rename/restore/restart, no silent overwrite/delete, generated artifact
   qualification, canonical diagnostics/coverage/docs, and independent review before

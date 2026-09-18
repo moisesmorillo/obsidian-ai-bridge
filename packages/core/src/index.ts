@@ -30,6 +30,13 @@ export type {
 } from "@core/local-vault/local-vault.types";
 export type { ReadOnlyLocalVault } from "@core/local-vault/read-only-local-vault.port";
 export type { ConditionalCurrentNoteRepository } from "@core/mirror/conditional-current-note-repository.port";
+export type { ConflictPreservationCryptography } from "@core/mirror/conflict-preservation-service";
+export { ConflictPreservationService } from "@core/mirror/conflict-preservation-service";
+export type {
+  ConflictPreservationRejection,
+  ConflictPreservationRequest,
+  ConflictPreservationResult,
+} from "@core/mirror/conflict-preservation-service.types";
 export { CurrentGenerationService } from "@core/mirror/current-generation-service";
 export {
   classifyReconciliation,
@@ -37,6 +44,33 @@ export {
 } from "@core/mirror/divergence-classifier";
 export type { MirrorScheduledJob } from "@core/mirror/fair-mirror-scheduler";
 export { FairMirrorScheduler } from "@core/mirror/fair-mirror-scheduler";
+export type { LocalReconciliationWriteCryptography } from "@core/mirror/local-reconciliation-write-service";
+export { LocalReconciliationWriteService } from "@core/mirror/local-reconciliation-write-service";
+export type {
+  AuthorizedCreateEligibleRequest,
+  AuthorizedReplaceEligibleRequest,
+  LocalReconciliationCommandRejection,
+  LocalReconciliationCommandResult,
+} from "@core/mirror/local-reconciliation-write-service.types";
+export {
+  LOCAL_RECONCILIATION_DISPATCH_MODE,
+  LOCAL_RECONCILIATION_FAILURE,
+  LOCAL_RECONCILIATION_REFUSAL,
+  LOCAL_RECONCILIATION_WRITE_OUTCOME,
+  RECONCILIATION_PRESERVATION_ROOT,
+} from "@core/mirror/local-reconciliation-writer.constants";
+export type { LocalReconciliationWriter } from "@core/mirror/local-reconciliation-writer.port";
+export type {
+  ConfirmedLocalReconciliationWrite,
+  CreateEligibleLocalRequest,
+  CreatePreservationLocalRequest,
+  FailedLocalReconciliationWrite,
+  LocalReconciliationDispatchMode,
+  LocalReconciliationWriteResult,
+  ReconciliationPreservationPath,
+  RefusedLocalReconciliationWrite,
+  ReplaceEligibleLocalRequest,
+} from "@core/mirror/local-reconciliation-writer.types";
 export {
   APPLICATION_ETAG_PATTERN,
   APPLICATION_ETAG_PREFIX,
@@ -293,6 +327,12 @@ export {
   reconciliationAuthorityForAction,
 } from "@core/mirror/reconciliation-decision-policy";
 export { ReconciliationObservationGenerationOwner } from "@core/mirror/reconciliation-observation";
+export {
+  createReconciliationPreservationPath,
+  isReconciliationPreservationPath,
+} from "@core/mirror/reconciliation-preservation-path";
+export type { RequiredReconciliationPreservation } from "@core/mirror/reconciliation-preservation-policy";
+export { requiredReconciliationPreservations } from "@core/mirror/reconciliation-preservation-policy";
 export type {
   ReconciliationAdmissionRequest,
   ReconciliationAdmissionResult,

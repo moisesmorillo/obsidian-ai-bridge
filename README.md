@@ -150,8 +150,10 @@ Start with [AGENTS.md](AGENTS.md), [architecture](docs/architecture.md), the
 [canonical roadmap and agent onboarding](docs/roadmap.md), then the
 [active M4 implementation-ready specification](docs/milestones/m4-remote-to-local-reconciliation-and-conflict-resolution.md)
 and [sequential plan](docs/plans/m4-remote-to-local-reconciliation-and-conflict-resolution.md).
-Slice 1 implements only the closed contracts and durable migration fence; later M4
-review, mutation, conflict, restore, history, and UI slices remain unimplemented.
+M4 Slices 1–3 implement the closed contracts/state migration fence, core-only
+read-only review/admission, and uncomposed narrow local write/conflict-preservation
+primitives. Resolution actions, tombstone/restore/history handling, runtime/UI
+composition, and qualification remain unimplemented.
 The completed [M3 specification](docs/milestones/m3-remote-bridge-client-and-publishing.md),
 [approved decision brief](docs/plans/m3-design-decisions.md), and
 [sequential plan](docs/plans/m3-remote-bridge-client-and-publishing.md) record

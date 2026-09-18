@@ -1,10 +1,10 @@
 # M4 implementation plan — reviewed reconciliation and conflict resolution
 
-**Status: M4 Slices 1–2 implemented; Slices 3–8 remain planned.** M4 remains the
-single `NEXT` milestone. Slice 1 adds contracts and the state/migration fence; Slice
-2 adds the core-only read-only review/admission seam. It
-activates no M4 user behavior or mutation capability. Do not deploy or install into a
-personal vault as validation.
+**Status: M4 Slices 1–3 implemented; Slices 4–8 remain planned.** M4 remains the
+single `NEXT` milestone. Slice 1 adds contracts and the state/migration fence, Slice 2
+adds the core-only read-only review/admission seam, and Slice 3 adds uncomposed narrow
+local-effect and durable preservation primitives. It activates no M4 user behavior or
+action orchestration. Do not deploy or install into a personal vault as validation.
 
 [Specification](../milestones/m4-remote-to-local-reconciliation-and-conflict-resolution.md)
 and [ADRs 0005–0008](../decisions/README.md) are normative. Preserve every completed
@@ -89,14 +89,15 @@ retry and exact read-back barriers, downgrade/registry refusal, handoff interact
 capacity overflow, and exact 50,000-path migration with empty sparse M4 collections.
 
 The migration and state-relationship matrices are recorded in the milestone's
-[Slice 1 evidence](../milestones/m4-remote-to-local-reconciliation-and-conflict-resolution.md#slice-1-implementation-evidence). Slice 2 evidence is recorded in the
-milestone's [Slice 2 implementation evidence](../milestones/m4-remote-to-local-reconciliation-and-conflict-resolution.md#slice-2-implementation-evidence).
+[Slice 1 evidence](../milestones/m4-remote-to-local-reconciliation-and-conflict-resolution.md#slice-1-implementation-evidence). Slice 2 and Slice 3 evidence are recorded in the
+milestone's [Slice 2 implementation evidence](../milestones/m4-remote-to-local-reconciliation-and-conflict-resolution.md#slice-2-implementation-evidence) and
+[Slice 3 implementation evidence](../milestones/m4-remote-to-local-reconciliation-and-conflict-resolution.md#slice-3-implementation-evidence).
 The final canonical source suite passes 64 files / 880 tests with 95.00% statements,
 91.35% branches, 98.47% functions, and 96.98% lines. The final diff contains no UI
 command/modal/settings action, local writer, Fetch/RemoteBridge or Worker/API/OpenAPI
 change, deployment configuration, timer, scan, or runtime M4 mutation capability.
 
-## Slice 2 — Read-only review engine and stale-decision policy
+## Slice 2 — Read-only review engine and stale-decision policy — IMPLEMENTED
 
 ### Objective and prerequisites
 
@@ -139,7 +140,7 @@ review remains read-only and unexposed behind a core composition seam. Candidate
 recovery inventory failures remain sanitized and non-authoritative. Canonical check
 and semantic review of stateful ownership are required before the slice is complete.
 
-## Slice 3 — Narrow local mutation and conflict preservation
+## Slice 3 — Narrow local mutation and conflict preservation — IMPLEMENTED
 
 ### Objective and prerequisites
 
@@ -178,9 +179,18 @@ where preservation is required; the adapter owns host mechanics and effect evide
 
 ### Completion evidence
 
-All local operation/interleaving tests pass, existing M2/M3 tests remain unchanged,
-and production code has no generic Vault or delete capability. Canonical check passes;
-no user-facing M4 action is composed.
+Implemented core writer contracts expose only create-eligible, replace-eligible, and
+create-preservation. `ConflictPreservationService` and
+`LocalReconciliationWriteService` bind dispatch to active operation/action/path/phase/
+reservation/evidence, persist pending state before host effects, settle only verified
+postconditions, retain unknown certainty, and support exact same-operation recovery.
+The official Obsidian adapter uses only narrow lookup/create/createFolder/read/process
+host operations, creates fixed generated archive paths component-by-component, applies
+exact comparison inside `Vault.process`, and rereads identity/text/hash. Focused tests
+cover collision and concurrency matrices, persistence barriers, receipt lifecycle,
+restart recovery, event fencing, path/privacy/size checks, inert content, and the
+absence of rename/delete/move/generic Vault capabilities. Existing M2/M3 tests remain
+green. No user-facing M4 action or remote effect is composed.
 
 ## Slice 4 — Revisioned adoption and live/live resolution
 

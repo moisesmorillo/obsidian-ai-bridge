@@ -51,6 +51,25 @@ describe("ObsidianMirrorEvents", () => {
     expect(eventSink.observePresent).toHaveBeenNthCalledWith(2, "note.md");
   });
 
+  it("ignores preservation-file events because the reserved dot root is outside mirror eligibility", () => {
+    const eventSink = sink();
+    const events = new ObsidianMirrorEvents(
+      new App().vault,
+      { registerEvent: () => undefined },
+      eventSink,
+      { configDirectory: "host-settings" },
+    );
+    events.attach();
+    const file = addFile(
+      ".ai-bridge-conflicts/11111111-1111-4111-8111-111111111111/local.md",
+    );
+    host.emitVault("create", file);
+    host.emitVault("modify", file);
+    host.emitVault("delete", file);
+    expect(eventSink.observePresent).not.toHaveBeenCalled();
+    expect(eventSink.observeDelete).not.toHaveBeenCalled();
+  });
+
   it("captures immutable old/new file paths before host object mutation", () => {
     const eventSink = sink();
     const events = new ObsidianMirrorEvents(

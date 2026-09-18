@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.8.0](https://github.com/moisesmorillo/obsidian-ai-bridge/compare/v0.7.1...v0.8.0) (2026-09-18)
+
+
+### Features
+
+* **core:** add read-only reconciliation review engine ([#34](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/34)) ([670440d](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/670440df918fefce07223531c45f4c1d2a97d705))
+* **m4:** add state v3 migration fence ([#31](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/31)) ([f12466d](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/f12466dcd5d23b604cf3eed24f6d4dd12da2d7b6))
+
+
+### Bug Fixes
+
+* **core:** harden M4 reconciliation state contracts ([#32](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/32)) ([3f2c1d2](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/3f2c1d2ac80ad293359c892a02bb899d5b4ba7c9))
+
+
+### Documentation
+
+* **m4:** finalize reconciliation implementation design ([#29](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/29)) ([4196841](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/4196841c4cffe1a367f8bfc878ce3858834b8153))
+
 ## [0.7.1](https://github.com/moisesmorillo/obsidian-ai-bridge/compare/v0.7.0...v0.7.1) (2026-09-17)
 
 

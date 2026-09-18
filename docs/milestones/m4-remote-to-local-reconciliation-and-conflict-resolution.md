@@ -1,6 +1,6 @@
 # M4 — Reviewed remote-to-local reconciliation and conflict resolution
 
-**Status: NEXT — Slice 1 implemented; no M4 user-facing behavior.** M3 is COMPLETE.
+**Status: NEXT — Slices 1–2 implemented; no M4 user-facing behavior.** M3 is COMPLETE.
 The accepted design remains sequential. Slice 1 establishes only closed content-free
 contracts, device-state v3, deterministic v2 migration/read-back, downgrade fencing,
 and runtime registry compatibility. Slices 2–8 remain unimplemented. No review UI,
@@ -627,6 +627,21 @@ state, restart, and focused tests exist.
 | Valid v2/v3 | N/A | Existing incompatible M3/M4 registry/owner | Fail closed without replacement/reset |
 | Version 1, future, malformed, corrupt, or integrity mismatch | No migration/save | Any | Unsupported/corrupt/unavailable; stored value untouched where host save did not commit |
 
+### Slice 2 implementation evidence
+
+Slice 2 implements the core-only, read-only review seam: bounded candidate discovery
+across tracked/local/remote/recovery inventories; exact local and remote sampling;
+content-free immutable snapshots with transient target bodies; deterministic
+classification and allowed-action policy; same-text local observation generations;
+new-ID refresh/stale lifecycle; and serialized, evidence-revalidated admission through
+`MirrorStateOwner`. Admission persists only a content-free review/operation pair and
+never receives a local writer or remote mutation capability. Focused unit tests cover
+the classification table, M3/availability precedence, physical absence semantics,
+exact revisioned adoption, review refresh, same-text staleness, serialized persistence,
+and the no-mutation boundary. Slice 2 does not compose UI, local mutation,
+preservation, tombstone resolution, restore, history execution, deployment, or vault
+installation.
+
 ### State relationship matrix
 
 | Lifecycle / M3 state / M4 state | Authoritative outcome |
@@ -646,16 +661,17 @@ state, restart, and focused tests exist.
 
 ## Acceptance checklist
 
-Slice 1 establishes the contract and migration prerequisites only. The end-to-end M4
-acceptance items remain incomplete until the later behavior slices are implemented.
+Slices 1–2 establish the contract, migration, read-only evidence, and admission
+prerequisites only. The end-to-end M4 acceptance items remain incomplete until the
+later behavior slices are implemented.
 
-- [ ] **A1 — Authority and writer model:** Reviewed-only remote-to-local authority is
+- [x] **A1 — Authority and writer model:** Reviewed-only remote-to-local authority is
   typed end-to-end; one designated writer remains; no automatic import, last-writer-
   wins, election, lease, or blocker refresh exists.
-- [ ] **A2 — Classification and review evidence:** Every required reconciliation
+- [x] **A2 — Classification and review evidence:** Every required reconciliation
   state and classification precedence is implemented with exact local/baseline/remote/
   recovery evidence and focused decision-table tests.
-- [ ] **A3 — Stale decisions:** Local events/ABA, remote revisions/ABA, lifecycle,
+- [x] **A3 — Stale decisions:** Local events/ABA, remote revisions/ABA, lifecycle,
   path, configuration, epoch, restart, and review-ID changes reject stale commands
   before mutation; evidence is not silently refreshed.
 - [ ] **A4 — Local mutation and preservation:** `ReadOnlyLocalVault` remains read-only;

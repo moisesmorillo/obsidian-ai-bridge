@@ -1,7 +1,8 @@
 # M4 implementation plan — reviewed reconciliation and conflict resolution
 
-**Status: M4 Slice 1 implemented; Slices 2–8 remain planned.** M4 remains the
-single `NEXT` milestone. Slice 1 adds contracts and the state/migration fence only; it
+**Status: M4 Slices 1–2 implemented; Slices 3–8 remain planned.** M4 remains the
+single `NEXT` milestone. Slice 1 adds contracts and the state/migration fence; Slice
+2 adds the core-only read-only review/admission seam. It
 activates no M4 user behavior or mutation capability. Do not deploy or install into a
 personal vault as validation.
 
@@ -88,7 +89,8 @@ retry and exact read-back barriers, downgrade/registry refusal, handoff interact
 capacity overflow, and exact 50,000-path migration with empty sparse M4 collections.
 
 The migration and state-relationship matrices are recorded in the milestone's
-[Slice 1 evidence](../milestones/m4-remote-to-local-reconciliation-and-conflict-resolution.md#slice-1-implementation-evidence).
+[Slice 1 evidence](../milestones/m4-remote-to-local-reconciliation-and-conflict-resolution.md#slice-1-implementation-evidence). Slice 2 evidence is recorded in the
+milestone's [Slice 2 implementation evidence](../milestones/m4-remote-to-local-reconciliation-and-conflict-resolution.md#slice-2-implementation-evidence).
 The final canonical source suite passes 64 files / 880 tests with 95.00% statements,
 91.35% branches, 98.47% functions, and 96.98% lines. The final diff contains no UI
 command/modal/settings action, local writer, Fetch/RemoteBridge or Worker/API/OpenAPI
@@ -132,9 +134,10 @@ the coordinator.
 
 ### Completion evidence
 
-Decision-table and barrier tests pass; review remains read-only and unexposed or behind
-an inert internal composition seam. Canonical check and semantic review of stateful
-ownership pass.
+Decision-table, same-text observation, refresh, and admission revalidation tests pass;
+review remains read-only and unexposed behind a core composition seam. Candidate and
+recovery inventory failures remain sanitized and non-authoritative. Canonical check
+and semantic review of stateful ownership are required before the slice is complete.
 
 ## Slice 3 — Narrow local mutation and conflict preservation
 

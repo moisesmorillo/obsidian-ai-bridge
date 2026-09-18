@@ -25,8 +25,10 @@ head `e97af36` resolved all three, and the corrective review returned APPROVE wi
 open findings. M3 is COMPLETE; PR #27 merged at `63b0599` and made the transition
 canonical. M4 is NEXT. Slice 1 implements the closed reconciliation contracts,
 sparse device-state v3, deterministic v2 migration/read-back fence, and incompatible
-same-realm runtime version. It exposes no M4 review, scanning, local/remote mutation,
-timer, or user-facing behavior; Slices 2–8 remain unimplemented. The connected outward mirror remains
+same-realm runtime version. Slice 2 now adds a core-only bounded read-only review,
+classification, stale-validation, and content-free admission seam. It exposes no UI,
+local/remote mutation, timer, or user-facing behavior; Slices 3–8 remain unimplemented.
+The connected outward mirror remains
 experimental and undeployed, with no real Obsidian desktop/mobile or iCloud runtime
 qualification.
 See the [verified current state](current-state.md) for source/configuration evidence,
@@ -331,10 +333,20 @@ never publishes in-memory migrated state. A committed v3 write is safely recogni
 on the next startup even when the prior read-back failed. Runtime registry and owner
 structural versions are both 3, so M3 and M4 owners refuse same-realm reuse.
 
+Slice 2 adds a core-only `ReconciliationReviewService` behind read-only local and
+remote ports. It forms a bounded union of tracked/local/visible-remote/recovery paths,
+samples exact content-free local and remote identity while retaining target bodies only
+in process memory, applies the classifier/action policy, and invalidates reviews on
+refresh or observation changes. Admission revalidates runtime, baseline, M3, local,
+remote, recovery, and reservation identity inside the serialized state-owner
+transition, then persists only the content-free durable review/operation pair. The
+service has no local writer or remote mutation dependency and is not composed into the
+plugin UI/runtime.
+
 ## Explicitly deferred
 
-- M4 (NEXT; Slice 1 contracts/migration implemented): reviewed/manual reconciliation,
-  exact revisioned adoption, archive-first conflicts, a separate bounded local
+- M4 (NEXT; Slices 1–2 contracts/migration/read-only review implemented): reviewed/manual
+  reconciliation, exact revisioned adoption, archive-first conflicts, a separate bounded local
   mutation port, reviewed tombstones, local-first restore, deferred-history choices,
   the existing v2 API, and the retained one-writer model remain later-slice behavior.
   Slice 1 contributes only state v3, frozen v2 decoding, deterministic same-key

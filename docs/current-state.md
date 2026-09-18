@@ -11,8 +11,10 @@ M4 is the single NEXT milestone. Its [implementation-ready specification](milest
 and ADRs 0005–0008 resolve the design. Slice 1 now implements closed content-free M4
 contracts, sparse device-state v3, strict semantic validation, frozen v2 decoding,
 deterministic same-key migration/read-back, downgrade fencing, and runtime registry
-version 3. It adds no review/classification engine, UI, local or remote mutation,
-conflict handling, restore, history execution, scanning, timer, Fetch, or Worker/API behavior.
+version 3. Slice 2 now adds a core-only bounded read-only review/classification and
+admission engine with ephemeral snapshots, stale observation fencing, and content-free
+serialized operation admission. It adds no UI, local or remote mutation, conflict
+handling, restore, history execution, timer, Fetch, or Worker/API behavior.
 M3 completed [Slice 0 platform qualification](qualification/m3-slice-0-platform-primitives.md),
 Slice 1's modern plugin baseline/shared typed contracts, Worker Slice 2A–2C's
 private storage/application transitions plus public safe v2 HTTP/OpenAPI/CORS, and
@@ -128,8 +130,10 @@ deletion/recreation/rename orchestration; Slice 7 composes them with the Fetch c
 through official host callbacks, settings, timers and same-realm ownership. There are
 no remote-to-local writes. Slice 8's artifact, operational, validation and semantic
 review gates passed; the corrective review of `e97af36` returned APPROVE. PR #27
-merged at `63b0599`; M3 is COMPLETE and the transition is canonical. M4 is NEXT with Slice 1's contract/state/migration fence implemented. No M4
-remote-to-local or local-mutation behavior exists; later read, preservation,
+merged at `63b0599`; M3 is COMPLETE and the transition is canonical. M4 is NEXT with
+Slices 1–2's contract/state/migration and core read-only review/admission seams
+implemented. No M4 UI, remote-to-local mutation, or local-mutation behavior exists;
+later read, preservation,
 resolution, restore, history, and UI slices remain unimplemented. The accepted M4 design is reviewed-only: exact format-2 revisions
 may be adopted, competing bytes must be preserved before replacement, remote
 tombstones require explicit choices without plugin local delete/move, recovery restore

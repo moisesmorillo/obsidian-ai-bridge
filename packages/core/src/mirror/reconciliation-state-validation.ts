@@ -30,6 +30,11 @@ import type {
   MirrorUnresolvedMutation,
   RenameDeferredMirrorState,
 } from "@core/mirror/mirror-state.types";
+import { createReconciliationPreservationPath } from "@core/mirror/reconciliation-preservation-path";
+import {
+  areRequiredReconciliationPreservationsVerified,
+  requiredReconciliationPreservations,
+} from "@core/mirror/reconciliation-preservation-policy";
 import {
   MAX_RECONCILIATION_OPERATIONS,
   MAX_RECONCILIATION_PRESERVATION_RECEIPTS,
@@ -56,14 +61,6 @@ import type {
 } from "@core/mirror/reconciliation-state.types";
 import { isNormalizedNotePath } from "@core/note-path/note-path";
 import { MAX_NOTE_SIZE_BYTES } from "@core/vault/vault.constants";
-
-/** Exact competing bytes derived from sampled evidence, never from a receipt's own claims. */
-interface RequiredPreservation {
-  readonly originalPath: ReconciliationPreservationReceipt["originalPath"];
-  readonly side: ReconciliationPreservationReceipt["side"];
-  readonly sourceRevision: ReconciliationPreservationReceipt["sourceRevision"];
-  readonly contentSha256: ReconciliationPreservationReceipt["contentSha256"];
-}
 
 /**
  * Validates all cross-field M4 review, operation, reservation, and M3-precedence rules.
@@ -1089,9 +1086,12 @@ function validatePreservationReceipt(
   ) {
     return false;
   }
-  const expectedPath = `.ai-bridge-conflicts/${operation.operationId}/${receipt.side}.md`;
+  const expectedPath = createReconciliationPreservationPath(
+    operation.operationId,
+    receipt.side,
+  );
   if (receipt.preservationPath !== expectedPath) return false;
-  const requirements = requiredPreservations(operation);
+  const requirements = requiredReconciliationPreservations(operation);
   if (requirements === undefined) return false;
   return requirements.some(
     (required) =>
@@ -1099,127 +1099,6 @@ function validatePreservationReceipt(
       required.side === receipt.side &&
       required.sourceRevision === receipt.sourceRevision &&
       required.contentSha256 === receipt.contentSha256,
-  );
-}
-
-/**
- * Owns the action-to-competing-bytes preservation matrix used for both receipt admission and effect fencing.
- * An empty list means no preservation is required; undefined means the evidence cannot
- * establish required bytes. Other validators enforce the action's evidence prerequisites.
- *
- * @returns Required preservation identities, an empty list when unnecessary, or undefined when evidence cannot establish them.
- */
-function requiredPreservations(
-  operation: ReconciliationOperation,
-): readonly RequiredPreservation[] | undefined {
-  const target = targetEvidence(operation.snapshot);
-  if (target === undefined) return undefined;
-  switch (operation.action.kind) {
-    case RECONCILIATION_ACTION.keepLocal:
-      return remotePreservation(target);
-    case RECONCILIATION_ACTION.useRemote:
-      return target.local.kind === RECONCILIATION_LOCAL_EVIDENCE_KIND.live
-        ? localPreservations(target)
-        : [];
-    case RECONCILIATION_ACTION.keepBoth:
-      return operation.action.primarySide ===
-        RECONCILIATION_PRESERVATION_SIDE.local
-        ? remotePreservation(target)
-        : target.local.kind === RECONCILIATION_LOCAL_EVIDENCE_KIND.live
-          ? localPreservations(target)
-          : undefined;
-    case RECONCILIATION_ACTION.adoptRevision:
-    case RECONCILIATION_ACTION.acceptTombstone:
-    case RECONCILIATION_ACTION.defer:
-      return [];
-    case RECONCILIATION_ACTION.recreateRemote:
-      return target.local.kind === RECONCILIATION_LOCAL_EVIDENCE_KIND.live
-        ? localPreservations(target)
-        : undefined;
-    case RECONCILIATION_ACTION.restoreRecovery: {
-      const destination = destinationEvidence(operation);
-      if (destination === undefined) return undefined;
-      return destination.local.kind === RECONCILIATION_LOCAL_EVIDENCE_KIND.live
-        ? localPreservations(destination)
-        : [];
-    }
-    case RECONCILIATION_ACTION.forkLegacy:
-      return remotePreservation(target);
-    case RECONCILIATION_ACTION.resolveHistory:
-      return historyHasMaterialEffect(operation)
-        ? remotePreservation(target)
-        : [];
-  }
-}
-
-/**
- * Derives the exact live local safety copy; local bytes have no application source revision.
- *
- * @returns One local copy requirement for live bytes, or undefined for non-live evidence.
- */
-function localPreservations(
-  evidence: ReconciliationPathEvidence,
-): readonly RequiredPreservation[] | undefined {
-  if (evidence.local.kind !== RECONCILIATION_LOCAL_EVIDENCE_KIND.live) {
-    return undefined;
-  }
-  return [
-    {
-      originalPath: evidence.path,
-      side: RECONCILIATION_PRESERVATION_SIDE.local,
-      sourceRevision: null,
-      contentSha256: evidence.local.contentSha256,
-    },
-  ];
-}
-
-/**
- * Derives live revision-bound or legacy hash-only remote copies; absent, tombstoned or unavailable evidence supplies no bytes.
- *
- * @returns One remote copy requirement for live/legacy bytes, or undefined without those bytes.
- */
-function remotePreservation(
-  evidence: ReconciliationPathEvidence,
-): readonly RequiredPreservation[] | undefined {
-  switch (evidence.remote.kind) {
-    case RECONCILIATION_REMOTE_EVIDENCE_KIND.live:
-      return [
-        {
-          originalPath: evidence.path,
-          side: RECONCILIATION_PRESERVATION_SIDE.remote,
-          sourceRevision: evidence.remote.revision,
-          contentSha256: evidence.remote.contentSha256,
-        },
-      ];
-    case RECONCILIATION_REMOTE_EVIDENCE_KIND.legacy:
-      return [
-        {
-          originalPath: evidence.path,
-          side: RECONCILIATION_PRESERVATION_SIDE.remote,
-          sourceRevision: null,
-          contentSha256: evidence.remote.contentSha256,
-        },
-      ];
-    case RECONCILIATION_REMOTE_EVIDENCE_KIND.absent:
-    case RECONCILIATION_REMOTE_EVIDENCE_KIND.tombstone:
-    case RECONCILIATION_REMOTE_EVIDENCE_KIND.unavailable:
-      return undefined;
-  }
-}
-
-/**
- * Distinguishes no-effect history retention from preservation/cleanup progress that requires an exact remote safety copy.
- *
- * @returns Whether deferred history has preservation or cleanup progress.
- */
-function historyHasMaterialEffect(operation: ReconciliationOperation): boolean {
-  return (
-    operation.phase === RECONCILIATION_OPERATION_PHASE.preserving ||
-    operation.phase === RECONCILIATION_OPERATION_PHASE.mutatingRemote ||
-    operation.phase === RECONCILIATION_OPERATION_PHASE.evidenceRequired ||
-    operation.phase === RECONCILIATION_OPERATION_PHASE.partial ||
-    operation.remoteEffect !== MUTATION_EFFECT_CERTAINTY.notDispatched ||
-    operation.preservationReceipts.length > 0
   );
 }
 
@@ -1233,7 +1112,7 @@ function historyHasMaterialEffect(operation: ReconciliationOperation): boolean {
 function validateOperationLifecycleEvidence(
   operation: ReconciliationOperation,
 ): boolean {
-  const requirements = requiredPreservations(operation);
+  const requirements = requiredReconciliationPreservations(operation);
   if (requirements === undefined) return false;
   const receipts = operation.preservationReceipts;
   if (
@@ -1274,7 +1153,10 @@ function validateOperationLifecycleEvidence(
       break;
     case RECONCILIATION_OPERATION_PHASE.mutatingLocal:
     case RECONCILIATION_OPERATION_PHASE.mutatingRemote:
-      phaseIsConsistent = requiredReceiptsVerified(requirements, receipts);
+      phaseIsConsistent = areRequiredReconciliationPreservationsVerified(
+        requirements,
+        receipts,
+      );
       break;
     case RECONCILIATION_OPERATION_PHASE.evidenceRequired:
       phaseIsConsistent =
@@ -1295,7 +1177,7 @@ function validateOperationLifecycleEvidence(
         (operation.localEffect === MUTATION_EFFECT_CERTAINTY.notDispatched ||
           operation.localEffect === MUTATION_EFFECT_CERTAINTY.confirmed) &&
         operation.remoteEffect === MUTATION_EFFECT_CERTAINTY.notDispatched &&
-        requiredReceiptsVerified(requirements, receipts);
+        areRequiredReconciliationPreservationsVerified(requirements, receipts);
       break;
     case RECONCILIATION_OPERATION_PHASE.stale:
       phaseIsConsistent = noEffects(operation) && receiptsVerified;
@@ -1323,30 +1205,7 @@ function validateOperationLifecycleEvidence(
     );
   return (
     !materialEffectMayHaveStarted ||
-    requiredReceiptsVerified(requirements, receipts)
-  );
-}
-
-/**
- * Requires a verified receipt matching every evidence-derived identity; vacuously accepts actions needing no copies.
- *
- * @param requirements - Evidence-derived copies required before effects.
- * @param receipts - Persisted proof claims to match by complete identity.
- * @returns Whether every requirement has a matching verified receipt.
- */
-function requiredReceiptsVerified(
-  requirements: readonly RequiredPreservation[],
-  receipts: readonly ReconciliationPreservationReceipt[],
-): boolean {
-  return requirements.every((required) =>
-    receipts.some(
-      (receipt) =>
-        receipt.originalPath === required.originalPath &&
-        receipt.side === required.side &&
-        receipt.sourceRevision === required.sourceRevision &&
-        receipt.contentSha256 === required.contentSha256 &&
-        receipt.proofState === RECONCILIATION_PRESERVATION_PROOF_STATE.verified,
-    ),
+    areRequiredReconciliationPreservationsVerified(requirements, receipts)
   );
 }
 

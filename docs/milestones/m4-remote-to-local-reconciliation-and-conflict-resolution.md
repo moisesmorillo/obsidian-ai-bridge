@@ -1,11 +1,12 @@
 # M4 — Reviewed remote-to-local reconciliation and conflict resolution
 
-**Status: NEXT — Slices 1–2 implemented; no M4 user-facing behavior.** M3 is COMPLETE.
-The accepted design remains sequential. Slice 1 establishes only closed content-free
-contracts, device-state v3, deterministic v2 migration/read-back, downgrade fencing,
-and runtime registry compatibility. Slices 2–8 remain unimplemented. No review UI,
-reconciliation scanning/classification, local/remote mutation, conflict handling,
-restore/history execution, timer, deployment, or personal-vault installation is active.
+**Status: NEXT — Slices 1–3 implemented; no M4 user-facing behavior.** M3 is COMPLETE.
+The accepted design remains sequential. Slices 1–2 establish closed content-free
+contracts, device-state v3, deterministic migration/fencing, and the read-only review
+and admission seam. Slice 3 adds only uncomposed, operation-authorized local mutation
+and durable conflict-preservation primitives. Slices 4–8 remain unimplemented. No
+review UI, action orchestration, remote mutation, tombstone/restore/history execution,
+timer, deployment, or personal-vault installation is active.
 
 ## Objective
 
@@ -565,8 +566,8 @@ The bounded test-first sequence is normative in the
 [M4 plan](../plans/m4-remote-to-local-reconciliation-and-conflict-resolution.md):
 
 1. **Implemented:** closed contracts, state v3, strict migration, and runtime downgrade fence;
-2. read-only evidence sampling and pure divergence/stale-decision policy;
-3. narrow local mutation adapter and verified preservation;
+2. **Implemented:** read-only evidence sampling and pure divergence/stale-decision policy;
+3. **Implemented:** narrow local mutation adapter and verified preservation;
 4. revisioned adoption and live/live action orchestration;
 5. remote tombstone resolution and local-first recovery restore;
 6. bounded deferred rename/history resolution;
@@ -642,6 +643,30 @@ and the no-mutation boundary. Slice 2 does not compose UI, local mutation,
 preservation, tombstone resolution, restore, history execution, deployment, or vault
 installation.
 
+### Slice 3 implementation evidence
+
+Slice 3 implements a separate `LocalReconciliationWriter` with only eligible
+create, exact compare-and-replace, and generated create-only preservation commands.
+Core application services authorize each command against one active durable operation,
+its action, exact path evidence, reservation, phase, preservation matrix, and transient
+content digest. They persist a prepared local effect or pending preservation receipt
+before host dispatch, settle only post-verified evidence, retain `unknown` certainty
+when an effect cannot be proven, and fence later effects after persistence failure.
+Same-operation recovery is explicit and may adopt only exact expected bytes.
+
+The Obsidian adapter uses only official `Vault` lookup/create/createFolder/read/process
+operations through a narrow host wrapper. It builds preservation folders component by
+component, never interpolates a source path into the reserved tree, refuses every
+file/folder/config-root collision, performs compare-and-replace inside `Vault.process`,
+and rereads exact identity/text/hash after effects. It exposes no delete, rename, move,
+trash, filesystem, generic Vault, or remote capability. Conflict artifacts remain
+outside mirroring through the existing dot-segment exclusion. Focused tests cover
+collisions, concurrent changes, host ambiguity, postcondition failures, pending →
+verified receipt ordering, persistence barriers, restart recovery, multi-path
+reservations, event-generation fencing, malicious/inert content, and port-capability
+negatives. The primitives are not composed into the plugin runtime or UI; Slice 4 owns
+action orchestration.
+
 ### State relationship matrix
 
 | Lifecycle / M3 state / M4 state | Authoritative outcome |
@@ -661,9 +686,9 @@ installation.
 
 ## Acceptance checklist
 
-Slices 1–2 establish the contract, migration, read-only evidence, and admission
-prerequisites only. The end-to-end M4 acceptance items remain incomplete until the
-later behavior slices are implemented.
+Slices 1–3 establish the contract, migration, read-only evidence/admission, and
+uncomposed local-effect/preservation prerequisites. The end-to-end M4 acceptance
+items remain incomplete until the later behavior slices are implemented.
 
 - [x] **A1 — Authority and writer model:** Reviewed-only remote-to-local authority is
   typed end-to-end; one designated writer remains; no automatic import, last-writer-
@@ -674,7 +699,7 @@ later behavior slices are implemented.
 - [x] **A3 — Stale decisions:** Local events/ABA, remote revisions/ABA, lifecycle,
   path, configuration, epoch, restart, and review-ID changes reject stale commands
   before mutation; evidence is not silently refreshed.
-- [ ] **A4 — Local mutation and preservation:** `ReadOnlyLocalVault` remains read-only;
+- [x] **A4 — Local mutation and preservation:** `ReadOnlyLocalVault` remains read-only;
   the separate narrow writer enforces eligibility, size, absence/compare predicates,
   collision policy, post-verification, unknown effects, and archive-first safety. No
   local rename/delete exists, and no competing version is destroyed before durable

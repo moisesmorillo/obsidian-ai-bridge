@@ -25,9 +25,11 @@ head `e97af36` resolved all three, and the corrective review returned APPROVE wi
 open findings. M3 is COMPLETE; PR #27 merged at `63b0599` and made the transition
 canonical. M4 is NEXT. Slice 1 implements the closed reconciliation contracts,
 sparse device-state v3, deterministic v2 migration/read-back fence, and incompatible
-same-realm runtime version. Slice 2 now adds a core-only bounded read-only review,
-classification, stale-validation, and content-free admission seam. It exposes no UI,
-local/remote mutation, timer, or user-facing behavior; Slices 3–8 remain unimplemented.
+same-realm runtime version. Slice 2 adds a core-only bounded read-only review,
+classification, stale-validation, and content-free admission seam. Slice 3 adds a
+separate uncomposed local writer, durable preservation service, and official Obsidian
+adapter with exact postcondition evidence. It exposes no UI, action orchestration,
+remote mutation, timer, or user-facing behavior; Slices 4–8 remain unimplemented.
 The connected outward mirror remains
 experimental and undeployed, with no real Obsidian desktop/mobile or iCloud runtime
 qualification.
@@ -140,8 +142,11 @@ Pre/post object identity, path, size and mtime checks reject observed changes.
 They are best-effort evidence, not an atomic snapshot or future write revision.
 The inspection service discards transient content before returning metadata. M3
 settings use modern declarative definitions and native SecretStorage references;
-only dispatch-time adapter code reads the bearer. The plugin uses no editor events,
-raw filesystem APIs or local mutation capability.
+only dispatch-time adapter code reads the bearer. The composed plugin uses no editor
+events, raw filesystem APIs, or local mutation capability. M4 Slice 3 adds an
+uncomposed infrastructure adapter whose narrow host wrapper uses only official Vault
+lookup/create/createFolder/read/process operations; it is not reachable from commands,
+runtime sessions, or timers.
 
 Bun stages browser-target CommonJS `main.js` plus the unchanged manifest. The
 bundle exposes `module.exports.default` with only `obsidian` external; no Node
@@ -343,15 +348,24 @@ transition, then persists only the content-free durable review/operation pair. T
 service has no local writer or remote mutation dependency and is not composed into the
 plugin UI/runtime.
 
+Slice 3 keeps that review boundary intact and introduces a separate
+`LocalReconciliationWriter` with only eligible create, exact compare-and-replace, and
+generated create-only preservation. Core services bind each dispatch to the active
+operation/action/path/phase/reservation/evidence; durable prepared effects and pending
+receipts precede host calls, while confirmed effects and verified receipts require an
+exact reread/hash. Ambiguity stays `unknown`, persistence failure fences later effects,
+and restart adoption is limited to exact same-operation bytes. The Obsidian adapter
+receives only a minimal host interface and exposes no generic Vault, delete, rename,
+move, trash, filesystem, network, or transport capability.
+
 ## Explicitly deferred
 
-- M4 (NEXT; Slices 1–2 contracts/migration/read-only review implemented): reviewed/manual
-  reconciliation, exact revisioned adoption, archive-first conflicts, a separate bounded local
-  mutation port, reviewed tombstones, local-first restore, deferred-history choices,
-  the existing v2 API, and the retained one-writer model remain later-slice behavior.
-  Slice 1 contributes only state v3, frozen v2 decoding, deterministic same-key
-  migration/read-back, sparse content-free metadata contracts, validation, and runtime
-  downgrade fencing. Planned dependency flow is thin commands/modal → focused core review/action
+- M4 (NEXT; Slices 1–3 implemented): reviewed/manual reconciliation, exact revisioned
+  adoption, archive-first action orchestration, reviewed tombstones, local-first restore,
+  deferred-history choices, the existing v2 API, and the retained one-writer model
+  remain later-slice behavior. Slices 1–3 contribute state/migration fencing, read-only
+  review/admission, and uncomposed local write/preservation primitives. Planned
+  dependency flow is thin commands/modal → focused core review/action
   policy owners → `ReadOnlyLocalVault` + a separate `LocalReconciliationWriter` +
   existing `RemoteBridge`/state owner → Obsidian/Fetch adapters. Remote divergence
   remains a review item; no automatic import or cross-system atomicity is claimed.

@@ -44,6 +44,7 @@ export {
 } from "@core/mirror/divergence-classifier";
 export type { MirrorScheduledJob } from "@core/mirror/fair-mirror-scheduler";
 export { FairMirrorScheduler } from "@core/mirror/fair-mirror-scheduler";
+export { LiveResolutionService } from "@core/mirror/live-resolution-service";
 export type { LocalReconciliationWriteCryptography } from "@core/mirror/local-reconciliation-write-service";
 export { LocalReconciliationWriteService } from "@core/mirror/local-reconciliation-write-service";
 export type {
@@ -321,11 +322,25 @@ export type {
   MirrorSynchronizerPhase,
   MirrorSynchronizerRuntime,
 } from "@core/mirror/mirror-synchronizer.types";
+export type {
+  ReconciliationActionExecutionRejection,
+  ReconciliationActionExecutionRequest,
+  ReconciliationActionExecutionResult,
+} from "@core/mirror/reconciliation-action-execution.types";
 export {
   allowedReconciliationActions,
   isReconciliationActionAllowed,
   reconciliationAuthorityForAction,
 } from "@core/mirror/reconciliation-decision-policy";
+export type {
+  ExactLocalReconciliationContent,
+  ExactRecoveryReconciliationContent,
+  ExactRemoteReconciliationContent,
+  ReconciliationEffectRuntime,
+  ReconciliationRemoteMutationOptions,
+  ReconciliationRemoteMutationSettlement,
+} from "@core/mirror/reconciliation-effect-executor";
+export { ReconciliationEffectExecutor } from "@core/mirror/reconciliation-effect-executor";
 export { ReconciliationObservationGenerationOwner } from "@core/mirror/reconciliation-observation";
 export {
   createReconciliationPreservationPath,
@@ -401,6 +416,7 @@ export {
   isReconciliationStateConsistent,
   reconciliationReviewSnapshotsEqual,
 } from "@core/mirror/reconciliation-state-validation";
+export { RecoveryRestoreService } from "@core/mirror/recovery-restore-service";
 export { RecoveryService } from "@core/mirror/recovery-service";
 export type { RecoverySnapshotRepository } from "@core/mirror/recovery-snapshot-repository.port";
 export { REMOTE_BRIDGE_FAILURE } from "@core/mirror/remote-bridge.constants";
@@ -415,6 +431,10 @@ export type {
   RemoteRequestAdmission,
   RemoteRequestPermit,
 } from "@core/mirror/remote-bridge.types";
+export { RemoteTombstoneResolutionService } from "@core/mirror/remote-tombstone-resolution-service";
+export type { ReconciliationOperationSource } from "@core/mirror/resolution-coordinator";
+export { ResolutionCoordinator } from "@core/mirror/resolution-coordinator";
+export { RevisionedAdoptionService } from "@core/mirror/revisioned-adoption-service";
 export {
   decodeNotePath,
   encodeNotePath,

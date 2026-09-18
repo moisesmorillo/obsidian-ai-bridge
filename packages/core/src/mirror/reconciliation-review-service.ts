@@ -7,6 +7,7 @@ import {
   classifyReconciliation,
   isReconciliationReviewable,
 } from "@core/mirror/divergence-classifier";
+import { MUTATION_EFFECT_CERTAINTY } from "@core/mirror/mirror.constants";
 import type {
   CurrentNoteState,
   RecoverySnapshotId,
@@ -188,7 +189,17 @@ export class ReconciliationReviewService implements ReconciliationReviewQuery {
       request.recoveryId ?? null,
     );
     if (sampled.kind === "failure") return sampled;
-    if (!isReconciliationReviewable(sampled.snapshot)) {
+    const restoredPublication = isRestoredPublicationSnapshot(sampled.snapshot)
+      ? this.restorePredecessor(
+          this.stateOwner.snapshot().state,
+          sampled.snapshot,
+          { kind: RECONCILIATION_ACTION.keepLocal },
+        )
+      : undefined;
+    if (
+      !isReconciliationReviewable(sampled.snapshot) &&
+      restoredPublication === undefined
+    ) {
       return { kind: "not-reviewable" };
     }
     this.invalidateOverlapping(sampled.snapshot.paths.map((path) => path.path));
@@ -200,7 +211,10 @@ export class ReconciliationReviewService implements ReconciliationReviewQuery {
       snapshot: sampled.snapshot,
       operationId: null,
       sessionId: request.sessionId,
-      allowedActions: allowedReconciliationActions(sampled.snapshot),
+      allowedActions:
+        restoredPublication === undefined
+          ? allowedReconciliationActions(sampled.snapshot)
+          : [RECONCILIATION_ACTION.keepLocal],
       sampledLocalText: sampled.localText,
       sampledRemoteText: sampled.remoteText,
     };
@@ -310,7 +324,19 @@ export class ReconciliationReviewService implements ReconciliationReviewQuery {
       this.markStale(request.reviewId);
       return rejected("stale-review", this.stateOwner.snapshot());
     }
-    if (!isReconciliationActionAllowed(sampled.snapshot, request.action)) {
+    const restoredPublication = this.restorePredecessor(
+      before.state,
+      sampled.snapshot,
+      request.action,
+    );
+    if (
+      !isReconciliationActionAllowed(sampled.snapshot, request.action) &&
+      !(
+        request.action.kind === RECONCILIATION_ACTION.keepLocal &&
+        isRestoredPublicationSnapshot(sampled.snapshot) &&
+        restoredPublication !== undefined
+      )
+    ) {
       return rejected("action-not-allowed", this.stateOwner.snapshot());
     }
     const operationId = this.dependencies.createOperationId();
@@ -321,8 +347,20 @@ export class ReconciliationReviewService implements ReconciliationReviewQuery {
       if (!this.currentStateMatches(state, sampled.snapshot)) return undefined;
       if (!this.isAdmissionLifecycleAllowed(state, sampled.snapshot))
         return undefined;
-      if (this.hasReservationConflict(state, sampled.snapshot))
+      const restorePredecessor = this.restorePredecessor(
+        state,
+        sampled.snapshot,
+        request.action,
+      );
+      if (
+        this.hasReservationConflict(
+          state,
+          sampled.snapshot,
+          restorePredecessor?.operationId,
+        )
+      ) {
         return undefined;
+      }
       if (this.hasOpenReviewConflict(review)) return undefined;
       const reservations = this.createReservations(
         state,
@@ -359,11 +397,22 @@ export class ReconciliationReviewService implements ReconciliationReviewQuery {
         snapshot: sampled.snapshot,
         operationId,
       };
+      const transferredState =
+        restorePredecessor === undefined
+          ? state
+          : transferRestoreOwnership(
+              state,
+              restorePredecessor,
+              operation.operationId,
+            );
       return {
-        ...state,
-        reconciliationReviews: [...state.reconciliationReviews, durableReview],
+        ...transferredState,
+        reconciliationReviews: [
+          ...transferredState.reconciliationReviews,
+          durableReview,
+        ],
         reconciliationOperations: [
-          ...state.reconciliationOperations,
+          ...transferredState.reconciliationOperations,
           operation,
         ],
       };
@@ -731,15 +780,64 @@ export class ReconciliationReviewService implements ReconciliationReviewQuery {
   private hasReservationConflict(
     state: MirrorDeviceState,
     snapshot: ReconciliationReviewSnapshot,
+    transferableRestoreId?: ReconciliationOperation["operationId"],
   ): boolean {
     return state.reconciliationOperations.some(
       (operation) =>
+        operation.operationId !== transferableRestoreId &&
         operation.phase !== RECONCILIATION_OPERATION_PHASE.stale &&
         operation.phase !== RECONCILIATION_OPERATION_PHASE.completed &&
         operation.reservations.some((reservation) =>
           snapshot.paths.some((evidence) => evidence.path === reservation.path),
         ),
     );
+  }
+
+  /**
+   * Finds the one local-first restore whose exact restored path may transfer to a
+   * fresh reviewed successor in the same serialized admission transition.
+   *
+   * @param state - Current authoritative durable state.
+   * @param snapshot - Fresh successor review snapshot.
+   * @param action - Reviewed successor action; defer cannot release restore ownership.
+   * @returns Exact transferable restore, or undefined without complete post-restore evidence.
+   */
+  private restorePredecessor(
+    state: MirrorDeviceState,
+    snapshot: ReconciliationReviewSnapshot,
+    action: ReconciliationAdmissionRequest["action"],
+  ): ReconciliationOperation | undefined {
+    if (action.kind === RECONCILIATION_ACTION.defer) return undefined;
+    return state.reconciliationOperations.find((operation) => {
+      if (
+        operation.action.kind !== RECONCILIATION_ACTION.restoreRecovery ||
+        operation.phase !==
+          RECONCILIATION_OPERATION_PHASE.restoredPendingReview ||
+        operation.localEffect !== MUTATION_EFFECT_CERTAINTY.confirmed ||
+        operation.snapshot.recovery === null
+      ) {
+        return false;
+      }
+      const restoredPath =
+        operation.destinationPath ?? operation.snapshot.targetPath;
+      if (snapshot.targetPath !== restoredPath) return false;
+      const before = operation.snapshot.paths.find(
+        (evidence) => evidence.path === restoredPath,
+      );
+      const after = snapshot.paths.find(
+        (evidence) => evidence.path === restoredPath,
+      );
+      return (
+        before !== undefined &&
+        before.local.kind !== RECONCILIATION_LOCAL_EVIDENCE_KIND.unknown &&
+        after?.local.kind === RECONCILIATION_LOCAL_EVIDENCE_KIND.live &&
+        (snapshot.runtime.listenerEpoch !==
+          operation.snapshot.runtime.listenerEpoch ||
+          after.local.observationGeneration >
+            before.local.observationGeneration) &&
+        after.local.contentSha256 === operation.snapshot.recovery.contentSha256
+      );
+    });
   }
 
   /**
@@ -1033,6 +1131,26 @@ function m3For(
 }
 
 /**
+ * Identifies the otherwise-M3-owned local generation that only a completed restore
+ * successor may explicitly publish.
+ *
+ * @param snapshot - Fresh candidate snapshot for the restored path.
+ * @returns Whether local bytes are live while both baseline and remote remain absent.
+ */
+function isRestoredPublicationSnapshot(
+  snapshot: ReconciliationReviewSnapshot,
+): boolean {
+  const target = snapshot.paths.find(
+    (evidence) => evidence.path === snapshot.targetPath,
+  );
+  return (
+    target?.local.kind === RECONCILIATION_LOCAL_EVIDENCE_KIND.live &&
+    target.baseline.kind === MIRROR_ACKNOWLEDGEMENT_KIND.unassociated &&
+    target.remote.kind === RECONCILIATION_REMOTE_EVIDENCE_KIND.absent
+  );
+}
+
+/**
  * Requires a genuinely absent local/remote unassociated destination before reserving it as new.
  * @param evidence - Candidate destination evidence.
  * @returns Whether the destination is safe to classify as new.
@@ -1099,6 +1217,38 @@ function lifecycleEquals(
  */
 function sortedPaths(paths: ReadonlySet<NotePath>): readonly NotePath[] {
   return [...paths].toSorted((left, right) => left.localeCompare(right));
+}
+
+/**
+ * Completes one local-first restore while atomically linking its reviewed successor.
+ *
+ * @param state - Current durable state containing the active restore.
+ * @param restore - Exact restored-pending-review predecessor.
+ * @param successorOperationId - Newly admitted operation taking the same path.
+ * @returns State with predecessor operation/review made terminal before successor append.
+ */
+function transferRestoreOwnership(
+  state: MirrorDeviceState,
+  restore: ReconciliationOperation,
+  successorOperationId: ReconciliationOperation["operationId"],
+): MirrorDeviceState {
+  return {
+    ...state,
+    reconciliationOperations: state.reconciliationOperations.map((operation) =>
+      operation.operationId === restore.operationId
+        ? {
+            ...operation,
+            phase: RECONCILIATION_OPERATION_PHASE.completed,
+            successorOperationId,
+          }
+        : operation,
+    ),
+    reconciliationReviews: state.reconciliationReviews.map((review) =>
+      review.reviewId === restore.reviewId
+        ? { ...review, status: RECONCILIATION_REVIEW_STATUS.completed }
+        : review,
+    ),
+  };
 }
 
 /**

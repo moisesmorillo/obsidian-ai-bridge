@@ -65,10 +65,10 @@ implementation-ready design. Slice 1 now implements the closed contracts, sparse
 state v3, deterministic v2 migration/read-back fence, downgrade refusal, and runtime
 registry compatibility fence. Slice 2 adds the core-only bounded read-only
 review/classification engine, ephemeral stale-bound reviews, allowed-action policy,
-and serialized content-free admission. Slice 3 adds uncomposed operation-authorized
-local create/replace and durable preservation primitives with explicit unknown-effect
-recovery. It exposes no M4 user-facing action or remote mutation behavior; Slices 4–8
-remain unimplemented.
+and serialized content-free admission. Slice 3 adds operation-authorized local create/replace and durable preservation
+primitives. Slices 4–5 add core-only exact live/adoption/tombstone/restore action
+execution, receipt-based remote effect recovery, and restored-path successor ownership.
+They expose no M4 user-facing behavior; Slices 6–8 remain unimplemented.
 Slice 0 qualifies the pinned local
 conditional-storage runtime and host declarations. Slice 1 raises the plugin baseline
 to 1.13.0 and adds shared typed contracts. Worker Slice 2A–2C implements private conditional storage, application current/
@@ -184,7 +184,7 @@ merely because the server-side storage and application checkpoints are implement
 
 ### M4 — Remote-to-local reconciliation and conflict resolution
 
-**NEXT — Slices 1–3 implemented; no user-facing M4 behavior.** The
+**NEXT — Slices 1–5 implemented; no user-facing M4 behavior.** The
 [specification](milestones/m4-remote-to-local-reconciliation-and-conflict-resolution.md),
 [test-first plan](plans/m4-remote-to-local-reconciliation-and-conflict-resolution.md),
 and accepted-design ADRs 0005–0008 resolve the material choices. A separate request is
@@ -198,6 +198,12 @@ do not pre-authorize M4 code.
   change in any dimension makes the decision stale. Confirmed actions persist the same
   snapshot and content-free phases before effects. No automatic/hybrid
   bidirectionality.
+- **Implemented core actions:** focused services execute archive-first Keep local,
+  Use remote, Keep both, exact format-2 adoption, distinct-path legacy fork, explicit
+  tombstone adoption/recreation/copy, and local-first recovery restore. Conditional
+  effects retain exact receipt evidence across restart; restore remains
+  `restored-pending-review` until a fresh reviewed successor atomically takes the path.
+  No plugin runtime, UI, history execution, or automatic decision is composed.
 - **Preservation/local mutation:** competing bytes are create-only and post-verified
   under the existing excluded `.ai-bridge-conflicts/<operation>/` namespace before
   replacement. The state-v3 validator derives the one required side/revision/hash
@@ -218,10 +224,10 @@ do not pre-authorize M4 code.
   review/admission seam: bounded candidate union discovery, exact content-free evidence,
   deterministic classification, transient review bodies, stale refresh/observation
   fencing, allowed-action policy, and serialized content-free operation admission.
-  Existing v2 Worker operations remain unchanged; no new API/infrastructure or mutation
-  capability exists. Slice 3 adds only the separate uncomposed local writer and
-  preservation services; action orchestration remains absent. One designated writer
-  remains.
+  Existing v2 Worker operations remain unchanged; no new API/infrastructure capability
+  exists. Slice 3 adds the separate local writer and preservation services; Slices 4–5
+  compose them with existing `RemoteBridge` operations only inside core. One designated
+  writer remains.
 - **Slice 1 evidence:** closed authority/classification/action/status/evidence/
   preservation contracts, immutable stale-decision identity, evidence-bound receipt
   matrix, restored-pending-review ownership transfer, restart-time M3 scheduling and
@@ -238,7 +244,14 @@ do not pre-authorize M4 code.
   unknown effects, and fence persistence failure. The official Obsidian adapter uses
   lookup/create/createFolder/read/process only; no local delete/rename/move, generic
   Vault, UI command, remote mutation, deployment, or personal-vault installation is
-  composed. No later acceptance item is claimed complete.
+  composed.
+- **Slices 4–5 evidence:** focused action services and a shared exact-effect executor
+  cover archive-first live resolution, exact adoption, different-path legacy fork,
+  explicit tombstone choices, and local-first recovery restore. Tests include stale
+  barriers, path collisions, conditional refusal, persistence failure, unknown-effect
+  receipt recovery, restore restart, and expired/unavailable recovery. No plugin
+  command, modal, timer, runtime composition, Worker/API change, deployment, or
+  personal-vault installation is composed.
 - **Risks/exit:** the A1–A12 checklist requires exact barrier tests for concurrent
   edit/delete/rename/restore/restart, no silent overwrite/delete, generated artifact
   qualification, canonical diagnostics/coverage/docs, and independent review before

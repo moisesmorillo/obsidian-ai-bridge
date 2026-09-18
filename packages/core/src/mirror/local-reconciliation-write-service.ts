@@ -22,6 +22,7 @@ import {
   RECONCILIATION_ACTION,
   RECONCILIATION_LOCAL_EVIDENCE_KIND,
   RECONCILIATION_OPERATION_PHASE,
+  RECONCILIATION_PRESERVATION_SIDE,
   RECONCILIATION_REMOTE_EVIDENCE_KIND,
 } from "@core/mirror/reconciliation-state.constants";
 import type {
@@ -147,33 +148,32 @@ export class LocalReconciliationWriteService {
         before,
       );
     }
-    if (
-      operation.action.kind !== RECONCILIATION_ACTION.useRemote &&
-      operation.action.kind !== RECONCILIATION_ACTION.adoptRevision
-    ) {
+    if (!actionAllowsCreate(operation)) {
       return rejected("wrong-action", before);
     }
-    const target = targetEvidence(operation, request.path);
+    const target = pathEvidence(operation, request.path);
+    const replacementHash = createSourceHash(operation, request.path);
     if (
       target === undefined ||
       target.local.kind !== RECONCILIATION_LOCAL_EVIDENCE_KIND.absent ||
-      target.remote.kind !== RECONCILIATION_REMOTE_EVIDENCE_KIND.live
+      replacementHash === undefined
     ) {
       return rejected("path-evidence-mismatch", before);
     }
     if (!ownsPath(operation, request.path)) {
+      /* v8 ignore next -- consistent evidence-authorized create paths are operation reservations. */
       return rejected("reservation-mismatch", before);
     }
     const mode = dispatchMode(operation);
     if (mode === undefined) return rejected("wrong-phase", before);
     const bodyHash = await this.hash(request.content);
-    if (bodyHash !== target.remote.contentSha256) {
+    if (bodyHash !== replacementHash) {
       return rejected("source-evidence-mismatch", before);
     }
     return {
       kind: "authorized",
       operation,
-      replacementHash: target.remote.contentSha256,
+      replacementHash,
       mode,
     };
   }
@@ -200,18 +200,20 @@ export class LocalReconciliationWriteService {
         before,
       );
     }
-    if (operation.action.kind !== RECONCILIATION_ACTION.useRemote) {
+    if (!actionAllowsReplace(operation)) {
       return rejected("wrong-action", before);
     }
-    const target = targetEvidence(operation, request.path);
+    const target = pathEvidence(operation, request.path);
+    const replacementEvidenceHash = replaceSourceHash(operation, request.path);
     if (
       target === undefined ||
       target.local.kind !== RECONCILIATION_LOCAL_EVIDENCE_KIND.live ||
-      target.remote.kind !== RECONCILIATION_REMOTE_EVIDENCE_KIND.live
+      replacementEvidenceHash === undefined
     ) {
       return rejected("path-evidence-mismatch", before);
     }
     if (!ownsPath(operation, request.path)) {
+      /* v8 ignore next -- consistent evidence-authorized replace paths are operation reservations. */
       return rejected("reservation-mismatch", before);
     }
     const mode = dispatchMode(operation);
@@ -222,7 +224,7 @@ export class LocalReconciliationWriteService {
     ]);
     if (
       expectedHash !== target.local.contentSha256 ||
-      replacementHash !== target.remote.contentSha256
+      replacementHash !== replacementEvidenceHash
     ) {
       return rejected("source-evidence-mismatch", before);
     }
@@ -230,7 +232,7 @@ export class LocalReconciliationWriteService {
       kind: "authorized",
       operation,
       expectedHash: target.local.contentSha256,
-      replacementHash: target.remote.contentSha256,
+      replacementHash: replacementEvidenceHash,
       observationGeneration: target.local.observationGeneration,
       mode,
     };
@@ -258,9 +260,13 @@ export class LocalReconciliationWriteService {
       }
       return replaceOperation(state, {
         ...current,
-        phase: RECONCILIATION_OPERATION_PHASE.mutatingLocal,
+        phase:
+          current.action.kind === RECONCILIATION_ACTION.restoreRecovery
+            ? RECONCILIATION_OPERATION_PHASE.restoredPendingReview
+            : RECONCILIATION_OPERATION_PHASE.mutatingLocal,
         localEffect:
-          mode === LOCAL_RECONCILIATION_DISPATCH_MODE.firstDispatch
+          mode === LOCAL_RECONCILIATION_DISPATCH_MODE.firstDispatch &&
+          current.phase !== RECONCILIATION_OPERATION_PHASE.partial
             ? MUTATION_EFFECT_CERTAINTY.notDispatched
             : current.localEffect,
       });
@@ -319,14 +325,20 @@ export class LocalReconciliationWriteService {
       const operation = findActiveOperation(state, operationId);
       if (
         operation === undefined ||
-        operation.phase !== RECONCILIATION_OPERATION_PHASE.mutatingLocal ||
+        (operation.phase !== RECONCILIATION_OPERATION_PHASE.mutatingLocal &&
+          operation.phase !==
+            RECONCILIATION_OPERATION_PHASE.restoredPendingReview) ||
         !ownsPath(operation, path)
       ) {
         return undefined;
       }
       return replaceOperation(state, {
         ...operation,
-        phase,
+        phase:
+          confirmed &&
+          operation.action.kind === RECONCILIATION_ACTION.restoreRecovery
+            ? RECONCILIATION_OPERATION_PHASE.restoredPendingReview
+            : phase,
         localEffect: effect,
       });
     });
@@ -409,16 +421,130 @@ function findActiveOperation(
 }
 
 /**
+ * Selects exact immutable evidence for one operation-owned effect path.
+ *
  * @param operation - Durable operation carrying immutable evidence.
- * @param path - Requested target path.
- * @returns Exact target evidence only when the requested path is the immutable target.
+ * @param path - Requested target or destination path.
+ * @returns Exact sampled path evidence when present.
  */
-function targetEvidence(
+function pathEvidence(
   operation: ReconciliationOperation,
   path: AuthorizedCreateEligibleRequest["path"],
 ): ReconciliationPathEvidence | undefined {
-  if (operation.snapshot.targetPath !== path) return undefined;
   return operation.snapshot.paths.find((evidence) => evidence.path === path);
+}
+
+/** @returns Whether the admitted action can create one eligible local path. */
+function actionAllowsCreate(operation: ReconciliationOperation): boolean {
+  return (
+    operation.action.kind === RECONCILIATION_ACTION.useRemote ||
+    operation.action.kind === RECONCILIATION_ACTION.adoptRevision ||
+    operation.action.kind === RECONCILIATION_ACTION.keepBoth ||
+    operation.action.kind === RECONCILIATION_ACTION.forkLegacy ||
+    operation.action.kind === RECONCILIATION_ACTION.restoreRecovery
+  );
+}
+
+/** @returns Whether the admitted action can replace one exact eligible local path. */
+function actionAllowsReplace(operation: ReconciliationOperation): boolean {
+  return (
+    operation.action.kind === RECONCILIATION_ACTION.useRemote ||
+    operation.action.kind === RECONCILIATION_ACTION.keepBoth ||
+    operation.action.kind === RECONCILIATION_ACTION.restoreRecovery
+  );
+}
+
+/**
+ * Derives the only content digest an action may create at an absent local path.
+ *
+ * @param operation - Admitted action and immutable evidence.
+ * @param path - Requested create destination.
+ * @returns Evidence-bound source digest, or undefined when the action grants no create authority.
+ */
+function createSourceHash(
+  operation: ReconciliationOperation,
+  path: AuthorizedCreateEligibleRequest["path"],
+): ContentSha256 | undefined {
+  const target = pathEvidence(operation, operation.snapshot.targetPath);
+  if (target === undefined) return undefined;
+  switch (operation.action.kind) {
+    case RECONCILIATION_ACTION.useRemote:
+    case RECONCILIATION_ACTION.adoptRevision:
+      return path === operation.snapshot.targetPath &&
+        target.remote.kind === RECONCILIATION_REMOTE_EVIDENCE_KIND.live
+        ? target.remote.contentSha256
+        : undefined;
+    case RECONCILIATION_ACTION.keepBoth:
+      if (path !== operation.destinationPath) return undefined;
+      if (
+        operation.action.primarySide === RECONCILIATION_PRESERVATION_SIDE.local
+      ) {
+        return target.remote.kind === RECONCILIATION_REMOTE_EVIDENCE_KIND.live
+          ? target.remote.contentSha256
+          : undefined;
+      }
+      return target.local.kind === RECONCILIATION_LOCAL_EVIDENCE_KIND.live
+        ? target.local.contentSha256
+        : undefined;
+    case RECONCILIATION_ACTION.forkLegacy:
+      return path === operation.destinationPath &&
+        target.remote.kind === RECONCILIATION_REMOTE_EVIDENCE_KIND.legacy
+        ? target.remote.contentSha256
+        : undefined;
+    case RECONCILIATION_ACTION.restoreRecovery:
+      return path ===
+        (operation.destinationPath ?? operation.snapshot.targetPath)
+        ? operation.snapshot.recovery?.contentSha256
+        : undefined;
+    case RECONCILIATION_ACTION.keepLocal:
+    case RECONCILIATION_ACTION.acceptTombstone:
+    case RECONCILIATION_ACTION.recreateRemote:
+    case RECONCILIATION_ACTION.resolveHistory:
+    case RECONCILIATION_ACTION.defer:
+      return undefined;
+  }
+}
+
+/**
+ * Derives the only replacement digest an action may write over sampled local bytes.
+ *
+ * @param operation - Admitted action and immutable evidence.
+ * @param path - Requested replacement path.
+ * @returns Evidence-bound replacement digest, or undefined without replace authority.
+ */
+function replaceSourceHash(
+  operation: ReconciliationOperation,
+  path: AuthorizedReplaceEligibleRequest["path"],
+): ContentSha256 | undefined {
+  const target = pathEvidence(operation, operation.snapshot.targetPath);
+  if (target === undefined) return undefined;
+  switch (operation.action.kind) {
+    case RECONCILIATION_ACTION.useRemote:
+      return path === operation.snapshot.targetPath &&
+        target.remote.kind === RECONCILIATION_REMOTE_EVIDENCE_KIND.live
+        ? target.remote.contentSha256
+        : undefined;
+    case RECONCILIATION_ACTION.keepBoth:
+      return path === operation.snapshot.targetPath &&
+        operation.action.primarySide ===
+          RECONCILIATION_PRESERVATION_SIDE.remote &&
+        target.remote.kind === RECONCILIATION_REMOTE_EVIDENCE_KIND.live
+        ? target.remote.contentSha256
+        : undefined;
+    case RECONCILIATION_ACTION.restoreRecovery:
+      return path ===
+        (operation.destinationPath ?? operation.snapshot.targetPath)
+        ? operation.snapshot.recovery?.contentSha256
+        : undefined;
+    case RECONCILIATION_ACTION.keepLocal:
+    case RECONCILIATION_ACTION.adoptRevision:
+    case RECONCILIATION_ACTION.acceptTombstone:
+    case RECONCILIATION_ACTION.recreateRemote:
+    case RECONCILIATION_ACTION.forkLegacy:
+    case RECONCILIATION_ACTION.resolveHistory:
+    case RECONCILIATION_ACTION.defer:
+      return undefined;
+  }
 }
 
 /**
@@ -463,7 +589,9 @@ function dispatchMode(
     return LOCAL_RECONCILIATION_DISPATCH_MODE.firstDispatch;
   }
   if (
+    operation.phase === RECONCILIATION_OPERATION_PHASE.partial ||
     operation.phase === RECONCILIATION_OPERATION_PHASE.mutatingLocal ||
+    operation.phase === RECONCILIATION_OPERATION_PHASE.restoredPendingReview ||
     (operation.phase === RECONCILIATION_OPERATION_PHASE.evidenceRequired &&
       operation.localEffect === MUTATION_EFFECT_CERTAINTY.unknown)
   ) {

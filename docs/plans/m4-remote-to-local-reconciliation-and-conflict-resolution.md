@@ -1,6 +1,6 @@
 # M4 implementation plan — reviewed reconciliation and conflict resolution
 
-**Status: M4 Slices 1–3 implemented; Slices 4–8 remain planned.** M4 remains the
+**Status: M4 Slices 1–5 implemented; Slices 6–8 remain planned.** M4 remains the
 single `NEXT` milestone. Slice 1 adds contracts and the state/migration fence, Slice 2
 adds the core-only read-only review/admission seam, and Slice 3 adds uncomposed narrow
 local-effect and durable preservation primitives. It activates no M4 user behavior or
@@ -192,7 +192,7 @@ restart recovery, event fencing, path/privacy/size checks, inert content, and th
 absence of rename/delete/move/generic Vault capabilities. Existing M2/M3 tests remain
 green. No user-facing M4 action or remote effect is composed.
 
-## Slice 4 — Revisioned adoption and live/live resolution
+## Slice 4 — Revisioned adoption and live/live resolution — IMPLEMENTED
 
 ### Objective and prerequisites
 
@@ -232,11 +232,16 @@ comparison, preservation, ACK matching, or local adapter mechanics.
 
 ### Completion evidence
 
-Every general harmful-decision matrix row has deterministic tests asserting exact
-surviving bytes/revisions. Existing v2 API remains unchanged. Canonical check and a
-stateful structural review pass; still no end-user command.
+Core now composes archive-first Keep local, Use remote, both Keep both primary-side
+orders, exact format-2 adoption, and safe different-path legacy forks through focused
+action services and one typed coordinator. One shared effect executor owns exact
+local/remote evidence reads, receipt-based unknown-effect recovery, conditional remote
+dispatch, atomic baseline completion, and sanitized finite results. Tests cover exact
+surviving bytes/revisions, alternate-path absence, collisions, stale evidence,
+conditional refusal, persistence fencing, and lost-response recovery. Existing v2
+API remains unchanged, and no plugin runtime or end-user command is composed.
 
-## Slice 5 — Remote tombstone review and local-first recovery restore
+## Slice 5 — Remote tombstone review and local-first recovery restore — IMPLEMENTED
 
 ### Objective and prerequisites
 
@@ -272,8 +277,17 @@ the same preservation and stale-decision owners.
 
 ### Completion evidence
 
-The complete tombstone matrix and restore workflow pass with exact byte/revision
-assertions. API/OpenAPI semantic tests confirm no wire drift. Canonical check passes.
+Core now executes explicit absent-only tombstone adoption, preserve-first exact
+recreation, and local copy to an independently absent path without any local delete or
+rename capability. Recovery restore revalidates prepared/unexpired sealed metadata and
+content, preserves an occupied destination first, persists the
+`restored-pending-review` fence before the local write, and performs no remote
+mutation. Serialized successor admission can atomically transfer the restored path
+from the completed restore to a fresh reviewed operation; alternate restored paths
+receive an explicit absence-only Keep local publication decision across restart.
+Focused tests cover stale,
+expired, unavailable, changed, collision, persistence, restart, and receipt-recovery
+paths. Worker/API/OpenAPI code remains unchanged; no runtime/UI composition exists.
 
 The [non-normative Slices 6–7 implementation preparation](m4-slices-6-7-implementation-preparation.md)
 records pre-Slice-4/5 handoff analysis, test matrices, dependencies, and contract gaps.

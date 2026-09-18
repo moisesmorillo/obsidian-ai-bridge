@@ -1,12 +1,12 @@
 # M4 — Reviewed remote-to-local reconciliation and conflict resolution
 
-**Status: NEXT — Slices 1–3 implemented; no M4 user-facing behavior.** M3 is COMPLETE.
-The accepted design remains sequential. Slices 1–2 establish closed content-free
-contracts, device-state v3, deterministic migration/fencing, and the read-only review
-and admission seam. Slice 3 adds only uncomposed, operation-authorized local mutation
-and durable conflict-preservation primitives. Slices 4–8 remain unimplemented. No
-review UI, action orchestration, remote mutation, tombstone/restore/history execution,
-timer, deployment, or personal-vault installation is active.
+**Status: NEXT — Slices 1–5 implemented; no M4 user-facing behavior.** M3 is COMPLETE.
+The accepted design remains sequential. Slices 1–3 establish the closed state,
+read-only review/admission, narrow local mutation, and durable preservation seams.
+Slices 4–5 add core-only reviewed action orchestration for live resolution, exact
+adoption, remote tombstones, and local-first recovery restore. Slices 6–8 remain
+unimplemented. No review UI, deferred-history execution, runtime composition, timer,
+deployment, or personal-vault installation is active.
 
 ## Objective
 
@@ -568,8 +568,8 @@ The bounded test-first sequence is normative in the
 1. **Implemented:** closed contracts, state v3, strict migration, and runtime downgrade fence;
 2. **Implemented:** read-only evidence sampling and pure divergence/stale-decision policy;
 3. **Implemented:** narrow local mutation adapter and verified preservation;
-4. revisioned adoption and live/live action orchestration;
-5. remote tombstone resolution and local-first recovery restore;
+4. **Implemented:** revisioned adoption and live/live action orchestration;
+5. **Implemented:** remote tombstone resolution and local-first recovery restore;
 6. bounded deferred rename/history resolution;
 7. runtime/session/command/modal/status composition;
 8. generated artifact, operational/security documentation, qualification, and final
@@ -667,6 +667,32 @@ reservations, event-generation fencing, malicious/inert content, and port-capabi
 negatives. The primitives are not composed into the plugin runtime or UI; Slice 4 owns
 action orchestration.
 
+### Slices 4–5 implementation evidence
+
+Core now routes durable reviewed operations through focused live-resolution,
+revisioned-adoption, remote-tombstone, recovery-restore, and coordination services.
+A shared mechanical executor rechecks exact local generations and remote
+metadata/content barriers, performs required preservation, dispatches only original
+revision/absence-bound conditional requests, recovers ambiguous effects only from the
+operation's exact receipt, and atomically records proven baselines and completion.
+Keep local, Use remote, both Keep both orders, exact format-2 adoption, and distinct-path
+legacy fork preserve competing bytes before replacement. Tombstone handling provides
+only explicit absent adoption, exact recreation, or safe local copying; it never grants
+local delete/move authority.
+
+Recovery restore validates exact prepared or unexpired sealed metadata/content,
+preserves occupied destinations, persists `restored-pending-review` before the local
+write, and never mutates remote state. A later fresh reviewed operation can atomically
+complete/link the restore and take over its restored-path reservation. An alternate
+restored path receives one explicit absence-only Keep local publication decision,
+including after a new listener epoch. Unknown local
+or remote effects remain finite durable evidence states, persistence failure fences
+later mutation, and terminal results expose no raw adapter detail. Focused core tests
+cover successful byte/revision outcomes, stale barriers, alternate-path collisions,
+conditional refusal, persistence failure, restart, expired/unavailable recovery, and
+lost-response receipt recovery. Worker, protocol, OpenAPI, plugin runtime, commands,
+modals, and timers are unchanged.
+
 ### State relationship matrix
 
 | Lifecycle / M3 state / M4 state | Authoritative outcome |
@@ -686,9 +712,9 @@ action orchestration.
 
 ## Acceptance checklist
 
-Slices 1–3 establish the contract, migration, read-only evidence/admission, and
-uncomposed local-effect/preservation prerequisites. The end-to-end M4 acceptance
-items remain incomplete until the later behavior slices are implemented.
+Slices 1–5 establish the contract, migration, read-only evidence/admission, local
+primitives/preservation, and core-only live/tombstone/restore action execution. The
+end-to-end M4 acceptance items remain incomplete until Slices 6–8 are implemented.
 
 - [x] **A1 — Authority and writer model:** Reviewed-only remote-to-local authority is
   typed end-to-end; one designated writer remains; no automatic import, last-writer-
@@ -704,14 +730,14 @@ items remain incomplete until the later behavior slices are implemented.
   collision policy, post-verification, unknown effects, and archive-first safety. No
   local rename/delete exists, and no competing version is destroyed before durable
   preservation proof.
-- [ ] **A5 — Conflict resolution and adoption:** Keep local, use remote, keep both,
+- [x] **A5 — Conflict resolution and adoption:** Keep local, use remote, keep both,
   defer, explicit format-2 adoption, and legacy fork behavior pass phase/restart/
   unknown-effect tests. Equal text alone never creates a baseline.
-- [ ] **A6 — Remote tombstones:** Locally absent/live/modified/recreated/unstable rows
+- [x] **A6 — Remote tombstones:** Locally absent/live/modified/recreated/unstable rows
   pass exact tests; absent-only adoption and live preserve/recreate/copy/defer choices
   are explicit; no plugin local delete/move, remote tombstone, or absence silently
   removes local content.
-- [ ] **A7 — Recovery restore:** Exact prepared/unexpired selection, destination and
+- [x] **A7 — Recovery restore:** Exact prepared/unexpired selection, destination and
   collision checks, preservation, local-first write, restored-pending-review fence,
   stale evidence, restart, expired/purged negatives, and no GET-side mutation pass.
 - [ ] **A8 — Rename/history:** Deferred cleanup, duplicates, chains, overlaps, former-

@@ -21,10 +21,12 @@ import {
   type MirrorDeviceState,
   MirrorStateOwner,
   type MirrorStateStore,
+  MUTATION_EFFECT_CERTAINTY,
   RECONCILIATION_ACTION,
   RECONCILIATION_CLASSIFICATION,
   RECONCILIATION_LOCAL_EVIDENCE_KIND,
   RECONCILIATION_LOCAL_STABILITY,
+  RECONCILIATION_OPERATION_PHASE,
   RECONCILIATION_REMOTE_EVIDENCE_KIND,
   type ReadOnlyLocalVault,
   type ReconciliationAction,
@@ -1689,6 +1691,120 @@ describe("M4 read-only review service", () => {
     expect(service.listOpen(reviewId)).toEqual([]);
     expect(remote.mutateNote).not.toHaveBeenCalled();
     expect(JSON.stringify(store.saves[0])).not.toContain("same");
+  });
+
+  it("transfers an alternate restored path to explicit publication after restart", async () => {
+    const fixture = makeService();
+    const alternatePath = "notes/restored.md" as typeof path;
+    const tombstone = remoteTombstoneState();
+    fixture.local.list.mockResolvedValue({
+      kind: LocalInspectionKind.ok,
+      entries: [],
+      skipped: {
+        unsupported_file: 0,
+        excluded_location: 0,
+        invalid_path: 0,
+        oversized: 0,
+      },
+    });
+    fixture.local.read.mockResolvedValue({
+      kind: LocalInspectionKind.failed,
+      reason: LocalVaultFailureReason.missingFile,
+    });
+    fixture.remote.inspectNote.mockImplementation(async (candidatePath) => ({
+      kind: "success",
+      value:
+        candidatePath === path
+          ? tombstone
+          : { kind: "absent", path: candidatePath },
+    }));
+    fixture.remote.readNote.mockResolvedValue({
+      kind: "success",
+      value: { kind: "missing" },
+    });
+    fixture.remote.listRecovery.mockResolvedValue({
+      kind: "success",
+      value: { recoveries: [snapshotRecovery()], nextCursor: null },
+    });
+    fixture.remote.inspectRecovery.mockResolvedValue({
+      kind: "success",
+      value: snapshotRecovery(),
+    });
+
+    await fixture.service.discover();
+    const restoreReview = await fixture.service.createReview({
+      targetPath: path,
+      sessionId: reviewId,
+      relatedPaths: [alternatePath],
+    });
+    expect(restoreReview.kind).toBe("created");
+    if (restoreReview.kind !== "created") return;
+    await expect(
+      fixture.service.admit({
+        reviewId: restoreReview.review.reviewId,
+        sessionId: reviewId,
+        action: { kind: RECONCILIATION_ACTION.restoreRecovery },
+        destinationPath: alternatePath,
+      }),
+    ).resolves.toMatchObject({ kind: "admitted" });
+    await fixture.owner.transition((current) => ({
+      ...current,
+      reconciliationOperations: current.reconciliationOperations.map(
+        (operation) => ({
+          ...operation,
+          phase: RECONCILIATION_OPERATION_PHASE.restoredPendingReview,
+          localEffect: MUTATION_EFFECT_CERTAINTY.confirmed,
+        }),
+      ),
+    }));
+
+    fixture.setRuntime({
+      ...snapshot().runtime,
+      listenerEpoch: 2,
+    });
+    fixture.local.list.mockResolvedValue({
+      kind: LocalInspectionKind.ok,
+      entries: [{ path: alternatePath, sizeBytes: 4 }],
+      skipped: {
+        unsupported_file: 0,
+        excluded_location: 0,
+        invalid_path: 0,
+        oversized: 0,
+      },
+    });
+    fixture.local.read.mockResolvedValue({
+      kind: LocalInspectionKind.ok,
+      content: "same",
+      sizeBytes: 4,
+    });
+    await fixture.service.discover();
+    const successorReview = await fixture.service.createReview({
+      targetPath: alternatePath,
+      sessionId: secondOperationId,
+    });
+    expect(successorReview.kind).toBe("created");
+    if (successorReview.kind !== "created") return;
+    const admitted = await fixture.service.admit({
+      reviewId: successorReview.review.reviewId,
+      sessionId: secondOperationId,
+      action: { kind: RECONCILIATION_ACTION.keepLocal },
+    });
+
+    expect(admitted).toMatchObject({ kind: "admitted" });
+    const operations = fixture.owner.snapshot().state.reconciliationOperations;
+    expect(operations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          operationId,
+          phase: RECONCILIATION_OPERATION_PHASE.completed,
+          successorOperationId: thirdOperationId,
+        }),
+        expect.objectContaining({
+          operationId: thirdOperationId,
+          phase: RECONCILIATION_OPERATION_PHASE.admitted,
+        }),
+      ]),
+    );
   });
 
   it("invalidates the old review on refresh and on a same-text observation", async () => {

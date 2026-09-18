@@ -27,9 +27,11 @@ canonical. M4 is NEXT. Slice 1 implements the closed reconciliation contracts,
 sparse device-state v3, deterministic v2 migration/read-back fence, and incompatible
 same-realm runtime version. Slice 2 adds a core-only bounded read-only review,
 classification, stale-validation, and content-free admission seam. Slice 3 adds a
-separate uncomposed local writer, durable preservation service, and official Obsidian
-adapter with exact postcondition evidence. It exposes no UI, action orchestration,
-remote mutation, timer, or user-facing behavior; Slices 4–8 remain unimplemented.
+separate local writer, durable preservation service, and official Obsidian adapter
+with exact postcondition evidence. Slices 4–5 add core-only live/adoption/tombstone/
+restore action services, shared exact effect settlement, and restored-path successor
+transfer. They expose no UI, runtime composition, history execution, timer, or
+user-facing behavior; Slices 6–8 remain unimplemented.
 The connected outward mirror remains
 experimental and undeployed, with no real Obsidian desktop/mobile or iCloud runtime
 qualification.
@@ -302,12 +304,19 @@ accepted whole-mirror/plaintext/deletion disclosure before activation. Request
 cancellation retains permits through settlement; one-shot timers stop after explicit
 runtime fencing, and Web Crypto capability/provider failure closes durable mutation
 admission while preserving dirty work for explicit recovery. Replacement sessions
-never replace owner state; incompatible registry versions fail closed. No M4
-remote-to-local behavior exists. Slice 0 remains the
+never replace owner state; incompatible registry versions fail closed. M4 Slices 4–5
+now provide uncomposed core action execution: exact local/remote/recovery reads feed
+archive-first live resolution, exact revision adoption, safe legacy fork, explicit
+tombstone choices, and local-first restore. The shared executor owns conditional
+remote dispatch, receipt-based unknown-effect recovery, finite persistence fencing,
+and atomic baseline completion. Restore keeps its path reserved in
+`restored-pending-review` until serialized admission links and transfers ownership to
+a fresh reviewed successor. No plugin command, modal, timer, or runtime invokes these
+services yet. Slice 0 remains the
 pinned local workerd qualification task and declaration-only host check; no slice
 establishes real-host behavior.
 
-## M4 Slice 1 state boundary
+## M4 Slices 1–5 core boundary
 
 Core now owns closed authority, classification, action, lifecycle, evidence,
 reservation, effect, and preservation-receipt contracts plus linear cross-field
@@ -358,13 +367,24 @@ and restart adoption is limited to exact same-operation bytes. The Obsidian adap
 receives only a minimal host interface and exposes no generic Vault, delete, rename,
 move, trash, filesystem, network, or transport capability.
 
+Slices 4–5 compose those core seams without changing adapter capabilities. Focused
+action services select archive-first ordering while one mechanical executor owns exact
+local/remote/recovery barriers, conditional remote effects, receipt-based ambiguity
+recovery, and atomic baseline completion. Live resolution and revisioned adoption
+preserve competitors before replacement; legacy data only forks to a different absent
+path. Tombstone actions never remove local content. Restore persists its local-first
+fence before writing and transfers ownership only to a fresh reviewed successor; an
+alternate restored path requires an explicit absence-only publication decision even
+across listener epochs. These services remain uncomposed from the plugin runtime.
+
 ## Explicitly deferred
 
-- M4 (NEXT; Slices 1–3 implemented): reviewed/manual reconciliation, exact revisioned
-  adoption, archive-first action orchestration, reviewed tombstones, local-first restore,
-  deferred-history choices, the existing v2 API, and the retained one-writer model
-  remain later-slice behavior. Slices 1–3 contribute state/migration fencing, read-only
-  review/admission, and uncomposed local write/preservation primitives. Planned
+- M4 (NEXT; Slices 1–5 implemented): reviewed/manual reconciliation uses exact
+  revisioned adoption, archive-first action orchestration, reviewed tombstones,
+  local-first restore, the existing v2 API, and the retained one-writer model. Core
+  Slices 1–5 now provide state/migration fencing, read-only review/admission, local
+  write/preservation primitives, and uncomposed live/tombstone/restore execution.
+  Deferred-history choices, runtime/UI composition, and qualification remain. Planned
   dependency flow is thin commands/modal → focused core review/action
   policy owners → `ReadOnlyLocalVault` + a separate `LocalReconciliationWriter` +
   existing `RemoteBridge`/state owner → Obsidian/Fetch adapters. Remote divergence

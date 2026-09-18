@@ -114,7 +114,7 @@ export function isReconciliationStateConsistent(
         operation.snapshot,
       ) ||
       !validateReviewOperationLifecycle(review, operation) ||
-      !validateClassificationAction(review, operation) ||
+      !validateClassificationAction(review, operation, operations) ||
       !validateOperationAuthority(operation) ||
       !validateOperationPaths(operation, trackedPaths) ||
       !validateRestoreSuccessor(operation, operations) ||
@@ -762,11 +762,49 @@ function validateRestoreSuccessor(
     beforeRestore !== undefined &&
     beforeRestore.local.kind !== RECONCILIATION_LOCAL_EVIDENCE_KIND.unknown &&
     afterRestore?.local.kind === RECONCILIATION_LOCAL_EVIDENCE_KIND.live &&
-    afterRestore.local.observationGeneration >
-      beforeRestore.local.observationGeneration &&
+    (successor.snapshot.runtime.listenerEpoch !==
+      operation.snapshot.runtime.listenerEpoch ||
+      afterRestore.local.observationGeneration >
+        beforeRestore.local.observationGeneration) &&
     recovery !== null &&
     afterRestore.local.contentSha256 === recovery.contentSha256
   );
+}
+
+/**
+ * Recognizes the linked Keep local successor that publishes an alternate restored
+ * path whose unassociated remote head is still physically absent.
+ *
+ * @param successor - Candidate restored-path publication operation.
+ * @param operations - Operations indexed by durable identity.
+ * @returns Whether a completed restore explicitly transferred this exact path.
+ */
+function isRestoredPublicationSuccessor(
+  successor: ReconciliationOperation,
+  operations: ReadonlyMap<string, ReconciliationOperation>,
+): boolean {
+  const target = targetEvidence(successor.snapshot);
+  if (
+    successor.action.kind !== RECONCILIATION_ACTION.keepLocal ||
+    target?.local.kind !== RECONCILIATION_LOCAL_EVIDENCE_KIND.live ||
+    target.baseline.kind !== MIRROR_ACKNOWLEDGEMENT_KIND.unassociated ||
+    target.remote.kind !== RECONCILIATION_REMOTE_EVIDENCE_KIND.absent
+  ) {
+    return false;
+  }
+  for (const predecessor of operations.values()) {
+    const restoredPath =
+      predecessor.destinationPath ?? predecessor.snapshot.targetPath;
+    if (
+      predecessor.action.kind === RECONCILIATION_ACTION.restoreRecovery &&
+      predecessor.phase === RECONCILIATION_OPERATION_PHASE.completed &&
+      predecessor.successorOperationId === successor.operationId &&
+      restoredPath === successor.snapshot.targetPath
+    ) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /**
@@ -783,7 +821,10 @@ function validateActionEvidence(operation: ReconciliationOperation): boolean {
     case RECONCILIATION_ACTION.keepLocal:
       return (
         localKind === RECONCILIATION_LOCAL_EVIDENCE_KIND.live &&
-        remoteKind === RECONCILIATION_REMOTE_EVIDENCE_KIND.live &&
+        (remoteKind === RECONCILIATION_REMOTE_EVIDENCE_KIND.live ||
+          (remoteKind === RECONCILIATION_REMOTE_EVIDENCE_KIND.absent &&
+            target.baseline.kind ===
+              MIRROR_ACKNOWLEDGEMENT_KIND.unassociated)) &&
         operation.snapshot.recovery === null
       );
     case RECONCILIATION_ACTION.useRemote:
@@ -906,6 +947,7 @@ function validateActionPhase(operation: ReconciliationOperation): boolean {
 function validateClassificationAction(
   review: ReconciliationReview,
   operation: ReconciliationOperation,
+  operations: ReadonlyMap<string, ReconciliationOperation>,
 ): boolean {
   const action = operation.action.kind;
   if (action === RECONCILIATION_ACTION.defer) return true;
@@ -914,8 +956,12 @@ function validateClassificationAction(
     case RECONCILIATION_CLASSIFICATION.unknownLocal:
     case RECONCILIATION_CLASSIFICATION.remoteUnavailable:
     case RECONCILIATION_CLASSIFICATION.unresolvedM3Effect:
-    case RECONCILIATION_CLASSIFICATION.localAhead:
       return false;
+    case RECONCILIATION_CLASSIFICATION.localAhead:
+      return (
+        action === RECONCILIATION_ACTION.keepLocal &&
+        isRestoredPublicationSuccessor(operation, operations)
+      );
     case RECONCILIATION_CLASSIFICATION.remoteAhead:
       return (
         action === RECONCILIATION_ACTION.keepLocal ||
@@ -1039,7 +1085,8 @@ function validateOperationPaths(
       case RECONCILIATION_PATH_REFERENCE_KIND.newDestination:
         if (
           operation.destinationPath !== reservation.path ||
-          trackedPaths.has(reservation.path) ||
+          (trackedPaths.has(reservation.path) &&
+            operation.phase !== RECONCILIATION_OPERATION_PHASE.completed) ||
           !isAbsentDestination(operation.snapshot, reservation.path)
         ) {
           return false;
@@ -1091,7 +1138,7 @@ function validatePreservationReceipt(
     receipt.side,
   );
   if (receipt.preservationPath !== expectedPath) return false;
-  const requirements = requiredReconciliationPreservations(operation);
+  const requirements = validationPreservationRequirements(operation);
   if (requirements === undefined) return false;
   return requirements.some(
     (required) =>
@@ -1100,6 +1147,28 @@ function validatePreservationReceipt(
       required.sourceRevision === receipt.sourceRevision &&
       required.contentSha256 === receipt.contentSha256,
   );
+}
+
+/**
+ * Supplies the no-competitor preservation exception for a linked restored-path
+ * publication while leaving the standalone preservation policy fail-closed.
+ *
+ * @param operation - Operation whose preservation matrix is being validated.
+ * @returns Evidence-derived preservation requirements or invalid evidence.
+ */
+function validationPreservationRequirements(
+  operation: ReconciliationOperation,
+): ReturnType<typeof requiredReconciliationPreservations> {
+  const target = targetEvidence(operation.snapshot);
+  if (
+    operation.action.kind === RECONCILIATION_ACTION.keepLocal &&
+    target?.local.kind === RECONCILIATION_LOCAL_EVIDENCE_KIND.live &&
+    target.baseline.kind === MIRROR_ACKNOWLEDGEMENT_KIND.unassociated &&
+    target.remote.kind === RECONCILIATION_REMOTE_EVIDENCE_KIND.absent
+  ) {
+    return [];
+  }
+  return requiredReconciliationPreservations(operation);
 }
 
 /**
@@ -1112,7 +1181,7 @@ function validatePreservationReceipt(
 function validateOperationLifecycleEvidence(
   operation: ReconciliationOperation,
 ): boolean {
-  const requirements = requiredReconciliationPreservations(operation);
+  const requirements = validationPreservationRequirements(operation);
   if (requirements === undefined) return false;
   const receipts = operation.preservationReceipts;
   if (
@@ -1226,10 +1295,7 @@ function validateCompletedEffects(operation: ReconciliationOperation): boolean {
     case RECONCILIATION_ACTION.adoptRevision:
       return requiredLocalEffect(operation) ? localConfirmed : true;
     case RECONCILIATION_ACTION.keepBoth:
-      return targetEvidence(operation.snapshot)?.remote.kind ===
-        RECONCILIATION_REMOTE_EVIDENCE_KIND.tombstone
-        ? localConfirmed
-        : localConfirmed && remoteConfirmed;
+      return localConfirmed && remoteConfirmed;
     case RECONCILIATION_ACTION.recreateRemote:
       return remoteConfirmed;
     case RECONCILIATION_ACTION.restoreRecovery:

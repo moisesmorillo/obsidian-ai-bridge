@@ -1,14 +1,13 @@
 # M4 Slices 6–7 implementation preparation
 
-> **Non-normative preparation/handoff:** Current source plus the accepted
-> [M4 specification](../milestones/m4-remote-to-local-reconciliation-and-conflict-resolution.md)
-> and [ADRs 0005–0008](../decisions/README.md) remain authoritative. This analysis
-> was produced before Slices 4–5 were implemented; those slices were considered only
-> as planned contracts. Every gap, likely module, and possible API described here
-> **MUST** be revalidated against the final merged Slices 4–5 before any contract or
-> production-code change. This document must not justify implementation that
-> contradicts later merged code, and no new product decision is accepted merely
-> because it appears here.
+> **Historical preparation plus post-Slice-5 refinement:** The original analysis
+> below was produced before Slices 4–5 and remains non-normative historical evidence.
+> The final section revalidates all twelve gaps against merged PR #38 at `c81832e` and
+> applies the planning contracts proposed by
+> [ADR 0009](../decisions/0009-m4-history-runtime-and-device-state-v4.md). Current
+> source, the [M4 specification](../milestones/m4-remote-to-local-reconciliation-and-conflict-resolution.md),
+> and accepted ADRs remain authoritative. This document grants no production-code,
+> deployment, or personal-vault authority.
 
 ## Purpose
 
@@ -183,13 +182,14 @@ Remote source cleanup is admissible only when all conditions remain true:
 8. Exact source bytes are post-verified in the excluded preservation archive.
 9. The conditional tombstone uses the sampled source revision, never a refreshed
    latest revision.
-10. The existing Worker v2 deletion operation performs recovery-first conditional
-    tombstoning and returns an exact receipt.
+10. The existing Worker v2 deletion operation uses the globally unique step ID—not the
+    parent history ID—as its mutation/recovery operation ID, performs recovery-first
+    conditional tombstoning, and returns an exact receipt bound to that step ID.
 11. ACK/baseline changes and deferred-history cleanup are persisted last, after the
     effect is proven.
 
 An unknown remote effect transitions to evidence-required. Recovery inspects the exact
-operation receipt/current revision and never blindly redispatches, adopts a newer
+step-ID receipt/current revision and never blindly redispatches, adopts a newer
 revision, or substitutes a new operation ID. Remote physical absence, a foreign
 association, legacy content, or malformed evidence cannot authorize cleanup.
 
@@ -253,7 +253,7 @@ association, legacy content, or malformed evidence cannot authorize cleanup.
 | Restart after a pending archive write | Inspect/adopt only an exact same-operation artifact |
 | Restart after verified archive | Revalidate exact source/destination evidence before dispatch |
 | Remote source changes while archive is written | Archive survives; old cleanup becomes stale |
-| Remote tombstone commits but response is lost | Inspect the exact operation receipt; do not blindly retry |
+| Remote tombstone commits but response is lost | Inspect the exact step-ID operation receipt; do not blindly retry |
 | Remote commit succeeds but state save fails | Persistence fences later effects; tombstone/recovery and archive survive |
 | Restart after one chain step | Completed step is not replayed; remaining steps stay reserved |
 | Local source is recreated before cleanup | Recreated bytes survive; old cleanup is refused |
@@ -472,31 +472,33 @@ reconciliation policy or render note bodies.
 | Persistence or global runtime fence is active | Sanitized status remains visible | No further effect admission |
 | Active restore is `restored-pending-review` | Fresh successor review may be shown | Ordinary M3 scheduling/handoff remains fenced until linked successor completion |
 
-## Own-write event consumption ordering
+## Local-effect event ordering
 
-1. Every eligible host event first advances the
+1. Every eligible official host event first advances the
    `ReconciliationObservationGenerationOwner`, including same-text saves.
 2. Events on unreserved paths continue through unchanged M3 behavior.
 3. Preservation-path events remain excluded by the existing dot-segment policy.
-4. Create/modify events on an M4-reserved eligible path are offered to the
-   reconciliation owner before M3.
-5. Such an event may be consumed as the operation's own write only when the durable
-   phase, reserved path, expected hash, observation identity, and exact postcondition
-   prove that relationship.
-6. An extra event, mismatching current bytes, delete, or rename is external successor
-   evidence, not an own-write event.
-7. Successor evidence remains dirty/reviewable and is not erased when the admitted
-   operation completes.
-8. Reservations release only after own-event/postcondition settlement is durably
-   recorded.
-9. If unload occurs while an expected event is pending, the durable operation and
-   exact local postcondition—not the detached callback—remain recovery authority.
-10. M4 never emits a local delete or rename, so delete and rename events on a reserved
-    path always invalidate/block rather than being consumed as expected M4 effects.
+4. Events on an M4-reserved eligible path are sequenced with local-effect dispatch and
+   offered to the reconciliation owner before M3.
+5. A durable synthetic effect ID plus exact writer postcondition proves the local
+   effect; it never proves that a host callback was caused by that effect.
+6. Every create/modify/delete/rename callback after the prepared observation generation
+   is conservative external successor evidence. None is consumed as an own event.
+7. While reserved, successor evidence is collapsed into a bounded durable first/latest
+   generation and event-kind range and is not erased when the effect settles.
+8. A queue barrier persists earlier callbacks before release. A non-empty successor
+   range keeps the path reserved until a fresh linked review either settles exact
+   alignment with no effect or admits an ordinary successor that atomically takes
+   ownership; a later callback enters normal M3/M4 observation.
+9. If unload occurs during settlement, the durable synthetic identity, exact local
+   postcondition, and successor range—not a detached callback—remain recovery evidence.
+10. M4 never emits a local delete or rename; such callbacks therefore always represent
+    successor evidence.
 
-The current operation contract lacks a durable own-event identity; see contract gap
-9. Do not approximate this with timing, a boolean suppression flag, or path-only event
-filtering.
+The merged operation contract lacks this synthetic observation and successor range;
+contract gap 9 records that baseline, and ADR 0009 resolves it for implementation. Do
+not approximate causality with timing, a boolean suppression flag, path matching, or an
+"ignore next event" rule.
 
 ## Status projections
 
@@ -592,8 +594,9 @@ allows them and must not be logged by default.
   receives no UI result.
 - Local M4 write emits an event before post-verification: reservation remains until
   classification and durable settlement.
-- External edit follows an own event before settlement: exact operation effect and
-  successor evidence remain separately visible.
+- An external edit follows the host callback likely caused by an M4 write before
+  settlement: the synthetic operation effect and all successor evidence remain
+  separately visible without assigning callback causality.
 - Configuration changes while a remote request is pending: no new old-generation
   request; unknown effect remains explicit.
 - M3 path B runs while reserved M4 path A is blocked.
@@ -861,19 +864,19 @@ single global bound.
 creating any M4 scheduler. Do not create a parallel unbounded or independently capped
 engine by default.
 
-## 9. Own-write event consumption lacks durable identity
+## 9. Local-effect event sequencing lacks durable identity
 
-**Why it matters:** Slice 7 must consume the host event caused by an exact M4 local
-write without granting ordinary M3 outward authority, while preserving an external or
-same-text successor event. Path and timing alone cannot distinguish those cases.
+**Why it matters:** Slice 7 must account for host callbacks around an exact M4 local
+write without granting ordinary M3 outward authority or hiding an external/same-text
+successor event. Path and timing alone cannot establish callback causality.
 
-**Current cause:** `ReconciliationOperation` records effect certainty but no consumed
-observation generation or expected own-event identity. `ObsidianMirrorEvents` routes
-primitive events directly to `MirrorRuntimeOwner`, and current M3 event handling has
-no M4-local-effect association.
+**Current cause:** `ReconciliationOperation` records effect certainty but no synthetic
+local-effect identity, observation generation, or successor range.
+`ObsidianMirrorEvents` routes primitive events directly to `MirrorRuntimeOwner`, and
+current M3 event handling has no M4-local-effect association.
 
-**Blocks:** Slice 7 own-write consumption, restore fencing, exact successor-event
-handling, and safe reservation release.
+**Blocks:** Slice 7 local-effect/event sequencing, restore fencing, exact successor-
+event handling, and safe reservation release.
 
 **Possible Slice 4–5 effect:** Local-resolution or restore orchestration may add exact
 post-write observation/effect metadata or a runtime event-consumption protocol.
@@ -952,9 +955,102 @@ adding another query. Reuse its exact validation and bounds; do not let the UI q
 Before implementing Slice 6 or Slice 7:
 
 1. update to the final clean merged main containing Slices 4–5;
-2. reread the M4 specification, canonical implementation plan, ADRs 0005–0008, and
+2. reread the M4 specification, canonical implementation plan, ADRs 0005–0009, and
    the complete merged Slice 4–5 source/tests;
-3. re-evaluate every dependency, proposed module, and all twelve gaps above;
-4. remove or revise observations already resolved by merged code;
-5. surface any remaining contract contradiction without inventing product policy;
+3. use the post-Slice-5 revalidation and final contracts below rather than treating
+   the original pre-Slice-4/5 hypotheses as current truth;
+4. implement Slice 6 before Slice 7 inside one implementation branch/PR; never merge
+   or publish an intermediate plugin that writes v4 without the complete version-4
+   runtime owner/registry surface;
+5. preserve every accepted M3/M4 invariant and stop if implementation evidence
+   contradicts the normative contracts rather than
+   inventing a replacement policy;
 6. implement only under an explicit production implementation request.
+
+---
+
+# Post-Slice-5 revalidation and final contracts
+
+This section records the required revalidation against clean `main` at `c81832e`
+after merged PR #38. It preserves the original analysis above as historical evidence.
+[ADR 0009](../decisions/0009-m4-history-runtime-and-device-state-v4.md) is normative
+for every decision closed here. This planning update adds no Slice 6 or Slice 7
+production behavior.
+
+## Twelve-gap disposition
+
+| Gap | Original status | Post-Slice-5 evidence | Final contract decision | Resolved by this planning PR | Target slice / semantic owner | Required implementation tests |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1. History decision payload | Blocked Slice 6/7 because the action was kind-only | `ResolveHistoryReconciliationAction` is still kind-only; admission accepts at most one destination; the Slice 4 coordinator rejects history | Use the closed `retain-independent`, `defer-history`, or `execute-cleanup-plan` decision. UI selects only an opaque candidate; group, canonical path, and cleanup steps are derived from current durable evidence | **Yes, contractually** | Slice 6: `RenameHistoryGroupPolicy`, history decision policy, review admission | Every decision variant, candidate replay, caller path injection, stale group/member/revision, unrepresentable mapping |
+| 2. Grouped completed steps | Blocked exact grouped restart | Slice 4–5 added finite aggregate phases/effect recovery but no per-step history evidence | One parent operation owns a bounded ordered step ledger and full group reservations; one current step progresses; exact confirmed steps never replay | **Yes, contractually** | Slice 6: `RenameHistoryResolutionService`; mechanical effects remain in `ReconciliationEffectExecutor` | Restart at every step phase, exact receipt recovery, unknown/refused block, completed-step no replay, unrelated progress |
+| 3. Same-side artifact collision | Blocked multiple grouped competitors | Preservation paths remain `<operation>/<side>.md` | New history artifacts use `<operation>/<step>/<side>.md`; existing non-history paths remain unchanged | **Yes, contractually** | Slice 6: preservation path/policy and v4 receipt validation | Multiple same-side artifacts, UUID/path validation, collision, same-step recovery, no source-path interpolation |
+| 4. Side-only preservation dispatch | Blocked exact grouped preservation | `ConflictPreservationRequest` and service authorization still select the first requirement by side | History preservation is selected by parent operation plus exact step ID plus side; policy derives original path/revision/hash/path | **Yes, contractually** | Slice 6: step-scoped preservation request and `ConflictPreservationService` | Wrong step/side/hash/revision/path, duplicate selector, restart adoption, extra receipt rejection |
+| 5. History local effects | Ambiguous mapping could imply forbidden local effects | Validation still forbids history local effects; merged ordinary action services do not provide generic history linkage | History may retain/defer, preserve, and conditionally tombstone an exact former remote source only. Local restructuring and ordinary create/replace require host action or a fresh ordinary review with no inherited history authority | **Yes, contractually** | Slice 6: history action/phase validator | Port-capability negatives, impossible local phases, host edit invalidation, fresh ordinary review, no linked implicit authority |
+| 6. Direct-only history discovery | Blocked complete evidence/reservations | Review discovery still adds only direct deferred destinations and trusts optional related paths for expansion | Derive bounded transitive closure solely from durable rename edges; lexical full-group sample/reservation; caller lists have no authority | **Yes, contractually** | Slice 6: `RenameHistoryGroupPolicy` | Chain, overlap, shared destination, cycle, null destination, capacity, omission/expansion attacks |
+| 7. Closed v3 compatibility | Blocked every new durable shape | Strict v3 codec/runtime version 3 cannot accept step/event fields compatibly | Introduce strict device state v4, frozen v3 decoder, deterministic same-key v3→v4 migration, exact 12 MiB prospective-state bound, runtime/registry version 4, no reverse migration; no v4 publication until both slices land together | **Yes, contractually** | Slice 6 first checkpoint: codec/migration/core validation; Slice 7 completes the atomic runtime version transition in the same implementation PR | Non-empty v3 reviews/operations/receipts/effects, largest valid migration projection, exact byte boundary/oversize refusal, save/read-back failures, downgrade and same-realm refusal |
+| 8. Shared scheduler | Blocked safe runtime composition | `MirrorSynchronizer` still constructs a private scheduler; Slice 4–5 services have no scheduler | `MirrorRuntimeOwner` owns one injected `FairMirrorScheduler` for M3 and M4 with two global jobs; durable state remains restart authority | **Yes, contractually** | Slice 7: runtime owner/factory, M3 synchronizer injection, reviewed runtime | Combined two-job bound, fairness, overlap, detach settlement, blocked group plus unrelated M3/M4 work |
+| 9. Own-write event identity | Blocked exact event/successor handling | Exact post-write hash and restore fence exist, but no durable event identity exists and Vault callbacks carry no operation token | Persist a synthetic local-effect observation ID and exact postcondition. Every official Vault event is external successor evidence; never infer causal origin or ignore-next. A fresh linked aligned review closes with no effect; otherwise ownership transfers to an ordinary successor | **Yes, contractually** | Slice 7 runtime sequencing; Slice 6/v4 operation contract; local write service retains effect mechanics | Event before/during/after write, same-text extra event, aligned no-effect closure, non-aligned transfer, delete/rename, listener gap, restart, queued event before release |
+| 10. Session invalidation | Blocked modal lifecycle | Reviews have session IDs and global invalidation, but no close-one/session operation | `ReconciliationReviewService` owns `closeReview` and `invalidateSession`; clear transient bodies only; admitted durable operations survive | **Yes, contractually** | Slice 7: review service/runtime facade/modal | Concurrent sessions, close one, unload, refresh/replay, admitted operation unaffected, body-reference negatives |
+| 11. Startup orphan staling | Blocked safe command enablement | Factory publishes a loaded owner without the documented orphan transition | `ReconciliationStartupService` performs one serialized pre-publication stale transition; save failure prevents publication; valid pairs remain exact | **Yes, contractually** | Slice 7: core startup service and plugin runtime factory | Orphan statuses, valid active/terminal pairs, idempotence, failed save/read, no command/network/local access before commit |
+| 12. Recovery selection query | Blocked restore modal | Bounded inventory already returns metadata states, but discovery drops them and restore requires a caller-known ID | Review service owns a bounded content-free selection projection for prepared, sealed-active, sealed-expired, purged, and incomplete results; selection is re-inspected at review creation | **Yes, contractually** | Slice 7: review service/runtime query/modal | Pagination/cursor bounds, no body reads, expiry, purged/incomplete, metadata change/refresh/session staleness |
+
+All twelve gaps are resolved **as contracts**, not as implementation. None was fully
+resolved or made obsolete by Slices 4–5. Gaps 2, 9, 10, and 12 had partial merged
+foundations; the final decisions above close their remaining implementation ambiguity.
+
+## Implementation-ready state-transition reconstruction
+
+The implementation must preserve this ownership chain:
+
+```text
+RenameHistoryGroupPolicy
+  durable rename graph + selected target
+  → complete lexical group + opaque operator candidates
+
+HistoryDecisionPolicy / ReconciliationReviewService
+  exact snapshot + one closed operator choice
+  → one admitted parent operation + full durable reservations + ordered steps
+
+RenameHistoryResolutionService
+  parent decision + next step + exact current evidence
+  → no-effect terminal, preserve, conditional remote cleanup, or typed attention
+
+ReconciliationPreservationPolicy / ConflictPreservationService
+  operation + step + sampled source evidence
+  → exact create-only `<operation>/<step>/<side>.md` receipt
+
+ReconciliationEffectExecutor
+  exact step predicate + step ID as the v2 mutation/recovery operation ID
+  → recovery-first conditional tombstone + exact/unknown/refused settlement
+
+MirrorStateOwner
+  proven step settlement
+  → persist receipt/effect before next step; clear reviewed blockers last
+
+FairMirrorScheduler owned by MirrorRuntimeOwner
+  ready M3/M4 jobs + process reservations
+  → at most two active jobs; durable reservations still decide restart authority
+
+ReviewedReconciliationRuntime
+  synthetic local-effect observation + every ordered Vault event
+  → exact own-effect proof, conservative successor evidence, aligned no-effect closure
+
+ReconciliationReviewService / ReconciliationStartupService
+  session close, recovery query, or loaded orphan review
+  → body discard, exact selection staleness, or pre-publication durable staling
+```
+
+No coordinator may absorb group derivation, action policy, preservation requirements,
+remote effect mechanics, event classification, state serialization, or UI formatting.
+The shared scheduler selects execution order only and grants no mutation authority.
+
+## Slice handoff
+
+A fresh implementation session may begin Slice 6 only after reading ADR 0009 and this
+section. Slice 6 starts with state v4/frozen-v3 migration tests, then group/decision,
+step-ledger, step-preservation, and history-effect tests. Slice 7 starts only after
+that checkpoint is complete, in the same implementation branch/PR, and adds scheduler
+injection, conservative event sequencing, session/startup/recovery-query services,
+commands/modals/status, and focused runtime integration tests. Only then may plugin
+migration/publication switch atomically to device state and runtime version 4. Slice 8
+remains a separate qualification/documentation slice.

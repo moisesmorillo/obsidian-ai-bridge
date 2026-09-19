@@ -42,14 +42,17 @@ decisions, not an invented historical rationale.
 | [0002 — Conditional current-generation remote mutation](0002-conditional-remote-note-mutation.md) | Accepted (Worker contract implemented) | Fresh envelope revisions/R2 CAS, exact receipts, safe v2 and v1 PUT/DELETE retirement |
 | [0003 — Single-writer mirror association and per-path state](0003-publishing-association-and-local-state.md) | Accepted (Worker guard and Slice 3 local model implemented) | Whole opt-in, device-local ACK/uncertainty ledger, lifecycle ownership and explicit handoff |
 | [0004 — Recoverable runtime removals and local renames](0004-recoverable-mirror-deletions.md) | Accepted (implemented M3 baseline) | Event deletion authority, separate 30-day recovery, permanent heads/purge markers, destination-first rename |
-| [0005 — Reviewed reconciliation authority](0005-reviewed-reconciliation-authority.md) | Accepted (Slice 1 contracts only) | Reviewed-only remote-to-local authority, stale decisions, and retained one-writer model |
-| [0006 — Conflict preservation and bounded local mutation](0006-conflict-preservation-and-local-mutation.md) | Accepted (Slice 1 metadata contracts only) | Excluded local conflict archive, narrow local mutation port, and cross-boundary ordering |
-| [0007 — Explicit adoption, tombstone handling, and restore](0007-explicit-adoption-tombstone-and-restore.md) | Accepted (Slice 1 action contracts only) | Exact revisioned adoption, safe legacy fork, reviewed tombstones, and local-first restore |
-| [0008 — M4 device-state migration and downgrade fence](0008-m4-device-state-migration.md) | Accepted (implemented Slice 1) | Deterministic schema v2→v3 migration, partial-operation state, restart, and downgrade refusal |
+| [0005 — Reviewed reconciliation authority](0005-reviewed-reconciliation-authority.md) | Accepted (Slices 1–5 core contracts/actions implemented) | Reviewed-only remote-to-local authority, stale decisions, and retained one-writer model |
+| [0006 — Conflict preservation and bounded local mutation](0006-conflict-preservation-and-local-mutation.md) | Accepted (Slices 1–5 core/local seams implemented) | Excluded local conflict archive, narrow local mutation port, and cross-boundary ordering |
+| [0007 — Explicit adoption, tombstone handling, and restore](0007-explicit-adoption-tombstone-and-restore.md) | Accepted (Slices 1–5 core actions implemented) | Exact revisioned adoption, safe legacy fork, reviewed tombstones, and local-first restore |
+| [0008 — M4 device-state migration and downgrade fence](0008-m4-device-state-migration.md) | Accepted (implemented Slice 1 v2→v3 history) | Deterministic schema v2→v3 migration, partial-operation state, restart, and downgrade refusal |
+| [0009 — Bounded history resolution, runtime authority, and device-state v4](0009-m4-history-runtime-and-device-state-v4.md) | Proposed (Slices 6–7 contract refinement) | Parent-owned history steps, step-scoped preservation, shared runtime authority, and strict v3→v4 migration |
 
 ADR 0001 records the implemented M1 baseline. ADRs 0002–0004 record the implemented
-M3 design without claiming deployment. ADRs 0005–0008 resolve M4 design. Slice 1 implements their closed state contracts and
-ADR 0008 migration fence only; it does not authorize or claim later reconciliation,
-mutation, UI, deployment, or production behavior. See the M3
+M3 design without claiming deployment. ADRs 0005–0008 are accepted M4 decisions and
+ADRs 0005–0007 now have core implementation through Slice 5. ADR 0008 remains the
+historically accurate implemented v2→v3 fence. ADR 0009 proposes the additive Slice
+6–7 contracts and v3→v4 fence; it neither rewrites v3 history nor authorizes production
+behavior, UI, deployment, or production claims. See the M3
 [decision brief](../plans/m3-design-decisions.md) and the M4
 [implementation-ready specification](../milestones/m4-remote-to-local-reconciliation-and-conflict-resolution.md).

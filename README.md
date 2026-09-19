@@ -2,7 +2,7 @@
 
 A secure bridge between Obsidian and remote AI or agent clients.
 
-> **Status:** M3 automatic eligible-Markdown mirroring is **COMPLETE**; PR #27 merged at `63b0599` and made the M3→M4 transition canonical. **NEXT:** [M4 — Remote-to-local reconciliation and conflict resolution](docs/milestones/m4-remote-to-local-reconciliation-and-conflict-resolution.md). M4 Slice 1 now establishes closed immutable content-free reconciliation identity, evidence-bound preservation and restore-fence contracts, device-state v3, deterministic v2 migration, and downgrade/runtime fences only. No M4 review UI, local/remote mutation, scanning, timers, or other user-facing behavior is active. M3 remains experimental and undeployed, with no personal-vault installation, real-host/iCloud qualification, or production-readiness claim.
+> **Status:** M3 automatic eligible-Markdown mirroring is **COMPLETE**; PR #27 merged at `63b0599` and made the M3→M4 transition canonical. **NEXT:** [M4 — Remote-to-local reconciliation and conflict resolution](docs/milestones/m4-remote-to-local-reconciliation-and-conflict-resolution.md), with Slices 1–5 implemented and Slice 6 next. Planning-only ADR 0009 makes Slices 6–7 implementation-ready and requires device state v4, but no deferred-history execution, M4 runtime/UI, timers, or other user-facing M4 behavior is active. M3 remains experimental and undeployed, with no personal-vault installation, real-host/iCloud qualification, or production-readiness claim.
 
 ## Motivation
 
@@ -154,7 +154,10 @@ M4 Slices 1–5 implement the closed contracts/state migration fence, core-only
 read-only review/admission, narrow local write/conflict preservation, and uncomposed
 live/adoption/tombstone/recovery action execution. Deferred-history handling,
 runtime/UI composition, and qualification remain unimplemented.
-The completed [M3 specification](docs/milestones/m3-remote-bridge-client-and-publishing.md),
+The planning-only [Slices 6–7 contract refinement](docs/decisions/0009-m4-history-runtime-and-device-state-v4.md)
+defines state v4, bounded parent-owned history steps, step-scoped preservation and the
+shared runtime authority model without implementing them. The completed
+[M3 specification](docs/milestones/m3-remote-bridge-client-and-publishing.md),
 [approved decision brief](docs/plans/m3-design-decisions.md), and
 [sequential plan](docs/plans/m3-remote-bridge-client-and-publishing.md) record
 automatic bootstrap/saved-file events, per-path state, safe conditional mutations,

@@ -1,12 +1,14 @@
 # M4 — Reviewed remote-to-local reconciliation and conflict resolution
 
-**Status: NEXT — Slices 1–5 implemented; no M4 user-facing behavior.** M3 is COMPLETE.
-The accepted design remains sequential. Slices 1–3 establish the closed state,
-read-only review/admission, narrow local mutation, and durable preservation seams.
-Slices 4–5 add core-only reviewed action orchestration for live resolution, exact
-adoption, remote tombstones, and local-first recovery restore. Slices 6–8 remain
-unimplemented. No review UI, deferred-history execution, runtime composition, timer,
-deployment, or personal-vault installation is active.
+**Status: NEXT — Slices 1–5 implemented; Slice 6 is NEXT; Slices 6–7 contracts are
+implementation-ready; no M4 user-facing behavior.** M3 is COMPLETE. The accepted
+design remains sequential. Slices 1–3 establish the version-3 state, read-only
+review/admission, narrow local mutation, and durable preservation seams. Slices 4–5
+add core-only reviewed action orchestration for live resolution, exact adoption,
+remote tombstones, and local-first recovery restore. Planning-only ADR 0009 closes the
+history/runtime contracts and requires device state v4 before Slice 6 execution.
+Slices 6–8 remain unimplemented. No review UI, deferred-history execution, runtime
+composition, timer, deployment, or personal-vault installation is active.
 
 ## Objective
 
@@ -51,11 +53,16 @@ The accepted ADRs are normative with this specification:
 - [ADR 0007](../decisions/0007-explicit-adoption-tombstone-and-restore.md): exact
   revisioned adoption, no unsafe in-place legacy adoption, reviewed tombstones, and
   local-first restore using the existing v2 API;
-- [ADR 0008](../decisions/0008-m4-device-state-migration.md): version-3 state,
-  deterministic v2 migration, and downgrade fencing.
+- [ADR 0008](../decisions/0008-m4-device-state-migration.md): implemented version-3
+  state, deterministic v2 migration, and the first M4 downgrade fence;
+- [ADR 0009](../decisions/0009-m4-history-runtime-and-device-state-v4.md): proposed
+  Slice 6–7 refinement defining bounded history decisions/steps, step-scoped
+  preservation, conservative local-event authority, one shared scheduler, and the
+  required version-3→4 migration.
 
-No material M4 decision requires maintainer input. Implementation details may be
-refined only when they preserve these accepted authority and data-safety contracts.
+No material M4 product-policy decision remains. ADR 0009 is the implementation-ready
+technical contract for Slices 6–7 and may be accepted through the planning PR; it does
+not authorize production behavior, deployment, or a weakened authority model.
 
 ## Authority model
 
@@ -201,14 +208,16 @@ Core keeps `ReadOnlyLocalVault` unchanged and defines a separate
 | --- | --- | --- | --- |
 | `createEligible` | Valid eligible destination, ≤1 MiB UTF-8, expected absent, active exact operation | Existing file/folder refuses; no suffix/overwrite | Exact file identity and content hash after create |
 | `replaceEligible` | Existing eligible file, exact transient expected text/hash/generation, replacement in bounds | Host atomic `process` callback refuses changed text | Returned written text plus fresh exact read/hash |
-| `createPreservation` | Generated `.ai-bridge-conflicts/<operation>/<side>.md`, expected absent, outside the actual config subtree, content in bounds | Any parent/file/config collision blocks | Exact reserved path/hash and successful reread |
+| `createPreservation` | Generated non-history `.ai-bridge-conflicts/<operation>/<side>.md` or v4 history `.ai-bridge-conflicts/<parent-operation>/<step>/<side>.md`, expected absent, outside the actual config subtree, content in bounds | Unknown parent/step/file/config collision blocks | Exact reserved path/hash and successful reread |
 
 The port never accepts host objects, arbitrary normalized strings, generic write/delete
 methods, filesystem paths, or transport types. The adapter uses official Obsidian APIs
-only. It may reuse the reserved root folder, but the operation-UUID folder is
-create-only on first dispatch. Only the same durable unknown-effect operation may
-adopt an existing exact side hash; a file at the root or unrelated/mismatching
-operation/side collision blocks. It
+only. It may reuse the reserved root folder. A non-history operation-UUID folder is
+create-only on first dispatch. A history parent folder follows ADR 0009's persisted
+parent/step provenance rule, and each step folder is create-only on first dispatch.
+Only the same durable unknown-effect operation/step may adopt an existing exact side
+hash; a file at the root or unrelated/mismatching operation/step/side collision blocks.
+It
 creates folders component-by-component and never follows a remote-supplied path into
 the reserved tree.
 
@@ -250,10 +259,11 @@ The state-v3 validator owns the complete pre-effect preservation matrix:
 | Bounded history | Exact target remote live hash + revision before selected remote cleanup; a no-effect retain/defer completion requires none |
 | Defer | None |
 
-Every persisted receipt must match the operation UUID, original path, generated
-side-specific preservation path, required side, source revision/null relationship,
-and evidence-derived content hash. An extra receipt or any receipt whose source
-evidence cannot establish exact bytes is invalid.
+Every persisted non-history receipt must match the operation UUID, original path,
+generated side-specific preservation path, required side, source revision/null
+relationship, and evidence-derived content hash. A version-4 history receipt must also
+match its exact step ID and step-scoped path. An extra receipt or any receipt whose
+source evidence cannot establish exact bytes is invalid.
 
 ### Live/live actions
 
@@ -264,6 +274,11 @@ evidence cannot establish exact bytes is invalid.
 | **Keep both** | Exact operator decision plus primary side and operator-chosen locally/remotely absent eligible path; archive required competitor first | Create/verify archive → create/verify competitor locally → conditional absence-only remote create and persist alternate ACK → resolve original using Keep local or Use remote ordering → release both aligned paths | Partial local copies are retained and recorded. Any changed/colliding path blocks. Original ACK changes only after selected primary is proven. |
 | **Manual merge** | No built-in automatic or modal merge | Operator edits a local note using Obsidian, then opens a fresh review and chooses Keep local/Keep both | Editing invalidates the old review. The merged bytes use the ordinary exact local evidence and conditional remote PUT. |
 | **Defer** | Operator or no action | No mutation; retain review/blocker | Fresh review later; unrelated paths progress. |
+
+These rows define action-effect completion. Under the Slice 7 event protocol, any
+confirmed local create/replace can remain reserved in `successor-review-required` after
+those effects settle. Exact fresh alignment closes it without another effect; otherwise
+a linked ordinary successor must take ownership before release.
 
 ### General harmful-decision matrix
 
@@ -330,9 +345,9 @@ tombstone and supplies no deletion authority.
    Invalid, excluded, dot/config, occupied-folder, and oversized destinations refuse.
 4. If absent, create-only. If occupied, require a different path or explicit archive
    plus atomic compare-and-replace. No silent collision suffix.
-5. Persist the active `restored-pending-review` operation phase before the local
-   mutation; consume the plugin's own host event without granting ordinary outward
-   authority.
+5. Persist the active `restored-pending-review` operation phase and synthetic local-
+   effect observation before the local mutation; route every official host event as
+   conservative successor evidence rather than granting ordinary outward authority.
 6. Verify destination bytes and persist the local effect. The active reservation
    survives restart/re-enable, blocks handoff, and excludes the path from ordinary M3
    scheduling. Do not mutate the remote head or update its baseline.
@@ -348,29 +363,48 @@ it never repeats a create over a collision or assumes an interrupted host write 
 
 ## Deferred rename/history reconciliation
 
-M4 reviews current evidence, not imagined history. It groups every path referenced by
-an M3 rename plan plus current local/remote states and exact ACKs.
+M4 reviews current evidence, not imagined history. `RenameHistoryGroupPolicy` derives
+the bounded transitive closure of durable M3 rename source/destination edges and
+samples every grouped path; callers cannot supply an authoritative path list. The UI
+selects one opaque evidence-derived candidate, while admission persists one closed
+`retain-independent`, `defer-history`, or `execute-cleanup-plan` decision.
 
 | History state | Permitted operator choices | Required preservation/safety |
 | --- | --- | --- |
-| Destination ACK exact; source remote still expected; local source absent | Complete source cleanup | Preserve source remote content, then recovery-first conditional tombstone exact source revision |
-| Source and destination both live | Retain as independent notes, choose one canonical path, or complete remote source cleanup | Preserve every version that will be replaced/tombstoned; adopt exact revisions explicitly |
-| Rename chain A→B→C with exact current evidence | Map each current generation to an existing/new destination or keep independent | Reserve all involved paths lexically; execute one proven step at a time; no history inference |
-| Overlapping renames | Defer or explicitly map current notes | No automatic chain collapse; unrelated paths continue |
-| Remote edit at former source | Keep/adopt as independent, import, or preserve then explicitly tombstone | Old cleanup authority is invalid; exact new revision requires fresh choice |
-| Locally recreated source | Treat as independent current local note | Never consume the old cleanup permission to remove recreated bytes |
-| Destination moved/edited again | Review current destination(s) | Old destination prerequisite is stale; preserve and remap explicitly |
-| Insufficient/contradictory history | Keep current versions/defer and choose explicit current mappings | No arbitrary historical reconstruction or cleanup |
+| Destination ACK exact; source remote still expected; local source absent | Complete the exact selected source cleanup | Preserve source remote content under the selected step, then recovery-first conditional tombstone the sampled source revision |
+| Source and destination both live | Retain independently, select an already-grouped canonical path where no local effect is needed, select an exact former-source cleanup, or defer | Preserve every selected remote source before cleanup; no duplicate collapse or implied local write |
+| Rename chain A→B→C with exact current evidence | Choose one bounded evidence-derived cleanup plan or retain/defer | Reserve A/B/C together; execute the parent operation's durable ordered steps one at a time |
+| Overlapping renames | Choose one evidence-derived current cleanup plan, retain, or defer | No automatic chain collapse; unrelated groups continue through the shared scheduler |
+| Remote edit at former source | Treat the new revision as independent current divergence | Old cleanup candidate is stale; no effect |
+| Locally recreated source | Treat as independent current local note | Never consume old cleanup permission against recreated bytes |
+| Destination moved/edited again | Open a fresh grouped review | Old destination prerequisite and candidate are stale |
+| Insufficient/contradictory history | Retain current notes or defer | No guessed mapping, cleanup, or historical reconstruction |
 
-A grouped operation persists every reserved path and completed step. It never claims
-an atomic multi-key rename. A remote tombstone step remains recovery-first. If a
-chosen mapping requires a local rename/removal, the operator performs it in Obsidian
-and starts a fresh review; M4 never executes that stale-sensitive host effect.
+One parent history operation atomically reserves the complete lexical group and owns a
+bounded ordered cleanup-step ledger. Each step has a globally unique locally generated
+UUID-v4 that is also that step's Worker v2 mutation/recovery operation ID, exact
+source/prerequisite references derived from the immutable snapshot, step phase, and
+exact remote effect evidence. Validation rejects collisions among parent and step IDs;
+the parent ID is never reused for multiple remote tombstones. Completed steps never
+replay; an unknown/refused/stale current step blocks every later step. History artifacts use
+`.ai-bridge-conflicts/<operation>/<step>/<side>.md` and bind parent, step, original
+path, side, revision/null, hash, generated path, and proof state.
+
+History-native effects are limited to preservation and exact recovery-first remote
+former-source tombstones. They never create, replace, rename, move, trash, or delete a
+local note. If a desired mapping needs local restructuring or ordinary create/replace,
+the operator performs the host change or opens a fresh ordinary M4 review; no history
+authority transfers. No atomic multi-key rename is claimed.
 
 ## Durable state and migration
 
-M4 schema version 3 is incompatible with M3 version 2 because old code must not ignore
-partial resolutions. The durable additions are:
+Implemented Slice 1 schema version 3 is incompatible with M3 version 2 because old
+code must not ignore partial resolutions. It remains the historical source format for
+the next migration. ADR 0009 requires Slice 6 to introduce strict schema version 4
+before grouped history becomes executable because ordered steps, step-scoped receipts,
+and local-effect observation fences cannot be appended silently to strict v3.
+
+The version-3 durable additions are:
 
 ```text
 MirrorDeviceState
@@ -403,7 +437,23 @@ increments; same-realm M3↔M4 replacement refuses and requires a host restart.
 No reverse migration exists. Handoff lifecycle/staged data is preserved without
 activation. Active M4 operations block handoff export. Valid historical rollback may
 remain undetectable and requires paused revalidation. See
-[ADR 0008](../decisions/0008-m4-device-state-migration.md).
+[ADR 0008](../decisions/0008-m4-device-state-migration.md) for implemented v2→v3
+history and [ADR 0009](../decisions/0009-m4-history-runtime-and-device-state-v4.md)
+for the required v3→v4 contract.
+
+Version 4 reuses the same key and performs frozen strict-v3 decode → deterministic v4
+projection → complete validation/encode → one save → exact read-back/strict-v4 decode
+before publication. It preserves non-empty v3 M4 records without inventing a history
+decision or event origin. Unrefined v3 history and already-started v3 local effects
+remain explicit migration-attention blockers. The v4 codec is bounded to 12 MiB and
+retains existing path/review/operation/receipt cardinality ceilings. Every remote
+cleanup step consumes one of the 2,048 preservation-receipt slots, so total history
+steps cannot exceed the remaining receipt capacity; exact prospective encoded size may
+refuse admission below that ceiling. Runtime owner and registry structural versions
+become 4; v3 owners and code reject v4 and no reverse migration exists. Slice 6's codec
+and core checkpoint may be built first, but Slices 6–7 must land together: no plugin
+runtime may save v4 until the complete version-4 Slice 7 owner/registry surface is
+present.
 
 ## Remote API audit
 
@@ -474,6 +524,43 @@ The coordinator may route phases but must not implement classification, stale ch
 preservation rules, local adapter mechanics, every action matrix, UI formatting, and
 migration in one module. Each closed decision table receives focused unit tests. Core
 imports no Obsidian, HTTP/Fetch, Hono, Cloudflare, R2, or filesystem types.
+
+## Slice 7 runtime authority contracts
+
+One long-lived `FairMirrorScheduler`, owned by `MirrorRuntimeOwner`, is injected into
+M3 and M4 and retains the existing global two-job bound. Process reservations provide
+fair execution exclusion only; active durable operations remain restart authority.
+Detach removes callbacks/timers but never releases a scheduler reservation before the
+owned promise settles.
+
+Obsidian events expose no operation token. M4 therefore persists a locally generated
+synthetic local-effect ID, expected path/hash, listener epoch, and pre-effect external
+observation generation before a create/replace. Exact writer postcondition confirms
+that synthetic effect. Every official create/modify/delete/rename event remains
+external successor evidence and advances the observation owner; no next-event, timing,
+or path-only suppression exists. Even a same-text event probably caused by the M4
+write remains successor evidence. Events observed while reserved are collapsed into a
+bounded durable first/latest generation and event-kind range. A queue barrier persists
+earlier events before release; any recorded successor keeps the operation active in
+`successor-review-required`. A fresh linked review may release exact current alignment
+through one no-effect atomic settlement, or an admitted ordinary successor operation
+must atomically take ownership; stale, incomplete, closed, or deferred review leaves
+the predecessor reserved. This conservative rule may create an extra review but cannot
+erase an external event, deadlock an aligned path, or grant ordinary M3 authority.
+Listener gaps/restart retain the durable effect, postcondition, successor range, and
+successor link rather than process-local causality claims.
+
+`ReconciliationReviewService` owns exact close-one-review and invalidate-one-session
+operations. They clear transient bodies and pending UI authority but never cancel an
+admitted durable operation. `ReconciliationStartupService` performs one serialized
+pre-publication transition that stales durable orphan reviews, preserves valid
+review-operation pairs, and fails runtime publication if persistence fails.
+
+The same review service owns a bounded content-free recovery-selection query. It
+reports prepared, sealed-active, sealed-expired, purged, and incomplete inventory
+truthfully without fetching bodies. Review creation re-inspects the submitted exact
+recovery ID and binds current revision/status/hash/expiry; refresh, metadata change, or
+session invalidation makes the old selection stale.
 
 ## UI/UX model
 
@@ -570,8 +657,8 @@ The bounded test-first sequence is normative in the
 3. **Implemented:** narrow local mutation adapter and verified preservation;
 4. **Implemented:** revisioned adoption and live/live action orchestration;
 5. **Implemented:** remote tombstone resolution and local-first recovery restore;
-6. bounded deferred rename/history resolution;
-7. runtime/session/command/modal/status composition;
+6. **NEXT:** device-state v4 compatibility fence plus bounded deferred rename/history resolution;
+7. shared-runtime/session/command/modal/status composition under ADR 0009;
 8. generated artifact, operational/security documentation, qualification, and final
    semantic gates.
 
@@ -743,10 +830,11 @@ end-to-end M4 acceptance items remain incomplete until Slices 6–8 are implemen
 - [ ] **A8 — Rename/history:** Deferred cleanup, duplicates, chains, overlaps, former-
   source remote edits, recreated sources, and later destination edits preserve all
   versions and require explicit current-state choices without pseudo-atomicity.
-- [ ] **A9 — Migration/restart:** Strict deterministic v2→v3 migration preserves all
-  M3 intents/blockers/handoff data, fails closed, read-back verifies, rejects unknown
-  versions, fences downgrade/runtime replacement, and reconciles every M4 partial
-  phase to exact resume, completion, stale, unknown-effect, or blocked state without
+- [ ] **A9 — Migration/restart:** Implemented strict v2→v3 history remains intact;
+  Slice 6 adds deterministic v3→v4 migration preserving non-empty M3/M4 state without
+  inferred decisions/events, fail-closed exact read-back, old/future-version and
+  runtime replacement fences, and exact reconciliation of every M4 partial phase to
+  resume, completion, stale, unknown-effect, migration-attention, or blocked without
   body history.
 - [ ] **A10 — API, security, and UX:** Existing v2-only capability is proven sufficient;
   OpenAPI/CORS remain synchronized and unchanged unless implementation evidence forces

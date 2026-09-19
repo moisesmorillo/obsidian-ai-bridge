@@ -6,19 +6,24 @@ review and merged at `b300726` (PR #7). M3's completion PR #27 passed canonical
 validation and final semantic review; its three MINOR findings were corrected at
 `e97af36`, whose corrective review returned APPROVE with no open findings. PR #27
 merged at `63b0599`; M3 is COMPLETE and the M3→M4 transition is canonical.
-M4 is the single NEXT milestone. Its [implementation-ready specification](milestones/m4-remote-to-local-reconciliation-and-conflict-resolution.md),
+M4 is the single NEXT milestone; within it Slice 6 is NEXT. Its
+[implementation-ready specification](milestones/m4-remote-to-local-reconciliation-and-conflict-resolution.md),
 [sequential plan](plans/m4-remote-to-local-reconciliation-and-conflict-resolution.md),
-and ADRs 0005–0008 resolve the design. Slice 1 now implements closed content-free M4
-contracts, sparse device-state v3, strict semantic validation, frozen v2 decoding,
-deterministic same-key migration/read-back, downgrade fencing, and runtime registry
-version 3. Slice 2 adds a core-only bounded read-only review/classification and
-admission engine with ephemeral snapshots, stale observation fencing, and content-free
-serialized operation admission. Slice 3 adds operation-authorized local create/replace
-and durable conflict-preservation primitives. Slices 4–5 add core-only exact
-live/adoption/tombstone/restore action execution, receipt-based remote-effect recovery,
-finite persistence fencing, and atomic restored-path successor transfer. They add no
-UI, runtime composition, deferred-history execution, timer, Fetch adapter change, or
-Worker/API behavior.
+and ADRs 0005–0009 resolve the product design and the remaining Slice 6–7 technical
+contracts. Slice 1 implements closed content-free M4 contracts, sparse device-state
+v3, strict semantic validation, frozen v2 decoding, deterministic same-key migration/
+read-back, downgrade fencing, and runtime registry version 3. Slice 2 adds a core-only
+bounded read-only review/classification and admission engine with ephemeral snapshots,
+stale observation fencing, and content-free serialized operation admission. Slice 3
+adds operation-authorized local create/replace and durable conflict-preservation
+primitives. Slices 4–5 add core-only exact live/adoption/tombstone/restore action
+execution, receipt-based remote-effect recovery, finite persistence fencing, and atomic
+restored-path successor transfer. Planning-only ADR 0009 requires state v4, parent-owned
+history steps, step-scoped archives, one shared runtime scheduler, conservative
+synthetic local-effect observation, scoped review invalidation, startup orphan staling,
+and bounded recovery selection. None is implemented yet. No UI, runtime composition,
+deferred-history execution, timer, Fetch adapter change, or Worker/API behavior was
+added by the planning refinement.
 M3 completed [Slice 0 platform qualification](qualification/m3-slice-0-platform-primitives.md),
 Slice 1's modern plugin baseline/shared typed contracts, Worker Slice 2A–2C's
 private storage/application transitions plus public safe v2 HTTP/OpenAPI/CORS, and
@@ -137,14 +142,17 @@ review gates passed; the corrective review of `e97af36` returned APPROVE. PR #27
 merged at `63b0599`; M3 is COMPLETE and the transition is canonical. M4 is NEXT with
 Slices 1–5's contract/state/migration, core read-only review/admission, local
 write/preservation seams, and core-only live/adoption/tombstone/restore execution
-implemented. No M4 UI or runtime composition exists; history, composition, and
-qualification slices remain unimplemented. The accepted M4 design is reviewed-only: exact format-2 revisions
-may later be adopted, competing bytes must be preserved before replacement, remote
-tombstones require explicit choices without plugin local delete/move, recovery restore
-is local-only first, legacy same-path adoption remains prohibited, valid state v2
-migrates fail-closed to v3, the existing v2 API suffices, and one designated writer
-remains. The local Slice 3 primitives are uncomposed and grant no current operator
-functionality; later resolution behavior remains an accepted design contract.
+implemented. Slice 6 is NEXT; Slices 6–7 are contract-ready under ADR 0009 but remain
+unimplemented. No M4 UI or runtime composition exists; history, composition, and
+qualification slices remain unimplemented. The accepted M4 design is reviewed-only:
+exact format-2 revisions may later be adopted, competing bytes must be preserved before
+replacement, remote tombstones require explicit choices without plugin local delete/
+move, recovery restore is local-only first, legacy same-path adoption remains
+prohibited, valid state v2 migrates fail-closed to implemented v3, Slice 6 must migrate
+strict v3 to strict v4 before history execution, the existing v2 API suffices, and one
+designated writer remains. The local Slice 3 primitives are uncomposed and grant no
+current operator functionality; later resolution behavior remains an accepted design
+contract.
 
 There is no search, MCP, AI inference, attachment mirroring or remote-to-local plugin client.
 No D1, Durable Objects, queues, Vectorize, Workers AI or external database is part

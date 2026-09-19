@@ -2,9 +2,11 @@
 
 ## Status
 
-**Accepted; Slice 1 preservation metadata contracts implemented.** No local mutation
-port, adapter, preservation effect, or user workflow is implemented yet; M3 behavior
-remains unchanged.
+**Accepted; Slices 1–5 preservation contracts, narrow local port/adapter, and core
+effects are implemented.** They remain uncomposed from a user workflow; M3 behavior
+is unchanged. [ADR 0009](0009-m4-history-runtime-and-device-state-v4.md) adds the
+pending step-scoped history artifact identity without weakening existing create-only
+operation-scoped preservation.
 
 ## Context
 

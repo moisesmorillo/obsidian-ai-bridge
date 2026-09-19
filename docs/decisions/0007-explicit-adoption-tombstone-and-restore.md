@@ -2,9 +2,11 @@
 
 ## Status
 
-**Accepted; Slice 1 closed action/state contracts implemented.** Adoption, tombstone,
-restore, local mutation, and remote mutation behavior remain unimplemented. Existing
-M3 remote contracts are unchanged.
+**Accepted; Slices 1–5 core adoption, tombstone, local-first restore, local mutation,
+and conditional remote action behavior are implemented.** They remain uncomposed from
+the plugin runtime/UI, and existing M3 remote contracts are unchanged.
+[ADR 0009](0009-m4-history-runtime-and-device-state-v4.md) preserves these action
+boundaries while refining pending history/runtime composition.
 
 ## Context
 

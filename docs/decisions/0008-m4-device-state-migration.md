@@ -2,10 +2,12 @@
 
 ## Status
 
-**Accepted — implemented in M4 Slice 1.** Device-state v3, frozen v2 decoding,
-deterministic same-key migration/read-back, downgrade refusal, sparse validation, and
-runtime registry version 3 are executable. No later M4 reconciliation behavior is
-implemented.
+**Accepted — implemented in M4 Slice 1; extended prospectively by
+[ADR 0009](0009-m4-history-runtime-and-device-state-v4.md).** Device-state v3, frozen
+v2 decoding, deterministic same-key migration/read-back, downgrade refusal, sparse
+validation, and runtime registry version 3 are executable. This record remains the
+historical truth for v2→v3. ADR 0009 does not pretend v3 never existed; it requires a
+separate strict v3→v4 migration before Slice 6 history execution.
 
 ## Context
 
@@ -111,5 +113,6 @@ justify new infrastructure.
 
 [M4 specification](../milestones/m4-remote-to-local-reconciliation-and-conflict-resolution.md),
 [M4 implementation plan](../plans/m4-remote-to-local-reconciliation-and-conflict-resolution.md),
-[ADR 0003](0003-publishing-association-and-local-state.md), and current strict codec
+[ADR 0003](0003-publishing-association-and-local-state.md),
+[ADR 0009](0009-m4-history-runtime-and-device-state-v4.md), and current strict codec
 `apps/obsidian-plugin/src/state/device-state-codec.ts`.

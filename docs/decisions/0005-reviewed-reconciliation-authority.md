@@ -2,9 +2,11 @@
 
 ## Status
 
-**Accepted; Slice 1 closed authority/state contracts implemented.** No review engine,
-operator UI, or reconciliation effect is implemented yet. This record does not
-authorize deployment or personal-vault installation.
+**Accepted; Slices 1–5 core authority, review, admission, and action contracts are
+implemented.** They remain uncomposed: no operator UI or plugin reconciliation runtime
+exists. [ADR 0009](0009-m4-history-runtime-and-device-state-v4.md) refines the pending
+Slices 6–7 history/runtime representation without changing reviewed-only authority.
+This record does not authorize deployment or personal-vault installation.
 
 ## Context
 

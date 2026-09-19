@@ -58,17 +58,19 @@ New infrastructure requires a concrete need and [ADR](decisions/README.md).
 compose an experimental connected outward mirror, not a production-ready or
 remote-to-local system. Canonical validation passed, the final semantic review's three
 MINOR findings were corrected at `e97af36`, and the corrective review returned APPROVE
-with no open findings. M4 is the single NEXT milestone. Its reviewed-only authority,
-preservation, local mutation, adoption/tombstone/restore, migration, and one-writer
-decisions are now
-implementation-ready design. Slice 1 now implements the closed contracts, sparse
-state v3, deterministic v2 migration/read-back fence, downgrade refusal, and runtime
-registry compatibility fence. Slice 2 adds the core-only bounded read-only
-review/classification engine, ephemeral stale-bound reviews, allowed-action policy,
-and serialized content-free admission. Slice 3 adds operation-authorized local create/replace and durable preservation
-primitives. Slices 4–5 add core-only exact live/adoption/tombstone/restore action
-execution, receipt-based remote effect recovery, and restored-path successor ownership.
-They expose no M4 user-facing behavior; Slices 6–8 remain unimplemented.
+with no open findings. M4 is the single NEXT milestone; within it Slice 6 is NEXT.
+Its reviewed-only authority, preservation, local mutation, adoption/tombstone/restore,
+migration, and one-writer product decisions are implementation-ready. Slice 1
+implements the closed contracts, sparse state v3, deterministic v2 migration/read-back
+fence, downgrade refusal, and runtime registry compatibility fence. Slice 2 adds the
+core-only bounded read-only review/classification engine, ephemeral stale-bound reviews,
+allowed-action policy, and serialized content-free admission. Slice 3 adds operation-
+authorized local create/replace and durable preservation primitives. Slices 4–5 add
+core-only exact live/adoption/tombstone/restore action execution, receipt-based remote
+effect recovery, and restored-path successor ownership. Planning-only ADR 0009 closes
+all post-Slice-5 history/runtime contract gaps and requires strict state v4 for Slice 6.
+Slices 6–7 are implementation-ready but expose no behavior; Slices 6–8 remain
+unimplemented.
 Slice 0 qualifies the pinned local
 conditional-storage runtime and host declarations. Slice 1 raises the plugin baseline
 to 1.13.0 and adds shared typed contracts. Worker Slice 2A–2C implements private conditional storage, application current/
@@ -184,12 +186,13 @@ merely because the server-side storage and application checkpoints are implement
 
 ### M4 — Remote-to-local reconciliation and conflict resolution
 
-**NEXT — Slices 1–5 implemented; no user-facing M4 behavior.** The
+**NEXT — Slices 1–5 implemented; Slice 6 NEXT; Slices 6–7 contracts
+implementation-ready; no user-facing M4 behavior.** The
 [specification](milestones/m4-remote-to-local-reconciliation-and-conflict-resolution.md),
 [test-first plan](plans/m4-remote-to-local-reconciliation-and-conflict-resolution.md),
-and accepted-design ADRs 0005–0008 resolve the material choices. A separate request is
-still required before production implementation. M3 completion and this planning PR
-do not pre-authorize M4 code.
+and accepted-design ADRs 0005–0008 plus proposed contract-refinement ADR 0009 resolve
+the material product and technical choices. A separate request is still required
+before production implementation. This planning PR does not pre-authorize M4 code.
 
 - **Authority:** reviewed/manual reconciliation only. Remote divergence remains a
   review item until an operator chooses an evidence-bound typed action. One immutable
@@ -252,6 +255,14 @@ do not pre-authorize M4 code.
   receipt recovery, restore restart, and expired/unavailable recovery. No plugin
   command, modal, timer, runtime composition, Worker/API change, deployment, or
   personal-vault installation is composed.
+- **Slice 6–7 contract readiness:** ADR 0009 selects one parent ordered history-step
+  ledger, step-scoped conflict paths, remote-only history effects, strict same-key
+  v3→v4 migration, one runtime-owned M3/M4 scheduler, synthetic exact local-effect
+  observations with every Vault event treated as successor evidence, session-scoped
+  invalidation, startup orphan staling, and bounded recovery selection. Slices 6–7 are
+  sequential checkpoints in one future implementation PR; no intermediate plugin may
+  save v4 before the complete version-4 owner/registry surface exists. These are
+  planning contracts only; no history/runtime/UI production behavior exists.
 - **Risks/exit:** the A1–A12 checklist requires exact barrier tests for concurrent
   edit/delete/rename/restore/restart, no silent overwrite/delete, generated artifact
   qualification, canonical diagnostics/coverage/docs, and independent review before
@@ -290,8 +301,9 @@ do not pre-authorize M4 code.
 **None for M3 or M4.** M3's accepted choices and primary-source limits are in its
 [decision brief](plans/m3-design-decisions.md). M4's reviewed-only authority,
 conflict preservation, bounded local mutation, revisioned/legacy adoption,
-tombstone/restore, state migration, existing-v2 API, and retained one-writer choices
-are resolved in [ADRs 0005–0008](decisions/README.md). Technical implementation and
+tombstone/restore, version-3 history, version-4 Slice 6 migration, bounded grouped
+progress, runtime authority, existing-v2 API, and retained one-writer choices are
+resolved in [ADRs 0005–0009](decisions/README.md). Technical implementation and
 qualification must satisfy the specifications; they are not permission to weaken the
 accepted model. Later questions remain open:
 

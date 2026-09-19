@@ -30,8 +30,11 @@ classification, stale-validation, and content-free admission seam. Slice 3 adds 
 separate local writer, durable preservation service, and official Obsidian adapter
 with exact postcondition evidence. Slices 4–5 add core-only live/adoption/tombstone/
 restore action services, shared exact effect settlement, and restored-path successor
-transfer. They expose no UI, runtime composition, history execution, timer, or
-user-facing behavior; Slices 6–8 remain unimplemented.
+transfer. Planning-only ADR 0009 makes Slices 6–7 implementation-ready: Slice 6 is
+NEXT and must add state v4 plus bounded parent-owned history steps; Slice 7 must add
+one shared M3/M4 scheduler and conservative runtime/session composition. No UI,
+runtime composition, history execution, timer, or user-facing M4 behavior exists;
+Slices 6–8 remain unimplemented.
 The connected outward mirror remains
 experimental and undeployed, with no real Obsidian desktop/mobile or iCloud runtime
 qualification.
@@ -377,18 +380,71 @@ fence before writing and transfers ownership only to a fresh reviewed successor;
 alternate restored path requires an explicit absence-only publication decision even
 across listener epochs. These services remain uncomposed from the plugin runtime.
 
+## Planned M4 Slices 6–7 ownership
+
+ADR 0009 fixes the implementation boundaries without adding production code:
+
+```text
+RenameHistoryGroupPolicy
+  durable rename graph → complete bounded group + opaque choices
+        ↓
+HistoryDecisionPolicy / ReconciliationReviewService
+  exact choice + immutable group snapshot → one parent operation/full reservations
+        ↓
+RenameHistoryResolutionService
+  ordered current step → preserve / exact remote cleanup / attention
+        ↓
+ReconciliationPreservationPolicy + ReconciliationEffectExecutor
+  step-scoped create-only archive + existing v2 recovery-first tombstone
+        ↓
+MirrorStateOwner
+  persist exact step settlement before advancing/clearing blockers
+
+MirrorRuntimeOwner
+  one FairMirrorScheduler (M3 + M4, two jobs)
+        ↓
+ReviewedReconciliationRuntime
+  synthetic local-effect proof + all Vault events as successor evidence
+        ↓
+review/startup/recovery query owners → thin commands/modal/status
+```
+
+State v4 is required before history execution. The frozen v3 decoder migrates the
+same key deterministically, preserving non-empty M3/M4 state and turning unrefined v3
+history or unfenced started local effects into explicit attention blockers rather than
+inferred decisions. Each globally unique history step UUID is also its exact Worker v2
+mutation/recovery operation ID; the parent ID is never reused across tombstones. New
+history archives add that step UUID between operation and side; existing non-history
+archive paths remain valid. History never uses the local writer. The shared scheduler
+orders work only; durable operation
+reservations and serialized state transitions remain authority.
+
+Because official Vault events have no causal operation token, runtime code must not
+claim that a path/timing match identifies an own event. Exact adapter postcondition
+confirms a persisted synthetic effect identity, while every real host event advances
+external observation state. Events observed while reserved are persisted as one
+bounded successor range; a queue barrier drains earlier callbacks and a fresh reviewed
+successor either settles exact alignment without an effect or transfers ownership to a
+linked ordinary operation before release. This may conservatively create another review
+but cannot hide a same-text external successor or deadlock an aligned path.
+
 ## Explicitly deferred
 
-- M4 (NEXT; Slices 1–5 implemented): reviewed/manual reconciliation uses exact
-  revisioned adoption, archive-first action orchestration, reviewed tombstones,
-  local-first restore, the existing v2 API, and the retained one-writer model. Core
-  Slices 1–5 now provide state/migration fencing, read-only review/admission, local
-  write/preservation primitives, and uncomposed live/tombstone/restore execution.
-  Deferred-history choices, runtime/UI composition, and qualification remain. Planned
-  dependency flow is thin commands/modal → focused core review/action
-  policy owners → `ReadOnlyLocalVault` + a separate `LocalReconciliationWriter` +
-  existing `RemoteBridge`/state owner → Obsidian/Fetch adapters. Remote divergence
-  remains a review item; no automatic import or cross-system atomicity is claimed.
+- M4 (NEXT; Slices 1–5 implemented; Slice 6 NEXT): reviewed/manual reconciliation
+  uses exact revisioned adoption, archive-first action orchestration, reviewed
+  tombstones, local-first restore, the existing v2 API, and the retained one-writer
+  model. Core Slices 1–5 now provide version-3 migration fencing, read-only review/
+  admission, local write/preservation primitives, and uncomposed live/tombstone/
+  restore execution. ADR 0009 makes the remaining contracts implementation-ready but
+  adds no behavior: Slice 6 introduces strict state v4, a durable-edge-derived history
+  group, one parent ordered step ledger, step-scoped conflict artifacts and remote-only
+  former-source cleanup; Slice 7 composes one runtime-owned M3/M4 two-job scheduler,
+  synthetic exact local-effect observations, conservative successor events, scoped
+  review invalidation, startup orphan staling and bounded recovery selection. Planned
+  dependency flow remains thin commands/modal → focused core review/action policy
+  owners → `ReadOnlyLocalVault` + separate `LocalReconciliationWriter` + existing
+  `RemoteBridge`/state owner → Obsidian/Fetch adapters. Remote divergence remains a
+  review item; no automatic import or cross-system atomicity is claimed.
 - M5: Broader operational readiness, abuse limits and scoped authentication evolution.
 - M6: Authorized MCP transport/tool definitions, never direct R2 access.
 - Outside this roadmap: search, attachments and AI inference. NAS replication or

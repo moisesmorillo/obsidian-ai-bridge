@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.1](https://github.com/moisesmorillo/obsidian-ai-bridge/compare/v0.9.0...v0.9.1) (2026-09-19)
+
+
+### Documentation
+
+* **m4:** refine slices 6 and 7 contracts ([#39](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/39)) ([789b77f](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/789b77f676b84ebba6a9a55bb130e0f85305e6f7))
+
 ## [0.9.0](https://github.com/moisesmorillo/obsidian-ai-bridge/compare/v0.8.0...v0.9.0) (2026-09-18)
 
 

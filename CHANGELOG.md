@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.9.0](https://github.com/moisesmorillo/obsidian-ai-bridge/compare/v0.8.0...v0.9.0) (2026-09-18)
+
+
+### Features
+
+* **core:** execute reviewed reconciliation actions ([#38](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/38)) ([c81832e](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/c81832e3d1bb65547a443d52645fe756779f629e))
+* **reconciliation:** add durable local mutation primitives ([#35](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/35)) ([cd8fb36](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/cd8fb364a9d6b259be4613c80a475541bdcd7bc2))
+
+
+### Documentation
+
+* **m4:** preserve slices 6-7 implementation preparation ([#37](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/37)) ([3a7bf3b](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/3a7bf3bf87c48a30647686c6dc2cdf1a62b685cd))
+
 ## [0.8.0](https://github.com/moisesmorillo/obsidian-ai-bridge/compare/v0.7.1...v0.8.0) (2026-09-18)
 
 

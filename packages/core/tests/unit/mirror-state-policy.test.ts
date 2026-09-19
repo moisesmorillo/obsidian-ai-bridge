@@ -16,6 +16,7 @@ import {
   type HandoffRecord,
   invalidateHandoffAlignments,
   isDurableMutationAdmissionAllowed,
+  LOCAL_EFFECT_OBSERVATION_KIND,
   MIRROR_ACKNOWLEDGEMENT_KIND,
   MIRROR_DESIRED_STATE_KIND,
   MIRROR_DEVICE_LIFECYCLE_KIND,
@@ -366,6 +367,9 @@ describe("handoff policy", () => {
           ],
           preservationReceipts: [],
           successorOperationId: null,
+          localEffectObservation: {
+            kind: LOCAL_EFFECT_OBSERVATION_KIND.notStarted,
+          },
           localEffect: MUTATION_EFFECT_CERTAINTY.notDispatched,
           remoteEffect: MUTATION_EFFECT_CERTAINTY.notDispatched,
         },

@@ -7,9 +7,12 @@ import {
   createMirrorAssociationId,
   createMirrorOperationId,
   createMirrorWriterId,
+  createReconciliationPreservationPath,
   inspectBoundedMirrorInventory,
   inspectBoundedRecoveryInventory,
+  isNonHistoryReconciliationOperation,
   isReconciliationActionAllowed,
+  LOCAL_EFFECT_OBSERVATION_KIND,
   LocalInspectionKind,
   LocalVaultFailureReason,
   MIRROR_ACKNOWLEDGEMENT_KIND,
@@ -24,9 +27,12 @@ import {
   MUTATION_EFFECT_CERTAINTY,
   RECONCILIATION_ACTION,
   RECONCILIATION_CLASSIFICATION,
+  RECONCILIATION_EVENT_KIND,
   RECONCILIATION_LOCAL_EVIDENCE_KIND,
   RECONCILIATION_LOCAL_STABILITY,
   RECONCILIATION_OPERATION_PHASE,
+  RECONCILIATION_PRESERVATION_PROOF_STATE,
+  RECONCILIATION_PRESERVATION_SIDE,
   RECONCILIATION_REMOTE_EVIDENCE_KIND,
   type ReadOnlyLocalVault,
   type ReconciliationAction,
@@ -69,6 +75,9 @@ const secondOperationId = required(
 );
 const thirdOperationId = required(
   createMirrorOperationId("88888888-8888-4888-8888-888888888888"),
+);
+const effectId = required(
+  createMirrorOperationId("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
 );
 const revision = required(
   createApplicationRevision("55555555-5555-4555-8555-555555555555"),
@@ -471,7 +480,10 @@ describe("M4 action policy", () => {
       { kind: RECONCILIATION_ACTION.recreateRemote },
       { kind: RECONCILIATION_ACTION.restoreRecovery },
       { kind: RECONCILIATION_ACTION.forkLegacy },
-      { kind: RECONCILIATION_ACTION.resolveHistory },
+      {
+        kind: RECONCILIATION_ACTION.resolveHistory,
+        decision: { kind: "defer-history" },
+      },
       { kind: RECONCILIATION_ACTION.defer },
     ];
     for (const action of actions) {
@@ -761,7 +773,7 @@ function makeService(
   let currentRuntime = runtime;
   const observations = new ReconciliationObservationGenerationOwner();
   const remote = remoteReader();
-  const hashContent = vi.fn(async () => hash);
+  const hashContent = vi.fn(async (_content: string) => hash);
   let operationIndex = 0;
   const local = {
     list: vi.fn<ReadOnlyLocalVault["list"]>(async () => ({
@@ -886,6 +898,25 @@ describe("M4 read-only review service", () => {
         operationId,
       ),
     ).toEqual({ kind: "failure", reason: "stale-review" });
+    expect(
+      wrongSession.service.preview(
+        created.review.reviewId,
+        operationId,
+        "local",
+      ),
+    ).toBeNull();
+    expect(
+      wrongSession.service.preview(created.review.reviewId, reviewId, "local"),
+    ).toBe("same");
+    wrongSession.service.invalidateSession(operationId);
+    expect(wrongSession.service.listOpen(reviewId)).toHaveLength(1);
+    expect(
+      wrongSession.service.closeReview(created.review.reviewId, operationId),
+    ).toBe(false);
+    expect(
+      wrongSession.service.closeReview(created.review.reviewId, reviewId),
+    ).toBe(true);
+    expect(wrongSession.service.listOpen(reviewId)).toEqual([]);
   });
 
   it("rejects admission when the action or destination is not allowed", async () => {
@@ -1753,6 +1784,16 @@ describe("M4 read-only review service", () => {
         (operation) => ({
           ...operation,
           phase: RECONCILIATION_OPERATION_PHASE.restoredPendingReview,
+          localEffectObservation: {
+            kind: LOCAL_EFFECT_OBSERVATION_KIND.confirmed,
+            effectId,
+            path: alternatePath,
+            expectedHash: hash,
+            listenerEpoch: 1,
+            beforeGeneration: 1,
+            postconditionHash: hash,
+            successor: null,
+          },
           localEffect: MUTATION_EFFECT_CERTAINTY.confirmed,
         }),
       ),
@@ -1802,6 +1843,147 @@ describe("M4 read-only review service", () => {
         expect.objectContaining({
           operationId: thirdOperationId,
           phase: RECONCILIATION_OPERATION_PHASE.admitted,
+        }),
+      ]),
+    );
+  });
+
+  it("transfers a durable local-event fence to an explicit aligned successor", async () => {
+    const fixture = makeService();
+    fixture.hashContent.mockImplementation(async (content) =>
+      content === "same" ? hash : otherHash,
+    );
+    fixture.remote.inspectNote.mockResolvedValue({
+      kind: "success",
+      value: {
+        kind: "live",
+        path,
+        revision: otherRevision,
+        contentSha256: otherHash,
+        receipt: {
+          action: "create",
+          associationId: association,
+          operationId,
+          precondition: { kind: "absent" },
+          contentSha256: otherHash,
+        },
+      },
+    });
+    fixture.remote.readNote.mockResolvedValue({
+      kind: "success",
+      value: {
+        kind: "live",
+        revision: otherRevision,
+        content: "other",
+      },
+    });
+    await fixture.service.discover();
+    const initialReview = await fixture.service.createReview({
+      targetPath: path,
+      sessionId: reviewId,
+    });
+    expect(initialReview.kind).toBe("created");
+    if (initialReview.kind !== "created") return;
+    const initialAdmission = await fixture.service.admit({
+      reviewId: initialReview.review.reviewId,
+      sessionId: reviewId,
+      action: { kind: RECONCILIATION_ACTION.useRemote },
+    });
+    if (initialAdmission.kind !== "admitted") {
+      throw new Error(`Initial admission failed: ${initialAdmission.reason}`);
+    }
+    const preservationPath = createReconciliationPreservationPath(
+      operationId,
+      RECONCILIATION_PRESERVATION_SIDE.local,
+    );
+    expect(preservationPath).toBeDefined();
+    if (preservationPath === undefined) return;
+    fixture.observations.observe(path);
+    await fixture.owner.transition((current) => ({
+      ...current,
+      paths: current.paths.map((entry) => ({
+        ...entry,
+        acknowledgement: {
+          kind: MIRROR_ACKNOWLEDGEMENT_KIND.live,
+          revision: otherRevision,
+          contentSha256: otherHash,
+        },
+      })),
+      reconciliationOperations: current.reconciliationOperations.map(
+        (operation) =>
+          isNonHistoryReconciliationOperation(operation)
+            ? {
+                ...operation,
+                phase: RECONCILIATION_OPERATION_PHASE.successorReviewRequired,
+                preservationReceipts: [
+                  {
+                    scope: "operation",
+                    operationId: operation.operationId,
+                    originalPath: path,
+                    side: RECONCILIATION_PRESERVATION_SIDE.local,
+                    sourceRevision: null,
+                    contentSha256: hash,
+                    preservationPath,
+                    proofState:
+                      RECONCILIATION_PRESERVATION_PROOF_STATE.verified,
+                  },
+                ],
+                localEffectObservation: {
+                  kind: LOCAL_EFFECT_OBSERVATION_KIND.confirmed,
+                  effectId,
+                  path,
+                  expectedHash: otherHash,
+                  listenerEpoch: 1,
+                  beforeGeneration: 1,
+                  postconditionHash: otherHash,
+                  successor: {
+                    firstGeneration: 2,
+                    latestGeneration: 2,
+                    eventKinds: [RECONCILIATION_EVENT_KIND.modify],
+                  },
+                },
+                localEffect: MUTATION_EFFECT_CERTAINTY.confirmed,
+              }
+            : operation,
+      ),
+    }));
+
+    fixture.local.read.mockResolvedValue({
+      kind: LocalInspectionKind.ok,
+      content: "other",
+      sizeBytes: 5,
+    });
+    await fixture.service.discover();
+    const successorReview = await fixture.service.createReview({
+      targetPath: path,
+      sessionId: secondOperationId,
+    });
+    expect(successorReview).toMatchObject({
+      kind: "created",
+      review: {
+        classification: RECONCILIATION_CLASSIFICATION.aligned,
+        allowedActions: [RECONCILIATION_ACTION.defer],
+      },
+    });
+    if (successorReview.kind !== "created") return;
+    await expect(
+      fixture.service.admit({
+        reviewId: successorReview.review.reviewId,
+        sessionId: secondOperationId,
+        action: { kind: RECONCILIATION_ACTION.defer },
+      }),
+    ).resolves.toMatchObject({ kind: "admitted" });
+
+    expect(fixture.owner.snapshot().state.reconciliationOperations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          operationId,
+          phase: RECONCILIATION_OPERATION_PHASE.completed,
+          successorOperationId: thirdOperationId,
+        }),
+        expect.objectContaining({
+          operationId: thirdOperationId,
+          phase: RECONCILIATION_OPERATION_PHASE.completed,
         }),
       ]),
     );

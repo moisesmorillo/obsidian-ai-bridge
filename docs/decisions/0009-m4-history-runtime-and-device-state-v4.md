@@ -2,11 +2,11 @@
 
 ## Status
 
-**Proposed — contract refinement only.** This record makes M4 Slices 6–7
-implementation-ready after merged Slice 5. It introduces no production behavior,
-changes no Worker API, and does not mark either slice implemented. It extends rather
-than rewrites [ADR 0008](0008-m4-device-state-migration.md): version 3 remains the
-implemented Slice 1 format and version 4 is the required Slice 6 migration target.
+**Accepted and implemented by M4 Slices 6–7.** The compatibility transition adds
+strict device state v4 and the complete version-4 runtime-owner surface together. It
+changes no Worker API and extends rather than rewrites
+[ADR 0008](0008-m4-device-state-migration.md): version 3 remains the frozen historical
+format and version 4 is current.
 
 ## Context
 
@@ -34,15 +34,16 @@ UI-provided related paths are neither required nor accepted as authority. Capaci
 missing evidence, contradictory edges, physical remote absence, foreign association,
 legacy source, or unresolved M3 work produces a typed non-authoritative result.
 
-The review projection exposes locally generated opaque candidate IDs. UI submits only
-the review/session identity, one candidate ID where required, and one closed operator
-choice. Admission resolves that candidate against the still-current derived group and
-persists the resulting evidence-bound decision. The durable decision shape is:
+The review projection exposes only bounded validated candidate paths from the current
+process-local discovery set. UI submits the review/session identity, one selected
+projected path where required, and one closed operator choice. Admission rejects paths
+outside that set, rederives the still-current complete group, and persists only the
+resulting evidence-bound decision; caller-supplied related paths never become authority. The durable decision shape is:
 
 ```text
 HistoryAdmissionRequest
   decision: retain-independent | defer-history | execute-cleanup-plan
-  candidateId: opaque session value | null
+  selectedCandidatePath: projected NotePath | null
 
 HistoryDecision                              # durable after admission
   retain-independent
@@ -70,7 +71,7 @@ Choice fields and evidence ownership are fixed:
 | Durable field | Source | Authority rule |
 | --- | --- | --- |
 | Decision kind | Operator choice from the closed action set | No free-form action |
-| Candidate ID before admission | Operator selects an opaque ID supplied by the current review | ID is session/review-scoped, resolved exactly once, and is not persisted or used as restart authority |
+| Candidate path before admission | Operator selects a bounded path supplied by current process-local discovery | Membership is rechecked, group paths are rederived, and the selection grants no authority to add or omit related paths |
 | Complete group and reservations | `RenameHistoryGroupPolicy` from durable rename edges | Caller cannot add or omit paths |
 | Canonical path | Admission policy resolves the selected candidate to an existing group member | Never accepted as free-form UI input |
 | Cleanup source/prerequisite paths and revisions | Exact immutable snapshot plus durable rename evidence | Persisted as derived evidence; never refreshed to latest |
@@ -314,11 +315,16 @@ LocalEffectObservation
     postconditionHash: expectedHash
     successor: none | observed-generation-range
   legacy-v3-unfenced
-  not-started | not-required
+  not-started
+  not-required
+    path/listenerEpoch/beforeGeneration
+    successor: none | observed-generation-range
 ```
 
 The path event router and local-effect dispatch are serialized by the long-lived
-reviewed-reconciliation runtime. The writer's exact post-read/hash confirms the
+reviewed-reconciliation runtime. Remote-only reviewed effects retain the structured
+`not-required` fence so a local edit while a conditional remote request is pending
+cannot disappear merely because no plugin local write was needed. The writer's exact post-read/hash confirms the
 synthetic effect ID; it does not consume a Vault event. Every create/modify/delete/
 rename callback increments the external observation generation and is sequenced after
 or before that state transition. Any generation greater than `beforeGeneration` is

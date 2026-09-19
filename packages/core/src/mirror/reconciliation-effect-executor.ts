@@ -18,6 +18,7 @@ import type {
   CurrentNoteState,
   MirrorOperationId,
   MutationAcknowledgement,
+  MutationEffectCertainty,
   OperationReceipt,
   RecoverySnapshotState,
 } from "@core/mirror/mirror.types";
@@ -34,6 +35,7 @@ import type {
 } from "@core/mirror/mirror-state.types";
 import type { MirrorStateOwner } from "@core/mirror/mirror-state-owner";
 import { isDurableMutationAdmissionAllowed } from "@core/mirror/mirror-state-policy";
+import { isNonHistoryReconciliationOperation } from "@core/mirror/reconciliation-operation";
 import {
   type RequiredReconciliationPreservation,
   requiredReconciliationPreservations,
@@ -48,6 +50,7 @@ import {
   RECONCILIATION_REVIEW_STATUS,
 } from "@core/mirror/reconciliation-state.constants";
 import type {
+  ReconciliationNonHistoryOperation,
   ReconciliationOperation,
   ReconciliationPathEvidence,
   ReconciliationRemoteEvidence,
@@ -387,7 +390,11 @@ export class ReconciliationEffectExecutor {
   ): Promise<ReconciliationRemoteMutationSettlement> {
     const operation = this.operation(operationId);
     const before = this.stateOwner.snapshot();
-    if (operation === undefined || request.operationId !== operationId) {
+    if (
+      operation === undefined ||
+      !isNonHistoryReconciliationOperation(operation) ||
+      request.operationId !== operationId
+    ) {
       return {
         kind: "rejected",
         reason: "operation-not-active",
@@ -436,7 +443,7 @@ export class ReconciliationEffectExecutor {
       return this.blockRemote(operationId, "evidence-changed");
     }
     const prepared = await this.stateOwner.transition((state) => {
-      const currentOperation = activeOperation(state, operationId);
+      const currentOperation = activeNonHistoryOperation(state, operationId);
       if (
         currentOperation === undefined ||
         !isDurableMutationAdmissionAllowed(state)
@@ -490,11 +497,11 @@ export class ReconciliationEffectExecutor {
   async complete(
     operationId: MirrorOperationId,
     acknowledgements: readonly MutationAcknowledgement[],
-    localEffect: ReconciliationOperation["localEffect"],
-    remoteEffect: ReconciliationOperation["remoteEffect"],
+    localEffect: MutationEffectCertainty,
+    remoteEffect: MutationEffectCertainty,
   ): Promise<MirrorStateSnapshot | undefined> {
     const committed = await this.stateOwner.transition((state) => {
-      const operation = activeOperation(state, operationId);
+      const operation = activeNonHistoryOperation(state, operationId);
       if (operation === undefined) return undefined;
       let next = state;
       for (const acknowledgement of acknowledgements) {
@@ -502,13 +509,20 @@ export class ReconciliationEffectExecutor {
         if (updated === undefined) return undefined;
         next = updated;
       }
+      const successorObserved =
+        "successor" in operation.localEffectObservation &&
+        operation.localEffectObservation.successor !== null;
       next = replaceOperation(next, {
         ...operation,
-        phase: RECONCILIATION_OPERATION_PHASE.completed,
+        phase: successorObserved
+          ? RECONCILIATION_OPERATION_PHASE.successorReviewRequired
+          : RECONCILIATION_OPERATION_PHASE.completed,
         localEffect,
         remoteEffect,
       });
-      return completeReview(next, operation.reviewId);
+      return successorObserved
+        ? next
+        : completeReview(next, operation.reviewId);
     });
     return committed.kind === "committed" ? committed.snapshot : undefined;
   }
@@ -538,18 +552,27 @@ export class ReconciliationEffectExecutor {
     options: ReconciliationRemoteMutationOptions,
   ): Promise<ReconciliationRemoteMutationSettlement> {
     const committed = await this.stateOwner.transition((state) => {
-      const operation = activeOperation(state, operationId);
+      const operation = activeNonHistoryOperation(state, operationId);
       if (operation === undefined) return undefined;
       const withAcknowledgement = options.recordAcknowledgement
         ? recordAcknowledgement(state, acknowledgement, false)
         : state;
       if (withAcknowledgement === undefined) return undefined;
+      const remoteEffect = options.aggregateEffect
+        ? MUTATION_EFFECT_CERTAINTY.confirmed
+        : operation.remoteEffect;
+      const successorObserved =
+        "successor" in operation.localEffectObservation &&
+        operation.localEffectObservation.successor !== null;
       return replaceOperation(withAcknowledgement, {
         ...operation,
-        phase: RECONCILIATION_OPERATION_PHASE.partial,
-        remoteEffect: options.aggregateEffect
-          ? MUTATION_EFFECT_CERTAINTY.confirmed
-          : operation.remoteEffect,
+        phase:
+          successorObserved &&
+          (remoteEffect === MUTATION_EFFECT_CERTAINTY.confirmed ||
+            operation.localEffect === MUTATION_EFFECT_CERTAINTY.confirmed)
+            ? RECONCILIATION_OPERATION_PHASE.successorReviewRequired
+            : RECONCILIATION_OPERATION_PHASE.partial,
+        remoteEffect,
       });
     });
     if (committed.kind !== "committed") {
@@ -571,7 +594,7 @@ export class ReconciliationEffectExecutor {
     operationId: MirrorOperationId,
   ): Promise<ReconciliationRemoteMutationSettlement> {
     const committed = await this.stateOwner.transition((state) => {
-      const operation = activeOperation(state, operationId);
+      const operation = activeNonHistoryOperation(state, operationId);
       if (operation === undefined) return undefined;
       return replaceOperation(state, {
         ...operation,
@@ -599,7 +622,7 @@ export class ReconciliationEffectExecutor {
     _reason: "evidence-changed" | "remote-effect-failed",
   ): Promise<ReconciliationRemoteMutationSettlement> {
     const committed = await this.stateOwner.transition((state) => {
-      const operation = activeOperation(state, operationId);
+      const operation = activeNonHistoryOperation(state, operationId);
       if (operation === undefined) return undefined;
       return replaceOperation(state, {
         ...operation,
@@ -631,6 +654,18 @@ function activeOperation(
       operation.phase !== RECONCILIATION_OPERATION_PHASE.completed &&
       operation.phase !== RECONCILIATION_OPERATION_PHASE.stale,
   );
+}
+
+/** @returns Active non-history operation whose aggregate effect fields are authoritative. */
+function activeNonHistoryOperation(
+  state: MirrorDeviceState,
+  operationId: MirrorOperationId,
+): ReconciliationNonHistoryOperation | undefined {
+  const operation = activeOperation(state, operationId);
+  return operation !== undefined &&
+    isNonHistoryReconciliationOperation(operation)
+    ? operation
+    : undefined;
 }
 
 /** @returns Whether one verified receipt proves the exact preservation requirement. */

@@ -4,6 +4,8 @@ import {
   type LocalEligibilityPolicy,
   LocalInspectionKind,
   type NotePath,
+  RECONCILIATION_EVENT_KIND,
+  type ReconciliationEventKind,
 } from "@obsidian-ai-bridge/core";
 import {
   type EventRef,
@@ -22,7 +24,7 @@ export interface ObsidianEventRegistrationHost {
 /** Primitive lifecycle sink implemented by the same-realm runtime owner. */
 export interface MirrorEventSink {
   /** Records immutable eligible saved-file presence. */
-  observePresent(path: NotePath): Promise<void>;
+  observePresent(path: NotePath, kind?: ReconciliationEventKind): Promise<void>;
   /** Records immutable post-bootstrap deletion evidence. */
   observeDelete(path: NotePath): Promise<void>;
   /** Records immutable file rename identities. */
@@ -64,10 +66,14 @@ export class ObsidianMirrorEvents {
     if (this.attached) return;
     this.attached = true;
     this.registration.registerEvent(
-      this.vault.on("create", (file) => this.onPresent(file)),
+      this.vault.on("create", (file) =>
+        this.onPresent(file, RECONCILIATION_EVENT_KIND.create),
+      ),
     );
     this.registration.registerEvent(
-      this.vault.on("modify", (file) => this.onPresent(file)),
+      this.vault.on("modify", (file) =>
+        this.onPresent(file, RECONCILIATION_EVENT_KIND.modify),
+      ),
     );
     this.registration.registerEvent(
       this.vault.on("delete", (file) => this.onDelete(file)),
@@ -83,11 +89,11 @@ export class ObsidianMirrorEvents {
   }
 
   /** Captures eligible saved-file presence only while attached; delegates authority and failure handling to the owner. */
-  private onPresent(file: TAbstractFile): void {
+  private onPresent(file: TAbstractFile, kind: ReconciliationEventKind): void {
     if (!this.attached || !(file instanceof TFile)) return;
     const path = eligiblePath(file.path, this.policy);
     if (path === null) return;
-    void this.owner.observePresent(path).catch(() => undefined);
+    void this.owner.observePresent(path, kind).catch(() => undefined);
   }
 
   /** Emits file absence or folder-removal observations; the core decides whether post-bootstrap deletion authority exists. */

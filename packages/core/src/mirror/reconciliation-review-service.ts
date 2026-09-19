@@ -35,10 +35,12 @@ import {
   isReconciliationActionAllowed,
   reconciliationAuthorityForAction,
 } from "@core/mirror/reconciliation-decision-policy";
+import { isNonHistoryReconciliationOperation } from "@core/mirror/reconciliation-operation";
 import type {
   ReconciliationAdmissionRequest,
   ReconciliationDiscoveryResult,
   ReconciliationObservationSource,
+  ReconciliationRecoverySelectionResult,
   ReconciliationRemoteReader,
   ReconciliationReviewDependencies,
   ReconciliationReviewQuery,
@@ -46,7 +48,10 @@ import type {
   ReconciliationReviewResult,
 } from "@core/mirror/reconciliation-review.types";
 import {
+  LOCAL_EFFECT_OBSERVATION_KIND,
   RECONCILIATION_ACTION,
+  RECONCILIATION_AUTHORITY_SOURCE,
+  RECONCILIATION_CLASSIFICATION,
   RECONCILIATION_LOCAL_EVIDENCE_KIND,
   RECONCILIATION_LOCAL_STABILITY,
   RECONCILIATION_OPERATION_PHASE,
@@ -57,6 +62,8 @@ import {
 } from "@core/mirror/reconciliation-state.constants";
 import type {
   EphemeralReconciliationReview,
+  ReconciliationHistoryOperation,
+  ReconciliationNonHistoryOperation,
   ReconciliationOperation,
   ReconciliationPathEvidence,
   ReconciliationReview,
@@ -67,6 +74,7 @@ import type {
   RemoteBridgeFailure,
   RemoteBridgeResult,
 } from "@core/mirror/remote-bridge.types";
+import { RenameHistoryGroupPolicy } from "@core/mirror/rename-history-group-policy";
 import type { NotePath } from "@core/note-path/note-path.types";
 
 /**
@@ -95,6 +103,7 @@ export class ReconciliationReviewService implements ReconciliationReviewQuery {
     private readonly remote: ReconciliationRemoteReader,
     private readonly stateOwner: MirrorStateOwner,
     private readonly dependencies: ReconciliationReviewDependencies,
+    private readonly historyGroups = new RenameHistoryGroupPolicy(),
   ) {
     this.observations = dependencies.observations;
   }
@@ -189,16 +198,20 @@ export class ReconciliationReviewService implements ReconciliationReviewQuery {
       request.recoveryId ?? null,
     );
     if (sampled.kind === "failure") return sampled;
+    const currentState = this.stateOwner.snapshot().state;
     const restoredPublication = isRestoredPublicationSnapshot(sampled.snapshot)
-      ? this.restorePredecessor(
-          this.stateOwner.snapshot().state,
-          sampled.snapshot,
-          { kind: RECONCILIATION_ACTION.keepLocal },
-        )
+      ? this.restorePredecessor(currentState, sampled.snapshot, {
+          kind: RECONCILIATION_ACTION.keepLocal,
+        })
       : undefined;
+    const localEffectSuccessor = this.localEffectPredecessor(
+      currentState,
+      sampled.snapshot,
+    );
     if (
       !isReconciliationReviewable(sampled.snapshot) &&
-      restoredPublication === undefined
+      restoredPublication === undefined &&
+      localEffectSuccessor === undefined
     ) {
       return { kind: "not-reviewable" };
     }
@@ -212,9 +225,13 @@ export class ReconciliationReviewService implements ReconciliationReviewQuery {
       operationId: null,
       sessionId: request.sessionId,
       allowedActions:
-        restoredPublication === undefined
-          ? allowedReconciliationActions(sampled.snapshot)
-          : [RECONCILIATION_ACTION.keepLocal],
+        restoredPublication !== undefined
+          ? [RECONCILIATION_ACTION.keepLocal]
+          : localEffectSuccessor !== undefined &&
+              classifyReconciliation(sampled.snapshot) ===
+                RECONCILIATION_CLASSIFICATION.aligned
+            ? [RECONCILIATION_ACTION.defer]
+            : allowedReconciliationActions(sampled.snapshot),
       sampledLocalText: sampled.localText,
       sampledRemoteText: sampled.remoteText,
     };
@@ -267,6 +284,84 @@ export class ReconciliationReviewService implements ReconciliationReviewQuery {
         review.sessionId === sessionId &&
         review.status === RECONCILIATION_REVIEW_STATUS.pending,
     );
+  }
+
+  /** @inheritdoc */
+  async listRecoverySelections(): Promise<ReconciliationRecoverySelectionResult> {
+    const inventory = await inspectBoundedRecoveryInventory(this.remote);
+    const recoveries = [...inventory.states].toSorted(
+      (left, right) =>
+        left.path.localeCompare(right.path) ||
+        left.revision.localeCompare(right.revision),
+    );
+    return inventory.kind === "complete"
+      ? { kind: "complete", recoveries }
+      : { kind: "incomplete", recoveries };
+  }
+
+  /**
+   * Returns one explicitly requested transient text sample for the exact pending session.
+   *
+   * @param reviewId - Ephemeral review identity.
+   * @param sessionId - Exact UI session owner.
+   * @param side - Sample side selected by the operator.
+   * @returns Literal bounded text, or null when stale/unavailable.
+   */
+  preview(
+    reviewId: ReconciliationReviewRequest["sessionId"],
+    sessionId: ReconciliationReviewRequest["sessionId"],
+    side: "local" | "remote",
+  ): string | null {
+    const review = this.reviews.get(reviewId);
+    if (
+      review === undefined ||
+      review.sessionId !== sessionId ||
+      review.status !== RECONCILIATION_REVIEW_STATUS.pending
+    ) {
+      return null;
+    }
+    return side === "local"
+      ? review.sampledLocalText
+      : review.sampledRemoteText;
+  }
+
+  /**
+   * Closes one pending review owned by the exact UI session and discards all bodies.
+   *
+   * @param reviewId - Ephemeral review identity.
+   * @param sessionId - Exact presentation session owner.
+   * @returns Whether a pending review was invalidated.
+   */
+  closeReview(
+    reviewId: ReconciliationReviewRequest["sessionId"],
+    sessionId: ReconciliationReviewRequest["sessionId"],
+  ): boolean {
+    const review = this.reviews.get(reviewId);
+    if (
+      review === undefined ||
+      review.sessionId !== sessionId ||
+      review.status !== RECONCILIATION_REVIEW_STATUS.pending
+    ) {
+      return false;
+    }
+    this.reviews.set(reviewId, staleReview(review));
+    return true;
+  }
+
+  /**
+   * Invalidates every pending review for one detached presentation session.
+   *
+   * @param sessionId - Session whose transient authority is ending.
+   */
+  invalidateSession(sessionId: ReconciliationReviewRequest["sessionId"]): void {
+    for (const review of this.reviews.values()) {
+      if (
+        review.sessionId === sessionId &&
+        review.status === RECONCILIATION_REVIEW_STATUS.pending
+      ) {
+        this.reviews.set(review.reviewId, staleReview(review));
+      }
+    }
   }
 
   /**
@@ -352,11 +447,17 @@ export class ReconciliationReviewService implements ReconciliationReviewQuery {
         sampled.snapshot,
         request.action,
       );
+      const localEffectPredecessor = this.localEffectPredecessor(
+        state,
+        sampled.snapshot,
+      );
+      const transferablePredecessor =
+        restorePredecessor ?? localEffectPredecessor;
       if (
         this.hasReservationConflict(
           state,
           sampled.snapshot,
-          restorePredecessor?.operationId,
+          transferablePredecessor?.operationId,
         )
       ) {
         return undefined;
@@ -368,24 +469,78 @@ export class ReconciliationReviewService implements ReconciliationReviewQuery {
         selectedDestination,
       );
       if (reservations === undefined) return undefined;
+      const historyProgress =
+        request.action.kind === RECONCILIATION_ACTION.resolveHistory
+          ? this.historyGroups.createProgress(
+              state,
+              sampled.snapshot,
+              request.action.decision,
+              operationId,
+              this.dependencies.createOperationId,
+            )
+          : undefined;
+      if (
+        request.action.kind === RECONCILIATION_ACTION.resolveHistory &&
+        historyProgress === undefined
+      ) {
+        return undefined;
+      }
       const phase =
-        request.action.kind === RECONCILIATION_ACTION.defer
+        request.action.kind === RECONCILIATION_ACTION.defer ||
+        (historyProgress !== undefined &&
+          historyProgress.nextStepIndex === null)
           ? RECONCILIATION_OPERATION_PHASE.completed
           : RECONCILIATION_OPERATION_PHASE.admitted;
-      const operation: ReconciliationOperation = {
+      const common = {
         operationId,
         reviewId: review.reviewId,
         authority: reconciliationAuthorityForAction(request.action),
-        action: request.action,
         phase,
         snapshot: sampled.snapshot,
         destinationPath: selectedDestination,
         reservations,
         preservationReceipts: [],
         successorOperationId: null,
-        localEffect: "not-dispatched",
-        remoteEffect: "not-dispatched",
       };
+      let operation: ReconciliationOperation;
+      if (
+        request.action.kind === RECONCILIATION_ACTION.resolveHistory &&
+        historyProgress !== undefined
+      ) {
+        operation = {
+          ...common,
+          authority: RECONCILIATION_AUTHORITY_SOURCE.historyDecision,
+          action: request.action,
+          historyProgress,
+        } satisfies ReconciliationHistoryOperation;
+      } else {
+        if (request.action.kind === RECONCILIATION_ACTION.resolveHistory) {
+          return undefined;
+        }
+        const target = sampled.snapshot.paths.find(
+          (evidence) => evidence.path === sampled.snapshot.targetPath,
+        );
+        if (target === undefined) return undefined;
+        operation = {
+          ...common,
+          action: request.action,
+          localEffect: MUTATION_EFFECT_CERTAINTY.notDispatched,
+          remoteEffect: MUTATION_EFFECT_CERTAINTY.notDispatched,
+          localEffectObservation: actionMayWriteLocal(request.action.kind)
+            ? { kind: LOCAL_EFFECT_OBSERVATION_KIND.notStarted }
+            : {
+                kind: LOCAL_EFFECT_OBSERVATION_KIND.notRequired,
+                path: sampled.snapshot.targetPath,
+                listenerEpoch: sampled.snapshot.runtime.listenerEpoch,
+                beforeGeneration:
+                  target.local.kind ===
+                  RECONCILIATION_LOCAL_EVIDENCE_KIND.unknown
+                    ? 0
+                    : target.local.observationGeneration,
+                successor: null,
+              },
+        };
+      }
       const durableReview: ReconciliationReview = {
         retention: RECONCILIATION_REVIEW_RETENTION.durable,
         reviewId: review.reviewId,
@@ -398,11 +553,11 @@ export class ReconciliationReviewService implements ReconciliationReviewQuery {
         operationId,
       };
       const transferredState =
-        restorePredecessor === undefined
+        transferablePredecessor === undefined
           ? state
-          : transferRestoreOwnership(
+          : transferReconciliationOwnership(
               state,
-              restorePredecessor,
+              transferablePredecessor,
               operation.operationId,
             );
       return {
@@ -453,7 +608,22 @@ export class ReconciliationReviewService implements ReconciliationReviewQuery {
   private reviewPaths(
     request: ReconciliationReviewRequest,
   ): readonly NotePath[] {
+    const state = this.stateOwner.snapshot().state;
+    const historyGroup = this.historyGroups.derive(state, request.targetPath);
+    if (historyGroup.kind === "group") return historyGroup.paths;
     const paths = new Set<NotePath>([request.targetPath]);
+    const localEffectPredecessor = state.reconciliationOperations.find(
+      (operation) =>
+        isNonHistoryReconciliationOperation(operation) &&
+        operation.phase ===
+          RECONCILIATION_OPERATION_PHASE.successorReviewRequired &&
+        operation.reservations.some(
+          (reservation) => reservation.path === request.targetPath,
+        ),
+    );
+    for (const reservation of localEffectPredecessor?.reservations ?? []) {
+      paths.add(reservation.path);
+    }
     for (const path of request.relatedPaths ?? []) paths.add(path);
     if (
       request.destinationPath !== undefined &&
@@ -461,9 +631,9 @@ export class ReconciliationReviewService implements ReconciliationReviewQuery {
     ) {
       paths.add(request.destinationPath);
     }
-    const statePath = this.stateOwner
-      .snapshot()
-      .state.paths.find((entry) => entry.path === request.targetPath);
+    const statePath = state.paths.find(
+      (entry) => entry.path === request.targetPath,
+    );
     if (statePath?.desired.kind === MIRROR_DESIRED_STATE_KIND.renameDeferred) {
       paths.add(statePath.path);
       if (statePath.desired.destinationPath !== null) {
@@ -775,16 +945,17 @@ export class ReconciliationReviewService implements ReconciliationReviewQuery {
    * Detects durable active operation overlap before the owner transition adds a new reservation.
    * @param state - Current durable state.
    * @param snapshot - Paths the new operation would reserve.
-   * @returns Whether an active operation overlaps those paths.
+   * @param transferablePredecessorId - Exact restore/event predecessor released atomically.
+   * @returns Whether another active operation overlaps those paths.
    */
   private hasReservationConflict(
     state: MirrorDeviceState,
     snapshot: ReconciliationReviewSnapshot,
-    transferableRestoreId?: ReconciliationOperation["operationId"],
+    transferablePredecessorId?: ReconciliationOperation["operationId"],
   ): boolean {
     return state.reconciliationOperations.some(
       (operation) =>
-        operation.operationId !== transferableRestoreId &&
+        operation.operationId !== transferablePredecessorId &&
         operation.phase !== RECONCILIATION_OPERATION_PHASE.stale &&
         operation.phase !== RECONCILIATION_OPERATION_PHASE.completed &&
         operation.reservations.some((reservation) =>
@@ -810,6 +981,7 @@ export class ReconciliationReviewService implements ReconciliationReviewQuery {
     if (action.kind === RECONCILIATION_ACTION.defer) return undefined;
     return state.reconciliationOperations.find((operation) => {
       if (
+        !isNonHistoryReconciliationOperation(operation) ||
         operation.action.kind !== RECONCILIATION_ACTION.restoreRecovery ||
         operation.phase !==
           RECONCILIATION_OPERATION_PHASE.restoredPendingReview ||
@@ -838,6 +1010,33 @@ export class ReconciliationReviewService implements ReconciliationReviewQuery {
         after.local.contentSha256 === operation.snapshot.recovery.contentSha256
       );
     });
+  }
+
+  /**
+   * Finds the exact operation retaining a durable post-admission local-event range.
+   *
+   * @param state - Current authoritative durable state.
+   * @param snapshot - Fresh complete successor review snapshot.
+   * @returns Transferable predecessor, or undefined without complete reservation coverage.
+   */
+  private localEffectPredecessor(
+    state: MirrorDeviceState,
+    snapshot: ReconciliationReviewSnapshot,
+  ): ReconciliationNonHistoryOperation | undefined {
+    return state.reconciliationOperations.find(
+      (operation): operation is ReconciliationNonHistoryOperation =>
+        isNonHistoryReconciliationOperation(operation) &&
+        operation.phase ===
+          RECONCILIATION_OPERATION_PHASE.successorReviewRequired &&
+        "successor" in operation.localEffectObservation &&
+        operation.localEffectObservation.successor !== null &&
+        operation.reservations.every((reservation) =>
+          snapshot.paths.some((evidence) => evidence.path === reservation.path),
+        ) &&
+        operation.reservations.some(
+          (reservation) => reservation.path === snapshot.targetPath,
+        ),
+    );
   }
 
   /**
@@ -1220,22 +1419,22 @@ function sortedPaths(paths: ReadonlySet<NotePath>): readonly NotePath[] {
 }
 
 /**
- * Completes one local-first restore while atomically linking its reviewed successor.
+ * Completes one restore or event-fenced operation while atomically linking its reviewed successor.
  *
- * @param state - Current durable state containing the active restore.
- * @param restore - Exact restored-pending-review predecessor.
+ * @param state - Current durable state containing the active predecessor.
+ * @param predecessor - Exact restored- or successor-review predecessor.
  * @param successorOperationId - Newly admitted operation taking the same path.
  * @returns State with predecessor operation/review made terminal before successor append.
  */
-function transferRestoreOwnership(
+function transferReconciliationOwnership(
   state: MirrorDeviceState,
-  restore: ReconciliationOperation,
+  predecessor: ReconciliationOperation,
   successorOperationId: ReconciliationOperation["operationId"],
 ): MirrorDeviceState {
   return {
     ...state,
     reconciliationOperations: state.reconciliationOperations.map((operation) =>
-      operation.operationId === restore.operationId
+      operation.operationId === predecessor.operationId
         ? {
             ...operation,
             phase: RECONCILIATION_OPERATION_PHASE.completed,
@@ -1244,11 +1443,29 @@ function transferRestoreOwnership(
         : operation,
     ),
     reconciliationReviews: state.reconciliationReviews.map((review) =>
-      review.reviewId === restore.reviewId
+      review.reviewId === predecessor.reviewId
         ? { ...review, status: RECONCILIATION_REVIEW_STATUS.completed }
         : review,
     ),
   };
+}
+
+/**
+ * Identifies ordinary actions that can dispatch an eligible local create or replace.
+ *
+ * @param kind - Closed admitted action kind.
+ * @returns Whether v4 must retain synthetic local-effect observation state.
+ */
+function actionMayWriteLocal(
+  kind: ReconciliationOperation["action"]["kind"],
+): boolean {
+  return (
+    kind === RECONCILIATION_ACTION.useRemote ||
+    kind === RECONCILIATION_ACTION.keepBoth ||
+    kind === RECONCILIATION_ACTION.adoptRevision ||
+    kind === RECONCILIATION_ACTION.restoreRecovery ||
+    kind === RECONCILIATION_ACTION.forkLegacy
+  );
 }
 
 /**

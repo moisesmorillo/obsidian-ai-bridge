@@ -10,13 +10,14 @@ import {
   rejectReconciliationAction,
 } from "@core/mirror/reconciliation-action-result";
 import type { ReconciliationEffectExecutor } from "@core/mirror/reconciliation-effect-executor";
+import { isNonHistoryReconciliationOperation } from "@core/mirror/reconciliation-operation";
 import {
   RECONCILIATION_ACTION,
   RECONCILIATION_LOCAL_EVIDENCE_KIND,
   RECONCILIATION_OPERATION_PHASE,
 } from "@core/mirror/reconciliation-state.constants";
 import type {
-  ReconciliationOperation,
+  ReconciliationNonHistoryOperation,
   ReconciliationPathEvidence,
 } from "@core/mirror/reconciliation-state.types";
 
@@ -36,7 +37,10 @@ export class RecoveryRestoreService {
     const operation = this.effects.operation(request.operationId);
     if (operation === undefined)
       return rejectReconciliationAction(this.effects, "operation-not-found");
-    if (operation.action.kind !== RECONCILIATION_ACTION.restoreRecovery) {
+    if (
+      !isNonHistoryReconciliationOperation(operation) ||
+      operation.action.kind !== RECONCILIATION_ACTION.restoreRecovery
+    ) {
       return rejectReconciliationAction(this.effects, "wrong-action");
     }
     const recovery = operation.snapshot.recovery;
@@ -111,7 +115,7 @@ export class RecoveryRestoreService {
 
 /** @returns Immutable selected destination evidence, including in-place restore. */
 function destinationEvidence(
-  operation: ReconciliationOperation,
+  operation: ReconciliationNonHistoryOperation,
 ): ReconciliationPathEvidence | undefined {
   const path = operation.destinationPath ?? operation.snapshot.targetPath;
   return operation.snapshot.paths.find((evidence) => evidence.path === path);

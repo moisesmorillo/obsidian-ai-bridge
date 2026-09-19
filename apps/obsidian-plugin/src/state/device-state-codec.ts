@@ -8,8 +8,18 @@ import {
   createMirrorWriterId,
   createRecoverySnapshotId,
   HANDOFF_ALIGNMENT_KIND,
+  HISTORY_CLEANUP_STEP_KIND,
+  HISTORY_CLEANUP_STEP_PHASE,
+  HISTORY_DECISION_KIND,
+  HISTORY_PROGRESS_KIND,
+  HISTORY_REMOTE_EFFECT_KIND,
+  type HistoryCleanupStep,
+  isHistoryReconciliationOperation,
   isMirrorDeviceStateConsistent,
   isNormalizedNotePath,
+  type LegacyV3HistoryProgress,
+  LOCAL_EFFECT_OBSERVATION_KIND,
+  type LocalEffectObservation,
   MAX_MIRROR_TRACKED_PATHS,
   MAX_RECONCILIATION_OPERATIONS,
   MAX_RECONCILIATION_PRESERVATION_RECEIPTS,
@@ -35,11 +45,13 @@ import {
   RECONCILIATION_ACTION,
   RECONCILIATION_AUTHORITY_SOURCE,
   RECONCILIATION_CLASSIFICATION,
+  RECONCILIATION_EVENT_KIND,
   RECONCILIATION_LOCAL_EVIDENCE_KIND,
   RECONCILIATION_LOCAL_STABILITY,
   RECONCILIATION_OPERATION_PHASE,
   RECONCILIATION_PATH_REFERENCE_KIND,
   RECONCILIATION_PRESERVATION_PROOF_STATE,
+  RECONCILIATION_PRESERVATION_SCOPE,
   RECONCILIATION_PRESERVATION_SIDE,
   RECONCILIATION_REMOTE_EVIDENCE_KIND,
   RECONCILIATION_REVIEW_RETENTION,
@@ -52,6 +64,7 @@ import {
   type ReconciliationReview,
   type ReconciliationReviewSnapshot,
   type ReconciliationRuntimeIdentity,
+  type RefinedHistoryProgress,
   type RenameDeferredMirrorState,
   type StagedHandoff,
   type TransferableAcknowledgement,
@@ -75,8 +88,15 @@ export const MIRROR_DEVICE_STATE_STORAGE_KEY = "ai-bridge:mirror-device-state";
 /** Closed serialized format identifier independent from synced plugin data. */
 export const MIRROR_DEVICE_STATE_FORMAT = "obsidian-ai-bridge-device-state";
 
-/** Maximum UTF-8 bytes accepted for one host-local device-state snapshot. */
-export const MAX_MIRROR_DEVICE_STATE_BYTES = 8 * 1024 * 1024;
+/** Maximum UTF-8 bytes accepted for one host-local version-4 device-state snapshot. */
+export const MAX_MIRROR_DEVICE_STATE_BYTES = 12 * 1024 * 1024;
+
+/** Strict v4 DTO discriminants separating aggregate and history operation shapes. */
+const MIRROR_OPERATION_DTO_KIND = {
+  ordinary: "ordinary",
+  history: "history",
+  legacyV3History: "legacy-v3-history",
+} as const;
 
 /** Strict host-local decode result; incompatible data is never treated as missing. */
 export type MirrorDeviceStateDecodeResult =
@@ -184,7 +204,7 @@ const unresolvedMutationStateSchema = z
   })
   .strict();
 
-/** Strict per-path M3 ledger retained by v3 without per-path M4 placeholders. */
+/** Strict per-path M3 ledger retained by v4 without per-path M4 placeholders. */
 const pathStateSchema = z
   .object({
     path: z.string(),
@@ -453,8 +473,8 @@ const reconciliationReviewSnapshotSchema = z
   })
   .strict();
 
-/** Closed operator action representation, with an explicit primary side only for keep-both. */
-const reconciliationActionSchema = z.discriminatedUnion("kind", [
+/** Closed non-history action representation, with an explicit primary side only for keep-both. */
+const reconciliationNonHistoryActionSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal(RECONCILIATION_ACTION.keepLocal) }).strict(),
   z.object({ kind: z.literal(RECONCILIATION_ACTION.useRemote) }).strict(),
   z
@@ -471,9 +491,35 @@ const reconciliationActionSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal(RECONCILIATION_ACTION.recreateRemote) }).strict(),
   z.object({ kind: z.literal(RECONCILIATION_ACTION.restoreRecovery) }).strict(),
   z.object({ kind: z.literal(RECONCILIATION_ACTION.forkLegacy) }).strict(),
-  z.object({ kind: z.literal(RECONCILIATION_ACTION.resolveHistory) }).strict(),
   z.object({ kind: z.literal(RECONCILIATION_ACTION.defer) }).strict(),
 ]);
+
+/** Durable refined history decision; canonical paths are derived before persistence. */
+const historyDecisionSchema = z.discriminatedUnion("kind", [
+  z
+    .object({ kind: z.literal(HISTORY_DECISION_KIND.retainIndependent) })
+    .strict(),
+  z.object({ kind: z.literal(HISTORY_DECISION_KIND.deferHistory) }).strict(),
+  z
+    .object({
+      kind: z.literal(HISTORY_DECISION_KIND.executeCleanupPlan),
+      canonicalPath: z.string().nullable(),
+    })
+    .strict(),
+]);
+
+/** Refined history action carrying the exact admitted closed decision. */
+const refinedHistoryActionSchema = z
+  .object({
+    kind: z.literal(RECONCILIATION_ACTION.resolveHistory),
+    decision: historyDecisionSchema,
+  })
+  .strict();
+
+/** Frozen kind-only history action retained only by a migrated attention blocker. */
+const legacyHistoryActionSchema = z
+  .object({ kind: z.literal(RECONCILIATION_ACTION.resolveHistory) })
+  .strict();
 
 /** Durable content-free review record; classification/status and optional operation linkage require core relationship validation. */
 const reconciliationReviewSchema = z
@@ -517,73 +563,183 @@ const reconciliationReservationSchema = z
   })
   .strict();
 
-/** Preservation metadata only; core binds path, side, revision and hash to required sampled bytes rather than trusting claims. */
-const reconciliationPreservationReceiptSchema = z
-  .object({
-    operationId: z.string(),
-    originalPath: z.string(),
-    side: z.enum([
-      RECONCILIATION_PRESERVATION_SIDE.local,
-      RECONCILIATION_PRESERVATION_SIDE.remote,
-    ]),
-    sourceRevision: z.string().nullable(),
-    contentSha256: z.string(),
-    preservationPath: z.string().min(1).max(512),
-    proofState: z.enum([
-      RECONCILIATION_PRESERVATION_PROOF_STATE.pending,
-      RECONCILIATION_PRESERVATION_PROOF_STATE.verified,
-      RECONCILIATION_PRESERVATION_PROOF_STATE.evidenceRequired,
-      RECONCILIATION_PRESERVATION_PROOF_STATE.blocked,
-    ]),
-  })
-  .strict();
+/** Fields shared by operation- and history-step-scoped preservation receipts. */
+const preservationReceiptFields = {
+  operationId: z.string(),
+  originalPath: z.string(),
+  side: z.enum([
+    RECONCILIATION_PRESERVATION_SIDE.local,
+    RECONCILIATION_PRESERVATION_SIDE.remote,
+  ]),
+  sourceRevision: z.string().nullable(),
+  contentSha256: z.string(),
+  preservationPath: z.string().min(1).max(512),
+  proofState: z.enum([
+    RECONCILIATION_PRESERVATION_PROOF_STATE.pending,
+    RECONCILIATION_PRESERVATION_PROOF_STATE.verified,
+    RECONCILIATION_PRESERVATION_PROOF_STATE.evidenceRequired,
+    RECONCILIATION_PRESERVATION_PROOF_STATE.blocked,
+  ]),
+};
 
-/**
- * Durable reviewed operation with exact snapshot, reservations, proof metadata and separate effect certainty.
- * The restore phase and successor link preserve ownership across restart; core checks
- * action/phase/evidence relationships after decoding. This schema creates no effects.
- */
-const reconciliationOperationSchema = z
+/** Closed receipt identity preserving old paths while adding exact history provenance. */
+const reconciliationPreservationReceiptSchema = z.discriminatedUnion("scope", [
+  z
+    .object({
+      scope: z.literal(RECONCILIATION_PRESERVATION_SCOPE.operation),
+      ...preservationReceiptFields,
+    })
+    .strict(),
+  z
+    .object({
+      scope: z.literal(RECONCILIATION_PRESERVATION_SCOPE.historyStep),
+      stepId: z.string(),
+      ...preservationReceiptFields,
+    })
+    .strict(),
+]);
+
+/** Bounded durable successor event range; no body or causal-host claim is persisted. */
+const successorRangeSchema = z
   .object({
-    operationId: z.string(),
-    reviewId: z.string(),
-    authority: z.enum([
-      RECONCILIATION_AUTHORITY_SOURCE.reconciliationDecision,
-      RECONCILIATION_AUTHORITY_SOURCE.adoptionDecision,
-      RECONCILIATION_AUTHORITY_SOURCE.tombstoneDecision,
-      RECONCILIATION_AUTHORITY_SOURCE.recoveryRestoreDecision,
-      RECONCILIATION_AUTHORITY_SOURCE.historyDecision,
-    ]),
-    action: reconciliationActionSchema,
-    phase: z.enum([
-      RECONCILIATION_OPERATION_PHASE.admitted,
-      RECONCILIATION_OPERATION_PHASE.preserving,
-      RECONCILIATION_OPERATION_PHASE.mutatingLocal,
-      RECONCILIATION_OPERATION_PHASE.mutatingRemote,
-      RECONCILIATION_OPERATION_PHASE.evidenceRequired,
-      RECONCILIATION_OPERATION_PHASE.partial,
-      RECONCILIATION_OPERATION_PHASE.restoredPendingReview,
-      RECONCILIATION_OPERATION_PHASE.stale,
-      RECONCILIATION_OPERATION_PHASE.blocked,
-      RECONCILIATION_OPERATION_PHASE.completed,
-    ]),
-    snapshot: reconciliationReviewSnapshotSchema,
-    destinationPath: z.string().nullable(),
-    reservations: z
-      .array(reconciliationReservationSchema)
+    firstGeneration: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
+    latestGeneration: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
+    eventKinds: z
+      .array(
+        z.enum([
+          RECONCILIATION_EVENT_KIND.create,
+          RECONCILIATION_EVENT_KIND.modify,
+          RECONCILIATION_EVENT_KIND.delete,
+          RECONCILIATION_EVENT_KIND.rename,
+        ]),
+      )
       .min(1)
-      .max(MAX_MIRROR_TRACKED_PATHS),
-    preservationReceipts: z
-      .array(reconciliationPreservationReceiptSchema)
-      .max(MAX_RECONCILIATION_PRESERVATION_RECEIPTS),
-    successorOperationId: z.string().nullable(),
-    localEffect: z.enum([
+      .max(4),
+  })
+  .strict();
+
+/** Exact synthetic local-effect observation or conservative migration attention. */
+const localEffectObservationSchema = z.discriminatedUnion("kind", [
+  z
+    .object({
+      kind: z.literal(LOCAL_EFFECT_OBSERVATION_KIND.notRequired),
+      path: z.string(),
+      listenerEpoch: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
+      beforeGeneration: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+      successor: successorRangeSchema.nullable(),
+    })
+    .strict(),
+  z
+    .object({ kind: z.literal(LOCAL_EFFECT_OBSERVATION_KIND.notStarted) })
+    .strict(),
+  z
+    .object({ kind: z.literal(LOCAL_EFFECT_OBSERVATION_KIND.legacyV3Unfenced) })
+    .strict(),
+  ...[
+    LOCAL_EFFECT_OBSERVATION_KIND.prepared,
+    LOCAL_EFFECT_OBSERVATION_KIND.confirmed,
+    LOCAL_EFFECT_OBSERVATION_KIND.recoveredV3,
+  ].map((kind) =>
+    z
+      .object({
+        kind: z.literal(kind),
+        effectId: z.string(),
+        path: z.string(),
+        expectedHash: z.string(),
+        listenerEpoch: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
+        beforeGeneration: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+        postconditionHash: z.string().nullable(),
+        successor: successorRangeSchema.nullable(),
+      })
+      .strict(),
+  ),
+]);
+
+/** Closed operation-level phase shared by non-history and parent history records. */
+const reconciliationOperationPhaseSchema = z.enum([
+  RECONCILIATION_OPERATION_PHASE.admitted,
+  RECONCILIATION_OPERATION_PHASE.preserving,
+  RECONCILIATION_OPERATION_PHASE.mutatingLocal,
+  RECONCILIATION_OPERATION_PHASE.mutatingRemote,
+  RECONCILIATION_OPERATION_PHASE.evidenceRequired,
+  RECONCILIATION_OPERATION_PHASE.partial,
+  RECONCILIATION_OPERATION_PHASE.restoredPendingReview,
+  RECONCILIATION_OPERATION_PHASE.successorReviewRequired,
+  RECONCILIATION_OPERATION_PHASE.stale,
+  RECONCILIATION_OPERATION_PHASE.blocked,
+  RECONCILIATION_OPERATION_PHASE.completed,
+]);
+
+/** Exact history remote-effect evidence; confirmed receipt identity is step-bound. */
+const historyRemoteEffectSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("not-dispatched") }).strict(),
+  z.object({ kind: z.literal("definitely-refused") }).strict(),
+  z.object({ kind: z.literal("unknown") }).strict(),
+  z
+    .object({
+      kind: z.literal(
+        HISTORY_REMOTE_EFFECT_KIND.confirmedExactTombstoneReceipt,
+      ),
+      revision: z.string(),
+      receipt: operationReceiptSchema,
+    })
+    .strict(),
+]);
+
+/** One bounded ordered history cleanup step with original sampled predicates. */
+const historyCleanupStepSchema = z
+  .object({
+    stepId: z.string(),
+    kind: z.literal(HISTORY_CLEANUP_STEP_KIND.remoteFormerSourceCleanup),
+    sourcePath: z.string(),
+    prerequisitePath: z.string().nullable(),
+    sourceRevision: z.string(),
+    sourceContentSha256: z.string(),
+    prerequisiteRevision: z.string().nullable(),
+    localAbsenceGeneration: z
+      .number()
+      .int()
+      .min(1)
+      .max(Number.MAX_SAFE_INTEGER),
+    phase: z.enum([
+      HISTORY_CLEANUP_STEP_PHASE.pending,
+      HISTORY_CLEANUP_STEP_PHASE.preserving,
+      HISTORY_CLEANUP_STEP_PHASE.ready,
+      HISTORY_CLEANUP_STEP_PHASE.mutatingRemote,
+      HISTORY_CLEANUP_STEP_PHASE.evidenceRequired,
+      HISTORY_CLEANUP_STEP_PHASE.blocked,
+      HISTORY_CLEANUP_STEP_PHASE.completed,
+    ]),
+    remoteEffect: historyRemoteEffectSchema,
+  })
+  .strict();
+
+/** Refined ordered history progress schema. */
+const refinedHistoryProgressSchema = z
+  .object({
+    kind: z.literal(HISTORY_PROGRESS_KIND.refined),
+    decision: historyDecisionSchema,
+    steps: z.array(historyCleanupStepSchema).max(MAX_MIRROR_TRACKED_PATHS),
+    nextStepIndex: z
+      .number()
+      .int()
+      .min(0)
+      .max(MAX_MIRROR_TRACKED_PATHS)
+      .nullable(),
+  })
+  .strict();
+
+/** Frozen v3 aggregate history evidence retained only as a migration blocker. */
+const legacyHistoryProgressSchema = z
+  .object({
+    kind: z.literal(HISTORY_PROGRESS_KIND.legacyV3Unrefined),
+    aggregateLocalEffect: z.enum([
       MUTATION_EFFECT_CERTAINTY.notDispatched,
       MUTATION_EFFECT_CERTAINTY.definitelyRefused,
       MUTATION_EFFECT_CERTAINTY.confirmed,
       MUTATION_EFFECT_CERTAINTY.unknown,
     ]),
-    remoteEffect: z.enum([
+    aggregateRemoteEffect: z.enum([
       MUTATION_EFFECT_CERTAINTY.notDispatched,
       MUTATION_EFFECT_CERTAINTY.definitelyRefused,
       MUTATION_EFFECT_CERTAINTY.confirmed,
@@ -592,7 +748,71 @@ const reconciliationOperationSchema = z
   })
   .strict();
 
-/** Strict v3 host-local envelope with bounded sparse M4 collections; rejects unknown fields and all older/newer versions. */
+/** Common content-free operation fields shared by the action-discriminated v4 union. */
+const operationFields = {
+  operationId: z.string(),
+  reviewId: z.string(),
+  authority: z.enum([
+    RECONCILIATION_AUTHORITY_SOURCE.reconciliationDecision,
+    RECONCILIATION_AUTHORITY_SOURCE.adoptionDecision,
+    RECONCILIATION_AUTHORITY_SOURCE.tombstoneDecision,
+    RECONCILIATION_AUTHORITY_SOURCE.recoveryRestoreDecision,
+    RECONCILIATION_AUTHORITY_SOURCE.historyDecision,
+  ]),
+  phase: reconciliationOperationPhaseSchema,
+  snapshot: reconciliationReviewSnapshotSchema,
+  destinationPath: z.string().nullable(),
+  reservations: z
+    .array(reconciliationReservationSchema)
+    .min(1)
+    .max(MAX_MIRROR_TRACKED_PATHS),
+  preservationReceipts: z
+    .array(reconciliationPreservationReceiptSchema)
+    .max(MAX_RECONCILIATION_PRESERVATION_RECEIPTS),
+  successorOperationId: z.string().nullable(),
+};
+
+/** Strict v4 operation union: aggregate effects for ordinary actions, ordered steps for history. */
+const reconciliationOperationSchema = z.union([
+  z
+    .object({
+      ...operationFields,
+      operationKind: z.literal(MIRROR_OPERATION_DTO_KIND.ordinary),
+      action: reconciliationNonHistoryActionSchema,
+      localEffect: z.enum([
+        MUTATION_EFFECT_CERTAINTY.notDispatched,
+        MUTATION_EFFECT_CERTAINTY.definitelyRefused,
+        MUTATION_EFFECT_CERTAINTY.confirmed,
+        MUTATION_EFFECT_CERTAINTY.unknown,
+      ]),
+      remoteEffect: z.enum([
+        MUTATION_EFFECT_CERTAINTY.notDispatched,
+        MUTATION_EFFECT_CERTAINTY.definitelyRefused,
+        MUTATION_EFFECT_CERTAINTY.confirmed,
+        MUTATION_EFFECT_CERTAINTY.unknown,
+      ]),
+      localEffectObservation: localEffectObservationSchema,
+    })
+    .strict(),
+  z
+    .object({
+      ...operationFields,
+      operationKind: z.literal(MIRROR_OPERATION_DTO_KIND.history),
+      action: refinedHistoryActionSchema,
+      historyProgress: refinedHistoryProgressSchema,
+    })
+    .strict(),
+  z
+    .object({
+      ...operationFields,
+      operationKind: z.literal(MIRROR_OPERATION_DTO_KIND.legacyV3History),
+      action: legacyHistoryActionSchema,
+      historyProgress: legacyHistoryProgressSchema,
+    })
+    .strict(),
+]);
+
+/** Strict v4 host-local envelope with bounded sparse M4 collections; rejects unknown fields and all older/newer versions. */
 const deviceStateSchema = z
   .object({
     format: z.literal(MIRROR_DEVICE_STATE_FORMAT),
@@ -628,9 +848,9 @@ const stateHeaderSchema = z
   })
   .loose();
 
-/** Adapter-only v3 envelope after structural validation, before domain rehydration and consistency checks. */
+/** Adapter-only v4 envelope after structural validation, before domain rehydration and consistency checks. */
 type DeviceStateDto = z.infer<typeof deviceStateSchema>;
-/** Serialized M3 path ledger retained inside v3, with identifiers still represented as strings. */
+/** Serialized M3 path ledger retained inside v4, with identifiers still represented as strings. */
 type PathStateDto = z.infer<typeof pathStateSchema>;
 /** Persisted baseline variant used by both live ledger and sampled review evidence. */
 type AcknowledgementDto = z.infer<typeof acknowledgementSchema>;
@@ -736,14 +956,17 @@ export function encodeMirrorDeviceState(state: MirrorDeviceState): string {
   }
   const projected = projectDeviceState(state);
   const validated = deviceStateSchema.safeParse(projected);
+  /* v8 ignore next -- projection from a validated v4 domain state is schema-total. */
   if (!validated.success) {
     throw new Error("Invalid mirror device state fields.");
   }
   try {
+    /* v8 ignore next -- strict projection round-trip preserves validated invariants. */
     if (!isMirrorDeviceStateConsistent(convertDeviceState(validated.data))) {
       throw new Error("Invalid projected mirror device state invariant.");
     }
   } catch {
+    /* v8 ignore next -- strict projection conversion accepts every schema-valid projection. */
     throw new Error("Invalid mirror device state fields.");
   }
   const encoded = JSON.stringify(validated.data);
@@ -754,9 +977,9 @@ export function encodeMirrorDeviceState(state: MirrorDeviceState): string {
 }
 
 /**
- * Projects the core ledger into the v3 envelope for strict schema and round-trip validation before encoding.
+ * Projects the core ledger into the v4 envelope for strict schema and round-trip validation before encoding.
  *
- * @returns The content-free v3 envelope projection.
+ * @returns The content-free v4 envelope projection.
  */
 function projectDeviceState(state: MirrorDeviceState): DeviceStateDto {
   return {
@@ -1000,11 +1223,10 @@ function projectReview(review: ReconciliationReview): ReconciliationReviewDto {
 function projectOperation(
   operation: ReconciliationOperation,
 ): ReconciliationOperationDto {
-  return {
+  const common = {
     operationId: operation.operationId,
     reviewId: operation.reviewId,
     authority: operation.authority,
-    action: { ...operation.action },
     phase: operation.phase,
     snapshot: projectReconciliationSnapshot(operation.snapshot),
     destinationPath: operation.destinationPath,
@@ -1016,9 +1238,111 @@ function projectOperation(
       ...receipt,
     })),
     successorOperationId: operation.successorOperationId,
+  };
+  if (isHistoryReconciliationOperation(operation)) {
+    if (
+      operation.historyProgress.kind === HISTORY_PROGRESS_KIND.legacyV3Unrefined
+    ) {
+      return {
+        ...common,
+        operationKind: MIRROR_OPERATION_DTO_KIND.legacyV3History,
+        action: { kind: RECONCILIATION_ACTION.resolveHistory },
+        historyProgress: { ...operation.historyProgress },
+      };
+    }
+    const historyProgress = projectRefinedHistoryProgress(
+      operation.historyProgress,
+    );
+    return {
+      ...common,
+      operationKind: MIRROR_OPERATION_DTO_KIND.history,
+      action: {
+        kind: RECONCILIATION_ACTION.resolveHistory,
+        decision: historyProgress.decision,
+      },
+      historyProgress,
+    };
+  }
+  return {
+    ...common,
+    operationKind: MIRROR_OPERATION_DTO_KIND.ordinary,
+    action: { ...operation.action },
     localEffect: operation.localEffect,
     remoteEffect: operation.remoteEffect,
+    localEffectObservation: projectLocalEffectObservation(
+      operation.localEffectObservation,
+    ),
   };
+}
+
+/**
+ * Projects refined history progress into the strict mutable adapter DTO shape.
+ *
+ * @param progress - Durable refined history step ledger.
+ * @returns Serialized decision, ordered steps, and cursor.
+ */
+function projectRefinedHistoryProgress(
+  progress: RefinedHistoryProgress,
+): z.infer<typeof refinedHistoryProgressSchema> {
+  return {
+    kind: progress.kind,
+    decision:
+      progress.decision.kind === HISTORY_DECISION_KIND.executeCleanupPlan
+        ? { ...progress.decision }
+        : { kind: progress.decision.kind },
+    steps: progress.steps.map((step) => ({
+      ...step,
+      remoteEffect:
+        step.remoteEffect.kind ===
+        HISTORY_REMOTE_EFFECT_KIND.confirmedExactTombstoneReceipt
+          ? {
+              ...step.remoteEffect,
+              receipt: { ...step.remoteEffect.receipt },
+            }
+          : { kind: step.remoteEffect.kind },
+    })),
+    nextStepIndex: progress.nextStepIndex,
+  };
+}
+
+/**
+ * Projects exact local-effect fencing into mutable adapter DTO arrays without weakening event identity.
+ *
+ * @param observation - Durable synthetic-effect observation.
+ * @returns Strict serialized observation.
+ */
+function projectLocalEffectObservation(
+  observation: LocalEffectObservation,
+): z.infer<typeof localEffectObservationSchema> {
+  switch (observation.kind) {
+    case LOCAL_EFFECT_OBSERVATION_KIND.notRequired:
+      return {
+        ...observation,
+        successor:
+          observation.successor === null
+            ? null
+            : {
+                ...observation.successor,
+                eventKinds: [...observation.successor.eventKinds],
+              },
+      };
+    case LOCAL_EFFECT_OBSERVATION_KIND.notStarted:
+    case LOCAL_EFFECT_OBSERVATION_KIND.legacyV3Unfenced:
+      return { kind: observation.kind };
+    case LOCAL_EFFECT_OBSERVATION_KIND.prepared:
+    case LOCAL_EFFECT_OBSERVATION_KIND.confirmed:
+    case LOCAL_EFFECT_OBSERVATION_KIND.recoveredV3:
+      return {
+        ...observation,
+        successor:
+          observation.successor === null
+            ? null
+            : {
+                ...observation.successor,
+                eventKinds: [...observation.successor.eventKinds],
+              },
+      };
+  }
 }
 
 /**
@@ -1128,7 +1452,7 @@ function projectOperationReceipt(
 }
 
 /**
- * Rehydrates v3 identifiers while preserving ledger metadata; the caller must still enforce full consistency and handoff integrity.
+ * Rehydrates v4 identifiers while preserving ledger metadata; the caller must still enforce full consistency and handoff integrity.
  *
  * @returns Rehydrated state pending consistency and integrity validation.
  */
@@ -1270,9 +1594,11 @@ function convertDeferredHistory(
   dto: z.infer<typeof renameDeferredStateSchema>,
 ): RenameDeferredMirrorState {
   const converted = convertDesiredState(dto);
+  /* v8 ignore start -- the caller schema is the rename-deferred discriminant branch. */
   if (converted.kind !== MIRROR_DESIRED_STATE_KIND.renameDeferred) {
     throw new Error("Expected deferred-history evidence.");
   }
+  /* v8 ignore stop */
   return converted;
 }
 
@@ -1395,11 +1721,10 @@ function convertReview(dto: ReconciliationReviewDto): ReconciliationReview {
 function convertOperation(
   dto: ReconciliationOperationDto,
 ): ReconciliationOperation {
-  return {
+  const common = {
     operationId: requireParsed(dto.operationId, createMirrorOperationId),
     reviewId: requireParsed(dto.reviewId, createMirrorOperationId),
     authority: dto.authority,
-    action: { ...dto.action },
     phase: dto.phase,
     snapshot: convertReconciliationSnapshot(dto.snapshot),
     destinationPath:
@@ -1417,8 +1742,159 @@ function convertOperation(
       dto.successorOperationId === null
         ? null
         : requireParsed(dto.successorOperationId, createMirrorOperationId),
+  };
+  if ("historyProgress" in dto) {
+    const historyProgress = convertHistoryProgress(dto.historyProgress);
+    if (historyProgress.kind === HISTORY_PROGRESS_KIND.legacyV3Unrefined) {
+      return {
+        ...common,
+        action: { kind: RECONCILIATION_ACTION.resolveHistory },
+        historyProgress,
+      };
+    }
+    return {
+      ...common,
+      action: {
+        kind: RECONCILIATION_ACTION.resolveHistory,
+        decision: historyProgress.decision,
+      },
+      historyProgress,
+    };
+  }
+  return {
+    ...common,
+    action: { ...dto.action },
     localEffect: dto.localEffect,
     remoteEffect: dto.remoteEffect,
+    localEffectObservation: convertLocalEffectObservation(
+      dto.localEffectObservation,
+    ),
+  };
+}
+
+/**
+ * @param progress - Structurally validated serialized history progress.
+ * @returns Rehydrated history progress with every step identity and predicate branded.
+ */
+function convertHistoryProgress(
+  progress: Extract<
+    ReconciliationOperationDto,
+    { action: { kind: "bounded-history-decision" } }
+  >["historyProgress"],
+): RefinedHistoryProgress | LegacyV3HistoryProgress {
+  if (progress.kind === HISTORY_PROGRESS_KIND.legacyV3Unrefined) {
+    return { ...progress };
+  }
+  return {
+    kind: progress.kind,
+    decision:
+      progress.decision.kind === HISTORY_DECISION_KIND.executeCleanupPlan
+        ? {
+            kind: progress.decision.kind,
+            canonicalPath:
+              progress.decision.canonicalPath === null
+                ? null
+                : requireParsed(
+                    progress.decision.canonicalPath,
+                    parsePersistedNotePath,
+                  ),
+          }
+        : { kind: progress.decision.kind },
+    steps: progress.steps.map((step): HistoryCleanupStep => {
+      return {
+        stepId: requireParsed(step.stepId, createMirrorOperationId),
+        kind: step.kind,
+        sourcePath: requireParsed(step.sourcePath, parsePersistedNotePath),
+        prerequisitePath:
+          step.prerequisitePath === null
+            ? null
+            : requireParsed(step.prerequisitePath, parsePersistedNotePath),
+        sourceRevision: requireParsed(
+          step.sourceRevision,
+          createApplicationRevision,
+        ),
+        sourceContentSha256: requireParsed(
+          step.sourceContentSha256,
+          createContentSha256,
+        ),
+        prerequisiteRevision:
+          step.prerequisiteRevision === null
+            ? null
+            : requireParsed(
+                step.prerequisiteRevision,
+                createApplicationRevision,
+              ),
+        localAbsenceGeneration: step.localAbsenceGeneration,
+        phase: step.phase,
+        remoteEffect: convertHistoryRemoteEffect(step.remoteEffect),
+      };
+    }),
+    nextStepIndex: progress.nextStepIndex,
+  };
+}
+
+/**
+ * Rehydrates one history step's remote certainty, retaining only exact tombstone receipts as confirmation.
+ *
+ * @param effect - Structurally validated serialized remote-effect evidence.
+ * @returns Strongly discriminated history remote-effect evidence.
+ */
+function convertHistoryRemoteEffect(
+  effect: z.infer<typeof historyRemoteEffectSchema>,
+): HistoryCleanupStep["remoteEffect"] {
+  switch (effect.kind) {
+    case MUTATION_EFFECT_CERTAINTY.notDispatched:
+    case MUTATION_EFFECT_CERTAINTY.definitelyRefused:
+    case MUTATION_EFFECT_CERTAINTY.unknown:
+      return { kind: effect.kind };
+    case HISTORY_REMOTE_EFFECT_KIND.confirmedExactTombstoneReceipt: {
+      const receipt = convertOperationReceipt(effect.receipt);
+      if (receipt.action !== MUTATION_ACTION.tombstone) {
+        throw new Error("Expected history tombstone receipt.");
+      }
+      return {
+        kind: effect.kind,
+        revision: requireParsed(effect.revision, createApplicationRevision),
+        receipt,
+      };
+    }
+  }
+}
+
+/**
+ * @param observation - Structurally validated local-effect observation evidence.
+ * @returns Rehydrated exact synthetic observation without assigning host-event causality.
+ */
+function convertLocalEffectObservation(
+  observation: Extract<
+    ReconciliationOperationDto,
+    { localEffect: string }
+  >["localEffectObservation"],
+): Extract<
+  ReconciliationOperation,
+  { localEffect: string }
+>["localEffectObservation"] {
+  if (observation.kind === LOCAL_EFFECT_OBSERVATION_KIND.notRequired) {
+    return {
+      ...observation,
+      path: requireParsed(observation.path, parsePersistedNotePath),
+    };
+  }
+  if (
+    observation.kind === LOCAL_EFFECT_OBSERVATION_KIND.notStarted ||
+    observation.kind === LOCAL_EFFECT_OBSERVATION_KIND.legacyV3Unfenced
+  ) {
+    return observation;
+  }
+  return {
+    ...observation,
+    effectId: requireParsed(observation.effectId, createMirrorOperationId),
+    path: requireParsed(observation.path, parsePersistedNotePath),
+    expectedHash: requireParsed(observation.expectedHash, createContentSha256),
+    postconditionHash:
+      observation.postconditionHash === null
+        ? null
+        : requireParsed(observation.postconditionHash, createContentSha256),
   };
 }
 
@@ -1631,7 +2107,7 @@ function convertReconciliationRecoveryEvidence(
 function convertPreservationReceipt(
   dto: ReconciliationPreservationReceiptDto,
 ): ReconciliationPreservationReceipt {
-  return {
+  const common = {
     operationId: requireParsed(dto.operationId, createMirrorOperationId),
     originalPath: requireParsed(dto.originalPath, parsePersistedNotePath),
     side: dto.side,
@@ -1643,6 +2119,13 @@ function convertPreservationReceipt(
     preservationPath: dto.preservationPath,
     proofState: dto.proofState,
   };
+  return dto.scope === RECONCILIATION_PRESERVATION_SCOPE.historyStep
+    ? {
+        scope: dto.scope,
+        stepId: requireParsed(dto.stepId, createMirrorOperationId),
+        ...common,
+      }
+    : { scope: dto.scope, ...common };
 }
 
 /**
@@ -1685,10 +2168,10 @@ function requireParsed<Value>(
 }
 
 /**
- * Returns UTF-8 bytes for the persisted v3 snapshot capacity check.
+ * Returns UTF-8 bytes for the persisted v4 snapshot capacity check.
  *
- * @param value - Serialized v3 snapshot text.
- * @returns Encoded v3 snapshot byte count.
+ * @param value - Serialized v4 snapshot text.
+ * @returns Encoded v4 snapshot byte count.
  */
 function byteLength(value: string): number {
   return new TextEncoder().encode(value).byteLength;

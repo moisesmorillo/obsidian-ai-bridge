@@ -11,17 +11,44 @@ import { vi } from "vitest";
 /** Text-only DOM surface: markup APIs deliberately do not exist in this double. */
 export class TextElement {
   textContent = "";
+  disabled = false;
+  private tagName = "";
   readonly children: TextElement[] = [];
+  private readonly listeners = new Map<string, Set<() => void>>();
   readonly empty = vi.fn(() => {
     this.textContent = "";
     this.children.length = 0;
   });
-  readonly createEl = vi.fn((tag: string, options: { text: string }) => {
+  readonly createEl = vi.fn((tag: string, options?: { text: string }) => {
     const child = new TextElement();
-    child.textContent = options.text;
+    child.tagName = tag;
+    child.textContent = options?.text ?? "";
     this.children.push(child);
-    return { tag, child };
+    return child;
   });
+  readonly addEventListener = vi.fn(
+    (event: string, listener: () => void): void => {
+      const listeners = this.listeners.get(event) ?? new Set<() => void>();
+      listeners.add(listener);
+      this.listeners.set(event, listeners);
+    },
+  );
+  readonly querySelectorAll = vi.fn(
+    (selector: string): readonly TextElement[] =>
+      this.children.filter((child) => child.tagName === selector),
+  );
+  /**
+   * Fires one registered host event unless the control is disabled.
+   * @param event - Exact registered event name to dispatch.
+   */
+  dispatch(event: string): void {
+    if (this.disabled) return;
+    for (const listener of this.listeners.get(event) ?? []) listener();
+  }
+  /** Models an explicit host button activation. */
+  click(): void {
+    this.dispatch("click");
+  }
 }
 
 /** Typed initial selection and notices, widened without casting host objects. */

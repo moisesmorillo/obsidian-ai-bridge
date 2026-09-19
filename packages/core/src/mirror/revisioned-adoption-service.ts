@@ -18,13 +18,14 @@ import {
   rejectReconciliationAction,
 } from "@core/mirror/reconciliation-action-result";
 import type { ReconciliationEffectExecutor } from "@core/mirror/reconciliation-effect-executor";
+import { isNonHistoryReconciliationOperation } from "@core/mirror/reconciliation-operation";
 import {
   RECONCILIATION_ACTION,
   RECONCILIATION_LOCAL_EVIDENCE_KIND,
   RECONCILIATION_REMOTE_EVIDENCE_KIND,
 } from "@core/mirror/reconciliation-state.constants";
 import type {
-  ReconciliationOperation,
+  ReconciliationNonHistoryOperation,
   ReconciliationPathEvidence,
   ReconciliationRemoteLiveEvidence,
 } from "@core/mirror/reconciliation-state.types";
@@ -45,6 +46,9 @@ export class RevisionedAdoptionService {
     const operation = this.effects.operation(request.operationId);
     if (operation === undefined)
       return rejectReconciliationAction(this.effects, "operation-not-found");
+    if (!isNonHistoryReconciliationOperation(operation)) {
+      return rejectReconciliationAction(this.effects, "wrong-action");
+    }
     if (operation.action.kind === RECONCILIATION_ACTION.adoptRevision) {
       return this.adopt(operation);
     }
@@ -60,7 +64,7 @@ export class RevisionedAdoptionService {
    * @returns Completed or finite attention result.
    */
   private async adopt(
-    operation: ReconciliationOperation,
+    operation: ReconciliationNonHistoryOperation,
   ): Promise<ReconciliationActionExecutionResult> {
     const target = targetEvidence(operation);
     if (target?.remote.kind !== RECONCILIATION_REMOTE_EVIDENCE_KIND.live) {
@@ -69,7 +73,7 @@ export class RevisionedAdoptionService {
     const remote = await this.effects.readExactRemote(target);
     if (typeof remote === "string")
       return rejectReconciliationAction(this.effects, "evidence-changed");
-    let localEffect: ReconciliationOperation["localEffect"] =
+    let localEffect: ReconciliationNonHistoryOperation["localEffect"] =
       MUTATION_EFFECT_CERTAINTY.notDispatched;
     if (target.local.kind === RECONCILIATION_LOCAL_EVIDENCE_KIND.absent) {
       const local = await this.effects.readExactLocal(target);
@@ -112,7 +116,7 @@ export class RevisionedAdoptionService {
    * @returns Completed or finite attention result.
    */
   private async forkLegacy(
-    operation: ReconciliationOperation,
+    operation: ReconciliationNonHistoryOperation,
   ): Promise<ReconciliationActionExecutionResult> {
     const target = targetEvidence(operation);
     const destination =
@@ -188,7 +192,7 @@ export class RevisionedAdoptionService {
 
 /** @returns Immutable target evidence. */
 function targetEvidence(
-  operation: ReconciliationOperation,
+  operation: ReconciliationNonHistoryOperation,
 ): ReconciliationPathEvidence | undefined {
   return operation.snapshot.paths.find(
     (evidence) => evidence.path === operation.snapshot.targetPath,
@@ -210,7 +214,7 @@ function sampledLiveAcknowledgement(
 
 /** @returns Absence-only format-2 create request for the distinct legacy fork path. */
 function createRequest(
-  operation: ReconciliationOperation,
+  operation: ReconciliationNonHistoryOperation,
   path: ReconciliationPathEvidence["path"],
   content: string,
 ): ConditionalMutationRequest {

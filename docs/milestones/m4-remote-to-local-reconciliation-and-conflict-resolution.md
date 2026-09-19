@@ -1,14 +1,12 @@
 # M4 — Reviewed remote-to-local reconciliation and conflict resolution
 
-**Status: NEXT — Slices 1–5 implemented; Slice 6 is NEXT; Slices 6–7 contracts are
-implementation-ready; no M4 user-facing behavior.** M3 is COMPLETE. The accepted
-design remains sequential. Slices 1–3 establish the version-3 state, read-only
-review/admission, narrow local mutation, and durable preservation seams. Slices 4–5
-add core-only reviewed action orchestration for live resolution, exact adoption,
-remote tombstones, and local-first recovery restore. Planning-only ADR 0009 closes the
-history/runtime contracts and requires device state v4 before Slice 6 execution.
-Slices 6–8 remain unimplemented. No review UI, deferred-history execution, runtime
-composition, timer, deployment, or personal-vault installation is active.
+**Status: NEXT — Slices 1–7 implemented; Slice 8 is NEXT.** M3 is COMPLETE. The
+accepted design remains sequential. Slices 1–5 establish reviewed state, admission,
+preservation, local mutation, and action orchestration. Slices 6–7 implement ADR
+0009's strict device-state-v4 transition, bounded parent-owned history cleanup,
+step-scoped preservation, shared M3/M4 scheduling, conservative local event fencing,
+and text-only runtime/session/command/modal/status composition. Slice 8 qualification
+remains unimplemented. No deployment or personal-vault installation is active.
 
 ## Objective
 
@@ -244,7 +242,7 @@ cleanup automation is outside M4.
 - Failed/colliding preservation stops the action. No mutation compensates by deleting
   another version.
 
-The state-v3 validator owns the complete pre-effect preservation matrix:
+The state-v4 validator owns the complete pre-effect preservation matrix:
 
 | Action | Evidence-derived required preservation before a material effect |
 | --- | --- |
@@ -366,7 +364,7 @@ it never repeats a create over a collision or assumes an interrupted host write 
 M4 reviews current evidence, not imagined history. `RenameHistoryGroupPolicy` derives
 the bounded transitive closure of durable M3 rename source/destination edges and
 samples every grouped path; callers cannot supply an authoritative path list. The UI
-selects one opaque evidence-derived candidate, while admission persists one closed
+selects one bounded current-discovery candidate path, while admission rederives the group and persists one closed
 `retain-independent`, `defer-history`, or `execute-cleanup-plan` decision.
 
 | History state | Permitted operator choices | Required preservation/safety |
@@ -657,10 +655,10 @@ The bounded test-first sequence is normative in the
 3. **Implemented:** narrow local mutation adapter and verified preservation;
 4. **Implemented:** revisioned adoption and live/live action orchestration;
 5. **Implemented:** remote tombstone resolution and local-first recovery restore;
-6. **NEXT:** device-state v4 compatibility fence plus bounded deferred rename/history resolution;
-7. shared-runtime/session/command/modal/status composition under ADR 0009;
-8. generated artifact, operational/security documentation, qualification, and final
-   semantic gates.
+6. **Implemented:** device-state v4 compatibility fence plus bounded deferred rename/history resolution;
+7. **Implemented:** shared-runtime/session/command/modal/status composition under ADR 0009;
+8. **NEXT:** generated artifact, operational/security documentation, qualification,
+   and final semantic gates.
 
 No slice exposes a user mutation before its preservation, stale validation, durable
 state, restart, and focused tests exist.
@@ -777,8 +775,30 @@ or remote effects remain finite durable evidence states, persistence failure fen
 later mutation, and terminal results expose no raw adapter detail. Focused core tests
 cover successful byte/revision outcomes, stale barriers, alternate-path collisions,
 conditional refusal, persistence failure, restart, expired/unavailable recovery, and
-lost-response receipt recovery. Worker, protocol, OpenAPI, plugin runtime, commands,
-modals, and timers are unchanged.
+lost-response receipt recovery. Worker, protocol, and OpenAPI remain unchanged.
+
+### Slices 6–7 implementation evidence
+
+Device state is now strict version 4. Startup accepts current v4 or performs the
+same-key, canonical-save, exact-read-back v2→v3→v4 transition. The frozen v3 decoder
+and deterministic projector retain non-empty M3/M4 evidence, make v3 aggregate history
+an explicit non-dispatchable blocker, and mark already-started unfenced local effects
+for operator attention rather than inventing decisions or callback causality.
+
+`RenameHistoryGroupPolicy` derives complete lexical connected components solely from
+durable deferred-rename edges. Refined history operations own ordered step UUIDs,
+step-scoped preservation paths/receipts, exact local-absence and destination/source
+revision predicates, conditional recovery-first tombstones, receipt recovery, and
+persisted cursors. No local delete/rename, guessed chain collapse, native object delete,
+or extra Worker route was added.
+
+One owner-scoped `FairMirrorScheduler` now serves M3 and M4. The reviewed runtime owns
+ephemeral sessions, startup orphan staling, bounded recovery selection, operation
+resume, and event-first M4 routing. Synthetic local-effect IDs/postconditions are
+persisted independently from conservative successor event ranges; no callback is
+claimed as causally own. Two text-only commands/modals render literal previews only
+after explicit action, clear transient bodies on close/detach, and consume sanitized
+status projections. Registration performs no network or mutation.
 
 ### State relationship matrix
 
@@ -788,7 +808,7 @@ modals, and timers are unchanged.
 | Active/paused + no unresolved M3 effect + disjoint valid sparse M4 metadata | Valid |
 | Any active M4 operation + reserved path with unresolved M3 mutation | Invalid; M3 effect wins |
 | Deferred rename + non-history active M4 operation | Invalid; deferred history wins |
-| Deferred rename + exact history action | Valid contract state; no Slice 1 effect capability |
+| Deferred rename + exact refined history action | Valid; only the persisted ordered remote-only step ledger may dispatch |
 | Overlapping active M4 reservations | Invalid |
 | Persisted restore intent or confirmed local effect + `restored-pending-review` | Active reservation fences M3 scheduling and handoff across restart |
 | Completed restore + no linked successor owner | Invalid |
@@ -799,9 +819,9 @@ modals, and timers are unchanged.
 
 ## Acceptance checklist
 
-Slices 1–5 establish the contract, migration, read-only evidence/admission, local
-primitives/preservation, and core-only live/tombstone/restore action execution. The
-end-to-end M4 acceptance items remain incomplete until Slices 6–8 are implemented.
+Slices 1–7 establish the contract, v4 migration, reviewed evidence/admission,
+local primitives/preservation, all reviewed actions including bounded history, and
+runtime/UI composition. Slice 8 qualification and final transition remain incomplete.
 
 - [x] **A1 — Authority and writer model:** Reviewed-only remote-to-local authority is
   typed end-to-end; one designated writer remains; no automatic import, last-writer-
@@ -827,16 +847,16 @@ end-to-end M4 acceptance items remain incomplete until Slices 6–8 are implemen
 - [x] **A7 — Recovery restore:** Exact prepared/unexpired selection, destination and
   collision checks, preservation, local-first write, restored-pending-review fence,
   stale evidence, restart, expired/purged negatives, and no GET-side mutation pass.
-- [ ] **A8 — Rename/history:** Deferred cleanup, duplicates, chains, overlaps, former-
+- [x] **A8 — Rename/history:** Deferred cleanup, duplicates, chains, overlaps, former-
   source remote edits, recreated sources, and later destination edits preserve all
   versions and require explicit current-state choices without pseudo-atomicity.
-- [ ] **A9 — Migration/restart:** Implemented strict v2→v3 history remains intact;
-  Slice 6 adds deterministic v3→v4 migration preserving non-empty M3/M4 state without
+- [x] **A9 — Migration/restart:** Strict v2→v3 history remains intact;
+  deterministic v3→v4 migration preserves non-empty M3/M4 state without
   inferred decisions/events, fail-closed exact read-back, old/future-version and
   runtime replacement fences, and exact reconciliation of every M4 partial phase to
   resume, completion, stale, unknown-effect, migration-attention, or blocked without
   body history.
-- [ ] **A10 — API, security, and UX:** Existing v2-only capability is proven sufficient;
+- [x] **A10 — API, security, and UX:** Existing v2-only capability is proven sufficient;
   OpenAPI/CORS remain synchronized and unchanged unless implementation evidence forces
   a successor decision. Text-only review, path/content validation, sanitized status,
   token/body/log negatives, and malicious Markdown tests pass.

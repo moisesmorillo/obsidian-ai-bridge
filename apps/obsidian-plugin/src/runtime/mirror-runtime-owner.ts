@@ -1,6 +1,9 @@
 import {
   activateIsolatedAssociation,
+  createMirrorOperationId,
+  FairMirrorScheduler,
   fenceMirrorRuntime,
+  type LocalReconciliationWriter,
   MIRROR_DEVICE_LIFECYCLE_KIND,
   MIRROR_GLOBAL_BLOCK_REASON,
   MIRROR_PATH_BLOCK_REASON,
@@ -17,7 +20,12 @@ import {
   pauseForHandoff,
   pauseMirrorWriter,
   prepareHandoffExport,
+  RECONCILIATION_EVENT_KIND,
+  RECONCILIATION_OPERATION_PHASE,
   type ReadOnlyLocalVault,
+  type ReconciliationAction,
+  type ReconciliationEventKind,
+  ReconciliationObservationGenerationOwner,
   resumeMirrorWriter,
 } from "@obsidian-ai-bridge/core";
 import type { MirrorPreferencesDecodeResult } from "@obsidian-plugin/configuration/mirror-preferences";
@@ -25,6 +33,12 @@ import {
   ObsidianSecretReferenceStore,
   type ObsidianSecretStorageHost,
 } from "@obsidian-plugin/configuration/obsidian-secret-store";
+import type {
+  ReconciliationCandidateList,
+  ReconciliationReviewDetail,
+  ReconciliationUiCommandResult,
+  RecoverySelectionList,
+} from "@obsidian-plugin/reconciliation/reconciliation-ui.types";
 import { FetchRemoteBridge } from "@obsidian-plugin/remote/fetch-remote-bridge";
 import type { RemoteFetch } from "@obsidian-plugin/remote/fetch-remote-bridge.types";
 import {
@@ -38,6 +52,7 @@ import {
 } from "@obsidian-plugin/runtime/mirror-observation-epoch";
 import { MirrorReconciliationCoordinator } from "@obsidian-plugin/runtime/mirror-reconciliation-coordinator";
 import { MirrorStagedHandoffVerifier } from "@obsidian-plugin/runtime/mirror-staged-handoff-verifier";
+import { ReconciliationRuntimeOwner } from "@obsidian-plugin/runtime/reconciliation-runtime-owner";
 import {
   createHandoffRecord,
   encodeHandoffRecord,
@@ -54,12 +69,13 @@ export type {
 } from "@obsidian-plugin/runtime/mirror-observation-epoch";
 
 /** Version of the same-realm runtime-owner structural contract. */
-export const MIRROR_RUNTIME_OWNER_VERSION = 3;
+export const MIRROR_RUNTIME_OWNER_VERSION = 4;
 
 /** Construction dependencies retained behind plugin adapter boundaries. */
 export interface MirrorRuntimeOwnerDependencies {
   readonly stateOwner: MirrorStateOwner;
   readonly local: ReadOnlyLocalVault;
+  readonly localWriter?: LocalReconciliationWriter;
   readonly secretStorage: ObsidianSecretStorageHost;
   readonly runtime: MirrorSynchronizerRuntime;
   readonly fetch?: RemoteFetch | null;
@@ -98,6 +114,10 @@ export class MirrorRuntimeOwner {
   private readonly admission = new MirrorConnectionAdmissionCoordinator();
   private readonly epochs = new MirrorObservationEpochCoordinator();
   private readonly reconciliation = new MirrorReconciliationCoordinator();
+  private readonly scheduler = new FairMirrorScheduler();
+  private readonly observations =
+    new ReconciliationObservationGenerationOwner();
+  private reviewed: ReconciliationRuntimeOwner | null = null;
   private readonly outcomes = new Map<NotePath, MirrorPathJobOutcome>();
   private readonly handoff: MirrorStagedHandoffVerifier;
   private activeOwnerOperations = 0;
@@ -138,6 +158,10 @@ export class MirrorRuntimeOwner {
    */
   detach(sessionId: string): void {
     if (!this.epochs.detach(sessionId)) return;
+    const parsedSessionId = createMirrorOperationId(sessionId);
+    if (parsedSessionId !== undefined) {
+      this.reviewed?.invalidateSession(parsedSessionId);
+    }
     this.admission.gate.disable();
   }
 
@@ -208,7 +232,12 @@ export class MirrorRuntimeOwner {
    * Routes a create/modify event to staged invalidation or ordinary core policy.
    * @param path - Immutable eligible saved path from the host event.
    */
-  async observePresent(path: NotePath): Promise<void> {
+  async observePresent(
+    path: NotePath,
+    eventKind: ReconciliationEventKind = RECONCILIATION_EVENT_KIND.modify,
+  ): Promise<void> {
+    const generation = this.observations.observe(path);
+    if (await this.reviewed?.observeEvent(path, eventKind, generation)) return;
     if (await this.handoff.observePresent(path)) return;
     const synchronizer = this.admission.currentConnection()?.synchronizer;
     if (synchronizer === undefined) return;
@@ -220,6 +249,16 @@ export class MirrorRuntimeOwner {
    * @param path - Immutable eligible deleted path from the host event.
    */
   async observeDelete(path: NotePath): Promise<void> {
+    const generation = this.observations.observe(path);
+    if (
+      await this.reviewed?.observeEvent(
+        path,
+        RECONCILIATION_EVENT_KIND.delete,
+        generation,
+      )
+    ) {
+      return;
+    }
     if (await this.handoff.observeDelete(path)) return;
     const synchronizer = this.admission.currentConnection()?.synchronizer;
     if (synchronizer === undefined) return;
@@ -235,6 +274,21 @@ export class MirrorRuntimeOwner {
     sourcePath: NotePath,
     destinationPath: NotePath | null,
   ): Promise<void> {
+    const sourceGeneration = this.observations.observe(sourcePath);
+    const sourceReserved = await this.reviewed?.observeEvent(
+      sourcePath,
+      RECONCILIATION_EVENT_KIND.rename,
+      sourceGeneration,
+    );
+    const destinationReserved =
+      destinationPath === null
+        ? false
+        : await this.reviewed?.observeEvent(
+            destinationPath,
+            RECONCILIATION_EVENT_KIND.rename,
+            this.observations.observe(destinationPath),
+          );
+    if (sourceReserved || destinationReserved) return;
     if (await this.handoff.observeRename(sourcePath, destinationPath)) return;
     const synchronizer = this.admission.currentConnection()?.synchronizer;
     if (synchronizer === undefined) return;
@@ -257,6 +311,7 @@ export class MirrorRuntimeOwner {
     oldFolder: string,
     newFolder: string | null,
   ): Promise<MirrorFolderRenameResult | null> {
+    await this.observeReservedFolderRename(oldFolder, newFolder);
     if (await this.handoff.observeFolderRename(oldFolder, newFolder)) {
       return { planned: 0, deferred: 0, knownDescendants: 0 };
     }
@@ -265,6 +320,44 @@ export class MirrorRuntimeOwner {
     return this.runOwnerOperation(() =>
       synchronizer.observeFolderRename(oldFolder, newFolder),
     );
+  }
+
+  /**
+   * Records a folder callback as successor evidence for every reserved descendant.
+   * @param oldFolder - Literal pre-event folder prefix.
+   * @param newFolder - Eligible destination prefix or null after scope exit.
+   */
+  private async observeReservedFolderRename(
+    oldFolder: string,
+    newFolder: string | null,
+  ): Promise<void> {
+    if (this.reviewed === null || oldFolder.length === 0) return;
+    const affectedPrefixes = [
+      `${oldFolder}/`,
+      ...(newFolder === null ? [] : [`${newFolder}/`]),
+    ];
+    const reservedPaths = new Set(
+      this.stateOwner
+        .snapshot()
+        .state.reconciliationOperations.filter(
+          (operation) =>
+            operation.phase !== RECONCILIATION_OPERATION_PHASE.completed &&
+            operation.phase !== RECONCILIATION_OPERATION_PHASE.stale,
+        )
+        .flatMap((operation) =>
+          operation.reservations.map((reservation) => reservation.path),
+        )
+        .filter((path) =>
+          affectedPrefixes.some((prefix) => path.startsWith(prefix)),
+        ),
+    );
+    for (const path of reservedPaths) {
+      await this.reviewed.observeEvent(
+        path,
+        RECONCILIATION_EVENT_KIND.rename,
+        this.observations.observe(path),
+      );
+    }
   }
 
   /** @returns Earliest wake only while the current observation epoch is ready. */
@@ -577,6 +670,111 @@ export class MirrorRuntimeOwner {
     return { kind: "completed" };
   }
 
+  /**
+   * Lists current M4 candidates only for the attached layout-ready session.
+   * @param sessionId - Current plugin enable-lifetime UUID.
+   * @returns Sanitized bounded candidate projection.
+   */
+  async listReconciliationCandidates(
+    sessionId: string,
+  ): Promise<ReconciliationCandidateList> {
+    if (!this.reconciliationReady(sessionId)) return { kind: "unavailable" };
+    return this.reviewed?.listCandidates() ?? { kind: "unavailable" };
+  }
+
+  /**
+   * Creates one content-free M4 detail for the current session.
+   * @param sessionId - Current plugin enable-lifetime UUID.
+   * @param path - Candidate path selected by the operator.
+   * @param recoveryId - Optional exact recovery identity.
+   * @param destinationPath - Optional untrusted destination literal sampled after normalization.
+   * @returns Sanitized detail or null when stale/unavailable.
+   */
+  createReconciliationReview(
+    sessionId: string,
+    path: NotePath,
+    recoveryId:
+      | import("@obsidian-ai-bridge/core").RecoverySnapshotId
+      | null = null,
+    destinationPath: string | null = null,
+  ): Promise<ReconciliationReviewDetail | null> {
+    const parsed = createMirrorOperationId(sessionId);
+    if (!this.reconciliationReady(sessionId) || parsed === undefined) {
+      return Promise.resolve(null);
+    }
+    return (
+      this.reviewed?.createReview(parsed, path, recoveryId, destinationPath) ??
+      Promise.resolve(null)
+    );
+  }
+
+  /**
+   * Lists bounded recovery metadata for explicit operator selection.
+   * @param sessionId - Current plugin enable-lifetime UUID.
+   * @returns Sanitized recovery rows, or an empty list when unavailable.
+   */
+  listRecoverySelections(sessionId: string): Promise<RecoverySelectionList> {
+    return this.reconciliationReady(sessionId)
+      ? (this.reviewed?.listRecoveries() ??
+          Promise.resolve({ kind: "unavailable" }))
+      : Promise.resolve({ kind: "unavailable" });
+  }
+
+  /**
+   * Returns one explicitly requested literal preview for a current review.
+   * @param sessionId - Current plugin enable-lifetime UUID.
+   * @param reviewId - Pending review identity.
+   * @param side - Selected local or remote sample.
+   * @returns Bounded inert text or null.
+   */
+  reconciliationPreview(
+    sessionId: string,
+    reviewId: import("@obsidian-ai-bridge/core").MirrorOperationId,
+    side: "local" | "remote",
+  ): string | null {
+    const parsed = createMirrorOperationId(sessionId);
+    return parsed === undefined
+      ? null
+      : (this.reviewed?.preview(parsed, reviewId, side) ?? null);
+  }
+
+  /**
+   * Closes one pending review and discards transient samples.
+   * @param sessionId - Current plugin enable-lifetime UUID.
+   * @param reviewId - Pending review identity.
+   */
+  closeReconciliationReview(
+    sessionId: string,
+    reviewId: import("@obsidian-ai-bridge/core").MirrorOperationId,
+  ): void {
+    const parsed = createMirrorOperationId(sessionId);
+    if (parsed !== undefined) this.reviewed?.closeReview(parsed, reviewId);
+  }
+
+  /**
+   * Submits one exact M4 decision from the current presentation session.
+   * @param sessionId - Current plugin enable-lifetime UUID.
+   * @param reviewId - Ephemeral review identity.
+   * @param action - Closed typed operator action.
+   * @param destinationPath - Optional literal destination.
+   * @returns Sanitized command result.
+   */
+  submitReconciliation(
+    sessionId: string,
+    reviewId: import("@obsidian-ai-bridge/core").MirrorOperationId,
+    action: ReconciliationAction,
+    destinationPath?: NotePath | null,
+  ): Promise<ReconciliationUiCommandResult> {
+    const parsed = createMirrorOperationId(sessionId);
+    if (!this.reconciliationReady(sessionId) || parsed === undefined) {
+      return Promise.resolve({ kind: "unavailable" });
+    }
+    return (
+      this.reviewed?.submit(parsed, reviewId, action, destinationPath) ??
+      Promise.resolve({ kind: "unavailable" })
+    );
+  }
+
   /** @returns Current sanitized status projection for UI and commands. */
   status(): MirrorOperationalStatus {
     const connection = this.admission.currentConnection();
@@ -586,6 +784,20 @@ export class MirrorRuntimeOwner {
       connection?.synchronizer.currentPhase() ?? null,
       this.outcomes,
       this.admission.currentServerIdentity(),
+    );
+  }
+
+  /**
+   * @param sessionId - Exact attached plugin session identity.
+   * @returns Whether the session may query or submit M4 reviewed work.
+   */
+  private reconciliationReady(sessionId: string): boolean {
+    return (
+      this.epochs.isAttached(sessionId) &&
+      this.epochs.isLayoutReady() &&
+      this.reviewed !== null &&
+      this.admission.currentServerIdentity().kind === "matched" &&
+      this.stateOwner.snapshot().mutationAdmissionAllowed
     );
   }
 
@@ -665,6 +877,8 @@ export class MirrorRuntimeOwner {
 
   /** Retires connection identity and bootstrap completion while preserving old in-flight settlement and pausing active state. */
   private async retireConnectionForConfigurationChange(): Promise<void> {
+    this.reviewed?.detach();
+    this.reviewed = null;
     this.admission.retireConnection();
     this.reconciliation.invalidate();
     await this.pauseForConfigurationChange();
@@ -733,8 +947,47 @@ export class MirrorRuntimeOwner {
       remote,
       this.stateOwner,
       this.dependencies.runtime,
+      this.scheduler,
     );
+    this.reviewed?.detach();
+    this.reviewed =
+      this.dependencies.localWriter === undefined
+        ? null
+        : new ReconciliationRuntimeOwner({
+            local: this.dependencies.local,
+            localWriter: this.dependencies.localWriter,
+            remote,
+            stateOwner: this.stateOwner,
+            runtime: this.dependencies.runtime,
+            observations: this.observations,
+            scheduler: this.scheduler,
+            cryptography: this.dependencies.cryptography ?? globalThis.crypto,
+            currentIdentity: () => this.reconciliationIdentity(generation),
+          });
     this.admission.publishConnection(remote, synchronizer);
+    this.reviewed?.resumePersisted();
+  }
+
+  /**
+   * @param configurationGeneration - Exact active connection generation.
+   * @returns Current identity used to stale every sampled M4 decision dimension.
+   */
+  private reconciliationIdentity(
+    configurationGeneration: number,
+  ): import("@obsidian-ai-bridge/core").ReconciliationRuntimeIdentity {
+    const state = this.stateOwner.snapshot().state;
+    const server = this.admission.currentServerIdentity();
+    return {
+      runtimeOwnerVersion: MIRROR_RUNTIME_OWNER_VERSION,
+      configurationGeneration,
+      listenerEpoch: this.epochs.readyEpoch() ?? 0,
+      deviceId: state.deviceId,
+      designatedWriterId:
+        server.kind === "matched" || server.kind === "mismatch"
+          ? server.designatedWriterId
+          : state.deviceId,
+      lifecycle: state.lifecycle,
+    };
   }
 
   /** @returns Existing durable association binding, or null before activation. */

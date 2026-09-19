@@ -192,6 +192,7 @@ export class ObsidianLocalReconciliationWriter<
     const path = createReconciliationPreservationPath(
       request.operationId,
       request.side,
+      request.stepId,
     );
     if (path === undefined || !this.preservationRootIsSafe(path)) {
       return refused(LOCAL_RECONCILIATION_REFUSAL.unsafePreservationRoot);
@@ -209,9 +210,19 @@ export class ObsidianLocalReconciliationWriter<
     if (root !== null) return root;
     const operation = await this.ensurePreservationFolder(
       operationFolder,
-      request.mode === LOCAL_RECONCILIATION_DISPATCH_MODE.sameOperationRecovery,
+      request.stepId !== undefined ||
+        request.mode ===
+          LOCAL_RECONCILIATION_DISPATCH_MODE.sameOperationRecovery,
     );
     if (operation !== null) return operation;
+    if (request.stepId !== undefined) {
+      const step = await this.ensurePreservationFolder(
+        `${operationFolder}/${request.stepId}`,
+        request.mode ===
+          LOCAL_RECONCILIATION_DISPATCH_MODE.sameOperationRecovery,
+      );
+      if (step !== null) return step;
+    }
 
     let existing: ObsidianReconciliationNode<File> | null;
     try {

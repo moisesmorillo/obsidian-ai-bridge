@@ -12,16 +12,25 @@ import type { ContentSha256 } from "@core/mirror/mirror.types";
 import type { MirrorDeviceState } from "@core/mirror/mirror-state.types";
 import type { MirrorStateOwner } from "@core/mirror/mirror-state-owner";
 import { isDurableMutationAdmissionAllowed } from "@core/mirror/mirror-state-policy";
+import {
+  isHistoryReconciliationOperation,
+  isRefinedHistoryReconciliationOperation,
+} from "@core/mirror/reconciliation-operation";
 import { createReconciliationPreservationPath } from "@core/mirror/reconciliation-preservation-path";
 import {
   type RequiredReconciliationPreservation,
   requiredReconciliationPreservations,
 } from "@core/mirror/reconciliation-preservation-policy";
 import {
+  HISTORY_CLEANUP_STEP_PHASE,
+  HISTORY_PROGRESS_KIND,
   RECONCILIATION_OPERATION_PHASE,
   RECONCILIATION_PRESERVATION_PROOF_STATE,
+  RECONCILIATION_PRESERVATION_SCOPE,
 } from "@core/mirror/reconciliation-state.constants";
 import type {
+  HistoryStepPreservationReceipt,
+  ReconciliationHistoryOperation,
   ReconciliationOperation,
   ReconciliationPreservationReceipt,
 } from "@core/mirror/reconciliation-state.types";
@@ -84,6 +93,7 @@ export class ConflictPreservationService {
     if (prepared.kind !== "prepared") return prepared;
     const result = await this.writer.createPreservation({
       operationId: request.operationId,
+      ...(request.stepId === undefined ? {} : { stepId: request.stepId }),
       side: request.side,
       content: request.content,
       contentSha256: authorization.requirement.contentSha256,
@@ -165,7 +175,8 @@ export class ConflictPreservationService {
     if (!isActive(operation)) return rejection("operation-not-active");
     const requirements = requiredReconciliationPreservations(operation);
     const requirement = requirements?.find(
-      (candidate) => candidate.side === request.side,
+      (candidate) =>
+        candidate.side === request.side && candidate.stepId === request.stepId,
     );
     if (requirement === undefined)
       return rejection("preservation-not-required");
@@ -188,13 +199,31 @@ export class ConflictPreservationService {
     const path = createReconciliationPreservationPath(
       operation.operationId,
       requirement.side,
+      requirement.stepId,
     );
     /* c8 ignore next -- valid persisted operation IDs and closed sides always generate a path. */
     if (path === undefined) return rejection("source-evidence-mismatch");
     const existing = operation.preservationReceipts.find(
-      (receipt) => receipt.side === requirement.side,
+      (receipt) =>
+        receipt.side === requirement.side &&
+        (requirement.stepId === undefined
+          ? receipt.scope === RECONCILIATION_PRESERVATION_SCOPE.operation
+          : receipt.scope === RECONCILIATION_PRESERVATION_SCOPE.historyStep &&
+            receipt.stepId === requirement.stepId),
     );
-    if (operation.phase === RECONCILIATION_OPERATION_PHASE.admitted) {
+    const historyStep =
+      isHistoryReconciliationOperation(operation) &&
+      operation.historyProgress.kind === HISTORY_PROGRESS_KIND.refined &&
+      requirement.stepId !== undefined
+        ? operation.historyProgress.steps.find(
+            (step) => step.stepId === requirement.stepId,
+          )
+        : undefined;
+    const mayFirstDispatch =
+      historyStep === undefined
+        ? operation.phase === RECONCILIATION_OPERATION_PHASE.admitted
+        : historyStep.phase === HISTORY_CLEANUP_STEP_PHASE.pending;
+    if (mayFirstDispatch) {
       if (existing !== undefined) return rejection("wrong-phase");
       return {
         kind: "authorized",
@@ -203,9 +232,14 @@ export class ConflictPreservationService {
         receipt: pendingReceipt(operation, requirement, path),
       };
     }
+    const mayRecover =
+      historyStep === undefined
+        ? operation.phase === RECONCILIATION_OPERATION_PHASE.preserving ||
+          operation.phase === RECONCILIATION_OPERATION_PHASE.evidenceRequired
+        : historyStep.phase === HISTORY_CLEANUP_STEP_PHASE.preserving ||
+          historyStep.phase === HISTORY_CLEANUP_STEP_PHASE.evidenceRequired;
     if (
-      (operation.phase === RECONCILIATION_OPERATION_PHASE.preserving ||
-        operation.phase === RECONCILIATION_OPERATION_PHASE.evidenceRequired) &&
+      mayRecover &&
       existing !== undefined &&
       receiptMatches(existing, requirement, path) &&
       existing.proofState !==
@@ -282,18 +316,75 @@ export class ConflictPreservationService {
         return undefined;
       }
       const otherReceipts = operation.preservationReceipts.filter(
-        (candidate) => candidate.side !== receipt.side,
+        (candidate) =>
+          candidate.side !== receipt.side ||
+          candidate.scope !== receipt.scope ||
+          (candidate.scope === RECONCILIATION_PRESERVATION_SCOPE.historyStep &&
+            receipt.scope === RECONCILIATION_PRESERVATION_SCOPE.historyStep &&
+            candidate.stepId !== receipt.stepId),
       );
-      const nextOperation: ReconciliationOperation = {
-        ...operation,
-        phase,
-        preservationReceipts: [...otherReceipts, receipt],
-        localEffect: MUTATION_EFFECT_CERTAINTY.notDispatched,
-        remoteEffect: MUTATION_EFFECT_CERTAINTY.notDispatched,
-      };
+      const nextOperation: ReconciliationOperation =
+        isRefinedHistoryReconciliationOperation(operation) &&
+        receipt.scope === RECONCILIATION_PRESERVATION_SCOPE.historyStep
+          ? updateHistoryPreservation(operation, receipt, [
+              ...otherReceipts,
+              receipt,
+            ])
+          : !isHistoryReconciliationOperation(operation)
+            ? {
+                ...operation,
+                phase,
+                preservationReceipts: [...otherReceipts, receipt],
+                localEffect: MUTATION_EFFECT_CERTAINTY.notDispatched,
+                remoteEffect: MUTATION_EFFECT_CERTAINTY.notDispatched,
+              }
+            : operation;
       return replaceOperation(state, nextOperation);
     });
   }
+}
+
+/**
+ * Advances one history step's preservation phase while leaving every other step intact.
+ *
+ * @param operation - Refined parent operation.
+ * @param receipt - Exact step-scoped receipt being persisted.
+ * @param receipts - Complete deduplicated parent receipt set.
+ * @returns Updated parent and step lifecycle.
+ */
+function updateHistoryPreservation(
+  operation: ReconciliationHistoryOperation,
+  receipt: HistoryStepPreservationReceipt,
+  receipts: readonly ReconciliationPreservationReceipt[],
+): ReconciliationHistoryOperation {
+  const stepPhase =
+    receipt.proofState === RECONCILIATION_PRESERVATION_PROOF_STATE.pending
+      ? HISTORY_CLEANUP_STEP_PHASE.preserving
+      : receipt.proofState === RECONCILIATION_PRESERVATION_PROOF_STATE.verified
+        ? HISTORY_CLEANUP_STEP_PHASE.ready
+        : receipt.proofState ===
+            RECONCILIATION_PRESERVATION_PROOF_STATE.evidenceRequired
+          ? HISTORY_CLEANUP_STEP_PHASE.evidenceRequired
+          : HISTORY_CLEANUP_STEP_PHASE.blocked;
+  const parentPhase =
+    stepPhase === HISTORY_CLEANUP_STEP_PHASE.preserving
+      ? RECONCILIATION_OPERATION_PHASE.preserving
+      : stepPhase === HISTORY_CLEANUP_STEP_PHASE.evidenceRequired
+        ? RECONCILIATION_OPERATION_PHASE.evidenceRequired
+        : stepPhase === HISTORY_CLEANUP_STEP_PHASE.blocked
+          ? RECONCILIATION_OPERATION_PHASE.blocked
+          : RECONCILIATION_OPERATION_PHASE.partial;
+  return {
+    ...operation,
+    phase: parentPhase,
+    preservationReceipts: receipts,
+    historyProgress: {
+      ...operation.historyProgress,
+      steps: operation.historyProgress.steps.map((step) =>
+        step.stepId === receipt.stepId ? { ...step, phase: stepPhase } : step,
+      ),
+    },
+  };
 }
 
 /** Successful internal preservation authorization. */
@@ -356,6 +447,12 @@ function pendingReceipt(
 ): ReconciliationPreservationReceipt {
   return {
     operationId: operation.operationId,
+    ...(requirement.stepId === undefined
+      ? { scope: RECONCILIATION_PRESERVATION_SCOPE.operation }
+      : {
+          scope: RECONCILIATION_PRESERVATION_SCOPE.historyStep,
+          stepId: requirement.stepId,
+        }),
     originalPath: requirement.originalPath,
     side: requirement.side,
     sourceRevision: requirement.sourceRevision,
@@ -377,6 +474,10 @@ function receiptMatches(
   preservationPath: ReconciliationPreservationReceipt["preservationPath"],
 ): boolean {
   return (
+    (requirement.stepId === undefined
+      ? receipt.scope === RECONCILIATION_PRESERVATION_SCOPE.operation
+      : receipt.scope === RECONCILIATION_PRESERVATION_SCOPE.historyStep &&
+        receipt.stepId === requirement.stepId) &&
     receipt.originalPath === requirement.originalPath &&
     receipt.side === requirement.side &&
     receipt.sourceRevision === requirement.sourceRevision &&

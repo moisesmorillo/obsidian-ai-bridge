@@ -7,6 +7,7 @@ import {
   createMirrorAssociationId,
   createMirrorOperationId,
   createMirrorWriterId,
+  LOCAL_EFFECT_OBSERVATION_KIND,
   LocalInspectionKind,
   type LocalListResult,
   type LocalReadResult,
@@ -1483,6 +1484,7 @@ function stateWithRestoreFence(): MirrorDeviceState {
         ],
         preservationReceipts: [
           {
+            scope: "operation",
             operationId: OPERATION_A,
             originalPath: PATH_A,
             side: RECONCILIATION_PRESERVATION_SIDE.local,
@@ -1493,6 +1495,16 @@ function stateWithRestoreFence(): MirrorDeviceState {
           },
         ],
         successorOperationId: null,
+        localEffectObservation: {
+          kind: LOCAL_EFFECT_OBSERVATION_KIND.confirmed,
+          effectId: OPERATION_C,
+          path: PATH_A,
+          expectedHash: HASH_A,
+          listenerEpoch: 1,
+          beforeGeneration: 0,
+          postconditionHash: HASH_A,
+          successor: null,
+        },
         localEffect: MUTATION_EFFECT_CERTAINTY.confirmed,
         remoteEffect: MUTATION_EFFECT_CERTAINTY.notDispatched,
       },

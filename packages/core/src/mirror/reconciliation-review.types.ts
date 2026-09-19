@@ -1,3 +1,4 @@
+import type { RecoverySnapshotState } from "@core/mirror/mirror.types";
 import type {
   MirrorDeviceState,
   MirrorStateSnapshot,
@@ -121,6 +122,17 @@ export type ReconciliationAdmissionResult =
 /** Action kind exposed to future UI without embedding presentation policy. */
 export type ReconciliationAllowedAction = ReconciliationAction["kind"];
 
+/** Bounded content-free recovery selection result for one explicit UI query. */
+export type ReconciliationRecoverySelectionResult =
+  | {
+      readonly kind: "complete";
+      readonly recoveries: readonly RecoverySnapshotState[];
+    }
+  | {
+      readonly kind: "incomplete";
+      readonly recoveries: readonly RecoverySnapshotState[];
+    };
+
 /** Read-only candidate and ephemeral-review query surface. */
 export interface ReconciliationReviewQuery {
   /** @returns Current bounded candidate union and ephemeral reviews. */
@@ -129,6 +141,8 @@ export interface ReconciliationReviewQuery {
   listOpen(
     sessionId: import("@core/mirror/mirror.types").MirrorOperationId,
   ): readonly EphemeralReconciliationReview[];
+  /** @returns Bounded content-free recovery metadata; incomplete results grant no restore authority. */
+  listRecoverySelections(): Promise<ReconciliationRecoverySelectionResult>;
 }
 
 /** Snapshot input used by the pure classifier and action table. */

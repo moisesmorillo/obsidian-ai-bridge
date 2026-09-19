@@ -2,6 +2,8 @@ import {
   isMirrorDeviceStateConsistent,
   type MirrorDeviceState,
   type MirrorDeviceStateV2,
+  type MirrorDeviceStateV3,
+  projectMirrorDeviceStateV3ToV4,
 } from "@obsidian-ai-bridge/core";
 
 /**
@@ -16,8 +18,8 @@ import {
  */
 export function migrateMirrorDeviceStateV2ToV3(
   state: MirrorDeviceStateV2,
-): MirrorDeviceState {
-  const migrated: MirrorDeviceState = {
+): MirrorDeviceStateV3 {
+  const migrated: MirrorDeviceStateV3 = {
     deviceId: state.deviceId,
     lifecycle: state.lifecycle,
     globalBlockReason: state.globalBlockReason,
@@ -26,9 +28,33 @@ export function migrateMirrorDeviceStateV2ToV3(
     reconciliationReviews: [],
     reconciliationOperations: [],
   };
-  if (!isMirrorDeviceStateConsistent(migrated)) {
+  if (
+    !isMirrorDeviceStateConsistent(projectMirrorDeviceStateV3ToV4(migrated))
+  ) {
     throw new Error(
       "Migrated mirror device state violates version-3 invariants.",
+    );
+  }
+  return migrated;
+}
+
+/**
+ * Projects one strict non-empty version-3 state into the version-4 compatibility surface.
+ *
+ * History and started local effects become explicit attention states; no decision,
+ * cleanup step, event origin, or newer evidence is inferred.
+ *
+ * @param state - Strictly decoded frozen version-3 state.
+ * @returns Fully validated version-4 state.
+ * @throws When the projection violates the current v4 invariant contract.
+ */
+export function migrateMirrorDeviceStateV3ToV4(
+  state: MirrorDeviceStateV3,
+): MirrorDeviceState {
+  const migrated = projectMirrorDeviceStateV3ToV4(state);
+  if (!isMirrorDeviceStateConsistent(migrated)) {
+    throw new Error(
+      "Migrated mirror device state violates version-4 invariants.",
     );
   }
   return migrated;

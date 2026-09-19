@@ -18,6 +18,7 @@ import {
   rejectReconciliationAction,
 } from "@core/mirror/reconciliation-action-result";
 import type { ReconciliationEffectExecutor } from "@core/mirror/reconciliation-effect-executor";
+import { isNonHistoryReconciliationOperation } from "@core/mirror/reconciliation-operation";
 import {
   RECONCILIATION_ACTION,
   RECONCILIATION_LOCAL_EVIDENCE_KIND,
@@ -26,7 +27,7 @@ import {
 } from "@core/mirror/reconciliation-state.constants";
 import type {
   KeepBothReconciliationAction,
-  ReconciliationOperation,
+  ReconciliationNonHistoryOperation,
   ReconciliationPathEvidence,
   ReconciliationRemoteLiveEvidence,
 } from "@core/mirror/reconciliation-state.types";
@@ -52,6 +53,9 @@ export class LiveResolutionService {
     const operation = this.effects.operation(request.operationId);
     if (operation === undefined)
       return rejectReconciliationAction(this.effects, "operation-not-found");
+    if (!isNonHistoryReconciliationOperation(operation)) {
+      return rejectReconciliationAction(this.effects, "wrong-action");
+    }
     switch (operation.action.kind) {
       case RECONCILIATION_ACTION.keepLocal:
         return this.keepLocal(operation);
@@ -70,7 +74,7 @@ export class LiveResolutionService {
    * @returns Completed or finite attention result.
    */
   private async keepLocal(
-    operation: ReconciliationOperation,
+    operation: ReconciliationNonHistoryOperation,
   ): Promise<ReconciliationActionExecutionResult> {
     const target = targetEvidence(operation);
     if (
@@ -130,7 +134,7 @@ export class LiveResolutionService {
    * @returns Completed or finite attention result.
    */
   private async useRemote(
-    operation: ReconciliationOperation,
+    operation: ReconciliationNonHistoryOperation,
   ): Promise<ReconciliationActionExecutionResult> {
     const target = targetEvidence(operation);
     if (target?.remote.kind !== RECONCILIATION_REMOTE_EVIDENCE_KIND.live) {
@@ -194,7 +198,7 @@ export class LiveResolutionService {
    * @returns Completed or finite attention result.
    */
   private async keepBoth(
-    operation: ReconciliationOperation,
+    operation: ReconciliationNonHistoryOperation,
     action: KeepBothReconciliationAction,
   ): Promise<ReconciliationActionExecutionResult> {
     const target = targetEvidence(operation);
@@ -368,7 +372,7 @@ export class LiveResolutionService {
 
 /** @returns Immutable target evidence. */
 function targetEvidence(
-  operation: ReconciliationOperation,
+  operation: ReconciliationNonHistoryOperation,
 ): ReconciliationPathEvidence | undefined {
   return operation.snapshot.paths.find(
     (evidence) => evidence.path === operation.snapshot.targetPath,
@@ -377,7 +381,7 @@ function targetEvidence(
 
 /** @returns Conditional update request bound to sampled live revision and operation identity. */
 function updateRequest(
-  operation: ReconciliationOperation,
+  operation: ReconciliationNonHistoryOperation,
   remote: ReconciliationRemoteLiveEvidence,
   content: string,
 ): ConditionalMutationRequest {
@@ -397,7 +401,7 @@ function updateRequest(
 
 /** @returns Absence-only create request for an admitted new destination. */
 function createRequest(
-  operation: ReconciliationOperation,
+  operation: ReconciliationNonHistoryOperation,
   path: ReconciliationPathEvidence["path"],
   content: string,
 ): ConditionalMutationRequest {

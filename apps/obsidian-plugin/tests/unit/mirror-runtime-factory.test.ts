@@ -82,7 +82,7 @@ describe("createMirrorRuntimeOwner", () => {
     );
   });
 
-  it("does not publish an owner or access the vault/network before migrated v3 read-back", async () => {
+  it("does not publish an owner or access the vault/network before migrated v4 read-back", async () => {
     const app = new App();
     const deviceId = createMirrorWriterId(
       "11111111-1111-4111-8111-111111111111",

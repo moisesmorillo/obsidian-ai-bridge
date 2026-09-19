@@ -1,19 +1,15 @@
 # M4 implementation plan — reviewed reconciliation and conflict resolution
 
-**Status: M4 Slices 1–5 implemented; Slice 6 is NEXT; Slices 6–7 contracts are
-implementation-ready; Slice 8 remains planned.** M4 remains the single `NEXT`
-milestone. Slice 1 adds contracts and the version-3 state/migration fence, Slice 2 adds
-the core-only read-only review/admission seam, and Slice 3 adds uncomposed narrow
-local-effect and durable preservation primitives. Slices 4–5 add uncomposed action
-execution. The planning-only contract refinement in
-[ADR 0009](../decisions/0009-m4-history-runtime-and-device-state-v4.md) requires
-version 4 before Slice 6 history execution and closes the Slice 7 runtime contracts.
-No Slice 6/7 user behavior is implemented. Do not deploy or install into a personal
-vault as validation.
+**Status: M4 Slices 1–7 implemented; Slice 8 is NEXT.** M4 remains the single
+`NEXT` milestone. Slices 1–5 establish contracts, reviewed admission, preservation,
+local effects, and live/adoption/tombstone/restore execution. Slices 6–7 implement
+[ADR 0009](../decisions/0009-m4-history-runtime-and-device-state-v4.md) as one strict
+version-4 compatibility transition: bounded history execution plus shared runtime,
+session, command, modal, and status composition. Do not deploy or install into a
+personal vault as validation; Slice 8 owns qualification.
 
 [Specification](../milestones/m4-remote-to-local-reconciliation-and-conflict-resolution.md)
-and [ADRs 0005–0009](../decisions/README.md) are normative once ADR 0009 is accepted
-through its planning PR. Preserve every completed
+and [ADRs 0005–0009](../decisions/README.md) are normative. Preserve every completed
 M3 invariant and its current executable contracts. The eight slices follow dependency
 and safe-exposure boundaries—state, read policy, local effects, live resolution,
 tombstone/restore, history, host composition, and qualification—not an arbitrary
@@ -320,7 +316,7 @@ operations, or multi-key atomic claims.
    implementation PR. Migrated active v3 history and unfenced local effects remain
    conservative blockers; no decision/event evidence is inferred.
 2. Add `RenameHistoryGroupPolicy` as the sole durable-edge closure owner. It derives
-   the bounded lexical group and opaque operator candidates; UI/caller path sets never
+   the bounded lexical group and validated current-discovery candidates; UI/caller path sets never
    define authority.
 3. Admit one closed retain/defer/execute-cleanup decision into one parent operation
    that atomically reserves the complete group and owns a bounded ordered step ledger.

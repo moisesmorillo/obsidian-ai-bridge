@@ -60,9 +60,68 @@ export const RECONCILIATION_OPERATION_PHASE = {
   evidenceRequired: "evidence-required",
   partial: "partial",
   restoredPendingReview: "restored-pending-review",
+  successorReviewRequired: "successor-review-required",
   stale: "stale",
   blocked: "blocked",
   completed: "completed",
+} as const;
+
+/** Closed operator choices for a complete evidence-derived deferred-history group. */
+export const HISTORY_DECISION_KIND = {
+  retainIndependent: "retain-independent",
+  deferHistory: "defer-history",
+  executeCleanupPlan: "execute-cleanup-plan",
+} as const;
+
+/** Closed remote-only cleanup step kind; history never gains a local effect channel. */
+export const HISTORY_CLEANUP_STEP_KIND = {
+  remoteFormerSourceCleanup: "remote-former-source-cleanup",
+} as const;
+
+/** Closed remote-effect evidence kinds for one history cleanup step. */
+export const HISTORY_REMOTE_EFFECT_KIND = {
+  confirmedExactTombstoneReceipt: "confirmed-exact-tombstone-receipt",
+} as const;
+
+/** Durable phase of one ordered history cleanup step. */
+export const HISTORY_CLEANUP_STEP_PHASE = {
+  pending: "pending",
+  preserving: "preserving",
+  ready: "ready",
+  mutatingRemote: "mutating-remote",
+  evidenceRequired: "evidence-required",
+  blocked: "blocked",
+  completed: "completed",
+} as const;
+
+/** Migration and refined-history progress variants in the v4 operation union. */
+export const HISTORY_PROGRESS_KIND = {
+  refined: "refined",
+  legacyV3Unrefined: "legacy-v3-history-unrefined",
+} as const;
+
+/** Durable synthetic local-effect observation variants. */
+export const LOCAL_EFFECT_OBSERVATION_KIND = {
+  notRequired: "not-required",
+  notStarted: "not-started",
+  prepared: "prepared",
+  confirmed: "confirmed",
+  recoveredV3: "recovered-v3",
+  legacyV3Unfenced: "legacy-v3-unfenced",
+} as const;
+
+/** Eligible Vault event kinds retained as bounded successor evidence. */
+export const RECONCILIATION_EVENT_KIND = {
+  create: "create",
+  modify: "modify",
+  delete: "delete",
+  rename: "rename",
+} as const;
+
+/** Closed persistence scope for operation- and step-owned preservation receipts. */
+export const RECONCILIATION_PRESERVATION_SCOPE = {
+  operation: "operation",
+  historyStep: "history-step",
 } as const;
 
 /** Sides whose exact bytes may be preserved before a competing mutation. */

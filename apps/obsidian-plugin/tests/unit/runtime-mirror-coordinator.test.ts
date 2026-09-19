@@ -127,7 +127,7 @@ describe("same-runtime mirror coordinator", () => {
     await expect(
       acquireRuntimeMirrorCoordinator(app, async () => owner()),
     ).resolves.toEqual({ kind: "incompatible-existing-owner" });
-    expect(MIRROR_RUNTIME_OWNER_VERSION).toBe(3);
+    expect(MIRROR_RUNTIME_OWNER_VERSION).toBe(4);
   });
 
   it("refuses and preserves an M3 registry when M4 code enters the same realm", async () => {
@@ -151,7 +151,7 @@ describe("same-runtime mirror coordinator", () => {
         MIRROR_RUNTIME_COORDINATOR_SYMBOL,
       )?.value,
     ).toBe(oldRegistry);
-    expect(MIRROR_RUNTIME_COORDINATOR_VERSION).toBe(3);
+    expect(MIRROR_RUNTIME_COORDINATOR_VERSION).toBe(4);
   });
 
   it("fails closed instead of replacing an incompatible existing global owner", async () => {

@@ -263,13 +263,32 @@ current or recovery namespaces.
 See [Worker API](api.md) for complete statuses, media types, CORS, and validator
 rules.
 
+## Experimental reviewed reconciliation commands
+
+M4 Slices 6–7 register **AI Bridge: Review remote divergence** and **AI Bridge:
+Restore recovery snapshot**. They are available only to the attached, layout-ready,
+identity-matched designated writer. Opening a command performs a bounded metadata
+query; it does not mutate notes. Previews are explicit and rendered as literal text.
+Every mutation requires a fresh sampled review and typed action. Keep-both and legacy
+fork choices additionally require a distinct eligible Markdown destination that is
+sampled before admission.
+
+Closing a modal or disabling the plugin invalidates its transient review and discards
+sampled bodies. Durable admitted work is not cancelled: restart resumes finite work
+under the same reservations. `blocked`, `evidence-required`,
+`successor-review-required`, migrated legacy-history attention, and restored-pending-
+review status require a fresh operator review; never delete local state to clear them.
+Recovery restore is local-first and never silently publishes restored bytes remotely.
+These commands remain experimental until Slice 8 artifact and disposable-vault
+qualification; do not use a personal vault or deploy merely to validate them.
+
 ## Rollback and downgrade restrictions
 
 No rollback path is claimed safe unless it has been tested. Use these alternatives:
 
 | Unsafe action | Why it is unsafe | Safe response |
 | --- | --- | --- |
-| Run M3/version-2 plugin code after device-state v3 exists | Old code must reject v3; stripping sparse M4 fields or restoring v2 can discard partial authority/effects. | Preserve state/evidence, restart into compatible M4 code, allow only the built-in verified v2→v3 migration, and upgrade forward. |
+| Run version-2/3 plugin code after device-state v4 exists | Old code must reject v4; stripping history steps, successor-event evidence, or sparse M4 records can discard partial authority/effects. | Preserve state/evidence, restart into compatible M4 code, allow only the built-in verified v2→v3→v4 migration, and upgrade forward. |
 | Downgrade to v1 PUT/DELETE behavior | Unconditional mutation bypasses format-2 revisions, tombstones, and recovery. | Keep v1 mutations retired; upgrade Worker/client forward. |
 | Redirect delayed old-association requests into a reset association or reused bucket | Pending privileged requests could mutate the new namespace. | Use an isolated empty bucket/association/credentials and preserve old state. |
 | Delete unresolved ledger/intents to make a writer look healthy | Unknown remote effects and original conditions become unprovable. | Pause, inspect exact receipts, drain/recover, or retain the blocker for handoff/M4. |

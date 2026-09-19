@@ -2,7 +2,7 @@
 
 A secure bridge between Obsidian and remote AI or agent clients.
 
-> **Status:** M3 automatic eligible-Markdown mirroring is **COMPLETE**; PR #27 merged at `63b0599` and made the M3→M4 transition canonical. **NEXT:** [M4 — Remote-to-local reconciliation and conflict resolution](docs/milestones/m4-remote-to-local-reconciliation-and-conflict-resolution.md), with Slices 1–5 implemented and Slice 6 next. Planning-only ADR 0009 makes Slices 6–7 implementation-ready and requires device state v4, but no deferred-history execution, M4 runtime/UI, timers, or other user-facing M4 behavior is active. M3 remains experimental and undeployed, with no personal-vault installation, real-host/iCloud qualification, or production-readiness claim.
+> **Status:** M3 automatic eligible-Markdown mirroring is **COMPLETE**; PR #27 merged at `63b0599` and made the M3→M4 transition canonical. **NEXT:** [M4 — Remote-to-local reconciliation and conflict resolution](docs/milestones/m4-remote-to-local-reconciliation-and-conflict-resolution.md), with Slices 1–7 implemented and Slice 8 next. Device-state v4, reviewed deferred-history cleanup, shared M3/M4 scheduling, conservative local-effect event fencing, and text-only review/recovery UI are implemented but remain experimental and undeployed. No personal-vault installation, real-host/iCloud qualification, or production-readiness claim is made.
 
 ## Motivation
 
@@ -25,7 +25,7 @@ Cloudflare Worker
 Cloudflare R2
 ```
 
-Completed M3 connects this outward path in the generated plugin: an explicitly activated designated writer observes official saved-file events and uses the conditional v2 Worker API. The system remains experimental and undeployed; it has no remote-to-local synchronization, MCP, production certification, or real Obsidian desktop/mobile qualification.
+Completed M3 connects this outward path in the generated plugin: an explicitly activated designated writer observes official saved-file events and uses the conditional v2 Worker API. M4 Slices 1–7 add explicit reviewed remote-to-local actions, not automatic bidirectional synchronization. The system remains experimental and undeployed; it has no MCP, production certification, or real Obsidian desktop/mobile qualification.
 
 ## Goals
 
@@ -41,7 +41,7 @@ Completed M3 connects this outward path in the generated plugin: an explicitly a
 - The plugin ID is `ai-bridge`. See [disposable-vault qualification guidance](docs/plugin-development.md). No real Obsidian desktop/mobile host or iCloud event trace has been tested.
 - Authentication uses one privileged bearer token; there are no users. Association/writer UUIDs are non-secret cooperating-writer guards, not authorization. Trusted host/plugin/Worker/cloud operators can read plaintext.
 - iCloud remains working-vault device sync. The plugin sees host events rather than a transactional iCloud log; missed/offline absences never grant deletion authority, so some deletions require later reconciliation.
-- M3 has no remote-to-local behavior, automatic takeover, conflict resolution, richer restore UI, scheduled cleanup, search, MCP, D1, Durable Objects, Workers AI, or Vectorize support. The [operator guide](docs/operations.md) describes setup, recovery, handoff, rotation, and rollback restrictions.
+- M3 itself has no remote-to-local behavior. M4 Slices 1–7 add explicit reviewed reconciliation, text-only recovery selection, and bounded deferred-history cleanup, but no automatic takeover, automatic bidirectional conflict resolution, scheduled cleanup, search, MCP, D1, Durable Objects, Workers AI, or Vectorize support. The [operator guide](docs/operations.md) describes setup, recovery, handoff, rotation, and rollback restrictions.
 
 ## Workspace components
 
@@ -150,13 +150,12 @@ Start with [AGENTS.md](AGENTS.md), [architecture](docs/architecture.md), the
 [canonical roadmap and agent onboarding](docs/roadmap.md), then the
 [active M4 implementation-ready specification](docs/milestones/m4-remote-to-local-reconciliation-and-conflict-resolution.md)
 and [sequential plan](docs/plans/m4-remote-to-local-reconciliation-and-conflict-resolution.md).
-M4 Slices 1–5 implement the closed contracts/state migration fence, core-only
-read-only review/admission, narrow local write/conflict preservation, and uncomposed
-live/adoption/tombstone/recovery action execution. Deferred-history handling,
-runtime/UI composition, and qualification remain unimplemented.
-The planning-only [Slices 6–7 contract refinement](docs/decisions/0009-m4-history-runtime-and-device-state-v4.md)
-defines state v4, bounded parent-owned history steps, step-scoped preservation and the
-shared runtime authority model without implementing them. The completed
+M4 Slices 1–7 implement the closed contracts, strict v2→v3→v4 migration fence,
+review/admission, narrow local write/conflict preservation, live/adoption/tombstone/
+recovery execution, bounded parent-owned history steps, step-scoped preservation,
+and shared runtime/session/command/modal/status composition. Slice 8 qualification
+remains unimplemented. [ADR 0009](docs/decisions/0009-m4-history-runtime-and-device-state-v4.md)
+defines the implemented v4 compatibility transition and conservative event authority. The completed
 [M3 specification](docs/milestones/m3-remote-bridge-client-and-publishing.md),
 [approved decision brief](docs/plans/m3-design-decisions.md), and
 [sequential plan](docs/plans/m3-remote-bridge-client-and-publishing.md) record

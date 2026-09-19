@@ -29,8 +29,12 @@ import {
   MIRROR_DEVICE_STATE_FORMAT,
   MIRROR_DEVICE_STATE_STORAGE_KEY,
 } from "@obsidian-plugin/state/device-state-codec";
-import { migrateMirrorDeviceStateV2ToV3 } from "@obsidian-plugin/state/device-state-migration";
+import {
+  migrateMirrorDeviceStateV2ToV3,
+  migrateMirrorDeviceStateV3ToV4,
+} from "@obsidian-plugin/state/device-state-migration";
 import { decodeMirrorDeviceStateV2 } from "@obsidian-plugin/state/device-state-v2.codec";
+import { encodeMirrorDeviceStateV3 } from "@obsidian-plugin/state/device-state-v3.codec";
 import type { HandoffIntegrity } from "@obsidian-plugin/state/handoff-codec";
 import {
   type MirrorDeviceStateMigrationBoundary,
@@ -316,8 +320,8 @@ describe("frozen version-2 codec and deterministic version-3 migration", () => {
       reconciliationOperations: [],
     });
     expect(second).toEqual(first);
-    expect(encodeMirrorDeviceState(second)).toBe(
-      encodeMirrorDeviceState(first),
+    expect(encodeMirrorDeviceStateV3(second)).toBe(
+      encodeMirrorDeviceStateV3(first),
     );
   });
 
@@ -415,7 +419,7 @@ describe("frozen version-2 codec and deterministic version-3 migration", () => {
     expect(host.saveLocalStorage).not.toHaveBeenCalled();
   });
 
-  it("refuses version 3 in the frozen decoder and version 2 in the current decoder", async () => {
+  it("refuses version 4 in the frozen v2 decoder and version 2 in the current decoder", async () => {
     const current: MirrorDeviceState = {
       ...emptyV2(),
       reconciliationReviews: [],
@@ -426,7 +430,7 @@ describe("frozen version-2 codec and deterministic version-3 migration", () => {
         encodeMirrorDeviceState(current),
         integrity,
       ),
-    ).toEqual({ kind: "unsupported-version", version: 3 });
+    ).toEqual({ kind: "unsupported-version", version: 4 });
     expect(
       await decodeMirrorDeviceState(encodeV2(emptyV2()), integrity),
     ).toEqual({
@@ -458,7 +462,7 @@ describe("frozen version-2 codec and deterministic version-3 migration", () => {
     },
     {
       name: "future version",
-      value: JSON.stringify({ format: MIRROR_DEVICE_STATE_FORMAT, version: 4 }),
+      value: JSON.stringify({ format: MIRROR_DEVICE_STATE_FORMAT, version: 5 }),
     },
     {
       name: "malformed version",
@@ -498,12 +502,16 @@ describe("frozen version-2 codec and deterministic version-3 migration", () => {
       await new ObsidianMirrorStateStore(loadFailure, integrity).load(),
     ).toEqual({ kind: "unavailable" });
 
-    for (const failingMember of ["migrate", "encode"] as const) {
+    for (const failingMember of ["migrateV2", "migrateV3", "encode"] as const) {
       const host = new MemoryHost(encodeV2(emptyV2()));
       const migration: MirrorDeviceStateMigrationBoundary = {
-        migrate: (state) => {
-          if (failingMember === "migrate") throw new Error("invariant");
+        migrateV2: (state) => {
+          if (failingMember === "migrateV2") throw new Error("invariant");
           return migrateMirrorDeviceStateV2ToV3(state);
+        },
+        migrateV3: (state) => {
+          if (failingMember === "migrateV3") throw new Error("invariant");
+          return migrateMirrorDeviceStateV3ToV4(state);
         },
         encode: (state) => {
           if (failingMember === "encode") throw new Error("encode");
@@ -540,7 +548,7 @@ describe("frozen version-2 codec and deterministic version-3 migration", () => {
     };
     expect(
       await new ObsidianMirrorStateStore(
-        new MemoryHost(encodeMirrorDeviceState(stagedV3)),
+        new MemoryHost(encodeMirrorDeviceStateV3(stagedV3)),
         throwingIntegrity,
       ).load(),
     ).toEqual({ kind: "unavailable" });
@@ -570,7 +578,7 @@ describe("frozen version-2 codec and deterministic version-3 migration", () => {
       await new ObsidianMirrorStateStore(
         new MemoryHost(null),
         throwingIntegrity,
-      ).save(stagedV3),
+      ).save(migrateMirrorDeviceStateV3ToV4(stagedV3)),
     ).toEqual({ kind: "failed", reason: "unavailable" });
   });
 
@@ -591,11 +599,11 @@ describe("frozen version-2 codec and deterministic version-3 migration", () => {
 
     const mismatch = new MemoryHost(encodeV2(emptyV2()));
     mismatch.saveLocalStorage.mockImplementationOnce(async () => {
-      mismatch.value = `${encodeMirrorDeviceState({
-        ...emptyV2(),
-        reconciliationReviews: [],
-        reconciliationOperations: [],
-      })} `;
+      mismatch.value = `${encodeMirrorDeviceState(
+        migrateMirrorDeviceStateV3ToV4(
+          migrateMirrorDeviceStateV2ToV3(emptyV2()),
+        ),
+      )} `;
     });
     expect(
       await new ObsidianMirrorStateStore(mismatch, integrity).load(),
@@ -712,7 +720,9 @@ describe("frozen version-2 codec and deterministic version-3 migration", () => {
     expect(migrated.paths).toHaveLength(MAX_MIRROR_TRACKED_PATHS);
     expect(migrated.reconciliationReviews).toEqual([]);
     expect(migrated.reconciliationOperations).toEqual([]);
-    const encoded = encodeMirrorDeviceState(migrated);
+    const encoded = encodeMirrorDeviceState(
+      migrateMirrorDeviceStateV3ToV4(migrated),
+    );
     expect(new TextEncoder().encode(encoded).byteLength).toBeLessThanOrEqual(
       MAX_MIRROR_DEVICE_STATE_BYTES,
     );

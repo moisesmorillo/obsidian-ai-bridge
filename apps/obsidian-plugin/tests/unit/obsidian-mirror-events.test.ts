@@ -47,8 +47,16 @@ describe("ObsidianMirrorEvents", () => {
     expect(eventSink.observePresent).not.toHaveBeenCalled();
     host.emitVault("create", file);
     host.emitVault("modify", file);
-    expect(eventSink.observePresent).toHaveBeenNthCalledWith(1, "note.md");
-    expect(eventSink.observePresent).toHaveBeenNthCalledWith(2, "note.md");
+    expect(eventSink.observePresent).toHaveBeenNthCalledWith(
+      1,
+      "note.md",
+      "create",
+    );
+    expect(eventSink.observePresent).toHaveBeenNthCalledWith(
+      2,
+      "note.md",
+      "modify",
+    );
   });
 
   it("ignores preservation-file events because the reserved dot root is outside mirror eligibility", () => {

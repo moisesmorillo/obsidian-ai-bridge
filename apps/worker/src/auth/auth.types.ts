@@ -1,7 +1,10 @@
 import type {
+  AUTHENTICATION_CONFIGURATION_MODE,
   AUTHENTICATION_RESULT_KIND,
   AUTHORIZATION_PARSE_RESULT_KIND,
   BEARER_CREDENTIALS_RESULT_KIND,
+  CLIENT_PERMISSION,
+  CREDENTIAL_REGISTRY_VERSION,
 } from "@worker/auth/auth.constants";
 
 /** Generic result of parsing an HTTP Authorization header. */
@@ -26,7 +29,56 @@ export type BearerCredentialsResult =
       readonly token: string;
     };
 
+/** One independently granted client capability retained exactly on a principal. */
+export type ClientPermission =
+  (typeof CLIENT_PERMISSION)[keyof typeof CLIENT_PERMISSION];
+
+/** Strict digest-only metadata for one active client credential. */
+export interface CredentialRegistryEntry {
+  /** Immutable canonical lowercase UUID-v4 client identity. */
+  readonly clientId: string;
+  /** Unique operator-facing label; never authentication input. */
+  readonly name: string;
+  /** Nonempty exact capability set, without implied permissions. */
+  readonly permissions: readonly ClientPermission[];
+  /** Canonical lowercase SHA-256 digest verifier, never a raw token. */
+  readonly tokenDigest: string;
+}
+
+/** Complete bounded authentication registry accepted atomically by the Worker. */
+export interface CredentialRegistry {
+  /** Strict schema version governing every registry entry. */
+  readonly version: typeof CREDENTIAL_REGISTRY_VERSION;
+  /** Active digest-only credentials, bounded by configuration validation. */
+  readonly credentials: readonly CredentialRegistryEntry[];
+}
+
+/** Authenticated client identity made available without token or digest material. */
+export interface ClientPrincipal {
+  /** Immutable canonical lowercase UUID-v4 client identity. */
+  readonly clientId: string;
+  /** Operator-facing client label. */
+  readonly name: string;
+  /** Exact configured capabilities; Slice 4 will enforce route requirements. */
+  readonly permissions: readonly ClientPermission[];
+}
+
+/** Explicit mutually exclusive authentication authority for one request. */
+export type AuthenticationConfiguration =
+  | {
+      readonly mode: typeof AUTHENTICATION_CONFIGURATION_MODE.credentialRegistry;
+      readonly serializedRegistry: string | undefined;
+    }
+  | {
+      readonly mode: typeof AUTHENTICATION_CONFIGURATION_MODE.singletonMigration;
+      readonly token: string | undefined;
+    }
+  | { readonly mode: typeof AUTHENTICATION_CONFIGURATION_MODE.invalid };
+
 /** Request-level authentication outcome without exposing credential details. */
 export type AuthenticationResult =
-  | { readonly kind: typeof AUTHENTICATION_RESULT_KIND.authenticated }
+  | {
+      readonly kind: typeof AUTHENTICATION_RESULT_KIND.authenticated;
+      readonly principal: ClientPrincipal;
+    }
   | { readonly kind: typeof AUTHENTICATION_RESULT_KIND.unauthenticated };

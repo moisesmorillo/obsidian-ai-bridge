@@ -6,7 +6,7 @@ The Worker exposes an experimental authenticated personal-mirror API. Public rou
 Authorization: Bearer <token>
 ```
 
-Missing, malformed, or incorrect credentials return `401 unauthorized` with `WWW-Authenticate: Bearer`. One bearer remains privileged for the namespace; mirror association/writer IDs are cooperating-writer guards, not separate authentication or authorization scopes. API content, JSON, and errors use `Cache-Control: no-store`.
+Missing, malformed, incorrect, or invalidly configured credentials return the same sanitized `401 unauthorized` with `WWW-Authenticate: Bearer`. The active version-1 registry accepts at most 16 named clients and stores only canonical domain-separated SHA-256 digests. Successful authentication resolves a secret-free principal containing client ID, name, and the exact configured `read`/`write`/`delete` set. Slice 2 does **not** enforce permissions per route; current migrated writer credentials therefore declare all three and existing authenticated behavior remains unchanged until Slice 4. Mirror association/writer IDs remain separate cooperating-writer guards, not authentication or permission. API content, JSON, and errors use `Cache-Control: no-store`; principals, tokens, and digests are not returned.
 
 The `:path` segment is canonical unpadded base64url of a validated literal lowercase-`.md` NotePath. For example, `Homelab/DNS/Technitium.md` is `SG9tZWxhYi9ETlMvVGVjaG5pdGl1bS5tZA`. Paths are not URI-decoded or repaired. Traversal, absolute paths, backslashes, empty/dot segments, invalid UTF-8 identifiers, and noncanonical encodings are rejected.
 

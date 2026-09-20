@@ -23,7 +23,7 @@ composition. Slice 8's generated-artifact qualification and operational document
 are implemented. The independent final review found three MINOR issues, corrective
 head `e97af36` resolved all three, and the corrective review returned APPROVE with no
 open findings. M3 is COMPLETE; PR #27 merged at `63b0599` and made the transition
-canonical. M4 Slices 1–8 are COMPLETE in this completion PR and M5 is NEXT. The
+canonical. M4 Slices 1–8 are COMPLETE and M5 is NEXT. M5 Slices 0–2 are complete in this Slice 2 PR; Slice 3 is next. The
 current boundary includes strict device state v4 with frozen v2/v3 migration, reviewed
 sampling/admission, narrow local writes and preservation, live/adoption/tombstone/
 restore actions, bounded parent-owned history steps, step-scoped archives, one shared
@@ -75,7 +75,7 @@ The Worker authenticates API requests, validates media type, payload size, UTF-8
 apps/worker/src/
 ├── app.ts                         Hono assembly, middleware, and routes
 ├── app.types.ts                   Dependency contract for the transport adapter
-├── auth/                          Bearer parsing, scheme validation, token comparison
+├── auth/                          Bearer parsing, strict registry validation, digest verification, typed principals
 ├── env/                           Cloudflare binding types
 ├── http/                          Controllers, HTTP errors, responses, OpenAPI routes
 ├── infrastructure/                R2 vault repository adapter and R2 port subset
@@ -89,7 +89,7 @@ apps/worker/src/
 
 ### Cloudflare Worker
 
-The Worker is the remote HTTP/API boundary. `index.ts` constructs the Hono app and long-lived LogTape dependency once per isolate. Request middleware resolves environment-specific authentication and creates current-generation/recovery application services from the active R2 binding; composition validates static non-secret association/writer UUIDs. `app.ts` composes typed Hono middleware, controllers, narrow v2 CORS, OpenAPI, and Scalar. One named v2 route-operation policy owns each public path and HTTP method; Hono registration, CORS capability resolution, and OpenAPI consume that policy instead of restating it. HTTP controllers validate transport input and delegate transition policy to `packages/core`. They do not call R2 or implement CAS/recovery policy.
+The Worker is the remote HTTP/API boundary. `index.ts` constructs the Hono app and long-lived LogTape dependency once per isolate. Request middleware resolves exactly one environment-selected authentication authority, validates the complete digest-only registry, and publishes a secret-free typed client principal before creating current-generation/recovery application services from the active R2 binding; composition validates static non-secret association/writer UUIDs. Committed configuration selects registry authority. The temporary singleton migration mode never falls through to registry authority (or vice versa) and is removed in Slice 4. `app.ts` composes typed Hono middleware, controllers, narrow v2 CORS, OpenAPI, and Scalar. One named v2 route-operation policy owns each public path and HTTP method; Hono registration, CORS capability resolution, and OpenAPI consume that policy instead of restating it. HTTP controllers validate transport input and delegate transition policy to `packages/core`. They do not call R2 or implement CAS/recovery policy.
 
 ### Cloudflare R2
 
@@ -163,10 +163,14 @@ MCP is planned as a future adapter for agent clients. It is not implemented, and
 
 ## Security and data-safety boundaries
 
-The Worker authenticates `/api/v1`, `/api/v2`, and descendants with one bearer
-token; public health/OpenAPI/Scalar do not grant note access. The token grants every
-remote note operation in a single namespace, not scoped or per-device permissions.
-Static v2 association/writer IDs guard cooperating clients but are not authentication.
+The Worker authenticates `/api/v1`, `/api/v2`, and descendants through a strict
+registry of at most 16 named opaque bearers; public health/OpenAPI/Scalar do not grant
+note access. Configuration retains only domain-separated SHA-256 verifier material.
+Successful authentication publishes client ID, name, and exact permission metadata,
+never a token or digest. Slice 2 does not enforce those permissions per route, so a
+migrated current writer declares all three and existing authenticated behavior is
+unchanged until Slice 4. Static v2 association/writer IDs guard cooperating clients
+separately and are not authentication or permission.
 R2 holds readable note text: the Worker/cloud operator is trusted, and no
 application-level end-to-end encryption is implemented. Never infer production
 readiness, installed resources or credentials from repository configuration.
@@ -433,10 +437,11 @@ but cannot hide a same-text external successor or deadlock an aligned path.
 
 ## Explicitly deferred
 
-- M5 (NEXT; Slices 0–1 planning/evidence accepted): scoped authentication,
-  permission enforcement, client-attributed live diagnostics, v1 retirement,
-  operational runbooks, latest-release artifact synchronization, and real-desktop
-  qualification. ADR 0011 selects no application quota/limiter, recovery automation,
+- M5 (NEXT; Slices 0–2 complete, Slice 3 next): route permission enforcement,
+  client-attributed live diagnostics, v1 retirement, operational runbooks,
+  latest-release artifact synchronization, and real-desktop qualification. Slice 2
+  already implements scoped authentication metadata/lifecycle and the migration
+  checkpoint without enforcing the later route matrix. ADR 0011 selects no application quota/limiter, recovery automation,
   durable log store, mobile writer, or multi-release support. M4's reviewed
   reconciliation remains experimental and makes no automatic import, cross-system
   atomicity, deployment, or production-readiness claim.

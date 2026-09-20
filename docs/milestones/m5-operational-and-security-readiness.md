@@ -1,10 +1,6 @@
 # M5 — Operational and security readiness
 
-**Status: NEXT — Slices 0–1 planning and qualification decisions accepted; no M5
-production behavior is implemented.** M1–M4 remain COMPLETE and M6 remains PLANNED.
-This specification records the accepted Slice 0 security model and Slice 1 operating
-policies. Later slices require their own refined acceptance evidence before production
-implementation, and no current release or platform is supported.
+**Status: NEXT — Slices 0–2 complete in this Slice 2 PR; Slice 3 is next.** M1–M4 remain COMPLETE and M6 remains PLANNED. Slice 2 implements the credential registry, typed principal, offline lifecycle, and explicit singleton migration checkpoint. Route-level permission enforcement remains unimplemented until Slice 4, and no current release or platform is supported.
 
 ## Objective
 
@@ -185,7 +181,7 @@ support remove work rather than creating replacement scope.
 **Independently mergeable outcome:** implementable operating decisions without runtime
 or infrastructure change.
 
-### Slice 2 — Credential registry, principal, and lifecycle tooling — PLANNED
+### Slice 2 — Credential registry, principal, and lifecycle tooling — COMPLETE IN THIS PR
 
 - Implement the bounded digest-only registry, typed principal resolution, constant-
   work token verification, strict configuration validation, and fail-closed startup.
@@ -193,16 +189,21 @@ or infrastructure change.
   with one-time raw-token handling and no HTTP management API.
 - Define and test the bounded migration checkpoint from the current privileged bearer;
   do not enforce route permissions or remove compatibility routes in this slice.
+- Committed Worker configuration selects registry authority. The explicitly named
+  singleton migration mode and registry mode are mutually exclusive, with no
+  per-request fallback; Slice 4 removes the temporary mode after migration.
 
 **Dependency:** Slices 0–1.
 
-**Expected production scope:** 8–10 files / 800–1,200 net new LOC.
+**Production estimate:** 10 files / approximately 950–1,200 net new LOC.
+
+**Production outcome:** 10 changed/new files / 459 net new LOC.
 
 **Independently mergeable outcome:** authenticated requests resolve a bounded typed
 principal and lifecycle tooling safely produces digest-only configuration, while
 current route authority remains behind one explicit temporary migration checkpoint.
 
-### Slice 3 — Client-attributed live diagnostics — PLANNED
+### Slice 3 — Client-attributed live diagnostics — NEXT
 
 - Add client ID and closed operation/outcome attribution to the existing content-free
   structured application events.
@@ -227,8 +228,8 @@ retention.
 - Enforce exact `read`/`write`/`delete` checks from the typed principal before storage
   or mutation dispatch while preserving separate writer/association/application
   guards.
-- Migrate the plugin and authorized clients through the verified credential lifecycle,
-  remove the temporary privileged fallback, and remove every registered v1 route and
+- Complete authorized-client migration through the verified credential lifecycle,
+  remove the temporary singleton migration mode, and remove every registered v1 route and
   OpenAPI contract. Never resurrect retired mutations.
 - Document future MCP mapping only as reuse of these operation permissions.
 
@@ -350,6 +351,15 @@ without deployment or M6.
 - This Slice 1 change is documentation/evidence-only: zero production files and zero
   production LOC, with no dependency, binding, route, authentication, API behavior,
   manifest, generated benchmark, credential, deployment, release, or M6 change.
+
+## Slice 2 acceptance evidence
+
+- One strict validator owns registry version 1, exact fields, canonical lowercase UUID-v4 IDs, ADR name grammar, closed nonempty permission sets, lowercase 64-hex digests, case-insensitive unique names, unique IDs/digests, and the 16-entry bound. Malformed or unavailable configuration authenticates nobody.
+- Tokens use 32 Web Crypto random bytes encoded as canonical unpadded base64url. Verifiers use SHA-256 over the documented domain separator plus UTF-8 token bytes. Authentication computes the supplied digest once, compares it against every active entry without an early successful return, and publishes only `{clientId, name, permissions}`.
+- `mise run credentials --` provides offline create, overlap rotation, exact revoke, no-overlap lost-token replacement, and all-new total-registry replacement. It accepts no raw-token argument, refuses non-interactive secret output, keeps confidential registry files outside the repository, writes them atomically with owner-only mode, and makes no network/deployment call.
+- The migration selector has only `singleton-migration`, `credential-registry`, and fail-closed invalid outcomes. Each valid mode evaluates one authority path and ignores the other secret. Committed Wrangler configuration requires the registry and selects registry mode; after switching, the old singleton fails even before secret removal. Slice 4 owns source-level removal of the temporary mode.
+- Focused tests cover one/many/16/17 entries, all duplicate/malformed/version/unknown-field/permission cases, first/middle/last authentication, complete digest evaluation, principal identity, sanitized failures/leakage negatives, lifecycle failures and capacity, exact revocation/loss replacement, total loss, and migration exclusivity while preserving existing writer/association/effect behavior.
+- Permission metadata is deliberately not route-enforced in this slice. Full writer credentials use all three values to preserve current M3/M4 behavior; Slice 4 remains the sole owner of the exhaustive operation-to-permission table.
 
 ## M6 boundary
 

@@ -71,6 +71,10 @@ run = "node node_modules/vitest/vitest.mjs run --config apps/obsidian-plugin/vit
 description = "Run the Worker with Wrangler local development"
 run = "node apps/worker/node_modules/wrangler/bin/wrangler.js dev --config apps/worker/wrangler.jsonc"
 
+[tasks.credentials]
+description = "Manage the digest-only Worker credential registry offline"
+run = "bun tools/credentials/cli.ts"
+
 [tasks.check]
 description = "Run the complete repository validation pipeline"
 depends = ["biome:check", "lint", "typecheck", "coverage", "worker:storage-test", "build"]

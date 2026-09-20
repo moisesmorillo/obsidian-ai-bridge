@@ -4,6 +4,7 @@ import {
   apiErrorResponseSchema,
 } from "@obsidian-ai-bridge/protocol";
 import { createWorkerApp } from "@worker/app";
+import { AUTHENTICATION_CONFIGURATION_MODE } from "@worker/auth/auth.constants";
 import type { Logger } from "@worker/logging/logger.types";
 import {
   createTestMirrorServices,
@@ -17,7 +18,10 @@ function application(bucket: MemoryMirrorBucket) {
   return createWorkerApp({
     logger,
     resolveMirrorServices: () => createTestMirrorServices(bucket),
-    resolveToken: () => "token",
+    resolveAuthentication: () => ({
+      mode: AUTHENTICATION_CONFIGURATION_MODE.singletonMigration,
+      token: "token",
+    }),
   });
 }
 

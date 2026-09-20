@@ -4,6 +4,7 @@ import type {
   MirrorWriterId,
   RecoveryService,
 } from "@obsidian-ai-bridge/core";
+import type { AuthenticationConfiguration } from "@worker/auth/auth.types";
 import type { WorkerEnv } from "@worker/env/env.types";
 import type { Logger } from "@worker/logging/logger.types";
 
@@ -36,14 +37,14 @@ export type MirrorServicesResolver = (
 ) => WorkerMirrorServices;
 
 /**
- * Resolves the bearer token expected for an incoming API request.
+ * Resolves the exclusive authentication authority selected for an incoming request.
  *
- * @param environment - Active Worker bindings containing secret configuration.
- * @returns The expected token, or `undefined` when authentication is not configured.
+ * @param environment - Active Worker bindings containing confidential verifier configuration.
+ * @returns Registry, temporary singleton migration, or fail-closed invalid configuration.
  */
-export type AuthenticationTokenResolver = (
+export type AuthenticationConfigurationResolver = (
   environment: WorkerEnv,
-) => string | undefined;
+) => AuthenticationConfiguration;
 
 /** Long-lived dependencies used to assemble the Worker transport once per isolate. */
 export interface WorkerAppDependencies {
@@ -53,6 +54,6 @@ export interface WorkerAppDependencies {
   /** Factory resolving current-generation, recovery, and designation dependencies. */
   readonly resolveMirrorServices: MirrorServicesResolver;
 
-  /** Factory that resolves the expected authentication token from current bindings. */
-  readonly resolveToken: AuthenticationTokenResolver;
+  /** Factory resolving exactly one authentication authority from current bindings. */
+  readonly resolveAuthentication: AuthenticationConfigurationResolver;
 }

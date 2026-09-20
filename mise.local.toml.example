@@ -1,5 +1,6 @@
-# Copy to mise.local.toml for machine-specific overrides and credentials.
+# Copy to mise.local.toml for machine-specific overrides and confidential verifier configuration.
 # The file is ignored by Git and must never contain shared secrets.
 
 [env]
-# OBSIDIAN_BRIDGE_TOKEN = "replace-with-a-local-development-token"
+# OBSIDIAN_BRIDGE_AUTH_MODE = "credential-registry"
+# OBSIDIAN_BRIDGE_CREDENTIAL_REGISTRY = '{"version":1,"credentials":[]}'

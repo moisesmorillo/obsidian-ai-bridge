@@ -4,7 +4,7 @@ Security and data safety are priorities. The repository is experimental and does
 claim a production-ready bridge, security certification, complete backup, or supported
 production release.
 
-## M3/M4 trust and authorization boundary
+## M3–M5 Slice 2 trust and authorization boundary
 
 The implemented outward mirror trusts the Obsidian host/plugin environment, the
 plugin runtime, Worker, Cloudflare/R2 operator, and authorized bearer holders with
@@ -12,18 +12,28 @@ plaintext note content. There is no application-level end-to-end encryption. A l
 malicious or compromised privileged plugin/host is inside this trusted-host boundary;
 M3 does not claim isolation from it.
 
-One `OBSIDIAN_BRIDGE_TOKEN` bearer is privileged for all remote operations in one
-namespace. Keep it in the Worker secret mechanism and Obsidian native SecretStorage,
-never committed configuration, `data.json`, host-local mirror state, handoff records,
-logs, notices, or screenshots. Native SecretStorage is a host-managed vault-local
-store, not a documented OS-keychain or isolation guarantee. Private R2 prevents
-public bucket access but does not make this bearer least-privilege.
+The Worker now authenticates at most 16 named opaque client bearers from a strict
+version-1 digest-only registry. Raw tokens use 256 random bits and remain only in the
+consuming client's approved secret store; the registry contains domain-separated
+SHA-256 verifier material and non-secret metadata. Neither raw tokens nor digests may
+enter committed configuration, `data.json`, host-local mirror state, handoff records,
+logs, notices, screenshots, API responses, or generated documentation. Native
+SecretStorage is a host-managed vault-local store, not a documented OS-keychain or
+isolation guarantee. Private R2 prevents public bucket access but does not protect
+plaintext from a correctly authenticated client or privileged operator.
+
+Successful authentication resolves client ID, name, and exact `read`/`write`/`delete`
+metadata. Slice 2 does not enforce that metadata against routes; full writer migration
+credentials use all three permissions and other authenticated principals retain the
+existing route behavior until Slice 4. The committed Worker selects registry mode.
+The temporary `singleton-migration` mode is a mutually exclusive checkpoint, not a
+fallback, and Slice 4 removes it after migration.
 
 `MIRROR_ASSOCIATION_ID`, `MIRROR_WRITER_ID`, plugin device UUIDs, and mirror
 eligibility are not authorization secrets or client permission scopes. Static IDs
-reduce accidental mutation by cooperating non-writer clients; a malicious privileged
-bearer can impersonate them. M5 owns any future scoped permission redesign; M4 does
-not make the bearer least-privilege.
+reduce accidental mutation by cooperating non-writer clients; an authenticated client
+with route authority can still supply them. They remain separate from the principal,
+future Slice 4 permission checks, and current application preconditions.
 
 The user opts into the whole eligible Markdown mirror. Eligibility is limited to
 literal lowercase `.md` paths of at most 1 MiB, excluding dot-prefixed segments and
@@ -118,7 +128,7 @@ Offline/listener-gap deletions may remain remotely live because absence cannot s
 be promoted to delete authority. Ordering across iCloud devices is not globally
 transactional. M4 provides only explicit reviewed reconciliation: it does not add
 automatic bidirectional sync, cross-system atomicity, multi-writer coordination,
-conflict-artifact cleanup automation, scoped clients, or MCP. Real desktop/mobile,
+conflict-artifact cleanup automation, route-level permission enforcement, or MCP. Real desktop/mobile,
 iCloud, native-secret, host rollback/durability, WebView transport, background iOS,
 and deployed Worker/R2 behavior remain unqualified. R2 is a private mirror/API layer,
 not the sole authority or a guaranteed complete backup.

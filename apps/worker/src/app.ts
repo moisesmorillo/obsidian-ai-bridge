@@ -85,19 +85,19 @@ export function createWorkerApp(
   app.use(`${API_V2_PREFIX}/*`, createV2CorsMiddleware());
   app.use(
     API_PREFIX,
-    createAuthenticationMiddleware(dependencies.resolveToken),
+    createAuthenticationMiddleware(dependencies.resolveAuthentication),
   );
   app.use(
     `${API_PREFIX}/*`,
-    createAuthenticationMiddleware(dependencies.resolveToken),
+    createAuthenticationMiddleware(dependencies.resolveAuthentication),
   );
   app.use(
     API_V2_PREFIX,
-    createAuthenticationMiddleware(dependencies.resolveToken),
+    createAuthenticationMiddleware(dependencies.resolveAuthentication),
   );
   app.use(
     `${API_V2_PREFIX}/*`,
-    createAuthenticationMiddleware(dependencies.resolveToken),
+    createAuthenticationMiddleware(dependencies.resolveAuthentication),
   );
   app.use(API_V2_PREFIX, createV2RoutePolicyGuardMiddleware());
   app.use(`${API_V2_PREFIX}/*`, createV2RoutePolicyGuardMiddleware());

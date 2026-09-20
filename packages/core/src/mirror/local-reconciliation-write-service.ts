@@ -18,6 +18,10 @@ import { createMirrorOperationId } from "@core/mirror/mirror-identifiers";
 import type { MirrorDeviceState } from "@core/mirror/mirror-state.types";
 import type { MirrorStateOwner } from "@core/mirror/mirror-state-owner";
 import { isDurableMutationAdmissionAllowed } from "@core/mirror/mirror-state-policy";
+import {
+  localCreateSourceHash,
+  localReplaceSourceHash,
+} from "@core/mirror/reconciliation-local-effect-policy";
 import { isNonHistoryReconciliationOperation } from "@core/mirror/reconciliation-operation";
 import {
   areRequiredReconciliationPreservationsVerified,
@@ -28,8 +32,6 @@ import {
   RECONCILIATION_ACTION,
   RECONCILIATION_LOCAL_EVIDENCE_KIND,
   RECONCILIATION_OPERATION_PHASE,
-  RECONCILIATION_PRESERVATION_SIDE,
-  RECONCILIATION_REMOTE_EVIDENCE_KIND,
 } from "@core/mirror/reconciliation-state.constants";
 import type {
   LocalEffectObservation,
@@ -177,7 +179,7 @@ export class LocalReconciliationWriteService {
       return rejected("wrong-action", before);
     }
     const target = pathEvidence(operation, request.path);
-    const replacementHash = createSourceHash(operation, request.path);
+    const replacementHash = localCreateSourceHash(operation, request.path);
     if (
       target === undefined ||
       target.local.kind !== RECONCILIATION_LOCAL_EVIDENCE_KIND.absent ||
@@ -229,7 +231,10 @@ export class LocalReconciliationWriteService {
       return rejected("wrong-action", before);
     }
     const target = pathEvidence(operation, request.path);
-    const replacementEvidenceHash = replaceSourceHash(operation, request.path);
+    const replacementEvidenceHash = localReplaceSourceHash(
+      operation,
+      request.path,
+    );
     if (
       target === undefined ||
       target.local.kind !== RECONCILIATION_LOCAL_EVIDENCE_KIND.live ||
@@ -291,10 +296,7 @@ export class LocalReconciliationWriteService {
       const localEffectObservation =
         mode === LOCAL_RECONCILIATION_DISPATCH_MODE.firstDispatch
           ? {
-              kind:
-                this.observations === undefined
-                  ? LOCAL_EFFECT_OBSERVATION_KIND.recoveredV3
-                  : LOCAL_EFFECT_OBSERVATION_KIND.prepared,
+              kind: LOCAL_EFFECT_OBSERVATION_KIND.prepared,
               effectId:
                 this.observations?.createEffectId() ??
                 fallbackEffectId(current.operationId),
@@ -615,97 +617,6 @@ function actionAllowsReplace(
     operation.action.kind === RECONCILIATION_ACTION.keepBoth ||
     operation.action.kind === RECONCILIATION_ACTION.restoreRecovery
   );
-}
-
-/**
- * Derives the only content digest an action may create at an absent local path.
- *
- * @param operation - Admitted action and immutable evidence.
- * @param path - Requested create destination.
- * @returns Evidence-bound source digest, or undefined when the action grants no create authority.
- */
-function createSourceHash(
-  operation: ReconciliationNonHistoryOperation,
-  path: AuthorizedCreateEligibleRequest["path"],
-): ContentSha256 | undefined {
-  const target = pathEvidence(operation, operation.snapshot.targetPath);
-  if (target === undefined) return undefined;
-  switch (operation.action.kind) {
-    case RECONCILIATION_ACTION.useRemote:
-    case RECONCILIATION_ACTION.adoptRevision:
-      return path === operation.snapshot.targetPath &&
-        target.remote.kind === RECONCILIATION_REMOTE_EVIDENCE_KIND.live
-        ? target.remote.contentSha256
-        : undefined;
-    case RECONCILIATION_ACTION.keepBoth:
-      if (path !== operation.destinationPath) return undefined;
-      if (
-        operation.action.primarySide === RECONCILIATION_PRESERVATION_SIDE.local
-      ) {
-        return target.remote.kind === RECONCILIATION_REMOTE_EVIDENCE_KIND.live
-          ? target.remote.contentSha256
-          : undefined;
-      }
-      return target.local.kind === RECONCILIATION_LOCAL_EVIDENCE_KIND.live
-        ? target.local.contentSha256
-        : undefined;
-    case RECONCILIATION_ACTION.forkLegacy:
-      return path === operation.destinationPath &&
-        target.remote.kind === RECONCILIATION_REMOTE_EVIDENCE_KIND.legacy
-        ? target.remote.contentSha256
-        : undefined;
-    case RECONCILIATION_ACTION.restoreRecovery:
-      return path ===
-        (operation.destinationPath ?? operation.snapshot.targetPath)
-        ? operation.snapshot.recovery?.contentSha256
-        : undefined;
-    case RECONCILIATION_ACTION.keepLocal:
-    case RECONCILIATION_ACTION.acceptTombstone:
-    case RECONCILIATION_ACTION.recreateRemote:
-    case RECONCILIATION_ACTION.defer:
-      return undefined;
-  }
-}
-
-/**
- * Derives the only replacement digest an action may write over sampled local bytes.
- *
- * @param operation - Admitted action and immutable evidence.
- * @param path - Requested replacement path.
- * @returns Evidence-bound replacement digest, or undefined without replace authority.
- */
-function replaceSourceHash(
-  operation: ReconciliationNonHistoryOperation,
-  path: AuthorizedReplaceEligibleRequest["path"],
-): ContentSha256 | undefined {
-  const target = pathEvidence(operation, operation.snapshot.targetPath);
-  if (target === undefined) return undefined;
-  switch (operation.action.kind) {
-    case RECONCILIATION_ACTION.useRemote:
-      return path === operation.snapshot.targetPath &&
-        target.remote.kind === RECONCILIATION_REMOTE_EVIDENCE_KIND.live
-        ? target.remote.contentSha256
-        : undefined;
-    case RECONCILIATION_ACTION.keepBoth:
-      return path === operation.snapshot.targetPath &&
-        operation.action.primarySide ===
-          RECONCILIATION_PRESERVATION_SIDE.remote &&
-        target.remote.kind === RECONCILIATION_REMOTE_EVIDENCE_KIND.live
-        ? target.remote.contentSha256
-        : undefined;
-    case RECONCILIATION_ACTION.restoreRecovery:
-      return path ===
-        (operation.destinationPath ?? operation.snapshot.targetPath)
-        ? operation.snapshot.recovery?.contentSha256
-        : undefined;
-    case RECONCILIATION_ACTION.keepLocal:
-    case RECONCILIATION_ACTION.adoptRevision:
-    case RECONCILIATION_ACTION.acceptTombstone:
-    case RECONCILIATION_ACTION.recreateRemote:
-    case RECONCILIATION_ACTION.forkLegacy:
-    case RECONCILIATION_ACTION.defer:
-      return undefined;
-  }
 }
 
 /**

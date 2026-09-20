@@ -1,8 +1,10 @@
 import {
   createDisabledMirrorState,
+  createMirrorOperationId,
   createMirrorWriterId,
   type MirrorDeviceState,
   MirrorStateOwner,
+  ReconciliationV3LocalEffectRecoveryService,
   staleOrphanedReconciliationReviews,
 } from "@obsidian-ai-bridge/core";
 import { ObsidianLocalReconciliationWriter } from "@obsidian-plugin/infrastructure/obsidian-local-reconciliation-writer";
@@ -61,22 +63,40 @@ export async function createMirrorRuntimeOwner(
   } else {
     throw new Error("Device-local mirror state is unavailable.");
   }
-  const startupState = staleOrphanedReconciliationReviews(state);
-  if (startupState !== state) {
-    const saved = await store.save(startupState);
-    if (saved.kind !== "saved") {
-      throw new Error("Device-local mirror state is unavailable.");
-    }
-    state = startupState;
-  }
   const local = new ObsidianLocalVault(createObsidianVaultHost(vault));
   const runtime = new BrowserMirrorSynchronizerRuntime(globalThis.crypto);
+  const stateOwner = new MirrorStateOwner(state, store);
+  const migrationRecovery =
+    await new ReconciliationV3LocalEffectRecoveryService({
+      local,
+      stateOwner,
+      hashContent: (content) => runtime.hashContent(content),
+      createEffectId: () => {
+        const id = createMirrorOperationId(globalThis.crypto.randomUUID());
+        if (id === undefined) {
+          throw new Error("Required runtime identity is unavailable.");
+        }
+        return id;
+      },
+    }).recover();
+  if (migrationRecovery.kind !== "completed") {
+    throw new Error("Device-local mirror state is unavailable.");
+  }
+  const startupState = staleOrphanedReconciliationReviews(
+    migrationRecovery.snapshot.state,
+  );
+  if (startupState !== migrationRecovery.snapshot.state) {
+    const committed = await stateOwner.transition(() => startupState);
+    if (committed.kind !== "committed") {
+      throw new Error("Device-local mirror state is unavailable.");
+    }
+  }
   const localWriter = new ObsidianLocalReconciliationWriter(
     createObsidianLocalReconciliationHost(vault),
     runtime,
   );
   return new MirrorRuntimeOwner({
-    stateOwner: new MirrorStateOwner(state, store),
+    stateOwner,
     local,
     localWriter,
     secretStorage: app.secretStorage,

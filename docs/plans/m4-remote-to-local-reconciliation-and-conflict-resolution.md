@@ -298,7 +298,7 @@ records pre-Slice-4/5 handoff analysis, test matrices, dependencies, and contrac
 Revalidate it against the final merged Slices 4–5; it does not amend this plan, the
 M4 specification, or accepted ADRs.
 
-## Slice 6 — Device-state v4 and deferred rename/history resolution — NEXT
+## Slice 6 — Device-state v4 and deferred rename/history resolution — IMPLEMENTED
 
 ### Objective and prerequisites
 
@@ -313,8 +313,11 @@ operations, or multi-key atomic claims.
    v3→v4 migration, exact read-back, 12 MiB v4 bound, and non-empty v3 M4-state
    fixtures. Build this checkpoint first, but do not publish or save v4 from the plugin
    until Slice 7 completes the version-4 owner/registry surface in the same
-   implementation PR. Migrated active v3 history and unfenced local effects remain
-   conservative blockers; no decision/event evidence is inferred.
+   implementation PR. Migrated active v3 history remains a conservative blocker.
+   Unfenced v3 local effects retain their prior phase and enter a startup-only
+   read/hash transition before publication: exact postconditions recover without
+   redispatch, changed/absent evidence blocks permanently, ambiguous evidence remains
+   retryable, and save failure aborts startup. No decision/event evidence is inferred.
 2. Add `RenameHistoryGroupPolicy` as the sole durable-edge closure owner. It derives
    the bounded lexical group and validated current-discovery candidates; UI/caller path sets never
    define authority.
@@ -376,7 +379,7 @@ reserved, exact steps are auditable and bounded, no arbitrary history list/body 
 server transaction/compensating delete/new API exists, and canonical validation plus
 policy-ownership review pass.
 
-## Slice 7 — Runtime, commands, modal, and status composition
+## Slice 7 — Runtime, commands, modal, and status composition — IMPLEMENTED
 
 ### Objective and prerequisites
 
@@ -404,10 +407,13 @@ surface. Runtime composition follows ADR 0009 and adds no new authority.
    listeners. Stale orphan durable reviews in one serialized transition; preserve valid
    operation pairs; save failure prevents publication.
 5. Expose the review service's bounded content-free recovery selection query, including
-   prepared, sealed-active, sealed-expired, purged and incomplete results. Listing
-   never fetches content; review creation re-inspects exact selected metadata.
+   prepared, sealed-active, sealed-expired, purged and incomplete results with explicit
+   actionability. Listing and restore share one runtime-clock expiry predicate and
+   listing never fetches content. Runtime submission requires an exact latest-complete
+   process-local metadata binding; review creation then re-inspects the selection.
 6. Add thin commands, text-only modal/previews, recovery selection, and content-free
-   status projections. UI submits typed identities and never derives policy.
+   status projections. UI submits typed identities and projected history candidates;
+   core rederives any durable canonical path and all policy.
 
 ### Tests first
 
@@ -454,7 +460,7 @@ callbacks. Responsibility inventory proves every transition has the owner above,
 runtime facade remains routing-only, and canonical check passes before Slice 8 artifact
 work.
 
-## Slice 8 — Artifact, operations, qualification, and completion gates
+## Slice 8 — Artifact, operations, qualification, and completion gates — NEXT
 
 ### Objective and prerequisites
 

@@ -23,7 +23,7 @@ import {
   RECONCILIATION_EVENT_KIND,
   RECONCILIATION_OPERATION_PHASE,
   type ReadOnlyLocalVault,
-  type ReconciliationAction,
+  type ReconciliationAdmissionAction,
   type ReconciliationEventKind,
   ReconciliationObservationGenerationOwner,
   resumeMirrorWriter,
@@ -762,7 +762,7 @@ export class MirrorRuntimeOwner {
   submitReconciliation(
     sessionId: string,
     reviewId: import("@obsidian-ai-bridge/core").MirrorOperationId,
-    action: ReconciliationAction,
+    action: ReconciliationAdmissionAction,
     destinationPath?: NotePath | null,
   ): Promise<ReconciliationUiCommandResult> {
     const parsed = createMirrorOperationId(sessionId);

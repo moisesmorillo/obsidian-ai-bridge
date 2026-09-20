@@ -21,6 +21,7 @@ import type {
   HISTORY_DECISION_KIND,
   HISTORY_PROGRESS_KIND,
   HISTORY_REMOTE_EFFECT_KIND,
+  LEGACY_V3_LOCAL_EFFECT_RECOVERY_STATE,
   LOCAL_EFFECT_OBSERVATION_KIND,
   RECONCILIATION_ACTION,
   RECONCILIATION_AUTHORITY_SOURCE,
@@ -263,9 +264,22 @@ export interface DeferHistoryDecision {
 /** Execute only the exact evidence-derived former-source cleanup plan. */
 export interface ExecuteCleanupHistoryDecision {
   readonly kind: typeof HISTORY_DECISION_KIND.executeCleanupPlan;
-  /** Existing lexical group member selected by policy, never free-form UI input. */
+  /** Existing lexical group member derived by admission policy, never free-form UI input. */
   readonly canonicalPath: NotePath | null;
 }
+
+/** Process-local cleanup selection submitted from one bounded review projection. */
+export interface ExecuteCleanupHistoryAdmissionDecision {
+  readonly kind: typeof HISTORY_DECISION_KIND.executeCleanupPlan;
+  /** Candidate selected from the current review projection and revalidated during admission. */
+  readonly selectedCandidatePath: NotePath;
+}
+
+/** Closed process-local history choice accepted before durable policy derivation. */
+export type HistoryAdmissionDecision =
+  | RetainIndependentHistoryDecision
+  | DeferHistoryDecision
+  | ExecuteCleanupHistoryAdmissionDecision;
 
 /** Closed durable operator decision for one complete deferred-history group. */
 export type HistoryDecision =
@@ -277,6 +291,12 @@ export type HistoryDecision =
 export interface ResolveHistoryReconciliationAction {
   readonly kind: typeof RECONCILIATION_ACTION.resolveHistory;
   readonly decision: HistoryDecision;
+}
+
+/** Process-local history request whose canonical decision is derived only during admission. */
+export interface ResolveHistoryAdmissionAction {
+  readonly kind: typeof RECONCILIATION_ACTION.resolveHistory;
+  readonly decision: HistoryAdmissionDecision;
 }
 
 /** Persist an explicit no-mutation decision where durable deferral is required. */
@@ -296,6 +316,11 @@ export type ReconciliationAction =
   | ForkLegacyReconciliationAction
   | ResolveHistoryReconciliationAction
   | DeferReconciliationAction;
+
+/** Closed action submitted for admission before history policy derives durable fields. */
+export type ReconciliationAdmissionAction =
+  | Exclude<ReconciliationAction, ResolveHistoryReconciliationAction>
+  | ResolveHistoryAdmissionAction;
 
 /** One operation-owned path reservation with an explicit ledger relationship. */
 export interface ReconciliationPathReservation {
@@ -376,7 +401,13 @@ export interface NoLocalEffectObservation {
 export type LocalEffectObservation =
   | NoLocalEffectObservation
   | { readonly kind: typeof LOCAL_EFFECT_OBSERVATION_KIND.notStarted }
-  | { readonly kind: typeof LOCAL_EFFECT_OBSERVATION_KIND.legacyV3Unfenced }
+  | {
+      readonly kind: typeof LOCAL_EFFECT_OBSERVATION_KIND.legacyV3Unfenced;
+      /** Exact pre-projection v3 phase restored only after postcondition recovery. */
+      readonly priorPhase: ReconciliationOperationPhaseV3;
+      /** Startup recovery progress; blocked evidence is never retried automatically. */
+      readonly recoveryState: (typeof LEGACY_V3_LOCAL_EFFECT_RECOVERY_STATE)[keyof typeof LEGACY_V3_LOCAL_EFFECT_RECOVERY_STATE];
+    }
   | IdentifiedLocalEffectObservation;
 
 /** Exact confirmed history tombstone evidence bound to the cleanup step UUID. */

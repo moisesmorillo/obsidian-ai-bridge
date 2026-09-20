@@ -20,6 +20,7 @@ import {
 import type { ReconciliationEffectExecutor } from "@core/mirror/reconciliation-effect-executor";
 import { isNonHistoryReconciliationOperation } from "@core/mirror/reconciliation-operation";
 import {
+  LOCAL_EFFECT_OBSERVATION_KIND,
   RECONCILIATION_ACTION,
   RECONCILIATION_LOCAL_EVIDENCE_KIND,
   RECONCILIATION_PRESERVATION_SIDE,
@@ -152,7 +153,21 @@ export class LiveResolutionService {
     if (typeof remote === "string")
       return rejectReconciliationAction(this.effects, "evidence-changed");
     let localEffect = operation.localEffect;
-    if (target.local.kind === RECONCILIATION_LOCAL_EVIDENCE_KIND.absent) {
+    if (
+      operation.localEffectObservation.kind ===
+      LOCAL_EFFECT_OBSERVATION_KIND.recoveredV3
+    ) {
+      const recovered = await this.effects.readCurrentLocal(
+        operation.localEffectObservation.path,
+        operation.localEffectObservation.expectedHash,
+      );
+      if (recovered === "changed") {
+        return rejectReconciliationAction(this.effects, "evidence-changed");
+      }
+      localEffect = MUTATION_EFFECT_CERTAINTY.confirmed;
+    } else if (
+      target.local.kind === RECONCILIATION_LOCAL_EVIDENCE_KIND.absent
+    ) {
       const result = await this.effects.localWrites.createEligible({
         operationId: operation.operationId,
         path: target.path,

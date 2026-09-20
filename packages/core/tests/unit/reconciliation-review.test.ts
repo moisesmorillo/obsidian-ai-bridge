@@ -279,6 +279,53 @@ describe("M4 divergence classifier", () => {
         },
       }),
     ],
+    [
+      "aligned",
+      snapshot({
+        local: {
+          kind: RECONCILIATION_LOCAL_EVIDENCE_KIND.absent,
+          stability: RECONCILIATION_LOCAL_STABILITY.stable,
+          observationGeneration: 2,
+        },
+        baseline: {
+          kind: MIRROR_ACKNOWLEDGEMENT_KIND.tombstone,
+          revision: otherRevision,
+          recoveryId: operationId,
+        },
+        remote: {
+          kind: RECONCILIATION_REMOTE_EVIDENCE_KIND.tombstone,
+          associationId: association,
+          revision: otherRevision,
+          deletedRevision: revision,
+          recoveryId: operationId,
+          receipt: {
+            action: "tombstone",
+            associationId: association,
+            operationId,
+            precondition: { kind: "matching-revision", revision },
+          },
+        },
+      }),
+    ],
+    [
+      "remote-ahead",
+      snapshot({
+        baseline: {
+          kind: MIRROR_ACKNOWLEDGEMENT_KIND.tombstone,
+          revision,
+          recoveryId: operationId,
+        },
+      }),
+    ],
+    [
+      "unknown-local",
+      snapshot({
+        local: {
+          kind: RECONCILIATION_LOCAL_EVIDENCE_KIND.unknown,
+          stability: RECONCILIATION_LOCAL_STABILITY.unknown,
+        },
+      }),
+    ],
   ] as const)("classifies $0", (expected, value) => {
     expect(classifyReconciliation(value)).toBe(expected);
   });

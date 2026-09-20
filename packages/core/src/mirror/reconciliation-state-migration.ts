@@ -5,6 +5,7 @@ import type {
 } from "@core/mirror/mirror-state.types";
 import {
   HISTORY_PROGRESS_KIND,
+  LEGACY_V3_LOCAL_EFFECT_RECOVERY_STATE,
   LOCAL_EFFECT_OBSERVATION_KIND,
   RECONCILIATION_ACTION,
   RECONCILIATION_LOCAL_EVIDENCE_KIND,
@@ -96,8 +97,13 @@ function projectOperation(
     (evidence) => evidence.path === operation.snapshot.targetPath,
   );
   const localEffectObservation: LocalEffectObservation =
-    operation.localEffect !== MUTATION_EFFECT_CERTAINTY.notDispatched
-      ? { kind: LOCAL_EFFECT_OBSERVATION_KIND.legacyV3Unfenced }
+    operation.localEffect !== MUTATION_EFFECT_CERTAINTY.notDispatched ||
+    operation.phase === RECONCILIATION_OPERATION_PHASE.mutatingLocal
+      ? {
+          kind: LOCAL_EFFECT_OBSERVATION_KIND.legacyV3Unfenced,
+          priorPhase: operation.phase,
+          recoveryState: LEGACY_V3_LOCAL_EFFECT_RECOVERY_STATE.pending,
+        }
       : actionCanWriteLocal(operation)
         ? { kind: LOCAL_EFFECT_OBSERVATION_KIND.notStarted }
         : {

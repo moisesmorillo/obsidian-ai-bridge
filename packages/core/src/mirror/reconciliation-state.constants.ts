@@ -100,6 +100,13 @@ export const HISTORY_PROGRESS_KIND = {
   legacyV3Unrefined: "legacy-v3-history-unrefined",
 } as const;
 
+/** Focused startup-recovery progress retained by an unfenced v3 local effect. */
+export const LEGACY_V3_LOCAL_EFFECT_RECOVERY_STATE = {
+  pending: "pending",
+  evidenceRequired: "evidence-required",
+  blocked: "blocked",
+} as const;
+
 /** Durable synthetic local-effect observation variants. */
 export const LOCAL_EFFECT_OBSERVATION_KIND = {
   notRequired: "not-required",

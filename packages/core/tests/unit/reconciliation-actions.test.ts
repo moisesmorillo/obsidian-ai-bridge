@@ -1002,6 +1002,51 @@ describe("M4 revisioned adoption and live resolution", () => {
     });
   });
 
+  it("resumes recovered-v3 adoption without redispatching a local create", async () => {
+    const target = pathEvidence(PATH, localAbsent(), {
+      kind: RECONCILIATION_REMOTE_EVIDENCE_KIND.live,
+      associationId: ASSOCIATION,
+      revision: REVISION_REMOTE,
+      contentSha256: HASH_REMOTE,
+      receipt: remoteLive().receipt,
+    });
+    const initial = stateFor(
+      { kind: RECONCILIATION_ACTION.adoptRevision },
+      target,
+    );
+    const current = requiredNonHistory(initial.reconciliationOperations[0]);
+    const recovered: ReconciliationNonHistoryOperation = {
+      ...current,
+      phase: RECONCILIATION_OPERATION_PHASE.partial,
+      localEffect: MUTATION_EFFECT_CERTAINTY.confirmed,
+      localEffectObservation: {
+        kind: LOCAL_EFFECT_OBSERVATION_KIND.recoveredV3,
+        effectId: RECOVERY,
+        path: PATH,
+        expectedHash: HASH_REMOTE,
+        listenerEpoch: 1,
+        beforeGeneration: 7,
+        postconditionHash: HASH_REMOTE,
+        successor: null,
+      },
+    };
+    const subject = harness({
+      ...initial,
+      reconciliationOperations: [recovered],
+    });
+    subject.local.files.set(PATH, REMOTE_TEXT);
+    subject.remote.states.set(PATH, remoteLive());
+    subject.remote.bodies.set(PATH, REMOTE_TEXT);
+    const create = vi.spyOn(subject.local, "createEligible");
+    const replace = vi.spyOn(subject.local, "replaceEligible");
+
+    await expect(
+      subject.adoption.execute({ operationId: OPERATION }),
+    ).resolves.toMatchObject({ kind: "completed" });
+    expect(create).not.toHaveBeenCalled();
+    expect(replace).not.toHaveBeenCalled();
+  });
+
   it.each([
     RECONCILIATION_PRESERVATION_SIDE.local,
     RECONCILIATION_PRESERVATION_SIDE.remote,

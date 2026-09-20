@@ -360,6 +360,16 @@ export {
 export type { RequiredReconciliationPreservation } from "@core/mirror/reconciliation-preservation-policy";
 export { requiredReconciliationPreservations } from "@core/mirror/reconciliation-preservation-policy";
 export type {
+  RecoverySelectionProjection,
+  RecoverySelectionState,
+} from "@core/mirror/reconciliation-recovery-selection";
+export {
+  isRecoverySnapshotExpired,
+  projectRecoverySelection,
+  RECOVERY_SELECTION_STATE,
+  recoverySnapshotStatesEqual,
+} from "@core/mirror/reconciliation-recovery-selection";
+export type {
   ReconciliationAdmissionRequest,
   ReconciliationAdmissionResult,
   ReconciliationAllowedAction,
@@ -381,6 +391,7 @@ export {
   HISTORY_DECISION_KIND,
   HISTORY_PROGRESS_KIND,
   HISTORY_REMOTE_EFFECT_KIND,
+  LEGACY_V3_LOCAL_EFFECT_RECOVERY_STATE,
   LOCAL_EFFECT_OBSERVATION_KIND,
   MAX_RECONCILIATION_OPERATIONS,
   MAX_RECONCILIATION_PRESERVATION_RECEIPTS,
@@ -405,7 +416,9 @@ export type {
   AdoptRevisionReconciliationAction,
   DeferReconciliationAction,
   EphemeralReconciliationReview,
+  ExecuteCleanupHistoryAdmissionDecision,
   ForkLegacyReconciliationAction,
+  HistoryAdmissionDecision,
   HistoryCleanupStep,
   HistoryDecision,
   HistoryRemoteEffect,
@@ -417,6 +430,7 @@ export type {
   LocalEffectObservation,
   LocalEffectSuccessorRange,
   ReconciliationAction,
+  ReconciliationAdmissionAction,
   ReconciliationAuthoritySource,
   ReconciliationClassification,
   ReconciliationEventKind,
@@ -426,6 +440,7 @@ export type {
   ReconciliationNonHistoryOperation,
   ReconciliationOperation,
   ReconciliationOperationPhase,
+  ReconciliationOperationPhaseV3,
   ReconciliationOperationV3,
   ReconciliationPathEvidence,
   ReconciliationPathReservation,
@@ -441,6 +456,7 @@ export type {
   ReconciliationRuntimeIdentity,
   RecreateRemoteReconciliationAction,
   RefinedHistoryProgress,
+  ResolveHistoryAdmissionAction,
   ResolveHistoryReconciliationAction,
   RestoreRecoveryReconciliationAction,
   UseRemoteReconciliationAction,
@@ -451,6 +467,9 @@ export {
   isReconciliationStateConsistent,
   reconciliationReviewSnapshotsEqual,
 } from "@core/mirror/reconciliation-state-validation";
+export type { ReconciliationV3LocalEffectRecoveryDependencies } from "@core/mirror/reconciliation-v3-local-effect-recovery";
+export { ReconciliationV3LocalEffectRecoveryService } from "@core/mirror/reconciliation-v3-local-effect-recovery";
+export type { ReconciliationV3LocalEffectRecoveryResult } from "@core/mirror/reconciliation-v3-local-effect-recovery.types";
 export { RecoveryRestoreService } from "@core/mirror/recovery-restore-service";
 export { RecoveryService } from "@core/mirror/recovery-service";
 export type { RecoverySnapshotRepository } from "@core/mirror/recovery-snapshot-repository.port";

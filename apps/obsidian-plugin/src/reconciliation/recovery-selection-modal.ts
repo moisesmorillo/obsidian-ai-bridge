@@ -49,9 +49,12 @@ export class RecoverySelectionModal extends Modal {
       const button = this.contentEl.createEl("button", {
         text: `${recovery.path} — ${recovery.state}`,
       });
-      button.addEventListener("click", () => {
-        void this.select(recovery);
-      });
+      button.disabled = !recovery.actionable;
+      if (recovery.actionable) {
+        button.addEventListener("click", () => {
+          void this.select(recovery);
+        });
+      }
     }
   }
 

@@ -393,6 +393,63 @@ describe("RenameHistoryGroupPolicy", () => {
     expect(progress?.steps.map((step) => step.sourcePath)).toEqual([a, b]);
   });
 
+  it("derives durable canonical identity only from a current projected candidate", () => {
+    const source = path("notes/source.md");
+    const destination = path("notes/destination.md");
+    const outside = path("notes/forged.md");
+    const mirrorState = state([deferred(1, source, destination)]);
+    const sampled = snapshot(source, [source, destination], mirrorState);
+    const policy = new RenameHistoryGroupPolicy();
+
+    expect(
+      policy.deriveDecision(mirrorState, sampled, {
+        kind: HISTORY_DECISION_KIND.executeCleanupPlan,
+        selectedCandidatePath: destination,
+      }),
+    ).toEqual({
+      kind: HISTORY_DECISION_KIND.executeCleanupPlan,
+      canonicalPath: destination,
+    });
+    expect(
+      policy.deriveDecision(mirrorState, sampled, {
+        kind: HISTORY_DECISION_KIND.executeCleanupPlan,
+        selectedCandidatePath: outside,
+      }),
+    ).toBeUndefined();
+    expect(
+      policy.deriveDecision(mirrorState, sampled, {
+        kind: HISTORY_DECISION_KIND.retainIndependent,
+      }),
+    ).toEqual({ kind: HISTORY_DECISION_KIND.retainIndependent });
+    expect(
+      policy.deriveDecision(mirrorState, sampled, {
+        kind: HISTORY_DECISION_KIND.deferHistory,
+      }),
+    ).toEqual({ kind: HISTORY_DECISION_KIND.deferHistory });
+  });
+
+  it("rejects a selected candidate after durable group membership changes", () => {
+    const source = path("notes/source.md");
+    const destination = path("notes/destination.md");
+    const added = path("notes/added.md");
+    const original = state([deferred(1, source, destination)]);
+    const changed = state([
+      deferred(1, source, destination),
+      deferred(2, destination, added),
+    ]);
+
+    expect(
+      new RenameHistoryGroupPolicy().deriveDecision(
+        changed,
+        snapshot(source, [source, destination], original),
+        {
+          kind: HISTORY_DECISION_KIND.executeCleanupPlan,
+          selectedCandidatePath: destination,
+        },
+      ),
+    ).toBeUndefined();
+  });
+
   it("does not expand a seed that has no durable deferred-history edge", () => {
     const mirrorState = state([]);
     const seed = path("notes/a.md");

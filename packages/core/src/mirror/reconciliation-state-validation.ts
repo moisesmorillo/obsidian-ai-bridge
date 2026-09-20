@@ -30,6 +30,7 @@ import type {
   MirrorUnresolvedMutation,
   RenameDeferredMirrorState,
 } from "@core/mirror/mirror-state.types";
+import { isAuthorizedLocalEffectPostcondition } from "@core/mirror/reconciliation-local-effect-policy";
 import {
   isHistoryReconciliationOperation,
   isNonHistoryReconciliationOperation,
@@ -44,6 +45,7 @@ import {
   HISTORY_DECISION_KIND,
   HISTORY_PROGRESS_KIND,
   HISTORY_REMOTE_EFFECT_KIND,
+  LEGACY_V3_LOCAL_EFFECT_RECOVERY_STATE,
   LOCAL_EFFECT_OBSERVATION_KIND,
   MAX_RECONCILIATION_OPERATIONS,
   MAX_RECONCILIATION_PRESERVATION_RECEIPTS,
@@ -1616,8 +1618,15 @@ function validateLocalEffectObservation(
       );
     case LOCAL_EFFECT_OBSERVATION_KIND.legacyV3Unfenced:
       return (
-        operation.phase === RECONCILIATION_OPERATION_PHASE.blocked ||
-        operation.phase === RECONCILIATION_OPERATION_PHASE.evidenceRequired
+        (observation.recoveryState ===
+          LEGACY_V3_LOCAL_EFFECT_RECOVERY_STATE.evidenceRequired &&
+          operation.phase ===
+            RECONCILIATION_OPERATION_PHASE.evidenceRequired) ||
+        ((observation.recoveryState ===
+          LEGACY_V3_LOCAL_EFFECT_RECOVERY_STATE.pending ||
+          observation.recoveryState ===
+            LEGACY_V3_LOCAL_EFFECT_RECOVERY_STATE.blocked) &&
+          operation.phase === RECONCILIATION_OPERATION_PHASE.blocked)
       );
     case LOCAL_EFFECT_OBSERVATION_KIND.prepared:
     case LOCAL_EFFECT_OBSERVATION_KIND.confirmed:
@@ -1626,6 +1635,12 @@ function validateLocalEffectObservation(
         observation.listenerEpoch < 1 ||
         observation.beforeGeneration < 0 ||
         !isContentSha256(observation.expectedHash) ||
+        (observation.kind === LOCAL_EFFECT_OBSERVATION_KIND.recoveredV3 &&
+          !isAuthorizedLocalEffectPostcondition(
+            operation,
+            observation.path,
+            observation.expectedHash,
+          )) ||
         (observation.postconditionHash !== null &&
           observation.postconditionHash !== observation.expectedHash)
       ) {
@@ -1639,7 +1654,8 @@ function validateLocalEffectObservation(
         return observation.postconditionHash === null;
       }
       if (
-        observation.kind === LOCAL_EFFECT_OBSERVATION_KIND.confirmed &&
+        (observation.kind === LOCAL_EFFECT_OBSERVATION_KIND.confirmed ||
+          observation.kind === LOCAL_EFFECT_OBSERVATION_KIND.recoveredV3) &&
         (operation.localEffect !== MUTATION_EFFECT_CERTAINTY.confirmed ||
           observation.postconditionHash !== observation.expectedHash)
       ) {

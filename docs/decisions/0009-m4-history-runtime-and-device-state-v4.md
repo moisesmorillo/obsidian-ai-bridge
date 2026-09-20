@@ -237,11 +237,17 @@ receipt, reservation, and successor link. It infers no history choice, step comp
 or event causality:
 
 - non-history v3 operations receive the v4 observation state `legacy-v3-unfenced` when
-  they contain a started/confirmed/unknown local effect. Before any further mutation,
-  a focused migration-recovery transition reuses the existing exact operation evidence
-  and writer postcondition read only: exact expected bytes become a recovered synthetic
-  confirmation, definitely absent/changed evidence becomes blocked, and ambiguity
-  remains evidence-required. It never dispatches a local effect or infers a host event;
+  they contain a started/confirmed/unknown local effect. That state retains the exact
+  prior v3 phase and focused recovery progress. Before runtime/UI publication or any
+  further mutation, a startup-only transition uses a read-only local inspection and
+  the exact postcondition derivable from existing operation evidence: exact expected
+  bytes become a recovered synthetic confirmation and resume from a safe prior phase;
+  definitely absent/changed evidence becomes a permanent blocked result; and unavailable
+  or ambiguous evidence remains evidence-required for a later startup retry. Failed
+  persistence aborts startup without publishing the prospective transition. The
+  recovery owner has no writer, remote port, review authority, or event source, so it
+  cannot redispatch a local effect or infer a host event. Semantic v4 validation also
+  rederives the authorized path/digest pair for every persisted `recovered-v3` result;
 - v3 history operations receive `legacy-v3-history-unrefined`; their aggregate state
   and receipts are preserved, they dispatch no new effect, and active records become
   permanent migration-attention blockers in M4 because no operator choice can be
@@ -315,6 +321,8 @@ LocalEffectObservation
     postconditionHash: expectedHash
     successor: none | observed-generation-range
   legacy-v3-unfenced
+    priorPhase: exact frozen-v3 operation phase
+    recoveryState: pending | evidence-required | blocked
   not-started
   not-required
     path/listenerEpoch/beforeGeneration
@@ -379,13 +387,16 @@ state owner, runs this transition, and publishes commands/runtime only after a
 committed or no-op result. Save failure is state-unavailable.
 
 `ReconciliationReviewService` also owns the bounded recovery-selection query because it
-already owns read-only recovery evidence. The query returns content-free entries for
-prepared, sealed-active, sealed-expired, and purged metadata plus complete/incomplete
-pagination status. It fetches no recovery body. UI submits the exact recovery ID from
-one current session projection; `createReview` re-inspects metadata and binds the exact
-revision/status/hash/expiry to the new immutable snapshot. Refresh, metadata change,
-session invalidation, or incomplete inventory makes the prior selection stale and
-grants no restore authority.
+already owns read-only recovery evidence. The query classifies content-free entries as
+prepared, sealed-active, sealed-expired, or purged with an explicit actionability flag
+and complete/incomplete pagination status. Expiry classification and restore admission
+share one runtime-clock predicate, so expired, purged, and incomplete rows remain
+visible but cannot be submitted. Listing fetches no recovery body. The runtime binds
+selection to exact metadata from its latest complete process-local projection and
+consumes that binding on submission; `createReview` then re-inspects metadata and binds
+the exact revision/status/hash/expiry to the new immutable snapshot. Refresh, metadata
+change, session invalidation, incomplete inventory, or a forged ID makes the prior
+selection stale and grants no restore authority.
 
 ## Consequences
 

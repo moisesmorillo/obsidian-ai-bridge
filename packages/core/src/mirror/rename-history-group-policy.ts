@@ -19,6 +19,7 @@ import {
   RECONCILIATION_REMOTE_EVIDENCE_KIND,
 } from "@core/mirror/reconciliation-state.constants";
 import type {
+  HistoryAdmissionDecision,
   HistoryCleanupStep,
   HistoryDecision,
   ReconciliationReviewSnapshot,
@@ -95,6 +96,43 @@ export class RenameHistoryGroupPolicy {
     return {
       kind: "group",
       paths: [...paths].toSorted((left, right) => left.localeCompare(right)),
+    };
+  }
+
+  /**
+   * Resolves one process-local projected selection into the durable history decision.
+   *
+   * @param state - Current durable rename-edge authority.
+   * @param snapshot - Complete immutable group evidence.
+   * @param decision - Operator choice containing no durable canonical field.
+   * @returns Durable decision, or undefined when projection membership/group evidence is stale.
+   */
+  deriveDecision(
+    state: MirrorDeviceState,
+    snapshot: ReconciliationReviewSnapshot,
+    decision: HistoryAdmissionDecision,
+  ): HistoryDecision | undefined {
+    const group = this.derive(state, snapshot.targetPath);
+    if (group.kind !== "group") return undefined;
+    const sampledPaths = snapshot.paths
+      .map((evidence) => evidence.path)
+      .toSorted((left, right) => left.localeCompare(right));
+    if (
+      sampledPaths.length !== group.paths.length ||
+      sampledPaths.some((path, index) => path !== group.paths[index])
+    ) {
+      return undefined;
+    }
+    if (
+      decision.kind === HISTORY_DECISION_KIND.retainIndependent ||
+      decision.kind === HISTORY_DECISION_KIND.deferHistory
+    ) {
+      return decision;
+    }
+    if (!group.paths.includes(decision.selectedCandidatePath)) return undefined;
+    return {
+      kind: HISTORY_DECISION_KIND.executeCleanupPlan,
+      canonicalPath: decision.selectedCandidatePath,
     };
   }
 

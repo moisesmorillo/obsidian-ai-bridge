@@ -62,6 +62,8 @@ import {
 } from "@core/mirror/reconciliation-state.constants";
 import type {
   EphemeralReconciliationReview,
+  ReconciliationAction,
+  ReconciliationAdmissionAction,
   ReconciliationHistoryOperation,
   ReconciliationNonHistoryOperation,
   ReconciliationOperation,
@@ -419,15 +421,23 @@ export class ReconciliationReviewService implements ReconciliationReviewQuery {
       this.markStale(request.reviewId);
       return rejected("stale-review", this.stateOwner.snapshot());
     }
-    const restoredPublication = this.restorePredecessor(
+    const derivedAction = this.deriveAdmissionAction(
       before.state,
       sampled.snapshot,
       request.action,
     );
+    if (derivedAction === undefined) {
+      return rejected("action-not-allowed", this.stateOwner.snapshot());
+    }
+    const restoredPublication = this.restorePredecessor(
+      before.state,
+      sampled.snapshot,
+      derivedAction,
+    );
     if (
-      !isReconciliationActionAllowed(sampled.snapshot, request.action) &&
+      !isReconciliationActionAllowed(sampled.snapshot, derivedAction) &&
       !(
-        request.action.kind === RECONCILIATION_ACTION.keepLocal &&
+        derivedAction.kind === RECONCILIATION_ACTION.keepLocal &&
         isRestoredPublicationSnapshot(sampled.snapshot) &&
         restoredPublication !== undefined
       )
@@ -442,10 +452,16 @@ export class ReconciliationReviewService implements ReconciliationReviewQuery {
       if (!this.currentStateMatches(state, sampled.snapshot)) return undefined;
       if (!this.isAdmissionLifecycleAllowed(state, sampled.snapshot))
         return undefined;
-      const restorePredecessor = this.restorePredecessor(
+      const action = this.deriveAdmissionAction(
         state,
         sampled.snapshot,
         request.action,
+      );
+      if (action === undefined) return undefined;
+      const restorePredecessor = this.restorePredecessor(
+        state,
+        sampled.snapshot,
+        action,
       );
       const localEffectPredecessor = this.localEffectPredecessor(
         state,
@@ -470,23 +486,23 @@ export class ReconciliationReviewService implements ReconciliationReviewQuery {
       );
       if (reservations === undefined) return undefined;
       const historyProgress =
-        request.action.kind === RECONCILIATION_ACTION.resolveHistory
+        action.kind === RECONCILIATION_ACTION.resolveHistory
           ? this.historyGroups.createProgress(
               state,
               sampled.snapshot,
-              request.action.decision,
+              action.decision,
               operationId,
               this.dependencies.createOperationId,
             )
           : undefined;
       if (
-        request.action.kind === RECONCILIATION_ACTION.resolveHistory &&
+        action.kind === RECONCILIATION_ACTION.resolveHistory &&
         historyProgress === undefined
       ) {
         return undefined;
       }
       const phase =
-        request.action.kind === RECONCILIATION_ACTION.defer ||
+        action.kind === RECONCILIATION_ACTION.defer ||
         (historyProgress !== undefined &&
           historyProgress.nextStepIndex === null)
           ? RECONCILIATION_OPERATION_PHASE.completed
@@ -494,7 +510,7 @@ export class ReconciliationReviewService implements ReconciliationReviewQuery {
       const common = {
         operationId,
         reviewId: review.reviewId,
-        authority: reconciliationAuthorityForAction(request.action),
+        authority: reconciliationAuthorityForAction(action),
         phase,
         snapshot: sampled.snapshot,
         destinationPath: selectedDestination,
@@ -504,17 +520,17 @@ export class ReconciliationReviewService implements ReconciliationReviewQuery {
       };
       let operation: ReconciliationOperation;
       if (
-        request.action.kind === RECONCILIATION_ACTION.resolveHistory &&
+        action.kind === RECONCILIATION_ACTION.resolveHistory &&
         historyProgress !== undefined
       ) {
         operation = {
           ...common,
           authority: RECONCILIATION_AUTHORITY_SOURCE.historyDecision,
-          action: request.action,
+          action,
           historyProgress,
         } satisfies ReconciliationHistoryOperation;
       } else {
-        if (request.action.kind === RECONCILIATION_ACTION.resolveHistory) {
+        if (action.kind === RECONCILIATION_ACTION.resolveHistory) {
           return undefined;
         }
         const target = sampled.snapshot.paths.find(
@@ -523,10 +539,10 @@ export class ReconciliationReviewService implements ReconciliationReviewQuery {
         if (target === undefined) return undefined;
         operation = {
           ...common,
-          action: request.action,
+          action,
           localEffect: MUTATION_EFFECT_CERTAINTY.notDispatched,
           remoteEffect: MUTATION_EFFECT_CERTAINTY.notDispatched,
-          localEffectObservation: actionMayWriteLocal(request.action.kind)
+          localEffectObservation: actionMayWriteLocal(action.kind)
             ? { kind: LOCAL_EFFECT_OBSERVATION_KIND.notStarted }
             : {
                 kind: LOCAL_EFFECT_OBSERVATION_KIND.notRequired,
@@ -976,7 +992,7 @@ export class ReconciliationReviewService implements ReconciliationReviewQuery {
   private restorePredecessor(
     state: MirrorDeviceState,
     snapshot: ReconciliationReviewSnapshot,
-    action: ReconciliationAdmissionRequest["action"],
+    action: ReconciliationAction,
   ): ReconciliationOperation | undefined {
     if (action.kind === RECONCILIATION_ACTION.defer) return undefined;
     return state.reconciliationOperations.find((operation) => {
@@ -1055,6 +1071,33 @@ export class ReconciliationReviewService implements ReconciliationReviewQuery {
           current.snapshot.paths.some((right) => left.path === right.path),
         ),
     );
+  }
+
+  /**
+   * Converts a process-local admission request into the only durable action shape.
+   *
+   * History canonical paths are derived from the current complete group; presentation
+   * can submit only a selected projected candidate. Ordinary actions pass through.
+   *
+   * @param state - Current durable group authority.
+   * @param snapshot - Fresh complete immutable review evidence.
+   * @param action - Process-local operator request.
+   * @returns Durable action or undefined when history selection/group evidence is stale.
+   */
+  private deriveAdmissionAction(
+    state: MirrorDeviceState,
+    snapshot: ReconciliationReviewSnapshot,
+    action: ReconciliationAdmissionAction,
+  ): ReconciliationAction | undefined {
+    if (action.kind !== RECONCILIATION_ACTION.resolveHistory) return action;
+    const decision = this.historyGroups.deriveDecision(
+      state,
+      snapshot,
+      action.decision,
+    );
+    return decision === undefined
+      ? undefined
+      : { kind: RECONCILIATION_ACTION.resolveHistory, decision };
   }
 
   /**

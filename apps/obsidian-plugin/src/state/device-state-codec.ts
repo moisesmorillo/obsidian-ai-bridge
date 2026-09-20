@@ -17,6 +17,7 @@ import {
   isHistoryReconciliationOperation,
   isMirrorDeviceStateConsistent,
   isNormalizedNotePath,
+  LEGACY_V3_LOCAL_EFFECT_RECOVERY_STATE,
   type LegacyV3HistoryProgress,
   LOCAL_EFFECT_OBSERVATION_KIND,
   type LocalEffectObservation,
@@ -618,6 +619,20 @@ const successorRangeSchema = z
   })
   .strict();
 
+/** Frozen v3 phases retained only while local postcondition recovery remains unresolved. */
+const legacyV3OperationPhaseSchema = z.enum([
+  RECONCILIATION_OPERATION_PHASE.admitted,
+  RECONCILIATION_OPERATION_PHASE.preserving,
+  RECONCILIATION_OPERATION_PHASE.mutatingLocal,
+  RECONCILIATION_OPERATION_PHASE.mutatingRemote,
+  RECONCILIATION_OPERATION_PHASE.evidenceRequired,
+  RECONCILIATION_OPERATION_PHASE.partial,
+  RECONCILIATION_OPERATION_PHASE.restoredPendingReview,
+  RECONCILIATION_OPERATION_PHASE.stale,
+  RECONCILIATION_OPERATION_PHASE.blocked,
+  RECONCILIATION_OPERATION_PHASE.completed,
+]);
+
 /** Exact synthetic local-effect observation or conservative migration attention. */
 const localEffectObservationSchema = z.discriminatedUnion("kind", [
   z
@@ -633,7 +648,15 @@ const localEffectObservationSchema = z.discriminatedUnion("kind", [
     .object({ kind: z.literal(LOCAL_EFFECT_OBSERVATION_KIND.notStarted) })
     .strict(),
   z
-    .object({ kind: z.literal(LOCAL_EFFECT_OBSERVATION_KIND.legacyV3Unfenced) })
+    .object({
+      kind: z.literal(LOCAL_EFFECT_OBSERVATION_KIND.legacyV3Unfenced),
+      priorPhase: legacyV3OperationPhaseSchema,
+      recoveryState: z.enum([
+        LEGACY_V3_LOCAL_EFFECT_RECOVERY_STATE.pending,
+        LEGACY_V3_LOCAL_EFFECT_RECOVERY_STATE.evidenceRequired,
+        LEGACY_V3_LOCAL_EFFECT_RECOVERY_STATE.blocked,
+      ]),
+    })
     .strict(),
   ...[
     LOCAL_EFFECT_OBSERVATION_KIND.prepared,
@@ -1327,8 +1350,9 @@ function projectLocalEffectObservation(
               },
       };
     case LOCAL_EFFECT_OBSERVATION_KIND.notStarted:
-    case LOCAL_EFFECT_OBSERVATION_KIND.legacyV3Unfenced:
       return { kind: observation.kind };
+    case LOCAL_EFFECT_OBSERVATION_KIND.legacyV3Unfenced:
+      return observation;
     case LOCAL_EFFECT_OBSERVATION_KIND.prepared:
     case LOCAL_EFFECT_OBSERVATION_KIND.confirmed:
     case LOCAL_EFFECT_OBSERVATION_KIND.recoveredV3:

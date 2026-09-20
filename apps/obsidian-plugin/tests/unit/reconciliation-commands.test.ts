@@ -1,6 +1,7 @@
 import {
   createMirrorOperationId,
   createRecoverySnapshotId,
+  HISTORY_DECISION_KIND,
   normalizeNotePath,
   RECONCILIATION_ACTION,
   RECONCILIATION_CLASSIFICATION,
@@ -125,6 +126,7 @@ describe("ReconciliationCommands", () => {
       destinationPath: null,
       classification: RECONCILIATION_CLASSIFICATION.bothChanged,
       allowedActions: [RECONCILIATION_ACTION.defer],
+      historyCandidates: [],
     });
     const modal = new ReconciliationReviewModal(
       new App(),
@@ -166,6 +168,7 @@ describe("ReconciliationCommands", () => {
         RECONCILIATION_ACTION.resolveHistory,
         RECONCILIATION_ACTION.defer,
       ],
+      historyCandidates: [path],
     });
     vi.mocked(application.reconciliationPreview).mockReturnValueOnce(
       "<literal preview>",
@@ -209,6 +212,63 @@ describe("ReconciliationCommands", () => {
     expect(application.closeReconciliationReview).not.toHaveBeenCalled();
   });
 
+  it("submits only a bounded history candidate instead of a durable canonical path", async () => {
+    const application = owner();
+    const path = normalizeNotePath("notes/history-source.md");
+    const candidate = normalizeNotePath("notes/history-destination.md");
+    const reviewId = createMirrorOperationId(
+      "44444444-4444-4444-8444-444444444444",
+    );
+    if (
+      path === undefined ||
+      candidate === undefined ||
+      reviewId === undefined
+    ) {
+      return;
+    }
+    vi.mocked(application.createReconciliationReview).mockResolvedValueOnce({
+      reviewId,
+      targetPath: path,
+      destinationPath: null,
+      classification: RECONCILIATION_CLASSIFICATION.deferredHistory,
+      allowedActions: [RECONCILIATION_ACTION.resolveHistory],
+      historyCandidates: [candidate],
+    });
+    vi.mocked(application.submitReconciliation).mockResolvedValueOnce({
+      kind: "admitted",
+    });
+    const modal = new ReconciliationReviewModal(
+      new App(),
+      application,
+      "33333333-3333-4333-8333-333333333333",
+      [path],
+    );
+
+    modal.open();
+    modal.contentEl.querySelectorAll("button")[0]?.click();
+    await Promise.resolve();
+    await Promise.resolve();
+    modal.contentEl.querySelectorAll("button")[4]?.click();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(application.submitReconciliation).toHaveBeenCalledWith(
+      "33333333-3333-4333-8333-333333333333",
+      reviewId,
+      {
+        kind: RECONCILIATION_ACTION.resolveHistory,
+        decision: {
+          kind: HISTORY_DECISION_KIND.executeCleanupPlan,
+          selectedCandidatePath: candidate,
+        },
+      },
+      undefined,
+    );
+    const submitted = vi.mocked(application.submitReconciliation).mock
+      .calls[0]?.[2];
+    expect(submitted).not.toHaveProperty("decision.canonicalPath");
+  });
+
   it("resamples a literal destination and closes a refused destination review", async () => {
     const application = owner();
     const path = normalizeNotePath("notes/actions.md");
@@ -234,6 +294,7 @@ describe("ReconciliationCommands", () => {
         destinationPath: null,
         classification: RECONCILIATION_CLASSIFICATION.bothChanged,
         allowedActions: [RECONCILIATION_ACTION.keepBoth],
+        historyCandidates: [],
       })
       .mockResolvedValueOnce({
         reviewId: destinationReviewId,
@@ -241,6 +302,7 @@ describe("ReconciliationCommands", () => {
         destinationPath: destination,
         classification: RECONCILIATION_CLASSIFICATION.bothChanged,
         allowedActions: [RECONCILIATION_ACTION.keepBoth],
+        historyCandidates: [],
       });
     vi.mocked(application.submitReconciliation).mockResolvedValueOnce({
       kind: "stale",
@@ -305,6 +367,7 @@ describe("ReconciliationCommands", () => {
         destinationPath: null,
         classification: RECONCILIATION_CLASSIFICATION.bothChanged,
         allowedActions: [RECONCILIATION_ACTION.keepBoth],
+        historyCandidates: [],
       });
       vi.mocked(application.createReconciliationReview).mockResolvedValueOnce(
         failure === "missing"
@@ -319,6 +382,7 @@ describe("ReconciliationCommands", () => {
                 failure === "disallowed"
                   ? [RECONCILIATION_ACTION.defer]
                   : [RECONCILIATION_ACTION.keepBoth],
+              historyCandidates: [],
             },
       );
       const modal = new ReconciliationReviewModal(
@@ -408,6 +472,7 @@ describe("ReconciliationCommands", () => {
       destinationPath: null,
       classification: RECONCILIATION_CLASSIFICATION.bothChanged,
       allowedActions: [RECONCILIATION_ACTION.defer],
+      historyCandidates: [],
     });
     await Promise.resolve();
     await Promise.resolve();
@@ -440,6 +505,7 @@ describe("ReconciliationCommands", () => {
         RECONCILIATION_ACTION.keepBoth,
         RECONCILIATION_ACTION.defer,
       ],
+      historyCandidates: [],
     });
     const submit =
       Promise.withResolvers<
@@ -478,6 +544,7 @@ describe("ReconciliationCommands", () => {
         destinationPath: null,
         classification: RECONCILIATION_CLASSIFICATION.bothChanged,
         allowedActions: [RECONCILIATION_ACTION.keepBoth],
+        historyCandidates: [],
       })
       .mockReturnValueOnce(destinationReview.promise);
     const destinationModal = new ReconciliationReviewModal(
@@ -529,12 +596,21 @@ describe("ReconciliationCommands", () => {
       destinationPath: null,
       classification: RECONCILIATION_CLASSIFICATION.localMissing,
       allowedActions: [RECONCILIATION_ACTION.restoreRecovery],
+      historyCandidates: [],
     });
     const modal = new RecoverySelectionModal(
       new App(),
       application,
       "33333333-3333-4333-8333-333333333333",
-      [{ id: recoveryId, path, state: "prepared", recoverUntil: null }],
+      [
+        {
+          id: recoveryId,
+          path,
+          state: "prepared",
+          recoverUntil: null,
+          actionable: true,
+        },
+      ],
     );
 
     modal.open();
@@ -572,6 +648,7 @@ describe("ReconciliationCommands", () => {
       destinationPath: null,
       classification: RECONCILIATION_CLASSIFICATION.localMissing,
       allowedActions: [RECONCILIATION_ACTION.restoreRecovery],
+      historyCandidates: [],
     });
     vi.mocked(application.submitReconciliation).mockResolvedValueOnce({
       kind: "admitted",
@@ -580,7 +657,15 @@ describe("ReconciliationCommands", () => {
       new App(),
       application,
       "33333333-3333-4333-8333-333333333333",
-      [{ id: recoveryId, path, state: "prepared", recoverUntil: null }],
+      [
+        {
+          id: recoveryId,
+          path,
+          state: "prepared",
+          recoverUntil: null,
+          actionable: true,
+        },
+      ],
       true,
     );
 
@@ -608,13 +693,69 @@ describe("ReconciliationCommands", () => {
       new App(),
       application,
       "33333333-3333-4333-8333-333333333333",
-      [{ id: recoveryId, path, state: "prepared", recoverUntil: null }],
+      [
+        {
+          id: recoveryId,
+          path,
+          state: "prepared",
+          recoverUntil: null,
+          actionable: true,
+        },
+      ],
     );
     unavailable.open();
     unavailable.contentEl.querySelectorAll("button")[0]?.click();
     await Promise.resolve();
     await Promise.resolve();
     expect(application.createReconciliationReview).toHaveBeenCalledTimes(2);
+  });
+
+  it("renders expired and purged recovery metadata without actionable selection", () => {
+    const application = owner();
+    const path = normalizeNotePath("notes/recovery.md");
+    const expiredId = createRecoverySnapshotId(
+      "55555555-5555-4555-8555-555555555555",
+    );
+    const purgedId = createRecoverySnapshotId(
+      "66666666-6666-4666-8666-666666666666",
+    );
+    if (
+      path === undefined ||
+      expiredId === undefined ||
+      purgedId === undefined
+    ) {
+      return;
+    }
+    const modal = new RecoverySelectionModal(
+      new App(),
+      application,
+      "33333333-3333-4333-8333-333333333333",
+      [
+        {
+          id: expiredId,
+          path,
+          state: "sealed-expired",
+          recoverUntil: "1970-01-01T00:00:00.000Z",
+          actionable: false,
+        },
+        {
+          id: purgedId,
+          path,
+          state: "purged",
+          recoverUntil: "1970-01-01T00:00:00.000Z",
+          actionable: false,
+        },
+      ],
+    );
+
+    modal.open();
+    const buttons = modal.contentEl.querySelectorAll("button");
+    expect(buttons).toHaveLength(2);
+    expect([...buttons].every((button) => button.disabled)).toBe(true);
+    buttons.forEach((button) => {
+      button.click();
+    });
+    expect(application.createReconciliationReview).not.toHaveBeenCalled();
   });
 
   it("suppresses a delayed modal after detach", async () => {

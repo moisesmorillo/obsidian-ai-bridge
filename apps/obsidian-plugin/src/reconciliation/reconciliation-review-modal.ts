@@ -3,7 +3,7 @@ import {
   type NotePath,
   RECONCILIATION_ACTION,
   RECONCILIATION_PRESERVATION_SIDE,
-  type ReconciliationAction,
+  type ReconciliationAdmissionAction,
 } from "@obsidian-ai-bridge/core";
 import type {
   ReconciliationReviewDetail,
@@ -123,7 +123,7 @@ export class ReconciliationReviewModal extends Modal {
   /** Renders exact action controls without deriving whether an action is allowed. */
   private renderActionControls(
     detail: ReconciliationReviewDetail,
-    actionKind: ReconciliationAction["kind"],
+    actionKind: ReconciliationAdmissionAction["kind"],
   ): void {
     if (actionKind === RECONCILIATION_ACTION.keepBoth) {
       this.renderDestinationActionButton("Keep both (local primary)", {
@@ -151,13 +151,15 @@ export class ReconciliationReviewModal extends Modal {
         kind: actionKind,
         decision: { kind: HISTORY_DECISION_KIND.deferHistory },
       });
-      this.renderActionButton("Execute cleanup toward selected path", {
-        kind: actionKind,
-        decision: {
-          kind: HISTORY_DECISION_KIND.executeCleanupPlan,
-          canonicalPath: detail.targetPath,
-        },
-      });
+      for (const candidate of detail.historyCandidates) {
+        this.renderActionButton(`Execute cleanup toward ${candidate}`, {
+          kind: actionKind,
+          decision: {
+            kind: HISTORY_DECISION_KIND.executeCleanupPlan,
+            selectedCandidatePath: candidate,
+          },
+        });
+      }
       return;
     }
     this.renderActionButton(actionKind, { kind: actionKind });
@@ -170,7 +172,7 @@ export class ReconciliationReviewModal extends Modal {
    */
   private renderDestinationActionButton(
     label: string,
-    action: ReconciliationAction,
+    action: ReconciliationAdmissionAction,
   ): void {
     const destination = this.contentEl.createEl("input");
     destination.type = "text";
@@ -187,7 +189,7 @@ export class ReconciliationReviewModal extends Modal {
    * @param candidate - Untrusted literal path entered by the operator.
    */
   private async submitWithDestination(
-    action: ReconciliationAction,
+    action: ReconciliationAdmissionAction,
     candidate: string,
   ): Promise<void> {
     if (this.submitted || this.deciding || this.detail === null) return;
@@ -226,7 +228,7 @@ export class ReconciliationReviewModal extends Modal {
    */
   private renderActionButton(
     label: string,
-    action: ReconciliationAction,
+    action: ReconciliationAdmissionAction,
   ): void {
     const button = this.contentEl.createEl("button", { text: label });
     button.addEventListener("click", () => {
@@ -244,7 +246,7 @@ export class ReconciliationReviewModal extends Modal {
    */
   private async submitDecision(
     detail: ReconciliationReviewDetail,
-    action: ReconciliationAction,
+    action: ReconciliationAdmissionAction,
     destinationPath?: NotePath,
   ): Promise<void> {
     this.submitted = true;

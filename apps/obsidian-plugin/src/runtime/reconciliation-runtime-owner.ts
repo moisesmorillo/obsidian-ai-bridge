@@ -11,23 +11,26 @@ import {
   type MirrorSynchronizerRuntime,
   type NotePath,
   normalizeNotePath,
+  projectRecoverySelection,
   RECONCILIATION_ACTION,
   RECONCILIATION_EVENT_KIND,
   RECONCILIATION_OPERATION_PHASE,
-  RECOVERY_SNAPSHOT_STATE_KIND,
   type ReadOnlyLocalVault,
-  type ReconciliationAction,
+  type ReconciliationAdmissionAction,
   ReconciliationEffectExecutor,
   type ReconciliationEventKind,
   type ReconciliationObservationGenerationOwner,
   ReconciliationReviewService,
   type ReconciliationRuntimeIdentity,
   RecoveryRestoreService,
+  type RecoverySnapshotId,
+  type RecoverySnapshotState,
   type RemoteBridge,
   RemoteTombstoneResolutionService,
   RenameHistoryResolutionService,
   ResolutionCoordinator,
   RevisionedAdoptionService,
+  recoverySnapshotStatesEqual,
 } from "@obsidian-ai-bridge/core";
 import type {
   ReconciliationCandidateList,
@@ -66,6 +69,11 @@ export class ReconciliationRuntimeOwner {
   private readonly history: RenameHistoryResolutionService;
   /** Router for ordinary reviewed action executors. */
   private readonly coordinator: ResolutionCoordinator;
+  /** Exact actionable recovery metadata from the latest complete process-local query. */
+  private readonly recoverySelections = new Map<
+    RecoverySnapshotId,
+    RecoverySnapshotState
+  >();
   /** Connection-lifetime fence for new transient review authority. */
   private attached = true;
 
@@ -136,6 +144,7 @@ export class ReconciliationRuntimeOwner {
   /** Stops new process-local UI authority without cancelling durable settlement. */
   detach(): void {
     this.attached = false;
+    this.recoverySelections.clear();
     this.reviews.invalidate();
   }
 
@@ -144,6 +153,7 @@ export class ReconciliationRuntimeOwner {
    * @param sessionId - Exact UI session identity.
    */
   invalidateSession(sessionId: MirrorOperationId): void {
+    this.recoverySelections.clear();
     this.reviews.invalidateSession(sessionId);
   }
 
@@ -167,12 +177,25 @@ export class ReconciliationRuntimeOwner {
   async createReview(
     sessionId: MirrorOperationId,
     targetPath: NotePath,
-    recoveryId:
-      | import("@obsidian-ai-bridge/core").RecoverySnapshotId
-      | null = null,
+    recoveryId: RecoverySnapshotId | null = null,
     destinationPath: string | null = null,
   ): Promise<ReconciliationReviewDetail | null> {
     if (!this.attached) return null;
+    let selectedRecovery: RecoverySnapshotState | null = null;
+    if (recoveryId !== null) {
+      const selected = this.recoverySelections.get(recoveryId);
+      if (selected === undefined) return null;
+      if (
+        !projectRecoverySelection(
+          selected,
+          this.dependencies.runtime.nowMilliseconds(),
+        ).actionable
+      ) {
+        this.recoverySelections.delete(recoveryId);
+        return null;
+      }
+      selectedRecovery = selected;
+    }
     let normalizedDestination: NotePath | null = null;
     if (destinationPath !== null) {
       const normalized = normalizeNotePath(destinationPath);
@@ -186,12 +209,36 @@ export class ReconciliationRuntimeOwner {
       destinationPath: normalizedDestination,
     });
     if (result.kind !== "created") return null;
+    if (
+      selectedRecovery !== null &&
+      (result.review.snapshot.recovery === null ||
+        !recoverySnapshotStatesEqual(
+          selectedRecovery,
+          result.review.snapshot.recovery,
+        ) ||
+        !projectRecoverySelection(
+          result.review.snapshot.recovery,
+          this.dependencies.runtime.nowMilliseconds(),
+        ).actionable)
+    ) {
+      this.reviews.closeReview(result.review.reviewId, sessionId);
+      this.recoverySelections.delete(selectedRecovery.id);
+      return null;
+    }
+    if (selectedRecovery !== null) {
+      this.recoverySelections.delete(selectedRecovery.id);
+    }
     return {
       reviewId: result.review.reviewId,
       targetPath: result.review.snapshot.targetPath,
       destinationPath: normalizedDestination ?? null,
       classification: result.review.classification,
       allowedActions: result.review.allowedActions,
+      historyCandidates: result.review.allowedActions.includes(
+        RECONCILIATION_ACTION.resolveHistory,
+      )
+        ? result.review.snapshot.paths.map((evidence) => evidence.path)
+        : [],
     };
   }
 
@@ -199,24 +246,28 @@ export class ReconciliationRuntimeOwner {
   async listRecoveries(): Promise<RecoverySelectionList> {
     if (!this.attached) return { kind: "unavailable" };
     const result = await this.reviews.listRecoverySelections();
-    const recoveries: RecoverySelectionDetail[] = result.recoveries.flatMap(
+    const complete = result.kind === "complete";
+    this.recoverySelections.clear();
+    const recoveries: RecoverySelectionDetail[] = result.recoveries.map(
       (recovery) => {
-        if (recovery.kind === RECOVERY_SNAPSHOT_STATE_KIND.purged) return [];
-        return [
-          {
-            id: recovery.id,
-            path: recovery.path,
-            state: recovery.kind,
-            recoverUntil:
-              recovery.kind === RECOVERY_SNAPSHOT_STATE_KIND.sealed
-                ? recovery.recoverUntil
-                : null,
-          },
-        ];
+        const projection = projectRecoverySelection(
+          recovery,
+          this.dependencies.runtime.nowMilliseconds(),
+        );
+        if (complete && projection.actionable) {
+          this.recoverySelections.set(recovery.id, recovery);
+        }
+        return {
+          id: recovery.id,
+          path: recovery.path,
+          state: projection.state,
+          recoverUntil: projection.recoverUntil,
+          actionable: complete && projection.actionable,
+        };
       },
     );
     return {
-      kind: result.kind === "complete" ? "available" : "incomplete",
+      kind: complete ? "available" : "incomplete",
       recoveries,
     };
   }
@@ -258,7 +309,7 @@ export class ReconciliationRuntimeOwner {
   async submit(
     sessionId: MirrorOperationId,
     reviewId: MirrorOperationId,
-    action: ReconciliationAction,
+    action: ReconciliationAdmissionAction,
     destinationPath?: NotePath | null,
   ): Promise<ReconciliationUiCommandResult> {
     if (!this.attached) return { kind: "unavailable" };

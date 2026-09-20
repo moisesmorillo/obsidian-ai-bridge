@@ -11,6 +11,7 @@ import {
   HISTORY_PROGRESS_KIND,
   HISTORY_REMOTE_EFFECT_KIND,
   isNonHistoryReconciliationOperation,
+  LEGACY_V3_LOCAL_EFFECT_RECOVERY_STATE,
   LOCAL_EFFECT_OBSERVATION_KIND,
   MIRROR_ACKNOWLEDGEMENT_KIND,
   MIRROR_DESIRED_STATE_KIND,
@@ -404,6 +405,8 @@ describe("version-4 device-state codec and frozen version-3 compatibility", () =
           phase: RECONCILIATION_OPERATION_PHASE.blocked,
           localEffectObservation: {
             kind: LOCAL_EFFECT_OBSERVATION_KIND.legacyV3Unfenced,
+            priorPhase: RECONCILIATION_OPERATION_PHASE.completed,
+            recoveryState: LEGACY_V3_LOCAL_EFFECT_RECOVERY_STATE.pending,
           },
           localEffect: MUTATION_EFFECT_CERTAINTY.unknown,
         },
@@ -413,6 +416,39 @@ describe("version-4 device-state codec and frozen version-3 compatibility", () =
       pendingReviews: 1,
       activeOperations: 1,
       attentionOperations: 1,
+    });
+  });
+
+  it("treats a v3 mutating-local checkpoint as potentially dispatched", () => {
+    const current = stateWithOperationV3();
+    const operation = required(current.reconciliationOperations[0]);
+    const projected = projectMirrorDeviceStateV3ToV4({
+      ...current,
+      reconciliationOperations: [
+        {
+          ...operation,
+          action: { kind: RECONCILIATION_ACTION.useRemote },
+          phase: RECONCILIATION_OPERATION_PHASE.mutatingLocal,
+          localEffect: MUTATION_EFFECT_CERTAINTY.notDispatched,
+          preservationReceipts: operation.preservationReceipts.map(
+            (receipt) => ({
+              ...receipt,
+              side: RECONCILIATION_PRESERVATION_SIDE.local,
+              sourceRevision: null,
+              preservationPath: `.ai-bridge-conflicts/${OPERATION}/local.md`,
+            }),
+          ),
+        },
+      ],
+    });
+
+    expect(projected.reconciliationOperations[0]).toMatchObject({
+      phase: RECONCILIATION_OPERATION_PHASE.blocked,
+      localEffectObservation: {
+        kind: LOCAL_EFFECT_OBSERVATION_KIND.legacyV3Unfenced,
+        priorPhase: RECONCILIATION_OPERATION_PHASE.mutatingLocal,
+        recoveryState: LEGACY_V3_LOCAL_EFFECT_RECOVERY_STATE.pending,
+      },
     });
   });
 

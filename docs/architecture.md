@@ -311,11 +311,15 @@ receipt-based unknown-effect recovery, finite persistence fencing, and atomic ba
 completion. Restore keeps its path reserved in `restored-pending-review` until
 serialized admission links and transfers ownership to a fresh reviewed successor.
 Slices 6–7 compose these services behind reviewed commands, text-only modals, one
-shared scheduler, and session-scoped authority. Slice 0 remains the
+shared scheduler, and session-scoped authority. Before that authority is published, a
+startup-only read/hash service resolves pending v3 local effects from durable expected
+postconditions without a writer capability: exact bytes resume as `recovered-v3`,
+changed/absent bytes remain permanently blocked, ambiguous evidence remains retryable,
+and save failure aborts startup. Slice 0 remains the
 pinned local workerd qualification task and declaration-only host check; no slice
 establishes real-host behavior.
 
-## M4 Slices 1–5 core boundary
+## M4 Slices 1–7 core boundary
 
 Core now owns closed authority, classification, action, lifecycle, evidence,
 reservation, effect, and preservation-receipt contracts plus linear cross-field

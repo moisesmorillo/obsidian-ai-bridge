@@ -20,6 +20,7 @@ import {
 import type { ReconciliationEffectExecutor } from "@core/mirror/reconciliation-effect-executor";
 import { isNonHistoryReconciliationOperation } from "@core/mirror/reconciliation-operation";
 import {
+  LOCAL_EFFECT_OBSERVATION_KIND,
   RECONCILIATION_ACTION,
   RECONCILIATION_LOCAL_EVIDENCE_KIND,
   RECONCILIATION_REMOTE_EVIDENCE_KIND,
@@ -75,7 +76,21 @@ export class RevisionedAdoptionService {
       return rejectReconciliationAction(this.effects, "evidence-changed");
     let localEffect: ReconciliationNonHistoryOperation["localEffect"] =
       MUTATION_EFFECT_CERTAINTY.notDispatched;
-    if (target.local.kind === RECONCILIATION_LOCAL_EVIDENCE_KIND.absent) {
+    if (
+      operation.localEffectObservation.kind ===
+      LOCAL_EFFECT_OBSERVATION_KIND.recoveredV3
+    ) {
+      const recovered = await this.effects.readCurrentLocal(
+        operation.localEffectObservation.path,
+        operation.localEffectObservation.expectedHash,
+      );
+      if (recovered === "changed") {
+        return rejectReconciliationAction(this.effects, "evidence-changed");
+      }
+      localEffect = MUTATION_EFFECT_CERTAINTY.confirmed;
+    } else if (
+      target.local.kind === RECONCILIATION_LOCAL_EVIDENCE_KIND.absent
+    ) {
       const local = await this.effects.readExactLocal(target);
       if (local !== "absent")
         return rejectReconciliationAction(this.effects, "evidence-changed");

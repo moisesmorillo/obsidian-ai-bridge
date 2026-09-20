@@ -9,6 +9,7 @@ import {
   FairMirrorScheduler,
   HISTORY_DECISION_KIND,
   LocalInspectionKind,
+  LocalVaultFailureReason,
   MIRROR_ACKNOWLEDGEMENT_KIND,
   MIRROR_DESIRED_STATE_KIND,
   MIRROR_DEVICE_LIFECYCLE_KIND,
@@ -52,6 +53,9 @@ const RECOVERY = required(
 );
 const SEALED_RECOVERY = required(
   createRecoverySnapshotId("99999999-9999-4999-8999-999999999999"),
+);
+const EXPIRED_RECOVERY = required(
+  createRecoverySnapshotId("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
 );
 const SESSION = required(
   createMirrorOperationId("66666666-6666-4666-8666-666666666666"),
@@ -335,6 +339,7 @@ function subject(
     readonly state?: MirrorDeviceState;
     readonly local?: ReadOnlyLocalVault;
     readonly remote?: RemoteBridge;
+    readonly nowMilliseconds?: () => number;
   } = {},
 ) {
   const stateOwner = new MirrorStateOwner(
@@ -398,7 +403,7 @@ function subject(
     remote: remoteBridge,
     stateOwner,
     runtime: {
-      nowMilliseconds: () => 1_000,
+      nowMilliseconds: options.nowMilliseconds ?? (() => 1_000),
       hashContent: async (content) =>
         content === "local" ? LOCAL_HASH : REMOTE_HASH,
       createOperationId: () =>
@@ -506,7 +511,7 @@ describe("ReconciliationRuntimeOwner", () => {
     ).resolves.toEqual({ kind: "failed" });
   });
 
-  it("filters purged recovery metadata and retains bounded prepared rows", async () => {
+  it("truthfully projects prepared, active, expired, and purged recovery metadata", async () => {
     const { owner, remoteBridge } = subject();
     vi.spyOn(remoteBridge, "listRecovery").mockResolvedValueOnce({
       kind: "success",
@@ -532,6 +537,16 @@ describe("ReconciliationRuntimeOwner", () => {
             recoverUntil: "2030-01-01T00:00:00.000Z",
           },
           {
+            kind: "sealed",
+            id: EXPIRED_RECOVERY,
+            associationId: ASSOCIATION,
+            path: PATH,
+            revision: REMOTE_REVISION,
+            sourceRevision: BASE_REVISION,
+            contentSha256: REMOTE_HASH,
+            recoverUntil: "1970-01-01T00:00:00.000Z",
+          },
+          {
             kind: "purged",
             id: RECOVERY,
             associationId: ASSOCIATION,
@@ -554,15 +569,242 @@ describe("ReconciliationRuntimeOwner", () => {
           path: PATH,
           state: "prepared",
           recoverUntil: null,
+          actionable: true,
         },
         {
           id: SEALED_RECOVERY,
           path: PATH,
-          state: "sealed",
+          state: "sealed-active",
           recoverUntil: "2030-01-01T00:00:00.000Z",
+          actionable: true,
+        },
+        {
+          id: EXPIRED_RECOVERY,
+          path: PATH,
+          state: "sealed-expired",
+          recoverUntil: "1970-01-01T00:00:00.000Z",
+          actionable: false,
+        },
+        {
+          id: RECOVERY,
+          path: PATH,
+          state: "purged",
+          recoverUntil: "2030-01-01T00:00:00.000Z",
+          actionable: false,
         },
       ],
     });
+  });
+
+  it("keeps partial recovery inventory visible but non-actionable", async () => {
+    const { owner, remoteBridge } = subject();
+    vi.spyOn(remoteBridge, "listRecovery")
+      .mockResolvedValueOnce({
+        kind: "success",
+        value: {
+          recoveries: [
+            {
+              kind: "prepared",
+              id: RECOVERY,
+              associationId: ASSOCIATION,
+              path: PATH,
+              revision: REMOTE_REVISION,
+              sourceRevision: BASE_REVISION,
+              contentSha256: REMOTE_HASH,
+            },
+          ],
+          nextCursor: "next-page",
+        },
+      })
+      .mockResolvedValueOnce({
+        kind: "failure",
+        failure: "network-unavailable",
+      });
+
+    await expect(owner.listRecoveries()).resolves.toEqual({
+      kind: "incomplete",
+      recoveries: [
+        {
+          id: RECOVERY,
+          path: PATH,
+          state: "prepared",
+          recoverUntil: null,
+          actionable: false,
+        },
+      ],
+    });
+  });
+
+  it("consumes an exact recovery selection after fresh metadata reinspection", async () => {
+    const selected = {
+      kind: "prepared" as const,
+      id: RECOVERY,
+      associationId: ASSOCIATION,
+      path: PATH,
+      revision: REMOTE_REVISION,
+      sourceRevision: BASE_REVISION,
+      contentSha256: REMOTE_HASH,
+    };
+    const remoteBridge = remote();
+    vi.spyOn(remoteBridge, "listRecovery").mockResolvedValueOnce({
+      kind: "success",
+      value: { recoveries: [selected], nextCursor: null },
+    });
+    vi.spyOn(remoteBridge, "inspectRecovery").mockResolvedValue({
+      kind: "success",
+      value: selected,
+    });
+    vi.spyOn(remoteBridge, "inspectNote").mockResolvedValue({
+      kind: "success",
+      value: {
+        kind: "tombstone",
+        path: PATH,
+        revision: REMOTE_REVISION,
+        deletedRevision: BASE_REVISION,
+        recoveryId: RECOVERY,
+        receipt: {
+          action: "tombstone",
+          associationId: ASSOCIATION,
+          operationId: RECEIPT_OPERATION,
+          precondition: {
+            kind: "matching-revision",
+            revision: BASE_REVISION,
+          },
+        },
+      },
+    });
+    const local: ReadOnlyLocalVault = {
+      list: vi.fn(async () => ({
+        kind: LocalInspectionKind.ok,
+        entries: [],
+        skipped: {
+          unsupported_file: 0,
+          excluded_location: 0,
+          invalid_path: 0,
+          oversized: 0,
+        },
+      })),
+      read: vi.fn(async () => ({
+        kind: LocalInspectionKind.failed,
+        reason: LocalVaultFailureReason.missingFile,
+      })),
+    };
+    const { owner } = subject(undefined, { remote: remoteBridge, local });
+
+    await owner.listRecoveries();
+    await expect(
+      owner.createReview(SESSION, PATH, RECOVERY),
+    ).resolves.toMatchObject({
+      targetPath: PATH,
+      allowedActions: expect.arrayContaining([
+        RECONCILIATION_ACTION.restoreRecovery,
+      ]),
+    });
+    await expect(
+      owner.createReview(SESSION, PATH, RECOVERY),
+    ).resolves.toBeNull();
+  });
+
+  it("rejects recovery metadata that changes after process-local selection", async () => {
+    const { owner, remoteBridge } = subject();
+    const selected = {
+      kind: "prepared" as const,
+      id: RECOVERY,
+      associationId: ASSOCIATION,
+      path: PATH,
+      revision: REMOTE_REVISION,
+      sourceRevision: BASE_REVISION,
+      contentSha256: REMOTE_HASH,
+    };
+    vi.spyOn(remoteBridge, "listRecovery").mockResolvedValueOnce({
+      kind: "success",
+      value: { recoveries: [selected], nextCursor: null },
+    });
+    vi.spyOn(remoteBridge, "inspectRecovery").mockResolvedValue({
+      kind: "success",
+      value: { ...selected, revision: BASE_REVISION },
+    });
+
+    await expect(owner.listRecoveries()).resolves.toMatchObject({
+      kind: "available",
+      recoveries: [{ id: RECOVERY, actionable: true }],
+    });
+    await expect(
+      owner.createReview(SESSION, PATH, RECOVERY),
+    ).resolves.toBeNull();
+    await expect(
+      owner.createReview(SESSION, PATH, RECOVERY),
+    ).resolves.toBeNull();
+  });
+
+  it("consumes a sealed selection that expires before fresh review sampling", async () => {
+    let nowMilliseconds = 1_000;
+    const { owner, remoteBridge } = subject(undefined, {
+      nowMilliseconds: () => nowMilliseconds,
+    });
+    const selected = {
+      kind: "sealed" as const,
+      id: SEALED_RECOVERY,
+      associationId: ASSOCIATION,
+      path: PATH,
+      revision: REMOTE_REVISION,
+      sourceRevision: BASE_REVISION,
+      contentSha256: REMOTE_HASH,
+      recoverUntil: "1970-01-01T00:00:02.000Z",
+    };
+    vi.spyOn(remoteBridge, "listRecovery").mockResolvedValueOnce({
+      kind: "success",
+      value: { recoveries: [selected], nextCursor: null },
+    });
+    const inspect = vi.spyOn(remoteBridge, "inspectRecovery");
+
+    await expect(owner.listRecoveries()).resolves.toMatchObject({
+      kind: "available",
+      recoveries: [{ id: SEALED_RECOVERY, actionable: true }],
+    });
+    nowMilliseconds = 2_000;
+    await expect(
+      owner.createReview(SESSION, PATH, SEALED_RECOVERY),
+    ).resolves.toBeNull();
+    await expect(
+      owner.createReview(SESSION, PATH, SEALED_RECOVERY),
+    ).resolves.toBeNull();
+    expect(inspect).not.toHaveBeenCalled();
+  });
+
+  it("rejects a sealed selection that expires during fresh metadata inspection", async () => {
+    let nowMilliseconds = 1_000;
+    const { owner, remoteBridge } = subject(undefined, {
+      nowMilliseconds: () => nowMilliseconds,
+    });
+    const selected = {
+      kind: "sealed" as const,
+      id: SEALED_RECOVERY,
+      associationId: ASSOCIATION,
+      path: PATH,
+      revision: REMOTE_REVISION,
+      sourceRevision: BASE_REVISION,
+      contentSha256: REMOTE_HASH,
+      recoverUntil: "1970-01-01T00:00:02.000Z",
+    };
+    vi.spyOn(remoteBridge, "listRecovery").mockResolvedValueOnce({
+      kind: "success",
+      value: { recoveries: [selected], nextCursor: null },
+    });
+    vi.spyOn(remoteBridge, "inspectRecovery").mockImplementationOnce(
+      async () => {
+        nowMilliseconds = 2_000;
+        return { kind: "success", value: selected };
+      },
+    );
+
+    await owner.listRecoveries();
+    await expect(
+      owner.createReview(SESSION, PATH, SEALED_RECOVERY),
+    ).resolves.toBeNull();
+    await expect(
+      owner.createReview(SESSION, PATH, SEALED_RECOVERY),
+    ).resolves.toBeNull();
   });
 
   it("normalizes sampled destinations and rejects candidates outside discovery", async () => {
@@ -601,13 +843,23 @@ describe("ReconciliationRuntimeOwner", () => {
     expect(detail.allowedActions).toContain(
       RECONCILIATION_ACTION.resolveHistory,
     );
+    expect(detail.historyCandidates).toEqual([HISTORY_SOURCE, PATH]);
+    await expect(
+      owner.submit(SESSION, detail.reviewId, {
+        kind: RECONCILIATION_ACTION.resolveHistory,
+        decision: {
+          kind: HISTORY_DECISION_KIND.executeCleanupPlan,
+          selectedCandidatePath: required(normalizeNotePath("notes/forged.md")),
+        },
+      }),
+    ).resolves.toEqual({ kind: "failed" });
 
     await expect(
       owner.submit(SESSION, detail.reviewId, {
         kind: RECONCILIATION_ACTION.resolveHistory,
         decision: {
           kind: HISTORY_DECISION_KIND.executeCleanupPlan,
-          canonicalPath: null,
+          selectedCandidatePath: PATH,
         },
       }),
     ).resolves.toEqual({ kind: "admitted" });
@@ -615,7 +867,16 @@ describe("ReconciliationRuntimeOwner", () => {
 
     expect(mutateNote).toHaveBeenCalledOnce();
     expect(stateOwner.snapshot().state.reconciliationOperations).toMatchObject([
-      { phase: "completed" },
+      {
+        phase: "completed",
+        action: {
+          kind: RECONCILIATION_ACTION.resolveHistory,
+          decision: {
+            kind: HISTORY_DECISION_KIND.executeCleanupPlan,
+            canonicalPath: PATH,
+          },
+        },
+      },
     ]);
   });
 

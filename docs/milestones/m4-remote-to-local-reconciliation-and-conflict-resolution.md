@@ -781,9 +781,12 @@ lost-response receipt recovery. Worker, protocol, and OpenAPI remain unchanged.
 
 Device state is now strict version 4. Startup accepts current v4 or performs the
 same-key, canonical-save, exact-read-back v2→v3→v4 transition. The frozen v3 decoder
-and deterministic projector retain non-empty M3/M4 evidence, make v3 aggregate history
-an explicit non-dispatchable blocker, and mark already-started unfenced local effects
-for operator attention rather than inventing decisions or callback causality.
+and deterministic projector retain non-empty M3/M4 evidence and make v3 aggregate
+history an explicit non-dispatchable blocker. Already-started unfenced local effects
+retain their exact prior phase and enter a pre-publication read/hash transition: exact
+durable postconditions resume as synthetic recovered evidence without redispatch,
+changed/absent bytes remain blocked, ambiguous reads remain evidence-required, and
+failed persistence aborts startup. No decision or callback causality is invented.
 
 `RenameHistoryGroupPolicy` derives complete lexical connected components solely from
 durable deferred-rename edges. Refined history operations own ordered step UUIDs,
@@ -793,8 +796,9 @@ persisted cursors. No local delete/rename, guessed chain collapse, native object
 or extra Worker route was added.
 
 One owner-scoped `FairMirrorScheduler` now serves M3 and M4. The reviewed runtime owns
-ephemeral sessions, startup orphan staling, bounded recovery selection, operation
-resume, and event-first M4 routing. Synthetic local-effect IDs/postconditions are
+ephemeral sessions, startup orphan staling, bounded recovery selection with truthful
+prepared/sealed-active/sealed-expired/purged actionability and exact latest-projection
+binding, operation resume, and event-first M4 routing. Synthetic local-effect IDs/postconditions are
 persisted independently from conservative successor event ranges; no callback is
 claimed as causally own. Two text-only commands/modals render literal previews only
 after explicit action, clear transient bodies on close/detach, and consume sanitized

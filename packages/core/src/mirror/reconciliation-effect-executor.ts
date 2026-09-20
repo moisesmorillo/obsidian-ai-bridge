@@ -40,6 +40,10 @@ import {
   type RequiredReconciliationPreservation,
   requiredReconciliationPreservations,
 } from "@core/mirror/reconciliation-preservation-policy";
+import {
+  isRecoverySnapshotExpired,
+  recoverySnapshotStatesEqual,
+} from "@core/mirror/reconciliation-recovery-selection";
 import type { ReconciliationObservationSource } from "@core/mirror/reconciliation-review.types";
 import {
   RECONCILIATION_LOCAL_EVIDENCE_KIND,
@@ -306,13 +310,12 @@ export class ReconciliationEffectExecutor {
     if (
       first.kind !== "success" ||
       first.value === null ||
-      !recoveryEquals(expected, first.value)
+      !recoverySnapshotStatesEqual(expected, first.value)
     ) {
       return "changed";
     }
     if (
-      first.value.kind === RECOVERY_SNAPSHOT_STATE_KIND.sealed &&
-      Date.parse(first.value.recoverUntil) <= this.runtime.nowMilliseconds()
+      isRecoverySnapshotExpired(first.value, this.runtime.nowMilliseconds())
     ) {
       return "expired";
     }
@@ -326,7 +329,7 @@ export class ReconciliationEffectExecutor {
       hash !== expected.contentSha256 ||
       second.kind !== "success" ||
       second.value === null ||
-      !recoveryEquals(expected, second.value)
+      !recoverySnapshotStatesEqual(expected, second.value)
     ) {
       return "changed";
     }
@@ -743,25 +746,6 @@ function preconditionEquals(
     (left.kind === CONDITIONAL_MUTATION_PRECONDITION_KIND.absent ||
       (right.kind === CONDITIONAL_MUTATION_PRECONDITION_KIND.matchingRevision &&
         left.revision === right.revision))
-  );
-}
-
-/** @returns Whether selected recovery metadata is unchanged in every authority field. */
-function recoveryEquals(
-  left: RecoverySnapshotState,
-  right: RecoverySnapshotState,
-): boolean {
-  return (
-    left.kind === right.kind &&
-    left.id === right.id &&
-    left.associationId === right.associationId &&
-    left.path === right.path &&
-    left.revision === right.revision &&
-    left.sourceRevision === right.sourceRevision &&
-    left.contentSha256 === right.contentSha256 &&
-    (left.kind === RECOVERY_SNAPSHOT_STATE_KIND.prepared ||
-      (right.kind !== RECOVERY_SNAPSHOT_STATE_KIND.prepared &&
-        left.recoverUntil === right.recoverUntil))
   );
 }
 

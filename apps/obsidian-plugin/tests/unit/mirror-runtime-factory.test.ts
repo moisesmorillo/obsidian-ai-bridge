@@ -2,6 +2,8 @@ import {
   createDisabledMirrorState,
   createMirrorWriterId,
   MIRROR_DEVICE_STATE_V2_VERSION,
+  MirrorStateOwner,
+  ReconciliationV3LocalEffectRecoveryService,
 } from "@obsidian-ai-bridge/core";
 import { createMirrorRuntimeOwner } from "@obsidian-plugin/runtime/mirror-runtime-factory";
 import {
@@ -127,6 +129,26 @@ describe("createMirrorRuntimeOwner", () => {
     );
     expect(host.saveLocalStorage).toHaveBeenCalledTimes(1);
     expect(host.loadLocalStorage).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not publish runtime authority when migrated local-effect recovery cannot persist", async () => {
+    const app = new App();
+    const deviceId = createMirrorWriterId(
+      "11111111-1111-4111-8111-111111111111",
+    );
+    if (deviceId === undefined) throw new Error("Invalid fixture identity.");
+    const state = createDisabledMirrorState(deviceId);
+    const snapshot = new MirrorStateOwner(state, {
+      save: async () => ({ kind: "saved" }),
+    }).snapshot();
+    vi.spyOn(
+      ReconciliationV3LocalEffectRecoveryService.prototype,
+      "recover",
+    ).mockResolvedValueOnce({ kind: "unavailable", snapshot });
+
+    await expect(createMirrorRuntimeOwner(app, app.vault)).rejects.toThrow(
+      "state is unavailable",
+    );
   });
 
   it("does not replace corrupt App-local state", async () => {

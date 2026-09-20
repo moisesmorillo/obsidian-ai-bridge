@@ -6,6 +6,7 @@ import type {
 import type {
   EphemeralReconciliationReview,
   ReconciliationAction,
+  ReconciliationAdmissionAction,
   ReconciliationClassification,
   ReconciliationReviewSnapshot,
   ReconciliationRuntimeIdentity,
@@ -102,7 +103,7 @@ export type ReconciliationReviewFailure =
 export interface ReconciliationAdmissionRequest {
   readonly reviewId: import("@core/mirror/mirror.types").MirrorOperationId;
   readonly sessionId: import("@core/mirror/mirror.types").MirrorOperationId;
-  readonly action: ReconciliationAction;
+  readonly action: ReconciliationAdmissionAction;
   readonly destinationPath?: NotePath | null;
 }
 

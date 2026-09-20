@@ -1,8 +1,9 @@
 import type {
   MirrorOperationId,
   NotePath,
-  ReconciliationAction,
+  ReconciliationAdmissionAction,
   ReconciliationClassification,
+  RecoverySelectionState,
   RecoverySnapshotId,
 } from "@obsidian-ai-bridge/core";
 
@@ -19,15 +20,19 @@ export interface ReconciliationReviewDetail {
   /** Validated destination sampled by the application owner, when requested. */
   readonly destinationPath: NotePath | null;
   readonly classification: ReconciliationClassification;
-  readonly allowedActions: readonly ReconciliationAction["kind"][];
+  readonly allowedActions: readonly ReconciliationAdmissionAction["kind"][];
+  /** Bounded current-group candidates accepted for a history cleanup selection. */
+  readonly historyCandidates: readonly NotePath[];
 }
 
-/** Content-free recovery selector row. */
+/** Content-free recovery selector row with application-owned actionability. */
 export interface RecoverySelectionDetail {
   readonly id: RecoverySnapshotId;
   readonly path: NotePath;
-  readonly state: "prepared" | "sealed";
+  readonly state: RecoverySelectionState;
   readonly recoverUntil: string | null;
+  /** Whether a complete inventory may offer this exact metadata row for resampling. */
+  readonly actionable: boolean;
 }
 
 /** Bounded recovery inventory outcome without transport or body details. */
@@ -75,7 +80,7 @@ export interface ReconciliationUiOwner {
   readonly submitReconciliation: (
     sessionId: string,
     reviewId: MirrorOperationId,
-    action: ReconciliationAction,
+    action: ReconciliationAdmissionAction,
     destinationPath?: NotePath | null,
   ) => Promise<ReconciliationUiCommandResult>;
 }

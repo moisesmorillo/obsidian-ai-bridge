@@ -50,6 +50,30 @@ resources, credentials or vault installations from configuration, or deploy mere
 to validate work. If no next milestone remains, propose a roadmap update rather
 than inventing product scope.
 
+## Change-size discipline
+
+1. Prefer one coherent semantic capability or state transition per pull request.
+2. Before implementation, estimate the expected production scope. If the work is
+   likely to change more than 10 production files or add more than 1,500 net new
+   production lines, STOP before implementation and propose smaller pull requests.
+3. A decomposition proposal must identify the independent semantic boundaries, the
+   dependency and order between pull requests, the invariants each preserves, and
+   why each can be reviewed and merged independently.
+4. An exception requires explicit technical justification, such as frozen
+   compatibility codecs, an unavoidable mechanical migration, generated artifacts,
+   or a change that is genuinely unsafe to land partially.
+5. Tests and documentation do not count toward the production-line threshold, but
+   unusually large test or documentation changes still require justification.
+6. Do not bundle unrelated cleanup, future-slice preparation, speculative
+   abstractions, or broad refactors into an implementation pull request unless they
+   are independently required for correctness.
+7. If corrective review work would push a pull request materially beyond the size
+   limits, stop and propose whether the correction should be a separate pull request.
+8. Reviews should prioritize the current diff, affected semantic owners, and relevant
+   invariants rather than re-auditing the entire repository by default.
+9. Large change size alone is not a defect, but crossing either threshold requires
+   explicit authorization before implementation.
+
 ## Tooling and development environment
 
 `mise` is the canonical entry point for project tooling and tasks.

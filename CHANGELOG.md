@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.1](https://github.com/moisesmorillo/obsidian-ai-bridge/compare/v0.10.0...v0.10.1) (2026-09-20)
+
+
+### Testing
+
+* **plugin:** qualify M4 reconciliation and complete milestone ([#43](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/43)) ([e7f9871](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/e7f9871b9b0da1572167c18c904c2c110f1a9dd6))
+
 ## [0.10.0](https://github.com/moisesmorillo/obsidian-ai-bridge/compare/v0.9.0...v0.10.0) (2026-09-20)
 
 

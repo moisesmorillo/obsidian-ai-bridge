@@ -2,7 +2,7 @@
 
 A secure bridge between Obsidian and remote AI or agent clients.
 
-> **Status:** M1–M4 are **COMPLETE** in repository implementation/qualification; this completion PR makes [M5 — Operational and security readiness](docs/roadmap.md#m5--operational-and-security-readiness) the single **NEXT** milestone, planning-only. M4 adds qualified reviewed reconciliation, device-state v4, preservation, tombstone/recovery/history actions, shared scheduling, conservative event fencing, and text-only UI. The bridge remains experimental and undeployed. No personal-vault installation, real desktop/mobile/iCloud/background-iOS qualification, or production-readiness claim is made.
+> **Status:** M1–M4 are **COMPLETE** and [M5 — Operational and security readiness](docs/roadmap.md#m5--operational-and-security-readiness) is the single **NEXT** milestone. M5 Slices 0–1 have accepted planning/evidence decisions only; no M5 production behavior or current support claim exists. M4 adds qualified reviewed reconciliation, device-state v4, preservation, tombstone/recovery/history actions, shared scheduling, conservative event fencing, and text-only UI. The bridge remains experimental and undeployed. No personal-vault installation, real desktop/mobile/iCloud/background-iOS qualification, or production-readiness claim is made.
 
 ## Motivation
 
@@ -155,13 +155,15 @@ fence, review/admission, narrow local write/conflict preservation, live/adoption
 tombstone/recovery execution, bounded parent-owned history steps, step-scoped
 preservation, and shared runtime/session/command/modal/status composition.
 [ADR 0009](docs/decisions/0009-m4-history-runtime-and-device-state-v4.md) defines the v4
-compatibility transition and conservative event authority. M5 is NEXT with a
-documentation-only Slice 0 foundation: its
+compatibility transition and conservative event authority. M5 is NEXT with accepted
+documentation/evidence Slices 0–1: its
 [planning specification](docs/milestones/m5-operational-and-security-readiness.md),
-[consolidated threat model](docs/threat-model.md), and
-[credential/permission ADR](docs/decisions/0010-scoped-client-credentials-and-permissions.md)
-accept a bounded future client model while leaving the evidence-gated Slice 1
-operational decisions open. No M5 production behavior is implemented. The completed
+[consolidated threat model](docs/threat-model.md),
+[credential/permission ADR](docs/decisions/0010-scoped-client-credentials-and-permissions.md),
+and [operational-policy ADR](docs/decisions/0011-m5-operational-envelope.md)
+accept a bounded future client model and close the eight Slice 1 decisions. The
+10,000-note value is a later desktop qualification target, not current support; no M5
+production behavior is implemented. The completed
 [M3 specification](docs/milestones/m3-remote-bridge-client-and-publishing.md),
 [approved decision brief](docs/plans/m3-design-decisions.md), and
 [sequential plan](docs/plans/m3-remote-bridge-client-and-publishing.md) record

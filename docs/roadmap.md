@@ -278,26 +278,32 @@ specification remain required before M5 production work.
 
 ### M5 — Operational and security readiness
 
-**NEXT — Slice 0 planning foundation accepted; no M5 production behavior is
-implemented.** The [M5 specification](milestones/m5-operational-and-security-readiness.md),
-[consolidated threat model](threat-model.md), and
-[ADR 0010](decisions/0010-scoped-client-credentials-and-permissions.md) define the
-minimum foundation for later decision and implementation slices.
+**NEXT — Slices 0–1 planning and operating decisions accepted; no M5 production
+behavior is implemented.** The
+[M5 specification](milestones/m5-operational-and-security-readiness.md),
+[consolidated threat model](threat-model.md),
+[ADR 0010](decisions/0010-scoped-client-credentials-and-permissions.md), and
+[ADR 0011](decisions/0011-m5-operational-envelope.md) define the foundation for the
+remaining implementation and qualification slices.
 
 - **Accepted Slice 0 design:** at most 16 active named opaque bearer credentials;
   digest-only Worker registry; typed client principals; independent `read`, `write`,
   and `delete` permissions; separate association/writer mutation guards; one-time
   token display, independent revocation, bounded manual rotation overlap, and fresh-
   credential recovery from token/registry loss. This model is not implemented yet.
-- **Open Slice 1 decisions:** evidence-based supported note count, limiter mechanism,
-  exact operation quotas, plugin platform flag, recovery maintenance surface, release
-  support window, log retention, and complete v1 retirement policy. No 10,000-note
-  support claim or Cloudflare Rate Limiting binding is accepted by default.
+- **Accepted Slice 1 policy:** 10,000 eligible notes is a later real-desktop
+  qualification target, not current support; no application quota or Rate Limiting
+  binding; `isDesktopOnly: false` with initial designated-writer support limited to
+  Obsidian desktop 1.13.0+ on Apple-silicon macOS; bounded manual recovery maintenance;
+  latest-M5-ready-release support only; zero-day
+  application-log retention; and complete v1 route retirement before support.
+- **Reduced remaining work:** no limiter/quota state, recovery command/scheduler,
+  mobile-writer qualification, durable log sink, or multi-release maintenance. Slices
+  2–6 retain explicit per-slice production estimates and mergeable outcomes.
 - **Risks/exit:** truthful limits/permissions, tested runbooks/rotation/recovery,
-  bounded resources, reviewed secrets/diagnostics, explicit platform/release evidence,
-  and final semantic/security approval. No security certification, SaaS scale, or
-  full-backup guarantee is implied.
-- Deployment is separately authorized, not implied by validation/completion.
+  bounded resources, reviewed secrets/live diagnostics, explicit desktop/release
+  evidence, and final semantic/security approval. No security certification, SaaS
+  scale, full-backup guarantee, current support, or deployment is implied.
 
 ### M6 — MCP adapter
 
@@ -312,25 +318,20 @@ minimum foundation for later decision and implementation slices.
 
 ## Unresolved product decisions
 
-**None for M3 or M4.** M3's accepted choices and primary-source limits are in its
+**None for M3, M4, or M5.** M3's accepted choices and primary-source limits are in its
 [decision brief](plans/m3-design-decisions.md). M4's reviewed-only authority,
 conflict preservation, bounded local mutation, revisioned/legacy adoption,
 tombstone/restore, version-3 history, version-4 Slice 6 migration, bounded grouped
 progress, runtime authority, existing-v2 API, and retained one-writer choices are
 resolved in [ADRs 0005–0009](decisions/README.md). M5 Slice 0 accepts the bounded
-credential/principal/permission/lifecycle model in [ADR 0010](decisions/0010-scoped-client-credentials-and-permissions.md),
-but it does not implement that model or resolve the following Slice 1 decisions:
+credential/principal/permission/lifecycle model in
+[ADR 0010](decisions/0010-scoped-client-credentials-and-permissions.md), and Slice 1
+accepts the evidence-bounded operating policy in
+[ADR 0011](decisions/0011-m5-operational-envelope.md). Neither record implements
+production behavior or claims current support.
 
 | Decision required | Earliest milestone/slice | Boundary until resolved |
 | --- | --- | --- |
-| Practical supported note-count target | M5 Slice 1 | Existing hard bounds are not a support claim; 10,000 notes is neither assumed nor canonical |
-| Cloudflare Rate Limiting binding | M5 Slice 1 | No new binding/service; compare measured need and simpler controls first |
-| Exact read/write/delete quota numbers | M5 Slice 1 | No new quota claim or enforcement value |
-| Desktop-only plugin manifest setting | M5 Slice 1 | Current manifest remains unchanged; no desktop/mobile support expansion claim |
-| Recovery maintenance command versus bounded manual runbook | M5 Slice 1 | Existing explicit API/manual behavior remains; no command or scheduler |
-| Release support window | M5 Slice 1 | No supported production release claim |
-| Logging retention duration | M5 Slice 1 | Existing content-free logs have no repository retention guarantee |
-| Complete v1 retirement policy | M5 Slice 1 | V1 reads remain; v1 PUT/DELETE remain retired |
 | MCP hosting, transport, tools/resources, prompt boundary and permission mapping | M6 | No MCP implementation, MCP-specific credential, or direct storage access |
 
 Technical implementation and qualification must satisfy the specifications; milestone
@@ -346,20 +347,23 @@ Read in order: [README](../README.md), [AGENTS](../AGENTS.md),
 its [sequential plan](plans/m4-remote-to-local-reconciliation-and-conflict-resolution.md),
 the M5 [planning specification](milestones/m5-operational-and-security-readiness.md),
 [threat model](threat-model.md), and
-[credential ADR](decisions/0010-scoped-client-credentials-and-permissions.md), then the
+[credential ADR](decisions/0010-scoped-client-credentials-and-permissions.md),
+[operational-policy ADR](decisions/0011-m5-operational-envelope.md), then the
 completed M3 [spec](milestones/m3-remote-bridge-client-and-publishing.md),
 [plan](plans/m3-remote-bridge-client-and-publishing.md), and
-[decisions](plans/m3-design-decisions.md). M5 is the single NEXT milestone; Slice 0 is
-documentation-only, and Slice 1 must resolve its explicit evidence-gated decisions
-before dependent production implementation. Inspect relevant source/tests/tooling/CI,
+[decisions](plans/m3-design-decisions.md). M5 is the single NEXT milestone; Slices
+0–1 are accepted documentation/evidence only, and Slice 2 is the next production
+boundary. Inspect relevant source/tests/tooling/CI,
 [CONTRIBUTING](../CONTRIBUTING.md) and [SECURITY](../SECURITY.md).
 [current-state](current-state.md) is an evidence map, not a substitute for code.
 
 Repository state beats conversation assumptions; current code beats stale docs.
 Correct discrepancies explicitly without changing a completed invariant silently.
-Implement only NEXT after an implementation request. A planning PR does not itself
-implement/finish a milestone or authorize deployment. If a later spec is not ready,
-refine it and surface material decisions first; use [ADRs](decisions/README.md).
+Implement only NEXT after an implementation request. M5 Slices 0–1 are accepted
+planning/evidence only; Slice 2 is the next production implementation boundary. A
+planning PR does not itself implement/finish a milestone or authorize deployment. If
+a later spec is not ready, refine it and surface material decisions first; use
+[ADRs](decisions/README.md).
 
 ### Validation and milestone transition
 

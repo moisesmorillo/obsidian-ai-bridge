@@ -48,6 +48,7 @@ decisions, not an invented historical rationale.
 | [0008 — M4 device-state migration and downgrade fence](0008-m4-device-state-migration.md) | Accepted (implemented Slice 1 v2→v3 history) | Deterministic schema v2→v3 migration, partial-operation state, restart, and downgrade refusal |
 | [0009 — Bounded history resolution, runtime authority, and device-state v4](0009-m4-history-runtime-and-device-state-v4.md) | Accepted (Slices 6–7 implemented) | Parent-owned history steps, step-scoped preservation, shared runtime authority, and strict v3→v4 migration |
 | [0010 — Scoped client credentials, permissions, and lifecycle](0010-scoped-client-credentials-and-permissions.md) | Accepted for M5 planning (not implemented) | Bounded digest-only bearer clients, typed principals, read/write/delete semantics, revocation, and rotation |
+| [0011 — M5 operational envelope and support policy](0011-m5-operational-envelope.md) | Accepted for M5 planning (not yet qualified) | 10,000-note qualification target, no application quotas/limiter, desktop-writer intent, manual recovery, latest-only releases, zero-day logs, and v1 retirement |
 
 ADR 0001 records the implemented M1 baseline. ADRs 0002–0004 record the implemented
 M3 design without claiming deployment. ADRs 0005–0008 are accepted M4 decisions and
@@ -56,6 +57,7 @@ historically accurate implemented v2→v3 fence. ADR 0009's additive Slice 6–7
 and v3→v4 fence are implemented without rewriting v3 history or authorizing deployment
 or production claims. ADR 0010 is an accepted M5 Slice 0 design constraint only; the
 current single privileged bearer remains implemented until later M5 slices migrate and
-qualify the new model. See the M3 [decision brief](../plans/m3-design-decisions.md),
+qualify the new model. ADR 0011 closes the Slice 1 operating-policy choices without
+claiming current support or changing runtime behavior. See the M3 [decision brief](../plans/m3-design-decisions.md),
 the M4 [implementation-ready specification](../milestones/m4-remote-to-local-reconciliation-and-conflict-resolution.md),
 and the M5 [planning specification](../milestones/m5-operational-and-security-readiness.md).

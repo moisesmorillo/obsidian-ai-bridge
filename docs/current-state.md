@@ -141,8 +141,9 @@ review gates passed; the corrective review of `e97af36` returned APPROVE. PR #27
 merged at `63b0599`; M3 is COMPLETE and its transition is canonical. M4 is COMPLETE
 in this completion PR with reviewed contracts, strict state-v4
 migration, preservation/local-write seams, live/adoption/tombstone/restore/history
-execution, plugin runtime/UI composition, and Slice 8 qualification. M5 is NEXT and
-planning-only. The accepted M4 design remains
+execution, plugin runtime/UI composition, and Slice 8 qualification. M5 is NEXT;
+Slices 0–1 are accepted planning/evidence only, with no production behavior or current
+support claim. The accepted M4 design remains
 reviewed-only: exact format-2 revisions may be adopted, competing bytes are preserved
 before replacement, remote tombstones require explicit choices without plugin local
 delete/move, recovery restore is local-only first, legacy same-path adoption remains
@@ -170,8 +171,10 @@ The [operator guide](operations.md) records setup, one-writer availability,
 upgrade/handoff/reset, bearer rotation, recovery API use, iCloud uncertainty, and
 rollback prohibitions. M3 completion is an implementation/evidence milestone; it is
 not production readiness, deployment, or real-host qualification.
-Broader operating limits/recovery automation and scoped authentication remain M5;
-prerequisites to safe M3/M4 behavior must not be postponed there.
+Scoped authentication, permission enforcement, live client attribution, complete v1
+retirement, runbooks, and real-desktop qualification remain M5. ADR 0011 deliberately
+selects no application quota/limiter, recovery automation, durable logs, mobile writer,
+or multi-release support; prerequisites to safe M3/M4 behavior must not be postponed.
 
 ## History that still matters
 

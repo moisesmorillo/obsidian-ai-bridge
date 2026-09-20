@@ -133,7 +133,9 @@ before maintainers can coordinate a response.
 ## Supported versions
 
 There are no supported production releases. The default branch is the only
-development line receiving best-effort security review.
+development line receiving best-effort security review. ADR 0011 plans support only
+for the latest M5-ready release after its artifact/platform/scale qualification; it
+does not support any current tag or promise backports.
 
 | Version | Supported |
 | --- | --- |

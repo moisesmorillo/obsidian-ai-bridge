@@ -1,12 +1,14 @@
 # M4 implementation plan — reviewed reconciliation and conflict resolution
 
-**Status: M4 Slices 1–7 implemented; Slice 8 is NEXT.** M4 remains the single
-`NEXT` milestone. Slices 1–5 establish contracts, reviewed admission, preservation,
-local effects, and live/adoption/tombstone/restore execution. Slices 6–7 implement
+**Status: M4 COMPLETE — Slices 1–8 implemented and qualified.** M5 is the single
+`NEXT` milestone and remains planning-only. Slices 1–5 establish contracts, reviewed
+admission, preservation, local effects, and live/adoption/tombstone/restore execution.
+Slices 6–7 implement
 [ADR 0009](../decisions/0009-m4-history-runtime-and-device-state-v4.md) as one strict
 version-4 compatibility transition: bounded history execution plus shared runtime,
-session, command, modal, and status composition. Do not deploy or install into a
-personal vault as validation; Slice 8 owns qualification.
+session, command, modal, and status composition. Slice 8 qualifies the artifact,
+operations, canonical gates, and final semantics without deployment or personal-vault
+installation.
 
 [Specification](../milestones/m4-remote-to-local-reconciliation-and-conflict-resolution.md)
 and [ADRs 0005–0009](../decisions/README.md) are normative. Preserve every completed
@@ -460,7 +462,7 @@ callbacks. Responsibility inventory proves every transition has the owner above,
 runtime facade remains routing-only, and canonical check passes before Slice 8 artifact
 work.
 
-## Slice 8 — Artifact, operations, qualification, and completion gates — NEXT
+## Slice 8 — Artifact, operations, qualification, and completion gates — IMPLEMENTED
 
 ### Objective and prerequisites
 
@@ -519,8 +521,14 @@ hidden state machines, migration/rollback holes, duplicated semantic owners, and
 unnecessary infrastructure. Fix every actionable finding and re-run both validation
 and corrective review.
 
-### Completion boundary
+### Completion evidence
 
-Record concrete A1–A12 evidence in the M4 specification. Only a completion PR with all
-items satisfied may mark M4 COMPLETE and M5 NEXT. Do not merge automatically, deploy,
-or claim personal-vault/production qualification.
+The M4 specification records concrete A1–A12 evidence. Final canonical validation runs
+75 source test files / 1,194 tests, 8 workerd storage tests, and 11 generated-artifact
+tests. Coverage is 95.02% statements, 90.62% branches, 98.12% functions, and 96.96%
+lines. Artifact qualification covers reviewed preservation/conditional mutation, three
+stale dimensions, literal untrusted text, local-only pending restore, same-realm owner
+retention, incompatible registry refusal, and leakage negatives. The final semantic
+review returns APPROVE with no actionable findings. M4 is COMPLETE and M5 is the single
+NEXT milestone in this unmerged completion PR; no deployment, personal-vault install,
+real-host qualification, or production-readiness claim is implied.

@@ -4,7 +4,7 @@ Security and data safety are priorities. The repository is experimental and does
 claim a production-ready bridge, security certification, complete backup, or supported
 production release.
 
-## M3 trust and authorization boundary
+## M3/M4 trust and authorization boundary
 
 The implemented outward mirror trusts the Obsidian host/plugin environment, the
 plugin runtime, Worker, Cloudflare/R2 operator, and authorized bearer holders with
@@ -22,7 +22,8 @@ public bucket access but does not make this bearer least-privilege.
 `MIRROR_ASSOCIATION_ID`, `MIRROR_WRITER_ID`, plugin device UUIDs, and mirror
 eligibility are not authorization secrets or client permission scopes. Static IDs
 reduce accidental mutation by cooperating non-writer clients; a malicious privileged
-bearer can impersonate them. M5, not M3, owns any future scoped permission redesign.
+bearer can impersonate them. M5 owns any future scoped permission redesign; M4 does
+not make the bearer least-privilege.
 
 The user opts into the whole eligible Markdown mirror. Eligibility is limited to
 literal lowercase `.md` paths of at most 1 MiB, excluding dot-prefixed segments and
@@ -58,6 +59,21 @@ instructions found in notes.
 - Runtime replacement in one compatible realm reuses the owner; process restart uses
   the validated content-free ledger. Abort, unload, timeout, or UI disappearance is
   not proof that a Worker operation rolled back.
+- M4 remote-to-local effects require an exact operator review. Stale session, local
+  observation, remote revision/receipt, recovery metadata, lifecycle, configuration,
+  listener epoch, path, or reservation evidence refuses mutation; evidence is never
+  silently refreshed to the latest generation.
+- Competing local or remote bytes are create-only and post-verified under generated
+  `.ai-bridge-conflicts` paths before replacement or reviewed remote cleanup. M4 has
+  no local delete, move, rename, trash, raw filesystem, or generic Vault capability.
+- Remote Markdown and recovery bodies are untrusted plaintext. Review previews use
+  literal text controls and do not render HTML/Markdown, execute links/commands, or
+  interpret note instructions. A confirmed import becomes ordinary vault plaintext
+  and may be observed by other trusted-host plugins.
+- Recovery restore is local-first and makes no remote mutation. The restored path
+  remains reserved in `restored-pending-review` until a fresh reviewed successor takes
+  ownership. Unknown effects, successor events, and active M4 operations remain
+  durable attention states and block handoff.
 
 Status/notices, structured application logs, plugin data, host-local state, and
 handoff exports intentionally exclude bearer plaintext and note bodies. Worker logs
@@ -82,15 +98,17 @@ sample. A lost writer/ledger cannot safely take over the same association
 automatically; use a new isolated empty bucket/association/credentials while
 preserving old state for recovery.
 
-Do not run old M3/version-2 plugin code against M4 device-state version 3. Slice 1
-migrates valid v2 in place only after a same-key save/read-back fence; there is no
-reverse migration, reset, or supported downgrade. Do not restore stale local state as
-authority, re-enable an old writer after handoff without redesignation and credential
-handling, roll the Worker back over format-2 objects, re-enable v1
-mutations, discard unresolved intents, or redirect delayed old requests into a reset
-association. Pause, preserve evidence, upgrade forward, hand off, revalidate, or use
-an isolated reset. See the [operator guide](docs/operations.md) for exact setup,
-secret rotation, recovery API, handoff, and rollback procedures.
+Do not run version-2/3 plugin code after M4 device-state version 4 exists. Startup
+strictly performs the same-key v2→v3→v4 migration with canonical save/read-back before
+runtime publication; there is no reverse migration, reset, or supported downgrade.
+The runtime owner and registry are also version 4, and incompatible same-realm reuse
+fails closed. Do not restore stale local state as authority, re-enable an old writer
+after handoff without redesignation and credential handling, roll the Worker back over
+format-2 objects, re-enable v1 mutations, discard unresolved intents/M4 operations, or
+redirect delayed old requests into a reset association. Pause, preserve evidence,
+restart when required, upgrade forward, hand off, revalidate, or use an isolated reset.
+See the [operator guide](docs/operations.md) for exact setup, reviewed operations,
+secret rotation, recovery API, handoff, migration, and rollback procedures.
 
 ## Residual limits
 
@@ -98,10 +116,12 @@ Saved reads and host-local persistence are not atomic/fsync guarantees. Same-siz
 edits with indistinguishable timestamps can evade best-effort local race evidence.
 Offline/listener-gap deletions may remain remotely live because absence cannot safely
 be promoted to delete authority. Ordering across iCloud devices is not globally
-transactional. Remote-to-local writes, conflict resolution, adoption, richer restore,
-multi-writer coordination, cleanup automation, scoped clients, and MCP are not M3
-capabilities. R2 is a private mirror/API layer, not the sole authority or a guaranteed
-complete backup.
+transactional. M4 provides only explicit reviewed reconciliation: it does not add
+automatic bidirectional sync, cross-system atomicity, multi-writer coordination,
+conflict-artifact cleanup automation, scoped clients, or MCP. Real desktop/mobile,
+iCloud, native-secret, host rollback/durability, WebView transport, background iOS,
+and deployed Worker/R2 behavior remain unqualified. R2 is a private mirror/API layer,
+not the sole authority or a guaranteed complete backup.
 
 ## Reporting a vulnerability
 

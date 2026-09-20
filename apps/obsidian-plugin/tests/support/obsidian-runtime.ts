@@ -12,6 +12,9 @@ import { vi } from "vitest";
 export class TextElement {
   textContent = "";
   disabled = false;
+  value = "";
+  type = "";
+  placeholder = "";
   private tagName = "";
   readonly children: TextElement[] = [];
   private readonly listeners = new Map<string, Set<() => void>>();

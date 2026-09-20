@@ -58,9 +58,10 @@ New infrastructure requires a concrete need and [ADR](decisions/README.md).
 compose an experimental connected outward mirror, not a production-ready or
 remote-to-local system. Canonical validation passed, the final semantic review's three
 MINOR findings were corrected at `e97af36`, and the corrective review returned APPROVE
-with no open findings. M4 is the single NEXT milestone; within it Slice 8 is NEXT.
-Its reviewed-only authority, preservation, local mutation, adoption/tombstone/restore,
-migration, and one-writer product decisions are implementation-ready. Slice 1
+with no open findings. M4 Slices 1–8 are COMPLETE in this completion PR, and M5 is
+the single NEXT milestone. M4's reviewed-only authority, preservation, local mutation,
+adoption/tombstone/restore, migration, and one-writer product decisions are implemented
+and qualified. Slice 1
 implements the closed contracts, sparse state v3, deterministic v2 migration/read-back
 fence, downgrade refusal, and runtime registry compatibility fence. Slice 2 adds the
 core-only bounded read-only review/classification engine, ephemeral stale-bound reviews,
@@ -69,8 +70,9 @@ authorized local create/replace and durable preservation primitives. Slices 4–
 core-only exact live/adoption/tombstone/restore action execution, receipt-based remote
 effect recovery, and restored-path successor ownership. ADR 0009's compatibility transition is implemented by Slices 6–7: strict state v4,
 bounded reviewed history cleanup, shared M3/M4 scheduling, durable synthetic local
-effect/successor evidence, and text-only runtime/UI composition. Slice 8
-qualification remains unimplemented.
+effect/successor evidence, and text-only runtime/UI composition. Slice 8 adds
+proportional packaged M4 behavior, stale/restore/replacement/leakage gates, synchronized
+operations/security guidance, canonical validation, and final semantic approval.
 Slice 0 qualifies the pinned local
 conditional-storage runtime and host declarations. Slice 1 raises the plugin baseline
 to 1.13.0 and adds shared typed contracts. Worker Slice 2A–2C implements private conditional storage, application current/
@@ -107,8 +109,8 @@ production code. Dependencies include all previous milestones.
 | M1 | Worker API foundation and engineering quality | COMPLETE | Authenticated remote Markdown CRUD/listing with R2 and enforced quality gate | None |
 | M2 | Obsidian read-only local-vault adapter | COMPLETE | Explicit local inspection without sending or changing notes | M1 |
 | M3 | Automatic eligible-Markdown remote mirror | COMPLETE | Whole eligible saved vault mirrors outward, including recoverable removals/renames, with one designated writer | M2 |
-| M4 | Remote-to-local reconciliation and conflict resolution | NEXT | Review/adopt/resolve remote divergence and richer restoration without silent local data loss | M3 |
-| M5 | Operational and security readiness | PLANNED | Operate a bounded personal bridge with reviewed limits, permissions and runbooks | M4 |
+| M4 | Remote-to-local reconciliation and conflict resolution | COMPLETE | Review/adopt/resolve remote divergence and richer restoration without silent local data loss | M3 |
+| M5 | Operational and security readiness | NEXT | Operate a bounded personal bridge with reviewed limits, permissions and runbooks | M4 |
 | M6 | MCP adapter | PLANNED | Same authorized operations for MCP-capable agents | M5 |
 
 ### M1 — Worker API foundation and engineering quality
@@ -186,12 +188,13 @@ merely because the server-side storage and application checkpoints are implement
 
 ### M4 — Remote-to-local reconciliation and conflict resolution
 
-**NEXT — Slices 1–7 implemented; Slice 8 NEXT.** The
+**COMPLETE — Slices 1–8 implemented, qualified, documented, and semantically
+approved in this completion PR.** The
 [specification](milestones/m4-remote-to-local-reconciliation-and-conflict-resolution.md),
 [test-first plan](plans/m4-remote-to-local-reconciliation-and-conflict-resolution.md),
 and accepted ADRs 0005–0009 resolve the material product and technical choices.
-Slices 1–7 are implemented; a separate request remains required for Slice 8 and later
-milestones.
+Slices 1–8 are implemented and qualified; a separate request and implementation-ready
+specification remain required before M5 production work.
 
 - **Authority:** reviewed/manual reconciliation only. Remote divergence remains a
   review item until an operator chooses an evidence-bound typed action. One immutable
@@ -262,16 +265,21 @@ milestones.
   session invalidation, startup orphan staling, bounded recovery selection, commands,
   text-only modals, and sanitized status are implemented together. No intermediate
   runtime publishes or saves v4 with an older owner/registry surface.
-- **Risks/exit:** the A1–A12 checklist requires exact barrier tests for concurrent
-  edit/delete/rename/restore/restart, no silent overwrite/delete, generated artifact
-  qualification, canonical diagnostics/coverage/docs, and independent review before
-  M5 can become NEXT.
+- **Exit met:** A1–A12 are supported by exact barrier tests, generated-artifact
+  qualification, canonical diagnostics/coverage/docs, and final semantic approval.
+  Final validation runs 75 source files / 1,194 tests, 8 workerd tests, and 11 artifact
+  tests at 95.02% statements, 90.62% branches, 98.12% functions, and 96.96% lines.
+  M5 becomes NEXT without M5 production code, deployment, personal-vault installation,
+  or real-host/iCloud/background-iOS qualification.
 - **Non-goals:** silent last-writer-wins, automatic import/adoption/merge, same-path
   legacy normalization, blanket remote authority, multi-writer coordination,
   collaboration, attachments, new server history, or replacement of working-vault
   sync.
 
 ### M5 — Operational and security readiness
+
+**NEXT — planning only.** Refine an implementation-ready milestone specification and
+resolve its listed permission/operating decisions before requesting production code.
 
 - **Scope:** supported operating envelope, threat model, setup/upgrade/rollback/
   backup/recovery runbooks, abuse limits and credential lifecycle. M3 pulls forward
@@ -318,12 +326,14 @@ required decisions forward explicitly; surface material ambiguity rather than gu
 ## Agent onboarding and execution
 
 Read in order: [README](../README.md), [AGENTS](../AGENTS.md),
-[architecture](architecture.md), this roadmap, the single NEXT
+[architecture](architecture.md), this roadmap, the completed
 [M4 specification](milestones/m4-remote-to-local-reconciliation-and-conflict-resolution.md),
 its [sequential plan](plans/m4-remote-to-local-reconciliation-and-conflict-resolution.md),
 and the completed M3 [spec](milestones/m3-remote-bridge-client-and-publishing.md),
-[plan](plans/m3-remote-bridge-client-and-publishing.md) and
-[decisions](plans/m3-design-decisions.md). Inspect relevant source/tests/tooling/CI,
+[plan](plans/m3-remote-bridge-client-and-publishing.md), and
+[decisions](plans/m3-design-decisions.md). M5 is the single NEXT milestone but has no
+implementation-ready specification yet; refine it before production implementation.
+Inspect relevant source/tests/tooling/CI,
 [CONTRIBUTING](../CONTRIBUTING.md) and [SECURITY](../SECURITY.md).
 [current-state](current-state.md) is an evidence map, not a substitute for code.
 
@@ -342,6 +352,7 @@ refine it and surface material decisions first; use [ADRs](decisions/README.md).
 - Check all active acceptance items. In the implementation completion PR, update
   spec/status/evidence, roadmap, current-state/architecture/API/ADRs/operations.
 - Merged PR #27 records the approved M3 A1–A11 evidence and atomically marked M3
-  COMPLETE and M4 NEXT while keeping M4 production code out of the completion PR.
-  Do not merge your own work here.
+  COMPLETE and M4 NEXT. This M4 completion PR records A1–A12, marks M4 COMPLETE, and
+  makes M5 the single NEXT milestone while keeping M5 production code out. Do not
+  merge your own work here.
 - After M6 there is no inferred M7; propose an explicit new roadmap objective.

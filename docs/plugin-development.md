@@ -1,10 +1,10 @@
 # Obsidian plugin development and qualification
 
-The current plugin preserves M2 metadata-only inspection and composes the
-experimental M3 one-way mirror. It targets Obsidian **1.13.0+**, uses only official
-host APIs and standards web primitives, and is not production certified. Canonical
-validation does not require a Worker deployment, real credentials, or installation in
-a vault.
+The current plugin preserves M2 metadata-only inspection, composes the experimental
+M3 one-way mirror, and adds explicit reviewed M4 reconciliation. It targets Obsidian
+**1.13.0+**, uses only official host APIs and standards web primitives, and is not
+production certified. Canonical validation does not require a Worker deployment, real
+credentials, or installation in a vault.
 
 ## Build and generated-artifact qualification
 
@@ -30,7 +30,7 @@ There is no custom export footer, Node/Electron runtime shim, or runtime depende
 other than host-provided `obsidian`. Node is used only by development validation.
 
 `plugin:smoke` rebuilds and evaluates the **actual generated files** in isolated
-browser-like CommonJS realms. Its six proportional tests are separate from source
+browser-like CommonJS realms. Its eleven proportional tests are separate from source
 coverage and do not import the production entrypoint. They prove packaging/runtime
 properties that source tests cannot:
 
@@ -46,11 +46,18 @@ properties that source tests cannot:
   `RemoteBridge`, and standards Fetch to one real conditional v2 PUT with canonical
   base64url path, bearer, association/writer/operation headers, `If-None-Match: *`,
   Markdown media type/body, and no v1 request;
-- a pending packaged reconciliation/mutation across a newly evaluated replacement
-  bundle in the same realm/App identity, proving owner reuse without a concurrent
-  duplicate bootstrap or mutation; the required positive-only listener-gap pass may
-  follow settlement; plus incompatible-registry fail-closed behavior;
-- retained M2 in-flight inspection exclusion and stale-UI suppression across re-enable.
+- a packaged remote-ahead review that displays hostile Markdown literally, creates and
+  verifies the exact generated remote preservation artifact, and sends one conditional
+  v2 Keep local PUT with the reviewed revision and exact association/writer/operation
+  identity; replacing the bundle while that request is pending retains one durable
+  owner/operation and conservatively records unknown effect evidence rather than
+  duplicating the mutation;
+- packaged stale-session, same-text local-event, and changed-remote-revision cases that
+  refuse preservation and mutation;
+- a packaged exact recovery restore that writes only local bytes, makes no remote
+  mutation, and persists `restored-pending-review` ownership;
+- retained M3 same-realm in-flight owner reuse, incompatible-registry fail-closed
+  behavior, and M2 in-flight inspection exclusion/stale-UI suppression.
 
 The artifact realm provides standards `fetch`, Web Crypto, streams, abort, URL,
 encoding, and deterministic timers plus a typed Obsidian host double. It intentionally
@@ -74,9 +81,9 @@ inflate source coverage.
 ## Deliberate disposable-vault procedure
 
 This procedure documents a possible manual qualification; it was **not performed for
-M3 Slice 8**. Never use a personal or production vault. Use synthetic, non-sensitive
-notes and separately authorized disposable server resources if testing network
-behavior.
+M3 or M4 completion**. Never use a personal or production vault. Use synthetic,
+non-sensitive notes and separately authorized disposable server resources if testing
+network behavior.
 
 1. Create a new empty disposable vault in Obsidian 1.13.0 or newer. Keep the
    repository outside the vault. Record its actual configuration directory (normally
@@ -170,15 +177,16 @@ declarations and official source history, not inferred solely from the manifest:
   establishes that Node/Electron APIs are unavailable; it does not certify standards
   Fetch streaming/abort/CORS behavior in every desktop/mobile WebView.
 
-Host declarations establish API availability, not runtime qualification. Slice 8 did
-not install into a vault. Real desktop/mobile, iCloud traces, native secret UI,
+Host declarations establish API availability, not runtime qualification. M4 Slice 8
+did not install into a vault. Real desktop/mobile, iCloud traces, native secret UI,
 host-local durability/rollback, WebView transport behavior, and deployed Worker/R2
 remain explicit residual qualification limits.
 
 ## Operating model
 
-The [M3 operator guide](operations.md) is authoritative for initial empty-association
-setup, one-writer availability, safe upgrade/re-enable, handoff/reset, independent
-bearer rotation, recovery list/read/seal/purge, iCloud uncertainty, and forbidden
-rollback/downgrade actions. It does not authorize deployment or claim production
-support.
+The [M3/M4 operator guide](operations.md) is authoritative for initial empty-
+association setup, reviewed divergence/tombstone/restore/history operations, conflict
+artifact cleanup, one-writer availability, safe upgrade/re-enable, handoff/reset,
+independent bearer rotation, recovery list/read/seal/purge, state migration, iCloud
+uncertainty, and forbidden rollback/downgrade actions. It does not authorize deployment
+or claim production support.

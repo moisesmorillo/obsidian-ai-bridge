@@ -433,10 +433,13 @@ but cannot hide a same-text external successor or deadlock an aligned path.
 
 ## Explicitly deferred
 
-- M5 (NEXT; planning only): broader operational readiness, abuse limits, scoped
-  authentication evolution, release/platform support, and recovery automation. M4's
-  reviewed reconciliation remains experimental and makes no automatic import,
-  cross-system atomicity, deployment, or production-readiness claim.
+- M5 (NEXT; Slices 0–1 planning/evidence accepted): scoped authentication,
+  permission enforcement, client-attributed live diagnostics, v1 retirement,
+  operational runbooks, latest-release artifact synchronization, and real-desktop
+  qualification. ADR 0011 selects no application quota/limiter, recovery automation,
+  durable log store, mobile writer, or multi-release support. M4's reviewed
+  reconciliation remains experimental and makes no automatic import, cross-system
+  atomicity, deployment, or production-readiness claim.
 - M6: Authorized MCP transport/tool definitions, never direct R2 access.
 - Outside this roadmap: search, attachments and AI inference. NAS replication or
   stronger remote authority are possibilities, not selected infrastructure. D1,

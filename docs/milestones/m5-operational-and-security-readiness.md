@@ -1,10 +1,10 @@
 # M5 — Operational and security readiness
 
-**Status: NEXT — Slice 0 planning foundation accepted; no M5 production behavior is
-implemented.** M1–M4 remain COMPLETE and M6 remains PLANNED. This specification is a
-planning skeleton: it makes the accepted Slice 0 security model and Slice 1 decision
-gates explicit, but later slices require their own refined acceptance evidence before
-production implementation.
+**Status: NEXT — Slices 0–1 planning and qualification decisions accepted; no M5
+production behavior is implemented.** M1–M4 remain COMPLETE and M6 remains PLANNED.
+This specification records the accepted Slice 0 security model and Slice 1 operating
+policies. Later slices require their own refined acceptance evidence before production
+implementation, and no current release or platform is supported.
 
 ## Objective
 
@@ -27,7 +27,7 @@ personal-vault installation.
 - [ADR 0010](../decisions/0010-scoped-client-credentials-and-permissions.md): bounded
   named opaque bearer credentials, typed client principals, closed permissions,
   digest-only registry, revocation, rotation, and registry-loss lifecycle.
-- [Roadmap](../roadmap.md): milestone order and the Slice 1 open-decision register.
+- [Roadmap](../roadmap.md): milestone order and the accepted Slice 1 operating-policy summary.
 
 Repository implementation and completed ADRs remain authoritative for current M1–M4
 behavior. Slice 0 changes no Worker route, authentication behavior, plugin manifest,
@@ -48,7 +48,7 @@ Cloudflare binding, dependency, test contract, deployment, or credential.
 - Setup, upgrade, rollback, credential incident, writer handoff, backup/recovery, and
   recovery-maintenance procedures consistent with existing effect certainty.
 - Explicit supported release/platform window and qualification evidence.
-- Complete v1 compatibility/retirement policy chosen before changing current routes.
+- Complete v1 read retirement before any M5 operational-support claim.
 - Documentation and final semantic/security review proving the implemented boundary
   matches the accepted decisions.
 
@@ -63,8 +63,8 @@ Cloudflare binding, dependency, test contract, deployment, or credential.
 - Automatic bidirectional sync, silent conflict resolution, weaker conditional writes,
   local delete/move, or bypass of M4 reviewed authority.
 - A new database, queue, storage service, Cloudflare Rate Limiting binding, or other
-  infrastructure without an explicit accepted Slice 1 decision and, when
-  consequential, a successor ADR.
+  infrastructure without new workload/incident evidence and, when consequential, a
+  successor ADR.
 - Deployment, production certification, complete backup, exact physical erasure,
   disaster-recovery guarantee, or unsupported desktop/mobile/background-iOS claim.
 - Completing v1 retirement, recovery automation, release tooling, or platform
@@ -130,52 +130,60 @@ loss fails closed, preserves data/evidence, issues all-new credentials, and reco
 in-flight effects before resuming. A rollback that restores a revoked digest is
 prohibited.
 
-## Decisions deliberately open for Slice 1
+## Accepted Slice 1 operational decisions
 
-Slice 0 does not accept recommendations for the following. Slice 1 must gather the
-listed evidence, compare alternatives, record a decision, and synchronize this
-specification before dependent production work.
+[ADR 0011](../decisions/0011-m5-operational-envelope.md) owns the evidence,
+alternatives, uncertainty, and policy detail. Its synthetic measurements select a
+future qualification target; they do not establish current real-host, deployment, or
+production support.
 
-| Open decision | Evidence required before acceptance | Boundary until decided | Dependent slices |
-| --- | --- | --- | --- |
-| Practical supported note-count target | Measured current inventory/list/state/device-state/runtime behavior at representative personal-vault sizes and explicit cost/latency/failure observations | Existing hard bounds are implementation limits, not a support claim; **10,000 notes is not canonical or presumed** | 3, 5, 6 |
-| Cloudflare Rate Limiting binding | Threat/cost model, local application-control alternatives, failure mode, development/test behavior, and infrastructure/operational burden | No binding or service is selected or added | 3 |
-| Exact read/write/delete quota numbers | Measured normal M3/M4/plugin/API operation patterns, burst needs, recovery behavior, principal keying, windows, status/retry contract, and destructive-operation safety | No new quota claim or magic number | 3, 4 |
-| Desktop-only plugin manifest setting | Actual qualified desktop/mobile/native-secret/iCloud/background constraints and product support intent | Current non-desktop-only manifest remains unchanged; no mobile support claim | 5, 6 |
-| Recovery maintenance command versus bounded manual runbook | Prepared/sealed/expired/purged inventory evidence, operator error analysis, safety of automation, and bounded workload | Existing explicit API/manual semantics remain; no scheduler/command is added | 5 |
-| Release support window | Upgrade/downgrade compatibility, security response capability, artifact/versioning evidence, and maintainer commitment | No supported production release claim | 5, 6 |
-| Logging retention duration | Required incident/operation evidence, metadata privacy, platform capability, deletion/configuration semantics, and cost | Existing content-free logging remains; no retention guarantee | 3, 5 |
-| Complete v1 retirement policy | Observed compatibility need, current authenticated v1 read use, migration path, OpenAPI/client impact, and rollback risk | V1 reads remain; v1 PUT/DELETE remain retired; no route change | 4, 5 |
+| Decision | Accepted policy | Remaining implementation or qualification gate |
+| --- | --- | --- |
+| Practical supported note-count target | 10,000 eligible notes is the initial M5 qualification target and eventual maximum support claim; 50,000 remains only a hard safety ceiling | Slice 6 must qualify 10,000 on a real supported desktop host or lower/withhold the claim |
+| Cloudflare Rate Limiting binding | No binding or replacement infrastructure | Reopen only from deployed workload, incident, or cost evidence with a complete limiter contract |
+| Read/write/delete quotas | No application numeric quotas and no new 429 contract; retain existing hard bounds, independent delete permission, client revocation, and platform/account controls | Later slices test hard bounds and permission/revocation behavior, not invented request rates |
+| Plugin platform support | Keep `isDesktopOnly: false`; initial writer support is limited to Obsidian desktop 1.13.0+ on Apple-silicon macOS; mobile, Intel macOS, Windows, and Linux writers remain unsupported | Slice 6 must name and exercise the exact Obsidian/macOS versions before support is claimed |
+| Recovery maintenance | Existing API plus a manual one-page/one-mutation-at-a-time runbook; no command or scheduler | Slice 5 refines and exercises the runbook while preserving 30-day and CAS semantics |
+| Release support | No current supported release; after M5, latest M5-ready release only, upgrade forward, rollback only through an exact qualified compatibility path | Synchronized root/plugin/staged artifact versions and compatibility evidence are release gates |
+| Logging retention | Zero-day application-log retention: live diagnostics only, no Workers Logs/Logpush/durable sink or audit claim | Client-attributed content-free events remain useful live; forbidden data remains absent |
+| Complete v1 retirement | Remove every registered v1 route and its OpenAPI compatibility before M5 support; v1 mutations stay retired until removal and are never restored | Slice 4 migrates clients, removes routes, and preserves authenticated unknown-descendant behavior |
 
-Slice 1 must not bundle implementation. If evidence cannot justify a safe choice, the
-decision remains open and dependent slices stay blocked.
+Slice 1 changed documentation and gathered disposable local evidence only. It added no
+production code, dependency, binding, manifest, route, credential, generated vault,
+benchmark artifact, or deployment.
 
-## Preliminary slice plan
+## Revised slice plan
 
-The boundaries below are semantic and dependency-oriented. Estimated filenames or
-lines of code are deliberately non-normative. Each implementation slice must refine
-its own tests, migration, rollback, documentation, and acceptance evidence before
-production changes.
+The boundaries are semantic and dependency-oriented. Production estimates are planning
+gates, exclude tests/docs/tooling, and must be rechecked before each implementation
+slice. Crossing either AGENTS.md limit requires explicit authorization. Decisions that
+selected no limiter, no numeric quotas, manual recovery, zero-day logs, and latest-only
+support remove work rather than creating replacement scope.
 
-### Slice 0 — Threat and credential foundation — PLANNING COMPLETE IN THIS PR
+### Slice 0 — Threat and credential foundation — COMPLETE
 
-- Add this milestone skeleton, the consolidated threat model, and ADR 0010.
-- Separate accepted credential/permission/lifecycle decisions from Slice 1 open
-  operational decisions.
-- Keep M5 `NEXT`, M6 `PLANNED`, and current runtime behavior unchanged.
+- Added this milestone skeleton, the consolidated threat model, and ADR 0010.
+- Separated accepted credential/permission/lifecycle decisions from operational
+  evidence decisions.
+- Changed no production behavior.
 
-### Slice 1 — Qualification evidence and decision closure — PLANNED
+**Production estimate/outcome:** 0 files / 0 LOC.
 
-- Run bounded synthetic qualification needed for the eight open decisions.
-- Record alternatives, measurements, failure modes, and accepted decisions in ADRs or
-  the roadmap/spec as appropriate.
-- Do not introduce production behavior, infrastructure, manifest changes, route
-  changes, or credentials merely to gather evidence.
+### Slice 1 — Qualification evidence and decision closure — COMPLETE IN THIS PR
+
+- Ran bounded disposable in-memory qualification at 1,000, 5,000, and 10,000 eligible
+  notes through current inventory, validation, codec, and migration paths.
+- Accepted the eight policies in ADR 0011 and synchronized this specification,
+  roadmap, decision index, and affected threat-model references.
+- Removed unsupported limiter/quota, recovery-command, mobile-writer, durable-log, and
+  multi-release work from later slices.
 
 **Dependency:** Slice 0.
 
-**Exit:** every open row above is accepted or explicitly retained as a blocker; later
-slices have implementable numeric/platform/operational contracts.
+**Production estimate/outcome:** 0 files / 0 LOC.
+
+**Independently mergeable outcome:** implementable operating decisions without runtime
+or infrastructure change.
 
 ### Slice 2 — Credential registry, principal, and lifecycle tooling — PLANNED
 
@@ -183,76 +191,96 @@ slices have implementable numeric/platform/operational contracts.
   work token verification, strict configuration validation, and fail-closed startup.
 - Add offline create/provision, rotate, revoke, and total-loss replacement tooling
   with one-time raw-token handling and no HTTP management API.
-- Define and test the migration checkpoint from the current privileged bearer without
-  an indefinite fallback. Do not yet broaden route permission policy beyond the
-  narrow compatibility gate required for staged migration.
+- Define and test the bounded migration checkpoint from the current privileged bearer;
+  do not enforce route permissions or remove compatibility routes in this slice.
 
 **Dependency:** Slices 0–1.
 
-**Exit:** credential lifecycle and principal identity are independently testable,
-bounded, secret-safe, and operationally reversible only through fresh credentials.
+**Expected production scope:** 8–10 files / 800–1,200 net new LOC.
 
-### Slice 3 — Abuse controls and client-attributed diagnostics — PLANNED
+**Independently mergeable outcome:** authenticated requests resolve a bounded typed
+principal and lifecycle tooling safely produces digest-only configuration, while
+current route authority remains behind one explicit temporary migration checkpoint.
 
-- Implement the Slice 1 accepted read/write/delete limits and limiter mechanism.
-- Preserve effect certainty, bounded retries, stable sanitized failures, privacy, and
-  content-free logging while adding client ID/operation attribution needed by
-  runbooks.
-- Implement accepted logging retention configuration/documentation without exposing
-  token, digest, body, concrete path, or raw error data.
+### Slice 3 — Client-attributed live diagnostics — PLANNED
 
-**Dependency:** Slices 1–2.
+- Add client ID and closed operation/outcome attribution to the existing content-free
+  structured application events.
+- Preserve zero-day retention: add no Workers Logs configuration, export, sink,
+  binding, quota counter, 429 response, token/digest/body/path/raw-error field, or
+  audit-log claim.
+- Exercise excessive-request and destructive-request scenarios only to prove existing
+  hard bounds, revocation response, and effect certainty; do not assert a rate quota.
 
-**Exit:** measured normal workloads pass; excessive requests fail predictably without
-false success, hidden mutation, unbounded scanning, or diagnostic leakage.
+**Dependency:** Slice 2.
 
-### Slice 4 — Permission enforcement and compatibility migration — PLANNED
+**Expected production scope:** 3–5 files / 150–350 net new LOC.
+
+**Independently mergeable outcome:** live diagnostics identify the principal and
+operation without changing authorization, request admission, infrastructure, or
+retention.
+
+### Slice 4 — Permission enforcement, client migration, and v1 retirement — PLANNED
 
 - Create one exhaustive route-operation permission table for public, authenticated
-  v1/v2, recovery, unknown-descendant, and preflight behavior.
+  v2/recovery, unknown-descendant, and preflight behavior.
 - Enforce exact `read`/`write`/`delete` checks from the typed principal before storage
-  or mutation dispatch, while preserving separate writer/association/application
+  or mutation dispatch while preserving separate writer/association/application
   guards.
-- Migrate plugin and authorized clients through the verified credential lifecycle.
-  Apply the accepted complete v1 policy; do not resurrect retired mutations.
+- Migrate the plugin and authorized clients through the verified credential lifecycle,
+  remove the temporary privileged fallback, and remove every registered v1 route and
+  OpenAPI contract. Never resurrect retired mutations.
 - Document future MCP mapping only as reuse of these operation permissions.
 
 **Dependency:** Slices 1–3.
 
-**Exit:** every route operation has one tested permission owner; delete is never
-implied by write; the privileged fallback is removed according to the accepted
-migration contract.
+**Expected production scope:** 8–10 files / 700–1,200 net new LOC.
+
+**Independently mergeable outcome:** every remaining API operation has one tested
+permission owner, the privileged fallback is gone, delete is independent, current
+clients use scoped v2 credentials, and v1 is fully retired.
 
 ### Slice 5 — Operational, recovery, release, and incident runbooks — PLANNED
 
-- Implement the accepted recovery-maintenance choice, if any, without weakening
-  conditional state/recovery semantics.
+- Refine and exercise the bounded manual recovery procedure; add no plugin command,
+  scheduler, or automatic purge.
 - Finalize setup, client rotation/revocation, writer handoff, total registry loss,
-  credential compromise, backup/restore, forward upgrade, rollback refusal, v1
-  transition, and unsupported-environment procedures.
-- Apply the accepted release support window and platform/manifest decision only with
-  synchronized artifacts and operator guidance.
+  credential compromise, external backup/restore, forward upgrade, rollback refusal,
+  v1 removal, and unsupported-environment procedures.
+- Define release/artifact version synchronization and latest-only support intake.
+  Preserve `isDesktopOnly: false`; do not claim the selected Apple-silicon macOS
+  desktop platform before Slice 6.
 
 **Dependency:** Slices 1–4.
 
-**Exit:** runbooks are tested against representative failure paths and never prescribe
-state deletion, stale registry restore, unsafe takeover, destructive probes, or R2-as-
-backup claims.
+**Expected production scope:** 0 files / 0 LOC. Release/tool configuration or docs may
+change, but no production TypeScript or runtime behavior is planned.
 
-### Slice 6 — Integrated qualification and completion gates — PLANNED
+**Independently mergeable outcome:** reviewed runbooks and release gates match the
+implemented credential/API boundary without automation or support overclaim.
 
-- Qualify the accepted note-count envelope, limits, credential leakage negatives,
-  permission matrix, revocation/rotation, rollback, recovery, packaged plugin, and
-  supported platforms/releases.
+### Slice 6 — Integrated desktop qualification and completion gates — PLANNED
+
+- Qualify 1,000/5,000/10,000-note representative behavior, hard bounds, credential
+  leakage negatives, permission matrix, revocation/rotation, upgrade/rollback refusal,
+  manual recovery, packaged plugin, and the exact Apple-silicon macOS/Obsidian
+  desktop versions intended for the supported release.
 - Run canonical automation and final semantic/security review; correct every finding.
 - Synchronize README, architecture, current-state, API/OpenAPI, security, operations,
   ADRs, and roadmap with implemented evidence.
-- Only after all exit criteria pass may M5 become COMPLETE and M6 become NEXT.
+- Only after every gate passes may M5 become COMPLETE and M6 become NEXT. If real-host
+  10,000-note evidence fails, lower or withhold the support claim rather than changing
+  the 50,000 safety ceiling or hiding uncertainty.
 
 **Dependency:** Slices 1–5.
 
-**Exit:** evidence supports the bounded claims below without deployment or security-
-certification overstatement.
+**Expected production scope:** 0 files / 0 LOC planned. A discovered production defect
+requires a separately estimated corrective slice before completion, not hidden
+qualification-slice implementation.
+
+**Independently mergeable outcome:** final evidence and documentation establish the
+bounded latest-release Apple-silicon macOS desktop support claim and transition,
+without deployment or M6.
 
 ## Preliminary acceptance and exit criteria
 
@@ -270,17 +298,19 @@ certification overstatement.
 - **A5 — Migration:** the current privileged bearer is removed through an explicit
   staged migration with no indefinite fallback, raw-token persistence, silent client
   promotion, or unsafe rollback.
-- **A6 — Bounded operation:** supported note count, request limits, limiter behavior,
-  payload/page/state bounds, and retry semantics are measured, documented, and tested.
-- **A7 — Diagnostics/privacy:** client-attributed events are sufficient for the
+- **A6 — Bounded operation:** the 10,000-note envelope and existing payload/page/state/
+  scheduler/retry bounds are measured, documented, and tested; no application quota,
+  429 contract, or Rate Limiting binding is implied.
+- **A7 — Diagnostics/privacy:** client-attributed live events are sufficient for the
   accepted incident/runbook needs and exclude all forbidden secret/content/path/raw-
-  error data; retention matches the accepted Slice 1 decision.
+  error data; zero-day retention and the absence of an audit-log claim match ADR 0011.
 - **A8 — Recovery and rollback:** maintenance, credential loss, device-state failure,
   backup/restore, upgrade, and rollback procedures preserve evidence and exact effect
   certainty. R2 is never described as a complete backup.
-- **A9 — Platform/release truth:** manifest flags, supported environments, release
-  window, v1 policy, and qualification claims match actual evidence. Unsupported
-  environments are named without implying hidden support.
+- **A9 — Platform/release truth:** unchanged loadability flags, the actually qualified
+  desktop writer environment, latest-only release window, complete v1 retirement,
+  synchronized artifacts, and scale claims match evidence. Unsupported mobile and
+  rollback environments are named without implying hidden support.
 - **A10 — Architecture:** core remains platform-independent; clients and future MCP
   use Worker/application policy rather than R2; no unaccepted service/dependency or
   credential administration API appears.
@@ -298,12 +328,28 @@ certification overstatement.
   slice owners.
 - ADR 0010 accepts the bounded credential/principal model, exact permission semantics,
   separate writer guards, and full lifecycle contract without implementing them.
-- The eight operational decisions remain explicitly open for Slice 1; no 10,000-note
-  support claim, Rate Limiting binding, quota, manifest flag, maintenance command,
-  release window, log retention, or complete v1 policy is selected.
-- This Slice 0 change is documentation-only: zero production files, zero production
+- Slice 0 deliberately left all eight operating decisions open for Slice 1 and made no
+  production/support claim.
+- The Slice 0 change was documentation-only: zero production files, zero production
   lines, no dependency/binding/route/auth/manifest/test/deployment change, and no
   credentials.
+
+## Slice 1 acceptance evidence
+
+- ADR 0011 records repository/platform evidence, realistic alternatives, explicit
+  uncertainty, and the disposition of all eight decisions.
+- Disposable current-code measurements cover local and paged remote inventory, v4
+  validation/encode/decode, and v2→v3→v4 migration at 1,000, 5,000, and 10,000 settled
+  live paths. The harness/data were not committed and do not claim real-host behavior.
+- The decision selects 10,000 as a later qualification target, not a current support
+  claim, and keeps 50,000 as a distinct hard safety ceiling.
+- No Rate Limiting binding, numeric quota, mobile-writer support, recovery automation,
+  durable logs, multi-release support, v1 route change, or replacement work was added.
+- The revised remaining slices each identify dependencies, an independently mergeable
+  outcome, and an expected production file/LOC range within AGENTS.md gates.
+- This Slice 1 change is documentation/evidence-only: zero production files and zero
+  production LOC, with no dependency, binding, route, authentication, API behavior,
+  manifest, generated benchmark, credential, deployment, release, or M6 change.
 
 ## M6 boundary
 

@@ -12,6 +12,7 @@ import {
   MIRROR_DEVICE_LIFECYCLE_KIND,
   MIRROR_DEVICE_STATE_VERSION,
   type MirrorDeviceState,
+  type MirrorDeviceStateV3,
   MUTATION_ACTION,
   type NotePath,
   normalizeNotePath,
@@ -22,6 +23,10 @@ import {
   MAX_MIRROR_DEVICE_STATE_BYTES,
   MIRROR_DEVICE_STATE_FORMAT,
 } from "@obsidian-plugin/state/device-state-codec";
+import {
+  decodeMirrorDeviceStateV3,
+  encodeMirrorDeviceStateV3,
+} from "@obsidian-plugin/state/device-state-v3.codec";
 import {
   createHandoffRecord,
   WebCryptoHandoffIntegrity,
@@ -155,9 +160,9 @@ describe("device-local mirror state codec", () => {
   it("distinguishes an unsupported future version and rejects unknown fields", async () => {
     expect(
       await decodeMirrorDeviceState(
-        JSON.stringify({ format: MIRROR_DEVICE_STATE_FORMAT, version: 4 }),
+        JSON.stringify({ format: MIRROR_DEVICE_STATE_FORMAT, version: 5 }),
       ),
-    ).toEqual({ kind: "unsupported-version", version: 4 });
+    ).toEqual({ kind: "unsupported-version", version: 5 });
     const raw = rawState();
     expect(
       await decodeMirrorDeviceState(JSON.stringify({ ...raw, surprise: true })),
@@ -309,6 +314,45 @@ describe("device-local mirror state codec", () => {
         },
       ],
     };
+    const tombstoneIntent: MirrorDeviceState = {
+      ...state(),
+      paths: state().paths.map((entry) => ({
+        ...entry,
+        unresolvedMutation: {
+          intent: {
+            action: MUTATION_ACTION.tombstone,
+            associationId: ASSOCIATION_ID,
+            writerId: DEVICE_ID,
+            operationId: OTHER_OPERATION_ID,
+            path: PATH,
+            precondition: { kind: "matching-revision", revision: REVISION },
+            mutationAttempts: 1,
+            evidenceAttempts: 1,
+          },
+          phase: "recovery-preparation",
+        },
+      })),
+    };
+    const updateIntent: MirrorDeviceState = {
+      ...state(),
+      paths: state().paths.map((entry) => ({
+        ...entry,
+        unresolvedMutation: {
+          intent: {
+            action: MUTATION_ACTION.update,
+            associationId: ASSOCIATION_ID,
+            writerId: DEVICE_ID,
+            operationId: OTHER_OPERATION_ID,
+            path: PATH,
+            precondition: { kind: "matching-revision", revision: REVISION },
+            contentSha256: HASH,
+            mutationAttempts: 1,
+            evidenceAttempts: 1,
+          },
+          phase: "evidence-required",
+        },
+      })),
+    };
     const renameDeferred: MirrorDeviceState = {
       ...state(),
       paths: state().paths.map((entry) => ({
@@ -378,14 +422,45 @@ describe("device-local mirror state codec", () => {
         ],
       },
     };
+    const liveAcknowledgement = required(state().paths[0]).acknowledgement;
+    if (liveAcknowledgement.kind !== MIRROR_ACKNOWLEDGEMENT_KIND.live) {
+      throw new Error("Expected a live fixture acknowledgement.");
+    }
+    const liveHandoffRecord = await createHandoffRecord(
+      {
+        associationId: ASSOCIATION_ID,
+        origin: "https://bridge.example",
+        entries: [{ path: PATH, acknowledgement: liveAcknowledgement }],
+      },
+      new WebCryptoHandoffIntegrity(),
+    );
+    const stagedLive: MirrorDeviceState = {
+      ...staged,
+      stagedHandoff: {
+        ...required(staged.stagedHandoff),
+        checksum: liveHandoffRecord.checksum,
+        entries: [
+          {
+            path: PATH,
+            acknowledgement: liveAcknowledgement,
+            localAlignment: "pending",
+            remoteVerification: "pending",
+            observationGeneration: 4,
+          },
+        ],
+      },
+    };
     for (const candidate of [
       disabled,
       createIntent,
       recreate,
+      tombstoneIntent,
+      updateIntent,
       renameDeferred,
       draining,
       drained,
       staged,
+      stagedLive,
     ]) {
       expect(
         await decodeMirrorDeviceState(encodeMirrorDeviceState(candidate)),
@@ -393,7 +468,36 @@ describe("device-local mirror state codec", () => {
         kind: "valid",
         state: candidate,
       });
+      const v3: MirrorDeviceStateV3 = {
+        ...candidate,
+        reconciliationReviews: [],
+        reconciliationOperations: [],
+      };
+      expect(
+        await decodeMirrorDeviceStateV3(encodeMirrorDeviceStateV3(v3)),
+      ).toEqual({ kind: "valid", state: v3 });
     }
+    const corruptStagedV3 = JSON.parse(
+      encodeMirrorDeviceStateV3({
+        ...staged,
+        reconciliationReviews: [],
+        reconciliationOperations: [],
+      }),
+    );
+    corruptStagedV3.stagedHandoff.checksum = "00".repeat(32);
+    expect(
+      await decodeMirrorDeviceStateV3(JSON.stringify(corruptStagedV3)),
+    ).toEqual({ kind: "corrupt" });
+    const stagedV3 = encodeMirrorDeviceStateV3({
+      ...staged,
+      reconciliationReviews: [],
+      reconciliationOperations: [],
+    });
+    expect(
+      await decodeMirrorDeviceStateV3(stagedV3, {
+        digest: async () => required(createContentSha256("00".repeat(32))),
+      }),
+    ).toEqual({ kind: "corrupt" });
     expect(
       await decodeMirrorDeviceState(
         JSON.stringify({

@@ -1,13 +1,12 @@
 # M4 Slices 6–7 implementation preparation
 
-> **Historical preparation plus post-Slice-5 refinement:** The original analysis
+> **Historical preparation plus implemented transition:** The original analysis
 > below was produced before Slices 4–5 and remains non-normative historical evidence.
-> The final section revalidates all twelve gaps against merged PR #38 at `c81832e` and
-> applies the planning contracts proposed by
+> Its revalidated contracts were implemented together by Slices 6–7 under
 > [ADR 0009](../decisions/0009-m4-history-runtime-and-device-state-v4.md). Current
 > source, the [M4 specification](../milestones/m4-remote-to-local-reconciliation-and-conflict-resolution.md),
-> and accepted ADRs remain authoritative. This document grants no production-code,
-> deployment, or personal-vault authority.
+> and accepted ADRs remain authoritative. Slice 8 qualification, deployment, and
+> personal-vault installation remain separately authorized.
 
 ## Purpose
 
@@ -981,7 +980,7 @@ production behavior.
 
 | Gap | Original status | Post-Slice-5 evidence | Final contract decision | Resolved by this planning PR | Target slice / semantic owner | Required implementation tests |
 | --- | --- | --- | --- | --- | --- | --- |
-| 1. History decision payload | Blocked Slice 6/7 because the action was kind-only | `ResolveHistoryReconciliationAction` is still kind-only; admission accepts at most one destination; the Slice 4 coordinator rejects history | Use the closed `retain-independent`, `defer-history`, or `execute-cleanup-plan` decision. UI selects only an opaque candidate; group, canonical path, and cleanup steps are derived from current durable evidence | **Yes, contractually** | Slice 6: `RenameHistoryGroupPolicy`, history decision policy, review admission | Every decision variant, candidate replay, caller path injection, stale group/member/revision, unrepresentable mapping |
+| 1. History decision payload | Blocked Slice 6/7 because the action was kind-only | `ResolveHistoryReconciliationAction` is still kind-only; admission accepts at most one destination; the Slice 4 coordinator rejects history | Use the closed `retain-independent`, `defer-history`, or `execute-cleanup-plan` decision. UI selects only a bounded current-discovery candidate path; group membership and cleanup steps are rederived from current durable evidence | **Yes, contractually** | Slice 6: `RenameHistoryGroupPolicy`, history decision policy, review admission | Every decision variant, candidate replay, caller path injection, stale group/member/revision, unrepresentable mapping |
 | 2. Grouped completed steps | Blocked exact grouped restart | Slice 4–5 added finite aggregate phases/effect recovery but no per-step history evidence | One parent operation owns a bounded ordered step ledger and full group reservations; one current step progresses; exact confirmed steps never replay | **Yes, contractually** | Slice 6: `RenameHistoryResolutionService`; mechanical effects remain in `ReconciliationEffectExecutor` | Restart at every step phase, exact receipt recovery, unknown/refused block, completed-step no replay, unrelated progress |
 | 3. Same-side artifact collision | Blocked multiple grouped competitors | Preservation paths remain `<operation>/<side>.md` | New history artifacts use `<operation>/<step>/<side>.md`; existing non-history paths remain unchanged | **Yes, contractually** | Slice 6: preservation path/policy and v4 receipt validation | Multiple same-side artifacts, UUID/path validation, collision, same-step recovery, no source-path interpolation |
 | 4. Side-only preservation dispatch | Blocked exact grouped preservation | `ConflictPreservationRequest` and service authorization still select the first requirement by side | History preservation is selected by parent operation plus exact step ID plus side; policy derives original path/revision/hash/path | **Yes, contractually** | Slice 6: step-scoped preservation request and `ConflictPreservationService` | Wrong step/side/hash/revision/path, duplicate selector, restart adoption, extra receipt rejection |

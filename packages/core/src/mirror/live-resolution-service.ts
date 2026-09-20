@@ -18,7 +18,9 @@ import {
   rejectReconciliationAction,
 } from "@core/mirror/reconciliation-action-result";
 import type { ReconciliationEffectExecutor } from "@core/mirror/reconciliation-effect-executor";
+import { isNonHistoryReconciliationOperation } from "@core/mirror/reconciliation-operation";
 import {
+  LOCAL_EFFECT_OBSERVATION_KIND,
   RECONCILIATION_ACTION,
   RECONCILIATION_LOCAL_EVIDENCE_KIND,
   RECONCILIATION_PRESERVATION_SIDE,
@@ -26,7 +28,7 @@ import {
 } from "@core/mirror/reconciliation-state.constants";
 import type {
   KeepBothReconciliationAction,
-  ReconciliationOperation,
+  ReconciliationNonHistoryOperation,
   ReconciliationPathEvidence,
   ReconciliationRemoteLiveEvidence,
 } from "@core/mirror/reconciliation-state.types";
@@ -52,6 +54,9 @@ export class LiveResolutionService {
     const operation = this.effects.operation(request.operationId);
     if (operation === undefined)
       return rejectReconciliationAction(this.effects, "operation-not-found");
+    if (!isNonHistoryReconciliationOperation(operation)) {
+      return rejectReconciliationAction(this.effects, "wrong-action");
+    }
     switch (operation.action.kind) {
       case RECONCILIATION_ACTION.keepLocal:
         return this.keepLocal(operation);
@@ -70,7 +75,7 @@ export class LiveResolutionService {
    * @returns Completed or finite attention result.
    */
   private async keepLocal(
-    operation: ReconciliationOperation,
+    operation: ReconciliationNonHistoryOperation,
   ): Promise<ReconciliationActionExecutionResult> {
     const target = targetEvidence(operation);
     if (
@@ -130,7 +135,7 @@ export class LiveResolutionService {
    * @returns Completed or finite attention result.
    */
   private async useRemote(
-    operation: ReconciliationOperation,
+    operation: ReconciliationNonHistoryOperation,
   ): Promise<ReconciliationActionExecutionResult> {
     const target = targetEvidence(operation);
     if (target?.remote.kind !== RECONCILIATION_REMOTE_EVIDENCE_KIND.live) {
@@ -148,7 +153,21 @@ export class LiveResolutionService {
     if (typeof remote === "string")
       return rejectReconciliationAction(this.effects, "evidence-changed");
     let localEffect = operation.localEffect;
-    if (target.local.kind === RECONCILIATION_LOCAL_EVIDENCE_KIND.absent) {
+    if (
+      operation.localEffectObservation.kind ===
+      LOCAL_EFFECT_OBSERVATION_KIND.recoveredV3
+    ) {
+      const recovered = await this.effects.readCurrentLocal(
+        operation.localEffectObservation.path,
+        operation.localEffectObservation.expectedHash,
+      );
+      if (recovered === "changed") {
+        return rejectReconciliationAction(this.effects, "evidence-changed");
+      }
+      localEffect = MUTATION_EFFECT_CERTAINTY.confirmed;
+    } else if (
+      target.local.kind === RECONCILIATION_LOCAL_EVIDENCE_KIND.absent
+    ) {
       const result = await this.effects.localWrites.createEligible({
         operationId: operation.operationId,
         path: target.path,
@@ -194,7 +213,7 @@ export class LiveResolutionService {
    * @returns Completed or finite attention result.
    */
   private async keepBoth(
-    operation: ReconciliationOperation,
+    operation: ReconciliationNonHistoryOperation,
     action: KeepBothReconciliationAction,
   ): Promise<ReconciliationActionExecutionResult> {
     const target = targetEvidence(operation);
@@ -368,7 +387,7 @@ export class LiveResolutionService {
 
 /** @returns Immutable target evidence. */
 function targetEvidence(
-  operation: ReconciliationOperation,
+  operation: ReconciliationNonHistoryOperation,
 ): ReconciliationPathEvidence | undefined {
   return operation.snapshot.paths.find(
     (evidence) => evidence.path === operation.snapshot.targetPath,
@@ -377,7 +396,7 @@ function targetEvidence(
 
 /** @returns Conditional update request bound to sampled live revision and operation identity. */
 function updateRequest(
-  operation: ReconciliationOperation,
+  operation: ReconciliationNonHistoryOperation,
   remote: ReconciliationRemoteLiveEvidence,
   content: string,
 ): ConditionalMutationRequest {
@@ -397,7 +416,7 @@ function updateRequest(
 
 /** @returns Absence-only create request for an admitted new destination. */
 function createRequest(
-  operation: ReconciliationOperation,
+  operation: ReconciliationNonHistoryOperation,
   path: ReconciliationPathEvidence["path"],
   content: string,
 ): ConditionalMutationRequest {

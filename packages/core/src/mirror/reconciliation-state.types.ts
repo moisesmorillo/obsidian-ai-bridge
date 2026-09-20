@@ -16,14 +16,23 @@ import type {
   RenameDeferredMirrorState,
 } from "@core/mirror/mirror-state.types";
 import type {
+  HISTORY_CLEANUP_STEP_KIND,
+  HISTORY_CLEANUP_STEP_PHASE,
+  HISTORY_DECISION_KIND,
+  HISTORY_PROGRESS_KIND,
+  HISTORY_REMOTE_EFFECT_KIND,
+  LEGACY_V3_LOCAL_EFFECT_RECOVERY_STATE,
+  LOCAL_EFFECT_OBSERVATION_KIND,
   RECONCILIATION_ACTION,
   RECONCILIATION_AUTHORITY_SOURCE,
   RECONCILIATION_CLASSIFICATION,
+  RECONCILIATION_EVENT_KIND,
   RECONCILIATION_LOCAL_EVIDENCE_KIND,
   RECONCILIATION_LOCAL_STABILITY,
   RECONCILIATION_OPERATION_PHASE,
   RECONCILIATION_PATH_REFERENCE_KIND,
   RECONCILIATION_PRESERVATION_PROOF_STATE,
+  RECONCILIATION_PRESERVATION_SCOPE,
   RECONCILIATION_PRESERVATION_SIDE,
   RECONCILIATION_REMOTE_EVIDENCE_KIND,
   RECONCILIATION_REVIEW_RETENTION,
@@ -242,9 +251,52 @@ export interface ForkLegacyReconciliationAction {
   readonly kind: typeof RECONCILIATION_ACTION.forkLegacy;
 }
 
+/** Retain the exact grouped current paths independently and clear only reviewed blockers. */
+export interface RetainIndependentHistoryDecision {
+  readonly kind: typeof HISTORY_DECISION_KIND.retainIndependent;
+}
+
+/** Keep the exact grouped deferred blockers for a later fresh review. */
+export interface DeferHistoryDecision {
+  readonly kind: typeof HISTORY_DECISION_KIND.deferHistory;
+}
+
+/** Execute only the exact evidence-derived former-source cleanup plan. */
+export interface ExecuteCleanupHistoryDecision {
+  readonly kind: typeof HISTORY_DECISION_KIND.executeCleanupPlan;
+  /** Existing lexical group member derived by admission policy, never free-form UI input. */
+  readonly canonicalPath: NotePath | null;
+}
+
+/** Process-local cleanup selection submitted from one bounded review projection. */
+export interface ExecuteCleanupHistoryAdmissionDecision {
+  readonly kind: typeof HISTORY_DECISION_KIND.executeCleanupPlan;
+  /** Candidate selected from the current review projection and revalidated during admission. */
+  readonly selectedCandidatePath: NotePath;
+}
+
+/** Closed process-local history choice accepted before durable policy derivation. */
+export type HistoryAdmissionDecision =
+  | RetainIndependentHistoryDecision
+  | DeferHistoryDecision
+  | ExecuteCleanupHistoryAdmissionDecision;
+
+/** Closed durable operator decision for one complete deferred-history group. */
+export type HistoryDecision =
+  | RetainIndependentHistoryDecision
+  | DeferHistoryDecision
+  | ExecuteCleanupHistoryDecision;
+
 /** Apply one bounded explicit current-state decision to deferred M3 history. */
 export interface ResolveHistoryReconciliationAction {
   readonly kind: typeof RECONCILIATION_ACTION.resolveHistory;
+  readonly decision: HistoryDecision;
+}
+
+/** Process-local history request whose canonical decision is derived only during admission. */
+export interface ResolveHistoryAdmissionAction {
+  readonly kind: typeof RECONCILIATION_ACTION.resolveHistory;
+  readonly decision: HistoryAdmissionDecision;
 }
 
 /** Persist an explicit no-mutation decision where durable deferral is required. */
@@ -265,6 +317,11 @@ export type ReconciliationAction =
   | ResolveHistoryReconciliationAction
   | DeferReconciliationAction;
 
+/** Closed action submitted for admission before history policy derives durable fields. */
+export type ReconciliationAdmissionAction =
+  | Exclude<ReconciliationAction, ResolveHistoryReconciliationAction>
+  | ResolveHistoryAdmissionAction;
+
 /** One operation-owned path reservation with an explicit ledger relationship. */
 export interface ReconciliationPathReservation {
   readonly path: NotePath;
@@ -274,8 +331,8 @@ export interface ReconciliationPathReservation {
 /** Exact content-free recovery generation selected for a local-first restore. */
 export type ReconciliationRecoveryEvidence = RecoverySnapshotState;
 
-/** Content-free preservation identity and proof progress; only verified state claims a completed safety copy. */
-export interface ReconciliationPreservationReceipt {
+/** Fields shared by operation- and step-scoped preservation receipts. */
+export interface ReconciliationPreservationReceiptBase {
   readonly operationId: MirrorOperationId;
   readonly originalPath: NotePath;
   readonly side: (typeof RECONCILIATION_PRESERVATION_SIDE)[keyof typeof RECONCILIATION_PRESERVATION_SIDE];
@@ -287,23 +344,191 @@ export interface ReconciliationPreservationReceipt {
   readonly proofState: (typeof RECONCILIATION_PRESERVATION_PROOF_STATE)[keyof typeof RECONCILIATION_PRESERVATION_PROOF_STATE];
 }
 
-/** Sparse durable confirmed action and restart evidence without any note body. */
-export interface ReconciliationOperation {
+/** Existing one-operation/one-side preservation identity for non-history actions. */
+export interface OperationScopedPreservationReceipt
+  extends ReconciliationPreservationReceiptBase {
+  readonly scope: typeof RECONCILIATION_PRESERVATION_SCOPE.operation;
+}
+
+/** Step-scoped history preservation identity preventing same-side collisions. */
+export interface HistoryStepPreservationReceipt
+  extends ReconciliationPreservationReceiptBase {
+  readonly scope: typeof RECONCILIATION_PRESERVATION_SCOPE.historyStep;
+  readonly stepId: MirrorOperationId;
+}
+
+/** Content-free preservation identity and proof progress. */
+export type ReconciliationPreservationReceipt =
+  | OperationScopedPreservationReceipt
+  | HistoryStepPreservationReceipt;
+
+/** Closed eligible Vault event kind persisted without bodies. */
+export type ReconciliationEventKind =
+  (typeof RECONCILIATION_EVENT_KIND)[keyof typeof RECONCILIATION_EVENT_KIND];
+
+/** Bounded successor event range observed after local-effect preparation. */
+export interface LocalEffectSuccessorRange {
+  readonly firstGeneration: number;
+  readonly latestGeneration: number;
+  readonly eventKinds: readonly ReconciliationEventKind[];
+}
+
+/** Exact prepared or proven synthetic local-effect identity. */
+export interface IdentifiedLocalEffectObservation {
+  readonly kind:
+    | typeof LOCAL_EFFECT_OBSERVATION_KIND.prepared
+    | typeof LOCAL_EFFECT_OBSERVATION_KIND.confirmed
+    | typeof LOCAL_EFFECT_OBSERVATION_KIND.recoveredV3;
+  readonly effectId: MirrorOperationId;
+  readonly path: NotePath;
+  readonly expectedHash: ContentSha256;
+  readonly listenerEpoch: number;
+  readonly beforeGeneration: number;
+  readonly postconditionHash: ContentSha256 | null;
+  readonly successor: LocalEffectSuccessorRange | null;
+}
+
+/** Event fence retained for an operation that has no plugin local-write effect. */
+export interface NoLocalEffectObservation {
+  readonly kind: typeof LOCAL_EFFECT_OBSERVATION_KIND.notRequired;
+  readonly path: NotePath;
+  readonly listenerEpoch: number;
+  readonly beforeGeneration: number;
+  readonly successor: LocalEffectSuccessorRange | null;
+}
+
+/** Durable synthetic local-effect observation state. */
+export type LocalEffectObservation =
+  | NoLocalEffectObservation
+  | { readonly kind: typeof LOCAL_EFFECT_OBSERVATION_KIND.notStarted }
+  | {
+      readonly kind: typeof LOCAL_EFFECT_OBSERVATION_KIND.legacyV3Unfenced;
+      /** Exact pre-projection v3 phase restored only after postcondition recovery. */
+      readonly priorPhase: ReconciliationOperationPhaseV3;
+      /** Startup recovery progress; blocked evidence is never retried automatically. */
+      readonly recoveryState: (typeof LEGACY_V3_LOCAL_EFFECT_RECOVERY_STATE)[keyof typeof LEGACY_V3_LOCAL_EFFECT_RECOVERY_STATE];
+    }
+  | IdentifiedLocalEffectObservation;
+
+/** Exact confirmed history tombstone evidence bound to the cleanup step UUID. */
+export interface ConfirmedHistoryRemoteEffect {
+  readonly kind: typeof HISTORY_REMOTE_EFFECT_KIND.confirmedExactTombstoneReceipt;
+  readonly revision: ApplicationRevision;
+  readonly receipt: TombstoneOperationReceipt;
+}
+
+/** Closed effect certainty for one remote-only history cleanup step. */
+export type HistoryRemoteEffect =
+  | { readonly kind: "not-dispatched" }
+  | { readonly kind: "definitely-refused" }
+  | { readonly kind: "unknown" }
+  | ConfirmedHistoryRemoteEffect;
+
+/** One deterministic former-source cleanup step owned by its parent operation. */
+export interface HistoryCleanupStep {
+  readonly stepId: MirrorOperationId;
+  readonly kind: typeof HISTORY_CLEANUP_STEP_KIND.remoteFormerSourceCleanup;
+  readonly sourcePath: NotePath;
+  readonly prerequisitePath: NotePath | null;
+  readonly sourceRevision: ApplicationRevision;
+  readonly sourceContentSha256: ContentSha256;
+  readonly prerequisiteRevision: ApplicationRevision | null;
+  readonly localAbsenceGeneration: number;
+  readonly phase: (typeof HISTORY_CLEANUP_STEP_PHASE)[keyof typeof HISTORY_CLEANUP_STEP_PHASE];
+  readonly remoteEffect: HistoryRemoteEffect;
+}
+
+/** Refined v4 decision and bounded ordered cleanup ledger. */
+export interface RefinedHistoryProgress {
+  readonly kind: typeof HISTORY_PROGRESS_KIND.refined;
+  readonly decision: HistoryDecision;
+  readonly steps: readonly HistoryCleanupStep[];
+  readonly nextStepIndex: number | null;
+}
+
+/** Preserved v3 aggregate history state that can never dispatch under v4. */
+export interface LegacyV3HistoryProgress {
+  readonly kind: typeof HISTORY_PROGRESS_KIND.legacyV3Unrefined;
+  readonly aggregateLocalEffect: MutationEffectCertainty;
+  readonly aggregateRemoteEffect: MutationEffectCertainty;
+}
+
+/** Common identity, snapshot, reservation and review linkage for every v4 operation. */
+export interface ReconciliationOperationBase {
   readonly operationId: MirrorOperationId;
   readonly reviewId: MirrorOperationId;
   readonly authority: ReconciliationAuthoritySource;
-  readonly action: ReconciliationAction;
   readonly phase: ReconciliationOperationPhase;
-  /** Immutable copy of the exact review identity admitted for this operation. */
   readonly snapshot: ReconciliationReviewSnapshot;
-  /** Distinct alternate destination when selected; null uses the target and grants no implicit new-path authority. */
   readonly destinationPath: NotePath | null;
   readonly reservations: readonly ReconciliationPathReservation[];
   readonly preservationReceipts: readonly ReconciliationPreservationReceipt[];
-  /** Reviewed successor linked at restore completion; it may later complete but must not be stale. */
+  /** Exact reviewed operation receiving a restored path or durable successor-event fence. */
   readonly successorOperationId: MirrorOperationId | null;
-  /** Local effect knowledge independent of phase; unknown is not permission to retry blindly. */
+}
+
+/** All non-history actions retain aggregate effect certainty and exact local observation fencing. */
+export interface ReconciliationNonHistoryOperation
+  extends ReconciliationOperationBase {
+  readonly action: Exclude<
+    ReconciliationAction,
+    ResolveHistoryReconciliationAction
+  >;
   readonly localEffect: MutationEffectCertainty;
-  /** Remote effect knowledge; a local-first restore must leave this undispatched. */
+  readonly remoteEffect: MutationEffectCertainty;
+  readonly localEffectObservation: LocalEffectObservation;
+}
+
+/** Refined history operation; its ordered steps are the sole remote-effect authority. */
+export interface ReconciliationHistoryOperation
+  extends ReconciliationOperationBase {
+  readonly action: ResolveHistoryReconciliationAction;
+  readonly historyProgress: RefinedHistoryProgress;
+}
+
+/** Historical kind-only history action preserved without inventing an operator decision. */
+export interface LegacyV3HistoryAction {
+  readonly kind: typeof RECONCILIATION_ACTION.resolveHistory;
+}
+
+/** Migrated v3 history operation preserved as an explicit non-dispatchable attention blocker. */
+export interface LegacyV3HistoryOperation extends ReconciliationOperationBase {
+  readonly action: LegacyV3HistoryAction;
+  readonly historyProgress: LegacyV3HistoryProgress;
+}
+
+/** Sparse durable confirmed action and restart evidence without any note body. */
+export type ReconciliationOperation =
+  | ReconciliationNonHistoryOperation
+  | ReconciliationHistoryOperation
+  | LegacyV3HistoryOperation;
+
+/** Frozen version-3 operation-scoped receipt shape used only by forward migration. */
+export type ReconciliationPreservationReceiptV3 = Omit<
+  OperationScopedPreservationReceipt,
+  "scope"
+>;
+
+/** Frozen version-3 operation phase set before successor-event fencing existed. */
+export type ReconciliationOperationPhaseV3 = Exclude<
+  ReconciliationOperationPhase,
+  typeof RECONCILIATION_OPERATION_PHASE.successorReviewRequired
+>;
+
+/** Frozen version-3 operation shape used only by the strict historical decoder. */
+export interface ReconciliationOperationV3 {
+  readonly operationId: MirrorOperationId;
+  readonly reviewId: MirrorOperationId;
+  readonly authority: ReconciliationAuthoritySource;
+  readonly action:
+    | LegacyV3HistoryAction
+    | Exclude<ReconciliationAction, ResolveHistoryReconciliationAction>;
+  readonly phase: ReconciliationOperationPhaseV3;
+  readonly snapshot: ReconciliationReviewSnapshot;
+  readonly destinationPath: NotePath | null;
+  readonly reservations: readonly ReconciliationPathReservation[];
+  readonly preservationReceipts: readonly ReconciliationPreservationReceiptV3[];
+  readonly successorOperationId: MirrorOperationId | null;
+  readonly localEffect: MutationEffectCertainty;
   readonly remoteEffect: MutationEffectCertainty;
 }

@@ -28,6 +28,29 @@ function repository(): VaultRepository {
 }
 
 describe("VaultNoteService", () => {
+  it.each([
+    { existed: false, created: true },
+    { existed: true, created: false },
+  ])(
+    "reports created=$created when prior existence is $existed",
+    async ({ existed, created }) => {
+      const write = vi.fn().mockResolvedValue(undefined);
+      const vault: VaultRepository = {
+        ...repository(),
+        exists: vi.fn().mockResolvedValue(existed),
+        write,
+      };
+      const path = validPath("Alpha.md");
+
+      await expect(
+        new VaultNoteService(vault).write(path, "content"),
+      ).resolves.toEqual({
+        created,
+      });
+      expect(write).toHaveBeenCalledWith(path, "content");
+    },
+  );
+
   it("rejects payloads larger than the byte limit", async () => {
     const write = vi.fn().mockResolvedValue(undefined);
     const vault: VaultRepository = {

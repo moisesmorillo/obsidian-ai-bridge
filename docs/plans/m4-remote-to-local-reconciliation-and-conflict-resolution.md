@@ -1,19 +1,15 @@
 # M4 implementation plan — reviewed reconciliation and conflict resolution
 
-**Status: M4 Slices 1–5 implemented; Slice 6 is NEXT; Slices 6–7 contracts are
-implementation-ready; Slice 8 remains planned.** M4 remains the single `NEXT`
-milestone. Slice 1 adds contracts and the version-3 state/migration fence, Slice 2 adds
-the core-only read-only review/admission seam, and Slice 3 adds uncomposed narrow
-local-effect and durable preservation primitives. Slices 4–5 add uncomposed action
-execution. The planning-only contract refinement in
-[ADR 0009](../decisions/0009-m4-history-runtime-and-device-state-v4.md) requires
-version 4 before Slice 6 history execution and closes the Slice 7 runtime contracts.
-No Slice 6/7 user behavior is implemented. Do not deploy or install into a personal
-vault as validation.
+**Status: M4 Slices 1–7 implemented; Slice 8 is NEXT.** M4 remains the single
+`NEXT` milestone. Slices 1–5 establish contracts, reviewed admission, preservation,
+local effects, and live/adoption/tombstone/restore execution. Slices 6–7 implement
+[ADR 0009](../decisions/0009-m4-history-runtime-and-device-state-v4.md) as one strict
+version-4 compatibility transition: bounded history execution plus shared runtime,
+session, command, modal, and status composition. Do not deploy or install into a
+personal vault as validation; Slice 8 owns qualification.
 
 [Specification](../milestones/m4-remote-to-local-reconciliation-and-conflict-resolution.md)
-and [ADRs 0005–0009](../decisions/README.md) are normative once ADR 0009 is accepted
-through its planning PR. Preserve every completed
+and [ADRs 0005–0009](../decisions/README.md) are normative. Preserve every completed
 M3 invariant and its current executable contracts. The eight slices follow dependency
 and safe-exposure boundaries—state, read policy, local effects, live resolution,
 tombstone/restore, history, host composition, and qualification—not an arbitrary
@@ -302,7 +298,7 @@ records pre-Slice-4/5 handoff analysis, test matrices, dependencies, and contrac
 Revalidate it against the final merged Slices 4–5; it does not amend this plan, the
 M4 specification, or accepted ADRs.
 
-## Slice 6 — Device-state v4 and deferred rename/history resolution — NEXT
+## Slice 6 — Device-state v4 and deferred rename/history resolution — IMPLEMENTED
 
 ### Objective and prerequisites
 
@@ -317,10 +313,13 @@ operations, or multi-key atomic claims.
    v3→v4 migration, exact read-back, 12 MiB v4 bound, and non-empty v3 M4-state
    fixtures. Build this checkpoint first, but do not publish or save v4 from the plugin
    until Slice 7 completes the version-4 owner/registry surface in the same
-   implementation PR. Migrated active v3 history and unfenced local effects remain
-   conservative blockers; no decision/event evidence is inferred.
+   implementation PR. Migrated active v3 history remains a conservative blocker.
+   Unfenced v3 local effects retain their prior phase and enter a startup-only
+   read/hash transition before publication: exact postconditions recover without
+   redispatch, changed/absent evidence blocks permanently, ambiguous evidence remains
+   retryable, and save failure aborts startup. No decision/event evidence is inferred.
 2. Add `RenameHistoryGroupPolicy` as the sole durable-edge closure owner. It derives
-   the bounded lexical group and opaque operator candidates; UI/caller path sets never
+   the bounded lexical group and validated current-discovery candidates; UI/caller path sets never
    define authority.
 3. Admit one closed retain/defer/execute-cleanup decision into one parent operation
    that atomically reserves the complete group and owns a bounded ordered step ledger.
@@ -380,7 +379,7 @@ reserved, exact steps are auditable and bounded, no arbitrary history list/body 
 server transaction/compensating delete/new API exists, and canonical validation plus
 policy-ownership review pass.
 
-## Slice 7 — Runtime, commands, modal, and status composition
+## Slice 7 — Runtime, commands, modal, and status composition — IMPLEMENTED
 
 ### Objective and prerequisites
 
@@ -408,10 +407,13 @@ surface. Runtime composition follows ADR 0009 and adds no new authority.
    listeners. Stale orphan durable reviews in one serialized transition; preserve valid
    operation pairs; save failure prevents publication.
 5. Expose the review service's bounded content-free recovery selection query, including
-   prepared, sealed-active, sealed-expired, purged and incomplete results. Listing
-   never fetches content; review creation re-inspects exact selected metadata.
+   prepared, sealed-active, sealed-expired, purged and incomplete results with explicit
+   actionability. Listing and restore share one runtime-clock expiry predicate and
+   listing never fetches content. Runtime submission requires an exact latest-complete
+   process-local metadata binding; review creation then re-inspects the selection.
 6. Add thin commands, text-only modal/previews, recovery selection, and content-free
-   status projections. UI submits typed identities and never derives policy.
+   status projections. UI submits typed identities and projected history candidates;
+   core rederives any durable canonical path and all policy.
 
 ### Tests first
 
@@ -458,7 +460,7 @@ callbacks. Responsibility inventory proves every transition has the owner above,
 runtime facade remains routing-only, and canonical check passes before Slice 8 artifact
 work.
 
-## Slice 8 — Artifact, operations, qualification, and completion gates
+## Slice 8 — Artifact, operations, qualification, and completion gates — NEXT
 
 ### Objective and prerequisites
 

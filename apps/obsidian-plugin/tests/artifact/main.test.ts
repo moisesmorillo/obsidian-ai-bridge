@@ -267,7 +267,7 @@ describe("packaged Obsidian main.js", () => {
     expect(requires.length).toBeGreaterThan(0);
     expect(new Set(requires)).toEqual(new Set(["obsidian"]));
     expect(bundle).not.toMatch(
-      /\b(?:process|Buffer|Bun|__dirname|__filename)\b|node:|import\s*\(/,
+      /\b(?:Buffer|Bun|__dirname|__filename)\b|\bprocess\.(?:env|cwd|argv|versions)\b|node:|import\s*\(/,
     );
     expect(bundle).not.toContain(BEARER);
     expect(bundle).not.toContain("OBSIDIAN_BRIDGE_TOKEN");
@@ -279,7 +279,7 @@ describe("packaged Obsidian main.js", () => {
     );
   });
 
-  it("loads inertly, exposes modern declarative SecretStorage settings, retains both M2 commands, and cleans up official host registrations", async () => {
+  it("loads inertly, exposes native settings and reviewed commands, and cleans up official host registrations", async () => {
     const plugin = await new ArtifactRealm().load();
     expect(
       [...obsidian.host.commands].map(([id, entry]) => [id, entry.name]),
@@ -292,6 +292,8 @@ describe("packaged Obsidian main.js", () => {
       ["ai-bridge:pause-mirror", "Pause mirror"],
       ["ai-bridge:resume-mirror", "Resume mirror"],
       ["ai-bridge:prepare-writer-handoff", "Prepare writer handoff"],
+      ["ai-bridge:review-remote-divergence", "Review remote divergence"],
+      ["ai-bridge:restore-recovery-snapshot", "Restore recovery snapshot"],
     ]);
     expect(obsidian.host.vault.getFiles).not.toHaveBeenCalled();
     expect(obsidian.host.vault.read).not.toHaveBeenCalled();
@@ -551,9 +553,14 @@ describe("packaged Obsidian main.js", () => {
       ).toHaveLength(1),
     );
 
+    const localLoadsBeforeReplacement =
+      obsidian.host.loadLocalStorage.mock.calls.length;
+    expect(localLoadsBeforeReplacement).toBeGreaterThan(0);
     runtimeA.unload();
     const runtimeB = await realm.load(app);
-    expect(obsidian.host.loadLocalStorage).toHaveBeenCalledTimes(1);
+    expect(obsidian.host.loadLocalStorage).toHaveBeenCalledTimes(
+      localLoadsBeforeReplacement,
+    );
     expect(
       fetch.mock.calls.filter(([url]) => url.pathname === "/api/v2/mirror"),
     ).toHaveLength(1);

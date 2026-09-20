@@ -6,7 +6,12 @@ import {
   createMirrorWriterId,
   createRecoverySnapshotId,
   type EphemeralReconciliationReview,
+  HISTORY_CLEANUP_STEP_KIND,
+  HISTORY_CLEANUP_STEP_PHASE,
+  HISTORY_DECISION_KIND,
+  HISTORY_PROGRESS_KIND,
   isMirrorDeviceStateConsistent,
+  LOCAL_EFFECT_OBSERVATION_KIND,
   MAX_RECONCILIATION_REVIEWS,
   MIRROR_ACKNOWLEDGEMENT_KIND,
   MIRROR_DESIRED_STATE_KIND,
@@ -31,12 +36,15 @@ import {
   RECONCILIATION_REVIEW_STATUS,
   RECOVERY_SNAPSHOT_STATE_KIND,
   type ReconciliationAction,
+  type ReconciliationHistoryOperation,
+  type ReconciliationNonHistoryOperation,
   type ReconciliationOperation,
   type ReconciliationOperationPhase,
   type ReconciliationPathEvidence,
   type ReconciliationReview,
   type ReconciliationReviewSnapshot,
   reconciliationReviewSnapshotsEqual,
+  staleOrphanedReconciliationReviews,
 } from "@obsidian-ai-bridge/core";
 import { describe, expect, it } from "vitest";
 
@@ -82,6 +90,9 @@ const SUCCESSOR_REVIEW = required(
 const SUCCESSOR_OPERATION = required(
   createMirrorOperationId("88888888-8888-4888-8888-888888888888"),
 );
+const LOCAL_EFFECT = required(
+  createMirrorOperationId("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+);
 
 function baseState(): MirrorDeviceState {
   return {
@@ -125,9 +136,16 @@ function actionFor(kind: ReconciliationAction["kind"]): ReconciliationAction {
     case RECONCILIATION_ACTION.recreateRemote:
     case RECONCILIATION_ACTION.restoreRecovery:
     case RECONCILIATION_ACTION.forkLegacy:
-    case RECONCILIATION_ACTION.resolveHistory:
     case RECONCILIATION_ACTION.defer:
       return { kind };
+    case RECONCILIATION_ACTION.resolveHistory:
+      return {
+        kind,
+        decision: {
+          kind: HISTORY_DECISION_KIND.executeCleanupPlan,
+          canonicalPath: null,
+        },
+      };
   }
 }
 
@@ -153,6 +171,18 @@ function authorityFor(
   }
 }
 
+function operationFor(
+  kind?: ReconciliationNonHistoryOperation["action"]["kind"],
+  phase?: ReconciliationOperationPhase,
+): ReconciliationNonHistoryOperation;
+function operationFor(
+  kind: typeof RECONCILIATION_ACTION.resolveHistory,
+  phase?: ReconciliationOperationPhase,
+): ReconciliationHistoryOperation;
+function operationFor(
+  kind: ReconciliationAction["kind"],
+  phase?: ReconciliationOperationPhase,
+): ReconciliationOperation;
 function operationFor(
   kind: ReconciliationAction["kind"] = RECONCILIATION_ACTION.keepLocal,
   phase: ReconciliationOperationPhase = RECONCILIATION_OPERATION_PHASE.admitted,
@@ -275,11 +305,10 @@ function operationFor(
           }
         : null,
   };
-  return {
+  const common = {
     operationId: OPERATION,
     reviewId: REVIEW,
     authority: authorityFor(kind),
-    action: actionFor(kind),
     phase,
     snapshot,
     destinationPath: needsDestination ? DESTINATION : null,
@@ -296,8 +325,84 @@ function operationFor(
     ],
     preservationReceipts: [],
     successorOperationId: null,
+  };
+  if (kind === RECONCILIATION_ACTION.resolveHistory) {
+    const decision = {
+      kind: HISTORY_DECISION_KIND.executeCleanupPlan,
+      canonicalPath: null,
+    } as const;
+    return {
+      ...common,
+      authority: RECONCILIATION_AUTHORITY_SOURCE.historyDecision,
+      action: { kind, decision },
+      historyProgress: {
+        kind: HISTORY_PROGRESS_KIND.refined,
+        decision,
+        steps: [
+          {
+            stepId: RECOVERY,
+            kind: HISTORY_CLEANUP_STEP_KIND.remoteFormerSourceCleanup,
+            sourcePath: SOURCE,
+            prerequisitePath: DESTINATION,
+            sourceRevision: REVISION,
+            sourceContentSha256: OTHER_HASH,
+            prerequisiteRevision: null,
+            localAbsenceGeneration: 1,
+            phase: HISTORY_CLEANUP_STEP_PHASE.pending,
+            remoteEffect: { kind: MUTATION_EFFECT_CERTAINTY.notDispatched },
+          },
+        ],
+        nextStepIndex: 0,
+      },
+    };
+  }
+  const action = actionFor(kind);
+  if (action.kind === RECONCILIATION_ACTION.resolveHistory) {
+    throw new Error("Unexpected history action.");
+  }
+  return {
+    ...common,
+    action,
+    localEffectObservation:
+      phase === RECONCILIATION_OPERATION_PHASE.mutatingLocal
+        ? {
+            kind: LOCAL_EFFECT_OBSERVATION_KIND.prepared,
+            effectId: LOCAL_EFFECT,
+            path: SOURCE,
+            expectedHash: OTHER_HASH,
+            listenerEpoch: 1,
+            beforeGeneration: 1,
+            postconditionHash: null,
+            successor: null,
+          }
+        : { kind: LOCAL_EFFECT_OBSERVATION_KIND.notStarted },
     localEffect: MUTATION_EFFECT_CERTAINTY.notDispatched,
     remoteEffect: MUTATION_EFFECT_CERTAINTY.notDispatched,
+  };
+}
+
+/**
+ * @param successor - Whether a later host event must force successor review.
+ * @returns Exact confirmed synthetic local-effect evidence for a fixture operation.
+ */
+function confirmedLocalEffect(
+  successor: boolean = false,
+): ReconciliationNonHistoryOperation["localEffectObservation"] {
+  return {
+    kind: LOCAL_EFFECT_OBSERVATION_KIND.confirmed,
+    effectId: LOCAL_EFFECT,
+    path: SOURCE,
+    expectedHash: OTHER_HASH,
+    listenerEpoch: 1,
+    beforeGeneration: 1,
+    postconditionHash: OTHER_HASH,
+    successor: successor
+      ? {
+          firstGeneration: 2,
+          latestGeneration: 2,
+          eventKinds: ["modify"],
+        }
+      : null,
   };
 }
 
@@ -331,6 +436,7 @@ function verifiedReceipt(
       throw new Error("Expected live local preservation evidence.");
     }
     return {
+      scope: "operation",
       operationId: operation.operationId,
       originalPath: target.path,
       side,
@@ -347,6 +453,7 @@ function verifiedReceipt(
     throw new Error("Expected exact remote preservation evidence.");
   }
   return {
+    scope: "operation",
     operationId: operation.operationId,
     originalPath: target.path,
     side,
@@ -460,6 +567,41 @@ describe("M4 reconciliation state contracts", () => {
     expect(durable.retention).toBe(RECONCILIATION_REVIEW_RETENTION.durable);
     expect(baseState()).not.toHaveProperty("sampledLocalText");
     expect(baseState()).not.toHaveProperty("sampledRemoteText");
+  });
+
+  it("stales startup reviews without linked operations before publication", () => {
+    const initial = baseState();
+    const snapshot = operationFor().snapshot;
+    const state: MirrorDeviceState = {
+      ...initial,
+      reconciliationReviews: [
+        {
+          retention: RECONCILIATION_REVIEW_RETENTION.durable,
+          reviewId: REVIEW,
+          classification: RECONCILIATION_CLASSIFICATION.bothChanged,
+          status: RECONCILIATION_REVIEW_STATUS.pending,
+          snapshot,
+          operationId: null,
+        },
+      ],
+    };
+
+    const projected = staleOrphanedReconciliationReviews(state);
+
+    expect(projected.reconciliationReviews).toEqual([
+      expect.objectContaining({
+        reviewId: REVIEW,
+        status: RECONCILIATION_REVIEW_STATUS.stale,
+        operationId: null,
+      }),
+    ]);
+    expect(state.reconciliationReviews[0]?.status).toBe(
+      RECONCILIATION_REVIEW_STATUS.pending,
+    );
+    expect(isMirrorDeviceStateConsistent(projected)).toBe(true);
+    expect(staleOrphanedReconciliationReviews(projected)).toBe(projected);
+    const linked = stateWithOperation(operationFor());
+    expect(staleOrphanedReconciliationReviews(linked)).toBe(linked);
   });
 
   it.each(Object.values(RECONCILIATION_CLASSIFICATION))(
@@ -579,7 +721,8 @@ describe("M4 reconciliation state contracts", () => {
             : RECONCILIATION_PRESERVATION_PROOF_STATE.verified;
       const localEffect =
         phase === RECONCILIATION_OPERATION_PHASE.partial ||
-        phase === RECONCILIATION_OPERATION_PHASE.completed
+        phase === RECONCILIATION_OPERATION_PHASE.completed ||
+        phase === RECONCILIATION_OPERATION_PHASE.successorReviewRequired
           ? MUTATION_EFFECT_CERTAINTY.confirmed
           : MUTATION_EFFECT_CERTAINTY.notDispatched;
       const remoteEffect =
@@ -603,6 +746,13 @@ describe("M4 reconciliation state contracts", () => {
                   },
                 ]
               : [],
+            localEffectObservation:
+              localEffect === MUTATION_EFFECT_CERTAINTY.confirmed
+                ? confirmedLocalEffect(
+                    phase ===
+                      RECONCILIATION_OPERATION_PHASE.successorReviewRequired,
+                  )
+                : operation.localEffectObservation,
             localEffect,
             remoteEffect,
           }),
@@ -666,12 +816,6 @@ describe("M4 reconciliation state contracts", () => {
       localEffect: MUTATION_EFFECT_CERTAINTY.confirmed,
       remoteEffect: MUTATION_EFFECT_CERTAINTY.confirmed,
     },
-    {
-      action: RECONCILIATION_ACTION.resolveHistory,
-      side: RECONCILIATION_PRESERVATION_SIDE.remote,
-      localEffect: MUTATION_EFFECT_CERTAINTY.notDispatched,
-      remoteEffect: MUTATION_EFFECT_CERTAINTY.confirmed,
-    },
   ] as const)(
     "accepts completed $action only with its exact preservation and effects",
     ({ action, side, localEffect, remoteEffect }) => {
@@ -684,6 +828,10 @@ describe("M4 reconciliation state contracts", () => {
           stateWithOperation({
             ...operation,
             preservationReceipts: [verifiedReceipt(operation, side)],
+            localEffectObservation:
+              localEffect === MUTATION_EFFECT_CERTAINTY.confirmed
+                ? confirmedLocalEffect()
+                : operation.localEffectObservation,
             localEffect,
             remoteEffect,
           }),
@@ -701,6 +849,7 @@ describe("M4 reconciliation state contracts", () => {
       isMirrorDeviceStateConsistent(
         stateWithOperation({
           ...operation,
+          localEffectObservation: confirmedLocalEffect(),
           localEffect: MUTATION_EFFECT_CERTAINTY.confirmed,
         }),
       ),
@@ -1103,6 +1252,7 @@ describe("M4 reconciliation state contracts", () => {
           ...adoption,
           preservationReceipts: [
             {
+              scope: "operation",
               operationId: OPERATION,
               originalPath: SOURCE,
               side: RECONCILIATION_PRESERVATION_SIDE.remote,
@@ -1248,6 +1398,7 @@ describe("M4 reconciliation state contracts", () => {
 
     const keepLocal = operationFor();
     const receipt = {
+      scope: "operation",
       operationId: OPERATION,
       originalPath: SOURCE,
       side: RECONCILIATION_PRESERVATION_SIDE.remote,
@@ -1731,6 +1882,7 @@ describe("M4 reconciliation state contracts", () => {
           ...localOperation,
           preservationReceipts: [
             {
+              scope: "operation",
               operationId: OPERATION,
               originalPath: SOURCE,
               side: RECONCILIATION_PRESERVATION_SIDE.local,
@@ -1753,6 +1905,7 @@ describe("M4 reconciliation state contracts", () => {
           ...legacyOperation,
           preservationReceipts: [
             {
+              scope: "operation",
               operationId: OPERATION,
               originalPath: SOURCE,
               side: RECONCILIATION_PRESERVATION_SIDE.remote,
@@ -1798,12 +1951,6 @@ describe("M4 reconciliation state contracts", () => {
       phase: RECONCILIATION_OPERATION_PHASE.mutatingLocal,
       side: RECONCILIATION_PRESERVATION_SIDE.remote,
     },
-    {
-      name: "history cleanup remote bytes",
-      action: RECONCILIATION_ACTION.resolveHistory,
-      phase: RECONCILIATION_OPERATION_PHASE.mutatingRemote,
-      side: RECONCILIATION_PRESERVATION_SIDE.remote,
-    },
   ] as const)(
     "binds $name to the exact sampled hash and revision",
     ({ action, phase, side }) => {
@@ -1839,10 +1986,6 @@ describe("M4 reconciliation state contracts", () => {
     {
       action: RECONCILIATION_ACTION.forkLegacy,
       phase: RECONCILIATION_OPERATION_PHASE.mutatingLocal,
-    },
-    {
-      action: RECONCILIATION_ACTION.resolveHistory,
-      phase: RECONCILIATION_OPERATION_PHASE.mutatingRemote,
     },
   ] as const)(
     "rejects missing required preservation for $action",
@@ -1971,6 +2114,7 @@ describe("M4 reconciliation state contracts", () => {
           ...operation,
           preservationReceipts: [
             {
+              scope: "operation",
               operationId: OPERATION,
               originalPath: SOURCE,
               side: RECONCILIATION_PRESERVATION_SIDE.remote,
@@ -2008,12 +2152,14 @@ describe("M4 reconciliation state contracts", () => {
       preservationReceipts: [
         verifiedReceipt(collision, RECONCILIATION_PRESERVATION_SIDE.local),
       ],
+      localEffectObservation: confirmedLocalEffect(),
       localEffect: MUTATION_EFFECT_CERTAINTY.confirmed,
     } satisfies ReconciliationOperation;
     expect(
       isMirrorDeviceStateConsistent(
         stateWithOperation({
           ...restore,
+          localEffectObservation: collision.localEffectObservation,
           localEffect: MUTATION_EFFECT_CERTAINTY.notDispatched,
         }),
       ),
@@ -2108,6 +2254,82 @@ describe("M4 reconciliation state contracts", () => {
     ).toBe(true);
   });
 
+  it("requires a generation-covering reviewed successor for remote-only event fences", () => {
+    const template = operationFor(RECONCILIATION_ACTION.keepLocal);
+    const predecessor: ReconciliationNonHistoryOperation = {
+      ...template,
+      phase: RECONCILIATION_OPERATION_PHASE.completed,
+      preservationReceipts: [
+        verifiedReceipt(template, RECONCILIATION_PRESERVATION_SIDE.remote),
+      ],
+      successorOperationId: SUCCESSOR_OPERATION,
+      localEffectObservation: {
+        kind: LOCAL_EFFECT_OBSERVATION_KIND.notRequired,
+        path: SOURCE,
+        listenerEpoch: 1,
+        beforeGeneration: 1,
+        successor: {
+          firstGeneration: 2,
+          latestGeneration: 3,
+          eventKinds: ["modify", "rename"],
+        },
+      },
+      remoteEffect: MUTATION_EFFECT_CERTAINTY.confirmed,
+    };
+    const successorTemplate = operationFor(RECONCILIATION_ACTION.keepLocal);
+    const successor: ReconciliationNonHistoryOperation = {
+      ...successorTemplate,
+      operationId: SUCCESSOR_OPERATION,
+      reviewId: SUCCESSOR_REVIEW,
+      snapshot: {
+        ...successorTemplate.snapshot,
+        paths: successorTemplate.snapshot.paths.map((evidence) =>
+          evidence.local.kind === RECONCILIATION_LOCAL_EVIDENCE_KIND.live
+            ? {
+                ...evidence,
+                local: { ...evidence.local, observationGeneration: 3 },
+              }
+            : evidence,
+        ),
+      },
+    };
+    const initial = stateWithOperation(predecessor);
+    const successorReview: ReconciliationReview = {
+      retention: RECONCILIATION_REVIEW_RETENTION.durable,
+      reviewId: SUCCESSOR_REVIEW,
+      classification: RECONCILIATION_CLASSIFICATION.bothChanged,
+      status: RECONCILIATION_REVIEW_STATUS.staged,
+      snapshot: successor.snapshot,
+      operationId: SUCCESSOR_OPERATION,
+    };
+    expect(
+      isMirrorDeviceStateConsistent({
+        ...initial,
+        reconciliationReviews: [
+          required(initial.reconciliationReviews[0]),
+          successorReview,
+        ],
+        reconciliationOperations: [predecessor, successor],
+      }),
+    ).toBe(true);
+    expect(
+      isMirrorDeviceStateConsistent({
+        ...initial,
+        reconciliationReviews: [
+          required(initial.reconciliationReviews[0]),
+          {
+            ...successorReview,
+            snapshot: successorTemplate.snapshot,
+          },
+        ],
+        reconciliationOperations: [
+          predecessor,
+          { ...successor, snapshot: successorTemplate.snapshot },
+        ],
+      }),
+    ).toBe(false);
+  });
+
   it("permits exact revision adoption without preservation only when no competitor is replaced", () => {
     const adoption = operationFor(RECONCILIATION_ACTION.adoptRevision);
     expect(isMirrorDeviceStateConsistent(stateWithOperation(adoption))).toBe(
@@ -2189,18 +2411,95 @@ describe("M4 reconciliation state contracts", () => {
     const historyOperation = operationFor(RECONCILIATION_ACTION.resolveHistory);
     const historyState = stateWithOperation(historyOperation);
     const historyReview = required(historyState.reconciliationReviews[0]);
+    const validHistoryState = {
+      ...historyState,
+      paths: [deferredPath],
+      reconciliationReviews: [
+        {
+          ...historyReview,
+          classification: RECONCILIATION_CLASSIFICATION.deferredHistory,
+        },
+      ],
+    };
+    expect(isMirrorDeviceStateConsistent(validHistoryState)).toBe(true);
+
+    if (!("historyProgress" in historyOperation)) {
+      throw new Error("Expected history fixture.");
+    }
+    const retainDecision = {
+      kind: HISTORY_DECISION_KIND.retainIndependent,
+    } as const;
+    const retained = {
+      ...historyOperation,
+      action: {
+        kind: RECONCILIATION_ACTION.resolveHistory,
+        decision: retainDecision,
+      },
+      phase: RECONCILIATION_OPERATION_PHASE.completed,
+      historyProgress: {
+        kind: HISTORY_PROGRESS_KIND.refined,
+        decision: retainDecision,
+        steps: [],
+        nextStepIndex: null,
+      },
+    } as const;
     expect(
       isMirrorDeviceStateConsistent({
-        ...historyState,
-        paths: [deferredPath],
+        ...validHistoryState,
         reconciliationReviews: [
           {
-            ...historyReview,
-            classification: RECONCILIATION_CLASSIFICATION.deferredHistory,
+            ...required(validHistoryState.reconciliationReviews[0]),
+            status: RECONCILIATION_REVIEW_STATUS.completed,
+          },
+        ],
+        reconciliationOperations: [retained],
+      }),
+    ).toBe(true);
+    expect(
+      isMirrorDeviceStateConsistent({
+        ...validHistoryState,
+        reconciliationOperations: [
+          {
+            ...retained,
+            historyProgress: {
+              ...retained.historyProgress,
+              steps: historyOperation.historyProgress.steps,
+            },
           },
         ],
       }),
-    ).toBe(true);
+    ).toBe(false);
+    expect(
+      isMirrorDeviceStateConsistent({
+        ...validHistoryState,
+        reconciliationOperations: [
+          {
+            ...historyOperation,
+            historyProgress: {
+              ...historyOperation.historyProgress,
+              nextStepIndex: null,
+            },
+          },
+        ],
+      }),
+    ).toBe(false);
+    expect(
+      isMirrorDeviceStateConsistent({
+        ...validHistoryState,
+        reconciliationOperations: [
+          {
+            ...historyOperation,
+            historyProgress: {
+              ...historyOperation.historyProgress,
+              steps: historyOperation.historyProgress.steps.map((step) => ({
+                ...step,
+                prerequisitePath: step.sourcePath,
+              })),
+            },
+          },
+        ],
+      }),
+    ).toBe(false);
   });
 
   it("enforces the global sparse-review capacity", () => {

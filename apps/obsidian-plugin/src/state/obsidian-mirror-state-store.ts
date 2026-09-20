@@ -1,8 +1,10 @@
 import {
   MIRROR_DEVICE_STATE_V2_VERSION,
+  MIRROR_DEVICE_STATE_V3_VERSION,
   MIRROR_STATE_STORE_FAILURE,
   type MirrorDeviceState,
   type MirrorDeviceStateV2,
+  type MirrorDeviceStateV3,
   type MirrorStateSaveResult,
   type MirrorStateStore,
 } from "@obsidian-ai-bridge/core";
@@ -12,8 +14,12 @@ import {
   MIRROR_DEVICE_STATE_STORAGE_KEY,
   type MirrorDeviceStateDecodeResult,
 } from "@obsidian-plugin/state/device-state-codec";
-import { migrateMirrorDeviceStateV2ToV3 } from "@obsidian-plugin/state/device-state-migration";
+import {
+  migrateMirrorDeviceStateV2ToV3,
+  migrateMirrorDeviceStateV3ToV4,
+} from "@obsidian-plugin/state/device-state-migration";
 import { decodeMirrorDeviceStateV2 } from "@obsidian-plugin/state/device-state-v2.codec";
+import { decodeMirrorDeviceStateV3 } from "@obsidian-plugin/state/device-state-v3.codec";
 import {
   type HandoffIntegrity,
   verifyHandoffPayloadChecksum,
@@ -30,15 +36,18 @@ export interface ObsidianLocalStorageHost {
 
 /** Migration mechanics injected only at the startup persistence boundary. */
 export interface MirrorDeviceStateMigrationBoundary {
-  /** @param state - Validated frozen version-2 input. @returns Version-3 projection. */
-  migrate(state: MirrorDeviceStateV2): MirrorDeviceState;
-  /** @param state - Validated migrated state. @returns Canonical version-3 JSON. */
+  /** @param state - Validated frozen version-2 input. @returns Frozen version-3 projection. */
+  migrateV2(state: MirrorDeviceStateV2): MirrorDeviceStateV3;
+  /** @param state - Validated frozen version-3 input. @returns Current version-4 projection. */
+  migrateV3(state: MirrorDeviceStateV3): MirrorDeviceState;
+  /** @param state - Validated migrated state. @returns Canonical version-4 JSON. */
   encode(state: MirrorDeviceState): string;
 }
 
 /** Production migration mechanics kept explicit for deterministic test substitution. */
 const DEFAULT_MIGRATION_BOUNDARY: MirrorDeviceStateMigrationBoundary = {
-  migrate: migrateMirrorDeviceStateV2ToV3,
+  migrateV2: migrateMirrorDeviceStateV2ToV3,
+  migrateV3: migrateMirrorDeviceStateV3ToV4,
   encode: encodeMirrorDeviceState,
 };
 
@@ -50,10 +59,10 @@ export type MirrorDeviceStateLoadResult =
 /**
  * Device-local state adapter backed only by App local storage.
  *
- * Version-2 migration is completed and read-verified under the existing key before
- * version-3 state is returned. The adapter never publishes an in-memory migration,
- * falls back to synced plugin data, clears malformed data, or retries as version 2
- * after a version-3 write.
+ * Version-2/3 migration is completed and read-verified under the existing key before
+ * version-4 state is returned. The adapter never publishes an in-memory migration,
+ * falls back to synced plugin data, clears malformed data, or retries as an older
+ * format after a version-4 write.
  */
 export class ObsidianMirrorStateStore implements MirrorStateStore {
   /**
@@ -68,10 +77,10 @@ export class ObsidianMirrorStateStore implements MirrorStateStore {
   ) {}
 
   /**
-   * Loads current state or crosses the version-2 migration fence through same-key save and exact read-back.
+   * Loads current state or crosses the version-2/3 migration fence through same-key save and exact read-back.
    * Host persistence is not a cross-process transaction or a rollback detector.
    *
-   * @returns Strict version-3 load outcome; migration storage failures are unavailable.
+   * @returns Strict version-4 load outcome; migration storage failures are unavailable.
    */
   async load(): Promise<MirrorDeviceStateLoadResult> {
     const stored = await this.loadRaw();
@@ -83,28 +92,35 @@ export class ObsidianMirrorStateStore implements MirrorStateStore {
     } catch {
       return { kind: "unavailable" };
     }
-    if (
-      current.kind !== "unsupported-version" ||
-      current.version !== MIRROR_DEVICE_STATE_V2_VERSION
-    ) {
-      return current;
-    }
+    if (current.kind !== "unsupported-version") return current;
 
-    let historical: Awaited<ReturnType<typeof decodeMirrorDeviceStateV2>>;
+    let historical: MirrorDeviceStateV3;
     try {
-      historical = await decodeMirrorDeviceStateV2(
-        stored.value,
-        this.integrity,
-      );
+      if (current.version === MIRROR_DEVICE_STATE_V3_VERSION) {
+        const decoded = await decodeMirrorDeviceStateV3(
+          stored.value,
+          this.integrity,
+        );
+        if (decoded.kind !== "valid") return decoded;
+        historical = decoded.state;
+      } else if (current.version === MIRROR_DEVICE_STATE_V2_VERSION) {
+        const decoded = await decodeMirrorDeviceStateV2(
+          stored.value,
+          this.integrity,
+        );
+        if (decoded.kind !== "valid") return decoded;
+        historical = this.migration.migrateV2(decoded.state);
+      } else {
+        return current;
+      }
     } catch {
       return { kind: "unavailable" };
     }
-    if (historical.kind !== "valid") return historical;
 
     let migrated: MirrorDeviceState;
     let encoded: string;
     try {
-      migrated = this.migration.migrate(historical.state);
+      migrated = this.migration.migrateV3(historical);
       encoded = this.migration.encode(migrated);
     } catch {
       return { kind: "unavailable" };
@@ -133,7 +149,7 @@ export class ObsidianMirrorStateStore implements MirrorStateStore {
   }
 
   /**
-   * @param state - Complete validated content-free version-3 state.
+   * @param state - Complete validated content-free version-4 state.
    * @returns Sanitized save result for the serialized core owner.
    */
   async save(state: MirrorDeviceState): Promise<MirrorStateSaveResult> {

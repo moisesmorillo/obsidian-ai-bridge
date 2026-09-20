@@ -17,7 +17,9 @@ import {
   createMirrorOperationId,
   createMirrorWriterId,
   createReconciliationPreservationPath,
+  isNonHistoryReconciliationOperation,
   LiveResolutionService,
+  LOCAL_EFFECT_OBSERVATION_KIND,
   LOCAL_RECONCILIATION_WRITE_OUTCOME,
   type LocalReconciliationWriter,
   LocalReconciliationWriteService,
@@ -32,6 +34,7 @@ import {
   RECONCILIATION_ACTION,
   RECONCILIATION_AUTHORITY_SOURCE,
   RECONCILIATION_CLASSIFICATION,
+  RECONCILIATION_EVENT_KIND,
   RECONCILIATION_LOCAL_EVIDENCE_KIND,
   RECONCILIATION_LOCAL_STABILITY,
   RECONCILIATION_OPERATION_PHASE,
@@ -44,6 +47,7 @@ import {
   type ReconciliationAction,
   type ReconciliationClassification,
   ReconciliationEffectExecutor,
+  type ReconciliationNonHistoryOperation,
   ReconciliationObservationGenerationOwner,
   type ReconciliationOperation,
   type ReconciliationPathEvidence,
@@ -64,6 +68,19 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  */
 function required<Value>(value: Value | undefined): Value {
   if (value === undefined) throw new Error("Invalid reconciliation fixture.");
+  return value;
+}
+
+/**
+ * @param value - Optional operation fixture.
+ * @returns Required aggregate-effect operation fixture.
+ */
+function requiredNonHistory(
+  value: ReconciliationOperation | undefined,
+): ReconciliationNonHistoryOperation {
+  if (value === undefined || !isNonHistoryReconciliationOperation(value)) {
+    throw new Error("Expected non-history operation.");
+  }
   return value;
 }
 
@@ -311,6 +328,7 @@ class RemoteDouble implements RemoteBridge {
   refuseMutationAttempt: number | null = null;
   mutationAttempts = 0;
   recoveryContentAvailable = true;
+  onMutation: (() => Promise<void>) | null = null;
 
   /** @inheritdoc */
   async describe() {
@@ -376,6 +394,7 @@ class RemoteDouble implements RemoteBridge {
     request: Parameters<RemoteBridge["mutateNote"]>[0],
   ): Promise<RemoteBridgeMutationResult<MutationAcknowledgement>> {
     this.mutationAttempts += 1;
+    await this.onMutation?.();
     if (
       this.refuseNextMutation ||
       this.refuseMutationAttempt === this.mutationAttempts
@@ -696,18 +715,32 @@ function authority(
   }
 }
 
-/** @returns Valid state containing one admitted operation. */
+/** Device state fixture whose operations are all aggregate-effect actions. */
+type NonHistoryOperationState = Omit<
+  MirrorDeviceState,
+  "reconciliationOperations"
+> & {
+  readonly reconciliationOperations: readonly ReconciliationNonHistoryOperation[];
+};
+
+/**
+ * @param action - Closed aggregate-effect action.
+ * @param target - Exact target evidence.
+ * @param destination - Optional exact destination evidence.
+ * @param recovery - Optional selected recovery evidence.
+ * @returns Valid state containing one admitted operation.
+ */
 function stateFor(
-  action: ReconciliationAction,
+  action: ReconciliationNonHistoryOperation["action"],
   target: ReconciliationPathEvidence,
   destination?: ReconciliationPathEvidence,
   recovery: ReconciliationReviewSnapshot["recovery"] = null,
-): MirrorDeviceState {
+): NonHistoryOperationState {
   const reviewSnapshot = snapshot(
     destination === undefined ? [target] : [target, destination],
     recovery,
   );
-  const operation: ReconciliationOperation = {
+  const operation: ReconciliationNonHistoryOperation = {
     operationId: OPERATION,
     reviewId: REVIEW,
     authority: authority(action),
@@ -728,6 +761,23 @@ function stateFor(
     ],
     preservationReceipts: [],
     successorOperationId: null,
+    localEffectObservation:
+      action.kind === RECONCILIATION_ACTION.useRemote ||
+      action.kind === RECONCILIATION_ACTION.keepBoth ||
+      action.kind === RECONCILIATION_ACTION.adoptRevision ||
+      action.kind === RECONCILIATION_ACTION.restoreRecovery ||
+      action.kind === RECONCILIATION_ACTION.forkLegacy
+        ? { kind: LOCAL_EFFECT_OBSERVATION_KIND.notStarted }
+        : {
+            kind: LOCAL_EFFECT_OBSERVATION_KIND.notRequired,
+            path: target.path,
+            listenerEpoch: reviewSnapshot.runtime.listenerEpoch,
+            beforeGeneration:
+              target.local.kind === RECONCILIATION_LOCAL_EVIDENCE_KIND.unknown
+                ? 0
+                : target.local.observationGeneration,
+            successor: null,
+          },
     localEffect: MUTATION_EFFECT_CERTAINTY.notDispatched,
     remoteEffect: MUTATION_EFFECT_CERTAINTY.notDispatched,
   };
@@ -869,6 +919,43 @@ describe("M4 revisioned adoption and live resolution", () => {
     });
   });
 
+  it("retains a local successor event while Keep local remote PUT is pending", async () => {
+    const target = pathEvidence(PATH, localLive(LOCAL_TEXT), {
+      kind: RECONCILIATION_REMOTE_EVIDENCE_KIND.live,
+      associationId: ASSOCIATION,
+      revision: REVISION_REMOTE,
+      contentSha256: HASH_REMOTE,
+      receipt: remoteLive().receipt,
+    });
+    const subject = harness(
+      stateFor({ kind: RECONCILIATION_ACTION.keepLocal }, target),
+    );
+    subject.local.files.set(PATH, LOCAL_TEXT);
+    subject.remote.states.set(PATH, remoteLive());
+    subject.remote.bodies.set(PATH, REMOTE_TEXT);
+    subject.remote.onMutation = async () => {
+      const generation = subject.observations.observe(PATH);
+      await subject.effects.localWrites.observeReservedEvent(
+        PATH,
+        RECONCILIATION_EVENT_KIND.modify,
+        generation,
+      );
+    };
+
+    const result = await subject.live.execute({ operationId: OPERATION });
+
+    expect(result.snapshot.state.reconciliationOperations[0]).toMatchObject({
+      phase: RECONCILIATION_OPERATION_PHASE.successorReviewRequired,
+      remoteEffect: MUTATION_EFFECT_CERTAINTY.confirmed,
+      localEffectObservation: {
+        kind: LOCAL_EFFECT_OBSERVATION_KIND.notRequired,
+        successor: {
+          eventKinds: [RECONCILIATION_EVENT_KIND.modify],
+        },
+      },
+    });
+  });
+
   it("preserves local bytes before Use remote and retains a lost ACK for exact evidence recovery", async () => {
     const target = pathEvidence(PATH, localLive(LOCAL_TEXT), {
       kind: RECONCILIATION_REMOTE_EVIDENCE_KIND.live,
@@ -913,6 +1000,51 @@ describe("M4 revisioned adoption and live resolution", () => {
       revision: REVISION_REMOTE,
       contentSha256: HASH_REMOTE,
     });
+  });
+
+  it("resumes recovered-v3 adoption without redispatching a local create", async () => {
+    const target = pathEvidence(PATH, localAbsent(), {
+      kind: RECONCILIATION_REMOTE_EVIDENCE_KIND.live,
+      associationId: ASSOCIATION,
+      revision: REVISION_REMOTE,
+      contentSha256: HASH_REMOTE,
+      receipt: remoteLive().receipt,
+    });
+    const initial = stateFor(
+      { kind: RECONCILIATION_ACTION.adoptRevision },
+      target,
+    );
+    const current = requiredNonHistory(initial.reconciliationOperations[0]);
+    const recovered: ReconciliationNonHistoryOperation = {
+      ...current,
+      phase: RECONCILIATION_OPERATION_PHASE.partial,
+      localEffect: MUTATION_EFFECT_CERTAINTY.confirmed,
+      localEffectObservation: {
+        kind: LOCAL_EFFECT_OBSERVATION_KIND.recoveredV3,
+        effectId: RECOVERY,
+        path: PATH,
+        expectedHash: HASH_REMOTE,
+        listenerEpoch: 1,
+        beforeGeneration: 7,
+        postconditionHash: HASH_REMOTE,
+        successor: null,
+      },
+    };
+    const subject = harness({
+      ...initial,
+      reconciliationOperations: [recovered],
+    });
+    subject.local.files.set(PATH, REMOTE_TEXT);
+    subject.remote.states.set(PATH, remoteLive());
+    subject.remote.bodies.set(PATH, REMOTE_TEXT);
+    const create = vi.spyOn(subject.local, "createEligible");
+    const replace = vi.spyOn(subject.local, "replaceEligible");
+
+    await expect(
+      subject.adoption.execute({ operationId: OPERATION }),
+    ).resolves.toMatchObject({ kind: "completed" });
+    expect(create).not.toHaveBeenCalled();
+    expect(replace).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -1686,7 +1818,7 @@ describe("M4 action negative and recovery matrices", () => {
     const subject = harness(
       stateFor({ kind: RECONCILIATION_ACTION.keepLocal }, target),
     );
-    const original = required(subject.effects.operation(OPERATION));
+    const original = requiredNonHistory(subject.effects.operation(OPERATION));
     const operationSpy = vi.spyOn(subject.effects, "operation");
     const execute = async (
       service: {
@@ -1950,7 +2082,7 @@ describe("M4 action negative and recovery matrices", () => {
     keepBothRemote.local.refuseNextReplace = true;
     await expect(
       keepBothRemote.live.execute({ operationId: OPERATION }),
-    ).resolves.toMatchObject({ kind: "evidence-required" });
+    ).resolves.toMatchObject({ kind: "blocked" });
 
     const keepBothLocal = harness(
       stateFor(
@@ -2044,7 +2176,7 @@ describe("M4 action negative and recovery matrices", () => {
       stateFor({ kind: RECONCILIATION_ACTION.keepLocal }, liveTarget),
     );
     vi.spyOn(wrong.effects, "operation").mockReturnValue({
-      ...required(wrong.effects.operation(OPERATION)),
+      ...requiredNonHistory(wrong.effects.operation(OPERATION)),
       action: { kind: RECONCILIATION_ACTION.adoptRevision },
     });
     await expect(
@@ -2411,7 +2543,9 @@ describe("M4 action negative and recovery matrices", () => {
     const recoveryChanged = harness(
       stateFor({ kind: RECONCILIATION_ACTION.keepLocal }, liveTarget),
     );
-    const operation = required(recoveryChanged.effects.operation(OPERATION));
+    const operation = requiredNonHistory(
+      recoveryChanged.effects.operation(OPERATION),
+    );
     const selected = {
       ...operation,
       snapshot: {
@@ -2432,7 +2566,7 @@ describe("M4 action negative and recovery matrices", () => {
     );
     phased.remote.states.set(PATH, remoteLive());
     vi.spyOn(phased.effects, "operation").mockReturnValue({
-      ...required(phased.effects.operation(OPERATION)),
+      ...requiredNonHistory(phased.effects.operation(OPERATION)),
       phase: RECONCILIATION_OPERATION_PHASE.mutatingRemote,
     });
     await expect(
@@ -2466,7 +2600,7 @@ describe("M4 action negative and recovery matrices", () => {
     const subject = harness(
       stateFor({ kind: RECONCILIATION_ACTION.keepLocal }, originalTarget),
     );
-    const operation = required(subject.effects.operation(OPERATION));
+    const operation = requiredNonHistory(subject.effects.operation(OPERATION));
     const restoredTarget = pathEvidence(
       PATH,
       localLive(LOCAL_TEXT),
@@ -2536,9 +2670,10 @@ describe("M4 action negative and recovery matrices", () => {
     const result = await subject.adoption.execute({ operationId: OPERATION });
 
     expect(result.kind).toBe("completed");
-    expect(result.snapshot.state.reconciliationOperations[0]?.localEffect).toBe(
-      MUTATION_EFFECT_CERTAINTY.notDispatched,
-    );
+    expect(
+      requiredNonHistory(result.snapshot.state.reconciliationOperations[0])
+        .localEffect,
+    ).toBe(MUTATION_EFFECT_CERTAINTY.notDispatched);
   });
 
   it("imports an absent local path through Use remote with archive-free ordering", async () => {
@@ -2749,7 +2884,7 @@ describe("M4 action negative and recovery matrices", () => {
     await expect(fresh.effects.readExactRemote(unavailable)).resolves.toBe(
       "changed",
     );
-    const operation = required(fresh.effects.operation(OPERATION));
+    const operation = requiredNonHistory(fresh.effects.operation(OPERATION));
     await expect(fresh.effects.readExactRecovery(operation)).resolves.toBe(
       "unavailable",
     );
@@ -2972,7 +3107,7 @@ describe("M4 action negative and recovery matrices", () => {
       subject.tombstones,
       subject.restore,
     );
-    const original = required(subject.effects.operation(OPERATION));
+    const original = requiredNonHistory(subject.effects.operation(OPERATION));
 
     const operationSpy = vi
       .spyOn(subject.effects, "operation")

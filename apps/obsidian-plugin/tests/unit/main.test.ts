@@ -58,6 +58,8 @@ describe("AiBridgePlugin commands and lifecycle", () => {
       "ai-bridge:pause-mirror",
       "ai-bridge:resume-mirror",
       "ai-bridge:prepare-writer-handoff",
+      "ai-bridge:review-remote-divergence",
+      "ai-bridge:restore-recovery-snapshot",
     ]);
     expect(host.settingsTabs.size).toBe(1);
     expect(host.statusBars.size).toBe(1);

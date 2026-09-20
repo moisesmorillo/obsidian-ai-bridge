@@ -41,7 +41,6 @@ import type { NotePath } from "@core/note-path/note-path.types";
  * does not execute M4 reviewed reconciliation.
  */
 export class MirrorSynchronizer {
-  private readonly scheduler = new FairMirrorScheduler();
   private readonly pathRuntime = new MirrorPathRuntime();
   private readonly outcomes = new Map<NotePath, MirrorPathJobOutcome>();
   private readonly bootstrapCoordinator: MirrorBootstrapCoordinator;
@@ -60,12 +59,14 @@ export class MirrorSynchronizer {
    * @param remote - Conditional remote bridge; every call performs one attempt only.
    * @param stateOwner - Sole durable ledger transition owner.
    * @param runtime - Deterministic time, digest, and operation-identity seams.
+   * @param scheduler - Owner-scoped scheduler shared with reviewed M4 work.
    */
   constructor(
     local: ReadOnlyLocalVault,
     remote: RemoteBridge,
     private readonly stateOwner: MirrorStateOwner,
     private readonly runtime: MirrorSynchronizerRuntime,
+    private readonly scheduler: FairMirrorScheduler = new FairMirrorScheduler(),
   ) {
     this.pathRuntime.initializeDestructiveGrace(
       stateOwner.snapshot().state.paths,

@@ -18,13 +18,14 @@ import {
   rejectReconciliationAction,
 } from "@core/mirror/reconciliation-action-result";
 import type { ReconciliationEffectExecutor } from "@core/mirror/reconciliation-effect-executor";
+import { isNonHistoryReconciliationOperation } from "@core/mirror/reconciliation-operation";
 import {
   RECONCILIATION_ACTION,
   RECONCILIATION_LOCAL_EVIDENCE_KIND,
   RECONCILIATION_REMOTE_EVIDENCE_KIND,
 } from "@core/mirror/reconciliation-state.constants";
 import type {
-  ReconciliationOperation,
+  ReconciliationNonHistoryOperation,
   ReconciliationPathEvidence,
   ReconciliationRemoteTombstoneEvidence,
 } from "@core/mirror/reconciliation-state.types";
@@ -45,6 +46,9 @@ export class RemoteTombstoneResolutionService {
     const operation = this.effects.operation(request.operationId);
     if (operation === undefined)
       return rejectReconciliationAction(this.effects, "operation-not-found");
+    if (!isNonHistoryReconciliationOperation(operation)) {
+      return rejectReconciliationAction(this.effects, "wrong-action");
+    }
     switch (operation.action.kind) {
       case RECONCILIATION_ACTION.acceptTombstone:
         return this.accept(operation);
@@ -63,7 +67,7 @@ export class RemoteTombstoneResolutionService {
    * @returns Completed or finite attention result.
    */
   private async accept(
-    operation: ReconciliationOperation,
+    operation: ReconciliationNonHistoryOperation,
   ): Promise<ReconciliationActionExecutionResult> {
     const target = targetEvidence(operation);
     if (
@@ -96,7 +100,7 @@ export class RemoteTombstoneResolutionService {
    * @returns Completed or finite attention result.
    */
   private async recreate(
-    operation: ReconciliationOperation,
+    operation: ReconciliationNonHistoryOperation,
   ): Promise<ReconciliationActionExecutionResult> {
     const target = targetEvidence(operation);
     if (
@@ -147,7 +151,7 @@ export class RemoteTombstoneResolutionService {
    * @returns Completed or finite attention result.
    */
   private async copyAndDefer(
-    operation: ReconciliationOperation,
+    operation: ReconciliationNonHistoryOperation,
   ): Promise<ReconciliationActionExecutionResult> {
     const target = targetEvidence(operation);
     const destination =
@@ -228,7 +232,7 @@ export class RemoteTombstoneResolutionService {
 
 /** @returns Immutable target evidence. */
 function targetEvidence(
-  operation: ReconciliationOperation,
+  operation: ReconciliationNonHistoryOperation,
 ): ReconciliationPathEvidence | undefined {
   return operation.snapshot.paths.find(
     (evidence) => evidence.path === operation.snapshot.targetPath,
@@ -250,7 +254,7 @@ function sampledTombstoneAcknowledgement(
 
 /** @returns Exact tombstone-revision recreation request. */
 function recreateRequest(
-  operation: ReconciliationOperation,
+  operation: ReconciliationNonHistoryOperation,
   remote: ReconciliationRemoteTombstoneEvidence,
   content: string,
 ): ConditionalMutationRequest {
@@ -270,7 +274,7 @@ function recreateRequest(
 
 /** @returns Absence-only create request for the explicit alternate path. */
 function createRequest(
-  operation: ReconciliationOperation,
+  operation: ReconciliationNonHistoryOperation,
   path: ReconciliationPathEvidence["path"],
   content: string,
 ): ConditionalMutationRequest {

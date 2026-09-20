@@ -1,4 +1,5 @@
 import { MirrorOperationalCommands } from "@obsidian-plugin/commands/mirror-commands";
+import { ReconciliationCommands } from "@obsidian-plugin/commands/reconciliation-commands";
 import { MirrorConfigurationController } from "@obsidian-plugin/configuration/mirror-configuration-controller";
 import { ObsidianPluginDataStore } from "@obsidian-plugin/configuration/mirror-preferences";
 import { MirrorSettingsTab } from "@obsidian-plugin/configuration/mirror-settings-tab";
@@ -28,6 +29,7 @@ export class MirrorPluginSession {
     private readonly events: ObsidianMirrorEvents,
     private readonly wake: MirrorWakeScheduler,
     private readonly commands: MirrorOperationalCommands,
+    private readonly reconciliationCommands: ReconciliationCommands,
     private readonly settings: MirrorSettingsTab,
     private readonly ui: MirrorStatusUi,
     private readonly statusBar: HTMLElement | null,
@@ -93,6 +95,12 @@ export class MirrorPluginSession {
       ui,
     );
     commands.register();
+    const reconciliationCommands = new ReconciliationCommands(
+      plugin,
+      acquired.coordinator,
+      id,
+    );
+    reconciliationCommands.register();
     const settings = new MirrorSettingsTab(
       plugin.app,
       plugin,
@@ -114,6 +122,7 @@ export class MirrorPluginSession {
       events,
       wake,
       commands,
+      reconciliationCommands,
       settings,
       ui,
       statusBar,
@@ -143,6 +152,7 @@ export class MirrorPluginSession {
     this.events.detach();
     this.wake.detach();
     this.commands.detach();
+    this.reconciliationCommands.detach();
     this.settings.detach();
     this.configuration.detach();
     this.ui.close();

@@ -38,8 +38,9 @@ properties that source tests cannot:
   `obsidian` external;
 - absence of Node globals/imports and fixture bearer/note/recovery content, private-key
   markers, and machine-local path patterns in `main.js`;
-- unconfigured inert loading, both M2 commands, M3 operational commands, modern
-  declarative settings, native `SecretComponent`, official create/modify/delete/
+- unconfigured inert loading, both M2 commands, M3 operational commands, M4 review/
+  recovery command registration, modern declarative settings, native
+  `SecretComponent`, official create/modify/delete/
   rename listener registration, layout-ready integration, and cleanup;
 - an official saved-file event through the packaged plugin runtime, core engine,
   `RemoteBridge`, and standards Fetch to one real conditional v2 PUT with canonical
@@ -86,8 +87,9 @@ behavior.
    secrets, or the whole repository. No `styles.css` is generated.
 3. Reopen the vault, enable Community plugins, and enable **AI Bridge**. Initial load
    provisions a non-secret device UUID in official host-local storage, registers the
-   two M2 commands, M3 settings/operational commands, status UI, and saved Vault
-   listeners. An unconfigured plugin remains passive: it does not scan or send notes.
+   two M2 commands, M3 settings/operational commands, M4 review/recovery commands,
+   status UI, and saved Vault listeners. An unconfigured plugin remains passive: it
+   does not scan or send notes.
 4. For local-only M2 inspection, create synthetic notes and run **AI Bridge: Inspect
    local Markdown notes** or **AI Bridge: Inspect active Markdown note**. Results show
    paths/byte metadata only, never note bodies. Active inspection reads saved text,
@@ -134,9 +136,9 @@ behavior.
 - If an old experimental `obsidian-ai-bridge` directory exists, disable and remove it
   deliberately before installing `ai-bridge`; never run both. Do not delete the whole
   vault configuration directory.
-- Never downgrade to M3/version-2 plugin code after device-state version 3 is written,
-  and never downgrade a Worker that does not understand format-2 generations. Slice 1
-  has no reverse state migration. Follow [rollback restrictions](operations.md#rollback-and-downgrade-restrictions).
+- Never downgrade to version-2/3 plugin code after device-state version 4 is written,
+  and never downgrade a Worker that does not understand format-2 generations. The
+  v2→v3→v4 transition has no reverse state migration. Follow [rollback restrictions](operations.md#rollback-and-downgrade-restrictions).
 
 ## Official API and minimum-version evidence
 

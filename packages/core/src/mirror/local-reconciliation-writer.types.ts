@@ -46,6 +46,8 @@ export interface ReplaceEligibleLocalRequest {
 /** Generated create-only preservation request; no caller-supplied archive path is accepted. */
 export interface CreatePreservationLocalRequest {
   readonly operationId: MirrorOperationId;
+  /** History step UUID inserted between parent and side; absent for ordinary operations. */
+  readonly stepId?: MirrorOperationId;
   readonly side: ReconciliationPreservationReceipt["side"];
   readonly content: string;
   readonly contentSha256: ContentSha256;

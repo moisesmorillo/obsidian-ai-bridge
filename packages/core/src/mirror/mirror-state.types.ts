@@ -20,6 +20,7 @@ import type {
 } from "@core/mirror/mirror-state.constants";
 import type {
   ReconciliationOperation,
+  ReconciliationOperationV3,
   ReconciliationReview,
 } from "@core/mirror/reconciliation-state.types";
 import type { NotePath } from "@core/note-path/note-path.types";
@@ -255,7 +256,13 @@ export interface MirrorDeviceStateV2 {
   readonly stagedHandoff: StagedHandoff | null;
 }
 
-/** Current version-3 core-owned durable state saved outside synced plugin data. */
+/** Frozen version-3 M4 state used only for deterministic forward migration. */
+export interface MirrorDeviceStateV3 extends MirrorDeviceStateV2 {
+  readonly reconciliationReviews: readonly ReconciliationReview[];
+  readonly reconciliationOperations: readonly ReconciliationOperationV3[];
+}
+
+/** Current version-4 core-owned durable state saved outside synced plugin data. */
 export interface MirrorDeviceState extends MirrorDeviceStateV2 {
   /** Sparse content-free review metadata; absent paths receive no placeholder. */
   readonly reconciliationReviews: readonly ReconciliationReview[];

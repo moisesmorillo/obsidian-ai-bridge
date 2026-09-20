@@ -15,6 +15,8 @@ export type ConflictPreservationRejection =
 /** Exact transient preservation command; source paths never shape the archive destination. */
 export interface ConflictPreservationRequest {
   readonly operationId: MirrorOperationId;
+  /** Exact history step selector; absent only for existing non-history actions. */
+  readonly stepId?: MirrorOperationId;
   readonly side: ReconciliationPreservationReceipt["side"];
   readonly content: string;
 }

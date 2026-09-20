@@ -6,6 +6,7 @@ import {
   createMirrorOperationId,
   createMirrorWriterId,
   createRecoverySnapshotId,
+  type LocalReconciliationWriter,
   MIRROR_ACKNOWLEDGEMENT_KIND,
   MIRROR_DESIRED_STATE_KIND,
   MIRROR_DEVICE_LIFECYCLE_KIND,
@@ -86,6 +87,18 @@ function description(writerId = DEVICE_ID): Response {
   });
 }
 
+const localWriter: LocalReconciliationWriter = {
+  createEligible: async () => {
+    throw new Error("Unexpected reviewed local creation.");
+  },
+  replaceEligible: async () => {
+    throw new Error("Unexpected reviewed local replacement.");
+  },
+  createPreservation: async () => {
+    throw new Error("Unexpected reviewed preservation.");
+  },
+};
+
 function owner(
   fetch: RemoteFetch,
   initial: boolean | MirrorDeviceState = false,
@@ -103,6 +116,7 @@ function owner(
       store,
     ),
     local: new ObsidianLocalVault(vault),
+    localWriter,
     secretStorage: { getSecret: () => secret },
     runtime: {
       nowMilliseconds: () => 100,
@@ -119,6 +133,39 @@ beforeEach(() => {
 });
 
 describe("MirrorRuntimeOwner composition", () => {
+  it("keeps reviewed UI methods unavailable before a current ready session", async () => {
+    const runtime = owner(vi.fn<RemoteFetch>());
+    const session = "33333333-3333-4333-8333-333333333333";
+
+    await expect(
+      runtime.listReconciliationCandidates(session),
+    ).resolves.toEqual({
+      kind: "unavailable",
+    });
+    await expect(runtime.listRecoverySelections(session)).resolves.toEqual({
+      kind: "unavailable",
+    });
+    await expect(
+      runtime.createReconciliationReview(
+        session,
+        required(normalizeNotePath("notes/a.md")),
+      ),
+    ).resolves.toBeNull();
+    await expect(
+      runtime.createReconciliationReview(
+        "invalid",
+        required(normalizeNotePath("notes/a.md")),
+      ),
+    ).resolves.toBeNull();
+    expect(
+      runtime.reconciliationPreview("invalid", OPERATION_ID, "local"),
+    ).toBeNull();
+    runtime.closeReconciliationReview("invalid", OPERATION_ID);
+    await expect(
+      runtime.submitReconciliation(session, OPERATION_ID, { kind: "defer" }),
+    ).resolves.toEqual({ kind: "unavailable" });
+  });
+
   it("enforces one attached presentation session and ignores stale detach", () => {
     const runtime = owner(vi.fn<RemoteFetch>());
     expect(runtime.attach({ id: "first", onChanged: vi.fn() })).toEqual({
@@ -209,6 +256,42 @@ describe("MirrorRuntimeOwner composition", () => {
     expect(vault.getFiles).toHaveBeenCalledOnce();
     expect(runtime.status().writer).toBe("active-writer");
     expect(runtime.status().bootstrap).toBe("observing");
+  });
+
+  it("exposes only bounded reviewed projections for a ready UUID session", async () => {
+    const session = "77777777-7777-4777-8777-777777777777";
+    const fetch = vi.fn<RemoteFetch>(async (input) => {
+      if (input.pathname.endsWith("/mirror")) return description();
+      if (input.pathname.includes("/recovery")) {
+        return json({ recoveries: [], nextCursor: null });
+      }
+      return json({ notes: [], nextCursor: null });
+    });
+    const runtime = owner(fetch, true);
+    runtime.attach({ id: session, onChanged: vi.fn() });
+    await runtime.applyConfiguration({ kind: "valid", preferences });
+    await runtime.onLayoutReady(session);
+    await runtime.synchronizeReady();
+    const path = required(normalizeNotePath("notes/review.md"));
+
+    await expect(
+      runtime.listReconciliationCandidates(session),
+    ).resolves.toEqual({
+      kind: "unavailable",
+    });
+    await expect(runtime.listRecoverySelections(session)).resolves.toEqual({
+      kind: "unavailable",
+    });
+    await expect(
+      runtime.createReconciliationReview(session, path),
+    ).resolves.toBeNull();
+    expect(
+      runtime.reconciliationPreview(session, OPERATION_ID, "local"),
+    ).toBeNull();
+    runtime.closeReconciliationReview(session, OPERATION_ID);
+    await expect(
+      runtime.submitReconciliation(session, OPERATION_ID, { kind: "defer" }),
+    ).resolves.toEqual({ kind: "unavailable" });
   });
 
   it("fails a non-designated active state before local enumeration", async () => {

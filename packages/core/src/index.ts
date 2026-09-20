@@ -45,7 +45,10 @@ export {
 export type { MirrorScheduledJob } from "@core/mirror/fair-mirror-scheduler";
 export { FairMirrorScheduler } from "@core/mirror/fair-mirror-scheduler";
 export { LiveResolutionService } from "@core/mirror/live-resolution-service";
-export type { LocalReconciliationWriteCryptography } from "@core/mirror/local-reconciliation-write-service";
+export type {
+  LocalReconciliationObservationRuntime,
+  LocalReconciliationWriteCryptography,
+} from "@core/mirror/local-reconciliation-write-service";
 export { LocalReconciliationWriteService } from "@core/mirror/local-reconciliation-write-service";
 export type {
   AuthorizedCreateEligibleRequest,
@@ -200,6 +203,7 @@ export {
   MIRROR_DESIRED_STATE_KIND,
   MIRROR_DEVICE_LIFECYCLE_KIND,
   MIRROR_DEVICE_STATE_V2_VERSION,
+  MIRROR_DEVICE_STATE_V3_VERSION,
   MIRROR_DEVICE_STATE_VERSION,
   MIRROR_GLOBAL_BLOCK_REASON,
   MIRROR_MUTATION_PHASE,
@@ -230,6 +234,7 @@ export type {
   MirrorDeviceLifecycle,
   MirrorDeviceState,
   MirrorDeviceStateV2,
+  MirrorDeviceStateV3,
   MirrorGlobalBlockReason,
   MirrorOrigin,
   MirrorPathBlockReason,
@@ -287,6 +292,7 @@ export { MIRROR_STATE_STORE_FAILURE } from "@core/mirror/mirror-state-store.port
 export {
   isMirrorDeviceStateConsistent,
   isMirrorDeviceStateV2Consistent,
+  isMirrorDeviceStateV3Consistent,
 } from "@core/mirror/mirror-state-validation";
 export type {
   AbsentCurrentGenerationObservation,
@@ -343,11 +349,26 @@ export type {
 export { ReconciliationEffectExecutor } from "@core/mirror/reconciliation-effect-executor";
 export { ReconciliationObservationGenerationOwner } from "@core/mirror/reconciliation-observation";
 export {
+  isHistoryReconciliationOperation,
+  isNonHistoryReconciliationOperation,
+  isRefinedHistoryReconciliationOperation,
+} from "@core/mirror/reconciliation-operation";
+export {
   createReconciliationPreservationPath,
   isReconciliationPreservationPath,
 } from "@core/mirror/reconciliation-preservation-path";
 export type { RequiredReconciliationPreservation } from "@core/mirror/reconciliation-preservation-policy";
 export { requiredReconciliationPreservations } from "@core/mirror/reconciliation-preservation-policy";
+export type {
+  RecoverySelectionProjection,
+  RecoverySelectionState,
+} from "@core/mirror/reconciliation-recovery-selection";
+export {
+  isRecoverySnapshotExpired,
+  projectRecoverySelection,
+  RECOVERY_SELECTION_STATE,
+  recoverySnapshotStatesEqual,
+} from "@core/mirror/reconciliation-recovery-selection";
 export type {
   ReconciliationAdmissionRequest,
   ReconciliationAdmissionResult,
@@ -363,18 +384,28 @@ export type {
   ReconciliationRuntimeIdentitySource,
 } from "@core/mirror/reconciliation-review.types";
 export { ReconciliationReviewService } from "@core/mirror/reconciliation-review-service";
+export { staleOrphanedReconciliationReviews } from "@core/mirror/reconciliation-startup";
 export {
+  HISTORY_CLEANUP_STEP_KIND,
+  HISTORY_CLEANUP_STEP_PHASE,
+  HISTORY_DECISION_KIND,
+  HISTORY_PROGRESS_KIND,
+  HISTORY_REMOTE_EFFECT_KIND,
+  LEGACY_V3_LOCAL_EFFECT_RECOVERY_STATE,
+  LOCAL_EFFECT_OBSERVATION_KIND,
   MAX_RECONCILIATION_OPERATIONS,
   MAX_RECONCILIATION_PRESERVATION_RECEIPTS,
   MAX_RECONCILIATION_REVIEWS,
   RECONCILIATION_ACTION,
   RECONCILIATION_AUTHORITY_SOURCE,
   RECONCILIATION_CLASSIFICATION,
+  RECONCILIATION_EVENT_KIND,
   RECONCILIATION_LOCAL_EVIDENCE_KIND,
   RECONCILIATION_LOCAL_STABILITY,
   RECONCILIATION_OPERATION_PHASE,
   RECONCILIATION_PATH_REFERENCE_KIND,
   RECONCILIATION_PRESERVATION_PROOF_STATE,
+  RECONCILIATION_PRESERVATION_SCOPE,
   RECONCILIATION_PRESERVATION_SIDE,
   RECONCILIATION_REMOTE_EVIDENCE_KIND,
   RECONCILIATION_REVIEW_RETENTION,
@@ -385,19 +416,36 @@ export type {
   AdoptRevisionReconciliationAction,
   DeferReconciliationAction,
   EphemeralReconciliationReview,
+  ExecuteCleanupHistoryAdmissionDecision,
   ForkLegacyReconciliationAction,
+  HistoryAdmissionDecision,
+  HistoryCleanupStep,
+  HistoryDecision,
+  HistoryRemoteEffect,
+  HistoryStepPreservationReceipt,
+  IdentifiedLocalEffectObservation,
   KeepBothReconciliationAction,
   KeepLocalReconciliationAction,
+  LegacyV3HistoryProgress,
+  LocalEffectObservation,
+  LocalEffectSuccessorRange,
   ReconciliationAction,
+  ReconciliationAdmissionAction,
   ReconciliationAuthoritySource,
   ReconciliationClassification,
+  ReconciliationEventKind,
+  ReconciliationHistoryOperation,
   ReconciliationLocalEvidence,
   ReconciliationM3PathEvidence,
+  ReconciliationNonHistoryOperation,
   ReconciliationOperation,
   ReconciliationOperationPhase,
+  ReconciliationOperationPhaseV3,
+  ReconciliationOperationV3,
   ReconciliationPathEvidence,
   ReconciliationPathReservation,
   ReconciliationPreservationReceipt,
+  ReconciliationPreservationReceiptV3,
   ReconciliationRecoveryEvidence,
   ReconciliationRemoteEvidence,
   ReconciliationReview,
@@ -407,15 +455,21 @@ export type {
   ReconciliationReviewStatus,
   ReconciliationRuntimeIdentity,
   RecreateRemoteReconciliationAction,
+  RefinedHistoryProgress,
+  ResolveHistoryAdmissionAction,
   ResolveHistoryReconciliationAction,
   RestoreRecoveryReconciliationAction,
   UseRemoteReconciliationAction,
 } from "@core/mirror/reconciliation-state.types";
+export { projectMirrorDeviceStateV3ToV4 } from "@core/mirror/reconciliation-state-migration";
 export {
   isReconciliationPathReserved,
   isReconciliationStateConsistent,
   reconciliationReviewSnapshotsEqual,
 } from "@core/mirror/reconciliation-state-validation";
+export type { ReconciliationV3LocalEffectRecoveryDependencies } from "@core/mirror/reconciliation-v3-local-effect-recovery";
+export { ReconciliationV3LocalEffectRecoveryService } from "@core/mirror/reconciliation-v3-local-effect-recovery";
+export type { ReconciliationV3LocalEffectRecoveryResult } from "@core/mirror/reconciliation-v3-local-effect-recovery.types";
 export { RecoveryRestoreService } from "@core/mirror/recovery-restore-service";
 export { RecoveryService } from "@core/mirror/recovery-service";
 export type { RecoverySnapshotRepository } from "@core/mirror/recovery-snapshot-repository.port";
@@ -432,6 +486,14 @@ export type {
   RemoteRequestPermit,
 } from "@core/mirror/remote-bridge.types";
 export { RemoteTombstoneResolutionService } from "@core/mirror/remote-tombstone-resolution-service";
+export type { RenameHistoryGroupResult } from "@core/mirror/rename-history-group-policy";
+export { RenameHistoryGroupPolicy } from "@core/mirror/rename-history-group-policy";
+export type {
+  RenameHistoryResolutionRequest,
+  RenameHistoryResolutionResult,
+} from "@core/mirror/rename-history-resolution.types";
+export type { RenameHistoryResolutionRuntime } from "@core/mirror/rename-history-resolution-service";
+export { RenameHistoryResolutionService } from "@core/mirror/rename-history-resolution-service";
 export type { ReconciliationOperationSource } from "@core/mirror/resolution-coordinator";
 export { ResolutionCoordinator } from "@core/mirror/resolution-coordinator";
 export { RevisionedAdoptionService } from "@core/mirror/revisioned-adoption-service";

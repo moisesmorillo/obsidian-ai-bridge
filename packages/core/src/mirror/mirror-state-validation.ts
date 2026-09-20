@@ -14,8 +14,10 @@ import {
 import type {
   MirrorDeviceState,
   MirrorDeviceStateV2,
+  MirrorDeviceStateV3,
   MirrorPathState,
 } from "@core/mirror/mirror-state.types";
+import { projectMirrorDeviceStateV3ToV4 } from "@core/mirror/reconciliation-state-migration";
 import { isReconciliationStateConsistent } from "@core/mirror/reconciliation-state-validation";
 
 /**
@@ -34,6 +36,19 @@ export function isMirrorDeviceStateConsistent(
     isMirrorDeviceStateV2Consistent(state) &&
     isReconciliationStateConsistent(state)
   );
+}
+
+/**
+ * Validates frozen v3 semantics through the deterministic no-inference v4 projection.
+ *
+ * @param state - Strictly decoded historical version-3 state.
+ * @returns Whether M3 invariants and all preserved M4 relationships remain valid.
+ */
+export function isMirrorDeviceStateV3Consistent(
+  state: MirrorDeviceStateV3,
+): boolean {
+  if (!isMirrorDeviceStateV2Consistent(state)) return false;
+  return isReconciliationStateConsistent(projectMirrorDeviceStateV3ToV4(state));
 }
 
 /**

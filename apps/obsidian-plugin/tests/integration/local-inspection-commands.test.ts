@@ -64,7 +64,8 @@ describe("local inspection commands → service → official Obsidian adapter", 
     const [modal] = [...host.modals];
     expect(
       modal?.contentEl.createEl.mock.calls.every(
-        ([, options]) => typeof options.text === "string",
+        ([, options]) =>
+          options !== undefined && typeof options.text === "string",
       ),
     ).toBe(true);
     await command("inspect-active-note")();

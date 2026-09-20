@@ -7,6 +7,7 @@ import {
   createMirrorWriterId,
   createRecoverySnapshotId,
   formatApplicationEtag,
+  isApplicationEtag,
   parseApplicationEtag,
 } from "@obsidian-ai-bridge/core";
 import { describe, expect, it } from "vitest";
@@ -27,6 +28,8 @@ describe("M3 mirror identifiers", () => {
     const etag = formatApplicationEtag(revision);
     expect(etag).toBe(`"m3-${UUID_V4}"`);
     expect(createApplicationEtag(etag)).toBe(etag);
+    expect(isApplicationEtag(etag)).toBe(true);
+    expect(isApplicationEtag("not-an-etag")).toBe(false);
     expect(parseApplicationEtag(etag)).toBe(revision);
   });
 

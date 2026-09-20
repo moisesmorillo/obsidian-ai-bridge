@@ -1,9 +1,11 @@
-import { MUTATION_EFFECT_CERTAINTY } from "@core/mirror/mirror.constants";
+import { isHistoryReconciliationOperation } from "@core/mirror/reconciliation-operation";
 import {
+  HISTORY_DECISION_KIND,
+  HISTORY_PROGRESS_KIND,
   RECONCILIATION_ACTION,
   RECONCILIATION_LOCAL_EVIDENCE_KIND,
-  RECONCILIATION_OPERATION_PHASE,
   RECONCILIATION_PRESERVATION_PROOF_STATE,
+  RECONCILIATION_PRESERVATION_SCOPE,
   RECONCILIATION_PRESERVATION_SIDE,
   RECONCILIATION_REMOTE_EVIDENCE_KIND,
 } from "@core/mirror/reconciliation-state.constants";
@@ -15,6 +17,8 @@ import type {
 
 /** Exact competing-byte identity derived from admitted evidence, never receipt claims. */
 export interface RequiredReconciliationPreservation {
+  /** Exact history step selector; absent for ordinary operation-scoped artifacts. */
+  readonly stepId?: import("@core/mirror/mirror.types").MirrorOperationId;
   readonly originalPath: ReconciliationPreservationReceipt["originalPath"];
   readonly side: ReconciliationPreservationReceipt["side"];
   readonly sourceRevision: ReconciliationPreservationReceipt["sourceRevision"];
@@ -68,9 +72,9 @@ export function requiredReconciliationPreservations(
     case RECONCILIATION_ACTION.forkLegacy:
       return remotePreservation(target);
     case RECONCILIATION_ACTION.resolveHistory:
-      return historyHasMaterialEffect(operation)
-        ? remotePreservation(target)
-        : [];
+      return isHistoryReconciliationOperation(operation)
+        ? historyPreservation(operation)
+        : undefined;
   }
 }
 
@@ -88,6 +92,10 @@ export function areRequiredReconciliationPreservationsVerified(
   return requirements.every((required) =>
     receipts.some(
       (receipt) =>
+        (required.stepId === undefined
+          ? receipt.scope === RECONCILIATION_PRESERVATION_SCOPE.operation
+          : receipt.scope === RECONCILIATION_PRESERVATION_SCOPE.historyStep &&
+            receipt.stepId === required.stepId) &&
         receipt.originalPath === required.originalPath &&
         receipt.side === required.side &&
         receipt.sourceRevision === required.sourceRevision &&
@@ -164,14 +172,42 @@ function remotePreservation(
   }
 }
 
-/** @returns Whether history has entered archive/cleanup progress rather than no-effect retention. */
-function historyHasMaterialEffect(operation: ReconciliationOperation): boolean {
-  return (
-    operation.phase === RECONCILIATION_OPERATION_PHASE.preserving ||
-    operation.phase === RECONCILIATION_OPERATION_PHASE.mutatingRemote ||
-    operation.phase === RECONCILIATION_OPERATION_PHASE.evidenceRequired ||
-    operation.phase === RECONCILIATION_OPERATION_PHASE.partial ||
-    operation.remoteEffect !== MUTATION_EFFECT_CERTAINTY.notDispatched ||
-    operation.preservationReceipts.length > 0
-  );
+/**
+ * Derives the one current step-scoped remote preservation identity.
+ *
+ * @param operation - Refined or migrated history operation.
+ * @returns No requirements for no-effect decisions, one exact step requirement, or undefined for migration attention.
+ */
+function historyPreservation(
+  operation: Extract<
+    ReconciliationOperation,
+    { readonly action: { readonly kind: "bounded-history-decision" } }
+  >,
+): readonly RequiredReconciliationPreservation[] | undefined {
+  if (
+    operation.historyProgress.kind === HISTORY_PROGRESS_KIND.legacyV3Unrefined
+  ) {
+    return undefined;
+  }
+  if (
+    operation.historyProgress.decision.kind ===
+      HISTORY_DECISION_KIND.retainIndependent ||
+    operation.historyProgress.decision.kind ===
+      HISTORY_DECISION_KIND.deferHistory
+  ) {
+    return [];
+  }
+  const index = operation.historyProgress.nextStepIndex;
+  if (index === null) return [];
+  const step = operation.historyProgress.steps[index];
+  if (step === undefined) return undefined;
+  return [
+    {
+      stepId: step.stepId,
+      originalPath: step.sourcePath,
+      side: RECONCILIATION_PRESERVATION_SIDE.remote,
+      sourceRevision: step.sourceRevision,
+      contentSha256: step.sourceContentSha256,
+    },
+  ];
 }

@@ -11,6 +11,10 @@ import {
   type MirrorWriterId,
   type NotePath,
 } from "@obsidian-ai-bridge/core";
+import {
+  createReconciliationOperationalStatus,
+  type ReconciliationOperationalStatus,
+} from "@obsidian-plugin/status/reconciliation-status";
 
 /** Sanitized configuration status; malformed plugin data is never presented raw. */
 export type MirrorConfigurationStatus =
@@ -56,6 +60,7 @@ export interface MirrorOperationalStatus {
   readonly globalBlockReason: MirrorGlobalBlockReason | null;
   readonly persistenceFenced: boolean;
   readonly pendingPaths: number;
+  readonly reconciliation: ReconciliationOperationalStatus;
   readonly pathStatuses: readonly MirrorOperationalPathStatus[];
   readonly lastOutcome: MirrorPathJobOutcome | null;
 }
@@ -112,6 +117,7 @@ export function createMirrorOperationalStatus(
     globalBlockReason: snapshot.state.globalBlockReason,
     persistenceFenced: !snapshot.persistenceAvailable,
     pendingPaths: pathStatuses.length,
+    reconciliation: createReconciliationOperationalStatus(snapshot.state),
     pathStatuses,
     lastOutcome,
   };
@@ -132,6 +138,9 @@ export function formatMirrorOperationalStatus(
     `Writer: ${status.writer}`,
     `Bootstrap: ${status.bootstrap}`,
     `Pending or blocked paths: ${status.pendingPaths}`,
+    `M4 reviews pending/stale: ${status.reconciliation.pendingReviews}/${status.reconciliation.staleReviews}`,
+    `M4 operations active/attention: ${status.reconciliation.activeOperations}/${status.reconciliation.attentionOperations}`,
+    `M4 restored/successor/history attention: ${status.reconciliation.restoredPendingReview}/${status.reconciliation.successorReviewRequired}/${status.reconciliation.historyAttention}`,
     `Persistence fenced: ${status.persistenceFenced ? "yes" : "no"}`,
   ];
   if (status.globalBlockReason !== null) {

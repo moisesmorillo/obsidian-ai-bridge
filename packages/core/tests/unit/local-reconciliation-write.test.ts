@@ -7,9 +7,12 @@ import {
   createMirrorOperationId,
   createMirrorWriterId,
   createReconciliationPreservationPath,
+  isNonHistoryReconciliationOperation,
   isReconciliationPathReserved,
   isReconciliationPreservationPath,
+  LOCAL_EFFECT_OBSERVATION_KIND,
   LOCAL_RECONCILIATION_DISPATCH_MODE,
+  LOCAL_RECONCILIATION_WRITE_OUTCOME,
   type LocalReconciliationWriter,
   LocalReconciliationWriteService,
   MIRROR_ACKNOWLEDGEMENT_KIND,
@@ -22,6 +25,7 @@ import {
   RECONCILIATION_ACTION,
   RECONCILIATION_AUTHORITY_SOURCE,
   RECONCILIATION_CLASSIFICATION,
+  RECONCILIATION_EVENT_KIND,
   RECONCILIATION_LOCAL_EVIDENCE_KIND,
   RECONCILIATION_LOCAL_STABILITY,
   RECONCILIATION_OPERATION_PHASE,
@@ -31,6 +35,7 @@ import {
   RECONCILIATION_REMOTE_EVIDENCE_KIND,
   RECONCILIATION_REVIEW_RETENTION,
   RECONCILIATION_REVIEW_STATUS,
+  type ReconciliationNonHistoryOperation,
   ReconciliationObservationGenerationOwner,
   type ReconciliationOperation,
   type ReconciliationPathEvidence,
@@ -60,6 +65,9 @@ const REVIEW = required(
 const OPERATION = required(
   createMirrorOperationId("44444444-4444-4444-8444-444444444444"),
 );
+const EFFECT = required(
+  createMirrorOperationId("77777777-7777-4777-8777-777777777777"),
+);
 const REVISION_A = required(
   createApplicationRevision("55555555-5555-4555-8555-555555555555"),
 );
@@ -76,6 +84,29 @@ const PRESERVATION_PATH = required(
     RECONCILIATION_PRESERVATION_SIDE.local,
   ),
 );
+
+/** @returns Prepared synthetic local-effect evidence for restart fixtures. */
+function preparedLocalEffect() {
+  return {
+    kind: LOCAL_EFFECT_OBSERVATION_KIND.prepared,
+    effectId: EFFECT,
+    path: PATH,
+    expectedHash: HASH_REMOTE,
+    listenerEpoch: 1,
+    beforeGeneration: 7,
+    postconditionHash: null,
+    successor: null,
+  } as const;
+}
+
+/** @returns Confirmed synthetic local-effect evidence for terminal fixtures. */
+function confirmedLocalEffect() {
+  return {
+    ...preparedLocalEffect(),
+    kind: LOCAL_EFFECT_OBSERVATION_KIND.confirmed,
+    postconditionHash: HASH_REMOTE,
+  } as const;
+}
 
 /** In-memory durable store with one selectable save failure. */
 class Store implements MirrorStateStore {
@@ -250,7 +281,7 @@ function pausedStateWithOperation(
  */
 function preservationOperation(
   phase: ReconciliationOperation["phase"] = RECONCILIATION_OPERATION_PHASE.admitted,
-): ReconciliationOperation {
+): ReconciliationNonHistoryOperation {
   return {
     operationId: OPERATION,
     reviewId: REVIEW,
@@ -266,6 +297,7 @@ function preservationOperation(
       phase === RECONCILIATION_OPERATION_PHASE.preserving
         ? [
             {
+              scope: "operation",
               operationId: OPERATION,
               originalPath: PATH,
               side: RECONCILIATION_PRESERVATION_SIDE.local,
@@ -277,13 +309,47 @@ function preservationOperation(
           ]
         : [],
     successorOperationId: null,
+    localEffectObservation: { kind: LOCAL_EFFECT_OBSERVATION_KIND.notStarted },
     localEffect: MUTATION_EFFECT_CERTAINTY.notDispatched,
     remoteEffect: MUTATION_EFFECT_CERTAINTY.notDispatched,
   };
 }
 
+/** @returns A valid remote-only operation with a durable target event fence. */
+function remoteOnlyOperation(): ReconciliationNonHistoryOperation {
+  const operation = preservationOperation();
+  const target = operation.snapshot.paths[0];
+  if (target?.remote.kind !== RECONCILIATION_REMOTE_EVIDENCE_KIND.live) {
+    throw new Error("Invalid remote-only fixture.");
+  }
+  return {
+    ...operation,
+    action: { kind: RECONCILIATION_ACTION.keepLocal },
+    phase: RECONCILIATION_OPERATION_PHASE.mutatingRemote,
+    preservationReceipts: [
+      {
+        scope: "operation",
+        operationId: OPERATION,
+        originalPath: PATH,
+        side: RECONCILIATION_PRESERVATION_SIDE.remote,
+        sourceRevision: target.remote.revision,
+        contentSha256: target.remote.contentSha256,
+        preservationPath: `.ai-bridge-conflicts/${OPERATION}/remote.md`,
+        proofState: RECONCILIATION_PRESERVATION_PROOF_STATE.verified,
+      },
+    ],
+    localEffectObservation: {
+      kind: LOCAL_EFFECT_OBSERVATION_KIND.notRequired,
+      path: PATH,
+      listenerEpoch: operation.snapshot.runtime.listenerEpoch,
+      beforeGeneration: 7,
+      successor: null,
+    },
+  };
+}
+
 /** @returns A valid two-path keep-both operation whose local competitor requires preservation. */
-function multiPathPreservationOperation(): ReconciliationOperation {
+function multiPathPreservationOperation(): ReconciliationNonHistoryOperation {
   const target = liveSnapshot();
   return {
     operationId: OPERATION,
@@ -321,13 +387,14 @@ function multiPathPreservationOperation(): ReconciliationOperation {
     ],
     preservationReceipts: [],
     successorOperationId: null,
+    localEffectObservation: { kind: LOCAL_EFFECT_OBSERVATION_KIND.notStarted },
     localEffect: MUTATION_EFFECT_CERTAINTY.notDispatched,
     remoteEffect: MUTATION_EFFECT_CERTAINTY.notDispatched,
   };
 }
 
 /** @returns A valid absent-target exact revision adoption operation. */
-function adoptionOperation(): ReconciliationOperation {
+function adoptionOperation(): ReconciliationNonHistoryOperation {
   return {
     operationId: OPERATION,
     reviewId: REVIEW,
@@ -341,9 +408,22 @@ function adoptionOperation(): ReconciliationOperation {
     ],
     preservationReceipts: [],
     successorOperationId: null,
+    localEffectObservation: { kind: LOCAL_EFFECT_OBSERVATION_KIND.notStarted },
     localEffect: MUTATION_EFFECT_CERTAINTY.notDispatched,
     remoteEffect: MUTATION_EFFECT_CERTAINTY.notDispatched,
   };
+}
+
+/** @returns The first aggregate-effect operation in a test snapshot. */
+function firstNonHistoryOperation(state: MirrorDeviceState) {
+  const operation = state.reconciliationOperations[0];
+  if (
+    operation === undefined ||
+    !isNonHistoryReconciliationOperation(operation)
+  ) {
+    throw new Error("Expected non-history operation.");
+  }
+  return operation;
 }
 
 /** Function-property mock surface that remains safe to reference without a bound receiver. */
@@ -900,7 +980,7 @@ describe("LocalReconciliationWriteService", () => {
     expect(store.saves[0]?.reconciliationOperations[0]?.phase).toBe(
       RECONCILIATION_OPERATION_PHASE.mutatingLocal,
     );
-    const final = owner.snapshot().state.reconciliationOperations[0];
+    const final = firstNonHistoryOperation(owner.snapshot().state);
     expect(final?.phase).toBe(RECONCILIATION_OPERATION_PHASE.partial);
     expect(final?.localEffect).toBe(MUTATION_EFFECT_CERTAINTY.confirmed);
     expect(isReconciliationPathReserved(owner.snapshot().state, PATH)).toBe(
@@ -920,6 +1000,174 @@ describe("LocalReconciliationWriteService", () => {
         mode: LOCAL_RECONCILIATION_DISPATCH_MODE.firstDispatch,
       }),
     );
+  });
+
+  it("retains every post-preparation host callback as durable successor evidence", async () => {
+    const owner = new MirrorStateOwner(
+      stateWithOperation(adoptionOperation()),
+      new Store(),
+    );
+    const localWriter = writer();
+    const generations = new ReconciliationObservationGenerationOwner();
+    Array.from({ length: 7 }).forEach(() => {
+      generations.observe(PATH);
+    });
+    let service: LocalReconciliationWriteService;
+    localWriter.createEligible.mockImplementation(async () => {
+      const generation = generations.observe(PATH);
+      await service.observeReservedEvent(
+        PATH,
+        RECONCILIATION_EVENT_KIND.create,
+        generation,
+      );
+      return {
+        kind: "confirmed",
+        outcome: LOCAL_RECONCILIATION_WRITE_OUTCOME.created,
+        path: PATH,
+        contentSha256: HASH_REMOTE,
+        sizeBytes: 6,
+      };
+    });
+    service = new LocalReconciliationWriteService(
+      localWriter,
+      owner,
+      cryptography,
+      {
+        createEffectId: () => EFFECT,
+        listenerEpoch: () => 1,
+        currentGeneration: (path) => generations.current(path),
+      },
+    );
+
+    await expect(
+      service.createEligible({
+        operationId: OPERATION,
+        path: PATH,
+        content: "remote",
+      }),
+    ).resolves.toMatchObject({ kind: "confirmed" });
+    const laterGeneration = generations.observe(PATH);
+    await expect(
+      service.observeReservedEvent(
+        PATH,
+        RECONCILIATION_EVENT_KIND.modify,
+        laterGeneration,
+      ),
+    ).resolves.toBe(true);
+
+    expect(firstNonHistoryOperation(owner.snapshot().state)).toMatchObject({
+      phase: RECONCILIATION_OPERATION_PHASE.successorReviewRequired,
+      localEffect: MUTATION_EFFECT_CERTAINTY.confirmed,
+      localEffectObservation: {
+        kind: LOCAL_EFFECT_OBSERVATION_KIND.confirmed,
+        effectId: EFFECT,
+        beforeGeneration: 7,
+        postconditionHash: HASH_REMOTE,
+        successor: {
+          firstGeneration: 8,
+          latestGeneration: 9,
+          eventKinds: [
+            RECONCILIATION_EVENT_KIND.create,
+            RECONCILIATION_EVENT_KIND.modify,
+          ],
+        },
+      },
+    });
+  });
+
+  it("retains a local edit while a remote-only effect is pending", async () => {
+    const owner = new MirrorStateOwner(
+      stateWithOperation(remoteOnlyOperation()),
+      new Store(),
+    );
+    const service = new LocalReconciliationWriteService(
+      writer(),
+      owner,
+      cryptography,
+    );
+
+    await expect(
+      service.observeReservedEvent(PATH, RECONCILIATION_EVENT_KIND.modify, 8),
+    ).resolves.toBe(true);
+
+    expect(firstNonHistoryOperation(owner.snapshot().state)).toMatchObject({
+      phase: RECONCILIATION_OPERATION_PHASE.mutatingRemote,
+      localEffectObservation: {
+        kind: LOCAL_EFFECT_OBSERVATION_KIND.notRequired,
+        successor: {
+          firstGeneration: 8,
+          latestGeneration: 8,
+          eventKinds: [RECONCILIATION_EVENT_KIND.modify],
+        },
+      },
+    });
+  });
+
+  it("retains callbacks from every reservation after preparing a local effect", async () => {
+    const owner = new MirrorStateOwner(
+      stateWithOperation(multiPathPreservationOperation()),
+      new Store(),
+    );
+    const localWriter = writer();
+    localWriter.createPreservation.mockResolvedValue({
+      kind: "confirmed",
+      outcome: LOCAL_RECONCILIATION_WRITE_OUTCOME.created,
+      path: PRESERVATION_PATH,
+      contentSha256: HASH_LOCAL,
+      sizeBytes: 5,
+    });
+    await new ConflictPreservationService(
+      localWriter,
+      owner,
+      cryptography,
+    ).preserve({
+      operationId: OPERATION,
+      side: RECONCILIATION_PRESERVATION_SIDE.local,
+      content: "local",
+    });
+    const generations = new ReconciliationObservationGenerationOwner();
+    let service: LocalReconciliationWriteService;
+    localWriter.createEligible.mockImplementation(async () => {
+      await service.observeReservedEvent(
+        PATH,
+        RECONCILIATION_EVENT_KIND.modify,
+        generations.observe(PATH),
+      );
+      return {
+        kind: "confirmed",
+        outcome: LOCAL_RECONCILIATION_WRITE_OUTCOME.created,
+        path: DESTINATION,
+        contentSha256: HASH_LOCAL,
+        sizeBytes: 5,
+      };
+    });
+    service = new LocalReconciliationWriteService(
+      localWriter,
+      owner,
+      cryptography,
+      {
+        createEffectId: () => EFFECT,
+        listenerEpoch: () => 1,
+        currentGeneration: (path) => generations.current(path),
+      },
+    );
+
+    await service.createEligible({
+      operationId: OPERATION,
+      path: DESTINATION,
+      content: "local",
+    });
+
+    expect(firstNonHistoryOperation(owner.snapshot().state)).toMatchObject({
+      localEffectObservation: {
+        path: DESTINATION,
+        successor: {
+          firstGeneration: 1,
+          latestGeneration: 1,
+          eventKinds: [RECONCILIATION_EVENT_KIND.modify],
+        },
+      },
+    });
   });
 
   it("rechecks lifecycle admission after asynchronous local source hashing", async () => {
@@ -1097,6 +1345,7 @@ describe("LocalReconciliationWriteService", () => {
     const completed: ReconciliationOperation = {
       ...adoptionOperation(),
       phase: RECONCILIATION_OPERATION_PHASE.completed,
+      localEffectObservation: confirmedLocalEffect(),
       localEffect: MUTATION_EFFECT_CERTAINTY.confirmed,
     };
     const inactiveWriter = writer();
@@ -1382,6 +1631,7 @@ describe("LocalReconciliationWriteService", () => {
     const operation: ReconciliationOperation = {
       ...preservationOperation(RECONCILIATION_OPERATION_PHASE.preserving),
       phase: RECONCILIATION_OPERATION_PHASE.evidenceRequired,
+      localEffectObservation: preparedLocalEffect(),
       localEffect: MUTATION_EFFECT_CERTAINTY.unknown,
     };
     const owner = new MirrorStateOwner(
@@ -1406,9 +1656,9 @@ describe("LocalReconciliationWriteService", () => {
         replacementContent: "remote",
       }),
     ).resolves.toMatchObject({ kind: "evidence-required" });
-    expect(
-      owner.snapshot().state.reconciliationOperations[0]?.localEffect,
-    ).toBe(MUTATION_EFFECT_CERTAINTY.unknown);
+    expect(firstNonHistoryOperation(owner.snapshot().state).localEffect).toBe(
+      MUTATION_EFFECT_CERTAINTY.unknown,
+    );
   });
 
   it("persists unknown local effects and permits only exact same-operation recovery", async () => {
@@ -1442,9 +1692,9 @@ describe("LocalReconciliationWriteService", () => {
         content: "remote",
       }),
     ).resolves.toMatchObject({ kind: "evidence-required" });
-    expect(
-      owner.snapshot().state.reconciliationOperations[0]?.localEffect,
-    ).toBe(MUTATION_EFFECT_CERTAINTY.unknown);
+    expect(firstNonHistoryOperation(owner.snapshot().state).localEffect).toBe(
+      MUTATION_EFFECT_CERTAINTY.unknown,
+    );
     await expect(
       service.createEligible({
         operationId: OPERATION,

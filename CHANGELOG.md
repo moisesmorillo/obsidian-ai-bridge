@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.10.0](https://github.com/moisesmorillo/obsidian-ai-bridge/compare/v0.9.0...v0.10.0) (2026-09-20)
+
+
+### Features
+
+* **plugin:** implement M4 history and runtime compatibility ([#41](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/41)) ([9dfce37](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/9dfce3747645fd2de4c128eeafc8241955e9e904))
+
+
+### Documentation
+
+* add change-size discipline ([#42](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/42)) ([37bff1a](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/37bff1a6032bae4fc94fb70446e858f54d6d06d0))
+* **m4:** refine slices 6 and 7 contracts ([#39](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/39)) ([789b77f](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/789b77f676b84ebba6a9a55bb130e0f85305e6f7))
+
 ## [0.9.0](https://github.com/moisesmorillo/obsidian-ai-bridge/compare/v0.8.0...v0.9.0) (2026-09-18)
 
 

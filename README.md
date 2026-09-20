@@ -155,8 +155,13 @@ fence, review/admission, narrow local write/conflict preservation, live/adoption
 tombstone/recovery execution, bounded parent-owned history steps, step-scoped
 preservation, and shared runtime/session/command/modal/status composition.
 [ADR 0009](docs/decisions/0009-m4-history-runtime-and-device-state-v4.md) defines the v4
-compatibility transition and conservative event authority. M5 is NEXT but has no
-implementation-ready specification; refine it before production work. The completed
+compatibility transition and conservative event authority. M5 is NEXT with a
+documentation-only Slice 0 foundation: its
+[planning specification](docs/milestones/m5-operational-and-security-readiness.md),
+[consolidated threat model](docs/threat-model.md), and
+[credential/permission ADR](docs/decisions/0010-scoped-client-credentials-and-permissions.md)
+accept a bounded future client model while leaving the evidence-gated Slice 1
+operational decisions open. No M5 production behavior is implemented. The completed
 [M3 specification](docs/milestones/m3-remote-bridge-client-and-publishing.md),
 [approved decision brief](docs/plans/m3-design-decisions.md), and
 [sequential plan](docs/plans/m3-remote-bridge-client-and-publishing.md) record
@@ -179,7 +184,7 @@ active milestone. Dates are intentionally not assigned.
 
 ## Security
 
-This project handles potentially sensitive vault content. The connected outward M3 runtime remains experimental and is not a production security boundary or certification. See [SECURITY.md](SECURITY.md) and the [operator guide](docs/operations.md).
+This project handles potentially sensitive vault content. The connected outward M3 runtime remains experimental and is not a production security boundary or certification. See [SECURITY.md](SECURITY.md), the [consolidated threat model](docs/threat-model.md), and the [operator guide](docs/operations.md).
 
 ## Contributing
 

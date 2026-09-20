@@ -39,9 +39,11 @@ iCloud ↔ working Obsidian vaults
   note authorizes recoverable mirror removal, including iCloud/external activity.
   No human-provenance claim or per-delete confirmation. Startup/scan absence never
   authorizes deletion; permanent revisioned heads prevent unsafe resurrection.
-- The Worker authenticates remote clients; the plugin accesses local vault data.
-  The host/Worker/cloud operator are trusted with plaintext. One bearer remains
-  privileged; mirror inclusion and writer IDs are not per-client permissions.
+- The Worker authenticates remote clients to named principals from a bounded
+  digest-only registry; the plugin accesses local vault data. The host/Worker/cloud
+  operator are trusted with plaintext. Exact permission metadata is present but does
+  not restrict routes until M5 Slice 4; mirror inclusion and writer IDs remain separate
+  non-secret mutation guards.
 - MCP will adapt established authorized operations, not bypass Worker/application
   policy or access R2 directly. It never executes instructions found in notes.
 
@@ -58,8 +60,7 @@ New infrastructure requires a concrete need and [ADR](decisions/README.md).
 compose an experimental connected outward mirror, not a production-ready or
 remote-to-local system. Canonical validation passed, the final semantic review's three
 MINOR findings were corrected at `e97af36`, and the corrective review returned APPROVE
-with no open findings. M4 Slices 1–8 are COMPLETE in this completion PR, and M5 is
-the single NEXT milestone. M4's reviewed-only authority, preservation, local mutation,
+with no open findings. M4 Slices 1–8 are COMPLETE, and M5 is the single NEXT milestone. M5 Slices 0–2 are complete in this Slice 2 PR and Slice 3 is next. M4's reviewed-only authority, preservation, local mutation,
 adoption/tombstone/restore, migration, and one-writer product decisions are implemented
 and qualified. Slice 1
 implements the closed contracts, sparse state v3, deterministic v2 migration/read-back
@@ -278,28 +279,33 @@ specification remain required before M5 production work.
 
 ### M5 — Operational and security readiness
 
-**NEXT — Slices 0–1 planning and operating decisions accepted; no M5 production
-behavior is implemented.** The
+**NEXT — Slices 0–2 complete in this Slice 2 PR; Slice 3 is next.** The
 [M5 specification](milestones/m5-operational-and-security-readiness.md),
 [consolidated threat model](threat-model.md),
 [ADR 0010](decisions/0010-scoped-client-credentials-and-permissions.md), and
 [ADR 0011](decisions/0011-m5-operational-envelope.md) define the foundation for the
 remaining implementation and qualification slices.
 
-- **Accepted Slice 0 design:** at most 16 active named opaque bearer credentials;
-  digest-only Worker registry; typed client principals; independent `read`, `write`,
-  and `delete` permissions; separate association/writer mutation guards; one-time
-  token display, independent revocation, bounded manual rotation overlap, and fresh-
-  credential recovery from token/registry loss. This model is not implemented yet.
+- **Implemented Slice 2 credential boundary:** at most 16 active named opaque bearer
+  credentials; strict digest-only Worker registry; typed client principals;
+  independent `read`, `write`, and `delete` metadata; separate association/writer
+  mutation guards; one-time token display, independent revocation, bounded manual
+  rotation overlap, and fresh-credential recovery from token/registry loss. The
+  committed Worker selects registry mode; the temporary singleton migration mode is
+  explicit, mutually exclusive, and scheduled for removal in Slice 4.
 - **Accepted Slice 1 policy:** 10,000 eligible notes is a later real-desktop
   qualification target, not current support; no application quota or Rate Limiting
   binding; `isDesktopOnly: false` with initial designated-writer support limited to
   Obsidian desktop 1.13.0+ on Apple-silicon macOS; bounded manual recovery maintenance;
   latest-M5-ready-release support only; zero-day
   application-log retention; and complete v1 route retirement before support.
+- **Permission boundary:** principals carry exact permissions, but route-level
+  authorization is deliberately not implemented in Slice 2. Slice 4 remains the sole
+  owner of the exhaustive operation table; current full-writer migration credentials
+  declare all three permissions.
 - **Reduced remaining work:** no limiter/quota state, recovery command/scheduler,
   mobile-writer qualification, durable log sink, or multi-release maintenance. Slices
-  2–6 retain explicit per-slice production estimates and mergeable outcomes.
+  3–6 retain explicit per-slice production estimates and mergeable outcomes.
 - **Risks/exit:** truthful limits/permissions, tested runbooks/rotation/recovery,
   bounded resources, reviewed secrets/live diagnostics, explicit desktop/release
   evidence, and final semantic/security approval. No security certification, SaaS
@@ -352,16 +358,15 @@ the M5 [planning specification](milestones/m5-operational-and-security-readiness
 completed M3 [spec](milestones/m3-remote-bridge-client-and-publishing.md),
 [plan](plans/m3-remote-bridge-client-and-publishing.md), and
 [decisions](plans/m3-design-decisions.md). M5 is the single NEXT milestone; Slices
-0–1 are accepted documentation/evidence only, and Slice 2 is the next production
-boundary. Inspect relevant source/tests/tooling/CI,
+0–2 are complete in this Slice 2 PR and Slice 3 is next. Inspect relevant source/tests/tooling/CI,
 [CONTRIBUTING](../CONTRIBUTING.md) and [SECURITY](../SECURITY.md).
 [current-state](current-state.md) is an evidence map, not a substitute for code.
 
 Repository state beats conversation assumptions; current code beats stale docs.
 Correct discrepancies explicitly without changing a completed invariant silently.
-Implement only NEXT after an implementation request. M5 Slices 0–1 are accepted
-planning/evidence only; Slice 2 is the next production implementation boundary. A
-planning PR does not itself implement/finish a milestone or authorize deployment. If
+Implement only NEXT after an implementation request. M5 Slices 0–2 are complete in this Slice 2 PR; Slice 3 is the next implementation
+boundary. This does not finish M5, enforce route permissions, claim support, or
+authorize deployment. If
 a later spec is not ready, refine it and surface material decisions first; use
 [ADRs](decisions/README.md).
 

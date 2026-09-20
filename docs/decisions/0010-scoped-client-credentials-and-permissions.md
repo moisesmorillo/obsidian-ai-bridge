@@ -2,11 +2,7 @@
 
 ## Status
 
-**Accepted for M5 planning — not implemented.** This Slice 0 decision defines the
-credential and permission contract that later M5 slices must implement and qualify.
-The current Worker still accepts one privileged `OBSIDIAN_BRIDGE_TOKEN`; this record
-does not change runtime authentication, routes, bindings, deployment, or client
-configuration.
+**Accepted — credential/principal/lifecycle contract implemented by M5 Slice 2; route authorization remains Slice 4.** The Worker now resolves strict bounded named credentials to typed principals and provides offline lifecycle tooling. Permission metadata is present but is not yet enforced per route. The explicitly named singleton migration mode remains only as the accepted temporary checkpoint and is scheduled for removal in Slice 4; committed configuration selects registry authority.
 
 ## Context
 
@@ -26,7 +22,7 @@ an MCP-specific authentication scheme.
 
 ### Credential model
 
-M5 will replace the single privileged runtime credential with **bounded named opaque
+M5 Slice 2 replaces the default single privileged runtime credential with **bounded named opaque
 bearer credentials**:
 
 - The authenticating secret is an opaque, randomly generated bearer token. It contains
@@ -49,10 +45,14 @@ bearer credentials**:
   tokens. SHA-256 is sufficient for these uniformly random 256-bit secrets; the
   implementation must domain-separate its token digest input, reject duplicate
   digests, and compare every candidate digest without an early-match timing shortcut.
-- The registry is supplied through an operator-managed Worker secret/configuration
-  boundary. No D1, KV, Durable Object, R2 credential record, or other service is
-  accepted by this ADR. The exact schema and provisioning command belong to Slice 2,
-  but they may not weaken these bounds or store raw tokens.
+- The registry is supplied as compact JSON through the operator-managed
+  `OBSIDIAN_BRIDGE_CREDENTIAL_REGISTRY` Worker secret/configuration boundary. Version
+  1 is `{version: 1, credentials: [...]}`; entries contain only `clientId`, `name`,
+  `permissions`, and `tokenDigest`. Unknown fields are rejected at both levels.
+  `tokenDigest` is exactly 64 lowercase hexadecimal SHA-256 characters derived from
+  UTF-8 bytes of `obsidian-ai-bridge:client-credential:v1\0` followed by the raw
+  token bytes. No D1, KV, Durable Object, R2 credential record, or other service is
+  accepted, and raw tokens are never part of this representation.
 - A successful request resolves to a typed client principal containing the client ID,
   display name, and exact permission set. Handlers and application composition receive
   that principal rather than an unscoped authenticated boolean.
@@ -125,8 +125,12 @@ bearer.
    succeeded.
 
 There is no credential-management HTTP/admin API in M5. Provision, rotate, revoke, and
-recover are explicit operator actions through bounded offline tooling and the hosting
-platform's authorized secret/configuration path.
+recover use `mise run credentials -- ...`, which accepts metadata and an outside-repo
+registry path, refuses raw-token arguments and redirected secret output, atomically
+writes owner-only digest configuration, and displays a generated raw token once in an
+interactive terminal. Applying that registry through the hosting platform remains a
+separate explicit operator action; the tool makes no HTTP administration or deployment
+call.
 
 #### Rotate with bounded overlap
 
@@ -209,10 +213,15 @@ Cloudflare operator, authorized client, or trusted Obsidian host. The 16-client 
 fits the intended personal bridge and keeps authentication work deterministic; it is
 not a SaaS tenant limit or an accepted request quota.
 
-M5 implementation must migrate deliberately from the current single privileged
-secret. It may provide a bounded compatibility window only as an explicit migration
-step with tests and a removal criterion; it may not retain an indefinite privileged
-fallback. Exact route permissions and migration order remain Slice 4 work.
+Slice 2 implements the deliberate checkpoint with the exact
+`OBSIDIAN_BRIDGE_AUTH_MODE` values `singleton-migration` and `credential-registry`.
+Only the selected authority is evaluated: a staged registry is ignored in singleton
+mode, and a still-present old singleton secret is ignored in registry mode. Missing or
+unknown mode and malformed registry configuration fail closed. Committed Wrangler
+configuration selects registry mode, so the old singleton no longer authenticates at
+the Slice 2 endpoint. Slice 4 must remove the temporary singleton mode after client
+migration while adding route-level permission enforcement; it may not normalize this
+checkpoint into a permanent fallback.
 
 ## Alternatives
 

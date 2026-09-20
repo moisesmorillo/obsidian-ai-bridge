@@ -1,13 +1,12 @@
 # Verified current state
 
-This snapshot records completed M1–M4 repository implementation and qualification.
+This snapshot records completed M1–M4 repository implementation and M5 Slice 2's credential checkpoint.
 M2 source/tooling through `2e74b23` passed independent semantic
 review and merged at `b300726` (PR #7). M3's completion PR #27 passed canonical
 validation and final semantic review; its three MINOR findings were corrected at
 `e97af36`, whose corrective review returned APPROVE with no open findings. PR #27
 merged at `63b0599`; M3 is COMPLETE and the M3→M4 transition is canonical.
-M4 Slices 1–8 are COMPLETE in this completion PR and M5 is the single NEXT
-milestone. The completed
+M4 Slices 1–8 are COMPLETE and M5 is the single NEXT milestone. M5 Slices 0–2 are complete in this Slice 2 PR and Slice 3 is next. The completed
 [specification](milestones/m4-remote-to-local-reconciliation-and-conflict-resolution.md),
 [sequential plan](plans/m4-remote-to-local-reconciliation-and-conflict-resolution.md),
 and ADRs 0005–0009 define the reviewed boundary. The compatibility transition uses
@@ -50,7 +49,8 @@ boundaries; [API](api.md) describes the HTTP contract.
 | Worker | Typed Hono/OpenAPI app assembled once per isolate; request middleware resolves the note service and bearer secret from bindings. Handlers call application services, not repositories. | `apps/worker/src/{index,app,app.types}.ts`, `src/http/` |
 | M3 Worker | Private tagged live/tombstone/recovery codecs; create-only and exact-observed-generation R2 CAS; core current/recovery policy with existing-generation association continuity; authenticated public v2 mirror/current/recovery routes; strict IDs/conditions/media/stream bounds; application ETags; separate recovery metadata/content; method-specific CORS; envelope-aware v1 reads and 410 v1 mutation retirement. | `packages/core/src/mirror/`, `apps/worker/src/{composition,http,infrastructure}/`, focused storage/service/HTTP/composed tests |
 | Routes | Public health/OpenAPI/Scalar; authenticated envelope-aware v1 GET/list plus retired PUT/DELETE; authenticated paginated v2 mirror/current/state/recovery metadata/content and POST maintenance routes. One named policy owns v2 paths and operation methods for Hono registration, CORS and OpenAPI. Both API prefixes and unknown descendants are protected; registered v2 OPTIONS is storage-free. | `apps/worker/src/app.ts`, `src/http/{v2-route-policy,v2.handlers,v2-cors.middleware,openapi.routes}.ts` |
-| Authentication | One `OBSIDIAN_BRIDGE_TOKEN`; missing/empty configuration fails closed. Bearer scheme is case-insensitive; malformed, missing, unsupported or wrong credentials yield sanitized 401 with `WWW-Authenticate: Bearer`. Comparison hashes both tokens with SHA-256 and compares fixed-length digests without early exit. | `apps/worker/src/auth/`, `src/http/authentication.middleware.ts` |
+| Authentication | Strict version-1 registry of at most 16 named digest-only clients; canonical lowercase UUID-v4 IDs, ADR name grammar, nonempty exact permission sets, unique IDs/case-folded names/digests, and unknown-field/version rejection are validated atomically. Tokens use 32 secure-random bytes and canonical unpadded base64url; verifiers use domain-separated SHA-256 and canonical lowercase hex. Every configured digest is compared without an early successful exit. Success publishes only a typed `{clientId, name, permissions}` principal; missing/malformed/wrong/invalid configuration yields sanitized 401. Explicit singleton migration and registry modes never fall through to each other; committed configuration selects registry mode. Route permission enforcement remains Slice 4. | `apps/worker/src/auth/`, `src/http/authentication.middleware.ts`, focused auth/registry/integration tests |
+| Credential lifecycle | Offline mise tooling creates/provisions fresh credentials, performs bounded overlap rotation, revokes exact client IDs, replaces lost credentials without recovery, and builds all-new registries after total loss. It validates complete updates through the same registry owner, accepts no raw-token argument, requires interactive one-time secret display, writes owner-only registry files outside the repository, and makes no HTTP/deployment call. | `tools/credentials/`, `tools/tests/unit/credential-lifecycle.test.ts`, [operator procedure](operations.md#credential-registry-lifecycle-and-singleton-migration) |
 | Persistence | `VAULT_BUCKET` binding, keys `vault/<normalized-path>`, Markdown HTTP metadata. V2 listing exposes bounded 50-object pages with opaque cursors; retained v1 aggregates at most 1,000 such pages. Both filter unsafe/non-Markdown/oversized untagged legacy/out-of-namespace keys; tagged malformed or oversized objects fail sanitized. | `apps/worker/src/infrastructure/`, `packages/core/src/vault/note-service.ts` |
 | Reads/writes/deletes | Legacy/live reads return decoded text; tombstones are hidden. V2 create/update/recreate/tombstone and recovery maintenance use application service policy plus conditional R2 PUT only. Persisted malformed/oversized objects fail sanitized. V1 PUT/DELETE return 410 without mutation. | Repository, service and handlers above |
 | Addressing | Item routes require canonical unpadded base64url of UTF-8 `NotePath`, not hierarchical URL paths. Relative paths must end in lowercase `.md`; absolute/drive paths, backslashes, NUL, empty/dot segments, dangerous encoded separators/traversal and noncanonical identifiers are rejected. | `packages/core/src/note-path/`, corresponding unit tests |
@@ -70,7 +70,7 @@ boundaries; [API](api.md) describes the HTTP contract.
   dependency graph and `bun.lock`; `mise run install` installs it frozen.
 - Tasks: `install`, `format`, `biome:check`, `lint`, `typecheck`, `test`, `coverage`,
   `worker:storage-test`, `build`, `worker:build`, `plugin:build`, `plugin:smoke`,
-  `dev`, `check`. Use `mise run <task>`.
+  `dev`, `credentials`, `check`. `credentials` runs bounded offline create/rotate/revoke/loss/replacement tooling and makes no remote call. Use `mise run <task>`.
   `mise install` installs tools, not workspace dependencies. Dev-only
   `@types/node` 24.13.4 supports artifact tests; it adds no plugin runtime module.
 - `check` depends on Biome check (formatting, recommended lint and organize-import
@@ -85,9 +85,10 @@ boundaries; [API](api.md) describes the HTTP contract.
   prohibition, direct-console prohibition and configured documentation rules.
   These checks do **not** prove all architecture/TSDoc requirements in
   [AGENTS.md](../AGENTS.md); manual semantic review remains mandatory.
-- Vitest **5**: **75 source test files / 1,194 tests**, plus **1 generated-artifact
+- Vitest **5**: **77 source test files / 1,239 tests**, plus **1 generated-artifact
   file / 11 tests** executed by the build task. The unchanged M1 baseline had
-  15 files / 105 tests. Exact slice validation is recorded in the
+  15 files / 105 tests. M5 Slice 2 adds focused registry, authentication, lifecycle,
+  migration, leakage, and CLI-boundary tests. Exact earlier slice validation is recorded in the
   [implementation plan](plans/m2-obsidian-read-only-local-adapter.md).
 - Worker unit tests live under `apps/worker/tests/unit/` (auth, HTTP, R2 adapter,
   logging). `apps/worker/tests/integration/worker.test.ts` composes Hono, the real
@@ -104,10 +105,10 @@ boundaries; [API](api.md) describes the HTTP contract.
   `*.types.ts`, build/output and Wrangler state. Reports: text, JSON summary, LCOV.
   Global thresholds: **lines 95%, statements 95%, functions 94%, branches 90%**.
   Coverage is a regression signal, not proof of test quality.
-- Root Vitest projects include shared packages, Worker and plugin. Final M4 source
-  coverage is statements **95.02% (7,330/7,714)**, branches **90.62%
-  (5,875/6,483)**, functions **98.12% (1,623/1,654)**, and lines **96.96%
-  (6,965/7,183)**; thresholds and production inclusion remain enforced. Artifact tests
+- Root Vitest projects include shared packages, Worker and plugin. M5 Slice 2 source
+  coverage is statements **95.07% (7,407/7,791)**, branches **90.66%
+  (5,907/6,515)**, functions **98.14% (1,638/1,669)**, and lines **96.99%
+  (7,040/7,258)**; thresholds and production inclusion remain enforced. Artifact tests
   are separate from source coverage, run after packaging and never replace behavioral
   coverage.
 - The Worker declares Miniflare **5.20260908.0-alpha** directly for its storage
@@ -127,8 +128,10 @@ boundaries; [API](api.md) describes the HTTP contract.
 
 ## Explicit limitations and deferred work
 
-The Worker API is a remote storage boundary, **not synchronization**. A token holder
-remains privileged for this one namespace; static IDs are not scoped permissions.
+The Worker API is a remote storage boundary, **not synchronization**. Named principals
+are independently revocable, but Slice 2 has not yet applied their permission metadata
+to routes; every authenticated client therefore retains the current namespace route
+authority. Static IDs are not scoped permissions.
 Safe conditional v2 routes now exist and unsafe v1 mutations are retired. Slice 3
 models and persists device-local configuration/state, activation and staged handoff,
 including atomic indexed alignment batches. Slices 5–6 implement core bootstrap,
@@ -142,8 +145,9 @@ merged at `63b0599`; M3 is COMPLETE and its transition is canonical. M4 is COMPL
 in this completion PR with reviewed contracts, strict state-v4
 migration, preservation/local-write seams, live/adoption/tombstone/restore/history
 execution, plugin runtime/UI composition, and Slice 8 qualification. M5 is NEXT;
-Slices 0–1 are accepted planning/evidence only, with no production behavior or current
-support claim. The accepted M4 design remains
+Slices 0–2 are complete in this Slice 2 PR, with no current support claim. Credential
+principals/lifecycle exist, but route-level permission enforcement, client-attributed
+live diagnostics, v1 retirement, and final qualification remain later M5 slices. The accepted M4 design remains
 reviewed-only: exact format-2 revisions may be adopted, competing bytes are preserved
 before replacement, remote tombstones require explicit choices without plugin local
 delete/move, recovery restore is local-only first, legacy same-path adoption remains
@@ -171,8 +175,8 @@ The [operator guide](operations.md) records setup, one-writer availability,
 upgrade/handoff/reset, bearer rotation, recovery API use, iCloud uncertainty, and
 rollback prohibitions. M3 completion is an implementation/evidence milestone; it is
 not production readiness, deployment, or real-host qualification.
-Scoped authentication, permission enforcement, live client attribution, complete v1
-retirement, runbooks, and real-desktop qualification remain M5. ADR 0011 deliberately
+Route permission enforcement, live client attribution, complete v1 retirement, final
+runbooks, and real-desktop qualification remain M5. ADR 0011 deliberately
 selects no application quota/limiter, recovery automation, durable logs, mobile writer,
 or multi-release support; prerequisites to safe M3/M4 behavior must not be postponed.
 

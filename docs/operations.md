@@ -1,4 +1,4 @@
-# M3/M4 operator guide
+# M3/M4 and M5 Slice 2 operator guide
 
 M3 provides the experimental Obsidian-to-Worker mirror. M4 adds explicit reviewed
 reconciliation; it does not make the mirror automatically bidirectional. The bridge is
@@ -17,8 +17,10 @@ qualification.
 - Writer availability determines mirror freshness. There is no election, lease,
   automatic takeover, multi-writer coordination, or always-on iOS claim.
 - `MIRROR_ASSOCIATION_ID` and `MIRROR_WRITER_ID` are non-secret operational guards
-  for cooperating clients. They are not authorization or cryptographic device
-  identities. The bearer remains privileged for every operation in the namespace.
+  for cooperating clients. They are not authentication, permissions, or cryptographic
+  device identities. Authentication resolves a named principal from the bounded
+  credential registry. Slice 2 records permissions but does not enforce them per route;
+  current writer credentials therefore declare `read`, `write`, and `delete`.
 - Eligible Markdown is sent and stored as plaintext. The Obsidian host and other
   privileged plugins, plugin runtime, Worker, Cloudflare/R2 operator, and authorized
   bearer holders are inside the trusted plaintext boundary. Private R2 does not make
@@ -50,12 +52,16 @@ committed development configuration means a remote resource exists.
 4. **Configure the Worker identity.** Set `MIRROR_ASSOCIATION_ID` to the independently
    generated association UUID and `MIRROR_WRITER_ID` to the exact plugin device UUID
    from the previous step. A mismatch remains passive and fails mutation closed.
-5. **Configure the bearer and endpoint.** Set a strong bearer through the Worker
-   secret `OBSIDIAN_BRIDGE_TOKEN`; never commit it to `wrangler.jsonc`,
-   `mise.local.toml.example`, plugin data, screenshots, or documentation. Create or
-   select the corresponding native SecretStorage entry under **Bearer secret
-   reference**; `data.json` stores only the reference. Host-local mirror state and
-   handoff records must not contain the plaintext bearer. Enter an absolute endpoint
+5. **Configure the client credential and endpoint.** Follow
+   [credential provisioning](#credential-registry-lifecycle-and-singleton-migration)
+   to create a full-writer client with `read,write,delete`, apply its digest-only
+   registry through `OBSIDIAN_BRIDGE_CREDENTIAL_REGISTRY`, and transfer the raw token
+   exactly once into native SecretStorage. Keep
+   `OBSIDIAN_BRIDGE_AUTH_MODE=credential-registry`; never commit the registry or raw
+   token to `wrangler.jsonc`, `mise.local.toml.example`, plugin data, screenshots, or
+   documentation. Select only the corresponding native SecretStorage reference under
+   **Bearer secret reference**; `data.json` stores only the reference. Host-local
+   mirror state and handoff records must not contain the plaintext bearer. Enter an absolute endpoint
    origin with no userinfo, query, fragment, or non-root path. HTTPS is required.
    Plain HTTP is allowed only after explicit consent for the exact literal
    `localhost`, `127.0.0.1`, or `[::1]` origin including its port. There is no LAN,
@@ -154,20 +160,130 @@ and local evidence for recovery. The safe reset is a separately authorized new e
 bucket/namespace, new association UUID, new credentials, and new designation with no
 route for delayed old requests to reach it.
 
-## Bearer rotation
+## Credential registry lifecycle and singleton migration
 
-Bearer rotation is independent from association and writer identity:
+The credential tool is offline: it makes no HTTP administration call, changes no
+Worker binding, and never deploys. Registry files contain confidential digest verifier
+material and must use a protected path outside the repository. Secret-generating
+commands require an interactive terminal and refuse redirected stdout. They display
+the raw canonical base64url token once after atomically writing the digest-only
+registry with owner-only permissions. Copy that token directly into the consuming
+client's approved secret store; do not put it in a CLI argument, file, shell history,
+clipboard automation, log, screenshot, issue, or documentation.
 
-1. Pause and conservatively settle pending or unknown effects before replacing
-   connection identity. Preserve unresolved evidence; do not clear the ledger.
-2. Change/revoke the old `OBSIDIAN_BRIDGE_TOKEN` server-side using the authorized
-   Worker secret mechanism.
-3. Create or update the native SecretStorage entry and select only its reference in
-   plugin settings. Never put plaintext in `data.json`, host-local state, handoff
-   metadata, logs, notices, or committed configuration.
-4. Reverify authenticated association/writer identity, then resume. Rotation does not
-   redefine the association, and rotating `MIRROR_WRITER_ID` is not a substitute for
-   revoking the old bearer.
+### Create and provision
+
+1. Choose a unique 1–64 character ADR-compliant name and the least exact permissions.
+   The current designated writer needs all three permissions until Slice 4.
+2. Create or update a protected outside-repository registry:
+
+   ```bash
+   mise run credentials -- create \
+     --registry "$HOME/.config/obsidian-ai-bridge/credentials.json" \
+     --name "Obsidian writer" \
+     --permissions read,write,delete
+   ```
+
+3. Transfer the displayed token once into the client's native SecretStorage entry.
+4. Apply only the registry file through the authorized Worker secret boundary, for
+   example by feeding it on stdin to `wrangler secret put
+   OBSIDIAN_BRIDGE_CREDENTIAL_REGISTRY`; do not pass verifier JSON as a command
+   argument. Keep `OBSIDIAN_BRIDGE_AUTH_MODE=credential-registry`.
+5. Verify authenticated server identity and intended non-destructive current behavior.
+   Local generation alone is not provisioning success.
+
+### Explicit singleton-to-registry checkpoint
+
+The source retains `singleton-migration` only until Slice 4 removes it. It is an
+exclusive mode, not a fallback: singleton mode ignores a staged registry, registry
+mode ignores a still-present singleton secret, and missing/unknown mode fails closed.
+
+1. Pause the writer and settle or preserve every pending/unknown M3/M4 effect.
+2. Before the Slice 2 Worker transition, explicitly select
+   `OBSIDIAN_BRIDGE_AUTH_MODE=singleton-migration`; verify the old
+   `OBSIDIAN_BRIDGE_TOKEN` still authenticates only in that mode.
+3. Create a distinct full-writer registry credential, install its raw token in native
+   SecretStorage, and stage the digest-only registry secret. The staged registry does
+   not authenticate while singleton mode is selected.
+4. Deliberately change the Worker mode to `credential-registry`. Verify the new client
+   principal through authenticated server identity and a non-destructive read. Current
+   writer/association and conditional/effect checks remain unchanged.
+5. Prove the old singleton token now receives sanitized `401`; it cannot fall through
+   from registry authority even if the old secret still exists.
+6. Remove `OBSIDIAN_BRIDGE_TOKEN` through the authorized platform secret mechanism,
+   verify the new client again, and resume only after preserved effects are reconciled.
+   Never roll back to singleton mode or a registry snapshot containing revoked authority.
+
+Committed Wrangler configuration already selects registry mode and requires the
+registry secret. Slice 4 removes the temporary singleton code path after migration;
+no supported endpoint retains it indefinitely.
+
+### Rotate with bounded overlap
+
+1. Pause or settle relevant writer work. Rotation is independent of association/writer
+   identity and never mutates the old token.
+2. Create a distinct replacement name/client while retaining the old entry:
+
+   ```bash
+   mise run credentials -- rotate \
+     --registry "$HOME/.config/obsidian-ai-bridge/credentials.json" \
+     --client-id "$OLD_CLIENT_UUID" \
+     --name "Obsidian writer next" \
+     --permissions read,write,delete
+   ```
+
+   Rotation refuses when all 16 slots are occupied; explicitly revoke an unrelated
+   credential or accept a controlled no-overlap replacement instead of eviction.
+3. Apply the overlapped registry, install the new token, verify the new principal with
+   non-destructive behavior, switch the client, and settle old in-flight work.
+4. Revoke the old client exactly, reapply the registry, and prove its old token returns
+   `401`:
+
+   ```bash
+   mise run credentials -- revoke \
+     --registry "$HOME/.config/obsidian-ai-bridge/credentials.json" \
+     --client-id "$OLD_CLIENT_UUID"
+   ```
+
+### Revoke or replace a lost token
+
+Exact revoke removes only the named client ID and never changes unrelated clients.
+Apply and verify the replacement registry before considering revocation effective.
+A raw token cannot be recovered from its digest.
+
+Treat loss as possible disclosure. To skip overlap and atomically replace the old
+entry in the local candidate registry:
+
+```bash
+mise run credentials -- replace-lost \
+  --registry "$HOME/.config/obsidian-ai-bridge/credentials.json" \
+  --client-id "$LOST_CLIENT_UUID" \
+  --name "Recovered writer" \
+  --permissions read,write,delete
+```
+
+Install the new raw token, apply the registry, prove the old token fails, and inspect
+preserved operation evidence before resuming. If limited overlap is safer than outage,
+use the rotation procedure but minimize the interval and explicitly revoke the old ID.
+
+### Total registry loss
+
+Do not reconstruct tokens from digests, clients, logs, or documentation. Pause clients
+and writer admission; authentication remains fail-closed. Preserve R2, device state,
+receipts, active/unknown operations, recovery evidence, and platform audit evidence.
+Build an unrelated registry with one declaration per client:
+
+```bash
+mise run credentials -- replace-registry \
+  --registry "$HOME/.config/obsidian-ai-bridge/credentials.json" \
+  --client "Obsidian writer=read,write,delete" \
+  --client "Read client=read"
+```
+
+Every client receives a fresh ID and token. Deliberately reinstall each token, apply
+the all-new registry, verify required principals, and reconcile possibly committed
+in-flight effects before resuming. Registry loss never authorizes R2 reset, device-state
+reset, deletion, or restoration of an arbitrary stale registry.
 
 ## Deletion and recovery operations
 
@@ -198,7 +314,7 @@ All GETs are read-only.
 
 ```http
 GET <bridge-origin>/api/v2/recovery?cursor=<opaque-next-cursor>
-Authorization: Bearer <privileged-bearer>
+Authorization: Bearer <client-bearer>
 ```
 
 The response is one metadata-only page (at most 50 scanned objects) with
@@ -207,7 +323,7 @@ cursor. Do not manufacture or decode cursors.
 
 ```http
 GET <bridge-origin>/api/v2/recovery/<recovery-uuid>
-Authorization: Bearer <privileged-bearer>
+Authorization: Bearer <client-bearer>
 ```
 
 Inspect the closed metadata state and strong application `ETag`; this endpoint does
@@ -215,7 +331,7 @@ not return note text.
 
 ```http
 GET <bridge-origin>/api/v2/recovery/<recovery-uuid>/content
-Authorization: Bearer <privileged-bearer>
+Authorization: Bearer <client-bearer>
 ```
 
 Prepared and unexpired sealed content returns Markdown. Expired or purged content
@@ -229,7 +345,7 @@ canonical UUID-v4 operation identity:
 
 ```http
 POST <bridge-origin>/api/v2/recovery/<recovery-uuid>/seal
-Authorization: Bearer <privileged-bearer>
+Authorization: Bearer <client-bearer>
 Bridge-Association-Id: <association-uuid>
 Bridge-Writer-Id: <designated-writer-uuid>
 Bridge-Operation-Id: <fresh-operation-uuid>
@@ -248,7 +364,7 @@ After `recoverUntil`, use the exact sealed recovery ETag and a fresh operation U
 
 ```http
 POST <bridge-origin>/api/v2/recovery/<recovery-uuid>/purge
-Authorization: Bearer <privileged-bearer>
+Authorization: Bearer <client-bearer>
 Bridge-Association-Id: <association-uuid>
 Bridge-Writer-Id: <designated-writer-uuid>
 Bridge-Operation-Id: <fresh-operation-uuid>

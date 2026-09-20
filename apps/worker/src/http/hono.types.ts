@@ -1,11 +1,15 @@
 import type { OpenAPIHono } from "@hono/zod-openapi";
 import type { WorkerMirrorServices } from "@worker/app.types";
+import type { ClientPrincipal } from "@worker/auth/auth.types";
 import type { WorkerEnv } from "@worker/env/env.types";
 import type { Context, MiddlewareHandler } from "hono";
 import type { BlankInput, BlankSchema } from "hono/types";
 
 /** Context variables injected before request handlers execute. */
 export interface WorkerContextVariables {
+  /** Secret-free client identity on authenticated API paths; public routes leave it undefined. */
+  readonly clientPrincipal: ClientPrincipal | undefined;
+
   /** M3 application services resolved from the active environment bindings. */
   readonly mirrorServices: WorkerMirrorServices;
 }

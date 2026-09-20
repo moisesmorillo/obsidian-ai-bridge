@@ -21,6 +21,14 @@ import {
 } from "@obsidian-ai-bridge/protocol";
 import { createWorkerApp } from "@worker/app";
 import {
+  AUTHENTICATION_CONFIGURATION_MODE,
+  CLIENT_PERMISSION,
+} from "@worker/auth/auth.constants";
+import {
+  digestCredentialToken,
+  serializeCredentialRegistry,
+} from "@worker/auth/credential-registry";
+import {
   toOpenApiV2RoutePath,
   V2_ROUTE_POLICY,
 } from "@worker/http/v2-route-policy";
@@ -113,7 +121,10 @@ function application(
     app: createWorkerApp({
       logger,
       resolveMirrorServices: () => mirrorServices,
-      resolveToken: () => TOKEN,
+      resolveAuthentication: () => ({
+        mode: AUTHENTICATION_CONFIGURATION_MODE.singletonMigration,
+        token: TOKEN,
+      }),
     }),
     logger,
     mirrorServices,
@@ -158,6 +169,66 @@ describe("Worker v2 API", () => {
       expect(await errorCode(response)).toBe(API_ERROR_CODE.unauthorized);
       expect(response.headers.get("Access-Control-Allow-Origin")).toBe(cors);
     }
+  });
+
+  it("authenticates a registry principal without leaking token or digest in failure responses or logs", async () => {
+    const token = "registry-secret-fixture";
+    const tokenDigest = await digestCredentialToken(token);
+    const logger = new TestLogger();
+    const bucket = new MemoryMirrorBucket();
+    const app = createWorkerApp({
+      logger,
+      resolveMirrorServices: () => createTestMirrorServices(bucket),
+      resolveAuthentication: () => ({
+        mode: AUTHENTICATION_CONFIGURATION_MODE.credentialRegistry,
+        serializedRegistry: serializeCredentialRegistry({
+          version: 1,
+          credentials: [
+            {
+              clientId: "55555555-5555-4555-8555-555555555555",
+              name: "Registry writer",
+              permissions: [
+                CLIENT_PERMISSION.read,
+                CLIENT_PERMISSION.write,
+                CLIENT_PERMISSION.delete,
+              ],
+              tokenDigest,
+            },
+          ],
+        }),
+      }),
+    });
+
+    const accepted = await app.fetch(
+      request("/api/v2/mirror", {
+        headers: { Authorization: `Bearer ${token}` },
+      }),
+    );
+    expect(accepted.status).toBe(200);
+
+    const writeHeaders = mutationHeaders(990, { ifNoneMatch: "*" });
+    writeHeaders.set("Authorization", `Bearer ${token}`);
+    writeHeaders.set("Content-Type", "text/plain");
+    const compatibleWrite = await app.fetch(
+      request(noteRoute("Registry.md"), {
+        method: "PUT",
+        headers: writeHeaders,
+        body: "registry writer",
+      }),
+    );
+    expect(compatibleWrite.status).toBe(201);
+
+    const refused = await app.fetch(
+      request("/api/v2/mirror", {
+        headers: { Authorization: "Bearer wrong-secret-fixture" },
+      }),
+    );
+    expect(refused.status).toBe(401);
+    const observable = `${await refused.text()}${JSON.stringify(logger.entries)}`;
+    expect(observable).not.toContain(token);
+    expect(observable).not.toContain(tokenDigest);
+    expect(observable).not.toContain("wrong-secret-fixture");
+    expect(observable).not.toContain("Registry writer");
   });
 
   it("describes validated mirror configuration without secrets", async () => {
@@ -671,7 +742,10 @@ describe("Worker v2 API", () => {
         resolutions += 1;
         return createTestMirrorServices(bucket);
       },
-      resolveToken: () => TOKEN,
+      resolveAuthentication: () => ({
+        mode: AUTHENTICATION_CONFIGURATION_MODE.singletonMigration,
+        token: TOKEN,
+      }),
     });
     const valid = await app.fetch(
       request(`${noteRoute("Alpha.md")}/state`, {
@@ -1563,7 +1637,10 @@ describe("Worker v2 reviewed transport boundaries", () => {
         resolutions += 1;
         return createTestMirrorServices(bucket);
       },
-      resolveToken: () => TOKEN,
+      resolveAuthentication: () => ({
+        mode: AUTHENTICATION_CONFIGURATION_MODE.singletonMigration,
+        token: TOKEN,
+      }),
     });
     const id = operationId(901);
     const routes = [
@@ -1681,7 +1758,10 @@ describe("Worker v2 reviewed transport boundaries", () => {
         resolutions += 1;
         return createTestMirrorServices(bucket);
       },
-      resolveToken: () => TOKEN,
+      resolveAuthentication: () => ({
+        mode: AUTHENTICATION_CONFIGURATION_MODE.singletonMigration,
+        token: TOKEN,
+      }),
     });
     const aliases = [
       "/%61pi/v2/mirror",

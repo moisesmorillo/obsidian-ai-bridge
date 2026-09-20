@@ -2,11 +2,12 @@
 
 ## Status
 
-**Accepted; Slices 1–5 preservation contracts, narrow local port/adapter, and core
-effects are implemented.** They remain uncomposed from a user workflow; M3 behavior
-is unchanged. [ADR 0009](0009-m4-history-runtime-and-device-state-v4.md) adds the
-pending step-scoped history artifact identity without weakening existing create-only
-operation-scoped preservation.
+**Accepted and implemented by M4.** Slices 1–5 establish preservation contracts,
+the narrow local port/adapter, and core effects; Slices 6–7 compose the reviewed user
+workflow; Slice 8 qualifies the packaged preservation path. M3 behavior remains
+unchanged. [ADR 0009](0009-m4-history-runtime-and-device-state-v4.md) adds the
+implemented step-scoped history artifact identity without weakening existing
+create-only operation-scoped preservation.
 
 ## Context
 

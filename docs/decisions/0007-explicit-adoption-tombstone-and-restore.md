@@ -2,11 +2,12 @@
 
 ## Status
 
-**Accepted; Slices 1–5 core adoption, tombstone, local-first restore, local mutation,
-and conditional remote action behavior are implemented.** They remain uncomposed from
-the plugin runtime/UI, and existing M3 remote contracts are unchanged.
+**Accepted and implemented by M4.** Slices 1–5 establish core adoption, tombstone,
+local-first restore, local mutation, and conditional remote actions; Slices 6–7 compose
+them through the plugin runtime/UI; Slice 8 qualifies the packaged restore and
+conditional-resolution boundaries. Existing M3 remote contracts are unchanged.
 [ADR 0009](0009-m4-history-runtime-and-device-state-v4.md) preserves these action
-boundaries while refining pending history/runtime composition.
+boundaries in the implemented history/runtime composition.
 
 ## Context
 

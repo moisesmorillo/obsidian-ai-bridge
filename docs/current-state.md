@@ -1,23 +1,25 @@
 # Verified current state
 
-This snapshot records the completed M1 foundation, M2 local-inspection adapter, and
-M3 Slices 0–8. M2 source/tooling through `2e74b23` passed independent semantic
+This snapshot records completed M1–M4 repository implementation and qualification.
+M2 source/tooling through `2e74b23` passed independent semantic
 review and merged at `b300726` (PR #7). M3's completion PR #27 passed canonical
 validation and final semantic review; its three MINOR findings were corrected at
 `e97af36`, whose corrective review returned APPROVE with no open findings. PR #27
 merged at `63b0599`; M3 is COMPLETE and the M3→M4 transition is canonical.
-M4 is the single NEXT milestone; within it Slice 8 is NEXT. Its
-[implementation-ready specification](milestones/m4-remote-to-local-reconciliation-and-conflict-resolution.md),
+M4 Slices 1–8 are COMPLETE in this completion PR and M5 is the single NEXT
+milestone. The completed
+[specification](milestones/m4-remote-to-local-reconciliation-and-conflict-resolution.md),
 [sequential plan](plans/m4-remote-to-local-reconciliation-and-conflict-resolution.md),
-and ADRs 0005–0009 define the implemented Slices 1–7. The compatibility transition
-now uses strict device state v4 and runtime-owner version 4, frozen v2/v3 decoders,
-same-key exact read-back migration, content-free reviewed admission/effects, bounded
-parent-owned history steps and step-scoped archives. One owner-scoped scheduler serves
-M3 and M4. Synthetic local-effect identity/postconditions and conservative successor
-event ranges survive restart. Startup stales orphan reviews; sessions invalidate
-transient bodies; bounded recovery selection, two review commands, literal-text modals,
-and sanitized M4 status are composed. Worker/API behavior is unchanged. Slice 8
-artifact/manual qualification remains unimplemented.
+and ADRs 0005–0009 define the reviewed boundary. The compatibility transition uses
+strict device state v4 and runtime-owner version 4, frozen v2/v3 decoders, same-key
+exact read-back migration, content-free reviewed admission/effects, bounded parent-
+owned history steps and step-scoped archives. One owner-scoped scheduler serves M3 and
+M4. Synthetic local-effect identity/postconditions and conservative successor event
+ranges survive restart. Startup stales orphan reviews; sessions invalidate transient
+bodies; bounded recovery selection, two review commands, literal-text modals, and
+sanitized M4 status are composed. Worker/API behavior is unchanged. Slice 8 adds the
+packaged M4/stale/restore/replacement/leakage qualification and synchronized operations,
+security, diagnostics, coverage, links, and semantic-review evidence.
 M3 completed [Slice 0 platform qualification](qualification/m3-slice-0-platform-primitives.md),
 Slice 1's modern plugin baseline/shared typed contracts, Worker Slice 2A–2C's
 private storage/application transitions plus public safe v2 HTTP/OpenAPI/CORS, and
@@ -58,7 +60,7 @@ boundaries; [API](api.md) describes the HTTP contract.
 | Logging | LogTape 2.3.4 JSON-lines console sink via a thin injected adapter; completed-request events include operation, method, registered route template (or `unknown`), status and duration in milliseconds. No request IDs, per-client audit trail or error-code field yet. Application events do not include tokens, bodies, concrete note paths or raw exceptions. | `apps/worker/src/logging/`, logging and Worker tests |
 | Plugin | `AiBridgePlugin` preserves the two M2 inspection commands and composes M3 through one enable-lifetime session attached to a versioned same-App-realm facade. Focused host owners govern listener epochs, configuration/connection admission, reconciliation progress and staged-handoff verification. Official saved Vault events register before layout readiness; every replacement listener gap gets a fresh positive-only scan while retained reservations/settlement survive and scan absence grants no delete authority. Positive admission refreshes the one-shot scheduler before reporting inventory settles. Staged handoff events advance durable generations and invalidate sampled metadata before atomic align/activate. Modern declarative settings persist only endpoint/loopback consent/native secret reference, display non-secret device/server designation, and require whole-scope/plaintext/deletion trust consent; dispatch retrieves the bearer from SecretStorage. Missing/failing Web Crypto fences mutation and wake scheduling while retaining dirty state for explicit recovery. Sanitized status and check/retry/pause/resume/handoff controls expose no body, token or raw transport error. M4 Slices 6–7 strictly load v4 or migrate validated v2→v3→v4 through one same-key save plus exact read-back before owner publication; runtime registry/owner version 4 refuses older reuse. Reviewed M4 commands, text-only modals, session invalidation, startup orphan staling, shared scheduling, event-first successor fencing, recovery selection and sanitized status are composed. Before publication, a read-only startup transition resolves migrated v3 local effects from durable expected postconditions without redispatch: exact bytes resume as `recovered-v3`, absent/changed bytes stay blocked, ambiguous evidence remains retryable, and failed persistence aborts startup. Incompatible registries fail closed. Local create/replace is reachable only through reviewed operations and exact evidence; there is no editor event, local delete/move/rename, capability fallback, deployment or real-host qualification. Manifest remains `ai-bridge`, minimum `1.13.0`, non-desktop-only. | `apps/obsidian-plugin/src/{main.ts,commands/,configuration/,events/,runtime/,status/,remote/,state/}`, dedicated plugin unit/integration/artifact suites |
 | Local safety | Shared literal `.md` path and 1 MiB policy; dot-prefixed/configuration-directory exclusions; pre-read metadata and post-read UTF-8 bound; exact lookup and pre/post object/path/mtime/size checks. M4's separate reviewed-write adapter supports only official lookup/create/createFolder/read/process operations, fixed generated conflict paths, create-only collision rules, atomic exact-text replacement, and post-effect identity/hash verification. It is composed only behind admitted reviewed operations. No delete/rename/move, raw filesystem, path repair/URI decoding, Markdown-rendered content UI, or cross-system atomicity claim. | `packages/core/src/local-vault/`, `apps/obsidian-plugin/src/infrastructure/`, focused adapter tests |
-| Plugin artifact | Browser-target CommonJS exposes `module.exports.default`, keeps only `obsidian` external, and stages the unchanged manifest. Six generated-artifact tests exercise modern declarative SecretStorage settings, official saved Vault event/layout-ready wiring, a real packaged event→core→Fetch v2 conditional PUT with canonical path/identity/operation headers, same-realm in-flight owner reuse across fresh bundle evaluation, incompatible-registry fail-closed behavior, M2 lifecycle continuity, and Node/fixture/secret/machine-path leakage negatives. No real desktop/mobile host was tested. | `.mise.toml`, `apps/obsidian-plugin/tests/artifact/main.test.ts`, [qualification and operating evidence](plugin-development.md) |
+| Plugin artifact | Browser-target CommonJS exposes `module.exports.default`, keeps only `obsidian` external, and stages the unchanged manifest. Eleven generated-artifact tests retain the M2/M3 packaging/runtime checks and add literal hostile-text preview, one packaged review→preservation→conditional v2 Keep local path with exact identity/revision semantics, stale session/local-event/remote-revision refusal, local-only pending restore, compatible M4 owner retention, incompatible-registry refusal, and credential/body/Node/raw-filesystem/private-key/machine-path leakage negatives. No real desktop/mobile host was tested. | `.mise.toml`, `apps/obsidian-plugin/tests/artifact/main.test.ts`, [qualification and operating evidence](plugin-development.md) |
 | Core | Public branded identifier/path utilities, `NoteService`/`VaultNoteService`, `VaultRepository`, size limit and typed payload/storage errors. M3 adds platform-independent UUID-v4 IDs, ETags, digests, closed current/recovery/intent/effect contracts, generation-bound conditional ports, current-generation/recovery orchestration, Slice 3's closed device/per-path ledger and serialized state owner, and Slice 4's `RemoteBridge`. Slice 5 adds `MirrorSynchronizer`, a fair two-slot/one-path scheduler, bounded reporting inventory, positive observation generations, 750 ms/5 s coalescing, exact-ACK/evidence reconciliation and durable three-attempt/three-evidence budgets. Slice 6 adds durable event-only delete authority, five-second grace/exact absence, recovery-first tombstone execution through the same finite intent/evidence machinery, exact tombstone recreation, destination-first two-path rename with durable/deferred cleanup prerequisites, lexical reservations, and bounded pre-event folder-descendant expansion. M4 uses closed authority/classification/action/review/operation/evidence/preservation contracts, bounded sparse state-v4 collections, and linear cross-field validation. Its corrected immutable review snapshot captures runtime/configuration/listener identity, per-path local/ACK/remote/M3 evidence, exact remote receipts and recovery metadata. Preservation receipts are checked against evidence-derived side/revision/hash requirements, and `restored-pending-review` reservations durably fence ordinary M3 scheduling until a linked reviewed successor takes ownership. Focused lifecycle planner, deletion executor, rename executor and durable transition owner keep policy out of the facade. Positive work starts fail-closed until a current handshake and one indexed durable bootstrap batch succeed; local/capacity/stale/persistence failures remain inactive. Reporting inventory may remain pending in one shared slot while positive work settles in the other. Lifecycle, global and persistence fences suppress mutation admission and wake deadlines while preserving unresolved evidence. M4 Slice 3 keeps `ReadOnlyLocalVault` unchanged and adds a separate three-command `LocalReconciliationWriter`; focused services authorize exact operation/action/path/phase/reservation/evidence, persist prepared effects or pending preservation receipts before dispatch, post-verify evidence, retain unknown certainty, and allow only exact same-operation recovery. Slices 4–5 compose those primitives inside core for archive-first live resolution, exact adoption and legacy fork, explicit tombstone resolution, and local-first recovery restore. A shared effect executor performs exact barriers, conditional remote settlement, receipt recovery and atomic baseline completion; restored paths remain fenced until a fresh reviewed successor atomically takes ownership. Core still imports no Obsidian, Fetch/HTTP, Hono, Cloudflare, filesystem or protocol dependency. | `packages/core/src/`, package exports |
 | Protocol | Strict Zod schemas and inferred DTOs for health, errors, retained v1 responses, and bounded M3 identity, NotePath, precondition, receipt, current-state, recovery, intent, capability/result and pagination contracts. Stable public HTTP methods/statuses and v2 route roots, child segments, query/header names and media types are also owned here and consumed by Worker/OpenAPI/plugin adapters; adapter-private route syntax, response classification and CORS policy remain outside. The reserved version `0.1` envelope remains unused rather than being silently repurposed. | `packages/protocol/src/` |
 
@@ -83,8 +85,8 @@ boundaries; [API](api.md) describes the HTTP contract.
   prohibition, direct-console prohibition and configured documentation rules.
   These checks do **not** prove all architecture/TSDoc requirements in
   [AGENTS.md](../AGENTS.md); manual semantic review remains mandatory.
-- Vitest **5**: **70 source test files / 1040 tests**, plus **1 generated-artifact
-  file / 6 tests** executed by the build task. The unchanged M1 baseline had
+- Vitest **5**: **75 source test files / 1,194 tests**, plus **1 generated-artifact
+  file / 11 tests** executed by the build task. The unchanged M1 baseline had
   15 files / 105 tests. Exact slice validation is recorded in the
   [implementation plan](plans/m2-obsidian-read-only-local-adapter.md).
 - Worker unit tests live under `apps/worker/tests/unit/` (auth, HTTP, R2 adapter,
@@ -102,10 +104,12 @@ boundaries; [API](api.md) describes the HTTP contract.
   `*.types.ts`, build/output and Wrangler state. Reports: text, JSON summary, LCOV.
   Global thresholds: **lines 95%, statements 95%, functions 94%, branches 90%**.
   Coverage is a regression signal, not proof of test quality.
-- Root Vitest projects include shared packages, Worker and plugin. M4 Slices 4–5 source
-  coverage is statements **95.02%**, branches **91.07%**, functions **98.41%**, lines
-  **97.10%**; thresholds and production inclusion remain enforced. Artifact tests are separate
-  from source coverage, run after packaging and never replace behavioral coverage.
+- Root Vitest projects include shared packages, Worker and plugin. Final M4 source
+  coverage is statements **95.02% (7,330/7,714)**, branches **90.62%
+  (5,875/6,483)**, functions **98.12% (1,623/1,654)**, and lines **96.96%
+  (6,965/7,183)**; thresholds and production inclusion remain enforced. Artifact tests
+  are separate from source coverage, run after packaging and never replace behavioral
+  coverage.
 - The Worker declares Miniflare **5.20260908.0-alpha** directly for its storage
   qualification task, exactly matching Wrangler **4.130.0** and workerd
   **1.20260908.1**. The task runs under Node and is part of `check`; it uses no
@@ -131,13 +135,14 @@ including atomic indexed alignment batches. Slices 5–6 implement core bootstra
 positive-event coalescing, path scheduling, finite retry/evidence policy and runtime
 deletion/recreation/rename orchestration; Slice 7 composes them with the Fetch client
 through official host callbacks, settings, timers and same-realm ownership. M3 has
-no remote-to-local writes; M4 Slices 6–7 now expose only explicit reviewed local
-create/replace actions. Slice 8's artifact, operational, validation and semantic
+no remote-to-local writes; M4 Slices 6–7 expose only explicit reviewed local
+create/replace actions. M3 Slice 8's artifact, operational, validation, and semantic
 review gates passed; the corrective review of `e97af36` returned APPROVE. PR #27
-merged at `63b0599`; M3 is COMPLETE and the transition is canonical. M4 is NEXT with
-Slices 1–7's reviewed contracts, strict state-v4 migration, preservation/local-write
-seams, live/adoption/tombstone/restore/history execution, and plugin runtime/UI
-composition implemented. Slice 8 qualification is NEXT. The accepted M4 design remains
+merged at `63b0599`; M3 is COMPLETE and its transition is canonical. M4 is COMPLETE
+in this completion PR with reviewed contracts, strict state-v4
+migration, preservation/local-write seams, live/adoption/tombstone/restore/history
+execution, plugin runtime/UI composition, and Slice 8 qualification. M5 is NEXT and
+planning-only. The accepted M4 design remains
 reviewed-only: exact format-2 revisions may be adopted, competing bytes are preserved
 before replacement, remote tombstones require explicit choices without plugin local
 delete/move, recovery restore is local-only first, legacy same-path adoption remains

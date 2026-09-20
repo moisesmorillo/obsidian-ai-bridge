@@ -8,6 +8,7 @@ import {
   type SettingDefinition,
   type SettingDefinitionItem,
   TFile,
+  TFolder,
 } from "obsidian";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -29,9 +30,16 @@ const manifestText = readFileSync(
 const DEVICE_ID = "11111111-1111-4111-8111-111111111111";
 const ASSOCIATION_ID = "22222222-2222-4222-8222-222222222222";
 const REVISION = "44444444-4444-4444-8444-444444444444";
+const REMOTE_REVISION = "55555555-5555-4555-8555-555555555555";
+const RESOLVED_REVISION = "66666666-6666-4666-8666-666666666666";
+const REMOTE_OPERATION_ID = "77777777-7777-4777-8777-777777777777";
+const RECOVERY_ID = "88888888-8888-4888-8888-888888888888";
+const RECOVERY_REVISION = "99999999-9999-4999-8999-999999999999";
 const NOTE_PATH = "artifact/100% 雪.md";
 const ENCODED_NOTE_PATH = "YXJ0aWZhY3QvMTAwJSDpm6oubWQ";
 const NOTE_BODY = "ARTIFACT-FIXTURE-NOTE-BODY";
+const MALICIOUS_REMOTE_BODY =
+  "# Untrusted\n<script>globalThis.compromised = true</script>\n[run](command:erase-vault)";
 const RECOVERY_BODY = "ARTIFACT-FIXTURE-RECOVERY-BODY";
 const BEARER = "ARTIFACT-FIXTURE-BEARER";
 const SECRET_REFERENCE = "artifact-secret-reference";
@@ -41,6 +49,18 @@ interface ArtifactRealmOptions {
   readonly fetch?: (url: URL, init: RequestInit) => Promise<Response>;
   readonly performance?: Pick<Performance, "now">;
   readonly window?: Pick<Window, "setTimeout" | "clearTimeout">;
+}
+
+interface ArtifactLivePathState {
+  readonly path: string;
+  readonly acknowledgement: {
+    readonly kind: "live";
+    readonly revision: string;
+    readonly contentSha256: string;
+  };
+  readonly unresolvedMutation: null;
+  readonly desired: { readonly kind: "none" };
+  readonly blockedReason: null;
 }
 
 /**
@@ -150,13 +170,18 @@ function command(id: string): () => Promise<void> {
   };
 }
 
-/** Installs strict active-writer state/preferences without importing source codecs. */
-function configureActiveWriter(): void {
+/**
+ * Installs strict active-writer state/preferences without importing source codecs.
+ * @param paths - Exact content-free durable path records.
+ */
+function configureActiveWriter(
+  paths: readonly ArtifactLivePathState[] = [],
+): void {
   obsidian.host.localStorage.set(
     STATE_KEY,
     JSON.stringify({
       format: "obsidian-ai-bridge-device-state",
-      version: 3,
+      version: 4,
       deviceId: DEVICE_ID,
       lifecycle: {
         kind: "active",
@@ -164,7 +189,7 @@ function configureActiveWriter(): void {
         origin: "https://bridge.example",
       },
       globalBlockReason: null,
-      paths: [],
+      paths,
       stagedHandoff: null,
       reconciliationReviews: [],
       reconciliationOperations: [],
@@ -180,17 +205,40 @@ function configureActiveWriter(): void {
   obsidian.host.secrets.set(SECRET_REFERENCE, BEARER);
 }
 
-/** @returns One eligible saved file in the host double. */
-function addSavedNote(): TFile {
+/**
+ * Installs one exact live acknowledgement for packaged M4 qualification.
+ * @param contentSha256 - Exact local or historical baseline text digest.
+ */
+function configureLiveBaseline(contentSha256: string): void {
+  configureActiveWriter([
+    {
+      path: NOTE_PATH,
+      acknowledgement: {
+        kind: "live",
+        revision: REVISION,
+        contentSha256,
+      },
+      unresolvedMutation: null,
+      desired: { kind: "none" },
+      blockedReason: null,
+    },
+  ]);
+}
+
+/**
+ * @param content - Exact saved text to expose through the host.
+ * @returns One eligible saved file in the host double.
+ */
+function addSavedNote(content = NOTE_BODY): TFile {
   const file = new TFile();
   file.path = NOTE_PATH;
   file.stat = {
-    size: new TextEncoder().encode(NOTE_BODY).byteLength,
+    size: new TextEncoder().encode(content).byteLength,
     mtime: 1_000,
     ctime: 1_000,
   };
   obsidian.host.files.set(file.path, file);
-  obsidian.host.contents.set(file, NOTE_BODY);
+  obsidian.host.contents.set(file, content);
   return file;
 }
 
@@ -225,6 +273,375 @@ function json(
     status,
     headers: responseHeaders,
   });
+}
+
+interface CapturedRequest {
+  readonly url: URL;
+  readonly init: RequestInit;
+}
+
+interface ReviewServer {
+  readonly fetch: (url: URL, init: RequestInit) => Promise<Response>;
+  readonly requests: CapturedRequest[];
+  setRemote(revision: string, content: string): void;
+  resolvePendingMutation(): Promise<void>;
+}
+
+/**
+ * Creates one stateful v2 server double used only through packaged Fetch calls.
+ * @param pendingMutation - Whether the reviewed PUT remains unsettled until replacement.
+ * @returns Captured v2 server behavior and mutation controls.
+ */
+async function createReviewServer(
+  pendingMutation = false,
+): Promise<ReviewServer> {
+  let remoteRevision = REMOTE_REVISION;
+  let parentRevision = REVISION;
+  let remoteContent = MALICIOUS_REMOTE_BODY;
+  let receiptOperationId = REMOTE_OPERATION_ID;
+  let pendingRequest: CapturedRequest | null = null;
+  const pending = pendingMutation ? Promise.withResolvers<Response>() : null;
+  const requests: CapturedRequest[] = [];
+
+  /**
+   * Builds the exact acknowledgement for one captured conditional update.
+   * @param request - Captured reviewed PUT.
+   * @returns Exact format-2 acknowledgement response.
+   */
+  const mutationResponse = async (request: CapturedRequest) => {
+    const headers = new Headers(request.init.headers);
+    const operationId = headers.get("Bridge-Operation-Id");
+    if (operationId === null || typeof request.init.body !== "string") {
+      return json(
+        { error: { code: "invalid_request", message: "Invalid request." } },
+        400,
+      );
+    }
+    const contentSha256 = await sha256(request.init.body);
+    remoteContent = request.init.body;
+    parentRevision = remoteRevision;
+    receiptOperationId = operationId;
+    remoteRevision = RESOLVED_REVISION;
+    return json(
+      {
+        path: NOTE_PATH,
+        revision: remoteRevision,
+        receipt: {
+          action: "update",
+          associationId: ASSOCIATION_ID,
+          operationId,
+          precondition: {
+            kind: "matching-revision",
+            revision: parentRevision,
+          },
+          contentSha256,
+        },
+      },
+      200,
+      { ETag: `"m3-${remoteRevision}"` },
+    );
+  };
+
+  const fetch = async (url: URL, init: RequestInit): Promise<Response> => {
+    const request = { url, init };
+    requests.push(request);
+    if (url.pathname === "/api/v2/mirror") {
+      return json({
+        protocol: "obsidian-ai-bridge-mirror-v2",
+        associationId: ASSOCIATION_ID,
+        writerId: DEVICE_ID,
+        maxNoteSizeBytes: 1024 * 1024,
+        maxPageSize: 50,
+        recoveryRetentionSeconds: 2_592_000,
+      });
+    }
+    if (url.pathname === "/api/v2/notes") {
+      return json({ notes: [NOTE_PATH], nextCursor: null });
+    }
+    if (url.pathname === "/api/v2/recovery") {
+      return json({ recoveries: [], nextCursor: null });
+    }
+    if (url.pathname === `/api/v2/notes/${ENCODED_NOTE_PATH}/state`) {
+      const contentSha256 = await sha256(remoteContent);
+      return json(
+        {
+          kind: "live",
+          path: NOTE_PATH,
+          revision: remoteRevision,
+          contentSha256,
+          receipt: {
+            action: "update",
+            associationId: ASSOCIATION_ID,
+            operationId: receiptOperationId,
+            precondition: {
+              kind: "matching-revision",
+              revision: parentRevision,
+            },
+            contentSha256,
+          },
+        },
+        200,
+        { ETag: `"m3-${remoteRevision}"` },
+      );
+    }
+    if (
+      url.pathname === `/api/v2/notes/${ENCODED_NOTE_PATH}` &&
+      init.method === "GET"
+    ) {
+      return new Response(remoteContent, {
+        headers: {
+          "Content-Type": "text/markdown; charset=utf-8",
+          "Bridge-Note-Format": "2",
+          ETag: `"m3-${remoteRevision}"`,
+        },
+      });
+    }
+    if (
+      url.pathname === `/api/v2/notes/${ENCODED_NOTE_PATH}` &&
+      init.method === "PUT"
+    ) {
+      if (
+        new Headers(init.headers).get("If-Match") !== `"m3-${remoteRevision}"`
+      ) {
+        return json(
+          { error: { code: "precondition_failed", message: "Stale." } },
+          412,
+        );
+      }
+      if (pending !== null) {
+        pendingRequest = request;
+        return pending.promise;
+      }
+      return mutationResponse(request);
+    }
+    return json({ error: { code: "not_found", message: "Not found." } }, 404);
+  };
+
+  return {
+    fetch,
+    requests,
+    setRemote: (revision, content) => {
+      parentRevision = remoteRevision;
+      receiptOperationId = REMOTE_OPERATION_ID;
+      remoteRevision = revision;
+      remoteContent = content;
+    },
+    resolvePendingMutation: async () => {
+      if (pending === null || pendingRequest === null) {
+        throw new Error("Expected one pending packaged mutation.");
+      }
+      pending.resolve(await mutationResponse(pendingRequest));
+    },
+  };
+}
+
+/**
+ * Creates an exact read-only tombstone/recovery server for packaged restore.
+ * @returns Captured server behavior and requests.
+ */
+async function createRecoveryServer() {
+  const contentSha256 = await sha256(RECOVERY_BODY);
+  const requests: CapturedRequest[] = [];
+  const metadata = {
+    kind: "prepared",
+    id: RECOVERY_ID,
+    associationId: ASSOCIATION_ID,
+    path: NOTE_PATH,
+    revision: RECOVERY_REVISION,
+    sourceRevision: REVISION,
+    contentSha256,
+  };
+  const fetch = async (url: URL, init: RequestInit): Promise<Response> => {
+    requests.push({ url, init });
+    if (url.pathname === "/api/v2/mirror") {
+      return json({
+        protocol: "obsidian-ai-bridge-mirror-v2",
+        associationId: ASSOCIATION_ID,
+        writerId: DEVICE_ID,
+        maxNoteSizeBytes: 1024 * 1024,
+        maxPageSize: 50,
+        recoveryRetentionSeconds: 2_592_000,
+      });
+    }
+    if (url.pathname === "/api/v2/notes") {
+      return json({ notes: [], nextCursor: null });
+    }
+    if (url.pathname === "/api/v2/recovery") {
+      return json({ recoveries: [metadata], nextCursor: null });
+    }
+    if (url.pathname === `/api/v2/recovery/${RECOVERY_ID}/content`) {
+      return new Response(RECOVERY_BODY, {
+        headers: {
+          "Content-Type": "text/markdown; charset=utf-8",
+          "Bridge-Note-Format": "2",
+          ETag: `"m3-${RECOVERY_REVISION}"`,
+        },
+      });
+    }
+    if (url.pathname === `/api/v2/recovery/${RECOVERY_ID}`) {
+      return json(metadata, 200, {
+        ETag: `"m3-${RECOVERY_REVISION}"`,
+      });
+    }
+    if (url.pathname === `/api/v2/notes/${ENCODED_NOTE_PATH}/state`) {
+      return json(
+        {
+          kind: "tombstone",
+          path: NOTE_PATH,
+          revision: REMOTE_REVISION,
+          deletedRevision: REVISION,
+          recoveryId: RECOVERY_ID,
+          receipt: {
+            action: "tombstone",
+            associationId: ASSOCIATION_ID,
+            operationId: RECOVERY_ID,
+            precondition: {
+              kind: "matching-revision",
+              revision: REVISION,
+            },
+          },
+        },
+        200,
+        { ETag: `"m3-${REMOTE_REVISION}"` },
+      );
+    }
+    return json({ error: { code: "not_found", message: "Not found." } }, 404);
+  };
+  return { fetch, requests };
+}
+
+/** @returns Official create/folder/process behavior without a raw adapter. */
+function installVaultMutationHost(): void {
+  const folders = new Map<string, TFolder>();
+  obsidian.host.vault.getAbstractFileByPath.mockImplementation(
+    (path) => obsidian.host.files.get(path) ?? folders.get(path) ?? null,
+  );
+  obsidian.host.vault.createFolder.mockImplementation(async (path) => {
+    if (obsidian.host.files.has(path) || folders.has(path)) {
+      throw new Error("Path collision");
+    }
+    const folder = new TFolder();
+    folder.path = path;
+    folders.set(path, folder);
+    return folder;
+  });
+  obsidian.host.vault.create.mockImplementation(async (path, content) => {
+    if (obsidian.host.files.has(path) || folders.has(path)) {
+      throw new Error("Path collision");
+    }
+    const file = new TFile();
+    file.path = path;
+    file.stat = {
+      size: new TextEncoder().encode(content).byteLength,
+      mtime: 2_000,
+      ctime: 2_000,
+    };
+    obsidian.host.files.set(path, file);
+    obsidian.host.contents.set(file, content);
+    return file;
+  });
+  obsidian.host.vault.process.mockImplementation(async (file, update) => {
+    const next = update(obsidian.host.contents.get(file) ?? "");
+    obsidian.host.contents.set(file, next);
+    file.stat.size = new TextEncoder().encode(next).byteLength;
+    return next;
+  });
+}
+
+/** @returns One visible modal or fails when the packaged command did not open it. */
+function visibleModal(): obsidian.Modal {
+  const modal = [...obsidian.host.modals].at(-1);
+  if (modal === undefined) throw new Error("Expected a visible modal.");
+  return modal;
+}
+
+/**
+ * @param modal - Visible packaged modal.
+ * @param label - Exact text-only control label.
+ * @returns Matching immediate button.
+ */
+function modalButton(modal: obsidian.Modal, label: string) {
+  const button = modal.contentEl
+    .querySelectorAll("button")
+    .find((candidate) => candidate.textContent === label);
+  if (button === undefined) throw new Error(`Missing modal button: ${label}`);
+  return button;
+}
+
+/** @returns Verification of current association/designation through packaged settings. */
+async function verifyPackagedServerIdentity(): Promise<void> {
+  const settings = [...obsidian.host.settingsTabs][0];
+  if (settings === undefined) throw new Error("Expected packaged settings.");
+  const identity = findSetting(
+    settings.settingItems,
+    "Authenticated server identity",
+  );
+  if (identity.action === undefined) {
+    throw new Error("Expected server identity action.");
+  }
+  Reflect.apply(identity.action, undefined, [undefined, 0]);
+  await vi.waitFor(() =>
+    expect(obsidian.host.notices.at(-1)?.message).toBe(
+      "Server association and writer designation verified.",
+    ),
+  );
+}
+
+/**
+ * Loads a tracked packaged writer and opens one exact remote-ahead review.
+ * @param server - Stateful v2 server double.
+ * @returns Packaged realm, host identities, modal, and saved note.
+ */
+async function openPackagedReview(server: ReviewServer) {
+  configureLiveBaseline(await sha256(NOTE_BODY));
+  installVaultMutationHost();
+  const file = addSavedNote();
+  let now = 0;
+  const timers = new Map<number, () => void>();
+  let nextTimer = 1;
+  const realm = new ArtifactRealm({
+    fetch: server.fetch,
+    performance: { now: () => now },
+    window: {
+      setTimeout: (callback: TimerHandler) => {
+        if (typeof callback !== "function") {
+          throw new Error("Expected a callback timer.");
+        }
+        const handle = nextTimer++;
+        timers.set(handle, () => Reflect.apply(callback, undefined, []));
+        return handle;
+      },
+      clearTimeout: (handle?: number) => {
+        if (handle !== undefined) timers.delete(handle);
+      },
+    },
+  });
+  const app = new App();
+  const plugin = await realm.load(app);
+  obsidian.host.becomeLayoutReady();
+  await vi.waitFor(() => expect(timers.size).toBeGreaterThan(0));
+  now = 1_000;
+  const wakes = [...timers.values()];
+  timers.clear();
+  for (const wake of wakes) wake();
+  await vi.waitFor(() =>
+    expect(obsidian.host.localStorage.get(STATE_KEY)).toContain(
+      '"blockedReason":"diverged"',
+    ),
+  );
+  await verifyPackagedServerIdentity();
+  await command("ai-bridge:review-remote-divergence")();
+  await vi.waitFor(() => expect(obsidian.host.modals.size).toBe(1));
+  const modal = visibleModal();
+  modalButton(modal, NOTE_PATH).click();
+  await vi.waitFor(() =>
+    expect(
+      modal.contentEl
+        .querySelectorAll("button")
+        .some((candidate) => candidate.textContent === "keep-local"),
+    ).toBe(true),
+  );
+  return { app, file, modal, plugin, realm };
 }
 
 /**
@@ -273,9 +690,10 @@ describe("packaged Obsidian main.js", () => {
     expect(bundle).not.toContain("OBSIDIAN_BRIDGE_TOKEN");
     expect(bundle).not.toContain("CLOUDFLARE_API_TOKEN");
     expect(bundle).not.toContain(NOTE_BODY);
+    expect(bundle).not.toContain(MALICIOUS_REMOTE_BODY);
     expect(bundle).not.toContain(RECOVERY_BODY);
     expect(bundle).not.toMatch(
-      /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----|\/(?:Users|home)\/[^/\s]+\/|[A-Za-z]:\\Users\\/,
+      /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----|\/(?:Users|home)\/[^/\s]+\/|[A-Za-z]:\\Users\\|\bDeno\.|\.adapter\.(?:read|write|remove|rename)\b/,
     );
   });
 
@@ -605,6 +1023,176 @@ describe("packaged Obsidian main.js", () => {
     ).toHaveLength(1);
     expect(obsidian.host.contents.get(file)).toBe(NOTE_BODY);
     runtimeB.unload();
+  });
+
+  it("renders untrusted Markdown literally and retains one reviewed preservation resolution across compatible replacement", async () => {
+    const server = await createReviewServer(true);
+    const { app, modal, plugin, realm } = await openPackagedReview(server);
+
+    modalButton(modal, "Show remote text preview").click();
+    const preview = modal.contentEl
+      .querySelectorAll("pre")
+      .find((candidate) => candidate.textContent === MALICIOUS_REMOTE_BODY);
+    expect(preview?.textContent).toBe(MALICIOUS_REMOTE_BODY);
+    expect(preview?.children).toEqual([]);
+    expect(Reflect.get(globalThis, "compromised")).toBeUndefined();
+
+    modalButton(modal, "keep-local").click();
+    await vi.waitFor(() =>
+      expect(
+        server.requests.filter(({ init }) => init.method === "PUT"),
+      ).toHaveLength(1),
+    );
+    const mutation = server.requests.find(({ init }) => init.method === "PUT");
+    if (mutation === undefined) throw new Error("Expected reviewed v2 PUT.");
+    const headers = new Headers(mutation.init.headers);
+    const operationId = headers.get("Bridge-Operation-Id");
+    if (operationId === null)
+      throw new Error("Expected reviewed operation ID.");
+    expect(mutation.url.pathname).toBe(`/api/v2/notes/${ENCODED_NOTE_PATH}`);
+    expect(mutation.init.body).toBe(NOTE_BODY);
+    expect(headers.get("Authorization")).toBe(`Bearer ${BEARER}`);
+    expect(headers.get("Bridge-Association-Id")).toBe(ASSOCIATION_ID);
+    expect(headers.get("Bridge-Writer-Id")).toBe(DEVICE_ID);
+    expect(headers.get("If-Match")).toBe(`"m3-${REMOTE_REVISION}"`);
+    expect(headers.has("If-None-Match")).toBe(false);
+    expect(
+      server.requests.every(({ url }) => url.pathname.startsWith("/api/v2/")),
+    ).toBe(true);
+    const preservationPath = `.ai-bridge-conflicts/${operationId}/remote.md`;
+    const preservation = obsidian.host.files.get(preservationPath);
+    expect(preservation).toBeDefined();
+    expect(
+      preservation === undefined
+        ? undefined
+        : obsidian.host.contents.get(preservation),
+    ).toBe(MALICIOUS_REMOTE_BODY);
+
+    const loadsBeforeReplacement =
+      obsidian.host.loadLocalStorage.mock.calls.length;
+    plugin.unload();
+    const replacement = await realm.load(app);
+    expect(obsidian.host.loadLocalStorage).toHaveBeenCalledTimes(
+      loadsBeforeReplacement,
+    );
+    expect(
+      server.requests.filter(({ init }) => init.method === "PUT"),
+    ).toHaveLength(1);
+
+    await server.resolvePendingMutation();
+    await vi.waitFor(() => {
+      const persisted = obsidian.host.localStorage.get(STATE_KEY);
+      if (typeof persisted !== "string") {
+        throw new Error("Expected persisted reviewed operation.");
+      }
+      expect(persisted).toContain(operationId);
+      expect(persisted).toContain('"phase":"evidence-required"');
+      expect(persisted).toContain('"remoteEffect":"unknown"');
+    });
+    expect(
+      server.requests.filter(({ init }) => init.method === "PUT"),
+    ).toHaveLength(1);
+    const original = obsidian.host.files.get(NOTE_PATH);
+    if (original === undefined) throw new Error("Expected original note.");
+    expect(obsidian.host.contents.get(original)).toBe(NOTE_BODY);
+    replacement.unload();
+  });
+
+  it.each(["session", "local-event", "remote-revision"] as const)(
+    "rejects a stale %s review before packaged mutation",
+    async (staleDimension) => {
+      const server = await createReviewServer();
+      const { file, modal, plugin } = await openPackagedReview(server);
+      const keepLocal = modalButton(modal, "keep-local");
+
+      if (staleDimension === "session") {
+        plugin.unload();
+        keepLocal.disabled = false;
+      }
+      if (staleDimension === "local-event") {
+        obsidian.host.emitVault("modify", file);
+        await Promise.resolve();
+        await Promise.resolve();
+      }
+      if (staleDimension === "remote-revision") {
+        server.setRemote(
+          RESOLVED_REVISION,
+          `${MALICIOUS_REMOTE_BODY}\nchanged`,
+        );
+      }
+      keepLocal.click();
+
+      await vi.waitFor(() =>
+        expect(
+          modal.contentEl.children.map((child) => child.textContent).join("\n"),
+        ).toContain("stale or unavailable"),
+      );
+      expect(
+        server.requests.filter(({ init }) => init.method === "PUT"),
+      ).toHaveLength(0);
+      expect(obsidian.host.vault.create).not.toHaveBeenCalled();
+      if (staleDimension !== "session") plugin.unload();
+    },
+  );
+
+  it("restores exact recovery bytes locally without remote mutation and keeps reviewed pending ownership", async () => {
+    configureLiveBaseline(await sha256(RECOVERY_BODY));
+    installVaultMutationHost();
+    const server = await createRecoveryServer();
+    const plugin = await new ArtifactRealm({ fetch: server.fetch }).load();
+    obsidian.host.becomeLayoutReady();
+    await vi.waitFor(() =>
+      expect(
+        [...obsidian.host.statusBars].some((item) =>
+          item.textContent.includes("0 pending"),
+        ),
+      ).toBe(true),
+    );
+
+    await verifyPackagedServerIdentity();
+    await command("ai-bridge:restore-recovery-snapshot")();
+    await vi.waitFor(() => expect(obsidian.host.modals.size).toBe(1));
+    const modal = visibleModal();
+    modalButton(modal, `${NOTE_PATH} — prepared`).click();
+    await vi.waitFor(() =>
+      expect(
+        modal.contentEl
+          .querySelectorAll("button")
+          .some(
+            (candidate) => candidate.textContent === "Confirm recovery restore",
+          ),
+      ).toBe(true),
+    );
+    const confirmation = modal.contentEl.querySelectorAll("input")[0];
+    if (confirmation === undefined) {
+      throw new Error("Expected exact recovery destination confirmation.");
+    }
+    confirmation.value = NOTE_PATH;
+    modalButton(modal, "Confirm recovery restore").click();
+
+    await vi.waitFor(() => {
+      const restored = obsidian.host.files.get(NOTE_PATH);
+      expect(restored).toBeDefined();
+      expect(
+        restored === undefined
+          ? undefined
+          : obsidian.host.contents.get(restored),
+      ).toBe(RECOVERY_BODY);
+      const persisted = obsidian.host.localStorage.get(STATE_KEY);
+      if (typeof persisted !== "string") {
+        throw new Error("Expected persisted restore fence.");
+      }
+      expect(persisted).toContain('"phase":"restored-pending-review"');
+    });
+    expect(
+      server.requests.filter(({ init }) =>
+        ["PUT", "DELETE", "POST"].includes(init.method ?? "GET"),
+      ),
+    ).toHaveLength(0);
+    expect(
+      server.requests.every(({ url }) => url.pathname.startsWith("/api/v2/")),
+    ).toBe(true);
+    plugin.unload();
   });
 
   it("fails closed when the generated bundle encounters an incompatible registry version", async () => {

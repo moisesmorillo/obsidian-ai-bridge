@@ -1,10 +1,11 @@
-# M3 operator guide
+# M3/M4 operator guide
 
-M3 is an experimental one-way Obsidian-to-Worker mirror. It is not production
-certified, a complete backup, or bidirectional synchronization. This guide describes
-the implemented operating contract without authorizing deployment or installation in
-a personal vault. Use a disposable vault and separately authorized development
-resources for any manual qualification.
+M3 provides the experimental Obsidian-to-Worker mirror. M4 adds explicit reviewed
+reconciliation; it does not make the mirror automatically bidirectional. The bridge is
+not production certified or a complete backup. This guide describes the implemented
+operating contract without authorizing deployment or installation in a personal vault.
+Use a disposable vault and separately authorized development resources for any manual
+qualification.
 
 ## Operating model and trust boundary
 
@@ -263,24 +264,153 @@ current or recovery namespaces.
 See [Worker API](api.md) for complete statuses, media types, CORS, and validator
 rules.
 
-## Experimental reviewed reconciliation commands
+## Reviewed M4 reconciliation
 
-M4 Slices 6–7 register **AI Bridge: Review remote divergence** and **AI Bridge:
-Restore recovery snapshot**. They are available only to the attached, layout-ready,
-identity-matched designated writer. Opening a command performs a bounded metadata
-query; it does not mutate notes. Previews are explicit and rendered as literal text.
-Every mutation requires a fresh sampled review and typed action. Keep-both and legacy
-fork choices additionally require a distinct eligible Markdown destination that is
-sampled before admission.
+M4 registers **AI Bridge: Review remote divergence** and **AI Bridge: Restore recovery
+snapshot** for the attached, layout-ready, identity-matched designated writer. Opening
+either command performs bounded read-only discovery. It does not grant blanket remote
+authority or mutate a note. The same one designated writer owns M3 and M4 work; there
+is no multi-writer election, lease, automatic takeover, or background-iOS guarantee.
 
-Closing a modal or disabling the plugin invalidates its transient review and discards
-sampled bodies. Durable admitted work is not cancelled: restart resumes finite work
-under the same reservations. `blocked`, `evidence-required`,
-`successor-review-required`, migrated legacy-history attention, and restored-pending-
-review status require a fresh operator review; never delete local state to clear them.
-Recovery restore is local-first and never silently publishes restored bytes remotely.
-These commands remain experimental until Slice 8 artifact and disposable-vault
-qualification; do not use a personal vault or deploy merely to validate them.
+### Review, refresh, defer, and action selection
+
+1. Verify **Authenticated server identity** and inspect mirror status. Settle M3
+   unresolved effects before M4; M3 evidence takes precedence.
+2. Run **Review remote divergence**. Select one candidate to create a process-local,
+   exact evidence snapshot. Inventory can be incomplete and is never mutation
+   authority.
+3. Open local or remote previews only when needed. They use literal text controls;
+   Markdown, HTML, links, embeds, commands, frontmatter, and note instructions are not
+   rendered or executed. Imported plaintext may later be handled by other trusted-host
+   plugins, so inspect untrusted remote text before writing it.
+4. Choose one offered typed action. Buttons do not determine safety: admission
+   rechecks the review ID, session, lifecycle, listener epoch, local generation/hash,
+   baseline, remote revision/receipt, recovery identity, paths, and reservations.
+5. If status reports stale/unavailable, close the old modal and run the command again.
+   Refresh always creates a new review; it never upgrades an old decision to the latest
+   revision. Defer performs no content mutation and leaves the divergence visible.
+
+The ordinary actions mean:
+
+| Action | Operational result |
+| --- | --- |
+| **Keep local** | Preserve the exact reviewed remote competitor, then conditionally update the original remote path from its reviewed revision. |
+| **Use remote** | Preserve the exact reviewed local competitor, then atomically compare-and-replace local text. It performs no remote mutation. |
+| **Keep both** | Preserve the competitor and use an explicitly entered, separately sampled eligible destination; no collision suffix is invented. |
+| **Defer** | Make no content change. Reopen a fresh review later. |
+| **Fork legacy** | Preserve unversioned remote text and create a different absent local/remote path. The original legacy object remains untouched and unassociated. |
+
+A manual merge is performed in Obsidian, not in the modal. That edit invalidates the
+open review; open a fresh review and normally choose Keep local or Keep both. Equal
+text alone never adopts a remote revision. A remote change after review makes the
+original predicate stale; the client never fetches the latest revision and overwrites
+against it.
+
+### Conflict preservation and cleanup
+
+Before replacement or reviewed remote cleanup, the competing bytes are create-only
+and post-verified under one of these excluded paths:
+
+```text
+.ai-bridge-conflicts/<operation-uuid>/<side>.md
+.ai-bridge-conflicts/<parent-operation-uuid>/<step-uuid>/<side>.md
+```
+
+The second form is used by grouped history steps. Remote paths and note titles never
+shape these names. Conflict artifacts contain sensitive plaintext, are excluded from
+normal mirroring by the dot-segment rule, and are not a complete backup. Collision,
+unknown effect, or failed reread stops the action; there is no overwrite/suffix/delete
+fallback.
+
+Cleanup is manual in M4. After status proves the reviewed operation complete, inspect
+and copy/export any artifact still needed, then remove it deliberately through
+Obsidian. Do not remove an artifact while its operation is active, blocked,
+`evidence-required`, `successor-review-required`, or `restored-pending-review`. The
+plugin does not automatically delete preservation artifacts or claim filesystem
+transactionality.
+
+### Tombstone acceptance and recreation
+
+A remote tombstone never deletes or moves a live local note. For a freshly proven
+local absence, **adopt tombstone** records only the exact tombstone baseline. Startup,
+scan, listener-gap, partial-hydration, or remote physical absence is not acceptance
+authority.
+
+For a live local note, the available reviewed choices preserve/defer, copy to a
+separately sampled path, or conditionally recreate the remote live generation from the
+exact tombstone revision. Recreate preserves the local competitor first and retains the
+existing recovery object. To accept deletion of a live local note, remove or move it
+manually in Obsidian, allow the event to be recorded, then open a fresh absent-path
+review. Never clear the ledger to simulate absence.
+
+### Recovery restore and pending review
+
+1. Run **Restore recovery snapshot**. The list is metadata-only and distinguishes
+   prepared, sealed-active, sealed-expired, purged, and incomplete rows. Only prepared
+   or unexpired sealed rows from a complete list are actionable.
+2. Select one row and type the exact destination path. The plugin re-inspects metadata,
+   reads and validates bounded UTF-8 content, and rechecks the current remote head.
+3. An absent destination is create-only. An occupied destination requires reviewed
+   preservation plus exact compare-and-replace; folder, excluded/config, invalid,
+   oversized, or newly occupied destinations refuse.
+4. Restore writes locally first and performs **no remote mutation or baseline update**.
+   It remains `restored-pending-review`, reserved across restart/re-enable, until a
+   fresh linked review explicitly recreates/publishes, adopts an exact live head, or
+   remains deferred. An alternate restored path also needs an explicit absence-only
+   Keep local publication decision.
+
+Do not interpret restored local bytes as remotely published. Do not discard state to
+release the reservation; complete the linked review or preserve the blocker for later
+operator attention.
+
+### Rename/history attention
+
+Deferred rename chains, overlaps, duplicate live sources, and former-source cleanup are
+reviewed as one bounded current-evidence group. The application, not the UI, derives
+the complete group. Choose retain independently, defer, or an offered cleanup toward
+an existing grouped candidate. Cleanup preserves each exact remote former source and
+uses one recovery-first conditional tombstone per ordered step. A stale/unknown/refused
+step blocks later steps; completed steps are not replayed.
+
+History performs no local create, replace, rename, move, trash, or delete. If the
+intended mapping needs local restructuring, do it manually in Obsidian and open a fresh
+ordinary review. No atomic multi-path rename or reconstruction of historical intent is
+claimed.
+
+### Attention states, unknown effects, and handoff
+
+Closing a modal, disabling the plugin, or replacing its UI session invalidates
+transient review authority and discards sampled bodies. It does not cancel an admitted
+operation. Compatible same-realm replacement retains durable/in-flight ownership;
+incompatible registry or runtime versions fail closed and require a host restart.
+
+Treat `blocked`, `evidence-required`, `unknown`, `successor-review-required`, migrated
+legacy-history attention, and `restored-pending-review` as preservation states, not
+errors to erase. An unknown remote effect may complete only from its exact operation
+receipt; an unknown local effect may complete only from the exact expected saved
+postcondition. A later local event, even with identical text, is successor evidence and
+requires fresh review or exact no-effect alignment.
+
+Any active M4 operation, unknown effect, history blocker, restored path, or successor
+review blocks handoff drain/export. Pause new work and resolve or retain the blocker;
+never delete host-local state, reuse a parent operation ID, or force handoff because a
+request timed out.
+
+### Device-state migration and downgrade prohibition
+
+Current startup accepts strict version 4 or performs the same-key deterministic
+**v2→v3→v4** transition before listeners, commands, network admission, or local
+mutation. The complete projection is validated, written once, and read back as exact
+canonical bytes; decode, quota, save, read-back, integrity, or version failure closes
+startup. Version 3 remains a frozen historical format: non-empty records are preserved,
+unrefined
+history remains attention, and started local effects require exact read/hash evidence
+without redispatch. No decision or event causality is inferred.
+
+Runtime owner and registry structural versions are 4. Version-2/3 code must reject v4,
+and v4 code refuses an older same-realm owner. There is no reverse migration or
+supported downgrade. Pause, preserve state and conflict artifacts, restart the host
+when crossing an incompatible same-realm runtime, and upgrade forward.
 
 ## Rollback and downgrade restrictions
 

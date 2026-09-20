@@ -1,12 +1,13 @@
 # M4 — Reviewed remote-to-local reconciliation and conflict resolution
 
-**Status: NEXT — Slices 1–7 implemented; Slice 8 is NEXT.** M3 is COMPLETE. The
-accepted design remains sequential. Slices 1–5 establish reviewed state, admission,
-preservation, local mutation, and action orchestration. Slices 6–7 implement ADR
-0009's strict device-state-v4 transition, bounded parent-owned history cleanup,
+**Status: COMPLETE — Slices 1–8 qualified in this completion PR.** M3 remains
+COMPLETE and M5 is the single NEXT milestone. Slices 1–5 establish reviewed state,
+admission, preservation, local mutation, and action orchestration. Slices 6–7 implement
+ADR 0009's strict device-state-v4 transition, bounded parent-owned history cleanup,
 step-scoped preservation, shared M3/M4 scheduling, conservative local event fencing,
-and text-only runtime/session/command/modal/status composition. Slice 8 qualification
-remains unimplemented. No deployment or personal-vault installation is active.
+and text-only runtime/session/command/modal/status composition. Slice 8 qualifies the
+packaged artifact, operations, coverage, diagnostics, links, security boundaries, and
+final semantics. No deployment or personal-vault installation occurred.
 
 ## Objective
 
@@ -53,10 +54,10 @@ The accepted ADRs are normative with this specification:
   local-first restore using the existing v2 API;
 - [ADR 0008](../decisions/0008-m4-device-state-migration.md): implemented version-3
   state, deterministic v2 migration, and the first M4 downgrade fence;
-- [ADR 0009](../decisions/0009-m4-history-runtime-and-device-state-v4.md): proposed
-  Slice 6–7 refinement defining bounded history decisions/steps, step-scoped
-  preservation, conservative local-event authority, one shared scheduler, and the
-  required version-3→4 migration.
+- [ADR 0009](../decisions/0009-m4-history-runtime-and-device-state-v4.md): accepted
+  and implemented Slice 6–7 refinement defining bounded history decisions/steps,
+  step-scoped preservation, conservative local-event authority, one shared scheduler,
+  and the version-3→4 migration.
 
 No material M4 product-policy decision remains. ADR 0009 is the implementation-ready
 technical contract for Slices 6–7 and may be accepted through the planning PR; it does
@@ -657,8 +658,8 @@ The bounded test-first sequence is normative in the
 5. **Implemented:** remote tombstone resolution and local-first recovery restore;
 6. **Implemented:** device-state v4 compatibility fence plus bounded deferred rename/history resolution;
 7. **Implemented:** shared-runtime/session/command/modal/status composition under ADR 0009;
-8. **NEXT:** generated artifact, operational/security documentation, qualification,
-   and final semantic gates.
+8. **Implemented:** generated artifact, operational/security documentation,
+   qualification, and final semantic gates.
 
 No slice exposes a user mutation before its preservation, stale validation, durable
 state, restart, and focused tests exist.
@@ -823,9 +824,9 @@ status projections. Registration performs no network or mutation.
 
 ## Acceptance checklist
 
-Slices 1–7 establish the contract, v4 migration, reviewed evidence/admission,
-local primitives/preservation, all reviewed actions including bounded history, and
-runtime/UI composition. Slice 8 qualification and final transition remain incomplete.
+Slices 1–8 establish and qualify the contract, v4 migration, reviewed evidence/
+admission, local primitives/preservation, all reviewed actions including bounded
+history, runtime/UI composition, packaged behavior, and operating limits.
 
 - [x] **A1 — Authority and writer model:** Reviewed-only remote-to-local authority is
   typed end-to-end; one designated writer remains; no automatic import, last-writer-
@@ -864,17 +865,52 @@ runtime/UI composition. Slice 8 qualification and final transition remain incomp
   OpenAPI/CORS remain synchronized and unchanged unless implementation evidence forces
   a successor decision. Text-only review, path/content validation, sanitized status,
   token/body/log negatives, and malicious Markdown tests pass.
-- [ ] **A11 — Qualification and canonical gates:** Generated CommonJS artifact tests
+- [x] **A11 — Qualification and canonical gates:** Generated CommonJS artifact tests
   proportionally exercise real built review→preservation→conditional action and stale
   session behavior. `mise install`, `mise run install`, `mise run check`, runtime
   qualification, four-metric coverage thresholds, diagnostics/editor review,
   Markdown links, `git diff --check`, and secret/generated-artifact scans pass. Real
   host/deployment/iCloud evidence or its absence is reported exactly.
-- [ ] **A12 — Documentation, review, and transition:** Architecture/current-state/API
+- [x] **A12 — Documentation, review, and transition:** Architecture/current-state/API
   (if changed)/security/plugin-development/operations/migration/conflict runbooks match
   implementation; independent `/skill:code-review` finds no unresolved blocking issue;
   completion evidence is recorded; only then is M4 COMPLETE and M5 made the single
   NEXT milestone in the completion PR.
+
+## Slice 8 completion evidence
+
+- The generated browser-target CommonJS suite runs **11 tests** against staged
+  `main.js`/`manifest.json`. It covers M4 command registration, literal hostile-
+  Markdown preview, one real review→generated preservation→conditional v2 Keep local
+  request with exact association/writer/operation/revision semantics, stale session/
+  same-text local event/remote revision refusal, local-only restore with durable
+  `restored-pending-review`, compatible same-realm M4 ownership, incompatible registry
+  refusal, and credential/body/Node/raw-filesystem/private-key/machine-path leakage
+  negatives. It remains proportional and does not duplicate the core action matrix.
+- Canonical source validation passes **75 files / 1,194 tests**, plus **8** pinned
+  workerd/R2 qualification tests and the **11** generated-artifact tests. V8 coverage
+  remains **95.02% statements (7,330/7,714), 90.62% branches (5,875/6,483), 98.12%
+  functions (1,623/1,654), and 96.96% lines (6,965/7,183)** with all production roots
+  included and thresholds unchanged.
+- `mise install`, frozen `mise run install`, `mise run tsdoc:check`, `mise run check`,
+  `git diff --check`, Markdown local-link/heading validation, exact-one-`NEXT`, artifact
+  leakage, tracked secret/config/deployment, dependency/service, and editor/CLI
+  diagnostic inspections pass. Biome, Oxlint, TypeScript, TSDoc, tests, coverage,
+  dry-run Worker build, and plugin build/smoke report no diagnostics or failures.
+- A1–A10 were revalidated against their source, state, action, runtime, migration,
+  security, and focused-test owners; the built artifact does not contradict them.
+  A11 and A12 now have direct evidence. The final `/skill:code-review` verdict is
+  **APPROVE** with no actionable findings after the documentation correction and
+  canonical rerun.
+- Documentation now covers review/refresh/defer, Keep local/Use remote/Keep both,
+  conflict artifacts and cleanup, tombstone acceptance/recreation, local-first restore,
+  rename/history attention, v2→v3→v4 migration, downgrade prohibition, unknown-effect
+  and handoff fences, one writer, privileged bearer/plaintext trust, untrusted Markdown,
+  and unsupported real-host guarantees. The Worker API/OpenAPI/CORS are unchanged.
+- No Worker deployment, remote resource creation, credential use, personal-vault
+  installation, real desktop/mobile/native-secret/iCloud trace, or background-iOS
+  qualification occurred. M4 completion is an implementation and repository-
+  qualification result, not a production-readiness claim.
 
 ## Non-goals
 

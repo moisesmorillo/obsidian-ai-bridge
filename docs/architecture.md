@@ -23,13 +23,14 @@ composition. Slice 8's generated-artifact qualification and operational document
 are implemented. The independent final review found three MINOR issues, corrective
 head `e97af36` resolved all three, and the corrective review returned APPROVE with no
 open findings. M3 is COMPLETE; PR #27 merged at `63b0599` and made the transition
-canonical. M4 is NEXT and Slices 1–7 are implemented. The current boundary includes
-strict device state v4 with frozen v2/v3 migration, reviewed sampling/admission,
-narrow local writes and preservation, live/adoption/tombstone/restore actions,
-bounded parent-owned history steps, step-scoped archives, one shared M3/M4 scheduler,
-durable synthetic local-effect/successor evidence, and runtime/session/command/modal/
-status composition. ADR 0009 governs the compatibility transition. Slice 8 artifact
-and manual qualification remains unimplemented.
+canonical. M4 Slices 1–8 are COMPLETE in this completion PR and M5 is NEXT. The
+current boundary includes strict device state v4 with frozen v2/v3 migration, reviewed
+sampling/admission, narrow local writes and preservation, live/adoption/tombstone/
+restore actions, bounded parent-owned history steps, step-scoped archives, one shared
+M3/M4 scheduler, durable synthetic local-effect/successor evidence, and runtime/session/
+command/modal/status composition. ADR 0009 governs the compatibility transition.
+Slice 8 qualifies the packaged runtime and operator/security boundary without changing
+the architecture or Worker API.
 The connected outward mirror remains
 experimental and undeployed, with no real Obsidian desktop/mobile or iCloud runtime
 qualification.
@@ -319,7 +320,7 @@ and save failure aborts startup. Slice 0 remains the
 pinned local workerd qualification task and declaration-only host check; no slice
 establishes real-host behavior.
 
-## M4 Slices 1–7 core boundary
+## M4 core boundary
 
 Core now owns closed authority, classification, action, lifecycle, evidence,
 reservation, effect, and preservation-receipt contracts plus linear cross-field
@@ -432,14 +433,10 @@ but cannot hide a same-text external successor or deadlock an aligned path.
 
 ## Explicitly deferred
 
-- M4 (NEXT; Slices 1–7 implemented; Slice 8 NEXT): reviewed/manual reconciliation
-  uses exact revisioned adoption, archive-first action orchestration, reviewed
-  tombstones, local-first restore, bounded history cleanup, the existing v2 API, and
-  the retained one-writer model. Slice 8 must qualify the built artifact and real-host
-  operating instructions. Remote divergence remains a review item; no automatic import
-  or cross-system atomicity is claimed.
-
-- M5: Broader operational readiness, abuse limits and scoped authentication evolution.
+- M5 (NEXT; planning only): broader operational readiness, abuse limits, scoped
+  authentication evolution, release/platform support, and recovery automation. M4's
+  reviewed reconciliation remains experimental and makes no automatic import,
+  cross-system atomicity, deployment, or production-readiness claim.
 - M6: Authorized MCP transport/tool definitions, never direct R2 access.
 - Outside this roadmap: search, attachments and AI inference. NAS replication or
   stronger remote authority are possibilities, not selected infrastructure. D1,

@@ -1,12 +1,12 @@
 # Verified current state
 
-This snapshot records completed M1–M4 repository implementation and M5 Slice 2's credential checkpoint.
+This snapshot records completed M1–M4 repository implementation and M5 Slices 2–3's credential and live-diagnostics checkpoints.
 M2 source/tooling through `2e74b23` passed independent semantic
 review and merged at `b300726` (PR #7). M3's completion PR #27 passed canonical
 validation and final semantic review; its three MINOR findings were corrected at
 `e97af36`, whose corrective review returned APPROVE with no open findings. PR #27
 merged at `63b0599`; M3 is COMPLETE and the M3→M4 transition is canonical.
-M4 Slices 1–8 are COMPLETE and M5 is the single NEXT milestone. M5 Slices 0–2 are complete in this Slice 2 PR and Slice 3 is next. The completed
+M4 Slices 1–8 are COMPLETE and M5 is the single NEXT milestone. M5 Slices 0–3 are complete and Slice 4 is next. The completed
 [specification](milestones/m4-remote-to-local-reconciliation-and-conflict-resolution.md),
 [sequential plan](plans/m4-remote-to-local-reconciliation-and-conflict-resolution.md),
 and ADRs 0005–0009 define the reviewed boundary. The compatibility transition uses
@@ -57,7 +57,7 @@ boundaries; [API](api.md) describes the HTTP contract.
 | Payload | `MAX_NOTE_SIZE_BYTES = 1024 * 1024` in core. Worker bounds actual streamed bytes independently of the declared length, rejects invalid UTF-8, accepts empty content, and accepts Markdown/plain-text media types case-insensitively with parameters. V2 PUT requires an explicit supported content type even for an omitted or zero-byte body. Core rechecks UTF-8 byte length before writes. | `packages/core/src/vault/`, `apps/worker/src/http/note-body.ts`, `note-content-type.ts` |
 | API documentation | OpenAPI 3.1 generated through `@hono/zod-openapi`; shared Zod response schemas; public Scalar reference. It documents actual v2 security, IDs/conditions, optional empty PUT body with required explicit media type, pagination/state/recovery routes and statuses, plus v1 retirement. | `apps/worker/src/http/openapi.routes.ts`, semantic HTTP integration tests |
 | Responses | Stable typed error codes mapped to sanitized HTTP errors. Authenticated JSON/content/error responses use `Cache-Control: no-store`; registered v2 route/method responses and errors add narrow CORS. Revisioned generations expose strong application ETags, never R2 validators. | `apps/worker/src/http/api-*`, `http-response-headers.ts`, `v2.handlers.ts` |
-| Logging | LogTape 2.3.4 JSON-lines console sink via a thin injected adapter; completed-request events include operation, method, registered route template (or `unknown`), status and duration in milliseconds. No request IDs, per-client audit trail or error-code field yet. Application events do not include tokens, bodies, concrete note paths or raw exceptions. | `apps/worker/src/logging/`, logging and Worker tests |
+| Logging | LogTape 2.3.4 JSON-lines console sink via a thin injected adapter; completed-request events include event operation, method, registered route template (or `unknown`), closed operation category, closed authentication result, canonical client ID only when authenticated, HTTP status, stable API error code when present, and duration in milliseconds. Application events exclude client names, tokens/digests, permission metadata, authorization headers, bodies, concrete or encoded note/recovery identifiers, revisions, hashes, receipts, storage envelopes, and raw exceptions. Platform-managed live diagnostics retain zero application days and are not a durable audit trail. | `apps/worker/src/logging/`, v2 route policy, focused logging and Worker integration tests |
 | Plugin | `AiBridgePlugin` preserves the two M2 inspection commands and composes M3 through one enable-lifetime session attached to a versioned same-App-realm facade. Focused host owners govern listener epochs, configuration/connection admission, reconciliation progress and staged-handoff verification. Official saved Vault events register before layout readiness; every replacement listener gap gets a fresh positive-only scan while retained reservations/settlement survive and scan absence grants no delete authority. Positive admission refreshes the one-shot scheduler before reporting inventory settles. Staged handoff events advance durable generations and invalidate sampled metadata before atomic align/activate. Modern declarative settings persist only endpoint/loopback consent/native secret reference, display non-secret device/server designation, and require whole-scope/plaintext/deletion trust consent; dispatch retrieves the bearer from SecretStorage. Missing/failing Web Crypto fences mutation and wake scheduling while retaining dirty state for explicit recovery. Sanitized status and check/retry/pause/resume/handoff controls expose no body, token or raw transport error. M4 Slices 6–7 strictly load v4 or migrate validated v2→v3→v4 through one same-key save plus exact read-back before owner publication; runtime registry/owner version 4 refuses older reuse. Reviewed M4 commands, text-only modals, session invalidation, startup orphan staling, shared scheduling, event-first successor fencing, recovery selection and sanitized status are composed. Before publication, a read-only startup transition resolves migrated v3 local effects from durable expected postconditions without redispatch: exact bytes resume as `recovered-v3`, absent/changed bytes stay blocked, ambiguous evidence remains retryable, and failed persistence aborts startup. Incompatible registries fail closed. Local create/replace is reachable only through reviewed operations and exact evidence; there is no editor event, local delete/move/rename, capability fallback, deployment or real-host qualification. Manifest remains `ai-bridge`, minimum `1.13.0`, non-desktop-only. | `apps/obsidian-plugin/src/{main.ts,commands/,configuration/,events/,runtime/,status/,remote/,state/}`, dedicated plugin unit/integration/artifact suites |
 | Local safety | Shared literal `.md` path and 1 MiB policy; dot-prefixed/configuration-directory exclusions; pre-read metadata and post-read UTF-8 bound; exact lookup and pre/post object/path/mtime/size checks. M4's separate reviewed-write adapter supports only official lookup/create/createFolder/read/process operations, fixed generated conflict paths, create-only collision rules, atomic exact-text replacement, and post-effect identity/hash verification. It is composed only behind admitted reviewed operations. No delete/rename/move, raw filesystem, path repair/URI decoding, Markdown-rendered content UI, or cross-system atomicity claim. | `packages/core/src/local-vault/`, `apps/obsidian-plugin/src/infrastructure/`, focused adapter tests |
 | Plugin artifact | Browser-target CommonJS exposes `module.exports.default`, keeps only `obsidian` external, and stages the unchanged manifest. Eleven generated-artifact tests retain the M2/M3 packaging/runtime checks and add literal hostile-text preview, one packaged review→preservation→conditional v2 Keep local path with exact identity/revision semantics, stale session/local-event/remote-revision refusal, local-only pending restore, compatible M4 owner retention, incompatible-registry refusal, and credential/body/Node/raw-filesystem/private-key/machine-path leakage negatives. No real desktop/mobile host was tested. | `.mise.toml`, `apps/obsidian-plugin/tests/artifact/main.test.ts`, [qualification and operating evidence](plugin-development.md) |
@@ -85,10 +85,11 @@ boundaries; [API](api.md) describes the HTTP contract.
   prohibition, direct-console prohibition and configured documentation rules.
   These checks do **not** prove all architecture/TSDoc requirements in
   [AGENTS.md](../AGENTS.md); manual semantic review remains mandatory.
-- Vitest **5**: **77 source test files / 1,239 tests**, plus **1 generated-artifact
+- Vitest **5**: **78 source test files / 1,241 tests**, plus **1 generated-artifact
   file / 11 tests** executed by the build task. The unchanged M1 baseline had
   15 files / 105 tests. M5 Slice 2 adds focused registry, authentication, lifecycle,
-  migration, leakage, and CLI-boundary tests. Exact earlier slice validation is recorded in the
+  migration, leakage, and CLI-boundary tests; Slice 3 adds focused client/operation/
+  outcome attribution, hard-bound, failure, and leakage tests. Exact earlier slice validation is recorded in the
   [implementation plan](plans/m2-obsidian-read-only-local-adapter.md).
 - Worker unit tests live under `apps/worker/tests/unit/` (auth, HTTP, R2 adapter,
   logging). `apps/worker/tests/integration/worker.test.ts` composes Hono, the real
@@ -105,10 +106,10 @@ boundaries; [API](api.md) describes the HTTP contract.
   `*.types.ts`, build/output and Wrangler state. Reports: text, JSON summary, LCOV.
   Global thresholds: **lines 95%, statements 95%, functions 94%, branches 90%**.
   Coverage is a regression signal, not proof of test quality.
-- Root Vitest projects include shared packages, Worker and plugin. M5 Slice 2 source
-  coverage is statements **95.07% (7,407/7,791)**, branches **90.66%
-  (5,907/6,515)**, functions **98.14% (1,638/1,669)**, and lines **96.99%
-  (7,040/7,258)**; thresholds and production inclusion remain enforced. Artifact tests
+- Root Vitest projects include shared packages, Worker and plugin. M5 Slice 3 source
+  coverage is statements **95.08% (7,448/7,833)**, branches **90.71%
+  (5,942/6,550)**, functions **98.15% (1,645/1,676)**, and lines **96.99%
+  (7,078/7,297)**; thresholds and production inclusion remain enforced. Artifact tests
   are separate from source coverage, run after packaging and never replace behavioral
   coverage.
 - The Worker declares Miniflare **5.20260908.0-alpha** directly for its storage
@@ -129,7 +130,7 @@ boundaries; [API](api.md) describes the HTTP contract.
 ## Explicit limitations and deferred work
 
 The Worker API is a remote storage boundary, **not synchronization**. Named principals
-are independently revocable, but Slice 2 has not yet applied their permission metadata
+are independently revocable, but Slices 2–3 have not applied their permission metadata
 to routes; every authenticated client therefore retains the current namespace route
 authority. Static IDs are not scoped permissions.
 Safe conditional v2 routes now exist and unsafe v1 mutations are retired. Slice 3
@@ -145,9 +146,9 @@ merged at `63b0599`; M3 is COMPLETE and its transition is canonical. M4 is COMPL
 in this completion PR with reviewed contracts, strict state-v4
 migration, preservation/local-write seams, live/adoption/tombstone/restore/history
 execution, plugin runtime/UI composition, and Slice 8 qualification. M5 is NEXT;
-Slices 0–2 are complete in this Slice 2 PR, with no current support claim. Credential
-principals/lifecycle exist, but route-level permission enforcement, client-attributed
-live diagnostics, v1 retirement, and final qualification remain later M5 slices. The accepted M4 design remains
+Slices 0–3 are complete, with no current support claim. Credential principals/lifecycle
+and client-attributed content-free live diagnostics exist, but route-level permission
+enforcement, v1 retirement, and final qualification remain later M5 slices. The accepted M4 design remains
 reviewed-only: exact format-2 revisions may be adopted, competing bytes are preserved
 before replacement, remote tombstones require explicit choices without plugin local
 delete/move, recovery restore is local-only first, legacy same-path adoption remains
@@ -175,8 +176,8 @@ The [operator guide](operations.md) records setup, one-writer availability,
 upgrade/handoff/reset, bearer rotation, recovery API use, iCloud uncertainty, and
 rollback prohibitions. M3 completion is an implementation/evidence milestone; it is
 not production readiness, deployment, or real-host qualification.
-Route permission enforcement, live client attribution, complete v1 retirement, final
-runbooks, and real-desktop qualification remain M5. ADR 0011 deliberately
+Route permission enforcement, complete v1 retirement, final runbooks, and real-desktop
+qualification remain M5. ADR 0011 deliberately
 selects no application quota/limiter, recovery automation, durable logs, mobile writer,
 or multi-release support; prerequisites to safe M3/M4 behavior must not be postponed.
 

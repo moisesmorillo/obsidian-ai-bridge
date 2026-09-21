@@ -1,4 +1,4 @@
-# M3/M4 and M5 Slice 2 operator guide
+# M3/M4 and M5 Slices 2–3 operator guide
 
 M3 provides the experimental Obsidian-to-Worker mirror. M4 adds explicit reviewed
 reconciliation; it does not make the mirror automatically bidirectional. The bridge is
@@ -20,7 +20,8 @@ qualification.
   for cooperating clients. They are not authentication, permissions, or cryptographic
   device identities. Authentication resolves a named principal from the bounded
   credential registry. Slice 2 records permissions but does not enforce them per route;
-  current writer credentials therefore declare `read`, `write`, and `delete`.
+  Slice 3 changes diagnostics only. Current writer credentials therefore declare
+  `read`, `write`, and `delete`.
 - Eligible Markdown is sent and stored as plaintext. The Obsidian host and other
   privileged plugins, plugin runtime, Worker, Cloudflare/R2 operator, and authorized
   bearer holders are inside the trusted plaintext boundary. Private R2 does not make
@@ -89,6 +90,26 @@ committed development configuration means a remote resource exists.
 
 Enabling an unconfigured, disabled, or non-writer plugin does not send note content.
 M2 inspection commands remain independent and do not grant upload consent.
+
+## Live diagnostic boundary
+
+Worker application logs are platform-managed live diagnostics with zero-day
+application retention. No Workers Logs, Logpush, Tail Worker persistence, OTLP export,
+or project durable sink is configured. A missed or sampled live session may leave no
+record; these events are not a durable security audit trail, non-repudiation evidence,
+or recovery authority.
+
+Each completed request event contains only the event kind, HTTP method, registered
+route template or bounded `unknown`, closed operation category (`public`, `mirror_read`,
+`current_read`, `current_mutation`, `destructive_mutation`, `recovery_read`,
+`recovery_maintenance`, or `unknown`), closed authentication result (`public`,
+`rejected`, or `authenticated`), canonical client ID when authenticated, HTTP status,
+stable API error code when available, and duration. It excludes client display names, permission metadata, raw
+bearers, token digests, authorization headers, request/response bodies, concrete or
+encoded note/recovery identifiers, revisions, content hashes, operation/recovery
+receipts, storage envelopes, and raw exceptions. Public and rejected requests have no
+client ID. Repeated traffic and destructive attempts remain observable but no request
+quota, rate limit, 429 behavior, or durable history is implied.
 
 ## Saved-event and iCloud uncertainty
 

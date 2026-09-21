@@ -1,6 +1,6 @@
 # M5 — Operational and security readiness
 
-**Status: NEXT — Slices 0–2 complete in this Slice 2 PR; Slice 3 is next.** M1–M4 remain COMPLETE and M6 remains PLANNED. Slice 2 implements the credential registry, typed principal, offline lifecycle, and explicit singleton migration checkpoint. Route-level permission enforcement remains unimplemented until Slice 4, and no current release or platform is supported.
+**Status: NEXT — Slices 0–3 complete; Slice 4 is next.** M1–M4 remain COMPLETE and M6 remains PLANNED. Slice 2 implements the credential registry, typed principal, offline lifecycle, and explicit singleton migration checkpoint. Slice 3 implements client-attributed content-free live diagnostics while preserving zero-day retention. Route-level permission enforcement remains unimplemented until Slice 4, and no current release or platform is supported.
 
 ## Objective
 
@@ -203,25 +203,33 @@ or infrastructure change.
 principal and lifecycle tooling safely produces digest-only configuration, while
 current route authority remains behind one explicit temporary migration checkpoint.
 
-### Slice 3 — Client-attributed live diagnostics — NEXT
+### Slice 3 — Client-attributed live diagnostics — COMPLETE
 
-- Add client ID and closed operation/outcome attribution to the existing content-free
-  structured application events.
-- Preserve zero-day retention: add no Workers Logs configuration, export, sink,
-  binding, quota counter, 429 response, token/digest/body/path/raw-error field, or
-  audit-log claim.
-- Exercise excessive-request and destructive-request scenarios only to prove existing
-  hard bounds, revocation response, and effect certainty; do not assert a rate quota.
+- Added canonical client ID only for authenticated requests plus closed authentication,
+  route-derived operation, HTTP status, and stable API-error attribution to the
+  existing content-free completed-request event.
+- Reused the v2 route-policy owner for operation categories without adding a permission
+  table or authorization decision. Retained v1/public projections are bounded until
+  Slice 4 removes compatibility routes; unknown routes emit only `unknown`.
+- Preserved zero-day retention: no Workers Logs configuration, export, sink, binding,
+  quota counter, 429 response, token/digest/name/body/path/raw-error field, or audit-log
+  claim was added.
+- Focused tests cover repeated authenticated reads by two principals, destructive and
+  oversized attempts, revoked and malformed credentials, application failure,
+  recovery identity, public traffic, unknown routes, exact stable outcomes, leakage
+  negatives, and unchanged storage effects.
 
 **Dependency:** Slice 2.
 
 **Expected production scope:** 3–5 files / 150–350 net new LOC.
 
+**Production outcome:** 4 changed production files / 270 net new LOC.
+
 **Independently mergeable outcome:** live diagnostics identify the principal and
 operation without changing authorization, request admission, infrastructure, or
 retention.
 
-### Slice 4 — Permission enforcement, client migration, and v1 retirement — PLANNED
+### Slice 4 — Permission enforcement, client migration, and v1 retirement — NEXT
 
 - Create one exhaustive route-operation permission table for public, authenticated
   v2/recovery, unknown-descendant, and preflight behavior.
@@ -360,6 +368,27 @@ without deployment or M6.
 - The migration selector has only `singleton-migration`, `credential-registry`, and fail-closed invalid outcomes. Each valid mode evaluates one authority path and ignores the other secret. Committed Wrangler configuration requires the registry and selects registry mode; after switching, the old singleton fails even before secret removal. Slice 4 owns source-level removal of the temporary mode.
 - Focused tests cover one/many/16/17 entries, all duplicate/malformed/version/unknown-field/permission cases, first/middle/last authentication, complete digest evaluation, principal identity, sanitized failures/leakage negatives, lifecycle failures and capacity, exact revocation/loss replacement, total loss, and migration exclusivity while preserving existing writer/association/effect behavior.
 - Permission metadata is deliberately not route-enforced in this slice. Full writer credentials use all three values to preserve current M3/M4 behavior; Slice 4 remains the sole owner of the exhaustive operation-to-permission table.
+
+## Slice 3 acceptance evidence
+
+- One structured event owner emits event kind, registered route template or bounded
+  `unknown`, method, duration, status, stable API error code when present, closed
+  authentication result, closed operation category, and canonical client ID only for
+  authenticated requests.
+- V2 diagnostic categories are attached to the existing named route-policy operations
+  and cannot admit or authorize a request. Public and retained v1 projections remain
+  transport-local; Slice 4 still exclusively owns permission enforcement and v1
+  removal.
+- Focused integration tests prove distinct client attribution, repeated reads,
+  destructive and oversized failures, revoked and malformed credentials, application
+  failure, recovery and unknown routes, exact API outcomes, and no storage mutation in
+  refused scenarios.
+- Leakage assertions exclude raw tokens/digests, names, authorization/header data,
+  request bodies, raw and encoded note paths, recovery and operation IDs, revisions,
+  content-hash text, receipts, raw exceptions, and concrete unknown paths.
+- ADR 0011's zero-day contract is unchanged: no persistent logging configuration,
+  service, binding, dependency, quota/rate limit, 429 behavior, audit claim, deployment,
+  or M6 capability was added.
 
 ## M6 boundary
 

@@ -1,10 +1,7 @@
 import { encodeNotePath, normalizeNotePath } from "@obsidian-ai-bridge/core";
 import { API_ERROR_CODE } from "@obsidian-ai-bridge/protocol";
 import { createWorkerApp } from "@worker/app";
-import {
-  AUTHENTICATION_CONFIGURATION_MODE,
-  CLIENT_PERMISSION,
-} from "@worker/auth/auth.constants";
+import { CLIENT_PERMISSION } from "@worker/auth/auth.constants";
 import {
   digestCredentialToken,
   serializeCredentialRegistry,
@@ -98,7 +95,6 @@ async function application() {
     logger,
     resolveMirrorServices: () => mirrorServices,
     resolveAuthentication: () => ({
-      mode: AUTHENTICATION_CONFIGURATION_MODE.credentialRegistry,
       serializedRegistry: serializeCredentialRegistry({
         version: 1,
         credentials: [
@@ -183,6 +179,46 @@ describe("Worker live request diagnostics", () => {
         status: 200,
       },
     ]);
+  });
+
+  it("keeps permission refusals free of permission, registry, and content detail", async () => {
+    const { app, firstDigest, logger, secondDigest } = await application();
+    const headers = mutationHeaders(SECOND_CLIENT.token);
+    headers.set("If-None-Match", "*");
+    headers.delete("If-Match");
+
+    const response = await app.fetch(
+      request(`/api/v2/notes/${encodedPath(PRIVATE_PATH)}`, {
+        method: "PUT",
+        headers,
+        body: PRIVATE_BODY,
+      }),
+    );
+
+    expect(response.status).toBe(403);
+    expect(logger.entries).toHaveLength(1);
+    expect(logger.entries[0]).toMatchObject({
+      authentication: LOG_AUTHENTICATION_RESULT.authenticated,
+      clientId: SECOND_CLIENT.id,
+      errorCode: API_ERROR_CODE.forbiddenWriter,
+      operationCategory: LOG_OPERATION_CATEGORY.currentMutation,
+      status: 403,
+    });
+    const observable = `${await response.text()}${JSON.stringify(logger.entries)}`;
+    for (const forbidden of [
+      FIRST_CLIENT.name,
+      FIRST_CLIENT.token,
+      SECOND_CLIENT.name,
+      SECOND_CLIENT.token,
+      firstDigest,
+      secondDigest,
+      PRIVATE_PATH,
+      encodedPath(PRIVATE_PATH),
+      PRIVATE_BODY,
+      "permissions",
+    ]) {
+      expect(observable).not.toContain(forbidden);
+    }
   });
 
   it("keeps public, rejected, destructive, bounded, failure, recovery, and unknown outcomes sanitized", async () => {

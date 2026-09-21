@@ -1,4 +1,4 @@
-# M3/M4 and M5 Slices 2–3 operator guide
+# M3/M4 and M5 Slices 2–4 operator guide
 
 M3 provides the experimental Obsidian-to-Worker mirror. M4 adds explicit reviewed
 reconciliation; it does not make the mirror automatically bidirectional. The bridge is
@@ -19,9 +19,9 @@ qualification.
 - `MIRROR_ASSOCIATION_ID` and `MIRROR_WRITER_ID` are non-secret operational guards
   for cooperating clients. They are not authentication, permissions, or cryptographic
   device identities. Authentication resolves a named principal from the bounded
-  credential registry. Slice 2 records permissions but does not enforce them per route;
-  Slice 3 changes diagnostics only. Current writer credentials therefore declare
-  `read`, `write`, and `delete`.
+  credential registry. Slice 4 enforces exact independent permissions before service/
+  storage dispatch. Current writer credentials require `read`, `write`, and `delete`;
+  `write` never implies `delete`.
 - Eligible Markdown is sent and stored as plaintext. The Obsidian host and other
   privileged plugins, plugin runtime, Worker, Cloudflare/R2 operator, and authorized
   bearer holders are inside the trusted plaintext boundary. Private R2 does not make
@@ -57,9 +57,10 @@ committed development configuration means a remote resource exists.
    [credential provisioning](#credential-registry-lifecycle-and-singleton-migration)
    to create a full-writer client with `read,write,delete`, apply its digest-only
    registry through `OBSIDIAN_BRIDGE_CREDENTIAL_REGISTRY`, and transfer the raw token
-   exactly once into native SecretStorage. Keep
-   `OBSIDIAN_BRIDGE_AUTH_MODE=credential-registry`; never commit the registry or raw
-   token to `wrangler.jsonc`, `mise.local.toml.example`, plugin data, screenshots, or
+   exactly once into native SecretStorage. Registry authentication is the only runtime
+   mode; never configure `OBSIDIAN_BRIDGE_TOKEN` or `OBSIDIAN_BRIDGE_AUTH_MODE`, and
+   never commit the registry or raw token to `wrangler.jsonc`,
+   `mise.local.toml.example`, plugin data, screenshots, or
    documentation. Select only the corresponding native SecretStorage reference under
    **Bearer secret reference**; `data.json` stores only the reference. Host-local
    mirror state and handoff records must not contain the plaintext bearer. Enter an absolute endpoint
@@ -195,7 +196,7 @@ clipboard automation, log, screenshot, issue, or documentation.
 ### Create and provision
 
 1. Choose a unique 1–64 character ADR-compliant name and the least exact permissions.
-   The current designated writer needs all three permissions until Slice 4.
+   The current designated writer needs all three permissions for complete M3/M4 behavior.
 2. Create or update a protected outside-repository registry:
 
    ```bash
@@ -209,35 +210,30 @@ clipboard automation, log, screenshot, issue, or documentation.
 4. Apply only the registry file through the authorized Worker secret boundary, for
    example by feeding it on stdin to `wrangler secret put
    OBSIDIAN_BRIDGE_CREDENTIAL_REGISTRY`; do not pass verifier JSON as a command
-   argument. Keep `OBSIDIAN_BRIDGE_AUTH_MODE=credential-registry`.
+   argument. No authentication-mode variable is accepted.
 5. Verify authenticated server identity and intended non-destructive current behavior.
    Local generation alone is not provisioning success.
 
-### Explicit singleton-to-registry checkpoint
+### Upgrade from a singleton-authentication version
 
-The source retains `singleton-migration` only until Slice 4 removes it. It is an
-exclusive mode, not a fallback: singleton mode ignores a staged registry, registry
-mode ignores a still-present singleton secret, and missing/unknown mode fails closed.
+This version has no singleton mode, fallback, token binding, fixed migration principal,
+or automatic secret copying. Operators must complete credential provisioning **before**
+upgrading the Worker into this version:
 
-1. Pause the writer and settle or preserve every pending/unknown M3/M4 effect.
-2. Before the Slice 2 Worker transition, explicitly select
-   `OBSIDIAN_BRIDGE_AUTH_MODE=singleton-migration`; verify the old
-   `OBSIDIAN_BRIDGE_TOKEN` still authenticates only in that mode.
-3. Create a distinct full-writer registry credential, install its raw token in native
-   SecretStorage, and stage the digest-only registry secret. The staged registry does
-   not authenticate while singleton mode is selected.
-4. Deliberately change the Worker mode to `credential-registry`. Verify the new client
-   principal through authenticated server identity and a non-destructive read. Current
-   writer/association and conditional/effect checks remain unchanged.
-5. Prove the old singleton token now receives sanitized `401`; it cannot fall through
-   from registry authority even if the old secret still exists.
-6. Remove `OBSIDIAN_BRIDGE_TOKEN` through the authorized platform secret mechanism,
-   verify the new client again, and resume only after preserved effects are reconciled.
-   Never roll back to singleton mode or a registry snapshot containing revoked authority.
-
-Committed Wrangler configuration already selects registry mode and requires the
-registry secret. Slice 4 removes the temporary singleton code path after migration;
-no supported endpoint retains it indefinitely.
+1. Pause the writer and settle or preserve every pending/unknown M3/M4 effect while the
+   previously deployed version remains available.
+2. Use the offline lifecycle tool to create a distinct full-writer registry credential
+   with `read,write,delete`, install its raw token in native SecretStorage, and stage the
+   digest-only registry secret through the authorized platform boundary.
+3. Switch the plugin/client to that registry bearer and verify authenticated server
+   identity plus a non-destructive v2 read against a registry-capable Worker version.
+4. Stop/drain every v1 or singleton client, preserve unresolved effect evidence, then
+   upgrade forward to this version. V2 is the sole authenticated HTTP API.
+5. Prove the old singleton token now receives sanitized `401`, remove
+   `OBSIDIAN_BRIDGE_TOKEN` and any `OBSIDIAN_BRIDGE_AUTH_MODE` variable through the
+   authorized platform mechanism, and verify the new registry client again.
+6. Resume only after preserved effects are reconciled. Never roll back to singleton
+   authority or a registry snapshot containing revoked credentials.
 
 ### Rotate with bounded overlap
 

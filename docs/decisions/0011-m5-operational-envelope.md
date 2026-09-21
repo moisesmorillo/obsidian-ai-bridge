@@ -2,7 +2,7 @@
 
 ## Status
 
-**Accepted for M5 planning — live-diagnostics retention implemented, remaining policy not yet fully qualified.** This
+**Accepted for M5 planning — live diagnostics and v1 retirement implemented; remaining policy not yet fully qualified.** This
 Slice 1 record closes the eight operational decisions needed to refine later M5 work.
 It changes no runtime, authentication, API, plugin manifest, Cloudflare binding,
 dependency, deployment, credential, or current support claim. The numeric envelope
@@ -191,17 +191,16 @@ retention guarantee.
 
 ### 8. Complete v1 retirement
 
-No current repository client requires v1 reads. Before any M5 operational-support
-claim, remove every registered v1 route and its OpenAPI compatibility contract. V1
-PUT/DELETE remain storage-free retired responses until that removal and must never be
-restored. Supported clients must migrate to v2 before the M5-ready release. There is no
-dual supported window, because no observed client needs one and latest-only support
-makes an indefinite compatibility surface unnecessary.
+No current repository client requires v1 reads. Slice 4 removes every registered v1
+route and its OpenAPI compatibility contract; retired v1 PUT/DELETE handlers were not
+restored. Clients must use v2 before upgrading into this version. There is no dual
+supported window, because no observed client needs one and latest-only support makes
+an indefinite compatibility surface unnecessary.
 
-The implementation slice must preserve authentication of unknown API descendants and
-choose/test the sanitized post-removal response without adding a v1 fallback. Until
-that slice lands, current authenticated v1 reads remain implemented exactly as
-historical compatibility behavior.
+Unknown API descendants remain authenticated. After removal, a valid registry bearer
+receives sanitized `404 not_found` for v1 paths, while absent/invalid credentials
+receive `401 unauthorized`; both outcomes precede service/storage dispatch. No v1
+fallback or storage-format migration was added.
 
 ## Consequences
 

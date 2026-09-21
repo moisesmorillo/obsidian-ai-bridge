@@ -2,17 +2,10 @@ import {
   API_ERROR_CODE,
   type ApiErrorCode,
   apiErrorResponseSchema,
-  HTTP_METHOD,
 } from "@obsidian-ai-bridge/protocol";
 import type { WorkerContext, WorkerMiddleware } from "@worker/http/hono.types";
-import {
-  API_REFERENCE_ROUTE,
-  HEALTH_ROUTE,
-  HTTP_STATUS,
-  NOTES_ROUTE,
-  OPENAPI_ROUTE,
-} from "@worker/http/http.constants";
-import { resolveV2LogOperationCategory } from "@worker/http/v2-route-policy";
+import { HTTP_STATUS } from "@worker/http/http.constants";
+import { resolveRouteOperation } from "@worker/http/v2-route-policy";
 import type {
   Logger,
   LogOperationCategory,
@@ -21,26 +14,12 @@ import type {
 import {
   LOG_AUTHENTICATION_RESULT,
   LOG_OPERATION,
-  LOG_OPERATION_CATEGORY,
   UNMATCHED_ROUTE_LABEL,
 } from "@worker/logging/logging.constants";
 import { routePath } from "hono/route";
 
-/** Hono method used for public CORS capability discovery. */
-const CORS_PREFLIGHT_METHOD = "OPTIONS";
-
-/** Hono catch-all template normalized to the bounded unknown route label. */
-const HONO_NOT_FOUND_ROUTE = "/*";
-
-/** Registered public routes that perform no client authentication. */
-const PUBLIC_ROUTES = new Set([
-  API_REFERENCE_ROUTE,
-  HEALTH_ROUTE,
-  OPENAPI_ROUTE,
-]);
-
-/** Registered v1 item route retained until Slice 4 compatibility removal. */
-const V1_NOTE_ROUTE = `${NOTES_ROUTE}/:path`;
+/** Hono catch-all templates normalized to the bounded unknown route label. */
+const HONO_NOT_FOUND_ROUTES = new Set(["/*", "/api/*"]);
 
 /**
  * Logs one content-free diagnostic projection after the complete response is produced.
@@ -57,14 +36,14 @@ export function createRequestLoggingMiddleware(
     const completedAt = performance.now();
     const resolvedRoute = routePath(context);
     const registeredRoute =
-      resolvedRoute === undefined || resolvedRoute === HONO_NOT_FOUND_ROUTE
+      resolvedRoute === undefined || HONO_NOT_FOUND_ROUTES.has(resolvedRoute)
         ? UNMATCHED_ROUTE_LABEL
         : resolvedRoute;
     const errorCode = await resolveApiErrorCode(context.res);
 
     logger.info({
       operation: LOG_OPERATION.httpRequest,
-      operationCategory: resolveLogOperationCategory(context, registeredRoute),
+      operationCategory: resolveLogOperationCategory(context),
       method: context.req.method,
       route: registeredRoute,
       status: context.res.status,
@@ -130,54 +109,19 @@ function resolveAuthenticationAttribution(
 }
 
 /**
- * Resolves one bounded operation category from registered route semantics.
+ * Resolves one bounded category from the authoritative operation policy.
  *
- * V2 delegates to its existing route-policy owner. Retained v1 and public routes are
- * projected locally until Slice 4 removes v1; unknown methods/routes stay `unknown`.
- * This function observes routing only and grants no authority.
+ * Diagnostics consume the same route classification as authorization without gaining
+ * authority to admit, deny, or reinterpret an operation.
  *
- * @param context - Request carrying the raw pathname and method.
- * @param registeredRoute - Hono route template or the sanitized unknown label.
+ * @param context - Request carrying the literal pathname and method.
  * @returns Closed operation category without concrete path data.
  */
 function resolveLogOperationCategory(
   context: WorkerContext,
-  registeredRoute: string,
 ): LogOperationCategory {
-  if (context.req.method === CORS_PREFLIGHT_METHOD) {
-    return LOG_OPERATION_CATEGORY.public;
-  }
-
-  const v2Category = resolveV2LogOperationCategory(
+  return resolveRouteOperation(
     new URL(context.req.url).pathname,
     context.req.method,
-  );
-  if (v2Category !== undefined) return v2Category;
-
-  if (PUBLIC_ROUTES.has(registeredRoute)) {
-    return LOG_OPERATION_CATEGORY.public;
-  }
-
-  if (
-    context.req.method === HTTP_METHOD.get &&
-    (registeredRoute === NOTES_ROUTE || registeredRoute === V1_NOTE_ROUTE)
-  ) {
-    return LOG_OPERATION_CATEGORY.currentRead;
-  }
-
-  if (
-    context.req.method === HTTP_METHOD.put &&
-    registeredRoute === V1_NOTE_ROUTE
-  ) {
-    return LOG_OPERATION_CATEGORY.currentMutation;
-  }
-
-  if (
-    context.req.method === HTTP_METHOD.delete &&
-    registeredRoute === V1_NOTE_ROUTE
-  ) {
-    return LOG_OPERATION_CATEGORY.destructiveMutation;
-  }
-
-  return LOG_OPERATION_CATEGORY.unknown;
+  ).operationCategory;
 }

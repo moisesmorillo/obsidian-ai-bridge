@@ -6,20 +6,11 @@ import {
   MIRROR_MEDIA_TYPE,
 } from "@obsidian-ai-bridge/protocol";
 
-/** Versioned URL prefix for the retained M1 API. */
-export const API_V1_PREFIX = "/api/v1";
-
 /** Versioned URL prefix for the conditional mirror API. */
 export const API_V2_PREFIX = MIRROR_API_V2_PREFIX;
 
-/** Backward-compatible alias for the retained v1 prefix. */
-export const API_PREFIX = API_V1_PREFIX;
-
 /** Unauthenticated liveness endpoint route. */
 export const HEALTH_ROUTE = "/health";
-
-/** Retained v1 note collection route. */
-export const NOTES_ROUTE = `${API_V1_PREFIX}/notes`;
 
 /** V2 mirror capability route. */
 export const MIRROR_ROUTE = MIRROR_API_V2_ROUTE.mirror;

@@ -4,7 +4,7 @@ Security and data safety are priorities. The repository is experimental and does
 claim a production-ready bridge, security certification, complete backup, or supported
 production release.
 
-## M3–M5 Slice 2 trust and authorization boundary
+## M3–M5 Slice 4 trust and authorization boundary
 
 The implemented outward mirror trusts the Obsidian host/plugin environment, the
 plugin runtime, Worker, Cloudflare/R2 operator, and authorized bearer holders with
@@ -23,17 +23,16 @@ isolation guarantee. Private R2 prevents public bucket access but does not prote
 plaintext from a correctly authenticated client or privileged operator.
 
 Successful authentication resolves client ID, name, and exact `read`/`write`/`delete`
-metadata. Slice 2 does not enforce that metadata against routes; full writer migration
-credentials use all three permissions and other authenticated principals retain the
-existing route behavior until Slice 4. The committed Worker selects registry mode.
-The temporary `singleton-migration` mode is a mutually exclusive checkpoint, not a
-fallback, and Slice 4 removes it after migration.
+metadata. One exhaustive operation policy enforces those independent permissions before
+service/storage dispatch; `write` never implies `delete`. The designated writer needs
+all three for complete M3/M4 behavior. Registry authentication is the only mode;
+singleton bearer authority and every v1 HTTP route are retired.
 
 `MIRROR_ASSOCIATION_ID`, `MIRROR_WRITER_ID`, plugin device UUIDs, and mirror
 eligibility are not authorization secrets or client permission scopes. Static IDs
 reduce accidental mutation by cooperating non-writer clients; an authenticated client
 with route authority can still supply them. They remain separate from the principal,
-future Slice 4 permission checks, and current application preconditions.
+current permission checks, and application preconditions.
 
 The user opts into the whole eligible Markdown mirror. Eligibility is limited to
 literal lowercase `.md` paths of at most 1 MiB, excluding dot-prefixed segments and
@@ -57,8 +56,9 @@ instructions found in notes.
   a tombstone after five seconds and an exact absence check, including possible
   iCloud/external activity. Host events do not prove human intent.
 - Conditional format-2 revisions and receipts protect creates, updates, recreation,
-  and tombstones. V1 PUT and DELETE return storage-free `410 mutation_api_retired`.
-  There is no v1 mutation fallback or latest-revision force overwrite.
+  and tombstones. V1 has no registered HTTP or OpenAPI route; authenticated requests
+  receive ordinary sanitized 404 before service/storage dispatch. There is no v1
+  mutation fallback or latest-revision force overwrite.
 - Deletion prepares recovery content before the tombstone CAS. The tombstone CAS is
   the deletion linearization point. Recovery sealing establishes 30 days from the
   stored tombstone upload time; sealing may fail after deletion and unsealed/orphan
@@ -128,7 +128,7 @@ Offline/listener-gap deletions may remain remotely live because absence cannot s
 be promoted to delete authority. Ordering across iCloud devices is not globally
 transactional. M4 provides only explicit reviewed reconciliation: it does not add
 automatic bidirectional sync, cross-system atomicity, multi-writer coordination,
-conflict-artifact cleanup automation, route-level permission enforcement, or MCP. Real desktop/mobile,
+conflict-artifact cleanup automation or MCP. Real desktop/mobile,
 iCloud, native-secret, host rollback/durability, WebView transport, background iOS,
 and deployed Worker/R2 behavior remain unqualified. R2 is a private mirror/API layer,
 not the sole authority or a guaranteed complete backup.

@@ -19,7 +19,6 @@ import {
   mirrorDescriptionSchema,
   mirrorOperationIdSchema,
   mirrorWriterIdSchema,
-  noteListResponseSchema,
   notePageSchema,
   purgedRecoverySnapshotStateSchema,
   recoveryPageSchema,
@@ -32,20 +31,20 @@ import {
   AUTHENTICATION_SCHEME,
   WWW_AUTHENTICATE_HEADER,
 } from "@worker/auth/auth.constants";
+import type { ClientPermission } from "@worker/auth/auth.types";
 import {
   CACHE_CONTROL_HEADER,
   CACHE_CONTROL_NO_STORE,
-  HEALTH_ROUTE,
   HTTP_HEADER,
   HTTP_STATUS,
   JSON_CONTENT_TYPE,
   MARKDOWN_CONTENT_TYPE,
   MARKDOWN_MEDIA_TYPE,
-  NOTES_ROUTE,
   PLAIN_TEXT_MEDIA_TYPE,
   SUPPORTED_NOTE_CONTENT_TYPE_PATTERN,
 } from "@worker/http/http.constants";
 import {
+  ROUTE_OPERATION_POLICY,
   toOpenApiV2RoutePath,
   V2_ROUTE_POLICY,
   type V2RouteMethod,
@@ -70,6 +69,16 @@ function toOpenApiMethod(
     case HTTP_METHOD.put:
       return "put";
   }
+}
+
+/**
+ * Describes the exact permission owned by one route-policy operation.
+ *
+ * @param permission - Independent client capability required before dispatch.
+ * @returns Public OpenAPI prose derived from the authorization owner.
+ */
+function permissionDescription(permission: ClientPermission): string {
+  return `Requires the ${permission} permission.`;
 }
 
 /** OpenAPI security-scheme identifier shared by authenticated routes. */
@@ -286,7 +295,7 @@ const errors = {
   },
   forbidden: documentedError(
     errorContentForCode(API_ERROR_CODE.forbiddenWriter),
-    "Static association/writer designation refused the mutation.",
+    "The authenticated client lacks the operation permission or the static association/writer designation refused the mutation.",
   ),
   notFound: documentedError(
     errorContentForCode(API_ERROR_CODE.notFound),
@@ -295,10 +304,6 @@ const errors = {
   conflict: documentedError(
     errorContentForCode(API_ERROR_CODE.conflict),
     "Recovery proof or retention policy refuses this transition.",
-  ),
-  mutationRetired: documentedError(
-    errorContentForCode(API_ERROR_CODE.mutationApiRetired),
-    "Unsafe v1 mutation is retired.",
   ),
   recoveryUnavailable: documentedError(
     errorContentForCode(API_ERROR_CODE.recoveryUnavailable),
@@ -328,8 +333,8 @@ const errors = {
 
 /** OpenAPI route for unauthenticated liveness. */
 export const healthRoute = createRoute({
-  method: "get",
-  path: HEALTH_ROUTE,
+  method: toOpenApiMethod(ROUTE_OPERATION_POLICY.public.health.method),
+  path: ROUTE_OPERATION_POLICY.public.health.path,
   responses: {
     [HTTP_STATUS.ok]: {
       content: { [JSON_CONTENT_TYPE]: { schema: healthResponseSchema } },
@@ -340,82 +345,6 @@ export const healthRoute = createRoute({
   },
   summary: "Check Worker health",
   tags: ["system"],
-});
-
-/** Retained envelope-aware v1 note listing. */
-export const listNotesRoute = createRoute({
-  method: "get",
-  path: NOTES_ROUTE,
-  responses: {
-    [HTTP_STATUS.ok]: {
-      content: { [JSON_CONTENT_TYPE]: { schema: noteListResponseSchema } },
-      description:
-        "Sorted visible legacy/live paths when the bounded 1,000-page aggregation completes.",
-      headers: cacheControlResponseHeader,
-    },
-    [HTTP_STATUS.unauthorized]: errors.unauthorized,
-    [HTTP_STATUS.internalServerError]: errors.internalServerError,
-  },
-  security: bearerSecurity,
-  summary: "List notes through the retained v1 read API",
-  tags: ["v1 notes"],
-});
-
-/** Retained envelope-aware v1 content read. */
-export const getNoteRoute = createRoute({
-  method: "get",
-  path: `${NOTES_ROUTE}/{path}`,
-  request: { params: notePathParameters },
-  responses: {
-    [HTTP_STATUS.ok]: {
-      content: { [MARKDOWN_CONTENT_TYPE]: { schema: z.string() } },
-      description: "Legacy or decoded live Markdown content.",
-      headers: cacheControlResponseHeader,
-    },
-    [HTTP_STATUS.badRequest]: errors.invalidPath,
-    [HTTP_STATUS.unauthorized]: errors.unauthorized,
-    [HTTP_STATUS.notFound]: errors.notFound,
-    [HTTP_STATUS.internalServerError]: errors.internalServerError,
-  },
-  security: bearerSecurity,
-  summary: "Read a note through the retained v1 API",
-  tags: ["v1 notes"],
-});
-
-/** Authenticated v1 PUT retirement. */
-export const putNoteRoute = createRoute({
-  method: "put",
-  path: `${NOTES_ROUTE}/{path}`,
-  request: { params: notePathParameters },
-  responses: {
-    [HTTP_STATUS.unauthorized]: errors.unauthorized,
-    [HTTP_STATUS.gone]: {
-      ...errors.mutationRetired,
-      description: "Unsafe v1 mutation is retired with mutation_api_retired.",
-    },
-    [HTTP_STATUS.internalServerError]: errors.internalServerError,
-  },
-  security: bearerSecurity,
-  summary: "Retired v1 note write",
-  tags: ["v1 notes"],
-});
-
-/** Authenticated v1 DELETE retirement. */
-export const deleteNoteRoute = createRoute({
-  method: "delete",
-  path: `${NOTES_ROUTE}/{path}`,
-  request: { params: notePathParameters },
-  responses: {
-    [HTTP_STATUS.unauthorized]: errors.unauthorized,
-    [HTTP_STATUS.gone]: {
-      ...errors.mutationRetired,
-      description: "Unsafe v1 deletion is retired with mutation_api_retired.",
-    },
-    [HTTP_STATUS.internalServerError]: errors.internalServerError,
-  },
-  security: bearerSecurity,
-  summary: "Retired v1 note deletion",
-  tags: ["v1 notes"],
 });
 
 /** Authenticated v2 mirror capability description. */
@@ -430,9 +359,13 @@ export const getMirrorRoute = createRoute({
       headers: cacheControlResponseHeader,
     },
     [HTTP_STATUS.unauthorized]: errors.unauthorized,
+    [HTTP_STATUS.forbidden]: errors.forbidden,
     [HTTP_STATUS.internalServerError]: errors.internalServerError,
   },
   security: bearerSecurity,
+  description: permissionDescription(
+    V2_ROUTE_POLICY.mirror.permissions.describe,
+  ),
   summary: "Describe mirror capabilities",
   tags: ["v2 mirror"],
 });
@@ -451,9 +384,11 @@ export const listV2NotesRoute = createRoute({
     },
     [HTTP_STATUS.badRequest]: errors.invalidRequest,
     [HTTP_STATUS.unauthorized]: errors.unauthorized,
+    [HTTP_STATUS.forbidden]: errors.forbidden,
     [HTTP_STATUS.internalServerError]: errors.internalServerError,
   },
   security: bearerSecurity,
+  description: permissionDescription(V2_ROUTE_POLICY.notes.permissions.list),
   summary: "List one current-note page",
   tags: ["v2 notes"],
 });
@@ -476,10 +411,12 @@ export const getV2NoteRoute = createRoute({
     },
     [HTTP_STATUS.badRequest]: errors.invalidPath,
     [HTTP_STATUS.unauthorized]: errors.unauthorized,
+    [HTTP_STATUS.forbidden]: errors.forbidden,
     [HTTP_STATUS.notFound]: errors.notFound,
     [HTTP_STATUS.internalServerError]: errors.internalServerError,
   },
   security: bearerSecurity,
+  description: permissionDescription(V2_ROUTE_POLICY.note.permissions.read),
   summary: "Read current note content",
   tags: ["v2 notes"],
 });
@@ -501,9 +438,13 @@ export const getV2NoteStateRoute = createRoute({
     },
     [HTTP_STATUS.badRequest]: errors.invalidPath,
     [HTTP_STATUS.unauthorized]: errors.unauthorized,
+    [HTTP_STATUS.forbidden]: errors.forbidden,
     [HTTP_STATUS.internalServerError]: errors.internalServerError,
   },
   security: bearerSecurity,
+  description: permissionDescription(
+    V2_ROUTE_POLICY.noteState.permissions.inspect,
+  ),
   summary: "Inspect current note state",
   tags: ["v2 notes"],
 });
@@ -559,8 +500,7 @@ export const putV2NoteRoute = createRoute({
     [HTTP_STATUS.internalServerError]: errors.internalServerError,
   },
   security: bearerSecurity,
-  description:
-    "Exactly one precondition is required: If-None-Match: * for create, or one strong If-Match for update/recreate. Supplying neither or both is rejected.",
+  description: `${permissionDescription(V2_ROUTE_POLICY.note.permissions.write)} Exactly one precondition is required: If-None-Match: * for create, or one strong If-Match for update/recreate. Supplying neither or both is rejected.`,
   summary: "Conditionally create, update, or recreate a note",
   tags: ["v2 notes"],
 });
@@ -591,6 +531,7 @@ export const deleteV2NoteRoute = createRoute({
     [HTTP_STATUS.internalServerError]: errors.internalServerError,
   },
   security: bearerSecurity,
+  description: permissionDescription(V2_ROUTE_POLICY.note.permissions.remove),
   summary: "Recoverably tombstone a live note",
   tags: ["v2 notes"],
 });
@@ -609,9 +550,11 @@ export const listRecoveryRoute = createRoute({
     },
     [HTTP_STATUS.badRequest]: errors.invalidRequest,
     [HTTP_STATUS.unauthorized]: errors.unauthorized,
+    [HTTP_STATUS.forbidden]: errors.forbidden,
     [HTTP_STATUS.internalServerError]: errors.internalServerError,
   },
   security: bearerSecurity,
+  description: permissionDescription(V2_ROUTE_POLICY.recovery.permissions.list),
   summary: "List recovery metadata",
   tags: ["v2 recovery"],
 });
@@ -633,10 +576,14 @@ export const getRecoveryRoute = createRoute({
     },
     [HTTP_STATUS.badRequest]: errors.invalidRequest,
     [HTTP_STATUS.unauthorized]: errors.unauthorized,
+    [HTTP_STATUS.forbidden]: errors.forbidden,
     [HTTP_STATUS.notFound]: errors.notFound,
     [HTTP_STATUS.internalServerError]: errors.internalServerError,
   },
   security: bearerSecurity,
+  description: permissionDescription(
+    V2_ROUTE_POLICY.recoveryItem.permissions.inspect,
+  ),
   summary: "Inspect recovery metadata",
   tags: ["v2 recovery"],
 });
@@ -658,11 +605,15 @@ export const getRecoveryContentRoute = createRoute({
     },
     [HTTP_STATUS.badRequest]: errors.invalidRequest,
     [HTTP_STATUS.unauthorized]: errors.unauthorized,
+    [HTTP_STATUS.forbidden]: errors.forbidden,
     [HTTP_STATUS.notFound]: errors.notFound,
     [HTTP_STATUS.gone]: errors.recoveryUnavailable,
     [HTTP_STATUS.internalServerError]: errors.internalServerError,
   },
   security: bearerSecurity,
+  description: permissionDescription(
+    V2_ROUTE_POLICY.recoveryContent.permissions.read,
+  ),
   summary: "Read recoverable text",
   tags: ["v2 recovery"],
 });
@@ -714,6 +665,11 @@ function recoveryMutationRoute(
       [HTTP_STATUS.internalServerError]: errors.internalServerError,
     },
     security: bearerSecurity,
+    description: permissionDescription(
+      isSeal
+        ? V2_ROUTE_POLICY.recoverySeal.permissions.seal
+        : V2_ROUTE_POLICY.recoveryPurge.permissions.purge,
+    ),
     summary: isSeal
       ? "Seal prepared recovery"
       : "Purge expired recovery content",

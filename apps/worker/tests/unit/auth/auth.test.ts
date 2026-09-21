@@ -1,6 +1,5 @@
 import { MIRROR_HTTP_HEADER } from "@obsidian-ai-bridge/protocol";
 import {
-  AUTHENTICATION_CONFIGURATION_MODE,
   AUTHENTICATION_RESULT_KIND,
   AUTHORIZATION_PARSE_RESULT_KIND,
   BEARER_CREDENTIALS_RESULT_KIND,
@@ -73,43 +72,9 @@ describe("hasMatchingToken", () => {
 });
 
 describe("authenticateRequest", () => {
-  it("authenticates only a valid bearer in explicit singleton migration mode", async () => {
-    const configuration = {
-      mode: AUTHENTICATION_CONFIGURATION_MODE.singletonMigration,
-      token: "secret-token",
-    } as const;
-    await expect(
-      authenticateRequest(
-        headersWithAuthorization("Bearer secret-token"),
-        configuration,
-      ),
-    ).resolves.toEqual({
-      kind: AUTHENTICATION_RESULT_KIND.authenticated,
-      principal: {
-        clientId: "00000000-0000-4000-8000-000000000000",
-        name: "singleton-migration",
-        permissions: [
-          CLIENT_PERMISSION.read,
-          CLIENT_PERMISSION.write,
-          CLIENT_PERMISSION.delete,
-        ],
-      },
-    });
-    await expect(
-      authenticateRequest(headersWithAuthorization(), configuration),
-    ).resolves.toEqual({ kind: AUTHENTICATION_RESULT_KIND.unauthenticated });
-    await expect(
-      authenticateRequest(
-        headersWithAuthorization("Basic secret-token"),
-        configuration,
-      ),
-    ).resolves.toEqual({ kind: AUTHENTICATION_RESULT_KIND.unauthenticated });
-  });
-
   it("resolves exact registry principal metadata and sanitizes authentication failures", async () => {
     const token = "registry-token";
     const configuration = {
-      mode: AUTHENTICATION_CONFIGURATION_MODE.credentialRegistry,
       serializedRegistry: serializeCredentialRegistry({
         version: 1,
         credentials: [
@@ -151,54 +116,30 @@ describe("authenticateRequest", () => {
     }
   });
 
-  it("keeps singleton and registry authority mutually exclusive during migration", async () => {
-    const registryToken = "registry-token";
-    const serializedRegistry = serializeCredentialRegistry({
-      version: 1,
-      credentials: [
-        {
-          clientId: "11111111-1111-4111-8111-111111111111",
-          name: "Writer",
-          permissions: [
-            CLIENT_PERMISSION.read,
-            CLIENT_PERMISSION.write,
-            CLIENT_PERMISSION.delete,
-          ],
-          tokenDigest: await digestCredentialToken(registryToken),
-        },
-      ],
-    });
+  it("rejects the retired singleton bearer even when legacy-looking input remains", async () => {
+    const legacyLookingConfiguration = {
+      serializedRegistry: undefined,
+      mode: "singleton-migration",
+      token: "old-singleton",
+    };
 
     await expect(
-      authenticateRequest(headersWithAuthorization("Bearer old-singleton"), {
-        mode: AUTHENTICATION_CONFIGURATION_MODE.credentialRegistry,
-        serializedRegistry,
-      }),
-    ).resolves.toEqual({ kind: AUTHENTICATION_RESULT_KIND.unauthenticated });
-    await expect(
-      authenticateRequest(headersWithAuthorization(`Bearer ${registryToken}`), {
-        mode: AUTHENTICATION_CONFIGURATION_MODE.singletonMigration,
-        token: "old-singleton",
-      }),
-    ).resolves.toEqual({ kind: AUTHENTICATION_RESULT_KIND.unauthenticated });
-    await expect(
-      authenticateRequest(headersWithAuthorization("Bearer old-singleton"), {
-        mode: AUTHENTICATION_CONFIGURATION_MODE.invalid,
-      }),
+      authenticateRequest(
+        headersWithAuthorization("Bearer old-singleton"),
+        legacyLookingConfiguration,
+      ),
     ).resolves.toEqual({ kind: AUTHENTICATION_RESULT_KIND.unauthenticated });
   });
 
-  it("fails malformed or missing confidential configuration closed", async () => {
+  it("fails malformed or missing confidential registry configuration closed", async () => {
     await expect(
       authenticateRequest(headersWithAuthorization("Bearer supplied"), {
-        mode: AUTHENTICATION_CONFIGURATION_MODE.credentialRegistry,
         serializedRegistry: "{malformed",
       }),
     ).resolves.toEqual({ kind: AUTHENTICATION_RESULT_KIND.unauthenticated });
     await expect(
       authenticateRequest(headersWithAuthorization("Bearer supplied"), {
-        mode: AUTHENTICATION_CONFIGURATION_MODE.singletonMigration,
-        token: undefined,
+        serializedRegistry: undefined,
       }),
     ).resolves.toEqual({ kind: AUTHENTICATION_RESULT_KIND.unauthenticated });
   });

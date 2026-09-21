@@ -23,14 +23,7 @@ export const AUTHENTICATION_RESULT_KIND = {
   unauthenticated: "unauthenticated",
 } as const;
 
-/** Explicit authentication authority selected for one Worker environment. */
-export const AUTHENTICATION_CONFIGURATION_MODE = {
-  credentialRegistry: "credential-registry",
-  invalid: "invalid",
-  singletonMigration: "singleton-migration",
-} as const;
-
-/** Closed client capabilities recorded now and enforced by Slice 4. */
+/** Closed independent client capabilities enforced by the route-operation policy. */
 export const CLIENT_PERMISSION = {
   read: "read",
   write: "write",

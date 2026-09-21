@@ -1,12 +1,12 @@
 # Worker API
 
-The Worker exposes an experimental authenticated personal-mirror API. Public routes are `GET /health`, `GET /openapi.json`, and `GET /docs`. `/api/v1`, `/api/v2`, and every descendant (including unknown routes) require:
+The Worker exposes an experimental authenticated personal-mirror API. Public routes are `GET /health`, `GET /openapi.json`, and `GET /docs`. `/api` and every descendant (including retired v1 and unknown routes) require:
 
 ```http
 Authorization: Bearer <token>
 ```
 
-Missing, malformed, incorrect, or invalidly configured credentials return the same sanitized `401 unauthorized` with `WWW-Authenticate: Bearer`. The active version-1 registry accepts at most 16 named clients and stores only canonical domain-separated SHA-256 digests. Successful authentication resolves a secret-free principal containing client ID, name, and the exact configured `read`/`write`/`delete` set. Slice 2 does **not** enforce permissions per route; current migrated writer credentials therefore declare all three and existing authenticated behavior remains unchanged until Slice 4. Mirror association/writer IDs remain separate cooperating-writer guards, not authentication or permission. API content, JSON, and errors use `Cache-Control: no-store`; principals, tokens, and digests are not returned.
+Missing, malformed, incorrect, or invalidly configured credentials return the same sanitized `401 unauthorized` with `WWW-Authenticate: Bearer`. The active version-1 registry is the only authentication authority, accepts at most 16 named clients, and stores only canonical domain-separated SHA-256 digests. Successful authentication resolves a secret-free principal containing client ID, name, and the exact configured `read`/`write`/`delete` set. One exhaustive operation policy enforces the required independent permission before service/storage dispatch. An authenticated client without it receives sanitized `403`; the response does not expose the principal's permission set or registry metadata. Mirror association/writer IDs and application preconditions remain separate later guards. API content, JSON, and errors use `Cache-Control: no-store`; principals, tokens, and digests are not returned.
 
 The `:path` segment is canonical unpadded base64url of a validated literal lowercase-`.md` NotePath. For example, `Homelab/DNS/Technitium.md` is `SG9tZWxhYi9ETlMvVGVjaG5pdGl1bS5tZA`. Paths are not URI-decoded or repaired. Traversal, absolute paths, backslashes, empty/dot segments, invalid UTF-8 identifiers, and noncanonical encodings are rejected.
 
@@ -14,19 +14,19 @@ The `:path` segment is canonical unpadded base64url of a validated literal lower
 
 The public v2 routes are:
 
-| Method | Path | Purpose |
-| --- | --- | --- |
-| GET | `/api/v2/mirror` | Protocol limits and configured association/designated writer IDs |
-| GET | `/api/v2/notes?cursor=...` | One bounded page of visible legacy/live paths |
-| GET | `/api/v2/notes/:path` | Raw legacy/live Markdown; absent/tombstone is 404 |
-| GET | `/api/v2/notes/:path/state` | Metadata-only absent/legacy/live/tombstone state |
-| PUT | `/api/v2/notes/:path` | Conditional create, live update, or tombstone recreation |
-| DELETE | `/api/v2/notes/:path` | Recovery-first conditional tombstone, never physical DELETE |
-| GET | `/api/v2/recovery?cursor=...` | One metadata-only recovery page |
-| GET | `/api/v2/recovery/:id` | Recovery metadata only |
-| GET | `/api/v2/recovery/:id/content` | Prepared/unexpired-sealed recovery text |
-| POST | `/api/v2/recovery/:id/seal` | Explicit conditional sealing repair |
-| POST | `/api/v2/recovery/:id/purge` | Explicit conditional expired-content purge to a marker |
+| Method | Path | Permission | Purpose |
+| --- | --- | --- | --- |
+| GET | `/api/v2/mirror` | `read` | Protocol limits and configured association/designated writer IDs |
+| GET | `/api/v2/notes?cursor=...` | `read` | One bounded page of visible legacy/live paths |
+| GET | `/api/v2/notes/:path` | `read` | Raw legacy/live Markdown; absent/tombstone is 404 |
+| GET | `/api/v2/notes/:path/state` | `read` | Metadata-only absent/legacy/live/tombstone state |
+| PUT | `/api/v2/notes/:path` | `write` | Conditional create, live update, or tombstone recreation |
+| DELETE | `/api/v2/notes/:path` | `delete` | Recovery-first conditional tombstone, never physical DELETE |
+| GET | `/api/v2/recovery?cursor=...` | `read` | One metadata-only recovery page |
+| GET | `/api/v2/recovery/:id` | `read` | Recovery metadata only |
+| GET | `/api/v2/recovery/:id/content` | `read` | Prepared/unexpired-sealed recovery text |
+| POST | `/api/v2/recovery/:id/seal` | `write` | Explicit conditional sealing repair |
+| POST | `/api/v2/recovery/:id/purge` | `delete` | Explicit conditional expired-content purge to a marker |
 
 All GET routes are read-only. List calls inspect at most 50 R2 objects and return an opaque `nextCursor` or `null`; accepted cursors are nonempty and at most 4096 characters. Clients must not supply a storage prefix. Empty visible pages may still have continuation. Recovery pages never include note plaintext or private R2 validators/metadata.
 
@@ -88,11 +88,11 @@ Registered v2 routes support narrow credential-free CORS. Responses use `Access-
 
 State/recovery item routes advertise GET only, maintenance routes POST only, and the note item route GET/PUT/DELETE. Unknown v2 OPTIONS requests remain bearer-protected. Errors for declared v2 route/method combinations carry the same CORS response headers. Unknown routes, noncanonical static-segment aliases, and undeclared methods (including HEAD) do not.
 
-## Retained v1 compatibility
+## Retired v1 HTTP API
 
-`GET /api/v1/notes` retains the sorted `{ "notes": [...] }` compatibility response while decoding format-2 objects, listing legacy/live paths, and hiding tombstones. It aggregates at most 1,000 pages of 50 scanned objects (50,000 scanned objects); continuation beyond that ceiling fails with sanitized `500 internal_error` rather than claiming a complete inventory. `GET /api/v1/notes/:path` returns raw legacy text or decoded live text and hides absent/tombstone as 404. Malformed/unsupported tagged objects fail with sanitized 500.
+No `/api/v1` route or OpenAPI compatibility path is registered. A valid registry bearer receives the ordinary sanitized `404 not_found` for v1 paths; a missing or invalid bearer receives `401 unauthorized`. Both outcomes occur before mirror-service construction or storage access. There is no `410` compatibility handler or old mutation fallback.
 
-Authenticated `PUT /api/v1/notes/:path` and `DELETE /api/v1/notes/:path` now return `410 mutation_api_retired` without reading a request body or mutating storage. There is no old mutation fallback or alternate native DELETE route. Operators must stop/drain old writers before upgrading and must not roll old Worker code back over format-2 objects.
+Retirement changes only the HTTP surface. It does not rewrite or remove R2 objects. Untagged legacy Markdown remains governed by the established v2 read/adoption policy. Operators upgrading into this version must first provision and verify the full-writer registry credential, migrate the plugin's native SecretStorage bearer, stop/drain any old v1 client, and never roll old Worker code back over format-2 objects or revoked credentials.
 
 ## Errors and generated contract
 
@@ -102,9 +102,9 @@ Errors use a stable sanitized JSON envelope:
 {"error":{"code":"precondition_failed","message":"The supplied application generation is stale or targets the wrong state."}}
 ```
 
-The implemented codes cover `unauthorized`, `forbidden_writer`, `invalid_path`, `invalid_request`, `unsupported_media_type`, `invalid_body`, `payload_too_large`, `not_found`, `conflict`, `mutation_api_retired`, `recovery_unavailable`, `precondition_failed`, `precondition_required`, and `internal_error`. No response contains credentials, raw exceptions, storage keys, R2 validators, or storage envelope bytes.
+The implemented codes cover `unauthorized`, sanitized 403 `forbidden_writer` (used without permission-set detail for permission or designation refusal), `invalid_path`, `invalid_request`, `unsupported_media_type`, `invalid_body`, `payload_too_large`, `not_found`, `conflict`, `recovery_unavailable`, `precondition_failed`, `precondition_required`, and `internal_error`. The protocol schema retains historical `mutation_api_retired`, but no registered route emits it after v1 retirement. No response contains credentials, raw exceptions, storage keys, R2 validators, or storage envelope bytes.
 
-`GET /openapi.json` is generated as OpenAPI 3.1 and describes v1 retirement plus the actual v2 security, headers, optional empty PUT body, media types, pagination, current/recovery schemas, distinct metadata/content routes, and relevant statuses. `GET /docs` serves Scalar. These public documentation routes do not grant note access.
+`GET /openapi.json` is generated as OpenAPI 3.1 and describes only the actual v2 authenticated surface, required permissions, `401` versus `403`, headers, optional empty PUT body, media types, pagination, current/recovery schemas, distinct metadata/content routes, and relevant statuses. `GET /docs` serves Scalar. These public documentation routes do not grant note access.
 
 The generated plugin now composes this v2 surface for the explicitly activated
 designated writer. Artifact qualification proves a packaged saved-file event reaches a

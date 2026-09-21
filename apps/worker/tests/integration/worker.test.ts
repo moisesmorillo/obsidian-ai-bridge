@@ -20,15 +20,13 @@ import {
   tombstoneMutationResponseSchema,
 } from "@obsidian-ai-bridge/protocol";
 import { createWorkerApp } from "@worker/app";
-import {
-  AUTHENTICATION_CONFIGURATION_MODE,
-  CLIENT_PERMISSION,
-} from "@worker/auth/auth.constants";
+import { CLIENT_PERMISSION } from "@worker/auth/auth.constants";
 import {
   digestCredentialToken,
   serializeCredentialRegistry,
 } from "@worker/auth/credential-registry";
 import {
+  resolveRouteOperation,
   toOpenApiV2RoutePath,
   V2_ROUTE_POLICY,
 } from "@worker/http/v2-route-policy";
@@ -37,6 +35,7 @@ import {
   createTestMirrorServices,
   MemoryMirrorBucket,
   TEST_ASSOCIATION_ID,
+  TEST_AUTHENTICATION_CONFIGURATION,
   TEST_WRITER_ID,
 } from "@worker-tests/support/mirror-test-kit";
 import { describe, expect, it, vi } from "vitest";
@@ -121,10 +120,7 @@ function application(
     app: createWorkerApp({
       logger,
       resolveMirrorServices: () => mirrorServices,
-      resolveAuthentication: () => ({
-        mode: AUTHENTICATION_CONFIGURATION_MODE.singletonMigration,
-        token: TOKEN,
-      }),
+      resolveAuthentication: () => TEST_AUTHENTICATION_CONFIGURATION,
     }),
     logger,
     mirrorServices,
@@ -180,7 +176,6 @@ describe("Worker v2 API", () => {
       logger,
       resolveMirrorServices: () => createTestMirrorServices(bucket),
       resolveAuthentication: () => ({
-        mode: AUTHENTICATION_CONFIGURATION_MODE.credentialRegistry,
         serializedRegistry: serializeCredentialRegistry({
           version: 1,
           credentials: [
@@ -742,10 +737,7 @@ describe("Worker v2 API", () => {
         resolutions += 1;
         return createTestMirrorServices(bucket);
       },
-      resolveAuthentication: () => ({
-        mode: AUTHENTICATION_CONFIGURATION_MODE.singletonMigration,
-        token: TOKEN,
-      }),
+      resolveAuthentication: () => TEST_AUTHENTICATION_CONFIGURATION,
     });
     const valid = await app.fetch(
       request(`${noteRoute("Alpha.md")}/state`, {
@@ -1189,7 +1181,7 @@ describe("Worker v2 API", () => {
     expect(logged).not.toContain("sensitive note body");
   });
 
-  it("publishes an exact semantic OpenAPI contract for v1 and v2", async () => {
+  it("publishes an exact permission-aware OpenAPI contract for v2 only", async () => {
     const { app } = application(new MemoryMirrorBucket());
     const response = await app.fetch(request("/openapi.json"));
     const schemaObject = z
@@ -1240,8 +1232,6 @@ describe("Worker v2 API", () => {
       })
       .parse(await response.json());
     expect(Object.keys(document.paths).sort()).toEqual([
-      "/api/v1/notes",
-      "/api/v1/notes/{path}",
       "/api/v2/mirror",
       "/api/v2/notes",
       "/api/v2/notes/{path}",
@@ -1255,16 +1245,10 @@ describe("Worker v2 API", () => {
     ]);
     const expected = {
       "/health": { get: ["200", "500"] },
-      "/api/v1/notes": { get: ["200", "401", "500"] },
-      "/api/v1/notes/{path}": {
-        get: ["200", "400", "401", "404", "500"],
-        put: ["401", "410", "500"],
-        delete: ["401", "410", "500"],
-      },
-      "/api/v2/mirror": { get: ["200", "401", "500"] },
-      "/api/v2/notes": { get: ["200", "400", "401", "500"] },
+      "/api/v2/mirror": { get: ["200", "401", "403", "500"] },
+      "/api/v2/notes": { get: ["200", "400", "401", "403", "500"] },
       "/api/v2/notes/{path}": {
-        get: ["200", "400", "401", "404", "500"],
+        get: ["200", "400", "401", "403", "404", "500"],
         put: [
           "200",
           "201",
@@ -1279,11 +1263,17 @@ describe("Worker v2 API", () => {
         ],
         delete: ["200", "400", "401", "403", "412", "413", "428", "500"],
       },
-      "/api/v2/notes/{path}/state": { get: ["200", "400", "401", "500"] },
-      "/api/v2/recovery": { get: ["200", "400", "401", "500"] },
-      "/api/v2/recovery/{id}": { get: ["200", "400", "401", "404", "500"] },
+      "/api/v2/notes/{path}/state": {
+        get: ["200", "400", "401", "403", "500"],
+      },
+      "/api/v2/recovery": {
+        get: ["200", "400", "401", "403", "500"],
+      },
+      "/api/v2/recovery/{id}": {
+        get: ["200", "400", "401", "403", "404", "500"],
+      },
       "/api/v2/recovery/{id}/content": {
-        get: ["200", "400", "401", "404", "410", "500"],
+        get: ["200", "400", "401", "403", "404", "410", "500"],
       },
       "/api/v2/recovery/{id}/seal": {
         post: [
@@ -1344,6 +1334,23 @@ describe("Worker v2 API", () => {
       }))
       .sort((left, right) => left.path.localeCompare(right.path));
     expect(openApiSurface).toEqual(policySurface);
+    for (const definition of Object.values(V2_ROUTE_POLICY)) {
+      for (const method of Object.values(definition.operations)) {
+        const path = concreteV2Route(definition.path, operationId(991));
+        const policy = resolveRouteOperation(path, method);
+        if (policy.kind !== "permission") {
+          throw new Error("Registered v2 operation lacks permission policy");
+        }
+        const documented = required(
+          required(document.paths[toOpenApiV2RoutePath(definition.path)])[
+            method.toLowerCase()
+          ],
+        );
+        expect(documented.description).toContain(
+          `Requires the ${policy.permission} permission.`,
+        );
+      }
+    }
 
     const put = required(required(document.paths["/api/v2/notes/{path}"]).put);
     expect(put.requestBody?.required).toBe(false);
@@ -1351,6 +1358,7 @@ describe("Worker v2 API", () => {
       "text/markdown",
       "text/plain",
     ]);
+    expect(put.description).toContain("Requires the write permission");
     expect(put.description).toContain("Exactly one precondition");
     const putHeaders = new Map(
       put.parameters
@@ -1458,67 +1466,6 @@ describe("Worker v2 API", () => {
   });
 });
 
-describe("retained v1 compatibility", () => {
-  it("reads legacy/live envelopes, hides tombstones, and retires all mutations", async () => {
-    const bucket = new MemoryMirrorBucket();
-    bucket.seed("vault/Legacy.md", "legacy body");
-    const { app } = application(bucket);
-    const created = await createNote(app, 20, "live body");
-
-    const list = await app.fetch(
-      request("/api/v1/notes", {
-        headers: { Authorization: `Bearer ${TOKEN}` },
-      }),
-    );
-    expect(await list.json()).toEqual({ notes: ["Alpha.md", "Legacy.md"] });
-    const legacy = await app.fetch(
-      request(noteRoute("Legacy.md", "v1"), {
-        headers: { Authorization: `Bearer ${TOKEN}` },
-      }),
-    );
-    expect(await legacy.text()).toBe("legacy body");
-    const missing = await app.fetch(
-      request(noteRoute("Missing.md", "v1"), {
-        headers: { Authorization: `Bearer ${TOKEN}` },
-      }),
-    );
-    expect(missing.status).toBe(404);
-
-    for (const method of ["PUT", "DELETE"]) {
-      const response = await app.fetch(
-        request(noteRoute("Alpha.md", "v1"), {
-          method,
-          headers: { Authorization: `Bearer ${TOKEN}` },
-          ...(method === "PUT" ? { body: "unsafe" } : {}),
-        }),
-      );
-      expect(response.status).toBe(410);
-      expect(await errorCode(response)).toBe(API_ERROR_CODE.mutationApiRetired);
-    }
-    const read = await app.fetch(
-      request(noteRoute("Alpha.md"), {
-        headers: { Authorization: `Bearer ${TOKEN}` },
-      }),
-    );
-    expect(read.headers.get("ETag")).toBe(
-      `"m3-${created.acknowledgement.revision}"`,
-    );
-  });
-
-  it("sanitizes malformed tagged storage instead of treating it as raw or absent", async () => {
-    const bucket = new MemoryMirrorBucket();
-    bucket.seed("vault/Alpha.md", "{}", { bridgeFormat: "2" });
-    const { app } = application(bucket);
-    const response = await app.fetch(
-      request(noteRoute("Alpha.md", "v1"), {
-        headers: { Authorization: `Bearer ${TOKEN}` },
-      }),
-    );
-    expect(response.status).toBe(500);
-    expect(await errorCode(response)).toBe(API_ERROR_CODE.internalError);
-  });
-});
-
 type ConditionalPutPredicate = (key: string, body: string) => boolean;
 
 /**
@@ -1582,7 +1529,6 @@ describe("Worker v2 reviewed transport boundaries", () => {
     const id = operationId(900);
     const protectedRoutes = [
       ["GET", "/api/v1/notes"],
-      ["GET", noteRoute("Alpha.md", "v1")],
       ["PUT", noteRoute("Alpha.md", "v1")],
       ["DELETE", noteRoute("Alpha.md", "v1")],
       ["GET", "/api/v1/unknown/descendant"],
@@ -1637,10 +1583,7 @@ describe("Worker v2 reviewed transport boundaries", () => {
         resolutions += 1;
         return createTestMirrorServices(bucket);
       },
-      resolveAuthentication: () => ({
-        mode: AUTHENTICATION_CONFIGURATION_MODE.singletonMigration,
-        token: TOKEN,
-      }),
+      resolveAuthentication: () => TEST_AUTHENTICATION_CONFIGURATION,
     });
     const id = operationId(901);
     const routes = [
@@ -1758,10 +1701,7 @@ describe("Worker v2 reviewed transport boundaries", () => {
         resolutions += 1;
         return createTestMirrorServices(bucket);
       },
-      resolveAuthentication: () => ({
-        mode: AUTHENTICATION_CONFIGURATION_MODE.singletonMigration,
-        token: TOKEN,
-      }),
+      resolveAuthentication: () => TEST_AUTHENTICATION_CONFIGURATION,
     });
     const aliases = [
       "/%61pi/v2/mirror",
@@ -1847,12 +1787,6 @@ describe("Worker v2 reviewed transport boundaries", () => {
     > = [
       [
         "GET",
-        `/api/v1/notes/${aliasedPath}`,
-        { Authorization: `Bearer ${TOKEN}` },
-        undefined,
-      ],
-      [
-        "GET",
         `/api/v2/notes/${aliasedPath}`,
         { Authorization: `Bearer ${TOKEN}` },
         undefined,
@@ -1925,8 +1859,8 @@ describe("Worker v2 reviewed transport boundaries", () => {
         headers: { Authorization: `Bearer ${TOKEN}` },
       }),
     );
-    expect(hierarchical.status).toBe(400);
-    expect(await errorCode(hierarchical)).toBe(API_ERROR_CODE.invalidPath);
+    expect(hierarchical.status).toBe(404);
+    expect(await errorCode(hierarchical)).toBe(API_ERROR_CODE.notFound);
     expect(bucket.getCount).toBe(0);
     expect(bucket.putKeys).toHaveLength(0);
   });
@@ -2206,8 +2140,8 @@ describe("Worker handler-to-conditional-storage races", () => {
   });
 });
 
-describe("oversized legacy list compatibility", () => {
-  it("filters oversized untagged entries from composed v1/v2 lists while direct reads still fail", async () => {
+describe("oversized legacy object compatibility", () => {
+  it("filters oversized untagged entries from v2 lists while direct reads still fail", async () => {
     const bucket = new MemoryMirrorBucket();
     bucket.seed("vault/Visible.md", "visible");
     bucket.seed("vault/Oversized.md", "x".repeat(1_048_577));
@@ -2218,11 +2152,6 @@ describe("oversized legacy list compatibility", () => {
         await app.fetch(request("/api/v2/notes", { headers: authorization }))
       ).json(),
     ).toEqual({ notes: ["Visible.md"], nextCursor: null });
-    expect(
-      await (
-        await app.fetch(request("/api/v1/notes", { headers: authorization }))
-      ).json(),
-    ).toEqual({ notes: ["Visible.md"] });
     expect(
       (
         await app.fetch(
@@ -2236,10 +2165,6 @@ describe("oversized legacy list compatibility", () => {
     });
     expect(
       (await app.fetch(request("/api/v2/notes", { headers: authorization })))
-        .status,
-    ).toBe(500);
-    expect(
-      (await app.fetch(request("/api/v1/notes", { headers: authorization })))
         .status,
     ).toBe(500);
   });

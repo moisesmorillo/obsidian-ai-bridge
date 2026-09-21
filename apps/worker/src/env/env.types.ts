@@ -1,15 +1,9 @@
 /// <reference types="@cloudflare/workers-types" />
 
-/** Confidential and explicit bindings used only to select request authentication authority. */
+/** Confidential binding for the sole registry authentication authority. */
 export interface WorkerAuthenticationEnvironment {
-  /** Explicit authority selector; unknown or missing values fail authentication closed. */
-  readonly OBSIDIAN_BRIDGE_AUTH_MODE?: string;
-
-  /** Digest-only credential registry used by the committed authentication mode. */
+  /** Digest-only credential registry; missing or invalid input fails authentication closed. */
   readonly OBSIDIAN_BRIDGE_CREDENTIAL_REGISTRY?: string;
-
-  /** Legacy bearer accepted only when singleton migration mode is explicitly selected. */
-  readonly OBSIDIAN_BRIDGE_TOKEN?: string;
 }
 
 /**

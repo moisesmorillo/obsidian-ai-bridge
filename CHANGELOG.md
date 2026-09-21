@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.11.0](https://github.com/moisesmorillo/obsidian-ai-bridge/compare/v0.10.1...v0.11.0) (2026-09-21)
+
+
+### Features
+
+* **worker:** add scoped client credential lifecycle ([#48](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/48)) ([a7cf9b4](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/a7cf9b42a94ea9aa89453229d93750bc034fd38a))
+* **worker:** attribute live diagnostics to clients ([#49](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/49)) ([bf6b6d8](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/bf6b6d82a27d0997ad6cecb2dc95e4f0944dc61f))
+
+
+### Documentation
+
+* **m5:** close operational readiness decisions ([#47](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/47)) ([476339a](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/476339ab58e0e9f02ce5b2332d2990b724613804))
+* **m5:** define threat and credential model ([#45](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/45)) ([d04fb62](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/d04fb62e15cebb88edc23ac7b10fdfb32b5cdf86))
+
 ## [0.10.1](https://github.com/moisesmorillo/obsidian-ai-bridge/compare/v0.10.0...v0.10.1) (2026-09-20)
 
 

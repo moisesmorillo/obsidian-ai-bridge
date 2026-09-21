@@ -2,5 +2,4 @@
 # The file is ignored by Git and must never contain shared secrets.
 
 [env]
-# OBSIDIAN_BRIDGE_AUTH_MODE = "credential-registry"
 # OBSIDIAN_BRIDGE_CREDENTIAL_REGISTRY = '{"version":1,"credentials":[]}'

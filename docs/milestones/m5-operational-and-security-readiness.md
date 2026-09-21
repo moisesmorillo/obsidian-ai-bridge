@@ -1,6 +1,6 @@
 # M5 — Operational and security readiness
 
-**Status: NEXT — Slices 0–3 complete; Slice 4 is next.** M1–M4 remain COMPLETE and M6 remains PLANNED. Slice 2 implements the credential registry, typed principal, offline lifecycle, and explicit singleton migration checkpoint. Slice 3 implements client-attributed content-free live diagnostics while preserving zero-day retention. Route-level permission enforcement remains unimplemented until Slice 4, and no current release or platform is supported.
+**Status: NEXT — Slices 0–4 complete; Slice 5 is next.** M1–M4 remain COMPLETE and M6 remains PLANNED. Slice 2 implements the credential registry, typed principal, offline lifecycle, and historical singleton migration checkpoint. Slice 3 implements client-attributed content-free live diagnostics while preserving zero-day retention. Slice 4 enforces exact route permissions, removes singleton authority, and retires every v1 HTTP/OpenAPI route. No current release or platform is supported.
 
 ## Objective
 
@@ -229,7 +229,7 @@ current route authority remains behind one explicit temporary migration checkpoi
 operation without changing authorization, request admission, infrastructure, or
 retention.
 
-### Slice 4 — Permission enforcement, client migration, and v1 retirement — NEXT
+### Slice 4 — Permission enforcement, client migration, and v1 retirement — COMPLETE
 
 - Create one exhaustive route-operation permission table for public, authenticated
   v2/recovery, unknown-descendant, and preflight behavior.
@@ -244,6 +244,12 @@ retention.
 **Dependency:** Slices 1–3.
 
 **Expected production scope:** 8–10 files / 700–1,200 net new LOC.
+
+**Production outcome:** 11 changed production TypeScript files / 379 additions and
+528 deletions / 149 net lines removed. The 11th file is an explicitly authorized,
+three-constant deletion from the Worker HTTP constants module that completes v1 source
+retirement; no additional scope expansion occurred. Existing typed registry, route,
+CORS, OpenAPI, and diagnostic owners kept the implementation below the net-line estimate.
 
 **Independently mergeable outcome:** every remaining API operation has one tested
 permission owner, the privileged fallback is gone, delete is independent, current
@@ -389,6 +395,34 @@ without deployment or M6.
 - ADR 0011's zero-day contract is unchanged: no persistent logging configuration,
   service, binding, dependency, quota/rate limit, 429 behavior, audit claim, deployment,
   or M6 capability was added.
+
+## Slice 4 acceptance evidence
+
+- One typed route-operation policy owns every public route, registered v2 method,
+  exact `read`/`write`/`delete` requirement, registered preflight, and authenticated
+  unknown API outcome. Hono registration, authorization, CORS, OpenAPI, and diagnostics
+  consume its projections without another permission owner.
+- Authentication resolves only the strict digest registry. Source/env/Wrangler/local
+  configuration contain no singleton mode or token authority; focused tests prove an
+  old singleton token receives sanitized `401`.
+- Authorization executes after principal resolution and before mirror-service
+  construction. Insufficient permissions return sanitized `403`; absent/invalid
+  credentials return `401`. Permission refusal, unknown methods/routes, OPTIONS, and
+  retired v1 paths perform zero service/storage/effect dispatch.
+- The exhaustive operation matrix tests full, exact, insufficient, and missing
+  credentials for all 11 authenticated v2 operations. It separately proves `write`
+  cannot tombstone or purge, `delete` implies neither read nor write, and an authorized
+  writer still fails the existing association/writer guard independently.
+- Every v1 route registration and generated OpenAPI path is removed. Authenticated v1
+  requests now receive the ordinary sanitized unknown-API `404`; unauthenticated v1
+  requests remain `401`. No storage object or format migration was performed, so
+  legacy stored objects remain readable only through established v2 policy.
+- The plugin remains an ordinary Bearer client using native SecretStorage and v2. A
+  registry credential with `read`, `write`, and `delete` preserves its complete M3/M4
+  behavior; no client ID, permission, or bypass is invented in plugin state.
+- Canonical validation, coverage, generated artifacts, diff hygiene, and final semantic
+  review evidence are recorded in this PR. No quota, limiter, recovery automation,
+  release tooling, deployment, platform-support claim, or M6 code was added.
 
 ## M6 boundary
 

@@ -1,45 +1,29 @@
-import { AUTHENTICATION_CONFIGURATION_MODE } from "@worker/auth/auth.constants";
 import { resolveWorkerAuthentication } from "@worker/index";
 import { describe, expect, it } from "vitest";
 
 describe("Worker entrypoint", () => {
-  it("exports a fully assembled fetch application that fails missing auth mode closed", async () => {
+  it("exports a fully assembled fetch application that fails missing registry closed", async () => {
     const { default: worker } = await import("@worker/index");
     expect(worker).toHaveProperty("fetch");
     const response = await Reflect.apply(worker.fetch, worker, [
-      new Request("https://example.test/api/v1/notes"),
-      { OBSIDIAN_BRIDGE_TOKEN: "token" },
+      new Request("https://example.test/api/v2/notes"),
+      { OBSIDIAN_BRIDGE_TOKEN: "retired-token" },
     ]);
     expect(response.status).toBe(401);
   });
 
-  it("selects exactly one explicit authority without mixed fallback", () => {
-    const bothSecrets = {
+  it("resolves only the digest registry and ignores retired singleton bindings", () => {
+    const environment = {
+      OBSIDIAN_BRIDGE_AUTH_MODE: "singleton-migration",
       OBSIDIAN_BRIDGE_CREDENTIAL_REGISTRY: "registry",
-      OBSIDIAN_BRIDGE_TOKEN: "singleton",
+      OBSIDIAN_BRIDGE_TOKEN: "retired-token",
     };
-    expect(
-      resolveWorkerAuthentication({
-        ...bothSecrets,
-        OBSIDIAN_BRIDGE_AUTH_MODE:
-          AUTHENTICATION_CONFIGURATION_MODE.credentialRegistry,
-      }),
-    ).toEqual({
-      mode: AUTHENTICATION_CONFIGURATION_MODE.credentialRegistry,
+
+    expect(resolveWorkerAuthentication(environment)).toEqual({
       serializedRegistry: "registry",
     });
-    expect(
-      resolveWorkerAuthentication({
-        ...bothSecrets,
-        OBSIDIAN_BRIDGE_AUTH_MODE:
-          AUTHENTICATION_CONFIGURATION_MODE.singletonMigration,
-      }),
-    ).toEqual({
-      mode: AUTHENTICATION_CONFIGURATION_MODE.singletonMigration,
-      token: "singleton",
-    });
-    expect(resolveWorkerAuthentication(bothSecrets)).toEqual({
-      mode: AUTHENTICATION_CONFIGURATION_MODE.invalid,
+    expect(resolveWorkerAuthentication({})).toEqual({
+      serializedRegistry: undefined,
     });
   });
 });

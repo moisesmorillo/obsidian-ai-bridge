@@ -2,46 +2,31 @@ import { OpenAPIHono } from "@hono/zod-openapi";
 import { API_ERROR_CODE } from "@obsidian-ai-bridge/protocol";
 import { Scalar } from "@scalar/hono-api-reference";
 import type { WorkerAppDependencies } from "@worker/app.types";
-import { createErrorResponse } from "@worker/http/api-responses";
+import {
+  createErrorResponse,
+  createUnauthorizedResponse,
+} from "@worker/http/api-responses";
 import { createAuthenticationMiddleware } from "@worker/http/authentication.middleware";
 import type {
   WorkerApplication,
   WorkerBasePath,
   WorkerHonoEnvironment,
+  WorkerMiddleware,
 } from "@worker/http/hono.types";
+import { API_V2_PREFIX } from "@worker/http/http.constants";
+import { createHealthHandler } from "@worker/http/note.handlers";
 import {
-  API_PREFIX,
-  API_REFERENCE_ROUTE,
-  API_V2_PREFIX,
-  HEALTH_ROUTE,
-  NOTES_ROUTE,
-  OPENAPI_ROUTE,
-} from "@worker/http/http.constants";
-import {
-  createDeleteNoteHandler,
-  createGetNoteHandler,
-  createHealthHandler,
-  createInvalidPathHandler,
-  createListNotesHandler,
-  createPutNoteHandler,
-  createUnsupportedNoteMethodHandler,
-} from "@worker/http/note.handlers";
-import {
-  deleteNoteRoute,
   deleteV2NoteRoute,
   getMirrorRoute,
-  getNoteRoute,
   getRecoveryContentRoute,
   getRecoveryRoute,
   getV2NoteRoute,
   getV2NoteStateRoute,
   healthRoute,
-  listNotesRoute,
   listRecoveryRoute,
   listV2NotesRoute,
   openApiConfiguration,
   purgeRecoveryRoute,
-  putNoteRoute,
   putV2NoteRoute,
   sealRecoveryRoute,
 } from "@worker/http/openapi.routes";
@@ -60,16 +45,56 @@ import {
   createSealRecoveryHandler,
 } from "@worker/http/v2.handlers";
 import { createV2CorsMiddleware } from "@worker/http/v2-cors.middleware";
-import { V2_ROUTE_POLICY } from "@worker/http/v2-route-policy";
+import {
+  AUTHENTICATED_API_ROOT,
+  ROUTE_OPERATION_KIND,
+  ROUTE_OPERATION_POLICY,
+  resolveRouteOperation,
+  V2_ROUTE_POLICY,
+} from "@worker/http/v2-route-policy";
 import { createV2RoutePolicyGuardMiddleware } from "@worker/http/v2-route-policy.middleware";
 import { createRequestLoggingMiddleware } from "@worker/logging/request-logging.middleware";
 import type { BlankSchema } from "hono/types";
 
 /**
+ * Enforces the permission selected by the authoritative operation policy.
+ *
+ * Authentication publishes the principal first. Unknown API operations and exact
+ * permission refusals terminate here before service construction or effect dispatch.
+ *
+ * @returns Middleware enforcing independent principal permissions without writer bypass.
+ */
+function createOperationAuthorizationMiddleware(): WorkerMiddleware {
+  return async (context, next) => {
+    const operation = resolveRouteOperation(
+      new URL(context.req.url).pathname,
+      context.req.method,
+    );
+    if (operation.kind === ROUTE_OPERATION_KIND.authenticatedUnknown) {
+      return createErrorResponse(API_ERROR_CODE.notFound);
+    }
+    if (operation.kind !== ROUTE_OPERATION_KIND.permission) {
+      await next();
+      return;
+    }
+
+    const principal = context.var.clientPrincipal;
+    if (principal === undefined) {
+      return createUnauthorizedResponse(context);
+    }
+    if (!principal.permissions.includes(operation.permission)) {
+      return createErrorResponse(API_ERROR_CODE.forbiddenWriter);
+    }
+
+    await next();
+  };
+}
+
+/**
  * Builds the complete Hono transport adapter from infrastructure-agnostic ports.
  *
  * @param dependencies - Long-lived ports used to resolve request services and logging.
- * @returns A typed Hono application with retained v1 and conditional v2 routes.
+ * @returns A typed Hono application with public routes and authenticated v2 operations.
  */
 export function createWorkerApp(
   dependencies: WorkerAppDependencies,
@@ -84,33 +109,31 @@ export function createWorkerApp(
   app.use(API_V2_PREFIX, createV2CorsMiddleware());
   app.use(`${API_V2_PREFIX}/*`, createV2CorsMiddleware());
   app.use(
-    API_PREFIX,
+    AUTHENTICATED_API_ROOT,
     createAuthenticationMiddleware(dependencies.resolveAuthentication),
   );
   app.use(
-    `${API_PREFIX}/*`,
+    `${AUTHENTICATED_API_ROOT}/*`,
     createAuthenticationMiddleware(dependencies.resolveAuthentication),
   );
+  app.use(AUTHENTICATED_API_ROOT, createOperationAuthorizationMiddleware());
   app.use(
-    API_V2_PREFIX,
-    createAuthenticationMiddleware(dependencies.resolveAuthentication),
+    `${AUTHENTICATED_API_ROOT}/*`,
+    createOperationAuthorizationMiddleware(),
+  );
+  app.use(AUTHENTICATED_API_ROOT, createV2RoutePolicyGuardMiddleware());
+  app.use(`${AUTHENTICATED_API_ROOT}/*`, createV2RoutePolicyGuardMiddleware());
+  app.use(
+    AUTHENTICATED_API_ROOT,
+    createRequestDependenciesMiddleware(dependencies.resolveMirrorServices),
   );
   app.use(
-    `${API_V2_PREFIX}/*`,
-    createAuthenticationMiddleware(dependencies.resolveAuthentication),
-  );
-  app.use(API_V2_PREFIX, createV2RoutePolicyGuardMiddleware());
-  app.use(`${API_V2_PREFIX}/*`, createV2RoutePolicyGuardMiddleware());
-  app.use(
+    `${AUTHENTICATED_API_ROOT}/*`,
     createRequestDependenciesMiddleware(dependencies.resolveMirrorServices),
   );
 
   [
     healthRoute,
-    listNotesRoute,
-    getNoteRoute,
-    putNoteRoute,
-    deleteNoteRoute,
     getMirrorRoute,
     listV2NotesRoute,
     getV2NoteStateRoute,
@@ -126,14 +149,11 @@ export function createWorkerApp(
     app.openAPIRegistry.registerPath(route);
   });
 
-  app.get(HEALTH_ROUTE, createHealthHandler());
-
-  app.get(NOTES_ROUTE, createListNotesHandler());
-  app.get(`${NOTES_ROUTE}/:path`, createGetNoteHandler());
-  app.put(`${NOTES_ROUTE}/:path`, createPutNoteHandler());
-  app.delete(`${NOTES_ROUTE}/:path`, createDeleteNoteHandler());
-  app.all(`${NOTES_ROUTE}/:path`, createUnsupportedNoteMethodHandler());
-  app.all(`${NOTES_ROUTE}/*`, createInvalidPathHandler());
+  app.on(
+    ROUTE_OPERATION_POLICY.public.health.method,
+    ROUTE_OPERATION_POLICY.public.health.path,
+    createHealthHandler(),
+  );
 
   app.on(
     V2_ROUTE_POLICY.mirror.operations.describe,
@@ -165,9 +185,6 @@ export function createWorkerApp(
     V2_ROUTE_POLICY.note.path,
     createDeleteV2NoteHandler(),
   );
-  app.all(V2_ROUTE_POLICY.noteState.path, createUnsupportedNoteMethodHandler());
-  app.all(V2_ROUTE_POLICY.note.path, createUnsupportedNoteMethodHandler());
-  app.all(`${V2_ROUTE_POLICY.notes.path}/*`, createInvalidPathHandler());
   app.on(
     V2_ROUTE_POLICY.recovery.operations.list,
     V2_ROUTE_POLICY.recovery.path,
@@ -194,8 +211,12 @@ export function createWorkerApp(
     createPurgeRecoveryHandler(),
   );
 
-  app.doc(OPENAPI_ROUTE, openApiConfiguration);
-  app.get(API_REFERENCE_ROUTE, Scalar({ url: OPENAPI_ROUTE }));
+  app.doc(ROUTE_OPERATION_POLICY.public.openApi.path, openApiConfiguration);
+  app.on(
+    ROUTE_OPERATION_POLICY.public.reference.method,
+    ROUTE_OPERATION_POLICY.public.reference.path,
+    Scalar({ url: ROUTE_OPERATION_POLICY.public.openApi.path }),
+  );
   app.notFound(() => createErrorResponse(API_ERROR_CODE.notFound));
   app.onError(() => createErrorResponse(API_ERROR_CODE.internalError));
 

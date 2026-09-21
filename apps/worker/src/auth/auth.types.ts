@@ -1,5 +1,4 @@
 import type {
-  AUTHENTICATION_CONFIGURATION_MODE,
   AUTHENTICATION_RESULT_KIND,
   AUTHORIZATION_PARSE_RESULT_KIND,
   BEARER_CREDENTIALS_RESULT_KIND,
@@ -59,21 +58,15 @@ export interface ClientPrincipal {
   readonly clientId: string;
   /** Operator-facing client label. */
   readonly name: string;
-  /** Exact configured capabilities; Slice 4 will enforce route requirements. */
+  /** Exact configured capabilities enforced independently without implication. */
   readonly permissions: readonly ClientPermission[];
 }
 
-/** Explicit mutually exclusive authentication authority for one request. */
-export type AuthenticationConfiguration =
-  | {
-      readonly mode: typeof AUTHENTICATION_CONFIGURATION_MODE.credentialRegistry;
-      readonly serializedRegistry: string | undefined;
-    }
-  | {
-      readonly mode: typeof AUTHENTICATION_CONFIGURATION_MODE.singletonMigration;
-      readonly token: string | undefined;
-    }
-  | { readonly mode: typeof AUTHENTICATION_CONFIGURATION_MODE.invalid };
+/** Registry-only authentication configuration resolved for one request. */
+export interface AuthenticationConfiguration {
+  /** Untrusted serialized digest registry; unavailable or invalid input fails closed. */
+  readonly serializedRegistry: string | undefined;
+}
 
 /** Request-level authentication outcome without exposing credential details. */
 export type AuthenticationResult =

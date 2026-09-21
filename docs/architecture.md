@@ -23,7 +23,7 @@ composition. Slice 8's generated-artifact qualification and operational document
 are implemented. The independent final review found three MINOR issues, corrective
 head `e97af36` resolved all three, and the corrective review returned APPROVE with no
 open findings. M3 is COMPLETE; PR #27 merged at `63b0599` and made the transition
-canonical. M4 Slices 1–8 are COMPLETE and M5 is NEXT. M5 Slices 0–3 are complete; Slice 4 is next. The
+canonical. M4 Slices 1–8 are COMPLETE and M5 is NEXT. M5 Slices 0–4 are complete; Slice 5 is next. The
 current boundary includes strict device state v4 with frozen v2/v3 migration, reviewed
 sampling/admission, narrow local writes and preservation, live/adoption/tombstone/
 restore actions, bounded parent-owned history steps, step-scoped archives, one shared
@@ -89,7 +89,7 @@ apps/worker/src/
 
 ### Cloudflare Worker
 
-The Worker is the remote HTTP/API boundary. `index.ts` constructs the Hono app and long-lived LogTape dependency once per isolate. Request middleware resolves exactly one environment-selected authentication authority, validates the complete digest-only registry, and publishes a secret-free typed client principal before creating current-generation/recovery application services from the active R2 binding; composition validates static non-secret association/writer UUIDs. Completed-request logging observes that principal and the existing v2 route-policy owner to emit closed content-free authentication, operation, status, and stable-error outcomes. Committed configuration selects registry authority. The temporary singleton migration mode never falls through to registry authority (or vice versa) and is removed in Slice 4. `app.ts` composes typed Hono middleware, controllers, narrow v2 CORS, OpenAPI, and Scalar. One named v2 route-operation policy owns each public path and HTTP method; Hono registration, CORS capability resolution, and OpenAPI consume that policy instead of restating it. HTTP controllers validate transport input and delegate transition policy to `packages/core`. They do not call R2 or implement CAS/recovery policy.
+The Worker is the remote HTTP/API boundary. `index.ts` constructs the Hono app and long-lived LogTape dependency once per isolate. Request middleware validates the sole digest-only credential registry, publishes a secret-free typed client principal, and enforces the exact operation permission before creating current-generation/recovery application services from the active R2 binding; composition then validates static non-secret association/writer UUIDs. Completed-request logging consumes the same route-operation policy to emit closed content-free authentication, operation, status, and stable-error outcomes without becoming an authorization owner. Singleton authentication is retired. `app.ts` composes typed Hono middleware, controllers, narrow v2 CORS, OpenAPI, and Scalar. One named route-operation policy owns every public, authenticated v2, preflight, and unknown API operation plus each exact permission; Hono registration, authorization, diagnostics, CORS capability resolution, and OpenAPI consume that policy instead of restating it. HTTP controllers validate transport input and delegate transition policy to `packages/core`. They do not call R2 or implement CAS/recovery policy.
 
 ### Cloudflare R2
 
@@ -163,14 +163,15 @@ MCP is planned as a future adapter for agent clients. It is not implemented, and
 
 ## Security and data-safety boundaries
 
-The Worker authenticates `/api/v1`, `/api/v2`, and descendants through a strict
-registry of at most 16 named opaque bearers; public health/OpenAPI/Scalar do not grant
-note access. Configuration retains only domain-separated SHA-256 verifier material.
-Successful authentication publishes client ID, name, and exact permission metadata,
-never a token or digest. Slices 2–3 do not enforce those permissions per route, so a
-migrated current writer declares all three and existing authenticated behavior is
-unchanged until Slice 4. Static v2 association/writer IDs guard cooperating clients
-separately and are not authentication or permission.
+The Worker authenticates `/api` descendants through a strict registry of at most 16
+named opaque bearers; public health/OpenAPI/Scalar do not grant note access.
+Configuration retains only domain-separated SHA-256 verifier material. Successful
+authentication publishes client ID, name, and exact permission metadata, never a token
+or digest. The exhaustive operation policy requires `read`, `write`, or independent
+`delete` before service/storage dispatch; unknown API operations fail closed. Static
+v2 association/writer IDs guard cooperating clients separately and remain application
+preconditions rather than authentication or permission. The v1 HTTP API and singleton
+bearer authority are retired.
 R2 holds readable note text: the Worker/cloud operator is trusted, and no
 application-level end-to-end encryption is implemented. Never infer production
 readiness, installed resources or credentials from repository configuration.
@@ -442,11 +443,10 @@ but cannot hide a same-text external successor or deadlock an aligned path.
 
 ## Explicitly deferred
 
-- M5 (NEXT; Slices 0–3 complete, Slice 4 next): route permission enforcement,
-  v1 retirement, operational runbooks,
-  latest-release artifact synchronization, and real-desktop qualification. Slice 2
-  already implements scoped authentication metadata/lifecycle and the migration
-  checkpoint without enforcing the later route matrix. ADR 0011 selects no application quota/limiter, recovery automation,
+- M5 (NEXT; Slices 0–4 complete, Slice 5 next): operational runbooks,
+  latest-release artifact synchronization, and real-desktop qualification. Slice 4
+  enforces scoped permissions, removes singleton authority, and leaves v2 as the sole
+  authenticated HTTP API. ADR 0011 selects no application quota/limiter, recovery automation,
   durable log store, mobile writer, or multi-release support. M4's reviewed
   reconciliation remains experimental and makes no automatic import, cross-system
   atomicity, deployment, or production-readiness claim.

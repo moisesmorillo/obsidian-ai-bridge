@@ -2,7 +2,7 @@
 
 ## Status
 
-**Accepted — credential/principal/lifecycle contract implemented by M5 Slice 2; route authorization remains Slice 4.** The Worker now resolves strict bounded named credentials to typed principals and provides offline lifecycle tooling. Permission metadata is present but is not yet enforced per route. The explicitly named singleton migration mode remains only as the accepted temporary checkpoint and is scheduled for removal in Slice 4; committed configuration selects registry authority.
+**Accepted — credential/principal/lifecycle contract implemented by M5 Slice 2; route authorization and migration retirement implemented by Slice 4.** The Worker resolves strict bounded named credentials to typed principals, enforces independent operation permissions before service/storage dispatch, and provides offline lifecycle tooling. The singleton migration authority and every v1 HTTP route are retired; registry authentication and v2 are the only active authenticated boundaries.
 
 ## Context
 
@@ -58,7 +58,7 @@ bearer credentials**:
   that principal rather than an unscoped authenticated boolean.
 - Authentication failure remains a sanitized `401`. An authenticated principal that
   lacks the operation's permission is denied without dispatching storage or mutation;
-  Slice 4 will define the exact transport response and exhaustive route-operation
+  Slice 4 defines the exact transport response and exhaustive route-operation
   permission table.
 
 Token digests are verifier material and remain confidential configuration even though
@@ -82,10 +82,9 @@ that expectation does not make the permissions imply one another. A read-only cl
 needs only `read`. Public health/OpenAPI/documentation routes do not resolve a client
 principal. Retired v1 mutations remain retired regardless of permission.
 
-This table defines operation semantics, not exact route mapping. M5 Slice 4 owns one
-exhaustive route-operation permission table derived from the implemented API and must
-cover compatibility routes, unknown descendants, preflight behavior, and every
-mutation. No route may infer `delete` from an HTTP method alone without the table's
+This table defines operation semantics. M5 Slice 4 implements one exhaustive
+route-operation permission table derived from the v2 API and covering public routes,
+unknown authenticated descendants, preflight behavior, and every mutation. No route may infer `delete` from an HTTP method alone without the table's
 reviewed operation semantics.
 
 ### Separate writer and association guards
@@ -213,15 +212,12 @@ Cloudflare operator, authorized client, or trusted Obsidian host. The 16-client 
 fits the intended personal bridge and keeps authentication work deterministic; it is
 not a SaaS tenant limit or an accepted request quota.
 
-Slice 2 implements the deliberate checkpoint with the exact
-`OBSIDIAN_BRIDGE_AUTH_MODE` values `singleton-migration` and `credential-registry`.
-Only the selected authority is evaluated: a staged registry is ignored in singleton
-mode, and a still-present old singleton secret is ignored in registry mode. Missing or
-unknown mode and malformed registry configuration fail closed. Committed Wrangler
-configuration selects registry mode, so the old singleton no longer authenticates at
-the Slice 2 endpoint. Slice 4 must remove the temporary singleton mode after client
-migration while adding route-level permission enforcement; it may not normalize this
-checkpoint into a permanent fallback.
+Slice 2 historically implemented a deliberate mutually exclusive singleton-to-registry
+checkpoint. Slice 4 removes its selector, singleton secret binding, fixed migration
+principal, and authentication branch after client migration. The Worker now always
+validates `OBSIDIAN_BRIDGE_CREDENTIAL_REGISTRY`; missing or malformed registry
+configuration fails closed, and a still-present old singleton token has no authentication
+capability. No automatic secret copying or fallback was introduced.
 
 ## Alternatives
 

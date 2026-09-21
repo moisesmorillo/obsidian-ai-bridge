@@ -2,7 +2,7 @@
 
 A secure bridge between Obsidian and remote AI or agent clients.
 
-> **Status:** M1–M4 are **COMPLETE** and [M5 — Operational and security readiness](docs/roadmap.md#m5--operational-and-security-readiness) remains the single **NEXT** milestone. M5 Slices 0–3 are complete: the Worker now has a strict bounded digest-only credential registry, typed client principals, explicit singleton-migration checkpoint, offline lifecycle tooling, and client-attributed content-free live diagnostics. Route-level permission enforcement is still unimplemented and belongs to Slice 4; there is no current support claim. The bridge remains experimental and undeployed. No personal-vault installation, real desktop/mobile/iCloud/background-iOS qualification, or production-readiness claim is made.
+> **Status:** M1–M4 are **COMPLETE** and [M5 — Operational and security readiness](docs/roadmap.md#m5--operational-and-security-readiness) remains the single **NEXT** milestone. M5 Slices 0–4 are complete: the Worker now authenticates only through the strict bounded digest-only credential registry, enforces independent route permissions, exposes only v2 authenticated operations, and emits client-attributed content-free live diagnostics. Slice 5 is next; there is no current support claim. The bridge remains experimental and undeployed. No personal-vault installation, real desktop/mobile/iCloud/background-iOS qualification, or production-readiness claim is made.
 
 ## Motivation
 
@@ -25,7 +25,7 @@ Cloudflare Worker
 Cloudflare R2
 ```
 
-Completed M3 connects this outward path in the generated plugin: an explicitly activated designated writer observes official saved-file events and uses the conditional v2 Worker API. Completed M4 adds qualified explicit reviewed remote-to-local actions, not automatic bidirectional synchronization. M5 Slices 2–3 add named credential authentication/lifecycle and live client-attributed diagnostics, but not route permission enforcement or operational readiness. The system remains experimental and undeployed; it has no MCP, production certification, or real Obsidian desktop/mobile qualification.
+Completed M3 connects this outward path in the generated plugin: an explicitly activated designated writer observes official saved-file events and uses the conditional v2 Worker API. Completed M4 adds qualified explicit reviewed remote-to-local actions, not automatic bidirectional synchronization. M5 Slices 2–4 add named registry-only authentication/lifecycle, independent route permission enforcement, v1 retirement, and live client-attributed diagnostics, but not operational readiness. The system remains experimental and undeployed; it has no MCP, production certification, or real Obsidian desktop/mobile qualification.
 
 ## Goals
 
@@ -39,7 +39,7 @@ Completed M3 connects this outward path in the generated plugin: an explicitly a
 - After explicit whole-scope consent, one configured designated writer automatically mirrors eligible saved Markdown outward. Unconfigured, disabled, and non-writer instances remain passive. M2 metadata-only inspection commands remain available and independent.
 - Local eligibility excludes dot-prefixed segments and the host configuration directory; literal paths are not URI-decoded. Reads use best-effort change detection, not atomic snapshots or editor buffers. Notes are limited to 1 MiB.
 - The plugin ID is `ai-bridge`. See [disposable-vault qualification guidance](docs/plugin-development.md). No real Obsidian desktop/mobile host or iCloud event trace has been tested.
-- Authentication resolves a named client principal from a strict registry of at most 16 domain-separated token digests. Raw client tokens remain only in approved client secret stores. Live content-free diagnostics identify authenticated client IDs and closed operation/outcome categories, with zero-day retention and no audit-trail claim. Permission metadata exists but is not route-enforced until M5 Slice 4, so every migrated writer credential currently uses `read`, `write`, and `delete`. Association/writer UUIDs remain separate non-secret cooperating-writer guards.
+- Authentication resolves a named client principal only from a strict registry of at most 16 domain-separated token digests. Raw client tokens remain only in approved client secret stores. One exhaustive operation policy enforces independent `read`, `write`, and `delete` permissions before service/storage dispatch; `write` never implies `delete`. The designated writer credential needs all three for current M3/M4 behavior. Live content-free diagnostics identify authenticated client IDs and closed operation/outcome categories, with zero-day retention and no audit-trail claim. Association/writer UUIDs remain separate non-secret cooperating-writer guards.
 - iCloud remains working-vault device sync. The plugin sees host events rather than a transactional iCloud log; missed/offline absences never grant deletion authority, so some deletions require later reconciliation.
 - M3 itself has no remote-to-local behavior. M4 adds explicit reviewed reconciliation, text-only recovery selection, and bounded deferred-history cleanup, but no automatic takeover, automatic bidirectional conflict resolution, scheduled cleanup, search, MCP, D1, Durable Objects, Workers AI, or Vectorize support. The [operator guide](docs/operations.md) describes review, restoration, setup, recovery, handoff, rotation, migration, and rollback restrictions.
 
@@ -117,7 +117,7 @@ mise exec -- bunx wrangler r2 bucket create obsidian-ai-bridge-dev --config apps
 mise exec -- bunx wrangler secret put OBSIDIAN_BRIDGE_CREDENTIAL_REGISTRY --config apps/worker/wrangler.jsonc
 ```
 
-Use `mise run credentials -- create` to build a registry file outside the repository and display a fresh raw token once in an interactive terminal; see the [credential lifecycle and migration procedure](docs/operations.md#credential-registry-lifecycle-and-singleton-migration). For local `wrangler dev`, set `OBSIDIAN_BRIDGE_CREDENTIAL_REGISTRY` under `[env]` in the ignored `mise.local.toml` only for local development and keep `OBSIDIAN_BRIDGE_AUTH_MODE = "credential-registry"`. Wrangler 4.130.0 declares the registry secret through `secrets.required`. The committed development configuration also contains canonical non-secret `MIRROR_ASSOCIATION_ID` and `MIRROR_WRITER_ID` UUID-v4 examples; operators must deliberately replace them together when configuring their own namespace/designated writer. Invalid auth configuration fails all authenticated requests closed; invalid or missing designation IDs fail v2 mutations closed. Do not create `apps/worker/.dev.vars`, and never commit raw tokens or digest registries. Wrangler is run with Node.js because its local `workerd` proxy does not respond reliably when launched through Bun:
+Use `mise run credentials -- create` to build a registry file outside the repository and display a fresh raw token once in an interactive terminal; see the [credential lifecycle and migration procedure](docs/operations.md#credential-registry-lifecycle-and-singleton-migration). For local `wrangler dev`, set `OBSIDIAN_BRIDGE_CREDENTIAL_REGISTRY` under `[env]` in the ignored `mise.local.toml` only for local development. Registry authentication is the sole runtime mode; `OBSIDIAN_BRIDGE_TOKEN` and `OBSIDIAN_BRIDGE_AUTH_MODE` are retired. Wrangler 4.130.0 declares the registry secret through `secrets.required`. The committed development configuration also contains canonical non-secret `MIRROR_ASSOCIATION_ID` and `MIRROR_WRITER_ID` UUID-v4 examples; operators must deliberately replace them together when configuring their own namespace/designated writer. Invalid auth configuration fails all authenticated requests closed; invalid or missing designation IDs fail v2 mutations closed. Do not create `apps/worker/.dev.vars`, and never commit raw tokens or digest registries. Wrangler is run with Node.js because its local `workerd` proxy does not respond reliably when launched through Bun:
 
 ```bash
 mise run dev
@@ -127,7 +127,7 @@ Wrangler provides local R2 emulation for the binding during local development. T
 
 ## Worker API
 
-The Worker exposes public health/OpenAPI/Scalar routes, authenticated envelope-aware v1 reads, and authenticated conditional v2 mirror/current/recovery routes. Unsafe v1 PUT and DELETE now return `410 mutation_api_retired` without storage mutation. V2 note PUT/DELETE and recovery seal/purge require the configured association/writer IDs, one operation UUID, and the documented exact conditional header. Recovery metadata and content use distinct GET endpoints.
+The Worker exposes public health/OpenAPI/Scalar routes and authenticated conditional v2 mirror/current/recovery routes. The v1 HTTP API, including its former read and retired-mutation compatibility routes, is no longer registered. V2 note PUT/DELETE and recovery seal/purge require the configured association/writer IDs, one operation UUID, and the documented exact conditional header. Recovery metadata and content use distinct GET endpoints.
 
 For note item routes, `:path` is a canonical base64url-encoded note path. See [docs/api.md](docs/api.md) for the complete route/status/header contract and encoding example.
 
@@ -155,17 +155,18 @@ fence, review/admission, narrow local write/conflict preservation, live/adoption
 tombstone/recovery execution, bounded parent-owned history steps, step-scoped
 preservation, and shared runtime/session/command/modal/status composition.
 [ADR 0009](docs/decisions/0009-m4-history-runtime-and-device-state-v4.md) defines the v4
-compatibility transition and conservative event authority. M5 is NEXT with completed Slices 0–3; Slice 4 is next. Its
+compatibility transition and conservative event authority. M5 is NEXT with completed Slices 0–4; Slice 5 is next. Its
 [planning specification](docs/milestones/m5-operational-and-security-readiness.md),
 [consolidated threat model](docs/threat-model.md),
 [credential/permission ADR](docs/decisions/0010-scoped-client-credentials-and-permissions.md),
 and [operational-policy ADR](docs/decisions/0011-m5-operational-envelope.md)
 define the accepted client model and operating policy. Slice 2 implements the bounded
 digest-only registry, typed principal resolution, offline lifecycle tooling, and the
-explicit singleton migration checkpoint. Slice 3 adds client-ID, closed-operation,
+historical singleton migration checkpoint. Slice 3 adds client-ID, closed-operation,
 authentication, status, and stable-error attribution to content-free live diagnostics
-without durable retention. The 10,000-note value is a later desktop qualification
-target, not current support; route-level permission enforcement is not implemented. The completed
+without durable retention. Slice 4 activates registry-only authentication, enforces
+independent route permissions, and retires every v1 HTTP route/OpenAPI contract. The
+10,000-note value is a later desktop qualification target, not current support. The completed
 [M3 specification](docs/milestones/m3-remote-bridge-client-and-publishing.md),
 [approved decision brief](docs/plans/m3-design-decisions.md), and
 [sequential plan](docs/plans/m3-remote-bridge-client-and-publishing.md) record

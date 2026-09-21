@@ -10,6 +10,8 @@ import type {
   MirrorDesignation,
   WorkerMirrorServices,
 } from "@worker/app.types";
+import { CLIENT_PERMISSION } from "@worker/auth/auth.constants";
+import type { AuthenticationConfiguration } from "@worker/auth/auth.types";
 import type {
   R2ConditionalBucketPort,
   R2ConditionalObjectMetadata,
@@ -20,6 +22,29 @@ import type {
 import { R2ConditionalCurrentNoteRepository } from "@worker/infrastructure/r2-conditional-current-note.repository";
 import { R2RecoverySnapshotRepository } from "@worker/infrastructure/r2-recovery-snapshot.repository";
 import { sha256Content } from "@worker/storage/storage-crypto";
+
+/** Registry bearer used by composed Worker HTTP tests. */
+export const TEST_CREDENTIAL_TOKEN = "secret-token";
+
+/** Registry-only full-writer configuration used by composed Worker HTTP tests. */
+export const TEST_AUTHENTICATION_CONFIGURATION: AuthenticationConfiguration = {
+  serializedRegistry: JSON.stringify({
+    version: 1,
+    credentials: [
+      {
+        clientId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        name: "Test writer",
+        permissions: [
+          CLIENT_PERMISSION.read,
+          CLIENT_PERMISSION.write,
+          CLIENT_PERMISSION.delete,
+        ],
+        tokenDigest:
+          "efea3e87819395533be1ec38571d63494f7c2e8aa3dc60fc4af97813aab8937a",
+      },
+    ],
+  }),
+};
 
 /** Stable test association accepted by composed Worker HTTP tests. */
 export const TEST_ASSOCIATION_ID = required(

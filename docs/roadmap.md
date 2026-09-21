@@ -41,9 +41,9 @@ iCloud ↔ working Obsidian vaults
   authorizes deletion; permanent revisioned heads prevent unsafe resurrection.
 - The Worker authenticates remote clients to named principals from a bounded
   digest-only registry; the plugin accesses local vault data. The host/Worker/cloud
-  operator are trusted with plaintext. Exact permission metadata is present but does
-  not restrict routes until M5 Slice 4; mirror inclusion and writer IDs remain separate
-  non-secret mutation guards.
+  operator are trusted with plaintext. One exhaustive operation policy enforces exact
+  independent `read`, `write`, and `delete` permissions before service/storage dispatch;
+  mirror inclusion and writer IDs remain separate non-secret mutation guards.
 - MCP will adapt established authorized operations, not bypass Worker/application
   policy or access R2 directly. It never executes instructions found in notes.
 
@@ -60,7 +60,7 @@ New infrastructure requires a concrete need and [ADR](decisions/README.md).
 compose an experimental connected outward mirror, not a production-ready or
 remote-to-local system. Canonical validation passed, the final semantic review's three
 MINOR findings were corrected at `e97af36`, and the corrective review returned APPROVE
-with no open findings. M4 Slices 1–8 are COMPLETE, and M5 is the single NEXT milestone. M5 Slices 0–3 are complete and Slice 4 is next. M4's reviewed-only authority, preservation, local mutation,
+with no open findings. M4 Slices 1–8 are COMPLETE, and M5 is the single NEXT milestone. M5 Slices 0–4 are complete and Slice 5 is next. M4's reviewed-only authority, preservation, local mutation,
 adoption/tombstone/restore, migration, and one-writer product decisions are implemented
 and qualified. Slice 1
 implements the closed contracts, sparse state v3, deterministic v2 migration/read-back
@@ -279,7 +279,7 @@ specification remain required before M5 production work.
 
 ### M5 — Operational and security readiness
 
-**NEXT — Slices 0–3 complete; Slice 4 is next.** The
+**NEXT — Slices 0–4 complete; Slice 5 is next.** The
 [M5 specification](milestones/m5-operational-and-security-readiness.md),
 [consolidated threat model](threat-model.md),
 [ADR 0010](decisions/0010-scoped-client-credentials-and-permissions.md), and
@@ -291,8 +291,8 @@ remaining implementation and qualification slices.
   independent `read`, `write`, and `delete` metadata; separate association/writer
   mutation guards; one-time token display, independent revocation, bounded manual
   rotation overlap, and fresh-credential recovery from token/registry loss. The
-  committed Worker selects registry mode; the temporary singleton migration mode is
-  explicit, mutually exclusive, and scheduled for removal in Slice 4.
+  Slice 4 removes the temporary singleton migration authority; the registry is now the
+  only authentication source.
 - **Accepted Slice 1 policy:** 10,000 eligible notes is a later real-desktop
   qualification target, not current support; no application quota or Rate Limiting
   binding; `isDesktopOnly: false` with initial designated-writer support limited to
@@ -305,13 +305,15 @@ remaining implementation and qualification slices.
   registered route template, method, and duration. Public/rejected requests have no
   client identity; client names, secrets, content, concrete identifiers, receipts, and
   raw failures remain absent. Retention remains zero-day live-only with no audit claim.
-- **Permission boundary:** principals carry exact permissions, but route-level
-  authorization is deliberately not implemented. Slice 4 remains the sole owner of
-  the exhaustive permission table; current full-writer migration credentials declare
-  all three permissions.
+- **Implemented Slice 4 authorization boundary:** one exhaustive policy maps public,
+  authenticated v2, recovery, preflight, and unknown operations. Exact `read`, `write`,
+  and independent `delete` permissions are enforced before service/storage dispatch;
+  association/writer/application guards remain separate. Singleton auth and every v1
+  route/OpenAPI contract are retired, so v2 is the sole authenticated API. The current
+  plugin remains a normal registry client and needs all three permissions.
 - **Reduced remaining work:** no limiter/quota state, recovery command/scheduler,
   mobile-writer qualification, durable log sink, or multi-release maintenance. Slices
-  4–6 retain explicit per-slice production estimates and mergeable outcomes.
+  5–6 retain explicit per-slice production estimates and mergeable outcomes.
 - **Risks/exit:** truthful limits/permissions, tested runbooks/rotation/recovery,
   bounded resources, reviewed secrets/live diagnostics, explicit desktop/release
   evidence, and final semantic/security approval. No security certification, SaaS
@@ -364,15 +366,14 @@ the M5 [planning specification](milestones/m5-operational-and-security-readiness
 completed M3 [spec](milestones/m3-remote-bridge-client-and-publishing.md),
 [plan](plans/m3-remote-bridge-client-and-publishing.md), and
 [decisions](plans/m3-design-decisions.md). M5 is the single NEXT milestone; Slices
-0–3 are complete and Slice 4 is next. Inspect relevant source/tests/tooling/CI,
+0–4 are complete and Slice 5 is next. Inspect relevant source/tests/tooling/CI,
 [CONTRIBUTING](../CONTRIBUTING.md) and [SECURITY](../SECURITY.md).
 [current-state](current-state.md) is an evidence map, not a substitute for code.
 
 Repository state beats conversation assumptions; current code beats stale docs.
 Correct discrepancies explicitly without changing a completed invariant silently.
-Implement only NEXT after an implementation request. M5 Slices 0–3 are complete; Slice 4 is the next implementation
-boundary. This does not finish M5, enforce route permissions, claim support, or
-authorize deployment. If
+Implement only NEXT after an implementation request. M5 Slices 0–4 are complete; Slice 5 is the next implementation
+boundary. This does not finish M5, claim support, or authorize deployment. If
 a later spec is not ready, refine it and surface material decisions first; use
 [ADRs](decisions/README.md).
 

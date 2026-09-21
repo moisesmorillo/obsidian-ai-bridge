@@ -2,7 +2,7 @@
 
 A secure bridge between Obsidian and remote AI or agent clients.
 
-> **Status:** M1–M4 are **COMPLETE** and [M5 — Operational and security readiness](docs/roadmap.md#m5--operational-and-security-readiness) remains the single **NEXT** milestone. M5 Slices 0–2 are complete in this Slice 2 PR: the Worker now has a strict bounded digest-only credential registry, typed client principals, explicit singleton-migration checkpoint, and offline lifecycle tooling. Route-level permission enforcement is still unimplemented and belongs to Slice 4; there is no current support claim. The bridge remains experimental and undeployed. No personal-vault installation, real desktop/mobile/iCloud/background-iOS qualification, or production-readiness claim is made.
+> **Status:** M1–M4 are **COMPLETE** and [M5 — Operational and security readiness](docs/roadmap.md#m5--operational-and-security-readiness) remains the single **NEXT** milestone. M5 Slices 0–3 are complete: the Worker now has a strict bounded digest-only credential registry, typed client principals, explicit singleton-migration checkpoint, offline lifecycle tooling, and client-attributed content-free live diagnostics. Route-level permission enforcement is still unimplemented and belongs to Slice 4; there is no current support claim. The bridge remains experimental and undeployed. No personal-vault installation, real desktop/mobile/iCloud/background-iOS qualification, or production-readiness claim is made.
 
 ## Motivation
 
@@ -25,7 +25,7 @@ Cloudflare Worker
 Cloudflare R2
 ```
 
-Completed M3 connects this outward path in the generated plugin: an explicitly activated designated writer observes official saved-file events and uses the conditional v2 Worker API. Completed M4 adds qualified explicit reviewed remote-to-local actions, not automatic bidirectional synchronization. M5 Slice 2 adds named credential authentication and lifecycle but not route permission enforcement or operational readiness. The system remains experimental and undeployed; it has no MCP, production certification, or real Obsidian desktop/mobile qualification.
+Completed M3 connects this outward path in the generated plugin: an explicitly activated designated writer observes official saved-file events and uses the conditional v2 Worker API. Completed M4 adds qualified explicit reviewed remote-to-local actions, not automatic bidirectional synchronization. M5 Slices 2–3 add named credential authentication/lifecycle and live client-attributed diagnostics, but not route permission enforcement or operational readiness. The system remains experimental and undeployed; it has no MCP, production certification, or real Obsidian desktop/mobile qualification.
 
 ## Goals
 
@@ -39,7 +39,7 @@ Completed M3 connects this outward path in the generated plugin: an explicitly a
 - After explicit whole-scope consent, one configured designated writer automatically mirrors eligible saved Markdown outward. Unconfigured, disabled, and non-writer instances remain passive. M2 metadata-only inspection commands remain available and independent.
 - Local eligibility excludes dot-prefixed segments and the host configuration directory; literal paths are not URI-decoded. Reads use best-effort change detection, not atomic snapshots or editor buffers. Notes are limited to 1 MiB.
 - The plugin ID is `ai-bridge`. See [disposable-vault qualification guidance](docs/plugin-development.md). No real Obsidian desktop/mobile host or iCloud event trace has been tested.
-- Authentication resolves a named client principal from a strict registry of at most 16 domain-separated token digests. Raw client tokens remain only in approved client secret stores. Permission metadata exists but is not route-enforced until M5 Slice 4, so every migrated writer credential currently uses `read`, `write`, and `delete`. Association/writer UUIDs remain separate non-secret cooperating-writer guards.
+- Authentication resolves a named client principal from a strict registry of at most 16 domain-separated token digests. Raw client tokens remain only in approved client secret stores. Live content-free diagnostics identify authenticated client IDs and closed operation/outcome categories, with zero-day retention and no audit-trail claim. Permission metadata exists but is not route-enforced until M5 Slice 4, so every migrated writer credential currently uses `read`, `write`, and `delete`. Association/writer UUIDs remain separate non-secret cooperating-writer guards.
 - iCloud remains working-vault device sync. The plugin sees host events rather than a transactional iCloud log; missed/offline absences never grant deletion authority, so some deletions require later reconciliation.
 - M3 itself has no remote-to-local behavior. M4 adds explicit reviewed reconciliation, text-only recovery selection, and bounded deferred-history cleanup, but no automatic takeover, automatic bidirectional conflict resolution, scheduled cleanup, search, MCP, D1, Durable Objects, Workers AI, or Vectorize support. The [operator guide](docs/operations.md) describes review, restoration, setup, recovery, handoff, rotation, migration, and rollback restrictions.
 
@@ -155,16 +155,17 @@ fence, review/admission, narrow local write/conflict preservation, live/adoption
 tombstone/recovery execution, bounded parent-owned history steps, step-scoped
 preservation, and shared runtime/session/command/modal/status composition.
 [ADR 0009](docs/decisions/0009-m4-history-runtime-and-device-state-v4.md) defines the v4
-compatibility transition and conservative event authority. M5 is NEXT with completed Slices 0–2; Slice 3 is next. Its
+compatibility transition and conservative event authority. M5 is NEXT with completed Slices 0–3; Slice 4 is next. Its
 [planning specification](docs/milestones/m5-operational-and-security-readiness.md),
 [consolidated threat model](docs/threat-model.md),
 [credential/permission ADR](docs/decisions/0010-scoped-client-credentials-and-permissions.md),
 and [operational-policy ADR](docs/decisions/0011-m5-operational-envelope.md)
 define the accepted client model and operating policy. Slice 2 implements the bounded
 digest-only registry, typed principal resolution, offline lifecycle tooling, and the
-explicit singleton migration checkpoint. The 10,000-note value is a later desktop
-qualification target, not current support; route-level permission enforcement and
-client-attributed logging are not implemented. The completed
+explicit singleton migration checkpoint. Slice 3 adds client-ID, closed-operation,
+authentication, status, and stable-error attribution to content-free live diagnostics
+without durable retention. The 10,000-note value is a later desktop qualification
+target, not current support; route-level permission enforcement is not implemented. The completed
 [M3 specification](docs/milestones/m3-remote-bridge-client-and-publishing.md),
 [approved decision brief](docs/plans/m3-design-decisions.md), and
 [sequential plan](docs/plans/m3-remote-bridge-client-and-publishing.md) record

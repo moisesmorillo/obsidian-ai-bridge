@@ -12,7 +12,9 @@ vi.mock("@logtape/logtape", () => ({ getLogger: logTape.getLogger }));
 
 import type { RequestLogEntry } from "@worker/logging/logger.types";
 import {
+  LOG_AUTHENTICATION_RESULT,
   LOG_OPERATION,
+  LOG_OPERATION_CATEGORY,
   WORKER_LOG_CATEGORY,
 } from "@worker/logging/logging.constants";
 import { createWorkerLogger } from "@worker/logging/logtape-logger";
@@ -22,6 +24,9 @@ describe("createWorkerLogger", () => {
   it("passes request metadata as LogTape structured properties", () => {
     const entry: RequestLogEntry = {
       operation: LOG_OPERATION.httpRequest,
+      operationCategory: LOG_OPERATION_CATEGORY.currentRead,
+      authentication: LOG_AUTHENTICATION_RESULT.authenticated,
+      clientId: "55555555-5555-4555-8555-555555555555",
       method: "GET",
       route: "/api/v1/notes/:path",
       status: 200,

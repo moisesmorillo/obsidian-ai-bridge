@@ -2,7 +2,7 @@
 
 ## Status
 
-**Accepted for M5 planning — partially unimplemented and not yet qualified.** This
+**Accepted for M5 planning — live-diagnostics retention implemented, remaining policy not yet fully qualified.** This
 Slice 1 record closes the eight operational decisions needed to refine later M5 work.
 It changes no runtime, authentication, API, plugin manifest, Cloudflare binding,
 dependency, deployment, credential, or current support claim. The numeric envelope
@@ -181,9 +181,11 @@ sampling or a missed session can leave no record. Logs are diagnostics, not an a
 trail or recovery authority.
 
 Only content-free structured application events may be emitted. Raw tokens or digests,
-authorization headers, bodies, concrete note paths, storage envelopes, and raw
-exceptions are forbidden even in real-time output. Client ID and closed operation kind
-may be added later for live attribution. Platform/account metadata outside application
+authorization headers, bodies, concrete or encoded note/recovery identifiers, storage
+envelopes, revisions, hashes, receipts, and raw exceptions are forbidden even in
+real-time output. Slice 3 adds canonical client ID only for authenticated requests plus
+closed authentication/operation categories, status, and stable API error codes. It
+adds no durable sink or audit authority. Platform/account metadata outside application
 control remains inside the trusted Cloudflare operator boundary and is not a project
 retention guarantee.
 

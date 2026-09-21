@@ -23,7 +23,7 @@ composition. Slice 8's generated-artifact qualification and operational document
 are implemented. The independent final review found three MINOR issues, corrective
 head `e97af36` resolved all three, and the corrective review returned APPROVE with no
 open findings. M3 is COMPLETE; PR #27 merged at `63b0599` and made the transition
-canonical. M4 Slices 1–8 are COMPLETE and M5 is NEXT. M5 Slices 0–2 are complete in this Slice 2 PR; Slice 3 is next. The
+canonical. M4 Slices 1–8 are COMPLETE and M5 is NEXT. M5 Slices 0–3 are complete; Slice 4 is next. The
 current boundary includes strict device state v4 with frozen v2/v3 migration, reviewed
 sampling/admission, narrow local writes and preservation, live/adoption/tombstone/
 restore actions, bounded parent-owned history steps, step-scoped archives, one shared
@@ -89,7 +89,7 @@ apps/worker/src/
 
 ### Cloudflare Worker
 
-The Worker is the remote HTTP/API boundary. `index.ts` constructs the Hono app and long-lived LogTape dependency once per isolate. Request middleware resolves exactly one environment-selected authentication authority, validates the complete digest-only registry, and publishes a secret-free typed client principal before creating current-generation/recovery application services from the active R2 binding; composition validates static non-secret association/writer UUIDs. Committed configuration selects registry authority. The temporary singleton migration mode never falls through to registry authority (or vice versa) and is removed in Slice 4. `app.ts` composes typed Hono middleware, controllers, narrow v2 CORS, OpenAPI, and Scalar. One named v2 route-operation policy owns each public path and HTTP method; Hono registration, CORS capability resolution, and OpenAPI consume that policy instead of restating it. HTTP controllers validate transport input and delegate transition policy to `packages/core`. They do not call R2 or implement CAS/recovery policy.
+The Worker is the remote HTTP/API boundary. `index.ts` constructs the Hono app and long-lived LogTape dependency once per isolate. Request middleware resolves exactly one environment-selected authentication authority, validates the complete digest-only registry, and publishes a secret-free typed client principal before creating current-generation/recovery application services from the active R2 binding; composition validates static non-secret association/writer UUIDs. Completed-request logging observes that principal and the existing v2 route-policy owner to emit closed content-free authentication, operation, status, and stable-error outcomes. Committed configuration selects registry authority. The temporary singleton migration mode never falls through to registry authority (or vice versa) and is removed in Slice 4. `app.ts` composes typed Hono middleware, controllers, narrow v2 CORS, OpenAPI, and Scalar. One named v2 route-operation policy owns each public path and HTTP method; Hono registration, CORS capability resolution, and OpenAPI consume that policy instead of restating it. HTTP controllers validate transport input and delegate transition policy to `packages/core`. They do not call R2 or implement CAS/recovery policy.
 
 ### Cloudflare R2
 
@@ -167,7 +167,7 @@ The Worker authenticates `/api/v1`, `/api/v2`, and descendants through a strict
 registry of at most 16 named opaque bearers; public health/OpenAPI/Scalar do not grant
 note access. Configuration retains only domain-separated SHA-256 verifier material.
 Successful authentication publishes client ID, name, and exact permission metadata,
-never a token or digest. Slice 2 does not enforce those permissions per route, so a
+never a token or digest. Slices 2–3 do not enforce those permissions per route, so a
 migrated current writer declares all three and existing authenticated behavior is
 unchanged until Slice 4. Static v2 association/writer IDs guard cooperating clients
 separately and are not authentication or permission.
@@ -177,7 +177,12 @@ readiness, installed resources or credentials from repository configuration.
 
 Preserve canonical base64url addressing, validated relative lowercase `.md`
 paths, the 1 MiB UTF-8 bound, sanitized errors and content-free structured
-LogTape request logs. Do not log concrete note paths or raw failures. JSON API
+LogTape request logs. Authenticated events include only canonical client ID, never
+client name, token, digest, or permission metadata. Closed operation categories derive
+from registered route semantics; unknown routes remain bounded. Logs are platform-
+managed live diagnostics with zero-day application retention, not a durable security
+audit trail. Do not log concrete note/recovery identifiers, bodies, revisions, hashes,
+receipts, headers, storage envelopes, or raw failures. JSON API
 and Markdown content responses are uncached via `no-store`.
 
 Slice 7 composes explicit whole-mirror consent with the implemented state,
@@ -437,8 +442,8 @@ but cannot hide a same-text external successor or deadlock an aligned path.
 
 ## Explicitly deferred
 
-- M5 (NEXT; Slices 0–2 complete, Slice 3 next): route permission enforcement,
-  client-attributed live diagnostics, v1 retirement, operational runbooks,
+- M5 (NEXT; Slices 0–3 complete, Slice 4 next): route permission enforcement,
+  v1 retirement, operational runbooks,
   latest-release artifact synchronization, and real-desktop qualification. Slice 2
   already implements scoped authentication metadata/lifecycle and the migration
   checkpoint without enforcing the later route matrix. ADR 0011 selects no application quota/limiter, recovery automation,

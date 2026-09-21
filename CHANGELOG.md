@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.0.0](https://github.com/moisesmorillo/obsidian-ai-bridge/compare/v0.11.0...v1.0.0) (2026-09-21)
+
+
+### ⚠ BREAKING CHANGES
+
+* **worker:** enforce scoped client permissions ([#50](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/50))
+
+### Features
+
+* **worker:** enforce scoped client permissions ([#50](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/50)) ([dd537ff](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/dd537ffd363081d312db0653bc5274eb6ce4e171))
+
 ## [0.11.0](https://github.com/moisesmorillo/obsidian-ai-bridge/compare/v0.10.1...v0.11.0) (2026-09-21)
 
 

@@ -207,7 +207,7 @@ Core keeps `ReadOnlyLocalVault` unchanged and defines a separate
 | --- | --- | --- | --- |
 | `createEligible` | Valid eligible destination, ≤1 MiB UTF-8, expected absent, active exact operation | Existing file/folder refuses; no suffix/overwrite | Exact file identity and content hash after create |
 | `replaceEligible` | Existing eligible file, exact transient expected text/hash/generation, replacement in bounds | Host atomic `process` callback refuses changed text | Returned written text plus fresh exact read/hash |
-| `createPreservation` | Generated non-history `.ai-bridge-conflicts/<operation>/<side>.md` or v4 history `.ai-bridge-conflicts/<parent-operation>/<step>/<side>.md`, expected absent, outside the actual config subtree, content in bounds | Unknown parent/step/file/config collision blocks | Exact reserved path/hash and successful reread |
+| `createPreservation` | Generated non-history `ai-bridge-conflicts/<operation>/<side>.md` or v4 history `ai-bridge-conflicts/<parent-operation>/<step>/<side>.md`, expected absent, outside the actual config subtree, content in bounds | Unknown parent/step/file/config collision blocks | Exact reserved path/hash and successful reread |
 
 The port never accepts host objects, arbitrary normalized strings, generic write/delete
 methods, filesystem paths, or transport types. The adapter uses official Obsidian APIs
@@ -238,8 +238,10 @@ cleanup automation is outside M4.
   it is not assumed to preserve arbitrary live/live competitors.
 - Preservation metadata records operation, original path, side, exact source revision
   if any, content hash, reserved path, and proof status. It contains no body.
-- Conflict files are excluded by the existing dot-segment rule and never enter normal
-  mirroring. An operator-selected eligible keep-both destination is separate.
+- New conflict files use the explicitly reserved, host-visible
+  `ai-bridge-conflicts` namespace. It and the historical `.ai-bridge-conflicts`
+  namespace are excluded at exact path boundaries from scanning, saved events and
+  review candidates. An operator-selected eligible keep-both destination is separate.
 - Failed/colliding preservation stops the action. No mutation compensates by deleting
   another version.
 
@@ -385,9 +387,11 @@ UUID-v4 that is also that step's Worker v2 mutation/recovery operation ID, exact
 source/prerequisite references derived from the immutable snapshot, step phase, and
 exact remote effect evidence. Validation rejects collisions among parent and step IDs;
 the parent ID is never reused for multiple remote tombstones. Completed steps never
-replay; an unknown/refused/stale current step blocks every later step. History artifacts use
-`.ai-bridge-conflicts/<operation>/<step>/<side>.md` and bind parent, step, original
-path, side, revision/null, hash, generated path, and proof state.
+replay; an unknown/refused/stale current step blocks every later step. New history artifacts use
+`ai-bridge-conflicts/<operation>/<step>/<side>.md` and bind parent, step, original
+path, side, revision/null, hash, generated path, and proof state. Frozen persisted
+receipts may retain the historical dot-prefixed path; they are never rewritten or
+redispatched under the current root.
 
 History-native effects are limited to preservation and exact recovery-first remote
 former-source tombstones. They never create, replace, rename, move, trash, or delete a
@@ -907,10 +911,12 @@ history, runtime/UI composition, packaged behavior, and operating limits.
   rename/history attention, v2→v3→v4 migration, downgrade prohibition, unknown-effect
   and handoff fences, one writer, privileged bearer/plaintext trust, untrusted Markdown,
   and unsupported real-host guarantees. The Worker API/OpenAPI/CORS are unchanged.
-- No Worker deployment, remote resource creation, credential use, personal-vault
-  installation, real desktop/mobile/native-secret/iCloud trace, or background-iOS
-  qualification occurred. M4 completion is an implementation and repository-
-  qualification result, not a production-readiness claim.
+- No Worker deployment, remote resource creation, production credential use,
+  personal-vault installation, complete desktop/mobile/native-secret/iCloud trace, or
+  background-iOS qualification occurred. Later corrective evidence covers only the
+  replacement preservation root and one isolated desktop Keep-local path. M4 completion
+  is an implementation and repository-qualification result, not a production-readiness
+  claim.
 
 ## Non-goals
 

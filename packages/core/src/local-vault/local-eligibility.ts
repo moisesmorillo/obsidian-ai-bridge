@@ -9,6 +9,7 @@ import type {
   LocalPathEligibility,
   LocalSizeEligibility,
 } from "@core/local-vault/local-vault.types";
+import { isReconciliationPreservationNamespacePath } from "@core/local-vault/reconciliation-preservation-namespace";
 import { isNormalizedNotePath } from "@core/note-path/note-path";
 import { MARKDOWN_FILE_EXTENSION } from "@core/note-path/note-path.constants";
 import { MAX_NOTE_SIZE_BYTES } from "@core/vault/vault.constants";
@@ -32,6 +33,7 @@ export function evaluateLocalNotePath(
   }
 
   if (
+    isReconciliationPreservationNamespacePath(path) ||
     path.split("/").some((segment) => segment.startsWith(".")) ||
     path === policy.configDirectory ||
     path.startsWith(`${policy.configDirectory}/`)

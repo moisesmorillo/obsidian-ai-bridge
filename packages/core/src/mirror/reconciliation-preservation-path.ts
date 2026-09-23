@@ -1,4 +1,7 @@
-import { RECONCILIATION_PRESERVATION_ROOT } from "@core/mirror/local-reconciliation-writer.constants";
+import {
+  LEGACY_RECONCILIATION_PRESERVATION_ROOT,
+  RECONCILIATION_PRESERVATION_ROOT,
+} from "@core/local-vault/reconciliation-preservation-namespace";
 import type { ReconciliationPreservationPath } from "@core/mirror/local-reconciliation-writer.types";
 import type { MirrorOperationId } from "@core/mirror/mirror.types";
 import { createMirrorOperationId } from "@core/mirror/mirror-identifiers";
@@ -22,6 +25,58 @@ export function createReconciliationPreservationPath(
   side: ReconciliationPreservationReceipt["side"],
   stepId?: MirrorOperationId,
 ): ReconciliationPreservationPath | undefined {
+  return createPreservationPathAtRoot(
+    RECONCILIATION_PRESERVATION_ROOT,
+    operationId,
+    side,
+    stepId,
+  );
+}
+
+/**
+ * Verifies an exact current or historical persisted path for one operation and side.
+ *
+ * This compatibility predicate never generates or redispatches a legacy path. New
+ * effects use {@link createReconciliationPreservationPath} and therefore only the
+ * host-visible current root.
+ *
+ * @param candidate - Untrusted persisted or host path.
+ * @param operationId - Expected durable operation identity.
+ * @param side - Expected closed competitor side.
+ * @param stepId - Optional exact history-step identity.
+ * @returns Whether the candidate has an exact current or frozen legacy identity.
+ */
+export function isReconciliationPreservationPath(
+  candidate: string,
+  operationId: MirrorOperationId,
+  side: ReconciliationPreservationReceipt["side"],
+  stepId?: MirrorOperationId,
+): candidate is ReconciliationPreservationPath {
+  return [
+    RECONCILIATION_PRESERVATION_ROOT,
+    LEGACY_RECONCILIATION_PRESERVATION_ROOT,
+  ].some(
+    (root) =>
+      candidate ===
+      createPreservationPathAtRoot(root, operationId, side, stepId),
+  );
+}
+
+/**
+ * Generates one exact path beneath a supplied current or frozen historical root.
+ *
+ * @param root - Internally selected preservation namespace.
+ * @param operationId - Durable locally generated parent operation identity.
+ * @param side - Closed competitor side.
+ * @param stepId - Optional history-step identity inserted before the side.
+ * @returns The exact reserved path, or undefined for malformed runtime input.
+ */
+function createPreservationPathAtRoot(
+  root: string,
+  operationId: MirrorOperationId,
+  side: ReconciliationPreservationReceipt["side"],
+  stepId?: MirrorOperationId,
+): ReconciliationPreservationPath | undefined {
   if (
     createMirrorOperationId(operationId) !== operationId ||
     (stepId !== undefined && createMirrorOperationId(stepId) !== stepId)
@@ -32,28 +87,7 @@ export function createReconciliationPreservationPath(
     case RECONCILIATION_PRESERVATION_SIDE.local:
     case RECONCILIATION_PRESERVATION_SIDE.remote: {
       const step = stepId === undefined ? "" : `/${stepId}`;
-      return `${RECONCILIATION_PRESERVATION_ROOT}/${operationId}${step}/${side}.md` as ReconciliationPreservationPath;
+      return `${root}/${operationId}${step}/${side}.md` as ReconciliationPreservationPath;
     }
   }
-}
-
-/**
- * Verifies that a candidate is exactly the generated path for one operation and side.
- *
- * @param candidate - Untrusted persisted or host path.
- * @param operationId - Expected durable operation identity.
- * @param side - Expected closed competitor side.
- * @param stepId - Optional exact history-step identity.
- * @returns Whether the candidate has no normalization or traversal variance.
- */
-export function isReconciliationPreservationPath(
-  candidate: string,
-  operationId: MirrorOperationId,
-  side: ReconciliationPreservationReceipt["side"],
-  stepId?: MirrorOperationId,
-): candidate is ReconciliationPreservationPath {
-  return (
-    candidate ===
-    createReconciliationPreservationPath(operationId, side, stepId)
-  );
 }

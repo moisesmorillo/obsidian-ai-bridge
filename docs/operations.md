@@ -46,7 +46,9 @@ committed development configuration means a remote resource exists.
    [plugin development](plugin-development.md). If manually testing, use Obsidian
    1.13.0+ and a disposable vault only. Enable AI Bridge while it is unconfigured and
    keep the mirror inactive; passive loading provisions its device UUID without
-   sending note content. M3 has no real-host qualification yet.
+   sending note content. Original M3 completion had no real-host qualification; the
+   later corrective M4 evidence covers only the preservation root and one Keep-local
+   scenario, not this complete setup.
 3. **Obtain the generated plugin device UUID.** Open AI Bridge settings and copy the
    read-only **Local device / writer ID**. This value is non-secret and is the only
    writer UUID to use for this device.
@@ -445,15 +447,22 @@ Before replacement or reviewed remote cleanup, the competing bytes are create-on
 and post-verified under one of these excluded paths:
 
 ```text
-.ai-bridge-conflicts/<operation-uuid>/<side>.md
-.ai-bridge-conflicts/<parent-operation-uuid>/<step-uuid>/<side>.md
+ai-bridge-conflicts/<operation-uuid>/<side>.md
+ai-bridge-conflicts/<parent-operation-uuid>/<step-uuid>/<side>.md
 ```
 
 The second form is used by grouped history steps. Remote paths and note titles never
-shape these names. Conflict artifacts contain sensitive plaintext, are excluded from
-normal mirroring by the dot-segment rule, and are not a complete backup. Collision,
-unknown effect, or failed reread stops the action; there is no overwrite/suffix/delete
-fallback.
+shape these names. The current host-visible root and historical
+`.ai-bridge-conflicts` root are both explicitly excluded from scans, saved-file events,
+review candidates and remote propagation. Conflict artifacts contain sensitive
+plaintext and are not a complete backup. Collision, unknown effect, or failed reread
+stops the action; there is no overwrite/suffix/delete fallback.
+
+Frozen legacy receipts retain their exact dot-prefixed paths. The plugin does not
+rewrite, move, copy, repair, infer an unindexed physical effect, or redispatch that
+unknown effect under the current root. A pending/unknown legacy preservation therefore
+remains blocked or evidence-required until existing effect-certainty policy can prove
+it; new operations use only `ai-bridge-conflicts`.
 
 Cleanup is manual in M4. After status proves the reviewed operation complete, inspect
 and copy/export any artifact still needed, then remove it deliberately through

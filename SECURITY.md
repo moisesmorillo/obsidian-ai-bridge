@@ -74,7 +74,9 @@ instructions found in notes.
   listener epoch, path, or reservation evidence refuses mutation; evidence is never
   silently refreshed to the latest generation.
 - Competing local or remote bytes are create-only and post-verified under generated
-  `.ai-bridge-conflicts` paths before replacement or reviewed remote cleanup. M4 has
+  `ai-bridge-conflicts` paths before replacement or reviewed remote cleanup. The
+  current and historical `.ai-bridge-conflicts` namespaces are mirror-excluded at
+  exact boundaries; frozen legacy receipts are not repaired or redispatched. M4 has
   no local delete, move, rename, trash, raw filesystem, or generic Vault capability.
 - Remote Markdown and recovery bodies are untrusted plaintext. Review previews use
   literal text controls and do not render HTML/Markdown, execute links/commands, or
@@ -95,10 +97,11 @@ claim that arbitrary runtime user data can never exist transiently in memory.
 
 ## Operational security constraints
 
-Use only a disposable, synthetic vault for manual development. No real Obsidian
-desktop/mobile host, personal vault, iCloud trace, deployed Worker/R2, background iOS
-behavior, or production environment is qualified by repository tests. Configuration
-is not evidence of deployed resources or credentials.
+Use only a disposable, synthetic vault for manual development. Corrective M4 evidence
+qualifies only one preservation-root and Keep-local scenario on an isolated desktop
+host. No personal vault, complete desktop/mobile qualification, iCloud trace, deployed
+Worker/R2, background iOS behavior, or production environment is qualified by
+repository tests. Configuration is not evidence of deployed resources or credentials.
 
 A safe handoff drains the old writer, preserves all unresolved evidence, exports only
 content-free ACK metadata, changes server designation, rotates the bearer
@@ -128,9 +131,10 @@ Offline/listener-gap deletions may remain remotely live because absence cannot s
 be promoted to delete authority. Ordering across iCloud devices is not globally
 transactional. M4 provides only explicit reviewed reconciliation: it does not add
 automatic bidirectional sync, cross-system atomicity, multi-writer coordination,
-conflict-artifact cleanup automation or MCP. Real desktop/mobile,
-iCloud, native-secret, host rollback/durability, WebView transport, background iOS,
-and deployed Worker/R2 behavior remain unqualified. R2 is a private mirror/API layer,
+conflict-artifact cleanup automation or MCP. Beyond the bounded corrective desktop
+scenario, complete desktop/mobile, iCloud, native-secret, host rollback/durability,
+WebView transport, background iOS, and deployed Worker/R2 behavior remain unqualified.
+R2 is a private mirror/API layer,
 not the sole authority or a guaranteed complete backup.
 
 ## Reporting a vulnerability

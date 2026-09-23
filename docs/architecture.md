@@ -31,9 +31,10 @@ M3/M4 scheduler, durable synthetic local-effect/successor evidence, and runtime/
 command/modal/status composition. ADR 0009 governs the compatibility transition.
 Slice 8 qualifies the packaged runtime and operator/security boundary without changing
 the architecture or Worker API.
-The connected outward mirror remains
-experimental and undeployed, with no real Obsidian desktop/mobile or iCloud runtime
-qualification.
+The connected outward mirror remains experimental and undeployed. Corrective M4
+qualification exercises only the preservation-root and one Keep-local path on the
+named isolated desktop host; no complete real-host scale rerun, mobile or iCloud
+runtime qualification is claimed.
 See the [verified current state](current-state.md) for source/configuration evidence,
 [roadmap](roadmap.md) for execution order and open decisions, and
 [ADR 0001](decisions/0001-worker-r2-foundation.md) for the durable foundation.
@@ -134,10 +135,11 @@ ObsidianLocalVault              Obsidian saved-read/state + bounded Fetch adapte
 Core owns closed typed results, literal path/size policy and lexical sorting. The
 local port is separate from mutation-capable M1 `VaultRepository`. The adapter
 supplies the exact host configuration directory, enumerates metadata without
-reading bodies, and resolves/reads the active captured saved path once. Shared
-policy rejects unsupported, excluded, invalid and oversized files in order;
-1 MiB bounds both metadata and measured UTF-8 text. Dot-prefixed segments and the
-configuration subtree are private regardless of M1 remote path acceptance.
+reading bodies, and resolves/reads the active captured saved path once. Shared policy rejects unsupported, excluded, invalid and oversized files in order;
+1 MiB bounds both metadata and measured UTF-8 text. Dot-prefixed segments, the
+configuration subtree, and the exact current/historical preservation namespaces are
+private regardless of M1 remote path acceptance; ordinary prefix-sharing names remain
+eligible.
 
 Pre/post object identity, path, size and mtime checks reject observed changes.
 They are best-effort evidence, not an atomic snapshot or future write revision.
@@ -374,7 +376,10 @@ the plugin runtime/UI while effects remain in separate services.
 
 Slice 3 keeps that review boundary intact and introduces a separate
 `LocalReconciliationWriter` with only eligible create, exact compare-and-replace, and
-generated create-only preservation. Core services bind each dispatch to the active
+generated create-only preservation. New artifacts use the official-index-visible
+`ai-bridge-conflicts` root. One exact-boundary policy also excludes the frozen
+historical `.ai-bridge-conflicts` namespace from scanning, events, review discovery and
+remote propagation. Core services bind each dispatch to the active
 operation/action/path/phase/reservation/evidence; durable prepared effects and pending
 receipts precede host calls, while confirmed effects and verified receipts require an
 exact reread/hash. Ambiguity stays `unknown`, persistence failure fences later effects,

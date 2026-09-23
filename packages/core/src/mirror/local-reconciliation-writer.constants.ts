@@ -31,6 +31,3 @@ export const LOCAL_RECONCILIATION_FAILURE = {
   hostUnavailable: "host-unavailable",
   postconditionMismatch: "postcondition-mismatch",
 } as const;
-
-/** Reserved dot-prefixed root for generated conflict-preservation artifacts. */
-export const RECONCILIATION_PRESERVATION_ROOT = ".ai-bridge-conflicts";

@@ -3,8 +3,10 @@ import {
   type CreateEligibleLocalRequest,
   type CreatePreservationLocalRequest,
   createReconciliationPreservationPath,
+  currentPreservationNamespaceOverlapsConfig,
   evaluateLocalNotePath,
   evaluateLocalNoteSize,
+  isCurrentReconciliationPreservationNamespacePath,
   LOCAL_RECONCILIATION_DISPATCH_MODE,
   LOCAL_RECONCILIATION_FAILURE,
   LOCAL_RECONCILIATION_REFUSAL,
@@ -398,13 +400,14 @@ export class ObsidianLocalReconciliationWriter<
   private preservationRootIsSafe(
     path: ReconciliationPreservationPath,
   ): boolean {
-    const config = this.host.policy.configDirectory;
-    const overlapsConfig =
-      config === RECONCILIATION_PRESERVATION_ROOT ||
-      config.startsWith(`${RECONCILIATION_PRESERVATION_ROOT}/`) ||
-      RECONCILIATION_PRESERVATION_ROOT.startsWith(`${config}/`);
-    if (overlapsConfig) return false;
-    if (!path.startsWith(`${RECONCILIATION_PRESERVATION_ROOT}/`)) return false;
+    if (
+      currentPreservationNamespaceOverlapsConfig(
+        this.host.policy.configDirectory,
+      )
+    ) {
+      return false;
+    }
+    if (!isCurrentReconciliationPreservationNamespacePath(path)) return false;
     const eligibility = evaluateLocalNotePath(path, this.host.policy);
     return (
       eligibility.kind === LocalInspectionKind.failed &&

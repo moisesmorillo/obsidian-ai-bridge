@@ -6,7 +6,9 @@
 strict device state v4 and the complete version-4 runtime-owner surface together. It
 changes no Worker API and extends rather than rewrites
 [ADR 0008](0008-m4-device-state-migration.md): version 3 remains the frozen historical
-format and version 4 is current.
+format and version 4 is current. [ADR 0012](0012-host-visible-conflict-preservation-namespace.md)
+supersedes only this record's generated preservation-root location for new operations;
+step identity and frozen historical receipt semantics remain unchanged.
 
 ## Context
 

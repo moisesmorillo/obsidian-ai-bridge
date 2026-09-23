@@ -3,6 +3,7 @@ import {
   LocalVaultFailureReason,
 } from "@core/local-vault/local-vault.constants";
 import type { ReadOnlyLocalVault } from "@core/local-vault/read-only-local-vault.port";
+import { isReconciliationPreservationNamespacePath } from "@core/local-vault/reconciliation-preservation-namespace";
 import {
   classifyReconciliation,
   isReconciliationReviewable,
@@ -834,7 +835,7 @@ export class ReconciliationReviewService implements ReconciliationReviewQuery {
       entry.desired.kind === MIRROR_DESIRED_STATE_KIND.renameDeferred &&
       entry.desired.destinationPath !== null
     ) {
-      candidates.add(entry.desired.destinationPath);
+      this.addCandidate(candidates, entry.desired.destinationPath);
     }
   }
 
@@ -842,17 +843,19 @@ export class ReconciliationReviewService implements ReconciliationReviewQuery {
    * Adds a candidate only within the existing tracked-path bound.
    * @param candidates - Bounded candidate set.
    * @param path - Candidate path.
-   * @returns Whether the path is present after the attempted add.
+   * @returns Whether the path was added, already present, or intentionally excluded without exceeding capacity.
    */
   private addCandidate(candidates: Set<NotePath>, path: NotePath): boolean {
+    if (isReconciliationPreservationNamespacePath(path)) return true;
     if (candidates.has(path)) return true;
     if (candidates.size >= MAX_MIRROR_TRACKED_PATHS) return false;
     candidates.add(path);
     return true;
   }
 
-  /** @returns Whether a path is in the last bounded candidate union. */
+  /** @returns Whether a non-preservation path is in the last bounded candidate union. */
   private isCandidate(path: NotePath): boolean {
+    if (isReconciliationPreservationNamespacePath(path)) return false;
     return (
       this.candidates.has(path) ||
       this.stateOwner

@@ -551,7 +551,11 @@ must atomically take ownership; stale, incomplete, closed, or deferred review le
 the predecessor reserved. This conservative rule may create an extra review but cannot
 erase an external event, deadlock an aligned path, or grant ordinary M3 authority.
 Listener gaps/restart retain the durable effect, postcondition, successor range, and
-successor link rather than process-local causality claims.
+successor link rather than process-local causality claims. **Corrective design only:**
+this implemented v4 retention does not prove absence of a missed successor while
+listeners were detached. [ADR 0013](../decisions/0013-listener-ready-effect-authority-and-observation-gap-recovery.md)
+proposes strict state v5, a gap-review fence and listener-ready dispatch lease; its
+implementation and qualification remain outstanding.
 
 `ReconciliationReviewService` owns exact close-one-review and invalidate-one-session
 operations. They clear transient bodies and pending UI authority but never cancel an

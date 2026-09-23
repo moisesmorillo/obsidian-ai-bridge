@@ -50,6 +50,7 @@ decisions, not an invented historical rationale.
 | [0010 — Scoped client credentials, permissions, and lifecycle](0010-scoped-client-credentials-and-permissions.md) | Accepted (Slice 2 lifecycle and Slice 4 authorization/retirement implemented) | Bounded digest-only bearer clients, typed principals, read/write/delete semantics, revocation, and rotation |
 | [0011 — M5 operational envelope and support policy](0011-m5-operational-envelope.md) | Accepted for M5 planning (not yet qualified) | 10,000-note qualification target, no application quotas/limiter, desktop-writer intent, manual recovery, latest-only releases, zero-day logs, and v1 retirement |
 | [0012 — Host-visible conflict-preservation namespace](0012-host-visible-conflict-preservation-namespace.md) | Accepted (corrective M4 production change implemented) | Official-index-visible current archive root, exact mirror exclusions, and frozen legacy receipt compatibility |
+| [0013 — Listener-ready effect authority and observation-gap recovery](0013-listener-ready-effect-authority-and-observation-gap-recovery.md) | Proposed (design only; not implemented) | Orthogonal durable v5 gap fence, dispatch lease, review transfer and strict compatibility transition |
 
 ADR 0001 records the implemented M1 baseline. ADRs 0002–0004 record the implemented
 M3 design without claiming deployment. ADRs 0005–0008 are accepted M4 decisions and
@@ -61,6 +62,6 @@ checkpoint are implemented by M5 Slice 2; Slice 4 enforces the route-operation
 permissions and retires singleton/v1 authority. ADR 0011 closes the Slice 1 operating-policy choices without
 claiming current support or changing runtime behavior. ADR 0012 corrects only the M4
 preservation namespace after real-host evidence while retaining frozen legacy receipt
-identity and every preserve-first safety rule. See the M3 [decision brief](../plans/m3-design-decisions.md),
+identity and every preserve-first safety rule. ADR 0013 proposes to supersede only ADR 0009's listener-gap sufficiency assumption; it does not change the current v4 runtime. See the M3 [decision brief](../plans/m3-design-decisions.md),
 the M4 [implementation-ready specification](../milestones/m4-remote-to-local-reconciliation-and-conflict-resolution.md),
 and the M5 [planning specification](../milestones/m5-operational-and-security-readiness.md).

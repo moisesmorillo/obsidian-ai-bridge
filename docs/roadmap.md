@@ -285,9 +285,11 @@ specification remain required before M5 production work.
 ### M5 — Operational and security readiness
 
 **NEXT — Slices 0–4 complete; Slice 5 is next.** M5 Slice 5–6 qualification
-remains blocked until the corrective host-visible M4 preservation PR lands and the
-full qualification sequence is rerun; this correction does not resume or complete M5.
-The
+remains blocked despite the merged host-visible M4 preservation correction: the
+pre-layout 5,000-path listener amplification and unprovable M4 listener-gap successor
+absence require the proposed [ADR 0013](decisions/0013-listener-ready-effect-authority-and-observation-gap-recovery.md)
+compatibility/runtime correction and a full qualification rerun. This design PR does
+not implement that correction, resume M5 or claim support. The
 [M5 specification](milestones/m5-operational-and-security-readiness.md),
 [consolidated threat model](threat-model.md),
 [ADR 0010](decisions/0010-scoped-client-credentials-and-permissions.md), and

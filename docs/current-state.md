@@ -1,6 +1,6 @@
 # Verified current state
 
-This snapshot records completed M1–M4 repository implementation and M5 Slices 2–4's credential, permission, API-retirement, and live-diagnostics checkpoints.
+This snapshot records completed M1–M4 repository implementation and M5 Slices 2–4's credential, permission, API-retirement, and live-diagnostics checkpoints. The current strict device-state v4 runtime still attaches Vault listeners before layout readiness; the 5,000-path pre-layout renderer failure and M4 unobserved-gap hazard are not corrected by this documentation change. [ADR 0013](decisions/0013-listener-ready-effect-authority-and-observation-gap-recovery.md) proposes a v5 correction, not an implemented capability.
 M2 source/tooling through `2e74b23` passed independent semantic
 review and merged at `b300726` (PR #7). M3's completion PR #27 passed canonical
 validation and final semantic review; its three MINOR findings were corrected at

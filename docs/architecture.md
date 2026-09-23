@@ -304,9 +304,11 @@ the global ledger bound. Slice 7 adds host composition behind a Promise-backed,
 versioned `globalThis`/`Symbol` owner registry per App realm. `MirrorRuntimeOwner`
 remains the facade while focused coordinators own observation attachment epochs,
 configuration/connection admission, non-destructive reconciliation progress and
-staged-handoff verification. Every listener gap receives a fresh layout-ready positive
+staged-handoff verification. Every listener gap currently receives a fresh layout-ready positive
 scan without replacing scheduler reservations or deriving delete authority from
-absence. Bootstrap positive admission notifies the current session before reporting
+absence. This v4 behavior does not prove continuous M4 observation: [ADR 0013](decisions/0013-listener-ready-effect-authority-and-observation-gap-recovery.md)
+proposes a v5 durable gap fence and listener-ready dispatch lease, neither of which
+is implemented yet. Bootstrap positive admission notifies the current session before reporting
 inventory settles, allowing the free scheduler slot to run local work without polling.
 Staged handoff events advance durable positive generations and invalidate sampled
 metadata; alignment plus activation is one serialized transition, and events arriving

@@ -18,6 +18,7 @@ import {
   createMirrorWriterId,
   createReconciliationPreservationPath,
   isNonHistoryReconciliationOperation,
+  LEGACY_RECONCILIATION_PRESERVATION_ROOT,
   LiveResolutionService,
   LOCAL_EFFECT_OBSERVATION_KIND,
   LOCAL_RECONCILIATION_WRITE_OUTCOME,
@@ -39,6 +40,8 @@ import {
   RECONCILIATION_LOCAL_STABILITY,
   RECONCILIATION_OPERATION_PHASE,
   RECONCILIATION_PATH_REFERENCE_KIND,
+  RECONCILIATION_PRESERVATION_PROOF_STATE,
+  RECONCILIATION_PRESERVATION_SCOPE,
   RECONCILIATION_PRESERVATION_SIDE,
   RECONCILIATION_REMOTE_EVIDENCE_KIND,
   RECONCILIATION_REVIEW_RETENTION,
@@ -158,6 +161,7 @@ class LocalDouble implements LocalReconciliationWriter {
   refuseNextCreate = false;
   refuseNextReplace = false;
   loseNextReplaceResponse = false;
+  loseNextPreservationResponse = false;
 
   /** @returns Empty metadata inventory because action tests address admitted paths directly. */
   async list() {
@@ -293,6 +297,14 @@ class LocalDouble implements LocalReconciliationWriter {
       } as const;
     }
     this.preservation.set(path, request.content);
+    if (this.loseNextPreservationResponse) {
+      this.loseNextPreservationResponse = false;
+      return {
+        kind: "failed",
+        reason: "postcondition-mismatch",
+        effect: "unknown",
+      } as const;
+    }
     return {
       kind: "confirmed",
       outcome:
@@ -892,6 +904,88 @@ beforeEach(() => {
 });
 
 describe("M4 revisioned adoption and live resolution", () => {
+  it("stops Keep local at evidence-required when host indexing cannot prove preservation", async () => {
+    const target = pathEvidence(PATH, localLive(LOCAL_TEXT), {
+      kind: RECONCILIATION_REMOTE_EVIDENCE_KIND.live,
+      associationId: ASSOCIATION,
+      revision: REVISION_REMOTE,
+      contentSha256: HASH_REMOTE,
+      receipt: remoteLive().receipt,
+    });
+    const subject = harness(
+      stateFor({ kind: RECONCILIATION_ACTION.keepLocal }, target),
+    );
+    subject.local.files.set(PATH, LOCAL_TEXT);
+    subject.remote.states.set(PATH, remoteLive());
+    subject.remote.bodies.set(PATH, REMOTE_TEXT);
+    subject.local.loseNextPreservationResponse = true;
+
+    const result = await subject.live.execute({ operationId: OPERATION });
+    expect(result).toMatchObject({ kind: "evidence-required" });
+
+    expect(subject.remote.mutationAttempts).toBe(0);
+    expect(result.snapshot.state.reconciliationOperations[0]).toMatchObject({
+      phase: RECONCILIATION_OPERATION_PHASE.evidenceRequired,
+      preservationReceipts: [
+        {
+          proofState: RECONCILIATION_PRESERVATION_PROOF_STATE.evidenceRequired,
+        },
+      ],
+    });
+  });
+
+  it("does not reinterpret or redispatch an unknown legacy preservation receipt", async () => {
+    const target = pathEvidence(PATH, localLive(LOCAL_TEXT), {
+      kind: RECONCILIATION_REMOTE_EVIDENCE_KIND.live,
+      associationId: ASSOCIATION,
+      revision: REVISION_REMOTE,
+      contentSha256: HASH_REMOTE,
+      receipt: remoteLive().receipt,
+    });
+    const admitted = stateFor(
+      { kind: RECONCILIATION_ACTION.keepLocal },
+      target,
+    );
+    const operation = requiredNonHistory(admitted.reconciliationOperations[0]);
+    const legacyPath = `${LEGACY_RECONCILIATION_PRESERVATION_ROOT}/${OPERATION}/remote.md`;
+    const state: NonHistoryOperationState = {
+      ...admitted,
+      reconciliationOperations: [
+        {
+          ...operation,
+          phase: RECONCILIATION_OPERATION_PHASE.evidenceRequired,
+          preservationReceipts: [
+            {
+              operationId: OPERATION,
+              scope: RECONCILIATION_PRESERVATION_SCOPE.operation,
+              originalPath: PATH,
+              side: RECONCILIATION_PRESERVATION_SIDE.remote,
+              sourceRevision: REVISION_REMOTE,
+              contentSha256: HASH_REMOTE,
+              preservationPath: legacyPath,
+              proofState:
+                RECONCILIATION_PRESERVATION_PROOF_STATE.evidenceRequired,
+            },
+          ],
+        },
+      ],
+    };
+    const subject = harness(state);
+    subject.local.files.set(PATH, LOCAL_TEXT);
+    subject.remote.states.set(PATH, remoteLive());
+    subject.remote.bodies.set(PATH, REMOTE_TEXT);
+
+    const result = await subject.live.execute({ operationId: OPERATION });
+    expect(result).toMatchObject({ kind: "rejected" });
+
+    expect(subject.local.preservation.size).toBe(0);
+    expect(subject.remote.mutationAttempts).toBe(0);
+    expect(
+      requiredNonHistory(result.snapshot.state.reconciliationOperations[0])
+        .preservationReceipts[0]?.preservationPath,
+    ).toBe(legacyPath);
+  });
+
   it("preserves remote bytes before Keep local and records the exact update baseline", async () => {
     const target = pathEvidence(PATH, localLive(LOCAL_TEXT), {
       kind: RECONCILIATION_REMOTE_EVIDENCE_KIND.live,

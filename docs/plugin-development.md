@@ -30,7 +30,7 @@ There is no custom export footer, Node/Electron runtime shim, or runtime depende
 other than host-provided `obsidian`. Node is used only by development validation.
 
 `plugin:smoke` rebuilds and evaluates the **actual generated files** in isolated
-browser-like CommonJS realms. Its eleven proportional tests are separate from source
+browser-like CommonJS realms. Its twelve proportional tests are separate from source
 coverage and do not import the production entrypoint. They prove packaging/runtime
 properties that source tests cannot:
 
@@ -46,8 +46,10 @@ properties that source tests cannot:
   `RemoteBridge`, and standards Fetch to one real conditional v2 PUT with canonical
   base64url path, bearer, association/writer/operation headers, `If-None-Match: *`,
   Markdown media type/body, and no v1 request;
+- a host double that reproduces physical dot-folder creation without subsequent Vault-
+  index visibility;
 - a packaged remote-ahead review that displays hostile Markdown literally, creates and
-  verifies the exact generated remote preservation artifact, and sends one conditional
+  verifies the exact host-visible generated remote preservation artifact, and sends one conditional
   v2 Keep local PUT with the reviewed revision and exact association/writer/operation
   identity; replacing the bundle while that request is pending retains one durable
   owner/operation and conservatively records unknown effect evidence rather than
@@ -178,9 +180,12 @@ declarations and official source history, not inferred solely from the manifest:
   Fetch streaming/abort/CORS behavior in every desktop/mobile WebView.
 
 Host declarations establish API availability, not runtime qualification. M4 Slice 8
-did not install into a vault. Real desktop/mobile, iCloud traces, native secret UI,
-host-local durability/rollback, WebView transport behavior, and deployed Worker/R2
-remain explicit residual qualification limits.
+did not install into a vault. A later corrective run on the named isolated desktop
+qualified only the replacement preservation root and minimal Keep-local path; see
+[corrective evidence](qualification/m4-host-visible-preservation.md). Full real desktop
+scale rerun, mobile, iCloud traces, host-local durability/rollback, broad WebView
+transport behavior, and deployed Worker/R2 remain explicit residual qualification
+limits.
 
 ## Operating model
 

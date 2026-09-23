@@ -510,23 +510,34 @@ async function createRecoveryServer() {
   return { fetch, requests };
 }
 
-/** @returns Official create/folder/process behavior without a raw adapter. */
-function installVaultMutationHost(): void {
+/** Physical effects retained separately from the Vault index in the artifact host double. */
+interface VaultMutationHostEvidence {
+  readonly physicalFolders: ReadonlyMap<string, TFolder>;
+  readonly physicalFiles: ReadonlyMap<string, TFile>;
+}
+
+/** @returns Official create/folder/process behavior plus physical effects hidden from the Vault index. */
+function installVaultMutationHost(): VaultMutationHostEvidence {
   const folders = new Map<string, TFolder>();
+  const physicalFolders = new Map<string, TFolder>();
+  const physicalFiles = new Map<string, TFile>();
   obsidian.host.vault.getAbstractFileByPath.mockImplementation(
     (path) => obsidian.host.files.get(path) ?? folders.get(path) ?? null,
   );
   obsidian.host.vault.createFolder.mockImplementation(async (path) => {
-    if (obsidian.host.files.has(path) || folders.has(path)) {
+    if (physicalFiles.has(path) || physicalFolders.has(path)) {
       throw new Error("Path collision");
     }
     const folder = new TFolder();
     folder.path = path;
-    folders.set(path, folder);
+    physicalFolders.set(path, folder);
+    if (!path.split("/").some((segment: string) => segment.startsWith("."))) {
+      folders.set(path, folder);
+    }
     return folder;
   });
   obsidian.host.vault.create.mockImplementation(async (path, content) => {
-    if (obsidian.host.files.has(path) || folders.has(path)) {
+    if (physicalFiles.has(path) || physicalFolders.has(path)) {
       throw new Error("Path collision");
     }
     const file = new TFile();
@@ -536,8 +547,11 @@ function installVaultMutationHost(): void {
       mtime: 2_000,
       ctime: 2_000,
     };
-    obsidian.host.files.set(path, file);
-    obsidian.host.contents.set(file, content);
+    physicalFiles.set(path, file);
+    if (!path.split("/").some((segment: string) => segment.startsWith("."))) {
+      obsidian.host.files.set(path, file);
+      obsidian.host.contents.set(file, content);
+    }
     return file;
   });
   obsidian.host.vault.process.mockImplementation(async (file, update) => {
@@ -546,6 +560,7 @@ function installVaultMutationHost(): void {
     file.stat.size = new TextEncoder().encode(next).byteLength;
     return next;
   });
+  return { physicalFolders, physicalFiles };
 }
 
 /** @returns One visible modal or fails when the packaged command did not open it. */
@@ -669,6 +684,17 @@ function findSetting(
 beforeEach(obsidian.resetHost);
 
 describe("packaged Obsidian main.js", () => {
+  it("models physical dot-folder creation without Vault-index visibility", async () => {
+    const evidence = installVaultMutationHost();
+
+    await obsidian.host.vault.createFolder(".ai-bridge-conflicts");
+
+    expect(evidence.physicalFolders.has(".ai-bridge-conflicts")).toBe(true);
+    expect(
+      obsidian.host.vault.getAbstractFileByPath(".ai-bridge-conflicts"),
+    ).toBeNull();
+  });
+
   it("stages a browser CommonJS artifact with only the intended Obsidian external and no fixture, secret, or machine leakage", () => {
     expect(manifestText).toBe(
       readFileSync(new URL("../../manifest.json", import.meta.url), "utf8"),
@@ -1059,7 +1085,7 @@ describe("packaged Obsidian main.js", () => {
     expect(
       server.requests.every(({ url }) => url.pathname.startsWith("/api/v2/")),
     ).toBe(true);
-    const preservationPath = `.ai-bridge-conflicts/${operationId}/remote.md`;
+    const preservationPath = `ai-bridge-conflicts/${operationId}/remote.md`;
     const preservation = obsidian.host.files.get(preservationPath);
     expect(preservation).toBeDefined();
     expect(

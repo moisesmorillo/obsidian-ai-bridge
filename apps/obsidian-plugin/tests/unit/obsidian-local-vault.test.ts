@@ -1,11 +1,13 @@
 import {
   isNormalizedNotePath,
+  LEGACY_RECONCILIATION_PRESERVATION_ROOT,
   LocalInspectionKind,
   type LocalReadFailureReason,
   LocalSkipReason,
   LocalVaultFailureReason,
   MAX_NOTE_SIZE_BYTES,
   type NotePath,
+  RECONCILIATION_PRESERVATION_ROOT,
 } from "@obsidian-ai-bridge/core";
 import { ObsidianLocalVault } from "@obsidian-plugin/infrastructure/obsidian-local-vault";
 import {
@@ -39,6 +41,8 @@ describe("ObsidianLocalVault.list", () => {
       fakeFile("config/secret.md"),
       fakeFile(".hidden/a.md"),
       fakeFile("folder/.secret.md"),
+      fakeFile(`${RECONCILIATION_PRESERVATION_ROOT}/operation/remote.md`),
+      fakeFile(`${LEGACY_RECONCILIATION_PRESERVATION_ROOT}/operation/local.md`),
       fakeFile("image.png"),
       fakeFile("config/UPPER.MD"),
       fakeFile("bad//path.md"),
@@ -58,7 +62,7 @@ describe("ObsidianLocalVault.list", () => {
       ],
       skipped: {
         unsupported_file: 2,
-        excluded_location: 3,
+        excluded_location: 5,
         invalid_path: 1,
         oversized: 1,
       },

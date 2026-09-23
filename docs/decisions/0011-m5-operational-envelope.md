@@ -15,8 +15,10 @@ M1–M4 provide hard safety bounds, conditional effects, content-free state, and
 recovery APIs, but those implementation ceilings are not an operating-support
 contract. In particular, the 50,000 tracked-path limit and 12 MiB state limit prevent
 unbounded state; they do not prove that a real Obsidian writer is usable at those
-limits. No real desktop/mobile host, iCloud trace, deployed Worker, or production
-release has been qualified.
+limits. At this decision's acceptance, no real desktop/mobile host, iCloud trace,
+deployed Worker, or production release had been qualified. Later corrective M4
+evidence covers only one preservation-root/Keep-local scenario and does not qualify
+this operating envelope.
 
 Slice 1 therefore compared the smallest policies that could support one personal
 bridge without treating one development laptop, a platform maximum, or an earlier

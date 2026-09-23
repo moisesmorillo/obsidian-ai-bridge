@@ -29,6 +29,14 @@ export type {
   LocalVaultFailureReasonCode,
 } from "@core/local-vault/local-vault.types";
 export type { ReadOnlyLocalVault } from "@core/local-vault/read-only-local-vault.port";
+export {
+  currentPreservationNamespaceOverlapsConfig,
+  isCurrentReconciliationPreservationNamespacePath,
+  isReconciliationPreservationNamespacePath,
+  LEGACY_RECONCILIATION_PRESERVATION_ROOT,
+  RECONCILIATION_PRESERVATION_ROOT,
+  RECONCILIATION_PRESERVATION_ROOTS,
+} from "@core/local-vault/reconciliation-preservation-namespace";
 export type { ConditionalCurrentNoteRepository } from "@core/mirror/conditional-current-note-repository.port";
 export type { ConflictPreservationCryptography } from "@core/mirror/conflict-preservation-service";
 export { ConflictPreservationService } from "@core/mirror/conflict-preservation-service";
@@ -61,7 +69,6 @@ export {
   LOCAL_RECONCILIATION_FAILURE,
   LOCAL_RECONCILIATION_REFUSAL,
   LOCAL_RECONCILIATION_WRITE_OUTCOME,
-  RECONCILIATION_PRESERVATION_ROOT,
 } from "@core/mirror/local-reconciliation-writer.constants";
 export type { LocalReconciliationWriter } from "@core/mirror/local-reconciliation-writer.port";
 export type {

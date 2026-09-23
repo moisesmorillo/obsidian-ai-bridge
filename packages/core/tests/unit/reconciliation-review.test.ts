@@ -12,6 +12,7 @@ import {
   inspectBoundedRecoveryInventory,
   isNonHistoryReconciliationOperation,
   isReconciliationActionAllowed,
+  LEGACY_RECONCILIATION_PRESERVATION_ROOT,
   LOCAL_EFFECT_OBSERVATION_KIND,
   LocalInspectionKind,
   LocalVaultFailureReason,
@@ -32,6 +33,7 @@ import {
   RECONCILIATION_LOCAL_STABILITY,
   RECONCILIATION_OPERATION_PHASE,
   RECONCILIATION_PRESERVATION_PROOF_STATE,
+  RECONCILIATION_PRESERVATION_ROOT,
   RECONCILIATION_PRESERVATION_SIDE,
   RECONCILIATION_REMOTE_EVIDENCE_KIND,
   type ReadOnlyLocalVault,
@@ -708,6 +710,45 @@ describe("M4 bounded inventory", () => {
     expect(recoveries.kind).toBe("incomplete");
     expect(notes.paths).toEqual([]);
     expect(recoveries.paths).toEqual([]);
+  });
+
+  it("never admits current or historical preservation artifacts as review candidates", async () => {
+    const fixture = makeService();
+    const currentArtifact =
+      `${RECONCILIATION_PRESERVATION_ROOT}/${operationId}/remote.md` as typeof path;
+    const legacyArtifact =
+      `${LEGACY_RECONCILIATION_PRESERVATION_ROOT}/${operationId}/local.md` as typeof path;
+    const prefixOrdinary =
+      `${RECONCILIATION_PRESERVATION_ROOT}-notes/ordinary.md` as typeof path;
+    fixture.remote.listNotes.mockResolvedValue({
+      kind: "success",
+      value: {
+        notes: [currentArtifact, legacyArtifact, prefixOrdinary],
+        nextCursor: null,
+      },
+    });
+    fixture.remote.listRecovery.mockResolvedValue({
+      kind: "success",
+      value: {
+        recoveries: [
+          { ...snapshotRecovery(), path: currentArtifact },
+          { ...snapshotRecovery(), path: legacyArtifact },
+        ],
+        nextCursor: null,
+      },
+    });
+
+    const result = await fixture.service.discover();
+
+    expect(result.candidates).toContain(prefixOrdinary);
+    expect(result.candidates).not.toContain(currentArtifact);
+    expect(result.candidates).not.toContain(legacyArtifact);
+    await expect(
+      fixture.service.createReview({
+        targetPath: currentArtifact,
+        sessionId: reviewId,
+      }),
+    ).resolves.toEqual({ kind: "failure", reason: "not-a-candidate" });
   });
 
   it("reports capacity limits from local, remote, and recovery inventories", async () => {

@@ -2,11 +2,14 @@ import {
   evaluateLocalNote,
   evaluateLocalNotePath,
   evaluateLocalNoteSize,
+  isReconciliationPreservationNamespacePath,
+  LEGACY_RECONCILIATION_PRESERVATION_ROOT,
   LocalInspectionKind,
   LocalSkipReason,
   LocalVaultFailureReason,
   type LocalVaultFailureReasonCode,
   MAX_NOTE_SIZE_BYTES,
+  RECONCILIATION_PRESERVATION_ROOT,
 } from "@obsidian-ai-bridge/core";
 import { describe, expect, it } from "vitest";
 
@@ -64,6 +67,33 @@ describe("local eligibility", () => {
     expect(evaluateLocalNote(path, Number.NaN, policy)).toEqual(
       failure(LocalSkipReason.excludedLocation),
     );
+  });
+
+  it("excludes exact current and historical preservation namespaces without prefix overmatching", () => {
+    for (const root of [
+      RECONCILIATION_PRESERVATION_ROOT,
+      LEGACY_RECONCILIATION_PRESERVATION_ROOT,
+    ]) {
+      expect(isReconciliationPreservationNamespacePath(root)).toBe(true);
+      expect(isReconciliationPreservationNamespacePath(`${root}/nested`)).toBe(
+        true,
+      );
+      expect(evaluateLocalNotePath(`${root}/remote.md`, policy)).toEqual(
+        failure(LocalSkipReason.excludedLocation),
+      );
+    }
+
+    for (const path of [
+      `${RECONCILIATION_PRESERVATION_ROOT}-notes/ordinary.md`,
+      `${RECONCILIATION_PRESERVATION_ROOT}.md`,
+      "notes/ordinary.md",
+    ]) {
+      expect(isReconciliationPreservationNamespacePath(path)).toBe(false);
+      expect(evaluateLocalNotePath(path, policy)).toEqual({
+        kind: LocalInspectionKind.ok,
+        path,
+      });
+    }
   });
 
   it("compares the exact configured directory boundary", () => {

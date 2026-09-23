@@ -5,8 +5,10 @@
 > Its revalidated contracts were implemented together by Slices 6–7 under
 > [ADR 0009](../decisions/0009-m4-history-runtime-and-device-state-v4.md). Current
 > source, the [M4 specification](../milestones/m4-remote-to-local-reconciliation-and-conflict-resolution.md),
-> and accepted ADRs remain authoritative. Slice 8 qualification, deployment, and
-> personal-vault installation remain separately authorized.
+> and accepted ADRs remain authoritative. [ADR 0012](../decisions/0012-host-visible-conflict-preservation-namespace.md)
+> supersedes the dot-prefixed preservation-root references below for new effects;
+> those references remain historical compatibility evidence. Slice 8 qualification,
+> deployment, and personal-vault installation remain separately authorized.
 
 ## Purpose
 

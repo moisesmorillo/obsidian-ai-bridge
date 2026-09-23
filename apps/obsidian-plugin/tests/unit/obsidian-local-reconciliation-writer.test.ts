@@ -4,6 +4,7 @@ import {
   createMirrorOperationId,
   evaluateLocalNotePath,
   isNormalizedNotePath,
+  LEGACY_RECONCILIATION_PRESERVATION_ROOT,
   LOCAL_RECONCILIATION_DISPATCH_MODE,
   LOCAL_RECONCILIATION_REFUSAL,
   LocalInspectionKind,
@@ -12,6 +13,7 @@ import {
   MAX_NOTE_SIZE_BYTES,
   type MirrorOperationId,
   type NotePath,
+  RECONCILIATION_PRESERVATION_ROOT,
   RECONCILIATION_PRESERVATION_SIDE,
 } from "@obsidian-ai-bridge/core";
 import { ObsidianLocalReconciliationWriter } from "@obsidian-plugin/infrastructure/obsidian-local-reconciliation-writer";
@@ -32,19 +34,27 @@ interface WriterFile extends ObsidianReconciliationFile {
 /** Official-capability host double with no delete/rename/move methods. */
 class WriterHost implements ObsidianLocalReconciliationHost<WriterFile> {
   readonly nodes = new Map<string, ObsidianReconciliationNode<WriterFile>>();
+  readonly physicalNodes = new Map<
+    string,
+    ObsidianReconciliationNode<WriterFile>
+  >();
   readonly policy: { readonly configDirectory: string };
   /** @param path - Exact fixture path. @returns Current node identity or null. */
   readonly lookup = vi.fn((path: string) => this.nodes.get(path) ?? null);
   /** @param path - Exact folder path to seed through the host capability. */
   readonly createFolder = vi.fn(async (path: string) => {
-    if (this.nodes.has(path)) throw new Error("collision");
-    this.nodes.set(path, { kind: "folder" });
+    if (this.physicalNodes.has(path)) throw new Error("collision");
+    const node = { kind: "folder" } as const;
+    this.physicalNodes.set(path, node);
+    if (!hasDotPrefixedSegment(path)) this.nodes.set(path, node);
   });
   /** @param path - Exact file path. @param content - Initial saved text. @returns Created file identity. */
   readonly create = vi.fn(async (path: string, content: string) => {
-    if (this.nodes.has(path)) throw new Error("collision");
+    if (this.physicalNodes.has(path)) throw new Error("collision");
     const file = writerFile(path, content);
-    this.nodes.set(path, { kind: "file", file });
+    const node = { kind: "file", file } as const;
+    this.physicalNodes.set(path, node);
+    if (!hasDotPrefixedSegment(path)) this.nodes.set(path, node);
     return file;
   });
   /** @param file - Captured file identity. @returns Its current saved text. */
@@ -74,7 +84,9 @@ class WriterHost implements ObsidianLocalReconciliationHost<WriterFile> {
    */
   file(path: string, content: string): WriterFile {
     const file = writerFile(path, content);
-    this.nodes.set(path, { kind: "file", file });
+    const node = { kind: "file", file } as const;
+    this.nodes.set(path, node);
+    this.physicalNodes.set(path, node);
     return file;
   }
 
@@ -84,8 +96,18 @@ class WriterHost implements ObsidianLocalReconciliationHost<WriterFile> {
    * @param path - Exact fixture folder path.
    */
   folder(path: string): void {
-    this.nodes.set(path, { kind: "folder" });
+    const node = { kind: "folder" } as const;
+    this.nodes.set(path, node);
+    this.physicalNodes.set(path, node);
   }
+}
+
+/**
+ * @param path - Literal host path inspected by the double.
+ * @returns Whether the path contains a dot-prefixed segment hidden from the modeled index.
+ */
+function hasDotPrefixedSegment(path: string): boolean {
+  return path.split("/").some((segment) => segment.startsWith("."));
 }
 
 /**
@@ -592,10 +614,21 @@ describe("ObsidianLocalReconciliationWriter.replaceEligible", () => {
 });
 
 describe("ObsidianLocalReconciliationWriter.createPreservation", () => {
-  it("creates fixed parent folders and exact generated side content", async () => {
+  it("models physical dot-folder creation without subsequent Vault-index visibility", async () => {
+    const host = new WriterHost();
+
+    await host.createFolder(LEGACY_RECONCILIATION_PRESERVATION_ROOT);
+
+    expect(
+      host.physicalNodes.get(LEGACY_RECONCILIATION_PRESERVATION_ROOT),
+    ).toEqual({ kind: "folder" });
+    expect(host.lookup(LEGACY_RECONCILIATION_PRESERVATION_ROOT)).toBeNull();
+  });
+
+  it("creates fixed host-visible parent folders and exact generated side content", async () => {
     const host = new WriterHost();
     const writer = new ObsidianLocalReconciliationWriter(host, cryptography);
-    const expectedPath = `.ai-bridge-conflicts/${OPERATION}/local.md`;
+    const expectedPath = `${RECONCILIATION_PRESERVATION_ROOT}/${OPERATION}/local.md`;
     await expect(
       writer.createPreservation(preservationRequest()),
     ).resolves.toEqual({
@@ -606,8 +639,8 @@ describe("ObsidianLocalReconciliationWriter.createPreservation", () => {
       sizeBytes: 10,
     });
     expect(host.createFolder.mock.calls).toEqual([
-      [".ai-bridge-conflicts"],
-      [`.ai-bridge-conflicts/${OPERATION}`],
+      [RECONCILIATION_PRESERVATION_ROOT],
+      [`${RECONCILIATION_PRESERVATION_ROOT}/${OPERATION}`],
     ]);
     expect(host.create).toHaveBeenCalledExactlyOnceWith(
       expectedPath,
@@ -623,10 +656,14 @@ describe("ObsidianLocalReconciliationWriter.createPreservation", () => {
     "fails closed for %s collision",
     async (collision) => {
       const host = new WriterHost();
-      const operationFolder = `.ai-bridge-conflicts/${OPERATION}`;
+      const operationFolder = `${RECONCILIATION_PRESERVATION_ROOT}/${OPERATION}`;
       const sidePath = `${operationFolder}/local.md`;
-      if (collision === "root-file") host.file(".ai-bridge-conflicts", "x");
-      if (collision !== "root-file") host.folder(".ai-bridge-conflicts");
+      if (collision === "root-file") {
+        host.file(RECONCILIATION_PRESERVATION_ROOT, "x");
+      }
+      if (collision !== "root-file") {
+        host.folder(RECONCILIATION_PRESERVATION_ROOT);
+      }
       if (collision === "operation-folder") host.folder(operationFolder);
       if (collision === "side-file") {
         host.folder(operationFolder);
@@ -649,8 +686,8 @@ describe("ObsidianLocalReconciliationWriter.createPreservation", () => {
 
   it("allows only same-operation exact recovery adoption", async () => {
     const host = new WriterHost();
-    const operationFolder = `.ai-bridge-conflicts/${OPERATION}`;
-    host.folder(".ai-bridge-conflicts");
+    const operationFolder = `${RECONCILIATION_PRESERVATION_ROOT}/${OPERATION}`;
+    host.folder(RECONCILIATION_PRESERVATION_ROOT);
     host.folder(operationFolder);
     host.file(`${operationFolder}/local.md`, "competitor");
     const writer = new ObsidianLocalReconciliationWriter(host, cryptography);
@@ -697,7 +734,7 @@ describe("ObsidianLocalReconciliationWriter.createPreservation", () => {
     ).resolves.toMatchObject({ kind: "failed", effect: "unknown" });
 
     const sideFailure = new WriterHost();
-    sideFailure.folder(".ai-bridge-conflicts");
+    sideFailure.folder(RECONCILIATION_PRESERVATION_ROOT);
     sideFailure.create.mockRejectedValueOnce(new Error("ambiguous"));
     await expect(
       new ObsidianLocalReconciliationWriter(
@@ -707,8 +744,8 @@ describe("ObsidianLocalReconciliationWriter.createPreservation", () => {
     ).resolves.toMatchObject({ kind: "failed", effect: "unknown" });
 
     const recoveryFailure = new WriterHost();
-    const operationFolder = `.ai-bridge-conflicts/${OPERATION}`;
-    recoveryFailure.folder(".ai-bridge-conflicts");
+    const operationFolder = `${RECONCILIATION_PRESERVATION_ROOT}/${OPERATION}`;
+    recoveryFailure.folder(RECONCILIATION_PRESERVATION_ROOT);
     recoveryFailure.folder(operationFolder);
     recoveryFailure.file(`${operationFolder}/local.md`, "competitor");
     recoveryFailure.read.mockRejectedValueOnce(new Error("unavailable"));
@@ -728,8 +765,8 @@ describe("ObsidianLocalReconciliationWriter.createPreservation", () => {
 
   it("fails closed when preservation side lookup or folder post-verification becomes unavailable", async () => {
     const sideLookup = new WriterHost();
-    sideLookup.folder(".ai-bridge-conflicts");
-    sideLookup.folder(`.ai-bridge-conflicts/${OPERATION}`);
+    sideLookup.folder(RECONCILIATION_PRESERVATION_ROOT);
+    sideLookup.folder(`${RECONCILIATION_PRESERVATION_ROOT}/${OPERATION}`);
     sideLookup.lookup.mockImplementation((path) => {
       if (path.endsWith("/local.md")) throw new Error("unavailable");
       return sideLookup.nodes.get(path) ?? null;
@@ -750,7 +787,7 @@ describe("ObsidianLocalReconciliationWriter.createPreservation", () => {
     const folderVerify = new WriterHost();
     let rootLookups = 0;
     folderVerify.lookup.mockImplementation((path) => {
-      if (path === ".ai-bridge-conflicts") {
+      if (path === RECONCILIATION_PRESERVATION_ROOT) {
         rootLookups += 1;
         if (rootLookups === 2) throw new Error("ambiguous");
       }
@@ -766,34 +803,37 @@ describe("ObsidianLocalReconciliationWriter.createPreservation", () => {
 
   it("does not reuse another operation artifact or interpolate source paths", async () => {
     const host = new WriterHost();
-    host.folder(".ai-bridge-conflicts");
-    host.folder(`.ai-bridge-conflicts/${OTHER_OPERATION}`);
-    host.file(`.ai-bridge-conflicts/${OTHER_OPERATION}/local.md`, "competitor");
+    host.folder(RECONCILIATION_PRESERVATION_ROOT);
+    host.folder(`${RECONCILIATION_PRESERVATION_ROOT}/${OTHER_OPERATION}`);
+    host.file(
+      `${RECONCILIATION_PRESERVATION_ROOT}/${OTHER_OPERATION}/local.md`,
+      "competitor",
+    );
     const writer = new ObsidianLocalReconciliationWriter(host, cryptography);
     const result = await writer.createPreservation(preservationRequest());
     expect(result).toMatchObject({ kind: "confirmed" });
     expect(host.create.mock.calls[0]?.[0]).toBe(
-      `.ai-bridge-conflicts/${OPERATION}/local.md`,
+      `${RECONCILIATION_PRESERVATION_ROOT}/${OPERATION}/local.md`,
     );
     expect(host.create.mock.calls[0]?.[0]).not.toContain("notes/target.md");
   });
 
-  it.each([".ai-bridge-conflicts", ".ai-bridge-conflicts/settings"])(
-    "protects overlapping config subtree %s",
-    async (configDirectory) => {
-      const host = new WriterHost(configDirectory);
-      await expect(
-        new ObsidianLocalReconciliationWriter(
-          host,
-          cryptography,
-        ).createPreservation(preservationRequest()),
-      ).resolves.toMatchObject({
-        kind: "refused",
-        reason: LOCAL_RECONCILIATION_REFUSAL.unsafePreservationRoot,
-      });
-      expect(host.createFolder).not.toHaveBeenCalled();
-    },
-  );
+  it.each([
+    RECONCILIATION_PRESERVATION_ROOT,
+    `${RECONCILIATION_PRESERVATION_ROOT}/settings`,
+  ])("protects overlapping config subtree %s", async (configDirectory) => {
+    const host = new WriterHost(configDirectory);
+    await expect(
+      new ObsidianLocalReconciliationWriter(
+        host,
+        cryptography,
+      ).createPreservation(preservationRequest()),
+    ).resolves.toMatchObject({
+      kind: "refused",
+      reason: LOCAL_RECONCILIATION_REFUSAL.unsafePreservationRoot,
+    });
+    expect(host.createFolder).not.toHaveBeenCalled();
+  });
 
   it("rejects malformed operation/side input so traversal cannot shape the generated path", async () => {
     const host = new WriterHost();

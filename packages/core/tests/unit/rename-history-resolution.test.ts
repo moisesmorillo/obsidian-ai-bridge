@@ -727,7 +727,11 @@ describe("RenameHistoryResolutionService", () => {
             {
               scope: "history-step",
               stepId: STEP,
-              preservationPath: `.ai-bridge-conflicts/${OPERATION}/${STEP}/remote.md`,
+              preservationPath: createReconciliationPreservationPath(
+                OPERATION,
+                "remote",
+                STEP,
+              ),
             },
           ],
         },

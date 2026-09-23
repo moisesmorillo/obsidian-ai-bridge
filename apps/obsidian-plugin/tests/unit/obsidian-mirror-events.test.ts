@@ -1,3 +1,7 @@
+import {
+  LEGACY_RECONCILIATION_PRESERVATION_ROOT,
+  RECONCILIATION_PRESERVATION_ROOT,
+} from "@obsidian-ai-bridge/core";
 import { ObsidianMirrorEvents } from "@obsidian-plugin/events/obsidian-mirror-events";
 import {
   host,
@@ -59,7 +63,10 @@ describe("ObsidianMirrorEvents", () => {
     );
   });
 
-  it("ignores preservation-file events because the reserved dot root is outside mirror eligibility", () => {
+  it.each([
+    RECONCILIATION_PRESERVATION_ROOT,
+    LEGACY_RECONCILIATION_PRESERVATION_ROOT,
+  ])("excludes every file and folder event from reserved root %s", (root) => {
     const eventSink = sink();
     const events = new ObsidianMirrorEvents(
       new App().vault,
@@ -68,14 +75,22 @@ describe("ObsidianMirrorEvents", () => {
       { configDirectory: "host-settings" },
     );
     events.attach();
-    const file = addFile(
-      ".ai-bridge-conflicts/11111111-1111-4111-8111-111111111111/local.md",
-    );
+    const path = `${root}/11111111-1111-4111-8111-111111111111/local.md`;
+    const file = addFile(path);
     host.emitVault("create", file);
     host.emitVault("modify", file);
     host.emitVault("delete", file);
+    file.path = "notes/moved-artifact.md";
+    host.emitVault("rename", file, path);
+    const folder = new TFolder();
+    folder.path = root;
+    host.emitVault("delete", folder);
+    folder.path = "moved-artifacts";
+    host.emitVault("rename", folder, root);
     expect(eventSink.observePresent).not.toHaveBeenCalled();
     expect(eventSink.observeDelete).not.toHaveBeenCalled();
+    expect(eventSink.observeRename).not.toHaveBeenCalled();
+    expect(eventSink.observeFolderRename).not.toHaveBeenCalled();
   });
 
   it("captures immutable old/new file paths before host object mutation", () => {

@@ -12,7 +12,7 @@ import type {
 import type { ReconciliationPreservationReceipt } from "@core/mirror/reconciliation-state.types";
 import type { NotePath } from "@core/note-path/note-path.types";
 
-/** Generated reserved path that can only be constructed from an operation UUID and closed side. */
+/** Current generated or frozen historical reserved path bound to an operation UUID and closed side. */
 export type ReconciliationPreservationPath = string & {
   readonly __brand: "ReconciliationPreservationPath";
 };

@@ -35,7 +35,7 @@ import {
   isHistoryReconciliationOperation,
   isNonHistoryReconciliationOperation,
 } from "@core/mirror/reconciliation-operation";
-import { createReconciliationPreservationPath } from "@core/mirror/reconciliation-preservation-path";
+import { isReconciliationPreservationPath } from "@core/mirror/reconciliation-preservation-path";
 import {
   areRequiredReconciliationPreservationsVerified,
   requiredReconciliationPreservations,
@@ -1366,18 +1366,20 @@ function validatePreservationReceipt(
   ) {
     return false;
   }
-  const expectedPath =
+  const hasValidPersistedPath =
     receipt.scope === RECONCILIATION_PRESERVATION_SCOPE.historyStep
-      ? createReconciliationPreservationPath(
+      ? isReconciliationPreservationPath(
+          receipt.preservationPath,
           operation.operationId,
           receipt.side,
           receipt.stepId,
         )
-      : createReconciliationPreservationPath(
+      : isReconciliationPreservationPath(
+          receipt.preservationPath,
           operation.operationId,
           receipt.side,
         );
-  if (receipt.preservationPath !== expectedPath) return false;
+  if (!hasValidPersistedPath) return false;
   const requirements = validationPreservationRequirements(operation);
   if (requirements === undefined) return false;
   return requirements.some(

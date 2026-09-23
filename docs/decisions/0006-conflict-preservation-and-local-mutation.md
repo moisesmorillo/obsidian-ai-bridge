@@ -2,9 +2,11 @@
 
 ## Status
 
-**Accepted and implemented by M4.** Slices 1–5 establish preservation contracts,
+**Superseded only for the preservation-root location by
+[ADR 0012](0012-host-visible-conflict-preservation-namespace.md); all other decisions
+remain accepted and implemented by M4.** Slices 1–5 establish preservation contracts,
 the narrow local port/adapter, and core effects; Slices 6–7 compose the reviewed user
-workflow; Slice 8 qualifies the packaged preservation path. M3 behavior remains
+workflow; Slice 8 qualifies the originally selected path. M3 behavior remains
 unchanged. [ADR 0009](0009-m4-history-runtime-and-device-state-v4.md) adds the
 implemented step-scoped history artifact identity without weakening existing
 create-only operation-scoped preservation.
@@ -29,7 +31,9 @@ host boundary, but it must not recursively enter the whole eligible mirror.
 ### Preservation location
 
 Before any action can replace a competing version or clean up its remote original,
-M4 creates and verifies a local preservation artifact under:
+M4 originally created and verified a local preservation artifact under the following
+historical namespace. ADR 0012 replaces this location for new operations without
+rewriting historical receipts:
 
 ```text
 .ai-bridge-conflicts/<review-operation-uuid>/local.md

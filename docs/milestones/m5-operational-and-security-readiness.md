@@ -1,6 +1,14 @@
 # M5 — Operational and security readiness
 
-**Status: NEXT — Slices 0–4 complete; Slice 5 is next.** M1–M4 remain COMPLETE and M6 remains PLANNED. Slice 2 implements the credential registry, typed principal, offline lifecycle, and historical singleton migration checkpoint. Slice 3 implements client-attributed content-free live diagnostics while preserving zero-day retention. Slice 4 enforces exact route permissions, removes singleton authority, and retires every v1 HTTP/OpenAPI route. No current release or platform is supported.
+**Status: NEXT — Slices 0–4 complete; Slice 5 is next.** M1–M4 remain COMPLETE
+and M6 remains PLANNED. Slice 5–6 qualification is blocked until the corrective M4
+host-visible preservation change lands and the complete qualification sequence is
+rerun; the corrective PR does not resume or complete M5. Slice 2 implements the
+credential registry, typed principal, offline lifecycle, and historical singleton
+migration checkpoint. Slice 3 implements client-attributed content-free live
+diagnostics while preserving zero-day retention. Slice 4 enforces exact route
+permissions, removes singleton authority, and retires every v1 HTTP/OpenAPI route. No
+current release or platform is supported.
 
 ## Objective
 

@@ -96,9 +96,11 @@ See [M3 completion evidence](milestones/m3-remote-bridge-client-and-publishing.m
 [current-state evidence](current-state.md), [architecture](architecture.md),
 [implemented API](api.md), [M2 completion](milestones/m2-obsidian-read-only-local-adapter.md#completion-evidence)
 and [M2 plan](plans/m2-obsidian-read-only-local-adapter.md). Current test counts
-and coverage evidence are recorded in [current-state](current-state.md); no deployed Worker or real Obsidian desktop/mobile
-host was exercised. M4's planned evidence requirements are not existing coverage or
-permission to start production implementation.
+and coverage evidence are recorded in [current-state](current-state.md); that M3 evidence
+exercised no deployed Worker or real Obsidian desktop/mobile host. Later corrective M4
+evidence is limited to the preservation root and one Keep-local path. M4's then-planned
+evidence requirements were not existing coverage or permission to start production
+implementation.
 
 ## Milestone table
 
@@ -212,8 +214,11 @@ specification remain required before M5 production work.
   Bounded deferred-history cleanup is also implemented through ordered step ledgers;
   no automatic decision is composed.
 - **Preservation/local mutation:** competing bytes are create-only and post-verified
-  under the existing excluded `.ai-bridge-conflicts/<operation>/` namespace before
-  replacement. The state-v4 validator derives the required operation- or step-scoped side/revision/hash
+  under the explicit host-visible `ai-bridge-conflicts/<operation>/` namespace before
+  replacement. Corrective real-host qualification found the historical
+  `.ai-bridge-conflicts` root physically creatable but absent from the Obsidian Vault
+  index; ADR 0012 changes new generation only. Both namespaces are mirror-excluded,
+  and frozen legacy receipts remain exact and conservative rather than repaired. The state-v4 validator derives the required operation- or step-scoped side/revision/hash
   matrix from sampled evidence and rejects unbound or extra receipts. A dedicated
   narrow core port supports exact create, atomic replace, and create-only preservation;
   the M3 read-only port stays unchanged. No plugin local rename/delete or generic
@@ -279,7 +284,10 @@ specification remain required before M5 production work.
 
 ### M5 — Operational and security readiness
 
-**NEXT — Slices 0–4 complete; Slice 5 is next.** The
+**NEXT — Slices 0–4 complete; Slice 5 is next.** M5 Slice 5–6 qualification
+remains blocked until the corrective host-visible M4 preservation PR lands and the
+full qualification sequence is rerun; this correction does not resume or complete M5.
+The
 [M5 specification](milestones/m5-operational-and-security-readiness.md),
 [consolidated threat model](threat-model.md),
 [ADR 0010](decisions/0010-scoped-client-credentials-and-permissions.md), and

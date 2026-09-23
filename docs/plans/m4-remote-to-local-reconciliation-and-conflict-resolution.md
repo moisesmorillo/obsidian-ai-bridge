@@ -8,7 +8,9 @@ Slices 6–7 implement
 version-4 compatibility transition: bounded history execution plus shared runtime,
 session, command, modal, and status composition. Slice 8 qualifies the artifact,
 operations, canonical gates, and final semantics without deployment or personal-vault
-installation.
+installation. [ADR 0012](../decisions/0012-host-visible-conflict-preservation-namespace.md)
+supersedes this completed plan's dot-prefixed preservation-root references for new
+effects; they remain historical descriptions for frozen legacy receipts.
 
 [Specification](../milestones/m4-remote-to-local-reconciliation-and-conflict-resolution.md)
 and [ADRs 0005–0009](../decisions/README.md) are normative. Preserve every completed

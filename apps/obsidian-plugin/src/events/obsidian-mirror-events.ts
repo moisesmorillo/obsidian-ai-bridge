@@ -1,6 +1,7 @@
 import {
   evaluateLocalNotePath,
   isNormalizedNotePath,
+  isReconciliationPreservationNamespacePath,
   type LocalEligibilityPolicy,
   LocalInspectionKind,
   type NotePath,
@@ -108,6 +109,7 @@ export class ObsidianMirrorEvents {
     }
     if (file instanceof TFolder) {
       const oldFolder = `${file.path}`;
+      if (!eligibleFolder(oldFolder, this.policy)) return;
       void this.owner
         .observeFolderRename(oldFolder, null)
         .catch(() => undefined);
@@ -120,6 +122,7 @@ export class ObsidianMirrorEvents {
     const oldPath = `${oldPathValue}`;
     const newPath = `${file.path}`;
     if (file instanceof TFile) {
+      if (isReconciliationPreservationNamespacePath(oldPath)) return;
       const source = eligiblePath(oldPath, this.policy);
       const destination = eligiblePath(newPath, this.policy);
       if (source !== null) {
@@ -134,6 +137,7 @@ export class ObsidianMirrorEvents {
       return;
     }
     if (file instanceof TFolder) {
+      if (!eligibleFolder(oldPath, this.policy)) return;
       const destinationFolder = eligibleFolder(newPath, this.policy)
         ? newPath
         : null;

@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.0.1](https://github.com/moisesmorillo/obsidian-ai-bridge/compare/v1.0.0...v1.0.1) (2026-09-24)
+
+
+### Bug Fixes
+
+* **plugin:** fence effects across listener gaps ([#55](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/55)) ([4f8a2d8](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/4f8a2d897dc63aac67a7a62ee3e5013959c91220))
+* **plugin:** use host-visible conflict preservation paths ([#52](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/52)) ([917d454](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/917d454cce3b845fc45aab9e6349103085df9004))
+
+
+### Documentation
+
+* **m4:** define listener-gap effect authority ([#54](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/54)) ([eeafbe1](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/eeafbe17e8d74d83a4e8fb949633800e04555a7d))
+
 ## [1.0.0](https://github.com/moisesmorillo/obsidian-ai-bridge/compare/v0.11.0...v1.0.0) (2026-09-21)
 
 

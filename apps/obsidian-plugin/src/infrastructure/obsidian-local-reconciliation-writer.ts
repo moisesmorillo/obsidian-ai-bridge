@@ -17,7 +17,9 @@ import {
   type LocalReconciliationWriter,
   LocalSkipReason,
   MUTATION_EFFECT_CERTAINTY,
+  RECONCILIATION_EFFECT_DISPATCH_KIND,
   RECONCILIATION_PRESERVATION_ROOT,
+  type ReconciliationEffectDispatchKind,
   type ReconciliationPreservationPath,
   type ReplaceEligibleLocalRequest,
 } from "@obsidian-ai-bridge/core";
@@ -26,6 +28,10 @@ import type {
   ObsidianReconciliationFile,
   ObsidianReconciliationNode,
 } from "@obsidian-plugin/infrastructure/obsidian-local-reconciliation-writer.types";
+import type {
+  MirrorEffectDispatchAuthority,
+  MirrorEffectDispatchResult,
+} from "@obsidian-plugin/runtime/mirror-effect-dispatch-authority";
 
 /** Private callback sentinel proving `Vault.process` refused before returning replacement text. */
 const STALE_PROCESS_REFUSAL = Symbol("stale-local-reconciliation-content");
@@ -49,6 +55,7 @@ export class ObsidianLocalReconciliationWriter<
   constructor(
     private readonly host: ObsidianLocalReconciliationHost<File>,
     private readonly cryptography: LocalReconciliationWriteCryptography,
+    private readonly dispatchAuthority?: MirrorEffectDispatchAuthority,
   ) {}
 
   /** @inheritdoc */
@@ -96,10 +103,19 @@ export class ObsidianLocalReconciliationWriter<
       return refused(LOCAL_RECONCILIATION_REFUSAL.destinationFileExists);
     }
 
-    const parents = await this.ensureEligibleParents(request.path);
+    const parents = await this.ensureEligibleParents(
+      request.path,
+      request.operationId,
+    );
     if (parents !== null) return parents;
     try {
-      await this.host.create(request.path, request.content);
+      const dispatch = this.dispatch(
+        request.operationId,
+        RECONCILIATION_EFFECT_DISPATCH_KIND.localMutation,
+        () => this.host.create(request.path, request.content),
+      );
+      if (dispatch.kind === "not-ready") return failedBeforeEffect();
+      await dispatch.value;
     } catch {
       return failedUnknown();
     }
@@ -161,18 +177,25 @@ export class ObsidianLocalReconciliationWriter<
     }
 
     try {
-      await this.host.process(node.file, (current) => {
-        const currentNode = this.host.lookup(request.path);
-        if (
-          node.file.path !== request.path ||
-          currentNode?.kind !== "file" ||
-          currentNode.file !== node.file ||
-          current !== request.expectedContent
-        ) {
-          throw STALE_PROCESS_REFUSAL;
-        }
-        return request.replacementContent;
-      });
+      const dispatch = this.dispatch(
+        request.operationId,
+        RECONCILIATION_EFFECT_DISPATCH_KIND.localMutation,
+        () =>
+          this.host.process(node.file, (current) => {
+            const currentNode = this.host.lookup(request.path);
+            if (
+              node.file.path !== request.path ||
+              currentNode?.kind !== "file" ||
+              currentNode.file !== node.file ||
+              current !== request.expectedContent
+            ) {
+              throw STALE_PROCESS_REFUSAL;
+            }
+            return request.replacementContent;
+          }),
+      );
+      if (dispatch.kind === "not-ready") return failedBeforeEffect();
+      await dispatch.value;
     } catch (error) {
       if (error === STALE_PROCESS_REFUSAL) {
         return refused(LOCAL_RECONCILIATION_REFUSAL.staleContent);
@@ -196,6 +219,7 @@ export class ObsidianLocalReconciliationWriter<
       request.side,
       request.stepId,
     );
+    const effectIdentity = request.stepId ?? request.operationId;
     if (path === undefined || !this.preservationRootIsSafe(path)) {
       return refused(LOCAL_RECONCILIATION_REFUSAL.unsafePreservationRoot);
     }
@@ -208,6 +232,7 @@ export class ObsidianLocalReconciliationWriter<
     const root = await this.ensurePreservationFolder(
       RECONCILIATION_PRESERVATION_ROOT,
       true,
+      effectIdentity,
     );
     if (root !== null) return root;
     const operation = await this.ensurePreservationFolder(
@@ -215,6 +240,7 @@ export class ObsidianLocalReconciliationWriter<
       request.stepId !== undefined ||
         request.mode ===
           LOCAL_RECONCILIATION_DISPATCH_MODE.sameOperationRecovery,
+      effectIdentity,
     );
     if (operation !== null) return operation;
     if (request.stepId !== undefined) {
@@ -222,6 +248,7 @@ export class ObsidianLocalReconciliationWriter<
         `${operationFolder}/${request.stepId}`,
         request.mode ===
           LOCAL_RECONCILIATION_DISPATCH_MODE.sameOperationRecovery,
+        effectIdentity,
       );
       if (step !== null) return step;
     }
@@ -257,7 +284,13 @@ export class ObsidianLocalReconciliationWriter<
       return refused(LOCAL_RECONCILIATION_REFUSAL.preservationCollision);
     }
     try {
-      await this.host.create(path, request.content);
+      const dispatch = this.dispatch(
+        effectIdentity,
+        RECONCILIATION_EFFECT_DISPATCH_KIND.localPreservation,
+        () => this.host.create(path, request.content),
+      );
+      if (dispatch.kind === "not-ready") return failedBeforeEffect();
+      await dispatch.value;
     } catch {
       return failedUnknown();
     }
@@ -318,10 +351,12 @@ export class ObsidianLocalReconciliationWriter<
    * Creates each missing eligible parent component without path repair or fallback lookup.
    *
    * @param path - Already eligible destination whose parent components are required.
+   * @param operationId - Current durable effect identity checked at each folder creation.
    * @returns Null when all parents exist, otherwise a typed refusal/failure.
    */
   private async ensureEligibleParents(
     path: string,
+    operationId: CreateEligibleLocalRequest["operationId"],
   ): Promise<LocalReconciliationWriteResult | null> {
     const segments = path.split("/").slice(0, -1);
     let parent = "";
@@ -338,7 +373,13 @@ export class ObsidianLocalReconciliationWriter<
       }
       if (node?.kind === "folder") continue;
       try {
-        await this.host.createFolder(parent);
+        const dispatch = this.dispatch(
+          operationId,
+          RECONCILIATION_EFFECT_DISPATCH_KIND.localMutation,
+          () => this.host.createFolder(parent),
+        );
+        if (dispatch.kind === "not-ready") return failedBeforeEffect();
+        await dispatch.value;
       } catch {
         return failedUnknown();
       }
@@ -359,11 +400,13 @@ export class ObsidianLocalReconciliationWriter<
    *
    * @param path - Exact reserved folder component.
    * @param mayReuse - Whether durable recovery authority permits an existing folder.
+   * @param operationId - Current durable effect identity checked before creation.
    * @returns Null when the folder is ready, otherwise a typed refusal/failure.
    */
   private async ensurePreservationFolder(
     path: string,
     mayReuse: boolean,
+    operationId: CreateEligibleLocalRequest["operationId"],
   ): Promise<LocalReconciliationWriteResult | null> {
     let node: ObsidianReconciliationNode<File> | null;
     try {
@@ -380,7 +423,13 @@ export class ObsidianLocalReconciliationWriter<
         : refused(LOCAL_RECONCILIATION_REFUSAL.preservationCollision);
     }
     try {
-      await this.host.createFolder(path);
+      const dispatch = this.dispatch(
+        operationId,
+        RECONCILIATION_EFFECT_DISPATCH_KIND.localPreservation,
+        () => this.host.createFolder(path),
+      );
+      if (dispatch.kind === "not-ready") return failedBeforeEffect();
+      await dispatch.value;
     } catch {
       return failedUnknown();
     }
@@ -389,6 +438,30 @@ export class ObsidianLocalReconciliationWriter<
     } catch {
       return failedUnknown();
     }
+  }
+
+  /**
+   * Starts one host mutation only while its operation still owns the current observation epoch.
+   *
+   * Standalone adapter tests omit the runtime capability; the only production composition
+   * injects it from the same-realm owner before the writer can be used.
+   *
+   * @param operationId - Durable M4 owner or exact history step identity.
+   * @param kind - Local mutation or preservation boundary checked against durable phase.
+   * @param effect - Synchronous host call that crosses the effect boundary.
+   * @returns Invocation result or a proof that no host call began.
+   */
+  private dispatch<Value>(
+    operationId: CreateEligibleLocalRequest["operationId"],
+    kind: ReconciliationEffectDispatchKind,
+    effect: () => Value,
+  ): MirrorEffectDispatchResult<Value> {
+    return (
+      this.dispatchAuthority?.dispatch(operationId, kind, effect) ?? {
+        kind: "dispatched",
+        value: effect(),
+      }
+    );
   }
 
   /**

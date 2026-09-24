@@ -7,22 +7,34 @@ import {
   createReconciliationPreservationPath,
   createRecoverySnapshotId,
   FairMirrorScheduler,
+  fenceActiveReconciliationForObservationGap,
+  HISTORY_CLEANUP_STEP_PHASE,
   HISTORY_DECISION_KIND,
+  HISTORY_REMOTE_EFFECT_KIND,
+  isReconciliationEffectDispatchAllowed,
+  isRefinedHistoryReconciliationOperation,
   LocalInspectionKind,
   LocalVaultFailureReason,
   MIRROR_ACKNOWLEDGEMENT_KIND,
   MIRROR_DESIRED_STATE_KIND,
   MIRROR_DEVICE_LIFECYCLE_KIND,
   MIRROR_RENAME_PHASE,
+  MIRROR_STATE_STORE_FAILURE,
   type MirrorDeviceState,
   MirrorStateOwner,
+  type MirrorStateSaveResult,
   type MirrorStateStore,
   normalizeNotePath,
   RECONCILIATION_ACTION,
+  RECONCILIATION_EFFECT_DISPATCH_KIND,
+  RECONCILIATION_OPERATION_PHASE,
   type ReadOnlyLocalVault,
   ReconciliationObservationGenerationOwner,
   type RemoteBridge,
 } from "@obsidian-ai-bridge/core";
+import { MirrorEffectDispatchGate } from "@obsidian-plugin/runtime/mirror-effect-dispatch-authority";
+import { MirrorObservationEpochCoordinator } from "@obsidian-plugin/runtime/mirror-observation-epoch";
+import { MIRROR_RUNTIME_OWNER_VERSION } from "@obsidian-plugin/runtime/mirror-runtime-owner";
 import { ReconciliationRuntimeOwner } from "@obsidian-plugin/runtime/reconciliation-runtime-owner";
 import { describe, expect, it, vi } from "vitest";
 
@@ -48,6 +60,9 @@ const REMOTE_REVISION = required(
 const RECEIPT_OPERATION = required(
   createMirrorOperationId("55555555-5555-4555-8555-555555555555"),
 );
+const UNRELATED_STEP = required(
+  createMirrorOperationId("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"),
+);
 const RECOVERY = required(
   createRecoverySnapshotId("88888888-8888-4888-8888-888888888888"),
 );
@@ -68,8 +83,15 @@ const LOCAL_HASH = required(createContentSha256("22".repeat(32)));
 const REMOTE_HASH = required(createContentSha256("33".repeat(32)));
 
 class Store implements MirrorStateStore {
-  async save(): Promise<{ readonly kind: "saved" }> {
-    return { kind: "saved" };
+  failed = false;
+
+  async save(): Promise<MirrorStateSaveResult> {
+    return this.failed
+      ? {
+          kind: "failed",
+          reason: MIRROR_STATE_STORE_FAILURE.unavailable,
+        }
+      : { kind: "saved" };
   }
 }
 
@@ -96,6 +118,7 @@ function initialState(): MirrorDeviceState {
       },
     ],
     stagedHandoff: null,
+    reconciliationGapGroupReviews: [],
     reconciliationReviews: [],
     reconciliationOperations: [],
   };
@@ -340,11 +363,13 @@ function subject(
     readonly local?: ReadOnlyLocalVault;
     readonly remote?: RemoteBridge;
     readonly nowMilliseconds?: () => number;
+    readonly isNormalSchedulingReady?: () => boolean;
   } = {},
 ) {
+  const store = new Store();
   const stateOwner = new MirrorStateOwner(
     options.state ?? initialState(),
-    new Store(),
+    store,
   );
   const scheduler = new FairMirrorScheduler();
   const observations = new ReconciliationObservationGenerationOwner();
@@ -397,6 +422,7 @@ function subject(
     })),
   };
   const remoteBridge = options.remote ?? remote();
+  const remoteMutation = vi.spyOn(remoteBridge, "mutateNote");
   const owner = new ReconciliationRuntimeOwner({
     local,
     localWriter,
@@ -412,8 +438,9 @@ function subject(
     observations,
     scheduler,
     cryptography,
+    isNormalSchedulingReady: options.isNormalSchedulingReady ?? (() => true),
     currentIdentity: () => ({
-      runtimeOwnerVersion: 4,
+      runtimeOwnerVersion: MIRROR_RUNTIME_OWNER_VERSION,
       configurationGeneration: 1,
       listenerEpoch: 1,
       deviceId: DEVICE,
@@ -425,10 +452,399 @@ function subject(
       },
     }),
   });
-  return { owner, scheduler, stateOwner, localWriter, remoteBridge };
+  return {
+    owner,
+    scheduler,
+    stateOwner,
+    store,
+    localWriter,
+    remoteBridge,
+    remoteMutation,
+  };
 }
 
 describe("ReconciliationRuntimeOwner", () => {
+  it("binds dispatch to the exact current operation, configuration, and observation lease", async () => {
+    const { owner, scheduler, stateOwner, store } = subject(crypto, {
+      isNormalSchedulingReady: () => false,
+    });
+    await owner.listCandidates();
+    const review = await owner.createReview(SESSION, PATH);
+    if (review === null) throw new Error("Expected a current review.");
+    await expect(
+      owner.submit(SESSION, review.reviewId, {
+        kind: RECONCILIATION_ACTION.useRemote,
+      }),
+    ).resolves.toEqual({ kind: "admitted" });
+    await scheduler.whenIdle();
+    const operation = stateOwner.snapshot().state.reconciliationOperations[0];
+    if (operation === undefined)
+      throw new Error("Expected an admitted operation.");
+
+    const prepared = await stateOwner.transition((state) => ({
+      ...state,
+      reconciliationOperations: state.reconciliationOperations.map(
+        (candidate) =>
+          candidate.operationId === operation.operationId
+            ? {
+                ...candidate,
+                phase: RECONCILIATION_OPERATION_PHASE.preserving,
+              }
+            : candidate,
+      ),
+    }));
+    expect(prepared.kind).toBe("committed");
+
+    const epochs = new MirrorObservationEpochCoordinator();
+    epochs.attach({ id: SESSION, onChanged: vi.fn() });
+    expect(epochs.markLayoutReady(SESSION)).toEqual({
+      kind: "ready",
+      epoch: 1,
+    });
+    const authority = new MirrorEffectDispatchGate(stateOwner, epochs);
+    authority.setConfigurationGeneration(1);
+    const effect = vi.fn(() => "dispatched");
+    const preservationKind =
+      RECONCILIATION_EFFECT_DISPATCH_KIND.localPreservation;
+    expect(
+      authority.dispatch(operation.operationId, preservationKind, effect),
+    ).toEqual({ kind: "not-ready" });
+    expect(effect).not.toHaveBeenCalled();
+
+    expect(epochs.publishDispatchLease(SESSION)).toBe(true);
+    expect(
+      authority.dispatch(operation.operationId, preservationKind, effect),
+    ).toEqual({ kind: "dispatched", value: "dispatched" });
+    expect(
+      authority.dispatch(
+        operation.operationId,
+        RECONCILIATION_EFFECT_DISPATCH_KIND.remoteMutation,
+        effect,
+      ),
+    ).toEqual({ kind: "not-ready" });
+    expect(
+      authority.dispatch(
+        operation.operationId,
+        RECONCILIATION_EFFECT_DISPATCH_KIND.localMutation,
+        effect,
+      ),
+    ).toEqual({ kind: "not-ready" });
+
+    const blocked = await stateOwner.transition((state) => ({
+      ...state,
+      reconciliationOperations: state.reconciliationOperations.map(
+        (candidate) =>
+          candidate.operationId === operation.operationId
+            ? {
+                ...candidate,
+                phase: RECONCILIATION_OPERATION_PHASE.blocked,
+              }
+            : candidate,
+      ),
+    }));
+    expect(blocked.kind).toBe("committed");
+    expect(
+      authority.dispatch(operation.operationId, preservationKind, effect),
+    ).toEqual({ kind: "not-ready" });
+    expect(effect).toHaveBeenCalledOnce();
+
+    store.failed = true;
+    await expect(
+      stateOwner.transition((state) => state),
+    ).resolves.toMatchObject({
+      kind: "save-failed",
+    });
+    expect(
+      authority.dispatch(operation.operationId, preservationKind, effect),
+    ).toEqual({ kind: "not-ready" });
+    store.failed = false;
+    await stateOwner.verifyPersistence();
+
+    authority.setConfigurationGeneration(2);
+    expect(
+      authority.dispatch(operation.operationId, preservationKind, effect),
+    ).toEqual({ kind: "not-ready" });
+    authority.setConfigurationGeneration(1);
+    await stateOwner.transition(fenceActiveReconciliationForObservationGap);
+    expect(
+      authority.dispatch(operation.operationId, preservationKind, effect),
+    ).toEqual({ kind: "not-ready" });
+    expect(effect).toHaveBeenCalledOnce();
+  });
+
+  it("authorizes only the current history step and boundary phase", async () => {
+    const historyBridge = historyRemote();
+    const { owner, scheduler, stateOwner } = subject(crypto, {
+      state: historyState(),
+      local: historyLocal(),
+      remote: historyBridge,
+      isNormalSchedulingReady: () => false,
+    });
+    const review = await owner.createReview(SESSION, HISTORY_SOURCE);
+    if (review === null) throw new Error("Expected a history review.");
+    await expect(
+      owner.submit(SESSION, review.reviewId, {
+        kind: RECONCILIATION_ACTION.resolveHistory,
+        decision: {
+          kind: HISTORY_DECISION_KIND.executeCleanupPlan,
+          selectedCandidatePath: PATH,
+        },
+      }),
+    ).resolves.toEqual({ kind: "admitted" });
+    await scheduler.whenIdle();
+    const admitted = stateOwner.snapshot().state.reconciliationOperations[0];
+    if (
+      admitted === undefined ||
+      !isRefinedHistoryReconciliationOperation(admitted)
+    ) {
+      throw new Error("Expected a refined history operation.");
+    }
+    const currentStepIndex = admitted.historyProgress.nextStepIndex;
+    if (currentStepIndex === null) {
+      throw new Error("Expected one pending history step.");
+    }
+    const currentStep = admitted.historyProgress.steps[currentStepIndex];
+    if (currentStep === undefined) {
+      throw new Error("Expected the current history step.");
+    }
+    expect(
+      isReconciliationEffectDispatchAllowed(
+        admitted,
+        UNRELATED_STEP,
+        RECONCILIATION_EFFECT_DISPATCH_KIND.localPreservation,
+      ),
+    ).toBe(false);
+    const prepared = await stateOwner.transition((state) => ({
+      ...state,
+      reconciliationOperations: state.reconciliationOperations.map(
+        (candidate) =>
+          candidate.operationId === admitted.operationId &&
+          isRefinedHistoryReconciliationOperation(candidate)
+            ? {
+                ...candidate,
+                phase: RECONCILIATION_OPERATION_PHASE.preserving,
+                historyProgress: {
+                  ...candidate.historyProgress,
+                  steps: candidate.historyProgress.steps.map((step) =>
+                    step.stepId === currentStep.stepId
+                      ? {
+                          ...step,
+                          phase: HISTORY_CLEANUP_STEP_PHASE.preserving,
+                        }
+                      : step,
+                  ),
+                },
+              }
+            : candidate,
+      ),
+    }));
+    expect(prepared.kind).toBe("committed");
+
+    const epochs = new MirrorObservationEpochCoordinator();
+    epochs.attach({ id: SESSION, onChanged: vi.fn() });
+    expect(epochs.markLayoutReady(SESSION)).toMatchObject({ kind: "ready" });
+    expect(epochs.publishDispatchLease(SESSION)).toBe(true);
+    const authority = new MirrorEffectDispatchGate(stateOwner, epochs);
+    authority.setConfigurationGeneration(1);
+    const effect = vi.fn(() => "dispatched");
+    expect(
+      authority.dispatch(
+        admitted.operationId,
+        RECONCILIATION_EFFECT_DISPATCH_KIND.localPreservation,
+        effect,
+      ),
+    ).toEqual({ kind: "not-ready" });
+    expect(
+      authority.dispatch(
+        currentStep.stepId,
+        RECONCILIATION_EFFECT_DISPATCH_KIND.localPreservation,
+        effect,
+      ),
+    ).toEqual({ kind: "dispatched", value: "dispatched" });
+    expect(
+      authority.dispatch(
+        currentStep.stepId,
+        RECONCILIATION_EFFECT_DISPATCH_KIND.remoteMutation,
+        effect,
+      ),
+    ).toEqual({ kind: "not-ready" });
+    expect(
+      authority.dispatch(
+        currentStep.stepId,
+        RECONCILIATION_EFFECT_DISPATCH_KIND.localMutation,
+        effect,
+      ),
+    ).toEqual({ kind: "not-ready" });
+
+    const remotePrepared = await stateOwner.transition((state) => ({
+      ...state,
+      reconciliationOperations: state.reconciliationOperations.map(
+        (candidate) =>
+          candidate.operationId === admitted.operationId &&
+          isRefinedHistoryReconciliationOperation(candidate)
+            ? {
+                ...candidate,
+                phase: RECONCILIATION_OPERATION_PHASE.mutatingRemote,
+                historyProgress: {
+                  ...candidate.historyProgress,
+                  steps: candidate.historyProgress.steps.map((step) =>
+                    step.stepId === currentStep.stepId
+                      ? {
+                          ...step,
+                          phase: HISTORY_CLEANUP_STEP_PHASE.mutatingRemote,
+                        }
+                      : step,
+                  ),
+                },
+              }
+            : candidate,
+      ),
+    }));
+    expect(remotePrepared.kind).toBe("committed");
+    expect(
+      authority.dispatch(
+        currentStep.stepId,
+        RECONCILIATION_EFFECT_DISPATCH_KIND.remoteMutation,
+        effect,
+      ),
+    ).toEqual({ kind: "dispatched", value: "dispatched" });
+    expect(
+      authority.dispatch(
+        admitted.operationId,
+        RECONCILIATION_EFFECT_DISPATCH_KIND.remoteMutation,
+        effect,
+      ),
+    ).toEqual({ kind: "not-ready" });
+    expect(
+      authority.dispatch(
+        currentStep.stepId,
+        RECONCILIATION_EFFECT_DISPATCH_KIND.localPreservation,
+        effect,
+      ),
+    ).toEqual({ kind: "not-ready" });
+
+    const blocked = await stateOwner.transition((state) => ({
+      ...state,
+      reconciliationOperations: state.reconciliationOperations.map(
+        (candidate) =>
+          candidate.operationId === admitted.operationId &&
+          isRefinedHistoryReconciliationOperation(candidate)
+            ? {
+                ...candidate,
+                phase: RECONCILIATION_OPERATION_PHASE.blocked,
+                historyProgress: {
+                  ...candidate.historyProgress,
+                  steps: candidate.historyProgress.steps.map((step) =>
+                    step.stepId === currentStep.stepId
+                      ? {
+                          ...step,
+                          phase: HISTORY_CLEANUP_STEP_PHASE.blocked,
+                          remoteEffect: {
+                            kind: HISTORY_REMOTE_EFFECT_KIND.definitelyRefused,
+                          },
+                        }
+                      : step,
+                  ),
+                },
+              }
+            : candidate,
+      ),
+    }));
+    expect(blocked.kind).toBe("committed");
+    expect(
+      authority.dispatch(
+        currentStep.stepId,
+        RECONCILIATION_EFFECT_DISPATCH_KIND.remoteMutation,
+        effect,
+      ),
+    ).toEqual({ kind: "not-ready" });
+    expect(effect).toHaveBeenCalledTimes(2);
+  });
+
+  it("atomically transfers fresh gap decisions while normal scheduling is fenced", async () => {
+    const { owner, scheduler, stateOwner } = subject(crypto, {
+      isNormalSchedulingReady: () => false,
+    });
+    await owner.listCandidates();
+    const review = await owner.createReview(SESSION, PATH);
+    if (review === null) throw new Error("Expected a current review.");
+    await expect(
+      owner.submit(SESSION, review.reviewId, {
+        kind: RECONCILIATION_ACTION.useRemote,
+      }),
+    ).resolves.toEqual({ kind: "admitted" });
+    await scheduler.whenIdle();
+    const predecessor = stateOwner.snapshot().state.reconciliationOperations[0];
+    if (predecessor === undefined) {
+      throw new Error("Expected an admitted predecessor operation.");
+    }
+    await stateOwner.transition(fenceActiveReconciliationForObservationGap);
+
+    expect(owner.listObservationGaps()).toMatchObject({
+      kind: "available",
+      candidates: [{ operationId: predecessor.operationId, paths: [PATH] }],
+    });
+    const group = await owner.createGapGroupReview(
+      SESSION,
+      predecessor.operationId,
+    );
+    expect(group.kind).toBe("created");
+    if (group.kind !== "created") return;
+    const child = required(group.review.children[0]);
+    expect(child.allowedActions).toContain(RECONCILIATION_ACTION.keepLocal);
+
+    await expect(
+      owner.submitGapGroup(SESSION, group.review.reviewId, [
+        {
+          reviewId: child.reviewId,
+          action: { kind: RECONCILIATION_ACTION.keepLocal },
+        },
+      ]),
+    ).resolves.toEqual({ kind: "admitted" });
+    await scheduler.whenIdle();
+    const state = stateOwner.snapshot().state;
+    expect(state.reconciliationOperations).toContainEqual(
+      expect.objectContaining({
+        operationId: predecessor.operationId,
+        phase: "completed",
+        gapSuccessorOperationIds: [expect.any(String)],
+      }),
+    );
+    expect(state.reconciliationOperations).toContainEqual(
+      expect.objectContaining({
+        reviewId: child.reviewId,
+        observationCoverage: "continuous",
+        phase: "admitted",
+      }),
+    );
+  });
+
+  it("holds newly admitted effects until the startup observation barrier releases scheduling", async () => {
+    let normalSchedulingReady = false;
+    const { owner, scheduler, localWriter, remoteMutation } = subject(crypto, {
+      isNormalSchedulingReady: () => normalSchedulingReady,
+    });
+    await owner.listCandidates();
+    const review = await owner.createReview(SESSION, PATH);
+    if (review === null) throw new Error("Expected a current review.");
+    expect(review.allowedActions).toContain(RECONCILIATION_ACTION.useRemote);
+
+    await expect(
+      owner.submit(SESSION, review.reviewId, {
+        kind: RECONCILIATION_ACTION.useRemote,
+      }),
+    ).resolves.toEqual({ kind: "admitted" });
+    await scheduler.whenIdle();
+    expect(localWriter.replaceEligible.mock.calls).toHaveLength(0);
+    expect(remoteMutation).not.toHaveBeenCalled();
+
+    normalSchedulingReady = true;
+    owner.resumePersisted();
+    await scheduler.whenIdle();
+    expect(localWriter.replaceEligible.mock.calls).toHaveLength(1);
+    expect(remoteMutation).not.toHaveBeenCalled();
+  });
+
   it("owns sanitized review sessions, defer admission, recovery listing, and detach", async () => {
     const { owner, scheduler, stateOwner } = subject();
 

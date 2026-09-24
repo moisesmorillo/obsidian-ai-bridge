@@ -71,7 +71,7 @@ export function allowedReconciliationActions(
 
 /**
  * Checks an explicit action against the same classification/evidence table used
- * for the future UI action list.
+ * by the current review UI.
  *
  * @param snapshot - Current immutable evidence.
  * @param action - Explicit operator action to validate.

@@ -1,4 +1,4 @@
-/** Closed operator authority sources that may admit future M4 operations. */
+/** Closed operator authority sources required when an M4 operation is admitted. */
 export const RECONCILIATION_AUTHORITY_SOURCE = {
   reconciliationDecision: "operator-reconciliation-decision",
   adoptionDecision: "operator-adoption-decision",
@@ -28,6 +28,30 @@ export const RECONCILIATION_REVIEW_RETENTION = {
   durable: "durable",
 } as const;
 
+/** Durable observation authority retained independently from operation phase and effect certainty. */
+export const RECONCILIATION_OBSERVATION_COVERAGE = {
+  continuous: "continuous",
+  gapReviewRequired: "gap-review-required",
+} as const;
+
+/** Closed effect boundaries whose M4 authority differs by durable operation phase. */
+export const RECONCILIATION_EFFECT_DISPATCH_KIND = {
+  localPreservation: "local-preservation",
+  localMutation: "local-mutation",
+  remoteMutation: "remote-mutation",
+} as const;
+
+/** Kind of persisted complete-scope listener-gap review evidence. */
+export const RECONCILIATION_GAP_REVIEW_KIND = {
+  gapGroup: "gap-group",
+} as const;
+
+/** Statuses of predecessor-linked complete gap-group reviews. */
+export const RECONCILIATION_GAP_REVIEW_STATUS = {
+  stale: "stale",
+  completed: "completed",
+} as const;
+
 /** Durable review statuses; transient sampled bodies are never represented here. */
 export const RECONCILIATION_REVIEW_STATUS = {
   pending: "pending",
@@ -37,7 +61,7 @@ export const RECONCILIATION_REVIEW_STATUS = {
   completed: "completed",
 } as const;
 
-/** Closed future operation actions approved by the M4 specification. */
+/** Closed operation actions approved by the M4 specification. */
 export const RECONCILIATION_ACTION = {
   keepLocal: "keep-local",
   useRemote: "use-remote",
@@ -80,6 +104,9 @@ export const HISTORY_CLEANUP_STEP_KIND = {
 
 /** Closed remote-effect evidence kinds for one history cleanup step. */
 export const HISTORY_REMOTE_EFFECT_KIND = {
+  notDispatched: "not-dispatched",
+  definitelyRefused: "definitely-refused",
+  unknown: "unknown",
   confirmedExactTombstoneReceipt: "confirmed-exact-tombstone-receipt",
 } as const;
 
@@ -94,7 +121,7 @@ export const HISTORY_CLEANUP_STEP_PHASE = {
   completed: "completed",
 } as const;
 
-/** Migration and refined-history progress variants in the v4 operation union. */
+/** Progress discriminants for refined history and frozen v3 migration blockers in v5 operations. */
 export const HISTORY_PROGRESS_KIND = {
   refined: "refined",
   legacyV3Unrefined: "legacy-v3-history-unrefined",
@@ -182,3 +209,6 @@ export const MAX_RECONCILIATION_OPERATIONS = 1_024;
 
 /** Maximum preservation receipts retained across sparse operations. */
 export const MAX_RECONCILIATION_PRESERVATION_RECEIPTS = 2_048;
+
+/** Maximum predecessor-linked complete gap-group reviews retained in one state. */
+export const MAX_RECONCILIATION_GAP_GROUP_REVIEWS = 1_024;

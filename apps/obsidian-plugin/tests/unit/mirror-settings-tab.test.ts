@@ -163,6 +163,7 @@ describe("MirrorSettingsTab", () => {
     );
     const plugin = await loadPluginReady();
     host.becomeLayoutReady();
+    await new Promise((resolve) => setTimeout(resolve, 0));
     const tab = [...host.settingsTabs][0];
     if (tab === undefined) throw new Error("Expected settings tab.");
 
@@ -260,6 +261,7 @@ describe("MirrorSettingsTab", () => {
     );
     const plugin = await loadPluginReady();
     host.becomeLayoutReady();
+    await new Promise((resolve) => setTimeout(resolve, 0));
     const tab = [...host.settingsTabs][0];
     if (tab === undefined) throw new Error("Expected settings tab.");
     const server = findDefinition(

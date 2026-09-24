@@ -1,9 +1,11 @@
 # M5 — Operational and security readiness
 
 **Status: NEXT — Slices 0–4 complete; Slice 5 is next.** M1–M4 remain COMPLETE
-and M6 remains PLANNED. Slice 5–6 qualification is blocked until the corrective M4
-host-visible preservation change lands and the complete qualification sequence is
-rerun; the corrective PR does not resume or complete M5. Slice 2 implements the
+and M6 remains PLANNED. The corrective M4 ADR 0013 v5 listener-gap implementation
+and a bounded disposable Obsidian 1.13.7 scenario are complete; M5 Slice 6's full
+qualification sequence remains outstanding, including the 10,000-note target and
+platform/release matrix. The corrective change does not resume or complete M5 and makes
+no current support claim. Slice 2 implements the
 credential registry, typed principal, offline lifecycle, and historical singleton
 migration checkpoint. Slice 3 implements client-attributed content-free live
 diagnostics while preserving zero-day retention. Slice 4 enforces exact route
@@ -361,9 +363,12 @@ without deployment or M6.
 
 - ADR 0011 records repository/platform evidence, realistic alternatives, explicit
   uncertainty, and the disposition of all eight decisions.
-- Disposable current-code measurements cover local and paged remote inventory, v4
-  validation/encode/decode, and v2→v3→v4 migration at 1,000, 5,000, and 10,000 settled
-  live paths. The harness/data were not committed and do not claim real-host behavior.
+- Historical disposable measurements in [ADR 0011](../decisions/0011-m5-operational-envelope.md)
+  cover local and paged remote inventory, strict v4 validation/encode/decode, and
+  v2→v3→v4 migration at 1,000, 5,000, and 10,000 settled live paths. They do not
+  measure the current v5 codec or v4→v5 overhead. Slice 6 must repeat the relevant
+  state/migration measurements against v5; the uncommitted harness does not claim
+  real-host behavior.
 - The decision selects 10,000 as a later qualification target, not a current support
   claim, and keeps 50,000 as a distinct hard safety ceiling.
 - No Rate Limiting binding, numeric quota, mobile-writer support, recovery automation,

@@ -47,6 +47,7 @@ import {
 import type { ReconciliationObservationSource } from "@core/mirror/reconciliation-review.types";
 import {
   RECONCILIATION_LOCAL_EVIDENCE_KIND,
+  RECONCILIATION_OBSERVATION_COVERAGE,
   RECONCILIATION_OPERATION_PHASE,
   RECONCILIATION_PRESERVATION_PROOF_STATE,
   RECONCILIATION_PRESERVATION_SIDE,
@@ -430,6 +431,8 @@ export class ReconciliationEffectExecutor {
       }
     }
     if (
+      operation.observationCoverage ===
+        RECONCILIATION_OBSERVATION_COVERAGE.gapReviewRequired ||
       operation.phase === RECONCILIATION_OPERATION_PHASE.mutatingRemote ||
       (operation.phase === RECONCILIATION_OPERATION_PHASE.evidenceRequired &&
         operation.remoteEffect === MUTATION_EFFECT_CERTAINTY.unknown)
@@ -515,15 +518,20 @@ export class ReconciliationEffectExecutor {
       const successorObserved =
         "successor" in operation.localEffectObservation &&
         operation.localEffectObservation.successor !== null;
+      const gapFenced =
+        operation.observationCoverage ===
+        RECONCILIATION_OBSERVATION_COVERAGE.gapReviewRequired;
       next = replaceOperation(next, {
         ...operation,
-        phase: successorObserved
-          ? RECONCILIATION_OPERATION_PHASE.successorReviewRequired
-          : RECONCILIATION_OPERATION_PHASE.completed,
+        phase: gapFenced
+          ? operation.phase
+          : successorObserved
+            ? RECONCILIATION_OPERATION_PHASE.successorReviewRequired
+            : RECONCILIATION_OPERATION_PHASE.completed,
         localEffect,
         remoteEffect,
       });
-      return successorObserved
+      return gapFenced || successorObserved
         ? next
         : completeReview(next, operation.reviewId);
     });
@@ -570,11 +578,14 @@ export class ReconciliationEffectExecutor {
       return replaceOperation(withAcknowledgement, {
         ...operation,
         phase:
-          successorObserved &&
-          (remoteEffect === MUTATION_EFFECT_CERTAINTY.confirmed ||
-            operation.localEffect === MUTATION_EFFECT_CERTAINTY.confirmed)
-            ? RECONCILIATION_OPERATION_PHASE.successorReviewRequired
-            : RECONCILIATION_OPERATION_PHASE.partial,
+          operation.observationCoverage ===
+          RECONCILIATION_OBSERVATION_COVERAGE.gapReviewRequired
+            ? operation.phase
+            : successorObserved &&
+                (remoteEffect === MUTATION_EFFECT_CERTAINTY.confirmed ||
+                  operation.localEffect === MUTATION_EFFECT_CERTAINTY.confirmed)
+              ? RECONCILIATION_OPERATION_PHASE.successorReviewRequired
+              : RECONCILIATION_OPERATION_PHASE.partial,
         remoteEffect,
       });
     });

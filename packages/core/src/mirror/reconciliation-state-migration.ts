@@ -2,6 +2,7 @@ import { MUTATION_EFFECT_CERTAINTY } from "@core/mirror/mirror.constants";
 import type {
   MirrorDeviceState,
   MirrorDeviceStateV3,
+  MirrorDeviceStateV4,
 } from "@core/mirror/mirror-state.types";
 import {
   HISTORY_PROGRESS_KIND,
@@ -9,15 +10,16 @@ import {
   LOCAL_EFFECT_OBSERVATION_KIND,
   RECONCILIATION_ACTION,
   RECONCILIATION_LOCAL_EVIDENCE_KIND,
+  RECONCILIATION_OBSERVATION_COVERAGE,
   RECONCILIATION_OPERATION_PHASE,
   RECONCILIATION_PRESERVATION_SCOPE,
   RECONCILIATION_REVIEW_STATUS,
 } from "@core/mirror/reconciliation-state.constants";
 import type {
   LocalEffectObservation,
-  ReconciliationNonHistoryOperation,
   ReconciliationOperation,
   ReconciliationOperationV3,
+  ReconciliationOperationV4,
 } from "@core/mirror/reconciliation-state.types";
 
 /**
@@ -32,7 +34,7 @@ import type {
  */
 export function projectMirrorDeviceStateV3ToV4(
   state: MirrorDeviceStateV3,
-): MirrorDeviceState {
+): MirrorDeviceStateV4 {
   const reconciliationOperations =
     state.reconciliationOperations.map(projectOperation);
   const attentionOperationIds = new Set(
@@ -60,14 +62,62 @@ export function projectMirrorDeviceStateV3ToV4(
 }
 
 /**
+ * Projects the frozen v4 state into the strict v5 contract without asserting listener continuity.
+ *
+ * Every nonterminal operation is fenced because persisted epochs and exact effects
+ * cannot prove coverage through the cold-start interval. Historical fields and IDs
+ * remain unchanged; no reviews, effects, ranges or decisions are synthesized.
+ *
+ * @param state - Strictly decoded and validated version-4 state.
+ * @returns Version-5 projection requiring complete semantic validation.
+ */
+export function projectMirrorDeviceStateV4ToV5(
+  state: MirrorDeviceStateV4,
+): MirrorDeviceState {
+  return {
+    deviceId: state.deviceId,
+    lifecycle: state.lifecycle,
+    globalBlockReason: state.globalBlockReason,
+    paths: state.paths,
+    stagedHandoff: state.stagedHandoff,
+    reconciliationReviews: state.reconciliationReviews,
+    reconciliationGapGroupReviews: [],
+    reconciliationOperations:
+      state.reconciliationOperations.map(projectV4Operation),
+  };
+}
+
+/**
+ * Retains terminal historical audit evidence and fences every operation still owning authority.
+ *
+ * @param operation - Strictly decoded version-4 operation.
+ * @returns Exact v5 operation projection with no fabricated successor links.
+ */
+function projectV4Operation(
+  operation: ReconciliationOperationV4,
+): ReconciliationOperation {
+  const observationCoverage =
+    operation.phase === RECONCILIATION_OPERATION_PHASE.completed ||
+    operation.phase === RECONCILIATION_OPERATION_PHASE.stale
+      ? RECONCILIATION_OBSERVATION_COVERAGE.continuous
+      : RECONCILIATION_OBSERVATION_COVERAGE.gapReviewRequired;
+  const common = {
+    ...operation,
+    observationCoverage,
+    gapSuccessorOperationIds: [],
+  };
+  return common;
+}
+
+/**
  * Projects one historical operation without repairing or reinterpreting evidence.
  *
  * @param operation - Frozen v3 aggregate operation.
- * @returns V4 non-history observation state or a non-dispatchable history blocker.
+ * @returns Version-4 non-history observation state or a non-dispatchable history blocker.
  */
 function projectOperation(
   operation: ReconciliationOperationV3,
-): ReconciliationOperation {
+): ReconciliationOperationV4 {
   const preservationReceipts = operation.preservationReceipts.map(
     (receipt) => ({
       ...receipt,
@@ -127,14 +177,14 @@ function projectOperation(
         : operation.phase,
     preservationReceipts,
     localEffectObservation,
-  } satisfies ReconciliationNonHistoryOperation;
+  } satisfies ReconciliationOperationV4;
 }
 
 /**
  * Determines only whether the historical action had a local effect channel.
  *
- * This does not infer that an effect occurred or that a future effect is allowed;
- * v4 validation and action services retain that authority.
+ * This does not infer that an effect occurred or authorize a future effect. Frozen
+ * v4 validation checks the projection; runtime action services retain dispatch authority.
  *
  * @param operation - Historical non-history operation.
  * @returns Whether its accepted action can require local create/replace.

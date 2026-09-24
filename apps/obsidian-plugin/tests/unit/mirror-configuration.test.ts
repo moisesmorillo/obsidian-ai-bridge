@@ -307,6 +307,7 @@ describe("native secret and host-local state adapters", () => {
         })),
       },
       reconciliationReviews: [],
+      reconciliationGapGroupReviews: [],
       reconciliationOperations: [],
     };
     const saveLocalStorage = vi.fn();

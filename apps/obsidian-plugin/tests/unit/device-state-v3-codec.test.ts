@@ -11,14 +11,21 @@ import {
   HISTORY_PROGRESS_KIND,
   HISTORY_REMOTE_EFFECT_KIND,
   isNonHistoryReconciliationOperation,
+  isReconciliationStateV4Consistent,
   LEGACY_V3_LOCAL_EFFECT_RECOVERY_STATE,
   LOCAL_EFFECT_OBSERVATION_KIND,
+  MAX_MUTATION_ATTEMPTS,
+  MAX_MUTATION_EVIDENCE_ATTEMPTS,
   MIRROR_ACKNOWLEDGEMENT_KIND,
   MIRROR_DESIRED_STATE_KIND,
   MIRROR_DEVICE_LIFECYCLE_KIND,
+  MIRROR_MUTATION_PHASE,
+  MIRROR_PATH_BLOCK_REASON,
+  MIRROR_PAUSE_REASON,
   MIRROR_RENAME_PHASE,
   type MirrorDeviceState,
   type MirrorDeviceStateV3,
+  type MirrorDeviceStateV4,
   MUTATION_ACTION,
   MUTATION_EFFECT_CERTAINTY,
   normalizeNotePath,
@@ -28,6 +35,7 @@ import {
   RECONCILIATION_CLASSIFICATION,
   RECONCILIATION_LOCAL_EVIDENCE_KIND,
   RECONCILIATION_LOCAL_STABILITY,
+  RECONCILIATION_OBSERVATION_COVERAGE,
   RECONCILIATION_OPERATION_PHASE,
   RECONCILIATION_PATH_REFERENCE_KIND,
   RECONCILIATION_PRESERVATION_PROOF_STATE,
@@ -44,11 +52,18 @@ import {
   encodeMirrorDeviceState,
   MAX_MIRROR_DEVICE_STATE_BYTES,
 } from "@obsidian-plugin/state/device-state-codec";
-import { migrateMirrorDeviceStateV3ToV4 } from "@obsidian-plugin/state/device-state-migration";
+import {
+  migrateMirrorDeviceStateV3ToV4,
+  migrateMirrorDeviceStateV4ToV5,
+} from "@obsidian-plugin/state/device-state-migration";
 import {
   decodeMirrorDeviceStateV3,
   encodeMirrorDeviceStateV3,
 } from "@obsidian-plugin/state/device-state-v3.codec";
+import {
+  decodeMirrorDeviceStateV4,
+  encodeMirrorDeviceStateV4,
+} from "@obsidian-plugin/state/device-state-v4.codec";
 import { createReconciliationOperationalStatus } from "@obsidian-plugin/status/reconciliation-status";
 import { describe, expect, it } from "vitest";
 
@@ -108,6 +123,7 @@ function baseState(): MirrorDeviceState {
       },
     ],
     stagedHandoff: null,
+    reconciliationGapGroupReviews: [],
     reconciliationReviews: [],
     reconciliationOperations: [],
   };
@@ -171,6 +187,8 @@ function stateWithOperation(): MirrorDeviceState {
     ],
     reconciliationOperations: [
       {
+        observationCoverage: RECONCILIATION_OBSERVATION_COVERAGE.continuous,
+        gapSuccessorOperationIds: [],
         operationId: OPERATION,
         reviewId: REVIEW,
         authority: RECONCILIATION_AUTHORITY_SOURCE.reconciliationDecision,
@@ -269,6 +287,8 @@ function stateWithHistoryOperation(): MirrorDeviceState {
     ],
     reconciliationOperations: [
       {
+        observationCoverage: RECONCILIATION_OBSERVATION_COVERAGE.continuous,
+        gapSuccessorOperationIds: [],
         operationId: OPERATION,
         reviewId: REVIEW,
         authority: RECONCILIATION_AUTHORITY_SOURCE.historyDecision,
@@ -311,15 +331,39 @@ function stateWithHistoryOperation(): MirrorDeviceState {
   };
 }
 
+async function expectFrozenV4RoundTrip(
+  state: MirrorDeviceStateV3,
+): Promise<void> {
+  const projected = projectMirrorDeviceStateV3ToV4(state);
+  const encoded = encodeMirrorDeviceStateV4(projected);
+  await expect(decodeMirrorDeviceStateV4(encoded)).resolves.toEqual({
+    kind: "valid",
+    state: projected,
+  });
+}
+
+function withoutGapGroupReviews(
+  state: MirrorDeviceState,
+): Omit<MirrorDeviceState, "reconciliationGapGroupReviews"> {
+  const { reconciliationGapGroupReviews: _gapReviews, ...legacyState } = state;
+  return legacyState;
+}
+
 function stateWithOperationV3(): MirrorDeviceStateV3 {
   const state = stateWithOperation();
   const operation = required(state.reconciliationOperations[0]);
   if (!isNonHistoryReconciliationOperation(operation)) {
     throw new Error("Expected ordinary fixture operation.");
   }
-  const { localEffectObservation: _observation, ...ordinary } = operation;
+  const {
+    localEffectObservation: _observation,
+    observationCoverage: _coverage,
+    gapSuccessorOperationIds: _successorIds,
+    ...ordinary
+  } = operation;
+  const { reconciliationGapGroupReviews: _gapReviews, ...legacyState } = state;
   return {
-    ...state,
+    ...legacyState,
     reconciliationOperations: [
       {
         ...ordinary,
@@ -335,6 +379,238 @@ function stateWithOperationV3(): MirrorDeviceStateV3 {
 type CorruptState = (raw: ReturnType<typeof JSON.parse>) => void;
 
 describe("version-4 device-state codec and frozen version-3 compatibility", () => {
+  it("round-trips the exact historical v4 operation codec before v5 migration", async () => {
+    await expectFrozenV4RoundTrip(stateWithOperationV3());
+  });
+
+  it("preserves refined frozen-v4 history authority before conservative v5 fencing", async () => {
+    const current = stateWithHistoryOperation();
+    const currentOperation = required(current.reconciliationOperations[0]);
+    if (!("historyProgress" in currentOperation)) {
+      throw new Error("Expected refined history progress.");
+    }
+    const {
+      observationCoverage: _coverage,
+      gapSuccessorOperationIds: _successors,
+      ...legacyOperation
+    } = currentOperation;
+    const {
+      reconciliationGapGroupReviews: _gapReviews,
+      reconciliationOperations: _operations,
+      ...legacyState
+    } = current;
+    const frozenV4 = {
+      ...legacyState,
+      reconciliationOperations: [legacyOperation],
+    };
+    const encoded = encodeMirrorDeviceStateV4(frozenV4);
+    await expect(decodeMirrorDeviceStateV4(encoded)).resolves.toEqual({
+      kind: "valid",
+      state: frozenV4,
+    });
+
+    const migrated = migrateMirrorDeviceStateV4ToV5(frozenV4);
+    expect(migrated.reconciliationOperations[0]).toMatchObject({
+      observationCoverage:
+        RECONCILIATION_OBSERVATION_COVERAGE.gapReviewRequired,
+      historyProgress: currentOperation.historyProgress,
+    });
+  });
+
+  it("keeps frozen-v4 encoding inside its semantic and byte bounds", () => {
+    const { reconciliationGapGroupReviews: _gapReviews, ...legacyState } =
+      baseState();
+    const frozenV4 = projectMirrorDeviceStateV3ToV4({
+      ...legacyState,
+      reconciliationOperations: [],
+    });
+    expect(() =>
+      encodeMirrorDeviceStateV4({
+        ...frozenV4,
+        paths: [...frozenV4.paths, ...frozenV4.paths],
+      }),
+    ).toThrow("invariant");
+
+    const template = required(frozenV4.paths[0]);
+    const oversized = {
+      ...frozenV4,
+      paths: Array.from({ length: 6_200 }, (_, index) => ({
+        ...template,
+        path: required(
+          normalizeNotePath(`notes/${index}-${"a".repeat(2_040)}.md`),
+        ),
+      })),
+    };
+    expect(() => encodeMirrorDeviceStateV4(oversized)).toThrow("storage bound");
+  });
+
+  it("round-trips frozen v4 lifecycle, desired-state, and mutation variants", async () => {
+    const { reconciliationGapGroupReviews: _gapReviews, ...legacyState } =
+      baseState();
+    const base: MirrorDeviceStateV3 = {
+      ...legacyState,
+      reconciliationOperations: [],
+    };
+    const template = required(base.paths[0]);
+    const lifecycleVariants: readonly MirrorDeviceStateV3["lifecycle"][] = [
+      {
+        kind: MIRROR_DEVICE_LIFECYCLE_KIND.paused,
+        associationId: ASSOCIATION,
+        origin: "https://bridge.example",
+        reason: MIRROR_PAUSE_REASON.manual,
+      },
+      {
+        kind: MIRROR_DEVICE_LIFECYCLE_KIND.handoffDraining,
+        associationId: ASSOCIATION,
+        origin: "https://bridge.example",
+      },
+      {
+        kind: MIRROR_DEVICE_LIFECYCLE_KIND.handoffDrained,
+        associationId: ASSOCIATION,
+        origin: "https://bridge.example",
+      },
+      { kind: MIRROR_DEVICE_LIFECYCLE_KIND.disabled },
+    ];
+    for (const lifecycle of lifecycleVariants) {
+      await expectFrozenV4RoundTrip({
+        ...base,
+        lifecycle,
+        paths:
+          lifecycle.kind === MIRROR_DEVICE_LIFECYCLE_KIND.disabled
+            ? []
+            : base.paths,
+      });
+    }
+
+    const desiredVariants: readonly MirrorDeviceState["paths"][number][] = [
+      {
+        ...template,
+        desired: {
+          kind: MIRROR_DESIRED_STATE_KIND.dirtyPresent,
+          observationGeneration: 2,
+        },
+      },
+      {
+        ...template,
+        desired: {
+          kind: MIRROR_DESIRED_STATE_KIND.runtimeDelete,
+          observationGeneration: 2,
+          evidenceId: EFFECT,
+          associationId: ASSOCIATION,
+          expectedRevision: REVISION,
+          graceDeadlineMilliseconds: 5_000,
+        },
+      },
+      {
+        ...template,
+        desired: {
+          kind: MIRROR_DESIRED_STATE_KIND.renameDeferred,
+          observationGeneration: 2,
+          renameId: EFFECT,
+          associationId: ASSOCIATION,
+          sourcePath: PATH,
+          destinationPath: DESTINATION,
+          sourceExpectedRevision: REVISION,
+          destinationObservationGeneration: 3,
+          destinationAcknowledgedRevision: REVISION,
+          graceDeadlineMilliseconds: 5_000,
+          phase: MIRROR_RENAME_PHASE.sourceCleanupRequired,
+        },
+        blockedReason: MIRROR_PATH_BLOCK_REASON.renameDeferred,
+      },
+    ];
+    for (const desiredPath of desiredVariants) {
+      const paths =
+        desiredPath.desired.kind === MIRROR_DESIRED_STATE_KIND.renameDeferred
+          ? [desiredPath, { ...template, path: DESTINATION }]
+          : [desiredPath];
+      await expectFrozenV4RoundTrip({ ...base, paths });
+    }
+
+    const unresolvedVariants: readonly MirrorDeviceState["paths"][number][] = [
+      {
+        ...template,
+        acknowledgement: { kind: MIRROR_ACKNOWLEDGEMENT_KIND.unassociated },
+        unresolvedMutation: {
+          intent: {
+            action: MUTATION_ACTION.create,
+            associationId: ASSOCIATION,
+            writerId: DEVICE,
+            operationId: EFFECT,
+            path: PATH,
+            precondition: { kind: "absent" },
+            contentSha256: HASH,
+            mutationAttempts: MAX_MUTATION_ATTEMPTS - 1,
+            evidenceAttempts: MAX_MUTATION_EVIDENCE_ATTEMPTS - 1,
+          },
+          phase: MIRROR_MUTATION_PHASE.intentPersisted,
+        },
+        blockedReason: MIRROR_PATH_BLOCK_REASON.unresolvedEffect,
+      },
+      {
+        ...template,
+        unresolvedMutation: {
+          intent: {
+            action: MUTATION_ACTION.update,
+            associationId: ASSOCIATION,
+            writerId: DEVICE,
+            operationId: EFFECT,
+            path: PATH,
+            precondition: { kind: "matching-revision", revision: REVISION },
+            contentSha256: HASH,
+            mutationAttempts: 1,
+            evidenceAttempts: 1,
+          },
+          phase: MIRROR_MUTATION_PHASE.evidenceRequired,
+        },
+        blockedReason: MIRROR_PATH_BLOCK_REASON.unresolvedEffect,
+      },
+      {
+        ...template,
+        acknowledgement: {
+          kind: MIRROR_ACKNOWLEDGEMENT_KIND.tombstone,
+          revision: REVISION,
+          recoveryId: RECOVERY,
+        },
+        unresolvedMutation: {
+          intent: {
+            action: MUTATION_ACTION.recreate,
+            associationId: ASSOCIATION,
+            writerId: DEVICE,
+            operationId: EFFECT,
+            path: PATH,
+            precondition: { kind: "matching-revision", revision: REVISION },
+            contentSha256: HASH,
+            mutationAttempts: 1,
+            evidenceAttempts: 1,
+          },
+          phase: MIRROR_MUTATION_PHASE.evidenceRequired,
+        },
+        blockedReason: MIRROR_PATH_BLOCK_REASON.unresolvedEffect,
+      },
+      {
+        ...template,
+        unresolvedMutation: {
+          intent: {
+            action: MUTATION_ACTION.tombstone,
+            associationId: ASSOCIATION,
+            writerId: DEVICE,
+            operationId: EFFECT,
+            path: PATH,
+            precondition: { kind: "matching-revision", revision: REVISION },
+            mutationAttempts: 1,
+            evidenceAttempts: 1,
+          },
+          phase: MIRROR_MUTATION_PHASE.recoveryPreparation,
+        },
+        blockedReason: MIRROR_PATH_BLOCK_REASON.unresolvedEffect,
+      },
+    ];
+    for (const unresolvedPath of unresolvedVariants) {
+      await expectFrozenV4RoundTrip({ ...base, paths: [unresolvedPath] });
+    }
+  });
+
   it("classifies frozen decoder boundaries without interpreting malformed storage", async () => {
     await expect(decodeMirrorDeviceStateV3(null)).resolves.toEqual({
       kind: "missing",
@@ -397,11 +673,17 @@ describe("version-4 device-state codec and frozen version-3 compatibility", () =
       kind: "valid",
       state: v3,
     });
-    const migrated = migrateMirrorDeviceStateV3ToV4(v3);
+    await expectFrozenV4RoundTrip(v3);
+    const migrated = migrateMirrorDeviceStateV4ToV5(
+      migrateMirrorDeviceStateV3ToV4(v3),
+    );
     expect(migrated).toMatchObject({
       reconciliationReviews: [{ status: RECONCILIATION_REVIEW_STATUS.staged }],
       reconciliationOperations: [
         {
+          observationCoverage:
+            RECONCILIATION_OBSERVATION_COVERAGE.gapReviewRequired,
+          gapSuccessorOperationIds: [],
           phase: RECONCILIATION_OPERATION_PHASE.blocked,
           localEffectObservation: {
             kind: LOCAL_EFFECT_OBSERVATION_KIND.legacyV3Unfenced,
@@ -596,9 +878,126 @@ describe("version-4 device-state codec and frozen version-3 compatibility", () =
     await expect(
       decodeMirrorDeviceState(encodeMirrorDeviceState(confirmed)),
     ).resolves.toEqual({ kind: "valid", state: confirmed });
+    const confirmedOperation = required(confirmed.reconciliationOperations[0]);
+    const {
+      observationCoverage: _coverage,
+      gapSuccessorOperationIds: _successors,
+      ...confirmedV4Operation
+    } = confirmedOperation;
+    const confirmedV4: MirrorDeviceStateV4 = {
+      ...withoutGapGroupReviews(confirmed),
+      reconciliationOperations: [confirmedV4Operation],
+    };
+    expect(
+      isReconciliationStateV4Consistent({
+        ...confirmedV4,
+        reconciliationReviews: confirmedV4.reconciliationReviews.map(
+          (entry) => ({
+            ...entry,
+            status: RECONCILIATION_REVIEW_STATUS.staged,
+          }),
+        ),
+        reconciliationOperations: confirmedV4.reconciliationOperations.map(
+          (entry) => ({
+            ...entry,
+            phase: RECONCILIATION_OPERATION_PHASE.partial,
+          }),
+        ),
+      }),
+    ).toBe(false);
+    const encodedConfirmed = encodeMirrorDeviceState(confirmed);
+    await expect(decodeMirrorDeviceState(encodedConfirmed)).resolves.toEqual({
+      kind: "valid",
+      state: confirmed,
+    });
+    const encodedConfirmedV4 = encodeMirrorDeviceStateV4(confirmedV4);
+    await expect(
+      decodeMirrorDeviceStateV4(encodedConfirmedV4),
+    ).resolves.toEqual({ kind: "valid", state: confirmedV4 });
+
+    const invalidContentReceipt = JSON.stringify({
+      action: MUTATION_ACTION.create,
+      associationId: ASSOCIATION,
+      operationId: STEP,
+      precondition: { kind: "absent" },
+      contentSha256: HASH,
+    });
+    const exactTombstoneReceipt = JSON.stringify({
+      action: MUTATION_ACTION.tombstone,
+      associationId: ASSOCIATION,
+      operationId: STEP,
+      precondition: { kind: "matching-revision", revision: REVISION },
+    });
+    const invalidHistoryV5 = encodedConfirmed.replace(
+      exactTombstoneReceipt,
+      invalidContentReceipt,
+    );
+    const invalidHistoryV4 = encodedConfirmedV4.replace(
+      exactTombstoneReceipt,
+      invalidContentReceipt,
+    );
+    expect(invalidHistoryV5).not.toBe(encodedConfirmed);
+    expect(invalidHistoryV4).not.toBe(encodedConfirmedV4);
+    await expect(decodeMirrorDeviceState(invalidHistoryV5)).resolves.toEqual({
+      kind: "corrupt",
+    });
+    await expect(decodeMirrorDeviceStateV4(invalidHistoryV4)).resolves.toEqual({
+      kind: "corrupt",
+    });
+
+    const liveEvidence = required(
+      confirmedOperation.snapshot.paths.find(
+        (evidence) => evidence.remote.kind === "live",
+      ),
+    );
+    if (liveEvidence.remote.kind !== "live") {
+      throw new Error("Expected live serialized evidence.");
+    }
+    const liveEvidenceJson = JSON.stringify(liveEvidence.remote);
+    const invalidLiveEvidence = JSON.stringify({
+      ...liveEvidence.remote,
+      receipt: {
+        action: MUTATION_ACTION.tombstone,
+        associationId: liveEvidence.remote.associationId,
+        operationId: liveEvidence.remote.receipt.operationId,
+        precondition: {
+          kind: "matching-revision",
+          revision: liveEvidence.remote.revision,
+        },
+      },
+    });
+    const invalidTombstoneEvidence = JSON.stringify({
+      kind: "tombstone",
+      associationId: liveEvidence.remote.associationId,
+      revision: liveEvidence.remote.revision,
+      deletedRevision: liveEvidence.remote.revision,
+      recoveryId: RECOVERY,
+      receipt: liveEvidence.remote.receipt,
+    });
+    for (const [encoded, decode] of [
+      [encodedConfirmed, decodeMirrorDeviceState],
+      [encodedConfirmedV4, decodeMirrorDeviceStateV4],
+    ] as const) {
+      const contentReceiptAsTombstone = encoded.replace(
+        liveEvidenceJson,
+        invalidLiveEvidence,
+      );
+      const tombstoneWithContentReceipt = encoded.replace(
+        liveEvidenceJson,
+        invalidTombstoneEvidence,
+      );
+      expect(contentReceiptAsTombstone).not.toBe(encoded);
+      expect(tombstoneWithContentReceipt).not.toBe(encoded);
+      await expect(decode(contentReceiptAsTombstone)).resolves.toEqual({
+        kind: "corrupt",
+      });
+      await expect(decode(tombstoneWithContentReceipt)).resolves.toEqual({
+        kind: "corrupt",
+      });
+    }
 
     const v3History: MirrorDeviceStateV3 = {
-      ...history,
+      ...withoutGapGroupReviews(history),
       reconciliationOperations: [
         {
           operationId: operation.operationId,
@@ -619,10 +1018,12 @@ describe("version-4 device-state codec and frozen version-3 compatibility", () =
     await expect(
       decodeMirrorDeviceStateV3(encodeMirrorDeviceStateV3(v3History)),
     ).resolves.toEqual({ kind: "valid", state: v3History });
+    await expectFrozenV4RoundTrip(v3History);
     const legacy = projectMirrorDeviceStateV3ToV4(v3History);
+    const migrated = migrateMirrorDeviceStateV4ToV5(legacy);
     await expect(
-      decodeMirrorDeviceState(encodeMirrorDeviceState(legacy)),
-    ).resolves.toEqual({ kind: "valid", state: legacy });
+      decodeMirrorDeviceState(encodeMirrorDeviceState(migrated)),
+    ).resolves.toEqual({ kind: "valid", state: migrated });
   });
 
   it("round-trips prepared and remote-only local-event fences", async () => {
@@ -777,7 +1178,7 @@ describe("version-4 device-state codec and frozen version-3 compatibility", () =
     });
     const recoveryReview = required(fenced.reconciliationReviews[0]);
     const v3Recovery: MirrorDeviceStateV3 = {
-      ...fenced,
+      ...withoutGapGroupReviews(fenced),
       reconciliationReviews: [
         {
           ...recoveryReview,
@@ -790,6 +1191,7 @@ describe("version-4 device-state codec and frozen version-3 compatibility", () =
     await expect(
       decodeMirrorDeviceStateV3(encodeMirrorDeviceStateV3(v3Recovery)),
     ).resolves.toEqual({ kind: "valid", state: v3Recovery });
+    await expectFrozenV4RoundTrip(v3Recovery);
     const preparedRecovery = recoveryReview.snapshot.recovery;
     if (preparedRecovery === null)
       throw new Error("Expected recovery evidence.");
@@ -810,6 +1212,7 @@ describe("version-4 device-state codec and frozen version-3 compatibility", () =
     await expect(
       decodeMirrorDeviceStateV3(encodeMirrorDeviceStateV3(v3Sealed)),
     ).resolves.toEqual({ kind: "valid", state: v3Sealed });
+    await expectFrozenV4RoundTrip(v3Sealed);
 
     const unownedTerminal = JSON.parse(encoded);
     unownedTerminal.reconciliationOperations[0].phase =
@@ -923,12 +1326,13 @@ describe("version-4 device-state codec and frozen version-3 compatibility", () =
       decodeMirrorDeviceState(encodeMirrorDeviceState(candidate)),
     ).resolves.toEqual({ kind: "valid", state: candidate });
     const v3: MirrorDeviceStateV3 = {
-      ...candidate,
+      ...withoutGapGroupReviews(candidate),
       reconciliationOperations: [],
     };
     await expect(
       decodeMirrorDeviceStateV3(encodeMirrorDeviceStateV3(v3)),
     ).resolves.toEqual({ kind: "valid", state: v3 });
+    await expectFrozenV4RoundTrip(v3);
   });
 
   it("refuses a semantically valid state that exceeds the codec byte bound", () => {
@@ -949,7 +1353,7 @@ describe("version-4 device-state codec and frozen version-3 compatibility", () =
     };
     expect(() => encodeMirrorDeviceState(state)).toThrow("storage bound");
     const v3: MirrorDeviceStateV3 = {
-      ...state,
+      ...withoutGapGroupReviews(state),
       reconciliationReviews: [],
       reconciliationOperations: [],
     };

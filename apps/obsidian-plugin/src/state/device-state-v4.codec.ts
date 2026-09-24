@@ -14,22 +14,20 @@ import {
   HISTORY_PROGRESS_KIND,
   HISTORY_REMOTE_EFFECT_KIND,
   type HistoryCleanupStep,
-  isHistoryReconciliationOperation,
-  isMirrorDeviceStateConsistent,
+  isMirrorDeviceStateV4Consistent,
   isNormalizedNotePath,
   LEGACY_V3_LOCAL_EFFECT_RECOVERY_STATE,
   type LegacyV3HistoryProgress,
   LOCAL_EFFECT_OBSERVATION_KIND,
   type LocalEffectObservation,
   MAX_MIRROR_TRACKED_PATHS,
-  MAX_RECONCILIATION_GAP_GROUP_REVIEWS,
   MAX_RECONCILIATION_OPERATIONS,
   MAX_RECONCILIATION_PRESERVATION_RECEIPTS,
   MAX_RECONCILIATION_REVIEWS,
   MIRROR_ACKNOWLEDGEMENT_KIND,
   MIRROR_DESIRED_STATE_KIND,
   MIRROR_DEVICE_LIFECYCLE_KIND,
-  MIRROR_DEVICE_STATE_VERSION,
+  MIRROR_DEVICE_STATE_V4_VERSION,
   MIRROR_GLOBAL_BLOCK_REASON,
   MIRROR_MUTATION_PHASE,
   MIRROR_PATH_BLOCK_REASON,
@@ -38,7 +36,7 @@ import {
   type MirrorAcknowledgement,
   type MirrorDesiredState,
   type MirrorDeviceLifecycle,
-  type MirrorDeviceState,
+  type MirrorDeviceStateV4,
   type MirrorPathState,
   MUTATION_ACTION,
   MUTATION_EFFECT_CERTAINTY,
@@ -48,11 +46,8 @@ import {
   RECONCILIATION_AUTHORITY_SOURCE,
   RECONCILIATION_CLASSIFICATION,
   RECONCILIATION_EVENT_KIND,
-  RECONCILIATION_GAP_REVIEW_KIND,
-  RECONCILIATION_GAP_REVIEW_STATUS,
   RECONCILIATION_LOCAL_EVIDENCE_KIND,
   RECONCILIATION_LOCAL_STABILITY,
-  RECONCILIATION_OBSERVATION_COVERAGE,
   RECONCILIATION_OPERATION_PHASE,
   RECONCILIATION_PATH_REFERENCE_KIND,
   RECONCILIATION_PRESERVATION_PROOF_STATE,
@@ -62,8 +57,7 @@ import {
   RECONCILIATION_REVIEW_RETENTION,
   RECONCILIATION_REVIEW_STATUS,
   RECOVERY_SNAPSHOT_STATE_KIND,
-  type ReconciliationGapGroupReview,
-  type ReconciliationOperation,
+  type ReconciliationOperationV4,
   type ReconciliationPathEvidence,
   type ReconciliationPreservationReceipt,
   type ReconciliationRecoveryEvidence,
@@ -94,10 +88,10 @@ export const MIRROR_DEVICE_STATE_STORAGE_KEY = "ai-bridge:mirror-device-state";
 /** Closed serialized format identifier independent from synced plugin data. */
 export const MIRROR_DEVICE_STATE_FORMAT = "obsidian-ai-bridge-device-state";
 
-/** Maximum UTF-8 bytes for v5, including worst-case gap authority overhead on a valid bounded v4 projection. */
-export const MAX_MIRROR_DEVICE_STATE_BYTES = 13 * 1024 * 1024;
+/** Maximum UTF-8 bytes accepted for one host-local version-4 device-state snapshot. */
+export const MAX_MIRROR_DEVICE_STATE_BYTES = 12 * 1024 * 1024;
 
-/** Strict v5 DTO discriminants separating aggregate and history operation shapes. */
+/** Strict v4 DTO discriminants separating aggregate and history operation shapes. */
 const MIRROR_OPERATION_DTO_KIND = {
   ordinary: "ordinary",
   history: "history",
@@ -105,9 +99,9 @@ const MIRROR_OPERATION_DTO_KIND = {
 } as const;
 
 /** Strict host-local decode result; incompatible data is never treated as missing. */
-export type MirrorDeviceStateDecodeResult =
+export type MirrorDeviceStateV4DecodeResult =
   | { readonly kind: "missing" }
-  | { readonly kind: "valid"; readonly state: MirrorDeviceState }
+  | { readonly kind: "valid"; readonly state: MirrorDeviceStateV4 }
   | { readonly kind: "corrupt" }
   | { readonly kind: "unsupported-version"; readonly version: number };
 
@@ -210,7 +204,7 @@ const unresolvedMutationStateSchema = z
   })
   .strict();
 
-/** Strict M3 path record retained across v4 and v5; sparse M4 state remains in separate top-level collections. */
+/** Strict per-path M3 ledger retained by v4 without per-path M4 placeholders. */
 const pathStateSchema = z
   .object({
     path: z.string(),
@@ -557,21 +551,6 @@ const reconciliationReviewSchema = z
   })
   .strict();
 
-/** Persisted complete-scope gap review; child identities link only to ordinary durable review records. */
-const reconciliationGapGroupReviewSchema = z
-  .object({
-    kind: z.literal(RECONCILIATION_GAP_REVIEW_KIND.gapGroup),
-    reviewId: z.string(),
-    predecessorOperationId: z.string(),
-    status: z.enum([
-      RECONCILIATION_GAP_REVIEW_STATUS.stale,
-      RECONCILIATION_GAP_REVIEW_STATUS.completed,
-    ]),
-    snapshot: reconciliationReviewSnapshotSchema,
-    childReviewIds: z.array(z.string()).max(MAX_RECONCILIATION_OPERATIONS),
-  })
-  .strict();
-
 /** Persisted path ownership role; core verifies tracked/target/new-destination claims against sampled and current state. */
 const reconciliationReservationSchema = z
   .object({
@@ -791,15 +770,8 @@ const legacyHistoryProgressSchema = z
   })
   .strict();
 
-/** Common content-free operation fields shared by the action-discriminated v5 union. */
+/** Common content-free operation fields shared by the action-discriminated v4 union. */
 const operationFields = {
-  observationCoverage: z.enum([
-    RECONCILIATION_OBSERVATION_COVERAGE.continuous,
-    RECONCILIATION_OBSERVATION_COVERAGE.gapReviewRequired,
-  ]),
-  gapSuccessorOperationIds: z
-    .array(z.string())
-    .max(MAX_RECONCILIATION_OPERATIONS),
   operationId: z.string(),
   reviewId: z.string(),
   authority: z.enum([
@@ -822,7 +794,7 @@ const operationFields = {
   successorOperationId: z.string().nullable(),
 };
 
-/** Strict v5 operation union: aggregate effects for ordinary actions, ordered steps for history. */
+/** Strict v4 operation union: aggregate effects for ordinary actions, ordered steps for history. */
 const reconciliationOperationSchema = z.union([
   z
     .object({
@@ -862,11 +834,11 @@ const reconciliationOperationSchema = z.union([
     .strict(),
 ]);
 
-/** Strict v5 host-local envelope with bounded sparse M4 collections; rejects unknown fields and all older/newer versions. */
+/** Strict v4 host-local envelope with bounded sparse M4 collections; rejects unknown fields and all older/newer versions. */
 const deviceStateSchema = z
   .object({
     format: z.literal(MIRROR_DEVICE_STATE_FORMAT),
-    version: z.literal(MIRROR_DEVICE_STATE_VERSION),
+    version: z.literal(MIRROR_DEVICE_STATE_V4_VERSION),
     deviceId: z.string(),
     lifecycle: lifecycleSchema,
     globalBlockReason: z
@@ -885,9 +857,6 @@ const deviceStateSchema = z
     reconciliationReviews: z
       .array(reconciliationReviewSchema)
       .max(MAX_RECONCILIATION_REVIEWS),
-    reconciliationGapGroupReviews: z
-      .array(reconciliationGapGroupReviewSchema)
-      .max(MAX_RECONCILIATION_GAP_GROUP_REVIEWS),
     reconciliationOperations: z
       .array(reconciliationOperationSchema)
       .max(MAX_RECONCILIATION_OPERATIONS),
@@ -901,9 +870,9 @@ const stateHeaderSchema = z
   })
   .loose();
 
-/** Adapter-only v5 envelope after structural validation, before domain rehydration and consistency checks. */
+/** Adapter-only v4 envelope after structural validation, before domain rehydration and consistency checks. */
 type DeviceStateDto = z.infer<typeof deviceStateSchema>;
-/** Serialized M3 path ledger retained inside v5, with identifiers still represented as strings. */
+/** Serialized M3 path ledger retained inside v4, with identifiers still represented as strings. */
 type PathStateDto = z.infer<typeof pathStateSchema>;
 /** Persisted baseline variant used by both live ledger and sampled review evidence. */
 type AcknowledgementDto = z.infer<typeof acknowledgementSchema>;
@@ -935,10 +904,6 @@ type ReconciliationRuntimeIdentityDto = z.infer<
 >;
 /** Durable review DTO linking sampled evidence to an optional admitted operation. */
 type ReconciliationReviewDto = z.infer<typeof reconciliationReviewSchema>;
-/** Complete content-free gap sample DTO linked to one predecessor and zero or more successor reviews. */
-type ReconciliationGapGroupReviewDto = z.infer<
-  typeof reconciliationGapGroupReviewSchema
->;
 /** Persisted restart authority DTO containing phases, reservations and effect/proof metadata, never note bodies. */
 type ReconciliationOperationDto = z.infer<typeof reconciliationOperationSchema>;
 /** Serialized preservation claim awaiting identifier conversion and evidence-bound core validation. */
@@ -954,10 +919,10 @@ type ReconciliationPreservationReceiptDto = z.infer<
  * @returns Missing, valid, corrupt, or unsupported-version outcome, including older formats.
  * @throws When staged-baseline integrity cannot be evaluated by the host.
  */
-export async function decodeMirrorDeviceState(
+export async function decodeMirrorDeviceStateV4(
   stored: unknown,
   integrity: HandoffIntegrity = new WebCryptoHandoffIntegrity(),
-): Promise<MirrorDeviceStateDecodeResult> {
+): Promise<MirrorDeviceStateV4DecodeResult> {
   if (stored === null || stored === undefined) return { kind: "missing" };
   if (typeof stored !== "string") return { kind: "corrupt" };
   if (byteLength(stored) > MAX_MIRROR_DEVICE_STATE_BYTES) {
@@ -970,18 +935,21 @@ export async function decodeMirrorDeviceState(
     return { kind: "corrupt" };
   }
   const header = stateHeaderSchema.safeParse(parsed);
-  if (header.success && header.data.version !== MIRROR_DEVICE_STATE_VERSION) {
+  if (
+    header.success &&
+    header.data.version !== MIRROR_DEVICE_STATE_V4_VERSION
+  ) {
     return { kind: "unsupported-version", version: header.data.version };
   }
   const decoded = deviceStateSchema.safeParse(parsed);
   if (!decoded.success) return { kind: "corrupt" };
-  let state: MirrorDeviceState;
+  let state: MirrorDeviceStateV4;
   try {
     state = convertDeviceState(decoded.data);
   } catch {
     return { kind: "corrupt" };
   }
-  if (!isMirrorDeviceStateConsistent(state)) return { kind: "corrupt" };
+  if (!isMirrorDeviceStateV4Consistent(state)) return { kind: "corrupt" };
   if (state.stagedHandoff !== null) {
     const checksumMatches = await verifyHandoffPayloadChecksum(
       {
@@ -1007,19 +975,19 @@ export async function decodeMirrorDeviceState(
  * @returns JSON suitable only for `App.saveLocalStorage`.
  * @throws When a caller supplies inconsistent state or the practical size bound is exceeded.
  */
-export function encodeMirrorDeviceState(state: MirrorDeviceState): string {
-  if (!isMirrorDeviceStateConsistent(state)) {
+export function encodeMirrorDeviceStateV4(state: MirrorDeviceStateV4): string {
+  if (!isMirrorDeviceStateV4Consistent(state)) {
     throw new Error("Invalid mirror device state invariant.");
   }
   const projected = projectDeviceState(state);
   const validated = deviceStateSchema.safeParse(projected);
-  /* v8 ignore next -- projection from a validated v5 domain state is schema-total. */
+  /* v8 ignore next -- projection from a validated v4 domain state is schema-total. */
   if (!validated.success) {
     throw new Error("Invalid mirror device state fields.");
   }
   try {
     /* v8 ignore next -- strict projection round-trip preserves validated invariants. */
-    if (!isMirrorDeviceStateConsistent(convertDeviceState(validated.data))) {
+    if (!isMirrorDeviceStateV4Consistent(convertDeviceState(validated.data))) {
       throw new Error("Invalid projected mirror device state invariant.");
     }
   } catch {
@@ -1034,14 +1002,14 @@ export function encodeMirrorDeviceState(state: MirrorDeviceState): string {
 }
 
 /**
- * Projects the core ledger into the v5 envelope for strict schema and round-trip validation before encoding.
+ * Projects the core ledger into the v4 envelope for strict schema and round-trip validation before encoding.
  *
- * @returns The content-free v5 envelope projection.
+ * @returns The content-free v4 envelope projection.
  */
-function projectDeviceState(state: MirrorDeviceState): DeviceStateDto {
+function projectDeviceState(state: MirrorDeviceStateV4): DeviceStateDto {
   return {
     format: MIRROR_DEVICE_STATE_FORMAT,
-    version: MIRROR_DEVICE_STATE_VERSION,
+    version: MIRROR_DEVICE_STATE_V4_VERSION,
     deviceId: state.deviceId,
     lifecycle: projectLifecycle(state.lifecycle),
     globalBlockReason: state.globalBlockReason,
@@ -1064,9 +1032,6 @@ function projectDeviceState(state: MirrorDeviceState): DeviceStateDto {
             })),
           },
     reconciliationReviews: state.reconciliationReviews.map(projectReview),
-    reconciliationGapGroupReviews: state.reconciliationGapGroupReviews.map(
-      projectGapGroupReview,
-    ),
     reconciliationOperations:
       state.reconciliationOperations.map(projectOperation),
   };
@@ -1276,35 +1241,14 @@ function projectReview(review: ReconciliationReview): ReconciliationReviewDto {
 }
 
 /**
- * Persists complete-scope gap evidence and exact child-review identities without sampled note bodies.
- *
- * @param review - Durable predecessor-linked gap review.
- * @returns The strict content-free gap-review DTO.
- */
-function projectGapGroupReview(
-  review: ReconciliationGapGroupReview,
-): ReconciliationGapGroupReviewDto {
-  return {
-    kind: review.kind,
-    reviewId: review.reviewId,
-    predecessorOperationId: review.predecessorOperationId,
-    status: review.status,
-    snapshot: projectReconciliationSnapshot(review.snapshot),
-    childReviewIds: [...review.childReviewIds],
-  };
-}
-
-/**
  * Serializes restart ownership, restore successor linkage and separate local/remote effect certainty for strict validation.
  *
  * @returns The restart-preserving operation DTO.
  */
 function projectOperation(
-  operation: ReconciliationOperation,
+  operation: ReconciliationOperationV4,
 ): ReconciliationOperationDto {
   const common = {
-    observationCoverage: operation.observationCoverage,
-    gapSuccessorOperationIds: [...operation.gapSuccessorOperationIds],
     operationId: operation.operationId,
     reviewId: operation.reviewId,
     authority: operation.authority,
@@ -1320,7 +1264,7 @@ function projectOperation(
     })),
     successorOperationId: operation.successorOperationId,
   };
-  if (isHistoryReconciliationOperation(operation)) {
+  if ("historyProgress" in operation) {
     if (
       operation.historyProgress.kind === HISTORY_PROGRESS_KIND.legacyV3Unrefined
     ) {
@@ -1534,11 +1478,11 @@ function projectOperationReceipt(
 }
 
 /**
- * Rehydrates v5 identifiers while preserving ledger metadata; the caller must still enforce full consistency and handoff integrity.
+ * Rehydrates v4 identifiers while preserving ledger metadata; the caller must still enforce full consistency and handoff integrity.
  *
  * @returns Rehydrated state pending consistency and integrity validation.
  */
-function convertDeviceState(dto: DeviceStateDto): MirrorDeviceState {
+function convertDeviceState(dto: DeviceStateDto): MirrorDeviceStateV4 {
   return {
     deviceId: requireParsed(dto.deviceId, createMirrorWriterId),
     lifecycle: convertLifecycle(dto.lifecycle),
@@ -1549,9 +1493,6 @@ function convertDeviceState(dto: DeviceStateDto): MirrorDeviceState {
         ? null
         : convertStagedHandoff(dto.stagedHandoff),
     reconciliationReviews: dto.reconciliationReviews.map(convertReview),
-    reconciliationGapGroupReviews: dto.reconciliationGapGroupReviews.map(
-      convertGapGroupReview,
-    ),
     reconciliationOperations:
       dto.reconciliationOperations.map(convertOperation),
   };
@@ -1799,42 +1740,14 @@ function convertReview(dto: ReconciliationReviewDto): ReconciliationReview {
 }
 
 /**
- * Rehydrates gap identities while preserving status and exact sample without evaluating freshness.
- *
- * @param dto - Strictly parsed content-free gap-review DTO.
- * @returns The persisted gap review with branded identifiers.
- */
-function convertGapGroupReview(
-  dto: ReconciliationGapGroupReviewDto,
-): ReconciliationGapGroupReview {
-  return {
-    kind: dto.kind,
-    reviewId: requireParsed(dto.reviewId, createMirrorOperationId),
-    predecessorOperationId: requireParsed(
-      dto.predecessorOperationId,
-      createMirrorOperationId,
-    ),
-    status: dto.status,
-    snapshot: convertReconciliationSnapshot(dto.snapshot),
-    childReviewIds: dto.childReviewIds.map((id) =>
-      requireParsed(id, createMirrorOperationId),
-    ),
-  };
-}
-
-/**
  * Restores phase, snapshot, reservations, preservation and successor identity without settling or replaying any effects.
  *
  * @returns The rehydrated operation without replay or effect settlement.
  */
 function convertOperation(
   dto: ReconciliationOperationDto,
-): ReconciliationOperation {
+): ReconciliationOperationV4 {
   const common = {
-    observationCoverage: dto.observationCoverage,
-    gapSuccessorOperationIds: dto.gapSuccessorOperationIds.map((id) =>
-      requireParsed(id, createMirrorOperationId),
-    ),
     operationId: requireParsed(dto.operationId, createMirrorOperationId),
     reviewId: requireParsed(dto.reviewId, createMirrorOperationId),
     authority: dto.authority,
@@ -1984,7 +1897,7 @@ function convertLocalEffectObservation(
     { localEffect: string }
   >["localEffectObservation"],
 ): Extract<
-  ReconciliationOperation,
+  ReconciliationOperationV4,
   { localEffect: string }
 >["localEffectObservation"] {
   if (observation.kind === LOCAL_EFFECT_OBSERVATION_KIND.notRequired) {
@@ -2281,10 +2194,10 @@ function requireParsed<Value>(
 }
 
 /**
- * Returns UTF-8 bytes for the persisted v5 snapshot capacity check.
+ * Returns UTF-8 bytes for the persisted v4 snapshot capacity check.
  *
- * @param value - Serialized v5 snapshot text.
- * @returns Encoded v5 snapshot byte count.
+ * @param value - Serialized v4 snapshot text.
+ * @returns Encoded v4 snapshot byte count.
  */
 function byteLength(value: string): number {
   return new TextEncoder().encode(value).byteLength;

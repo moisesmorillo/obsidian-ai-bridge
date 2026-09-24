@@ -22,13 +22,16 @@ export class TextElement {
     this.textContent = "";
     this.children.length = 0;
   });
-  readonly createEl = vi.fn((tag: string, options?: { text: string }) => {
-    const child = new TextElement();
-    child.tagName = tag;
-    child.textContent = options?.text ?? "";
-    this.children.push(child);
-    return child;
-  });
+  readonly createEl = vi.fn(
+    (tag: string, options?: { text?: string; value?: string }) => {
+      const child = new TextElement();
+      child.tagName = tag;
+      child.textContent = options?.text ?? "";
+      child.value = options?.value ?? "";
+      this.children.push(child);
+      return child;
+    },
+  );
   readonly addEventListener = vi.fn(
     (event: string, listener: () => void): void => {
       const listeners = this.listeners.get(event) ?? new Set<() => void>();

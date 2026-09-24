@@ -8,6 +8,8 @@ import type {
   ReconciliationAction,
   ReconciliationAdmissionAction,
   ReconciliationClassification,
+  ReconciliationGapGroupReview,
+  ReconciliationOperation,
   ReconciliationReviewSnapshot,
   ReconciliationRuntimeIdentity,
 } from "@core/mirror/reconciliation-state.types";
@@ -67,7 +69,7 @@ export interface ReconciliationReviewRequest {
     | null;
 }
 
-/** Candidate union and completeness result returned to a future review list. */
+/** Candidate union and completeness result returned to the read-only review list. */
 export type ReconciliationDiscoveryResult =
   | {
       readonly kind: "complete";
@@ -107,6 +109,71 @@ export interface ReconciliationAdmissionRequest {
   readonly destinationPath?: NotePath | null;
 }
 
+/** Fresh process-local complete review of one gap-fenced predecessor reservation set. */
+export interface EphemeralReconciliationGapGroupReview {
+  readonly retention: "ephemeral";
+  readonly reviewId: import("@core/mirror/mirror.types").MirrorOperationId;
+  readonly predecessorOperationId: import("@core/mirror/mirror.types").MirrorOperationId;
+  readonly sessionId: import("@core/mirror/mirror.types").MirrorOperationId;
+  readonly snapshot: ReconciliationReviewSnapshot;
+  readonly childReviewIds: readonly import("@core/mirror/mirror.types").MirrorOperationId[];
+  readonly unreviewablePaths: readonly NotePath[];
+}
+
+/** Exact predecessor and current session used to sample every retained reservation. */
+export interface ReconciliationGapGroupReviewRequest {
+  readonly predecessorOperationId: import("@core/mirror/mirror.types").MirrorOperationId;
+  readonly sessionId: import("@core/mirror/mirror.types").MirrorOperationId;
+}
+
+/** Read-only group and target-scoped or complete-history child details for explicit operator review. */
+export interface ReconciliationGapGroupReviewProjection {
+  readonly group: EphemeralReconciliationGapGroupReview;
+  readonly children: readonly EphemeralReconciliationReview[];
+}
+
+/** Complete gap review creation result; failures retain predecessor reservations. */
+export type ReconciliationGapGroupReviewResult =
+  | {
+      readonly kind: "created";
+      readonly review: ReconciliationGapGroupReviewProjection;
+    }
+  | { readonly kind: "not-reviewable" }
+  | { readonly kind: "failure"; readonly reason: ReconciliationReviewFailure };
+
+/** One ordinary target action or complete-group history decision in an atomic gap-transfer batch. */
+export interface ReconciliationGapChildAdmissionRequest {
+  readonly reviewId: import("@core/mirror/mirror.types").MirrorOperationId;
+  readonly action: ReconciliationAdmissionAction;
+  readonly destinationPath?: NotePath | null;
+}
+
+/** Full successor set; an empty action list requests only safe no-effect settlement. */
+export interface ReconciliationGapGroupAdmissionRequest {
+  readonly reviewId: import("@core/mirror/mirror.types").MirrorOperationId;
+  readonly sessionId: import("@core/mirror/mirror.types").MirrorOperationId;
+  readonly actions: readonly ReconciliationGapChildAdmissionRequest[];
+}
+
+/** Serialized no-effect settlement or atomic ordinary-successor transfer result. */
+export type ReconciliationGapGroupAdmissionResult =
+  | {
+      readonly kind: "settled";
+      readonly review: ReconciliationGapGroupReview;
+      readonly snapshot: MirrorStateSnapshot;
+    }
+  | {
+      readonly kind: "transferred";
+      readonly review: ReconciliationGapGroupReview;
+      readonly operations: readonly ReconciliationOperation[];
+      readonly snapshot: MirrorStateSnapshot;
+    }
+  | {
+      readonly kind: "rejected";
+      readonly reason: ReconciliationReviewFailure;
+      readonly snapshot: MirrorStateSnapshot;
+    };
+
 /** Durable admission result; operation is present only after the serialized owner commit. */
 export type ReconciliationAdmissionResult =
   | {
@@ -120,7 +187,7 @@ export type ReconciliationAdmissionResult =
       readonly snapshot: MirrorStateSnapshot;
     };
 
-/** Action kind exposed to future UI without embedding presentation policy. */
+/** Action kind exposed to the review UI without embedding presentation policy. */
 export type ReconciliationAllowedAction = ReconciliationAction["kind"];
 
 /** Bounded content-free recovery selection result for one explicit UI query. */
@@ -149,7 +216,7 @@ export interface ReconciliationReviewQuery {
 /** Snapshot input used by the pure classifier and action table. */
 export type ReconciliationClassificationInput = ReconciliationReviewSnapshot;
 
-/** Classification plus action set suitable for a future read-only detail view. */
+/** Classification and action set projected into a read-only review detail view. */
 export interface ReconciliationReviewProjection {
   readonly classification: ReconciliationClassification;
   readonly allowedActions: readonly ReconciliationAllowedAction[];

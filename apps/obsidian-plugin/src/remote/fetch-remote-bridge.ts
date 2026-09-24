@@ -275,6 +275,7 @@ export class FetchRemoteBridge implements RemoteBridge {
         method: remoteOperationMethod(operation),
         path: notePathRoute(request.path),
         headers,
+        effectOperationId: request.operationId,
         ...(request.action === MUTATION_ACTION.tombstone
           ? {}
           : { body: request.content }),
@@ -500,6 +501,7 @@ export class FetchRemoteBridge implements RemoteBridge {
       {
         method: remoteOperationMethod(operation),
         path: `${recoveryRoute(request.id)}/${action}`,
+        effectOperationId: request.operationId,
         headers: {
           ...identityHeaders(
             request.associationId,

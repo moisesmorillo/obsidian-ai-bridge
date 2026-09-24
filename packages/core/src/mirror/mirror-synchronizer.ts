@@ -270,7 +270,7 @@ export class MirrorSynchronizer {
   }
 
   /**
-   * Returns the next finite coalescing or retry deadline for host timer composition.
+   * Returns the next finite coalescing or retry deadline for normal host scheduling.
    *
    * `null` means admission is closed or no unblocked path needs a wake. The caller
    * schedules one bounded host timer and invokes `synchronizeReady`; it must not poll.
@@ -279,12 +279,7 @@ export class MirrorSynchronizer {
    */
   nextWakeAtMilliseconds(): number | null {
     const snapshot = this.stateOwner.snapshot();
-    if (
-      this.phase !== MIRROR_SYNCHRONIZER_PHASE.observing ||
-      !snapshot.mutationAdmissionAllowed
-    ) {
-      return null;
-    }
+    if (!this.canSchedule(snapshot)) return null;
     return this.pathRuntime.nextWakeAtMilliseconds(
       snapshot.state.paths.filter(
         (entry) => !isM3EntryReserved(snapshot, entry),
@@ -294,24 +289,62 @@ export class MirrorSynchronizer {
   }
 
   /**
-   * Runs every path currently ready under coalescing or retry policy.
+   * Returns a wake only for new positive paths admitted by the current bootstrap scan.
+   *
+   * Persisted deletes, rename cleanup, unresolved mutations, and buffered events are
+   * excluded until the listener queue has drained and normal scheduling is released.
+   *
+   * @returns Earliest bootstrap-positive deadline, or no eligible wake.
+   */
+  nextBootstrapPositiveWakeAtMilliseconds(): number | null {
+    const snapshot = this.stateOwner.snapshot();
+    if (!this.canSchedule(snapshot)) return null;
+    return this.pathRuntime.nextWakeAtMilliseconds(
+      bootstrapPositiveEntries(snapshot, this.pathRuntime),
+      this.runtime.nowMilliseconds(),
+    );
+  }
+
+  /**
+   * Runs every currently ready path under coalescing or retry policy.
    *
    * Rename plans enter first, then other work, with lexical ordering within each
-   * priority. Admitted jobs remain FIFO. At most two execute
-   * globally, and duplicate reservations for one path are refused.
+   * priority. Admitted jobs remain FIFO. At most two execute globally, and duplicate
+   * reservations for one path are refused.
    *
    * @returns When all jobs admitted by this pass have settled.
    */
   async synchronizeReady(): Promise<void> {
+    await this.synchronizePaths(this.stateOwner.snapshot().state.paths);
+  }
+
+  /**
+   * Runs only current-scan positive work while bootstrap waits on reporting inventory.
+   *
+   * This mode cannot resume persisted destructive or uncertain M3 operations before
+   * queued listener observations are durably admitted.
+   *
+   * @returns When all admitted bootstrap-positive jobs have settled.
+   */
+  async synchronizeBootstrapPositiveReady(): Promise<void> {
+    const snapshot = this.stateOwner.snapshot();
+    await this.synchronizePaths(
+      bootstrapPositiveEntries(snapshot, this.pathRuntime),
+    );
+  }
+
+  /**
+   * Applies lifecycle admission and shared scheduler policy to a path projection.
+   * @param paths - Current durable entries, prefiltered only for the selected scheduling mode.
+   * @returns When every job admitted by this pass settles.
+   */
+  private async synchronizePaths(
+    paths: readonly MirrorPathState[],
+  ): Promise<void> {
     const now = this.runtime.nowMilliseconds();
     const snapshot = this.stateOwner.snapshot();
-    if (
-      this.phase !== MIRROR_SYNCHRONIZER_PHASE.observing ||
-      !snapshot.mutationAdmissionAllowed
-    ) {
-      return;
-    }
-    const ready = snapshot.state.paths
+    if (!this.canSchedule(snapshot)) return;
+    const ready = paths
       .filter(
         (entry) =>
           !this.scheduler.isReserved(entry.path) &&
@@ -341,6 +374,18 @@ export class MirrorSynchronizer {
     await Promise.all(completions);
   }
 
+  /**
+   * Checks lifecycle phase and durable admission before considering any scheduled path.
+   * @param snapshot - Exact state-owner snapshot used for the scheduling decision.
+   * @returns Whether this synchronizer may admit ready work.
+   */
+  private canSchedule(snapshot: MirrorStateSnapshot): boolean {
+    return (
+      this.phase === MIRROR_SYNCHRONIZER_PHASE.observing &&
+      snapshot.mutationAdmissionAllowed
+    );
+  }
+
   /** Runs one scheduler-owned path through its current semantic policy owner. */
   private async runPath(path: NotePath): Promise<void> {
     const snapshot = this.stateOwner.snapshot();
@@ -368,6 +413,25 @@ export class MirrorSynchronizer {
   async grantRetry(path: NotePath): Promise<boolean> {
     return this.intentExecutor.grantRetry(path);
   }
+}
+
+/**
+ * Selects only unreserved, non-unresolved positives admitted by this startup scan.
+ * @param snapshot - Durable path ledger after the current scan's admission commit.
+ * @param pathRuntime - Process-local markers for positive paths admitted by bootstrap.
+ * @returns Paths eligible for the pre-barrier positive scheduler slot.
+ */
+function bootstrapPositiveEntries(
+  snapshot: MirrorStateSnapshot,
+  pathRuntime: MirrorPathRuntime,
+): readonly MirrorPathState[] {
+  return snapshot.state.paths.filter(
+    (entry) =>
+      entry.desired.kind === MIRROR_DESIRED_STATE_KIND.dirtyPresent &&
+      entry.unresolvedMutation === null &&
+      pathRuntime.requiresBootstrapInspection(entry.path) &&
+      !isM3EntryReserved(snapshot, entry),
+  );
 }
 
 /** @returns Whether active M4 ownership reserves this source or rename destination. */

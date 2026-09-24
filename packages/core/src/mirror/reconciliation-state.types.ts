@@ -26,9 +26,13 @@ import type {
   RECONCILIATION_ACTION,
   RECONCILIATION_AUTHORITY_SOURCE,
   RECONCILIATION_CLASSIFICATION,
+  RECONCILIATION_EFFECT_DISPATCH_KIND,
   RECONCILIATION_EVENT_KIND,
+  RECONCILIATION_GAP_REVIEW_KIND,
+  RECONCILIATION_GAP_REVIEW_STATUS,
   RECONCILIATION_LOCAL_EVIDENCE_KIND,
   RECONCILIATION_LOCAL_STABILITY,
+  RECONCILIATION_OBSERVATION_COVERAGE,
   RECONCILIATION_OPERATION_PHASE,
   RECONCILIATION_PATH_REFERENCE_KIND,
   RECONCILIATION_PRESERVATION_PROOF_STATE,
@@ -44,7 +48,7 @@ import type { NotePath } from "@core/note-path/note-path.types";
 export type ReconciliationAuthoritySource =
   (typeof RECONCILIATION_AUTHORITY_SOURCE)[keyof typeof RECONCILIATION_AUTHORITY_SOURCE];
 
-/** Closed classification assigned by the future read-only review engine. */
+/** Closed classification assigned by the content-free read-only review engine. */
 export type ReconciliationClassification =
   (typeof RECONCILIATION_CLASSIFICATION)[keyof typeof RECONCILIATION_CLASSIFICATION];
 
@@ -55,6 +59,18 @@ export type ReconciliationReviewRetention =
 /** Durable lifecycle of content-free review metadata. */
 export type ReconciliationReviewStatus =
   (typeof RECONCILIATION_REVIEW_STATUS)[keyof typeof RECONCILIATION_REVIEW_STATUS];
+
+/** Durable coverage authority for an active reviewed operation. */
+export type ReconciliationObservationCoverage =
+  (typeof RECONCILIATION_OBSERVATION_COVERAGE)[keyof typeof RECONCILIATION_OBSERVATION_COVERAGE];
+
+/** Exact local or remote effect class selecting one M4 dispatch phase. */
+export type ReconciliationEffectDispatchKind =
+  (typeof RECONCILIATION_EFFECT_DISPATCH_KIND)[keyof typeof RECONCILIATION_EFFECT_DISPATCH_KIND];
+
+/** Closed status of a predecessor-linked gap-group review. */
+export type ReconciliationGapReviewStatus =
+  (typeof RECONCILIATION_GAP_REVIEW_STATUS)[keyof typeof RECONCILIATION_GAP_REVIEW_STATUS];
 
 /** Durable lifecycle of one admitted reconciliation operation. */
 export type ReconciliationOperationPhase =
@@ -194,6 +210,17 @@ export interface ReconciliationReview extends ReconciliationReviewMetadata {
   readonly retention: typeof RECONCILIATION_REVIEW_RETENTION.durable;
 }
 
+/** Completed/stale full-reservation review used only to close a listener-gap predecessor. */
+export interface ReconciliationGapGroupReview {
+  readonly kind: typeof RECONCILIATION_GAP_REVIEW_KIND.gapGroup;
+  readonly reviewId: MirrorOperationId;
+  readonly predecessorOperationId: MirrorOperationId;
+  readonly status: ReconciliationGapReviewStatus;
+  readonly snapshot: ReconciliationReviewSnapshot;
+  /** Exact ordinary review identities atomically admitted as replacement owners. */
+  readonly childReviewIds: readonly MirrorOperationId[];
+}
+
 /**
  * Process-local review sample that may carry bounded transient target-note text.
  *
@@ -208,6 +235,8 @@ export interface EphemeralReconciliationReview
   readonly allowedActions: readonly ReconciliationAction["kind"][];
   readonly sampledLocalText: string | null;
   readonly sampledRemoteText: string | null;
+  /** Linked active predecessor when this complete sample resolves an uncovered listener interval. */
+  readonly gapPredecessorId?: MirrorOperationId;
 }
 
 /** Keep the exact sampled local bytes as the authoritative original path. */
@@ -419,9 +448,9 @@ export interface ConfirmedHistoryRemoteEffect {
 
 /** Closed effect certainty for one remote-only history cleanup step. */
 export type HistoryRemoteEffect =
-  | { readonly kind: "not-dispatched" }
-  | { readonly kind: "definitely-refused" }
-  | { readonly kind: "unknown" }
+  | { readonly kind: typeof HISTORY_REMOTE_EFFECT_KIND.notDispatched }
+  | { readonly kind: typeof HISTORY_REMOTE_EFFECT_KIND.definitelyRefused }
+  | { readonly kind: typeof HISTORY_REMOTE_EFFECT_KIND.unknown }
   | ConfirmedHistoryRemoteEffect;
 
 /** One deterministic former-source cleanup step owned by its parent operation. */
@@ -438,7 +467,7 @@ export interface HistoryCleanupStep {
   readonly remoteEffect: HistoryRemoteEffect;
 }
 
-/** Refined v4 decision and bounded ordered cleanup ledger. */
+/** Refined history decision and bounded ordered cleanup ledger retained by current v5 operations. */
 export interface RefinedHistoryProgress {
   readonly kind: typeof HISTORY_PROGRESS_KIND.refined;
   readonly decision: HistoryDecision;
@@ -446,15 +475,19 @@ export interface RefinedHistoryProgress {
   readonly nextStepIndex: number | null;
 }
 
-/** Preserved v3 aggregate history state that can never dispatch under v4. */
+/** Preserved v3 aggregate history state that remains non-dispatchable after migration. */
 export interface LegacyV3HistoryProgress {
   readonly kind: typeof HISTORY_PROGRESS_KIND.legacyV3Unrefined;
   readonly aggregateLocalEffect: MutationEffectCertainty;
   readonly aggregateRemoteEffect: MutationEffectCertainty;
 }
 
-/** Common identity, snapshot, reservation and review linkage for every v4 operation. */
+/** Common identity, snapshot, reservation and review linkage for every v5 operation. */
 export interface ReconciliationOperationBase {
+  /** Observation proof independent from phase, effects and numeric listener epoch. */
+  readonly observationCoverage: ReconciliationObservationCoverage;
+  /** Ordinary operations atomically admitted as reviewed successors across a listener gap. */
+  readonly gapSuccessorOperationIds: readonly MirrorOperationId[];
   readonly operationId: MirrorOperationId;
   readonly reviewId: MirrorOperationId;
   readonly authority: ReconciliationAuthoritySource;
@@ -502,6 +535,21 @@ export type ReconciliationOperation =
   | ReconciliationNonHistoryOperation
   | ReconciliationHistoryOperation
   | LegacyV3HistoryOperation;
+
+/** Frozen v4 operation shape accepted only by the v4 decoder and v4→v5 migration. */
+export type ReconciliationOperationV4 =
+  | Omit<
+      ReconciliationNonHistoryOperation,
+      "observationCoverage" | "gapSuccessorOperationIds"
+    >
+  | Omit<
+      ReconciliationHistoryOperation,
+      "observationCoverage" | "gapSuccessorOperationIds"
+    >
+  | Omit<
+      LegacyV3HistoryOperation,
+      "observationCoverage" | "gapSuccessorOperationIds"
+    >;
 
 /** Frozen version-3 operation-scoped receipt shape used only by forward migration. */
 export type ReconciliationPreservationReceiptV3 = Omit<

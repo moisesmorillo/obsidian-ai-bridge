@@ -95,10 +95,10 @@ network behavior.
    and `manifest.json`. Do not copy source, dependencies, repository configuration,
    secrets, or the whole repository. No `styles.css` is generated.
 3. Reopen the vault, enable Community plugins, and enable **AI Bridge**. Initial load
-   provisions a non-secret device UUID in official host-local storage, registers the
-   two M2 commands, M3 settings/operational commands, M4 review/recovery commands,
-   status UI, and saved Vault listeners. An unconfigured plugin remains passive: it
-   does not scan or send notes.
+   provisions a non-secret device UUID in official host-local storage and registers
+   the M2 commands, M3 settings/operational commands, M4 review/recovery commands,
+   and status UI. Saved Vault listeners attach only after workspace layout readiness;
+   an unconfigured plugin remains passive and does not scan or send notes.
 4. For local-only M2 inspection, create synthetic notes and run **AI Bridge: Inspect
    local Markdown notes** or **AI Bridge: Inspect active Markdown note**. Results show
    paths/byte metadata only, never note bodies. Active inspection reads saved text,
@@ -111,9 +111,15 @@ network behavior.
    plaintext/runtime-delete trust, then activate.
 6. Use only synthetic eligible lowercase `.md` notes of at most 1 MiB. Dot-prefixed
    segments and the configuration subtree are excluded. Save/create/modify events
-   should drive bounded outward requests after layout-ready bootstrap. Do not infer
-   delete behavior from startup absence; only observed post-bootstrap events can grant
-   runtime delete authority.
+   should drive bounded outward requests after layout readiness. Startup buffers a
+   bounded number of callbacks, classifies persisted M4 operations, and runs positive
+   bootstrap. Before the drain, only current-scan positive paths without unresolved M3
+   intent or M4 reservations may use the scheduler; persisted destructive/uncertain work
+   waits until callbacks are durable; only then may normal scheduling and persisted M4
+   resume proceed. Overflow, failed drain, or active event-delivery rejection closes the
+   current lease and normal scheduling; unresolved operations remain fenced until a fresh
+   classified listener epoch. Do not infer delete behavior from startup/listener-gap
+   absence; only observed events can grant runtime delete authority.
 7. Inspect metadata-only status and authenticated Worker reads. Never put credentials
    in screenshots, terminal transcripts, notes, or issue reports. Do not claim an
    iCloud/mobile result unless that exact disposable trace was run and recorded.
@@ -136,8 +142,10 @@ network behavior.
   rebuild/smoke-check, replace only `main.js` and `manifest.json`, and restart Obsidian
   when the manifest changes.
 - Compatible same-realm replacement/re-enable reuses the runtime owner; a new process
-  loads host-local state. Listener gaps receive positive-only reconciliation and
-  absence never authorizes delete. Unsupported registry/state versions fail closed.
+  loads host-local state. Every fresh observation epoch durably gap-fences active M4
+  operations before effectful resume; current dispatch rechecks the exact lease, and
+  fresh complete-group review is required to settle or transfer reservations. Positive
+  scans remain absence-neutral. Unsupported registry/state versions fail closed.
 - To remove a disposable installation, pause/drain first, disable AI Bridge, close the
   vault, verify the path, and remove only its `ai-bridge` directory. Removing files
   does not prove in-flight Worker requests were cancelled, revoke/delete a shared
@@ -145,9 +153,20 @@ network behavior.
 - If an old experimental `obsidian-ai-bridge` directory exists, disable and remove it
   deliberately before installing `ai-bridge`; never run both. Do not delete the whole
   vault configuration directory.
-- Never downgrade to version-2/3 plugin code after device-state version 4 is written,
-  and never downgrade a Worker that does not understand format-2 generations. The
-  v2→v3→v4 transition has no reverse state migration. Follow [rollback restrictions](operations.md#rollback-and-downgrade-restrictions).
+- Never downgrade to version-2/3/4 plugin code after device-state version 5 is
+  written, and never downgrade a Worker that does not understand format-2 generations.
+  The v2→v3→v4→v5 transition has no reverse state migration. Follow [rollback
+  restrictions](operations.md#rollback-and-downgrade-restrictions).
+
+## Bounded ADR 0013 disposable-host qualification
+
+A corrective disposable-host run in Obsidian 1.13.7 exercised strict v4→v5 startup
+migration, a fresh complete-group gap review with atomic successor transfer, and a
+later edit made while the plugin was detached. The latter remained unreviewable after
+reattach and retained reservations rather than overwriting or releasing authority.
+The run used only synthetic notes and a loopback API fixture; it did not qualify the
+10,000-note target or the M5 platform/failure matrix. See the [bounded qualification
+record](qualification/m4-listener-gap-recovery.md) for scope, outcomes, and limits.
 
 ## Official API and minimum-version evidence
 
@@ -180,9 +199,10 @@ declarations and official source history, not inferred solely from the manifest:
   Fetch streaming/abort/CORS behavior in every desktop/mobile WebView.
 
 Host declarations establish API availability, not runtime qualification. M4 Slice 8
-did not install into a vault. A later corrective run on the named isolated desktop
-qualified only the replacement preservation root and minimal Keep-local path; see
-[corrective evidence](qualification/m4-host-visible-preservation.md). Full real desktop
+did not install into a vault. Later isolated corrective runs qualified the replacement
+preservation root/minimal Keep-local path and bounded listener-gap migration/review/
+transfer/detached-edit scenarios; see [preservation evidence](qualification/m4-host-visible-preservation.md)
+and [listener-gap evidence](qualification/m4-listener-gap-recovery.md). Full real-desktop
 scale rerun, mobile, iCloud traces, host-local durability/rollback, broad WebView
 transport behavior, and deployed Worker/R2 remain explicit residual qualification
 limits.

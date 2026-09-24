@@ -56,7 +56,7 @@ afterEach(() => {
 });
 
 describe("plugin automatic mirror composition", () => {
-  it("registers events before layout bootstrap and mirrors a later saved create through the host timer", async () => {
+  it("registers listeners at layout readiness before bootstrap and mirrors a later saved create", async () => {
     const state: MirrorDeviceState = {
       deviceId: DEVICE_ID,
       lifecycle: {
@@ -67,6 +67,7 @@ describe("plugin automatic mirror composition", () => {
       globalBlockReason: null,
       paths: [],
       stagedHandoff: null,
+      reconciliationGapGroupReviews: [],
       reconciliationReviews: [],
       reconciliationOperations: [],
     };
@@ -143,12 +144,13 @@ describe("plugin automatic mirror composition", () => {
     await Promise.resolve(plugin.load());
     expect(fetch).not.toHaveBeenCalled();
     expect(host.vault.getFiles).not.toHaveBeenCalled();
-    expect(host.vault.on.mock.invocationCallOrder.at(-1)).toBeLessThan(
-      host.onLayoutReady.mock.invocationCallOrder[0] ?? Number.MAX_SAFE_INTEGER,
-    );
+    expect(host.vault.on).not.toHaveBeenCalled();
 
     host.becomeLayoutReady();
     await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
+    expect(host.vault.on.mock.invocationCallOrder.at(-1)).toBeLessThan(
+      fetch.mock.invocationCallOrder[0] ?? Number.MAX_SAFE_INTEGER,
+    );
     expect(host.vault.getFiles).toHaveBeenCalledOnce();
 
     const file = addFile(PATH, CONTENT);
@@ -192,6 +194,7 @@ describe("plugin automatic mirror composition", () => {
       globalBlockReason: null,
       paths: [],
       stagedHandoff: null,
+      reconciliationGapGroupReviews: [],
       reconciliationReviews: [],
       reconciliationOperations: [],
     };
@@ -303,6 +306,7 @@ describe("plugin automatic mirror composition", () => {
       globalBlockReason: null,
       paths: [],
       stagedHandoff: null,
+      reconciliationGapGroupReviews: [],
       reconciliationReviews: [],
       reconciliationOperations: [],
     };
@@ -415,6 +419,7 @@ describe("plugin automatic mirror composition", () => {
       globalBlockReason: null,
       paths: [],
       stagedHandoff: null,
+      reconciliationGapGroupReviews: [],
       reconciliationReviews: [],
       reconciliationOperations: [],
     };
@@ -500,6 +505,7 @@ describe("plugin automatic mirror composition", () => {
       globalBlockReason: null,
       paths: [],
       stagedHandoff: null,
+      reconciliationGapGroupReviews: [],
       reconciliationReviews: [],
       reconciliationOperations: [],
     };

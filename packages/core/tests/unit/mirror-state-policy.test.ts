@@ -34,6 +34,7 @@ import {
   RECONCILIATION_CLASSIFICATION,
   RECONCILIATION_LOCAL_EVIDENCE_KIND,
   RECONCILIATION_LOCAL_STABILITY,
+  RECONCILIATION_OBSERVATION_COVERAGE,
   RECONCILIATION_OPERATION_PHASE,
   RECONCILIATION_PATH_REFERENCE_KIND,
   RECONCILIATION_REMOTE_EVIDENCE_KIND,
@@ -352,6 +353,8 @@ describe("handoff policy", () => {
       ],
       reconciliationOperations: [
         {
+          observationCoverage: RECONCILIATION_OBSERVATION_COVERAGE.continuous,
+          gapSuccessorOperationIds: [],
           operationId: OPERATION_ID,
           reviewId: REVIEW_ID,
           authority: RECONCILIATION_AUTHORITY_SOURCE.reconciliationDecision,

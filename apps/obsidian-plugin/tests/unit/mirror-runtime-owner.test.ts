@@ -6,18 +6,34 @@ import {
   createMirrorOperationId,
   createMirrorWriterId,
   createRecoverySnapshotId,
+  isMirrorDeviceStateConsistent,
   type LocalReconciliationWriter,
   MIRROR_ACKNOWLEDGEMENT_KIND,
   MIRROR_DESIRED_STATE_KIND,
   MIRROR_DEVICE_LIFECYCLE_KIND,
   MIRROR_MUTATION_PHASE,
   MIRROR_PATH_BLOCK_REASON,
+  MIRROR_STATE_STORE_FAILURE,
   type MirrorDeviceState,
   type MirrorPathState,
   MirrorStateOwner,
   type MirrorStateStore,
+  MUTATION_EFFECT_CERTAINTY,
   type NotePath,
   normalizeNotePath,
+  RECONCILIATION_ACTION,
+  RECONCILIATION_AUTHORITY_SOURCE,
+  RECONCILIATION_CLASSIFICATION,
+  RECONCILIATION_LOCAL_EVIDENCE_KIND,
+  RECONCILIATION_LOCAL_STABILITY,
+  RECONCILIATION_OBSERVATION_COVERAGE,
+  RECONCILIATION_OPERATION_PHASE,
+  RECONCILIATION_PATH_REFERENCE_KIND,
+  RECONCILIATION_REMOTE_EVIDENCE_KIND,
+  RECONCILIATION_REVIEW_RETENTION,
+  RECONCILIATION_REVIEW_STATUS,
+  type ReconciliationOperation,
+  type ReconciliationReview,
 } from "@obsidian-ai-bridge/core";
 import type { MirrorPreferences } from "@obsidian-plugin/configuration/mirror-preferences";
 import { ObsidianLocalVault } from "@obsidian-plugin/infrastructure/obsidian-local-vault";
@@ -45,6 +61,9 @@ const ASSOCIATION_ID = required(
 );
 const OPERATION_ID = required(
   createMirrorOperationId("33333333-3333-4333-8333-333333333333"),
+);
+const OTHER_OPERATION_ID = required(
+  createMirrorOperationId("77777777-7777-4777-8777-777777777777"),
 );
 const REVISION_ID = required(
   createApplicationRevision("44444444-4444-4444-8444-444444444444"),
@@ -161,6 +180,20 @@ describe("MirrorRuntimeOwner composition", () => {
       runtime.reconciliationPreview("invalid", OPERATION_ID, "local"),
     ).toBeNull();
     runtime.closeReconciliationReview("invalid", OPERATION_ID);
+    await expect(runtime.verifyServerIdentity()).resolves.toEqual({
+      kind: "not-ready",
+    });
+    await expect(runtime.activate(true)).resolves.toEqual({
+      kind: "not-ready",
+    });
+    await expect(runtime.resume()).resolves.toEqual({ kind: "not-ready" });
+    await expect(
+      runtime.createObservationGapReview(session, OPERATION_ID),
+    ).resolves.toEqual({ kind: "unavailable" });
+    runtime.closeObservationGapReview(session, OPERATION_ID);
+    await expect(
+      runtime.submitObservationGapReview(session, OPERATION_ID, []),
+    ).resolves.toEqual({ kind: "unavailable" });
     await expect(
       runtime.submitReconciliation(session, OPERATION_ID, { kind: "defer" }),
     ).resolves.toEqual({ kind: "unavailable" });
@@ -256,6 +289,376 @@ describe("MirrorRuntimeOwner composition", () => {
     expect(vault.getFiles).toHaveBeenCalledOnce();
     expect(runtime.status().writer).toBe("active-writer");
     expect(runtime.status().bootstrap).toBe("observing");
+  });
+
+  it("keeps persisted destructive M3 work behind the startup event barrier", async () => {
+    const session = "88888888-8888-4888-8888-888888888888";
+    const path = requiredNotePath("notes/deleting.md");
+    let now = 0;
+    const vault = new FakeVaultHost();
+    const fetch = vi.fn<RemoteFetch>(async (input) =>
+      input.pathname.endsWith("/mirror")
+        ? description()
+        : json({ notes: [], nextCursor: null }),
+    );
+    const pathState: MirrorPathState = {
+      path,
+      acknowledgement: {
+        kind: MIRROR_ACKNOWLEDGEMENT_KIND.live,
+        revision: REVISION_ID,
+        contentSha256: CONTENT_HASH,
+      },
+      unresolvedMutation: null,
+      desired: {
+        kind: MIRROR_DESIRED_STATE_KIND.runtimeDelete,
+        observationGeneration: 1,
+        evidenceId: OTHER_OPERATION_ID,
+        associationId: ASSOCIATION_ID,
+        expectedRevision: REVISION_ID,
+        graceDeadlineMilliseconds: 0,
+      },
+      blockedReason: null,
+    };
+    const runtime = new MirrorRuntimeOwner({
+      stateOwner: new MirrorStateOwner(
+        { ...state(true), paths: [pathState] },
+        { save: async () => ({ kind: "saved" }) },
+      ),
+      local: new ObsidianLocalVault(vault),
+      localWriter,
+      secretStorage: { getSecret: () => "bearer" },
+      runtime: {
+        nowMilliseconds: () => now,
+        hashContent: async () => CONTENT_HASH,
+        createOperationId: () => OPERATION_ID,
+      },
+      fetch,
+    });
+    runtime.attach({ id: session, onChanged: vi.fn() });
+    await runtime.applyConfiguration({ kind: "valid", preferences });
+    now = 6_000;
+    const drain = Promise.withResolvers<boolean>();
+    const drainQueuedEvents = vi.fn(() => drain.promise);
+    const startup = runtime.onLayoutReady(
+      session,
+      drainQueuedEvents,
+      () => true,
+    );
+    await vi.waitFor(() => expect(drainQueuedEvents).toHaveBeenCalledOnce());
+
+    await runtime.synchronizeReady();
+    expect(vault.getFile).not.toHaveBeenCalledWith(path);
+
+    drain.resolve(true);
+    await startup;
+    await runtime.synchronizeReady();
+    expect(vault.getFile).toHaveBeenCalledWith(path);
+  });
+
+  it("revokes the current effect lease after active event delivery failure", async () => {
+    const fetch = vi.fn<RemoteFetch>(async (input) =>
+      input.pathname.endsWith("/mirror")
+        ? description()
+        : json({ notes: [], nextCursor: null }),
+    );
+    const runtime = owner(fetch, true);
+    const session = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    runtime.attach({ id: session, onChanged: vi.fn() });
+    await runtime.applyConfiguration({ kind: "valid", preferences });
+    await runtime.onLayoutReady(session);
+
+    await runtime.failObservationDelivery();
+
+    await expect(runtime.checkNow()).resolves.toEqual({ kind: "not-ready" });
+    expect(runtime.nextWakeAtMilliseconds()).toBeNull();
+
+    runtime.detach(session);
+    const nextSession = "99999999-8888-4888-8888-999999999999";
+    runtime.attach({ id: nextSession, onChanged: vi.fn() });
+    await runtime.applyConfiguration({ kind: "valid", preferences });
+    await runtime.onLayoutReady(nextSession);
+    await expect(runtime.verifyServerIdentity()).resolves.toEqual({
+      kind: "completed",
+    });
+    expect(runtime.listObservationGaps(nextSession)).toEqual({
+      kind: "available",
+      candidates: [],
+    });
+  });
+
+  it("keeps the startup effect lease unpublished after pre-ready observation loss", async () => {
+    const fetch = vi.fn<RemoteFetch>(async (input) =>
+      input.pathname.endsWith("/mirror")
+        ? description()
+        : json({ notes: [], nextCursor: null }),
+    );
+    const runtime = owner(fetch, true);
+    const session = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    runtime.attach({ id: session, onChanged: vi.fn() });
+    await runtime.applyConfiguration({ kind: "valid", preferences });
+
+    await runtime.failObservationDelivery();
+    await runtime.onLayoutReady(session);
+
+    expect(fetch).not.toHaveBeenCalled();
+    expect(runtime.nextWakeAtMilliseconds()).toBeNull();
+  });
+
+  it("records reserved descendants of a same-realm folder rename before core expansion", async () => {
+    const path = requiredNotePath("notes/folder/locked.md");
+    const reviewId = required(
+      createMirrorOperationId("77777777-7777-4777-8777-777777777777"),
+    );
+    const lifecycle = {
+      kind: MIRROR_DEVICE_LIFECYCLE_KIND.active,
+      associationId: ASSOCIATION_ID,
+      origin: preferences.origin ?? "",
+    } as const;
+    const pathState: MirrorPathState = {
+      path,
+      acknowledgement: {
+        kind: MIRROR_ACKNOWLEDGEMENT_KIND.live,
+        revision: REVISION_ID,
+        contentSha256: CONTENT_HASH,
+      },
+      unresolvedMutation: null,
+      desired: { kind: MIRROR_DESIRED_STATE_KIND.none },
+      blockedReason: null,
+    };
+    const snapshot = {
+      runtime: {
+        runtimeOwnerVersion: 3,
+        configurationGeneration: 1,
+        listenerEpoch: 1,
+        deviceId: DEVICE_ID,
+        designatedWriterId: DEVICE_ID,
+        lifecycle,
+      },
+      targetPath: path,
+      paths: [
+        {
+          path,
+          local: {
+            kind: RECONCILIATION_LOCAL_EVIDENCE_KIND.live,
+            stability: RECONCILIATION_LOCAL_STABILITY.stable,
+            observationGeneration: 1,
+            byteSize: 4,
+            contentSha256: CONTENT_HASH,
+          },
+          baseline: pathState.acknowledgement,
+          remote: {
+            kind: RECONCILIATION_REMOTE_EVIDENCE_KIND.live,
+            associationId: ASSOCIATION_ID,
+            revision: PARENT_REVISION_ID,
+            contentSha256: CONTENT_HASH,
+            receipt: {
+              action: "create",
+              associationId: ASSOCIATION_ID,
+              operationId: OPERATION_ID,
+              precondition: { kind: "absent" },
+              contentSha256: CONTENT_HASH,
+            },
+          },
+          m3: { unresolvedMutation: null, deferredHistory: null },
+        },
+      ],
+      recovery: null,
+    } as const;
+    const operation: ReconciliationOperation = {
+      observationCoverage: RECONCILIATION_OBSERVATION_COVERAGE.continuous,
+      gapSuccessorOperationIds: [],
+      operationId: OPERATION_ID,
+      reviewId,
+      authority: RECONCILIATION_AUTHORITY_SOURCE.adoptionDecision,
+      action: { kind: RECONCILIATION_ACTION.adoptRevision },
+      phase: RECONCILIATION_OPERATION_PHASE.admitted,
+      snapshot,
+      destinationPath: null,
+      reservations: [
+        { path, kind: RECONCILIATION_PATH_REFERENCE_KIND.reviewTarget },
+      ],
+      preservationReceipts: [],
+      successorOperationId: null,
+      localEffect: MUTATION_EFFECT_CERTAINTY.notDispatched,
+      remoteEffect: MUTATION_EFFECT_CERTAINTY.notDispatched,
+      localEffectObservation: {
+        kind: "not-required",
+        path,
+        listenerEpoch: 1,
+        beforeGeneration: 1,
+        successor: null,
+      },
+    };
+    const review: ReconciliationReview = {
+      retention: RECONCILIATION_REVIEW_RETENTION.durable,
+      reviewId,
+      classification: RECONCILIATION_CLASSIFICATION.remoteAhead,
+      status: RECONCILIATION_REVIEW_STATUS.staged,
+      snapshot,
+      operationId: OPERATION_ID,
+    };
+    const initial: MirrorDeviceState = {
+      ...state(true),
+      paths: [pathState],
+      reconciliationReviews: [review],
+      reconciliationOperations: [operation],
+    };
+    expect(isMirrorDeviceStateConsistent(initial)).toBe(true);
+    const fetch = vi.fn<RemoteFetch>(async (input) =>
+      input.pathname.endsWith("/mirror")
+        ? description()
+        : json({ notes: [], nextCursor: null }),
+    );
+    const runtime = owner(fetch, initial);
+    await runtime.observePresent(path);
+    runtime.attach({
+      id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      onChanged: vi.fn(),
+    });
+    await runtime.applyConfiguration({ kind: "valid", preferences });
+    await runtime.onLayoutReady("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
+
+    await runtime.observeFolderRename("notes/folder", "moved/folder");
+
+    expect(
+      runtime.stateOwner.snapshot().state.reconciliationOperations[0],
+    ).toMatchObject({
+      observationCoverage:
+        RECONCILIATION_OBSERVATION_COVERAGE.gapReviewRequired,
+      localEffectObservation: {
+        kind: "not-required",
+        successor: {
+          firstGeneration: 2,
+          latestGeneration: 2,
+          eventKinds: ["rename"],
+        },
+      },
+    });
+  });
+
+  it("keeps reconciliation UI unavailable until the startup observation drain is durable", async () => {
+    const session = "88888888-8888-4888-8888-888888888888";
+    const fetch = vi.fn<RemoteFetch>(async (input) => {
+      if (input.pathname.endsWith("/mirror")) return description();
+      if (input.pathname.includes("/recovery")) {
+        return json({ recoveries: [], nextCursor: null });
+      }
+      return json({ notes: [], nextCursor: null });
+    });
+    const runtime = owner(fetch, true);
+    const drain = Promise.withResolvers<boolean>();
+    const drainQueuedEvents = vi
+      .fn<() => Promise<boolean>>()
+      .mockImplementationOnce(() => drain.promise)
+      .mockResolvedValue(true);
+    runtime.attach({ id: session, onChanged: vi.fn() });
+    await runtime.applyConfiguration({ kind: "valid", preferences });
+    const startup = runtime.onLayoutReady(
+      session,
+      drainQueuedEvents,
+      () => true,
+    );
+    await vi.waitFor(() => expect(drainQueuedEvents).toHaveBeenCalledOnce());
+    await expect(runtime.verifyServerIdentity()).resolves.toEqual({
+      kind: "completed",
+    });
+    expect(runtime.status().serverIdentity.kind).toBe("matched");
+    expect(runtime.listObservationGaps(session)).toEqual({
+      kind: "unavailable",
+    });
+
+    const reconfiguration = runtime.applyConfiguration({
+      kind: "valid",
+      preferences,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(drainQueuedEvents).toHaveBeenCalledOnce();
+    expect(runtime.listObservationGaps(session)).toEqual({
+      kind: "unavailable",
+    });
+
+    drain.resolve(true);
+    await Promise.all([startup, reconfiguration]);
+    expect(runtime.listObservationGaps(session)).toEqual({
+      kind: "available",
+      candidates: [],
+    });
+    await expect(
+      runtime.listReconciliationCandidates(session),
+    ).resolves.toEqual({
+      kind: "available",
+      candidates: [],
+    });
+    await expect(runtime.listRecoverySelections(session)).resolves.toEqual({
+      kind: "available",
+      recoveries: [],
+    });
+    await expect(
+      runtime.createObservationGapReview(session, OPERATION_ID),
+    ).resolves.toEqual({ kind: "not-reviewable" });
+    runtime.closeObservationGapReview(session, OPERATION_ID);
+    await expect(
+      runtime.submitObservationGapReview(session, OPERATION_ID, []),
+    ).resolves.toEqual({ kind: "failed" });
+    const absentPath = required(normalizeNotePath("notes/not-listed.md"));
+    await expect(
+      runtime.createReconciliationReview(session, absentPath),
+    ).resolves.toBeNull();
+    expect(
+      runtime.reconciliationPreview(session, OPERATION_ID, "local"),
+    ).toBeNull();
+    runtime.closeReconciliationReview(session, OPERATION_ID);
+    await expect(
+      runtime.submitReconciliation(session, OPERATION_ID, { kind: "defer" }),
+    ).resolves.toEqual({ kind: "failed" });
+  });
+
+  it("revokes readiness when startup observations cannot be durably drained", async () => {
+    const session = "99999999-9999-4999-8999-999999999999";
+    const fetch = vi.fn<RemoteFetch>(async (input) => {
+      if (input.pathname.endsWith("/mirror")) return description();
+      if (input.pathname.includes("/recovery")) {
+        return json({ recoveries: [], nextCursor: null });
+      }
+      return json({ notes: [], nextCursor: null });
+    });
+    const runtime = owner(fetch, true);
+    const drain = vi.fn(async () => false);
+    const activate = vi.fn(() => true);
+    runtime.attach({ id: session, onChanged: vi.fn() });
+    await runtime.applyConfiguration({ kind: "valid", preferences });
+
+    await runtime.onLayoutReady(session, drain, activate);
+
+    expect(drain).toHaveBeenCalledOnce();
+    expect(activate).not.toHaveBeenCalled();
+    expect(runtime.listObservationGaps(session)).toEqual({
+      kind: "unavailable",
+    });
+  });
+
+  it("revokes readiness when event activation fails after a durable drain", async () => {
+    const session = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const fetch = vi.fn<RemoteFetch>(async (input) => {
+      if (input.pathname.endsWith("/mirror")) return description();
+      if (input.pathname.includes("/recovery")) {
+        return json({ recoveries: [], nextCursor: null });
+      }
+      return json({ notes: [], nextCursor: null });
+    });
+    const runtime = owner(fetch, true);
+    const drain = vi.fn(async () => true);
+    const activate = vi.fn(() => false);
+    runtime.attach({ id: session, onChanged: vi.fn() });
+    await runtime.applyConfiguration({ kind: "valid", preferences });
+
+    await runtime.onLayoutReady(session, drain, activate);
+
+    expect(drain).toHaveBeenCalledOnce();
+    expect(activate).toHaveBeenCalledOnce();
+    expect(runtime.listObservationGaps(session)).toEqual({
+      kind: "unavailable",
+    });
   });
 
   it("exposes only bounded reviewed projections for a ready UUID session", async () => {
@@ -818,7 +1221,8 @@ describe("MirrorRuntimeOwner composition", () => {
   it("keeps bootstrap closed while incompatible preferences wait for a durable pause", async () => {
     const pendingPause = Promise.withResolvers<{ readonly kind: "saved" }>();
     const save = vi.fn<MirrorStateStore["save"]>(() => pendingPause.promise);
-    const runtime = owner(vi.fn<RemoteFetch>(), true, undefined, { save });
+    const fetch = vi.fn<RemoteFetch>();
+    const runtime = owner(fetch, true, undefined, { save });
     runtime.attach({ id: "session", onChanged: vi.fn() });
     await runtime.applyConfiguration({ kind: "valid", preferences });
 
@@ -827,10 +1231,18 @@ describe("MirrorRuntimeOwner composition", () => {
       preferences: { ...preferences, secretReference: "replacement-token" },
     });
     await vi.waitFor(() => expect(save).toHaveBeenCalledOnce());
-    await runtime.onLayoutReady("session");
-    pendingPause.resolve({ kind: "saved" });
-    await replacing;
+    let layoutReadySettled = false;
+    const layoutReady = runtime.onLayoutReady("session").then(() => {
+      layoutReadySettled = true;
+    });
+    await Promise.resolve();
+    expect(layoutReadySettled).toBe(false);
+    expect(fetch).not.toHaveBeenCalled();
 
+    pendingPause.resolve({ kind: "saved" });
+    await Promise.all([replacing, layoutReady]);
+
+    expect(fetch).not.toHaveBeenCalled();
     expect(runtime.stateOwner.snapshot().state.lifecycle.kind).toBe(
       MIRROR_DEVICE_LIFECYCLE_KIND.paused,
     );
@@ -1146,6 +1558,32 @@ describe("MirrorRuntimeOwner composition", () => {
     expect(runtime.stateOwner.snapshot().state.lifecycle.kind).toBe(
       MIRROR_DEVICE_LIFECYCLE_KIND.active,
     );
+  });
+
+  it("rejects host event delivery after an observation persistence failure", async () => {
+    let failWrites = false;
+    const store: MirrorStateStore = {
+      save: async () =>
+        failWrites
+          ? {
+              kind: "failed",
+              reason: MIRROR_STATE_STORE_FAILURE.unavailable,
+            }
+          : { kind: "saved" },
+    };
+    const runtime = owner(
+      vi.fn<RemoteFetch>(),
+      true,
+      new FakeVaultHost(),
+      store,
+    );
+    runtime.attach({ id: "session", onChanged: vi.fn() });
+    await runtime.applyConfiguration({ kind: "valid", preferences });
+    failWrites = true;
+    await expect(
+      runtime.observePresent(requiredNotePath("event.md")),
+    ).rejects.toThrow("Observation persistence is unavailable.");
+    expect(runtime.stateOwner.snapshot().persistenceAvailable).toBe(false);
   });
 
   it("keeps pre-bootstrap deletion and rename observations non-destructive", async () => {

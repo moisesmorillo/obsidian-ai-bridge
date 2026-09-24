@@ -8,9 +8,17 @@ import {
   classifyReconciliation,
   isReconciliationReviewable,
 } from "@core/mirror/divergence-classifier";
-import { MUTATION_EFFECT_CERTAINTY } from "@core/mirror/mirror.constants";
+import {
+  CONDITIONAL_MUTATION_PRECONDITION_KIND,
+  MUTATION_ACTION,
+  MUTATION_EFFECT_CERTAINTY,
+} from "@core/mirror/mirror.constants";
 import type {
+  ConditionalMutationPrecondition,
+  ContentMutationAction,
+  ContentSha256,
   CurrentNoteState,
+  MirrorOperationId,
   RecoverySnapshotId,
   RecoverySnapshotState,
 } from "@core/mirror/mirror.types";
@@ -36,27 +44,49 @@ import {
   isReconciliationActionAllowed,
   reconciliationAuthorityForAction,
 } from "@core/mirror/reconciliation-decision-policy";
-import { isNonHistoryReconciliationOperation } from "@core/mirror/reconciliation-operation";
+import {
+  isHistoryReconciliationOperation,
+  isNonHistoryReconciliationOperation,
+  isRefinedHistoryReconciliationOperation,
+} from "@core/mirror/reconciliation-operation";
+import {
+  areRequiredReconciliationPreservationsVerified,
+  requiredReconciliationPreservations,
+} from "@core/mirror/reconciliation-preservation-policy";
 import type {
+  EphemeralReconciliationGapGroupReview,
   ReconciliationAdmissionRequest,
   ReconciliationDiscoveryResult,
+  ReconciliationGapGroupAdmissionRequest,
+  ReconciliationGapGroupAdmissionResult,
+  ReconciliationGapGroupReviewRequest,
+  ReconciliationGapGroupReviewResult,
   ReconciliationObservationSource,
   ReconciliationRecoverySelectionResult,
   ReconciliationRemoteReader,
   ReconciliationReviewDependencies,
+  ReconciliationReviewFailure,
   ReconciliationReviewQuery,
   ReconciliationReviewRequest,
   ReconciliationReviewResult,
 } from "@core/mirror/reconciliation-review.types";
 import {
+  HISTORY_CLEANUP_STEP_PHASE,
+  HISTORY_DECISION_KIND,
+  HISTORY_PROGRESS_KIND,
+  HISTORY_REMOTE_EFFECT_KIND,
   LOCAL_EFFECT_OBSERVATION_KIND,
   RECONCILIATION_ACTION,
   RECONCILIATION_AUTHORITY_SOURCE,
   RECONCILIATION_CLASSIFICATION,
+  RECONCILIATION_GAP_REVIEW_KIND,
+  RECONCILIATION_GAP_REVIEW_STATUS,
   RECONCILIATION_LOCAL_EVIDENCE_KIND,
   RECONCILIATION_LOCAL_STABILITY,
+  RECONCILIATION_OBSERVATION_COVERAGE,
   RECONCILIATION_OPERATION_PHASE,
   RECONCILIATION_PATH_REFERENCE_KIND,
+  RECONCILIATION_PRESERVATION_SIDE,
   RECONCILIATION_REMOTE_EVIDENCE_KIND,
   RECONCILIATION_REVIEW_RETENTION,
   RECONCILIATION_REVIEW_STATUS,
@@ -65,6 +95,7 @@ import type {
   EphemeralReconciliationReview,
   ReconciliationAction,
   ReconciliationAdmissionAction,
+  ReconciliationGapGroupReview,
   ReconciliationHistoryOperation,
   ReconciliationNonHistoryOperation,
   ReconciliationOperation,
@@ -90,6 +121,10 @@ import type { NotePath } from "@core/note-path/note-path.types";
  */
 export class ReconciliationReviewService implements ReconciliationReviewQuery {
   private readonly reviews = new Map<string, EphemeralReconciliationReview>();
+  private readonly gapGroupReviews = new Map<
+    string,
+    EphemeralReconciliationGapGroupReview
+  >();
   private readonly observations: ReconciliationObservationSource;
   private positiveInventory = new Set<NotePath>();
   private localInventoryAvailable = false;
@@ -109,6 +144,349 @@ export class ReconciliationReviewService implements ReconciliationReviewQuery {
     private readonly historyGroups = new RenameHistoryGroupPolicy(),
   ) {
     this.observations = dependencies.observations;
+  }
+
+  /**
+   * Samples the exact reservations of one active gap-fenced operation and derives target-scoped child reviews.
+   *
+   * @param request - Predecessor and UI session identity.
+   * @returns A complete process-local group and per-target reviews, or a refusal that retains all reservations.
+   */
+  async createGapGroupReview(
+    request: ReconciliationGapGroupReviewRequest,
+  ): Promise<ReconciliationGapGroupReviewResult> {
+    const before = this.stateOwner.snapshot();
+    const initialPredecessor = before.state.reconciliationOperations.find(
+      (operation) =>
+        operation.operationId === request.predecessorOperationId &&
+        operation.observationCoverage ===
+          RECONCILIATION_OBSERVATION_COVERAGE.gapReviewRequired &&
+        operation.phase !== RECONCILIATION_OPERATION_PHASE.completed &&
+        operation.phase !== RECONCILIATION_OPERATION_PHASE.stale,
+    );
+    if (initialPredecessor === undefined) return { kind: "not-reviewable" };
+    let predecessor: ReconciliationOperation = initialPredecessor;
+    const predecessorOperationId = predecessor.operationId;
+    const paths = predecessor.reservations.map(
+      (reservation) => reservation.path,
+    );
+    let sampled = await this.sample(
+      predecessor.snapshot.targetPath,
+      paths,
+      predecessor.snapshot.recovery?.id ?? null,
+    );
+    if (sampled.kind === "failure") {
+      return { kind: "failure", reason: sampled.reason };
+    }
+    if (
+      !reservationScopeMatches(
+        this.stateOwner
+          .snapshot()
+          .state.reconciliationOperations.find(
+            (operation) => operation.operationId === predecessorOperationId,
+          ),
+        sampled.snapshot,
+      ) ||
+      !samePathSet(
+        sampled.snapshot.paths.map((evidence) => evidence.path),
+        paths,
+      ) ||
+      sampled.snapshot.paths.some(
+        (evidence) =>
+          evidence.local.kind === RECONCILIATION_LOCAL_EVIDENCE_KIND.unknown ||
+          evidence.remote.kind ===
+            RECONCILIATION_REMOTE_EVIDENCE_KIND.unavailable,
+      )
+    ) {
+      return { kind: "failure", reason: "evidence-unavailable" };
+    }
+    const recovered = await this.recoverExactGapEffects(
+      predecessor,
+      sampled.snapshot,
+    );
+    if (recovered === "persistence-failure") {
+      return { kind: "failure", reason: "persistence-failure" };
+    }
+    if (recovered === "stale") {
+      return { kind: "failure", reason: "stale-review" };
+    }
+    if (recovered === "recovered") {
+      const current = this.stateOwner
+        .snapshot()
+        .state.reconciliationOperations.find(
+          (operation) => operation.operationId === predecessorOperationId,
+        );
+      if (current === undefined) return { kind: "not-reviewable" };
+      predecessor = current;
+      sampled = await this.sample(
+        current.snapshot.targetPath,
+        paths,
+        current.snapshot.recovery?.id ?? null,
+      );
+      if (sampled.kind === "failure") {
+        return { kind: "failure", reason: sampled.reason };
+      }
+      if (
+        !reservationScopeMatches(
+          this.stateOwner
+            .snapshot()
+            .state.reconciliationOperations.find(
+              (operation) => operation.operationId === predecessorOperationId,
+            ),
+          sampled.snapshot,
+        ) ||
+        !samePathSet(
+          sampled.snapshot.paths.map((evidence) => evidence.path),
+          paths,
+        ) ||
+        sampled.snapshot.paths.some(
+          (evidence) =>
+            evidence.local.kind ===
+              RECONCILIATION_LOCAL_EVIDENCE_KIND.unknown ||
+            evidence.remote.kind ===
+              RECONCILIATION_REMOTE_EVIDENCE_KIND.unavailable,
+        )
+      ) {
+        return { kind: "failure", reason: "evidence-unavailable" };
+      }
+    }
+    this.invalidateOverlapping(paths);
+    const reviewId = this.dependencies.createOperationId();
+    if (
+      this.gapGroupReviews.has(reviewId) ||
+      this.reviews.has(reviewId) ||
+      hasPersistedGapIdentityCollision(before.state, reviewId) ||
+      predecessor.operationId === reviewId
+    ) {
+      return { kind: "failure", reason: "stale-review" };
+    }
+    const children: EphemeralReconciliationReview[] = [];
+    const unreviewablePaths: NotePath[] = [];
+    const currentState = this.stateOwner.snapshot().state;
+    const historyGroup = this.historyGroups.derive(
+      currentState,
+      predecessor.snapshot.targetPath,
+    );
+    const historyGroupCoversReservations =
+      historyGroup.kind === "group" &&
+      samePathSet(historyGroup.paths, paths) &&
+      this.currentStateMatches(currentState, sampled.snapshot) &&
+      this.historyGroups.createProgress(
+        currentState,
+        sampled.snapshot,
+        { kind: HISTORY_DECISION_KIND.retainIndependent },
+        predecessor.operationId,
+        this.dependencies.createOperationId,
+      ) !== undefined &&
+      sampled.snapshot.paths.every((evidence) => {
+        const targetSnapshot = singleTargetSnapshot(
+          sampled.snapshot,
+          evidence.path,
+        );
+        const classification = classifyReconciliation(targetSnapshot);
+        return (
+          classification === RECONCILIATION_CLASSIFICATION.deferredHistory ||
+          classification === RECONCILIATION_CLASSIFICATION.aligned
+        );
+      });
+    if (historyGroupCoversReservations) {
+      const childReviewId = this.dependencies.createOperationId();
+      if (
+        childReviewId === reviewId ||
+        this.reviews.has(childReviewId) ||
+        this.gapGroupReviews.has(childReviewId) ||
+        hasPersistedGapIdentityCollision(before.state, childReviewId) ||
+        childReviewId === predecessor.operationId
+      ) {
+        return { kind: "failure", reason: "stale-review" };
+      }
+      const targetContent = sampled.pathContents.get(
+        sampled.snapshot.targetPath,
+      );
+      const child: EphemeralReconciliationReview = {
+        retention: RECONCILIATION_REVIEW_RETENTION.ephemeral,
+        reviewId: childReviewId,
+        classification: RECONCILIATION_CLASSIFICATION.deferredHistory,
+        status: RECONCILIATION_REVIEW_STATUS.pending,
+        snapshot: sampled.snapshot,
+        operationId: null,
+        sessionId: request.sessionId,
+        allowedActions: [RECONCILIATION_ACTION.resolveHistory],
+        sampledLocalText: targetContent?.localText ?? null,
+        sampledRemoteText: targetContent?.remoteText ?? null,
+        gapPredecessorId: predecessor.operationId,
+      };
+      this.reviews.set(child.reviewId, child);
+      children.push(child);
+    } else {
+      for (const evidence of sampled.snapshot.paths) {
+        const snapshot = singleTargetSnapshot(sampled.snapshot, evidence.path);
+        const classification = classifyReconciliation(snapshot);
+        const restoreSuccessor = isGapRestoreSuccessor(predecessor, snapshot, {
+          kind: RECONCILIATION_ACTION.keepLocal,
+        });
+        if (
+          classification === RECONCILIATION_CLASSIFICATION.aligned &&
+          !restoreSuccessor
+        ) {
+          continue;
+        }
+        if (
+          (classification === RECONCILIATION_CLASSIFICATION.deferredHistory ||
+            !isReconciliationReviewable(snapshot)) &&
+          !restoreSuccessor
+        ) {
+          unreviewablePaths.push(evidence.path);
+          continue;
+        }
+        const allowedActions = gapSuccessorActions(snapshot, restoreSuccessor);
+        if (allowedActions.length === 0) {
+          unreviewablePaths.push(evidence.path);
+          continue;
+        }
+        const childReviewId = this.dependencies.createOperationId();
+        if (
+          childReviewId === reviewId ||
+          this.reviews.has(childReviewId) ||
+          this.gapGroupReviews.has(childReviewId) ||
+          hasPersistedGapIdentityCollision(before.state, childReviewId) ||
+          childReviewId === predecessor.operationId
+        ) {
+          return { kind: "failure", reason: "stale-review" };
+        }
+        const content = sampled.pathContents.get(evidence.path);
+        const child: EphemeralReconciliationReview = {
+          retention: RECONCILIATION_REVIEW_RETENTION.ephemeral,
+          reviewId: childReviewId,
+          classification,
+          status: RECONCILIATION_REVIEW_STATUS.pending,
+          snapshot,
+          operationId: null,
+          sessionId: request.sessionId,
+          allowedActions,
+          sampledLocalText: content?.localText ?? null,
+          sampledRemoteText: content?.remoteText ?? null,
+          gapPredecessorId: predecessor.operationId,
+        };
+        this.reviews.set(child.reviewId, child);
+        children.push(child);
+      }
+    }
+    const group: EphemeralReconciliationGapGroupReview = {
+      retention: RECONCILIATION_REVIEW_RETENTION.ephemeral,
+      reviewId,
+      predecessorOperationId: predecessor.operationId,
+      sessionId: request.sessionId,
+      snapshot: sampled.snapshot,
+      childReviewIds: children.map((child) => child.reviewId),
+      unreviewablePaths: unreviewablePaths.toSorted((left, right) =>
+        left.localeCompare(right),
+      ),
+    };
+    this.gapGroupReviews.set(group.reviewId, group);
+    return { kind: "created", review: { group, children } };
+  }
+
+  /**
+   * Recovers only exact operation-bound effects visible in the complete fresh sample.
+   * No host or remote mutation capability is used, and the gap fence is retained.
+   *
+   * @param operation - Current gap-fenced non-history operation.
+   * @param snapshot - Complete current evidence for its reservation scope.
+   * @returns Whether exact evidence was committed, stale, unavailable, or absent.
+   */
+  private async recoverExactGapEffects(
+    operation: ReconciliationOperation,
+    snapshot: ReconciliationReviewSnapshot,
+  ): Promise<"unchanged" | "recovered" | "stale" | "persistence-failure"> {
+    if (!isNonHistoryReconciliationOperation(operation)) return "unchanged";
+    let localEffect = operation.localEffect;
+    let remoteEffect = operation.remoteEffect;
+    let localEffectObservation = operation.localEffectObservation;
+    const preparedObservation =
+      localEffectObservation.kind === LOCAL_EFFECT_OBSERVATION_KIND.prepared
+        ? localEffectObservation
+        : undefined;
+    const localPostcondition =
+      preparedObservation === undefined
+        ? undefined
+        : snapshot.paths.find(
+            (evidence) => evidence.path === preparedObservation.path,
+          );
+    if (
+      preparedObservation !== undefined &&
+      localEffect !== MUTATION_EFFECT_CERTAINTY.confirmed &&
+      localEffect !== MUTATION_EFFECT_CERTAINTY.definitelyRefused &&
+      localPostcondition?.local.kind ===
+        RECONCILIATION_LOCAL_EVIDENCE_KIND.live &&
+      localPostcondition.local.contentSha256 ===
+        preparedObservation.expectedHash
+    ) {
+      localEffect = MUTATION_EFFECT_CERTAINTY.confirmed;
+      localEffectObservation = {
+        ...preparedObservation,
+        kind: LOCAL_EFFECT_OBSERVATION_KIND.confirmed,
+        postconditionHash: preparedObservation.expectedHash,
+      };
+    }
+    if (
+      remoteEffect !== MUTATION_EFFECT_CERTAINTY.confirmed &&
+      hasExactGapRemoteReceipt(operation, snapshot)
+    ) {
+      remoteEffect = MUTATION_EFFECT_CERTAINTY.confirmed;
+    }
+    if (
+      localEffect === operation.localEffect &&
+      remoteEffect === operation.remoteEffect &&
+      localEffectObservation === operation.localEffectObservation
+    ) {
+      return "unchanged";
+    }
+    const phase = recoveredGapOperationPhase({
+      ...operation,
+      localEffect,
+      remoteEffect,
+      localEffectObservation,
+    });
+    const committed = await this.stateOwner.transition((state) => {
+      const current = state.reconciliationOperations.find(
+        (candidate) => candidate.operationId === operation.operationId,
+      );
+      if (
+        current === undefined ||
+        !isNonHistoryReconciliationOperation(current) ||
+        current.observationCoverage !==
+          RECONCILIATION_OBSERVATION_COVERAGE.gapReviewRequired ||
+        current.phase !== operation.phase ||
+        current.localEffect !== operation.localEffect ||
+        current.remoteEffect !== operation.remoteEffect ||
+        !reservationScopeMatches(current, snapshot) ||
+        !reconciliationReviewSnapshotsEqual(
+          current.snapshot,
+          operation.snapshot,
+        ) ||
+        !this.currentStateMatches(state, snapshot)
+      ) {
+        return undefined;
+      }
+      return {
+        ...state,
+        reconciliationOperations: state.reconciliationOperations.map(
+          (candidate) =>
+            candidate.operationId === current.operationId
+              ? {
+                  ...current,
+                  phase,
+                  localEffect,
+                  remoteEffect,
+                  localEffectObservation,
+                }
+              : candidate,
+        ),
+      };
+    });
+    if (committed.kind === "save-failed") return "persistence-failure";
+    return committed.kind === "committed" ? "recovered" : "stale";
   }
 
   /**
@@ -260,7 +638,8 @@ export class ReconciliationReviewService implements ReconciliationReviewQuery {
     }
     if (
       current.sessionId !== sessionId ||
-      current.status !== RECONCILIATION_REVIEW_STATUS.pending
+      current.status !== RECONCILIATION_REVIEW_STATUS.pending ||
+      current.gapPredecessorId !== undefined
     ) {
       return { kind: "failure", reason: "stale-review" };
     }
@@ -352,6 +731,22 @@ export class ReconciliationReviewService implements ReconciliationReviewQuery {
   }
 
   /**
+   * Invalidates one process-local gap group owned by the exact presentation session.
+   * @param reviewId - Ephemeral complete group identity.
+   * @param sessionId - Exact presentation identity that owns the group.
+   * @returns Whether this call invalidated and cleared a pending group.
+   */
+  closeGapGroupReview(
+    reviewId: MirrorOperationId,
+    sessionId: ReconciliationReviewRequest["sessionId"],
+  ): boolean {
+    const group = this.gapGroupReviews.get(reviewId);
+    if (group === undefined || group.sessionId !== sessionId) return false;
+    this.invalidateGapGroup(group);
+    return true;
+  }
+
+  /**
    * Invalidates every pending review for one detached presentation session.
    *
    * @param sessionId - Session whose transient authority is ending.
@@ -365,6 +760,9 @@ export class ReconciliationReviewService implements ReconciliationReviewQuery {
         this.reviews.set(review.reviewId, staleReview(review));
       }
     }
+    for (const group of this.gapGroupReviews.values()) {
+      if (group.sessionId === sessionId) this.invalidateGapGroup(group);
+    }
   }
 
   /**
@@ -376,6 +774,9 @@ export class ReconciliationReviewService implements ReconciliationReviewQuery {
       if (review.status === RECONCILIATION_REVIEW_STATUS.pending) {
         this.reviews.set(review.reviewId, staleReview(review));
       }
+    }
+    for (const group of this.gapGroupReviews.values()) {
+      this.invalidateGapGroup(group);
     }
   }
 
@@ -400,6 +801,9 @@ export class ReconciliationReviewService implements ReconciliationReviewQuery {
       review.status !== RECONCILIATION_REVIEW_STATUS.pending
     ) {
       return rejected("stale-review", before);
+    }
+    if (review.gapPredecessorId !== undefined) {
+      return rejected("action-not-allowed", before);
     }
     const selectedDestination = request.destinationPath ?? null;
     if (
@@ -509,6 +913,8 @@ export class ReconciliationReviewService implements ReconciliationReviewQuery {
           ? RECONCILIATION_OPERATION_PHASE.completed
           : RECONCILIATION_OPERATION_PHASE.admitted;
       const common = {
+        observationCoverage: RECONCILIATION_OBSERVATION_COVERAGE.continuous,
+        gapSuccessorOperationIds: [],
         operationId,
         reviewId: review.reviewId,
         authority: reconciliationAuthorityForAction(action),
@@ -618,6 +1024,505 @@ export class ReconciliationReviewService implements ReconciliationReviewQuery {
   }
 
   /**
+   * Settles a fully aligned no-effect gap or atomically transfers every changed target to fresh ordinary reviews.
+   *
+   * @param request - Complete group identity and all child action choices.
+   * @returns Serialized settlement/transfer or a refusal that leaves the predecessor active.
+   */
+  async admitGapGroup(
+    request: ReconciliationGapGroupAdmissionRequest,
+  ): Promise<ReconciliationGapGroupAdmissionResult> {
+    const before = this.stateOwner.snapshot();
+    const group = this.gapGroupReviews.get(request.reviewId);
+    if (group === undefined) return gapRejected("review-not-found", before);
+    if (group.sessionId !== request.sessionId) {
+      return gapRejected("stale-review", before);
+    }
+    const predecessor = findGapPredecessor(
+      before.state,
+      group.predecessorOperationId,
+    );
+    if (predecessor === undefined) return gapRejected("stale-review", before);
+    const sampled = await this.sample(
+      group.snapshot.targetPath,
+      group.snapshot.paths.map((evidence) => evidence.path),
+      group.snapshot.recovery?.id ?? null,
+    );
+    if (sampled.kind === "failure") {
+      return gapRejected(sampled.reason, this.stateOwner.snapshot());
+    }
+    if (!reconciliationReviewSnapshotsEqual(group.snapshot, sampled.snapshot)) {
+      await this.persistStaleGapGroup(group);
+      return gapRejected("stale-review", this.stateOwner.snapshot());
+    }
+    if (request.actions.length === 0) {
+      return this.settleGapGroupWithoutEffects(
+        group,
+        predecessor,
+        sampled.snapshot,
+      );
+    }
+    if (
+      group.unreviewablePaths.length !== 0 ||
+      request.actions.length !== group.childReviewIds.length ||
+      new Set(request.actions.map((action) => action.reviewId)).size !==
+        request.actions.length ||
+      group.childReviewIds.some(
+        (reviewId) =>
+          !request.actions.some((action) => action.reviewId === reviewId),
+      )
+    ) {
+      return gapRejected("action-not-allowed", before);
+    }
+    if (!gapEffectRecoveryIsComplete(predecessor, sampled.snapshot)) {
+      return gapRejected("action-not-allowed", before);
+    }
+
+    const plans: GapSuccessorPlan[] = [];
+    const reservedPaths = new Set<NotePath>();
+    const operationIds = new Set<MirrorOperationId>([
+      predecessor.operationId,
+      group.reviewId,
+      ...group.childReviewIds,
+      ...before.state.reconciliationOperations.map(
+        (operation) => operation.operationId,
+      ),
+      ...before.state.reconciliationReviews.map((review) => review.reviewId),
+      ...before.state.reconciliationGapGroupReviews.map(
+        (review) => review.reviewId,
+      ),
+    ]);
+    for (const childReviewId of group.childReviewIds) {
+      const child = this.reviews.get(childReviewId);
+      const selection = request.actions.find(
+        (action) => action.reviewId === childReviewId,
+      );
+      if (
+        child === undefined ||
+        selection === undefined ||
+        child.sessionId !== request.sessionId ||
+        child.status !== RECONCILIATION_REVIEW_STATUS.pending ||
+        child.gapPredecessorId !== predecessor.operationId
+      ) {
+        return gapRejected("stale-review", before);
+      }
+      const historyChild = child.allowedActions.includes(
+        RECONCILIATION_ACTION.resolveHistory,
+      );
+      const snapshot = historyChild
+        ? sampled.snapshot
+        : singleTargetSnapshot(sampled.snapshot, child.snapshot.targetPath);
+      if (!reconciliationReviewSnapshotsEqual(child.snapshot, snapshot)) {
+        await this.persistStaleGapGroup(group);
+        return gapRejected("stale-review", this.stateOwner.snapshot());
+      }
+      const action = this.deriveAdmissionAction(
+        before.state,
+        snapshot,
+        selection.action,
+      );
+      if (
+        action === undefined ||
+        action.kind === RECONCILIATION_ACTION.defer ||
+        historyChild !==
+          (action.kind === RECONCILIATION_ACTION.resolveHistory) ||
+        (!isReconciliationActionAllowed(snapshot, action) &&
+          !isGapRestoreSuccessor(predecessor, snapshot, action))
+      ) {
+        return gapRejected("action-not-allowed", before);
+      }
+      const selectedDestination = selection.destinationPath ?? null;
+      if (
+        selectedDestination !== null &&
+        !snapshot.paths.some(
+          (evidence) => evidence.path === selectedDestination,
+        )
+      ) {
+        return gapRejected("action-not-allowed", before);
+      }
+      const reservations = this.createReservations(
+        before.state,
+        snapshot,
+        selectedDestination,
+      );
+      if (
+        reservations === undefined ||
+        reservations.some((reservation) =>
+          reservedPaths.has(reservation.path),
+        ) ||
+        this.hasReservationConflict(
+          before.state,
+          snapshot,
+          predecessor.operationId,
+        )
+      ) {
+        return gapRejected("reservation-conflict", before);
+      }
+      if (action.kind === RECONCILIATION_ACTION.resolveHistory) {
+        const historyGroup = this.historyGroups.derive(
+          before.state,
+          snapshot.targetPath,
+        );
+        const predecessorPaths = predecessor.reservations.map(
+          (reservation) => reservation.path,
+        );
+        if (
+          selectedDestination !== null ||
+          action.decision.kind === HISTORY_DECISION_KIND.deferHistory ||
+          historyGroup.kind !== "group" ||
+          !samePathSet(historyGroup.paths, predecessorPaths) ||
+          !samePathSet(
+            reservations.map((reservation) => reservation.path),
+            predecessorPaths,
+          )
+        ) {
+          return gapRejected("action-not-allowed", before);
+        }
+        const operationId = this.dependencies.createOperationId();
+        if (operationIds.has(operationId)) {
+          return gapRejected("stale-review", before);
+        }
+        operationIds.add(operationId);
+        const historyProgress = this.historyGroups.createProgress(
+          before.state,
+          snapshot,
+          action.decision,
+          operationId,
+          this.dependencies.createOperationId,
+        );
+        if (
+          historyProgress === undefined ||
+          (action.decision.kind === HISTORY_DECISION_KIND.executeCleanupPlan &&
+            historyProgress.steps.length === 0) ||
+          historyProgress.steps.some((step) => operationIds.has(step.stepId))
+        ) {
+          return gapRejected("action-not-allowed", before);
+        }
+        for (const step of historyProgress.steps) {
+          operationIds.add(step.stepId);
+        }
+        for (const reservation of reservations) {
+          reservedPaths.add(reservation.path);
+        }
+        const phase =
+          historyProgress.nextStepIndex === null
+            ? RECONCILIATION_OPERATION_PHASE.completed
+            : RECONCILIATION_OPERATION_PHASE.admitted;
+        const operation: ReconciliationHistoryOperation = {
+          observationCoverage: RECONCILIATION_OBSERVATION_COVERAGE.continuous,
+          gapSuccessorOperationIds: [],
+          operationId,
+          reviewId: child.reviewId,
+          authority: RECONCILIATION_AUTHORITY_SOURCE.historyDecision,
+          action,
+          phase,
+          snapshot,
+          destinationPath: null,
+          reservations,
+          preservationReceipts: [],
+          successorOperationId: null,
+          historyProgress,
+        };
+        plans.push({
+          review: child,
+          operation,
+          durableReview: {
+            retention: RECONCILIATION_REVIEW_RETENTION.durable,
+            reviewId: child.reviewId,
+            classification: classifyReconciliation(snapshot),
+            status:
+              phase === RECONCILIATION_OPERATION_PHASE.completed
+                ? RECONCILIATION_REVIEW_STATUS.completed
+                : RECONCILIATION_REVIEW_STATUS.staged,
+            snapshot,
+            operationId,
+          },
+        });
+        continue;
+      }
+      for (const reservation of reservations)
+        reservedPaths.add(reservation.path);
+      const target = snapshot.paths.find(
+        (evidence) => evidence.path === snapshot.targetPath,
+      );
+      if (target === undefined) {
+        return gapRejected("action-not-allowed", before);
+      }
+      const operationId = this.dependencies.createOperationId();
+      if (operationIds.has(operationId)) {
+        return gapRejected("stale-review", before);
+      }
+      operationIds.add(operationId);
+      const operation: ReconciliationNonHistoryOperation = {
+        observationCoverage: RECONCILIATION_OBSERVATION_COVERAGE.continuous,
+        gapSuccessorOperationIds: [],
+        operationId,
+        reviewId: child.reviewId,
+        authority: reconciliationAuthorityForAction(action),
+        action,
+        phase: RECONCILIATION_OPERATION_PHASE.admitted,
+        snapshot,
+        destinationPath: selectedDestination,
+        reservations,
+        preservationReceipts: [],
+        successorOperationId: null,
+        localEffect: MUTATION_EFFECT_CERTAINTY.notDispatched,
+        remoteEffect: MUTATION_EFFECT_CERTAINTY.notDispatched,
+        localEffectObservation: actionMayWriteLocal(action.kind)
+          ? { kind: LOCAL_EFFECT_OBSERVATION_KIND.notStarted }
+          : {
+              kind: LOCAL_EFFECT_OBSERVATION_KIND.notRequired,
+              path: snapshot.targetPath,
+              listenerEpoch: snapshot.runtime.listenerEpoch,
+              beforeGeneration:
+                target.local.kind === RECONCILIATION_LOCAL_EVIDENCE_KIND.unknown
+                  ? 0
+                  : target.local.observationGeneration,
+              successor: null,
+            },
+      };
+      plans.push({
+        review: child,
+        operation,
+        durableReview: {
+          retention: RECONCILIATION_REVIEW_RETENTION.durable,
+          reviewId: child.reviewId,
+          classification: classifyReconciliation(snapshot),
+          status: RECONCILIATION_REVIEW_STATUS.staged,
+          snapshot,
+          operationId,
+        },
+      });
+    }
+    if (plans.length === 0) return gapRejected("action-not-allowed", before);
+
+    const durableGroup: ReconciliationGapGroupReview = {
+      kind: RECONCILIATION_GAP_REVIEW_KIND.gapGroup,
+      reviewId: group.reviewId,
+      predecessorOperationId: predecessor.operationId,
+      status: RECONCILIATION_GAP_REVIEW_STATUS.completed,
+      snapshot: sampled.snapshot,
+      childReviewIds: plans.map((plan) => plan.review.reviewId),
+    };
+    const committed = await this.stateOwner.transition((state) => {
+      const currentPredecessor = findGapPredecessor(
+        state,
+        predecessor.operationId,
+      );
+      if (
+        this.gapGroupReviews.get(group.reviewId) !== group ||
+        currentPredecessor === undefined ||
+        !reservationScopeMatches(currentPredecessor, sampled.snapshot) ||
+        !this.currentStateMatches(state, sampled.snapshot) ||
+        !this.isAdmissionLifecycleAllowed(state, sampled.snapshot) ||
+        !gapEffectRecoveryIsComplete(currentPredecessor, sampled.snapshot) ||
+        plans.some(
+          (plan) =>
+            this.reviews.get(plan.review.reviewId) !== plan.review ||
+            plan.review.sessionId !== request.sessionId ||
+            plan.review.status !== RECONCILIATION_REVIEW_STATUS.pending ||
+            !this.currentStateMatches(state, plan.operation.snapshot) ||
+            (!isReconciliationActionAllowed(
+              plan.operation.snapshot,
+              plan.operation.action,
+            ) &&
+              !isGapRestoreSuccessor(
+                currentPredecessor,
+                plan.operation.snapshot,
+                plan.operation.action,
+              )) ||
+            this.hasReservationConflict(
+              state,
+              plan.operation.snapshot,
+              predecessor.operationId,
+            ),
+        ) ||
+        new Set(
+          plans.flatMap((plan) =>
+            plan.operation.reservations.map((reservation) => reservation.path),
+          ),
+        ).size !==
+          plans.reduce(
+            (reservationCount, plan) =>
+              reservationCount + plan.operation.reservations.length,
+            0,
+          )
+      ) {
+        return undefined;
+      }
+      const completedPredecessor: ReconciliationOperation = {
+        ...currentPredecessor,
+        phase: RECONCILIATION_OPERATION_PHASE.completed,
+        gapSuccessorOperationIds: plans.map(
+          (plan) => plan.operation.operationId,
+        ),
+      };
+      const nextState: MirrorDeviceState = {
+        ...state,
+        reconciliationOperations: [
+          ...state.reconciliationOperations.map((operation) =>
+            operation.operationId === predecessor.operationId
+              ? completedPredecessor
+              : operation,
+          ),
+          ...plans.map((plan) => plan.operation),
+        ],
+        reconciliationReviews: [
+          ...state.reconciliationReviews.map((review) =>
+            review.reviewId === predecessor.reviewId
+              ? { ...review, status: RECONCILIATION_REVIEW_STATUS.completed }
+              : review,
+          ),
+          ...plans.map((plan) => plan.durableReview),
+        ],
+        reconciliationGapGroupReviews: [
+          ...state.reconciliationGapGroupReviews,
+          durableGroup,
+        ],
+      };
+      return nextState;
+    });
+    if (committed.kind !== "committed") {
+      return gapRejected(
+        committed.kind === "save-failed"
+          ? "persistence-failure"
+          : "reservation-conflict",
+        committed.snapshot,
+      );
+    }
+    const operations = plans.map((plan) => {
+      const operation = committed.snapshot.state.reconciliationOperations.find(
+        (candidate) => candidate.operationId === plan.operation.operationId,
+      );
+      if (operation === undefined)
+        throw new Error("Committed gap child missing.");
+      this.reviews.set(plan.review.reviewId, {
+        ...plan.review,
+        status: plan.durableReview.status,
+        operationId: operation.operationId,
+        sampledLocalText: null,
+        sampledRemoteText: null,
+      });
+      return operation;
+    });
+    this.gapGroupReviews.delete(group.reviewId);
+    return {
+      kind: "transferred",
+      review: durableGroup,
+      operations,
+      snapshot: committed.snapshot,
+    };
+  }
+
+  /**
+   * Completes a predecessor only when a fresh group snapshot proves a genuinely effect-safe no-op.
+   * @param group - Exact process-local gap review.
+   * @param predecessor - Current active gap-fenced operation.
+   * @param snapshot - Fresh immutable complete reservation-set evidence.
+   * @returns Committed terminal review, or a refusal preserving the predecessor reservation.
+   */
+  private async settleGapGroupWithoutEffects(
+    group: EphemeralReconciliationGapGroupReview,
+    predecessor: ReconciliationOperation,
+    snapshot: ReconciliationReviewSnapshot,
+  ): Promise<ReconciliationGapGroupAdmissionResult> {
+    if (
+      group.childReviewIds.length !== 0 ||
+      group.unreviewablePaths.length !== 0 ||
+      !gapOperationCanSettleWithoutEffects(predecessor, snapshot)
+    ) {
+      return gapRejected("action-not-allowed", this.stateOwner.snapshot());
+    }
+    const durableGroup: ReconciliationGapGroupReview = {
+      kind: RECONCILIATION_GAP_REVIEW_KIND.gapGroup,
+      reviewId: group.reviewId,
+      predecessorOperationId: predecessor.operationId,
+      status: RECONCILIATION_GAP_REVIEW_STATUS.completed,
+      snapshot,
+      childReviewIds: [],
+    };
+    const committed = await this.stateOwner.transition((state) => {
+      const current = findGapPredecessor(state, predecessor.operationId);
+      if (
+        this.gapGroupReviews.get(group.reviewId) !== group ||
+        current === undefined ||
+        !reservationScopeMatches(current, snapshot) ||
+        !this.currentStateMatches(state, snapshot) ||
+        !gapOperationCanSettleWithoutEffects(current, snapshot) ||
+        !this.isAdmissionLifecycleAllowed(state, snapshot)
+      ) {
+        return undefined;
+      }
+      return {
+        ...state,
+        reconciliationOperations: state.reconciliationOperations.map(
+          (operation) =>
+            operation.operationId === current.operationId
+              ? {
+                  ...operation,
+                  phase: RECONCILIATION_OPERATION_PHASE.completed,
+                  gapSuccessorOperationIds: [],
+                }
+              : operation,
+        ),
+        reconciliationReviews: state.reconciliationReviews.map((review) =>
+          review.reviewId === current.reviewId
+            ? { ...review, status: RECONCILIATION_REVIEW_STATUS.completed }
+            : review,
+        ),
+        reconciliationGapGroupReviews: [
+          ...state.reconciliationGapGroupReviews,
+          durableGroup,
+        ],
+      };
+    });
+    if (committed.kind !== "committed") {
+      return gapRejected(
+        committed.kind === "save-failed"
+          ? "persistence-failure"
+          : "reservation-conflict",
+        committed.snapshot,
+      );
+    }
+    this.gapGroupReviews.delete(group.reviewId);
+    return {
+      kind: "settled",
+      review: durableGroup,
+      snapshot: committed.snapshot,
+    };
+  }
+
+  /** Persists a stale complete review as audit evidence without releasing its predecessor. */
+  private async persistStaleGapGroup(
+    group: EphemeralReconciliationGapGroupReview,
+  ): Promise<void> {
+    for (const reviewId of group.childReviewIds) this.markStale(reviewId);
+    const durableGroup: ReconciliationGapGroupReview = {
+      kind: RECONCILIATION_GAP_REVIEW_KIND.gapGroup,
+      reviewId: group.reviewId,
+      predecessorOperationId: group.predecessorOperationId,
+      status: RECONCILIATION_GAP_REVIEW_STATUS.stale,
+      snapshot: group.snapshot,
+      childReviewIds: [],
+    };
+    await this.stateOwner.transition((state) =>
+      findGapPredecessor(state, group.predecessorOperationId) === undefined ||
+      state.reconciliationGapGroupReviews.some(
+        (review) => review.reviewId === group.reviewId,
+      )
+        ? undefined
+        : {
+            ...state,
+            reconciliationGapGroupReviews: [
+              ...state.reconciliationGapGroupReviews,
+              durableGroup,
+            ],
+          },
+    );
+    this.gapGroupReviews.delete(group.reviewId);
+  }
+
+  /**
    * Creates the deterministic target/related path sample set.
    * @param request - Review target and optional related selections.
    * @returns Lexically ordered unique paths.
@@ -689,12 +1594,20 @@ export class ReconciliationReviewService implements ReconciliationReviewQuery {
     const evidence: ReconciliationPathEvidence[] = [];
     let localText: string | null = null;
     let remoteText: string | null = null;
+    const pathContents = new Map<
+      NotePath,
+      { readonly localText: string | null; readonly remoteText: string | null }
+    >();
     let selectedRecovery: RecoverySnapshotState | null = null;
     for (const path of paths) {
       const local = await this.sampleLocal(path);
       const remote = remoteReady
         ? await this.sampleRemote(path)
         : unavailableRemote();
+      pathContents.set(path, {
+        localText: local.text,
+        remoteText: remote.text,
+      });
       if (path === targetPath) {
         localText = local.text;
         remoteText = remote.text;
@@ -734,7 +1647,13 @@ export class ReconciliationReviewService implements ReconciliationReviewQuery {
       paths: evidence,
       recovery: selectedRecovery,
     };
-    return { kind: "sampled", snapshot, localText, remoteText };
+    return {
+      kind: "sampled",
+      snapshot,
+      localText,
+      remoteText,
+      pathContents,
+    };
   }
 
   /**
@@ -871,6 +1790,13 @@ export class ReconciliationReviewService implements ReconciliationReviewQuery {
    */
   private invalidateOverlapping(paths: readonly NotePath[]): void {
     const affected = new Set(paths);
+    for (const group of this.gapGroupReviews.values()) {
+      if (
+        group.snapshot.paths.some((evidence) => affected.has(evidence.path))
+      ) {
+        this.invalidateGapGroup(group);
+      }
+    }
     for (const review of this.reviews.values()) {
       if (
         review.status === RECONCILIATION_REVIEW_STATUS.pending &&
@@ -879,6 +1805,14 @@ export class ReconciliationReviewService implements ReconciliationReviewQuery {
         this.reviews.set(review.reviewId, staleReview(review));
       }
     }
+  }
+
+  /** Invalidates one complete transient gap review and every child body it owns. */
+  private invalidateGapGroup(
+    group: EphemeralReconciliationGapGroupReview,
+  ): void {
+    for (const reviewId of group.childReviewIds) this.markStale(reviewId);
+    this.gapGroupReviews.delete(group.reviewId);
   }
 
   /**
@@ -1147,6 +2081,562 @@ export class ReconciliationReviewService implements ReconciliationReviewQuery {
   }
 }
 
+/** One complete ordinary or history successor and its durable review projection. */
+interface GapSuccessorPlan {
+  readonly review: EphemeralReconciliationReview;
+  readonly operation:
+    | ReconciliationNonHistoryOperation
+    | ReconciliationHistoryOperation;
+  readonly durableReview: ReconciliationReview;
+}
+
+/**
+ * Selects ordinary single-target actions that fit the predecessor's existing reservation scope.
+ * @param snapshot - Fresh target-only evidence for one changed reserved path.
+ * @param restoreSuccessor - Whether the special restored-pending-review contract applies.
+ * @returns Actions that need neither a new destination nor a history-group decision.
+ */
+function gapSuccessorActions(
+  snapshot: ReconciliationReviewSnapshot,
+  restoreSuccessor: boolean,
+): readonly ReconciliationAdmissionAction["kind"][] {
+  if (restoreSuccessor) return [RECONCILIATION_ACTION.keepLocal];
+  if (
+    classifyReconciliation(snapshot) ===
+    RECONCILIATION_CLASSIFICATION.deferredHistory
+  ) {
+    return [];
+  }
+  return allowedReconciliationActions(snapshot).filter(
+    (action): action is ReconciliationAdmissionAction["kind"] =>
+      action !== RECONCILIATION_ACTION.defer &&
+      action !== RECONCILIATION_ACTION.keepBoth &&
+      action !== RECONCILIATION_ACTION.forkLegacy &&
+      action !== RECONCILIATION_ACTION.resolveHistory,
+  );
+}
+
+/**
+ * Finds the still-reserved operation that may be resolved by fresh gap evidence.
+ * @param state - Current durable state.
+ * @param operationId - Exact predecessor identity.
+ * @returns Active gap-fenced predecessor only.
+ */
+function findGapPredecessor(
+  state: MirrorDeviceState,
+  operationId: MirrorOperationId,
+): ReconciliationOperation | undefined {
+  return state.reconciliationOperations.find(
+    (operation) =>
+      operation.operationId === operationId &&
+      operation.observationCoverage ===
+        RECONCILIATION_OBSERVATION_COVERAGE.gapReviewRequired &&
+      operation.phase !== RECONCILIATION_OPERATION_PHASE.completed &&
+      operation.phase !== RECONCILIATION_OPERATION_PHASE.stale,
+  );
+}
+
+/**
+ * Checks every durable identity namespace before admitting one gap-review UUID.
+ * @param state - Current durable mirror state.
+ * @param reviewId - Candidate process-local group or child identity.
+ * @returns Whether a durable operation, review or group already owns this ID.
+ */
+function hasPersistedGapIdentityCollision(
+  state: MirrorDeviceState,
+  reviewId: MirrorOperationId,
+): boolean {
+  return (
+    state.reconciliationOperations.some(
+      (operation) => operation.operationId === reviewId,
+    ) ||
+    state.reconciliationReviews.some(
+      (review) => review.reviewId === reviewId,
+    ) ||
+    state.reconciliationGapGroupReviews.some(
+      (review) => review.reviewId === reviewId,
+    )
+  );
+}
+
+/**
+ * Confirms that a complete fresh group snapshot exactly covers one operation's retained reservations.
+ * @param operation - Current candidate predecessor, if it still exists.
+ * @param snapshot - Fresh complete path evidence.
+ * @returns Whether both bounded path sets are identical.
+ */
+function reservationScopeMatches(
+  operation: ReconciliationOperation | undefined,
+  snapshot: ReconciliationReviewSnapshot,
+): boolean {
+  return (
+    operation !== undefined &&
+    samePathSet(
+      operation.reservations.map((reservation) => reservation.path),
+      snapshot.paths.map((evidence) => evidence.path),
+    )
+  );
+}
+
+/**
+ * Recognizes a current exact M3 receipt for the one remote mutation implied by the old action.
+ * @param operation - Gap-fenced operation whose remote call may have completed.
+ * @param snapshot - Complete current sample of its exact reservation set.
+ * @returns Whether the current remote generation proves that operation's requested mutation.
+ */
+function hasExactGapRemoteReceipt(
+  operation: ReconciliationNonHistoryOperation,
+  snapshot: ReconciliationReviewSnapshot,
+): boolean {
+  if (snapshot.runtime.lifecycle.kind !== MIRROR_DEVICE_LIFECYCLE_KIND.active) {
+    return false;
+  }
+  const target = operation.snapshot.paths.find(
+    (evidence) => evidence.path === operation.snapshot.targetPath,
+  );
+  if (target === undefined) return false;
+  let path: NotePath;
+  let action: ContentMutationAction;
+  let precondition: ConditionalMutationPrecondition;
+  let expectedHash: ContentSha256;
+  switch (operation.action.kind) {
+    case RECONCILIATION_ACTION.keepLocal:
+      if (target.local.kind !== RECONCILIATION_LOCAL_EVIDENCE_KIND.live) {
+        return false;
+      }
+      path = target.path;
+      expectedHash = target.local.contentSha256;
+      if (target.remote.kind === RECONCILIATION_REMOTE_EVIDENCE_KIND.absent) {
+        action = MUTATION_ACTION.create;
+        precondition = {
+          kind: CONDITIONAL_MUTATION_PRECONDITION_KIND.absent,
+        };
+      } else if (
+        target.remote.kind === RECONCILIATION_REMOTE_EVIDENCE_KIND.live
+      ) {
+        action = MUTATION_ACTION.update;
+        precondition = {
+          kind: CONDITIONAL_MUTATION_PRECONDITION_KIND.matchingRevision,
+          revision: target.remote.revision,
+        };
+      } else {
+        return false;
+      }
+      break;
+    case RECONCILIATION_ACTION.keepBoth: {
+      if (
+        target.local.kind !== RECONCILIATION_LOCAL_EVIDENCE_KIND.live ||
+        target.remote.kind !== RECONCILIATION_REMOTE_EVIDENCE_KIND.live
+      ) {
+        return false;
+      }
+      if (
+        operation.action.primarySide === RECONCILIATION_PRESERVATION_SIDE.local
+      ) {
+        path = target.path;
+        action = MUTATION_ACTION.update;
+        expectedHash = target.local.contentSha256;
+        precondition = {
+          kind: CONDITIONAL_MUTATION_PRECONDITION_KIND.matchingRevision,
+          revision: target.remote.revision,
+        };
+        break;
+      }
+      const destination = operation.destinationPath;
+      const destinationEvidence = operation.snapshot.paths.find(
+        (evidence) => evidence.path === destination,
+      );
+      if (
+        destination === null ||
+        destinationEvidence?.remote.kind !==
+          RECONCILIATION_REMOTE_EVIDENCE_KIND.absent
+      ) {
+        return false;
+      }
+      path = destination;
+      action = MUTATION_ACTION.create;
+      expectedHash = target.local.contentSha256;
+      precondition = {
+        kind: CONDITIONAL_MUTATION_PRECONDITION_KIND.absent,
+      };
+      break;
+    }
+    case RECONCILIATION_ACTION.recreateRemote:
+      if (
+        target.local.kind !== RECONCILIATION_LOCAL_EVIDENCE_KIND.live ||
+        target.remote.kind !== RECONCILIATION_REMOTE_EVIDENCE_KIND.tombstone
+      ) {
+        return false;
+      }
+      path = target.path;
+      action = MUTATION_ACTION.recreate;
+      expectedHash = target.local.contentSha256;
+      precondition = {
+        kind: CONDITIONAL_MUTATION_PRECONDITION_KIND.matchingRevision,
+        revision: target.remote.revision,
+      };
+      break;
+    case RECONCILIATION_ACTION.forkLegacy: {
+      const destination = operation.destinationPath;
+      const destinationEvidence = operation.snapshot.paths.find(
+        (evidence) => evidence.path === destination,
+      );
+      if (
+        destination === null ||
+        target.remote.kind !== RECONCILIATION_REMOTE_EVIDENCE_KIND.legacy ||
+        destinationEvidence?.remote.kind !==
+          RECONCILIATION_REMOTE_EVIDENCE_KIND.absent
+      ) {
+        return false;
+      }
+      path = destination;
+      action = MUTATION_ACTION.create;
+      expectedHash = target.remote.contentSha256;
+      precondition = {
+        kind: CONDITIONAL_MUTATION_PRECONDITION_KIND.absent,
+      };
+      break;
+    }
+    default:
+      return false;
+  }
+  const current = snapshot.paths.find((evidence) => evidence.path === path);
+  if (current?.remote.kind !== RECONCILIATION_REMOTE_EVIDENCE_KIND.live) {
+    return false;
+  }
+  const receipt = current.remote.receipt;
+  return (
+    receipt.operationId === operation.operationId &&
+    receipt.associationId === snapshot.runtime.lifecycle.associationId &&
+    receipt.action === action &&
+    receipt.contentSha256 === expectedHash &&
+    receiptPreconditionMatches(receipt.precondition, precondition)
+  );
+}
+
+/** @returns Whether two conditional mutation preconditions identify the same generation. */
+function receiptPreconditionMatches(
+  actual: ConditionalMutationPrecondition,
+  expected: ConditionalMutationPrecondition,
+): boolean {
+  if (actual.kind !== expected.kind) return false;
+  return (
+    actual.kind === CONDITIONAL_MUTATION_PRECONDITION_KIND.absent ||
+    (expected.kind ===
+      CONDITIONAL_MUTATION_PRECONDITION_KIND.matchingRevision &&
+      actual.revision === expected.revision)
+  );
+}
+
+/** @returns A phase that records recovered effects without completing or unblocking the gap operation. */
+function recoveredGapOperationPhase(
+  operation: ReconciliationNonHistoryOperation,
+): ReconciliationNonHistoryOperation["phase"] {
+  if (
+    operation.phase === RECONCILIATION_OPERATION_PHASE.blocked ||
+    operation.phase === RECONCILIATION_OPERATION_PHASE.preserving
+  ) {
+    return operation.phase;
+  }
+  if (
+    operation.action.kind === RECONCILIATION_ACTION.restoreRecovery &&
+    operation.localEffect === MUTATION_EFFECT_CERTAINTY.confirmed
+  ) {
+    return RECONCILIATION_OPERATION_PHASE.restoredPendingReview;
+  }
+  return operation.phase === RECONCILIATION_OPERATION_PHASE.mutatingLocal ||
+    operation.phase === RECONCILIATION_OPERATION_PHASE.mutatingRemote ||
+    operation.phase === RECONCILIATION_OPERATION_PHASE.evidenceRequired
+    ? RECONCILIATION_OPERATION_PHASE.partial
+    : operation.phase;
+}
+
+/**
+ * Allows transfer only after every potentially dispatched effect has exact conclusive evidence.
+ * @param operation - Gap-fenced predecessor under review.
+ * @returns Whether new reviews may replace the old effect authority.
+ */
+function gapEffectRecoveryIsComplete(
+  operation: ReconciliationOperation,
+  freshSnapshot: ReconciliationReviewSnapshot,
+): boolean {
+  if (isNonHistoryReconciliationOperation(operation)) {
+    if (
+      operation.localEffect === MUTATION_EFFECT_CERTAINTY.unknown ||
+      operation.remoteEffect === MUTATION_EFFECT_CERTAINTY.unknown ||
+      operation.localEffectObservation.kind ===
+        LOCAL_EFFECT_OBSERVATION_KIND.prepared ||
+      operation.localEffectObservation.kind ===
+        LOCAL_EFFECT_OBSERVATION_KIND.legacyV3Unfenced
+    ) {
+      return false;
+    }
+    const confirmedEffect =
+      operation.localEffect === MUTATION_EFFECT_CERTAINTY.confirmed ||
+      operation.remoteEffect === MUTATION_EFFECT_CERTAINTY.confirmed;
+    if (!confirmedEffect) {
+      return (
+        operation.phase === RECONCILIATION_OPERATION_PHASE.admitted &&
+        operation.localEffect === MUTATION_EFFECT_CERTAINTY.notDispatched &&
+        operation.remoteEffect === MUTATION_EFFECT_CERTAINTY.notDispatched &&
+        operation.preservationReceipts.length === 0
+      );
+    }
+    const requirements = requiredReconciliationPreservations(operation);
+    return (
+      requirements !== undefined &&
+      areRequiredReconciliationPreservationsVerified(
+        requirements,
+        operation.preservationReceipts,
+      ) &&
+      isConfirmedLocalPostconditionCurrent(operation, freshSnapshot)
+    );
+  }
+  if (!isHistoryReconciliationOperation(operation)) return false;
+  if (!isRefinedHistoryReconciliationOperation(operation)) return false;
+  const progress = operation.historyProgress;
+  if (
+    progress.kind !== HISTORY_PROGRESS_KIND.refined ||
+    progress.steps.some(
+      (step) =>
+        step.remoteEffect.kind === HISTORY_REMOTE_EFFECT_KIND.unknown ||
+        ((step.phase === HISTORY_CLEANUP_STEP_PHASE.mutatingRemote ||
+          step.phase === HISTORY_CLEANUP_STEP_PHASE.evidenceRequired) &&
+          step.remoteEffect.kind !==
+            HISTORY_REMOTE_EFFECT_KIND.confirmedExactTombstoneReceipt),
+    )
+  ) {
+    return false;
+  }
+  const pendingStep =
+    progress.nextStepIndex === null
+      ? undefined
+      : progress.steps[progress.nextStepIndex];
+  if (
+    pendingStep?.phase === HISTORY_CLEANUP_STEP_PHASE.pending &&
+    pendingStep.remoteEffect.kind ===
+      HISTORY_REMOTE_EFFECT_KIND.notDispatched &&
+    !operation.preservationReceipts.some(
+      (receipt) => "stepId" in receipt && receipt.stepId === pendingStep.stepId,
+    )
+  ) {
+    return true;
+  }
+  const requirements = requiredReconciliationPreservations(operation);
+  return (
+    requirements !== undefined &&
+    areRequiredReconciliationPreservationsVerified(
+      requirements,
+      operation.preservationReceipts,
+    )
+  );
+}
+
+/**
+ * Refuses no-effect terminalization when the predecessor contains restore or observed-successor authority.
+ * @param operation - Gap-fenced predecessor.
+ * @param snapshot - Fresh complete group evidence.
+ * @returns Whether an atomic no-effect settlement is permitted.
+ */
+function gapOperationCanSettleWithoutEffects(
+  operation: ReconciliationOperation,
+  snapshot: ReconciliationReviewSnapshot,
+): boolean {
+  if (
+    !gapEffectRecoveryIsComplete(operation, snapshot) ||
+    operation.gapSuccessorOperationIds.length !== 0 ||
+    snapshot.paths.some(
+      (evidence) =>
+        evidence.m3.unresolvedMutation !== null ||
+        evidence.m3.deferredHistory !== null ||
+        classifyReconciliation({
+          ...snapshot,
+          targetPath: evidence.path,
+          paths: [evidence],
+          recovery: null,
+        }) !== RECONCILIATION_CLASSIFICATION.aligned,
+    )
+  ) {
+    return false;
+  }
+  if (isNonHistoryReconciliationOperation(operation)) {
+    if (
+      operation.action.kind === RECONCILIATION_ACTION.restoreRecovery ||
+      !gapSuccessorRangeIsCovered(operation, snapshot)
+    ) {
+      return false;
+    }
+    if (
+      operation.localEffect !== MUTATION_EFFECT_CERTAINTY.confirmed &&
+      operation.remoteEffect !== MUTATION_EFFECT_CERTAINTY.confirmed
+    ) {
+      return operation.phase === RECONCILIATION_OPERATION_PHASE.admitted;
+    }
+    return true;
+  }
+  if (!isRefinedHistoryReconciliationOperation(operation)) return false;
+  const progress = operation.historyProgress;
+  return (
+    progress.kind === HISTORY_PROGRESS_KIND.refined &&
+    progress.decision.kind === HISTORY_DECISION_KIND.executeCleanupPlan &&
+    progress.nextStepIndex === null &&
+    progress.steps.length > 0 &&
+    progress.steps.every(
+      (step) =>
+        step.phase === HISTORY_CLEANUP_STEP_PHASE.completed &&
+        step.remoteEffect.kind ===
+          HISTORY_REMOTE_EFFECT_KIND.confirmedExactTombstoneReceipt,
+    )
+  );
+}
+
+/**
+ * Keeps completed local effects subject to their exact operation-bound postcondition.
+ * @param operation - Operation containing its synthetic local effect evidence.
+ * @returns Whether the sampled evidence still matches the confirmed local postcondition.
+ */
+function isConfirmedLocalPostconditionCurrent(
+  operation: ReconciliationNonHistoryOperation,
+  freshSnapshot: ReconciliationReviewSnapshot,
+): boolean {
+  const effect = operation.localEffectObservation;
+  if (effect.kind !== LOCAL_EFFECT_OBSERVATION_KIND.confirmed) {
+    return operation.localEffect !== MUTATION_EFFECT_CERTAINTY.confirmed;
+  }
+  const evidence = freshSnapshot.paths.find(
+    (path) => path.path === effect.path,
+  );
+  return (
+    evidence?.local.kind === RECONCILIATION_LOCAL_EVIDENCE_KIND.live &&
+    evidence.local.contentSha256 === effect.expectedHash &&
+    effect.postconditionHash === effect.expectedHash
+  );
+}
+
+/**
+ * Confirms that a complete fresh group sample includes any retained real successor range.
+ * @param operation - Gap-fenced predecessor carrying exact post-effect event evidence.
+ * @param snapshot - Fresh sample of every predecessor reservation.
+ * @returns Whether the current sample is at least as recent as an event in its own epoch.
+ */
+function gapSuccessorRangeIsCovered(
+  operation: ReconciliationNonHistoryOperation,
+  snapshot: ReconciliationReviewSnapshot,
+): boolean {
+  const observation = operation.localEffectObservation;
+  if (!("successor" in observation) || observation.successor === null) {
+    return true;
+  }
+  const evidence = snapshot.paths.find(
+    (candidate) => candidate.path === observation.path,
+  );
+  if (
+    evidence === undefined ||
+    evidence.local.kind === RECONCILIATION_LOCAL_EVIDENCE_KIND.unknown
+  ) {
+    return false;
+  }
+  return (
+    snapshot.runtime.listenerEpoch !== observation.listenerEpoch ||
+    evidence.local.observationGeneration >=
+      observation.successor.latestGeneration
+  );
+}
+
+/**
+ * Recognizes the one restore fence that must receive an ordinary reviewed child even when bytes align.
+ * @param predecessor - Gap-fenced restore operation.
+ * @param snapshot - Fresh child target sample.
+ * @param action - Proposed ordinary successor action.
+ * @returns Whether the child retains the existing restore-successor rule.
+ */
+function isGapRestoreSuccessor(
+  predecessor: ReconciliationOperation,
+  snapshot: ReconciliationReviewSnapshot,
+  action: ReconciliationAction,
+): boolean {
+  if (
+    !isNonHistoryReconciliationOperation(predecessor) ||
+    predecessor.action.kind !== RECONCILIATION_ACTION.restoreRecovery ||
+    predecessor.phase !==
+      RECONCILIATION_OPERATION_PHASE.restoredPendingReview ||
+    predecessor.localEffect !== MUTATION_EFFECT_CERTAINTY.confirmed ||
+    predecessor.snapshot.recovery === null ||
+    action.kind !== RECONCILIATION_ACTION.keepLocal ||
+    snapshot.targetPath !==
+      (predecessor.destinationPath ?? predecessor.snapshot.targetPath)
+  ) {
+    return false;
+  }
+  const before = predecessor.snapshot.paths.find(
+    (evidence) => evidence.path === snapshot.targetPath,
+  );
+  const after = snapshot.paths.find(
+    (evidence) => evidence.path === snapshot.targetPath,
+  );
+  return (
+    before !== undefined &&
+    before.local.kind !== RECONCILIATION_LOCAL_EVIDENCE_KIND.unknown &&
+    after?.local.kind === RECONCILIATION_LOCAL_EVIDENCE_KIND.live &&
+    (snapshot.runtime.listenerEpoch !==
+      predecessor.snapshot.runtime.listenerEpoch ||
+      after.local.observationGeneration > before.local.observationGeneration) &&
+    after.local.contentSha256 === predecessor.snapshot.recovery.contentSha256
+  );
+}
+
+/**
+ * Projects one group path into the existing exact single-target review contract.
+ * @param group - Complete fresh group evidence.
+ * @param targetPath - One target path owned by the ordinary child.
+ * @returns Target-scoped snapshot retaining only its exact sample and selected recovery metadata.
+ */
+function singleTargetSnapshot(
+  group: ReconciliationReviewSnapshot,
+  targetPath: NotePath,
+): ReconciliationReviewSnapshot {
+  const evidence = group.paths.find((path) => path.path === targetPath);
+  if (evidence === undefined)
+    throw new Error("Gap target evidence is missing.");
+  return {
+    runtime: group.runtime,
+    targetPath,
+    paths: [evidence],
+    recovery: group.targetPath === targetPath ? group.recovery : null,
+  };
+}
+
+/**
+ * Compares exact bounded reservation sets without allowing duplicate path evidence.
+ * @param left - First ordered or unordered path set.
+ * @param right - Second ordered or unordered path set.
+ * @returns Whether both inputs contain the same unique paths.
+ */
+function samePathSet(
+  left: readonly NotePath[],
+  right: readonly NotePath[],
+): boolean {
+  return (
+    new Set(left).size === left.length &&
+    new Set(right).size === right.length &&
+    left.length === right.length &&
+    left.every((path) => right.includes(path))
+  );
+}
+
+/**
+ * Creates a gap admission refusal using the current serialized snapshot.
+ * @param reason - Sanitized non-effect refusal classification.
+ * @param snapshot - Latest state-owner evidence.
+ * @returns Refusal retaining old reservations.
+ */
+function gapRejected(
+  reason: ReconciliationReviewFailure,
+  snapshot: MirrorStateSnapshot,
+): ReconciliationGapGroupAdmissionResult {
+  return { kind: "rejected", reason, snapshot };
+}
+
 /** Result of one complete asynchronous snapshot sample. */
 type SampleResult =
   | {
@@ -1154,6 +2644,13 @@ type SampleResult =
       readonly snapshot: ReconciliationReviewSnapshot;
       readonly localText: string | null;
       readonly remoteText: string | null;
+      readonly pathContents: ReadonlyMap<
+        NotePath,
+        {
+          readonly localText: string | null;
+          readonly remoteText: string | null;
+        }
+      >;
     }
   | {
       readonly kind: "failure";
@@ -1500,7 +2997,7 @@ function transferReconciliationOwnership(
  * Identifies ordinary actions that can dispatch an eligible local create or replace.
  *
  * @param kind - Closed admitted action kind.
- * @returns Whether v4 must retain synthetic local-effect observation state.
+ * @returns Whether the current operation requires synthetic local-effect observation state.
  */
 function actionMayWriteLocal(
   kind: ReconciliationOperation["action"]["kind"],

@@ -211,6 +211,7 @@ export {
   MIRROR_DEVICE_LIFECYCLE_KIND,
   MIRROR_DEVICE_STATE_V2_VERSION,
   MIRROR_DEVICE_STATE_V3_VERSION,
+  MIRROR_DEVICE_STATE_V4_VERSION,
   MIRROR_DEVICE_STATE_VERSION,
   MIRROR_GLOBAL_BLOCK_REASON,
   MIRROR_MUTATION_PHASE,
@@ -242,6 +243,7 @@ export type {
   MirrorDeviceState,
   MirrorDeviceStateV2,
   MirrorDeviceStateV3,
+  MirrorDeviceStateV4,
   MirrorGlobalBlockReason,
   MirrorOrigin,
   MirrorPathBlockReason,
@@ -300,6 +302,7 @@ export {
   isMirrorDeviceStateConsistent,
   isMirrorDeviceStateV2Consistent,
   isMirrorDeviceStateV3Consistent,
+  isMirrorDeviceStateV4Consistent,
 } from "@core/mirror/mirror-state-validation";
 export type {
   AbsentCurrentGenerationObservation,
@@ -345,6 +348,7 @@ export {
   isReconciliationActionAllowed,
   reconciliationAuthorityForAction,
 } from "@core/mirror/reconciliation-decision-policy";
+export { isReconciliationEffectDispatchAllowed } from "@core/mirror/reconciliation-effect-dispatch-policy";
 export type {
   ExactLocalReconciliationContent,
   ExactRecoveryReconciliationContent,
@@ -355,6 +359,10 @@ export type {
 } from "@core/mirror/reconciliation-effect-executor";
 export { ReconciliationEffectExecutor } from "@core/mirror/reconciliation-effect-executor";
 export { ReconciliationObservationGenerationOwner } from "@core/mirror/reconciliation-observation";
+export {
+  fenceActiveReconciliationForObservationGap,
+  isGapFencedReconciliationOperation,
+} from "@core/mirror/reconciliation-observation-gap";
 export {
   isHistoryReconciliationOperation,
   isNonHistoryReconciliationOperation,
@@ -400,15 +408,20 @@ export {
   HISTORY_REMOTE_EFFECT_KIND,
   LEGACY_V3_LOCAL_EFFECT_RECOVERY_STATE,
   LOCAL_EFFECT_OBSERVATION_KIND,
+  MAX_RECONCILIATION_GAP_GROUP_REVIEWS,
   MAX_RECONCILIATION_OPERATIONS,
   MAX_RECONCILIATION_PRESERVATION_RECEIPTS,
   MAX_RECONCILIATION_REVIEWS,
   RECONCILIATION_ACTION,
   RECONCILIATION_AUTHORITY_SOURCE,
   RECONCILIATION_CLASSIFICATION,
+  RECONCILIATION_EFFECT_DISPATCH_KIND,
   RECONCILIATION_EVENT_KIND,
+  RECONCILIATION_GAP_REVIEW_KIND,
+  RECONCILIATION_GAP_REVIEW_STATUS,
   RECONCILIATION_LOCAL_EVIDENCE_KIND,
   RECONCILIATION_LOCAL_STABILITY,
+  RECONCILIATION_OBSERVATION_COVERAGE,
   RECONCILIATION_OPERATION_PHASE,
   RECONCILIATION_PATH_REFERENCE_KIND,
   RECONCILIATION_PRESERVATION_PROOF_STATE,
@@ -440,15 +453,20 @@ export type {
   ReconciliationAdmissionAction,
   ReconciliationAuthoritySource,
   ReconciliationClassification,
+  ReconciliationEffectDispatchKind,
   ReconciliationEventKind,
+  ReconciliationGapGroupReview,
+  ReconciliationGapReviewStatus,
   ReconciliationHistoryOperation,
   ReconciliationLocalEvidence,
   ReconciliationM3PathEvidence,
   ReconciliationNonHistoryOperation,
+  ReconciliationObservationCoverage,
   ReconciliationOperation,
   ReconciliationOperationPhase,
   ReconciliationOperationPhaseV3,
   ReconciliationOperationV3,
+  ReconciliationOperationV4,
   ReconciliationPathEvidence,
   ReconciliationPathReservation,
   ReconciliationPreservationReceipt,
@@ -468,10 +486,14 @@ export type {
   RestoreRecoveryReconciliationAction,
   UseRemoteReconciliationAction,
 } from "@core/mirror/reconciliation-state.types";
-export { projectMirrorDeviceStateV3ToV4 } from "@core/mirror/reconciliation-state-migration";
+export {
+  projectMirrorDeviceStateV3ToV4,
+  projectMirrorDeviceStateV4ToV5,
+} from "@core/mirror/reconciliation-state-migration";
 export {
   isReconciliationPathReserved,
   isReconciliationStateConsistent,
+  isReconciliationStateV4Consistent,
   reconciliationReviewSnapshotsEqual,
 } from "@core/mirror/reconciliation-state-validation";
 export type { ReconciliationV3LocalEffectRecoveryDependencies } from "@core/mirror/reconciliation-v3-local-effect-recovery";

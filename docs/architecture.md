@@ -24,17 +24,15 @@ are implemented. The independent final review found three MINOR issues, correcti
 head `e97af36` resolved all three, and the corrective review returned APPROVE with no
 open findings. M3 is COMPLETE; PR #27 merged at `63b0599` and made the transition
 canonical. M4 Slices 1–8 are COMPLETE and M5 is NEXT. M5 Slices 0–4 are complete; Slice 5 is next. The
-current boundary includes strict device state v4 with frozen v2/v3 migration, reviewed
+current boundary includes strict device state v5 with frozen v2/v3/v4 migration, reviewed
 sampling/admission, narrow local writes and preservation, live/adoption/tombstone/
 restore actions, bounded parent-owned history steps, step-scoped archives, one shared
 M3/M4 scheduler, durable synthetic local-effect/successor evidence, and runtime/session/
-command/modal/status composition. ADR 0009 governs the compatibility transition.
-Slice 8 qualifies the packaged runtime and operator/security boundary without changing
-the architecture or Worker API.
-The connected outward mirror remains experimental and undeployed. Corrective M4
-qualification exercises only the preservation-root and one Keep-local path on the
-named isolated desktop host; no complete real-host scale rerun, mobile or iCloud
-runtime qualification is claimed.
+command/modal/status composition. ADR 0009 governs the historical v4 transition; ADR 0013
+adds the atomic v5 observation-gap correction. Bounded disposable-host qualification
+exercises v5 migration, gap review/transfer, and retained reservations after a detached
+edit. The connected outward mirror remains experimental and undeployed; no complete
+10,000-note desktop, mobile, or iCloud runtime qualification is claimed.
 See the [verified current state](current-state.md) for source/configuration evidence,
 [roadmap](roadmap.md) for execution order and open decisions, and
 [ADR 0001](decisions/0001-worker-r2-foundation.md) for the durable foundation.
@@ -113,9 +111,12 @@ historical test coverage but is no longer composed into HTTP mutation routes.
 registers the two M2 inspection commands, then loads strict preferences/device state
 and attaches one presentation/event/timer session to the versioned same-App-realm M3
 owner. Unconfigured, disabled and non-writer states remain passive. A configured
-active designated writer registers official saved Vault events before layout-ready
-bootstrap and automatically mirrors all eligible Markdown through the core scheduler
-and bounded Fetch adapter. The M2 in-flight exclusion remains independent. Session
+active designated writer waits until workspace layout readiness before attaching
+official saved Vault events. A bounded startup callback buffer and durable gap
+classification precede ordinary scheduling/resume; while the buffer is being filled,
+only positive paths admitted by the current bootstrap scan may use the scheduler. It
+mirrors eligible Markdown through the core scheduler and
+bounded Fetch adapter. The M2 in-flight exclusion remains independent. Session
 identity suppresses stale UI, and unload detaches callbacks, UI and timers while the
 owner retains admission reservations and durable settlement. Results show metadata
 as text, never note content or raw exceptions.
@@ -304,12 +305,18 @@ the global ledger bound. Slice 7 adds host composition behind a Promise-backed,
 versioned `globalThis`/`Symbol` owner registry per App realm. `MirrorRuntimeOwner`
 remains the facade while focused coordinators own observation attachment epochs,
 configuration/connection admission, non-destructive reconciliation progress and
-staged-handoff verification. Every listener gap currently receives a fresh layout-ready positive
-scan without replacing scheduler reservations or deriving delete authority from
-absence. This v4 behavior does not prove continuous M4 observation: [ADR 0013](decisions/0013-listener-ready-effect-authority-and-observation-gap-recovery.md)
-proposes a v5 durable gap fence and listener-ready dispatch lease, neither of which
-is implemented yet. Bootstrap positive admission notifies the current session before reporting
-inventory settles, allowing the free scheduler slot to run local work without polling.
+staged-handoff verification. Listener registration now waits until layout readiness. A bounded startup callback
+buffer captures events while persisted active operations receive durable v5 gap fences;
+queued callbacks are drained durably before normal scheduling and reconciliation UI
+become available. Positive bootstrap work may proceed before that event barrier, but
+persisted M4 operations do not resume and every effect checks the current listener/
+configuration lease immediately before host or Fetch dispatch. A fresh complete-group
+review settles only aligned no-effect state or atomically transfers reservations to
+reviewed successors. Scan absence never grants deletion authority. This is the ADR 0013
+correction; bounded disposable-host evidence does not constitute full M5 qualification. Bootstrap positive admission notifies the current session before reporting
+inventory settles, allowing the free scheduler slot to run only current-scan positive
+paths without polling; persisted destructive or uncertain work remains held until the
+startup event barrier completes.
 Staged handoff events advance durable positive generations and invalidate sampled
 metadata; alignment plus activation is one serialized transition, and events arriving
 while it commits are sequenced after that transition rather than discarded. Native
@@ -330,9 +337,12 @@ shared scheduler, and session-scoped authority. Before that authority is publish
 startup-only read/hash service resolves pending v3 local effects from durable expected
 postconditions without a writer capability: exact bytes resume as `recovered-v3`,
 changed/absent bytes remain permanently blocked, ambiguous evidence remains retryable,
-and save failure aborts startup. Slice 0 remains the
-pinned local workerd qualification task and declaration-only host check; no slice
-establishes real-host behavior.
+and save failure aborts startup. Startup's positive bootstrap phase precedes draining
+the bounded event queue; concurrent readiness paths join one captured-session drain, and
+overflow or failed drain closes the lease and keeps ordinary scheduling/UI unavailable.
+A rejected active event sink likewise stops delivery, synchronously revokes the lease,
+and attempts durable gap fencing before a later epoch can resume. Slice 0 remains the pinned local workerd qualification task
+and declaration-only host check; it does not establish broad real-host behavior.
 
 ## M4 core boundary
 
@@ -343,10 +353,11 @@ listener identity, complete content-free per-path local/ACK/remote/M3 evidence, 
 remote receipts, and selected recovery metadata; the admitted operation copies that
 same typed snapshot and strict validation requires exact equality. The preservation
 policy derives the required side, revision, and content hash from this evidence rather
-than trusting receipt claims. `MirrorDeviceState` version 4 retains every M3 field and
-adds bounded sparse `reconciliationReviews`, action-discriminated operations, ordered
-history steps, step-scoped receipts, and local-effect successor evidence;
-neither can represent note/recovery bodies or arbitrary payload records.
+than trusting receipt claims. `MirrorDeviceState` version 5 retains every M3 field
+and bounded sparse M4 review, operation, ordered-history, step-receipt, and local-effect
+successor evidence, then adds operation-level observation coverage and predecessor-
+linked complete gap-group reviews/successor links. The ledger cannot represent
+note/recovery bodies or arbitrary payload records.
 
 Active M4 reservations cannot overlap, unresolved M3 effects take precedence,
 deferred rename state permits only an explicit history operation, and active
@@ -356,15 +367,18 @@ paths. A confirmed recovery restore enters the explicit active
 successor operation atomically takes over the restored path; after that successor
 completes, ordinary M3 ownership may resume.
 
-The plugin adapter keeps explicit frozen version-2 and version-3 decoders separate
-from the strict version-4 writer. Startup detects the stored version before owner
-construction. A valid v2/v3 value is projected without inferred decisions or events,
-validated, written once to the same key, loaded once, byte-compared to the canonical
-write, and strictly decoded before runtime publication. Any decode, migration, encoding, save, quota,
-read-back, integrity, or version failure remains unavailable/corrupt/unsupported and
-never publishes in-memory migrated state. A committed v4 write is safely recognized
-on the next startup even when the prior read-back failed. Runtime registry and owner
-structural versions are both 4, so older owners refuse same-realm reuse.
+The plugin adapter keeps explicit frozen version-2, version-3, and version-4 decoders
+separate from the strict version-5 writer. Startup detects the stored version before
+owner construction. Valid historical values project sequentially through the frozen
+v2→v3→v4 contracts, then strict v4→v5 classification marks every nonterminal v4
+operation `gap-review-required` while terminal records remain historical evidence.
+The complete v5 projection is validated, written once to the same key, loaded once,
+byte-compared to the canonical write, and strictly decoded before runtime publication.
+Any decode, migration, encoding, save, quota, read-back, integrity, or version failure
+remains unavailable/corrupt/unsupported and never publishes in-memory migrated state.
+A committed v5 write is safely recognized on the next startup even when the prior
+read-back failed. Runtime registry and owner structural versions are both 5, so older
+owners refuse same-realm reuse.
 
 Slice 2 adds a core-only `ReconciliationReviewService` behind read-only local and
 remote ports. It forms a bounded union of tracked/local/visible-remote/recovery paths,
@@ -429,10 +443,11 @@ ReviewedReconciliationRuntime
 review/startup/recovery query owners → thin commands/modal/status
 ```
 
-State v4 is required before history execution. The frozen v3 decoder migrates the
+State v5 is required before history execution. The frozen v3 decoder migrates the
 same key deterministically, preserving non-empty M3/M4 state and turning unrefined v3
 history or unfenced started local effects into explicit attention blockers rather than
-inferred decisions. Each globally unique history step UUID is also its exact Worker v2
+inferred decisions; frozen v4 then migrates to v5 with every nonterminal operation
+gap-fenced. Each globally unique history step UUID is also its exact Worker v2
 mutation/recovery operation ID; the parent ID is never reused across tombstones. New
 history archives add that step UUID between operation and side; existing non-history
 archive paths remain valid. History never uses the local writer. The shared scheduler
@@ -445,8 +460,13 @@ confirms a persisted synthetic effect identity, while every real host event adva
 external observation state. Events observed while reserved are persisted as one
 bounded successor range; a queue barrier drains earlier callbacks and a fresh reviewed
 successor either settles exact alignment without an effect or transfers ownership to a
-linked ordinary operation before release. This may conservatively create another review
-but cannot hide a same-text external successor or deadlock an aligned path.
+linked ordinary operation before release. The v5 `observationCoverage` fence is
+orthogonal to phase/effect evidence: cold start and listener gaps fence active
+operations, and exact receipt recovery does not clear the gap. A fresh complete group
+review may settle only aligned no-effect state or atomically transfer changed paths to
+reviewed successors; stale/incomplete/unknown evidence retains the entire reservation
+group. This may conservatively create another review but cannot hide a same-text
+external successor or deadlock an aligned path.
 
 ## Explicitly deferred
 

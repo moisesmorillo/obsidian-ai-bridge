@@ -12,7 +12,7 @@ import type {
 /**
  * Narrows aggregate-effect operations away from refined and migrated history records.
  *
- * @param operation - Any current v4 operation.
+ * @param operation - Any current v5 operation.
  * @returns Whether aggregate local/remote effect fields are authoritative.
  */
 export function isNonHistoryReconciliationOperation(
@@ -24,7 +24,7 @@ export function isNonHistoryReconciliationOperation(
 /**
  * Narrows every deferred-history operation without deciding whether it may dispatch.
  *
- * @param operation - Any current v4 operation.
+ * @param operation - Any current v5 operation.
  * @returns Whether history progress, rather than aggregate effect fields, is authoritative.
  */
 export function isHistoryReconciliationOperation(
@@ -36,7 +36,7 @@ export function isHistoryReconciliationOperation(
 /**
  * Narrows history state to an operator-refined ordered step ledger.
  *
- * @param operation - Any current v4 operation.
+ * @param operation - Any current v5 operation.
  * @returns Whether the operation may own refined history step execution.
  */
 export function isRefinedHistoryReconciliationOperation(

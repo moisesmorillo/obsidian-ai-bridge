@@ -8,8 +8,11 @@ import {
   encodeNotePath,
   formatApplicationEtag,
   isNormalizedNotePath,
+  type MirrorOperationId,
   type NotePath,
   normalizeNotePath,
+  RECONCILIATION_EFFECT_DISPATCH_KIND,
+  type ReconciliationEffectDispatchKind,
   type RemoteRequestAdmission,
 } from "@obsidian-ai-bridge/core";
 import { FetchRemoteBridge } from "@obsidian-plugin/remote/fetch-remote-bridge";
@@ -18,6 +21,7 @@ import {
   REMOTE_NOTE_REQUEST_CONTENT_TYPE,
 } from "@obsidian-plugin/remote/fetch-remote-bridge.constants";
 import type { RemoteFetch } from "@obsidian-plugin/remote/fetch-remote-bridge.types";
+import type { MirrorEffectDispatchAuthority } from "@obsidian-plugin/runtime/mirror-effect-dispatch-authority";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const ASSOCIATION = required(
@@ -65,7 +69,10 @@ function admission(): RemoteRequestAdmission & {
   readonly release: ReturnType<typeof vi.fn>;
 } {
   const release = vi.fn();
-  const admitMock = vi.fn().mockResolvedValue({ release });
+  const admitMock = vi.fn().mockResolvedValue({
+    isCurrent: () => true,
+    release,
+  });
   return { admit: admitMock, admitMock, release };
 }
 
@@ -73,6 +80,7 @@ function adapter(
   fetch: (input: URL, init: RequestInit) => Promise<Response>,
   secret = "first-token",
   deadlineMilliseconds?: number,
+  effectDispatchAuthority?: MirrorEffectDispatchAuthority,
 ) {
   const requestAdmission = admission();
   const storage = { getSecret: vi.fn(() => secret) };
@@ -85,6 +93,9 @@ function adapter(
       fetch,
       crypto: globalThis.crypto,
       ...(deadlineMilliseconds === undefined ? {} : { deadlineMilliseconds }),
+      ...(effectDispatchAuthority === undefined
+        ? {}
+        : { effectDispatchAuthority }),
     }),
     requestAdmission,
     storage,
@@ -393,6 +404,80 @@ describe("FetchRemoteBridge", () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
+  it("refuses a permit that expires before the Fetch dispatch boundary", async () => {
+    const fetch = vi.fn<RemoteFetch>();
+    const requestAdmission = admission();
+    requestAdmission.admitMock.mockResolvedValue({
+      isCurrent: () => false,
+      release: requestAdmission.release,
+    });
+    const bridge = new FetchRemoteBridge({
+      origin: "https://bridge.example",
+      secretStorage: { getSecret: () => "token" },
+      secretReference: "reference",
+      admission: requestAdmission,
+      fetch,
+    });
+
+    await expect(bridge.mutateNote(createRequest)).resolves.toEqual({
+      kind: "failure",
+      failure: "admission-denied",
+      effect: "not-dispatched",
+    });
+    expect(fetch).not.toHaveBeenCalled();
+    expect(requestAdmission.release).toHaveBeenCalledOnce();
+  });
+
+  it("invokes mutations through the atomic effect authority and refuses a stale lease", async () => {
+    const fetch = vi.fn<RemoteFetch>(async () =>
+      json(acknowledgement(), 201, { ETag: formatApplicationEtag(REVISION) }),
+    );
+    const dispatchedOperations: MirrorOperationId[] = [];
+    const dispatchedKinds: ReconciliationEffectDispatchKind[] = [];
+    const authority: MirrorEffectDispatchAuthority = {
+      setConfigurationGeneration: () => undefined,
+      dispatch<Value>(
+        operationId: MirrorOperationId,
+        kind: ReconciliationEffectDispatchKind,
+        effect: () => Value,
+      ) {
+        dispatchedOperations.push(operationId);
+        dispatchedKinds.push(kind);
+        return { kind: "dispatched", value: effect() };
+      },
+    };
+    const permitted = adapter(fetch, "first-token", undefined, authority);
+    await expect(
+      permitted.bridge.mutateNote(createRequest),
+    ).resolves.toMatchObject({
+      kind: "confirmed",
+      confirmed: { path: PATH, revision: REVISION },
+    });
+    expect(dispatchedOperations).toEqual([OPERATION]);
+    expect(dispatchedKinds).toEqual([
+      RECONCILIATION_EFFECT_DISPATCH_KIND.remoteMutation,
+    ]);
+    expect(fetch).toHaveBeenCalledOnce();
+
+    const deniedAuthority: MirrorEffectDispatchAuthority = {
+      setConfigurationGeneration: () => undefined,
+      dispatch<Value>(
+        _operationId: MirrorOperationId,
+        _kind: ReconciliationEffectDispatchKind,
+        _effect: () => Value,
+      ) {
+        return { kind: "not-ready" };
+      },
+    };
+    const denied = adapter(fetch, "first-token", undefined, deniedAuthority);
+    await expect(denied.bridge.mutateNote(createRequest)).resolves.toEqual({
+      kind: "failure",
+      failure: "admission-denied",
+      effect: "not-dispatched",
+    });
+    expect(fetch).toHaveBeenCalledOnce();
+  });
+
   it("bounds JSON bodies by actual streamed bytes rather than Content-Length", async () => {
     const oversized = "x".repeat(MAX_REMOTE_METADATA_RESPONSE_BYTES + 1);
     const { bridge } = adapter(
@@ -513,6 +598,29 @@ describe("FetchRemoteBridge", () => {
     expect(cancelled).toBe(true);
     expect(requestAdmission.release).not.toHaveBeenCalled();
     required(settleCancellation)();
+    await vi.waitFor(() =>
+      expect(requestAdmission.release).toHaveBeenCalledOnce(),
+    );
+  });
+
+  it("releases a timed-out Fetch permit when the late request rejects", async () => {
+    let rejectFetch: ((reason?: Error) => void) | undefined;
+    const pendingFetch = new Promise<Response>((_resolve, reject) => {
+      rejectFetch = reject;
+    });
+    const { bridge, requestAdmission } = adapter(
+      () => pendingFetch,
+      "token",
+      5,
+    );
+
+    await expect(bridge.mutateNote(createRequest)).resolves.toEqual({
+      kind: "failure",
+      failure: "timed-out",
+      effect: "unknown",
+    });
+    expect(requestAdmission.release).not.toHaveBeenCalled();
+    required(rejectFetch)(new Error("late network failure"));
     await vi.waitFor(() =>
       expect(requestAdmission.release).toHaveBeenCalledOnce(),
     );

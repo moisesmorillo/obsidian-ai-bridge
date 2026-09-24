@@ -26,6 +26,7 @@ import {
 import type {
   MirrorDeviceLifecycle,
   MirrorDeviceState,
+  MirrorDeviceStateV4,
   MirrorPathState,
   MirrorUnresolvedMutation,
   RenameDeferredMirrorState,
@@ -47,14 +48,18 @@ import {
   HISTORY_REMOTE_EFFECT_KIND,
   LEGACY_V3_LOCAL_EFFECT_RECOVERY_STATE,
   LOCAL_EFFECT_OBSERVATION_KIND,
+  MAX_RECONCILIATION_GAP_GROUP_REVIEWS,
   MAX_RECONCILIATION_OPERATIONS,
   MAX_RECONCILIATION_PRESERVATION_RECEIPTS,
   MAX_RECONCILIATION_REVIEWS,
   RECONCILIATION_ACTION,
   RECONCILIATION_AUTHORITY_SOURCE,
   RECONCILIATION_CLASSIFICATION,
+  RECONCILIATION_GAP_REVIEW_KIND,
+  RECONCILIATION_GAP_REVIEW_STATUS,
   RECONCILIATION_LOCAL_EVIDENCE_KIND,
   RECONCILIATION_LOCAL_STABILITY,
+  RECONCILIATION_OBSERVATION_COVERAGE,
   RECONCILIATION_OPERATION_PHASE,
   RECONCILIATION_PATH_REFERENCE_KIND,
   RECONCILIATION_PRESERVATION_PROOF_STATE,
@@ -68,6 +73,7 @@ import type {
   HistoryCleanupStep,
   LegacyV3HistoryOperation,
   LocalEffectSuccessorRange,
+  ReconciliationGapGroupReview,
   ReconciliationHistoryOperation,
   ReconciliationNonHistoryOperation,
   ReconciliationOperation,
@@ -76,17 +82,18 @@ import type {
   ReconciliationReview,
   ReconciliationReviewSnapshot,
 } from "@core/mirror/reconciliation-state.types";
+import { projectMirrorDeviceStateV4ToV5 } from "@core/mirror/reconciliation-state-migration";
 import { isNormalizedNotePath } from "@core/note-path/note-path";
 import { MAX_NOTE_SIZE_BYTES } from "@core/vault/vault.constants";
 
 /**
- * Validates all cross-field M4 review, operation, reservation, and M3-precedence rules.
+ * Validates all cross-field M4 review, gap, operation, reservation, and M3-precedence rules.
  *
  * The implementation indexes paths and identities once so validation remains linear
  * in tracked paths plus sparse M4 records. It validates metadata only; note bodies
  * are not part of the type or persisted schema.
  *
- * @param state - Candidate version-4 device state after strict field conversion.
+ * @param state - Candidate version-5 device state after strict field conversion.
  * @returns Whether its sparse M4 relationships are internally safe.
  */
 export function isReconciliationStateConsistent(
@@ -97,6 +104,7 @@ export function isReconciliationStateConsistent(
   const pathStates = new Map(state.paths.map((entry) => [entry.path, entry]));
   const reviews = new Map<string, ReconciliationReview>();
   const operations = new Map<string, ReconciliationOperation>();
+  const gapReviews = new Map<string, ReconciliationGapGroupReview>();
   const durableIds = new Set<string>();
 
   for (const review of state.reconciliationReviews) {
@@ -110,6 +118,18 @@ export function isReconciliationStateConsistent(
     }
     reviews.set(review.reviewId, review);
     durableIds.add(review.reviewId);
+  }
+  for (const gapReview of state.reconciliationGapGroupReviews) {
+    if (
+      !validateGapGroupReview(gapReview) ||
+      !validateSnapshotOwner(state, gapReview.snapshot) ||
+      gapReviews.has(gapReview.reviewId) ||
+      durableIds.has(gapReview.reviewId)
+    ) {
+      return false;
+    }
+    gapReviews.set(gapReview.reviewId, gapReview);
+    durableIds.add(gapReview.reviewId);
   }
   for (const operation of state.reconciliationOperations) {
     const ownedIds = operationOwnedIds(operation);
@@ -143,7 +163,7 @@ export function isReconciliationStateConsistent(
       !validateClassificationAction(review, operation, operations) ||
       !validateOperationAuthority(operation) ||
       !validateOperationPaths(operation, trackedPaths) ||
-      !validateSuccessorRelationship(operation, operations) ||
+      !validateSuccessorRelationship(operation, operations, gapReviews) ||
       !validateM3Precedence(operation, pathStates)
     ) {
       return false;
@@ -164,7 +184,32 @@ export function isReconciliationStateConsistent(
   for (const review of state.reconciliationReviews) {
     if (!validateReviewRelationship(review, operations)) return false;
   }
-  return true;
+  return validateGapGroupRelationships(gapReviews, reviews, operations);
+}
+
+/**
+ * Validates frozen v4 semantic relationships without borrowing v5 gap-state exceptions.
+ *
+ * The v4 format has no persisted observation-coverage evidence. Restore continuous
+ * coverage only in this validation projection so historical phase/cursor invariants
+ * remain exact; the explicit migration alone publishes gap-required coverage.
+ *
+ * @param state - Strictly decoded frozen version-4 state.
+ * @returns Whether its complete M3/M4 evidence remains valid under historical rules.
+ */
+export function isReconciliationStateV4Consistent(
+  state: MirrorDeviceStateV4,
+): boolean {
+  const projected = projectMirrorDeviceStateV4ToV5(state);
+  return isReconciliationStateConsistent({
+    ...projected,
+    reconciliationOperations: projected.reconciliationOperations.map(
+      (operation) => ({
+        ...operation,
+        observationCoverage: RECONCILIATION_OBSERVATION_COVERAGE.continuous,
+      }),
+    ),
+  });
 }
 
 /**
@@ -188,9 +233,9 @@ export function isReconciliationPathReserved(
 /**
  * Compares every immutable authority and evidence dimension of two review snapshots.
  *
- * Future decision admission can use this pure comparison without an untyped runtime
- * side channel. A changed epoch, receipt, size, path, M3 state, or lifecycle makes
- * the snapshot stale even when note bytes remain equal.
+ * Review admission uses this pure comparison without an untyped runtime side
+ * channel. A changed epoch, receipt, size, path, M3 state, or lifecycle makes the
+ * snapshot stale even when note bytes remain equal.
  *
  * @param left - Previously sampled authoritative snapshot.
  * @param right - Fresh candidate snapshot.
@@ -221,6 +266,8 @@ export function reconciliationReviewSnapshotsEqual(
 function validateCapacity(state: MirrorDeviceState): boolean {
   if (
     state.reconciliationReviews.length > MAX_RECONCILIATION_REVIEWS ||
+    state.reconciliationGapGroupReviews.length >
+      MAX_RECONCILIATION_GAP_GROUP_REVIEWS ||
     state.reconciliationOperations.length > MAX_RECONCILIATION_OPERATIONS
   ) {
     return false;
@@ -229,6 +276,9 @@ function validateCapacity(state: MirrorDeviceState): boolean {
   let pathReferences = 0;
   for (const review of state.reconciliationReviews) {
     pathReferences += review.snapshot.paths.length;
+  }
+  for (const gapReview of state.reconciliationGapGroupReviews) {
+    pathReferences += gapReview.snapshot.paths.length;
   }
   for (const operation of state.reconciliationOperations) {
     receipts += operation.preservationReceipts.length;
@@ -282,6 +332,7 @@ function validateLifecycle(state: MirrorDeviceState): boolean {
     case MIRROR_DEVICE_LIFECYCLE_KIND.handoffStaged:
       return (
         state.reconciliationReviews.length === 0 &&
+        state.reconciliationGapGroupReviews.length === 0 &&
         state.reconciliationOperations.length === 0
       );
     case MIRROR_DEVICE_LIFECYCLE_KIND.handoffDrained:
@@ -329,6 +380,30 @@ function validateReview(review: ReconciliationReview): boolean {
     (review.operationId === null
       ? review.status !== RECONCILIATION_REVIEW_STATUS.staged
       : createMirrorOperationId(review.operationId) === review.operationId)
+  );
+}
+
+/**
+ * Validates content-free gap evidence identity, closed status and child review references.
+ *
+ * @param review - Persisted complete reservation-scope sample.
+ * @returns Whether the sample is structurally safe for relationship checks.
+ */
+function validateGapGroupReview(review: ReconciliationGapGroupReview): boolean {
+  return (
+    review.kind === RECONCILIATION_GAP_REVIEW_KIND.gapGroup &&
+    createMirrorOperationId(review.reviewId) === review.reviewId &&
+    createMirrorOperationId(review.predecessorOperationId) ===
+      review.predecessorOperationId &&
+    (review.status === RECONCILIATION_GAP_REVIEW_STATUS.stale ||
+      review.status === RECONCILIATION_GAP_REVIEW_STATUS.completed) &&
+    validateSnapshot(review.snapshot) &&
+    review.childReviewIds.length <= MAX_RECONCILIATION_OPERATIONS &&
+    review.childReviewIds.every(
+      (id, index) =>
+        createMirrorOperationId(id) === id &&
+        review.childReviewIds.indexOf(id) === index,
+    )
   );
 }
 
@@ -715,6 +790,49 @@ function validateRecoveryEvidence(
 }
 
 /**
+ * Accepts only protocol-defined operation observation authority values.
+ *
+ * @param coverage - Persisted proof scope, independent from listener epoch and phase.
+ * @returns Whether the coverage is one of the closed v5 values.
+ */
+function isObservationCoverage(
+  coverage: ReconciliationOperation["observationCoverage"],
+): boolean {
+  return (
+    coverage === RECONCILIATION_OBSERVATION_COVERAGE.continuous ||
+    coverage === RECONCILIATION_OBSERVATION_COVERAGE.gapReviewRequired
+  );
+}
+
+/**
+ * Validates unique cross-operation links and permits them only on a gap-fenced completed predecessor.
+ *
+ * @param operation - Candidate durable operation with successor links.
+ * @returns Whether its gap transfer authority shape is internally valid.
+ */
+function validateGapSuccessorIds(operation: ReconciliationOperation): boolean {
+  const successors = operation.gapSuccessorOperationIds;
+  if (
+    successors.length > MAX_RECONCILIATION_OPERATIONS ||
+    successors.some(
+      (id, index) =>
+        createMirrorOperationId(id) !== id ||
+        id === operation.operationId ||
+        successors.indexOf(id) !== index,
+    )
+  ) {
+    return false;
+  }
+  return (
+    successors.length === 0 ||
+    (operation.observationCoverage ===
+      RECONCILIATION_OBSERVATION_COVERAGE.gapReviewRequired &&
+      operation.phase === RECONCILIATION_OPERATION_PHASE.completed &&
+      operation.successorOperationId === null)
+  );
+}
+
+/**
  * Checks one operation's identity, action/evidence/phase, unique reservations and evidence-bound receipts before cross-record validation.
  *
  * @returns Whether operation fields, reservations and receipts are internally valid.
@@ -724,6 +842,8 @@ function validateOperationFields(operation: ReconciliationOperation): boolean {
     createMirrorOperationId(operation.operationId) !== operation.operationId ||
     createMirrorOperationId(operation.reviewId) !== operation.reviewId ||
     operation.operationId === operation.reviewId ||
+    !isObservationCoverage(operation.observationCoverage) ||
+    !validateGapSuccessorIds(operation) ||
     !validateSnapshot(operation.snapshot) ||
     (operation.destinationPath !== null &&
       !isNormalizedNotePath(operation.destinationPath)) ||
@@ -794,22 +914,19 @@ function isMigratedRestoreOwnershipPair(
 }
 
 /**
- * Requires a distinct successor ID only after an atomic restore/event-fence ownership transfer.
- *
- * @returns Whether successor identity is present exactly when required and is distinct.
+ * Requires exact operation links for restore transfer while leaving gap-group authority to its dedicated review record.
+ * @returns Whether ordinary successor identity is present exactly when required and is distinct.
  */
 function validateSuccessorIdentity(
   operation: ReconciliationOperation,
 ): boolean {
   const requiresSuccessor =
-    (operation.action.kind === RECONCILIATION_ACTION.restoreRecovery &&
-      (operation.phase === RECONCILIATION_OPERATION_PHASE.completed ||
-        isLegacyV3UnfencedOperation(operation))) ||
-    (isNonHistoryReconciliationOperation(operation) &&
-      operation.phase === RECONCILIATION_OPERATION_PHASE.completed &&
-      "successor" in operation.localEffectObservation &&
-      operation.localEffectObservation.successor !== null);
-  if (!requiresSuccessor) return operation.successorOperationId === null;
+    operation.action.kind === RECONCILIATION_ACTION.restoreRecovery &&
+    (operation.phase === RECONCILIATION_OPERATION_PHASE.completed ||
+      isLegacyV3UnfencedOperation(operation));
+  if (!requiresSuccessor && operation.successorOperationId === null) {
+    return true;
+  }
   return (
     operation.successorOperationId !== null &&
     operation.successorOperationId !== operation.operationId &&
@@ -819,15 +936,15 @@ function validateSuccessorIdentity(
 }
 
 /**
- * Refuses a terminal transferred predecessor without its exact reviewed successor.
- * Restore transfer retains its recovery hash/generation checks; event-fence transfer
- * requires complete reservation coverage and the durable successor generation.
- *
- * @returns Whether a transferred predecessor has a valid successor, or needs none.
+ * Refuses a terminal restore/event predecessor without its authoritative transfer record.
+ * Restore uses its one-to-one operation link; gap-reviewed successor ranges use a
+ * predecessor-linked complete group record whose children are validated separately.
+ * @returns Whether the predecessor has a valid successor relationship.
  */
 function validateSuccessorRelationship(
   operation: ReconciliationOperation,
   operations: ReadonlyMap<string, ReconciliationOperation>,
+  gapReviews: ReadonlyMap<string, ReconciliationGapGroupReview>,
 ): boolean {
   const eventSuccessor =
     isNonHistoryReconciliationOperation(operation) &&
@@ -839,6 +956,13 @@ function validateSuccessorRelationship(
     operation.action.kind === RECONCILIATION_ACTION.restoreRecovery &&
     (operation.phase === RECONCILIATION_OPERATION_PHASE.completed ||
       isLegacyV3UnfencedOperation(operation));
+  if (eventSuccessor && operation.successorOperationId === null) {
+    return [...gapReviews.values()].some(
+      (review) =>
+        review.predecessorOperationId === operation.operationId &&
+        review.status === RECONCILIATION_GAP_REVIEW_STATUS.completed,
+    );
+  }
   if (!eventSuccessor && !restoreSuccessor) {
     return operation.successorOperationId === null;
   }
@@ -1136,10 +1260,20 @@ function validateHistoryOperationLifecycle(
   ) {
     return false;
   }
-  return nextStepIndex === null
-    ? operation.phase === RECONCILIATION_OPERATION_PHASE.completed
-    : operation.phase !== RECONCILIATION_OPERATION_PHASE.completed &&
-        operation.phase !== RECONCILIATION_OPERATION_PHASE.stale;
+  if (nextStepIndex === null) {
+    return (
+      operation.phase === RECONCILIATION_OPERATION_PHASE.completed ||
+      (operation.observationCoverage ===
+        RECONCILIATION_OBSERVATION_COVERAGE.gapReviewRequired &&
+        operation.phase !== RECONCILIATION_OPERATION_PHASE.stale)
+    );
+  }
+  return (
+    operation.phase !== RECONCILIATION_OPERATION_PHASE.stale &&
+    (operation.phase !== RECONCILIATION_OPERATION_PHASE.completed ||
+      operation.observationCoverage ===
+        RECONCILIATION_OBSERVATION_COVERAGE.gapReviewRequired)
+  );
 }
 
 /**
@@ -1155,14 +1289,16 @@ function validateHistoryStep(step: HistoryCleanupStep): boolean {
     case HISTORY_CLEANUP_STEP_PHASE.preserving:
     case HISTORY_CLEANUP_STEP_PHASE.ready:
     case HISTORY_CLEANUP_STEP_PHASE.mutatingRemote:
-      return step.remoteEffect.kind === MUTATION_EFFECT_CERTAINTY.notDispatched;
+      return (
+        step.remoteEffect.kind === HISTORY_REMOTE_EFFECT_KIND.notDispatched
+      );
     case HISTORY_CLEANUP_STEP_PHASE.evidenceRequired:
-      return step.remoteEffect.kind === MUTATION_EFFECT_CERTAINTY.unknown;
+      return step.remoteEffect.kind === HISTORY_REMOTE_EFFECT_KIND.unknown;
     case HISTORY_CLEANUP_STEP_PHASE.blocked:
       return (
         step.remoteEffect.kind ===
-          MUTATION_EFFECT_CERTAINTY.definitelyRefused ||
-        step.remoteEffect.kind === MUTATION_EFFECT_CERTAINTY.unknown
+          HISTORY_REMOTE_EFFECT_KIND.definitelyRefused ||
+        step.remoteEffect.kind === HISTORY_REMOTE_EFFECT_KIND.unknown
       );
     case HISTORY_CLEANUP_STEP_PHASE.completed:
       return (
@@ -1494,6 +1630,8 @@ function validateOperationLifecycleEvidence(
       receipt.proofState !== RECONCILIATION_PRESERVATION_PROOF_STATE.pending,
   );
 
+  const transferredWithoutEffects =
+    isEffectFreeGapTransferPredecessor(operation);
   let phaseIsConsistent: boolean;
   switch (operation.phase) {
     case RECONCILIATION_OPERATION_PHASE.admitted:
@@ -1552,7 +1690,7 @@ function validateOperationLifecycleEvidence(
       phaseIsConsistent =
         !hasUnknownEffect &&
         receiptsVerified &&
-        validateCompletedEffects(operation);
+        (transferredWithoutEffects || validateCompletedEffects(operation));
       break;
   }
   if (!phaseIsConsistent) return false;
@@ -1564,7 +1702,8 @@ function validateOperationLifecycleEvidence(
     operation.phase === RECONCILIATION_OPERATION_PHASE.restoredPendingReview ||
     operation.phase ===
       RECONCILIATION_OPERATION_PHASE.successorReviewRequired ||
-    operation.phase === RECONCILIATION_OPERATION_PHASE.completed ||
+    (operation.phase === RECONCILIATION_OPERATION_PHASE.completed &&
+      !transferredWithoutEffects) ||
     effects.some(
       (effect) => effect !== MUTATION_EFFECT_CERTAINTY.notDispatched,
     );
@@ -1607,8 +1746,7 @@ function validateLocalEffectObservation(
             RECONCILIATION_OPERATION_PHASE.successorReviewRequired
         : operation.phase ===
             RECONCILIATION_OPERATION_PHASE.successorReviewRequired ||
-            (operation.phase === RECONCILIATION_OPERATION_PHASE.completed &&
-              operation.successorOperationId !== null) ||
+            operation.phase === RECONCILIATION_OPERATION_PHASE.completed ||
             operation.remoteEffect !== MUTATION_EFFECT_CERTAINTY.confirmed;
     }
     case LOCAL_EFFECT_OBSERVATION_KIND.notStarted:
@@ -1668,8 +1806,7 @@ function validateLocalEffectObservation(
             RECONCILIATION_OPERATION_PHASE.successorReviewRequired
         : operation.phase ===
             RECONCILIATION_OPERATION_PHASE.successorReviewRequired ||
-            (operation.phase === RECONCILIATION_OPERATION_PHASE.completed &&
-              operation.successorOperationId !== null) ||
+            operation.phase === RECONCILIATION_OPERATION_PHASE.completed ||
             operation.localEffect !== MUTATION_EFFECT_CERTAINTY.confirmed;
     }
   }
@@ -1693,6 +1830,25 @@ function isValidSuccessorRange(
       successor.eventKinds.length > 0 &&
       successor.eventKinds.length <= 4 &&
       new Set(successor.eventKinds).size === successor.eventKinds.length)
+  );
+}
+
+/**
+ * Recognizes an effect-free predecessor completed only through a validated successor transfer.
+ *
+ * @param operation - Aggregate-effect predecessor retaining exact atomic transfer links.
+ * @returns Whether the linked gap transfer retires authority without claiming an effect ran.
+ */
+function isEffectFreeGapTransferPredecessor(
+  operation: ReconciliationNonHistoryOperation,
+): boolean {
+  return (
+    operation.phase === RECONCILIATION_OPERATION_PHASE.completed &&
+    operation.observationCoverage ===
+      RECONCILIATION_OBSERVATION_COVERAGE.gapReviewRequired &&
+    operation.gapSuccessorOperationIds.length > 0 &&
+    operation.preservationReceipts.length === 0 &&
+    noEffects(operation)
   );
 }
 
@@ -1830,6 +1986,138 @@ function validateReviewRelationship(
     review.classification !==
       RECONCILIATION_CLASSIFICATION.unresolvedM3Effect &&
     review.classification !== RECONCILIATION_CLASSIFICATION.deferredHistory
+  );
+}
+
+/**
+ * Validates exact predecessor reservations and the reciprocal atomic transfer to child reviews.
+ *
+ * @param gapReviews - Unique durable gap evidence records.
+ * @param reviews - Ordinary operation-authorizing durable reviews.
+ * @param operations - Unique durable operations and their transfer links.
+ * @returns Whether every completed or stale gap review has a valid predecessor relationship, including later-fenced successors.
+ */
+function validateGapGroupRelationships(
+  gapReviews: ReadonlyMap<string, ReconciliationGapGroupReview>,
+  reviews: ReadonlyMap<string, ReconciliationReview>,
+  operations: ReadonlyMap<string, ReconciliationOperation>,
+): boolean {
+  const completedPredecessors = new Map<string, ReconciliationGapGroupReview>();
+  for (const gapReview of gapReviews.values()) {
+    const predecessor = operations.get(gapReview.predecessorOperationId);
+    if (
+      predecessor === undefined ||
+      predecessor.observationCoverage !==
+        RECONCILIATION_OBSERVATION_COVERAGE.gapReviewRequired ||
+      gapReview.snapshot.targetPath !== predecessor.snapshot.targetPath ||
+      !samePathSet(
+        gapReview.snapshot.paths.map((evidence) => evidence.path),
+        predecessor.reservations.map((reservation) => reservation.path),
+      )
+    ) {
+      return false;
+    }
+    if (gapReview.status === RECONCILIATION_GAP_REVIEW_STATUS.stale) {
+      if (
+        !isActiveOperation(predecessor) ||
+        gapReview.childReviewIds.length !== 0 ||
+        predecessor.gapSuccessorOperationIds.length !== 0
+      ) {
+        return false;
+      }
+      continue;
+    }
+    if (
+      predecessor.phase !== RECONCILIATION_OPERATION_PHASE.completed ||
+      completedPredecessors.has(predecessor.operationId)
+    ) {
+      return false;
+    }
+    const childOperations: ReconciliationOperation[] = [];
+    for (const childReviewId of gapReview.childReviewIds) {
+      const review = reviews.get(childReviewId);
+      const child =
+        review?.operationId === null || review?.operationId === undefined
+          ? undefined
+          : operations.get(review.operationId);
+      if (
+        review === undefined ||
+        child === undefined ||
+        child.reviewId !== review.reviewId ||
+        (child.observationCoverage !==
+          RECONCILIATION_OBSERVATION_COVERAGE.continuous &&
+          child.observationCoverage !==
+            RECONCILIATION_OBSERVATION_COVERAGE.gapReviewRequired) ||
+        !runtimeIdentityEquals(
+          gapReview.snapshot.runtime,
+          child.snapshot.runtime,
+        ) ||
+        child.snapshot.paths.some((evidence) => {
+          const gapEvidence = gapReview.snapshot.paths.find(
+            (sample) => sample.path === evidence.path,
+          );
+          return (
+            gapEvidence === undefined ||
+            !pathEvidenceEquals(evidence, gapEvidence)
+          );
+        })
+      ) {
+        return false;
+      }
+      childOperations.push(child);
+    }
+    if (
+      !samePathSet(
+        predecessor.gapSuccessorOperationIds,
+        childOperations.map((child) => child.operationId),
+      )
+    ) {
+      return false;
+    }
+    completedPredecessors.set(predecessor.operationId, gapReview);
+  }
+  return [...operations.values()].every((operation) => {
+    if (
+      operation.gapSuccessorOperationIds.length !== 0 &&
+      !completedPredecessors.has(operation.operationId)
+    ) {
+      return false;
+    }
+    if (
+      !isHistoryReconciliationOperation(operation) ||
+      operation.observationCoverage !==
+        RECONCILIATION_OBSERVATION_COVERAGE.gapReviewRequired ||
+      operation.phase !== RECONCILIATION_OPERATION_PHASE.completed ||
+      operation.historyProgress.kind !== HISTORY_PROGRESS_KIND.refined ||
+      operation.historyProgress.nextStepIndex === null
+    ) {
+      return true;
+    }
+    const transfer = completedPredecessors.get(operation.operationId);
+    return (
+      transfer !== undefined &&
+      transfer.childReviewIds.length > 0 &&
+      operation.gapSuccessorOperationIds.length > 0
+    );
+  });
+}
+
+/**
+ * Compares two path identity lists as sets while rejecting duplicate samples.
+ *
+ * @param left - First path identity collection.
+ * @param right - Second path identity collection.
+ * @returns Whether each collection contains the same unique paths.
+ */
+function samePathSet(
+  left: readonly string[],
+  right: readonly string[],
+): boolean {
+  return (
+    new Set(left).size === left.length &&
+    new Set(right).size === right.length &&
+    left.length === right.length &&
+    left.every((path) => right.includes(path))
   );
 }
 

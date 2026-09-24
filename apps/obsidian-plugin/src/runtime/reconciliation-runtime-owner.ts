@@ -3,6 +3,7 @@ import {
   createMirrorOperationId,
   type FairMirrorScheduler,
   fenceMirrorRuntime,
+  isHistoryReconciliationOperation,
   LiveResolutionService,
   type LocalReconciliationWriter,
   LocalReconciliationWriteService,
@@ -14,12 +15,14 @@ import {
   projectRecoverySelection,
   RECONCILIATION_ACTION,
   RECONCILIATION_EVENT_KIND,
+  RECONCILIATION_OBSERVATION_COVERAGE,
   RECONCILIATION_OPERATION_PHASE,
   type ReadOnlyLocalVault,
   type ReconciliationAdmissionAction,
   ReconciliationEffectExecutor,
   type ReconciliationEventKind,
   type ReconciliationObservationGenerationOwner,
+  type ReconciliationOperation,
   ReconciliationReviewService,
   type ReconciliationRuntimeIdentity,
   RecoveryRestoreService,
@@ -34,6 +37,9 @@ import {
 } from "@obsidian-ai-bridge/core";
 import type {
   ReconciliationCandidateList,
+  ReconciliationGapActionSelection,
+  ReconciliationGapReviewCreationResult,
+  ReconciliationObservationGapList,
   ReconciliationReviewDetail,
   ReconciliationUiCommandResult,
   RecoverySelectionDetail,
@@ -50,6 +56,8 @@ export interface ReconciliationRuntimeOwnerDependencies {
   readonly observations: ReconciliationObservationGenerationOwner;
   readonly scheduler: FairMirrorScheduler;
   readonly cryptography: Crypto;
+  /** @returns Whether queued startup observations are durable and normal M4 scheduling is released. */
+  isNormalSchedulingReady(): boolean;
   /** @returns Exact current owner/configuration/listener identity. */
   currentIdentity(): ReconciliationRuntimeIdentity;
 }
@@ -164,6 +172,129 @@ export class ReconciliationRuntimeOwner {
     return result.kind === "complete"
       ? { kind: "available", candidates: result.candidates }
       : { kind: "incomplete", candidates: result.candidates };
+  }
+
+  /**
+   * @returns Current active gap-fenced predecessors and complete reservation path sets.
+   */
+  listObservationGaps(): ReconciliationObservationGapList {
+    if (!this.attached) return { kind: "unavailable" };
+    const candidates = this.dependencies.stateOwner
+      .snapshot()
+      .state.reconciliationOperations.filter(
+        (operation) =>
+          operation.observationCoverage ===
+            RECONCILIATION_OBSERVATION_COVERAGE.gapReviewRequired &&
+          operation.phase !== RECONCILIATION_OPERATION_PHASE.completed &&
+          operation.phase !== RECONCILIATION_OPERATION_PHASE.stale,
+      )
+      .map((operation) => ({
+        operationId: operation.operationId,
+        paths: operation.reservations.map((reservation) => reservation.path),
+      }))
+      .toSorted(
+        (left, right) =>
+          left.paths[0]?.localeCompare(right.paths[0] ?? "") ?? 0,
+      );
+    return { kind: "available", candidates };
+  }
+
+  /**
+   * Creates a new complete gap review after attempting exact history-step recovery, when required.
+   * @param sessionId - Exact process-local presentation owner.
+   * @param predecessorOperationId - Gap-fenced operation whose reservations remain held.
+   * @returns Sanitized fresh review or fail-closed result.
+   */
+  async createGapGroupReview(
+    sessionId: MirrorOperationId,
+    predecessorOperationId: MirrorOperationId,
+  ): Promise<ReconciliationGapReviewCreationResult> {
+    if (!this.attached) return { kind: "unavailable" };
+    const predecessor = this.dependencies.stateOwner
+      .snapshot()
+      .state.reconciliationOperations.find(
+        (operation) => operation.operationId === predecessorOperationId,
+      );
+    if (
+      predecessor === undefined ||
+      predecessor.observationCoverage !==
+        RECONCILIATION_OBSERVATION_COVERAGE.gapReviewRequired
+    ) {
+      return { kind: "not-reviewable" };
+    }
+    if (isHistoryReconciliationOperation(predecessor)) {
+      await this.history.execute({ operationId: predecessorOperationId });
+    }
+    const result = await this.reviews.createGapGroupReview({
+      predecessorOperationId,
+      sessionId,
+    });
+    if (result.kind !== "created") {
+      return result.kind === "not-reviewable"
+        ? { kind: "not-reviewable" }
+        : { kind: "failed" };
+    }
+    return {
+      kind: "created",
+      review: {
+        reviewId: result.review.group.reviewId,
+        predecessorOperationId: result.review.group.predecessorOperationId,
+        paths: result.review.group.snapshot.paths.map(
+          (evidence) => evidence.path,
+        ),
+        children: result.review.children.map((child) => ({
+          reviewId: child.reviewId,
+          targetPath: child.snapshot.targetPath,
+          classification: child.classification,
+          allowedActions: child.allowedActions,
+          historyCandidates: child.allowedActions.includes(
+            RECONCILIATION_ACTION.resolveHistory,
+          )
+            ? child.snapshot.paths.map((evidence) => evidence.path)
+            : [],
+        })),
+        unreviewablePaths: result.review.group.unreviewablePaths,
+      },
+    };
+  }
+
+  /**
+   * Clears an unsubmitted gap group and every child body owned by this session.
+   * @param sessionId - Exact process-local presentation owner.
+   * @param reviewId - Complete gap-group review identity.
+   * @returns Nothing; durable predecessor ownership is unchanged.
+   */
+  closeGapGroupReview(
+    sessionId: MirrorOperationId,
+    reviewId: MirrorOperationId,
+  ): void {
+    if (!this.attached) return;
+    this.reviews.closeGapGroupReview(reviewId, sessionId);
+  }
+
+  /**
+   * Submits every fresh child decision together and schedules only committed successors.
+   * @param sessionId - Exact process-local presentation owner.
+   * @param reviewId - Complete gap-group review identity.
+   * @param actions - Every ordinary child action or an empty no-effect request.
+   * @returns Sanitized settlement/admission outcome.
+   */
+  async submitGapGroup(
+    sessionId: MirrorOperationId,
+    reviewId: MirrorOperationId,
+    actions: readonly ReconciliationGapActionSelection[],
+  ): Promise<ReconciliationUiCommandResult> {
+    if (!this.attached) return { kind: "unavailable" };
+    const result = await this.reviews.admitGapGroup({
+      reviewId,
+      sessionId,
+      actions,
+    });
+    if (result.kind === "settled") return { kind: "completed" };
+    if (result.kind !== "transferred") return { kind: "failed" };
+    for (const operation of result.operations)
+      this.schedule(operation.operationId);
+    return { kind: "admitted" };
   }
 
   /**
@@ -355,6 +486,7 @@ export class ReconciliationRuntimeOwner {
     for (const operation of this.dependencies.stateOwner.snapshot().state
       .reconciliationOperations) {
       if (
+        this.hasCurrentDispatchLease(operation) &&
         operation.phase !== RECONCILIATION_OPERATION_PHASE.completed &&
         operation.phase !== RECONCILIATION_OPERATION_PHASE.stale
       ) {
@@ -378,6 +510,7 @@ export class ReconciliationRuntimeOwner {
     if (
       operation === undefined ||
       operation.reservations.length === 0 ||
+      !this.hasCurrentDispatchLease(operation) ||
       operation.phase === RECONCILIATION_OPERATION_PHASE.completed ||
       operation.phase === RECONCILIATION_OPERATION_PHASE.stale
     ) {
@@ -399,7 +532,10 @@ export class ReconciliationRuntimeOwner {
           .state.reconciliationOperations.find(
             (candidate) => candidate.operationId === operationId,
           );
-        if (current?.action.kind === RECONCILIATION_ACTION.resolveHistory) {
+        if (current === undefined || !this.hasCurrentDispatchLease(current)) {
+          return;
+        }
+        if (current.action.kind === RECONCILIATION_ACTION.resolveHistory) {
           const result = await this.history.execute({ operationId });
           continueHistory = result.kind === "progressed";
           return;
@@ -415,6 +551,24 @@ export class ReconciliationRuntimeOwner {
       async () => {
         await this.dependencies.stateOwner.transition(fenceMirrorRuntime);
       },
+    );
+  }
+
+  /**
+   * Requires durable continuous coverage and the exact current listener epoch before an operation can resume.
+   * @param operation - Persisted operation candidate.
+   * @returns Whether this operation belongs to the open current effect lease.
+   */
+  private hasCurrentDispatchLease(operation: ReconciliationOperation): boolean {
+    const current = this.dependencies.currentIdentity();
+    return (
+      this.dependencies.isNormalSchedulingReady() &&
+      operation.observationCoverage ===
+        RECONCILIATION_OBSERVATION_COVERAGE.continuous &&
+      operation.snapshot.runtime.listenerEpoch > 0 &&
+      operation.snapshot.runtime.listenerEpoch === current.listenerEpoch &&
+      operation.snapshot.runtime.configurationGeneration ===
+        current.configurationGeneration
     );
   }
 

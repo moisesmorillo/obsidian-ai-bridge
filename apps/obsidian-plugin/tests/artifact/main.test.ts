@@ -181,7 +181,7 @@ function configureActiveWriter(
     STATE_KEY,
     JSON.stringify({
       format: "obsidian-ai-bridge-device-state",
-      version: 4,
+      version: 5,
       deviceId: DEVICE_ID,
       lifecycle: {
         kind: "active",
@@ -191,6 +191,7 @@ function configureActiveWriter(
       globalBlockReason: null,
       paths,
       stagedHandoff: null,
+      reconciliationGapGroupReviews: [],
       reconciliationReviews: [],
       reconciliationOperations: [],
     }),
@@ -738,17 +739,20 @@ describe("packaged Obsidian main.js", () => {
       ["ai-bridge:prepare-writer-handoff", "Prepare writer handoff"],
       ["ai-bridge:review-remote-divergence", "Review remote divergence"],
       ["ai-bridge:restore-recovery-snapshot", "Restore recovery snapshot"],
+      ["ai-bridge:review-observation-gaps", "Review observation gaps"],
     ]);
     expect(obsidian.host.vault.getFiles).not.toHaveBeenCalled();
     expect(obsidian.host.vault.read).not.toHaveBeenCalled();
     expect(obsidian.host.getActiveFile).not.toHaveBeenCalled();
     expect(obsidian.host.loadData).toHaveBeenCalledTimes(1);
     expect(obsidian.host.saveData).not.toHaveBeenCalled();
+    expect(obsidian.host.vaultListeners.size).toBe(0);
+    expect(obsidian.host.onLayoutReady).toHaveBeenCalledOnce();
+    obsidian.host.becomeLayoutReady();
     expect(obsidian.host.vaultListeners.get("create")).toHaveLength(1);
     expect(obsidian.host.vaultListeners.get("modify")).toHaveLength(1);
     expect(obsidian.host.vaultListeners.get("delete")).toHaveLength(1);
     expect(obsidian.host.vaultListeners.get("rename")).toHaveLength(1);
-    expect(obsidian.host.onLayoutReady).toHaveBeenCalledOnce();
 
     const settings = [...obsidian.host.settingsTabs][0];
     if (settings === undefined) throw new Error("Expected a settings tab");
@@ -874,12 +878,14 @@ describe("packaged Obsidian main.js", () => {
     const plugin = await realm.load();
     expect(fetch).not.toHaveBeenCalled();
     expect(obsidian.host.vault.getFiles).not.toHaveBeenCalled();
-    expect(obsidian.host.vault.on.mock.invocationCallOrder.at(-1)).toBeLessThan(
-      obsidian.host.onLayoutReady.mock.invocationCallOrder[0] ??
-        Number.MAX_SAFE_INTEGER,
-    );
+    expect(obsidian.host.vault.on).not.toHaveBeenCalled();
+    const layoutReadyRegistrationOrder =
+      obsidian.host.onLayoutReady.mock.invocationCallOrder[0] ?? 0;
 
     obsidian.host.becomeLayoutReady();
+    expect(obsidian.host.vault.on.mock.invocationCallOrder[0]).toBeGreaterThan(
+      layoutReadyRegistrationOrder,
+    );
     await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
     const file = addSavedNote();
     obsidian.host.emitVault("modify", file);
@@ -1172,6 +1178,11 @@ describe("packaged Obsidian main.js", () => {
         [...obsidian.host.statusBars].some((item) =>
           item.textContent.includes("0 pending"),
         ),
+      ).toBe(true),
+    );
+    await vi.waitFor(() =>
+      expect(
+        server.requests.some(({ url }) => url.pathname === "/api/v2/notes"),
       ).toBe(true),
     );
 

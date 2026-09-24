@@ -112,6 +112,20 @@ export class MirrorStateOwner {
   }
 
   /**
+   * Queues a state barrier after prior transitions and avoids a storage write when policy returns the exact current state.
+   *
+   * A no-op still waits for earlier writes to settle, so callers can safely publish lifecycle authority from the resulting snapshot.
+   *
+   * @param transition - Core policy evaluated against the latest serialized state.
+   * @returns Commit, unchanged-state success, validation, or sanitized persistence outcome.
+   */
+  transitionIfChanged(
+    transition: (current: MirrorDeviceState) => MirrorDeviceState | undefined,
+  ): Promise<MirrorStateCommitResult> {
+    return this.enqueue(() => this.apply(transition, true));
+  }
+
+  /**
    * Persists the current authoritative snapshot before clearing a runtime save-failure fence.
    *
    * @returns Updated conservative snapshot; admission remains denied on another failure.
@@ -157,10 +171,12 @@ export class MirrorStateOwner {
    * Validates and saves a queued transition before publishing/revision advance; typed save failure retains prior state and fences admission.
    *
    * @param transition - Queued pure state transition evaluated against the latest published ledger.
+   * @param skipUnchanged - Whether exact current-state identity avoids persistence while retaining queue-barrier semantics.
    * @returns The committed or rejected transition outcome.
    */
   private async apply(
     transition: (current: MirrorDeviceState) => MirrorDeviceState | undefined,
+    skipUnchanged = false,
   ): Promise<MirrorStateCommitResult> {
     const next = transition(this.state);
     if (next === undefined || !isMirrorDeviceStateConsistent(next)) {
@@ -168,6 +184,9 @@ export class MirrorStateOwner {
         kind: "invalid-transition",
         snapshot: this.settledOperationSnapshot(),
       };
+    }
+    if (skipUnchanged && next === this.state) {
+      return { kind: "committed", snapshot: this.settledOperationSnapshot() };
     }
     const saved = await this.store.save(next);
     if (saved.kind === "failed") {

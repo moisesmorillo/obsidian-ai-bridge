@@ -27,6 +27,7 @@ import {
   RECONCILIATION_CLASSIFICATION,
   RECONCILIATION_LOCAL_EVIDENCE_KIND,
   RECONCILIATION_LOCAL_STABILITY,
+  RECONCILIATION_OBSERVATION_COVERAGE,
   RECONCILIATION_OPERATION_PHASE,
   RECONCILIATION_PATH_REFERENCE_KIND,
   RECONCILIATION_PRESERVATION_PROOF_STATE,
@@ -182,6 +183,7 @@ function migratedState(
       },
     ],
     stagedHandoff: null,
+    reconciliationGapGroupReviews: [],
     reconciliationReviews: [
       {
         retention: RECONCILIATION_REVIEW_RETENTION.durable,
@@ -194,6 +196,8 @@ function migratedState(
     ],
     reconciliationOperations: [
       {
+        observationCoverage: RECONCILIATION_OBSERVATION_COVERAGE.continuous,
+        gapSuccessorOperationIds: [],
         operationId: OPERATION,
         reviewId: REVIEW,
         authority: RECONCILIATION_AUTHORITY_SOURCE.adoptionDecision,

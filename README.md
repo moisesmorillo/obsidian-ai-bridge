@@ -2,7 +2,7 @@
 
 A secure bridge between Obsidian and remote AI or agent clients.
 
-> **Status:** M1–M4 are **COMPLETE** and [M5 — Operational and security readiness](docs/roadmap.md#m5--operational-and-security-readiness) remains the single **NEXT** milestone. M5 Slices 0–4 are complete: the Worker now authenticates only through the strict bounded digest-only credential registry, enforces independent route permissions, exposes only v2 authenticated operations, and emits client-attributed content-free live diagnostics. Slice 5 is next, but Slice 5–6 qualification remains blocked despite the merged host-visible preservation fix: the listener-gap safety correction in [ADR 0013](docs/decisions/0013-listener-ready-effect-authority-and-observation-gap-recovery.md) is design only, and full qualification must be rerun; there is no current support claim. The bridge remains experimental and undeployed. No personal-vault installation, full real-desktop/mobile/iCloud/background-iOS qualification, or production-readiness claim is made.
+> **Status:** M1–M4 are **COMPLETE** and [M5 — Operational and security readiness](docs/roadmap.md#m5--operational-and-security-readiness) remains the single **NEXT** milestone. M5 Slices 0–4 are complete: the Worker now authenticates only through the strict bounded digest-only credential registry, enforces independent route permissions, exposes only v2 authenticated operations, and emits client-attributed content-free live diagnostics. The corrective [ADR 0013](docs/decisions/0013-listener-ready-effect-authority-and-observation-gap-recovery.md) implementation adds strict device-state v5, delayed listener attachment, dispatch-time leases, and fail-closed observation-gap review. Bounded qualification in a disposable Obsidian 1.13.7 host exercised migration, reviewed transfer, and reservation retention after a detached edit; full M5 qualification remains outstanding and there is no current support claim. The bridge remains experimental and undeployed. No personal-vault installation, full-scale desktop/mobile/iCloud/background-iOS qualification, or production-readiness claim is made.
 
 ## Motivation
 
@@ -25,7 +25,7 @@ Cloudflare Worker
 Cloudflare R2
 ```
 
-Completed M3 connects this outward path in the generated plugin: an explicitly activated designated writer observes official saved-file events and uses the conditional v2 Worker API. Completed M4 adds qualified explicit reviewed remote-to-local actions, not automatic bidirectional synchronization. M5 Slices 2–4 add named registry-only authentication/lifecycle, independent route permission enforcement, v1 retirement, and live client-attributed diagnostics, but not operational readiness. The system remains experimental and undeployed; it has no MCP or production certification. Real-host evidence is limited to the isolated corrective preservation-root and Keep-local scenario, not complete desktop/mobile qualification.
+Completed M3 connects this outward path in the generated plugin: an explicitly activated designated writer observes official saved-file events and uses the conditional v2 Worker API. Completed M4 adds explicit reviewed remote-to-local actions, strict state-v5 observation-gap fencing, and dispatch-boundary lease checks—not automatic bidirectional synchronization. M5 Slices 2–4 add named registry-only authentication/lifecycle, independent route permission enforcement, v1 retirement, and live client-attributed diagnostics, but not operational readiness. The system remains experimental and undeployed; it has no MCP or production certification. Disposable real-host evidence covers the corrective preservation-root/Keep-local scenario and bounded ADR 0013 gap migration/review/transfer cases; it is not full desktop/mobile qualification.
 
 ## Goals
 
@@ -38,7 +38,7 @@ Completed M3 connects this outward path in the generated plugin: an explicitly a
 
 - After explicit whole-scope consent, one configured designated writer automatically mirrors eligible saved Markdown outward. Unconfigured, disabled, and non-writer instances remain passive. M2 metadata-only inspection commands remain available and independent.
 - Local eligibility excludes dot-prefixed segments, the host configuration directory, and the exact current/historical conflict-preservation namespaces `ai-bridge-conflicts` and `.ai-bridge-conflicts`; prefix-sharing ordinary names remain eligible. Literal paths are not URI-decoded. Reads use best-effort change detection, not atomic snapshots or editor buffers. Notes are limited to 1 MiB.
-- The plugin ID is `ai-bridge`. See [disposable-vault qualification guidance](docs/plugin-development.md). Corrective isolated Obsidian desktop evidence covers only the replacement preservation root and one Keep-local path; no complete desktop, mobile or iCloud qualification has been performed.
+- The plugin ID is `ai-bridge`. See [disposable-vault qualification guidance](docs/plugin-development.md). Isolated Obsidian desktop evidence covers the replacement preservation root/Keep-local path and a bounded ADR 0013 migration, gap-transfer, and detached-edit retention scenario. No 10,000-note/complete desktop, mobile, or iCloud qualification has been performed.
 - Authentication resolves a named client principal only from a strict registry of at most 16 domain-separated token digests. Raw client tokens remain only in approved client secret stores. One exhaustive operation policy enforces independent `read`, `write`, and `delete` permissions before service/storage dispatch; `write` never implies `delete`. The designated writer credential needs all three for current M3/M4 behavior. Live content-free diagnostics identify authenticated client IDs and closed operation/outcome categories, with zero-day retention and no audit-trail claim. Association/writer UUIDs remain separate non-secret cooperating-writer guards.
 - iCloud remains working-vault device sync. The plugin sees host events rather than a transactional iCloud log; missed/offline absences never grant deletion authority, so some deletions require later reconciliation.
 - M3 itself has no remote-to-local behavior. M4 adds explicit reviewed reconciliation, text-only recovery selection, and bounded deferred-history cleanup, but no automatic takeover, automatic bidirectional conflict resolution, scheduled cleanup, search, MCP, D1, Durable Objects, Workers AI, or Vectorize support. The [operator guide](docs/operations.md) describes review, restoration, setup, recovery, handoff, rotation, migration, and rollback restrictions.
@@ -153,9 +153,11 @@ and [sequential plan](docs/plans/m4-remote-to-local-reconciliation-and-conflict-
 M4 Slices 1–8 implement and qualify the closed contracts, strict v2→v3→v4 migration
 fence, review/admission, narrow local write/conflict preservation, live/adoption/
 tombstone/recovery execution, bounded parent-owned history steps, step-scoped
-preservation, and shared runtime/session/command/modal/status composition.
-[ADR 0009](docs/decisions/0009-m4-history-runtime-and-device-state-v4.md) defines the v4
-compatibility transition and conservative event authority. M5 is NEXT with completed Slices 0–4; Slice 5 is next. Its
+preservation, and shared runtime/session/command/modal/status composition. The atomic
+[ADR 0013](docs/decisions/0013-listener-ready-effect-authority-and-observation-gap-recovery.md)
+correction then adds strict v4→v5 migration, cold-start/detach gap fencing, layout-ready
+listener registration, dispatch leases, and fresh complete-group transfer. It does not
+change the Worker API or complete M5 qualification. M5 is NEXT with completed Slices 0–4; Slice 5 is next. Its
 [planning specification](docs/milestones/m5-operational-and-security-readiness.md),
 [consolidated threat model](docs/threat-model.md),
 [credential/permission ADR](docs/decisions/0010-scoped-client-credentials-and-permissions.md),

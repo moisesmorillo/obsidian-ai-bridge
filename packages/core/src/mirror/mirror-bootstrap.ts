@@ -86,6 +86,7 @@ export class MirrorBootstrapCoordinator {
     if (!isBootstrapAdmissionCandidate(initial)) {
       return { kind: "inactive", eligiblePaths: [], inventory: null };
     }
+    this.pathRuntime.beginBootstrapScan();
     onStarted();
     const description = await this.remote.describe();
     if (description.kind === "failure") {

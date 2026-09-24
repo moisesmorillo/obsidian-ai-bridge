@@ -1,3 +1,4 @@
+import { ObservationGapReviewModal } from "@obsidian-plugin/reconciliation/observation-gap-review-modal";
 import { ReconciliationReviewModal } from "@obsidian-plugin/reconciliation/reconciliation-review-modal";
 import type { ReconciliationUiOwner } from "@obsidian-plugin/reconciliation/reconciliation-ui.types";
 import { RecoverySelectionModal } from "@obsidian-plugin/reconciliation/recovery-selection-modal";
@@ -12,6 +13,10 @@ export const RECONCILIATION_COMMANDS = {
   restore: {
     id: "restore-recovery-snapshot",
     name: "Restore recovery snapshot",
+  },
+  observationGaps: {
+    id: "review-observation-gaps",
+    name: "Review observation gaps",
   },
 } as const satisfies Record<string, Pick<Command, "id" | "name">>;
 
@@ -45,6 +50,24 @@ export class ReconciliationCommands {
         void this.openRecovery();
       },
     });
+    this.plugin.addCommand({
+      ...RECONCILIATION_COMMANDS.observationGaps,
+      callback: () => {
+        this.openObservationGaps();
+      },
+    });
+  }
+
+  /** Opens only the bounded active-gap projection for a current attached session. */
+  private openObservationGaps(): void {
+    const result = this.owner.listObservationGaps(this.sessionId);
+    if (!this.attached || result.kind === "unavailable") return;
+    new ObservationGapReviewModal(
+      this.plugin.app,
+      this.owner,
+      this.sessionId,
+      result.candidates,
+    ).open();
   }
 
   /** Prevents delayed command completions from opening stale UI. */

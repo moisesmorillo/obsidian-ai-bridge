@@ -11,6 +11,7 @@ import {
   MIRROR_ACKNOWLEDGEMENT_KIND,
   MIRROR_DESIRED_STATE_KIND,
   MIRROR_DEVICE_LIFECYCLE_KIND,
+  MIRROR_GLOBAL_BLOCK_REASON,
   MIRROR_PAUSE_REASON,
   MIRROR_STATE_STORE_FAILURE,
   type MirrorDeviceState,
@@ -96,6 +97,7 @@ function activeState(): MirrorDeviceState {
       },
     ],
     stagedHandoff: null,
+    reconciliationGapGroupReviews: [],
     reconciliationReviews: [],
     reconciliationOperations: [],
   };
@@ -167,6 +169,38 @@ describe("MirrorStateOwner", () => {
     expect(competingResult.kind).toBe("stale");
     expect(competingResult.snapshot.mutationAdmissionAllowed).toBe(true);
     expect(store.save).toHaveBeenCalledTimes(1);
+  });
+
+  it("waits behind pending persistence for a no-op state barrier without rewriting state", async () => {
+    const pending = Promise.withResolvers<MirrorStateSaveResult>();
+    const store = new FakeStateStore();
+    store.save.mockImplementationOnce(() => pending.promise);
+    const owner = new MirrorStateOwner(activeState(), store);
+    const transition = owner.transition((state) => ({
+      ...state,
+      globalBlockReason: MIRROR_GLOBAL_BLOCK_REASON.runtimeUnavailable,
+    }));
+    let barrierObservedCommittedState = false;
+    const barrier = owner.transitionIfChanged((state) => {
+      barrierObservedCommittedState =
+        state.globalBlockReason ===
+        MIRROR_GLOBAL_BLOCK_REASON.runtimeUnavailable;
+      return state;
+    });
+
+    await Promise.resolve();
+    expect(store.save).toHaveBeenCalledOnce();
+    pending.resolve({ kind: "saved" });
+    const [transitionResult, barrierResult] = await Promise.all([
+      transition,
+      barrier,
+    ]);
+
+    expect(transitionResult.kind).toBe("committed");
+    expect(barrierResult.kind).toBe("committed");
+    expect(barrierObservedCommittedState).toBe(true);
+    expect(owner.snapshot().revision).toBe(1);
+    expect(store.save).toHaveBeenCalledOnce();
   });
 
   it("rejects ACKs that mismatch any persisted intent identity field", async () => {
@@ -346,6 +380,7 @@ describe("MirrorStateOwner", () => {
             origin: ORIGIN,
           },
           stagedHandoff: null,
+          reconciliationGapGroupReviews: [],
           reconciliationReviews: [],
           reconciliationOperations: [],
         }))
@@ -440,6 +475,7 @@ describe("MirrorStateOwner", () => {
         entries,
       },
       reconciliationReviews: [],
+      reconciliationGapGroupReviews: [],
       reconciliationOperations: [],
     };
     const store = new FakeStateStore();

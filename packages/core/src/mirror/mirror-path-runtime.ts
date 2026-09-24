@@ -84,6 +84,20 @@ export class MirrorPathRuntime {
     return now >= this.destructiveGraceDeadline(path, persistedDeadline, now);
   }
 
+  /**
+   * Clears prior-scan positive markers so only observations recorded after this call
+   * can enter the next positive bootstrap scheduler window.
+   */
+  beginBootstrapScan(): void {
+    for (const [path, state] of this.pathState) {
+      if (!state.bootstrapInspectionRequired) continue;
+      this.pathState.set(path, {
+        ...state,
+        bootstrapInspectionRequired: false,
+      });
+    }
+  }
+
   /** @returns A process-local strictly increasing observation generation. */
   nextGeneration(): number {
     this.observationGeneration += 1;

@@ -62,18 +62,22 @@ remote-to-local system. Canonical validation passed, the final semantic review's
 MINOR findings were corrected at `e97af36`, and the corrective review returned APPROVE
 with no open findings. M4 Slices 1–8 are COMPLETE, and M5 is the single NEXT milestone. M5 Slices 0–4 are complete and Slice 5 is next. M4's reviewed-only authority, preservation, local mutation,
 adoption/tombstone/restore, migration, and one-writer product decisions are implemented
-and qualified. Slice 1
-implements the closed contracts, sparse state v3, deterministic v2 migration/read-back
-fence, downgrade refusal, and runtime registry compatibility fence. Slice 2 adds the
-core-only bounded read-only review/classification engine, ephemeral stale-bound reviews,
-allowed-action policy, and serialized content-free admission. Slice 3 adds operation-
-authorized local create/replace and durable preservation primitives. Slices 4–5 add
-core-only exact live/adoption/tombstone/restore action execution, receipt-based remote
-effect recovery, and restored-path successor ownership. ADR 0009's compatibility transition is implemented by Slices 6–7: strict state v4,
-bounded reviewed history cleanup, shared M3/M4 scheduling, durable synthetic local
-effect/successor evidence, and text-only runtime/UI composition. Slice 8 adds
+and qualified. Slice 1 implements the closed contracts, sparse state v3, deterministic
+v2 migration/read-back fence, downgrade refusal, and runtime registry compatibility
+fence. Slice 2 adds the core-only bounded read-only review/classification engine,
+ephemeral stale-bound reviews, allowed-action policy, and serialized content-free
+admission. Slice 3 adds operation-authorized local create/replace and durable
+preservation primitives. Slices 4–5 add core-only exact live/adoption/tombstone/restore
+action execution, receipt-based remote effect recovery, and restored-path successor
+ownership. ADR 0009's compatibility transition is implemented by Slices 6–7: strict
+state v4, bounded reviewed history cleanup, shared M3/M4 scheduling, durable synthetic
+local-effect/successor evidence, and text-only runtime/UI composition. Slice 8 adds
 proportional packaged M4 behavior, stale/restore/replacement/leakage gates, synchronized
 operations/security guidance, canonical validation, and final semantic approval.
+The later corrective [ADR 0013](decisions/0013-listener-ready-effect-authority-and-observation-gap-recovery.md)
+implementation advances current device state and owner/registry authority to v5, adds
+cold-start/listener-gap fencing and dispatch leases, and has bounded disposable-host
+evidence; this correction does not constitute M5 qualification or support.
 Slice 0 qualifies the pinned local
 conditional-storage runtime and host declarations. Slice 1 raises the plugin baseline
 to 1.13.0 and adds shared typed contracts. Worker Slice 2A–2C implements private conditional storage, application current/
@@ -284,12 +288,13 @@ specification remain required before M5 production work.
 
 ### M5 — Operational and security readiness
 
-**NEXT — Slices 0–4 complete; Slice 5 is next.** M5 Slice 5–6 qualification
-remains blocked despite the merged host-visible M4 preservation correction: the
-pre-layout 5,000-path listener amplification and unprovable M4 listener-gap successor
-absence require the proposed [ADR 0013](decisions/0013-listener-ready-effect-authority-and-observation-gap-recovery.md)
-compatibility/runtime correction and a full qualification rerun. This design PR does
-not implement that correction, resume M5 or claim support. The
+**NEXT — Slices 0–4 complete; Slice 5 is next.** The corrective ADR 0013 v5
+compatibility/runtime change is implemented, and bounded disposable Obsidian 1.13.7
+qualification exercises migration, complete-group review/transfer, and fail-closed
+reservation retention after a detached edit. This does not meet M5 Slice 6's full
+qualification envelope: the 10,000-note target, full desktop failure matrix, iCloud,
+mobile, release synchronization, and operational procedures remain outstanding. M5
+continues as the sole NEXT milestone with no support claim. The
 [M5 specification](milestones/m5-operational-and-security-readiness.md),
 [consolidated threat model](threat-model.md),
 [ADR 0010](decisions/0010-scoped-client-credentials-and-permissions.md), and

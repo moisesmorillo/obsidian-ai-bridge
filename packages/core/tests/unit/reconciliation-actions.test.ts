@@ -38,6 +38,7 @@ import {
   RECONCILIATION_EVENT_KIND,
   RECONCILIATION_LOCAL_EVIDENCE_KIND,
   RECONCILIATION_LOCAL_STABILITY,
+  RECONCILIATION_OBSERVATION_COVERAGE,
   RECONCILIATION_OPERATION_PHASE,
   RECONCILIATION_PATH_REFERENCE_KIND,
   RECONCILIATION_PRESERVATION_PROOF_STATE,
@@ -753,6 +754,8 @@ function stateFor(
     recovery,
   );
   const operation: ReconciliationNonHistoryOperation = {
+    observationCoverage: RECONCILIATION_OBSERVATION_COVERAGE.continuous,
+    gapSuccessorOperationIds: [],
     operationId: OPERATION,
     reviewId: REVIEW,
     authority: authority(action),
@@ -807,6 +810,7 @@ function stateFor(
       },
     ],
     stagedHandoff: null,
+    reconciliationGapGroupReviews: [],
     reconciliationReviews: [
       {
         retention: RECONCILIATION_REVIEW_RETENTION.durable,

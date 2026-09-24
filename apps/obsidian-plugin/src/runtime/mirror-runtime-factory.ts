@@ -11,6 +11,8 @@ import { ObsidianLocalReconciliationWriter } from "@obsidian-plugin/infrastructu
 import { createObsidianLocalReconciliationHost } from "@obsidian-plugin/infrastructure/obsidian-local-reconciliation-writer-host";
 import { ObsidianLocalVault } from "@obsidian-plugin/infrastructure/obsidian-local-vault";
 import { createObsidianVaultHost } from "@obsidian-plugin/infrastructure/obsidian-vault-host";
+import { MirrorEffectDispatchGate } from "@obsidian-plugin/runtime/mirror-effect-dispatch-authority";
+import { MirrorObservationEpochCoordinator } from "@obsidian-plugin/runtime/mirror-observation-epoch";
 import {
   BrowserMirrorSynchronizerRuntime,
   hasMirrorRuntimeCryptography,
@@ -30,7 +32,7 @@ export type MirrorRuntimeAppHost = Pick<
  * Loads or provisions device-local state before constructing the runtime owner.
  *
  * Missing state receives one new UUID-v4 and is saved before publication. Loading
- * may migrate valid v2/v3 state. Corrupt, future, unavailable or unsuccessfully saved
+ * may migrate valid v2/v3/v4 state. Corrupt, future, unavailable or unsuccessfully saved
  * state prevents owner publication; host save failure does not prove no write occurred.
  *
  * @param app - Official App-local storage and SecretStorage capabilities.
@@ -91,14 +93,19 @@ export async function createMirrorRuntimeOwner(
       throw new Error("Device-local mirror state is unavailable.");
     }
   }
+  const epochs = new MirrorObservationEpochCoordinator();
+  const dispatchAuthority = new MirrorEffectDispatchGate(stateOwner, epochs);
   const localWriter = new ObsidianLocalReconciliationWriter(
     createObsidianLocalReconciliationHost(vault),
     runtime,
+    dispatchAuthority,
   );
   return new MirrorRuntimeOwner({
     stateOwner,
     local,
     localWriter,
+    epochs,
+    effectDispatchAuthority: dispatchAuthority,
     secretStorage: app.secretStorage,
     runtime,
     cryptography: globalThis.crypto,

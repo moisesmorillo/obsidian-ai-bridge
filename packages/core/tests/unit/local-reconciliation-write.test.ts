@@ -28,6 +28,7 @@ import {
   RECONCILIATION_EVENT_KIND,
   RECONCILIATION_LOCAL_EVIDENCE_KIND,
   RECONCILIATION_LOCAL_STABILITY,
+  RECONCILIATION_OBSERVATION_COVERAGE,
   RECONCILIATION_OPERATION_PHASE,
   RECONCILIATION_PATH_REFERENCE_KIND,
   RECONCILIATION_PRESERVATION_PROOF_STATE,
@@ -229,6 +230,7 @@ function stateWithOperation(
       },
     ],
     stagedHandoff: null,
+    reconciliationGapGroupReviews: [],
     reconciliationReviews: [
       {
         retention: RECONCILIATION_REVIEW_RETENTION.durable,
@@ -283,6 +285,8 @@ function preservationOperation(
   phase: ReconciliationOperation["phase"] = RECONCILIATION_OPERATION_PHASE.admitted,
 ): ReconciliationNonHistoryOperation {
   return {
+    observationCoverage: RECONCILIATION_OBSERVATION_COVERAGE.continuous,
+    gapSuccessorOperationIds: [],
     operationId: OPERATION,
     reviewId: REVIEW,
     authority: RECONCILIATION_AUTHORITY_SOURCE.reconciliationDecision,
@@ -352,6 +356,8 @@ function remoteOnlyOperation(): ReconciliationNonHistoryOperation {
 function multiPathPreservationOperation(): ReconciliationNonHistoryOperation {
   const target = liveSnapshot();
   return {
+    observationCoverage: RECONCILIATION_OBSERVATION_COVERAGE.continuous,
+    gapSuccessorOperationIds: [],
     operationId: OPERATION,
     reviewId: REVIEW,
     authority: RECONCILIATION_AUTHORITY_SOURCE.reconciliationDecision,
@@ -396,6 +402,8 @@ function multiPathPreservationOperation(): ReconciliationNonHistoryOperation {
 /** @returns A valid absent-target exact revision adoption operation. */
 function adoptionOperation(): ReconciliationNonHistoryOperation {
   return {
+    observationCoverage: RECONCILIATION_OBSERVATION_COVERAGE.continuous,
+    gapSuccessorOperationIds: [],
     operationId: OPERATION,
     reviewId: REVIEW,
     authority: RECONCILIATION_AUTHORITY_SOURCE.adoptionDecision,

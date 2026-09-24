@@ -31,6 +31,7 @@ import {
   LOCAL_EFFECT_OBSERVATION_KIND,
   RECONCILIATION_ACTION,
   RECONCILIATION_LOCAL_EVIDENCE_KIND,
+  RECONCILIATION_OBSERVATION_COVERAGE,
   RECONCILIATION_OPERATION_PHASE,
 } from "@core/mirror/reconciliation-state.constants";
 import type {
@@ -514,7 +515,7 @@ export class LocalReconciliationWriteService {
 }
 
 /**
- * Derives a deterministic non-parent UUID only for compatibility callers lacking the v4 runtime seam.
+ * Derives a deterministic non-parent UUID only for compatibility callers without the injected effect-identity seam.
  *
  * @param operationId - Parent operation identity.
  * @returns Distinct valid synthetic effect identity.
@@ -650,6 +651,8 @@ function dispatchMode(
 ): AuthorizedWrite["mode"] | undefined {
   const requirements = requiredReconciliationPreservations(operation);
   if (
+    operation.observationCoverage !==
+      RECONCILIATION_OBSERVATION_COVERAGE.continuous ||
     requirements === undefined ||
     !areRequiredReconciliationPreservationsVerified(
       requirements,

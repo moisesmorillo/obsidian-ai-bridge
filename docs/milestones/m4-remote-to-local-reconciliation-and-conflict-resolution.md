@@ -458,6 +458,17 @@ and core checkpoint may be built first, but Slices 6–7 must land together: no 
 runtime may save v4 until the complete version-4 Slice 7 owner/registry surface is
 present.
 
+The corrective ADR 0013 transition makes version 5 current while keeping the v4 codec
+frozen. Startup strictly decodes v4, projects all existing evidence unchanged, assigns
+`continuous` only to terminal operations and `gap-review-required` to every nonterminal
+operation, validates the complete v5 state, and performs one same-key save plus exact
+read-back/strict-v5 decode before owner publication. Existing v2/v3 histories still
+project through their frozen v3/v4 paths before the final v5 migration. The v5 byte
+limit is 13 MiB; existing collection ceilings remain in force. Runtime-owner and
+same-realm registry versions are both 5. There is no reverse migration, and a cold
+start durably fences any active v5 operation whose process-local observation interval
+cannot be proven continuous before effectful resume.
+
 ## Remote API audit
 
 | M4 operation | Existing v2 capability | Sufficiency |
@@ -551,11 +562,13 @@ must atomically take ownership; stale, incomplete, closed, or deferred review le
 the predecessor reserved. This conservative rule may create an extra review but cannot
 erase an external event, deadlock an aligned path, or grant ordinary M3 authority.
 Listener gaps/restart retain the durable effect, postcondition, successor range, and
-successor link rather than process-local causality claims. **Corrective design only:**
-this implemented v4 retention does not prove absence of a missed successor while
-listeners were detached. [ADR 0013](../decisions/0013-listener-ready-effect-authority-and-observation-gap-recovery.md)
-proposes strict state v5, a gap-review fence and listener-ready dispatch lease; its
-implementation and qualification remain outstanding.
+successor link rather than process-local causality claims. The v4 retention alone did
+not prove absence of a missed successor while listeners were detached. The corrective
+[ADR 0013](../decisions/0013-listener-ready-effect-authority-and-observation-gap-recovery.md)
+implementation now uses strict state v5, a gap-review fence, a layout-ready listener
+lifecycle, and dispatch-time leases. Fresh complete-group review is required to settle
+or atomically transfer active reservations; the bounded host evidence is recorded in
+[listener-gap qualification](../qualification/m4-listener-gap-recovery.md).
 
 `ReconciliationReviewService` owns exact close-one-review and invalidate-one-session
 operations. They clear transient bodies and pending UI authority but never cancel an
@@ -813,6 +826,40 @@ claimed as causally own. Two text-only commands/modals render literal previews o
 after explicit action, clear transient bodies on close/detach, and consume sanitized
 status projections. Registration performs no network or mutation.
 
+### Corrective ADR 0013 implementation evidence
+
+The corrective runtime/state change preserves ADR 0009's v4 semantics as frozen
+history and makes strict state v5 current. `observationCoverage` is orthogonal to
+operation phase and effect certainty. The same-key v4→v5 migration preserves all
+historical evidence, fences every nonterminal v4 operation, and validates/encodes the
+complete bounded state before exact read-back and owner publication. Cold startup and
+listener detach durably classify active operations before a new effect lease is usable;
+local/remote effect adapters recheck the current lease immediately before dispatch.
+
+Vault listeners attach only after workspace layout readiness. Callbacks arriving before
+the startup barrier opens are held in a bounded buffer; active-writer positive bootstrap
+may proceed, but its early scheduler slot is restricted to current-scan positive paths
+without unresolved M3 intent or M4 reservations. Persisted destructive/uncertain M3 work,
+normal scheduling, reconciliation UI, and persisted M4 resume remain unavailable until
+buffered events are durably drained and event delivery activates.
+Overflow, drain failure, persistence failure, stale configuration, or lease invalidation
+fails closed. No absence observation grants deletion authority.
+
+Gap recovery uses fresh complete evidence for the full predecessor reservation set.
+Aligned no-effect settlement is atomic; changed evidence transfers only through
+reviewed successor operations, with history-group decisions represented by a linked
+gap-group review. Effect receipt recovery does not clear the gap, unknown effects are
+not bypassed, and incomplete/unreviewable groups retain reservations. The UI exposes
+only text-only reviewed commands and remains unavailable before startup readiness.
+
+Focused tests cover frozen migration/downgrade, relationship validation, complete-group
+settlement/transfer, repeated gaps, history cleanup, unknown effects, dispatch leases,
+startup event buffering, and readiness. A disposable Obsidian 1.13.7 host run exercised
+migration, a reviewed transfer, and reservation retention after a detached edit; see
+[bounded qualification](../qualification/m4-listener-gap-recovery.md). It did not run
+the M5 10,000-note target or qualify mobile/iCloud behavior. No Worker/API change was
+made.
+
 ### State relationship matrix
 
 | Lifecycle / M3 state / M4 state | Authoritative outcome |
@@ -864,21 +911,22 @@ history, runtime/UI composition, packaged behavior, and operating limits.
   source remote edits, recreated sources, and later destination edits preserve all
   versions and require explicit current-state choices without pseudo-atomicity.
 - [x] **A9 — Migration/restart:** Strict v2→v3 history remains intact;
-  deterministic v3→v4 migration preserves non-empty M3/M4 state without
-  inferred decisions/events, fail-closed exact read-back, old/future-version and
-  runtime replacement fences, and exact reconciliation of every M4 partial phase to
-  resume, completion, stale, unknown-effect, migration-attention, or blocked without
-  body history.
+  deterministic v3→v4 migration and corrective v4→v5 migration preserve non-empty
+  M3/M4 state without inferred decisions/events, fail-closed exact read-back, old/future-
+  version and runtime replacement fences, and exact reconciliation of every M4 partial
+  phase to resume, completion, stale, unknown-effect, migration-attention, or blocked
+  without body history. Every nonterminal historical operation is gap-fenced before
+  effectful resume.
 - [x] **A10 — API, security, and UX:** Existing v2-only capability is proven sufficient;
   OpenAPI/CORS remain synchronized and unchanged unless implementation evidence forces
   a successor decision. Text-only review, path/content validation, sanitized status,
   token/body/log negatives, and malicious Markdown tests pass.
 - [x] **A11 — Qualification and canonical gates:** Generated CommonJS artifact tests
   proportionally exercise real built review→preservation→conditional action and stale
-  session behavior. `mise install`, `mise run install`, `mise run check`, runtime
-  qualification, four-metric coverage thresholds, diagnostics/editor review,
-  Markdown links, `git diff --check`, and secret/generated-artifact scans pass. Real
-  host/deployment/iCloud evidence or its absence is reported exactly.
+  session behavior. The later ADR 0013 corrective change also has bounded disposable
+  Obsidian 1.13.7 evidence for v5 migration/review/transfer and fail-closed detached-edit
+  behavior. Canonical validation and the full M5 desktop/iCloud/mobile qualification
+  remain distinct; the latter is still outstanding and no support claim is made.
 - [x] **A12 — Documentation, review, and transition:** Architecture/current-state/API
   (if changed)/security/plugin-development/operations/migration/conflict runbooks match
   implementation; independent `/skill:code-review` finds no unresolved blocking issue;

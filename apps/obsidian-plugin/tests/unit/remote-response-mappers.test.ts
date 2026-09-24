@@ -53,11 +53,61 @@ describe("remote response mappers", () => {
     });
   });
 
+  it("maps absence, tombstones, and sealed recovery without widening protocol state", () => {
+    expect(mapCurrentStateDto({ kind: "absent", path: PATH })).toEqual({
+      kind: "absent",
+      path: PATH,
+    });
+
+    const tombstone = {
+      kind: "tombstone",
+      path: PATH,
+      revision: REVISION,
+      deletedRevision: REVISION,
+      recoveryId: RECOVERY_ID,
+      receipt: {
+        action: "tombstone",
+        associationId: ASSOCIATION_ID,
+        operationId: OPERATION_ID,
+        precondition: { kind: "matching-revision", revision: PARENT_REVISION },
+      },
+    } satisfies CurrentNoteStateDto;
+    expect(mapCurrentStateDto(tombstone)).toMatchObject({
+      kind: "tombstone",
+      deletedRevision: REVISION,
+      recoveryId: RECOVERY_ID,
+    });
+
+    const sealed: RecoverySnapshotStateDto = {
+      kind: "sealed",
+      id: RECOVERY_ID,
+      associationId: ASSOCIATION_ID,
+      path: PATH,
+      revision: REVISION,
+      sourceRevision: PARENT_REVISION,
+      contentSha256: CONTENT_SHA_256,
+      recoverUntil: "2030-01-01T00:00:00.000Z",
+    };
+    expect(mapRecoveryStateDto(sealed)).toMatchObject({
+      kind: "sealed",
+      recoverUntil: "2030-01-01T00:00:00.000Z",
+    });
+  });
+
   it("rejects DTO fields that cannot become branded application values", () => {
     expect(
       mapMutationAcknowledgementDto({
         ...acknowledgementDto,
         revision: "not-a-revision",
+      }),
+    ).toBeUndefined();
+    expect(
+      mapCurrentStateDto({
+        kind: "live",
+        path: PATH,
+        revision: REVISION,
+        contentSha256: "not-a-hash",
+        receipt: acknowledgementDto.receipt,
       }),
     ).toBeUndefined();
     expect(

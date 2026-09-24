@@ -1,5 +1,7 @@
 import {
+  type MirrorOperationId,
   MUTATION_EFFECT_CERTAINTY,
+  RECONCILIATION_EFFECT_DISPATCH_KIND,
   REMOTE_BRIDGE_FAILURE,
   type RemoteBridgeMutationResult,
   type RemoteBridgeResult,
@@ -26,6 +28,7 @@ type FetchRequestDispatcherDependencies = Pick<
   | "admission"
   | "cancellation"
   | "deadlineMilliseconds"
+  | "effectDispatchAuthority"
   | "fetch"
   | "origin"
   | "secretReference"
@@ -38,6 +41,7 @@ interface RemoteHttpRequest {
   readonly path: string;
   readonly headers?: HeadersInit;
   readonly body?: BodyInit | null;
+  readonly effectOperationId?: MirrorOperationId;
 }
 
 /** Sanitized read failure shared by pre-response and body-decoding paths. */
@@ -296,13 +300,42 @@ export class FetchRequestDispatcher {
     try {
       const headers = new Headers(request.headers);
       headers.set(MIRROR_HTTP_HEADER.authorization, `Bearer ${bearer}`);
-      const promise = fetch(url, {
+      if (!permit.isCurrent() || controller.signal.aborted) {
+        return {
+          kind: "failure",
+          failure: REMOTE_BRIDGE_FAILURE.admissionDenied,
+          dispatched: false,
+        };
+      }
+      const init: RequestInit = {
         ...REMOTE_FETCH_OPTIONS,
         method: request.method,
         headers,
         ...(request.body === undefined ? {} : { body: request.body }),
         signal: controller.signal,
-      });
+      };
+      let promise: Promise<Response>;
+      const effectAuthority = this.dependencies.effectDispatchAuthority;
+      if (
+        request.effectOperationId !== undefined &&
+        effectAuthority !== undefined
+      ) {
+        const result = effectAuthority.dispatch(
+          request.effectOperationId,
+          RECONCILIATION_EFFECT_DISPATCH_KIND.remoteMutation,
+          () => fetch(url, init),
+        );
+        if (result.kind === "not-ready") {
+          return {
+            kind: "failure",
+            failure: REMOTE_BRIDGE_FAILURE.admissionDenied,
+            dispatched: false,
+          };
+        }
+        promise = result.value;
+      } else {
+        promise = fetch(url, init);
+      }
       dispatched = true;
       const raced = await raceFetchWithAbort(promise, controller.signal);
       if (raced.kind === "aborted") {

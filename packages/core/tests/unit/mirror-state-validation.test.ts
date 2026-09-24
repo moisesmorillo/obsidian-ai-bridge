@@ -178,6 +178,7 @@ function state(
     globalBlockReason: null,
     paths,
     stagedHandoff: null,
+    reconciliationGapGroupReviews: [],
     reconciliationReviews: [],
     reconciliationOperations: [],
   };

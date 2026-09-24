@@ -15,10 +15,14 @@ import type {
   MirrorDeviceState,
   MirrorDeviceStateV2,
   MirrorDeviceStateV3,
+  MirrorDeviceStateV4,
   MirrorPathState,
 } from "@core/mirror/mirror-state.types";
 import { projectMirrorDeviceStateV3ToV4 } from "@core/mirror/reconciliation-state-migration";
-import { isReconciliationStateConsistent } from "@core/mirror/reconciliation-state-validation";
+import {
+  isReconciliationStateConsistent,
+  isReconciliationStateV4Consistent,
+} from "@core/mirror/reconciliation-state-validation";
 
 /**
  * Validates cross-field invariants of an already strongly typed device state.
@@ -48,7 +52,24 @@ export function isMirrorDeviceStateV3Consistent(
   state: MirrorDeviceStateV3,
 ): boolean {
   if (!isMirrorDeviceStateV2Consistent(state)) return false;
-  return isReconciliationStateConsistent(projectMirrorDeviceStateV3ToV4(state));
+  return isReconciliationStateV4Consistent(
+    projectMirrorDeviceStateV3ToV4(state),
+  );
+}
+
+/**
+ * Validates the frozen v4 semantics for strict decoding and v4→v5 migration.
+ *
+ * @param state - Strictly decoded historical version-4 state.
+ * @returns Whether its M3 and M4 evidence satisfies the frozen v4 contract.
+ */
+export function isMirrorDeviceStateV4Consistent(
+  state: MirrorDeviceStateV4,
+): boolean {
+  return (
+    isMirrorDeviceStateV2Consistent(state) &&
+    isReconciliationStateV4Consistent(state)
+  );
 }
 
 /**

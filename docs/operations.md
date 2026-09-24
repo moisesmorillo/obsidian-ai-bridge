@@ -81,11 +81,17 @@ committed development configuration means a remote resource exists.
    per-folder allow-list, or per-delete confirmation.
 8. **Activate only after exact alignment.** For a genuinely new empty association,
    enable **Enable whole eligible Markdown mirror** after designation verification.
-   The plugin registers official Vault listeners before layout-ready bootstrap,
-   enumerates positive eligible saved state, checks remote state, and uses create-only
-   conditions for unassociated paths. Existing live, legacy, or tombstone collisions
-   block rather than being adopted or overwritten. Startup or scan absence never
-   creates deletion authority.
+   The plugin waits for workspace layout readiness before registering official Vault
+   listeners. It classifies persisted observation gaps and runs positive bootstrap; the
+   early scheduler slot is limited to current-scan positive paths without unresolved M3
+   intent or M4 reservations. It durably drains a bounded startup event buffer before
+   normal scheduling and persisted M4 resume. Buffer overflow, failed drain, or active event-delivery rejection leaves
+   the lease and normal work closed; reload/re-enable to establish a fresh classified
+   listener epoch, and do not treat existing operations as resumable before review. It
+   enumerates positive eligible saved state, checks remote state, and uses create-only conditions
+   for unassociated paths. Existing live, legacy, or tombstone collisions block rather
+   than being adopted or overwritten. Startup or scan absence never creates deletion
+   authority.
 9. **Verify staged behavior.** Use metadata-only status and **Check mirror now**.
    Expect bounded bootstrap/catch-up and then observing status. Verify remote state
    with authenticated read-only v2 requests before relying on freshness. Do not treat
@@ -123,13 +129,20 @@ change—can authorize a recoverable remote tombstone after the five-second grac
 an exact local-absence check.
 
 Changes made while the writer is offline, while the plugin is disabled, or during a
-listener gap can later be rediscovered **positively** by a fresh scan. A missing path
-during startup or such a gap does not authorize deletion. Consequently, an offline
-local deletion may remain as a stale remote live head until a later reviewed M4 or
-operator reconciliation flow exists. Ordering across devices is not globally
-transactional, and the designated writer must run for mirror freshness. No desktop,
-mobile, iCloud event trace, background iOS execution, or always-on behavior has been
-qualified.
+listener gap can later be rediscovered **positively** by a fresh scan. Listeners attach
+only after layout readiness; buffered startup events are durably sequenced before normal
+scheduling. A rejected active event callback synchronously closes effect authority and
+is classified as a new observation gap. Every active M4 operation spanning a cold start,
+listener gap, or delivery failure remains fenced until fresh complete-group review safely
+settles or transfers its reservations;
+unknown effects and unreviewable evidence stay reserved. A missing path during startup
+or a gap never authorizes deletion. Consequently, an offline local deletion may remain
+as a stale remote live head until explicit reviewed reconciliation. Ordering across
+devices is not globally transactional, and the designated writer must run for mirror
+freshness. Bounded disposable desktop corrective scenarios are recorded in the
+[listener-gap report](qualification/m4-listener-gap-recovery.md); no 10,000-note,
+full desktop, mobile, iCloud trace, background iOS execution, or always-on behavior
+has been qualified.
 
 ## Safe upgrade, disable, and re-enable
 
@@ -144,9 +157,11 @@ qualified.
 - A new process reconstructs from validated device-local state. Unresolved receipts,
   retry/evidence budgets, ACKs, deletion evidence, and rename prerequisites remain
   durable; no historic plaintext body queue exists.
-- Every detached-listener gap receives conservative positive reconciliation. Missing
-  entries in that scan never authorize delete. Unsupported runtime capabilities,
-  state/configuration failures, and incompatible persisted versions fail closed.
+- Every fresh listener epoch durably gap-fences active M4 operations before effectful
+  resume. The startup event buffer must drain successfully before normal scheduling;
+  missing entries in positive scans never authorize delete. Unsupported runtime
+  capabilities, state/configuration failures, and incompatible persisted versions fail
+  closed.
 - Disabling or uninstalling does not prove remote requests were cancelled, erase a
   shared native secret, revoke a bearer, or make persisted state safe to discard.
 
@@ -540,19 +555,24 @@ request timed out.
 
 ### Device-state migration and downgrade prohibition
 
-Current startup accepts strict version 4 or performs the same-key deterministic
-**v2→v3→v4** transition before listeners, commands, network admission, or local
-mutation. The complete projection is validated, written once, and read back as exact
-canonical bytes; decode, quota, save, read-back, integrity, or version failure closes
-startup. Version 3 remains a frozen historical format: non-empty records are preserved,
-unrefined
-history remains attention, and started local effects require exact read/hash evidence
-without redispatch. No decision or event causality is inferred.
+Current startup accepts strict version 5 or performs the same-key deterministic
+**v2→v3→v4→v5** transition. Frozen v2/v3 projections remain unchanged; v4→v5 preserves
+all prior evidence and marks every nonterminal historical operation as requiring
+fresh gap review. The complete projection is validated, written once, and read back as
+exact canonical bytes before owner publication or effectful resume. Decode, quota,
+save, read-back, integrity, or version failure closes startup. Version 3 and 4 remain
+frozen historical formats: unrefined history remains attention, and started local
+effects require exact read/hash evidence without redispatch. No decision or event
+causality is inferred.
 
-Runtime owner and registry structural versions are 4. Version-2/3 code must reject v4,
-and v4 code refuses an older same-realm owner. There is no reverse migration or
-supported downgrade. Pause, preserve state and conflict artifacts, restart the host
-when crossing an incompatible same-realm runtime, and upgrade forward.
+Every fresh layout-ready listener epoch durably fences active operations before the
+dispatch lease is published. A bounded callback buffer is drained before ordinary
+scheduling, review UI, and persisted M4 resume; each effect also checks the exact
+current listener/configuration lease immediately before dispatch. Runtime owner and
+same-realm registry structural versions are 5. Version-2/3/4 code must reject v5, and
+v5 code refuses an older same-realm owner. There is no reverse migration or supported
+downgrade. Pause, preserve state and conflict artifacts, restart the host when crossing
+an incompatible same-realm runtime, and upgrade forward.
 
 ## Rollback and downgrade restrictions
 
@@ -560,7 +580,7 @@ No rollback path is claimed safe unless it has been tested. Use these alternativ
 
 | Unsafe action | Why it is unsafe | Safe response |
 | --- | --- | --- |
-| Run version-2/3 plugin code after device-state v4 exists | Old code must reject v4; stripping history steps, successor-event evidence, or sparse M4 records can discard partial authority/effects. | Preserve state/evidence, restart into compatible M4 code, allow only the built-in verified v2→v3→v4 migration, and upgrade forward. |
+| Run version-2/3/4 plugin code after device-state v5 exists | Older code must reject v5; stripping history, gap-review, effect, or reservation evidence can discard partial authority. | Preserve state/evidence, restart into compatible code, allow only the built-in verified v2→v3→v4→v5 migration, and upgrade forward. |
 | Downgrade to v1 PUT/DELETE behavior | Unconditional mutation bypasses format-2 revisions, tombstones, and recovery. | Keep v1 mutations retired; upgrade Worker/client forward. |
 | Redirect delayed old-association requests into a reset association or reused bucket | Pending privileged requests could mutate the new namespace. | Use an isolated empty bucket/association/credentials and preserve old state. |
 | Delete unresolved ledger/intents to make a writer look healthy | Unknown remote effects and original conditions become unprovable. | Pause, inspect exact receipts, drain/recover, or retain the blocker for handoff/M4. |

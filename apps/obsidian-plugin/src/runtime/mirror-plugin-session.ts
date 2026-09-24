@@ -36,8 +36,8 @@ export class MirrorPluginSession {
   ) {}
 
   /**
-   * Loads strict configuration/state, acquires ownership, then registers events before
-   * UI and the layout-ready bootstrap callback.
+   * Loads strict configuration/state, acquires ownership, builds the event adapter,
+   * then registers UI and the layout-ready callback that attaches listeners.
    *
    * @param plugin - Current official Plugin instance.
    * @param isCurrent - Enable-generation guard checked after every asynchronous boundary.
@@ -86,8 +86,6 @@ export class MirrorPluginSession {
       acquired.coordinator,
       { configDirectory: plugin.app.vault.configDir },
     );
-    events.attach();
-
     const ui = new MirrorStatusUi(plugin.app);
     const commands = new MirrorOperationalCommands(
       plugin,
@@ -130,8 +128,14 @@ export class MirrorPluginSession {
     session.refresh();
 
     plugin.app.workspace.onLayoutReady(() => {
-      if (!session?.isCurrent()) return;
-      void acquired.coordinator.onLayoutReady(id).catch(() => undefined);
+      if (!session?.isCurrent() || !events.attach()) return;
+      void acquired.coordinator
+        .onLayoutReady(
+          id,
+          () => events.drainQueued(),
+          () => events.activate(),
+        )
+        .catch(() => undefined);
     });
     return session;
   }
@@ -149,6 +153,7 @@ export class MirrorPluginSession {
   detach(): void {
     if (!this.attached) return;
     this.attached = false;
+    this.owner.detach(this.id);
     this.events.detach();
     this.wake.detach();
     this.commands.detach();
@@ -157,7 +162,6 @@ export class MirrorPluginSession {
     this.configuration.detach();
     this.ui.close();
     if (this.statusBar !== null) this.statusBar.textContent = "";
-    this.owner.detach(this.id);
   }
 
   /**

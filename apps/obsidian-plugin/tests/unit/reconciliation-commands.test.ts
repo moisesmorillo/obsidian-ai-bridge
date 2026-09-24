@@ -10,6 +10,7 @@ import {
   RECONCILIATION_COMMANDS,
   ReconciliationCommands,
 } from "@obsidian-plugin/commands/reconciliation-commands";
+import { ObservationGapReviewModal } from "@obsidian-plugin/reconciliation/observation-gap-review-modal";
 import { ReconciliationReviewModal } from "@obsidian-plugin/reconciliation/reconciliation-review-modal";
 import type { ReconciliationUiOwner } from "@obsidian-plugin/reconciliation/reconciliation-ui.types";
 import { RecoverySelectionModal } from "@obsidian-plugin/reconciliation/recovery-selection-modal";
@@ -22,11 +23,32 @@ vi.mock(
   async () => import("@obsidian-plugin-tests/support/obsidian-runtime"),
 );
 
+/**
+ * @param value - Candidate produced by a validating core constructor.
+ * @returns The validated fixture value.
+ */
+function required<Value>(value: Value | undefined): Value {
+  if (value === undefined)
+    throw new Error("Invalid reconciliation UI fixture.");
+  return value;
+}
+
 function owner(): ReconciliationUiOwner {
   return {
     listReconciliationCandidates: vi.fn<
       ReconciliationUiOwner["listReconciliationCandidates"]
     >(async () => ({ kind: "available", candidates: [] })),
+    listObservationGaps: vi.fn<ReconciliationUiOwner["listObservationGaps"]>(
+      () => ({ kind: "available", candidates: [] }),
+    ),
+    createObservationGapReview: vi.fn<
+      ReconciliationUiOwner["createObservationGapReview"]
+    >(async () => ({ kind: "unavailable" })),
+    closeObservationGapReview:
+      vi.fn<ReconciliationUiOwner["closeObservationGapReview"]>(),
+    submitObservationGapReview: vi.fn<
+      ReconciliationUiOwner["submitObservationGapReview"]
+    >(async () => ({ kind: "unavailable" })),
     listRecoverySelections: vi.fn<
       ReconciliationUiOwner["listRecoverySelections"]
     >(async () => ({ kind: "available", recoveries: [] })),
@@ -77,11 +99,15 @@ describe("ReconciliationCommands", () => {
     expect(fixture.commands.map(({ id, name }) => ({ id, name }))).toEqual([
       RECONCILIATION_COMMANDS.review,
       RECONCILIATION_COMMANDS.restore,
+      RECONCILIATION_COMMANDS.observationGaps,
     ]);
     expect(application.listReconciliationCandidates).not.toHaveBeenCalled();
     expect(application.listRecoverySelections).not.toHaveBeenCalled();
+    expect(application.listObservationGaps).not.toHaveBeenCalled();
     expect(application.createReconciliationReview).not.toHaveBeenCalled();
     expect(application.submitReconciliation).not.toHaveBeenCalled();
+    expect(application.createObservationGapReview).not.toHaveBeenCalled();
+    expect(application.submitObservationGapReview).not.toHaveBeenCalled();
   });
 
   it("opens only sanitized review and recovery projections after explicit commands", async () => {
@@ -93,6 +119,9 @@ describe("ReconciliationCommands", () => {
     const recoveryOpen = vi
       .spyOn(RecoverySelectionModal.prototype, "open")
       .mockImplementation(() => undefined);
+    const gapOpen = vi
+      .spyOn(ObservationGapReviewModal.prototype, "open")
+      .mockImplementation(() => undefined);
     const commands = new ReconciliationCommands(
       fixture.plugin,
       application,
@@ -102,13 +131,16 @@ describe("ReconciliationCommands", () => {
 
     fixture.commands[0]?.callback?.();
     fixture.commands[1]?.callback?.();
+    fixture.commands[2]?.callback?.();
     await Promise.resolve();
     await Promise.resolve();
 
     expect(application.listReconciliationCandidates).toHaveBeenCalledOnce();
     expect(application.listRecoverySelections).toHaveBeenCalledOnce();
+    expect(application.listObservationGaps).toHaveBeenCalledOnce();
     expect(reviewOpen).toHaveBeenCalledOnce();
     expect(recoveryOpen).toHaveBeenCalledOnce();
+    expect(gapOpen).toHaveBeenCalledOnce();
   });
 
   it("owns one candidate selection and invalidates its unsubmitted review on close", async () => {
@@ -756,6 +788,587 @@ describe("ReconciliationCommands", () => {
       button.click();
     });
     expect(application.createReconciliationReview).not.toHaveBeenCalled();
+  });
+
+  it("discards a complete gap review that finishes after its modal closes", async () => {
+    const application = owner();
+    const path = normalizeNotePath("notes/gap.md");
+    const predecessorOperationId = createMirrorOperationId(
+      "77777777-7777-4777-8777-777777777777",
+    );
+    const groupReviewId = createMirrorOperationId(
+      "88888888-8888-4888-8888-888888888888",
+    );
+    if (
+      path === undefined ||
+      predecessorOperationId === undefined ||
+      groupReviewId === undefined
+    ) {
+      return;
+    }
+    const pendingReview =
+      Promise.withResolvers<
+        Awaited<ReturnType<ReconciliationUiOwner["createObservationGapReview"]>>
+      >();
+    vi.mocked(application.createObservationGapReview).mockReturnValueOnce(
+      pendingReview.promise,
+    );
+    const modal = new ObservationGapReviewModal(
+      new App(),
+      application,
+      "33333333-3333-4333-8333-333333333333",
+      [{ operationId: predecessorOperationId, paths: [path] }],
+    );
+
+    modal.open();
+    modal.contentEl.querySelectorAll("button")[0]?.click();
+    modal.close();
+    pendingReview.resolve({
+      kind: "created",
+      review: {
+        reviewId: groupReviewId,
+        predecessorOperationId,
+        paths: [path],
+        children: [],
+        unreviewablePaths: [],
+      },
+    });
+    await vi.waitFor(() =>
+      expect(application.closeObservationGapReview).toHaveBeenCalledWith(
+        "33333333-3333-4333-8333-333333333333",
+        groupReviewId,
+      ),
+    );
+    expect(modal.contentEl.children).toEqual([]);
+  });
+
+  it("submits every changed gap path as one exact atomic batch", async () => {
+    const application = owner();
+    const path = normalizeNotePath("notes/gap.md");
+    const predecessorOperationId = createMirrorOperationId(
+      "77777777-7777-4777-8777-777777777777",
+    );
+    const groupReviewId = createMirrorOperationId(
+      "88888888-8888-4888-8888-888888888888",
+    );
+    const childReviewId = createMirrorOperationId(
+      "99999999-9999-4999-8999-999999999999",
+    );
+    if (
+      path === undefined ||
+      predecessorOperationId === undefined ||
+      groupReviewId === undefined ||
+      childReviewId === undefined
+    ) {
+      return;
+    }
+    vi.mocked(application.listObservationGaps).mockReturnValueOnce({
+      kind: "available",
+      candidates: [{ operationId: predecessorOperationId, paths: [path] }],
+    });
+    vi.mocked(application.createObservationGapReview).mockResolvedValueOnce({
+      kind: "created",
+      review: {
+        reviewId: groupReviewId,
+        predecessorOperationId,
+        paths: [path],
+        children: [
+          {
+            reviewId: childReviewId,
+            targetPath: path,
+            classification: RECONCILIATION_CLASSIFICATION.remoteAhead,
+            allowedActions: [
+              RECONCILIATION_ACTION.adoptRevision,
+              RECONCILIATION_ACTION.useRemote,
+            ],
+            historyCandidates: [],
+          },
+        ],
+        unreviewablePaths: [],
+      },
+    });
+    vi.mocked(application.submitObservationGapReview).mockResolvedValueOnce({
+      kind: "admitted",
+    });
+    const modal = new ObservationGapReviewModal(
+      new App(),
+      application,
+      "33333333-3333-4333-8333-333333333333",
+      [{ operationId: predecessorOperationId, paths: [path] }],
+    );
+
+    modal.open();
+    modal.contentEl.querySelectorAll("button")[0]?.click();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(modal.contentEl.querySelectorAll("button")).toHaveLength(3);
+    modal.contentEl.querySelectorAll("button")[0]?.click();
+    expect(modal.contentEl.querySelectorAll("pre")[0]?.textContent).toBe(
+      "local preview is unavailable.",
+    );
+    modal.contentEl.querySelectorAll("button")[2]?.click();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(application.submitObservationGapReview).toHaveBeenCalledOnce();
+    expect(application.submitObservationGapReview).toHaveBeenCalledWith(
+      "33333333-3333-4333-8333-333333333333",
+      groupReviewId,
+      [
+        {
+          reviewId: childReviewId,
+          action: { kind: RECONCILIATION_ACTION.adoptRevision },
+        },
+      ],
+    );
+    expect(application.closeObservationGapReview).not.toHaveBeenCalled();
+  });
+
+  it("renders and submits one explicit bounded history decision", async () => {
+    const application = owner();
+    const path = normalizeNotePath("notes/history-new.md");
+    const predecessorOperationId = createMirrorOperationId(
+      "77777777-7777-4777-8777-777777777777",
+    );
+    const groupReviewId = createMirrorOperationId(
+      "88888888-8888-4888-8888-888888888888",
+    );
+    const childReviewId = createMirrorOperationId(
+      "99999999-9999-4999-8999-999999999999",
+    );
+    if (
+      path === undefined ||
+      predecessorOperationId === undefined ||
+      groupReviewId === undefined ||
+      childReviewId === undefined
+    ) {
+      return;
+    }
+    vi.mocked(application.createObservationGapReview).mockResolvedValueOnce({
+      kind: "created",
+      review: {
+        reviewId: groupReviewId,
+        predecessorOperationId,
+        paths: [path],
+        children: [
+          {
+            reviewId: childReviewId,
+            targetPath: path,
+            classification: RECONCILIATION_CLASSIFICATION.deferredHistory,
+            allowedActions: [RECONCILIATION_ACTION.resolveHistory],
+            historyCandidates: [path],
+          },
+        ],
+        unreviewablePaths: [],
+      },
+    });
+    vi.mocked(application.submitObservationGapReview).mockResolvedValueOnce({
+      kind: "admitted",
+    });
+    const modal = new ObservationGapReviewModal(
+      new App(),
+      application,
+      "33333333-3333-4333-8333-333333333333",
+      [{ operationId: predecessorOperationId, paths: [path] }],
+    );
+
+    modal.open();
+    modal.contentEl.querySelectorAll("button")[0]?.click();
+    await Promise.resolve();
+    await Promise.resolve();
+    const choice = modal.contentEl.querySelectorAll("select")[0];
+    if (choice === undefined) return;
+    expect(
+      Array.from(choice.querySelectorAll("option"), (option) => option.value),
+    ).toEqual([HISTORY_DECISION_KIND.retainIndependent, `execute:${path}`]);
+    choice.value = `execute:${path}`;
+    modal.contentEl.querySelectorAll("button")[2]?.click();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(application.submitObservationGapReview).toHaveBeenCalledWith(
+      "33333333-3333-4333-8333-333333333333",
+      groupReviewId,
+      [
+        {
+          reviewId: childReviewId,
+          action: {
+            kind: RECONCILIATION_ACTION.resolveHistory,
+            decision: {
+              kind: HISTORY_DECISION_KIND.executeCleanupPlan,
+              selectedCandidatePath: path,
+            },
+          },
+        },
+      ],
+    );
+  });
+
+  it("withholds every settlement control when one reserved path is unreviewable", async () => {
+    const application = owner();
+    const path = normalizeNotePath("notes/gap.md");
+    const predecessorOperationId = createMirrorOperationId(
+      "77777777-7777-4777-8777-777777777777",
+    );
+    const groupReviewId = createMirrorOperationId(
+      "88888888-8888-4888-8888-888888888888",
+    );
+    if (
+      path === undefined ||
+      predecessorOperationId === undefined ||
+      groupReviewId === undefined
+    ) {
+      return;
+    }
+    vi.mocked(application.createObservationGapReview).mockResolvedValueOnce({
+      kind: "created",
+      review: {
+        reviewId: groupReviewId,
+        predecessorOperationId,
+        paths: [path],
+        children: [],
+        unreviewablePaths: [path],
+      },
+    });
+    const modal = new ObservationGapReviewModal(
+      new App(),
+      application,
+      "33333333-3333-4333-8333-333333333333",
+      [{ operationId: predecessorOperationId, paths: [path] }],
+    );
+
+    modal.open();
+    modal.contentEl.querySelectorAll("button")[0]?.click();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(modal.contentEl.querySelectorAll("button")).toHaveLength(0);
+    expect(application.submitObservationGapReview).not.toHaveBeenCalled();
+    modal.close();
+    expect(application.closeObservationGapReview).toHaveBeenCalledWith(
+      "33333333-3333-4333-8333-333333333333",
+      groupReviewId,
+    );
+  });
+
+  it("exposes aligned no-effect settlement only as an explicit decision", async () => {
+    const application = owner();
+    const path = required(normalizeNotePath("notes/aligned.md"));
+    const predecessorOperationId = required(
+      createMirrorOperationId("77777777-7777-4777-8777-777777777777"),
+    );
+    const groupReviewId = required(
+      createMirrorOperationId("88888888-8888-4888-8888-888888888888"),
+    );
+    vi.mocked(application.createObservationGapReview).mockResolvedValueOnce({
+      kind: "created",
+      review: {
+        reviewId: groupReviewId,
+        predecessorOperationId,
+        paths: [path],
+        children: [],
+        unreviewablePaths: [],
+      },
+    });
+    vi.mocked(application.submitObservationGapReview).mockResolvedValueOnce({
+      kind: "completed",
+    });
+    const modal = new ObservationGapReviewModal(
+      new App(),
+      application,
+      "33333333-3333-4333-8333-333333333333",
+      [{ operationId: predecessorOperationId, paths: [path] }],
+    );
+
+    modal.open();
+    modal.contentEl.querySelectorAll("button")[0]?.click();
+    await vi.waitFor(() =>
+      expect(modal.contentEl.querySelectorAll("button")[0]?.textContent).toBe(
+        "Settle aligned gap without effects",
+      ),
+    );
+    modal.contentEl.querySelectorAll("button")[0]?.click();
+    await vi.waitFor(() =>
+      expect(application.submitObservationGapReview).toHaveBeenCalledOnce(),
+    );
+    expect(application.submitObservationGapReview).toHaveBeenCalledWith(
+      "33333333-3333-4333-8333-333333333333",
+      groupReviewId,
+      [],
+    );
+  });
+
+  it("maps every supported simple action into one complete atomic group", async () => {
+    const application = owner();
+    const predecessorOperationId = required(
+      createMirrorOperationId("77777777-7777-4777-8777-777777777777"),
+    );
+    const groupReviewId = required(
+      createMirrorOperationId("88888888-8888-4888-8888-888888888888"),
+    );
+    const kinds = [
+      RECONCILIATION_ACTION.keepLocal,
+      RECONCILIATION_ACTION.useRemote,
+      RECONCILIATION_ACTION.acceptTombstone,
+      RECONCILIATION_ACTION.recreateRemote,
+      RECONCILIATION_ACTION.restoreRecovery,
+    ] as const;
+    const children = kinds.map((kind, index) => ({
+      reviewId: required(
+        createMirrorOperationId(
+          `90000000-0000-4000-8000-${(index + 1).toString().padStart(12, "0")}`,
+        ),
+      ),
+      targetPath: required(normalizeNotePath(`notes/gap-${index}.md`)),
+      classification: RECONCILIATION_CLASSIFICATION.remoteAhead,
+      allowedActions: [kind],
+      historyCandidates: [],
+    }));
+    vi.mocked(application.createObservationGapReview).mockResolvedValueOnce({
+      kind: "created",
+      review: {
+        reviewId: groupReviewId,
+        predecessorOperationId,
+        paths: children.map((child) => child.targetPath),
+        children,
+        unreviewablePaths: [],
+      },
+    });
+    vi.mocked(application.submitObservationGapReview).mockResolvedValueOnce({
+      kind: "admitted",
+    });
+    const modal = new ObservationGapReviewModal(
+      new App(),
+      application,
+      "33333333-3333-4333-8333-333333333333",
+      [
+        {
+          operationId: predecessorOperationId,
+          paths: children.map((child) => child.targetPath),
+        },
+      ],
+    );
+
+    modal.open();
+    modal.contentEl.querySelectorAll("button")[0]?.click();
+    await vi.waitFor(() =>
+      expect(modal.contentEl.querySelectorAll("button")).toHaveLength(11),
+    );
+    modal.contentEl.querySelectorAll("button")[10]?.click();
+    await vi.waitFor(() =>
+      expect(application.submitObservationGapReview).toHaveBeenCalledOnce(),
+    );
+    expect(application.submitObservationGapReview).toHaveBeenCalledWith(
+      "33333333-3333-4333-8333-333333333333",
+      groupReviewId,
+      children.map((child, index) => ({
+        reviewId: child.reviewId,
+        action: { kind: kinds[index] },
+      })),
+    );
+  });
+
+  it("explains an empty gap inventory without implying that work is complete", () => {
+    const modal = new ObservationGapReviewModal(
+      new App(),
+      owner(),
+      "33333333-3333-4333-8333-333333333333",
+      [],
+    );
+
+    modal.open();
+
+    expect(
+      Array.from(modal.contentEl.querySelectorAll("p")).map(
+        (paragraph) => paragraph.textContent,
+      ),
+    ).toContain("No active observation-gap reservations are available.");
+  });
+
+  it("refuses a gap child with no supported ordinary action", async () => {
+    const application = owner();
+    const path = required(normalizeNotePath("notes/no-action.md"));
+    const predecessorOperationId = required(
+      createMirrorOperationId("77777777-7777-4777-8777-777777777777"),
+    );
+    const groupReviewId = required(
+      createMirrorOperationId("88888888-8888-4888-8888-888888888888"),
+    );
+    const childReviewId = required(
+      createMirrorOperationId("99999999-9999-4999-8999-999999999999"),
+    );
+    vi.mocked(application.createObservationGapReview).mockResolvedValueOnce({
+      kind: "created",
+      review: {
+        reviewId: groupReviewId,
+        predecessorOperationId,
+        paths: [path],
+        children: [
+          {
+            reviewId: childReviewId,
+            targetPath: path,
+            classification: RECONCILIATION_CLASSIFICATION.remoteAhead,
+            allowedActions: [],
+            historyCandidates: [],
+          },
+        ],
+        unreviewablePaths: [],
+      },
+    });
+    const modal = new ObservationGapReviewModal(
+      new App(),
+      application,
+      "33333333-3333-4333-8333-333333333333",
+      [{ operationId: predecessorOperationId, paths: [path] }],
+    );
+
+    modal.open();
+    modal.contentEl.querySelectorAll("button")[0]?.click();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    await vi.waitFor(() =>
+      expect(
+        Array.from(modal.contentEl.querySelectorAll("p")).map(
+          (paragraph) => paragraph.textContent,
+        ),
+      ).toContain("No ordinary action fits this path's retained reservation."),
+    );
+    Array.from(modal.contentEl.querySelectorAll("button")).at(-1)?.click();
+    expect(application.submitObservationGapReview).not.toHaveBeenCalled();
+    expect(
+      Array.from(modal.contentEl.querySelectorAll("p")).map(
+        (paragraph) => paragraph.textContent,
+      ),
+    ).toContain("Every changed path requires one supported fresh action.");
+  });
+
+  it("rejects a selector value outside the owner-supplied simple action subset", async () => {
+    const application = owner();
+    const path = required(normalizeNotePath("notes/unsupported-action.md"));
+    const predecessorOperationId = required(
+      createMirrorOperationId("77777777-7777-4777-8777-777777777777"),
+    );
+    const groupReviewId = required(
+      createMirrorOperationId("88888888-8888-4888-8888-888888888888"),
+    );
+    const childReviewId = required(
+      createMirrorOperationId("99999999-9999-4999-8999-999999999999"),
+    );
+    vi.mocked(application.createObservationGapReview).mockResolvedValueOnce({
+      kind: "created",
+      review: {
+        reviewId: groupReviewId,
+        predecessorOperationId,
+        paths: [path],
+        children: [
+          {
+            reviewId: childReviewId,
+            targetPath: path,
+            classification: RECONCILIATION_CLASSIFICATION.bothChanged,
+            allowedActions: [RECONCILIATION_ACTION.keepBoth],
+            historyCandidates: [],
+          },
+        ],
+        unreviewablePaths: [],
+      },
+    });
+    const modal = new ObservationGapReviewModal(
+      new App(),
+      application,
+      "33333333-3333-4333-8333-333333333333",
+      [{ operationId: predecessorOperationId, paths: [path] }],
+    );
+
+    modal.open();
+    modal.contentEl.querySelectorAll("button")[0]?.click();
+    await Promise.resolve();
+    await Promise.resolve();
+    Array.from(modal.contentEl.querySelectorAll("button")).at(-1)?.click();
+
+    expect(application.submitObservationGapReview).not.toHaveBeenCalled();
+    expect(
+      Array.from(modal.contentEl.querySelectorAll("p")).map(
+        (paragraph) => paragraph.textContent,
+      ),
+    ).toContain("Every changed path requires one supported fresh action.");
+  });
+
+  it("keeps the predecessor held when a complete transfer is refused", async () => {
+    const application = owner();
+    const path = required(normalizeNotePath("notes/refused.md"));
+    const predecessorOperationId = required(
+      createMirrorOperationId("77777777-7777-4777-8777-777777777777"),
+    );
+    const groupReviewId = required(
+      createMirrorOperationId("88888888-8888-4888-8888-888888888888"),
+    );
+    const childReviewId = required(
+      createMirrorOperationId("99999999-9999-4999-8999-999999999999"),
+    );
+    vi.mocked(application.createObservationGapReview).mockResolvedValueOnce({
+      kind: "created",
+      review: {
+        reviewId: groupReviewId,
+        predecessorOperationId,
+        paths: [path],
+        children: [
+          {
+            reviewId: childReviewId,
+            targetPath: path,
+            classification: RECONCILIATION_CLASSIFICATION.remoteAhead,
+            allowedActions: [RECONCILIATION_ACTION.useRemote],
+            historyCandidates: [],
+          },
+        ],
+        unreviewablePaths: [],
+      },
+    });
+    vi.mocked(application.submitObservationGapReview).mockResolvedValueOnce({
+      kind: "stale",
+    });
+    const modal = new ObservationGapReviewModal(
+      new App(),
+      application,
+      "33333333-3333-4333-8333-333333333333",
+      [{ operationId: predecessorOperationId, paths: [path] }],
+    );
+
+    modal.open();
+    modal.contentEl.querySelectorAll("button")[0]?.click();
+    await vi.waitFor(() =>
+      expect(modal.contentEl.querySelectorAll("button")).toHaveLength(3),
+    );
+    modal.contentEl.querySelectorAll("button")[2]?.click();
+    await vi.waitFor(() =>
+      expect(application.closeObservationGapReview).toHaveBeenCalledOnce(),
+    );
+    expect(modal.contentEl.querySelectorAll("p")[0]?.textContent).toContain(
+      "all untransferred reservations remain held",
+    );
+  });
+
+  it("shows a fixed message when the complete group sample is unavailable", async () => {
+    const application = owner();
+    const path = required(normalizeNotePath("notes/unavailable.md"));
+    const predecessorOperationId = required(
+      createMirrorOperationId("77777777-7777-4777-8777-777777777777"),
+    );
+    const modal = new ObservationGapReviewModal(
+      new App(),
+      application,
+      "33333333-3333-4333-8333-333333333333",
+      [{ operationId: predecessorOperationId, paths: [path] }],
+    );
+
+    modal.open();
+    modal.contentEl.querySelectorAll("button")[0]?.click();
+    await vi.waitFor(() =>
+      expect(modal.contentEl.querySelectorAll("p")[0]?.textContent).toContain(
+        "complete fresh review is unavailable",
+      ),
+    );
+    expect(application.submitObservationGapReview).not.toHaveBeenCalled();
   });
 
   it("suppresses a delayed modal after detach", async () => {

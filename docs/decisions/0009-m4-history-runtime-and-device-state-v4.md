@@ -6,9 +6,12 @@
 strict device state v4 and the complete version-4 runtime-owner surface together. It
 changes no Worker API and extends rather than rewrites
 [ADR 0008](0008-m4-device-state-migration.md): version 3 remains the frozen historical
-format and version 4 is current. [ADR 0012](0012-host-visible-conflict-preservation-namespace.md)
+format and version 4 is now a frozen historical format. [ADR 0012](0012-host-visible-conflict-preservation-namespace.md)
 supersedes only this record's generated preservation-root location for new operations;
-step identity and frozen historical receipt semantics remain unchanged. [ADR 0013](0013-listener-ready-effect-authority-and-observation-gap-recovery.md) proposes a corrective v5 listener-gap fence; this record continues to describe the implemented v4 behavior, not proof of continuity through uncovered intervals.
+step identity and frozen historical receipt semantics remain unchanged. Implemented
+[ADR 0013](0013-listener-ready-effect-authority-and-observation-gap-recovery.md)
+supersedes only ADR 0009's listener-gap sufficiency assumption and introduces the
+current strict v5 state/runtime surface. This record remains the historical v4 contract.
 
 ## Context
 

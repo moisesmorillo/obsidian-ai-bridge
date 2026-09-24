@@ -32,6 +32,7 @@ import {
   RECONCILIATION_CLASSIFICATION,
   RECONCILIATION_LOCAL_EVIDENCE_KIND,
   RECONCILIATION_LOCAL_STABILITY,
+  RECONCILIATION_OBSERVATION_COVERAGE,
   RECONCILIATION_OPERATION_PHASE,
   RECONCILIATION_PATH_REFERENCE_KIND,
   RECONCILIATION_REMOTE_EVIDENCE_KIND,
@@ -218,6 +219,7 @@ function state(): MirrorDeviceState {
       },
     ],
     stagedHandoff: null,
+    reconciliationGapGroupReviews: [],
     reconciliationReviews: [
       {
         retention: RECONCILIATION_REVIEW_RETENTION.durable,
@@ -230,6 +232,8 @@ function state(): MirrorDeviceState {
     ],
     reconciliationOperations: [
       {
+        observationCoverage: RECONCILIATION_OBSERVATION_COVERAGE.continuous,
+        gapSuccessorOperationIds: [],
         operationId: OPERATION,
         reviewId: REVIEW,
         authority: RECONCILIATION_AUTHORITY_SOURCE.historyDecision,
@@ -525,6 +529,8 @@ describe("RenameHistoryResolutionService", () => {
       ...initial,
       reconciliationOperations: [
         {
+          observationCoverage: RECONCILIATION_OBSERVATION_COVERAGE.continuous,
+          gapSuccessorOperationIds: [],
           operationId: operation.operationId,
           reviewId: operation.reviewId,
           authority: operation.authority,

@@ -68,6 +68,11 @@ export type RemoteRecoveryContent =
 
 /** One globally coordinated request permit; release follows adapter settlement. */
 export interface RemoteRequestPermit {
+  /**
+   * Rechecks the exact synchronous admission generation immediately before dispatch.
+   * @returns Whether the permit still belongs to an open request lease.
+   */
+  isCurrent(): boolean;
   /** Releases the permit exactly once after the adapter stops owning the request. */
   release(): void;
 }

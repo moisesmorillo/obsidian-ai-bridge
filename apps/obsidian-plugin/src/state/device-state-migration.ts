@@ -1,9 +1,12 @@
 import {
   isMirrorDeviceStateConsistent,
+  isMirrorDeviceStateV4Consistent,
   type MirrorDeviceState,
   type MirrorDeviceStateV2,
   type MirrorDeviceStateV3,
+  type MirrorDeviceStateV4,
   projectMirrorDeviceStateV3ToV4,
+  projectMirrorDeviceStateV4ToV5,
 } from "@obsidian-ai-bridge/core";
 
 /**
@@ -29,7 +32,7 @@ export function migrateMirrorDeviceStateV2ToV3(
     reconciliationOperations: [],
   };
   if (
-    !isMirrorDeviceStateConsistent(projectMirrorDeviceStateV3ToV4(migrated))
+    !isMirrorDeviceStateV4Consistent(projectMirrorDeviceStateV3ToV4(migrated))
   ) {
     throw new Error(
       "Migrated mirror device state violates version-3 invariants.",
@@ -39,22 +42,44 @@ export function migrateMirrorDeviceStateV2ToV3(
 }
 
 /**
- * Projects one strict non-empty version-3 state into the version-4 compatibility surface.
+ * Projects one strict non-empty version-3 state into the frozen version-4 compatibility surface.
  *
  * History and started local effects become explicit attention states; no decision,
  * cleanup step, event origin, or newer evidence is inferred.
  *
  * @param state - Strictly decoded frozen version-3 state.
  * @returns Fully validated version-4 state.
- * @throws When the projection violates the current v4 invariant contract.
+ * @throws When the projection violates the frozen v4 invariant contract.
  */
 export function migrateMirrorDeviceStateV3ToV4(
   state: MirrorDeviceStateV3,
-): MirrorDeviceState {
+): MirrorDeviceStateV4 {
   const migrated = projectMirrorDeviceStateV3ToV4(state);
-  if (!isMirrorDeviceStateConsistent(migrated)) {
+  if (!isMirrorDeviceStateV4Consistent(migrated)) {
     throw new Error(
       "Migrated mirror device state violates version-4 invariants.",
+    );
+  }
+  return migrated;
+}
+
+/**
+ * Fences every still-active v4 operation because persisted state cannot prove coverage across cold start.
+ *
+ * Terminal operations remain unchanged. No live review, effect, recovery result or
+ * observation range is inferred from numeric epochs or historical operation phase.
+ *
+ * @param state - Strictly decoded and semantically valid frozen v4 state.
+ * @returns Fully validated v5 state with explicit cold-gap authority.
+ * @throws When the projection violates the current v5 invariant contract.
+ */
+export function migrateMirrorDeviceStateV4ToV5(
+  state: MirrorDeviceStateV4,
+): MirrorDeviceState {
+  const migrated = projectMirrorDeviceStateV4ToV5(state);
+  if (!isMirrorDeviceStateConsistent(migrated)) {
+    throw new Error(
+      "Migrated mirror device state violates version-5 invariants.",
     );
   }
   return migrated;

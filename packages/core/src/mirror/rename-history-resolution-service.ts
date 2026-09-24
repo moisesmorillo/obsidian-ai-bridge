@@ -34,6 +34,7 @@ import {
   HISTORY_PROGRESS_KIND,
   HISTORY_REMOTE_EFFECT_KIND,
   RECONCILIATION_ACTION,
+  RECONCILIATION_OBSERVATION_COVERAGE,
   RECONCILIATION_OPERATION_PHASE,
   RECONCILIATION_PRESERVATION_SIDE,
   RECONCILIATION_REVIEW_STATUS,
@@ -106,10 +107,23 @@ export class RenameHistoryResolutionService {
       return { kind: "completed", snapshot: before };
     }
     const index = operation.historyProgress.nextStepIndex;
-    if (index === null) return { kind: "completed", snapshot: before };
+    if (index === null) {
+      return operation.observationCoverage ===
+        RECONCILIATION_OBSERVATION_COVERAGE.gapReviewRequired
+        ? { kind: "evidence-required", snapshot: before }
+        : { kind: "completed", snapshot: before };
+    }
     const step = operation.historyProgress.steps[index];
     if (step === undefined) return rejection("operation-not-active", before);
     /* v8 ignore stop */
+    if (
+      operation.observationCoverage ===
+        RECONCILIATION_OBSERVATION_COVERAGE.gapReviewRequired &&
+      step.phase !== HISTORY_CLEANUP_STEP_PHASE.evidenceRequired &&
+      step.phase !== HISTORY_CLEANUP_STEP_PHASE.mutatingRemote
+    ) {
+      return { kind: "evidence-required", snapshot: before };
+    }
 
     if (
       step.phase === HISTORY_CLEANUP_STEP_PHASE.evidenceRequired ||
@@ -161,7 +175,7 @@ export class RenameHistoryResolutionService {
       index,
       HISTORY_CLEANUP_STEP_PHASE.mutatingRemote,
       RECONCILIATION_OPERATION_PHASE.mutatingRemote,
-      { kind: MUTATION_EFFECT_CERTAINTY.notDispatched },
+      { kind: HISTORY_REMOTE_EFFECT_KIND.notDispatched },
       true,
     );
     if (prepared.kind !== "committed") {
@@ -200,7 +214,7 @@ export class RenameHistoryResolutionService {
         index,
         HISTORY_CLEANUP_STEP_PHASE.evidenceRequired,
         RECONCILIATION_OPERATION_PHASE.evidenceRequired,
-        { kind: MUTATION_EFFECT_CERTAINTY.unknown },
+        { kind: HISTORY_REMOTE_EFFECT_KIND.unknown },
       );
       return persisted.kind === "committed"
         ? { kind: "evidence-required", snapshot: persisted.snapshot }
@@ -219,7 +233,7 @@ export class RenameHistoryResolutionService {
         index,
         HISTORY_CLEANUP_STEP_PHASE.evidenceRequired,
         RECONCILIATION_OPERATION_PHASE.evidenceRequired,
-        { kind: MUTATION_EFFECT_CERTAINTY.unknown },
+        { kind: HISTORY_REMOTE_EFFECT_KIND.unknown },
       );
       return persisted.kind === "committed"
         ? { kind: "evidence-required", snapshot: persisted.snapshot }
@@ -260,7 +274,7 @@ export class RenameHistoryResolutionService {
     /* v8 ignore stop */
     const effectMayHaveStarted =
       step.phase === HISTORY_CLEANUP_STEP_PHASE.mutatingRemote ||
-      step.remoteEffect.kind === MUTATION_EFFECT_CERTAINTY.unknown;
+      step.remoteEffect.kind === HISTORY_REMOTE_EFFECT_KIND.unknown;
     const committed = await this.persistStepPhase(
       before.operationId,
       index,
@@ -268,8 +282,8 @@ export class RenameHistoryResolutionService {
       RECONCILIATION_OPERATION_PHASE.blocked,
       {
         kind: effectMayHaveStarted
-          ? MUTATION_EFFECT_CERTAINTY.unknown
-          : MUTATION_EFFECT_CERTAINTY.definitelyRefused,
+          ? HISTORY_REMOTE_EFFECT_KIND.unknown
+          : HISTORY_REMOTE_EFFECT_KIND.definitelyRefused,
       },
     );
     if (committed.kind === "committed") return true;
@@ -492,11 +506,15 @@ export class RenameHistoryResolutionService {
         (candidate) => candidate.phase !== HISTORY_CLEANUP_STEP_PHASE.completed,
       );
       const completed = nextStepIndex === -1;
+      const gapFenced =
+        operation.observationCoverage ===
+        RECONCILIATION_OBSERVATION_COVERAGE.gapReviewRequired;
       const nextOperation: ReconciliationHistoryOperation = {
         ...operation,
-        phase: completed
-          ? RECONCILIATION_OPERATION_PHASE.completed
-          : RECONCILIATION_OPERATION_PHASE.partial,
+        phase:
+          completed && !gapFenced
+            ? RECONCILIATION_OPERATION_PHASE.completed
+            : RECONCILIATION_OPERATION_PHASE.partial,
         historyProgress: {
           ...operation.historyProgress,
           steps,
@@ -527,7 +545,7 @@ export class RenameHistoryResolutionService {
             candidate.operationId === operationId ? nextOperation : candidate,
         ),
         reconciliationReviews: state.reconciliationReviews.map((review) =>
-          review.reviewId === operation.reviewId && completed
+          review.reviewId === operation.reviewId && completed && !gapFenced
             ? { ...review, status: RECONCILIATION_REVIEW_STATUS.completed }
             : review,
         ),

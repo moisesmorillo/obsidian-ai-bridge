@@ -19,8 +19,10 @@ import type {
   MIRROR_RENAME_PHASE,
 } from "@core/mirror/mirror-state.constants";
 import type {
+  ReconciliationGapGroupReview,
   ReconciliationOperation,
   ReconciliationOperationV3,
+  ReconciliationOperationV4,
   ReconciliationReview,
 } from "@core/mirror/reconciliation-state.types";
 import type { NotePath } from "@core/note-path/note-path.types";
@@ -223,7 +225,7 @@ export type HandoffLocalObservation =
   | HandoffLiveLocalObservation
   | HandoffTombstoneLocalObservation;
 
-/** Future remote comparison result for one transferred acknowledgement. */
+/** Remote comparison result paired with one transferred acknowledgement. */
 export interface HandoffRemoteObservation {
   readonly path: NotePath;
   readonly acknowledgement: TransferableAcknowledgement | null;
@@ -262,10 +264,18 @@ export interface MirrorDeviceStateV3 extends MirrorDeviceStateV2 {
   readonly reconciliationOperations: readonly ReconciliationOperationV3[];
 }
 
-/** Current version-4 core-owned durable state saved outside synced plugin data. */
+/** Frozen v4 state decoded only as historical input to the strict v4→v5 migration. */
+export interface MirrorDeviceStateV4 extends MirrorDeviceStateV2 {
+  readonly reconciliationReviews: readonly ReconciliationReview[];
+  readonly reconciliationOperations: readonly ReconciliationOperationV4[];
+}
+
+/** Current version-5 core-owned durable state with explicit listener-gap authority. */
 export interface MirrorDeviceState extends MirrorDeviceStateV2 {
   /** Sparse content-free review metadata; absent paths receive no placeholder. */
   readonly reconciliationReviews: readonly ReconciliationReview[];
+  /** Sparse predecessor-linked gap review evidence with complete content-free snapshots. */
+  readonly reconciliationGapGroupReviews: readonly ReconciliationGapGroupReview[];
   /** Sparse confirmed operations carrying restart evidence but never note bodies. */
   readonly reconciliationOperations: readonly ReconciliationOperation[];
 }

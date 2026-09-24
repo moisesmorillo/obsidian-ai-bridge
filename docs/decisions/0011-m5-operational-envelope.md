@@ -5,7 +5,9 @@
 **Accepted for M5 planning — live diagnostics and v1 retirement implemented; remaining policy not yet fully qualified.** This
 Slice 1 record closes the eight operational decisions needed to refine later M5 work.
 It changes no runtime, authentication, API, plugin manifest, Cloudflare binding,
-dependency, deployment, credential, or current support claim. The numeric envelope
+dependency, deployment, credential, or current support claim. Later corrective ADR 0013
+advances the M4 state/runtime format to v5 without changing this operating policy; its
+bounded disposable-host evidence does not qualify the numeric envelope. The envelope
 below becomes a support claim only after the remaining implementation and Slice 6
 qualification gates pass.
 
@@ -28,9 +30,11 @@ planning suggestion as a universal guarantee.
 
 ### Synthetic local qualification
 
-A disposable in-memory harness called current production boundaries directly; it was
-not committed and used no vault content, credentials, filesystem vault, network, or
-deployment. For each sample it created eligible path metadata and a minimal content-
+A disposable in-memory harness called production boundaries at the time of measurement;
+it was not committed and used no vault content, credentials, filesystem vault, network,
+or deployment. The state/codec measurements were for the then-current strict v4 format;
+they do not measure v5 migration, validation, or the v5 13 MiB ceiling. For each sample
+it created eligible path metadata and a minimal content-
 free live acknowledgement per path, then measured:
 
 - `ObsidianLocalVault.list` plus `LocalInspectionService.list`, including eligibility
@@ -39,6 +43,9 @@ free live acknowledgement per path, then measured:
 - `isMirrorDeviceStateConsistent`;
 - strict device-state v4 encode and decode; and
 - strict v2 decode followed by v2→v3→v4 projection and v4 encode.
+
+These are historical v4 measurements. M5 qualification must include the current v5
+codec and v2→v3→v4→v5 migration path.
 
 The qualification ran three fresh Bun processes per sample on macOS 26.6.2, Apple M4
 Pro, 48 GiB RAM, using the repository-pinned Bun 1.4.2. Values are medians; encoded
@@ -63,7 +70,8 @@ canonical suite's fixture volume and runtime were unchanged.
 
 - The plugin scheduler permits two active jobs, finite retries, 50-object API pages,
   1,000-page explicit inventory passes, 1 MiB note bodies, at most 50,000 tracked
-  paths, and a 12 MiB current state. These are independent hard bounds.
+  paths, a 12 MiB historical v4 state bound, and the current 13 MiB v5 state bound.
+  These are independent hard limits, not an operating-capacity guarantee.
 - The current plugin and all production clients use v2. Repository search found v1
   route ownership only in the Worker compatibility surface; no current production
   client imports or calls authenticated v1 reads. Tests and documentation preserve
@@ -73,7 +81,8 @@ canonical suite's fixture volume and runtime were unchanged.
   native-secret, iCloud, WebView, or background-iOS behavior.
 - Current release automation versions the root package at 0.10.1 while the plugin
   manifest remains 0.1.0. This is valid experimental history but is insufficient for
-  a synchronized supported artifact claim. Device state v4 has no reverse migration.
+  a synchronized supported artifact claim. Current device state v5 has no reverse
+  migration; strict v2/v3/v4 readers reject v5.
 - Recovery APIs already provide 50-object metadata pages and one exact conditional
   seal or purge per request. Purge preserves a content-free marker and the accepted
   30-day semantics; there is no safe bulk-delete or scheduler requirement.
@@ -105,7 +114,7 @@ result.
 
 The 50,000-path constant remains a corruption/resource safety ceiling. Counts above
 10,000 are unsupported even when they fit that ceiling. Note count does not override
-the 1 MiB per-note, 12 MiB state, collection, page, retry, or scheduler bounds.
+the 1 MiB per-note, current 13 MiB v5 state, collection, page, retry, or scheduler bounds (the frozen historical v4 bound was 12 MiB).
 
 ### 2–3. Rate limiting and operation quotas
 
@@ -252,5 +261,6 @@ authority, reviewed reconciliation, or unknown-effect preservation.
 - [Worker API](../api.md)
 - [Operator guide](../operations.md)
 - [ADR 0004 — recovery semantics](0004-recoverable-mirror-deletions.md)
-- [ADR 0009 — state v4 and hard bounds](0009-m4-history-runtime-and-device-state-v4.md)
+- [ADR 0009 — historical state v4 and hard bounds](0009-m4-history-runtime-and-device-state-v4.md)
+- [ADR 0013 — current state v5 listener-gap correction](0013-listener-ready-effect-authority-and-observation-gap-recovery.md)
 - [ADR 0010 — scoped credentials and permissions](0010-scoped-client-credentials-and-permissions.md)

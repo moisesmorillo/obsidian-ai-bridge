@@ -2,6 +2,7 @@ import {
   activateIsolatedAssociation,
   createMirrorOperationId,
   FairMirrorScheduler,
+  fenceActiveReconciliationForObservationGap,
   fenceMirrorRuntime,
   type LocalReconciliationWriter,
   MIRROR_DEVICE_LIFECYCLE_KIND,
@@ -35,6 +36,9 @@ import {
 } from "@obsidian-plugin/configuration/obsidian-secret-store";
 import type {
   ReconciliationCandidateList,
+  ReconciliationGapActionSelection,
+  ReconciliationGapReviewCreationResult,
+  ReconciliationObservationGapList,
   ReconciliationReviewDetail,
   ReconciliationUiCommandResult,
   RecoverySelectionList,
@@ -45,6 +49,7 @@ import {
   MirrorConnectionAdmissionCoordinator,
   type MirrorRuntimeConnection,
 } from "@obsidian-plugin/runtime/mirror-connection-admission";
+import type { MirrorEffectDispatchAuthority } from "@obsidian-plugin/runtime/mirror-effect-dispatch-authority";
 import {
   MirrorObservationEpochCoordinator,
   type MirrorRuntimeAttachResult,
@@ -69,7 +74,7 @@ export type {
 } from "@obsidian-plugin/runtime/mirror-observation-epoch";
 
 /** Version of the same-realm runtime-owner structural contract. */
-export const MIRROR_RUNTIME_OWNER_VERSION = 4;
+export const MIRROR_RUNTIME_OWNER_VERSION = 5;
 
 /** Construction dependencies retained behind plugin adapter boundaries. */
 export interface MirrorRuntimeOwnerDependencies {
@@ -82,6 +87,10 @@ export interface MirrorRuntimeOwnerDependencies {
   readonly cryptography?: Crypto;
   /** Explicit runtime recovery probe; production verifies a real SHA-256 operation. */
   readonly probeRuntime?: () => Promise<boolean>;
+  /** Single listener/layout authority also guards exact local/remote dispatch boundaries. */
+  readonly epochs?: MirrorObservationEpochCoordinator;
+  /** Shared exact-operation lease checked by local and Fetch adapters. */
+  readonly effectDispatchAuthority?: MirrorEffectDispatchAuthority;
 }
 
 /** Closed operational action result suitable for sanitized UI. */
@@ -109,22 +118,40 @@ export type MirrorRuntimeHandoffExportResult =
  * semantic owner. The facade routes decisions and retains sanitized outcomes only.
  */
 export class MirrorRuntimeOwner {
+  /** Structural compatibility identifier validated before a same-realm owner is reused. */
   readonly version = MIRROR_RUNTIME_OWNER_VERSION;
+  /** Durable state authority shared by every runtime adapter and application service. */
   readonly stateOwner: MirrorStateOwner;
   private readonly admission = new MirrorConnectionAdmissionCoordinator();
-  private readonly epochs = new MirrorObservationEpochCoordinator();
+  private readonly epochs: MirrorObservationEpochCoordinator;
   private readonly reconciliation = new MirrorReconciliationCoordinator();
   private readonly scheduler = new FairMirrorScheduler();
   private readonly observations =
     new ReconciliationObservationGenerationOwner();
   private reviewed: ReconciliationRuntimeOwner | null = null;
   private readonly outcomes = new Map<NotePath, MirrorPathJobOutcome>();
+  /** Whether normal scheduling and reviewed work may run after the durable startup barrier. */
+  private normalSchedulingReady = false;
+  /** Whether positive-only bootstrap may run before normal event delivery is activated. */
+  private bootstrapSchedulingReady = false;
+  /** Exact attached presentation identity used to revoke its lease on delivery failure. */
+  private sessionId: string | null = null;
+  /** Sticky per-attachment fence preventing lease publication after any lost observation. */
+  private observationDeliveryUnavailable = false;
+  /** Queue drain captured from the event adapter for the current ready attachment. */
+  private startupEventDrain: (() => Promise<boolean>) | null = null;
+  /** Delivery activation captured alongside the current attachment's queue drain. */
+  private startupEventActivation: (() => boolean) | null = null;
+  /** Shares one startup observation drain across concurrent readiness callers. */
+  private startupEventBarrier: Promise<boolean> | null = null;
   private readonly handoff: MirrorStagedHandoffVerifier;
   private activeOwnerOperations = 0;
 
   /** @param dependencies - Validated state plus host-independent and adapter seams. */
   constructor(private readonly dependencies: MirrorRuntimeOwnerDependencies) {
     this.stateOwner = dependencies.stateOwner;
+    this.epochs =
+      dependencies.epochs ?? new MirrorObservationEpochCoordinator();
     this.handoff = new MirrorStagedHandoffVerifier({
       stateOwner: dependencies.stateOwner,
       local: dependencies.local,
@@ -146,7 +173,12 @@ export class MirrorRuntimeOwner {
   attach(
     attachment: MirrorRuntimeSessionAttachment,
   ): MirrorRuntimeAttachResult {
+    const isNewAttachment = this.sessionId !== attachment.id;
     const result = this.epochs.attach(attachment);
+    if (result.kind === "attached") {
+      if (isNewAttachment) this.observationDeliveryUnavailable = false;
+      this.sessionId = attachment.id;
+    }
     this.reconcileAdmission();
     this.notify();
     return result;
@@ -158,11 +190,15 @@ export class MirrorRuntimeOwner {
    */
   detach(sessionId: string): void {
     if (!this.epochs.detach(sessionId)) return;
+    this.sessionId = null;
     const parsedSessionId = createMirrorOperationId(sessionId);
     if (parsedSessionId !== undefined) {
       this.reviewed?.invalidateSession(parsedSessionId);
     }
     this.admission.gate.disable();
+    this.normalSchedulingReady = false;
+    this.bootstrapSchedulingReady = false;
+    void this.classifyObservationGap();
   }
 
   /**
@@ -212,93 +248,146 @@ export class MirrorRuntimeOwner {
     }
     this.reconcileAdmission();
     this.notify();
-    if (this.epochs.isLayoutReady()) {
-      await this.startAutomaticReconciliation(false);
+    if (this.epochs.isLayoutReady()) this.bootstrapSchedulingReady = true;
+    if (
+      this.epochs.isLayoutReady() &&
+      (await this.startAndCompleteAutomaticReconciliation(false))
+    ) {
+      this.notify();
     }
   }
 
   /**
-   * Accepts layout readiness once and reconciles the new listener epoch.
+   * Fences persisted operations, publishes the lease for positive bootstrap, then drains queued observations before normal scheduling.
    * @param sessionId - Current enable-lifetime session identity.
+   * @param drainQueuedEvents - Adapter barrier that persists callbacks captured during classification.
+   * @param activateEvents - Adapter action opening delivery after bootstrap ordering is established.
    */
-  async onLayoutReady(sessionId: string): Promise<void> {
+  async onLayoutReady(
+    sessionId: string,
+    drainQueuedEvents: () => Promise<boolean> = async () => true,
+    activateEvents: () => boolean = () => true,
+  ): Promise<void> {
     const ready = this.epochs.markLayoutReady(sessionId);
     if (ready.kind !== "ready") return;
+    this.startupEventBarrier = null;
+    if (
+      !(await this.classifyObservationGap()) ||
+      this.observationDeliveryUnavailable ||
+      this.sessionId !== sessionId
+    ) {
+      return;
+    }
+    this.startupEventDrain = drainQueuedEvents;
+    this.startupEventActivation = activateEvents;
+    if (!this.epochs.publishDispatchLease(sessionId)) return;
     this.reconcileAdmission();
-    await this.startAutomaticReconciliation(false);
+    if (this.admission.currentConnection() === null) return;
+    this.bootstrapSchedulingReady = true;
+    this.notify();
+    const activeWriter =
+      this.stateOwner.snapshot().state.lifecycle.kind ===
+      MIRROR_DEVICE_LIFECYCLE_KIND.active;
+    const bootstrapCompleted = await this.startAutomaticReconciliation(false);
+    if (
+      this.observationDeliveryUnavailable ||
+      (activeWriter && !bootstrapCompleted)
+    ) {
+      return;
+    }
+    if (!(await this.completeStartupEventBarrier())) return;
+    this.normalSchedulingReady = bootstrapCompleted || !activeWriter;
+    if (bootstrapCompleted) this.reviewed?.resumePersisted();
+    this.notify();
   }
 
   /**
    * Routes a create/modify event to staged invalidation or ordinary core policy.
    * @param path - Immutable eligible saved path from the host event.
+   * @throws When local observation persistence fails, so the event adapter revokes its lease.
    */
   async observePresent(
     path: NotePath,
     eventKind: ReconciliationEventKind = RECONCILIATION_EVENT_KIND.modify,
   ): Promise<void> {
-    const generation = this.observations.observe(path);
-    if (await this.reviewed?.observeEvent(path, eventKind, generation)) return;
-    if (await this.handoff.observePresent(path)) return;
-    const synchronizer = this.admission.currentConnection()?.synchronizer;
-    if (synchronizer === undefined) return;
-    await this.runOwnerOperation(() => synchronizer.observePresent(path));
+    try {
+      const generation = this.observations.observe(path);
+      if (await this.reviewed?.observeEvent(path, eventKind, generation))
+        return;
+      if (await this.handoff.observePresent(path)) return;
+      const synchronizer = this.admission.currentConnection()?.synchronizer;
+      if (synchronizer === undefined) return;
+      await this.runOwnerOperation(() => synchronizer.observePresent(path));
+    } finally {
+      this.assertObservationPersistenceAvailable();
+    }
   }
 
   /**
    * Routes a delete event to staged invalidation or post-bootstrap core policy.
    * @param path - Immutable eligible deleted path from the host event.
+   * @throws When local observation persistence fails, so the event adapter revokes its lease.
    */
   async observeDelete(path: NotePath): Promise<void> {
-    const generation = this.observations.observe(path);
-    if (
-      await this.reviewed?.observeEvent(
-        path,
-        RECONCILIATION_EVENT_KIND.delete,
-        generation,
-      )
-    ) {
-      return;
+    try {
+      const generation = this.observations.observe(path);
+      if (
+        await this.reviewed?.observeEvent(
+          path,
+          RECONCILIATION_EVENT_KIND.delete,
+          generation,
+        )
+      ) {
+        return;
+      }
+      if (await this.handoff.observeDelete(path)) return;
+      const synchronizer = this.admission.currentConnection()?.synchronizer;
+      if (synchronizer === undefined) return;
+      await this.runOwnerOperation(() => synchronizer.observeDelete(path));
+    } finally {
+      this.assertObservationPersistenceAvailable();
     }
-    if (await this.handoff.observeDelete(path)) return;
-    const synchronizer = this.admission.currentConnection()?.synchronizer;
-    if (synchronizer === undefined) return;
-    await this.runOwnerOperation(() => synchronizer.observeDelete(path));
   }
 
   /**
    * Routes a file rename without granting staged state ordinary mutation intent.
    * @param sourcePath - Eligible pre-event path.
    * @param destinationPath - Eligible destination or null when it left scope.
+   * @throws When local observation persistence fails, so the event adapter revokes its lease.
    */
   async observeRename(
     sourcePath: NotePath,
     destinationPath: NotePath | null,
   ): Promise<void> {
-    const sourceGeneration = this.observations.observe(sourcePath);
-    const sourceReserved = await this.reviewed?.observeEvent(
-      sourcePath,
-      RECONCILIATION_EVENT_KIND.rename,
-      sourceGeneration,
-    );
-    const destinationReserved =
-      destinationPath === null
-        ? false
-        : await this.reviewed?.observeEvent(
-            destinationPath,
-            RECONCILIATION_EVENT_KIND.rename,
-            this.observations.observe(destinationPath),
-          );
-    if (sourceReserved || destinationReserved) return;
-    if (await this.handoff.observeRename(sourcePath, destinationPath)) return;
-    const synchronizer = this.admission.currentConnection()?.synchronizer;
-    if (synchronizer === undefined) return;
-    await this.runOwnerOperation(async () => {
-      if (destinationPath === null) {
-        await synchronizer.observeRenameOutOfEligibility(sourcePath);
-        return;
-      }
-      await synchronizer.observeRename(sourcePath, destinationPath);
-    });
+    try {
+      const sourceGeneration = this.observations.observe(sourcePath);
+      const sourceReserved = await this.reviewed?.observeEvent(
+        sourcePath,
+        RECONCILIATION_EVENT_KIND.rename,
+        sourceGeneration,
+      );
+      const destinationReserved =
+        destinationPath === null
+          ? false
+          : await this.reviewed?.observeEvent(
+              destinationPath,
+              RECONCILIATION_EVENT_KIND.rename,
+              this.observations.observe(destinationPath),
+            );
+      if (sourceReserved || destinationReserved) return;
+      if (await this.handoff.observeRename(sourcePath, destinationPath)) return;
+      const synchronizer = this.admission.currentConnection()?.synchronizer;
+      if (synchronizer === undefined) return;
+      await this.runOwnerOperation(async () => {
+        if (destinationPath === null) {
+          await synchronizer.observeRenameOutOfEligibility(sourcePath);
+          return;
+        }
+        await synchronizer.observeRename(sourcePath, destinationPath);
+      });
+    } finally {
+      this.assertObservationPersistenceAvailable();
+    }
   }
 
   /**
@@ -306,20 +395,52 @@ export class MirrorRuntimeOwner {
    * @param oldFolder - Literal pre-event folder prefix.
    * @param newFolder - New eligible prefix or null when it left scope.
    * @returns Bounded core expansion, staged invalidation summary, or no connection.
+   * @throws When local observation persistence fails, so the event adapter revokes its lease.
    */
   async observeFolderRename(
     oldFolder: string,
     newFolder: string | null,
   ): Promise<MirrorFolderRenameResult | null> {
-    await this.observeReservedFolderRename(oldFolder, newFolder);
-    if (await this.handoff.observeFolderRename(oldFolder, newFolder)) {
-      return { planned: 0, deferred: 0, knownDescendants: 0 };
+    try {
+      await this.observeReservedFolderRename(oldFolder, newFolder);
+      if (await this.handoff.observeFolderRename(oldFolder, newFolder)) {
+        return { planned: 0, deferred: 0, knownDescendants: 0 };
+      }
+      const synchronizer = this.admission.currentConnection()?.synchronizer;
+      if (synchronizer === undefined) return null;
+      return await this.runOwnerOperation(() =>
+        synchronizer.observeFolderRename(oldFolder, newFolder),
+      );
+    } finally {
+      this.assertObservationPersistenceAvailable();
     }
-    const synchronizer = this.admission.currentConnection()?.synchronizer;
-    if (synchronizer === undefined) return null;
-    return this.runOwnerOperation(() =>
-      synchronizer.observeFolderRename(oldFolder, newFolder),
-    );
+  }
+
+  /**
+   * Revokes observation and effect authority when a host callback cannot be durably delivered.
+   *
+   * Lease invalidation is synchronous; the durable gap fence is best-effort and must
+   * complete before a later epoch can publish a replacement lease.
+   *
+   * @returns Completion of the durable classification attempt.
+   */
+  failObservationDelivery(): Promise<void> {
+    this.observationDeliveryUnavailable = true;
+    if (this.sessionId !== null) {
+      this.epochs.invalidateDispatchLease(this.sessionId);
+    }
+    this.admission.gate.disable();
+    this.normalSchedulingReady = false;
+    this.bootstrapSchedulingReady = false;
+    const presentationId =
+      this.sessionId === null
+        ? undefined
+        : createMirrorOperationId(this.sessionId);
+    if (presentationId !== undefined) {
+      this.reviewed?.invalidateSession(presentationId);
+    }
+    this.notify();
+    return this.classifyObservationGap().then(() => undefined);
   }
 
   /**
@@ -360,26 +481,33 @@ export class MirrorRuntimeOwner {
     }
   }
 
-  /** @returns Earliest wake only while the current observation epoch is ready. */
+  /** @returns Positive-bootstrap deadline before queue drain, otherwise normal work deadline for the ready epoch. */
   nextWakeAtMilliseconds(): number | null {
-    if (!this.epochs.isLayoutReady()) return null;
-    return (
-      this.admission
-        .currentConnection()
-        ?.synchronizer.nextWakeAtMilliseconds() ?? null
-    );
+    if (!this.epochs.isLayoutReady() || !this.bootstrapSchedulingReady) {
+      return null;
+    }
+    const synchronizer = this.admission.currentConnection()?.synchronizer;
+    if (synchronizer === undefined) return null;
+    return this.normalSchedulingReady
+      ? synchronizer.nextWakeAtMilliseconds()
+      : synchronizer.nextBootstrapPositiveWakeAtMilliseconds();
   }
 
   /**
-   * Runs ready work or durably fences an unexpected local runtime failure.
+   * Runs only current-scan positive bootstrap paths before queue drain, then normal work; fences unexpected local runtime failure.
    * @returns Whether work settled normally or scheduling was fenced.
    */
   async synchronizeReady(): Promise<MirrorRuntimeSynchronizationResult> {
+    if (!this.bootstrapSchedulingReady) return { kind: "completed" };
     const synchronizer = this.admission.currentConnection()?.synchronizer;
     if (synchronizer === undefined) return { kind: "completed" };
     try {
       await this.runOwnerOperation(async () => {
-        await synchronizer.synchronizeReady();
+        if (this.normalSchedulingReady) {
+          await synchronizer.synchronizeReady();
+        } else {
+          await synchronizer.synchronizeBootstrapPositiveReady();
+        }
         this.captureOutcomes(synchronizer);
       });
       return { kind: "completed" };
@@ -401,7 +529,7 @@ export class MirrorRuntimeOwner {
       return { kind: "not-ready" };
     }
     if (!(await this.recoverRuntimeIfNeeded())) return { kind: "failed" };
-    const result = await this.startAutomaticReconciliation(true);
+    const result = await this.startAndCompleteAutomaticReconciliation(true);
     return result ? { kind: "completed" } : { kind: "failed" };
   }
 
@@ -671,7 +799,7 @@ export class MirrorRuntimeOwner {
   }
 
   /**
-   * Lists current M4 candidates only for the attached layout-ready session.
+   * Lists current M4 candidates only after startup observations are durable and the attached session is fully ready.
    * @param sessionId - Current plugin enable-lifetime UUID.
    * @returns Sanitized bounded candidate projection.
    */
@@ -680,6 +808,75 @@ export class MirrorRuntimeOwner {
   ): Promise<ReconciliationCandidateList> {
     if (!this.reconciliationReady(sessionId)) return { kind: "unavailable" };
     return this.reviewed?.listCandidates() ?? { kind: "unavailable" };
+  }
+
+  /**
+   * Lists every active gap-fenced operation and its exact bounded reservations.
+   * @param sessionId - Current plugin enable-lifetime UUID.
+   * @returns Sanitized bounded gap candidates, or unavailable when the session is stale.
+   */
+  listObservationGaps(sessionId: string): ReconciliationObservationGapList {
+    return this.reconciliationReady(sessionId)
+      ? (this.reviewed?.listObservationGaps() ?? { kind: "unavailable" })
+      : { kind: "unavailable" };
+  }
+
+  /**
+   * Creates a complete fresh review for one active gap-fenced predecessor.
+   * @param sessionId - Current plugin enable-lifetime UUID.
+   * @param predecessorOperationId - Exact operation retaining the gap reservations.
+   * @returns Sanitized complete-group evidence, or a fail-closed outcome.
+   */
+  createObservationGapReview(
+    sessionId: string,
+    predecessorOperationId: import("@obsidian-ai-bridge/core").MirrorOperationId,
+  ): Promise<ReconciliationGapReviewCreationResult> {
+    const parsed = createMirrorOperationId(sessionId);
+    if (!this.reconciliationReady(sessionId) || parsed === undefined) {
+      return Promise.resolve({ kind: "unavailable" });
+    }
+    return (
+      this.reviewed?.createGapGroupReview(parsed, predecessorOperationId) ??
+      Promise.resolve({ kind: "unavailable" })
+    );
+  }
+
+  /**
+   * Closes one transient gap review without changing durable reservations.
+   * @param sessionId - Exact process-local presentation owner.
+   * @param reviewId - Complete gap-group review identity.
+   * @returns Nothing; unsubmitted bodies are discarded.
+   */
+  closeObservationGapReview(
+    sessionId: string,
+    reviewId: import("@obsidian-ai-bridge/core").MirrorOperationId,
+  ): void {
+    const parsed = createMirrorOperationId(sessionId);
+    if (parsed !== undefined) {
+      this.reviewed?.closeGapGroupReview(parsed, reviewId);
+    }
+  }
+
+  /**
+   * Atomically submits all target-scoped gap successors or the no-effect settlement.
+   * @param sessionId - Exact current plugin enable-lifetime UUID.
+   * @param reviewId - Complete fresh group review identity.
+   * @param actions - Every child action, or an empty list for exact no-effect settlement.
+   * @returns Sanitized outcome after one serialized durable commit.
+   */
+  submitObservationGapReview(
+    sessionId: string,
+    reviewId: import("@obsidian-ai-bridge/core").MirrorOperationId,
+    actions: readonly ReconciliationGapActionSelection[],
+  ): Promise<ReconciliationUiCommandResult> {
+    const parsed = createMirrorOperationId(sessionId);
+    if (!this.reconciliationReady(sessionId) || parsed === undefined) {
+      return Promise.resolve({ kind: "unavailable" });
+    }
+    return (
+      this.reviewed?.submitGapGroup(parsed, reviewId, actions) ??
+      Promise.resolve({ kind: "unavailable" })
+    );
   }
 
   /**
@@ -795,10 +992,109 @@ export class MirrorRuntimeOwner {
     return (
       this.epochs.isAttached(sessionId) &&
       this.epochs.isLayoutReady() &&
+      this.normalSchedulingReady &&
       this.reviewed !== null &&
       this.admission.currentServerIdentity().kind === "matched" &&
       this.stateOwner.snapshot().mutationAdmissionAllowed
     );
+  }
+
+  /**
+   * Durably fences every active operation before a fresh listener epoch may dispatch.
+   *
+   * @returns Whether the current state is persistent and all gap classification was committed.
+   */
+  private async classifyObservationGap(): Promise<boolean> {
+    if (!this.stateOwner.snapshot().persistenceAvailable) return false;
+    const committed = await this.stateOwner.transitionIfChanged(
+      fenceActiveReconciliationForObservationGap,
+    );
+    return (
+      committed.kind === "committed" && committed.snapshot.persistenceAvailable
+    );
+  }
+
+  /**
+   * Drains callbacks accumulated during bootstrap before enabling ordinary event scheduling.
+   *
+   * @returns Whether queued observations were committed and live event delivery is active.
+   */
+  private completeStartupEventBarrier(): Promise<boolean> {
+    const sessionId = this.sessionId;
+    if (
+      sessionId === null ||
+      !this.epochs.isAttached(sessionId) ||
+      !this.epochs.isLayoutReady()
+    ) {
+      return Promise.resolve(false);
+    }
+    if (this.startupEventBarrier !== null) {
+      return this.startupEventBarrier.then(
+        (completed) =>
+          completed &&
+          this.epochs.isAttached(sessionId) &&
+          this.epochs.isLayoutReady(),
+      );
+    }
+
+    const drain = this.startupEventDrain;
+    const activate = this.startupEventActivation;
+    if (drain === null && activate === null) return Promise.resolve(true);
+    if (drain === null || activate === null) {
+      this.epochs.invalidateDispatchLease(sessionId);
+      this.admission.gate.disable();
+      this.normalSchedulingReady = false;
+      this.bootstrapSchedulingReady = false;
+      return Promise.resolve(false);
+    }
+    this.startupEventBarrier = this.drainAndActivateStartupEvents(
+      sessionId,
+      drain,
+      activate,
+    );
+    return this.startupEventBarrier;
+  }
+
+  /**
+   * Persists startup callbacks once and activates delivery only for their owning listener session.
+   * @param sessionId - Session that owns the captured queue callbacks.
+   * @param drain - Persistence barrier captured when this session became ready.
+   * @param activate - Event-delivery activation captured for the same session.
+   * @returns Whether the same session still owns a ready dispatch lease.
+   */
+  private async drainAndActivateStartupEvents(
+    sessionId: string,
+    drain: () => Promise<boolean>,
+    activate: () => boolean,
+  ): Promise<boolean> {
+    if (!(await drain()) || !activate()) {
+      if (this.epochs.isAttached(sessionId)) {
+        this.epochs.invalidateDispatchLease(sessionId);
+        this.admission.gate.disable();
+        this.normalSchedulingReady = false;
+        this.bootstrapSchedulingReady = false;
+      }
+      return false;
+    }
+    return this.epochs.isAttached(sessionId) && this.epochs.isLayoutReady();
+  }
+
+  /**
+   * Completes positive bootstrap, drains startup observations and resumes only current-lease operations.
+   *
+   * @param force - Whether a previously completed identity should bootstrap again.
+   * @returns Whether bootstrap, queued-event persistence and listener activation all completed.
+   */
+  private async startAndCompleteAutomaticReconciliation(
+    force: boolean,
+  ): Promise<boolean> {
+    this.bootstrapSchedulingReady = this.epochs.isLayoutReady();
+    if (!(await this.startAutomaticReconciliation(force))) return false;
+    if (!(await this.completeStartupEventBarrier())) return false;
+    this.normalSchedulingReady = true;
+    this.reviewed?.resumePersisted();
+    this.notify();
+    return true;
   }
 
   /**
@@ -877,6 +1173,9 @@ export class MirrorRuntimeOwner {
 
   /** Retires connection identity and bootstrap completion while preserving old in-flight settlement and pausing active state. */
   private async retireConnectionForConfigurationChange(): Promise<void> {
+    this.normalSchedulingReady = false;
+    this.bootstrapSchedulingReady = false;
+    this.dependencies.effectDispatchAuthority?.setConfigurationGeneration(null);
     this.reviewed?.detach();
     this.reviewed = null;
     this.admission.retireConnection();
@@ -916,10 +1215,18 @@ export class MirrorRuntimeOwner {
     secretReference: string,
     generation: number,
   ): void {
+    this.dependencies.effectDispatchAuthority?.setConfigurationGeneration(
+      generation,
+    );
     const remote = new FetchRemoteBridge({
       origin,
       secretReference,
       secretStorage: this.dependencies.secretStorage,
+      ...(this.dependencies.effectDispatchAuthority === undefined
+        ? {}
+        : {
+            effectDispatchAuthority: this.dependencies.effectDispatchAuthority,
+          }),
       admission: {
         admit: async () =>
           this.admission.isGenerationCurrent(generation)
@@ -962,10 +1269,10 @@ export class MirrorRuntimeOwner {
             observations: this.observations,
             scheduler: this.scheduler,
             cryptography: this.dependencies.cryptography ?? globalThis.crypto,
+            isNormalSchedulingReady: () => this.normalSchedulingReady,
             currentIdentity: () => this.reconciliationIdentity(generation),
           });
     this.admission.publishConnection(remote, synchronizer);
-    this.reviewed?.resumePersisted();
   }
 
   /**
@@ -1051,6 +1358,13 @@ export class MirrorRuntimeOwner {
     this.reconcileAdmission();
     this.notify();
     return true;
+  }
+
+  /** Refuses to acknowledge an event sink callback after any durable observation write failed. */
+  private assertObservationPersistenceAvailable(): void {
+    if (!this.stateOwner.snapshot().persistenceAvailable) {
+      throw new Error("Observation persistence is unavailable.");
+    }
   }
 
   /**

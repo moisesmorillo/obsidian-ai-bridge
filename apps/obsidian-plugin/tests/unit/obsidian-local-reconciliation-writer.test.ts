@@ -13,8 +13,10 @@ import {
   MAX_NOTE_SIZE_BYTES,
   type MirrorOperationId,
   type NotePath,
+  RECONCILIATION_EFFECT_DISPATCH_KIND,
   RECONCILIATION_PRESERVATION_ROOT,
   RECONCILIATION_PRESERVATION_SIDE,
+  type ReconciliationEffectDispatchKind,
 } from "@obsidian-ai-bridge/core";
 import { ObsidianLocalReconciliationWriter } from "@obsidian-plugin/infrastructure/obsidian-local-reconciliation-writer";
 import type {
@@ -22,6 +24,10 @@ import type {
   ObsidianReconciliationFile,
   ObsidianReconciliationNode,
 } from "@obsidian-plugin/infrastructure/obsidian-local-reconciliation-writer.types";
+import type {
+  MirrorEffectDispatchAuthority,
+  MirrorEffectDispatchResult,
+} from "@obsidian-plugin/runtime/mirror-effect-dispatch-authority";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 /** Mutable saved-file double used only by the narrow host fixture. */
@@ -162,6 +168,9 @@ const OPERATION = required(
 );
 const OTHER_OPERATION = required(
   createMirrorOperationId("22222222-2222-4222-8222-222222222222"),
+);
+const HISTORY_STEP = required(
+  createMirrorOperationId("33333333-3333-4333-8333-333333333333"),
 );
 const PATH = notePath("notes/target.md");
 const cryptography: LocalReconciliationWriteCryptography = {
@@ -650,6 +659,44 @@ describe("ObsidianLocalReconciliationWriter.createPreservation", () => {
       kind: LocalInspectionKind.failed,
       reason: LocalSkipReason.excludedLocation,
     });
+  });
+
+  it("binds every history preservation folder and content effect to the exact step ID", async () => {
+    const host = new WriterHost();
+    const dispatches: {
+      readonly operationId: MirrorOperationId;
+      readonly kind: ReconciliationEffectDispatchKind;
+    }[] = [];
+    const authority: MirrorEffectDispatchAuthority = {
+      setConfigurationGeneration: () => undefined,
+      dispatch<Value>(
+        operationId: MirrorOperationId,
+        kind: ReconciliationEffectDispatchKind,
+        effect: () => Value,
+      ): MirrorEffectDispatchResult<Value> {
+        dispatches.push({ operationId, kind });
+        return { kind: "dispatched", value: effect() };
+      },
+    };
+    const writer = new ObsidianLocalReconciliationWriter(
+      host,
+      cryptography,
+      authority,
+    );
+
+    await expect(
+      writer.createPreservation({
+        ...preservationRequest(),
+        stepId: HISTORY_STEP,
+      }),
+    ).resolves.toMatchObject({ kind: "confirmed", outcome: "created" });
+
+    expect(dispatches).toEqual(
+      Array.from({ length: 4 }, () => ({
+        operationId: HISTORY_STEP,
+        kind: RECONCILIATION_EFFECT_DISPATCH_KIND.localPreservation,
+      })),
+    );
   });
 
   it.each(["root-file", "operation-folder", "side-file", "side-folder"])(

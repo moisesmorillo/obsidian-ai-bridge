@@ -6,6 +6,7 @@ import {
   LocalVaultFailureReason,
 } from "@obsidian-ai-bridge/core";
 import AiBridgePlugin from "@obsidian-plugin/main";
+import { MirrorPluginSession } from "@obsidian-plugin/runtime/mirror-plugin-session";
 import {
   host,
   resetHost,
@@ -60,20 +61,19 @@ describe("AiBridgePlugin commands and lifecycle", () => {
       "ai-bridge:prepare-writer-handoff",
       "ai-bridge:review-remote-divergence",
       "ai-bridge:restore-recovery-snapshot",
+      "ai-bridge:review-observation-gaps",
     ]);
     expect(host.settingsTabs.size).toBe(1);
     expect(host.statusBars.size).toBe(1);
+    expect(host.vault.on).not.toHaveBeenCalled();
+    host.becomeLayoutReady();
+    await Promise.resolve();
     expect(host.vault.on.mock.calls.map(([name]) => name)).toEqual([
       "create",
       "modify",
       "delete",
       "rename",
     ]);
-    expect(host.vault.on.mock.invocationCallOrder.at(-1)).toBeLessThan(
-      host.onLayoutReady.mock.invocationCallOrder[0] ?? Number.MAX_SAFE_INTEGER,
-    );
-    host.becomeLayoutReady();
-    await Promise.resolve();
     expect(host.vault.getFiles).not.toHaveBeenCalled();
     expect(guards.fetch).not.toHaveBeenCalled();
     await command("inspect-local-notes")();
@@ -87,6 +87,18 @@ describe("AiBridgePlugin commands and lifecycle", () => {
         (listeners) => listeners.size === 0,
       ),
     ).toBe(true);
+  });
+
+  it("reports local-only availability when mirror session creation fails", async () => {
+    vi.spyOn(MirrorPluginSession, "create").mockResolvedValueOnce(null);
+    const plugin = await loadPluginReady();
+
+    await command("show-mirror-status")();
+
+    expect(host.notices.map((notice) => notice.message)).toContain(
+      "AI Bridge mirror runtime is unavailable. Local inspection remains available.",
+    );
+    plugin.unload();
   });
 
   it("suppresses late M3 composition after unload during initial data loading", async () => {

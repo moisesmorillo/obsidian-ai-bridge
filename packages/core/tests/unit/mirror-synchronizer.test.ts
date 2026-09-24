@@ -24,6 +24,7 @@ import {
   MIRROR_STATE_STORE_FAILURE,
   type MirrorDeviceState,
   type MirrorOperationId,
+  type MirrorPathState,
   MirrorStateOwner,
   type MirrorStateSaveResult,
   type MirrorStateStore,
@@ -38,6 +39,7 @@ import {
   RECONCILIATION_CLASSIFICATION,
   RECONCILIATION_LOCAL_EVIDENCE_KIND,
   RECONCILIATION_LOCAL_STABILITY,
+  RECONCILIATION_OBSERVATION_COVERAGE,
   RECONCILIATION_OPERATION_PHASE,
   RECONCILIATION_PATH_REFERENCE_KIND,
   RECONCILIATION_PRESERVATION_PROOF_STATE,
@@ -469,6 +471,70 @@ describe("MirrorSynchronizer bootstrap and coalescing", () => {
       value: { notes: [], nextCursor: null },
     });
     await expect(bootstrap).resolves.toMatchObject({ kind: "complete" });
+  });
+
+  it("limits pre-barrier scheduling to current positive bootstrap paths", async () => {
+    const pendingInventory =
+      Promise.withResolvers<Awaited<ReturnType<RemoteBridge["listNotes"]>>>();
+    remote.listNotes.mockReturnValueOnce(pendingInventory.promise);
+    const deletedPath: MirrorPathState = {
+      path: PATH_B,
+      acknowledgement: {
+        kind: MIRROR_ACKNOWLEDGEMENT_KIND.live,
+        revision: REVISION_A,
+        contentSha256: HASH_A,
+      },
+      unresolvedMutation: null,
+      desired: {
+        kind: MIRROR_DESIRED_STATE_KIND.runtimeDelete,
+        observationGeneration: 1,
+        evidenceId: OPERATION_C,
+        associationId: ASSOCIATION,
+        expectedRevision: REVISION_A,
+        graceDeadlineMilliseconds: 0,
+      },
+      blockedReason: null,
+    };
+    const synchronizer = new MirrorSynchronizer(
+      local,
+      remote,
+      new MirrorStateOwner({ ...activeState(), paths: [deletedPath] }, store),
+      runtime,
+    );
+    const onPositiveAdmission = vi.fn();
+    const bootstrap = synchronizer.bootstrap({ onPositiveAdmission });
+    await vi.waitFor(() => expect(onPositiveAdmission).toHaveBeenCalledOnce());
+
+    runtime.now = 6_000;
+    expect(
+      synchronizer.nextBootstrapPositiveWakeAtMilliseconds(),
+    ).not.toBeNull();
+    await synchronizer.synchronizeBootstrapPositiveReady();
+
+    expect(local.read).toHaveBeenCalledWith(PATH_A);
+    expect(local.read).not.toHaveBeenCalledWith(PATH_B);
+    expect(remote.inspectNote).not.toHaveBeenCalledWith(PATH_B);
+    expect(remote.mutateNote).toHaveBeenCalledWith(
+      expect.objectContaining({ path: PATH_A }),
+    );
+
+    pendingInventory.resolve({
+      kind: "success",
+      value: { notes: [], nextCursor: null },
+    });
+    await expect(bootstrap).resolves.toMatchObject({ kind: "complete" });
+  });
+
+  it("does not reuse positive bootstrap markers from an earlier scan", async () => {
+    const synchronizer = createInactiveSynchronizer();
+    await synchronizer.bootstrap();
+    expect(synchronizer.nextBootstrapPositiveWakeAtMilliseconds()).toBe(750);
+
+    local.list.mockResolvedValueOnce(listResult([]));
+    await synchronizer.bootstrap();
+    expect(synchronizer.nextBootstrapPositiveWakeAtMilliseconds()).toBeNull();
+    await synchronizer.synchronizeBootstrapPositiveReady();
+    expect(local.read).not.toHaveBeenCalled();
   });
 
   it("suppresses wake deadlines while a bootstrapped writer is paused", async () => {
@@ -1372,6 +1438,7 @@ function activeState(): MirrorDeviceState {
     globalBlockReason: null,
     paths: [],
     stagedHandoff: null,
+    reconciliationGapGroupReviews: [],
     reconciliationReviews: [],
     reconciliationOperations: [],
   };
@@ -1469,6 +1536,8 @@ function stateWithRestoreFence(): MirrorDeviceState {
     ],
     reconciliationOperations: [
       {
+        observationCoverage: RECONCILIATION_OBSERVATION_COVERAGE.continuous,
+        gapSuccessorOperationIds: [],
         operationId: OPERATION_A,
         reviewId: OPERATION_B,
         authority: RECONCILIATION_AUTHORITY_SOURCE.recoveryRestoreDecision,

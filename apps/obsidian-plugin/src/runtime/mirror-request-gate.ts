@@ -21,11 +21,14 @@ export class MirrorRequestGate
   implements RemoteRequestAdmission, MirrorRequestCancellation
 {
   private open = false;
+  private generation = 0;
   private activePermits = 0;
   private readonly controllers = new Set<AbortController>();
 
   /** Opens admission for a verified attached runtime session. */
   enable(): void {
+    if (this.open) return;
+    this.generation += 1;
     this.open = true;
   }
 
@@ -34,6 +37,7 @@ export class MirrorRequestGate
    * Remote effect certainty remains owned by the transport/core settlement path.
    */
   disable(): void {
+    if (this.open) this.generation += 1;
     this.open = false;
     for (const controller of this.controllers) controller.abort();
   }
@@ -50,7 +54,9 @@ export class MirrorRequestGate
     }
     this.activePermits += 1;
     let released = false;
+    const generation = this.generation;
     return {
+      isCurrent: () => this.open && this.generation === generation,
       release: () => {
         if (released) return;
         released = true;

@@ -1,5 +1,6 @@
 import type { RemoteRequestAdmission } from "@obsidian-ai-bridge/core";
 import type { ObsidianSecretStorageHost } from "@obsidian-plugin/configuration/obsidian-secret-store";
+import type { MirrorEffectDispatchAuthority } from "@obsidian-plugin/runtime/mirror-effect-dispatch-authority";
 import type { MirrorRequestCancellation } from "@obsidian-plugin/runtime/mirror-request-gate";
 
 /** Standards Fetch seam retained only at the plugin transport boundary. */
@@ -17,6 +18,8 @@ export interface FetchRemoteBridgeDependencies {
   readonly admission: RemoteRequestAdmission;
   /** Coordinator-owned cancellation registration retained through real settlement. */
   readonly cancellation?: MirrorRequestCancellation;
+  /** Current observation lease checked at every Fetch mutation boundary. */
+  readonly effectDispatchAuthority?: MirrorEffectDispatchAuthority;
   /** Injectable standards Fetch seam for deterministic transport tests. */
   readonly fetch?: RemoteFetch | null;
   /** Injectable Web Crypto implementation for exact content-receipt validation. */

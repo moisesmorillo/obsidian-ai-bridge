@@ -127,13 +127,50 @@ describe("same-runtime mirror coordinator", () => {
     await expect(
       acquireRuntimeMirrorCoordinator(app, async () => owner()),
     ).resolves.toEqual({ kind: "incompatible-existing-owner" });
-    expect(MIRROR_RUNTIME_OWNER_VERSION).toBe(4);
+    expect(MIRROR_RUNTIME_OWNER_VERSION).toBe(5);
   });
 
-  it("refuses and preserves an M3 registry when M4 code enters the same realm", async () => {
+  it("rejects a v5 owner missing any new gap-authority member", async () => {
+    const app = {};
+    const gapMembers = [
+      "failObservationDelivery",
+      "listObservationGaps",
+      "createObservationGapReview",
+      "closeObservationGapReview",
+      "submitObservationGapReview",
+    ] as const;
+
+    for (const missingMember of gapMembers) {
+      Reflect.deleteProperty(globalThis, MIRROR_RUNTIME_COORDINATOR_SYMBOL);
+      const compatible = owner();
+      const incomplete = new Proxy(compatible, {
+        get(target, property, receiver) {
+          return property === missingMember
+            ? undefined
+            : Reflect.get(target, property, receiver);
+        },
+      });
+      const coordinators = new WeakMap<object, Promise<MirrorRuntimeOwner>>();
+      coordinators.set(app, Promise.resolve(incomplete));
+      Object.defineProperty(globalThis, MIRROR_RUNTIME_COORDINATOR_SYMBOL, {
+        value: {
+          format: "obsidian-ai-bridge-runtime-registry",
+          version: MIRROR_RUNTIME_COORDINATOR_VERSION,
+          coordinators,
+        },
+        configurable: true,
+      });
+
+      await expect(
+        acquireRuntimeMirrorCoordinator(app, async () => owner()),
+      ).resolves.toEqual({ kind: "incompatible-existing-owner" });
+    }
+  });
+
+  it("refuses and preserves a v4 registry when v5 code enters the same realm", async () => {
     const oldRegistry = {
       format: "obsidian-ai-bridge-runtime-registry",
-      version: 2,
+      version: 4,
       coordinators: new WeakMap(),
     };
     Object.defineProperty(globalThis, MIRROR_RUNTIME_COORDINATOR_SYMBOL, {
@@ -151,7 +188,7 @@ describe("same-runtime mirror coordinator", () => {
         MIRROR_RUNTIME_COORDINATOR_SYMBOL,
       )?.value,
     ).toBe(oldRegistry);
-    expect(MIRROR_RUNTIME_COORDINATOR_VERSION).toBe(4);
+    expect(MIRROR_RUNTIME_COORDINATOR_VERSION).toBe(5);
   });
 
   it("fails closed instead of replacing an incompatible existing global owner", async () => {

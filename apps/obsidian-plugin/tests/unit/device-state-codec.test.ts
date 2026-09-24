@@ -93,6 +93,7 @@ function state(): MirrorDeviceState {
       },
     ],
     stagedHandoff: null,
+    reconciliationGapGroupReviews: [],
     reconciliationReviews: [],
     reconciliationOperations: [],
   };
@@ -160,9 +161,9 @@ describe("device-local mirror state codec", () => {
   it("distinguishes an unsupported future version and rejects unknown fields", async () => {
     expect(
       await decodeMirrorDeviceState(
-        JSON.stringify({ format: MIRROR_DEVICE_STATE_FORMAT, version: 5 }),
+        JSON.stringify({ format: MIRROR_DEVICE_STATE_FORMAT, version: 6 }),
       ),
-    ).toEqual({ kind: "unsupported-version", version: 5 });
+    ).toEqual({ kind: "unsupported-version", version: 6 });
     const raw = rawState();
     expect(
       await decodeMirrorDeviceState(JSON.stringify({ ...raw, surprise: true })),
@@ -468,8 +469,10 @@ describe("device-local mirror state codec", () => {
         kind: "valid",
         state: candidate,
       });
+      const { reconciliationGapGroupReviews: _gapReviews, ...legacyState } =
+        candidate;
       const v3: MirrorDeviceStateV3 = {
-        ...candidate,
+        ...legacyState,
         reconciliationReviews: [],
         reconciliationOperations: [],
       };
@@ -736,6 +739,7 @@ describe("device-local mirror state codec", () => {
         })),
       },
       reconciliationReviews: [],
+      reconciliationGapGroupReviews: [],
       reconciliationOperations: [],
     };
     const stagedEntry = required(staged.stagedHandoff?.entries[0]);

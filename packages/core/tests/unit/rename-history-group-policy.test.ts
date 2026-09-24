@@ -89,6 +89,7 @@ function state(paths: readonly MirrorPathState[]): MirrorDeviceState {
     globalBlockReason: null,
     paths,
     stagedHandoff: null,
+    reconciliationGapGroupReviews: [],
     reconciliationReviews: [],
     reconciliationOperations: [],
   };

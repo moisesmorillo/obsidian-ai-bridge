@@ -25,8 +25,12 @@ import {
   RECONCILIATION_ACTION,
   RECONCILIATION_AUTHORITY_SOURCE,
   RECONCILIATION_CLASSIFICATION,
+  RECONCILIATION_EVENT_KIND,
+  RECONCILIATION_GAP_REVIEW_KIND,
+  RECONCILIATION_GAP_REVIEW_STATUS,
   RECONCILIATION_LOCAL_EVIDENCE_KIND,
   RECONCILIATION_LOCAL_STABILITY,
+  RECONCILIATION_OBSERVATION_COVERAGE,
   RECONCILIATION_OPERATION_PHASE,
   RECONCILIATION_PATH_REFERENCE_KIND,
   RECONCILIATION_PRESERVATION_PROOF_STATE,
@@ -36,6 +40,7 @@ import {
   RECONCILIATION_REVIEW_STATUS,
   RECOVERY_SNAPSHOT_STATE_KIND,
   type ReconciliationAction,
+  type ReconciliationGapGroupReview,
   type ReconciliationHistoryOperation,
   type ReconciliationNonHistoryOperation,
   type ReconciliationOperation,
@@ -44,6 +49,7 @@ import {
   type ReconciliationReview,
   type ReconciliationReviewSnapshot,
   reconciliationReviewSnapshotsEqual,
+  requiredReconciliationPreservations,
   staleOrphanedReconciliationReviews,
 } from "@obsidian-ai-bridge/core";
 import { describe, expect, it } from "vitest";
@@ -117,6 +123,7 @@ function baseState(): MirrorDeviceState {
       },
     ],
     stagedHandoff: null,
+    reconciliationGapGroupReviews: [],
     reconciliationReviews: [],
     reconciliationOperations: [],
   };
@@ -306,6 +313,8 @@ function operationFor(
         : null,
   };
   const common = {
+    observationCoverage: RECONCILIATION_OBSERVATION_COVERAGE.continuous,
+    gapSuccessorOperationIds: [],
     operationId: OPERATION,
     reviewId: REVIEW,
     authority: authorityFor(kind),
@@ -550,6 +559,16 @@ describe("M4 reconciliation state contracts", () => {
       );
     },
   );
+
+  it("accepts a disabled writer with no retained path or operation state", () => {
+    expect(
+      isMirrorDeviceStateConsistent({
+        ...baseState(),
+        lifecycle: { kind: MIRROR_DEVICE_LIFECYCLE_KIND.disabled },
+        paths: [],
+      }),
+    ).toBe(true);
+  });
 
   it("keeps ephemeral sampled text outside the durable state contract", () => {
     const durable = stateWithOperation(operationFor()).reconciliationReviews[0];
@@ -1262,6 +1281,70 @@ describe("M4 reconciliation state contracts", () => {
               proofState: RECONCILIATION_PRESERVATION_PROOF_STATE.verified,
             },
           ],
+        }),
+      ),
+    ).toBe(false);
+  });
+
+  it("rejects stale, reversed, empty, and duplicated local successor ranges", () => {
+    const remoteOnly = operationFor(RECONCILIATION_ACTION.keepLocal);
+    const invalidRanges = [
+      {
+        firstGeneration: 1,
+        latestGeneration: 2,
+        eventKinds: [RECONCILIATION_EVENT_KIND.modify],
+      },
+      {
+        firstGeneration: 2,
+        latestGeneration: 1,
+        eventKinds: [RECONCILIATION_EVENT_KIND.modify],
+      },
+      { firstGeneration: 2, latestGeneration: 2, eventKinds: [] },
+      {
+        firstGeneration: 2,
+        latestGeneration: 2,
+        eventKinds: [
+          RECONCILIATION_EVENT_KIND.modify,
+          RECONCILIATION_EVENT_KIND.modify,
+        ],
+      },
+    ] as const;
+
+    for (const successor of invalidRanges) {
+      expect(
+        isMirrorDeviceStateConsistent(
+          stateWithOperation({
+            ...remoteOnly,
+            localEffectObservation: {
+              kind: LOCAL_EFFECT_OBSERVATION_KIND.notRequired,
+              path: SOURCE,
+              listenerEpoch: 1,
+              beforeGeneration: 1,
+              successor,
+            },
+          }),
+        ),
+      ).toBe(false);
+    }
+
+    const prepared = operationFor(
+      RECONCILIATION_ACTION.keepBoth,
+      RECONCILIATION_OPERATION_PHASE.mutatingLocal,
+    );
+    if (
+      prepared.localEffectObservation.kind !==
+      LOCAL_EFFECT_OBSERVATION_KIND.prepared
+    ) {
+      throw new Error("Expected prepared local-effect evidence.");
+    }
+    expect(
+      isMirrorDeviceStateConsistent(
+        stateWithOperation({
+          ...prepared,
+          localEffectObservation: {
+            ...prepared.localEffectObservation,
+            successor: invalidRanges[1],
+          },
         }),
       ),
     ).toBe(false);
@@ -2198,6 +2281,8 @@ describe("M4 reconciliation state contracts", () => {
     const successorTemplate = operationFor(RECONCILIATION_ACTION.keepLocal);
     const successor: ReconciliationOperation = {
       ...successorTemplate,
+      observationCoverage: RECONCILIATION_OBSERVATION_COVERAGE.continuous,
+      gapSuccessorOperationIds: [],
       operationId: SUCCESSOR_OPERATION,
       reviewId: SUCCESSOR_REVIEW,
       snapshot: {
@@ -2279,6 +2364,8 @@ describe("M4 reconciliation state contracts", () => {
     const successorTemplate = operationFor(RECONCILIATION_ACTION.keepLocal);
     const successor: ReconciliationNonHistoryOperation = {
       ...successorTemplate,
+      observationCoverage: RECONCILIATION_OBSERVATION_COVERAGE.continuous,
+      gapSuccessorOperationIds: [],
       operationId: SUCCESSOR_OPERATION,
       reviewId: SUCCESSOR_REVIEW,
       snapshot: {
@@ -2328,6 +2415,247 @@ describe("M4 reconciliation state contracts", () => {
         ],
       }),
     ).toBe(false);
+  });
+
+  it("requires reciprocal durable links for an atomic gap-group transfer", () => {
+    const template = operationFor(RECONCILIATION_ACTION.keepLocal);
+    const predecessor: ReconciliationNonHistoryOperation = {
+      ...template,
+      phase: RECONCILIATION_OPERATION_PHASE.completed,
+      observationCoverage:
+        RECONCILIATION_OBSERVATION_COVERAGE.gapReviewRequired,
+      gapSuccessorOperationIds: [SUCCESSOR_OPERATION],
+    };
+    const child: ReconciliationNonHistoryOperation = {
+      ...template,
+      operationId: SUCCESSOR_OPERATION,
+      reviewId: SUCCESSOR_REVIEW,
+    };
+    const predecessorReview: ReconciliationReview = {
+      retention: RECONCILIATION_REVIEW_RETENTION.durable,
+      reviewId: REVIEW,
+      classification: RECONCILIATION_CLASSIFICATION.bothChanged,
+      status: RECONCILIATION_REVIEW_STATUS.completed,
+      snapshot: predecessor.snapshot,
+      operationId: predecessor.operationId,
+    };
+    const childReview: ReconciliationReview = {
+      ...predecessorReview,
+      reviewId: SUCCESSOR_REVIEW,
+      status: RECONCILIATION_REVIEW_STATUS.staged,
+      snapshot: child.snapshot,
+      operationId: child.operationId,
+    };
+    const gapReview: ReconciliationGapGroupReview = {
+      kind: RECONCILIATION_GAP_REVIEW_KIND.gapGroup,
+      reviewId: required(
+        createMirrorOperationId("aaaaaaaa-bbbb-4ccc-8ddd-000000000001"),
+      ),
+      predecessorOperationId: predecessor.operationId,
+      status: RECONCILIATION_GAP_REVIEW_STATUS.completed,
+      snapshot: predecessor.snapshot,
+      childReviewIds: [child.reviewId],
+    };
+    const transferred: MirrorDeviceState = {
+      ...baseState(),
+      reconciliationReviews: [predecessorReview, childReview],
+      reconciliationGapGroupReviews: [gapReview],
+      reconciliationOperations: [predecessor, child],
+    };
+
+    expect(isMirrorDeviceStateConsistent(transferred)).toBe(true);
+    expect(
+      isMirrorDeviceStateConsistent({
+        ...transferred,
+        reconciliationGapGroupReviews: [
+          gapReview,
+          { ...gapReview, reviewId: childReview.reviewId },
+        ],
+      }),
+    ).toBe(false);
+    const stalePredecessor: ReconciliationNonHistoryOperation = {
+      ...template,
+      observationCoverage:
+        RECONCILIATION_OBSERVATION_COVERAGE.gapReviewRequired,
+    };
+    const staleGroup: ReconciliationGapGroupReview = {
+      ...gapReview,
+      predecessorOperationId: stalePredecessor.operationId,
+      status: RECONCILIATION_GAP_REVIEW_STATUS.stale,
+      childReviewIds: [],
+    };
+    expect(
+      isMirrorDeviceStateConsistent({
+        ...stateWithOperation(stalePredecessor),
+        reconciliationGapGroupReviews: [staleGroup],
+      }),
+    ).toBe(true);
+    expect(
+      isMirrorDeviceStateConsistent({
+        ...transferred,
+        reconciliationGapGroupReviews: [{ ...gapReview, childReviewIds: [] }],
+      }),
+    ).toBe(false);
+    expect(
+      isMirrorDeviceStateConsistent({
+        ...transferred,
+        reconciliationOperations: [
+          predecessor,
+          {
+            ...child,
+            snapshot: {
+              ...child.snapshot,
+              runtime: { ...child.snapshot.runtime, listenerEpoch: 2 },
+            },
+          },
+        ],
+      }),
+    ).toBe(false);
+  });
+
+  it("validates frozen history preservation against live and legacy remote evidence", () => {
+    const refined = operationFor(RECONCILIATION_ACTION.resolveHistory);
+    const legacy: ReconciliationOperation = {
+      ...refined,
+      action: { kind: RECONCILIATION_ACTION.resolveHistory },
+      phase: RECONCILIATION_OPERATION_PHASE.blocked,
+      historyProgress: {
+        kind: HISTORY_PROGRESS_KIND.legacyV3Unrefined,
+        aggregateLocalEffect: MUTATION_EFFECT_CERTAINTY.notDispatched,
+        aggregateRemoteEffect: MUTATION_EFFECT_CERTAINTY.notDispatched,
+      },
+    };
+    const liveReceipt = verifiedReceipt(
+      legacy,
+      RECONCILIATION_PRESERVATION_SIDE.remote,
+    );
+    expect(
+      isMirrorDeviceStateConsistent(
+        stateWithOperation({ ...legacy, preservationReceipts: [liveReceipt] }),
+      ),
+    ).toBe(true);
+
+    const legacyEvidence = withPathEvidence(legacy, SOURCE, (evidence) => ({
+      ...evidence,
+      remote: {
+        kind: RECONCILIATION_REMOTE_EVIDENCE_KIND.legacy,
+        contentSha256: OTHER_HASH,
+      },
+    }));
+    const legacyReceipt = verifiedReceipt(
+      legacyEvidence,
+      RECONCILIATION_PRESERVATION_SIDE.remote,
+    );
+    expect(
+      isMirrorDeviceStateConsistent(
+        stateWithOperation({
+          ...legacyEvidence,
+          preservationReceipts: [legacyReceipt],
+        }),
+      ),
+    ).toBe(true);
+  });
+
+  it("fails preservation policy closed when action evidence is incomplete", () => {
+    const template = operationFor(RECONCILIATION_ACTION.keepLocal);
+    expect(
+      requiredReconciliationPreservations({
+        ...template,
+        snapshot: { ...template.snapshot, paths: [] },
+      }),
+    ).toBeUndefined();
+    expect(
+      requiredReconciliationPreservations({
+        ...operationFor(RECONCILIATION_ACTION.keepLocal),
+        snapshot: {
+          ...template.snapshot,
+          paths: template.snapshot.paths.map((evidence) => ({
+            ...evidence,
+            remote: { kind: RECONCILIATION_REMOTE_EVIDENCE_KIND.absent },
+          })),
+        },
+      }),
+    ).toBeUndefined();
+    const keepBothRemote: ReconciliationOperation = {
+      ...operationFor(RECONCILIATION_ACTION.keepBoth),
+      action: {
+        kind: RECONCILIATION_ACTION.keepBoth,
+        primarySide: RECONCILIATION_PRESERVATION_SIDE.remote,
+      },
+      snapshot: {
+        ...operationFor(RECONCILIATION_ACTION.keepBoth).snapshot,
+        paths: operationFor(RECONCILIATION_ACTION.keepBoth).snapshot.paths.map(
+          (evidence) =>
+            evidence.path === SOURCE
+              ? {
+                  ...evidence,
+                  local: {
+                    kind: RECONCILIATION_LOCAL_EVIDENCE_KIND.absent,
+                    stability: RECONCILIATION_LOCAL_STABILITY.stable,
+                    observationGeneration: 1,
+                  },
+                }
+              : evidence,
+        ),
+      },
+    };
+    expect(requiredReconciliationPreservations(keepBothRemote)).toBeUndefined();
+    const history = operationFor(RECONCILIATION_ACTION.resolveHistory);
+    if (!("historyProgress" in history)) {
+      throw new Error("Expected history fixture.");
+    }
+    expect(
+      requiredReconciliationPreservations({
+        ...history,
+        historyProgress: {
+          kind: HISTORY_PROGRESS_KIND.legacyV3Unrefined,
+          aggregateLocalEffect: MUTATION_EFFECT_CERTAINTY.notDispatched,
+          aggregateRemoteEffect: MUTATION_EFFECT_CERTAINTY.notDispatched,
+        },
+      }),
+    ).toBeUndefined();
+    const retainDecision = {
+      kind: HISTORY_DECISION_KIND.retainIndependent,
+    } as const;
+    expect(
+      requiredReconciliationPreservations({
+        ...history,
+        action: {
+          kind: RECONCILIATION_ACTION.resolveHistory,
+          decision: retainDecision,
+        },
+        historyProgress: {
+          kind: HISTORY_PROGRESS_KIND.refined,
+          decision: retainDecision,
+          steps: [],
+          nextStepIndex: null,
+        },
+      }),
+    ).toEqual([]);
+    expect(
+      requiredReconciliationPreservations({
+        ...history,
+        historyProgress: { ...history.historyProgress, nextStepIndex: null },
+      }),
+    ).toEqual([]);
+    expect(
+      requiredReconciliationPreservations({
+        ...history,
+        historyProgress: { ...history.historyProgress, nextStepIndex: 2 },
+      }),
+    ).toBeUndefined();
+    const restore = operationFor(RECONCILIATION_ACTION.restoreRecovery);
+    expect(
+      requiredReconciliationPreservations({
+        ...restore,
+        snapshot: {
+          ...restore.snapshot,
+          paths: restore.snapshot.paths.filter(
+            (evidence) => evidence.path !== DESTINATION,
+          ),
+        },
+      }),
+    ).toBeUndefined();
   });
 
   it("permits exact revision adoption without preservation only when no competitor is replaced", () => {

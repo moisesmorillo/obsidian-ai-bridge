@@ -108,6 +108,7 @@ export function createDisabledMirrorState(
     paths: [],
     stagedHandoff: null,
     reconciliationReviews: [],
+    reconciliationGapGroupReviews: [],
     reconciliationOperations: [],
   };
 }

@@ -42,4 +42,32 @@ describe("MirrorObservationEpochCoordinator", () => {
     expect(coordinator.detach("other")).toBe(false);
     expect(coordinator.isAttached("current")).toBe(true);
   });
+
+  it("grants and revokes one epoch-bound dispatch lease", () => {
+    const coordinator = new MirrorObservationEpochCoordinator();
+    const dispatch = vi.fn(() => "effect");
+    coordinator.attach({ id: "current", onChanged: vi.fn() });
+
+    expect(coordinator.publishDispatchLease("current")).toBe(false);
+    expect(coordinator.markLayoutReady("current")).toEqual({
+      kind: "ready",
+      epoch: 1,
+    });
+    expect(coordinator.publishDispatchLease("other")).toBe(false);
+    expect(coordinator.publishDispatchLease("current")).toBe(true);
+    expect(coordinator.publishDispatchLease("current")).toBe(false);
+    expect(coordinator.dispatch(2, dispatch)).toEqual({ kind: "not-ready" });
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(coordinator.dispatch(1, dispatch)).toEqual({
+      kind: "dispatched",
+      value: "effect",
+    });
+    expect(coordinator.invalidateDispatchLease("other")).toBe(false);
+    expect(coordinator.invalidateDispatchLease("current")).toBe(true);
+    expect(coordinator.invalidateDispatchLease("current")).toBe(false);
+    expect(coordinator.publishDispatchLease("current")).toBe(false);
+    expect(coordinator.readyEpoch()).toBeNull();
+    expect(coordinator.dispatch(1, dispatch)).toEqual({ kind: "not-ready" });
+    expect(dispatch).toHaveBeenCalledOnce();
+  });
 });

@@ -14,8 +14,10 @@ import type {
 import {
   LOG_AUTHENTICATION_RESULT,
   LOG_OPERATION,
+  LOG_OPERATION_CATEGORY,
   UNMATCHED_ROUTE_LABEL,
 } from "@worker/logging/logging.constants";
+import { MCP_ENDPOINT_PATH } from "@worker/mcp/mcp.constants";
 import { routePath } from "hono/route";
 
 /** Hono catch-all templates normalized to the bounded unknown route label. */
@@ -120,6 +122,9 @@ function resolveAuthenticationAttribution(
 function resolveLogOperationCategory(
   context: WorkerContext,
 ): LogOperationCategory {
+  if (new URL(context.req.url).pathname === MCP_ENDPOINT_PATH) {
+    return LOG_OPERATION_CATEGORY.mcpRequest;
+  }
   return resolveRouteOperation(
     new URL(context.req.url).pathname,
     context.req.method,

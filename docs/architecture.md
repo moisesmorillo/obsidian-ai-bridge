@@ -23,8 +23,10 @@ composition. Slice 8's generated-artifact qualification and operational document
 are implemented. The independent final review found three MINOR issues, corrective
 head `e97af36` resolved all three, and the corrective review returned APPROVE with no
 open findings. M3 is COMPLETE; PR #27 merged at `63b0599` and made the transition
-canonical. M4 Slices 1–8 and M5 are COMPLETE in the proposed qualification transition; M6 is the
-sole NEXT milestone. The current plugin boundary includes strict device state v5 with
+canonical. M4 Slices 1–8 and M5 are COMPLETE. M6's stateless Worker MCP adapter is
+COMPLETE and qualified in this transition; no milestone is marked NEXT and no later
+milestone is inferred. The roadmap transition becomes canonical when the completion PR
+merges. The current plugin boundary includes strict device state v5 with
 frozen v2/v3/v4 migration, reviewed sampling/admission, narrow local writes and
 preservation, live/adoption/tombstone/restore actions, bounded parent-owned history
 steps, step-scoped archives, one shared M3/M4 scheduler, durable synthetic
@@ -35,8 +37,7 @@ claim, exact Obsidian/macOS host, synthetic active-writer qualification through 
 notes, current v5 migration/restart measurements, reproducible artifact evidence, and
 remaining platform/deployment limits. This is software qualification, not security
 certification or production-service approval; no production deployment or personal
-vault was used. M6 remains planning-only until its detailed specification and open
-decisions are resolved. See the [verified current state](current-state.md) for
+vault was used. See the [verified current state](current-state.md) for
 source/configuration evidence, [roadmap](roadmap.md) for execution order and open
 decisions, and [ADR 0001](decisions/0001-worker-r2-foundation.md) for the durable
 foundation.
@@ -83,6 +84,7 @@ apps/worker/src/
 ├── http/                          Controllers, HTTP errors, responses, OpenAPI routes
 ├── infrastructure/                R2 vault repository adapter and R2 port subset
 ├── logging/                       Structured LogTape adapter and request logging middleware
+├── mcp/                           Stateless MCP protocol server and bounded HTTP transport adapter
 └── index.ts                       One-time Worker application assembly and dependency construction
 ```
 
@@ -92,7 +94,7 @@ apps/worker/src/
 
 ### Cloudflare Worker
 
-The Worker is the remote HTTP/API boundary. `index.ts` constructs the Hono app and long-lived LogTape dependency once per isolate. Request middleware validates the sole digest-only credential registry, publishes a secret-free typed client principal, and enforces the exact operation permission before creating current-generation/recovery application services from the active R2 binding; composition then validates static non-secret association/writer UUIDs. Completed-request logging consumes the same route-operation policy to emit closed content-free authentication, operation, status, and stable-error outcomes without becoming an authorization owner. Singleton authentication is retired. `app.ts` composes typed Hono middleware, controllers, narrow v2 CORS, OpenAPI, and Scalar. One named route-operation policy owns every public, authenticated v2, preflight, and unknown API operation plus each exact permission; Hono registration, authorization, diagnostics, CORS capability resolution, and OpenAPI consume that policy instead of restating it. HTTP controllers validate transport input and delegate transition policy to `packages/core`. They do not call R2 or implement CAS/recovery policy.
+The Worker is the remote HTTP/API boundary. `index.ts` constructs the Hono app and long-lived LogTape dependency once per isolate. Request middleware validates the sole digest-only credential registry, publishes a secret-free typed client principal, and enforces the exact operation permission before creating current-generation/recovery application services from the active R2 binding; composition then validates static non-secret association/writer UUIDs. Completed-request logging consumes the same route-operation policy to emit closed content-free authentication, operation, status, and stable-error outcomes without becoming an authorization owner. Singleton authentication is retired. `app.ts` composes typed Hono middleware, controllers, narrow v2 CORS, OpenAPI, Scalar, and the stateless MCP endpoint. The HTTP route-operation policy owns each API operation; an exhaustive MCP capability-to-permission table gates every MCP tool and content resource independently. Both boundaries use the same authentication and application-service composition and check exact permissions before service/storage dispatch. MCP has no repository or R2 dependency and does not expose local-vault mutation or reviewed reconciliation. HTTP controllers and MCP callbacks validate transport input and delegate transition policy to `packages/core`; they do not call R2 or implement CAS/recovery policy.
 
 ### Cloudflare R2
 
@@ -164,14 +166,30 @@ unit/integration tests remain covered independently. See
 [development instructions and official API/version evidence](plugin-development.md)
 for install/removal and the explicit absence of real desktop/mobile host tests.
 
-### Future MCP adapter
+### MCP adapter
 
-MCP is planned as a future adapter for agent clients. It is not implemented, and no MCP-specific dependency or contract is included in M1.
+The M6 adapter serves stateless Streamable HTTP at `POST /mcp` using the official
+web-standard SDK. It reuses the M5 registry bearer and typed principal as an
+application-level authentication overlay, not as MCP OAuth: M5 tokens are not OAuth
+access tokens or audience-bound, so the Worker does not publish Protected Resource
+Metadata and does not claim full MCP authorization-profile conformance. A separate
+exhaustive permission table covers static discovery, each read tool/resource, each
+conditional write and recovery maintenance operation. Permission checks precede
+application-service resolution. The SDK adapter uses only `CurrentGenerationService`
+and `RecoveryService`; it has no direct storage access, no session state, and no local
+vault authority. Note/recovery plaintext is returned only through explicit bounded
+resource reads as untrusted Markdown; tool failures include a stable typed error code
+and static message, while resource errors and structured logs remain content-free.
+Destructive annotations and static instructions ask clients to obtain user
+confirmation; this is client-owned, not server proof of human approval. See the
+[MCP/API contract](api.md#mcp-interface), [M6 specification](milestones/m6-mcp-adapter.md),
+[qualification report](qualification/m6-final.md), and [ADR 0014](decisions/0014-stateless-mcp-adapter-and-existing-credentials.md).
 
 ## Security and data-safety boundaries
 
-The Worker authenticates `/api` descendants through a strict registry of at most 16
-named opaque bearers; public health/OpenAPI/Scalar do not grant note access.
+The Worker authenticates `/api` descendants and `/mcp` through a strict registry of
+at most 16 named opaque bearers; public health/OpenAPI/Scalar do not grant note
+access. MCP capability discovery also requires an authenticated principal.
 Configuration retains only domain-separated SHA-256 verifier material. Successful
 authentication publishes client ID, name, and exact permission metadata, never a token
 or digest. The exhaustive operation policy requires `read`, `write`, or independent
@@ -191,7 +209,9 @@ from registered route semantics; unknown routes remain bounded. Logs are platfor
 managed live diagnostics with zero-day application retention, not a durable security
 audit trail. Do not log concrete note/recovery identifiers, bodies, revisions, hashes,
 receipts, headers, storage envelopes, or raw failures. JSON API
-and Markdown content responses are uncached via `no-store`.
+and Markdown content responses are uncached via `no-store`. MCP logs use only the
+static `/mcp` route and closed request category; they omit tool names/arguments,
+resource identifiers, RPC IDs, and content.
 
 Slice 7 composes explicit whole-mirror consent with the implemented state,
 synchronization and lifecycle policy. A failed operation, stale read or missing scan
@@ -480,10 +500,9 @@ external successor or deadlock an aligned path.
   automation, durable log store, mobile writer, or multi-release support was selected.
   M4 remains reviewed-only: no automatic import, cross-system atomicity, production
   deployment, security certification, or complete-backup claim.
-- M6 is NEXT for planning only: an authorized MCP transport/tool adapter, never direct
-  R2 access. It is not implementation-ready until hosting, transport, authentication/
-  permission mapping, tool/resource surface, confirmation, and content-limit decisions
-  are resolved in a dedicated specification.
+- M6 is complete in the current roadmap transition: the authorized MCP adapter uses
+  existing Worker services and never accesses R2 directly. No later milestone is
+  defined; future work requires an explicit roadmap change.
 - Outside this roadmap: search, attachments and AI inference. NAS replication or
   stronger remote authority are possibilities, not selected infrastructure. D1,
   Durable Objects, queues, Workers AI, Vectorize and external databases are not

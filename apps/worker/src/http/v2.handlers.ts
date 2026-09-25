@@ -248,42 +248,20 @@ export function createPutV2NoteHandler() {
     const body = await noteBody(context);
     if ("error" in body) return body.error;
 
-    if (
+    const result = await context.var.mirrorServices.current.writeConditionally({
+      ...identity.identity,
+      path,
+      precondition: condition.precondition,
+      content: body.content,
+    });
+    return contentMutationResponse(
+      context,
+      result,
       condition.precondition.kind ===
-      CONDITIONAL_MUTATION_PRECONDITION_KIND.absent
-    ) {
-      const result = await context.var.mirrorServices.current.create({
-        action: MUTATION_ACTION.create,
-        ...identity.identity,
-        path,
-        precondition: condition.precondition,
-        content: body.content,
-      });
-      return contentMutationResponse(context, result, HTTP_STATUS.created);
-    }
-
-    const observed = await context.var.mirrorServices.current.inspect(path);
-    if (observed.kind === CURRENT_NOTE_STATE_KIND.live) {
-      const result = await context.var.mirrorServices.current.update({
-        action: MUTATION_ACTION.update,
-        ...identity.identity,
-        path,
-        precondition: condition.precondition,
-        content: body.content,
-      });
-      return contentMutationResponse(context, result, HTTP_STATUS.ok);
-    }
-    if (observed.kind === CURRENT_NOTE_STATE_KIND.tombstone) {
-      const result = await context.var.mirrorServices.current.recreate({
-        action: MUTATION_ACTION.recreate,
-        ...identity.identity,
-        path,
-        precondition: condition.precondition,
-        content: body.content,
-      });
-      return contentMutationResponse(context, result, HTTP_STATUS.ok);
-    }
-    return createErrorResponse(API_ERROR_CODE.preconditionFailed);
+        CONDITIONAL_MUTATION_PRECONDITION_KIND.absent
+        ? HTTP_STATUS.created
+        : HTTP_STATUS.ok,
+    );
   };
 }
 

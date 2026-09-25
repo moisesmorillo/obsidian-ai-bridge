@@ -7,9 +7,11 @@ import type {
 } from "@core/mirror/mirror.constants";
 import type {
   ApplicationRevision,
-  ConditionalMutationResult,
+  ConditionalMutationPrecondition,
+  ContentOperationReceipt,
   ContentSha256,
   CurrentNoteState,
+  MirrorAssociationId,
   MirrorOperationId,
   MirrorWriterId,
   MutationAcknowledgement,
@@ -22,6 +24,7 @@ import type {
   ObservedPreparedRecoveryGeneration,
   StoredTombstoneCurrentGeneration,
 } from "@core/mirror/mirror-storage.types";
+import type { NotePath } from "@core/note-path/note-path.types";
 
 /** Deterministic cryptographic dependencies used to assemble persisted generations. */
 export interface MirrorGenerationCryptography {
@@ -156,5 +159,36 @@ export type RecoveryMaintenanceResult =
     }
   | { readonly kind: typeof RECOVERY_MAINTENANCE_RESULT_KIND.unknown };
 
-/** Public content mutation operation shape retained for service method documentation. */
-export type CurrentContentMutationResult = ConditionalMutationResult;
+/** Application write request whose action is selected from one explicit precondition.
+ *
+ * The adapter cannot select create, update, or recreation directly; the service derives
+ * the permitted transition from observed state and retains exact storage CAS authority.
+ */
+export interface ConditionalContentWriteRequest {
+  /** Configured remote association whose ownership must match existing generations. */
+  readonly associationId: MirrorAssociationId;
+  /** Configured writer identity; it is never accepted from the transport caller. */
+  readonly writerId: MirrorWriterId;
+  /** Caller-owned identity retained in the persisted operation receipt. */
+  readonly operationId: MirrorOperationId;
+  /** Literal validated vault-relative Markdown path. */
+  readonly path: NotePath;
+  /** Absence-only creation or exact-revision update/recreation requirement. */
+  readonly precondition: ConditionalMutationPrecondition;
+  /** Exact UTF-8 Markdown text, bounded by the application service. */
+  readonly content: string;
+}
+
+/** Exact acknowledgment for a confirmed current-content write, excluding tombstone receipts. */
+export interface ContentMutationAcknowledgement {
+  /** Literal vault-relative path whose current generation was confirmed. */
+  readonly path: NotePath;
+  /** Application revision returned by the exact confirmed content PUT. */
+  readonly revision: ApplicationRevision;
+  /** Receipt whose action is create, update, or recreate, never tombstone. */
+  readonly receipt: ContentOperationReceipt;
+}
+
+/** Public certainty result for one conditional current-content write. */
+export type CurrentContentMutationResult =
+  MutationEffectResult<ContentMutationAcknowledgement>;

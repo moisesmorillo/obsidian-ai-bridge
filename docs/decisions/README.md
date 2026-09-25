@@ -51,6 +51,7 @@ decisions, not an invented historical rationale.
 | [0011 — M5 operational envelope and support policy](0011-m5-operational-envelope.md) | Accepted and qualified by M5 | Exact v1.0.2 / Obsidian 1.13.7 / macOS 26.6.2 / Apple M4 Pro envelope through 10,000 eligible notes; no quotas/limiter, manual recovery, latest-only releases, zero-day logs, and v1 retirement |
 | [0012 — Host-visible conflict-preservation namespace](0012-host-visible-conflict-preservation-namespace.md) | Accepted (corrective M4 production change implemented) | Official-index-visible current archive root, exact mirror exclusions, and frozen legacy receipt compatibility |
 | [0013 — Listener-ready effect authority and observation-gap recovery](0013-listener-ready-effect-authority-and-observation-gap-recovery.md) | Accepted and implemented in merged M4 PR #55 | Orthogonal durable v5 gap fence, dispatch lease, review transfer and strict compatibility transition |
+| [0014 — Stateless MCP adapter and existing credentials](0014-stateless-mcp-adapter-and-existing-credentials.md) | Accepted for M6; implementation and qualification complete on the completion branch | Current stateless Streamable HTTP, M5 principal/permissions, declared application-auth overlay (not OAuth-profile conformance), and bounded tools/resources |
 
 ADR 0001 records the implemented M1 baseline. ADRs 0002–0004 record the implemented
 M3 design without claiming deployment. ADRs 0005–0008 are accepted M4 decisions and
@@ -66,7 +67,10 @@ real-host evidence while retaining frozen legacy receipt identity and every
 preserve-first safety rule. ADR 0013 supersedes only ADR 0009's listener-gap sufficiency
 assumption; its corrective implementation advances current state/runtime to v5 without
 changing the Worker API. M5's broader qualification is separate and does not expand
-these ADRs' historical scope. See the M3 [decision brief](../plans/m3-design-decisions.md),
+these ADRs' historical scope. Accepted ADR 0014 records the M6 design and its
+[qualification report](../qualification/m6-final.md); the dedicated [M6
+specification](../milestones/m6-mcp-adapter.md) records completed acceptance evidence.
+The transition becomes canonical when its completion PR merges. See the M3 [decision brief](../plans/m3-design-decisions.md),
 the M4 [implementation-ready specification](../milestones/m4-remote-to-local-reconciliation-and-conflict-resolution.md),
 and the completed M5 [specification](../milestones/m5-operational-and-security-readiness.md)
 with its [final qualification report](../qualification/m5-final.md).

@@ -93,6 +93,49 @@ Registered v2 routes support narrow credential-free CORS. Responses use `Access-
 
 State/recovery item routes advertise GET only, maintenance routes POST only, and the note item route GET/PUT/DELETE. Unknown v2 OPTIONS requests remain bearer-protected. Errors for declared v2 route/method combinations carry the same CORS response headers. Unknown routes, noncanonical static-segment aliases, and undeclared methods (including HEAD) do not.
 
+## MCP interface
+
+The Worker exposes an authenticated, stateless MCP Streamable HTTP endpoint at
+`POST /mcp`, using protocol revision `2026-07-28`. Every POST independently uses the
+same M5 `Authorization: Bearer <token>` registry authentication and typed principal
+as the HTTP API. This is an application-level bearer overlay, not MCP OAuth: M5
+credentials are not OAuth access tokens or audience-bound, so the endpoint does not
+publish Protected Resource Metadata or claim full MCP authorization-profile
+conformance. Clients must support a preconfigured bearer header; OAuth-discovery-only
+clients are unsupported.
+
+Only POST is accepted; GET and DELETE are not session/stream endpoints, and the
+legacy initialize-era protocol is rejected. The endpoint is stateless, issues no MCP
+session ID, rejects cross-origin browser requests, and marks responses
+`Cache-Control: no-store`. Request streams are capped at **6,307,840 bytes** and
+**16,384 chunks**; response streams are capped at **8,388,608 bytes** and the same
+chunk ceiling. Note bodies remain limited by core to **1 MiB UTF-8**, and each list
+call remains one existing page of at most 50 items. No production endpoint or
+deployment is claimed by this repository documentation.
+
+The fixed tools are `list_notes`, `inspect_note`, `write_note`, `delete_note`,
+`list_recovery`, `inspect_recovery`, `seal_recovery`, and `purge_recovery`. Reads use
+the exact `read` permission, conditional current-note writes and recovery sealing use
+`write`, and recoverable deletion and eligible purge use `delete`. The permission
+check precedes application-service resolution. These operations delegate to the
+existing current-generation and recovery services; the MCP adapter has no direct R2
+access and does not mutate a local vault.
+
+Note and recovery content are returned only by explicit `read`-authorized resource
+template reads: `obsidian-ai-bridge://note/{encodedPath}` uses canonical unpadded
+base64url NotePath addressing, and `obsidian-ai-bridge://recovery/{id}` reads an
+eligible recovery generation. Tool listings and metadata results contain no note
+bodies. Remote text remains untrusted Markdown. Mutation conditions, operation
+identities, recovery-first delete, retained-marker purge, and uncertain-effect
+handling remain the existing application-service contract. Application tool failures
+return `isError: true`, a stable `structuredContent.error.code` from the closed
+`permission_denied`, `stale_revision`, `invalid_state`, `unavailable`, and
+`effect_uncertain` set, and its static message; no raw exception, storage detail,
+receipt, or content is returned. MCP resource failures use bounded protocol errors.
+Mutation tool annotations and static server instructions require clients to obtain
+user confirmation before invoking writes, deletion, sealing, or purge; the server does
+not accept a caller-supplied confirmation field or prove that a human confirmed.
+
 ## Retired v1 HTTP API
 
 No `/api/v1` route or OpenAPI compatibility path is registered. A valid registry bearer receives the ordinary sanitized `404 not_found` for v1 paths; a missing or invalid bearer receives `401 unauthorized`. Both outcomes occur before mirror-service construction or storage access. There is no `410` compatibility handler or old mutation fallback.

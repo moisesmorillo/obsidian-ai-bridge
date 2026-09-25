@@ -54,6 +54,11 @@ import {
 } from "@worker/http/v2-route-policy";
 import { createV2RoutePolicyGuardMiddleware } from "@worker/http/v2-route-policy.middleware";
 import { createRequestLoggingMiddleware } from "@worker/logging/request-logging.middleware";
+import { MCP_ENDPOINT_PATH } from "@worker/mcp/mcp.constants";
+import {
+  createMcpEndpointPolicyMiddleware,
+  createMcpRequestHandler,
+} from "@worker/mcp/mcp.transport";
 import type { BlankSchema } from "hono/types";
 
 /**
@@ -106,6 +111,11 @@ export function createWorkerApp(
   >();
 
   app.use(createRequestLoggingMiddleware(dependencies.logger));
+  app.use(MCP_ENDPOINT_PATH, createMcpEndpointPolicyMiddleware());
+  app.use(
+    MCP_ENDPOINT_PATH,
+    createAuthenticationMiddleware(dependencies.resolveAuthentication),
+  );
   app.use(API_V2_PREFIX, createV2CorsMiddleware());
   app.use(`${API_V2_PREFIX}/*`, createV2CorsMiddleware());
   app.use(
@@ -154,6 +164,7 @@ export function createWorkerApp(
     ROUTE_OPERATION_POLICY.public.health.path,
     createHealthHandler(),
   );
+  app.all(MCP_ENDPOINT_PATH, createMcpRequestHandler(dependencies));
 
   app.on(
     V2_ROUTE_POLICY.mirror.operations.describe,

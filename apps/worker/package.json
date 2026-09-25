@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "dependencies": {
+    "@modelcontextprotocol/server": "2.0.0",
     "@hono/zod-openapi": "^1.6.3",
     "@logtape/logtape": "2.3.4",
     "@obsidian-ai-bridge/core": "workspace:*",

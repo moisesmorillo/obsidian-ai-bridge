@@ -15,7 +15,7 @@ iCloud ↔ working Obsidian vaults
                |
        one designated plugin writer
                ↓
-        Cloudflare Worker ← authorized REST clients / future MCP adapter
+        Cloudflare Worker ← authorized REST and MCP clients
                ↓
           private R2 mirror
 ```
@@ -60,7 +60,7 @@ New infrastructure requires a concrete need and [ADR](decisions/README.md).
 compose an experimental connected outward mirror, not a production-ready or
 remote-to-local system. Canonical validation passed, the final semantic review's three
 MINOR findings were corrected at `e97af36`, and the corrective review returned APPROVE
-with no open findings. M4 Slices 1–8 and M5 are COMPLETE in this proposed transition; M6 is the sole NEXT milestone. M5's support claim is limited to the latest v1.0.2 release and its exact [qualification report](qualification/m5-final.md). M4's reviewed-only authority, preservation, local mutation,
+with no open findings. M4 Slices 1–8 and M5 are COMPLETE; M6 is COMPLETE in this completion transition. No milestone is NEXT, and no M7 is defined. M5's support claim is limited to the latest v1.0.2 release and its exact [qualification report](qualification/m5-final.md). M4's reviewed-only authority, preservation, local mutation,
 adoption/tombstone/restore, migration, and one-writer product decisions are implemented
 and qualified. Slice 1 implements the closed contracts, sparse state v3, deterministic
 v2 migration/read-back fence, downgrade refusal, and runtime registry compatibility
@@ -108,8 +108,10 @@ implementation.
 
 ## Milestone table
 
-Exactly one milestone is `NEXT`. Later rows are direction, not permission to start
-production code. Dependencies include all previous milestones.
+A milestone is `NEXT` only while its prerequisites and specification authorize
+implementation. M1–M6 are COMPLETE in the current transition, so none is marked
+`NEXT`; no later milestone is defined. Future direction does not authorize production
+code. Dependencies include all previous milestones.
 
 | ID | Milestone | Status | User-visible outcome | Dependency |
 | --- | --- | --- | --- | --- |
@@ -118,7 +120,7 @@ production code. Dependencies include all previous milestones.
 | M3 | Automatic eligible-Markdown remote mirror | COMPLETE | Whole eligible saved vault mirrors outward, including recoverable removals/renames, with one designated writer | M2 |
 | M4 | Remote-to-local reconciliation and conflict resolution | COMPLETE | Review/adopt/resolve remote divergence and richer restoration without silent local data loss | M3 |
 | M5 | Operational and security readiness | COMPLETE | Latest-only, bounded v1.0.2 software support with reviewed limits, permissions, runbooks and qualification evidence | M4 |
-| M6 | MCP adapter | NEXT | Same authorized operations for MCP-capable agents; planning/specification only until open decisions are resolved | M5 |
+| M6 | MCP adapter | COMPLETE | Same authorized operations for MCP-capable agents through the M5 authentication and application-service boundary; bounded official-client qualification complete | M5 |
 
 ### M1 — Worker API foundation and engineering quality
 
@@ -200,8 +202,8 @@ approved in this completion PR.** The
 [specification](milestones/m4-remote-to-local-reconciliation-and-conflict-resolution.md),
 [test-first plan](plans/m4-remote-to-local-reconciliation-and-conflict-resolution.md),
 and accepted ADRs 0005–0009 resolve the material product and technical choices.
-Slices 1–8 are implemented and qualified; a separate request and implementation-ready
-specification remain required before M5 production work.
+Slices 1–8 were implemented and qualified before M5 was authorized by its separate
+implementation-ready specification. M5 and M6 are now complete in this transition.
 
 - **Authority:** reviewed/manual reconciliation only. Remote divergence remains a
   review item until an operator chooses an evidence-bound typed action. One immutable
@@ -330,36 +332,48 @@ and [ADR 0011](decisions/0011-m5-operational-envelope.md) for the accepted bound
 
 ### M6 — MCP adapter
 
-**NEXT — planning/specification only; not implementation-ready.** Resolve the open
-hosting, transport, authentication/permission mapping, tool/resource surface,
-confirmation, and content-limit decisions and refine a dedicated milestone
-specification before production implementation.
+**COMPLETE in this completion transition.** The implementation-ready [M6
+specification](milestones/m6-mcp-adapter.md), accepted [ADR
+0014](decisions/0014-stateless-mcp-adapter-and-existing-credentials.md), and [final
+qualification report](qualification/m6-final.md) record the adapter, tests, canonical
+validation, official-client evidence, and residual compatibility limits. This roadmap
+The single M6 completion PR remains unmerged; this transition becomes canonical only when it merges.
 
-- **Scope:** thin MCP transport over established authorized application operations,
-  discoverable contracts and safe errors. No direct R2 shortcut or separate sync engine.
-- **Decisions:** hosting/transport, authentication/permission mapping, tool/resource
-  surface, confirmation and content limits. Mirror eligibility is not this policy.
-- **Risks/exit:** excessive agent privilege, prompt injection and sensitive output;
-  contract/auth/mutation tests, quality/semantic gates and actual supported-client
-  evidence. Notes remain untrusted data, never executable instructions.
-- No MCP-only inference/search/product expansion without a new roadmap decision.
+- **Scope:** thin stateless Streamable HTTP adapter at `POST /mcp` over existing
+  Worker authentication, exact M5 permission grants, and current/recovery application
+  services. No direct R2 shortcut, second sync engine, OAuth provider, MCP-only
+  credential, or additional infrastructure.
+- **Surface:** eight narrow tools and two explicit note/recovery resource templates;
+  conditional remote create/update/recreation, recovery-first tombstone, exact seal,
+  and eligible purge remain service-owned. Read/write/delete are independent.
+- **Safety:** static user-confirmation guidance and mutation annotations are advisory
+  to MCP clients, not server proof of a human decision. Tool errors carry stable typed
+  codes, note content is explicit-resource-only untrusted text, and logs are
+  content/argument/path-free. OAuth-only client compatibility is not claimed.
+- **Qualification:** official MCP TypeScript Client 2.0.0 exercised the in-process
+  Worker-compatible handler with a synthetic registry bearer and in-memory storage;
+  no Inspector/UI-client compatibility or deployed service is claimed. Canonical
+  checks, coverage, and final semantic/security review are recorded in the report.
+- No MCP-only inference/search/product expansion. M6 is the final defined milestone;
+  no M7 is inferred.
 
 ## Unresolved product decisions
 
-**None for M1–M5; M6 decisions remain open.** M3's accepted choices and
+**None for M1–M6.** M3's accepted choices and
 primary-source limits are in its [decision brief](plans/m3-design-decisions.md). M4's
 reviewed-only authority, conflict preservation, bounded local mutation,
 revisioned/legacy adoption, tombstone/restore, history, runtime authority, and
 one-writer choices are resolved in [ADRs 0005–0009](decisions/README.md). M5's
 credential/permission model and qualified operating policy are recorded in
 [ADRs 0010](decisions/0010-scoped-client-credentials-and-permissions.md) and
-[0011](decisions/0011-m5-operational-envelope.md). M6 hosting/transport,
-authentication mapping, tool/resource surface, confirmation policy, and content limits
-must be resolved and specified before production implementation.
+[0011](decisions/0011-m5-operational-envelope.md). M6's accepted design is recorded in
+accepted [ADR 0014](decisions/0014-stateless-mcp-adapter-and-existing-credentials.md),
+its completed [specification](milestones/m6-mcp-adapter.md), and [qualification
+report](qualification/m6-final.md).
 
-| Decision required | Earliest milestone/slice | Boundary until resolved |
-| --- | --- | --- |
-| MCP hosting, transport, tools/resources, prompt boundary and permission mapping | M6 | No MCP implementation, MCP-specific credential, or direct storage access |
+There are no unresolved product decisions through the final current milestone, M6.
+No M7 is currently defined; any future roadmap work requires an explicit roadmap
+update rather than an inferred follow-on.
 
 Technical implementation and qualification must satisfy the specifications; milestone
 order never permits weakening accepted data-loss/security prerequisites. Keep a
@@ -370,26 +384,28 @@ a support claim.
 
 Read in order: [README](../README.md), [AGENTS](../AGENTS.md),
 [architecture](architecture.md), this roadmap, the completed
-[M5 specification](milestones/m5-operational-and-security-readiness.md) and [final
-qualification report](qualification/m5-final.md), then the completed
+[M6 specification](milestones/m6-mcp-adapter.md) and [qualification report](qualification/m6-final.md),
+[ADR 0014](decisions/0014-stateless-mcp-adapter-and-existing-credentials.md), then the
+completed [M5 specification](milestones/m5-operational-and-security-readiness.md) and
+[qualification report](qualification/m5-final.md), followed by the completed
 [M4 specification](milestones/m4-remote-to-local-reconciliation-and-conflict-resolution.md)
 and its [sequential plan](plans/m4-remote-to-local-reconciliation-and-conflict-resolution.md),
-[threat model](threat-model.md), and [credential ADR](decisions/0010-scoped-client-credentials-and-permissions.md),
-[operational-policy ADR](decisions/0011-m5-operational-envelope.md), followed by the
-completed M3 [spec](milestones/m3-remote-bridge-client-and-publishing.md),
+[threat model](threat-model.md), [credential ADR](decisions/0010-scoped-client-credentials-and-permissions.md),
+[operational-policy ADR](decisions/0011-m5-operational-envelope.md), and completed M3
+[spec](milestones/m3-remote-bridge-client-and-publishing.md),
 [plan](plans/m3-remote-bridge-client-and-publishing.md), and
-[decisions](plans/m3-design-decisions.md). M6 is the sole NEXT milestone, planning-only;
-its dedicated detailed specification and open hosting/transport/auth/tool decisions
-must be resolved before any production implementation. Inspect relevant source/tests/tooling/CI,
+[decisions](plans/m3-design-decisions.md). M1–M6 are COMPLETE in this completion
+transition, with no milestone marked NEXT and no M7 defined. Inspect relevant
+source/tests/tooling/CI,
 [CONTRIBUTING](../CONTRIBUTING.md) and [SECURITY](../SECURITY.md).
 [current-state](current-state.md) is an evidence map, not a substitute for code.
 
 Repository state beats conversation assumptions; current code beats stale docs.
 Correct discrepancies explicitly without changing a completed invariant silently.
-Implement only NEXT after an implementation request. M5 is complete in the proposed transition. M6's roadmap entry is planning scope, not
-an implementation-ready specification; refine the dedicated M6 spec and surface its
-material decisions before production code. Use [ADRs](decisions/README.md) when the
-choices affect architecture or security.
+Implement only NEXT. The M6 completion transition records the accepted design, implementation, and
+qualification; do not infer later roadmap work.
+Use [ADRs](decisions/README.md) when consequential implementation evidence requires
+an explicitly accepted successor decision.
 
 ### Validation and milestone transition
 
@@ -399,8 +415,9 @@ choices affect architecture or security.
   re-review all concrete findings; document bounded permitted deferrals explicitly.
 - Check all active acceptance items. In the implementation completion PR, update
   spec/status/evidence, roadmap, current-state/architecture/API/ADRs/operations.
-- Merged PR #27 records the approved M3 A1–A11 evidence; the M4 completion PR marks
-  M4 COMPLETE and M5 NEXT. This M5 completion PR records A1–A12, proposes M5 COMPLETE
-  and M6 as the single NEXT milestone, and adds no M6 implementation. The transition
-  becomes canonical when the PR merges; do not merge your own work here.
+- Merged PR #27 records the approved M3 A1–A11 evidence; the M4 completion transition
+  preceded M5 qualification. The M5 completion transition made M5 COMPLETE and M6 NEXT.
+  This single M6 completion PR records final adapter evidence and marks M6 COMPLETE;
+  the roadmap then has no NEXT milestone and defines no M7. The transition becomes
+  canonical only when the PR merges; do not merge your own work here.
 - After M6 there is no inferred M7; propose an explicit new roadmap objective.

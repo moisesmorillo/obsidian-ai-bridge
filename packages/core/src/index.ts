@@ -45,7 +45,10 @@ export type {
   ConflictPreservationRequest,
   ConflictPreservationResult,
 } from "@core/mirror/conflict-preservation-service.types";
-export { CurrentGenerationService } from "@core/mirror/current-generation-service";
+export {
+  CurrentGenerationService,
+  isValidCurrentNoteContent,
+} from "@core/mirror/current-generation-service";
 export {
   classifyReconciliation,
   isReconciliationReviewable,
@@ -154,8 +157,10 @@ export type {
 } from "@core/mirror/mirror.types";
 export { applyMutationAcknowledgement } from "@core/mirror/mirror-acknowledgement";
 export type {
+  ConditionalContentWriteRequest,
   ConfirmedTombstoneSealRequest,
   ConfirmedTombstoneTransition,
+  ContentMutationAcknowledgement,
   CurrentContentMutationResult,
   CurrentContentResult,
   MirrorClock,

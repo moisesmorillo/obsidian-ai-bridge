@@ -22,6 +22,7 @@ export const LOG_AUTHENTICATION_RESULT = {
 /** Closed route-semantic categories used for content-free request diagnostics. */
 export const LOG_OPERATION_CATEGORY = {
   currentMutation: "current_mutation",
+  mcpRequest: "mcp_request",
   currentRead: "current_read",
   destructiveMutation: "destructive_mutation",
   mirrorRead: "mirror_read",

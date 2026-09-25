@@ -1,7 +1,9 @@
 import type { ConditionalCurrentNoteRepository } from "@core/mirror/conditional-current-note-repository.port";
 import {
+  CONDITIONAL_MUTATION_PRECONDITION_KIND,
   CURRENT_CONTENT_RESULT_KIND,
   CURRENT_NOTE_STATE_KIND,
+  MUTATION_ACTION,
   MUTATION_EFFECT_CERTAINTY,
   TOMBSTONE_WORKFLOW_STAGE_KIND,
 } from "@core/mirror/mirror.constants";
@@ -18,6 +20,7 @@ import type {
   TombstoneOperationReceipt,
 } from "@core/mirror/mirror.types";
 import type {
+  ConditionalContentWriteRequest,
   CurrentContentMutationResult,
   CurrentContentResult,
   MirrorGenerationCryptography,
@@ -33,6 +36,23 @@ import type {
 import type { RecoveryService } from "@core/mirror/recovery-service";
 import type { NotePath } from "@core/note-path/note-path.types";
 import { MAX_NOTE_SIZE_BYTES } from "@core/vault/vault.constants";
+
+/** Validates exact current-note text without normalization before hashing or dispatch.
+ *
+ * TextEncoder replaces unmatched UTF-16 surrogates; a round trip rejects that
+ * replacement while preserving a leading U+FEFF as literal note content.
+ *
+ * @param content - Exact text candidate supplied by an adapter.
+ * @returns Whether its well-formed UTF-8 representation fits the core note limit.
+ */
+export function isValidCurrentNoteContent(content: string): boolean {
+  const bytes = new TextEncoder().encode(content);
+  return (
+    bytes.byteLength <= MAX_NOTE_SIZE_BYTES &&
+    new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes) ===
+      content
+  );
+}
 
 /**
  * Application policy for current-generation inspection and conditional transitions.
@@ -127,6 +147,71 @@ export class CurrentGenerationService {
   }
 
   /**
+   * Applies one conditional content write using the observed generation to select its action.
+   *
+   * An absent precondition permits only create. A matching revision permits an update only
+   * for a same-association live generation or recreation only for its same-association
+   * tombstone. Legacy, absent, cross-association, or stale observations are refused without
+   * a replacement dispatch; the exact observed storage capability remains the CAS authority.
+   *
+   * @param request - Explicit content, operation identity, association, and precondition.
+   * @returns Exact confirmed acknowledgement or conservative effect certainty.
+   */
+  async writeConditionally(
+    request: ConditionalContentWriteRequest,
+  ): Promise<CurrentContentMutationResult> {
+    if (!isValidCurrentNoteContent(request.content)) {
+      return { kind: MUTATION_EFFECT_CERTAINTY.notDispatched };
+    }
+
+    const precondition = request.precondition;
+    if (precondition.kind === CONDITIONAL_MUTATION_PRECONDITION_KIND.absent) {
+      return this.create({
+        action: MUTATION_ACTION.create,
+        associationId: request.associationId,
+        writerId: request.writerId,
+        operationId: request.operationId,
+        path: request.path,
+        precondition,
+        content: request.content,
+      });
+    }
+
+    const matchingWrite = {
+      associationId: request.associationId,
+      writerId: request.writerId,
+      operationId: request.operationId,
+      path: request.path,
+      precondition,
+      content: request.content,
+    };
+    let observed: CurrentGenerationObservation;
+    try {
+      observed = await this.repository.read(request.path);
+    } catch {
+      return { kind: MUTATION_EFFECT_CERTAINTY.notDispatched };
+    }
+
+    switch (observed.kind) {
+      case CURRENT_NOTE_STATE_KIND.live:
+        return this.writeObservedGeneration(
+          { action: MUTATION_ACTION.update, ...matchingWrite },
+          observed,
+          CURRENT_NOTE_STATE_KIND.live,
+        );
+      case CURRENT_NOTE_STATE_KIND.tombstone:
+        return this.writeObservedGeneration(
+          { action: MUTATION_ACTION.recreate, ...matchingWrite },
+          observed,
+          CURRENT_NOTE_STATE_KIND.tombstone,
+        );
+      case CURRENT_NOTE_STATE_KIND.absent:
+      case CURRENT_NOTE_STATE_KIND.legacy:
+        return { kind: MUTATION_EFFECT_CERTAINTY.definitelyRefused };
+    }
+  }
+
+  /**
    * Creates only after recognized absence and still uses atomic create-only storage.
    *
    * @param request - Exact create intent and UTF-8 Markdown body.
@@ -135,7 +220,7 @@ export class CurrentGenerationService {
   async create(
     request: ConditionalCreateRequest,
   ): Promise<CurrentContentMutationResult> {
-    if (!this.contentIsBounded(request.content)) {
+    if (!isValidCurrentNoteContent(request.content)) {
       return { kind: MUTATION_EFFECT_CERTAINTY.notDispatched };
     }
 
@@ -290,7 +375,9 @@ export class CurrentGenerationService {
       kind: MUTATION_EFFECT_CERTAINTY.confirmed,
       stage: TOMBSTONE_WORKFLOW_STAGE_KIND.complete,
       confirmed: {
-        acknowledgement: this.acknowledgement(tombstoneResult.confirmed.state),
+        acknowledgement: this.tombstoneAcknowledgement(
+          tombstoneResult.confirmed.state,
+        ),
         recovery: preparation.confirmed.state,
         sealing,
       },
@@ -310,25 +397,45 @@ export class CurrentGenerationService {
       | typeof CURRENT_NOTE_STATE_KIND.live
       | typeof CURRENT_NOTE_STATE_KIND.tombstone,
   ): Promise<CurrentContentMutationResult> {
-    if (!this.contentIsBounded(request.content)) {
+    if (!isValidCurrentNoteContent(request.content)) {
       return { kind: MUTATION_EFFECT_CERTAINTY.notDispatched };
     }
 
+    let observed: CurrentGenerationObservation;
     try {
-      const observed = await this.repository.read(request.path);
-      if (
-        observed.kind !== CURRENT_NOTE_STATE_KIND.live &&
-        observed.kind !== CURRENT_NOTE_STATE_KIND.tombstone
-      ) {
-        return { kind: MUTATION_EFFECT_CERTAINTY.definitelyRefused };
-      }
-      if (
-        observed.kind !== requiredKind ||
-        !this.matchesExistingGeneration(observed.state, request)
-      ) {
-        return { kind: MUTATION_EFFECT_CERTAINTY.definitelyRefused };
-      }
+      observed = await this.repository.read(request.path);
+    } catch {
+      return { kind: MUTATION_EFFECT_CERTAINTY.notDispatched };
+    }
 
+    return this.writeObservedGeneration(request, observed, requiredKind);
+  }
+
+  /**
+   * Dispatches content replacement only through the exact observed generation's CAS.
+   *
+   * @param request - Action selected from the explicit current state and revision.
+   * @param observed - One storage observation retaining its replacement capability.
+   * @param requiredKind - State that authorizes the selected update or recreation.
+   * @returns Exact stored acknowledgement or conservative effect certainty.
+   */
+  private async writeObservedGeneration(
+    request: ConditionalUpdateRequest | ConditionalRecreateRequest,
+    observed: CurrentGenerationObservation,
+    requiredKind:
+      | typeof CURRENT_NOTE_STATE_KIND.live
+      | typeof CURRENT_NOTE_STATE_KIND.tombstone,
+  ): Promise<CurrentContentMutationResult> {
+    if (
+      (observed.kind !== CURRENT_NOTE_STATE_KIND.live &&
+        observed.kind !== CURRENT_NOTE_STATE_KIND.tombstone) ||
+      observed.kind !== requiredKind ||
+      !this.matchesExistingGeneration(observed.state, request)
+    ) {
+      return { kind: MUTATION_EFFECT_CERTAINTY.definitelyRefused };
+    }
+
+    try {
       const contentSha256 = await this.cryptography.digest(request.content);
       const receipt: ContentOperationReceipt = {
         action: request.action,
@@ -389,21 +496,17 @@ export class CurrentGenerationService {
     }
     return {
       kind: MUTATION_EFFECT_CERTAINTY.confirmed,
-      confirmed: this.acknowledgement(result.confirmed.state),
+      confirmed: this.contentAcknowledgement(result.confirmed.state),
     };
   }
 
   /**
-   * Derives an acknowledgement from the exact state returned by a successful PUT.
+   * Derives content-write evidence from the exact live state returned by a successful PUT.
    *
-   * @param state - Exact confirmed live or tombstone metadata.
-   * @returns Receipt-bearing application acknowledgement for this generation.
+   * @param state - Exact confirmed live-generation metadata.
+   * @returns Receipt-bearing acknowledgment that cannot represent a tombstone.
    */
-  private acknowledgement(
-    state:
-      | StoredLiveCurrentGeneration["state"]
-      | Extract<CurrentNoteState, { kind: "tombstone" }>,
-  ) {
+  private contentAcknowledgement(state: StoredLiveCurrentGeneration["state"]) {
     return {
       path: state.path,
       revision: state.revision,
@@ -412,12 +515,18 @@ export class CurrentGenerationService {
   }
 
   /**
-   * Checks the exact UTF-8 byte limit before digest or storage dispatch.
+   * Derives tombstone evidence from the exact state returned by a successful delete PUT.
    *
-   * @param content - Exact text candidate without normalization.
-   * @returns Whether its UTF-8 representation fits the note limit.
+   * @param state - Exact confirmed tombstone metadata.
+   * @returns Receipt-bearing acknowledgment for the committed tombstone transition.
    */
-  private contentIsBounded(content: string): boolean {
-    return new TextEncoder().encode(content).byteLength <= MAX_NOTE_SIZE_BYTES;
+  private tombstoneAcknowledgement(
+    state: Extract<CurrentNoteState, { kind: "tombstone" }>,
+  ) {
+    return {
+      path: state.path,
+      revision: state.revision,
+      receipt: state.receipt,
+    };
   }
 }

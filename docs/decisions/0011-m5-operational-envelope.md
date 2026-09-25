@@ -2,14 +2,12 @@
 
 ## Status
 
-**Accepted for M5 planning — live diagnostics and v1 retirement implemented; remaining policy not yet fully qualified.** This
-Slice 1 record closes the eight operational decisions needed to refine later M5 work.
-It changes no runtime, authentication, API, plugin manifest, Cloudflare binding,
-dependency, deployment, credential, or current support claim. Later corrective ADR 0013
-advances the M4 state/runtime format to v5 without changing this operating policy; its
-bounded disposable-host evidence does not qualify the numeric envelope. The envelope
-below becomes a support claim only after the remaining implementation and Slice 6
-qualification gates pass.
+**Accepted; implemented and qualified by M5.** This Slice 1 record closes the eight
+operational decisions used by the later M5 runbooks and final qualification. It changes
+no runtime or API behavior. Corrective ADR 0013 advances the M4 state/runtime format
+to v5; the subsequent [M5 final report](../qualification/m5-final.md) separately
+qualifies the exact release, v5 migration/restart envelope, and desktop profile. M5
+support remains limited to release v1.0.2 and the exact environment documented below.
 
 ## Context
 
@@ -44,8 +42,9 @@ free live acknowledgement per path, then measured:
 - strict device-state v4 encode and decode; and
 - strict v2 decode followed by v2→v3→v4 projection and v4 encode.
 
-These are historical v4 measurements. M5 qualification must include the current v5
-codec and v2→v3→v4→v5 migration path.
+These remain historical v4 measurements. The final M5 qualification separately
+measured the current v5 codec and v2→v3→v4→v5 migration/restart path; see the [M5
+report](../qualification/m5-final.md#a6--bounded-operation).
 
 The qualification ran three fresh Bun processes per sample on macOS 26.6.2, Apple M4
 Pro, 48 GiB RAM, using the repository-pinned Bun 1.4.2. Values are medians; encoded
@@ -61,10 +60,12 @@ heap usage.
 The inventory measurements exclude host filesystem, Obsidian, WebView, network, R2,
 and note-body hashing/transfer latency. The state fixture represents ordinary settled
 live paths, not a maximum-size combination of reviews, operations, receipts, or long
-paths. The results establish acceptable local algorithm/codec headroom at 10,000 for
-the next qualification gate, not mobile behavior, startup latency on other devices,
-or a current support guarantee. No generated data entered tests or artifacts, so the
-canonical suite's fixture volume and runtime were unchanged.
+paths. These synthetic results did not establish support. The later M5 real-host
+active-writer and current-v5 migration/restart measurements qualify only the exact
+profile and scale in the [final report](../qualification/m5-final.md); they do not
+establish mobile behavior, other-device startup latency, or a universal guarantee. No
+generated data entered tests or artifacts, so canonical suite fixture volume and
+runtime were unchanged.
 
 ### Repository and platform evidence
 
@@ -76,13 +77,14 @@ canonical suite's fixture volume and runtime were unchanged.
   route ownership only in the Worker compatibility surface; no current production
   client imports or calls authenticated v1 reads. Tests and documentation preserve
   v1 behavior but are not compatibility consumers.
-- The manifest is Obsidian 1.13.0, `isDesktopOnly: false`, and the bundle avoids
-  Node/Electron APIs. Declaration and host-double evidence does not prove mobile,
-  native-secret, iCloud, WebView, or background-iOS behavior.
-- Current release automation versions the root package at 0.10.1 while the plugin
-  manifest remains 0.1.0. This is valid experimental history but is insufficient for
-  a synchronized supported artifact claim. Current device state v5 has no reverse
-  migration; strict v2/v3/v4 readers reject v5.
+- The manifest minimum is Obsidian 1.13.0, `isDesktopOnly: false`, and the bundle
+  avoids Node/Electron APIs. The M5 qualified writer profile is Obsidian Desktop
+  1.13.7 on macOS 26.6.2 / Apple M4 Pro. Broader mobile/native-secret/iCloud/
+  WebView/background-iOS combinations remain unqualified.
+- The v1.0.2 root/plugin/manifest/staged identities are synchronized and the tagged
+  plugin build is reproducible under canonical tooling. The GitHub v1.0.2 release has
+  no downloadable binary assets; the qualified artifact is source-built. Current device
+  state v5 has no reverse migration; frozen v2/v3/v4 readers reject v5.
 - Recovery APIs already provide 50-object metadata pages and one exact conditional
   seal or purge per request. Purge preserves a content-free marker and the accepted
   30-day semantics; there is no safe bulk-delete or scheduler requirement.
@@ -104,13 +106,12 @@ canonical suite's fixture volume and runtime were unchanged.
 
 ### 1. Note-count envelope
 
-Adopt **10,000 eligible notes** as the initial M5 qualification target and eventual
-maximum supported personal-vault envelope. It is not a current support claim. M5 may
-claim support up to that count only after Slice 6 qualifies the packaged plugin on a
-real supported desktop host with representative startup, state persistence, body
-hashing/transfer, failure, and restart observations. Failure of that gate must lower
-the claim or retain no numeric claim; it must not be explained away by this synthetic
-result.
+Adopt **10,000 eligible notes** as the maximum qualified personal-mirror envelope.
+M5 passed this ceiling only on the exact packaged/plugin host profile recorded in the
+[final report](../qualification/m5-final.md): Obsidian Desktop 1.13.7 on macOS 26.6.2 /
+Apple M4 Pro. Retained active-writer and v4→v5 migration/restart evidence covers
+synthetic startup, persistence, transfer, and restart behavior. This is not universal
+10,000-note support on other hosts, nor a latency or availability SLA.
 
 The 50,000-path constant remains a corruption/resource safety ceiling. Counts above
 10,000 are unsupported even when they fit that ceiling. Note count does not override
@@ -141,11 +142,11 @@ selected.
 
 Keep `isDesktopOnly: false`: the plugin may load wherever Obsidian accepts the current
 manifest and unsupported instances may use passive/local inspection behavior. The
-**only intended initial supported designated-writer environment is Obsidian desktop
-1.13.0+ on Apple-silicon macOS**, using the exact Obsidian/macOS versions exercised by
-Slice 6. No desktop platform is supported yet because real-host qualification has not
-happened. Intel macOS, Windows, and Linux writers remain unsupported until separately
-qualified.
+**only M5-qualified designated-writer environment is Obsidian Desktop 1.13.7 on
+macOS 26.6.2 / Apple M4 Pro**, as recorded in the final report. The manifest retains the
+1.13.0 minimum and `isDesktopOnly: false`, but neither broadens this tested support
+envelope. Intel macOS, Windows, Linux, other desktop versions, and all mobile writers
+remain unsupported until separately qualified.
 
 Mobile loading is not mobile writer support. iOS/Android designated-writer operation,
 background freshness, mobile native-secret behavior, mobile WebView transport, and
@@ -169,10 +170,12 @@ effect-certainty and operator-review boundary without creating an always-on main
 
 ### 6. Release support
 
-There is still no supported release today. After M5 completion, support **only the
-latest M5-ready release**; there are no parallel maintenance lines or backports for a
-personal project. Operators are expected to pause, preserve evidence, and upgrade
-forward to the latest release before requesting support.
+Support **only the latest M5-ready release, v1.0.2**; there are no parallel
+maintenance lines or backports for this personal project. Its root/plugin/manifest/
+staged identities and reproducible source-built artifact were checked; the GitHub
+release has no binary assets. Compatibility instructions name the same exact version
+and operating envelope. Operators must pause, preserve evidence, and upgrade forward
+to the latest qualified release before requesting support.
 
 Rollback is allowed only when that exact artifact has explicit compatibility evidence
 for the currently persisted device-state, remote storage, API, and credential-registry
@@ -215,13 +218,13 @@ fallback or storage-format migration was added.
 
 ## Consequences
 
-The decisions remove a limiter binding, quota state/failures, recovery automation,
+The decisions removed a limiter binding, quota state/failures, recovery automation,
 mobile-writer work, durable log infrastructure, and multi-release maintenance from M5.
-They also make real desktop qualification at 10,000 notes, synchronized release
-artifacts, latest-only forward upgrades, and complete v1 route removal explicit gates.
-The accepted residual risks are volumetric abuse within platform limits, no historical
-application-log trail, manual recovery maintenance, unsupported mobile writers, and
-no rollback unless an exact path is separately proven.
+The final report closes the exact 10,000-note desktop qualification, synchronized
+v1.0.2 artifact identity/reproducibility, latest-only forward-upgrade policy, and full
+v1 retirement. Accepted residual risks are volumetric abuse within platform limits, no
+historical application-log trail, manual recovery maintenance, unsupported mobile
+writers, and no rollback unless an exact path is separately proven.
 
 None of these decisions weakens authentication, independent delete permission,
 conditional effects, 30-day recovery, retained tombstones/markers, one-writer
@@ -231,9 +234,9 @@ authority, reviewed reconciliation, or unknown-effect preservation.
 
 - **Claim 50,000 or universal 10,000-note support now:** rejected; the larger number is
   a safety ceiling and the synthetic run omits real host/network/storage behavior.
-- **Use 5,000 as the target:** defensible but rejected because current bounded
-  operations showed substantial headroom at 10,000; Slice 6 remains able to lower the
-  claim if real-host evidence fails.
+- **Use 5,000 as the target:** defensible but rejected because the bounded M5
+  active-writer and v5 migration/restart evidence passes 10,000 on the exact profile;
+  this does not extrapolate to other hosts.
 - **Add Cloudflare Rate Limiting or exact per-operation quotas now:** rejected because
   no workload supports the numbers and the binding is permissive/location-local.
 - **Set `isDesktopOnly: true`:** rejected because loadability is broader than writer

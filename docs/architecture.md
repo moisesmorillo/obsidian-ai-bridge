@@ -23,19 +23,23 @@ composition. Slice 8's generated-artifact qualification and operational document
 are implemented. The independent final review found three MINOR issues, corrective
 head `e97af36` resolved all three, and the corrective review returned APPROVE with no
 open findings. M3 is COMPLETE; PR #27 merged at `63b0599` and made the transition
-canonical. M4 Slices 1–8 are COMPLETE and M5 is NEXT. M5 Slices 0–4 are complete; Slice 5 is next. The
-current boundary includes strict device state v5 with frozen v2/v3/v4 migration, reviewed
-sampling/admission, narrow local writes and preservation, live/adoption/tombstone/
-restore actions, bounded parent-owned history steps, step-scoped archives, one shared
-M3/M4 scheduler, durable synthetic local-effect/successor evidence, and runtime/session/
-command/modal/status composition. ADR 0009 governs the historical v4 transition; ADR 0013
-adds the atomic v5 observation-gap correction. Bounded disposable-host qualification
-exercises v5 migration, gap review/transfer, and retained reservations after a detached
-edit. The connected outward mirror remains experimental and undeployed; no complete
-10,000-note desktop, mobile, or iCloud runtime qualification is claimed.
-See the [verified current state](current-state.md) for source/configuration evidence,
-[roadmap](roadmap.md) for execution order and open decisions, and
-[ADR 0001](decisions/0001-worker-r2-foundation.md) for the durable foundation.
+canonical. M4 Slices 1–8 and M5 are COMPLETE in the proposed qualification transition; M6 is the
+sole NEXT milestone. The current plugin boundary includes strict device state v5 with
+frozen v2/v3/v4 migration, reviewed sampling/admission, narrow local writes and
+preservation, live/adoption/tombstone/restore actions, bounded parent-owned history
+steps, step-scoped archives, one shared M3/M4 scheduler, durable synthetic
+local-effect/successor evidence, and runtime/session/command/modal/status composition.
+ADR 0009 governs the historical v4 transition; ADR 0013 adds the atomic v5
+observation-gap correction. The final M5 report records the narrow v1.0.2 support
+claim, exact Obsidian/macOS host, synthetic active-writer qualification through 10,000
+notes, current v5 migration/restart measurements, reproducible artifact evidence, and
+remaining platform/deployment limits. This is software qualification, not security
+certification or production-service approval; no production deployment or personal
+vault was used. M6 remains planning-only until its detailed specification and open
+decisions are resolved. See the [verified current state](current-state.md) for
+source/configuration evidence, [roadmap](roadmap.md) for execution order and open
+decisions, and [ADR 0001](decisions/0001-worker-r2-foundation.md) for the durable
+foundation.
 
 ## Package boundaries
 
@@ -468,16 +472,18 @@ reviewed successors; stale/incomplete/unknown evidence retains the entire reserv
 group. This may conservatively create another review but cannot hide a same-text
 external successor or deadlock an aligned path.
 
-## Explicitly deferred
+## Deferred and future scope
 
-- M5 (NEXT; Slices 0–4 complete, Slice 5 next): operational runbooks,
-  latest-release artifact synchronization, and real-desktop qualification. Slice 4
-  enforces scoped permissions, removes singleton authority, and leaves v2 as the sole
-  authenticated HTTP API. ADR 0011 selects no application quota/limiter, recovery automation,
-  durable log store, mobile writer, or multi-release support. M4's reviewed
-  reconciliation remains experimental and makes no automatic import, cross-system
-  atomicity, deployment, or production-readiness claim.
-- M6: Authorized MCP transport/tool definitions, never direct R2 access.
+- M5 is complete with a narrow latest-only v1.0.2 software-support envelope; its exact
+  platform, scale, release identity, and residual limits are in the [qualification
+  report](qualification/m5-final.md). No application quota/limiter, recovery
+  automation, durable log store, mobile writer, or multi-release support was selected.
+  M4 remains reviewed-only: no automatic import, cross-system atomicity, production
+  deployment, security certification, or complete-backup claim.
+- M6 is NEXT for planning only: an authorized MCP transport/tool adapter, never direct
+  R2 access. It is not implementation-ready until hosting, transport, authentication/
+  permission mapping, tool/resource surface, confirmation, and content-limit decisions
+  are resolved in a dedicated specification.
 - Outside this roadmap: search, attachments and AI inference. NAS replication or
   stronger remote authority are possibilities, not selected infrastructure. D1,
   Durable Objects, queues, Workers AI, Vectorize and external databases are not

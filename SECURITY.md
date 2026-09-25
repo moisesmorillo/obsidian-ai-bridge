@@ -1,8 +1,9 @@
 # Security policy
 
-Security and data safety are priorities. The repository is experimental and does not
-claim a production-ready bridge, security certification, complete backup, or supported
-production release.
+Security and data safety are priorities. M5 qualifies only the latest software release
+v1.0.2 within the exact, narrow envelope in the [operator guide](docs/operations.md#current-m5-qualification-and-support).
+This is not security certification, production-service approval, or a complete-backup
+claim; no production Worker/R2 deployment or personal vault was used.
 
 ## M3–M5 Slice 4 trust and authorization boundary
 
@@ -97,11 +98,13 @@ claim that arbitrary runtime user data can never exist transiently in memory.
 
 ## Operational security constraints
 
-Use only a disposable, synthetic vault for manual development. Corrective M4 evidence
-qualifies only one preservation-root and Keep-local scenario on an isolated desktop
-host. No personal vault, complete desktop/mobile qualification, iCloud trace, deployed
-Worker/R2, background iOS behavior, or production environment is qualified by
-repository tests. Configuration is not evidence of deployed resources or credentials.
+Use only a disposable, synthetic vault for manual qualification. M5 qualifies one
+active writer on Obsidian Desktop 1.13.7 / macOS 26.6.2 / Apple M4 Pro through 10,000
+eligible notes; the [final report](docs/qualification/m5-final.md) records this bounded
+profile and retained Keep-local/rotation evidence. It does not qualify other desktop
+versions, mobile, iCloud ordering, background iOS, a deployed Worker/R2, or a general
+production environment. No personal vault was used. Configuration is not evidence of
+deployed resources or credentials.
 
 A safe handoff drains the old writer, preserves all unresolved evidence, exports only
 content-free ACK metadata, changes server designation, rotates the bearer
@@ -144,17 +147,21 @@ Include reproduction details, impact, and suggested mitigation when possible. Do
 disclose a vulnerability in a public issue, discussion, pull request, or social media
 before maintainers can coordinate a response.
 
-## Supported versions
+## Supported software version and scope
 
-There are no supported production releases. The default branch is the only
-development line receiving best-effort security review. ADR 0011 plans support only
-for the latest M5-ready release after its artifact/platform/scale qualification; it
-does not support any current tag or promise backports.
+The only M5-qualified software release is **v1.0.2**, latest-only, within the exact
+platform and 10,000-note envelope documented in the [operator guide](docs/operations.md#current-m5-qualification-and-support)
+and [final qualification report](docs/qualification/m5-final.md). There are no
+backports or parallel support lines. This is not support for an operated production
+service: no production Worker/R2 deployment, security certification, or complete backup
+is claimed. The default branch receives best-effort security review; earlier tags are
+unsupported.
 
-| Version | Supported |
+| Version | Support status |
 | --- | --- |
-| Development branch | Best effort |
-| Published production releases | None |
+| v1.0.2 | M5-qualified latest release, exact bounded envelope only |
+| Development branch | Best-effort review; no release support until separately qualified |
+| Earlier published tags | Unsupported |
 
 ## Examples of security issues
 

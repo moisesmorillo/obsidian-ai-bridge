@@ -1,16 +1,18 @@
 # M5 — Operational and security readiness
 
-**Status: NEXT — Slices 0–4 complete; Slice 5 is next.** M1–M4 remain COMPLETE
-and M6 remains PLANNED. The corrective M4 ADR 0013 v5 listener-gap implementation
-and a bounded disposable Obsidian 1.13.7 scenario are complete; M5 Slice 6's full
-qualification sequence remains outstanding, including the 10,000-note target and
-platform/release matrix. The corrective change does not resume or complete M5 and makes
-no current support claim. Slice 2 implements the
-credential registry, typed principal, offline lifecycle, and historical singleton
-migration checkpoint. Slice 3 implements client-attributed content-free live
-diagnostics while preserving zero-day retention. Slice 4 enforces exact route
-permissions, removes singleton authority, and retires every v1 HTTP/OpenAPI route. No
-current release or platform is supported.
+**Status: COMPLETE — Slices 0–6 and A1–A12 qualified.** M1–M5 are COMPLETE and
+M6 is the sole NEXT milestone. The [final qualification report](../qualification/m5-final.md)
+records the exact v1.0.2 support envelope: one active writer on Obsidian Desktop
+1.13.7 / macOS 26.6.2 / Apple M4 Pro, through 10,000 eligible notes. It includes
+retained active-writer, Keep-local, and credential-rotation evidence; current v5
+migration/restart measurements; loopback recovery/diagnostics; release identity and
+reproducibility; and canonical validation/review. No personal vault or production
+Worker/R2 deployment was used. The v1.0.2 GitHub release has no binary assets; its
+plugin bundle is built from the version-aligned tagged source. This limited software
+support is not security certification, a production-service approval, or a complete
+backup claim. M5's registry, principal, offline lifecycle, live diagnostics, exact
+permissions, and v1 retirement remain as implemented; Slices 5–6 now complete the
+operational and qualification contract.
 
 ## Objective
 
@@ -20,11 +22,12 @@ credential and recovery lifecycle, truthful support/release claims, and evidence
 runbooks. Preserve every M3/M4 data-safety invariant while replacing the single
 privileged bearer with a least-privilege client principal model.
 
-M5 completion will mean the repository can support a specifically documented personal
-operating envelope. It will not mean security certification, SaaS/multi-tenant scale,
-complete-backup guarantees, uninterrupted availability, protection from a fully
-privileged host/cloud operator, deployment, or automatic authorization of a real
-personal-vault installation.
+M5 completion means the repository supports the specifically documented v1.0.2
+operating envelope in the [final qualification report](../qualification/m5-final.md).
+It does not mean security certification, SaaS/multi-tenant scale, complete-backup
+guarantees, uninterrupted availability, protection from a fully privileged host/cloud
+operator, production deployment, or automatic authorization of a real personal-vault
+installation.
 
 ## Normative Slice 0 foundation
 
@@ -139,20 +142,20 @@ prohibited.
 ## Accepted Slice 1 operational decisions
 
 [ADR 0011](../decisions/0011-m5-operational-envelope.md) owns the evidence,
-alternatives, uncertainty, and policy detail. Its synthetic measurements select a
-future qualification target; they do not establish current real-host, deployment, or
-production support.
+alternatives, uncertainty, and policy detail. Its historical synthetic measurements
+alone do not establish real-host support. The separate M5 support evidence and
+remaining limits are in the [final report](../qualification/m5-final.md).
 
-| Decision | Accepted policy | Remaining implementation or qualification gate |
+| Decision | Accepted policy | Final M5 disposition |
 | --- | --- | --- |
-| Practical supported note-count target | 10,000 eligible notes is the initial M5 qualification target and eventual maximum support claim; 50,000 remains only a hard safety ceiling | Slice 6 must qualify 10,000 on a real supported desktop host or lower/withhold the claim |
-| Cloudflare Rate Limiting binding | No binding or replacement infrastructure | Reopen only from deployed workload, incident, or cost evidence with a complete limiter contract |
-| Read/write/delete quotas | No application numeric quotas and no new 429 contract; retain existing hard bounds, independent delete permission, client revocation, and platform/account controls | Later slices test hard bounds and permission/revocation behavior, not invented request rates |
-| Plugin platform support | Keep `isDesktopOnly: false`; initial writer support is limited to Obsidian desktop 1.13.0+ on Apple-silicon macOS; mobile, Intel macOS, Windows, and Linux writers remain unsupported | Slice 6 must name and exercise the exact Obsidian/macOS versions before support is claimed |
-| Recovery maintenance | Existing API plus a manual one-page/one-mutation-at-a-time runbook; no command or scheduler | Slice 5 refines and exercises the runbook while preserving 30-day and CAS semantics |
-| Release support | No current supported release; after M5, latest M5-ready release only, upgrade forward, rollback only through an exact qualified compatibility path | Synchronized root/plugin/staged artifact versions and compatibility evidence are release gates |
-| Logging retention | Zero-day application-log retention: live diagnostics only, no Workers Logs/Logpush/durable sink or audit claim | Client-attributed content-free events remain useful live; forbidden data remains absent |
-| Complete v1 retirement | Remove every registered v1 route and its OpenAPI compatibility before M5 support; v1 mutations stay retired until removal and are never restored | Slice 4 migrates clients, removes routes, and preserves authenticated unknown-descendant behavior |
+| Practical supported note-count target | 10,000 eligible notes is the maximum qualified envelope; 50,000 remains only a hard safety ceiling | Active-writer and current v5 migration/restart matrix passed through 10,000 on the exact profile in the [final report](../qualification/m5-final.md) |
+| Cloudflare Rate Limiting binding | No binding or replacement infrastructure | No workload/incident evidence justifies changing the accepted decision |
+| Read/write/delete quotas | No application numeric quotas and no new 429 contract; retain existing hard bounds, independent delete permission, client revocation, and platform/account controls | Hard-bound and permission behavior passed; no request-rate claim is made |
+| Plugin platform support | Keep `isDesktopOnly: false`; writer support is limited to the qualified Obsidian/macOS profile; mobile, Intel macOS, Windows, and Linux writers remain unsupported | Obsidian Desktop 1.13.7 / macOS 26.6.2 / Apple M4 Pro exercised; other versions/platforms remain unqualified |
+| Recovery maintenance | Existing API plus a manual one-page/one-mutation-at-a-time runbook; no command or scheduler | Loopback recovery inspection/export, exact replay, early-purge refusal, and existing expiry tests passed; 30-day/CAS semantics preserved |
+| Release support | Latest M5-ready release only, forward upgrade, no backports; rollback only through exact qualified compatibility evidence | v1.0.2 identity, staged build reproducibility, changelog/tag identity, and scoped compatibility instructions verified; the GitHub release has no binary assets |
+| Logging retention | Zero-day application-log retention: live diagnostics only, no Workers Logs/Logpush/durable sink or audit claim | Actual loopback events and leakage checks match the content-free schema and retention contract |
+| Complete v1 retirement | Remove every registered v1 route and its OpenAPI compatibility before M5 support; v1 mutations stay retired until removal and are never restored | Slice 4 retired all v1 routes; authenticated unknown descendants are tested and the v2 API is the only authenticated contract |
 
 Slice 1 changed documentation and gathered disposable local evidence only. It added no
 production code, dependency, binding, manifest, route, credential, generated vault,
@@ -265,16 +268,17 @@ CORS, OpenAPI, and diagnostic owners kept the implementation below the net-line 
 permission owner, the privileged fallback is gone, delete is independent, current
 clients use scoped v2 credentials, and v1 is fully retired.
 
-### Slice 5 — Operational, recovery, release, and incident runbooks — PLANNED
+### Slice 5 — Operational, recovery, release, and incident runbooks — COMPLETE
 
-- Refine and exercise the bounded manual recovery procedure; add no plugin command,
-  scheduler, or automatic purge.
-- Finalize setup, client rotation/revocation, writer handoff, total registry loss,
-  credential compromise, external backup/restore, forward upgrade, rollback refusal,
-  v1 removal, and unsupported-environment procedures.
-- Define release/artifact version synchronization and latest-only support intake.
-  Preserve `isDesktopOnly: false`; do not claim the selected Apple-silicon macOS
-  desktop platform before Slice 6.
+- Refined and exercised the bounded manual recovery procedure; no plugin command,
+  scheduler, or automatic purge was added.
+- Finalized setup, client rotation/revocation, writer handoff, total registry loss,
+  credential compromise, exact recovery export, forward upgrade, rollback refusal,
+  v1 removal, and unsupported-environment procedures. No full external-backup provider
+  or complete-backup guarantee was selected.
+- Defined release/artifact version synchronization and latest-only support intake.
+  Preserved `isDesktopOnly: false` and limited writer support to the exact qualified
+  Apple-silicon macOS / Obsidian desktop profile.
 
 **Dependency:** Slices 1–4.
 
@@ -284,30 +288,33 @@ change, but no production TypeScript or runtime behavior is planned.
 **Independently mergeable outcome:** reviewed runbooks and release gates match the
 implemented credential/API boundary without automation or support overclaim.
 
-### Slice 6 — Integrated desktop qualification and completion gates — PLANNED
+### Slice 6 — Integrated desktop qualification and completion gates — COMPLETE
 
-- Qualify 1,000/5,000/10,000-note representative behavior, hard bounds, credential
-  leakage negatives, permission matrix, revocation/rotation, upgrade/rollback refusal,
-  manual recovery, packaged plugin, and the exact Apple-silicon macOS/Obsidian
-  desktop versions intended for the supported release.
-- Run canonical automation and final semantic/security review; correct every finding.
-- Synchronize README, architecture, current-state, API/OpenAPI, security, operations,
-  ADRs, and roadmap with implemented evidence.
-- Only after every gate passes may M5 become COMPLETE and M6 become NEXT. If real-host
-  10,000-note evidence fails, lower or withhold the support claim rather than changing
-  the 50,000 safety ceiling or hiding uncertainty.
+- Retained already-valid 1,000/5,000/10,000 active-writer, fresh Keep-local, and
+  credential-rotation evidence without rerunning those host scenarios merely because
+  release metadata changed. The final report records their exact bounded results.
+- Verified the current v5 migration/restart matrix, hard bounds, permission/lifecycle
+  and leakage tests, upgrade/rollback refusal, manual loopback recovery/diagnostics,
+  packaged artifact identity/reproducibility, and exact qualified desktop version.
+- Ran canonical automation, Markdown link/heading checks, exact-one-NEXT and diff
+  hygiene; completed the final semantic/security review and corrected documentation.
+- Required A1–A12 evidence passes for the exact support envelope. The final report
+  separately records one pause/resume conflict attempt that remained in attention after
+  a local Worker interruption; it is explicitly unqualified and not counted as a pass.
+  This PR proposes M5 COMPLETE and M6 NEXT; broader platforms or failures remain
+  outside the claim rather than being inferred.
 
 **Dependency:** Slices 1–5.
 
-**Expected production scope:** 0 files / 0 LOC planned. A discovered production defect
-requires a separately estimated corrective slice before completion, not hidden
-qualification-slice implementation.
+**Expected production scope:** 0 files / 0 LOC. The final qualification transition
+changes documentation/evidence only; a discovered production defect would require a
+separately estimated corrective slice.
 
 **Independently mergeable outcome:** final evidence and documentation establish the
 bounded latest-release Apple-silicon macOS desktop support claim and transition,
-without deployment or M6.
+without deployment or M6 production code.
 
-## Preliminary acceptance and exit criteria
+## A1–A12 acceptance and exit criteria — COMPLETE
 
 - **A1 — Threat coverage:** every threat-model row is implemented, explicitly bounded,
   or retained as a named residual with an owner; no trust boundary is silently widened.
@@ -342,9 +349,11 @@ without deployment or M6.
 - **A11 — Validation:** canonical checks, focused security/abuse/lifecycle tests,
   generated-artifact leakage checks, Markdown links/headings, exact-one-`NEXT`, diff
   hygiene, and editor diagnostics pass.
-- **A12 — Review and transition:** final `/skill:code-review` finds no unresolved
-  blocking issue. Completion evidence is recorded before changing M5 from NEXT or M6
-  from PLANNED.
+- **A12 — Review and transition:** final semantic/security review found no unresolved
+  blocking issue in the accepted envelope. The report preserves the separate
+  inconclusive pause/resume attempt without treating it as a pass. Completion evidence
+  is recorded before the proposed M5 COMPLETE / M6 NEXT transition; it becomes canonical
+  when the PR merges.
 
 ## Slice 0 acceptance evidence
 
@@ -365,12 +374,13 @@ without deployment or M6.
   uncertainty, and the disposition of all eight decisions.
 - Historical disposable measurements in [ADR 0011](../decisions/0011-m5-operational-envelope.md)
   cover local and paged remote inventory, strict v4 validation/encode/decode, and
-  v2→v3→v4 migration at 1,000, 5,000, and 10,000 settled live paths. They do not
-  measure the current v5 codec or v4→v5 overhead. Slice 6 must repeat the relevant
-  state/migration measurements against v5; the uncommitted harness does not claim
-  real-host behavior.
-- The decision selects 10,000 as a later qualification target, not a current support
-  claim, and keeps 50,000 as a distinct hard safety ceiling.
+  v2→v3→v4 migration at 1,000, 5,000, and 10,000 settled live paths. The later M5
+  qualification measured the current v5 codec and v2→v3→v4→v5 migration/restarts; see
+  the [final report](../qualification/m5-final.md#a6--bounded-operation). The
+  historical in-memory harness alone still makes no real-host claim.
+- The decision selects 10,000 as the exact tested support ceiling and keeps 50,000
+  as a distinct hard safety ceiling; evidence is limited to the single host profile in
+  the [final report](../qualification/m5-final.md#a9--platform-and-release-truth).
 - No Rate Limiting binding, numeric quota, mobile-writer support, recovery automation,
   durable logs, multi-release support, v1 route change, or replacement work was added.
 - The revised remaining slices each identify dependencies, an independently mergeable
@@ -437,10 +447,53 @@ without deployment or M6.
   review evidence are recorded in this PR. No quota, limiter, recovery automation,
   release tooling, deployment, platform-support claim, or M6 code was added.
 
-## M6 boundary
+## Slice 5 acceptance evidence
 
-M6 may expose selected authorized operations through MCP only after M5 establishes the
-implemented client principal and route-operation policy. M6 must define tool/resource,
-transport, hosting, confirmation, prompt/content, and permission mapping separately.
-It may not access R2 directly, execute note instructions, reuse writer IDs as auth, or
-create a broader MCP-specific credential.
+- The runbook covers setup/designation, exact permissions, rotation/revocation,
+  lost-token/registry procedures, writer handoff, device-state failure, external backup
+  responsibilities, recovery export, forward upgrade, unsupported downgrade, and
+  incident handling. No command, scheduler, quota, durable log sink, or recovery
+  automation was added.
+- A loopback-only Worker/R2 exercise used synthetic credentials and one synthetic note
+  to verify read-only write refusal before mutation, conditional create/read/delete,
+  one-page recovery metadata, content-free metadata, exact-content export to an
+  owner-only temporary file, exact sealed replay, and refusal of premature purge while
+  retaining the recovery content. Its local state/export/logs were removed afterward.
+  This is not a full external-backup provider round trip or complete-backup claim.
+- Existing deterministic expiry/purge tests prove expired content transitions to a
+  retained marker. The runbook retains explicit one-page/one-mutation limits and the
+  30-day deadline; the only manual purge request was deliberately premature and was
+  refused with recovery content retained.
+- Artifact and compatibility instructions identify v1.0.2. The GitHub release notes
+  contain no compatibility overclaim and the release has no binary assets; the
+  source-built artifact is the qualified package.
+
+## Slice 6 acceptance evidence
+
+- Retained real-host active-writer evidence on Obsidian Desktop 1.13.7 / macOS 26.6.2 /
+  Apple M4 Pro: 1,000, 5,000, and 10,000 synthetic notes settled with no pending paths,
+  global block, or persistence fence. Existing operator-valid fresh Keep-local and
+  credential-rotation evidence was reused, not repeated.
+- The v4→v5 migration/restart matrix passed at 1k/5k/10k; the 10k state remained well
+  below the 13 MiB limit. Exact page counts, state sizes, timings, and retained evidence
+  references appear in the [M5 final report](../qualification/m5-final.md).
+- Release version/manifest/staged artifact identity and reproducible consecutive
+  builds pass for v1.0.2. `isDesktopOnly: false` and manifest minimum 1.13.0 are
+  unchanged; support is limited to the exact host exercised above.
+- Canonical checks, focused route/security/lifecycle/migration tests, generated-artifact
+  checks, Markdown links/headings, exact-one-NEXT, and diff hygiene pass. CLI/editor-
+  configured diagnostics are clean; no source or editor-settings changes were made.
+  Final review found no unresolved issue in scope; production TypeScript diff is zero
+  files/LOC.
+- M5 is COMPLETE and M6 becomes the sole NEXT milestone when the qualification PR is
+  merged. Mobile, other desktop versions, iCloud trace semantics, background iOS,
+  deployed Worker/R2, complete backup, and security certification remain unqualified.
+
+### M6 boundary
+
+M6 is NEXT for planning only. Refine its dedicated specification and resolve hosting,
+transport, authentication/permission, tool/resource, confirmation, and content-limit
+decisions before production code. M6 may expose selected authorized operations through
+MCP only after M5 establishes the implemented client principal and route-operation
+policy. It may not access R2 directly, execute note instructions, reuse writer IDs as
+auth, or create a broader MCP-specific credential.

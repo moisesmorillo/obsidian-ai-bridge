@@ -2,7 +2,7 @@
 
 ## Status
 
-**Accepted and implemented as the corrective M4 change; merge/canonical transition is pending.** This record supersedes only ADR 0009's implication that retaining exact effect evidence and successor ranges is sufficient across an unobserved listener interval. ADR 0009 remains the historical account of the v4 format, history ledger, and conservative treatment of *observed* events. ADR 0012's archive namespace and frozen receipts are unchanged. The implementation has bounded disposable Obsidian 1.13.7 evidence, but M5 qualification and support remain outstanding.
+**Accepted and implemented in merged corrective M4 PR #55.** This record supersedes only ADR 0009's implication that retaining exact effect evidence and successor ranges is sufficient across an unobserved listener interval. ADR 0009 remains the historical account of the v4 format, history ledger, and conservative treatment of *observed* events. ADR 0012's archive namespace and frozen receipts are unchanged. Its bounded disposable Obsidian 1.13.7 evidence is recorded in the listener-gap qualification; M5's broader, separately bounded qualification is recorded in the [M5 final report](../qualification/m5-final.md).
 
 ## Context
 
@@ -73,7 +73,7 @@ A terminal operation committed *before* detach/death is not retroactively fenced
 
 ## Consequences
 
-This is a compatibility/runtime correction, not an M5 readiness claim. M5 remains the sole NEXT milestone; its full-scale and platform qualification remains outstanding. The implementation lands the v5 state/owner compatibility change atomically with dispatch fencing, startup ordering, gap review/transfer, validation, and tests. Focused tests cover migration and downgrade, process-death/listener-gap classification, same-text successor events, final history settlement, save failures, dispatch-lease invalidation, review transfer, startup buffering/readiness, and artifact/runtime boundaries. The bounded disposable-host result is recorded in [M4 listener-gap qualification](../qualification/m4-listener-gap-recovery.md).
+This compatibility/runtime correction was not by itself an M5 readiness claim. M5 later completed a separate A1–A12 qualification; M6 is now NEXT for planning. The implementation lands the v5 state/owner compatibility change atomically with dispatch fencing, startup ordering, gap review/transfer, validation, and tests. Focused tests cover migration and downgrade, process-death/listener-gap classification, same-text successor events, final history settlement, save failures, dispatch-lease invalidation, review transfer, startup buffering/readiness, and artifact/runtime boundaries. The bounded disposable-host result is recorded in [M4 listener-gap qualification](../qualification/m4-listener-gap-recovery.md).
 
 **Implemented ownership:** core state constants/types/validation and migration own the v5 coverage and predecessor-linked gap-review schema; `ReconciliationReviewService` plus the serialized `MirrorStateOwner` own complete-group review and atomic transfer; `ReconciliationEffectExecutor` and the history resolver preserve exact effect certainty; plugin state codecs keep v2/v3/v4 frozen and perform v5 same-key migration; `MirrorRuntimeOwner`, `MirrorObservationEpochCoordinator`, `ReconciliationRuntimeOwner`, and the Fetch/local dispatch adapters order startup, lease checks, and normal scheduling. The review policy is not duplicated in action services. Tests cover the core state/review matrix, plugin migration/runtime/event/UI boundaries, and packaged artifact behavior.
 

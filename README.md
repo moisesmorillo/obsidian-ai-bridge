@@ -1,8 +1,22 @@
 # obsidian-ai-bridge
 
-A secure bridge between Obsidian and remote AI or agent clients.
+A data-safety-focused bridge between Obsidian and authorized remote AI or agent clients.
 
-> **Status:** M1–M4 are **COMPLETE** and [M5 — Operational and security readiness](docs/roadmap.md#m5--operational-and-security-readiness) remains the single **NEXT** milestone. M5 Slices 0–4 are complete: the Worker now authenticates only through the strict bounded digest-only credential registry, enforces independent route permissions, exposes only v2 authenticated operations, and emits client-attributed content-free live diagnostics. The corrective [ADR 0013](docs/decisions/0013-listener-ready-effect-authority-and-observation-gap-recovery.md) implementation adds strict device-state v5, delayed listener attachment, dispatch-time leases, and fail-closed observation-gap review. Bounded qualification in a disposable Obsidian 1.13.7 host exercised migration, reviewed transfer, and reservation retention after a detached edit; full M5 qualification remains outstanding and there is no current support claim. The bridge remains experimental and undeployed. No personal-vault installation, full-scale desktop/mobile/iCloud/background-iOS qualification, or production-readiness claim is made.
+> **Status:** M1–M5 are **COMPLETE**; [M6 — MCP adapter](docs/roadmap.md#m6--mcp-adapter)
+> is the sole **NEXT** milestone. M5 qualifies only the latest M5-ready release,
+> **v1.0.2**, for one designated active writer on Obsidian Desktop 1.13.7 / macOS
+> 26.6.2 / Apple M4 Pro, with synthetic-vault scale through 10,000 eligible Markdown
+> notes. See the [final M5 qualification report](docs/qualification/m5-final.md) and
+> [operating envelope](docs/operations.md#current-m5-qualification-and-support).
+> This is a narrow software-support claim, not security certification, production-
+> service approval, or a complete-backup guarantee. Qualification used only a
+> disposable synthetic vault and did not deploy production resources. Mobile, Intel
+> macOS, Windows/Linux writers, iCloud event ordering,
+> background iOS, other desktop versions, and deployed Worker/R2 behavior remain
+> unqualified. The v1.0.2 GitHub release has no downloadable binary assets; the
+> qualified plugin artifact is source-built and reproducible. M6 is planning-only until
+> its detailed specification and open hosting/transport/auth/tool-surface decisions
+> are resolved.
 
 ## Motivation
 
@@ -25,7 +39,7 @@ Cloudflare Worker
 Cloudflare R2
 ```
 
-Completed M3 connects this outward path in the generated plugin: an explicitly activated designated writer observes official saved-file events and uses the conditional v2 Worker API. Completed M4 adds explicit reviewed remote-to-local actions, strict state-v5 observation-gap fencing, and dispatch-boundary lease checks—not automatic bidirectional synchronization. M5 Slices 2–4 add named registry-only authentication/lifecycle, independent route permission enforcement, v1 retirement, and live client-attributed diagnostics, but not operational readiness. The system remains experimental and undeployed; it has no MCP or production certification. Disposable real-host evidence covers the corrective preservation-root/Keep-local scenario and bounded ADR 0013 gap migration/review/transfer cases; it is not full desktop/mobile qualification.
+Completed M3 connects this outward path in the generated plugin: an explicitly activated designated writer observes official saved-file events and uses the conditional v2 Worker API. Completed M4 adds explicit reviewed remote-to-local actions, strict state-v5 observation-gap fencing, and dispatch-boundary lease checks—not automatic bidirectional synchronization. M5 completes registry-only authentication/lifecycle, independent route permissions, v1 retirement, content-free live diagnostics, operational runbooks, and bounded release qualification. The only M5 software-support claim is v1.0.2 within the exact [documented envelope](docs/operations.md#current-m5-qualification-and-support); the bridge has no MCP, security certification, production-service approval, or deployment. The [final qualification report](docs/qualification/m5-final.md) distinguishes the qualified 10,000-note desktop profile from unqualified platforms and event traces.
 
 ## Goals
 
@@ -38,8 +52,8 @@ Completed M3 connects this outward path in the generated plugin: an explicitly a
 
 - After explicit whole-scope consent, one configured designated writer automatically mirrors eligible saved Markdown outward. Unconfigured, disabled, and non-writer instances remain passive. M2 metadata-only inspection commands remain available and independent.
 - Local eligibility excludes dot-prefixed segments, the host configuration directory, and the exact current/historical conflict-preservation namespaces `ai-bridge-conflicts` and `.ai-bridge-conflicts`; prefix-sharing ordinary names remain eligible. Literal paths are not URI-decoded. Reads use best-effort change detection, not atomic snapshots or editor buffers. Notes are limited to 1 MiB.
-- The plugin ID is `ai-bridge`. See [disposable-vault qualification guidance](docs/plugin-development.md). Isolated Obsidian desktop evidence covers the replacement preservation root/Keep-local path and a bounded ADR 0013 migration, gap-transfer, and detached-edit retention scenario. No 10,000-note/complete desktop, mobile, or iCloud qualification has been performed.
-- Authentication resolves a named client principal only from a strict registry of at most 16 domain-separated token digests. Raw client tokens remain only in approved client secret stores. One exhaustive operation policy enforces independent `read`, `write`, and `delete` permissions before service/storage dispatch; `write` never implies `delete`. The designated writer credential needs all three for current M3/M4 behavior. Live content-free diagnostics identify authenticated client IDs and closed operation/outcome categories, with zero-day retention and no audit-trail claim. Association/writer UUIDs remain separate non-secret cooperating-writer guards.
+- The plugin ID is `ai-bridge`. The [M5 qualification report](docs/qualification/m5-final.md) records active-writer, migration/restart, and artifact evidence through 10,000 synthetic notes on the single qualified Obsidian/macOS desktop profile, plus retained Keep-local and credential-rotation evidence. This does not qualify other desktop versions, mobile, iCloud event ordering, background iOS, or a deployed Worker/R2. Never use a personal or production vault for manual qualification; see [disposable-vault guidance](docs/plugin-development.md).
+- Authentication resolves a named client principal only from a strict registry of at most 16 domain-separated token digests. Raw client tokens remain only in approved client secret stores. One exhaustive operation policy enforces independent `read`, `write`, and `delete` permissions before service/storage dispatch; `write` never implies `delete`. The designated writer credential needs all three for current M3/M4/M5 behavior. Live content-free diagnostics identify authenticated client IDs and closed operation/outcome categories, with zero-day retention and no audit-trail claim. Association/writer UUIDs remain separate non-secret cooperating-writer guards.
 - iCloud remains working-vault device sync. The plugin sees host events rather than a transactional iCloud log; missed/offline absences never grant deletion authority, so some deletions require later reconciliation.
 - M3 itself has no remote-to-local behavior. M4 adds explicit reviewed reconciliation, text-only recovery selection, and bounded deferred-history cleanup, but no automatic takeover, automatic bidirectional conflict resolution, scheduled cleanup, search, MCP, D1, Durable Objects, Workers AI, or Vectorize support. The [operator guide](docs/operations.md) describes review, restoration, setup, recovery, handoff, rotation, migration, and rollback restrictions.
 
@@ -147,28 +161,17 @@ docs/                   Architecture, API, current-state audit, roadmap,
 ## Project memory and next work
 
 Start with [AGENTS.md](AGENTS.md), [architecture](docs/architecture.md), the
-[canonical roadmap and agent onboarding](docs/roadmap.md), then the
-completed [M4 specification](docs/milestones/m4-remote-to-local-reconciliation-and-conflict-resolution.md)
-and [sequential plan](docs/plans/m4-remote-to-local-reconciliation-and-conflict-resolution.md).
-M4 Slices 1–8 implement and qualify the closed contracts, strict v2→v3→v4 migration
-fence, review/admission, narrow local write/conflict preservation, live/adoption/
-tombstone/recovery execution, bounded parent-owned history steps, step-scoped
-preservation, and shared runtime/session/command/modal/status composition. The atomic
-[ADR 0013](docs/decisions/0013-listener-ready-effect-authority-and-observation-gap-recovery.md)
-correction then adds strict v4→v5 migration, cold-start/detach gap fencing, layout-ready
-listener registration, dispatch leases, and fresh complete-group transfer. It does not
-change the Worker API or complete M5 qualification. M5 is NEXT with completed Slices 0–4; Slice 5 is next. Its
-[planning specification](docs/milestones/m5-operational-and-security-readiness.md),
-[consolidated threat model](docs/threat-model.md),
-[credential/permission ADR](docs/decisions/0010-scoped-client-credentials-and-permissions.md),
-and [operational-policy ADR](docs/decisions/0011-m5-operational-envelope.md)
-define the accepted client model and operating policy. Slice 2 implements the bounded
-digest-only registry, typed principal resolution, offline lifecycle tooling, and the
-historical singleton migration checkpoint. Slice 3 adds client-ID, closed-operation,
-authentication, status, and stable-error attribution to content-free live diagnostics
-without durable retention. Slice 4 activates registry-only authentication, enforces
-independent route permissions, and retires every v1 HTTP route/OpenAPI contract. The
-10,000-note value is a later desktop qualification target, not current support. The completed
+[canonical roadmap and agent onboarding](docs/roadmap.md), and the completed
+[M5 specification](docs/milestones/m5-operational-and-security-readiness.md) with its
+[final qualification evidence](docs/qualification/m5-final.md). M1–M5 are complete;
+M6 is NEXT for planning. Its current [roadmap boundary](docs/roadmap.md#m6--mcp-adapter)
+is not an implementation-ready specification: resolve its open design choices and
+write/refine the M6 specification before production code. M5's current supported
+release, exact host/scale envelope, residual limits, and all A1–A12 evidence are in
+the report and [operator guide](docs/operations.md#current-m5-qualification-and-support).
+The [M5 threat model](docs/threat-model.md), [credential/permission ADR](docs/decisions/0010-scoped-client-credentials-and-permissions.md),
+and [operational-policy ADR](docs/decisions/0011-m5-operational-envelope.md) record
+its accepted boundaries. The completed
 [M3 specification](docs/milestones/m3-remote-bridge-client-and-publishing.md),
 [approved decision brief](docs/plans/m3-design-decisions.md), and
 [sequential plan](docs/plans/m3-remote-bridge-client-and-publishing.md) record
@@ -191,7 +194,7 @@ active milestone. Dates are intentionally not assigned.
 
 ## Security
 
-This project handles potentially sensitive vault content. The connected outward M3 runtime remains experimental and is not a production security boundary or certification. See [SECURITY.md](SECURITY.md), the [consolidated threat model](docs/threat-model.md), and the [operator guide](docs/operations.md).
+This project handles potentially sensitive vault content. M5's v1.0.2 software support is limited to the exact documented envelope; it is not a production security boundary, security certification, or complete backup. See [SECURITY.md](SECURITY.md), the [consolidated threat model](docs/threat-model.md), and the [operator guide](docs/operations.md).
 
 ## Contributing
 

@@ -48,9 +48,9 @@ decisions, not an invented historical rationale.
 | [0008 — M4 device-state migration and downgrade fence](0008-m4-device-state-migration.md) | Accepted (implemented Slice 1 v2→v3 history) | Deterministic schema v2→v3 migration, partial-operation state, restart, and downgrade refusal |
 | [0009 — Bounded history resolution, runtime authority, and device-state v4](0009-m4-history-runtime-and-device-state-v4.md) | Accepted (Slices 6–7 implemented) | Parent-owned history steps, step-scoped preservation, shared runtime authority, and strict v3→v4 migration |
 | [0010 — Scoped client credentials, permissions, and lifecycle](0010-scoped-client-credentials-and-permissions.md) | Accepted (Slice 2 lifecycle and Slice 4 authorization/retirement implemented) | Bounded digest-only bearer clients, typed principals, read/write/delete semantics, revocation, and rotation |
-| [0011 — M5 operational envelope and support policy](0011-m5-operational-envelope.md) | Accepted for M5 planning (not yet qualified) | 10,000-note qualification target, no application quotas/limiter, desktop-writer intent, manual recovery, latest-only releases, zero-day logs, and v1 retirement |
+| [0011 — M5 operational envelope and support policy](0011-m5-operational-envelope.md) | Accepted and qualified by M5 | Exact v1.0.2 / Obsidian 1.13.7 / macOS 26.6.2 / Apple M4 Pro envelope through 10,000 eligible notes; no quotas/limiter, manual recovery, latest-only releases, zero-day logs, and v1 retirement |
 | [0012 — Host-visible conflict-preservation namespace](0012-host-visible-conflict-preservation-namespace.md) | Accepted (corrective M4 production change implemented) | Official-index-visible current archive root, exact mirror exclusions, and frozen legacy receipt compatibility |
-| [0013 — Listener-ready effect authority and observation-gap recovery](0013-listener-ready-effect-authority-and-observation-gap-recovery.md) | Accepted and implemented in corrective M4 change; merge pending | Orthogonal durable v5 gap fence, dispatch lease, review transfer and strict compatibility transition |
+| [0013 — Listener-ready effect authority and observation-gap recovery](0013-listener-ready-effect-authority-and-observation-gap-recovery.md) | Accepted and implemented in merged M4 PR #55 | Orthogonal durable v5 gap fence, dispatch lease, review transfer and strict compatibility transition |
 
 ADR 0001 records the implemented M1 baseline. ADRs 0002–0004 record the implemented
 M3 design without claiming deployment. ADRs 0005–0008 are accepted M4 decisions and
@@ -59,12 +59,14 @@ historically accurate implemented v2→v3 fence. ADR 0009's additive Slice 6–7
 and v3→v4 fence are implemented without rewriting v3 history or authorizing deployment
 or production claims. ADR 0010's registry, principal, lifecycle tooling, and historical singleton migration
 checkpoint are implemented by M5 Slice 2; Slice 4 enforces the route-operation
-permissions and retires singleton/v1 authority. ADR 0011 closes the Slice 1 operating-policy choices without
-claiming current support or changing runtime behavior. ADR 0012 corrects only the M4
-preservation namespace after real-host evidence while retaining frozen legacy receipt
-identity and every preserve-first safety rule. ADR 0013 supersedes only ADR 0009's
-listener-gap sufficiency assumption; its corrective implementation advances the
-current state/runtime to v5 without changing the Worker API. Bounded disposable-host
-evidence does not complete M5 qualification. See the M3 [decision brief](../plans/m3-design-decisions.md),
+permissions and retires singleton/v1 authority. ADR 0011 records the accepted operating policy now qualified by the exact v1.0.2
+support envelope in the [M5 final report](../qualification/m5-final.md), without
+changing runtime behavior. ADR 0012 corrects only the M4 preservation namespace after
+real-host evidence while retaining frozen legacy receipt identity and every
+preserve-first safety rule. ADR 0013 supersedes only ADR 0009's listener-gap sufficiency
+assumption; its corrective implementation advances current state/runtime to v5 without
+changing the Worker API. M5's broader qualification is separate and does not expand
+these ADRs' historical scope. See the M3 [decision brief](../plans/m3-design-decisions.md),
 the M4 [implementation-ready specification](../milestones/m4-remote-to-local-reconciliation-and-conflict-resolution.md),
-and the M5 [planning specification](../milestones/m5-operational-and-security-readiness.md).
+and the completed M5 [specification](../milestones/m5-operational-and-security-readiness.md)
+with its [final qualification report](../qualification/m5-final.md).

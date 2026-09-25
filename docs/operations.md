@@ -1,11 +1,34 @@
-# M3/M4 and M5 Slices 2–4 operator guide
+# M3/M4/M5 operator guide
 
-M3 provides the experimental Obsidian-to-Worker mirror. M4 adds explicit reviewed
-reconciliation; it does not make the mirror automatically bidirectional. The bridge is
-not production certified or a complete backup. This guide describes the implemented
-operating contract without authorizing deployment or installation in a personal vault.
-Use a disposable vault and separately authorized development resources for any manual
-qualification.
+M3 provides the Obsidian-to-Worker mirror. M4 adds explicit reviewed reconciliation;
+it does not make the mirror automatically bidirectional. R2 is not a complete backup.
+This guide describes the implemented operating contract and M5's limited software-
+support envelope; it does not certify security or approve a production service or
+Worker/R2 deployment. Manual qualification must use a disposable vault and separately
+authorized development resources, never a personal vault.
+
+## Current M5 qualification and support
+
+The only M5-qualified release is **v1.0.2**, latest-only, for one active designated
+writer on **Obsidian Desktop 1.13.7 / macOS 26.6.2 / Apple M4 Pro**, with up to
+**10,000 eligible Markdown notes**. The declared host API minimum remains 1.13.0, but
+that does not qualify other Obsidian/macOS versions. The bound reflects synthetic-vault
+active-writer and current v5 migration/restart evidence; it is not a latency SLA,
+complete-backup guarantee, or certification of a deployed service. See the [M5
+qualification report](qualification/m5-final.md) for exact measurements and retained
+prior evidence.
+
+Mobile writers, Intel macOS, Windows/Linux, other desktop versions, iCloud event
+ordering, background iOS, multiple active writers, and deployed Worker/R2 behavior
+are not qualified. The manifest remains `isDesktopOnly: false` for loadability only;
+it does not broaden the supported writer platform. The v1.0.2 GitHub release contains
+no downloadable binary assets; the qualified plugin bundle is generated from the
+version-aligned tagged source and must be built reproducibly. From the v1.0.2 tag, run
+`mise install`, `mise run install`, `mise run plugin:build`, and `mise run plugin:smoke`,
+then use only the generated `main.js` and `manifest.json` as described in [plugin
+development](plugin-development.md). No earlier release or rollback line is supported,
+and no backports are promised. Configuration is not proof of deployed resources or
+credentials.
 
 ## Operating model and trust boundary
 
@@ -31,6 +54,34 @@ qualification.
   UTF-8 rules are included. Attachments, Obsidian configuration, arbitrary files, and
   note instructions are not mirrored or executed.
 
+## Independent vault backup and restore
+
+R2 is a conditional mirror with 30-day deleted-content recovery, not a complete vault
+backup. M5 does not select, configure, or guarantee any external backup provider; the
+vault owner must keep an independent, versioned backup appropriate to the data. A backup of
+the vault does not capture native SecretStorage contents or necessarily capture
+Obsidian host-local mirror state. `data.json` contains only a secret reference, not the
+bearer itself. Keep content backup, credentials, and the content-free mirror ledger as
+separate recovery concerns.
+
+1. Before a risky plugin update, handoff, or recovery-maintenance operation, pause the
+   writer and preserve the complete working vault with the independently selected
+   backup mechanism. Follow that provider's integrity/retention contract; verify a
+   restore on an isolated copy and compare the intended paths/content before relying
+   on it. M5 did not qualify a provider or remote backup service.
+2. Never restore a vault over a live writer or overwrite/delete the original copy as
+   part of a test. Open a restored copy without activating the mirror. Treat restored
+   notes as current local data that requires exact identity/revision review; do not
+   infer remote absence, replay old operations, or silently overwrite remote content.
+3. Preserve R2 and the original host-local state as evidence when a restore is needed.
+   Do not treat restored `data.json`, a vault copy, or a structurally valid old ledger
+   as mirror authority. Re-establish credentials separately, verify authenticated
+   association/writer identity, and use the documented handoff, reconciliation, or
+   isolated-reset procedure before activating a writer.
+4. For one deleted note, use the bounded [recovery API procedure](#read-only-recovery-inspection)
+   to inspect metadata and explicitly export exact content. This does not restore the
+   whole vault, reset remote state, or replace the independent backup.
+
 ## Initial setup for a new empty association
 
 The initial M3 association must use a separately authorized **empty** R2 bucket or
@@ -43,12 +94,12 @@ committed development configuration means a remote resource exists.
    device identity. The values committed in `apps/worker/wrangler.jsonc` are
    non-secret local-development examples, not a deployed association.
 2. **Build, qualify, and load the plugin passively.** Run the canonical tasks in
-   [plugin development](plugin-development.md). If manually testing, use Obsidian
-   1.13.0+ and a disposable vault only. Enable AI Bridge while it is unconfigured and
-   keep the mirror inactive; passive loading provisions its device UUID without
-   sending note content. Original M3 completion had no real-host qualification; the
-   later corrective M4 evidence covers only the preservation root and one Keep-local
-   scenario, not this complete setup.
+   [plugin development](plugin-development.md). The M5 support envelope names
+   Obsidian Desktop 1.13.7 on macOS 26.6.2 / Apple M4 Pro; use a disposable vault for
+   any manual test. Enable AI Bridge while it is unconfigured and keep the mirror
+   inactive; passive loading provisions its device UUID without sending note content.
+   The bounded M5 report covers only synthetic active-writer and recovery scenarios,
+   not a real personal association or deployed service.
 3. **Obtain the generated plugin device UUID.** Open AI Bridge settings and copy the
    read-only **Local device / writer ID**. This value is non-secret and is the only
    writer UUID to use for this device.
@@ -139,10 +190,11 @@ unknown effects and unreviewable evidence stay reserved. A missing path during s
 or a gap never authorizes deletion. Consequently, an offline local deletion may remain
 as a stale remote live head until explicit reviewed reconciliation. Ordering across
 devices is not globally transactional, and the designated writer must run for mirror
-freshness. Bounded disposable desktop corrective scenarios are recorded in the
-[listener-gap report](qualification/m4-listener-gap-recovery.md); no 10,000-note,
-full desktop, mobile, iCloud trace, background iOS execution, or always-on behavior
-has been qualified.
+freshness. The bounded M5 scale and v4→v5 migration/restart evidence is in the [final
+qualification report](qualification/m5-final.md); corrective host details remain in the
+[listener-gap report](qualification/m4-listener-gap-recovery.md). The exact qualified
+profile does not establish other desktop configurations, mobile/iCloud ordering,
+background iOS, or always-on behavior.
 
 ## Safe upgrade, disable, and re-enable
 

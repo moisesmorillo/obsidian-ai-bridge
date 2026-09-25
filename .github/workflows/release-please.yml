@@ -26,3 +26,31 @@ jobs:
           command: manifest
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
+
+      - name: Check out release pull request
+        if: ${{ steps.release.outputs.pr != '' }}
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ fromJSON(steps.release.outputs.pr).headBranchName }}
+          token: ${{ steps.app-token.outputs.token }}
+
+      - name: Install repository tools
+        if: ${{ steps.release.outputs.pr != '' }}
+        uses: jdx/mise-action@v4
+        with:
+          install: true
+          cache: true
+          github_token: ${{ steps.app-token.outputs.token }}
+
+      - name: Regenerate and commit Bun lockfile
+        if: ${{ steps.release.outputs.pr != '' }}
+        run: |
+          mise run install:lockfile
+          if git diff --quiet -- bun.lock; then
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- bun.lock
+          git commit -m "build(release): refresh bun lockfile"
+          git push

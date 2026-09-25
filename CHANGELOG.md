@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.0.2](https://github.com/moisesmorillo/obsidian-ai-bridge/compare/v1.0.1...v1.0.2) (2026-09-25)
+
+
+### Bug Fixes
+
+* **release:** synchronize plugin release identity ([#56](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/56)) ([c9f4117](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/c9f41179ba47f93cb66c93986c7b73c7dda46fb1))
+
+
+### CI
+
+* **release:** refresh Bun lockfile in release PRs ([#58](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/58)) ([1b5ccca](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/1b5ccca9e6985fe4d87eb3168958644b858720d3))
+
 ## [1.0.1](https://github.com/moisesmorillo/obsidian-ai-bridge/compare/v1.0.0...v1.0.1) (2026-09-24)
 
 

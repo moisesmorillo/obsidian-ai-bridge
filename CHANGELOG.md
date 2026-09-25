@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.0](https://github.com/moisesmorillo/obsidian-ai-bridge/compare/v1.0.2...v1.1.0) (2026-09-25)
+
+
+### Features
+
+* **mcp:** add authorized MCP adapter ([#60](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/60)) ([85bf3e1](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/85bf3e161454bdf4ac8c4c2494b80fe75f3a1c28))
+
 ## [1.0.2](https://github.com/moisesmorillo/obsidian-ai-bridge/compare/v1.0.1...v1.0.2) (2026-09-25)
 
 

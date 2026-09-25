@@ -6,6 +6,10 @@ node = "24.21.0"
 description = "Install locked workspace dependencies"
 run = "bun install --frozen-lockfile"
 
+[tasks."install:lockfile"]
+description = "Regenerate the Bun lockfile after workspace version changes"
+run = "bun install --lockfile-only"
+
 [tasks.format]
 description = "Apply Biome formatting"
 run = "bunx biome format --write ."
@@ -67,6 +71,11 @@ description = "Load the packaged plugin with an isolated Obsidian host double"
 depends = ["plugin:build"]
 run = "node node_modules/vitest/vitest.mjs run --config apps/obsidian-plugin/vitest.smoke.config.ts"
 
+[tasks."release:identity-check"]
+description = "Verify synchronized root, plugin, lockfile, and staged release versions"
+depends = ["plugin:build"]
+run = "node tools/release-identity/check.mjs"
+
 [tasks.dev]
 description = "Run the Worker with Wrangler local development"
 run = "node apps/worker/node_modules/wrangler/bin/wrangler.js dev --config apps/worker/wrangler.jsonc"
@@ -77,4 +86,4 @@ run = "bun tools/credentials/cli.ts"
 
 [tasks.check]
 description = "Run the complete repository validation pipeline"
-depends = ["biome:check", "lint", "typecheck", "coverage", "worker:storage-test", "build"]
+depends = ["biome:check", "lint", "typecheck", "coverage", "worker:storage-test", "build", "release:identity-check"]

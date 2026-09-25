@@ -35,14 +35,22 @@ before implementation. Follow the roadmap's completion/transition protocol and
 ## Releases
 
 Release Please runs only after commits land on `main`. It reads the Conventional
-squash commit subject and PR body, tracks this single product from
-`.release-please-manifest.json` at `0.1.0`, updates the root `package.json`
-version, and opens a release PR rather than directly tagging a release. The
-configured default strategy produces `0.1.0 →
-0.1.1` for `fix` and `0.1.x → 0.2.0` for `feat`; a genuine breaking change at a
-pre-1.0 version produces the default major bump (`0.1.x → 1.0.0`).
+squash commit subject and PR body, tracks one root product from
+`.release-please-manifest.json`, and opens a release PR rather than directly tagging
+a release. Component tags and independent plugin releases are disabled. The root
+`package.json`, plugin `package.json`, and plugin source `manifest.json` versions are
+explicit Release Please extra-files and must match the manifest's root release version.
 
-Release Please authenticates with a dedicated GitHub App that is installed only for
+Release Please does not regenerate Bun's JSONC lockfile. If a release PR changes the
+plugin package version, run `mise run install:lockfile` to update the
+`apps/obsidian-plugin` workspace version in `bun.lock`. Then run `mise run check`;
+its release identity check builds the staged plugin and verifies the root, plugin,
+lockfile, source manifest, release manifest, and staged manifest versions agree.
+Do not merge a release PR while that check reports drift.
+
+On the current 1.x line, a `fix` release bumps the patch version, `feat` bumps the
+minor version, and a genuine breaking change bumps the major version. Release Please
+authenticates with a dedicated GitHub App that is installed only for
 this repository. At runtime, the workflow creates a short-lived installation token
 from the repository secrets `RELEASE_PLEASE_APP_ID` and
 `RELEASE_PLEASE_APP_PRIVATE_KEY`, then passes it directly to Release Please. Do not

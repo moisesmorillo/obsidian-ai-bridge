@@ -7,6 +7,16 @@
       "type": "json",
       "path": "package.json",
       "jsonpath": "$.version"
+    },
+    {
+      "type": "json",
+      "path": "apps/obsidian-plugin/package.json",
+      "jsonpath": "$.version"
+    },
+    {
+      "type": "json",
+      "path": "apps/obsidian-plugin/manifest.json",
+      "jsonpath": "$.version"
     }
   ],
   "changelog-sections": [

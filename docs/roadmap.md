@@ -60,7 +60,7 @@ New infrastructure requires a concrete need and [ADR](decisions/README.md).
 compose an experimental connected outward mirror, not a production-ready or
 remote-to-local system. Canonical validation passed, the final semantic review's three
 MINOR findings were corrected at `e97af36`, and the corrective review returned APPROVE
-with no open findings. M4 Slices 1–8 are COMPLETE, and M5 is the single NEXT milestone. M5 Slices 0–4 are complete and Slice 5 is next. M4's reviewed-only authority, preservation, local mutation,
+with no open findings. M4 Slices 1–8 and M5 are COMPLETE in this proposed transition; M6 is the sole NEXT milestone. M5's support claim is limited to the latest v1.0.2 release and its exact [qualification report](qualification/m5-final.md). M4's reviewed-only authority, preservation, local mutation,
 adoption/tombstone/restore, migration, and one-writer product decisions are implemented
 and qualified. Slice 1 implements the closed contracts, sparse state v3, deterministic
 v2 migration/read-back fence, downgrade refusal, and runtime registry compatibility
@@ -117,8 +117,8 @@ production code. Dependencies include all previous milestones.
 | M2 | Obsidian read-only local-vault adapter | COMPLETE | Explicit local inspection without sending or changing notes | M1 |
 | M3 | Automatic eligible-Markdown remote mirror | COMPLETE | Whole eligible saved vault mirrors outward, including recoverable removals/renames, with one designated writer | M2 |
 | M4 | Remote-to-local reconciliation and conflict resolution | COMPLETE | Review/adopt/resolve remote divergence and richer restoration without silent local data loss | M3 |
-| M5 | Operational and security readiness | NEXT | Operate a bounded personal bridge with reviewed limits, permissions and runbooks | M4 |
-| M6 | MCP adapter | PLANNED | Same authorized operations for MCP-capable agents | M5 |
+| M5 | Operational and security readiness | COMPLETE | Latest-only, bounded v1.0.2 software support with reviewed limits, permissions, runbooks and qualification evidence | M4 |
+| M6 | MCP adapter | NEXT | Same authorized operations for MCP-capable agents; planning/specification only until open decisions are resolved | M5 |
 
 ### M1 — Worker API foundation and engineering quality
 
@@ -275,12 +275,13 @@ specification remain required before M5 production work.
   session invalidation, startup orphan staling, bounded recovery selection, commands,
   text-only modals, and sanitized status are implemented together. No intermediate
   runtime publishes or saves v4 with an older owner/registry surface.
-- **Exit met:** A1–A12 are supported by exact barrier tests, generated-artifact
-  qualification, canonical diagnostics/coverage/docs, and final semantic approval.
-  Final validation runs 75 source files / 1,194 tests, 8 workerd tests, and 11 artifact
-  tests at 95.02% statements, 90.62% branches, 98.12% functions, and 96.96% lines.
-  M5 becomes NEXT without M5 production code, deployment, personal-vault installation,
-  or real-host/iCloud/background-iOS qualification.
+- **Exit met at M4 completion:** A1–A12 were supported by exact barrier tests,
+  generated-artifact qualification, canonical diagnostics/coverage/docs, and final
+  semantic approval. That historical validation ran 75 source files / 1,194 tests,
+  8 workerd tests, and 11 artifact tests at 95.02% statements, 90.62% branches,
+  98.12% functions, and 96.96% lines. It made M5 NEXT without M5 production code,
+  deployment, personal-vault installation, or real-host/iCloud/background-iOS
+  qualification; the later M5 host evidence is recorded in the [final report](qualification/m5-final.md).
 - **Non-goals:** silent last-writer-wins, automatic import/adoption/merge, same-path
   legacy normalization, blanket remote authority, multi-writer coordination,
   collaboration, attachments, new server history, or replacement of working-vault
@@ -288,53 +289,51 @@ specification remain required before M5 production work.
 
 ### M5 — Operational and security readiness
 
-**NEXT — Slices 0–4 complete; Slice 5 is next.** The corrective ADR 0013 v5
-compatibility/runtime change is implemented, and bounded disposable Obsidian 1.13.7
-qualification exercises migration, complete-group review/transfer, and fail-closed
-reservation retention after a detached edit. This does not meet M5 Slice 6's full
-qualification envelope: the 10,000-note target, full desktop failure matrix, iCloud,
-mobile, release synchronization, and operational procedures remain outstanding. M5
-continues as the sole NEXT milestone with no support claim. The
+**COMPLETE.** M5 closed A1–A12 without adding production TypeScript in its final
+qualification transition. The only M5-qualified release is latest-only **v1.0.2** for
+one active writer on Obsidian Desktop 1.13.7 / macOS 26.6.2 / Apple M4 Pro, with a
+10,000-eligible-note synthetic-vault ceiling. The [final qualification report](qualification/m5-final.md)
+records retained 1k/5k/10k and credential-rotation/Keep-local evidence, current v5
+migration/restart measurements, the loopback recovery/diagnostics exercise, release
+identity and reproducibility, canonical validation, and semantic review. No personal
+vault or production Worker/R2 deployment was used. The v1.0.2 GitHub release has no
+binary assets; the qualified plugin artifact is built from the version-aligned source.
+M5 is not security certification, complete backup, general production-service
+approval, mobile/other-desktop support, or multi-writer support. See the
 [M5 specification](milestones/m5-operational-and-security-readiness.md),
-[consolidated threat model](threat-model.md),
-[ADR 0010](decisions/0010-scoped-client-credentials-and-permissions.md), and
-[ADR 0011](decisions/0011-m5-operational-envelope.md) define the foundation for the
-remaining implementation and qualification slices.
+[consolidated threat model](threat-model.md), [ADR 0010](decisions/0010-scoped-client-credentials-and-permissions.md),
+and [ADR 0011](decisions/0011-m5-operational-envelope.md) for the accepted boundary.
 
-- **Implemented Slice 2 credential boundary:** at most 16 active named opaque bearer
-  credentials; strict digest-only Worker registry; typed client principals;
-  independent `read`, `write`, and `delete` metadata; separate association/writer
-  mutation guards; one-time token display, independent revocation, bounded manual
-  rotation overlap, and fresh-credential recovery from token/registry loss. The
-  Slice 4 removes the temporary singleton migration authority; the registry is now the
-  only authentication source.
-- **Accepted Slice 1 policy:** 10,000 eligible notes is a later real-desktop
-  qualification target, not current support; no application quota or Rate Limiting
-  binding; `isDesktopOnly: false` with initial designated-writer support limited to
-  Obsidian desktop 1.13.0+ on Apple-silicon macOS; bounded manual recovery maintenance;
-  latest-M5-ready-release support only; zero-day
-  application-log retention; and complete v1 route retirement before support.
-- **Implemented Slice 3 diagnostic boundary:** one content-free completed-request
-  event shape identifies authenticated canonical client ID, closed route-derived
-  operation and authentication categories, status, stable API error code when present,
-  registered route template, method, and duration. Public/rejected requests have no
-  client identity; client names, secrets, content, concrete identifiers, receipts, and
-  raw failures remain absent. Retention remains zero-day live-only with no audit claim.
-- **Implemented Slice 4 authorization boundary:** one exhaustive policy maps public,
-  authenticated v2, recovery, preflight, and unknown operations. Exact `read`, `write`,
-  and independent `delete` permissions are enforced before service/storage dispatch;
-  association/writer/application guards remain separate. Singleton auth and every v1
-  route/OpenAPI contract are retired, so v2 is the sole authenticated API. The current
-  plugin remains a normal registry client and needs all three permissions.
-- **Reduced remaining work:** no limiter/quota state, recovery command/scheduler,
-  mobile-writer qualification, durable log sink, or multi-release maintenance. Slices
-  5–6 retain explicit per-slice production estimates and mergeable outcomes.
-- **Risks/exit:** truthful limits/permissions, tested runbooks/rotation/recovery,
-  bounded resources, reviewed secrets/live diagnostics, explicit desktop/release
-  evidence, and final semantic/security approval. No security certification, SaaS
-  scale, full-backup guarantee, current support, or deployment is implied.
+- **Slice 2 — credential lifecycle:** at most 16 named opaque bearer credentials;
+  strict digest-only registry; typed principal; independent `read`, `write`, and
+  `delete`; one-time token display, revoke/rotation/loss recovery. The temporary
+  singleton migration authority is removed.
+- **Slice 3 — live diagnostics:** content-free completed-request events identify the
+  authenticated client ID and closed operation/authentication outcomes; names, secrets,
+  content, concrete identifiers, receipts, and raw failures remain absent. Retention is
+  zero application days; events are not an audit trail.
+- **Slice 4 — authorization and v1 retirement:** one exhaustive policy enforces exact
+  independent permissions before service/storage dispatch. Singleton auth and every
+  v1 route/OpenAPI contract are retired; v2 is the only authenticated API.
+- **Slice 5 — operational runbooks:** setup, permission, rotation/revocation, handoff,
+  lost-registry, manual recovery/export, upgrade, rollback refusal, and release
+  procedures are synchronized with the implemented effects. No recovery automation,
+  quota/limiter, durable log sink, or deployment was added.
+- **Slice 6 — integrated qualification:** real-host active-writer behavior through
+  10,000 synthetic notes and v4→v5 migration/restart matrix pass on the exact stated
+  profile; live loopback recovery/diagnostics, current artifact identity/reproducibility,
+  platform limits, canonical validation, and final semantic review are recorded in the
+  report.
+- **Final transition scope:** 0 production TypeScript files / 0 production LOC.
+  Broader desktop versions, mobile, iCloud event ordering, background iOS, production
+  resources, complete backup, and SaaS-scale guarantees remain outside the claim.
 
 ### M6 — MCP adapter
+
+**NEXT — planning/specification only; not implementation-ready.** Resolve the open
+hosting, transport, authentication/permission mapping, tool/resource surface,
+confirmation, and content-limit decisions and refine a dedicated milestone
+specification before production implementation.
 
 - **Scope:** thin MCP transport over established authorized application operations,
   discoverable contracts and safe errors. No direct R2 shortcut or separate sync engine.
@@ -347,17 +346,16 @@ remaining implementation and qualification slices.
 
 ## Unresolved product decisions
 
-**None for M3, M4, or M5.** M3's accepted choices and primary-source limits are in its
-[decision brief](plans/m3-design-decisions.md). M4's reviewed-only authority,
-conflict preservation, bounded local mutation, revisioned/legacy adoption,
-tombstone/restore, version-3 history, version-4 Slice 6 migration, bounded grouped
-progress, runtime authority, existing-v2 API, and retained one-writer choices are
-resolved in [ADRs 0005–0009](decisions/README.md). M5 Slice 0 accepts the bounded
-credential/principal/permission/lifecycle model in
-[ADR 0010](decisions/0010-scoped-client-credentials-and-permissions.md), and Slice 1
-accepts the evidence-bounded operating policy in
-[ADR 0011](decisions/0011-m5-operational-envelope.md). Neither record implements
-production behavior or claims current support.
+**None for M1–M5; M6 decisions remain open.** M3's accepted choices and
+primary-source limits are in its [decision brief](plans/m3-design-decisions.md). M4's
+reviewed-only authority, conflict preservation, bounded local mutation,
+revisioned/legacy adoption, tombstone/restore, history, runtime authority, and
+one-writer choices are resolved in [ADRs 0005–0009](decisions/README.md). M5's
+credential/permission model and qualified operating policy are recorded in
+[ADRs 0010](decisions/0010-scoped-client-credentials-and-permissions.md) and
+[0011](decisions/0011-m5-operational-envelope.md). M6 hosting/transport,
+authentication mapping, tool/resource surface, confirmation policy, and content limits
+must be resolved and specified before production implementation.
 
 | Decision required | Earliest milestone/slice | Boundary until resolved |
 | --- | --- | --- |
@@ -372,25 +370,26 @@ a support claim.
 
 Read in order: [README](../README.md), [AGENTS](../AGENTS.md),
 [architecture](architecture.md), this roadmap, the completed
-[M4 specification](milestones/m4-remote-to-local-reconciliation-and-conflict-resolution.md),
-its [sequential plan](plans/m4-remote-to-local-reconciliation-and-conflict-resolution.md),
-the M5 [planning specification](milestones/m5-operational-and-security-readiness.md),
-[threat model](threat-model.md), and
-[credential ADR](decisions/0010-scoped-client-credentials-and-permissions.md),
-[operational-policy ADR](decisions/0011-m5-operational-envelope.md), then the
+[M5 specification](milestones/m5-operational-and-security-readiness.md) and [final
+qualification report](qualification/m5-final.md), then the completed
+[M4 specification](milestones/m4-remote-to-local-reconciliation-and-conflict-resolution.md)
+and its [sequential plan](plans/m4-remote-to-local-reconciliation-and-conflict-resolution.md),
+[threat model](threat-model.md), and [credential ADR](decisions/0010-scoped-client-credentials-and-permissions.md),
+[operational-policy ADR](decisions/0011-m5-operational-envelope.md), followed by the
 completed M3 [spec](milestones/m3-remote-bridge-client-and-publishing.md),
 [plan](plans/m3-remote-bridge-client-and-publishing.md), and
-[decisions](plans/m3-design-decisions.md). M5 is the single NEXT milestone; Slices
-0–4 are complete and Slice 5 is next. Inspect relevant source/tests/tooling/CI,
+[decisions](plans/m3-design-decisions.md). M6 is the sole NEXT milestone, planning-only;
+its dedicated detailed specification and open hosting/transport/auth/tool decisions
+must be resolved before any production implementation. Inspect relevant source/tests/tooling/CI,
 [CONTRIBUTING](../CONTRIBUTING.md) and [SECURITY](../SECURITY.md).
 [current-state](current-state.md) is an evidence map, not a substitute for code.
 
 Repository state beats conversation assumptions; current code beats stale docs.
 Correct discrepancies explicitly without changing a completed invariant silently.
-Implement only NEXT after an implementation request. M5 Slices 0–4 are complete; Slice 5 is the next implementation
-boundary. This does not finish M5, claim support, or authorize deployment. If
-a later spec is not ready, refine it and surface material decisions first; use
-[ADRs](decisions/README.md).
+Implement only NEXT after an implementation request. M5 is complete in the proposed transition. M6's roadmap entry is planning scope, not
+an implementation-ready specification; refine the dedicated M6 spec and surface its
+material decisions before production code. Use [ADRs](decisions/README.md) when the
+choices affect architecture or security.
 
 ### Validation and milestone transition
 
@@ -400,8 +399,8 @@ a later spec is not ready, refine it and surface material decisions first; use
   re-review all concrete findings; document bounded permitted deferrals explicitly.
 - Check all active acceptance items. In the implementation completion PR, update
   spec/status/evidence, roadmap, current-state/architecture/API/ADRs/operations.
-- Merged PR #27 records the approved M3 A1–A11 evidence and atomically marked M3
-  COMPLETE and M4 NEXT. This M4 completion PR records A1–A12, marks M4 COMPLETE, and
-  makes M5 the single NEXT milestone while keeping M5 production code out. Do not
-  merge your own work here.
+- Merged PR #27 records the approved M3 A1–A11 evidence; the M4 completion PR marks
+  M4 COMPLETE and M5 NEXT. This M5 completion PR records A1–A12, proposes M5 COMPLETE
+  and M6 as the single NEXT milestone, and adds no M6 implementation. The transition
+  becomes canonical when the PR merges; do not merge your own work here.
 - After M6 there is no inferred M7; propose an explicit new roadmap objective.

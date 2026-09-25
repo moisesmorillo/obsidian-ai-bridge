@@ -1,10 +1,14 @@
 # Obsidian plugin development and qualification
 
-The current plugin preserves M2 metadata-only inspection, composes the experimental
-M3 one-way mirror, and adds explicit reviewed M4 reconciliation. It targets Obsidian
-**1.13.0+**, uses only official host APIs and standards web primitives, and is not
-production certified. Canonical validation does not require a Worker deployment, real
-credentials, or installation in a vault.
+The current plugin preserves M2 metadata-only inspection, composes the M3 one-way
+mirror, and adds explicit reviewed M4 reconciliation. It targets Obsidian **1.13.0+**,
+uses only official host APIs and standards web primitives, and is not security-certified
+or deployed as a production service. The narrow M5 software-support claim is for the
+latest release v1.0.2 on Obsidian Desktop 1.13.7 / macOS 26.6.2 / Apple M4 Pro, with
+one active writer and synthetic scale through 10,000 eligible notes. See the [final
+qualification report](qualification/m5-final.md) and [operator guide](operations.md#current-m5-qualification-and-support).
+No other platform or desktop version is implied. Canonical validation does not require
+a Worker deployment, real credentials, or installation in a personal vault.
 
 ## Build and generated-artifact qualification
 
@@ -82,14 +86,17 @@ inflate source coverage.
 
 ## Deliberate disposable-vault procedure
 
-This procedure documents a possible manual qualification; it was **not performed for
-M3 or M4 completion**. Never use a personal or production vault. Use synthetic,
-non-sensitive notes and separately authorized disposable server resources if testing
-network behavior.
+This procedure documents manual qualification steps. The bounded M5 scenarios
+recorded in the [final report](qualification/m5-final.md) were performed only with
+synthetic notes, a disposable vault, and a loopback Worker/R2 emulator; the broader
+platform/failure matrix below is not implied complete. Never use a personal or
+production vault. Use synthetic, non-sensitive notes and separately authorized
+disposable server resources if testing network behavior.
 
-1. Create a new empty disposable vault in Obsidian 1.13.0 or newer. Keep the
-   repository outside the vault. Record its actual configuration directory (normally
-   `.obsidian`).
+1. Create a new empty disposable vault in Obsidian 1.13.0 or newer. Only Obsidian
+   Desktop 1.13.7 on macOS 26.6.2 / Apple M4 Pro is in the M5 support envelope;
+   the declared API minimum does not qualify every newer host version. Keep the
+   repository outside the vault and record its actual configuration directory.
 2. Run `mise run plugin:smoke`. Close the disposable vault, create
    `<vault>/<config-directory>/plugins/ai-bridge/`, and copy only generated `main.js`
    and `manifest.json`. Do not copy source, dependencies, repository configuration,
@@ -199,19 +206,22 @@ declarations and official source history, not inferred solely from the manifest:
   Fetch streaming/abort/CORS behavior in every desktop/mobile WebView.
 
 Host declarations establish API availability, not runtime qualification. M4 Slice 8
-did not install into a vault. Later isolated corrective runs qualified the replacement
-preservation root/minimal Keep-local path and bounded listener-gap migration/review/
-transfer/detached-edit scenarios; see [preservation evidence](qualification/m4-host-visible-preservation.md)
-and [listener-gap evidence](qualification/m4-listener-gap-recovery.md). Full real-desktop
-scale rerun, mobile, iCloud traces, host-local durability/rollback, broad WebView
-transport behavior, and deployed Worker/R2 remain explicit residual qualification
-limits.
+did not install into a vault. Later isolated runs qualified the replacement preservation
+root/Keep-local path and bounded listener-gap migration/review/transfer/detached-edit
+scenarios; see [preservation evidence](qualification/m4-host-visible-preservation.md)
+and [listener-gap evidence](qualification/m4-listener-gap-recovery.md). M5 adds the
+exact 1k/5k/10k active-writer and v4→v5 migration/restart envelope on the single
+listed desktop host, plus loopback recovery and live-diagnostics checks; see the [final
+report](qualification/m5-final.md). Other desktop versions, mobile, iCloud traces,
+host-local fsync/durability, general rollback, broad WebView transport behavior, and
+deployed Worker/R2 remain explicit residual qualification limits.
 
 ## Operating model
 
-The [M3/M4 operator guide](operations.md) is authoritative for initial empty-
+The [M3/M4/M5 operator guide](operations.md) is authoritative for initial empty-
 association setup, reviewed divergence/tombstone/restore/history operations, conflict
 artifact cleanup, one-writer availability, safe upgrade/re-enable, handoff/reset,
 independent bearer rotation, recovery list/read/seal/purge, state migration, iCloud
-uncertainty, and forbidden rollback/downgrade actions. It does not authorize deployment
-or claim production support.
+uncertainty, and forbidden rollback/downgrade actions. It defines the narrow v1.0.2
+M5 software-support envelope; it does not authorize production Worker deployment,
+security certification, a general production service, or complete backup.

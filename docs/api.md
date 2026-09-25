@@ -1,6 +1,11 @@
 # Worker API
 
-The Worker exposes an experimental authenticated personal-mirror API. Public routes are `GET /health`, `GET /openapi.json`, and `GET /docs`. `/api` and every descendant (including retired v1 and unknown routes) require:
+The Worker exposes an experimental authenticated personal-mirror API. M5's limited
+software-support window is for release v1.0.2 on the exact profile in the [operator
+guide](operations.md#current-m5-qualification-and-support); no production Worker/R2
+service is claimed. Public routes are `GET /health`, `GET /openapi.json`, and
+`GET /docs`. `/api` and every descendant (including retired v1 and unknown routes)
+require:
 
 ```http
 Authorization: Bearer <token>

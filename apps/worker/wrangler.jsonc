@@ -10,6 +10,11 @@
       "custom_domain": true
     }
   ],
+  "kv_namespaces": [
+    {
+      "binding": "OAUTH_KV"
+    }
+  ],
   "r2_buckets": [
     {
       "binding": "VAULT_BUCKET",

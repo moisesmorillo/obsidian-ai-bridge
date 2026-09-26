@@ -38,12 +38,23 @@ Both paths require the current `main` commit; release events also require the ta
 to match the package version. The workflow runs the canonical `mise run check`
 (including the release identity gate) and deploys the configured Worker using
 `cloudflare/wrangler-action@v4` with the repository's pinned Wrangler version,
-without automatic resource provisioning. The deployment preserves
+with automatic provisioning for the ID-less `OAUTH_KV` binding. A read-only
+bucket check must succeed before deploy so a missing mirror bucket is not
+silently replaced. The deployment preserves
 dashboard-set non-secret vars, including any later configured association/writer IDs;
 it does not create or select those IDs. Publishing a stable, non-prerelease tag
 starts this job automatically. An operator can also start it with
 `workflow_dispatch` from the current `main`. Neither path runs during pull
 request validation or from a prerelease.
+
+The first manual deployment after this configuration change creates and binds
+one OAuth KV namespace. Confirm that the deploy output lists both `OAUTH_KV`
+and the existing `VAULT_BUCKET`, then repeat the Access session and protected
+API denial checks. The KV binding is not used for note access in this slice.
+If either check fails, restore the preceding Worker version and keep Access on
+the entire hostname; do not delete either storage resource. Future deployments
+reuse the namespace created by Wrangler, without committing its account-specific
+ID. No pull-request check creates remote resources.
 
 The `production` GitHub environment must hold `CLOUDFLARE_API_TOKEN` and
 `CLOUDFLARE_ACCOUNT_ID` as environment secrets. Scope the API token to the intended

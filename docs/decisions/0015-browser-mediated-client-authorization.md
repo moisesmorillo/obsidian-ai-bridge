@@ -2,9 +2,9 @@
 
 ## Status
 
-**Proposed for the post-M6 rollout.** This record authorizes no production
-behavior until the maintainer accepts it. M5 credential and single-writer rules
-remain the current implementation; ADRs 0010 and 0014 are not yet superseded.
+**Accepted for the post-M6 rollout after maintainer merge of PR #74.** M5
+credential and single-writer rules remain the current implementation; ADRs
+0010 and 0014 are not yet superseded.
 
 ## Context
 

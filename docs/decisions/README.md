@@ -52,7 +52,7 @@ decisions, not an invented historical rationale.
 | [0012 — Host-visible conflict-preservation namespace](0012-host-visible-conflict-preservation-namespace.md) | Accepted (corrective M4 production change implemented) | Official-index-visible current archive root, exact mirror exclusions, and frozen legacy receipt compatibility |
 | [0013 — Listener-ready effect authority and observation-gap recovery](0013-listener-ready-effect-authority-and-observation-gap-recovery.md) | Accepted and implemented in merged M4 PR #55 | Orthogonal durable v5 gap fence, dispatch lease, review transfer and strict compatibility transition |
 | [0014 — Stateless MCP adapter and existing credentials](0014-stateless-mcp-adapter-and-existing-credentials.md) | Accepted for M6; implementation and qualification complete on the completion branch | Current stateless Streamable HTTP, M5 principal/permissions, declared application-auth overlay (not OAuth-profile conformance), and bounded tools/resources |
-| [0015 — Browser-mediated client authorization](0015-browser-mediated-client-authorization.md) | Proposed for post-M6 rollout | Access owner login, OAuth grants, separate REST/MCP audiences, per-grant revocation, and safe cutover |
+| [0015 — Browser-mediated client authorization](0015-browser-mediated-client-authorization.md) | Accepted for post-M6 rollout; implementation staged | Access owner login, OAuth grants, separate REST/MCP audiences, per-grant revocation, and safe cutover |
 
 ADR 0001 records the implemented M1 baseline. ADRs 0002–0004 record the implemented
 M3 design without claiming deployment. ADRs 0005–0008 are accepted M4 decisions and

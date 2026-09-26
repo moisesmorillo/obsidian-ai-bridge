@@ -30,6 +30,40 @@ development](plugin-development.md). No earlier release or rollback line is supp
 and no backports are promised. Configuration is not proof of deployed resources or
 credentials.
 
+## Staged release deployment
+
+`.github/workflows/deploy-worker.yml` checks out current `main` for a manual first
+deployment, or an existing stable release tag for later automatic deployments.
+Both paths require the current `main` commit; release events also require the tag
+to match the package version. The workflow runs the canonical `mise run check`
+(including the release identity gate) and deploys the
+configured Worker using `cloudflare/wrangler-action@v4` with the repository's
+pinned Wrangler version, without automatic resource provisioning. The deployment preserves
+dashboard-set non-secret vars, including any later configured association/writer IDs;
+it does not create or select those IDs. Publication of a release
+starts this job only after the repository variable `WORKER_AUTO_DEPLOY` is set to
+`true`. Until then, an operator can start it manually with `workflow_dispatch`
+from the current `main`. Neither path runs during pull request validation.
+
+The `production` GitHub environment must hold `CLOUDFLARE_API_TOKEN` and
+`CLOUDFLARE_ACCOUNT_ID` as environment secrets. Scope the API token to the intended
+account and Worker deployment permissions. The configured R2 bucket must already
+exist in that account. The current Worker still requires the separately provisioned
+`OBSIDIAN_BRIDGE_CREDENTIAL_REGISTRY` Worker secret; GitHub's Cloudflare deployment
+token is not a bridge client credential. Do not put either credential in source,
+workflow inputs, or logs. The committed configuration omits both example mirror IDs,
+so v2 mutations remain disabled until the real association and plugin-generated
+writer ID are deliberately configured. A deploy job does not grant mirror activation
+or personal-vault installation approval.
+
+For the first manual deployment, leave `WORKER_AUTO_DEPLOY` unset, run the workflow
+manually, then validate the exact Worker endpoint, authentication/authorization,
+R2 binding and non-destructive behavior with synthetic data. Confirm the deployed
+version and preserve the prior version for rollback. Only after this evidence and
+the intended client-authentication design are accepted should the repository variable
+be set to `true` for later releases. Worker version rollback changes code only; it
+does not undo R2 writes, credential changes, or client-local state.
+
 ## Operating model and trust boundary
 
 - iCloud remains the working-vault device sync. AI Bridge observes official Obsidian
@@ -91,8 +125,8 @@ committed development configuration means a remote resource exists.
 1. **Provision the Worker/R2 prerequisite separately.** Bind `VAULT_BUCKET` to the
    intended empty bucket and generate a fresh canonical lowercase UUID-v4 only for
    `MIRROR_ASSOCIATION_ID`. Do not invent `MIRROR_WRITER_ID`; the plugin owns that
-   device identity. The values committed in `apps/worker/wrangler.jsonc` are
-   non-secret local-development examples, not a deployed association.
+   device identity. The committed configuration omits both IDs, so it cannot grant
+   write authority before an operator configures a real association.
 2. **Build, qualify, and load the plugin passively.** Run the canonical tasks in
    [plugin development](plugin-development.md). The M5 support envelope names
    Obsidian Desktop 1.13.7 on macOS 26.6.2 / Apple M4 Pro; use a disposable vault for

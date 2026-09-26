@@ -126,20 +126,27 @@ for canonical validation.
 
 ## Local Worker development
 
-The Worker uses a `VAULT_BUCKET` R2 binding configured for `obsidian-ai-bridge-dev`. Create the Cloudflare bucket once before using a remote deployment or remote R2 development session:
+The Worker uses a `VAULT_BUCKET` R2 binding configured for `obsidian-ai-bridge`.
+Local `wrangler dev` uses an R2 emulator. For a remote deployment, first verify that
+the target Cloudflare account has an empty bucket with that name; create it only if
+needed:
 
 ```bash
-mise exec -- bunx wrangler r2 bucket create obsidian-ai-bridge-dev --config apps/worker/wrangler.jsonc
+mise exec -- bunx wrangler r2 bucket create obsidian-ai-bridge --config apps/worker/wrangler.jsonc
 mise exec -- bunx wrangler secret put OBSIDIAN_BRIDGE_CREDENTIAL_REGISTRY --config apps/worker/wrangler.jsonc
 ```
 
-Use `mise run credentials -- create` to build a registry file outside the repository and display a fresh raw token once in an interactive terminal; see the [credential lifecycle and migration procedure](docs/operations.md#credential-registry-lifecycle-and-singleton-migration). For local `wrangler dev`, set `OBSIDIAN_BRIDGE_CREDENTIAL_REGISTRY` under `[env]` in the ignored `mise.local.toml` only for local development. Registry authentication is the sole runtime mode; `OBSIDIAN_BRIDGE_TOKEN` and `OBSIDIAN_BRIDGE_AUTH_MODE` are retired. Wrangler 4.130.0 declares the registry secret through `secrets.required`. The committed development configuration also contains canonical non-secret `MIRROR_ASSOCIATION_ID` and `MIRROR_WRITER_ID` UUID-v4 examples; operators must deliberately replace them together when configuring their own namespace/designated writer. Invalid auth configuration fails all authenticated requests closed; invalid or missing designation IDs fail v2 mutations closed. Do not create `apps/worker/.dev.vars`, and never commit raw tokens or digest registries. Wrangler is run with Node.js because its local `workerd` proxy does not respond reliably when launched through Bun:
+Use `mise run credentials -- create` to build a registry file outside the repository and display a fresh raw token once in an interactive terminal; see the [credential lifecycle and migration procedure](docs/operations.md#credential-registry-lifecycle-and-singleton-migration). For local `wrangler dev`, set `OBSIDIAN_BRIDGE_CREDENTIAL_REGISTRY` under `[env]` in the ignored `mise.local.toml` only for local development. Registry authentication is the sole runtime mode; `OBSIDIAN_BRIDGE_TOKEN` and `OBSIDIAN_BRIDGE_AUTH_MODE` are retired. Wrangler declares the registry secret through `secrets.required`. The committed configuration intentionally has no `MIRROR_ASSOCIATION_ID` or `MIRROR_WRITER_ID`; authenticated reads remain available, but v2 mutations fail closed until operators deliberately configure a real association and the plugin-generated writer ID. Do not create `apps/worker/.dev.vars`, and never commit raw tokens or digest registries. Wrangler is run with Node.js because its local `workerd` proxy does not respond reliably when launched through Bun:
 
 ```bash
 mise run dev
 ```
 
 Wrangler provides local R2 emulation for the binding during local development. The API details are in [docs/api.md](docs/api.md).
+
+Release deployment is staged behind a disabled GitHub Actions switch. See the
+[release deployment procedure](docs/operations.md#staged-release-deployment) before
+setting any Cloudflare deployment secrets or enabling automatic deployments.
 
 ## Worker API
 

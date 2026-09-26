@@ -128,7 +128,8 @@ boundaries; [API](api.md) describes the Worker HTTP and MCP contracts.
 - `.github/workflows/ci.yml`: pushes to `main` and pull requests run the
   **Quality checks** job on Ubuntu, installing tools with mise, then
   `mise run install` and `mise run check`. Actions are checkout v7, mise-action v4,
-  cache v6. There is no deployment job.
+  cache v6. A separate release deployment workflow is staged behind the unset
+  `WORKER_AUTO_DEPLOY` switch; its presence does not prove a deployed Worker.
 - `.vscode/settings.json` connects the plugin manifest to the committed JSON
   schema. Check editor diagnostics as well as CLI results.
 

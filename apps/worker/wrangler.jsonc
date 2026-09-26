@@ -6,14 +6,10 @@
   "secrets": {
     "required": ["OBSIDIAN_BRIDGE_CREDENTIAL_REGISTRY"]
   },
-  "vars": {
-    "MIRROR_ASSOCIATION_ID": "11111111-1111-4111-8111-111111111111",
-    "MIRROR_WRITER_ID": "22222222-2222-4222-8222-222222222222"
-  },
   "r2_buckets": [
     {
       "binding": "VAULT_BUCKET",
-      "bucket_name": "obsidian-ai-bridge-dev"
+      "bucket_name": "obsidian-ai-bridge"
     }
   ]
 }

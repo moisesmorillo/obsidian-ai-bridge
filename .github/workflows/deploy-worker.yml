@@ -4,11 +4,6 @@ on:
   release:
     types: [published]
   workflow_dispatch:
-    inputs:
-      release_tag:
-        description: Existing release tag to deploy (vX.Y.Z)
-        required: true
-        type: string
 
 permissions:
   contents: read
@@ -24,21 +19,22 @@ jobs:
     runs-on: ubuntu-latest
     environment: production
     steps:
-      - name: Check out the published release tag
+      - name: Check out current main or published release tag
         uses: actions/checkout@v7
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.event.release.tag_name }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && 'main' || github.event.release.tag_name }}
           fetch-depth: 0
 
-      - name: Verify release tag is current main
+      - name: Verify source is current main
         env:
-          RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.event.release.tag_name }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
-          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            exit 1
-          fi
-          test "$(git rev-parse HEAD)" = "$(git rev-parse "refs/tags/$RELEASE_TAG^{commit}")"
           test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)"
+          if [[ "$EVENT_NAME" == release ]]; then
+            [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+            test "$(git rev-parse HEAD)" = "$(git rev-parse "refs/tags/$RELEASE_TAG^{commit}")"
+          fi
 
       - name: Install repository tools
         uses: jdx/mise-action@v4
@@ -51,8 +47,9 @@ jobs:
         run: mise run install
 
       - name: Verify release tag matches package version
+        if: ${{ github.event_name == 'release' }}
         env:
-          RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.event.release.tag_name }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: test "$RELEASE_TAG" = "v$(node -p 'require("./package.json").version')"
 
       - name: Validate released source and identity

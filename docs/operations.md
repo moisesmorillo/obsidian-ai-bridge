@@ -32,16 +32,18 @@ credentials.
 
 ## Staged release deployment
 
-`.github/workflows/deploy-worker.yml` checks out an existing stable release tag,
-requires it to be the current `main` commit and match the package version, runs the
-canonical `mise run check` (including the release identity gate), and deploys the
+`.github/workflows/deploy-worker.yml` checks out current `main` for a manual first
+deployment, or an existing stable release tag for later automatic deployments.
+Both paths require the current `main` commit; release events also require the tag
+to match the package version. The workflow runs the canonical `mise run check`
+(including the release identity gate) and deploys the
 configured Worker using `cloudflare/wrangler-action@v4` with the repository's
 pinned Wrangler version, without automatic resource provisioning. The deployment preserves
 dashboard-set non-secret vars, including any later configured association/writer IDs;
 it does not create or select those IDs. Publication of a release
 starts this job only after the repository variable `WORKER_AUTO_DEPLOY` is set to
-`true`. Until then, an operator can start it manually with `workflow_dispatch` and
-an existing release tag. Neither path runs during pull request validation.
+`true`. Until then, an operator can start it manually with `workflow_dispatch`
+from the current `main`. Neither path runs during pull request validation.
 
 The `production` GitHub environment must hold `CLOUDFLARE_API_TOKEN` and
 `CLOUDFLARE_ACCOUNT_ID` as environment secrets. Scope the API token to the intended
@@ -54,7 +56,7 @@ so v2 mutations remain disabled until the real association and plugin-generated
 writer ID are deliberately configured. A deploy job does not grant mirror activation
 or personal-vault installation approval.
 
-For the first release deployment, leave `WORKER_AUTO_DEPLOY` unset, run the workflow
+For the first manual deployment, leave `WORKER_AUTO_DEPLOY` unset, run the workflow
 manually, then validate the exact Worker endpoint, authentication/authorization,
 R2 binding and non-destructive behavior with synthetic data. Confirm the deployed
 version and preserve the prior version for rollback. Only after this evidence and

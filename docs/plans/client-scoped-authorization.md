@@ -45,9 +45,10 @@ records is a candidate, not yet an accepted storage decision.
 
 1. Document and review the OAuth/grant design, including an Obsidian native
    callback and the MCP clients to qualify. No production configuration change.
-2. Land a Worker-only, fail-closed authorization foundation with synthetic
-   tests. Existing API/MCP operations remain registry-protected until the new
-   principal source and exhaustive permission policy are qualified.
+2. Verify Access identity on an exact Worker session route with a body-free,
+   fail-closed response and synthetic tests. Existing API/MCP operations remain
+   registry-protected until the new principal source and exhaustive permission
+   policy are qualified.
 3. Add client registration and owner-login flow; test with synthetic clients and
    data. Stage any Access application path change and verify OAuth metadata and
    denial of unauthenticated API requests. Roll back the path change if either

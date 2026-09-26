@@ -1,7 +1,14 @@
 import { createWorkerApp } from "@worker/app";
+import {
+  ACCESS_SESSION_PATH,
+  resolveAccessSession,
+} from "@worker/auth/access-session";
 import type { AuthenticationConfiguration } from "@worker/auth/auth.types";
 import { resolveWorkerMirrorServices } from "@worker/composition";
-import type { WorkerAuthenticationEnvironment } from "@worker/env/env.types";
+import type {
+  WorkerAuthenticationEnvironment,
+  WorkerEnv,
+} from "@worker/env/env.types";
 import {
   configureWorkerLogging,
   createWorkerLogger,
@@ -33,5 +40,18 @@ export function resolveWorkerAuthentication(
   };
 }
 
-/** Fully assembled Worker application exported to the Cloudflare runtime. */
-export default worker;
+/** Cloudflare entrypoint preserving the existing API while checking Access on one exact route. */
+export default {
+  fetch(request: Request, environment: WorkerEnv, context: ExecutionContext) {
+    if (new URL(request.url).pathname === ACCESS_SESSION_PATH) {
+      if (request.method !== "GET") {
+        return new Response(null, {
+          status: 404,
+          headers: { "Cache-Control": "no-store" },
+        });
+      }
+      return resolveAccessSession(context?.access);
+    }
+    return worker.fetch(request, environment, context);
+  },
+} satisfies ExportedHandler<WorkerEnv>;

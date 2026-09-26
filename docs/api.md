@@ -1,5 +1,14 @@
 # Worker API
 
+## Access session check
+
+`GET /auth/session` returns an empty `204` only when Cloudflare Access
+authenticated this direct Worker invocation and supplied a usable user
+identity. Missing or unusable Access identity returns an empty `401`; other
+methods return `404`. Responses use `Cache-Control: no-store` and disclose no
+identity fields. This check does not issue a client credential, grant API/MCP
+permissions, or change the existing bearer authorization policy.
+
 The Worker exposes an experimental authenticated personal-mirror API. M5's limited
 software-support window is for release v1.0.2 on the exact profile in the [operator
 guide](operations.md#current-m5-qualification-and-support); no production Worker/R2

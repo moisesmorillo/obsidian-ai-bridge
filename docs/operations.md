@@ -33,17 +33,17 @@ credentials.
 ## Staged release deployment
 
 `.github/workflows/deploy-worker.yml` checks out current `main` for a manual CI
-deployment, or an existing stable release tag for later automatic deployments.
+deployment, or the published stable release tag for automatic deployments.
 Both paths require the current `main` commit; release events also require the tag
 to match the package version. The workflow runs the canonical `mise run check`
 (including the release identity gate) and deploys the configured Worker using
 `cloudflare/wrangler-action@v4` with the repository's pinned Wrangler version,
 without automatic resource provisioning. The deployment preserves
 dashboard-set non-secret vars, including any later configured association/writer IDs;
-it does not create or select those IDs. Publication of a release
-starts this job only after the repository variable `WORKER_AUTO_DEPLOY` is set to
-`true`. Until then, an operator can start it manually with `workflow_dispatch`
-from the current `main`. Neither path runs during pull request validation.
+it does not create or select those IDs. Publishing a stable, non-prerelease tag
+starts this job automatically. An operator can also start it with
+`workflow_dispatch` from the current `main`. Neither path runs during pull
+request validation or from a prerelease.
 
 The `production` GitHub environment must hold `CLOUDFLARE_API_TOKEN` and
 `CLOUDFLARE_ACCOUNT_ID` as environment secrets. Scope the API token to the intended
@@ -60,17 +60,15 @@ so v2 mutations remain disabled until the real association and plugin-generated
 writer ID are deliberately configured. A deploy job does not grant mirror activation
 or personal-vault installation approval.
 
-For the first deployment of a new Worker, leave `WORKER_AUTO_DEPLOY` unset and run
-the workflow manually from current `main`. Without the registry secret, supported
-protected HTTP and MCP operations fail closed with `401`; public routes remain
-available. Confirm the exact Worker endpoint and R2 binding without writing data.
-Then provision the registry through the credential procedure below or a future
-reviewed pairing mechanism before any client uses protected routes. Validate
-authentication/authorization and non-destructive behavior with synthetic data
-before enabling a personal vault. Confirm the deployed
-version and preserve the prior version for rollback. Only after this evidence and
-the intended client-authentication design are accepted should the repository variable
-be set to `true` for later releases. Worker version rollback changes code only; it
+The first Worker deployment was run manually against the existing R2 bucket, and
+the custom hostname was validated after correcting an unrelated zone-wide redirect.
+Without the registry secret, supported protected HTTP and MCP operations fail
+closed with `401`. Future stable releases now deploy automatically. Provision the
+registry through the credential procedure below or a future reviewed pairing
+mechanism before any client uses protected routes. Validate authentication,
+authorization, and non-destructive behavior with synthetic data before enabling a
+personal vault. Confirm every deployed version and preserve the prior version for
+rollback. Worker version rollback changes code only; it
 does not undo R2 writes, credential changes, or client-local state.
 
 ## Operating model and trust boundary

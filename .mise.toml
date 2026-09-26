@@ -78,7 +78,7 @@ run = "node tools/release-identity/check.mjs"
 
 [tasks.dev]
 description = "Run the Worker with Wrangler local development"
-run = "node apps/worker/node_modules/wrangler/bin/wrangler.js dev --config apps/worker/wrangler.jsonc"
+run = "node apps/worker/node_modules/wrangler/bin/wrangler.js dev --config apps/worker/wrangler.jsonc --var LOCAL_API_DOCS:true"
 
 [tasks.credentials]
 description = "Manage the digest-only Worker credential registry offline"

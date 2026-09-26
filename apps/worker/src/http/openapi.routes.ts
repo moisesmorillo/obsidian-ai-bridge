@@ -10,7 +10,6 @@ import {
   currentNoteStateSchema,
   encodedNotePathSchema,
   HTTP_METHOD,
-  healthResponseSchema,
   MIRROR_API_V2_QUERY_PARAMETER,
   MIRROR_API_V2_SEGMENT,
   matchingContentMutationAcknowledgementSchema,
@@ -44,7 +43,6 @@ import {
   SUPPORTED_NOTE_CONTENT_TYPE_PATTERN,
 } from "@worker/http/http.constants";
 import {
-  ROUTE_OPERATION_POLICY,
   toOpenApiV2RoutePath,
   V2_ROUTE_POLICY,
   type V2RouteMethod,
@@ -330,22 +328,6 @@ const errors = {
     "Sanitized storage or internal failure.",
   ),
 };
-
-/** OpenAPI route for unauthenticated liveness. */
-export const healthRoute = createRoute({
-  method: toOpenApiMethod(ROUTE_OPERATION_POLICY.public.health.method),
-  path: ROUTE_OPERATION_POLICY.public.health.path,
-  responses: {
-    [HTTP_STATUS.ok]: {
-      content: { [JSON_CONTENT_TYPE]: { schema: healthResponseSchema } },
-      description: "Worker is available.",
-      headers: cacheControlResponseHeader,
-    },
-    [HTTP_STATUS.internalServerError]: errors.internalServerError,
-  },
-  summary: "Check Worker health",
-  tags: ["system"],
-});
 
 /** Authenticated v2 mirror capability description. */
 export const getMirrorRoute = createRoute({

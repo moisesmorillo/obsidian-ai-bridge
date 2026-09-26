@@ -3,8 +3,9 @@
 The Worker exposes an experimental authenticated personal-mirror API. M5's limited
 software-support window is for release v1.0.2 on the exact profile in the [operator
 guide](operations.md#current-m5-qualification-and-support); no production Worker/R2
-service is claimed. Public routes are `GET /health`, `GET /openapi.json`, and
-`GET /docs`. `/api` and every descendant (including retired v1 and unknown routes)
+service is claimed. There is no `/health` endpoint. `GET /openapi.json` and
+`GET /docs` return `404` in the deployed Worker; `mise run dev` enables them
+locally with `LOCAL_API_DOCS=true`. `/api` and every descendant (including retired v1 and unknown routes)
 require:
 
 ```http
@@ -152,7 +153,7 @@ Errors use a stable sanitized JSON envelope:
 
 The implemented codes cover `unauthorized`, sanitized 403 `forbidden_writer` (used without permission-set detail for permission or designation refusal), `invalid_path`, `invalid_request`, `unsupported_media_type`, `invalid_body`, `payload_too_large`, `not_found`, `conflict`, `recovery_unavailable`, `precondition_failed`, `precondition_required`, and `internal_error`. The protocol schema retains historical `mutation_api_retired`, but no registered route emits it after v1 retirement. No response contains credentials, raw exceptions, storage keys, R2 validators, or storage envelope bytes.
 
-`GET /openapi.json` is generated as OpenAPI 3.1 and describes only the actual v2 authenticated surface, required permissions, `401` versus `403`, headers, optional empty PUT body, media types, pagination, current/recovery schemas, distinct metadata/content routes, and relevant statuses. `GET /docs` serves Scalar. These public documentation routes do not grant note access.
+In local development, `GET /openapi.json` is generated as OpenAPI 3.1 and describes only the actual v2 authenticated surface, required permissions, `401` versus `403`, headers, optional empty PUT body, media types, pagination, current/recovery schemas, distinct metadata/content routes, and relevant statuses. `GET /docs` serves Scalar. Both return `404` when `LOCAL_API_DOCS` is absent, as in the deployed Worker.
 
 The generated plugin now composes this v2 surface for the explicitly activated
 designated writer. Artifact qualification proves a packaged saved-file event reaches a

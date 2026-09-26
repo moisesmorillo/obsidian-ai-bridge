@@ -1,12 +1,6 @@
 import { decodeNotePath, type NotePath } from "@obsidian-ai-bridge/core";
-import {
-  API_ROUTE_PARAMETER,
-  HEALTH_STATUS,
-  type HealthResponse,
-} from "@obsidian-ai-bridge/protocol";
-import { createJsonResponse } from "@worker/http/api-responses";
+import { API_ROUTE_PARAMETER } from "@obsidian-ai-bridge/protocol";
 import type { WorkerContext } from "@worker/http/hono.types";
-import { HTTP_STATUS } from "@worker/http/http.constants";
 
 /**
  * Reads one route parameter only when the original URL uses its literal spelling.
@@ -41,16 +35,4 @@ export function decodeRequestNotePath(
     API_ROUTE_PARAMETER.notePath,
   );
   return encodedPath === undefined ? undefined : decodeNotePath(encodedPath);
-}
-
-/**
- * Creates the handler for the unauthenticated liveness endpoint.
- *
- * @returns A handler producing the stable health response.
- */
-export function createHealthHandler() {
-  return (context: WorkerContext) => {
-    const response: HealthResponse = { status: HEALTH_STATUS.ok };
-    return createJsonResponse(context, response, HTTP_STATUS.ok);
-  };
 }

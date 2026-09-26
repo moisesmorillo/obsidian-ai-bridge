@@ -9,9 +9,6 @@ import {
 /** Versioned URL prefix for the conditional mirror API. */
 export const API_V2_PREFIX = MIRROR_API_V2_PREFIX;
 
-/** Unauthenticated liveness endpoint route. */
-export const HEALTH_ROUTE = "/health";
-
 /** V2 mirror capability route. */
 export const MIRROR_ROUTE = MIRROR_API_V2_ROUTE.mirror;
 

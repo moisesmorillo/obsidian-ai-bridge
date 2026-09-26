@@ -7,7 +7,6 @@ import { CLIENT_PERMISSION } from "@worker/auth/auth.constants";
 import type { ClientPermission } from "@worker/auth/auth.types";
 import {
   API_REFERENCE_ROUTE,
-  HEALTH_ROUTE,
   MIRROR_ROUTE,
   OPENAPI_ROUTE,
   RECOVERY_ROUTE,
@@ -120,7 +119,6 @@ function definePublicRoute(
  */
 export const ROUTE_OPERATION_POLICY = {
   public: {
-    health: definePublicRoute(HEALTH_ROUTE, HTTP_METHOD.get),
     openApi: definePublicRoute(OPENAPI_ROUTE, HTTP_METHOD.get),
     reference: definePublicRoute(API_REFERENCE_ROUTE, HTTP_METHOD.get),
   },

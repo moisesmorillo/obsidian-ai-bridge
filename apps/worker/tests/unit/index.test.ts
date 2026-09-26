@@ -5,11 +5,18 @@ describe("Worker entrypoint", () => {
   it("exports a fully assembled fetch application that fails missing registry closed", async () => {
     const { default: worker } = await import("@worker/index");
     expect(worker).toHaveProperty("fetch");
-    const response = await Reflect.apply(worker.fetch, worker, [
-      new Request("https://example.test/api/v2/notes"),
-      { OBSIDIAN_BRIDGE_TOKEN: "retired-token" },
-    ]);
-    expect(response.status).toBe(401);
+    for (const request of [
+      new Request("https://example.test/api/v2/notes", {
+        headers: { Authorization: "Bearer unregistered-token" },
+      }),
+      new Request("https://example.test/mcp", {
+        method: "POST",
+        headers: { Authorization: "Bearer unregistered-token" },
+      }),
+    ]) {
+      const response = await Reflect.apply(worker.fetch, worker, [request, {}]);
+      expect(response.status).toBe(401);
+    }
   });
 
   it("resolves only the digest registry and ignores retired singleton bindings", () => {

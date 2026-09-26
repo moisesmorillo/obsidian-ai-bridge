@@ -15,7 +15,7 @@ concurrency:
 jobs:
   deploy:
     name: Validate release and deploy Worker
-    if: ${{ github.event_name == 'workflow_dispatch' || (github.event.release.prerelease == false && vars.WORKER_AUTO_DEPLOY == 'true') }}
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.release.prerelease == false }}
     runs-on: ubuntu-latest
     environment: production
     steps:

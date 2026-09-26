@@ -143,9 +143,9 @@ mise run dev
 
 Wrangler provides local R2 emulation for the binding during local development. The API details are in [docs/api.md](docs/api.md).
 
-Release deployment is staged behind a disabled GitHub Actions switch. See the
-[release deployment procedure](docs/operations.md#staged-release-deployment) before
-setting any Cloudflare deployment secrets or enabling automatic deployments.
+The first Worker deployment was performed manually. Later stable releases deploy
+automatically through GitHub Actions; manual runs remain available. See the
+[release deployment procedure](docs/operations.md#staged-release-deployment).
 
 ## Worker API
 

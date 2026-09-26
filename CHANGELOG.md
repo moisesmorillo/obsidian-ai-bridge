@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.1.1](https://github.com/moisesmorillo/obsidian-ai-bridge/compare/v1.1.0...v1.1.1) (2026-09-26)
+
+
+### Bug Fixes
+
+* **worker:** configure production custom domain ([#64](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/64)) ([82afd9a](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/82afd9a453be7fefdbb4f4c5a216cba0c9410566))
+
+
+### CI
+
+* **worker:** stage release deployment workflow ([#62](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/62)) ([f344e4a](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/f344e4ab83826927a2c9ec13b448c34566784961))
+
 ## [1.1.0](https://github.com/moisesmorillo/obsidian-ai-bridge/compare/v1.0.2...v1.1.0) (2026-09-25)
 
 

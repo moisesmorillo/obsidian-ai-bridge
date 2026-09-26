@@ -18,7 +18,7 @@
     },
     "apps/obsidian-plugin": {
       "name": "@obsidian-ai-bridge/obsidian-plugin",
-      "version": "1.1.0",
+      "version": "1.1.1",
       "dependencies": {
         "@obsidian-ai-bridge/core": "workspace:*",
         "@obsidian-ai-bridge/protocol": "workspace:*",

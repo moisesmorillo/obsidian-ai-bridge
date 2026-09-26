@@ -8,11 +8,6 @@
 * **worker:** verify Cloudflare Access session without granting API access ([#72](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/72)) ([fd3f56a](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/fd3f56aea24e0c294ca513b5508673edeb3e34b2))
 
 
-### Documentation
-
-* **auth:** remove live rollout details from public docs ([#71](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/71)) ([4baf2c0](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/4baf2c0372361770fd407440d86d039ddd0d592f))
-* **rollout:** record Access gate and client authorization boundary ([#69](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/69)) ([7d278be](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/7d278becaf32802e4cce9c18b0647a0a50c00b34))
-
 ## [1.1.3](https://github.com/moisesmorillo/obsidian-ai-bridge/compare/v1.1.2...v1.1.3) (2026-09-26)
 
 

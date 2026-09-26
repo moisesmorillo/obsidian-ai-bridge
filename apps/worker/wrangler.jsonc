@@ -10,9 +10,6 @@
       "custom_domain": true
     }
   ],
-  "secrets": {
-    "required": ["OBSIDIAN_BRIDGE_CREDENTIAL_REGISTRY"]
-  },
   "r2_buckets": [
     {
       "binding": "VAULT_BUCKET",

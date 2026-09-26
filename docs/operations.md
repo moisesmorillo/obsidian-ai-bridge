@@ -51,24 +51,23 @@ account and Worker deployment permissions. The configured R2 bucket must already
 exist in that account. The Worker is configured for `obsidian-bridge.mmorillo.dev`
 as a Custom Domain, with `workers.dev` disabled; creating that connection also
 requires Workers Routes Write on the `mmorillo.dev` zone. Confirm the hostname has
-no conflicting DNS record before the first deployment. The current Worker still
-requires the separately provisioned `OBSIDIAN_BRIDGE_CREDENTIAL_REGISTRY` Worker
-secret; GitHub's Cloudflare deployment
-token is not a bridge client credential. Do not put either credential in source,
-workflow inputs, or logs. The committed configuration omits both example mirror IDs,
+no conflicting DNS record before the first deployment. Authenticated requests
+require a separately provisioned `OBSIDIAN_BRIDGE_CREDENTIAL_REGISTRY` Worker secret;
+GitHub's Cloudflare deployment token is not a bridge client credential. Do not put
+either credential in source, workflow inputs, or logs. The committed configuration
+omits both example mirror IDs,
 so v2 mutations remain disabled until the real association and plugin-generated
 writer ID are deliberately configured. A deploy job does not grant mirror activation
 or personal-vault installation approval.
 
-For the first deployment of a new Worker, leave `WORKER_AUTO_DEPLOY` unset.
-Generate the registry outside the repository as described below, then deploy once
-from an authorized local Wrangler session using `--secrets-file`. The file must map
-`OBSIDIAN_BRIDGE_CREDENTIAL_REGISTRY` to the registry JSON string. Wrangler cannot
-set this secret in advance with `secret put` while the Worker does not exist, and
-the workflow does not accept a bootstrap credential. After this one-time bootstrap,
-run the workflow manually to verify future CI deployments, then validate the exact
-Worker endpoint, authentication/authorization, R2 binding and non-destructive
-behavior with synthetic data. Confirm the deployed
+For the first deployment of a new Worker, leave `WORKER_AUTO_DEPLOY` unset and run
+the workflow manually from current `main`. Without the registry secret, supported
+protected HTTP and MCP operations fail closed with `401`; public routes remain
+available. Confirm the exact Worker endpoint and R2 binding without writing data.
+Then provision the registry through the credential procedure below or a future
+reviewed pairing mechanism before any client uses protected routes. Validate
+authentication/authorization and non-destructive behavior with synthetic data
+before enabling a personal vault. Confirm the deployed
 version and preserve the prior version for rollback. Only after this evidence and
 the intended client-authentication design are accepted should the repository variable
 be set to `true` for later releases. Worker version rollback changes code only; it
@@ -320,11 +319,10 @@ clipboard automation, log, screenshot, issue, or documentation.
    ```
 
 3. Transfer the displayed token once into the client's native SecretStorage entry.
-4. For an existing Worker, apply only the registry file through the authorized
+4. After the Worker exists, apply only the registry file through the authorized
    Worker secret boundary, for example by feeding it on stdin to `wrangler secret
-   put OBSIDIAN_BRIDGE_CREDENTIAL_REGISTRY`. For a new Worker, use a protected
-   `--secrets-file` on the first deployment as described above. Do not pass
-   verifier JSON as a command argument. No authentication-mode variable is accepted.
+   put OBSIDIAN_BRIDGE_CREDENTIAL_REGISTRY`. Do not pass verifier JSON as a command
+   argument. No authentication-mode variable is accepted.
 5. Verify authenticated server identity and intended non-destructive current behavior.
    Local generation alone is not provisioning success.
 

@@ -1,5 +1,71 @@
 # Changelog
 
+## [2.0.0](https://github.com/moisesmorillo/obsidian-ai-bridge/compare/v1.2.0...v2.0.0) (2026-09-26)
+
+
+### ⚠ BREAKING CHANGES
+
+* **worker:** enforce scoped client permissions ([#50](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/50))
+
+### Features
+
+* **core:** add bounded mirror autosync orchestration ([#22](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/22)) ([68bff5d](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/68bff5dc0319bb4ef3b34574498bc74d23ce995f))
+* **core:** add M3 mirror contracts ([#12](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/12)) ([510aaf2](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/510aaf2ca1fd9f8747df4cd592205e7613667c70))
+* **core:** add mirror lifecycle orchestration ([#24](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/24)) ([3d50a27](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/3d50a27d912e455cca3e348a8ad4f0fe21a6c0b4))
+* **core:** add read-only reconciliation review engine ([#34](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/34)) ([670440d](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/670440df918fefce07223531c45f4c1d2a97d705))
+* **core:** execute reviewed reconciliation actions ([#38](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/38)) ([c81832e](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/c81832e3d1bb65547a443d52645fe756779f629e))
+* **m4:** add state v3 migration fence ([#31](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/31)) ([f12466d](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/f12466dcd5d23b604cf3eed24f6d4dd12da2d7b6))
+* **mcp:** add authorized MCP adapter ([#60](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/60)) ([85bf3e1](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/85bf3e161454bdf4ac8c4c2494b80fe75f3a1c28))
+* **plugin:** add device-local mirror state ([#17](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/17)) ([9b18375](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/9b18375f827a03082952f07326ec3dd401eca597))
+* **plugin:** add typed remote bridge transport ([#18](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/18)) ([cd2ab71](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/cd2ab713a5a430055f6e718e080e9292150eb084))
+* **plugin:** compose the M3 host mirror runtime ([#25](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/25)) ([5a55fdf](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/5a55fdfdb26a5c00eec5d79041f874a2411aa5e3))
+* **plugin:** implement M4 history and runtime compatibility ([#41](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/41)) ([9dfce37](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/9dfce3747645fd2de4c128eeafc8241955e9e904))
+* **reconciliation:** add durable local mutation primitives ([#35](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/35)) ([cd8fb36](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/cd8fb364a9d6b259be4613c80a475541bdcd7bc2))
+* **worker:** add conditional M3 storage API ([#13](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/13)) ([16a050c](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/16a050ceb06b366f29aef6fa7825f39d341a4365))
+* **worker:** add scoped client credential lifecycle ([#48](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/48)) ([a7cf9b4](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/a7cf9b42a94ea9aa89453229d93750bc034fd38a))
+* **worker:** attribute live diagnostics to clients ([#49](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/49)) ([bf6b6d8](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/bf6b6d82a27d0997ad6cecb2dc95e4f0944dc61f))
+* **worker:** enforce scoped client permissions ([#50](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/50)) ([dd537ff](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/dd537ffd363081d312db0653bc5274eb6ce4e171))
+* **worker:** verify Cloudflare Access session without granting API access ([#72](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/72)) ([fd3f56a](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/fd3f56aea24e0c294ca513b5508673edeb3e34b2))
+
+
+### Bug Fixes
+
+* **core:** enforce mirror association continuity ([#15](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/15)) ([fe82f4e](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/fe82f4e3a1253bf6ce7e98efd73bc8451dd07de2))
+* **core:** harden M4 reconciliation state contracts ([#32](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/32)) ([3f2c1d2](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/3f2c1d2ac80ad293359c892a02bb899d5b4ba7c9))
+* **mirror:** correct reviewed state and transport semantics ([#20](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/20)) ([0b39432](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/0b39432b6f4707e94dbcd47659613ac2a9e5efea))
+* **plugin:** fence effects across listener gaps ([#55](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/55)) ([4f8a2d8](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/4f8a2d897dc63aac67a7a62ee3e5013959c91220))
+* **plugin:** use host-visible conflict preservation paths ([#52](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/52)) ([917d454](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/917d454cce3b845fc45aab9e6349103085df9004))
+* **release:** synchronize plugin release identity ([#56](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/56)) ([c9f4117](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/c9f41179ba47f93cb66c93986c7b73c7dda46fb1))
+* **worker:** allow initial deploy without credential registry ([#65](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/65)) ([dfe5a8f](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/dfe5a8f2f26eb1cd08898e865758648ac9f5938f))
+* **worker:** configure production custom domain ([#64](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/64)) ([82afd9a](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/82afd9a453be7fefdbb4f4c5a216cba0c9410566))
+* **worker:** hide public routes and enable stable release deploys ([#67](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/67)) ([33332ba](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/33332bab41daafc735636b8eb8fd166d75e4505c))
+
+
+### Documentation
+
+* add change-size discipline ([#42](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/42)) ([37bff1a](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/37bff1a6032bae4fc94fb70446e858f54d6d06d0))
+* **auth:** remove live rollout details from public docs ([#71](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/71)) ([4baf2c0](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/4baf2c0372361770fd407440d86d039ddd0d592f))
+* **m4:** define listener-gap effect authority ([#54](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/54)) ([eeafbe1](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/eeafbe17e8d74d83a4e8fb949633800e04555a7d))
+* **m4:** finalize reconciliation implementation design ([#29](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/29)) ([4196841](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/4196841c4cffe1a367f8bfc878ce3858834b8153))
+* **m4:** preserve slices 6-7 implementation preparation ([#37](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/37)) ([3a7bf3b](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/3a7bf3bf87c48a30647686c6dc2cdf1a62b685cd))
+* **m4:** refine slices 6 and 7 contracts ([#39](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/39)) ([789b77f](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/789b77f676b84ebba6a9a55bb130e0f85305e6f7))
+* **m5:** close operational readiness decisions ([#47](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/47)) ([476339a](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/476339ab58e0e9f02ce5b2332d2990b724613804))
+* **m5:** define threat and credential model ([#45](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/45)) ([d04fb62](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/d04fb62e15cebb88edc23ac7b10fdfb32b5cdf86))
+* **rollout:** record Access gate and client authorization boundary ([#69](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/69)) ([7d278be](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/7d278becaf32802e4cce9c18b0647a0a50c00b34))
+
+
+### Testing
+
+* **plugin:** qualify M3 artifact and operations ([#27](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/27)) ([63b0599](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/63b059958ad3d033bba861108d083cb6f1826f92))
+* **plugin:** qualify M4 reconciliation and complete milestone ([#43](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/43)) ([e7f9871](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/e7f9871b9b0da1572167c18c904c2c110f1a9dd6))
+
+
+### CI
+
+* **release:** enforce conventional changes ([#10](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/10)) ([9eb0d7f](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/9eb0d7f68b22735ab7ece787dfce924bca0bf4b1))
+* **release:** refresh Bun lockfile in release PRs ([#58](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/58)) ([1b5ccca](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/1b5ccca9e6985fe4d87eb3168958644b858720d3))
+* **worker:** stage release deployment workflow ([#62](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/62)) ([f344e4a](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/f344e4ab83826927a2c9ec13b448c34566784961))
+
 ## [1.2.0](https://github.com/moisesmorillo/obsidian-ai-bridge/compare/v1.1.3...v1.2.0) (2026-09-26)
 
 

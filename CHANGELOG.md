@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.2.0](https://github.com/moisesmorillo/obsidian-ai-bridge/compare/v1.1.3...v1.2.0) (2026-09-26)
+
+
+### Features
+
+* **worker:** verify Cloudflare Access session without granting API access ([#72](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/72)) ([fd3f56a](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/fd3f56aea24e0c294ca513b5508673edeb3e34b2))
+
+
 ## [1.1.3](https://github.com/moisesmorillo/obsidian-ai-bridge/compare/v1.1.2...v1.1.3) (2026-09-26)
 
 

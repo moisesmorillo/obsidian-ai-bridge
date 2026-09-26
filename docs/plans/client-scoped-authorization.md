@@ -1,15 +1,10 @@
-# Production Access rollout: verified boundary and next authorization decision
+# Client-scoped authorization design boundary
 
-## Verified on 2026-09-26
+## Scope
 
-- Release `v1.1.3` deploys `obsidian-ai-bridge-worker` at
-  `obsidian-bridge.mmorillo.dev` with the existing `VAULT_BUCKET` R2 binding.
-- An unauthenticated request to `/api/v2/mirror` receives a Cloudflare Access
-  `302` login redirect. After the owner signs in, the Worker returns its own
-  sanitized `401` (`Authentication is required.`). This proves the Access gate
-  and confirms that Access identity is not yet an application principal.
-- The deployed Worker has no credential registry. The personal vault has not
-  been connected. No data migration or bucket reset is part of this rollout.
+This public design note states the authorization boundary needed to replace
+operator-copied credentials. It does not describe a particular deployment,
+account policy, credential state, or vault installation.
 
 ## Required behavior before a vault connection
 
@@ -34,18 +29,17 @@ assertion to the origin. Its published origin contract does not document a
 stable OAuth client or grant identifier available to the Worker. Consequently,
 the current evidence does not support using Managed OAuth alone to enforce
 independent permissions and revocation for each installation or MCP client.
-Do not enable Managed OAuth on the production application as a substitute for
-the bridge's client authorization.
+Managed OAuth must not be treated as a substitute for the bridge's client
+authorization.
 
 The proposed direction is to use Access for **owner login** and have the bridge
 issue and validate its own client-scoped OAuth grants. This requires a separate
 ADR before production implementation: define client registration, redirect URI
 rules, consent, grant persistence, token rotation/revocation, metadata endpoints,
-and the exact Access path arrangement. In particular, the current whole-host
-Access application would intercept public OAuth discovery and token endpoints;
-any path change must be staged so the Worker still rejects unauthenticated API
-requests. Reuse of the existing R2 bucket for grant records is a candidate,
-not yet an accepted storage decision.
+and the exact Access path arrangement. A whole-host Access gate would intercept
+public OAuth discovery and token endpoints; any path change must be staged so
+the Worker still rejects unauthenticated API requests. Reuse of R2 for grant
+records is a candidate, not yet an accepted storage decision.
 
 ## Sequence and rollback boundaries
 
@@ -55,10 +49,10 @@ not yet an accepted storage decision.
    tests. Existing API/MCP operations remain registry-protected until the new
    principal source and exhaustive permission policy are qualified.
 3. Add client registration and owner-login flow; test with synthetic clients and
-   data. Then update Access application paths and verify OAuth metadata and
-   denial of unauthenticated API requests. Roll back the Access path change if
-   either check fails. Never roll back to a grant snapshot that re-enables a
-   revoked client.
+   data. Stage any Access application path change and verify OAuth metadata and
+   denial of unauthenticated API requests. Roll back the path change if either
+   check fails. Never roll back to a grant snapshot that re-enables a revoked
+   client.
 4. Add Obsidian Connect and qualify one disposable vault, then a second
    installation. Only after that consider the personal vault. MCP client
    qualification follows the Worker auth validation.

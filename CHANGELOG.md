@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.3](https://github.com/moisesmorillo/obsidian-ai-bridge/compare/v1.1.2...v1.1.3) (2026-09-26)
+
+
+### Bug Fixes
+
+* **worker:** hide public routes and enable stable release deploys ([#67](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/67)) ([33332ba](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/33332bab41daafc735636b8eb8fd166d75e4505c))
+
 ## [1.1.2](https://github.com/moisesmorillo/obsidian-ai-bridge/compare/v1.1.1...v1.1.2) (2026-09-26)
 
 

@@ -59,10 +59,6 @@ depends = ["worker:build", "plugin:smoke"]
 description = "Bundle the Cloudflare Worker without deploying it"
 run = "node apps/worker/node_modules/wrangler/bin/wrangler.js deploy --dry-run --config apps/worker/wrangler.jsonc"
 
-[tasks."worker:deploy"]
-description = "Deploy the Worker to the configured Cloudflare account without provisioning resources"
-run = "node apps/worker/node_modules/wrangler/bin/wrangler.js deploy --no-x-provision --keep-vars --config apps/worker/wrangler.jsonc"
-
 [tasks."plugin:build"]
 description = "Bundle the local-only plugin as browser-compatible CommonJS and stage its manifest"
 run = """

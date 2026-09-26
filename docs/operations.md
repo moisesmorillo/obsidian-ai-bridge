@@ -35,7 +35,8 @@ credentials.
 `.github/workflows/deploy-worker.yml` checks out an existing stable release tag,
 requires it to be the current `main` commit and match the package version, runs the
 canonical `mise run check` (including the release identity gate), and deploys the
-configured Worker without automatic resource provisioning. The deployment preserves
+configured Worker using `cloudflare/wrangler-action@v4` with the repository's
+pinned Wrangler version, without automatic resource provisioning. The deployment preserves
 dashboard-set non-secret vars, including any later configured association/writer IDs;
 it does not create or select those IDs. Publication of a release
 starts this job only after the repository variable `WORKER_AUTO_DEPLOY` is set to

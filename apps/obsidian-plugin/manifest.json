@@ -1,7 +1,7 @@
 {
   "id": "ai-bridge",
   "name": "AI Bridge",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "minAppVersion": "1.13.0",
   "description": "An experimental foundation for a secure bridge between Obsidian and remote AI clients.",
   "author": "Moisés Morillo",

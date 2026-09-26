@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.2](https://github.com/moisesmorillo/obsidian-ai-bridge/compare/v1.1.1...v1.1.2) (2026-09-26)
+
+
+### Bug Fixes
+
+* **worker:** allow initial deploy without credential registry ([#65](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/65)) ([dfe5a8f](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/dfe5a8f2f26eb1cd08898e865758648ac9f5938f))
+
 ## [1.1.1](https://github.com/moisesmorillo/obsidian-ai-bridge/compare/v1.1.0...v1.1.1) (2026-09-26)
 
 

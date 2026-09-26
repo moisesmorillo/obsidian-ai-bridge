@@ -7,7 +7,6 @@ import type {
 } from "@obsidian-ai-bridge/core";
 import type {
   ApiErrorResponse,
-  HealthResponse,
   MirrorDescriptionDto,
   NoteListResponse,
   NotePageDto,
@@ -20,7 +19,6 @@ import type {
 export type JsonResponseBody =
   | ApiErrorResponse
   | CurrentNoteState
-  | HealthResponse
   | MirrorDescriptionDto
   | MutationAcknowledgement
   | NoteListResponse

@@ -149,7 +149,7 @@ setting any Cloudflare deployment secrets or enabling automatic deployments.
 
 ## Worker API
 
-The Worker exposes public health/OpenAPI/Scalar routes and authenticated conditional v2 mirror/current/recovery routes. The v1 HTTP API, including its former read and retired-mutation compatibility routes, is no longer registered. V2 note PUT/DELETE and recovery seal/purge require the configured association/writer IDs, one operation UUID, and the documented exact conditional header. Recovery metadata and content use distinct GET endpoints.
+The Worker exposes authenticated conditional v2 mirror/current/recovery routes. `/health` is not registered. OpenAPI and Scalar are available through `mise run dev` locally; `/openapi.json` and `/docs` return `404` in the deployed Worker. The v1 HTTP API, including its former read and retired-mutation compatibility routes, is no longer registered. V2 note PUT/DELETE and recovery seal/purge require the configured association/writer IDs, one operation UUID, and the documented exact conditional header. Recovery metadata and content use distinct GET endpoints.
 
 For note item routes, `:path` is a canonical base64url-encoded note path. The separate stateless MCP endpoint is `POST /mcp`; its bearer-authenticated tools and explicit content resources reuse the existing Worker services and independent permission table, and do not implement MCP OAuth discovery. See [docs/api.md](docs/api.md) for the complete route/status/header contract and encoding example.
 

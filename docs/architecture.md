@@ -188,8 +188,9 @@ confirmation; this is client-owned, not server proof of human approval. See the
 ## Security and data-safety boundaries
 
 The Worker authenticates `/api` descendants and `/mcp` through a strict registry of
-at most 16 named opaque bearers; public health/OpenAPI/Scalar do not grant note
-access. MCP capability discovery also requires an authenticated principal.
+at most 16 named opaque bearers. The Worker has no `/health` route; OpenAPI and
+Scalar are enabled only for local development and do not grant note access.
+MCP capability discovery also requires an authenticated principal.
 Configuration retains only domain-separated SHA-256 verifier material. Successful
 authentication publishes client ID, name, and exact permission metadata, never a token
 or digest. The exhaustive operation policy requires `read`, `write`, or independent

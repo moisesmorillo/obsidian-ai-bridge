@@ -152,9 +152,9 @@ async function createNote(
 }
 
 describe("Worker v2 API", () => {
-  it("keeps health public and protects v2 plus unknown descendants", async () => {
+  it("does not expose health and protects v2 plus unknown descendants", async () => {
     const { app } = application(new MemoryMirrorBucket());
-    expect((await app.fetch(request("/health"))).status).toBe(200);
+    expect((await app.fetch(request("/health"))).status).toBe(404);
 
     for (const [path, cors] of [
       ["/api/v2/mirror", "*"],
@@ -1183,7 +1183,10 @@ describe("Worker v2 API", () => {
 
   it("publishes an exact permission-aware OpenAPI contract for v2 only", async () => {
     const { app } = application(new MemoryMirrorBucket());
-    const response = await app.fetch(request("/openapi.json"));
+    const response = await app.fetch(request("/openapi.json"), {
+      LOCAL_API_DOCS: "true",
+      VAULT_BUCKET: new MemoryMirrorBucket(),
+    });
     const schemaObject = z
       .object({
         pattern: z.string().optional(),
@@ -1241,10 +1244,8 @@ describe("Worker v2 API", () => {
       "/api/v2/recovery/{id}/content",
       "/api/v2/recovery/{id}/purge",
       "/api/v2/recovery/{id}/seal",
-      "/health",
     ]);
     const expected = {
-      "/health": { get: ["200", "500"] },
       "/api/v2/mirror": { get: ["200", "401", "403", "500"] },
       "/api/v2/notes": { get: ["200", "400", "401", "403", "500"] },
       "/api/v2/notes/{path}": {
@@ -1312,8 +1313,7 @@ describe("Worker v2 API", () => {
       for (const [method, statuses] of Object.entries(methods)) {
         const contract = required(pathContract[method]);
         expect(Object.keys(contract.responses)).toEqual(statuses);
-        if (path !== "/health")
-          expect(contract.security).toEqual([{ bearerAuth: [] }]);
+        expect(contract.security).toEqual([{ bearerAuth: [] }]);
       }
     }
     const policySurface = Object.values(V2_ROUTE_POLICY)

@@ -14,7 +14,6 @@ import type {
   WorkerMiddleware,
 } from "@worker/http/hono.types";
 import { API_V2_PREFIX } from "@worker/http/http.constants";
-import { createHealthHandler } from "@worker/http/note.handlers";
 import {
   deleteV2NoteRoute,
   getMirrorRoute,
@@ -22,7 +21,6 @@ import {
   getRecoveryRoute,
   getV2NoteRoute,
   getV2NoteStateRoute,
-  healthRoute,
   listRecoveryRoute,
   listV2NotesRoute,
   openApiConfiguration,
@@ -143,7 +141,6 @@ export function createWorkerApp(
   );
 
   [
-    healthRoute,
     getMirrorRoute,
     listV2NotesRoute,
     getV2NoteStateRoute,
@@ -159,11 +156,6 @@ export function createWorkerApp(
     app.openAPIRegistry.registerPath(route);
   });
 
-  app.on(
-    ROUTE_OPERATION_POLICY.public.health.method,
-    ROUTE_OPERATION_POLICY.public.health.path,
-    createHealthHandler(),
-  );
   app.all(MCP_ENDPOINT_PATH, createMcpRequestHandler(dependencies));
 
   app.on(
@@ -222,6 +214,17 @@ export function createWorkerApp(
     createPurgeRecoveryHandler(),
   );
 
+  for (const route of [
+    ROUTE_OPERATION_POLICY.public.openApi.path,
+    ROUTE_OPERATION_POLICY.public.reference.path,
+  ]) {
+    app.use(route, async (context, next) => {
+      if (context.env?.LOCAL_API_DOCS !== "true") {
+        return createErrorResponse(API_ERROR_CODE.notFound);
+      }
+      await next();
+    });
+  }
   app.doc(ROUTE_OPERATION_POLICY.public.openApi.path, openApiConfiguration);
   app.on(
     ROUTE_OPERATION_POLICY.public.reference.method,

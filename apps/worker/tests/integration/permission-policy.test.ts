@@ -317,11 +317,22 @@ describe("Worker route-operation permission policy", () => {
     expect(authorizedWriter.bucket.putKeys).toHaveLength(0);
   });
 
-  it("keeps public/preflight storage-free and retired or unknown API operations fail closed", async () => {
+  it("keeps documentation hidden and preflight storage-free while unknown API operations fail closed", async () => {
     const testApp = await application([CLIENT_PERMISSION.read]);
     for (const path of ["/health", "/openapi.json", "/docs"]) {
       expect(
         (await testApp.app.fetch(operationRequest("GET", path))).status,
+      ).toBe(404);
+    }
+    expect(testApp.serviceResolutions()).toBe(0);
+    for (const path of ["/openapi.json", "/docs"]) {
+      expect(
+        (
+          await testApp.app.fetch(operationRequest("GET", path), {
+            LOCAL_API_DOCS: "true",
+            VAULT_BUCKET: testApp.bucket,
+          })
+        ).status,
       ).toBe(200);
     }
     expect(testApp.serviceResolutions()).toBe(0);

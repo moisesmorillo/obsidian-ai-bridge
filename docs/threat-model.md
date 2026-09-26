@@ -61,8 +61,9 @@ access R2 directly, mutate the local vault, or gain authority from note content.
 | Cloudflare/platform operator | Trusted with Worker configuration, verifier material, runtime visibility, R2 plaintext, deployment history, and platform logs. M5 does not protect against a malicious fully privileged operator. |
 | MCP clients | Outside the Worker boundary and authenticated independently on every stateless POST through the M5 registry. They receive only exact tool/resource permissions; they cannot select writer identity, call arbitrary application operations, or confer authority on note content. |
 
-Public health/OpenAPI/documentation routes cross the Worker boundary without note
-authority. Authenticated API and MCP routes cross authentication first. M5 resolves
+Locally enabled OpenAPI/documentation routes cross the Worker boundary without note
+authority; the deployed Worker returns `404` for them and has no `/health` route.
+Authenticated API and MCP routes cross authentication first. M5 resolves
 the same typed client principal for both; HTTP route policy and the exhaustive MCP
 capability table keep permission checks separate from designated-writer, association,
 conditional revision, preservation, and recovery checks. MCP authentication is an

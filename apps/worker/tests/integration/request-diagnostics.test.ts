@@ -226,7 +226,7 @@ describe("Worker live request diagnostics", () => {
       await application();
     const encodedPrivatePath = encodedPath(PRIVATE_PATH);
 
-    expect((await app.fetch(request("/health"))).status).toBe(200);
+    expect((await app.fetch(request("/health"))).status).toBe(404);
 
     const destructive = await app.fetch(
       request(`/api/v2/notes/${encodedPrivatePath}`, {
@@ -284,9 +284,9 @@ describe("Worker live request diagnostics", () => {
 
     expect(logger.entries[0]).toMatchObject({
       authentication: LOG_AUTHENTICATION_RESULT.public,
-      operationCategory: LOG_OPERATION_CATEGORY.public,
-      route: "/health",
-      status: 200,
+      operationCategory: LOG_OPERATION_CATEGORY.unknown,
+      route: "unknown",
+      status: 404,
     });
     expect(logger.entries[0]).not.toHaveProperty("clientId");
     expect(logger.entries[1]).toMatchObject({

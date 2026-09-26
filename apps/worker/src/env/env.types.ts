@@ -12,6 +12,8 @@ export interface WorkerAuthenticationEnvironment {
  * Verifier material is supplied as Wrangler secrets and never enters API logs or responses.
  */
 export interface WorkerEnv extends WorkerAuthenticationEnvironment {
+  /** Local-only switch for the generated API reference; absent in production. */
+  readonly LOCAL_API_DOCS?: string;
   /** R2 bucket containing namespaced vault note objects. */
   readonly VAULT_BUCKET: R2Bucket;
 

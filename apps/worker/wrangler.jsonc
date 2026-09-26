@@ -3,6 +3,13 @@
   "name": "obsidian-ai-bridge-worker",
   "main": "src/index.ts",
   "compatibility_date": "2026-09-09",
+  "workers_dev": false,
+  "routes": [
+    {
+      "pattern": "obsidian-bridge.mmorillo.dev",
+      "custom_domain": true
+    }
+  ],
   "secrets": {
     "required": ["OBSIDIAN_BRIDGE_CREDENTIAL_REGISTRY"]
   },

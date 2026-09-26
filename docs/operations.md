@@ -32,13 +32,13 @@ credentials.
 
 ## Staged release deployment
 
-`.github/workflows/deploy-worker.yml` checks out current `main` for a manual first
+`.github/workflows/deploy-worker.yml` checks out current `main` for a manual CI
 deployment, or an existing stable release tag for later automatic deployments.
 Both paths require the current `main` commit; release events also require the tag
 to match the package version. The workflow runs the canonical `mise run check`
-(including the release identity gate) and deploys the
-configured Worker using `cloudflare/wrangler-action@v4` with the repository's
-pinned Wrangler version, without automatic resource provisioning. The deployment preserves
+(including the release identity gate) and deploys the configured Worker using
+`cloudflare/wrangler-action@v4` with the repository's pinned Wrangler version,
+without automatic resource provisioning. The deployment preserves
 dashboard-set non-secret vars, including any later configured association/writer IDs;
 it does not create or select those IDs. Publication of a release
 starts this job only after the repository variable `WORKER_AUTO_DEPLOY` is set to
@@ -48,17 +48,27 @@ from the current `main`. Neither path runs during pull request validation.
 The `production` GitHub environment must hold `CLOUDFLARE_API_TOKEN` and
 `CLOUDFLARE_ACCOUNT_ID` as environment secrets. Scope the API token to the intended
 account and Worker deployment permissions. The configured R2 bucket must already
-exist in that account. The current Worker still requires the separately provisioned
-`OBSIDIAN_BRIDGE_CREDENTIAL_REGISTRY` Worker secret; GitHub's Cloudflare deployment
+exist in that account. The Worker is configured for `obsidian-bridge.mmorillo.dev`
+as a Custom Domain, with `workers.dev` disabled; creating that connection also
+requires Workers Routes Write on the `mmorillo.dev` zone. Confirm the hostname has
+no conflicting DNS record before the first deployment. The current Worker still
+requires the separately provisioned `OBSIDIAN_BRIDGE_CREDENTIAL_REGISTRY` Worker
+secret; GitHub's Cloudflare deployment
 token is not a bridge client credential. Do not put either credential in source,
 workflow inputs, or logs. The committed configuration omits both example mirror IDs,
 so v2 mutations remain disabled until the real association and plugin-generated
 writer ID are deliberately configured. A deploy job does not grant mirror activation
 or personal-vault installation approval.
 
-For the first manual deployment, leave `WORKER_AUTO_DEPLOY` unset, run the workflow
-manually, then validate the exact Worker endpoint, authentication/authorization,
-R2 binding and non-destructive behavior with synthetic data. Confirm the deployed
+For the first deployment of a new Worker, leave `WORKER_AUTO_DEPLOY` unset.
+Generate the registry outside the repository as described below, then deploy once
+from an authorized local Wrangler session using `--secrets-file`. The file must map
+`OBSIDIAN_BRIDGE_CREDENTIAL_REGISTRY` to the registry JSON string. Wrangler cannot
+set this secret in advance with `secret put` while the Worker does not exist, and
+the workflow does not accept a bootstrap credential. After this one-time bootstrap,
+run the workflow manually to verify future CI deployments, then validate the exact
+Worker endpoint, authentication/authorization, R2 binding and non-destructive
+behavior with synthetic data. Confirm the deployed
 version and preserve the prior version for rollback. Only after this evidence and
 the intended client-authentication design are accepted should the repository variable
 be set to `true` for later releases. Worker version rollback changes code only; it
@@ -310,10 +320,11 @@ clipboard automation, log, screenshot, issue, or documentation.
    ```
 
 3. Transfer the displayed token once into the client's native SecretStorage entry.
-4. Apply only the registry file through the authorized Worker secret boundary, for
-   example by feeding it on stdin to `wrangler secret put
-   OBSIDIAN_BRIDGE_CREDENTIAL_REGISTRY`; do not pass verifier JSON as a command
-   argument. No authentication-mode variable is accepted.
+4. For an existing Worker, apply only the registry file through the authorized
+   Worker secret boundary, for example by feeding it on stdin to `wrangler secret
+   put OBSIDIAN_BRIDGE_CREDENTIAL_REGISTRY`. For a new Worker, use a protected
+   `--secrets-file` on the first deployment as described above. Do not pass
+   verifier JSON as a command argument. No authentication-mode variable is accepted.
 5. Verify authenticated server identity and intended non-destructive current behavior.
    Local generation alone is not provisioning success.
 

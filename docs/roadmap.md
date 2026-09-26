@@ -1,8 +1,9 @@
 # Project roadmap
 
 The post-M6 [client authorization design note](plans/client-scoped-authorization.md)
-records requirements to review before connecting a vault. It does not define
-M7 or mark a milestone `NEXT`.
+records requirements to review before connecting a vault. [Proposed ADR 0015](decisions/0015-browser-mediated-client-authorization.md)
+describes the staged OAuth and revocation design for that rollout. Neither
+document defines M7 or marks a milestone `NEXT`.
 
 This is the canonical execution roadmap: implemented facts, planned direction and
 unresolved choices are distinct. Dates are intentionally not assigned. Engineering

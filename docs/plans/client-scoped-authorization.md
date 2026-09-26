@@ -33,13 +33,11 @@ Managed OAuth must not be treated as a substitute for the bridge's client
 authorization.
 
 The proposed direction is to use Access for **owner login** and have the bridge
-issue and validate its own client-scoped OAuth grants. This requires a separate
-ADR before production implementation: define client registration, redirect URI
-rules, consent, grant persistence, token rotation/revocation, metadata endpoints,
-and the exact Access path arrangement. A whole-host Access gate would intercept
-public OAuth discovery and token endpoints; any path change must be staged so
-the Worker still rejects unauthenticated API requests. Reuse of R2 for grant
-records is a candidate, not yet an accepted storage decision.
+issue and validate its own client-scoped OAuth grants. [Proposed ADR 0015](../decisions/0015-browser-mediated-client-authorization.md)
+specifies the intended provider, storage, resource audiences, revocation and
+Access path cutover for maintainer review. A whole-host Access gate would
+intercept public OAuth discovery and token endpoints; any path change must be
+staged so the Worker still rejects unauthenticated API requests.
 
 ## Sequence and rollback boundaries
 

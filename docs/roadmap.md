@@ -1,5 +1,10 @@
 # Project roadmap
 
+The post-M6 [production Access rollout](plans/production-access-rollout.md)
+records the deployed login gate and the client-authorization design still
+needed before connecting a vault. It does not define M7 or mark a milestone
+`NEXT`.
+
 This is the canonical execution roadmap: implemented facts, planned direction and
 unresolved choices are distinct. Dates are intentionally not assigned. Engineering
 rules live in [AGENTS.md](../AGENTS.md).

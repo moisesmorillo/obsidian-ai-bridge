@@ -82,6 +82,14 @@ personal vault. Confirm every deployed version and preserve the prior version fo
 rollback. Worker version rollback changes code only; it
 does not undo R2 writes, credential changes, or client-local state.
 
+The post-M6 OAuth validation slice adds a canonical `OAUTH_ISSUER` deployment
+variable and uses the existing `OAUTH_KV` and `VAULT_BUCKET` bindings. It does
+not enable owner consent, OAuth token issuance, or public OAuth discovery.
+Cloudflare Access remains a whole-host gate. M5 registry clients keep their
+existing route permissions; no OAuth client can be connected through this slice.
+Do not install the personal-vault plugin on the strength of this validation
+slice alone.
+
 ## Operating model and trust boundary
 
 - iCloud remains the working-vault device sync. AI Bridge observes official Obsidian

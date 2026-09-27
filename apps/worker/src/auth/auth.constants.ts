@@ -21,6 +21,7 @@ export const AUTHORIZATION_PARSE_RESULT_KIND = {
 export const AUTHENTICATION_RESULT_KIND = {
   authenticated: "authenticated",
   unauthenticated: "unauthenticated",
+  unavailable: "unavailable",
 } as const;
 
 /** Closed independent client capabilities enforced by the route-operation policy. */

@@ -4,9 +4,10 @@
   "private": true,
   "type": "module",
   "dependencies": {
-    "@modelcontextprotocol/server": "2.0.0",
+    "@cloudflare/workers-oauth-provider": "1.1.0",
     "@hono/zod-openapi": "^1.6.3",
     "@logtape/logtape": "2.3.4",
+    "@modelcontextprotocol/server": "2.0.0",
     "@obsidian-ai-bridge/core": "workspace:*",
     "@obsidian-ai-bridge/protocol": "workspace:*",
     "@scalar/hono-api-reference": "^0.12.1",

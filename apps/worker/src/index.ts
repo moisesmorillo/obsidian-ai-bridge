@@ -24,7 +24,7 @@ const worker = createWorkerApp({
 });
 
 /**
- * Resolves the sole registry authentication authority from request bindings.
+ * Resolves the M5 registry authentication authority from request bindings.
  *
  * Missing or malformed registry configuration is retained as untrusted input and
  * rejected by the strict registry decoder; no legacy secret can authenticate.

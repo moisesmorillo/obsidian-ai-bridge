@@ -14,8 +14,10 @@ export interface WorkerAuthenticationEnvironment {
 export interface WorkerEnv extends WorkerAuthenticationEnvironment {
   /** Local-only switch for the generated API reference; absent in production. */
   readonly LOCAL_API_DOCS?: string;
-  /** OAuth provider state; unused until the client-grant implementation is deployed. */
+  /** OAuth provider token records; no grant-issuance route exists in this slice. */
   readonly OAUTH_KV: KVNamespace;
+  /** Canonical public OAuth issuer and base for the REST and MCP resource IDs. */
+  readonly OAUTH_ISSUER?: string;
   /** R2 bucket containing namespaced vault note objects. */
   readonly VAULT_BUCKET: R2Bucket;
 

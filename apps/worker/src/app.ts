@@ -112,17 +112,26 @@ export function createWorkerApp(
   app.use(MCP_ENDPOINT_PATH, createMcpEndpointPolicyMiddleware());
   app.use(
     MCP_ENDPOINT_PATH,
-    createAuthenticationMiddleware(dependencies.resolveAuthentication),
+    createAuthenticationMiddleware(
+      dependencies.resolveAuthentication,
+      MCP_ENDPOINT_PATH,
+    ),
   );
   app.use(API_V2_PREFIX, createV2CorsMiddleware());
   app.use(`${API_V2_PREFIX}/*`, createV2CorsMiddleware());
   app.use(
     AUTHENTICATED_API_ROOT,
-    createAuthenticationMiddleware(dependencies.resolveAuthentication),
+    createAuthenticationMiddleware(
+      dependencies.resolveAuthentication,
+      API_V2_PREFIX,
+    ),
   );
   app.use(
     `${AUTHENTICATED_API_ROOT}/*`,
-    createAuthenticationMiddleware(dependencies.resolveAuthentication),
+    createAuthenticationMiddleware(
+      dependencies.resolveAuthentication,
+      API_V2_PREFIX,
+    ),
   );
   app.use(AUTHENTICATED_API_ROOT, createOperationAuthorizationMiddleware());
   app.use(

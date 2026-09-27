@@ -74,4 +74,5 @@ export type AuthenticationResult =
       readonly kind: typeof AUTHENTICATION_RESULT_KIND.authenticated;
       readonly principal: ClientPrincipal;
     }
-  | { readonly kind: typeof AUTHENTICATION_RESULT_KIND.unauthenticated };
+  | { readonly kind: typeof AUTHENTICATION_RESULT_KIND.unauthenticated }
+  | { readonly kind: typeof AUTHENTICATION_RESULT_KIND.unavailable };

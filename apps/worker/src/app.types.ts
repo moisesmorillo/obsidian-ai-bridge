@@ -37,10 +37,10 @@ export type MirrorServicesResolver = (
 ) => WorkerMirrorServices;
 
 /**
- * Resolves the exclusive authentication authority selected for an incoming request.
+ * Resolves the M5 registry authentication authority for an incoming request.
  *
  * @param environment - Active Worker bindings containing confidential verifier configuration.
- * @returns Registry, temporary singleton migration, or fail-closed invalid configuration.
+ * @returns Registry-only configuration; OAuth validation is a separate path.
  */
 export type AuthenticationConfigurationResolver = (
   environment: WorkerEnv,
@@ -54,6 +54,6 @@ export interface WorkerAppDependencies {
   /** Factory resolving current-generation, recovery, and designation dependencies. */
   readonly resolveMirrorServices: MirrorServicesResolver;
 
-  /** Factory resolving exactly one authentication authority from current bindings. */
+  /** Factory resolving the M5 registry authority from current bindings. */
   readonly resolveAuthentication: AuthenticationConfigurationResolver;
 }

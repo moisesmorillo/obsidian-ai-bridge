@@ -1,5 +1,16 @@
 # Verified current state
 
+## Post-M6 OAuth rollout in progress
+
+The Worker deployment now has an OAuth KV binding and a verified Access-only
+session probe. ADR 0015 governs the staged client-authorization rollout. This
+change adds resource-bound OAuth bearer validation for the existing REST and MCP
+permission policies, with a fail-closed R2 revocation-marker check. It does not
+serve provider endpoints, issue OAuth grants, change Cloudflare Access paths, or
+connect a personal vault. M5 registry authentication remains available. The
+deployed Worker must be checked separately after a release; source and CI do not
+prove that this change is deployed.
+
 This snapshot records completed M1–M6 implementation and qualification evidence on the M6 completion branch. M5's bounded support claim is limited to latest M5-ready release v1.0.2 and one designated writer on Obsidian Desktop 1.13.7 / macOS 26.6.2 / Apple M4 Pro, with synthetic active-writer behavior through 10,000 eligible notes. The final report records retained scale, credential-rotation, and Keep-local results; v4→v5 migration/restart evidence; live loopback recovery/diagnostics; exact release identity; residual platform/deployment limits; and one explicitly unqualified pause/resume conflict attempt. No personal vault or production Worker/R2 deployment was used. M1–M6 are COMPLETE in this transition; no milestone is marked NEXT, and no M7 is inferred. The roadmap transition becomes canonical when its completion PR merges.
 M2 source/tooling through `2e74b23` passed independent semantic
 review and merged at `b300726` (PR #7). M3's completion PR #27 passed canonical

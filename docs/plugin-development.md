@@ -10,6 +10,23 @@ qualification report](qualification/m5-final.md) and [operator guide](operations
 No other platform or desktop version is implied. Canonical validation does not require
 a Worker deployment, real credentials, or installation in a personal vault.
 
+## Staged read-only OAuth connection
+
+The post-M6 **Connect read-only** setting is an isolated qualification step, not
+writer onboarding. In a disposable vault, save the HTTPS Worker origin, click
+**Connect**, approve only `read` in the Access-protected browser consent page,
+and allow the `obsidian://ai-bridge-oauth` callback to reopen Obsidian. Each
+attempt registers a public client, uses a fresh S256 PKCE challenge and state,
+and accepts only the exact issuer, resource, and read-only token response.
+Obsidian SecretStorage receives the access and refresh tokens under vault-local
+references; `data.json` receives only the access-token reference. The current
+Fetch adapter uses the access token but does not renew it yet, so read access
+expires and requires another Connect attempt. No writer designation, mutation
+permission, automatic activation, or personal-vault qualification follows from
+this step. A repeat Connect creates another grant; revoke obsolete grants in the
+owner UI. Keep the personal vault disconnected until refresh, writer ownership,
+and synthetic remote-write qualification are complete.
+
 ## Build and generated-artifact qualification
 
 From the repository root after [development setup](../README.md#development):

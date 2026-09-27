@@ -29,6 +29,7 @@ import {
   ReconciliationObservationGenerationOwner,
   resumeMirrorWriter,
 } from "@obsidian-ai-bridge/core";
+import { isReadOnlyOAuthSecretReference } from "@obsidian-plugin/auth/read-only-oauth-connection";
 import type { MirrorPreferencesDecodeResult } from "@obsidian-plugin/configuration/mirror-preferences";
 import {
   ObsidianSecretReferenceStore,
@@ -157,7 +158,7 @@ export class MirrorRuntimeOwner {
       local: dependencies.local,
       runtime: dependencies.runtime,
       admission: this.admission,
-      secretAvailable: () => this.secretAvailable(),
+      secretAvailable: () => this.writerCredentialAvailable(),
       onChanged: () => this.notify(),
       ...(dependencies.cryptography === undefined
         ? {}
@@ -615,7 +616,7 @@ export class MirrorRuntimeOwner {
       !explicitWholeMirrorConsent ||
       !this.epochs.isLayoutReady() ||
       connection === null ||
-      !this.secretAvailable() ||
+      !this.writerCredentialAvailable() ||
       !(await this.recoverRuntimeIfNeeded())
     ) {
       return { kind: "not-ready" };
@@ -671,7 +672,7 @@ export class MirrorRuntimeOwner {
     if (
       !this.epochs.isLayoutReady() ||
       connection === null ||
-      !this.secretAvailable() ||
+      !this.writerCredentialAvailable() ||
       !(await this.recoverRuntimeIfNeeded())
     ) {
       return { kind: "not-ready" };
@@ -770,7 +771,11 @@ export class MirrorRuntimeOwner {
     explicitWholeMirrorConsent: boolean,
   ): Promise<MirrorRuntimeActionResult> {
     const connection = this.admission.currentConnection();
-    if (!this.epochs.isLayoutReady() || connection === null) {
+    if (
+      !this.epochs.isLayoutReady() ||
+      connection === null ||
+      !this.writerCredentialAvailable()
+    ) {
       return { kind: "not-ready" };
     }
     if (!(await this.recoverRuntimeIfNeeded())) return { kind: "failed" };
@@ -1108,7 +1113,7 @@ export class MirrorRuntimeOwner {
     const connection = this.admission.currentConnection();
     if (attachmentEpoch === null || connection === null) return false;
     const state = this.stateOwner.snapshot().state;
-    if (!this.secretAvailable()) {
+    if (!this.writerCredentialAvailable()) {
       await this.pauseForConfigurationChange();
       this.reconcileAdmission();
       this.notify();
@@ -1320,12 +1325,26 @@ export class MirrorRuntimeOwner {
     );
   }
 
+  /** @returns Whether current credentials may be used by the writer runtime. */
+  private writerCredentialAvailable(): boolean {
+    const reference = this.admission.currentPreferences()?.secretReference;
+    return (
+      reference !== null &&
+      reference !== undefined &&
+      !isReadOnlyOAuthSecretReference(reference) &&
+      this.secretAvailable()
+    );
+  }
+
   /** Delegates request-gate readiness to the admission owner using current lifecycle, layout and secret evidence. */
   private reconcileAdmission(): void {
     this.admission.reconcileAdmission(
       this.stateOwner,
       this.epochs.isLayoutReady(),
-      this.secretAvailable(),
+      this.stateOwner.snapshot().state.lifecycle.kind ===
+        MIRROR_DEVICE_LIFECYCLE_KIND.active
+        ? this.writerCredentialAvailable()
+        : this.secretAvailable(),
     );
   }
 

@@ -6,12 +6,20 @@ The Worker deployment now has an OAuth KV binding and a verified Access-only
 session probe. ADR 0015 governs the staged client-authorization rollout. The
 source adds Access-protected owner consent, named grants, a paginated grant view,
 and R2-fenced revocation. Provider discovery, registration, and token routes are
-dispatched, but the existing whole-host Access application still blocks unpaired
-external OAuth clients. Resource-bound OAuth bearers use the existing REST and MCP
-permission policies and fail-closed R2 marker checks. This change does not alter
-Cloudflare Access paths or connect a personal vault. M5 registry authentication
-remains available. The deployed Worker must be checked separately after a release;
+dispatched. On 2026-09-26, the owner's Access application was narrowed to
+`/authorize` and `/auth/*`; anonymous probes observed owner redirects to Access,
+public OAuth metadata, and 401 denial at the API and MCP endpoints.
+Resource-bound OAuth bearers use the existing REST and MCP permission policies
+and fail-closed R2 marker checks. This change does not alter the personal vault.
+M5 registry authentication remains available. The deployed Worker must be checked separately after a release;
 source and CI do not prove that this change is deployed.
+
+The staged plugin Connect read-only source requests a per-installation OAuth
+grant through the browser and stores returned tokens only in native SecretStorage.
+This is a disposable-vault qualification path: token refresh, automatic writer
+ownership, multiwriter conflict handling, and personal-vault installation remain
+pending. Source tests do not establish native callback behavior on a real
+Obsidian installation.
 
 This snapshot records completed M1–M6 implementation and qualification evidence on the M6 completion branch. M5's bounded support claim is limited to latest M5-ready release v1.0.2 and one designated writer on Obsidian Desktop 1.13.7 / macOS 26.6.2 / Apple M4 Pro, with synthetic active-writer behavior through 10,000 eligible notes. The final report records retained scale, credential-rotation, and Keep-local results; v4→v5 migration/restart evidence; live loopback recovery/diagnostics; exact release identity; residual platform/deployment limits; and one explicitly unqualified pause/resume conflict attempt. No personal vault or production Worker/R2 deployment was used. M1–M6 are COMPLETE in this transition; no milestone is marked NEXT, and no M7 is inferred. The roadmap transition becomes canonical when its completion PR merges.
 M2 source/tooling through `2e74b23` passed independent semantic

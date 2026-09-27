@@ -1,3 +1,8 @@
+import {
+  OAUTH_CALLBACK_ACTION,
+  READ_ONLY_OAUTH_SECRET_PREFIX,
+  ReadOnlyOAuthConnection,
+} from "@obsidian-plugin/auth/read-only-oauth-connection";
 import { MirrorOperationalCommands } from "@obsidian-plugin/commands/mirror-commands";
 import { ReconciliationCommands } from "@obsidian-plugin/commands/reconciliation-commands";
 import { MirrorConfigurationController } from "@obsidian-plugin/configuration/mirror-configuration-controller";
@@ -12,7 +17,7 @@ import {
 } from "@obsidian-plugin/runtime/mirror-wake-scheduler";
 import { acquireRuntimeMirrorCoordinator } from "@obsidian-plugin/state/runtime-mirror-coordinator";
 import { MirrorStatusUi } from "@obsidian-plugin/status/mirror-status-ui";
-import type { Plugin } from "obsidian";
+import { type Plugin, requestUrl } from "obsidian";
 
 /**
  * One plugin-instance presentation/event/timer attachment to a same-realm owner.
@@ -31,6 +36,7 @@ export class MirrorPluginSession {
     private readonly commands: MirrorOperationalCommands,
     private readonly reconciliationCommands: ReconciliationCommands,
     private readonly settings: MirrorSettingsTab,
+    private readonly oauth: ReadOnlyOAuthConnection | null,
     private readonly ui: MirrorStatusUi,
     private readonly statusBar: HTMLElement | null,
   ) {}
@@ -99,12 +105,90 @@ export class MirrorPluginSession {
       id,
     );
     reconciliationCommands.register();
+    const secretReference = `${READ_ONLY_OAUTH_SECRET_PREFIX}${acquired.coordinator.status().deviceId.replaceAll("-", "")}`;
+    const oauth =
+      typeof plugin.registerObsidianProtocolHandler === "function" &&
+      typeof plugin.app.secretStorage?.setSecret === "function"
+        ? new ReadOnlyOAuthConnection({
+            installationName: `Obsidian AI Bridge (${acquired.coordinator.status().deviceId})`,
+            request: async (url, body, contentType) => {
+              const response = await requestUrl({
+                url,
+                method: "POST",
+                body,
+                contentType,
+                throw: false,
+              });
+              return { status: response.status, text: response.text };
+            },
+            openBrowser: (url) => {
+              window.open(url, "_blank", "noopener,noreferrer");
+            },
+            saveTokens: async (accessToken, refreshToken) => {
+              plugin.app.secretStorage.setSecret(secretReference, accessToken);
+              plugin.app.secretStorage.setSecret(
+                `${secretReference}-refresh`,
+                refreshToken,
+              );
+              return true;
+            },
+            verifyRead: async (origin, accessToken) => {
+              const response = await requestUrl({
+                url: `${origin}/api/v2/notes`,
+                method: "GET",
+                headers: { Authorization: `Bearer ${accessToken}` },
+                throw: false,
+              });
+              if (response.status !== 200) return false;
+              const parsed: unknown = JSON.parse(response.text);
+              return (
+                typeof parsed === "object" &&
+                parsed !== null &&
+                "notes" in parsed &&
+                Array.isArray(parsed.notes)
+              );
+            },
+            saveConnection: async (origin) => {
+              const preferences = configuration.current();
+              if (preferences.origin !== origin) return false;
+              return configuration.save({
+                ...preferences,
+                secretReference,
+              });
+            },
+          })
+        : null;
+    if (oauth !== null) {
+      plugin.registerObsidianProtocolHandler(
+        OAUTH_CALLBACK_ACTION,
+        (params) => {
+          if (!session?.isCurrent()) return;
+          void oauth
+            .complete({
+              code: params.code,
+              state: params.state,
+              iss: params.iss,
+              error: params.error,
+            })
+            .then((result) => {
+              if (!session?.isCurrent()) return;
+              ui.showMessage(
+                result.kind === "connected"
+                  ? "Read-only client connected. Writer activation remains unavailable."
+                  : "Read-only authorization was not completed.",
+              );
+              session.refresh();
+            });
+        },
+      );
+    }
     const settings = new MirrorSettingsTab(
       plugin.app,
       plugin,
       configuration,
       acquired.coordinator,
       ui,
+      oauth,
     );
     plugin.addSettingTab(settings);
     const statusBar = createStatusBar(plugin);
@@ -122,6 +206,7 @@ export class MirrorPluginSession {
       commands,
       reconciliationCommands,
       settings,
+      oauth,
       ui,
       statusBar,
     );
@@ -159,6 +244,7 @@ export class MirrorPluginSession {
     this.commands.detach();
     this.reconciliationCommands.detach();
     this.settings.detach();
+    this.oauth?.detach();
     this.configuration.detach();
     this.ui.close();
     if (this.statusBar !== null) this.statusBar.textContent = "";

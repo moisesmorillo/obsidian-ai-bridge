@@ -1,4 +1,8 @@
 import { MIRROR_DEVICE_LIFECYCLE_KIND } from "@obsidian-ai-bridge/core";
+import {
+  isReadOnlyOAuthSecretReference,
+  type ReadOnlyOAuthConnection,
+} from "@obsidian-plugin/auth/read-only-oauth-connection";
 import type { MirrorConfigurationController } from "@obsidian-plugin/configuration/mirror-configuration-controller";
 import { validateMirrorEndpoint } from "@obsidian-plugin/configuration/mirror-endpoint";
 import type { MirrorRuntimeOwner } from "@obsidian-plugin/runtime/mirror-runtime-owner";
@@ -39,6 +43,7 @@ export class MirrorSettingsTab extends PluginSettingTab {
    * @param configuration - Strict data.json controller.
    * @param owner - Runtime operational owner.
    * @param presentation - Text-only UI hooks.
+   * @param oauth - Optional read-only browser authorization for this attachment.
    */
   constructor(
     app: App,
@@ -46,6 +51,7 @@ export class MirrorSettingsTab extends PluginSettingTab {
     private readonly configuration: MirrorConfigurationController,
     private readonly owner: MirrorRuntimeOwner,
     private readonly presentation: MirrorSettingsPresentation,
+    private readonly oauth: ReadOnlyOAuthConnection | null = null,
   ) {
     super(app, plugin);
   }
@@ -144,6 +150,46 @@ export class MirrorSettingsTab extends PluginSettingTab {
               );
             },
           },
+          ...(this.oauth === null
+            ? []
+            : [
+                {
+                  name: "Connect read-only",
+                  desc: "Authorize this installation in your browser. This does not enable a writer or mirror vault content.",
+                  render: (setting) => {
+                    setting.addButton((component) =>
+                      component.setButtonText("Connect").onClick(() => {
+                        const origin = this.configuration.current().origin;
+                        if (origin === null) {
+                          this.presentation.showMessage(
+                            "Save an HTTPS bridge endpoint first.",
+                          );
+                          return;
+                        }
+                        if (
+                          this.owner.stateOwner.snapshot().state.lifecycle
+                            .kind !== MIRROR_DEVICE_LIFECYCLE_KIND.disabled
+                        ) {
+                          this.presentation.showMessage(
+                            "Pause the mirror before connecting a new client.",
+                          );
+                          return;
+                        }
+                        void this.oauth?.start(origin).then((result) => {
+                          if (!this.attached) return;
+                          this.presentation.showMessage(
+                            result.kind === "started"
+                              ? "Complete read-only authorization in your browser."
+                              : result.kind === "busy"
+                                ? "Authorization is already in progress."
+                                : "Authorization could not be started.",
+                          );
+                        });
+                      }),
+                    );
+                  },
+                } satisfies SettingDefinitionItem,
+              ]),
         ],
       },
       {
@@ -201,7 +247,10 @@ export class MirrorSettingsTab extends PluginSettingTab {
               const active = lifecycle === MIRROR_DEVICE_LIFECYCLE_KIND.active;
               const canEnable =
                 this.wholeMirrorConsentAccepted &&
-                status.serverIdentity.kind === "matched";
+                status.serverIdentity.kind === "matched" &&
+                !isReadOnlyOAuthSecretReference(
+                  this.configuration.current().secretReference ?? "",
+                );
               setting.addToggle((component) =>
                 component
                   .setValue(active)

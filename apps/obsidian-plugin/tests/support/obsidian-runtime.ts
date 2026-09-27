@@ -1,6 +1,7 @@
 import type {
   Command,
   App as ObsidianApp,
+  ObsidianProtocolHandler,
   TFile as ObsidianTFile,
   PluginManifest,
   SettingDefinitionItem,
@@ -77,6 +78,7 @@ export const host = {
   commands: new Map<string, Command>(),
   modals: new Set<Modal>(),
   settingsTabs: new Set<PluginSettingTab>(),
+  protocolHandlers: new Map<string, ObsidianProtocolHandler>(),
   statusBars: new Set<TextElement>(),
   settingRows: [] as Setting[],
   secretComponents: [] as SecretComponent[],
@@ -231,6 +233,19 @@ export class Plugin {
     host.settingsTabs.add(tab);
     tab.update();
     this.register(() => host.settingsTabs.delete(tab));
+  }
+
+  /**
+   * Registers a native callback for this plugin attachment only.
+   * @param action - Obsidian protocol action.
+   * @param handler - Callback owned by this plugin attachment.
+   */
+  registerObsidianProtocolHandler(
+    action: string,
+    handler: ObsidianProtocolHandler,
+  ): void {
+    host.protocolHandlers.set(action, handler);
+    this.register(() => host.protocolHandlers.delete(action));
   }
 
   /**
@@ -508,6 +523,7 @@ export function resetHost(): void {
   host.commands.clear();
   host.modals.clear();
   host.settingsTabs.clear();
+  host.protocolHandlers.clear();
   host.statusBars.clear();
   host.settingRows.length = 0;
   host.secretComponents.length = 0;

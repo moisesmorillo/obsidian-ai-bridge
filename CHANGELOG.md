@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.2.1](https://github.com/moisesmorillo/obsidian-ai-bridge/compare/v1.2.0...v1.2.1) (2026-09-27)
+
+
+### Documentation
+
+* **auth:** propose client OAuth rollout design ([#74](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/74)) ([caa030b](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/caa030bc85b207504e9fa95243c22cb9cecd0aec))
+
+
+### CI
+
+* **worker:** provision OAuth KV binding safely ([#76](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/76)) ([731c9c1](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/731c9c195d45858ab7f9f7fa7281cbb3604c33a7))
+
 ## [1.2.0](https://github.com/moisesmorillo/obsidian-ai-bridge/compare/v1.1.3...v1.2.0) (2026-09-26)
 
 

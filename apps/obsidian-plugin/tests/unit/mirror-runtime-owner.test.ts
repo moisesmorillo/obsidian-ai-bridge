@@ -775,6 +775,26 @@ describe("MirrorRuntimeOwner composition", () => {
     });
   });
 
+  it("refuses writer activation with a read-only OAuth secret", async () => {
+    const fetch = vi.fn<RemoteFetch>(async () => description());
+    const runtime = owner(fetch);
+    runtime.attach({ id: "session", onChanged: vi.fn() });
+    await runtime.applyConfiguration({
+      kind: "valid",
+      preferences: {
+        ...preferences,
+        secretReference: "ai-bridge-oauth-11111111111141118111111111111111",
+      },
+    });
+    await runtime.onLayoutReady("session");
+    await expect(runtime.activate(true)).resolves.toEqual({
+      kind: "not-ready",
+    });
+    expect(runtime.stateOwner.snapshot().state.lifecycle.kind).toBe(
+      MIRROR_DEVICE_LIFECYCLE_KIND.disabled,
+    );
+  });
+
   it("publishes sanitized association/designation status and refuses mismatch", async () => {
     const runtime = owner(
       vi.fn<RemoteFetch>(async () => description(OTHER_DEVICE_ID)),

@@ -30,6 +30,144 @@ afterEach(() => {
 });
 
 describe("MirrorSettingsTab", () => {
+  it("requires a saved endpoint before starting read-only authorization", async () => {
+    const plugin = await loadPluginReady();
+    const tab = [...host.settingsTabs][0];
+    if (tab === undefined) throw new Error("Expected settings tab.");
+    const connect = findDefinition(tab.settingItems, "Connect read-only");
+    if (connect.render === undefined)
+      throw new Error("Expected connection button.");
+    const row = new Setting();
+    Reflect.apply(connect.render, undefined, [row, {}]);
+    row.buttons[0]?.click?.();
+    expect(host.notices.at(-1)?.message).toBe(
+      "Save an HTTPS bridge endpoint first.",
+    );
+    expect(host.requestUrl).not.toHaveBeenCalled();
+    plugin.unload();
+  });
+
+  it("keeps configuration unpublished when the issued token cannot read notes", async () => {
+    host.loadData.mockResolvedValue(
+      encodeMirrorPreferences({
+        origin: "https://bridge.example",
+        loopbackHttpOrigin: null,
+        secretReference: null,
+      }),
+    );
+    const open = vi.fn();
+    vi.stubGlobal("window", { open });
+    host.requestUrl.mockImplementation(async ({ url }) => {
+      if (url.endsWith("/oauth/register"))
+        return { status: 201, text: JSON.stringify({ client_id: "client-1" }) };
+      if (url.endsWith("/oauth/token"))
+        return {
+          status: 200,
+          text: JSON.stringify({
+            access_token: "private-access-token",
+            refresh_token: "private-refresh-token",
+            token_type: "bearer",
+            expires_in: 3600,
+            scope: "read",
+            resource: "https://bridge.example/api/v2",
+          }),
+        };
+      return { status: 401, text: "" };
+    });
+    const plugin = await loadPluginReady();
+    const tab = [...host.settingsTabs][0];
+    if (tab === undefined) throw new Error("Expected settings tab.");
+    const connect = findDefinition(tab.settingItems, "Connect read-only");
+    if (connect.render === undefined)
+      throw new Error("Expected connection button.");
+    const row = new Setting();
+    Reflect.apply(connect.render, undefined, [row, {}]);
+    row.buttons[0]?.click?.();
+    await vi.waitFor(() => expect(open).toHaveBeenCalledOnce());
+    const authorization = new URL(open.mock.calls[0]?.[0]);
+    host.protocolHandlers.get("ai-bridge-oauth")?.({
+      action: "ai-bridge-oauth",
+      code: "code",
+      state: authorization.searchParams.get("state") ?? "",
+      iss: "https://bridge.example",
+    });
+    await vi.waitFor(() =>
+      expect(host.notices.at(-1)?.message).toBe(
+        "Read-only authorization was not completed.",
+      ),
+    );
+    expect(host.saveData).not.toHaveBeenCalled();
+    expect(host.secrets.size).toBe(0);
+    plugin.unload();
+  });
+
+  it("connects a read-only client through Obsidian without exposing tokens in plugin data", async () => {
+    host.loadData.mockResolvedValue(
+      encodeMirrorPreferences({
+        origin: "https://bridge.example",
+        loopbackHttpOrigin: null,
+        secretReference: null,
+      }),
+    );
+    const open = vi.fn();
+    vi.stubGlobal("window", { open });
+    host.requestUrl.mockImplementation(async ({ url, headers }) => {
+      if (url.endsWith("/oauth/register"))
+        return { status: 201, text: JSON.stringify({ client_id: "client-1" }) };
+      if (url.endsWith("/oauth/token"))
+        return {
+          status: 200,
+          text: JSON.stringify({
+            access_token: "private-access-token",
+            refresh_token: "private-refresh-token",
+            token_type: "bearer",
+            expires_in: 3600,
+            scope: "read",
+            resource: "https://bridge.example/api/v2",
+          }),
+        };
+      expect(url).toBe("https://bridge.example/api/v2/notes");
+      expect(headers).toEqual({ Authorization: "Bearer private-access-token" });
+      return {
+        status: 200,
+        text: JSON.stringify({ notes: [], nextCursor: null }),
+      };
+    });
+
+    const plugin = await loadPluginReady();
+    const tab = [...host.settingsTabs][0];
+    if (tab === undefined) throw new Error("Expected settings tab.");
+    const connect = findDefinition(tab.settingItems, "Connect read-only");
+    if (connect.render === undefined)
+      throw new Error("Expected connection button.");
+    const row = new Setting();
+    Reflect.apply(connect.render, undefined, [row, {}]);
+    row.buttons[0]?.click?.();
+    await vi.waitFor(() => expect(open).toHaveBeenCalledOnce());
+    const authorization = new URL(open.mock.calls[0]?.[0]);
+    expect(authorization.searchParams.get("scope")).toBe("read");
+    expect(authorization.searchParams.get("redirect_uri")).toBe(
+      "obsidian://ai-bridge-oauth",
+    );
+    const callback = host.protocolHandlers.get("ai-bridge-oauth");
+    if (callback === undefined) throw new Error("Expected OAuth callback.");
+    callback({
+      action: "ai-bridge-oauth",
+      code: "one-use-code",
+      state: authorization.searchParams.get("state") ?? "",
+      iss: "https://bridge.example",
+    });
+    await vi.waitFor(() => expect(host.saveData).toHaveBeenCalledOnce());
+    const stored = JSON.stringify(host.saveData.mock.calls[0]?.[0]);
+    expect(stored).toContain("ai-bridge-oauth-");
+    expect(stored).not.toContain("private-access-token");
+    expect(stored).not.toContain("private-refresh-token");
+    expect([...host.secrets.values()]).toContain("private-access-token");
+    expect([...host.secrets.values()]).toContain("private-refresh-token");
+    plugin.unload();
+    expect(host.protocolHandlers.size).toBe(0);
+  });
+
   it("uses modern declarative rows for atomic endpoint consent and native secret references", async () => {
     const plugin = await loadPluginReady();
     const tab = [...host.settingsTabs][0];

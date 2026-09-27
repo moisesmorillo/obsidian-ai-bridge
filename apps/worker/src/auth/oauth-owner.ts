@@ -63,7 +63,7 @@ export async function handleOAuthOwnerRequest(
       consent.headers.set("Cache-Control", NO_STORE);
       consent.headers.set(
         "Content-Security-Policy",
-        "default-src 'none'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
+        `default-src 'none'; form-action 'self' ${new URL(authRequest.redirectUri).origin}; base-uri 'none'; frame-ancestors 'none'`,
       );
       return new Response(consentPage(client, authRequest, consent.handle), {
         headers: consent.headers,

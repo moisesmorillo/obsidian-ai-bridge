@@ -1,5 +1,6 @@
 import type { MirrorOrigin } from "@obsidian-ai-bridge/core";
 import {
+  formatOAuthInstallationName,
   OAUTH_CALLBACK_URI,
   ReadOnlyOAuthConnection,
   type ReadOnlyOAuthHost,
@@ -58,6 +59,11 @@ async function start(fixtureValue: ReturnType<typeof fixture>) {
 }
 
 describe("read-only OAuth connection", () => {
+  it("formats a client name accepted by the Worker", () => {
+    expect(
+      formatOAuthInstallationName("e00eea10-f113-4a75-bd33-ca9e729466e3"),
+    ).toBe("Obsidian AI Bridge e00eea10-f113-4a75-bd33-ca9e729466e3");
+  });
   it("registers an untrusted native client and uses a fresh S256 challenge", async () => {
     const value = fixture();
     const { connection, authorization } = await start(value);

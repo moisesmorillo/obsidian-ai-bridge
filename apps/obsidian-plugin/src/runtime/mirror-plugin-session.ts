@@ -1,4 +1,5 @@
 import {
+  formatOAuthInstallationName,
   OAUTH_CALLBACK_ACTION,
   READ_ONLY_OAUTH_SECRET_PREFIX,
   ReadOnlyOAuthConnection,
@@ -110,7 +111,9 @@ export class MirrorPluginSession {
       typeof plugin.registerObsidianProtocolHandler === "function" &&
       typeof plugin.app.secretStorage?.setSecret === "function"
         ? new ReadOnlyOAuthConnection({
-            installationName: `Obsidian AI Bridge (${acquired.coordinator.status().deviceId})`,
+            installationName: formatOAuthInstallationName(
+              acquired.coordinator.status().deviceId,
+            ),
             request: async (url, body, contentType) => {
               const response = await requestUrl({
                 url,

@@ -7,6 +7,14 @@ export const OAUTH_CALLBACK_URI = "obsidian://ai-bridge-oauth";
 export const OAUTH_CALLBACK_ACTION = "ai-bridge-oauth";
 /** Prefix reserved for OAuth grants with read permission only. */
 export const READ_ONLY_OAUTH_SECRET_PREFIX = "ai-bridge-oauth-";
+
+/**
+ * @param deviceId - This installation's generated device identifier.
+ * @returns A per-device display name compatible with Worker credential names.
+ */
+export function formatOAuthInstallationName(deviceId: string): string {
+  return `Obsidian AI Bridge ${deviceId}`;
+}
 const MAX_RESPONSE_LENGTH = 16 * 1024;
 const AUTHORIZATION_LIFETIME_MILLISECONDS = 10 * 60 * 1000;
 const REST_RESOURCE_PATH = "/api/v2";

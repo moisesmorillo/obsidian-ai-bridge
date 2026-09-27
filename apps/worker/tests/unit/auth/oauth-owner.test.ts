@@ -139,6 +139,9 @@ describe("owner authorization", () => {
     expect(body).toContain('value="read"');
     expect(body).toContain('value="write"');
     expect(response.headers.get("Cache-Control")).toBe("no-store");
+    expect(response.headers.get("Content-Security-Policy")).toContain(
+      "form-action 'self' http://127.0.0.1:1234",
+    );
   });
 
   it("issues one independently revocable grant limited to selected permissions", async () => {

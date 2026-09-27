@@ -95,6 +95,10 @@ subsequent public denial or audience tests fail. Never roll back the R2 markers
 or restore old grant state after a revocation. Do not install the personal-vault
 plugin on the strength of this source change alone.
 
+The consent page permits form navigation only to the bridge and the provider-validated
+client redirect origin. Browser denial and approval redirects must reach that origin;
+the callback client may still be offline during a synthetic test.
+
 ## Operating model and trust boundary
 
 - iCloud remains the working-vault device sync. AI Bridge observes official Obsidian

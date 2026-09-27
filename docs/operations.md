@@ -82,13 +82,18 @@ personal vault. Confirm every deployed version and preserve the prior version fo
 rollback. Worker version rollback changes code only; it
 does not undo R2 writes, credential changes, or client-local state.
 
-The post-M6 OAuth validation slice adds a canonical `OAUTH_ISSUER` deployment
-variable and uses the existing `OAUTH_KV` and `VAULT_BUCKET` bindings. It does
-not enable owner consent, OAuth token issuance, or public OAuth discovery.
-Cloudflare Access remains a whole-host gate. M5 registry clients keep their
-existing route permissions; no OAuth client can be connected through this slice.
-Do not install the personal-vault plugin on the strength of this validation
-slice alone.
+The post-M6 authorization source uses canonical `OAUTH_ISSUER`, `OAUTH_KV`, and
+`VAULT_BUCKET`. Access-protected `/authorize` presents the client's identity,
+redirect destination, resource, and requested permissions before a named grant is
+issued. `/auth/grants` lists an owner's grants and writes a permanent private R2
+denial marker before provider revocation. The Worker also dispatches the provider's
+discovery, registration, and token routes. Cloudflare Access remains a whole-host
+gate, so external OAuth clients cannot yet complete the flow. M5 registry clients
+keep their existing route permissions. Qualify the owner flow with synthetic
+clients before narrowing Access paths; restore the whole-host Access gate if
+subsequent public denial or audience tests fail. Never roll back the R2 markers
+or restore old grant state after a revocation. Do not install the personal-vault
+plugin on the strength of this source change alone.
 
 ## Operating model and trust boundary
 

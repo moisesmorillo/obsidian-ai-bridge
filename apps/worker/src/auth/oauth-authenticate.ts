@@ -16,12 +16,12 @@ import type {
   GrantRevocationStatus,
 } from "@worker/auth/grant-revocation.types";
 import { parseGrantRevocationId } from "@worker/auth/grant-revocation-id";
-import { API_V2_PREFIX, HTTP_HEADER } from "@worker/http/http.constants";
+import { type API_V2_PREFIX, HTTP_HEADER } from "@worker/http/http.constants";
 import {
   type GrantRevocationBucketPort,
   R2GrantRevocationRepository,
 } from "@worker/infrastructure/r2-grant-revocation.repository";
-import { MCP_ENDPOINT_PATH } from "@worker/mcp/mcp.constants";
+import type { MCP_ENDPOINT_PATH } from "@worker/mcp/mcp.constants";
 import { z } from "zod";
 
 /** Canonical protected-resource paths; tokens issued for one cannot access the other. */
@@ -56,7 +56,7 @@ export interface OAuthGrantRevocationChecker {
   check(id: GrantRevocationId): Promise<GrantRevocationStatus>;
 }
 
-/** Strict grant props created only by the future owner consent flow. */
+/** Strict grant props created by the Access-protected owner consent flow. */
 const oauthGrantPropsSchema = z
   .object({
     principalId: z.string().refine(isUuidV4),
@@ -147,8 +147,7 @@ export async function authenticateOAuthBearer(
 /**
  * Authenticates an OAuth bearer only when the deployment has a canonical issuer.
  *
- * The current release does not serve provider endpoints or issue grants. Only a
- * previously issued, resource-bound token with an active revocation marker can
+ * Only a previously issued, resource-bound token with an active revocation marker can
  * reach the established REST/MCP permission policies.
  *
  * @param headers - Original request headers containing an optional Bearer token.
@@ -176,21 +175,8 @@ export async function authenticateOAuthRequest(
   }
 
   try {
-    const { OAuthAuthorizationServer } = await import(
-      "@cloudflare/workers-oauth-provider"
-    );
-    const server = new OAuthAuthorizationServer<OAuthAuthenticationEnvironment>(
-      {
-        issuer,
-        resources: [
-          `${issuer}${API_V2_PREFIX}`,
-          `${issuer}${MCP_ENDPOINT_PATH}`,
-        ],
-        authorizeEndpoint: "/authorize",
-        tokenEndpoint: "/oauth/token",
-        scopesSupported: Object.values(CLIENT_PERMISSION),
-      },
-    );
+    const { createOAuthServer } = await import("@worker/auth/oauth-server");
+    const server = createOAuthServer<OAuthAuthenticationEnvironment>(issuer);
     const revocations = new R2GrantRevocationRepository(
       environment.VAULT_BUCKET,
     );
@@ -207,10 +193,12 @@ export async function authenticateOAuthRequest(
 }
 
 /**
- * @param value - Untrusted deployment issuer configuration.
- * @returns True only for a canonical HTTPS origin without path or credentials.
+ * @param value - Untrusted issuer deployment configuration.
+ * @returns True only for a canonical HTTPS issuer origin.
  */
-function isCanonicalHttpsOrigin(value: string | undefined): value is string {
+export function isCanonicalHttpsOrigin(
+  value: string | undefined,
+): value is string {
   if (value === undefined) return false;
   try {
     const url = new URL(value);

@@ -1,7 +1,7 @@
 # Project roadmap
 
 The post-M6 [client authorization design note](plans/client-scoped-authorization.md)
-records requirements to review before connecting a vault. [Proposed ADR 0015](decisions/0015-browser-mediated-client-authorization.md)
+records requirements to review before connecting a vault. [Accepted ADR 0015](decisions/0015-browser-mediated-client-authorization.md)
 describes the staged OAuth and revocation design for that rollout. Neither
 document defines M7 or marks a milestone `NEXT`.
 

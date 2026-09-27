@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.3.0](https://github.com/moisesmorillo/obsidian-ai-bridge/compare/v1.2.1...v1.3.0) (2026-09-27)
+
+
+### Features
+
+* **auth:** add durable grant revocation fence ([#77](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/77)) ([1c7917d](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/1c7917d91fb2bbbd685f0a8f26f91b6692811ec7))
+* **auth:** add owner consent and revocable OAuth grants ([#80](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/80)) ([3b4cfd0](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/3b4cfd079c8c39661c5d5842e3eec10e8b66819c))
+* **auth:** validate resource-bound OAuth bearers ([#79](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/79)) ([c3831b2](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/c3831b2f3220fa65ae75e3c5fbb55b8c1faf58c8))
+
 ## [1.2.1](https://github.com/moisesmorillo/obsidian-ai-bridge/compare/v1.2.0...v1.2.1) (2026-09-27)
 
 

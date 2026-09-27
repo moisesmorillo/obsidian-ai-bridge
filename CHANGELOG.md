@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.1](https://github.com/moisesmorillo/obsidian-ai-bridge/compare/v1.3.0...v1.3.1) (2026-09-27)
+
+
+### Bug Fixes
+
+* **auth:** permit validated OAuth redirect in consent CSP ([#81](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/81)) ([15a0800](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/15a0800d1d17daac2789c94458c46fdd8a8d6c63))
+
 ## [1.3.0](https://github.com/moisesmorillo/obsidian-ai-bridge/compare/v1.2.1...v1.3.0) (2026-09-27)
 
 

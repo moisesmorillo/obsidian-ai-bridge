@@ -4,6 +4,11 @@ import {
   resolveAccessSession,
 } from "@worker/auth/access-session";
 import type { AuthenticationConfiguration } from "@worker/auth/auth.types";
+import { isCanonicalHttpsOrigin } from "@worker/auth/oauth-authenticate";
+import {
+  isOAuthProtocolPath,
+  OAUTH_ROUTE_PATH,
+} from "@worker/auth/oauth-routes";
 import { resolveWorkerMirrorServices } from "@worker/composition";
 import type {
   WorkerAuthenticationEnvironment,
@@ -42,8 +47,13 @@ export function resolveWorkerAuthentication(
 
 /** Cloudflare entrypoint preserving the existing API while checking Access on one exact route. */
 export default {
-  fetch(request: Request, environment: WorkerEnv, context: ExecutionContext) {
-    if (new URL(request.url).pathname === ACCESS_SESSION_PATH) {
+  async fetch(
+    request: Request,
+    environment: WorkerEnv,
+    context: ExecutionContext,
+  ) {
+    const path = new URL(request.url).pathname;
+    if (path === ACCESS_SESSION_PATH) {
       if (request.method !== "GET") {
         return new Response(null, {
           status: 404,
@@ -51,6 +61,26 @@ export default {
         });
       }
       return resolveAccessSession(context?.access);
+    }
+    if (
+      path === OAUTH_ROUTE_PATH.authorize ||
+      path === OAUTH_ROUTE_PATH.grants
+    ) {
+      const { handleOAuthOwnerRequest } = await import(
+        "@worker/auth/oauth-owner"
+      );
+      return handleOAuthOwnerRequest(request, environment, context?.access);
+    }
+    if (isOAuthProtocolPath(path)) {
+      const issuer = environment.OAUTH_ISSUER;
+      if (!isCanonicalHttpsOrigin(issuer))
+        return new Response(null, { status: 503 });
+      const { createOAuthServer } = await import("@worker/auth/oauth-server");
+      return createOAuthServer<WorkerEnv>(issuer).fetch(
+        request,
+        environment,
+        context,
+      );
     }
     return worker.fetch(request, environment, context);
   },

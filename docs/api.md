@@ -9,6 +9,23 @@ methods return `404`. Responses use `Cache-Control: no-store` and disclose no
 identity fields. This check does not issue a client credential, grant API/MCP
 permissions, or change the existing bearer authorization policy.
 
+## Owner OAuth routes (staged rollout)
+
+`GET /authorize` validates a resource-bound OAuth authorization request and
+shows Access-authenticated owner consent. `POST /authorize` requires the same
+origin, a browser-bound one-time consent handle, a client name, and a nonempty
+subset of requested `read`, `write`, or `delete` scopes. Denial returns the
+provider's OAuth error redirect. Approval creates an independently revocable
+grant; consent never automatically grants API access to an Access session.
+
+`GET /auth/grants` lists one page of the signed-in owner's named grants;
+`POST /auth/grants` revokes one grant from that page, writing its R2 denial
+marker before provider revocation. Both owner routes require verified Access
+identity and return uncached responses. The provider serves its standard
+metadata, registration, and token endpoints, but the whole-host Access gate
+still prevents an external OAuth client from completing the flow. Public
+discovery and MCP OAuth compatibility are not yet qualified.
+
 The Worker exposes an experimental authenticated personal-mirror API. M5's limited
 software-support window is for release v1.0.2 on the exact profile in the [operator
 guide](operations.md#current-m5-qualification-and-support); no production Worker/R2
@@ -21,7 +38,7 @@ require:
 Authorization: Bearer <token>
 ```
 
-Missing, malformed, incorrect, or invalidly configured credentials return the same sanitized `401 unauthorized` with `WWW-Authenticate: Bearer`. The active version-1 registry is the only authentication authority, accepts at most 16 named clients, and stores only canonical domain-separated SHA-256 digests. Successful authentication resolves a secret-free principal containing client ID, name, and the exact configured `read`/`write`/`delete` set. One exhaustive operation policy enforces the required independent permission before service/storage dispatch. An authenticated client without it receives sanitized `403`; the response does not expose the principal's permission set or registry metadata. Mirror association/writer IDs and application preconditions remain separate later guards. API content, JSON, and errors use `Cache-Control: no-store`; principals, tokens, and digests are not returned.
+Missing, malformed, incorrect, or invalidly configured credentials return the same sanitized `401 unauthorized` with `WWW-Authenticate: Bearer`. The active version-1 registry accepts at most 16 named clients and stores only canonical domain-separated SHA-256 digests. The staged OAuth path accepts only provider-validated tokens for the exact REST or MCP resource, intersects token scopes with the stored grant permissions, and checks its R2 revocation marker before resolving the same secret-free principal. One exhaustive operation policy enforces the required independent permission before service/storage dispatch. An authenticated client without it receives sanitized `403`; the response does not expose the principal's permission set or registry metadata. Mirror association/writer IDs and application preconditions remain separate later guards. API content, JSON, and errors use `Cache-Control: no-store`; principals, tokens, and digests are not returned.
 
 The `:path` segment is canonical unpadded base64url of a validated literal lowercase-`.md` NotePath. For example, `Homelab/DNS/Technitium.md` is `SG9tZWxhYi9ETlMvVGVjaG5pdGl1bS5tZA`. Paths are not URI-decoded or repaired. Traversal, absolute paths, backslashes, empty/dot segments, invalid UTF-8 identifiers, and noncanonical encodings are rejected.
 
@@ -107,12 +124,12 @@ State/recovery item routes advertise GET only, maintenance routes POST only, and
 
 The Worker exposes an authenticated, stateless MCP Streamable HTTP endpoint at
 `POST /mcp`, using protocol revision `2026-07-28`. Every POST independently uses the
-same M5 `Authorization: Bearer <token>` registry authentication and typed principal
-as the HTTP API. This is an application-level bearer overlay, not MCP OAuth: M5
-credentials are not OAuth access tokens or audience-bound, so the endpoint does not
-publish Protected Resource Metadata or claim full MCP authorization-profile
-conformance. Clients must support a preconfigured bearer header; OAuth-discovery-only
-clients are unsupported.
+same `Authorization: Bearer <token>` principal and permission policy as the HTTP
+API. M5 registry credentials remain an application-level bearer overlay, not OAuth
+tokens. The staged OAuth path additionally validates audience-bound provider tokens
+for the MCP resource. Provider metadata is implemented but remains behind the
+whole-host Access gate; external OAuth-discovery-only clients cannot yet complete
+the flow, and MCP OAuth authorization conformance is not claimed.
 
 Only POST is accepted; GET and DELETE are not session/stream endpoints, and the
 legacy initialize-era protocol is rejected. The endpoint is stateless, issues no MCP

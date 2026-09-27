@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.4.0](https://github.com/moisesmorillo/obsidian-ai-bridge/compare/v1.3.1...v1.4.0) (2026-09-27)
+
+
+### Features
+
+* **plugin:** add read-only OAuth connection ([#83](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/83)) ([bd70b9f](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/bd70b9f3cf683a4924d8e8727367b8130436f443))
+
 ## [1.3.1](https://github.com/moisesmorillo/obsidian-ai-bridge/compare/v1.3.0...v1.3.1) (2026-09-27)
 
 

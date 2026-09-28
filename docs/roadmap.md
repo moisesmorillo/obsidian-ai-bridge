@@ -38,7 +38,10 @@ iPad local vault ──┘                        |
   implemented facts until a separately qualified change supersedes them.
 - Each device has its own revocable grant. Per-path versions and conditional
   mutations preserve concurrent changes for review; initial absence cannot
-  delete remote content. MCP uses the same version domain and permission checks.
+  delete remote content. Authorized REST/MCP revisions auto-apply to a device
+  only when its local state, including acknowledged absence, matches the exact
+  acknowledged base and all preconditions pass; conflicts and unknown effects
+  require review.
 - R2 initially owns shared sync state, but is **not an independent backup**.
   The Worker/operator remain trusted with plaintext. A storage port keeps R2
   details out of the protocol so a future NAS backend can be qualified against
@@ -376,11 +379,14 @@ No M7 is currently defined; any future roadmap work requires an explicit roadmap
 update rather than an inferred follow-on.
 
 The proposed bidirectional sync direction has unresolved decisions before any
-personal-vault cutover: MCP-origin application policy, vault namespace and old
-object migration, path equivalence across devices, supported file limits and
-configuration categories, plus independent backup retention. The [proposal
+personal-vault cutover: vault namespace and old object migration, path
+equivalence across devices, supported file limits and configuration
+categories, plus independent backup retention. The [proposal
 plan](plans/bidirectional-vault-sync-rollout.md#decisions-to-close-before-personal-vault-cutover)
-tracks their evidence. These choices do not reopen completed M1–M6 milestones.
+tracks their evidence. The owner selected automatic application for authorized
+REST/MCP revisions under exact-base safety; this proposed policy does not
+change current M4 reviewed effects. These choices do not reopen completed
+M1–M6 milestones.
 
 Technical implementation and qualification must satisfy the specifications; milestone
 order never permits weakening accepted data-loss/security prerequisites. Keep a

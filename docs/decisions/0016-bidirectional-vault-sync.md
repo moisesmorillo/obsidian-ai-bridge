@@ -61,9 +61,10 @@ existing 1 MiB Markdown-only qualification is not a whole-vault claim.
   parallel revision domain. Each device durably remembers the exact remote
   version it acknowledged and any unresolved local or remote effect.
 - Synchronization classifies local, acknowledged base, and remote versions.
-  Unchanged local content can receive a remote change; unchanged remote content
-  can receive a local change. Concurrently changed content, delete/edit races,
-  ambiguous effects, and invalid state preserve both sides and require review.
+  Unchanged local state, including acknowledged absence, can receive a remote change;
+  unchanged remote content can receive a local change. Concurrently changed
+  content, delete/edit races, ambiguous effects, and invalid state preserve
+  both sides and require review.
   Initial behavior creates a conflict copy rather than guessing a text merge.
 - A mutation uses create-only or compare-and-swap against the exact observed
   remote version. A failed condition stops the operation; it never retries
@@ -72,20 +73,26 @@ existing 1 MiB Markdown-only qualification is not a whole-vault claim.
   the local bytes and create a review item. No timestamp is an authority token.
 - An empty new vault is a download target, not evidence of remote deletion.
   Startup absence, an incomplete scan, a stopped app, or an observation gap
-  cannot authorize deletion. A deletion requires an acknowledged path and a
-  captured post-enrollment Vault delete event, with a matching remote
-  precondition. The event alone does not prove human intent. Tombstones prevent
-  stale devices from recreating deleted files. An external deletion while
-  Obsidian is closed has no captured event: leave the remote version intact,
-  show the missing local path for review, and require explicit confirmation
-  before a remote tombstone. Recovery must not silently erase the remote copy.
-- Remote MCP changes are ordinary remote revisions. They reach devices through
-  the same pull/reconcile path. API and MCP must not bypass revision checks or
-  write a separate namespace that the sync engine cannot observe. Record the
-  mutation origin so clients can display it and support review. Whether authorized MCP
-  changes auto-apply locally or enter a review queue is an explicit product
-  decision before enabling that path; neither behavior is implied by an OAuth
-  `write` grant alone.
+  cannot authorize deletion. A locally originated remote deletion requires an
+  acknowledged path and a captured post-enrollment Vault delete event, with a
+  matching remote precondition. The event alone does not prove human intent.
+  An incoming authorized remote tombstone may delete a local copy only when it
+  still matches the exact acknowledged base and recovery is preserved.
+  Tombstones prevent stale devices from recreating deleted files. An external
+  deletion while Obsidian is closed has no captured event: leave the remote
+  version intact, show the missing local path for review, and require explicit
+  confirmation before a remote tombstone. Recovery must not silently erase the
+  remote copy.
+- Authorized REST/MCP changes are ordinary remote revisions. They reach
+  devices through the same pull/reconcile path and auto-apply while the local
+  state, including acknowledged absence, still matches the exact acknowledged base
+  and every remote revision and local precondition passes. Concurrent changes
+  or unknown effects preserve both sides and require review. Record and display
+  mutation origin. Note text never supplies instructions or authority to the
+  synchronizer. API and MCP
+  must not bypass revision checks or write a separate namespace that the sync
+  engine cannot observe. This is proposed future behavior, not current M4
+  remote-to-local authority.
 - Path identity must be portable across the supported hosts. The proposed
   comparison key is per-segment NFC normalization plus Unicode case folding,
   while preserving original file bytes and display names. Enrollment detects
@@ -133,7 +140,8 @@ reviewed-only remote-to-local rule must be superseded by a versioned protocol;
 historical ADRs remain accurate for the implemented releases. The Worker and
 plugin need coordinated migration, but old clients must fail closed during the
 transition. Whole-vault scope and mobile qualification make this substantially
-larger than automatic multiwriter admission. [The rollout plan](../plans/bidirectional-vault-sync-rollout.md)
+larger than merely admitting more writers to the existing outward mirror.
+[The rollout plan](../plans/bidirectional-vault-sync-rollout.md)
 defines independently reviewable slices and the cutover evidence.
 
 ## Rejected shortcuts

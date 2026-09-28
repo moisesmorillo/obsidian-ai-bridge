@@ -67,7 +67,7 @@ excluded category must be visible to the user.
 | Maximum file size and transfer method | Support the measured vault, with bounded transfers and no whole-file mobile memory assumption | Read-only vault inventory and real iPhone/iPad transfer tests |
 | Configuration categories | Opt into portable Obsidian settings; keep secrets, device layout, plugin binaries, and bridge state local | User review of actual configuration and desktop/mobile replay |
 | Conflict behavior | Preserve both versions and require review; no automatic Markdown merge initially | Two-device and MCP conflict exercises |
-| MCP-origin changes | Choose automatic local application for authorized agents or a review queue; show origin either way | Threat-model review, owner decision, and tests for the selected policy |
+| REST/MCP-origin changes | Auto-apply authorized remote revisions only when local state, including acknowledged absence, matches the exact acknowledged base and all preconditions pass; preserve both sides for review on conflict or unknown effect, and display origin | Clean create/update/recoverable-delete replay, concurrent local edit, stale revision, unknown effect, and hostile note-content tests |
 | Vault namespace | Choose one vault per bucket or immutable vault-ID prefixes; keep existing `vault/<path>` objects safe | Bucket inventory, v2 REST/MCP transition and rollback drill |
 | Path equivalence | Propose NFC-normalized, Unicode-case-folded per-segment comparison and reject aliases without changing file bytes | macOS/iPhone/iPad case and normalization matrix, enrollment collision preview |
 | Backup retention and location | Independent versioned copy outside the active R2 authority | Restore drill, including tombstones and control metadata |
@@ -89,21 +89,18 @@ behavior they verify. No slice alone enables the personal vault.
 
 Accept or revise ADR 0016 and the roadmap target. Preserve M1–M6 history and
 the current live deployment claim. Specify file scope, platform support, trust
-model, conflict policy, backup requirement, MCP-origin policy, and the
-difference between R2 authority and a complete backup. Revise this plan and
-ADR before any code PR. Update the [threat model](../threat-model.md) for mobile
-write/delete grants, MCP-origin local effects, path/delete/rename hazards,
+model, conflict policy, backup requirement, the selected REST/MCP-origin
+auto-application policy, and the difference between R2 authority and a complete
+backup. Revise this plan and ADR before any code PR. Update the
+[threat model](../threat-model.md) for mobile write/delete grants, REST/MCP-origin
+local effects, path/delete/rename hazards,
 incremental-feed failure, and R2 as authority.
 
 **Exit:** one reviewable contract and explicit threat/owner decisions; no M7
 invented and no writer enabled.
 
-This design-only change may still be included in a Release Please release PR;
-a published stable release triggers the plugin-asset workflow even if plugin
-behavior is unchanged. The `hidden` setting for a changelog section controls
-display, not a verified release-suppression rule. Review the actual release
-automation result before publishing; do not alter release identity gates to
-work around a documentation-only version bump.
+Before publishing a release from this design-only change, follow the
+[release-process guidance](../operations.md#release-please-and-documentation-only-changes).
 
 ### 1. Versioned sync protocol and storage port
 
@@ -122,11 +119,18 @@ define cursor ordering, expiry, gap detection, and snapshot consistency.
 Complete scans recover from a missing, expired, or ambiguous cursor, but are
 not the normal mobile poll path. Set request/byte/time limits from a measured
 vault and qualify the recovery scan on supported devices.
+Remote rename is a durable destination-first operation: conditionally create
+the destination and persist its evidence before conditionally tombstoning the
+source. A crash between those steps may leave two visible copies, never a
+missing sole copy; recovery checks both exact revisions and asks for review if
+either changed. Repeated replay must not duplicate the destination or erase an
+independently edited source.
 
 **Exit:** two callers racing on the same version cannot both commit; a failed
 head/history operation leaves recoverable evidence; old clients cannot fork
 the data. Incremental replay and full-scan recovery converge on the same
-version graph. Storage failures cannot turn into empty-success responses.
+version graph. Interrupted rename leaves two copies, never zero. Storage
+failures cannot turn into empty-success responses.
 
 ### 2. Pure three-way reconciliation engine
 
@@ -146,10 +150,18 @@ visible conflict copy and review queue; automatic text merging is a later
 optional feature, never a requirement for first cutover. Reuse M4 preservation
 and receipt concepts where they fit without weakening their evidence rules.
 
-**Exit:** deterministic state-matrix tests cover offline edits, MCP edits,
-stale revisions, reinstalls, interruption between persistence and remote
-effect, deletion/recreation, closed-app external deletion, path aliases, and
-repeat replay without duplication or loss.
+Authorized REST/MCP-origin create, update, and recoverable delete revisions
+auto-apply only when the local state, including acknowledged absence, still matches
+the exact acknowledged base and remote and local preconditions pass. Show the
+origin; a concurrent local edit, stale revision, or unknown effect preserves
+both sides for review. Note content never becomes a command or an authority
+signal.
+
+**Exit:** deterministic state-matrix tests cover clean REST/MCP auto-application,
+REST/MCP conflict review, offline edits, stale revisions, reinstalls,
+interruption between persistence and remote effect, deletion/recreation,
+closed-app external deletion, path aliases, and repeat replay without
+duplication or loss.
 
 ### 3. Safe Obsidian local effects and whole-vault files
 
@@ -161,12 +173,8 @@ binary transfer and bounded/streamed file handling where host capabilities
 permit it. Resolve configuration categories separately from note data, with
 per-device defaults and secret/state exclusions. Keep user-visible recovery
 copies out of automatic re-publication unless explicitly accepted.
-Rename is a durable destination-first operation: conditionally create the
-destination and persist its evidence before conditionally tombstoning the
-source. A crash between those steps may leave two visible copies, never a
-missing sole copy; recovery checks both exact revisions and asks for review if
-either changed. A repeated replay must not duplicate the destination or erase
-an independently edited source.
+Local rename effects consume the destination-first remote protocol receipts
+defined in stage 1 and verify exact local evidence before and after mutation.
 
 **Exit:** a disposable desktop vault round-trips Markdown, Canvas, and target
 attachment types by hash; settings do not leak secrets; crashes and restarts
@@ -197,7 +205,9 @@ device without disabling others; its queued writes fail closed on reconnect.
 
 Exercise the deployed Worker/R2 with synthetic data: multi-device races,
 conditional failures, partial transfers, expired credentials, revoked grants,
-MCP mutations, recovery history, tombstones, restore, and old-client denial.
+REST/MCP clean auto-application and conflict preservation, hostile note text,
+recovery history, tombstones, restore, and old-client denial.
+
 Document private bucket access and the plaintext Worker/operator trust
 boundary. Implement an independent backup and prove a restore into an isolated
 environment, including content, versions, tombstones, vault identity, and

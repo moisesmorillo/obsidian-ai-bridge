@@ -125,7 +125,15 @@ existing 1 MiB Markdown-only qualification is not a whole-vault claim.
   request, byte, and time budgets. The R2 implementation is an adapter inside
   the Worker; R2 keys, conditional headers, and ETags do not enter plugin state
   or the public sync protocol. A full scan remains a correctness fallback if an
-  incremental change cursor is missing, expired, or ambiguous.
+  incremental change cursor is missing, expired, or ambiguous. The bounded M7
+  foundation specifies fair round-robin feed pages, cursor-driven R2 inventory
+  with revision/tombstone evidence read from validated head bodies, and typed
+  failure when the listing budget expires before `truncated` becomes false. Repeated
+  writes to mutable same-key objects, including lane heads, preserve exact CAS and
+  observe R2's write rate limit; throttled or uncertain effects remain resumable but
+  blocked rather than reported as successful mutations. These storage requirements do
+  not accept the broader bidirectional product destination or authorize a client
+  cutover.
 - The current `vault/<path>` objects and v2 REST/MCP view belong to the
   existing mirror contract. Before adopting any object, choose and document
   whether one bucket contains exactly one vault or isolates vaults under

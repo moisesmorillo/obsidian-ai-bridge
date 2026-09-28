@@ -127,7 +127,7 @@ include all previous milestones.
 | M4 | Remote-to-local reconciliation and conflict resolution | COMPLETE | Review/adopt/resolve remote divergence and richer restoration without silent local data loss | M3 |
 | M5 | Operational and security readiness | COMPLETE | Latest-only, bounded v1.0.2 software support with reviewed limits, permissions, runbooks and qualification evidence | M4 |
 | M6 | MCP adapter | COMPLETE | Same authorized operations for MCP-capable agents through the M5 authentication and application-service boundary; bounded official-client qualification complete | M5 |
-| M7 | Versioned sync protocol and isolated R2 store | NEXT | Uncomposed versioned contract, `SyncStore` port, isolated R2 adapter, bounded feed/inventory and recovery foundation | M6 |
+| M7 | Versioned sync protocol and isolated R2 store | NEXT | Uncomposed versioned contract, `SyncStore` port, isolated R2 adapter, fair bounded feed, cursor-complete inventory, and rate-limit-safe recovery foundation | M6 |
 
 ### M1 — Worker API foundation and engineering quality
 
@@ -379,7 +379,8 @@ its completed [specification](milestones/m6-mcp-adapter.md), and [qualification
 report](qualification/m6-final.md).
 
 There are no unresolved product decisions through completed M6. M7's protocol,
-namespace, v2 coexistence, feed, inventory, and recovery choices are defined in its
+namespace, v2 coexistence, fair feed, cursor-driven inventory, same-key write pacing,
+and recovery choices are defined in its
 [implementation-ready specification](milestones/m7-versioned-sync-protocol-and-r2-store.md).
 
 The proposed bidirectional sync direction has remaining decisions before later client

@@ -107,8 +107,9 @@ Before publishing a release from this design-only change, follow the
 ### 1. Versioned sync protocol and storage port
 
 Stage 1 is M7. Its exact schemas, namespace, v2 coexistence contract, operation
-journal, 64-lane incremental feed, bounded inventory, cursor recovery, rename
-ordering, test-first PR units, and acceptance criteria are in the
+journal, fair round-robin 64-lane incremental feed, cursor-driven inventory,
+same-key R2 write pacing/recovery, rename ordering, test-first PR units, and
+acceptance criteria are in the
 [implementation-ready M7 specification](../milestones/m7-versioned-sync-protocol-and-r2-store.md).
 The contract uses the existing bucket under `sync/v1/vaults/<vault-id>/`; existing
 v2 `vault/` and `recovery/` objects remain byte-for-byte untouched and are never
@@ -117,20 +118,30 @@ current writer, migrate data, or activate a vault. Before any later protocol
 exposure, migrated identities require an explicit v2 compatibility fence so old
 clients cannot write an invisible parallel revision.
 
-Stage 1's initial inventory ceiling is 10,000 synthetic current objects, listing
-pages are limited to 50, and the current 1 MiB Markdown limit remains in force.
-An inventory is complete only when all feed lanes have stable identical start/end
-vectors and no pending operation; otherwise it is incomplete and cannot imply
-absence or deletion. An expired or ambiguous cursor must recover through a
-complete inventory, or remain unchanged with a typed failure. The M7 spec defines
-the required local workerd measurements; it makes no deployed/mobile qualification
-claim.
+Stage 1's initial inventory ceiling is 10,000 synthetic current objects, each
+listing request asks for at most 50 objects, and the current 1 MiB Markdown limit
+remains in force. R2 can return a short page while `truncated` remains true; follow
+the returned cursor and treat `truncated: false`, not page length, as completion.
+The 200 LIST-call budget is a maximum, not a guarantee that 10,000 objects can be
+listed. Each head's revision/tombstone comes from a validated current-head body,
+not list metadata. Inventory must finish within its list/read/byte budgets and
+match stable feed vectors with no pending operation; otherwise it returns a typed
+failure without absence or deletion evidence. An expired or ambiguous feed cursor
+must recover through a complete inventory, or remain unchanged with a typed failure.
+Repeated writes to same-key mutable objects, including lane heads, observe R2's
+per-key rate limit while retaining exact CAS; throttled or uncertain effects stay
+resumable/blocked. The M7 spec
+defines the required local workerd measurements; it makes no deployed/mobile
+qualification claim.
 
 **Exit:** satisfy every M7 acceptance item, including same-revision race refusal,
-operation recovery at every persistence boundary, old-prefix noninterference,
-bounded cursor replay and inventory recovery, interruption-safe destination-first
-rename, and `mise run check`. Existing v2 API/MCP and designated-writer tests remain
-green; no routes are mounted and no personal-vault data is used.
+feed fairness under a continuously busy lane, short R2 list pages and cursor
+continuation, typed budget exhaustion without partial inventory, same-key throttling
+and uncertain-effect recovery, operation recovery at every persistence boundary,
+old-prefix noninterference, bounded cursor replay/inventory recovery,
+interruption-safe destination-first rename, and `mise run check`. Existing v2
+API/MCP and designated-writer tests remain green; no routes are mounted and no
+personal-vault data is used.
 
 ### 2. Pure three-way reconciliation engine
 

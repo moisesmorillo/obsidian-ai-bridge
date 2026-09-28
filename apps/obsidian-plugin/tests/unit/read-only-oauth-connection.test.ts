@@ -17,7 +17,7 @@ function fixture(tokenOverrides: Record<string, unknown> = {}) {
   const saveConnection = vi.fn(async () => true);
   const verifyRead = vi.fn(async () => true);
   const host: ReadOnlyOAuthHost = {
-    installationName: "Obsidian AI Bridge (test-installation)",
+    installationName: "Mac",
     request: async (url, body, contentType) => {
       requests.push({ url, body, contentType });
       return url.endsWith("/oauth/register")
@@ -63,7 +63,7 @@ describe("read-only OAuth connection", () => {
     const { connection, authorization } = await start(value);
     expect(value.requests[0]?.url).toBe(`${ORIGIN}/oauth/register`);
     expect(JSON.parse(value.requests[0]?.body ?? "{}")).toMatchObject({
-      client_name: "Obsidian AI Bridge (test-installation)",
+      client_name: "Mac",
       redirect_uris: [OAUTH_CALLBACK_URI],
       token_endpoint_auth_method: "none",
       grant_types: ["authorization_code", "refresh_token"],

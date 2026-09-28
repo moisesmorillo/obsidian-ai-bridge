@@ -15,9 +15,10 @@ import {
   BrowserMirrorTimerHost,
   MirrorWakeScheduler,
 } from "@obsidian-plugin/runtime/mirror-wake-scheduler";
+import { formatOAuthInstallationName } from "@obsidian-plugin/runtime/oauth-installation-name";
 import { acquireRuntimeMirrorCoordinator } from "@obsidian-plugin/state/runtime-mirror-coordinator";
 import { MirrorStatusUi } from "@obsidian-plugin/status/mirror-status-ui";
-import { type Plugin, requestUrl } from "obsidian";
+import { Platform, type Plugin, requestUrl } from "obsidian";
 
 /**
  * One plugin-instance presentation/event/timer attachment to a same-realm owner.
@@ -110,7 +111,7 @@ export class MirrorPluginSession {
       typeof plugin.registerObsidianProtocolHandler === "function" &&
       typeof plugin.app.secretStorage?.setSecret === "function"
         ? new ReadOnlyOAuthConnection({
-            installationName: `Obsidian AI Bridge (${acquired.coordinator.status().deviceId})`,
+            installationName: formatOAuthInstallationName(Platform),
             request: async (url, body, contentType) => {
               const response = await requestUrl({
                 url,

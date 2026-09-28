@@ -144,6 +144,22 @@ describe("owner authorization", () => {
     );
   });
 
+  it("allows the native Obsidian callback through the consent form CSP", async () => {
+    provider.parse.mockResolvedValue({
+      ...authRequest,
+      redirectUri: "obsidian://ai-bridge-oauth",
+    });
+    const response = await handleOAuthOwnerRequest(
+      new Request(`${ISSUER}/authorize?client_id=client-1`),
+      environment(),
+      access,
+    );
+    expect(response.status).toBe(200);
+    expect(response.headers.get("Content-Security-Policy")).toContain(
+      "form-action 'self' obsidian:",
+    );
+  });
+
   it("issues one independently revocable grant limited to selected permissions", async () => {
     const response = await handleOAuthOwnerRequest(
       post(

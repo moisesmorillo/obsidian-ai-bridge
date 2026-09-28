@@ -20,6 +20,15 @@ import { z } from "zod";
 const MAX_FORM_BYTES = 8192;
 const PAGE_SIZE = 50;
 const NO_STORE = "no-store";
+
+/**
+ * @param redirectUri - Registered authorization callback.
+ * @returns The consent form's browser or Obsidian redirect source.
+ */
+function formActionDestination(redirectUri: string): string {
+  const redirect = new URL(redirectUri);
+  return redirect.protocol === "obsidian:" ? "obsidian:" : redirect.origin;
+}
 const permissionSchema = z.enum([
   CLIENT_PERMISSION.read,
   CLIENT_PERMISSION.write,
@@ -63,7 +72,7 @@ export async function handleOAuthOwnerRequest(
       consent.headers.set("Cache-Control", NO_STORE);
       consent.headers.set(
         "Content-Security-Policy",
-        `default-src 'none'; form-action 'self' ${new URL(authRequest.redirectUri).origin}; base-uri 'none'; frame-ancestors 'none'`,
+        `default-src 'none'; form-action 'self' ${formActionDestination(authRequest.redirectUri)}; base-uri 'none'; frame-ancestors 'none'`,
       );
       return new Response(consentPage(client, authRequest, consent.handle), {
         headers: consent.headers,

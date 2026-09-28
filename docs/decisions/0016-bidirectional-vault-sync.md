@@ -32,9 +32,13 @@ existing 1 MiB Markdown-only qualification is not a whole-vault claim.
   cutover. Offline edits remain local until the app can synchronize.
 - The Worker remains the authenticated API boundary. Each installation receives
   its own revocable OAuth grant; MCP/REST clients use the same application
-  revision and permission rules. A device ID identifies a participant but is
-  not a credential, lock, or designated writer. Owner-authorized enrollment
-  creates one immutable vault identity; no operator-copied writer UUID is needed.
+  revision and permission rules. The current plugin connection requests only
+  `read`; synchronization requires separately granted `write` and `delete`,
+  durable refresh/revocation handling, and removal of the static
+  `MIRROR_WRITER_ID` admission guard only after the replacement protocol is
+  qualified. A device ID identifies a participant but is not a credential,
+  lock, or designated writer. Owner-authorized enrollment creates one immutable
+  vault identity; no operator-copied writer UUID is needed.
 - The initial data scope is Markdown, Canvas, and user attachments required by
   the vault. Configuration sync is a separate, explicit category decision:
   portable settings may be selected; credentials, device-local state, caches,
@@ -51,8 +55,11 @@ existing 1 MiB Markdown-only qualification is not a whole-vault claim.
 
 - The service maintains a current version or recoverable tombstone per path,
   bounded version history, and an application-level revision independent of a
-  storage vendor's ETag. Each device durably remembers the exact remote version
-  it acknowledged and any unresolved local or remote effect.
+  storage vendor's ETag. The existing v2 application ETag and format-2
+  acknowledgements/receipts are the migration input: the new protocol must
+  define their exact mapping or versioned rejection, rather than create a
+  parallel revision domain. Each device durably remembers the exact remote
+  version it acknowledged and any unresolved local or remote effect.
 - Synchronization classifies local, acknowledged base, and remote versions.
   Unchanged local content can receive a remote change; unchanged remote content
   can receive a local change. Concurrently changed content, delete/edit races,
@@ -68,10 +75,24 @@ existing 1 MiB Markdown-only qualification is not a whole-vault claim.
   cannot authorize deletion. A deletion requires an acknowledged path and a
   captured post-enrollment Vault delete event, with a matching remote
   precondition. The event alone does not prove human intent. Tombstones prevent
-  stale devices from recreating deleted files.
+  stale devices from recreating deleted files. An external deletion while
+  Obsidian is closed has no captured event: leave the remote version intact,
+  show the missing local path for review, and require explicit confirmation
+  before a remote tombstone. Recovery must not silently erase the remote copy.
 - Remote MCP changes are ordinary remote revisions. They reach devices through
   the same pull/reconcile path. API and MCP must not bypass revision checks or
-  write a separate namespace that the sync engine cannot observe.
+  write a separate namespace that the sync engine cannot observe. Record the
+  mutation origin so clients can display it and support review. Whether authorized MCP
+  changes auto-apply locally or enter a review queue is an explicit product
+  decision before enabling that path; neither behavior is implied by an OAuth
+  `write` grant alone.
+- Path identity must be portable across the supported hosts. The proposed
+  comparison key is per-segment NFC normalization plus Unicode case folding,
+  while preserving original file bytes and display names. Enrollment detects
+  and blocks distinct paths with the same key, case-only renames, NFC/NFD
+  aliases, and any additional host-observed aliases; it does not guess which
+  file wins or publish either until reviewed. Qualify the exact key against
+  macOS, iOS, and iPadOS before cutover.
 - Mobile freshness is qualified while Obsidian runs: on opening, returning to
   the app, local changes, and an explicit Sync now action. Do not promise iOS
   background execution while the app is suspended.
@@ -80,10 +101,19 @@ existing 1 MiB Markdown-only qualification is not a whole-vault claim.
 
 - Core owns a narrow `SyncStore` contract for conditional current-version
   mutation, immutable recovery/version retrieval, tombstones, and complete
-  bounded inventory. The R2 implementation is an adapter inside the Worker;
-  R2 keys, conditional headers, and ETags do not enter plugin state or the
-  public sync protocol. A full scan remains a correctness fallback if an
+  bounded inventory. Normal mobile synchronization requires a bounded,
+  durable incremental change feed or equivalent manifest with a versioned
+  cursor; complete scans are recovery and enrollment operations with explicit
+  request, byte, and time budgets. The R2 implementation is an adapter inside
+  the Worker; R2 keys, conditional headers, and ETags do not enter plugin state
+  or the public sync protocol. A full scan remains a correctness fallback if an
   incremental change cursor is missing, expired, or ambiguous.
+- The current `vault/<path>` objects and v2 REST/MCP view belong to the
+  existing mirror contract. Before adopting any object, choose and document
+  whether one bucket contains exactly one vault or isolates vaults under
+  immutable vault-ID prefixes. A versioned namespace must preserve the old
+  objects and define how old reads/writes are migrated, routed, or denied;
+  no client may observe a stale successful write into an invisible namespace.
 - A future NAS backend must demonstrate the **same atomic per-path condition**,
   durable version/history retention, consistent enumeration or a safe snapshot
   protocol, and backup/restore semantics. S3 compatibility alone is not proof.

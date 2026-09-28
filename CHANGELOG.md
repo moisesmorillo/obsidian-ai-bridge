@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.4.2](https://github.com/moisesmorillo/obsidian-ai-bridge/compare/v1.4.1...v1.4.2) (2026-09-28)
+
+
+### CI
+
+* **release:** publish Obsidian plugin assets ([#87](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/87)) ([cb26dcf](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/cb26dcf84b9bc78c7bcde5dde44e672b4ef8861d))
+
 ## [1.4.1](https://github.com/moisesmorillo/obsidian-ai-bridge/compare/v1.4.0...v1.4.1) (2026-09-28)
 
 

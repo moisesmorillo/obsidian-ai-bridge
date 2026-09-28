@@ -1,6 +1,5 @@
 import type { MirrorOrigin } from "@obsidian-ai-bridge/core";
 import {
-  formatOAuthInstallationName,
   OAUTH_CALLBACK_URI,
   ReadOnlyOAuthConnection,
   type ReadOnlyOAuthHost,
@@ -59,47 +58,6 @@ async function start(fixtureValue: ReturnType<typeof fixture>) {
 }
 
 describe("read-only OAuth connection", () => {
-  it("uses a recognizable platform label without exposing the device ID", () => {
-    const platform = {
-      isIosApp: false,
-      isAndroidApp: false,
-      isTablet: false,
-      isMacOS: false,
-      isWin: false,
-      isLinux: false,
-    };
-    expect(formatOAuthInstallationName({ ...platform, isMacOS: true })).toBe(
-      "Mac",
-    );
-    expect(
-      formatOAuthInstallationName({
-        ...platform,
-        isIosApp: true,
-        isTablet: true,
-        isMacOS: true,
-      }),
-    ).toBe("iPad");
-    expect(formatOAuthInstallationName({ ...platform, isIosApp: true })).toBe(
-      "iPhone",
-    );
-    expect(
-      formatOAuthInstallationName({ ...platform, isAndroidApp: true }),
-    ).toBe("Android phone");
-    expect(
-      formatOAuthInstallationName({
-        ...platform,
-        isAndroidApp: true,
-        isTablet: true,
-      }),
-    ).toBe("Android tablet");
-    expect(formatOAuthInstallationName({ ...platform, isWin: true })).toBe(
-      "Windows PC",
-    );
-    expect(formatOAuthInstallationName({ ...platform, isLinux: true })).toBe(
-      "Linux PC",
-    );
-    expect(formatOAuthInstallationName(platform)).toBe("Device");
-  });
   it("registers an untrusted native client and uses a fresh S256 challenge", async () => {
     const value = fixture();
     const { connection, authorization } = await start(value);

@@ -1,5 +1,4 @@
 import {
-  formatOAuthInstallationName,
   OAUTH_CALLBACK_ACTION,
   READ_ONLY_OAUTH_SECRET_PREFIX,
   ReadOnlyOAuthConnection,
@@ -16,6 +15,7 @@ import {
   BrowserMirrorTimerHost,
   MirrorWakeScheduler,
 } from "@obsidian-plugin/runtime/mirror-wake-scheduler";
+import { formatOAuthInstallationName } from "@obsidian-plugin/runtime/oauth-installation-name";
 import { acquireRuntimeMirrorCoordinator } from "@obsidian-plugin/state/runtime-mirror-coordinator";
 import { MirrorStatusUi } from "@obsidian-plugin/status/mirror-status-ui";
 import { Platform, type Plugin, requestUrl } from "obsidian";

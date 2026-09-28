@@ -24,9 +24,11 @@ are implemented. The independent final review found three MINOR issues, correcti
 head `e97af36` resolved all three, and the corrective review returned APPROVE with no
 open findings. M3 is COMPLETE; PR #27 merged at `63b0599` and made the transition
 canonical. M4 Slices 1–8 and M5 are COMPLETE. M6's stateless Worker MCP adapter is
-COMPLETE and qualified in this transition; no milestone is marked NEXT and no later
-milestone is inferred. The roadmap transition becomes canonical when the completion PR
-merges. The current plugin boundary includes strict device state v5 with
+COMPLETE and qualified in this transition. M7 — versioned sync protocol and isolated
+R2 store — is NEXT in the current roadmap transition; its specification authorizes
+only isolated storage foundations after the documentation transition merges. It does
+not authorize sync activation, migration, or changes to the current writer. The current
+plugin boundary includes strict device state v5 with
 frozen v2/v3/v4 migration, reviewed sampling/admission, narrow local writes and
 preservation, live/adoption/tombstone/restore actions, bounded parent-owned history
 steps, step-scoped archives, one shared M3/M4 scheduler, durable synthetic
@@ -510,9 +512,11 @@ external successor or deadlock an aligned path.
   automation, durable log store, mobile writer, or multi-release support was selected.
   M4 remains reviewed-only: no automatic import, cross-system atomicity, production
   deployment, security certification, or complete-backup claim.
-- M6 is complete in the current roadmap transition: the authorized MCP adapter uses
-  existing Worker services and never accesses R2 directly. No later milestone is
-  defined; future work requires an explicit roadmap change.
+- M6 is complete: the authorized MCP adapter uses existing Worker services and never
+  accesses R2 directly. M7 is the next defined milestone; it adds an uncomposed,
+  versioned sync contract and isolated R2 store without changing current v2 routes or
+  the designated writer. Sync activation, migration, client enrollment, and cutover
+  remain outside M7 and require later roadmap authorization.
 - Outside this roadmap: search, attachments and AI inference. NAS replication or
   stronger remote authority are possibilities, not selected infrastructure. D1,
   Durable Objects, queues, Workers AI, Vectorize and external databases are not

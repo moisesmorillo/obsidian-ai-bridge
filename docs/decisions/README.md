@@ -53,7 +53,7 @@ decisions, not an invented historical rationale.
 | [0013 — Listener-ready effect authority and observation-gap recovery](0013-listener-ready-effect-authority-and-observation-gap-recovery.md) | Accepted and implemented in merged M4 PR #55 | Orthogonal durable v5 gap fence, dispatch lease, review transfer and strict compatibility transition |
 | [0014 — Stateless MCP adapter and existing credentials](0014-stateless-mcp-adapter-and-existing-credentials.md) | Accepted for M6; implementation and qualification complete on the completion branch | Current stateless Streamable HTTP, M5 principal/permissions, declared application-auth overlay (not OAuth-profile conformance), and bounded tools/resources |
 | [0015 — Browser-mediated client authorization](0015-browser-mediated-client-authorization.md) | Accepted; post-M6 OAuth and read-only plugin connection implemented; sync-write migration pending | Access owner login, OAuth grants, separate REST/MCP audiences, per-grant revocation, and safe cutover |
-| [0016 — Bidirectional vault synchronization](0016-bidirectional-vault-sync.md) | Proposed | Local vaults on Mac/iPhone/iPad, shared sync authority, conflict preservation, and a portable storage boundary |
+| [0016 — Bidirectional vault synchronization](0016-bidirectional-vault-sync.md) | Proposed; M7 foundation separately scoped | Future local vault sync, conflict preservation, and a portable storage boundary; M7 implements only the isolated protocol/storage foundation |
 
 ADR 0001 records the implemented M1 baseline. ADRs 0002–0004 record the implemented
 M3 design without claiming deployment. ADRs 0005–0008 are accepted M4 decisions and

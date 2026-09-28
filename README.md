@@ -2,9 +2,10 @@
 
 A data-safety-focused bridge between Obsidian and authorized remote AI or agent clients.
 
-> **Status:** M1–M6 are **COMPLETE** in the current transition; [M6 — MCP adapter](docs/roadmap.md#m6--mcp-adapter)
-> is the final defined milestone. The transition becomes canonical when its completion
-> PR merges; no M7 is defined. M5 qualifies only the latest M5-ready release,
+> **Status:** M1–M6 are **COMPLETE**; [M7 — versioned sync protocol and isolated R2 store](docs/roadmap.md#m7--versioned-sync-protocol-and-isolated-r2-store)
+> is **NEXT** in this roadmap transition. Its documentation PR must merge before
+> implementation begins. M7 does not activate sync, migrate data, or change the current
+> writer. M5 qualifies only the latest M5-ready release,
 > **v1.0.2**, for one designated active writer on Obsidian Desktop 1.13.7 / macOS
 > 26.6.2 / Apple M4 Pro, with synthetic-vault scale through 10,000 eligible Markdown
 > notes. See the [final M5 qualification report](docs/qualification/m5-final.md) and
@@ -176,7 +177,9 @@ Start with [AGENTS.md](AGENTS.md), [architecture](docs/architecture.md), the
 [canonical roadmap and agent onboarding](docs/roadmap.md), and the completed
 [M5 specification](docs/milestones/m5-operational-and-security-readiness.md) with its
 [final qualification evidence](docs/qualification/m5-final.md). M1–M6 are complete in
-this transition, with no milestone marked NEXT and no M7 defined. The accepted
+this transition. M7 is the sole NEXT milestone, with an implementation-ready
+[specification](docs/milestones/m7-versioned-sync-protocol-and-r2-store.md); its roadmap
+transition becomes canonical only when the documentation PR merges. The accepted
 [ADR 0014](docs/decisions/0014-stateless-mcp-adapter-and-existing-credentials.md),
 completed [M6 specification](docs/milestones/m6-mcp-adapter.md), and [M6 qualification
 report](docs/qualification/m6-final.md) record the adapter and its residual limits.

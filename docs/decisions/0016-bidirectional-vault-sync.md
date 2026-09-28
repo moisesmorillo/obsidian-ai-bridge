@@ -2,10 +2,12 @@
 
 ## Status
 
-**Proposed.** This changes the proposed product destination, not the deployed
-single-writer behavior or the M1–M6 completion record. No later milestone is
-defined or marked `NEXT`. Implementation requires separately reviewed contracts,
-qualification, and an explicit personal-vault cutover.
+**Proposed.** This describes the future product destination, not the deployed
+single-writer behavior or the M1–M6 completion record. M7 is `NEXT` for the
+bounded versioned-protocol and isolated-storage foundation only; this status does
+not accept the complete bidirectional target, activate sync, authorize migration,
+or permit a personal-vault cutover. Later client/reconciliation/cutover milestones
+require separate specifications and qualification.
 
 ## Context
 
@@ -123,7 +125,42 @@ existing 1 MiB Markdown-only qualification is not a whole-vault claim.
   request, byte, and time budgets. The R2 implementation is an adapter inside
   the Worker; R2 keys, conditional headers, and ETags do not enter plugin state
   or the public sync protocol. A full scan remains a correctness fallback if an
-  incremental change cursor is missing, expired, or ambiguous.
+  incremental change cursor is missing, expired, or ambiguous. The bounded M7
+  foundation specifies fair round-robin feed pages and resumable R2 inventory. It
+  persists an opaque listing cursor and bounded immutable evidence chunks across
+  Worker invocations, caps every inventory, evidence-page, and cleanup invocation at
+  400 internal-service subrequests, and does not rely on a Paid plan or raised quota.
+  Short/empty R2 pages continue by exact cursor until `truncated: false`; each step
+  sets the R2 limit to one object and persists one complete page in one chunk. The
+  total ceiling is 20,001 logical list pages and chunks, not a per-call result
+  guarantee. A no-interruption scan uses at most 20,001 LIST and 10,000 head GET calls;
+  durable per-page attempt reservations allow one replay, for ceilings of 40,002 actual
+  LIST and 20,000 actual head GET calls (60,002 listing/head data subrequests). Each page allows
+  at most two persisted data-read attempts; preflight deferrals spend no attempt, while
+  a second interrupted attempt fails closed only after an exact chunk-key read proves no
+  valid chunk exists. On resumption, probe that key before data reads; an existing chunk
+  is validated and used to advance the manifest without repeating LIST/head GET. An
+  unavailable or uncertain chunk read remains blocked and cannot trigger another
+  data-read attempt. Unique head bodies are capped at 20 MiB,
+  replayed head-read bodies at 40 MiB, chunks at 12 KiB each, and serialized evidence at
+  192 MiB. That ceiling is calculated from 15,360,000 summary bytes, 5,120,256
+  page-transcript bytes, and 163,848,192 chunk-envelope bytes (184,328,448 total, below
+  192 MiB). Every call, replay included, remains within the 400-subrequest invocation cap.
+  One complete evidence traversal needs at most 1,251 successful calls of 16
+  chunks/heads each. A
+  complete listing with validated head-body revision/tombstone evidence and identical
+  no-pending start/end lane vectors yields a snapshot handle. Partial scans/pages provide
+  no absence/deletion evidence. Typed exhaustion,
+  interruption, and expiry failures are specified in the M7 contract. Repeated writes
+  to mutable same-key objects, including lane heads, journals, inventory manifests, and
+  active slots, preserve exact CAS and observe R2's write rate limit. Cooldown deferrals
+  resume the same durable step without an extra read attempt; throttled or uncertain
+  effects remain resumable but blocked rather than reported as successful mutations.
+  Workers Free's 10 ms CPU/request ceiling is a M7 implementation exit gate for every
+  inventory invocation profile; documentation and local workerd tests do not establish
+  compliance or authorize a production rollout.
+  These storage requirements do not accept the broader bidirectional product
+  destination or authorize a client cutover.
 - The current `vault/<path>` objects and v2 REST/MCP view belong to the
   existing mirror contract. Before adopting any object, choose and document
   whether one bucket contains exactly one vault or isolates vaults under
@@ -150,8 +187,10 @@ historical ADRs remain accurate for the implemented releases. The Worker and
 plugin need coordinated migration, but old clients must fail closed during the
 transition. Whole-vault scope and mobile qualification make this substantially
 larger than merely admitting more writers to the existing outward mirror.
-[The rollout plan](../plans/bidirectional-vault-sync-rollout.md)
-defines independently reviewable slices and the cutover evidence.
+[The M7 specification](../milestones/m7-versioned-sync-protocol-and-r2-store.md)
+closes the protocol/storage decisions required for rollout stage 1. The
+[rollout plan](../plans/bidirectional-vault-sync-rollout.md) retains later
+independently reviewable slices and cutover evidence.
 
 ## Rejected shortcuts
 

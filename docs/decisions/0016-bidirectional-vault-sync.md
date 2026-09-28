@@ -126,14 +126,28 @@ existing 1 MiB Markdown-only qualification is not a whole-vault claim.
   the Worker; R2 keys, conditional headers, and ETags do not enter plugin state
   or the public sync protocol. A full scan remains a correctness fallback if an
   incremental change cursor is missing, expired, or ambiguous. The bounded M7
-  foundation specifies fair round-robin feed pages, cursor-driven R2 inventory
-  with revision/tombstone evidence read from validated head bodies, and typed
-  failure when the listing budget expires before `truncated` becomes false. Repeated
-  writes to mutable same-key objects, including lane heads, preserve exact CAS and
-  observe R2's write rate limit; throttled or uncertain effects remain resumable but
-  blocked rather than reported as successful mutations. These storage requirements do
-  not accept the broader bidirectional product destination or authorize a client
-  cutover.
+  foundation specifies fair round-robin feed pages and resumable R2 inventory. It
+  persists an opaque listing cursor and bounded immutable evidence chunks across
+  Worker invocations, caps every inventory, evidence-page, and cleanup invocation at
+  400 internal-service subrequests, and does not rely on a Paid plan or raised quota.
+  Short/empty R2 pages continue by exact cursor until `truncated: false`; 20,001
+  logical list pages and 10,000 unique heads are total scan ceilings, not a per-call
+  result guarantee. A no-interruption scan uses at most 20,001 LIST and 10,000 head GET
+  calls; durable per-step attempt reservations allow one replay, for ceilings of 40,002
+  actual LIST and 20,000 actual head GET calls. Unique head bodies are capped at 20 MiB,
+  replayed head-read bodies at 40 MiB, and unique serialized evidence at 24 MiB. Every
+  replay still counts against the 400-subrequest invocation cap. A complete listing
+  with validated head-body revision/tombstone evidence and identical no-pending
+  start/end lane vectors yields a snapshot handle; evidence paging is itself bounded to
+  300 chunks/100 heads per call. Partial scans/pages provide no absence/deletion
+  evidence. Typed exhaustion,
+  interruption, and expiry failures are specified in the M7 contract. Repeated writes
+  to mutable same-key objects, including lane heads, journals, inventory manifests, and
+  active slots, preserve exact CAS and observe R2's write rate limit. Cooldown deferrals
+  resume the same durable step without an extra read attempt; throttled or uncertain
+  effects remain resumable but blocked rather than reported as successful mutations.
+  These storage requirements do not accept the broader bidirectional product
+  destination or authorize a client cutover.
 - The current `vault/<path>` objects and v2 REST/MCP view belong to the
   existing mirror contract. Before adopting any object, choose and document
   whether one bucket contains exactly one vault or isolates vaults under

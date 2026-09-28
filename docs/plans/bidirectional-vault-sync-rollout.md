@@ -120,24 +120,39 @@ clients cannot write an invisible parallel revision.
 
 Stage 1's initial inventory ceiling is 10,000 synthetic current objects, each
 listing request asks for at most 50 objects, and the current 1 MiB Markdown limit
-remains in force. R2 can return a short page while `truncated` remains true; follow
-the returned cursor and treat `truncated: false`, not page length, as completion.
-The 200 LIST-call budget is a maximum, not a guarantee that 10,000 objects can be
-listed. Each head's revision/tombstone comes from a validated current-head body,
-not list metadata. Inventory must finish within its list/read/byte budgets and
-match stable feed vectors with no pending operation; otherwise it returns a typed
-failure without absence or deletion evidence. An expired or ambiguous feed cursor
-must recover through a complete inventory, or remain unchanged with a typed failure.
-Repeated writes to same-key mutable objects, including lane heads, observe R2's
-per-key rate limit while retaining exact CAS; throttled or uncertain effects stay
-resumable/blocked. The M7 spec
-defines the required local workerd measurements; it makes no deployed/mobile
-qualification claim.
+remains in force. R2 can return short or empty pages while `truncated` remains true;
+persist and follow its opaque cursor, and treat only `truncated: false` as completion.
+Each head's revision/tombstone comes from a validated current-head body, not list
+metadata. A resumable manifest and immutable evidence chunks span bounded Worker
+invocations. Each inventory, evidence-page, or cleanup invocation consumes at most 400
+internal-service subrequests, leaving at least 600 of Workers Free's 1,000 limit and
+assuming no Paid plan or raised quota. The total scan permits 20,001 logical list pages
+and 10,000 unique heads (at most 3,334 six-page listing steps plus separate start/final
+steps). A durable per-step attempt reservation allows one replay before terminal
+exhaustion. A no-interruption scan uses at most 20,001 LIST and 10,000 head GET calls,
+while hard actual-call ceilings are 40,002 LIST and 20,000 head GET calls. Every replay
+counts against the same 400-subrequest invocation cap. The scan is subject to 20 MiB
+unique head bodies, 40 MiB actual head-read responses, 24 MiB evidence, per-head,
+cursor, entry, and 24-hour ceilings. Only `truncated: false` completes listing.
+Same-key manifest/active-slot cooldowns defer durable transitions across invocations
+without repeating reads or sleeping. Evidence reads are separately bounded to 300
+chunks/100 heads per call and expose a final marker only after contiguous hash-chain
+verification. Only the final scan step may issue a complete handle, after matching
+start/end feed vectors with no pending operation and read-back-verified release of its
+active slot. Interrupted, throttled, expired, exhausted, or inconsistent scans preserve
+their checkpoint or fail typed and never provide absence/deletion evidence. Repeated
+writes to same-key mutable objects observe R2's per-key rate limit while retaining exact
+CAS; throttled or uncertain effects remain resumable/blocked. The M7 spec defines the
+required local workerd measurements; it makes no deployed/mobile qualification claim.
 
 **Exit:** satisfy every M7 acceptance item, including same-revision race refusal,
 feed fairness under a continuously busy lane, short R2 list pages and cursor
-continuation, typed budget exhaustion without partial inventory, same-key throttling
-and uncertain-effect recovery, operation recovery at every persistence boundary,
+continuation across persisted steps, worst-case 10,000-head/20,001-logical-page inventory
+within the per-invocation 400-subrequest bound without plan upgrades, bounded evidence
+pages, interruption at every inventory checkpoint/chunk boundary, consistent final
+vectors, typed budget exhaustion without partial inventory, same-key throttling and
+inventory-manifest cooldown deferral without duplicate reads, uncertain-effect recovery,
+operation recovery at every persistence boundary,
 old-prefix noninterference, bounded cursor replay/inventory recovery,
 interruption-safe destination-first rename, and `mise run check`. Existing v2
 API/MCP and designated-writer tests remain green; no routes are mounted and no

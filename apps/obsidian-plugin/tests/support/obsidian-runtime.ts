@@ -9,6 +9,16 @@ import type {
 } from "obsidian";
 import { vi } from "vitest";
 
+/** Public platform flags exposed by Obsidian on the qualified desktop host. */
+export const Platform = {
+  isIosApp: false,
+  isAndroidApp: false,
+  isTablet: false,
+  isMacOS: true,
+  isWin: false,
+  isLinux: false,
+};
+
 /** Text-only DOM surface: markup APIs deliberately do not exist in this double. */
 export class TextElement {
   textContent = "";

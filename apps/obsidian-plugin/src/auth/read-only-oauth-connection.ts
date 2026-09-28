@@ -9,11 +9,24 @@ export const OAUTH_CALLBACK_ACTION = "ai-bridge-oauth";
 export const READ_ONLY_OAUTH_SECRET_PREFIX = "ai-bridge-oauth-";
 
 /**
- * @param deviceId - This installation's generated device identifier.
- * @returns A per-device display name compatible with Worker credential names.
+ * @param platform - Obsidian's public cross-platform device category flags.
+ * @returns A readable default name compatible with Worker credential names.
  */
-export function formatOAuthInstallationName(deviceId: string): string {
-  return `Obsidian AI Bridge ${deviceId}`;
+export function formatOAuthInstallationName(platform: {
+  readonly isIosApp: boolean;
+  readonly isAndroidApp: boolean;
+  readonly isTablet: boolean;
+  readonly isMacOS: boolean;
+  readonly isWin: boolean;
+  readonly isLinux: boolean;
+}): string {
+  if (platform.isIosApp) return platform.isTablet ? "iPad" : "iPhone";
+  if (platform.isAndroidApp)
+    return platform.isTablet ? "Android tablet" : "Android phone";
+  if (platform.isMacOS) return "Mac";
+  if (platform.isWin) return "Windows PC";
+  if (platform.isLinux) return "Linux PC";
+  return "Device";
 }
 const MAX_RESPONSE_LENGTH = 16 * 1024;
 const AUTHORIZATION_LIFETIME_MILLISECONDS = 10 * 60 * 1000;

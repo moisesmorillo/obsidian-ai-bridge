@@ -18,7 +18,7 @@ function fixture(tokenOverrides: Record<string, unknown> = {}) {
   const saveConnection = vi.fn(async () => true);
   const verifyRead = vi.fn(async () => true);
   const host: ReadOnlyOAuthHost = {
-    installationName: "Obsidian AI Bridge (test-installation)",
+    installationName: "Mac",
     request: async (url, body, contentType) => {
       requests.push({ url, body, contentType });
       return url.endsWith("/oauth/register")
@@ -59,17 +59,53 @@ async function start(fixtureValue: ReturnType<typeof fixture>) {
 }
 
 describe("read-only OAuth connection", () => {
-  it("formats a client name accepted by the Worker", () => {
+  it("uses a recognizable platform label without exposing the device ID", () => {
+    const platform = {
+      isIosApp: false,
+      isAndroidApp: false,
+      isTablet: false,
+      isMacOS: false,
+      isWin: false,
+      isLinux: false,
+    };
+    expect(formatOAuthInstallationName({ ...platform, isMacOS: true })).toBe(
+      "Mac",
+    );
     expect(
-      formatOAuthInstallationName("e00eea10-f113-4a75-bd33-ca9e729466e3"),
-    ).toBe("Obsidian AI Bridge e00eea10-f113-4a75-bd33-ca9e729466e3");
+      formatOAuthInstallationName({
+        ...platform,
+        isIosApp: true,
+        isTablet: true,
+        isMacOS: true,
+      }),
+    ).toBe("iPad");
+    expect(formatOAuthInstallationName({ ...platform, isIosApp: true })).toBe(
+      "iPhone",
+    );
+    expect(
+      formatOAuthInstallationName({ ...platform, isAndroidApp: true }),
+    ).toBe("Android phone");
+    expect(
+      formatOAuthInstallationName({
+        ...platform,
+        isAndroidApp: true,
+        isTablet: true,
+      }),
+    ).toBe("Android tablet");
+    expect(formatOAuthInstallationName({ ...platform, isWin: true })).toBe(
+      "Windows PC",
+    );
+    expect(formatOAuthInstallationName({ ...platform, isLinux: true })).toBe(
+      "Linux PC",
+    );
+    expect(formatOAuthInstallationName(platform)).toBe("Device");
   });
   it("registers an untrusted native client and uses a fresh S256 challenge", async () => {
     const value = fixture();
     const { connection, authorization } = await start(value);
     expect(value.requests[0]?.url).toBe(`${ORIGIN}/oauth/register`);
     expect(JSON.parse(value.requests[0]?.body ?? "{}")).toMatchObject({
-      client_name: "Obsidian AI Bridge (test-installation)",
+      client_name: "Mac",
       redirect_uris: [OAUTH_CALLBACK_URI],
       token_endpoint_auth_method: "none",
       grant_types: ["authorization_code", "refresh_token"],

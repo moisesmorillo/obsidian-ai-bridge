@@ -23,10 +23,13 @@ the read-only callback and stored a native secret reference after the Safari
 callback URL was opened manually. The deployed consent page blocked the automatic
 native redirect through its `form-action` CSP, and the plugin's default name
 contained parentheses rejected by the Worker's credential-name policy. The
-source fixes both defects; deployment and an automatic native callback still
-need live verification. The writer identity probe failed; the checked-in Worker
-configuration does not provide an association or designated writer. The mirror
-was not activated, and the personal vault was not used.
+source fixes both defects and defaults the visible OAuth client name to a
+cross-platform device category such as Mac or iPhone. The name remains editable
+at consent; the UUID remains an internal writer identity. Deployment and an
+automatic native callback still need live verification. The writer identity
+probe failed; the checked-in Worker configuration does not provide an association
+or designated writer. The mirror was not activated, and the personal vault was
+not used.
 
 This snapshot records completed M1–M6 implementation and qualification evidence on the M6 completion branch. M5's bounded support claim is limited to latest M5-ready release v1.0.2 and one designated writer on Obsidian Desktop 1.13.7 / macOS 26.6.2 / Apple M4 Pro, with synthetic active-writer behavior through 10,000 eligible notes. The final report records retained scale, credential-rotation, and Keep-local results; v4→v5 migration/restart evidence; live loopback recovery/diagnostics; exact release identity; residual platform/deployment limits; and one explicitly unqualified pause/resume conflict attempt. No personal vault or production Worker/R2 deployment was used. M1–M6 are COMPLETE in this transition; no milestone is marked NEXT, and no M7 is inferred. The roadmap transition becomes canonical when its completion PR merges.
 M2 source/tooling through `2e74b23` passed independent semantic

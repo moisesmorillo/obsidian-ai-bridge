@@ -13,9 +13,9 @@ This is the canonical execution roadmap: implemented facts, planned direction an
 unresolved choices are distinct. Dates are intentionally not assigned. Engineering
 rules live in [AGENTS.md](../AGENTS.md).
 
-## Project end state
+## Proposed future target
 
-**Proposed future target:** `obsidian-ai-bridge` synchronizes local working vaults
+**Proposed:** `obsidian-ai-bridge` synchronizes local working vaults
 on Mac, iPhone, and iPad through an authenticated service backed initially by
 private R2. Authorized API/AI/agent clients participate in the same revision
 domain. The complete target and migration gates are in [the rollout proposal](plans/bidirectional-vault-sync-rollout.md).
@@ -332,12 +332,12 @@ and [ADR 0011](decisions/0011-m5-operational-envelope.md) for the accepted bound
 
 ### M6 — MCP adapter
 
-**COMPLETE in this completion transition.** The implementation-ready [M6
+**COMPLETE.** The implementation-ready [M6
 specification](milestones/m6-mcp-adapter.md), accepted [ADR
 0014](decisions/0014-stateless-mcp-adapter-and-existing-credentials.md), and [final
 qualification report](qualification/m6-final.md) record the adapter, tests, canonical
-validation, official-client evidence, and residual compatibility limits. This roadmap
-The single M6 completion PR remains unmerged; this transition becomes canonical only when it merges.
+validation, official-client evidence, and residual compatibility limits. The M6
+completion PR has merged; later OAuth and sync proposals have separate status.
 
 - **Scope:** thin stateless Streamable HTTP adapter at `POST /mcp` over existing
   Worker authentication, exact M5 permission grants, and current/recovery application
@@ -375,6 +375,13 @@ There are no unresolved product decisions through the final current milestone, M
 No M7 is currently defined; any future roadmap work requires an explicit roadmap
 update rather than an inferred follow-on.
 
+The proposed bidirectional sync direction has unresolved decisions before any
+personal-vault cutover: MCP-origin application policy, vault namespace and old
+object migration, path equivalence across devices, supported file limits and
+configuration categories, plus independent backup retention. The [proposal
+plan](plans/bidirectional-vault-sync-rollout.md#decisions-to-close-before-personal-vault-cutover)
+tracks their evidence. These choices do not reopen completed M1–M6 milestones.
+
 Technical implementation and qualification must satisfy the specifications; milestone
 order never permits weakening accepted data-loss/security prerequisites. Keep a
 material decision open rather than guessing or treating a planning recommendation as
@@ -383,7 +390,9 @@ a support claim.
 ## Agent onboarding and execution
 
 Read in order: [README](../README.md), [AGENTS](../AGENTS.md),
-[architecture](architecture.md), this roadmap, the completed
+[architecture](architecture.md), this roadmap, the [proposed sync
+ADR](decisions/0016-bidirectional-vault-sync.md) and [rollout
+plan](plans/bidirectional-vault-sync-rollout.md), then the completed
 [M6 specification](milestones/m6-mcp-adapter.md) and [qualification report](qualification/m6-final.md),
 [ADR 0014](decisions/0014-stateless-mcp-adapter-and-existing-credentials.md), then the
 completed [M5 specification](milestones/m5-operational-and-security-readiness.md) and

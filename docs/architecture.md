@@ -94,7 +94,7 @@ apps/worker/src/
 
 ### Cloudflare Worker
 
-The Worker is the remote HTTP/API boundary. `index.ts` constructs the Hono app and long-lived LogTape dependency once per isolate. Request middleware validates the digest-only M5 credential registry first. Post-M6 OAuth validation is an additional bearer path: the Cloudflare provider checks the exact REST or MCP resource against KV, strict grant props and token scopes narrow the existing typed client principal, and an R2 revocation-marker read must confirm the grant remains active before service resolution. Provider or marker failures deny OAuth access; the Worker has no owner-consent or grant-issuance route yet. The same operation policies still enforce exact permissions before creating current-generation/recovery application services from the active R2 binding; composition then validates static non-secret association/writer UUIDs. Completed-request logging consumes the same route-operation policy to emit closed content-free authentication, operation, status, and stable-error outcomes without becoming an authorization owner. Singleton authentication is retired. `app.ts` composes typed Hono middleware, controllers, narrow v2 CORS, OpenAPI, Scalar, and the stateless MCP endpoint. The HTTP route-operation policy owns each API operation; an exhaustive MCP capability-to-permission table gates every MCP tool and content resource independently. MCP has no repository or R2 dependency and does not expose local-vault mutation or reviewed reconciliation. HTTP controllers and MCP callbacks validate transport input and delegate transition policy to `packages/core`; they do not call R2 or implement CAS/recovery policy.
+The Worker is the remote HTTP/API boundary. `index.ts` constructs the Hono app and long-lived LogTape dependency once per isolate. Request middleware validates the digest-only M5 credential registry first. Post-M6 OAuth validation is an additional bearer path: the Cloudflare provider checks the exact REST or MCP resource against KV, strict grant props and token scopes narrow the existing typed client principal, and an R2 revocation-marker read must confirm the grant remains active before service resolution. Provider or marker failures deny OAuth access. Access-protected owner routes provide consent and grant revocation, while provider routes issue OAuth tokens and register clients. The same operation policies still enforce exact permissions before creating current-generation/recovery application services from the active R2 binding; composition then validates static non-secret association/writer UUIDs. Completed-request logging consumes the same route-operation policy to emit closed content-free authentication, operation, status, and stable-error outcomes without becoming an authorization owner. Singleton authentication is retired. `app.ts` composes typed Hono middleware, controllers, narrow v2 CORS, OpenAPI, Scalar, and the stateless MCP endpoint. The HTTP route-operation policy owns each API operation; an exhaustive MCP capability-to-permission table gates every MCP tool and content resource independently. MCP has no repository or R2 dependency and does not expose local-vault mutation or reviewed reconciliation. HTTP controllers and MCP callbacks validate transport input and delegate transition policy to `packages/core`; they do not call R2 or implement CAS/recovery policy.
 
 ### Cloudflare R2
 
@@ -170,9 +170,10 @@ for install/removal and the explicit absence of real desktop/mobile host tests.
 
 The M6 adapter serves stateless Streamable HTTP at `POST /mcp` using the official
 web-standard SDK. Its M6 baseline reuses the M5 registry bearer and typed principal as an
-application-level authentication overlay. Post-M6 OAuth bearer validation does not
-turn M5 tokens into OAuth tokens or add public Protected Resource Metadata, consent,
-or grant issuance; the Worker does not claim full MCP authorization-profile conformance. A separate
+application-level authentication overlay. Post-M6 OAuth adds resource metadata,
+consent, grant issuance, and resource-bound bearer validation; it does not
+convert M5 registry tokens into OAuth tokens. Client interoperability must be
+qualified separately rather than inferred from these routes. A separate
 exhaustive permission table covers static discovery, each read tool/resource, each
 conditional write and recovery maintenance operation. Permission checks precede
 application-service resolution. The SDK adapter uses only `CurrentGenerationService`
@@ -189,7 +190,10 @@ confirmation; this is client-owned, not server proof of human approval. See the
 
 The Worker authenticates `/api` descendants and `/mcp` through the M5 registry of
 at most 16 named opaque bearers or a resource-bound OAuth token that passes strict
-grant-prop, scope, and R2 revocation checks. No OAuth grants can be issued yet.
+grant-prop, scope, and R2 revocation checks. Access-protected `/authorize` and
+`/auth/grants` provide owner consent and grant management; OAuth provider routes
+issue tokens and register clients. The current plugin OAuth connection requests
+only `read`, so issuance does not enable a sync writer.
 The Worker has no `/health` route; OpenAPI and
 Scalar are enabled only for local development and do not grant note access.
 MCP capability discovery also requires an authenticated principal.

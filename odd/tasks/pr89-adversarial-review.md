@@ -14,9 +14,9 @@ Substantial documentation correction with two meaningful steps. Route: delegated
 
 ## Tasks
 
-- [ ] T1 — Clarify ADR/protocol and rollout requirements: OAuth write/delete and refresh migration; existing revision/receipt and object namespace transition; path equivalence and external deletion; MCP origin policy; mandatory incremental feed/mobile bounds; rename crash semantics. Check affected source contracts and design consistency. Commit a reviewable documentation unit.
+- [x] T1 — Clarify ADR/protocol and rollout requirements: OAuth write/delete and refresh migration; existing revision/receipt and object namespace transition; path equivalence and external deletion; MCP origin policy; mandatory incremental feed/mobile bounds; rename crash semantics. Check affected source contracts and design consistency. Commit a reviewable documentation unit.
 - [ ] T2 — Correct roadmap, threat model, stale/self-referential wording, and release-process explanation. Keep historical state distinct from proposed direction. Verify docs, applicable quality checks, and release behavior claim. Commit a reviewable documentation unit.
 
 ## Evidence and next step
 
-Current head: `4711651`. Initial assessment: most review findings are valid; `hidden: true` is documented as a changelog-display setting and cannot be offered as an established release-suppression fix. Next: complete T1 after reading this task file, then T2, verify, and respond to the GitHub review within the authorized remote-session boundary.
+T1 evidence: commit `65d756f`; `git diff --check` and `mise run check` passed. Native RDD assessment unavailable because `gentle-ai` is not installed (`command not found`). Current head: `65d756f`. Initial assessment: most review findings are valid; `hidden: true` is documented as a changelog-display setting and cannot be offered as an established release-suppression fix. Next: complete T2, verify, and respond to the GitHub review within the authorized remote-session boundary.

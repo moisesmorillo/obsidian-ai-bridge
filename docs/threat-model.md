@@ -9,6 +9,9 @@ active-writer ceiling. This is software qualification, not security certificatio
 penetration-test evidence, production deployment, or complete-backup assurance. M6
 adds no MCP OAuth authorization profile or deployment claim; its bounded official
 client evidence is recorded in the [M6 qualification report](qualification/m6-final.md).
+The post-M6 OAuth rollout is documented by [ADR 0015](decisions/0015-browser-mediated-client-authorization.md);
+the M1–M6 baseline below should not be read as a claim that those newer routes
+or bidirectional synchronization were part of M6 qualification.
 
 The modeled system is one personal eligible-Markdown mirror: an Obsidian vault and
 designated writer plugin communicate with an authenticated Cloudflare Worker that
@@ -141,6 +144,26 @@ evidence; M6 evidence is in its dedicated qualification report.
   receives no direct R2 access, writer designation, implicit delete authority, prompt
   trust, or separate credential shape. Its static bearer overlay is not MCP OAuth,
   Protected Resource Metadata, or audience-bound authorization.
+
+## Proposed bidirectional sync threats to resolve before implementation
+
+This section is a **design gate**, not an implemented control or a qualification
+claim. The [proposed ADR 0016](decisions/0016-bidirectional-vault-sync.md) and
+[rollout plan](plans/bidirectional-vault-sync-rollout.md) would make R2-backed
+state the shared synchronization authority across Mac, iPhone, and iPad. Stage
+0 must keep the following threats and the selected policy visible; later slices
+must supply disposable-vault evidence before a personal-vault cutover.
+
+| Proposed exposure | Required decision and evidence |
+| --- | --- |
+| Each mobile installation can hold independently revocable `write` and `delete` OAuth grants. A lost device, leaked refresh token, stale offline queue, or failed revocation can publish or delete after the owner believes access ended. | Specify token storage and refresh rotation, per-device revocation behavior, least-privilege scope consent, and queued-write refusal after revocation. Test actual iPhone/iPad restart, expiry, loss/revocation, and reconnect paths. Native Obsidian SecretStorage is not assumed to be a hardware-bound keychain. |
+| An authorized REST/MCP mutation can propagate into every local vault, including content produced by an agent after reading untrusted Markdown. Current MCP annotations are advisory, not proof of human approval. | Decide automatic local application versus a review queue for MCP-origin changes before enabling them. Record origin with each revision, constrain scopes, preserve conflicts, and test prompt-injection and mistaken or malicious authorized writes under the chosen policy. |
+| Case or Unicode path aliases, a missed closed-app deletion event, or an interrupted rename can cause a file to appear missing, duplicate, or overwrite another path on a different host. | Qualify path equivalence on each supported host, reject enrollment collisions, require captured or explicit delete authority, and prove destination-first rename recovery without silent erasure. |
+| A stale, omitted, or ambiguous incremental cursor can hide remote changes; repeated full inventories can exhaust mobile battery, bandwidth, or Worker/R2 budget. | Require a bounded durable change feed or equivalent manifest, detect gaps and expired cursors, and recover by a complete consistent scan with measured request, byte, memory, and time bounds. |
+| Making R2 the sole sync authority can turn account loss, bad rollout, or operator error into loss across every device. R2 version history alone is not independent backup. | Select and restore-test an independent versioned backup of content, tombstones, history, and control metadata before cutover; qualify forward and rollback procedures without reactivating a stale iCloud writer. |
+
+No entry grants a production writer or changes the current M1–M6 safety
+boundary. Revisit the implemented threat table as each sync slice lands.
 
 ## Residual-risk statement
 

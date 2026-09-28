@@ -16,7 +16,9 @@ Markdown-only outward mirror; M5's exact desktop qualification is not mobile or
 bidirectional qualification. The [proposed ADR](../decisions/0016-bidirectional-vault-sync.md)
 sets the target contract. The current [roadmap](../roadmap.md),
 [architecture](../architecture.md), and [operations guide](../operations.md)
-remain the authority for implemented behavior until each slice merges.
+describe implemented behavior where current; the code and [current-state
+evidence](../current-state.md) resolve stale prose until each slice updates its
+documentation and qualification.
 
 ## Non-negotiable properties
 
@@ -89,9 +91,19 @@ Accept or revise ADR 0016 and the roadmap target. Preserve M1–M6 history and
 the current live deployment claim. Specify file scope, platform support, trust
 model, conflict policy, backup requirement, MCP-origin policy, and the
 difference between R2 authority and a complete backup. Revise this plan and
-ADR before any code PR.
+ADR before any code PR. Update the [threat model](../threat-model.md) for mobile
+write/delete grants, MCP-origin local effects, path/delete/rename hazards,
+incremental-feed failure, and R2 as authority.
 
-**Exit:** one reviewable contract; no M7 invented and no writer enabled.
+**Exit:** one reviewable contract and explicit threat/owner decisions; no M7
+invented and no writer enabled.
+
+This design-only change may still be included in a Release Please release PR;
+a published stable release triggers the plugin-asset workflow even if plugin
+behavior is unchanged. The `hidden` setting for a changelog section controls
+display, not a verified release-suppression rule. Review the actual release
+automation result before publishing; do not alter release identity gates to
+work around a documentation-only version bump.
 
 ### 1. Versioned sync protocol and storage port
 

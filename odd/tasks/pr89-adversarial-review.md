@@ -17,6 +17,7 @@ Substantial documentation correction with two meaningful steps. Route: delegated
 - [x] T1 — Clarify ADR/protocol and rollout requirements: OAuth write/delete and refresh migration; existing revision/receipt and object namespace transition; path equivalence and external deletion; MCP origin policy; mandatory incremental feed/mobile bounds; rename crash semantics. Check affected source contracts and design consistency. Commit a reviewable documentation unit.
 - [x] T2 — Correct roadmap, threat model, stale/self-referential wording, and release-process explanation. Keep historical state distinct from proposed direction. Verify docs, applicable quality checks, and release behavior claim. Commit a reviewable documentation unit.
 - [x] T3 — Close the MCP-origin product decision as automatic local application under exact acknowledged-base/precondition checks, with preservation and review for conflicts or unknown effects; resolve second-review wording, rename placement, and release-guidance location. Recheck docs and PR. Commit a reviewable documentation unit.
+- [x] T4 — Resolve third-review never-seen remote creates and safe incoming tombstones; clarify durable absence evidence, current deployment prose, and the roadmap NEXT gate. Verify against official Obsidian API declarations, affected docs, and canonical checks. Commit a reviewable documentation unit.
 
 ## Evidence and next step
 
@@ -25,3 +26,9 @@ T1 evidence: commit `65d756f`; `git diff --check` and `mise run check` passed. N
 ## Second review correction
 
 Review `5339112906` verified the first corrections and identified remaining wording and placement issues. The owner explicitly selected automatic application for authorized MCP-origin changes in the future sync design; this does not authorize current M4 auto-apply or a live writer. T3 route: delegated direct because ADR, plan, roadmap, threat model, and operations need coordinated non-trivial edits. The reviewer requested removal of this `odd/` task record, but the user-provided ODD instruction requires it for substantial work; retain it as process evidence, not product authority. Release Please source supports a docs-only patch-release concern for the current `simple` strategy; release automation changes remain a separate decision. The second review also noted that the 400-line guidance came from an agent skill, not the repository production-code gate; correct the PR body rather than attributing that limit to AGENTS.md.
+
+## Third review correction
+
+Review `5339383010` found that acknowledged absence does not cover a brand-new remote path. The future protocol must allow a never-seen remote create only after a fresh local absence/collision check and no pending local intent; a pre-existing local file goes to review. The installed Obsidian declarations show `FileManager.trashFile` follows the user trash preference, while `Vault.trash` takes an explicit system/local flag and `Vault.delete` is permanent. Incoming auto-delete must preserve remote recovery, use the user-preferred trash path where qualified, and fail closed on uncertain local effect. The owner request to review the updated PR continues the authorized review-correction work. T4 route: delegated direct; multiple design docs and current-state docs need coordinated changes.
+
+T4 checks observed: `mise run check`, `git diff --check`, relative Markdown targets, and stale-claim scan passed. The installed Obsidian declaration confirms `FileManager.trashFile` follows the user's trash preference. The third-review corrections remain documentation-only.

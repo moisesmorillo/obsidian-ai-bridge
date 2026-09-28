@@ -39,9 +39,10 @@ iPad local vault ──┘                        |
 - Each device has its own revocable grant. Per-path versions and conditional
   mutations preserve concurrent changes for review; initial absence cannot
   delete remote content. Authorized REST/MCP revisions auto-apply to a device
-  only when its local state, including acknowledged absence, matches the exact
-  acknowledged base and all preconditions pass; conflicts and unknown effects
-  require review.
+  only when its local state matches the exact acknowledged base and all
+  preconditions pass. A never-seen create requires a fresh complete local
+  absence/alias check with no pending intent or observation gap; conflicts and
+  unknown effects require review.
 - R2 initially owns shared sync state, but is **not an independent backup**.
   The Worker/operator remain trusted with plaintext. A storage port keeps R2
   details out of the protocol so a future NAS backend can be qualified against

@@ -192,9 +192,12 @@ prohibited, the existing v2 API suffices, and one designated writer remains.
 MCP is limited to the documented authorized Worker tools and explicit note/recovery resources; it adds no search, inference, attachment mirroring, reconciliation, or remote-to-local plugin client. No D1, Durable Objects, queues, Vectorize, Workers AI or external database is part of the product architecture. Generated local emulator artifacts are not evidence that such services were selected.
 
 R2 contains note text, not application-encrypted ciphertext. The Worker/cloud
-operator is within the trust boundary. Configuration names a development bucket;
-it does not prove that bucket, a deployment, credentials or a vault installation
-exists. Local secret configuration is ignored and must not become project memory.
+operator is within the trust boundary. The committed Worker configuration binds
+the production `obsidian-ai-bridge` bucket, and the [operator guide](operations.md#worker-deployment)
+records the first manual Worker deployment. Configuration alone does not prove
+the currently deployed version, credentials, or a vault installation; the M5
+qualification itself did not exercise production Worker/R2. Local secret
+configuration is ignored and must not become project memory.
 
 Generated OpenAPI 3.1 now documents the runtime's canonical identifier and ETag
 patterns, closed note formats, exact status/media/header/security surface, required

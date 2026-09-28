@@ -67,7 +67,7 @@ excluded category must be visible to the user.
 | Maximum file size and transfer method | Support the measured vault, with bounded transfers and no whole-file mobile memory assumption | Read-only vault inventory and real iPhone/iPad transfer tests |
 | Configuration categories | Opt into portable Obsidian settings; keep secrets, device layout, plugin binaries, and bridge state local | User review of actual configuration and desktop/mobile replay |
 | Conflict behavior | Preserve both versions and require review; no automatic Markdown merge initially | Two-device and MCP conflict exercises |
-| REST/MCP-origin changes | Auto-apply authorized remote revisions only when local state, including acknowledged absence, matches the exact acknowledged base and all preconditions pass; preserve both sides for review on conflict or unknown effect, and display origin | Clean create/update/recoverable-delete replay, concurrent local edit, stale revision, unknown effect, and hostile note-content tests |
+| REST/MCP-origin changes | Auto-apply authorized remote revisions against an exact acknowledged local base; a never-seen create requires a fresh complete local absence check with no pending intent, alias, or observation gap | Clean never-seen create, existing-local collision, recoverable delete, concurrent edit, stale revision, unknown effect, and hostile note-content tests |
 | Vault namespace | Choose one vault per bucket or immutable vault-ID prefixes; keep existing `vault/<path>` objects safe | Bucket inventory, v2 REST/MCP transition and rollback drill |
 | Path equivalence | Propose NFC-normalized, Unicode-case-folded per-segment comparison and reject aliases without changing file bytes | macOS/iPhone/iPad case and normalization matrix, enrollment collision preview |
 | Backup retention and location | Independent versioned copy outside the active R2 authority | Restore drill, including tombstones and control metadata |
@@ -106,8 +106,11 @@ Before publishing a release from this design-only change, follow the
 
 Define vault identity, per-file application revisions, current/live/tombstone
 states, immutable recovery/version references, bounded inventory, and client
-checkpoints. Keep authorization at the Worker boundary and make a narrow
-`SyncStore` port in core. Map or explicitly reject existing v2 application
+checkpoints. Define durable acknowledged absence only after a complete,
+gap-free local inventory is reconciled with a consistent remote snapshot at a
+known generation; never infer it from a partial scan or an unobserved path.
+Keep authorization at the Worker boundary and make a
+narrow `SyncStore` port in core. Map or explicitly reject existing v2 application
 ETags and format-2 receipts. Adapt R2 conditional writes behind the port.
 Decide one-vault-per-bucket versus immutable vault-ID prefixes and inspect
 existing `vault/<path>` objects before any adoption. Start in an isolated,
@@ -119,6 +122,7 @@ define cursor ordering, expiry, gap detection, and snapshot consistency.
 Complete scans recover from a missing, expired, or ambiguous cursor, but are
 not the normal mobile poll path. Set request/byte/time limits from a measured
 vault and qualify the recovery scan on supported devices.
+
 Remote rename is a durable destination-first operation: conditionally create
 the destination and persist its evidence before conditionally tombstoning the
 source. A crash between those steps may leave two visible copies, never a
@@ -128,9 +132,11 @@ independently edited source.
 
 **Exit:** two callers racing on the same version cannot both commit; a failed
 head/history operation leaves recoverable evidence; old clients cannot fork
-the data. Incremental replay and full-scan recovery converge on the same
-version graph. Interrupted rename leaves two copies, never zero. Storage
-failures cannot turn into empty-success responses.
+the data. A complete checkpoint distinguishes acknowledged absence from
+never-seen paths, and an incomplete or gapped scan cannot establish either
+deletion authority or acknowledged absence. Incremental replay and full-scan
+recovery converge on the same version graph. Interrupted rename leaves two
+copies, never zero. Storage failures cannot turn into empty-success responses.
 
 ### 2. Pure three-way reconciliation engine
 
@@ -142,6 +148,13 @@ mtime. A new empty vault downloads; an existing local vault gets a preview of
 collisions before joining. Reject distinct paths that compare equal after
 per-segment NFC normalization and Unicode case folding, plus any aliases
 observed on a supported host; preserve original file bytes and display names.
+
+For a never-seen remote create, perform a fresh complete local check for the
+path and its equivalence class. Apply it only if both are absent, no pending
+local intent exists, and observation has no gap; an existing object or any
+ambiguous result requires review. This is separate from a durably acknowledged
+absence established by stage 1.
+
 Treat case-only rename and NFC/NFD aliases as explicit state-matrix cases. A
 file removed externally while Obsidian was closed has no Vault delete event:
 retain the remote version and show the missing local path for review rather
@@ -151,17 +164,18 @@ optional feature, never a requirement for first cutover. Reuse M4 preservation
 and receipt concepts where they fit without weakening their evidence rules.
 
 Authorized REST/MCP-origin create, update, and recoverable delete revisions
-auto-apply only when the local state, including acknowledged absence, still matches
-the exact acknowledged base and remote and local preconditions pass. Show the
-origin; a concurrent local edit, stale revision, or unknown effect preserves
-both sides for review. Note content never becomes a command or an authority
-signal.
+auto-apply only when the local state still matches its exact acknowledged base
+and remote and local preconditions pass, or when a never-seen create satisfies
+the fresh-absence rule above. Show the origin; a concurrent local edit, stale
+revision, or unknown effect preserves both sides for review. Note content never
+becomes a command or an authority signal.
 
 **Exit:** deterministic state-matrix tests cover clean REST/MCP auto-application,
-REST/MCP conflict review, offline edits, stale revisions, reinstalls,
-interruption between persistence and remote effect, deletion/recreation,
-closed-app external deletion, path aliases, and repeat replay without
-duplication or loss.
+never-seen creates with absent and pre-existing local paths, pending local
+intent, path aliases, observation gaps, REST/MCP conflict review, offline edits,
+stale revisions, reinstalls, interruption between persistence and remote
+effect, deletion/recreation, closed-app external deletion, and repeat replay
+without duplication or loss.
 
 ### 3. Safe Obsidian local effects and whole-vault files
 
@@ -173,12 +187,24 @@ binary transfer and bounded/streamed file handling where host capabilities
 permit it. Resolve configuration categories separately from note data, with
 per-device defaults and secret/state exclusions. Keep user-visible recovery
 copies out of automatic re-publication unless explicitly accepted.
+
+For an incoming authorized tombstone, require the exact acknowledged local
+base and retained remote recovery. Use `FileManager.trashFile` for the local
+effect so Obsidian follows the user's trash preference; do not rely on a
+stable OS or vault trash path. Qualify local recoverability on each supported
+host and trash setting, or preserve and verify an exact excluded local copy
+before trashing. If recovery cannot be established, or the local effect fails or remains
+uncertain, stop for review without acknowledging deletion. Do not use permanent `Vault.delete` for this
+automatic path.
+
 Local rename effects consume the destination-first remote protocol receipts
 defined in stage 1 and verify exact local evidence before and after mutation.
 
 **Exit:** a disposable desktop vault round-trips Markdown, Canvas, and target
 attachment types by hash; settings do not leak secrets; crashes and restarts
-resume without converting an ambiguous effect into a destructive retry.
+resume without converting an ambiguous effect into a destructive retry. A
+remote tombstone leaves independently restorable remote and local recovery
+evidence or fails closed.
 
 ### 4. Independent enrollment and mobile lifecycle
 
@@ -257,8 +283,10 @@ continue using the same API without reinterpreting old revisions.
 
 ## Next handoff
 
-This design proposal must be reviewed before a production sync PR. The first
-implementation PR after this design is accepted should establish
+This design proposal must be reviewed before a production sync PR. A separate,
+explicit roadmap update must mark an eligible implementation milestone `NEXT`
+before code work begins; this proposal does not define M7 or mark `NEXT`. The
+first implementation PR after that transition should establish
 the versioned sync contract and R2 storage port **without changing the live
 writer path**. Before code, verify the current `main`, open PRs, roadmap,
 workflows, and deployed bindings again. Use disposable vaults through stage 5.

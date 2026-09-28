@@ -100,8 +100,11 @@ The Worker is the remote HTTP/API boundary. `index.ts` constructs the Hono app a
 
 R2 stores current objects under `vault/<normalized-path>` and recovery objects under
 `recovery/<operation-uuid>` through `VAULT_BUCKET`, without client S3 credentials.
-Configuration names a development bucket but does not prove a remote resource exists;
-setup instructions are in the [README](../README.md#local-worker-development).
+The committed configuration names the production `obsidian-ai-bridge` bucket;
+the [operator guide](operations.md#worker-deployment) records the first manual
+Worker deployment and custom-hostname check. Configuration alone does not prove
+the currently deployed version, credentials, or any vault installation. Local
+setup instructions remain in the [README](../README.md#local-worker-development).
 Reachable mutations use create-only or exact-observed-generation conditional PUT;
 application policy also refuses mutation when an established generation's receipt
 belongs to another association. Current tombstones and purged recovery markers are

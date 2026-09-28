@@ -61,11 +61,14 @@ existing 1 MiB Markdown-only qualification is not a whole-vault claim.
   parallel revision domain. Each device durably remembers the exact remote
   version it acknowledged and any unresolved local or remote effect.
 - Synchronization classifies local, acknowledged base, and remote versions.
-  Unchanged local state, including acknowledged absence, can receive a remote change;
-  unchanged remote content can receive a local change. Concurrently changed
-  content, delete/edit races, ambiguous effects, and invalid state preserve
-  both sides and require review.
-  Initial behavior creates a conflict copy rather than guessing a text merge.
+  Unchanged local state, including durably acknowledged absence, can receive a
+  remote change; unchanged remote content can receive a local change.
+  Concurrently changed content, delete/edit races, ambiguous effects, and
+  invalid state preserve both sides and require review. A never-seen remote create has no acknowledged base: it may create a local path only after a fresh complete local check proves
+  that path absent, no pending local intent or path-equivalence collision exists,
+  and observation has no gap. An existing local object, incomplete check, or
+  ambiguous state goes to review. Initial behavior creates a conflict copy
+  rather than guessing a text merge.
 - A mutation uses create-only or compare-and-swap against the exact observed
   remote version. A failed condition stops the operation; it never retries
   against a newly observed head. Local application uses official Obsidian Vault
@@ -76,23 +79,29 @@ existing 1 MiB Markdown-only qualification is not a whole-vault claim.
   cannot authorize deletion. A locally originated remote deletion requires an
   acknowledged path and a captured post-enrollment Vault delete event, with a
   matching remote precondition. The event alone does not prove human intent.
-  An incoming authorized remote tombstone may delete a local copy only when it
-  still matches the exact acknowledged base and recovery is preserved.
+  An incoming authorized remote tombstone may remove a local copy only when it
+  still matches the exact acknowledged base, remote recovery is retained, and
+  the local effect has a qualified recovery path. Use Obsidian's
+  `FileManager.trashFile` to follow the user's trash setting; do not assume a
+  stable OS or vault trash path. If recoverability cannot be established,
+  preserve and verify an exact excluded local copy before trashing or stop for
+  review.
+  Failed or uncertain effects never count as successful deletion.
   Tombstones prevent stale devices from recreating deleted files. An external
   deletion while Obsidian is closed has no captured event: leave the remote
   version intact, show the missing local path for review, and require explicit
   confirmation before a remote tombstone. Recovery must not silently erase the
   remote copy.
 - Authorized REST/MCP changes are ordinary remote revisions. They reach
-  devices through the same pull/reconcile path and auto-apply while the local
-  state, including acknowledged absence, still matches the exact acknowledged base
-  and every remote revision and local precondition passes. Concurrent changes
-  or unknown effects preserve both sides and require review. Record and display
+  devices through the same pull/reconcile path and auto-apply when the local
+  state matches its exact acknowledged base and every remote revision and local
+  precondition passes. A never-seen create additionally requires the fresh
+  absence, intent, collision, and gap checks above. Concurrent changes or
+  unknown effects preserve both sides and require review. Record and display
   mutation origin. Note text never supplies instructions or authority to the
-  synchronizer. API and MCP
-  must not bypass revision checks or write a separate namespace that the sync
-  engine cannot observe. This is proposed future behavior, not current M4
-  remote-to-local authority.
+  synchronizer. API and MCP must not bypass revision checks or write a separate
+  namespace that the sync engine cannot observe. This is proposed future
+  behavior, not current M4 remote-to-local authority.
 - Path identity must be portable across the supported hosts. The proposed
   comparison key is per-segment NFC normalization plus Unicode case folding,
   while preserving original file bytes and display names. Enrollment detects

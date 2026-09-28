@@ -292,36 +292,43 @@ change-size limits; dependencies and acceptance evidence are listed below.
   The core sees the `InventoryId` and typed progress, never the R2 cursor.
 - The R2-only scan manifest is capped at `MAX_INVENTORY_MANIFEST_BYTES = 8,192` and
   records schema, vault/scan IDs, phase, start lane vector, exact opaque R2 cursor
-  (maximum `MAX_INVENTORY_CURSOR_BYTES = 4,096` UTF-8 bytes), last lexicographic key,
-  empty-page count, next step number, logical page/head counts, actual R2 LIST/head-GET
-  attempt counts, unique/read body-byte totals, evidence-byte total, immutable chunk
-  count/hash chain, the current step's reserved attempt number, and a server-time
-  expiry 24 hours after start. If an R2 cursor exceeds its cap, fail
-  with `inventory_limit_exceeded` before advancing progress. The manifest uses exact
-  ETag CAS. Each immutable evidence chunk contains at most 300 validated head summaries
-  and 2 MiB serialized
-  evidence, is create-only, and is keyed by the monotonically increasing step number.
-  A chunk records its step number, previous chunk hash, and for each list page ordered
-  input/output cursor digests, the `truncated` result, and validated head summaries.
-  Each page transcript has a canonical serialized limit of 256 bytes; its cursor
-  digests are SHA-256 hex, never the raw cursor. The evidence-byte total includes each
-  unique transcript, head summary, chunk envelope, and hash-chain field exactly once.
-  The remaining serialized chunk envelope (including fixed metadata and hash fields,
-  excluding transcripts and summaries) is capped at 1,024 bytes per chunk.
-  Hash each chunk as SHA-256 over its exact strict-canonical UTF-8 JSON bytes; the
-  manifest CAS advances the rolling hash only after the chunk is read back and
-  validated. Only the manifest stores the opaque continuation cursor. Inventory
-  metadata never enters note data, feed events, or client sync checkpoints.
+  (maximum `MAX_INVENTORY_CURSOR_BYTES = 4,096` UTF-8 bytes, stored as unpadded
+  base64url), last lexicographic key, empty-page count, next step number, logical
+  page/head counts, actual R2 LIST/head-GET attempt counts, unique/read body-byte totals,
+  evidence-byte total, immutable chunk count/hash chain, current step's reserved attempt
+  number, and a server-time expiry 24 hours after start. Its encoded cursor is at most
+  5,462 bytes; all other fields and JSON syntax fit within the remaining 2,730 bytes.
+  An R2 cursor above the cap fails with `inventory_limit_exceeded` before progress
+  advances. The manifest uses exact ETag CAS. Each immutable evidence chunk contains
+  exactly one complete R2 list-page result, at most one validated head summary, and at
+  most `MAX_INVENTORY_CHUNK_BYTES = 12 KiB` serialized evidence; it is create-only and
+  keyed by the monotonically increasing step number. A chunk records its step number,
+  previous chunk hash, input/output cursor digests, `truncated`, and the validated head
+  summary. It stores the exact output cursor bytes as unpadded base64url (or `null` for a
+  terminal page) so recovery can advance without repeating R2 reads. Each page transcript
+  has a canonical serialized limit of 256 bytes; cursor digests are SHA-256 hex, never raw
+  cursor values. Evidence-byte accounting includes each unique transcript, summary,
+  envelope, and hash-chain field exactly once. The serialized chunk envelope (fixed
+  metadata, hash fields, and encoded output cursor, excluding transcript and summary) is
+  capped at `MAX_INVENTORY_CHUNK_ENVELOPE_BYTES = 8,192`: at most 5,462 bytes for unpadded
+  base64url encoding of the 4,096-byte cursor plus 2,730 bytes for all other fields and
+  canonical JSON syntax. Hash each chunk as SHA-256 over its exact strict-canonical UTF-8
+  JSON bytes; the manifest CAS advances the rolling hash only after the chunk is read
+  back and validated. The manifest is the authoritative continuation cursor; the chunk's
+  cursor is private recovery evidence. Neither cursor enters core, note data, feed events,
+  or client sync checkpoints.
 - `startInventory` first creates an exact-request `starting` manifest, then claims
   `inventories/active.json` with exact CAS. It captures the 64 lane heads and pending
   markers and changes the manifest to `scanning` with the start vector only if no lane
   is pending. A retry with the same ID resumes the recorded phase; a different active
   scan cannot be adopted. If start-vector capture finds a pending lane, mark this scan
   failed and replace only its own active-slot value with `empty` by exact CAS. An
-  interruption retains the manifest/slot for the same-ID retry. Each continuation step follows at
-  most six R2 listing pages under `heads/`, requesting at most 50 objects per page,
-  and performs one bounded GET for every listed head (at most 300 head GETs per step).
-  R2 may return fewer objects than requested; page length is never a completion signal.
+  interruption retains the manifest/slot for the same-ID retry. Each continuation
+  step processes exactly one complete R2 listing page under `heads/`, using
+  `MAX_INVENTORY_LIST_PAGES_PER_STEP = 1` and `MAX_INVENTORY_LIST_LIMIT = 1`, and performs
+  at most one bounded GET for its head body. No step commits a partial page. R2 may
+  return fewer objects than requested, including zero; page length is never a completion
+  signal.
   Follow the exact opaque R2 cursor whenever `truncated` is true and stop listing
   only when it is false. Every truncated page must include a cursor different from its
   input cursor.
@@ -346,20 +353,30 @@ change-size limits; dependencies and acceptance evidence are listed below.
   `storage_unavailable` with that ID and the saved cursor; resume it when storage is
   available. Neither condition advances progress. If a progress write itself has
   uncertain effect, return
-  `effect_unknown` until exact read-back resolves it. If interrupted after chunk
-  creation but before manifest advance, resume the same input cursor and step: verify
-  the existing chunk matches every page's cursor digests, `truncated` value, key order,
-  and head evidence before advancing. Before any R2 LIST or head GET for a step, persist
-  by exact-CAS reservation that this is attempt one or two for that step; charge it
-  against the
-  total attempt ceilings even if the invocation is interrupted. If attempt one ends
-  before a verifiable chunk exists, resume may reserve attempt two after the same-key
-  cooldown. A verified existing chunk is read and advanced without repeating its list
-  or head requests. If attempt two ends without a verifiable chunk, fail the scan with
-  `inventory_limit_exceeded`; never issue a third data-read attempt for that step. A
-  different chunk, divergent manifest, or unprovable write returns
-  `effect_unknown`/`inventory_incomplete` and the scan cannot complete. A terminal
-  `inventory_incomplete` marks the scan failed and attempts to replace only its own
+  `effect_unknown` until exact read-back resolves it. Persist the data-read attempt
+  reservation by exact CAS before issuing the page's LIST or head GET. Each step allows
+  at most two such attempts, counting interruptions and failed reads. Preflight
+  subrequest/CPU deferral occurs before reservation and spends none. If execution stops
+  after an attempt reservation, resume the same step and input cursor by first reading
+  its deterministic chunk key. That recovery read is not a data-read attempt but counts
+  against the invocation subrequest budget. If a chunk exists, it is the sole
+  authoritative replay evidence: do not repeat LIST/head GET. Read and validate the
+  exact chunk bytes, canonical hash, prior root, step, input-cursor digest against the
+  manifest, page transcript, `truncated` flag, strict key order, head schema, counts and
+  bytes, and output-cursor digest against the exact cursor stored in that chunk. Then
+  advance the manifest by exact CAS from that stored cursor. A terminal transcript must
+  have `truncated: false` and a `null` output cursor; a truncated transcript must have
+  an advancing cursor. An unavailable read-back after a possible chunk write returns
+  `effect_unknown` and retains the scan for same-ID recovery; do not issue another
+  LIST/head GET or release the active slot until the write is resolved. A present but
+  altered, conflicting, or invalid chunk fails as `inventory_incomplete`. Neither case advances
+  the manifest. If the chunk is absent and only attempt one was reserved, reserve
+  attempt two by exact CAS after the cooldown, then issue the same LIST/head reads from
+  the saved input cursor. If attempt two ends and an exact chunk-key read proves no
+  verifiable chunk exists, fail the scan with `inventory_limit_exceeded`; never issue a
+  third data-read attempt for that step. A divergent manifest or uncertain progress write
+  returns `effect_unknown`; the scan cannot complete. A terminal `inventory_incomplete` marks
+  the scan failed and attempts to replace only its own
   active-slot value with `empty` by exact CAS; if either write is throttled or uncertain,
   retain the slot until recovery proves its state. Resolve a lost manifest-CAS response
   by rereading the manifest; never overwrite a newer step. R2 write pacing and cooldowns
@@ -377,23 +394,29 @@ change-size limits; dependencies and acceptance evidence are listed below.
   write, and read-back as one internal-service subrequest. The protocol constant
   `MAX_INVENTORY_SUBREQUESTS_PER_INVOCATION = 400` includes all inventory reads,
   writes, recovery read-backs, and any other internal-service calls composed into that
-  request. A listing step uses at most six
-  LIST calls and 300 head GETs (306); reserve the remaining 94 for manifest/active-slot/
-  chunk operations and bounded recovery reads. Start/final-vector steps use at most
-  128 lane-head and pending-marker reads, with all manifest/active-slot calls inside
+  request. A listing step uses one LIST and at most one head GET; reserve the remaining
+  398 for manifest/active-slot/chunk operations and bounded recovery reads.
+  Start/final-vector steps use at most 128 lane-head and pending-marker reads, with all
+  manifest/active-slot calls inside
   the same 400 total. Before each call, reserve budget for its worst-case required
-  persistence/read-back; defer work rather than crossing the cap. This leaves at least
-  600 of Workers Free's 1,000 internal-service subrequests for unrelated work. M7 is
-  uncomposed; a later caller must include its own calls in the platform's 1,000 limit
+  persistence/read-back; defer work rather than crossing the cap. If the invocation
+  cannot reserve subrequest and CPU budget for a full one-page step (including one
+  possible head GET and its persistence/read-back), return `inventory_in_progress`
+  before reserving a read attempt. Do not commit a partial page. If runtime termination
+  occurs after reservation, the attempt is charged and the bounded replay rule applies.
+  This leaves at least 600 of Workers Free's 1,000 internal-service subrequests for
+  unrelated work. M7 is uncomposed; a later caller must include its own calls in the
+  platform's 1,000 limit
   and not invoke an inventory step unless the combined request fits. Evidence paging
-  reads at most 300 chunks and returns at most 100 head summaries in one invocation;
+  reads at most 16 chunks and returns at most 16 head summaries in one invocation;
   if the chunk bound is reached first, it returns a continuation cursor without
   advancing the scan. A step deferred for budget returns `inventory_in_progress`
   without advancing the saved cursor.
-- Each listing step validates its complete R2 response, any listed head bodies, and
-  its immutable evidence chunk before advancing the manifest's rolling chunk hash and
-  progress with exact CAS. On resume, an existing step chunk is revalidated against
-  the repeated list responses before that CAS. Once `truncated: false` is durably
+- On the first attempt, validate the complete R2 LIST response and any listed head body,
+  then write the create-only step chunk. The single replay procedure above governs every
+  retry: an existing chunk is validated and advances the manifest without repeating R2
+  reads. Both paths advance the rolling root/cursor only by exact CAS after the complete
+  page/chunk is validated. Once `truncated: false` is durably
   recorded, a separate bounded finalization step reads all 64 lane heads and pending
   markers again. A scan is complete only when no lane is pending and the final vector
   exactly equals the saved start vector. Because every mutation reserves and commits
@@ -413,7 +436,7 @@ change-size limits; dependencies and acceptance evidence are listed below.
   retry time until complete, or a `CompleteInventory` handle containing the stable
   generation vector, final entry count, chunk count, and hash-chain root.
   `readInventoryPage` is permitted only after manifest state is complete. It returns
-  at most 100 head summaries per call; if the 300-chunk bound is reached first, it
+  at most 16 head summaries per call; if the 16-chunk bound is reached first, it
   returns the opaque continuation cursor rather than implying completion. The cursor
   contains the scan ID, snapshot root, next chunk/entry offset, and prior chunk hash.
   Pages are contiguous and strictly ordered; each is bound to the handle's vault, scan
@@ -428,26 +451,36 @@ change-size limits; dependencies and acceptance evidence are listed below.
   40,002` counts actual R2 LIST subrequests including the single replay allowance.
   `MAX_INVENTORY_HEADS = 10,000` counts unique validated heads, while
   `MAX_INVENTORY_HEAD_GET_CALLS = 20,000` counts actual head-body GETs including one
-  replay per head. A no-interruption scan uses at most one LIST and one head GET per
-  page/key; interruption replay consumes the additional fixed allowance. The manifest
+  replay per head. Thus listing plus head-body data reads are at most 60,002 R2
+  subrequests across the scan, excluding other per-invocation control/persistence calls.
+  A no-interruption scan uses one LIST and at most one head GET per page/key;
+  interruption replay consumes the additional fixed allowance. The manifest
   attempt reservation is durable before those calls, so repeated interruption cannot
   evade the ceilings. Exceeding them fails closed with `inventory_limit_exceeded`.
   Also cap `MAX_INVENTORY_HEAD_BODY_BYTES = 20 MiB` of unique validated head bodies,
   `MAX_INVENTORY_HEAD_READ_BYTES = 40 MiB` across actual GET responses, and
-  `MAX_INVENTORY_EVIDENCE_BYTES = 24 MiB` serialized unique evidence and
-  `MAX_INVENTORY_STEP_CHUNKS = 3,334` (the ceiling of 20,001 logical pages divided by
-  six).
-  At all maxima, 10,000 summaries use 15,360,000 bytes, 20,001 page transcripts use
-  5,120,256 bytes, and 3,334 chunk envelopes use at most 3,414,016 bytes: 23,894,272
-  bytes total, below 24 MiB. The 1,536-byte per-head summary cap and 2,048-byte body cap
-  permit all 10,000 maximum-sized heads within their cumulative byte ceilings.
+  `MAX_INVENTORY_EVIDENCE_BYTES = 192 MiB` of serialized unique evidence.
+  `MAX_INVENTORY_STEP_CHUNKS = MAX_INVENTORY_LIST_PAGES = 20,001`: each complete list
+  page is one step and one chunk, including short and empty truncated pages. Preflight
+  CPU or subrequest deferral happens before reserving an attempt and creates no chunk;
+  therefore it cannot increase the chunk bound. At all maxima, 10,000 summaries use
+  15,360,000 bytes, 20,001 page transcripts use 5,120,256 bytes, and chunk envelopes
+  use at most 163,848,192 bytes. The total, 184,328,448 bytes, is below 192 MiB. The
+  1,536-byte summary cap and 2,048-byte body cap permit 10,000 maximum-sized heads
+  within their cumulative bounds. `MAX_INVENTORY_EVIDENCE_CHUNKS_PER_CALL = 16`, so a
+  single successful evidence traversal requires at most
+  `MAX_INVENTORY_EVIDENCE_PAGE_CALLS = ceil(20,001 / 16) = 1,251` calls; every call,
+  including an idempotent retry, remains subject to the 400-subrequest invocation cap.
   This permits a 10,000-head scan when each nonterminal page returns only one new key
   and up to one empty truncated page per head; it is a bound, not a guarantee that R2
-  will return a particular number of objects per call. Exceeding any total ceiling before
-  `truncated: false` returns `inventory_limit_exceeded`, with no complete handle or
+  will return a particular number of objects per call. This is a contract bound, not a
+  runtime qualification: M7 cannot exit until the Workers Free CPU gate below passes.
+  Exceeding any total ceiling before `truncated: false` returns
+  `inventory_limit_exceeded`, with no complete handle or
   absence conclusions. This is terminal: mark the manifest failed and replace only its
   own active-slot value with `empty` by exact CAS. If that write is throttled or
-  uncertain, retain the slot until recovery proves its state. A scan past its 24-hour expiry returns
+  uncertain, retain the slot until recovery proves its state. A scan past its 24-hour
+  expiry returns
   `inventory_expired`; restart uses a new `InventoryId`. Typed `storage_throttled`,
   `storage_unavailable`, `inventory_incomplete`, and `effect_unknown` outcomes preserve
   no false completion.
@@ -462,11 +495,18 @@ change-size limits; dependencies and acceptance evidence are listed below.
   been consumed. Any failed/expired scan restarts from the beginning; partial chunks
   never become an empty vault or deletion signal.
 - Stage 1 uses 10,000 synthetic current objects as the initial inventory ceiling.
-  Each invocation stays under the Free-plan-safe subrequest budget; the implementation
-  measures total elapsed time, CPU, and memory across resumptions in local workerd.
+  Each continuation requests one object per list page and performs at most one head GET;
+  evidence paging reads at most 16 chunks. The implementation measures total elapsed
+  time, CPU, and memory across resumptions in local workerd, but local checks do not
+  establish Cloudflare CPU compliance. Workers Free allows 10 ms CPU per request.
+  Before M7 can be marked complete, an explicitly authorized isolated Workers Free
+  qualification must show every inventory invocation profile stays within that limit.
+  If any profile exceeds it, reduce per-invocation work and recalculate page, chunk,
+  evidence, and expiry bounds; do not assume Paid CPU limits or raise the quota.
   The existing 1 MiB object limit remains in force for mutation/content reads, not
   inventory head reads. No deployed or mobile performance claim follows from this
-  synthetic ceiling.
+  synthetic ceiling; documentation checks and local workerd measurements alone do not
+  satisfy the Free CPU qualification gate.
 
 ### R2 write throttling and uncertain effects
 
@@ -590,39 +630,48 @@ crosses repository thresholds, subdivide further without changing these contract
    expired cursors. With one lane producing continuously and a later-numbered lane
    holding eligible events, each eligible lane is served within one 64-lane round;
    the hot lane cannot take a second event in a round before the other lane's turn.
-5. Inventory tests prove requested page limit 50, short pages with `truncated: true`
-   continue using the exact returned cursor, and only `truncated: false` completes
-   listing. They verify revision/tombstone evidence comes from each validated head
-   body's GET (not list metadata). Ten thousand maximum-sized valid head bodies and
-   summaries remain within their aggregate byte ceilings. A worst-case 10,000-head
-   scan with one new head per nonterminal list page and up to 10,000 cursor-advancing
-   empty pages completes across persisted steps within 20,001 logical list pages,
-   40,002 actual LIST calls including one replay per step, 10,000 unique heads, and
-   20,000 head GET calls including replay. It does not exceed 400 internal-service
-   subrequests in any invocation under the Workers Free limit. Assert each step's exact
-   subrequest count, 24-hour expiry, per-step and total ceilings, and that no plan tier
-   or raised quota is assumed. Verify same-key inventory-manifest and active-slot
+5. Inventory tests prove each step requests exactly one complete R2 list page with
+   request limit one and commits one corresponding chunk, including short and empty
+   pages; only `truncated: false` completes listing. Ten thousand maximum-sized valid
+   heads and summaries remain within their aggregate byte ceilings. The worst-case
+   10,000-head scan completes in at most 20,001 logical list pages/chunks, 40,002 LIST
+   calls and 20,000 head GET calls including one replay allowance per page (60,002 data
+   subrequests). One uninterrupted evidence traversal takes at most 1,251 successful
+   responses at 16 chunks per call. Assert every inventory invocation, including control
+   and recovery reads/writes, stays within 400 subrequests. Budget or CPU preflight
+   deferral must occur before attempt reservation and consume neither an attempt nor a
+   chunk. For an interrupted attempt with no verified chunk, allow exactly one
+   same-step/same-cursor replay; a second interrupted attempt fails with
+   `inventory_limit_exceeded` only after an exact chunk-key read proves no valid chunk
+   exists. On resumption with a reserved attempt, probe that key before any data read; if
+   the read is unavailable, retain `effect_unknown` without spending an attempt. If a
+   chunk write remains uncertain, resolve it by read-back only; do not issue another
+   LIST/head GET. If a create-only chunk exists, recovery MUST read and
+   validate that exact chunk, transcript, output cursor, root, counts, and bytes, then
+   CAS-advance from its persisted cursor without repeating LIST or head GET. A missing,
+   corrupt, mismatched, or unprovable chunk never advances the manifest or yields a
+   handle. Assert the 20,001-chunk ceiling, 20 MiB unique and 40 MiB replayed head-read
+   bodies, and the 192 MiB evidence ceiling with its 184,328,448-byte calculation.
+   Verify cursor/manifest/chunk caps and 24-hour expiry. Same-key manifest and active-slot
    cooldowns defer transitions across invocations without sleeping or consuming another
-   read attempt, including resumption after a chunk is durable but manifest advancement
-   is deferred. Inject interruption after initial manifest creation, active-slot claim,
-   start-vector capture, list/head reads, immutable chunk create, manifest CAS,
-   final-vector read, completion, slot release, and cleanup. Scan interruptions resume
-   the same `InventoryId` without skips, duplicate evidence, or false completion; cleanup
-   interruption remains limited to eligible inventory artifacts. Prove a persisted
-   per-step attempt budget permits one interrupted read attempt and rejects a second
-   interrupted attempt without exceeding actual LIST/GET ceilings. Test the per-page
-   transcript and per-chunk envelope byte caps, including the maximum aggregate-evidence
-   arithmetic. A changed generation or pending lane invalidates the scan.
-   Verify `readInventoryPage` rejects pending/failed scans, reads at most 300 chunks and
-   returns at most 100 entries per call, and treats an empty continuation page as
-   progress; only the terminal marker and verified root/count finish paging. No
-   individual page or incomplete chunk chain can establish absence. Assert scan,
-   evidence-page, and cleanup invocations remain within 400 internal-service
-   subrequests, including recovery reads. Exhausting a total budget, malformed or
-   non-advancing cursor, missing/malformed head, throttle, and unavailable storage each
-   produce the specified typed outcome with no complete handle; unavailable list/head
-   reads retain the same scan ID and cursor for retry. Cover cleanup restricted
-   to expired inventory artifacts and preserve all note/feed/version data.
+   data-read attempt, including chunk durability followed by deferred manifest advance.
+   Inject interruption after initial manifest creation, active-slot claim, start-vector
+   capture, LIST/head reads, chunk create, manifest CAS, final-vector read, completion,
+   slot release, and cleanup. Resumption uses the same `InventoryId` without skipped or
+   duplicate evidence or false completion; cleanup remains prefix-limited. A changed
+   generation or pending lane invalidates the scan. `readInventoryPage` rejects
+   pending/failed scans, reads at most 16 chunks and returns at most 16 heads per call,
+   and treats an empty continuation as progress; only the terminal marker and verified
+   root/count finish paging. No individual page or incomplete chunk chain establishes
+   absence. Exhausted budgets, malformed/non-advancing cursors, missing/malformed heads,
+   throttling, and unavailable storage produce their typed outcome without a complete
+   handle; unavailable reads retain the scan ID and cursor. Cleanup affects only eligible
+   inventory artifacts and preserves note/feed/version data. Separately profile start,
+   continuation, finalization, evidence-page, cleanup, and recovery invocation CPU on a
+   separately authorized isolated Workers Free runtime. Every profile must stay within
+   the current 10 ms CPU limit before M7 exits. `mise run check` and local workerd do not
+   satisfy this runtime gate; if a profile exceeds the limit, reduce per-invocation work
+   and recalculate all affected bounds.
 6. Recovery tests inject failure after every journal/current/event/head persistence
    boundary; retry either commits the exact same operation, records a safe abort, or
    remains blocked as `operation_pending`/`effect_unknown`. Same-key tests cover

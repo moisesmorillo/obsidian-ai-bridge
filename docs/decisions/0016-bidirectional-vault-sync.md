@@ -130,22 +130,35 @@ existing 1 MiB Markdown-only qualification is not a whole-vault claim.
   persists an opaque listing cursor and bounded immutable evidence chunks across
   Worker invocations, caps every inventory, evidence-page, and cleanup invocation at
   400 internal-service subrequests, and does not rely on a Paid plan or raised quota.
-  Short/empty R2 pages continue by exact cursor until `truncated: false`; 20,001
-  logical list pages and 10,000 unique heads are total scan ceilings, not a per-call
-  result guarantee. A no-interruption scan uses at most 20,001 LIST and 10,000 head GET
-  calls; durable per-step attempt reservations allow one replay, for ceilings of 40,002
-  actual LIST and 20,000 actual head GET calls. Unique head bodies are capped at 20 MiB,
-  replayed head-read bodies at 40 MiB, and unique serialized evidence at 24 MiB. Every
-  replay still counts against the 400-subrequest invocation cap. A complete listing
-  with validated head-body revision/tombstone evidence and identical no-pending
-  start/end lane vectors yields a snapshot handle; evidence paging is itself bounded to
-  300 chunks/100 heads per call. Partial scans/pages provide no absence/deletion
-  evidence. Typed exhaustion,
+  Short/empty R2 pages continue by exact cursor until `truncated: false`; each step
+  sets the R2 limit to one object and persists one complete page in one chunk. The
+  total ceiling is 20,001 logical list pages and chunks, not a per-call result
+  guarantee. A no-interruption scan uses at most 20,001 LIST and 10,000 head GET calls;
+  durable per-page attempt reservations allow one replay, for ceilings of 40,002 actual
+  LIST and 20,000 actual head GET calls (60,002 listing/head data subrequests). Each page allows
+  at most two persisted data-read attempts; preflight deferrals spend no attempt, while
+  a second interrupted attempt fails closed only after an exact chunk-key read proves no
+  valid chunk exists. On resumption, probe that key before data reads; an existing chunk
+  is validated and used to advance the manifest without repeating LIST/head GET. An
+  unavailable or uncertain chunk read remains blocked and cannot trigger another
+  data-read attempt. Unique head bodies are capped at 20 MiB,
+  replayed head-read bodies at 40 MiB, chunks at 12 KiB each, and serialized evidence at
+  192 MiB. That ceiling is calculated from 15,360,000 summary bytes, 5,120,256
+  page-transcript bytes, and 163,848,192 chunk-envelope bytes (184,328,448 total, below
+  192 MiB). Every call, replay included, remains within the 400-subrequest invocation cap.
+  One complete evidence traversal needs at most 1,251 successful calls of 16
+  chunks/heads each. A
+  complete listing with validated head-body revision/tombstone evidence and identical
+  no-pending start/end lane vectors yields a snapshot handle. Partial scans/pages provide
+  no absence/deletion evidence. Typed exhaustion,
   interruption, and expiry failures are specified in the M7 contract. Repeated writes
   to mutable same-key objects, including lane heads, journals, inventory manifests, and
   active slots, preserve exact CAS and observe R2's write rate limit. Cooldown deferrals
   resume the same durable step without an extra read attempt; throttled or uncertain
   effects remain resumable but blocked rather than reported as successful mutations.
+  Workers Free's 10 ms CPU/request ceiling is a M7 implementation exit gate for every
+  inventory invocation profile; documentation and local workerd tests do not establish
+  compliance or authorize a production rollout.
   These storage requirements do not accept the broader bidirectional product
   destination or authorize a client cutover.
 - The current `vault/<path>` objects and v2 REST/MCP view belong to the

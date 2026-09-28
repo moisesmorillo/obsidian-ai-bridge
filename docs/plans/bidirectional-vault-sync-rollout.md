@@ -118,44 +118,51 @@ current writer, migrate data, or activate a vault. Before any later protocol
 exposure, migrated identities require an explicit v2 compatibility fence so old
 clients cannot write an invisible parallel revision.
 
-Stage 1's initial inventory ceiling is 10,000 synthetic current objects, each
-listing request asks for at most 50 objects, and the current 1 MiB Markdown limit
-remains in force. R2 can return short or empty pages while `truncated` remains true;
-persist and follow its opaque cursor, and treat only `truncated: false` as completion.
-Each head's revision/tombstone comes from a validated current-head body, not list
-metadata. A resumable manifest and immutable evidence chunks span bounded Worker
+Stage 1's initial inventory ceiling is 10,000 synthetic current objects, and the
+current 1 MiB Markdown mutation limit remains in force. Each continuation sets the R2
+limit to one object and commits exactly one complete list page/chunk. Short and empty
+pages continue with the exact opaque cursor while `truncated` is true; only false
+completes listing. Each head's revision/tombstone comes from its validated current-head
+body, not list metadata. A resumable manifest and immutable evidence chunks span Worker
 invocations. Each inventory, evidence-page, or cleanup invocation consumes at most 400
-internal-service subrequests, leaving at least 600 of Workers Free's 1,000 limit and
-assuming no Paid plan or raised quota. The total scan permits 20,001 logical list pages
-and 10,000 unique heads (at most 3,334 six-page listing steps plus separate start/final
-steps). A durable per-step attempt reservation allows one replay before terminal
-exhaustion. A no-interruption scan uses at most 20,001 LIST and 10,000 head GET calls,
-while hard actual-call ceilings are 40,002 LIST and 20,000 head GET calls. Every replay
-counts against the same 400-subrequest invocation cap. The scan is subject to 20 MiB
-unique head bodies, 40 MiB actual head-read responses, 24 MiB evidence, per-head,
-cursor, entry, and 24-hour ceilings. Only `truncated: false` completes listing.
-Same-key manifest/active-slot cooldowns defer durable transitions across invocations
-without repeating reads or sleeping. Evidence reads are separately bounded to 300
-chunks/100 heads per call and expose a final marker only after contiguous hash-chain
-verification. Only the final scan step may issue a complete handle, after matching
-start/end feed vectors with no pending operation and read-back-verified release of its
-active slot. Interrupted, throttled, expired, exhausted, or inconsistent scans preserve
-their checkpoint or fail typed and never provide absence/deletion evidence. Repeated
-writes to same-key mutable objects observe R2's per-key rate limit while retaining exact
-CAS; throttled or uncertain effects remain resumable/blocked. The M7 spec defines the
-required local workerd measurements; it makes no deployed/mobile qualification claim.
+internal-service subrequests, leaving at least 600 of Workers Free's 1,000 limit without
+assuming a Paid plan or raised quota. The total is at most 20,001 logical list pages and
+one chunk per page (20,001 chunks), plus 10,000 unique heads. A no-interruption scan
+uses at most 20,001 LIST and 10,000 head GET calls; durable per-page attempt
+reservations allow one replay and cap actual calls at 40,002 LIST plus 20,000 head GET
+(60,002 listing/head data subrequests). Each page has at most two data-read attempts;
+preflight deferrals spend none. On resumption with an attempt reserved, probe the exact
+chunk key first; a present chunk is validated and advances the manifest without repeating
+LIST/head GET. If attempt two ends, fail only after an exact read proves no valid chunk
+exists; an uncertain/unavailable chunk read stays blocked for read-back and cannot trigger
+another data-read attempt. The scan is subject to 20 MiB unique head bodies, 40 MiB actual
+head-read responses, 192 MiB serialized evidence, 4 KiB cursors, 8 KiB manifests, 12 KiB
+chunks, and a 24-hour lifetime. The
+evidence ceiling is the sum of 15,360,000 summary bytes, 5,120,256 page-transcript bytes,
+and 163,848,192 chunk-envelope bytes (184,328,448 total). Evidence reads use at most 16
+chunks/heads per call, or 1,251 successful calls for one complete traversal, and expose a terminal
+marker only after contiguous hash-chain verification. Only the final scan step may issue
+a complete handle, after matching start/end feed vectors with no pending operation and
+read-back-verified release of its active slot. Interrupted, throttled, expired, exhausted,
+or inconsistent scans preserve their checkpoint or fail typed and never provide
+absence/deletion evidence. Repeated writes to same-key mutable objects observe R2's
+per-key rate limit while retaining exact CAS; throttled or uncertain effects remain
+resumable/blocked. The M7 spec requires an isolated Workers Free runtime qualification
+for the 10 ms CPU/request limit; repository checks and local workerd do not prove it. No
+production deployment or mobile qualification is implied.
 
 **Exit:** satisfy every M7 acceptance item, including same-revision race refusal,
-feed fairness under a continuously busy lane, short R2 list pages and cursor
-continuation across persisted steps, worst-case 10,000-head/20,001-logical-page inventory
-within the per-invocation 400-subrequest bound without plan upgrades, bounded evidence
-pages, interruption at every inventory checkpoint/chunk boundary, consistent final
-vectors, typed budget exhaustion without partial inventory, same-key throttling and
-inventory-manifest cooldown deferral without duplicate reads, uncertain-effect recovery,
-operation recovery at every persistence boundary,
-old-prefix noninterference, bounded cursor replay/inventory recovery,
-interruption-safe destination-first rename, and `mise run check`. Existing v2
-API/MCP and designated-writer tests remain green; no routes are mounted and no
+feed fairness under a continuously busy lane, short R2 list pages and cursor continuation
+across one-page chunks, worst-case 10,000-head/20,001-page inventory within the
+per-invocation 400-subrequest bound without plan upgrades, exact replay from a durable
+chunk without repeated data reads, one interrupted read replay per page, 192 MiB evidence
+arithmetic, bounded evidence pages, interruption at every inventory checkpoint/chunk
+boundary, consistent final vectors, typed budget exhaustion without partial inventory,
+same-key throttling and inventory-manifest cooldown deferral without duplicate reads,
+uncertain-effect recovery, explicit Workers Free CPU qualification, operation recovery at
+every persistence boundary, old-prefix noninterference, bounded cursor replay/inventory
+recovery, interruption-safe destination-first rename, and `mise run check`. Existing
+v2 API/MCP and designated-writer tests remain green; no routes are mounted and no
 personal-vault data is used.
 
 ### 2. Pure three-way reconciliation engine

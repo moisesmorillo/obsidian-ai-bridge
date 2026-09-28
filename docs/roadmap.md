@@ -127,7 +127,7 @@ include all previous milestones.
 | M4 | Remote-to-local reconciliation and conflict resolution | COMPLETE | Review/adopt/resolve remote divergence and richer restoration without silent local data loss | M3 |
 | M5 | Operational and security readiness | COMPLETE | Latest-only, bounded v1.0.2 software support with reviewed limits, permissions, runbooks and qualification evidence | M4 |
 | M6 | MCP adapter | COMPLETE | Same authorized operations for MCP-capable agents through the M5 authentication and application-service boundary; bounded official-client qualification complete | M5 |
-| M7 | Versioned sync protocol and isolated R2 store | NEXT | Uncomposed versioned contract, `SyncStore` port, isolated R2 adapter, fair bounded feed, resumable 10,000-head inventory within a 400-subrequest invocation ceiling, bounded evidence paging, and rate-limit-safe recovery foundation | M6 |
+| M7 | Versioned sync protocol and isolated R2 store | NEXT | Uncomposed versioned contract, `SyncStore` port, isolated R2 adapter, fair bounded feed, resumable 10,000-head inventory within a 400-subrequest invocation ceiling, bounded evidence paging, rate-limit-safe recovery, and a Workers Free CPU qualification gate | M6 |
 
 ### M1 — Worker API foundation and engineering quality
 

@@ -21,7 +21,13 @@ Substantial documentation correction with two meaningful steps. Route: delegated
 
 ## Evidence and next step
 
-T1 evidence: commit `65d756f`; `git diff --check` and `mise run check` passed. Native RDD assessment unavailable because `gentle-ai` is not installed (`command not found`). T2 evidence: commit `c53dd20`; `git diff --check`, affected Markdown link resolution, stale-claim scan, and `mise run check` passed. Native RDD assessment remains unavailable (`gentle-ai` not installed). Current pre-T3 head: `cfadbcc`. Initial assessment: most review findings are valid; `hidden: true` is documented as a changelog-display setting and cannot be offered as an established release-suppression fix. The first correction was published and answered in PR #89. T3 evidence: commit `4899d86`; `mise run check`, `git diff --check`, relative Markdown target resolution, and stale-policy scan passed. Native RDD assessment unavailable (`gentle-ai` not installed). Next: publish T3, update the PR description, and answer review 5339112906. No sync code, deployment, or personal-vault change was made.
+- T1: `65d756f`; `mise run check` and `git diff --check` passed.
+- T2: `c53dd20`; canonical checks, affected links, and stale-claim scan passed.
+- T3: `4899d86`; canonical checks, affected links, and policy scan passed.
+- T4: `e934588`; canonical checks, affected links, and stale-claim scan passed. The installed Obsidian API declaration confirms `FileManager.trashFile` follows the user trash preference.
+- Native RDD assessment was unavailable throughout because `gentle-ai` is not installed (`command not found`). The Engram mirror remains pending because this runtime exposes no Engram tool.
+
+Current implementation head: `e934588`. Next: publish the branch and answer third review `5339383010`. No sync code, deployment, or personal-vault change was made.
 
 ## Second review correction
 
@@ -31,4 +37,3 @@ Review `5339112906` verified the first corrections and identified remaining word
 
 Review `5339383010` found that acknowledged absence does not cover a brand-new remote path. The future protocol must allow a never-seen remote create only after a fresh local absence/collision check and no pending local intent; a pre-existing local file goes to review. The installed Obsidian declarations show `FileManager.trashFile` follows the user trash preference, while `Vault.trash` takes an explicit system/local flag and `Vault.delete` is permanent. Incoming auto-delete must preserve remote recovery, use the user-preferred trash path where qualified, and fail closed on uncertain local effect. The owner request to review the updated PR continues the authorized review-correction work. T4 route: delegated direct; multiple design docs and current-state docs need coordinated changes.
 
-T4 checks observed: `mise run check`, `git diff --check`, relative Markdown targets, and stale-claim scan passed. The installed Obsidian declaration confirms `FileManager.trashFile` follows the user's trash preference. The third-review corrections remain documentation-only.

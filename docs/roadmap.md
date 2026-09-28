@@ -4,10 +4,10 @@ The post-M6 [client authorization design note](plans/client-scoped-authorization
 records requirements to review before connecting a vault. [Accepted ADR 0015](decisions/0015-browser-mediated-client-authorization.md)
 describes the staged OAuth and revocation design for that rollout. Neither
 document defines M7 or marks a milestone `NEXT`.
-The [automatic multiwriter rollout proposal](plans/automatic-multiwriter-rollout.md)
-and [proposed ADR 0016](decisions/0016-automatic-multiwriter-mirror.md) describe
-a separate post-M6 change under review. They do not change the implemented
-single-writer support claim or authorize a production writer.
+The [bidirectional vault sync rollout proposal](plans/bidirectional-vault-sync-rollout.md)
+and [proposed ADR 0016](decisions/0016-bidirectional-vault-sync.md) describe
+a post-M6 product direction under review. They do not change the implemented
+single-writer support claim, authorize a production writer, or migrate a vault.
 
 This is the canonical execution roadmap: implemented facts, planned direction and
 unresolved choices are distinct. Dates are intentionally not assigned. Engineering
@@ -15,51 +15,42 @@ rules live in [AGENTS.md](../AGENTS.md).
 
 ## Project end state
 
-`obsidian-ai-bridge` maintains a **private personal mirror of all eligible Markdown
-notes** for authorized remote API/AI/agent access, while the user keeps the working
-Obsidian vault. This supersedes PR #8's selected-note/manual-publishing drift.
+**Proposed future target:** `obsidian-ai-bridge` synchronizes local working vaults
+on Mac, iPhone, and iPad through an authenticated service backed initially by
+private R2. Authorized API/AI/agent clients participate in the same revision
+domain. The complete target and migration gates are in [the rollout proposal](plans/bidirectional-vault-sync-rollout.md).
+This target supersedes the earlier mirror-only direction; it does not retroactively
+change M1–M6 behavior or qualification.
 
 ```text
-iCloud ↔ working Obsidian vaults
-               |
-       one designated plugin writer
-               ↓
-        Cloudflare Worker ← authorized REST and MCP clients
-               ↓
-          private R2 mirror
+Mac local vault ───┐
+iPhone local vault ├── bridge plugin ↔ Worker/API ← REST and MCP clients
+iPad local vault ──┘                        |
+                                  private R2 sync store
 ```
 
-- The user opts into the entire eligible Markdown mirror. Saved local creates,
-  changes, eligible runtime removals and renames propagate automatically, with
-  bounded work, visible progress/divergence and operational retry/pause controls.
-  No per-note selection, folder/tag/frontmatter allow-list or manual-primary model.
-- Retain canonical literal NotePath, lowercase .md, dot/config exclusions and 1 MiB
-  UTF-8 limit. The mirror is not a backup of credentials, configuration, attachments
-  or arbitrary vault files. Eligibility determines scope, **not authorization**.
-- iCloud remains device-to-device sync. R2 is mirror/API persistence, not the sole
-  authority or complete guaranteed backup. The designated writer must be running
-  for freshness. NAS replication/stronger remote authority may be considered later,
-  but are not present requirements or implemented capabilities.
-- Local saved state is the normal M3 mutation source. Remote revision changes are
-  divergence, not permission to overwrite or import. M4 uses reviewed-only,
-  evidence-bound conflict/adoption/restoration flows; no automatic or hybrid
-  bidirectional synchronization.
-- An observed post-bootstrap Obsidian delete event for an already-associated eligible
-  note authorizes recoverable mirror removal, including iCloud/external activity.
-  No human-provenance claim or per-delete confirmation. Startup/scan absence never
-  authorizes deletion; permanent revisioned heads prevent unsafe resurrection.
-- The Worker authenticates remote clients to named principals from a bounded
-  digest-only registry; the plugin accesses local vault data. The host/Worker/cloud
-  operator are trusted with plaintext. One exhaustive operation policy enforces exact
-  independent `read`, `write`, and `delete` permissions before service/storage dispatch;
-  mirror inclusion and writer IDs remain separate non-secret mutation guards.
-- MCP will adapt established authorized operations, not bypass Worker/application
-  policy or access R2 directly. It never executes instructions found in notes.
+- The target replaces iCloud for **vault synchronization**, with local offline
+  copies and remote-to-local as well as local-to-remote changes. The current
+  deployed release still uses iCloud and its one-writer Markdown mirror.
+- Target scope includes Markdown, Canvas and user attachments. Portable Obsidian
+  configuration is selective; credentials, the bridge ledger, caches, and
+  device-local settings are excluded. Current `.md` and 1 MiB limits remain
+  implemented facts until a separately qualified change supersedes them.
+- Each device has its own revocable grant. Per-path versions and conditional
+  mutations preserve concurrent changes for review; initial absence cannot
+  delete remote content. MCP uses the same version domain and permission checks.
+- R2 initially owns shared sync state, but is **not an independent backup**.
+  The Worker/operator remain trusted with plaintext. A storage port keeps R2
+  details out of the protocol so a future NAS backend can be qualified against
+  the same semantics; a NAS migration is not yet specified or deployed.
+- Mobile sync runs while Obsidian is open or resumed. No suspended-iOS background
+  freshness claim is made. Cutover from iCloud requires independent backup,
+  disposable-device qualification, and explicit per-device verification.
 
-Outside this roadmap: replacing iCloud/Obsidian Sync, general file backup,
-attachments, search/indexing, embeddings/inference, collaboration, arbitrary
-filesystem access and SaaS multi-tenancy. No additional database/service is assumed.
-New infrastructure requires a concrete need and [ADR](decisions/README.md).
+Outside the proposed target: general filesystem backup, search/indexing,
+embeddings/inference, collaborative real-time editing, arbitrary filesystem
+access and SaaS multi-tenancy. New infrastructure needs a concrete need and
+an [ADR](decisions/README.md).
 
 ## Current state
 

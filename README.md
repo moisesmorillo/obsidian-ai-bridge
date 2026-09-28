@@ -124,6 +124,10 @@ whole-scope consent. The automated artifact suite is not a real-host or mobile
 compatibility test; no Worker deployment or personal-vault installation is required
 for canonical validation.
 
+Stable releases publish `main.js` and `manifest.json` as downloadable release
+assets after checking the tagged source. A release without those assets must not
+be treated as a packaged plugin; see the [release asset procedure](docs/operations.md#plugin-release-assets).
+
 ## Local Worker development
 
 The Worker uses a `VAULT_BUCKET` R2 binding configured for `obsidian-ai-bridge`.

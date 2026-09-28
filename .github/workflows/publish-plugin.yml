@@ -1,0 +1,71 @@
+name: Publish released Obsidian plugin
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing stable release tag to publish plugin assets for
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: plugin-release-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.event.release.tag_name }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Validate release and upload plugin assets
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.release.prerelease == false }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.event.release.tag_name }}
+    steps:
+      - name: Check out the release tag
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+          fetch-depth: 0
+
+      - name: Verify stable release and source identity
+        run: |
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          test "$(git rev-parse HEAD)" = "$(git rev-parse "refs/tags/$RELEASE_TAG^{commit}")"
+          git merge-base --is-ancestor HEAD origin/main
+          test "$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft,isPrerelease --jq '(.isDraft == false) and (.isPrerelease == false)')" = true
+
+      - name: Install repository tools
+        uses: jdx/mise-action@v4
+        with:
+          install: true
+          cache: true
+          github_token: ${{ github.token }}
+
+      - name: Install locked dependencies
+        run: mise run install
+
+      - name: Validate released source and artifact identity
+        run: |
+          test "$RELEASE_TAG" = "v$(node -p 'require("./package.json").version')"
+          mise run check
+
+      - name: Upload or verify plugin assets
+        run: |
+          assets="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')"
+          mkdir -p "$RUNNER_TEMP/verified-plugin-assets"
+          for asset in main.js manifest.json; do
+            local_file="apps/obsidian-plugin/dist/$asset"
+            test -s "$local_file"
+            if printf '%s\n' "$assets" | grep -Fxq "$asset"; then
+              gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --pattern "$asset" --dir "$RUNNER_TEMP/verified-plugin-assets"
+              cmp "$local_file" "$RUNNER_TEMP/verified-plugin-assets/$asset"
+            else
+              gh release upload "$RELEASE_TAG" "$local_file" --repo "$GITHUB_REPOSITORY"
+            fi
+          done

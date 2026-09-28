@@ -114,10 +114,13 @@ disposable server resources if testing network behavior.
    Desktop 1.13.7 on macOS 26.6.2 / Apple M4 Pro is in the M5 support envelope;
    the declared API minimum does not qualify every newer host version. Keep the
    repository outside the vault and record its actual configuration directory.
-2. Run `mise run plugin:smoke`. Close the disposable vault, create
-   `<vault>/<config-directory>/plugins/ai-bridge/`, and copy only generated `main.js`
-   and `manifest.json`. Do not copy source, dependencies, repository configuration,
-   secrets, or the whole repository. No `styles.css` is generated.
+2. For a published stable release with plugin assets, download its `main.js` and
+   `manifest.json`. For local development, run `mise run plugin:smoke` and use the
+   generated files instead. Close the disposable vault, create
+   `<vault>/<config-directory>/plugins/ai-bridge/`, and copy only those two files.
+   Keep both files from the same tag or build. Do not copy source, dependencies,
+   repository configuration, secrets, or the whole repository. No `styles.css` is
+   generated.
 3. Reopen the vault, enable Community plugins, and enable **AI Bridge**. Initial load
    provisions a non-secret device UUID in official host-local storage and registers
    the M2 commands, M3 settings/operational commands, M4 review/recovery commands,

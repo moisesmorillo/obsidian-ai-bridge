@@ -32,6 +32,21 @@ credentials.
 
 ## Staged release deployment
 
+### Plugin release assets
+
+`.github/workflows/publish-plugin.yml` checks out the exact stable release tag,
+requires it to be an ancestor of `main`, verifies the GitHub release is published
+and non-prerelease, and runs `mise run check` with the release identity gate before
+uploading `main.js` and `manifest.json`. It uses only the job-scoped GitHub token;
+it does not deploy the Worker or access Cloudflare credentials. Repeated runs compare
+existing assets byte-for-byte and refuse to replace differing files. The manual
+`workflow_dispatch` input accepts an existing stable tag, including v1.4.1 after
+this workflow is merged; the release event covers later stable releases. Confirm
+both assets appear on the GitHub release before installing them in a disposable
+vault. This publishing step does not extend M5's qualified support envelope.
+
+### Worker deployment
+
 `.github/workflows/deploy-worker.yml` checks out current `main` for a manual CI
 deployment, or the published stable release tag for automatic deployments.
 Both paths require the current `main` commit; release events also require the tag

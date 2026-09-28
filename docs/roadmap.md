@@ -4,6 +4,10 @@ The post-M6 [client authorization design note](plans/client-scoped-authorization
 records requirements to review before connecting a vault. [Accepted ADR 0015](decisions/0015-browser-mediated-client-authorization.md)
 describes the staged OAuth and revocation design for that rollout. Neither
 document defines M7 or marks a milestone `NEXT`.
+The [automatic multiwriter rollout proposal](plans/automatic-multiwriter-rollout.md)
+and [proposed ADR 0016](decisions/0016-automatic-multiwriter-mirror.md) describe
+a separate post-M6 change under review. They do not change the implemented
+single-writer support claim or authorize a production writer.
 
 This is the canonical execution roadmap: implemented facts, planned direction and
 unresolved choices are distinct. Dates are intentionally not assigned. Engineering

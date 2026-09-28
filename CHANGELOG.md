@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.4.1](https://github.com/moisesmorillo/obsidian-ai-bridge/compare/v1.4.0...v1.4.1) (2026-09-28)
+
+
+### Bug Fixes
+
+* **oauth:** complete native Obsidian authorization ([#85](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/85)) ([cf7cb48](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/cf7cb489ce0ff8a876c3fbf9d0c0768665addbff))
+
 ## [1.4.0](https://github.com/moisesmorillo/obsidian-ai-bridge/compare/v1.3.1...v1.4.0) (2026-09-27)
 
 

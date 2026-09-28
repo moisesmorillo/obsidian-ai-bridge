@@ -32,6 +32,22 @@ credentials.
 
 ## Staged release deployment
 
+### Release Please and documentation-only changes
+
+This repository uses Release Please's `simple` strategy. A squash-merged
+Conventional Commit such as `docs:` can produce a patch release pull request
+even when no application behavior changed. Marking a type `hidden` under
+`changelog-sections` changes its changelog display; it does not prevent that
+version bump. A published stable release triggers both plugin-asset publishing
+and Worker deployment, each under its existing source-identity checks.
+
+Inspect the generated release pull request before merging it. If a release is
+unwanted for a documentation-only change, leave the release pull request open
+to accumulate a later product change. A separate release-policy change could
+evaluate manifest-level `exclude-paths` with tests for mixed file commits;
+do not assume it excludes a squash commit that also touches non-excluded files.
+Do not weaken the release identity gate to suppress or repair a release.
+
 ### Plugin release assets
 
 `.github/workflows/publish-plugin.yml` checks out the exact stable release tag,

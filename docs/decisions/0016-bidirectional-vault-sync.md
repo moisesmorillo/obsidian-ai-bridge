@@ -2,10 +2,12 @@
 
 ## Status
 
-**Proposed.** This changes the proposed product destination, not the deployed
-single-writer behavior or the M1–M6 completion record. No later milestone is
-defined or marked `NEXT`. Implementation requires separately reviewed contracts,
-qualification, and an explicit personal-vault cutover.
+**Proposed.** This describes the future product destination, not the deployed
+single-writer behavior or the M1–M6 completion record. M7 is `NEXT` for the
+bounded versioned-protocol and isolated-storage foundation only; this status does
+not accept the complete bidirectional target, activate sync, authorize migration,
+or permit a personal-vault cutover. Later client/reconciliation/cutover milestones
+require separate specifications and qualification.
 
 ## Context
 
@@ -150,8 +152,10 @@ historical ADRs remain accurate for the implemented releases. The Worker and
 plugin need coordinated migration, but old clients must fail closed during the
 transition. Whole-vault scope and mobile qualification make this substantially
 larger than merely admitting more writers to the existing outward mirror.
-[The rollout plan](../plans/bidirectional-vault-sync-rollout.md)
-defines independently reviewable slices and the cutover evidence.
+[The M7 specification](../milestones/m7-versioned-sync-protocol-and-r2-store.md)
+closes the protocol/storage decisions required for rollout stage 1. The
+[rollout plan](../plans/bidirectional-vault-sync-rollout.md) retains later
+independently reviewable slices and cutover evidence.
 
 ## Rejected shortcuts
 

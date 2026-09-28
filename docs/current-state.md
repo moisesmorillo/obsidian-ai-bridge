@@ -31,13 +31,13 @@ probe failed; the checked-in Worker configuration does not provide an associatio
 or designated writer. The mirror was not activated, and the personal vault was
 not used.
 
-This snapshot records completed M1–M6 implementation and qualification evidence on the M6 completion branch. M5's bounded support claim is limited to latest M5-ready release v1.0.2 and one designated writer on Obsidian Desktop 1.13.7 / macOS 26.6.2 / Apple M4 Pro, with synthetic active-writer behavior through 10,000 eligible notes. The final report records retained scale, credential-rotation, and Keep-local results; v4→v5 migration/restart evidence; live loopback recovery/diagnostics; exact release identity; residual platform/deployment limits; and one explicitly unqualified pause/resume conflict attempt. No personal vault or production Worker/R2 deployment was used. M1–M6 are COMPLETE in this transition; no milestone is marked NEXT, and no M7 is inferred. The roadmap transition becomes canonical when its completion PR merges.
+This snapshot records completed M1–M6 implementation and qualification evidence. M5's bounded support claim is limited to latest M5-ready release v1.0.2 and one designated writer on Obsidian Desktop 1.13.7 / macOS 26.6.2 / Apple M4 Pro, with synthetic active-writer behavior through 10,000 eligible notes. The final report records retained scale, credential-rotation, and Keep-local results; v4→v5 migration/restart evidence; live loopback recovery/diagnostics; exact release identity; residual platform/deployment limits; and one explicitly unqualified pause/resume conflict attempt. No personal vault or production Worker/R2 deployment was used. M1–M6 are COMPLETE; M7 — versioned sync protocol and isolated R2 store — is NEXT in this documentation transition. Its implementation may begin only after that PR merges and does not activate the protocol, migrate data, or change the live writer.
 M2 source/tooling through `2e74b23` passed independent semantic
 review and merged at `b300726` (PR #7). M3's completion PR #27 passed canonical
 validation and final semantic review; its three MINOR findings were corrected at
 `e97af36`, whose corrective review returned APPROVE with no open findings. PR #27
 merged at `63b0599`; M3 is COMPLETE and the M3→M4 transition is canonical.
-M4, M5, and M6 are COMPLETE in this transition; no milestone is marked NEXT. The completed
+M4, M5, and M6 are COMPLETE; M7 is the sole NEXT milestone in this roadmap transition. The completed
 [specification](milestones/m4-remote-to-local-reconciliation-and-conflict-resolution.md),
 [sequential plan](plans/m4-remote-to-local-reconciliation-and-conflict-resolution.md),
 and ADRs 0005–0009 define the reviewed boundary. The compatibility transition uses

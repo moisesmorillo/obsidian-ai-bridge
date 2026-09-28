@@ -151,8 +151,11 @@ This section is a **design gate**, not an implemented control or a qualification
 claim. The [proposed ADR 0016](decisions/0016-bidirectional-vault-sync.md) and
 [rollout plan](plans/bidirectional-vault-sync-rollout.md) would make R2-backed
 state the shared synchronization authority across Mac, iPhone, and iPad. Stage
-0 must keep the following threats and the selected policy visible; later slices
-must supply disposable-vault evidence before a personal-vault cutover.
+0 bounds the isolated protocol/storage foundation without accepting the broader
+product destination. The [M7 specification](milestones/m7-versioned-sync-protocol-and-r2-store.md)
+defines storage requirements only; they are not implemented controls or permission
+to activate sync. Later slices must supply disposable-vault evidence before a
+personal-vault cutover.
 
 | Proposed exposure | Required decision and evidence |
 | --- | --- |

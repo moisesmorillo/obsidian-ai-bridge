@@ -10,8 +10,9 @@ verified migration. It does not replace an independent backup, guarantee mobile
 background execution, or imply end-to-end encryption. A future NAS can implement
 the same storage contract after a separately qualified migration.
 
-This is a post-M6 **proposal**, not a `NEXT` milestone or permission to activate
-the personal vault. Current release 1.4.2 still implements a one-writer,
+This is a post-M6 rollout plan. M7 is `NEXT` only for stage 1's versioned,
+isolated protocol/storage foundation; this does not authorize activation of the
+personal vault. Current release 1.4.2 still implements a one-writer,
 Markdown-only outward mirror; M5's exact desktop qualification is not mobile or
 bidirectional qualification. The [proposed ADR](../decisions/0016-bidirectional-vault-sync.md)
 sets the target contract. The current [roadmap](../roadmap.md),
@@ -68,7 +69,7 @@ excluded category must be visible to the user.
 | Configuration categories | Opt into portable Obsidian settings; keep secrets, device layout, plugin binaries, and bridge state local | User review of actual configuration and desktop/mobile replay |
 | Conflict behavior | Preserve both versions and require review; no automatic Markdown merge initially | Two-device and MCP conflict exercises |
 | REST/MCP-origin changes | Auto-apply authorized remote revisions against an exact acknowledged local base; a never-seen create requires a fresh complete local absence check with no pending intent, alias, or observation gap | Clean never-seen create, existing-local collision, recoverable delete, concurrent edit, stale revision, unknown effect, and hostile note-content tests |
-| Vault namespace | Choose one vault per bucket or immutable vault-ID prefixes; keep existing `vault/<path>` objects safe | Bucket inventory, v2 REST/MCP transition and rollback drill |
+| Vault namespace and legacy coexistence | M7 uses `sync/v1/vaults/<vault-id>/` in the existing bucket and never reads through or adopts v2 keys; a later import needs an explicit identity binding and v2 route fence | Synthetic namespace-isolation tests in M7; bucket inventory and v2 transition/rollback drill before any import |
 | Path equivalence | Propose NFC-normalized, Unicode-case-folded per-segment comparison and reject aliases without changing file bytes | macOS/iPhone/iPad case and normalization matrix, enrollment collision preview |
 | Backup retention and location | Independent versioned copy outside the active R2 authority | Restore drill, including tombstones and control metadata |
 | Privacy model | Retain current trusted plaintext Worker model so authorized MCP can read notes | Explicit consent and verified private storage/API access |
@@ -85,58 +86,51 @@ production files/lines before starting; split a slice by behavior if the
 repository's change-size gate would be crossed. Tests and docs accompany the
 behavior they verify. No slice alone enables the personal vault.
 
-### 0. Replace the proposed product contract
+### 0. Bound the protocol/storage foundation
 
-Accept or revise ADR 0016 and the roadmap target. Preserve M1–M6 history and
-the current live deployment claim. Specify file scope, platform support, trust
-model, conflict policy, backup requirement, the selected REST/MCP-origin
-auto-application policy, and the difference between R2 authority and a complete
-backup. Revise this plan and ADR before any code PR. Update the
-[threat model](../threat-model.md) for mobile write/delete grants, REST/MCP-origin
-local effects, path/delete/rename hazards,
-incremental-feed failure, and R2 as authority.
+Keep ADR 0016's broader product destination Proposed. Define only the decisions
+required for an isolated, uncomposed protocol and storage foundation; do not accept
+client enrollment, local reconciliation, mobile support, migration, or cutover policy
+by implication. Preserve M1–M6 history and the current live deployment claim. Keep
+the future threat categories visible in the [threat model](../threat-model.md), while
+distinguishing M7 storage requirements from implemented controls.
 
-**Exit:** one reviewable contract and explicit threat/owner decisions; no M7
-invented and no writer enabled.
+**Exit:** the [M7 specification](../milestones/m7-versioned-sync-protocol-and-r2-store.md)
+resolves protocol versioning, namespace and v2 coexistence, conditional storage,
+inventory/feed recovery, operation replay, and stage-1 tests. The broader ADR 0016
+product contract remains Proposed; the current writer is unchanged and no new writer
+is enabled.
 
 Before publishing a release from this design-only change, follow the
 [release-process guidance](../operations.md#release-please-and-documentation-only-changes).
 
 ### 1. Versioned sync protocol and storage port
 
-Define vault identity, per-file application revisions, current/live/tombstone
-states, immutable recovery/version references, bounded inventory, and client
-checkpoints. Define durable acknowledged absence only after a complete,
-gap-free local inventory is reconciled with a consistent remote snapshot at a
-known generation; never infer it from a partial scan or an unobserved path.
-Keep authorization at the Worker boundary and make a
-narrow `SyncStore` port in core. Map or explicitly reject existing v2 application
-ETags and format-2 receipts. Adapt R2 conditional writes behind the port.
-Decide one-vault-per-bucket versus immutable vault-ID prefixes and inspect
-existing `vault/<path>` objects before any adoption. Start in an isolated,
-versioned namespace, with exact import/retention and rollback rules for those
-objects. Define how old v2 API and MCP reads/writes are routed or denied during
-transition so no change is invisible to the new engine. Provide a durable,
-bounded incremental change feed or equivalent manifest for routine sync;
-define cursor ordering, expiry, gap detection, and snapshot consistency.
-Complete scans recover from a missing, expired, or ambiguous cursor, but are
-not the normal mobile poll path. Set request/byte/time limits from a measured
-vault and qualify the recovery scan on supported devices.
+Stage 1 is M7. Its exact schemas, namespace, v2 coexistence contract, operation
+journal, 64-lane incremental feed, bounded inventory, cursor recovery, rename
+ordering, test-first PR units, and acceptance criteria are in the
+[implementation-ready M7 specification](../milestones/m7-versioned-sync-protocol-and-r2-store.md).
+The contract uses the existing bucket under `sync/v1/vaults/<vault-id>/`; existing
+v2 `vault/` and `recovery/` objects remain byte-for-byte untouched and are never
+read through or silently adopted. M7 does not mount public sync routes, alter the
+current writer, migrate data, or activate a vault. Before any later protocol
+exposure, migrated identities require an explicit v2 compatibility fence so old
+clients cannot write an invisible parallel revision.
 
-Remote rename is a durable destination-first operation: conditionally create
-the destination and persist its evidence before conditionally tombstoning the
-source. A crash between those steps may leave two visible copies, never a
-missing sole copy; recovery checks both exact revisions and asks for review if
-either changed. Repeated replay must not duplicate the destination or erase an
-independently edited source.
+Stage 1's initial inventory ceiling is 10,000 synthetic current objects, listing
+pages are limited to 50, and the current 1 MiB Markdown limit remains in force.
+An inventory is complete only when all feed lanes have stable identical start/end
+vectors and no pending operation; otherwise it is incomplete and cannot imply
+absence or deletion. An expired or ambiguous cursor must recover through a
+complete inventory, or remain unchanged with a typed failure. The M7 spec defines
+the required local workerd measurements; it makes no deployed/mobile qualification
+claim.
 
-**Exit:** two callers racing on the same version cannot both commit; a failed
-head/history operation leaves recoverable evidence; old clients cannot fork
-the data. A complete checkpoint distinguishes acknowledged absence from
-never-seen paths, and an incomplete or gapped scan cannot establish either
-deletion authority or acknowledged absence. Incremental replay and full-scan
-recovery converge on the same version graph. Interrupted rename leaves two
-copies, never zero. Storage failures cannot turn into empty-success responses.
+**Exit:** satisfy every M7 acceptance item, including same-revision race refusal,
+operation recovery at every persistence boundary, old-prefix noninterference,
+bounded cursor replay and inventory recovery, interruption-safe destination-first
+rename, and `mise run check`. Existing v2 API/MCP and designated-writer tests remain
+green; no routes are mounted and no personal-vault data is used.
 
 ### 2. Pure three-way reconciliation engine
 
@@ -283,11 +277,11 @@ continue using the same API without reinterpreting old revisions.
 
 ## Next handoff
 
-This design proposal must be reviewed before a production sync PR. A separate,
-explicit roadmap update must mark an eligible implementation milestone `NEXT`
-before code work begins; this proposal does not define M7 or mark `NEXT`. The
-first implementation PR after that transition should establish
-the versioned sync contract and R2 storage port **without changing the live
-writer path**. Before code, verify the current `main`, open PRs, roadmap,
-workflows, and deployed bindings again. Use disposable vaults through stage 5.
-Do not activate the personal vault or disable iCloud from an automated job.
+M7 is `NEXT` in a separate documentation-only roadmap transition and becomes
+canonical only after that PR merges. Do not start implementation before the merge.
+Its first implementation PR establishes the protocol contracts; follow-on small PRs
+implement the port, isolated R2 primitives, and feed/inventory/recovery as defined
+in the M7 specification, all **without changing the live writer path**. Before code,
+verify current `main`, open PRs, roadmap, workflows, and deployed bindings again.
+Use disposable synthetic data through stage 5. Do not activate the personal vault
+or disable iCloud from an automated job.

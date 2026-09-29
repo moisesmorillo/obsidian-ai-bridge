@@ -379,6 +379,21 @@ describe("marker-gated isolated sync current and recovery records", () => {
     }
   });
 
+  it("rejects second-read content that no longer matches verified version metadata", async () => {
+    await seedMarker();
+    await seedVersion();
+    await seedContent();
+    const key = syncContentKey(vaultId, revision);
+    let reads = 0;
+    bucket.getHook = (requestedKey) => {
+      if (requestedKey === key && ++reads === 2)
+        bucket.seed(key, new TextEncoder().encode("divergent second read"));
+    };
+    expect((await records.readContent(vaultId, revision)).kind).toBe(
+      "unavailable",
+    );
+  });
+
   it("does not return content when its body disappears after verification", async () => {
     await seedMarker();
     await seedVersion();

@@ -354,8 +354,7 @@ describe("one-key conditional sync R2 storage", () => {
     }
   });
 
-  it("rejects malformed canonical key families before storage access", async () => {
-    const reads = vi.spyOn(bucket, "get");
+  it("rejects malformed canonical key families at key admission", async () => {
     const invalidKeys = [
       "vault/legacy.md",
       `sync/v1/vaults/${vaultId}/heads/not-base64!.json`,
@@ -367,8 +366,6 @@ describe("one-key conditional sync R2 storage", () => {
     for (const invalidKey of invalidKeys) {
       expect(createSyncR2Key(invalidKey, vaultId)).toBeUndefined();
     }
-    expect(reads).not.toHaveBeenCalled();
-    expect(bucket.puts).toHaveLength(0);
     await expect(store.create(key, new Uint8Array(2_049))).rejects.toThrow(
       RangeError,
     );

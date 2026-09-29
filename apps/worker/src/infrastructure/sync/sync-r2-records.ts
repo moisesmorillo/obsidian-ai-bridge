@@ -436,7 +436,8 @@ export function syncR2Records(objects: SyncR2ObjectStore): SyncR2Records {
       );
       if (
         body.kind === "observed" &&
-        body.observation.value.kind === "contentBody"
+        body.observation.value.kind === "contentBody" &&
+        bodyMatches(metadata.observation.value, body.observation.value)
       ) {
         return {
           kind: "observed",

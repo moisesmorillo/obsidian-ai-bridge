@@ -27,7 +27,8 @@ const utf8Encoder = new TextEncoder();
  * @param bytes - Exact persisted UTF-8 JSON bytes, bounded before parsing or hashing.
  * @param expectedVaultId - Validated vault identity expected by the caller.
  * @returns A strict Worker-private journal, lane head, or immutable feed event.
- * @throws {TypeError} When identity, canonical JSON, key linkage, payload evidence, or schema is invalid.
+ * @throws {ZodError} When the expected vault ID or strict record schema is invalid.
+ * @throws {TypeError} When UTF-8, JSON, identity, key linkage, or payload evidence is invalid.
  * @throws {RangeError} When the record exceeds its persisted byte ceiling.
  */
 export async function decodeSyncPublication(

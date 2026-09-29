@@ -42,6 +42,7 @@ import type {
   SyncPublicationRecord,
   SyncPublicationStepEvidence,
 } from "@worker/infrastructure/sync/sync-publication.types";
+import { SYNC_R2_WRITE_COOLDOWN_MS } from "@worker/infrastructure/sync/sync-r2.constants";
 import { isCanonicalSyncR2Key } from "@worker/infrastructure/sync/sync-r2-key";
 import { syncHeadRecordSchema } from "@worker/infrastructure/sync/sync-record.schemas";
 import { z } from "zod";
@@ -491,9 +492,12 @@ function assertStepEvidence(journal: SyncJournalRecord): void {
   }
   if (precondition.kind === "observed") {
     assertBoundedEtag(precondition.etag);
+    const observedCooldownFloor =
+      precondition.uploadedAtEpochMs + SYNC_R2_WRITE_COOLDOWN_MS;
     if (
       evidence.retryAfterEpochMs !== null &&
-      evidence.retryAfterEpochMs < precondition.uploadedAtEpochMs
+      (!Number.isSafeInteger(observedCooldownFloor) ||
+        evidence.retryAfterEpochMs < observedCooldownFloor)
     ) {
       throw new TypeError(
         "Persisted retry floor cannot precede the observed R2 cooldown.",
@@ -600,6 +604,9 @@ function assertObservedPrecondition(
       prior.path !== journal.request.path ||
       journal.request.parent.kind !== "revision" ||
       prior.revision !== journal.request.parent.revision ||
+      (journal.request.kind === "tombstone" &&
+        (prior.kind !== "live" ||
+          prior.contentSha256 !== journal.request.contentSha256)) ||
       key !== syncHeadKey(journal.vaultId, journal.request.path) ||
       JSON.stringify(prior) !== text
     ) {

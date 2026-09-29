@@ -7,6 +7,7 @@ import {
   R2_ABSENCE_WILDCARD,
   R2_IF_NONE_MATCH_HEADER,
 } from "@worker/infrastructure/storage-object.constants";
+import { SYNC_R2_WRITE_COOLDOWN_MS } from "@worker/infrastructure/sync/sync-r2.constants";
 import type {
   SyncR2Key,
   SyncR2ObjectStore,
@@ -17,9 +18,6 @@ import type {
 } from "@worker/infrastructure/sync/sync-r2.types";
 import { isCanonicalSyncR2Key } from "@worker/infrastructure/sync/sync-r2-key";
 import { SYNC_RECORD_LIMITS } from "@worker/infrastructure/sync/sync-record.schemas";
-
-/** Minimum same-key retry spacing required by the M7 R2 contract. */
-const SYNC_R2_WRITE_COOLDOWN_MS = 1_100;
 
 /** Builds a private one-key conditional adapter with deterministic time and safe effect certainty.
  * @param bucket Conditional-only R2 capability; no delete or unconditional write is accepted.

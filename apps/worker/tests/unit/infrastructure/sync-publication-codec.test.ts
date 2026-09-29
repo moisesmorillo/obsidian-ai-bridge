@@ -189,6 +189,49 @@ async function updateJournal(retryAfterEpochMs: number | null) {
   } as const;
 }
 
+/** Builds a tombstone write journal observed against one exact versioned prior head.
+ * @param priorKind - Whether the prior revision is live or already a tombstone.
+ * @param priorDigest - Exact prior metadata digest to compare with the mutation request.
+ * @returns Pending tombstone write fixture with encoded original head bytes.
+ */
+async function tombstoneWriteJournal(
+  priorKind: "live" | "tombstone",
+  priorDigest: string,
+) {
+  const journal = await tombstoneJournal();
+  const priorHead = {
+    schemaVersion: 1,
+    protocolMajor: 1,
+    vaultId: VAULT_ID,
+    path: PATH,
+    revision: OTHER_REVISION,
+    contentSha256: priorDigest,
+    byteSize: encoder.encode(CONTENT).byteLength,
+    mediaType: "text/markdown",
+    operationId: OTHER_OPERATION_ID,
+    origin: ORIGIN,
+    kind: priorKind,
+    parent:
+      priorKind === "live"
+        ? { kind: "never_seen" }
+        : { kind: "revision", revision: REVISION },
+  };
+  return {
+    ...journal,
+    stepEvidence: {
+      step: "write_head",
+      key: syncHeadKey(VAULT_ID, PATH),
+      precondition: {
+        kind: "observed",
+        etag: "original-tombstone-parent-etag",
+        bytes: encodeBase64Url(json(priorHead)),
+        uploadedAtEpochMs: 700,
+      },
+      retryAfterEpochMs: 1_800,
+    },
+  } as const;
+}
+
 /** Builds a tombstone journal retaining its exact parent digest and no request body.
  * @returns Strict pending tombstone fixture for immutable recovery metadata creation.
  */
@@ -412,6 +455,14 @@ describe("private sync publication codec", () => {
 
     const knownFloor = await updateJournal(1_800);
     const knownBytes = await encodeSyncPublication(knownFloor);
+    const tooSoonBytes = encoder.encode(
+      new TextDecoder()
+        .decode(knownBytes)
+        .replace('"retryAfterEpochMs":1800', '"retryAfterEpochMs":701'),
+    );
+    await expect(
+      decodeSyncPublication("journal", key, tooSoonBytes, VAULT_ID),
+    ).rejects.toThrow();
     const known = await decodeSyncPublication(
       "journal",
       key,
@@ -421,6 +472,88 @@ describe("private sync publication codec", () => {
     expect(known.kind).toBe("journal");
     if (known.kind !== "journal") throw new Error("Expected a journal.");
     expect(known.stepEvidence.retryAfterEpochMs).toBe(1_800);
+  });
+
+  it("accepts tombstoning the exact live parent with a matching content digest", async () => {
+    const { decodeSyncPublication, encodeSyncPublication } = await import(
+      "@worker/infrastructure/sync/sync-publication.codec"
+    );
+    const tombstone = await tombstoneJournal();
+    const journal = await tombstoneWriteJournal(
+      "live",
+      tombstone.request.contentSha256,
+    );
+    const bytes = await encodeSyncPublication(journal);
+    await expect(
+      decodeSyncPublication(
+        "journal",
+        syncOperationKey(VAULT_ID, OPERATION_ID),
+        bytes,
+        VAULT_ID,
+      ),
+    ).resolves.toMatchObject({ status: "pending" });
+  });
+
+  it("rejects tombstoning a live parent with a mismatched content digest", async () => {
+    const { decodeSyncPublication, encodeSyncPublication } = await import(
+      "@worker/infrastructure/sync/sync-publication.codec"
+    );
+    const tombstone = await tombstoneJournal();
+    const matching = await tombstoneWriteJournal(
+      "live",
+      tombstone.request.contentSha256,
+    );
+    const mismatched = await tombstoneWriteJournal("live", "a".repeat(64));
+    expect(tombstone.request.contentSha256).not.toBe("a".repeat(64));
+    const validBytes = await encodeSyncPublication(matching);
+    const invalidBytes = encoder.encode(
+      new TextDecoder()
+        .decode(validBytes)
+        .replace(
+          matching.stepEvidence.precondition.bytes,
+          mismatched.stepEvidence.precondition.bytes,
+        ),
+    );
+    await expect(
+      decodeSyncPublication(
+        "journal",
+        syncOperationKey(VAULT_ID, OPERATION_ID),
+        invalidBytes,
+        VAULT_ID,
+      ),
+    ).rejects.toThrow();
+  });
+
+  it("rejects tombstoning a parent that is already a tombstone", async () => {
+    const { decodeSyncPublication, encodeSyncPublication } = await import(
+      "@worker/infrastructure/sync/sync-publication.codec"
+    );
+    const tombstone = await tombstoneJournal();
+    const matching = await tombstoneWriteJournal(
+      "live",
+      tombstone.request.contentSha256,
+    );
+    const tombstoneParent = await tombstoneWriteJournal(
+      "tombstone",
+      tombstone.request.contentSha256,
+    );
+    const validBytes = await encodeSyncPublication(matching);
+    const invalidBytes = encoder.encode(
+      new TextDecoder()
+        .decode(validBytes)
+        .replace(
+          matching.stepEvidence.precondition.bytes,
+          tombstoneParent.stepEvidence.precondition.bytes,
+        ),
+    );
+    await expect(
+      decodeSyncPublication(
+        "journal",
+        syncOperationKey(VAULT_ID, OPERATION_ID),
+        invalidBytes,
+        VAULT_ID,
+      ),
+    ).rejects.toThrow();
   });
 
   it("rejects wrong major, vault, key, operation, and result-revision linkages", async () => {

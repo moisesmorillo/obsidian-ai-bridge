@@ -28,6 +28,11 @@ COMPLETE and qualified in this transition. M7 — versioned sync protocol and is
 R2 store — is NEXT in the current roadmap transition; its specification authorizes
 only isolated storage foundations after the documentation transition merges. It does
 not authorize sync activation, migration, or changes to the current writer. The current
+M7.1 protocol contracts live in `packages/protocol`: protocol-major-one identity and
+checkpoint schemas, canonical sync namespace keys, SHA-256 feed-lane selection, and
+opaque cursor encoding. They remain uncomposed with the Worker, plugin, and M1–M6 v2
+behavior; acceptance evidence is recorded in the [M7 specification](milestones/m7-versioned-sync-protocol-and-r2-store.md#m71-protocol-contract-evidence).
+The current
 plugin boundary includes strict device state v5 with
 frozen v2/v3/v4 migration, reviewed sampling/admission, narrow local writes and
 preservation, live/adoption/tombstone/restore actions, bounded parent-owned history

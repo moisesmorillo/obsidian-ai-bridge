@@ -532,6 +532,11 @@ export type { ReconciliationOperationSource } from "@core/mirror/resolution-coor
 export { ResolutionCoordinator } from "@core/mirror/resolution-coordinator";
 export { RevisionedAdoptionService } from "@core/mirror/revisioned-adoption-service";
 export {
+  decodeBase64Url,
+  decodeUtf8,
+  encodeBase64Url,
+} from "@core/note-path/base64url";
+export {
   decodeNotePath,
   encodeNotePath,
   isNormalizedNotePath,

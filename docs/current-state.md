@@ -78,7 +78,7 @@ boundaries; [API](api.md) describes the Worker HTTP and MCP contracts.
 
 M7.2's nine-method `SyncStore` contract and conservative mutation policy are
 implemented in `packages/core`. The test-only `InMemorySyncStore` in
-`packages/core/tests/unit/sync-store-fake.test.ts` exercises a serialized in-memory
+`packages/protocol/tests/unit/sync-store-fake.test.ts` exercises a serialized in-memory
 compare-and-set model using validated UUID/path fixtures, exact UTF-8 hashing, and
 injected clock/effect outcomes. Its eleven cases cover per-vault idempotency scope,
 concurrent create/update races, exact replay versus same-vault changed-request reuse,

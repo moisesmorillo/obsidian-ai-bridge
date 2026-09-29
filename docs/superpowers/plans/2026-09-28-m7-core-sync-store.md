@@ -39,7 +39,7 @@
 - `packages/protocol/src/sync.schemas.ts` and `packages/protocol/src/sync.types.ts`: adapt existing validators to the authoritative core types while preserving current exports and codec behavior. Keep `sync.constants.ts` and `sync.codec.ts` as the single runtime protocol source.
 - `packages/core/tests/unit/sync-store-contract.test.ts`: type/shape, exhaustiveness and no-authority-from-partial-result assertions.
 - `packages/core/tests/unit/sync-mutation-policy.test.ts`: state/evidence policy matrix.
-- `packages/core/tests/unit/sync-store-fake.test.ts`: deterministic contract fake and concurrency/idempotency tests (fake lives in this test file, not production).
+- `packages/protocol/tests/unit/sync-store-fake.test.ts`: deterministic contract fake and concurrency/idempotency tests (the protocol workspace already depends on core; fake remains test-only).
 - `packages/protocol/tests/unit/sync.contracts.test.ts`: retained M7.1 tests plus compile-time assignability/brand regression checks.
 - Update `docs/milestones/m7-versioned-sync-protocol-and-r2-store.md`, `docs/current-state.md`, `docs/architecture.md` only for actual M7.2 evidence/boundary changes; do not mark M7 complete.
 
@@ -72,14 +72,14 @@
 
 ### Task 3: Deterministic fake and state-matrix conformance evidence
 
-**Files:** Test `packages/core/tests/unit/sync-store-fake.test.ts`; modify production only if Task 3 tests reveal a contract/policy defect. Update `docs/milestones/m7-versioned-sync-protocol-and-r2-store.md`, `docs/current-state.md`, `docs/architecture.md` for exact evidence.
+**Files:** Test `packages/protocol/tests/unit/sync-store-fake.test.ts`; modify production only if Task 3 tests reveal a contract/policy defect. Update `docs/milestones/m7-versioned-sync-protocol-and-r2-store.md`, `docs/current-state.md`, `docs/architecture.md` for exact evidence.
 
 **Interfaces:** Test-only `InMemorySyncStore implements SyncStore` consumes the Task 2 types/policy. Its per-vault operation map binds the entire exact request; its per-path head map simulates atomic compare-and-set with a deterministic serialized critical section; injected clock/hash/effect hooks simulate pending/unknown outcomes. Test-only feed/inventory methods return closed typed statuses without pretending to implement the M7.4 durable algorithm; tests must not present this fake as local workerd qualification.
 
 - [ ] **Step 1: Write failing contract scenarios.** Use fixed UUIDv4 fixtures and synthetic Markdown: two simultaneous `mutate` calls on the same never-seen or revision parent yield exactly one success and one `stale_revision`; exact same-op retry yields the same committed position; changed request/op ID yields `operation_id_reused`; a stale tombstone cannot remove updated content; injected pending/unknown write cannot return success, advance feed or claim never-seen absence.
-- [ ] **Step 2: Run `mise run test -- packages/core/tests/unit/sync-store-fake.test.ts`.** Expect fake scenarios to fail before its implementation.
+- [ ] **Step 2: Run `mise run test -- packages/protocol/tests/unit/sync-store-fake.test.ts`.** Expect fake scenarios to fail before its implementation.
 - [ ] **Step 3: Implement the minimal test-only fake.** Clearly label its non-atomic multi-key/feed/inventory limitations; drive mutation decisions through Task 2 policy rather than duplicating the rules. Keep the core production port adapter-neutral.
-- [ ] **Step 4: Run `mise run test -- packages/core/tests/unit/sync-store-fake.test.ts packages/core/tests/unit/sync-store-contract.test.ts packages/core/tests/unit/sync-mutation-policy.test.ts packages/protocol/tests/unit/sync.contracts.test.ts`.** Expect the full M7.1/M7.2 focused set to pass.
+- [ ] **Step 4: Run `mise run test -- packages/protocol/tests/unit/sync-store-fake.test.ts packages/core/tests/unit/sync-store-contract.test.ts packages/core/tests/unit/sync-mutation-policy.test.ts packages/protocol/tests/unit/sync.contracts.test.ts`.** Expect the full M7.1/M7.2 focused set to pass.
 - [ ] **Step 5: Run `mise install`, `mise run install`, `mise run check`.** Expect formatting, lint/TSDoc, types, coverage, workerd regression and bundles pass. If the fake does not meaningfully exercise a port method, document that M7.3/M7.4 own its behavior rather than inserting false-positive assertions.
 - [ ] **Step 6: Perform semantic/security review and record exact evidence.** Inspect package direction, branded-type proof at validation boundary, no unsafe casts, failure certainty, exact-byte idempotency, size/hash semantics, public TSDoc, scope/file count and no M1–M6 behavior change. Update docs with actual check results, explicitly marking M7.2 done *only when verified*, M7.3 next unit and M7 milestone still NEXT.
 - [ ] **Step 7: Commit** with `test(core): qualify M7 sync store contract and fake` (include evidence docs); no deployment.

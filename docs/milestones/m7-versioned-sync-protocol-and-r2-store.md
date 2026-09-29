@@ -722,15 +722,15 @@ M1–M6 behavior, or the milestone's activation exclusions.
 
 ## M7.2 core port, mutation policy, and deterministic fake evidence
 
-**M7.2 unit: COMPLETE for its core contract and test-fake scope. M7 remains NEXT; M7.3 is the next implementation unit.** The nine-method `SyncStore` port and pure `evaluateSyncMutation` policy remain in `packages/core`; no production storage adapter or activation surface was added. `packages/core/tests/unit/sync-store-fake.test.ts` adds a test-only in-memory fake with per-vault operation journals, per-path heads, a deterministic serialized critical section, validated UUID/path fixtures, exact UTF-8 SHA-256 hooks, a deterministic clock, and injected committed/pending/unknown effect outcomes. Mutations are decided by the Task 2 policy rather than a second copy of its transition rules.
+**M7.2 unit: COMPLETE for its core contract and test-fake scope. M7 remains NEXT; M7.3 is the next implementation unit.** The nine-method `SyncStore` port and pure `evaluateSyncMutation` policy remain in `packages/core`; no production storage adapter or activation surface was added. `packages/protocol/tests/unit/sync-store-fake.test.ts` adds a test-only in-memory fake with per-vault operation journals, per-path heads, a deterministic serialized critical section, validated UUID/path fixtures, exact UTF-8 SHA-256 hooks, a deterministic clock, and injected committed/pending/unknown effect outcomes. The test lives in protocol because that workspace already depends on core; neither the core manifest nor production core imports protocol. Mutations are decided by the Task 2 policy rather than a second copy of its transition rules.
 
 The eleven fake cases cover per-vault operation identity (the same operation ID may independently exist in different vaults), concurrent create against never-seen and update against an exact revision, exact replay and same-vault changed-request rejection, stale-tombstone refusal, pending/unknown outcomes without success/feed advancement/never-seen claims, and preservation of exact recovery bytes. The fake's in-memory serialization is only a deterministic unit-test model: it does not prove durable or cross-key atomicity. Its `readChanges` returns a closed refusal and its inventory methods refuse completion; these methods do not implement feed pagination, inventory progress, M7.3 R2 persistence, or M7.4 crash recovery. This is not local workerd qualification.
 
 | Verification | Result |
 | --- | --- |
 | `mise install` | Passed: all 44 configured tools were already installed. |
-| `mise run install` | Passed: 207 installs checked across 333 packages; the core test-only protocol workspace dependency added no external packages. |
-| Focused fake | Passed: 1 file / 11 tests. |
+| `mise run install` | Passed: 207 installs checked across 333 packages; no reverse core-to-protocol workspace dependency is declared. |
+| Focused fake (`packages/protocol/tests/unit/sync-store-fake.test.ts`) | Passed: 1 file / 11 tests. |
 | Focused M7.1/M7.2 command (`sync-store-fake`, `sync-store-contract`, `sync-mutation-policy`, `sync.contracts`) | Passed: 4 files / 39 tests. |
 | `mise run check` | Passed: 92 source test files / 1,487 tests; 8 local workerd storage tests; 12 plugin artifact smoke tests; typecheck, Biome, lint/TSDoc, Worker dry-run build, and plugin build/smoke passed. The Worker build exited with `--dry-run`; no deployment occurred. |
 | Global coverage from `mise run check` | Passed: statements 95.05%, branches 90.72%, functions 98.45%, lines 96.96%. |

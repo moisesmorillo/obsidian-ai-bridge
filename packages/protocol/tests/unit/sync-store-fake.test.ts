@@ -1,22 +1,15 @@
-import type { ContentSha256 } from "@core/mirror/mirror.types";
-import { createContentSha256 } from "@core/mirror/mirror-identifiers";
 import type {
-  SyncEventSequence,
-  SyncNotePath,
-  SyncOperationId,
-  SyncRevision,
-  SyncVaultId,
-} from "@core/sync/sync.types";
-import { evaluateSyncMutation } from "@core/sync/sync-mutation-policy";
-import type { SyncStore } from "@core/sync/sync-store.port";
-import type {
+  ContentSha256,
   SyncChangeEvent,
   SyncContinueInventoryInput,
   SyncCurrentState,
+  SyncEventSequence,
   SyncInventoryResult,
   SyncMutationRequest,
   SyncMutationResult,
   SyncMutationSuccess,
+  SyncNotePath,
+  SyncOperationId,
   SyncOperationRecord,
   SyncReadChangesInput,
   SyncReadChangesResult,
@@ -31,10 +24,17 @@ import type {
   SyncRecoveryRecord,
   SyncResumeOperationInput,
   SyncResumeOperationResult,
+  SyncRevision,
   SyncStartInventoryInput,
+  SyncStore,
   SyncStoreFailure,
+  SyncVaultId,
   SyncVersionRecord,
-} from "@core/sync/sync-store.types";
+} from "@obsidian-ai-bridge/core";
+import {
+  createContentSha256,
+  evaluateSyncMutation,
+} from "@obsidian-ai-bridge/core";
 import {
   SYNC_SEQUENCE_WIDTH,
   syncDeviceIdSchema,

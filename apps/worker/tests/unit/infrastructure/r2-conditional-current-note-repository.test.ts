@@ -294,6 +294,20 @@ describe("R2ConditionalCurrentNoteRepository", () => {
     });
   });
 
+  it("rejects oversized exact R2 generations before decoding their body", async () => {
+    const bucket = new MemoryBucket();
+    const repository = new R2ConditionalCurrentNoteRepository(bucket);
+    bucket.seed("valid tagged object", {
+      [BRIDGE_STORAGE_FORMAT_METADATA_KEY]:
+        BRIDGE_STORAGE_FORMAT_METADATA_VALUE,
+    });
+    bucket.replaceMetadata({ size: MAX_LIVE_CURRENT_OBJECT_BYTES + 1 });
+
+    await expect(repository.read(PATH)).rejects.toMatchObject({
+      kind: STORED_OBJECT_DATA_ERROR_KIND.tooLarge,
+    });
+  });
+
   it("preserves unknown PUT effects and rejects invalid candidates before dispatch", async () => {
     const bucket = new MemoryBucket();
     const repository = new R2ConditionalCurrentNoteRepository(bucket);

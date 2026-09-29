@@ -34,7 +34,20 @@ export default {
     const sentinel = await env.BUCKET.get(legacyKey);
     const sentinelAfter = Array.from(new Uint8Array(await sentinel.arrayBuffer()));
     const object = await env.BUCKET.get(key);
+    const activeKey = "sync/v1/vaults/11111111-1111-4111-8111-111111111111/inventories/active.json";
+    const activeBytes = new TextEncoder().encode("{\\"state\\":\\"empty\\"}");
+    const activeCreate = await env.BUCKET.put(activeKey, activeBytes, {
+      onlyIf: new Headers({ "If-None-Match": "*" }),
+    });
+    const activeObservation = await env.BUCKET.get(activeKey);
+    const activeReplace = await env.BUCKET.put(
+      activeKey,
+      new TextEncoder().encode("{\\"state\\":\\"active\\"}"),
+      { onlyIf: { etagMatches: activeObservation.etag } },
+    );
     return Response.json({
+      inventoryCreateOnly: activeCreate !== null,
+      inventoryExactCas: activeReplace !== null,
       first: first !== null,
       createOnlyPredicateRefused: absentPredicate === null,
       exactPredicateAccepted: exact !== null,
@@ -89,6 +102,8 @@ describe("local workerd isolated sync R2 predicates", () => {
     expect(response.status).toBe(200);
     const result = z
       .object({
+        inventoryCreateOnly: z.boolean(),
+        inventoryExactCas: z.boolean(),
         first: z.boolean(),
         createOnlyPredicateRefused: z.boolean(),
         exactPredicateAccepted: z.boolean(),
@@ -103,6 +118,8 @@ describe("local workerd isolated sync R2 predicates", () => {
       })
       .parse(await response.json());
     expect(result).toMatchObject({
+      inventoryCreateOnly: true,
+      inventoryExactCas: true,
       first: true,
       createOnlyPredicateRefused: true,
       exactPredicateAccepted: true,
@@ -114,8 +131,16 @@ describe("local workerd isolated sync R2 predicates", () => {
       sentinel: "unchanged-v2-sentinel",
     });
     expect(Number.isFinite(new Date(result.uploaded).getTime())).toBe(true);
-    expect(result.listedSyncOnly).toEqual([
+    expect(result.listedSyncOnly).toContain(
       "sync/v1/vaults/11111111-1111-4111-8111-111111111111/vault.json",
-    ]);
+    );
+    expect(result.listedSyncOnly).toContain(
+      "sync/v1/vaults/11111111-1111-4111-8111-111111111111/inventories/active.json",
+    );
+    expect(
+      result.listedSyncOnly.every((listedKey) =>
+        listedKey.startsWith("sync/v1/vaults/"),
+      ),
+    ).toBe(true);
   });
 });

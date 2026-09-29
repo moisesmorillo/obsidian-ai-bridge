@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.6.0](https://github.com/moisesmorillo/obsidian-ai-bridge/compare/v1.5.0...v1.6.0) (2026-09-29)
+
+
+### Features
+
+* **worker:** add isolated M7 sync R2 primitives ([#95](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/95)) ([2a885a5](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/2a885a5344fc0b169538fb447de757bb6dcb0175))
+
 ## [1.5.0](https://github.com/moisesmorillo/obsidian-ai-bridge/compare/v1.4.3...v1.5.0) (2026-09-29)
 
 

@@ -349,8 +349,11 @@ export type SyncChangedResult =
   | { readonly kind: "live"; readonly revision: SyncRevision }
   | { readonly kind: "tombstone"; readonly revision: SyncRevision };
 
-/** Typed reason recorded when an operation aborts before changing the current head. */
-export type SyncAbortedChangeReason = SyncStoreErrorCode;
+/** Exact parent conflict that proves an operation did not change the current head. */
+export type SyncAbortedChangeReason = Extract<
+  SyncStoreErrorCode,
+  "stale_revision"
+>;
 
 /** One committed metadata-only changed or aborted event in the feed. */
 export type SyncChangeEvent =

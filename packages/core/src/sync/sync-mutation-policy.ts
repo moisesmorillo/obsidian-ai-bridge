@@ -126,8 +126,6 @@ function matchesMutationParent(
         observed.contentSha256 === request.contentSha256
       );
   }
-
-  return assertNever(request);
 }
 
 /** Compares every immutable mutation field, including exact encoded live bytes.
@@ -140,46 +138,36 @@ function sameMutationRequest(
   right: SyncMutationRequest,
 ): boolean {
   if (
-    left.kind !== right.kind ||
     left.vaultId !== right.vaultId ||
     left.path !== right.path ||
     left.operationId !== right.operationId ||
     left.revision !== right.revision ||
     left.origin !== right.origin ||
-    left.contentSha256 !== right.contentSha256 ||
-    !sameParent(left.parent, right.parent)
+    left.contentSha256 !== right.contentSha256
   ) {
     return false;
   }
 
   switch (left.kind) {
     case "create":
+      return (
+        right.kind === "create" &&
+        left.mediaType === right.mediaType &&
+        sameUtf8Bytes(left.content, right.content)
+      );
     case "update":
       return (
-        right.kind === left.kind &&
+        right.kind === "update" &&
+        left.parent.revision === right.parent.revision &&
         left.mediaType === right.mediaType &&
         sameUtf8Bytes(left.content, right.content)
       );
     case "tombstone":
-      return right.kind === "tombstone";
+      return (
+        right.kind === "tombstone" &&
+        left.parent.revision === right.parent.revision
+      );
   }
-
-  return assertNever(left);
-}
-
-/** Compares the exact never-seen or revision parent bound to each request.
- * @param left Parent precondition in the submitted request.
- * @param right Parent precondition in the journaled request.
- * @returns Whether both requests bind the same parent evidence.
- */
-function sameParent(
-  left: SyncMutationRequest["parent"],
-  right: SyncMutationRequest["parent"],
-): boolean {
-  if (left.kind !== right.kind) return false;
-  if (left.kind === "never_seen") return true;
-
-  return right.kind === "revision" && left.revision === right.revision;
 }
 
 /** Compares UTF-8 payload bytes without normalizing Unicode or Markdown text.
@@ -194,15 +182,6 @@ function sameUtf8Bytes(left: string, right: string): boolean {
     leftBytes.byteLength === rightBytes.byteLength &&
     leftBytes.every((byte, index) => byte === rightBytes[index])
   );
-}
-
-/** Fails type checking if a mutation variant is added without policy handling.
- * @param value Exhaustively handled mutation value.
- * @returns Never; an unexpected value is a programming defect.
- * @throws Error when called with a runtime value outside the closed union.
- */
-function assertNever(value: never): never {
-  throw new Error(`Unhandled sync mutation variant: ${String(value)}`);
 }
 
 /** Produces a typed non-success outcome without mutating observed inputs.

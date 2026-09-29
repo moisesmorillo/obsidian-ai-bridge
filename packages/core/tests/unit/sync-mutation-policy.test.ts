@@ -174,6 +174,17 @@ describe("evaluateSyncMutation", () => {
     expect(tombstoneDecision).toEqual({ kind: "proceed" });
   });
 
+  it("rejects a proposed revision that repeats its parent", async () => {
+    const decision = await evaluateSyncMutation(
+      { ...updateRequest, revision: REVISION_1 },
+      live,
+      undefined,
+      hashContent,
+    );
+
+    expect(decision).toEqual({ kind: "reject", code: "invalid_input" });
+  });
+
   it("rejects stale parents and tombstones without an exact live parent to preserve", async () => {
     const staleUpdate = await evaluateSyncMutation(
       { ...updateRequest, parent: { kind: "revision", revision: REVISION_3 } },
@@ -286,6 +297,22 @@ describe("evaluateSyncMutation", () => {
       committed,
       hashContent,
     );
+    const changedSameLengthContent = await evaluateSyncMutation(
+      { ...createRequest, content: "# original mote" },
+      neverSeen,
+      committed,
+      hashContent,
+    );
+    const reissuedAsUpdate = await evaluateSyncMutation(
+      {
+        ...createRequest,
+        kind: "update",
+        parent: { kind: "revision", revision: REVISION_2 },
+      },
+      neverSeen,
+      committed,
+      hashContent,
+    );
     const composedRequest = { ...createRequest, content: "Café" };
     const composedRecord = committedRecord(composedRequest);
     const decomposedReplay = await evaluateSyncMutation(
@@ -309,7 +336,60 @@ describe("evaluateSyncMutation", () => {
       kind: "reject",
       code: "operation_id_reused",
     });
+    expect(changedSameLengthContent).toEqual({
+      kind: "reject",
+      code: "operation_id_reused",
+    });
+    expect(reissuedAsUpdate).toEqual({
+      kind: "reject",
+      code: "operation_id_reused",
+    });
     expect(decomposedReplay).toEqual({
+      kind: "reject",
+      code: "operation_id_reused",
+    });
+  });
+
+  it("preserves exact committed update and tombstone replays", async () => {
+    const updateReplay = await evaluateSyncMutation(
+      updateRequest,
+      neverSeen,
+      committedRecord(updateRequest),
+      hashContent,
+    );
+    const tombstoneReplay = await evaluateSyncMutation(
+      tombstoneRequest,
+      neverSeen,
+      committedRecord(tombstoneRequest),
+      hashContent,
+    );
+
+    expect(updateReplay).toEqual({
+      kind: "already_committed",
+      revision: updateRequest.revision,
+      operationId: updateRequest.operationId,
+      position: committedRecord(updateRequest).position,
+    });
+    expect(tombstoneReplay).toEqual({
+      kind: "already_committed",
+      revision: tombstoneRequest.revision,
+      operationId: tombstoneRequest.operationId,
+      position: committedRecord(tombstoneRequest).position,
+    });
+  });
+
+  it("rejects an operation replay whose revision parent changed", async () => {
+    const changedParent = await evaluateSyncMutation(
+      {
+        ...updateRequest,
+        parent: { kind: "revision", revision: REVISION_3 },
+      },
+      neverSeen,
+      committedRecord(updateRequest),
+      hashContent,
+    );
+
+    expect(changedParent).toEqual({
       kind: "reject",
       code: "operation_id_reused",
     });

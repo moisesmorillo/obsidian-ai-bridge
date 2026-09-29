@@ -11,6 +11,7 @@ import type {
 } from "@core/sync/sync.types";
 import type { SyncStore } from "@core/sync/sync-store.port";
 import type {
+  SyncAbortedChangeReason,
   SyncCompleteInventory,
   SyncContinueInventoryInput,
   SyncInventoryResult,
@@ -152,6 +153,13 @@ const mutationWithoutDigest: SyncMutationRequest = {
   content: "note",
   mediaType: "text/markdown",
 };
+const safeAbortedChangeReason: SyncAbortedChangeReason = "stale_revision";
+// @ts-expect-error An unresolved effect cannot prove the current head was unchanged.
+const unknownEffectAbortReason: SyncAbortedChangeReason = "effect_unknown";
+// @ts-expect-error A pending operation cannot be published as a conclusive abort.
+const pendingOperationAbortReason: SyncAbortedChangeReason =
+  "operation_pending";
+
 const tombstoneWithoutPreservedParent: SyncTombstoneRequest = {
   kind: "tombstone",
   vaultId: VAULT_ID,
@@ -383,6 +391,9 @@ describe("SyncStore contract shapes", () => {
       mutationWithoutPosition,
       mutationWithoutDigest,
       tombstoneWithoutPreservedParent,
+      safeAbortedChangeReason,
+      unknownEffectAbortReason,
+      pendingOperationAbortReason,
       readWithR2Etag,
       continueWithR2Cursor,
     ];

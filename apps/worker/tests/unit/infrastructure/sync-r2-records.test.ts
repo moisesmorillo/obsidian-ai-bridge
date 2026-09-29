@@ -246,7 +246,10 @@ describe("marker-gated isolated sync current and recovery records", () => {
   });
 
   it("distinguishes definite marker and linked-body rejection from unavailable evidence", async () => {
-    expect((await records.createHead(makeHead())).kind).toBe("refused");
+    expect(
+      (await records.createHead(makeHead(), { retryAfterEpochMs: 99_000 }))
+        .kind,
+    ).toBe("refused");
     bucket.unavailableKeys.add(markerKey());
     expect((await records.createHead(makeHead())).kind).toBe("effect_unknown");
 
@@ -453,6 +456,103 @@ describe("marker-gated isolated sync current and recovery records", () => {
     bucket.failReadback = true;
     const result = await records.createHead(makeHead());
     expect(result.kind).toBe("effect_unknown");
+  });
+
+  it.each([
+    ["timeout", new Error("write timeout"), "effect_unknown"],
+    [
+      "rate limit",
+      Object.assign(new Error("R2 rate limit"), { status: 429 }),
+      "throttled",
+    ],
+  ] as const)(
+    "forwards a %s create cooldown to a fresh records facade",
+    async (_label, failure, expectedKind) => {
+      await seedMarker();
+      bucket.failure = failure;
+      const first = await records.createHead(makeHead());
+      expect(first.kind).toBe(expectedKind);
+      if (
+        (first.kind !== "effect_unknown" && first.kind !== "throttled") ||
+        first.retryAfterEpochMs === undefined
+      )
+        throw new Error("Expected write cooldown evidence.");
+      const retryContext = { retryAfterEpochMs: first.retryAfterEpochMs };
+
+      bucket.failure = undefined;
+      const freshRecords = syncR2Records(
+        syncR2ObjectStore(bucket, () => 20_000),
+      );
+      const putsBeforeEarlyRetry = bucket.puts.length;
+      expect(await freshRecords.createHead(makeHead(), retryContext)).toEqual({
+        kind: "throttled",
+        retryAfterEpochMs: first.retryAfterEpochMs,
+      });
+      expect(bucket.puts).toHaveLength(putsBeforeEarlyRetry);
+
+      expect(first.retryAfterEpochMs).toBe(21_100);
+      expect(await freshRecords.createHead(makeHead(), retryContext)).toEqual({
+        kind: "throttled",
+        retryAfterEpochMs: 21_100,
+      });
+      const atFloorRecords = syncR2Records(
+        syncR2ObjectStore(bucket, () => 21_100),
+      );
+      expect(await atFloorRecords.createHead(makeHead(), retryContext)).toEqual(
+        { kind: "confirmed" },
+      );
+    },
+  );
+
+  it("forwards exact-head replacement cooldown while retaining the observed ETag", async () => {
+    await seedMarker();
+    expect((await records.createHead(makeHead())).kind).toBe("confirmed");
+    const observed = await records.readHead(vaultId, path);
+    if (observed.kind !== "observed")
+      throw new Error("Expected head observation.");
+    const replacement = {
+      ...makeHead(alternateRevision),
+      parent: { kind: "revision" as const, revision },
+    };
+
+    bucket.failure = new Error("write timeout");
+    const first = await records.replaceHead(observed.observation, replacement);
+    expect(first.kind).toBe("effect_unknown");
+    if (
+      first.kind !== "effect_unknown" ||
+      first.retryAfterEpochMs === undefined
+    )
+      throw new Error("Expected uncertain-write cooldown evidence.");
+    const retryAfterEpochMs = first.retryAfterEpochMs;
+    const retryContext = { retryAfterEpochMs };
+
+    bucket.failure = undefined;
+    const freshRecords = syncR2Records(syncR2ObjectStore(bucket, () => 20_000));
+    const putsBeforeEarlyRetry = bucket.puts.length;
+    expect(
+      await freshRecords.replaceHead(
+        observed.observation,
+        replacement,
+        retryContext,
+      ),
+    ).toEqual({
+      kind: "throttled",
+      retryAfterEpochMs,
+    });
+    expect(bucket.puts).toHaveLength(putsBeforeEarlyRetry);
+    const atFloorRecords = syncR2Records(
+      syncR2ObjectStore(bucket, () => retryAfterEpochMs),
+    );
+    expect(
+      await atFloorRecords.replaceHead(
+        observed.observation,
+        replacement,
+        retryContext,
+      ),
+    ).toEqual({ kind: "confirmed" });
+    expect(bucket.puts.at(-1)?.options.onlyIf).toEqual({
+      etagMatches: observed.observation.observed.etag,
+    });
   });
 
   it("validates recovery metadata and raw recovery body together", async () => {

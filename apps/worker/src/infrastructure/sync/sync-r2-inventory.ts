@@ -7,6 +7,7 @@ import type { SyncInventoryIdDto, SyncVaultIdDto } from "@protocol/sync.types";
 import type {
   SyncR2Key,
   SyncR2ObjectStore,
+  SyncR2RetryContext,
   SyncR2WriteResult,
   SyncRecordObservation,
   SyncRecordRead,
@@ -35,24 +36,36 @@ export interface SyncR2InventoryScratch {
   readActive(
     vaultId: SyncVaultIdDto,
   ): Promise<SyncRecordRead<SyncInventorySlot>>;
-  /** Creates the active-slot key using create-only conditional storage semantics. */
-  createActive(slot: SyncInventorySlot): Promise<SyncR2WriteResult>;
+  /** Creates the active-slot key using create-only conditional storage semantics.
+   * @param retryContext Prior cross-isolate cooldown evidence, when resuming a write.
+   */
+  createActive(
+    slot: SyncInventorySlot,
+    retryContext?: SyncR2RetryContext,
+  ): Promise<SyncR2WriteResult>;
   /** Replaces only the exact previously observed active-slot generation. */
   replaceActive(
     observed: SyncRecordObservation<SyncInventorySlot>,
     slot: SyncInventorySlot,
+    retryContext?: SyncR2RetryContext,
   ): Promise<SyncR2WriteResult>;
   /** Reads one manifest by its exact vault and immutable inventory identity. */
   readManifest(
     vaultId: SyncVaultIdDto,
     inventoryId: SyncInventoryIdDto,
   ): Promise<SyncRecordRead<SyncInventoryManifest>>;
-  /** Creates one manifest using create-only conditional storage semantics. */
-  createManifest(record: SyncInventoryManifest): Promise<SyncR2WriteResult>;
+  /** Creates one manifest using create-only conditional storage semantics.
+   * @param retryContext Prior cross-isolate cooldown evidence, when resuming a write.
+   */
+  createManifest(
+    record: SyncInventoryManifest,
+    retryContext?: SyncR2RetryContext,
+  ): Promise<SyncR2WriteResult>;
   /** Replaces only the exact previously observed manifest generation. */
   replaceManifest(
     observed: SyncRecordObservation<SyncInventoryManifest>,
     record: SyncInventoryManifest,
+    retryContext?: SyncR2RetryContext,
   ): Promise<SyncR2WriteResult>;
   /** Reads one immutable chunk only when key, embedded step, and cursor digest validate. */
   readChunk(
@@ -60,8 +73,13 @@ export interface SyncR2InventoryScratch {
     inventoryId: SyncInventoryIdDto,
     step: number,
   ): Promise<SyncRecordRead<SyncInventoryChunk>>;
-  /** Creates one immutable chunk using create-only conditional storage semantics. */
-  createChunk(record: SyncInventoryChunk): Promise<SyncR2WriteResult>;
+  /** Creates one immutable chunk using create-only conditional storage semantics.
+   * @param retryContext Prior cross-isolate cooldown evidence, when resuming a write.
+   */
+  createChunk(
+    record: SyncInventoryChunk,
+    retryContext?: SyncR2RetryContext,
+  ): Promise<SyncR2WriteResult>;
 }
 
 /** Composes strict inventory records with the one-key conditional R2 boundary.
@@ -122,6 +140,7 @@ export function syncR2InventoryScratch(
   /** Validates and encodes one record before a create-only write at its canonical key.
    * @param record Strict inventory record selected for creation.
    * @param keyValue Exact protocol key derived from the record identity.
+   * @param retryContext Caller-carried cooldown floor from a prior uncertain/throttled attempt.
    * @returns Conditional-write certainty without inferring successful progress.
    */
   async function createRecord(
@@ -130,6 +149,7 @@ export function syncR2InventoryScratch(
       { readonly kind: "activeSlot" | "manifest" | "chunk" }
     >,
     keyValue: string,
+    retryContext?: SyncR2RetryContext,
   ): Promise<SyncR2WriteResult> {
     const vaultId = record.record.vaultId;
     const key = keyFor(keyValue, vaultId);
@@ -142,7 +162,7 @@ export function syncR2InventoryScratch(
       return { kind: "refused" };
     }
     try {
-      return await objects.create(key, bytes);
+      return await objects.create(key, bytes, retryContext);
     } catch {
       return { kind: "effect_unknown" };
     }
@@ -154,6 +174,7 @@ export function syncR2InventoryScratch(
    * @param record Replacement record with the same identity.
    * @param keyValue Canonical active-slot or manifest key.
    * @param vaultId Validated namespace identity.
+   * @param retryContext Caller-carried cooldown floor from a prior uncertain/throttled attempt.
    * @returns Exact-CAS certainty; stale observations are never refreshed.
    */
   async function replaceRecord<T>(
@@ -165,6 +186,7 @@ export function syncR2InventoryScratch(
     >,
     keyValue: string,
     vaultId: SyncVaultIdDto,
+    retryContext?: SyncR2RetryContext,
   ): Promise<SyncR2WriteResult> {
     const key = keyFor(keyValue, vaultId);
     if (
@@ -189,7 +211,7 @@ export function syncR2InventoryScratch(
       return { kind: "refused" };
     }
     try {
-      return await objects.replace(observed.observed, bytes);
+      return await objects.replace(observed.observed, bytes, retryContext);
     } catch {
       return { kind: "effect_unknown" };
     }
@@ -207,19 +229,21 @@ export function syncR2InventoryScratch(
             : undefined,
       );
     },
-    createActive(slot) {
+    createActive(slot, retryContext) {
       return createRecord(
         { kind: "activeSlot", record: slot },
         syncInventoryActiveKey(slot.vaultId),
+        retryContext,
       );
     },
-    replaceActive(observed, slot) {
+    replaceActive(observed, slot, retryContext) {
       return replaceRecord(
         "activeSlot",
         observed,
         { kind: "activeSlot", record: slot },
         syncInventoryActiveKey(slot.vaultId),
         slot.vaultId,
+        retryContext,
       );
     },
     readManifest(vaultId, inventoryId) {
@@ -235,19 +259,21 @@ export function syncR2InventoryScratch(
             : undefined,
       );
     },
-    createManifest(record) {
+    createManifest(record, retryContext) {
       return createRecord(
         { kind: "manifest", record },
         syncInventoryManifestKey(record.vaultId, record.inventoryId),
+        retryContext,
       );
     },
-    replaceManifest(observed, record) {
+    replaceManifest(observed, record, retryContext) {
       return replaceRecord(
         "manifest",
         observed,
         { kind: "manifest", record },
         syncInventoryManifestKey(record.vaultId, record.inventoryId),
         record.vaultId,
+        retryContext,
       );
     },
     readChunk(vaultId, inventoryId, step) {
@@ -264,10 +290,11 @@ export function syncR2InventoryScratch(
             : undefined,
       );
     },
-    createChunk(record) {
+    createChunk(record, retryContext) {
       return createRecord(
         { kind: "chunk", record },
         syncInventoryChunkKey(record.vaultId, record.inventoryId, record.step),
+        retryContext,
       );
     },
   };

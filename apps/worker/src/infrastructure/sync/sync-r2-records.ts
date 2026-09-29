@@ -15,6 +15,7 @@ import type {
 import type {
   SyncR2Key,
   SyncR2ObjectStore,
+  SyncR2RetryContext,
   SyncR2WriteResult,
   SyncRecordObservation,
   SyncRecordRead,
@@ -46,20 +47,31 @@ export interface SyncR2Records {
     vaultId: SyncVaultIdDto,
     path: SyncNotePathDto,
   ): Promise<SyncRecordRead<SyncHeadRecord>>;
-  /** Creates a current head after marker validation using create-only R2 semantics. */
-  createHead(record: SyncHeadRecord): Promise<SyncR2WriteResult>;
+  /** Creates a current head after marker validation using create-only R2 semantics.
+   * @param retryContext Prior cross-isolate cooldown evidence, when resuming a write.
+   */
+  createHead(
+    record: SyncHeadRecord,
+    retryContext?: SyncR2RetryContext,
+  ): Promise<SyncR2WriteResult>;
   /** Replaces only the exact observed head generation after marker validation. */
   replaceHead(
     observed: SyncRecordObservation<SyncHeadRecord>,
     record: SyncHeadRecord,
+    retryContext?: SyncR2RetryContext,
   ): Promise<SyncR2WriteResult>;
   /** Reads immutable metadata only when its exact content object verifies against it. */
   readVersion(
     vaultId: SyncVaultIdDto,
     revision: SyncRevisionDto,
   ): Promise<SyncRecordRead<SyncVersionMetadata>>;
-  /** Creates immutable version metadata only when its body already matches. */
-  createVersion(record: SyncVersionMetadata): Promise<SyncR2WriteResult>;
+  /** Creates immutable version metadata only when its body already matches.
+   * @param retryContext Prior cross-isolate cooldown evidence, when resuming a write.
+   */
+  createVersion(
+    record: SyncVersionMetadata,
+    retryContext?: SyncR2RetryContext,
+  ): Promise<SyncR2WriteResult>;
   /** Reads exact content only after its version metadata's digest and byte size match. */
   readContent(
     vaultId: SyncVaultIdDto,
@@ -70,17 +82,24 @@ export interface SyncR2Records {
   /** Creates one exact immutable content-body object. */
   createContent(
     record: Extract<SyncBodyRecord, { readonly kind: "contentBody" }>,
+    retryContext?: SyncR2RetryContext,
   ): Promise<SyncR2WriteResult>;
   /** Reads recovery metadata only when its exact recovery body verifies against it. */
   readRecovery(
     vaultId: SyncVaultIdDto,
     operationId: SyncOperationIdDto,
   ): Promise<SyncRecordRead<SyncRecoveryMetadata>>;
-  /** Creates recovery metadata only when its body already matches. */
-  createRecovery(record: SyncRecoveryMetadata): Promise<SyncR2WriteResult>;
+  /** Creates recovery metadata only when its body already matches.
+   * @param retryContext Prior cross-isolate cooldown evidence, when resuming a write.
+   */
+  createRecovery(
+    record: SyncRecoveryMetadata,
+    retryContext?: SyncR2RetryContext,
+  ): Promise<SyncR2WriteResult>;
   /** Creates one exact immutable recovery-body object. */
   createRecoveryBody(
     record: Extract<SyncBodyRecord, { readonly kind: "recoveryBody" }>,
+    retryContext?: SyncR2RetryContext,
   ): Promise<SyncR2WriteResult>;
 }
 
@@ -273,11 +292,13 @@ export function syncR2Records(objects: SyncR2ObjectStore): SyncR2Records {
   /** Validates marker, record encoding, and canonical key before one create-only write.
    * @param record Strict decoded record to encode without mutation sequencing.
    * @param keyValue Exact M7.1 key produced for the record identity.
+   * @param retryContext Caller-carried cooldown floor from a prior uncertain/throttled attempt.
    * @returns Conditional-write certainty from the one-key R2 primitive.
    */
   async function createRecord(
     record: SyncDecodedRecord,
     keyValue: string,
+    retryContext?: SyncR2RetryContext,
   ): Promise<SyncR2WriteResult> {
     const marker = await validateMarker(recordVaultId(record));
     if (marker.kind === "refused") return { kind: "refused" };
@@ -286,7 +307,7 @@ export function syncR2Records(objects: SyncR2ObjectStore): SyncR2Records {
     if (key === undefined) return { kind: "effect_unknown" };
     try {
       const bytes = await encodeSyncRecord(record);
-      return await objects.create(key, bytes);
+      return await objects.create(key, bytes, retryContext);
     } catch {
       return { kind: "effect_unknown" };
     }
@@ -339,13 +360,14 @@ export function syncR2Records(objects: SyncR2ObjectStore): SyncR2Records {
         decoded.kind === "head" ? decoded.record : undefined,
       );
     },
-    async createHead(record) {
+    async createHead(record, retryContext) {
       return createRecord(
         { kind: "head", record },
         syncHeadKey(record.vaultId, record.path),
+        retryContext,
       );
     },
-    async replaceHead(observed, record) {
+    async replaceHead(observed, record, retryContext) {
       const marker = await validateMarker(record.vaultId);
       if (marker.kind === "refused") return { kind: "refused" };
       if (marker.kind === "unavailable") return { kind: "effect_unknown" };
@@ -379,13 +401,13 @@ export function syncR2Records(objects: SyncR2ObjectStore): SyncR2Records {
           return { kind: "refused" };
         }
         const bytes = await encodeSyncRecord({ kind: "head", record });
-        return await objects.replace(observed.observed, bytes);
+        return await objects.replace(observed.observed, bytes, retryContext);
       } catch {
         return { kind: "effect_unknown" };
       }
     },
     readVersion: readVerifiedVersion,
-    async createVersion(record) {
+    async createVersion(record, retryContext) {
       const marker = await validateMarker(record.vaultId);
       if (marker.kind === "refused") return { kind: "refused" };
       if (marker.kind === "unavailable") return { kind: "effect_unknown" };
@@ -401,6 +423,7 @@ export function syncR2Records(objects: SyncR2ObjectStore): SyncR2Records {
       return createRecord(
         { kind: "version", record },
         syncVersionKey(record.vaultId, record.revision),
+        retryContext,
       );
     },
     async readContent(vaultId, revision) {
@@ -427,14 +450,15 @@ export function syncR2Records(objects: SyncR2ObjectStore): SyncR2Records {
       if (body.kind === "unavailable") return { kind: "unavailable" };
       return { kind: "unavailable" };
     },
-    async createContent(record) {
+    async createContent(record, retryContext) {
       return createRecord(
         { kind: "contentBody", record },
         syncContentKey(record.vaultId, record.revision),
+        retryContext,
       );
     },
     readRecovery: readVerifiedRecovery,
-    async createRecovery(record) {
+    async createRecovery(record, retryContext) {
       const marker = await validateMarker(record.vaultId);
       if (marker.kind === "refused") return { kind: "refused" };
       if (marker.kind === "unavailable") return { kind: "effect_unknown" };
@@ -450,12 +474,14 @@ export function syncR2Records(objects: SyncR2ObjectStore): SyncR2Records {
       return createRecord(
         { kind: "recoveryMetadata", record },
         syncRecoveryKey(record.vaultId, record.operationId, "metadata"),
+        retryContext,
       );
     },
-    async createRecoveryBody(record) {
+    async createRecoveryBody(record, retryContext) {
       return createRecord(
         { kind: "recoveryBody", record },
         syncRecoveryKey(record.vaultId, record.operationId, "content"),
+        retryContext,
       );
     },
   };

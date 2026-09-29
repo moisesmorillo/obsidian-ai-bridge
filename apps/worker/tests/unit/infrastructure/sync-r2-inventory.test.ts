@@ -414,6 +414,89 @@ describe("isolated inventory scratch persistence", () => {
     expect(await scratch.readActive(vaultId)).toEqual({ kind: "unavailable" });
   });
 
+  it("carries timeout cooldown evidence into a fresh scratch facade", async () => {
+    bucket.putFailure = new Error("write timeout");
+    const first = await scratch.createManifest(makeManifest());
+    expect(first.kind).toBe("effect_unknown");
+    if (
+      first.kind !== "effect_unknown" ||
+      first.retryAfterEpochMs === undefined
+    )
+      throw new Error("Expected uncertain-write cooldown evidence.");
+
+    bucket.putFailure = undefined;
+    const freshScratch = syncR2InventoryScratch(
+      syncR2ObjectStore(bucket, () => bucket.now),
+    );
+    const putsBeforeEarlyRetry = bucket.puts.length;
+    const retryContext = { retryAfterEpochMs: first.retryAfterEpochMs };
+    expect(
+      await freshScratch.createManifest(makeManifest(), retryContext),
+    ).toEqual({
+      kind: "throttled",
+      retryAfterEpochMs: first.retryAfterEpochMs,
+    });
+    expect(bucket.puts).toHaveLength(putsBeforeEarlyRetry);
+
+    bucket.now = first.retryAfterEpochMs;
+    expect(
+      await freshScratch.createManifest(makeManifest(), retryContext),
+    ).toEqual({ kind: "confirmed" });
+  });
+
+  it("carries exact-slot replacement cooldown across facade instances", async () => {
+    const slotKey = keyFor(syncInventoryActiveKey(vaultId));
+    bucket.seed(
+      slotKey,
+      await encodeSyncRecord({ kind: "activeSlot", record: makeSlot() }),
+    );
+    const observed = await scratch.readActive(vaultId);
+    if (observed.kind !== "observed")
+      throw new Error("Expected slot observation.");
+
+    bucket.putFailure = new Error("write timeout");
+    const first = await scratch.replaceActive(
+      observed.observation,
+      makeSlot("empty"),
+    );
+    expect(first.kind).toBe("effect_unknown");
+    if (
+      first.kind !== "effect_unknown" ||
+      first.retryAfterEpochMs === undefined
+    )
+      throw new Error("Expected uncertain-write cooldown evidence.");
+
+    bucket.putFailure = undefined;
+    const freshScratch = syncR2InventoryScratch(
+      syncR2ObjectStore(bucket, () => bucket.now),
+    );
+    const putsBeforeEarlyRetry = bucket.puts.length;
+    const retryContext = { retryAfterEpochMs: first.retryAfterEpochMs };
+    expect(
+      await freshScratch.replaceActive(
+        observed.observation,
+        makeSlot("empty"),
+        retryContext,
+      ),
+    ).toEqual({
+      kind: "throttled",
+      retryAfterEpochMs: first.retryAfterEpochMs,
+    });
+    expect(bucket.puts).toHaveLength(putsBeforeEarlyRetry);
+
+    bucket.now = first.retryAfterEpochMs;
+    expect(
+      await freshScratch.replaceActive(
+        observed.observation,
+        makeSlot("empty"),
+        retryContext,
+      ),
+    ).toEqual({ kind: "confirmed" });
+    expect(bucket.puts.at(-1)?.options.onlyIf).toEqual({
+      etagMatches: observed.observation.observed.etag,
+    });
+  });
+
   it("retains uncertain write evidence and defers repeat writes without sleeping", async () => {
     bucket.putFailure = new Error("timeout");
     const result = await scratch.createManifest(makeManifest());

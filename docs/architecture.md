@@ -43,11 +43,15 @@ conditional effects and 1,100-ms per-key cooldown, with caller-carried retry flo
 for later durable M7.4 recovery; the facades validate record/key/body linkages but
 do not implement `SyncStore`, journal/feed sequencing or completed scans. Raw
 Markdown is retained byte-for-byte and compared to separate hash/size metadata
-before a complete read is returned. An unavailable conditional read-back cannot
+before a complete read is returned. Live versions link their own content body;
+tombstone versions instead verify their parent's retained recovery metadata and
+body, without copying content under the tombstone revision. An unavailable
+conditional read-back cannot
 be promoted to either success or definite failure. No new private facade is
 composed into Worker HTTP/MCP or the plugin; M1–M6 v2 objects and writer remain
-unchanged. Canonical `mise run check` passed at `3fdd777` with 1,561 source tests,
-9 local workerd tests and 95.00% statement coverage (no headroom). Local workerd
+unchanged. Canonical `mise run check` passed after the tombstone-evidence
+correction with 1,565 source tests, 9 local workerd tests and 95.00%
+statement coverage (no headroom). Local workerd
 demonstrates conditional semantics, not production rate limiting or Workers Free
 CPU qualification. [M7.3 evidence](milestones/m7-versioned-sync-protocol-and-r2-store.md#m73-isolated-r2-primitives-evidence)
 records exact boundaries; M7.4 must add durable journal/feed and stable-vector

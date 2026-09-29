@@ -31,7 +31,7 @@ Provide the first versioned shared-state foundation for later bidirectional sync
 
 M7.1 began with protocol contracts and tests; M7.2 added the core port. The owner
 explicitly authorized one M7.3 PR despite the usual change-size limits: nine
-production files and 2,411 net production lines, reviewed as separate work-unit
+production files and 2,457 net production lines, reviewed as separate work-unit
 commits. This exception does not extend to M7.4 or unrelated changes. Dependencies
 and acceptance evidence are listed below.
 
@@ -748,10 +748,15 @@ No personal vault or remote resource was used. M7.3 owns isolated R2 primitives;
 `infrastructure/sync/` modules implement strict protocol-major-one persisted
 records, canonical namespace keys, one-key conditional R2 operations and two
 single-object facades. `sync-r2-records.ts` reads and writes marker-gated heads,
-immutable version/content pairs and recovery metadata/body pairs; it checks exact
-UTF-8 bytes against independent digest and size evidence, including on a second
-content read. `sync-r2-inventory.ts` exposes bounded active-slot, manifest and
-chunk scratch operations without claiming a complete inventory. The one-key
+live version/content pairs and operation-bound tombstone version/recovery pairs;
+it checks exact UTF-8 bytes against independent digest and size evidence, including
+on a second live-content read. A tombstone's digest and size describe its retained
+live parent; its version is accepted only when recovery metadata names that parent,
+path, vault and deleting operation and its raw recovery body verifies. No content
+object is created under the tombstone revision, and `readContent` cannot expose
+one even if an unexpected object exists. `sync-r2-inventory.ts` exposes
+bounded active-slot, manifest and chunk scratch operations without claiming a
+complete inventory. The one-key
 adapter uses create-only or the originally observed ETag, exact read-back after
 successful, uncertain or conditionally refused writes, typed refusals versus
 unknown effects, and a 1,100-ms same-key cooldown. A caller may carry its retry
@@ -760,11 +765,11 @@ cannot prove a replacement failed, and no write is retried with a refreshed ETag
 
 | Verification | Result |
 | --- | --- |
-| Scope against `8870e06` | Nine Worker production files, 2,412 lines added / 1 removed (2,411 net); eight private sync modules plus the narrow existing R2 binding type adjustment. No core/protocol/plugin production or Worker app/route/composition changes. |
+| Scope against `8870e06` | Nine Worker production files, 2,458 lines added / 1 removed (2,457 net); eight private sync modules plus the narrow existing R2 binding type adjustment. No core/protocol/plugin production or Worker app/route/composition changes. |
 | Focused units and local R2 | Strict record, one-key, current/recovery and inventory tests plus 9 local workerd storage tests passed. Workerd validates conditional primitives and v2-prefix noninterference, not live Cloudflare throttling or CPU. |
 | `mise install`, `mise run install` | Passed at branch baseline; no new dependency or production binding. |
-| `mise run check` at `3fdd777` | Passed: formatting, Biome assists, typecheck, lint/TSDoc, 96 source test files / 1,561 tests, 9 local workerd tests, 12 plugin artifact smoke tests, Worker dry-run build and plugin build. |
-| Global coverage | Statements **9,810/10,326 (95.00%)**, branches 90.73%, functions 98.5%, lines 97.06%. Statements have no headroom; recheck after any production change. |
+| `mise run check` for this correction | Passed: formatting, Biome assists, typecheck, lint/TSDoc, 96 source test files / 1,565 tests, 9 local workerd tests, 12 plugin artifact smoke tests, Worker dry-run build and plugin build. |
+| Global coverage | Statements **9,824/10,340 (95.00%)**, branches 90.76%, functions 98.5%, lines 97.07%. Statements have no headroom; recheck after any production change. |
 | Semantic/security review | Task-level reviews and independent whole-branch review; conditional-null exact read-back and pre-dispatch invalid encoding findings corrected; a later CAS-unavailable certainty bug corrected and re-reviewed. Final code review found no issues. |
 
 Two tests-only expansions cover adjacent existing R2 storage: focused recovery

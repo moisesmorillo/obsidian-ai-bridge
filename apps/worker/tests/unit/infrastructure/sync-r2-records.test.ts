@@ -44,6 +44,12 @@ const operationId = syncOperationIdSchema.parse(
 const deviceId = syncDeviceIdSchema.parse(
   "55555555-5555-4555-8555-555555555555",
 );
+const parentOperationId = syncOperationIdSchema.parse(
+  "66666666-6666-4666-8666-666666666666",
+);
+const parentDeviceId = syncDeviceIdSchema.parse(
+  "77777777-7777-4777-8777-777777777777",
+);
 const payload = new TextEncoder().encode("# Exact\r\nbody 🌐\n");
 const digest = checkedSha256(
   "5233e986028efd912c63be9f5576784bea82ec1cbb7e5e0ea22ce9b40e08a70d",
@@ -181,6 +187,14 @@ function makeHead(
     operationId,
     origin: deviceId,
     kind: "live",
+  };
+}
+
+function makeTombstone(): SyncHeadRecord {
+  return {
+    ...makeHead(alternateRevision),
+    kind: "tombstone",
+    parent: { kind: "revision", revision },
   };
 }
 
@@ -727,6 +741,176 @@ describe("marker-gated isolated sync current and recovery records", () => {
     );
     bucket.seed(bodyKey, new TextEncoder().encode("wrong"));
     expect((await records.readRecovery(vaultId, operationId)).kind).toBe(
+      "unavailable",
+    );
+  });
+
+  it("creates and reads a tombstone version from exact parent recovery without a tombstone content copy", async () => {
+    await seedMarker();
+    await seedContent();
+    await seedVersion({
+      ...makeHead(),
+      operationId: parentOperationId,
+      origin: parentDeviceId,
+    });
+    expect(
+      (
+        await records.createRecoveryBody({
+          kind: "recoveryBody",
+          vaultId,
+          operationId,
+          bytes: payload,
+          byteSize: payload.byteLength,
+          contentSha256: digest,
+        })
+      ).kind,
+    ).toBe("confirmed");
+    expect(
+      (
+        await records.createRecovery({
+          ...makeRecovery(),
+          origin: parentDeviceId,
+        })
+      ).kind,
+    ).toBe("confirmed");
+
+    const tombstone = makeTombstone();
+    expect((await records.createVersion(tombstone)).kind).toBe("confirmed");
+    const read = await records.readVersion(vaultId, alternateRevision);
+    expect(read.kind).toBe("observed");
+    if (read.kind === "observed")
+      expect(read.observation.value).toEqual(tombstone);
+    expect(bucket.objects.has(syncContentKey(vaultId, alternateRevision))).toBe(
+      false,
+    );
+    expect(
+      bucket.puts.some(
+        ({ key }) => key === syncContentKey(vaultId, alternateRevision),
+      ),
+    ).toBe(false);
+  });
+
+  it("does not expose a forged tombstone-revision content body as live note content", async () => {
+    await seedMarker();
+    await seedVersion(makeTombstone());
+    bucket.seed(syncRecoveryKey(vaultId, operationId, "content"), payload);
+    bucket.seed(
+      syncRecoveryKey(vaultId, operationId, "metadata"),
+      await encodeSyncRecord({
+        kind: "recoveryMetadata",
+        record: makeRecovery(),
+      }),
+    );
+    await seedContent(alternateRevision);
+
+    expect((await records.readVersion(vaultId, alternateRevision)).kind).toBe(
+      "observed",
+    );
+    expect((await records.readContent(vaultId, alternateRevision)).kind).toBe(
+      "unavailable",
+    );
+  });
+
+  it("refuses tombstone creation without exact linked recovery evidence", async () => {
+    await seedMarker();
+    const tombstone = makeTombstone();
+    expect((await records.createVersion(tombstone)).kind).toBe("refused");
+    const recoveryBodyKey = syncRecoveryKey(vaultId, operationId, "content");
+    bucket.seed(recoveryBodyKey, payload);
+    expect((await records.createVersion(tombstone)).kind).toBe(
+      "effect_unknown",
+    );
+
+    const recoveryMetadataKey = syncRecoveryKey(
+      vaultId,
+      operationId,
+      "metadata",
+    );
+    bucket.seed(
+      recoveryMetadataKey,
+      await encodeSyncRecord({
+        kind: "recoveryMetadata",
+        record: { ...makeRecovery(), sourceRevision: alternateRevision },
+      }),
+    );
+    expect((await records.createVersion(tombstone)).kind).toBe("refused");
+
+    const differentBody = new TextEncoder().encode("different preserved body");
+    bucket.seed(recoveryBodyKey, differentBody);
+    bucket.seed(
+      recoveryMetadataKey,
+      await encodeSyncRecord({
+        kind: "recoveryMetadata",
+        record: {
+          ...makeRecovery(),
+          contentSha256: checkedSha256(await sha256Hex(differentBody)),
+          byteSize: differentBody.byteLength,
+        },
+      }),
+    );
+    expect((await records.createVersion(tombstone)).kind).toBe("refused");
+    expect(bucket.objects.has(syncVersionKey(vaultId, alternateRevision))).toBe(
+      false,
+    );
+  });
+
+  it("withholds tombstone version reads when recovery is missing or mismatched", async () => {
+    await seedMarker();
+    const tombstone = makeTombstone();
+    await seedVersion(tombstone);
+    expect((await records.readVersion(vaultId, alternateRevision)).kind).toBe(
+      "unavailable",
+    );
+
+    bucket.seed(syncRecoveryKey(vaultId, operationId, "content"), payload);
+    bucket.seed(
+      syncRecoveryKey(vaultId, operationId, "metadata"),
+      await encodeSyncRecord({
+        kind: "recoveryMetadata",
+        record: { ...makeRecovery(), sourceRevision: alternateRevision },
+      }),
+    );
+    expect((await records.readVersion(vaultId, alternateRevision)).kind).toBe(
+      "unavailable",
+    );
+    bucket.seed(
+      syncRecoveryKey(vaultId, operationId, "metadata"),
+      await encodeSyncRecord({
+        kind: "recoveryMetadata",
+        record: {
+          ...makeRecovery(),
+          path: syncNotePathSchema.parse("notes/other.md"),
+        },
+      }),
+    );
+    expect((await records.readVersion(vaultId, alternateRevision)).kind).toBe(
+      "unavailable",
+    );
+    bucket.seed(
+      syncRecoveryKey(vaultId, operationId, "content"),
+      new TextEncoder().encode("wrong"),
+    );
+    expect((await records.readVersion(vaultId, alternateRevision)).kind).toBe(
+      "unavailable",
+    );
+
+    const differentBody = new TextEncoder().encode("different preserved body");
+    bucket.seed(
+      syncRecoveryKey(vaultId, operationId, "content"),
+      differentBody,
+    );
+    bucket.seed(
+      syncRecoveryKey(vaultId, operationId, "metadata"),
+      await encodeSyncRecord({
+        kind: "recoveryMetadata",
+        record: {
+          ...makeRecovery(),
+          contentSha256: checkedSha256(await sha256Hex(differentBody)),
+          byteSize: differentBody.byteLength,
+        },
+      }),
+    );
+    expect((await records.readVersion(vaultId, alternateRevision)).kind).toBe(
       "unavailable",
     );
   });

@@ -44,7 +44,7 @@ export type SyncRecordParent =
       readonly revision: SyncRevisionDto;
     };
 
-/** Fields binding one version and its body evidence to path and operation provenance. */
+/** Fields binding a live body or a tombstone's preserved parent body to version provenance. */
 interface SyncVersionMetadataBase extends SyncRecordEnvelope {
   /** Canonical NotePath represented by this revision. */
   readonly path: SyncNotePathDto;
@@ -52,9 +52,9 @@ interface SyncVersionMetadataBase extends SyncRecordEnvelope {
   readonly revision: SyncRevisionDto;
   /** Exact previously observed path state used as the mutation precondition. */
   readonly parent: SyncRecordParent;
-  /** SHA-256 declared for the separately stored exact body bytes. */
+  /** SHA-256 of live content, or of the parent body retained for a tombstone. */
   readonly contentSha256: ContentSha256;
-  /** Exact UTF-8 body byte count declared for linked body verification. */
+  /** Exact UTF-8 byte count of the live or preserved parent body. */
   readonly byteSize: number;
   /** Fixed Markdown media type supported by this protocol major. */
   readonly mediaType: "text/markdown";
@@ -77,7 +77,7 @@ export type SyncHeadRecord = SyncVersionMetadataBase &
       }
   );
 
-/** Strict immutable version metadata; content remains in a separate raw body object. */
+/** Strict immutable version metadata; only live revisions own content bodies. */
 export type SyncVersionMetadata = SyncHeadRecord;
 
 /** Tombstone-linked metadata for the exact preserved source body. */

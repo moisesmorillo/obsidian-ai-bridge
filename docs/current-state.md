@@ -104,15 +104,17 @@ protocol-major-one persisted records and canonical `sync/v1/vaults/<vault-id>/`
 keys. A one-key R2 adapter requires create-only or the originally observed ETag,
 resolves conditional refusals by exact read-back, and retains uncertain effects and
 per-key cooldown evidence. Marker-gated record operations keep raw Markdown bytes
-bound to independent version/recovery digest and size metadata; inventory scratch
+bound to independent version/recovery digest and size metadata; tombstone versions
+validate operation-bound recovery of the exact live parent, not a content copy under
+the tombstone revision. Inventory scratch
 operations expose bounded slot/manifest/chunk evidence without scan-completion
 authority. A caller-carried retry context crosses fresh facades; M7.4 must persist
 it across isolates. These modules do not implement or compose `SyncStore`.
 
-`mise run check` passed on branch head `3fdd777`: **96 source test files / 1,561
-tests**, **9 local workerd storage tests**, **12 plugin artifact smoke tests**,
-Worker dry-run and plugin builds; global coverage **95.00% statements (9,810/10,326)**,
-90.73% branches, 98.5% functions, 97.06% lines. The statement gate has no
+`mise run check` passed for the tombstone-evidence correction: **96 source test
+files / 1,565 tests**, **9 local workerd storage tests**, **12 plugin artifact
+smoke tests**, Worker dry-run and plugin builds; global coverage **95.00%
+statements (9,824/10,340)**, 90.76% branches, 98.5% functions, 97.07% lines. The statement gate has no
 headroom. Independent task, whole-branch and correction reviews closed the
 reported safety findings. Existing v2 production behavior, HTTP/MCP/plugin
 composition, deployed R2 and personal vault were untouched. Workerd verifies

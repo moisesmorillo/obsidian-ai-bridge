@@ -60,19 +60,19 @@ export interface SyncR2Records {
     record: SyncHeadRecord,
     retryContext?: SyncR2RetryContext,
   ): Promise<SyncR2WriteResult>;
-  /** Reads immutable metadata only when its exact content object verifies against it. */
+  /** Reads live metadata with its body, or tombstone metadata with exact parent recovery evidence. */
   readVersion(
     vaultId: SyncVaultIdDto,
     revision: SyncRevisionDto,
   ): Promise<SyncRecordRead<SyncVersionMetadata>>;
-  /** Creates immutable version metadata only when its body already matches.
+  /** Creates immutable live metadata from its body or tombstone metadata from parent recovery.
    * @param retryContext Prior cross-isolate cooldown evidence, when resuming a write.
    */
   createVersion(
     record: SyncVersionMetadata,
     retryContext?: SyncR2RetryContext,
   ): Promise<SyncR2WriteResult>;
-  /** Reads exact content only after its version metadata's digest and byte size match. */
+  /** Reads a live version's exact content only after its metadata and body verify. */
   readContent(
     vaultId: SyncVaultIdDto,
     revision: SyncRevisionDto,
@@ -187,10 +187,10 @@ export function syncR2Records(objects: SyncR2ObjectStore): SyncR2Records {
     return createSyncR2Key(value, vaultId);
   }
 
-  /** Reads a strict version metadata record and its exact linked immutable body.
-   * @param vaultId Immutable vault identity owning both objects.
-   * @param revision Exact immutable revision encoded into both keys.
-   * @returns Metadata only after raw body size and SHA-256 match; incomplete evidence is unavailable.
+  /** Reads a strict live version with its body or a tombstone with exact parent recovery.
+   * @param vaultId Immutable vault identity owning the linked evidence.
+   * @param revision Exact immutable version revision encoded into its metadata key.
+   * @returns Metadata only after its own live body or operation-bound recovery verifies.
    */
   async function readVerifiedVersion(
     vaultId: SyncVaultIdDto,
@@ -214,6 +214,19 @@ export function syncR2Records(objects: SyncR2ObjectStore): SyncR2Records {
         : { kind: "unavailable" };
     }
     if (metadata.kind !== "observed") return metadata;
+    if (metadata.observation.value.kind === "tombstone") {
+      const recovery = await readVerifiedRecovery(
+        vaultId,
+        metadata.observation.value.operationId,
+      );
+      return recovery.kind === "observed" &&
+        recoveryMatchesTombstone(
+          metadata.observation.value,
+          recovery.observation.value,
+        )
+        ? metadata
+        : { kind: "unavailable" };
+    }
     const body = await readBody(
       "contentBody",
       syncContentKey(vaultId, revision),
@@ -316,6 +329,26 @@ export function syncR2Records(objects: SyncR2ObjectStore): SyncR2Records {
     } catch {
       return { kind: "effect_unknown" };
     }
+  }
+
+  /** Validates that operation-bound recovery contains the exact tombstone parent's body evidence.
+   * @param tombstone Immutable deletion whose digest describes its retained live parent.
+   * @param recovery Strict metadata already verified against its raw recovery body.
+   * @returns Whether vault, path, operation, parent revision, media type and bytes agree.
+   */
+  function recoveryMatchesTombstone(
+    tombstone: SyncVersionMetadata & { readonly kind: "tombstone" },
+    recovery: SyncRecoveryMetadata,
+  ): boolean {
+    return (
+      recovery.vaultId === tombstone.vaultId &&
+      recovery.path === tombstone.path &&
+      recovery.operationId === tombstone.operationId &&
+      recovery.sourceRevision === tombstone.parent.revision &&
+      recovery.contentSha256 === tombstone.contentSha256 &&
+      recovery.byteSize === tombstone.byteSize &&
+      recovery.mediaType === tombstone.mediaType
+    );
   }
 
   /** Validates body metadata equality for either immutable content family.
@@ -426,15 +459,26 @@ export function syncR2Records(objects: SyncR2ObjectStore): SyncR2Records {
       const marker = await validateMarker(record.vaultId);
       if (marker.kind === "refused") return { kind: "refused" };
       if (marker.kind === "unavailable") return { kind: "effect_unknown" };
-      const version = await readBody(
-        "contentBody",
-        syncContentKey(record.vaultId, record.revision),
-        record.vaultId,
-      );
-      if (version.kind === "absent") return { kind: "refused" };
-      if (version.kind === "unavailable") return { kind: "effect_unknown" };
-      if (!bodyMatches(record, version.observation.value))
-        return { kind: "refused" };
+      if (record.kind === "tombstone") {
+        const recovery = await readVerifiedRecovery(
+          record.vaultId,
+          record.operationId,
+        );
+        if (recovery.kind === "absent") return { kind: "refused" };
+        if (recovery.kind === "unavailable") return { kind: "effect_unknown" };
+        if (!recoveryMatchesTombstone(record, recovery.observation.value))
+          return { kind: "refused" };
+      } else {
+        const body = await readBody(
+          "contentBody",
+          syncContentKey(record.vaultId, record.revision),
+          record.vaultId,
+        );
+        if (body.kind === "absent") return { kind: "refused" };
+        if (body.kind === "unavailable") return { kind: "effect_unknown" };
+        if (!bodyMatches(record, body.observation.value))
+          return { kind: "refused" };
+      }
       return createRecord(
         { kind: "version", record },
         syncVersionKey(record.vaultId, record.revision),
@@ -444,6 +488,8 @@ export function syncR2Records(objects: SyncR2ObjectStore): SyncR2Records {
     async readContent(vaultId, revision) {
       const metadata = await readVerifiedVersion(vaultId, revision);
       if (metadata.kind !== "observed") return metadata;
+      if (metadata.observation.value.kind === "tombstone")
+        return { kind: "unavailable" };
       const body = await readBody(
         "contentBody",
         syncContentKey(vaultId, revision),

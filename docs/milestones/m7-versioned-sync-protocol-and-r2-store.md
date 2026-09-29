@@ -526,11 +526,20 @@ and acceptance evidence are listed below.
   journal exists, preserve it and any lane reservation; return `operation_pending`
   with the same operation ID and updated `retryAfterEpochMs`. Each `resumeOperation`
   invocation performs at most one bounded recovery attempt, uses the same request/op
-  ID and the exact CAS ETag recorded for the unfinished step, and may not run before
-  `retryAfterEpochMs`. It must not refresh an ETag for that step. Do not sleep inside
-  a Worker request; if the lower bound has not passed, return the typed pending
-  result. Another typed pending result is returned if R2 throttles again. Do not
-  clear a pending lane reservation merely because it is throttled.
+  ID and the exact CAS ETag recorded for the unfinished mutation step, and may not run
+  before `retryAfterEpochMs`. It must not refresh an ETag for that step. Journal-only
+  transitions are the narrow exception: the exact typed journal body and monotonic
+  phase are the durable prior-state evidence, so a fresh exact read of that same
+  operation-bound record may supply the current ETag for its journal transition. After
+  an uncertain journal write, exact target read-back means done; exact prior-state
+  read-back defers the invocation using its known safe floor or observation time plus
+  1,100 ms, with the new floor persisted before a later write; divergent or unavailable
+  evidence remains `effect_unknown`. This does not refresh lane, current-head, or
+  immutable-write preconditions, whose original ETag and exact prior bytes remain
+  durably recorded. Do not sleep inside a Worker request; if the lower bound has not
+  passed, return the typed pending result. Another typed pending result is returned if
+  R2 throttles again. Do not clear a pending lane reservation merely because it is
+  throttled.
 - After any timed-out/failed write whose effect is uncertain, read the same key and
   validate the complete stored record. Exact evidence bound to this operation proves
   that step and recovery may continue. Exact unchanged prior body plus its original

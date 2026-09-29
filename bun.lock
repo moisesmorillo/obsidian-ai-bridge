@@ -52,6 +52,9 @@
     "packages/core": {
       "name": "@obsidian-ai-bridge/core",
       "version": "0.1.0",
+      "devDependencies": {
+        "@obsidian-ai-bridge/protocol": "workspace:*",
+      },
     },
     "packages/protocol": {
       "name": "@obsidian-ai-bridge/protocol",

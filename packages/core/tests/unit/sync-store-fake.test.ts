@@ -35,16 +35,16 @@ import type {
   SyncStoreFailure,
   SyncVersionRecord,
 } from "@core/sync/sync-store.types";
-import { syncFeedLaneForPath } from "@protocol/sync.codec";
-import { SYNC_SEQUENCE_WIDTH } from "@protocol/sync.constants";
 import {
+  SYNC_SEQUENCE_WIDTH,
   syncDeviceIdSchema,
   syncEventSequenceSchema,
+  syncFeedLaneForPath,
   syncNotePathSchema,
   syncOperationIdSchema,
   syncRevisionSchema,
   syncVaultIdSchema,
-} from "@protocol/sync.schemas";
+} from "@obsidian-ai-bridge/protocol";
 import { describe, expect, it } from "vitest";
 
 const VAULT_ID = syncVaultIdSchema.parse(

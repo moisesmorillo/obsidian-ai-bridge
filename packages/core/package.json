@@ -8,5 +8,8 @@
       "types": "./src/index.ts",
       "import": "./src/index.ts"
     }
+  },
+  "devDependencies": {
+    "@obsidian-ai-bridge/protocol": "workspace:*"
   }
 }

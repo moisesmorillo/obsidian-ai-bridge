@@ -22,7 +22,7 @@
 ## Review Focus
 
 1. A hostile caller passes a wrong-vault or role-swapped UUID: parsing must reject malformed values and role swapping must fail type checking (Tasks 1–2).
-2. An operation ID is reused with a different payload, parent or vault: return `operation_id_reused` without changing a head (Task 3).
+2. An operation ID is reused with a different payload or parent within the same vault: return `operation_id_reused` without changing a head; the same operation ID may coexist in different vault namespaces (Task 3).
 3. Two concurrent callers claim the same absent or exact revision: at most one successful transition; loser gets `stale_revision` (Task 3).
 4. Tombstoning a never-seen path or after an uncertain/pending effect: no successful tombstone or inferred absence (Tasks 2–3).
 5. Partial/expired inventory or invalid/foreign/future feed cursor: no empty-success page, complete handle, or deletion authority (Task 2 contract tests; operational enforcement belongs to M7.4).

@@ -50,6 +50,13 @@ export async function evaluateSyncMutation(
   priorOperation: SyncOperationRecord | undefined,
   hashContent: (content: string) => Promise<ContentSha256>,
 ): Promise<SyncMutationDecision> {
+  if (
+    priorOperation !== undefined &&
+    !sameMutationRequest(request, priorOperation.request)
+  ) {
+    return reject("operation_id_reused");
+  }
+
   if (!hasFreshRevision(request)) {
     return reject("invalid_input");
   }
@@ -66,10 +73,6 @@ export async function evaluateSyncMutation(
   }
 
   if (priorOperation !== undefined) {
-    if (!sameMutationRequest(request, priorOperation.request)) {
-      return reject("operation_id_reused");
-    }
-
     switch (priorOperation.kind) {
       case "pending":
         return reject("operation_pending");

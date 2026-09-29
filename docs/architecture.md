@@ -37,8 +37,8 @@ pending/unknown outcomes. The fake is not a production adapter or proof of durab
 multi-key CAS, feed pagination, inventory persistence, or local workerd behavior. Core
 production code remains independent of protocol, Worker, R2, HTTP, and plugin
 composition. M7.1/M7.2 remain uncomposed with the Worker, plugin, and M1–M6 v2
-behavior; the M7.2 focused suite passed 4 files / 33 tests and canonical
-`mise run check` passed with 1,481 source tests. Exact unit evidence is recorded in the
+behavior; the M7.2 focused suite passed 4 files / 39 tests and canonical
+`mise run check` passed with 1,487 source tests. Exact unit evidence is recorded in the
 [M7 specification](milestones/m7-versioned-sync-protocol-and-r2-store.md#m72-core-port-mutation-policy-and-deterministic-fake-evidence).
 M7.3 is the next implementation unit; M7 remains NEXT and activation remains excluded.
 The current

@@ -80,15 +80,15 @@ M7.2's nine-method `SyncStore` contract and conservative mutation policy are
 implemented in `packages/core`. The test-only `InMemorySyncStore` in
 `packages/core/tests/unit/sync-store-fake.test.ts` exercises a serialized in-memory
 compare-and-set model using validated UUID/path fixtures, exact UTF-8 hashing, and
-injected clock/effect outcomes. Its eight cases cover per-vault idempotency scope,
-concurrent create/update races, exact replay versus changed-request reuse, stale
-tombstones, pending/unknown failure certainty, and exact recovery bytes. The fake does
-not implement feed cursor traversal or inventory persistence; its typed refusals are
+injected clock/effect outcomes. Its eleven cases cover per-vault idempotency scope,
+concurrent create/update races, exact replay versus same-vault changed-request reuse,
+stale tombstones, pending/unknown failure certainty, and exact recovery bytes. The fake
+does not implement feed cursor traversal or inventory persistence; its typed refusals are
 not behavioral qualification for those methods.
 
-The focused M7.1/M7.2 suite passed **4 files / 33 tests**. `mise install`,
+The focused M7.1/M7.2 suite passed **4 files / 39 tests**. `mise install`,
 `mise run install`, and `mise run check` passed; the check ran **92 source test files /
-1,481 tests**, **8 local workerd storage tests**, and **12 plugin artifact smoke tests**,
+1,487 tests**, **8 local workerd storage tests**, and **12 plugin artifact smoke tests**,
 with global coverage of **95.05% statements, 90.72% branches, 98.45% functions, and
 96.96% lines**. The Worker build was dry-run only. No R2 sync adapter, Worker/API/plugin
 composition, migration, deployment, or personal-vault use was involved. M7.3 is the
@@ -140,7 +140,7 @@ boundaries and validation results.
   prohibition, direct-console prohibition and configured documentation rules.
   These checks do **not** prove all architecture/TSDoc requirements in
   [AGENTS.md](../AGENTS.md); manual semantic review remains mandatory.
-- Vitest **5**: **92 source test files / 1,481 tests**, plus **1 generated-artifact
+- Vitest **5**: **92 source test files / 1,487 tests**, plus **1 generated-artifact
   smoke file / 12 tests** and **1 Worker storage-test file / 8 tests**. The unchanged
   M1 baseline had 15 files / 105 tests. M5 adds focused registry, authentication,
   lifecycle, migration, leakage, and CLI-boundary tests; M6 adds official MCP client,

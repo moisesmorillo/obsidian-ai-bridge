@@ -350,6 +350,52 @@ describe("evaluateSyncMutation", () => {
     });
   });
 
+  it("rejects changed replay bytes as operation reuse before digest validation", async () => {
+    const changedContent = { ...createRequest, content: UPDATED_CONTENT };
+    const changedReplay = await evaluateSyncMutation(
+      changedContent,
+      neverSeen,
+      committedRecord(createRequest),
+      async () => OTHER_DIGEST_VALUE,
+    );
+
+    expect(changedReplay).toEqual({
+      kind: "reject",
+      code: "operation_id_reused",
+    });
+  });
+
+  it("rejects oversized changed replay bytes as operation reuse", async () => {
+    const oversizedReplay = await evaluateSyncMutation(
+      {
+        ...createRequest,
+        content: "x".repeat(MAX_NOTE_SIZE_BYTES + 1),
+      },
+      neverSeen,
+      committedRecord(createRequest),
+      async () => OTHER_DIGEST_VALUE,
+    );
+
+    expect(oversizedReplay).toEqual({
+      kind: "reject",
+      code: "operation_id_reused",
+    });
+  });
+
+  it("validates exact committed replay content before returning success", async () => {
+    const invalidExactReplay = await evaluateSyncMutation(
+      createRequest,
+      live,
+      committedRecord(createRequest),
+      async () => OTHER_DIGEST_VALUE,
+    );
+
+    expect(invalidExactReplay).toEqual({
+      kind: "reject",
+      code: "invalid_input",
+    });
+  });
+
   it("preserves exact committed update and tombstone replays", async () => {
     const updateReplay = await evaluateSyncMutation(
       updateRequest,

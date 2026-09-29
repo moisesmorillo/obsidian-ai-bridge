@@ -1,3 +1,4 @@
+import { Buffer } from "node:buffer";
 import { createContentSha256 } from "@obsidian-ai-bridge/core";
 import {
   syncContentKey,
@@ -373,7 +374,11 @@ describe("marker-gated isolated sync current and recovery records", () => {
     const content = await records.readContent(vaultId, revision);
     expect(content.kind).toBe("observed");
     if (content.kind === "observed") {
-      expect(content.observation.value.bytes).toEqual(largePayload);
+      expect(
+        Buffer.from(content.observation.value.bytes).equals(
+          Buffer.from(largePayload),
+        ),
+      ).toBe(true);
       expect(content.observation.value.byteSize).toBe(largePayload.byteLength);
       expect(content.observation.value.contentSha256).toBe(largeDigest);
     }

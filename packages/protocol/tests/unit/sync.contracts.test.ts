@@ -1,3 +1,15 @@
+import type {
+  NotePath,
+  SyncCheckpoint,
+  SyncDeviceId,
+  SyncEventSequence,
+  SyncInventoryId,
+  SyncNotePath,
+  SyncOperationId,
+  SyncRevision,
+  SyncSequence,
+  SyncVaultId,
+} from "@obsidian-ai-bridge/core";
 import { encodeBase64Url, encodeNotePath } from "@obsidian-ai-bridge/core";
 import {
   decodeSyncCursor,
@@ -57,6 +69,91 @@ const INVENTORY_ID = syncInventoryIdSchema.parse(
 const ZERO_SEQUENCE = "0".repeat(20);
 
 describe("M7 versioned sync contracts", () => {
+  it("keeps validated outputs core-owned and round-trips the cursor codec", () => {
+    const vaultId: SyncVaultId = syncVaultIdSchema.parse(
+      "8f4c6a20-2b51-4d86-9c55-df50d9390d96",
+    );
+    const deviceId: SyncDeviceId = syncDeviceIdSchema.parse(
+      "cb5760e7-b198-441e-b459-7187df4672dc",
+    );
+    const revision: SyncRevision = syncRevisionSchema.parse(
+      "1c79a710-b532-4c32-9e14-cda5fa23a06d",
+    );
+    const operationId: SyncOperationId = syncOperationIdSchema.parse(
+      "b03f51ea-581e-4e4a-bec3-b89d4325d7c7",
+    );
+    const inventoryId: SyncInventoryId = syncInventoryIdSchema.parse(
+      "a5eaa17e-6e5c-4fb7-8585-8a5da7e5133b",
+    );
+    const path: SyncNotePath = syncNotePathSchema.parse("nested/note.md");
+    const notePath: NotePath = path;
+    const sequence: SyncSequence = syncSequenceSchema.parse(ZERO_SEQUENCE);
+    const eventSequence: SyncEventSequence = syncEventSequenceSchema.parse(
+      "00000000000000000001",
+    );
+    const checkpoint: SyncCheckpoint = syncCheckpointSchema.parse({
+      protocolMajor: 1,
+      vaultId,
+      laneSequences: Array.from({ length: SYNC_FEED_LANE_COUNT }, () =>
+        syncSequenceSchema.parse(ZERO_SEQUENCE),
+      ),
+      nextLane: 0,
+    });
+
+    // @ts-expect-error A device identity cannot be used as a vault identity.
+    const vaultIdFromDevice: SyncVaultId = deviceId;
+    // @ts-expect-error A vault identity cannot be used as a device identity.
+    const deviceIdFromVault: SyncDeviceId = vaultId;
+    // @ts-expect-error A revision identity cannot be used as a vault identity.
+    const vaultIdFromRevision: SyncVaultId = revision;
+    // @ts-expect-error Unvalidated strings are not core-owned identifiers.
+    const unvalidatedVaultId: SyncVaultId =
+      "8f4c6a20-2b51-4d86-9c55-df50d9390d96";
+    // @ts-expect-error A possibly-zero sequence is not an event sequence.
+    const eventSequenceFromCheckpointSequence: SyncEventSequence = sequence;
+    const invalidCheckpoint: SyncCheckpoint = {
+      protocolMajor: 1,
+      // @ts-expect-error A checkpoint cannot use a device identity as its vault.
+      vaultId: deviceId,
+      // @ts-expect-error Checkpoint lane positions must be validated sequences.
+      laneSequences: [ZERO_SEQUENCE],
+      nextLane: 64,
+    };
+
+    expect(decodeSyncCursor(encodeSyncCursor(checkpoint), vaultId)).toEqual(
+      checkpoint,
+    );
+    expect({
+      vaultId,
+      deviceId,
+      revision,
+      operationId,
+      inventoryId,
+      path,
+      notePath,
+      sequence,
+      eventSequence,
+    }).toEqual({
+      vaultId: VAULT_ID,
+      deviceId: DEVICE_ID,
+      revision: REVISION,
+      operationId: OPERATION_ID,
+      inventoryId: INVENTORY_ID,
+      path: "nested/note.md",
+      notePath: "nested/note.md",
+      sequence: ZERO_SEQUENCE,
+      eventSequence: "00000000000000000001",
+    });
+    void [
+      vaultIdFromDevice,
+      deviceIdFromVault,
+      vaultIdFromRevision,
+      unvalidatedVaultId,
+      eventSequenceFromCheckpointSequence,
+      invalidCheckpoint,
+    ];
+  });
+
   it("defines protocol major one without changing the v2 envelope", () => {
     expect(SYNC_PROTOCOL_MAJOR).toBe(1);
     expect(SYNC_NAMESPACE_PREFIX).toBe("sync/v1/vaults");
@@ -180,7 +277,13 @@ describe("M7 versioned sync contracts", () => {
     expect(syncFeedLaneHeadKey(VAULT_ID, 63)).toBe(
       `sync/v1/vaults/${VAULT_ID}/feed/3f/head.json`,
     );
-    expect(syncFeedEventKey(VAULT_ID, 0, "00000000000000000001")).toBe(
+    expect(
+      syncFeedEventKey(
+        VAULT_ID,
+        0,
+        syncEventSequenceSchema.parse("00000000000000000001"),
+      ),
+    ).toBe(
       `sync/v1/vaults/${VAULT_ID}/feed/00/events/00000000000000000001.json`,
     );
     expect(syncInventoryActiveKey(VAULT_ID)).toBe(
@@ -197,6 +300,7 @@ describe("M7 versioned sync contracts", () => {
 
   it("rejects invalid key components rather than interpolating hostile values", () => {
     expect(() => syncFeedLaneHeadKey(VAULT_ID, -1)).toThrow(RangeError);
+    // @ts-expect-error Untrusted sequence text is rejected before it can be a key component.
     expect(() => syncFeedEventKey(VAULT_ID, 1, "1")).toThrow(TypeError);
     expect(() => syncInventoryChunkKey(VAULT_ID, INVENTORY_ID, -1)).toThrow(
       TypeError,
@@ -204,7 +308,7 @@ describe("M7 versioned sync contracts", () => {
   });
 
   it("round-trips only strict, vault-bound 64-lane checkpoint cursors", () => {
-    const checkpoint = {
+    const checkpoint = syncCheckpointSchema.parse({
       protocolMajor: 1,
       vaultId: VAULT_ID,
       laneSequences: Array.from(
@@ -212,7 +316,7 @@ describe("M7 versioned sync contracts", () => {
         () => ZERO_SEQUENCE,
       ),
       nextLane: 0,
-    } as const;
+    });
     const cursor = encodeSyncCursor(checkpoint);
     expect(decodeSyncCursor(cursor, VAULT_ID)).toEqual(checkpoint);
     expect(decodeSyncCursor(`${cursor}=`, VAULT_ID)).toBeUndefined();

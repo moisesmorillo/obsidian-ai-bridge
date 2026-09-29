@@ -1,3 +1,14 @@
+import type {
+  SyncCheckpoint,
+  SyncDeviceId,
+  SyncEventSequence,
+  SyncInventoryId,
+  SyncNotePath,
+  SyncOperationId,
+  SyncRevision,
+  SyncSequence,
+  SyncVaultId,
+} from "@obsidian-ai-bridge/core";
 import {
   BASE64URL_PATTERN,
   isNormalizedNotePath,
@@ -13,27 +24,35 @@ import {
 } from "@protocol/sync.constants";
 import { z } from "zod";
 
-/** Validates immutable lowercase UUID-v4 identifiers owned by the sync protocol. */
+/** Validates canonical lowercase UUID-v4 strings before role-specific branding. */
 export const syncIdentifierSchema = z.string().regex(UUID_V4_PATTERN);
 
-/** Distinguishes a server-issued vault identity from other UUID identifiers. */
-export const syncVaultIdSchema = syncIdentifierSchema.brand("SyncVaultId");
+/** Validates a vault UUID, then brands it as the core sync identity at this trust boundary. */
+export const syncVaultIdSchema = syncIdentifierSchema.transform(
+  (identifier): SyncVaultId => identifier as SyncVaultId,
+);
 
-/** Distinguishes one device installation identity from other UUID identifiers. */
-export const syncDeviceIdSchema = syncIdentifierSchema.brand("SyncDeviceId");
+/** Validates a device UUID, then brands it as the core sync identity at this trust boundary. */
+export const syncDeviceIdSchema = syncIdentifierSchema.transform(
+  (identifier): SyncDeviceId => identifier as SyncDeviceId,
+);
 
-/** Distinguishes one immutable revision identity from other UUID identifiers. */
-export const syncRevisionSchema = syncIdentifierSchema.brand("SyncRevision");
+/** Validates a revision UUID, then brands it as the core sync identity at this trust boundary. */
+export const syncRevisionSchema = syncIdentifierSchema.transform(
+  (identifier): SyncRevision => identifier as SyncRevision,
+);
 
-/** Distinguishes one idempotent operation identity from other UUID identifiers. */
-export const syncOperationIdSchema =
-  syncIdentifierSchema.brand("SyncOperationId");
+/** Validates an operation UUID, then brands it as the core sync identity at this trust boundary. */
+export const syncOperationIdSchema = syncIdentifierSchema.transform(
+  (identifier): SyncOperationId => identifier as SyncOperationId,
+);
 
-/** Distinguishes one immutable inventory scan identity from other UUID identifiers. */
-export const syncInventoryIdSchema =
-  syncIdentifierSchema.brand("SyncInventoryId");
+/** Validates an inventory UUID, then brands it as the core sync identity at this trust boundary. */
+export const syncInventoryIdSchema = syncIdentifierSchema.transform(
+  (identifier): SyncInventoryId => identifier as SyncInventoryId,
+);
 
-/** Validates a canonical Markdown NotePath that fits the M7 R2 key bound. */
+/** Validates the canonical, bounded Markdown path before adding the core sync-path brand. */
 export const syncNotePathSchema = z
   .string()
   .refine(
@@ -44,20 +63,22 @@ export const syncNotePathSchema = z
     (path) =>
       new TextEncoder().encode(path).byteLength <= MAX_SYNC_NOTE_PATH_BYTES,
     `A sync NotePath cannot exceed ${MAX_SYNC_NOTE_PATH_BYTES} UTF-8 bytes.`,
-  );
+  )
+  .transform((path): SyncNotePath => path as SyncNotePath);
 
-/** Validates a canonical fixed-width decimal feed sequence, including zero checkpoints. */
+/** Validates the fixed-width decimal checkpoint domain before core branding. */
 export const syncSequenceSchema = z
   .string()
   .length(SYNC_SEQUENCE_WIDTH)
   .regex(/^\d+$/)
   .max(SYNC_MAX_SEQUENCE.length)
-  .refine((sequence) => sequence <= SYNC_MAX_SEQUENCE);
+  .refine((sequence) => sequence <= SYNC_MAX_SEQUENCE)
+  .transform((sequence): SyncSequence => sequence as SyncSequence);
 
-/** Validates one sequence allocated to an immutable feed event; zero is reserved. */
-export const syncEventSequenceSchema = syncSequenceSchema.refine(
-  (sequence) => sequence !== "0".repeat(SYNC_SEQUENCE_WIDTH),
-);
+/** Validates a non-zero event position before narrowing the core sequence brand. */
+export const syncEventSequenceSchema = syncSequenceSchema
+  .refine((sequence) => sequence !== "0".repeat(SYNC_SEQUENCE_WIDTH))
+  .transform((sequence): SyncEventSequence => sequence as SyncEventSequence);
 
 /** Closed error code schema for protocol-major-one storage operations. */
 export const syncErrorCodeSchema = z.enum(SYNC_ERROR_CODES);
@@ -71,7 +92,7 @@ export const syncVaultMarkerSchema = z
   })
   .strict();
 
-/** Strict checkpoint vector; each lane sequence is a fixed-width decimal string. */
+/** Validates a strict protocol/vault checkpoint, returning its core semantic type. */
 export const syncCheckpointSchema = z
   .object({
     protocolMajor: z.literal(SYNC_PROTOCOL_MAJOR),
@@ -82,7 +103,8 @@ export const syncCheckpointSchema = z
       .min(0)
       .max(SYNC_FEED_LANE_COUNT - 1),
   })
-  .strict();
+  .strict()
+  .transform((checkpoint): SyncCheckpoint => checkpoint);
 
 /** Validates unpadded base64url syntax for opaque M7 cursors before codec decoding. */
 export const syncOpaqueCursorSchema = z

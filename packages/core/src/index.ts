@@ -544,6 +544,17 @@ export {
 } from "@core/note-path/note-path";
 export { BASE64URL_PATTERN } from "@core/note-path/note-path.constants";
 export type { NotePath } from "@core/note-path/note-path.types";
+export type {
+  SyncCheckpoint,
+  SyncDeviceId,
+  SyncEventSequence,
+  SyncInventoryId,
+  SyncNotePath,
+  SyncOperationId,
+  SyncRevision,
+  SyncSequence,
+  SyncVaultId,
+} from "@core/sync/sync.types";
 export { VaultNoteService } from "@core/vault/note-service";
 export type { NoteService } from "@core/vault/note-service.types";
 export { MAX_NOTE_SIZE_BYTES } from "@core/vault/vault.constants";

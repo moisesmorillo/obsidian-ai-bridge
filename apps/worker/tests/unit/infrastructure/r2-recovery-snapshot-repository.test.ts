@@ -82,6 +82,7 @@ class MemoryBucket implements R2ConditionalBucketPort {
   readonly options: R2ConditionalPutOptions[] = [];
   throwOnPut = false;
   invalidPutMetadata = false;
+  listedObjects: readonly R2ConditionalObjectMetadata[] | undefined;
   private sequence = 0;
   private readonly objects = new Map<string, MemoryGeneration>();
 
@@ -90,9 +91,11 @@ class MemoryBucket implements R2ConditionalBucketPort {
     readonly cursor?: string;
     readonly limit?: number;
   }): Promise<R2ListResult> {
-    const objects = [...this.objects.values()]
-      .map((entry) => entry.metadata)
-      .filter((entry) => entry.key.startsWith(options.prefix));
+    const objects =
+      this.listedObjects ??
+      [...this.objects.values()]
+        .map((entry) => entry.metadata)
+        .filter((entry) => entry.key.startsWith(options.prefix));
     return { truncated: false, objects };
   }
 
@@ -258,6 +261,143 @@ describe("R2RecoverySnapshotRepository", () => {
     await expect(repository.list()).resolves.toEqual({
       states: [observed?.state],
       nextCursor: null,
+    });
+  });
+
+  it("fails closed when R2 lists keys outside the recovery identity namespace", async () => {
+    const bucket = new MemoryBucket();
+    bucket.listedObjects = [
+      {
+        key: "vault/unexpected.md",
+        size: 1,
+        etag: "etag-listed-outside-recovery",
+        uploaded: new Date("2027-01-01T00:00:00.000Z"),
+      },
+    ];
+    const repository = new R2RecoverySnapshotRepository(bucket);
+
+    await expect(repository.list()).rejects.toMatchObject({
+      kind: STORED_OBJECT_DATA_ERROR_KIND.malformed,
+    });
+  });
+
+  it("fails closed when a listed recovery key has no valid operation identity", async () => {
+    const bucket = new MemoryBucket();
+    bucket.listedObjects = [
+      {
+        key: "recovery/not-an-operation-id",
+        size: 1,
+        etag: "etag-listed-invalid-id",
+        uploaded: new Date("2027-01-01T00:00:00.000Z"),
+      },
+    ];
+    const repository = new R2RecoverySnapshotRepository(bucket);
+
+    await expect(repository.list()).rejects.toMatchObject({
+      kind: STORED_OBJECT_DATA_ERROR_KIND.malformed,
+    });
+  });
+
+  it("omits a listed recovery generation that disappears before its exact read", async () => {
+    const bucket = new MemoryBucket();
+    bucket.listedObjects = [
+      {
+        key: `recovery/${ID}`,
+        size: 1,
+        etag: "etag-disappeared-after-list",
+        uploaded: new Date("2027-01-01T00:00:00.000Z"),
+      },
+    ];
+    const repository = new R2RecoverySnapshotRepository(bucket);
+
+    await expect(repository.list()).resolves.toEqual({
+      states: [],
+      nextCursor: null,
+    });
+  });
+
+  it("does not dispatch seal or purge candidates for another observed identity", async () => {
+    const bucket = new MemoryBucket();
+    const repository = new R2RecoverySnapshotRepository(bucket);
+    const created = await repository.create(prepared());
+    if (created.kind !== MUTATION_EFFECT_CERTAINTY.confirmed) {
+      throw new Error("Expected prepared generation");
+    }
+    const beforeSeal = required(bucket.snapshot()).body;
+    const putsBeforeSeal = bucket.options.length;
+    const otherId = required(
+      createMirrorOperationId("99999999-9999-4999-8999-999999999999"),
+    );
+
+    await expect(
+      created.confirmed.replacement.seal({
+        ...prepared(),
+        id: otherId,
+        kind: RECOVERY_SNAPSHOT_STATE_KIND.sealed,
+        revision: SEALED_REVISION,
+        operationId: ID,
+        previousRevision: PREPARED_REVISION,
+        tombstoneRevision: TOMBSTONE_REVISION,
+        recoverUntil: RECOVER_UNTIL,
+      }),
+    ).resolves.toEqual({ kind: MUTATION_EFFECT_CERTAINTY.notDispatched });
+    expect(bucket.options).toHaveLength(putsBeforeSeal);
+    expect(required(bucket.snapshot()).body).toBe(beforeSeal);
+
+    const sealed = await created.confirmed.replacement.seal({
+      ...prepared(),
+      kind: RECOVERY_SNAPSHOT_STATE_KIND.sealed,
+      revision: SEALED_REVISION,
+      operationId: ID,
+      previousRevision: PREPARED_REVISION,
+      tombstoneRevision: TOMBSTONE_REVISION,
+      recoverUntil: RECOVER_UNTIL,
+    });
+    if (sealed.kind !== MUTATION_EFFECT_CERTAINTY.confirmed) {
+      throw new Error("Expected sealed generation");
+    }
+    const beforePurge = required(bucket.snapshot()).body;
+    const putsBeforePurge = bucket.options.length;
+
+    await expect(
+      sealed.confirmed.replacement.purge({
+        kind: RECOVERY_SNAPSHOT_STATE_KIND.purged,
+        id: otherId,
+        associationId: ASSOCIATION_ID,
+        path: PATH,
+        revision: PURGED_REVISION,
+        sourceRevision: SOURCE_REVISION,
+        contentSha256: DIGEST,
+        operationId: ID,
+        previousRevision: SEALED_REVISION,
+        tombstoneRevision: TOMBSTONE_REVISION,
+        recoverUntil: RECOVER_UNTIL,
+      }),
+    ).resolves.toEqual({ kind: MUTATION_EFFECT_CERTAINTY.notDispatched });
+    expect(bucket.options).toHaveLength(putsBeforePurge);
+    expect(required(bucket.snapshot()).body).toBe(beforePurge);
+  });
+
+  it("does not dispatch prepared content with a digest inconsistent with its body", async () => {
+    const bucket = new MemoryBucket();
+    const repository = new R2RecoverySnapshotRepository(bucket);
+
+    await expect(
+      repository.create({ ...prepared(), content: "different plaintext" }),
+    ).resolves.toEqual({ kind: MUTATION_EFFECT_CERTAINTY.notDispatched });
+    expect(bucket.options).toHaveLength(0);
+    expect(bucket.snapshot()).toBeUndefined();
+  });
+
+  it("rejects a valid recovery envelope whose identity differs from its key", async () => {
+    const bucket = new MemoryBucket();
+    const repository = new R2RecoverySnapshotRepository(bucket);
+    await repository.create(prepared());
+    const otherId = "99999999-9999-4999-8999-999999999999";
+    bucket.replace(required(bucket.snapshot()).body.replaceAll(ID, otherId));
+
+    await expect(repository.read(ID)).rejects.toMatchObject({
+      kind: STORED_OBJECT_DATA_ERROR_KIND.malformed,
     });
   });
 

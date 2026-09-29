@@ -74,6 +74,28 @@ This is not a claim about a deployed environment or installed Obsidian host.
 [Roadmap](roadmap.md) owns milestone status; [architecture](architecture.md) owns
 boundaries; [API](api.md) describes the Worker HTTP and MCP contracts.
 
+## M7.2 core sync-store evidence
+
+M7.2's nine-method `SyncStore` contract and conservative mutation policy are
+implemented in `packages/core`. The test-only `InMemorySyncStore` in
+`packages/core/tests/unit/sync-store-fake.test.ts` exercises a serialized in-memory
+compare-and-set model using validated UUID/path fixtures, exact UTF-8 hashing, and
+injected clock/effect outcomes. Its eight cases cover per-vault idempotency scope,
+concurrent create/update races, exact replay versus changed-request reuse, stale
+tombstones, pending/unknown failure certainty, and exact recovery bytes. The fake does
+not implement feed cursor traversal or inventory persistence; its typed refusals are
+not behavioral qualification for those methods.
+
+The focused M7.1/M7.2 suite passed **4 files / 33 tests**. `mise install`,
+`mise run install`, and `mise run check` passed; the check ran **92 source test files /
+1,481 tests**, **8 local workerd storage tests**, and **12 plugin artifact smoke tests**,
+with global coverage of **95.05% statements, 90.72% branches, 98.45% functions, and
+96.96% lines**. The Worker build was dry-run only. No R2 sync adapter, Worker/API/plugin
+composition, migration, deployment, or personal-vault use was involved. M7.3 is the
+next implementation unit; M7 remains the sole **NEXT** milestone, and sync activation
+remains excluded. See the [M7.2 evidence](milestones/m7-versioned-sync-protocol-and-r2-store.md#m72-core-port-mutation-policy-and-deterministic-fake-evidence) for exact
+boundaries and validation results.
+
 ## Implemented capabilities and evidence
 
 | Area | Verified behavior | Primary evidence |
@@ -118,7 +140,7 @@ boundaries; [API](api.md) describes the Worker HTTP and MCP contracts.
   prohibition, direct-console prohibition and configured documentation rules.
   These checks do **not** prove all architecture/TSDoc requirements in
   [AGENTS.md](../AGENTS.md); manual semantic review remains mandatory.
-- Vitest **5**: **83 source test files / 1,402 tests**, plus **1 generated-artifact
+- Vitest **5**: **92 source test files / 1,481 tests**, plus **1 generated-artifact
   smoke file / 12 tests** and **1 Worker storage-test file / 8 tests**. The unchanged
   M1 baseline had 15 files / 105 tests. M5 adds focused registry, authentication,
   lifecycle, migration, leakage, and CLI-boundary tests; M6 adds official MCP client,

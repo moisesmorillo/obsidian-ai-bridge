@@ -30,8 +30,17 @@ only isolated storage foundations after the documentation transition merges. It 
 not authorize sync activation, migration, or changes to the current writer. The current
 M7.1 protocol contracts live in `packages/protocol`: protocol-major-one identity and
 checkpoint schemas, canonical sync namespace keys, SHA-256 feed-lane selection, and
-opaque cursor encoding. They remain uncomposed with the Worker, plugin, and M1–M6 v2
-behavior; acceptance evidence is recorded in the [M7 specification](milestones/m7-versioned-sync-protocol-and-r2-store.md#m71-protocol-contract-evidence).
+opaque cursor encoding. M7.2 adds the storage-independent `SyncStore` port and pure
+conditional-mutation policy in `packages/core`; a test-only serialized in-memory fake
+exercises exact-parent concurrency, operation replay, tombstone safety, and conservative
+pending/unknown outcomes. The fake is not a production adapter or proof of durable
+multi-key CAS, feed pagination, inventory persistence, or local workerd behavior. Core
+production code remains independent of protocol, Worker, R2, HTTP, and plugin
+composition. M7.1/M7.2 remain uncomposed with the Worker, plugin, and M1–M6 v2
+behavior; the M7.2 focused suite passed 4 files / 33 tests and canonical
+`mise run check` passed with 1,481 source tests. Exact unit evidence is recorded in the
+[M7 specification](milestones/m7-versioned-sync-protocol-and-r2-store.md#m72-core-port-mutation-policy-and-deterministic-fake-evidence).
+M7.3 is the next implementation unit; M7 remains NEXT and activation remains excluded.
 The current
 plugin boundary includes strict device state v5 with
 frozen v2/v3/v4 migration, reviewed sampling/admission, narrow local writes and

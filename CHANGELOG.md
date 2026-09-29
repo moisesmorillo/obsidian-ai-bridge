@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.5.0](https://github.com/moisesmorillo/obsidian-ai-bridge/compare/v1.4.3...v1.5.0) (2026-09-29)
+
+
+### Features
+
+* **core:** define versioned sync store contract and policy ([#94](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/94)) ([417724c](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/417724c459e917aba243cf3f4799804ac6684104))
+* **protocol:** add M7 sync contracts ([#92](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/92)) ([2ec6f4c](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/2ec6f4c3a23a8a458904a19492dc9743ca81f61e))
+
 ## [1.4.3](https://github.com/moisesmorillo/obsidian-ai-bridge/compare/v1.4.2...v1.4.3) (2026-09-28)
 
 

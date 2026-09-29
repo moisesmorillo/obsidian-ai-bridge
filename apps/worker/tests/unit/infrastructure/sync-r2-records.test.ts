@@ -493,7 +493,25 @@ describe("marker-gated isolated sync current and recovery records", () => {
           parent: { kind: "revision", revision },
         })
       ).kind,
-    ).toBe("effect_unknown");
+    ).toBe("refused");
+    expect(bucket.puts).toHaveLength(putsBeforeInvalidRecord);
+  });
+
+  it("refuses an invalid replacement before storage dispatch", async () => {
+    await seedMarker();
+    expect((await records.createHead(makeHead())).kind).toBe("confirmed");
+    const observed = await records.readHead(vaultId, path);
+    if (observed.kind !== "observed")
+      throw new Error("Expected exact head observation.");
+    const putsBeforeInvalidRecord = bucket.puts.length;
+    expect(
+      (
+        await records.replaceHead(observed.observation, {
+          ...makeHead(alternateRevision),
+          parent: { kind: "revision", revision: alternateRevision },
+        })
+      ).kind,
+    ).toBe("refused");
     expect(bucket.puts).toHaveLength(putsBeforeInvalidRecord);
   });
 

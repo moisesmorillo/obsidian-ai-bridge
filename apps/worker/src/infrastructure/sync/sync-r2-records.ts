@@ -305,8 +305,13 @@ export function syncR2Records(objects: SyncR2ObjectStore): SyncR2Records {
     if (marker.kind === "unavailable") return { kind: "effect_unknown" };
     const key = keyFor(keyValue, recordVaultId(record));
     if (key === undefined) return { kind: "effect_unknown" };
+    let bytes: Uint8Array;
     try {
-      const bytes = await encodeSyncRecord(record);
+      bytes = await encodeSyncRecord(record);
+    } catch {
+      return { kind: "refused" };
+    }
+    try {
       return await objects.create(key, bytes, retryContext);
     } catch {
       return { kind: "effect_unknown" };
@@ -383,6 +388,7 @@ export function syncR2Records(objects: SyncR2ObjectStore): SyncR2Records {
       ) {
         return { kind: "refused" };
       }
+      let observedBytes: Uint8Array;
       try {
         const decoded = await decodeSyncRecord(
           "head",
@@ -390,7 +396,7 @@ export function syncR2Records(objects: SyncR2ObjectStore): SyncR2Records {
           observed.observed.bytes,
           record.vaultId,
         );
-        const observedBytes = await encodeSyncRecord({
+        observedBytes = await encodeSyncRecord({
           kind: "head",
           record: observed.value,
         });
@@ -400,7 +406,16 @@ export function syncR2Records(objects: SyncR2ObjectStore): SyncR2Records {
         ) {
           return { kind: "refused" };
         }
-        const bytes = await encodeSyncRecord({ kind: "head", record });
+      } catch {
+        return { kind: "effect_unknown" };
+      }
+      let bytes: Uint8Array;
+      try {
+        bytes = await encodeSyncRecord({ kind: "head", record });
+      } catch {
+        return { kind: "refused" };
+      }
+      try {
         return await objects.replace(observed.observed, bytes, retryContext);
       } catch {
         return { kind: "effect_unknown" };

@@ -195,7 +195,21 @@ export function syncR2ObjectStore(
 
     try {
       const result = await bucket.put(key, bytes, options);
-      if (result === null) return { kind: "refused" };
+      if (result === null) {
+        const readback = await read(key, SYNC_RECORD_LIMITS.contentBodyBytes);
+        if (
+          readback.kind === "observed" &&
+          equalBytes(readback.observation.bytes, bytes)
+        ) {
+          return { kind: "confirmed" };
+        }
+        if (readback.kind === "observed" || condition.kind === "replace") {
+          return { kind: "refused" };
+        }
+        const retryAfterEpochMs = epochNow() + SYNC_R2_WRITE_COOLDOWN_MS;
+        retryNotBefore.set(key, retryAfterEpochMs);
+        return effectUnknown(retryAfterEpochMs);
+      }
       const successfulUploadTime = result.uploaded.getTime();
       const resultRetryAt = Number.isFinite(successfulUploadTime)
         ? successfulUploadTime + SYNC_R2_WRITE_COOLDOWN_MS

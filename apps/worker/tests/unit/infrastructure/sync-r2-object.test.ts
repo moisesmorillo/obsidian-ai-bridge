@@ -76,6 +76,7 @@ class MemoryBucket implements R2ConditionalBucketPort {
   forceRefusal = false;
   writeThenFail = false;
   replacementOnFailure: Uint8Array | undefined;
+  nullPutHook: ((key: string, bytes: Uint8Array) => Promise<void>) | undefined;
   etagSequence = 0;
   constructor(private readonly clock: () => number) {}
   async get(key: string): Promise<R2ConditionalStoredObject | null> {
@@ -104,7 +105,10 @@ class MemoryBucket implements R2ConditionalBucketPort {
       predicate instanceof Headers
         ? predicate.get("If-None-Match") === "*" && previous === undefined
         : previous?.etag === predicate.etagMatches;
-    if (!expected || this.forceRefusal) return null;
+    if (!expected || this.forceRefusal) {
+      await this.nullPutHook?.(key, bytes);
+      return null;
+    }
     if (this.putFailure && !this.writeThenFail) throw this.putFailure;
     const object = new MemoryObject(
       key,
@@ -181,6 +185,68 @@ describe("one-key conditional sync R2 storage", () => {
       etagMatches: observed.observation.etag,
     });
     expect(bucket.objects.get(key)?.etag).toBe(observed.observation.etag);
+  });
+
+  it("resolves a conditional null by one exact read-back without retrying", async () => {
+    const matching = data.slice();
+    bucket.forceRefusal = true;
+    bucket.nullPutHook = async (putKey, bytes) => {
+      await bucket.seed(putKey, bytes, now);
+    };
+    const createResult = await store.create(key, matching);
+    expect(createResult.kind).toBe("confirmed");
+    expect(bucket.puts).toHaveLength(1);
+
+    bucket.objects.clear();
+    bucket.puts.length = 0;
+    bucket.forceRefusal = false;
+    const original = await bucket.seed(key, data, now - 5_000);
+    const observed = await store.read(key, 100);
+    expect(observed.kind).toBe("observed");
+    if (observed.kind !== "observed") return;
+    bucket.forceRefusal = true;
+    bucket.nullPutHook = async (putKey) => {
+      await bucket.seed(putKey, new TextEncoder().encode("divergent"), now);
+    };
+    const replaced = await store.replace(
+      observed.observation,
+      new TextEncoder().encode("candidate"),
+    );
+    expect(replaced.kind).toBe("refused");
+    expect(bucket.puts).toHaveLength(1);
+    expect(bucket.puts[0]?.options.onlyIf).toEqual({
+      etagMatches: original.etag,
+    });
+
+    bucket.objects.clear();
+    bucket.puts.length = 0;
+    bucket.forceRefusal = true;
+    bucket.nullPutHook = undefined;
+    const possibleInFlightCreate = await store.create(key, matching);
+    expect(possibleInFlightCreate).toEqual({
+      kind: "effect_unknown",
+      retryAfterEpochMs: now + 1_100,
+    });
+    expect(bucket.puts).toHaveLength(1);
+    now += 1_100;
+
+    bucket.objects.clear();
+    bucket.puts.length = 0;
+    bucket.getFailure = undefined;
+    bucket.nullPutHook = undefined;
+    bucket.forceRefusal = true;
+    let getCalls = 0;
+    const unavailableReadback = vi
+      .spyOn(bucket, "get")
+      .mockImplementation(async (requestedKey) => {
+        getCalls += 1;
+        if (getCalls === 2) throw new Error("storage unavailable");
+        return bucket.objects.get(requestedKey) ?? null;
+      });
+    const unknown = await store.create(key, matching);
+    expect(unknown.kind).toBe("effect_unknown");
+    expect(bucket.puts).toHaveLength(1);
+    unavailableReadback.mockRestore();
   });
 
   it("allows only one writer from one observed CAS generation to confirm", async () => {

@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.4.3](https://github.com/moisesmorillo/obsidian-ai-bridge/compare/v1.4.2...v1.4.3) (2026-09-28)
+
+
+### Documentation
+
+* **architecture:** plan bidirectional vault sync ([#89](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/89)) ([8fa7337](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/8fa73375d3267581f596f066db25bdcf133624d0))
+* **roadmap:** define M7 sync storage foundation ([#91](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/91)) ([745528e](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/745528e9baf61231dcc437d9ab8a2aaa21b9d1e6))
+
 ## [1.4.2](https://github.com/moisesmorillo/obsidian-ai-bridge/compare/v1.4.1...v1.4.2) (2026-09-28)
 
 

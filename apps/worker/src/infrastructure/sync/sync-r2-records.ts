@@ -33,6 +33,12 @@ import type {
   SyncVersionMetadata,
 } from "@worker/infrastructure/sync/sync-record.types";
 
+/** Exact validation outcome for the namespace marker prerequisite. */
+type SyncMarkerEvidence =
+  | { readonly kind: "valid" }
+  | { readonly kind: "refused" }
+  | { readonly kind: "unavailable" };
+
 /** One-record current, version, content, and recovery access within a validated sync-v1 vault. */
 export interface SyncR2Records {
   /** Reads one current head only after validating the matching namespace marker. */
@@ -83,15 +89,18 @@ export interface SyncR2Records {
  * @returns Marker-gated current, version, content, and recovery record operations.
  */
 export function syncR2Records(objects: SyncR2ObjectStore): SyncR2Records {
-  /** Confirms the exact vault marker before the facade relies on namespace state.
+  /** Confirms exact marker validity separately from known refusal and unavailable reads.
    * @param vaultId Validated immutable vault namespace.
-   * @returns Whether an exact-key marker strictly identifies this vault.
+   * @returns Whether the marker validates, is definitely invalid/absent, or cannot be read.
    */
-  async function hasMarker(vaultId: SyncVaultIdDto): Promise<boolean> {
+  async function validateMarker(
+    vaultId: SyncVaultIdDto,
+  ): Promise<SyncMarkerEvidence> {
     const key = createSyncR2Key(syncVaultMarkerKey(vaultId), vaultId);
-    if (key === undefined) return false;
+    if (key === undefined) return { kind: "refused" };
     const result = await objects.read(key, 2_048);
-    if (result.kind !== "observed") return false;
+    if (result.kind === "absent") return { kind: "refused" };
+    if (result.kind === "unavailable") return { kind: "unavailable" };
     try {
       const decoded = await decodeSyncRecord(
         "vaultMarker",
@@ -99,17 +108,17 @@ export function syncR2Records(objects: SyncR2ObjectStore): SyncR2Records {
         result.observation.bytes,
         vaultId,
       );
-      return (
-        decoded.kind === "vaultMarker" &&
+      return decoded.kind === "vaultMarker" &&
         decoded.vaultId === vaultId &&
         syncVaultMarkerSchema.safeParse({
           schemaVersion: decoded.schemaVersion,
           protocolMajor: decoded.protocolMajor,
           vaultId: decoded.vaultId,
         }).success
-      );
+        ? { kind: "valid" }
+        : { kind: "refused" };
     } catch {
-      return false;
+      return { kind: "refused" };
     }
   }
 
@@ -168,7 +177,8 @@ export function syncR2Records(objects: SyncR2ObjectStore): SyncR2Records {
     vaultId: SyncVaultIdDto,
     revision: SyncRevisionDto,
   ): Promise<SyncRecordRead<SyncVersionMetadata>> {
-    if (!(await hasMarker(vaultId))) return { kind: "unavailable" };
+    if ((await validateMarker(vaultId)).kind !== "valid")
+      return { kind: "unavailable" };
     const key = keyFor(syncVersionKey(vaultId, revision), vaultId);
     if (key === undefined) return { kind: "unavailable" };
     const metadata = await readRecord("version", key, vaultId, (decoded) =>
@@ -205,7 +215,8 @@ export function syncR2Records(objects: SyncR2ObjectStore): SyncR2Records {
     vaultId: SyncVaultIdDto,
     operationId: SyncOperationIdDto,
   ): Promise<SyncRecordRead<SyncRecoveryMetadata>> {
-    if (!(await hasMarker(vaultId))) return { kind: "unavailable" };
+    if ((await validateMarker(vaultId)).kind !== "valid")
+      return { kind: "unavailable" };
     const key = keyFor(
       syncRecoveryKey(vaultId, operationId, "metadata"),
       vaultId,
@@ -268,8 +279,9 @@ export function syncR2Records(objects: SyncR2ObjectStore): SyncR2Records {
     record: SyncDecodedRecord,
     keyValue: string,
   ): Promise<SyncR2WriteResult> {
-    if (!(await hasMarker(recordVaultId(record))))
-      return { kind: "effect_unknown" };
+    const marker = await validateMarker(recordVaultId(record));
+    if (marker.kind === "refused") return { kind: "refused" };
+    if (marker.kind === "unavailable") return { kind: "effect_unknown" };
     const key = keyFor(keyValue, recordVaultId(record));
     if (key === undefined) return { kind: "effect_unknown" };
     try {
@@ -319,7 +331,8 @@ export function syncR2Records(objects: SyncR2ObjectStore): SyncR2Records {
 
   return {
     async readHead(vaultId, path) {
-      if (!(await hasMarker(vaultId))) return { kind: "unavailable" };
+      if ((await validateMarker(vaultId)).kind !== "valid")
+        return { kind: "unavailable" };
       const key = keyFor(syncHeadKey(vaultId, path), vaultId);
       if (key === undefined) return { kind: "unavailable" };
       return readRecord("head", key, vaultId, (decoded) =>
@@ -333,7 +346,9 @@ export function syncR2Records(objects: SyncR2ObjectStore): SyncR2Records {
       );
     },
     async replaceHead(observed, record) {
-      if (!(await hasMarker(record.vaultId))) return { kind: "effect_unknown" };
+      const marker = await validateMarker(record.vaultId);
+      if (marker.kind === "refused") return { kind: "refused" };
+      if (marker.kind === "unavailable") return { kind: "effect_unknown" };
       const expectedKey = keyFor(
         syncHeadKey(record.vaultId, record.path),
         record.vaultId,
@@ -371,17 +386,18 @@ export function syncR2Records(objects: SyncR2ObjectStore): SyncR2Records {
     },
     readVersion: readVerifiedVersion,
     async createVersion(record) {
-      if (!(await hasMarker(record.vaultId))) return { kind: "effect_unknown" };
+      const marker = await validateMarker(record.vaultId);
+      if (marker.kind === "refused") return { kind: "refused" };
+      if (marker.kind === "unavailable") return { kind: "effect_unknown" };
       const version = await readBody(
         "contentBody",
         syncContentKey(record.vaultId, record.revision),
         record.vaultId,
       );
-      if (
-        version.kind !== "observed" ||
-        !bodyMatches(record, version.observation.value)
-      )
-        return { kind: "effect_unknown" };
+      if (version.kind === "absent") return { kind: "refused" };
+      if (version.kind === "unavailable") return { kind: "effect_unknown" };
+      if (!bodyMatches(record, version.observation.value))
+        return { kind: "refused" };
       return createRecord(
         { kind: "version", record },
         syncVersionKey(record.vaultId, record.revision),
@@ -419,17 +435,18 @@ export function syncR2Records(objects: SyncR2ObjectStore): SyncR2Records {
     },
     readRecovery: readVerifiedRecovery,
     async createRecovery(record) {
-      if (!(await hasMarker(record.vaultId))) return { kind: "effect_unknown" };
+      const marker = await validateMarker(record.vaultId);
+      if (marker.kind === "refused") return { kind: "refused" };
+      if (marker.kind === "unavailable") return { kind: "effect_unknown" };
       const body = await readBody(
         "recoveryBody",
         syncRecoveryKey(record.vaultId, record.operationId, "content"),
         record.vaultId,
       );
-      if (
-        body.kind !== "observed" ||
-        !bodyMatches(record, body.observation.value)
-      )
-        return { kind: "effect_unknown" };
+      if (body.kind === "absent") return { kind: "refused" };
+      if (body.kind === "unavailable") return { kind: "effect_unknown" };
+      if (!bodyMatches(record, body.observation.value))
+        return { kind: "refused" };
       return createRecord(
         { kind: "recoveryMetadata", record },
         syncRecoveryKey(record.vaultId, record.operationId, "metadata"),

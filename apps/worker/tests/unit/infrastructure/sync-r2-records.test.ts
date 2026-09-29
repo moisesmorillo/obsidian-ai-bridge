@@ -92,10 +92,12 @@ class MemoryBucket implements R2ConditionalBucketPort {
   readonly objects = new Map<string, MemoryObject>();
   readonly puts: { key: string; options: R2ConditionalPutOptions }[] = [];
   failure: Error | undefined;
+  readonly unavailableKeys = new Set<string>();
   failReadback = false;
   sequence = 0;
 
   async get(key: string): Promise<R2ConditionalStoredObject | null> {
+    if (this.unavailableKeys.has(key)) throw new Error("storage unavailable");
     if (this.failReadback && this.puts.some((put) => put.key === key)) {
       throw new Error("read-back unavailable");
     }
@@ -243,8 +245,27 @@ describe("marker-gated isolated sync current and recovery records", () => {
     expect(await records.readHead(vaultId, path)).toEqual({ kind: "absent" });
   });
 
-  it("refuses reads and writes when the vault marker is absent, malformed, or cross-vault", async () => {
+  it("distinguishes definite marker and linked-body rejection from unavailable evidence", async () => {
+    expect((await records.createHead(makeHead())).kind).toBe("refused");
+    bucket.unavailableKeys.add(markerKey());
     expect((await records.createHead(makeHead())).kind).toBe("effect_unknown");
+
+    bucket.unavailableKeys.clear();
+    await seedMarker();
+    expect((await records.createVersion(makeHead())).kind).toBe("refused");
+    const contentKey = syncContentKey(vaultId, revision);
+    bucket.unavailableKeys.add(contentKey);
+    expect((await records.createVersion(makeHead())).kind).toBe(
+      "effect_unknown",
+    );
+
+    bucket.unavailableKeys.clear();
+    bucket.seed(contentKey, new TextEncoder().encode("different bytes"));
+    expect((await records.createVersion(makeHead())).kind).toBe("refused");
+  });
+
+  it("refuses reads and writes when the vault marker is absent, malformed, or cross-vault", async () => {
+    expect((await records.createHead(makeHead())).kind).toBe("refused");
     bucket.seed(markerKey(), new TextEncoder().encode("{"));
     expect((await records.readHead(vaultId, path)).kind).toBe("unavailable");
     bucket.seed(
@@ -257,7 +278,7 @@ describe("marker-gated isolated sync current and recovery records", () => {
         }),
       ),
     );
-    expect((await records.createHead(makeHead())).kind).toBe("effect_unknown");
+    expect((await records.createHead(makeHead())).kind).toBe("refused");
   });
 
   it("validates same-vault head identity against the exact canonical path key", async () => {

@@ -203,7 +203,10 @@ export function syncR2ObjectStore(
         ) {
           return { kind: "confirmed" };
         }
-        if (readback.kind === "observed" || condition.kind === "replace") {
+        if (
+          readback.kind === "observed" ||
+          (readback.kind === "absent" && condition.kind === "replace")
+        ) {
           return { kind: "refused" };
         }
         const retryAfterEpochMs = epochNow() + SYNC_R2_WRITE_COOLDOWN_MS;

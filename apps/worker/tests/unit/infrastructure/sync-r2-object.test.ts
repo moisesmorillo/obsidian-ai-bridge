@@ -249,6 +249,58 @@ describe("one-key conditional sync R2 storage", () => {
     unavailableReadback.mockRestore();
   });
 
+  it("keeps a conditional-null replacement with unavailable read-back effect-unknown", async () => {
+    const original = await bucket.seed(key, data, now - 5_000);
+    const observed = await store.read(key, 100);
+    expect(observed.kind).toBe("observed");
+    if (observed.kind !== "observed") return;
+
+    bucket.forceRefusal = true;
+    let getCalls = 0;
+    vi.spyOn(bucket, "get").mockImplementation(async (requestedKey) => {
+      getCalls += 1;
+      if (getCalls === 2) throw new Error("storage unavailable");
+      return bucket.objects.get(requestedKey) ?? null;
+    });
+
+    const result = await store.replace(
+      observed.observation,
+      new TextEncoder().encode("candidate"),
+    );
+
+    expect(result).toEqual({
+      kind: "effect_unknown",
+      retryAfterEpochMs: now + 1_100,
+    });
+    expect(bucket.puts).toHaveLength(1);
+    expect(bucket.puts[0]?.options.onlyIf).toEqual({
+      etagMatches: original.etag,
+    });
+  });
+
+  it("refuses a conditional-null replacement with absent read-back", async () => {
+    const original = await bucket.seed(key, data, now - 5_000);
+    const observed = await store.read(key, 100);
+    expect(observed.kind).toBe("observed");
+    if (observed.kind !== "observed") return;
+    bucket.forceRefusal = true;
+    bucket.nullPutHook = async (putKey) => {
+      bucket.objects.delete(putKey);
+    };
+
+    const result = await store.replace(
+      observed.observation,
+      new TextEncoder().encode("candidate"),
+    );
+
+    expect(result.kind).toBe("refused");
+    expect(bucket.objects.has(key)).toBe(false);
+    expect(bucket.puts).toHaveLength(1);
+    expect(bucket.puts[0]?.options.onlyIf).toEqual({
+      etagMatches: original.etag,
+    });
+  });
+
   it("allows only one writer from one observed CAS generation to confirm", async () => {
     await bucket.seed(key, data, now - 5_000);
     const read = await store.read(key, 100);

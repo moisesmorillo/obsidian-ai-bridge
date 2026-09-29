@@ -57,6 +57,7 @@ const DEVICE_ID = syncDeviceIdSchema.parse(
   "cb5760e7-b198-441e-b459-7187df4672dc",
 );
 const PATH = syncNotePathSchema.parse("notes/example.md");
+const OTHER_PATH = syncNotePathSchema.parse("notes/other.md");
 const OPERATION_ID_1 = syncOperationIdSchema.parse(
   "b03f51ea-581e-4e4a-bec3-b89d4325d7c7",
 );
@@ -272,6 +273,9 @@ class InMemorySyncStore implements SyncStore {
           position: decision.position,
         };
       }
+      if (vault.versions.has(boundRequest.revision)) {
+        return { kind: "error", code: "invalid_input" };
+      }
 
       const pending: SyncOperationRecord = {
         kind: "pending",
@@ -376,21 +380,33 @@ class InMemorySyncStore implements SyncStore {
   async readVersion(
     input: SyncReadVersionInput,
   ): Promise<SyncReadVersionResult> {
-    const version = this.vaultState(input.vaultId).versions.get(input.revision);
-    return version === undefined
+    const vault = this.vaultState(input.vaultId);
+    const version = vault.versions.get(input.revision);
+    if (version !== undefined) return { kind: "present", version };
+
+    const unresolvedOperation = Array.from(vault.operations.values()).find(
+      (operation): operation is UnresolvedSyncOperation =>
+        operation.kind !== "committed" &&
+        operation.request.revision === input.revision,
+    );
+    return unresolvedOperation === undefined
       ? { kind: "absent" }
-      : { kind: "present", version };
+      : failureForOperation(unresolvedOperation);
   }
 
   async readRecovery(
     input: SyncReadRecoveryInput,
   ): Promise<SyncReadRecoveryResult> {
-    const recovery = this.vaultState(input.vaultId).recoveries.get(
-      input.operationId,
-    );
-    return recovery === undefined
-      ? { kind: "absent" }
-      : { kind: "present", recovery };
+    const vault = this.vaultState(input.vaultId);
+    const recovery = vault.recoveries.get(input.operationId);
+    if (recovery !== undefined) return { kind: "present", recovery };
+
+    const operation = vault.operations.get(input.operationId);
+    return operation !== undefined &&
+      operation.kind !== "committed" &&
+      operation.request.kind === "tombstone"
+      ? failureForOperation(operation)
+      : { kind: "absent" };
   }
 
   /** Refuses cursor reads because this fake does not implement feed traversal.
@@ -672,6 +688,102 @@ describe("InMemorySyncStore contract fake", () => {
     });
     expect(store.feedEventCount(VAULT_ID)).toBe(1);
     expect(store.feedEventCount(OTHER_VAULT_ID)).toBe(1);
+  });
+
+  it.each([
+    ["pending", "operation_pending"],
+    ["unknown", "effect_unknown"],
+  ] as const)(
+    "does not prove matching version or recovery absence for a tombstone with %s effect",
+    async (effect, code) => {
+      let effectCalls = 0;
+      const store = new InMemorySyncStore(
+        makeHooks(() => {
+          effectCalls += 1;
+          return effectCalls === 1 ? "commit" : effect;
+        }),
+      );
+      const initial = await createRequest();
+      committed(await store.mutate(initial));
+      const tombstone = await tombstoneRequest(
+        REVISION_1,
+        OPERATION_ID_2,
+        REVISION_2,
+        initial.contentSha256,
+      );
+
+      expect(await store.mutate(tombstone)).toEqual({
+        kind: "error",
+        code,
+        operationId: OPERATION_ID_2,
+      });
+      const matchingReads = await Promise.all([
+        store.readVersion({ vaultId: VAULT_ID, revision: REVISION_2 }),
+        store.readRecovery({
+          vaultId: VAULT_ID,
+          operationId: OPERATION_ID_2,
+        }),
+      ]);
+      const unresolvedFailure = {
+        kind: "error",
+        code,
+        operationId: OPERATION_ID_2,
+      };
+      expect(matchingReads).toEqual([unresolvedFailure, unresolvedFailure]);
+      expect(
+        await store.readVersion({ vaultId: VAULT_ID, revision: REVISION_3 }),
+      ).toEqual({ kind: "absent" });
+      expect(
+        await store.readRecovery({
+          vaultId: VAULT_ID,
+          operationId: OPERATION_ID_3,
+        }),
+      ).toEqual({ kind: "absent" });
+      expect(
+        await store.readVersion({
+          vaultId: OTHER_VAULT_ID,
+          revision: REVISION_2,
+        }),
+      ).toEqual({ kind: "absent" });
+      expect(
+        await store.readRecovery({
+          vaultId: OTHER_VAULT_ID,
+          operationId: OPERATION_ID_2,
+        }),
+      ).toEqual({ kind: "absent" });
+    },
+  );
+
+  it("refuses a revision collision across paths without changing prior evidence", async () => {
+    const store = new InMemorySyncStore(makeHooks());
+    const originalRequest = await createRequest();
+    const originalSuccess = committed(await store.mutate(originalRequest));
+    const collisionRequest = {
+      ...(await createRequest(OPERATION_ID_2, REVISION_1, CONTENT_CHANGED)),
+      path: OTHER_PATH,
+    };
+
+    expect(await store.mutate(collisionRequest)).toEqual({
+      kind: "error",
+      code: "invalid_input",
+    });
+    expect(
+      await store.readVersion({ vaultId: VAULT_ID, revision: REVISION_1 }),
+    ).toMatchObject({
+      kind: "present",
+      version: {
+        path: PATH,
+        content: CONTENT_INITIAL,
+      },
+    });
+    expect(
+      await store.readCurrent({ vaultId: VAULT_ID, path: PATH }),
+    ).toMatchObject({ kind: "live", revision: REVISION_1 });
+    expect(
+      await store.readCurrent({ vaultId: VAULT_ID, path: OTHER_PATH }),
+    ).toEqual({ kind: "never_seen" });
+    expect(await store.mutate(originalRequest)).toEqual(originalSuccess);
+    expect(store.feedEventCount(VAULT_ID)).toBe(1);
   });
 
   it("allows exactly one simultaneous create against never-seen absence", async () => {

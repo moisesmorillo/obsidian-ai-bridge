@@ -75,7 +75,7 @@ export interface R2ConditionalBucketPort {
    */
   put(
     key: string,
-    content: string,
+    content: string | Uint8Array,
     options: R2ConditionalPutOptions,
   ): Promise<R2ConditionalObjectMetadata | null>;
 }

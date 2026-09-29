@@ -15,6 +15,7 @@ export default {
     const legacyKey = "vault/synthetic-m7-sentinel.md";
     const legacyBytes = new TextEncoder().encode("unchanged-v2-sentinel");
     await env.BUCKET.put(legacyKey, legacyBytes);
+    const sentinelBefore = Array.from(new Uint8Array(await (await env.BUCKET.get(legacyKey)).arrayBuffer()));
     const key = "sync/v1/vaults/11111111-1111-4111-8111-111111111111/vault.json";
     const createOnly = new Headers({ "If-None-Match": "*" });
     const first = await env.BUCKET.put(key, body, { onlyIf: createOnly });
@@ -31,6 +32,7 @@ export default {
     });
     const stored = await env.BUCKET.get(key);
     const sentinel = await env.BUCKET.get(legacyKey);
+    const sentinelAfter = Array.from(new Uint8Array(await sentinel.arrayBuffer()));
     const object = await env.BUCKET.get(key);
     return Response.json({
       first: first !== null,
@@ -39,7 +41,9 @@ export default {
       stalePredicateRefused: stale === null,
       bytes: Array.from(new Uint8Array(await stored.arrayBuffer())),
       createdBytes,
-      sentinel: new TextDecoder().decode(await sentinel.arrayBuffer()),
+      exactReadBack: JSON.stringify(createdBytes) === JSON.stringify(Array.from(body)),
+      sentinelUnchanged: JSON.stringify(sentinelBefore) === JSON.stringify(sentinelAfter),
+      sentinel: new TextDecoder().decode(new Uint8Array(sentinelAfter)),
       uploaded: object.uploaded.toISOString(),
       listedSyncOnly: (await env.BUCKET.list({ prefix: "sync/v1/vaults/" })).objects.map((item) => item.key),
     });
@@ -91,6 +95,8 @@ describe("local workerd isolated sync R2 predicates", () => {
         stalePredicateRefused: z.boolean(),
         bytes: z.array(z.number()),
         createdBytes: z.array(z.number()),
+        exactReadBack: z.boolean(),
+        sentinelUnchanged: z.boolean(),
         sentinel: z.string(),
         uploaded: z.string(),
         listedSyncOnly: z.array(z.string()),
@@ -103,6 +109,8 @@ describe("local workerd isolated sync R2 predicates", () => {
       stalePredicateRefused: true,
       bytes: Array.from(new TextEncoder().encode("cas-winner")),
       createdBytes: Array.from(payload),
+      exactReadBack: true,
+      sentinelUnchanged: true,
       sentinel: "unchanged-v2-sentinel",
     });
     expect(Number.isFinite(new Date(result.uploaded).getTime())).toBe(true);

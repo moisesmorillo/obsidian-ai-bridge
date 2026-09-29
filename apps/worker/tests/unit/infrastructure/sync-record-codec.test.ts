@@ -34,11 +34,17 @@ const REVISION = syncRevisionSchema.parse(
 const OPERATION = syncOperationIdSchema.parse(
   "8f14e45f-ea6b-4a0f-a4d0-7c2f9e9a0004",
 );
+const OTHER_OPERATION = syncOperationIdSchema.parse(
+  "8f14e45f-ea6b-4a0f-a4d0-7c2f9e9a0008",
+);
 const OTHER_REVISION = syncRevisionSchema.parse(
   "8f14e45f-ea6b-4a0f-a4d0-7c2f9e9a0007",
 );
 const INVENTORY = syncInventoryIdSchema.parse(
   "8f14e45f-ea6b-4a0f-a4d0-7c2f9e9a0005",
+);
+const OTHER_INVENTORY = syncInventoryIdSchema.parse(
+  "8f14e45f-ea6b-4a0f-a4d0-7c2f9e9a0009",
 );
 const ORIGIN = syncDeviceIdSchema.parse("8f14e45f-ea6b-4a0f-a4d0-7c2f9e9a0006");
 const PATH = syncNotePathSchema.parse("folder/note.md");
@@ -116,6 +122,14 @@ describe("strict private sync persistence records", () => {
     ).rejects.toThrow();
     await expect(
       decodeSyncRecord("head", key, head({ injected: true }), VAULT_ID),
+    ).rejects.toThrow();
+    await expect(
+      decodeSyncRecord(
+        "head",
+        key,
+        head({ parent: { kind: "revision", revision: REVISION } }),
+        VAULT_ID,
+      ),
     ).rejects.toThrow();
     await expect(
       decodeSyncRecord("head", key, head({ protocolMajor: 2 }), VAULT_ID),
@@ -203,6 +217,14 @@ describe("strict private sync persistence records", () => {
         VAULT_ID,
       ),
     ).resolves.toMatchObject({ kind: "recoveryMetadata" });
+    await expect(
+      decodeSyncRecord(
+        "recoveryMetadata",
+        syncRecoveryKey(VAULT_ID, OTHER_OPERATION, "metadata"),
+        json(recovery),
+        VAULT_ID,
+      ),
+    ).rejects.toThrow();
     const slot = json({
       schemaVersion: 1,
       protocolMajor: 1,
@@ -218,11 +240,32 @@ describe("strict private sync persistence records", () => {
         VAULT_ID,
       ),
     ).resolves.toMatchObject({ kind: "activeSlot" });
+    await expect(
+      decodeSyncRecord(
+        "activeSlot",
+        syncInventoryActiveKey(VAULT_ID),
+        json({
+          schemaVersion: 1,
+          protocolMajor: 1,
+          vaultId: OTHER_VAULT_ID,
+          state: "empty",
+        }),
+        VAULT_ID,
+      ),
+    ).rejects.toThrow();
     const manifestBytes = manifest();
     const manifestKey = syncInventoryManifestKey(VAULT_ID, INVENTORY);
     await expect(
       decodeSyncRecord("manifest", manifestKey, manifestBytes, VAULT_ID),
     ).resolves.toMatchObject({ kind: "manifest" });
+    await expect(
+      decodeSyncRecord(
+        "manifest",
+        syncInventoryManifestKey(VAULT_ID, OTHER_INVENTORY),
+        manifestBytes,
+        VAULT_ID,
+      ),
+    ).rejects.toThrow();
     await expect(
       decodeSyncRecord(
         "manifest",
@@ -243,6 +286,94 @@ describe("strict private sync persistence records", () => {
         "contentBody",
         `sync/v1/vaults/${VAULT_ID}/content/${REVISION}.md`,
         new Uint8Array([0xc3, 0x28]),
+        VAULT_ID,
+      ),
+    ).rejects.toThrow();
+    await expect(
+      decodeSyncRecord(
+        "contentBody",
+        `sync/v1/vaults/${VAULT_ID}/content/not-a-revision.md`,
+        encoder.encode("body"),
+        VAULT_ID,
+      ),
+    ).rejects.toThrow();
+  });
+
+  it("rejects wrong-family keys and noncanonical inventory resume keys", async () => {
+    const marker = json({
+      schemaVersion: 1,
+      protocolMajor: 1,
+      vaultId: VAULT_ID,
+    });
+    await expect(
+      decodeSyncRecord(
+        "vaultMarker",
+        syncVaultMarkerKey(OTHER_VAULT_ID),
+        marker,
+        VAULT_ID,
+      ),
+    ).rejects.toThrow();
+
+    const malformedHeadKeys = [
+      `vault/${PATH}`,
+      `sync/v1/vaults/${VAULT_ID}/heads/not-base64!.json`,
+      `sync/v1/vaults/${VAULT_ID}/heads/${encodeBase64Url(encoder.encode(PATH))}x.json`,
+    ];
+    for (const lastKey of malformedHeadKeys) {
+      await expect(
+        decodeSyncRecord(
+          "manifest",
+          syncInventoryManifestKey(VAULT_ID, INVENTORY),
+          manifest({ lastKey }),
+          VAULT_ID,
+        ),
+      ).rejects.toThrow();
+    }
+  });
+
+  it("encodes only the exact validated vault marker representation", async () => {
+    const bytes = json({
+      schemaVersion: 1,
+      protocolMajor: 1,
+      vaultId: VAULT_ID,
+    });
+    const decoded = await decodeSyncRecord(
+      "vaultMarker",
+      syncVaultMarkerKey(VAULT_ID),
+      bytes,
+      VAULT_ID,
+    );
+    expect(await encodeSyncRecord(decoded)).toEqual(bytes);
+  });
+
+  it("validates recovery body keys and preserves exact recovery bytes", async () => {
+    const body = encoder.encode("# recovery\r\nexact bytes 🌐");
+    const recoveryKey = syncRecoveryKey(VAULT_ID, OPERATION, "content");
+    const decoded = await decodeSyncRecord(
+      "recoveryBody",
+      recoveryKey,
+      body,
+      VAULT_ID,
+    );
+    expect(decoded.kind).toBe("recoveryBody");
+    if (decoded.kind !== "recoveryBody")
+      throw new Error("Expected validated recovery body.");
+    expect(decoded.record.bytes).toEqual(body);
+    expect(decoded.record.byteSize).toBe(body.byteLength);
+    expect(await encodeSyncRecord(decoded)).toEqual(body);
+    await expect(
+      decodeSyncRecord(
+        "recoveryBody",
+        syncRecoveryKey(VAULT_ID, OPERATION, "metadata"),
+        body,
+        VAULT_ID,
+      ),
+    ).rejects.toThrow();
+    await expect(
+      decodeSyncRecord(
+        "recoveryBody",
+        syncRecoveryKey(OTHER_VAULT_ID, OPERATION, "content"),
+        body,
         VAULT_ID,
       ),
     ).rejects.toThrow();
@@ -375,6 +506,115 @@ describe("strict private sync persistence records", () => {
         "chunk",
         chunkKey,
         json({ ...baseChunk, transcript: JSON.stringify("😀".repeat(70)) }),
+        VAULT_ID,
+      ),
+    ).rejects.toThrow();
+  });
+
+  it("rejects impossible manifest prefixes and noncanonical page transcripts", async () => {
+    const key = syncInventoryManifestKey(VAULT_ID, INVENTORY);
+    await expect(
+      decodeSyncRecord("manifest", key, manifest({ nextStep: 1 }), VAULT_ID),
+    ).rejects.toThrow();
+    await expect(
+      decodeSyncRecord(
+        "manifest",
+        key,
+        manifest({
+          chunkCount: 1,
+          nextStep: 1,
+          listPageCount: 1,
+          chunkHash: null,
+        }),
+        VAULT_ID,
+      ),
+    ).rejects.toThrow();
+    await expect(
+      decodeSyncRecord("manifest", key, manifest({ cursor: "a" }), VAULT_ID),
+    ).rejects.toThrow();
+
+    const chunkKey = syncInventoryChunkKey(VAULT_ID, INVENTORY, 0);
+    const baseChunk = {
+      schemaVersion: 1,
+      protocolMajor: 1,
+      vaultId: VAULT_ID,
+      inventoryId: INVENTORY,
+      step: 0,
+      previousChunkHash: null,
+      inputCursorDigest: "0".repeat(64),
+      outputCursorDigest:
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      outputCursor: null,
+      truncated: false,
+      transcript: "{}",
+      headSummary: null,
+    };
+    for (const transcript of ['{"step":0} ', "not-json"]) {
+      await expect(
+        decodeSyncRecord(
+          "chunk",
+          chunkKey,
+          json({ ...baseChunk, transcript }),
+          VAULT_ID,
+        ),
+      ).rejects.toThrow();
+    }
+    await expect(
+      decodeSyncRecord(
+        "chunk",
+        chunkKey,
+        json({ ...baseChunk, previousChunkHash: "a".repeat(64) }),
+        VAULT_ID,
+      ),
+    ).rejects.toThrow();
+    await expect(
+      decodeSyncRecord(
+        "chunk",
+        chunkKey,
+        json({ ...baseChunk, outputCursor: "a", truncated: false }),
+        VAULT_ID,
+      ),
+    ).rejects.toThrow();
+    await expect(
+      decodeSyncRecord(
+        "chunk",
+        chunkKey,
+        json({
+          ...baseChunk,
+          headSummary: {
+            pathKey: "not-base64!",
+            revision: REVISION,
+            kind: "live",
+          },
+        }),
+        VAULT_ID,
+      ),
+    ).rejects.toThrow();
+  });
+
+  it("rejects malformed encoded cursors before trusting chunk evidence", async () => {
+    const emptyCursorDigest = Array.from(
+      new Uint8Array(await crypto.subtle.digest("SHA-256", new Uint8Array())),
+      (byte) => byte.toString(16).padStart(2, "0"),
+    ).join("");
+    await expect(
+      decodeSyncRecord(
+        "chunk",
+        syncInventoryChunkKey(VAULT_ID, INVENTORY, 0),
+        json({
+          schemaVersion: 1,
+          protocolMajor: 1,
+          vaultId: VAULT_ID,
+          inventoryId: INVENTORY,
+          step: 0,
+          previousChunkHash: null,
+          inputCursorDigest: "0".repeat(64),
+          outputCursorDigest: emptyCursorDigest,
+          outputCursor: "a",
+          truncated: true,
+          transcript: "{}",
+          headSummary: null,
+        }),
         VAULT_ID,
       ),
     ).rejects.toThrow();

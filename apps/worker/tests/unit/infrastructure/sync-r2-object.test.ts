@@ -1,5 +1,24 @@
-import { syncVaultMarkerKey } from "@protocol/sync.codec";
-import { syncVaultIdSchema } from "@protocol/sync.schemas";
+import {
+  syncContentKey,
+  syncFeedEventKey,
+  syncFeedLaneHeadKey,
+  syncHeadKey,
+  syncInventoryActiveKey,
+  syncInventoryChunkKey,
+  syncInventoryManifestKey,
+  syncOperationKey,
+  syncRecoveryKey,
+  syncVaultMarkerKey,
+  syncVersionKey,
+} from "@protocol/sync.codec";
+import {
+  syncEventSequenceSchema,
+  syncInventoryIdSchema,
+  syncNotePathSchema,
+  syncOperationIdSchema,
+  syncRevisionSchema,
+  syncVaultIdSchema,
+} from "@protocol/sync.schemas";
 import type {
   R2ConditionalBucketPort,
   R2ConditionalObjectMetadata,
@@ -254,17 +273,102 @@ describe("one-key conditional sync R2 storage", () => {
     ).toBe("confirmed");
   });
 
-  it("rejects oversized R2 metadata before allocating its body", async () => {
-    const stored = await bucket.seed(key, data, now, 101);
-    const result = await store.read(key, 100);
-    expect(result.kind).toBe("unavailable");
-    expect(stored.arrayBufferCalls).toBe(0);
+  it("rejects malformed size limits and inconsistent R2 body evidence", async () => {
+    const reads = vi.spyOn(bucket, "get");
+    expect((await store.read(key, -1)).kind).toBe("unavailable");
+    expect((await store.read(key, 1.5)).kind).toBe("unavailable");
+    expect((await store.read(key, 1_048_577)).kind).toBe("unavailable");
+    expect(reads).not.toHaveBeenCalled();
+
+    const stored = await bucket.seed(key, data, now, data.byteLength + 1);
+    expect((await store.read(key, data.byteLength + 1)).kind).toBe(
+      "unavailable",
+    );
+    expect(stored.arrayBufferCalls).toBe(1);
   });
 
-  it("rejects non-sync and oversized keys/bodies before storage access", async () => {
+  it("treats incomplete R2 generation metadata as unavailable, not absence", async () => {
+    bucket.objects.set(key, new MemoryObject(key, data, "", new Date(now)));
+    expect((await store.read(key, 100)).kind).toBe("unavailable");
+    bucket.objects.set(
+      key,
+      new MemoryObject(key, data, "etag-valid", new Date(Number.NaN)),
+    );
+    expect((await store.read(key, 100)).kind).toBe("unavailable");
+    bucket.objects.set(
+      key,
+      new MemoryObject("different-key", data, "etag-valid", new Date(now)),
+    );
+    expect((await store.read(key, 100)).kind).toBe("unavailable");
+  });
+
+  it("refuses missing validators and invalid caller retry floors without writing", async () => {
+    await bucket.seed(key, data, now - 5_000);
+    const read = await store.read(key, 100);
+    expect(read.kind).toBe("observed");
+    if (read.kind !== "observed") return;
+    const putsBeforeInvalidEvidence = bucket.puts.length;
+    expect(
+      await store.replace(
+        { ...read.observation, etag: "" },
+        new TextEncoder().encode("next"),
+      ),
+    ).toEqual({ kind: "effect_unknown" });
+    expect(await store.create(key, data, { retryAfterEpochMs: -1 })).toEqual({
+      kind: "effect_unknown",
+    });
+    expect(await store.create(key, data, { retryAfterEpochMs: 1.5 })).toEqual({
+      kind: "effect_unknown",
+    });
+    expect(bucket.puts).toHaveLength(putsBeforeInvalidEvidence);
+  });
+
+  it("admits exact canonical keys for each isolated sync record family", () => {
+    const revision = syncRevisionSchema.parse(
+      "22222222-2222-4222-8222-222222222222",
+    );
+    const operation = syncOperationIdSchema.parse(
+      "33333333-3333-4333-8333-333333333333",
+    );
+    const inventory = syncInventoryIdSchema.parse(
+      "44444444-4444-4444-8444-444444444444",
+    );
+    const sequence = syncEventSequenceSchema.parse("00000000000000000001");
+    const path = syncNotePathSchema.parse("notes/example.md");
+    const acceptedKeys = [
+      syncVaultMarkerKey(vaultId),
+      syncHeadKey(vaultId, path),
+      syncVersionKey(vaultId, revision),
+      syncContentKey(vaultId, revision),
+      syncOperationKey(vaultId, operation),
+      syncRecoveryKey(vaultId, operation, "metadata"),
+      syncRecoveryKey(vaultId, operation, "content"),
+      syncInventoryActiveKey(vaultId),
+      syncInventoryManifestKey(vaultId, inventory),
+      syncInventoryChunkKey(vaultId, inventory, 0),
+      syncFeedLaneHeadKey(vaultId, 63),
+      syncFeedEventKey(vaultId, 63, sequence),
+    ];
+    for (const value of acceptedKeys) {
+      expect(createSyncR2Key(value, vaultId)).toBe(value);
+    }
+  });
+
+  it("rejects malformed canonical key families before storage access", async () => {
     const reads = vi.spyOn(bucket, "get");
-    expect(createSyncR2Key("vault/legacy.md", vaultId)).toBeUndefined();
+    const invalidKeys = [
+      "vault/legacy.md",
+      `sync/v1/vaults/${vaultId}/heads/not-base64!.json`,
+      `sync/v1/vaults/${vaultId}/versions/11111111-1111-4111-8111-11111111111A.json`,
+      `sync/v1/vaults/${vaultId}/inventories/scans/22222222-2222-4222-8222-222222222222/chunks/01.json`,
+      `sync/v1/vaults/${vaultId}/feed/40/head.json`,
+      `sync/v1/vaults/${vaultId}/feed/00/events/00000000000000000000.json`,
+    ];
+    for (const invalidKey of invalidKeys) {
+      expect(createSyncR2Key(invalidKey, vaultId)).toBeUndefined();
+    }
     expect(reads).not.toHaveBeenCalled();
+    expect(bucket.puts).toHaveLength(0);
     await expect(store.create(key, new Uint8Array(2_049))).rejects.toThrow(
       RangeError,
     );

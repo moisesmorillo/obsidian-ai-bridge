@@ -93,10 +93,12 @@ class MemoryBucket implements R2ConditionalBucketPort {
   readonly puts: { key: string; options: R2ConditionalPutOptions }[] = [];
   failure: Error | undefined;
   readonly unavailableKeys = new Set<string>();
+  getHook: ((key: string) => void) | undefined;
   failReadback = false;
   sequence = 0;
 
   async get(key: string): Promise<R2ConditionalStoredObject | null> {
+    this.getHook?.(key);
     if (this.unavailableKeys.has(key)) throw new Error("storage unavailable");
     if (this.failReadback && this.puts.some((put) => put.key === key)) {
       throw new Error("read-back unavailable");
@@ -237,10 +239,16 @@ async function seedVersion(record = makeHead()): Promise<void> {
 }
 
 describe("marker-gated isolated sync current and recovery records", () => {
-  it("does not treat missing head as absence until the exact matching marker is validated", async () => {
+  it("does not treat missing records as absent until the matching marker is validated", async () => {
     expect(await records.readHead(vaultId, path)).toEqual({
       kind: "unavailable",
     });
+    expect((await records.readVersion(vaultId, revision)).kind).toBe(
+      "unavailable",
+    );
+    expect((await records.readRecovery(vaultId, operationId)).kind).toBe(
+      "unavailable",
+    );
     await seedMarker();
     expect(await records.readHead(vaultId, path)).toEqual({ kind: "absent" });
   });
@@ -371,6 +379,35 @@ describe("marker-gated isolated sync current and recovery records", () => {
     }
   });
 
+  it("does not return content when its body disappears after verification", async () => {
+    await seedMarker();
+    await seedVersion();
+    await seedContent();
+    const key = syncContentKey(vaultId, revision);
+    let reads = 0;
+    bucket.getHook = (requestedKey) => {
+      if (requestedKey === key && ++reads === 2) bucket.objects.delete(key);
+    };
+    expect((await records.readContent(vaultId, revision)).kind).toBe(
+      "unavailable",
+    );
+  });
+
+  it("does not return content when its second body read becomes unavailable", async () => {
+    await seedMarker();
+    await seedVersion();
+    await seedContent();
+    const key = syncContentKey(vaultId, revision);
+    let reads = 0;
+    bucket.getHook = (requestedKey) => {
+      if (requestedKey === key && ++reads === 2)
+        bucket.unavailableKeys.add(key);
+    };
+    expect((await records.readContent(vaultId, revision)).kind).toBe(
+      "unavailable",
+    );
+  });
+
   it("creates same-content revisions at distinct immutable keys and refuses conflicts", async () => {
     await seedMarker();
     const first = makeHead(revision);
@@ -431,6 +468,20 @@ describe("marker-gated isolated sync current and recovery records", () => {
     ).toBe("refused");
   });
 
+  it("does not persist a head whose parent repeats its own revision", async () => {
+    await seedMarker();
+    const putsBeforeInvalidRecord = bucket.puts.length;
+    expect(
+      (
+        await records.createHead({
+          ...makeHead(),
+          parent: { kind: "revision", revision },
+        })
+      ).kind,
+    ).toBe("effect_unknown");
+    expect(bucket.puts).toHaveLength(putsBeforeInvalidRecord);
+  });
+
   it("refuses exact-head replacement after the observed generation becomes stale", async () => {
     await seedMarker();
     expect((await records.createHead(makeHead())).kind).toBe("confirmed");
@@ -448,6 +499,58 @@ describe("marker-gated isolated sync current and recovery records", () => {
       "refused",
     );
     expect(bucket.puts).toHaveLength(putsBeforeStaleAttempt);
+  });
+
+  it("rejects forged or malformed observed head evidence before replacement", async () => {
+    await seedMarker();
+    expect((await records.createHead(makeHead())).kind).toBe("confirmed");
+    const observed = await records.readHead(vaultId, path);
+    if (observed.kind !== "observed")
+      throw new Error("Expected exact head observation.");
+    const replacement = {
+      ...makeHead(alternateRevision),
+      parent: { kind: "revision" as const, revision },
+    };
+    const putsBeforeForgery = bucket.puts.length;
+    expect(
+      (
+        await records.replaceHead(
+          { ...observed.observation, value: makeHead(alternateRevision) },
+          replacement,
+        )
+      ).kind,
+    ).toBe("refused");
+    expect(
+      (
+        await records.replaceHead(
+          {
+            ...observed.observation,
+            value: {
+              ...observed.observation.value,
+              path: syncNotePathSchema.parse("notes/foreign.md"),
+            },
+          },
+          replacement,
+        )
+      ).kind,
+    ).toBe("refused");
+    expect(bucket.puts).toHaveLength(putsBeforeForgery);
+
+    expect(
+      (
+        await records.replaceHead(
+          {
+            ...observed.observation,
+            observed: {
+              ...observed.observation.observed,
+              bytes: new TextEncoder().encode("{"),
+            },
+          },
+          replacement,
+        )
+      ).kind,
+    ).toBe("effect_unknown");
+    expect(bucket.puts).toHaveLength(putsBeforeForgery);
   });
 
   it("does not confirm an uncertain create without exact linked read-back", async () => {
@@ -557,6 +660,9 @@ describe("marker-gated isolated sync current and recovery records", () => {
 
   it("validates recovery metadata and raw recovery body together", async () => {
     await seedMarker();
+    expect((await records.readRecovery(vaultId, operationId)).kind).toBe(
+      "absent",
+    );
     const metadataKey = createSyncR2Key(
       syncRecoveryKey(vaultId, operationId, "metadata"),
       vaultId,
@@ -584,6 +690,36 @@ describe("marker-gated isolated sync current and recovery records", () => {
     bucket.seed(bodyKey, new TextEncoder().encode("wrong"));
     expect((await records.readRecovery(vaultId, operationId)).kind).toBe(
       "unavailable",
+    );
+  });
+
+  it("creates recovery metadata only after its exact body has been persisted", async () => {
+    await seedMarker();
+    const record = makeRecovery();
+    expect((await records.createRecovery(record)).kind).toBe("refused");
+
+    const bodyRecord = {
+      kind: "recoveryBody" as const,
+      vaultId,
+      operationId,
+      bytes: payload,
+      byteSize: payload.byteLength,
+      contentSha256: digest,
+    };
+    expect((await records.createRecoveryBody(bodyRecord)).kind).toBe(
+      "confirmed",
+    );
+    expect(
+      (
+        await records.createRecovery({
+          ...record,
+          contentSha256: checkedSha256("a".repeat(64)),
+        })
+      ).kind,
+    ).toBe("refused");
+    expect((await records.createRecovery(record)).kind).toBe("confirmed");
+    expect((await records.readRecovery(vaultId, operationId)).kind).toBe(
+      "observed",
     );
   });
 });

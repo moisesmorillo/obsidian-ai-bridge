@@ -8,9 +8,11 @@ import type {
   SyncOperationId,
   SyncRevision,
   SyncSequence,
+  SyncStoreErrorCode,
   SyncVaultId,
 } from "@obsidian-ai-bridge/core";
 import { encodeBase64Url, encodeNotePath } from "@obsidian-ai-bridge/core";
+import type { SyncErrorCodeDto } from "@obsidian-ai-bridge/protocol";
 import {
   decodeSyncCursor,
   decodeSyncPathKey,
@@ -67,6 +69,16 @@ const INVENTORY_ID = syncInventoryIdSchema.parse(
   "a5eaa17e-6e5c-4fb7-8585-8a5da7e5133b",
 );
 const ZERO_SEQUENCE = "0".repeat(20);
+
+type TypeEqual<Left, Right> = [Left] extends [Right]
+  ? [Right] extends [Left]
+    ? true
+    : false
+  : false;
+const syncStoreErrorCodesMatchProtocol: TypeEqual<
+  SyncErrorCodeDto,
+  SyncStoreErrorCode
+> = true;
 
 describe("M7 versioned sync contracts", () => {
   it("keeps validated outputs core-owned and round-trips the cursor codec", () => {
@@ -156,6 +168,7 @@ describe("M7 versioned sync contracts", () => {
 
   it("defines protocol major one without changing the v2 envelope", () => {
     expect(SYNC_PROTOCOL_MAJOR).toBe(1);
+    expect(syncStoreErrorCodesMatchProtocol).toBe(true);
     expect(SYNC_NAMESPACE_PREFIX).toBe("sync/v1/vaults");
     expect(
       syncVaultMarkerSchema.safeParse({

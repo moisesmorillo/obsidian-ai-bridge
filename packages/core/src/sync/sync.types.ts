@@ -6,6 +6,9 @@ export type SyncVaultId = string & { readonly __brand: "SyncVaultId" };
 /** Stable installation UUID, distinct from authorization and writer election. */
 export type SyncDeviceId = string & { readonly __brand: "SyncDeviceId" };
 
+/** Device identity recorded as mutation provenance, never authorization or a lock. */
+export type SyncOrigin = SyncDeviceId;
+
 /** Immutable UUID identity for one version of a path in the sync store. */
 export type SyncRevision = string & { readonly __brand: "SyncRevision" };
 

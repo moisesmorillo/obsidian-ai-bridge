@@ -12,6 +12,9 @@ node_modules/
 .env.*
 mise.local.toml
 
+# Local isolated development worktrees
+.worktrees/
+
 # Pi runtime artifacts (project configuration and resources remain trackable)
 .pi/delegate/
 .pi/tasks/

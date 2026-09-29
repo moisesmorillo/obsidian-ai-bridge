@@ -699,6 +699,27 @@ crosses repository thresholds, subdivide further without changing these contract
     evidence report are synchronized. Final semantic/security review has no
     unexplained findings.
 
+## M7.1 protocol contract evidence
+
+M7.1 adds the isolated protocol-major-one identifiers, strict vault marker and
+checkpoint schemas, fixed-width sequence and error contracts, canonical namespace
+key builders, SHA-256 feed-lane selection, and canonical base64url checkpoint cursor
+codec in `packages/protocol`. Focused unit coverage is in
+`packages/protocol/tests/unit/sync.contracts.test.ts`.
+
+This evidence covers the M7.1 unit only. The storage port, R2 adapter, feed replay,
+inventory persistence, crash recovery, runtime qualification, and deployment remain
+for their separately sequenced units. It does not alter protocol `0.1`, v2 prefixes,
+M1–M6 behavior, or the milestone's activation exclusions.
+
+| Verification | Result |
+| --- | --- |
+| `mise install` and `mise run install` | Passed; no dependency changes |
+| Focused M7 contract tests | Passed: 11 tests |
+| `mise run check` | Passed: formatting, lint, types, 1,459 tests, coverage, and builds |
+| Semantic review | Passed: M7.1 only; no v2/M1–M6 behavior or activation surface changed |
+| Review follow-up | Resolved: cross-vault cursor binding, canonical path-decoder reuse, exact closed-error-set assertion |
+
 ## Exit and next transition
 
 M7 is complete only when all four implementation units and acceptance criteria are

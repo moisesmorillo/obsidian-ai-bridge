@@ -544,6 +544,68 @@ export {
 } from "@core/note-path/note-path";
 export { BASE64URL_PATTERN } from "@core/note-path/note-path.constants";
 export type { NotePath } from "@core/note-path/note-path.types";
+export type {
+  SyncCheckpoint,
+  SyncDeviceId,
+  SyncEventSequence,
+  SyncInventoryId,
+  SyncNotePath,
+  SyncOperationId,
+  SyncOrigin,
+  SyncRevision,
+  SyncSequence,
+  SyncVaultId,
+} from "@core/sync/sync.types";
+export type {
+  SyncMutationDecision,
+  SyncMutationPolicyErrorCode,
+} from "@core/sync/sync-mutation-policy";
+export { evaluateSyncMutation } from "@core/sync/sync-mutation-policy";
+export type { SyncStore } from "@core/sync/sync-store.port";
+export type {
+  SyncAbortedChangeReason,
+  SyncChangedResult,
+  SyncChangeEvent,
+  SyncCheckpointCursor,
+  SyncCommittedPosition,
+  SyncCompleteInventory,
+  SyncCompleteInventoryEvidencePage,
+  SyncContinueInventoryInput,
+  SyncCreateRequest,
+  SyncCurrentState,
+  SyncInventoryEvidenceCursor,
+  SyncInventoryEvidencePage,
+  SyncInventoryProgress,
+  SyncInventoryResult,
+  SyncInventorySummary,
+  SyncLiveCurrentState,
+  SyncMutationParent,
+  SyncMutationRequest,
+  SyncMutationResult,
+  SyncMutationSuccess,
+  SyncNeverSeenState,
+  SyncOperationRecord,
+  SyncReadChangesInput,
+  SyncReadChangesResult,
+  SyncReadCurrentInput,
+  SyncReadCurrentResult,
+  SyncReadInventoryPageInput,
+  SyncReadInventoryPageResult,
+  SyncReadRecoveryInput,
+  SyncReadRecoveryResult,
+  SyncReadVersionInput,
+  SyncReadVersionResult,
+  SyncRecoveryRecord,
+  SyncResumeOperationInput,
+  SyncResumeOperationResult,
+  SyncStartInventoryInput,
+  SyncStoreErrorCode,
+  SyncStoreFailure,
+  SyncTombstoneCurrentState,
+  SyncTombstoneRequest,
+  SyncUpdateRequest,
+  SyncVersionRecord,
+} from "@core/sync/sync-store.types";
 export { VaultNoteService } from "@core/vault/note-service";
 export type { NoteService } from "@core/vault/note-service.types";
 export { MAX_NOTE_SIZE_BYTES } from "@core/vault/vault.constants";

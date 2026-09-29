@@ -2,10 +2,12 @@
 
 ## Status
 
-**NEXT — implementation authorized only after the documentation transition PR
-merges.** This milestone establishes a versioned, storage-independent sync
-contract and its isolated R2 implementation. It does not enable synchronization,
-change the current writer, migrate data, or authorize a personal-vault cutover.
+**NEXT — M7.1/M7.2 are complete; M7.3's isolated R2 primitives are verified in
+this implementation branch, pending merge; M7.4 remains.** This milestone
+establishes a versioned, storage-independent sync contract and its isolated R2
+implementation. It does not enable synchronization, change the current writer,
+migrate data, or authorize a personal-vault cutover. Branch evidence becomes a
+canonical milestone transition only when its PR merges.
 
 M1–M6 remain complete and historically accurate. M3's designated-writer mirror,
 the current v2 REST/MCP behavior, M4's reviewed-only local authority, and M5's
@@ -27,10 +29,11 @@ Provide the first versioned shared-state foundation for later bidirectional sync
 - conformance and R2-runtime tests proving the contract without adding active HTTP,
   MCP, OAuth, or plugin sync behavior.
 
-The first M7 implementation PR must start with protocol contracts and tests. Follow-on
-PRs may add the port, the isolated R2 key codec, and adapter/feed/recovery behavior as
-separate reviewable work units. Keep each production PR within the repository's
-change-size limits; dependencies and acceptance evidence are listed below.
+M7.1 began with protocol contracts and tests; M7.2 added the core port. The owner
+explicitly authorized one M7.3 PR despite the usual change-size limits: nine
+production files and 2,411 net production lines, reviewed as separate work-unit
+commits. This exception does not extend to M7.4 or unrelated changes. Dependencies
+and acceptance evidence are listed below.
 
 ## Preserved invariants
 
@@ -607,8 +610,9 @@ tests with the behavior they verify:
    public routes.
 
 Dependencies are strictly sequential. Each PR must pass focused tests, `mise run
-check`, and a semantic review before the next begins. If measured production scope
-crosses repository thresholds, subdivide further without changing these contracts.
+check`, and a semantic review before the next begins. The authorized single-PR
+M7.3 size exception is recorded above; other oversized units must be subdivided
+or separately approved without changing these contracts.
 
 ## Acceptance criteria
 
@@ -737,6 +741,43 @@ The eleven fake cases cover per-vault operation identity (the same operation ID 
 | Semantic/security review | Passed for M7.2 scope: core remains adapter-neutral; test fixtures cross the existing protocol validation boundary; exact request bytes and typed unresolved outcomes remain conservative; no production M1–M6, R2, Worker, HTTP, plugin, or activation changes. |
 
 No personal vault or remote resource was used. M7.3 owns isolated R2 primitives; M7.4 owns durable feed/inventory/recovery algorithms and their workerd conformance. This evidence does not qualify those behaviors, change current writer behavior, or authorize sync activation. The M7 status above remains **NEXT** until every implementation unit and acceptance criterion is separately completed and merged.
+
+## M7.3 isolated R2 primitives evidence
+
+**Implementation verified in this branch; M7 remains NEXT.** The private Worker
+`infrastructure/sync/` modules implement strict protocol-major-one persisted
+records, canonical namespace keys, one-key conditional R2 operations and two
+single-object facades. `sync-r2-records.ts` reads and writes marker-gated heads,
+immutable version/content pairs and recovery metadata/body pairs; it checks exact
+UTF-8 bytes against independent digest and size evidence, including on a second
+content read. `sync-r2-inventory.ts` exposes bounded active-slot, manifest and
+chunk scratch operations without claiming a complete inventory. The one-key
+adapter uses create-only or the originally observed ETag, exact read-back after
+successful, uncertain or conditionally refused writes, typed refusals versus
+unknown effects, and a 1,100-ms same-key cooldown. A caller may carry its retry
+floor across isolates; M7.4 must persist and restore it. An unavailable read-back
+cannot prove a replacement failed, and no write is retried with a refreshed ETag.
+
+| Verification | Result |
+| --- | --- |
+| Scope against `8870e06` | Nine Worker production files, 2,412 lines added / 1 removed (2,411 net); eight private sync modules plus the narrow existing R2 binding type adjustment. No core/protocol/plugin production or Worker app/route/composition changes. |
+| Focused units and local R2 | Strict record, one-key, current/recovery and inventory tests plus 9 local workerd storage tests passed. Workerd validates conditional primitives and v2-prefix noninterference, not live Cloudflare throttling or CPU. |
+| `mise install`, `mise run install` | Passed at branch baseline; no new dependency or production binding. |
+| `mise run check` at `3fdd777` | Passed: formatting, Biome assists, typecheck, lint/TSDoc, 96 source test files / 1,561 tests, 9 local workerd tests, 12 plugin artifact smoke tests, Worker dry-run build and plugin build. |
+| Global coverage | Statements **9,810/10,326 (95.00%)**, branches 90.73%, functions 98.5%, lines 97.06%. Statements have no headroom; recheck after any production change. |
+| Semantic/security review | Task-level reviews and independent whole-branch review; conditional-null exact read-back and pre-dispatch invalid encoding findings corrected; a later CAS-unavailable certainty bug corrected and re-reviewed. Final code review found no issues. |
+
+Two tests-only expansions cover adjacent existing R2 storage: focused recovery
+repository safety cases and a current-note regression requiring a valid exact
+generation larger than the live-object ceiling to be rejected before body decoding.
+Neither changes M1–M6 production behavior. No sync route, public API, `SyncStore` adapter,
+marker provisioning, operation journal, feed traversal, inventory completion,
+scan cleanup, cross-object reconciliation, deployment or personal vault was added
+or qualified. M7.4 must bind the durable journal/feed and scan state, validate
+external chunk chains, preserve persisted retry floors and unresolved effects,
+and measure aggregate Workers Free subrequests/CPU before any subsequent
+activation proposal. Local workerd and API declarations do not prove production
+rate limits or mobile/desktop behavior.
 
 ## Exit and next transition
 

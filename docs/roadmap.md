@@ -8,7 +8,10 @@ and [proposed ADR 0016](decisions/0016-bidirectional-vault-sync.md) describe
 a post-M6 product direction. The implementation-ready [M7 specification](milestones/m7-versioned-sync-protocol-and-r2-store.md)
 defines the isolated protocol/storage foundation and is the sole `NEXT` milestone in
 this transition. It does not change the implemented single-writer support claim,
-activate a production writer, or migrate a vault.
+activate a production writer, or migrate a vault. M7.1/M7.2 are complete;
+M7.3's isolated R2 primitives are verified in this implementation branch and become
+canonical when merged. M7.4's journal, feed, inventory and crash recovery are next
+within M7, not a new milestone or permission to activate sync.
 
 This is the canonical execution roadmap: implemented facts, planned direction and
 unresolved choices are distinct. Dates are intentionally not assigned. Engineering

@@ -36,11 +36,22 @@ exercises exact-parent concurrency, operation replay, tombstone safety, and cons
 pending/unknown outcomes. The fake is not a production adapter or proof of durable
 multi-key CAS, feed pagination, inventory persistence, or local workerd behavior. Core
 production code remains independent of protocol, Worker, R2, HTTP, and plugin
-composition. M7.1/M7.2 remain uncomposed with the Worker, plugin, and M1–M6 v2
-behavior; the M7.2 focused suite passed 4 files / 39 tests and canonical
-`mise run check` passed with 1,487 source tests. Exact unit evidence is recorded in the
-[M7 specification](milestones/m7-versioned-sync-protocol-and-r2-store.md#m72-core-port-mutation-policy-and-deterministic-fake-evidence).
-M7.3 is the next implementation unit; M7 remains NEXT and activation remains excluded.
+composition. M7.3 adds private `apps/worker/src/infrastructure/sync/` persisted codecs,
+canonical keys, one-key R2 create/CAS/read-back evidence, and separate marker-gated
+current/version/recovery and inventory scratch facades. The one-key boundary owns
+conditional effects and 1,100-ms per-key cooldown, with caller-carried retry floors
+for later durable M7.4 recovery; the facades validate record/key/body linkages but
+do not implement `SyncStore`, journal/feed sequencing or completed scans. Raw
+Markdown is retained byte-for-byte and compared to separate hash/size metadata
+before a complete read is returned. An unavailable conditional read-back cannot
+be promoted to either success or definite failure. No new private facade is
+composed into Worker HTTP/MCP or the plugin; M1–M6 v2 objects and writer remain
+unchanged. Canonical `mise run check` passed at `3fdd777` with 1,561 source tests,
+9 local workerd tests and 95.00% statement coverage (no headroom). Local workerd
+demonstrates conditional semantics, not production rate limiting or Workers Free
+CPU qualification. [M7.3 evidence](milestones/m7-versioned-sync-protocol-and-r2-store.md#m73-isolated-r2-primitives-evidence)
+records exact boundaries; M7.4 must add durable journal/feed and stable-vector
+inventory orchestration. M7 remains NEXT and activation remains excluded.
 The current
 plugin boundary includes strict device state v5 with
 frozen v2/v3/v4 migration, reviewed sampling/admission, narrow local writes and

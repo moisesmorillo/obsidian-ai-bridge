@@ -31,7 +31,7 @@ probe failed; the checked-in Worker configuration does not provide an associatio
 or designated writer. The mirror was not activated, and the personal vault was
 not used.
 
-This snapshot records completed M1–M6 implementation and qualification evidence. M5's bounded support claim is limited to latest M5-ready release v1.0.2 and one designated writer on Obsidian Desktop 1.13.7 / macOS 26.6.2 / Apple M4 Pro, with synthetic active-writer behavior through 10,000 eligible notes. The final report records retained scale, credential-rotation, and Keep-local results; v4→v5 migration/restart evidence; live loopback recovery/diagnostics; exact release identity; residual platform/deployment limits; and one explicitly unqualified pause/resume conflict attempt. No personal vault or production Worker/R2 deployment was used. M1–M6 are COMPLETE; M7 — versioned sync protocol and isolated R2 store — is NEXT in this documentation transition. Its implementation may begin only after that PR merges and does not activate the protocol, migrate data, or change the live writer.
+This snapshot records completed M1–M6 implementation and qualification evidence. M5's bounded support claim is limited to latest M5-ready release v1.0.2 and one designated writer on Obsidian Desktop 1.13.7 / macOS 26.6.2 / Apple M4 Pro, with synthetic active-writer behavior through 10,000 eligible notes. The final report records retained scale, credential-rotation, and Keep-local results; v4→v5 migration/restart evidence; live loopback recovery/diagnostics; exact release identity; residual platform/deployment limits; and one explicitly unqualified pause/resume conflict attempt. No personal vault or production Worker/R2 deployment was used. M1–M6 are COMPLETE; M7 — versioned sync protocol and isolated R2 store — remains NEXT. M7.1/M7.2 are complete and M7.3's isolated primitives are verified in this branch, pending merge; M7.4 is not implemented. None of these foundations activates sync, migrates data, or changes the live writer.
 M2 source/tooling through `2e74b23` passed independent semantic
 review and merged at `b300726` (PR #7). M3's completion PR #27 passed canonical
 validation and final semantic review; its three MINOR findings were corrected at
@@ -91,10 +91,34 @@ The focused M7.1/M7.2 suite passed **4 files / 39 tests**. `mise install`,
 1,487 tests**, **8 local workerd storage tests**, and **12 plugin artifact smoke tests**,
 with global coverage of **95.05% statements, 90.72% branches, 98.45% functions, and
 96.96% lines**. The Worker build was dry-run only. No R2 sync adapter, Worker/API/plugin
-composition, migration, deployment, or personal-vault use was involved. M7.3 is the
-next implementation unit; M7 remains the sole **NEXT** milestone, and sync activation
-remains excluded. See the [M7.2 evidence](milestones/m7-versioned-sync-protocol-and-r2-store.md#m72-core-port-mutation-policy-and-deterministic-fake-evidence) for exact
+composition, migration, deployment, or personal-vault use was involved. M7.3 was the
+next implementation unit at that checkpoint; it is now verified in this branch.
+M7 remains the sole **NEXT** milestone, and sync activation remains excluded. See
+the [M7.2 evidence](milestones/m7-versioned-sync-protocol-and-r2-store.md#m72-core-port-mutation-policy-and-deterministic-fake-evidence) for exact
 boundaries and validation results.
+
+## M7.3 isolated R2 storage evidence
+
+The uncomposed Worker `infrastructure/sync/` boundary now validates strict private
+protocol-major-one persisted records and canonical `sync/v1/vaults/<vault-id>/`
+keys. A one-key R2 adapter requires create-only or the originally observed ETag,
+resolves conditional refusals by exact read-back, and retains uncertain effects and
+per-key cooldown evidence. Marker-gated record operations keep raw Markdown bytes
+bound to independent version/recovery digest and size metadata; inventory scratch
+operations expose bounded slot/manifest/chunk evidence without scan-completion
+authority. A caller-carried retry context crosses fresh facades; M7.4 must persist
+it across isolates. These modules do not implement or compose `SyncStore`.
+
+`mise run check` passed on branch head `3fdd777`: **96 source test files / 1,561
+tests**, **9 local workerd storage tests**, **12 plugin artifact smoke tests**,
+Worker dry-run and plugin builds; global coverage **95.00% statements (9,810/10,326)**,
+90.73% branches, 98.5% functions, 97.06% lines. The statement gate has no
+headroom. Independent task, whole-branch and correction reviews closed the
+reported safety findings. Existing v2 production behavior, HTTP/MCP/plugin
+composition, deployed R2 and personal vault were untouched. Workerd verifies
+conditional semantics but not Cloudflare Free throttling/CPU; no journal/feed,
+completed inventory, external chunk-chain reconciliation, marker provisioning or
+sync activation is qualified. [M7.3 evidence and next obligations](milestones/m7-versioned-sync-protocol-and-r2-store.md#m73-isolated-r2-primitives-evidence).
 
 ## Implemented capabilities and evidence
 

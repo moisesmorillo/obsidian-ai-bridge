@@ -12,6 +12,7 @@ import type {
   SyncR2ObjectStore,
   SyncR2Observed,
   SyncR2ReadResult,
+  SyncR2RetryContext,
   SyncR2WriteResult,
 } from "@worker/infrastructure/sync/sync-r2.types";
 import { isCanonicalSyncR2Key } from "@worker/infrastructure/sync/sync-r2-key";
@@ -54,17 +55,19 @@ export function syncR2ObjectStore(
     try {
       const stored = await bucket.get(key);
       if (stored === null) return { kind: "absent" };
-      const bytes = new Uint8Array(await stored.arrayBuffer());
       const uploadedTime = stored.uploaded.getTime();
       if (
-        bytes.byteLength > readLimit ||
-        bytes.byteLength !== stored.size ||
+        !Number.isSafeInteger(stored.size) ||
+        stored.size < 0 ||
+        stored.size > readLimit ||
         stored.key !== key ||
         stored.etag.length === 0 ||
         !Number.isFinite(uploadedTime)
       ) {
         return { kind: "unavailable" };
       }
+      const bytes = new Uint8Array(await stored.arrayBuffer());
+      if (bytes.byteLength !== stored.size) return { kind: "unavailable" };
       return {
         kind: "observed",
         observation: {
@@ -82,32 +85,42 @@ export function syncR2ObjectStore(
   /** Attempts one create-only PUT and establishes success only from exact byte read-back.
    * @param key Canonical key that must be absent or already contain the exact requested bytes.
    * @param bytes Exact candidate body retained without text normalization.
+   * @param retryContext Previously returned cooldown floor that must survive isolate changes.
    * @returns Confirmed, refused, throttled, or effect-unknown result.
    */
   async function create(
     key: SyncR2Key,
     bytes: Uint8Array,
+    retryContext?: SyncR2RetryContext,
   ): Promise<SyncR2WriteResult> {
-    return write(key, bytes, { kind: "create" });
+    return write(key, bytes, { kind: "create" }, retryContext);
   }
 
   /** Attempts one CAS with the exact previously observed ETag and never refreshes after refusal.
    * @param observed Exact key, bytes, ETag, and upload timestamp from an earlier read.
    * @param bytes Exact candidate replacement body.
+   * @param retryContext Previously returned cooldown floor that must survive isolate changes.
    * @returns Confirmed, refused, throttled, or effect-unknown result.
    */
   async function replace(
     observed: SyncR2Observed,
     bytes: Uint8Array,
+    retryContext?: SyncR2RetryContext,
   ): Promise<SyncR2WriteResult> {
     if (!isValidObservation(observed)) return { kind: "effect_unknown" };
-    return write(observed.key, bytes, { kind: "replace", observed });
+    return write(
+      observed.key,
+      bytes,
+      { kind: "replace", observed },
+      retryContext,
+    );
   }
 
   /** Preflights one key, enforces cooldown, sends one conditional write and classifies exact evidence.
    * @param key Canonical M7.1 key to create or conditionally replace.
    * @param bytes Exact candidate body.
    * @param condition Create-only absence or exact previously observed ETag predicate.
+   * @param retryContext Prior safe retry floor supplied by the caller across isolate changes.
    * @returns The single-attempt result; it never retries after refusal or uncertainty.
    */
   async function write(
@@ -116,7 +129,15 @@ export function syncR2ObjectStore(
     condition:
       | { readonly kind: "create" }
       | { readonly kind: "replace"; readonly observed: SyncR2Observed },
+    retryContext?: SyncR2RetryContext,
   ): Promise<SyncR2WriteResult> {
+    if (
+      retryContext !== undefined &&
+      (!Number.isSafeInteger(retryContext.retryAfterEpochMs) ||
+        retryContext.retryAfterEpochMs < 0)
+    ) {
+      return { kind: "effect_unknown" };
+    }
     if (!isValidSyncKey(key)) return { kind: "effect_unknown" };
     const familyLimit = maxBytesForKey(key);
     if (familyLimit === undefined) return { kind: "effect_unknown" };
@@ -146,7 +167,11 @@ export function syncR2ObjectStore(
       current.kind === "observed"
         ? current.observation.uploaded.getTime() + SYNC_R2_WRITE_COOLDOWN_MS
         : 0;
-    const retryAt = Math.max(uploadedCooldown, retryNotBefore.get(key) ?? 0);
+    const retryAt = Math.max(
+      uploadedCooldown,
+      retryNotBefore.get(key) ?? 0,
+      retryContext?.retryAfterEpochMs ?? 0,
+    );
     if (epochNow() < retryAt) {
       return { kind: "throttled", retryAfterEpochMs: retryAt };
     }

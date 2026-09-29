@@ -21,15 +21,23 @@ class MemoryObject implements R2ConditionalStoredObject {
   readonly key: string;
   readonly customMetadata = {};
 
-  constructor(key: string, bytes: Uint8Array, etag: string, uploaded: Date) {
+  arrayBufferCalls = 0;
+  constructor(
+    key: string,
+    bytes: Uint8Array,
+    etag: string,
+    uploaded: Date,
+    declaredSize = bytes.byteLength,
+  ) {
     this.key = key;
-    this.size = bytes.byteLength;
+    this.size = declaredSize;
     this.etag = etag;
     this.uploaded = uploaded;
     this.bytes = bytes.slice();
   }
   private readonly bytes: Uint8Array;
   async arrayBuffer(): Promise<ArrayBuffer> {
+    this.arrayBufferCalls += 1;
     return this.bytes.slice().buffer;
   }
   async text(): Promise<string> {
@@ -99,12 +107,14 @@ class MemoryBucket implements R2ConditionalBucketPort {
     key: string,
     bytes: Uint8Array,
     uploaded: number,
+    declaredSize = bytes.byteLength,
   ): Promise<MemoryObject> {
     const object = new MemoryObject(
       key,
       bytes,
       `etag-${++this.etagSequence}`,
       new Date(uploaded),
+      declaredSize,
     );
     this.objects.set(key, object);
     return object;
@@ -208,20 +218,47 @@ describe("one-key conditional sync R2 storage", () => {
     });
   });
 
-  it("returns a timeout cooldown and permits the same create only after that lower bound", async () => {
+  it("carries timeout cooldown evidence across stores and blocks a pre-floor retry", async () => {
     bucket.putFailure = new Error("network timeout");
     const uncertain = await store.create(key, data);
     expect(uncertain).toEqual({
       kind: "effect_unknown",
       retryAfterEpochMs: now + 1_100,
     });
-    expect(await store.create(key, data)).toEqual({
+    if (
+      uncertain.kind !== "effect_unknown" ||
+      uncertain.retryAfterEpochMs === undefined
+    )
+      return;
+
+    const nextIsolateStore = syncR2ObjectStore(bucket, () => now);
+    const putsBeforeRetry = bucket.puts.length;
+    expect(
+      await nextIsolateStore.create(key, data, {
+        retryAfterEpochMs: uncertain.retryAfterEpochMs,
+      }),
+    ).toEqual({
       kind: "throttled",
-      retryAfterEpochMs: now + 1_100,
+      retryAfterEpochMs: uncertain.retryAfterEpochMs,
     });
-    now += 1_100;
+    expect(bucket.puts).toHaveLength(putsBeforeRetry);
+
+    now = uncertain.retryAfterEpochMs;
     bucket.putFailure = undefined;
-    expect((await store.create(key, data)).kind).toBe("confirmed");
+    expect(
+      (
+        await nextIsolateStore.create(key, data, {
+          retryAfterEpochMs: uncertain.retryAfterEpochMs,
+        })
+      ).kind,
+    ).toBe("confirmed");
+  });
+
+  it("rejects oversized R2 metadata before allocating its body", async () => {
+    const stored = await bucket.seed(key, data, now, 101);
+    const result = await store.read(key, 100);
+    expect(result.kind).toBe("unavailable");
+    expect(stored.arrayBufferCalls).toBe(0);
   });
 
   it("rejects non-sync and oversized keys/bodies before storage access", async () => {

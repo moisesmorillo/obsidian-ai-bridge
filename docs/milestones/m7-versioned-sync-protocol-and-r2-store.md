@@ -201,10 +201,54 @@ and acceptance evidence are listed below.
 - The storage adapter uses a durable operation journal and a pending/committed
   publication state. The journal is create-only and binds the full normalized
   mutation request; same operation ID and same request resumes, while a different
-  request returns `operation_id_reused`. The lane head contains the committed
-  sequence and either no pending reservation or exactly one pending operation with
-  its reserved next sequence. The write order is: create journal, reserve the next
-  lane sequence with exact-head CAS, create and verify immutable version/content
+  request returns `operation_id_reused`. The initial `unallocated` pending journal
+  binds its exact request and path-derived lane but has **no** sequence, predecessor
+  clock, feed position, or authority to write a version, head, or event. Pending
+  journals are a strict discriminated union: `unallocated` holds the exact current
+  lane-head key, observed generation ETag, complete canonical prior bytes and
+  `uploaded` timestamp (or verified absence before initial lane-head creation),
+  plus the known retry floor; `allocated` alone holds the won sequence, predecessor
+  clock, and subsequent step evidence. A missing lane-head ETag cannot authorize
+  reservation. If the lane-head key is initially absent, create/read back the
+  zero-sequence unreserved head first; its original ETag must be persisted in the
+  unallocated journal before attempting reservation. This initialization is not
+  a claim of sequence one. The lane head contains the committed sequence and
+  either no pending reservation or exactly one pending operation with its reserved
+  next sequence. A successful exact-head CAS against the precondition durably
+  recorded in the unallocated journal creates that operation-owned lane
+  reservation; its candidate next sequence and predecessor clock are derived
+  only from those exact observed prior bytes. Only exact read-back of a pending
+  marker matching this operation ID, candidate lane/sequence, and predecessor
+  clock authorizes the one-way exact-CAS journal transition from `unallocated`
+  to `allocated`. Concurrent same-ID callers may join the already allocated
+  journal only after its complete typed body and pending marker agree; an older
+  unallocated observation cannot overwrite a newer journal generation.
+  This transition may be delayed by the journal's same-key cooldown. If it is
+  interrupted, the lane head's exact pending operation ID, lane, next sequence,
+  and predecessor committed clock reconstruct the allocation for the same exact
+  journal request; conflicting or unavailable evidence remains `effect_unknown`
+  and retains the lane blocker. A journal cannot claim another operation's pending
+  marker or invent a sequence from an absent/failed lane read.
+  A concurrent different-operation reservation that definitively loses its lane
+  CAS remains `unallocated`: it publishes **no** abort event at the winner's
+  sequence and performs no current-head effect. While another operation owns the
+  lane, return `operation_pending` with the loser's stable operation ID. After the
+  winner commits/releases its lane and exact read-back proves the loser's previous
+  CAS did not reserve it, a fresh unreserved lane-head observation may replace
+  only that loser's still-unallocated prior observation by exact journal CAS
+  (respecting journal cooldown), then start a **new** reservation attempt at the
+  then-current next sequence. An uncertain old CAS with unchanged prior bytes/ETag
+  may be retried only with that original condition after the cooldown; a missing,
+  conflicting, or unavailable read-back cannot rebase the journal observation.
+  A refused/changed lane predicate is not a refreshed CAS retry of the same step:
+  the proven losing attempt ends before the next observation is durably recorded.
+  This does not refresh a stale current-head mutation predicate; those remain
+  fenced. A same-ID duplicate joins its exact journal and may adopt only its own
+  verified pending lane marker. Sequence exhaustion before allocation returns
+  `sequence_exhausted` without inventing a feed event; the journal remains bound to
+  its exact request. No local lock or R2 LIST decides allocation. The write order
+  is: create unallocated journal, reserve the next lane sequence with exact-head
+  CAS, durably bind that allocation to the journal, create and verify immutable version/content
   (and recovery body for a tombstone), conditionally replace the exact current head,
   create the immutable feed event, mark the journal committed, then commit the lane
   head last. An operation aborted before changing current state publishes an aborted
@@ -687,7 +731,15 @@ or separately approved without changing these contracts.
    and recalculate all affected bounds.
 6. Recovery tests inject failure after every journal/current/event/head persistence
    boundary; retry either commits the exact same operation, records a safe abort, or
-   remains blocked as `operation_pending`/`effect_unknown`. Same-key tests cover
+   remains blocked as `operation_pending`/`effect_unknown`. In particular, race two
+   different operation IDs hashing to one lane from the same observed committed
+   head: only one owns its next sequence, the losing unallocated journal neither
+   aborts that sequence nor mutates a head, and after verified release it claims
+   the next available sequence. Interrupt after lane CAS but before journal
+   allocation, then recover from the exact same-operation pending marker; missing,
+   another-operation, or unavailable evidence cannot fabricate allocation. Race
+   two same-ID callers as well: only the exact request may join its own journal and
+   pending marker. Same-key tests cover
    create-only journal replay, journal transitions, lane-head reservation/commit,
    and current-head writes; they prove the minimum successful-write interval, exact
    CAS under concurrent workers, and no retry before the returned cooldown. Inject

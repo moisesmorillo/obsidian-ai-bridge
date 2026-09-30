@@ -73,9 +73,10 @@ function json(value: object): Uint8Array {
 
 /** Builds a pending journal with the exact lane reservation precondition.
  * @param content - Exact live request content, defaulting to the ordinary fixture.
+ * @param operationId - Canonical operation identity bound to the journal fixture.
  * @returns Strict pending journal fixture with independently computed byte evidence.
  */
-async function pendingJournal(content = CONTENT) {
+async function pendingJournal(content = CONTENT, operationId = OPERATION_ID) {
   const lane = await syncFeedLaneForPath(PATH);
   const contentBytes = encoder.encode(content);
   return {
@@ -84,12 +85,12 @@ async function pendingJournal(content = CONTENT) {
     vaultId: VAULT_ID,
     kind: "journal",
     status: "pending",
-    operationId: OPERATION_ID,
+    operationId,
     request: {
       kind: "create",
       vaultId: VAULT_ID,
       path: PATH,
-      operationId: OPERATION_ID,
+      operationId,
       revision: REVISION,
       parent: { kind: "never_seen" },
       contentSha256: await sha256(contentBytes),
@@ -98,14 +99,15 @@ async function pendingJournal(content = CONTENT) {
       origin: ORIGIN,
     },
     payload: { byteSize: contentBytes.byteLength },
+    allocationState: "allocated",
     reservation: {
       lane,
       sequence: syncEventSequenceSchema.parse("00000000000000000001"),
       previousCommittedAtEpochMs: 0,
     },
     stepEvidence: {
-      step: "reserve_lane",
-      key: syncFeedLaneHeadKey(VAULT_ID, lane),
+      step: "immutable_create",
+      key: syncVersionKey(VAULT_ID, REVISION),
       precondition: { kind: "absent" },
       retryAfterEpochMs: null,
     },
@@ -170,6 +172,7 @@ async function updateJournal(retryAfterEpochMs: number | null) {
       origin: ORIGIN,
     },
     payload: { byteSize: contentBytes.byteLength },
+    allocationState: "allocated",
     reservation: {
       lane,
       sequence: syncEventSequenceSchema.parse("00000000000000000002"),
@@ -255,6 +258,7 @@ async function tombstoneJournal() {
       origin: ORIGIN,
     },
     payload: null,
+    allocationState: "allocated",
     reservation: {
       lane,
       sequence: syncEventSequenceSchema.parse("00000000000000000002"),
@@ -289,6 +293,72 @@ async function pendingLaneHead() {
   } as const;
 }
 
+/** Builds an unreserved lane head for an observed allocation precondition.
+ * @param committedSequence - Exact fixed-width high-water mark, including zero.
+ * @param committedAtEpochMs - Time bound to that high-water mark.
+ * @returns Canonical lane head without a pending owner.
+ */
+async function unreservedLaneHead(
+  committedSequence = syncSequenceSchema.parse("00000000000000000000"),
+  committedAtEpochMs = 0,
+) {
+  return {
+    schemaVersion: 1,
+    protocolMajor: 1,
+    vaultId: VAULT_ID,
+    kind: "laneHead",
+    lane: await syncFeedLaneForPath(PATH),
+    committedSequence,
+    committedAtEpochMs,
+  } as const;
+}
+
+/** Builds a journal with no sequence authority and one exact lane observation.
+ * @param observation - Verified lane-head absence or its exact canonical prior generation.
+ * @param operationId - Immutable operation identity for this private request.
+ * @returns Strict unallocated journal candidate for codec and facade tests.
+ */
+async function unallocatedJournal(
+  observation:
+    | { readonly kind: "absent" }
+    | {
+        readonly kind: "observed";
+        readonly head: Awaited<ReturnType<typeof unreservedLaneHead>>;
+        readonly etag: string;
+        readonly uploadedAtEpochMs: number;
+      },
+  operationId = OPERATION_ID,
+) {
+  const allocated = await pendingJournal(CONTENT, operationId);
+  const lane = allocated.reservation.lane;
+  const precondition =
+    observation.kind === "absent"
+      ? ({ kind: "absent" } as const)
+      : ({
+          kind: "observed",
+          etag: observation.etag,
+          bytes: encodeBase64Url(json(observation.head)),
+          uploadedAtEpochMs: observation.uploadedAtEpochMs,
+        } as const);
+  return {
+    schemaVersion: 1,
+    protocolMajor: 1,
+    vaultId: VAULT_ID,
+    kind: "journal",
+    status: "pending",
+    operationId,
+    request: allocated.request,
+    payload: allocated.payload,
+    allocationState: "unallocated",
+    lane,
+    laneObservation: {
+      key: syncFeedLaneHeadKey(VAULT_ID, lane),
+      precondition,
+      retryAfterEpochMs: null,
+    },
+  } as const;
+}
+
 /** Builds a fully linked changed event for one exact lane and sequence key.
  * @returns Canonical content-free event fixture bound to its path-derived lane.
  */
@@ -310,6 +380,186 @@ async function changedEvent() {
 }
 
 describe("private sync publication codec", () => {
+  it("round-trips an unallocated journal without sequence or publication authority", async () => {
+    const { decodeSyncPublication, encodeSyncPublication } = await import(
+      "@worker/infrastructure/sync/sync-publication.codec"
+    );
+    const head = await unreservedLaneHead();
+    const unallocated = await unallocatedJournal({
+      kind: "observed",
+      head,
+      etag: '"zero-head-generation"',
+      uploadedAtEpochMs: 800,
+    });
+    const key = syncOperationKey(VAULT_ID, OPERATION_ID);
+    const bytes = await encodeSyncPublication(unallocated);
+
+    await expect(
+      decodeSyncPublication("journal", key, bytes, VAULT_ID),
+    ).resolves.toEqual(unallocated);
+    await expect(
+      decodeSyncPublication(
+        "journal",
+        key,
+        json({
+          ...unallocated,
+          reservation: {
+            lane: unallocated.lane,
+            sequence: "00000000000000000001",
+            previousCommittedAtEpochMs: 0,
+          },
+        }),
+        VAULT_ID,
+      ),
+    ).rejects.toThrow();
+    await expect(
+      decodeSyncPublication(
+        "journal",
+        key,
+        json({
+          ...unallocated,
+          stepEvidence: { step: "reserve_lane" },
+        }),
+        VAULT_ID,
+      ),
+    ).rejects.toThrow();
+  });
+
+  it("accepts verified absence for zero-head initialization but rejects malformed lane observations", async () => {
+    const { decodeSyncPublication, encodeSyncPublication } = await import(
+      "@worker/infrastructure/sync/sync-publication.codec"
+    );
+    const key = syncOperationKey(VAULT_ID, OPERATION_ID);
+    const absent = await unallocatedJournal({ kind: "absent" });
+    await expect(
+      decodeSyncPublication(
+        "journal",
+        key,
+        await encodeSyncPublication(absent),
+        VAULT_ID,
+      ),
+    ).resolves.toMatchObject({ allocationState: "unallocated" });
+
+    const head = await unreservedLaneHead();
+    const observed = await unallocatedJournal({
+      kind: "observed",
+      head,
+      etag: '"zero-head-generation"',
+      uploadedAtEpochMs: 800,
+    });
+    for (const malformed of [
+      {
+        ...observed,
+        lane: (observed.lane + 1) % 64,
+      },
+      {
+        ...observed,
+        laneObservation: {
+          ...observed.laneObservation,
+          key: "sync/v1/unrelated",
+        },
+      },
+      {
+        ...observed,
+        laneObservation: {
+          ...observed.laneObservation,
+          precondition: {
+            ...observed.laneObservation.precondition,
+            uploadedAtEpochMs: 1_000,
+          },
+        },
+      },
+    ]) {
+      await expect(
+        decodeSyncPublication("journal", key, json(malformed), VAULT_ID),
+      ).rejects.toThrow();
+    }
+  });
+
+  it("rejects malformed exact lane bytes, retry floors, and reserved snapshots", async () => {
+    const { decodeSyncPublication } = await import(
+      "@worker/infrastructure/sync/sync-publication.codec"
+    );
+    const key = syncOperationKey(VAULT_ID, OPERATION_ID);
+    const head = await unreservedLaneHead();
+    const observed = await unallocatedJournal({
+      kind: "observed",
+      head,
+      etag: '"zero-head-generation"',
+      uploadedAtEpochMs: 800,
+    });
+    const { laneObservation } = observed;
+    if (laneObservation.precondition.kind !== "observed") {
+      throw new Error("Expected an exact observed lane fixture.");
+    }
+    const precondition = laneObservation.precondition;
+    const reservedHead = {
+      ...head,
+      pending: {
+        operationId: OPERATION_ID,
+        nextSequence: syncEventSequenceSchema.parse("00000000000000000001"),
+      },
+    };
+    const malformed = [
+      {
+        ...observed,
+        laneObservation: { ...laneObservation, retryAfterEpochMs: 1_899 },
+      },
+      {
+        ...observed,
+        laneObservation: {
+          ...laneObservation,
+          precondition: { ...precondition, bytes: "!" },
+        },
+      },
+      {
+        ...observed,
+        laneObservation: {
+          ...laneObservation,
+          precondition: {
+            ...precondition,
+            bytes: encodeBase64Url(new Uint8Array([0xff])),
+          },
+        },
+      },
+      {
+        ...observed,
+        laneObservation: {
+          ...laneObservation,
+          precondition: {
+            ...precondition,
+            bytes: encodeBase64Url(encoder.encode("{")),
+          },
+        },
+      },
+      {
+        ...observed,
+        laneObservation: {
+          ...laneObservation,
+          precondition: {
+            ...precondition,
+            bytes: encodeBase64Url(json(reservedHead)),
+          },
+        },
+      },
+    ];
+    for (const record of malformed) {
+      await expect(
+        decodeSyncPublication("journal", key, json(record), VAULT_ID),
+      ).rejects.toThrow();
+    }
+
+    const tombstone = await tombstoneJournal();
+    await expect(
+      decodeSyncPublication(
+        "journal",
+        key,
+        json({ ...tombstone, payload: { byteSize: 1 } }),
+        VAULT_ID,
+      ),
+    ).rejects.toThrow("Only live requests carry exact payload size evidence.");
+  });
+
   it("round-trips exact request bytes and produces idempotent canonical journal bytes", async () => {
     const { decodeSyncPublication, encodeSyncPublication } = await import(
       "@worker/infrastructure/sync/sync-publication.codec"
@@ -383,7 +633,13 @@ describe("private sync publication codec", () => {
       VAULT_ID,
     );
     expect(priorRead).toEqual(pending);
-    if (priorRead.kind !== "journal") throw new Error("Expected a journal.");
+    if (
+      priorRead.kind !== "journal" ||
+      priorRead.status !== "pending" ||
+      priorRead.allocationState !== "allocated"
+    ) {
+      throw new Error("Expected an allocated pending journal.");
+    }
     expect(priorRead.stepEvidence.retryAfterEpochMs).toBe(1_800);
 
     const lane = pending.reservation.lane;
@@ -412,6 +668,60 @@ describe("private sync publication codec", () => {
     await expect(
       decodeSyncPublication("journal", key, committedBytes, VAULT_ID),
     ).resolves.toMatchObject({ status: "committed" });
+
+    const reservedHead = await pendingLaneHead();
+    const invalidCommitPreconditions = [
+      {
+        ...committed,
+        stepEvidence: {
+          ...committed.stepEvidence,
+          precondition: {
+            ...committed.stepEvidence.precondition,
+            bytes: encodeBase64Url(
+              json({
+                ...reservedHead,
+                lane: (reservedHead.lane + 1) % 64,
+              }),
+            ),
+          },
+        },
+      },
+      {
+        ...committed,
+        stepEvidence: {
+          ...committed.stepEvidence,
+          precondition: {
+            ...committed.stepEvidence.precondition,
+            bytes: encodeBase64Url(
+              json({
+                ...reservedHead,
+                pending: {
+                  ...reservedHead.pending,
+                  operationId: OTHER_OPERATION_ID,
+                },
+              }),
+            ),
+          },
+        },
+      },
+      {
+        ...committed,
+        stepEvidence: {
+          ...committed.stepEvidence,
+          precondition: {
+            ...committed.stepEvidence.precondition,
+            bytes: encodeBase64Url(
+              encoder.encode(`${JSON.stringify(reservedHead)} `),
+            ),
+          },
+        },
+      },
+    ];
+    for (const malformed of invalidCommitPreconditions) {
+      await expect(
+        decodeSyncPublication("journal", key, json(malformed), VAULT_ID),
+      ).rejects.toThrow();
+    }
 
     await expect(
       decodeSyncPublication(
@@ -443,7 +753,13 @@ describe("private sync publication codec", () => {
       VAULT_ID,
     );
     expect(recovered.kind).toBe("journal");
-    if (recovered.kind !== "journal") throw new Error("Expected a journal.");
+    if (
+      recovered.kind !== "journal" ||
+      recovered.status !== "pending" ||
+      recovered.allocationState !== "allocated"
+    ) {
+      throw new Error("Expected an allocated pending journal.");
+    }
     expect(recovered.stepEvidence).toEqual(journal.stepEvidence);
     expect(recovered.stepEvidence.precondition).toMatchObject({
       kind: "observed",
@@ -470,7 +786,13 @@ describe("private sync publication codec", () => {
       VAULT_ID,
     );
     expect(known.kind).toBe("journal");
-    if (known.kind !== "journal") throw new Error("Expected a journal.");
+    if (
+      known.kind !== "journal" ||
+      known.status !== "pending" ||
+      known.allocationState !== "allocated"
+    ) {
+      throw new Error("Expected an allocated pending journal.");
+    }
     expect(known.stepEvidence.retryAfterEpochMs).toBe(1_800);
   });
 
@@ -953,23 +1275,16 @@ describe("private sync publication codec", () => {
     await expect(encodeSyncPublication(pendingLane)).resolves.toBeInstanceOf(
       Uint8Array,
     );
-    const initialLane = { ...pendingLane, pending: undefined };
-    await expect(
-      encodeSyncPublication({
-        ...live,
-        stepEvidence: {
-          step: "reserve_lane",
-          key: syncFeedLaneHeadKey(VAULT_ID, pendingLane.lane),
-          precondition: {
-            kind: "observed",
-            etag: "initial-lane-etag",
-            bytes: encodeBase64Url(json(initialLane)),
-            uploadedAtEpochMs: 800,
-          },
-          retryAfterEpochMs: null,
-        },
-      }),
-    ).resolves.toBeInstanceOf(Uint8Array);
+    const initialLane = await unreservedLaneHead();
+    const unallocated = await unallocatedJournal({
+      kind: "observed",
+      head: initialLane,
+      etag: "initial-lane-etag",
+      uploadedAtEpochMs: 800,
+    });
+    await expect(encodeSyncPublication(unallocated)).resolves.toBeInstanceOf(
+      Uint8Array,
+    );
     await expect(encodeSyncPublication(event)).resolves.toBeInstanceOf(
       Uint8Array,
     );

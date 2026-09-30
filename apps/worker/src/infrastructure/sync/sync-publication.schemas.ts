@@ -42,6 +42,7 @@ import type {
   SyncJournalRecord,
   SyncPublicationRecord,
   SyncPublicationStepEvidence,
+  SyncUnallocatedPendingJournalRecord,
 } from "@worker/infrastructure/sync/sync-publication.types";
 import { SYNC_R2_WRITE_COOLDOWN_MS } from "@worker/infrastructure/sync/sync-r2.constants";
 import { isCanonicalSyncR2Key } from "@worker/infrastructure/sync/sync-r2-key";
@@ -71,9 +72,6 @@ const laneSchema = z
 const MAX_PRECONDITION_BASE64URL_CHARACTERS = Math.ceil(
   (SYNC_PUBLICATION_LIMITS.preconditionBytes * 4) / 3,
 );
-/** First event sequence assigned to an empty M7.4 feed lane. */
-const FIRST_SYNC_EVENT_SEQUENCE: SyncEventSequenceDto =
-  syncEventSequenceSchema.parse("00000000000000000001");
 /** Exact common envelope for every private journal, lane-head, and feed event. */
 const envelopeShape = {
   schemaVersion: z.literal(1),
@@ -140,17 +138,24 @@ const mutationRequestSchema = z
       });
     }
   });
-/** Captured R2 absence or exact prior mutable generation for one pending write. */
+/** Exact observed R2 generation captured as an original mutable-write precondition. */
+const observedPreconditionSchema = z
+  .object({
+    kind: z.literal("observed"),
+    etag: z.string().min(1).max(SYNC_PUBLICATION_LIMITS.etagBytes),
+    bytes: z.string().min(1).max(MAX_PRECONDITION_BASE64URL_CHARACTERS),
+    uploadedAtEpochMs: epochMillisecondsSchema,
+  })
+  .strict();
+/** Proven absence or exact prior generation for a publication precondition. */
+const absenceOrObservedPreconditionSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("absent") }).strict(),
+  observedPreconditionSchema,
+]);
+/** Captured R2 condition for one mutable write or an exact journal-only phase. */
 const publicationPreconditionSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("absent") }).strict(),
-  z
-    .object({
-      kind: z.literal("observed"),
-      etag: z.string().min(1).max(SYNC_PUBLICATION_LIMITS.etagBytes),
-      bytes: z.string().min(1).max(MAX_PRECONDITION_BASE64URL_CHARACTERS),
-      uploadedAtEpochMs: epochMillisecondsSchema,
-    })
-    .strict(),
+  observedPreconditionSchema,
   z
     .object({
       kind: z.literal("journal_phase"),
@@ -158,9 +163,16 @@ const publicationPreconditionSchema = z.discriminatedUnion("kind", [
     })
     .strict(),
 ]);
+/** Exact lane-head snapshot retained while a request still lacks allocation authority. */
+const journalLaneObservationSchema = z
+  .object({
+    key: z.string().min(1),
+    precondition: absenceOrObservedPreconditionSchema,
+    retryAfterEpochMs: epochMillisecondsSchema.nullable(),
+  })
+  .strict();
 /** Closed step name selecting one deterministic key and its persisted exact precondition. */
 const publicationStepSchema = z.enum([
-  "reserve_lane",
   "immutable_create",
   "write_head",
   "create_event",
@@ -197,28 +209,42 @@ const positionSchema = z
     sequence: syncEventSequenceSchema,
   })
   .strict();
-/** Identity and immutable request shared by all operation journal states. */
-const journalBaseShape = {
+/** Immutable request identity shared by every private journal authority phase. */
+const journalIdentityShape = {
   ...envelopeShape,
   kind: z.literal("journal"),
   operationId: syncOperationIdSchema,
   request: mutationRequestSchema,
   payload: payloadEvidenceSchema.nullable(),
+};
+/** Reservation and in-flight evidence present only after the lane marker is won. */
+const allocatedJournalShape = {
+  ...journalIdentityShape,
+  allocationState: z.literal("allocated"),
   reservation: laneReservationSchema,
   stepEvidence: publicationStepEvidenceSchema,
 };
-/** Strict pending, committed, or aborted journal with request, sequence and time linkage checks. */
+/** Strict pending, committed, aborted, or unallocated journal with closed authority phases. */
 export const syncJournalRecordSchema = z
-  .discriminatedUnion("status", [
+  .union([
     z
       .object({
-        ...journalBaseShape,
+        ...journalIdentityShape,
+        status: z.literal("pending"),
+        allocationState: z.literal("unallocated"),
+        lane: laneSchema,
+        laneObservation: journalLaneObservationSchema,
+      })
+      .strict(),
+    z
+      .object({
+        ...allocatedJournalShape,
         status: z.literal("pending"),
       })
       .strict(),
     z
       .object({
-        ...journalBaseShape,
+        ...allocatedJournalShape,
         status: z.literal("committed"),
         position: positionSchema,
         revision: syncRevisionSchema,
@@ -227,7 +253,7 @@ export const syncJournalRecordSchema = z
       .strict(),
     z
       .object({
-        ...journalBaseShape,
+        ...allocatedJournalShape,
         status: z.literal("aborted"),
         position: positionSchema,
         reason: z.literal("stale_revision" satisfies SyncAbortedChangeReason),
@@ -252,6 +278,12 @@ export const syncJournalRecordSchema = z
         code: "custom",
         message: "Only live requests carry exact payload size evidence.",
       });
+    }
+    if (
+      journal.status === "pending" &&
+      journal.allocationState === "unallocated"
+    ) {
+      return;
     }
     if (
       journal.status !== "pending" &&
@@ -305,6 +337,11 @@ export const syncJournalRecordSchema = z
       });
     }
   });
+/** Journal variants that carry immutable allocation and publication-step authority. */
+type SyncAllocatedPublicationJournal = Exclude<
+  SyncJournalRecord,
+  SyncUnallocatedPendingJournalRecord
+>;
 /** Exact 20-digit sequence increment, refusing to wrap the protocol maximum.
  * @param current - Current fixed-width committed lane sequence.
  * @returns Its exact non-zero successor, or undefined at protocol exhaustion.
@@ -431,11 +468,6 @@ export async function assertSyncPublicationRecord(
 async function assertJournalRecord(journal: SyncJournalRecord): Promise<void> {
   const request = journal.request;
   const lane = await syncFeedLaneForPath(request.path);
-  if (journal.reservation.lane !== lane) {
-    throw new TypeError(
-      "Journal lane does not match its normalized request path.",
-    );
-  }
   if (request.kind === "create" || request.kind === "update") {
     const bytes = new TextEncoder().encode(request.content);
     if (
@@ -452,14 +484,90 @@ async function assertJournalRecord(journal: SyncJournalRecord): Promise<void> {
       "Tombstone journals cannot contain a mutation payload.",
     );
   }
+  if (
+    journal.status === "pending" &&
+    journal.allocationState === "unallocated"
+  ) {
+    if (journal.lane !== lane) {
+      throw new TypeError(
+        "Unallocated journal lane does not match its normalized request path.",
+      );
+    }
+    assertUnallocatedLaneObservation(journal);
+    return;
+  }
+  if (journal.reservation.lane !== lane) {
+    throw new TypeError(
+      "Journal lane does not match its normalized request path.",
+    );
+  }
   assertStepEvidence(journal);
 }
 
+/** Validates the exact unreserved lane generation or absence retained before allocation.
+ * @param journal - Unallocated request whose lane observation is its authority boundary.
+ * @returns No value; throws when the key, canonical bytes, upload evidence, or retry floor disagrees.
+ */
+function assertUnallocatedLaneObservation(
+  journal: SyncUnallocatedPendingJournalRecord,
+): void {
+  const observation = journal.laneObservation;
+  if (observation.key !== syncFeedLaneHeadKey(journal.vaultId, journal.lane)) {
+    throw new TypeError(
+      "Unallocated lane observation has a non-canonical key.",
+    );
+  }
+  const precondition = observation.precondition;
+  if (precondition.kind === "absent") return;
+
+  assertBoundedEtag(precondition.etag);
+  const cooldownFloor =
+    precondition.uploadedAtEpochMs + SYNC_R2_WRITE_COOLDOWN_MS;
+  if (
+    observation.retryAfterEpochMs !== null &&
+    (!Number.isSafeInteger(cooldownFloor) ||
+      observation.retryAfterEpochMs < cooldownFloor)
+  ) {
+    throw new TypeError(
+      "Lane retry floor cannot precede the observed R2 cooldown.",
+    );
+  }
+  const bytes = decodeBase64Url(precondition.bytes);
+  if (
+    bytes === undefined ||
+    encodeBase64Url(bytes) !== precondition.bytes ||
+    bytes.byteLength > SYNC_PUBLICATION_LIMITS.preconditionBytes
+  ) {
+    throw new TypeError("Lane observation is not exact bounded byte evidence.");
+  }
+  const text = decodeUtf8(bytes);
+  if (text === undefined) {
+    throw new TypeError("Lane observation is not valid UTF-8.");
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw new TypeError("Lane observation is not valid JSON.");
+  }
+  const head = syncLaneHeadRecordSchema.parse(parsed);
+  if (
+    head.vaultId !== journal.vaultId ||
+    head.lane !== journal.lane ||
+    head.pending !== undefined ||
+    JSON.stringify(head) !== text
+  ) {
+    throw new TypeError(
+      "Unallocated lane observation must be its exact canonical unreserved head.",
+    );
+  }
+}
+
 /** Checks a journal step's canonical target and its immutable original precondition.
- * @param journal - Pending or settled journal carrying the exact current step evidence.
+ * @param journal - Allocated journal carrying the exact current step evidence.
  * @returns No value; throws when the key, step, or precondition is inconsistent.
  */
-function assertStepEvidence(journal: SyncJournalRecord): void {
+function assertStepEvidence(journal: SyncAllocatedPublicationJournal): void {
   const evidence = journal.stepEvidence;
   const key = expectedStepKey(journal, evidence.step, evidence.key);
   if (key === undefined || key !== evidence.key) {
@@ -511,21 +619,8 @@ function assertStepEvidence(journal: SyncJournalRecord): void {
     assertObservedPrecondition(journal, evidence.step, evidence.key, bytes);
     return;
   }
-  if (
-    evidence.step === "reserve_lane" ||
-    evidence.step === "commit_lane" ||
-    evidence.step === "write_head"
-  ) {
+  if (evidence.step === "commit_lane" || evidence.step === "write_head") {
     assertAbsentPreconditionAllowed(journal, evidence.step);
-    if (
-      evidence.step === "reserve_lane" &&
-      (journal.reservation.sequence !== FIRST_SYNC_EVENT_SEQUENCE ||
-        journal.reservation.previousCommittedAtEpochMs !== 0)
-    ) {
-      throw new TypeError(
-        "An absent lane starts at sequence one and commit time zero.",
-      );
-    }
     return;
   }
   if (precondition.kind !== "absent") {
@@ -543,7 +638,7 @@ function assertStepEvidence(journal: SyncJournalRecord): void {
  * @returns No value; throws when the observation cannot prove its exact precondition.
  */
 function assertObservedPrecondition(
-  journal: SyncJournalRecord,
+  journal: SyncAllocatedPublicationJournal,
   step: SyncPublicationStepEvidence["step"],
   key: string,
   bytes: Uint8Array,
@@ -557,7 +652,7 @@ function assertObservedPrecondition(
   } catch {
     throw new TypeError("Observed precondition is not valid JSON evidence.");
   }
-  if (step === "reserve_lane" || step === "commit_lane") {
+  if (step === "commit_lane") {
     const prior = syncLaneHeadRecordSchema.parse(parsed);
     if (
       prior.vaultId !== journal.vaultId ||
@@ -571,16 +666,10 @@ function assertObservedPrecondition(
         "Lane-head precondition disagrees with its reserved successor.",
       );
     }
-    if (step === "reserve_lane" && prior.pending !== undefined) {
-      throw new TypeError(
-        "A new lane reservation cannot replace an existing pending operation.",
-      );
-    }
     if (
-      step === "commit_lane" &&
-      (prior.pending === undefined ||
-        prior.pending.operationId !== journal.operationId ||
-        prior.pending.nextSequence !== journal.reservation.sequence)
+      prior.pending === undefined ||
+      prior.pending.operationId !== journal.operationId ||
+      prior.pending.nextSequence !== journal.reservation.sequence
     ) {
       throw new TypeError(
         "Lane commit precondition is not this operation's reservation.",
@@ -615,13 +704,13 @@ function assertObservedPrecondition(
   );
 }
 
-/** Restricts an absent observation to create-only or first lane-reservation steps.
- * @param journal - Immutable request whose mutation kind constrains create versus CAS.
+/** Restricts absent observations to create-only objects and never to reserved lane heads.
+ * @param journal - Allocated request whose mutation kind constrains create versus CAS.
  * @param step - Publication step whose target was exactly observed absent.
  * @returns No value; throws when absence cannot authorize this step.
  */
 function assertAbsentPreconditionAllowed(
-  journal: SyncJournalRecord,
+  journal: SyncAllocatedPublicationJournal,
   step: SyncPublicationStepEvidence["step"],
 ): void {
   if (step === "write_head" && journal.request.kind !== "create") {
@@ -630,7 +719,6 @@ function assertAbsentPreconditionAllowed(
     );
   }
   if (
-    step !== "reserve_lane" &&
     step !== "write_head" &&
     step !== "immutable_create" &&
     step !== "create_event"
@@ -648,14 +736,13 @@ function assertAbsentPreconditionAllowed(
  * @returns Exact protocol-v1 target key, or undefined for any mismatch.
  */
 function expectedStepKey(
-  journal: SyncJournalRecord,
+  journal: SyncAllocatedPublicationJournal,
   step: SyncPublicationStepEvidence["step"],
   candidate: string,
 ): string | undefined {
   const { vaultId, operationId, request, reservation } = journal;
   let expected: string | undefined;
   switch (step) {
-    case "reserve_lane":
     case "commit_lane":
       expected = syncFeedLaneHeadKey(vaultId, reservation.lane);
       break;

@@ -1,15 +1,23 @@
 import type { SyncMutationRequest } from "@core/sync/sync-store.types";
+import { decodeBase64Url } from "@obsidian-ai-bridge/core";
 import {
   syncFeedEventKey,
   syncFeedLaneHeadKey,
   syncOperationKey,
   syncVaultMarkerKey,
 } from "@protocol/sync.codec";
-import { SYNC_SEQUENCE_WIDTH } from "@protocol/sync.constants";
-import { syncSequenceSchema } from "@protocol/sync.schemas";
+import {
+  SYNC_MAX_SEQUENCE,
+  SYNC_SEQUENCE_WIDTH,
+} from "@protocol/sync.constants";
+import {
+  syncEventSequenceSchema,
+  syncSequenceSchema,
+} from "@protocol/sync.schemas";
 import type {
   SyncEventSequenceDto,
   SyncOperationIdDto,
+  SyncSequenceDto,
   SyncVaultIdDto,
 } from "@protocol/sync.types";
 import {
@@ -24,6 +32,7 @@ import type {
   SyncPendingJournalRecord,
   SyncPublicationKind,
   SyncPublicationRecord,
+  SyncUnallocatedPendingJournalRecord,
 } from "@worker/infrastructure/sync/sync-publication.types";
 import type {
   SyncR2Key,
@@ -59,18 +68,18 @@ export interface SyncR2Publication {
     vaultId: SyncVaultIdDto,
     operationId: SyncOperationIdDto,
   ): Promise<SyncRecordRead<SyncJournalRecord>>;
-  /** Creates only an initial pending journal using exact-byte create-only semantics.
-   * @param record Immutable pending request journal bound to its operation key.
+  /** Creates only an unallocated request journal after verifying its saved lane observation.
+   * @param record Immutable request with no sequence or publication-step authority.
    * @param retryContext Persisted cooldown floor from an earlier uncertain or throttled attempt.
    * @returns Create certainty after the one-key adapter's exact read-back.
    */
   createJournal(
-    record: SyncPendingJournalRecord,
+    record: SyncUnallocatedPendingJournalRecord,
     retryContext?: SyncR2RetryContext,
   ): Promise<SyncR2WriteResult>;
-  /** Replaces one exact journal observation, refreshing a typed pending phase only for a terminal target.
+  /** Advances one journal through exact allocation proof, loser re-observation, or terminal settlement.
    * @param observed Exact decoded journal and R2 generation supplied by the caller.
-   * @param record Strict replacement state for the same vault and operation; phase commits must settle it.
+   * @param record Strict monotonic replacement for the same operation; allocation requires its exact lane marker.
    * @param retryContext Persisted cooldown floor from an earlier uncertain or throttled attempt.
    * @returns Exact-CAS certainty; divergent or unavailable evidence is never treated as absence.
    */
@@ -259,7 +268,9 @@ export function syncR2Publication(
   ): Promise<SyncR2WriteResult> {
     if (
       key === undefined ||
-      (record.kind === "journal" && record.status !== "pending")
+      (record.kind === "journal" &&
+        (record.status !== "pending" ||
+          record.allocationState !== "unallocated"))
     ) {
       return { kind: "refused" };
     }
@@ -294,13 +305,16 @@ export function syncR2Publication(
    * @param refreshJournalPhase Whether this exact source phase and terminal target qualify for the journal-only refresh.
    * @returns Exact CAS result, an idempotent exact target confirmation, or conservative uncertainty/refusal.
    */
-  async function replaceRecord<T extends SyncPublicationRecord>(
+  async function replaceRecord<
+    PreviousRecord extends SyncPublicationRecord,
+    NextRecord extends SyncPublicationRecord,
+  >(
     kind: SyncPublicationKind,
-    observed: SyncRecordObservation<T>,
-    record: T,
+    observed: SyncRecordObservation<PreviousRecord>,
+    record: NextRecord,
     key: SyncR2Key | undefined,
     retryContext: SyncR2RetryContext | undefined,
-    refreshJournalPhase?: () => Promise<SyncRecordRead<T>>,
+    refreshJournalPhase?: () => Promise<SyncRecordRead<SyncPublicationRecord>>,
   ): Promise<SyncR2WriteResult> {
     if (
       key === undefined ||
@@ -366,27 +380,404 @@ export function syncR2Publication(
     }
   }
 
+  /** One validation result that distinguishes safe evidence from refusal and uncertainty. */
+  type SyncLaneValidation =
+    | { readonly kind: "valid" }
+    | { readonly kind: "refused" }
+    | { readonly kind: "effect_unknown" };
+
+  /** Reads the exact lane-head key through the marker-gated strict publication decoder.
+   * @param vaultId Validated protocol-v1 namespace.
+   * @param lane Path-derived lane whose exact generation is being inspected.
+   * @returns Absent, unavailable, or decoded head with original R2 evidence.
+   */
+  async function readLaneHeadRecord(
+    vaultId: SyncVaultIdDto,
+    lane: SyncLaneHeadRecord["lane"],
+  ): Promise<SyncRecordRead<SyncLaneHeadRecord>> {
+    const key = buildKey(() => syncFeedLaneHeadKey(vaultId, lane), vaultId);
+    return readRecord("laneHead", key, vaultId, (record) =>
+      record.kind === "laneHead" &&
+      record.vaultId === vaultId &&
+      record.lane === lane
+        ? record
+        : undefined,
+    );
+  }
+
+  /** Verifies that an unallocated record's exact source generation is still current.
+   * @param journal Unallocated request and persisted exact lane condition.
+   * @returns Valid only for identical absence or ETag/bytes/uploaded metadata.
+   */
+  async function validateLaneObservation(
+    journal: SyncUnallocatedPendingJournalRecord,
+  ): Promise<SyncLaneValidation> {
+    const current = await readLaneHeadRecord(journal.vaultId, journal.lane);
+    if (current.kind === "unavailable") return { kind: "effect_unknown" };
+    if (journal.laneObservation.precondition.kind === "absent") {
+      return current.kind === "absent"
+        ? { kind: "valid" }
+        : { kind: "refused" };
+    }
+    if (
+      current.kind !== "observed" ||
+      !matchesLaneObservation(
+        journal.laneObservation.precondition,
+        current.observation,
+      )
+    ) {
+      return { kind: "refused" };
+    }
+    return { kind: "valid" };
+  }
+
+  /** Checks a monotonic unallocated journal update or its exact own-marker allocation.
+   * @param previous Persisted unallocated journal generation being replaced.
+   * @param next Candidate unallocated observation or allocated journal state.
+   * @returns Valid only when current lane evidence authorizes the exact transition.
+   */
+  async function validateUnallocatedTransition(
+    previous: SyncUnallocatedPendingJournalRecord,
+    next: SyncPendingJournalRecord,
+  ): Promise<SyncLaneValidation> {
+    if (next.allocationState === "allocated") {
+      return validateOwnLaneReservation(previous, next);
+    }
+    if (next.lane !== previous.lane) return { kind: "refused" };
+    if (
+      sameLanePrecondition(
+        previous.laneObservation.precondition,
+        next.laneObservation.precondition,
+      )
+    ) {
+      if (
+        !isMonotonicRetryFloor(
+          previous.laneObservation.retryAfterEpochMs,
+          next.laneObservation.retryAfterEpochMs,
+        )
+      ) {
+        return { kind: "refused" };
+      }
+      return validateLaneObservation(previous);
+    }
+    if (next.laneObservation.precondition.kind !== "observed") {
+      return { kind: "refused" };
+    }
+    const current = await readLaneHeadRecord(previous.vaultId, previous.lane);
+    if (current.kind === "unavailable") return { kind: "effect_unknown" };
+    if (
+      current.kind !== "observed" ||
+      current.observation.value.pending !== undefined ||
+      !matchesLaneObservation(
+        next.laneObservation.precondition,
+        current.observation,
+      )
+    ) {
+      return { kind: "refused" };
+    }
+    const nextHead = current.observation.value;
+    if (previous.laneObservation.precondition.kind === "absent") {
+      return nextHead.committedSequence === INITIAL_LANE_SEQUENCE &&
+        nextHead.committedAtEpochMs === 0
+        ? { kind: "valid" }
+        : { kind: "refused" };
+    }
+    const priorHead = await decodePriorLaneHead(previous);
+    if (
+      priorHead === undefined ||
+      BigInt(nextHead.committedSequence) <=
+        BigInt(priorHead.committedSequence) ||
+      nextHead.committedAtEpochMs <= priorHead.committedAtEpochMs
+    ) {
+      return { kind: "refused" };
+    }
+    return { kind: "valid" };
+  }
+
+  /** Requires an unreserved prior observation and exact read-back of its own lane marker.
+   * @param journal Original unallocated journal with the sequence predecessor snapshot.
+   * @param allocated Candidate whose reservation must be the exact successor of that snapshot.
+   * @returns Valid only for the exact operation/lane/sequence/clock pending marker.
+   */
+  async function validateOwnLaneReservation(
+    journal: SyncUnallocatedPendingJournalRecord,
+    allocated: Extract<
+      SyncPendingJournalRecord,
+      { allocationState: "allocated" }
+    >,
+  ): Promise<SyncLaneValidation> {
+    if (journal.laneObservation.precondition.kind !== "observed") {
+      return { kind: "refused" };
+    }
+    const priorHead = await decodePriorLaneHead(journal);
+    if (priorHead === undefined) return { kind: "refused" };
+    const nextSequence = nextEventSequence(priorHead.committedSequence);
+    if (
+      nextSequence === undefined ||
+      allocated.reservation.lane !== journal.lane ||
+      allocated.reservation.sequence !== nextSequence ||
+      allocated.reservation.previousCommittedAtEpochMs !==
+        priorHead.committedAtEpochMs
+    ) {
+      return { kind: "refused" };
+    }
+    const current = await readLaneHeadRecord(journal.vaultId, journal.lane);
+    if (current.kind === "unavailable") return { kind: "effect_unknown" };
+    if (
+      current.kind !== "observed" ||
+      current.observation.value.committedSequence !==
+        priorHead.committedSequence ||
+      current.observation.value.committedAtEpochMs !==
+        priorHead.committedAtEpochMs ||
+      current.observation.value.pending?.operationId !== journal.operationId ||
+      current.observation.value.pending.nextSequence !== nextSequence
+    ) {
+      return { kind: "refused" };
+    }
+    return { kind: "valid" };
+  }
+
+  /** Decodes only the exact persisted unreserved lane precondition.
+   * @param journal Unallocated journal carrying canonical base64url bytes and ETag.
+   * @returns Strict lane head or undefined for absence or any invalid evidence.
+   */
+  async function decodePriorLaneHead(
+    journal: SyncUnallocatedPendingJournalRecord,
+  ): Promise<SyncLaneHeadRecord | undefined> {
+    const precondition = journal.laneObservation.precondition;
+    if (precondition.kind !== "observed") return undefined;
+    const bytes = decodeBase64Url(precondition.bytes);
+    if (bytes === undefined) return undefined;
+    try {
+      const decoded = await decodeSyncPublication(
+        "laneHead",
+        journal.laneObservation.key,
+        bytes,
+        journal.vaultId,
+      );
+      return decoded.kind === "laneHead" ? decoded : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** Matches a saved lane observation against its current complete R2 generation.
+   * @param precondition Persisted canonical prior bytes, ETag, and server upload time.
+   * @param current Strict lane-head observation freshly read from R2.
+   * @returns Whether every original generation field is byte-for-byte unchanged.
+   */
+  function matchesLaneObservation(
+    precondition: Extract<
+      SyncUnallocatedPendingJournalRecord["laneObservation"]["precondition"],
+      { kind: "observed" }
+    >,
+    current: SyncRecordObservation<SyncLaneHeadRecord>,
+  ): boolean {
+    const bytes = decodeBase64Url(precondition.bytes);
+    return (
+      bytes !== undefined &&
+      current.observed.etag === precondition.etag &&
+      current.observed.uploaded.getTime() === precondition.uploadedAtEpochMs &&
+      equalBytes(current.observed.bytes, bytes)
+    );
+  }
+
+  /** Compares retained lane conditions without inferring a refreshed observation.
+   * @param previous Exact lane condition already durable in the unallocated journal.
+   * @param next Candidate lane condition whose same-generation change may only be a retry floor.
+   * @returns Whether absence remains absence or every observed generation field is identical.
+   */
+  function sameLanePrecondition(
+    previous: SyncUnallocatedPendingJournalRecord["laneObservation"]["precondition"],
+    next: SyncUnallocatedPendingJournalRecord["laneObservation"]["precondition"],
+  ): boolean {
+    if (previous.kind !== next.kind) return false;
+    if (previous.kind === "absent" && next.kind === "absent") return true;
+    if (previous.kind !== "observed" || next.kind !== "observed") {
+      return false;
+    }
+    return (
+      previous.etag === next.etag &&
+      previous.bytes === next.bytes &&
+      previous.uploadedAtEpochMs === next.uploadedAtEpochMs
+    );
+  }
+
+  /** Accepts only a durable nondecreasing lane retry floor.
+   * @param previous Floor already retained for the lane-head key, if any.
+   * @param next Candidate floor that must not move backward or clear a known value.
+   * @returns Whether the candidate advances or preserves the known absolute retry time.
+   */
+  function isMonotonicRetryFloor(
+    previous: number | null,
+    next: number | null,
+  ): boolean {
+    return next !== null && (previous === null || next >= previous);
+  }
+
+  /** Resolves unallocated journal CAS outcomes without refreshing their original generation.
+   * @param observed Caller-observed unallocated journal with exact original ETag.
+   * @param record Monotonic unallocated refresh or exact-marker allocated target.
+   * @param key Canonical operation journal key.
+   * @param retryContext Persisted cooldown floor for the journal key.
+   * @returns Exact target confirmation, original-ETag CAS result, or conservative refusal.
+   */
+  async function replaceUnallocatedJournal(
+    observed: SyncRecordObservation<SyncUnallocatedPendingJournalRecord>,
+    record: SyncPendingJournalRecord,
+    key: SyncR2Key | undefined,
+    retryContext?: SyncR2RetryContext,
+  ): Promise<SyncR2WriteResult> {
+    if (key === undefined) return { kind: "refused" };
+    let priorBytes: Uint8Array;
+    let replacementBytes: Uint8Array;
+    try {
+      priorBytes = await encodeSyncPublication(observed.value);
+      replacementBytes = await encodeSyncPublication(record);
+    } catch {
+      return { kind: "refused" };
+    }
+    if (!equalBytes(priorBytes, observed.observed.bytes)) {
+      return { kind: "refused" };
+    }
+    const current = await readRecord("journal", key, record.vaultId, (value) =>
+      value.kind === "journal" ? value : undefined,
+    );
+    if (current.kind === "unavailable") return { kind: "effect_unknown" };
+    if (current.kind === "absent") return { kind: "refused" };
+    if (equalBytes(current.observation.observed.bytes, replacementBytes)) {
+      return { kind: "confirmed" };
+    }
+    if (
+      !equalBytes(current.observation.observed.bytes, priorBytes) ||
+      !sameR2Generation(current.observation.observed, observed.observed)
+    ) {
+      return { kind: "refused" };
+    }
+    const authority = await validateUnallocatedTransition(
+      observed.value,
+      record,
+    );
+    if (authority.kind !== "valid") return authority;
+    return replaceRecord("journal", observed, record, key, retryContext);
+  }
+
+  /** Advances allocated journals while preserving reservation identity and terminal CAS rules.
+   * @param observed Exact pending allocated journal generation supplied by the caller.
+   * @param record Allocated monotonic progress or a valid terminal journal.
+   * @param key Canonical operation journal key.
+   * @param retryContext Persisted cooldown floor for the journal key.
+   * @returns Exact-CAS result without refreshing any non-terminal allocation state.
+   */
+  async function replaceAllocatedJournal(
+    observed: SyncRecordObservation<
+      Exclude<SyncJournalRecord, SyncUnallocatedPendingJournalRecord>
+    >,
+    record: Exclude<SyncJournalRecord, SyncUnallocatedPendingJournalRecord>,
+    key: SyncR2Key | undefined,
+    retryContext?: SyncR2RetryContext,
+  ): Promise<SyncR2WriteResult> {
+    if (key === undefined) return { kind: "refused" };
+    const pendingPhase =
+      observed.value.status === "pending" &&
+      observed.value.stepEvidence.step === "commit_journal" &&
+      observed.value.stepEvidence.precondition.kind === "journal_phase" &&
+      observed.value.stepEvidence.precondition.status === "pending";
+    if (pendingPhase && record.status === "pending") {
+      return { kind: "refused" };
+    }
+    const refreshJournalPhase = pendingPhase
+      ? () =>
+          readRecord("journal", key, record.vaultId, (candidate) =>
+            candidate.kind === "journal" ? candidate : undefined,
+          )
+      : undefined;
+    return replaceRecord(
+      "journal",
+      observed,
+      record,
+      key,
+      retryContext,
+      refreshJournalPhase,
+    );
+  }
+
+  /** Reads the exact operation journal only after the matching vault marker validates.
+   * @param vaultId Validated immutable sync-v1 namespace.
+   * @param operationId Canonical operation UUID identifying one journal key.
+   * @returns Typed absence, unavailability, or decoded journal with exact R2 observation.
+   */
+  async function readJournalRecord(
+    vaultId: SyncVaultIdDto,
+    operationId: SyncOperationIdDto,
+  ): Promise<SyncRecordRead<SyncJournalRecord>> {
+    const key = buildKey(() => syncOperationKey(vaultId, operationId), vaultId);
+    return readRecord("journal", key, vaultId, (record) =>
+      record.kind === "journal" &&
+      record.vaultId === vaultId &&
+      record.operationId === operationId
+        ? record
+        : undefined,
+    );
+  }
+
+  /** Creates an unallocated request after exact key, namespace, and lane snapshot validation.
+   * @param record Initial journal containing no reservation or publication-step evidence.
+   * @param retryContext Persisted cooldown floor returned by an earlier create attempt.
+   * @returns Confirmed exact replay, create result, or conservative refusal/uncertainty.
+   */
+  async function createUnallocatedJournal(
+    record: SyncUnallocatedPendingJournalRecord,
+    retryContext?: SyncR2RetryContext,
+  ): Promise<SyncR2WriteResult> {
+    const marker = await validateMarker(record.vaultId);
+    if (marker.kind === "refused") return { kind: "refused" };
+    if (marker.kind === "unavailable") return { kind: "effect_unknown" };
+    let bytes: Uint8Array;
+    try {
+      bytes = await encodeSyncPublication(record);
+    } catch {
+      return { kind: "refused" };
+    }
+    const existing = await readJournalRecord(
+      record.vaultId,
+      record.operationId,
+    );
+    if (existing.kind === "unavailable") return { kind: "effect_unknown" };
+    if (existing.kind === "observed") {
+      return equalBytes(existing.observation.observed.bytes, bytes)
+        ? { kind: "confirmed" }
+        : { kind: "refused" };
+    }
+    const lane = await validateLaneObservation(record);
+    if (lane.kind !== "valid") return lane;
+    const key = buildKey(
+      () => syncOperationKey(record.vaultId, record.operationId),
+      record.vaultId,
+    );
+    return createRecord("journal", record, key, retryContext);
+  }
+
+  /** Compares complete exact-R2 generation evidence without refreshing ETags.
+   * @param current Fresh or caller-carried private R2 observation.
+   * @param original Persisted exact observation that the CAS was authorized against.
+   * @returns Whether key, ETag, upload time, and complete body bytes are identical.
+   */
+  function sameR2Generation(
+    current: SyncRecordObservation<SyncJournalRecord>["observed"],
+    original: SyncRecordObservation<SyncJournalRecord>["observed"],
+  ): boolean {
+    return (
+      current.key === original.key &&
+      current.etag === original.etag &&
+      current.uploaded.getTime() === original.uploaded.getTime() &&
+      equalBytes(current.bytes, original.bytes)
+    );
+  }
+
   return {
-    readJournal(vaultId, operationId) {
-      const key = buildKey(
-        () => syncOperationKey(vaultId, operationId),
-        vaultId,
-      );
-      return readRecord("journal", key, vaultId, (record) =>
-        record.kind === "journal" &&
-        record.vaultId === vaultId &&
-        record.operationId === operationId
-          ? record
-          : undefined,
-      );
-    },
-    createJournal(record, retryContext) {
-      const key = buildKey(
-        () => syncOperationKey(record.vaultId, record.operationId),
-        record.vaultId,
-      );
-      return createRecord("journal", record, key, retryContext);
-    },
+    readJournal: readJournalRecord,
+    createJournal: createUnallocatedJournal,
     replaceJournal(observed, record, retryContext) {
       if (
         observed.value.status !== "pending" ||
@@ -398,39 +789,28 @@ export function syncR2Publication(
         () => syncOperationKey(record.vaultId, record.operationId),
         record.vaultId,
       );
-      const pendingPhase =
-        observed.value.status === "pending" &&
-        observed.value.stepEvidence.step === "commit_journal" &&
-        observed.value.stepEvidence.precondition.kind === "journal_phase" &&
-        observed.value.stepEvidence.precondition.status === "pending";
-      if (pendingPhase && record.status === "pending") {
+      if (observed.value.allocationState === "unallocated") {
+        if (record.status !== "pending") {
+          return Promise.resolve({ kind: "refused" });
+        }
+        return replaceUnallocatedJournal(
+          { value: observed.value, observed: observed.observed },
+          record,
+          key,
+          retryContext,
+        );
+      }
+      if (record.allocationState !== "allocated") {
         return Promise.resolve({ kind: "refused" });
       }
-      const refreshJournalPhase = pendingPhase
-        ? () =>
-            readRecord("journal", key, record.vaultId, (candidate) =>
-              candidate.kind === "journal" ? candidate : undefined,
-            )
-        : undefined;
-      return replaceRecord(
-        "journal",
-        observed,
+      return replaceAllocatedJournal(
+        { value: observed.value, observed: observed.observed },
         record,
         key,
         retryContext,
-        refreshJournalPhase,
       );
     },
-    readLaneHead(vaultId, lane) {
-      const key = buildKey(() => syncFeedLaneHeadKey(vaultId, lane), vaultId);
-      return readRecord("laneHead", key, vaultId, (record) =>
-        record.kind === "laneHead" &&
-        record.vaultId === vaultId &&
-        record.lane === lane
-          ? record
-          : undefined,
-      );
-    },
+    readLaneHead: readLaneHeadRecord,
     createLaneHead(record, retryContext) {
       const key = buildKey(
         () => syncFeedLaneHeadKey(record.vaultId, record.lane),
@@ -446,6 +826,9 @@ export function syncR2Publication(
       return createRecord("laneHead", record, key, retryContext);
     },
     replaceLaneHead(observed, record, retryContext) {
+      if (!isAllowedLaneHeadTransition(observed.value, record)) {
+        return Promise.resolve({ kind: "refused" });
+      }
       const key = buildKey(
         () => syncFeedLaneHeadKey(record.vaultId, record.lane),
         record.vaultId,
@@ -477,20 +860,77 @@ export function syncR2Publication(
   };
 }
 
-/** Confirms a journal transition preserves its immutable operation and lane allocation.
+/** Allows only exact next-sequence reservation or release of the currently owned marker.
+ * @param previous Exact caller-observed lane state.
+ * @param next Candidate lane state encoded for the same canonical lane key.
+ * @returns Whether the transition preserves one owner and strictly monotonic high water.
+ */
+function isAllowedLaneHeadTransition(
+  previous: SyncLaneHeadRecord,
+  next: SyncLaneHeadRecord,
+): boolean {
+  if (previous.vaultId !== next.vaultId || previous.lane !== next.lane) {
+    return false;
+  }
+  if (previous.pending === undefined) {
+    return (
+      next.pending !== undefined &&
+      next.committedSequence === previous.committedSequence &&
+      next.committedAtEpochMs === previous.committedAtEpochMs &&
+      next.pending.nextSequence ===
+        nextEventSequence(previous.committedSequence)
+    );
+  }
+  return (
+    next.pending === undefined &&
+    next.committedSequence === previous.pending.nextSequence &&
+    next.committedAtEpochMs > previous.committedAtEpochMs
+  );
+}
+
+/** Computes one fixed-width successor without wrapping the protocol's maximum sequence.
+ * @param current Current committed lane sequence retained by an exact prior observation.
+ * @returns Its non-zero successor, or undefined when the lane is exhausted.
+ */
+function nextEventSequence(
+  current: SyncSequenceDto,
+): SyncEventSequenceDto | undefined {
+  if (current === SYNC_MAX_SEQUENCE) return undefined;
+  const next = (BigInt(current) + 1n)
+    .toString()
+    .padStart(SYNC_SEQUENCE_WIDTH, "0");
+  const parsed = syncEventSequenceSchema.safeParse(next);
+  return parsed.success ? parsed.data : undefined;
+}
+
+/** Preserves request identity while allowing only unallocated-to-allocated journal authority.
  * @param previous Exact pending journal state being replaced.
  * @param next Candidate journal state for that same durable operation.
- * @returns Whether request bytes, payload evidence, reservation and operation identity are unchanged.
+ * @returns Whether immutable request and lane identity remain stable without allocation rewind.
  */
 function sameJournalIdentity(
-  previous: SyncJournalRecord,
+  previous: SyncPendingJournalRecord,
   next: SyncJournalRecord,
 ): boolean {
+  if (
+    previous.vaultId !== next.vaultId ||
+    previous.operationId !== next.operationId ||
+    !sameMutationRequest(previous.request, next.request) ||
+    previous.payload?.byteSize !== next.payload?.byteSize
+  ) {
+    return false;
+  }
+  if (previous.allocationState === "unallocated") {
+    if (next.status === "pending" && next.allocationState === "unallocated") {
+      return previous.lane === next.lane;
+    }
+    return (
+      next.allocationState === "allocated" &&
+      previous.lane === next.reservation.lane
+    );
+  }
   return (
-    previous.vaultId === next.vaultId &&
-    previous.operationId === next.operationId &&
-    sameMutationRequest(previous.request, next.request) &&
-    previous.payload?.byteSize === next.payload?.byteSize &&
+    next.allocationState === "allocated" &&
     previous.reservation.lane === next.reservation.lane &&
     previous.reservation.sequence === next.reservation.sequence &&
     previous.reservation.previousCommittedAtEpochMs ===

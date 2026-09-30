@@ -64,7 +64,6 @@ export type SyncPublicationPrecondition =
 export interface SyncPublicationStepEvidence {
   /** Closed durable step; the matching key family and request identity are validated together. */
   readonly step:
-    | "reserve_lane"
     | "immutable_create"
     | "write_head"
     | "create_event"
@@ -93,6 +92,19 @@ export interface SyncJournalPayloadEvidence {
   readonly byteSize: number;
 }
 
+/** Exact prior lane state retained before this operation may attempt a reservation. */
+export interface SyncJournalLaneObservation {
+  /** Canonical lane-head key derived from the immutable request path. */
+  readonly key: string;
+  /** Verified absence for zero-head initialization or its exact observed R2 generation. */
+  readonly precondition: Exclude<
+    SyncPublicationPrecondition,
+    { readonly kind: "journal_phase" }
+  >;
+  /** Known retry floor for the independent lane-head key, if a write was throttled or uncertain. */
+  readonly retryAfterEpochMs: number | null;
+}
+
 /** Common immutable journal identity and request, retained for every terminal state. */
 interface SyncJournalBase extends SyncPublicationEnvelope {
   /** Distinguishes this persisted family from lane heads and feed events. */
@@ -103,20 +115,44 @@ interface SyncJournalBase extends SyncPublicationEnvelope {
   readonly request: SyncMutationRequest;
   /** Digest-checked UTF-8 payload size, or null for body-free tombstones. */
   readonly payload: SyncJournalPayloadEvidence | null;
-  /** Proposed or committed exact feed allocation and predecessor lane clock. */
+}
+
+/** Pending request bound to an exact lane observation but not authorized for publication. */
+export interface SyncUnallocatedPendingJournalRecord extends SyncJournalBase {
+  /** Pending is never a committed mutation result. */
+  readonly status: "pending";
+  /** Explicit authority phase; unallocated journals carry no sequence or step evidence. */
+  readonly allocationState: "unallocated";
+  /** SHA-256-selected lane derived from the normalized request path. */
+  readonly lane: number;
+  /** Exact lane-head absence or generation observed before any reservation attempt. */
+  readonly laneObservation: SyncJournalLaneObservation;
+}
+
+/** Shared allocation authority retained after the operation wins its lane marker. */
+interface SyncAllocatedJournalBase extends SyncJournalBase {
+  /** Allocation can only be persisted after exact own-marker read-back. */
+  readonly allocationState: "allocated";
+  /** Won lane sequence and its exact predecessor committed clock. */
   readonly reservation: SyncLaneReservation;
-  /** Last durable step evidence, including the original ETag and known retry floor. */
+  /** Last durable publication step evidence, including original CAS conditions. */
   readonly stepEvidence: SyncPublicationStepEvidence;
 }
 
-/** Unresolved operation whose exact request and next durable step survive isolate loss. */
-export interface SyncPendingJournalRecord extends SyncJournalBase {
+/** Allocated unresolved operation whose next durable step survives isolate loss. */
+export interface SyncAllocatedPendingJournalRecord
+  extends SyncAllocatedJournalBase {
   /** Pending is never a committed mutation result. */
   readonly status: "pending";
 }
 
+/** Either pending authority phase accepted for a private operation journal. */
+export type SyncPendingJournalRecord =
+  | SyncUnallocatedPendingJournalRecord
+  | SyncAllocatedPendingJournalRecord;
+
 /** Fully published operation bound to its changed-event revision and commit time. */
-export interface SyncCommittedJournalRecord extends SyncJournalBase {
+export interface SyncCommittedJournalRecord extends SyncAllocatedJournalBase {
   /** Feed evidence and journal state are committed; lane release remains R2-observable. */
   readonly status: "committed";
   /** Exact assigned feed position, equal to the reservation. */
@@ -133,7 +169,7 @@ export interface SyncCommittedJournalRecord extends SyncJournalBase {
 }
 
 /** Conclusively rejected parent precondition published at its reserved feed position. */
-export interface SyncAbortedJournalRecord extends SyncJournalBase {
+export interface SyncAbortedJournalRecord extends SyncAllocatedJournalBase {
   /** Aborted records describe a proven no-head-change result. */
   readonly status: "aborted";
   /** Closed feed position reserved for this no-change event. */
@@ -149,7 +185,7 @@ export interface SyncAbortedJournalRecord extends SyncJournalBase {
   readonly committedAtEpochMs: number;
 }
 
-/** Closed pending, committed, or conclusively aborted immutable operation journal. */
+/** Closed unallocated, allocated, committed, or conclusively aborted operation journal. */
 export type SyncJournalRecord =
   | SyncPendingJournalRecord
   | SyncCommittedJournalRecord

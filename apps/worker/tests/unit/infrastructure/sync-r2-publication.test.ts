@@ -27,13 +27,17 @@ import type {
 import { encodeSyncPublication } from "@worker/infrastructure/sync/sync-publication.codec";
 import { SYNC_PUBLICATION_LIMITS } from "@worker/infrastructure/sync/sync-publication.schemas";
 import type {
+  SyncAllocatedPendingJournalRecord,
   SyncFeedEventRecord,
   SyncJournalRecord,
   SyncLaneHeadRecord,
-  SyncPendingJournalRecord,
   SyncPublicationStepEvidence,
+  SyncUnallocatedPendingJournalRecord,
 } from "@worker/infrastructure/sync/sync-publication.types";
-import type { SyncR2ObjectStore } from "@worker/infrastructure/sync/sync-r2.types";
+import type {
+  SyncR2ObjectStore,
+  SyncRecordObservation,
+} from "@worker/infrastructure/sync/sync-r2.types";
 import { createSyncR2Key } from "@worker/infrastructure/sync/sync-r2-key";
 import { syncR2ObjectStore } from "@worker/infrastructure/sync/sync-r2-object";
 import { syncR2Publication } from "@worker/infrastructure/sync/sync-r2-publication";
@@ -93,6 +97,8 @@ class MemoryBucket implements R2ConditionalBucketPort {
     readonly options: R2ConditionalPutOptions;
   }[] = [];
   readonly unavailableKeys = new Set<string>();
+  readonly unavailableAfterPut = new Set<string>();
+  readonly nullPutKeys = new Set<string>();
   failure: Error | undefined;
   failReadback = false;
   private etagSequence = 0;
@@ -100,7 +106,13 @@ class MemoryBucket implements R2ConditionalBucketPort {
   constructor(private readonly epochNow: () => number) {}
 
   async get(key: string): Promise<R2ConditionalStoredObject | null> {
-    if (this.unavailableKeys.has(key)) throw new Error("R2 read unavailable");
+    if (
+      this.unavailableKeys.has(key) ||
+      (this.unavailableAfterPut.has(key) &&
+        this.puts.some((put) => put.key === key))
+    ) {
+      throw new Error("R2 read unavailable");
+    }
     if (this.failReadback && this.puts.some((put) => put.key === key)) {
       throw new Error("R2 read-back unavailable");
     }
@@ -126,6 +138,10 @@ class MemoryBucket implements R2ConditionalBucketPort {
     const bytes =
       typeof content === "string" ? encoder.encode(content) : content.slice();
     this.puts.push({ key, bytes, options });
+    if (this.nullPutKeys.delete(key)) {
+      this.unavailableAfterPut.add(key);
+      return null;
+    }
     const previous = this.objects.get(key);
     const condition = options.onlyIf;
     const accepted =
@@ -183,9 +199,9 @@ async function seedMarker(forVault = vaultId): Promise<void> {
 
 async function journal(
   content = "# Exact\r\nUnicode 🌐 and NUL \u0000",
-  step: "reserve_lane" | "immutable_create" | "commit_journal" = "reserve_lane",
+  step: "immutable_create" | "commit_journal" = "immutable_create",
   journalOperationId: SyncOperationIdDto = operationId,
-): Promise<SyncPendingJournalRecord> {
+): Promise<SyncAllocatedPendingJournalRecord> {
   const lane = await syncFeedLaneForPath(path);
   const bytes = encoder.encode(content);
   const digestInput = new Uint8Array(bytes.byteLength);
@@ -198,11 +214,9 @@ async function journal(
   );
   if (contentSha256 === undefined) throw new Error("Invalid fixture digest.");
   const targetKey =
-    step === "reserve_lane"
-      ? syncFeedLaneHeadKey(vaultId, lane)
-      : step === "immutable_create"
-        ? syncVersionKey(vaultId, revision)
-        : syncOperationKey(vaultId, journalOperationId);
+    step === "immutable_create"
+      ? syncVersionKey(vaultId, revision)
+      : syncOperationKey(vaultId, journalOperationId);
   return {
     schemaVersion: 1,
     protocolMajor: 1,
@@ -210,6 +224,7 @@ async function journal(
     kind: "journal",
     status: "pending",
     operationId: journalOperationId,
+    allocationState: "allocated",
     request: {
       kind: "create",
       vaultId,
@@ -242,7 +257,7 @@ async function journal(
 
 async function updateJournalRecord(
   journalOperationId: SyncOperationIdDto,
-): Promise<SyncPendingJournalRecord> {
+): Promise<SyncAllocatedPendingJournalRecord> {
   const original = await journal(
     "# update request",
     "immutable_create",
@@ -268,7 +283,7 @@ async function updateJournalRecord(
 
 async function tombstoneJournalRecord(
   journalOperationId: SyncOperationIdDto,
-): Promise<SyncPendingJournalRecord> {
+): Promise<SyncAllocatedPendingJournalRecord> {
   const original = await journal(
     "# tombstone parent",
     "immutable_create",
@@ -306,8 +321,8 @@ async function tombstoneJournalRecord(
 }
 
 function nextJournalStep(
-  record: SyncPendingJournalRecord,
-): SyncPendingJournalRecord {
+  record: SyncAllocatedPendingJournalRecord,
+): SyncAllocatedPendingJournalRecord {
   return {
     ...record,
     stepEvidence: {
@@ -324,7 +339,7 @@ function nextJournalStep(
 }
 
 async function settledJournal(
-  pending: SyncPendingJournalRecord,
+  pending: SyncAllocatedPendingJournalRecord,
   status: "committed" | "aborted",
 ): Promise<SyncJournalRecord> {
   const lane = pending.reservation.lane;
@@ -402,10 +417,982 @@ async function initialLaneHead(): Promise<SyncLaneHeadRecord> {
   };
 }
 
+async function unallocatedJournal(
+  head: SyncLaneHeadRecord,
+  journalOperationId: SyncOperationIdDto = operationId,
+  observed?: SyncRecordObservation<SyncLaneHeadRecord>,
+  content = "# Exact\r\nUnicode 🌐 and NUL \u0000",
+): Promise<SyncUnallocatedPendingJournalRecord> {
+  const allocated = await journal(
+    content,
+    "immutable_create",
+    journalOperationId,
+  );
+  return {
+    schemaVersion: 1,
+    protocolMajor: 1,
+    vaultId,
+    kind: "journal",
+    status: "pending",
+    operationId: journalOperationId,
+    request: allocated.request,
+    payload: allocated.payload,
+    allocationState: "unallocated",
+    lane: head.lane,
+    laneObservation: {
+      key: syncFeedLaneHeadKey(vaultId, head.lane),
+      precondition:
+        observed === undefined
+          ? { kind: "absent" }
+          : {
+              kind: "observed",
+              etag: observed.observed.etag,
+              bytes: encodeBase64Url(observed.observed.bytes),
+              uploadedAtEpochMs: observed.observed.uploaded.getTime(),
+            },
+      retryAfterEpochMs: null,
+    },
+  };
+}
+
+function unallocatedFromAllocated(
+  allocated: SyncAllocatedPendingJournalRecord,
+  head: SyncLaneHeadRecord,
+  observation: {
+    readonly etag: string;
+    readonly bytes: Uint8Array;
+    readonly uploaded: Date;
+  },
+): SyncUnallocatedPendingJournalRecord {
+  return {
+    schemaVersion: 1,
+    protocolMajor: 1,
+    vaultId: allocated.vaultId,
+    kind: "journal",
+    status: "pending",
+    operationId: allocated.operationId,
+    request: allocated.request,
+    payload: allocated.payload,
+    allocationState: "unallocated",
+    lane: head.lane,
+    laneObservation: {
+      key: syncFeedLaneHeadKey(allocated.vaultId, head.lane),
+      precondition: {
+        kind: "observed",
+        etag: observation.etag,
+        bytes: encodeBase64Url(observation.bytes),
+        uploadedAtEpochMs: observation.uploaded.getTime(),
+      },
+      retryAfterEpochMs: null,
+    },
+  };
+}
+
+async function persistAllocatedJournal(
+  allocated: SyncAllocatedPendingJournalRecord,
+): Promise<void> {
+  const priorHead: SyncLaneHeadRecord = {
+    schemaVersion: 1,
+    protocolMajor: 1,
+    vaultId,
+    kind: "laneHead",
+    lane: allocated.reservation.lane,
+    committedSequence: syncSequenceSchema.parse(
+      (BigInt(allocated.reservation.sequence) - 1n)
+        .toString()
+        .padStart(20, "0"),
+    ),
+    committedAtEpochMs: allocated.reservation.previousCommittedAtEpochMs,
+  };
+  const headBytes = await encodeSyncPublication(priorHead);
+  const generation = bucket.seed(
+    syncFeedLaneHeadKey(vaultId, priorHead.lane),
+    headBytes,
+    epochNow - 5_000,
+  );
+  const laneRead = await publication.readLaneHead(vaultId, priorHead.lane);
+  if (laneRead.kind !== "observed") {
+    throw new Error("Expected exact prior lane head for allocated fixture.");
+  }
+  const unallocated = unallocatedFromAllocated(allocated, priorHead, {
+    etag: generation.etag,
+    bytes: headBytes,
+    uploaded: generation.uploaded,
+  });
+  if ((await publication.createJournal(unallocated)).kind !== "confirmed") {
+    throw new Error("Expected initial unallocated journal fixture.");
+  }
+  const journalRead = await publication.readJournal(
+    vaultId,
+    allocated.operationId,
+  );
+  if (journalRead.kind !== "observed") {
+    throw new Error("Expected exact unallocated journal fixture.");
+  }
+  const reservedHead: SyncLaneHeadRecord = {
+    ...priorHead,
+    pending: {
+      operationId: allocated.operationId,
+      nextSequence: allocated.reservation.sequence,
+    },
+  };
+  if (
+    (await publication.replaceLaneHead(laneRead.observation, reservedHead))
+      .kind !== "confirmed"
+  ) {
+    throw new Error("Expected exact lane reservation fixture.");
+  }
+  epochNow += 1_100;
+  if (
+    (await publication.replaceJournal(journalRead.observation, allocated))
+      .kind !== "confirmed"
+  ) {
+    throw new Error("Expected own-marker allocation fixture.");
+  }
+}
+
+async function allocatedJournal(
+  unallocated: SyncUnallocatedPendingJournalRecord,
+  priorHead: SyncLaneHeadRecord,
+): Promise<SyncAllocatedPendingJournalRecord> {
+  const nextSequence = syncEventSequenceSchema.parse(
+    (BigInt(priorHead.committedSequence) + 1n).toString().padStart(20, "0"),
+  );
+  return {
+    schemaVersion: 1,
+    protocolMajor: 1,
+    vaultId,
+    kind: "journal",
+    status: "pending",
+    operationId: unallocated.operationId,
+    request: unallocated.request,
+    payload: unallocated.payload,
+    allocationState: "allocated",
+    reservation: {
+      lane: priorHead.lane,
+      sequence: nextSequence,
+      previousCommittedAtEpochMs: priorHead.committedAtEpochMs,
+    },
+    stepEvidence: {
+      step: "immutable_create",
+      key: syncVersionKey(vaultId, unallocated.request.revision),
+      precondition: { kind: "absent" },
+      retryAfterEpochMs: null,
+    },
+  };
+}
+
 describe("marker-gated private sync publication persistence", () => {
+  it("persists exact unallocated request identity and rejects changed same-ID requests", async () => {
+    await seedMarker();
+    const head = await initialLaneHead();
+    const headKey = syncFeedLaneHeadKey(vaultId, head.lane);
+    bucket.seed(headKey, await encodeSyncPublication(head), epochNow - 5_000);
+    const headRead = await publication.readLaneHead(vaultId, head.lane);
+    expect(headRead.kind).toBe("observed");
+    if (headRead.kind !== "observed") return;
+    const unallocated = await unallocatedJournal(
+      head,
+      operationId,
+      headRead.observation,
+    );
+    const key = syncOperationKey(vaultId, operationId);
+
+    expect(await publication.createJournal(unallocated)).toEqual({
+      kind: "confirmed",
+    });
+    expect(await publication.createJournal(unallocated)).toEqual({
+      kind: "confirmed",
+    });
+    const changedRequest = await unallocatedJournal(
+      head,
+      operationId,
+      headRead.observation,
+      "different same-ID body",
+    );
+    expect(await publication.createJournal(changedRequest)).toEqual({
+      kind: "refused",
+    });
+    const read = await publication.readJournal(vaultId, operationId);
+    expect(read.kind).toBe("observed");
+    if (read.kind !== "observed") return;
+    expect(read.observation.value.allocationState).toBe("unallocated");
+    expect(read.observation.observed.key).toBe(key);
+  });
+
+  it("refuses journal creation after its saved lane absence or generation changes", async () => {
+    await seedMarker();
+    const head = await initialLaneHead();
+    const key = syncFeedLaneHeadKey(vaultId, head.lane);
+    const absent = await unallocatedJournal(head);
+    bucket.seed(key, await encodeSyncPublication(head), epochNow - 5_000);
+    expect(await publication.createJournal(absent)).toEqual({
+      kind: "refused",
+    });
+
+    const originalHeadRead = await publication.readLaneHead(vaultId, head.lane);
+    expect(originalHeadRead.kind).toBe("observed");
+    if (originalHeadRead.kind !== "observed") return;
+    const observed = await unallocatedJournal(
+      head,
+      alternateOperationId,
+      originalHeadRead.observation,
+    );
+    const changedHead: SyncLaneHeadRecord = {
+      ...head,
+      committedSequence: syncSequenceSchema.parse("00000000000000000001"),
+      committedAtEpochMs: 101,
+    };
+    bucket.seed(
+      key,
+      await encodeSyncPublication(changedHead),
+      epochNow - 5_000,
+    );
+    expect(await publication.createJournal(observed)).toEqual({
+      kind: "refused",
+    });
+  });
+
+  it("does not replace an observed lane condition with fabricated absence", async () => {
+    await seedMarker();
+    const head = await initialLaneHead();
+    const laneKey = syncFeedLaneHeadKey(vaultId, head.lane);
+    bucket.seed(laneKey, await encodeSyncPublication(head), epochNow - 5_000);
+    const laneRead = await publication.readLaneHead(vaultId, head.lane);
+    expect(laneRead.kind).toBe("observed");
+    if (laneRead.kind !== "observed") return;
+    const original = await unallocatedJournal(
+      head,
+      operationId,
+      laneRead.observation,
+    );
+    expect(await publication.createJournal(original)).toEqual({
+      kind: "confirmed",
+    });
+    const journalRead = await publication.readJournal(vaultId, operationId);
+    expect(journalRead.kind).toBe("observed");
+    if (journalRead.kind !== "observed") return;
+    const fabricatedAbsence = {
+      ...original,
+      laneObservation: {
+        ...original.laneObservation,
+        precondition: { kind: "absent" as const },
+        retryAfterEpochMs: null,
+      },
+    };
+    expect(
+      await publication.replaceJournal(
+        journalRead.observation,
+        fabricatedAbsence,
+      ),
+    ).toEqual({ kind: "refused" });
+  });
+
+  it("requires zero-head initialization before refreshing an absent lane observation", async () => {
+    await seedMarker();
+    const initialHead = await initialLaneHead();
+    const original = await unallocatedJournal(initialHead);
+    expect(await publication.createJournal(original)).toEqual({
+      kind: "confirmed",
+    });
+    const journalRead = await publication.readJournal(vaultId, operationId);
+    expect(journalRead.kind).toBe("observed");
+    if (journalRead.kind !== "observed") return;
+
+    const advancedHead: SyncLaneHeadRecord = {
+      ...initialHead,
+      committedSequence: syncSequenceSchema.parse("00000000000000000001"),
+      committedAtEpochMs: 101,
+    };
+    const key = syncFeedLaneHeadKey(vaultId, initialHead.lane);
+    bucket.seed(
+      key,
+      await encodeSyncPublication(advancedHead),
+      epochNow - 5_000,
+    );
+    const advancedHeadRead = await publication.readLaneHead(
+      vaultId,
+      initialHead.lane,
+    );
+    expect(advancedHeadRead.kind).toBe("observed");
+    if (advancedHeadRead.kind !== "observed") return;
+    const changedObservation = await unallocatedJournal(
+      initialHead,
+      operationId,
+      advancedHeadRead.observation,
+    );
+    expect(
+      await publication.replaceJournal(
+        journalRead.observation,
+        changedObservation,
+      ),
+    ).toEqual({ kind: "refused" });
+  });
+
+  it("rejects a refreshed generation without committed lane progress", async () => {
+    await seedMarker();
+    const initialHead = await initialLaneHead();
+    const head: SyncLaneHeadRecord = {
+      ...initialHead,
+      committedSequence: syncSequenceSchema.parse("00000000000000000001"),
+      committedAtEpochMs: 101,
+    };
+    const key = syncFeedLaneHeadKey(vaultId, head.lane);
+    const bytes = await encodeSyncPublication(head);
+    bucket.seed(key, bytes, epochNow - 5_000);
+    const originalHeadRead = await publication.readLaneHead(vaultId, head.lane);
+    expect(originalHeadRead.kind).toBe("observed");
+    if (originalHeadRead.kind !== "observed") return;
+    const original = await unallocatedJournal(
+      head,
+      operationId,
+      originalHeadRead.observation,
+    );
+    expect(await publication.createJournal(original)).toEqual({
+      kind: "confirmed",
+    });
+    const journalRead = await publication.readJournal(vaultId, operationId);
+    expect(journalRead.kind).toBe("observed");
+    if (journalRead.kind !== "observed") return;
+
+    bucket.seed(key, bytes, epochNow - 4_000);
+    const rewrittenHeadRead = await publication.readLaneHead(
+      vaultId,
+      head.lane,
+    );
+    expect(rewrittenHeadRead.kind).toBe("observed");
+    if (rewrittenHeadRead.kind !== "observed") return;
+    const changedObservation = await unallocatedJournal(
+      head,
+      operationId,
+      rewrittenHeadRead.observation,
+    );
+    expect(
+      await publication.replaceJournal(
+        journalRead.observation,
+        changedObservation,
+      ),
+    ).toEqual({ kind: "refused" });
+  });
+
+  it("persists monotonic retry floors without changing an observed lane generation", async () => {
+    await seedMarker();
+    const head = await initialLaneHead();
+    const headBytes = await encodeSyncPublication(head);
+    bucket.seed(
+      syncFeedLaneHeadKey(vaultId, head.lane),
+      headBytes,
+      epochNow - 5_000,
+    );
+    const laneRead = await publication.readLaneHead(vaultId, head.lane);
+    expect(laneRead.kind).toBe("observed");
+    if (laneRead.kind !== "observed") return;
+    const original = await unallocatedJournal(
+      head,
+      operationId,
+      laneRead.observation,
+    );
+    expect(await publication.createJournal(original)).toEqual({
+      kind: "confirmed",
+    });
+    const journalRead = await publication.readJournal(vaultId, operationId);
+    expect(journalRead.kind).toBe("observed");
+    if (journalRead.kind !== "observed") return;
+    const retryAfterEpochMs = epochNow + 2_000;
+    const raised = {
+      ...original,
+      laneObservation: {
+        ...original.laneObservation,
+        retryAfterEpochMs,
+      },
+    };
+
+    epochNow += 1_100;
+    const laneKey = syncFeedLaneHeadKey(vaultId, head.lane);
+    bucket.unavailableKeys.add(laneKey);
+    expect(
+      await publication.replaceJournal(journalRead.observation, raised),
+    ).toEqual({ kind: "effect_unknown" });
+    bucket.unavailableKeys.delete(laneKey);
+    expect(
+      await publication.replaceJournal(journalRead.observation, raised),
+    ).toEqual({ kind: "confirmed" });
+    const raisedRead = await publication.readJournal(vaultId, operationId);
+    expect(raisedRead.kind).toBe("observed");
+    if (
+      raisedRead.kind !== "observed" ||
+      raisedRead.observation.value.status !== "pending" ||
+      raisedRead.observation.value.allocationState !== "unallocated"
+    ) {
+      return;
+    }
+    expect(raisedRead.observation.value.laneObservation).toEqual(
+      raised.laneObservation,
+    );
+    expect(raisedRead.observation.value.laneObservation.precondition).toEqual(
+      original.laneObservation.precondition,
+    );
+
+    const invalidFloor = {
+      ...raised,
+      laneObservation: {
+        ...raised.laneObservation,
+        retryAfterEpochMs: Number.NaN,
+      },
+    };
+    expect(
+      await publication.replaceJournal(raisedRead.observation, invalidFloor),
+    ).toEqual({ kind: "refused" });
+
+    const regressed = {
+      ...raised,
+      laneObservation: {
+        ...raised.laneObservation,
+        retryAfterEpochMs: retryAfterEpochMs - 1,
+      },
+    };
+    epochNow += 1_100;
+    expect(
+      await publication.replaceJournal(raisedRead.observation, regressed),
+    ).toEqual({ kind: "refused" });
+  });
+
+  it("persists a monotonic retry floor while the initial lane head is absent", async () => {
+    await seedMarker();
+    const head = await initialLaneHead();
+    const original = await unallocatedJournal(head);
+    expect(await publication.createJournal(original)).toEqual({
+      kind: "confirmed",
+    });
+    const journalRead = await publication.readJournal(vaultId, operationId);
+    expect(journalRead.kind).toBe("observed");
+    if (journalRead.kind !== "observed") return;
+    const retryAfterEpochMs = epochNow + 2_000;
+    const raised = {
+      ...original,
+      laneObservation: {
+        ...original.laneObservation,
+        retryAfterEpochMs,
+      },
+    };
+
+    epochNow += 1_100;
+    expect(
+      await publication.replaceJournal(journalRead.observation, raised),
+    ).toEqual({ kind: "confirmed" });
+    const raisedRead = await publication.readJournal(vaultId, operationId);
+    expect(raisedRead.kind).toBe("observed");
+    if (
+      raisedRead.kind !== "observed" ||
+      raisedRead.observation.value.status !== "pending" ||
+      raisedRead.observation.value.allocationState !== "unallocated"
+    ) {
+      return;
+    }
+    expect(raisedRead.observation.value.laneObservation).toEqual(
+      raised.laneObservation,
+    );
+    const regressed = {
+      ...raised,
+      laneObservation: {
+        ...raised.laneObservation,
+        retryAfterEpochMs: null,
+      },
+    };
+    epochNow += 1_100;
+    expect(
+      await publication.replaceJournal(raisedRead.observation, regressed),
+    ).toEqual({ kind: "refused" });
+  });
+
+  it("keeps an unallocated request unchanged while a later lane owner is pending", async () => {
+    await seedMarker();
+    const head = await initialLaneHead();
+    const laneKey = syncFeedLaneHeadKey(vaultId, head.lane);
+    bucket.seed(laneKey, await encodeSyncPublication(head), epochNow - 5_000);
+    const originalLaneRead = await publication.readLaneHead(vaultId, head.lane);
+    expect(originalLaneRead.kind).toBe("observed");
+    if (originalLaneRead.kind !== "observed") return;
+    const unallocated = await unallocatedJournal(
+      head,
+      operationId,
+      originalLaneRead.observation,
+    );
+    expect(await publication.createJournal(unallocated)).toEqual({
+      kind: "confirmed",
+    });
+    const journalRead = await publication.readJournal(vaultId, operationId);
+    expect(journalRead.kind).toBe("observed");
+    if (journalRead.kind !== "observed") return;
+
+    const firstMarker: SyncLaneHeadRecord = {
+      ...head,
+      pending: {
+        operationId: alternateOperationId,
+        nextSequence: syncEventSequenceSchema.parse("00000000000000000001"),
+      },
+    };
+    expect(
+      await publication.replaceLaneHead(
+        originalLaneRead.observation,
+        firstMarker,
+      ),
+    ).toEqual({ kind: "confirmed" });
+    const firstMarkerRead = await publication.readLaneHead(vaultId, head.lane);
+    expect(firstMarkerRead.kind).toBe("observed");
+    if (firstMarkerRead.kind !== "observed") return;
+    const releasedHead: SyncLaneHeadRecord = {
+      ...head,
+      committedSequence: syncSequenceSchema.parse("00000000000000000001"),
+      committedAtEpochMs: 101,
+    };
+    epochNow += 1_100;
+    expect(
+      await publication.replaceLaneHead(
+        firstMarkerRead.observation,
+        releasedHead,
+      ),
+    ).toEqual({ kind: "confirmed" });
+    const releasedLaneRead = await publication.readLaneHead(vaultId, head.lane);
+    expect(releasedLaneRead.kind).toBe("observed");
+    if (releasedLaneRead.kind !== "observed") return;
+    const nextMarker: SyncLaneHeadRecord = {
+      ...releasedHead,
+      pending: {
+        operationId: alternateOperationId,
+        nextSequence: syncEventSequenceSchema.parse("00000000000000000002"),
+      },
+    };
+    epochNow += 1_100;
+    expect(
+      await publication.replaceLaneHead(
+        releasedLaneRead.observation,
+        nextMarker,
+      ),
+    ).toEqual({ kind: "confirmed" });
+
+    const releasedObservation = await unallocatedJournal(
+      releasedHead,
+      operationId,
+      releasedLaneRead.observation,
+    );
+    expect(
+      await publication.replaceJournal(
+        journalRead.observation,
+        releasedObservation,
+      ),
+    ).toEqual({ kind: "refused" });
+  });
+
+  it("allocates one same-lane winner and lets only the released loser claim the next sequence", async () => {
+    await seedMarker();
+    const head = await initialLaneHead();
+    const headBytes = await encodeSyncPublication(head);
+    bucket.seed(
+      syncFeedLaneHeadKey(vaultId, head.lane),
+      headBytes,
+      epochNow - 5_000,
+    );
+    const sharedLaneRead = await publication.readLaneHead(vaultId, head.lane);
+    expect(sharedLaneRead.kind).toBe("observed");
+    if (sharedLaneRead.kind !== "observed") return;
+    const first = await unallocatedJournal(
+      head,
+      operationId,
+      sharedLaneRead.observation,
+    );
+    const second = await unallocatedJournal(
+      head,
+      alternateOperationId,
+      sharedLaneRead.observation,
+    );
+    expect(await publication.createJournal(first)).toEqual({
+      kind: "confirmed",
+    });
+    expect(await publication.createJournal(second)).toEqual({
+      kind: "confirmed",
+    });
+    const firstRead = await publication.readJournal(vaultId, operationId);
+    const secondRead = await publication.readJournal(
+      vaultId,
+      alternateOperationId,
+    );
+    const laneRead = await publication.readLaneHead(vaultId, head.lane);
+    expect(firstRead.kind).toBe("observed");
+    expect(secondRead.kind).toBe("observed");
+    expect(laneRead.kind).toBe("observed");
+    if (
+      firstRead.kind !== "observed" ||
+      secondRead.kind !== "observed" ||
+      laneRead.kind !== "observed"
+    ) {
+      return;
+    }
+
+    const firstMarker: SyncLaneHeadRecord = {
+      ...head,
+      pending: {
+        operationId,
+        nextSequence: syncEventSequenceSchema.parse("00000000000000000001"),
+      },
+    };
+    const secondMarker: SyncLaneHeadRecord = {
+      ...head,
+      pending: {
+        operationId: alternateOperationId,
+        nextSequence: syncEventSequenceSchema.parse("00000000000000000001"),
+      },
+    };
+    const reservationResults = await Promise.all([
+      publication.replaceLaneHead(laneRead.observation, firstMarker),
+      publication.replaceLaneHead(laneRead.observation, secondMarker),
+    ]);
+    expect(reservationResults.map(({ kind }) => kind).sort()).toEqual([
+      "confirmed",
+      "refused",
+    ]);
+
+    const winnerLane = await publication.readLaneHead(vaultId, head.lane);
+    expect(winnerLane.kind).toBe("observed");
+    if (winnerLane.kind !== "observed") return;
+    const winnerId = winnerLane.observation.value.pending?.operationId;
+    expect([operationId, alternateOperationId]).toContain(winnerId);
+    if (winnerId === undefined) return;
+    const winnerUnallocated = winnerId === operationId ? first : second;
+    const loserUnallocated = winnerId === operationId ? second : first;
+    const winnerJournalRead = winnerId === operationId ? firstRead : secondRead;
+    const loserJournalRead = winnerId === operationId ? secondRead : firstRead;
+    const winnerAllocated = await allocatedJournal(winnerUnallocated, head);
+    const loserAllocated = await allocatedJournal(loserUnallocated, head);
+    epochNow += 1_100;
+
+    expect(
+      await publication.replaceJournal(
+        winnerJournalRead.observation,
+        winnerAllocated,
+      ),
+    ).toEqual({ kind: "confirmed" });
+    const winnerWritesBeforeReplay = bucket.puts.filter(
+      (put) => put.key === syncOperationKey(vaultId, winnerId),
+    ).length;
+    expect(
+      await publication.replaceJournal(
+        loserJournalRead.observation,
+        loserAllocated,
+      ),
+    ).toEqual({ kind: "refused" });
+    expect(
+      await publication.replaceJournal(
+        winnerJournalRead.observation,
+        winnerAllocated,
+      ),
+    ).toEqual({ kind: "confirmed" });
+    expect(
+      bucket.puts.filter(
+        (put) => put.key === syncOperationKey(vaultId, winnerId),
+      ),
+    ).toHaveLength(winnerWritesBeforeReplay);
+    const loserRead = await publication.readJournal(
+      vaultId,
+      loserUnallocated.operationId,
+    );
+    expect(loserRead.kind).toBe("observed");
+    if (loserRead.kind !== "observed") return;
+    expect(loserRead.observation.value.allocationState).toBe("unallocated");
+
+    const releasedHead: SyncLaneHeadRecord = {
+      ...head,
+      committedSequence: syncSequenceSchema.parse("00000000000000000001"),
+      committedAtEpochMs: 101,
+    };
+    epochNow += 1_100;
+    expect(
+      await publication.replaceLaneHead(winnerLane.observation, releasedHead),
+    ).toEqual({ kind: "confirmed" });
+    const releasedLane = await publication.readLaneHead(vaultId, head.lane);
+    expect(releasedLane.kind).toBe("observed");
+    if (releasedLane.kind !== "observed") return;
+    const rebasedLoser = await unallocatedJournal(
+      releasedHead,
+      loserUnallocated.operationId,
+      releasedLane.observation,
+    );
+    expect(
+      await publication.replaceJournal(loserRead.observation, rebasedLoser),
+    ).toEqual({ kind: "confirmed" });
+    epochNow += 1_100;
+    const currentLane = await publication.readLaneHead(vaultId, head.lane);
+    const rebasedJournalRead = await publication.readJournal(
+      vaultId,
+      loserUnallocated.operationId,
+    );
+    expect(currentLane.kind).toBe("observed");
+    expect(rebasedJournalRead.kind).toBe("observed");
+    if (
+      currentLane.kind !== "observed" ||
+      rebasedJournalRead.kind !== "observed"
+    ) {
+      return;
+    }
+    const nextReservation: SyncLaneHeadRecord = {
+      ...releasedHead,
+      pending: {
+        operationId: loserUnallocated.operationId,
+        nextSequence: syncEventSequenceSchema.parse("00000000000000000002"),
+      },
+    };
+    expect(
+      await publication.replaceLaneHead(
+        currentLane.observation,
+        nextReservation,
+      ),
+    ).toEqual({ kind: "confirmed" });
+    const loserNextAllocation = await allocatedJournal(
+      rebasedLoser,
+      releasedHead,
+    );
+    expect(loserNextAllocation.reservation.sequence).toBe(
+      "00000000000000000002",
+    );
+    expect(loserNextAllocation.reservation.sequence).not.toBe(
+      winnerAllocated.reservation.sequence,
+    );
+    expect(
+      await publication.replaceJournal(
+        rebasedJournalRead.observation,
+        loserNextAllocation,
+      ),
+    ).toEqual({ kind: "confirmed" });
+  });
+
+  it("rejects allocation from absent, mismatched, unavailable, or exhausted lane evidence", async () => {
+    await seedMarker();
+    const head = await initialLaneHead();
+    const absent = await unallocatedJournal(head);
+    expect(await publication.createJournal(absent)).toEqual({
+      kind: "confirmed",
+    });
+    const absentRead = await publication.readJournal(vaultId, operationId);
+    expect(absentRead.kind).toBe("observed");
+    if (absentRead.kind !== "observed") return;
+    const fabricated = await allocatedJournal(absent, head);
+    expect(
+      await publication.replaceJournal(absentRead.observation, fabricated),
+    ).toEqual({ kind: "refused" });
+
+    const key = syncFeedLaneHeadKey(vaultId, head.lane);
+    const headBytes = await encodeSyncPublication(head);
+    bucket.seed(key, headBytes, epochNow - 5_000);
+    const initialHeadRead = await publication.readLaneHead(vaultId, head.lane);
+    expect(initialHeadRead.kind).toBe("observed");
+    if (initialHeadRead.kind !== "observed") return;
+    const observed = await unallocatedJournal(
+      head,
+      operationId,
+      initialHeadRead.observation,
+    );
+    epochNow += 1_100;
+    expect(
+      await publication.replaceJournal(absentRead.observation, observed),
+    ).toEqual({ kind: "confirmed" });
+    const updatedRead = await publication.readJournal(vaultId, operationId);
+    expect(updatedRead.kind).toBe("observed");
+    if (updatedRead.kind !== "observed") return;
+
+    const mismatchedHead: SyncLaneHeadRecord = {
+      ...head,
+      committedSequence: syncSequenceSchema.parse("00000000000000000001"),
+      committedAtEpochMs: 10,
+      pending: {
+        operationId,
+        nextSequence: syncEventSequenceSchema.parse("00000000000000000002"),
+      },
+    };
+    bucket.seed(
+      key,
+      await encodeSyncPublication(mismatchedHead),
+      epochNow - 5_000,
+    );
+    const wrongAllocation = await allocatedJournal(observed, head);
+    expect(
+      await publication.replaceJournal(
+        updatedRead.observation,
+        wrongAllocation,
+      ),
+    ).toEqual({ kind: "refused" });
+
+    bucket.unavailableKeys.add(key);
+    expect(
+      await publication.replaceJournal(
+        updatedRead.observation,
+        wrongAllocation,
+      ),
+    ).toEqual({ kind: "effect_unknown" });
+
+    bucket.unavailableKeys.delete(key);
+    const maximumHead: SyncLaneHeadRecord = {
+      ...head,
+      committedSequence: syncSequenceSchema.parse("99999999999999999999"),
+      committedAtEpochMs: 10,
+    };
+    bucket.seed(
+      key,
+      await encodeSyncPublication(maximumHead),
+      epochNow - 5_000,
+    );
+    const maximumHeadRead = await publication.readLaneHead(
+      vaultId,
+      maximumHead.lane,
+    );
+    expect(maximumHeadRead.kind).toBe("observed");
+    if (maximumHeadRead.kind !== "observed") return;
+    const maximumJournal = await unallocatedJournal(
+      maximumHead,
+      alternateOperationId,
+      maximumHeadRead.observation,
+    );
+    expect(await publication.createJournal(maximumJournal)).toEqual({
+      kind: "confirmed",
+    });
+    const maximumRead = await publication.readJournal(
+      vaultId,
+      alternateOperationId,
+    );
+    expect(maximumRead.kind).toBe("observed");
+    if (maximumRead.kind !== "observed") return;
+    const impossibleAllocation: SyncAllocatedPendingJournalRecord = {
+      schemaVersion: 1,
+      protocolMajor: 1,
+      vaultId,
+      kind: "journal",
+      status: "pending",
+      operationId: maximumJournal.operationId,
+      request: maximumJournal.request,
+      payload: maximumJournal.payload,
+      allocationState: "allocated",
+      reservation: {
+        lane: maximumHead.lane,
+        sequence: syncEventSequenceSchema.parse("00000000000000000001"),
+        previousCommittedAtEpochMs: maximumHead.committedAtEpochMs,
+      },
+      stepEvidence: {
+        step: "immutable_create",
+        key: syncVersionKey(vaultId, maximumJournal.request.revision),
+        precondition: { kind: "absent" },
+        retryAfterEpochMs: null,
+      },
+    };
+    expect(
+      await publication.replaceJournal(
+        maximumRead.observation,
+        impossibleAllocation,
+      ),
+    ).toEqual({ kind: "refused" });
+  });
+
+  it("resolves journal allocation CAS as exact target, unchanged prior, conflict, or unavailable", async () => {
+    await seedMarker();
+    const head = await initialLaneHead();
+    const headBytes = await encodeSyncPublication(head);
+    bucket.seed(
+      syncFeedLaneHeadKey(vaultId, head.lane),
+      headBytes,
+      epochNow - 5_000,
+    );
+    const priorLaneRead = await publication.readLaneHead(vaultId, head.lane);
+    expect(priorLaneRead.kind).toBe("observed");
+    if (priorLaneRead.kind !== "observed") return;
+    const unallocated = await unallocatedJournal(
+      head,
+      operationId,
+      priorLaneRead.observation,
+    );
+    expect(await publication.createJournal(unallocated)).toEqual({
+      kind: "confirmed",
+    });
+    const source = await publication.readJournal(vaultId, operationId);
+    const laneRead = await publication.readLaneHead(vaultId, head.lane);
+    expect(source.kind).toBe("observed");
+    expect(laneRead.kind).toBe("observed");
+    if (source.kind !== "observed" || laneRead.kind !== "observed") return;
+    const marker: SyncLaneHeadRecord = {
+      ...head,
+      pending: {
+        operationId,
+        nextSequence: syncEventSequenceSchema.parse("00000000000000000001"),
+      },
+    };
+    expect(
+      await publication.replaceLaneHead(laneRead.observation, marker),
+    ).toEqual({
+      kind: "confirmed",
+    });
+    const allocated = await allocatedJournal(unallocated, head);
+    const journalKey = syncOperationKey(vaultId, operationId);
+    bucket.nullPutKeys.add(journalKey);
+    epochNow += 1_100;
+
+    const uncertain = await publication.replaceJournal(
+      source.observation,
+      allocated,
+    );
+    expect(uncertain.kind).toBe("effect_unknown");
+    bucket.unavailableAfterPut.delete(journalKey);
+
+    const unchanged = await publication.replaceJournal(
+      source.observation,
+      allocated,
+      uncertain.kind === "effect_unknown" &&
+        uncertain.retryAfterEpochMs !== undefined
+        ? { retryAfterEpochMs: uncertain.retryAfterEpochMs }
+        : undefined,
+    );
+    expect(unchanged).toMatchObject({ kind: "throttled" });
+    const writesBeforeRetry = bucket.puts.filter(
+      (put) => put.key === journalKey,
+    ).length;
+    epochNow += 1_100;
+    expect(
+      await publication.replaceJournal(
+        source.observation,
+        allocated,
+        uncertain.kind === "effect_unknown" &&
+          uncertain.retryAfterEpochMs !== undefined
+          ? { retryAfterEpochMs: uncertain.retryAfterEpochMs }
+          : undefined,
+      ),
+    ).toEqual({ kind: "confirmed" });
+    const retryPut = bucket.puts.filter((put) => put.key === journalKey).at(-1);
+    expect(retryPut?.options.onlyIf).toEqual({
+      etagMatches: source.observation.observed.etag,
+    });
+    expect(bucket.puts.filter((put) => put.key === journalKey)).toHaveLength(
+      writesBeforeRetry + 1,
+    );
+
+    const conflicting = await unallocatedJournal(
+      head,
+      operationId,
+      priorLaneRead.observation,
+      "conflicting same-ID request",
+    );
+    bucket.seed(
+      journalKey,
+      await encodeSyncPublication(conflicting),
+      epochNow - 5_000,
+    );
+    expect(
+      await publication.replaceJournal(source.observation, allocated),
+    ).toEqual({ kind: "refused" });
+    bucket.unavailableKeys.add(journalKey);
+    expect(
+      await publication.replaceJournal(source.observation, allocated),
+    ).toEqual({ kind: "effect_unknown" });
+  });
+
   it("create-only replays journals and events with exact canonical read-back bytes", async () => {
     await seedMarker();
-    const record = await journal();
+    const record = await unallocatedJournal(await initialLaneHead());
     const journalKey = syncOperationKey(vaultId, operationId);
 
     expect(await publication.createJournal(record)).toEqual({
@@ -462,7 +1449,12 @@ describe("marker-gated private sync publication persistence", () => {
 
   it("persists and reads a valid request journal larger than the old 2-KiB operation-key limit", async () => {
     await seedMarker();
-    const record = await journal("x".repeat(4_096));
+    const record = await unallocatedJournal(
+      await initialLaneHead(),
+      operationId,
+      undefined,
+      "x".repeat(4_096),
+    );
     const key = syncOperationKey(vaultId, operationId);
 
     expect(await publication.createJournal(record)).toEqual({
@@ -570,7 +1562,8 @@ describe("marker-gated private sync publication persistence", () => {
 
   it("refuses to replace an operation journal with a changed normalized request", async () => {
     await seedMarker();
-    const original = await journal();
+    const head = await initialLaneHead();
+    const original = await unallocatedJournal(head);
     expect(await publication.createJournal(original)).toEqual({
       kind: "confirmed",
     });
@@ -578,9 +1571,11 @@ describe("marker-gated private sync publication persistence", () => {
     expect(observed.kind).toBe("observed");
     if (observed.kind !== "observed") return;
     epochNow += 1_100;
-    const changedRequest = await journal(
+    const changedRequest = await unallocatedJournal(
+      head,
+      operationId,
+      undefined,
       "# A different operation body",
-      "immutable_create",
     );
 
     expect(
@@ -612,9 +1607,13 @@ describe("marker-gated private sync publication persistence", () => {
       syncOperationIdSchema.parse("88888888-8888-4888-8888-888888888888"),
     );
     for (const record of [update, tombstone]) {
-      expect(await publication.createJournal(record)).toEqual({
-        kind: "confirmed",
-      });
+      epochNow = 10_000;
+      bucket = new MemoryBucket(() => epochNow);
+      publication = syncR2Publication(
+        syncR2ObjectStore(bucket, () => epochNow),
+      );
+      await seedMarker();
+      await persistAllocatedJournal(record);
       const observed = await publication.readJournal(
         vaultId,
         record.operationId,
@@ -631,10 +1630,10 @@ describe("marker-gated private sync publication persistence", () => {
     }
   });
 
-  it("enforces the 1,100-ms cooldown on repeated journal and lane-head writes", async () => {
+  it("enforces independent 1,100-ms journal and lane-head retry floors", async () => {
     await seedMarker();
-    const record = await journal();
     const laneHead = await initialLaneHead();
+    const record = await unallocatedJournal(laneHead);
     expect(await publication.createJournal(record)).toEqual({
       kind: "confirmed",
     });
@@ -642,28 +1641,24 @@ describe("marker-gated private sync publication persistence", () => {
       kind: "confirmed",
     });
 
-    const nextJournal: SyncJournalRecord = {
-      ...record,
-      stepEvidence: {
-        step: "immutable_create",
-        key: syncVersionKey(vaultId, revision),
-        precondition: { kind: "absent" },
-        retryAfterEpochMs: null,
-      },
-    };
+    const laneHeadRead = await publication.readLaneHead(vaultId, laneHead.lane);
+    expect(laneHeadRead.kind).toBe("observed");
+    if (laneHeadRead.kind !== "observed") return;
+    const rebasedJournal = await unallocatedJournal(
+      laneHead,
+      operationId,
+      laneHeadRead.observation,
+    );
     const journalRead = await publication.readJournal(vaultId, operationId);
     expect(journalRead.kind).toBe("observed");
     if (journalRead.kind !== "observed") return;
-    const headRead = await publication.readLaneHead(vaultId, laneHead.lane);
-    expect(headRead.kind).toBe("observed");
-    if (headRead.kind !== "observed") return;
 
     const journalCooldown = await publication.replaceJournal(
       journalRead.observation,
-      nextJournal,
+      rebasedJournal,
     );
     const headCooldown = await publication.replaceLaneHead(
-      headRead.observation,
+      laneHeadRead.observation,
       {
         ...laneHead,
         pending: {
@@ -689,9 +1684,11 @@ describe("marker-gated private sync publication persistence", () => {
     if (cooledJournal.kind !== "observed" || cooledHead.kind !== "observed")
       return;
     expect(
-      await publication.replaceJournal(cooledJournal.observation, nextJournal, {
-        retryAfterEpochMs: 11_100,
-      }),
+      await publication.replaceJournal(
+        cooledJournal.observation,
+        rebasedJournal,
+        { retryAfterEpochMs: 11_100 },
+      ),
     ).toEqual({ kind: "confirmed" });
     expect(
       await publication.replaceLaneHead(
@@ -712,9 +1709,7 @@ describe("marker-gated private sync publication persistence", () => {
     await seedMarker();
     const phase = await journal(undefined, "commit_journal");
     const journalKey = syncOperationKey(vaultId, operationId);
-    expect(await publication.createJournal(phase)).toEqual({
-      kind: "confirmed",
-    });
+    await persistAllocatedJournal(phase);
     const staleRead = await publication.readJournal(vaultId, operationId);
     expect(staleRead.kind).toBe("observed");
     if (staleRead.kind !== "observed") return;
@@ -729,11 +1724,16 @@ describe("marker-gated private sync publication persistence", () => {
       "# Exact\r\nUnicode 🌐 and NUL \u0000",
       "immutable_create",
     );
+    const journalWritesBeforeRewind = bucket.puts.filter(
+      (put) => put.key === journalKey,
+    ).length;
 
     expect(
       await publication.replaceJournal(staleRead.observation, rewind),
     ).toEqual({ kind: "refused" });
-    expect(bucket.puts.filter((put) => put.key === journalKey)).toHaveLength(1);
+    expect(bucket.puts.filter((put) => put.key === journalKey)).toHaveLength(
+      journalWritesBeforeRewind,
+    );
   });
 
   it.each([
@@ -749,9 +1749,7 @@ describe("marker-gated private sync publication persistence", () => {
         journalOperationId,
       );
       const journalKey = syncOperationKey(vaultId, journalOperationId);
-      expect(await publication.createJournal(phase)).toEqual({
-        kind: "confirmed",
-      });
+      await persistAllocatedJournal(phase);
       const staleRead = await publication.readJournal(
         vaultId,
         journalOperationId,
@@ -788,9 +1786,44 @@ describe("marker-gated private sync publication persistence", () => {
     },
   );
 
+  it("refuses a terminal journal transition after its typed phase diverges", async () => {
+    await seedMarker();
+    const phase = await journal(undefined, "commit_journal");
+    const journalKey = syncOperationKey(vaultId, operationId);
+    await persistAllocatedJournal(phase);
+    const staleRead = await publication.readJournal(vaultId, operationId);
+    expect(staleRead.kind).toBe("observed");
+    if (staleRead.kind !== "observed") return;
+
+    const divergentPhase = {
+      ...phase,
+      stepEvidence: {
+        ...phase.stepEvidence,
+        retryAfterEpochMs: epochNow + 2_000,
+      },
+    };
+    bucket.seed(
+      journalKey,
+      await encodeSyncPublication(divergentPhase),
+      epochNow - 1_200,
+    );
+    const terminal = await settledJournal(phase, "committed");
+    const journalWritesBeforeRefusal = bucket.puts.filter(
+      (put) => put.key === journalKey,
+    ).length;
+    expect(
+      await publication.replaceJournal(staleRead.observation, terminal),
+    ).toEqual({ kind: "refused" });
+    expect(bucket.puts.filter((put) => put.key === journalKey)).toHaveLength(
+      journalWritesBeforeRefusal,
+    );
+  });
+
   it("returns a retry floor after 429 and preserves uncertainty when timeout read-back is unavailable", async () => {
     await seedMarker();
-    const rateLimitedJournal = await journal();
+    const rateLimitedJournal = await unallocatedJournal(
+      await initialLaneHead(),
+    );
     bucket.failure = Object.assign(new Error("rate limit"), { status: 429 });
     const limited = await publication.createJournal(rateLimitedJournal);
     expect(limited).toEqual({
@@ -806,10 +1839,11 @@ describe("marker-gated private sync publication persistence", () => {
     ).toEqual({ kind: "throttled", retryAfterEpochMs: epochNow + 1_100 });
     expect(bucket.puts).toHaveLength(writesAfterLimit);
 
-    const timeoutJournal = await journal(
-      "# timeout case",
-      "reserve_lane",
+    const timeoutJournal = await unallocatedJournal(
+      await initialLaneHead(),
       alternateOperationId,
+      undefined,
+      "# timeout case",
     );
     bucket.failure = new Error("network timeout");
     bucket.failReadback = true;
@@ -875,7 +1909,11 @@ describe("marker-gated private sync publication persistence", () => {
     expect(await markerUnavailable.readJournal(vaultId, operationId)).toEqual({
       kind: "unavailable",
     });
-    expect(await markerUnavailable.createJournal(await journal())).toEqual({
+    expect(
+      await markerUnavailable.createJournal(
+        await unallocatedJournal(await initialLaneHead()),
+      ),
+    ).toEqual({
       kind: "effect_unknown",
     });
 
@@ -912,7 +1950,9 @@ describe("marker-gated private sync publication persistence", () => {
     };
     const writeFailurePublication = syncR2Publication(writeFails);
     expect(
-      await writeFailurePublication.createJournal(await journal()),
+      await writeFailurePublication.createJournal(
+        await unallocatedJournal(await initialLaneHead()),
+      ),
     ).toEqual({ kind: "effect_unknown" });
     const head = await initialLaneHead();
     const headKey = syncFeedLaneHeadKey(vaultId, head.lane);
@@ -936,7 +1976,7 @@ describe("marker-gated private sync publication persistence", () => {
 
   it("refuses malformed initial or replacement publication records", async () => {
     await seedMarker();
-    const record = await journal();
+    const record = await unallocatedJournal(await initialLaneHead());
     const inconsistentRequest = {
       ...record,
       request: {
@@ -973,6 +2013,108 @@ describe("marker-gated private sync publication persistence", () => {
     expect(
       await publication.replaceLaneHead(observed.observation, invalidClock),
     ).toEqual({ kind: "refused" });
+
+    expect(
+      await publication.createLaneHead({
+        ...head,
+        // @ts-expect-error A lane-head create cannot accept a journal record.
+        kind: "journal",
+        status: "committed",
+        allocationState: "allocated",
+      }),
+    ).toEqual({ kind: "refused" });
+    expect(
+      await publication.createLaneHead({
+        ...head,
+        // @ts-expect-error A lane-head create cannot accept a feed event.
+        kind: "changed",
+        sequence: syncEventSequenceSchema.parse("00000000000000000001"),
+      }),
+    ).toEqual({ kind: "refused" });
+    expect(
+      await publication.createLaneHead({
+        ...head,
+        committedAtEpochMs: -1,
+      }),
+    ).toEqual({ kind: "refused" });
+    expect(
+      await publication.createLaneHead({
+        ...head,
+        // @ts-expect-error Invalid schema version is rejected by the strict record codec.
+        schemaVersion: 2,
+      }),
+    ).toEqual({ kind: "refused" });
+    expect(
+      await publication.replaceLaneHead(observed.observation, {
+        ...head,
+        pending: {
+          // @ts-expect-error Invalid marker identity is rejected before any R2 write.
+          operationId: "not-an-operation-id",
+          nextSequence: syncEventSequenceSchema.parse("00000000000000000001"),
+        },
+      }),
+    ).toEqual({ kind: "refused" });
+
+    const validJournal = await unallocatedJournal(
+      head,
+      operationId,
+      observed.observation,
+    );
+    expect(await publication.createJournal(validJournal)).toEqual({
+      kind: "confirmed",
+    });
+    const journalRead = await publication.readJournal(vaultId, operationId);
+    expect(journalRead.kind).toBe("observed");
+    if (journalRead.kind !== "observed") return;
+    const allocation = await allocatedJournal(validJournal, head);
+    const committed = await settledJournal(allocation, "committed");
+    expect(
+      await publication.replaceJournal(journalRead.observation, committed),
+    ).toEqual({ kind: "refused" });
+  });
+
+  it("refuses unallocated CAS observations whose retained bytes are not exact", async () => {
+    await seedMarker();
+    const head = await initialLaneHead();
+    const laneKey = syncFeedLaneHeadKey(vaultId, head.lane);
+    bucket.seed(laneKey, await encodeSyncPublication(head), epochNow - 5_000);
+    const laneRead = await publication.readLaneHead(vaultId, head.lane);
+    expect(laneRead.kind).toBe("observed");
+    if (laneRead.kind !== "observed") return;
+    const original = await unallocatedJournal(
+      head,
+      operationId,
+      laneRead.observation,
+    );
+    expect(await publication.createJournal(original)).toEqual({
+      kind: "confirmed",
+    });
+    const journalRead = await publication.readJournal(vaultId, operationId);
+    expect(journalRead.kind).toBe("observed");
+    if (
+      journalRead.kind !== "observed" ||
+      journalRead.observation.value.status !== "pending" ||
+      journalRead.observation.value.allocationState !== "unallocated"
+    ) {
+      return;
+    }
+    const raised = {
+      ...original,
+      laneObservation: {
+        ...original.laneObservation,
+        retryAfterEpochMs: epochNow + 1_000,
+      },
+    };
+    const forgedObservation = {
+      ...journalRead.observation,
+      observed: {
+        ...journalRead.observation.observed,
+        bytes: encoder.encode("different journal bytes"),
+      },
+    };
+    expect(await publication.replaceJournal(forgedObservation, raised)).toEqual(
+      { kind: "refused" },
+    );
   });
 
   it("refuses caller observations whose typed identity or retained key disagrees", async () => {
@@ -1049,7 +2191,11 @@ describe("marker-gated private sync publication persistence", () => {
     expect(await publication.readJournal(vaultId, operationId)).toEqual({
       kind: "unavailable",
     });
-    expect(await publication.createJournal(await journal())).toEqual({
+    expect(
+      await publication.createJournal(
+        await unallocatedJournal(await initialLaneHead()),
+      ),
+    ).toEqual({
       kind: "refused",
     });
 

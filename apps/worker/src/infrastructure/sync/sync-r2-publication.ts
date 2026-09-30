@@ -68,9 +68,9 @@ export interface SyncR2Publication {
     record: SyncPendingJournalRecord,
     retryContext?: SyncR2RetryContext,
   ): Promise<SyncR2WriteResult>;
-  /** Replaces one exact journal observation, refreshing only an explicitly typed pending journal phase.
+  /** Replaces one exact journal observation, refreshing a typed pending phase only for a terminal target.
    * @param observed Exact decoded journal and R2 generation supplied by the caller.
-   * @param record Strict replacement state for the same vault and operation.
+   * @param record Strict replacement state for the same vault and operation; phase commits must settle it.
    * @param retryContext Persisted cooldown floor from an earlier uncertain or throttled attempt.
    * @returns Exact-CAS certainty; divergent or unavailable evidence is never treated as absence.
    */
@@ -291,7 +291,7 @@ export function syncR2Publication(
    * @param record Strict replacement value for the same publication identity.
    * @param key Canonical R2 key derived from that identity.
    * @param retryContext Caller-carried lower bound from a previous write result.
-   * @param refreshJournalPhase Whether the observed pending journal has the recorded phase exception.
+   * @param refreshJournalPhase Whether this exact source phase and terminal target qualify for the journal-only refresh.
    * @returns Exact CAS result, an idempotent exact target confirmation, or conservative uncertainty/refusal.
    */
   async function replaceRecord<T extends SyncPublicationRecord>(
@@ -403,6 +403,9 @@ export function syncR2Publication(
         observed.value.stepEvidence.step === "commit_journal" &&
         observed.value.stepEvidence.precondition.kind === "journal_phase" &&
         observed.value.stepEvidence.precondition.status === "pending";
+      if (pendingPhase && record.status === "pending") {
+        return Promise.resolve({ kind: "refused" });
+      }
       const refreshJournalPhase = pendingPhase
         ? () =>
             readRecord("journal", key, record.vaultId, (candidate) =>

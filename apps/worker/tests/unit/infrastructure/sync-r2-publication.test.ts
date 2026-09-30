@@ -1,4 +1,4 @@
-import { createContentSha256 } from "@obsidian-ai-bridge/core";
+import { createContentSha256, encodeBase64Url } from "@obsidian-ai-bridge/core";
 import {
   syncFeedEventKey,
   syncFeedLaneForPath,
@@ -31,6 +31,7 @@ import type {
   SyncJournalRecord,
   SyncLaneHeadRecord,
   SyncPendingJournalRecord,
+  SyncPublicationStepEvidence,
 } from "@worker/infrastructure/sync/sync-publication.types";
 import type { SyncR2ObjectStore } from "@worker/infrastructure/sync/sync-r2.types";
 import { createSyncR2Key } from "@worker/infrastructure/sync/sync-r2-key";
@@ -319,6 +320,55 @@ function nextJournalStep(
       precondition: { kind: "absent" },
       retryAfterEpochMs: null,
     },
+  };
+}
+
+async function settledJournal(
+  pending: SyncPendingJournalRecord,
+  status: "committed" | "aborted",
+): Promise<SyncJournalRecord> {
+  const lane = pending.reservation.lane;
+  const reservedHead: SyncLaneHeadRecord = {
+    schemaVersion: 1,
+    protocolMajor: 1,
+    vaultId,
+    kind: "laneHead",
+    lane,
+    committedSequence: syncSequenceSchema.parse("00000000000000000000"),
+    committedAtEpochMs: pending.reservation.previousCommittedAtEpochMs,
+    pending: {
+      operationId: pending.operationId,
+      nextSequence: pending.reservation.sequence,
+    },
+  };
+  const finalEvidence: SyncPublicationStepEvidence = {
+    step: "commit_lane",
+    key: syncFeedLaneHeadKey(vaultId, lane),
+    precondition: {
+      kind: "observed",
+      etag: "etag-reserved-lane",
+      bytes: encodeBase64Url(await encodeSyncPublication(reservedHead)),
+      uploadedAtEpochMs: epochNow - 5_000,
+    },
+    retryAfterEpochMs: null,
+  };
+  if (status === "committed") {
+    return {
+      ...pending,
+      status,
+      stepEvidence: finalEvidence,
+      position: { lane, sequence: pending.reservation.sequence },
+      revision: pending.request.revision,
+      committedAtEpochMs: pending.reservation.previousCommittedAtEpochMs + 1,
+    };
+  }
+  return {
+    ...pending,
+    status,
+    stepEvidence: finalEvidence,
+    position: { lane, sequence: pending.reservation.sequence },
+    reason: "stale_revision",
+    committedAtEpochMs: pending.reservation.previousCommittedAtEpochMs + 1,
   };
 }
 
@@ -658,7 +708,7 @@ describe("marker-gated private sync publication persistence", () => {
     ).toEqual({ kind: "confirmed" });
   });
 
-  it("refreshes only a journal's exact typed pending phase, never a lane-head CAS", async () => {
+  it("refuses pending journal progress after the exact commit phase", async () => {
     await seedMarker();
     const phase = await journal(undefined, "commit_journal");
     const journalKey = syncOperationKey(vaultId, operationId);
@@ -670,53 +720,73 @@ describe("marker-gated private sync publication persistence", () => {
     if (staleRead.kind !== "observed") return;
 
     epochNow += 1_100;
-    const current = bucket.seed(
+    bucket.seed(
       journalKey,
       staleRead.observation.observed.bytes,
       epochNow - 1_200,
     );
-    const next = await journal(
+    const rewind = await journal(
       "# Exact\r\nUnicode 🌐 and NUL \u0000",
       "immutable_create",
     );
-    const result = await publication.replaceJournal(
-      staleRead.observation,
-      next,
-    );
 
-    expect(result).toEqual({ kind: "confirmed" });
-    expect(bucket.puts.at(-1)?.options.onlyIf).toEqual({
-      etagMatches: current.etag,
-    });
-    expect(bucket.puts.at(-1)?.options.onlyIf).not.toEqual({
-      etagMatches: staleRead.observation.observed.etag,
-    });
-    const writesBeforeReplay = bucket.puts.filter(
-      (put) => put.key === journalKey,
-    ).length;
     expect(
-      await publication.replaceJournal(staleRead.observation, next),
-    ).toEqual({ kind: "confirmed" });
-    const divergent: SyncPendingJournalRecord = {
-      ...next,
-      stepEvidence: {
-        step: "create_event",
-        key: syncFeedEventKey(
-          vaultId,
-          next.reservation.lane,
-          next.reservation.sequence,
-        ),
-        precondition: { kind: "absent" },
-        retryAfterEpochMs: null,
-      },
-    };
-    expect(
-      await publication.replaceJournal(staleRead.observation, divergent),
+      await publication.replaceJournal(staleRead.observation, rewind),
     ).toEqual({ kind: "refused" });
-    expect(bucket.puts.filter((put) => put.key === journalKey)).toHaveLength(
-      writesBeforeReplay,
-    );
+    expect(bucket.puts.filter((put) => put.key === journalKey)).toHaveLength(1);
   });
+
+  it.each([
+    { journalOperationId: operationId, status: "committed" },
+    { journalOperationId: alternateOperationId, status: "aborted" },
+  ] as const)(
+    "refreshes the exact journal-phase ETag only for a valid $status terminal target",
+    async ({ journalOperationId, status }) => {
+      await seedMarker();
+      const phase = await journal(
+        undefined,
+        "commit_journal",
+        journalOperationId,
+      );
+      const journalKey = syncOperationKey(vaultId, journalOperationId);
+      expect(await publication.createJournal(phase)).toEqual({
+        kind: "confirmed",
+      });
+      const staleRead = await publication.readJournal(
+        vaultId,
+        journalOperationId,
+      );
+      expect(staleRead.kind).toBe("observed");
+      if (staleRead.kind !== "observed") return;
+
+      epochNow += 1_100;
+      const current = bucket.seed(
+        journalKey,
+        staleRead.observation.observed.bytes,
+        epochNow - 1_200,
+      );
+      const terminal = await settledJournal(phase, status);
+      expect(
+        await publication.replaceJournal(staleRead.observation, terminal),
+      ).toEqual({ kind: "confirmed" });
+      expect(bucket.puts.at(-1)?.options.onlyIf).toEqual({
+        etagMatches: current.etag,
+      });
+      expect(bucket.puts.at(-1)?.options.onlyIf).not.toEqual({
+        etagMatches: staleRead.observation.observed.etag,
+      });
+
+      const putsBeforeReplay = bucket.puts.filter(
+        (put) => put.key === journalKey,
+      ).length;
+      expect(
+        await publication.replaceJournal(staleRead.observation, terminal),
+      ).toEqual({ kind: "confirmed" });
+      expect(bucket.puts.filter((put) => put.key === journalKey)).toHaveLength(
+        putsBeforeReplay,
+      );
+    },
+  );
 
   it("returns a retry floor after 429 and preserves uncertainty when timeout read-back is unavailable", async () => {
     await seedMarker();

@@ -197,6 +197,16 @@ async function seedMarker(forVault = vaultId): Promise<void> {
   );
 }
 
+/** Narrows strictly observed journals to durable terminal outcomes for retry-floor tests.
+ * @param record Validated journal candidate read from the publication adapter.
+ * @returns Whether the record is an allocated committed or aborted journal.
+ */
+function isTerminalJournal(
+  record: SyncJournalRecord,
+): record is Extract<SyncJournalRecord, { status: "committed" | "aborted" }> {
+  return record.status !== "pending" && record.allocationState === "allocated";
+}
+
 async function journal(
   content = "# Exact\r\nUnicode 🌐 and NUL \u0000",
   step: "immutable_create" | "commit_journal" = "immutable_create",
@@ -341,7 +351,7 @@ function nextJournalStep(
 async function settledJournal(
   pending: SyncAllocatedPendingJournalRecord,
   status: "committed" | "aborted",
-): Promise<SyncJournalRecord> {
+): Promise<Extract<SyncJournalRecord, { status: "committed" | "aborted" }>> {
   const lane = pending.reservation.lane;
   const reservedHead: SyncLaneHeadRecord = {
     schemaVersion: 1,
@@ -1934,6 +1944,145 @@ describe("marker-gated private sync publication persistence", () => {
       );
     },
   );
+
+  it.each([
+    { journalOperationId: operationId, status: "committed" },
+    { journalOperationId: alternateOperationId, status: "aborted" },
+  ] as const)(
+    "allows only a monotonic retry-floor update on a $status lane-commit journal",
+    async ({ journalOperationId, status }) => {
+      await seedMarker();
+      const phase = await journal(
+        undefined,
+        "commit_journal",
+        journalOperationId,
+      );
+      await persistAllocatedJournal(phase);
+      const pending = await publication.readJournal(
+        vaultId,
+        journalOperationId,
+      );
+      expect(pending.kind).toBe("observed");
+      if (pending.kind !== "observed") return;
+      epochNow += 1_100;
+      const terminal = await settledJournal(phase, status);
+      expect(
+        await publication.replaceJournal(pending.observation, terminal),
+      ).toEqual({ kind: "confirmed" });
+      epochNow += 1_100;
+
+      const committed = await publication.readJournal(
+        vaultId,
+        journalOperationId,
+      );
+      expect(committed.kind).toBe("observed");
+      if (committed.kind !== "observed") return;
+      if (!isTerminalJournal(committed.observation.value)) return;
+      const retryAfterEpochMs = epochNow + 2_000;
+      const raised = {
+        ...committed.observation.value,
+        stepEvidence: {
+          ...committed.observation.value.stepEvidence,
+          retryAfterEpochMs,
+        },
+      };
+      expect(
+        await publication.replaceJournal(committed.observation, raised),
+      ).toEqual({ kind: "confirmed" });
+
+      const freshPublication = syncR2Publication(
+        syncR2ObjectStore(bucket, () => epochNow),
+      );
+      const persisted = await freshPublication.readJournal(
+        vaultId,
+        journalOperationId,
+      );
+      expect(persisted.kind).toBe("observed");
+      if (persisted.kind !== "observed") return;
+      if (!isTerminalJournal(persisted.observation.value)) return;
+      expect(persisted.observation.value.stepEvidence.retryAfterEpochMs).toBe(
+        retryAfterEpochMs,
+      );
+      const regressed = {
+        ...persisted.observation.value,
+        stepEvidence: {
+          ...persisted.observation.value.stepEvidence,
+          retryAfterEpochMs: retryAfterEpochMs - 1,
+        },
+      };
+      epochNow += 1_100;
+      expect(
+        await freshPublication.replaceJournal(persisted.observation, regressed),
+      ).toEqual({ kind: "refused" });
+      const changedOutcome = {
+        ...persisted.observation.value,
+        committedAtEpochMs: persisted.observation.value.committedAtEpochMs + 1,
+        stepEvidence: {
+          ...persisted.observation.value.stepEvidence,
+          retryAfterEpochMs: retryAfterEpochMs + 2_000,
+        },
+      };
+      expect(
+        await freshPublication.replaceJournal(
+          persisted.observation,
+          changedOutcome,
+        ),
+      ).toEqual({ kind: "refused" });
+    },
+  );
+
+  it("resolves an uncertain terminal floor CAS across a fresh publication facade", async () => {
+    await seedMarker();
+    const phase = await journal(undefined, "commit_journal");
+    const journalKey = syncOperationKey(vaultId, operationId);
+    await persistAllocatedJournal(phase);
+    const pending = await publication.readJournal(vaultId, operationId);
+    expect(pending.kind).toBe("observed");
+    if (pending.kind !== "observed") return;
+    epochNow += 1_100;
+    const terminal = await settledJournal(phase, "committed");
+    expect(
+      await publication.replaceJournal(pending.observation, terminal),
+    ).toEqual({ kind: "confirmed" });
+    epochNow += 1_100;
+
+    const committed = await publication.readJournal(vaultId, operationId);
+    expect(committed.kind).toBe("observed");
+    if (committed.kind !== "observed") return;
+    if (!isTerminalJournal(committed.observation.value)) return;
+    const raised = {
+      ...committed.observation.value,
+      stepEvidence: {
+        ...committed.observation.value.stepEvidence,
+        retryAfterEpochMs: epochNow + 2_000,
+      },
+    };
+    bucket.nullPutKeys.add(journalKey);
+    expect(
+      await publication.replaceJournal(committed.observation, raised),
+    ).toMatchObject({ kind: "effect_unknown" });
+    bucket.unavailableAfterPut.delete(journalKey);
+    epochNow += 1_100;
+
+    const freshPublication = syncR2Publication(
+      syncR2ObjectStore(bucket, () => epochNow),
+    );
+    const exactPrior = await freshPublication.readJournal(vaultId, operationId);
+    expect(exactPrior.kind).toBe("observed");
+    if (exactPrior.kind !== "observed") return;
+    if (!isTerminalJournal(exactPrior.observation.value)) return;
+    expect(exactPrior.observation.value.status).toBe("committed");
+    expect(
+      await freshPublication.replaceJournal(exactPrior.observation, raised),
+    ).toEqual({ kind: "confirmed" });
+    const settled = await freshPublication.readJournal(vaultId, operationId);
+    expect(settled.kind).toBe("observed");
+    if (settled.kind !== "observed") return;
+    if (!isTerminalJournal(settled.observation.value)) return;
+    expect(settled.observation.value.stepEvidence.retryAfterEpochMs).toBe(
+      raised.stepEvidence.retryAfterEpochMs,
+    );
+  });
 
   it("refuses a terminal journal transition after its typed phase diverges", async () => {
     await seedMarker();

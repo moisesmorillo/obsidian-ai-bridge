@@ -709,6 +709,26 @@ export function syncR2Publication(
     );
   }
 
+  /** Advances only retry timing on an unchanged terminal lane-commit journal.
+   * @param observed Exact terminal journal generation supplied by the mutation state machine.
+   * @param record Same terminal outcome with a nondecreasing safe lane retry floor.
+   * @param key Canonical operation journal key.
+   * @param retryContext Persisted cooldown floor for the journal key.
+   * @returns Exact update confirmation or conservative conditional-write certainty.
+   */
+  async function replaceTerminalRetryFloor(
+    observed: SyncRecordObservation<SyncJournalRecord>,
+    record: SyncJournalRecord,
+    key: SyncR2Key,
+    retryContext?: SyncR2RetryContext,
+  ): Promise<SyncR2WriteResult> {
+    return replaceRecord("journal", observed, record, key, retryContext, () =>
+      readRecord("journal", key, record.vaultId, (candidate) =>
+        candidate.kind === "journal" ? candidate : undefined,
+      ),
+    );
+  }
+
   /** Reads the exact operation journal only after the matching vault marker validates.
    * @param vaultId Validated immutable sync-v1 namespace.
    * @param operationId Canonical operation UUID identifying one journal key.
@@ -786,16 +806,22 @@ export function syncR2Publication(
     readJournal: readJournalRecord,
     createJournal: createUnallocatedJournal,
     replaceJournal(observed, record, retryContext) {
-      if (
-        observed.value.status !== "pending" ||
-        !sameJournalIdentity(observed.value, record)
-      ) {
-        return Promise.resolve({ kind: "refused" });
-      }
       const key = buildKey(
         () => syncOperationKey(record.vaultId, record.operationId),
         record.vaultId,
       );
+      if (observed.value.status !== "pending") {
+        if (
+          !isTerminalRetryFloorUpdate(observed.value, record) ||
+          key === undefined
+        ) {
+          return Promise.resolve({ kind: "refused" });
+        }
+        return replaceTerminalRetryFloor(observed, record, key, retryContext);
+      }
+      if (!sameJournalIdentity(observed.value, record)) {
+        return Promise.resolve({ kind: "refused" });
+      }
       if (observed.value.allocationState === "unallocated") {
         if (record.status !== "pending") {
           return Promise.resolve({ kind: "refused" });
@@ -908,6 +934,64 @@ function nextEventSequence(
     .padStart(SYNC_SEQUENCE_WIDTH, "0");
   const parsed = syncEventSequenceSchema.safeParse(next);
   return parsed.success ? parsed.data : undefined;
+}
+
+/** Accepts only an unchanged terminal outcome with a monotonic commit-lane retry floor.
+ * @param previous Terminal record whose mutation and publication outcome are frozen.
+ * @param next Candidate record that may differ only by a safe retry-floor increase.
+ * @returns Whether the terminal lane-step retry evidence advances without authority rewrite.
+ */
+function isTerminalRetryFloorUpdate(
+  previous: SyncJournalRecord,
+  next: SyncJournalRecord,
+): boolean {
+  if (
+    (previous.status !== "committed" && previous.status !== "aborted") ||
+    previous.allocationState !== "allocated" ||
+    previous.stepEvidence.step !== "commit_lane" ||
+    next.status !== previous.status ||
+    next.allocationState !== "allocated" ||
+    next.stepEvidence.step !== "commit_lane" ||
+    previous.vaultId !== next.vaultId ||
+    previous.operationId !== next.operationId ||
+    !sameMutationRequest(previous.request, next.request) ||
+    previous.payload?.byteSize !== next.payload?.byteSize ||
+    previous.reservation.lane !== next.reservation.lane ||
+    previous.reservation.sequence !== next.reservation.sequence ||
+    previous.reservation.previousCommittedAtEpochMs !==
+      next.reservation.previousCommittedAtEpochMs ||
+    previous.position.lane !== next.position.lane ||
+    previous.position.sequence !== next.position.sequence ||
+    previous.committedAtEpochMs !== next.committedAtEpochMs ||
+    previous.stepEvidence.key !== next.stepEvidence.key ||
+    previous.stepEvidence.precondition.kind !== "observed" ||
+    next.stepEvidence.precondition.kind !== "observed" ||
+    previous.stepEvidence.precondition.etag !==
+      next.stepEvidence.precondition.etag ||
+    previous.stepEvidence.precondition.bytes !==
+      next.stepEvidence.precondition.bytes ||
+    previous.stepEvidence.precondition.uploadedAtEpochMs !==
+      next.stepEvidence.precondition.uploadedAtEpochMs
+  ) {
+    return false;
+  }
+  const nextFloor = next.stepEvidence.retryAfterEpochMs;
+  const previousFloor = previous.stepEvidence.retryAfterEpochMs;
+  const floorAdvances =
+    nextFloor !== null &&
+    (previousFloor === null || nextFloor >= previousFloor);
+  if (previous.status === "committed") {
+    return (
+      next.status === "committed" &&
+      previous.revision === next.revision &&
+      floorAdvances
+    );
+  }
+  return (
+    next.status === "aborted" &&
+    previous.reason === next.reason &&
+    floorAdvances
+  );
 }
 
 /** Preserves request identity while allowing only unallocated-to-allocated journal authority.

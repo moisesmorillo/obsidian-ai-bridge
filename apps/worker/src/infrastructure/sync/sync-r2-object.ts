@@ -7,6 +7,7 @@ import {
   R2_ABSENCE_WILDCARD,
   R2_IF_NONE_MATCH_HEADER,
 } from "@worker/infrastructure/storage-object.constants";
+import { SYNC_PUBLICATION_LIMITS } from "@worker/infrastructure/sync/sync-publication.constants";
 import { SYNC_R2_WRITE_COOLDOWN_MS } from "@worker/infrastructure/sync/sync-r2.constants";
 import type {
   SyncR2Key,
@@ -45,7 +46,7 @@ export function syncR2ObjectStore(
       familyLimit === undefined ||
       !Number.isSafeInteger(maxBytes) ||
       maxBytes < 0 ||
-      maxBytes > SYNC_RECORD_LIMITS.contentBodyBytes
+      maxBytes > SYNC_PUBLICATION_LIMITS.journalBytes
     ) {
       return { kind: "unavailable" };
     }
@@ -142,7 +143,7 @@ export function syncR2ObjectStore(
     if (bytes.byteLength > familyLimit) {
       throw new RangeError("Sync R2 object exceeds its key-family byte limit.");
     }
-    const current = await read(key, SYNC_RECORD_LIMITS.contentBodyBytes);
+    const current = await read(key, SYNC_PUBLICATION_LIMITS.journalBytes);
     if (current.kind === "unavailable") return { kind: "effect_unknown" };
     if (condition.kind === "create" && current.kind === "observed") {
       return equalBytes(current.observation.bytes, bytes)
@@ -194,7 +195,7 @@ export function syncR2ObjectStore(
     try {
       const result = await bucket.put(key, bytes, options);
       if (result === null) {
-        const readback = await read(key, SYNC_RECORD_LIMITS.contentBodyBytes);
+        const readback = await read(key, SYNC_PUBLICATION_LIMITS.journalBytes);
         if (
           readback.kind === "observed" &&
           equalBytes(readback.observation.bytes, bytes)
@@ -216,7 +217,7 @@ export function syncR2ObjectStore(
         ? successfulUploadTime + SYNC_R2_WRITE_COOLDOWN_MS
         : epochNow() + SYNC_R2_WRITE_COOLDOWN_MS;
       retryNotBefore.set(key, resultRetryAt);
-      const readback = await read(key, SYNC_RECORD_LIMITS.contentBodyBytes);
+      const readback = await read(key, SYNC_PUBLICATION_LIMITS.journalBytes);
       return readback.kind === "observed" &&
         equalBytes(readback.observation.bytes, bytes)
         ? { kind: "confirmed" }
@@ -227,7 +228,7 @@ export function syncR2ObjectStore(
       if (isRateLimitError(error)) {
         return { kind: "throttled", retryAfterEpochMs };
       }
-      const readback = await read(key, SYNC_RECORD_LIMITS.contentBodyBytes);
+      const readback = await read(key, SYNC_PUBLICATION_LIMITS.journalBytes);
       if (
         readback.kind === "observed" &&
         equalBytes(readback.observation.bytes, bytes)
@@ -300,6 +301,9 @@ function maxBytesForKey(key: SyncR2Key): number | undefined {
     return SYNC_RECORD_LIMITS.contentBodyBytes;
   }
   if (/\/heads\/[^/]+\.json$/.test(key)) return SYNC_RECORD_LIMITS.headBytes;
+  if (/\/operations\/[^/]+\.json$/.test(key)) {
+    return SYNC_PUBLICATION_LIMITS.journalBytes;
+  }
   if (/\/inventories\/scans\/[^/]+\/manifest\.json$/.test(key)) {
     return SYNC_RECORD_LIMITS.manifestBytes;
   }

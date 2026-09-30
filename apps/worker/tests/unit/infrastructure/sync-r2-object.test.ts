@@ -25,6 +25,7 @@ import type {
   R2ConditionalPutOptions,
   R2ConditionalStoredObject,
 } from "@worker/infrastructure/r2.types";
+import { SYNC_PUBLICATION_LIMITS } from "@worker/infrastructure/sync/sync-publication.constants";
 import { createSyncR2Key } from "@worker/infrastructure/sync/sync-r2-key";
 import { syncR2ObjectStore } from "@worker/infrastructure/sync/sync-r2-object";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -395,7 +396,9 @@ describe("one-key conditional sync R2 storage", () => {
     const reads = vi.spyOn(bucket, "get");
     expect((await store.read(key, -1)).kind).toBe("unavailable");
     expect((await store.read(key, 1.5)).kind).toBe("unavailable");
-    expect((await store.read(key, 1_048_577)).kind).toBe("unavailable");
+    expect(
+      (await store.read(key, SYNC_PUBLICATION_LIMITS.journalBytes + 1)).kind,
+    ).toBe("unavailable");
     expect(reads).not.toHaveBeenCalled();
 
     const stored = await bucket.seed(key, data, now, data.byteLength + 1);

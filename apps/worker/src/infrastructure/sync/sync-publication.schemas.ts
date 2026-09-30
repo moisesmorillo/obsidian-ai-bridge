@@ -37,6 +37,7 @@ import type {
   SyncSequenceDto,
   SyncVaultIdDto,
 } from "@protocol/sync.types";
+import { SYNC_PUBLICATION_LIMITS } from "@worker/infrastructure/sync/sync-publication.constants";
 import type {
   SyncJournalRecord,
   SyncPublicationRecord,
@@ -47,14 +48,7 @@ import { isCanonicalSyncR2Key } from "@worker/infrastructure/sync/sync-r2-key";
 import { syncHeadRecordSchema } from "@worker/infrastructure/sync/sync-record.schemas";
 import { z } from "zod";
 
-/** Single source of bounds for durable M7.4 publication records and their private payload evidence. */
-export const SYNC_PUBLICATION_LIMITS = {
-  payloadBytes: 1_048_576,
-  journalBytes: 8 * 1_048_576,
-  metadataBytes: 2_048,
-  preconditionBytes: 2_048,
-  etagBytes: 1_024,
-} as const;
+export { SYNC_PUBLICATION_LIMITS } from "@worker/infrastructure/sync/sync-publication.constants";
 
 /** Lower-case SHA-256 digest type accepted for exact immutable request bytes. */
 const sha256Schema = z.custom<SyncMutationRequest["contentSha256"]>(

@@ -45,7 +45,38 @@ export default {
       new TextEncoder().encode("{\\"state\\":\\"active\\"}"),
       { onlyIf: { etagMatches: activeObservation.etag } },
     );
+    const operationKey = "sync/v1/vaults/11111111-1111-4111-8111-111111111111/operations/22222222-2222-4222-8222-222222222222.json";
+    const journalBytes = new TextEncoder().encode("exact-journal-bytes");
+    const journalCreate = await env.BUCKET.put(operationKey, journalBytes, {
+      onlyIf: new Headers({ "If-None-Match": "*" }),
+    });
+    const journalCreated = await env.BUCKET.get(operationKey);
+    const journalReadBack = new Uint8Array(await journalCreated.arrayBuffer());
+    const journalReplay = await env.BUCKET.put(operationKey, journalBytes, {
+      onlyIf: new Headers({ "If-None-Match": "*" }),
+    });
+    const journalCas = await env.BUCKET.put(operationKey, new TextEncoder().encode("journal-cas-winner"), {
+      onlyIf: { etagMatches: journalCreate.etag },
+    });
+    const journalStaleCas = await env.BUCKET.put(operationKey, journalBytes, {
+      onlyIf: { etagMatches: journalCreate.etag },
+    });
+    const eventKey = "sync/v1/vaults/11111111-1111-4111-8111-111111111111/feed/03/events/00000000000000000001.json";
+    const eventBytes = new TextEncoder().encode("exact-event-bytes");
+    const eventCreate = await env.BUCKET.put(eventKey, eventBytes, {
+      onlyIf: new Headers({ "If-None-Match": "*" }),
+    });
+    const eventReplay = await env.BUCKET.put(eventKey, eventBytes, {
+      onlyIf: new Headers({ "If-None-Match": "*" }),
+    });
     return Response.json({
+      journalCreated: journalCreate !== null,
+      journalExactReadBack: JSON.stringify(Array.from(journalReadBack)) === JSON.stringify(Array.from(journalBytes)),
+      journalReplayRefused: journalReplay === null,
+      journalExactEtagCas: journalCas !== null,
+      journalStaleEtagRefused: journalStaleCas === null,
+      eventCreated: eventCreate !== null,
+      eventReplayRefused: eventReplay === null,
       inventoryCreateOnly: activeCreate !== null,
       inventoryExactCas: activeReplace !== null,
       first: first !== null,
@@ -104,6 +135,13 @@ describe("local workerd isolated sync R2 predicates", () => {
       .object({
         inventoryCreateOnly: z.boolean(),
         inventoryExactCas: z.boolean(),
+        journalCreated: z.boolean(),
+        journalExactReadBack: z.boolean(),
+        journalReplayRefused: z.boolean(),
+        journalExactEtagCas: z.boolean(),
+        journalStaleEtagRefused: z.boolean(),
+        eventCreated: z.boolean(),
+        eventReplayRefused: z.boolean(),
         first: z.boolean(),
         createOnlyPredicateRefused: z.boolean(),
         exactPredicateAccepted: z.boolean(),
@@ -120,6 +158,13 @@ describe("local workerd isolated sync R2 predicates", () => {
     expect(result).toMatchObject({
       inventoryCreateOnly: true,
       inventoryExactCas: true,
+      journalCreated: true,
+      journalExactReadBack: true,
+      journalReplayRefused: true,
+      journalExactEtagCas: true,
+      journalStaleEtagRefused: true,
+      eventCreated: true,
+      eventReplayRefused: true,
       first: true,
       createOnlyPredicateRefused: true,
       exactPredicateAccepted: true,
@@ -136,6 +181,12 @@ describe("local workerd isolated sync R2 predicates", () => {
     );
     expect(result.listedSyncOnly).toContain(
       "sync/v1/vaults/11111111-1111-4111-8111-111111111111/inventories/active.json",
+    );
+    expect(result.listedSyncOnly).toContain(
+      "sync/v1/vaults/11111111-1111-4111-8111-111111111111/operations/22222222-2222-4222-8222-222222222222.json",
+    );
+    expect(result.listedSyncOnly).toContain(
+      "sync/v1/vaults/11111111-1111-4111-8111-111111111111/feed/03/events/00000000000000000001.json",
     );
     expect(
       result.listedSyncOnly.every((listedKey) =>

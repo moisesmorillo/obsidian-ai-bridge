@@ -1290,6 +1290,155 @@ describe("marker-gated private sync publication persistence", () => {
     ).toEqual({ kind: "refused" });
   });
 
+  it.each([
+    {
+      evidence: "matching own marker",
+      expected: "confirmed",
+    },
+    {
+      evidence: "missing lane head",
+      expected: "refused",
+    },
+    {
+      evidence: "another operation's marker",
+      expected: "refused",
+    },
+    {
+      evidence: "wrong sequence marker",
+      expected: "refused",
+    },
+    {
+      evidence: "wrong committed clock marker",
+      expected: "refused",
+    },
+    {
+      evidence: "unavailable lane head",
+      expected: "effect_unknown",
+    },
+  ] as const)(
+    "resolves exact allocated target replay conservatively with $evidence evidence",
+    async ({ evidence, expected }) => {
+      await seedMarker();
+      const initialHead = await initialLaneHead();
+      const head: SyncLaneHeadRecord =
+        evidence === "wrong committed clock marker"
+          ? {
+              ...initialHead,
+              committedSequence: syncSequenceSchema.parse(
+                "00000000000000000001",
+              ),
+              committedAtEpochMs: 100,
+            }
+          : initialHead;
+      const laneKey = syncFeedLaneHeadKey(vaultId, head.lane);
+      bucket.seed(laneKey, await encodeSyncPublication(head), epochNow - 5_000);
+      const laneRead = await publication.readLaneHead(vaultId, head.lane);
+      expect(laneRead.kind).toBe("observed");
+      if (laneRead.kind !== "observed") return;
+
+      const unallocated = await unallocatedJournal(
+        head,
+        operationId,
+        laneRead.observation,
+      );
+      expect(await publication.createJournal(unallocated)).toEqual({
+        kind: "confirmed",
+      });
+      const journalRead = await publication.readJournal(vaultId, operationId);
+      expect(journalRead.kind).toBe("observed");
+      if (
+        journalRead.kind !== "observed" ||
+        journalRead.observation.value.allocationState !== "unallocated"
+      ) {
+        return;
+      }
+      const allocated = await allocatedJournal(
+        journalRead.observation.value,
+        head,
+      );
+      const ownMarker: SyncLaneHeadRecord = {
+        ...head,
+        pending: {
+          operationId,
+          nextSequence: allocated.reservation.sequence,
+        },
+      };
+
+      switch (evidence) {
+        case "matching own marker":
+        case "unavailable lane head":
+          bucket.seed(
+            laneKey,
+            await encodeSyncPublication(ownMarker),
+            epochNow - 5_000,
+          );
+          if (evidence === "unavailable lane head") {
+            bucket.unavailableKeys.add(laneKey);
+          }
+          break;
+        case "missing lane head":
+          bucket.objects.delete(laneKey);
+          break;
+        case "another operation's marker":
+          bucket.seed(
+            laneKey,
+            await encodeSyncPublication({
+              ...head,
+              pending: {
+                operationId: alternateOperationId,
+                nextSequence: allocated.reservation.sequence,
+              },
+            }),
+            epochNow - 5_000,
+          );
+          break;
+        case "wrong sequence marker":
+          bucket.seed(
+            laneKey,
+            await encodeSyncPublication({
+              ...head,
+              committedSequence: syncSequenceSchema.parse(
+                "00000000000000000001",
+              ),
+              committedAtEpochMs: 10,
+              pending: {
+                operationId,
+                nextSequence: syncEventSequenceSchema.parse(
+                  "00000000000000000002",
+                ),
+              },
+            }),
+            epochNow - 5_000,
+          );
+          break;
+        case "wrong committed clock marker":
+          bucket.seed(
+            laneKey,
+            await encodeSyncPublication({
+              ...head,
+              committedAtEpochMs: 101,
+              pending: {
+                operationId,
+                nextSequence: allocated.reservation.sequence,
+              },
+            }),
+            epochNow - 5_000,
+          );
+          break;
+      }
+
+      const journalKey = syncOperationKey(vaultId, operationId);
+      bucket.seed(
+        journalKey,
+        await encodeSyncPublication(allocated),
+        epochNow - 5_000,
+      );
+      expect(
+        await publication.replaceJournal(journalRead.observation, allocated),
+      ).toEqual({ kind: expected });
+    },
+  );
+
   it("resolves journal allocation CAS as exact target, unchanged prior, conflict, or unavailable", async () => {
     await seedMarker();
     const head = await initialLaneHead();

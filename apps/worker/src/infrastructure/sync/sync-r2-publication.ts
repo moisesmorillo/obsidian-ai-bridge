@@ -646,6 +646,13 @@ export function syncR2Publication(
     if (current.kind === "unavailable") return { kind: "effect_unknown" };
     if (current.kind === "absent") return { kind: "refused" };
     if (equalBytes(current.observation.observed.bytes, replacementBytes)) {
+      if (record.allocationState === "allocated") {
+        const authority = await validateOwnLaneReservation(
+          observed.value,
+          record,
+        );
+        if (authority.kind !== "valid") return authority;
+      }
       return { kind: "confirmed" };
     }
     if (

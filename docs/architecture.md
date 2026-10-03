@@ -63,10 +63,16 @@ admits identity-bound one-key transitions; the R2 adapter retains original
 conditional predicates and conservative effect classification. Separate inventory
 budget, cursor-witness, replay, page-evidence and cleanup owners enforce bounded
 progress without relisting verified chunks or reusing expired manifest identities.
-No HTTP/MCP/plugin bootstrap imports this composition. See
+No HTTP/MCP/plugin bootstrap imports this composition. PR #97 merged it at
+`62696b0`, including strict runtime LIST validation and an immutable schema-v2
+terminal failure latch at the existing step chunk key. A latch never authorizes
+page/cursor progress: same-ID recovery fails the exact reserved manifest without
+relisting, retains uncertainty, and releases only the owned slot when safe. Frozen
+v1 page decoding and namespace/storage ceilings are unchanged. See
 [M7.4 local evidence](qualification/m7-private-sync-store-local.md) for checks and
 independent review. Remote Workers Free CPU/account qualification and maximal
-real-head profiling remain pending. M7 remains NEXT and activation remains excluded.
+real-head profiling remain pending under the [qualification plan](plans/m7-sync-store-qualification.md).
+M7 remains NEXT and activation remains excluded.
 The current
 plugin boundary includes strict device state v5 with
 frozen v2/v3/v4 migration, reviewed sampling/admission, narrow local writes and

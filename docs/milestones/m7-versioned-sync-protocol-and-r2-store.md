@@ -3,13 +3,14 @@
 ## Status
 
 **NEXT — M7.1/M7.2 are complete; M7.3's isolated R2 primitives merged in
-PR #95. M7.4's private implementation is locally validated in this unmerged
-feature PR; remote Workers Free/account qualification and maximal real-head
-profiling remain pending.** This milestone
+PR #95. M7.4's private implementation merged in PR #97 (`62696b0`), including
+terminal inventory failure recovery; remote Workers Free/account qualification
+and maximal real-head profiling remain pending under the
+[qualification plan](../plans/m7-sync-store-qualification.md).** This milestone
 establishes a versioned, storage-independent sync contract and its isolated R2
 implementation. It does not enable synchronization, change the current writer,
-migrate data, or authorize a personal-vault cutover. Branch evidence becomes a
-canonical milestone transition only when its PR merges.
+migrate data, or authorize a personal-vault cutover. The implementation merge does
+not close outstanding qualification criteria or mark M7 COMPLETE.
 
 M1–M6 remain complete and historically accurate. M3's designated-writer mirror,
 the current v2 REST/MCP behavior, M4's reviewed-only local authority, and M5's
@@ -1136,18 +1137,24 @@ and measure aggregate Workers Free subrequests/CPU before any subsequent
 activation proposal. Local workerd and API declarations do not prove production
 rate limits or mobile/desktop behavior.
 
-## M7.4 local branch evidence (unmerged; isolated implementation approved)
+## M7.4 merged implementation evidence (qualification pending)
 
-The isolated private nine-method `SyncStore` is implemented in `feat/m7-complete-sync-store`: conditional mutation publication/recovery, committed feed paging, bounded v2 inventory cursor witnesses and chunk replay, complete-handle evidence paging, and canonical expired-scratch cleanup with permanent manifest tombstones. The current M1–M6 writer, HTTP/MCP surface and plugin remain unchanged.
+PR #97 merged at `62696b030a817eb2c4f91af8a6986a688fcd318b`. The isolated private nine-method `SyncStore` implements conditional mutation publication/recovery, committed feed paging, bounded v2 inventory cursor witnesses and chunk replay, complete-handle evidence paging, and canonical expired-scratch cleanup with permanent manifest tombstones. The current M1–M6 writer, HTTP/MCP surface and plugin remain unchanged.
 
 | Local evidence | Result and limit |
 | --- | --- |
 | `mise install` and `mise run check` | Passed before the first independent review, including Biome assists, lint/TSDoc, typecheck, coverage, builds and local native-runtime tests. |
-| Unchanged coverage gate | After R2: statements **12,272/12,917 (95%)**, branches **91.45%**, functions **98.64%**, lines **96.81%**. Final canonical check and `git diff --check` passed. |
+| Unchanged coverage gate | Final source `ed88daf` (identical merged tree): statements **12,301/12,948 (95%)**, branches **91.46%**, functions **98.65%**, lines **96.81%**. Canonical check, diff checks and PR CI passed. Historical R1/R2 evidence remains in the local report. |
 | First independent whole-branch pass | Retained continuation completed the mutation/publication/schema structural gate and accepted R1; its canonical rerun passed. R2 found unsafe floors in lane reservation/release. Five RED/GREEN lane cases now refuse response-floor forwarding/CAS and late invalid observation floors while preserving original predicates and same-ID recovery. Nine focused regressions passed; integrated rerun passed and corrective review approved the isolated implementation. R1/R2 are fixed; no open actionable findings remain. |
+| Terminal inventory correction | `ed88daf` persists deterministic reserved-step failures through an immutable chunk-key latch and exact post-reservation CAS; cooldown/recovery does not relist. Strict runtime LIST validation closes malformed flags/keys. **134/134** pertinent tests passed; retained corrective code/design review **APPROVE**, no actionable finding. |
 | Operational qualification | Synthetic R2/local Miniflare only. No deployment, real R2/account/vault, sync activation, maximal real-head profile or remote Workers Free CPU/account qualification. |
 
-See [local evidence and outstanding qualification](../qualification/m7-private-sync-store-local.md). This evidence updates the locally validated and independently approved implementation state, not a merged completion claim. **M7.4's full exit remains open for qualification/merge; M7 remains NEXT.** Keep the separate qualification and activation gates open. The owner now authorizes forward-only commits, feature-branch push and an open PR for review, but not merge or deployment; no following milestone becomes NEXT from this branch-local evidence.
+See [local evidence](../qualification/m7-private-sync-store-local.md) and the
+[remaining qualification plan](../plans/m7-sync-store-qualification.md). The merge
+closes private implementation delivery, not operational qualification. **M7.4's
+full exit remains open for qualification; M7 remains NEXT.** Deployment, real
+R2/vault access and activation require separate authorization. No following
+milestone becomes NEXT from this implementation merge.
 
 ## Exit and next transition
 

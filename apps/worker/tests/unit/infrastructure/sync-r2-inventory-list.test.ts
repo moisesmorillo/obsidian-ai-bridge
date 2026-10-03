@@ -80,7 +80,7 @@ describe("inventory listing boundary", () => {
       },
     });
     expect(await listing.readHead(vaultId, key, 2_048)).toEqual({
-      kind: "unavailable",
+      kind: "invalid",
     });
     expect(get).toHaveBeenCalledExactlyOnceWith(key);
   });
@@ -101,13 +101,13 @@ describe("inventory listing boundary", () => {
     const { listing, list } = fixture();
     list.mockResolvedValue({ objects: [], truncated: true, cursor: "" });
     expect(await listing.listHeads(vaultId, null)).toEqual({
-      kind: "unavailable",
+      kind: "invalid",
     });
     const missing = { objects: [], truncated: true, cursor: "opaque" };
     Object.defineProperty(missing, "cursor", { value: undefined });
     list.mockResolvedValue(missing);
     expect(await listing.listHeads(vaultId, null)).toEqual({
-      kind: "unavailable",
+      kind: "invalid",
     });
   });
 

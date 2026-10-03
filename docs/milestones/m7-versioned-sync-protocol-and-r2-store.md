@@ -449,7 +449,20 @@ and acceptance evidence are listed below.
   the saved input cursor. If attempt two ends and an exact chunk-key read proves no
   verifiable chunk exists, fail the scan with `inventory_limit_exceeded`; never issue a
   third data-read attempt for that step. A divergent manifest or uncertain progress write
-  returns `effect_unknown`; the scan cannot complete. A terminal `inventory_incomplete` marks
+  returns `effect_unknown`; the scan cannot complete. A deterministic post-reservation
+  LIST/head failure first writes a strict **schema-v2 failure latch** create-only at
+  that step's existing canonical chunk key. It contains only scan identity, step,
+  preceding root and closed `inventory_incomplete`/`inventory_limit_exceeded` reason;
+  it is not a v1 page transcript and never authorizes cursor, counter or complete
+  evidence advancement. The failed manifest CAS uses an exact reread matching the
+  entire just-reserved manifest bytes, not the stale pre-reservation ETag or an
+  adopted peer generation. If the manifest cooldown defers failure, same-ID replay
+  reads the latch and retries only the failure CAS, never the LIST/head GET. A lost
+  latch write/read-back or competing manifest retains `effect_unknown`; no slot is
+  released from uncertain failure evidence. Historical v1 page decoding remains
+  unchanged. The latch shares the existing chunk count, key and 12-KiB body ceiling;
+  cleanup already recognizes that canonical scratch key, so no new namespace or
+  account admission claim is introduced. A terminal `inventory_incomplete` marks
   the scan failed and attempts to replace only its own
   active-slot value with `empty` by exact CAS; if either write is throttled or uncertain,
   retain the slot until recovery proves its state. Resolve a lost manifest-CAS response

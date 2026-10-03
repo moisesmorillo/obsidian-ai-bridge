@@ -101,7 +101,31 @@ function fixture() {
     readActive: fail,
     createActive: fail,
     replaceActive: fail,
-    readManifest: fail,
+    async readManifest() {
+      const reservation = replaceManifest.mock.calls.at(-1)?.[1];
+      if (reservation === undefined)
+        throw new Error("Expected reserved manifest generation");
+      const key = createSyncR2Key(
+        syncInventoryManifestKey(vaultId, inventoryId),
+        vaultId,
+      );
+      if (key === undefined) throw new Error("Expected manifest key");
+      return {
+        kind: "observed",
+        observation: {
+          value: reservation,
+          observed: {
+            key,
+            etag: "reserved-generation",
+            bytes: await encodeSyncRecord({
+              kind: "manifest",
+              record: reservation,
+            }),
+            uploaded: new Date(now),
+          },
+        },
+      };
+    },
     createManifest: fail,
     replaceManifest,
     readChunk: fail,
@@ -224,13 +248,31 @@ describe("one inventory listing step", () => {
             ? { kind: "error", code: "storage_unavailable", inventoryId }
             : { kind: "error", code: "inventory_incomplete" },
       );
-      expect(state.replaceManifest).toHaveBeenCalledExactlyOnceWith(manifest, {
+      const terminal = fault !== "unavailable" && fault !== "chunk_throttled";
+      expect(state.replaceManifest).toHaveBeenCalledTimes(terminal ? 2 : 1);
+      expect(state.replaceManifest).toHaveBeenNthCalledWith(1, manifest, {
         ...manifest.value,
         reservedAttempt: 1,
       });
+      if (terminal) {
+        expect(state.replaceManifest.mock.calls[1]?.[0].observed.etag).toBe(
+          "reserved-generation",
+        );
+        expect(state.replaceManifest.mock.calls[1]?.[1]).toEqual({
+          ...manifest.value,
+          reservedAttempt: 1,
+          phase: "failed",
+        });
+        expect(state.createChunk).toHaveBeenCalledWith(
+          expect.objectContaining({
+            schemaVersion: 2,
+            failureCode: "inventory_incomplete",
+          }),
+        );
+      }
       expect(state.listHeads).toHaveBeenCalledOnce();
       expect(state.createChunk).toHaveBeenCalledTimes(
-        fault === "chunk_throttled" ? 1 : 0,
+        fault === "unavailable" ? 0 : 1,
       );
     },
   );

@@ -17,6 +17,7 @@ import { checkSyncInventoryCursor } from "@worker/infrastructure/sync/sync-r2-in
 import { verifySyncInventoryChunk } from "@worker/infrastructure/sync/sync-r2-inventory-evidence";
 import type { SyncR2InventoryListing } from "@worker/infrastructure/sync/sync-r2-inventory-list";
 import type { SyncServerClock } from "@worker/infrastructure/sync/sync-r2-mutation.types";
+import { encodeSyncRecord } from "@worker/infrastructure/sync/sync-record.codec";
 import { SYNC_RECORD_LIMITS } from "@worker/infrastructure/sync/sync-record.schemas";
 import type {
   SyncHeadSummary,
@@ -129,13 +130,15 @@ export async function runSyncInventoryStep(
   const { vaultId, inventoryId } = manifest.value;
   /** Persists terminal scan failure before its active slot can be released by continuation.
    * @param code Deterministic reason a further LIST must never remedy.
+   * @param authority Exact pre-reservation or verified post-reservation generation, never a refreshed peer.
    * @returns Failure only after the failed manifest is durably confirmed.
    */
   async function markFailed(
     code: "inventory_incomplete" | "inventory_limit_exceeded",
+    authority = manifest,
   ): Promise<SyncInventoryResult> {
-    const failed = await scratch.replaceManifest(manifest, {
-      ...manifest.value,
+    const failed = await scratch.replaceManifest(authority, {
+      ...authority.value,
       phase: "failed",
     });
     if (failed.kind === "throttled")
@@ -176,6 +179,14 @@ export async function runSyncInventoryStep(
       return { kind: "error", code: "effect_unknown", inventoryId };
     if (existing.kind === "invalid") return markFailed("inventory_incomplete");
     if (existing.kind === "observed") {
+      if (existing.observation.value.schemaVersion === 2) {
+        return markFailed(
+          existing.observation.value.previousChunkHash ===
+            manifest.value.chunkHash
+            ? existing.observation.value.failureCode
+            : "inventory_incomplete",
+        );
+      }
       const next = await successorManifest(manifest, existing.observation);
       if (next === undefined) return markFailed("inventory_incomplete");
       if (manifest.value.schemaVersion === 2) {
@@ -212,39 +223,94 @@ export async function runSyncInventoryStep(
       return markFailed("inventory_limit_exceeded");
   }
   const nextAttempt = manifest.value.reservedAttempt === 0 ? 1 : 2;
-  const claimed = await scratch.replaceManifest(manifest, {
+  const reservation: SyncInventoryManifest = {
     ...manifest.value,
     reservedAttempt: nextAttempt,
-  });
+  };
+  const claimed = await scratch.replaceManifest(manifest, reservation);
   if (claimed.kind === "throttled")
     return progress(vaultId, inventoryId, claimed.retryAfterEpochMs);
   if (claimed.kind !== "confirmed")
     return { kind: "error", code: "effect_unknown", inventoryId };
+  /** Latches a deterministic read failure before a same-key cooldown can defer manifest failure.
+   * The reread must equal the claimed bytes; it cannot adopt a competing manifest generation.
+   * @param code Closed terminal scan reason, never a transient unavailable read.
+   * @returns Terminal error after exact-CAS failure, deferred progress with durable latch, or uncertainty.
+   */
+  async function failReservedStep(
+    code: "inventory_incomplete" | "inventory_limit_exceeded",
+  ): Promise<SyncInventoryResult> {
+    const current = await scratch.readManifest(vaultId, inventoryId);
+    const expected = await encodeSyncRecord({
+      kind: "manifest",
+      record: reservation,
+    });
+    if (
+      current.kind !== "observed" ||
+      current.observation.observed.bytes.byteLength !== expected.byteLength ||
+      !expected.every(
+        (byte, index) => byte === current.observation.observed.bytes[index],
+      )
+    ) {
+      return { kind: "error", code: "effect_unknown", inventoryId };
+    }
+    const latched = await scratch.createChunk({
+      schemaVersion: 2,
+      protocolMajor: 1,
+      vaultId,
+      inventoryId,
+      step: reservation.nextStep,
+      previousChunkHash: reservation.chunkHash,
+      failureCode: code,
+    });
+    if (latched.kind === "throttled")
+      return progress(vaultId, inventoryId, latched.retryAfterEpochMs);
+    if (latched.kind !== "confirmed")
+      return {
+        kind: "error",
+        code: "effect_unknown",
+        inventoryId,
+        ...("retryAfterEpochMs" in latched &&
+        latched.retryAfterEpochMs !== undefined
+          ? { retryAfterEpochMs: latched.retryAfterEpochMs }
+          : {}),
+      };
+    return markFailed(code, current.observation);
+  }
   const rawInputBytes =
     manifest.value.cursor === null
       ? new Uint8Array()
       : decodeBase64Url(manifest.value.cursor);
   const rawInput =
     rawInputBytes === undefined ? undefined : decodeUtf8(rawInputBytes);
-  if (rawInput === undefined)
-    return { kind: "error", code: "inventory_incomplete" };
+  if (rawInput === undefined) return failReservedStep("inventory_incomplete");
   const listed = await listing.listHeads(
     vaultId,
     rawInput.length === 0 ? null : rawInput,
   );
+  if (listed.kind === "invalid")
+    return failReservedStep("inventory_incomplete");
   if (listed.kind !== "page")
     return { kind: "error", code: "storage_unavailable", inventoryId };
   if (listed.page.objects.length > 1)
-    return { kind: "error", code: "inventory_incomplete" };
+    return failReservedStep("inventory_incomplete");
   const rawOutput = listed.page.truncated ? listed.page.cursor : null;
   if (
     rawOutput !== null &&
     (rawOutput === rawInput ||
       encoder.encode(rawOutput).byteLength > SYNC_RECORD_LIMITS.cursorBytes)
   ) {
-    return { kind: "error", code: "inventory_incomplete" };
+    return failReservedStep("inventory_incomplete");
   }
   const object = listed.page.objects[0];
+  if (
+    (object !== undefined &&
+      reservation.headCount >= SYNC_RECORD_LIMITS.inventoryHeads) ||
+    (object === undefined &&
+      listed.page.truncated &&
+      reservation.emptyPageCount >= SYNC_RECORD_LIMITS.emptyInventoryPages)
+  )
+    return failReservedStep("inventory_limit_exceeded");
   let headSummary: SyncHeadSummary | null = null;
   let headBodyBytes = 0;
   if (object !== undefined) {
@@ -254,20 +320,22 @@ export async function runSyncInventoryStep(
       !object.key.endsWith(".json") ||
       (manifest.value.lastKey !== null && object.key <= manifest.value.lastKey)
     ) {
-      return { kind: "error", code: "inventory_incomplete" };
+      return failReservedStep("inventory_incomplete");
     }
     const pathKey = object.key.slice(prefix.length, -5);
     const path = decodeSyncPathKey(pathKey);
     if (path === undefined || syncHeadKey(vaultId, path) !== object.key) {
-      return { kind: "error", code: "inventory_incomplete" };
+      return failReservedStep("inventory_incomplete");
     }
     const read = await listing.readHead(
       vaultId,
       object.key,
       SYNC_RECORD_LIMITS.headBytes,
     );
+    if (read.kind === "unavailable")
+      return { kind: "error", code: "storage_unavailable", inventoryId };
     if (read.kind !== "observed" || read.observation.value.path !== path) {
-      return { kind: "error", code: "inventory_incomplete" };
+      return failReservedStep("inventory_incomplete");
     }
     headBodyBytes = read.observation.observed.bytes.byteLength;
     headSummary = {
@@ -286,7 +354,7 @@ export async function runSyncInventoryStep(
     encoder.encode(transcript).byteLength >
     SYNC_RECORD_LIMITS.chunkTranscriptBytes
   ) {
-    return { kind: "error", code: "inventory_limit_exceeded" };
+    return failReservedStep("inventory_limit_exceeded");
   }
   const chunk: SyncInventoryChunk = {
     schemaVersion: 1,

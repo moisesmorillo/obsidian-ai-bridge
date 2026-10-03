@@ -439,6 +439,7 @@ async function sha256Hex(bytes: Uint8Array): Promise<ContentSha256> {
 async function assertChunkCursorDigest(
   chunk: SyncInventoryChunk,
 ): Promise<void> {
+  if (chunk.schemaVersion === 2) return;
   const cursorBytes =
     chunk.outputCursor === null
       ? new Uint8Array()

@@ -314,6 +314,7 @@ export async function checkSyncInventoryCursor(
   scratch: SyncR2InventoryScratch,
   clock: SyncServerClock,
 ): Promise<SyncInventoryCursorCheck> {
+  if (chunk.value.schemaVersion === 2) return { kind: "incomplete" };
   if (!chunk.value.truncated) {
     return (await ownsCurrentScan(manifest, scratch, clock))
       ? { kind: "proved" }

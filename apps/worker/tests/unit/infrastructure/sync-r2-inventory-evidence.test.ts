@@ -13,7 +13,7 @@ import {
 } from "@worker/infrastructure/sync/sync-r2-inventory-evidence";
 import { createSyncR2Key } from "@worker/infrastructure/sync/sync-r2-key";
 import { encodeSyncRecord } from "@worker/infrastructure/sync/sync-record.codec";
-import type { SyncInventoryChunk } from "@worker/infrastructure/sync/sync-record.types";
+import type { SyncInventoryPageChunk } from "@worker/infrastructure/sync/sync-record.types";
 import { sha256Content } from "@worker/storage/storage-crypto";
 import { describe, expect, it } from "vitest";
 
@@ -44,8 +44,8 @@ const digestEmpty = fixtureDigest(
  * @returns Empty terminal evidence, with optional controlled forgery fields.
  */
 function emptyChunk(
-  overrides: Partial<SyncInventoryChunk> = {},
-): SyncInventoryChunk {
+  overrides: Partial<SyncInventoryPageChunk> = {},
+): SyncInventoryPageChunk {
   return {
     schemaVersion: 1,
     protocolMajor: 1,
@@ -72,9 +72,9 @@ function emptyChunk(
  * @returns Typed observation whose body is canonical unless overridden for tampering.
  */
 async function observedChunk(
-  value: SyncInventoryChunk,
+  value: SyncInventoryPageChunk,
   bytes?: Uint8Array,
-): Promise<SyncRecordObservation<SyncInventoryChunk>> {
+): Promise<SyncRecordObservation<SyncInventoryPageChunk>> {
   const key = createSyncR2Key(
     syncInventoryChunkKey(vaultId, inventoryId, 0),
     vaultId,

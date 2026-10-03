@@ -12,7 +12,10 @@ import type { SyncInventoryIdDto, SyncVaultIdDto } from "@protocol/sync.types";
 import type { SyncRecordObservation } from "@worker/infrastructure/sync/sync-r2.types";
 import { encodeSyncRecord } from "@worker/infrastructure/sync/sync-record.codec";
 import { SYNC_RECORD_LIMITS } from "@worker/infrastructure/sync/sync-record.schemas";
-import type { SyncInventoryChunk } from "@worker/infrastructure/sync/sync-record.types";
+import type {
+  SyncInventoryChunk,
+  SyncInventoryPageChunk,
+} from "@worker/infrastructure/sync/sync-record.types";
 import { sha256Content } from "@worker/storage/storage-crypto";
 import { z } from "zod";
 
@@ -50,7 +53,7 @@ export interface SyncInventoryChunkPosition {
 /** Validated immutable page evidence, shared by same-step replay and public evidence paging. */
 export interface SyncVerifiedInventoryChunk {
   /** Strict canonical chunk whose exact bytes matched the object observation. */
-  readonly record: SyncInventoryChunk;
+  readonly record: SyncInventoryPageChunk;
   /** Exact persisted canonical body byte count for aggregate evidence limits. */
   readonly byteSize: number;
   /** Rolling root over the exact chunk bytes including its prior root. */
@@ -71,6 +74,7 @@ export async function verifySyncInventoryChunk(
   chunk: SyncRecordObservation<SyncInventoryChunk>,
 ): Promise<SyncVerifiedInventoryChunk | undefined> {
   const record = chunk.value;
+  if (record.schemaVersion === 2) return undefined;
   if (
     record.vaultId !== prior.vaultId ||
     record.inventoryId !== prior.inventoryId ||

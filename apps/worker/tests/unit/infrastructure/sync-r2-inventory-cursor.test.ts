@@ -18,9 +18,10 @@ import { createSyncR2Key } from "@worker/infrastructure/sync/sync-r2-key";
 import { encodeSyncRecord } from "@worker/infrastructure/sync/sync-record.codec";
 import { syncInventoryCursorJournalSchema } from "@worker/infrastructure/sync/sync-record.schemas";
 import type {
-  SyncInventoryChunk,
   SyncInventoryCursorJournal,
   SyncInventoryManifest,
+  SyncInventoryPageChunk,
+  SyncInventoryStepFailure,
 } from "@worker/infrastructure/sync/sync-record.types";
 import { describe, expect, it, vi } from "vitest";
 
@@ -96,7 +97,7 @@ async function fixture() {
       uploaded: new Date(epoch - 2_000),
     },
   };
-  const chunkValue: SyncInventoryChunk = {
+  const chunkValue: SyncInventoryPageChunk = {
     schemaVersion: 1,
     protocolMajor: 1,
     vaultId,
@@ -115,7 +116,7 @@ async function fixture() {
     }),
     headSummary: null,
   };
-  const chunk: SyncRecordObservation<SyncInventoryChunk> = {
+  const chunk: SyncRecordObservation<SyncInventoryPageChunk> = {
     value: chunkValue,
     observed: {
       key: chunkKey,
@@ -232,6 +233,38 @@ async function fixture() {
 }
 
 describe("per-step R2 cursor witness attempt recovery", () => {
+  it("never turns a terminal step latch into cursor-witness or progress authority", async () => {
+    const state = await fixture();
+    const failure: SyncInventoryStepFailure = {
+      schemaVersion: 2,
+      protocolMajor: 1,
+      vaultId,
+      inventoryId,
+      step: 0,
+      previousChunkHash: null,
+      failureCode: "inventory_incomplete",
+    };
+    const observation = {
+      value: failure,
+      observed: {
+        ...state.chunk.observed,
+        bytes: await encodeSyncRecord({ kind: "chunk", record: failure }),
+      },
+    };
+    expect(
+      await checkSyncInventoryCursor(
+        state.manifest,
+        observation,
+        state.next,
+        state.scratch,
+        state.clock,
+      ),
+    ).toEqual({ kind: "incomplete" });
+    expect(state.createCursorJournal).not.toHaveBeenCalled();
+    expect(state.createCursorWitness).not.toHaveBeenCalled();
+    expect(state.replaceCursorJournal).not.toHaveBeenCalled();
+  });
+
   it.each(["attempting", "retry_wait"] as const)(
     "does not transition a cooled %s journal after losing scan authority before recovery",
     async (phase) => {

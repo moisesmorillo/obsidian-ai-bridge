@@ -15,11 +15,49 @@ import { syncR2ObjectStore } from "@worker/infrastructure/sync/sync-r2-object";
 import { decodeSyncRecord } from "@worker/infrastructure/sync/sync-record.codec";
 import { SYNC_RECORD_LIMITS } from "@worker/infrastructure/sync/sync-record.schemas";
 import type { SyncHeadRecord } from "@worker/infrastructure/sync/sync-record.types";
+import { z } from "zod";
+
+/** Validates actual SDK list entries, not the compile-time binding promise; other metadata is unused. */
+const inventoryListObjectsSchema = z
+  .array(
+    z.object({
+      key: z.string(),
+      size: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+    }),
+  )
+  .max(1);
+
+/** Rehydrates a closed full page only after the runtime flag, objects and continuation agree. */
+const inventoryListPageSchema = z.discriminatedUnion("truncated", [
+  z.object({
+    objects: inventoryListObjectsSchema,
+    truncated: z.literal(true),
+    cursor: z
+      .string()
+      .min(1)
+      .refine(
+        (cursor) =>
+          new TextEncoder().encode(cursor).byteLength <=
+          SYNC_RECORD_LIMITS.cursorBytes,
+      ),
+  }),
+  z.object({
+    objects: inventoryListObjectsSchema,
+    truncated: z.literal(false),
+    cursor: z.undefined().optional(),
+  }),
+]);
 
 /** Bounded private listing read that never accepts a caller-controlled namespace prefix. */
 export type SyncInventoryListRead =
   | { readonly kind: "page"; readonly page: R2ListResult }
-  | { readonly kind: "unavailable" };
+  | { readonly kind: "unavailable" }
+  | { readonly kind: "invalid" };
+
+/** Head evidence distinguishes unreadable transport from definitively malformed observed bytes. */
+export type SyncInventoryHeadRead =
+  | SyncRecordRead<SyncHeadRecord>
+  | { readonly kind: "invalid" };
 
 /** R2-only listing and head-body reads restricted to exact protocol-v1 vault heads. */
 export interface SyncR2InventoryListing {
@@ -42,7 +80,7 @@ export interface SyncR2InventoryListing {
     vaultId: SyncVaultIdDto,
     key: string,
     maxBytes: number,
-  ): Promise<SyncRecordRead<SyncHeadRecord>>;
+  ): Promise<SyncInventoryHeadRead>;
 }
 
 /** Builds a prefix-limited reader atop an invocation-counted raw R2 binding.
@@ -66,18 +104,10 @@ export function syncR2InventoryListing(
         const page = await bucket.list(
           cursor === null ? { prefix, limit: 1 } : { prefix, cursor, limit: 1 },
         );
-        if (
-          !Array.isArray(page.objects) ||
-          page.objects.length > 1 ||
-          (page.truncated &&
-            (typeof page.cursor !== "string" ||
-              page.cursor.length === 0 ||
-              new TextEncoder().encode(page.cursor).byteLength >
-                SYNC_RECORD_LIMITS.cursorBytes)) ||
-          (!page.truncated && "cursor" in page && page.cursor !== undefined)
-        )
-          return { kind: "unavailable" };
-        return { kind: "page", page };
+        const decoded = inventoryListPageSchema.safeParse(page);
+        return decoded.success
+          ? { kind: "page", page: decoded.data }
+          : { kind: "invalid" };
       } catch {
         return { kind: "unavailable" };
       }
@@ -116,9 +146,9 @@ export function syncR2InventoryListing(
                 observed: result.observation,
               },
             }
-          : { kind: "unavailable" };
+          : { kind: "invalid" };
       } catch {
-        return { kind: "unavailable" };
+        return { kind: "invalid" };
       }
     },
   };

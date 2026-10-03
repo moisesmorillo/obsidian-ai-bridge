@@ -275,7 +275,7 @@ const headSummarySchema = z
     }
   });
 /** One strict durable page replay record with exact output-cursor encoding. */
-export const syncInventoryChunkSchema = z
+const syncInventoryPageChunkSchema = z
   .object({
     ...envelopeShape,
     inventoryId: syncInventoryIdSchema,
@@ -353,6 +353,32 @@ export const syncInventoryChunkSchema = z
       });
     }
   });
+
+/** Strict v2 terminal latch; it cannot decode as a historical v1 page or contain payload content. */
+const syncInventoryStepFailureSchema = z
+  .object({
+    ...envelopeShape,
+    schemaVersion: z.literal(2),
+    inventoryId: syncInventoryIdSchema,
+    step: z
+      .number()
+      .int()
+      .min(0)
+      .max(SYNC_RECORD_LIMITS.inventorySteps - 1),
+    previousChunkHash: sha256Schema.nullable(),
+    failureCode: z.enum(["inventory_incomplete", "inventory_limit_exceeded"]),
+  })
+  .strict()
+  .refine(
+    (failure) => (failure.step === 0) === (failure.previousChunkHash === null),
+    "Failure latch must retain its exact preceding chunk root",
+  );
+
+/** Closed immutable step outcomes sharing the canonical chunk key and existing body ceiling. */
+export const syncInventoryChunkSchema = z.union([
+  syncInventoryPageChunkSchema,
+  syncInventoryStepFailureSchema,
+]);
 
 /** Confirms a transcript uses compact JSON spelling without discarded duplicate fields.
  *

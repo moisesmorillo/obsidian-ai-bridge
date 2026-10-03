@@ -1,6 +1,7 @@
 import type { SyncCompleteInventory } from "@core/sync/sync-store.types";
 import { createContentSha256, encodeBase64Url } from "@obsidian-ai-bridge/core";
 import {
+  syncHeadKey,
   syncInventoryActiveKey,
   syncInventoryChunkKey,
   syncInventoryClaimKey,
@@ -10,6 +11,7 @@ import {
 } from "@protocol/sync.codec";
 import {
   syncInventoryIdSchema,
+  syncNotePathSchema,
   syncSequenceSchema,
   syncVaultIdSchema,
 } from "@protocol/sync.schemas";
@@ -18,11 +20,15 @@ import type {
   R2ConditionalObjectMetadata,
   R2ConditionalPutOptions,
   R2ConditionalStoredObject,
+  R2ListResult,
 } from "@worker/infrastructure/r2.types";
 import type { SyncR2Key } from "@worker/infrastructure/sync/sync-r2.types";
 import { syncR2InventoryScratch } from "@worker/infrastructure/sync/sync-r2-inventory";
 import { createSyncInventoryInvocationBudget } from "@worker/infrastructure/sync/sync-r2-inventory-budget";
-import type { SyncR2InventoryListing } from "@worker/infrastructure/sync/sync-r2-inventory-list";
+import {
+  type SyncR2InventoryListing,
+  syncR2InventoryListing,
+} from "@worker/infrastructure/sync/sync-r2-inventory-list";
 import { syncR2InventoryPages } from "@worker/infrastructure/sync/sync-r2-inventory-pages";
 import { runSyncInventoryStep } from "@worker/infrastructure/sync/sync-r2-inventory-replay";
 import { syncR2InventoryRunner } from "@worker/infrastructure/sync/sync-r2-inventory-runner";
@@ -37,10 +43,11 @@ import {
 import type {
   SyncInventoryChunk,
   SyncInventoryManifest,
+  SyncInventoryPageChunk,
   SyncInventorySlot,
 } from "@worker/infrastructure/sync/sync-record.types";
 import { sha256Content } from "@worker/storage/storage-crypto";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const vaultId = syncVaultIdSchema.parse("11111111-1111-4111-8111-111111111111");
 const otherVaultId = syncVaultIdSchema.parse(
@@ -111,10 +118,7 @@ class MemoryBucket implements R2ConditionalBucketPort {
     return null;
   }
 
-  async list(): Promise<{
-    readonly objects: readonly [];
-    readonly truncated: false;
-  }> {
+  async list(): Promise<R2ListResult> {
     return { objects: [], truncated: false };
   }
 
@@ -203,8 +207,8 @@ function makeManifest(
 }
 
 function makeChunk(
-  overrides: Partial<SyncInventoryChunk> = {},
-): SyncInventoryChunk {
+  overrides: Partial<SyncInventoryPageChunk> = {},
+): SyncInventoryPageChunk {
   return {
     schemaVersion: 1,
     protocolMajor: 1,
@@ -228,6 +232,367 @@ let scratch: ReturnType<typeof syncR2InventoryScratch>;
 beforeEach(() => {
   bucket = new MemoryBucket();
   scratch = syncR2InventoryScratch(syncR2ObjectStore(bucket, () => bucket.now));
+});
+
+describe("terminal post-reservation inventory failures", () => {
+  it.each([
+    "lost_failure_response",
+    "peer_manifest",
+    "foreign_slot",
+    "unavailable_head",
+  ] as const)("preserves uncertainty and ownership at %s", async (fault) => {
+    const manifest: SyncInventoryManifest = {
+      ...makeManifest(),
+      schemaVersion: 2,
+      cursorWitnessMode: 1,
+      phase: "scanning",
+    };
+    bucket.seed(
+      syncInventoryManifestKey(vaultId, inventoryId),
+      await encodeSyncRecord({ kind: "manifest", record: manifest }),
+    );
+    bucket.seed(
+      syncInventoryActiveKey(vaultId),
+      await encodeSyncRecord({ kind: "activeSlot", record: makeSlot() }),
+    );
+    bucket.seed(
+      syncVaultMarkerKey(vaultId),
+      await encodeSyncRecord({
+        kind: "vaultMarker",
+        vaultId,
+        schemaVersion: 1,
+        protocolMajor: 1,
+      }),
+    );
+    const headKey = syncHeadKey(
+      vaultId,
+      syncNotePathSchema.parse("notes/missing.md"),
+    );
+    const failureKey = syncInventoryChunkKey(vaultId, inventoryId, 0);
+    const list = vi.spyOn(bucket, "list").mockImplementation(async () => {
+      bucket.now += 1_100;
+      return { objects: [{ key: headKey, size: 1 }], truncated: false };
+    });
+    const originalGet = bucket.get.bind(bucket);
+    let lost = false;
+    vi.spyOn(bucket, "get").mockImplementation(async (key) => {
+      if (
+        (fault === "lost_failure_response" && lost && key === failureKey) ||
+        (fault === "unavailable_head" && key === headKey)
+      )
+        throw new Error("Unavailable GET capability");
+      return originalGet(key);
+    });
+    if (fault === "lost_failure_response") {
+      const originalPut = bucket.put.bind(bucket);
+      vi.spyOn(bucket, "put").mockImplementation(async (key, body, options) => {
+        const result = await originalPut(key, body, options);
+        if (key === failureKey) {
+          lost = true;
+          throw new Error("Applied failure latch without acknowledgement");
+        }
+        return result;
+      });
+    }
+    if (fault === "peer_manifest") {
+      const originalCreate = scratch.createChunk.bind(scratch);
+      vi.spyOn(scratch, "createChunk").mockImplementation(async (chunk) => {
+        const result = await originalCreate(chunk);
+        const current = await scratch.readManifest(vaultId, inventoryId);
+        if (current.kind !== "observed")
+          throw new Error("Expected claimed generation");
+        bucket.now += 1_100;
+        expect(
+          await scratch.replaceManifest(current.observation, {
+            ...current.observation.value,
+            reservedAttempt: 2,
+          }),
+        ).toEqual({ kind: "confirmed" });
+        return result;
+      });
+    }
+    const continuation = () =>
+      syncR2InventoryRunner(
+        scratch,
+        syncR2Publication(syncR2ObjectStore(bucket, () => bucket.now)),
+        createSyncInventoryInvocationBudget(() => 20),
+        () => bucket.now,
+        syncR2InventoryListing(bucket),
+      ).continueInventory({ vaultId, inventoryId });
+    expect(await continuation()).toMatchObject({
+      kind: "error",
+      code:
+        fault === "foreign_slot"
+          ? "inventory_incomplete"
+          : fault === "unavailable_head"
+            ? "storage_unavailable"
+            : "effect_unknown",
+    });
+    expect(await scratch.readActive(vaultId)).toMatchObject({
+      kind: "observed",
+      observation: { value: { state: "active", inventoryId } },
+    });
+    if (fault === "unavailable_head") {
+      expect(await scratch.readChunk(vaultId, inventoryId, 0)).toEqual({
+        kind: "absent",
+      });
+      expect(await scratch.readManifest(vaultId, inventoryId)).toMatchObject({
+        kind: "observed",
+        observation: { value: { phase: "scanning" } },
+      });
+      return;
+    }
+    if (fault === "peer_manifest")
+      expect(await scratch.readManifest(vaultId, inventoryId)).toMatchObject({
+        kind: "observed",
+        observation: { value: { phase: "scanning", reservedAttempt: 2 } },
+      });
+    lost = false;
+    bucket.now += 1_100;
+    if (fault === "foreign_slot")
+      bucket.seed(
+        syncInventoryActiveKey(vaultId),
+        await encodeSyncRecord({
+          kind: "activeSlot",
+          record: makeSlot("active", otherInventoryId),
+        }),
+      );
+    expect(await continuation()).toEqual({
+      kind: "error",
+      code: "inventory_incomplete",
+    });
+    bucket.now += 1_100;
+    expect(await continuation()).toEqual({
+      kind: "error",
+      code: "inventory_incomplete",
+    });
+    expect(await scratch.readActive(vaultId)).toMatchObject({
+      kind: "observed",
+      observation: {
+        value:
+          fault === "foreign_slot"
+            ? { state: "active", inventoryId: otherInventoryId }
+            : { state: "empty" },
+      },
+    });
+    expect(list).toHaveBeenCalledOnce();
+  });
+
+  it("retains a durable failure latch through the post-reservation cooldown instead of relisting", async () => {
+    const manifest: SyncInventoryManifest = {
+      ...makeManifest(),
+      schemaVersion: 2,
+      cursorWitnessMode: 1,
+      phase: "scanning",
+    };
+    bucket.seed(
+      syncInventoryManifestKey(vaultId, inventoryId),
+      await encodeSyncRecord({ kind: "manifest", record: manifest }),
+    );
+    bucket.seed(
+      syncInventoryActiveKey(vaultId),
+      await encodeSyncRecord({ kind: "activeSlot", record: makeSlot() }),
+    );
+    bucket.seed(
+      syncVaultMarkerKey(vaultId),
+      await encodeSyncRecord({
+        kind: "vaultMarker",
+        vaultId,
+        schemaVersion: 1,
+        protocolMajor: 1,
+      }),
+    );
+    const list = vi.spyOn(bucket, "list").mockResolvedValue({
+      objects: [
+        {
+          key: syncHeadKey(
+            vaultId,
+            syncNotePathSchema.parse("notes/absent.md"),
+          ),
+          size: 1,
+        },
+      ],
+      truncated: false,
+    });
+    const continuation = () =>
+      syncR2InventoryRunner(
+        scratch,
+        syncR2Publication(syncR2ObjectStore(bucket, () => bucket.now)),
+        createSyncInventoryInvocationBudget(() => 20),
+        () => bucket.now,
+        syncR2InventoryListing(bucket),
+      ).continueInventory({ vaultId, inventoryId });
+    expect(await continuation()).toEqual({
+      kind: "inventory_in_progress",
+      vaultId,
+      inventoryId,
+      retryAfterEpochMs: bucket.now + 1_100,
+    });
+    expect(await scratch.readChunk(vaultId, inventoryId, 0)).toMatchObject({
+      kind: "observed",
+      observation: {
+        value: { schemaVersion: 2, failureCode: "inventory_incomplete" },
+      },
+    });
+    list.mockResolvedValue({ objects: [], truncated: false });
+    bucket.now += 1_100;
+    expect(await continuation()).toEqual({
+      kind: "error",
+      code: "inventory_incomplete",
+    });
+    expect(await scratch.readManifest(vaultId, inventoryId)).toMatchObject({
+      kind: "observed",
+      observation: { value: { phase: "failed" } },
+    });
+    bucket.now += 1_100;
+    expect(await continuation()).toEqual({
+      kind: "error",
+      code: "inventory_incomplete",
+    });
+    expect(await scratch.readActive(vaultId)).toMatchObject({
+      kind: "observed",
+      observation: { value: { state: "empty" } },
+    });
+    expect(list).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    "invalid_page",
+    "missing_truncated",
+    "non_boolean_truncated",
+    "missing_key",
+    "non_string_key",
+    "repeated_cursor",
+    "unordered_key",
+    "absent_head",
+    "malformed_head",
+    "head_limit",
+  ] as const)(
+    "durably fails %s and never LISTs again on same-ID continuation",
+    async (fault) => {
+      const manifest: SyncInventoryManifest = {
+        ...makeManifest(),
+        schemaVersion: 2,
+        cursorWitnessMode: 1,
+        phase: "scanning",
+      };
+      const headKey = syncHeadKey(
+        vaultId,
+        syncNotePathSchema.parse("notes/failure.md"),
+      );
+      const saved =
+        fault === "repeated_cursor" ||
+        fault === "unordered_key" ||
+        fault === "head_limit"
+          ? {
+              ...manifest,
+              cursor: "QQ",
+              lastKey: headKey,
+              nextStep: 1,
+              listPageCount: 1,
+              chunkCount: 1,
+              chunkHash: digest,
+              headCount: fault === "head_limit" ? 10_000 : 1,
+              listAttemptCount: 1,
+              headGetAttemptCount: 1,
+            }
+          : manifest;
+      // The head-limit fixture has a valid counter history at its actual persisted boundary.
+      const initial =
+        fault === "head_limit"
+          ? {
+              ...saved,
+              nextStep: 10_000,
+              listPageCount: 10_000,
+              chunkCount: 10_000,
+              listAttemptCount: 10_000,
+              headGetAttemptCount: 10_000,
+              lastKey: syncHeadKey(
+                vaultId,
+                syncNotePathSchema.parse("notes/0000.md"),
+              ),
+            }
+          : saved;
+      bucket.seed(
+        syncInventoryManifestKey(vaultId, inventoryId),
+        await encodeSyncRecord({ kind: "manifest", record: initial }),
+      );
+      bucket.seed(
+        syncInventoryActiveKey(vaultId),
+        await encodeSyncRecord({ kind: "activeSlot", record: makeSlot() }),
+      );
+      const marker = keyFor(syncVaultMarkerKey(vaultId));
+      bucket.seed(
+        marker,
+        await encodeSyncRecord({
+          kind: "vaultMarker",
+          vaultId,
+          schemaVersion: 1,
+          protocolMajor: 1,
+        }),
+      );
+      if (fault === "malformed_head")
+        bucket.seed(headKey, new TextEncoder().encode("{"));
+      const list = vi.spyOn(bucket, "list").mockImplementation(async () => {
+        bucket.now += 1_100;
+        if (fault === "invalid_page")
+          return { objects: [], truncated: true, cursor: "" };
+        if (
+          fault === "missing_truncated" ||
+          fault === "non_boolean_truncated"
+        ) {
+          const page: R2ListResult = { objects: [], truncated: false };
+          if (fault === "missing_truncated")
+            Reflect.deleteProperty(page, "truncated");
+          else Object.defineProperty(page, "truncated", { value: "false" });
+          return page;
+        }
+        if (fault === "missing_key" || fault === "non_string_key") {
+          const entry = { key: headKey, size: 1 };
+          if (fault === "missing_key") Reflect.deleteProperty(entry, "key");
+          else Object.defineProperty(entry, "key", { value: 12 });
+          return { objects: [entry], truncated: false };
+        }
+        if (fault === "repeated_cursor")
+          return { objects: [], truncated: true, cursor: "A" };
+        return { objects: [{ key: headKey, size: 1 }], truncated: false };
+      });
+      const continuation = () =>
+        syncR2InventoryRunner(
+          scratch,
+          syncR2Publication(syncR2ObjectStore(bucket, () => bucket.now)),
+          createSyncInventoryInvocationBudget(() => 20),
+          () => bucket.now,
+          syncR2InventoryListing(bucket),
+        ).continueInventory({ vaultId, inventoryId });
+      expect(await continuation()).toEqual({
+        kind: "error",
+        code:
+          fault === "head_limit"
+            ? "inventory_limit_exceeded"
+            : "inventory_incomplete",
+      });
+      expect(await scratch.readManifest(vaultId, inventoryId)).toMatchObject({
+        kind: "observed",
+        observation: { value: { phase: "failed", reservedAttempt: 1 } },
+      });
+      list.mockResolvedValue({ objects: [], truncated: false });
+      bucket.now += 1_100;
+      expect(await continuation()).toEqual({
+        kind: "error",
+        code: "inventory_incomplete",
+      });
+      expect(await scratch.readActive(vaultId)).toMatchObject({
+        kind: "observed",
+        observation: { value: { state: "empty" } },
+      });
+      expect(await continuation()).toEqual({
+        kind: "error",
+        code: "inventory_incomplete",
+      });
+      expect(list).toHaveBeenCalledOnce();
+    },
+  );
 });
 
 /** Seeds one strict reserved v2 chunk and exposes counted fresh-invocation replay.

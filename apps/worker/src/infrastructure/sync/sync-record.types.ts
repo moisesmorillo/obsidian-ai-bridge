@@ -209,7 +209,7 @@ export interface SyncHeadSummary {
 }
 
 /** One immutable replayable listing transcript and optional validated head summary. */
-export interface SyncInventoryChunk extends SyncRecordEnvelope {
+export interface SyncInventoryPageChunk extends SyncRecordEnvelope {
   /** Stable scan identity appearing in the chunk key. */
   readonly inventoryId: SyncInventoryIdDto;
   /** Monotonic step encoded in the chunk key. */
@@ -229,6 +229,28 @@ export interface SyncInventoryChunk extends SyncRecordEnvelope {
   /** Validated head summary returned by this single page, if any. */
   readonly headSummary: SyncHeadSummary | null;
 }
+
+/** Immutable terminal step evidence occupying the chunk key without authorizing page progress.
+ * Schema v2 is a failure latch, not a repaired or upgraded historical v1 page.
+ */
+export interface SyncInventoryStepFailure
+  extends Omit<SyncRecordEnvelope, "schemaVersion"> {
+  /** Version separating failure evidence from historical page transcripts. */
+  readonly schemaVersion: 2;
+  /** Stable scan identity whose reserved step observed the deterministic failure. */
+  readonly inventoryId: SyncInventoryIdDto;
+  /** Exact reserved step; the create-only key prevents a later successful page replacing this latch. */
+  readonly step: number;
+  /** Original prefix root, retained to prevent adopting evidence from another scan position. */
+  readonly previousChunkHash: ContentSha256 | null;
+  /** Closed terminal reason; never storage/transport uncertainty. */
+  readonly failureCode: "inventory_incomplete" | "inventory_limit_exceeded";
+}
+
+/** Create-only step outcome: exact historical page evidence or explicit terminal failure. */
+export type SyncInventoryChunk =
+  | SyncInventoryPageChunk
+  | SyncInventoryStepFailure;
 
 /** Validated random UUID electing exactly one inventory witness-dispatch generation. */
 export type SyncInventoryClaimId = string & {

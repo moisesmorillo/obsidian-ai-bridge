@@ -12,11 +12,21 @@ import type {
 /** Private publication record families accepted below one protocol-v1 vault prefix. */
 export type SyncPublicationKind = "journal" | "laneHead" | "feedEvent";
 
-/** Exact private JSON envelope shared by publication records. */
+/** Exact version-one JSON envelope retained by mutable lane heads and immutable feed events. */
 export interface SyncPublicationEnvelope {
-  /** Persisted schema generation for this record family. */
+  /** Persisted schema generation for the lane-head or feed-event family. */
   readonly schemaVersion: 1;
   /** Protocol major whose closed publication contract governs this record. */
+  readonly protocolMajor: 1;
+  /** Immutable vault namespace that must agree with both key and request. */
+  readonly vaultId: SyncVaultIdDto;
+}
+
+/** Version-two envelope used only by operation journals with strict attempt authority. */
+export interface SyncJournalPublicationEnvelope {
+  /** Persisted journal schema generation; version-one journals are never rehydrated. */
+  readonly schemaVersion: 2;
+  /** Protocol major whose closed publication contract governs this journal. */
   readonly protocolMajor: 1;
   /** Immutable vault namespace that must agree with both key and request. */
   readonly vaultId: SyncVaultIdDto;
@@ -60,31 +70,97 @@ export type SyncPublicationPrecondition =
       readonly status: "pending";
     };
 
-/** One in-flight publication target and its exact pre-dispatch recovery evidence. */
-export interface SyncPublicationStepEvidence {
-  /** Closed durable step; the matching key family and request identity are validated together. */
-  readonly step:
-    | "immutable_create"
-    | "write_head"
-    | "create_event"
-    | "commit_journal"
-    | "commit_lane";
+/** One durable external-write claim or its recovery wait, scoped to one step tuple. */
+export type SyncPublicationAttemptState =
+  | {
+      /** New target tuple with no external write claim. */
+      readonly state: "ready";
+      /** Every fresh target tuple begins at generation zero. */
+      readonly generation: 0;
+    }
+  | {
+      /** Exact journal claim authorizing one target PUT by its creator only. */
+      readonly state: "attempting";
+      /** Fresh UUID identifying the invocation that owns this one dispatch. */
+      readonly claimId: SyncOperationIdDto;
+      /** Positive safe generation scoped to the exact step, key, and precondition. */
+      readonly generation: number;
+      /** Claim creation time in Unix epoch milliseconds. */
+      readonly claimedAtEpochMs: number;
+    }
+  | {
+      /** Recovery has observed the original target state and fixed a safe retry floor. */
+      readonly state: "retry_wait";
+      /** Claim whose one target PUT is being reconciled. */
+      readonly claimId: SyncOperationIdDto;
+      /** Positive safe generation of the claim being reconciled. */
+      readonly generation: number;
+      /** Exact-read observation time in Unix epoch milliseconds. */
+      readonly observedAtEpochMs: number;
+      /** Fixed retry floor, also retained as the step's authoritative retry time. */
+      readonly retryAfterEpochMs: number;
+    };
+
+/** Event kind a pending create-event step is authorized to publish. */
+export type SyncEventOutcomeIntent = SyncChangeEvent["kind"];
+
+/** Journal-only transition that deliberately has no external attempt claim. */
+export type SyncPublicationJournalStep = "commit_journal";
+
+/** Closed external publication step whose effect must be preceded by a durable claim. */
+export type SyncPublicationExternalStep =
+  | "immutable_create"
+  | "write_head"
+  | "create_event"
+  | "commit_lane";
+
+/** Common exact key, precondition, and cooldown fields for one journal step. */
+interface SyncPublicationStepBase {
   /** Exact canonical protocol-v1 key associated with the saved precondition. */
   readonly key: string;
-  /**
-   * Exact pre-dispatch absence or observed generation for this step. A journal-only
-   * transition instead reads and matches the complete expected current journal body,
-   * then uses that read's ETag; it never borrows this exception for lane/head CAS.
-   */
+  /** Exact R2 precondition for the external target or exact journal-only prior phase. */
   readonly precondition: SyncPublicationPrecondition;
-  /**
-   * Persisted lower bound after a known throttle or uncertain attempt, if one exists.
-   * If the response floor was lost with an isolate, recovery must exactly observe this
-   * precondition, defer the invocation using observation time plus the 1,100-ms R2
-   * cooldown, and persist the new floor before a later write; it cannot refresh the ETag.
-   */
+  /** One authoritative retry lower bound for the target key, when known. */
   readonly retryAfterEpochMs: number | null;
 }
+
+/** Durable step evidence separates external claims from journal-only CAS authority. */
+export type SyncPublicationStepEvidence =
+  | (SyncPublicationStepBase & {
+      /** Event publication binds its server commit time before any event claim or PUT. */
+      readonly step: "create_event";
+      /** Fixed monotonic event time shared by every attempt and terminal journal. */
+      readonly committedAtEpochMs: number;
+      /** Persisted changed-versus-aborted outcome, immutable for this event-step tuple. */
+      readonly outcomeIntent: SyncEventOutcomeIntent;
+      /** Persisted tagged authority for the exact external step tuple. */
+      readonly attempt: SyncPublicationAttemptState;
+      /** External targets cannot use a journal-phase precondition. */
+      readonly precondition: Exclude<
+        SyncPublicationPrecondition,
+        { readonly kind: "journal_phase" }
+      >;
+    })
+  | (SyncPublicationStepBase & {
+      /** Other external writes require a persisted attempt claim before dispatch. */
+      readonly step: Exclude<SyncPublicationExternalStep, "create_event">;
+      /** Persisted tagged authority for the exact external step tuple. */
+      readonly attempt: SyncPublicationAttemptState;
+      /** External targets cannot use a journal-phase precondition. */
+      readonly precondition: Exclude<
+        SyncPublicationPrecondition,
+        { readonly kind: "journal_phase" }
+      >;
+    })
+  | (SyncPublicationStepBase & {
+      /** Journal-only progression uses its exact typed pending prior state. */
+      readonly step: SyncPublicationJournalStep;
+      /** Journal-only CAS never carries external target claim state. */
+      readonly precondition: Extract<
+        SyncPublicationPrecondition,
+        { readonly kind: "journal_phase" }
+      >;
+    });
 
 /** Exact UTF-8 size evidence for the request's retained live mutation payload. */
 export interface SyncJournalPayloadEvidence {
@@ -106,7 +182,7 @@ export interface SyncJournalLaneObservation {
 }
 
 /** Common immutable journal identity and request, retained for every terminal state. */
-interface SyncJournalBase extends SyncPublicationEnvelope {
+interface SyncJournalBase extends SyncJournalPublicationEnvelope {
   /** Distinguishes this persisted family from lane heads and feed events. */
   readonly kind: "journal";
   /** Operation UUID encoded by the journal's immutable M7 key. */
@@ -215,7 +291,58 @@ export interface SyncLaneHeadRecord extends SyncPublicationEnvelope {
 /** Immutable changed or aborted event stored at its exact lane and sequence key. */
 export type SyncFeedEventRecord = SyncPublicationEnvelope & SyncChangeEvent;
 
-/** Every private journal, lane-head, and feed-event record accepted by the codec. */
+/** Original absence or exact observed generation retained for a refused head predicate. */
+export type SyncHeadRefusalPrecondition = Exclude<
+  SyncPublicationPrecondition,
+  { readonly kind: "journal_phase" }
+>;
+
+/** Authoritative no-effect source allowed to create a head-refusal receipt. */
+export type SyncHeadRefusalSource =
+  | "preflight_no_dispatch"
+  | "conditional_null";
+
+/** Exact R2 generation of the stale head that prevented the claimed target write. */
+export interface SyncCompetingHeadObservation {
+  /** Opaque R2 generation token observed with these exact bytes. */
+  readonly etag: string;
+  /** Exact canonical head record bytes encoded as unpadded base64url. */
+  readonly bytes: string;
+  /** R2 server upload time in Unix epoch milliseconds. */
+  readonly uploadedAtEpochMs: number;
+}
+
+/** Worker-private generation-one receipt binding one head attempt to proven no-effect evidence. */
+export interface SyncHeadRefusalReceiptRecord {
+  /** Version of this private receipt representation, independent of protocol major. */
+  readonly schemaVersion: 1;
+  /** Protocol major of the private sync namespace containing its evidence. */
+  readonly protocolMajor: 1;
+  /** Immutable vault namespace bound by both receipt and private key. */
+  readonly vaultId: SyncVaultIdDto;
+  /** Operation identity encoded by the one canonical receipt key. */
+  readonly operationId: SyncOperationIdDto;
+  /** Exact attempt owner currently persisted in the operation journal. */
+  readonly claimId: SyncOperationIdDto;
+  /** Receipt-assisted abort is authority-limited to the first write-head claim. */
+  readonly generation: 1;
+  /** Canonical current-head key whose original conditional target was refused. */
+  readonly headKey: string;
+  /** SHA-256 of the canonical intended target-head JSON bytes. */
+  readonly headTargetSha256: SyncMutationRequest["contentSha256"];
+  /** Original absent or exact observed generation condition; never refreshed. */
+  readonly headPrecondition: SyncHeadRefusalPrecondition;
+  /** Fixed path-derived feed lane reserved by the operation. */
+  readonly lane: number;
+  /** Exact feed sequence reserved by the operation. */
+  readonly sequence: SyncEventSequenceDto;
+  /** Directly observed reason that this particular head PUT had no effect. */
+  readonly refusalSource: SyncHeadRefusalSource;
+  /** Exact typed competitor generation that still makes the request parent stale. */
+  readonly competingHead: SyncCompetingHeadObservation;
+}
+
+/** Every versioned operation journal, lane-head, and feed-event publication record. */
 export type SyncPublicationRecord =
   | SyncJournalRecord
   | SyncLaneHeadRecord

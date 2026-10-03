@@ -3,6 +3,7 @@ import {
   syncFeedEventKey,
   syncFeedLaneForPath,
   syncFeedLaneHeadKey,
+  syncHeadKey,
   syncOperationKey,
   syncRecoveryKey,
   syncVaultMarkerKey,
@@ -28,7 +29,9 @@ import { encodeSyncPublication } from "@worker/infrastructure/sync/sync-publicat
 import { SYNC_PUBLICATION_LIMITS } from "@worker/infrastructure/sync/sync-publication.schemas";
 import type {
   SyncAllocatedPendingJournalRecord,
+  SyncEventOutcomeIntent,
   SyncFeedEventRecord,
+  SyncHeadRefusalReceiptRecord,
   SyncJournalRecord,
   SyncLaneHeadRecord,
   SyncPublicationStepEvidence,
@@ -41,9 +44,14 @@ import type {
 import { createSyncR2Key } from "@worker/infrastructure/sync/sync-r2-key";
 import { syncR2ObjectStore } from "@worker/infrastructure/sync/sync-r2-object";
 import { syncR2Publication } from "@worker/infrastructure/sync/sync-r2-publication";
-import { beforeEach, describe, expect, it } from "vitest";
+import { encodeSyncRecord } from "@worker/infrastructure/sync/sync-record.codec";
+import type { SyncHeadRecord } from "@worker/infrastructure/sync/sync-record.types";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const vaultId = syncVaultIdSchema.parse("11111111-1111-4111-8111-111111111111");
+const alternateVaultId = syncVaultIdSchema.parse(
+  "88888888-8888-4888-8888-888888888888",
+);
 const operationId = syncOperationIdSchema.parse(
   "22222222-2222-4222-8222-222222222222",
 );
@@ -228,7 +236,7 @@ async function journal(
       ? syncVersionKey(vaultId, revision)
       : syncOperationKey(vaultId, journalOperationId);
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     protocolMajor: 1,
     vaultId,
     kind: "journal",
@@ -253,15 +261,21 @@ async function journal(
       sequence: syncEventSequenceSchema.parse("00000000000000000001"),
       previousCommittedAtEpochMs: 0,
     },
-    stepEvidence: {
-      step,
-      key: targetKey,
-      precondition:
-        step === "commit_journal"
-          ? { kind: "journal_phase", status: "pending" }
-          : { kind: "absent" },
-      retryAfterEpochMs: null,
-    },
+    stepEvidence:
+      step === "commit_journal"
+        ? {
+            step,
+            key: targetKey,
+            precondition: { kind: "journal_phase", status: "pending" },
+            retryAfterEpochMs: null,
+          }
+        : {
+            step,
+            key: targetKey,
+            precondition: { kind: "absent" },
+            retryAfterEpochMs: null,
+            attempt: { state: "ready", generation: 0 },
+          },
   };
 }
 
@@ -326,12 +340,14 @@ async function tombstoneJournalRecord(
       key: syncRecoveryKey(vaultId, journalOperationId, "metadata"),
       precondition: { kind: "absent" },
       retryAfterEpochMs: null,
+      attempt: { state: "ready", generation: 0 },
     },
   };
 }
 
 function nextJournalStep(
   record: SyncAllocatedPendingJournalRecord,
+  outcomeIntent: SyncEventOutcomeIntent,
 ): SyncAllocatedPendingJournalRecord {
   return {
     ...record,
@@ -342,8 +358,11 @@ function nextJournalStep(
         record.reservation.lane,
         record.reservation.sequence,
       ),
+      committedAtEpochMs: record.reservation.previousCommittedAtEpochMs + 1,
+      outcomeIntent,
       precondition: { kind: "absent" },
       retryAfterEpochMs: null,
+      attempt: { state: "ready", generation: 0 },
     },
   };
 }
@@ -376,6 +395,7 @@ async function settledJournal(
       uploadedAtEpochMs: epochNow - 5_000,
     },
     retryAfterEpochMs: null,
+    attempt: { state: "ready", generation: 0 },
   };
   if (status === "committed") {
     return {
@@ -439,7 +459,7 @@ async function unallocatedJournal(
     journalOperationId,
   );
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     protocolMajor: 1,
     vaultId,
     kind: "journal",
@@ -475,7 +495,7 @@ function unallocatedFromAllocated(
   },
 ): SyncUnallocatedPendingJournalRecord {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     protocolMajor: 1,
     vaultId: allocated.vaultId,
     kind: "journal",
@@ -569,7 +589,7 @@ async function allocatedJournal(
     (BigInt(priorHead.committedSequence) + 1n).toString().padStart(20, "0"),
   );
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     protocolMajor: 1,
     vaultId,
     kind: "journal",
@@ -588,11 +608,1664 @@ async function allocatedJournal(
       key: syncVersionKey(vaultId, unallocated.request.revision),
       precondition: { kind: "absent" },
       retryAfterEpochMs: null,
+      attempt: { state: "ready", generation: 0 },
     },
   };
 }
 
 describe("marker-gated private sync publication persistence", () => {
+  it("exposes exact marker-gated read and create-only persistence for refusal receipts", () => {
+    expect("readHeadRefusalReceipt" in publication).toBe(true);
+    expect("createHeadRefusalReceipt" in publication).toBe(true);
+  });
+
+  it("keeps receipt reads marker-gated when a vault is unprovisioned", async () => {
+    expect(
+      await publication.readHeadRefusalReceipt(vaultId, operationId),
+    ).toEqual({ kind: "unavailable" });
+    expect(bucket.puts).toHaveLength(0);
+  });
+
+  it("admits only the canonical Worker-private head-refusal key family", () => {
+    const receiptKey = `sync/v1/vaults/${vaultId}/operations/${operationId}.head-refusal.json`;
+    expect(createSyncR2Key(receiptKey, vaultId)).toBe(receiptKey);
+    expect(createSyncR2Key(receiptKey, alternateVaultId)).toBeUndefined();
+    expect(
+      createSyncR2Key(
+        `sync/v1/vaults/${vaultId}/operations/${operationId}.head-refusal.json/extra`,
+        vaultId,
+      ),
+    ).toBeUndefined();
+  });
+
+  it("creates and settles a refusal receipt only with its exact head, lane, and journal evidence", async () => {
+    await seedMarker();
+    const initial = await journal();
+    await persistAllocatedJournal(initial);
+    const created = await publication.readJournal(vaultId, operationId);
+    if (created.kind !== "observed")
+      throw new Error("Missing allocated journal.");
+    const createdJournal = created.observation.value;
+    if (
+      createdJournal.status !== "pending" ||
+      createdJournal.allocationState !== "allocated" ||
+      createdJournal.stepEvidence.step !== "immutable_create"
+    ) {
+      throw new Error("Expected allocated immutable step.");
+    }
+    epochNow += 1_100;
+    const firstClaim = {
+      ...createdJournal,
+      stepEvidence: {
+        ...createdJournal.stepEvidence,
+        attempt: {
+          state: "attempting" as const,
+          claimId: alternateOperationId,
+          generation: 1,
+          claimedAtEpochMs: epochNow,
+        },
+      },
+    };
+    expect(
+      await publication.replaceJournal(created.observation, firstClaim),
+    ).toEqual({ kind: "confirmed" });
+    epochNow += 1_100;
+    const claimed = await publication.readJournal(vaultId, operationId);
+    if (claimed.kind !== "observed") throw new Error("Missing first claim.");
+    const claimedJournal = claimed.observation.value;
+    if (
+      claimedJournal.status !== "pending" ||
+      claimedJournal.allocationState !== "allocated" ||
+      claimedJournal.stepEvidence.step !== "immutable_create"
+    ) {
+      throw new Error("Expected first immutable claim.");
+    }
+    const headKey = syncHeadKey(vaultId, path);
+    const headReady = {
+      ...claimedJournal,
+      stepEvidence: {
+        step: "write_head" as const,
+        key: headKey,
+        precondition: { kind: "absent" as const },
+        retryAfterEpochMs: null,
+        attempt: { state: "ready" as const, generation: 0 as const },
+      },
+    };
+    expect(
+      await publication.replaceJournal(claimed.observation, headReady),
+    ).toEqual({ kind: "confirmed" });
+    epochNow += 1_100;
+    const ready = await publication.readJournal(vaultId, operationId);
+    if (ready.kind !== "observed") throw new Error("Missing ready head step.");
+    const readyJournal = ready.observation.value;
+    if (
+      readyJournal.status !== "pending" ||
+      readyJournal.allocationState !== "allocated" ||
+      readyJournal.stepEvidence.step !== "write_head"
+    ) {
+      throw new Error("Expected ready write-head step.");
+    }
+    const headClaimed = {
+      ...readyJournal,
+      stepEvidence: {
+        ...readyJournal.stepEvidence,
+        attempt: {
+          state: "attempting" as const,
+          claimId: alternateOperationId,
+          generation: 1,
+          claimedAtEpochMs: epochNow,
+        },
+      },
+    };
+    expect(
+      await publication.replaceJournal(ready.observation, headClaimed),
+    ).toEqual({ kind: "confirmed" });
+
+    const request = initial.request;
+    if (request.kind !== "create") throw new Error("Expected create fixture.");
+    const target = {
+      schemaVersion: 1 as const,
+      protocolMajor: 1 as const,
+      vaultId,
+      kind: "live" as const,
+      path,
+      revision,
+      parent: request.parent,
+      contentSha256: request.contentSha256,
+      byteSize: encoder.encode(request.content).byteLength,
+      mediaType: request.mediaType,
+      operationId,
+      origin,
+    };
+    const targetBytes = await encodeSyncRecord({
+      kind: "head",
+      record: target,
+    });
+    const competitor = {
+      ...target,
+      revision: parentRevision,
+      parent: { kind: "never_seen" as const },
+      operationId: alternateOperationId,
+      contentSha256: request.contentSha256,
+      byteSize: 10,
+    };
+    const competitorBytes = await encodeSyncRecord({
+      kind: "head",
+      record: competitor,
+    });
+    const competingGeneration = bucket.seed(headKey, competitorBytes, epochNow);
+    const digestInput = targetBytes.slice();
+    const targetDigest = Array.from(
+      new Uint8Array(await crypto.subtle.digest("SHA-256", digestInput.buffer)),
+      (byte) => byte.toString(16).padStart(2, "0"),
+    ).join("");
+    const targetDigestValue = createContentSha256(targetDigest);
+    if (targetDigestValue === undefined)
+      throw new Error("Invalid target digest.");
+    const receipt: SyncHeadRefusalReceiptRecord = {
+      schemaVersion: 1,
+      protocolMajor: 1,
+      vaultId,
+      operationId,
+      claimId: alternateOperationId,
+      generation: 1,
+      headKey,
+      headTargetSha256: targetDigestValue,
+      headPrecondition: { kind: "absent" },
+      lane: headReady.reservation.lane,
+      sequence: headReady.reservation.sequence,
+      refusalSource: "preflight_no_dispatch",
+      competingHead: {
+        etag: competingGeneration.etag,
+        bytes: encodeBase64Url(competitorBytes),
+        uploadedAtEpochMs: competingGeneration.uploaded.getTime(),
+      },
+    };
+    const refusal = {
+      kind: "refused" as const,
+      noEffectProvenance: "preflight_no_dispatch" as const,
+    };
+    const receiptKey = `sync/v1/vaults/${vaultId}/operations/${operationId}.head-refusal.json`;
+    const markerKey = syncVaultMarkerKey(vaultId);
+    const marker = bucket.objects.get(markerKey);
+    if (!marker) throw new Error("Missing owned marker");
+    const putsBeforeMarkerLoss = bucket.puts.length;
+    bucket.unavailableKeys.add(markerKey);
+    expect(
+      await publication.createHeadRefusalReceipt(receipt, target, refusal),
+    ).toEqual({ kind: "effect_unknown" });
+    bucket.unavailableKeys.delete(markerKey);
+    bucket.objects.delete(markerKey);
+    expect(
+      await publication.createHeadRefusalReceipt(receipt, target, refusal),
+    ).toEqual({ kind: "refused" });
+    bucket.objects.set(markerKey, marker);
+    expect(bucket.puts).toHaveLength(putsBeforeMarkerLoss);
+    expect(bucket.objects.has(receiptKey)).toBe(false);
+    for (const key of [
+      syncOperationKey(vaultId, operationId),
+      syncFeedLaneHeadKey(vaultId, receipt.lane),
+      headKey,
+    ]) {
+      const exact = bucket.objects.get(key);
+      if (!exact) throw new Error("Missing exact receipt preflight fixture.");
+      bucket.objects.delete(key);
+      expect(
+        await publication.createHeadRefusalReceipt(receipt, target, refusal),
+      ).toEqual({ kind: "effect_unknown" });
+      bucket.objects.set(key, exact);
+      bucket.unavailableKeys.add(key);
+      expect(
+        await publication.createHeadRefusalReceipt(receipt, target, refusal),
+      ).toEqual({ kind: "effect_unknown" });
+      bucket.unavailableKeys.delete(key);
+    }
+    const exactHeadBeforeRefusal = bucket.objects.get(headKey);
+    if (!exactHeadBeforeRefusal)
+      throw new Error("Missing exact competing head.");
+    bucket.seed(headKey, competitorBytes, epochNow);
+    expect(
+      await publication.createHeadRefusalReceipt(receipt, target, refusal),
+    ).toEqual({ kind: "effect_unknown" });
+    bucket.objects.set(headKey, exactHeadBeforeRefusal);
+    expect(
+      await publication.createHeadRefusalReceipt(
+        { ...receipt, claimId: operationId },
+        target,
+        refusal,
+      ),
+    ).toEqual({ kind: "effect_unknown" });
+    const ownHead = bucket.seed(headKey, targetBytes, epochNow);
+    expect(
+      await publication.createHeadRefusalReceipt(
+        {
+          ...receipt,
+          competingHead: {
+            etag: ownHead.etag,
+            uploadedAtEpochMs: ownHead.uploaded.getTime(),
+            bytes: encodeBase64Url(targetBytes),
+          },
+        },
+        target,
+        refusal,
+      ),
+    ).toEqual({ kind: "effect_unknown" });
+    bucket.objects.set(headKey, exactHeadBeforeRefusal);
+    expect(
+      await publication.createHeadRefusalReceipt(
+        receipt,
+        { ...target, revision: parentRevision },
+        refusal,
+      ),
+    ).toEqual({ kind: "refused" });
+    expect(
+      await publication.createHeadRefusalReceipt(
+        {
+          ...receipt,
+          competingHead: { ...receipt.competingHead, bytes: "AQ" },
+        },
+        target,
+        refusal,
+      ),
+    ).toEqual({ kind: "refused" });
+    expect(bucket.puts.filter((put) => put.key === receiptKey)).toHaveLength(0);
+    const baseObjects = syncR2ObjectStore(bucket, () => epochNow);
+    const headReadFails = syncR2Publication({
+      ...baseObjects,
+      read: async (key, limit) => {
+        if (key === headKey) throw new Error("Head GET capability unavailable");
+        return baseObjects.read(key, limit);
+      },
+    });
+    await expect(
+      headReadFails.createHeadRefusalReceipt(receipt, target, refusal),
+    ).resolves.toEqual({ kind: "effect_unknown" });
+    const receiptWriteFails = syncR2Publication({
+      ...baseObjects,
+      create: async () => {
+        throw new Error("Receipt PUT transport failed");
+      },
+    });
+    expect(
+      await receiptWriteFails.createHeadRefusalReceipt(
+        receipt,
+        target,
+        refusal,
+      ),
+    ).toEqual({ kind: "effect_unknown" });
+    const receiptReadFails = syncR2Publication({
+      ...baseObjects,
+      read: async (key, limit) => {
+        if (key === receiptKey) throw new Error("Receipt GET transport failed");
+        return baseObjects.read(key, limit);
+      },
+    });
+    expect(
+      await receiptReadFails.readHeadRefusalReceipt(vaultId, operationId),
+    ).toEqual({ kind: "unavailable" });
+    bucket.seed(receiptKey, encoder.encode("{"), epochNow);
+    expect(
+      await publication.readHeadRefusalReceipt(vaultId, operationId),
+    ).toEqual({ kind: "unavailable" });
+    bucket.objects.delete(receiptKey);
+    const realDigest = crypto.subtle.digest.bind(crypto.subtle);
+    const targetDigestFailure = vi
+      .spyOn(crypto.subtle, "digest")
+      .mockImplementationOnce(realDigest)
+      .mockRejectedValueOnce(new Error("Target digest capability unavailable"));
+    try {
+      await expect(
+        publication.createHeadRefusalReceipt(receipt, target, refusal),
+      ).resolves.toEqual({ kind: "effect_unknown" });
+      expect(bucket.puts.filter((put) => put.key === receiptKey)).toHaveLength(
+        0,
+      );
+    } finally {
+      targetDigestFailure.mockRestore();
+    }
+    expect(
+      await publication.createHeadRefusalReceipt(receipt, target, refusal),
+    ).toEqual({ kind: "confirmed" });
+    const readback = await publication.readHeadRefusalReceipt(
+      vaultId,
+      operationId,
+    );
+    expect(readback.kind).toBe("observed");
+    if (readback.kind !== "observed") return;
+    expect(readback.observation.value).toEqual(receipt);
+    expect(bucket.puts.filter((put) => put.key === receiptKey)).toHaveLength(1);
+    expect(
+      await publication.createHeadRefusalReceipt(receipt, target, refusal),
+    ).toEqual({ kind: "confirmed" });
+    expect(bucket.puts.filter((put) => put.key === receiptKey)).toHaveLength(1);
+    expect(
+      await publication.createHeadRefusalReceipt(
+        { ...receipt, refusalSource: "conditional_null" },
+        target,
+        refusal,
+      ),
+    ).toEqual({ kind: "refused" });
+    expect(bucket.puts.filter((put) => put.key === receiptKey)).toHaveLength(1);
+
+    const current = await publication.readJournal(vaultId, operationId);
+    if (current.kind !== "observed")
+      throw new Error("Missing claimed head journal.");
+    const abortStep: SyncJournalRecord = {
+      ...headClaimed,
+      stepEvidence: {
+        step: "create_event",
+        key: syncFeedEventKey(vaultId, receipt.lane, receipt.sequence),
+        outcomeIntent: "aborted",
+        precondition: { kind: "absent" },
+        retryAfterEpochMs: null,
+        attempt: { state: "ready", generation: 0 },
+        committedAtEpochMs: epochNow,
+      },
+    };
+    const journalKey = syncOperationKey(vaultId, operationId);
+    const journalPuts = bucket.puts.filter(
+      (put) => put.key === journalKey,
+    ).length;
+    expect(
+      await publication.replaceJournalFromHeadRefusalReceipt(
+        current.observation,
+        receipt,
+        { ...target, revision: parentRevision },
+        abortStep,
+      ),
+    ).toEqual({ kind: "refused" });
+    expect(
+      await publication.replaceJournalFromHeadRefusalReceipt(
+        current.observation,
+        receipt,
+        target,
+        {
+          ...abortStep,
+          request: { ...abortStep.request, origin: alternateOrigin },
+        },
+      ),
+    ).toEqual({ kind: "refused" });
+    await expect(
+      headReadFails.replaceJournalFromHeadRefusalReceipt(
+        current.observation,
+        receipt,
+        target,
+        abortStep,
+      ),
+    ).resolves.toEqual({ kind: "effect_unknown" });
+    expect(bucket.puts.filter((put) => put.key === journalKey)).toHaveLength(
+      journalPuts,
+    );
+    const settlementDigestFailure = vi
+      .spyOn(crypto.subtle, "digest")
+      .mockImplementationOnce(realDigest)
+      .mockRejectedValueOnce(
+        new Error("Settlement digest capability unavailable"),
+      );
+    try {
+      await expect(
+        publication.replaceJournalFromHeadRefusalReceipt(
+          current.observation,
+          receipt,
+          target,
+          abortStep,
+        ),
+      ).resolves.toEqual({ kind: "effect_unknown" });
+      expect(bucket.puts.filter((put) => put.key === journalKey)).toHaveLength(
+        journalPuts,
+      );
+    } finally {
+      settlementDigestFailure.mockRestore();
+    }
+    const exactReceipt = bucket.objects.get(receiptKey);
+    if (!exactReceipt)
+      throw new Error("Missing exact persisted refusal receipt.");
+    bucket.objects.delete(receiptKey);
+    expect(
+      await publication.replaceJournalFromHeadRefusalReceipt(
+        current.observation,
+        receipt,
+        target,
+        abortStep,
+      ),
+    ).toEqual({ kind: "effect_unknown" });
+    bucket.objects.set(receiptKey, exactReceipt);
+
+    const laneKey = syncFeedLaneHeadKey(vaultId, receipt.lane);
+    const exactLane = bucket.objects.get(laneKey);
+    if (!exactLane) throw new Error("Missing exact reserved lane.");
+    bucket.objects.delete(laneKey);
+    expect(
+      await publication.replaceJournalFromHeadRefusalReceipt(
+        current.observation,
+        receipt,
+        target,
+        abortStep,
+      ),
+    ).toEqual({ kind: "effect_unknown" });
+    bucket.objects.set(laneKey, exactLane);
+
+    const exactHead = bucket.objects.get(headKey);
+    if (!exactHead) throw new Error("Missing exact competing head.");
+    bucket.objects.delete(headKey);
+    expect(
+      await publication.replaceJournalFromHeadRefusalReceipt(
+        current.observation,
+        receipt,
+        target,
+        abortStep,
+      ),
+    ).toEqual({ kind: "effect_unknown" });
+    bucket.objects.set(headKey, exactHead);
+    for (const key of [receiptKey, laneKey, headKey]) {
+      bucket.unavailableKeys.add(key);
+      expect(
+        await publication.replaceJournalFromHeadRefusalReceipt(
+          current.observation,
+          receipt,
+          target,
+          abortStep,
+        ),
+      ).toEqual({ kind: "effect_unknown" });
+      bucket.unavailableKeys.delete(key);
+    }
+    const laneRead = await publication.readLaneHead(vaultId, receipt.lane);
+    if (laneRead.kind !== "observed")
+      throw new Error("Missing reserved lane record.");
+    bucket.seed(
+      laneKey,
+      await encodeSyncPublication({
+        ...laneRead.observation.value,
+        pending: {
+          operationId: alternateOperationId,
+          nextSequence: receipt.sequence,
+        },
+      }),
+      epochNow,
+    );
+    expect(
+      await publication.replaceJournalFromHeadRefusalReceipt(
+        current.observation,
+        receipt,
+        target,
+        abortStep,
+      ),
+    ).toEqual({ kind: "effect_unknown" });
+    bucket.objects.set(laneKey, exactLane);
+    expect(bucket.puts.filter((put) => put.key === journalKey)).toHaveLength(
+      journalPuts,
+    );
+    expect(
+      await publication.replaceJournalFromHeadRefusalReceipt(
+        current.observation,
+        receipt,
+        target,
+        abortStep,
+      ),
+    ).toEqual({ kind: "throttled", retryAfterEpochMs: epochNow + 1_100 });
+    expect(bucket.puts.filter((put) => put.key === journalKey)).toHaveLength(
+      journalPuts,
+    );
+    epochNow += 1_100;
+    expect(
+      await publication.replaceJournalFromHeadRefusalReceipt(
+        current.observation,
+        receipt,
+        target,
+        abortStep,
+      ),
+    ).toEqual({ kind: "confirmed" });
+    const settled = await publication.readJournal(vaultId, operationId);
+    expect(settled.kind).toBe("observed");
+    if (settled.kind === "observed")
+      expect(settled.observation.value).toEqual(abortStep);
+  });
+
+  it.each(["update", "tombstone"] as const)(
+    "binds a %s refusal receipt to the original observed parent and exact intended head",
+    async (action) => {
+      await seedMarker();
+      const initial =
+        action === "update"
+          ? await updateJournalRecord(operationId)
+          : await tombstoneJournalRecord(operationId);
+      const request = initial.request;
+      if (request.kind === "create")
+        throw new Error("Expected exact revision parent");
+      const prior: SyncHeadRecord = {
+        schemaVersion: 1,
+        protocolMajor: 1,
+        vaultId,
+        kind: "live",
+        path,
+        revision: parentRevision,
+        parent: { kind: "never_seen" },
+        contentSha256: request.contentSha256,
+        byteSize: initial.payload?.byteSize ?? 18,
+        mediaType: "text/markdown",
+        operationId: alternateOperationId,
+        origin,
+      };
+      const headKey = syncHeadKey(vaultId, path);
+      const priorBytes = await encodeSyncRecord({
+        kind: "head",
+        record: prior,
+      });
+      const priorGeneration = bucket.seed(
+        headKey,
+        priorBytes,
+        epochNow - 5_000,
+      );
+      const precondition = {
+        kind: "observed" as const,
+        etag: priorGeneration.etag,
+        bytes: encodeBase64Url(priorBytes),
+        uploadedAtEpochMs: priorGeneration.uploaded.getTime(),
+      };
+      const claimed: SyncAllocatedPendingJournalRecord = {
+        ...initial,
+        stepEvidence: {
+          step: "write_head",
+          key: headKey,
+          precondition,
+          retryAfterEpochMs: null,
+          attempt: {
+            state: "attempting",
+            claimId: alternateOperationId,
+            generation: 1,
+            claimedAtEpochMs: epochNow - 2_000,
+          },
+        },
+      };
+      bucket.seed(
+        syncOperationKey(vaultId, operationId),
+        await encodeSyncPublication(claimed),
+        epochNow - 2_000,
+      );
+      const lane: SyncLaneHeadRecord = {
+        schemaVersion: 1,
+        protocolMajor: 1,
+        vaultId,
+        kind: "laneHead",
+        lane: initial.reservation.lane,
+        committedSequence: syncSequenceSchema.parse("00000000000000000001"),
+        committedAtEpochMs: initial.reservation.previousCommittedAtEpochMs,
+        pending: { operationId, nextSequence: initial.reservation.sequence },
+      };
+      bucket.seed(
+        syncFeedLaneHeadKey(vaultId, lane.lane),
+        await encodeSyncPublication(lane),
+        epochNow - 2_000,
+      );
+      const target: SyncHeadRecord = {
+        ...prior,
+        kind: action === "tombstone" ? "tombstone" : "live",
+        revision,
+        parent: request.parent,
+        operationId,
+        origin: request.origin,
+      };
+      const competitor: SyncHeadRecord = {
+        ...prior,
+        revision: syncRevisionSchema.parse(
+          "99999999-9999-4999-8999-999999999999",
+        ),
+      };
+      const competitorBytes = await encodeSyncRecord({
+        kind: "head",
+        record: competitor,
+      });
+      const competing = bucket.seed(headKey, competitorBytes, epochNow - 1_500);
+      const digest = async (head: SyncHeadRecord) => {
+        const bytes = await encodeSyncRecord({ kind: "head", record: head });
+        const input = bytes.slice();
+        const value = createContentSha256(
+          Array.from(
+            new Uint8Array(await crypto.subtle.digest("SHA-256", input.buffer)),
+            (byte) => byte.toString(16).padStart(2, "0"),
+          ).join(""),
+        );
+        if (!value) throw new Error("Expected target digest");
+        return value;
+      };
+      const receipt: SyncHeadRefusalReceiptRecord = {
+        schemaVersion: 1,
+        protocolMajor: 1,
+        vaultId,
+        operationId,
+        claimId: alternateOperationId,
+        generation: 1,
+        headKey,
+        headTargetSha256: await digest(target),
+        headPrecondition: precondition,
+        lane: lane.lane,
+        sequence: initial.reservation.sequence,
+        refusalSource: "conditional_null",
+        competingHead: {
+          etag: competing.etag,
+          bytes: encodeBase64Url(competitorBytes),
+          uploadedAtEpochMs: competing.uploaded.getTime(),
+        },
+      };
+      const noEffect = {
+        kind: "refused" as const,
+        noEffectProvenance: "conditional_null" as const,
+      };
+      const writes = bucket.puts.length;
+      const substitutions: SyncHeadRecord[] = [
+        { ...target, origin: alternateOrigin },
+        {
+          ...target,
+          parent: { kind: "revision", revision: competitor.revision },
+        },
+        action === "tombstone"
+          ? { ...target, kind: "live" }
+          : { ...target, byteSize: target.byteSize + 1 },
+      ];
+      for (const substituted of substitutions) {
+        expect(
+          await publication.createHeadRefusalReceipt(
+            { ...receipt, headTargetSha256: await digest(substituted) },
+            substituted,
+            noEffect,
+          ),
+        ).toEqual({ kind: "effect_unknown" });
+      }
+      expect(bucket.puts).toHaveLength(writes);
+      expect(
+        await publication.createHeadRefusalReceipt(receipt, target, noEffect),
+      ).toEqual({ kind: "confirmed" });
+      const observed = await publication.readJournal(vaultId, operationId);
+      if (observed.kind !== "observed")
+        throw new Error("Expected claimed head journal");
+      const abort: SyncAllocatedPendingJournalRecord = {
+        ...claimed,
+        stepEvidence: {
+          step: "create_event",
+          key: syncFeedEventKey(
+            vaultId,
+            lane.lane,
+            initial.reservation.sequence,
+          ),
+          outcomeIntent: "aborted",
+          precondition: { kind: "absent" },
+          retryAfterEpochMs: null,
+          attempt: { state: "ready", generation: 0 },
+          committedAtEpochMs: epochNow,
+        },
+      };
+      expect(
+        await publication.replaceJournalFromHeadRefusalReceipt(
+          observed.observation,
+          receipt,
+          target,
+          abort,
+        ),
+      ).toEqual({ kind: "confirmed" });
+      expect(await publication.readJournal(vaultId, operationId)).toMatchObject(
+        {
+          kind: "observed",
+          observation: {
+            value: {
+              status: "pending",
+              stepEvidence: { step: "create_event", outcomeIntent: "aborted" },
+            },
+          },
+        },
+      );
+      expect(
+        await publication.readEvent(
+          vaultId,
+          lane.lane,
+          initial.reservation.sequence,
+        ),
+      ).toEqual({ kind: "absent" });
+    },
+  );
+
+  it.each(["committed", "aborted"] as const)(
+    "keeps a %s terminal outcome immutable while fencing claim ownership and the fixed retry-wait floor",
+    async (status) => {
+      await seedMarker();
+      const settled = await settledJournal(await journal(), status);
+      if (settled.stepEvidence.step !== "commit_lane")
+        throw new Error("Expected lane evidence");
+      const key = syncOperationKey(vaultId, operationId);
+      bucket.seed(key, await encodeSyncPublication(settled), epochNow - 5_000);
+      const read = await publication.readJournal(vaultId, operationId);
+      if (read.kind !== "observed")
+        throw new Error("Expected terminal journal");
+      const claimed = {
+        ...settled,
+        stepEvidence: {
+          ...settled.stepEvidence,
+          attempt: {
+            state: "attempting" as const,
+            generation: 1,
+            claimId: alternateOperationId,
+            claimedAtEpochMs: epochNow,
+          },
+        },
+      };
+      expect(
+        await publication.replaceJournal(read.observation, claimed),
+      ).toEqual({ kind: "confirmed" });
+      epochNow += 1_100;
+      const claimedRead = await publication.readJournal(vaultId, operationId);
+      if (claimedRead.kind !== "observed")
+        throw new Error("Expected claimed terminal journal");
+      const raised = {
+        ...claimed,
+        stepEvidence: {
+          ...claimed.stepEvidence,
+          retryAfterEpochMs: epochNow + 1_100,
+        },
+      };
+      expect(
+        await publication.replaceJournal(claimedRead.observation, raised),
+      ).toEqual({ kind: "confirmed" });
+      epochNow += 1_100;
+      const raisedRead = await publication.readJournal(vaultId, operationId);
+      if (raisedRead.kind !== "observed")
+        throw new Error("Expected preserved terminal claim");
+      const writes = bucket.puts.length;
+      expect(
+        await publication.replaceJournal(raisedRead.observation, {
+          ...raised,
+          stepEvidence: {
+            ...raised.stepEvidence,
+            attempt: { ...raised.stepEvidence.attempt, claimId: operationId },
+          },
+        }),
+      ).toEqual({ kind: "refused" });
+      expect(bucket.puts).toHaveLength(writes);
+      const floor = epochNow + 1_100;
+      const waiting = {
+        ...raised,
+        stepEvidence: {
+          ...raised.stepEvidence,
+          retryAfterEpochMs: floor,
+          attempt: {
+            state: "retry_wait" as const,
+            generation: 1,
+            claimId: alternateOperationId,
+            observedAtEpochMs: epochNow,
+            retryAfterEpochMs: floor,
+          },
+        },
+      };
+      expect(
+        await publication.replaceJournal(raisedRead.observation, waiting),
+      ).toEqual({ kind: "confirmed" });
+      epochNow = floor;
+      const waitingRead = await publication.readJournal(vaultId, operationId);
+      if (waitingRead.kind !== "observed")
+        throw new Error("Expected fixed retry-wait authority");
+      const waitingWrites = bucket.puts.length;
+      expect(
+        await publication.replaceJournal(waitingRead.observation, {
+          ...waiting,
+          stepEvidence: {
+            ...waiting.stepEvidence,
+            retryAfterEpochMs: floor + 1_100,
+            attempt: {
+              ...waiting.stepEvidence.attempt,
+              retryAfterEpochMs: floor + 1_100,
+            },
+          },
+        }),
+      ).toEqual({ kind: "refused" });
+      const nextClaim = {
+        ...waiting,
+        stepEvidence: {
+          ...waiting.stepEvidence,
+          attempt: {
+            state: "attempting" as const,
+            generation: 2,
+            claimId: operationId,
+            claimedAtEpochMs: floor,
+          },
+        },
+      };
+      expect(
+        await publication.replaceJournal(waitingRead.observation, {
+          ...nextClaim,
+          stepEvidence: {
+            ...nextClaim.stepEvidence,
+            attempt: {
+              ...nextClaim.stepEvidence.attempt,
+              claimId: alternateOperationId,
+            },
+          },
+        }),
+      ).toEqual({ kind: "refused" });
+      expect(bucket.puts).toHaveLength(waitingWrites);
+      expect(
+        await publication.replaceJournal(waitingRead.observation, nextClaim),
+      ).toEqual({ kind: "confirmed" });
+      expect(await publication.readJournal(vaultId, operationId)).toMatchObject(
+        {
+          kind: "observed",
+          observation: {
+            value: {
+              status,
+              request: settled.request,
+              position: settled.position,
+              committedAtEpochMs: settled.committedAtEpochMs,
+              stepEvidence: {
+                step: "commit_lane",
+                retryAfterEpochMs: floor,
+                attempt: {
+                  state: "attempting",
+                  generation: 2,
+                  claimId: operationId,
+                },
+              },
+            },
+          },
+        },
+      );
+      expect(
+        bucket.puts.every(
+          ({ key }) => key === syncOperationKey(vaultId, operationId),
+        ),
+      ).toBe(true);
+    },
+  );
+
+  it("does not let generic journal replacement abort a claimed write-head step", async () => {
+    await seedMarker();
+    const initial = await journal();
+    if (initial.stepEvidence.step !== "immutable_create") return;
+    const headReady: SyncAllocatedPendingJournalRecord = {
+      ...initial,
+      stepEvidence: {
+        step: "write_head",
+        key: syncHeadKey(vaultId, path),
+        precondition: { kind: "absent" },
+        retryAfterEpochMs: null,
+        attempt: { state: "ready", generation: 0 },
+      },
+    };
+    if (headReady.stepEvidence.step !== "write_head") return;
+    const lane = await initialLaneHead();
+    const reservedLane: SyncLaneHeadRecord = {
+      ...lane,
+      pending: {
+        operationId,
+        nextSequence: headReady.reservation.sequence,
+      },
+    };
+    bucket.seed(
+      syncFeedLaneHeadKey(vaultId, lane.lane),
+      await encodeSyncPublication(reservedLane),
+      epochNow - 5_000,
+    );
+    bucket.seed(
+      syncOperationKey(vaultId, operationId),
+      await encodeSyncPublication(headReady),
+      epochNow - 5_000,
+    );
+
+    const ready = await publication.readJournal(vaultId, operationId);
+    expect(ready.kind).toBe("observed");
+    if (ready.kind !== "observed") return;
+    const claim: SyncAllocatedPendingJournalRecord = {
+      ...headReady,
+      stepEvidence: {
+        ...headReady.stepEvidence,
+        attempt: {
+          state: "attempting",
+          claimId: alternateOperationId,
+          generation: 1,
+          claimedAtEpochMs: epochNow,
+        },
+      },
+    };
+    expect(await publication.replaceJournal(ready.observation, claim)).toEqual({
+      kind: "confirmed",
+    });
+    const claimed = await publication.readJournal(vaultId, operationId);
+    expect(claimed.kind).toBe("observed");
+    if (claimed.kind !== "observed") return;
+    epochNow += 1_100;
+    const abort = nextJournalStep(claim, "aborted");
+    const writesBeforeAbort = bucket.puts.filter(
+      (put) => put.key === syncOperationKey(vaultId, operationId),
+    ).length;
+
+    expect(
+      await publication.replaceJournal(claimed.observation, abort),
+    ).toEqual({ kind: "refused" });
+    expect(
+      bucket.puts.filter(
+        (put) => put.key === syncOperationKey(vaultId, operationId),
+      ),
+    ).toHaveLength(writesBeforeAbort);
+    expect(await publication.readJournal(vaultId, operationId)).toMatchObject({
+      kind: "observed",
+      observation: {
+        value: {
+          stepEvidence: {
+            step: "write_head",
+            attempt: { state: "attempting", generation: 1 },
+          },
+        },
+      },
+    });
+  });
+
+  it("requires exact live proof for a ready-head stale-abort shortcut", async () => {
+    await seedMarker();
+    const initial = await journal();
+    if (initial.stepEvidence.step !== "immutable_create") return;
+    const headReady: SyncAllocatedPendingJournalRecord = {
+      ...initial,
+      stepEvidence: {
+        step: "write_head",
+        key: syncHeadKey(vaultId, path),
+        precondition: { kind: "absent" },
+        retryAfterEpochMs: null,
+        attempt: { state: "ready", generation: 0 },
+      },
+    };
+    if (headReady.stepEvidence.step !== "write_head") return;
+    const lane = await initialLaneHead();
+    const reservedLane: SyncLaneHeadRecord = {
+      ...lane,
+      pending: { operationId, nextSequence: headReady.reservation.sequence },
+    };
+    bucket.seed(
+      syncFeedLaneHeadKey(vaultId, lane.lane),
+      await encodeSyncPublication(reservedLane),
+      epochNow - 5_000,
+    );
+    bucket.seed(
+      syncOperationKey(vaultId, operationId),
+      await encodeSyncPublication(initial),
+      epochNow - 5_000,
+    );
+    const initialObservation = await publication.readJournal(
+      vaultId,
+      operationId,
+    );
+    if (initialObservation.kind !== "observed")
+      throw new Error("Expected historical immutable-step observation");
+    bucket.seed(
+      syncOperationKey(vaultId, operationId),
+      await encodeSyncPublication(headReady),
+      epochNow - 5_000,
+    );
+    const competitor: SyncHeadRecord = {
+      schemaVersion: 1,
+      protocolMajor: 1,
+      vaultId,
+      kind: "live",
+      path,
+      revision: parentRevision,
+      parent: { kind: "never_seen" },
+      contentSha256: initial.request.contentSha256,
+      byteSize: initial.payload?.byteSize ?? 0,
+      mediaType: "text/markdown",
+      operationId: alternateOperationId,
+      origin: alternateOrigin,
+    };
+    const headKey = createSyncR2Key(syncHeadKey(vaultId, path), vaultId);
+    if (headKey === undefined) return;
+    const competitorBytes = await encodeSyncRecord({
+      kind: "head",
+      record: competitor,
+    });
+    const competitorGeneration = bucket.seed(
+      headKey,
+      competitorBytes,
+      epochNow - 5_000,
+    );
+    const competitorObservation: SyncRecordObservation<SyncHeadRecord> = {
+      value: competitor,
+      observed: {
+        key: headKey,
+        etag: competitorGeneration.etag,
+        uploaded: competitorGeneration.uploaded,
+        bytes: competitorBytes,
+      },
+    };
+    const ready = await publication.readJournal(vaultId, operationId);
+    expect(ready.kind).toBe("observed");
+    if (ready.kind !== "observed") return;
+    const abort = nextJournalStep(headReady, "aborted");
+    expect(
+      await publication.replaceJournalFromReadyHeadCasAbort(
+        initialObservation.observation,
+        competitorObservation,
+        abort,
+      ),
+    ).toEqual({ kind: "refused" });
+    expect(await publication.replaceJournal(ready.observation, abort)).toEqual({
+      kind: "refused",
+    });
+    const writesBeforeShortcut = bucket.puts.filter(
+      (put) => put.key === syncOperationKey(vaultId, operationId),
+    ).length;
+    const changedCurrent: SyncHeadRecord = {
+      ...competitor,
+      revision: initial.request.revision,
+    };
+    bucket.seed(
+      headKey,
+      await encodeSyncRecord({ kind: "head", record: changedCurrent }),
+      epochNow,
+    );
+    expect(
+      await publication.replaceJournalFromReadyHeadCasAbort(
+        ready.observation,
+        competitorObservation,
+        abort,
+      ),
+    ).toEqual({ kind: "refused" });
+    expect(
+      bucket.puts.filter(
+        (put) => put.key === syncOperationKey(vaultId, operationId),
+      ),
+    ).toHaveLength(writesBeforeShortcut);
+
+    const restoredCompetitor = bucket.seed(headKey, competitorBytes, epochNow);
+    const currentCompetitorObservation: SyncRecordObservation<SyncHeadRecord> =
+      {
+        value: competitor,
+        observed: {
+          key: headKey,
+          etag: restoredCompetitor.etag,
+          uploaded: restoredCompetitor.uploaded,
+          bytes: competitorBytes,
+        },
+      };
+    const shortcut = () =>
+      publication.replaceJournalFromReadyHeadCasAbort(
+        ready.observation,
+        currentCompetitorObservation,
+        abort,
+      );
+    const baseObjects = syncR2ObjectStore(bucket, () => epochNow);
+    const headUnavailable = syncR2Publication({
+      ...baseObjects,
+      read: async (key, limit) => {
+        if (key === headKey)
+          throw new Error("Ready-abort head capability rejected");
+        return baseObjects.read(key, limit);
+      },
+    });
+    await expect(
+      headUnavailable.replaceJournalFromReadyHeadCasAbort(
+        ready.observation,
+        currentCompetitorObservation,
+        abort,
+      ),
+    ).resolves.toEqual({ kind: "effect_unknown" });
+    const markerKey = syncVaultMarkerKey(vaultId);
+    const marker = bucket.objects.get(markerKey);
+    if (marker === undefined) throw new Error("Expected live namespace marker");
+    for (const failure of ["unavailable", "absent"] as const) {
+      let markerReads = 0;
+      const lateNamespaceLoss = syncR2Publication({
+        ...baseObjects,
+        read: async (key, limit) => {
+          if (key === markerKey && ++markerReads === 3) {
+            if (failure === "absent") bucket.objects.delete(markerKey);
+            else bucket.unavailableKeys.add(markerKey);
+          }
+          return baseObjects.read(key, limit);
+        },
+      });
+      try {
+        expect(
+          await lateNamespaceLoss.replaceJournalFromReadyHeadCasAbort(
+            ready.observation,
+            currentCompetitorObservation,
+            abort,
+          ),
+        ).toEqual({
+          kind: failure === "absent" ? "refused" : "effect_unknown",
+        });
+        expect(markerReads).toBe(3);
+      } finally {
+        bucket.objects.set(markerKey, marker);
+        bucket.unavailableKeys.delete(markerKey);
+      }
+    }
+    const digestFailure = vi
+      .spyOn(crypto.subtle, "digest")
+      .mockRejectedValueOnce(new Error("Ready-abort claim digest unavailable"));
+    try {
+      expect(await shortcut()).toEqual({ kind: "refused" });
+    } finally {
+      digestFailure.mockRestore();
+    }
+    for (const [key, absentResult] of [
+      [syncOperationKey(vaultId, operationId), "refused"],
+      [syncFeedLaneHeadKey(vaultId, lane.lane), "effect_unknown"],
+      [headKey, "refused"],
+    ] as const) {
+      const exact = bucket.objects.get(key);
+      if (!exact) throw new Error("Missing exact shortcut preflight evidence.");
+      bucket.objects.delete(key);
+      expect(await shortcut()).toEqual({ kind: absentResult });
+      bucket.objects.set(key, exact);
+      bucket.unavailableKeys.add(key);
+      expect(await shortcut()).toEqual({ kind: "effect_unknown" });
+      bucket.unavailableKeys.delete(key);
+    }
+    expect(
+      bucket.puts.filter(
+        (put) => put.key === syncOperationKey(vaultId, operationId),
+      ),
+    ).toHaveLength(writesBeforeShortcut);
+    expect(await shortcut()).toEqual({ kind: "confirmed" });
+    expect(
+      bucket.puts.filter(
+        (put) => put.key === syncOperationKey(vaultId, operationId),
+      ),
+    ).toHaveLength(writesBeforeShortcut + 1);
+    const freshPublication = syncR2Publication(
+      syncR2ObjectStore(bucket, () => epochNow),
+    );
+    expect(
+      await freshPublication.readJournal(vaultId, operationId),
+    ).toMatchObject({
+      kind: "observed",
+      observation: {
+        value: {
+          stepEvidence: {
+            step: "create_event",
+            outcomeIntent: "aborted",
+            attempt: { state: "ready", generation: 0 },
+          },
+        },
+      },
+    });
+  });
+
+  it("authorizes the unclaimed stale-event shortcut without letting its witness change journal identity", async () => {
+    await seedMarker();
+    const initial = await journal();
+    await persistAllocatedJournal(initial);
+    const ready = await publication.readJournal(vaultId, operationId);
+    expect(ready.kind).toBe("observed");
+    if (ready.kind !== "observed") return;
+    const readyJournal = ready.observation.value;
+    if (
+      readyJournal.status !== "pending" ||
+      readyJournal.allocationState !== "allocated" ||
+      readyJournal.stepEvidence.step !== "immutable_create"
+    ) {
+      return;
+    }
+    const shortcut = nextJournalStep(readyJournal, "aborted");
+    if (shortcut.stepEvidence.step !== "create_event") return;
+    const eventKey = syncFeedEventKey(
+      vaultId,
+      readyJournal.reservation.lane,
+      readyJournal.reservation.sequence,
+    );
+    const invalidTransitions: SyncAllocatedPendingJournalRecord[] = [
+      {
+        ...readyJournal,
+        stepEvidence: {
+          step: "write_head",
+          key: syncHeadKey(vaultId, path),
+          precondition: { kind: "absent" },
+          retryAfterEpochMs: null,
+          attempt: { state: "ready", generation: 0 },
+        },
+      },
+      {
+        ...readyJournal,
+        stepEvidence: {
+          step: "commit_journal",
+          key: syncOperationKey(vaultId, operationId),
+          precondition: { kind: "journal_phase", status: "pending" },
+          retryAfterEpochMs: null,
+        },
+      },
+      {
+        ...shortcut,
+        stepEvidence: { ...shortcut.stepEvidence, outcomeIntent: "changed" },
+      },
+      {
+        ...shortcut,
+        stepEvidence: {
+          ...shortcut.stepEvidence,
+          key: syncFeedEventKey(
+            vaultId,
+            readyJournal.reservation.lane,
+            syncEventSequenceSchema.parse("00000000000000000002"),
+          ),
+        },
+      },
+      {
+        ...shortcut,
+        request: { ...shortcut.request, origin: alternateOrigin },
+      },
+      {
+        ...shortcut,
+        reservation: {
+          ...shortcut.reservation,
+          sequence: syncEventSequenceSchema.parse("00000000000000000002"),
+        },
+      },
+      {
+        ...shortcut,
+        stepEvidence: {
+          ...shortcut.stepEvidence,
+          precondition: {
+            kind: "observed",
+            etag: "unrelated-generation",
+            bytes: "AA",
+            uploadedAtEpochMs: epochNow - 5_000,
+          },
+        },
+      },
+      {
+        ...shortcut,
+        stepEvidence: {
+          ...shortcut.stepEvidence,
+          committedAtEpochMs:
+            readyJournal.reservation.previousCommittedAtEpochMs,
+        },
+      },
+    ];
+    const journalKey = syncOperationKey(vaultId, operationId);
+    const writesBeforeInvalid = bucket.puts.filter(
+      (put) => put.key === journalKey,
+    ).length;
+    for (const invalid of invalidTransitions) {
+      expect(
+        await publication.replaceJournal(ready.observation, invalid),
+      ).toEqual({ kind: "refused" });
+    }
+    expect(bucket.puts.filter((put) => put.key === journalKey)).toHaveLength(
+      writesBeforeInvalid,
+    );
+    epochNow += 1_100;
+
+    expect(
+      await publication.replaceJournal(ready.observation, {
+        ...shortcut,
+        stepEvidence: {
+          ...shortcut.stepEvidence,
+          key: eventKey,
+          committedAtEpochMs: epochNow,
+        },
+      }),
+    ).toEqual({ kind: "confirmed" });
+    const restartedPublication = syncR2Publication(
+      syncR2ObjectStore(bucket, () => epochNow),
+    );
+    const persisted = await restartedPublication.readJournal(
+      vaultId,
+      operationId,
+    );
+    expect(persisted).toMatchObject({
+      kind: "observed",
+      observation: {
+        value: {
+          stepEvidence: {
+            step: "create_event",
+            outcomeIntent: "aborted",
+            key: eventKey,
+            committedAtEpochMs: epochNow,
+            attempt: { state: "ready", generation: 0 },
+          },
+        },
+      },
+    });
+    if (
+      persisted.kind !== "observed" ||
+      persisted.observation.value.status !== "pending" ||
+      persisted.observation.value.allocationState !== "allocated" ||
+      persisted.observation.value.stepEvidence.step !== "create_event"
+    ) {
+      return;
+    }
+    epochNow += 1_100;
+    const journalWritesBeforeFlip = bucket.puts.filter(
+      (put) => put.key === syncOperationKey(vaultId, operationId),
+    ).length;
+    const flippedIntent: SyncAllocatedPendingJournalRecord = {
+      ...persisted.observation.value,
+      stepEvidence: {
+        ...persisted.observation.value.stepEvidence,
+        outcomeIntent: "changed",
+        attempt: {
+          state: "attempting",
+          claimId: alternateOperationId,
+          generation: 1,
+          claimedAtEpochMs: epochNow,
+        },
+      },
+    };
+    expect(
+      await restartedPublication.replaceJournal(
+        persisted.observation,
+        flippedIntent,
+      ),
+    ).toEqual({ kind: "refused" });
+    expect(
+      bucket.puts.filter(
+        (put) => put.key === syncOperationKey(vaultId, operationId),
+      ),
+    ).toHaveLength(journalWritesBeforeFlip);
+    expect(
+      await restartedPublication.readJournal(vaultId, operationId),
+    ).toMatchObject({
+      kind: "observed",
+      observation: {
+        value: {
+          stepEvidence: {
+            step: "create_event",
+            outcomeIntent: "aborted",
+            attempt: { state: "ready", generation: 0 },
+          },
+        },
+      },
+    });
+    const prior = persisted.observation.value;
+    if (prior.stepEvidence.step !== "create_event")
+      throw new Error("Expected aborted event step.");
+    const witness: SyncFeedEventRecord = {
+      schemaVersion: 1,
+      protocolMajor: 1,
+      vaultId,
+      kind: "aborted",
+      lane: prior.reservation.lane,
+      sequence: prior.reservation.sequence,
+      operationId,
+      reason: "stale_revision",
+      committedAtEpochMs: prior.stepEvidence.committedAtEpochMs,
+    };
+    bucket.seed(eventKey, await encodeSyncPublication(witness), epochNow);
+    const commit: SyncAllocatedPendingJournalRecord = {
+      ...prior,
+      stepEvidence: {
+        step: "commit_journal",
+        key: journalKey,
+        precondition: { kind: "journal_phase", status: "pending" },
+        retryAfterEpochMs: null,
+      },
+    };
+    for (const changed of [
+      { ...commit, request: { ...commit.request, origin: alternateOrigin } },
+      {
+        ...commit,
+        reservation: {
+          ...commit.reservation,
+          sequence: syncEventSequenceSchema.parse("00000000000000000002"),
+        },
+      },
+    ]) {
+      expect(
+        await restartedPublication.replaceJournal(
+          persisted.observation,
+          changed,
+        ),
+      ).toEqual({ kind: "refused" });
+    }
+    expect(bucket.puts.filter((put) => put.key === journalKey)).toHaveLength(
+      journalWritesBeforeFlip,
+    );
+    expect(
+      await restartedPublication.replaceJournal(persisted.observation, commit),
+    ).toEqual({ kind: "confirmed" });
+  });
+
+  it("allows only monotonic claims and retry waits for an unchanged target tuple", async () => {
+    await seedMarker();
+    const initial = await journal();
+    await persistAllocatedJournal(initial);
+    const ready = await publication.readJournal(vaultId, operationId);
+    expect(ready.kind).toBe("observed");
+    if (ready.kind !== "observed") return;
+    const readyJournal = ready.observation.value;
+    if (
+      readyJournal.status !== "pending" ||
+      readyJournal.allocationState !== "allocated" ||
+      readyJournal.stepEvidence.step === "commit_journal"
+    ) {
+      return;
+    }
+
+    const invalidGeneration: SyncAllocatedPendingJournalRecord = {
+      ...readyJournal,
+      stepEvidence: {
+        ...readyJournal.stepEvidence,
+        attempt: {
+          state: "attempting",
+          claimId: alternateOperationId,
+          generation: 2,
+          claimedAtEpochMs: epochNow,
+        },
+      },
+    };
+    epochNow += 1_100;
+    const writesBeforeInvalid = bucket.puts.filter(
+      (put) => put.key === syncOperationKey(vaultId, operationId),
+    ).length;
+    expect(
+      await publication.replaceJournal(ready.observation, invalidGeneration),
+    ).toEqual({ kind: "refused" });
+    expect(
+      bucket.puts.filter(
+        (put) => put.key === syncOperationKey(vaultId, operationId),
+      ),
+    ).toHaveLength(writesBeforeInvalid);
+
+    const claim: SyncAllocatedPendingJournalRecord = {
+      ...readyJournal,
+      stepEvidence: {
+        ...readyJournal.stepEvidence,
+        attempt: {
+          state: "attempting",
+          claimId: alternateOperationId,
+          generation: 1,
+          claimedAtEpochMs: epochNow,
+        },
+      },
+    };
+    expect(await publication.replaceJournal(ready.observation, claim)).toEqual({
+      kind: "confirmed",
+    });
+    const claimed = await publication.readJournal(vaultId, operationId);
+    expect(claimed.kind).toBe("observed");
+    if (claimed.kind !== "observed") return;
+    const claimedJournal = claimed.observation.value;
+    if (
+      claimedJournal.status !== "pending" ||
+      claimedJournal.allocationState !== "allocated" ||
+      claimedJournal.stepEvidence.step === "commit_journal" ||
+      claimedJournal.stepEvidence.attempt.state !== "attempting"
+    ) {
+      return;
+    }
+
+    const sameClaimAgain: SyncAllocatedPendingJournalRecord = {
+      ...claimedJournal,
+      stepEvidence: {
+        ...claimedJournal.stepEvidence,
+        attempt: {
+          state: "attempting",
+          claimId: claimedJournal.stepEvidence.attempt.claimId,
+          generation: 2,
+          claimedAtEpochMs:
+            claimedJournal.stepEvidence.attempt.claimedAtEpochMs,
+        },
+      },
+    };
+    epochNow += 1_100;
+    expect(
+      await publication.replaceJournal(claimed.observation, sameClaimAgain),
+    ).toEqual({ kind: "refused" });
+
+    const observedAtEpochMs = epochNow;
+    const retryAfterEpochMs = observedAtEpochMs + 1_100;
+    const retryWait: SyncAllocatedPendingJournalRecord = {
+      ...claimedJournal,
+      stepEvidence: {
+        ...claimedJournal.stepEvidence,
+        retryAfterEpochMs,
+        attempt: {
+          state: "retry_wait",
+          claimId: alternateOperationId,
+          generation: 1,
+          observedAtEpochMs,
+          retryAfterEpochMs,
+        },
+      },
+    };
+    expect(
+      await publication.replaceJournal(claimed.observation, retryWait),
+    ).toEqual({ kind: "confirmed" });
+    const waiting = await publication.readJournal(vaultId, operationId);
+    expect(waiting.kind).toBe("observed");
+    if (waiting.kind !== "observed") return;
+    const waitingJournal = waiting.observation.value;
+    if (
+      waitingJournal.status !== "pending" ||
+      waitingJournal.allocationState !== "allocated" ||
+      waitingJournal.stepEvidence.step === "commit_journal" ||
+      waitingJournal.stepEvidence.attempt.state !== "retry_wait"
+    ) {
+      return;
+    }
+
+    epochNow = Math.max(epochNow + 1_100, retryAfterEpochMs);
+    const nextClaim: SyncAllocatedPendingJournalRecord = {
+      ...waitingJournal,
+      stepEvidence: {
+        ...waitingJournal.stepEvidence,
+        attempt: {
+          state: "attempting",
+          claimId: operationId,
+          generation: 2,
+          claimedAtEpochMs: epochNow,
+        },
+      },
+    };
+    const raisedFloorClaim: SyncAllocatedPendingJournalRecord = {
+      ...nextClaim,
+      stepEvidence: {
+        ...nextClaim.stepEvidence,
+        retryAfterEpochMs: retryAfterEpochMs + 1_100,
+      },
+    };
+    expect(
+      await publication.replaceJournal(waiting.observation, raisedFloorClaim),
+    ).toEqual({ kind: "refused" });
+    expect(
+      await publication.replaceJournal(waiting.observation, nextClaim),
+    ).toEqual({ kind: "confirmed" });
+  });
+
+  it("keeps terminal outcome and original lane precondition fixed across claims", async () => {
+    await seedMarker();
+    const phase = await journal(undefined, "commit_journal");
+    await persistAllocatedJournal(phase);
+    const pending = await publication.readJournal(vaultId, operationId);
+    expect(pending.kind).toBe("observed");
+    if (pending.kind !== "observed") return;
+    epochNow += 1_100;
+    const terminal = await settledJournal(phase, "committed");
+    expect(
+      await publication.replaceJournal(pending.observation, terminal),
+    ).toEqual({ kind: "confirmed" });
+    const terminalRead = await publication.readJournal(vaultId, operationId);
+    expect(terminalRead.kind).toBe("observed");
+    if (
+      terminalRead.kind !== "observed" ||
+      !isTerminalJournal(terminalRead.observation.value)
+    ) {
+      return;
+    }
+    if (terminalRead.observation.value.status !== "committed")
+      throw new Error("Expected immutable committed outcome");
+    const writesBeforeChangedOutcome = bucket.puts.length;
+    expect(
+      await publication.replaceJournal(terminalRead.observation, {
+        ...terminalRead.observation.value,
+        revision: parentRevision,
+      }),
+    ).toEqual({ kind: "refused" });
+    expect(bucket.puts).toHaveLength(writesBeforeChangedOutcome);
+    expect(await publication.readJournal(vaultId, operationId)).toMatchObject({
+      kind: "observed",
+      observation: { value: { status: "committed", revision } },
+    });
+    epochNow += 1_100;
+    if (terminalRead.observation.value.stepEvidence.step !== "commit_lane") {
+      return;
+    }
+    const claim: Extract<
+      SyncJournalRecord,
+      { status: "committed" | "aborted" }
+    > = {
+      ...terminalRead.observation.value,
+      stepEvidence: {
+        ...terminalRead.observation.value.stepEvidence,
+        attempt: {
+          state: "attempting",
+          claimId: alternateOperationId,
+          generation: 1,
+          claimedAtEpochMs: epochNow,
+        },
+      },
+    };
+    expect(
+      await publication.replaceJournal(terminalRead.observation, claim),
+    ).toEqual({ kind: "confirmed" });
+    const claimed = await publication.readJournal(vaultId, operationId);
+    expect(claimed.kind).toBe("observed");
+    if (
+      claimed.kind !== "observed" ||
+      !isTerminalJournal(claimed.observation.value) ||
+      claimed.observation.value.stepEvidence.step !== "commit_lane" ||
+      claimed.observation.value.stepEvidence.attempt.state !== "attempting"
+    ) {
+      return;
+    }
+    if (
+      claimed.observation.value.stepEvidence.precondition.kind !== "observed"
+    ) {
+      return;
+    }
+    const changedPrecondition: Extract<
+      SyncJournalRecord,
+      { status: "committed" | "aborted" }
+    > = {
+      ...claimed.observation.value,
+      stepEvidence: {
+        ...claimed.observation.value.stepEvidence,
+        precondition: {
+          ...claimed.observation.value.stepEvidence.precondition,
+          etag: "a-refreshed-lane-etag",
+        },
+        retryAfterEpochMs: epochNow + 1_100,
+        attempt: {
+          state: "retry_wait",
+          claimId: alternateOperationId,
+          generation: 1,
+          observedAtEpochMs: epochNow,
+          retryAfterEpochMs: epochNow + 1_100,
+        },
+      },
+    };
+    epochNow += 1_100;
+    expect(
+      await publication.replaceJournal(
+        claimed.observation,
+        changedPrecondition,
+      ),
+    ).toEqual({ kind: "refused" });
+  });
+
   it("persists exact unallocated request identity and rejects changed same-ID requests", async () => {
     await seedMarker();
     const head = await initialLaneHead();
@@ -1271,7 +2944,7 @@ describe("marker-gated private sync publication persistence", () => {
     expect(maximumRead.kind).toBe("observed");
     if (maximumRead.kind !== "observed") return;
     const impossibleAllocation: SyncAllocatedPendingJournalRecord = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       protocolMajor: 1,
       vaultId,
       kind: "journal",
@@ -1290,6 +2963,7 @@ describe("marker-gated private sync publication persistence", () => {
         key: syncVersionKey(vaultId, maximumJournal.request.revision),
         precondition: { kind: "absent" },
         retryAfterEpochMs: null,
+        attempt: { state: "ready", generation: 0 },
       },
     };
     expect(
@@ -1491,34 +3165,38 @@ describe("marker-gated private sync publication persistence", () => {
     bucket.nullPutKeys.add(journalKey);
     epochNow += 1_100;
 
-    const uncertain = await publication.replaceJournal(
+    const noEffect = await publication.replaceJournal(
       source.observation,
       allocated,
     );
-    expect(uncertain.kind).toBe("effect_unknown");
+    expect(noEffect).toMatchObject({
+      kind: "effect_unknown",
+      noEffectProvenance: "conditional_null",
+    });
+    if (
+      noEffect.kind !== "effect_unknown" ||
+      noEffect.retryAfterEpochMs === undefined
+    ) {
+      return;
+    }
     bucket.unavailableAfterPut.delete(journalKey);
-
-    const unchanged = await publication.replaceJournal(
-      source.observation,
-      allocated,
-      uncertain.kind === "effect_unknown" &&
-        uncertain.retryAfterEpochMs !== undefined
-        ? { retryAfterEpochMs: uncertain.retryAfterEpochMs }
-        : undefined,
-    );
-    expect(unchanged).toMatchObject({ kind: "throttled" });
+    const retryContext = { retryAfterEpochMs: noEffect.retryAfterEpochMs };
     const writesBeforeRetry = bucket.puts.filter(
       (put) => put.key === journalKey,
     ).length;
+    expect(
+      await publication.replaceJournal(
+        source.observation,
+        allocated,
+        retryContext,
+      ),
+    ).toMatchObject({ kind: "throttled" });
     epochNow += 1_100;
     expect(
       await publication.replaceJournal(
         source.observation,
         allocated,
-        uncertain.kind === "effect_unknown" &&
-          uncertain.retryAfterEpochMs !== undefined
-          ? { retryAfterEpochMs: uncertain.retryAfterEpochMs }
-          : undefined,
+        retryContext,
       ),
     ).toEqual({ kind: "confirmed" });
     const retryPut = bucket.puts.filter((put) => put.key === journalKey).at(-1);
@@ -1779,11 +3457,49 @@ describe("marker-gated private sync publication persistence", () => {
       );
       expect(observed.kind).toBe("observed");
       if (observed.kind !== "observed") return;
+      const pendingJournal = observed.observation.value;
+      if (
+        pendingJournal.status !== "pending" ||
+        pendingJournal.allocationState !== "allocated" ||
+        pendingJournal.stepEvidence.step === "commit_journal"
+      ) {
+        return;
+      }
+      epochNow += 1_100;
+      const claim: SyncAllocatedPendingJournalRecord = {
+        ...pendingJournal,
+        stepEvidence: {
+          ...pendingJournal.stepEvidence,
+          attempt: {
+            state: "attempting",
+            claimId: operationId,
+            generation: 1,
+            claimedAtEpochMs: epochNow,
+          },
+        },
+      };
+      expect(
+        await publication.replaceJournal(observed.observation, claim),
+      ).toEqual({ kind: "confirmed" });
+      const claimed = await publication.readJournal(
+        vaultId,
+        record.operationId,
+      );
+      expect(claimed.kind).toBe("observed");
+      if (claimed.kind !== "observed") return;
+      const claimedJournal = claimed.observation.value;
+      if (
+        claimedJournal.status !== "pending" ||
+        claimedJournal.allocationState !== "allocated" ||
+        claimedJournal.stepEvidence.step === "commit_journal"
+      ) {
+        return;
+      }
       epochNow += 1_100;
       expect(
         await publication.replaceJournal(
-          observed.observation,
-          nextJournalStep(record),
+          claimed.observation,
+          nextJournalStep(claimedJournal, "changed"),
         ),
       ).toEqual({ kind: "confirmed" });
     }
@@ -2034,7 +3750,6 @@ describe("marker-gated private sync publication persistence", () => {
   it("resolves an uncertain terminal floor CAS across a fresh publication facade", async () => {
     await seedMarker();
     const phase = await journal(undefined, "commit_journal");
-    const journalKey = syncOperationKey(vaultId, operationId);
     await persistAllocatedJournal(phase);
     const pending = await publication.readJournal(vaultId, operationId);
     expect(pending.kind).toBe("observed");
@@ -2057,11 +3772,13 @@ describe("marker-gated private sync publication persistence", () => {
         retryAfterEpochMs: epochNow + 2_000,
       },
     };
-    bucket.nullPutKeys.add(journalKey);
+    bucket.failure = new Error("R2 response lost");
+    bucket.failReadback = true;
     expect(
       await publication.replaceJournal(committed.observation, raised),
     ).toMatchObject({ kind: "effect_unknown" });
-    bucket.unavailableAfterPut.delete(journalKey);
+    bucket.failure = undefined;
+    bucket.failReadback = false;
     epochNow += 1_100;
 
     const freshPublication = syncR2Publication(

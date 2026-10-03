@@ -36,15 +36,39 @@ export interface SyncRecordObservation<T> {
   readonly observed: SyncR2Observed;
 }
 
+/** Counts actual one-key R2 GET and PUT calls for one caller-owned invocation. */
+export interface SyncR2CallBudget {
+  /** Calls already dispatched through stores sharing this budget. */
+  readonly actualCalls: number;
+}
+
 /** Retry evidence callers must carry across isolates before reattempting a throttled or uncertain write. */
 export interface SyncR2RetryContext {
   /** Earliest safe Unix epoch millisecond time reported by the prior write result. */
   readonly retryAfterEpochMs: number;
 }
 
-/** Closed certainty outcomes for a single conditional R2 write attempt. */
+/** Provenance that a target PUT was not dispatched or was rejected by its direct R2 condition. */
+export type SyncR2NoEffectProvenance =
+  | "preflight_no_dispatch"
+  | "conditional_null";
+
+/** A refusal or uncertain result retaining direct no-effect provenance from one R2 attempt. */
+export type SyncR2NoEffectOutcome =
+  | {
+      readonly kind: "refused";
+      readonly noEffectProvenance: SyncR2NoEffectProvenance;
+    }
+  | {
+      readonly kind: "effect_unknown";
+      readonly noEffectProvenance: SyncR2NoEffectProvenance;
+      readonly retryAfterEpochMs?: number;
+    };
+
+/** Closed certainty outcomes for one conditional R2 write and its exact evidence. */
 export type SyncR2WriteResult =
   | { readonly kind: "confirmed" }
+  | SyncR2NoEffectOutcome
   | { readonly kind: "refused" }
   | { readonly kind: "throttled"; readonly retryAfterEpochMs: number }
   | { readonly kind: "effect_unknown"; readonly retryAfterEpochMs?: number };

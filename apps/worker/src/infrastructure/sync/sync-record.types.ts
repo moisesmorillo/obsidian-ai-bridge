@@ -19,7 +19,9 @@ export type SyncRecordKind =
   | "recoveryBody"
   | "activeSlot"
   | "manifest"
-  | "chunk";
+  | "chunk"
+  | "cursorJournal"
+  | "cursorWitness";
 
 /** Exact wire metadata shared by every strict private JSON envelope. */
 interface SyncRecordEnvelope {
@@ -136,8 +138,9 @@ export type SyncInventorySlot = SyncRecordEnvelope &
     | { readonly state: "active"; readonly inventoryId: SyncInventoryIdDto }
   );
 
-/** Strict bounded inventory continuation state private to the R2 adapter. */
-export interface SyncInventoryManifest extends SyncRecordEnvelope {
+/** Shared bounded inventory counters and cursor state across historical and witnessed manifests. */
+interface SyncInventoryManifestFields
+  extends Omit<SyncRecordEnvelope, "schemaVersion"> {
   /** Stable scan identity appearing in the canonical manifest key. */
   readonly inventoryId: SyncInventoryIdDto;
   /** Durable scan lifecycle stage used only by inventory recovery. */
@@ -176,6 +179,25 @@ export interface SyncInventoryManifest extends SyncRecordEnvelope {
   readonly expiresAtEpochMs: number;
 }
 
+/** Historical v1 scan evidence retained for expiry/no-reuse but never upgraded to witness authority. */
+export interface SyncInventoryManifestV1 extends SyncInventoryManifestFields {
+  /** Frozen historical manifest schema. */
+  readonly schemaVersion: 1;
+}
+
+/** New scan authority whose every truncated cursor advance requires a durable witness. */
+export interface SyncInventoryManifestV2 extends SyncInventoryManifestFields {
+  /** Strict witnessed scan schema. */
+  readonly schemaVersion: 2;
+  /** Fixed closed witness algorithm; other modes require a new schema. */
+  readonly cursorWitnessMode: 1;
+}
+
+/** Versioned manifest boundary; callers must fail closed on v1 authority. */
+export type SyncInventoryManifest =
+  | SyncInventoryManifestV1
+  | SyncInventoryManifestV2;
+
 /** Canonical path and published revision recorded for one listed inventory head. */
 export interface SyncHeadSummary {
   /** Canonical M7.1 unpadded base64url path key, not display-normalized text. */
@@ -208,6 +230,46 @@ export interface SyncInventoryChunk extends SyncRecordEnvelope {
   readonly headSummary: SyncHeadSummary | null;
 }
 
+/** Validated random UUID electing exactly one inventory witness-dispatch generation. */
+export type SyncInventoryClaimId = string & {
+  readonly __syncInventoryClaimId: unique symbol;
+};
+
+/** Fields linking one cursor claim or witness to the exact verified immutable chunk. */
+interface SyncInventoryCursorEvidence extends SyncRecordEnvelope {
+  /** Stable scan identity beneath the isolated scratch prefix. */
+  readonly inventoryId: SyncInventoryIdDto;
+  /** Zero-based producing chunk step. */
+  readonly step: number;
+  /** SHA-256 over exact canonical chunk bytes, not a listing ETag. */
+  readonly chunkHash: ContentSha256;
+  /** SHA-256 over the raw R2 output cursor, never the raw token itself. */
+  readonly cursorDigest: ContentSha256;
+}
+
+/** Immutable digest-indexed claim that this verified step produced a cursor. */
+export interface SyncInventoryCursorWitness
+  extends SyncInventoryCursorEvidence {}
+
+/** Durable exact-CAS attempt journal for a step's conditional witness write. */
+export type SyncInventoryCursorJournal = SyncInventoryCursorEvidence &
+  (
+    | {
+        /** This exact UUID generation may dispatch one create-only target PUT. */
+        readonly state: "attempting";
+        /** Unique generation fence, never reused for a second target dispatch. */
+        readonly claimId: SyncInventoryClaimId;
+      }
+    | {
+        /** A later generation must wait for exact absence and both cooldown floors. */
+        readonly state: "retry_wait";
+        /** Previously attempted UUID, retained as exact causal history. */
+        readonly claimId: SyncInventoryClaimId;
+        /** Earliest safe server epoch milliseconds for the next generation. */
+        readonly retryAfterEpochMs: number;
+      }
+  );
+
 /** Closed discriminated output of strict sync-record decoding. */
 export type SyncDecodedRecord =
   | {
@@ -235,4 +297,12 @@ export type SyncDecodedRecord =
     }
   | { readonly kind: "activeSlot"; readonly record: SyncInventorySlot }
   | { readonly kind: "manifest"; readonly record: SyncInventoryManifest }
-  | { readonly kind: "chunk"; readonly record: SyncInventoryChunk };
+  | { readonly kind: "chunk"; readonly record: SyncInventoryChunk }
+  | {
+      readonly kind: "cursorJournal";
+      readonly record: SyncInventoryCursorJournal;
+    }
+  | {
+      readonly kind: "cursorWitness";
+      readonly record: SyncInventoryCursorWitness;
+    };

@@ -9,6 +9,7 @@ import {
   encodeBase64Url,
 } from "@obsidian-ai-bridge/core";
 import {
+  decodeSyncPathKey,
   syncContentKey,
   syncFeedEventKey,
   syncFeedLaneForPath,
@@ -39,6 +40,7 @@ import type {
 } from "@protocol/sync.types";
 import { SYNC_PUBLICATION_LIMITS } from "@worker/infrastructure/sync/sync-publication.constants";
 import type {
+  SyncHeadRefusalReceiptRecord,
   SyncJournalRecord,
   SyncPublicationRecord,
   SyncPublicationStepEvidence,
@@ -46,7 +48,10 @@ import type {
 } from "@worker/infrastructure/sync/sync-publication.types";
 import { SYNC_R2_WRITE_COOLDOWN_MS } from "@worker/infrastructure/sync/sync-r2.constants";
 import { isCanonicalSyncR2Key } from "@worker/infrastructure/sync/sync-r2-key";
-import { syncHeadRecordSchema } from "@worker/infrastructure/sync/sync-record.schemas";
+import {
+  SYNC_RECORD_LIMITS,
+  syncHeadRecordSchema,
+} from "@worker/infrastructure/sync/sync-record.schemas";
 import { z } from "zod";
 
 export { SYNC_PUBLICATION_LIMITS } from "@worker/infrastructure/sync/sync-publication.constants";
@@ -75,6 +80,12 @@ const MAX_PRECONDITION_BASE64URL_CHARACTERS = Math.ceil(
 /** Exact common envelope for every private journal, lane-head, and feed event. */
 const envelopeShape = {
   schemaVersion: z.literal(1),
+  protocolMajor: z.literal(1),
+  vaultId: syncVaultIdSchema,
+};
+/** Journal-only schema-v2 envelope; lane and event records remain schema-v1. */
+const journalEnvelopeShape = {
+  schemaVersion: z.literal(2),
   protocolMajor: z.literal(1),
   vaultId: syncVaultIdSchema,
 };
@@ -152,17 +163,6 @@ const absenceOrObservedPreconditionSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("absent") }).strict(),
   observedPreconditionSchema,
 ]);
-/** Captured R2 condition for one mutable write or an exact journal-only phase. */
-const publicationPreconditionSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("absent") }).strict(),
-  observedPreconditionSchema,
-  z
-    .object({
-      kind: z.literal("journal_phase"),
-      status: z.literal("pending"),
-    })
-    .strict(),
-]);
 /** Exact lane-head snapshot retained while a request still lacks allocation authority. */
 const journalLaneObservationSchema = z
   .object({
@@ -171,23 +171,124 @@ const journalLaneObservationSchema = z
     retryAfterEpochMs: epochMillisecondsSchema.nullable(),
   })
   .strict();
-/** Closed step name selecting one deterministic key and its persisted exact precondition. */
-const publicationStepSchema = z.enum([
+/** Closed journal-only step whose CAS has no external attempt claim. */
+const journalStepSchema = z.literal("commit_journal");
+/** Closed external target steps that require a persisted attempt claim. */
+const externalStepSchema = z.enum([
   "immutable_create",
   "write_head",
-  "create_event",
-  "commit_journal",
   "commit_lane",
 ]);
-/** Durable, single-step precondition and known cooldown evidence. */
-const publicationStepEvidenceSchema = z
+/** Strict generation-zero authority for a target tuple not yet dispatched. */
+const readyAttemptSchema = z
+  .object({ state: z.literal("ready"), generation: z.literal(0) })
+  .strict();
+/** Strict unique invocation claim that authorizes at most its own target PUT. */
+const attemptingAttemptSchema = z
   .object({
-    step: publicationStepSchema,
+    state: z.literal("attempting"),
+    claimId: syncOperationIdSchema,
+    generation: epochMillisecondsSchema.min(1),
+    claimedAtEpochMs: epochMillisecondsSchema,
+  })
+  .strict();
+/** Strict recovered prior-target observation with its fixed, non-early retry floor. */
+const retryWaitAttemptSchema = z
+  .object({
+    state: z.literal("retry_wait"),
+    claimId: syncOperationIdSchema,
+    generation: epochMillisecondsSchema.min(1),
+    observedAtEpochMs: epochMillisecondsSchema,
+    retryAfterEpochMs: epochMillisecondsSchema,
+  })
+  .strict();
+/** Closed attempt-state tag accepted by every external publication step. */
+const publicationAttemptSchema = z.discriminatedUnion("state", [
+  readyAttemptSchema,
+  attemptingAttemptSchema,
+  retryWaitAttemptSchema,
+]);
+/** External target evidence that always carries attempt state and fixed target condition. */
+const externalStepEvidenceSchema = z
+  .object({
+    step: externalStepSchema,
     key: z.string().min(1),
-    precondition: publicationPreconditionSchema,
+    precondition: absenceOrObservedPreconditionSchema,
+    retryAfterEpochMs: epochMillisecondsSchema.nullable(),
+    attempt: publicationAttemptSchema,
+  })
+  .strict();
+/** Event-step evidence fixes the intended event kind and lane time before any create-only claim. */
+const eventStepEvidenceSchema = z
+  .object({
+    step: z.literal("create_event"),
+    key: z.string().min(1),
+    committedAtEpochMs: epochMillisecondsSchema,
+    outcomeIntent: z.enum(["changed", "aborted"]),
+    precondition: absenceOrObservedPreconditionSchema,
+    retryAfterEpochMs: epochMillisecondsSchema.nullable(),
+    attempt: publicationAttemptSchema,
+  })
+  .strict();
+/** Journal-only evidence has a typed pending phase and no external attempt substate. */
+const journalStepEvidenceSchema = z
+  .object({
+    step: journalStepSchema,
+    key: z.string().min(1),
+    precondition: z
+      .object({
+        kind: z.literal("journal_phase"),
+        status: z.literal("pending"),
+      })
+      .strict(),
     retryAfterEpochMs: epochMillisecondsSchema.nullable(),
   })
   .strict();
+/** Durable step union; retry-wait floor duplicates must equal the key's sole safe floor. */
+const publicationStepEvidenceSchema = z
+  .union([
+    externalStepEvidenceSchema,
+    eventStepEvidenceSchema,
+    journalStepEvidenceSchema,
+  ])
+  .superRefine((evidence, context) => {
+    if (evidence.step === "commit_journal") return;
+    if (
+      evidence.attempt.state === "retry_wait" &&
+      evidence.retryAfterEpochMs !== evidence.attempt.retryAfterEpochMs
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["attempt", "retryAfterEpochMs"],
+        message: "Retry-wait and step retry floors must be identical.",
+      });
+    }
+    if (evidence.attempt.state === "retry_wait") {
+      const minimumFloor =
+        evidence.attempt.observedAtEpochMs + SYNC_R2_WRITE_COOLDOWN_MS;
+      if (
+        !Number.isSafeInteger(minimumFloor) ||
+        evidence.attempt.retryAfterEpochMs < minimumFloor
+      ) {
+        context.addIssue({
+          code: "custom",
+          path: ["attempt", "retryAfterEpochMs"],
+          message: "Retry floor must follow the exact observation cooldown.",
+        });
+      }
+      if (
+        evidence.precondition.kind === "observed" &&
+        evidence.attempt.retryAfterEpochMs <
+          evidence.precondition.uploadedAtEpochMs + SYNC_R2_WRITE_COOLDOWN_MS
+      ) {
+        context.addIssue({
+          code: "custom",
+          path: ["attempt", "retryAfterEpochMs"],
+          message: "Retry floor cannot precede the target-key cooldown.",
+        });
+      }
+    }
+  });
 /** Exact lane allocation, retaining the predecessor clock for monotonic publication. */
 const laneReservationSchema = z
   .object({
@@ -211,7 +312,7 @@ const positionSchema = z
   .strict();
 /** Immutable request identity shared by every private journal authority phase. */
 const journalIdentityShape = {
-  ...envelopeShape,
+  ...journalEnvelopeShape,
   kind: z.literal("journal"),
   operationId: syncOperationIdSchema,
   request: mutationRequestSchema,
@@ -432,6 +533,130 @@ export const syncFeedEventRecordSchema = z.discriminatedUnion("kind", [
     .strict(),
 ]);
 
+/** Strict exact R2 observation retained for the stale head competing with one claim. */
+const competingHeadObservationSchema = z
+  .object({
+    etag: z.string().min(1).max(SYNC_PUBLICATION_LIMITS.etagBytes),
+    bytes: z.string().min(1).max(MAX_PRECONDITION_BASE64URL_CHARACTERS),
+    uploadedAtEpochMs: epochMillisecondsSchema,
+  })
+  .strict();
+
+/** Closed schema-v1 Worker-private receipt for a definite generation-one head refusal. */
+export const syncHeadRefusalReceiptSchema = z
+  .object({
+    schemaVersion: z.literal(1),
+    protocolMajor: z.literal(1),
+    vaultId: syncVaultIdSchema,
+    operationId: syncOperationIdSchema,
+    claimId: syncOperationIdSchema,
+    generation: z.literal(1),
+    headKey: z.string().min(1).max(1_023),
+    headTargetSha256: sha256Schema,
+    headPrecondition: absenceOrObservedPreconditionSchema,
+    lane: laneSchema,
+    sequence: syncEventSequenceSchema,
+    refusalSource: z.enum(["preflight_no_dispatch", "conditional_null"]),
+    competingHead: competingHeadObservationSchema,
+  })
+  .strict()
+  .superRefine((receipt, context) => {
+    const prefix = `sync/v1/vaults/${receipt.vaultId}/heads/`;
+    const encodedPath = receipt.headKey.startsWith(prefix)
+      ? /^([^/]+)\.json$/.exec(receipt.headKey.slice(prefix.length))?.[1]
+      : undefined;
+    const path =
+      encodedPath === undefined ? undefined : decodeSyncPathKey(encodedPath);
+    if (
+      path === undefined ||
+      syncHeadKey(receipt.vaultId, path) !== receipt.headKey
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["headKey"],
+        message: "Receipt target must be one canonical head key in its vault.",
+      });
+    }
+  });
+
+/** Revalidates receipt path, lane, opaque generations, and canonical bounded bytes. */
+export async function assertSyncHeadRefusalReceipt(
+  receipt: SyncHeadRefusalReceiptRecord,
+  expectedVaultId: SyncVaultIdDto,
+): Promise<void> {
+  if (receipt.vaultId !== expectedVaultId) {
+    throw new TypeError("Head-refusal receipt belongs to another vault.");
+  }
+  const encodedPath = /^sync\/v1\/vaults\/[^/]+\/heads\/([^/]+)\.json$/.exec(
+    receipt.headKey,
+  )?.[1];
+  const path =
+    encodedPath === undefined ? undefined : decodeSyncPathKey(encodedPath);
+  if (
+    path === undefined ||
+    (await syncFeedLaneForPath(path)) !== receipt.lane
+  ) {
+    throw new TypeError("Head-refusal receipt lane or path is invalid.");
+  }
+  assertBoundedEtag(receipt.competingHead.etag);
+  assertCanonicalReceiptHeadBytes(
+    receipt.competingHead.bytes,
+    expectedVaultId,
+    path,
+  );
+  if (receipt.headPrecondition.kind === "observed") {
+    assertBoundedEtag(receipt.headPrecondition.etag);
+    assertCanonicalReceiptHeadBytes(
+      receipt.headPrecondition.bytes,
+      expectedVaultId,
+      path,
+    );
+  }
+}
+
+/** Validates bounded canonical head bytes against their immutable vault and path identity.
+ * @param encoded Unpadded-base64url head evidence retained in the receipt.
+ * @param vaultId Receipt vault whose strict head record must match.
+ * @param path Canonical note path encoded by the exact head key.
+ * @throws TypeError When bytes, JSON, schema, vault, path, or canonical representation diverges.
+ */
+function assertCanonicalReceiptHeadBytes(
+  encoded: string,
+  vaultId: SyncVaultIdDto,
+  path: string,
+): void {
+  const bytes = decodeBase64Url(encoded);
+  if (
+    bytes === undefined ||
+    bytes.byteLength > SYNC_RECORD_LIMITS.headBytes ||
+    encodeBase64Url(bytes) !== encoded
+  ) {
+    throw new TypeError(
+      "Head-refusal receipt bytes are not canonical or bounded.",
+    );
+  }
+  const text = decodeUtf8(bytes);
+  if (text === undefined) {
+    throw new TypeError("Head-refusal receipt head bytes are not valid UTF-8.");
+  }
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    throw new TypeError("Head-refusal receipt head JSON is malformed.");
+  }
+  const head = syncHeadRecordSchema.parse(value);
+  if (
+    head.vaultId !== vaultId ||
+    head.path !== path ||
+    JSON.stringify(head) !== text
+  ) {
+    throw new TypeError(
+      "Head-refusal receipt head bytes diverge from their key.",
+    );
+  }
+}
+
 /** Confirms private publication identity, payload, feed-lane and in-flight precondition evidence.
  * @param record - Strictly schema-parsed publication record to recheck.
  * @param expectedVaultId - Vault namespace expected by the caller.
@@ -590,6 +815,15 @@ function assertStepEvidence(journal: SyncAllocatedPublicationJournal): void {
   if (precondition.kind === "journal_phase") {
     throw new TypeError(
       "Only a journal transition may use its typed prior phase.",
+    );
+  }
+  if (
+    evidence.step === "create_event" &&
+    evidence.committedAtEpochMs <=
+      journal.reservation.previousCommittedAtEpochMs
+  ) {
+    throw new TypeError(
+      "Event-step time must be strictly later than its predecessor lane clock.",
     );
   }
   if (precondition.kind === "observed") {

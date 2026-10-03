@@ -19,6 +19,14 @@ import {
   syncSequenceSchema,
   syncVaultIdSchema,
 } from "@protocol/sync.schemas";
+import {
+  decodeSyncHeadRefusalReceipt,
+  decodeSyncPublication,
+  encodeSyncHeadRefusalReceipt,
+  encodeSyncPublication,
+} from "@worker/infrastructure/sync/sync-publication.codec";
+import { syncJournalRecordSchema } from "@worker/infrastructure/sync/sync-publication.schemas";
+import { encodeSyncRecord } from "@worker/infrastructure/sync/sync-record.codec";
 import { describe, expect, it } from "vitest";
 
 const VAULT_ID = syncVaultIdSchema.parse(
@@ -80,7 +88,7 @@ async function pendingJournal(content = CONTENT, operationId = OPERATION_ID) {
   const lane = await syncFeedLaneForPath(PATH);
   const contentBytes = encoder.encode(content);
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     protocolMajor: 1,
     vaultId: VAULT_ID,
     kind: "journal",
@@ -110,6 +118,7 @@ async function pendingJournal(content = CONTENT, operationId = OPERATION_ID) {
       key: syncVersionKey(VAULT_ID, REVISION),
       precondition: { kind: "absent" },
       retryAfterEpochMs: null,
+      attempt: { state: "ready", generation: 0 },
     },
   } as const;
 }
@@ -153,7 +162,7 @@ async function updateJournal(retryAfterEpochMs: number | null) {
     parent: { kind: "never_seen" },
   };
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     protocolMajor: 1,
     vaultId: VAULT_ID,
     kind: "journal",
@@ -188,6 +197,7 @@ async function updateJournal(retryAfterEpochMs: number | null) {
         uploadedAtEpochMs: 700,
       },
       retryAfterEpochMs,
+      attempt: { state: "ready", generation: 0 },
     },
   } as const;
 }
@@ -231,6 +241,7 @@ async function tombstoneWriteJournal(
         uploadedAtEpochMs: 700,
       },
       retryAfterEpochMs: 1_800,
+      attempt: { state: "ready", generation: 0 },
     },
   } as const;
 }
@@ -241,7 +252,7 @@ async function tombstoneWriteJournal(
 async function tombstoneJournal() {
   const lane = await syncFeedLaneForPath(PATH);
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     protocolMajor: 1,
     vaultId: VAULT_ID,
     kind: "journal",
@@ -269,6 +280,7 @@ async function tombstoneJournal() {
       key: syncRecoveryKey(VAULT_ID, OPERATION_ID, "metadata"),
       precondition: { kind: "absent" },
       retryAfterEpochMs: null,
+      attempt: { state: "ready", generation: 0 },
     },
   } as const;
 }
@@ -341,7 +353,7 @@ async function unallocatedJournal(
           uploadedAtEpochMs: observation.uploadedAtEpochMs,
         } as const);
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     protocolMajor: 1,
     vaultId: VAULT_ID,
     kind: "journal",
@@ -380,6 +392,472 @@ async function changedEvent() {
 }
 
 describe("private sync publication codec", () => {
+  it.each([
+    "terminal_prior_phase",
+    "phase_on_immutable",
+    "nonmonotonic_event",
+    "undecodable_lane_observation",
+  ] as const)(
+    "refuses persisted publication evidence with %s instead of repairing its authority",
+    async (damage) => {
+      const pending = await pendingJournal();
+      const journal = await journalCommitPending(null);
+      const candidate =
+        damage === "terminal_prior_phase"
+          ? {
+              ...journal,
+              stepEvidence: {
+                ...journal.stepEvidence,
+                precondition: { kind: "journal_phase", status: "committed" },
+              },
+            }
+          : damage === "phase_on_immutable"
+            ? {
+                ...pending,
+                stepEvidence: {
+                  ...pending.stepEvidence,
+                  precondition: { kind: "journal_phase", status: "pending" },
+                },
+              }
+            : damage === "nonmonotonic_event"
+              ? {
+                  ...pending,
+                  reservation: {
+                    ...pending.reservation,
+                    sequence: syncEventSequenceSchema.parse(
+                      "00000000000000000002",
+                    ),
+                    previousCommittedAtEpochMs: 100,
+                  },
+                  stepEvidence: {
+                    step: "create_event",
+                    key: syncFeedEventKey(
+                      VAULT_ID,
+                      pending.reservation.lane,
+                      syncEventSequenceSchema.parse("00000000000000000002"),
+                    ),
+                    precondition: { kind: "absent" },
+                    retryAfterEpochMs: null,
+                    attempt: { state: "ready", generation: 0 },
+                    committedAtEpochMs: 100,
+                    outcomeIntent: "changed",
+                  },
+                }
+              : {
+                  ...pending,
+                  status: "committed",
+                  revision: REVISION,
+                  position: {
+                    lane: pending.reservation.lane,
+                    sequence: pending.reservation.sequence,
+                  },
+                  committedAtEpochMs: 200,
+                  stepEvidence: {
+                    step: "commit_lane",
+                    key: syncFeedLaneHeadKey(
+                      VAULT_ID,
+                      pending.reservation.lane,
+                    ),
+                    precondition: {
+                      kind: "observed",
+                      etag: "original",
+                      uploadedAtEpochMs: 100,
+                      bytes: encodeBase64Url(new Uint8Array([255])),
+                    },
+                    retryAfterEpochMs: null,
+                    attempt: { state: "ready", generation: 0 },
+                  },
+                };
+      const message =
+        damage === "terminal_prior_phase"
+          ? JSON.stringify('Invalid input: expected "pending"').slice(1, -1)
+          : damage === "phase_on_immutable"
+            ? "Invalid discriminator value. Expected 'absent' | 'observed'"
+            : damage === "nonmonotonic_event"
+              ? "Event-step time must be strictly later than its predecessor lane clock"
+              : "Journal precondition bytes are not exact bounded UTF-8 evidence";
+      await expect(
+        decodeSyncPublication(
+          "journal",
+          syncOperationKey(VAULT_ID, OPERATION_ID),
+          json(candidate),
+          VAULT_ID,
+        ),
+      ).rejects.toThrow(message);
+    },
+  );
+  it("does not rehydrate a settled journal that has lost its final lane-commit evidence", async () => {
+    const pending = await pendingJournal();
+    const damaged = {
+      ...pending,
+      status: "committed",
+      revision: pending.request.revision,
+      position: {
+        lane: pending.reservation.lane,
+        sequence: pending.reservation.sequence,
+      },
+      committedAtEpochMs: 200,
+    };
+    expect(syncJournalRecordSchema.safeParse(damaged).success).toBe(false);
+    await expect(
+      decodeSyncPublication(
+        "journal",
+        syncOperationKey(VAULT_ID, OPERATION_ID),
+        json(damaged),
+        VAULT_ID,
+      ),
+    ).rejects.toThrow();
+  });
+  it.each(["observation_floor", "original_target_floor"] as const)(
+    "rejects retry-wait authority below its %s even when its own floor fields agree",
+    async (floor) => {
+      const journal =
+        floor === "observation_floor"
+          ? await pendingJournal()
+          : await updateJournal(null);
+      const candidate = {
+        ...journal,
+        stepEvidence: {
+          ...journal.stepEvidence,
+          retryAfterEpochMs: 1_500,
+          attempt: {
+            state: "retry_wait",
+            claimId: OTHER_OPERATION_ID,
+            generation: 1,
+            observedAtEpochMs: floor === "observation_floor" ? 1_000 : 0,
+            retryAfterEpochMs: 1_500,
+          },
+        },
+      } as const;
+      await expect(encodeSyncPublication(candidate)).rejects.toThrow();
+      await expect(
+        decodeSyncPublication(
+          "journal",
+          syncOperationKey(VAULT_ID, OPERATION_ID),
+          json(candidate),
+          VAULT_ID,
+        ),
+      ).rejects.toThrow();
+    },
+  );
+
+  it("does not let a saved generation authorize replacement of a create-only immutable target", async () => {
+    const journal = await pendingJournal();
+    const candidate = {
+      ...journal,
+      stepEvidence: {
+        ...journal.stepEvidence,
+        precondition: {
+          kind: "observed",
+          etag: "immutable-generation",
+          bytes: encodeBase64Url(json(await pendingLaneHead())),
+          uploadedAtEpochMs: 0,
+        },
+        retryAfterEpochMs: 1_100,
+      },
+    } as const;
+    await expect(encodeSyncPublication(candidate)).rejects.toThrow(TypeError);
+    await expect(
+      decodeSyncPublication(
+        "journal",
+        syncOperationKey(VAULT_ID, OPERATION_ID),
+        json(candidate),
+        VAULT_ID,
+      ),
+    ).rejects.toThrow(TypeError);
+  });
+
+  it("does not let an absent lane observation authorize releasing a committed operation's reserved lane", async () => {
+    const pending = await pendingJournal();
+    const candidate = {
+      ...pending,
+      status: "committed",
+      revision: REVISION,
+      position: {
+        lane: pending.reservation.lane,
+        sequence: pending.reservation.sequence,
+      },
+      committedAtEpochMs: 200,
+      stepEvidence: {
+        step: "commit_lane",
+        key: syncFeedLaneHeadKey(VAULT_ID, pending.reservation.lane),
+        precondition: { kind: "absent" },
+        retryAfterEpochMs: null,
+        attempt: { state: "ready", generation: 0 },
+      },
+    } as const;
+    await expect(encodeSyncPublication(candidate)).rejects.toThrow(TypeError);
+    await expect(
+      decodeSyncPublication(
+        "journal",
+        syncOperationKey(VAULT_ID, OPERATION_ID),
+        json(candidate),
+        VAULT_ID,
+      ),
+    ).rejects.toThrow(TypeError);
+  });
+  it("round-trips strict bounded generation-one head-refusal receipts", async () => {
+    const competitorBytes = await encodeSyncRecord({
+      kind: "head",
+      record: {
+        schemaVersion: 1,
+        protocolMajor: 1,
+        vaultId: VAULT_ID,
+        kind: "live",
+        path: PATH,
+        revision: OTHER_REVISION,
+        parent: { kind: "never_seen" },
+        contentSha256: await sha256(encoder.encode("competitor")),
+        byteSize: 10,
+        mediaType: "text/markdown",
+        operationId: OTHER_OPERATION_ID,
+        origin: ORIGIN,
+      },
+    });
+    const targetBytes = await encodeSyncRecord({
+      kind: "head",
+      record: {
+        schemaVersion: 1,
+        protocolMajor: 1,
+        vaultId: VAULT_ID,
+        kind: "live",
+        path: PATH,
+        revision: REVISION,
+        parent: { kind: "never_seen" },
+        contentSha256: await sha256(encoder.encode(CONTENT)),
+        byteSize: encoder.encode(CONTENT).byteLength,
+        mediaType: "text/markdown",
+        operationId: OPERATION_ID,
+        origin: ORIGIN,
+      },
+    });
+    const receipt = {
+      schemaVersion: 1 as const,
+      protocolMajor: 1 as const,
+      vaultId: VAULT_ID,
+      operationId: OPERATION_ID,
+      claimId: OTHER_OPERATION_ID,
+      generation: 1 as const,
+      headKey: syncHeadKey(VAULT_ID, PATH),
+      headTargetSha256: await sha256(targetBytes),
+      headPrecondition: { kind: "absent" as const },
+      lane: await syncFeedLaneForPath(PATH),
+      sequence: syncEventSequenceSchema.parse("00000000000000000001"),
+      refusalSource: "preflight_no_dispatch" as const,
+      competingHead: {
+        etag: "etag-competitor",
+        bytes: encodeBase64Url(competitorBytes),
+        uploadedAtEpochMs: 1_000,
+      },
+    };
+    const key = `sync/v1/vaults/${VAULT_ID}/operations/${OPERATION_ID}.head-refusal.json`;
+    const bytes = await encodeSyncHeadRefusalReceipt(receipt);
+    expect(bytes.byteLength).toBeLessThanOrEqual(8_192);
+    const escapedEtag = "\u0000".repeat(1_024);
+    expect(encoder.encode(escapedEtag)).toHaveLength(1_024);
+    await expect(
+      encodeSyncHeadRefusalReceipt({
+        ...receipt,
+        competingHead: { ...receipt.competingHead, etag: escapedEtag },
+        headPrecondition: {
+          kind: "observed",
+          etag: escapedEtag,
+          uploadedAtEpochMs: 1_000,
+          bytes: encodeBase64Url(targetBytes),
+        },
+      }),
+    ).rejects.toThrow(RangeError);
+    await expect(
+      decodeSyncHeadRefusalReceipt(key, bytes, VAULT_ID),
+    ).resolves.toEqual(receipt);
+    await expect(
+      decodeSyncHeadRefusalReceipt(key, bytes, OTHER_VAULT_ID),
+    ).rejects.toThrow(TypeError);
+    await expect(
+      decodeSyncHeadRefusalReceipt(
+        key,
+        json({ ...receipt, lane: (receipt.lane + 1) % 64 }),
+        VAULT_ID,
+      ),
+    ).rejects.toThrow(TypeError);
+    await expect(
+      decodeSyncHeadRefusalReceipt(`${key}.other`, bytes, VAULT_ID),
+    ).rejects.toThrow();
+    await expect(
+      decodeSyncHeadRefusalReceipt(key, new Uint8Array(8_193), VAULT_ID),
+    ).rejects.toThrow(RangeError);
+    await expect(
+      decodeSyncHeadRefusalReceipt(
+        key,
+        json({ ...receipt, unexpectedAuthority: true }),
+        VAULT_ID,
+      ),
+    ).rejects.toThrow();
+    await expect(
+      encodeSyncHeadRefusalReceipt({
+        ...receipt,
+        headKey: syncOperationKey(VAULT_ID, OPERATION_ID),
+      }),
+    ).rejects.toThrow();
+    await expect(
+      encodeSyncHeadRefusalReceipt({
+        ...receipt,
+        competingHead: {
+          ...receipt.competingHead,
+          bytes: encodeBase64Url(encoder.encode("{}")),
+        },
+      }),
+    ).rejects.toThrow();
+    for (const malformed of [
+      "!",
+      encodeBase64Url(new Uint8Array([0xff])),
+      encodeBase64Url(encoder.encode("{")),
+      encodeBase64Url(
+        encoder.encode(`${new TextDecoder().decode(competitorBytes)} `),
+      ),
+    ]) {
+      await expect(
+        encodeSyncHeadRefusalReceipt({
+          ...receipt,
+          competingHead: { ...receipt.competingHead, bytes: malformed },
+        }),
+      ).rejects.toThrow();
+    }
+    const otherPath = syncNotePathSchema.parse("notes/foreign.md");
+    const foreignHeadBytes = await encodeSyncRecord({
+      kind: "head",
+      record: {
+        schemaVersion: 1,
+        protocolMajor: 1,
+        vaultId: VAULT_ID,
+        kind: "live",
+        path: otherPath,
+        revision: OTHER_REVISION,
+        parent: { kind: "never_seen" },
+        contentSha256: await sha256(encoder.encode("competitor")),
+        byteSize: 10,
+        mediaType: "text/markdown",
+        operationId: OTHER_OPERATION_ID,
+        origin: ORIGIN,
+      },
+    });
+    await expect(
+      encodeSyncHeadRefusalReceipt({
+        ...receipt,
+        competingHead: {
+          ...receipt.competingHead,
+          bytes: encodeBase64Url(foreignHeadBytes),
+        },
+      }),
+    ).rejects.toThrow();
+    const observedPrecondition = {
+      ...receipt,
+      headPrecondition: {
+        kind: "observed" as const,
+        etag: "etag-prior",
+        bytes: encodeBase64Url(competitorBytes),
+        uploadedAtEpochMs: 1_000,
+      },
+    };
+    await expect(
+      encodeSyncHeadRefusalReceipt(observedPrecondition),
+    ).resolves.toBeInstanceOf(Uint8Array);
+    await expect(
+      encodeSyncHeadRefusalReceipt({
+        ...observedPrecondition,
+        headPrecondition: {
+          ...observedPrecondition.headPrecondition,
+          bytes: "!",
+        },
+      }),
+    ).rejects.toThrow();
+  });
+
+  it("accepts strict journal-v2 attempt states without changing lane/event v1", async () => {
+    const { decodeSyncPublication, encodeSyncPublication } = await import(
+      "@worker/infrastructure/sync/sync-publication.codec"
+    );
+    const journal = await pendingJournal();
+    const versionTwoReady = {
+      ...journal,
+      schemaVersion: 2 as const,
+      stepEvidence: {
+        ...journal.stepEvidence,
+        attempt: { state: "ready" as const, generation: 0 as const },
+      },
+    };
+    await expect(
+      decodeSyncPublication(
+        "journal",
+        syncOperationKey(VAULT_ID, OPERATION_ID),
+        await encodeSyncPublication(versionTwoReady),
+        VAULT_ID,
+      ),
+    ).resolves.toMatchObject({
+      schemaVersion: 2,
+      stepEvidence: { attempt: { state: "ready", generation: 0 } },
+    });
+
+    await expect(
+      decodeSyncPublication(
+        "journal",
+        syncOperationKey(VAULT_ID, OPERATION_ID),
+        json({ ...versionTwoReady, schemaVersion: 1 }),
+        VAULT_ID,
+      ),
+    ).rejects.toThrow();
+
+    const malformed = [
+      {
+        ...versionTwoReady,
+        stepEvidence: { ...versionTwoReady.stepEvidence, attempt: undefined },
+      },
+      {
+        ...versionTwoReady,
+        stepEvidence: {
+          ...versionTwoReady.stepEvidence,
+          attempt: { state: "ready", generation: 1 },
+        },
+      },
+      {
+        ...versionTwoReady,
+        stepEvidence: {
+          ...versionTwoReady.stepEvidence,
+          attempt: {
+            state: "attempting",
+            claimId: OPERATION_ID,
+            generation: Number.MAX_SAFE_INTEGER + 1,
+            claimedAtEpochMs: 1,
+          },
+        },
+      },
+      {
+        ...versionTwoReady,
+        stepEvidence: {
+          ...versionTwoReady.stepEvidence,
+          retryAfterEpochMs: 2_000,
+          attempt: {
+            state: "retry_wait",
+            claimId: OPERATION_ID,
+            generation: 1,
+            observedAtEpochMs: 100,
+            retryAfterEpochMs: 1_200,
+          },
+        },
+      },
+    ];
+    for (const record of malformed) {
+      await expect(
+        decodeSyncPublication(
+          "journal",
+          syncOperationKey(VAULT_ID, OPERATION_ID),
+          json(record),
+          VAULT_ID,
+        ),
+      ).rejects.toThrow();
+    }
+  });
+
   it("round-trips an unallocated journal without sequence or publication authority", async () => {
     const { decodeSyncPublication, encodeSyncPublication } = await import(
       "@worker/infrastructure/sync/sync-publication.codec"
@@ -656,6 +1134,7 @@ describe("private sync publication codec", () => {
           uploadedAtEpochMs: 1_700,
         },
         retryAfterEpochMs: null,
+        attempt: { state: "ready", generation: 0 },
       },
       position: {
         lane,
@@ -935,6 +1414,7 @@ describe("private sync publication codec", () => {
           uploadedAtEpochMs: 100,
         },
         retryAfterEpochMs: null,
+        attempt: { state: "ready", generation: 0 },
       },
       position: {
         lane: committed.reservation.lane,
@@ -1208,6 +1688,41 @@ describe("private sync publication codec", () => {
     ).resolves.toMatchObject({ payload: { byteSize: 1_048_576 } });
   });
 
+  it("requires a closed outcome intent and fixed time for each event step", async () => {
+    const journal = await pendingJournal();
+    const event = await changedEvent();
+    const eventStep = {
+      ...journal,
+      stepEvidence: {
+        step: "create_event",
+        key: syncFeedEventKey(VAULT_ID, event.lane, event.sequence),
+        committedAtEpochMs: event.committedAtEpochMs,
+        outcomeIntent: "changed",
+        precondition: { kind: "absent" },
+        retryAfterEpochMs: null,
+        attempt: { state: "ready", generation: 0 },
+      },
+    };
+    expect(syncJournalRecordSchema.safeParse(eventStep).success).toBe(true);
+    expect(
+      syncJournalRecordSchema.safeParse({
+        ...eventStep,
+        stepEvidence: {
+          ...eventStep.stepEvidence,
+          outcomeIntent: "not-an-event-kind",
+        },
+      }).success,
+    ).toBe(false);
+    const { outcomeIntent: _outcomeIntent, ...missingIntentEvidence } =
+      eventStep.stepEvidence;
+    expect(
+      syncJournalRecordSchema.safeParse({
+        ...eventStep,
+        stepEvidence: missingIntentEvidence,
+      }).success,
+    ).toBe(false);
+  });
+
   it("encodes live and tombstone immutable targets plus each publication family", async () => {
     const { encodeSyncPublication } = await import(
       "@worker/infrastructure/sync/sync-publication.codec"
@@ -1225,6 +1740,7 @@ describe("private sync publication codec", () => {
             key,
             precondition: { kind: "absent" },
             retryAfterEpochMs: null,
+            attempt: { state: "ready", generation: 0 },
           },
         }),
       ).resolves.toBeInstanceOf(Uint8Array);
@@ -1237,6 +1753,7 @@ describe("private sync publication codec", () => {
           key: syncHeadKey(VAULT_ID, PATH),
           precondition: { kind: "absent" },
           retryAfterEpochMs: null,
+          attempt: { state: "ready", generation: 0 },
         },
       }),
     ).resolves.toBeInstanceOf(Uint8Array);
@@ -1247,8 +1764,11 @@ describe("private sync publication codec", () => {
         stepEvidence: {
           step: "create_event",
           key: syncFeedEventKey(VAULT_ID, event.lane, event.sequence),
+          committedAtEpochMs: event.committedAtEpochMs,
+          outcomeIntent: "changed",
           precondition: { kind: "absent" },
           retryAfterEpochMs: null,
+          attempt: { state: "ready", generation: 0 },
         },
       }),
     ).resolves.toBeInstanceOf(Uint8Array);
@@ -1267,6 +1787,7 @@ describe("private sync publication codec", () => {
             key,
             precondition: { kind: "absent" },
             retryAfterEpochMs: null,
+            attempt: { state: "ready", generation: 0 },
           },
         }),
       ).resolves.toBeInstanceOf(Uint8Array);
@@ -1395,6 +1916,7 @@ describe("private sync publication codec", () => {
           uploadedAtEpochMs: 800,
         },
         retryAfterEpochMs: null,
+        attempt: { state: "ready", generation: 0 },
       },
       position: {
         lane: pending.reservation.lane,
@@ -1466,6 +1988,7 @@ describe("private sync publication codec", () => {
           uploadedAtEpochMs: 950,
         },
         retryAfterEpochMs: null,
+        attempt: { state: "ready", generation: 0 },
       },
       position: {
         lane: pending.reservation.lane,

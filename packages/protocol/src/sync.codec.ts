@@ -1,4 +1,6 @@
 import {
+  type ContentSha256,
+  createContentSha256,
   decodeBase64Url,
   decodeNotePath,
   decodeUtf8,
@@ -6,6 +8,7 @@ import {
   encodeNotePath,
 } from "@obsidian-ai-bridge/core";
 import {
+  MAX_SYNC_INVENTORY_STEP_INDEX,
   MAX_SYNC_NOTE_PATH_BYTES,
   SYNC_FEED_LANE_COUNT,
   SYNC_NAMESPACE_PREFIX,
@@ -149,6 +152,46 @@ export function syncInventoryChunkKey(
     throw new TypeError("Expected a non-negative safe inventory step.");
   }
   return `${syncVaultPrefix(vaultId)}${SYNC_OBJECT_SEGMENT.inventories}/${SYNC_OBJECT_SEGMENT.scans}/${syncIdentifierSchema.parse(inventoryId)}/${SYNC_OBJECT_SEGMENT.chunks}/${step}.json`;
+}
+
+/** Builds a step-scoped CAS journal key without interpolating noncanonical numbers.
+ * @param vaultId Namespace owning the inventory.
+ * @param inventoryId Stable scan identity.
+ * @param step Valid zero-based chunk step, at most the scan ceiling.
+ * @returns Journal object key in the scan's private scratch namespace.
+ */
+export function syncInventoryClaimKey(
+  vaultId: SyncVaultIdDto,
+  inventoryId: SyncInventoryIdDto,
+  step: number,
+): string {
+  if (
+    !Number.isSafeInteger(step) ||
+    step < 0 ||
+    step > MAX_SYNC_INVENTORY_STEP_INDEX
+  ) {
+    throw new TypeError("Expected a bounded inventory claim step.");
+  }
+  return `${syncVaultPrefix(vaultId)}${SYNC_OBJECT_SEGMENT.inventories}/${SYNC_OBJECT_SEGMENT.scans}/${syncIdentifierSchema.parse(inventoryId)}/${SYNC_OBJECT_SEGMENT.chunks}/${SYNC_OBJECT_SEGMENT.claims}/${step}.json`;
+}
+
+/** Builds the immutable digest-indexed cursor witness key within one scan.
+ * @param vaultId Namespace owning the inventory.
+ * @param inventoryId Stable scan identity.
+ * @param cursorDigest SHA-256 of exact private R2 output cursor bytes.
+ * @returns Create-only witness key without embedding raw cursor bytes.
+ */
+export function syncInventoryCursorWitnessKey(
+  vaultId: SyncVaultIdDto,
+  inventoryId: SyncInventoryIdDto,
+  cursorDigest: ContentSha256,
+): string {
+  if (createContentSha256(cursorDigest) === undefined) {
+    throw new TypeError(
+      "Expected a lowercase SHA-256 inventory cursor digest.",
+    );
+  }
+  return `${syncVaultPrefix(vaultId)}${SYNC_OBJECT_SEGMENT.inventories}/${SYNC_OBJECT_SEGMENT.scans}/${syncIdentifierSchema.parse(inventoryId)}/${SYNC_OBJECT_SEGMENT.chunks}/${SYNC_OBJECT_SEGMENT.cursors}/${cursorDigest}.json`;
 }
 
 /** Assigns a canonical path to its protocol-stable SHA-256 feed lane.

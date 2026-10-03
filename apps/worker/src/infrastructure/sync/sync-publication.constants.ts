@@ -6,6 +6,8 @@ export const SYNC_PUBLICATION_LIMITS = {
   journalBytes: 8 * 1_048_576,
   /** Maximum bounded JSON bytes for lane heads and immutable feed events. */
   metadataBytes: 2_048,
+  /** Maximum exact UTF-8 body retained by one private head-refusal receipt. */
+  headRefusalReceiptBytes: 8_192,
   /** Maximum exact prior JSON bytes retained as a mutation precondition. */
   preconditionBytes: 2_048,
   /** Maximum UTF-8 bytes retained for an opaque original R2 ETag. */

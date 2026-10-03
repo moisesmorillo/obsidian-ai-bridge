@@ -11,6 +11,8 @@ import {
   syncHeadKey,
   syncInventoryActiveKey,
   syncInventoryChunkKey,
+  syncInventoryClaimKey,
+  syncInventoryCursorWitnessKey,
   syncInventoryManifestKey,
   syncRecoveryKey,
   syncVaultMarkerKey,
@@ -28,6 +30,8 @@ import {
   SYNC_RECORD_LIMITS,
   syncHeadRecordSchema,
   syncInventoryChunkSchema,
+  syncInventoryCursorJournalSchema,
+  syncInventoryCursorWitnessSchema,
   syncInventoryManifestSchema,
   syncInventorySlotSchema,
   syncRecoveryMetadataSchema,
@@ -64,12 +68,16 @@ export async function decodeSyncRecord(
 
   const limit =
     kind === "manifest"
-      ? SYNC_RECORD_LIMITS.manifestBytes
+      ? SYNC_RECORD_LIMITS.witnessedManifestBytes
       : kind === "chunk"
         ? SYNC_RECORD_LIMITS.chunkBytes
-        : kind === "head"
-          ? SYNC_RECORD_LIMITS.headBytes
-          : 2_048;
+        : kind === "cursorJournal"
+          ? SYNC_RECORD_LIMITS.cursorJournalBytes
+          : kind === "cursorWitness"
+            ? SYNC_RECORD_LIMITS.cursorWitnessBytes
+            : kind === "head"
+              ? SYNC_RECORD_LIMITS.headBytes
+              : 2_048;
   if (bytes.byteLength > limit)
     throw new RangeError("Sync record exceeds its storage byte limit.");
   const text = decodeUtf8(bytes);
@@ -128,6 +136,14 @@ export async function decodeSyncRecord(
   if (kind === "manifest") {
     const record = syncInventoryManifestSchema.parse(parsed);
     if (
+      record.schemaVersion === 1 &&
+      bytes.byteLength > SYNC_RECORD_LIMITS.manifestBytes
+    ) {
+      throw new RangeError(
+        "Historical inventory manifest exceeds its v1 byte limit.",
+      );
+    }
+    if (
       record.vaultId !== vaultId ||
       key !== syncInventoryManifestKey(vaultId, record.inventoryId)
     )
@@ -155,6 +171,37 @@ export async function decodeSyncRecord(
         "Inventory chunk identity does not match its key or vault.",
       );
     await assertChunkCursorDigest(record);
+    assertCanonicalRecord(text, record);
+    return { kind, record };
+  }
+  if (kind === "cursorJournal") {
+    const record = syncInventoryCursorJournalSchema.parse(parsed);
+    if (
+      record.vaultId !== vaultId ||
+      key !== syncInventoryClaimKey(vaultId, record.inventoryId, record.step)
+    ) {
+      throw new TypeError(
+        "Inventory cursor journal identity does not match its key or vault.",
+      );
+    }
+    assertCanonicalRecord(text, record);
+    return { kind, record };
+  }
+  if (kind === "cursorWitness") {
+    const record = syncInventoryCursorWitnessSchema.parse(parsed);
+    if (
+      record.vaultId !== vaultId ||
+      key !==
+        syncInventoryCursorWitnessKey(
+          vaultId,
+          record.inventoryId,
+          record.cursorDigest,
+        )
+    ) {
+      throw new TypeError(
+        "Inventory cursor witness identity does not match its key or vault.",
+      );
+    }
     assertCanonicalRecord(text, record);
     return { kind, record };
   }
@@ -190,6 +237,16 @@ export async function encodeSyncRecord(
     case "chunk":
       await assertChunkCursorDigest(record.record);
       return encodeJson(record.record, SYNC_RECORD_LIMITS.chunkBytes);
+    case "cursorJournal":
+      return encodeJson(
+        syncInventoryCursorJournalSchema.parse(record.record),
+        SYNC_RECORD_LIMITS.cursorJournalBytes,
+      );
+    case "cursorWitness":
+      return encodeJson(
+        syncInventoryCursorWitnessSchema.parse(record.record),
+        SYNC_RECORD_LIMITS.cursorWitnessBytes,
+      );
     case "head":
       return encodeJson(
         syncHeadRecordSchema.parse(record.record),
@@ -204,7 +261,9 @@ export async function encodeSyncRecord(
     case "manifest":
       return encodeJson(
         syncInventoryManifestSchema.parse(record.record),
-        SYNC_RECORD_LIMITS.manifestBytes,
+        record.record.schemaVersion === 1
+          ? SYNC_RECORD_LIMITS.manifestBytes
+          : SYNC_RECORD_LIMITS.witnessedManifestBytes,
       );
     case "vaultMarker":
       return encodeJson(

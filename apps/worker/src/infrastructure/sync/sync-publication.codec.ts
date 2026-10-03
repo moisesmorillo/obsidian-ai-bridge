@@ -7,16 +7,20 @@ import {
 import { syncVaultIdSchema } from "@protocol/sync.schemas";
 import type { SyncVaultIdDto } from "@protocol/sync.types";
 import {
+  assertSyncHeadRefusalReceipt,
   assertSyncPublicationRecord,
   SYNC_PUBLICATION_LIMITS,
   syncFeedEventRecordSchema,
+  syncHeadRefusalReceiptSchema,
   syncJournalRecordSchema,
   syncLaneHeadRecordSchema,
 } from "@worker/infrastructure/sync/sync-publication.schemas";
 import type {
+  SyncHeadRefusalReceiptRecord,
   SyncPublicationKind,
   SyncPublicationRecord,
 } from "@worker/infrastructure/sync/sync-publication.types";
+import { syncHeadRefusalReceiptKey } from "@worker/infrastructure/sync/sync-r2-key";
 
 const utf8Encoder = new TextEncoder();
 
@@ -59,12 +63,66 @@ export async function decodeSyncPublication(
   return record;
 }
 
-/** Encodes a strict private M7 publication as deterministic canonical UTF-8 JSON bytes.
- *
- * @param record - Validated protocol-v1 record whose exact request and R2 preconditions remain private to Worker storage.
- * @returns Canonical immutable bytes suitable for create-only storage or exact-CAS replacement.
+/** Encodes a strict private receipt after checking its exact no-effect evidence and byte ceiling.
+ * @param record Validated generation-one refusal record retained only by Worker storage.
+ * @returns Canonical immutable UTF-8 JSON bytes under the receipt limit.
+ * @throws {TypeError} When receipt schema, identity, path, or lane evidence is invalid.
+ * @throws {RangeError} When canonical UTF-8 bytes exceed 8,192 bytes.
+ */
+export async function encodeSyncHeadRefusalReceipt(
+  record: SyncHeadRefusalReceiptRecord,
+): Promise<Uint8Array> {
+  const validated = syncHeadRefusalReceiptSchema.parse(record);
+  await assertSyncHeadRefusalReceipt(validated, validated.vaultId);
+  const text = JSON.stringify(validated);
+  if (utf8ByteLength(text) > SYNC_PUBLICATION_LIMITS.headRefusalReceiptBytes) {
+    throw new RangeError("Head-refusal receipt exceeds its 8,192-byte limit.");
+  }
+  return utf8Encoder.encode(text);
+}
+
+/** Strictly decodes one private receipt only when its canonical key, vault and bounded bytes agree.
+ * @param key Untrusted full Worker-private receipt key.
+ * @param bytes Exact persisted UTF-8 JSON bytes; the ceiling is checked before decoding.
+ * @param expectedVaultId Validated immutable vault identity expected by the caller.
+ * @returns A strict typed generation-one no-effect receipt.
+ * @throws {TypeError} When UTF-8, JSON, key, path, lane, or identity evidence is invalid.
+ * @throws {RangeError} When the raw receipt exceeds its persisted byte ceiling.
+ */
+export async function decodeSyncHeadRefusalReceipt(
+  key: string,
+  bytes: Uint8Array,
+  expectedVaultId: SyncVaultIdDto,
+): Promise<SyncHeadRefusalReceiptRecord> {
+  const vaultId = syncVaultIdSchema.parse(expectedVaultId);
+  if (bytes.byteLength > SYNC_PUBLICATION_LIMITS.headRefusalReceiptBytes) {
+    throw new RangeError("Head-refusal receipt exceeds its 8,192-byte limit.");
+  }
+  const text = decodeUtf8(bytes);
+  if (text === undefined) {
+    throw new TypeError("Head-refusal receipt bytes are not valid UTF-8.");
+  }
+  const record = syncHeadRefusalReceiptSchema.parse(parseJson(text));
+  await assertSyncHeadRefusalReceipt(record, vaultId);
+  if (
+    record.vaultId !== vaultId ||
+    key !== syncHeadRefusalReceiptKey(vaultId, record.operationId)
+  ) {
+    throw new TypeError(
+      "Head-refusal receipt identity does not match its key.",
+    );
+  }
+  if (JSON.stringify(record) !== text) {
+    throw new TypeError("Head-refusal receipt JSON is not canonical.");
+  }
+  return record;
+}
+
+/** Encodes one private M7 publication as deterministic canonical UTF-8 JSON bytes.
+ * @param record Validated protocol-v1 journal, lane head, or feed event retained by Worker storage.
+ * @returns Canonical bytes suitable for create-only storage or exact-CAS replacement.
  * @throws {TypeError} When fields, request bytes, or precondition evidence disagree.
- * @throws {RangeError} When the serialized publication exceeds its storage byte ceiling.
+ * @throws {RangeError} When the serialized publication exceeds its family byte ceiling.
  */
 export async function encodeSyncPublication(
   record: SyncPublicationRecord,
@@ -78,6 +136,27 @@ export async function encodeSyncPublication(
     );
   }
   return bytes;
+}
+
+/** Measures exact UTF-8 output length without allocating the encoded receipt body.
+ * @param value Canonical JSON text whose byte ceiling must be proven before encoding.
+ * @returns Exact UTF-8 byte length, including multibyte ETag characters.
+ */
+function utf8ByteLength(value: string): number {
+  let byteLength = 0;
+  for (const character of value) {
+    const codePoint = character.codePointAt(0);
+    if (codePoint === undefined) return Number.POSITIVE_INFINITY;
+    byteLength +=
+      codePoint <= 0x7f
+        ? 1
+        : codePoint <= 0x7ff
+          ? 2
+          : codePoint <= 0xffff
+            ? 3
+            : 4;
+  }
+  return byteLength;
 }
 
 /** Parses strict UTF-8 text as JSON without allowing parser errors to escape untyped.

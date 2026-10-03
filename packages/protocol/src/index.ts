@@ -95,6 +95,8 @@ export {
   syncHeadKey,
   syncInventoryActiveKey,
   syncInventoryChunkKey,
+  syncInventoryClaimKey,
+  syncInventoryCursorWitnessKey,
   syncInventoryManifestKey,
   syncOperationKey,
   syncRecoveryKey,
@@ -103,6 +105,7 @@ export {
   syncVersionKey,
 } from "@protocol/sync.codec";
 export {
+  MAX_SYNC_INVENTORY_STEP_INDEX,
   MAX_SYNC_NOTE_PATH_BYTES,
   SYNC_ERROR_CODE,
   SYNC_ERROR_CODES,

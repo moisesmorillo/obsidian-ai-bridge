@@ -254,6 +254,60 @@ async function seedVersion(record = makeHead()): Promise<void> {
 }
 
 describe("marker-gated isolated sync current and recovery records", () => {
+  it.each(["content_create", "metadata_create", "head_replace"] as const)(
+    "returns operational uncertainty rather than throwing when the object capability rejects %s",
+    async (write) => {
+      await seedMarker();
+      await seedContent();
+      const next = {
+        ...makeHead(alternateRevision),
+        parent: { kind: "revision", revision },
+      } as const;
+      if (write === "head_replace") {
+        await seedVersion();
+        await seedContent(alternateRevision);
+        await seedVersion(next);
+        bucket.seed(
+          syncHeadKey(vaultId, path),
+          await encodeSyncRecord({ kind: "head", record: makeHead() }),
+        );
+      }
+      const objects = syncR2ObjectStore(bucket, () => 20_000);
+      const failing = syncR2Records({
+        ...objects,
+        async create() {
+          throw new Error("Object create capability unavailable");
+        },
+        async replace() {
+          throw new Error("Object replace capability unavailable");
+        },
+      });
+      const observed =
+        write === "head_replace"
+          ? await records.readHead(vaultId, path)
+          : undefined;
+      const dispatch = async (adapter: ReturnType<typeof syncR2Records>) => {
+        if (write === "content_create")
+          return adapter.createContent({
+            kind: "contentBody",
+            vaultId,
+            revision: alternateRevision,
+            bytes: payload,
+            byteSize: payload.byteLength,
+            contentSha256: digest,
+          });
+        if (write === "metadata_create")
+          return adapter.createVersion(makeHead());
+        if (observed?.kind !== "observed")
+          throw new Error("Expected verified head observation");
+        return adapter.replaceHead(observed.observation, next);
+      };
+      expect(await dispatch(failing)).toEqual({ kind: "effect_unknown" });
+      expect(bucket.puts).toHaveLength(0);
+      expect(await dispatch(records)).toEqual({ kind: "confirmed" });
+      expect(bucket.puts).toHaveLength(1);
+    },
+  );
   it("does not treat missing records as absent until the matching marker is validated", async () => {
     expect(await records.readHead(vaultId, path)).toEqual({
       kind: "unavailable",

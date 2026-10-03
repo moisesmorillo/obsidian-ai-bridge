@@ -31,7 +31,7 @@ probe failed; the checked-in Worker configuration does not provide an associatio
 or designated writer. The mirror was not activated, and the personal vault was
 not used.
 
-This snapshot records completed M1–M6 implementation and qualification evidence. M5's bounded support claim is limited to latest M5-ready release v1.0.2 and one designated writer on Obsidian Desktop 1.13.7 / macOS 26.6.2 / Apple M4 Pro, with synthetic active-writer behavior through 10,000 eligible notes. The final report records retained scale, credential-rotation, and Keep-local results; v4→v5 migration/restart evidence; live loopback recovery/diagnostics; exact release identity; residual platform/deployment limits; and one explicitly unqualified pause/resume conflict attempt. No personal vault or production Worker/R2 deployment was used. M1–M6 are COMPLETE; M7 — versioned sync protocol and isolated R2 store — remains NEXT. M7.1/M7.2 are complete and M7.3's isolated primitives are verified in this branch, pending merge; M7.4 is not implemented. None of these foundations activates sync, migrates data, or changes the live writer.
+This snapshot records completed M1–M6 implementation and qualification evidence. M5's bounded support claim is limited to latest M5-ready release v1.0.2 and one designated writer on Obsidian Desktop 1.13.7 / macOS 26.6.2 / Apple M4 Pro, with synthetic active-writer behavior through 10,000 eligible notes. The final report records retained scale, credential-rotation, and Keep-local results; v4→v5 migration/restart evidence; live loopback recovery/diagnostics; exact release identity; residual platform/deployment limits; and one explicitly unqualified pause/resume conflict attempt. No personal vault or production Worker/R2 deployment was used. M1–M6 are COMPLETE; M7 — versioned sync protocol and isolated R2 store — remains NEXT. M7.1/M7.2 are complete and M7.3's isolated primitives merged in PR #95. M7.4's private implementation is locally validated and independently approved in this feature PR, with remote Workers Free/account qualification and maximal real-head profiling still pending. None of these foundations activates sync, migrates data, or changes the live writer.
 M2 source/tooling through `2e74b23` passed independent semantic
 review and merged at `b300726` (PR #7). M3's completion PR #27 passed canonical
 validation and final semantic review; its three MINOR findings were corrected at
@@ -73,6 +73,22 @@ decodes legacy/format-2 objects through v2 and has fully retired the v1 HTTP sur
 This is not a claim about a deployed environment or installed Obsidian host.
 [Roadmap](roadmap.md) owns milestone status; [architecture](architecture.md) owns
 boundaries; [API](api.md) describes the Worker HTTP and MCP contracts.
+
+## M7.4 private composition evidence
+
+The private Worker `SyncStore` composes mutation publication/recovery, committed feed
+paging and bounded resumable inventory without any HTTP/MCP/plugin bootstrap import.
+Strict v2 cursor journals and digest witnesses fence replay; original-generation CAS
+and permanent no-reuse manifests preserve authority. Unsafe response/observation
+floors remain uncertainty, not permission for another write. Cleanup is limited to
+canonical expired scratch.
+
+The [local evidence report](qualification/m7-private-sync-store-local.md) records
+canonical checks, unchanged 95% coverage and closed independent-review findings.
+Local native tests and counted calls do not qualify remote Workers Free CPU or
+account/storage sustainability. The maximal real-head profile and normal merge
+transition remain open. M7 remains NEXT; the current writer and support claim are
+unchanged.
 
 ## M7.2 core sync-store evidence
 

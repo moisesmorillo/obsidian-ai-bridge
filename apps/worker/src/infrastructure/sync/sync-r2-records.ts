@@ -60,8 +60,13 @@ export interface SyncR2Records {
     record: SyncHeadRecord,
     retryContext?: SyncR2RetryContext,
   ): Promise<SyncR2WriteResult>;
-  /** Reads live metadata with its body, or tombstone metadata with exact parent recovery evidence. */
+  /** Reads one live version's metadata and linked body, or tombstone metadata with exact parent recovery evidence. */
   readVersion(
+    vaultId: SyncVaultIdDto,
+    revision: SyncRevisionDto,
+  ): Promise<SyncRecordRead<SyncVersionMetadata>>;
+  /** Reads a version metadata key independently when its linked body is an earlier publication step. */
+  readVersionMetadata(
     vaultId: SyncVaultIdDto,
     revision: SyncRevisionDto,
   ): Promise<SyncRecordRead<SyncVersionMetadata>>;
@@ -79,6 +84,13 @@ export interface SyncR2Records {
   ): Promise<
     SyncRecordRead<Extract<SyncBodyRecord, { readonly kind: "contentBody" }>>
   >;
+  /** Reads an exact content-body key before its version metadata is published. */
+  readContentBody(
+    vaultId: SyncVaultIdDto,
+    revision: SyncRevisionDto,
+  ): Promise<
+    SyncRecordRead<Extract<SyncBodyRecord, { readonly kind: "contentBody" }>>
+  >;
   /** Creates one exact immutable content-body object. */
   createContent(
     record: Extract<SyncBodyRecord, { readonly kind: "contentBody" }>,
@@ -89,6 +101,18 @@ export interface SyncR2Records {
     vaultId: SyncVaultIdDto,
     operationId: SyncOperationIdDto,
   ): Promise<SyncRecordRead<SyncRecoveryMetadata>>;
+  /** Reads a recovery metadata key independently when its body is an earlier publication step. */
+  readRecoveryMetadata(
+    vaultId: SyncVaultIdDto,
+    operationId: SyncOperationIdDto,
+  ): Promise<SyncRecordRead<SyncRecoveryMetadata>>;
+  /** Reads an exact recovery-body key before its metadata is published. */
+  readRecoveryBody(
+    vaultId: SyncVaultIdDto,
+    operationId: SyncOperationIdDto,
+  ): Promise<
+    SyncRecordRead<Extract<SyncBodyRecord, { readonly kind: "recoveryBody" }>>
+  >;
   /** Creates recovery metadata only when its body already matches.
    * @param retryContext Prior cross-isolate cooldown evidence, when resuming a write.
    */
@@ -455,6 +479,15 @@ export function syncR2Records(objects: SyncR2ObjectStore): SyncR2Records {
       }
     },
     readVersion: readVerifiedVersion,
+    async readVersionMetadata(vaultId, revision) {
+      if ((await validateMarker(vaultId)).kind !== "valid")
+        return { kind: "unavailable" };
+      const key = keyFor(syncVersionKey(vaultId, revision), vaultId);
+      if (key === undefined) return { kind: "unavailable" };
+      return readRecord("version", key, vaultId, (decoded) =>
+        decoded.kind === "version" ? decoded.record : undefined,
+      );
+    },
     async createVersion(record, retryContext) {
       const marker = await validateMarker(record.vaultId);
       if (marker.kind === "refused") return { kind: "refused" };
@@ -512,6 +545,26 @@ export function syncR2Records(objects: SyncR2ObjectStore): SyncR2Records {
       if (body.kind === "unavailable") return { kind: "unavailable" };
       return { kind: "unavailable" };
     },
+    async readContentBody(vaultId, revision) {
+      if ((await validateMarker(vaultId)).kind !== "valid")
+        return { kind: "unavailable" };
+      const body = await readBody(
+        "contentBody",
+        syncContentKey(vaultId, revision),
+        vaultId,
+      );
+      if (body.kind !== "observed") return body;
+      if (body.observation.value.kind !== "contentBody") {
+        return { kind: "unavailable" };
+      }
+      return {
+        kind: "observed",
+        observation: {
+          value: body.observation.value,
+          observed: body.observation.observed,
+        },
+      };
+    },
     async createContent(record, retryContext) {
       return createRecord(
         { kind: "contentBody", record },
@@ -520,6 +573,38 @@ export function syncR2Records(objects: SyncR2ObjectStore): SyncR2Records {
       );
     },
     readRecovery: readVerifiedRecovery,
+    async readRecoveryMetadata(vaultId, operationId) {
+      if ((await validateMarker(vaultId)).kind !== "valid")
+        return { kind: "unavailable" };
+      const key = keyFor(
+        syncRecoveryKey(vaultId, operationId, "metadata"),
+        vaultId,
+      );
+      if (key === undefined) return { kind: "unavailable" };
+      return readRecord("recoveryMetadata", key, vaultId, (decoded) =>
+        decoded.kind === "recoveryMetadata" ? decoded.record : undefined,
+      );
+    },
+    async readRecoveryBody(vaultId, operationId) {
+      if ((await validateMarker(vaultId)).kind !== "valid")
+        return { kind: "unavailable" };
+      const body = await readBody(
+        "recoveryBody",
+        syncRecoveryKey(vaultId, operationId, "content"),
+        vaultId,
+      );
+      if (body.kind !== "observed") return body;
+      if (body.observation.value.kind !== "recoveryBody") {
+        return { kind: "unavailable" };
+      }
+      return {
+        kind: "observed",
+        observation: {
+          value: body.observation.value,
+          observed: body.observation.observed,
+        },
+      };
+    },
     async createRecovery(record, retryContext) {
       const marker = await validateMarker(record.vaultId);
       if (marker.kind === "refused") return { kind: "refused" };

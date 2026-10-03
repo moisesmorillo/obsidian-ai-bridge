@@ -34,6 +34,7 @@ import {
   syncIdentifierSchema,
   syncInventoryActiveKey,
   syncInventoryChunkKey,
+  syncInventoryCursorWitnessKey,
   syncInventoryIdSchema,
   syncInventoryManifestKey,
   syncNotePathSchema,
@@ -245,6 +246,7 @@ describe("M7 versioned sync contracts", () => {
       "vault_not_found",
       "stale_revision",
       "operation_id_reused",
+      "mutation_not_admitted",
       "cursor_expired",
       "invalid_cursor",
       "inventory_incomplete",
@@ -258,6 +260,9 @@ describe("M7 versioned sync contracts", () => {
       "storage_unavailable",
     ]);
     expect(syncErrorCodeSchema.safeParse("storage_unavailable").success).toBe(
+      true,
+    );
+    expect(syncErrorCodeSchema.safeParse("mutation_not_admitted").success).toBe(
       true,
     );
     expect(syncErrorCodeSchema.safeParse("unknown_error").success).toBe(false);
@@ -313,6 +318,14 @@ describe("M7 versioned sync contracts", () => {
 
   it("rejects invalid key components rather than interpolating hostile values", () => {
     expect(() => syncFeedLaneHeadKey(VAULT_ID, -1)).toThrow(RangeError);
+    expect(() =>
+      syncInventoryCursorWitnessKey(
+        VAULT_ID,
+        INVENTORY_ID,
+        // @ts-expect-error Untrusted runtime digest cannot name a private cursor witness.
+        "not-a-digest",
+      ),
+    ).toThrow(TypeError);
     // @ts-expect-error Untrusted sequence text is rejected before it can be a key component.
     expect(() => syncFeedEventKey(VAULT_ID, 1, "1")).toThrow(TypeError);
     expect(() => syncInventoryChunkKey(VAULT_ID, INVENTORY_ID, -1)).toThrow(
@@ -333,6 +346,7 @@ describe("M7 versioned sync contracts", () => {
     const cursor = encodeSyncCursor(checkpoint);
     expect(decodeSyncCursor(cursor, VAULT_ID)).toEqual(checkpoint);
     expect(decodeSyncCursor(`${cursor}=`, VAULT_ID)).toBeUndefined();
+    expect(decodeSyncCursor("a", VAULT_ID)).toBeUndefined();
     expect(
       decodeSyncCursor(
         btoa('{"protocolMajor":2}').replace(/=+$/, ""),

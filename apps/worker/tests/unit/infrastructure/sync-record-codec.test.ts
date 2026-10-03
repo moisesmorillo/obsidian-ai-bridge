@@ -1,8 +1,10 @@
-import { encodeBase64Url } from "@obsidian-ai-bridge/core";
+import { createContentSha256, encodeBase64Url } from "@obsidian-ai-bridge/core";
 import {
   syncHeadKey,
   syncInventoryActiveKey,
   syncInventoryChunkKey,
+  syncInventoryClaimKey,
+  syncInventoryCursorWitnessKey,
   syncInventoryManifestKey,
   syncRecoveryKey,
   syncVaultMarkerKey,
@@ -413,7 +415,181 @@ describe("strict private sync persistence records", () => {
     expect(rejected.success).toBe(false);
   });
 
-  it("enforces the 2,048-byte head, 8,192-byte manifest, and 1,536-byte summary bounds", async () => {
+  it("accepts a 9-KiB v2 manifest with simultaneous maximal cursor, path and vector while keeping v1 capped at 8 KiB", async () => {
+    const lastKey = syncHeadKey(
+      VAULT_ID,
+      syncNotePathSchema.parse(`${"a".repeat(717)}.md`),
+    );
+    const maximalFields = {
+      cursor: encodeBase64Url(encoder.encode("x".repeat(4_096))),
+      lastKey,
+      startVector: Array.from({ length: 64 }, () => "9".repeat(20)),
+      emptyPageCount: 10_000,
+      nextStep: 20_000,
+      listPageCount: 20_000,
+      headCount: 10_000,
+      listAttemptCount: 40_002,
+      headGetAttemptCount: 20_000,
+      uniqueHeadBodyBytes: 20 * 1_048_576,
+      actualHeadBodyBytes: 40 * 1_048_576,
+      evidenceBytes: 192 * 1_048_576,
+      chunkCount: 20_000,
+      chunkHash: "a".repeat(64),
+      reservedAttempt: 2,
+    };
+    const v2 = manifest({
+      ...maximalFields,
+      schemaVersion: 2,
+      cursorWitnessMode: 1,
+    });
+    const key = syncInventoryManifestKey(VAULT_ID, INVENTORY);
+    expect(v2.byteLength).toBeGreaterThan(8_192);
+    expect(v2.byteLength).toBeLessThanOrEqual(9_216);
+    const decoded = await decodeSyncRecord("manifest", key, v2, VAULT_ID);
+    expect(decoded).toMatchObject({
+      kind: "manifest",
+      record: { schemaVersion: 2, cursorWitnessMode: 1 },
+    });
+    expect(await encodeSyncRecord(decoded)).toEqual(v2);
+    const historicalOversized = manifest(maximalFields);
+    expect(historicalOversized.byteLength).toBeGreaterThan(8_192);
+    await expect(
+      decodeSyncRecord("manifest", key, historicalOversized, VAULT_ID),
+    ).rejects.toThrow();
+    await expect(
+      decodeSyncRecord(
+        "manifest",
+        key,
+        manifest({
+          schemaVersion: 1,
+          cursorWitnessMode: 1,
+          cursor: encodeBase64Url(encoder.encode("x".repeat(4_096))),
+          lastKey,
+          startVector: Array.from({ length: 64 }, () => "9".repeat(20)),
+        }),
+        VAULT_ID,
+      ),
+    ).rejects.toThrow();
+    await expect(
+      decodeSyncRecord(
+        "manifest",
+        key,
+        manifest({ schemaVersion: 2 }),
+        VAULT_ID,
+      ),
+    ).rejects.toThrow();
+  });
+
+  it("binds strict bounded cursor witness and retryable journal records to their own scan keys", async () => {
+    const digest = createContentSha256("a".repeat(64));
+    if (digest === undefined) throw new Error("Invalid digest fixture");
+    const base = {
+      schemaVersion: 1,
+      protocolMajor: 1,
+      vaultId: VAULT_ID,
+      inventoryId: INVENTORY,
+      step: 20_000,
+      chunkHash: "b".repeat(64),
+      cursorDigest: digest,
+    };
+    const claimKey = syncInventoryClaimKey(VAULT_ID, INVENTORY, 20_000);
+    const witnessKey = syncInventoryCursorWitnessKey(
+      VAULT_ID,
+      INVENTORY,
+      digest,
+    );
+    const witness = json(base);
+    const attempting = json({
+      ...base,
+      state: "attempting",
+      claimId: "33333333-3333-4333-8333-333333333333",
+    });
+    const waiting = json({
+      ...base,
+      state: "retry_wait",
+      claimId: "33333333-3333-4333-8333-333333333333",
+      retryAfterEpochMs: 2_000_000_001_100,
+    });
+    for (const [kind, key, bytes] of [
+      ["cursorWitness", witnessKey, witness],
+      ["cursorJournal", claimKey, attempting],
+      ["cursorJournal", claimKey, waiting],
+    ] as const) {
+      const decoded = await decodeSyncRecord(kind, key, bytes, VAULT_ID);
+      expect(decoded).toMatchObject({
+        kind,
+        record: { step: 20_000, cursorDigest: digest },
+      });
+      expect(await encodeSyncRecord(decoded)).toEqual(bytes);
+    }
+    expect(witness.byteLength).toBeLessThanOrEqual(384);
+    expect(attempting.byteLength).toBeLessThanOrEqual(512);
+    expect(waiting.byteLength).toBeLessThanOrEqual(512);
+    await expect(
+      decodeSyncRecord(
+        "cursorJournal",
+        claimKey,
+        json({
+          ...base,
+          step: 19_999,
+          state: "attempting",
+          claimId: "33333333-3333-4333-8333-333333333333",
+        }),
+        VAULT_ID,
+      ),
+    ).rejects.toThrow();
+    await expect(
+      decodeSyncRecord(
+        "cursorWitness",
+        witnessKey,
+        json({ ...base, cursorDigest: "b".repeat(64) }),
+        VAULT_ID,
+      ),
+    ).rejects.toThrow();
+    await expect(
+      decodeSyncRecord(
+        "cursorWitness",
+        witnessKey,
+        json({ ...base, inventoryId: OTHER_INVENTORY }),
+        VAULT_ID,
+      ),
+    ).rejects.toThrow();
+    await expect(
+      decodeSyncRecord(
+        "cursorWitness",
+        witnessKey,
+        json({ ...base, padding: "x".repeat(512) }),
+        VAULT_ID,
+      ),
+    ).rejects.toThrow();
+    await expect(
+      decodeSyncRecord(
+        "cursorJournal",
+        claimKey,
+        json({
+          ...base,
+          state: "retry_wait",
+          claimId: "33333333-3333-4333-8333-333333333333",
+        }),
+        VAULT_ID,
+      ),
+    ).rejects.toThrow();
+    await expect(
+      decodeSyncRecord(
+        "cursorJournal",
+        claimKey,
+        json({
+          ...base,
+          state: "attempting",
+          claimId: "33333333-3333-4333-8333-333333333333",
+          retryAfterEpochMs: 2_000_000_001_100,
+        }),
+        VAULT_ID,
+      ),
+    ).rejects.toThrow();
+  });
+
+  it("enforces the 2,048-byte head, 8,192-byte historical manifest, and 1,536-byte summary bounds", async () => {
     const key = syncHeadKey(VAULT_ID, PATH);
     await expect(
       decodeSyncRecord(

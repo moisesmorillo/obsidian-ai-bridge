@@ -25,8 +25,12 @@ import type {
   R2ConditionalPutOptions,
   R2ConditionalStoredObject,
 } from "@worker/infrastructure/r2.types";
+import { SYNC_PUBLICATION_LIMITS } from "@worker/infrastructure/sync/sync-publication.constants";
 import { createSyncR2Key } from "@worker/infrastructure/sync/sync-r2-key";
-import { syncR2ObjectStore } from "@worker/infrastructure/sync/sync-r2-object";
+import {
+  createSyncR2CallBudget,
+  syncR2ObjectStore,
+} from "@worker/infrastructure/sync/sync-r2-object";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const vaultId = syncVaultIdSchema.parse("11111111-1111-4111-8111-111111111111");
@@ -66,6 +70,7 @@ class MemoryObject implements R2ConditionalStoredObject {
 
 class MemoryBucket implements R2ConditionalBucketPort {
   readonly objects = new Map<string, MemoryObject>();
+  readonly gets: string[] = [];
   readonly puts: {
     key: string;
     bytes: Uint8Array;
@@ -80,6 +85,7 @@ class MemoryBucket implements R2ConditionalBucketPort {
   etagSequence = 0;
   constructor(private readonly clock: () => number) {}
   async get(key: string): Promise<R2ConditionalStoredObject | null> {
+    this.gets.push(key);
     if (this.getFailure) throw this.getFailure;
     return this.objects.get(key) ?? null;
   }
@@ -156,6 +162,201 @@ beforeEach(() => {
 });
 
 describe("one-key conditional sync R2 storage", () => {
+  it.each([
+    "legacy/notes.md",
+    "sync/v1/vaults/not-a-vault/vault.json",
+    `sync/v1/vaults/${vaultId}/heads/invalid!.json`,
+  ])(
+    "rejects malformed runtime key %s at the raw read and create boundaries without R2 dispatch",
+    async (candidate) => {
+      // @ts-expect-error Raw JavaScript input cannot acquire a canonical key brand.
+      expect(await store.read(candidate, 100)).toEqual({ kind: "unavailable" });
+      // @ts-expect-error Verify runtime enforcement independently of the caller's compile-time brand.
+      expect(await store.create(candidate, data)).toEqual({
+        kind: "effect_unknown",
+      });
+      expect(bucket.gets).toHaveLength(0);
+      expect(bucket.puts).toHaveLength(0);
+    },
+  );
+
+  it("does not grant calls to a copied budget counter without its invocation capability", async () => {
+    const budget = createSyncR2CallBudget();
+    const copied = { actualCalls: budget.actualCalls };
+    const adapter = syncR2ObjectStore(bucket, () => now, copied);
+    expect(await adapter.read(key, 100)).toEqual({ kind: "unavailable" });
+    expect(await adapter.create(key, data)).toEqual({ kind: "effect_unknown" });
+    expect(bucket.gets).toHaveLength(0);
+    expect(bucket.puts).toHaveLength(0);
+    expect(budget.actualCalls).toBe(0);
+  });
+
+  it("does not treat a non-error rejection as explicit throttling or confirmed publication", async () => {
+    const put = vi.spyOn(bucket, "put").mockRejectedValueOnce("429");
+    try {
+      expect(await store.create(key, data)).toEqual({
+        kind: "effect_unknown",
+        retryAfterEpochMs: now + 1_100,
+      });
+      expect(bucket.gets).toHaveLength(2);
+      expect(bucket.objects.has(key)).toBe(false);
+      expect(await store.create(key, data)).toEqual({
+        kind: "throttled",
+        retryAfterEpochMs: now + 1_100,
+      });
+      expect(put).toHaveBeenCalledOnce();
+      now += 1_100;
+      expect(await store.create(key, data)).toEqual({ kind: "confirmed" });
+      expect(put).toHaveBeenCalledTimes(2);
+    } finally {
+      put.mockRestore();
+    }
+  });
+  it("keeps concurrent invocation budgets separate", async () => {
+    const firstBudget = createSyncR2CallBudget();
+    const secondBudget = createSyncR2CallBudget();
+    const firstStore = syncR2ObjectStore(bucket, () => now, firstBudget);
+    const secondStore = syncR2ObjectStore(bucket, () => now, secondBudget);
+
+    expect(
+      (
+        await Promise.all([
+          firstStore.read(key, 100),
+          secondStore.read(key, 100),
+        ])
+      ).map((result) => result.kind),
+    ).toEqual(["absent", "absent"]);
+    expect(firstBudget.actualCalls).toBe(1);
+    expect(secondBudget.actualCalls).toBe(1);
+    expect(bucket.gets).toHaveLength(2);
+  });
+
+  it("shares one invocation budget across independently created object stores", async () => {
+    const budget = createSyncR2CallBudget();
+    const firstStore = syncR2ObjectStore(bucket, () => now, budget);
+    const secondStore = syncR2ObjectStore(bucket, () => now, budget);
+
+    await Promise.all([firstStore.read(key, 100), secondStore.read(key, 100)]);
+
+    expect(budget.actualCalls).toBe(2);
+    expect(bucket.gets).toHaveLength(2);
+  });
+
+  it("blocks a sixty-fifth R2 read without dispatching it", async () => {
+    const budget = createSyncR2CallBudget();
+    const budgetedStore = syncR2ObjectStore(bucket, () => now, budget);
+
+    for (let call = 0; call < 64; call += 1) {
+      expect(await budgetedStore.read(key, 100)).toEqual({ kind: "absent" });
+    }
+
+    expect(await budgetedStore.read(key, 100)).toEqual({ kind: "unavailable" });
+    expect(bucket.gets).toHaveLength(64);
+    expect(budget.actualCalls).toBe(64);
+  });
+
+  it("reserves a write and its mandatory read-back before dispatch", async () => {
+    const budget = createSyncR2CallBudget();
+    const budgetedStore = syncR2ObjectStore(bucket, () => now, budget);
+
+    for (let call = 0; call < 62; call += 1) {
+      expect(await budgetedStore.read(key, 100)).toEqual({ kind: "absent" });
+    }
+
+    expect(await budgetedStore.create(key, data)).toEqual({
+      kind: "effect_unknown",
+    });
+    expect(bucket.gets).toHaveLength(63);
+    expect(bucket.puts).toHaveLength(0);
+    expect(budget.actualCalls).toBe(63);
+  });
+
+  it("does not dispatch a PUT when preflight consumes the final call", async () => {
+    const budget = createSyncR2CallBudget();
+    const budgetedStore = syncR2ObjectStore(bucket, () => now, budget);
+    for (let call = 0; call < 63; call += 1) {
+      expect(await budgetedStore.read(key, 100)).toEqual({ kind: "absent" });
+    }
+
+    expect(await budgetedStore.create(key, data)).toEqual({
+      kind: "effect_unknown",
+    });
+    expect(bucket.gets).toHaveLength(64);
+    expect(bucket.puts).toHaveLength(0);
+    expect(budget.actualCalls).toBe(64);
+  });
+
+  it("counts a conditional-null PUT and its exact read-back", async () => {
+    const budget = createSyncR2CallBudget();
+    const budgetedStore = syncR2ObjectStore(bucket, () => now, budget);
+    bucket.forceRefusal = true;
+
+    expect(await budgetedStore.create(key, data)).toEqual({
+      kind: "refused",
+      noEffectProvenance: "conditional_null",
+    });
+    expect(bucket.gets).toHaveLength(2);
+    expect(bucket.puts).toHaveLength(1);
+    expect(budget.actualCalls).toBe(3);
+  });
+
+  it("uses reserved read-back to confirm a lost PUT response", async () => {
+    const budget = createSyncR2CallBudget();
+    const budgetedStore = syncR2ObjectStore(bucket, () => now, budget);
+    bucket.putFailure = new Error("network timeout");
+    bucket.writeThenFail = true;
+
+    expect(await budgetedStore.create(key, data)).toEqual({
+      kind: "confirmed",
+    });
+    expect(bucket.gets).toHaveLength(2);
+    expect(bucket.puts).toHaveLength(1);
+    expect(budget.actualCalls).toBe(3);
+  });
+
+  it("does not confirm a lost PUT response when reserved read-back proves absence", async () => {
+    const budget = createSyncR2CallBudget();
+    const budgetedStore = syncR2ObjectStore(bucket, () => now, budget);
+    bucket.putFailure = new Error("network timeout");
+
+    expect(await budgetedStore.create(key, data)).toMatchObject({
+      kind: "effect_unknown",
+    });
+    expect(bucket.gets).toHaveLength(2);
+    expect(bucket.puts).toHaveLength(1);
+    expect(budget.actualCalls).toBe(3);
+  });
+
+  it("releases unused read-back capacity after a direct rate-limit response", async () => {
+    const budget = createSyncR2CallBudget();
+    const budgetedStore = syncR2ObjectStore(bucket, () => now, budget);
+    for (let call = 0; call < 61; call += 1) {
+      expect(await budgetedStore.read(key, 100)).toEqual({ kind: "absent" });
+    }
+    bucket.putFailure = new Error("429 rate limit");
+
+    expect(await budgetedStore.create(key, data)).toEqual({
+      kind: "throttled",
+      retryAfterEpochMs: now + 1_100,
+    });
+    expect(await budgetedStore.read(key, 100)).toEqual({ kind: "absent" });
+    expect(budget.actualCalls).toBe(64);
+    expect(bucket.gets).toHaveLength(63);
+    expect(bucket.puts).toHaveLength(1);
+  });
+
+  it("counts failed bucket calls as actual calls", async () => {
+    const budget = createSyncR2CallBudget();
+    const budgetedStore = syncR2ObjectStore(bucket, () => now, budget);
+    bucket.getFailure = new Error("storage unavailable");
+
+    expect(await budgetedStore.read(key, 100)).toEqual({ kind: "unavailable" });
+    bucket.getFailure = undefined;
+    expect(await budgetedStore.read(key, 100)).toEqual({ kind: "absent" });
+    expect(bucket.gets).toHaveLength(2);
+    expect(budget.actualCalls).toBe(2);
+  });
+
   it("creates only under the sync prefix and exact-read-back confirms bytes", async () => {
     const result = await store.create(key, data);
     expect(result.kind).toBe("confirmed");
@@ -170,8 +371,18 @@ describe("one-key conditional sync R2 storage", () => {
     expect(bucket.puts[0]?.key).toMatch(/^sync\/v1\/vaults\//);
   });
 
-  it("refuses create-only conflicts and stale ETags without refreshing the predicate", async () => {
+  it("reports typed no-effect provenance for preflight and direct conditional-null refusals", async () => {
     await bucket.seed(key, data, now - 5_000);
+    const preflight = await store.create(
+      key,
+      new TextEncoder().encode("different"),
+    );
+    expect(preflight).toEqual({
+      kind: "refused",
+      noEffectProvenance: "preflight_no_dispatch",
+    });
+    expect(bucket.puts).toHaveLength(0);
+
     const observed = await store.read(key, 100);
     expect(observed.kind).toBe("observed");
     if (observed.kind !== "observed") return;
@@ -180,7 +391,11 @@ describe("one-key conditional sync R2 storage", () => {
       observed.observation,
       new TextEncoder().encode("next"),
     );
-    expect(refused.kind).toBe("refused");
+    expect(refused).toEqual({
+      kind: "refused",
+      noEffectProvenance: "conditional_null",
+    });
+    expect(bucket.puts).toHaveLength(1);
     expect(bucket.puts.at(-1)?.options.onlyIf).toEqual({
       etagMatches: observed.observation.etag,
     });
@@ -212,7 +427,10 @@ describe("one-key conditional sync R2 storage", () => {
       observed.observation,
       new TextEncoder().encode("candidate"),
     );
-    expect(replaced.kind).toBe("refused");
+    expect(replaced).toEqual({
+      kind: "refused",
+      noEffectProvenance: "conditional_null",
+    });
     expect(bucket.puts).toHaveLength(1);
     expect(bucket.puts[0]?.options.onlyIf).toEqual({
       etagMatches: original.etag,
@@ -224,8 +442,8 @@ describe("one-key conditional sync R2 storage", () => {
     bucket.nullPutHook = undefined;
     const possibleInFlightCreate = await store.create(key, matching);
     expect(possibleInFlightCreate).toEqual({
-      kind: "effect_unknown",
-      retryAfterEpochMs: now + 1_100,
+      kind: "refused",
+      noEffectProvenance: "conditional_null",
     });
     expect(bucket.puts).toHaveLength(1);
     now += 1_100;
@@ -244,7 +462,10 @@ describe("one-key conditional sync R2 storage", () => {
         return bucket.objects.get(requestedKey) ?? null;
       });
     const unknown = await store.create(key, matching);
-    expect(unknown.kind).toBe("effect_unknown");
+    expect(unknown).toMatchObject({
+      kind: "effect_unknown",
+      noEffectProvenance: "conditional_null",
+    });
     expect(bucket.puts).toHaveLength(1);
     unavailableReadback.mockRestore();
   });
@@ -268,9 +489,9 @@ describe("one-key conditional sync R2 storage", () => {
       new TextEncoder().encode("candidate"),
     );
 
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       kind: "effect_unknown",
-      retryAfterEpochMs: now + 1_100,
+      noEffectProvenance: "conditional_null",
     });
     expect(bucket.puts).toHaveLength(1);
     expect(bucket.puts[0]?.options.onlyIf).toEqual({
@@ -293,7 +514,10 @@ describe("one-key conditional sync R2 storage", () => {
       new TextEncoder().encode("candidate"),
     );
 
-    expect(result.kind).toBe("refused");
+    expect(result).toEqual({
+      kind: "refused",
+      noEffectProvenance: "conditional_null",
+    });
     expect(bucket.objects.has(key)).toBe(false);
     expect(bucket.puts).toHaveLength(1);
     expect(bucket.puts[0]?.options.onlyIf).toEqual({
@@ -395,7 +619,9 @@ describe("one-key conditional sync R2 storage", () => {
     const reads = vi.spyOn(bucket, "get");
     expect((await store.read(key, -1)).kind).toBe("unavailable");
     expect((await store.read(key, 1.5)).kind).toBe("unavailable");
-    expect((await store.read(key, 1_048_577)).kind).toBe("unavailable");
+    expect(
+      (await store.read(key, SYNC_PUBLICATION_LIMITS.journalBytes + 1)).kind,
+    ).toBe("unavailable");
     expect(reads).not.toHaveBeenCalled();
 
     const stored = await bucket.seed(key, data, now, data.byteLength + 1);
@@ -470,6 +696,30 @@ describe("one-key conditional sync R2 storage", () => {
     for (const value of acceptedKeys) {
       expect(createSyncR2Key(value, vaultId)).toBe(value);
     }
+  });
+
+  it("admits only canonical scoped inventory claim and cursor witness keys", () => {
+    const inventory = syncInventoryIdSchema.parse(
+      "44444444-4444-4444-8444-444444444444",
+    );
+    const prefix = `sync/v1/vaults/${vaultId}/inventories/scans/${inventory}/chunks`;
+    const claim = `${prefix}/claims/20000.json`;
+    const witness = `${prefix}/cursors/${"a".repeat(64)}.json`;
+    expect(createSyncR2Key(claim, vaultId)).toBe(claim);
+    expect(createSyncR2Key(witness, vaultId)).toBe(witness);
+    for (const invalid of [
+      `${prefix}/claims/020000.json`,
+      `${prefix}/claims/20001.json`,
+      `${prefix}/cursors/${"A".repeat(64)}.json`,
+      `${prefix}/cursors/${"a".repeat(63)}.json`,
+      `${prefix}/cursors/${"a".repeat(64)}.json/foreign`,
+    ]) {
+      expect(createSyncR2Key(invalid, vaultId)).toBeUndefined();
+    }
+    const foreignVaultId = syncVaultIdSchema.parse(
+      "55555555-5555-4555-8555-555555555555",
+    );
+    expect(createSyncR2Key(claim, foreignVaultId)).toBeUndefined();
   });
 
   it("rejects malformed canonical key families at key admission", async () => {

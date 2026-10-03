@@ -1,4 +1,5 @@
 import type { ContentSha256 } from "@core/mirror/mirror.types";
+import { isContentSha256 } from "@core/mirror/mirror-identifiers";
 import type {
   SyncCommittedPosition,
   SyncCurrentState,
@@ -57,19 +58,8 @@ export async function evaluateSyncMutation(
     return reject("operation_id_reused");
   }
 
-  if (!hasFreshRevision(request)) {
+  if (!(await isSyncMutationInputValid(request, hashContent))) {
     return reject("invalid_input");
-  }
-
-  if (request.kind !== "tombstone") {
-    const contentBytes = new TextEncoder().encode(request.content);
-    if (contentBytes.byteLength > MAX_NOTE_SIZE_BYTES) {
-      return reject("invalid_input");
-    }
-
-    if ((await hashContent(request.content)) !== request.contentSha256) {
-      return reject("invalid_input");
-    }
   }
 
   if (priorOperation !== undefined) {
@@ -100,8 +90,75 @@ export async function evaluateSyncMutation(
  * @returns Whether this operation publishes a distinct revision.
  */
 function hasFreshRevision(request: SyncMutationRequest): boolean {
+  switch (request.kind) {
+    case "create":
+      return isNeverSeenParent(request.parent);
+    case "update":
+      return (
+        isRevisionParent(request.parent) &&
+        request.revision !== request.parent.revision
+      );
+    case "tombstone":
+      return (
+        isRevisionParent(request.parent) &&
+        request.revision !== request.parent.revision
+      );
+    default:
+      return false;
+  }
+}
+
+/** Validates caller-controlled parent and payload invariants without consulting observed state.
+ * @param request Complete mutation intent checked before any storage observation.
+ * @param hashContent Hashes exact UTF-8 text; the capability failure propagates to the caller.
+ * @returns Whether the request has a valid exact parent shape, fresh revision, and supported digest/size.
+ */
+export async function isSyncMutationInputValid(
+  request: SyncMutationRequest,
+  hashContent: (content: string) => Promise<ContentSha256>,
+): Promise<boolean> {
+  if (
+    !hasFreshRevision(request) ||
+    typeof request.contentSha256 !== "string" ||
+    !isContentSha256(request.contentSha256)
+  ) {
+    return false;
+  }
+  if (request.kind === "tombstone") return true;
+
+  const contentBytes = new TextEncoder().encode(request.content);
+  if (contentBytes.byteLength > MAX_NOTE_SIZE_BYTES) return false;
+
+  return (await hashContent(request.content)) === request.contentSha256;
+}
+
+/** Checks the create-only parent alternative without dereferencing malformed runtime input.
+ * @param parent Parent value received through the typed core contract.
+ * @returns Whether it is the explicit never-seen state.
+ */
+function isNeverSeenParent(parent: SyncMutationRequest["parent"]): boolean {
   return (
-    request.kind === "create" || request.revision !== request.parent.revision
+    typeof parent === "object" &&
+    parent !== null &&
+    parent.kind === "never_seen"
+  );
+}
+
+/** Checks the exact-revision parent alternative without dereferencing malformed runtime input.
+ * @param parent Parent value received through the typed core contract.
+ * @returns Whether it carries a string revision under the exact revision discriminator.
+ */
+function isRevisionParent(
+  parent: SyncMutationRequest["parent"],
+): parent is Extract<
+  SyncMutationRequest["parent"],
+  { readonly kind: "revision" }
+> {
+  return (
+    typeof parent === "object" &&
+    parent !== null &&
+    parent.kind === "revision" &&
+    typeof parent.revision === "string"
   );
 }
 

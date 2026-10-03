@@ -54,8 +54,19 @@ correction with 1,565 source tests, 9 local workerd tests and 95.00%
 statement coverage (no headroom). Local workerd
 demonstrates conditional semantics, not production rate limiting or Workers Free
 CPU qualification. [M7.3 evidence](milestones/m7-versioned-sync-protocol-and-r2-store.md#m73-isolated-r2-primitives-evidence)
-records exact boundaries; M7.4 must add durable journal/feed and stable-vector
-inventory orchestration. M7 remains NEXT and activation remains excluded.
+records the historical primitive boundary. M7.4 now adds private durable
+journal/feed and stable-vector inventory orchestration. `sync-r2-store.ts` composes
+the nine-method core port: the mutation orchestrator owns publication transitions,
+the attempt policy owns claim/floor decisions without granting a PUT, and terminal
+handling verifies the exact outcome/evidence conjunction. The publication facade
+admits identity-bound one-key transitions; the R2 adapter retains original
+conditional predicates and conservative effect classification. Separate inventory
+budget, cursor-witness, replay, page-evidence and cleanup owners enforce bounded
+progress without relisting verified chunks or reusing expired manifest identities.
+No HTTP/MCP/plugin bootstrap imports this composition. See
+[M7.4 local evidence](qualification/m7-private-sync-store-local.md) for checks and
+independent review. Remote Workers Free CPU/account qualification and maximal
+real-head profiling remain pending. M7 remains NEXT and activation remains excluded.
 The current
 plugin boundary includes strict device state v5 with
 frozen v2/v3/v4 migration, reviewed sampling/admission, narrow local writes and

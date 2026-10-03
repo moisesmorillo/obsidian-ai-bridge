@@ -2,8 +2,10 @@
 
 ## Status
 
-**NEXT — M7.1/M7.2 are complete; M7.3's isolated R2 primitives are verified in
-this implementation branch, pending merge; M7.4 remains.** This milestone
+**NEXT — M7.1/M7.2 are complete; M7.3's isolated R2 primitives merged in
+PR #95. M7.4's private implementation is locally validated in this unmerged
+feature PR; remote Workers Free/account qualification and maximal real-head
+profiling remain pending.** This milestone
 establishes a versioned, storage-independent sync contract and its isolated R2
 implementation. It does not enable synchronization, change the current writer,
 migrate data, or authorize a personal-vault cutover. Branch evidence becomes a
@@ -201,10 +203,65 @@ and acceptance evidence are listed below.
 - The storage adapter uses a durable operation journal and a pending/committed
   publication state. The journal is create-only and binds the full normalized
   mutation request; same operation ID and same request resumes, while a different
-  request returns `operation_id_reused`. The lane head contains the committed
-  sequence and either no pending reservation or exactly one pending operation with
-  its reserved next sequence. The write order is: create journal, reserve the next
-  lane sequence with exact-head CAS, create and verify immutable version/content
+  request returns `operation_id_reused`. The initial `unallocated` pending journal
+  binds its exact request and path-derived lane but has **no** sequence, predecessor
+  clock, feed position, or authority to write a version, head, or event. Pending
+  journals are a strict discriminated union: `unallocated` holds the exact current
+  lane-head key, observed generation ETag, complete canonical prior bytes and
+  `uploaded` timestamp (or verified absence before initial lane-head creation),
+  plus the known retry floor; `allocated` alone holds the won sequence, predecessor
+  clock, and subsequent step evidence. A missing lane-head ETag cannot authorize
+  reservation. If the lane-head key is initially absent, create/read back the
+  zero-sequence unreserved head first; its original ETag must be persisted in the
+  unallocated journal before attempting reservation. This initialization is not
+  a claim of sequence one. Before a journal is admitted, the adapter revalidates its
+  exact lane observation. If journal creation is definitely refused and exact journal
+  read-back proves the operation key absent, return `mutation_not_admitted` with the
+  stable operation ID. This guarantees no journal, reservation, sequence, current-head,
+  or feed-event effect for that request; zero-lane initialization may have occurred.
+  It has no `retryAfterEpochMs` or implied wait floor. The caller must resubmit the
+  identical full mutation request and operation ID through `mutate` once lane state
+  permits; `resumeOperation` cannot apply without a journal. Do not retry automatically
+  or loop within the invocation. If read-back is unavailable or divergent, retain
+  `effect_unknown`; if the exact journal appears, join it, and reject a different
+  request bound to that operation ID. The owner chose this immediate result over a
+  bounded automatic attempt to avoid additional R2 reads and CPU at the cost of an
+  extra caller round trip. The lane head contains the committed sequence and either no
+  pending reservation or exactly one pending operation with its reserved next sequence. A successful exact-head CAS against the precondition durably
+  recorded in the unallocated journal creates that operation-owned lane
+  reservation; its candidate next sequence and predecessor clock are derived
+  only from those exact observed prior bytes. Only exact read-back of a pending
+  marker matching this operation ID, candidate lane/sequence, and predecessor
+  clock authorizes the one-way exact-CAS journal transition from `unallocated`
+  to `allocated`. Concurrent same-ID callers may join the already allocated
+  journal only after its complete typed body and pending marker agree; an older
+  unallocated observation cannot overwrite a newer journal generation.
+  This transition may be delayed by the journal's same-key cooldown. If it is
+  interrupted, the lane head's exact pending operation ID, lane, next sequence,
+  and predecessor committed clock reconstruct the allocation for the same exact
+  journal request; conflicting or unavailable evidence remains `effect_unknown`
+  and retains the lane blocker. A journal cannot claim another operation's pending
+  marker or invent a sequence from an absent/failed lane read.
+  A concurrent different-operation reservation that definitively loses its lane
+  CAS remains `unallocated`: it publishes **no** abort event at the winner's
+  sequence and performs no current-head effect. While another operation owns the
+  lane, return `operation_pending` with the loser's stable operation ID. After the
+  winner commits/releases its lane and exact read-back proves the loser's previous
+  CAS did not reserve it, a fresh unreserved lane-head observation may replace
+  only that loser's still-unallocated prior observation by exact journal CAS
+  (respecting journal cooldown), then start a **new** reservation attempt at the
+  then-current next sequence. An uncertain old CAS with unchanged prior bytes/ETag
+  may be retried only with that original condition after the cooldown; a missing,
+  conflicting, or unavailable read-back cannot rebase the journal observation.
+  A refused/changed lane predicate is not a refreshed CAS retry of the same step:
+  the proven losing attempt ends before the next observation is durably recorded.
+  This does not refresh a stale current-head mutation predicate; those remain
+  fenced. A same-ID duplicate joins its exact journal and may adopt only its own
+  verified pending lane marker. Sequence exhaustion before allocation returns
+  `sequence_exhausted` without inventing a feed event; the journal remains bound to
+  its exact request. No local lock or R2 LIST decides allocation. The write order
+  is: create unallocated journal, reserve the next lane sequence with exact-head
+  CAS, durably bind that allocation to the journal, create and verify immutable version/content
   (and recovery body for a tombstone), conditionally replace the exact current head,
   create the immutable feed event, mark the journal committed, then commit the lane
   head last. An operation aborted before changing current state publishes an aborted
@@ -219,10 +276,13 @@ and acceptance evidence are listed below.
   record is readable.
 - The closed M7 store error set is `invalid_input`, `unsupported_protocol_version`,
   `vault_not_found`, `stale_revision`, `operation_id_reused`,
-  `cursor_expired`, `invalid_cursor`, `inventory_incomplete`,
+  `mutation_not_admitted`, `cursor_expired`, `invalid_cursor`, `inventory_incomplete`,
   `inventory_limit_exceeded`, `inventory_expired`, `inventory_id_reused`,
   `sequence_exhausted`, `storage_throttled`, `operation_pending`, `effect_unknown`,
-  and `storage_unavailable`. `inventory_in_progress` is a progress result, not an
+  and `storage_unavailable`. `mutation_not_admitted` includes the original operation
+  ID, has no retry floor, and requires resending the complete identical mutation
+  request through `mutate`; it is not resumable by operation ID alone.
+  `inventory_in_progress` is a progress result, not an
   error; it carries the stable scan ID and optional `retryAfterEpochMs`; when present,
   that is the earliest safe resume time for a known R2 cooldown. Budget deferral without
   a known delay omits the time. `storage_throttled` means a known R2 rate-limit refusal
@@ -293,15 +353,19 @@ and acceptance evidence are listed below.
   deletes the slot object. An expired slot can be replaced only after exact-read
   validation of the referenced manifest's expiry and exact CAS against the slot ETag.
   The core sees the `InventoryId` and typed progress, never the R2 cursor.
-- The R2-only scan manifest is capped at `MAX_INVENTORY_MANIFEST_BYTES = 8,192` and
-  records schema, vault/scan IDs, phase, start lane vector, exact opaque R2 cursor
+- The historical schema-v1 R2-only scan manifest is capped at
+  `MAX_INVENTORY_MANIFEST_BYTES = 8,192`; new scans require strict schema v2 and
+  its 9,216-byte cap under the corrective contract below. The manifest records
+  schema, vault/scan IDs, phase, start lane vector, exact opaque R2 cursor
   (maximum `MAX_INVENTORY_CURSOR_BYTES = 4,096` UTF-8 bytes, stored as unpadded
   base64url), last lexicographic key, empty-page count, next step number, logical
   page/head counts, actual R2 LIST/head-GET attempt counts, unique/read body-byte totals,
   evidence-byte total, immutable chunk count/hash chain, current step's reserved attempt
   number, and a server-time expiry 24 hours after start. Its encoded cursor is at most
-  5,462 bytes; all other fields and JSON syntax fit within the remaining 2,730 bytes.
-  An R2 cursor above the cap fails with `inventory_limit_exceeded` before progress
+  5,462 bytes. The historical claim that all other v1 fields necessarily fit
+  the remaining 2,730 bytes is false at simultaneous maxima (measured 8,528
+  bytes overall); the strict v2 cap and maximal-field regression fix this
+  discrepancy without relaxing historical v1 decoding. An R2 cursor above the cap fails with `inventory_limit_exceeded` before progress
   advances. The manifest uses exact ETag CAS. Each immutable evidence chunk contains
   exactly one complete R2 list-page result, at most one validated head summary, and at
   most `MAX_INVENTORY_CHUNK_BYTES = 12 KiB` serialized evidence; it is create-only and
@@ -315,7 +379,14 @@ and acceptance evidence are listed below.
   metadata, hash fields, and encoded output cursor, excluding transcript and summary) is
   capped at `MAX_INVENTORY_CHUNK_ENVELOPE_BYTES = 8,192`: at most 5,462 bytes for unpadded
   base64url encoding of the 4,096-byte cursor plus 2,730 bytes for all other fields and
-  canonical JSON syntax. Hash each chunk as SHA-256 over its exact strict-canonical UTF-8
+  canonical JSON syntax. The ≤256-byte transcript is strict canonical JSON with
+  `objectCount` (zero or one), `keySha256` (null for empty, otherwise SHA-256 of the
+  entire canonical listed head key), `headBodyBytes` (zero for empty, otherwise the
+  exact validated head response byte length), and `truncated`. Replay reconstructs
+  the key from the linked head summary's canonical `pathKey`, verifies its digest
+  and ordering against the manifest, and verifies the transcript against the chunk's
+  head and cursor evidence; no untrusted R2 list metadata supplies a revision.
+  Hash each chunk as SHA-256 over its exact strict-canonical UTF-8
   JSON bytes; the manifest CAS advances the rolling hash only after the chunk is read
   back and validated. The manifest is the authoritative continuation cursor; the chunk's
   cursor is private recovery evidence. Neither cursor enters core, note data, feed events,
@@ -378,7 +449,20 @@ and acceptance evidence are listed below.
   the saved input cursor. If attempt two ends and an exact chunk-key read proves no
   verifiable chunk exists, fail the scan with `inventory_limit_exceeded`; never issue a
   third data-read attempt for that step. A divergent manifest or uncertain progress write
-  returns `effect_unknown`; the scan cannot complete. A terminal `inventory_incomplete` marks
+  returns `effect_unknown`; the scan cannot complete. A deterministic post-reservation
+  LIST/head failure first writes a strict **schema-v2 failure latch** create-only at
+  that step's existing canonical chunk key. It contains only scan identity, step,
+  preceding root and closed `inventory_incomplete`/`inventory_limit_exceeded` reason;
+  it is not a v1 page transcript and never authorizes cursor, counter or complete
+  evidence advancement. The failed manifest CAS uses an exact reread matching the
+  entire just-reserved manifest bytes, not the stale pre-reservation ETag or an
+  adopted peer generation. If the manifest cooldown defers failure, same-ID replay
+  reads the latch and retries only the failure CAS, never the LIST/head GET. A lost
+  latch write/read-back or competing manifest retains `effect_unknown`; no slot is
+  released from uncertain failure evidence. Historical v1 page decoding remains
+  unchanged. The latch shares the existing chunk count, key and 12-KiB body ceiling;
+  cleanup already recognizes that canonical scratch key, so no new namespace or
+  account admission claim is introduced. A terminal `inventory_incomplete` marks
   the scan failed and attempts to replace only its own
   active-slot value with `empty` by exact CAS; if either write is throttled or uncertain,
   retain the slot until recovery proves its state. Resolve a lost manifest-CAS response
@@ -420,8 +504,9 @@ and acceptance evidence are listed below.
   retry: an existing chunk is validated and advances the manifest without repeating R2
   reads. Both paths advance the rolling root/cursor only by exact CAS after the complete
   page/chunk is validated. Once `truncated: false` is durably
-  recorded, a separate bounded finalization step reads all 64 lane heads and pending
-  markers again. A scan is complete only when no lane is pending and the final vector
+  recorded (`cursor: null` with at least one committed chunk/page; a starting scan
+  has zero pages), a separate bounded finalization step reads all 64 lane heads and
+  pending markers again. A scan is complete only when no lane is pending and the final vector
   exactly equals the saved start vector. Because every mutation reserves and commits
   a monotonic lane sequence, equality proves no committed mutation crossed the entire
   multi-invocation listing interval. Persist the complete manifest by exact CAS, then
@@ -448,6 +533,21 @@ and acceptance evidence are listed below.
   and verifying total count/root proves the complete snapshot. A missing/changed chunk
   or invalid page cursor returns typed failure and no absence evidence. M7 inventory
   remains reporting/recovery evidence and never grants deletion authority.
+- An expired scan's manifest is a permanent no-reuse tombstone, **not** a cleanup
+  target. Its existing scan ID remains expired even after all chunks are removed.
+  After exact expiry and active-slot evidence, an isolated cleanup capability may
+  delete only canonical chunks of a historical v1 scan; v2 additionally admits
+  only the canonical same-scan journal/witness scratch keys specified below.
+  Delete at most one bounded object plus read-back per invocation; uncertain
+  effects do not establish cleanup. When no eligible scratch remains, report
+  retained-manifest status, never complete storage reclamation. R2 DELETE
+  has no ETag predicate: deleting the manifest could delete a newly admitted
+  same-ID generation after stale expiry proof. At most 8,192 × N1 historical
+  v1 manifest body bytes plus 9,216 × N2 new v2 manifest body bytes, and R2
+  key/metadata overhead, remain for N1 and N2 admitted scans; there is no
+  global quota or tombstone reaper in M7. A future retention/retirement policy
+  needs a separate decision and qualification before activation. See
+  [ADR 0018](../decisions/0018-retain-expired-sync-inventory-manifests.md).
 - The logical listing-page ceiling is `MAX_INVENTORY_LIST_PAGES = 20,001` (at most
   10,000 non-empty pages, 10,000 empty truncated pages, and one terminal page), with
   at most two persisted read attempts per step. Thus `MAX_INVENTORY_LIST_CALLS =
@@ -492,6 +592,54 @@ and acceptance evidence are listed below.
   replacing only an expired or terminally failed scan's active-slot value with `empty`
   by exact CAS; feed, current heads, versions, and recovery objects are never cleanup
   targets.
+### M7.4 inventory cursor-history correction (accepted for isolated local TDD)
+
+The v1 manifest limit above is currently an **unresolved feasibility defect** for
+simultaneous accepted maxima: measured maximal JSON with a 4,096-byte R2 cursor,
+720-byte Markdown path and 64 maximum-width sequences is 8,528 bytes. Existing
+v1 replay does not reject non-adjacent cursor cycles. The [corrective design](../plans/2026-10-02-m7-inventory-cursor-history-design.md)
+and [ADR 0019](../decisions/0019-resumable-r2-inventory-cursor-witnesses.md)
+were independently cleared for **isolated local TDD only** by
+investigate-5eb505b68c8fa1e53b3ca98d11123244; they do not authorize
+activation, deployment, remote Free qualification or M7 completion. The
+version-2 manifest is strict, caps at 9,216 bytes
+with a maximal fixture, and leaves historical v1 decoded only as a ≤8,192-byte
+expired no-reuse tombstone: no v1 continuation, complete handle/page or inferred
+upgrade. The v2 writer needs one digest-indexed immutable witness (≤384 bytes)
+and exact-CAS per-step retryable journal (≤512 bytes) for every **truncated** output
+cursor. An initial null input is not visited; every later truncated output must
+be nonempty and never equal *any* earlier output (including non-adjacent empty
+pages). Only original-generation manifest CAS after exact chunk+journal+witness
+proof can advance; both fresh and replay paths must enforce it. The terminal
+chunk has no new witness but completion, handle, page and slot-release paths
+must inherit the fenced chain. A lost attempt-journal CAS grants no PUT authority;
+only a confirmed own-UUID `attempting` generation with fresh manifest/slot/expiry
+checks may dispatch one atomic create-only target PUT in that invocation. An
+absent witness after a prior claim enters persisted `retry_wait`, then a fresh
+UUID claim after the journal's own cooldown and a conservative target floor;
+no bounded lifetime count of physical PUTs is asserted. Each dispatcher must
+honor its own known response floor and every floor durably observed before its
+next attempt; the transitioning journal CAS records all floors then available
+to that invocation. A floor first reported after a different isolate already
+dispatched cannot retroactively prohibit that PUT, and an unpersisted floor
+cannot be known to a separate isolate. Uncertain CAS outcomes require exact
+reconciliation; atomic create-only bytes and matching witness evidence, not
+cooldown timing, prevent false completion. This clarification affects only the
+inventory-witness journal, not mutation attempt floors. Late PUTs
+can create only cleanup-eligible orphans under a retained expired manifest,
+not a complete handle. Cleanup would additionally allow canonical expired
+journal/witness keys, still **never** the manifest, with at most one DELETE and
+absence read-back per invocation. Expected scratch maxima: ≤60,001 objects,
+≤17,920,000 journal/witness body bytes plus key/metadata, and ≤9,216 bytes per
+new permanent v2 tombstone. An analytical 32-R2-call page-step preflight and
+136-start/134-final/18-evidence/8-cleanup credits must be verified against
+actual adapter traces; Workers Free CPU, daily requests, R2 billing and account
+retention remain separately unqualified. Implement with red/green tests for the exact transition table, byte fixtures,
+crash/race paths and worst-branch counted calls. The analytically reserved
+credits do **not** establish these tests, Free CPU or operational quotas; do
+not claim the isolated implementation complete until they pass and receive
+independent semantic review.
+
 - Treat an expired/missing/ambiguous feed cursor as a recovery transition: keep the
   client checkpoint unchanged, start or resume inventory by `InventoryId`, and publish
   the recovered checkpoint only after the complete handle and all evidence pages have
@@ -526,11 +674,22 @@ and acceptance evidence are listed below.
   journal exists, preserve it and any lane reservation; return `operation_pending`
   with the same operation ID and updated `retryAfterEpochMs`. Each `resumeOperation`
   invocation performs at most one bounded recovery attempt, uses the same request/op
-  ID and the exact CAS ETag recorded for the unfinished step, and may not run before
-  `retryAfterEpochMs`. It must not refresh an ETag for that step. Do not sleep inside
-  a Worker request; if the lower bound has not passed, return the typed pending
-  result. Another typed pending result is returned if R2 throttles again. Do not
-  clear a pending lane reservation merely because it is throttled.
+  ID and the exact CAS ETag recorded for the unfinished mutation step, and may not run
+  before `retryAfterEpochMs`. It must not refresh an ETag for that step. Journal-only
+  transitions are the narrow exception: the exact typed journal body and monotonic
+  phase are the durable prior-state evidence. A fresh exact read of that same
+  operation-bound journal may supply its current ETag only for the pending
+  `commit_journal` to terminal transition or the explicitly bounded `commit_lane`
+  attempt-state transitions below; it never supplies a refreshed external-step ETag.
+  After an uncertain journal write, exact target read-back means done; exact prior-state
+  read-back defers the invocation using its known safe floor or observation time plus
+  1,100 ms, with the new floor persisted before a later write; divergent or unavailable
+  evidence remains `effect_unknown`. This does not refresh lane, current-head, or
+  immutable-write preconditions, whose original ETag and exact prior bytes remain
+  durably recorded. Do not sleep inside a Worker request; if the lower bound has not
+  passed, return the typed pending result. Another typed pending result is returned if
+  R2 throttles again. Do not clear a pending lane reservation merely because it is
+  throttled.
 - After any timed-out/failed write whose effect is uncertain, read the same key and
   validate the complete stored record. Exact evidence bound to this operation proves
   that step and recovery may continue. Exact unchanged prior body plus its original
@@ -543,14 +702,18 @@ and acceptance evidence are listed below.
   retry only the same create-only bytes; when the operation journal exists, derive
   those bytes from its bound request. If the original request completes concurrently,
   create-only prevents replacement and read-back must validate the exact expected
-  record before continuing. If the initial
-  journal create times out and remains absent after cooldown, return `effect_unknown`
-  with its safe retry time; the caller may resubmit only the identical original
-  mutation request and operation ID. This cannot establish success without the exact
-  durable journal record. An R2 precondition refusal is resolved by read-back, never
-  by an unconditional retry. R2's strong consistency supports read-back of completed
-  writes but is not a multi-key transaction or proof that a still-in-flight request
-  has been canceled.
+  record before continuing. If the initial journal create times out, exact read-back
+  cannot prove a journal, and the adapter returns `effect_unknown` with the safe
+  `retryAfterEpochMs` floor. The caller owns that pre-journal floor and must retain it
+  across caller/isolate restarts, wait until it passes, then resubmit only the identical
+  complete mutation request and operation ID through `mutate`. `resumeOperation` cannot
+  recover an absent journal. No separate durable pre-journal key is created to store
+  this floor: a fresh isolate cannot establish the original create's timing from absent
+  R2 state. M7 does not claim enforcement against a caller that ignores the returned
+  floor. The exact journal must still be read and validated before any mutation can be
+  resumed. An R2 precondition refusal is resolved by read-back, never by an unconditional
+  retry. R2's strong consistency supports read-back of completed writes but is not a
+  multi-key transaction or proof that a still-in-flight request has been canceled.
 - For throttling or uncertain effects after the lane reservation, do not report the
   mutation as successful until current-head state, immutable feed event, committed
   journal, and committed lane head are all durably verified and the feed event is
@@ -559,6 +722,176 @@ and acceptance evidence are listed below.
   inventory returns `inventory_in_progress` with `retryAfterEpochMs`; without durable
   progress it returns `storage_throttled`. Neither outcome advances a cursor or returns
   partial inventory evidence.
+
+#### Post-journal attempt authority
+
+Every allocated journal step that can dispatch an external write—`immutable_create`,
+`write_head`, `create_event`, or terminal `commit_lane`—carries a strict attempt state
+inside its step evidence. A new step starts `ready` at generation zero. The first
+write is authorized only after an exact journal CAS to
+`attempting(claimId, generation=1, claimedAtEpochMs)`. `claimId` is a fresh UUID
+created for that attempt; a retry from `retry_wait` increments the generation and
+uses a fresh claim ID. Generation is scoped to the exact journaled `(step, key,
+precondition)` tuple: a verified transition to the next target key starts a new tuple
+at generation zero, while retries of one tuple increment its generation. Generations
+are nonnegative safe integers and never wrap; if the generation cannot be safely
+incremented, fail closed without a target write. The original external-step key,
+target bytes, and precondition remain fixed across every attempt of that tuple.
+`retryAfterEpochMs` remains the one authoritative safe floor for that key. On entry
+to `create_event`, the journal fixes the monotonic `committedAtEpochMs` and closed
+`outcomeIntent` (`changed` or `aborted`) before any claim or event PUT; both are
+immutable for the exact step/key/precondition tuple and every retry uses the same
+event bytes. The ready `immutable_create` → `create_event` shortcut is abort-only.
+A changed intent requires the exact operation-owned head and linked immutable
+version/body; an aborted intent requires stale-parent rejection against a
+non-operation-owned head. Recovery never infers or flips intent from a re-read head,
+and an observed event must match the persisted intent and timestamp.
+
+Only the invocation that created a claim may issue that claim's one target PUT, and
+only after the exact `attempting` journal bytes are confirmed. If the journal-CAS
+response is uncertain, reread the exact operation journal: an exact body containing
+that invocation's claim ID/generation may authorize its still-unsent target write;
+exact prior state, another claim, divergent bytes, or an unavailable read does not.
+A fresh invocation that finds `attempting` is a recovery reader, not the old claim
+owner: it must inspect the target and must never replay the old claim directly. Before
+dispatch, the owner rechecks that its exact claim remains current. No process-local
+lock participates in authority.
+
+| Persisted state / outcome | Required exact evidence | Durable transition and allowed work |
+| --- | --- | --- |
+| `ready` | Exact original target absence or exact original generation; both target and journal-key cooldowns have elapsed | CAS `ready` to a unique `attempting` claim, then perform at most one target PUT with the original create-only/ETag condition. If exact expected target bytes already exist without a prior attempt claim, treat the journal/target pair as divergent rather than adopting an unclaimed effect. |
+| `ready` at `immutable_create` | Exact current-head evidence re-evaluates the original parent as stale; the immutable step remains at generation zero, proving no PUT was authorized for this exact target tuple | CAS directly to the canonical reserved `create_event` key with a fixed `committedAtEpochMs` strictly after the predecessor lane clock and `ready` generation zero. Do not claim or PUT the immutable target. A later event invocation re-evaluates the parent and may publish only the stale abort if it remains stale; otherwise fail closed. |
+| `ready` at `write_head` | The exact journal is still `ready` at generation zero, the reserved lane still belongs to the operation, and the exact linked current head still rejects the original parent; no target claim or head PUT has occurred | A dedicated facade CAS revalidates the same journal generation, lane reservation, and exact current-head bytes before persisting only the canonical reserved `create_event` with a fixed monotonic timestamp and `ready` generation zero. Do not claim or PUT the head. A later event invocation rechecks the stale parent; changed, missing, or unavailable evidence stays blocked without publishing an event. Generic `replaceJournal` cannot take this edge. |
+| `attempting` | Exact target bytes/record for nonterminal steps; for terminal `commit_lane`, exact O journal/event/current evidence and an O-or-later lane head under the visibility rule below; the attempt journal key's `uploaded + 1,100 ms` cooldown has elapsed | Persist the next journal step by exact journal CAS; for terminal `commit_lane`, return O's terminal result only after its exact terminal evidence validates with a lane clock consistent with O. Do not issue another target PUT. If the journal-key cooldown has not elapsed, return `operation_pending` and defer this transition. |
+| `retry_wait` | Exact target bytes/record for nonterminal steps; for terminal `commit_lane`, exact O journal/event/current evidence and an O-or-later lane head under the visibility rule below; the attempt journal key's `uploaded + 1,100 ms` cooldown has elapsed | Persist the next journal step by exact journal CAS (or verify terminal `commit_lane` completion using O's exact journal, event, and current evidence plus a lane clock consistent with O); do not wait for the retry floor and do not issue another target PUT. If the journal-key cooldown has not elapsed, return `operation_pending` and defer this transition. |
+| `attempting` | Exact original prior generation, or absence only for a step whose original precondition is create-only absence; the attempt journal key's `uploaded + 1,100 ms` cooldown has elapsed | CAS to `retry_wait`, recording this observation time and the fixed floor `max(observedAt + 1,100 ms, targetUploaded + 1,100 ms when present, known R2 response floor, prior persisted floor)`. Do not issue a target PUT in this invocation. If the journal-key cooldown has not elapsed, keep `attempting` and defer. |
+| `retry_wait` | Exact original prior/valid absence; stored floor and current journal `uploaded + 1,100 ms` have elapsed | CAS to a new `attempting` generation/claim before one new target PUT. If either floor is in the future, return `operation_pending` with the earliest safe time and do not write or sleep. |
+| Any state after `throttled`, `refused`, or `effect_unknown` | Exact target, exact original prior/valid absence, or unavailable/divergent read-back | Exact target advances; exact prior/absence persists `retry_wait`; unavailable/divergent evidence stays `effect_unknown`. Only the no-effect `ready` generation-zero `write_head` case above may use the dedicated stale-parent shortcut. A claimed head refusal needs the narrow private receipt exception below; other claimed-to-aborted shortcuts are refused. The event write always occurs in a later invocation. |
+
+**Generation-one head-refusal receipt exception (isolated M7.4 only).** The
+`write_head` claim owner may create one private immutable refusal receipt after
+its exact first-generation claim has been confirmed and either (a) its head
+preflight definitively rejects the original create-only/ETag predicate before
+dispatch, or (b) its single conditional head PUT returns `null` from R2. A
+later divergent read-back, lost response, 429 or exception does not qualify.
+The private receipt is a *second external target PUT* allowed only on this
+no-effect path; there is never a second head PUT or event PUT in that
+invocation. The trusted Worker-only key family is canonical per
+`(vaultId, operationId)` and create-only. Its strict versioned record (≤8,192
+UTF-8 bytes) binds the exact claim ID/generation, request/journal identity,
+reserved position, original head key, target digest, original absence or exact
+ETag/bytes/uploaded-time precondition, typed no-dispatch or conditional-null
+provenance and exact competing head observation. A visible claim ID alone does
+not authenticate out-of-band forged R2 objects; deployment must restrict this
+private key family to the trusted Worker binding. An existing receipt may be
+adopted only on canonical byte equality; unavailable, malformed or divergent
+bytes remain unknown, never absence or repair.
+
+Receipt creation and a journal CAS are not atomic. Recovery may trust the
+receipt only while the **current** pending `write_head` journal still carries
+that identical generation-one `attempting` claim and immutable tuple, the lane
+still reserves its sequence, and the present linked competing head exactly
+matches the receipt and still makes the original parent stale. It CASes only
+that observed journal generation/ETag to a fixed `create_event` aborted intent
+and time after journal cooldown. A different/newer claim, `retry_wait`, a lost
+CAS without exact read-back, an unavailable head or a changed competitor makes
+the receipt inert; never refresh the journal ETag to adopt it. A persisted
+aborted event is written in a **later** invocation after the event's own claim.
+The receipt never proves that an earlier in-flight head PUT was canceled:
+receipt-assisted abort is limited to generation one, with one claim owner and
+one dispatched head call. A failed/uncertain receipt or storage exhaustion
+retains `effect_unknown` and the lane blocker; no eventual abort guarantee is
+claimed for those cases or for later generations.
+
+For terminal operation O's `commit_lane` reconciliation, a lane head at a later
+committed sequence can prove O's lane commit only after the exact typed terminal
+journal for O still matches its immutable outcome, O's exact immutable event at its
+reserved lane/sequence is readable and matches that outcome, and the current-head read
+is available and consistent with the terminal outcome (a committed O cannot be
+`never_seen`; an aborted O cannot appear as its rejected revision). The lane must be
+for O's lane with `committedSequence >= O.sequence`; when equal, its committed clock
+must equal O's commit time, and when greater, its committed clock must be strictly
+later than O's commit time. This proves O completed before a later same-lane commit; it
+does not authorize another lane PUT, refresh O's original lane ETag, or infer an absent
+or unreadable event. Any failed evidence check remains `effect_unknown`.
+
+An absent read-back is valid only when the step's persisted precondition is create-only
+absence; it is not valid for terminal `commit_lane`, whose exact precondition is the
+operation-owned pending lane-head generation. A failed attempt-state/floor CAS is
+always exactly reread. If the prior `attempting` record remains, that invocation must
+not issue the target PUT. If the journal now contains a different claim, or its bytes
+are divergent/unavailable, return `effect_unknown` and preserve the lane blocker.
+Never rebase a lane/current-head ETag from a later read. Target bytes for immutable
+creates/events remain operation-bound and create-only.
+
+A read of the exact prior target does not prove that an older R2 request was canceled.
+A late in-flight request may still complete after `retry_wait`; every such request is
+bound to the same target bytes and original ETag (or the same create-only absence), so
+at most one can change that exact generation and a loser must reconcile by read-back.
+The floor is a safe retry lower bound, not a cancellation lease or a claim that only
+one physical request can remain in flight. A claimant paused after its final journal
+check may still dispatch late after a newer resumer records `retry_wait` or a later
+claim; R2 cannot atomically couple that journal check to the target-key CAS. Such a
+late dispatch is safe only because every generation retains the identical target bytes
+and original create-only/ETag condition, so at most one can change the target generation
+and every loser reconciles by exact read-back. Rate limiting can extend the floor; no
+wait-loop is permitted.
+
+Terminal journal status is independent of lane-attempt progress. A `committed` or
+`aborted` `commit_lane` record may change only its attempt substate and nondecreasing
+retry floor under the transition table above. Request/payload identity, status,
+revision or abort reason, position, commit time, reservation, step/key, and original
+lane precondition (including exact bytes, ETag, and uploaded time) are immutable; a
+terminal record can never return to `pending` or change outcome. The publication
+facade must authorize these edges by rereading the same typed terminal journal and
+CASing only that journal key. Exact target journal bytes mean already applied; exact
+prior journal bytes may supply the current journal ETag; any other journal state is
+not adoptable. This extends, but does not generalize, the existing terminal retry-floor
+exception. It never refreshes the lane-head condition.
+
+Operation journals use private `schemaVersion: 2` for this attempt-state representation;
+private lane-head and event records remain at schema version 1, and all retain
+`protocolMajor: 1`. A schema-v1 journal is not rehydrated with an invented `ready`
+state: a legacy/unsupported journal decode is a typed unavailable/`effect_unknown`
+result, never journal absence, never a new create, and never an automatic repair or
+rewrite. M7's isolated store has no schema migration path; any future recovery or
+cleanup of schema-v1 journals needs a separately approved transition.
+
+The attempt protocol adds at most one external target PUT per invocation,
+**except** the generation-one definite head-refusal receipt path above, which
+may send one claimed head PUT and one private create-only receipt PUT but never
+an event or second head PUT. A normal dispatch uses one attempt-claim journal
+PUT plus that target PUT; it may use one additional journal PUT to persist a
+verified next step or `retry_wait`, but does not start a second target write. Recovery of a persisted `attempting` state performs no
+target PUT and at most one journal transition. With the current one-key facade,
+a pending-journal CAS is estimated at up to five R2 GETs/one PUT, terminal
+`commit_lane` journal CAS at up to seven GETs/one PUT, and one target write at up to
+three GETs/one PUT, before operation-specific current/event/source reads. The
+call-graph estimate for a worst one-step mutation invocation is about 37–41 GETs and
+at most three PUTs including a proven stale-head abort-step transition; test-level
+counters must confirm exact counts for live, tombstone, event, and terminal paths.
+The receipt candidate adds a code-derived successful-path estimate of three
+receipt-key GETs plus one PUT, and one additional journal/lane proof adds two
+GETs: 42–46 GETs and no more than four PUTs when added to the earlier estimate.
+This is **not a worst-case bound**. Mutation entry points must instead enforce
+an invocation-scoped ceiling of **64 actual R2 internal-service calls** at the
+one-key object boundary, counting marker/preflight/read-back and receipt proofs;
+no call after the cap may dispatch, and exhaustion leaves the result unknown
+and the lane reserved. Reserve capacity for the required write and read-back
+before dispatch; never turn a truncated read-back into confirmation. Test-level
+instrumentation must establish actual per-path counts and cap-exhaustion
+behavior before Task 3B acceptance. Receipt storage is permanent while its
+operation journal remains recoverable: at most one 8,192-byte body per
+qualifying operation, adding ≤8,192 × N body bytes for N such operations
+plus R2 key/metadata overhead. There is no receipt reaper or global storage
+quota in isolated M7. At an account quota failure, leave the lane blocked
+with `effect_unknown`; neither a cleanup claim nor eventual progress is
+implicit. These are design limits, not measured runtime qualification. The accepted M7
+spec has a 400-subrequest ceiling for inventory invocations and cites Workers Free's
+1,000-subrequest limit; it does not define a 50-subrequest mutation limit. Do not claim
+live Worker support from this arithmetic. CPU cost is unknown, and neither this
+attempt path nor the 10 ms Workers Free CPU gate has been qualified by this design-only
+change.
 
 ### Rename and replay
 
@@ -669,8 +1002,10 @@ or separately approved without changing these contracts.
    root/count finish paging. No individual page or incomplete chunk chain establishes
    absence. Exhausted budgets, malformed/non-advancing cursors, missing/malformed heads,
    throttling, and unavailable storage produce their typed outcome without a complete
-   handle; unavailable reads retain the scan ID and cursor. Cleanup affects only eligible
-   inventory artifacts and preserves note/feed/version data. Separately profile start,
+   handle; unavailable reads retain the scan ID and cursor. Cleanup affects only expired
+   inventory chunks, retains every manifest as a no-reuse tombstone, and preserves
+   note/feed/version data. Same-ID manifest-replacement races must not delete a new
+   generation. Separately profile start,
    continuation, finalization, evidence-page, cleanup, and recovery invocation CPU on a
    separately authorized isolated Workers Free runtime. Every profile must stay within
    the current 10 ms CPU limit before M7 exits. `mise run check` and local workerd do not
@@ -678,7 +1013,24 @@ or separately approved without changing these contracts.
    and recalculate all affected bounds.
 6. Recovery tests inject failure after every journal/current/event/head persistence
    boundary; retry either commits the exact same operation, records a safe abort, or
-   remains blocked as `operation_pending`/`effect_unknown`. Same-key tests cover
+   remains blocked as `operation_pending`/`effect_unknown`. For every allocated write
+   step, tests cover `ready`/`attempting`/`retry_wait`, the unique claim CAS, the
+   target PUT, exact target/prior/valid-absence/unavailable/divergent read-back, and
+   the attempt-state/floor journal CAS across fresh facades. Race two same-ID resumers:
+   only the exact claim owner may dispatch, and a lost claim/floor CAS whose exact
+   reread still shows the old `attempting` state must issue no target PUT. Inject
+   crashes before/after claim CAS, target PUT, and retry-floor CAS; verify journal-key
+   cooldown and the late-in-flight same-target/original-ETag caveat. Schema tests reject
+   schema-v1 journals without rehydration while schema-v1 lane/event records and v2
+   API/data sentinels remain unchanged. In particular, race two different operation
+   IDs hashing to one lane from the same observed committed
+   head: only one owns its next sequence, the losing unallocated journal neither
+   aborts that sequence nor mutates a head, and after verified release it claims
+   the next available sequence. Interrupt after lane CAS but before journal
+   allocation, then recover from the exact same-operation pending marker; missing,
+   another-operation, or unavailable evidence cannot fabricate allocation. Race
+   two same-ID callers as well: only the exact request may join its own journal and
+   pending marker. Same-key tests cover
    create-only journal replay, journal transitions, lane-head reservation/commit,
    and current-head writes; they prove the minimum successful-write interval, exact
    CAS under concurrent workers, and no retry before the returned cooldown. Inject
@@ -784,6 +1136,19 @@ and measure aggregate Workers Free subrequests/CPU before any subsequent
 activation proposal. Local workerd and API declarations do not prove production
 rate limits or mobile/desktop behavior.
 
+## M7.4 local branch evidence (unmerged; isolated implementation approved)
+
+The isolated private nine-method `SyncStore` is implemented in `feat/m7-complete-sync-store`: conditional mutation publication/recovery, committed feed paging, bounded v2 inventory cursor witnesses and chunk replay, complete-handle evidence paging, and canonical expired-scratch cleanup with permanent manifest tombstones. The current M1–M6 writer, HTTP/MCP surface and plugin remain unchanged.
+
+| Local evidence | Result and limit |
+| --- | --- |
+| `mise install` and `mise run check` | Passed before the first independent review, including Biome assists, lint/TSDoc, typecheck, coverage, builds and local native-runtime tests. |
+| Unchanged coverage gate | After R2: statements **12,272/12,917 (95%)**, branches **91.45%**, functions **98.64%**, lines **96.81%**. Final canonical check and `git diff --check` passed. |
+| First independent whole-branch pass | Retained continuation completed the mutation/publication/schema structural gate and accepted R1; its canonical rerun passed. R2 found unsafe floors in lane reservation/release. Five RED/GREEN lane cases now refuse response-floor forwarding/CAS and late invalid observation floors while preserving original predicates and same-ID recovery. Nine focused regressions passed; integrated rerun passed and corrective review approved the isolated implementation. R1/R2 are fixed; no open actionable findings remain. |
+| Operational qualification | Synthetic R2/local Miniflare only. No deployment, real R2/account/vault, sync activation, maximal real-head profile or remote Workers Free CPU/account qualification. |
+
+See [local evidence and outstanding qualification](../qualification/m7-private-sync-store-local.md). This evidence updates the locally validated and independently approved implementation state, not a merged completion claim. **M7.4's full exit remains open for qualification/merge; M7 remains NEXT.** Keep the separate qualification and activation gates open. The owner now authorizes forward-only commits, feature-branch push and an open PR for review, but not merge or deployment; no following milestone becomes NEXT from this branch-local evidence.
+
 ## Exit and next transition
 
 M7 is complete only when all four implementation units and acceptance criteria are
@@ -800,6 +1165,7 @@ refine its specification in a separate roadmap transition.
 - [Architecture](../architecture.md)
 - [Verified current state](../current-state.md)
 - [ADR 0016 — Bidirectional vault synchronization](../decisions/0016-bidirectional-vault-sync.md)
+- [ADR 0017 — Durable R2 publication attempt claims](../decisions/0017-r2-publication-attempt-claims.md)
 - [Bidirectional sync rollout plan](../plans/bidirectional-vault-sync-rollout.md)
 - [API contract](../api.md)
 - [Operations and release guidance](../operations.md)

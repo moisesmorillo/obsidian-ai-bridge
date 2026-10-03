@@ -6,8 +6,10 @@ import {
   encodeBase64Url,
 } from "@obsidian-ai-bridge/core";
 import { decodeSyncPathKey } from "@protocol/sync.codec";
+import { MAX_SYNC_INVENTORY_STEP_INDEX } from "@protocol/sync.constants";
 import {
   syncDeviceIdSchema,
+  syncIdentifierSchema,
   syncInventoryIdSchema,
   syncNotePathSchema,
   syncOperationIdSchema,
@@ -15,6 +17,7 @@ import {
   syncSequenceSchema,
   syncVaultIdSchema,
 } from "@protocol/sync.schemas";
+import type { SyncInventoryClaimId } from "@worker/infrastructure/sync/sync-record.types";
 import { z } from "zod";
 
 /** Single source of storage byte and count ceilings for private protocol-v1 records. */
@@ -23,11 +26,14 @@ export const SYNC_RECORD_LIMITS = {
   pathBytes: 720,
   headBytes: 2_048,
   manifestBytes: 8_192,
+  witnessedManifestBytes: 9_216,
+  cursorWitnessBytes: 384,
+  cursorJournalBytes: 512,
   cursorBytes: 4_096,
   chunkBytes: 12 * 1_024,
   chunkEnvelopeBytes: 8_192,
   summaryBytes: 1_536,
-  inventorySteps: 20_001,
+  inventorySteps: MAX_SYNC_INVENTORY_STEP_INDEX + 1,
   inventoryHeads: 10_000,
   emptyInventoryPages: 10_000,
   inventoryListAttempts: 40_002,
@@ -127,58 +133,64 @@ export const syncInventorySlotSchema = z.discriminatedUnion("state", [
     })
     .strict(),
 ]);
-/** Strict durable scan state with bounded opaque R2 continuation bytes. */
+/** Shared bounded scan fields; strict versioned variants retain independent authority. */
+const inventoryManifestShape = {
+  ...envelopeShape,
+  inventoryId: syncInventoryIdSchema,
+  phase: z.enum(["starting", "scanning", "complete", "failed"]),
+  startVector: z.array(syncSequenceSchema).length(64),
+  cursor: z.string().nullable(),
+  lastKey: z.string().nullable(),
+  emptyPageCount: z
+    .number()
+    .int()
+    .min(0)
+    .max(SYNC_RECORD_LIMITS.emptyInventoryPages),
+  nextStep: z.number().int().min(0).max(SYNC_RECORD_LIMITS.inventorySteps),
+  listPageCount: z.number().int().min(0).max(SYNC_RECORD_LIMITS.inventorySteps),
+  headCount: z.number().int().min(0).max(SYNC_RECORD_LIMITS.inventoryHeads),
+  listAttemptCount: z
+    .number()
+    .int()
+    .min(0)
+    .max(SYNC_RECORD_LIMITS.inventoryListAttempts),
+  headGetAttemptCount: z
+    .number()
+    .int()
+    .min(0)
+    .max(SYNC_RECORD_LIMITS.inventoryHeadGetAttempts),
+  uniqueHeadBodyBytes: z
+    .number()
+    .int()
+    .min(0)
+    .max(SYNC_RECORD_LIMITS.inventoryUniqueHeadBodyBytes),
+  actualHeadBodyBytes: z
+    .number()
+    .int()
+    .min(0)
+    .max(SYNC_RECORD_LIMITS.inventoryActualHeadBodyBytes),
+  evidenceBytes: z
+    .number()
+    .int()
+    .min(0)
+    .max(SYNC_RECORD_LIMITS.inventoryEvidenceBytes),
+  chunkCount: z.number().int().min(0).max(SYNC_RECORD_LIMITS.inventorySteps),
+  chunkHash: sha256Schema.nullable(),
+  reservedAttempt: z.union([z.literal(0), z.literal(1), z.literal(2)]),
+  expiresAtEpochMs: z.number().int().nonnegative(),
+};
+/** Strict historical-v1 or witnessed-v2 scan state with bounded opaque R2 cursor. */
 export const syncInventoryManifestSchema = z
-  .object({
-    ...envelopeShape,
-    inventoryId: syncInventoryIdSchema,
-    phase: z.enum(["starting", "scanning", "complete", "failed"]),
-    startVector: z.array(syncSequenceSchema).length(64),
-    cursor: z.string().nullable(),
-    lastKey: z.string().nullable(),
-    emptyPageCount: z
-      .number()
-      .int()
-      .min(0)
-      .max(SYNC_RECORD_LIMITS.emptyInventoryPages),
-    nextStep: z.number().int().min(0).max(SYNC_RECORD_LIMITS.inventorySteps),
-    listPageCount: z
-      .number()
-      .int()
-      .min(0)
-      .max(SYNC_RECORD_LIMITS.inventorySteps),
-    headCount: z.number().int().min(0).max(SYNC_RECORD_LIMITS.inventoryHeads),
-    listAttemptCount: z
-      .number()
-      .int()
-      .min(0)
-      .max(SYNC_RECORD_LIMITS.inventoryListAttempts),
-    headGetAttemptCount: z
-      .number()
-      .int()
-      .min(0)
-      .max(SYNC_RECORD_LIMITS.inventoryHeadGetAttempts),
-    uniqueHeadBodyBytes: z
-      .number()
-      .int()
-      .min(0)
-      .max(SYNC_RECORD_LIMITS.inventoryUniqueHeadBodyBytes),
-    actualHeadBodyBytes: z
-      .number()
-      .int()
-      .min(0)
-      .max(SYNC_RECORD_LIMITS.inventoryActualHeadBodyBytes),
-    evidenceBytes: z
-      .number()
-      .int()
-      .min(0)
-      .max(SYNC_RECORD_LIMITS.inventoryEvidenceBytes),
-    chunkCount: z.number().int().min(0).max(SYNC_RECORD_LIMITS.inventorySteps),
-    chunkHash: sha256Schema.nullable(),
-    reservedAttempt: z.union([z.literal(0), z.literal(1), z.literal(2)]),
-    expiresAtEpochMs: z.number().int().nonnegative(),
-  })
-  .strict()
+  .discriminatedUnion("schemaVersion", [
+    z.object(inventoryManifestShape).strict(),
+    z
+      .object({
+        ...inventoryManifestShape,
+        schemaVersion: z.literal(2),
+        cursorWitnessMode: z.literal(1),
+      })
+      .strict(),
+  ])
   .superRefine((manifest, context) => {
     if (
       manifest.chunkCount !== manifest.nextStep ||
@@ -203,6 +215,44 @@ export const syncInventoryManifestSchema = z
       });
     }
   });
+/** Validates a random UUID before branding it as one private witness attempt generation. */
+const inventoryClaimIdSchema = syncIdentifierSchema.transform(
+  (identifier): SyncInventoryClaimId => identifier as SyncInventoryClaimId,
+);
+/** Exact key-linked immutable cursor witness fields shared with its attempt journal. */
+const inventoryCursorEvidenceShape = {
+  ...envelopeShape,
+  inventoryId: syncInventoryIdSchema,
+  step: z
+    .number()
+    .int()
+    .min(0)
+    .max(SYNC_RECORD_LIMITS.inventorySteps - 1),
+  chunkHash: sha256Schema,
+  cursorDigest: sha256Schema,
+};
+/** Immutable digest-indexed record proving one truncated cursor's producing chunk. */
+export const syncInventoryCursorWitnessSchema = z
+  .object(inventoryCursorEvidenceShape)
+  .strict();
+/** Closed persisted state for one per-step exact-CAS witness dispatch journal. */
+export const syncInventoryCursorJournalSchema = z.discriminatedUnion("state", [
+  z
+    .object({
+      ...inventoryCursorEvidenceShape,
+      state: z.literal("attempting"),
+      claimId: inventoryClaimIdSchema,
+    })
+    .strict(),
+  z
+    .object({
+      ...inventoryCursorEvidenceShape,
+      state: z.literal("retry_wait"),
+      claimId: inventoryClaimIdSchema,
+      retryAfterEpochMs: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+    })
+    .strict(),
+]);
 /** Validated compact head evidence carried by one inventory chunk. */
 const headSummarySchema = z
   .object({
@@ -225,7 +275,7 @@ const headSummarySchema = z
     }
   });
 /** One strict durable page replay record with exact output-cursor encoding. */
-export const syncInventoryChunkSchema = z
+const syncInventoryPageChunkSchema = z
   .object({
     ...envelopeShape,
     inventoryId: syncInventoryIdSchema,
@@ -303,6 +353,32 @@ export const syncInventoryChunkSchema = z
       });
     }
   });
+
+/** Strict v2 terminal latch; it cannot decode as a historical v1 page or contain payload content. */
+const syncInventoryStepFailureSchema = z
+  .object({
+    ...envelopeShape,
+    schemaVersion: z.literal(2),
+    inventoryId: syncInventoryIdSchema,
+    step: z
+      .number()
+      .int()
+      .min(0)
+      .max(SYNC_RECORD_LIMITS.inventorySteps - 1),
+    previousChunkHash: sha256Schema.nullable(),
+    failureCode: z.enum(["inventory_incomplete", "inventory_limit_exceeded"]),
+  })
+  .strict()
+  .refine(
+    (failure) => (failure.step === 0) === (failure.previousChunkHash === null),
+    "Failure latch must retain its exact preceding chunk root",
+  );
+
+/** Closed immutable step outcomes sharing the canonical chunk key and existing body ceiling. */
+export const syncInventoryChunkSchema = z.union([
+  syncInventoryPageChunkSchema,
+  syncInventoryStepFailureSchema,
+]);
 
 /** Confirms a transcript uses compact JSON spelling without discarded duplicate fields.
  *

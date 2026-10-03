@@ -31,6 +31,7 @@ import type {
   SyncResumeOperationInput,
   SyncStartInventoryInput,
   SyncStoreErrorCode,
+  SyncStoreFailure,
   SyncTombstoneRequest,
 } from "@core/sync/sync-store.types";
 import { describe, expect, it } from "vitest";
@@ -133,6 +134,11 @@ const completeMutation: SyncMutationSuccess = {
   revision: REVISION,
   operationId: OPERATION_ID,
   position: { lane: 7, sequence: EVENT_SEQUENCE },
+};
+const mutationNotAdmitted: SyncStoreFailure = {
+  kind: "error",
+  code: "mutation_not_admitted",
+  operationId: OPERATION_ID,
 };
 // @ts-expect-error A committed mutation must include its committed feed position.
 const mutationWithoutPosition: SyncMutationSuccess = {
@@ -371,6 +377,7 @@ describe("SyncStore contract shapes", () => {
       "vault_not_found",
       "stale_revision",
       "operation_id_reused",
+      "mutation_not_admitted",
       "cursor_expired",
       "invalid_cursor",
       "inventory_incomplete",
@@ -384,7 +391,11 @@ describe("SyncStore contract shapes", () => {
       "storage_unavailable",
     ];
 
-    expect(codes).toHaveLength(16);
+    expect(codes).toHaveLength(17);
+    expect(mutationResultLabel(mutationNotAdmitted)).toBe(
+      "mutation_not_admitted",
+    );
+    expect("retryAfterEpochMs" in mutationNotAdmitted).toBe(false);
     expect(versionResultLabel({ kind: "absent" })).toBe("absent");
     expect(recoveryResultLabel({ kind: "absent" })).toBe("absent");
     void [

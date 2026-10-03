@@ -15,13 +15,18 @@ export type SyncMutationParent =
   | { readonly kind: "never_seen" }
   | { readonly kind: "revision"; readonly revision: SyncRevision };
 
-/** Closed protocol-major-one failure authority for core sync-store operations. */
+/** Closed protocol-major-one failure authority for core sync-store operations.
+ * `mutation_not_admitted` means no durable operation journal exists, so callers must
+ * resubmit the complete request and same operation ID through `mutate`; lane
+ * initialization may nevertheless have occurred.
+ */
 export type SyncStoreErrorCode =
   | "invalid_input"
   | "unsupported_protocol_version"
   | "vault_not_found"
   | "stale_revision"
   | "operation_id_reused"
+  | "mutation_not_admitted"
   | "cursor_expired"
   | "invalid_cursor"
   | "inventory_incomplete"
@@ -38,6 +43,7 @@ export type SyncStoreErrorCode =
 type SyncContextFreeErrorCode = Exclude<
   SyncStoreErrorCode,
   | "storage_throttled"
+  | "mutation_not_admitted"
   | "operation_pending"
   | "effect_unknown"
   | "storage_unavailable"
@@ -51,6 +57,12 @@ export type SyncStoreFailure =
       readonly code: "storage_throttled";
       /** Earliest safe retry time in Unix epoch milliseconds. */
       readonly retryAfterEpochMs: number;
+    }
+  | {
+      readonly kind: "error";
+      readonly code: "mutation_not_admitted";
+      /** Identity to reuse with the full request when retrying through `mutate`. */
+      readonly operationId: SyncOperationId;
     }
   | {
       readonly kind: "error";

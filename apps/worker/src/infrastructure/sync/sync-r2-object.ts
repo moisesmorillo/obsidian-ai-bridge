@@ -7,7 +7,13 @@ import {
   R2_ABSENCE_WILDCARD,
   R2_IF_NONE_MATCH_HEADER,
 } from "@worker/infrastructure/storage-object.constants";
+import { SYNC_PUBLICATION_LIMITS } from "@worker/infrastructure/sync/sync-publication.constants";
+import {
+  SYNC_R2_INVOCATION_CALL_LIMIT,
+  SYNC_R2_WRITE_COOLDOWN_MS,
+} from "@worker/infrastructure/sync/sync-r2.constants";
 import type {
+  SyncR2CallBudget,
   SyncR2Key,
   SyncR2ObjectStore,
   SyncR2Observed,
@@ -18,19 +24,54 @@ import type {
 import { isCanonicalSyncR2Key } from "@worker/infrastructure/sync/sync-r2-key";
 import { SYNC_RECORD_LIMITS } from "@worker/infrastructure/sync/sync-record.schemas";
 
-/** Minimum same-key retry spacing required by the M7 R2 contract. */
-const SYNC_R2_WRITE_COOLDOWN_MS = 1_100;
+/** Mutable accounting state held privately for one invocation's call budget. */
+interface SyncR2CallBudgetState {
+  /** GET and PUT calls already dispatched through this state. */
+  actualCalls: number;
+  /** Capacity held for pending PUT/read-back pairs. */
+  reservedCalls: number;
+}
+
+/** Unforgeable reservation for one conditional PUT and its exact read-back. */
+interface SyncR2WriteReservation {
+  /** Invocation state from which both calls were atomically reserved. */
+  readonly state: SyncR2CallBudgetState;
+  /** Reserved calls that have not yet been dispatched or released. */
+  remainingCalls: number;
+}
+
+/** Keeps invocation counters private while allowing a capability to be shared across stores. */
+const callBudgetStates = new WeakMap<SyncR2CallBudget, SyncR2CallBudgetState>();
+
+/** Creates an independent 64-call accounting capability for one invocation.
+ * @returns A live actual-call count shared by every object store passed this capability.
+ */
+export function createSyncR2CallBudget(): SyncR2CallBudget {
+  const state: SyncR2CallBudgetState = { actualCalls: 0, reservedCalls: 0 };
+  const budget: SyncR2CallBudget = {
+    get actualCalls() {
+      return state.actualCalls;
+    },
+  };
+  callBudgetStates.set(budget, state);
+  return budget;
+}
 
 /** Builds a private one-key conditional adapter with deterministic time and safe effect certainty.
  * @param bucket Conditional-only R2 capability; no delete or unconditional write is accepted.
  * @param epochNow Unix epoch millisecond clock for repeat-write cooldowns.
+ * @param callBudget Optional invocation budget shared by every object store in that invocation.
+ * Omitting the budget preserves the uncounted M7.3 boundary and its R2 call behavior.
  * @returns Key-scoped read/create/CAS operations with typed evidence certainty.
  */
 export function syncR2ObjectStore(
   bucket: R2ConditionalBucketPort,
   epochNow: () => number = Date.now,
+  callBudget?: SyncR2CallBudget,
 ): SyncR2ObjectStore {
   const retryNotBefore = new Map<string, number>();
+  const budgetState =
+    callBudget === undefined ? undefined : callBudgetStates.get(callBudget);
 
   /** Reads exact key bytes and metadata without allowing untrusted size or key input to reach R2.
    * @param key Canonical sync-v1 key admitted by the M7.1 key codec.
@@ -40,6 +81,7 @@ export function syncR2ObjectStore(
   async function read(
     key: SyncR2Key,
     maxBytes: number,
+    reservation?: SyncR2WriteReservation,
   ): Promise<SyncR2ReadResult> {
     if (!isValidSyncKey(key)) return { kind: "unavailable" };
     const familyLimit = maxBytesForKey(key);
@@ -47,11 +89,17 @@ export function syncR2ObjectStore(
       familyLimit === undefined ||
       !Number.isSafeInteger(maxBytes) ||
       maxBytes < 0 ||
-      maxBytes > SYNC_RECORD_LIMITS.contentBodyBytes
+      maxBytes > SYNC_PUBLICATION_LIMITS.journalBytes
     ) {
       return { kind: "unavailable" };
     }
     const readLimit = Math.min(maxBytes, familyLimit);
+    if (
+      callBudget !== undefined &&
+      !recordBudgetedCall(budgetState, reservation)
+    ) {
+      return { kind: "unavailable" };
+    }
     try {
       const stored = await bucket.get(key);
       if (stored === null) return { kind: "absent" };
@@ -86,7 +134,7 @@ export function syncR2ObjectStore(
    * @param key Canonical key that must be absent or already contain the exact requested bytes.
    * @param bytes Exact candidate body retained without text normalization.
    * @param retryContext Previously returned cooldown floor that must survive isolate changes.
-   * @returns Confirmed, refused, throttled, or effect-unknown result.
+   * @returns Confirmed state, precise no-effect provenance, throttle, or uncertainty.
    */
   async function create(
     key: SyncR2Key,
@@ -100,7 +148,7 @@ export function syncR2ObjectStore(
    * @param observed Exact key, bytes, ETag, and upload timestamp from an earlier read.
    * @param bytes Exact candidate replacement body.
    * @param retryContext Previously returned cooldown floor that must survive isolate changes.
-   * @returns Confirmed, refused, throttled, or effect-unknown result.
+   * @returns Confirmed state, precise no-effect provenance, throttle, or uncertainty.
    */
   async function replace(
     observed: SyncR2Observed,
@@ -121,7 +169,7 @@ export function syncR2ObjectStore(
    * @param bytes Exact candidate body.
    * @param condition Create-only absence or exact previously observed ETag predicate.
    * @param retryContext Prior safe retry floor supplied by the caller across isolate changes.
-   * @returns The single-attempt result; it never retries after refusal or uncertainty.
+   * @returns One effect-certainty result; it never retries after refusal or uncertainty.
    */
   async function write(
     key: SyncR2Key,
@@ -144,12 +192,15 @@ export function syncR2ObjectStore(
     if (bytes.byteLength > familyLimit) {
       throw new RangeError("Sync R2 object exceeds its key-family byte limit.");
     }
-    const current = await read(key, SYNC_RECORD_LIMITS.contentBodyBytes);
+    const current = await read(key, SYNC_PUBLICATION_LIMITS.journalBytes);
     if (current.kind === "unavailable") return { kind: "effect_unknown" };
     if (condition.kind === "create" && current.kind === "observed") {
       return equalBytes(current.observation.bytes, bytes)
         ? { kind: "confirmed" }
-        : { kind: "refused" };
+        : {
+            kind: "refused",
+            noEffectProvenance: "preflight_no_dispatch",
+          };
     }
     if (condition.kind === "replace") {
       if (
@@ -159,7 +210,10 @@ export function syncR2ObjectStore(
           condition.observed.uploaded.getTime() ||
         !equalBytes(current.observation.bytes, condition.observed.bytes)
       ) {
-        return { kind: "refused" };
+        return {
+          kind: "refused",
+          noEffectProvenance: "preflight_no_dispatch",
+        };
       }
     }
 
@@ -193,32 +247,59 @@ export function syncR2ObjectStore(
       };
     }
 
+    const reservation =
+      callBudget === undefined
+        ? undefined
+        : reserveWriteAndReadback(budgetState);
+    if (callBudget !== undefined && reservation === undefined) {
+      return effectUnknown(undefined);
+    }
+    if (
+      callBudget !== undefined &&
+      !recordBudgetedCall(budgetState, reservation)
+    ) {
+      releaseReservation(reservation);
+      return effectUnknown(undefined);
+    }
+
     try {
       const result = await bucket.put(key, bytes, options);
       if (result === null) {
-        const readback = await read(key, SYNC_RECORD_LIMITS.contentBodyBytes);
+        const readback = await read(
+          key,
+          SYNC_PUBLICATION_LIMITS.journalBytes,
+          reservation,
+        );
         if (
           readback.kind === "observed" &&
           equalBytes(readback.observation.bytes, bytes)
         ) {
           return { kind: "confirmed" };
         }
-        if (
-          readback.kind === "observed" ||
-          (readback.kind === "absent" && condition.kind === "replace")
-        ) {
-          return { kind: "refused" };
+        if (readback.kind === "unavailable") {
+          const retryAfterEpochMs = epochNow() + SYNC_R2_WRITE_COOLDOWN_MS;
+          retryNotBefore.set(key, retryAfterEpochMs);
+          return {
+            kind: "effect_unknown",
+            noEffectProvenance: "conditional_null",
+            retryAfterEpochMs,
+          };
         }
-        const retryAfterEpochMs = epochNow() + SYNC_R2_WRITE_COOLDOWN_MS;
-        retryNotBefore.set(key, retryAfterEpochMs);
-        return effectUnknown(retryAfterEpochMs);
+        return {
+          kind: "refused",
+          noEffectProvenance: "conditional_null",
+        };
       }
       const successfulUploadTime = result.uploaded.getTime();
       const resultRetryAt = Number.isFinite(successfulUploadTime)
         ? successfulUploadTime + SYNC_R2_WRITE_COOLDOWN_MS
         : epochNow() + SYNC_R2_WRITE_COOLDOWN_MS;
       retryNotBefore.set(key, resultRetryAt);
-      const readback = await read(key, SYNC_RECORD_LIMITS.contentBodyBytes);
+      const readback = await read(
+        key,
+        SYNC_PUBLICATION_LIMITS.journalBytes,
+        reservation,
+      );
       return readback.kind === "observed" &&
         equalBytes(readback.observation.bytes, bytes)
         ? { kind: "confirmed" }
@@ -227,9 +308,14 @@ export function syncR2ObjectStore(
       const retryAfterEpochMs = epochNow() + SYNC_R2_WRITE_COOLDOWN_MS;
       retryNotBefore.set(key, retryAfterEpochMs);
       if (isRateLimitError(error)) {
+        releaseReservation(reservation);
         return { kind: "throttled", retryAfterEpochMs };
       }
-      const readback = await read(key, SYNC_RECORD_LIMITS.contentBodyBytes);
+      const readback = await read(
+        key,
+        SYNC_PUBLICATION_LIMITS.journalBytes,
+        reservation,
+      );
       if (
         readback.kind === "observed" &&
         equalBytes(readback.observation.bytes, bytes)
@@ -241,6 +327,60 @@ export function syncR2ObjectStore(
   }
 
   return { read, create, replace };
+}
+
+/** Reserves the indivisible conditional PUT/read-back pair within the invocation ceiling.
+ * @param state Budget state owned by the caller's invocation capability.
+ * @returns A reservation for both actual calls, or undefined when both cannot be guaranteed.
+ */
+function reserveWriteAndReadback(
+  state: SyncR2CallBudgetState | undefined,
+): SyncR2WriteReservation | undefined {
+  if (
+    state === undefined ||
+    state.actualCalls + state.reservedCalls + 2 > SYNC_R2_INVOCATION_CALL_LIMIT
+  ) {
+    return undefined;
+  }
+  state.reservedCalls += 2;
+  return { state, remainingCalls: 2 };
+}
+
+/** Counts one dispatched R2 call, consuming a reservation or free invocation capacity.
+ * @param state Budget state attached to an invocation capability.
+ * @param reservation Pair reservation when this call is a write or its mandatory read-back.
+ * @returns Whether the call may reach the bucket without exceeding the cap.
+ */
+function recordBudgetedCall(
+  state: SyncR2CallBudgetState | undefined,
+  reservation?: SyncR2WriteReservation,
+): boolean {
+  if (state === undefined) return false;
+  if (reservation !== undefined) {
+    if (reservation.state !== state || reservation.remainingCalls === 0) {
+      return false;
+    }
+    reservation.remainingCalls -= 1;
+    state.reservedCalls -= 1;
+  } else if (
+    state.actualCalls + state.reservedCalls >=
+    SYNC_R2_INVOCATION_CALL_LIMIT
+  ) {
+    return false;
+  }
+  state.actualCalls += 1;
+  return true;
+}
+
+/** Releases still-unused reserved read-back capacity after a direct rate-limit response.
+ * @param reservation Reservation whose conditional PUT was dispatched but read-back was not used.
+ */
+function releaseReservation(
+  reservation: SyncR2WriteReservation | undefined,
+): void {
+  if (reservation === undefined) return;
+  reservation.state.reservedCalls -= reservation.remainingCalls;
+  reservation.remainingCalls = 0;
 }
 
 /** Confirms an observation retains complete generation evidence before replacement.
@@ -302,11 +442,27 @@ function maxBytesForKey(key: SyncR2Key): number | undefined {
     return SYNC_RECORD_LIMITS.contentBodyBytes;
   }
   if (/\/heads\/[^/]+\.json$/.test(key)) return SYNC_RECORD_LIMITS.headBytes;
+  if (/\/operations\/[^/]+\.head-refusal\.json$/.test(key)) {
+    return SYNC_PUBLICATION_LIMITS.headRefusalReceiptBytes;
+  }
+  if (/\/operations\/[^/]+\.json$/.test(key)) {
+    return SYNC_PUBLICATION_LIMITS.journalBytes;
+  }
   if (/\/inventories\/scans\/[^/]+\/manifest\.json$/.test(key)) {
-    return SYNC_RECORD_LIMITS.manifestBytes;
+    return SYNC_RECORD_LIMITS.witnessedManifestBytes;
   }
   if (/\/inventories\/scans\/[^/]+\/chunks\/[0-9]+\.json$/.test(key)) {
     return SYNC_RECORD_LIMITS.chunkBytes;
+  }
+  if (/\/inventories\/scans\/[^/]+\/chunks\/claims\/[0-9]+\.json$/.test(key)) {
+    return SYNC_RECORD_LIMITS.cursorJournalBytes;
+  }
+  if (
+    /\/inventories\/scans\/[^/]+\/chunks\/cursors\/[0-9a-f]{64}\.json$/.test(
+      key,
+    )
+  ) {
+    return SYNC_RECORD_LIMITS.cursorWitnessBytes;
   }
   return 2_048;
 }

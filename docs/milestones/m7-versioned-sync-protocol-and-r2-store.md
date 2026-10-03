@@ -2,8 +2,10 @@
 
 ## Status
 
-**NEXT — M7.1/M7.2 are complete; M7.3's isolated R2 primitives are verified in
-this implementation branch, pending merge; M7.4 remains.** This milestone
+**NEXT — M7.1/M7.2 are complete; M7.3's isolated R2 primitives merged in
+PR #95. M7.4's private implementation is locally validated in this unmerged
+feature PR; remote Workers Free/account qualification and maximal real-head
+profiling remain pending.** This milestone
 establishes a versioned, storage-independent sync contract and its isolated R2
 implementation. It does not enable synchronization, change the current writer,
 migrate data, or authorize a personal-vault cutover. Branch evidence becomes a

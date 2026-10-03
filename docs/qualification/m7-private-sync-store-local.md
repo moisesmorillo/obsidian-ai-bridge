@@ -4,7 +4,7 @@
 
 ## Candidate and boundary
 
-- Branch: `feat/m7-complete-sync-store`; HEAD: `59bd2f5`; review base: `2a885a5`.
+- Branch: `feat/m7-complete-sync-store`; review base: `2a885a5`. The initial overlay was reviewed at `59bd2f5`; the committed code/test snapshot validated afterward is `dfe274e1562f327350ede5f594fe62afa51b6b79`. Subsequent documentation-only publication corrections do not change that source/test snapshot; the final publication tip is identified in the PR commit list and final review report, not by a self-referential HEAD claim in this file.
 - The initial approved candidate included the complete tracked and untracked implementation overlay at `59bd2f5`. The owner subsequently authorized coherent forward-only commits, pushing this feature branch and opening an unmerged PR. Existing shared history is not rewritten; deployment and activation remain prohibited.
 - Private nine-method composition implements conditional mutation publication/recovery, committed feed paging, v2 inventory cursor witnesses/chunk replay, complete-handle evidence paging and scoped expired-scratch cleanup.
 - Original conditional-write authority, permanent manifest no-reuse tombstones and conservative unresolved effects remain intact. The current writer, HTTP/MCP surface and plugin are unchanged.
@@ -14,7 +14,8 @@
 | Check | Evidence |
 | --- | --- |
 | Installation | `mise install` completed. |
-| Canonical gate | `mise run check && git diff --check` passed after R2, task `b45e01da2`, exit 0. Includes Biome diagnostics/assists, semantic lint/TSDoc, typecheck, tests/coverage, build and local native-runtime checks. |
+| Post-R2 canonical gate | `mise run check && git diff --check` passed after R2, task `b45e01da2`, exit 0. Includes Biome diagnostics/assists, semantic lint/TSDoc, typecheck, tests/coverage, build and local native-runtime checks. |
+| Post-commit canonical gate | At committed snapshot `dfe274e1562f327350ede5f594fe62afa51b6b79`, `mise run check`, `git diff --check` and `git diff origin/main...HEAD --check` passed in `baa45b705`, exit 0. The tree was clean; coverage below was unchanged. This is separate evidence from the earlier overlay run. |
 | Statements | **12,272/12,917 (95%)**; unchanged configured threshold. |
 | Branches | **10,613/11,604 (91.45%)**. |
 | Functions | **2,410/2,443 (98.64%)**. |

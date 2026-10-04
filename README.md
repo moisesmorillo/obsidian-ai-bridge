@@ -2,10 +2,11 @@
 
 A data-safety-focused bridge between Obsidian and authorized remote AI or agent clients.
 
-> **Status:** M1–M6 are **COMPLETE**; [M7 — versioned sync protocol and isolated R2 store](docs/roadmap.md#m7--versioned-sync-protocol-and-isolated-r2-store)
+> **Status:** M1–M6 are **COMPLETE**; [M7 — versioned sync protocol and isolated R2 store](docs/milestones/m7-versioned-sync-protocol-and-r2-store.md)
 > is **NEXT** in this roadmap transition. M7.1–M7.3 are merged; M7.4's private
-> implementation is locally validated in this feature PR, with [remote qualification
-> and maximal-profile gates still pending](docs/qualification/m7-private-sync-store-local.md).
+> implementation merged in PR #97 (`62696b0`), including terminal inventory failure
+> recovery. [Local evidence](docs/qualification/m7-private-sync-store-local.md) is not
+> operational qualification; follow the [remaining-gates plan](docs/plans/m7-sync-store-qualification.md).
 > M7 does not activate sync, migrate data, or change the current writer. M5 qualifies only the latest M5-ready release,
 > **v1.0.2**, for one designated active writer on Obsidian Desktop 1.13.7 / macOS
 > 26.6.2 / Apple M4 Pro, with synthetic-vault scale through 10,000 eligible Markdown
@@ -179,8 +180,9 @@ Start with [AGENTS.md](AGENTS.md), [architecture](docs/architecture.md), the
 [M5 specification](docs/milestones/m5-operational-and-security-readiness.md) with its
 [final qualification evidence](docs/qualification/m5-final.md). M1–M6 are complete in
 this transition. M7 is the sole NEXT milestone, with an implementation-ready
-[specification](docs/milestones/m7-versioned-sync-protocol-and-r2-store.md); its roadmap
-transition becomes canonical only when the documentation PR merges. The accepted
+[specification](docs/milestones/m7-versioned-sync-protocol-and-r2-store.md). Its isolated
+implementation has merged; [qualification and exit](docs/plans/m7-sync-store-qualification.md)
+remain pending. The accepted
 [ADR 0014](docs/decisions/0014-stateless-mcp-adapter-and-existing-credentials.md),
 completed [M6 specification](docs/milestones/m6-mcp-adapter.md), and [M6 qualification
 report](docs/qualification/m6-final.md) record the adapter and its residual limits.

@@ -1,6 +1,8 @@
 # M7.4 Complete Sync Store Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **Historical implementation recipe:** PR #97 delivered this private store.
+> Do not repeat the production tasks below; follow the separately gated
+> [qualification plan](../../plans/m7-sync-store-qualification.md) for remaining work.
 
 **Goal:** Complete the private protocol-major-one `SyncStore` over the isolated M7.3 R2 primitives, with crash-safe publication, fair feed and bounded resumable inventory, without activating synchronization.
 
@@ -10,11 +12,21 @@
 
 **Spec:** `docs/milestones/m7-versioned-sync-protocol-and-r2-store.md` (M7.4), with M7.1–M7.3 already merged; ADR 0016 remains a proposal for later product activation.
 
-## Local execution status (unmerged)
+## Merged execution status (qualification pending)
 
-The private nine-method composition, mutation/feed/recovery state machines and bounded v2 inventory implementation are present on `feat/m7-complete-sync-store`. The unchanged 95% statement gate and canonical `mise run check` passed locally. The retained independent review completed the mutation/publication/schema structural matrix and accepted R1's pending-target floor correction. It found R2's equivalent unsafe response floors during lane reservation/release; five RED/GREEN cases now preserve the original journal at the attempted PUT and refuse later floor-authority CAS, including a late unsafe observation clock. Nine focused lane/target/admission regressions pass. The final canonical check passed with **12,272/12,917 statements (95%)**; retained corrective review approved the isolated implementation with **R1 and R2 fixed and no open actionable findings**. See [local evidence and remaining gates](../../qualification/m7-private-sync-store-local.md). **The private implementation is locally validated and approved; M7.4's full exit remains open for qualification/merge, and M7 remains NEXT.**
+**Historical initial evidence:** the private nine-method composition, mutation/feed/recovery state machines and bounded v2 inventory implementation were present on `feat/m7-complete-sync-store`. The unchanged 95% statement gate and canonical `mise run check` passed locally. The retained independent review completed the mutation/publication/schema structural matrix and accepted R1's pending-target floor correction. It found R2's equivalent unsafe response floors during lane reservation/release; five RED/GREEN cases now preserve the original journal at the attempted PUT and refuse later floor-authority CAS, including a late unsafe observation clock. Nine focused lane/target/admission regressions pass. The initial canonical check passed with **12,272/12,917 statements (95%)**; retained corrective review approved the isolated implementation with **R1 and R2 fixed and no open actionable findings**. See [local evidence and remaining gates](../../qualification/m7-private-sync-store-local.md). **The initial private implementation was locally validated and approved; current merged status and pending qualification are recorded below. M7 remains NEXT.**
 
-The owner's latest delivery instruction supersedes the earlier no-commit restriction: preserve all existing changes, prepare coherent forward-only commits, push `feat/m7-complete-sync-store`, and open one PR for review without merging. Continue inline; deployment and activation remain prohibited. Evidence and finding closure are recorded in `.superpowers/sdd/2026-09-29-m7-complete-sync-store/progress.md`. No current writer/route/plugin is activated; local Miniflare is not remote Workers Free CPU or account qualification.
+PR #97 subsequently merged at `62696b0`, including the forward-only terminal
+inventory correction `ed88daf`. The merged source passed canonical checks and
+independent corrective review: **134/134** pertinent tests, **12,301/12,948
+statements (95%)**, no actionable finding. The preceding paragraph records initial
+implementation evidence, not the final corrected tree. Implementation delivery is
+closed; M7.4 qualification and M7 exit remain pending under the
+[qualification plan](../../plans/m7-sync-store-qualification.md). The task checkboxes
+below are the historical implementation recipe, not an instruction to repeat completed
+production work or evidence that remaining profiling has run. No current writer,
+route or plugin is activated; local Miniflare is not remote Workers Free CPU/account
+qualification. Deployment, real R2/vault access and activation need separate approval.
 
 ## Global Constraints
 

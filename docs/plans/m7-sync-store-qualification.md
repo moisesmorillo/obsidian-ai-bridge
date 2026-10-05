@@ -43,6 +43,11 @@ short/empty-page behavior: synthetic cursor injection is not native R2 evidence.
 | Stable-vector finalization and evidence paging | Changed/pending lane prevents completion; each evidence response obeys chunk/head limits; full traversal proves counts/root |
 | Expiry and scratch cleanup | Canonical expired scratch only, bounded deletion/read-back, permanent no-reuse manifest retained, unrelated namespaces untouched |
 
+The [native cleanup contract subset](../qualification/m7-native-inventory-cleanup.md)
+covers canonical v2 scratch, peer-slot/manifest/sentinel preservation, injected expiry
+and an injected lost DELETE acknowledgement with actual local binding calls. It does
+not close owned-slot/competing-CAS/read-back-failure or real-time expiry/cleanup gates.
+
 Count **physical binding calls**, including control GETs, LISTs, conditional PUTs,
 read-backs, cleanup and refused recovery attempts, not only reserved logical credits.
 For every start/step/finalization/evidence/cleanup/recovery branch compare actual calls

@@ -131,6 +131,15 @@ These checks do **not** establish that CI executed the opt-in 1,000-head profile
 its measurements above come from the retained local run. CI evidence here is bound
 to that explicit head, not automatically to later documentation commits.
 
+The subsequent documentation correction head `6261c364ed401607042ed5669066a881906aea19`
+also passed [Quality checks, attempt 3](https://github.com/moisesmorillo/obsidian-ai-bridge/actions/runs/37369632114/attempts/3)
+and [Conventional PR title](https://github.com/moisesmorillo/obsidian-ai-bridge/actions/runs/37369632121).
+Its quality log confirms the same test counts and coverage. The first two quality
+attempts were cancelled without executing steps because a hosted runner could not
+be assigned; they are not test evidence. PR #100 merged as
+`2d961c324cca015d22089e883a506b60b199d7c2`, whose tree was verified identical to
+`6261c36`. This does not qualify later test additions or the opt-in profile in CI.
+
 Current scope includes only local host measurements and this population.
 Maximal, fault/short-page, cleanup, expiry/recovery matrices, trustworthy isolate CPU
 and memory, retry-inclusive account/billing/storage admission and remote Workers Free

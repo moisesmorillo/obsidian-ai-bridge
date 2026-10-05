@@ -92,7 +92,10 @@ and independently closed recovery/evidence findings. The maximal real-head profi
 remains open. The subsequent [1,000-head profile](qualification/m7-inventory-profile-1000.md)
 completed full verified traversal in about 39 min 30 s and measured host journal/seal
 costs, not isolate/remote CPU or later-scale feasibility. M7 remains NEXT; the current writer
-and support claim are unchanged.
+and support claim are unchanged. A focused [native cleanup contract test](qualification/m7-native-inventory-cleanup.md)
+checks canonical v2 scratch, exact manifest/peer preservation, injected expiry and
+lost DELETE acknowledgement with independent binding-call counts. This is a bounded
+regression subset, not the completed expiry/cleanup/fault or remote qualification matrix.
 
 ## M7.2 core sync-store evidence
 

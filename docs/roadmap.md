@@ -21,7 +21,10 @@ does not close scale or remote gates. The subsequent
 [1,000-head local profile](qualification/m7-inventory-profile-1000.md) completed in
 about 39 min 30 s under an explicitly extended 90-minute process budget, with full
 traversal and host-resource observations; 5,000/10,000 heads remain separately gated. No later-milestone production code or
-remote deployment is authorized by this profiling work.
+remote deployment is authorized by this profiling work. The focused
+[native cleanup contract subset](qualification/m7-native-inventory-cleanup.md)
+adds canonical deletion/preservation and lost-acknowledgement regressions under an
+injected clock; the remaining qualification gates and M7 NEXT status are unchanged.
 
 This is the canonical execution roadmap: implemented facts, planned direction and
 unresolved choices are distinct. Dates are intentionally not assigned. Engineering

@@ -51,6 +51,7 @@ run deadline stop work without changing the application's expiry or defenses.
 | `trace.jsonl` | Pre-dispatch intents and linked observed replies: actual method, timestamps, status, physical attempted GET/LIST/PUT calls, body bytes and explicitly host-only RSS |
 | `report.json` | Traversal completion/count/root handle, unique summaries, elapsed times, observed calls/maxima, unresolved attempts/accounting completeness, largest seeded head, recipe/source identity and versions |
 | `worker.mjs` | Exact native fixture bundled for the run |
+| `host-resources.json` | Invocation-local host timing/memory observations, written after teardown; auxiliary telemetry, never pair/checkpoint authority |
 
 `completed` certifies traversal only. `accountingComplete` additionally requires a
 reply for every retained dispatch intent; `calls` and `maxCallsPerRequest` explicitly
@@ -77,6 +78,36 @@ Workers Free CPU gate. The driver independently refuses a 401st binding dispatch
 the store retains its original physical-credit preflight. This baseline does not
 claim exhaustive worst-branch reservation verification.
 
+## Host-resource measurements
+
+The host recorder measures synchronous pair verification, recovery journal reading,
+final journal summarization and post-disposal sealing using monotonic wall time.
+Before/after snapshots include Node RSS, used/total heap, external and array-buffer
+bytes. The OS-provided Node process peak RSS is converted from KiB to bytes and
+covers the **whole process lifetime**, including prior test/import activity; it is
+not a phase allocation maximum. Snapshots can miss transient heap allocations.
+Child Bun/workerd processes and isolate memory/CPU are excluded. These observations
+cannot establish a remote budget or complete machine memory footprint.
+
+Telemetry identifies the recipe, process and invocation start; it is overwritten
+per admitted invocation, not combined into a fabricated cross-resume peak. Rejected
+recipe/persistence pairs do not overwrite retained telemetry. `sealed` records actual
+successful disposal/sealing separately from `traversalCompleted`; failures and
+interrupted traversal are not certified as successful by timing data. The recipe
+includes the recorder source, but auxiliary telemetry is deliberately excluded from
+the persistence pair: no telemetry file grants replay or completion authority.
+
+The owner authorized the next **local 1,000-head** measurement after tests/validation.
+The initial 30-minute process budget was explicitly extended to **90 minutes** after
+progress inspection showed sustained scanning, not a hang. Because an existing
+background-task deadline cannot be changed, the initial run was stopped and retained
+unsealed (732 persisted heads); a fresh directory/run uses the approved longer budget.
+A process deadline can force termination and leave an unsealed run: retain its evidence,
+do not repair its authority or extend application scan expiry. Parallel requests on
+one scan were not introduced. No 5,000/10,000-head or remote execution is authorized
+by this step. The [completed 1,000-head profile](m7-inventory-profile-1000.md) records actual calls,
+full traversal and host costs; maximal host-resource feasibility remains unqualified.
+
 ## Observed local baseline
 
 The corrective 0/1-head task after canonical validation completed successfully
@@ -100,10 +131,12 @@ Later harness edits require a fresh recipe/run rather than adopting these artifa
 
 ## Validation and remaining work
 
-Independent corrective code review approved the local harness; design review found
-it ready with a bounded follow-up. Before authorizing a large-scale run, measure host
-seal/journal processing and bound or stream it if needed: verification/sealing hash
-all retained bytes, while trace classification reads the full journal. Peak host
+Independent corrective code review approved the original baseline harness; design
+review found it ready with a bounded follow-up. The subsequent
+[1,000-head host measurement](m7-inventory-profile-1000.md) measures journal/seal costs,
+not 10,000-head feasibility. Before authorizing larger runs, assess those observations
+and bound or stream processing if needed: verification/sealing hash all retained
+bytes, while trace classification reads the full journal. Peak host
 memory can include the largest native persistence file and full trace. The 0/1-head
 results do not establish maximal host resource feasibility. This follow-up is deferred
 because large-scale execution is outside this PR's authorized baseline scope.

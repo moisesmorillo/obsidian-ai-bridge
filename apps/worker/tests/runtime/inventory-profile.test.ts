@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runLocalInventoryProfile } from "@worker-tests/runtime/fixtures/inventory-profile-driver";
+import { hostResourcesSchema } from "@worker-tests/runtime/fixtures/inventory-profile-host-resources";
 import { Miniflare } from "miniflare";
 import { expect, it } from "vitest";
 
@@ -25,6 +26,9 @@ it.each([
         ...(completed ? {} : { maxRequests: 1 }),
       });
       const worker = readFileSync(join(directory, "worker.mjs"));
+      const hostResources = readFileSync(
+        join(directory, "host-resources.json"),
+      );
       const path = join(
         directory,
         removed === "replacement" ? "r2-state" : removed,
@@ -35,6 +39,9 @@ it.each([
         runLocalInventoryProfile({ directory, headCount: 1 }),
       ).rejects.toThrow("Persistence pair");
       expect(readFileSync(join(directory, "worker.mjs"))).toEqual(worker);
+      expect(readFileSync(join(directory, "host-resources.json"))).toEqual(
+        hostResources,
+      );
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }
@@ -154,6 +161,31 @@ it.each([0, 1])(
       expect(report.requests).toBeGreaterThan(1);
       expect(report.calls.list).toBeGreaterThanOrEqual(1);
       expect(report.handle?.entryCount).toBe(headCount);
+      const resources = hostResourcesSchema.parse(
+        JSON.parse(
+          readFileSync(join(directory, "host-resources.json"), "utf8"),
+        ),
+      );
+      expect(resources).toMatchObject({
+        scope: "node-host-process-only",
+        recipeSha256: report.recipeSha256,
+        sealed: true,
+        traversalCompleted: true,
+        isolateCpu: "unavailable",
+        isolateMemory: "unavailable",
+      });
+      expect(resources.phases).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ phase: "verify_pair", outcome: "ok" }),
+          expect.objectContaining({ phase: "summarize_trace", outcome: "ok" }),
+          expect.objectContaining({ phase: "seal_pair", outcome: "ok" }),
+        ]),
+      );
+      for (const phase of resources.phases) {
+        expect(phase.wallMs).toBeGreaterThanOrEqual(0);
+        expect(phase.before.rssBytes).toBeGreaterThan(0);
+        expect(phase.after.processPeakRssBytes).toBeGreaterThan(0);
+      }
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }

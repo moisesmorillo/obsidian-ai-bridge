@@ -117,9 +117,21 @@ certified recoverable**. No authority was repaired to adopt it. The successful f
 run above accounts for its own calls only; both attempts together observed 132,644
 binding calls, not a remote billing estimate.
 
-Canonical validation before execution passed (23 native tests; production coverage
-unchanged). Final post-evidence checks and semantic review are required before PR
-publication. Current scope includes only local host measurements and this population.
+Canonical validation before execution and final post-evidence `mise run check`
+passed locally, including 2,081 source tests, 23 native tests and 12 artifact smoke
+tests. The final local publication gate (`baf0a14ef`) also passed `git diff --check`.
+Author semantic review of the complete PR diff was completed; it was **not independent**.
+
+GitHub CI was separately verified for PR #100 head
+`878d0451f5ed422cdbb2e22cbaf8882d72964247`: [Quality checks](https://github.com/moisesmorillo/obsidian-ai-bridge/actions/runs/37351695063)
+and [Conventional PR title](https://github.com/moisesmorillo/obsidian-ai-bridge/actions/runs/37351695130)
+both succeeded. The quality-run log confirms the same test counts and production
+coverage: 95% statements, 91.46% branches, 98.65% functions and 96.81% lines.
+These checks do **not** establish that CI executed the opt-in 1,000-head profile;
+its measurements above come from the retained local run. CI evidence here is bound
+to that explicit head, not automatically to later documentation commits.
+
+Current scope includes only local host measurements and this population.
 Maximal, fault/short-page, cleanup, expiry/recovery matrices, trustworthy isolate CPU
 and memory, retry-inclusive account/billing/storage admission and remote Workers Free
 qualification remain pending under the [qualification plan](../plans/m7-sync-store-qualification.md).

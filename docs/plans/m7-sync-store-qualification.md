@@ -1,6 +1,8 @@
 # M7 SyncStore qualification: remaining gates
 
-**Plan only; no profile has been run by this change.** PR #97 merged the private
+**Qualification plan; only local 0/1-head baseline profiles have run.** The
+[test-only harness and observed evidence](../qualification/m7-inventory-profile-harness.md)
+do not close the maximal, fault/cleanup or remote qualification gates. PR #97 merged the private
 implementation at `62696b030a817eb2c4f91af8a6986a688fcd318b`, including terminal
 inventory failure correction `ed88daf`. M7 remains **NEXT**. Qualification must
 close the gaps in [local evidence](../qualification/m7-private-sync-store-local.md),
@@ -10,7 +12,7 @@ not activate the store or change the current writer.
 
 | Stage | Deliverable | Authorization boundary |
 | --- | --- | --- |
-| 1. Local harness | Separate focused PR adding reproducible synthetic maximal profiling and a canonical `mise` task | Not implemented or authorized by this documentation PR; no real account, R2 or vault |
+| 1. Local harness | [Native baseline harness](../qualification/m7-inventory-profile-harness.md) provides bounded fixtures, one operation/request, checkpoints and a canonical `mise` task | Implemented locally; no real account, R2 or vault, and maximal/fault/cleanup qualification is not implied |
 | 2. Local evidence | Run the reviewed harness against a pinned local workerd build; retain measurements and failure traces | Explicit local execution approval; never call arithmetic or host-process CPU a remote profile |
 | 3. Remote qualification | Approved isolated Workers Free/R2 experiment and account-admission report | Separate owner approval of resources, workload, maximum cost/calls, retention and cleanup; no production bucket or personal vault |
 | 4. M7 exit | Acceptance/evidence reconciliation, canonical checks, semantic review and a completion PR | Only after all specification criteria pass; no automatic activation or following NEXT milestone |
@@ -54,9 +56,10 @@ expiry or suppressing defensive checks. Local CPU reporting must identify its me
 scope; if isolate CPU is unavailable, record that limitation instead of substituting
 Node/host wall time. Local workerd never satisfies the remote CPU gate.
 
-The future profiling task is deliberately **not** an existing `mise` command.
-Its harness PR must define the task, fixture setup, resumable driver, call accounting,
-measurement method, stop conditions and evidence outputs before execution. Keep costly
+The baseline `mise run worker:inventory-profile` task now exists; its
+[harness guide](../qualification/m7-inventory-profile-harness.md) defines fixture
+setup, resumable driving, call accounting, measurement scope, stop conditions and
+retained outputs. It is not an implementation of every profile in this matrix. Keep costly
 maximal runs separate from routine `mise run check`; retain fast regression assertions
 in the canonical gate. If implementing the harness crosses repository size limits,
 propose independent PR boundaries before production changes.
@@ -131,5 +134,6 @@ only where needed to verify identity-bound transitions.
   enrollment, migration, vault cutover and activation require a separate specification
   and authorization; no following milestone is started by this plan.
 
-**Next actionable change:** propose the focused local profiling harness PR with its
-measurement method and reviewable scope. Remote execution remains separately gated.
+**Next actionable change:** review the baseline harness/evidence, then explicitly
+scope the maximal local profile and missing failure/cleanup measurements before
+executing those long runs. Remote execution remains separately gated.

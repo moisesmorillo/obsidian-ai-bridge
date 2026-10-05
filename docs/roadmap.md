@@ -15,8 +15,13 @@ inventory failure correction; see [local evidence](qualification/m7-private-sync
 Its remote Workers Free CPU/account qualification and maximal real-head profile
 remain separate pending gates under the [qualification plan](plans/m7-sync-store-qualification.md).
 M7 remains NEXT: merged private code is not milestone completion or permission to
-activate sync. The next work is a separately scoped local profiling harness, not
-later-milestone production code or remote deployment.
+activate sync. The test-only local profiling harness merged in PR #99 at `306aa35`;
+its [0/1-head baseline evidence](qualification/m7-inventory-profile-harness.md)
+does not close scale or remote gates. The subsequent
+[1,000-head local profile](qualification/m7-inventory-profile-1000.md) completed in
+about 39 min 30 s under an explicitly extended 90-minute process budget, with full
+traversal and host-resource observations; 5,000/10,000 heads remain separately gated. No later-milestone production code or
+remote deployment is authorized by this profiling work.
 
 This is the canonical execution roadmap: implemented facts, planned direction and
 unresolved choices are distinct. Dates are intentionally not assigned. Engineering

@@ -25,6 +25,7 @@ import {
   profileReplySchema,
   profileStateSchema,
 } from "@worker-tests/runtime/fixtures/inventory-profile.contract";
+import { HostResourceRecorder } from "@worker-tests/runtime/fixtures/inventory-profile-host-resources";
 import {
   sealProfilePair,
   verifyProfilePair,
@@ -90,9 +91,15 @@ export async function runLocalInventoryProfile(
   const lockPath = join(options.directory, "run.lock");
   const lock = openSync(lockPath, "wx");
   let runtime: Miniflare | undefined;
+  const resources = new HostResourceRecorder();
+  let admittedRecipe: string | null = null;
+  let traversalCompleted = false;
+  let sealed = false;
   const staging = mkdtempSync(join(tmpdir(), "m7-profile-build-"));
   try {
-    const resumed = verifyProfilePair(options.directory);
+    const resumed = resources.measure("verify_pair", () =>
+      verifyProfilePair(options.directory),
+    );
     const root = new URL("../../../../../", import.meta.url).pathname;
     const output = join(staging, "worker.mjs");
     execFileSync(
@@ -134,6 +141,7 @@ export async function runLocalInventoryProfile(
       .update(JSON.stringify({ versions, nodeVersion: process.version }));
     for (const name of [
       "inventory-profile-driver.ts",
+      "inventory-profile-host-resources.ts",
       "inventory-profile-state.ts",
       "inventory-profile-policy.ts",
       "inventory-profile-persistence.ts",
@@ -169,8 +177,12 @@ export async function runLocalInventoryProfile(
         scanStartedAtMs: null,
         maxHeadBytes: 0,
       });
+    admittedRecipe = recipeHash;
     if (resumed) {
-      if (readProfileTrace(tracePath).unresolvedRequests > 0)
+      if (
+        resources.measure("recover_trace", () => readProfileTrace(tracePath))
+          .unresolvedRequests > 0
+      )
         state = profileStateSchema.parse({
           ...state,
           notBeforeMs: Math.max(
@@ -189,6 +201,7 @@ export async function runLocalInventoryProfile(
       writeFileSync(tracePath, "");
     }
     rmSync(join(options.directory, "report.json"), { force: true });
+    rmSync(join(options.directory, "host-resources.json"), { force: true });
     checkpoint(statePath, recipeHash, state);
     runtime = new Miniflare({
       resourcePersistencePath: join(options.directory, "r2-state"),
@@ -279,7 +292,10 @@ export async function runLocalInventoryProfile(
       });
       checkpoint(statePath, recipeHash, state);
     }
-    const trace = readProfileTrace(tracePath);
+    const trace = resources.measure("summarize_trace", () =>
+      readProfileTrace(tracePath),
+    );
+    traversalCompleted = state.phase === "done";
     const rows = trace.replies;
     const report = {
       schemaVersion: 1,
@@ -342,12 +358,25 @@ export async function runLocalInventoryProfile(
     try {
       if (runtime !== undefined) {
         await runtime.dispose();
-        sealProfilePair(options.directory);
+        resources.measure("seal_pair", () =>
+          sealProfilePair(options.directory),
+        );
+        sealed = true;
       }
     } finally {
-      rmSync(staging, { recursive: true, force: true });
-      closeSync(lock);
-      unlinkSync(lockPath);
+      try {
+        if (admittedRecipe !== null)
+          resources.save(
+            join(options.directory, "host-resources.json"),
+            admittedRecipe,
+            traversalCompleted,
+            sealed,
+          );
+      } finally {
+        rmSync(staging, { recursive: true, force: true });
+        closeSync(lock);
+        unlinkSync(lockPath);
+      }
     }
   }
 }

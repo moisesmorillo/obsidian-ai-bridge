@@ -1,8 +1,9 @@
 # M7 SyncStore qualification: remaining gates
 
-**Qualification plan; only local 0/1-head baseline profiles have run.** The
-[test-only harness and observed evidence](../qualification/m7-inventory-profile-harness.md)
-do not close the maximal, fault/cleanup or remote qualification gates. PR #97 merged the private
+**Qualification plan; local 0/1-head baselines and one 1,000-head profile have run.** The
+[test-only harness](../qualification/m7-inventory-profile-harness.md) and
+[1,000-head evidence](../qualification/m7-inventory-profile-1000.md) do not close the
+maximal, fault/cleanup or remote qualification gates. PR #97 merged the private
 implementation at `62696b030a817eb2c4f91af8a6986a688fcd318b`, including terminal
 inventory failure correction `ed88daf`. M7 remains **NEXT**. Qualification must
 close the gaps in [local evidence](../qualification/m7-private-sync-store-local.md),

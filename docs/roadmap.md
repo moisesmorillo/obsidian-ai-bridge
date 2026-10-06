@@ -12,15 +12,23 @@ activate a production writer, or migrate a vault. M7.1/M7.2 are complete;
 M7.3's isolated R2 primitives merged in PR #95. M7.4's private journal, feed,
 inventory and crash recovery merged in PR #97 at `62696b0`, including the terminal
 inventory failure correction; see [local evidence](qualification/m7-private-sync-store-local.md).
-Its remote Workers Free CPU/account qualification and maximal real-head profile
-remain separate pending gates under the [qualification plan](plans/m7-sync-store-qualification.md).
+Its remote Workers Free CPU/account qualification remains pending under the
+[qualification plan](plans/m7-sync-store-qualification.md). The owner has narrowed
+local execution to [proportional safety qualification](qualification/m7-proportional-local-scope.md):
+retain completed 5,000/10,000 maximal profiles and 5,000 copied cleanup, stop the
+20,001-page sparse run as unqualified, and launch no further large stress runs.
+Small critical safety cases and the existing real-day expiry run remain in scope.
+This is not a reduction of implemented limits or approval of a smaller support claim;
+M7 completion still requires an explicit acceptance/specification reconciliation.
 M7 remains NEXT: merged private code is not milestone completion or permission to
 activate sync. The test-only local profiling harness merged in PR #99 at `306aa35`;
 its [0/1-head baseline evidence](qualification/m7-inventory-profile-harness.md)
 does not close scale or remote gates. The subsequent
 [1,000-head local profile](qualification/m7-inventory-profile-1000.md) completed in
 about 39 min 30 s under an explicitly extended 90-minute process budget, with full
-traversal and host-resource observations; 5,000/10,000-head qualification remains open.
+traversal and host-resource observations. Later 5,000/10,000 maximum-encoded
+profiles have executed locally; their source-bound results and scope limitations
+are recorded in the proportional qualification note, not inferred from the baseline.
 The owner authorized synthetic local execution on 2026-10-05, not remote access or deployment.
 The [maximum-encoded fixture](qualification/m7-maximum-encoded-heads.md) reaches the
 2,048-byte head ceiling; fast regressions do not certify unexecuted scale profiles. No later-milestone production code or

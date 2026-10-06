@@ -14,8 +14,7 @@ saved Markdown through the existing private SyncStore, a local Worker, and an
 experimental plugin artifact. A separately authenticated REST client edits the
 same revision domain; the edit reaches the other vault. A concurrent local edit
 is never overwritten: retain the local file and a visible excluded remote copy,
-with an explicit attention result. REST satisfies the API/MCP requirement; adapting
-MCP is not required for this first demonstration.
+with an explicit attention result. REST demonstrates the shared revision domain for this local demo; MCP integration remains out of scope.
 
 The owner accepted a narrow successor to ADR 0020: synthetic loopback-only protocol
 composition and explicitly armed disposable-vault local effects may be developed

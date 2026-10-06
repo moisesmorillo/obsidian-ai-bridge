@@ -1186,11 +1186,12 @@ iCloud change or deployment is authorized by M7 COMPLETE.
 
 The [bounded native finalization/release candidate](../qualification/m7-native-inventory-finalization.md)
 supplies the authorized test-only 0/1-head subset; its evidence becomes canonical on
-merge and does not close G1. Next enumerate remaining G1 rows and approve a bounded
-scope before implementation. No following milestone is NEXT. API/client enrollment,
-legacy fencing/import and reconciliation need separately approved bounded
-specifications; do not construct a complete later milestone or operating envelope
-from this closure.
+merge and does not close G1. Further G1 work requires separately bounded scope. Owner-accepted
+[ADR 0021](../decisions/0021-isolated-local-markdown-sync-demo.md) now authorizes
+[M8](m8-local-markdown-sync-demo.md) as NEXT on specification merge solely for
+synthetic local functional composition. This does not close G1–G6 or authorize
+public API/client enrollment, legacy import or a supported operating envelope.
+Those require their own accepted specifications and qualification.
 
 ## References
 

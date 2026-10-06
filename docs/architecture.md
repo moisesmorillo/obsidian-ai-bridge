@@ -567,7 +567,12 @@ external successor or deadlock an aligned path.
   versioned sync contract and isolated R2 store without changing current v2 routes or
   the designated writer. Sync activation, migration, client enrollment, and cutover
   remain outside delivered M7 and require G1–G6 acceptance plus explicit later
-  bounded specifications/roadmap authorization. No subsequent milestone is NEXT.
+  bounded specifications/roadmap authorization. Owner-accepted
+  [ADR 0021](decisions/0021-isolated-local-markdown-sync-demo.md) adds only an isolated
+  synthetic local-demo exception: [M8](milestones/m8-local-markdown-sync-demo.md)
+  becomes NEXT on specification merge, with separate Worker/plugin entrypoints
+  outside release/deployment composition. No M8 code exists in this transition;
+  current runtime behavior and G1–G6 production/real-data blockers are unchanged.
 - Outside this roadmap: search, attachments and AI inference. NAS replication or
   stronger remote authority are possibilities, not selected infrastructure. D1,
   Durable Objects, queues, Workers AI, Vectorize and external databases are not

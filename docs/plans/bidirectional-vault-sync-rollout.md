@@ -314,11 +314,12 @@ continue using the same API without reinterpreting old revisions.
 
 ## Next handoff
 
-The ADR 0020 documentation transition closes M7 private delivery on merge. There
-is no next complete milestone or automatic authorization for stage 2. The next
-bounded implementation is the [small native finalization/release conformance fixture](../qualification/m7-delivery-and-activation-gate.md#next-bounded-implementation-work--not-a-new-milestone),
-with no public route, plugin or remote access. Subsequent production slices need
-explicit bounded specs and roadmap authorization; G1–G6 remain mandatory before use.
-Verify current `main`, open PRs and local source before code, not deployed resources
-without separate permission. Use disposable synthetic data for authorized qualification.
-Do not activate a personal vault or disable iCloud from an automated job.
+M7 private delivery is closed under merged ADR 0020. The owner separately accepted
+[M8's local Markdown demonstration](../milestones/m8-local-markdown-sync-demo.md)
+and [ADR 0021](../decisions/0021-isolated-local-markdown-sync-demo.md); M8 becomes
+NEXT on its specification PR's merge. Deliver isolated local REST/store behavior,
+then exact-base client reconciliation and a separate experimental plugin. This is
+not blanket authorization for stages 2–6 above. G1–G6 remain mandatory for
+public/productive exposure and real data. Verify current `main`, PRs and source
+before code. Use only disposable synthetic data or isolated simulated plugin
+instances; no Cloudflare access, deployment, personal vault or iCloud changes.

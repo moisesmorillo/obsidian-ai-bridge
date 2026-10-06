@@ -1,5 +1,29 @@
 # Changelog
 
+## [1.6.0](https://github.com/moisesmorillo/obsidian-ai-bridge/compare/v1.5.0...v1.6.0) (2026-10-06)
+
+
+### Features
+
+* **worker:** add isolated M7 sync R2 primitives ([#95](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/95)) ([2a885a5](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/2a885a5344fc0b169538fb447de757bb6dcb0175))
+* **worker:** add isolated M7 sync store ([#97](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/97)) ([62696b0](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/62696b030a817eb2c4f91af8a6986a688fcd318b))
+
+
+### Documentation
+
+* **m7:** narrow local qualification to proportional safety checks ([#106](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/106)) ([6b10c5e](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/6b10c5e1b2d258d6a368e6c06ac9e679126488a2))
+* **m7:** propose isolated Workers Free approval packet ([#104](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/104)) ([4b2b608](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/4b2b608be3441051fe5039ffd7dd6829bc41f134))
+* **m7:** record merged store and remaining qualification gates ([#98](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/98)) ([c7f59c9](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/c7f59c95399759e9b17582c9608ab3dc8c0ad015))
+
+
+### Testing
+
+* **worker:** add maximum-encoded inventory qualification fixtures ([#102](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/102)) ([6e04cfe](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/6e04cfe813064ca30bbf811a0880b8f7bcd36b95))
+* **worker:** add resumable local inventory profiling ([#99](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/99)) ([306aa35](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/306aa354e23d3fcd5fa32d5b30c4f8f1e82d866a))
+* **worker:** extend native inventory cleanup fault matrix ([#103](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/103)) ([27bf508](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/27bf5084e603637ca33a9d02df5f3d7cc245410f))
+* **worker:** measure host costs and profile 1000 inventory heads ([#100](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/100)) ([2d961c3](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/2d961c324cca015d22089e883a506b60b199d7c2))
+* **worker:** verify native inventory scratch cleanup ([#101](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/101)) ([3d5282b](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/3d5282b3be3f4486d275e860d7516c854d24fe7a))
+
 ## [1.5.0](https://github.com/moisesmorillo/obsidian-ai-bridge/compare/v1.4.3...v1.5.0) (2026-09-29)
 
 

@@ -20,8 +20,10 @@ import { setTimeout } from "node:timers/promises";
 import { MAX_INVENTORY_SUBREQUESTS_PER_INVOCATION } from "@protocol/sync.constants";
 import { SYNC_R2_WRITE_COOLDOWN_MS } from "@worker/infrastructure/sync/sync-r2.constants";
 import {
+  PROFILE_FIXTURE_KINDS,
   type ProfileState,
   profileCountSchema,
+  profileFixtureKindSchema,
   profileReplySchema,
   profileStateSchema,
 } from "@worker-tests/runtime/fixtures/inventory-profile.contract";
@@ -61,6 +63,9 @@ const optionsSchema = z
   .object({
     directory: z.string().min(1),
     headCount: profileCountSchema,
+    fixtureKind: profileFixtureKindSchema.default(
+      PROFILE_FIXTURE_KINDS.baseline,
+    ),
     maxRequests: z.number().int().min(1).max(PROFILE_MAX_REQUESTS).optional(),
   })
   .strict();
@@ -158,7 +163,8 @@ export async function runLocalInventoryProfile(
     if (
       loaded !== null &&
       (loaded.recipe !== recipeHash ||
-        loaded.state.headCount !== options.headCount)
+        loaded.state.headCount !== options.headCount ||
+        loaded.state.fixtureKind !== options.fixtureKind)
     )
       throw new RangeError(
         "Checkpoint belongs to another recipe; use a fresh output directory.",
@@ -167,6 +173,7 @@ export async function runLocalInventoryProfile(
       loaded?.state ??
       profileStateSchema.parse({
         headCount: options.headCount,
+        fixtureKind: options.fixtureKind,
         phase: "seed",
         offset: 0,
         handle: null,
@@ -175,6 +182,7 @@ export async function runLocalInventoryProfile(
         notBeforeMs: 0,
         startedAtMs: Date.now(),
         scanStartedAtMs: null,
+        hasListed: false,
         maxHeadBytes: 0,
       });
     admittedRecipe = recipeHash;
@@ -301,6 +309,7 @@ export async function runLocalInventoryProfile(
       schemaVersion: 1,
       scope: "local-native-inventory-only",
       headCount: state.headCount,
+      fixtureKind: state.fixtureKind,
       completed: state.phase === "done",
       phase: state.phase,
       elapsedMs: Date.now() - state.startedAtMs,

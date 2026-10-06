@@ -31,6 +31,14 @@ still block use. A later API/client/migration change requires a bounded specific
 not inference from M7 COMPLETE. Remote synthetic qualification also requires separate
 resource/cost/credential authorization; this ADR grants none.
 
+### Bounded successor
+
+Owner-accepted [ADR 0021](0021-isolated-local-markdown-sync-demo.md) adds a synthetic
+loopback/disposable-vault exception on its specification PR's merge. It closes none
+of the gates above and grants no public/productive exposure or real-data permission.
+The rest of this decision, including private M7 delivery and storage invariants,
+remains unchanged.
+
 ## Consequences
 
 M7 COMPLETE means implementation delivery, not Workers Free qualification, real R2

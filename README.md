@@ -3,8 +3,10 @@
 A data-safety-focused bridge between Obsidian and authorized remote AI or agent clients.
 
 > **Status:** M1–M6 retain their completed scope; [M7 — versioned sync protocol and isolated R2 store](docs/milestones/m7-versioned-sync-protocol-and-r2-store.md)
-> is **COMPLETE as private isolated delivery** when this documentation transition
-> merges. No subsequent milestone is NEXT. [Mandatory activation blockers](docs/qualification/m7-delivery-and-activation-gate.md)
+> is **COMPLETE as private isolated delivery** under merged ADR 0020 (#107). [M8 — local Markdown sync demo](docs/milestones/m8-local-markdown-sync-demo.md)
+> becomes NEXT on its specification PR's merge under [ADR 0021](docs/decisions/0021-isolated-local-markdown-sync-demo.md).
+> This authorizes only isolated synthetic local development, not production exposure.
+> [Mandatory activation blockers](docs/qualification/m7-delivery-and-activation-gate.md)
 > remain open: missing safety evidence, real 24-hour expiry, Workers Free/real R2,
 > account admission and exposure/client/migration readiness. Local 5k/10k profiles
 > are evidence only, not an operating envelope or permission to use real data. M7.1–M7.3 are merged; M7.4's private
@@ -190,7 +192,9 @@ with unchanged runtime contracts in the reconciled
 [storage specification](docs/milestones/m7-versioned-sync-protocol-and-r2-store.md).
 [Qualification before activation](docs/plans/m7-sync-store-qualification.md) remains
 mandatory and pending. The [criterion report](docs/qualification/m7-delivery-and-activation-gate.md)
-identifies the next small native conformance fixture, not a new complete milestone. The accepted
+retains open production/real-data blockers. The owner-accepted
+[M8 specification](docs/milestones/m8-local-markdown-sync-demo.md) defines the next
+functional local-demo deliveries; implementation begins after its specification PR merges. The accepted
 [ADR 0014](docs/decisions/0014-stateless-mcp-adapter-and-existing-credentials.md),
 completed [M6 specification](docs/milestones/m6-mcp-adapter.md), and [M6 qualification
 report](docs/qualification/m6-final.md) record the adapter and its residual limits.

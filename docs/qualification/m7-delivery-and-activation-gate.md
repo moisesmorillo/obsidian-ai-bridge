@@ -3,8 +3,11 @@
 **M7 delivers the private isolated store, not permission to use real data.**
 [ADR 0020](../decisions/0020-private-sync-store-delivery-and-activation-gate.md)
 closes implementation delivery when this documentation transition merges. Every
-pending requirement below remains an activation blocker. No following milestone is
-NEXT and no 1,000-note limit is adopted. The [boundary feasibility review](m7-delivery-boundary-feasibility.md)
+pending requirement below remains a production/real-data activation blocker.
+Owner-accepted [ADR 0021](../decisions/0021-isolated-local-markdown-sync-demo.md)
+authorizes [M8](../milestones/m8-local-markdown-sync-demo.md) as NEXT on specification
+merge only for isolated synthetic local composition. No gate closes and no
+1,000-note limit is adopted. The [boundary feasibility review](m7-delivery-boundary-feasibility.md)
 is ready for documentation delivery only, not for activation.
 
 ## Delivered evidence and limits
@@ -98,9 +101,10 @@ original-generation peer-slot CAS and exact peer/v2 preservation across fresh fa
 Its transition becomes canonical on merge; it does not close G1 or approve activation.
 No production behavior, public endpoint, plugin, remote resource or long profile changes.
 
-Next enumerate the remaining G1 rows and scope another bounded fixture before
-implementation; no following milestone or broad implementation is preauthorized.
-Before any remote experiment, qualify a lower-polling
-request schedule and recompute G4/G5 against verified limits and authorized workload.
-API/enrollment/client production work still needs a separately approved bounded spec.
-Do not define M8, start the complete rollout or install into a vault by inertia.
+Further G1 qualification needs separately bounded scope; this report alone does
+not authorize it. The owner instead accepted M8's functional local-demo specification
+under ADR 0021. That exception is not G1–G6 acceptance or permission for remote
+experiments, public routes, real data or cutover. Before any separately authorized
+remote experiment, qualify a lower-polling request schedule and recompute G4/G5
+against verified limits and authorized workload. Do not start the complete rollout
+or install into an existing vault by inertia.

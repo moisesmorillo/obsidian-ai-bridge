@@ -10,9 +10,12 @@ verified migration. It does not replace an independent backup, guarantee mobile
 background execution, or imply end-to-end encryption. A future NAS can implement
 the same storage contract after a separately qualified migration.
 
-This is a post-M6 rollout plan. M7 is `NEXT` only for stage 1's versioned,
-isolated protocol/storage foundation; this does not authorize activation of the
-personal vault. Current release 1.4.2 still implements a one-writer,
+This is a post-M6 rollout plan, not authorization for all stages. M7 is delivered
+as stage 1's private isolated foundation under [ADR 0020](../decisions/0020-private-sync-store-delivery-and-activation-gate.md)
+on the documentation transition's merge. All applicable
+[G1–G6 blockers](../qualification/m7-delivery-and-activation-gate.md) must close
+before real-data use/exposure/activation; no next milestone is inferred.
+The current implemented product still uses a one-writer,
 Markdown-only outward mirror; M5's exact desktop qualification is not mobile or
 bidirectional qualification. The [proposed ADR](../decisions/0016-bidirectional-vault-sync.md)
 sets the target contract. The current [roadmap](../roadmap.md),
@@ -110,7 +113,7 @@ Stage 1 is M7. Its exact schemas, namespace, v2 coexistence contract, operation
 journal, fair round-robin 64-lane incremental feed, cursor-driven inventory,
 same-key R2 write pacing/recovery, rename ordering, test-first PR units, and
 acceptance criteria are in the
-[implementation-ready M7 specification](../milestones/m7-versioned-sync-protocol-and-r2-store.md).
+[delivered M7 storage specification](../milestones/m7-versioned-sync-protocol-and-r2-store.md).
 The contract uses the existing bucket under `sync/v1/vaults/<vault-id>/`; existing
 v2 `vault/` and `recovery/` objects remain byte-for-byte untouched and are never
 read through or silently adopted. M7 does not mount public sync routes, alter the
@@ -136,8 +139,8 @@ chunk key first; a present chunk is validated and advances the manifest without 
 LIST/head GET. If attempt two ends, fail only after an exact read proves no valid chunk
 exists; an uncertain/unavailable chunk read stays blocked for read-back and cannot trigger
 another data-read attempt. The scan is subject to 20 MiB unique head bodies, 40 MiB actual
-head-read responses, 192 MiB serialized evidence, 4 KiB cursors, 8 KiB manifests, 12 KiB
-chunks, and a 24-hour lifetime. The
+head-read responses, 192 MiB serialized evidence, 4 KiB cursors, 9,216-byte schema-v2 manifests (historical v1 stays capped at
+8,192 bytes and cannot continue), 12 KiB chunks, and a 24-hour lifetime. The
 evidence ceiling is the sum of 15,360,000 summary bytes, 5,120,256 page-transcript bytes,
 and 163,848,192 chunk-envelope bytes (184,328,448 total). Evidence reads use at most 16
 chunks/heads per call, or 1,251 successful calls for one complete traversal, and expose a terminal
@@ -147,23 +150,24 @@ read-back-verified release of its active slot. Interrupted, throttled, expired, 
 or inconsistent scans preserve their checkpoint or fail typed and never provide
 absence/deletion evidence. Repeated writes to same-key mutable objects observe R2's
 per-key rate limit while retaining exact CAS; throttled or uncertain effects remain
-resumable/blocked. The M7 spec requires an isolated Workers Free runtime qualification
-for the 10 ms CPU/request limit; repository checks and local workerd do not prove it. No
+resumable/blocked. The mandatory preactivation gate requires isolated Workers Free runtime
+qualification against the accepted 10 ms CPU/request target, reverified before
+execution; repository checks and local workerd do not prove it. No
 production deployment or mobile qualification is implied.
 
-**Exit:** satisfy every M7 acceptance item, including same-revision race refusal,
-feed fairness under a continuously busy lane, short R2 list pages and cursor continuation
-across one-page chunks, worst-case 10,000-head/20,001-page inventory within the
-per-invocation 400-subrequest bound without plan upgrades, exact replay from a durable
-chunk without repeated data reads, one interrupted read replay per page, 192 MiB evidence
-arithmetic, bounded evidence pages, interruption at every inventory checkpoint/chunk
-boundary, consistent final vectors, typed budget exhaustion without partial inventory,
-same-key throttling and inventory-manifest cooldown deferral without duplicate reads,
-uncertain-effect recovery, explicit Workers Free CPU qualification, operation recovery at
-every persistence boundary, old-prefix noninterference, bounded cursor replay/inventory
-recovery, interruption-safe destination-first rename, and `mise run check`. Existing
-v2 API/MCP and designated-writer tests remain green; no routes are mounted and no
-personal-vault data is used.
+**Delivery exit:** reviewed merged private implementation, historical canonical
+checks and the reconciled criterion report close M7, not operational support.
+Local 5,000/10,000 maximum profiles remain evidence with their limits; real-day
+expiry is incomplete. No 1,000-note limit is selected. All undemonstrated native
+safety, worst-page/expiry, real R2, Workers Free CPU/memory/account and exposure
+requirements transfer to mandatory G1–G6, not to approved checkmarks.
+
+**Activation gate:** before real-data use or exposing stage 1, accept every
+applicable G1–G6 row with source-bound evidence and explicit owner approval.
+Partial inventory, unknown effects, stale CAS, client gaps and unverified resource
+limits remain blocking. Migration needs the binding/v2 fence before exposure;
+client sync/cutover additionally requires the later engine, host preservation and
+backup/restore evidence. Stage 1 delivery authorizes neither stage 2 nor a vault.
 
 ### 2. Pure three-way reconciliation engine
 
@@ -310,11 +314,11 @@ continue using the same API without reinterpreting old revisions.
 
 ## Next handoff
 
-M7 is `NEXT` in a separate documentation-only roadmap transition and becomes
-canonical only after that PR merges. Do not start implementation before the merge.
-Its first implementation PR establishes the protocol contracts; follow-on small PRs
-implement the port, isolated R2 primitives, and feed/inventory/recovery as defined
-in the M7 specification, all **without changing the live writer path**. Before code,
-verify current `main`, open PRs, roadmap, workflows, and deployed bindings again.
-Use disposable synthetic data through stage 5. Do not activate the personal vault
-or disable iCloud from an automated job.
+The ADR 0020 documentation transition closes M7 private delivery on merge. There
+is no next complete milestone or automatic authorization for stage 2. The next
+bounded implementation is the [small native finalization/release conformance fixture](../qualification/m7-delivery-and-activation-gate.md#next-bounded-implementation-work--not-a-new-milestone),
+with no public route, plugin or remote access. Subsequent production slices need
+explicit bounded specs and roadmap authorization; G1–G6 remain mandatory before use.
+Verify current `main`, open PRs and local source before code, not deployed resources
+without separate permission. Use disposable synthetic data for authorized qualification.
+Do not activate a personal vault or disable iCloud from an automated job.

@@ -2,8 +2,12 @@
 
 A data-safety-focused bridge between Obsidian and authorized remote AI or agent clients.
 
-> **Status:** M1–M6 are **COMPLETE**; [M7 — versioned sync protocol and isolated R2 store](docs/milestones/m7-versioned-sync-protocol-and-r2-store.md)
-> is **NEXT** in this roadmap transition. M7.1–M7.3 are merged; M7.4's private
+> **Status:** M1–M6 retain their completed scope; [M7 — versioned sync protocol and isolated R2 store](docs/milestones/m7-versioned-sync-protocol-and-r2-store.md)
+> is **COMPLETE as private isolated delivery** when this documentation transition
+> merges. No subsequent milestone is NEXT. [Mandatory activation blockers](docs/qualification/m7-delivery-and-activation-gate.md)
+> remain open: missing safety evidence, real 24-hour expiry, Workers Free/real R2,
+> account admission and exposure/client/migration readiness. Local 5k/10k profiles
+> are evidence only, not an operating envelope or permission to use real data. M7.1–M7.3 are merged; M7.4's private
 > implementation merged in PR #97 (`62696b0`), including terminal inventory failure
 > recovery. [Local evidence](docs/qualification/m7-private-sync-store-local.md) is not
 > operational qualification; follow the [remaining-gates plan](docs/plans/m7-sync-store-qualification.md).
@@ -180,10 +184,13 @@ Start with [AGENTS.md](AGENTS.md), [architecture](docs/architecture.md), the
 [canonical roadmap and agent onboarding](docs/roadmap.md), and the completed
 [M5 specification](docs/milestones/m5-operational-and-security-readiness.md) with its
 [final qualification evidence](docs/qualification/m5-final.md). M1–M6 are complete in
-this transition. M7 is the sole NEXT milestone, with an implementation-ready
-[specification](docs/milestones/m7-versioned-sync-protocol-and-r2-store.md). Its isolated
-implementation has merged; [qualification and exit](docs/plans/m7-sync-store-qualification.md)
-remain pending. The accepted
+this transition. M7 is delivered as a private isolated store under
+[ADR 0020](docs/decisions/0020-private-sync-store-delivery-and-activation-gate.md),
+with unchanged runtime contracts in the reconciled
+[storage specification](docs/milestones/m7-versioned-sync-protocol-and-r2-store.md).
+[Qualification before activation](docs/plans/m7-sync-store-qualification.md) remains
+mandatory and pending. The [criterion report](docs/qualification/m7-delivery-and-activation-gate.md)
+identifies the next small native conformance fixture, not a new complete milestone. The accepted
 [ADR 0014](docs/decisions/0014-stateless-mcp-adapter-and-existing-credentials.md),
 completed [M6 specification](docs/milestones/m6-mcp-adapter.md), and [M6 qualification
 report](docs/qualification/m6-final.md) record the adapter and its residual limits.

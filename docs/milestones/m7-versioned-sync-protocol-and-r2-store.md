@@ -2,15 +2,20 @@
 
 ## Status
 
-**NEXT — M7.1/M7.2 are complete; M7.3's isolated R2 primitives merged in
-PR #95. M7.4's private implementation merged in PR #97 (`62696b0`), including
-terminal inventory failure recovery; remote Workers Free/account qualification
-and maximal real-head profiling remain pending under the
-[qualification plan](../plans/m7-sync-store-qualification.md).** This milestone
+**COMPLETE as delivery of the private isolated store when this documentation
+transition merges.** M7.1–M7.4 are implemented; M7.3 merged in #95 and M7.4 in
+#97 (`62696b0`), including terminal inventory failure recovery.
+[ADR 0020](../decisions/0020-private-sync-store-delivery-and-activation-gate.md)
+separates delivery from the mandatory [preactivation gate and criterion report](../qualification/m7-delivery-and-activation-gate.md).
+Local 5,000/10,000 profiles are retained evidence, not operational qualification.
+Real 24-hour expiry is incomplete; Workers Free, real R2 and undemonstrated safety
+requirements remain pending activation blockers under the
+[qualification plan](../plans/m7-sync-store-qualification.md). This milestone
 establishes a versioned, storage-independent sync contract and its isolated R2
 implementation. It does not enable synchronization, change the current writer,
-migrate data, or authorize a personal-vault cutover. The implementation merge does
-not close outstanding qualification criteria or mark M7 COMPLETE.
+migrate data, or authorize a personal-vault cutover. The implementation merge alone did not close M7. This owner-approved documentation
+transition closes private delivery only; it does not approve outstanding qualification
+criteria or create a supported operating envelope.
 
 M1–M6 remain complete and historically accurate. M3's designated-writer mirror,
 the current v2 REST/MCP behavior, M4's reviewed-only local authority, and M5's
@@ -578,7 +583,7 @@ and acceptance evidence are listed below.
   This permits a 10,000-head scan when each nonterminal page returns only one new key
   and up to one empty truncated page per head; it is a bound, not a guarantee that R2
   will return a particular number of objects per call. This is a contract bound, not a
-  runtime qualification: M7 cannot exit until the Workers Free CPU gate below passes.
+  runtime qualification: activation remains blocked until the Workers Free CPU gate below passes.
   Exceeding any total ceiling before `truncated: false` returns
   `inventory_limit_exceeded`, with no complete handle or
   absence conclusions. This is terminal: mark the manifest failed and replace only its
@@ -595,8 +600,8 @@ and acceptance evidence are listed below.
   targets.
 ### M7.4 inventory cursor-history correction (accepted for isolated local TDD)
 
-The v1 manifest limit above is currently an **unresolved feasibility defect** for
-simultaneous accepted maxima: measured maximal JSON with a 4,096-byte R2 cursor,
+The historical v1 manifest limit above was a **feasibility defect**, corrected by
+the merged v2 implementation, for simultaneous accepted maxima: measured maximal JSON with a 4,096-byte R2 cursor,
 720-byte Markdown path and 64 maximum-width sequences is 8,528 bytes. Existing
 v1 replay does not reject non-adjacent cursor cycles. The [corrective design](../plans/2026-10-02-m7-inventory-cursor-history-design.md)
 and [ADR 0019](../decisions/0019-resumable-r2-inventory-cursor-witnesses.md)
@@ -650,8 +655,9 @@ independent semantic review.
   Each continuation requests one object per list page and performs at most one head GET;
   evidence paging reads at most 16 chunks. The implementation measures total elapsed
   time, CPU, and memory across resumptions in local workerd, but local checks do not
-  establish Cloudflare CPU compliance. Workers Free allows 10 ms CPU per request.
-  Before M7 can be marked complete, an explicitly authorized isolated Workers Free
+  establish Cloudflare CPU compliance. The accepted Workers Free target is 10 ms CPU
+  per request; current applicable platform limits must be reverified before execution.
+  Before activation or real-data use, an explicitly authorized isolated Workers Free
   qualification must show every inventory invocation profile stays within that limit.
   If any profile exceeds it, reduce per-invocation work and recalculate page, chunk,
   evidence, and expiry bounds; do not assume Paid CPU limits or raise the quota.
@@ -950,6 +956,15 @@ or separately approved without changing these contracts.
 
 ## Acceptance criteria
 
+These numbered requirements remain the storage/safety/qualification contract.
+They are **not all claimed passed** by private delivery. ADR 0020 replaces the old
+all-criteria-before-delivery exit rule: reviewed merged implementation and historical
+checks close M7's private delivery; undemonstrated native safety, operational and
+exposure requirements remain mandatory before activation. The
+[criterion dispositions and G1–G6 blockers](../qualification/m7-delivery-and-activation-gate.md#criterion-reconciliation)
+are authoritative for evidence, not an inferred checkmark on these requirements.
+No data-loss/security condition, implementation limit or TTL is weakened.
+
 1. Protocol and persistence schemas reject malformed paths/IDs, wrong vaults,
    unsupported versions, unknown authority-bearing fields, invalid revisions, and
    invalid cursor vectors; sequences remain exact 20-digit strings beyond
@@ -1009,7 +1024,7 @@ or separately approved without changing these contracts.
    generation. Separately profile start,
    continuation, finalization, evidence-page, cleanup, and recovery invocation CPU on a
    separately authorized isolated Workers Free runtime. Every profile must stay within
-   the current 10 ms CPU limit before M7 exits. `mise run check` and local workerd do not
+   the accepted 10 ms CPU target (reverified before execution) before activation. `mise run check` and local workerd do not
    satisfy this runtime gate; if a profile exceeds the limit, reduce per-invocation work
    and recalculate all affected bounds.
 6. Recovery tests inject failure after every journal/current/event/head persistence
@@ -1079,7 +1094,7 @@ M1–M6 behavior, or the milestone's activation exclusions.
 
 ## M7.2 core port, mutation policy, and deterministic fake evidence
 
-**M7.2 unit: COMPLETE for its core contract and test-fake scope. M7 remains NEXT; M7.3 is the next implementation unit.** The nine-method `SyncStore` port and pure `evaluateSyncMutation` policy remain in `packages/core`; no production storage adapter or activation surface was added. `packages/protocol/tests/unit/sync-store-fake.test.ts` adds a test-only in-memory fake with per-vault operation journals, per-path heads, a deterministic serialized critical section, validated UUID/path fixtures, exact UTF-8 SHA-256 hooks, a deterministic clock, and injected committed/pending/unknown effect outcomes. The test lives in protocol because that workspace already depends on core; neither the core manifest nor production core imports protocol. Mutations are decided by the Task 2 policy rather than a second copy of its transition rules.
+**Historical M7.2 checkpoint: COMPLETE for its core contract and test-fake scope; M7.3 was the next unit then.** The nine-method `SyncStore` port and pure `evaluateSyncMutation` policy remain in `packages/core`; no production storage adapter or activation surface was added. `packages/protocol/tests/unit/sync-store-fake.test.ts` adds a test-only in-memory fake with per-vault operation journals, per-path heads, a deterministic serialized critical section, validated UUID/path fixtures, exact UTF-8 SHA-256 hooks, a deterministic clock, and injected committed/pending/unknown effect outcomes. The test lives in protocol because that workspace already depends on core; neither the core manifest nor production core imports protocol. Mutations are decided by the Task 2 policy rather than a second copy of its transition rules.
 
 The eleven fake cases cover per-vault operation identity (the same operation ID may independently exist in different vaults), concurrent create against never-seen and update against an exact revision, exact replay and same-vault changed-request rejection, stale-tombstone refusal, pending/unknown outcomes without success/feed advancement/never-seen claims, and preservation of exact recovery bytes. The fake's in-memory serialization is only a deterministic unit-test model: it does not prove durable or cross-key atomicity. Its `readChanges` returns a closed refusal and its inventory methods refuse completion; these methods do not implement feed pagination, inventory progress, M7.3 R2 persistence, or M7.4 crash recovery. This is not local workerd qualification.
 
@@ -1093,11 +1108,11 @@ The eleven fake cases cover per-vault operation identity (the same operation ID 
 | Global coverage from `mise run check` | Passed: statements 95.05%, branches 90.72%, functions 98.45%, lines 96.96%. |
 | Semantic/security review | Passed for M7.2 scope: core remains adapter-neutral; test fixtures cross the existing protocol validation boundary; exact request bytes and typed unresolved outcomes remain conservative; no production M1–M6, R2, Worker, HTTP, plugin, or activation changes. |
 
-No personal vault or remote resource was used. M7.3 owns isolated R2 primitives; M7.4 owns durable feed/inventory/recovery algorithms and their workerd conformance. This evidence does not qualify those behaviors, change current writer behavior, or authorize sync activation. The M7 status above remains **NEXT** until every implementation unit and acceptance criterion is separately completed and merged.
+No personal vault or remote resource was used. M7.3 owns isolated R2 primitives; M7.4 owns durable feed/inventory/recovery algorithms and their workerd conformance. This evidence does not qualify those behaviors, change current writer behavior, or authorize sync activation. Current private-delivery status follows ADR 0020; these historical unit checks do not approve the preactivation requirements.
 
 ## M7.3 isolated R2 primitives evidence
 
-**Implementation verified in this branch; M7 remains NEXT.** The private Worker
+**Historical M7.3 primitive evidence; current private-delivery status follows ADR 0020.** The private Worker
 `infrastructure/sync/` modules implement strict protocol-major-one persisted
 records, canonical namespace keys, one-key conditional R2 operations and two
 single-object facades. `sync-r2-records.ts` reads and writes marker-gated heads,
@@ -1148,26 +1163,31 @@ PR #97 merged at `62696b030a817eb2c4f91af8a6986a688fcd318b`. The isolated privat
 | First independent whole-branch pass | Retained continuation completed the mutation/publication/schema structural gate and accepted R1; its canonical rerun passed. R2 found unsafe floors in lane reservation/release. Five RED/GREEN lane cases now refuse response-floor forwarding/CAS and late invalid observation floors while preserving original predicates and same-ID recovery. Nine focused regressions passed; integrated rerun passed and corrective review approved the isolated implementation. R1/R2 are fixed; no open actionable findings remain. |
 | Terminal inventory correction | `ed88daf` persists deterministic reserved-step failures through an immutable chunk-key latch and exact post-reservation CAS; cooldown/recovery does not relist. Strict runtime LIST validation closes malformed flags/keys. **134/134** pertinent tests passed; retained corrective code/design review **APPROVE**, no actionable finding. |
 | Local profiling follow-up | Test-only harness merged in PR #99 at `306aa35`. The subsequent [1,000-head synthetic profile](../qualification/m7-inventory-profile-1000.md) completed full evidence traversal in about **39 min 30 s**, with **76,830** observed attempted binding calls and a **135** per-request maximum. Host journal/seal/verification measurements exclude isolate CPU/memory and do not prove larger-scale feasibility. |
-| Maximum-encoded fixture | [Test-only dataset and recovery evidence](../qualification/m7-maximum-encoded-heads.md) reach exact 2,048-byte legal head bodies with 720-byte paths. Canonical fast tests pass; 5,000/10,000-head executions and remote gates remain pending. |
+| Maximum-encoded fixture | [Test-only dataset and recovery evidence](../qualification/m7-maximum-encoded-heads.md) reach exact 2,048-byte legal head bodies with 720-byte paths. Canonical fast tests pass; later local 5,000/10,000 executions are retained in the [consolidated report](../qualification/m7-delivery-and-activation-gate.md). Remote gates remain pending. |
 | Native cleanup subset | [Focused workerd/R2 regressions](../qualification/m7-native-inventory-cleanup.md) cover canonical v1/v2 scratch, exact manifest/peer preservation, injected expiry, owned/competing original-generation slot CAS, oversized LIST and lost DELETE/read-back acknowledgement. Physical calls are counted independently against the eight-call reservation; real-time/fault/cleanup matrices remain incomplete. |
-| Operational qualification | Synthetic R2/local Miniflare only. No deployment, real R2/account/vault, sync activation, maximal real-head profile or remote Workers Free CPU/account qualification. |
+| Operational qualification | Synthetic R2/local Miniflare only. No deployment, real R2/account/vault, sync activation or remote Workers Free CPU/account qualification. Later maximum-encoded local profiles are recorded separately. |
 
 See [local evidence](../qualification/m7-private-sync-store-local.md) and the
 [remaining qualification plan](../plans/m7-sync-store-qualification.md). The merge
 closes private implementation delivery, not operational qualification. **M7.4's
-full exit remains open for qualification; M7 remains NEXT.** Deployment, real
-R2/vault access and activation require separate authorization. No following
-milestone becomes NEXT from this implementation merge.
+implementation delivery is closed by ADR 0020's documentation transition;
+operational qualification remains open in G1–G6.** Deployment, real R2/vault
+access and activation require separate authorization and gate acceptance.
+No following milestone becomes NEXT.
 
 ## Exit and next transition
 
-M7 is complete only when all four implementation units and acceptance criteria are
-merged and evidenced. M7 completion does not authorize protocol activation, data
-migration, personal-vault use, disabling iCloud, or production deployment. The
-following milestone must separately specify and qualify API/client enrollment,
-legacy-v2 fencing/import behavior, and sync reconciliation before any protocol is
-exposed. Do not mark a following milestone `NEXT` in the M7 implementation PR;
-refine its specification in a separate roadmap transition.
+M7 closes as the reviewed, merged private store under ADR 0020, not as a declaration
+that every original qualification criterion passed. The consolidated report preserves
+5,000/10,000 local results, incomplete real expiry, deferred stress and open safety and
+remote gates. All applicable G1–G6 evidence and explicit owner acceptance are mandatory
+before protocol exposure, activation or real-data use. No route, migration, writer,
+iCloud change or deployment is authorized by M7 COMPLETE.
+
+The next bounded work is the report's test-only native finalization/release conformance
+fixture. No following milestone is NEXT. API/client enrollment, legacy fencing/import
+and reconciliation need separately approved bounded specifications; do not construct a
+complete later milestone or operating envelope from this closure.
 
 ## References
 

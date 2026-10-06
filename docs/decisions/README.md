@@ -57,6 +57,7 @@ decisions, not an invented historical rationale.
 | [0017 — Durable R2 publication attempt claims](0017-r2-publication-attempt-claims.md) | Accepted for isolated M7.4 implementation; qualification pending | Exact journal-CAS claims for allocated writes, bounded recovery, terminal lane commit fencing, and strict journal-schema compatibility |
 | [0018 — Retain expired sync-inventory manifests](0018-retain-expired-sync-inventory-manifests.md) | Accepted no-reuse rule; v2 size/cleanup scope superseded by ADR 0019 | Permanent no-reuse tombstones and historical v1 chunk-only cleanup |
 | [0019 — Resumable R2 inventory cursor witnesses](0019-resumable-r2-inventory-cursor-witnesses.md) | Accepted for isolated local M7.4 TDD; qualification pending | Strict v2 manifest, exact-CAS step journal and immutable digest witness to reject non-adjacent cursor cycles; bounded expired scratch cleanup |
+| [0020 — Private store delivery and mandatory activation gate](0020-private-sync-store-delivery-and-activation-gate.md) | Accepted by owner; canonical on documentation transition merge | M7 private delivery separated from open safety/real R2/Workers Free/exposure gates; no reduced population limit or automatic NEXT milestone |
 
 ADR 0001 records the implemented M1 baseline. ADRs 0002–0004 record the implemented
 M3 design without claiming deployment. ADRs 0005–0008 are accepted M4 decisions and

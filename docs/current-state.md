@@ -31,13 +31,13 @@ probe failed; the checked-in Worker configuration does not provide an associatio
 or designated writer. The mirror was not activated, and the personal vault was
 not used.
 
-This snapshot records completed M1–M6 implementation and qualification evidence. M5's bounded support claim is limited to latest M5-ready release v1.0.2 and one designated writer on Obsidian Desktop 1.13.7 / macOS 26.6.2 / Apple M4 Pro, with synthetic active-writer behavior through 10,000 eligible notes. The final report records retained scale, credential-rotation, and Keep-local results; v4→v5 migration/restart evidence; live loopback recovery/diagnostics; exact release identity; residual platform/deployment limits; and one explicitly unqualified pause/resume conflict attempt. No personal vault or production Worker/R2 deployment was used. M1–M6 are COMPLETE; M7 — versioned sync protocol and isolated R2 store — remains NEXT. M7.1/M7.2 are complete and M7.3's isolated primitives merged in PR #95. M7.4's private implementation merged in PR #97 at `62696b0`, including `ed88daf`'s terminal inventory failure correction. Its final canonical check and semantic review passed; [local evidence](qualification/m7-private-sync-store-local.md) records the exact source and coverage. Remote Workers Free/account qualification and maximal real-head profiling remain pending under the [qualification plan](plans/m7-sync-store-qualification.md). None of these foundations activates sync, migrates data, or changes the live writer.
+This snapshot records completed M1–M6 implementation and qualification evidence. M5's bounded support claim is limited to latest M5-ready release v1.0.2 and one designated writer on Obsidian Desktop 1.13.7 / macOS 26.6.2 / Apple M4 Pro, with synthetic active-writer behavior through 10,000 eligible notes. The final report records retained scale, credential-rotation, and Keep-local results; v4→v5 migration/restart evidence; live loopback recovery/diagnostics; exact release identity; residual platform/deployment limits; and one explicitly unqualified pause/resume conflict attempt. No personal vault or production Worker/R2 deployment was used. M1–M6 retain their completed scope; M7 is COMPLETE as private isolated store delivery on this documentation transition's merge under [ADR 0020](decisions/0020-private-sync-store-delivery-and-activation-gate.md), not operational qualification. No subsequent milestone is NEXT. M7.1/M7.2 are complete and M7.3's isolated primitives merged in PR #95. M7.4's private implementation merged in PR #97 at `62696b0`, including `ed88daf`'s terminal inventory failure correction. Its final canonical check and semantic review passed; [local evidence](qualification/m7-private-sync-store-local.md) records the exact source and coverage. Local 5,000/10,000 maximum profiles executed and remain local evidence. Real 24-hour expiry is incomplete; Workers Free, real R2 and undemonstrated safety remain mandatory [G1–G6 activation blockers](qualification/m7-delivery-and-activation-gate.md) under the [qualification plan](plans/m7-sync-store-qualification.md). None of these foundations activates sync, migrates data, or changes the live writer.
 M2 source/tooling through `2e74b23` passed independent semantic
 review and merged at `b300726` (PR #7). M3's completion PR #27 passed canonical
 validation and final semantic review; its three MINOR findings were corrected at
 `e97af36`, whose corrective review returned APPROVE with no open findings. PR #27
 merged at `63b0599`; M3 is COMPLETE and the M3→M4 transition is canonical.
-M4, M5, and M6 are COMPLETE; M7 is the sole NEXT milestone in this roadmap transition. The completed
+M4, M5, and M6 are COMPLETE; M7 private delivery does not authorize a new NEXT milestone. The completed
 [specification](milestones/m4-remote-to-local-reconciliation-and-conflict-resolution.md),
 [sequential plan](plans/m4-remote-to-local-reconciliation-and-conflict-resolution.md),
 and ADRs 0005–0009 define the reviewed boundary. The compatibility transition uses
@@ -88,18 +88,23 @@ canonical checks, unchanged 95% coverage and closed independent-review findings.
 Local native tests and counted calls do not qualify remote Workers Free CPU or
 account/storage sustainability. The test-only native baseline harness merged in
 PR #99 at `306aa35`, with [0/1-head observations](qualification/m7-inventory-profile-harness.md)
-and independently closed recovery/evidence findings. The maximal real-head profile
-remains open. The subsequent [1,000-head profile](qualification/m7-inventory-profile-1000.md)
+and independently closed recovery/evidence findings. Later local maximal results
+are retained in the consolidated report, not upgraded to operational evidence. The subsequent [1,000-head profile](qualification/m7-inventory-profile-1000.md)
 completed full verified traversal in about 39 min 30 s and measured host journal/seal
-costs, not isolate/remote CPU or later-scale feasibility. M7 remains NEXT; the current writer
-and support claim are unchanged. A focused [native cleanup contract test](qualification/m7-native-inventory-cleanup.md)
+costs, not isolate/remote CPU or later-scale feasibility. M7 private delivery leaves
+the current writer and support claim unchanged; no 1,000-note limit is adopted. A focused [native cleanup contract test](qualification/m7-native-inventory-cleanup.md)
 checks canonical v1/v2 scratch, owned-slot release, competing original-generation
 CAS, oversized LIST and lost DELETE/read-back acknowledgement with independent
 binding-call counts and exact manifest/peer/sentinel preservation. This is a bounded
 regression subset, not the completed expiry/cleanup/fault or remote qualification matrix.
 The [maximum-encoded dataset](qualification/m7-maximum-encoded-heads.md) adds legal
 2,048-byte live/tombstone metadata and fresh-isolate chunk recovery without relisting;
-its 5,000/10,000-head executions remain pending, not inferred from fast regressions.
+its later 5,000/10,000-head executions are documented as local-only evidence in the
+[consolidated delivery/gate report](qualification/m7-delivery-and-activation-gate.md).
+The actual-day expiry task was killed after 13 h 59 min, not completed; originals
+under the former worktrees are absent from the inspected checkout. Historical
+summaries/logs remain, but their seals were not reaudited. The report identifies
+all unclosed safety/operational gates and the next small native conformance fixture.
 
 ## M7.2 core sync-store evidence
 
@@ -120,7 +125,8 @@ with global coverage of **95.05% statements, 90.72% branches, 98.45% functions, 
 96.96% lines**. The Worker build was dry-run only. No R2 sync adapter, Worker/API/plugin
 composition, migration, deployment, or personal-vault use was involved. M7.3 was the
 next implementation unit at that checkpoint; it is now verified in this branch.
-M7 remains the sole **NEXT** milestone, and sync activation remains excluded. See
+This is historical M7.2 evidence; current private-delivery status follows ADR 0020,
+and sync activation remains blocked by G1–G6. See
 the [M7.2 evidence](milestones/m7-versioned-sync-protocol-and-r2-store.md#m72-core-port-mutation-policy-and-deterministic-fake-evidence) for exact
 boundaries and validation results.
 

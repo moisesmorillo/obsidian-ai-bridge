@@ -1,6 +1,6 @@
 # M7.4 private SyncStore: local evidence
 
-**Status: isolated implementation merged in PR #97, locally validated and independently approved; unactivated.** M7 remains NEXT. This report does not qualify Workers Free CPU, account sustainability or a production vault.
+**Status: isolated implementation merged in PR #97, locally validated and independently approved; unactivated.** This is historical implementation evidence; [ADR 0020](../decisions/0020-private-sync-store-delivery-and-activation-gate.md) closes private delivery only. The [consolidated report/G1–G6 blockers](m7-delivery-and-activation-gate.md) supersedes the old exit coupling. This report does not qualify Workers Free CPU, account sustainability or a production vault.
 
 ## Candidate and boundary
 
@@ -51,8 +51,8 @@ Whole-branch review covered mutation/publication/schema ownership and state/effe
 ## Remaining gates
 
 1. Separately authorize and measure remote Workers Free CPU/account and storage-admission qualification. No real R2, account or vault was accessed.
-2. Run the explicit maximal real-head operational profile; local arithmetic and counted calls are not measured Free-tier feasibility or retry-inclusive billing guarantees.
-3. Reconcile every M7 acceptance criterion and complete the reviewed milestone-exit transition only after the pending qualification evidence passes. PR #97's implementation merge alone does not mark M7 complete or move another milestone to NEXT.
+2. Preserve later local 5,000/10,000 maximum profiles with their limits. Missing sparse/adversarial, expiry and native safety evidence remains open; no stress repetition is authorized by this report.
+3. Follow G1–G6 before real-data use or activation. ADR 0020 closes private delivery without declaring those criteria passed or moving another milestone to NEXT.
 4. Specify and authorize activation independently; do not provision markers, migrate data or alter the current writer from this report.
 
 Follow the [remaining-gates qualification plan](../plans/m7-sync-store-qualification.md)

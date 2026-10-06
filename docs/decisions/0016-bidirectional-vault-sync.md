@@ -1,5 +1,9 @@
 # ADR 0016 — Bidirectional vault synchronization
 
+> Product proposal remains Proposed. Its original M7 NEXT reference is historical:
+> [ADR 0020](0020-private-sync-store-delivery-and-activation-gate.md) closes private
+> delivery only; [G1–G6](../qualification/m7-delivery-and-activation-gate.md) block use.
+
 ## Status
 
 **Proposed.** This describes the future product destination, not the deployed

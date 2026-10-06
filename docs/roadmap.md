@@ -400,11 +400,12 @@ completion PR has merged; later OAuth and sync proposals have separate status.
 
 ## Next bounded work and activation boundary
 
-Implement only a small test-only native fixture for changed/pending final vectors and
-interrupted completion/owned-slot release across fresh facades, with physical call
-counts and peer/v2 preservation. See the [exact scope](qualification/m7-delivery-and-activation-gate.md#next-bounded-implementation-work--not-a-new-milestone).
-Estimate its scope and keep it in one reviewable PR; no public route, plugin or
-remote resource is authorized. No whole following milestone is defined or started.
+The [bounded native finalization/release candidate](qualification/m7-native-inventory-finalization.md)
+supplies 0/1-head regressions for changed/pending final vectors, interrupted
+completion/owned-slot release, physical store-call counts and peer/v2 preservation
+across fresh facades. Its evidence becomes canonical on merge, not full G1 acceptance.
+Next enumerate remaining G1 rows and obtain a bounded scope before implementation;
+no public route, plugin, remote resource or whole following milestone is authorized.
 
 G1–G6 explicitly block real-data use and activation: missing safety matrix, real
 expiry/no-reuse, real R2/trusted storage, runtime feasibility, workload/account
@@ -462,16 +463,18 @@ and its [sequential plan](plans/m4-remote-to-local-reconciliation-and-conflict-r
 [operational-policy ADR](decisions/0011-m5-operational-envelope.md), and completed M3
 [spec](milestones/m3-remote-bridge-client-and-publishing.md),
 [plan](plans/m3-remote-bridge-client-and-publishing.md), and
-[decisions](plans/m3-design-decisions.md). M1–M6 are COMPLETE, with M7 as the sole
-NEXT milestone in this transition. Inspect relevant
+[decisions](plans/m3-design-decisions.md). M1–M6 are COMPLETE; M7 is COMPLETE as
+private delivery following merged ADR 0020 (#107). There is no NEXT milestone.
+Inspect relevant
 source/tests/tooling/CI,
 [CONTRIBUTING](../CONTRIBUTING.md) and [SECURITY](../SECURITY.md).
 [current-state](current-state.md) is an evidence map, not a substitute for code.
 
 Repository state beats conversation assumptions; current code beats stale docs.
 Correct discrepancies explicitly without changing a completed invariant silently.
-Implement only NEXT. The M6 completion transition records the accepted design, implementation, and
-qualification; do not infer later roadmap work.
+Implement only the explicitly authorized bounded qualification scope while no
+milestone is NEXT. The M6 completion transition records its accepted design,
+implementation and qualification; do not infer later roadmap work or activation.
 Use [ADRs](decisions/README.md) when consequential implementation evidence requires
 an explicitly accepted successor decision.
 

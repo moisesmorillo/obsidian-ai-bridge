@@ -23,6 +23,7 @@ proportional execution, not operational qualification.
 | Maximum 10,000 heads, `b8dda57f7`, source `1fd41cb` | 6 h 13 min 48.760 s; 10,000 summaries/chunks; 613,359 calls; max 135/request | No worst sparse-page or real R2 claim |
 | Copied 5,000 cleanup, `b895a92ee`, source `5bc02a3` | 14,998 scratch deletions; 85,621 calls including audits; max 5/cleanup; manifest/slot/heads/original retained | Injected expiry, not 24-hour expiry |
 | Small continuation on `ddefc4f` | 3 native bad-key cleanup cases, 10 focused contract cases and 1 adapter rename case passed; typecheck passed | Tests-only local overlays, patches/logs retained locally, not merged regressions or independent approval |
+| Bounded finalization/release candidate from `def2985b` | [0/1-head native regression fixture](m7-native-inventory-finalization.md) covers changed/pending final vectors, interrupted completion/release and original-generation peer-slot CAS | Candidate validation/review recorded in its report; fresh facades, injected clock, local R2 only; not full G1 or independent activation acceptance |
 
 The small cleanup cases preserve manifest/slot/scratch/sentinels and issue no target
 GET/DELETE for foreign, peer or noncanonical keys. The rename case uses the real
@@ -90,14 +91,16 @@ removed through a capacity adjustment.
 
 ## Next bounded implementation work — not a new milestone
 
-First implement a **test-only 0/1-head native conformance fixture** for final-vector
-mutation/pending-lane invalidation and completion/owned-slot release interruption across
-fresh facades, with actual binding counts, no false complete handle and exact peer/v2
-preservation. It closes named missing G1 rows, not the whole gate. Reuse existing
-contracts; no public endpoint, plugin change, remote resource or new long profile.
-Keep tests and evidence in one reviewable PR after a scope estimate.
+The **test-only 0/1-head native finalization/release fixture** is now supplied by the
+[bounded regression candidate](m7-native-inventory-finalization.md): changed/pending
+final vectors, interrupted completion/owned-slot release, physical store-call counts,
+original-generation peer-slot CAS and exact peer/v2 preservation across fresh facades.
+Its transition becomes canonical on merge; it does not close G1 or approve activation.
+No production behavior, public endpoint, plugin, remote resource or long profile changes.
 
-Then reconcile remaining G1 rows; before any remote experiment, qualify a lower-polling
+Next enumerate the remaining G1 rows and scope another bounded fixture before
+implementation; no following milestone or broad implementation is preauthorized.
+Before any remote experiment, qualify a lower-polling
 request schedule and recompute G4/G5 against verified limits and authorized workload.
 API/enrollment/client production work still needs a separately approved bounded spec.
 Do not define M8, start the complete rollout or install into a vault by inertia.

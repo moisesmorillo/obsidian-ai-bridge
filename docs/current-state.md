@@ -104,7 +104,11 @@ its later 5,000/10,000-head executions are documented as local-only evidence in 
 The actual-day expiry task was killed after 13 h 59 min, not completed; originals
 under the former worktrees are absent from the inspected checkout. Historical
 summaries/logs remain, but their seals were not reaudited. The report identifies
-all unclosed safety/operational gates and the next small native conformance fixture.
+all unclosed safety/operational gates. The [bounded finalization/release candidate](qualification/m7-native-inventory-finalization.md)
+adds 0/1-head changed/pending-vector refusal, interrupted completion/owned-slot recovery
+and native peer-slot CAS regressions with fresh facades and exact peer/v2 preservation.
+It leaves G1–G6 open; next work requires enumeration and approval of a bounded
+remaining G1 subset, not a new milestone or activation.
 
 ## M7.2 core sync-store evidence
 

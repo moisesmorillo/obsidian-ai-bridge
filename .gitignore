@@ -17,6 +17,7 @@ mise.local.toml
 
 # Pi runtime artifacts (project configuration and resources remain trackable)
 .pi/delegate/
+.pi/fusion/
 .pi/tasks/
 .pi/subagents/
 

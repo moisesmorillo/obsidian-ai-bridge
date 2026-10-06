@@ -44,9 +44,10 @@ short/empty-page behavior: synthetic cursor injection is not native R2 evidence.
 | Expiry and scratch cleanup | Canonical expired scratch only, bounded deletion/read-back, permanent no-reuse manifest retained, unrelated namespaces untouched |
 
 The [native cleanup contract subset](../qualification/m7-native-inventory-cleanup.md)
-covers canonical v2 scratch, peer-slot/manifest/sentinel preservation, injected expiry
-and an injected lost DELETE acknowledgement with actual local binding calls. It does
-not close owned-slot/competing-CAS/read-back-failure or real-time expiry/cleanup gates.
+covers canonical v1/v2 scratch, owned release and competing original-generation
+CAS, manifest/peer/sentinel preservation, oversized LIST and lost DELETE/read-back
+acknowledgements with actual local binding calls. It does not close bad-key LIST,
+real-time expiry/recovery or larger-scale cleanup gates; its expiry clock is injected.
 
 Count **physical binding calls**, including control GETs, LISTs, conditional PUTs,
 read-backs, cleanup and refused recovery attempts, not only reserved logical credits.

@@ -26,8 +26,8 @@ The [maximum-encoded fixture](qualification/m7-maximum-encoded-heads.md) reaches
 2,048-byte head ceiling; fast regressions do not certify unexecuted scale profiles. No later-milestone production code or
 remote deployment is authorized by this profiling work. The focused
 [native cleanup contract subset](qualification/m7-native-inventory-cleanup.md)
-adds canonical deletion/preservation and lost-acknowledgement regressions under an
-injected clock; the remaining qualification gates and M7 NEXT status are unchanged.
+adds canonical v1/v2 deletion/preservation, owned/competing-slot CAS and
+lost DELETE/read-back regressions under an injected clock; the remaining qualification gates and M7 NEXT status are unchanged.
 
 This is the canonical execution roadmap: implemented facts, planned direction and
 unresolved choices are distinct. Dates are intentionally not assigned. Engineering

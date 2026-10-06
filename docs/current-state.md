@@ -93,8 +93,9 @@ remains open. The subsequent [1,000-head profile](qualification/m7-inventory-pro
 completed full verified traversal in about 39 min 30 s and measured host journal/seal
 costs, not isolate/remote CPU or later-scale feasibility. M7 remains NEXT; the current writer
 and support claim are unchanged. A focused [native cleanup contract test](qualification/m7-native-inventory-cleanup.md)
-checks canonical v2 scratch, exact manifest/peer preservation, injected expiry and
-lost DELETE acknowledgement with independent binding-call counts. This is a bounded
+checks canonical v1/v2 scratch, owned-slot release, competing original-generation
+CAS, oversized LIST and lost DELETE/read-back acknowledgement with independent
+binding-call counts and exact manifest/peer/sentinel preservation. This is a bounded
 regression subset, not the completed expiry/cleanup/fault or remote qualification matrix.
 The [maximum-encoded dataset](qualification/m7-maximum-encoded-heads.md) adds legal
 2,048-byte live/tombstone metadata and fresh-isolate chunk recovery without relisting;

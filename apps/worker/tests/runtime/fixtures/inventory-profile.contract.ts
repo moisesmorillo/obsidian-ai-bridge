@@ -20,6 +20,17 @@ export const PROFILE_IDS = {
     "22222222-2222-4222-8222-222222222222",
   ),
 };
+/** Closed synthetic datasets; the baseline retains its original head bytes. */
+export const PROFILE_FIXTURE_KINDS = {
+  baseline: "baseline_ascii",
+  maximum: "maximum_encoded",
+} as const;
+/** Validates the dataset before seeding or checkpoint admission. */
+export const profileFixtureKindSchema = z.enum(
+  Object.values(PROFILE_FIXTURE_KINDS),
+);
+/** Dataset identity affects exact head bytes, not production policy. */
+export type ProfileFixtureKind = z.infer<typeof profileFixtureKindSchema>;
 /** Fixture-only head batch size; not a production invocation reservation. */
 export const PROFILE_SEED_BATCH = 32;
 /** Synthetic CPU admission estimate; explicitly not a measured Free CPU budget. */
@@ -100,6 +111,7 @@ export const profileRequestSchema = z.discriminatedUnion("action", [
       action: z.literal("seed"),
       headCount: profileCountSchema,
       offset: profileCountSchema,
+      fixtureKind: profileFixtureKindSchema.optional(),
     })
     .strict()
     .refine((input) => input.offset <= input.headCount),
@@ -177,6 +189,9 @@ export type ProfileReply = z.infer<typeof profileReplySchema>;
 export const profileStateSchema = z
   .object({
     headCount: profileCountSchema,
+    fixtureKind: profileFixtureKindSchema.default(
+      PROFILE_FIXTURE_KINDS.baseline,
+    ),
     phase: z.enum(["seed", "start", "scan", "page", "done"]),
     offset: profileCountSchema,
     handle: profileHandleSchema.nullable(),
@@ -185,6 +200,7 @@ export const profileStateSchema = z
     notBeforeMs: epochSchema,
     startedAtMs: epochSchema,
     scanStartedAtMs: epochSchema.nullable(),
+    hasListed: z.boolean().default(false),
     maxHeadBytes: z.number().int().min(0).max(SYNC_RECORD_LIMITS.headBytes),
   })
   .strict()

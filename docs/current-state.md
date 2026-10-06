@@ -96,6 +96,9 @@ and support claim are unchanged. A focused [native cleanup contract test](qualif
 checks canonical v2 scratch, exact manifest/peer preservation, injected expiry and
 lost DELETE acknowledgement with independent binding-call counts. This is a bounded
 regression subset, not the completed expiry/cleanup/fault or remote qualification matrix.
+The [maximum-encoded dataset](qualification/m7-maximum-encoded-heads.md) adds legal
+2,048-byte live/tombstone metadata and fresh-isolate chunk recovery without relisting;
+its 5,000/10,000-head executions remain pending, not inferred from fast regressions.
 
 ## M7.2 core sync-store evidence
 

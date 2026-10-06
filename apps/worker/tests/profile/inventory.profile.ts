@@ -1,5 +1,9 @@
 import { mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
+import {
+  PROFILE_FIXTURE_KINDS,
+  profileFixtureKindSchema,
+} from "@worker-tests/runtime/fixtures/inventory-profile.contract";
 import { runLocalInventoryProfile } from "@worker-tests/runtime/fixtures/inventory-profile-driver";
 import { profileHeadCount } from "@worker-tests/runtime/fixtures/inventory-profile-policy";
 import { expect, it } from "vitest";
@@ -12,7 +16,14 @@ it("retains a native inventory profile, without claiming unavailable CPU/memory 
       join(root, ".pi", "inventory-profiles", `${Date.now()}-${headCount}`),
   );
   mkdirSync(directory, { recursive: true });
-  const report = await runLocalInventoryProfile({ directory, headCount });
+  const fixtureKind = profileFixtureKindSchema.parse(
+    process.env.M7_PROFILE_FIXTURE ?? PROFILE_FIXTURE_KINDS.baseline,
+  );
+  const report = await runLocalInventoryProfile({
+    directory,
+    headCount,
+    fixtureKind,
+  });
   expect(report.completed).toBe(true);
   expect(report.accountingComplete).toBe(true);
   expect(report.verifiedSummaries).toBe(headCount);

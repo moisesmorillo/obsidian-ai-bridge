@@ -1,5 +1,6 @@
 import { SYNC_R2_WRITE_COOLDOWN_MS } from "@worker/infrastructure/sync/sync-r2.constants";
 import {
+  PROFILE_FIXTURE_KINDS,
   PROFILE_IDS,
   PROFILE_SEED_BATCH,
   type ProfileReply,
@@ -21,6 +22,9 @@ export function nextProfileRequest(state: ProfileState): ProfileRequest {
         action: "seed",
         headCount: state.headCount,
         offset: state.offset,
+        ...(state.fixtureKind === PROFILE_FIXTURE_KINDS.maximum
+          ? { fixtureKind: state.fixtureKind }
+          : {}),
       };
     case "start":
       return { action: "start" };
@@ -41,6 +45,8 @@ export function nextProfileRequest(state: ProfileState): ProfileRequest {
  * @param request Exact operation selected from that checkpoint.
  * @param reply Parsed observed reply whose identity/count/evidence must match.
  * @returns Validated successor, or throws leaving the previous checkpoint authoritative.
+ * Observed LIST calls select continuation scheduling only; every subsequent method still verifies
+ * its own durable authority, and only a verified complete handle permits evidence traversal.
  */
 export function advanceProfileState(
   state: ProfileState,
@@ -76,12 +82,15 @@ export function advanceProfileState(
       result.inventoryId !== PROFILE_IDS.inventoryId
     )
       throw new RangeError("Foreign scan identity.");
-    if (result.kind === "inventory_in_progress")
+    if (result.kind === "inventory_in_progress") {
+      const hasListed = state.hasListed || reply.metrics.calls.list > 0;
       return profileStateSchema.parse({
         ...state,
-        phase: request.action === "start" ? "scan" : "start",
+        phase: request.action === "start" || hasListed ? "scan" : "start",
+        hasListed,
         notBeforeMs: Math.max(state.notBeforeMs, result.retryAfterEpochMs ?? 0),
       });
+    }
     if (result.entryCount !== state.headCount)
       throw new RangeError("Complete handle has wrong fixture count.");
     return profileStateSchema.parse({
@@ -103,7 +112,7 @@ export function advanceProfileState(
         seen.has(index)
       )
         throw new RangeError("Duplicated or unexpected evidence summary.");
-      const expected = profileHead(index);
+      const expected = profileHead(index, state.fixtureKind);
       if (
         summary.path !== expected.path ||
         summary.kind !== expected.kind ||

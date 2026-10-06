@@ -20,6 +20,42 @@ it("persists the maximum known uncertainty floor without advancing work", () => 
   });
 });
 
+it("keeps continuation scheduling after an observed LIST without granting completion authority", () => {
+  const scanning = profileStateSchema.parse({
+    ...state,
+    phase: "scan",
+    offset: 1,
+  });
+  const listed = profileReplySchema.parse({
+    action: "inventory",
+    result: {
+      kind: "inventory_in_progress",
+      ...PROFILE_IDS,
+      retryAfterEpochMs: 2100,
+    },
+    metrics: { ...metrics, calls: { get: 1, list: 1, put: 1 } },
+  });
+  const continued = advanceProfileState(
+    scanning,
+    { action: "continue" },
+    listed,
+  );
+  expect(continued).toMatchObject({
+    phase: "scan",
+    hasListed: true,
+    handle: null,
+    notBeforeMs: 2100,
+  });
+  const deferred = profileReplySchema.parse({
+    action: "inventory",
+    result: { kind: "inventory_in_progress", ...PROFILE_IDS },
+    metrics: { ...metrics, calls: { get: 1, list: 0, put: 0 } },
+  });
+  expect(
+    advanceProfileState(continued, { action: "continue" }, deferred),
+  ).toMatchObject({ phase: "scan", hasListed: true, handle: null });
+});
+
 const metrics = {
   calls: { get: 2, put: 2, list: 0 },
   readBytes: 0,

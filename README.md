@@ -95,6 +95,7 @@ mise run install
 | `mise run tsdoc:check` | Check associated TSDoc presence across production TypeScript. |
 | `mise run test` | Run the fast Vitest test suite without coverage. |
 | `mise run worker:storage-test` | Qualify conditional R2 semantics in the pinned local workerd runtime. |
+| `mise run worker:inventory-profile` | Run/resume a synthetic local-only native inventory profile (zero heads by default); see [harness boundaries](docs/qualification/m7-inventory-profile-harness.md). |
 | `mise run coverage` | Run the Vitest suite with V8 coverage and enforce global thresholds. |
 | `mise run typecheck` | Type-check all workspaces. |
 | `mise run build` | Bundle the Worker with Wrangler in dry-run mode, stage the CommonJS plugin/manifest and run artifact smoke tests. |

@@ -47,6 +47,10 @@ run = "bunx vitest run"
 description = "Qualify conditional R2 behavior in the pinned local workerd runtime"
 run = "node node_modules/vitest/vitest.mjs run --config apps/worker/vitest.storage.config.ts"
 
+[tasks."worker:inventory-profile"]
+description = "Run or resume a synthetic local-only native inventory profile (default zero heads)"
+run = "node node_modules/vitest/vitest.mjs run --config apps/worker/vitest.profile.config.ts"
+
 [tasks.coverage]
 description = "Run Vitest with V8 coverage and enforce thresholds"
 run = "node node_modules/vitest/vitest.mjs run --coverage"

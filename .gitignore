@@ -20,6 +20,7 @@ mise.local.toml
 .pi/fusion/
 .pi/tasks/
 .pi/subagents/
+.pi/inventory-profiles/
 
 # TypeScript and build outputs
 *.tsbuildinfo

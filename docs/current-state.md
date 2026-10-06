@@ -86,9 +86,20 @@ canonical expired scratch.
 The [local evidence report](qualification/m7-private-sync-store-local.md) records
 canonical checks, unchanged 95% coverage and closed independent-review findings.
 Local native tests and counted calls do not qualify remote Workers Free CPU or
-account/storage sustainability. The maximal real-head profile and normal merge
-transition remain open. M7 remains NEXT; the current writer and support claim are
-unchanged.
+account/storage sustainability. The test-only native baseline harness merged in
+PR #99 at `306aa35`, with [0/1-head observations](qualification/m7-inventory-profile-harness.md)
+and independently closed recovery/evidence findings. The maximal real-head profile
+remains open. The subsequent [1,000-head profile](qualification/m7-inventory-profile-1000.md)
+completed full verified traversal in about 39 min 30 s and measured host journal/seal
+costs, not isolate/remote CPU or later-scale feasibility. M7 remains NEXT; the current writer
+and support claim are unchanged. A focused [native cleanup contract test](qualification/m7-native-inventory-cleanup.md)
+checks canonical v1/v2 scratch, owned-slot release, competing original-generation
+CAS, oversized LIST and lost DELETE/read-back acknowledgement with independent
+binding-call counts and exact manifest/peer/sentinel preservation. This is a bounded
+regression subset, not the completed expiry/cleanup/fault or remote qualification matrix.
+The [maximum-encoded dataset](qualification/m7-maximum-encoded-heads.md) adds legal
+2,048-byte live/tombstone metadata and fresh-isolate chunk recovery without relisting;
+its 5,000/10,000-head executions remain pending, not inferred from fast regressions.
 
 ## M7.2 core sync-store evidence
 

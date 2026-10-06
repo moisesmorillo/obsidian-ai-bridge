@@ -20,7 +20,8 @@ oversized-read findings. The [plan/evidence ledger](../plans/m8-local-sync-api.m
 and [lab guide](../local-sync-demo.md) distinguish native test-clock injection
 from real expiry/CPU/platform or desktop qualification. No real R2, deployment,
 personal vault or M8 plugin demonstration is claimed. Delivery 1 awaits owner
-PR review/merge; client reconciliation and plugin/two-vault work remain pending.
+review/merge of [PR #111](https://github.com/moisesmorillo/obsidian-ai-bridge/pull/111);
+client reconciliation and plugin/two-vault work remain pending.
 
 ## Outcome and accepted boundary
 

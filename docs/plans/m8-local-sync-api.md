@@ -78,7 +78,7 @@ read-back uses the existing one-key primitive before admitted first mutation.
 - [x] `mise install`, `mise run check`, local demo dry-run build; manual semantic
   review of permissions, original CAS, payload validation, namespace and release
   isolation.
-- [ ] Commit/push functional PR; leave merge to owner. No deployment.
+- [x] Commit/push functional PR; leave merge to owner. No deployment (#111).
 
 ## Execution ledger
 
@@ -124,8 +124,9 @@ read-back uses the existing one-key primitive before admitted first mutation.
   actionable finding; owner PR review/merge is separate. Documentation link validation
   checked 214 local targets with no missing files; whitespace is clean.
 - Operational guide and architecture/current-state/API references are drafted;
-  final evidence and post-check semantic closure are recorded. Commit and functional
-  PR are the remaining delivery actions.
+  final evidence and post-check semantic closure are recorded. Functional delivery
+  commit `72a6508` is published in [PR #111](https://github.com/moisesmorillo/obsidian-ai-bridge/pull/111);
+  owner review/merge remains pending. No deployment or plugin installation.
 
 ## Semantic review record
 

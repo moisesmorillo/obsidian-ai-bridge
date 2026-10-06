@@ -1184,10 +1184,13 @@ remote gates. All applicable G1–G6 evidence and explicit owner acceptance are 
 before protocol exposure, activation or real-data use. No route, migration, writer,
 iCloud change or deployment is authorized by M7 COMPLETE.
 
-The next bounded work is the report's test-only native finalization/release conformance
-fixture. No following milestone is NEXT. API/client enrollment, legacy fencing/import
-and reconciliation need separately approved bounded specifications; do not construct a
-complete later milestone or operating envelope from this closure.
+The [bounded native finalization/release candidate](../qualification/m7-native-inventory-finalization.md)
+supplies the authorized test-only 0/1-head subset; its evidence becomes canonical on
+merge and does not close G1. Next enumerate remaining G1 rows and approve a bounded
+scope before implementation. No following milestone is NEXT. API/client enrollment,
+legacy fencing/import and reconciliation need separately approved bounded
+specifications; do not construct a complete later milestone or operating envelope
+from this closure.
 
 ## References
 

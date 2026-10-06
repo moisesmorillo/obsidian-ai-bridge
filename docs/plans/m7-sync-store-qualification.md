@@ -70,6 +70,12 @@ CAS, manifest/peer/sentinel preservation, oversized LIST and lost DELETE/read-ba
 acknowledgements with actual local binding calls. It does not close bad-key LIST,
 real-time expiry/recovery or larger-scale cleanup gates; its expiry clock is injected.
 
+The [0/1-head native finalization/release candidate](../qualification/m7-native-inventory-finalization.md)
+adds fast regressions for changed/pending final vectors, lost completion/release
+responses, unavailable read-back and a peer takeover between preflight and native
+CAS. It uses fresh facades and injected time, not process-kill/real-clock evidence;
+it leaves all gates open and does not repeat any scale or expiry run.
+
 Count **physical binding calls**, including control GETs, LISTs, conditional PUTs,
 read-backs, cleanup and refused recovery attempts, not only reserved logical credits.
 For every start/step/finalization/evidence/cleanup/recovery branch compare actual calls

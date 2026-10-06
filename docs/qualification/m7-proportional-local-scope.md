@@ -3,7 +3,9 @@
 **Owner decision: stop further large stress runs and prioritize small safety cases.**
 This replaces the earlier instruction to execute the entire local maximum-scale
 matrix in this session. It does not lower implemented limits, waive unresolved
-acceptance criteria, activate synchronization or mark M7 complete.
+acceptance criteria or activate synchronization. Its original M7 NEXT status is
+superseded only for private delivery by [ADR 0020](../decisions/0020-private-sync-store-delivery-and-activation-gate.md);
+all missing qualification remains in the [mandatory gate report](m7-delivery-and-activation-gate.md).
 
 ## Execution policy
 
@@ -13,7 +15,7 @@ acceptance criteria, activate synchronization or mark M7 complete.
 | 20,001-page sparse run | Stopped by owner; retain partial artifacts, not qualified |
 | New large profiles, repetitions or large sparse-population cleanup | Deferred; require new explicit approval and a concrete unresolved risk |
 | Failure certainty, original-generation CAS, conflicts, recovery and bounded replay | Use deterministic small native fixtures; fix only validation-blocking defects |
-| Actual 24-hour expiry already in progress | Keep this existing run; do not launch additional expiry repetitions |
+| Actual 24-hour expiry | Existing task `b2812efb2` was killed after 13 h 59 min at Pi shutdown; incomplete, no approved report; no new repetition |
 | Remote Workers Free/account qualification | Still unauthorized and pending |
 
 Ten thousand heads are the protocol ceiling, not a measured vault workload.
@@ -65,12 +67,13 @@ execution-scope decision, not evidence that the original worst-case gate passed.
 
 1. Close narrowly scoped data-safety unknowns using small native cases and the
    existing fast canonical checks, without reopening a broad preparation program.
-2. Record the result of the already-running real-day expiry experiment separately.
+2. Record the real-day expiry as incomplete, not still running or passed.
 3. Deliver one consolidated criterion table: approved, failed, deferred or pending,
    with source identity and evidence scope. Never promote deferred stress criteria.
 
-M7 remains **NEXT**, synchronization inactive. Full maximum/adversarial and remote
-support remain unqualified where evidence is absent. A smaller initial support
-claim or revised M7 exit requires an explicit specification/roadmap decision;
-this document alone does not enact it. No production/plugin/credential/vault or
+M7 closes only as private isolated delivery under ADR 0020; synchronization stays
+inactive. Full maximum/adversarial and remote support remain unqualified where
+evidence is absent. No 1,000-note limit or smaller support claim is adopted.
+G1–G6 acceptance is mandatory before exposure/real-data use; this execution-scope
+note alone cannot close any of those gates. No production/plugin/credential/vault or
 remote-resource changes, no new preparation PR and no automatic merge.

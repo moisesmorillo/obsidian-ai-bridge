@@ -48,7 +48,7 @@ Before the first binding call, verify the newly created bucket is empty and the 
 6. Execute separately bounded faults/races and expiry/cleanup probes. Injected failures remain labelled; do not equate an injected lost reply with a provider fault or later absence with earlier confirmed deletion.
 7. Export sanitized source-bound reports and raw synthetic evidence to the approved local location. Redact credentials/account identifiers; retain failed and slow samples.
 
-**Blocking telemetry question:** determine the actual Free-tier mechanism for complete per-invocation CPU observations and trustworthy isolate memory evidence. Do not promise Workers Logs, Tail, Logpush or a paid capability until its fields, availability and sampling have been verified. Missing telemetry keeps M7 pending; switching tiers is not an acceptable shortcut.
+**Blocking telemetry question:** determine the actual Free-tier mechanism for complete per-invocation CPU observations and trustworthy isolate memory evidence. Do not promise Workers Logs, Tail, Logpush or a paid capability until its fields, availability and sampling have been verified. Missing telemetry keeps G4 and activation blocked after private M7 delivery; switching tiers is not an acceptable shortcut. See [ADR 0020 and the consolidated gates](../qualification/m7-delivery-and-activation-gate.md).
 
 ## Cleanup and reconciliation
 

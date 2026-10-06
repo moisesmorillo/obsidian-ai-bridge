@@ -1,5 +1,9 @@
 # M7.4 Complete Sync Store Implementation Plan
 
+> Historical implementation plan. [ADR 0020](../../decisions/0020-private-sync-store-delivery-and-activation-gate.md)
+> supersedes only its all-qualification-before-M7-COMPLETE rule. Undemonstrated
+> requirements remain mandatory [G1–G6 activation blockers](../../qualification/m7-delivery-and-activation-gate.md), not passed tasks.
+
 > **Historical implementation recipe:** PR #97 delivered this private store.
 > Do not repeat the production tasks below; follow the separately gated
 > [qualification plan](../../plans/m7-sync-store-qualification.md) for remaining work.

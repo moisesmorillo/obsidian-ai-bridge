@@ -25,8 +25,10 @@ head `e97af36` resolved all three, and the corrective review returned APPROVE wi
 open findings. M3 is COMPLETE; PR #27 merged at `63b0599` and made the transition
 canonical. M4 Slices 1–8 and M5 are COMPLETE. M6's stateless Worker MCP adapter is
 COMPLETE and qualified in this transition. M7 — versioned sync protocol and isolated
-R2 store — is NEXT in the current roadmap transition; its specification authorizes
-only isolated storage foundations after the documentation transition merges. It does
+R2 store — is COMPLETE as private isolated delivery on this documentation transition's
+merge under [ADR 0020](decisions/0020-private-sync-store-delivery-and-activation-gate.md).
+The [criterion report and G1–G6 gates](qualification/m7-delivery-and-activation-gate.md)
+separate delivered code from undemonstrated safety and operational qualification. It does
 not authorize sync activation, migration, or changes to the current writer. The current
 M7.1 protocol contracts live in `packages/protocol`: protocol-major-one identity and
 checkpoint schemas, canonical sync namespace keys, SHA-256 feed-lane selection, and
@@ -70,9 +72,11 @@ page/cursor progress: same-ID recovery fails the exact reserved manifest without
 relisting, retains uncertainty, and releases only the owned slot when safe. Frozen
 v1 page decoding and namespace/storage ceilings are unchanged. See
 [M7.4 local evidence](qualification/m7-private-sync-store-local.md) for checks and
-independent review. Remote Workers Free CPU/account qualification and maximal
-real-head profiling remain pending under the [qualification plan](plans/m7-sync-store-qualification.md).
-M7 remains NEXT and activation remains excluded.
+independent review. Local maximum 5,000/10,000-head profiles are retained evidence, not isolate/remote
+qualification. Real 24-hour expiry is incomplete. Workers Free CPU/memory/account,
+real R2 and missing native safety matrices remain pending under the
+[qualification plan](plans/m7-sync-store-qualification.md); G1–G6 block activation
+and real-data use. No implementation limits or active composition changed.
 The current
 plugin boundary includes strict device state v5 with
 frozen v2/v3/v4 migration, reviewed sampling/admission, narrow local writes and
@@ -559,10 +563,11 @@ external successor or deadlock an aligned path.
   M4 remains reviewed-only: no automatic import, cross-system atomicity, production
   deployment, security certification, or complete-backup claim.
 - M6 is complete: the authorized MCP adapter uses existing Worker services and never
-  accesses R2 directly. M7 is the next defined milestone; it adds an uncomposed,
+  accesses R2 directly. M7 delivers an uncomposed,
   versioned sync contract and isolated R2 store without changing current v2 routes or
   the designated writer. Sync activation, migration, client enrollment, and cutover
-  remain outside M7 and require later roadmap authorization.
+  remain outside delivered M7 and require G1–G6 acceptance plus explicit later
+  bounded specifications/roadmap authorization. No subsequent milestone is NEXT.
 - Outside this roadmap: search, attachments and AI inference. NAS replication or
   stronger remote authority are possibilities, not selected infrastructure. D1,
   Durable Objects, queues, Workers AI, Vectorize and external databases are not

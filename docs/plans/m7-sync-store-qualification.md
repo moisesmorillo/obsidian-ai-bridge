@@ -4,15 +4,20 @@
 [proportional local scope and preserved results](../qualification/m7-proportional-local-scope.md).
 Maximum 5,000/10,000 profiles and copied 5,000 cleanup have executed; the 20,001-page
 sparse run was stopped and remains unqualified. Prior instructions to finish every
-large local profile in this session are superseded. Full specification and remote
-qualification gates are not waived.
+large local profile in this session are superseded. Full storage/safety and remote
+qualification gates are not waived. Under
+[ADR 0020](../decisions/0020-private-sync-store-delivery-and-activation-gate.md),
+M7 closes as private isolated delivery; this plan now executes mandatory
+[preactivation G1–G6 gates](../qualification/m7-delivery-and-activation-gate.md),
+not a condition for calling the private implementation delivered.
 
-**Qualification plan; local 0/1-head baselines and one 1,000-head profile have run.** The
+**Preactivation qualification plan; local baselines and 1,000/5,000/10,000 profiles have run.** The
 [test-only harness](../qualification/m7-inventory-profile-harness.md) and
 [1,000-head evidence](../qualification/m7-inventory-profile-1000.md) do not close the
 maximal, fault/cleanup or remote qualification gates. PR #97 merged the private
 implementation at `62696b030a817eb2c4f91af8a6986a688fcd318b`, including terminal
-inventory failure correction `ed88daf`. M7 remains **NEXT**. Qualification must
+inventory failure correction `ed88daf`. M7 is delivered privately on the
+ADR 0020 transition's merge. Qualification must
 close the gaps in [local evidence](../qualification/m7-private-sync-store-local.md),
 not activate the store or change the current writer.
 
@@ -23,11 +28,14 @@ not activate the store or change the current writer.
 | 1. Local harness | [Native baseline harness](../qualification/m7-inventory-profile-harness.md) provides bounded fixtures, one operation/request, checkpoints and a canonical `mise` task | Implemented locally; no real account, R2 or vault, and maximal/fault/cleanup qualification is not implied |
 | 2. Local evidence | Run the reviewed harness against a pinned local workerd build; retain measurements and failure traces | Explicit local execution approval; never call arithmetic or host-process CPU a remote profile |
 | 3. Remote qualification | [Proposed isolated approval packet](m7-workers-free-approval-packet.md), then an approved Workers Free/R2 experiment and account-admission report | Separate owner approval of resources, workload, maximum cost/calls, retention and cleanup; no production bucket or personal vault |
-| 4. M7 exit | Acceptance/evidence reconciliation, canonical checks, semantic review and a completion PR | Only after all specification criteria pass; no automatic activation or following NEXT milestone |
+| 4. Preactivation acceptance | Source-bound G1–G6 evidence, candidate canonical checks, independent semantic/security review and explicit owner acceptance | All applicable rows required before real-data use/exposure/activation; M7 delivery is not this acceptance, and no automatic NEXT milestone |
 
 The [M7 specification](../milestones/m7-versioned-sync-protocol-and-r2-store.md)
 remains authoritative for ceilings and failure policy. This plan does not relax
 its 10,000-head, 400-subrequest, write-spacing, expiry or Workers Free CPU gates.
+M7 COMPLETE does not satisfy G1–G6. The existing real-day task ended after
+13 h 59 min during Pi shutdown without an approved expiry report; G2 remains open.
+No replacement long run is authorized.
 Do not add a public sync endpoint or mount the private store to profile it. A future
 isolated test entry may compose the store inside the Worker, as the existing native
 fixture does; its endpoint must not enter the production bootstrap.
@@ -37,8 +45,8 @@ fixture does; its endpoint must not enter the production bootstrap.
 This table retains the full contractual qualification target, **not the currently
 authorized execution queue**. Under the owner-approved proportional scope, do not
 launch or repeat large profiles or sparse-population cleanup. Use small fixtures
-for critical safety cases; retain deferred rows as unqualified. The existing real-day
-expiry run may finish, with no new long repetitions.
+for critical safety cases; retain deferred rows as unqualified. The former real-day
+expiry run is incomplete; do not restart it or infer a pass.
 
 Build valid synthetic heads through the actual persisted codecs, not mock summaries.
 Report the largest legal encoded head/path sizes achieved separately from schema
@@ -153,12 +161,14 @@ only where needed to verify identity-bound transitions.
   with approved stop limits; resource teardown and evidence retention are recorded.
 - [ ] All specification acceptance items map to evidence or remain explicitly blocked;
   canonical `mise install`, `mise run check` and semantic review pass on the candidate.
-- [ ] Only the reviewed completion transition marks M7 COMPLETE. Later API/client
-  enrollment, migration, vault cutover and activation require a separate specification
-  and authorization; no following milestone is started by this plan.
+- [ ] All applicable G1–G6 requirements are accepted before exposure/real-data use;
+  M7's private delivery status is not acceptance. Later API/client enrollment,
+  migration, cutover and activation need separate bounded specifications and owner
+  authorization; no following milestone is started by this plan.
 
-**Next action:** close critical failure-certainty/conflict/recovery gaps with small
-native fixtures, consume the already-running real-day expiry result and consolidate
-source-bound evidence. No further large stress execution without renewed explicit
-approval. Deferred maximum/adversarial criteria and remote execution remain gated;
-M7 exit/support changes require a separate accepted specification decision.
+**Next action:** implement the consolidated report's small native final-vector/
+completion/slot-release conformance fixture to close named G1 rows. The real-day
+result is already reconciled as incomplete, not running. No further large stress or
+expiry repetition without renewed explicit approval. Deferred maximum/adversarial
+criteria and remote execution remain blocked; ADR 0020 changes delivery only, not
+support or activation requirements.

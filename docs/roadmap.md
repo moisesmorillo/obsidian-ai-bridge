@@ -5,9 +5,12 @@ records requirements to review before connecting a vault. [Accepted ADR 0015](de
 describes the staged OAuth and revocation design for that rollout.
 The [bidirectional vault sync rollout proposal](plans/bidirectional-vault-sync-rollout.md)
 and [proposed ADR 0016](decisions/0016-bidirectional-vault-sync.md) describe
-a post-M6 product direction. The implementation-ready [M7 specification](milestones/m7-versioned-sync-protocol-and-r2-store.md)
-defines the isolated protocol/storage foundation and is the sole `NEXT` milestone in
-this transition. It does not change the implemented single-writer support claim,
+a post-M6 product direction. The delivered [M7 specification](milestones/m7-versioned-sync-protocol-and-r2-store.md)
+defines the isolated protocol/storage foundation. [ADR 0020](decisions/0020-private-sync-store-delivery-and-activation-gate.md)
+closes M7 as **private isolated store delivery** when this documentation transition
+merges, not operational readiness. No following milestone is NEXT; the
+[criterion report and mandatory activation blockers](qualification/m7-delivery-and-activation-gate.md)
+own the evidence boundary. It does not change the implemented single-writer support claim,
 activate a production writer, or migrate a vault. M7.1/M7.2 are complete;
 M7.3's isolated R2 primitives merged in PR #95. M7.4's private journal, feed,
 inventory and crash recovery merged in PR #97 at `62696b0`, including the terminal
@@ -17,11 +20,14 @@ Its remote Workers Free CPU/account qualification remains pending under the
 local execution to [proportional safety qualification](qualification/m7-proportional-local-scope.md):
 retain completed 5,000/10,000 maximal profiles and 5,000 copied cleanup, stop the
 20,001-page sparse run as unqualified, and launch no further large stress runs.
-Small critical safety cases and the existing real-day expiry run remain in scope.
-This is not a reduction of implemented limits or approval of a smaller support claim;
-M7 completion still requires an explicit acceptance/specification reconciliation.
-M7 remains NEXT: merged private code is not milestone completion or permission to
-activate sync. The test-only local profiling harness merged in PR #99 at `306aa35`;
+Small critical safety cases remain in scope. The real-day expiry task was killed
+at Pi shutdown after 13 h 59 min; no approved expiry result exists and no new long
+run is authorized.
+This is not a reduction of implemented limits or approval of a smaller support claim.
+The owner-approved ADR 0020 reconciles delivery and qualification without a 1,000-note
+limit: real expiry remains incomplete, and native safety/Workers Free/real R2/account
+requirements are mandatory G1–G6 blockers, not passed criteria. M7 COMPLETE is never
+permission to activate sync. The test-only local profiling harness merged in PR #99 at `306aa35`;
 its [0/1-head baseline evidence](qualification/m7-inventory-profile-harness.md)
 does not close scale or remote gates. The subsequent
 [1,000-head local profile](qualification/m7-inventory-profile-1000.md) completed in
@@ -35,7 +41,7 @@ The [maximum-encoded fixture](qualification/m7-maximum-encoded-heads.md) reaches
 remote deployment is authorized by this profiling work. The focused
 [native cleanup contract subset](qualification/m7-native-inventory-cleanup.md)
 adds canonical v1/v2 deletion/preservation, owned/competing-slot CAS and
-lost DELETE/read-back regressions under an injected clock; the remaining qualification gates and M7 NEXT status are unchanged.
+lost DELETE/read-back regressions under an injected clock; the remaining qualification gates stay open after private delivery.
 
 This is the canonical execution roadmap: implemented facts, planned direction and
 unresolved choices are distinct. Dates are intentionally not assigned. Engineering
@@ -92,7 +98,7 @@ an [ADR](decisions/README.md).
 compose an experimental connected outward mirror, not a production-ready or
 remote-to-local system. Canonical validation passed, the final semantic review's three
 MINOR findings were corrected at `e97af36`, and the corrective review returned APPROVE
-with no open findings. M4 Slices 1–8 and M5 are COMPLETE; M6 is COMPLETE. M7 — versioned sync protocol and isolated R2 store — is NEXT in this roadmap transition. M5's support claim is limited to the latest v1.0.2 release and its exact [qualification report](qualification/m5-final.md). M4's reviewed-only authority, preservation, local mutation,
+with no open findings. M4 Slices 1–8 and M5 are COMPLETE; M6 is COMPLETE. M7 — versioned sync protocol and isolated R2 store — is COMPLETE as private delivery in this documentation transition; no subsequent milestone is NEXT. M5's support claim is limited to the latest v1.0.2 release and its exact [qualification report](qualification/m5-final.md). M4's reviewed-only authority, preservation, local mutation,
 adoption/tombstone/restore, migration, and one-writer product decisions are implemented
 and qualified. Slice 1 implements the closed contracts, sparse state v3, deterministic
 v2 migration/read-back fence, downgrade refusal, and runtime registry compatibility
@@ -141,9 +147,10 @@ implementation.
 ## Milestone table
 
 A milestone is `NEXT` only while its prerequisites and implementation-ready
-specification authorize implementation. M1–M6 are COMPLETE; M7 is the sole `NEXT`
-milestone in this transition. The transition becomes canonical only when its
-documentation PR merges; no M7 implementation may start before then. Dependencies
+specification authorize implementation. M1–M6 retain their completed scope; M7 is
+COMPLETE only as private isolated delivery under ADR 0020. This documentation PR's
+merge makes the boundary canonical. There is **no NEXT milestone**: the next work
+item below is a bounded qualification fixture, not a new product milestone. Dependencies
 include all previous milestones.
 
 | ID | Milestone | Status | User-visible outcome | Dependency |
@@ -154,7 +161,7 @@ include all previous milestones.
 | M4 | Remote-to-local reconciliation and conflict resolution | COMPLETE | Review/adopt/resolve remote divergence and richer restoration without silent local data loss | M3 |
 | M5 | Operational and security readiness | COMPLETE | Latest-only, bounded v1.0.2 software support with reviewed limits, permissions, runbooks and qualification evidence | M4 |
 | M6 | MCP adapter | COMPLETE | Same authorized operations for MCP-capable agents through the M5 authentication and application-service boundary; bounded official-client qualification complete | M5 |
-| M7 | Versioned sync protocol and isolated R2 store | NEXT | Uncomposed versioned contract, `SyncStore` port, isolated R2 adapter, fair bounded feed, resumable 10,000-head inventory within a 400-subrequest invocation ceiling, bounded evidence paging, rate-limit-safe recovery, and a Workers Free CPU qualification gate | M6 |
+| M7 | Versioned sync protocol and isolated R2 store | COMPLETE (private delivery on this transition's merge) | Uncomposed contracts/`SyncStore`/R2 adapter, feed, inventory/evidence and recovery; local 5k/10k evidence retained, **not operational qualification**. All applicable G1–G6 gates block activation | M6 |
 
 ### M1 — Worker API foundation and engineering quality
 
@@ -391,6 +398,20 @@ completion PR has merged; later OAuth and sync proposals have separate status.
 - No MCP-only inference/search/product expansion. M6 remains complete and unchanged;
   M7 is separately scoped to isolated protocol/storage foundations.
 
+## Next bounded work and activation boundary
+
+Implement only a small test-only native fixture for changed/pending final vectors and
+interrupted completion/owned-slot release across fresh facades, with physical call
+counts and peer/v2 preservation. See the [exact scope](qualification/m7-delivery-and-activation-gate.md#next-bounded-implementation-work--not-a-new-milestone).
+Estimate its scope and keep it in one reviewable PR; no public route, plugin or
+remote resource is authorized. No whole following milestone is defined or started.
+
+G1–G6 explicitly block real-data use and activation: missing safety matrix, real
+expiry/no-reuse, real R2/trusted storage, runtime feasibility, workload/account
+admission and exposure/client/migration/cutover. Remote experiments need separate
+approval; deferral is not acceptance. A later production slice needs a bounded
+implementation-ready specification and explicit roadmap authorization.
+
 ## Unresolved product decisions
 
 **None for M1–M6.** M3's accepted choices and
@@ -464,8 +485,8 @@ an explicitly accepted successor decision.
   spec/status/evidence, roadmap, current-state/architecture/API/ADRs/operations.
 - Merged PR #27 records the approved M3 A1–A11 evidence; the M4 completion transition
   preceded M5 qualification. The M5 completion transition made M5 COMPLETE and M6 NEXT.
-  The M6 completion PR records final adapter evidence and marks M6 COMPLETE. A separate
-  documentation-only transition defines M7 NEXT; it becomes canonical only when that
-  PR merges. Do not start M7 implementation before the transition merges.
-- M7 completion must not activate sync or imply a personal-vault cutover. A later
-  milestone requires its own explicit roadmap transition and implementation-ready spec.
+  The M6 completion PR records final adapter evidence and marks M6 COMPLETE. The original transition made M7 NEXT. ADR 0020's current documentation-only
+  transition closes M7 as private delivery; its merge does not approve G1–G6.
+- M7 completion must not activate sync or imply a personal-vault cutover. G1–G6
+  acceptance and owner activation approval remain mandatory; any later production
+  work requires its own bounded specification/authorization, not an inferred M8.

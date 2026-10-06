@@ -65,7 +65,10 @@ Node/host wall time. Local workerd never satisfies the remote CPU gate.
 The baseline `mise run worker:inventory-profile` task now exists; its
 [harness guide](../qualification/m7-inventory-profile-harness.md) defines fixture
 setup, resumable driving, call accounting, measurement scope, stop conditions and
-retained outputs. It is not an implementation of every profile in this matrix. Keep costly
+retained outputs. Its optional [maximum-encoded dataset](../qualification/m7-maximum-encoded-heads.md)
+uses `M7_PROFILE_FIXTURE=maximum_encoded` for legal 2,048-byte live/tombstone heads.
+The owner authorized all synthetic local qualification on 2026-10-05; this does not
+close unexecuted cases or authorize remote resources. It is not an implementation of every profile in this matrix. Keep costly
 maximal runs separate from routine `mise run check`; retain fast regression assertions
 in the canonical gate. If implementing the harness crosses repository size limits,
 propose independent PR boundaries before production changes.

@@ -11,11 +11,14 @@ import {
 import type { R2ConditionalBucketPort } from "@worker/infrastructure/r2.types";
 import { createSyncR2Store } from "@worker/infrastructure/sync/sync-r2-store";
 import { encodeSyncRecord } from "@worker/infrastructure/sync/sync-record.codec";
+import { SYNC_RECORD_LIMITS } from "@worker/infrastructure/sync/sync-record.schemas";
 import type { SyncHeadRecord } from "@worker/infrastructure/sync/sync-record.types";
 import {
   PROFILE_CPU_ALLOWANCE_MS,
+  PROFILE_FIXTURE_KINDS,
   PROFILE_IDS,
   PROFILE_SEED_BATCH,
+  type ProfileFixtureKind,
   profileRequestSchema,
 } from "@worker-tests/runtime/fixtures/inventory-profile.contract";
 
@@ -25,20 +28,35 @@ interface ProfileEnv {
 }
 /** Generates a valid maximum-length path using portable-sized segments and ordered synthetic indices.
  * @param index Bounded deterministic fixture index, not a user vault identifier.
- * @returns Strict synthetic head metadata; no body/version conformance is implied.
+ * @param fixtureKind Dataset identity; maximum encoding alternates live/tombstone metadata with exact 2-KiB bodies.
+ * @returns Strict synthetic head metadata; no body/version conformance or filesystem installation is implied.
  */
-export function profileHead(index: number): SyncHeadRecord {
+export function profileHead(
+  index: number,
+  fixtureKind: ProfileFixtureKind = PROFILE_FIXTURE_KINDS.baseline,
+): SyncHeadRecord {
   const digest = createContentSha256(
     "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
   );
   if (digest === undefined) throw new RangeError("Invalid synthetic digest.");
+  const maximum = fixtureKind === PROFILE_FIXTURE_KINDS.maximum;
+  const kind = maximum && index % 2 !== 0 ? "tombstone" : "live";
+  const baselinePath = `${Array.from({ length: 4 }, () => "p".repeat(170)).join("/")}/${String(index).padStart(6, "0")}${"n".repeat(27)}.md`;
+  let replaced = 0;
+  const controlCharacters = kind === "live" ? 171 : 170;
+  const path = maximum
+    ? baselinePath.replaceAll("p", () => {
+        replaced += 1;
+        if (replaced <= controlCharacters) return "\u0001";
+        if (replaced <= controlCharacters + 3) return '"';
+        return "p";
+      })
+    : baselinePath;
   return {
     schemaVersion: 1,
     protocolMajor: 1,
     vaultId: PROFILE_IDS.vaultId,
-    path: syncNotePathSchema.parse(
-      `${Array.from({ length: 4 }, () => "p".repeat(170)).join("/")}/${String(index).padStart(6, "0")}${"n".repeat(27)}.md`,
-    ),
+    path: syncNotePathSchema.parse(path),
     revision: syncRevisionSchema.parse(
       `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
     ),
@@ -48,9 +66,9 @@ export function profileHead(index: number): SyncHeadRecord {
         "77777777-7777-4777-8777-777777777777",
       ),
     },
-    kind: "live",
+    kind,
     contentSha256: digest,
-    byteSize: 0,
+    byteSize: maximum ? SYNC_RECORD_LIMITS.contentBodyBytes : 0,
     mediaType: "text/markdown",
     operationId: syncOperationIdSchema.parse(
       "44444444-4444-4444-8444-444444444444",
@@ -167,7 +185,7 @@ export default {
           { length: end - input.offset },
           (_, offset) => input.offset + offset,
         )) {
-          const head = profileHead(index);
+          const head = profileHead(index, input.fixtureKind);
           const bytes = await encodeSyncRecord({ kind: "head", record: head });
           await seed(syncHeadKey(PROFILE_IDS.vaultId, head.path), bytes);
           maxHeadBytes = Math.max(maxHeadBytes, bytes.byteLength);

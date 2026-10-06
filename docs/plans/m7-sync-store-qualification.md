@@ -22,7 +22,7 @@ not activate the store or change the current writer.
 | --- | --- | --- |
 | 1. Local harness | [Native baseline harness](../qualification/m7-inventory-profile-harness.md) provides bounded fixtures, one operation/request, checkpoints and a canonical `mise` task | Implemented locally; no real account, R2 or vault, and maximal/fault/cleanup qualification is not implied |
 | 2. Local evidence | Run the reviewed harness against a pinned local workerd build; retain measurements and failure traces | Explicit local execution approval; never call arithmetic or host-process CPU a remote profile |
-| 3. Remote qualification | Approved isolated Workers Free/R2 experiment and account-admission report | Separate owner approval of resources, workload, maximum cost/calls, retention and cleanup; no production bucket or personal vault |
+| 3. Remote qualification | [Proposed isolated approval packet](m7-workers-free-approval-packet.md), then an approved Workers Free/R2 experiment and account-admission report | Separate owner approval of resources, workload, maximum cost/calls, retention and cleanup; no production bucket or personal vault |
 | 4. M7 exit | Acceptance/evidence reconciliation, canonical checks, semantic review and a completion PR | Only after all specification criteria pass; no automatic activation or following NEXT milestone |
 
 The [M7 specification](../milestones/m7-versioned-sync-protocol-and-r2-store.md)

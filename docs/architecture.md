@@ -94,6 +94,18 @@ source/configuration evidence, [roadmap](roadmap.md) for execution order and ope
 decisions, and [ADR 0001](decisions/0001-worker-r2-foundation.md) for the durable
 foundation.
 
+## M8 experimental local composition
+
+The [local lab](local-sync-demo.md) has a separate `apps/worker/src/demo/index.ts`
+and `wrangler.demo.jsonc`, not imported by release composition. Strict transport
+schemas bind requests to a server-configured vault/participant; registry read/write
+permissions are independent. `SyncDemoService` admits only the synthetic path/byte
+scope, then delegates exact-parent mutation/replay and current/version/feed evidence
+to the existing SyncStore. Only admitted mutations may prepare the fresh marker;
+reads never provision it. No inventory CPU override, OAuth, MCP, legacy read-through,
+delete, migration or plugin activation is added. The client/experimental plugin are
+later M8 deliveries; G1–G6 production/real-data gates remain open.
+
 ## Package boundaries
 
 Dependencies should flow from application adapters toward shared packages:

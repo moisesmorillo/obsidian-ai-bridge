@@ -1,5 +1,9 @@
 # Worker API
 
+The separate [synthetic local sync lab](local-sync-demo.md) uses its own loopback
+entrypoint/configuration and schema-derived API. It is not registered in this
+Worker, does not alter v2/MCP, and grants no production exposure or real-data use.
+
 ## Access session check
 
 `GET /auth/session` returns an empty `204` only when Cloudflare Access

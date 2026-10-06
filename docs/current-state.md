@@ -1,5 +1,16 @@
 # Verified current state
 
+## M8 local-only functional work
+
+[M8](milestones/m8-local-markdown-sync-demo.md) is NEXT under merged #110/ADR 0021.
+Delivery 1 adds `apps/worker/src/demo/` and `wrangler.demo.jsonc`: a separate,
+explicitly armed loopback REST/current/version/mutation/feed composition over the
+private store, with independent registry participants and original-request replay.
+[Lab instructions](local-sync-demo.md) identify its commands and evidence limits.
+The release Worker/plugin entrypoints and existing deployment configuration are
+unchanged. Client reconciliation and two-vault plugin demonstration are not yet
+delivered; G1–G6 remain open for productive exposure and real data.
+
 ## Post-M6 OAuth rollout in progress
 
 The Worker deployment now has an OAuth KV binding and a verified Access-only

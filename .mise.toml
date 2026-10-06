@@ -84,10 +84,24 @@ run = "node tools/release-identity/check.mjs"
 description = "Run the Worker with Wrangler local development"
 run = "node apps/worker/node_modules/wrangler/bin/wrangler.js dev --config apps/worker/wrangler.jsonc --var LOCAL_API_DOCS:true"
 
+[tasks."demo:dev"]
+description = "Run only the explicitly configured synthetic loopback Worker/R2 lab"
+env = { WRANGLER_SEND_METRICS = "false" }
+run = """
+: "${DEMO_CONFIGURATION:?Set the isolated synthetic lab configuration}"
+: "${DEMO_CREDENTIAL_REGISTRY:?Set the disposable digest registry}"
+node apps/worker/node_modules/wrangler/bin/wrangler.js dev --local --ip 127.0.0.1 --port 8789 --persist-to .pi/tasks/m8-local-demo-state --config apps/worker/wrangler.demo.jsonc --var "DEMO_CONFIGURATION:$DEMO_CONFIGURATION" --var "DEMO_CREDENTIAL_REGISTRY:$DEMO_CREDENTIAL_REGISTRY"
+"""
+
+[tasks."demo:build"]
+description = "Bundle only the isolated local sync demo without deploying"
+env = { WRANGLER_SEND_METRICS = "false" }
+run = "node apps/worker/node_modules/wrangler/bin/wrangler.js deploy --dry-run --config apps/worker/wrangler.demo.jsonc --outdir apps/worker/dist/demo"
+
 [tasks.credentials]
 description = "Manage the digest-only Worker credential registry offline"
 run = "bun tools/credentials/cli.ts"
 
 [tasks.check]
 description = "Run the complete repository validation pipeline"
-depends = ["biome:check", "lint", "typecheck", "coverage", "worker:storage-test", "build", "release:identity-check"]
+depends = ["biome:check", "lint", "typecheck", "coverage", "worker:storage-test", "build", "release:identity-check", "demo:build"]

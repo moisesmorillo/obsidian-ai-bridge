@@ -9,7 +9,7 @@ a post-M6 product direction. The delivered [M7 specification](milestones/m7-vers
 defines the isolated protocol/storage foundation. [ADR 0020](decisions/0020-private-sync-store-delivery-and-activation-gate.md)
 closed M7 as **private isolated store delivery** in merged #107, not operational
 readiness. [M8 — local Markdown sync demo](milestones/m8-local-markdown-sync-demo.md)
-is NEXT on its specification PR's merge under owner-accepted
+is NEXT after specification PR #110 merged (`2c96711`), under owner-accepted
 [ADR 0021](decisions/0021-isolated-local-markdown-sync-demo.md). Only isolated
 synthetic local composition is authorized; the
 [criterion report and mandatory activation blockers](qualification/m7-delivery-and-activation-gate.md)
@@ -101,7 +101,7 @@ an [ADR](decisions/README.md).
 compose an experimental connected outward mirror, not a production-ready or
 remote-to-local system. Canonical validation passed, the final semantic review's three
 MINOR findings were corrected at `e97af36`, and the corrective review returned APPROVE
-with no open findings. M4 Slices 1–8 and M5 are COMPLETE; M6 is COMPLETE. M7 — versioned sync protocol and isolated R2 store — is COMPLETE as private delivery. M8 becomes NEXT only on its accepted local-demo specification PR's merge; no M8 behavior is implemented by that transition. M5's support claim is limited to the latest v1.0.2 release and its exact [qualification report](qualification/m5-final.md). M4's reviewed-only authority, preservation, local mutation,
+with no open findings. M4 Slices 1–8 and M5 are COMPLETE; M6 is COMPLETE. M7 — versioned sync protocol and isolated R2 store — is COMPLETE as private delivery. M8 is NEXT after #110's accepted local-demo specification merge; that transition itself implemented no M8 behavior. The separate local API is the first functional delivery; the client/plugin and two-vault demonstration remain pending. M5's support claim is limited to the latest v1.0.2 release and its exact [qualification report](qualification/m5-final.md). M4's reviewed-only authority, preservation, local mutation,
 adoption/tombstone/restore, migration, and one-writer product decisions are implemented
 and qualified. Slice 1 implements the closed contracts, sparse state v3, deterministic
 v2 migration/read-back fence, downgrade refusal, and runtime registry compatibility
@@ -152,8 +152,8 @@ implementation.
 A milestone is `NEXT` only while its prerequisites and implementation-ready
 specification authorize implementation. M1–M6 retain their completed scope; M7 is
 COMPLETE only as private isolated delivery under merged ADR 0020. The owner accepted
-M8's synthetic local exception under ADR 0021; **M8 becomes NEXT when its
-specification PR merges**, not before. No remote qualification or production
+M8's synthetic local exception under ADR 0021; **M8 is NEXT after merged #110**.
+Delivery 1 is the isolated local API; M8 remains incomplete. No remote qualification or production
 activation is implied. Dependencies include the previous delivered milestones,
 not acceptance of their still-open operational gates for real-data use.
 
@@ -166,7 +166,7 @@ not acceptance of their still-open operational gates for real-data use.
 | M5 | Operational and security readiness | COMPLETE | Latest-only, bounded v1.0.2 software support with reviewed limits, permissions, runbooks and qualification evidence | M4 |
 | M6 | MCP adapter | COMPLETE | Same authorized operations for MCP-capable agents through the M5 authentication and application-service boundary; bounded official-client qualification complete | M5 |
 | M7 | Versioned sync protocol and isolated R2 store | COMPLETE (private delivery) | Uncomposed contracts/`SyncStore`/R2 adapter, feed, inventory/evidence and recovery; local 5k/10k evidence retained, **not operational qualification**. All applicable G1–G6 gates block productive exposure and real data | M6 |
-| M8 | [Local Markdown sync demo](milestones/m8-local-markdown-sync-demo.md) | NEXT on specification merge | Separate loopback Worker/API and experimental plugin; two disposable or simulated vault instances, REST-origin edits and concurrent-version preservation. No production activation | M7 private delivery; ADR 0021 local-only exception |
+| M8 | [Local Markdown sync demo](milestones/m8-local-markdown-sync-demo.md) | NEXT — delivery 1 | Separate loopback Worker/API and experimental plugin; two disposable or simulated vault instances, REST-origin edits and concurrent-version preservation. No production activation | M7 private delivery; ADR 0021 local-only exception |
 
 ### M1 — Worker API foundation and engineering quality
 
@@ -406,9 +406,11 @@ completion PR has merged; later OAuth and sync proposals have separate status.
 ## Next functional work and activation boundary
 
 The owner-accepted [M8 specification](milestones/m8-local-markdown-sync-demo.md)
-authorizes three sequential functional deliveries after its PR merges: isolated
+merged in #110 and authorizes three sequential functional deliveries: isolated
 local Worker/REST, durable exact-base client reconciliation, then experimental
-plugin composition and a two-instance demonstration. Tests accompany each new
+plugin composition and a two-instance demonstration. The [local API guide](local-sync-demo.md)
+and [implementation/evidence ledger](plans/m8-local-sync-api.md) describe delivery 1;
+client/plugin implementation and final two-vault evidence remain pending. Tests accompany each new
 behavior; do not open PRs solely to expand qualification matrices. Report concrete
 demo blockers promptly. Use actual disposable desktop hosts when available;
 otherwise label the accepted two-simulated-instance fallback precisely.

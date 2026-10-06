@@ -556,6 +556,7 @@ export type {
   SyncSequence,
   SyncVaultId,
 } from "@core/sync/sync.types";
+export { SyncDemoService } from "@core/sync/sync-demo-service";
 export type {
   SyncMutationDecision,
   SyncMutationPolicyErrorCode,

@@ -1,5 +1,12 @@
 # M7 SyncStore qualification: remaining gates
 
+**Execution narrowed by owner approval: no further large stress runs.** Follow the
+[proportional local scope and preserved results](../qualification/m7-proportional-local-scope.md).
+Maximum 5,000/10,000 profiles and copied 5,000 cleanup have executed; the 20,001-page
+sparse run was stopped and remains unqualified. Prior instructions to finish every
+large local profile in this session are superseded. Full specification and remote
+qualification gates are not waived.
+
 **Qualification plan; local 0/1-head baselines and one 1,000-head profile have run.** The
 [test-only harness](../qualification/m7-inventory-profile-harness.md) and
 [1,000-head evidence](../qualification/m7-inventory-profile-1000.md) do not close the
@@ -26,6 +33,12 @@ isolated test entry may compose the store inside the Worker, as the existing nat
 fixture does; its endpoint must not enter the production bootstrap.
 
 ## Local profile matrix
+
+This table retains the full contractual qualification target, **not the currently
+authorized execution queue**. Under the owner-approved proportional scope, do not
+launch or repeat large profiles or sparse-population cleanup. Use small fixtures
+for critical safety cases; retain deferred rows as unqualified. The existing real-day
+expiry run may finish, with no new long repetitions.
 
 Build valid synthetic heads through the actual persisted codecs, not mock summaries.
 Report the largest legal encoded head/path sizes achieved separately from schema
@@ -144,6 +157,8 @@ only where needed to verify identity-bound transitions.
   enrollment, migration, vault cutover and activation require a separate specification
   and authorization; no following milestone is started by this plan.
 
-**Next actionable change:** review the baseline harness/evidence, then explicitly
-scope the maximal local profile and missing failure/cleanup measurements before
-executing those long runs. Remote execution remains separately gated.
+**Next action:** close critical failure-certainty/conflict/recovery gaps with small
+native fixtures, consume the already-running real-day expiry result and consolidate
+source-bound evidence. No further large stress execution without renewed explicit
+approval. Deferred maximum/adversarial criteria and remote execution remain gated;
+M7 exit/support changes require a separate accepted specification decision.

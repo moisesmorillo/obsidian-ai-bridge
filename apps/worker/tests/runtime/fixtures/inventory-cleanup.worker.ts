@@ -21,6 +21,7 @@ import {
   type SyncInventoryCleanupBucket,
 } from "@worker/infrastructure/sync/sync-r2-inventory-cleanup";
 import { encodeSyncRecord } from "@worker/infrastructure/sync/sync-record.codec";
+import { syncInventoryManifestSchema } from "@worker/infrastructure/sync/sync-record.schemas";
 import { z } from "zod";
 
 /** Future injected epoch proves synthetic expiry; it is not throughput, CPU or real-time expiry evidence. */
@@ -71,6 +72,24 @@ interface CleanupEnv {
 export default {
   async fetch(request: Request, env: CleanupEnv): Promise<Response> {
     const input = requestSchema.parse(await request.json());
+    const slotOwner = z
+      .enum(["peer", "owned"])
+      .parse(request.headers.get("x-test-slot") ?? "peer");
+    const version = z
+      .enum(["1", "2"])
+      .parse(request.headers.get("x-test-version") ?? "2");
+    const fault = z
+      .enum([
+        "none",
+        "lost_readback_reply",
+        "oversized_list",
+        "slot_cas_race",
+        "v1_forbidden_claim",
+      ])
+      .parse(request.headers.get("x-test-fault") ?? "none");
+    let deleted = false;
+    let raced = false;
+    let faultWrites = 0;
     const calls = { get: 0, list: 0, put: 0, delete: 0 };
     /** Counts attempted native binding operations before dispatch, including rejected promises.
      * @param method Native operation being attempted; cleanup's own budget remains independently authoritative.
@@ -84,21 +103,53 @@ export default {
       calls[method] += 1;
     }
     const bucket: SyncInventoryCleanupBucket = {
-      get(key) {
+      async get(key) {
         count("get");
-        return env.BUCKET.get(key);
+        const object = await env.BUCKET.get(key);
+        if (deleted && fault === "lost_readback_reply")
+          throw new Error("Injected lost native read-back acknowledgement.");
+        return object;
       },
-      list(options) {
+      async list(options) {
         count("list");
-        return env.BUCKET.list(options);
+        const page = await env.BUCKET.list(options);
+        if (fault !== "oversized_list") return page;
+        const object = page.objects[0];
+        if (object === undefined)
+          throw new Error("Missing malformed-page fixture entry.");
+        return { ...page, objects: [object, object] };
       },
-      put(key, body, options) {
+      async put(key, body, options) {
+        if (
+          input.action === "cleanup" &&
+          fault === "slot_cas_race" &&
+          !raced &&
+          key === syncInventoryActiveKey(VAULT_ID)
+        ) {
+          raced = true;
+          const peer = await encodeSyncRecord({
+            kind: "activeSlot",
+            record: {
+              schemaVersion: 1,
+              protocolMajor: 1,
+              vaultId: VAULT_ID,
+              state: "active",
+              inventoryId: PEER_ID,
+            },
+          });
+          count("put");
+          faultWrites += 1;
+          const replacement = await env.BUCKET.put(key, peer, options);
+          if (replacement === null)
+            throw new Error("Competing original-generation CAS refused.");
+        }
         count("put");
         return env.BUCKET.put(key, body, options);
       },
       async delete(key) {
         count("delete");
         await env.BUCKET.delete(key);
+        deleted = true;
         if (input.action === "cleanup" && input.lostDeleteReply)
           throw new Error("Injected lost native DELETE acknowledgement.");
       },
@@ -117,8 +168,8 @@ export default {
       case "seed": {
         const manifest = await encodeSyncRecord({
           kind: "manifest",
-          record: {
-            schemaVersion: 2,
+          record: syncInventoryManifestSchema.parse({
+            schemaVersion: version === "1" ? 1 : 2,
             protocolMajor: 1,
             vaultId: VAULT_ID,
             inventoryId: SCAN_ID,
@@ -141,8 +192,8 @@ export default {
             chunkHash: null,
             reservedAttempt: 0,
             expiresAtEpochMs: CLOCK_MS + (input.live ? 1 : -1),
-            cursorWitnessMode: 1,
-          },
+            ...(version === "2" ? { cursorWitnessMode: 1 } : {}),
+          }),
         });
         const slot = await encodeSyncRecord({
           kind: "activeSlot",
@@ -151,13 +202,18 @@ export default {
             protocolMajor: 1,
             vaultId: VAULT_ID,
             state: "active",
-            inventoryId: PEER_ID,
+            inventoryId: slotOwner === "owned" ? SCAN_ID : PEER_ID,
           },
         });
         const objects = [
           { key: syncInventoryManifestKey(VAULT_ID, SCAN_ID), body: manifest },
           { key: syncInventoryActiveKey(VAULT_ID), body: slot },
-          ...SCRATCH_KEYS.map((key) => ({
+          ...SCRATCH_KEYS.filter(
+            (key) =>
+              version === "2" ||
+              key === SCRATCH_KEYS[0] ||
+              (fault === "v1_forbidden_claim" && key === SCRATCH_KEYS[1]),
+          ).map((key) => ({
             key,
             body: new TextEncoder().encode("synthetic-disposable-scratch"),
           })),
@@ -213,6 +269,7 @@ export default {
           result,
           actualCalls: budget.actualCalls,
           calls,
+          faultWrites,
           clock: "injected",
           cpu: "unavailable",
         });

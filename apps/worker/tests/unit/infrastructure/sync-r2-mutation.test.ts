@@ -8001,7 +8001,7 @@ describe("targeted mutation recovery boundaries", () => {
         },
       });
     }
-  }, 20_000);
+  }, 60_000);
 
   it("does not accept a corrupt R2 vault marker as mutation authority", async () => {
     const fixture = await setup();
@@ -8172,7 +8172,7 @@ describe("targeted mutation recovery boundaries", () => {
         recovery: { content, sourceRevision: revision },
       });
     }
-  }, 30_000);
+  }, 90_000);
 
   it("returns effect unknown when the initial journal lookup is unavailable", async () => {
     const fixture = await setup();

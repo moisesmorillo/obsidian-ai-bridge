@@ -1,5 +1,29 @@
 # Changelog
 
+## [1.7.0](https://github.com/moisesmorillo/obsidian-ai-bridge/compare/v1.6.0...v1.7.0) (2026-10-07)
+
+
+### Features
+
+* **sync:** add durable local demo reconciliation client ([#113](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/113)) ([75968a3](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/75968a3a4b464f157e5f38a8275959cb48c68f08))
+* **worker:** add isolated local Markdown sync API ([#111](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/111)) ([f885f0e](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/f885f0e8f6b6ca44a51900724bc4eea12a8a218e))
+
+
+### Bug Fixes
+
+* **sync:** guard local demo identity expectations ([#112](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/112)) ([cf05833](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/cf05833fd60c30c451b81d77c20a2a66605ca3f4))
+
+
+### Documentation
+
+* **m7:** close private store delivery behind activation gates ([#107](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/107)) ([def2985](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/def2985bd099170af5383d3bdf23e1c22d69cd9b))
+* **m8:** authorize isolated local Markdown sync demo ([#110](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/110)) ([2c96711](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/2c96711cb3d9c466a3b6633ba8751dba49a84454))
+
+
+### Testing
+
+* **worker:** cover native inventory finalization and slot recovery ([#109](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/109)) ([e1297d6](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/e1297d6973fa93325c3a2e5825a0deddb4967d3e))
+
 ## [1.6.0](https://github.com/moisesmorillo/obsidian-ai-bridge/compare/v1.5.0...v1.6.0) (2026-10-06)
 
 

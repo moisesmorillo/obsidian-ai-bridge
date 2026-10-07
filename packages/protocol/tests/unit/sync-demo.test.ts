@@ -12,8 +12,14 @@ import {
   syncVaultIdSchema,
 } from "@protocol/sync.schemas";
 import {
+  SYNC_DEMO_BINDING_HEADER,
+  SYNC_DEMO_TRANSPORT_ERROR,
+} from "@protocol/sync-demo.constants";
+import {
+  syncDemoBindingHeadersSchema,
   syncDemoRequestSchema,
   syncDemoResponseSchema,
+  syncDemoTransportFailureSchema,
 } from "@protocol/sync-demo.schemas";
 import { describe, expect, it, vi } from "vitest";
 
@@ -71,6 +77,40 @@ const command = {
 };
 
 describe("local sync demo contracts and application admission", () => {
+  it("validates paired expectations without normalizing or selecting server identity", () => {
+    const headers = {
+      [SYNC_DEMO_BINDING_HEADER.vaultId]: vaultId,
+      [SYNC_DEMO_BINDING_HEADER.origin]: origin,
+    };
+    expect(syncDemoBindingHeadersSchema.parse({})).toEqual({});
+    expect(syncDemoBindingHeadersSchema.parse(headers)).toEqual(headers);
+    expect(
+      syncDemoBindingHeadersSchema.safeParse({
+        [SYNC_DEMO_BINDING_HEADER.vaultId]: vaultId,
+      }).success,
+    ).toBe(false);
+    expect(
+      syncDemoBindingHeadersSchema.safeParse({
+        ...headers,
+        [SYNC_DEMO_BINDING_HEADER.origin]: "invalid",
+      }).success,
+    ).toBe(false);
+    expect(
+      syncDemoBindingHeadersSchema.safeParse({
+        ...headers,
+        extra: "unsupported",
+      }).success,
+    ).toBe(false);
+    const failure = {
+      kind: "error",
+      code: SYNC_DEMO_TRANSPORT_ERROR.bindingMismatch,
+    };
+    expect(syncDemoTransportFailureSchema.parse(failure)).toEqual(failure);
+    expect(
+      syncDemoTransportFailureSchema.safeParse({ ...failure, vaultId }).success,
+    ).toBe(false);
+    expect(syncDemoResponseSchema.safeParse(failure).success).toBe(false);
+  });
   it("admits exact create/update commands but no caller vault, origin, digest or deletion authority", () => {
     expect(syncDemoRequestSchema.parse(command)).toEqual(command);
     for (const extra of [

@@ -4,6 +4,7 @@ import {
   type SyncStore,
 } from "@obsidian-ai-bridge/core";
 import {
+  SYNC_DEMO_BINDING_HEADER,
   SYNC_DEMO_ROUTE,
   syncOperationIdSchema,
 } from "@obsidian-ai-bridge/protocol";
@@ -109,11 +110,18 @@ async function fixture(
     body: object,
     credential: string | null = token,
     host = "127.0.0.1",
+    expected: { vaultId?: string; origin?: string } = {},
   ) =>
     app.request(`http://${host}${SYNC_DEMO_ROUTE}`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
+        ...(expected.vaultId === undefined
+          ? {}
+          : { [SYNC_DEMO_BINDING_HEADER.vaultId]: expected.vaultId }),
+        ...(expected.origin === undefined
+          ? {}
+          : { [SYNC_DEMO_BINDING_HEADER.origin]: expected.origin }),
         ...(credential === null
           ? {}
           : { Authorization: `Bearer ${credential}` }),
@@ -124,6 +132,106 @@ async function fixture(
 }
 
 describe("isolated synthetic REST admission", () => {
+  it.each([
+    {
+      vaultId: "88888888-8888-4888-8888-888888888888",
+      origin: "33333333-3333-4333-8333-333333333333",
+    },
+    { vaultId: config.vaultId, origin: "55555555-5555-4555-8555-555555555555" },
+  ])(
+    "denies mismatched identity expectations before service resolution",
+    async (expected) => {
+      const f = await fixture();
+      const response = await f.request(mutation, token, "127.0.0.1", expected);
+      expect(response.status).toBe(400);
+      expect(await response.json()).toEqual({
+        kind: "error",
+        code: "binding_mismatch",
+      });
+      expect(f.resolveService).not.toHaveBeenCalled();
+      expect(f.store.mutate).not.toHaveBeenCalled();
+    },
+  );
+  it.each([
+    { vaultId: config.vaultId },
+    { origin: "33333333-3333-4333-8333-333333333333" },
+    { vaultId: "malformed", origin: "33333333-3333-4333-8333-333333333333" },
+  ])(
+    "rejects partial or malformed expectation pairs before service resolution",
+    async (expected) => {
+      const f = await fixture();
+      const response = await f.request(mutation, token, "127.0.0.1", expected);
+      expect(response.status).toBe(400);
+      expect(await response.json()).toEqual({
+        kind: "error",
+        code: "invalid_request",
+      });
+      expect(f.resolveService).not.toHaveBeenCalled();
+    },
+  );
+  it("accepts matching expectations without changing server identity or granting write", async () => {
+    const expected = {
+      vaultId: config.vaultId,
+      origin: "33333333-3333-4333-8333-333333333333",
+    };
+    const f = await fixture();
+    expect(
+      (await f.request(mutation, token, "127.0.0.1", expected)).status,
+    ).toBe(200);
+    expect(f.store.mutate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        vaultId: config.vaultId,
+        origin: expected.origin,
+      }),
+    );
+    const readOnly = await fixture(["read"]);
+    expect(
+      (await readOnly.request(mutation, token, "127.0.0.1", expected)).status,
+    ).toBe(403);
+    expect(readOnly.resolveService).not.toHaveBeenCalled();
+  });
+  it("documents both optional expectations and allows them through lab CORS preflight", async () => {
+    const f = await fixture();
+    const document = await f.app.request("http://127.0.0.1/openapi.json");
+    expect(await document.json()).toMatchObject({
+      paths: {
+        [SYNC_DEMO_ROUTE]: {
+          post: {
+            parameters: expect.arrayContaining([
+              expect.objectContaining({
+                in: "header",
+                name: SYNC_DEMO_BINDING_HEADER.vaultId,
+                required: false,
+              }),
+              expect.objectContaining({
+                in: "header",
+                name: SYNC_DEMO_BINDING_HEADER.origin,
+                required: false,
+              }),
+            ]),
+          },
+        },
+      },
+    });
+    const preflight = await f.app.request(
+      `http://127.0.0.1${SYNC_DEMO_ROUTE}`,
+      {
+        method: "OPTIONS",
+        headers: {
+          Origin: "app://obsidian.md",
+          "Access-Control-Request-Method": "POST",
+          "Access-Control-Request-Headers": Object.values(
+            SYNC_DEMO_BINDING_HEADER,
+          ).join(","),
+        },
+      },
+    );
+    for (const name of Object.values(SYNC_DEMO_BINDING_HEADER))
+      expect(
+        preflight.headers.get("Access-Control-Allow-Headers")?.toLowerCase(),
+      ).toContain(name.toLowerCase());
+    expect(f.resolveService).not.toHaveBeenCalled();
+  });
   it("denies missing/wrong credentials and non-loopback requests before service resolution", async () => {
     const f = await fixture();
     expect(

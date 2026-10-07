@@ -17,9 +17,39 @@ import {
 import {
   MAX_SYNC_DEMO_CONTENT_BYTES,
   MAX_SYNC_DEMO_FEED_EVENTS,
+  SYNC_DEMO_BINDING_HEADER,
   SYNC_DEMO_OPERATION,
+  SYNC_DEMO_TRANSPORT_ERROR,
 } from "@protocol/sync-demo.constants";
 import { z } from "zod";
+
+/** Optional paired client expectations of server-selected identity; absent pairs preserve REST compatibility and partial/malformed pairs grant no admission. */
+export const syncDemoBindingHeadersSchema = z
+  .object({
+    [SYNC_DEMO_BINDING_HEADER.vaultId]: syncVaultIdSchema
+      .optional()
+      .describe(
+        "Expected configured synthetic vault; never selects authority. Supply together with expected origin.",
+      ),
+    [SYNC_DEMO_BINDING_HEADER.origin]: syncDeviceIdSchema
+      .optional()
+      .describe(
+        "Expected authenticated participant's configured origin; never grants permissions. Supply together with expected vault.",
+      ),
+  })
+  .strict()
+  .refine(
+    (headers) =>
+      (headers[SYNC_DEMO_BINDING_HEADER.vaultId] === undefined) ===
+      (headers[SYNC_DEMO_BINDING_HEADER.origin] === undefined),
+  );
+/** Sanitized transport failures, distinct from domain operation/journal certainty and free of submitted identity values. */
+export const syncDemoTransportFailureSchema = z
+  .object({
+    kind: z.literal("error"),
+    code: z.enum(Object.values(SYNC_DEMO_TRANSPORT_ERROR)),
+  })
+  .strict();
 
 /** Exact parent evidence shared by the demo request and response contracts. */
 const parentSchema = z.discriminatedUnion("kind", [

@@ -10,6 +10,11 @@ export const SYNC_DEMO_LOOPBACK_HOSTS = [
 ] as const;
 /** Official desktop plugin origin allowed by lab CORS; it confers no registry permission. */
 export const SYNC_DEMO_CORS_ORIGIN = "app://obsidian.md";
+/** Paired denial-only identity expectations; these headers never select a vault, origin or permission. */
+export const SYNC_DEMO_BINDING_HEADER = {
+  vaultId: "X-AI-Bridge-Demo-Vault-Id",
+  origin: "X-AI-Bridge-Demo-Origin",
+} as const;
 /** Local lab byte admission, independent of the unchanged M7 storage limit. */
 export const MAX_SYNC_DEMO_CONTENT_BYTES = 16 * 1024;
 /** Metadata page ceiling required by the existing SyncStore port, not an inventory or whole-vault scan limit. */
@@ -34,5 +39,6 @@ export const SYNC_DEMO_TRANSPORT_ERROR = {
   unauthorized: "unauthorized",
   forbidden: "forbidden",
   invalidRequest: "invalid_request",
+  bindingMismatch: "binding_mismatch",
   tooLarge: "request_too_large",
 } as const;

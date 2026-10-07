@@ -150,6 +150,7 @@ export {
   MAX_SYNC_DEMO_FEED_EVENTS,
   MAX_SYNC_DEMO_PATHS,
   MAX_SYNC_DEMO_REQUEST_BYTES,
+  SYNC_DEMO_BINDING_HEADER,
   SYNC_DEMO_CORS_ORIGIN,
   SYNC_DEMO_LOOPBACK_HOSTS,
   SYNC_DEMO_OPERATION,
@@ -159,7 +160,9 @@ export {
   SYNC_DEMO_URL_PROTOCOL,
 } from "@protocol/sync-demo.constants";
 export {
+  syncDemoBindingHeadersSchema,
   syncDemoParticipantSchema,
   syncDemoRequestSchema,
   syncDemoResponseSchema,
+  syncDemoTransportFailureSchema,
 } from "@protocol/sync-demo.schemas";

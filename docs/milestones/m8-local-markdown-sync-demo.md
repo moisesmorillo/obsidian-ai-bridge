@@ -1,9 +1,10 @@
 # M8 — Local Markdown sync demonstration
 
-**NEXT — specification merged in #110; functional delivery 1 in progress.**
-The milestone is not COMPLETE. The [delivery-1 plan](../plans/m8-local-sync-api.md)
-and [local lab guide](../local-sync-demo.md) track the isolated API; client/plugin
-and two-vault evidence remain pending. Original specification baseline:
+**NEXT — delivery 1 merged in #111; delivery 2 implements the durable client.**
+The milestone is not COMPLETE. The [delivery-1 plan](../plans/m8-local-sync-api.md),
+[delivery-2 plan/evidence](../plans/m8-durable-sync-client.md) and
+[local lab guide](../local-sync-demo.md) track the isolated API/client.
+Experimental plugin composition and two-vault artifact evidence remain pending. Original specification baseline:
 `main` at `e1297d6973fa93325c3a2e5825a0deddb4967d3e`, including merged #109.
 [ADR 0021](../decisions/0021-isolated-local-markdown-sync-demo.md) authorizes only
 the synthetic local boundary. This is a functional delivery milestone, not another
@@ -19,9 +20,16 @@ thresholds. Post-green semantic self-review closed the OpenAPI-failure and
 oversized-read findings. The [plan/evidence ledger](../plans/m8-local-sync-api.md)
 and [lab guide](../local-sync-demo.md) distinguish native test-clock injection
 from real expiry/CPU/platform or desktop qualification. No real R2, deployment,
-personal vault or M8 plugin demonstration is claimed. Delivery 1 awaits owner
-review/merge of [PR #111](https://github.com/moisesmorillo/obsidian-ai-bridge/pull/111);
-client reconciliation and plugin/two-vault work remain pending.
+personal vault or M8 plugin demonstration is claimed. Delivery 1 merged in
+[PR #111](https://github.com/moisesmorillo/obsidian-ai-bridge/pull/111) at `f885f0e`
+on 2026-10-07. Delivery 2 adds strict content-free durable bases/original requests,
+prepared local effects, exact-base reconciliation and a bounded loopback Fetch
+adapter, all uncomposed into release runtime. Its integration scenario uses actual
+demo HTTP/service/R2-adapter code with deterministic conditional storage, simulated
+local hosts and disposable on-disk ledgers: A→B, B→A, REST-origin clean pull,
+restart and visible preserved concurrent edits. This is not desktop/plugin-artifact
+or native R2 client evidence. Delivery 3 still supplies official host/local-state/
+SecretStorage, listener/session owner, explicit Sync now/status and the final demo.
 
 ## Outcome and accepted boundary
 
@@ -115,6 +123,10 @@ Source owners to reuse, not broaden:
    `mutation_not_admitted` retry requires the identical full request; reconstruct
    payload only when saved local bytes still match the persisted request hash.
    Otherwise stop for attention, never invent replacement bytes or a new operation.
+   Retain the explicit pre-journal refusal in the ledger. For pending/unknown full
+   journal replay only, a verified immutable live version may reconstruct the body
+   when vault/path/revision/operation/origin/parent/hash/size all match the original
+   tuple; version existence alone is never committed proof.
 6. After interruption between a local effect and ledger save, exact prepared
    postcondition may settle that same effect. Divergent or unavailable evidence
    remains blocked. Cold start/listener gaps trigger fresh positive observation;

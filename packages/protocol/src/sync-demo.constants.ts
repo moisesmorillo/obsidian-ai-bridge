@@ -1,3 +1,5 @@
+import { SYNC_DEMO_CLIENT_LIMITS } from "@obsidian-ai-bridge/core";
+
 /** Explicitly experimental endpoint; it is never registered in the release Worker. */
 export const SYNC_DEMO_ROUTE = "/demo/v1/request";
 /** Lab transport scheme; this local-only contract never authorizes public HTTP endpoints. */
@@ -16,11 +18,11 @@ export const SYNC_DEMO_BINDING_HEADER = {
   origin: "X-AI-Bridge-Demo-Origin",
 } as const;
 /** Local lab byte admission, independent of the unchanged M7 storage limit. */
-export const MAX_SYNC_DEMO_CONTENT_BYTES = 16 * 1024;
+export const MAX_SYNC_DEMO_CONTENT_BYTES = SYNC_DEMO_CLIENT_LIMITS.contentBytes;
 /** Metadata page ceiling required by the existing SyncStore port, not an inventory or whole-vault scan limit. */
 export const MAX_SYNC_DEMO_FEED_EVENTS = 100;
 /** Maximum explicitly admitted synthetic paths, independent of participant count. */
-export const MAX_SYNC_DEMO_PATHS = 3;
+export const MAX_SYNC_DEMO_PATHS = SYNC_DEMO_CLIENT_LIMITS.paths;
 /** Exactly two disposable vault principals and one REST principal, each with a distinct origin. */
 export const SYNC_DEMO_PARTICIPANT_COUNT = 3;
 /** JSON may escape each UTF-8 byte into six ASCII bytes, plus bounded request metadata. */

@@ -166,3 +166,7 @@ export {
   syncDemoResponseSchema,
   syncDemoTransportFailureSchema,
 } from "@protocol/sync-demo.schemas";
+export {
+  syncDemoClientPathSchema,
+  syncDemoLedgerSchema,
+} from "@protocol/sync-demo-client.schemas";

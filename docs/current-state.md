@@ -8,8 +8,15 @@ explicitly armed loopback REST/current/version/mutation/feed composition over th
 private store, with independent registry participants and original-request replay.
 [Lab instructions](local-sync-demo.md) identify its commands and evidence limits.
 The release Worker/plugin entrypoints and existing deployment configuration are
-unchanged. Client reconciliation and two-vault plugin demonstration are not yet
-delivered; G1–G6 remain open for productive exposure and real data.
+unchanged. Delivery 1 merged in #111 (`f885f0e`, 2026-10-07). Delivery 2 adds the
+uncomposed `SyncDemoClient`/prepared-effect executor, separate strict content-free
+ledger schema, `SyncDemoLedgerRepository` and `SyncDemoFetchRemote`. Read-back proof
+precedes effects; only matching committed requests acknowledge a push. Clean pulls
+require exact ACK bytes, while concurrent edits retain both versions and attention.
+The [client evidence ledger](plans/m8-durable-sync-client.md) records simulated-host
+REST integration with real disposable ledger files, not a desktop/plugin artifact.
+Official experimental plugin composition and two-vault demonstration remain pending;
+G1–G6 remain open for productive exposure and real data.
 
 ## Post-M6 OAuth rollout in progress
 

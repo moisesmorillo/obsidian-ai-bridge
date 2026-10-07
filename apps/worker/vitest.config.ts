@@ -9,6 +9,7 @@ export default defineProject({
       "@protocol": `${workspaceRoot}/packages/protocol/src`,
       "@worker": `${workspaceRoot}/apps/worker/src`,
       "@worker-tests": `${workspaceRoot}/apps/worker/tests`,
+      "@obsidian-plugin": `${workspaceRoot}/apps/obsidian-plugin/src`,
     },
   },
   test: {

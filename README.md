@@ -4,7 +4,8 @@ A data-safety-focused bridge between Obsidian and authorized remote AI or agent 
 
 > **Status:** M1–M6 retain their completed scope; [M7 — versioned sync protocol and isolated R2 store](docs/milestones/m7-versioned-sync-protocol-and-r2-store.md)
 > is **COMPLETE as private isolated delivery** under merged ADR 0020 (#107). [M8 — local Markdown sync demo](docs/milestones/m8-local-markdown-sync-demo.md)
-> becomes NEXT on its specification PR's merge under [ADR 0021](docs/decisions/0021-isolated-local-markdown-sync-demo.md).
+> is NEXT after specification #110 and local API #111 merged under [ADR 0021](docs/decisions/0021-isolated-local-markdown-sync-demo.md).
+> Delivery 2 adds an uncomposed durable client; experimental plugin/two-vault evidence remains pending.
 > This authorizes only isolated synthetic local development, not production exposure.
 > [Mandatory activation blockers](docs/qualification/m7-delivery-and-activation-gate.md)
 > remain open: missing safety evidence, real 24-hour expiry, Workers Free/real R2,
@@ -195,8 +196,10 @@ with unchanged runtime contracts in the reconciled
 [Qualification before activation](docs/plans/m7-sync-store-qualification.md) remains
 mandatory and pending. The [criterion report](docs/qualification/m7-delivery-and-activation-gate.md)
 retains open production/real-data blockers. The owner-accepted
-[M8 specification](docs/milestones/m8-local-markdown-sync-demo.md) defines the next
-functional local-demo deliveries; implementation begins after its specification PR merges. The accepted
+[M8 specification](docs/milestones/m8-local-markdown-sync-demo.md) defines the active
+functional local-demo deliveries. The specification and local API have merged;
+[durable client work/evidence](docs/plans/m8-durable-sync-client.md) precedes the
+separate experimental plugin and two-vault demonstration. The accepted
 [ADR 0014](docs/decisions/0014-stateless-mcp-adapter-and-existing-credentials.md),
 completed [M6 specification](docs/milestones/m6-mcp-adapter.md), and [M6 qualification
 report](docs/qualification/m6-final.md) record the adapter and its residual limits.

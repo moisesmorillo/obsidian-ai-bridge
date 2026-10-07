@@ -64,7 +64,7 @@ Stop/split before crossing repository production caps; no production-scope excep
 - [x] Write transport tests for loopback admission, redirect denial, non-JSON/invalid UTF-8/oversize/timeout, wrong-operation bodies and budget exhaustion; initial import RED followed by real deadline/aggregate-response assertion RED and correction.
 - [x] Compose two clients against delivery 1 in an integration test with disposable on-disk ledger state. Demonstrate A→B, B→A, REST-origin clean pull, conflict retention and restart. Label deterministic conditional R2/host doubles, not native R2/desktop evidence.
 - [x] Run `mise install && mise run check`, inspect diagnostics/coverage/build outputs, then manual semantic/security review of the current diff and relevant invariants.
-- [ ] Synchronize lab guide, milestone, roadmap, architecture/current-state evidence; open a Conventional Commit PR for manual owner merge. Delivery 3 and two-vault artifact demonstration remain pending.
+- [x] Synchronize lab guide, milestone, roadmap, architecture/current-state evidence; open a Conventional Commit PR for manual owner merge. Delivery 3 and two-vault artifact demonstration remain pending.
 
 ## Evidence and rulings
 
@@ -153,3 +153,9 @@ read-back fencing, prepared-effect settlement, closed recovery dispatch, scoped
 refusal decoding and architecture/privacy boundaries; no blocking finding remains.
 The explicitly documented path-policy consolidation deferral remains. No actual
 host/tier qualification or deployment is claimed.
+
+Published [PR #113](https://github.com/moisesmorillo/obsidian-ai-bridge/pull/113),
+code commit `702621c`, against PR #112's branch. Merge #112 first, then retarget
+#113 to `main`; no automatic merge. Initial functional delta: 3,414 changed lines,
+ten production files/1,315 net production lines; review-size exception acceptance
+is requested in the PR. This plan's publication update does not alter runtime.

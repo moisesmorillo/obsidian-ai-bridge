@@ -51,7 +51,9 @@ The artifact scenario loads the real CommonJS experimental bundle in two indepen
 ## Evidence ledger
 
 Final canonical task **`b4f98a2a2`**, 2026-10-07, ran `mise install && mise run check`
-on baseline `main/e71bcf3` plus this delivery. It passed **2,244 fast / 53 native /
+on baseline `main/e71bcf3` plus production/test source commit
+`2c183e63d461549cf69ff1efe14e5b8a04884147` (subsequent report-only identity edits
+cannot change these built artifacts). It passed **2,244 fast / 53 native /
 14 artifact tests** (12 release + 2 experimental) in 61.96 seconds. Coverage:
 **95.02% statements / 91.49% branches / 98.61% functions / 96.86% lines**;
 thresholds unchanged. Formatting/assists/type-aware lint/strict typing/TSDoc
@@ -84,5 +86,5 @@ Post-green **author** semantic review covered responsibility direction, exact
 saved effects/retained ownership, closed status/TSDoc semantics, host-boundary
 weak-input conversion, privacy, finite dispatch and release noninterference.
 No blocking finding remains; this is **not independent review**. No personal
-vault was opened, Desktop launched, remote resource contacted or deployment run.
+vault was opened, Desktop launched, remote Worker/R2 resource contacted or deployment run.
 M8 completion becomes canonical on the functional delivery-3 PR merge only.

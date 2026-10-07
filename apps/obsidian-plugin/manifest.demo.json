@@ -1,0 +1,9 @@
+{
+  "id": "ai-bridge-synthetic-demo",
+  "name": "AI Bridge Synthetic Local Demo",
+  "version": "0.0.0",
+  "minAppVersion": "1.13.0",
+  "description": "Explicit synthetic Markdown sync between disposable local vaults. Not the release plugin.",
+  "author": "Moisés Morillo",
+  "isDesktopOnly": true
+}

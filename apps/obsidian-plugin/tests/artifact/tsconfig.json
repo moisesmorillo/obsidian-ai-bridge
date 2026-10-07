@@ -3,6 +3,9 @@
   "compilerOptions": {
     "types": ["node", "obsidian"],
     "paths": {
+      "miniflare": [
+        "../../../worker/node_modules/miniflare/dist/src/index.d.ts"
+      ],
       "@obsidian-plugin-tests/*": ["../*"],
       "@obsidian-plugin-manifest": ["../../manifest.json"]
     }

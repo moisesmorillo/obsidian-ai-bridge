@@ -1,7 +1,8 @@
 # Synthetic local sync API lab
 
 M8 delivery 1 provides a separate loopback Worker/API over the existing private
-SyncStore; delivery 2 adds an uncomposed durable exact-base client. Neither is the
+SyncStore; delivery 2 adds a durable exact-base client; delivery 3 composes it
+only into the separate synthetic experimental plugin. Neither is the
 deployed API or a plugin sync release, nor qualification of Workers Free, real R2,
 desktop/mobile hosts or real data. G1–G6 remain open. The experimental plugin and
 two-vault artifact demonstration are delivery 3.
@@ -155,11 +156,12 @@ can never acknowledge a mutation. An unsettled
 late request retains its permit; timeout is not rollback. Pending work may need
 another explicit invocation after its original epoch retry floor; no busy loop.
 
-Delivery 3 still must compose official Vault read/create/process/preservation,
+Delivery 3 composes official Vault read/create/process/preservation,
 whole-vault metadata preflight, listeners/session fencing and retained owner,
 App-local string persistence, native SecretStorage, explicit disposable-lab arming,
-a separate experimental artifact and Sync now/status. Do not attach these adapters
-to release `main.ts` or M3. Conflict resolution/deletes/renames/MCP remain out of
+a separate experimental artifact and Sync now/status. Follow the
+[disposable installation and five-flow artifact demonstration](qualification/m8-experimental-plugin-demo.md).
+These adapters are not attached to release `main.ts` or M3. Conflict resolution/deletes/renames/MCP remain out of
 scope. Divergent prepared effects or expired cursors require review of the
 disposable experiment, not silent reset or repair. See the
 [implementation/evidence ledger](plans/m8-durable-sync-client.md).

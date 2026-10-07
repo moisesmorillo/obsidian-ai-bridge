@@ -1,10 +1,12 @@
 # M8 — Local Markdown sync demonstration
 
-**NEXT — delivery 1 merged in #111; delivery 2 implements the durable client.**
-The milestone is not COMPLETE. The [delivery-1 plan](../plans/m8-local-sync-api.md),
-[delivery-2 plan/evidence](../plans/m8-durable-sync-client.md) and
-[local lab guide](../local-sync-demo.md) track the isolated API/client.
-Experimental plugin composition and two-vault artifact evidence remain pending. Original specification baseline:
+**COMPLETE on merge of the delivery-3 functional PR; until then M8 remains NEXT.**
+Delivery 1 merged in #111, the identity guard in #112 (`cf05833`) and delivery 2
+in #113 (`75968a3`). The [delivery-1 plan](../plans/m8-local-sync-api.md),
+[delivery-2 plan/evidence](../plans/m8-durable-sync-client.md),
+[delivery-3 plan](../plans/m8-experimental-plugin.md) and
+[artifact demonstration](../qualification/m8-experimental-plugin-demo.md) track
+all three isolated functional boundaries. Original specification baseline:
 `main` at `e1297d6973fa93325c3a2e5825a0deddb4967d3e`, including merged #109.
 [ADR 0021](../decisions/0021-isolated-local-markdown-sync-demo.md) authorizes only
 the synthetic local boundary. This is a functional delivery milestone, not another
@@ -28,8 +30,12 @@ adapter, all uncomposed into release runtime. Its integration scenario uses actu
 demo HTTP/service/R2-adapter code with deterministic conditional storage, simulated
 local hosts and disposable on-disk ledgers: A→B, B→A, REST-origin clean pull,
 restart and visible preserved concurrent edits. This is not desktop/plugin-artifact
-or native R2 client evidence. Delivery 3 still supplies official host/local-state/
-SecretStorage, listener/session owner, explicit Sync now/status and the final demo.
+or native R2 client evidence. Delivery 3 supplies official host/local-state/
+SecretStorage, listener/session owner, explicit Sync now/status and separately
+built artifact. Its five-flow demonstration uses two isolated simulated plugin
+instances/new disposable filesystem-backed Vaults with native local production
+Worker/R2. Desktop was not launched; this fallback is explicitly owner-authorized
+and is not a host compatibility, real R2 or secret durability claim.
 
 ## Outcome and accepted boundary
 
@@ -156,7 +162,7 @@ if it would exceed 10 production files or 1,500 net production lines.
 | --- | --- | --- |
 | 1 | Local Worker/API current/version, exact mutation/resume and feed; core service and strict transport contracts; separate lab entry/config/tasks. Target 8–10 production files, 700–1,100 lines. | REST create/update is visible in the real private store/feed. Separate identities/permissions, exact stale-write refusal and v2/release noninterference are testable before plugin work. No public route added. |
 | 2 | Durable three-way lab coordinator/ledger contracts and bounded Fetch adapter. Target 7–10 production files, 800–1,300 lines. | Two clients converge against delivery 1, retain original identities/floors and refuse concurrent replacement. Core has no Hono/R2/Obsidian dependencies. This is client behavior, not a replacement SyncStore. |
-| 3 | Separate plugin artifact, official host/local-state/secret composition, listeners, Sync now/status and disposable-vault procedure. Target 6–9 production files, 600–1,100 lines. | Real experimental plugin can exercise delivery 2 without M3 mirror activation. Built-artifact checks accompany host safety; finish with the two-vault demo and exact limitations. |
+| 3 | Separate plugin artifact, official host/local-state/secret composition, listeners, Sync now/status and disposable-vault procedure. Refined target ≤10 production files, 800–1,150 lines including the existing Fetch permit accessor and path-policy consolidation. | Real experimental plugin can exercise delivery 2 without M3 mirror activation. Built-artifact checks accompany host safety; finish with the two-vault demo and exact limitations. |
 
 Do not publish stable releases from the local-demo branch. PR titles use
 Conventional Commits. No merge or deployment is implied by implementation.
@@ -223,7 +229,11 @@ Do not substitute the old reviewed-only v2 workflow and call it automatic sync.
 - [x] Owner accepts written scope and local-only successor gate.
 - [x] Record accepted ADR/roadmap transition on the specification branch.
 - [x] Owner merges the specification PR; M8 becomes NEXT (#110, `2c96711`).
-- [ ] Refine implementation work units within the accepted scope; execute locally
+- [x] Refine implementation work units within the accepted scope; execute locally
   without requesting approval again for routine decisions.
-- [ ] Implement functional deliveries with focused tests and mandatory checks.
-- [ ] Perform semantic review and demonstrate/report only exercised boundaries.
+- [x] Implement functional deliveries with focused tests and mandatory checks.
+- [x] Perform author semantic review and demonstrate/report only exercised simulated boundaries.
+
+Final [evidence](../qualification/m8-experimental-plugin-demo.md) records 2,244
+fast / 53 native / 14 artifact tests, unchanged coverage thresholds and the final
+experimental artifact hashes. No subsequent implementation is authorized here.

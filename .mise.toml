@@ -70,10 +70,22 @@ bun build apps/obsidian-plugin/src/main.ts --target browser --format cjs --outdi
 cp apps/obsidian-plugin/manifest.json apps/obsidian-plugin/dist/manifest.json
 """
 
+[tasks."demo:plugin:build"]
+description = "Build only the explicitly armed synthetic plugin, separately from release artifacts"
+run = """
+bun build apps/obsidian-plugin/src/demo/demo-main.ts --target browser --format cjs --outfile apps/obsidian-plugin/dist/demo-plugin/main.js --external obsidian
+cp apps/obsidian-plugin/manifest.demo.json apps/obsidian-plugin/dist/demo-plugin/manifest.json
+"""
+
 [tasks."plugin:smoke"]
 description = "Load the packaged plugin with an isolated Obsidian host double"
-depends = ["plugin:build"]
+depends = ["plugin:build", "demo:plugin:build"]
 run = "node node_modules/vitest/vitest.mjs run --config apps/obsidian-plugin/vitest.smoke.config.ts"
+
+[tasks."demo:plugin:smoke"]
+description = "Exercise the synthetic plugin artifact in isolated simulated vaults, never a personal Desktop profile"
+depends = ["demo:plugin:build"]
+run = "node node_modules/vitest/vitest.mjs run --config apps/obsidian-plugin/vitest.smoke.config.ts -t 'synthetic plugin'"
 
 [tasks."release:identity-check"]
 description = "Verify synchronized root, plugin, lockfile, and staged release versions"

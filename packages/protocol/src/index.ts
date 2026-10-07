@@ -145,3 +145,21 @@ export type {
   SyncVaultIdDto,
   SyncVaultMarkerDto,
 } from "@protocol/sync.types";
+export {
+  MAX_SYNC_DEMO_CONTENT_BYTES,
+  MAX_SYNC_DEMO_FEED_EVENTS,
+  MAX_SYNC_DEMO_PATHS,
+  MAX_SYNC_DEMO_REQUEST_BYTES,
+  SYNC_DEMO_CORS_ORIGIN,
+  SYNC_DEMO_LOOPBACK_HOSTS,
+  SYNC_DEMO_OPERATION,
+  SYNC_DEMO_PARTICIPANT_COUNT,
+  SYNC_DEMO_ROUTE,
+  SYNC_DEMO_TRANSPORT_ERROR,
+  SYNC_DEMO_URL_PROTOCOL,
+} from "@protocol/sync-demo.constants";
+export {
+  syncDemoParticipantSchema,
+  syncDemoRequestSchema,
+  syncDemoResponseSchema,
+} from "@protocol/sync-demo.schemas";

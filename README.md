@@ -96,7 +96,7 @@ mise run install
 
 | Task | Purpose |
 | --- | --- |
-| `mise run check` | Run Biome formatting, linting, assists, type checking, coverage-enforced tests, and both application bundle validations. |
+| `mise run check` | Run Biome formatting, linting, assists, type checking, coverage-enforced tests, and release/lab bundle validations. |
 | `mise run lint` | Run TSDoc presence and type-aware Oxlint semantic checks, including deprecated API detection. |
 | `mise run tsdoc:check` | Check associated TSDoc presence across production TypeScript. |
 | `mise run test` | Run the fast Vitest test suite without coverage. |
@@ -108,6 +108,8 @@ mise run install
 | `mise run plugin:smoke` | Rebuild the plugin and load the actual bundle with an isolated Obsidian host double. |
 | `mise run format` | Apply Biome formatting. |
 | `mise run dev` | Run local Worker development through Wrangler. |
+| `mise run demo:build` | Dry-run bundle the separate synthetic local sync API; also included in `check`. |
+| `mise run demo:dev` | Explicitly armed loopback-only M8 lab, separate from the existing Worker; see [instructions](docs/local-sync-demo.md). |
 
 `mise run test` is the fast normal developer test command. `mise run coverage`
 runs the same suite with coverage reporting and threshold enforcement, while

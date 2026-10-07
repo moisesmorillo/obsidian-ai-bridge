@@ -1,11 +1,27 @@
 # M8 — Local Markdown sync demonstration
 
-**Accepted by the owner; NEXT on this specification PR's merge.** Implementation
-starts after that merge, not from this document's presence on a branch. Baseline:
+**NEXT — specification merged in #110; functional delivery 1 in progress.**
+The milestone is not COMPLETE. The [delivery-1 plan](../plans/m8-local-sync-api.md)
+and [local lab guide](../local-sync-demo.md) track the isolated API; client/plugin
+and two-vault evidence remain pending. Original specification baseline:
 `main` at `e1297d6973fa93325c3a2e5825a0deddb4967d3e`, including merged #109.
 [ADR 0021](../decisions/0021-isolated-local-markdown-sync-demo.md) authorizes only
 the synthetic local boundary. This is a functional delivery milestone, not another
 M7 qualification-matrix milestone.
+
+## Delivery 1 evidence
+
+The separate local Worker/API implements current/version/create/update/exact replay
+and feed over the existing store. Final local `mise install && mise run check`
+passed: 2,104 fast tests, 53 native tests and 12 release-plugin artifact tests;
+statements 95.01%, branches 91.48%, functions 98.62%, lines 96.83%, unchanged
+thresholds. Post-green semantic self-review closed the OpenAPI-failure and
+oversized-read findings. The [plan/evidence ledger](../plans/m8-local-sync-api.md)
+and [lab guide](../local-sync-demo.md) distinguish native test-clock injection
+from real expiry/CPU/platform or desktop qualification. No real R2, deployment,
+personal vault or M8 plugin demonstration is claimed. Delivery 1 awaits owner
+review/merge of [PR #111](https://github.com/moisesmorillo/obsidian-ai-bridge/pull/111);
+client reconciliation and plugin/two-vault work remain pending.
 
 ## Outcome and accepted boundary
 
@@ -190,7 +206,7 @@ Do not substitute the old reviewed-only v2 workflow and call it automatic sync.
 - [x] Define minimum scope, alternatives and independently reviewable deliveries.
 - [x] Owner accepts written scope and local-only successor gate.
 - [x] Record accepted ADR/roadmap transition on the specification branch.
-- [ ] Owner merges the specification PR; M8 becomes NEXT.
+- [x] Owner merges the specification PR; M8 becomes NEXT (#110, `2c96711`).
 - [ ] Refine implementation work units within the accepted scope; execute locally
   without requesting approval again for routine decisions.
 - [ ] Implement functional deliveries with focused tests and mandatory checks.

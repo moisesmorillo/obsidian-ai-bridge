@@ -119,10 +119,20 @@ restart settles only exact prepared postconditions, never redispatches a diverge
 local replacement. Conflicts remain latched with a verified excluded-copy receipt,
 unchanged base and visible attention; checkpoints cannot pass blocked work.
 
-Delivery 3 must supply official Vault/listener/session fencing, host-local storage,
-native SecretStorage, an explicitly built experimental artifact and Sync now/status.
-Two accurately labeled simulated hosts against the real local API plus on-disk
-ledger reload are integration evidence only. G1–G6 production/real-data gates remain open.
+Delivery 3's separate `demo-main.ts` composes official Vault metadata/read/create/
+process, deterministic excluded preservation, App-local string state and native
+SecretStorage with a modern settings button/command/status. A versioned same-realm
+App registry retains one original-config owner and unsettled transport across
+unload/re-enable/bundle evaluation. Execution leases fence effects at their actual
+dispatch boundary (including after the async secret lookup); already dispatched
+settlement/persistence stays owned. Listeners precede layout-ready admission and
+all saved events remain successor observations, without own-event heuristics.
+The Worker now reuses the protocol's existing synthetic path authority.
+Separate build/manifest/output never imports the M3 session or enters release assets.
+[Artifact demonstration](qualification/m8-experimental-plugin-demo.md) uses two
+isolated simulated plugin realms/new disposable filesystem-backed Vaults and native
+local production Worker/R2. This is not Desktop/native-secret durability or real R2
+qualification. G1–G6 production/real-data gates remain open.
 
 ## Package boundaries
 

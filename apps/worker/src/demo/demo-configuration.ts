@@ -1,9 +1,8 @@
-import { isReconciliationPreservationNamespacePath } from "@obsidian-ai-bridge/core";
 import {
   MAX_SYNC_DEMO_PATHS,
   SYNC_DEMO_PARTICIPANT_COUNT,
+  syncDemoClientPathSchema,
   syncDemoParticipantSchema,
-  syncNotePathSchema,
   syncVaultIdSchema,
 } from "@obsidian-ai-bridge/protocol";
 import { z } from "zod";
@@ -13,16 +12,7 @@ const configurationSchema = z
   .object({
     mode: z.literal("synthetic-local-only"),
     vaultId: syncVaultIdSchema,
-    paths: z
-      .array(
-        syncNotePathSchema.refine(
-          (path) =>
-            /^[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)*\.md$/.test(path) &&
-            !isReconciliationPreservationNamespacePath(path),
-        ),
-      )
-      .min(1)
-      .max(MAX_SYNC_DEMO_PATHS),
+    paths: z.array(syncDemoClientPathSchema).min(1).max(MAX_SYNC_DEMO_PATHS),
     participants: z
       .array(syncDemoParticipantSchema)
       .length(SYNC_DEMO_PARTICIPANT_COUNT),

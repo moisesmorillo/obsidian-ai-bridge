@@ -113,6 +113,12 @@ export class SyncDemoFetchRemote implements SyncDemoRemote {
       throw new TypeError("Invalid synthetic loopback endpoint.");
     this.endpoint = new URL(SYNC_DEMO_ROUTE, url).href;
   }
+  /** Reports unsettled secret/request/body ownership, including work surviving the scheduled deadline; never grants cancellation certainty.
+   * @returns Whether late transport settlement still owns the single dispatch permit.
+   */
+  isBusy(): boolean {
+    return this.busy;
+  }
   /** Resets finite admission for a serialized invocation; a late unsettled request still owns its permit. */
   beginPass(): void {
     this.requests = 0;

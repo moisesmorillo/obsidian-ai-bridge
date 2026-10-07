@@ -4,6 +4,10 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   resolve: {
     alias: {
+      miniflare: new URL(
+        "../worker/node_modules/miniflare/dist/src/index.js",
+        import.meta.url,
+      ).pathname,
       "@obsidian-plugin-tests": new URL("tests", import.meta.url).pathname,
       "@obsidian-plugin-manifest": new URL("manifest.json", import.meta.url)
         .pathname,

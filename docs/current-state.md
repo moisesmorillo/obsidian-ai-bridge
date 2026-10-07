@@ -15,8 +15,16 @@ precedes effects; only matching committed requests acknowledge a push. Clean pul
 require exact ACK bytes, while concurrent edits retain both versions and attention.
 The [client evidence ledger](plans/m8-durable-sync-client.md) records simulated-host
 REST integration with real disposable ledger files, not a desktop/plugin artifact.
-Official experimental plugin composition and two-vault demonstration remain pending;
-G1–G6 remain open for productive exposure and real data.
+#112 merged at `cf05833`; #113 merged at `75968a3`. Delivery 3 adds separate
+`demo-main.ts`, strict local configuration, retained owner, official saved-Vault
+adapter and modern declarative settings/native SecretStorage. Explicit build tasks
+stage only `dist/demo-plugin`; release publishing still selects `dist/main.js` and
+`dist/manifest.json`. [Built-artifact evidence](qualification/m8-experimental-plugin-demo.md)
+uses two isolated simulated plugin realms and newly created filesystem-backed
+Vault doubles against the production local Worker/native workerd R2: A→B, B→A,
+REST edit, cold restart and retained concurrent versions with visible attention.
+This is not real Obsidian Desktop or SecretStorage durability evidence.
+Completion becomes canonical only on the delivery-3 PR merge; G1–G6 remain open.
 
 ## Post-M6 OAuth rollout in progress
 

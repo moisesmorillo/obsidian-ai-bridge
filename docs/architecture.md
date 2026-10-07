@@ -103,8 +103,26 @@ permissions are independent. `SyncDemoService` admits only the synthetic path/by
 scope, then delegates exact-parent mutation/replay and current/version/feed evidence
 to the existing SyncStore. Only admitted mutations may prepare the fresh marker;
 reads never provision it. No inventory CPU override, OAuth, MCP, legacy read-through,
-delete, migration or plugin activation is added. The client/experimental plugin are
-later M8 deliveries; G1–G6 production/real-data gates remain open.
+delete, migration or plugin activation is added. Delivery 1 merged in #111.
+
+Delivery 2's `SyncDemoClient` serializes explicit commands and owns fresh three-way
+classification/feed settlement. `SyncDemoClientEffects` owns prepared transition
+persistence, original-request replay and verified local postconditions/preservation.
+Core uses narrow ports only, not Hono, R2, Obsidian or filesystem objects. Protocol
+owns strict rehydration; the uncomposed plugin `demo/` adapters provide verified
+string persistence and a 32-request, inclusive-deadline loopback Fetch capability.
+The client asserts paired expected vault/authenticated origin; the API guard
+(PR #112 prerequisite) denies mismatch within the same authenticated request,
+never selects authority from headers or accepts error-status commits.
+No note body/token is representable in the ledger. Failed saves fence the owner;
+restart settles only exact prepared postconditions, never redispatches a divergent
+local replacement. Conflicts remain latched with a verified excluded-copy receipt,
+unchanged base and visible attention; checkpoints cannot pass blocked work.
+
+Delivery 3 must supply official Vault/listener/session fencing, host-local storage,
+native SecretStorage, an explicitly built experimental artifact and Sync now/status.
+Two accurately labeled simulated hosts against the real local API plus on-disk
+ledger reload are integration evidence only. G1–G6 production/real-data gates remain open.
 
 ## Package boundaries
 
@@ -583,8 +601,8 @@ external successor or deadlock an aligned path.
   [ADR 0021](decisions/0021-isolated-local-markdown-sync-demo.md) adds only an isolated
   synthetic local-demo exception: [M8](milestones/m8-local-markdown-sync-demo.md)
   becomes NEXT on specification merge, with separate Worker/plugin entrypoints
-  outside release/deployment composition. No M8 code exists in this transition;
-  current runtime behavior and G1–G6 production/real-data blockers are unchanged.
+  outside release/deployment composition. The isolated local API and uncomposed
+  durable client do not change release activation or G1–G6 production/real-data blockers.
 - Outside this roadmap: search, attachments and AI inference. NAS replication or
   stronger remote authority are possibilities, not selected infrastructure. D1,
   Durable Objects, queues, Workers AI, Vectorize and external databases are not

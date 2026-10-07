@@ -126,7 +126,8 @@ read-back uses the existing one-key primitive before admitted first mutation.
 - Operational guide and architecture/current-state/API references are drafted;
   final evidence and post-check semantic closure are recorded. Functional delivery
   commit `72a6508` is published in [PR #111](https://github.com/moisesmorillo/obsidian-ai-bridge/pull/111);
-  owner review/merge remains pending. No deployment or plugin installation.
+  owner merged #111 at `f885f0e` on 2026-10-07. No deployment or plugin installation.
+  The [durable client successor](m8-durable-sync-client.md) is delivery 2.
 
 ## Semantic review record
 

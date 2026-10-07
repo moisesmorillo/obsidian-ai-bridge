@@ -1,9 +1,10 @@
 # Synthetic local sync API lab
 
-This is M8 delivery 1: a separate loopback Worker/API over the existing private
-SyncStore. It is **not** the deployed API, a plugin sync release, or qualification
-of Workers Free, real R2, desktop/mobile hosts or real data. G1–G6 remain open.
-The plugin and two-vault flow are later functional deliveries.
+M8 delivery 1 provides a separate loopback Worker/API over the existing private
+SyncStore; delivery 2 adds an uncomposed durable exact-base client. Neither is the
+deployed API or a plugin sync release, nor qualification of Workers Free, real R2,
+desktop/mobile hosts or real data. G1–G6 remain open. The experimental plugin and
+two-vault artifact demonstration are delivery 3.
 
 ## Start only the isolated lab
 
@@ -111,11 +112,57 @@ unbound participant, `413` above 102,400 encoded request bytes, and `503` for an
 unarmed/non-loopback/unavailable lab. The stream ceiling ignores Content-Length
 claims. Exceptions are sanitized; note text and credentials are not logged.
 
-Feed cursors reuse the protocol-major-one checkpoint codec. The later client
+Feed cursors reuse the protocol-major-one checkpoint codec. The durable client
 starts at the zero vector for this fresh lab identity and treats events as hints
 for verified current reads; historical events never regress a newer ACK. No
 inventory, tombstone application, deletion, rename, migration or MCP endpoint is
 exposed by the lab.
+
+## Exercise the uncomposed durable client
+
+```bash
+mise run test -- sync-demo-client sync-demo-ledger sync-demo-fetch
+```
+
+The integration scenario composes `SyncDemoClient`, strict `SyncDemoLedgerRepository`
+and `SyncDemoFetchRemote` with the actual local Worker entrypoint/service/R2 adapter.
+Two simulated local hosts exchange exact Markdown A→B and B→A, restart by loading
+separate disposable on-disk ledgers, apply an independently authenticated REST edit,
+and preserve a concurrent local edit plus verified excluded remote copy. Every pass
+asserts at most 32 HTTP requests. The storage clock/conditional bucket and local
+atomic host are deterministic doubles, not native R2 or desktop Vault evidence.
+Additional actual-HTTP cases deny wrong intended vault/participant and credential
+rotation after an earlier request, with zero storage objects created.
+Temp ledger directories are created and removed only by that test; no existing
+vault or persisted emulator state is read or changed.
+
+| Durable state | Behavior |
+| --- | --- |
+| ACK | Exact revision/hash, no note body; unrelated equal text cannot be silently adopted |
+| Push | Original operation/revision/parent/hash/floor/certainty; explicit pre-journal refusal requires unchanged saved bytes; uncertain journal replay may use a fully matching immutable tuple; only committed acknowledges |
+| Prepared local effect | Persist before create/atomic compare-and-replace; interruption settles only its exact saved postcondition, otherwise attention without redispatch |
+| Conflict | Keep local/base, create-only and verify competing remote bytes under excluded `ai-bridge-conflicts`, retain visible attention; never republish copies |
+| Checkpoint | Start at zero; historical events select fresh current/version reconciliation; advance only after every selected path settles, never past pending/conflict |
+| Invalid/unavailable storage | Bound encoded state to 16 KiB before parsing; reject unsupported/corrupt/foreign state unchanged; failed save/read-back fences the owner, never resets to empty |
+
+The Fetch adapter admits only exact loopback HTTP base URLs, reads the bearer at
+dispatch, sends the paired expected vault/authenticated-origin headers described
+in [API contracts](api.md), forbids redirects, bounds UTF-8 JSON response streams
+and applies one scheduled 10-second deadline including secret retrieval and body
+consumption (not a preemptive whole-command latency guarantee). Only the strict
+HTTP 400 binding refusal becomes invalid-input attention; error-status bodies
+can never acknowledge a mutation. An unsettled
+late request retains its permit; timeout is not rollback. Pending work may need
+another explicit invocation after its original epoch retry floor; no busy loop.
+
+Delivery 3 still must compose official Vault read/create/process/preservation,
+whole-vault metadata preflight, listeners/session fencing and retained owner,
+App-local string persistence, native SecretStorage, explicit disposable-lab arming,
+a separate experimental artifact and Sync now/status. Do not attach these adapters
+to release `main.ts` or M3. Conflict resolution/deletes/renames/MCP remain out of
+scope. Divergent prepared effects or expired cursors require review of the
+disposable experiment, not silent reset or repair. See the
+[implementation/evidence ledger](plans/m8-durable-sync-client.md).
 
 ## Evidence and teardown boundary
 

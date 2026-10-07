@@ -556,6 +556,30 @@ export type {
   SyncSequence,
   SyncVaultId,
 } from "@core/sync/sync.types";
+export { SyncDemoClient } from "@core/sync/sync-demo-client";
+export type {
+  SyncDemoClientEnvironment,
+  SyncDemoLedgerStore,
+  SyncDemoLocal,
+  SyncDemoLocalObservation,
+  SyncDemoRemote,
+  SyncDemoStringStorage,
+} from "@core/sync/sync-demo-client.port";
+export type {
+  SyncDemoApply,
+  SyncDemoBase,
+  SyncDemoClientBinding,
+  SyncDemoClientOutcome,
+  SyncDemoConflict,
+  SyncDemoEntry,
+  SyncDemoLedger,
+  SyncDemoPush,
+} from "@core/sync/sync-demo-client.types";
+export {
+  hashSyncDemoContent,
+  isSyncDemoContent,
+  SYNC_DEMO_CLIENT_LIMITS,
+} from "@core/sync/sync-demo-client-effects";
 export { SyncDemoService } from "@core/sync/sync-demo-service";
 export type {
   SyncMutationDecision,

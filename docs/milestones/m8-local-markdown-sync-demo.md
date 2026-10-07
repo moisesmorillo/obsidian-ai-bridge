@@ -83,6 +83,10 @@ Source owners to reuse, not broaden:
   or label injected allowance as platform evidence.
 - `apps/worker/src/auth/credential-registry.ts` and `authenticate-request.ts`:
   reuse verified principals; demo vault/origin binding remains separate policy.
+  The client sends paired denial-only identity expectations on each request;
+  compare them with that request's authenticated server binding before effects.
+  They never select a namespace/origin or imply permission, and a separate
+  preflight cannot substitute for the dispatch-time check.
 - `apps/obsidian-plugin/src/infrastructure/obsidian-local-reconciliation-writer.ts`
   and `obsidian-local-reconciliation-writer-host.ts`: narrow official effects.
   M8 supplies its own durable authority; M4 review/lease state is not fabricated.

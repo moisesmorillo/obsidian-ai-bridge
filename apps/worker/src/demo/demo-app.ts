@@ -1,16 +1,19 @@
-import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi";
+import { createRoute, OpenAPIHono } from "@hono/zod-openapi";
 import type { ContentSha256, SyncDemoService } from "@obsidian-ai-bridge/core";
 import {
   HTTP_METHOD,
   MAX_SYNC_DEMO_REQUEST_BYTES,
+  SYNC_DEMO_BINDING_HEADER,
   SYNC_DEMO_CORS_ORIGIN,
   SYNC_DEMO_LOOPBACK_HOSTS,
   SYNC_DEMO_OPERATION,
   SYNC_DEMO_ROUTE,
   SYNC_DEMO_TRANSPORT_ERROR,
   SYNC_DEMO_URL_PROTOCOL,
+  syncDemoBindingHeadersSchema,
   syncDemoRequestSchema,
   syncDemoResponseSchema,
+  syncDemoTransportFailureSchema,
 } from "@obsidian-ai-bridge/protocol";
 import { Scalar } from "@scalar/hono-api-reference";
 import {
@@ -64,16 +67,9 @@ const permissions = {
 const DEMO_UNAVAILABLE_STATUS = 503;
 /** Local OpenAPI security component identity, not a token scheme or an authorization capability. */
 const DEMO_BEARER_SECURITY_SCHEME = "bearerAuth";
-/** Sanitized transport envelope; domain certainty remains in the separate response schema. */
-const transportFailureSchema = z
-  .object({
-    kind: z.literal("error"),
-    code: z.enum(Object.values(SYNC_DEMO_TRANSPORT_ERROR)),
-  })
-  .strict();
 /** Shared documented JSON failure representation; each status retains its separate admission meaning. */
 const transportFailureContent = {
-  [JSON_CONTENT_TYPE]: { schema: transportFailureSchema },
+  [JSON_CONTENT_TYPE]: { schema: syncDemoTransportFailureSchema },
 };
 /** One schema-derived operation document, registered without an unbounded automatic JSON parser. */
 const requestRoute = createRoute({
@@ -81,6 +77,7 @@ const requestRoute = createRoute({
   path: SYNC_DEMO_ROUTE,
   security: [{ [DEMO_BEARER_SECURITY_SCHEME]: [] }],
   request: {
+    headers: syncDemoBindingHeadersSchema,
     body: {
       required: true,
       content: { [JSON_CONTENT_TYPE]: { schema: syncDemoRequestSchema } },
@@ -93,7 +90,7 @@ const requestRoute = createRoute({
       content: { [JSON_CONTENT_TYPE]: { schema: syncDemoResponseSchema } },
     },
     [HTTP_STATUS.badRequest]: {
-      description: "Invalid bounded request",
+      description: "Invalid bounded request or mismatched intended identity",
       content: transportFailureContent,
     },
     [HTTP_STATUS.unauthorized]: {
@@ -183,7 +180,11 @@ export function createSyncDemoApp(dependencies: SyncDemoAppDependencies) {
     cors({
       origin: SYNC_DEMO_CORS_ORIGIN,
       allowMethods: [HTTP_METHOD.post],
-      allowHeaders: [HTTP_HEADER.authorization, HTTP_HEADER.contentType],
+      allowHeaders: [
+        HTTP_HEADER.authorization,
+        HTTP_HEADER.contentType,
+        ...Object.values(SYNC_DEMO_BINDING_HEADER),
+      ],
       maxAge: 0,
     }),
   );
@@ -236,6 +237,30 @@ export function createSyncDemoApp(dependencies: SyncDemoAppDependencies) {
       return context.json(
         { kind: "error", code: SYNC_DEMO_TRANSPORT_ERROR.forbidden },
         HTTP_STATUS.forbidden,
+      );
+    const expectations = syncDemoBindingHeadersSchema.safeParse({
+      [SYNC_DEMO_BINDING_HEADER.vaultId]: context.req.header(
+        SYNC_DEMO_BINDING_HEADER.vaultId,
+      ),
+      [SYNC_DEMO_BINDING_HEADER.origin]: context.req.header(
+        SYNC_DEMO_BINDING_HEADER.origin,
+      ),
+    });
+    if (!expectations.success)
+      return context.json(
+        { kind: "error", code: SYNC_DEMO_TRANSPORT_ERROR.invalidRequest },
+        HTTP_STATUS.badRequest,
+      );
+    if (
+      expectations.data[SYNC_DEMO_BINDING_HEADER.vaultId] !== undefined &&
+      (expectations.data[SYNC_DEMO_BINDING_HEADER.vaultId] !==
+        configuration.vaultId ||
+        expectations.data[SYNC_DEMO_BINDING_HEADER.origin] !==
+          participant.origin)
+    )
+      return context.json(
+        { kind: "error", code: SYNC_DEMO_TRANSPORT_ERROR.bindingMismatch },
+        HTTP_STATUS.badRequest,
       );
     if (
       parseMediaType(context.req.header(HTTP_HEADER.contentType)) !==

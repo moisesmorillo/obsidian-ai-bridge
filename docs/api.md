@@ -4,6 +4,15 @@ The separate [synthetic local sync lab](local-sync-demo.md) uses its own loopbac
 entrypoint/configuration and schema-derived API. It is not registered in this
 Worker, does not alter v2/MCP, and grants no production exposure or real-data use.
 
+The lab accepts optional paired `X-AI-Bridge-Demo-Vault-Id` and
+`X-AI-Bridge-Demo-Origin` expectations. The durable client sends both on every
+request. They assert the configured vault and the authenticated participant's
+origin, **not** the current note author's origin. They never select authority or
+grant permissions. Partial/malformed pairs return `400 invalid_request`; a valid
+pair differing from the server-selected identity returns `400 binding_mismatch`
+before service/storage resolution. Omitting both headers keeps the existing
+REST behavior and server-owned binding. Lab OpenAPI and CORS document both headers.
+
 ## Access session check
 
 `GET /auth/session` returns an empty `204` only when Cloudflare Access

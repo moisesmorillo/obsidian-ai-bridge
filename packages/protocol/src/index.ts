@@ -170,3 +170,18 @@ export {
   syncDemoClientPathSchema,
   syncDemoLedgerSchema,
 } from "@protocol/sync-demo-client.schemas";
+export {
+  isSyncRemoteEndpoint,
+  SYNC_LAB_UNAVAILABLE_STATUS,
+  SYNC_REMOTE_CALLS,
+  SYNC_REMOTE_LIFETIME_MS,
+  SYNC_REMOTE_MODE,
+  SYNC_REMOTE_PUT_BYTES,
+  SYNC_REMOTE_TICKET_HEADER,
+  SYNC_REMOTE_TICKETS,
+  SYNC_REMOTE_URL_PROTOCOL,
+} from "@protocol/sync-remote.constants";
+export {
+  syncRemoteHeadersSchema,
+  syncRemoteTicketSchema,
+} from "@protocol/sync-remote.schemas";

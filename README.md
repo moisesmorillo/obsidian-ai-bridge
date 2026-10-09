@@ -4,10 +4,12 @@ A data-safety-focused bridge between Obsidian and authorized remote AI or agent 
 
 > **Status:** M1–M6 retain their completed scope; [M7 — versioned sync protocol and isolated R2 store](docs/milestones/m7-versioned-sync-protocol-and-r2-store.md)
 > is **COMPLETE as private isolated delivery** under merged ADR 0020 (#107). [M8 — local Markdown sync demo](docs/milestones/m8-local-markdown-sync-demo.md)
-> is NEXT after specification #110 and local API #111 merged under [ADR 0021](docs/decisions/0021-isolated-local-markdown-sync-demo.md).
-> Deliveries 1–2 merged through #113. Delivery 3 adds a separately built experimental
-> plugin and [two simulated-vault artifact demonstration](docs/qualification/m8-experimental-plugin-demo.md),
-> pending completion-PR merge; no Desktop compatibility claim.
+> is COMPLETE at #114 (`eef552a`) under [ADR 0021](docs/decisions/0021-isolated-local-markdown-sync-demo.md).
+> The separately built plugin and [artifact demonstration](docs/qualification/m8-experimental-plugin-demo.md)
+> remain local-only. The [remote synthetic successor](docs/milestones/m8-remote-synthetic-lab.md)
+> is NEXT for owner-authorized local implementation: standalone Worker, then remote
+> experimental plugin. [Cloudflare recipe approval](docs/remote-sync-lab.md) is mandatory
+> before account/session/credential access; G1–G6 stay open.
 > This authorizes only isolated synthetic local development, not production exposure.
 > [Mandatory activation blockers](docs/qualification/m7-delivery-and-activation-gate.md)
 > remain open: missing safety evidence, real 24-hour expiry, Workers Free/real R2,
@@ -114,6 +116,7 @@ mise run install
 | `mise run demo:plugin:build` | Build the distinct `ai-bridge-synthetic-demo` artifact under `dist/demo-plugin`, never release `dist/main.js`. |
 | `mise run demo:plugin:smoke` | Demonstrate five sync flows with two isolated simulated plugin instances and native local Worker/R2. |
 | `mise run demo:build` | Dry-run bundle the separate synthetic local sync API; also included in `check`. |
+| `mise run remote:build` | Bundle the separate remote synthetic Worker locally, without deployment/authentication. |
 | `mise run demo:dev` | Explicitly armed loopback-only M8 lab, separate from the existing Worker; see [instructions](docs/local-sync-demo.md). |
 
 `mise run test` is the fast normal developer test command. `mise run coverage`
@@ -205,7 +208,8 @@ functional local-demo deliveries. The specification and local API have merged;
 [durable client work/evidence](docs/plans/m8-durable-sync-client.md) merged in #113.
 The separate [experimental plugin plan](docs/plans/m8-experimental-plugin.md) and
 [demonstration report](docs/qualification/m8-experimental-plugin-demo.md) complete
-only the synthetic local boundary; no next milestone is selected or authorized. The accepted
+only the synthetic local boundary. The owner now authorizes local implementation of the
+[remote synthetic successor](docs/milestones/m8-remote-synthetic-lab.md), not Cloudflare operations. The accepted
 [ADR 0014](docs/decisions/0014-stateless-mcp-adapter-and-existing-credentials.md),
 completed [M6 specification](docs/milestones/m6-mcp-adapter.md), and [M6 qualification
 report](docs/qualification/m6-final.md) record the adapter and its residual limits.

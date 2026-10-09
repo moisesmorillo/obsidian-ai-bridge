@@ -10,10 +10,14 @@ import {
   SYNC_DEMO_ROUTE,
   SYNC_DEMO_TRANSPORT_ERROR,
   SYNC_DEMO_URL_PROTOCOL,
+  SYNC_LAB_UNAVAILABLE_STATUS,
+  SYNC_REMOTE_TICKET_HEADER,
+  SYNC_REMOTE_URL_PROTOCOL,
   syncDemoBindingHeadersSchema,
   syncDemoRequestSchema,
   syncDemoResponseSchema,
   syncDemoTransportFailureSchema,
+  syncRemoteHeadersSchema,
 } from "@obsidian-ai-bridge/protocol";
 import { Scalar } from "@scalar/hono-api-reference";
 import {
@@ -52,6 +56,15 @@ export interface SyncDemoAppDependencies {
   ) => SyncDemoService;
   /** Adapter-owned SHA-256 implementation over the exact submitted UTF-8 bytes. */
   readonly digest: (content: string) => Promise<ContentSha256>;
+  /** Remote-only transport capability, absent by default; admitted only after existing identity and permission checks. */
+  readonly remote?: {
+    /** Original HTTPS authority; request headers cannot redirect it. */
+    readonly endpoint: string;
+    /** Rechecks stop/expiry before every new admission, never cancellation of dispatched work. */
+    readonly active: () => boolean;
+    /** Consumes one transport ticket before resolving the store service; unknown claims return false. */
+    readonly admit: (headers: Headers, origin: string) => Promise<boolean>;
+  };
 }
 
 /** No runtime bindings or contextual weak types cross this constructor-injected HTTP app. */
@@ -64,7 +77,7 @@ const permissions = {
   [SYNC_DEMO_OPERATION.mutate]: CLIENT_PERMISSION.write,
 } as const;
 /** Fail-closed lab availability status, not a successful domain acknowledgement. */
-const DEMO_UNAVAILABLE_STATUS = 503;
+const DEMO_UNAVAILABLE_STATUS = SYNC_LAB_UNAVAILABLE_STATUS;
 /** Local OpenAPI security component identity, not a token scheme or an authorization capability. */
 const DEMO_BEARER_SECURITY_SCHEME = "bearerAuth";
 /** Shared documented JSON failure representation; each status retains its separate admission meaning. */
@@ -165,8 +178,14 @@ export function createSyncDemoApp(dependencies: SyncDemoAppDependencies) {
     const url = new URL(context.req.url);
     if (
       configuration === null ||
-      url.protocol !== SYNC_DEMO_URL_PROTOCOL ||
-      !SYNC_DEMO_LOOPBACK_HOSTS.some((host) => host === url.hostname)
+      (dependencies.remote
+        ? url.protocol !== SYNC_REMOTE_URL_PROTOCOL ||
+          url.origin !== dependencies.remote.endpoint ||
+          !dependencies.remote.active() ||
+          url.pathname !== SYNC_DEMO_ROUTE ||
+          url.search !== ""
+        : url.protocol !== SYNC_DEMO_URL_PROTOCOL ||
+          !SYNC_DEMO_LOOPBACK_HOSTS.some((host) => host === url.hostname))
     ) {
       return context.json(
         { kind: "error", code: SYNC_DEMO_TRANSPORT_ERROR.unavailable },
@@ -184,6 +203,7 @@ export function createSyncDemoApp(dependencies: SyncDemoAppDependencies) {
         HTTP_HEADER.authorization,
         HTTP_HEADER.contentType,
         ...Object.values(SYNC_DEMO_BINDING_HEADER),
+        ...(dependencies.remote ? [SYNC_REMOTE_TICKET_HEADER] : []),
       ],
       maxAge: 0,
     }),
@@ -205,7 +225,17 @@ export function createSyncDemoApp(dependencies: SyncDemoAppDependencies) {
       scheme: "bearer",
     },
   );
-  app.openAPIRegistry.registerPath(requestRoute);
+  app.openAPIRegistry.registerPath(
+    dependencies.remote
+      ? {
+          ...requestRoute,
+          request: {
+            ...requestRoute.request,
+            headers: syncRemoteHeadersSchema,
+          },
+        }
+      : requestRoute,
+  );
   app.doc(OPENAPI_ROUTE, {
     openapi: "3.0.0",
     info: {
@@ -246,7 +276,11 @@ export function createSyncDemoApp(dependencies: SyncDemoAppDependencies) {
         SYNC_DEMO_BINDING_HEADER.origin,
       ),
     });
-    if (!expectations.success)
+    if (
+      !expectations.success ||
+      (dependencies.remote &&
+        expectations.data[SYNC_DEMO_BINDING_HEADER.vaultId] === undefined)
+    )
       return context.json(
         { kind: "error", code: SYNC_DEMO_TRANSPORT_ERROR.invalidRequest },
         HTTP_STATUS.badRequest,
@@ -301,6 +335,19 @@ export function createSyncDemoApp(dependencies: SyncDemoAppDependencies) {
       return context.json(
         { kind: "error", code: SYNC_DEMO_TRANSPORT_ERROR.forbidden },
         HTTP_STATUS.forbidden,
+      );
+    if (
+      dependencies.remote &&
+      (!dependencies.remote.active() ||
+        !(await dependencies.remote.admit(
+          context.req.raw.headers,
+          participant.origin,
+        )) ||
+        !dependencies.remote.active())
+    )
+      return context.json(
+        { kind: "error", code: SYNC_DEMO_TRANSPORT_ERROR.unavailable },
+        DEMO_UNAVAILABLE_STATUS,
       );
     const service = dependencies.resolveService(configuration);
     switch (request.operation) {

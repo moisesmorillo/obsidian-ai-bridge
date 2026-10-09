@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.8.0](https://github.com/moisesmorillo/obsidian-ai-bridge/compare/v1.7.0...v1.8.0) (2026-10-09)
+
+
+### Features
+
+* **plugin:** add isolated remote synthetic sync artifact ([#117](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/117)) ([4ed312e](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/4ed312ea08da623e8021ba9ab2a6ba3d794d4e03))
+* **plugin:** add isolated synthetic Markdown sync demo ([#114](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/114)) ([eef552a](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/eef552a2bb0f5874953550a38b71637c59f468b7))
+* **worker:** add isolated remote synthetic sync lab ([#116](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/116)) ([7572905](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/7572905a835960b1d2c0d110e11899b4a91a4251))
+
 ## [1.7.0](https://github.com/moisesmorillo/obsidian-ai-bridge/compare/v1.6.0...v1.7.0) (2026-10-07)
 
 

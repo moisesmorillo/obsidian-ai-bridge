@@ -72,6 +72,50 @@ The provider hard request limit is account-wide. This fallback is invalid on Pai
 
 Public primary sources consulted during design: [Workers limits](https://developers.cloudflare.com/workers/platform/limits/), [R2 limits](https://developers.cloudflare.com/r2/platform/limits/), [R2 prices](https://developers.cloudflare.com/r2/pricing/) (2026-10-09 session). Account headroom, actual telemetry and remote binding semantics remain unknown. Heap/RSS from local Node and request wall time are not remote isolate evidence.
 
+### Isolated deployment configuration
+
+**PR merge is not operational approval.** The tracked `wrangler.remote.jsonc`
+intentionally has `workers_dev:false`, `preview_urls:false`, `routes:[]` and
+`remote:false`. It is a closed local-build template, not a directly usable public
+deployment configuration. Only after explicit recipe approval, copy its reviewed
+contents to `$LAB_CONFIG` outside Git and apply this exact overlay, replacing the
+owner/path placeholders locally. Keep its compatibility/observability settings.
+
+```json
+{
+  "account_id": "<owner-supplied-ID>",
+  "name": "ai-bridge-m8-remote-synthetic-20261009a",
+  "main": "<absolute-reviewed-repo>/apps/worker/src/remote/index.ts",
+  "workers_dev": true,
+  "preview_urls": false,
+  "routes": [],
+  "r2_buckets": [
+    {
+      "binding": "REMOTE_BUCKET",
+      "bucket_name": "ai-bridge-m8-remote-synthetic-20261009a",
+      "remote": false
+    }
+  ]
+}
+```
+
+`workers_dev:true` exposes only the approved new script's workers.dev hostname;
+`routes:[]` prevents adding production/custom-domain routes and preview URLs stay
+closed. `remote:false` prevents remote **development** access; deployment still
+binds the explicitly approved new bucket. The absolute reviewed entrypoint and
+explicit tsconfig are needed because `$LAB_CONFIG` lives outside the repository.
+Using the approved dedicated token only, the proposed deployment command is:
+
+```sh
+mise exec -- wrangler deploy --config "$LAB_CONFIG" --tsconfig "$REVIEWED_REPO/tsconfig.json"
+```
+
+**NOT executed.** Never omit `--config`, use the release/local config, deploy the
+tracked closed template directly, change the binding to an existing bucket, or
+add a production route. Initially omit configuration/registry secrets so the
+reachable hostname returns stopped/unavailable without R2 effects. Verify the
+actual published hostname equals the approval form before arming the secret.
+
 ## Authorized execution sequence (NOT executed)
 
 1. Verify supplied account/session identity and exact permission scope, tier/headroom/cost. No automatic production-resource discovery. Pin source SHA, build hashes and synthetic recipe. If CPU/heap observations are unavailable, label the limitation; do not claim G4 acceptance.

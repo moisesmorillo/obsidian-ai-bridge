@@ -21,14 +21,21 @@ Files: new `packages/protocol/src/sync-remote.constants.ts` and export; extend d
 - [x] GREEN: strict configuration and HTTPS matcher; capped R2 wrapper and one-use claim; Hono admission after existing authentication/schema/permission; standalone composition.
 - [x] Verify focused mise tests, canonical check and semantic review (combined candidate; final checkpoint in qualification report).
 - [x] Document authorization recipe, ADR exception and corrected M8 completion.
-- [ ] Commit Worker functionality with its tests/docs only.
+- [x] Commit Worker functionality with its tests/docs only (`5c30843`).
 
 ## Delivery 2 — experimental plugin
 
 Files: parameterize `demo-config`, `demo-owner`, `demo-main`, `sync-demo-fetch` with a default local profile; new remote profile/entrypoint and persisted ticket allocator; separate manifest/build task. Local exports/defaults stay loopback-only.
 
-- [ ] RED: local rejects HTTPS, remote rejects HTTP/foreign URL; exact remote endpoint Fetch with ticket; read-back failure/exhaustion no Fetch; distinct state and retained owner across replacement.
-- [ ] GREEN: explicit remote profile, independent configuration key/registry/ledger prefix; verified ticket persistence before dispatch; reuse existing leases and durable coordinator.
-- [ ] Verify all local five-flow artifact regressions plus remote artifact loading and transport composition without network/cloud.
-- [ ] Verify canonical check and semantic review; record actual limitations and rollback.
-- [ ] Commit plugin functionality with tests/docs. No deploy/credential/session lookup.
+- [x] RED: local rejects HTTPS, remote rejects HTTP/foreign URL; exact remote endpoint Fetch with ticket; read-back failure/exhaustion no Fetch; distinct state and retained owner across replacement.
+- [x] GREEN: explicit remote profile, independent configuration key/registry/ledger prefix; verified ticket persistence before dispatch; reuse existing leases and durable coordinator.
+- [x] Verify all local five-flow artifact regressions plus remote artifact loading and transport composition without network/cloud.
+- [x] Verify canonical check and semantic review; record actual limitations and rollback ([final evidence](../qualification/m8-remote-synthetic-local.md), frozen checkpoint `b9ef76f9d`).
+- [x] Commit plugin functionality with tests/docs. No deploy/credential/session lookup.
+
+Publication authorized: Worker branch `feat/m8-remote-worker` targets `main`;
+plugin branch `feat/m8-remote-plugin` targets the Worker branch. Each PR gets CI
+and independent boundary-security review before requesting merge. The concrete
+operational recipe is delivered in the plugin PR, not permission to execute it.
+No Cloudflare operation or merge is authorized. Size exception only if the actual
+repository gate requires it; both production scopes remain within its limits.

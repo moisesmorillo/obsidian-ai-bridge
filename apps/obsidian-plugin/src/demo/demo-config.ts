@@ -3,8 +3,10 @@ import {
   MAX_SYNC_DEMO_PATHS,
   SYNC_DEMO_LOOPBACK_HOSTS,
   SYNC_DEMO_URL_PROTOCOL,
+  SYNC_REMOTE_MODE,
   syncDemoClientPathSchema,
   syncDeviceIdSchema,
+  syncOperationIdSchema,
   syncVaultIdSchema,
 } from "@obsidian-ai-bridge/protocol";
 import type { App } from "obsidian";
@@ -35,8 +37,9 @@ const CONFIG_BYTES = 4096;
 /** Strict explicit arming/binding; only a native-secret reference, never a bearer or note body. */
 const configSchema = z
   .object({
-    mode: z.literal("synthetic-local-only"),
-    endpoint: z.string().refine(isDemoEndpoint),
+    mode: z.enum(["synthetic-local-only", SYNC_REMOTE_MODE]),
+    endpoint: z.string(),
+    experimentId: syncOperationIdSchema.optional(),
     vaultId: syncVaultIdSchema,
     deviceId: syncDeviceIdSchema,
     paths: z.array(syncDemoClientPathSchema).min(1).max(MAX_SYNC_DEMO_PATHS),
@@ -51,6 +54,35 @@ const configSchema = z
   );
 /** Validated local authority for one disposable namespace and immutable ordered target set. */
 export type DemoConfig = z.infer<typeof configSchema>;
+/** Transport/state capability selected only by the artifact entrypoint; local defaults never admit remote arming. */
+export interface DemoProfile {
+  /** Closed arming mode for this artifact, never selected by note content. */
+  readonly mode: DemoConfig["mode"];
+  /** Independent host-local configuration slot; does not migrate another profile. */
+  readonly configKey: string;
+  /** Same-App owner namespace retaining dispatch exclusion across bundle replacement. */
+  readonly ownerSymbol: symbol;
+  /** Content-free ledger namespace, combined with experiment/vault/device identities. */
+  readonly ledgerPrefix: string;
+  /** Default non-secret native selector, never an existing token. */
+  readonly secretReference: string;
+  /** Unarmed draft endpoint; successful configuration pins its exact authority. */
+  readonly endpoint: string;
+  /** Validates only the profile's endpoint syntax; retained configuration pins its exact original origin. */
+  readonly admitsEndpoint: (value: string) => boolean;
+  /** Remote-only, durable pre-dispatch admission; a missing or exhausted ticket closes Fetch. */
+  readonly ticket?: (app: App, config: DemoConfig) => string | null;
+}
+/** Artifact-selected local profile maintains original config/owner/ledger keys and loopback-only admission. */
+export const LOCAL_DEMO_PROFILE: DemoProfile = {
+  mode: "synthetic-local-only",
+  configKey: DEMO_CONFIG_KEY,
+  ownerSymbol: DEMO_OWNER_SYMBOL,
+  ledgerPrefix: "ai-bridge:synthetic-demo:ledger:v1",
+  secretReference: "demo-native-secret",
+  endpoint: "http://127.0.0.1:8789",
+  admitsEndpoint: isDemoEndpoint,
+};
 /** Checks exact loopback HTTP base origins without credentials, path, query or fragment; no network resolution occurs.
  * @param value Non-secret configured origin, never note text.
  * @returns Whether the exact synthetic transport contract admits this origin.
@@ -73,9 +105,13 @@ function isDemoEndpoint(value: string): boolean {
 }
 /** Isolates weak official App-local input and immediately converts bounded strict JSON to strong configuration, without repair.
  * @param value Untrusted host-local string or malformed boundary value.
+ * @param profile Artifact-selected transport/state authority; defaults retain the local-only contract.
  * @returns Exact armed configuration or null without normalization/reset.
  */
-export function decodeDemoConfig(value: unknown): DemoConfig | null {
+export function decodeDemoConfig(
+  value: unknown,
+  profile: DemoProfile = LOCAL_DEMO_PROFILE,
+): DemoConfig | null {
   if (
     typeof value !== "string" ||
     value.length > CONFIG_BYTES ||
@@ -84,7 +120,19 @@ export function decodeDemoConfig(value: unknown): DemoConfig | null {
     return null;
   try {
     const parsed = configSchema.safeParse(JSON.parse(value));
-    return parsed.success ? parsed.data : null;
+    if (
+      !parsed.success ||
+      parsed.data.mode !== profile.mode ||
+      !profile.admitsEndpoint(parsed.data.endpoint)
+    )
+      return null;
+    if (
+      profile.mode === SYNC_REMOTE_MODE
+        ? parsed.data.experimentId === undefined
+        : parsed.data.experimentId !== undefined
+    )
+      return null;
+    return parsed.data;
   } catch {
     return null;
   }
@@ -105,6 +153,9 @@ export function readDemoString(
 /** Stable host-local ledger slot bound to the original namespace and participant, never synced into Vault content.
  * @returns Versioned slot for the original vault/device binding.
  */
-export function demoLedgerKey(config: DemoConfig): string {
-  return `ai-bridge:synthetic-demo:ledger:v1:${config.vaultId}:${config.deviceId}`;
+export function demoLedgerKey(
+  config: DemoConfig,
+  profile: DemoProfile = LOCAL_DEMO_PROFILE,
+): string {
+  return `${profile.ledgerPrefix}:${config.experimentId ? `${config.experimentId}:` : ""}${config.vaultId}:${config.deviceId}`;
 }

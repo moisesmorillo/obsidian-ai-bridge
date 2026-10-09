@@ -1,0 +1,9 @@
+{
+  "id": "ai-bridge-synthetic-remote",
+  "name": "AI Bridge Synthetic Remote Lab",
+  "version": "0.0.0",
+  "minAppVersion": "1.13.0",
+  "description": "Explicit synthetic Markdown sync with one approved HTTPS lab. Not the release or local-demo plugin.",
+  "author": "Moisés Morillo",
+  "isDesktopOnly": true
+}

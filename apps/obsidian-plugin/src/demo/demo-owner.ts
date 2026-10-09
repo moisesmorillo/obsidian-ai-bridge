@@ -8,11 +8,11 @@ import {
   syncRevisionSchema,
 } from "@obsidian-ai-bridge/protocol";
 import {
-  DEMO_CONFIG_KEY,
-  DEMO_OWNER_SYMBOL,
   type DemoConfig,
+  type DemoProfile,
   decodeDemoConfig,
   demoLedgerKey,
+  LOCAL_DEMO_PROFILE,
   readDemoString,
 } from "@obsidian-plugin/demo/demo-config";
 import { DemoLocal } from "@obsidian-plugin/demo/demo-local";
@@ -43,6 +43,7 @@ export class DemoOwner {
     private readonly app: App,
     config: DemoConfig,
     fetcher: typeof fetch = fetch,
+    private readonly profile: DemoProfile = LOCAL_DEMO_PROFILE,
   ) {
     this.key = JSON.stringify(config);
     this.transport = new SyncDemoFetchRemote(
@@ -58,6 +59,14 @@ export class DemoOwner {
           return Promise.reject(new TypeError("Inactive demo execution."));
         return fetcher(input, init);
       },
+      undefined,
+      profile.ticket
+        ? {
+            endpoint: config.endpoint,
+            ticket: () =>
+              this.allowed() ? (profile.ticket?.(app, config) ?? null) : null,
+          }
+        : undefined,
     );
     const remote: SyncDemoRemote = {
       beginPass: () => this.transport.beginPass(),
@@ -78,7 +87,7 @@ export class DemoOwner {
           ? this.transport.changes(cursor)
           : Promise.resolve({ kind: "error", code: "invalid_input" }),
     };
-    const key = demoLedgerKey(config);
+    const key = demoLedgerKey(config, profile);
     const ledger = new SyncDemoLedgerRepository(
       {
         read: async () => readDemoString(app, key),
@@ -165,7 +174,8 @@ export class DemoOwner {
       return false;
     try {
       const current = decodeDemoConfig(
-        readDemoString(this.app, DEMO_CONFIG_KEY),
+        readDemoString(this.app, this.profile.configKey),
+        this.profile,
       );
       return current !== null && JSON.stringify(current) === this.key;
     } catch {
@@ -220,10 +230,11 @@ export function acquireDemoOwner(
   app: App,
   config: DemoConfig,
   fetcher: typeof fetch = fetch,
+  profile: DemoProfile = LOCAL_DEMO_PROFILE,
 ): DemoOwner | null {
   const descriptor = Object.getOwnPropertyDescriptor(
     globalThis,
-    DEMO_OWNER_SYMBOL,
+    profile.ownerSymbol,
   );
   const existing: unknown = descriptor?.value;
   if (descriptor !== undefined && !isRegistry(existing)) return null;
@@ -231,7 +242,7 @@ export function acquireDemoOwner(
     ? existing
     : { version: 1 as const, owners: new WeakMap<object, unknown>() };
   if (descriptor === undefined)
-    Object.defineProperty(globalThis, DEMO_OWNER_SYMBOL, {
+    Object.defineProperty(globalThis, profile.ownerSymbol, {
       value: registry,
       configurable: false,
       writable: false,
@@ -241,7 +252,7 @@ export function acquireDemoOwner(
     return isOwner(retained) && retained.key === JSON.stringify(config)
       ? retained
       : null;
-  const owner = new DemoOwner(app, config, fetcher);
+  const owner = new DemoOwner(app, config, fetcher, profile);
   registry.owners.set(app, owner);
   return owner;
 }

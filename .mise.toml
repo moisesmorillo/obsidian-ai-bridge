@@ -77,9 +77,16 @@ bun build apps/obsidian-plugin/src/demo/demo-main.ts --target browser --format c
 cp apps/obsidian-plugin/manifest.demo.json apps/obsidian-plugin/dist/demo-plugin/manifest.json
 """
 
+[tasks."remote:plugin:build"]
+description = "Build only the remote synthetic experimental plugin, without host installation or remote access"
+run = """
+bun build apps/obsidian-plugin/src/demo/remote-main.ts --target browser --format cjs --outfile apps/obsidian-plugin/dist/remote-plugin/main.js --external obsidian
+cp apps/obsidian-plugin/manifest.remote.json apps/obsidian-plugin/dist/remote-plugin/manifest.json
+"""
+
 [tasks."plugin:smoke"]
 description = "Load the packaged plugin with an isolated Obsidian host double"
-depends = ["plugin:build", "demo:plugin:build"]
+depends = ["plugin:build", "demo:plugin:build", "remote:plugin:build"]
 run = "node node_modules/vitest/vitest.mjs run --config apps/obsidian-plugin/vitest.smoke.config.ts"
 
 [tasks."demo:plugin:smoke"]

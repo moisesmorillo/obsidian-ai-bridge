@@ -11,6 +11,7 @@ import {
   decodeSyncCursor,
   HTTP_METHOD,
   HTTP_STATUS_CODE,
+  isSyncRemoteEndpoint,
   MAX_SYNC_DEMO_FEED_EVENTS,
   MAX_SYNC_DEMO_REQUEST_BYTES,
   MAX_SYNC_NOTE_PATH_BYTES,
@@ -22,9 +23,11 @@ import {
   SYNC_DEMO_ROUTE,
   SYNC_DEMO_TRANSPORT_ERROR,
   SYNC_DEMO_URL_PROTOCOL,
+  SYNC_REMOTE_TICKET_HEADER,
   syncDemoRequestSchema,
   syncDemoResponseSchema,
   syncDemoTransportFailureSchema,
+  syncRemoteTicketSchema,
 } from "@obsidian-ai-bridge/protocol";
 import type { z } from "zod";
 
@@ -81,26 +84,36 @@ function failure(
   }
 }
 
-/** Finite loopback-only Fetch capability, intentionally absent from release main.ts and M3 composition. */
+/** Explicit remote artifact capability; no setting can enable it in the default loopback transport. */
+interface RemoteFetchAdmission {
+  /** Immutable original HTTPS origin, compared before native secret retrieval or dispatch. */
+  readonly endpoint: string;
+  /** Persists a fresh single-use ticket before dispatch; null fences Fetch without refunding prior work. */
+  readonly ticket: () => string | null;
+}
+/** Finite loopback-default Fetch capability, intentionally absent from release main.ts and M3 composition. */
 export class SyncDemoFetchRemote implements SyncDemoRemote {
-  /** Canonical loopback route; request content never selects a different authority. */
+  /** Original canonical route; remote capability pins exact HTTPS authority, while defaults remain loopback-only. */
   private readonly endpoint: string;
   /** Dispatch admissions in this explicit pass; failures never refund a consumed count. */
   private requests = 0;
   /** Secret/request/body settlement exclusion survives timeout and pass-budget reset. */
   private busy = false;
-  /** Admits an exact loopback base URL; only dispatch-time secret retrieval may expose a bearer to the non-redirecting request. */
+  /** Admits loopback by default or one explicit original HTTPS capability; only dispatch-time native secret lookup exposes a bearer to non-redirecting Fetch. */
   constructor(
     endpoint: string,
     private readonly binding: SyncDemoClientBinding,
     private readonly bearer: () => Promise<string | null>,
     private readonly fetcher: typeof fetch = fetch,
     private readonly deadlineMs = REQUEST_DEADLINE_MS,
+    private readonly remote?: RemoteFetchAdmission,
   ) {
     const url = new URL(endpoint);
     if (
-      url.protocol !== SYNC_DEMO_URL_PROTOCOL ||
-      !SYNC_DEMO_LOOPBACK_HOSTS.some((host) => host === url.hostname) ||
+      (remote
+        ? endpoint !== remote.endpoint || !isSyncRemoteEndpoint(endpoint)
+        : url.protocol !== SYNC_DEMO_URL_PROTOCOL ||
+          !SYNC_DEMO_LOOPBACK_HOSTS.some((host) => host === url.hostname)) ||
       url.username ||
       url.password ||
       url.pathname !== "/" ||
@@ -276,6 +289,10 @@ export class SyncDemoFetchRemote implements SyncDemoRemote {
   ): Promise<WireResult | null> {
     const bearer = await this.bearer();
     if (bearer === null || signal.aborted) return null;
+    const ticket = this.remote?.ticket();
+    if (this.remote && !syncRemoteTicketSchema.safeParse(ticket).success)
+      return null;
+    if (signal.aborted) return null;
     const response = await this.fetcher(this.endpoint, {
       method: HTTP_METHOD.post,
       headers: {
@@ -283,6 +300,7 @@ export class SyncDemoFetchRemote implements SyncDemoRemote {
         [MIRROR_HTTP_HEADER.contentType]: MIRROR_MEDIA_TYPE.json,
         [SYNC_DEMO_BINDING_HEADER.vaultId]: this.binding.vaultId,
         [SYNC_DEMO_BINDING_HEADER.origin]: this.binding.deviceId,
+        ...(ticket == null ? {} : { [SYNC_REMOTE_TICKET_HEADER]: ticket }),
       },
       body: JSON.stringify(input),
       redirect: "error",

@@ -33,5 +33,9 @@ Files: parameterize `demo-config`, `demo-owner`, `demo-main`, `sync-demo-fetch` 
 - [x] Verify canonical check and semantic review; record actual limitations and rollback ([final evidence](../qualification/m8-remote-synthetic-local.md), frozen checkpoint `b9ef76f9d`).
 - [x] Commit plugin functionality with tests/docs. No deploy/credential/session lookup.
 
-Both units remain local on `feat/m8-remote-synthetic-lab`; no push, PR, merge or
-Cloudflare operation. Integration and remote authorization are separate owner decisions.
+Publication authorized: Worker branch `feat/m8-remote-worker` targets `main`;
+plugin branch `feat/m8-remote-plugin` targets the Worker branch. Each PR gets CI
+and independent boundary-security review before requesting merge. The concrete
+operational recipe is delivered in the plugin PR, not permission to execute it.
+No Cloudflare operation or merge is authorized. Size exception only if the actual
+repository gate requires it; both production scopes remain within its limits.

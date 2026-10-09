@@ -110,10 +110,14 @@ description = "Bundle only the isolated local sync demo without deploying"
 env = { WRANGLER_SEND_METRICS = "false" }
 run = "node apps/worker/node_modules/wrangler/bin/wrangler.js deploy --dry-run --config apps/worker/wrangler.demo.jsonc --outdir apps/worker/dist/demo"
 
+[tasks."remote:build"]
+description = "Bundle the isolated remote synthetic Worker locally, without Wrangler authentication or deployment"
+run = "bun build apps/worker/src/remote/index.ts --target browser --format esm --outdir apps/worker/dist/remote"
+
 [tasks.credentials]
 description = "Manage the digest-only Worker credential registry offline"
 run = "bun tools/credentials/cli.ts"
 
 [tasks.check]
 description = "Run the complete repository validation pipeline"
-depends = ["biome:check", "lint", "typecheck", "coverage", "worker:storage-test", "build", "release:identity-check", "demo:build"]
+depends = ["biome:check", "lint", "typecheck", "coverage", "worker:storage-test", "build", "release:identity-check", "demo:build", "remote:build"]

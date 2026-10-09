@@ -134,6 +134,20 @@ isolated simulated plugin realms/new disposable filesystem-backed Vaults and nat
 local production Worker/R2. This is not Desktop/native-secret durability or real R2
 qualification. G1–G6 production/real-data gates remain open.
 
+## Remote synthetic experimental composition
+
+[ADR 0022](decisions/0022-isolated-remote-synthetic-lab.md) adds a separate remote
+synthetic successor, not production activation. The new `remote/index.ts` receives
+only disposable `REMOTE_*` bindings. It injects exact HTTPS authority and one-use
+transport admission after existing authentication, participant, paired expectation
+and independent permission checks. R2 create-only ticket slots survive fresh isolates
+and lost replies; a claim never establishes store commitment. The aggregate capped
+binding includes claim/marker/store calls and submitted PUT bytes. Stop/expiry closes
+new admission without claiming cancellation of dispatched effects. No DO/KV or
+inventory CPU allowance is added. The local defaults remain loopback-only and the
+release entrypoints are unchanged. See [budgets/contract](milestones/m8-remote-synthetic-lab.md)
+and the [unexecuted authorization recipe](remote-sync-lab.md); G1–G6 remain OPEN.
+
 ## Package boundaries
 
 Dependencies should flow from application adapters toward shared packages:

@@ -13,6 +13,23 @@ pair differing from the server-selected identity returns `400 binding_mismatch`
 before service/storage resolution. Omitting both headers keeps the existing
 REST behavior and server-owned binding. Lab OpenAPI and CORS document both headers.
 
+## Separate remote synthetic contract
+
+The [remote lab](remote-sync-lab.md) uses a standalone HTTPS Worker, never this
+release API. `POST /demo/v1/request` reuses strict current/version/mutate/changes
+schemas but requires both identity expectations and `X-AI-Bridge-Remote-Ticket`
+(canonical participant-local decimal 0–99). The ticket is single-use transport
+admission, not store-operation identity. Unknown or refused claims return sanitized
+`503 demo_unavailable`; do not infer no store effect from a lost response. Resume
+an original store operation with unchanged tuple and a fresh transport ticket.
+Missing/invalid arming, stop/expiry or a foreign URL denies before storage; wrong
+credentials/permissions/identity deny before a claim. Only admitted requests
+resolve the original bounded service/store. Remote OpenAPI header contracts derive
+from `syncRemoteHeadersSchema`; `/docs` and `/openapi.json` are not remotely exposed.
+CORS adds only the ticket header to the existing Obsidian origin contract. No v2,
+MCP, OAuth, inventory or deletion capability is composed. Every remote operation
+still requires the separate authorization recipe; G1–G6 remain OPEN.
+
 ## Access session check
 
 `GET /auth/session` returns an empty `204` only when Cloudflare Access

@@ -58,7 +58,8 @@ decisions, not an invented historical rationale.
 | [0018 — Retain expired sync-inventory manifests](0018-retain-expired-sync-inventory-manifests.md) | Accepted no-reuse rule; v2 size/cleanup scope superseded by ADR 0019 | Permanent no-reuse tombstones and historical v1 chunk-only cleanup |
 | [0019 — Resumable R2 inventory cursor witnesses](0019-resumable-r2-inventory-cursor-witnesses.md) | Accepted for isolated local M7.4 TDD; qualification pending | Strict v2 manifest, exact-CAS step journal and immutable digest witness to reject non-adjacent cursor cycles; bounded expired scratch cleanup |
 | [0020 — Private store delivery and mandatory activation gate](0020-private-sync-store-delivery-and-activation-gate.md) | Accepted; merged in #107 | M7 private delivery separated from open safety/real R2/Workers Free/exposure gates; synthetic local exception separately authorized by ADR 0021 |
-| [0021 — Isolated local Markdown sync demo](0021-isolated-local-markdown-sync-demo.md) | Accepted by owner; canonical on specification merge | M8 NEXT for synthetic loopback Worker/REST and separate experimental plugin; concurrent-version preservation; G1–G6 remain open for productive exposure and real data |
+| [0021 — Isolated local Markdown sync demo](0021-isolated-local-markdown-sync-demo.md) | Accepted; local delivery complete in #114 | Synthetic loopback Worker/REST and separate experimental plugin; concurrent-version preservation; G1–G6 remain open |
+| [0022 — Isolated remote synthetic lab](0022-isolated-remote-synthetic-lab.md) | Accepted for local implementation; remote operations require recipe approval | Two functional deliveries, HTTPS-only disposable authority, one-use R2 admission tickets, capped calls/bytes and stop/expiry; no production or real-data activation |
 
 ADR 0001 records the implemented M1 baseline. ADRs 0002–0004 record the implemented
 M3 design without claiming deployment. ADRs 0005–0008 are accepted M4 decisions and

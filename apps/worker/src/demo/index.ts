@@ -29,11 +29,11 @@ interface SyncDemoEnvironment {
 const MAX_DEMO_MARKER_BYTES = 512;
 
 /** Creates only the configured fresh marker on admitted mutation; existing bytes must match exactly.
- * @param bucket Isolated local-emulator binding, never the existing vault binding.
+ * @param bucket Explicitly isolated conditional lab binding, never the release vault binding.
  * @param configuration Validated immutable lab namespace.
  * @returns Null only on exact marker proof, otherwise a typed failure and any known retry floor.
  */
-async function prepareDemoVault(
+export async function prepareDemoVault(
   bucket: R2ConditionalBucketPort,
   configuration: SyncDemoConfiguration,
 ): Promise<SyncStoreFailure | null> {

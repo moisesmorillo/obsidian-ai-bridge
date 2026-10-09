@@ -1,6 +1,8 @@
 # M8 — Local Markdown sync demonstration
 
-**COMPLETE on merge of the delivery-3 functional PR; until then M8 remains NEXT.**
+**COMPLETE — delivery-3 PR #114 merged at `eef552a`.**
+The [remote synthetic successor](m8-remote-synthetic-lab.md) is a separate
+owner-authorized local implementation; this local contract remains loopback-only.
 Delivery 1 merged in #111, the identity guard in #112 (`cf05833`) and delivery 2
 in #113 (`75968a3`). The [delivery-1 plan](../plans/m8-local-sync-api.md),
 [delivery-2 plan/evidence](../plans/m8-durable-sync-client.md),

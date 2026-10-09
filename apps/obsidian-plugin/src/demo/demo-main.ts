@@ -1,9 +1,11 @@
 import type { SyncDemoClientOutcome } from "@obsidian-ai-bridge/core";
+import { SYNC_REMOTE_MODE } from "@obsidian-ai-bridge/protocol";
 import {
-  DEMO_CONFIG_KEY,
   DEMO_PRESENTATION,
   type DemoPresentation,
+  type DemoProfile,
   decodeDemoConfig,
+  LOCAL_DEMO_PROFILE,
   readDemoString,
 } from "@obsidian-plugin/demo/demo-config";
 import {
@@ -15,6 +17,8 @@ import { Plugin } from "obsidian";
 
 /** Separate experimental artifact entrypoint; no release/M3 module is imported or activated. */
 export default class DemoPlugin extends Plugin {
+  /** Artifact-selected authority; the local entrypoint never selects a remote profile through settings. */
+  protected readonly profile: DemoProfile = LOCAL_DEMO_PROFILE;
   private owner: DemoOwner | null = null;
   private lease = 0;
   private alive = false;
@@ -24,6 +28,7 @@ export default class DemoPlugin extends Plugin {
   /** Registers explicit commands/settings and listeners before arming; there is no automatic network pass. */
   override onload(): void {
     this.alive = true;
+    this.reference = this.profile.secretReference;
     this.bar = this.addStatusBarItem();
     /** All saved events retain successor observation, never authorizing removal or suppressing own effects. */
     const observed = () => {
@@ -55,15 +60,16 @@ export default class DemoPlugin extends Plugin {
    */
   configurationText(): string {
     try {
-      const stored = readDemoString(this.app, DEMO_CONFIG_KEY);
+      const stored = readDemoString(this.app, this.profile.configKey);
       if (stored !== null) return stored;
     } catch {
       return "";
     }
     return JSON.stringify(
       {
-        mode: "synthetic-local-only",
-        endpoint: "http://127.0.0.1:8789",
+        mode: this.profile.mode,
+        endpoint: this.profile.endpoint,
+        ...(this.profile.mode === SYNC_REMOTE_MODE ? { experimentId: "" } : {}),
         vaultId: "",
         deviceId: crypto.randomUUID(),
         paths: ["demo.md"],
@@ -90,7 +96,7 @@ export default class DemoPlugin extends Plugin {
    * @param text Untrusted non-secret settings JSON, with explicit disposable acknowledgement.
    */
   configure(text: string): void {
-    const config = decodeDemoConfig(text);
+    const config = decodeDemoConfig(text, this.profile);
     if (
       config === null ||
       this.owner?.isBusy() ||
@@ -101,8 +107,8 @@ export default class DemoPlugin extends Plugin {
     }
     try {
       const serialized = JSON.stringify(config);
-      this.app.saveLocalStorage(DEMO_CONFIG_KEY, serialized);
-      if (readDemoString(this.app, DEMO_CONFIG_KEY) !== serialized) {
+      this.app.saveLocalStorage(this.profile.configKey, serialized);
+      if (readDemoString(this.app, this.profile.configKey) !== serialized) {
         this.present("attention");
         return;
       }
@@ -117,7 +123,7 @@ export default class DemoPlugin extends Plugin {
    */
   setSecretReference(reference: string): void {
     this.reference = reference;
-    const config = decodeDemoConfig(this.configurationText());
+    const config = decodeDemoConfig(this.configurationText(), this.profile);
     if (config !== null)
       this.configure(JSON.stringify({ ...config, secretReference: reference }));
   }
@@ -140,13 +146,14 @@ export default class DemoPlugin extends Plugin {
   private connect(): void {
     try {
       const config = decodeDemoConfig(
-        readDemoString(this.app, DEMO_CONFIG_KEY),
+        readDemoString(this.app, this.profile.configKey),
+        this.profile,
       );
       if (config === null) {
         this.present(DEMO_PRESENTATION.notArmed);
         return;
       }
-      const owner = acquireDemoOwner(this.app, config);
+      const owner = acquireDemoOwner(this.app, config, fetch, this.profile);
       if (owner === null) {
         this.present("attention");
         return;

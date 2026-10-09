@@ -117,6 +117,7 @@ mise run install
 | `mise run demo:plugin:smoke` | Demonstrate five sync flows with two isolated simulated plugin instances and native local Worker/R2. |
 | `mise run demo:build` | Dry-run bundle the separate synthetic local sync API; also included in `check`. |
 | `mise run remote:build` | Bundle the separate remote synthetic Worker locally, without deployment/authentication. |
+| `mise run remote:plugin:build` | Build `dist/remote-plugin`, separate from release and loopback artifacts; no host installation. |
 | `mise run demo:dev` | Explicitly armed loopback-only M8 lab, separate from the existing Worker; see [instructions](docs/local-sync-demo.md). |
 
 `mise run test` is the fast normal developer test command. `mise run coverage`

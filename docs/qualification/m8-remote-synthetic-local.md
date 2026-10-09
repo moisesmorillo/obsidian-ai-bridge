@@ -18,9 +18,10 @@ shared by both units; both are well below 1,500 net production lines. Tests/docs
 travel with functionality. No preparatory/tests-only PR. The Worker unit's
 review diff is about 1,200 authored changed lines, mostly security regressions/docs;
 the plugin's parameterized native artifact test moves/indents an existing scenario
-rather than adding a scale matrix. These coherent units exceed the skill's
-400-line review budget: recommend maintainer `size:exception` before opening their
-PRs, rather than stripping tests/docs or creating more preparatory PRs.
+rather than adding a scale matrix. The governing repository gate is <=10 production/config files and <=1,500 net
+production lines per unit (AGENTS.md), excluding tests/docs. Both units comply.
+No configured CI size gate or `size:exception` label was found; do not request an
+exception solely for total test/doc diff size. Tests/docs remain with functionality.
 
 ## Executed local checks
 

@@ -24,6 +24,8 @@ export interface SyncDemoPush {
   readonly contentSha256: ContentSha256;
   /** Unix epoch milliseconds; a subsequent explicit invocation must respect this floor. */
   readonly retryAfterEpochMs: number;
+  /** Separate shared-marker floor that must survive a new owner before any path spends a ticket. */
+  readonly vaultRetryAfterEpochMs?: number | undefined;
 }
 /** Prepared local effect permits postcondition settlement after restart, not automatic redispatch. */
 export interface SyncDemoApply {

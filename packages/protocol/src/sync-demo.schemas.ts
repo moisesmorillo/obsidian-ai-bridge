@@ -177,6 +177,7 @@ const failureSchema = z.union([
       kind: z.literal("error"),
       code: z.literal("storage_throttled"),
       retryAfterEpochMs: z.int().nonnegative(),
+      retryScope: z.literal("vault").optional(),
     })
     .strict(),
   z
@@ -200,6 +201,7 @@ const failureSchema = z.union([
       code: z.literal("effect_unknown"),
       operationId: syncOperationIdSchema.optional(),
       retryAfterEpochMs: z.int().nonnegative().optional(),
+      retryScope: z.literal("vault").optional(),
     })
     .strict(),
   z

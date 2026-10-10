@@ -66,6 +66,7 @@ export async function prepareDemoVault(
       kind: "error",
       code: "storage_throttled",
       retryAfterEpochMs: created.retryAfterEpochMs,
+      retryScope: "vault",
     };
   return {
     kind: "error",
@@ -74,6 +75,7 @@ export async function prepareDemoVault(
     created.retryAfterEpochMs !== undefined
       ? { retryAfterEpochMs: created.retryAfterEpochMs }
       : {}),
+    retryScope: "vault",
   };
 }
 

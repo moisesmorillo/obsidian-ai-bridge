@@ -64,6 +64,23 @@ const MAX_RESPONSE_BYTES = Math.max(
     FEED_PAGE_FRAMING_BYTES,
 );
 
+/** Scopes typed retry floors to the affected head/mutation path or immutable version key; feed failures remain global.
+ * @param input Strict admitted operation whose storage key may be throttled.
+ * @returns Key-local scope, or null for a shared feed floor.
+ */
+function retryScope(input: WireRequest): string | null {
+  switch (input.operation) {
+    case SYNC_DEMO_OPERATION.current:
+      return `path:${input.path}`;
+    case SYNC_DEMO_OPERATION.mutate:
+      return `path:${input.mutation.path}`;
+    case SYNC_DEMO_OPERATION.version:
+      return `revision:${input.revision}`;
+    default:
+      return null;
+  }
+}
+
 /** Converts contextual wire failures to core certainty without accepting incomplete code/context conjunctions.
  * @param result Strict schema-validated error variant, not arbitrary JSON.
  * @returns Core failure retaining contextual retry/operation certainty.
@@ -73,13 +90,22 @@ function failure(
 ): SyncStoreFailure {
   const retryAfterEpochMs =
     "retryAfterEpochMs" in result ? result.retryAfterEpochMs : undefined;
+  const retryScope =
+    "retryScope" in result && result.retryScope === "vault"
+      ? { retryScope: "vault" as const }
+      : {};
   const operationId = "operationId" in result ? result.operationId : undefined;
   const retry = retryAfterEpochMs === undefined ? {} : { retryAfterEpochMs };
   switch (result.code) {
     case "storage_throttled":
       return retryAfterEpochMs === undefined
         ? { kind: "error", code: "storage_unavailable" }
-        : { kind: "error", code: result.code, retryAfterEpochMs };
+        : {
+            kind: "error",
+            code: result.code,
+            retryAfterEpochMs,
+            ...retryScope,
+          };
     case "operation_pending":
       return operationId === undefined
         ? { kind: "error", code: "effect_unknown" }
@@ -90,8 +116,14 @@ function failure(
         : { kind: "error", code: result.code, operationId };
     case "effect_unknown":
       return operationId === undefined
-        ? { kind: "error", code: result.code, ...retry }
-        : { kind: "error", code: result.code, operationId, ...retry };
+        ? { kind: "error", code: result.code, ...retry, ...retryScope }
+        : {
+            kind: "error",
+            code: result.code,
+            operationId,
+            ...retry,
+            ...retryScope,
+          };
     case "storage_unavailable":
       return { kind: "error", code: "storage_unavailable" };
     default:
@@ -116,8 +148,10 @@ export class SyncDemoFetchRemote implements SyncDemoRemote {
   private busy = false;
   /** Remote stopped/expired/auth-refused responses permanently fence automatic retries for this owner. */
   private terminal = false;
-  /** Highest typed or HTTP rate-limit floor observed by this transport, in Unix milliseconds. */
+  /** HTTP admission and pathless typed floors apply to every dispatch, in Unix milliseconds. */
   private retryAfterEpochMs = 0;
+  /** Typed R2 floors retain only the affected path/version key and never block independent paths. */
+  private readonly scopedRetryFloors = new Map<string, number>();
   /** Admits loopback by default or one explicit original HTTPS capability; only dispatch-time native secret lookup exposes a bearer to non-redirecting Fetch. */
   constructor(
     endpoint: string,
@@ -158,8 +192,8 @@ export class SyncDemoFetchRemote implements SyncDemoRemote {
   isTerminal(): boolean {
     return this.terminal;
   }
-  /** Returns the observed floor before which no further remote ticket may be consumed.
-   * @returns Highest server floor in Unix milliseconds, or zero when none is known.
+  /** Returns the global admission floor before which no remote ticket may be consumed.
+   * @returns HTTP or pathless server floor in Unix milliseconds, or zero when none is known.
    */
   retryFloorEpochMs(): number {
     return this.retryAfterEpochMs;
@@ -285,9 +319,12 @@ export class SyncDemoFetchRemote implements SyncDemoRemote {
    * @returns Strict response or null when evidence/budget/deadline cannot be established.
    */
   private async request(input: WireRequest): Promise<WireResult | null> {
+    const scope = retryScope(input);
     if (
       this.terminal ||
       this.now() < this.retryAfterEpochMs ||
+      (scope !== null &&
+        this.now() < (this.scopedRetryFloors.get(scope) ?? 0)) ||
       this.busy ||
       this.requests >= SYNC_DEMO_CLIENT_LIMITS.requests
     )
@@ -405,11 +442,25 @@ export class SyncDemoFetchRemote implements SyncDemoRemote {
         result.data.kind === "error" &&
         "retryAfterEpochMs" in result.data &&
         result.data.retryAfterEpochMs !== undefined
-      )
-        this.retryAfterEpochMs = Math.max(
-          this.retryAfterEpochMs,
-          result.data.retryAfterEpochMs,
-        );
+      ) {
+        const scope = retryScope(input);
+        if (
+          scope === null ||
+          ("retryScope" in result.data && result.data.retryScope === "vault")
+        )
+          this.retryAfterEpochMs = Math.max(
+            this.retryAfterEpochMs,
+            result.data.retryAfterEpochMs,
+          );
+        else
+          this.scopedRetryFloors.set(
+            scope,
+            Math.max(
+              this.scopedRetryFloors.get(scope) ?? 0,
+              result.data.retryAfterEpochMs,
+            ),
+          );
+      }
       return result.data;
     } finally {
       void reader.cancel().catch(() => {});

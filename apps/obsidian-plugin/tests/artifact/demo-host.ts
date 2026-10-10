@@ -234,6 +234,8 @@ export interface ArtifactPlugin {
   unload(): void;
   configure(text: string): void;
   syncNow(): Promise<string>;
+  automaticSyncEnabled(): boolean;
+  setAutomaticSync(enabled: boolean): boolean;
   statusText(): string;
   readonly buttons: Button[];
   readonly statuses: TextNode[];
@@ -251,6 +253,10 @@ export function isPlugin(value: unknown): value is ArtifactPlugin {
     typeof value.configure === "function" &&
     "syncNow" in value &&
     typeof value.syncNow === "function" &&
+    "automaticSyncEnabled" in value &&
+    typeof value.automaticSyncEnabled === "function" &&
+    "setAutomaticSync" in value &&
+    typeof value.setAutomaticSync === "function" &&
     "statusText" in value &&
     typeof value.statusText === "function" &&
     "buttons" in value &&
@@ -261,10 +267,36 @@ export function isPlugin(value: unknown): value is ArtifactPlugin {
     value.commands instanceof Map
   );
 }
+/**
+ * Advances long waits in one isolated VM; Worker/R2 time remains real, while VM transport deadlines also shorten.
+ * @returns An isolated clock and timer pair for the artifact host.
+ */
+export function acceleratedArtifactClock() {
+  let skippedMs = 0;
+  class LabDate extends Date {
+    static override now(): number {
+      return Date.now() + skippedMs;
+    }
+  }
+  return {
+    Date: LabDate,
+    setTimeout: (callback: () => void, delay: number) => {
+      const accelerate = delay >= 4_000;
+      const physicalDelay = accelerate ? 1_500 : delay;
+      const started = Date.now();
+      return setTimeout(() => {
+        if (accelerate)
+          skippedMs += Math.max(0, delay - (Date.now() - started));
+        callback();
+      }, physicalDelay);
+    },
+  };
+}
 export function artifactRealm(
   bundle: string,
   app: SimApp,
   fetcher: typeof fetch,
+  clock?: ReturnType<typeof acceleratedArtifactClock>,
 ) {
   const module: { exports: unknown } = { exports: {} };
   const allowed = {
@@ -288,7 +320,8 @@ export function artifactRealm(
     TextEncoder,
     TextDecoder,
     AbortController,
-    setTimeout,
+    Date: clock?.Date ?? Date,
+    setTimeout: clock?.setTimeout ?? setTimeout,
     clearTimeout,
     fetch: fetcher,
   });

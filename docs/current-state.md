@@ -30,14 +30,20 @@ with restart limited to Force Reload of B, not the main process.
 
 ## Remote synthetic successor
 
-[ADR 0022](decisions/0022-isolated-remote-synthetic-lab.md) authorizes local
-implementation of two functional deliveries, not Cloudflare operations. Separate
+The [remote synthetic successor](milestones/m8-remote-synthetic-lab.md) is COMPLETE
+after merged #116/#117 and the authorized [F lab](qualification/m8-remote-synthetic-f.md).
+[ADR 0022](decisions/0022-isolated-remote-synthetic-lab.md) bounds its separate
+synthetic composition. Separate
 `src/remote/index.ts` and `wrangler.remote.jsonc` compose the same strict store with
 HTTPS authority, original server-bound participants, one-use tickets, physical
 binding call/PUT-byte ceilings and a one-hour stop/expiry gate. Local/release
 entrypoints retain their existing admission defaults. See the
-[authorization recipe](remote-sync-lab.md) before any remote account/session access.
-No resource, credential or live endpoint is inferred from this code.
+[authorization recipe](remote-sync-lab.md) for the historical experiment. F proved
+real Desktop A→B and B→A exact bytes/revisions plus stale-CAS refusal on one
+synthetic Markdown path, then stopped and deleted its Worker and private bucket.
+The experiment grants no standing Cloudflare access. [M9](milestones/m9-disposable-auto-markdown-sync.md)
+is NEXT for bounded automatic sync in disposable vaults; the existing experimental
+plugin remains manual. G1–G6 stay open for production and real data.
 
 ## Post-M6 OAuth rollout in progress
 
@@ -70,7 +76,7 @@ probe failed; the checked-in Worker configuration does not provide an associatio
 or designated writer. The mirror was not activated, and the personal vault was
 not used.
 
-This snapshot records completed M1–M6 implementation and qualification evidence. M5's bounded support claim is limited to latest M5-ready release v1.0.2 and one designated writer on Obsidian Desktop 1.13.7 / macOS 26.6.2 / Apple M4 Pro, with synthetic active-writer behavior through 10,000 eligible notes. The final report records retained scale, credential-rotation, and Keep-local results; v4→v5 migration/restart evidence; live loopback recovery/diagnostics; exact release identity; residual platform/deployment limits; and one explicitly unqualified pause/resume conflict attempt. No personal vault or production Worker/R2 deployment was used. M1–M6 retain their completed scope; M7 is COMPLETE as private isolated store delivery on this documentation transition's merge under [ADR 0020](decisions/0020-private-sync-store-delivery-and-activation-gate.md), not operational qualification. [M8](milestones/m8-local-markdown-sync-demo.md) became NEXT at #110 under [ADR 0021](decisions/0021-isolated-local-markdown-sync-demo.md) and COMPLETE at #114; the later [remote successor](milestones/m8-remote-synthetic-lab.md) has separate owner authorization for local implementation only. M7.1/M7.2 are complete and M7.3's isolated primitives merged in PR #95. M7.4's private implementation merged in PR #97 at `62696b0`, including `ed88daf`'s terminal inventory failure correction. Its final canonical check and semantic review passed; [local evidence](qualification/m7-private-sync-store-local.md) records the exact source and coverage. Local 5,000/10,000 maximum profiles executed and remain local evidence. Real 24-hour expiry is incomplete; Workers Free, real R2 and undemonstrated safety remain mandatory [G1–G6 activation blockers](qualification/m7-delivery-and-activation-gate.md) under the [qualification plan](plans/m7-sync-store-qualification.md). None of these foundations activates sync, migrates data, or changes the live writer.
+This snapshot records completed M1–M6 implementation and qualification evidence. M5's bounded support claim is limited to latest M5-ready release v1.0.2 and one designated writer on Obsidian Desktop 1.13.7 / macOS 26.6.2 / Apple M4 Pro, with synthetic active-writer behavior through 10,000 eligible notes. The final report records retained scale, credential-rotation, and Keep-local results; v4→v5 migration/restart evidence; live loopback recovery/diagnostics; exact release identity; residual platform/deployment limits; and one explicitly unqualified pause/resume conflict attempt. No personal vault or production Worker/R2 deployment was used. M1–M6 retain their completed scope; M7 is COMPLETE as private isolated store delivery under [ADR 0020](decisions/0020-private-sync-store-delivery-and-activation-gate.md), not operational qualification. [M8](milestones/m8-local-markdown-sync-demo.md) became NEXT at #110 under [ADR 0021](decisions/0021-isolated-local-markdown-sync-demo.md) and COMPLETE at #114; its later [remote successor](milestones/m8-remote-synthetic-lab.md) completed with #116/#117 and the bounded [F lab](qualification/m8-remote-synthetic-f.md). [M9](milestones/m9-disposable-auto-markdown-sync.md) is NEXT. M7.1/M7.2 are complete and M7.3's isolated primitives merged in PR #95. M7.4's private implementation merged in PR #97 at `62696b0`, including `ed88daf`'s terminal inventory failure correction. Its final canonical check and semantic review passed; [local evidence](qualification/m7-private-sync-store-local.md) records the exact source and coverage. Local 5,000/10,000 maximum profiles executed and remain local evidence. Real 24-hour expiry is incomplete; bounded F R2 evidence does not satisfy full Workers Free/R2 qualification or undemonstrated safety. These remain mandatory [G1–G6 activation blockers](qualification/m7-delivery-and-activation-gate.md) under the [qualification plan](plans/m7-sync-store-qualification.md). None of these foundations activates production sync, migrates data, or changes the live writer.
 M2 source/tooling through `2e74b23` passed independent semantic
 review and merged at `b300726` (PR #7). M3's completion PR #27 passed canonical
 validation and final semantic review; its three MINOR findings were corrected at

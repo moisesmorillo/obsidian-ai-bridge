@@ -5,12 +5,13 @@ A data-safety-focused bridge between Obsidian and authorized remote AI or agent 
 > **Status:** M1–M6 retain their completed scope; [M7 — versioned sync protocol and isolated R2 store](docs/milestones/m7-versioned-sync-protocol-and-r2-store.md)
 > is **COMPLETE as private isolated delivery** under merged ADR 0020 (#107). [M8 — local Markdown sync demo](docs/milestones/m8-local-markdown-sync-demo.md)
 > is COMPLETE at #114 (`eef552a`) under [ADR 0021](docs/decisions/0021-isolated-local-markdown-sync-demo.md).
-> The separately built plugin and [artifact demonstration](docs/qualification/m8-experimental-plugin-demo.md)
-> remain local-only. The [remote synthetic successor](docs/milestones/m8-remote-synthetic-lab.md)
-> is NEXT for owner-authorized local implementation: standalone Worker, then remote
-> experimental plugin. [Cloudflare recipe approval](docs/remote-sync-lab.md) is mandatory
-> before account/session/credential access; G1–G6 stay open.
-> This authorizes only isolated synthetic local development, not production exposure.
+> The [remote synthetic successor](docs/milestones/m8-remote-synthetic-lab.md)
+> is COMPLETE: #116 and #117 delivered a separate Worker and plugin; the
+> [F lab](docs/qualification/m8-remote-synthetic-f.md) demonstrated two-way
+> synthetic Desktop/R2 sync and stale-CAS refusal, then removed its resources.
+> [M9 bounded automatic sync](docs/milestones/m9-disposable-auto-markdown-sync.md)
+> is the single NEXT increment for disposable Markdown vaults. G1–G6 stay open;
+> there is no production, personal-vault, mobile or iCloud cutover claim.
 > [Mandatory activation blockers](docs/qualification/m7-delivery-and-activation-gate.md)
 > remain open: missing safety evidence, real 24-hour expiry, Workers Free/real R2,
 > account admission and exposure/client/migration readiness. Local 5k/10k profiles
@@ -204,13 +205,15 @@ with unchanged runtime contracts in the reconciled
 [Qualification before activation](docs/plans/m7-sync-store-qualification.md) remains
 mandatory and pending. The [criterion report](docs/qualification/m7-delivery-and-activation-gate.md)
 retains open production/real-data blockers. The owner-accepted
-[M8 specification](docs/milestones/m8-local-markdown-sync-demo.md) defines the active
+[M8 specification](docs/milestones/m8-local-markdown-sync-demo.md) records the completed
 functional local-demo deliveries. The specification and local API have merged;
 [durable client work/evidence](docs/plans/m8-durable-sync-client.md) merged in #113.
 The separate [experimental plugin plan](docs/plans/m8-experimental-plugin.md) and
 [demonstration report](docs/qualification/m8-experimental-plugin-demo.md) complete
-only the synthetic local boundary. The owner now authorizes local implementation of the
-[remote synthetic successor](docs/milestones/m8-remote-synthetic-lab.md), not Cloudflare operations. The accepted
+only the synthetic local boundary. The
+[remote synthetic successor](docs/milestones/m8-remote-synthetic-lab.md) is complete
+with [bounded F evidence](docs/qualification/m8-remote-synthetic-f.md).
+[M9](docs/milestones/m9-disposable-auto-markdown-sync.md) is NEXT. The accepted
 [ADR 0014](docs/decisions/0014-stateless-mcp-adapter-and-existing-credentials.md),
 completed [M6 specification](docs/milestones/m6-mcp-adapter.md), and [M6 qualification
 report](docs/qualification/m6-final.md) record the adapter and its residual limits.

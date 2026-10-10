@@ -36,6 +36,8 @@ Files: parameterize `demo-config`, `demo-owner`, `demo-main`, `sync-demo-fetch` 
 Publication authorized: Worker branch `feat/m8-remote-worker` targets `main`;
 plugin branch `feat/m8-remote-plugin` targets the Worker branch. Each PR gets CI
 and independent boundary-security review before requesting merge. The concrete
-operational recipe is delivered in the plugin PR, not permission to execute it.
-No Cloudflare operation or merge is authorized. Size exception only if the actual
-repository gate requires it; both production scopes remain within its limits.
+operational recipe was delivered in the plugin PR, not permission to execute it.
+At this planning stage, no Cloudflare operation or merge was authorized. The
+later bounded F lab is recorded in the [qualification report](../qualification/m8-remote-synthetic-f.md).
+Size exception applied only if the actual repository gate required it; both
+production scopes remained within its limits.

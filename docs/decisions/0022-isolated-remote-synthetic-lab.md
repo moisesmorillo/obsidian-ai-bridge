@@ -2,7 +2,10 @@
 
 ## Status
 
-Accepted for **local implementation** by the owner's current request. Canonical on functional delivery merge. Every Cloudflare operation remains separately unauthorized until the exact recipe is approved.
+Accepted and implemented in merged #116/#117. The separately authorized F
+experiment passed its bounded Desktop/R2 flow and removed its temporary resources;
+see the [sanitized report](../qualification/m8-remote-synthetic-f.md). This
+decision grants no standing authorization for another Cloudflare operation.
 
 ## Decision
 

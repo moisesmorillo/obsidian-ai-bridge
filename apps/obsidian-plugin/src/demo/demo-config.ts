@@ -17,6 +17,8 @@ export const DEMO_PRESENTATION = {
   notArmed: "Not armed",
   ready: "Ready",
   syncing: "Syncing",
+  automaticDisableUnverified:
+    "Automatic disable unverified. Close Obsidian; a full restart may resume if the old opt-in remains.",
 } as const;
 /** Trusted text-only categories; user/remote data cannot become a status. */
 export type DemoPresentation =
@@ -72,6 +74,10 @@ export interface DemoProfile {
   readonly admitsEndpoint: (value: string) => boolean;
   /** Remote-only, durable pre-dispatch admission; a missing or exhausted ticket closes Fetch. */
   readonly ticket?: (app: App, config: DemoConfig) => string | null;
+  /** Separate durable opt-in slot; absent for the local demo artifact. */
+  readonly automaticKey?: string;
+  /** Remote admission state checked before each scheduled wake. */
+  readonly automaticAvailable?: (app: App, config: DemoConfig) => boolean;
 }
 /** Artifact-selected local profile maintains original config/owner/ledger keys and loopback-only admission. */
 export const LOCAL_DEMO_PROFILE: DemoProfile = {

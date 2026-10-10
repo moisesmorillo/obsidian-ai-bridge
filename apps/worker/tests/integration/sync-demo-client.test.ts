@@ -129,6 +129,9 @@ async function lab(directory: string) {
       intended,
       secret,
       fetcher,
+      undefined,
+      undefined,
+      () => now,
     );
   }
   function client(index: number, initial: string | null) {

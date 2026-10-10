@@ -25,6 +25,16 @@ interface DemoRegistry {
   readonly version: 1;
   readonly owners: WeakMap<object, unknown>;
 }
+/** Automatic remote wake cadence; fixed polling also observes REST and peer edits without local events. */
+export const DEMO_AUTO_POLL_MS = 60_000;
+/** Saved events coalesce before one bounded pass. */
+const DEMO_AUTO_EVENT_MS = 500;
+/** Pending and transient failures wait at least this long before retrying. */
+const DEMO_AUTO_RETRY_MS = 5_000;
+/** One event episode has at most four accelerated retries before the normal poll cadence. */
+const DEMO_AUTO_RETRIES = 4;
+/** Maximum platform timer delay; a later wake rechecks any longer server floor. */
+const DEMO_AUTO_MAX_TIMER_MS = 2_147_483_647;
 /** Owns a single original configuration, client and unsettled permit through plugin/bundle replacement. */
 export class DemoOwner {
   /** Structural cross-bundle compatibility version, not a persistence migration version. */
@@ -36,12 +46,23 @@ export class DemoOwner {
   private layout = false;
   private running: number | null = null;
   private events = 0;
+  private timer: ReturnType<typeof setTimeout> | null = null;
+  private scheduleGeneration = 0;
+  private retryCount = 0;
+  private retryFloor = 0;
+  private automaticStopped = false;
+  private automaticFaultLatched = false;
+  private automaticLease = 0;
+  private runningAutomaticLease: number | null = null;
+  private onAutomaticResult: ((result: SyncDemoClientOutcome) => void) | null =
+    null;
   private readonly client: SyncDemoClient;
+  private readonly ledger: SyncDemoLedgerRepository;
   private readonly transport: SyncDemoFetchRemote;
   /** Composes official capabilities but performs no network or local initialization before an explicit command. */
   constructor(
     private readonly app: App,
-    config: DemoConfig,
+    private readonly config: DemoConfig,
     fetcher: typeof fetch = fetch,
     private readonly profile: DemoProfile = LOCAL_DEMO_PROFILE,
   ) {
@@ -88,7 +109,7 @@ export class DemoOwner {
           : Promise.resolve({ kind: "error", code: "invalid_input" }),
     };
     const key = demoLedgerKey(config, profile);
-    const ledger = new SyncDemoLedgerRepository(
+    this.ledger = new SyncDemoLedgerRepository(
       {
         read: async () => readDemoString(app, key),
         write: async (value) => {
@@ -98,7 +119,7 @@ export class DemoOwner {
       config,
     );
     this.client = new SyncDemoClient(
-      ledger,
+      this.ledger,
       new DemoLocal(app.vault, () => this.allowed()),
       remote,
       {
@@ -110,11 +131,18 @@ export class DemoOwner {
     );
   }
   /** Starts a listener-owning session without clearing any pending work or unsettled transport.
+   * @param onAutomaticResult Current presenter's trusted status callback; detached sessions cannot receive later results.
    * @returns New execution/presentation lease, invalidating all predecessor leases.
    */
-  attach(): number {
+  attach(onAutomaticResult?: (result: SyncDemoClientOutcome) => void): number {
+    this.cancelAutomatic();
+    ++this.automaticLease;
+    this.onAutomaticResult = onAutomaticResult ?? null;
     this.attached = true;
     this.layout = false;
+    this.automaticStopped = this.automaticFaultLatched;
+    this.retryCount = 0;
+    this.retryFloor = 0;
     return ++this.lease;
   }
   /** Detaches only the current presenter; prior session cleanup cannot detach its successor.
@@ -122,6 +150,9 @@ export class DemoOwner {
    */
   detach(token: number): void {
     if (token === this.lease) {
+      this.cancelAutomatic();
+      ++this.automaticLease;
+      this.onAutomaticResult = null;
       this.attached = false;
       this.layout = false;
       ++this.lease;
@@ -131,13 +162,226 @@ export class DemoOwner {
    * @param token Listener-owning lease reaching official layout readiness.
    */
   ready(token: number): void {
-    if (token === this.lease && this.attached) this.layout = true;
+    if (token === this.lease && this.attached) {
+      this.layout = true;
+      this.scheduleAutomatic(token, DEMO_AUTO_EVENT_MS);
+    }
   }
   /** Retains all saved metadata events as successor observations, with no own-event path/timing heuristic.
    * @param token Session that delivered the saved metadata event.
+   * @param path Official event target; only an admitted path schedules automatic work.
+   * @param oldPath Official rename source; an admitted source also schedules a conservative pass.
    */
-  observed(token: number): void {
-    if (token === this.lease && this.attached) ++this.events;
+  observed(token: number, path?: string, oldPath?: string): void {
+    if (token === this.lease && this.attached) {
+      ++this.events;
+      if (
+        this.config.paths.some(
+          (admitted) => admitted === path || admitted === oldPath,
+        )
+      )
+        this.scheduleAutomatic(token, DEMO_AUTO_EVENT_MS);
+    }
+  }
+  /** Returns exact separately persisted opt-in, failing closed on corrupt/unreadable or changed binding state.
+   * @returns Whether this immutable binding owns the saved remote opt-in.
+   */
+  automaticEnabled(): boolean {
+    if (!this.profile.automaticKey) return false;
+    try {
+      return readDemoString(this.app, this.profile.automaticKey) === this.key;
+    } catch {
+      return false;
+    }
+  }
+  /** Persists a remote-only toggle with exact read-back; disable cancels immediately without changing the original binding.
+   * @param token Current listener-owning lease.
+   * @param enabled Explicit user-selected automatic state.
+   * @returns Whether the separate opt-in was read-back verified.
+   */
+  setAutomatic(token: number, enabled: boolean): boolean {
+    const key = this.profile.automaticKey;
+    if (!key || token !== this.lease || !this.attached || !this.layout)
+      return false;
+    this.cancelAutomatic();
+    ++this.automaticLease;
+    this.automaticStopped = true;
+    this.automaticFaultLatched = true;
+    try {
+      const previous = readDemoString(this.app, key);
+      if (
+        enabled &&
+        previous !== null &&
+        previous !== "disabled" &&
+        previous !== this.key
+      )
+        return false;
+      const value = enabled ? this.key : "disabled";
+      this.app.saveLocalStorage(key, value);
+      if (readDemoString(this.app, key) !== value) return false;
+      this.automaticFaultLatched = false;
+      this.automaticStopped = !enabled;
+      this.retryCount = 0;
+      this.retryFloor = 0;
+      if (enabled) this.scheduleAutomatic(token, DEMO_AUTO_EVENT_MS);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  /** Invalidates queued callback generations; an in-flight pass still settles through its original lease. */
+  private cancelAutomatic(): void {
+    ++this.scheduleGeneration;
+    if (this.timer !== null) clearTimeout(this.timer);
+    this.timer = null;
+  }
+  /** Schedules at most one owner wake and never shortens a pending retry floor on host events.
+   * @param token Current listener-owning lease.
+   * @param delay Minimum delay in milliseconds before the wake.
+   */
+  private scheduleAutomatic(token: number, delay: number): void {
+    if (
+      !this.profile.automaticKey ||
+      this.automaticStopped ||
+      !this.attached ||
+      !this.layout ||
+      token !== this.lease ||
+      !this.automaticEnabled()
+    )
+      return;
+    this.cancelAutomatic();
+    const generation = this.scheduleGeneration;
+    const wait = Math.max(delay, this.retryFloor - Date.now());
+    this.timer = setTimeout(
+      () => {
+        this.timer = null;
+        if (generation === this.scheduleGeneration)
+          void this.wakeAutomatic(token);
+      },
+      Math.min(wait, DEMO_AUTO_MAX_TIMER_MS),
+    );
+  }
+  /** Runs one finite pass only while all original authority remains intact; attention and terminal admissions stop this owner.
+   * @param token Current listener-owning lease.
+   */
+  private async wakeAutomatic(token: number): Promise<void> {
+    if (!this.automaticAllowed(token)) {
+      this.automaticStopped = true;
+      this.automaticFaultLatched = true;
+      this.cancelAutomatic();
+      if (token === this.lease && this.attached)
+        this.onAutomaticResult?.("attention");
+      return;
+    }
+    if (this.isBusy()) {
+      this.retryAutomatic(token);
+      return;
+    }
+    const runLease = this.automaticLease;
+    const durableFloor = await this.durableRetryFloor();
+    if (runLease !== this.automaticLease || token !== this.lease) return;
+    if (durableFloor === null) {
+      this.automaticStopped = true;
+      this.automaticFaultLatched = true;
+      this.cancelAutomatic();
+      this.onAutomaticResult?.("attention");
+      return;
+    }
+    const floor = Math.max(durableFloor, this.transport.retryFloorEpochMs());
+    if (floor > Date.now()) {
+      this.retryFloor = floor;
+      this.scheduleAutomatic(token, floor - Date.now());
+      return;
+    }
+    if (!this.automaticAllowed(token)) return;
+    this.runningAutomaticLease = runLease;
+    let result: SyncDemoClientOutcome;
+    try {
+      result = await this.syncNow(token);
+    } finally {
+      this.runningAutomaticLease = null;
+    }
+    if (runLease !== this.automaticLease || token !== this.lease) return;
+    if (!this.automaticAllowed(token) || this.transport.isTerminal()) {
+      this.automaticStopped = true;
+      this.automaticFaultLatched = true;
+      this.cancelAutomatic();
+      if (
+        runLease === this.automaticLease &&
+        token === this.lease &&
+        this.attached
+      )
+        this.onAutomaticResult?.("attention");
+      return;
+    }
+    this.onAutomaticResult?.(result);
+    switch (result) {
+      case "settled":
+        this.retryCount = 0;
+        this.retryFloor = 0;
+        this.scheduleAutomatic(token, DEMO_AUTO_POLL_MS);
+        return;
+      case "pending":
+        this.retryAutomatic(token);
+        return;
+      case "attention":
+        this.automaticStopped = true;
+        this.automaticFaultLatched = true;
+        this.cancelAutomatic();
+        return;
+    }
+  }
+  /** Applies finite exponential retry pacing, then resumes only on the fixed remote poll interval.
+   * @param token Current listener-owning lease.
+   */
+  private retryAutomatic(token: number): void {
+    this.retryCount = Math.min(this.retryCount + 1, DEMO_AUTO_RETRIES);
+    const delay =
+      this.retryCount === DEMO_AUTO_RETRIES
+        ? DEMO_AUTO_POLL_MS
+        : DEMO_AUTO_RETRY_MS * 2 ** (this.retryCount - 1);
+    this.retryFloor = Math.max(
+      Date.now() + delay,
+      this.transport.retryFloorEpochMs(),
+    );
+    this.scheduleAutomatic(token, this.retryFloor - Date.now());
+  }
+  /** Reads prepared push floors from verified content-free ledger state before any new ticket is consumed.
+   * @returns Highest durable floor, or null when persistence authority is unavailable.
+   */
+  private async durableRetryFloor(): Promise<number | null> {
+    const loaded = await this.ledger.load();
+    if (loaded.kind !== "ready") return null;
+    return Math.max(
+      0,
+      ...loaded.ledger.entries.map((entry) =>
+        entry.work?.kind === "push" ? entry.work.retryAfterEpochMs : 0,
+      ),
+    );
+  }
+  /** Checks current opt-in, unchanged binding, ticket authority and session before every scheduled pass.
+   * @param token Current listener-owning lease.
+   * @returns Whether the original authority still permits a scheduled pass.
+   */
+  private automaticAllowed(token: number): boolean {
+    if (
+      !this.attached ||
+      !this.layout ||
+      token !== this.lease ||
+      !this.automaticEnabled() ||
+      this.transport.isTerminal() ||
+      !this.profile.automaticAvailable?.(this.app, this.config)
+    )
+      return false;
+    try {
+      const current = decodeDemoConfig(
+        readDemoString(this.app, this.profile.configKey),
+        this.profile,
+      );
+      return current !== null && JSON.stringify(current) === this.key;
+    } catch {
+      return false;
+    }
   }
   /** Excludes a successor command until both coordinator settlement and late transport/body work settle.
    * @returns Whether unsettled work still owns admission across presentation replacement.
@@ -171,6 +415,12 @@ export class DemoOwner {
    */
   private allowed(): boolean {
     if (!this.attached || !this.layout || this.running !== this.lease)
+      return false;
+    if (
+      this.runningAutomaticLease !== null &&
+      (this.runningAutomaticLease !== this.automaticLease ||
+        !this.automaticEnabled())
+    )
       return false;
     try {
       const current = decodeDemoConfig(
@@ -206,7 +456,11 @@ function isOwner(value: unknown): value is DemoOwner {
     "syncNow" in value &&
     typeof value.syncNow === "function" &&
     "isBusy" in value &&
-    typeof value.isBusy === "function"
+    typeof value.isBusy === "function" &&
+    "setAutomatic" in value &&
+    typeof value.setAutomatic === "function" &&
+    "automaticEnabled" in value &&
+    typeof value.automaticEnabled === "function"
   );
 }
 /** Validates the own data-property registry format and same-realm WeakMap; accessors and unsupported versions fail closed.

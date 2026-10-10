@@ -25,14 +25,17 @@ export default class DemoPlugin extends Plugin {
   private message: DemoPresentation = DEMO_PRESENTATION.notArmed;
   private bar: HTMLElement | null = null;
   private reference = "demo-native-secret";
-  /** Registers explicit commands/settings and listeners before arming; there is no automatic network pass. */
+  /** Registers commands/settings and listeners before arming; only the remote profile may schedule after opt-in. */
   override onload(): void {
     this.alive = true;
     this.reference = this.profile.secretReference;
     this.bar = this.addStatusBarItem();
-    /** All saved events retain successor observation, never authorizing removal or suppressing own effects. */
-    const observed = () => {
-      this.owner?.observed(this.lease);
+    /** All saved events retain successor observation, never authorizing removal or suppressing own effects.
+     * @param file Official saved-file event target; only admitted paths can wake automatic work.
+     * @param oldPath Official rename source; admitted source wake is conservative and never deletes remotely.
+     */
+    const observed = (file: { path: string }, oldPath?: string) => {
+      this.owner?.observed(this.lease, file.path, oldPath);
     };
     this.registerEvent(this.app.vault.on("create", observed));
     this.registerEvent(this.app.vault.on("modify", observed));
@@ -91,6 +94,30 @@ export default class DemoPlugin extends Plugin {
    */
   secretReference(): string {
     return this.reference;
+  }
+  /** Reports only the remote artifact's exact separate opt-in, never a configuration-embedded default.
+   * @returns Whether the retained owner has the exact persisted opt-in.
+   */
+  automaticSyncEnabled(): boolean {
+    return this.owner?.automaticEnabled() ?? false;
+  }
+  /** Restricts automatic controls to the separately built remote experimental profile.
+   * @returns Whether the artifact has the remote-only scheduling capability.
+   */
+  automaticSyncAvailable(): boolean {
+    return this.profile.automaticKey !== undefined;
+  }
+  /** Toggles remote automatic scheduling without changing the immutable config or durable ledger.
+   * @param enabled Explicit user-selected opt-in state.
+   * @returns Whether the separate toggle was saved and verified exactly.
+   */
+  setAutomaticSync(enabled: boolean): boolean {
+    const accepted = this.owner?.setAutomatic(this.lease, enabled) ?? false;
+    if (!accepted)
+      this.present(
+        enabled ? "attention" : DEMO_PRESENTATION.automaticDisableUnverified,
+      );
+    return accepted;
   }
   /** Saves only a validated arming/binding with exact read-back; a retained different configuration cannot redirect work.
    * @param text Untrusted non-secret settings JSON, with explicit disposable acknowledgement.
@@ -161,7 +188,9 @@ export default class DemoPlugin extends Plugin {
       this.owner?.detach(this.lease);
       this.owner = owner;
       this.reference = config.secretReference;
-      const lease = owner.attach();
+      const lease = owner.attach((result) => {
+        if (this.alive && this.lease === lease) this.present(result);
+      });
       this.lease = lease;
       this.app.workspace.onLayoutReady(() => {
         if (!this.alive || this.lease !== lease) return;

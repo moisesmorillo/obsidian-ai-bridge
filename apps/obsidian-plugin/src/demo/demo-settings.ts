@@ -15,17 +15,21 @@ export class DemoSettings extends PluginSettingTab {
     super(demo.app, demo);
     this.draft = demo.configurationText();
   }
-  /** Offers explicit disposable acknowledgement, native-secret selection and bounded Sync now without background scheduling.
+  /** Offers explicit disposable acknowledgement, native-secret selection and bounded Sync now; remote scheduling has separate opt-in.
    * @returns Modern declarative render controls; typing/selecting does not dispatch network work.
    */
   override getSettingDefinitions(): SettingDefinitionItem<never>[] {
-    return [
+    const definitions: SettingDefinitionItem<never>[] = [
       {
-        name: "Synthetic local demo only",
-        desc: `New disposable vaults only. Set acknowledgement to ${DEMO_ACKNOWLEDGEMENT}. No background synchronization.`,
+        name: this.demo.automaticSyncAvailable()
+          ? "Synthetic remote demo only"
+          : "Synthetic local demo only",
+        desc: this.demo.automaticSyncAvailable()
+          ? `New disposable vaults only. Set acknowledgement to ${DEMO_ACKNOWLEDGEMENT}. Automatic sync stays off until separately enabled below.`
+          : `New disposable vaults only. Set acknowledgement to ${DEMO_ACKNOWLEDGEMENT}. No background synchronization.`,
       },
       {
-        name: "Local connection and target identities",
+        name: "Experimental connection and target identities",
         desc: "JSON contains only mode, loopback endpoint, vaultId, deviceId, paths, secretReference and acknowledgement. Identity changes after arming require a fresh disposable experiment/full App restart; never erase the ledger.",
         render: (setting) => {
           setting.addTextArea((input) =>
@@ -69,5 +73,25 @@ export class DemoSettings extends PluginSettingTab {
         },
       },
     ];
+    if (this.demo.automaticSyncAvailable())
+      definitions.push({
+        name: "Automatic synthetic sync",
+        desc: "Disposable remote artifact only. Explicit opt-in schedules saved-file events and a 60-second remote poll. Pending retries back off; attention stops automatic passes.",
+        render: (setting) => {
+          setting.addButton((button) =>
+            button
+              .setButtonText(
+                this.demo.automaticSyncEnabled()
+                  ? "Disable automatic sync"
+                  : "Enable automatic sync",
+              )
+              .onClick(() => {
+                this.demo.setAutomaticSync(!this.demo.automaticSyncEnabled());
+                this.update();
+              }),
+          );
+        },
+      });
+    return definitions;
   }
 }

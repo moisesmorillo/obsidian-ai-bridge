@@ -23,6 +23,7 @@ import {
   SYNC_DEMO_ROUTE,
   SYNC_DEMO_TRANSPORT_ERROR,
   SYNC_DEMO_URL_PROTOCOL,
+  SYNC_LAB_UNAVAILABLE_STATUS,
   SYNC_REMOTE_TICKET_HEADER,
   syncDemoRequestSchema,
   syncDemoResponseSchema,
@@ -37,6 +38,20 @@ type WireResult = z.output<typeof syncDemoResponseSchema>;
 type WireRequest = z.output<typeof syncDemoRequestSchema>;
 /** Whole secret/dispatch/body deadline in milliseconds; neither abort nor timeout asserts rollback. */
 const REQUEST_DEADLINE_MS = 10_000;
+/** Standard rate-limit floor header, interpreted only for HTTP 429 in the remote experiment. */
+const RETRY_AFTER_HEADER = "Retry-After";
+/** Parses standard delta-seconds or HTTP-date Retry-After as a safe Unix-millisecond floor.
+ * @param value Untrusted remote header value.
+ * @param now Current time in the transport's clock domain.
+ * @returns Future safe floor or null for absent, invalid or non-future values.
+ */
+function retryAfterFloor(value: string | null, now: number): number | null {
+  if (value === null) return null;
+  const floor = /^[0-9]{1,10}$/.test(value)
+    ? now + Number(value) * 1000
+    : Date.parse(value);
+  return Number.isSafeInteger(floor) && floor > now ? floor : null;
+}
 /** Canonical Worker JSON allowance per event excluding its bounded ASCII path; covers UUIDs, sequence, timestamp and field syntax. */
 const FEED_EVENT_METADATA_BYTES = 512;
 /** Canonical cursor/page framing allowance in encoded bytes, including all 64 fixed-width lane positions. */
@@ -99,6 +114,10 @@ export class SyncDemoFetchRemote implements SyncDemoRemote {
   private requests = 0;
   /** Secret/request/body settlement exclusion survives timeout and pass-budget reset. */
   private busy = false;
+  /** Remote stopped/expired/auth-refused responses permanently fence automatic retries for this owner. */
+  private terminal = false;
+  /** Highest typed or HTTP rate-limit floor observed by this transport, in Unix milliseconds. */
+  private retryAfterEpochMs = 0;
   /** Admits loopback by default or one explicit original HTTPS capability; only dispatch-time native secret lookup exposes a bearer to non-redirecting Fetch. */
   constructor(
     endpoint: string,
@@ -107,6 +126,7 @@ export class SyncDemoFetchRemote implements SyncDemoRemote {
     private readonly fetcher: typeof fetch = fetch,
     private readonly deadlineMs = REQUEST_DEADLINE_MS,
     private readonly remote?: RemoteFetchAdmission,
+    private readonly now: () => number = Date.now,
   ) {
     const url = new URL(endpoint);
     if (
@@ -131,6 +151,18 @@ export class SyncDemoFetchRemote implements SyncDemoRemote {
    */
   isBusy(): boolean {
     return this.busy;
+  }
+  /** Reports a remote admission refusal that a timer must never retry.
+   * @returns Whether this transport observed a terminal remote refusal.
+   */
+  isTerminal(): boolean {
+    return this.terminal;
+  }
+  /** Returns the observed floor before which no further remote ticket may be consumed.
+   * @returns Highest server floor in Unix milliseconds, or zero when none is known.
+   */
+  retryFloorEpochMs(): number {
+    return this.retryAfterEpochMs;
   }
   /** Resets finite admission for a serialized invocation; a late unsettled request still owns its permit. */
   beginPass(): void {
@@ -253,7 +285,12 @@ export class SyncDemoFetchRemote implements SyncDemoRemote {
    * @returns Strict response or null when evidence/budget/deadline cannot be established.
    */
   private async request(input: WireRequest): Promise<WireResult | null> {
-    if (this.busy || this.requests >= SYNC_DEMO_CLIENT_LIMITS.requests)
+    if (
+      this.terminal ||
+      this.now() < this.retryAfterEpochMs ||
+      this.busy ||
+      this.requests >= SYNC_DEMO_CLIENT_LIMITS.requests
+    )
       return null;
     const admitted = syncDemoRequestSchema.safeParse(input);
     if (!admitted.success) return null;
@@ -308,6 +345,23 @@ export class SyncDemoFetchRemote implements SyncDemoRemote {
       signal,
     });
     if (
+      this.remote &&
+      [
+        HTTP_STATUS_CODE.unauthorized,
+        HTTP_STATUS_CODE.forbidden,
+        SYNC_LAB_UNAVAILABLE_STATUS,
+      ].includes(response.status)
+    )
+      this.terminal = true;
+    if (this.remote && response.status === HTTP_STATUS_CODE.rateLimited) {
+      const floor = retryAfterFloor(
+        response.headers.get(RETRY_AFTER_HEADER),
+        this.now(),
+      );
+      if (floor !== null)
+        this.retryAfterEpochMs = Math.max(this.retryAfterEpochMs, floor);
+    }
+    if (
       (response.status !== HTTP_STATUS_CODE.ok &&
         response.status !== HTTP_STATUS_CODE.badRequest) ||
       response.headers
@@ -346,7 +400,17 @@ export class SyncDemoFetchRemote implements SyncDemoRemote {
           : null;
       }
       const result = syncDemoResponseSchema.safeParse(JSON.parse(text));
-      return result.success ? result.data : null;
+      if (!result.success) return null;
+      if (
+        result.data.kind === "error" &&
+        "retryAfterEpochMs" in result.data &&
+        result.data.retryAfterEpochMs !== undefined
+      )
+        this.retryAfterEpochMs = Math.max(
+          this.retryAfterEpochMs,
+          result.data.retryAfterEpochMs,
+        );
+      return result.data;
     } finally {
       void reader.cancel().catch(() => {});
       reader.releaseLock();

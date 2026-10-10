@@ -10,10 +10,11 @@ export class FolderNode {
 }
 type Node = FileNode | FolderNode;
 type Listener = () => void;
+type VaultListener = (node: Node) => void;
 export class SimVault {
   readonly configDir = ".obsidian";
   readonly nodes = new Map<string, Node>();
-  readonly listeners = new Map<string, Set<Listener>>();
+  readonly listeners = new Map<string, Set<VaultListener>>();
   beforeProcess: (() => void) | null = null;
   readonly effects: string[] = [];
   constructor(readonly directory: string) {
@@ -34,14 +35,14 @@ export class SimVault {
     const file = new FileNode(path);
     this.nodes.set(path, file);
     this.effects.push("create");
-    this.emit("create");
+    this.emit("create", file);
     return file;
   }
   async createFolder(path: string): Promise<FolderNode> {
     mkdirSync(join(this.directory, path));
     const node = new FolderNode(path);
     this.nodes.set(path, node);
-    this.emit("create");
+    this.emit("create", node);
     return node;
   }
   async process(
@@ -53,21 +54,21 @@ export class SimVault {
     const text = update(await this.read(file));
     writeFileSync(join(this.directory, file.path), text);
     this.effects.push("process");
-    this.emit("modify");
+    this.emit("modify", file);
     return text;
   }
   async edit(file: FileNode, text: string): Promise<void> {
     writeFileSync(join(this.directory, file.path), text);
-    this.emit("modify");
+    this.emit("modify", file);
   }
-  on(event: string, callback: Listener): { detach: Listener } {
-    const callbacks = this.listeners.get(event) ?? new Set<Listener>();
+  on(event: string, callback: VaultListener): { detach: Listener } {
+    const callbacks = this.listeners.get(event) ?? new Set<VaultListener>();
     callbacks.add(callback);
     this.listeners.set(event, callbacks);
     return { detach: () => callbacks.delete(callback) };
   }
-  emit(event: string): void {
-    for (const callback of this.listeners.get(event) ?? []) callback();
+  emit(event: string, node: Node): void {
+    for (const callback of this.listeners.get(event) ?? []) callback(node);
   }
 }
 export class SimApp {

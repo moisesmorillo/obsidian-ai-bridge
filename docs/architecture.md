@@ -149,9 +149,12 @@ release entrypoints are unchanged. See [budgets/contract](milestones/m8-remote-s
 and the [historical authorization recipe](remote-sync-lab.md). The
 [F lab](qualification/m8-remote-synthetic-f.md) verified the separate Worker/R2
 and manual experimental plugin on disposable Desktop A/B, then removed its
-resources. The [M9 schedule](milestones/m9-disposable-auto-markdown-sync.md) is
-NEXT; no automatic remote scheduler or release integration exists yet. G1–G6
-remain OPEN.
+resources. The separate [M9 automatic schedule](milestones/m9-disposable-auto-markdown-sync.md)
+subsequently passed a real disposable Desktop demonstration without changing the
+release entrypoint. [M10](milestones/m10-personal-vault-beta.md) is NEXT for a
+one-note beta in an existing iCloud-backed vault; no beta endpoint or plugin
+profile exists yet. G1–G6 remain OPEN for general production and broad real-data
+use.
 
 ## Package boundaries
 
@@ -629,7 +632,7 @@ external successor or deadlock an aligned path.
   bounded specifications/roadmap authorization. Owner-accepted
   [ADR 0021](decisions/0021-isolated-local-markdown-sync-demo.md) adds only an isolated
   synthetic local-demo exception: [M8](milestones/m8-local-markdown-sync-demo.md)
-  becomes NEXT on specification merge, with separate Worker/plugin entrypoints
+  became NEXT on specification merge, with separate Worker/plugin entrypoints
   outside release/deployment composition. The isolated local API and uncomposed
   durable client do not change release activation or G1–G6 production/real-data blockers.
 - Outside this roadmap: search, attachments and AI inference. NAS replication or

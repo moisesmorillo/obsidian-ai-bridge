@@ -12,8 +12,11 @@ A data-safety-focused bridge between Obsidian and authorized remote AI or agent 
 > [M9 bounded automatic sync](docs/milestones/m9-disposable-auto-markdown-sync.md)
 > is COMPLETE for disposable Markdown vaults. Its
 > [real Desktop synthetic demonstration](docs/qualification/m9-disposable-desktop.md)
-> passed. No milestone is NEXT; G1–G6 stay open;
-> there is no production, personal-vault, mobile or iCloud cutover claim.
+> passed. [M10 one-note personal-vault beta](docs/milestones/m10-personal-vault-beta.md)
+> is NEXT. It starts with a separate private service and one new Markdown path
+> in the owner's existing iCloud-backed vault, only after focused safety checks,
+> a restorable snapshot and explicit opt-in. G1–G6 remain open; no broad
+> production, mobile or iCloud replacement claim follows from this transition.
 > [Mandatory activation blockers](docs/qualification/m7-delivery-and-activation-gate.md)
 > remain open: missing safety evidence, real 24-hour expiry, Workers Free/real R2,
 > account admission and exposure/client/migration readiness. Local 5k/10k profiles
@@ -215,7 +218,9 @@ The separate [experimental plugin plan](docs/plans/m8-experimental-plugin.md) an
 only the synthetic local boundary. The
 [remote synthetic successor](docs/milestones/m8-remote-synthetic-lab.md) is complete
 with [bounded F evidence](docs/qualification/m8-remote-synthetic-f.md).
-[M9](docs/milestones/m9-disposable-auto-markdown-sync.md) is COMPLETE for its disposable synthetic scope. The accepted
+[M9](docs/milestones/m9-disposable-auto-markdown-sync.md) is COMPLETE for its disposable synthetic scope.
+[M10 beta specification](docs/milestones/m10-personal-vault-beta.md) is NEXT; its
+documentation transition does not activate a personal vault. The accepted
 [ADR 0014](docs/decisions/0014-stateless-mcp-adapter-and-existing-credentials.md),
 completed [M6 specification](docs/milestones/m6-mcp-adapter.md), and [M6 qualification
 report](docs/qualification/m6-final.md) record the adapter and its residual limits.

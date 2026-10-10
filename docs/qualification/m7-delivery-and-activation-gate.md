@@ -76,6 +76,16 @@ Rows also apply to server-only real-data use; client/import requirements additio
 apply when that capability is exposed. Synthetic remote experiments require their own
 approval and cannot bootstrap permission to use real data.
 
+The owner subsequently requested a strictly bounded personal-vault beta under
+[ADR 0023](../decisions/0023-bounded-personal-vault-beta.md) and
+[M10](../milestones/m10-personal-vault-beta.md). That exception does not mark any
+G1–G6 row complete or permit general real-data use. Before its first personal-vault
+write, M10 requires a separate private service and exact path/vault admission,
+focused safety/security review, a restorable snapshot, explicit plugin opt-in and
+an observed stop path. If those conditions fail, the beta remains off. This
+one-note exception does not authorize a whole-vault import, deletes, mobile
+cutover or a claim that iCloud writes are unaffected.
+
 | Gate | Required evidence to close | Current gap |
 | --- | --- | --- |
 | G1 — Safety conformance | Source-bound native tests for feed fairness/continuation/expiry; inventory start/reservation/LIST/head/chunk/witness/manifest/final-vector/completion/slot/cleanup interruption; changed/pending vectors; partial/corrupt evidence; same/different-ID races; original-generation CAS; unique claim ownership, late writes, unavailable/divergent read-back, cooldown/floor/429; rename ACK-loss/replay/source edit; candidate canonical checks and independent semantic/security review | Unit tests, native subsets and author overlay checks do not establish the complete matrix. Missing safety rows must be enumerated and tested, never waived as scale-only |

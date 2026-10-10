@@ -14,7 +14,10 @@ This is a post-M6 rollout plan, not authorization for all stages. M7 is delivere
 as stage 1's private isolated foundation under [ADR 0020](../decisions/0020-private-sync-store-delivery-and-activation-gate.md)
 on the documentation transition's merge. All applicable
 [G1–G6 blockers](../qualification/m7-delivery-and-activation-gate.md) must close
-before real-data use/exposure/activation; no next milestone is inferred.
+before general real-data use/exposure/activation. The owner subsequently requested
+a one-note exception under [ADR 0023](../decisions/0023-bounded-personal-vault-beta.md)
+and [M10](../milestones/m10-personal-vault-beta.md); that beta has separate
+pre-use requirements and does not close G1–G6.
 The current implemented product still uses a one-writer,
 Markdown-only outward mirror; M5's exact desktop qualification is not mobile or
 bidirectional qualification. The [proposed ADR](../decisions/0016-bidirectional-vault-sync.md)
@@ -29,9 +32,13 @@ documentation and qualification.
 1. **No silent loss:** keep a recoverable version of both sides when local and
    remote changed, or when effect certainty is unknown. A conflict is visible
    and resolvable; failed sync is never reported as success.
-2. **One sync owner per vault:** iCloud and bridge never write the same live
-   vault concurrently during or after cutover. Each device retains an offline
-   local copy; the server is the shared sync authority.
+2. **One sync owner per vault at cutover:** iCloud and bridge do not write the
+   same live vault concurrently during or after the eventual provider cutover.
+   The bounded M10 beta is an explicit pre-cutover exception for one new path:
+   iCloud remains enabled, can propagate the bridge's local write, and can
+   deliver later events. Exact-base checks and conflict copies must preserve
+   both versions. Each device retains an offline local copy; after cutover the
+   server is the shared sync authority.
 3. **No inferred delete:** initial empty vaults, startup scans, missed events,
    incomplete inventory, and suspended mobile apps do not delete remote files.
    A confirmed deletion creates a recoverable tombstone bound to a known base.
@@ -162,12 +169,14 @@ expiry is incomplete. No 1,000-note limit is selected. All undemonstrated native
 safety, worst-page/expiry, real R2, Workers Free CPU/memory/account and exposure
 requirements transfer to mandatory G1–G6, not to approved checkmarks.
 
-**Activation gate:** before real-data use or exposing stage 1, accept every
+**General activation gate:** before broad real-data use or exposing stage 1, accept every
 applicable G1–G6 row with source-bound evidence and explicit owner approval.
 Partial inventory, unknown effects, stale CAS, client gaps and unverified resource
 limits remain blocking. Migration needs the binding/v2 fence before exposure;
 client sync/cutover additionally requires the later engine, host preservation and
 backup/restore evidence. Stage 1 delivery authorizes neither stage 2 nor a vault.
+The M10 one-note beta exception in ADR 0023 is separate and does not count as
+acceptance of this general gate.
 
 ### 2. Pure three-way reconciliation engine
 
@@ -317,9 +326,9 @@ continue using the same API without reinterpreting old revisions.
 M7 private delivery is closed under merged ADR 0020. The owner separately accepted
 [M8's local Markdown demonstration](../milestones/m8-local-markdown-sync-demo.md)
 and [ADR 0021](../decisions/0021-isolated-local-markdown-sync-demo.md); M8 becomes
-NEXT on its specification PR's merge. Deliver isolated local REST/store behavior,
-then exact-base client reconciliation and a separate experimental plugin. This is
-not blanket authorization for stages 2–6 above. G1–G6 remain mandatory for
-public/productive exposure and real data. Verify current `main`, PRs and source
-before code. Use only disposable synthetic data or isolated simulated plugin
-instances; no Cloudflare access, deployment, personal vault or iCloud changes.
+NEXT on its specification PR's merge. Those local deliveries, the remote
+synthetic successor and M9 have since completed. M10 is now the sole NEXT
+milestone for the separately gated one-note personal-vault beta. G1–G6 remain
+mandatory for public/productive exposure and broad real-data use; ADR 0023
+defines only the owner beta exception. The historical M8 handoff authorized
+no Cloudflare operation, personal-vault access or iCloud change.

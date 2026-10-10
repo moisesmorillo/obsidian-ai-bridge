@@ -2,7 +2,9 @@
 
 ## Status
 
-**Accepted by the owner; documentation transition becomes canonical on merge.**
+**Accepted by the owner; the absolute real-data prohibition is superseded only
+for the bounded M10 beta by [ADR 0023](0023-bounded-personal-vault-beta.md) on
+that decision's merge.**
 This supersedes only the M7 exit/qualification coupling, not the storage authority
 contracts in ADRs 0017–0019 or the proposed product direction in ADR 0016.
 
@@ -21,11 +23,15 @@ undemonstrated safety or operational requirement as a mandatory
 optional follow-up or permission to use real data. The completion transition is this
 single documentation PR; it does not create a following NEXT milestone.
 
+ADR 0023 later creates a separately gated one-note owner beta exception. This
+historical M7 decision itself still grants no real-data permission; the remaining
+G1–G6 requirements apply unchanged to general activation.
+
 Keep the implemented 10,000-head ceiling and the measured local 5,000/10,000 profiles
 with their limits. No 1,000-note support limit, deployed capacity claim or changed
 TTL, CAS predicate, codec, retry floor, retention or security policy is introduced.
 
-Before real-data use or public protocol exposure, all applicable gate rows must have
+Before general real-data use or public protocol exposure, all applicable gate rows must have
 source-bound evidence and explicit reviewed owner acceptance. Newly discovered defects
 still block use. A later API/client/migration change requires a bounded specification,
 not inference from M7 COMPLETE. Remote synthetic qualification also requires separate

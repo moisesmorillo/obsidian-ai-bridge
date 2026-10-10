@@ -62,15 +62,20 @@ The [remote synthetic successor](milestones/m8-remote-synthetic-lab.md) is COMPL
 #116 and #117 delivered its separate Worker and plugin, and the authorized
 [F lab](qualification/m8-remote-synthetic-f.md) verified A→B, B→A and stale-CAS
 refusal on disposable Desktop vaults against temporary private R2. The lab Worker
-and bucket were removed. G1–G6 remain OPEN for production and real data.
+and bucket were removed. G1–G6 remain OPEN for general production and broad
+real-data use; M10 defines a narrower owner-requested beta exception.
 
 **COMPLETE: [M9 bounded automatic Markdown sync](milestones/m9-disposable-auto-markdown-sync.md).**
 The owner-scoped schedule is implemented in the separate experimental plugin.
 The [disposable Desktop report](qualification/m9-disposable-desktop.md) records
 automatic two-way and REST-origin delivery, targeted reload and conflict
 preservation against a temporary private Worker/R2 lab, followed by teardown.
-No following milestone is defined or marked NEXT. No production release,
-personal vault, mobile or iCloud replacement is included.
+**NEXT: [M10 one-note personal-vault beta](milestones/m10-personal-vault-beta.md).**
+It is an owner-requested, bounded beta in the existing iCloud-backed vault,
+starting with one new Markdown path. It requires a separate private service,
+focused safety checks, a verified snapshot and explicit opt-in before any
+personal-vault write. [ADR 0023](decisions/0023-bounded-personal-vault-beta.md)
+records the narrow exception; M9's completed synthetic evidence does not activate M10.
 
 ## Proposed future target
 
@@ -175,8 +180,9 @@ A milestone is `NEXT` only while its prerequisites and implementation-ready
 specification authorize implementation. M1–M6 retain their completed scope; M7 is
 COMPLETE only as private isolated delivery under merged ADR 0020. The owner accepted
 M8's synthetic local exception under ADR 0021; **M8 is COMPLETE after merged #114**.
-All three local deliveries, the remote successor and M9 are complete. No milestone
-is NEXT. No production activation is implied.
+All three local deliveries, the remote successor and M9 are complete. M10 is the
+sole NEXT milestone for a one-note personal-vault beta; its spec does not itself
+authorize deployment or vault access. General production activation is not implied.
 Dependencies include the previous delivered milestones,
 not acceptance of their still-open operational gates for real-data use.
 
@@ -192,6 +198,7 @@ not acceptance of their still-open operational gates for real-data use.
 | M8 | [Local Markdown sync demo](milestones/m8-local-markdown-sync-demo.md) | COMPLETE (#114) | Separate loopback Worker/API and experimental plugin; two disposable or simulated vault instances, REST-origin edits and concurrent-version preservation. No production activation | M7 private delivery; ADR 0021 local-only exception |
 | M8 remote successor | [Remote synthetic lab](milestones/m8-remote-synthetic-lab.md) | COMPLETE (#116/#117 and F) | Separate HTTPS Worker/plugin; real disposable Desktop A→B, B→A and stale-CAS refusal against temporary R2; lab removed | M8 local; ADR 0022 |
 | M9 | [Bounded automatic Markdown sync](milestones/m9-disposable-auto-markdown-sync.md) | COMPLETE, synthetic disposable Desktop scope | Automatic, finite two-way sync for one exact synthetic Markdown path in two disposable Desktop vaults; no real data | M8 remote successor; G1–G6 still block production |
+| M10 | [One-note personal-vault beta](milestones/m10-personal-vault-beta.md) | NEXT, bounded beta | Separate private beta service and plugin profile; after focused checks and a verified snapshot, opt-in sync of one new Markdown path in an existing iCloud-backed Mac vault | M9; owner-approved narrow beta exception, not G1–G6 closure |
 
 ### M1 — Worker API foundation and engineering quality
 
@@ -446,12 +453,13 @@ experimental boundary; its real disposable Desktop evidence is recorded in
 the [qualification report](qualification/m9-disposable-desktop.md).
 
 Merged #109 supplies [bounded native finalization/release evidence](qualification/m7-native-inventory-finalization.md),
-not full G1 acceptance. G1–G6 still block productive/public exposure, real data and
-cutover: safety conformance, expiry, real R2, runtime feasibility, workload/account
+not full G1 acceptance. G1–G6 still block productive/public exposure, broad real
+data and cutover: safety conformance, expiry, real R2, runtime feasibility, workload/account
 admission and client/migration readiness. ADR 0021 and ADR 0022 permit only isolated
 synthetic composition and effects; neither closes these gates. The F Cloudflare
-experiment was removed. No personal-vault access, production activation,
-migration or mobile qualification follows from it. Current release routes and
+experiment was removed. M10 adds a separately bounded personal-vault beta
+exception with its own prerequisites; no personal-vault access, production
+activation, migration or mobile qualification follows from F. Current release routes and
 writer remain unchanged.
 
 ## Unresolved product decisions
@@ -508,7 +516,7 @@ and its [sequential plan](plans/m4-remote-to-local-reconciliation-and-conflict-r
 private delivery following merged ADR 0020 (#107). Read the accepted
 [M8 specification](milestones/m8-local-markdown-sync-demo.md) and
 [ADR 0021](decisions/0021-isolated-local-markdown-sync-demo.md) before local-demo
-work; M8 local, its remote synthetic successor and M9 are COMPLETE. No milestone is NEXT. Inspect relevant
+work; M8 local, its remote synthetic successor and M9 are COMPLETE. M10 is the sole NEXT milestone. Inspect relevant
 source/tests/tooling/CI,
 [CONTRIBUTING](../CONTRIBUTING.md) and [SECURITY](../SECURITY.md).
 [current-state](current-state.md) is an evidence map, not a substitute for code.
@@ -516,7 +524,7 @@ source/tests/tooling/CI,
 Repository state beats conversation assumptions; current code beats stale docs.
 Correct discrepancies explicitly without changing a completed invariant silently.
 M8's specification, all three local deliveries, and the remote synthetic successor
-are complete. Current work follows the bounded [M9 specification](milestones/m9-disposable-auto-markdown-sync.md).
+are complete. Current work follows the bounded [M10 specification](milestones/m10-personal-vault-beta.md).
 The completed F experiment grants no standing authorization for another Cloudflare
 operation. The M6
 completion transition records its accepted design, implementation and qualification;
@@ -539,6 +547,7 @@ an explicitly accepted successor decision.
 - M7 completion must not activate sync or imply a personal-vault cutover. M8 is an
   explicit local-only successor, not permission inferred from M7 COMPLETE. G1–G6
   acceptance and owner activation approval remain mandatory for productive exposure
-  and real-data use; the M8 transition alone authorized no following milestone.
+  and broad real-data use; the separately scoped M10 beta exception has its own
+  pre-use gates. The M8 transition alone authorized no following milestone.
   ADR 0022's local implementation and the separately authorized F experiment
   are complete; neither authorizes a new remote run or real-data use.

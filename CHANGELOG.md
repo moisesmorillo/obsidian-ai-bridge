@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.9.1](https://github.com/moisesmorillo/obsidian-ai-bridge/compare/v1.9.0...v1.9.1) (2026-10-10)
+
+
+### Documentation
+
+* **m9:** close disposable Desktop sync demo ([#124](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/124)) ([4390b31](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/4390b313d725adaed07222b8981a988910cbcdd2))
+* **roadmap:** define bounded personal-vault beta ([#126](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/126)) ([e8ae8d3](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/e8ae8d32aedc93aca1f5b6df9bb51f591bc3b56d))
+
 ## [1.9.0](https://github.com/moisesmorillo/obsidian-ai-bridge/compare/v1.8.1...v1.9.0) (2026-10-10)
 
 

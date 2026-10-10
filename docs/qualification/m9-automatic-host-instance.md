@@ -55,6 +55,9 @@ keep real wall time. This run proves the eventual automatic behavior in the
 isolated harness; it does not measure real Desktop latency or qualify the real
 HTTP deadline and R2 same-key write floor.
 
-The required Obsidian Desktop demonstration remains pending. M9 is not
-complete on this evidence alone. Production Worker, release plugin, G1–G6 and
-personal data remain untouched.
+This host-instance run alone did not close the Desktop criterion. A later,
+separately authorized [real disposable Desktop demonstration](m9-disposable-desktop.md)
+passed automatic REST→A/B, A→B, B→A, targeted Force Reload with direct local
+checkpoint persistence evidence, and conflict preservation. M9 is COMPLETE
+for that bounded synthetic scope; G1–G6 remain open for production and real
+data. This historical report still measures only the isolated harness.

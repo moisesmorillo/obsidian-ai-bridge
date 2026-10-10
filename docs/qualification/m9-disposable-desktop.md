@@ -14,11 +14,22 @@ deliver the edits below.
 | REST → A/B | A REST create committed after 10 bounded attempts; the 31-byte note appeared automatically on both hosts with matching SHA-256 prefix `29744b5`. |
 | A → B | A's 56-byte edit committed at remote revision prefix `f3a2e6c8` and arrived automatically on B with matching SHA-256 prefix `c7549f`. |
 | B → A | B's 82-byte edit committed at remote revision prefix `07fd4f21` and arrived automatically on A with matching SHA-256 prefix `40beb`. |
-| Targeted reload | `View → Force Reload` on A retained the note and the automatic opt-in; settings still offered `Disable automatic sync`. This did not restart the main Obsidian process. |
+| Targeted reload | `View → Force Reload` on A retained the note and the automatic opt-in; settings still offered `Disable automatic sync`. A second targeted reload after teardown preserved the exact local ledger evidence described below. Neither reload restarted the main Obsidian process. |
 | Concurrent edit | B's automatic opt-in was disabled before a 100-byte local edit (SHA-256 prefix `8ecc225`). A concurrent REST update from revision prefix `07fd4f21` committed after nine bounded attempts. When B's opt-in was re-enabled, it showed attention, preserved the local branch, and created exactly one conflict copy matching the remote content (SHA-256 prefix `3ce0a7`). It did not overwrite the local edit. |
 
 The recorded hashes and revision IDs above are prefixes, not complete values or
-independent proof of every checkpoint. Before teardown, the experiment's R2
+independent proof of every checkpoint. For the second targeted Force Reload,
+the local `vault-A` ledger was inspected directly before and after reload,
+while both opt-ins were off and the temporary Worker had already been deleted.
+Both observations had schema version 1, one `demo.md` entry, a 2,096-character
+cursor with SHA-256
+`3d5c8819c078faedcf9a06cce0351be506acf8c15168e844d66795683976e304`,
+base revision `beb11d79-89a6-498d-9192-60df1ae284ea`, and `workKind: null`.
+This verifies that this checkpoint survived a targeted host reload; it does
+not test a full Obsidian process restart or replay against a live Worker. The
+cursor value and credentials are not included in this report.
+
+Before teardown, the experiment's R2
 listing contained 109 admission objects (A 50, B 37, REST 22) and 19 sync-store
 objects. Admission objects are not a complete HTTP request count. REST used
 tickets 1–10 for the seed, 21–23 for current reads, and 24–32 for the

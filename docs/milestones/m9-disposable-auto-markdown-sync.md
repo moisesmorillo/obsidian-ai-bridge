@@ -65,11 +65,10 @@ The [disposable Desktop report](../qualification/m9-disposable-desktop.md)
 records automatic REST→A/B, A→B and B→A delivery, targeted host reload,
 conflict preservation, and teardown of the separately authorized temporary
 Worker and private bucket. This closes the real Desktop demonstration criterion
-within its one-path synthetic scope. The report records admission objects, not
-a complete HTTP request count, and does not claim complete checkpoint telemetry
-or full-process restart. The source-bound [host-instance report](../qualification/m9-automatic-host-instance.md)
-contains the focused bounded scheduler and checkpoint evidence. That
-host-instance run verified persisted checkpoint after targeted reload. The
-live Desktop run verified retained note content and automatic opt-in, but did
-not directly inspect the checkpoint. G1–G6 remain independent production
-blockers.
+within its one-path synthetic scope. The report records admission objects,
+not a complete HTTP request count. It directly verifies one persisted
+`vault-A` checkpoint across a second targeted Force Reload after the lab
+Worker was removed, while the source-bound [host-instance report](../qualification/m9-automatic-host-instance.md)
+contains the broader scheduler and checkpoint assertions. Neither source
+proves a full Obsidian process restart or production readiness. G1–G6 remain
+independent production blockers.

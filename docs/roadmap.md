@@ -64,12 +64,13 @@ The [remote synthetic successor](milestones/m8-remote-synthetic-lab.md) is COMPL
 refusal on disposable Desktop vaults against temporary private R2. The lab Worker
 and bucket were removed. G1–G6 remain OPEN for production and real data.
 
-**NEXT: [M9 bounded automatic Markdown sync](milestones/m9-disposable-auto-markdown-sync.md).**
-Add an owner-scoped schedule to the separate experimental plugin for exact
-disposable paths, reusing the durable client and remote synthetic boundary.
-Demonstrate automatic two-way and REST-origin delivery, reload recovery, bounded
-retry and conflict preservation. No production release, personal vault, mobile
-or iCloud replacement is included.
+**COMPLETE: [M9 bounded automatic Markdown sync](milestones/m9-disposable-auto-markdown-sync.md).**
+The owner-scoped schedule is implemented in the separate experimental plugin.
+The [disposable Desktop report](qualification/m9-disposable-desktop.md) records
+automatic two-way and REST-origin delivery, targeted reload and conflict
+preservation against a temporary private Worker/R2 lab, followed by teardown.
+No following milestone is defined or marked NEXT. No production release,
+personal vault, mobile or iCloud replacement is included.
 
 ## Proposed future target
 
@@ -174,8 +175,8 @@ A milestone is `NEXT` only while its prerequisites and implementation-ready
 specification authorize implementation. M1–M6 retain their completed scope; M7 is
 COMPLETE only as private isolated delivery under merged ADR 0020. The owner accepted
 M8's synthetic local exception under ADR 0021; **M8 is COMPLETE after merged #114**.
-All three local deliveries and the remote successor are complete. M9 is NEXT for
-bounded automatic sync in disposable vaults. No production activation is implied.
+All three local deliveries, the remote successor and M9 are complete. No milestone
+is NEXT. No production activation is implied.
 Dependencies include the previous delivered milestones,
 not acceptance of their still-open operational gates for real-data use.
 
@@ -190,7 +191,7 @@ not acceptance of their still-open operational gates for real-data use.
 | M7 | Versioned sync protocol and isolated R2 store | COMPLETE (private delivery) | Uncomposed contracts/`SyncStore`/R2 adapter, feed, inventory/evidence and recovery; local 5k/10k evidence retained, **not operational qualification**. All applicable G1–G6 gates block productive exposure and real data | M6 |
 | M8 | [Local Markdown sync demo](milestones/m8-local-markdown-sync-demo.md) | COMPLETE (#114) | Separate loopback Worker/API and experimental plugin; two disposable or simulated vault instances, REST-origin edits and concurrent-version preservation. No production activation | M7 private delivery; ADR 0021 local-only exception |
 | M8 remote successor | [Remote synthetic lab](milestones/m8-remote-synthetic-lab.md) | COMPLETE (#116/#117 and F) | Separate HTTPS Worker/plugin; real disposable Desktop A→B, B→A and stale-CAS refusal against temporary R2; lab removed | M8 local; ADR 0022 |
-| M9 | [Bounded automatic Markdown sync](milestones/m9-disposable-auto-markdown-sync.md) | NEXT | Automatic, finite two-way sync for exact synthetic Markdown paths in disposable vaults; no real data | M8 remote successor; G1–G6 still block production |
+| M9 | [Bounded automatic Markdown sync](milestones/m9-disposable-auto-markdown-sync.md) | COMPLETE, synthetic disposable Desktop scope | Automatic, finite two-way sync for one exact synthetic Markdown path in two disposable Desktop vaults; no real data | M8 remote successor; G1–G6 still block production |
 
 ### M1 — Worker API foundation and engineering quality
 
@@ -439,11 +440,10 @@ strict verified persistence, exact-base reconciliation and bounded loopback Fetc
 with two simulated local hosts and on-disk ledger reload against actual local API
 composition. Experimental plugin/official host composition and final two-vault
 artifact evidence merged in #114. The remote successor completed through #116/#117
-and [F evidence](qualification/m8-remote-synthetic-f.md). The next functional
-work is [M9](milestones/m9-disposable-auto-markdown-sync.md); it reuses the remote
-experimental boundary and does not redo M8. Tests accompany behavior; do not
-open PRs solely to expand qualification matrices. Use disposable Desktop hosts
-for the closing demonstration and label simulated fallbacks precisely.
+and [F evidence](qualification/m8-remote-synthetic-f.md). The completed
+[M9](milestones/m9-disposable-auto-markdown-sync.md) reused the remote
+experimental boundary; its real disposable Desktop evidence is recorded in
+the [qualification report](qualification/m9-disposable-desktop.md).
 
 Merged #109 supplies [bounded native finalization/release evidence](qualification/m7-native-inventory-finalization.md),
 not full G1 acceptance. G1–G6 still block productive/public exposure, real data and
@@ -508,7 +508,7 @@ and its [sequential plan](plans/m4-remote-to-local-reconciliation-and-conflict-r
 private delivery following merged ADR 0020 (#107). Read the accepted
 [M8 specification](milestones/m8-local-markdown-sync-demo.md) and
 [ADR 0021](decisions/0021-isolated-local-markdown-sync-demo.md) before local-demo
-work; M8 local and its remote synthetic successor are COMPLETE; M9 is NEXT. Inspect relevant
+work; M8 local, its remote synthetic successor and M9 are COMPLETE. No milestone is NEXT. Inspect relevant
 source/tests/tooling/CI,
 [CONTRIBUTING](../CONTRIBUTING.md) and [SECURITY](../SECURITY.md).
 [current-state](current-state.md) is an evidence map, not a substitute for code.

@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.9.0](https://github.com/moisesmorillo/obsidian-ai-bridge/compare/v1.8.1...v1.9.0) (2026-10-10)
+
+
+### Features
+
+* **sync:** reconcile independent synthetic paths ([#123](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/123)) ([9681a47](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/9681a4738c09ee366092c0fd06e23bd4cba18cc1))
+* **sync:** schedule bounded synthetic remote passes ([#122](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/122)) ([3f2815e](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/3f2815e1e14aef6fd76495e3da611a2d4d8eadb9))
+
+
+### Documentation
+
+* **roadmap:** close remote synthetic lab and define M9 ([#120](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/120)) ([972bb08](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/972bb080f468725561a94ba5c482ec608a652acc))
+
 ## [1.8.1](https://github.com/moisesmorillo/obsidian-ai-bridge/compare/v1.8.0...v1.8.1) (2026-10-10)
 
 

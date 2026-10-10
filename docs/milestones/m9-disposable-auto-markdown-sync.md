@@ -1,6 +1,6 @@
 # M9 — Bounded automatic Markdown sync in disposable vaults
 
-**NEXT after the remote synthetic lab closes.** Deliver an automatic sync loop
+**COMPLETE as a disposable synthetic Desktop demonstration.** M9 delivers an automatic sync loop
 in the *separately built experimental plugin*, using the existing remote
 synthetic Worker and durable exact-base client. This increment is for disposable
 Desktop vaults and approved synthetic endpoints only; it does not alter the
@@ -58,3 +58,17 @@ release plugin, production Worker, writer designation or G1–G6.
 - Development and local disposable-host checks need no Cloudflare operation. Any
   new remote lab requires separate authorization of its exact destination,
   operations and credential/session; the completed F authorization cannot be reused.
+
+## Desktop qualification progress
+
+The [disposable Desktop report](../qualification/m9-disposable-desktop.md)
+records automatic REST→A/B, A→B and B→A delivery, targeted host reload,
+conflict preservation, and teardown of the separately authorized temporary
+Worker and private bucket. This closes the real Desktop demonstration criterion
+within its one-path synthetic scope. The report records admission objects,
+not a complete HTTP request count. It directly verifies one persisted
+`vault-A` checkpoint across a second targeted Force Reload after the lab
+Worker was removed, while the source-bound [host-instance report](../qualification/m9-automatic-host-instance.md)
+contains the broader scheduler and checkpoint assertions. Neither source
+proves a full Obsidian process restart or production readiness. G1–G6 remain
+independent production blockers.

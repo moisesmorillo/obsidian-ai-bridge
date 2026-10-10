@@ -10,7 +10,9 @@ A data-safety-focused bridge between Obsidian and authorized remote AI or agent 
 > [F lab](docs/qualification/m8-remote-synthetic-f.md) demonstrated two-way
 > synthetic Desktop/R2 sync and stale-CAS refusal, then removed its resources.
 > [M9 bounded automatic sync](docs/milestones/m9-disposable-auto-markdown-sync.md)
-> is the single NEXT increment for disposable Markdown vaults. G1–G6 stay open;
+> is COMPLETE for disposable Markdown vaults. Its
+> [real Desktop synthetic demonstration](docs/qualification/m9-disposable-desktop.md)
+> passed. No milestone is NEXT; G1–G6 stay open;
 > there is no production, personal-vault, mobile or iCloud cutover claim.
 > [Mandatory activation blockers](docs/qualification/m7-delivery-and-activation-gate.md)
 > remain open: missing safety evidence, real 24-hour expiry, Workers Free/real R2,
@@ -213,7 +215,7 @@ The separate [experimental plugin plan](docs/plans/m8-experimental-plugin.md) an
 only the synthetic local boundary. The
 [remote synthetic successor](docs/milestones/m8-remote-synthetic-lab.md) is complete
 with [bounded F evidence](docs/qualification/m8-remote-synthetic-f.md).
-[M9](docs/milestones/m9-disposable-auto-markdown-sync.md) is NEXT. The accepted
+[M9](docs/milestones/m9-disposable-auto-markdown-sync.md) is COMPLETE for its disposable synthetic scope. The accepted
 [ADR 0014](docs/decisions/0014-stateless-mcp-adapter-and-existing-credentials.md),
 completed [M6 specification](docs/milestones/m6-mcp-adapter.md), and [M6 qualification
 report](docs/qualification/m6-final.md) record the adapter and its residual limits.

@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.8.1](https://github.com/moisesmorillo/obsidian-ai-bridge/compare/v1.8.0...v1.8.1) (2026-10-10)
+
+
+### Performance
+
+* **worker:** bound remote sync feed head reads ([#118](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/118)) ([89051c3](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/89051c30431f03e3ea16bc939e9be00d9a86518c))
+
 ## [1.8.0](https://github.com/moisesmorillo/obsidian-ai-bridge/compare/v1.7.0...v1.8.0) (2026-10-09)
 
 

@@ -10,8 +10,8 @@ defines the isolated protocol/storage foundation. [ADR 0020](decisions/0020-priv
 closed M7 as **private isolated store delivery** in merged #107, not operational
 readiness. [M8 — local Markdown sync demo](milestones/m8-local-markdown-sync-demo.md)
 is COMPLETE after delivery-3 PR #114 merged (`eef552a`), under owner-accepted
-[ADR 0021](decisions/0021-isolated-local-markdown-sync-demo.md). Only isolated
-synthetic local composition is authorized; the
+[ADR 0021](decisions/0021-isolated-local-markdown-sync-demo.md). The later
+remote synthetic composition also completed under ADR 0022; the
 [criterion report and mandatory activation blockers](qualification/m7-delivery-and-activation-gate.md)
 retain the production/real-data evidence boundary. It does not change the implemented single-writer support claim,
 activate a production writer, or migrate a vault. M7.1/M7.2 are complete;
@@ -38,7 +38,8 @@ about 39 min 30 s under an explicitly extended 90-minute process budget, with fu
 traversal and host-resource observations. Later 5,000/10,000 maximum-encoded
 profiles have executed locally; their source-bound results and scope limitations
 are recorded in the proportional qualification note, not inferred from the baseline.
-The owner authorized synthetic local execution on 2026-10-05, not remote access or deployment.
+The 2026-10-05 authorization covered local profiling only; F received separate,
+bounded remote authorization later.
 The [maximum-encoded fixture](qualification/m7-maximum-encoded-heads.md) reaches the
 2,048-byte head ceiling; fast regressions do not certify unexecuted scale profiles. No later-milestone production code or
 remote deployment is authorized by this profiling work. The focused
@@ -57,17 +58,18 @@ five flows on Obsidian 1.14.4/macOS 27.0.1 arm64; restart means Force Reload of 
 not a main-process restart. The retained Desktop report is local evidence, not
 real R2 or G1–G6 acceptance.
 
-**NEXT: [remote synthetic lab](milestones/m8-remote-synthetic-lab.md)**, explicitly
-authorized by the owner for local implementation under [ADR 0022](decisions/0022-isolated-remote-synthetic-lab.md).
-Two functional deliveries: standalone HTTPS Worker with bounded admission/stop,
-then a separate remote experimental plugin. Tests/docs travel with functionality;
-no preparatory/test-only PR chain or repeated large profiles. The local demo and
-release stay unchanged. A second account is optional; no DO is selected. Every
-Cloudflare operation needs approval of the [exact recipe](remote-sync-lab.md)
-before account/session/credential access. G1–G6 remain OPEN for production/data.
-The two-unit local candidate now has [verified delivery evidence](qualification/m8-remote-synthetic-local.md).
-NEXT remains this successor until merge/authorized experiment; do not redo M8 local
-or infer that local implementation qualifies a Cloudflare deployment.
+The [remote synthetic successor](milestones/m8-remote-synthetic-lab.md) is COMPLETE:
+#116 and #117 delivered its separate Worker and plugin, and the authorized
+[F lab](qualification/m8-remote-synthetic-f.md) verified A→B, B→A and stale-CAS
+refusal on disposable Desktop vaults against temporary private R2. The lab Worker
+and bucket were removed. G1–G6 remain OPEN for production and real data.
+
+**NEXT: [M9 bounded automatic Markdown sync](milestones/m9-disposable-auto-markdown-sync.md).**
+Add an owner-scoped schedule to the separate experimental plugin for exact
+disposable paths, reusing the durable client and remote synthetic boundary.
+Demonstrate automatic two-way and REST-origin delivery, reload recovery, bounded
+retry and conflict preservation. No production release, personal vault, mobile
+or iCloud replacement is included.
 
 ## Proposed future target
 
@@ -172,8 +174,9 @@ A milestone is `NEXT` only while its prerequisites and implementation-ready
 specification authorize implementation. M1–M6 retain their completed scope; M7 is
 COMPLETE only as private isolated delivery under merged ADR 0020. The owner accepted
 M8's synthetic local exception under ADR 0021; **M8 is COMPLETE after merged #114**.
-All three local deliveries are merged. The remote successor is NEXT for owner-authorized local implementation only. No remote qualification or production
-activation is implied. Dependencies include the previous delivered milestones,
+All three local deliveries and the remote successor are complete. M9 is NEXT for
+bounded automatic sync in disposable vaults. No production activation is implied.
+Dependencies include the previous delivered milestones,
 not acceptance of their still-open operational gates for real-data use.
 
 | ID | Milestone | Status | User-visible outcome | Dependency |
@@ -186,6 +189,8 @@ not acceptance of their still-open operational gates for real-data use.
 | M6 | MCP adapter | COMPLETE | Same authorized operations for MCP-capable agents through the M5 authentication and application-service boundary; bounded official-client qualification complete | M5 |
 | M7 | Versioned sync protocol and isolated R2 store | COMPLETE (private delivery) | Uncomposed contracts/`SyncStore`/R2 adapter, feed, inventory/evidence and recovery; local 5k/10k evidence retained, **not operational qualification**. All applicable G1–G6 gates block productive exposure and real data | M6 |
 | M8 | [Local Markdown sync demo](milestones/m8-local-markdown-sync-demo.md) | COMPLETE (#114) | Separate loopback Worker/API and experimental plugin; two disposable or simulated vault instances, REST-origin edits and concurrent-version preservation. No production activation | M7 private delivery; ADR 0021 local-only exception |
+| M8 remote successor | [Remote synthetic lab](milestones/m8-remote-synthetic-lab.md) | COMPLETE (#116/#117 and F) | Separate HTTPS Worker/plugin; real disposable Desktop A→B, B→A and stale-CAS refusal against temporary R2; lab removed | M8 local; ADR 0022 |
+| M9 | [Bounded automatic Markdown sync](milestones/m9-disposable-auto-markdown-sync.md) | NEXT | Automatic, finite two-way sync for exact synthetic Markdown paths in disposable vaults; no real data | M8 remote successor; G1–G6 still block production |
 
 ### M1 — Worker API foundation and engineering quality
 
@@ -433,19 +438,21 @@ The [durable-client plan/evidence](plans/m8-durable-sync-client.md) covers deliv
 strict verified persistence, exact-base reconciliation and bounded loopback Fetch,
 with two simulated local hosts and on-disk ledger reload against actual local API
 composition. Experimental plugin/official host composition and final two-vault
-artifact evidence merged in #114. Remote functional work follows the separate
-[successor specification](milestones/m8-remote-synthetic-lab.md); it does not redo M8. Tests accompany each new
-behavior; do not open PRs solely to expand qualification matrices. Report concrete
-demo blockers promptly. Use actual disposable desktop hosts when available;
-otherwise label the accepted two-simulated-instance fallback precisely.
+artifact evidence merged in #114. The remote successor completed through #116/#117
+and [F evidence](qualification/m8-remote-synthetic-f.md). The next functional
+work is [M9](milestones/m9-disposable-auto-markdown-sync.md); it reuses the remote
+experimental boundary and does not redo M8. Tests accompany behavior; do not
+open PRs solely to expand qualification matrices. Use disposable Desktop hosts
+for the closing demonstration and label simulated fallbacks precisely.
 
 Merged #109 supplies [bounded native finalization/release evidence](qualification/m7-native-inventory-finalization.md),
 not full G1 acceptance. G1–G6 still block productive/public exposure, real data and
 cutover: safety conformance, expiry, real R2, runtime feasibility, workload/account
-admission and client/migration readiness. ADR 0021 permits only synthetic loopback
-composition and disposable local effects; it closes none of these gates. No
-Cloudflare/personal-vault access, deployment, production activation, migration or mobile
-qualification is authorized. Current release routes and writer remain unchanged.
+admission and client/migration readiness. ADR 0021 and ADR 0022 permit only isolated
+synthetic composition and effects; neither closes these gates. The F Cloudflare
+experiment was removed. No personal-vault access, production activation,
+migration or mobile qualification follows from it. Current release routes and
+writer remain unchanged.
 
 ## Unresolved product decisions
 
@@ -501,17 +508,17 @@ and its [sequential plan](plans/m4-remote-to-local-reconciliation-and-conflict-r
 private delivery following merged ADR 0020 (#107). Read the accepted
 [M8 specification](milestones/m8-local-markdown-sync-demo.md) and
 [ADR 0021](decisions/0021-isolated-local-markdown-sync-demo.md) before local-demo
-work; M8 local is COMPLETE at #114; the remote successor is NEXT for local implementation only. Inspect relevant
+work; M8 local and its remote synthetic successor are COMPLETE; M9 is NEXT. Inspect relevant
 source/tests/tooling/CI,
 [CONTRIBUTING](../CONTRIBUTING.md) and [SECURITY](../SECURITY.md).
 [current-state](current-state.md) is an evidence map, not a substitute for code.
 
 Repository state beats conversation assumptions; current code beats stale docs.
 Correct discrepancies explicitly without changing a completed invariant silently.
-M8's specification and all three local deliveries are merged. Current authorized
-work is the bounded remote synthetic successor under ADR 0022, implemented locally.
-Routine choices within its contract do not require renewed implementation approval;
-every Cloudflare operation still requires approval of the exact authorization recipe. The M6
+M8's specification, all three local deliveries, and the remote synthetic successor
+are complete. Current work follows the bounded [M9 specification](milestones/m9-disposable-auto-markdown-sync.md).
+The completed F experiment grants no standing authorization for another Cloudflare
+operation. The M6
 completion transition records its accepted design, implementation and qualification;
 do not infer production activation or later rollout stages from M8.
 Use [ADRs](decisions/README.md) when consequential implementation evidence requires
@@ -533,5 +540,5 @@ an explicitly accepted successor decision.
   explicit local-only successor, not permission inferred from M7 COMPLETE. G1–G6
   acceptance and owner activation approval remain mandatory for productive exposure
   and real-data use; the M8 transition alone authorized no following milestone.
-  The owner's later explicit request authorizes the ADR 0022 successor locally,
-  not remote operations.
+  ADR 0022's local implementation and the separately authorized F experiment
+  are complete; neither authorizes a new remote run or real-data use.

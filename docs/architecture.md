@@ -146,7 +146,12 @@ binding includes claim/marker/store calls and submitted PUT bytes. Stop/expiry c
 new admission without claiming cancellation of dispatched effects. No DO/KV or
 inventory CPU allowance is added. The local defaults remain loopback-only and the
 release entrypoints are unchanged. See [budgets/contract](milestones/m8-remote-synthetic-lab.md)
-and the [unexecuted authorization recipe](remote-sync-lab.md); G1–G6 remain OPEN.
+and the [historical authorization recipe](remote-sync-lab.md). The
+[F lab](qualification/m8-remote-synthetic-f.md) verified the separate Worker/R2
+and manual experimental plugin on disposable Desktop A/B, then removed its
+resources. The [M9 schedule](milestones/m9-disposable-auto-markdown-sync.md) is
+NEXT; no automatic remote scheduler or release integration exists yet. G1–G6
+remain OPEN.
 
 ## Package boundaries
 

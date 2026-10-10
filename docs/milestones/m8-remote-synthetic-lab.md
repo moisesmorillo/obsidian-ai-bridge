@@ -1,10 +1,14 @@
 # M8 successor — remote synthetic lab
 
-**Owner-authorized local implementation; remote operations NOT authorized.** M8 local completed at #114 (`eef552a`). This successor changes only the experimental transport boundary, not the store, local safety, release or G1–G6 status.
+**COMPLETE after merged #116/#117 and authorized lab F.** M8 local completed at
+#114 (`eef552a`). This successor changes only the experimental transport
+boundary, not the store, local safety, release or G1–G6 status.
 
 The combined local implementation is verified in the
-[delivery evidence](../qualification/m8-remote-synthetic-local.md). Canonical roadmap
-transition awaits merge; remote operations/real-host validation await approval.
+[delivery evidence](../qualification/m8-remote-synthetic-local.md). The
+[F report](../qualification/m8-remote-synthetic-f.md) records real disposable
+Desktop/R2 A→B, B→A and stale-CAS results plus verified lab teardown. The
+[next bounded increment](m9-disposable-auto-markdown-sync.md) is separate.
 
 ## Contract
 
@@ -23,7 +27,10 @@ A feed conservative upper bound is `2*(64 lane reads + 64 expiry reads + 100 eve
 
 **Not a hard HTTP or billing cap:** rejected authenticated claims still cost one PUT each, and unauthenticated HTTP requests still consume Worker quota. The authorization recipe assumes Workers Free's hard account daily request ceiling and <=1 hour spanning at most two UTC days: <=200,000 total requests in the denial flood case. Thus conservatively <=353,600 binding attempts including admitted worst cases, plus explicitly reserved provisioning/teardown allowance. Account-wide contention matters on a shared account; a separate account is optional, not assumed. Paid tier or changes to request quotas require a new budget calculation. No sustainable service or adversarial availability claim.
 
-CPU/heap, real R2 semantics, account headroom, hostname and costs remain unverified until authorized preflight. Small note size does not prove 10 ms CPU/128 MB isolate feasibility. Budget enforcement does not close G4/G5.
+The F lab exercised real R2 only for its bounded synthetic flow; it did not
+qualify CPU/heap, account headroom or costs as a product envelope. Small note
+size does not prove 10 ms CPU/128 MB isolate feasibility. Budget enforcement
+does not close G4/G5.
 
 ## Two functional deliveries
 
@@ -37,5 +44,10 @@ No preparatory or tests-only PRs. Documentation and tests travel with functional
 - Local loopback still rejects remote URLs; remote rejects HTTP, foreign origins, missing expectations, missing registry, stopped/expired config, invalid/reused tickets and permission mismatch before service effects.
 - Concurrent and fresh-instance same-ticket requests permit at most one service; lost claim response consumes authority without false success. Binding exhaustion and write-byte exhaustion dispatch no excess call.
 - New plugin cannot read local-demo configuration/ledger or borrow its owner; exact endpoint and native-reference stability fence work. Persistent ticket advances before dispatch and survives reload. Redirects fail closed.
-- Existing five-flow local artifact demonstration remains green; remote-profile transport composes the same durable coordinator. Remote Desktop/cloud flows are pending separate approval, not asserted from test doubles.
-- `mise install`, `mise run check`, semantic review, concrete authorization recipe. No remote operation, personal-vault access, provisioning or credential inspection during implementation.
+- Existing five-flow local artifact demonstration remains green; remote-profile
+  transport composes the same durable coordinator. Real Desktop/cloud F evidence
+  is recorded separately and only for its synthetic path.
+- `mise install`, `mise run check`, semantic review and a concrete authorization
+  recipe accompanied implementation. The later, separately authorized F run
+  provisioned and removed only temporary synthetic resources; it did not touch
+  a personal vault or production sync.

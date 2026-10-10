@@ -1,11 +1,16 @@
 # Remote synthetic sync lab — authorization recipe
 
-**No Cloudflare operation has been authorized or performed.** Local implementation and simulated validation do not establish real R2/Workers Free behavior. G1–G6 remain OPEN. This is not a production rollout or backup.
+**Historical F recipe; do not execute it again.** The owner separately
+authorized synthetic lab F. Its bounded Desktop/R2 results and verified teardown
+are in the [F report](qualification/m8-remote-synthetic-f.md). The example below
+documents the original approval boundary, not a reusable approval or a currently
+deployed resource. G1–G6 remain OPEN; this is no production rollout or backup.
 
 ## Owner approval form (separate from PR merge)
 
-Merge authorizes code integration only. To authorize the remote experiment, return
-this completed form; do not paste a token or bearer:
+Merge authorized code integration only. The following was the proposed form for
+the original experiment; any future remote run needs fresh, explicit authority
+for its exact destination, operations and session. Do not paste a token or bearer:
 
 ```text
 Approve the M8 synthetic remote recipe, revision/source SHA: <reviewed plugin head>
@@ -70,7 +75,7 @@ At documented Standard prices, conservatively charge all <=513,600 attempts as C
 
 The provider hard request limit is account-wide. This fallback is invalid on Paid/unlimited tier, with a changed Free limit, with a longer window or if admission keys are reset. Recalculate and seek approval instead. Unauthorized flood can exhaust account quota; this lab does not promise production isolation at account-quota level or availability. It never authorizes spending through another account/plan.
 
-Public primary sources consulted during design: [Workers limits](https://developers.cloudflare.com/workers/platform/limits/), [R2 limits](https://developers.cloudflare.com/r2/platform/limits/), [R2 prices](https://developers.cloudflare.com/r2/pricing/) (2026-10-09 session). Account headroom, actual telemetry and remote binding semantics remain unknown. Heap/RSS from local Node and request wall time are not remote isolate evidence.
+Public primary sources consulted during design: [Workers limits](https://developers.cloudflare.com/workers/platform/limits/), [R2 limits](https://developers.cloudflare.com/r2/platform/limits/), [R2 prices](https://developers.cloudflare.com/r2/pricing/) (2026-10-09 session). At design time, account headroom, telemetry and remote binding semantics were unknown. The later [F report](qualification/m8-remote-synthetic-f.md) covers only its bounded flow; heap/RSS from local Node and request wall time are not remote isolate qualification.
 
 ### Isolated deployment configuration
 
@@ -116,7 +121,7 @@ add a production route. Initially omit configuration/registry secrets so the
 reachable hostname returns stopped/unavailable without R2 effects. Verify the
 actual published hostname equals the approval form before arming the secret.
 
-## Authorized execution sequence (NOT executed)
+## Historical execution sequence
 
 1. Verify supplied account/session identity and exact permission scope, tier/headroom/cost. No automatic production-resource discovery. Pin source SHA, build hashes and synthetic recipe. If CPU/heap observations are unavailable, label the limitation; do not claim G4 acceptance.
 2. Create the approved empty private bucket and standalone Worker only. Verify the binding matches that bucket, no production config/routes/imports and no public R2 endpoint. Initial Worker stays stopped/unconfigured.

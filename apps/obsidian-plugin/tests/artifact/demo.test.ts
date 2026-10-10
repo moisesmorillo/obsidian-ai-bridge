@@ -5,12 +5,46 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   type ArtifactPlugin,
+  acceleratedArtifactClock,
   artifactRealm,
   FileNode,
   SimApp,
 } from "@obsidian-plugin-tests/artifact/demo-host";
 import { Miniflare } from "miniflare";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+} from "vitest";
+import { z } from "zod";
+
+const ledgerSnapshotSchema = z.object({
+  cursor: z.string().min(1),
+  entries: z.array(
+    z.object({
+      base: z
+        .object({ revision: z.string(), contentSha256: z.string() })
+        .nullable(),
+      work: z.unknown(),
+    }),
+  ),
+});
+const cursorSnapshotSchema = z.object({
+  protocolMajor: z.literal(1),
+  vaultId: z.string(),
+  laneSequences: z.array(z.string()).length(64),
+  nextLane: z.number(),
+});
+
+function cursorSnapshot(value: string) {
+  const decoded = Buffer.from(value, "base64url").toString("utf8");
+  expect(Buffer.from(decoded, "utf8").toString("base64url")).toBe(value);
+  return cursorSnapshotSchema.parse(JSON.parse(decoded));
+}
 
 describe.each(["local", "remote"] as const)(
   "%s transport artifact",
@@ -60,14 +94,32 @@ describe.each(["local", "remote"] as const)(
         : "ai-bridge:synthetic-remote:configuration:v1";
     let runtime: Miniflare | undefined;
     const requestCounts: number[] = [];
+    const requestTrace: string[] = [];
+    const clientRequests = new Map<string, number>();
     let currentCalls = 0;
     const fetcher: typeof fetch = async (url, init) => {
       if (!runtime) throw new Error("Local Worker unavailable");
       ++currentCalls;
       if (typeof init?.body !== "string" || init.method !== "POST")
         throw new Error("Expected JSON POST");
+      const authorization = new Headers(init.headers).get("Authorization");
+      const participant = tokens.find(
+        (token) => authorization === `Bearer ${token}`,
+      );
+      if (participant !== undefined)
+        clientRequests.set(
+          participant,
+          (clientRequests.get(participant) ?? 0) + 1,
+        );
       const endpoint =
         typeof url === "string" ? url : url instanceof URL ? url.href : url.url;
+      const request: unknown = JSON.parse(init.body);
+      const operation =
+        typeof request === "object" &&
+        request !== null &&
+        "operation" in request
+          ? request.operation
+          : "invalid";
       const response = await runtime.dispatchFetch(endpoint, {
         method: "POST",
         body: init.body,
@@ -77,7 +129,20 @@ describe.each(["local", "remote"] as const)(
           ? {}
           : { signal: init.signal }),
       });
-      return new Response(await response.arrayBuffer(), {
+      const bytes = await response.arrayBuffer();
+      const result: unknown = JSON.parse(new TextDecoder().decode(bytes));
+      const kind =
+        typeof result === "object" && result !== null && "kind" in result
+          ? result.kind
+          : "invalid";
+      const code =
+        typeof result === "object" && result !== null && "code" in result
+          ? result.code
+          : "";
+      requestTrace.push(
+        `${String(operation)}:${response.status}:${String(kind)}:${String(code)}`,
+      );
+      return new Response(bytes, {
         status: response.status,
         headers: Array.from(response.headers.entries()),
       });
@@ -166,7 +231,7 @@ describe.each(["local", "remote"] as const)(
       }
       expect(result).toMatchObject({ kind: "committed" });
     }
-    beforeAll(async () => {
+    beforeAll(() => {
       const root = new URL("../../../../", import.meta.url).pathname;
       const output = join(directory, "worker.mjs");
       execFileSync(
@@ -183,6 +248,9 @@ describe.each(["local", "remote"] as const)(
         ],
         { cwd: root, stdio: "pipe" },
       );
+    }, 30_000);
+    beforeEach(async () => {
+      const output = join(directory, "worker.mjs");
       const registry = JSON.stringify({
         version: 1,
         credentials: tokens.map((token, index) => ({
@@ -253,8 +321,11 @@ describe.each(["local", "remote"] as const)(
       });
       await runtime.ready;
     }, 30_000);
-    afterAll(async () => {
+    afterEach(async () => {
       await runtime?.dispose();
+      runtime = undefined;
+    });
+    afterAll(async () => {
       rmSync(directory, { recursive: true, force: true });
     });
 
@@ -364,6 +435,194 @@ describe.each(["local", "remote"] as const)(
         pluginA.unload();
         pluginB.unload();
       }, 180_000);
+      it.runIf(profile === "remote")(
+        "automatically reconciles two isolated host instances without Sync now and preserves a competing edit",
+        async () => {
+          currentCalls = 0;
+          requestTrace.length = 0;
+          clientRequests.clear();
+          restTicket = 0;
+          const a = new SimApp(join(directory, "automatic-A"));
+          const b = new SimApp(join(directory, "automatic-B"));
+          a.secrets.set("demo-native-secret", tokens[0] ?? "");
+          b.secrets.set("demo-native-secret", tokens[1] ?? "");
+          const ledgerKey = (index: number) =>
+            `ai-bridge:synthetic-remote:ledger:v1:${experimentId}:${vaultId}:${origins[index]}`;
+          const ledger = (app: SimApp, index: number) => {
+            const saved = app.loadLocalStorage(ledgerKey(index));
+            if (typeof saved !== "string") return null;
+            return ledgerSnapshotSchema.parse(JSON.parse(saved));
+          };
+          const waitFor = async (
+            predicate: () => boolean | Promise<boolean>,
+            label: string,
+            timeoutMs = 30_000,
+          ) => {
+            const deadline = Date.now() + timeoutMs;
+            while (Date.now() < deadline) {
+              if (await predicate()) return;
+              await new Promise<void>((resolve) => setTimeout(resolve, 200));
+            }
+            expect(await predicate(), label).toBe(true);
+          };
+          const digest = (content: string) =>
+            createHash("sha256").update(content).digest("hex");
+          const callsFor = (index: number) =>
+            clientRequests.get(tokens[index] ?? "") ?? 0;
+          const clockA = acceleratedArtifactClock();
+          const clockB = acceleratedArtifactClock();
+          let pluginA = artifactRealm(bundle, a, fetcher, clockA).load();
+          let pluginB = artifactRealm(bundle, b, fetcher, clockB).load();
+          pluginA.configure(config(0));
+          pluginB.configure(config(1));
+          expect(pluginA.setAutomaticSync(true)).toBe(true);
+          expect(pluginA.automaticSyncEnabled()).toBe(true);
+          const aText = "# Automatic A\r\nexact bytes\n";
+          const fileA = await a.vault.create("demo.md", aText);
+          try {
+            await waitFor(
+              () => (ledger(a, 0)?.entries[0]?.base ?? null) !== null,
+              "A persisted its first exact base automatically",
+              120_000,
+            );
+          } catch (error) {
+            throw new Error(
+              `A state=${pluginA.statusText()} calls=${currentCalls} work=${JSON.stringify(ledger(a, 0)?.entries[0]?.work)} trace=${requestTrace.join(",")}`,
+              { cause: error },
+            );
+          }
+          const aBase = ledger(a, 0)?.entries[0]?.base;
+          expect(aBase?.contentSha256).toBe(digest(aText));
+          const afterA = currentCalls;
+          expect(afterA).toBeLessThanOrEqual(32);
+
+          expect(pluginB.setAutomaticSync(true)).toBe(true);
+          await waitFor(
+            () => b.vault.getAbstractFileByPath("demo.md") instanceof FileNode,
+            "B received A without Sync now",
+          );
+          const fileB = b.vault.getAbstractFileByPath("demo.md");
+          if (!(fileB instanceof FileNode)) throw new Error("B missing file");
+          expect(await b.vault.read(fileB)).toBe(aText);
+          expect(ledger(b, 1)?.entries[0]?.base).toEqual(aBase);
+          expect(currentCalls - afterA).toBeLessThanOrEqual(32);
+
+          const bText = "# Automatic B\n";
+          await b.vault.edit(fileB, bText);
+          await waitFor(
+            () =>
+              ledger(b, 1)?.entries[0]?.base?.contentSha256 === digest(bText),
+            "B committed its saved edit automatically",
+          );
+          const bBase = ledger(b, 1)?.entries[0]?.base;
+          pluginA.unload();
+          pluginA = artifactRealm(bundle, a, fetcher, clockA).load();
+          expect(pluginA.automaticSyncEnabled()).toBe(true);
+          await waitFor(
+            async () => (await a.vault.read(fileA)) === bText,
+            "A received B after targeted reload without Sync now",
+          );
+          expect(ledger(a, 0)?.entries[0]?.base).toEqual(bBase);
+
+          const beforeRest = currentCalls;
+          const restHead = await rest({
+            operation: "current",
+            path: "demo.md",
+          });
+          expect(revisionOf(restHead)).toBe(bBase?.revision);
+          const restText = "# REST automatic poll\n";
+          await restUpdate(revisionOf(restHead), restText);
+          const remoteHead = await rest({
+            operation: "current",
+            path: "demo.md",
+          });
+          const restRevision = revisionOf(remoteHead);
+          await waitFor(
+            async () => (await b.vault.read(fileB)) === restText,
+            "B received REST on its scheduled remote poll",
+            75_000,
+          );
+          const beforeReload = ledger(b, 1);
+          expect(beforeReload?.entries[0]?.base).toEqual({
+            revision: restRevision,
+            contentSha256: digest(restText),
+          });
+          expect(beforeReload?.cursor).toBeTruthy();
+          expect(currentCalls - beforeRest).toBeLessThanOrEqual(128);
+
+          pluginB.unload();
+          const coldB = new SimApp(join(directory, "automatic-B"), b.vault);
+          coldB.secrets.set("demo-native-secret", tokens[1] ?? "");
+          pluginB = artifactRealm(bundle, coldB, fetcher, clockB).load();
+          expect(pluginB.automaticSyncEnabled()).toBe(true);
+          await waitFor(
+            () => pluginB.statusText() === "settled",
+            "targeted reload rehydrated a settled automatic pass",
+          );
+          expect(ledger(coldB, 1)?.entries[0]?.base).toEqual(
+            beforeReload?.entries[0]?.base,
+          );
+          const beforeCursor = beforeReload?.cursor;
+          const afterCursor = ledger(coldB, 1)?.cursor;
+          if (beforeCursor === undefined || afterCursor === undefined)
+            throw new Error("Missing reload checkpoint");
+          const beforeVector = cursorSnapshot(beforeCursor);
+          const afterVector = cursorSnapshot(afterCursor);
+          expect(afterVector.vaultId).toBe(beforeVector.vaultId);
+          expect(
+            afterVector.laneSequences.every((sequence, index) => {
+              const previous = beforeVector.laneSequences[index];
+              return previous !== undefined && sequence >= previous;
+            }),
+          ).toBe(true);
+
+          expect(pluginA.setAutomaticSync(false)).toBe(true);
+          await new Promise<void>((resolve) => setTimeout(resolve, 1_600));
+          const aCallsAfterDisable = callsFor(0);
+          await new Promise<void>((resolve) => setTimeout(resolve, 1_800));
+          expect(callsFor(0)).toBe(aCallsAfterDisable);
+
+          pluginB.unload();
+          const conflictCursor = ledger(coldB, 1)?.cursor;
+          const competingText = "# Remote competing edit\n";
+          await restUpdate(restRevision, competingText);
+          const localText = "# Keep local concurrent edit\n";
+          await b.vault.edit(fileB, localText);
+          pluginB = artifactRealm(bundle, coldB, fetcher, clockB).load();
+          await waitFor(
+            () => pluginB.statusText() === "attention",
+            "stale local base stopped automatic sync",
+          );
+          expect(await b.vault.read(fileB)).toBe(localText);
+          const copies = b.vault
+            .getAllLoadedFiles()
+            .filter(
+              (node) =>
+                node instanceof FileNode &&
+                node.path.startsWith("ai-bridge-conflicts/"),
+            );
+          expect(copies).toHaveLength(1);
+          const copy = copies[0];
+          if (!(copy instanceof FileNode)) throw new Error("Missing copy");
+          expect(await b.vault.read(copy)).toBe(competingText);
+          expect(ledger(coldB, 1)?.entries[0]?.base).toEqual(
+            beforeReload?.entries[0]?.base,
+          );
+          expect(ledger(coldB, 1)?.cursor).toBe(conflictCursor);
+          expect(currentCalls).toBeLessThanOrEqual(300);
+          process.stdout.write(
+            `M9 isolated artifact requests ${JSON.stringify({
+              total: currentCalls,
+              a: callsFor(0),
+              b: callsFor(1),
+              rest: callsFor(2),
+            })}\n`,
+          );
+          pluginA.unload();
+          pluginB.unload();
+        },
+        360_000,
+      );
     });
   },
 );

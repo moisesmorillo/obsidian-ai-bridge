@@ -271,6 +271,52 @@ describe("syncR2Feed", () => {
     expect(calls.events).toEqual([]);
   });
 
+  it("reads independent lane heads concurrently within a fixed cap without changing the page", async () => {
+    const state = feedFixture(new Map([[0, 1n]]), eventMap(event(0, 1n)));
+    const originalRead = state.publication.readLaneHead.bind(state.publication);
+    let releaseReads = () => {};
+    const gate = new Promise<void>((resolve) => {
+      releaseReads = resolve;
+    });
+    let active = 0;
+    let peak = 0;
+    state.publication.readLaneHead = async (requestedVault, lane) => {
+      active += 1;
+      peak = Math.max(peak, active);
+      await gate;
+      try {
+        return await originalRead(requestedVault, lane);
+      } finally {
+        active -= 1;
+      }
+    };
+
+    const pending = state.reader.readChanges({ vaultId, cursor: cursor([]) });
+    const startedBeforeRelease = active;
+    releaseReads();
+    expect(await pending).toEqual({
+      kind: "page",
+      events: [
+        {
+          kind: "changed",
+          lane: 0,
+          sequence: sequence(1n),
+          path,
+          result: { kind: "live", revision },
+          operationId,
+          origin,
+          committedAtEpochMs: NOW,
+        },
+      ],
+      nextCursor: cursor([1n], 1),
+    });
+    expect(startedBeforeRelease).toBe(4);
+    expect(peak).toBe(4);
+    expect(state.calls.heads).toEqual(
+      Array.from({ length: SYNC_FEED_LANE_COUNT }, (_, lane) => lane),
+    );
+  });
+
   it("refuses malformed, foreign, future and unavailable head evidence", async () => {
     const { reader } = feedFixture(new Map(), new Map());
     expect(await reader.readChanges({ vaultId, cursor: "!" })).toEqual({

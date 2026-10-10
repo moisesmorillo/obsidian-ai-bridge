@@ -24,6 +24,8 @@ import type { SyncR2Publication } from "@worker/infrastructure/sync/sync-r2-publ
 const SYNC_CURSOR_RETENTION_MS = 30 * 24 * 60 * 60 * 1_000;
 /** Maximum metadata events emitted in one bounded feed page. */
 const SYNC_FEED_PAGE_LIMIT = 100;
+/** Keeps independent lane-head reads below Workers' six simultaneous outgoing connections. */
+const SYNC_FEED_HEAD_READ_CONCURRENCY = 4;
 /** Canonical initial clock used only for a verified absent lane head. */
 const INITIAL_SEQUENCE = syncSequenceSchema.parse(
   "0".repeat(SYNC_SEQUENCE_WIDTH),
@@ -91,16 +93,30 @@ export function syncR2Feed(
 
       // A verified missing lane head is an unused zero clock, not a missing event.
       const highWaters: SyncSequenceDto[] = [];
-      for (let lane = 0; lane < SYNC_FEED_LANE_COUNT; lane += 1) {
-        const read = await publication.readLaneHead(vaultId, lane);
-        if (read.kind === "unavailable") {
-          return { kind: "error", code: SYNC_ERROR_CODE.storageUnavailable };
-        }
-        highWaters.push(
-          read.kind === "absent"
-            ? INITIAL_SEQUENCE
-            : read.observation.value.committedSequence,
+      for (
+        let firstLane = 0;
+        firstLane < SYNC_FEED_LANE_COUNT;
+        firstLane += SYNC_FEED_HEAD_READ_CONCURRENCY
+      ) {
+        const batchSize = Math.min(
+          SYNC_FEED_HEAD_READ_CONCURRENCY,
+          SYNC_FEED_LANE_COUNT - firstLane,
         );
+        const reads = await Promise.all(
+          Array.from({ length: batchSize }, (_, offset) =>
+            publication.readLaneHead(vaultId, firstLane + offset),
+          ),
+        );
+        for (const read of reads) {
+          if (read.kind === "unavailable") {
+            return { kind: "error", code: SYNC_ERROR_CODE.storageUnavailable };
+          }
+          highWaters.push(
+            read.kind === "absent"
+              ? INITIAL_SEQUENCE
+              : read.observation.value.committedSequence,
+          );
+        }
       }
       if (
         highWaters.some((high, lane) => {

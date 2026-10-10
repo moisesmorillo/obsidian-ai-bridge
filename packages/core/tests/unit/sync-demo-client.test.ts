@@ -356,6 +356,51 @@ describe("durable exact-base local demo reconciliation", () => {
     expect(f.ledger().entries.every((entry) => entry.work === null)).toBe(true);
     expect(f.ledger().cursor).toBe(cursor);
   });
+  it("stops the pass before another path when persistence refuses the save", async () => {
+    const f = await twoPathFixture();
+    vi.spyOn(f.store, "save").mockResolvedValueOnce(false);
+    const current = vi.spyOn(f.remote, "current");
+    const changes = vi.spyOn(f.remote, "changes");
+    expect(await f.client().syncNow()).toBe("attention");
+    expect(current).toHaveBeenCalledExactlyOnceWith(path);
+    expect(f.requests).toHaveLength(0);
+    expect(f.otherRequests).toHaveLength(0);
+    expect(changes).not.toHaveBeenCalled();
+    expect(f.ledger().entries.every((entry) => entry.work === null)).toBe(true);
+  });
+  it("stops page-event reconciliation after a refused save", async () => {
+    const f = await twoPathFixture();
+    f.edit(null);
+    f.editOther(null);
+    const current = vi.spyOn(f.remote, "current");
+    vi.spyOn(f.remote, "changes").mockImplementation(async () => {
+      const first = await f.publish("new first");
+      const second = await f.publishOther("new second");
+      return {
+        kind: "page",
+        events: [first, second].map((version) => ({
+          kind: "changed" as const,
+          lane: 0,
+          sequence,
+          path: version.path,
+          result: { kind: "live" as const, revision: version.revision },
+          operationId: version.operationId,
+          origin: version.origin,
+          committedAtEpochMs: 1,
+        })),
+        nextCursor: "next-page",
+      };
+    });
+    vi.spyOn(f.store, "save").mockResolvedValueOnce(false);
+    expect(await f.client().syncNow()).toBe("attention");
+    expect(current.mock.calls.map(([target]) => target)).toEqual([
+      path,
+      otherPath,
+      path,
+    ]);
+    expect(f.ledger().cursor).toBe(cursor);
+    expect(f.ledger().entries.every((entry) => entry.work === null)).toBe(true);
+  });
   it("does not infer deletion from one path while another advances at its exact base", async () => {
     const f = await twoPathFixture();
     expect(await f.client().syncNow()).toBe("settled");

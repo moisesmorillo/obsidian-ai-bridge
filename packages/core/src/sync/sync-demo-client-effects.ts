@@ -92,6 +92,12 @@ export class SyncDemoClientEffects {
   get state(): SyncDemoLedger {
     return this.ledger;
   }
+  /** A refused save ends this pass before another path can be observed.
+   * @returns Whether this pass lost persistence authority.
+   */
+  get persistenceFailed(): boolean {
+    return this.fenced;
+  }
   /** Persists one entry transition and fences all later effects if proof fails.
    * @param entry Exact successor for an already bound path.
    * @returns Whether the complete replacement ledger was durably verified.

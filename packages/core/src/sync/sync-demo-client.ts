@@ -105,6 +105,7 @@ export class SyncDemoClient {
       let outcome: SyncDemoClientOutcome = "settled";
       for (const path of binding.paths) {
         const pathOutcome = await this.reconcile(path, effects);
+        if (effects.persistenceFailed) return "attention";
         outcome = combineOutcomes(outcome, pathOutcome);
       }
       if (outcome !== "settled") return outcome;
@@ -122,6 +123,7 @@ export class SyncDemoClient {
       }
       for (const path of paths) {
         const pathOutcome = await this.reconcile(path, effects);
+        if (effects.persistenceFailed) return "attention";
         outcome = combineOutcomes(outcome, pathOutcome);
       }
       if (outcome !== "settled") return outcome;

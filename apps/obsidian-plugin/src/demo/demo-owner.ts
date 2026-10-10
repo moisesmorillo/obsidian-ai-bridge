@@ -29,10 +29,12 @@ interface DemoRegistry {
 export const DEMO_AUTO_POLL_MS = 60_000;
 /** Saved events coalesce before one bounded pass. */
 const DEMO_AUTO_EVENT_MS = 500;
-/** Pending and transient failures wait at least this long before retrying. */
-const DEMO_AUTO_RETRY_MS = 5_000;
-/** One event episode has at most four accelerated retries before the normal poll cadence. */
-const DEMO_AUTO_RETRIES = 4;
+/** First pending retry delay; later attempts double up to the fixed cap. */
+const DEMO_AUTO_RETRY_MS = 1_000;
+/** Finite accelerated retries can advance the synthetic journal without a tight loop. */
+const DEMO_AUTO_RETRIES = 12;
+/** Longest accelerated pending delay before the normal poll cadence takes over. */
+const DEMO_AUTO_RETRY_CAP_MS = 10_000;
 /** Maximum platform timer delay; a later wake rechecks any longer server floor. */
 const DEMO_AUTO_MAX_TIMER_MS = 2_147_483_647;
 /** Owns a single original configuration, client and unsettled permit through plugin/bundle replacement. */
@@ -47,6 +49,7 @@ export class DemoOwner {
   private running: number | null = null;
   private events = 0;
   private timer: ReturnType<typeof setTimeout> | null = null;
+  private timerDueAt = 0;
   private scheduleGeneration = 0;
   private retryCount = 0;
   private retryFloor = 0;
@@ -180,7 +183,7 @@ export class DemoOwner {
           (admitted) => admitted === path || admitted === oldPath,
         )
       )
-        this.scheduleAutomatic(token, DEMO_AUTO_EVENT_MS);
+        this.scheduleAutomatic(token, DEMO_AUTO_EVENT_MS, true);
     }
   }
   /** Returns exact separately persisted opt-in, failing closed on corrupt/unreadable or changed binding state.
@@ -234,12 +237,18 @@ export class DemoOwner {
     ++this.scheduleGeneration;
     if (this.timer !== null) clearTimeout(this.timer);
     this.timer = null;
+    this.timerDueAt = 0;
   }
-  /** Schedules at most one owner wake and never shortens a pending retry floor on host events.
+  /** Schedules at most one owner wake, retaining an earlier pending wake under sustained host events.
    * @param token Current listener-owning lease.
    * @param delay Minimum delay in milliseconds before the wake.
+   * @param preserveEarlier Whether a host event may retain an already earlier scheduled wake.
    */
-  private scheduleAutomatic(token: number, delay: number): void {
+  private scheduleAutomatic(
+    token: number,
+    delay: number,
+    preserveEarlier = false,
+  ): void {
     if (
       !this.profile.automaticKey ||
       this.automaticStopped ||
@@ -249,12 +258,22 @@ export class DemoOwner {
       !this.automaticEnabled()
     )
       return;
+    const wait = Math.max(delay, this.retryFloor - Date.now());
+    const dueAt = Date.now() + Math.min(wait, DEMO_AUTO_MAX_TIMER_MS);
+    if (
+      preserveEarlier &&
+      this.timer !== null &&
+      this.timerDueAt <= dueAt &&
+      this.timerDueAt >= this.retryFloor
+    )
+      return;
     this.cancelAutomatic();
     const generation = this.scheduleGeneration;
-    const wait = Math.max(delay, this.retryFloor - Date.now());
+    this.timerDueAt = dueAt;
     this.timer = setTimeout(
       () => {
         this.timer = null;
+        this.timerDueAt = 0;
         if (generation === this.scheduleGeneration)
           void this.wakeAutomatic(token);
       },
@@ -278,7 +297,7 @@ export class DemoOwner {
       return;
     }
     const runLease = this.automaticLease;
-    const durableFloor = await this.durableRetryFloor();
+    const durableFloor = await this.durableVaultRetryFloor();
     if (runLease !== this.automaticLease || token !== this.lease) return;
     if (durableFloor === null) {
       this.automaticStopped = true;
@@ -335,27 +354,32 @@ export class DemoOwner {
    * @param token Current listener-owning lease.
    */
   private retryAutomatic(token: number): void {
-    this.retryCount = Math.min(this.retryCount + 1, DEMO_AUTO_RETRIES);
+    this.retryCount = Math.min(this.retryCount + 1, DEMO_AUTO_RETRIES + 1);
     const delay =
-      this.retryCount === DEMO_AUTO_RETRIES
+      this.retryCount > DEMO_AUTO_RETRIES
         ? DEMO_AUTO_POLL_MS
-        : DEMO_AUTO_RETRY_MS * 2 ** (this.retryCount - 1);
+        : Math.min(
+            DEMO_AUTO_RETRY_CAP_MS,
+            DEMO_AUTO_RETRY_MS * 2 ** (this.retryCount - 1),
+          );
     this.retryFloor = Math.max(
       Date.now() + delay,
       this.transport.retryFloorEpochMs(),
     );
     this.scheduleAutomatic(token, this.retryFloor - Date.now());
   }
-  /** Reads prepared push floors from verified content-free ledger state before any new ticket is consumed.
-   * @returns Highest durable floor, or null when persistence authority is unavailable.
+  /** Reads only shared vault-marker floors from verified ledger state; path-local prepared work cannot delay peers.
+   * @returns Highest shared floor, or null when persistence authority is unavailable.
    */
-  private async durableRetryFloor(): Promise<number | null> {
+  private async durableVaultRetryFloor(): Promise<number | null> {
     const loaded = await this.ledger.load();
     if (loaded.kind !== "ready") return null;
     return Math.max(
       0,
       ...loaded.ledger.entries.map((entry) =>
-        entry.work?.kind === "push" ? entry.work.retryAfterEpochMs : 0,
+        entry.work?.kind === "push"
+          ? (entry.work.vaultRetryAfterEpochMs ?? 0)
+          : 0,
       ),
     );
   }

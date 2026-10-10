@@ -34,6 +34,20 @@ function observationFailureOutcome(
   }
 }
 
+/** Retains the strongest unsatisfied result without preventing independent bound paths from progressing.
+ * @param previous Aggregate result of paths already reconciled.
+ * @param current Result of the next independent path.
+ * @returns Attention before pending before settled, without claiming feed settlement.
+ */
+function combineOutcomes(
+  previous: SyncDemoClientOutcome,
+  current: SyncDemoClientOutcome,
+): SyncDemoClientOutcome {
+  if (previous === "attention" || current === "attention") return "attention";
+  if (previous === "pending" || current === "pending") return "pending";
+  return "settled";
+}
+
 /** One serialized exact-base coordinator; delivery 3 must retain this owner across replacement sessions and fence stale host dispatch. */
 export class SyncDemoClient {
   /** Command exclusion lasts through effect and persistence settlement, not merely the calling UI session. */
@@ -71,6 +85,15 @@ export class SyncDemoClient {
         )
       )
         return "attention";
+      const vaultFloor = Math.max(
+        0,
+        ...ledger.entries.map((entry) =>
+          entry.work?.kind === "push"
+            ? (entry.work.vaultRetryAfterEpochMs ?? 0)
+            : 0,
+        ),
+      );
+      if (this.environment.now() < vaultFloor) return "pending";
       this.remote.beginPass();
       const effects = new SyncDemoClientEffects(
         ledger,
@@ -79,10 +102,12 @@ export class SyncDemoClient {
         this.remote,
         this.environment,
       );
+      let outcome: SyncDemoClientOutcome = "settled";
       for (const path of binding.paths) {
-        const outcome = await this.reconcile(path, effects);
-        if (outcome !== "settled") return outcome;
+        const pathOutcome = await this.reconcile(path, effects);
+        outcome = combineOutcomes(outcome, pathOutcome);
       }
+      if (outcome !== "settled") return outcome;
       const page = await this.remote.changes(effects.state.cursor);
       if (page.kind !== "page") return observationFailureOutcome(page.code);
       const paths = new Set<SyncNotePath>();
@@ -96,9 +121,10 @@ export class SyncDemoClient {
         paths.add(event.path);
       }
       for (const path of paths) {
-        const outcome = await this.reconcile(path, effects);
-        if (outcome !== "settled") return outcome;
+        const pathOutcome = await this.reconcile(path, effects);
+        outcome = combineOutcomes(outcome, pathOutcome);
       }
+      if (outcome !== "settled") return outcome;
       return (await effects.saveCursor(page.nextCursor))
         ? "settled"
         : "attention";

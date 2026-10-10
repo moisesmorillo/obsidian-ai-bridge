@@ -48,6 +48,7 @@ const workSchema = z.discriminatedUnion("kind", [
       parent: parentSchema,
       contentSha256: hashSchema,
       retryAfterEpochMs: z.int().nonnegative(),
+      vaultRetryAfterEpochMs: z.int().nonnegative().optional(),
     })
     .strict(),
   z

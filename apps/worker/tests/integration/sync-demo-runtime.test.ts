@@ -183,6 +183,7 @@ describe("demo composition over deterministic conditional storage", () => {
       kind: "error",
       code: "effect_unknown",
       retryAfterEpochMs: 2_000_000_005_000 + SYNC_R2_WRITE_COOLDOWN_MS,
+      retryScope: "vault",
     });
     expect([...f.objects.keys()]).toEqual([syncVaultMarkerKey(vaultId)]);
     const retry = await f.post(mutation);
@@ -197,6 +198,7 @@ describe("demo composition over deterministic conditional storage", () => {
       kind: "error",
       code: "storage_throttled",
       retryAfterEpochMs: 2_000_000_005_000 + SYNC_R2_WRITE_COOLDOWN_MS,
+      retryScope: "vault",
     });
     expect(f.objects.size).toBe(0);
   });

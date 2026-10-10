@@ -275,6 +275,10 @@ export class SyncDemoClientEffects {
       return "attention";
     const floor =
       "retryAfterEpochMs" in outcome ? (outcome.retryAfterEpochMs ?? 0) : 0;
+    const vaultFloor =
+      "retryScope" in outcome && outcome.retryScope === "vault"
+        ? Math.max(work.vaultRetryAfterEpochMs ?? 0, floor)
+        : work.vaultRetryAfterEpochMs;
     return (await this.saveEntry({
       ...entry,
       work: {
@@ -284,6 +288,9 @@ export class SyncDemoClientEffects {
             ? "not_admitted"
             : "uncertain",
         retryAfterEpochMs: Math.max(work.retryAfterEpochMs, floor),
+        ...(vaultFloor === undefined
+          ? {}
+          : { vaultRetryAfterEpochMs: vaultFloor }),
       },
     }))
       ? "pending"

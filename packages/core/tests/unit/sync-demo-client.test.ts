@@ -21,6 +21,7 @@ import { describe, expect, it, vi } from "vitest";
 const vaultId = "22222222-2222-4222-8222-222222222222" as SyncVaultId;
 const deviceId = "33333333-3333-4333-8333-333333333333" as SyncDeviceId;
 const path = "demo.md" as SyncNotePath;
+const otherPath = "other.md" as SyncNotePath;
 const cursor = "synthetic-zero-cursor";
 const sequence = "00000000000000000001" as SyncEventSequence;
 let identity = 10;
@@ -180,7 +181,228 @@ async function fixture(initial: string | null = "local") {
   };
 }
 
+async function twoPathFixture() {
+  const f = await fixture();
+  let otherLocal: string | null = "other local";
+  let otherHead: SyncReadCurrentResult = { kind: "never_seen" };
+  const otherRequests: Parameters<SyncDemoRemote["mutate"]>[0][] = [];
+  const originalObserve = f.host.observe.bind(f.host);
+  const originalCurrent = f.remote.current.bind(f.remote);
+  const originalMutate = f.remote.mutate.bind(f.remote);
+  const ledger = f.ledger();
+  f.setLedger({
+    ...ledger,
+    entries: [...ledger.entries, { path: otherPath, base: null, work: null }],
+  });
+  Object.assign(f.environment, {
+    binding: { vaultId, deviceId, paths: [path, otherPath] },
+  });
+  vi.spyOn(f.host, "observe").mockImplementation((target) =>
+    target === path
+      ? originalObserve(target)
+      : Promise.resolve(
+          otherLocal === null
+            ? { kind: "absent" as const }
+            : { kind: "live" as const, content: otherLocal },
+        ),
+  );
+  vi.spyOn(f.remote, "current").mockImplementation((target) =>
+    target === path ? originalCurrent(target) : Promise.resolve(otherHead),
+  );
+  vi.spyOn(f.remote, "mutate").mockImplementation(async (request) => {
+    if (request.path === path) return originalMutate(request);
+    otherRequests.push(structuredClone(request));
+    if (
+      request.parent.kind === "never_seen"
+        ? otherHead.kind !== "never_seen"
+        : otherHead.kind !== "live" ||
+          otherHead.revision !== request.parent.revision
+    )
+      return { kind: "error", code: "stale_revision" };
+    const byteSize = new TextEncoder().encode(request.content).byteLength;
+    f.versions.set(request.revision, {
+      ...request,
+      kind: "live",
+      byteSize,
+    });
+    const {
+      content: _content,
+      vaultId: _vaultId,
+      path: _path,
+      ...head
+    } = request;
+    otherHead = {
+      ...head,
+      kind: "live",
+      byteSize,
+    };
+    return {
+      kind: "committed",
+      revision: request.revision,
+      operationId: request.operationId,
+      position: { lane: 0, sequence },
+    };
+  });
+  return {
+    ...f,
+    otherRequests,
+    editOther: (value: string | null) => {
+      otherLocal = value;
+    },
+    otherHead: () => otherHead,
+    publishOther: async (content: string) => {
+      const version = {
+        kind: "live" as const,
+        vaultId,
+        path: otherPath,
+        revision: uuid() as SyncRevision,
+        operationId: uuid() as SyncOperationId,
+        origin: deviceId,
+        parent:
+          otherHead.kind === "live"
+            ? { kind: "revision" as const, revision: otherHead.revision }
+            : { kind: "never_seen" as const },
+        contentSha256: await hash(content),
+        content,
+        byteSize: new TextEncoder().encode(content).byteLength,
+        mediaType: "text/markdown" as const,
+      };
+      f.versions.set(version.revision, version);
+      const {
+        content: _content,
+        vaultId: _vaultId,
+        path: _path,
+        ...head
+      } = version;
+      otherHead = head;
+      return version;
+    },
+  };
+}
+
 describe("durable exact-base local demo reconciliation", () => {
+  it("holds every path before a manual fresh-client pass during a durable shared marker floor", async () => {
+    const f = await twoPathFixture();
+    const ledger = f.ledger();
+    const first = ledger.entries[0];
+    const second = ledger.entries[1];
+    if (first === undefined || second === undefined)
+      throw new Error("missing two-path fixture");
+    f.setLedger({
+      ...ledger,
+      entries: [
+        {
+          ...first,
+          work: {
+            kind: "push",
+            certainty: "uncertain",
+            operationId: uuid() as SyncOperationId,
+            revision: uuid() as SyncRevision,
+            parent: { kind: "never_seen" },
+            contentSha256: await hash("local"),
+            retryAfterEpochMs: 5000,
+            vaultRetryAfterEpochMs: 5000,
+          },
+        },
+        second,
+      ],
+    });
+    const current = vi.spyOn(f.remote, "current");
+    const beginPass = vi.spyOn(f.remote, "beginPass");
+    expect(await f.client().syncNow()).toBe("pending");
+    expect(beginPass).not.toHaveBeenCalled();
+    expect(current).not.toHaveBeenCalled();
+    expect(f.requests).toHaveLength(0);
+    expect(f.otherRequests).toHaveLength(0);
+    expect(f.ledger().cursor).toBe(cursor);
+    f.advance();
+    expect(await f.client().syncNow()).toBe("settled");
+    expect(f.requests).toHaveLength(1);
+    expect(f.otherRequests).toHaveLength(1);
+  });
+  it("settles a healthy path while another is pending, withholding the whole-page cursor", async () => {
+    const f = await twoPathFixture();
+    f.setHead({
+      kind: "error",
+      code: "storage_throttled",
+      retryAfterEpochMs: 5000,
+    });
+    const changes = vi.spyOn(f.remote, "changes");
+    expect(await f.client().syncNow()).toBe("pending");
+    expect(f.otherRequests).toHaveLength(1);
+    expect(f.ledger().entries[1]?.base?.revision).toBe(
+      f.otherRequests[0]?.revision,
+    );
+    expect(f.ledger().cursor).toBe(cursor);
+    expect(changes).not.toHaveBeenCalled();
+    f.setHead({ kind: "never_seen" });
+    changes.mockResolvedValue({
+      kind: "page",
+      events: [],
+      nextCursor: "next-complete-page",
+    });
+    expect(await f.client().syncNow()).toBe("settled");
+    expect(f.ledger().cursor).toBe("next-complete-page");
+    expect(f.otherRequests).toHaveLength(1);
+  });
+  it("stops the pass before another path when persistence throws", async () => {
+    const f = await twoPathFixture();
+    vi.spyOn(f.store, "save").mockRejectedValueOnce(
+      new Error("uncertain ledger persistence"),
+    );
+    expect(await f.client().syncNow()).toBe("attention");
+    expect(f.requests).toHaveLength(0);
+    expect(f.otherRequests).toHaveLength(0);
+    expect(f.ledger().entries.every((entry) => entry.work === null)).toBe(true);
+    expect(f.ledger().cursor).toBe(cursor);
+  });
+  it("does not infer deletion from one path while another advances at its exact base", async () => {
+    const f = await twoPathFixture();
+    expect(await f.client().syncNow()).toBe("settled");
+    const otherBase = f.ledger().entries[1]?.base?.revision;
+    f.edit(null);
+    f.editOther("other successor");
+    const changes = vi.spyOn(f.remote, "changes");
+    expect(await f.client().syncNow()).toBe("attention");
+    expect(f.requests).toHaveLength(1);
+    expect(f.otherRequests[1]?.parent).toEqual({
+      kind: "revision",
+      revision: otherBase,
+    });
+    expect(f.ledger().entries[1]?.base?.revision).toBe(
+      f.otherRequests[1]?.revision,
+    );
+    expect(f.ledger().cursor).toBe(cursor);
+    expect(changes).not.toHaveBeenCalled();
+  });
+  it("reports stale CAS conflict above another pending path and preserves both versions", async () => {
+    const f = await twoPathFixture();
+    expect(await f.client().syncNow()).toBe("settled");
+    const originalBase = f.ledger().entries[1]?.base;
+    f.setHead({
+      kind: "error",
+      code: "storage_throttled",
+      retryAfterEpochMs: 5000,
+    });
+    f.editOther("other local competitor");
+    const mutate = f.remote.mutate.bind(f.remote);
+    let competitor: Awaited<ReturnType<typeof f.publishOther>> | undefined;
+    vi.spyOn(f.remote, "mutate").mockImplementationOnce(async (request) => {
+      competitor = await f.publishOther("other remote competitor");
+      return mutate(request);
+    });
+    expect(await f.client().syncNow()).toBe("attention");
+    expect(f.otherRequests[1]?.parent).toEqual({
+      kind: "revision",
+      revision: originalBase?.revision,
+    });
+    expect(f.ledger().entries[1]?.base).toEqual(originalBase);
+    expect(f.ledger().entries[1]?.work?.kind).toBe("conflict");
+    expect(competitor && f.copies.get(competitor.revision)).toBe(
+      "other remote competitor",
+    );
+    expect(f.ledger().cursor).toBe(cursor);
+  });
   it("publishes a fresh positive note and persists committed exact base without note bytes", async () => {
     const f = await fixture();
     expect(await f.client().syncNow()).toBe("settled");
@@ -277,6 +499,7 @@ describe("durable exact-base local demo reconciliation", () => {
         code: "effect_unknown",
         operationId: request.operationId,
         retryAfterEpochMs: 5000,
+        retryScope: "vault",
       };
     });
     expect(await f.client().syncNow()).toBe("pending");
@@ -284,6 +507,7 @@ describe("durable exact-base local demo reconciliation", () => {
     expect(f.ledger().entries[0]?.work).toMatchObject({
       kind: "push",
       retryAfterEpochMs: 5000,
+      vaultRetryAfterEpochMs: 5000,
     });
     expect(await f.client().syncNow()).toBe("pending");
     expect(f.requests).toHaveLength(1);

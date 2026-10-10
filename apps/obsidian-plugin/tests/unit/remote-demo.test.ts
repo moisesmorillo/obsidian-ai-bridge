@@ -84,6 +84,32 @@ describe("remote synthetic plugin", () => {
       vi.useRealTimers();
     }
   });
+  it("does not starve the first automatic pass under sustained saved-file events", async () => {
+    vi.useFakeTimers();
+    try {
+      const app = new App();
+      const c = parsed();
+      host.localStorage.set(REMOTE_DEMO_PROFILE.configKey, JSON.stringify(c));
+      const owner = acquireDemoOwner(
+        app,
+        c,
+        vi.fn<typeof fetch>(),
+        REMOTE_DEMO_PROFILE,
+      );
+      if (!owner) throw new Error("missing owner");
+      const pass = vi.spyOn(owner, "syncNow").mockResolvedValue("settled");
+      const lease = owner.attach();
+      owner.ready(lease);
+      expect(owner.setAutomatic(lease, true)).toBe(true);
+      for (let count = 0; count < 10; count += 1) {
+        owner.observed(lease, "demo.md");
+        await vi.advanceTimersByTimeAsync(100);
+      }
+      expect(pass).toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
   it("backs off pending passes, stops on attention and fences detached callbacks", async () => {
     vi.useFakeTimers();
     try {
@@ -106,9 +132,9 @@ describe("remote synthetic plugin", () => {
       expect(owner.setAutomatic(lease, true)).toBe(true);
       await vi.advanceTimersByTimeAsync(1_000);
       expect(pass).toHaveBeenCalledTimes(1);
-      await vi.advanceTimersByTimeAsync(4_000);
+      await vi.advanceTimersByTimeAsync(499);
       expect(pass).toHaveBeenCalledTimes(1);
-      await vi.advanceTimersByTimeAsync(6_000);
+      await vi.advanceTimersByTimeAsync(1);
       expect(pass).toHaveBeenCalledTimes(2);
       await vi.advanceTimersByTimeAsync(120_000);
       expect(pass).toHaveBeenCalledTimes(2);
@@ -116,6 +142,47 @@ describe("remote synthetic plugin", () => {
       owner.observed(lease, "demo.md");
       await vi.advanceTimersByTimeAsync(120_000);
       expect(pass).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+  it("advances a multi-phase pending sync with twelve bounded fast retries, then polls", async () => {
+    vi.useFakeTimers();
+    try {
+      const app = new App();
+      const c = parsed();
+      host.localStorage.set(REMOTE_DEMO_PROFILE.configKey, JSON.stringify(c));
+      const owner = acquireDemoOwner(
+        app,
+        c,
+        vi.fn<typeof fetch>(),
+        REMOTE_DEMO_PROFILE,
+      );
+      if (!owner) throw new Error("missing owner");
+      const pass = vi.spyOn(owner, "syncNow").mockResolvedValue("pending");
+      const lease = owner.attach();
+      owner.ready(lease);
+      expect(owner.setAutomatic(lease, true)).toBe(true);
+      await vi.advanceTimersByTimeAsync(500);
+      expect(pass).toHaveBeenCalledTimes(1);
+      const acceleratedDelays = [
+        1_000,
+        2_000,
+        4_000,
+        8_000,
+        ...Array(8).fill(10_000),
+      ];
+      for (const [index, delay] of acceleratedDelays.entries()) {
+        await vi.advanceTimersByTimeAsync(delay - 1);
+        expect(pass).toHaveBeenCalledTimes(index + 1);
+        await vi.advanceTimersByTimeAsync(1);
+        expect(pass).toHaveBeenCalledTimes(index + 2);
+      }
+      await vi.advanceTimersByTimeAsync(59_999);
+      expect(pass).toHaveBeenCalledTimes(13);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(pass).toHaveBeenCalledTimes(14);
+      owner.detach(lease);
     } finally {
       vi.useRealTimers();
     }
@@ -379,92 +446,109 @@ describe("remote synthetic plugin", () => {
       vi.useRealTimers();
     }
   });
-  it("waits for a durable prepared push retry floor before starting another automatic pass", async () => {
-    vi.useFakeTimers();
-    try {
-      const app = new App();
-      const c = parsed();
-      const key = demoLedgerKey(c, REMOTE_DEMO_PROFILE);
-      const store = new SyncDemoLedgerRepository(
-        {
-          read: async () => readDemoString(app, key),
-          write: async (value) => app.saveLocalStorage(key, value),
-        },
-        c,
-      );
-      const loaded = await store.load();
-      if (loaded.kind !== "ready") throw new Error("missing fixture ledger");
-      const entry = loaded.ledger.entries[0];
-      if (entry === undefined) throw new Error("missing fixture entry");
-      const hash = createContentSha256("a".repeat(64));
-      if (hash === undefined) throw new Error("invalid fixture hash");
-      expect(
-        await store.save({
-          ...loaded.ledger,
-          entries: [
-            {
-              ...entry,
-              work: {
-                kind: "push",
-                certainty: "uncertain",
-                operationId: syncOperationIdSchema.parse(
-                  "44444444-4444-4444-8444-444444444444",
-                ),
-                revision: syncRevisionSchema.parse(
-                  "55555555-5555-4555-8555-555555555555",
-                ),
-                parent: { kind: "never_seen" },
-                contentSha256: hash,
-                retryAfterEpochMs: Date.now() + 30_000,
+  it.each([
+    ["path-local", false],
+    ["shared marker", true],
+  ])(
+    "respects %s durable push floors without blocking unrelated paths",
+    async (_label, shared) => {
+      vi.useFakeTimers();
+      try {
+        const app = new App();
+        const c = parsed();
+        const key = demoLedgerKey(c, REMOTE_DEMO_PROFILE);
+        const store = new SyncDemoLedgerRepository(
+          {
+            read: async () => readDemoString(app, key),
+            write: async (value) => app.saveLocalStorage(key, value),
+          },
+          c,
+        );
+        const loaded = await store.load();
+        if (loaded.kind !== "ready") throw new Error("missing fixture ledger");
+        const entry = loaded.ledger.entries[0];
+        if (entry === undefined) throw new Error("missing fixture entry");
+        const hash = createContentSha256("a".repeat(64));
+        if (hash === undefined) throw new Error("invalid fixture hash");
+        expect(
+          await store.save({
+            ...loaded.ledger,
+            entries: [
+              {
+                ...entry,
+                work: {
+                  kind: "push",
+                  certainty: "uncertain",
+                  operationId: syncOperationIdSchema.parse(
+                    "44444444-4444-4444-8444-444444444444",
+                  ),
+                  revision: syncRevisionSchema.parse(
+                    "55555555-5555-4555-8555-555555555555",
+                  ),
+                  parent: { kind: "never_seen" },
+                  contentSha256: hash,
+                  retryAfterEpochMs: Date.now() + 30_000,
+                  ...(shared
+                    ? { vaultRetryAfterEpochMs: Date.now() + 30_000 }
+                    : {}),
+                },
               },
-            },
-          ],
-        }),
-      ).toBe(true);
-      host.localStorage.set(REMOTE_DEMO_PROFILE.configKey, JSON.stringify(c));
-      const owner = acquireDemoOwner(
-        app,
-        c,
-        vi.fn<typeof fetch>(),
-        REMOTE_DEMO_PROFILE,
-      );
-      if (!owner) throw new Error("missing owner");
-      const pass = vi.spyOn(owner, "syncNow").mockResolvedValue("settled");
-      const lease = owner.attach();
-      owner.ready(lease);
-      expect(owner.setAutomatic(lease, true)).toBe(true);
-      await vi.advanceTimersByTimeAsync(20_000);
-      expect(pass).not.toHaveBeenCalled();
-      await vi.advanceTimersByTimeAsync(11_000);
-      expect(pass).toHaveBeenCalledTimes(1);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-  it("records typed retry floors and HTTP 429 Retry-After before allowing another remote ticket", async () => {
+            ],
+          }),
+        ).toBe(true);
+        host.localStorage.set(REMOTE_DEMO_PROFILE.configKey, JSON.stringify(c));
+        const owner = acquireDemoOwner(
+          app,
+          c,
+          vi.fn<typeof fetch>(),
+          REMOTE_DEMO_PROFILE,
+        );
+        if (!owner) throw new Error("missing owner");
+        const pass = vi.spyOn(owner, "syncNow").mockResolvedValue("settled");
+        const lease = owner.attach();
+        owner.ready(lease);
+        expect(owner.setAutomatic(lease, true)).toBe(true);
+        await vi.advanceTimersByTimeAsync(1_000);
+        expect(pass).toHaveBeenCalledTimes(shared ? 0 : 1);
+        if (shared) {
+          await vi.advanceTimersByTimeAsync(30_000);
+          expect(pass).toHaveBeenCalledTimes(1);
+        }
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
+  it("keeps typed path floors local while HTTP 429 Retry-After blocks all tickets", async () => {
     const c = parsed();
+    const otherPath = syncNotePathSchema.parse("other.md");
+    const twoPaths = { ...c, paths: [path, otherPath] };
     const floor = Date.now() + 30_000;
     const typedTicket = vi.fn(() => "0");
-    const typedFetch = vi.fn<typeof fetch>(async () =>
-      Response.json({
-        kind: "error",
-        code: "storage_throttled",
-        retryAfterEpochMs: floor,
-      }),
-    );
+    const typedFetch = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        Response.json({
+          kind: "error",
+          code: "storage_throttled",
+          retryAfterEpochMs: floor,
+        }),
+      )
+      .mockResolvedValueOnce(Response.json({ kind: "never_seen" }));
     const typed = new SyncDemoFetchRemote(
       c.endpoint,
-      c,
+      twoPaths,
       async () => "token",
       typedFetch,
       10_000,
       { endpoint: c.endpoint, ticket: typedTicket },
     );
     await typed.current(path);
-    expect(typed.retryFloorEpochMs()).toBe(floor);
+    expect(typed.retryFloorEpochMs()).toBe(0);
     await typed.current(path);
-    expect(typedTicket).toHaveBeenCalledTimes(1);
-    expect(typedFetch).toHaveBeenCalledTimes(1);
+    expect(await typed.current(otherPath)).toEqual({ kind: "never_seen" });
+    expect(typedTicket).toHaveBeenCalledTimes(2);
+    expect(typedFetch).toHaveBeenCalledTimes(2);
     const limitedTicket = vi.fn(() => "0");
     const limitedFetch = vi.fn<typeof fetch>(
       async () =>
@@ -472,7 +556,7 @@ describe("remote synthetic plugin", () => {
     );
     const limited = new SyncDemoFetchRemote(
       c.endpoint,
-      c,
+      twoPaths,
       async () => "token",
       limitedFetch,
       10_000,
@@ -483,6 +567,7 @@ describe("remote synthetic plugin", () => {
       Date.now() + 29_000,
     );
     await limited.current(path);
+    await limited.current(otherPath);
     expect(limitedTicket).toHaveBeenCalledTimes(1);
     expect(limitedFetch).toHaveBeenCalledTimes(1);
     const dated = new SyncDemoFetchRemote(
@@ -505,6 +590,86 @@ describe("remote synthetic plugin", () => {
     expect(dated.retryFloorEpochMs()).toBeGreaterThanOrEqual(
       Date.now() + 59_000,
     );
+  });
+  it("holds a throttled immutable version without blocking another admitted path", async () => {
+    const c = parsed();
+    const otherPath = syncNotePathSchema.parse("other.md");
+    const revision = syncRevisionSchema.parse(
+      "55555555-5555-4555-8555-555555555555",
+    );
+    const ticket = vi.fn(() => "0");
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        Response.json({
+          kind: "error",
+          code: "storage_throttled",
+          retryAfterEpochMs: Date.now() + 30_000,
+        }),
+      )
+      .mockResolvedValueOnce(Response.json({ kind: "never_seen" }));
+    const remote = new SyncDemoFetchRemote(
+      c.endpoint,
+      { ...c, paths: [path, otherPath] },
+      async () => "token",
+      fetcher,
+      10_000,
+      { endpoint: c.endpoint, ticket },
+    );
+    expect(await remote.version(revision)).toMatchObject({
+      kind: "error",
+      code: "storage_throttled",
+    });
+    await remote.version(revision);
+    expect(await remote.current(otherPath)).toEqual({ kind: "never_seen" });
+    expect(ticket).toHaveBeenCalledTimes(2);
+  });
+  it("holds all tickets for an explicitly vault-scoped marker throttle", async () => {
+    const c = parsed();
+    const otherPath = syncNotePathSchema.parse("other.md");
+    const ticket = vi.fn(() => "0");
+    const fetcher = vi.fn<typeof fetch>(async () =>
+      Response.json({
+        kind: "error",
+        code: "storage_throttled",
+        retryAfterEpochMs: Date.now() + 30_000,
+        retryScope: "vault",
+      }),
+    );
+    const remote = new SyncDemoFetchRemote(
+      c.endpoint,
+      { ...c, paths: [path, otherPath] },
+      async () => "token",
+      fetcher,
+      10_000,
+      { endpoint: c.endpoint, ticket },
+    );
+    const contentSha256 = createContentSha256("a".repeat(64));
+    if (contentSha256 === undefined) throw new Error("bad fixture digest");
+    expect(
+      await remote.mutate({
+        kind: "create",
+        vaultId: c.vaultId,
+        path,
+        origin: c.deviceId,
+        operationId: syncOperationIdSchema.parse(
+          "44444444-4444-4444-8444-444444444444",
+        ),
+        revision: syncRevisionSchema.parse(
+          "55555555-5555-4555-8555-555555555555",
+        ),
+        parent: { kind: "never_seen" },
+        contentSha256,
+        content: "synthetic",
+        mediaType: "text/markdown",
+      }),
+    ).toMatchObject({
+      kind: "error",
+      code: "storage_throttled",
+      retryScope: "vault",
+    });
+    await remote.current(otherPath);
+    expect(ticket).toHaveBeenCalledTimes(1);
   });
   it("uses the injected clock domain to release a retry floor without spending an early ticket", async () => {
     const c = parsed();

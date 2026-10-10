@@ -57,6 +57,8 @@ export type SyncStoreFailure =
       readonly code: "storage_throttled";
       /** Earliest safe retry time in Unix epoch milliseconds. */
       readonly retryAfterEpochMs: number;
+      /** Vault-wide preparation floor when the shared marker, rather than a note key, was throttled. */
+      readonly retryScope?: "vault";
     }
   | {
       readonly kind: "error";
@@ -77,6 +79,8 @@ export type SyncStoreFailure =
       readonly code: "effect_unknown";
       /** Earliest safe retry time when a write outcome has a known cooldown. */
       readonly retryAfterEpochMs?: number;
+      /** Vault-wide preparation floor when shared marker creation has uncertain effect. */
+      readonly retryScope?: "vault";
     }
   | {
       readonly kind: "error";

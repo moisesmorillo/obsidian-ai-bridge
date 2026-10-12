@@ -1,0 +1,14 @@
+{
+	"name": "@obsidian-ai-bridge/plugin",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"test": "vitest run",
+		"typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.tools.json",
+		"build": "bun run build.ts"
+	},
+	"devDependencies": {
+		"esbuild": "0.25.10",
+		"obsidian": "1.8.7"
+	}
+}

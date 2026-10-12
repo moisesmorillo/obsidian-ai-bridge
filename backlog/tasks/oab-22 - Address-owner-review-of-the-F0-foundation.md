@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@Moises'
 created_date: '2026-10-12 18:02'
-updated_date: '2026-10-12 19:36'
+updated_date: '2026-10-12 21:21'
 labels: []
 dependencies: []
 references:
@@ -27,12 +27,17 @@ Owner review pn-ffdc61 found stale Action and tooling selections, missing useful
 - [ ] #3 Protocol contracts, inferred types and their public documentation are independently editable from codecs; public exports and path/ETag behavior remain compatible.
 - [ ] #4 Useful TSDoc covers the annotated public declarations and inert plugin/Worker intent; AGENTS.md records operational lightweight layer rules without empty layers or duplicate shapes.
 - [ ] #5 Fresh bun run check and frozen installation pass; independent review and human diff review close the corrections before publication.
+- [ ] #6 Owner-requested workspace-local import aliases replace relative module imports throughout source and tests, resolve in TypeScript and real test/build runtimes, and preserve public package boundaries and runtime isolation.
 <!-- AC:END -->
 
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
 APPROVED in Plannotator pn-d3dfc4: docs/superpowers/plans/2026-10-12-f0-review-corrections.md. Execute its two serial deliverables using the owner-selected Superpowers subagent method. Task 1 owns protocol contract/type/codec separation and useful docs/AGENTS.md rules. Task 2 owns mise/CI/requested latest tooling and required TypeScript/Workers integration migrations. Independent task reviews, final whole-branch review, exact-head verification and human diff gate remain required. No F1 or deployment; remote CI remains OAB-2 publication acceptance.
+
+Additional owner review pn-23690c: aliases throughout source/tests, confirmed scope in conversation. Pending plan approval: docs/superpowers/plans/2026-10-12-workspace-import-aliases.md. One bounded alias integration task; retain the selected subagent-driven method, exact dependency versions, public package exports, real Workers and browser plugin evidence. No implementation until plan gate.
+
+Owner approved alias integration plan in pn-16fcc7. Execute its one task using preserved subagent-driven method, native private package imports and matching tsconfig paths, exact existing dependencies, consumer/isolation/runtime regressions, independent review and renewed final human gate.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -53,4 +58,8 @@ Verified compatibility rationale for one additional direct development dependenc
 Task 2 accepted: source32caeb35ab4831a72fab82f65eb1643caf9ec967; parent full GREENb9b89314b passed frozen unchanged install, Biome35files, every workspace typecheck,40tests(protocol33/Worker5/plugin2), all local builds including Worker dry-run and diff check. Fresh independent review0d51816d approved spec and quality with no findings. Native TS7 CLI isolation and leaky controls retained; verified host-file cache incompatibility resolved with supported Worker-only fsModuleCache:false; removed TS7 baseUrl without widening roots; generated .vitest reports ignored/excluded only. Initial failures and stopped stages remain recorded in implementation report; no retrospective passing claims.
 
 All nine owner annotation implementations mapped: 1 current immutable Action pins in CI;2 canonical mise.toml, no legacy Bun pin and README setup;3 meaningful plugin lifecycle/build TSDoc;4 requested plugin tooling/typings plus justified exact peer;5 default-deny Worker intent documentation;6 canonical protocol schemas/types/codecs/barrel and lightweight AGENTS boundaries;7 ETag contract/codec documentation;8 path contract/helper documentation;9 requested root dependencies with compiler and Workers migration. Task1 reviewd54af9eb and Task2 review0d51816d accept the implementations. Previous documentation-Minor deferrals are historical and superseded by250432b, not rewritten. Final whole-branch review, fresh exact-head check, owner diff review and real remote CI remain open; OAB-22 and OAB-2 not closed.
+
+Final corrected whole-branch reviewdc2e391e approved65files/nofindings at438e221; fresh exact-headbc3c37519 passed40tests/allchecks/frozenunchanged/cleantree. Owner pn-23690c then requested one additional import-alias convention and selected all source/tests across the repo. Verified relative imports are present and protocol paths absent: confirmed maintenance convention gap, not functional bug; relative usage pre-existed and the schema split added nested imports. No source/config changes for aliases yet, no publication; previous final approval does not cover the new request.
+
+Alias plan pn-16fcc7 approved before source changes; names #protocol/*, #worker/*, #plugin/* and #plugin-tools/build, source/tests scope. Previous source438e221 exact full40test checkbc3c37519 is the baseline; no redundant baseline rerun. Parent-run TDD and actual installed toolchain compatibility remain required.
 <!-- SECTION:NOTES:END -->

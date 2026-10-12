@@ -4,8 +4,13 @@ title: F1 Worker delivery gate
 status: To Do
 assignee: []
 created_date: '2026-10-12 15:13'
+updated_date: '2026-10-12 15:36'
 labels: []
-dependencies: []
+dependencies:
+  - OAB-2
+  - OAB-3
+  - OAB-4
+  - OAB-5
 documentation:
   - docs/spec.md
 ordinal: 6000

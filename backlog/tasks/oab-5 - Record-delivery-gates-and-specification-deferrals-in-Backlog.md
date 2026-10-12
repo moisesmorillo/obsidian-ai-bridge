@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-10-12 13:17'
-updated_date: '2026-10-12 15:26'
+updated_date: '2026-10-12 15:36'
 labels:
   - F0
 dependencies:
@@ -46,4 +46,6 @@ The tracking tool is initialized but empty. F0 must make committed work, phase e
 
 <!-- SECTION:NOTES:BEGIN -->
 Parent validation on the completed snapshot passed: `bun install --frozen-lockfile && WRANGLER_SEND_METRICS=false bun run check && git diff --check` (bg_run b64a99b62, exit 0). Frozen install left the lockfile unchanged; Biome reported 27 clean files; all source/tool typechecks, 31 tests (protocol 24, Worker 5, plugin 2), all builds, and final diff check passed. Wrangler build was `--dry-run` with no bindings; nothing was deployed. Full log: `.pi/tasks/01a12e59-7861-7763-802b-239398f8d319-17313/b64a99b62.output` relative to `/Users/moisesmorillo/workspace/moisesmorillo/obsidian-ai-bridge`.
+
+Correction round 1 (review finding, Important): The initial OAB-6 metadata incorrectly had `dependencies: []`; its acceptance text naming OAB-2/OAB-3/OAB-4/OAB-5 was not a substitute for required graph edges. Corrected only OAB-6 dependencies through Backlog CLI to exactly OAB-2,OAB-3,OAB-4,OAB-5. Verified `backlog task view OAB-6 --plain` now reports 4 direct dependencies and raw task metadata lists exactly those four IDs. Verified OAB-6 remains To Do; OAB-7→OAB-6, OAB-8→OAB-7, OAB-9→OAB-6, OAB-10→OAB-8+OAB-9, OAB-11→OAB-10, OAB-12→OAB-11 remain unchanged; no cycles in displayed graph. OAB-5 remains In Progress with all five criteria unchecked. No source/full-suite run was needed for this metadata-only correction; prior complete source check evidence remains above.
 <!-- SECTION:NOTES:END -->

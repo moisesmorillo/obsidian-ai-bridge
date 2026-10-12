@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@Moises'
 created_date: '2026-10-12 13:17'
-updated_date: '2026-10-12 16:22'
+updated_date: '2026-10-12 16:34'
 labels:
   - F0
   - protocol
@@ -52,4 +52,6 @@ New local isolation blocker from final whole-branch F0-I1: Vitest declaration im
 F0-I1 correction attempt: parent bg_run b2d9de6b1 ran focused isolation test, both protocol tsc projects, runtime build, frozen install, then root check. Actual result: focused runtime-isolation tests 2/2 passed (1.22s); runtime and tooling TypeScript projects both passed; runtime build passed; frozen install made no changes. Root check STOPPED at Biome because formatting/import ordering errors occurred only in new packages/protocol/test/runtime-isolation.test.ts and packages/protocol/tsconfig.tools.json; root test/typecheck/build stages did NOT run. Applied only Biome safe formatting to those two files, no rule or test logic changes. Re-request full frozen-install/root check; no full GREEN claimed until parent logs. Remote CI criterion #3 remains unchecked; OAB-2 remains In Progress; F0-M1/M2 doc deferrals untouched.
 
 F0-I1 validation completed by parent bg_run b29bffd2d after Biome-only formatting of runtime-isolation.test.ts and tsconfig.tools.json. Exact actual summary: `bun install --frozen-lockfile` exit 0/no lock changes; `WRANGLER_SEND_METRICS=false bun run check` exit 0; Biome 29 files clean; all workspace typechecks passed including protocol runtime and tooling projects; tests 33 total passed (protocol 26 = 14 path + 10 ETag + 2 isolation, Worker 5, plugin 2); all builds passed (protocol runtime tsc, plugin artifact, Worker dry-run without bindings); `git diff --check` passed. This follows verified RED baeea4d5d and focused GREEN plus two-project typechecks/runtime build from b2d9de6b1, whose root pipeline stopped at Biome before global formatting. No source behavior/config/test logic changed after b29bffd2d validation; only this OAB-2 note update follows. CI criterion #3 remains unchecked pending remote CI; task remains In Progress and no criteria were checked. F0-M1/M2 are still intentionally deferred and untouched.
+
+Final local approval: whole-branch Sol review2bed378c inspected53 files and found one Important F0-I1 ambient Node type leak; fix281cbb5 plus fresh scoped reviewe327d984 resolved it with no introduced breakage. Parent final exact-head acceptance b5be7d60a at281cbb58a14def8083b9cd837bcd156c622d400d exited0: frozen lock unchanged; Biome29 files; all workspace typechecks including runtime+tools protocol projects;33 tests(protocol26/Worker5/plugin2); all local builds and clean diff/tree. Local source gate is complete again. Two documentation Minors remain explicitly nonblocking/deferred until next relevant seam changes; not marked fixed. Human branch-diff review still pending, remoteCI3 still unchecked and official task remains In Progress. No deployment, personal vault access, measured device compatibility, full product acceptance or F0 completion claimed.
 <!-- SECTION:NOTES:END -->

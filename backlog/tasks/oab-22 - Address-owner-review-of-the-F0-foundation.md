@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@Moises'
 created_date: '2026-10-12 18:02'
-updated_date: '2026-10-12 22:20'
+updated_date: '2026-10-12 22:48'
 labels: []
 dependencies: []
 references:
@@ -72,4 +72,6 @@ Additional alias correction accepted: be21625ec3c4cd2fb19ddedcedf911276d1280e7, 
 All67-file whole review2dd5c2e2 and exact49test checkb733cf9e2 approved current hash implementation at48ee851. Final human pn-dcc6bc requested @ naming; Partly verdict: hash is standard Node package imports but not the requested convention. Owner explicitly authorized proceeding. No alias source changes yet; retained writer latestcbc7bc54 performs bounded preflight, long probes through parent runner. Human and remote-CI gates remain open.
 
 Controlled preflight b81e4718d valid: copied source has0hash/11at references, no native imports, public export unchanged. TS consumer without alias configuration fails6expected @protocol TS2307; same consumer with monorepo mappings passes; esbuild default and explicit producer tsconfig both pass. Earlier bb9ddb1c1 retained hash source and is invalid diagnostic history. Product docs15.1/15.3/F0 describe shared Bun-monorepo schemas, no independently published/config-free consumer guarantee. The prior extra plan fixture guarantee is explicitly superseded, not falsely claimed preserved: outside-monorepo raw-TS compilation requires alias configuration. No publication packaging added merely for that extra fixture; public package name/exports/signatures remain. Owner authorized @ correction and continuing; first write new RED, parent background checkpoints/review/human/remoteCI still required.
+
+Final requested @ correction accepted:84426bc4637fb4d6182084122906d0dbc7a52cc9, fresh independent review19ef847b spec/quality Approved with no findings. Parent full GREENb79f69d35: focused10/frozen123274unchanged/Biome37/allworkspace runtime/tooling TSC/49tests41protocol6realWorkers2plugin/alllocalbuildsWorker dry-run47.68KiBnobindings/diffclean. Shared relative root aliases and native Vite mappings work; all hash source aliases and package imports removed, no graph/version/dependency changes. Public API remains raw source package for configured monorepo consumers; config-free out-of-monorepo compiler limit explicitly documented in the implementation report/ruling, no standalone-publication guarantee invented. Historical hash plan/reviews retained. Final whole-branch integration re-review, fresh reviewed-head check and renewed human diff gate remain before publication; remote CI still required for OAB2/F0.
 <!-- SECTION:NOTES:END -->

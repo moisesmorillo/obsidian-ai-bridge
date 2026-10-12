@@ -1,5 +1,5 @@
-import { ETagPartsSchema, ETagSchema } from "../schemas/etag";
-import type { ETagParts } from "../types/etag";
+import { ETagPartsSchema, ETagSchema } from "#protocol/schemas/etag";
+import type { ETagParts } from "#protocol/types/etag";
 
 /** Formats a quoted tag; throws ZodError for an invalid epoch or revision. */
 export function formatETag(epoch: string, rev: number): string {

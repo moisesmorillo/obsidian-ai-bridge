@@ -1,7 +1,16 @@
 import { SELF } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
+import worker from "#worker/index";
 
 describe("default-deny Worker entry point", () => {
+	it("resolves the private workspace alias to the default-deny handler", async () => {
+		const response = await worker.fetch(
+			new Request("https://worker.invalid/unknown"),
+		);
+
+		expect(response.status).toBe(404);
+	});
+
 	it.each([
 		["GET", "/v1/vault"],
 		["GET", "/mcp"],

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatETag, parseETag } from "../src/index";
+import { formatETag, parseETag } from "#protocol/index";
 
 const epoch = "e".repeat(32);
 

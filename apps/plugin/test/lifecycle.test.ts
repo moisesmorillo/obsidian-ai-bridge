@@ -23,7 +23,7 @@ vi.mock("obsidian", () => ({
 }));
 
 import type { App, PluginManifest } from "obsidian";
-import AIBridgePlugin from "../src/main";
+import AIBridgePlugin from "#plugin/main";
 
 describe("AIBridgePlugin F0 lifecycle", () => {
 	beforeEach(() => host.calls.splice(0));

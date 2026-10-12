@@ -4,7 +4,9 @@
 		"lib": ["ES2022", "DOM"],
 		"types": [],
 		"paths": {
-			"obsidian": ["./node_modules/obsidian/obsidian.d.ts"]
+			"obsidian": ["./node_modules/obsidian/obsidian.d.ts"],
+			"#plugin/*": ["./src/*"],
+			"#plugin-tools/build": ["./build.ts"]
 		}
 	},
 	"include": ["src/**/*.ts"]

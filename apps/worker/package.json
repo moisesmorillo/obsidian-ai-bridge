@@ -2,6 +2,9 @@
 	"name": "@obsidian-ai-bridge/worker",
 	"private": true,
 	"type": "module",
+	"imports": {
+		"#worker/*": "./src/*.ts"
+	},
 	"scripts": {
 		"typecheck": "tsc --noEmit -p tsconfig.json",
 		"test": "vitest run",

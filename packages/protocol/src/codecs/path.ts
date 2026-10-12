@@ -1,4 +1,4 @@
-import { PathSchema } from "../schemas/path";
+import { PathSchema } from "#protocol/schemas/path";
 
 /** Normalizes a relative path; throws ZodError when it violates path constraints. */
 export function normalizePath(input: string): string {

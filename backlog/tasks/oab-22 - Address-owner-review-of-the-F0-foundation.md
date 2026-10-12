@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@Moises'
 created_date: '2026-10-12 18:02'
-updated_date: '2026-10-12 21:21'
+updated_date: '2026-10-12 21:49'
 labels: []
 dependencies: []
 references:
@@ -62,4 +62,6 @@ All nine owner annotation implementations mapped: 1 current immutable Action pin
 Final corrected whole-branch reviewdc2e391e approved65files/nofindings at438e221; fresh exact-headbc3c37519 passed40tests/allchecks/frozenunchanged/cleantree. Owner pn-23690c then requested one additional import-alias convention and selected all source/tests across the repo. Verified relative imports are present and protocol paths absent: confirmed maintenance convention gap, not functional bug; relative usage pre-existed and the schema split added nested imports. No source/config changes for aliases yet, no publication; previous final approval does not cover the new request.
 
 Alias plan pn-16fcc7 approved before source changes; names #protocol/*, #worker/*, #plugin/* and #plugin-tools/build, source/tests scope. Previous source438e221 exact full40test checkbc3c37519 is the baseline; no redundant baseline rerun. Parent-run TDD and actual installed toolchain compatibility remain required.
+
+Additional alias correction accepted: be21625ec3c4cd2fb19ddedcedf911276d1280e7, owner-approved plan pn-16fcc7, fresh task review7bb7dc53 spec/quality Approved with no findings. Parent complete GREENbb8d0167f: focused10 tests, frozen123/274 unchanged, Biome36files, all runtime/tooling typechecks,49tests(protocol41/realWorkers6/plugin2), local builds including Worker dry-run, diff clean. All40 prior cases retained plus9 alias cases. Native private package imports pair with TS paths; public consumer compiles/bundles/executes without private paths; relative value/type import policy diagnostics and allowed controls verified; compiler fixtures already copy actual package metadata; plugin tooling inherits aliases without leaking its roots/types into runtime. Initial invalid RED/harness failures remain history, separate editor diagnostic cause remains unproven, no suppression. Renew final whole-branch review/exact-head verification/human diff gate before publication; OAB22 and OAB2 remain In Progress.
 <!-- SECTION:NOTES:END -->

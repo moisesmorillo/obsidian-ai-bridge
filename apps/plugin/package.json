@@ -2,10 +2,6 @@
 	"name": "@obsidian-ai-bridge/plugin",
 	"private": true,
 	"type": "module",
-	"imports": {
-		"#plugin/*": "./src/*.ts",
-		"#plugin-tools/build": "./build.ts"
-	},
 	"scripts": {
 		"test": "vitest run",
 		"typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.tools.json",

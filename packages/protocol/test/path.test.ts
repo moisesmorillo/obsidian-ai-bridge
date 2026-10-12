@@ -1,5 +1,5 @@
+import { normalizePath, PathSchema, pathKey } from "@protocol/index";
 import { describe, expect, it } from "vitest";
-import { normalizePath, PathSchema, pathKey } from "#protocol/index";
 
 describe("path identity", () => {
 	it("normalizes Unicode to NFC and preserves casing", () => {

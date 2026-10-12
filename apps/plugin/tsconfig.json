@@ -1,13 +1,8 @@
 {
-	"extends": "../../tsconfig.base.json",
+	"extends": "../../tsconfig.aliases.json",
 	"compilerOptions": {
 		"lib": ["ES2022", "DOM"],
-		"types": [],
-		"paths": {
-			"obsidian": ["./node_modules/obsidian/obsidian.d.ts"],
-			"#plugin/*": ["./src/*"],
-			"#plugin-tools/build": ["./build.ts"]
-		}
+		"types": []
 	},
 	"include": ["src/**/*.ts"]
 }

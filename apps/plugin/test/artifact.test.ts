@@ -1,8 +1,8 @@
 import { existsSync, readFileSync } from "node:fs";
 import { builtinModules } from "node:module";
 import { resolve } from "node:path";
+import { buildPlugin } from "@plugin-tools/build";
 import { describe, expect, it } from "vitest";
-import { buildPlugin } from "#plugin-tools/build";
 
 const outputDirectory = resolve(import.meta.dirname, "../dist");
 

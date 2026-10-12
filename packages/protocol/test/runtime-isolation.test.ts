@@ -48,6 +48,10 @@ async function withFixture<T>(
 			join(repositoryRoot, "tsconfig.base.json"),
 			join(root, "tsconfig.base.json"),
 		);
+		await cp(
+			join(repositoryRoot, "tsconfig.aliases.json"),
+			join(root, "tsconfig.aliases.json"),
+		);
 		await cp(join(packageRoot, "src"), join(fixturePackage, "src"), {
 			recursive: true,
 		});

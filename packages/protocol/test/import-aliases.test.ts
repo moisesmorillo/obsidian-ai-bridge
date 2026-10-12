@@ -1,6 +1,15 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
-import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import {
+	cp,
+	mkdir,
+	mkdtemp,
+	readdir,
+	readFile,
+	rm,
+	symlink,
+	writeFile,
+} from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -60,47 +69,39 @@ const pluginTsconfig = readJson<TsConfig>(
 const pluginToolsTsconfig = readJson<TsConfig>(
 	new URL("../../../apps/plugin/tsconfig.tools.json", import.meta.url),
 );
+const sharedTsconfigUrl = new URL(
+	"../../../tsconfig.aliases.json",
+	import.meta.url,
+);
+const sharedTsconfig = existsSync(fileURLToPath(sharedTsconfigUrl))
+	? readJson<TsConfig>(sharedTsconfigUrl)
+	: undefined;
 const biome = readJson<BiomeConfig>(
 	new URL("../../../biome.json", import.meta.url),
 );
 
-const aliases = [
+const workspaces = [
 	{
 		name: "protocol",
 		packageJson: protocolPackage,
 		tsconfig: protocolTsconfig,
-		paths: { "#protocol/*": ["./src/*"] },
-		imports: { "#protocol/*": "./src/*.ts" },
 	},
-	{
-		name: "worker",
-		packageJson: workerPackage,
-		tsconfig: workerTsconfig,
-		paths: { "#worker/*": ["./src/*"] },
-		imports: { "#worker/*": "./src/*.ts" },
-	},
-	{
-		name: "plugin",
-		packageJson: pluginPackage,
-		tsconfig: pluginTsconfig,
-		paths: {
-			obsidian: ["./node_modules/obsidian/obsidian.d.ts"],
-			"#plugin/*": ["./src/*"],
-			"#plugin-tools/build": ["./build.ts"],
-		},
-		imports: {
-			"#plugin/*": "./src/*.ts",
-			"#plugin-tools/build": "./build.ts",
-		},
-	},
+	{ name: "worker", packageJson: workerPackage, tsconfig: workerTsconfig },
+	{ name: "plugin", packageJson: pluginPackage, tsconfig: pluginTsconfig },
 ];
-
+const expectedSharedPaths = {
+	"@protocol/*": ["./packages/protocol/src/*"],
+	"@worker/*": ["./apps/worker/src/*"],
+	"@plugin/*": ["./apps/plugin/src/*"],
+	"@plugin-tools/build": ["./apps/plugin/build.ts"],
+	obsidian: ["./apps/plugin/node_modules/obsidian/obsidian.d.ts"],
+};
 const relativeImportRule = biome.linter?.rules?.style?.noRestrictedImports;
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const repositoryRoot = resolve(packageRoot, "../..");
 
-function run(command: string, args: string[], cwd: string, input?: string) {
-	return spawnSync(command, args, { cwd, encoding: "utf8", input });
+function run(command: string, args: string[], cwd: string) {
+	return spawnSync(command, args, { cwd, encoding: "utf8" });
 }
 
 async function withTemporaryDirectory<T>(
@@ -115,14 +116,86 @@ async function withTemporaryDirectory<T>(
 	}
 }
 
+async function rewriteCopiedProtocolAliases(directory: string): Promise<void> {
+	for (const entry of await readdir(directory, { withFileTypes: true })) {
+		const path = join(directory, entry.name);
+		if (entry.isDirectory()) {
+			await rewriteCopiedProtocolAliases(path);
+		} else if (entry.isFile() && path.endsWith(".ts")) {
+			const contents = await readFile(path, "utf8");
+			await writeFile(path, contents.replaceAll("#protocol/", "@protocol/"));
+		}
+	}
+}
+
+async function createPublicConsumerFixture(root: string): Promise<string> {
+	const fixturePackage = join(root, "producer/packages/protocol");
+	await mkdir(fixturePackage, { recursive: true });
+	await cp(join(packageRoot, "src"), join(fixturePackage, "src"), {
+		recursive: true,
+	});
+	await rewriteCopiedProtocolAliases(join(fixturePackage, "src"));
+	await cp(
+		join(packageRoot, "package.json"),
+		join(fixturePackage, "package.json"),
+	);
+	await symlink(
+		join(packageRoot, "node_modules"),
+		join(fixturePackage, "node_modules"),
+		"dir",
+	);
+
+	const packageJsonPath = join(fixturePackage, "package.json");
+	const packageJson = JSON.parse(
+		await readFile(packageJsonPath, "utf8"),
+	) as PackageConfig;
+	delete packageJson.imports;
+	await writeFile(packageJsonPath, JSON.stringify(packageJson, null, 2));
+
+	const moduleDirectory = join(root, "node_modules/@obsidian-ai-bridge");
+	await mkdir(moduleDirectory, { recursive: true });
+	await symlink(fixturePackage, join(moduleDirectory, "protocol"), "dir");
+	await writeFile(
+		join(root, "consumer.ts"),
+		'import { PathSchema, formatETag, parseETag } from "@obsidian-ai-bridge/protocol";\n' +
+			'const path = PathSchema.parse("Notes/example.md");\n' +
+			'if (path !== "Notes/example.md") throw new Error("Unexpected normalized path");\n' +
+			'const epoch = "a".repeat(32);\n' +
+			"const tag = formatETag(epoch, 1);\n" +
+			'if (tag !== String.fromCharCode(34) + epoch + ".1" + String.fromCharCode(34)) throw new Error("Unexpected formatted ETag");\n' +
+			"const parsed = parseETag(tag);\n" +
+			'if (parsed.epoch !== epoch || parsed.rev !== 1) throw new Error("Unexpected parsed ETag");\n',
+	);
+	return fixturePackage;
+}
+
+function makeConsumerConfig(withSharedAliases: boolean) {
+	return {
+		...(withSharedAliases ? { extends: "../tsconfig.aliases.json" } : {}),
+		compilerOptions: {
+			target: "ES2022",
+			module: "ESNext",
+			moduleResolution: "Bundler",
+			strict: true,
+			noEmit: true,
+			types: [],
+		},
+		include: ["consumer.ts"],
+	};
+}
+
 describe("workspace import aliases", () => {
-	it.each(aliases)(
-		"keeps $name TypeScript and native package mappings paired",
+	it.each(workspaces)(
+		"inherits exact shared @ aliases for $name",
 		(workspace) => {
-			const compilerOptions = workspace.tsconfig.compilerOptions ?? {};
-			expect(compilerOptions.baseUrl).toBeUndefined();
-			expect(compilerOptions.paths).toEqual(workspace.paths);
-			expect(workspace.packageJson.imports).toEqual(workspace.imports);
+			expect(workspace.tsconfig.extends).toBe("../../tsconfig.aliases.json");
+			expect(workspace.packageJson.imports).toBeUndefined();
+			expect(sharedTsconfig).toBeDefined();
+			expect(sharedTsconfig?.extends).toBe("./tsconfig.base.json");
+			expect(sharedTsconfig?.compilerOptions?.baseUrl).toBeUndefined();
+			expect(sharedTsconfig?.compilerOptions?.paths).toEqual(
+				expectedSharedPaths,
+			);
 		},
 	);
 
@@ -130,7 +203,7 @@ describe("workspace import aliases", () => {
 		expect(protocolPackage.exports?.["."]).toBe("./src/index.ts");
 	});
 
-	it("preserves plugin tooling roots and inherits its source aliases", () => {
+	it("preserves plugin tooling roots and inherits workspace aliases", () => {
 		expect(pluginToolsTsconfig.extends).toBe("./tsconfig.json");
 		expect(pluginToolsTsconfig.include).toEqual([
 			"build.ts",
@@ -143,9 +216,6 @@ describe("workspace import aliases", () => {
 			noEmit: true,
 		});
 		expect(pluginTsconfig.compilerOptions?.types).toEqual([]);
-		expect(pluginTsconfig.compilerOptions?.paths?.obsidian).toEqual([
-			"./node_modules/obsidian/obsidian.d.ts",
-		]);
 	});
 
 	it("restricts relative module imports", () => {
@@ -193,14 +263,15 @@ describe("workspace import aliases", () => {
 			const allowedPath = join(root, "allowed.ts");
 			await writeFile(
 				allowedPath,
-				'import worker from "#worker/index"; import { readFileSync } from "node:fs"; import { formatETag } from "@obsidian-ai-bridge/protocol"; void worker; void readFileSync; void formatETag;',
+				'import worker from "@worker/index"; import { readFileSync } from "node:fs"; import { formatETag } from "@obsidian-ai-bridge/protocol"; void worker; void readFileSync; void formatETag;',
 			);
 			const allowed = lint(allowedPath);
 			expect(allowed.status, allowed.stdout + allowed.stderr).toBe(0);
 		});
 	});
 
-	it("typechecks and bundles a raw public protocol consumer without private alias paths", async () => {
+	it("compiles, bundles, and executes a consumer using the actual shared monorepo aliases", async () => {
+		expect(sharedTsconfig).toBeDefined();
 		const compiler = join(repositoryRoot, "node_modules/.bin/tsc");
 		const esbuild = join(
 			repositoryRoot,
@@ -210,48 +281,45 @@ describe("workspace import aliases", () => {
 		expect(existsSync(esbuild)).toBe(true);
 
 		await withTemporaryDirectory(".protocol-public-consumer-", async (root) => {
-			const moduleDirectory = join(root, "node_modules/@obsidian-ai-bridge");
-			await mkdir(moduleDirectory, { recursive: true });
-			await symlink(packageRoot, join(moduleDirectory, "protocol"), "dir");
-			await writeFile(
-				join(root, "consumer.ts"),
-				'import { PathSchema, formatETag, parseETag } from "@obsidian-ai-bridge/protocol";\nconst path = PathSchema.parse("Notes/example.md");\nif (path !== "Notes/example.md") throw new Error("Unexpected normalized path");\nconst epoch = "a".repeat(32);\nconst tag = formatETag(epoch, 1);\nif (tag !== String.fromCharCode(34) + epoch + ".1" + String.fromCharCode(34)) throw new Error("Unexpected formatted ETag");\nconst parsed = parseETag(tag);\nif (parsed.epoch !== epoch || parsed.rev !== 1) throw new Error("Unexpected parsed ETag");\n',
+			await createPublicConsumerFixture(root);
+			const configPath = join(root, "tsconfig.json");
+			await writeFile(configPath, JSON.stringify(makeConsumerConfig(false)));
+			const configFreeResult = run(
+				compiler,
+				["--noEmit", "--pretty", "false", "-p", configPath],
+				root,
 			);
-			const consumerConfig = {
-				compilerOptions: {
-					target: "ES2022",
-					module: "ESNext",
-					moduleResolution: "Bundler",
-					strict: true,
-					noEmit: true,
-					types: [],
-				},
-				include: ["consumer.ts"],
-			};
-			expect(consumerConfig.compilerOptions).not.toHaveProperty("paths");
-			await writeFile(
-				join(root, "tsconfig.json"),
-				JSON.stringify(consumerConfig),
-			);
+			const configFreeErrors =
+				`${configFreeResult.stdout}\n${configFreeResult.stderr}`
+					.split(/\r?\n/)
+					.filter((line) => /error TS\d+:/.test(line));
+			expect(configFreeResult.status).not.toBe(0);
+			expect(configFreeErrors.length).toBeGreaterThan(0);
+			expect(
+				configFreeErrors.every((line) =>
+					line.includes("Cannot find module '@protocol/"),
+				),
+			).toBe(true);
 
+			await writeFile(configPath, JSON.stringify(makeConsumerConfig(true)));
 			const typecheck = run(
 				compiler,
 				["--noEmit", "--pretty", "false", "-p", join(root, "tsconfig.json")],
 				root,
 			);
 			expect(typecheck.status, typecheck.stdout + typecheck.stderr).toBe(0);
+			const bundlePath = join(root, "consumer.js");
 			const bundle = run(
 				esbuild,
 				[
 					"consumer.ts",
 					"--bundle",
 					"--platform=browser",
-					`--outfile=${join(root, "consumer.js")}`,
+					`--outfile=${bundlePath}`,
 				],
 				root,
 			);
 			expect(bundle.status, bundle.stdout + bundle.stderr).toBe(0);
-			const bundlePath = join(root, "consumer.js");
 			expect(existsSync(bundlePath)).toBe(true);
 			const execution = run(process.execPath, [bundlePath], root);
 			expect(execution.status, execution.stdout + execution.stderr).toBe(0);

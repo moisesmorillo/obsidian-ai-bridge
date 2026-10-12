@@ -1,12 +1,12 @@
+import * as etagCodecs from "@protocol/codecs/etag";
+import * as pathCodecs from "@protocol/codecs/path";
+import * as protocol from "@protocol/index";
+import * as etagSchemas from "@protocol/schemas/etag";
+import { ETagPartsSchema } from "@protocol/schemas/etag";
+import * as pathSchemas from "@protocol/schemas/path";
+import type { ETagParts } from "@protocol/types/etag";
+import type { Path } from "@protocol/types/path";
 import { describe, expect, it } from "vitest";
-import * as etagCodecs from "#protocol/codecs/etag";
-import * as pathCodecs from "#protocol/codecs/path";
-import * as protocol from "#protocol/index";
-import * as etagSchemas from "#protocol/schemas/etag";
-import { ETagPartsSchema } from "#protocol/schemas/etag";
-import * as pathSchemas from "#protocol/schemas/path";
-import type { ETagParts } from "#protocol/types/etag";
-import type { Path } from "#protocol/types/path";
 
 const pathTypecheck: Path = pathSchemas.PathSchema.parse("Notes/example.md");
 const etagPartsTypecheck: ETagParts = ETagPartsSchema.parse({

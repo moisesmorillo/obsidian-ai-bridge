@@ -8,11 +8,13 @@ The F0 foundation is under implementation. The Worker entry point has no API rou
 
 ## Local development
 
-Use Bun 1.4.3 (the current foundation's pinned toolchain):
+Install the repository-pinned Bun and Node versions with mise:
 
 ```sh
-bun install --frozen-lockfile
-bun run check
+mise trust
+mise install
+mise exec -- bun install --frozen-lockfile
+mise exec -- bun run check
 ```
 
 `bun run check` runs Biome formatting/lint checks, TypeScript checks for all workspaces, Vitest suites, and package builds. It includes a Wrangler dry-run build only; it does not deploy or modify Cloudflare resources. The current workspace responsibilities are:

@@ -6,9 +6,9 @@
 		".": "./src/index.ts"
 	},
 	"scripts": {
-		"typecheck": "tsc --noEmit",
+		"typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.tools.json",
 		"test": "vitest run --passWithNoTests=false",
-		"build": "tsc --noEmit"
+		"build": "tsc --noEmit -p tsconfig.json"
 	},
 	"dependencies": {
 		"zod": "4.1.5"

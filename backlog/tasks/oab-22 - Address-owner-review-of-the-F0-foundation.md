@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@Moises'
 created_date: '2026-10-12 18:02'
-updated_date: '2026-10-12 21:49'
+updated_date: '2026-10-12 22:20'
 labels: []
 dependencies: []
 references:
@@ -38,6 +38,10 @@ APPROVED in Plannotator pn-d3dfc4: docs/superpowers/plans/2026-10-12-f0-review-c
 Additional owner review pn-23690c: aliases throughout source/tests, confirmed scope in conversation. Pending plan approval: docs/superpowers/plans/2026-10-12-workspace-import-aliases.md. One bounded alias integration task; retain the selected subagent-driven method, exact dependency versions, public package exports, real Workers and browser plugin evidence. No implementation until plan gate.
 
 Owner approved alias integration plan in pn-16fcc7. Execute its one task using preserved subagent-driven method, native private package imports and matching tsconfig paths, exact existing dependencies, consumer/isolation/runtime regressions, independent review and renewed final human gate.
+
+Owner pn-dcc6bc supersedes hash-prefix naming with @protocol/*, @worker/*, @plugin/* and @plugin-tools/build; conversation authorizes continuing without another naming questionnaire. Retained implementer first verifies actual existing toolchain resolution and public raw-TS consumer implications read-only, then parent records the minimal verified integration strategy before test-first correction. Preserve prior approved plan as history, no blind package imports key rename, dependency sweep or invented independent-consumer guarantee.
+
+Verified @ resolution ruling b81e4718d: full @protocol/*, @worker/*, @plugin/*, @plugin-tools/build; remove hash native imports without fake @ package imports. Canonical tsconfig.aliases.json extends neutral base, workspaces retain platform/types/include and tooling one-way inheritance. Existing Vite7 needs explicit native alias resolver derived from shared config; Bun/esbuild use actual TS config, Wrangler only verified supported resolution. No new dependency/version or protocol publication build. Updated contract RED before implementation, actual public monorepo consumer inherits shared alias config, unconfigured-consumer negative control verifies only unresolved producer aliases; compiler fixtures mirror actual root config and metadata.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -64,4 +68,8 @@ Final corrected whole-branch reviewdc2e391e approved65files/nofindings at438e221
 Alias plan pn-16fcc7 approved before source changes; names #protocol/*, #worker/*, #plugin/* and #plugin-tools/build, source/tests scope. Previous source438e221 exact full40test checkbc3c37519 is the baseline; no redundant baseline rerun. Parent-run TDD and actual installed toolchain compatibility remain required.
 
 Additional alias correction accepted: be21625ec3c4cd2fb19ddedcedf911276d1280e7, owner-approved plan pn-16fcc7, fresh task review7bb7dc53 spec/quality Approved with no findings. Parent complete GREENbb8d0167f: focused10 tests, frozen123/274 unchanged, Biome36files, all runtime/tooling typechecks,49tests(protocol41/realWorkers6/plugin2), local builds including Worker dry-run, diff clean. All40 prior cases retained plus9 alias cases. Native private package imports pair with TS paths; public consumer compiles/bundles/executes without private paths; relative value/type import policy diagnostics and allowed controls verified; compiler fixtures already copy actual package metadata; plugin tooling inherits aliases without leaking its roots/types into runtime. Initial invalid RED/harness failures remain history, separate editor diagnostic cause remains unproven, no suppression. Renew final whole-branch review/exact-head verification/human diff gate before publication; OAB22 and OAB2 remain In Progress.
+
+All67-file whole review2dd5c2e2 and exact49test checkb733cf9e2 approved current hash implementation at48ee851. Final human pn-dcc6bc requested @ naming; Partly verdict: hash is standard Node package imports but not the requested convention. Owner explicitly authorized proceeding. No alias source changes yet; retained writer latestcbc7bc54 performs bounded preflight, long probes through parent runner. Human and remote-CI gates remain open.
+
+Controlled preflight b81e4718d valid: copied source has0hash/11at references, no native imports, public export unchanged. TS consumer without alias configuration fails6expected @protocol TS2307; same consumer with monorepo mappings passes; esbuild default and explicit producer tsconfig both pass. Earlier bb9ddb1c1 retained hash source and is invalid diagnostic history. Product docs15.1/15.3/F0 describe shared Bun-monorepo schemas, no independently published/config-free consumer guarantee. The prior extra plan fixture guarantee is explicitly superseded, not falsely claimed preserved: outside-monorepo raw-TS compilation requires alias configuration. No publication packaging added merely for that extra fixture; public package name/exports/signatures remain. Owner authorized @ correction and continuing; first write new RED, parent background checkpoints/review/human/remoteCI still required.
 <!-- SECTION:NOTES:END -->

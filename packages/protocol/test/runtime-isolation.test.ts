@@ -92,7 +92,7 @@ describe("protocol runtime type isolation", () => {
 	it("rejects Node and Bun globals while allowing web-standard source globals", () => {
 		const identifiers = diagnosticsForOverlay(
 			"tsconfig.json",
-			"src/path.ts",
+			"src/index.ts",
 			[
 				"const __processProbe = process.version;",
 				'const __bufferProbe = Buffer.from("x").toString();',

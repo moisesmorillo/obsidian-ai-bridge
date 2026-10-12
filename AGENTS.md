@@ -10,6 +10,13 @@ Never: touch the owner's personal vault; deploy, modify or delete Cloudflare res
 
 Conventions: English in the repo; Conventional Commits; Biome formatting; Zod schemas in `packages/protocol` are the only place protocol shapes are defined.
 
+Maintainability and documentation rules:
+- Keep contracts and public API documentation outside transport handlers; document future API operations separately from their handlers without inventing operations before they exist.
+- Keep Zod schemas canonical and derive TypeScript contract types from them.
+- Preserve dependency direction: transport may depend on application; application remains independent of platform SDKs; infrastructure sits behind only the small ports actually needed; composition code wires dependencies only.
+- Do not create empty layers or one interface per function. A review should ask whether a contract/documentation-only change improperly forces unrelated implementation edits.
+- Use repo-relative or `~/` paths in durable documentation and `$HOME` in shell examples; never hardcode an owner's personal home directory.
+
 History: this repository was restarted from scratch on 2026-10-11. Any agent memory, note or document dated before that describes the legacy codebase and does not apply.
 
 Human review: when the `plannotator` tool is available (Pi), open the plan file with it (`annotate`) right after writing a plan and wait for the feedback message before implementing; before finishing a branch, open a `review` of the branch diff against `main` and address every annotation before the pull request. Without the tool, present the plan and the diff in the conversation instead.

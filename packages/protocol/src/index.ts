@@ -1,4 +1,6 @@
-export type { ETagParts } from "./etag";
-export { EpochSchema, ETagSchema, formatETag, parseETag } from "./etag";
-export type { Path } from "./path";
-export { normalizePath, PathSchema, pathKey } from "./path";
+export { formatETag, parseETag } from "./codecs/etag";
+export { normalizePath, pathKey } from "./codecs/path";
+export { EpochSchema, ETagSchema } from "./schemas/etag";
+export { PathSchema } from "./schemas/path";
+export type { ETagParts } from "./types/etag";
+export type { Path } from "./types/path";

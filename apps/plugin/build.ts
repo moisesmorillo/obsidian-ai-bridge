@@ -6,6 +6,7 @@ import { type BuildResult, build } from "esbuild";
 const packageDirectory = fileURLToPath(new URL(".", import.meta.url));
 const outputDirectory = resolve(packageDirectory, "dist");
 
+/** Builds the browser-targeted CommonJS plugin bundle and copies its manifest. */
 export async function buildPlugin(): Promise<BuildResult> {
 	await mkdir(outputDirectory, { recursive: true });
 	const result = await build({

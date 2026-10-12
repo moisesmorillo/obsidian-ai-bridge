@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+/** Checks path byte length, segment count, separators, and control characters. */
 function isValidPath(path: string): boolean {
 	const segments = path.split("/");
 	return (
@@ -13,16 +14,8 @@ function isValidPath(path: string): boolean {
 	);
 }
 
+/** Validates relative paths, normalizing Unicode to NFC before 512-byte/32-segment checks. */
 export const PathSchema = z
 	.string()
 	.transform((path) => path.normalize("NFC"))
 	.pipe(z.string().refine(isValidPath));
-export type Path = z.infer<typeof PathSchema>;
-
-export function normalizePath(input: string): string {
-	return PathSchema.parse(input);
-}
-
-export function pathKey(input: string): string {
-	return PathSchema.parse(input).toLowerCase();
-}

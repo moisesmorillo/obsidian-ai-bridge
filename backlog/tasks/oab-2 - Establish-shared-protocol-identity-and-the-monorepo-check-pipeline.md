@@ -1,11 +1,11 @@
 ---
 id: OAB-2
 title: Establish shared protocol identity and the monorepo check pipeline
-status: In Progress
+status: Done
 assignee:
   - '@Moises'
 created_date: '2026-10-12 13:17'
-updated_date: '2026-10-12 16:34'
+updated_date: '2026-10-12 23:12'
 labels:
   - F0
   - protocol
@@ -27,7 +27,7 @@ F0 needs executable contracts shared by all runtimes before backend or plugin be
 <!-- AC:BEGIN -->
 - [x] #1 Bun workspaces expose packages/protocol and can add apps/worker and apps/plugin without duplicate protocol definitions.
 - [x] #2 Tests prove NFC path normalization, byte and segment limits, canonical lowercase keys, random-generation ETag syntax and unsafe revision rejection.
-- [ ] #3 A frozen-lockfile install and bun run check pass locally and in CI; formatting, type errors and failed tests make the check fail.
+- [x] #3 A frozen-lockfile install and bun run check pass locally and in CI; formatting, type errors and failed tests make the check fail.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -54,4 +54,12 @@ F0-I1 correction attempt: parent bg_run b2d9de6b1 ran focused isolation test, bo
 F0-I1 validation completed by parent bg_run b29bffd2d after Biome-only formatting of runtime-isolation.test.ts and tsconfig.tools.json. Exact actual summary: `bun install --frozen-lockfile` exit 0/no lock changes; `WRANGLER_SEND_METRICS=false bun run check` exit 0; Biome 29 files clean; all workspace typechecks passed including protocol runtime and tooling projects; tests 33 total passed (protocol 26 = 14 path + 10 ETag + 2 isolation, Worker 5, plugin 2); all builds passed (protocol runtime tsc, plugin artifact, Worker dry-run without bindings); `git diff --check` passed. This follows verified RED baeea4d5d and focused GREEN plus two-project typechecks/runtime build from b2d9de6b1, whose root pipeline stopped at Biome before global formatting. No source behavior/config/test logic changed after b29bffd2d validation; only this OAB-2 note update follows. CI criterion #3 remains unchecked pending remote CI; task remains In Progress and no criteria were checked. F0-M1/M2 are still intentionally deferred and untouched.
 
 Final local approval: whole-branch Sol review2bed378c inspected53 files and found one Important F0-I1 ambient Node type leak; fix281cbb5 plus fresh scoped reviewe327d984 resolved it with no introduced breakage. Parent final exact-head acceptance b5be7d60a at281cbb58a14def8083b9cd837bcd156c622d400d exited0: frozen lock unchanged; Biome29 files; all workspace typechecks including runtime+tools protocol projects;33 tests(protocol26/Worker5/plugin2); all local builds and clean diff/tree. Local source gate is complete again. Two documentation Minors remain explicitly nonblocking/deferred until next relevant seam changes; not marked fixed. Human branch-diff review still pending, remoteCI3 still unchecked and official task remains In Progress. No deployment, personal vault access, measured device compatibility, full product acceptance or F0 completion claimed.
+
+Remote criterion now VERIFIED: PR3 https://github.com/moisesmorillo/obsidian-ai-bridge/pull/3, push CI https://github.com/moisesmorillo/obsidian-ai-bridge/actions/runs/38320649808 succeeded on exact d018bc80d517aa6156b9a3aade60d8c8c9cdacf3; PR CI https://github.com/moisesmorillo/obsidian-ai-bridge/actions/runs/38320650953 succeeded on merge preview e33d6e80401ca64b2d8393eaf45631ff83d37661 (d018 into f4eb1ff). Actual logs confirm mise2026.10.8/Bun1.4.3/Node24.21.0, frozen125-package installation, Biome37, every configured workspace typecheck,49tests41protocol6realWorkers2plugin, all local builds and Worker dry-run47.68KiB/no bindings. Local exact-head checkb2782df06 and independent final re-review6cc5bea1 passed; owner pn-548d61 approved diff. Prior format/type/test negative probes are recorded above; remote success is actual evidence, not inferred from local results. All F0 task criteria are satisfied; this does not qualify product44ACs, F1, devices, deployment or merge.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Established canonical shared protocol identity, frozen Bun workspace checks and read-only CI; maintained source-only runtime/tooling isolation and configured @ alias resolution. Verified path/ETag contracts, missing-global/leaky controls, real Worker and browser plugin integration, local and remote49-test checks. Accepted independent reviews and owner pn-548d61; PR3 published, remote runs38320649808 and38320650953 succeeded. Bounded F0 foundation complete; later delivery gates remain deferred.
+<!-- SECTION:FINAL_SUMMARY:END -->

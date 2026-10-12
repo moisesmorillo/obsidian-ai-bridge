@@ -1,11 +1,11 @@
 ---
 id: OAB-22
 title: Address owner review of the F0 foundation
-status: In Progress
+status: Done
 assignee:
   - '@Moises'
 created_date: '2026-10-12 18:02'
-updated_date: '2026-10-12 22:48'
+updated_date: '2026-10-12 23:12'
 labels: []
 dependencies: []
 references:
@@ -22,12 +22,12 @@ Owner review pn-ffdc61 found stale Action and tooling selections, missing useful
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 CI and local tools use one mise configuration with exact versions, and Actions use immutable release commit pins.
-- [ ] #2 Annotated root and plugin dependencies use verified current stable versions; required TypeScript and Workers test integration migrations preserve all existing behavior and runtime isolation.
-- [ ] #3 Protocol contracts, inferred types and their public documentation are independently editable from codecs; public exports and path/ETag behavior remain compatible.
-- [ ] #4 Useful TSDoc covers the annotated public declarations and inert plugin/Worker intent; AGENTS.md records operational lightweight layer rules without empty layers or duplicate shapes.
-- [ ] #5 Fresh bun run check and frozen installation pass; independent review and human diff review close the corrections before publication.
-- [ ] #6 Owner-requested workspace-local import aliases replace relative module imports throughout source and tests, resolve in TypeScript and real test/build runtimes, and preserve public package boundaries and runtime isolation.
+- [x] #1 CI and local tools use one mise configuration with exact versions, and Actions use immutable release commit pins.
+- [x] #2 Annotated root and plugin dependencies use verified current stable versions; required TypeScript and Workers test integration migrations preserve all existing behavior and runtime isolation.
+- [x] #3 Protocol contracts, inferred types and their public documentation are independently editable from codecs; public exports and path/ETag behavior remain compatible.
+- [x] #4 Useful TSDoc covers the annotated public declarations and inert plugin/Worker intent; AGENTS.md records operational lightweight layer rules without empty layers or duplicate shapes.
+- [x] #5 Fresh bun run check and frozen installation pass; independent review and human diff review close the corrections before publication.
+- [x] #6 Owner-requested workspace-local import aliases replace relative module imports throughout source and tests, resolve in TypeScript and real test/build runtimes, and preserve public package boundaries and runtime isolation.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -74,4 +74,12 @@ All67-file whole review2dd5c2e2 and exact49test checkb733cf9e2 approved current 
 Controlled preflight b81e4718d valid: copied source has0hash/11at references, no native imports, public export unchanged. TS consumer without alias configuration fails6expected @protocol TS2307; same consumer with monorepo mappings passes; esbuild default and explicit producer tsconfig both pass. Earlier bb9ddb1c1 retained hash source and is invalid diagnostic history. Product docs15.1/15.3/F0 describe shared Bun-monorepo schemas, no independently published/config-free consumer guarantee. The prior extra plan fixture guarantee is explicitly superseded, not falsely claimed preserved: outside-monorepo raw-TS compilation requires alias configuration. No publication packaging added merely for that extra fixture; public package name/exports/signatures remain. Owner authorized @ correction and continuing; first write new RED, parent background checkpoints/review/human/remoteCI still required.
 
 Final requested @ correction accepted:84426bc4637fb4d6182084122906d0dbc7a52cc9, fresh independent review19ef847b spec/quality Approved with no findings. Parent full GREENb79f69d35: focused10/frozen123274unchanged/Biome37/allworkspace runtime/tooling TSC/49tests41protocol6realWorkers2plugin/alllocalbuildsWorker dry-run47.68KiBnobindings/diffclean. Shared relative root aliases and native Vite mappings work; all hash source aliases and package imports removed, no graph/version/dependency changes. Public API remains raw source package for configured monorepo consumers; config-free out-of-monorepo compiler limit explicitly documented in the implementation report/ruling, no standalone-publication guarantee invented. Historical hash plan/reviews retained. Final whole-branch integration re-review, fresh reviewed-head check and renewed human diff gate remain before publication; remote CI still required for OAB2/F0.
+
+Final acceptance: all six criteria verified. AC1 actual remote mise/pinned-Action setup succeeded; AC2 requested upstream versions and necessary nativeTS7/Workers integration are independently reviewed and execute in CI; AC3/4 schema/type/codec/reference-identity and useful declaration/lifecycle documentation accepted by task1 d54af9eb plus final review; AC5 exact-head local checkb2782df06, task reviews0d51816d/19ef847b, whole-branch integration6cc5bea1 and owner pn-548d61 approved BEFORE publication; AC6 actual shared @ maps/public API/consumer/isolation/native runtime checks pass, no hash package imports. PR3 https://github.com/moisesmorillo/obsidian-ai-bridge/pull/3; real remote push38320649808 and PR38320650953 both succeeded: frozen install/Biome37/allconfiguredTSC/49tests/alllocalbuilds/no deployment. Current-source head d018bc80d517aa6156b9a3aade60d8c8c9cdacf3 is exact push checkout; PR checkout is derived merge preview e33d6e8. This task closure changes Backlog metadata only. Standalone configuration-free raw-TS consumption is intentionally unsupported, editor test-project import diagnostics remain disclosed with unproven cause; no global suppression, packaging, dependency sweep, future-phase work, personal vault or remote Cloudflare change.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Addressed all nine owner architecture/tooling/documentation findings and full @ source/test import convention, preserving public schema/codec behavior, platform/runtime isolation, real Workers and browser/CommonJS plugin artifact. Verified49tests/local and real push/PR CI; independent task/final reviews and renewed owner pn-548d61 approved. Published PR3 without merge/deployment/F1 implementation. Historical hash decisions and failed-probe evidence retained; raw TypeScript external consumers require alias configuration.
+<!-- SECTION:FINAL_SUMMARY:END -->

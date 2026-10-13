@@ -1,0 +1,9 @@
+{
+	"id": "ai-bridge",
+	"name": "AI Bridge",
+	"version": "0.1.0",
+	"author": "Moisés Morillo",
+	"description": "Private vault synchronization and authorized AI access.",
+	"minAppVersion": "1.13.0",
+	"isDesktopOnly": false
+}

@@ -5,8 +5,9 @@ status: Done
 assignee:
   - '@Moises'
 created_date: '2026-10-12 18:02'
-updated_date: '2026-10-12 23:12'
-labels: []
+updated_date: '2026-10-13 10:04'
+labels:
+  - F0
 dependencies: []
 references:
   - docs/spec.md

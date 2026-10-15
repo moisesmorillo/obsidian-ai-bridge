@@ -1,7 +1,9 @@
 import { EpochSchema } from "@obsidian-ai-bridge/protocol";
 
+/** Persisted SQLite schema version; incompatible changes require an explicit version boundary. */
 export const SCHEMA_VERSION = 1;
 
+/** Frozen §5.2 SQLite schema. This is the sole DDL source for bootstrap and validation. */
 export const SCHEMA = `CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE files (
  path TEXT PRIMARY KEY, path_key TEXT NOT NULL, rev INTEGER NOT NULL, seq INTEGER NOT NULL,
@@ -40,20 +42,38 @@ CREATE TABLE exports (
  calls_this_hour INTEGER, hour_started_at INTEGER, commit_sha TEXT, error TEXT
 );`;
 
-const APPLICATION_TABLES = [
-	"export_pins",
-	"revoked_grants",
-	"blob_refs",
-	"files_fts",
-	"receipts",
-	"revisions",
-	"changes",
-	"clients",
-	"exports",
-	"files",
-	"meta",
-] as const;
+type SchemaObjectKind = "table" | "index";
 
+interface FrozenSchemaObject {
+	name: string;
+	kind: SchemaObjectKind;
+	sql: string;
+}
+
+function normalizeSchemaSql(sql: string): string {
+	return sql.trim().replace(/;\s*$/, "").replace(/\s+/g, " ");
+}
+
+// Bind each controlled frozen DDL statement to its SQLite object without maintaining a second schema map.
+const FROZEN_SCHEMA_OBJECTS: FrozenSchemaObject[] = SCHEMA.split(";")
+	.map((statement) => statement.trim())
+	.filter(Boolean)
+	.map((sql) => {
+		const header =
+			/^CREATE\s+(?:UNIQUE\s+|VIRTUAL\s+)?(TABLE|INDEX)\s+([A-Za-z_][A-Za-z_0-9]*)\b/i.exec(
+				sql,
+			);
+		const [, kind, name] = header ?? [];
+		if (!kind || !name)
+			throw new Error("Invalid frozen vault schema statement");
+		return {
+			name,
+			kind: kind.toLowerCase() as SchemaObjectKind,
+			sql: normalizeSchemaSql(sql),
+		};
+	});
+
+/** Generates a canonical 128-bit epoch, resampling at most eight invalid entropy samples. */
 export function generateEpoch(
 	fillRandom: (bytes: Uint8Array) => Uint8Array,
 ): string {
@@ -78,6 +98,11 @@ function isCanonicalSafeInteger(value: string, nonNegative: boolean): boolean {
 	);
 }
 
+/**
+ * Creates and seeds an empty vault exactly once, or validates an existing version-1 store.
+ * Existing state is never repaired, replaced, or assigned a new epoch; all bootstrap work
+ * runs synchronously in one SQLite transaction. The injected factories are bootstrap inputs.
+ */
 export function initializeVaultStorage(
 	storage: DurableObjectStorage,
 	createEpoch: () => string,
@@ -139,19 +164,27 @@ export function initializeVaultStorage(
 		}
 		if (!isCanonicalSafeInteger(metadata.get("created_at") ?? "", false))
 			throw new Error("Invalid vault creation time");
-		for (const table of APPLICATION_TABLES) {
-			if (!tableNames.includes(table))
-				throw new Error(`Missing vault table: ${table}`);
-		}
-		const indexes = storage.sql
-			.exec<{ name: string }>(
-				"SELECT name FROM sqlite_master WHERE type = 'index'",
-			)
-			.toArray()
-			.map(({ name }) => name);
-		for (const index of ["files_live_key", "files_key"]) {
-			if (!indexes.includes(index))
-				throw new Error(`Missing vault index: ${index}`);
+		const actualObjects = new Map(
+			storage.sql
+				.exec<{ type: string; name: string; sql: string | null }>(
+					"SELECT type, name, sql FROM sqlite_master",
+				)
+				.toArray()
+				.map((object) => [object.name, object]),
+		);
+		for (const expected of FROZEN_SCHEMA_OBJECTS) {
+			const actual = actualObjects.get(expected.name);
+			if (!actual)
+				throw new Error(`Missing vault ${expected.kind}: ${expected.name}`);
+			if (
+				actual.type !== expected.kind ||
+				actual.sql === null ||
+				normalizeSchemaSql(actual.sql) !== expected.sql
+			) {
+				throw new Error(
+					`Incompatible vault ${expected.kind}: ${expected.name}`,
+				);
+			}
 		}
 	});
 }

@@ -22,6 +22,13 @@ const tableNames = (storage: DurableObjectStorage) =>
 		)
 		.toArray()
 		.map(({ name }) => name);
+const schemaDefinition = (storage: DurableObjectStorage, name: string) =>
+	storage.sql
+		.exec<{ sql: string | null }>(
+			"SELECT sql FROM sqlite_master WHERE name = ?",
+			name,
+		)
+		.toArray()[0]?.sql ?? null;
 
 const createEpoch = () =>
 	generateEpoch((bytes) => {
@@ -284,6 +291,109 @@ describe("Vault SQLite persistence", () => {
 					.exec<{ value: string }>("SELECT value FROM unknown_fixture")
 					.toArray(),
 			).toEqual([{ value: "preserve" }]);
+		});
+	});
+
+	it("rejects a same-named live index with an incompatible predicate without repairing it", async () => {
+		const stub = env.VAULTS.get(env.VAULTS.newUniqueId());
+		await runInDurableObject(stub, (_instance, state) => {
+			state.storage.sql.exec(
+				"INSERT INTO files(path,path_key,rev,seq,hash,size,kind,deleted,updated_at,origin) VALUES ('preserve-index.md','preserve-index.md',1,1,'hash',0,'text',0,10,'test')",
+			);
+			state.storage.sql.exec("DROP INDEX files_live_key");
+			state.storage.sql.exec(
+				"CREATE UNIQUE INDEX files_live_key ON files(path_key) WHERE deleted = 1",
+			);
+			const beforeSchema = schemaDefinition(state.storage, "files_live_key");
+			const beforeMetadata = metadata(state.storage);
+			let replacementRequested = false;
+			expect(() =>
+				initializeVaultStorage(
+					state.storage,
+					() => {
+						replacementRequested = true;
+						return createEpoch();
+					},
+					() => 2,
+				),
+			).toThrow();
+			expect(replacementRequested).toBe(false);
+			expect(schemaDefinition(state.storage, "files_live_key")).toBe(
+				beforeSchema,
+			);
+			expect(metadata(state.storage)).toEqual(beforeMetadata);
+			expect(
+				state.storage.sql
+					.exec("SELECT path FROM files WHERE path = 'preserve-index.md'")
+					.toArray(),
+			).toHaveLength(1);
+		});
+	});
+
+	it("rejects incompatible same-named table columns without repairing or losing rows", async () => {
+		const stub = env.VAULTS.get(env.VAULTS.newUniqueId());
+		await runInDurableObject(stub, (_instance, state) => {
+			state.storage.sql.exec(
+				"INSERT INTO files(path,path_key,rev,seq,hash,size,kind,deleted,updated_at,origin) VALUES ('preserve-column.md','preserve-column.md',1,1,'hash',0,'text',0,10,'test')",
+			);
+			state.storage.sql.exec(
+				"ALTER TABLE files RENAME COLUMN path_key TO path_lookup_key",
+			);
+			const beforeSchema = schemaDefinition(state.storage, "files");
+			const beforeMetadata = metadata(state.storage);
+			let replacementRequested = false;
+			expect(() =>
+				initializeVaultStorage(
+					state.storage,
+					() => {
+						replacementRequested = true;
+						return createEpoch();
+					},
+					() => 2,
+				),
+			).toThrow();
+			expect(replacementRequested).toBe(false);
+			expect(schemaDefinition(state.storage, "files")).toBe(beforeSchema);
+			expect(metadata(state.storage)).toEqual(beforeMetadata);
+			expect(
+				state.storage.sql
+					.exec("SELECT path FROM files WHERE path = 'preserve-column.md'")
+					.toArray(),
+			).toHaveLength(1);
+		});
+	});
+
+	it("rejects a same-named FTS table with the wrong tokenizer without repairing it", async () => {
+		const stub = env.VAULTS.get(env.VAULTS.newUniqueId());
+		await runInDurableObject(stub, (_instance, state) => {
+			state.storage.sql.exec("DROP TABLE files_fts");
+			state.storage.sql.exec(
+				"CREATE VIRTUAL TABLE files_fts USING fts5(path UNINDEXED, content, tokenize = 'trigram')",
+			);
+			state.storage.sql.exec(
+				"INSERT INTO files_fts(path, content) VALUES ('wrong-tokenizer.md', 'fixture content')",
+			);
+			const beforeSchema = schemaDefinition(state.storage, "files_fts");
+			const beforeMetadata = metadata(state.storage);
+			let replacementRequested = false;
+			expect(() =>
+				initializeVaultStorage(
+					state.storage,
+					() => {
+						replacementRequested = true;
+						return createEpoch();
+					},
+					() => 2,
+				),
+			).toThrow();
+			expect(replacementRequested).toBe(false);
+			expect(schemaDefinition(state.storage, "files_fts")).toBe(beforeSchema);
+			expect(metadata(state.storage)).toEqual(beforeMetadata);
+			expect(
+				state.storage.sql
+					.exec("SELECT path FROM files_fts WHERE path = 'wrong-tokenizer.md'")
+					.toArray(),
+			).toHaveLength(1);
 		});
 	});
 

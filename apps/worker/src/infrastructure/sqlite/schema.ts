@@ -42,19 +42,31 @@ CREATE TABLE exports (
  calls_this_hour INTEGER, hour_started_at INTEGER, commit_sha TEXT, error TEXT
 );`;
 
+/** SQLite catalog kinds used by this module's private frozen-DDL compatibility check. */
 type SchemaObjectKind = "table" | "index";
 
+/** Associates one statement from {@link SCHEMA} with its catalog name, kind, and SQL. */
 interface FrozenSchemaObject {
 	name: string;
 	kind: SchemaObjectKind;
 	sql: string;
 }
 
+/**
+ * Trims outer whitespace, removes a terminal semicolon, and collapses whitespace,
+ * including inside quoted literals.
+ * This is sufficient only for the current frozen DDL (including tokenizer argument separators);
+ * it is not a general SQL-equivalence normalizer.
+ */
 function normalizeSchemaSql(sql: string): string {
 	return sql.trim().replace(/;\s*$/, "").replace(/\s+/g, " ");
 }
 
-// Bind each controlled frozen DDL statement to its SQLite object without maintaining a second schema map.
+/**
+ * Derived from the sole DDL source rather than a second schema map. Assumes controlled,
+ * semicolon-delimited statements without embedded semicolons and the supported CREATE TABLE,
+ * CREATE INDEX, and CREATE VIRTUAL TABLE headers; it does not parse arbitrary SQL.
+ */
 const FROZEN_SCHEMA_OBJECTS: FrozenSchemaObject[] = SCHEMA.split(";")
 	.map((statement) => statement.trim())
 	.filter(Boolean)
@@ -89,6 +101,10 @@ export function generateEpoch(
 	throw new Error("Unable to generate a canonical vault epoch");
 }
 
+/**
+ * Accepts only the canonical decimal spelling of a safe integer; counters pass true to
+ * require nonnegative values, while creation timestamps pass false to retain signed values.
+ */
 function isCanonicalSafeInteger(value: string, nonNegative: boolean): boolean {
 	const parsed = Number(value);
 	return (

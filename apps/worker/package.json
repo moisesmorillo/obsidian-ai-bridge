@@ -3,11 +3,12 @@
 	"private": true,
 	"type": "module",
 	"scripts": {
-		"typecheck": "tsc --noEmit -p tsconfig.json",
+		"typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p test/tsconfig.json",
 		"test": "vitest run",
 		"build": "wrangler deploy --dry-run --outdir dist"
 	},
 	"dependencies": {
+		"@obsidian-ai-bridge/protocol": "workspace:*",
 		"hono": "4.9.6"
 	},
 	"devDependencies": {

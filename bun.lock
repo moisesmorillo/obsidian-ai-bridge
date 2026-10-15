@@ -22,6 +22,7 @@
     "apps/worker": {
       "name": "@obsidian-ai-bridge/worker",
       "dependencies": {
+        "@obsidian-ai-bridge/protocol": "workspace:*",
         "hono": "4.9.6",
       },
       "devDependencies": {

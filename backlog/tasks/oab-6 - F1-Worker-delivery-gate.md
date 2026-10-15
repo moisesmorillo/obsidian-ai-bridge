@@ -1,10 +1,11 @@
 ---
 id: OAB-6
 title: F1 Worker delivery gate
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@pi'
 created_date: '2026-10-12 15:13'
-updated_date: '2026-10-13 10:04'
+updated_date: '2026-10-15 00:58'
 labels:
   - phase-gate
   - F1
@@ -32,8 +33,20 @@ Track the F1 Worker phase in docs/spec.md §14. This is intent-only: research an
 - [ ] #3 Any Cloudflare resource/deployment action has separate explicit authorization.
 <!-- AC:END -->
 
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+Selected scope: research and decompose F1 from merged43fc8bd and the frozen spec, then request human approval before implementation. Nine intent-only subtasks OAB-6.1 through OAB-6.9 preserve the entire F1 scope. Plan only the first independently reviewable delivery, OAB-6.1 real SQLite Vault persistence, in docs/superpowers/plans/2026-10-15-f1-vault-persistence.md; later subtasks receive researched plans when selected. No subtasks are started or qualified by creating this decomposition. Each implementation slice requires failing tests, full checks, semantic review and human branch review before its PR.
+<!-- SECTION:PLAN:END -->
+
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
 Reconciled after merged F0: this is a committed section14 phase entry/exit gate, not a trigger-based deferred feature or an implementation task. Its original acceptance cases and dependency edges are unchanged. Dependency readiness only permits selection for research and decomposition; it does not authorize implementation, deployment or personal-vault access.
+
+Selected by owner after merged reconciliation PR4. Work starts as research and decomposition against the frozen spec and actual merged F0; no implementation plan is approved yet. No deployment/resource action or personal-vault access is authorized. Preserve every original F1 exit obligation, including server-side portions of multi-device cases; do not claim plugin behavior qualified by Worker tests.
+
+Research: primary Cloudflare docs confirm Paid10GB per SQLite DO,2MBrow/string,100boundparameters/query and synchronous transactionSync rollback; FTS5 is supported but the exact tokenizer must be proven in the actual installed runtime. Worker128MBmemory is shared by all concurrent requests. Owner chose declared SHA256+byte size for streamed blob PUT; bounded contract amendment tracked in OAB-6.5, not silently written into the frozen spec. OAB-6.9 records the F1 mixed server/client acceptance boundary; no real-plugin behavior is qualified here, and no phase exit is weakened automatically. Current UTC date2026-10-15; first-slice plan uses that date. No source, spec, dependency or Cloudflare resource has changed.
+
+Human plan pn-10c0db approved; owner selected subagent-driven execution for OAB-6.1 only. Baseline b2309ed8c passed frozen install, Biome37, all configured typechecks,49tests and all local dry-run builds on merged43fc8bd. Future subtasks remain To Do, and this phase gate stays open.
 <!-- SECTION:NOTES:END -->

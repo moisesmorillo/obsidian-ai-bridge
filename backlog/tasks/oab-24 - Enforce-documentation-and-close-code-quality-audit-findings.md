@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@pi'
 created_date: '2026-10-17 04:24'
-updated_date: '2026-10-17 05:04'
+updated_date: '2026-10-17 05:05'
 labels: []
 dependencies: []
 references:
@@ -68,6 +68,8 @@ Limits: editor probes report unresolved aliases and inconclusive files despite p
 Human branch-diff approval remains pending. OAB-24 stays In Progress until that approval.
 
 Owner approved branch diff pn-3b2108 without changes. Plan approval pn-741257 also stands. Approved-source verification b2cb00668 passes full checks, all 131 tests, local builds, diff checks, and Backlog doctor. All eight findings close with recorded evidence. No deployment occurred.
+
+Published one PR against main: https://github.com/moisesmorillo/obsidian-ai-bridge/pull/8. All source changes match approved review pn-3b2108. Approved-source verification b2cb00668 passes all 131 tests and full checks. Only execution-status metadata changed after approval.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary

@@ -211,7 +211,7 @@ It does not run against production or the personal vault.
 - [x] Open the branch diff against `main` in Plannotator and address every annotation.
 - [x] Verify the final reviewed source after any correction.
 - [x] Close OAB-24 only after its acceptance evidence exists.
-- [ ] Push the branch and create one English Conventional Commit PR.
+- [x] Push the branch and create one English Conventional Commit PR.
 - [ ] Remove the worktree only after all commits exist on the remote branch.
 - [ ] Report the PR URL, validation evidence, and any explicit residual limits.
 

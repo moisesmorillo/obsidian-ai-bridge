@@ -25,6 +25,31 @@ const DECLARATION_KINDS = new Set([
 	"abstract_method_signature",
 ]);
 
+/** Zod operations that return values or configuration instead of runtime schemas. */
+const ZOD_VALUE_OPERATIONS = new Set([
+	"parse",
+	"parseAsync",
+	"safeParse",
+	"safeParseAsync",
+	"encode",
+	"encodeAsync",
+	"safeEncode",
+	"safeEncodeAsync",
+	"decode",
+	"decodeAsync",
+	"safeDecode",
+	"safeDecodeAsync",
+	"flattenError",
+	"treeifyError",
+	"prettifyError",
+	"formatError",
+	"toJSONSchema",
+	"config",
+	"registry",
+	"getErrorMap",
+	"setErrorMap",
+]);
+
 /** Ignore the sole versioned runtime artifact. New generated paths need explicit review. */
 const GENERATED_PATH =
 	"apps/worker/src/infrastructure/sqlite/schema.generated.ts";
@@ -66,7 +91,11 @@ function declarationName(node: SgNode): string | undefined {
 		"generator_function",
 	].includes(String(value.kind()));
 	const exported = node.parent()?.parent()?.kind() === "export_statement";
-	const schema = /Schema$/.test(name) && /^z\./.test(value.text());
+	const operation = value.field("function")?.field("property")?.text() ?? "";
+	const schema =
+		value.kind() === "call_expression" &&
+		/^z\./.test(value.text()) &&
+		!ZOD_VALUE_OPERATIONS.has(operation);
 	const constant = /^[A-Z][A-Z_0-9]*$/.test(name);
 	return functionValue || exported || schema || constant ? name : undefined;
 }

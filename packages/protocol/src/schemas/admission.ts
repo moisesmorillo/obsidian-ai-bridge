@@ -79,6 +79,12 @@ export const OperationDescriptorSchema = z
 		}
 	});
 
+/** Typed failure kinds for append and blob size limits. */
+export const AdmissionSizeFailureKindSchema = z.enum([
+	"text_too_large",
+	"blob_too_large",
+]);
+
 /** Operation metadata with a lowercase SHA-256 payload hash and byte size. */
 export const OperationIntentSchema = OperationDescriptorSchema.safeExtend({
 	payload_hash: z.string().regex(/^[0-9a-f]{64}$/),
@@ -93,10 +99,22 @@ export const OperationIntentSchema = OperationDescriptorSchema.safeExtend({
 			ctx.addIssue({ code: "custom", message: "payload must be empty" });
 		}
 		if (intent.op === "append" && intent.size > 1_000_000) {
-			ctx.addIssue({ code: "custom", message: "append input too large" });
+			ctx.addIssue({
+				code: "custom",
+				params: {
+					admissionFailure: AdmissionSizeFailureKindSchema.enum.text_too_large,
+				},
+				message: "append input too large",
+			});
 		}
 		if (intent.op === "put" && intent.size > 25_000_000) {
-			ctx.addIssue({ code: "custom", message: "blob input too large" });
+			ctx.addIssue({
+				code: "custom",
+				params: {
+					admissionFailure: AdmissionSizeFailureKindSchema.enum.blob_too_large,
+				},
+				message: "blob input too large",
+			});
 		}
 		if (intent.size > 26_000_000) {
 			ctx.addIssue({ code: "custom", message: "request metadata too large" });
@@ -142,8 +160,12 @@ export const AdmissionFailureSchema = z
 		z.object({ kind: z.literal("revoked") }),
 		z.object({ kind: z.literal("forbidden_scope") }),
 		z.object({ kind: z.literal("epoch_mismatch"), current_epoch: EpochSchema }),
-		z.object({ kind: z.literal("text_too_large") }),
-		z.object({ kind: z.literal("blob_too_large") }),
+		z.object({
+			kind: z.literal(AdmissionSizeFailureKindSchema.enum.text_too_large),
+		}),
+		z.object({
+			kind: z.literal(AdmissionSizeFailureKindSchema.enum.blob_too_large),
+		}),
 		z.object({
 			kind: z.literal("admission_limited"),
 			retry_after_seconds: z.number().int().positive(),

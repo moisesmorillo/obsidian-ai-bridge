@@ -3,6 +3,7 @@ import type {
 	AdmissionFailureSchema,
 	AdmissionFinishResultSchema,
 	AdmissionResultSchema,
+	AdmissionSizeFailureKindSchema,
 	AuthorizationContextSchema,
 	DescriptorPreparationSchema,
 	OperationDescriptorSchema,
@@ -35,6 +36,10 @@ export type RequestAdmissionResult = z.infer<
 >;
 /** Single-use ticket returned after full authorization. */
 export type OperationTicket = z.infer<typeof OperationTicketSchema>;
+/** Typed reason for an append or blob size refusal. */
+export type AdmissionSizeFailureKind = z.infer<
+	typeof AdmissionSizeFailureKindSchema
+>;
 /** Internal failure detail for an admission denial. */
 export type AdmissionFailure = z.infer<typeof AdmissionFailureSchema>;
 /** Result of full operation authorization. */

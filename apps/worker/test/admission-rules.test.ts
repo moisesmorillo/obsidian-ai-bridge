@@ -27,11 +27,28 @@ const put: OperationIntent = {
 	payload_hash: "0".repeat(64),
 	size: 0,
 };
+const append: OperationIntent = {
+	op: "append",
+	epoch,
+	paths: ["note.md"],
+	precondition: { kind: "none" },
+	payload_hash: "0".repeat(64),
+	size: 0,
+};
 const descriptor: OperationDescriptor = {
 	op: "read",
 	paths: ["note.md"],
 	precondition: { kind: "none" },
 };
+
+function admissionCheckFailure(check: () => void): unknown {
+	try {
+		check();
+	} catch (error) {
+		return error;
+	}
+	return undefined;
+}
 
 describe("admission rules", () => {
 	it.each([
@@ -77,6 +94,119 @@ describe("admission rules", () => {
 				assertAdmissionAllowed(context, prepared, epoch),
 			),
 		).rejects.toBeInstanceOf(AdmissionDenied);
+	});
+	it("rejects client mismatch for a prepared descriptor", async () => {
+		const preparedContext = { ...context, client_id: "client-b" };
+		const checkedContext = { ...context, client_id: "client-a" };
+		const putDescriptor: OperationDescriptor = {
+			op: "put",
+			epoch,
+			paths: ["note.md"],
+			precondition: { kind: "absent" },
+		};
+		const prepared = await prepareDescriptor(preparedContext, putDescriptor);
+		expect(
+			admissionCheckFailure(() =>
+				assertAdmissionAllowed(checkedContext, prepared, epoch),
+			),
+		).toMatchObject({ failure: { kind: "invalid_request" } });
+	});
+	it("rejects client mismatch for a prepared operation", async () => {
+		const preparedContext = { ...context, client_id: "client-b" };
+		const checkedContext = { ...context, client_id: "client-a" };
+		const prepared = await prepareOperation(preparedContext, put);
+		expect(
+			admissionCheckFailure(() =>
+				assertAdmissionAllowed(checkedContext, prepared, epoch),
+			),
+		).toMatchObject({ failure: { kind: "invalid_request" } });
+	});
+	it("rejects a descriptor client mismatch before a missing scope", async () => {
+		const preparedContext = { ...context, client_id: "client-b" };
+		const checkedContext: AuthorizationContext = {
+			...context,
+			client_id: "client-a",
+			scopes: ["vault:read"],
+		};
+		const putDescriptor: OperationDescriptor = {
+			op: "put",
+			epoch,
+			paths: ["note.md"],
+			precondition: { kind: "absent" },
+		};
+		const prepared = await prepareDescriptor(preparedContext, putDescriptor);
+		expect(
+			admissionCheckFailure(() =>
+				assertAdmissionAllowed(checkedContext, prepared, epoch),
+			),
+		).toMatchObject({ failure: { kind: "invalid_request" } });
+	});
+	it("rejects an operation client mismatch before a missing scope", async () => {
+		const preparedContext = { ...context, client_id: "client-b" };
+		const checkedContext: AuthorizationContext = {
+			...context,
+			client_id: "client-a",
+			scopes: ["vault:read"],
+		};
+		const prepared = await prepareOperation(preparedContext, put);
+		expect(
+			admissionCheckFailure(() =>
+				assertAdmissionAllowed(checkedContext, prepared, epoch),
+			),
+		).toMatchObject({ failure: { kind: "invalid_request" } });
+	});
+	it("rejects a descriptor client mismatch before a stale epoch", async () => {
+		const preparedContext = { ...context, client_id: "client-b" };
+		const checkedContext = { ...context, client_id: "client-a" };
+		const putDescriptor: OperationDescriptor = {
+			op: "put",
+			epoch,
+			paths: ["note.md"],
+			precondition: { kind: "absent" },
+		};
+		const prepared = await prepareDescriptor(preparedContext, putDescriptor);
+		expect(
+			admissionCheckFailure(() =>
+				assertAdmissionAllowed(
+					checkedContext,
+					prepared,
+					"0000000000000000000000000000000b",
+				),
+			),
+		).toMatchObject({ failure: { kind: "invalid_request" } });
+	});
+	it("rejects an operation client mismatch before a stale epoch", async () => {
+		const preparedContext = { ...context, client_id: "client-b" };
+		const checkedContext = { ...context, client_id: "client-a" };
+		const prepared = await prepareOperation(preparedContext, put);
+		expect(
+			admissionCheckFailure(() =>
+				assertAdmissionAllowed(
+					checkedContext,
+					prepared,
+					"0000000000000000000000000000000b",
+				),
+			),
+		).toMatchObject({ failure: { kind: "invalid_request" } });
+	});
+	it("keeps fingerprints separate from grant identity", async () => {
+		const prepared = await prepareOperation(context, put);
+		const otherGrant = await prepareOperation(
+			{ ...context, grant_id: "another-grant" },
+			put,
+		);
+		expect(otherGrant.fingerprint).toBe(prepared.fingerprint);
+		expect(prepared).not.toHaveProperty("grant_id");
+
+		const preparedDescriptor = await prepareDescriptor(context, descriptor);
+		const otherGrantDescriptor = await prepareDescriptor(
+			{ ...context, grant_id: "another-grant" },
+			descriptor,
+		);
+		expect(otherGrantDescriptor.descriptorFingerprint).toBe(
+			preparedDescriptor.descriptorFingerprint,
+		);
+		expect(preparedDescriptor).not.toHaveProperty("grant_id");
 	});
 	it("allows read and delete only with their exact scopes", async () => {
 		const readContext: AuthorizationContext = {
@@ -323,6 +453,38 @@ describe("admission rules", () => {
 		expect(prepared.intent.paths[0]).toBe("before.md");
 		expect(Object.isFrozen(prepared.intent.paths)).toBe(true);
 	});
+	it.each([
+		["append", append, 1_000_001, "text_too_large"],
+		["put", put, 25_000_001, "blob_too_large"],
+	] as const)(
+		"returns the typed %s size refusal",
+		async (_op, intent, size, kind) => {
+			await expect(
+				prepareOperation(context, { ...intent, size }),
+			).rejects.toMatchObject({
+				failure: { kind },
+			});
+		},
+	);
+	it("accepts append and put declarations at their exact size limits", async () => {
+		await expect(
+			prepareOperation(context, { ...append, size: 1_000_000 }),
+		).resolves.toMatchObject({ intent: { size: 1_000_000 } });
+		await expect(
+			prepareOperation(context, { ...put, size: 25_000_000 }),
+		).resolves.toMatchObject({ intent: { size: 25_000_000 } });
+	});
+	it.each([
+		["append", append, 1_000_001],
+		["put", put, 25_000_001],
+	] as const)(
+		"keeps malformed oversized %s input as invalid_request",
+		async (_op, intent, size) => {
+			await expect(
+				prepareOperation(context, { ...intent, payload_hash: "bad", size }),
+			).rejects.toMatchObject({ failure: { kind: "invalid_request" } });
+		},
+	);
 	it("maps oversized descriptor envelopes to invalid_request", async () => {
 		const largeContext: AuthorizationContext = {
 			...context,

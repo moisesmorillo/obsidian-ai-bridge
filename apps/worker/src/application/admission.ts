@@ -1,23 +1,31 @@
 import type {
 	AdmissionFailure,
+	AdmissionSizeFailureKind,
 	AuthorizationContext,
 	OperationDescriptor,
 	OperationIntent,
 	VaultScope,
 } from "@obsidian-ai-bridge/protocol";
 import {
+	AdmissionSizeFailureKindSchema,
 	AuthorizationContextSchema,
 	DescriptorPreparationSchema,
 	OperationPreparationSchema,
 	parseETag,
 } from "@obsidian-ai-bridge/protocol";
 
+/**
+ * A normalized immutable snapshot for reservation checks. The descriptor fingerprint binds client identity and reservation metadata.
+ */
 export type PreparedDescriptor = Readonly<{
 	client_id: string;
 	descriptor: OperationDescriptor;
 	descriptorFingerprint: string;
 }>;
 
+/**
+ * A normalized immutable snapshot of full operation intent. The descriptor fingerprint binds reservation metadata, and the fingerprint binds full intent.
+ */
 export type PreparedOperation = PreparedDescriptor &
 	Readonly<{
 		intent: OperationIntent;
@@ -33,9 +41,23 @@ export class AdmissionDenied extends Error {
 
 /** Returns the minimum vault scope for an operation. */
 export function requiredScope(op: OperationIntent["op"]): VaultScope {
-	if (op === "read") return "vault:read";
-	if (op === "delete") return "vault:delete";
-	return "vault:write";
+	switch (op) {
+		case "read":
+			return "vault:read";
+		case "delete":
+			return "vault:delete";
+		case "put":
+		case "rename":
+		case "append":
+		case "restore":
+			return "vault:write";
+		default:
+			return assertNever(op);
+	}
+}
+
+function assertNever(value: never): never {
+	throw new Error(`Unhandled admission operation: ${value}`);
 }
 
 /** Derives the tuple epoch from a match ETag when the descriptor omits it. */
@@ -106,6 +128,31 @@ function freezeDescriptor(
 	}) as OperationDescriptor;
 }
 
+/**
+ * Returns a typed size refusal only when every schema issue names the same size kind.
+ * Mixed or other validation issues return undefined, so preparation keeps `invalid_request`.
+ */
+function sizeFailureFrom(
+	result: ReturnType<typeof OperationPreparationSchema.safeParse>,
+): AdmissionFailure | undefined {
+	if (result.success) return undefined;
+	const kinds: AdmissionSizeFailureKind[] = [];
+	for (const issue of result.error.issues) {
+		if (issue.code !== "custom") return undefined;
+		const parsedKind = AdmissionSizeFailureKindSchema.safeParse(
+			issue.params?.admissionFailure,
+		);
+		if (!parsedKind.success) return undefined;
+		kinds.push(parsedKind.data);
+	}
+	if (kinds.length === 0 || !kinds.every((kind) => kind === kinds[0])) {
+		return undefined;
+	}
+	return kinds[0] === "text_too_large"
+		? { kind: "text_too_large" }
+		: { kind: "blob_too_large" };
+}
+
 /** Copies and freezes normalized intent paths and preconditions. */
 function freezeIntent(intent: OperationIntent): OperationIntent {
 	return Object.freeze({
@@ -152,7 +199,11 @@ export async function prepareOperation(
 	intent: OperationIntent,
 ): Promise<PreparedOperation> {
 	const result = OperationPreparationSchema.safeParse({ context, intent });
-	if (!result.success) throw new AdmissionDenied({ kind: "invalid_request" });
+	if (!result.success) {
+		throw new AdmissionDenied(
+			sizeFailureFrom(result) ?? { kind: "invalid_request" },
+		);
+	}
 	const parsed = result.data;
 	const frozenContext = freezeContext(parsed.context);
 	const frozen = freezeIntent(parsed.intent);
@@ -182,6 +233,9 @@ export function assertAdmissionAllowed(
 	currentEpoch: string,
 ): void {
 	const parsedContext = AuthorizationContextSchema.parse(context);
+	if (parsedContext.client_id !== operation.client_id) {
+		throw new AdmissionDenied({ kind: "invalid_request" });
+	}
 	const op =
 		"intent" in operation ? operation.intent.op : operation.descriptor.op;
 	if (!parsedContext.scopes.includes(requiredScope(op))) {

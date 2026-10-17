@@ -9,3 +9,4 @@ coverage/
 .DS_Store
 .pi/
 .ai-bridge/
+.claude/settings.local.json

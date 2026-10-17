@@ -10,7 +10,10 @@ import type {
 } from "@obsidian-ai-bridge/protocol";
 import {
 	AuthorizationContextSchema,
+	formatETag,
 	OperationTicketSchema,
+	parseETag,
+	pathKey,
 } from "@obsidian-ai-bridge/protocol";
 import type {
 	PreparedDescriptor,
@@ -23,6 +26,7 @@ import {
 	prepareOperation,
 } from "@worker/application/admission";
 import {
+	files,
 	meta,
 	operationAdmissions,
 	revokedGrants,
@@ -258,6 +262,98 @@ export class SqliteAdmissionAuthority {
 			if (error instanceof AdmissionDenied) return denied(error.failure);
 			throw error;
 		}
+	}
+
+	/** Check policy, ticket ownership, expiry, fingerprint, and file preconditions in the caller transaction. */
+	consumeInTransaction(
+		tx: VaultTransaction,
+		context: AuthorizationContext,
+		operation: PreparedOperation,
+		ticketId: string,
+	): void {
+		const currentEpoch = assertPolicy(tx, context, operation);
+		if (operation.intent.op === "read")
+			throw new AdmissionDenied({ kind: "invalid_ticket" });
+		const now = this.ports.now();
+		if (!Number.isSafeInteger(now))
+			throw new AdmissionDenied({ kind: "invalid_request" });
+
+		const observed = tx
+			.select()
+			.from(operationAdmissions)
+			.where(eq(operationAdmissions.id, ticketId))
+			.all()[0];
+		if (
+			observed?.state !== "active" ||
+			observed.clientId !== context.client_id ||
+			observed.grantId !== context.grant_id ||
+			observed.epoch !== currentEpoch ||
+			observed.fingerprint !== operation.fingerprint ||
+			observed.expiresAt <= now
+		)
+			throw new AdmissionDenied({ kind: "invalid_ticket" });
+
+		const precondition = operation.intent.precondition;
+		if (precondition.kind === "match") {
+			const path = operation.intent.paths[0];
+			if (path === undefined)
+				throw new AdmissionDenied({ kind: "invalid_ticket" });
+			const current = tx
+				.select({ rev: files.rev, hash: files.hash, deleted: files.deleted })
+				.from(files)
+				.where(eq(files.path, path))
+				.limit(1)
+				.all()[0];
+			if (!current) throw new AdmissionDenied({ kind: "precondition_failed" });
+			const expectedTag = parseETag(precondition.etag);
+			if (expectedTag.epoch !== currentEpoch || expectedTag.rev !== current.rev)
+				throw new AdmissionDenied({
+					kind: "precondition_failed",
+					etag: formatETag(currentEpoch, current.rev),
+					hash: current.hash,
+					deleted: current.deleted === 1,
+				});
+		} else if (precondition.kind === "absent") {
+			const path = operation.intent.paths[0];
+			if (path === undefined)
+				throw new AdmissionDenied({ kind: "invalid_ticket" });
+			const current = tx
+				.select({ rev: files.rev, hash: files.hash, deleted: files.deleted })
+				.from(files)
+				.where(and(eq(files.pathKey, pathKey(path)), eq(files.deleted, 0)))
+				.limit(1)
+				.all()[0];
+			if (current)
+				throw new AdmissionDenied({
+					kind: "precondition_failed",
+					etag: formatETag(currentEpoch, current.rev),
+					hash: current.hash,
+					deleted: current.deleted === 1,
+				});
+		}
+
+		const consumed = tx
+			.delete(operationAdmissions)
+			.where(admissionRowPredicate(observed))
+			.returning({ id: operationAdmissions.id })
+			.all();
+		if (consumed.length !== 1)
+			throw new AdmissionDenied({ kind: "invalid_ticket" });
+	}
+
+	/** Persist one grant revocation without changing its first timestamp. */
+	recordRevocation(grantId: string): void {
+		if (!AuthorizationContextSchema.shape.grant_id.safeParse(grantId).success)
+			throw new AdmissionDenied({ kind: "invalid_request" });
+		const at = this.ports.now();
+		if (!Number.isSafeInteger(at))
+			throw new AdmissionDenied({ kind: "invalid_request" });
+		this.db.transaction((tx) => {
+			tx.insert(revokedGrants)
+				.values({ grantId, at })
+				.onConflictDoNothing({ target: revokedGrants.grantId })
+				.run();
+		});
 	}
 }
 

@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-10-17 04:24'
-updated_date: '2026-10-17 04:38'
+updated_date: '2026-10-17 04:56'
 labels: []
 dependencies: []
 references:
@@ -24,11 +24,11 @@ The owner requested one PR for the baseline audit findings. Missing declaration 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Useful TSDoc covers the agreed production declarations and important test helpers, with generated code and trivial bindings excluded.
-- [ ] #2 The canonical check rejects missing declaration documentation and invalid TSDoc syntax through tested positive and negative controls.
-- [ ] #3 One tooling-only alias resolver serves the three test configurations without weakening runtime isolation or public package boundaries.
-- [ ] #4 One documented fixture owns repeated storage teardown, and native tests cover invalid entropy lengths, epoch results, and creation times without partial state.
-- [ ] #5 AGENTS.md states declaration coverage, semantic review duties, operation-specific control-flow guidance, and explicit finding closure.
+- [x] #1 Useful TSDoc covers the agreed production declarations and important test helpers, with generated code and trivial bindings excluded.
+- [x] #2 The canonical check rejects missing declaration documentation and invalid TSDoc syntax through tested positive and negative controls.
+- [x] #3 One tooling-only alias resolver serves the three test configurations without weakening runtime isolation or public package boundaries.
+- [x] #4 One documented fixture owns repeated storage teardown, and native tests cover invalid entropy lengths, epoch results, and creation times without partial state.
+- [x] #5 AGENTS.md states declaration coverage, semantic review duties, operation-specific control-flow guidance, and explicit finding closure.
 - [ ] #6 Pinned baseline and final checks, semantic re-review, and human plan and branch-diff reviews support one PR with no deployment.
 <!-- AC:END -->
 
@@ -50,4 +50,20 @@ Owner approved plan pn-741257. Execute natively with a final independent review.
 Dependency probe resolved @microsoft/tsdoc 0.17.1 and @ast-grep/napi 0.51.0. Add exact root development versions only. The first parses TSDoc syntax. The second provides TypeScript syntax inventory without compiler API coupling. Native and parser behavior probes follow installation before checker implementation.
 
 Task 3 startup evidence: Vite externalized @tooling/vite-aliases before configuration resolution. Use one root tooling workspace named @obsidian-ai-bridge/tooling with a public ./vite-aliases export. Add explicit workspace development dependencies in the three test consumers. This is existing repository code, not a new external dependency or runtime package. Keep source aliases and production import restrictions. Root filtered checks replace duplicate tooling suffix commands.
+
+Final verification b9e91fa6a passed the frozen install, full checks, 131 tests, local builds, diff checks, and Backlog doctor. Worker builds used dry-run only.
+
+R1 fixed: table contracts explain persisted values and application duties. R2 fixed: bindings and constructor contracts explain native capability and initialization. R3 fixed: named helpers explain their authority and cleanup duties.
+
+R4 fixed: one tooling workspace owns alias conversion and trusted configuration loading. R5 fixed: one native fixture owns application schema teardown. R6 fixed: native cases cover invalid factories, rollback, valid retry, and existing-store factory exclusion.
+
+R7 fixed: the gate checks declaration comments and TSDoc syntax. Independent review found a suffix-dependent schema gap. Three RED cases reproduced it before the correction, and all 52 tooling tests now pass.
+
+R8 fixed: AGENTS.md states declaration duties, semantic review, operation-specific control flow, and explicit finding closure.
+
+The independent review found no production behavior or persisted-format defect. Parent review checked the correction and retained the recorded structural assessments. No actionable finding remains.
+
+Limits: editor probes report unresolved aliases and inconclusive files despite passing native compilers. Numerical coverage remains unknown. I do not claim remote CI or deployment results.
+
+Human branch-diff approval remains pending. OAB-24 stays In Progress until that approval.
 <!-- SECTION:NOTES:END -->

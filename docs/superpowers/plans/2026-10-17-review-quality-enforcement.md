@@ -200,14 +200,14 @@ It does not run against production or the personal vault.
 - Update OAB-24 only through the Backlog CLI.
 - Update this plan's checkboxes as steps complete.
 
-- [ ] Confirm the frozen worktree baseline result before implementation.
-- [ ] Run `bun install --frozen-lockfile` after the final lockfile change.
-- [ ] Run `bun run check` with the installed pinned tools.
-- [ ] Probe changed TypeScript paths with active diagnostics. Disclose unavailable or inconclusive editor results.
-- [ ] Run `git diff --check` and `backlog doctor`.
-- [ ] Run the complete code-review skill and TypeScript profile against the whole branch.
-- [ ] Reassess the storage initializer, schema model, generator, and shared tooling owners.
-- [ ] Record each audit finding as fixed, rejected, accepted deferral, or still open, with evidence.
+- [x] Confirm the frozen worktree baseline result before implementation.
+- [x] Run `bun install --frozen-lockfile` after the final lockfile change.
+- [x] Run `bun run check` with the installed pinned tools.
+- [x] Probe changed TypeScript paths with active diagnostics. Disclose unavailable or inconclusive editor results.
+- [x] Run `git diff --check` and `backlog doctor`.
+- [x] Run the complete code-review skill and TypeScript profile against the whole branch.
+- [x] Reassess the storage initializer, schema model, generator, and shared tooling owners.
+- [x] Record each audit finding as fixed, rejected, accepted deferral, or still open, with evidence.
 - [ ] Open the branch diff against `main` in Plannotator and address every annotation.
 - [ ] Verify the final reviewed source after any correction.
 - [ ] Close OAB-24 only after its acceptance evidence exists.

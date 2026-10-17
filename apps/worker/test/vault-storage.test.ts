@@ -6,6 +6,7 @@ import {
 	initializeVaultStorage,
 	SCHEMA,
 } from "@worker/infrastructure/sqlite/schema";
+import { RELATIONAL_SCHEMA_STATEMENTS } from "@worker/infrastructure/sqlite/schema.generated";
 import { describe, expect, it } from "vitest";
 
 const metadata = (storage: DurableObjectStorage) =>
@@ -37,6 +38,17 @@ const createEpoch = () =>
 	});
 
 describe("Vault SQLite persistence", () => {
+	it("uses generated relational DDL and keeps engine-specific FTS DDL separate", () => {
+		const relationalDdl = RELATIONAL_SCHEMA_STATEMENTS.join("\n");
+		expect(SCHEMA.startsWith(relationalDdl)).toBe(true);
+		const ftsDdl = SCHEMA.slice(relationalDdl.length).trim();
+		expect(ftsDdl).toMatch(/^CREATE VIRTUAL TABLE files_fts USING fts5\(/);
+		expect(ftsDdl).toContain(
+			"tokenize = 'trigram case_sensitive 0 remove_diacritics 1'",
+		);
+		expect(RELATIONAL_SCHEMA_STATEMENTS).toHaveLength(12);
+	});
+
 	it("initializes the frozen schema and canonical metadata", async () => {
 		expect(env.VAULTS).toBeDefined();
 		const stub = env.VAULTS.get(env.VAULTS.newUniqueId());
@@ -181,9 +193,19 @@ describe("Vault SQLite persistence", () => {
 			state.storage.sql.exec(
 				"UPDATE meta SET value = '2' WHERE key = 'schema_version'",
 			);
+			let replacementRequested = false;
 			expect(() =>
-				initializeVaultStorage(state.storage, createEpoch, () => 2),
+				initializeVaultStorage(
+					state.storage,
+					() => {
+						replacementRequested = true;
+						return createEpoch();
+					},
+					() => 2,
+				),
 			).toThrow();
+			expect(replacementRequested).toBe(false);
+			expect(tableNames(state.storage)).not.toContain("__drizzle_migrations");
 			expect(
 				state.storage.sql
 					.exec("SELECT path FROM files WHERE path = 'keep.md'")

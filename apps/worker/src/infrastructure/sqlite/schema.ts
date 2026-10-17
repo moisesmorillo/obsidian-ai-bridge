@@ -1,46 +1,19 @@
 import { EpochSchema } from "@obsidian-ai-bridge/protocol";
+import { RELATIONAL_SCHEMA_STATEMENTS } from "@worker/infrastructure/sqlite/schema.generated";
+import { meta, vaultSchema } from "@worker/infrastructure/sqlite/schema-model";
+import { sql } from "drizzle-orm";
+import { drizzle } from "drizzle-orm/durable-sqlite";
 
 /** Persisted SQLite schema version; incompatible changes require an explicit version boundary. */
 export const SCHEMA_VERSION = 1;
 
-/** Frozen §5.2 SQLite schema. This is the sole DDL source for bootstrap and validation. */
-export const SCHEMA = `CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-CREATE TABLE files (
- path TEXT PRIMARY KEY, path_key TEXT NOT NULL, rev INTEGER NOT NULL, seq INTEGER NOT NULL,
- hash TEXT NOT NULL, size INTEGER NOT NULL, kind TEXT NOT NULL CHECK (kind IN ('text','blob')),
- content TEXT, blob_hash TEXT, deleted INTEGER NOT NULL DEFAULT 0, updated_at INTEGER NOT NULL,
- origin TEXT NOT NULL
-);
-CREATE UNIQUE INDEX files_live_key ON files(path_key) WHERE deleted = 0;
-CREATE INDEX files_key ON files(path_key);
-CREATE TABLE revisions (
- path TEXT NOT NULL, rev INTEGER NOT NULL, hash TEXT NOT NULL, size INTEGER NOT NULL,
- kind TEXT NOT NULL, content TEXT, blob_hash TEXT, deleted INTEGER NOT NULL,
- origin TEXT NOT NULL, at INTEGER NOT NULL, PRIMARY KEY (path, rev)
-);
-CREATE TABLE changes (
- seq INTEGER PRIMARY KEY AUTOINCREMENT, op TEXT NOT NULL CHECK (op IN ('put','delete','rename')),
- path TEXT NOT NULL, rev INTEGER NOT NULL, hash TEXT NOT NULL, from_path TEXT, from_rev INTEGER,
- origin TEXT NOT NULL, at INTEGER NOT NULL
-);
-CREATE VIRTUAL TABLE files_fts USING fts5(
+/** Narrow FTS5 DDL unsupported by the relational model and kept at its engine-specific seam. */
+const FTS_SCHEMA = `CREATE VIRTUAL TABLE files_fts USING fts5(
  path UNINDEXED, content, tokenize = 'trigram case_sensitive 0 remove_diacritics 1'
-);
-CREATE TABLE receipts (
- client_id TEXT NOT NULL, key TEXT NOT NULL, fingerprint TEXT NOT NULL,
- status INTEGER NOT NULL, body TEXT NOT NULL, at INTEGER NOT NULL, PRIMARY KEY (client_id, key)
-);
-CREATE TABLE export_pins (export_id TEXT NOT NULL, path TEXT NOT NULL, rev INTEGER NOT NULL, PRIMARY KEY (export_id, path, rev));
-CREATE TABLE clients (
- id TEXT PRIMARY KEY, name TEXT NOT NULL, kind TEXT NOT NULL CHECK (kind IN ('device','agent','app')),
- created_at INTEGER NOT NULL, last_seen_at INTEGER
-);
-CREATE TABLE revoked_grants (grant_id TEXT PRIMARY KEY, at INTEGER NOT NULL);
-CREATE TABLE blob_refs (hash TEXT PRIMARY KEY, size INTEGER NOT NULL, first_ref_at INTEGER NOT NULL);
-CREATE TABLE exports (
- id TEXT PRIMARY KEY, started_at INTEGER, finished_at INTEGER, status TEXT, head_seq INTEGER,
- calls_this_hour INTEGER, hour_started_at INTEGER, commit_sha TEXT, error TEXT
 );`;
+
+/** Frozen §5.2 bootstrap DDL composed from generated relational SQL and the FTS5 statement. */
+export const SCHEMA = [...RELATIONAL_SCHEMA_STATEMENTS, FTS_SCHEMA].join("\n");
 
 /** SQLite catalog kinds used by this module's private frozen-DDL compatibility check. */
 type SchemaObjectKind = "table" | "index";
@@ -72,7 +45,7 @@ const FROZEN_SCHEMA_OBJECTS: FrozenSchemaObject[] = SCHEMA.split(";")
 	.filter(Boolean)
 	.map((sql) => {
 		const header =
-			/^CREATE\s+(?:UNIQUE\s+|VIRTUAL\s+)?(TABLE|INDEX)\s+([A-Za-z_][A-Za-z_0-9]*)\b/i.exec(
+			/^CREATE\s+(?:UNIQUE\s+|VIRTUAL\s+)?(TABLE|INDEX)\s+[`"]?([A-Za-z_][A-Za-z_0-9]*)\b[`"]?/i.exec(
 				sql,
 			);
 		const [, kind, name] = header ?? [];
@@ -85,7 +58,11 @@ const FROZEN_SCHEMA_OBJECTS: FrozenSchemaObject[] = SCHEMA.split(";")
 		};
 	});
 
-/** Generates a canonical 128-bit epoch, resampling at most eight invalid entropy samples. */
+/** Generates a canonical 128-bit epoch, resampling at most eight invalid entropy samples.
+ * @param fillRandom - Fills and returns a 16-byte buffer; other lengths fail, while invalid epochs retry.
+ * @returns A lowercase 32-character epoch accepted by the published `EpochSchema`.
+ * @throws When the entropy source returns an invalid-length buffer or all eight samples are invalid.
+ */
 export function generateEpoch(
 	fillRandom: (bytes: Uint8Array) => Uint8Array,
 ): string {
@@ -115,54 +92,58 @@ function isCanonicalSafeInteger(value: string, nonNegative: boolean): boolean {
 }
 
 /**
- * Creates and seeds an empty vault exactly once, or validates an existing version-1 store.
- * Existing state is never repaired, replaced, or assigned a new epoch; all bootstrap work
- * runs synchronously in one SQLite transaction. The injected factories are bootstrap inputs.
+ * Creates an empty generated-v1 vault once, or validates an existing generated-v1 store.
+ * Only the canonical generated initial schema is supported; the unpublished pre-ORM preview
+ * form fails closed. Existing state is never repaired, replaced, or assigned a new epoch.
+ * All DDL and initial metadata writes run synchronously in one Durable SQLite transaction.
+ * @param storage - The native storage belonging to this vault Durable Object.
+ * @param createEpoch - Called only during fresh initialization; an invalid result aborts the transaction.
+ * @param now - Called only during fresh initialization; returns the creation timestamp in milliseconds.
+ * @throws If storage is partial, unknown, incompatible, unsupported, or its bootstrap inputs are invalid.
  */
 export function initializeVaultStorage(
 	storage: DurableObjectStorage,
 	createEpoch: () => string,
 	now: () => number,
 ): void {
-	storage.transactionSync(() => {
-		const tableNames = storage.sql
-			.exec<{ name: string }>(
+	const db = drizzle(storage, { schema: vaultSchema });
+	db.transaction((tx) => {
+		const tableNames = tx
+			.all<{ name: string }>(
 				"SELECT name FROM sqlite_master WHERE type = 'table'",
 			)
-			.toArray()
 			.map(({ name }) => name);
 		const applicationTables = tableNames.filter(
 			(name) => !name.startsWith("sqlite_"),
 		);
 		if (applicationTables.length === 0) {
-			storage.sql.exec(SCHEMA);
+			for (const statement of RELATIONAL_SCHEMA_STATEMENTS)
+				tx.run(sql.raw(statement));
+			tx.run(sql.raw(FTS_SCHEMA));
 			const epoch = createEpoch();
 			if (!EpochSchema.safeParse(epoch).success)
 				throw new Error("Invalid vault epoch");
 			const createdAt = now();
 			if (!Number.isSafeInteger(createdAt))
 				throw new Error("Invalid vault creation time");
-			for (const [key, value] of Object.entries({
-				schema_version: String(SCHEMA_VERSION),
-				epoch,
-				head_seq: "0",
-				created_at: String(createdAt),
-				live_file_count: "0",
-			}))
-				storage.sql.exec(
-					"INSERT INTO meta (key, value) VALUES (?, ?)",
-					key,
-					value,
-				);
+			tx.insert(meta)
+				.values([
+					{ key: "schema_version", value: String(SCHEMA_VERSION) },
+					{ key: "epoch", value: epoch },
+					{ key: "head_seq", value: "0" },
+					{ key: "created_at", value: String(createdAt) },
+					{ key: "live_file_count", value: "0" },
+				])
+				.run();
 			return;
 		}
 
-		const metadata = new Map<string, string>(
-			storage.sql
-				.exec<{ key: string; value: string }>("SELECT key, value FROM meta")
-				.toArray()
-				.map(({ key, value }) => [key, value] as [string, string]),
-		);
+		const metadata = new Map<string, string>();
+		for (const row of tx.select().from(meta).all()) {
+			if (typeof row.key !== "string" || typeof row.value !== "string")
+				throw new Error("Malformed vault metadata row");
+			metadata.set(row.key, row.value);
+		}
 		if (metadata.get("schema_version") !== String(SCHEMA_VERSION)) {
 			throw new Error("Unsupported vault schema version");
 		}
@@ -181,11 +162,10 @@ export function initializeVaultStorage(
 		if (!isCanonicalSafeInteger(metadata.get("created_at") ?? "", false))
 			throw new Error("Invalid vault creation time");
 		const actualObjects = new Map(
-			storage.sql
-				.exec<{ type: string; name: string; sql: string | null }>(
+			tx
+				.all<{ type: string; name: string; sql: string | null }>(
 					"SELECT type, name, sql FROM sqlite_master",
 				)
-				.toArray()
 				.map((object) => [object.name, object]),
 		);
 		for (const expected of FROZEN_SCHEMA_OBJECTS) {

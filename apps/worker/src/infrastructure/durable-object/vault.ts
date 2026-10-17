@@ -7,6 +7,10 @@ import {
 
 /** SQLite-backed authority for one isolated vault id. */
 export class Vault extends DurableObject<Env> {
+	/**
+	 * Creates fresh storage or validates existing storage synchronously in one transaction.
+	 * Incompatible state throws without repair or identity replacement. Construction does not expose mutation operations.
+	 */
 	constructor(ctx: DurableObjectState, env: Env) {
 		super(ctx, env);
 		initializeVaultStorage(

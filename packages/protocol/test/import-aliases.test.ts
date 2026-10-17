@@ -4,7 +4,6 @@ import {
 	cp,
 	mkdir,
 	mkdtemp,
-	readdir,
 	readFile,
 	rm,
 	symlink,
@@ -14,14 +13,17 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
+/** Reads trusted fixture JSON with a caller-declared shape, not runtime validation. */
 function readJson<T>(path: URL): T {
 	return JSON.parse(readFileSync(path, "utf8")) as T;
 }
 
+/** Models only package export and import fields inspected by alias boundary tests. */
 type PackageConfig = {
 	exports?: Record<string, string>;
 	imports?: Record<string, string>;
 };
+/** Models configuration fields inspected by consumer and runtime isolation tests. */
 type TsConfig = {
 	extends?: string;
 	include?: string[];
@@ -33,6 +35,7 @@ type TsConfig = {
 		types?: string[];
 	};
 };
+/** Models the import restriction configuration inspected by the alias contract tests. */
 type BiomeConfig = {
 	linter?: {
 		rules?: {
@@ -91,6 +94,7 @@ const workspaces = [
 ];
 const expectedSharedPaths = {
 	"@protocol/*": ["./packages/protocol/src/*"],
+	"@tooling/*": ["./tooling/*"],
 	"@worker/*": ["./apps/worker/src/*"],
 	"@plugin/*": ["./apps/plugin/src/*"],
 	"@plugin-tools/build": ["./apps/plugin/build.ts"],
@@ -100,10 +104,12 @@ const relativeImportRule = biome.linter?.rules?.style?.noRestrictedImports;
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const repositoryRoot = resolve(packageRoot, "../..");
 
+/** Preserves subprocess output and status for cause-specific assertions, including expected failures. */
 function run(command: string, args: string[], cwd: string) {
 	return spawnSync(command, args, { cwd, encoding: "utf8" });
 }
 
+/** Owns a repository-local fixture directory and removes it after success or failure. */
 async function withTemporaryDirectory<T>(
 	prefix: string,
 	runFixture: (root: string) => Promise<T>,
@@ -116,25 +122,13 @@ async function withTemporaryDirectory<T>(
 	}
 }
 
-async function rewriteCopiedProtocolAliases(directory: string): Promise<void> {
-	for (const entry of await readdir(directory, { withFileTypes: true })) {
-		const path = join(directory, entry.name);
-		if (entry.isDirectory()) {
-			await rewriteCopiedProtocolAliases(path);
-		} else if (entry.isFile() && path.endsWith(".ts")) {
-			const contents = await readFile(path, "utf8");
-			await writeFile(path, contents.replaceAll("#protocol/", "@protocol/"));
-		}
-	}
-}
-
+/** Copies the real public producer into an isolated consumer fixture without publishing or changing production files. */
 async function createPublicConsumerFixture(root: string): Promise<string> {
 	const fixturePackage = join(root, "producer/packages/protocol");
 	await mkdir(fixturePackage, { recursive: true });
 	await cp(join(packageRoot, "src"), join(fixturePackage, "src"), {
 		recursive: true,
 	});
-	await rewriteCopiedProtocolAliases(join(fixturePackage, "src"));
 	await cp(
 		join(packageRoot, "package.json"),
 		join(fixturePackage, "package.json"),
@@ -169,6 +163,7 @@ async function createPublicConsumerFixture(root: string): Promise<string> {
 	return fixturePackage;
 }
 
+/** Selects shared alias inheritance for the consumer compiler control. No ambient runtime types enter the consumer. */
 function makeConsumerConfig(withSharedAliases: boolean) {
 	return {
 		...(withSharedAliases ? { extends: "../tsconfig.aliases.json" } : {}),
@@ -231,6 +226,7 @@ describe("workspace import aliases", () => {
 	it("reports relative value and type imports while allowing workspace, builtin, and public imports", async () => {
 		const biomePath = join(repositoryRoot, "node_modules/.bin/biome");
 		const configPath = join(repositoryRoot, "biome.json");
+		/** Runs the installed import rule against fixture files and preserves exact diagnostics. */
 		const lint = (path: string) =>
 			run(
 				biomePath,

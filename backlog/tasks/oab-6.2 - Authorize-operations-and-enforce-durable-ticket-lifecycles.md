@@ -1,10 +1,11 @@
 ---
 id: OAB-6.2
 title: Authorize operations and enforce durable ticket lifecycles
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@pi'
 created_date: '2026-10-15 00:38'
-updated_date: '2026-10-15 00:40'
+updated_date: '2026-10-17 12:58'
 labels:
   - F1
 dependencies:
@@ -29,3 +30,17 @@ Section6.3 authorization must precede every content side effect, and section 9.5
 - [ ] #3 Concurrent requests and uncertain completion have bounded, recoverable admission accounting, including cancellation and expired tickets; no transient Worker map is the authoritative per-client limiter.
 - [ ] #4 Real DO tests prove denial and interleaving behavior; production HTTP composition has no fixture identity or authentication bypass.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+Human plan approval: pn-f925b0. Execution: subagent-driven, selected by the owner.
+
+Plan: docs/superpowers/plans/2026-10-17-f1-authorization-tickets.md.
+
+1. Define canonical admission contracts and rules.
+2. Add durable reservations, binding, and expiry accounting.
+3. Add atomic consumption and revocation interleaving tests.
+
+Keep acceptance criteria unchecked until evidence and final human branch review pass. The parent owns validation and task closure.
+<!-- SECTION:PLAN:END -->

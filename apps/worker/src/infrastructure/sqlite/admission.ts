@@ -38,6 +38,9 @@ type VaultTransaction = Parameters<
 	Parameters<DrizzleSqliteDODatabase<typeof vaultSchema>["transaction"]>[0]
 >[0];
 
+/** Limit physical admission rows across all clients, grants, states, and expiry times. */
+const MAX_VAULT_ADMISSIONS = 1_024;
+
 /** SQLite admission entry points for one Durable Object's native storage. */
 export class SqliteAdmissionAuthority {
 	private readonly db;
@@ -71,6 +74,8 @@ export class SqliteAdmissionAuthority {
 				cleanupExpiredAdmissions(tx, context.client_id, now);
 				const limitFailure = checkClientLimit(tx, context.client_id, now);
 				if (limitFailure) return denied(limitFailure);
+				const vaultLimitFailure = checkVaultLimit(tx, now);
+				if (vaultLimitFailure) return denied(vaultLimitFailure);
 				const id = nextAdmissionId(tx, () => this.ports.newTicketId());
 				if (!id) return denied({ kind: "invalid_request" });
 				tx.insert(operationAdmissions)
@@ -231,6 +236,8 @@ export class SqliteAdmissionAuthority {
 				cleanupExpiredAdmissions(tx, context.client_id, now);
 				const limitFailure = checkClientLimit(tx, context.client_id, now);
 				if (limitFailure) return denied(limitFailure);
+				const vaultLimitFailure = checkVaultLimit(tx, now);
+				if (vaultLimitFailure) return denied(vaultLimitFailure);
 				const id = nextAdmissionId(tx, () => this.ports.newTicketId());
 				if (!id) return denied({ kind: "invalid_request" });
 				tx.insert(operationAdmissions)
@@ -392,6 +399,38 @@ function checkClientLimit(
 	return {
 		kind: "admission_limited",
 		retry_after_seconds: Math.max(1, Math.ceil((earliest - now) / 1000)),
+	};
+}
+
+/** Check the retained row limit before insertion and use the earliest expiry for a full vault. */
+function checkVaultLimit(
+	tx: VaultTransaction,
+	now: number,
+): AdmissionFailure | undefined {
+	const cappedAdmissions = tx
+		.select({ id: operationAdmissions.id })
+		.from(operationAdmissions)
+		.limit(MAX_VAULT_ADMISSIONS)
+		.as("capped_admissions");
+	const retainedCount = tx
+		.select({ value: count() })
+		.from(cappedAdmissions)
+		.all()[0]?.value;
+	if (retainedCount === undefined)
+		throw new Error("Vault admission count query returned no row");
+	if (retainedCount < MAX_VAULT_ADMISSIONS) return undefined;
+
+	const earliestExpiry = tx
+		.select({ expiresAt: operationAdmissions.expiresAt })
+		.from(operationAdmissions)
+		.orderBy(asc(operationAdmissions.expiresAt))
+		.limit(1)
+		.all()[0]?.expiresAt;
+	if (earliestExpiry === undefined)
+		throw new Error("Vault admission expiry query returned no row");
+	return {
+		kind: "admission_limited",
+		retry_after_seconds: Math.max(1, Math.ceil((earliestExpiry - now) / 1_000)),
 	};
 }
 

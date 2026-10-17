@@ -185,7 +185,13 @@ Each column needs a value. The state check uses the name `operation_admissions_s
 
 Index `operation_admissions_client_expiry` covers `(client_id, expires_at)`. Index `operation_admissions_expiry` covers `expires_at`.
 
-Each client can hold at most 16 unexpired records across grants and states. Each new admission removes all expired records for its client. It then removes at most 64 expired records globally by selected identifiers.
+Each client can hold at most 16 unexpired admission rows across grants and states. Each vault can hold at most 1,024 `operation_admissions` rows across all clients, grants, and states. Expired rows count until cleanup removes them.
+
+Each new admission removes all expired rows for its client. It then removes at most 64 expired rows globally by selected identifiers.
+
+At 1,024 or more retained rows, admission returns `admission_limited` with a positive retry delay. Client-limit denial takes precedence.
+
+For global denial, the retry delay uses the earliest retained expiry across the vault. Its value is `max(1, ceil((earliest_expiry - now) / 1000))` seconds.
 
 A record expires when `expires_at <= now`. Reservations and active tickets use a 60-second deadline. Uncertain work keeps its original deadline and charged slot.
 
@@ -484,13 +490,25 @@ Backup repository configured, one export `complete` and verified, and one restor
 | Revision retention (`revisions`) | 30 days, **floor 7 days** (floor approved by owner, §17.1); revisions pinned by an export are exempt | Pruned nightly. If `revisions` + FTS + receipts exceed **1 GB**, prune oldest beyond the 7-day floor and raise *attention* "history reduced"; never below 7 days, never silently |
 | Tombstones (`files.deleted=1`) | kept forever | Negligible size; guarantees deletes are never inferred |
 | Receipts | 30 days (accept window 25 days + 5 min skew) | §6.4 |
-| DO SQLite total | **2 GB** declared envelope (platform hard limit 10 GB) | Alert at 1.5 GB; at 2 GB every mutation except `delete` returns `507 capacity_exceeded` (every mutation writes a revision row, so content cannot be accepted without its revision); reads continue. Raising the envelope is a v2 decision |
+| DO SQLite total | **2 GB** product envelope, including admission storage. Needs Workers Paid. | Alert at 1.5 GB. At 2 GB, every mutation except `delete` returns `507 capacity_exceeded`. Every mutation writes a revision row, so content cannot be accepted without its revision. Reads continue. Raising this envelope is a v2 decision. |
 | R2 blobs | 10 GB free tier | Alert at 4 GB; GC trigger at 1 GB unreferenced (§16) |
 | Worker memory | 128 MB | No full-vault materialization anywhere; exports and hydration stream per file |
 | Polling | §7.4 | *measure* in F4: requests/day per device, p95 feed latency |
 | Export | ≤ 25 MB per Git blob, one at a time; ≤ 50 calls per alarm invocation; ≤ 60 content-creating calls per minute; ≤ 450 per hour | Partial export stays `in progress`; never announced as complete until the ref moves and verification passes; pinned revisions are never pruned |
 
-Cost expectation: $5/month base. Included allowances cover the measured vault with two orders of magnitude of headroom; the panel shows DO storage, R2 bytes and requests/day so the owner sees drift before billing does.
+Cloudflare lists 10 GB per SQLite Durable Object on Workers Paid and 1 GB on Workers Free. Its [Durable Object limits](https://developers.cloudflare.com/durable-objects/platform/limits/) give these limits. We read this page on 2026-10-17.
+
+SQL queries accept at most 100 bound parameters. Tables can have at most 100 columns. Each string, BLOB, or table row can use at most 2 MB.
+
+The [SQLite storage API](https://developers.cloudflare.com/durable-objects/api/sqlite-storage-api/), read 2026-10-17, states that `sql.databaseSize` returns database bytes. It also states that `transactionSync` rolls back when its synchronous callback throws.
+
+We did not verify the deployment account tier. This specification does not claim full-product Workers Free support. Admission storage feasibility uses the smaller 1 GB Workers Free limit.
+
+The native admission storage test has a growth target of at most 32 MiB. It uses an initialized empty fixture and three saturation, expiry, cleanup, and refill cycles. This target does not add a runtime database-size guard.
+
+Cost expectation: $5/month base. Included allowances cover the measured vault with two orders of magnitude of headroom.
+
+The panel shows DO storage, R2 bytes, and requests per day. The owner sees drift before billing.
 
 ## 13. Acceptance cases
 

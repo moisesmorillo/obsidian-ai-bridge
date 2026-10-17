@@ -18,12 +18,12 @@ Binding and completion keep their current behavior.
 ## Approval Boundary
 
 The owner selected an aggregate admission limit instead of deferred work.
-The parent proposes the numerical budget and behavior below.
-These details await human approval of this plan.
+The owner approved the full plan in Plannotator review `pn-bf0890`.
+The approval covers the budget and behavior below.
 
 This correction closes the shared design gap in CR-1 and DF-1.
-DF-2 also needs dated primary platform evidence and explicit tier assumptions.
-Task 2 remains unaccepted until validation and corrective review close these findings.
+Dated primary platform evidence and explicit tier assumptions address DF-2.
+Parent acceptance of Task 2 follows validation and corrective review.
 
 ## Global Constraints
 
@@ -38,7 +38,7 @@ Task 2 remains unaccepted until validation and corrective review close these fin
 - Get human approval before implementation.
 - Keep all four Backlog acceptance criteria unchecked.
 
-## Proposed Contract
+## Approved Contract
 
 1. Each vault can store at most **1,024 admission rows** after a successful insertion.
    This is a hard row limit, not a client population limit.
@@ -81,7 +81,7 @@ Task 2 remains unaccepted until validation and corrective review close these fin
    An over-budget test store must reject insertion after bounded cleanup unless its count falls below 1,024.
    Do not delete live rows, reset a store, or add a repair path.
 
-The proposed budget lets 64 clients hold all 16 client slots at once.
+The approved budget lets 64 clients hold all 16 client slots at once.
 It also lets more clients when each holds fewer slots.
 Expired rows can reduce the available slots until bounded cleanup removes them.
 

@@ -4,7 +4,6 @@ import {
 	cp,
 	mkdir,
 	mkdtemp,
-	readdir,
 	readFile,
 	rm,
 	symlink,
@@ -123,19 +122,6 @@ async function withTemporaryDirectory<T>(
 	}
 }
 
-/** Changes historical alias spelling only inside a copied producer fixture. */
-async function rewriteCopiedProtocolAliases(directory: string): Promise<void> {
-	for (const entry of await readdir(directory, { withFileTypes: true })) {
-		const path = join(directory, entry.name);
-		if (entry.isDirectory()) {
-			await rewriteCopiedProtocolAliases(path);
-		} else if (entry.isFile() && path.endsWith(".ts")) {
-			const contents = await readFile(path, "utf8");
-			await writeFile(path, contents.replaceAll("#protocol/", "@protocol/"));
-		}
-	}
-}
-
 /** Copies the real public producer into an isolated consumer fixture without publishing or changing production files. */
 async function createPublicConsumerFixture(root: string): Promise<string> {
 	const fixturePackage = join(root, "producer/packages/protocol");
@@ -143,7 +129,6 @@ async function createPublicConsumerFixture(root: string): Promise<string> {
 	await cp(join(packageRoot, "src"), join(fixturePackage, "src"), {
 		recursive: true,
 	});
-	await rewriteCopiedProtocolAliases(join(fixturePackage, "src"));
 	await cp(
 		join(packageRoot, "package.json"),
 		join(fixturePackage, "package.json"),

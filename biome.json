@@ -19,5 +19,40 @@
 				}
 			}
 		}
-	}
+	},
+	"overrides": [
+		{
+			"includes": ["apps/*/src/**", "packages/*/src/**"],
+			"linter": {
+				"rules": {
+					"style": {
+						"noRestrictedImports": {
+							"level": "error",
+							"options": {
+								"patterns": [
+									{
+										"group": ["./*", "../*"],
+										"message": "Use workspace-local import aliases."
+									},
+									{
+										"group": [
+											"@tooling/*",
+											"@plugin-tools/*",
+											"@obsidian-ai-bridge/tooling",
+											"@obsidian-ai-bridge/tooling/*",
+											"@ast-grep/napi",
+											"@ast-grep/napi/*",
+											"@microsoft/tsdoc",
+											"@microsoft/tsdoc/*"
+										],
+										"message": "Keep development tooling outside production source."
+									}
+								]
+							}
+						}
+					}
+				}
+			}
+		}
+	]
 }

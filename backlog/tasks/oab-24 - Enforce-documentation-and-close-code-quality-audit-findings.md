@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-10-17 04:24'
-updated_date: '2026-10-17 04:26'
+updated_date: '2026-10-17 04:38'
 labels: []
 dependencies: []
 references:
@@ -48,4 +48,6 @@ Pinned baseline bc147c61d passed: frozen install, Biome 2.5.15 on 49 files, all 
 Owner approved plan pn-741257. Execute natively with a final independent review. Pinned baseline bc147c61d passed all 68 tests and all checks.
 
 Dependency probe resolved @microsoft/tsdoc 0.17.1 and @ast-grep/napi 0.51.0. Add exact root development versions only. The first parses TSDoc syntax. The second provides TypeScript syntax inventory without compiler API coupling. Native and parser behavior probes follow installation before checker implementation.
+
+Task 3 startup evidence: Vite externalized @tooling/vite-aliases before configuration resolution. Use one root tooling workspace named @obsidian-ai-bridge/tooling with a public ./vite-aliases export. Add explicit workspace development dependencies in the three test consumers. This is existing repository code, not a new external dependency or runtime package. Keep source aliases and production import restrictions. Root filtered checks replace duplicate tooling suffix commands.
 <!-- SECTION:NOTES:END -->

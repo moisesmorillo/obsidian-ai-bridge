@@ -164,14 +164,14 @@ Keep selected names and workspace-specific options in each workspace.
 Retain one authoritative mapping in `tsconfig.aliases.json`.
 Do not put tooling exports in the production protocol package.
 
-- [ ] Write tests for wildcard aliases, the exact plugin-build alias, missing mappings, and repository-root resolution.
-- [ ] Observe RED before implementing the shared resolver.
-- [ ] Implement the helper and replace the three conversion copies.
-- [ ] Preserve copied fixture dependencies when test configurations import the new tooling helper.
-- [ ] Keep negative compiler controls cause-specific. Do not accept missing-tooling errors as successful isolation evidence.
-- [ ] Run resolver tests, alias tests, runtime-isolation tests, and all three native workspace suites.
-- [ ] Confirm that production source projects cannot get tooling globals or parser imports.
-- [ ] Commit with `refactor(tooling): share test alias conversion`.
+- [x] Write tests for wildcard aliases, the exact plugin-build alias, missing mappings, and repository-root resolution.
+- [x] Observe RED before implementing the shared resolver.
+- [x] Implement the helper and replace the three conversion copies.
+- [x] Preserve copied fixture dependencies when test configurations import the new tooling helper.
+- [x] Keep negative compiler controls cause-specific. Do not accept missing-tooling errors as successful isolation evidence.
+- [x] Run resolver tests, alias tests, runtime-isolation tests, and all three native workspace suites.
+- [x] Confirm that production source projects cannot get tooling globals or parser imports.
+- [x] Commit with `refactor(tooling): share test alias conversion`.
 
 ## Task 4: Consolidate Persistence Fixtures and Cover Input Failures
 
@@ -214,6 +214,16 @@ It does not run against production or the personal vault.
 - [ ] Push the branch and create one English Conventional Commit PR.
 - [ ] Remove the worktree only after all commits exist on the remote branch.
 - [ ] Report the PR URL, validation evidence, and any explicit residual limits.
+
+## Execution Rulings
+
+Vite configuration loads before aliases exist. A private tooling workspace supplies native package resolution through a public export.
+
+The shared reader owns trusted JSON loading as well as conversion. Each workspace keeps its own selected aliases and test settings.
+
+Consumer fixtures no longer rewrite historical aliases. They test unchanged current source.
+
+Production restrictions cover private aliases, public tooling exports, and parser dependencies. Native compilers remain separate from editor diagnostics.
 
 ## Approval Boundary
 

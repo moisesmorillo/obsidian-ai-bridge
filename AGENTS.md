@@ -55,8 +55,9 @@ Record the reviewed revision, documentation scope, structural candidates, valida
 Give each actionable finding an explicit evidence-based closure entry.
 Do not close a finding solely because nearby tests pass.
 
-Root `@tooling/*` imports serve development tooling only.
-Production source must not import root tooling or its Node and parser dependencies.
+Root `@tooling/*` imports serve the private development tooling workspace only.
+Other workspaces consume its public `@obsidian-ai-bridge/tooling/vite-aliases` export through development dependencies.
+Production source must not import tooling or its Node and parser dependencies.
 
 History: this repository was restarted from scratch on 2026-10-11. Any agent memory, note or document dated before that describes the legacy codebase and does not apply.
 

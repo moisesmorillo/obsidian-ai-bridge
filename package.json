@@ -4,12 +4,13 @@
 	"type": "module",
 	"workspaces": [
 		"apps/*",
-		"packages/*"
+		"packages/*",
+		"tooling"
 	],
 	"scripts": {
 		"lint": "biome check .",
-		"typecheck": "bun run --filter '@obsidian-ai-bridge/*' typecheck && tsc --noEmit -p tooling/tsconfig.json",
-		"test": "bun run --filter '@obsidian-ai-bridge/*' test && vitest run --config tooling/vitest.config.ts",
+		"typecheck": "bun run --filter '@obsidian-ai-bridge/*' typecheck",
+		"test": "bun run --filter '@obsidian-ai-bridge/*' test",
 		"build": "bun run --filter '@obsidian-ai-bridge/*' build",
 		"docs:check": "bun tooling/check-documentation.ts",
 		"check": "bun run lint && bun run docs:check && bun run typecheck && bun run test && bun run build"

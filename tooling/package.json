@@ -1,0 +1,12 @@
+{
+	"name": "@obsidian-ai-bridge/tooling",
+	"private": true,
+	"type": "module",
+	"exports": {
+		"./vite-aliases": "./vite-aliases.ts"
+	},
+	"scripts": {
+		"typecheck": "tsc --noEmit -p tsconfig.json",
+		"test": "vitest run --config vitest.config.ts"
+	}
+}

@@ -8,13 +8,16 @@
 	],
 	"scripts": {
 		"lint": "biome check .",
-		"typecheck": "bun run --filter '@obsidian-ai-bridge/*' typecheck",
-		"test": "bun run --filter '@obsidian-ai-bridge/*' test",
+		"typecheck": "bun run --filter '@obsidian-ai-bridge/*' typecheck && tsc --noEmit -p tooling/tsconfig.json",
+		"test": "bun run --filter '@obsidian-ai-bridge/*' test && vitest run --config tooling/vitest.config.ts",
 		"build": "bun run --filter '@obsidian-ai-bridge/*' build",
-		"check": "bun run lint && bun run typecheck && bun run test && bun run build"
+		"docs:check": "bun tooling/check-documentation.ts",
+		"check": "bun run lint && bun run docs:check && bun run typecheck && bun run test && bun run build"
 	},
 	"devDependencies": {
+		"@ast-grep/napi": "0.51.0",
 		"@biomejs/biome": "2.5.15",
+		"@microsoft/tsdoc": "0.17.1",
 		"@types/bun": "1.4.3",
 		"typescript": "7.0.2",
 		"vitest": "5.0.4"

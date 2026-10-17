@@ -91,6 +91,7 @@ const workspaces = [
 ];
 const expectedSharedPaths = {
 	"@protocol/*": ["./packages/protocol/src/*"],
+	"@tooling/*": ["./tooling/*"],
 	"@worker/*": ["./apps/worker/src/*"],
 	"@plugin/*": ["./apps/plugin/src/*"],
 	"@plugin-tools/build": ["./apps/plugin/build.ts"],

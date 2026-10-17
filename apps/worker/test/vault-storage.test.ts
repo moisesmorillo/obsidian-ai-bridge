@@ -276,6 +276,158 @@ describe("Vault SQLite persistence", () => {
 		});
 	});
 
+	it.each([
+		[
+			"table",
+			"CREATE TABLE unexpected_fixture (value TEXT NOT NULL)",
+			"INSERT INTO unexpected_fixture(value) VALUES ('preserve')",
+			"SELECT value FROM unexpected_fixture",
+			"Unexpected vault table: unexpected_fixture",
+		],
+		[
+			"files_fts_ lookalike table",
+			"CREATE TABLE files_fts_fixture (value TEXT NOT NULL)",
+			"INSERT INTO files_fts_fixture(value) VALUES ('preserve')",
+			"SELECT value FROM files_fts_fixture",
+			"Unexpected vault table: files_fts_fixture",
+		],
+		[
+			"index",
+			"CREATE INDEX unexpected_fixture_idx ON files(path)",
+			null,
+			null,
+			"Unexpected vault index: unexpected_fixture_idx",
+		],
+		[
+			"trigger",
+			"CREATE TRIGGER unexpected_fixture_trigger AFTER INSERT ON files BEGIN SELECT 1; END",
+			null,
+			null,
+			"Unexpected vault trigger: unexpected_fixture_trigger",
+		],
+		[
+			"view",
+			"CREATE VIEW unexpected_fixture_view AS SELECT path FROM files",
+			null,
+			null,
+			"Unexpected vault view: unexpected_fixture_view",
+		],
+	])(
+		"rejects an unexpected application %s without changing the vault",
+		async (_kind, createSql, insertSql, selectSql, expectedError) => {
+			const stub = env.VAULTS.get(env.VAULTS.newUniqueId());
+			await runInDurableObject(stub, (_instance, state) => {
+				state.storage.sql.exec(
+					"INSERT INTO files(path,path_key,rev,seq,hash,size,kind,deleted,updated_at,origin) VALUES ('preserve.md','preserve.md',1,1,'hash',0,'text',0,10,'test')",
+				);
+				state.storage.sql.exec(createSql);
+				if (insertSql) state.storage.sql.exec(insertSql);
+				const beforeMetadata = metadata(state.storage);
+				const beforeObject = state.storage.sql
+					.exec<{ type: string; name: string; sql: string | null }>(
+						"SELECT type, name, sql FROM sqlite_master WHERE name LIKE 'unexpected_fixture%' OR name = 'files_fts_fixture'",
+					)
+					.toArray();
+				let replacementRequested = false;
+				let creationTimeRequested = false;
+				expect(() =>
+					initializeVaultStorage(
+						state.storage,
+						() => {
+							replacementRequested = true;
+							return createEpoch();
+						},
+						() => {
+							creationTimeRequested = true;
+							return 2;
+						},
+					),
+				).toThrow(expectedError);
+				expect(replacementRequested).toBe(false);
+				expect(creationTimeRequested).toBe(false);
+				expect(metadata(state.storage)).toEqual(beforeMetadata);
+				expect(
+					state.storage.sql
+						.exec("SELECT path FROM files WHERE path = 'preserve.md'")
+						.toArray(),
+				).toHaveLength(1);
+				expect(
+					state.storage.sql
+						.exec(
+							"SELECT type, name, sql FROM sqlite_master WHERE name LIKE 'unexpected_fixture%' OR name = 'files_fts_fixture'",
+						)
+						.toArray(),
+				).toEqual(beforeObject);
+				if (selectSql)
+					expect(state.storage.sql.exec(selectSql).toArray()).toEqual([
+						{ value: "preserve" },
+					]);
+			});
+		},
+	);
+
+	it("fails closed on a view-only database without creating schema", async () => {
+		const stub = env.VAULTS.get(env.VAULTS.newUniqueId());
+		await runInDurableObject(stub, (_instance, state) => {
+			for (const statement of [
+				"DROP TABLE IF EXISTS export_pins",
+				"DROP TABLE IF EXISTS revoked_grants",
+				"DROP TABLE IF EXISTS blob_refs",
+				"DROP TABLE IF EXISTS files_fts",
+				"DROP TABLE IF EXISTS receipts",
+				"DROP TABLE IF EXISTS revisions",
+				"DROP TABLE IF EXISTS changes",
+				"DROP TABLE IF EXISTS clients",
+				"DROP TABLE IF EXISTS exports",
+				"DROP TABLE IF EXISTS files",
+				"DROP TABLE IF EXISTS meta",
+			]) {
+				state.storage.sql.exec(statement);
+			}
+			state.storage.sql.exec(
+				"CREATE VIEW unknown_fixture_view AS SELECT 1 AS value",
+			);
+			const before = state.storage.sql
+				.exec<{ type: string; name: string; sql: string | null }>(
+					"SELECT type, name, sql FROM sqlite_master",
+				)
+				.toArray();
+			expect(before).toContainEqual(
+				expect.objectContaining({
+					type: "view",
+					name: "unknown_fixture_view",
+				}),
+			);
+			expect(
+				tableNames(state.storage).filter((name) => !name.startsWith("sqlite_")),
+			).toEqual([]);
+			let epochRequested = false;
+			let creationTimeRequested = false;
+			expect(() =>
+				initializeVaultStorage(
+					state.storage,
+					() => {
+						epochRequested = true;
+						return createEpoch();
+					},
+					() => {
+						creationTimeRequested = true;
+						return 1;
+					},
+				),
+			).toThrow("Unexpected vault view: unknown_fixture_view");
+			expect(epochRequested).toBe(false);
+			expect(creationTimeRequested).toBe(false);
+			expect(
+				state.storage.sql
+					.exec<{ type: string; name: string; sql: string | null }>(
+						"SELECT type, name, sql FROM sqlite_master",
+					)
+					.toArray(),
+			).toEqual(before);
+		});
+	});
+
 	it("fails closed on an unknown-only database without deleting it", async () => {
 		const stub = env.VAULTS.get(env.VAULTS.newUniqueId());
 		await runInDurableObject(stub, (_instance, state) => {

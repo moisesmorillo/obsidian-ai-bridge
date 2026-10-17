@@ -108,15 +108,15 @@ export function initializeVaultStorage(
 ): void {
 	const db = drizzle(storage, { schema: vaultSchema });
 	db.transaction((tx) => {
-		const tableNames = tx
-			.all<{ name: string }>(
-				"SELECT name FROM sqlite_master WHERE type = 'table'",
-			)
-			.map(({ name }) => name);
-		const applicationTables = tableNames.filter(
-			(name) => !name.startsWith("sqlite_"),
+		const catalogObjects = tx.all<{
+			type: string;
+			name: string;
+			sql: string | null;
+		}>("SELECT type, name, sql FROM sqlite_master");
+		const applicationObjects = catalogObjects.filter(
+			({ name }) => !name.startsWith("sqlite_"),
 		);
-		if (applicationTables.length === 0) {
+		if (applicationObjects.length === 0) {
 			for (const statement of RELATIONAL_SCHEMA_STATEMENTS)
 				tx.run(sql.raw(statement));
 			tx.run(sql.raw(FTS_SCHEMA));
@@ -136,6 +136,26 @@ export function initializeVaultStorage(
 				])
 				.run();
 			return;
+		}
+
+		const actualObjects = new Map(
+			catalogObjects.map((object) => [object.name, object]),
+		);
+		// SQLite reserves this namespace. SQLite can give internal objects such as sqlite_sequence DDL.
+		const tableKinds = new Map(
+			tx
+				.all<{ name: string; type: string }>("PRAGMA table_list")
+				.map(({ name, type }) => [name, type]),
+		);
+		const expectedNames = new Set(
+			FROZEN_SCHEMA_OBJECTS.map(({ name }) => name),
+		);
+		for (const actual of catalogObjects) {
+			if (expectedNames.has(actual.name)) continue;
+			if (actual.name.startsWith("sqlite_")) continue;
+			if (actual.type === "table" && tableKinds.get(actual.name) === "shadow")
+				continue;
+			throw new Error(`Unexpected vault ${actual.type}: ${actual.name}`);
 		}
 
 		const metadata = new Map<string, string>();
@@ -161,13 +181,6 @@ export function initializeVaultStorage(
 		}
 		if (!isCanonicalSafeInteger(metadata.get("created_at") ?? "", false))
 			throw new Error("Invalid vault creation time");
-		const actualObjects = new Map(
-			tx
-				.all<{ type: string; name: string; sql: string | null }>(
-					"SELECT type, name, sql FROM sqlite_master",
-				)
-				.map((object) => [object.name, object]),
-		);
 		for (const expected of FROZEN_SCHEMA_OBJECTS) {
 			const actual = actualObjects.get(expected.name);
 			if (!actual)

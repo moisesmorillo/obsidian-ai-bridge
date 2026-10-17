@@ -1,11 +1,11 @@
 ---
 id: OAB-6.1
 title: Persist the Vault authority in real SQLite Durable Objects
-status: In Progress
+status: Done
 assignee:
   - '@pi'
 created_date: '2026-10-15 00:36'
-updated_date: '2026-10-15 02:24'
+updated_date: '2026-10-17 03:31'
 labels:
   - F1
 dependencies: []
@@ -34,6 +34,15 @@ F0 has no Durable Object or authoritative storage. Establish the real persistent
 
 <!-- SECTION:PLAN:BEGIN -->
 Owner approved docs/superpowers/plans/2026-10-15-f1-vault-persistence.md in pn-10c0db and explicitly selected subagent-driven execution. Implement only its Task1: real persistent SQLite Vault authority and local configuration/tests, preserving the current default-deny public Worker. The controller owns test execution, semantic review gates, Backlog closure and publication; no later F1 subtask or remote resource action is authorized.
+
+Owner-approved ORM correction within this same task; no new spec or later-F1 work:
+1. Preserve the native61test baseline and current runtime/source-isolation controls; no HTTP/auth/R2/plugin/resource actions.
+2. Declare the section5.2 relational schema in Drizzle TypeScript models, with exact persisted names, keys, constraints, indexes, nullable fields and integer-millisecond semantics. Derive persisted row types from the ORM, not duplicate interfaces or wire schemas.
+3. Generate/version local DDL from those models using development-only tooling; keep generated artifacts distinct from manually authored narrow FTS5 SQL. Preserve one schema owner, exact tokenizer and a bounded compatibility/admission check. No arbitrary SQL framework or competing hand-edited DDL map.
+4. Use the official synchronous DurableSQLite driver for normal metadata/query work. Keep fresh schema and metadata publication atomic, and validate existing/unknown/corrupt state before any ORM/migration write. Preserve healthy identity/data and fail closed without repair or replacement epoch.
+5. Keep justified raw SQL confined to engine-specific FTS5/catalog/DDL-artifact execution. Do not copy generic async transactions, remote migration commands or nodejs_compat flags from examples. Codegen/Node declarations must not enter production or runtime-test source projects.
+6. Improve the annotated persistence TSDoc with semantic parameter/result/error tags. Prove the real integrated implementation with existing native tests and targeted regressions for any changed admission/transaction/codegen boundary; actual RED before fixing a newly discovered behavior. Parent owns installs, generator runs and all long validation; writer freezes during runs.
+7. Run frozen install and full checks, fresh semantic review proportional to the ORM delta, and reopen the human main-diff gate. Close only OAB-6.1 after approval; leave all later tasks and Cloudflare resources untouched.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -58,4 +67,48 @@ Independent corrective review4eeacd47 closed Finding1(schema definitions) and Fi
 Final whole-branch Sol3f522143 reviewed exact20file base43fc..108 plus execution-note overlay, code APPROVE WITH NOTES/design ready with bounded follow-ups; no functional/platform blocker, previous Findings1/2 independently Fixed. One non-blocking MINOR FINAL-DOC-1 remains: document adapter-local descriptor kinds, controlled semicolon/header DDL assumptions, whitespace normalization including literals and canonical-integer sign policy beside private declarations. Parent elects a documentation-only correction now; no SQL/behavior/parser/dependency change. Source still requires final scoped documentation closure, exact-head checks and human diff approval before task closure/publication. Full review includes primary platform verification and aggregate first-slice budgets; no whole-F1/client or remote-runtime qualification claimed.
 
 Final source head2e77a291 independently approved by Sol closure4a1bf865: code APPROVE, design ready, no actionable findings; FINAL-DOC-1 and original Findings1/2 Fixed. Fresh exact-source-head verification bae583ef6 passed with HEAD unchanged before/after: frozen install124/274 unchanged, Biome42, all native configured compilers,61tests(49foundation+12persistence),alllocalbuilds,Wranglerdryrun494.23KiB/gzip77.42KiB VAULTS(Vault),doctor and diff-check clean. AC1: native schema/index/tokenizer bootstrap and rollback tests. AC2: native CSPRNG/canonical epoch plus repeat/eviction identity/time/version/data preservation. AC3: native isolation, rollback,1MBrow,literaltrigram/diacritics,unknown/newer/numeric/same-name corruption fail-closed tests. AC4: all49foundation cases,source/test isolation/native typechecks and local binding/migration dry-run without deployment. Four AC checked on observed evidence; status remains In Progress pending human branch-diff approval. No full-F1/client/remote-runtime qualification or later-slice execution.
+
+Human review pn-42e02f requested discussing ORM adoption and TSDoc tags before code edits. Parent inspected only those findings and official docs; owner then explicitly chose Drizzle with narrow SQL escapes via structured question. No new product specification requested or needed. Current raw-SQL implementation was intentional in this slice, not a spec requirement. Historical61test/source approvals remain evidence for the old implementation; AC checks are reset pending the approved ORM correction and renewed human diff. Dependency rationale before installation: drizzle-orm0.45.4 provides the official durable-sqlite driver and typed models/queries; drizzle-kit0.31.11 is development-only generation tooling so ordinary DDL derives reproducibly from declarative models rather than a second handwritten schema. These stable versions are parent integration choices verified from current registry metadata; no existing toolchain pins are changed. Versioned0.45.4 driver source confirms transaction callbacks delegate directly to storage.transactionSync. The stock migrator creates its own journal and writes pending DDL; do not blindly invoke it on existing or unknown/corrupt stores before admission. TSDoc correction uses semantic @param/@returns/@throws where informative without duplicated TypeScript types or meaningless void returns.
+
+ORM generation b500cf93b exit0 loaded the real model/config and emitted ten relational tables plus the two files indexes, snapshot and journal; no migration was applied. Full generated SQL/snapshot inspected. Parent fresh active LSP for drizzle.config.ts reports confirmed clean, while writer reports unresolved drizzle-kit. Installed native TypeScript standalone strict Bundler check b589a889b completed exit0 with no output; loader/compiler resolution is proven but contradictory editor acquisition is not attributed to cache. The root Worker config includes src only, leaving the new config outside configured tooling coverage. Authorize a discoverable isolated tooling directory with its own tsconfig.json for the Drizzle config, official installed Node/Bun declarations and an explicit appended tooling compiler command; production and test project includes/types remain unchanged. No reinstall, shim, diagnostic suppression or new dependency. Generated single-column text primary keys have explicit NOT NULL absent from the original SQLite DDL. Preserve original frozen SQLite nullability rather than silently strengthening constraints: inspect declarative table-level primary keys as a supported ORM representation and request local regeneration before runtime rewrite. Report a concrete limitation if Drizzle cannot express the original semantics; do not hand-edit generated SQL or invent another schema owner.
+
+Corrected local generation b8a57c21d exit0 has explicit artifact postconditions: one initial journal entry idx0, nonempty 0000_elite_thor_girl.sql2565bytes, ten relational tables, all six original TEXT primary keys retain nullable physical declarations, and changes.seq retains auto-increment. Full regenerated SQL read; table names, defaults, CHECKs, two files indexes/composite keys and nullable fields inspected; FTS remains the separate approved seam. Parent reset preparation in b95f16a9a initially left an empty meta directory; installed Kit prepareOutFolder only creates a journal if that directory is absent, logged ENOENT but returned0. This was invalid generation, not GREEN; exact empty-directory rmdir corrected it without touching tracked data. The three configured native Worker source/test/tooling compiler commands did pass in b95f16a9a; fresh active LSP config/model2of2confirmedclean. Old three untracked generation artifacts preserved privately before reset. Runtime rewrite may now proceed against generated declarative DDL, preserving fail-closed admission, synchronous atomicity, existing native cases and meaningful semantic TSDoc. No migration application/deployment or task closure.
+
+Owner explicitly selected Solo v1 generado after discussing compatibility of prior raw-SQL v1 versus generated canonical v1. The old SQL representation exists only in this unpublished, undeployed branch; this first delivery has no backward-compatibility obligation for that provisional representation. Support the generated canonical initial v1 only, preserving exact admission and healthy generated-v1 identity/data across repeat initialization/eviction. Any unsupported prior form must fail closed without writes, repair, epoch replacement, reset/deletion or automatic migration. No legacy DDL map, generalized SQL-equivalence parser or schema-version bump is authorized. Document this limited initial-release compatibility boundary concisely; no new product spec or later-phase work.
+
+Latest ORM correction evidence:
+- Source commits are 216d78c and 85467d3. The latter changes only the initializer and its native tests.
+- Run b2833f6bc passed all 68 tests, typechecks, drift guards, Biome, local builds, Backlog doctor, and diff checks.
+- The focused native suite passed 19 tests, including eviction identity and six cause-specific catalog admission regressions.
+- Wrangler 4.45 completed dry-run only. Its bundle measured 674.59 KiB, or 111.58 KiB with gzip.
+- Native run be9b0cb97 established six assertion failures before the admission fix. Earlier fixture errors do not count as behavior RED.
+- Fresh corrective review 846c00bb approved commit 85467d3 and closed all carried findings. Parent read its complete report.
+- The latest editor probe could not confirm either changed file as clean. Native compiler checks passed independently.
+- Whole-branch review and human diff approval remain pending. OAB-6.1 remains In Progress, with acceptance criteria unchecked.
+- No deployment, remote qualification, identity change, or later F1 implementation occurred.
+
+Human pn-459d97 correction evidence:
+- Owner validated both findings and selected a new PR from this branch into main.
+- The initializer now uses 31 lines and four private phase helpers. One transaction still owns all phases.
+- New helper contracts document transaction ownership, factory timing, read-only validation, and failure behavior.
+- Both tooling helpers now document their inputs, outputs, working-directory assumptions, and errors.
+- Run b4086508f passed focused native 19/19 and all 68 repository tests.
+- Biome checked 49 files. All typechecks, drift guards, local builds, Backlog doctor, and diff checks passed.
+- Wrangler 4.45 completed dry-run only. Its bundle measured 675.04 KiB, or 111.67 KiB with gzip.
+- The editor probe returned zero diagnostics but two inconclusive paths. It did not confirm clean files.
+- Independent corrective review and renewed human diff approval remain pending. Task status and acceptance criteria remain unchanged.
+
+Human review pn-6daf0f approved the final diff with no changes requested. Independent corrective review closed both pn-459d97 findings and all carried findings. Evidence for criteria 1–3 is the native 19-case suite.
+
+Evidence for criterion 4 includes the unchanged foundation tests, native compilers, and local dry-run binding build. The source hashes still match validation run b4086508f. Only OAB-6.1 closes.
+
+OAB-6 and later subtasks stay open.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Added native SQLite Vault bootstrap with Drizzle models, generated DDL, and strict read-only admission for existing state. Preserved atomic initialization, stable identity, default-deny HTTP behavior, and compiler isolation. Verified 19 native persistence tests, all 68 repository tests, typechecks, drift guards, lint, local builds, and Backlog checks.
+
+Independent review approved commit 9914151, and human review pn-6daf0f approved the final diff. Later F1 work and remote qualification remain outside this task.
+<!-- SECTION:FINAL_SUMMARY:END -->

@@ -9,6 +9,7 @@ import {
 import { RELATIONAL_SCHEMA_STATEMENTS } from "@worker/infrastructure/sqlite/schema.generated";
 import { describe, expect, it } from "vitest";
 
+/** Reads raw bootstrap strings so assertions detect invalid stored values without normalization. */
 const metadata = (storage: DurableObjectStorage) =>
 	Object.fromEntries(
 		storage.sql
@@ -16,6 +17,7 @@ const metadata = (storage: DurableObjectStorage) =>
 			.toArray()
 			.map(({ key, value }) => [key, value]),
 	);
+/** Lists native tables, including SQLite internals and FTS shadow tables. */
 const tableNames = (storage: DurableObjectStorage) =>
 	storage.sql
 		.exec<{ name: string }>(
@@ -23,6 +25,7 @@ const tableNames = (storage: DurableObjectStorage) =>
 		)
 		.toArray()
 		.map(({ name }) => name);
+/** Reads the exact catalog DDL, or null when no definition exists. */
 const schemaDefinition = (storage: DurableObjectStorage, name: string) =>
 	storage.sql
 		.exec<{ sql: string | null }>(
@@ -31,6 +34,7 @@ const schemaDefinition = (storage: DurableObjectStorage, name: string) =>
 		)
 		.toArray()[0]?.sql ?? null;
 
+/** Uses native random bytes and the production epoch validator for fresh test stores. */
 const createEpoch = () =>
 	generateEpoch((bytes) => {
 		bytes.set(crypto.getRandomValues(new Uint8Array(16)));

@@ -99,18 +99,18 @@ Reject absent or empty documentation for selected declarations.
 Do not claim that a parser detects every empty paraphrase, stale guarantee, or false contract.
 Keep declaration selection small and explicit, not a generic configurable lint framework.
 
-- [ ] Verify parser APIs and record exact dependency versions and reasons in OAB-24.
-- [ ] Write tests before the checker implementation.
-- [ ] Test exported functions, internal helpers, private methods, accessors, constructors, interfaces, schemas, and function-valued bindings.
-- [ ] Test missing comments, empty comments, malformed tags, misplaced comments, and unreadable or malformed source.
-- [ ] Test documented declarations, generated files, anonymous callbacks, ordinary variables, and re-exports as allowed controls.
-- [ ] Observe meaningful RED for the absent checker. Package-loader failures do not count as behavior RED.
-- [ ] Implement the inventory and TSDoc check behind the stated interface.
-- [ ] Add CLI integration tests with cause-specific findings and exit codes.
-- [ ] Connect the gate to `bun run check` without weakening existing checks.
-- [ ] Extend alias contract tests for the new tooling alias without relaxing existing assertions.
-- [ ] Run the focused tooling tests and tooling compiler.
-- [ ] Commit with `feat(tooling): enforce declaration documentation checks`.
+- [x] Verify parser APIs and record exact dependency versions and reasons in OAB-24.
+- [x] Write tests before the checker implementation.
+- [x] Test exported functions, internal helpers, private methods, accessors, constructors, interfaces, schemas, and function-valued bindings.
+- [x] Test missing comments, empty comments, malformed tags, misplaced comments, and unreadable or malformed source.
+- [x] Test documented declarations, generated files, anonymous callbacks, ordinary variables, and re-exports as allowed controls.
+- [x] Observe meaningful RED for the absent checker. Package-loader failures do not count as behavior RED.
+- [x] Implement the inventory and TSDoc check behind the stated interface.
+- [x] Add CLI integration tests with cause-specific findings and exit codes.
+- [x] Connect the gate to `bun run check` without weakening existing checks.
+- [x] Extend alias contract tests for the new tooling alias without relaxing existing assertions.
+- [x] Run the focused tooling tests and tooling compiler.
+- [x] Commit with `feat(tooling): enforce declaration documentation checks`.
 
 ## Task 2: Correct Contracts and Agent Rules
 
@@ -138,13 +138,13 @@ State that green automation does not replace the code-review skill or its TypeSc
 State that every actionable finding needs a supported closure entry.
 Keep one root AGENTS.md.
 
-- [ ] Run the new gate against the baseline and retain concrete missing-contract findings.
-- [ ] Add useful documentation with implementation, callers, tests, and specification evidence.
-- [ ] Document important test and configuration helpers selected by the same mechanical policy.
-- [ ] Add the agreed AGENTS.md rules with short, separate paragraphs.
-- [ ] Run documentation checks and manually compare each new contract with behavior.
-- [ ] Confirm that documentation edits do not change generated DDL or runtime behavior.
-- [ ] Commit with `docs: define semantic contracts and review duties`.
+- [x] Run the new gate against the baseline and retain concrete missing-contract findings.
+- [x] Add useful documentation with implementation, callers, tests, and specification evidence.
+- [x] Document important test and configuration helpers selected by the same mechanical policy.
+- [x] Add the agreed AGENTS.md rules with short, separate paragraphs.
+- [x] Run documentation checks and manually compare each new contract with behavior.
+- [x] Confirm that documentation edits do not change generated DDL or runtime behavior.
+- [x] Commit with `docs: define semantic contracts and review duties`.
 
 ## Task 3: Share Tooling Alias Conversion
 

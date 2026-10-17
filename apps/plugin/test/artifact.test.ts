@@ -19,6 +19,7 @@ describe("production plugin artifact", () => {
 		const builtinNames = new Set(
 			builtinModules.map((name) => name.replace(/^node:/, "")),
 		);
+		/** Detects Node builtin imports and their subpaths in the emitted plugin artifact. */
 		const isBuiltin = (specifier: string) =>
 			specifier.startsWith("node:") ||
 			builtinNames.has(specifier) ||

@@ -1,3 +1,10 @@
+/**
+ * Defines the frozen relational storage format from specification section 5.2.
+ * Timestamp fields use Unix milliseconds. Size fields count bytes, not characters.
+ *
+ * Text primary keys retain physical SQLite nullability. Application writers must supply canonical non-null identities.
+ * @packageDocumentation
+ */
 import { sql } from "drizzle-orm";
 import {
 	check,
@@ -9,7 +16,7 @@ import {
 	uniqueIndex,
 } from "drizzle-orm/sqlite-core";
 
-/** Relational §5.2 schema; timestamp fields (`*_at` and `at`) are plain Unix-millisecond integers, not Drizzle timestamp modes. */
+/** Stores bootstrap identity and counters as canonical strings. Existing-store validation owns their meaning and rejects malformed values without repair. */
 export const meta = sqliteTable(
 	"meta",
 	{
@@ -19,13 +26,16 @@ export const meta = sqliteTable(
 	(table) => [primaryKey({ columns: [table.key] })],
 );
 
+/** Defines current rows, including tombstones. Live rows have unique lowercase NFC keys. Application writes must preserve exact revision conditions. */
 export const files = sqliteTable(
 	"files",
 	{
 		path: text("path"),
+		/** Unicode lowercase of the NFC path. Only non-deleted rows reserve this key. */
 		pathKey: text("path_key").notNull(),
 		rev: integer("rev").notNull(),
 		seq: integer("seq").notNull(),
+		/** SHA-256 content hash, or an empty string for a tombstone. */
 		hash: text("hash").notNull(),
 		size: integer("size").notNull(),
 		kind: text("kind").notNull(),
@@ -45,6 +55,7 @@ export const files = sqliteTable(
 	],
 );
 
+/** Stores retained path revisions under a composite identity. Retention must preserve export-pinned revisions. Bootstrap creates structure but does not prune history. */
 export const revisions = sqliteTable(
 	"revisions",
 	{
@@ -62,6 +73,7 @@ export const revisions = sqliteTable(
 	(table) => [primaryKey({ columns: [table.path, table.rev] })],
 );
 
+/** Stores the vault-global feed sequence. Rename fields describe the source tombstone, not a second pending operation. */
 export const changes = sqliteTable(
 	"changes",
 	{
@@ -71,6 +83,7 @@ export const changes = sqliteTable(
 		rev: integer("rev").notNull(),
 		hash: text("hash").notNull(),
 		fromPath: text("from_path"),
+		/** Source tombstone revision for a rename. Other operations have no source revision. */
 		fromRev: integer("from_rev"),
 		origin: text("origin").notNull(),
 		at: integer("at").notNull(),
@@ -80,11 +93,13 @@ export const changes = sqliteTable(
 	],
 );
 
+/** Stores idempotency evidence under a client-scoped key. Application commits must publish the receipt with the corresponding authoritative mutation. */
 export const receipts = sqliteTable(
 	"receipts",
 	{
 		clientId: text("client_id").notNull(),
 		key: text("key").notNull(),
+		/** Hash of operation identity, precondition, and payload identity, not a content hash alone. */
 		fingerprint: text("fingerprint").notNull(),
 		status: integer("status").notNull(),
 		body: text("body").notNull(),
@@ -93,6 +108,7 @@ export const receipts = sqliteTable(
 	(table) => [primaryKey({ columns: [table.clientId, table.key] })],
 );
 
+/** Identifies revisions protected by an export. Retention must consult these rows before removing history. Bootstrap does not run exports or retention. */
 export const exportPins = sqliteTable(
 	"export_pins",
 	{
@@ -103,6 +119,7 @@ export const exportPins = sqliteTable(
 	(table) => [primaryKey({ columns: [table.exportId, table.path, table.rev] })],
 );
 
+/** Stores client identities independently of transport tokens. Client kinds use the frozen persisted spelling. */
 export const clients = sqliteTable(
 	"clients",
 	{
@@ -110,6 +127,7 @@ export const clients = sqliteTable(
 		name: text("name").notNull(),
 		kind: text("kind").notNull(),
 		createdAt: integer("created_at").notNull(),
+		/** Nullable observation time. Absence is not evidence that a client is inactive. */
 		lastSeenAt: integer("last_seen_at"),
 	},
 	(table) => [
@@ -121,6 +139,7 @@ export const clients = sqliteTable(
 	],
 );
 
+/** Stores grant revocation evidence for authoritative authorization checks. The timestamp uses Unix milliseconds, not token expiry units. */
 export const revokedGrants = sqliteTable(
 	"revoked_grants",
 	{
@@ -130,6 +149,7 @@ export const revokedGrants = sqliteTable(
 	(table) => [primaryKey({ columns: [table.grantId] })],
 );
 
+/** Stores referenced content hashes and byte sizes. These rows describe references, not proof that external bytes exist or match their hash. */
 export const blobRefs = sqliteTable(
 	"blob_refs",
 	{
@@ -140,6 +160,7 @@ export const blobRefs = sqliteTable(
 	(table) => [primaryKey({ columns: [table.hash] })],
 );
 
+/** Reserves the frozen export bookkeeping fields. Nullable fields do not prove completion or success. Bootstrap does not interpret export progress. */
 export const exports = sqliteTable(
 	"exports",
 	{
@@ -156,6 +177,7 @@ export const exports = sqliteTable(
 	(table) => [primaryKey({ columns: [table.id] })],
 );
 
+/** Gives the synchronous Drizzle adapter its canonical relational models. Engine-specific FTS remains outside this model collection. */
 export const vaultSchema = {
 	meta,
 	files,

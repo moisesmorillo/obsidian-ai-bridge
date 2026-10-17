@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { cloudflareTest } from "@cloudflare/vitest-plugin";
 import { defineConfig } from "vitest/config";
 
+/** Trusted alias configuration read from the repository, not external input validation. */
 type AliasConfig = {
 	compilerOptions: { paths: Record<string, string[]> };
 };

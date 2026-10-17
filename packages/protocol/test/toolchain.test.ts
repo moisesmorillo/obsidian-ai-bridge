@@ -3,14 +3,17 @@ import { describe, expect, it } from "vitest";
 
 const root = new URL("../../../", import.meta.url);
 
+/** Reads tracked configuration relative to the repository rather than the test process directory. */
 async function readRootFile(path: string): Promise<string> {
 	return readFile(new URL(path, root), "utf8");
 }
 
+/** Reads trusted repository JSON for toolchain assertions. The result is not runtime protocol validation. */
 async function readManifest(path: string): Promise<Record<string, unknown>> {
 	return JSON.parse(await readRootFile(path)) as Record<string, unknown>;
 }
 
+/** Combines declared dependency sections for version checks without resolving installed packages. */
 function versions(manifest: Record<string, unknown>): Record<string, string> {
 	return {
 		...(manifest.dependencies as Record<string, string> | undefined),

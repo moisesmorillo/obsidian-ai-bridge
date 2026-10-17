@@ -208,9 +208,9 @@ It does not run against production or the personal vault.
 - [x] Run the complete code-review skill and TypeScript profile against the whole branch.
 - [x] Reassess the storage initializer, schema model, generator, and shared tooling owners.
 - [x] Record each audit finding as fixed, rejected, accepted deferral, or still open, with evidence.
-- [ ] Open the branch diff against `main` in Plannotator and address every annotation.
-- [ ] Verify the final reviewed source after any correction.
-- [ ] Close OAB-24 only after its acceptance evidence exists.
+- [x] Open the branch diff against `main` in Plannotator and address every annotation.
+- [x] Verify the final reviewed source after any correction.
+- [x] Close OAB-24 only after its acceptance evidence exists.
 - [ ] Push the branch and create one English Conventional Commit PR.
 - [ ] Remove the worktree only after all commits exist on the remote branch.
 - [ ] Report the PR URL, validation evidence, and any explicit residual limits.

@@ -33,13 +33,17 @@ export const files = sqliteTable(
 		path: text("path"),
 		/** Unicode lowercase of the NFC path. Only non-deleted rows reserve this key. */
 		pathKey: text("path_key").notNull(),
+		/** Per-path revision that continues across delete and recreate operations. */
 		rev: integer("rev").notNull(),
+		/** Sequence of the vault-global change that produced this current row. */
 		seq: integer("seq").notNull(),
 		/** SHA-256 content hash, or an empty string for a tombstone. */
 		hash: text("hash").notNull(),
 		size: integer("size").notNull(),
 		kind: text("kind").notNull(),
+		/** Inline text payload. Application writes use the blob reference instead for blob rows. */
 		content: text("content"),
+		/** Content-addressed reference for blob rows. The reference alone does not prove external-byte integrity. */
 		blobHash: text("blob_hash"),
 		deleted: integer("deleted").notNull().default(0),
 		updatedAt: integer("updated_at").notNull(),
@@ -64,7 +68,9 @@ export const revisions = sqliteTable(
 		hash: text("hash").notNull(),
 		size: integer("size").notNull(),
 		kind: text("kind").notNull(),
+		/** Historical inline payload. Null does not authorize replacement with newer content. */
 		content: text("content"),
+		/** Historical content reference. Readers must use this revision, not a current-row substitute. */
 		blobHash: text("blob_hash"),
 		deleted: integer("deleted").notNull(),
 		origin: text("origin").notNull(),

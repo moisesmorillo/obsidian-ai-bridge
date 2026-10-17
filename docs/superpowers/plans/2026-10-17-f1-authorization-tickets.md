@@ -276,9 +276,9 @@ Revocation:
 **Consumes:** Existing path and ETag schemas.
 **Produces:** All canonical admission types, `prepareDescriptor`, `prepareOperation`, `requiredScope`, `assertAdmissionAllowed`, and `AdmissionDenied`.
 
-- [ ] Write failing schema tests for every operation, invalid cross-field combination, and boundary.
+- [x] Write failing schema tests for every operation, invalid cross-field combination, and boundary.
   Assert 512/513 path bytes, 32/33 segments, 2,048/2,049 identifier bytes, and 16 KiB envelope bounds.
-- [ ] Write failing permission tests.
+- [x] Write failing permission tests.
   Assert read needs read, delete needs delete, and put/rename/append/restore need write.
   Assert write alone cannot delete or read.
 
@@ -289,24 +289,24 @@ it("maps rename and delete to their exact scopes", () => {
   expect(requiredScope("read")).toBe("vault:read");
 });
 ```
-- [ ] Write failing fingerprint tests.
+- [x] Write failing fingerprint tests.
   Assert NFC equivalents match, while changed client, epoch, operation, destination, condition, hash, or size differs.
   Assert delimiter-containing fields cannot cause tuple ambiguity.
   Assert caller mutation during the hash await cannot change the prepared operation.
-- [ ] Write failing size and epoch tests.
+- [x] Write failing size and epoch tests.
   Assert bootstrap reads need no known epoch.
   Assert stale explicit or ETag epochs fail, oversized blob declarations fail, and oversized append inputs fail.
-- [ ] Run focused tests and record the observed failure.
+- [x] Run focused tests and record the observed failure.
   Wrap expected RED commands so the background task exits zero, then assert their observed exit code and failure output.
   An import failure alone does not prove permission behavior.
-- [ ] Implement the named contracts and application rules.
+- [x] Implement the named contracts and application rules.
   Include semantic TSDoc and immutable input snapshots.
-- [ ] Run:
+- [x] Run:
   `bun run --filter @obsidian-ai-bridge/protocol test`
   and `bun run --filter @obsidian-ai-bridge/worker test -- test/admission-rules.test.ts`.
   Expect every new assertion to pass.
-- [ ] Run `bun run check` once for this source state.
-- [ ] Commit as `feat(protocol): define vault admission contracts`.
+- [x] Run `bun run check` once for this source state.
+- [x] Commit as `feat(protocol): define vault admission contracts`.
 
 ## Task 2: Native Durable Admission and Expiry
 

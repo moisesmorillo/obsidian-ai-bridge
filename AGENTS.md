@@ -8,7 +8,7 @@ Invariants no change may break: every mutation is conditional on the exact obser
 
 Never: touch the owner's personal vault; deploy, modify or delete Cloudflare resources without explicit authorization in the current conversation; change git identity; add a dependency without stating why in the task; create demos, labs or parallel plugins. If something cannot be tested in the real code, add a deferred task with a trigger.
 
-Conventions: English in the repo; Conventional Commits; Biome formatting; Zod schemas in `packages/protocol` are the only place protocol shapes are defined. Within the monorepo, use the `@protocol/*`, `@worker/*`, or `@plugin/*` aliases for workspace-local source imports; `@plugin-tools/build` is test/tooling-only. Across workspaces, consume only published package exports such as `@obsidian-ai-bridge/protocol`, never another workspace's private aliases.
+Conventions: English in the repo; Conventional Commits; Biome formatting; Zod schemas in `packages/protocol` are the only place protocol shapes are defined. Within the monorepo, use the `@protocol/*`, `@worker/*`, or `@plugin/*` aliases for workspace-local source imports; `@plugin-tools/build` is test/tooling-only. Across workspaces, consume only published package exports such as `@obsidian-ai-bridge/protocol`, never another workspace's private aliases. A negative control that must fail is wrapped so the command exits 0 and records the observed exit code; the assertion runs on that output, so only real failures surface as failed tasks.
 
 Maintainability and documentation rules:
 - Keep contracts and public API documentation outside transport handlers; document future API operations separately from their handlers without inventing operations before they exist.

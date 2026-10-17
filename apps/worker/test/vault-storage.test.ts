@@ -46,7 +46,7 @@ describe("Vault SQLite persistence", () => {
 		expect(ftsDdl).toContain(
 			"tokenize = 'trigram case_sensitive 0 remove_diacritics 1'",
 		);
-		expect(RELATIONAL_SCHEMA_STATEMENTS).toHaveLength(12);
+		expect(RELATIONAL_SCHEMA_STATEMENTS).toHaveLength(15);
 	});
 
 	it("initializes the frozen schema and canonical metadata", async () => {
@@ -67,6 +67,7 @@ describe("Vault SQLite persistence", () => {
 					"revoked_grants",
 					"blob_refs",
 					"exports",
+					"operation_admissions",
 				]),
 			);
 			const indexes = state.storage.sql
@@ -79,7 +80,7 @@ describe("Vault SQLite persistence", () => {
 				expect.arrayContaining(["files_live_key", "files_key"]),
 			);
 			const data = metadata(state.storage);
-			expect(data.schema_version).toBe("1");
+			expect(data.schema_version).toBe("2");
 			expect(EpochSchema.safeParse(data.epoch).success).toBe(true);
 			expect(data.head_seq).toBe("0");
 			expect(data.live_file_count).toBe("0");
@@ -146,10 +147,11 @@ describe("Vault SQLite persistence", () => {
 	it("rolls back failed bootstrap", async () => {
 		const stub = env.VAULTS.get(env.VAULTS.newUniqueId());
 		await runInDurableObject(stub, (_instance, state) => {
+			state.storage.sql.exec("DROP TABLE IF EXISTS files_fts");
+			state.storage.sql.exec("DROP TABLE IF EXISTS operation_admissions");
 			state.storage.sql.exec("DROP TABLE IF EXISTS export_pins");
 			state.storage.sql.exec("DROP TABLE IF EXISTS revoked_grants");
 			state.storage.sql.exec("DROP TABLE IF EXISTS blob_refs");
-			state.storage.sql.exec("DROP TABLE IF EXISTS files_fts");
 			state.storage.sql.exec("DROP TABLE IF EXISTS receipts");
 			state.storage.sql.exec("DROP TABLE IF EXISTS revisions");
 			state.storage.sql.exec("DROP TABLE IF EXISTS changes");
@@ -191,7 +193,7 @@ describe("Vault SQLite persistence", () => {
 				"INSERT INTO files(path,path_key,rev,seq,hash,size,kind,deleted,updated_at,origin) VALUES ('keep.md','keep.md',1,1,'hash',0,'text',0,10,'test')",
 			);
 			state.storage.sql.exec(
-				"UPDATE meta SET value = '2' WHERE key = 'schema_version'",
+				"UPDATE meta SET value = '3' WHERE key = 'schema_version'",
 			);
 			let replacementRequested = false;
 			expect(() =>
@@ -213,7 +215,7 @@ describe("Vault SQLite persistence", () => {
 			).toHaveLength(1);
 			expect(metadata(state.storage).epoch).toBe(before.epoch);
 			state.storage.sql.exec(
-				"UPDATE meta SET value = '1' WHERE key = 'schema_version'",
+				"UPDATE meta SET value = '2' WHERE key = 'schema_version'",
 			);
 			state.storage.sql.exec("DROP INDEX files_key");
 			expect(() =>
@@ -370,10 +372,11 @@ describe("Vault SQLite persistence", () => {
 		const stub = env.VAULTS.get(env.VAULTS.newUniqueId());
 		await runInDurableObject(stub, (_instance, state) => {
 			for (const statement of [
+				"DROP TABLE IF EXISTS files_fts",
+				"DROP TABLE IF EXISTS operation_admissions",
 				"DROP TABLE IF EXISTS export_pins",
 				"DROP TABLE IF EXISTS revoked_grants",
 				"DROP TABLE IF EXISTS blob_refs",
-				"DROP TABLE IF EXISTS files_fts",
 				"DROP TABLE IF EXISTS receipts",
 				"DROP TABLE IF EXISTS revisions",
 				"DROP TABLE IF EXISTS changes",

@@ -166,6 +166,29 @@ CREATE TABLE blob_refs (hash TEXT PRIMARY KEY, size INTEGER NOT NULL, first_ref_
 CREATE TABLE exports (id TEXT PRIMARY KEY, started_at INTEGER, finished_at INTEGER, status TEXT, head_seq INTEGER, calls_this_hour INTEGER, hour_started_at INTEGER, commit_sha TEXT, error TEXT);
 ```
 
+The canonical initial application schema version is `2`. Version-1 stores fail closed without writes. Initialization does not migrate or repair unsupported stores.
+
+Version 2 adds `operation_admissions`:
+
+| Column | Type | Rule |
+| --- | --- | --- |
+| `id` | `TEXT` | Primary key |
+| `client_id` | `TEXT` | `NOT NULL` |
+| `grant_id` | `TEXT` | `NOT NULL` |
+| `epoch` | `TEXT` | `NOT NULL` |
+| `fingerprint` | `TEXT` | `NOT NULL` |
+| `admitted_at` | `INTEGER` | Unix milliseconds |
+| `expires_at` | `INTEGER` | Unix milliseconds |
+| `state` | `TEXT` | `reserved`, `active`, or `uncertain` |
+
+Each column needs a value. The state check uses the name `operation_admissions_state_check`.
+
+Index `operation_admissions_client_expiry` covers `(client_id, expires_at)`. Index `operation_admissions_expiry` covers `expires_at`.
+
+Each client can hold at most 16 unexpired records across grants and states. Each new admission removes all expired records for its client. It then removes at most 64 expired records globally by selected identifiers.
+
+A record expires when `expires_at <= now`. Reservations and active tickets use a 60-second deadline. Uncertain work keeps its original deadline and charged slot.
+
 ### 5.3 R2 layout
 
 - `blobs/<sha256>`: immutable. Written **before** the DO transaction that references it (§6.3). Unreferenced blobs are harmless; no automatic GC in v1 (§16).
@@ -202,7 +225,13 @@ Errors are `{error: <code>, message, ...details}`. Codes: `epoch_mismatch`, `cur
 
 ### 6.3 Mutation algorithm (inside the DO)
 
-1. **Authorize first.** The Worker validates the token (signature, expiry, audience) and then calls the DO `authorize(client_id, grant_id, scope, op, path, size)`. The DO checks `revoked_grants`, scope, path validity and size limits and returns either an error or a short-lived **operation ticket** (60 s). Nothing is written anywhere before this returns.
+1. **Authorize before content effects.** The Worker validates the token (signature, expiry, audience). The DO then checks `revoked_grants`, scope, path validity, and declared-size limits.
+
+   For body-bearing work, the DO may reserve admission capacity before the Worker reads or buffers the body. The DO writes admission bookkeeping only after the applicable permission checks and before it returns a lease or ticket.
+
+   A reservation does not authorize a content effect. The Worker reads or buffers the body only after it receives the lease.
+
+   No content bytes or content metadata may change in SQLite or R2 before full authorization returns an operation ticket. The ticket keeps the admission's original 60-second deadline.
 2. If `Idempotency-Key` present: look up receipt. Found with equal fingerprint → return stored response. Found with different fingerprint → `422 idempotency_mismatch`. Not found but key timestamp outside the acceptance window → `409 operation_expired`.
 3. Normalize path, compute `path_key`.
 4. For blobs only: with a valid ticket, the Worker streams the body to `blobs/<hash>` in R2 (idempotent by key), then calls the DO `commit(ticket, hash, size)`. For text, the body goes straight to the DO. A ticket is single-use and bound to the fingerprint.

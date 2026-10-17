@@ -8,7 +8,7 @@ import {
 } from "drizzle-orm/durable-sqlite";
 
 /** Persisted SQLite schema version; incompatible changes require an explicit version boundary. */
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 /** Narrow FTS5 DDL unsupported by the relational model and kept at its engine-specific seam. */
 const FTS_SCHEMA = `CREATE VIRTUAL TABLE files_fts USING fts5(

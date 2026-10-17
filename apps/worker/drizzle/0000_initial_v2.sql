@@ -68,6 +68,20 @@ CREATE TABLE `meta` (
 	`value` text NOT NULL
 );
 --> statement-breakpoint
+CREATE TABLE `operation_admissions` (
+	`id` text PRIMARY KEY NOT NULL,
+	`client_id` text NOT NULL,
+	`grant_id` text NOT NULL,
+	`epoch` text NOT NULL,
+	`fingerprint` text NOT NULL,
+	`admitted_at` integer NOT NULL,
+	`expires_at` integer NOT NULL,
+	`state` text NOT NULL,
+	CONSTRAINT "operation_admissions_state_check" CHECK("operation_admissions"."state" IN ('reserved', 'active', 'uncertain'))
+);
+--> statement-breakpoint
+CREATE INDEX `operation_admissions_client_expiry` ON `operation_admissions` (`client_id`,`expires_at`);--> statement-breakpoint
+CREATE INDEX `operation_admissions_expiry` ON `operation_admissions` (`expires_at`);--> statement-breakpoint
 CREATE TABLE `receipts` (
 	`client_id` text NOT NULL,
 	`key` text NOT NULL,

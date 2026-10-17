@@ -130,6 +130,31 @@ export const revokedGrants = sqliteTable(
 	(table) => [primaryKey({ columns: [table.grantId] })],
 );
 
+export const operationAdmissions = sqliteTable(
+	"operation_admissions",
+	{
+		id: text("id").primaryKey().notNull(),
+		clientId: text("client_id").notNull(),
+		grantId: text("grant_id").notNull(),
+		epoch: text("epoch").notNull(),
+		fingerprint: text("fingerprint").notNull(),
+		admittedAt: integer("admitted_at").notNull(),
+		expiresAt: integer("expires_at").notNull(),
+		state: text("state").notNull(),
+	},
+	(table) => [
+		check(
+			"operation_admissions_state_check",
+			sql`${table.state} IN ('reserved', 'active', 'uncertain')`,
+		),
+		index("operation_admissions_client_expiry").on(
+			table.clientId,
+			table.expiresAt,
+		),
+		index("operation_admissions_expiry").on(table.expiresAt),
+	],
+);
+
 export const blobRefs = sqliteTable(
 	"blob_refs",
 	{
@@ -167,4 +192,5 @@ export const vaultSchema = {
 	revokedGrants,
 	blobRefs,
 	exports,
+	operationAdmissions,
 };

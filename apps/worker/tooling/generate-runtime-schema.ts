@@ -8,6 +8,14 @@ const migrationDirectory = "./drizzle";
 const generatedModule = "./src/infrastructure/sqlite/schema.generated.ts";
 const checkOnly = process.argv.includes("--check");
 
+/**
+ * Read the only supported version-0 lowercase SQL artifact by filename and UTF-8 contents.
+ * This validates one initial artifact, not the migration chain.
+ *
+ * @param directory - Directory that contains the generated migration artifact.
+ * @returns Its filename and decoded SQL contents.
+ * @throws If the directory has multiple, missing, or unsupported SQL artifacts, or file access fails.
+ */
 async function readInitialMigration(directory: string): Promise<{
 	name: string;
 	sql: string;
@@ -25,6 +33,14 @@ async function readInitialMigration(directory: string): Promise<{
 	return { name, sql: await readFile(join(directory, name), "utf8") };
 }
 
+/**
+ * Format generated source with the repository Biome executable from the Worker working directory.
+ * Relative executable and output paths resolve from `apps/worker`.
+ *
+ * @param source - Generated module source sent to Biome on standard input.
+ * @returns The formatted module from standard output.
+ * @throws If Biome cannot start or returns a nonzero exit status.
+ */
 function formatGeneratedModule(source: string): string {
 	return execFileSync(
 		resolve("../../node_modules/.bin/biome"),

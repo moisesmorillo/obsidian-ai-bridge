@@ -2,7 +2,10 @@ import { EpochSchema } from "@obsidian-ai-bridge/protocol";
 import { RELATIONAL_SCHEMA_STATEMENTS } from "@worker/infrastructure/sqlite/schema.generated";
 import { meta, vaultSchema } from "@worker/infrastructure/sqlite/schema-model";
 import { sql } from "drizzle-orm";
-import { drizzle } from "drizzle-orm/durable-sqlite";
+import {
+	type DrizzleSqliteDODatabase,
+	drizzle,
+} from "drizzle-orm/durable-sqlite";
 
 /** Persisted SQLite schema version; incompatible changes require an explicit version boundary. */
 export const SCHEMA_VERSION = 1;
@@ -17,6 +20,14 @@ export const SCHEMA = [...RELATIONAL_SCHEMA_STATEMENTS, FTS_SCHEMA].join("\n");
 
 /** SQLite catalog kinds used by this module's private frozen-DDL compatibility check. */
 type SchemaObjectKind = "table" | "index";
+
+/** Native synchronous transaction argument for this module's Drizzle schema. */
+type VaultTransaction = Parameters<
+	Parameters<DrizzleSqliteDODatabase<typeof vaultSchema>["transaction"]>[0]
+>[0];
+
+/** One private `sqlite_master` row used to inspect catalog objects. */
+type CatalogObject = { type: string; name: string; sql: string | null };
 
 /** Associates one statement from {@link SCHEMA} with its catalog name, kind, and SQL. */
 interface FrozenSchemaObject {
@@ -108,92 +119,141 @@ export function initializeVaultStorage(
 ): void {
 	const db = drizzle(storage, { schema: vaultSchema });
 	db.transaction((tx) => {
-		const catalogObjects = tx.all<{
-			type: string;
-			name: string;
-			sql: string | null;
-		}>("SELECT type, name, sql FROM sqlite_master");
+		const catalogObjects = tx.all<CatalogObject>(
+			"SELECT type, name, sql FROM sqlite_master",
+		);
 		const applicationObjects = catalogObjects.filter(
 			({ name }) => !name.startsWith("sqlite_"),
 		);
 		if (applicationObjects.length === 0) {
-			for (const statement of RELATIONAL_SCHEMA_STATEMENTS)
-				tx.run(sql.raw(statement));
-			tx.run(sql.raw(FTS_SCHEMA));
-			const epoch = createEpoch();
-			if (!EpochSchema.safeParse(epoch).success)
-				throw new Error("Invalid vault epoch");
-			const createdAt = now();
-			if (!Number.isSafeInteger(createdAt))
-				throw new Error("Invalid vault creation time");
-			tx.insert(meta)
-				.values([
-					{ key: "schema_version", value: String(SCHEMA_VERSION) },
-					{ key: "epoch", value: epoch },
-					{ key: "head_seq", value: "0" },
-					{ key: "created_at", value: String(createdAt) },
-					{ key: "live_file_count", value: "0" },
-				])
-				.run();
+			createFreshVault(tx, createEpoch, now);
 			return;
 		}
 
 		const actualObjects = new Map(
 			catalogObjects.map((object) => [object.name, object]),
 		);
-		// SQLite reserves this namespace. SQLite can give internal objects such as sqlite_sequence DDL.
 		const tableKinds = new Map(
 			tx
 				.all<{ name: string; type: string }>("PRAGMA table_list")
 				.map(({ name, type }) => [name, type]),
 		);
-		const expectedNames = new Set(
-			FROZEN_SCHEMA_OBJECTS.map(({ name }) => name),
-		);
-		for (const actual of catalogObjects) {
-			if (expectedNames.has(actual.name)) continue;
-			if (actual.name.startsWith("sqlite_")) continue;
-			if (actual.type === "table" && tableKinds.get(actual.name) === "shadow")
-				continue;
-			throw new Error(`Unexpected vault ${actual.type}: ${actual.name}`);
-		}
-
-		const metadata = new Map<string, string>();
-		for (const row of tx.select().from(meta).all()) {
-			if (typeof row.key !== "string" || typeof row.value !== "string")
-				throw new Error("Malformed vault metadata row");
-			metadata.set(row.key, row.value);
-		}
-		if (metadata.get("schema_version") !== String(SCHEMA_VERSION)) {
-			throw new Error("Unsupported vault schema version");
-		}
-		for (const key of ["epoch", "head_seq", "created_at", "live_file_count"]) {
-			if (typeof metadata.get(key) !== "string")
-				throw new Error(`Missing vault metadata: ${key}`);
-		}
-		if (!EpochSchema.safeParse(metadata.get("epoch")).success)
-			throw new Error("Invalid vault epoch");
-		if (
-			!isCanonicalSafeInteger(metadata.get("head_seq") ?? "", true) ||
-			!isCanonicalSafeInteger(metadata.get("live_file_count") ?? "", true)
-		) {
-			throw new Error("Invalid numeric vault metadata");
-		}
-		if (!isCanonicalSafeInteger(metadata.get("created_at") ?? "", false))
-			throw new Error("Invalid vault creation time");
-		for (const expected of FROZEN_SCHEMA_OBJECTS) {
-			const actual = actualObjects.get(expected.name);
-			if (!actual)
-				throw new Error(`Missing vault ${expected.kind}: ${expected.name}`);
-			if (
-				actual.type !== expected.kind ||
-				actual.sql === null ||
-				normalizeSchemaSql(actual.sql) !== expected.sql
-			) {
-				throw new Error(
-					`Incompatible vault ${expected.kind}: ${expected.name}`,
-				);
-			}
-		}
+		rejectUnexpectedCatalogObjects(catalogObjects, tableKinds);
+		readAndValidateMetadata(tx);
+		validateExpectedObjects(actualObjects);
 	});
+}
+
+/**
+ * Create the schema and canonical metadata in the caller's active transaction.
+ * The caller owns commit and rollback.
+ *
+ * @param tx - Active transaction for all schema and metadata writes.
+ * @param createEpoch - Runs after schema DDL. Its result must pass epoch validation.
+ * @param now - Runs after epoch validation. Its result must be a safe integer timestamp.
+ *
+ * @throws If SQL or a factory fails, or a factory result is invalid.
+ */
+function createFreshVault(
+	tx: VaultTransaction,
+	createEpoch: () => string,
+	now: () => number,
+): void {
+	for (const statement of RELATIONAL_SCHEMA_STATEMENTS)
+		tx.run(sql.raw(statement));
+	tx.run(sql.raw(FTS_SCHEMA));
+	const epoch = createEpoch();
+	if (!EpochSchema.safeParse(epoch).success)
+		throw new Error("Invalid vault epoch");
+	const createdAt = now();
+	if (!Number.isSafeInteger(createdAt))
+		throw new Error("Invalid vault creation time");
+	tx.insert(meta)
+		.values([
+			{ key: "schema_version", value: String(SCHEMA_VERSION) },
+			{ key: "epoch", value: epoch },
+			{ key: "head_seq", value: "0" },
+			{ key: "created_at", value: String(createdAt) },
+			{ key: "live_file_count", value: "0" },
+		])
+		.run();
+}
+
+/**
+ * Reject unexpected catalog rows while allowing reserved names and native shadow tables.
+ * Reserved objects can have non-null DDL. Shadow exceptions need native PRAGMA classification.
+ *
+ * @param catalogObjects - Complete rows from the initial `sqlite_master` query.
+ * @param tableKinds - Complete name-to-kind map from `PRAGMA table_list`.
+ *
+ * @throws If a row is not expected, reserved, or classified as a shadow table.
+ */
+function rejectUnexpectedCatalogObjects(
+	catalogObjects: CatalogObject[],
+	tableKinds: Map<string, string>,
+): void {
+	const expectedNames = new Set(FROZEN_SCHEMA_OBJECTS.map(({ name }) => name));
+	for (const actual of catalogObjects) {
+		if (expectedNames.has(actual.name)) continue;
+		if (actual.name.startsWith("sqlite_")) continue;
+		if (actual.type === "table" && tableKinds.get(actual.name) === "shadow")
+			continue;
+		throw new Error(`Unexpected vault ${actual.type}: ${actual.name}`);
+	}
+}
+
+/**
+ * Read canonical ORM metadata rows and validate version, identity, counters, and time.
+ * This helper only reads metadata. It never writes or replaces vault identity.
+ *
+ * @param tx - Active transaction used to select rows from the canonical metadata table.
+ *
+ * @throws If metadata lacks a field, uses an unsupported version, or contains malformed or invalid values.
+ */
+function readAndValidateMetadata(tx: VaultTransaction): void {
+	const metadata = new Map<string, string>();
+	for (const row of tx.select().from(meta).all()) {
+		if (typeof row.key !== "string" || typeof row.value !== "string")
+			throw new Error("Malformed vault metadata row");
+		metadata.set(row.key, row.value);
+	}
+	if (metadata.get("schema_version") !== String(SCHEMA_VERSION))
+		throw new Error("Unsupported vault schema version");
+	for (const key of ["epoch", "head_seq", "created_at", "live_file_count"]) {
+		if (typeof metadata.get(key) !== "string")
+			throw new Error(`Missing vault metadata: ${key}`);
+	}
+	if (!EpochSchema.safeParse(metadata.get("epoch")).success)
+		throw new Error("Invalid vault epoch");
+	if (
+		!isCanonicalSafeInteger(metadata.get("head_seq") ?? "", true) ||
+		!isCanonicalSafeInteger(metadata.get("live_file_count") ?? "", true)
+	)
+		throw new Error("Invalid numeric vault metadata");
+	if (!isCanonicalSafeInteger(metadata.get("created_at") ?? "", false))
+		throw new Error("Invalid vault creation time");
+}
+
+/**
+ * Find expected catalog objects and compare their kinds and controlled-DDL definitions.
+ * Normalization handles whitespace and a terminal semicolon. This helper does not write catalog state.
+ *
+ * @param actualObjects - Catalog rows indexed by object name.
+ *
+ * @throws If an object is missing or its kind or normalized definition differs.
+ */
+function validateExpectedObjects(
+	actualObjects: Map<string, CatalogObject>,
+): void {
+	for (const expected of FROZEN_SCHEMA_OBJECTS) {
+		const actual = actualObjects.get(expected.name);
+		if (!actual)
+			throw new Error(`Missing vault ${expected.kind}: ${expected.name}`);
+		if (
+			actual.type !== expected.kind ||
+			actual.sql === null ||
+			normalizeSchemaSql(actual.sql) !== expected.sql
+		)
+			throw new Error(`Incompatible vault ${expected.kind}: ${expected.name}`);
+	}
 }

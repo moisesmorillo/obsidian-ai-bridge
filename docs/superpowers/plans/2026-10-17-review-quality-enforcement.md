@@ -183,16 +183,16 @@ Add documented `clearApplicationSchema(storage: DurableObjectStorage): void` in 
 It removes only the known application tables in the existing safe order.
 It does not run against production or the personal vault.
 
-- [ ] Add direct entropy tests for buffers shorter and longer than 16 bytes.
-- [ ] Add native initialization cases for invalid epoch results and unsafe creation timestamps.
-- [ ] For each initialization failure, assert no application schema or metadata remains.
-- [ ] Also verify that valid existing storage does not call either bootstrap factory.
-- [ ] Record that new coverage can pass immediately when current behavior is already correct.
-- [ ] Do not change correct production behavior merely to manufacture a RED result.
-- [ ] Consolidate the three teardown copies after the existing scenarios pass.
-- [ ] Preserve independent corruption, view-only, unknown-only, rollback, identity, and data-preservation assertions.
-- [ ] Run the complete native persistence suite and documentation checks.
-- [ ] Commit with `test(worker): cover bootstrap input failures`.
+- [x] Add direct entropy tests for buffers shorter and longer than 16 bytes.
+- [x] Add native initialization cases for invalid epoch results and unsafe creation timestamps.
+- [x] For each initialization failure, assert no application schema or metadata remains.
+- [x] Also verify that valid existing storage does not call either bootstrap factory.
+- [x] Record that new coverage can pass immediately when current behavior is already correct.
+- [x] Do not change correct production behavior merely to manufacture a RED result.
+- [x] Consolidate the three teardown copies after the existing scenarios pass.
+- [x] Preserve independent corruption, view-only, unknown-only, rollback, identity, and data-preservation assertions.
+- [x] Run the complete native persistence suite and documentation checks.
+- [x] Commit with `test(worker): cover bootstrap input failures`.
 
 ## Task 5: Verify, Review, and Publish One PR
 

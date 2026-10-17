@@ -41,6 +41,27 @@ const createEpoch = () =>
 		return bytes;
 	});
 
+/**
+ * Removes known application tables only inside an isolated native test store.
+ * The order removes FTS shadow state through its owning virtual table.
+ */
+function clearApplicationSchema(storage: DurableObjectStorage): void {
+	for (const statement of [
+		"DROP TABLE IF EXISTS export_pins",
+		"DROP TABLE IF EXISTS revoked_grants",
+		"DROP TABLE IF EXISTS blob_refs",
+		"DROP TABLE IF EXISTS files_fts",
+		"DROP TABLE IF EXISTS receipts",
+		"DROP TABLE IF EXISTS revisions",
+		"DROP TABLE IF EXISTS changes",
+		"DROP TABLE IF EXISTS clients",
+		"DROP TABLE IF EXISTS exports",
+		"DROP TABLE IF EXISTS files",
+		"DROP TABLE IF EXISTS meta",
+	])
+		storage.sql.exec(statement);
+}
+
 describe("Vault SQLite persistence", () => {
 	it("uses generated relational DDL and keeps engine-specific FTS DDL separate", () => {
 		const relationalDdl = RELATIONAL_SCHEMA_STATEMENTS.join("\n");
@@ -150,17 +171,7 @@ describe("Vault SQLite persistence", () => {
 	it("rolls back failed bootstrap", async () => {
 		const stub = env.VAULTS.get(env.VAULTS.newUniqueId());
 		await runInDurableObject(stub, (_instance, state) => {
-			state.storage.sql.exec("DROP TABLE IF EXISTS export_pins");
-			state.storage.sql.exec("DROP TABLE IF EXISTS revoked_grants");
-			state.storage.sql.exec("DROP TABLE IF EXISTS blob_refs");
-			state.storage.sql.exec("DROP TABLE IF EXISTS files_fts");
-			state.storage.sql.exec("DROP TABLE IF EXISTS receipts");
-			state.storage.sql.exec("DROP TABLE IF EXISTS revisions");
-			state.storage.sql.exec("DROP TABLE IF EXISTS changes");
-			state.storage.sql.exec("DROP TABLE IF EXISTS clients");
-			state.storage.sql.exec("DROP TABLE IF EXISTS exports");
-			state.storage.sql.exec("DROP TABLE IF EXISTS files");
-			state.storage.sql.exec("DROP TABLE IF EXISTS meta");
+			clearApplicationSchema(state.storage);
 			const remainingTables = tableNames(state.storage);
 			expect(
 				remainingTables.filter((name) => !name.startsWith("sqlite_")),
@@ -373,21 +384,7 @@ describe("Vault SQLite persistence", () => {
 	it("fails closed on a view-only database without creating schema", async () => {
 		const stub = env.VAULTS.get(env.VAULTS.newUniqueId());
 		await runInDurableObject(stub, (_instance, state) => {
-			for (const statement of [
-				"DROP TABLE IF EXISTS export_pins",
-				"DROP TABLE IF EXISTS revoked_grants",
-				"DROP TABLE IF EXISTS blob_refs",
-				"DROP TABLE IF EXISTS files_fts",
-				"DROP TABLE IF EXISTS receipts",
-				"DROP TABLE IF EXISTS revisions",
-				"DROP TABLE IF EXISTS changes",
-				"DROP TABLE IF EXISTS clients",
-				"DROP TABLE IF EXISTS exports",
-				"DROP TABLE IF EXISTS files",
-				"DROP TABLE IF EXISTS meta",
-			]) {
-				state.storage.sql.exec(statement);
-			}
+			clearApplicationSchema(state.storage);
 			state.storage.sql.exec(
 				"CREATE VIEW unknown_fixture_view AS SELECT 1 AS value",
 			);
@@ -435,17 +432,7 @@ describe("Vault SQLite persistence", () => {
 	it("fails closed on an unknown-only database without deleting it", async () => {
 		const stub = env.VAULTS.get(env.VAULTS.newUniqueId());
 		await runInDurableObject(stub, (_instance, state) => {
-			state.storage.sql.exec("DROP TABLE IF EXISTS export_pins");
-			state.storage.sql.exec("DROP TABLE IF EXISTS revoked_grants");
-			state.storage.sql.exec("DROP TABLE IF EXISTS blob_refs");
-			state.storage.sql.exec("DROP TABLE IF EXISTS files_fts");
-			state.storage.sql.exec("DROP TABLE IF EXISTS receipts");
-			state.storage.sql.exec("DROP TABLE IF EXISTS revisions");
-			state.storage.sql.exec("DROP TABLE IF EXISTS changes");
-			state.storage.sql.exec("DROP TABLE IF EXISTS clients");
-			state.storage.sql.exec("DROP TABLE IF EXISTS exports");
-			state.storage.sql.exec("DROP TABLE IF EXISTS files");
-			state.storage.sql.exec("DROP TABLE IF EXISTS meta");
+			clearApplicationSchema(state.storage);
 			state.storage.sql.exec(
 				"CREATE TABLE unknown_fixture (value TEXT NOT NULL)",
 			);
@@ -593,6 +580,93 @@ describe("Vault SQLite persistence", () => {
 			}),
 		).toThrow();
 		expect(attempts).toBe(8);
+	});
+
+	it.each([0, 15, 17, 32])(
+		"rejects a %i-byte entropy result without retry",
+		(length) => {
+			let calls = 0;
+			expect(() =>
+				generateEpoch(() => {
+					calls += 1;
+					return new Uint8Array(length);
+				}),
+			).toThrow("Entropy source returned an invalid byte count");
+			expect(calls).toBe(1);
+		},
+	);
+
+	it.each([
+		{
+			name: "numeric-only epoch",
+			epoch: "1".repeat(32),
+			time: 1,
+			error: "Invalid vault epoch",
+		},
+		{ name: "short epoch", epoch: "a", time: 1, error: "Invalid vault epoch" },
+		{
+			name: "NaN timestamp",
+			epoch: "a".repeat(32),
+			time: Number.NaN,
+			error: "Invalid vault creation time",
+		},
+		{
+			name: "infinite timestamp",
+			epoch: "a".repeat(32),
+			time: Number.POSITIVE_INFINITY,
+			error: "Invalid vault creation time",
+		},
+		{
+			name: "unsafe timestamp",
+			epoch: "a".repeat(32),
+			time: Number.MAX_SAFE_INTEGER + 1,
+			error: "Invalid vault creation time",
+		},
+		{
+			name: "fractional timestamp",
+			epoch: "a".repeat(32),
+			time: 1.5,
+			error: "Invalid vault creation time",
+		},
+	])("rolls back bootstrap after a $name", async ({ epoch, time, error }) => {
+		const stub = env.VAULTS.get(env.VAULTS.newUniqueId());
+		await runInDurableObject(stub, (_instance, state) => {
+			clearApplicationSchema(state.storage);
+			expect(() =>
+				initializeVaultStorage(
+					state.storage,
+					() => epoch,
+					() => time,
+				),
+			).toThrow(error);
+			expect(
+				state.storage.sql
+					.exec<{ name: string }>("SELECT name FROM sqlite_master")
+					.toArray()
+					.filter(({ name }) => !name.startsWith("sqlite_")),
+			).toEqual([]);
+			initializeVaultStorage(state.storage, createEpoch, () => -1);
+			expect(metadata(state.storage).created_at).toBe("-1");
+		});
+	});
+
+	it("validates existing storage without calling bootstrap factories", async () => {
+		const stub = env.VAULTS.get(env.VAULTS.newUniqueId());
+		await runInDurableObject(stub, (_instance, state) => {
+			const before = metadata(state.storage);
+			expect(() =>
+				initializeVaultStorage(
+					state.storage,
+					() => {
+						throw new Error("Existing storage called the epoch factory");
+					},
+					() => {
+						throw new Error("Existing storage called the time factory");
+					},
+				),
+			).not.toThrow();
+			expect(metadata(state.storage)).toEqual(before);
+		});
 	});
 
 	it("supports exact trigram diacritics and inline row size", async () => {

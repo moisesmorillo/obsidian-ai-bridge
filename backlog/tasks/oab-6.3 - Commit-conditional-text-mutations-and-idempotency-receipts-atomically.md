@@ -1,10 +1,11 @@
 ---
 id: OAB-6.3
 title: Commit conditional text mutations and idempotency receipts atomically
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@pi'
 created_date: '2026-10-15 00:38'
-updated_date: '2026-10-15 00:40'
+updated_date: '2026-10-18 18:13'
 labels:
   - F1
 dependencies:
@@ -29,3 +30,20 @@ Sections5 and6 require revision-safe publication and deterministic retries after
 - [ ] #3 A failed mutation leaves files, revisions, changes, FTS, counters and receipts unchanged; append/rename/restore can reuse the same atomic guarantees without duplicating policy.
 - [ ] #4 Real Worker/DO integration tests cover the actual HTTP boundary with a test-only identity fixture while the default production composition continues to fail closed.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+Approved by the owner through Plannotator pn-37ad1c. Plan: docs/superpowers/plans/2026-10-18-f1-conditional-text-commits.md.
+1. Add canonical file contracts and pure key/payload policies.
+2. Add separate durable claims and a shared atomic mutation coordinator.
+3. Implement conditional inline PUT, DELETE, and exact reads through the real Vault.
+4. Add real Worker-to-DO HTTP tests with a test-only identity entry and production default denial.
+Owner approved breaking storage changes without legacy migration. Fresh schema v3 rejects unsupported stores without repair or reset. Historical reads need X-Vault-Epoch. User selected subagents. Parent owns validation, Backlog, commits, and publication. No new dependencies or deployment. Human plan approval is complete. Frozen baseline passed all 369 tests before Task 1.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Human plan approval: pn-37ad1c. Frozen install passed. Canonical check passed 369 tests: tooling 52, protocol 123, Worker 192, plugin 2. Biome checked 70 files. All compiler groups, documentation checks, builds, Backlog doctor, and diff checks passed. All 121 tracked baseline inputs stayed unchanged. No product implementation started.
+<!-- SECTION:NOTES:END -->

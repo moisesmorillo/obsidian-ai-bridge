@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-10-15 00:38'
-updated_date: '2026-10-18 18:13'
+updated_date: '2026-10-18 19:59'
 labels:
   - F1
 dependencies:
@@ -46,4 +46,16 @@ Owner approved breaking storage changes without legacy migration. Fresh schema v
 
 <!-- SECTION:NOTES:BEGIN -->
 Human plan approval: pn-37ad1c. Frozen install passed. Canonical check passed 369 tests: tooling 52, protocol 123, Worker 192, plugin 2. Biome checked 70 files. All compiler groups, documentation checks, builds, Backlog doctor, and diff checks passed. All 121 tracked baseline inputs stayed unchanged. No product implementation started.
+
+Task 1 adds canonical file contracts, exact key bounds, UUIDv7 timing, and original-byte text payloads.
+
+PUT and DELETE reuse admission refinements. Full text preserves BOM and exact UTF-8 bytes. Read ranges use UTF-16 offsets and allow split surrogate pairs.
+
+Parent validation passed 479 tests: tooling 52, protocol 218, Worker 207, and plugin 2. Types, documentation, Biome, builds, Backlog doctor, and diff checks passed. Wrangler used dry-run only.
+
+Task 1 still needs independent review. Tasks 2 through 4 and all four acceptance criteria remain pending.
+
+The LSP probe confirmed no clean files. All 16 outcomes were inconclusive.
+
+Earlier failed quality gates and observers remain in private execution evidence.
 <!-- SECTION:NOTES:END -->

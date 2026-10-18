@@ -1,4 +1,5 @@
 import { parseETag } from "@protocol/codecs/etag";
+import { FullTextContentSchema } from "@protocol/schemas/content";
 import { EpochSchema, ETagSchema } from "@protocol/schemas/etag";
 import { PathSchema } from "@protocol/schemas/path";
 import { z } from "zod";
@@ -121,6 +122,17 @@ export const OperationIntentSchema = OperationDescriptorSchema.safeExtend({
 		}
 	});
 
+/** PUT or DELETE descriptor with the existing admission refinements retained. */
+export const TextMutationDescriptorSchema =
+	OperationDescriptorSchema.safeExtend({
+		op: z.enum(["put", "delete"]),
+	}).strict();
+
+/** PUT or DELETE intent with all existing payload and descriptor refinements retained. */
+export const TextMutationIntentSchema = OperationIntentSchema.safeExtend({
+	op: z.enum(["put", "delete"]),
+});
+
 /** Measures normalized envelope JSON in UTF-8 bytes after child schemas parse. */
 function withinPreparationLimit(
 	envelope: Record<string, unknown>,
@@ -179,6 +191,7 @@ export const AdmissionFailureSchema = z
 				.regex(/^(?:[0-9a-f]{64})?$/)
 				.optional(),
 			deleted: z.boolean().optional(),
+			content: FullTextContentSchema.optional(),
 		}),
 	])
 	.superRefine((failure, ctx) => {
@@ -198,6 +211,12 @@ export const AdmissionFailureSchema = z
 			ctx.addIssue({
 				code: "custom",
 				message: "current revision metadata must be complete",
+			});
+		}
+		if (failure.content !== undefined && !metadata.every(Boolean)) {
+			ctx.addIssue({
+				code: "custom",
+				message: "current content needs complete revision metadata",
 			});
 		}
 	});

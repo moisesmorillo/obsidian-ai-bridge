@@ -12,6 +12,8 @@ import type {
 	OperationTicketSchema,
 	RequestAdmissionLeaseSchema,
 	RequestAdmissionResultSchema,
+	TextMutationDescriptorSchema,
+	TextMutationIntentSchema,
 	VaultScopeSchema,
 } from "@protocol/schemas/admission";
 import type { z } from "zod";
@@ -36,6 +38,12 @@ export type RequestAdmissionResult = z.infer<
 >;
 /** Single-use ticket returned after full authorization. */
 export type OperationTicket = z.infer<typeof OperationTicketSchema>;
+/** PUT or DELETE descriptor, narrowed from the canonical admission descriptor. */
+export type TextMutationDescriptor = z.infer<
+	typeof TextMutationDescriptorSchema
+>;
+/** PUT or DELETE intent, narrowed from the canonical admission intent. */
+export type TextMutationIntent = z.infer<typeof TextMutationIntentSchema>;
 /** Typed reason for an append or blob size refusal. */
 export type AdmissionSizeFailureKind = z.infer<
 	typeof AdmissionSizeFailureKindSchema

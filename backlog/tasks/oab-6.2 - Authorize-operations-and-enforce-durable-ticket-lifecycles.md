@@ -1,11 +1,11 @@
 ---
 id: OAB-6.2
 title: Authorize operations and enforce durable ticket lifecycles
-status: In Progress
+status: Done
 assignee:
   - '@pi'
 created_date: '2026-10-15 00:38'
-updated_date: '2026-10-18 00:54'
+updated_date: '2026-10-18 15:07'
 labels:
   - F1
 dependencies:
@@ -25,10 +25,10 @@ Section6.3 authorization must precede every content side effect, and section 9.5
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Authoritative scope, epoch, path, size and revoked-grant checks occur before content effects; a revoked client cannot write any R2 byte.
-- [ ] #2 Tickets expire after 60 seconds, bind the operation fingerprint, are single-use and recheck revocation and preconditions atomically at commit.
-- [ ] #3 Concurrent requests and uncertain completion have bounded, recoverable admission accounting, including cancellation and expired tickets; no transient Worker map is the authoritative per-client limiter.
-- [ ] #4 Real DO tests prove denial and interleaving behavior; production HTTP composition has no fixture identity or authentication bypass.
+- [x] #1 Authoritative scope, epoch, path, size and revoked-grant checks occur before content effects; a revoked client cannot write any R2 byte.
+- [x] #2 Tickets expire after 60 seconds, bind the operation fingerprint, are single-use and recheck revocation and preconditions atomically at commit.
+- [x] #3 Concurrent requests and uncertain completion have bounded, recoverable admission accounting, including cancellation and expired tickets; no transient Worker map is the authoritative per-client limiter.
+- [x] #4 Real DO tests prove denial and interleaving behavior; production HTTP composition has no fixture identity or authentication bypass.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -46,12 +46,14 @@ Keep acceptance criteria unchecked until evidence and final human branch review 
 
 Task 2 correction: docs/superpowers/plans/2026-10-17-f1-global-admission-budget.md. The owner selected an aggregate limit now. The owner approved the numerical limits and denial behavior in review pn-bf0890. Preserve the original plan, retained writer, strict TDD, parent validation, and independent corrective review.
 
-Human approval: pn-bf0890. The owner approved the complete aggregate admission correction plan. Task 2 passed parent validation and corrective review. Task 3 passed parent acceptance at 801e41899342a6ff59a3f24802f3b9e9b225c80f. The independent whole-branch review returned APPROVE WITH NOTES. The parent closed its documentation finding after correction and independent review. Human branch review remains pending.
+Human approval: pn-bf0890. The owner approved the complete aggregate admission correction plan. Task 2 passed parent validation and corrective review. Task 3 passed parent acceptance at 801e41899342a6ff59a3f24802f3b9e9b225c80f. The independent whole-branch review returned APPROVE WITH NOTES. The parent closed its documentation finding after correction and independent review. Human review pn-b65e53 approved the whole branch without changes. The parent closed all four criteria against the approved evidence boundaries.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
+## Historical implementation checkpoints
+
 Task 1 passed parent acceptance at 65d1dc0a3d8fa68d0c9dab84a924b46c0fad9e68.
 The initial combined review and scoped correction review closed all four findings.
 The final full check passed with 203 tests, all workspace typechecks, lint, and builds.
@@ -122,4 +124,18 @@ WB-CR-1 identified an incorrect schema-version comment. The parent corrected onl
 Fresh validation passed 369 tests, all workspace compilers, documentation checks, lint, and builds. Backlog doctor and diff checks passed. The Worker build used Wrangler dry-run only, without deployment.
 
 The parent closed all technical findings. All four acceptance criteria remain unchecked until human approval. No product source or approved numerical contract changed during this metadata update.
+
+## Final acceptance
+
+Human review pn-b65e53 approved the complete branch without changes. The parent accepted all four criteria under the approved plan's evidence boundaries.
+
+Fresh validation passed 369 tests, all workspace compilers, documentation checks, lint, and builds. Native tests prove authorization denial, ticket expiry, single consumption, rollback, and durable admission recovery.
+
+This task delivers private admission authority and a transaction guard. Actual R2 staging and AC-28 remain in OAB-6.5. Public authentication, deployment, and complete F1 qualification remain outside this task.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Implemented canonical admission contracts, bounded durable tickets, and atomic consumption guards. Verified 369 tests and complete local checks. Independent technical reviews closed every finding, and human review pn-b65e53 approved the branch. Actual R2 and AC-28 remain in OAB-6.5.
+<!-- SECTION:FINAL_SUMMARY:END -->

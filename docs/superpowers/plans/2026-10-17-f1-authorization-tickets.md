@@ -457,8 +457,8 @@ expect(ticketAfterSuccess).toBeUndefined();
 - [x] Keep all OAB-6.2 acceptance boxes unchecked until implementation evidence passes.
 - [x] Run the selected execution workflow and the code-review skill.
 - [x] Get an independent whole-branch review with the mandated model.
-- [ ] Open human branch review against `main` with Plannotator. Address every annotation.
-- [ ] Close OAB-6.2 through Backlog CLI only after evidence and approval.
+- [x] Open human branch review against `main` with Plannotator. Address every annotation.
+- [x] Close OAB-6.2 through Backlog CLI only after evidence and approval.
 - [x] Commit task metadata separately when it changes no product source.
 - [ ] Push the explicit feature branch and open an English Conventional Commit pull request.
 - [ ] Preserve unique private evidence and remove only the clean, published worktree.
@@ -490,9 +490,10 @@ Task 3 passed parent acceptance at `801e41899342a6ff59a3f24802f3b9e9b225c80f` af
 The current main integration passed 369 tests and the complete repository check.
 Documentation changes preserve the non-comment TypeScript trees.
 
-All four OAB-6.2 acceptance criteria remain unchecked.
+All four OAB-6.2 acceptance criteria passed under the approved evidence boundaries.
 The independent whole-branch review returned `APPROVE WITH NOTES`.
 The scoped correction review closed `WB-CR-1` after comment-only correction at `fb93279`.
 Fresh validation passed 369 tests and the complete repository check.
 
-Human branch review remains pending.
+Human review `pn-b65e53` approved the complete branch without changes.
+The OAB-6.2 status is `Done`. Publication and evidence preservation remain pending.

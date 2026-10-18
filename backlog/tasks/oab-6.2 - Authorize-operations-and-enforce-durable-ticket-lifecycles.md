@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-10-15 00:38'
-updated_date: '2026-10-17 22:47'
+updated_date: '2026-10-18 00:28'
 labels:
   - F1
 dependencies:
@@ -46,7 +46,7 @@ Keep acceptance criteria unchecked until evidence and final human branch review 
 
 Task 2 correction: docs/superpowers/plans/2026-10-17-f1-global-admission-budget.md. The owner selected an aggregate limit now. The owner approved the numerical limits and denial behavior in review pn-bf0890. Preserve the original plan, retained writer, strict TDD, parent validation, and independent corrective review.
 
-Human approval: pn-bf0890. The owner approved the complete aggregate admission correction plan. Task 2 passed parent validation and corrective review. Resume the retained writer for Task 3 tests only.
+Human approval: pn-bf0890. The owner approved the complete aggregate admission correction plan. Task 2 passed parent validation and corrective review. Task 3 passed parent acceptance at 801e41899342a6ff59a3f24802f3b9e9b225c80f. Whole-branch and human reviews remain pending.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -57,7 +57,7 @@ The initial combined review and scoped correction review closed all four finding
 The final full check passed with 203 tests, all workspace typechecks, lint, and builds.
 
 The Worker build used Wrangler dry-run only. No deployment occurred.
-Task 3 remains pending. All OAB-6.2 acceptance criteria remain unchecked.
+Task 3 was pending at that checkpoint. All OAB-6.2 acceptance criteria remain unchecked.
 
 Before the aggregate correction, Task 2 remained unaccepted at e5113dcf032fe52d5c237ef241f31b114bf538f9. The initial full check passed with 249 tests.
 
@@ -84,8 +84,34 @@ Native storage grew by 9,572,352 bytes against the 33,554,432-byte target.
 The test sampled 386 transactions across setup and three cycles.
 The absolute peak and final retained size were 9,711,616 bytes against a 139,264-byte baseline.
 
-Task 3 remains pending. All four acceptance criteria remain unchecked until final evidence and human branch review pass.
+Task 3 was pending at that checkpoint. All four acceptance criteria remain unchecked until final evidence and human branch review pass.
 CPU, latency, and concurrent body memory remain separate OAB-6.5 and OAB-6.8 work.
 
 The Worker build used Wrangler dry-run only. No deployment occurred.
+
+Task 3 passed parent acceptance at 801e41899342a6ff59a3f24802f3b9e9b225c80f after independent review 03cfeb52-8dc9-4b35-83c6-4b51ce6ad045.
+The code verdict is APPROVE. The design verdict is READY WITH BOUNDED FOLLOW-UPS.
+
+The focused run passed 128 cases. Full validation passed 306 tests before main integration.
+Functional RED reached 21 failed cases, 10 baseline passes, and 35 assertion-error records.
+
+The parent integrated approved main d9742325e40706cf600f2382c78aef0b5056d149 at f9bcbd00745000ac2835919588dec77d28ed4443.
+Current validation passed 369 tests, all workspace compilers, documentation checks, lint, and builds.
+Backlog doctor and diff checks passed.
+
+All ten documentation changes preserve the complete non-comment TypeScript trees.
+The merge preserves both branches' native assertions and the existing shared fixture owner.
+Native workspace compilers passed despite an inconclusive editor probe.
+
+The Worker build used Wrangler dry-run only. No deployment occurred.
+
+OAB-6.8 owns whole-vault capacity and cumulative revocation storage checks.
+OAB-7 must not expose revocation before that evidence exists.
+Verify Workers Paid before any separately authorized deployment of the 2 GB product envelope.
+
+Operation-specific content algorithms remain in OAB-6.3 and OAB-6.4.
+Actual R2, AC-28, and streaming-memory checks remain in OAB-6.5.
+CPU and latency budgets remain in OAB-6.8.
+
+All four acceptance criteria remain unchecked. Whole-branch review and human branch review remain pending.
 <!-- SECTION:NOTES:END -->

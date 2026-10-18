@@ -325,15 +325,15 @@ it("maps rename and delete to their exact scopes", () => {
 **Consumes:** Task 1 contracts, `prepareDescriptor`, `prepareOperation`, and `assertAdmissionAllowed`.
 **Produces:** `reserve`, `authorize`, and `finish`, canonical schema version 2, native RPC delegation.
 
-- [ ] Preserve the base commit's exact v1 DDL as the test-only fixture before regeneration.
+- [x] Preserve the base commit's exact v1 DDL as the test-only fixture before regeneration.
   Name its origin commit in the fixture comment.
   Do not add historical schemas to production.
-- [ ] Write failing native tests for the missing admission table and schema version 2.
+- [x] Write failing native tests for the missing admission table and schema version 2.
   Seed a genuine canonical-v1 store from the fixture.
   Assert rejection preserves its catalog, epoch, metadata, and content without invoking identity factories.
-- [ ] Write failing native authorization tests for revoked grants, missing scopes, stale epochs, invalid paths, and oversized declarations.
+- [x] Write failing native authorization tests for revoked grants, missing scopes, stale epochs, invalid paths, and oversized declarations.
   Assert denial creates no ticket and changes no content tables.
-- [ ] Write the native 17-way reservation test through two stubs for the same Durable Object.
+- [x] Write the native 17-way reservation test through two stubs for the same Durable Object.
   Use the same client with different grants.
   Assert exactly 16 successes, one limited result, positive retry delay, and 16 stored rows.
   Assert a second client has its own limit.
@@ -344,25 +344,25 @@ it("maps rename and delete to their exact scopes", () => {
 expect(results.filter((result) => result.ok)).toHaveLength(16);
 expect(results.filter((result) => !result.ok)).toHaveLength(1);
 ```
-- [ ] Write native binding tests.
+- [x] Write native binding tests.
   Assert binding preserves the identifier, deadline, and one charged slot.
   Assert second binding, altered descriptors, expired leases, and foreign ownership cannot activate a ticket.
   Assert reserved rows cannot commit and uncertain rows cannot bind.
-- [ ] Write native finish and expiry tests.
+- [x] Write native finish and expiry tests.
   Assert settled completion releases exactly one slot and repeated completion releases none.
   Assert uncertain completion retains its slot and original deadline.
   Assert foreign-client and foreign-grant completion leave ownership and counts unchanged.
   Assert uncertainty survives eviction.
   Assert validity at 59,999 ms and rejection or capacity recovery at 60,000 ms.
-- [ ] Write native cleanup and failure tests.
+- [x] Write native cleanup and failure tests.
   Assert bounded global cleanup deletes at most 64 expired records and leaves live records intact.
   Assert identifier collisions, invalid server timestamps, and failed inserts never issue permission or leak slots.
-- [ ] Run the focused native tests and record valid RED evidence.
-- [ ] Add the Drizzle model and the bounded §5.2 amendment.
+- [x] Run the focused native tests and record valid RED evidence.
+- [x] Add the Drizzle model and the bounded §5.2 amendment.
   Clarify §6.3: no content bytes or content metadata change before successful authorization.
   Admission bookkeeping follows the applicable permission checks and precedes the ticket response.
   Do not weaken authorization-before-content or change public routes.
-- [ ] Remove the three old versioned initial artifacts after the fixture preserves them.
+- [x] Remove the three old versioned initial artifacts after the fixture preserves them.
   Generate only the unpublished canonical version-2 initial artifacts.
   From `apps/worker`, generate with the pinned CLI:
   `./node_modules/.bin/drizzle-kit generate --config tooling/drizzle.config.ts --name initial_v2`.
@@ -370,22 +370,22 @@ expect(results.filter((result) => !result.ok)).toHaveLength(1);
   Run `bun tooling/generate-runtime-schema.ts`.
   Keep one `0000_*.sql` artifact, its snapshot, and its journal.
   Do not broaden `readInitialMigration` or edit generated SQL manually.
-- [ ] Set application metadata `schema_version` to `2`.
+- [x] Set application metadata `schema_version` to `2`.
   Preserve strict admission of catalog objects and read-only rejection of older stores.
   Update relevant version literals and the 15-statement assertion.
   Artifact ordinal `0000` is not the application schema version.
   Keep the existing 8,192-byte bootstrap DDL limit.
-- [ ] Implement `reserve`, `authorize`, and `finish` with indexed Drizzle queries and synchronous transactions.
+- [x] Implement `reserve`, `authorize`, and `finish` with indexed Drizzle queries and synchronous transactions.
   Reject unsafe clock values or deadline overflow before insertion.
   Roll back every state change after insertion or entropy failure.
-- [ ] Delegate native `Vault.reserveAdmission`, `Vault.authorize`, and `Vault.finishAdmission` methods to the authority.
+- [x] Delegate native `Vault.reserveAdmission`, `Vault.authorize`, and `Vault.finishAdmission` methods to the authority.
   Wire real time and CSPRNG in composition.
   Accept verified Worker claims only through the private binding.
   Add no token provider, fixture switch, or HTTP route.
-- [ ] Run `bun run --filter @obsidian-ai-bridge/worker test -- test/vault-admission.test.ts test/vault-storage.test.ts`.
+- [x] Run `bun run --filter @obsidian-ai-bridge/worker test -- test/vault-admission.test.ts test/vault-storage.test.ts`.
   Expect all native tests to pass.
-- [ ] Run `bun run check`, `backlog doctor`, and `git diff --check`.
-- [ ] Commit as `feat(worker): persist bounded vault admission tickets`.
+- [x] Run `bun run check`, `backlog doctor`, and `git diff --check`.
+- [x] Commit as `feat(worker): persist bounded vault admission tickets`.
 
 ## Task 3: Atomic Consumption and Revocation Interleavings
 
@@ -400,14 +400,14 @@ expect(results.filter((result) => !result.ok)).toHaveLength(1);
 **Consumes:** Task 2 authority, schema, and durable accounting.
 **Produces:** `consumeInTransaction` and `recordRevocation`, ready for the OAB-6.3 content repository.
 
-- [ ] Write failing native consume tests.
+- [x] Write failing native consume tests.
   Assert one successful consumption, replay denial, foreign identity denial, and changed-intent denial.
   Assert reserved, read-only, uncertain, and expired admissions deny content consumption.
-- [ ] Write native interleaving tests.
+- [x] Write native interleaving tests.
   Admit first, then revoke, change scopes, change epoch, or replace the observed file revision.
   Assert each commit call fails before its SQL effect.
   Assert create-only collision and tombstone cases use current authoritative metadata.
-- [ ] Write the atomic rollback test with a real Drizzle transaction and real fixture rows.
+- [x] Write the atomic rollback test with a real Drizzle transaction and real fixture rows.
   Consume the ticket, change fixture file, revision, receipt, and feed rows, then throw.
   Assert the ticket, file, revision, receipt, and feed states all remain unchanged.
   Retry in a successful transaction and assert one effect and one consumed ticket.
@@ -419,23 +419,23 @@ expect(afterFailure).toEqual(before);
 expect(ticketAfterFailure?.id).toBe(ticket.id);
 expect(ticketAfterSuccess).toBeUndefined();
 ```
-- [ ] Write both cancellation/commit orderings.
+- [x] Write both cancellation/commit orderings.
   If commit wins, later finish is harmless.
   If uncertain cancellation wins, later commit fails and the slot remains charged until settlement or expiry.
-- [ ] Write response-loss recovery tests.
+- [x] Write response-loss recovery tests.
   Assert a lost authorization response retains one slot until expiry.
   Assert a lost commit response cannot consume again or decrement another admission.
   Assert a late acknowledgement cannot release a newer ticket.
-- [ ] Run the focused native tests and record valid RED evidence.
-- [ ] Implement consumption and idempotent revocation persistence.
+- [x] Run the focused native tests and record valid RED evidence.
+- [x] Implement consumption and idempotent revocation persistence.
   Use the caller's official transaction object, not an independent nested transaction.
   Select metadata only, never note content, for precondition failures.
   Keep operation-specific content algorithms and receipt semantics out of this task.
-- [ ] Verify production HTTP still rejects authorization-shaped bodies, headers, and guessed ticket routes.
+- [x] Verify production HTTP still rejects authorization-shaped bodies, headers, and guessed ticket routes.
   Assert no route exposes fixture claims or an authentication bypass.
-- [ ] Run focused native tests, then `bun run check`.
-- [ ] Run `backlog doctor` and `git diff --check`.
-- [ ] Commit as `feat(worker): consume admission tickets atomically`.
+- [x] Run focused native tests, then `bun run check`.
+- [x] Run `backlog doctor` and `git diff --check`.
+- [x] Commit as `feat(worker): consume admission tickets atomically`.
 
 ## Acceptance and Evidence Boundaries
 
@@ -454,12 +454,12 @@ expect(ticketAfterSuccess).toBeUndefined();
 
 ## Final Gates
 
-- [ ] Keep all OAB-6.2 acceptance boxes unchecked until implementation evidence passes.
-- [ ] Run the selected execution workflow and the code-review skill.
+- [x] Keep all OAB-6.2 acceptance boxes unchecked until implementation evidence passes.
+- [x] Run the selected execution workflow and the code-review skill.
 - [ ] Get an independent whole-branch review with the mandated model.
 - [ ] Open human branch review against `main` with Plannotator. Address every annotation.
 - [ ] Close OAB-6.2 through Backlog CLI only after evidence and approval.
-- [ ] Commit task metadata separately when it changes no product source.
+- [x] Commit task metadata separately when it changes no product source.
 - [ ] Push the explicit feature branch and open an English Conventional Commit pull request.
 - [ ] Preserve unique private evidence and remove only the clean, published worktree.
 - [ ] Do not merge or delete unpushed work.
@@ -480,3 +480,15 @@ Recommend subagent-driven execution for these three independently testable secur
 A fresh implementer and reviewer examine each task before the next task starts.
 Native execution remains an option, with an independent whole-branch review at the end.
 Do not treat the earlier OAB-6.1 execution choice as authorization for this task.
+
+## Execution Status
+
+Task 1 passed parent acceptance at `65d1dc0a3d8fa68d0c9dab84a924b46c0fad9e68`.
+Task 2 passed parent acceptance at `55db1282cd608d953fc45f16a7345d8ade8a049c` after the aggregate correction.
+Task 3 passed parent acceptance at `801e41899342a6ff59a3f24802f3b9e9b225c80f` after atomic-consumption validation and independent review.
+
+The current main integration passed 369 tests and the complete repository check.
+Documentation changes preserve the non-comment TypeScript trees.
+
+All four OAB-6.2 acceptance criteria remain unchecked.
+Whole-branch review and human branch review remain pending.

@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-10-15 00:38'
-updated_date: '2026-10-18 00:28'
+updated_date: '2026-10-18 00:54'
 labels:
   - F1
 dependencies:
@@ -46,7 +46,7 @@ Keep acceptance criteria unchecked until evidence and final human branch review 
 
 Task 2 correction: docs/superpowers/plans/2026-10-17-f1-global-admission-budget.md. The owner selected an aggregate limit now. The owner approved the numerical limits and denial behavior in review pn-bf0890. Preserve the original plan, retained writer, strict TDD, parent validation, and independent corrective review.
 
-Human approval: pn-bf0890. The owner approved the complete aggregate admission correction plan. Task 2 passed parent validation and corrective review. Task 3 passed parent acceptance at 801e41899342a6ff59a3f24802f3b9e9b225c80f. Whole-branch and human reviews remain pending.
+Human approval: pn-bf0890. The owner approved the complete aggregate admission correction plan. Task 2 passed parent validation and corrective review. Task 3 passed parent acceptance at 801e41899342a6ff59a3f24802f3b9e9b225c80f. The independent whole-branch review returned APPROVE WITH NOTES. The parent closed its documentation finding after correction and independent review. Human branch review remains pending.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -113,5 +113,13 @@ Operation-specific content algorithms remain in OAB-6.3 and OAB-6.4.
 Actual R2, AC-28, and streaming-memory checks remain in OAB-6.5.
 CPU and latency budgets remain in OAB-6.8.
 
-All four acceptance criteria remain unchecked. Whole-branch review and human branch review remain pending.
+All four acceptance criteria remain unchecked. Human branch review remains pending.
+
+The independent whole-branch Sol review examined d9742325e40706cf600f2382c78aef0b5056d149 through 359f58ac87e7fa945c4d26323c9ef43324223459. The code verdict was APPROVE WITH NOTES. The design verdict was READY WITH BOUNDED FOLLOW-UPS.
+
+WB-CR-1 identified an incorrect schema-version comment. The parent corrected only that comment in fb932790af4abdfdce5fa4573bbdbd1e58e22480, with identical non-comment TypeScript trees. The independent correction review returned APPROVE and closed WB-CR-1.
+
+Fresh validation passed 369 tests, all workspace compilers, documentation checks, lint, and builds. Backlog doctor and diff checks passed. The Worker build used Wrangler dry-run only, without deployment.
+
+The parent closed all technical findings. All four acceptance criteria remain unchecked until human approval. No product source or approved numerical contract changed during this metadata update.
 <!-- SECTION:NOTES:END -->

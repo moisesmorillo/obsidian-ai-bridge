@@ -18,10 +18,14 @@ const emptyPayloadHash =
 	"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 const states = ["reserved", "active", "uncertain"] as const;
 const operationKinds = ["reserve", "authorize"] as const;
+/** Admission insertion path exercised by reservation and full authorization tests. */
 type OperationKind = (typeof operationKinds)[number];
+/** Persisted lifecycle states seeded and checked by native tests. */
 type AdmissionTestState = (typeof states)[number];
+/** Result union returned by either request reservation or operation authorization. */
 type AdmissionResultForKind = RequestAdmissionResult | AdmissionResult;
 
+/** Raw SQL projection of the persisted admission ledger, including expired rows. */
 type AdmissionTestRow = {
 	id: string;
 	client_id: string;
@@ -33,6 +37,7 @@ type AdmissionTestRow = {
 	state: AdmissionTestState;
 };
 
+/** Camel-case seed record used to create and later identify one native ledger row. */
 type SeedRow = {
 	id: string;
 	clientId: string;
@@ -44,6 +49,7 @@ type SeedRow = {
 	state: AdmissionTestState;
 };
 
+/** Configure physical row groups, identities, and optional batch sampling after commit. Counts partition fixture rows. Timestamps use Unix milliseconds. */
 type SeedOptions = {
 	liveCount: number;
 	expiredCount: number;
@@ -55,10 +61,12 @@ type SeedOptions = {
 	afterBatchCommit?: (insertedRows: number) => void;
 };
 
+/** Build deterministic write-scope claims for one reservation or authorization test. */
 function contextFor(clientId: string, grantId: string): AuthorizationContext {
 	return { client_id: clientId, grant_id: grantId, scopes: ["vault:write"] };
 }
 
+/** Build a canonical absent-path put descriptor for the supplied vault epoch. */
 function descriptorFor(epoch: string): OperationDescriptor {
 	return {
 		op: "put",
@@ -68,10 +76,12 @@ function descriptorFor(epoch: string): OperationDescriptor {
 	};
 }
 
+/** Add the empty payload hash and zero-byte size to the canonical put descriptor. */
 function intentFor(epoch: string): OperationIntent {
 	return { ...descriptorFor(epoch), payload_hash: emptyPayloadHash, size: 0 };
 }
 
+/** Read the stored vault epoch and return an empty sentinel when metadata is absent. */
 function currentEpoch(storage: DurableObjectStorage): string {
 	return (
 		storage.sql
@@ -80,6 +90,7 @@ function currentEpoch(storage: DurableObjectStorage): string {
 	);
 }
 
+/** Create a native authority with test-controlled milliseconds and ticket identifiers. */
 function createAuthority(
 	storage: DurableObjectStorage,
 	now: number | (() => number),
@@ -91,6 +102,7 @@ function createAuthority(
 	});
 }
 
+/** Capture content, history, receipts, blob references, and metadata without admission rows. */
 function contentSnapshot(storage: DurableObjectStorage) {
 	return {
 		files: storage.sql.exec("SELECT * FROM files ORDER BY path").toArray(),
@@ -111,6 +123,7 @@ function contentSnapshot(storage: DurableObjectStorage) {
 	};
 }
 
+/** Read every physical admission row, including expired rows that await cleanup. */
 function admissionSnapshot(storage: DurableObjectStorage): AdmissionTestRow[] {
 	return storage.sql
 		.exec<AdmissionTestRow>("SELECT * FROM operation_admissions ORDER BY id")
@@ -236,6 +249,7 @@ async function seedAdmissions(
 	return rows;
 }
 
+/** Run the selected reserve or authorize path with the current vault epoch. */
 async function runInsertion(
 	kind: OperationKind,
 	authority: SqliteAdmissionAuthority,
@@ -248,12 +262,14 @@ async function runInsertion(
 		: authority.authorize(context, intentFor(epoch));
 }
 
+/** Normalize successful lease and ticket results for shared row assertions. */
 type AdmissionIdentity = {
 	id: string;
 	expiresAt: number;
 	state: "reserved" | "active";
 };
 
+/** Extract persisted identity and state, or return undefined for a denial. */
 function admissionIdentity(
 	result: AdmissionResultForKind,
 ): AdmissionIdentity | undefined {
@@ -271,6 +287,7 @@ function admissionIdentity(
 	};
 }
 
+/** Check retained rows and one new slot with canonical ownership and an unchanged 60-second deadline. */
 function expectSuccessfulInsertion(
 	result: AdmissionResultForKind,
 	context: AuthorizationContext,
@@ -305,6 +322,7 @@ function expectSuccessfulInsertion(
 	expect(identity.expiresAt).toBe(now + 60_000);
 }
 
+/** Seed 1,022 live rows plus caller-owned and global expired cleanup markers. */
 async function seedCleanupMarkers(
 	storage: DurableObjectStorage,
 	now: number,
@@ -340,6 +358,7 @@ async function seedCleanupMarkers(
 	return { liveRows, callerMarker, globalMarker };
 }
 
+/** Verify both expired markers retain their identities, fingerprints, and original deadlines. */
 function expectCleanupMarkersPresent(
 	storage: DurableObjectStorage,
 	now: number,
@@ -367,6 +386,7 @@ function expectCleanupMarkersPresent(
 	expect(callerMarker.clientId).not.toBe(globalMarker.clientId);
 }
 
+/** Verify cleanup removes both expired markers, admits one row, and leaves content tables unchanged. */
 async function expectCleanupSuccess(
 	kind: OperationKind,
 	storage: DurableObjectStorage,
@@ -1148,6 +1168,7 @@ describe("vault aggregate admission limit", () => {
 			let finalRetainedBytes = baselineBytes;
 			let transactionSamples = 0;
 			let setupTransactionSamples = 0;
+			/** Return native byte and transaction samples. Peak delta measures growth from the initialized empty database. */
 			const metrics = () => ({
 				baselineBytes,
 				absolutePeakBytes,
@@ -1193,6 +1214,7 @@ describe("vault aggregate admission limit", () => {
 					throw new Error("Resource identity prefix exceeds its byte limit");
 				return `${prefix}${"x".repeat(maxIdentityBytes - prefixBytes)}`;
 			};
+			/** Check the 1,024-row vault cap, 2,048-byte identities, canonical hashes, states, deadlines, and 16-row client cap. */
 			const expectResourceRows = (rows: AdmissionTestRow[]): void => {
 				const clientCounts = new Map<string, number>();
 				const validRows = rows.every((row) => {

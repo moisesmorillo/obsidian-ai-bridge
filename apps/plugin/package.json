@@ -10,6 +10,7 @@
 	"devDependencies": {
 		"@codemirror/view": "6.43.13",
 		"esbuild": "0.28.2",
-		"obsidian": "1.14.4"
+		"obsidian": "1.14.4",
+		"@obsidian-ai-bridge/tooling": "workspace:*"
 	}
 }

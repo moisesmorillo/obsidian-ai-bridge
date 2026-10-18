@@ -24,10 +24,12 @@ const runtimeProbe = [
 	'const __encoderProbe: Uint8Array = new TextEncoder().encode("x");',
 ].join("\n");
 
+/** Identifies an isolated protocol copy that retains real configuration and dependency resolution. */
 interface Fixture {
 	packageRoot: string;
 }
 
+/** Preserves compiler exit status and diagnostics so harness failures cannot imitate expected missing globals. */
 interface CompilerResult {
 	status: number;
 	output: string;
@@ -35,6 +37,7 @@ interface CompilerResult {
 	diagnosticCount: number;
 }
 
+/** Copies real protocol inputs and removes the temporary fixture after success or failure. */
 async function withFixture<T>(
 	run: (fixture: Fixture) => Promise<T>,
 ): Promise<T> {
@@ -85,6 +88,7 @@ async function withFixture<T>(
 	}
 }
 
+/** Appends source only inside a fixture so the real compiler checks its ambient type boundary. */
 async function addProbe(
 	fixture: Fixture,
 	relativePath: string,
@@ -95,6 +99,7 @@ async function addProbe(
 	await writeFile(path, `${source}\n${probe}\n`);
 }
 
+/** Runs the installed compiler against a fixture project. Process errors throw instead of becoming expected type failures. */
 function runCompiler(fixture: Fixture, configName: string): CompilerResult {
 	if (!existsSync(compilerPath)) {
 		throw new Error(
@@ -126,6 +131,7 @@ function runCompiler(fixture: Fixture, configName: string): CompilerResult {
 	return { status: result.status, output, missingNames, diagnosticCount };
 }
 
+/** Accepts only the named missing-global diagnostics. Unrelated compiler failures must fail the test. */
 function expectOnlyMissingNames(
 	result: CompilerResult,
 	expected: string[],

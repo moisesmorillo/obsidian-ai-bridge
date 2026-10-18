@@ -44,6 +44,7 @@ const writeIntent: OperationIntent = {
 };
 const now = 10_000;
 
+/** Create a test authority with controllable time and deterministic ticket-ID generation. */
 function createAuthority(
 	storage: DurableObjectStorage,
 	clock: number | (() => number) = now,
@@ -56,6 +57,7 @@ function createAuthority(
 	});
 }
 
+/** Dispatch one admission kind through its public authority method using live metadata. */
 function runAuthorityOperation(
 	authority: SqliteAdmissionAuthority,
 	kind: "reserve" | "authorize",
@@ -67,16 +69,19 @@ function runAuthorityOperation(
 		: authority.authorize(context, liveWriteIntent(storage));
 }
 
+/** Rebuild the canonical test descriptor with the current stored vault epoch. */
 function liveWriteDescriptor(
 	storage: DurableObjectStorage,
 ): OperationDescriptor {
 	return { ...writeDescriptor, epoch: currentEpoch(storage) };
 }
 
+/** Rebuild the canonical test intent with the current stored vault epoch. */
 function liveWriteIntent(storage: DurableObjectStorage): OperationIntent {
 	return { ...writeIntent, epoch: currentEpoch(storage) };
 }
 
+/** Read the stored epoch and use an empty sentinel when its metadata row is absent. */
 function currentEpoch(storage: DurableObjectStorage): string {
 	return (
 		storage.sql
@@ -85,6 +90,7 @@ function currentEpoch(storage: DurableObjectStorage): string {
 	);
 }
 
+/** Seed one explicit ledger row for a lifecycle test without calling an authority transition. */
 function seedAdmission(
 	storage: DurableObjectStorage,
 	row: {
@@ -110,6 +116,7 @@ function seedAdmission(
 	);
 }
 
+/** Capture an asynchronous value or its thrown error without changing either result. */
 async function captureResult<T>(run: () => Promise<T>) {
 	try {
 		return { value: await run() } as const;
@@ -118,6 +125,7 @@ async function captureResult<T>(run: () => Promise<T>) {
 	}
 }
 
+/** Raw admission ledger projection used to assert persisted ownership and lifecycle state. */
 type AdmissionTestRow = {
 	id: string;
 	client_id: string;
@@ -129,12 +137,14 @@ type AdmissionTestRow = {
 	state: string;
 };
 
+/** Read physical admission rows for lifecycle assertions. */
 function admissionRows(storage: DurableObjectStorage): AdmissionTestRow[] {
 	return storage.sql
 		.exec<AdmissionTestRow>("SELECT * FROM operation_admissions")
 		.toArray();
 }
 
+/** Snapshot file, revision, and feed rows to prove admission checks do not change content. */
 function contentState(storage: DurableObjectStorage) {
 	return {
 		files: storage.sql.exec("SELECT * FROM files ORDER BY path").toArray(),

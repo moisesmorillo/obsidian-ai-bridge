@@ -19,6 +19,13 @@ import {
 export class Vault extends DurableObject<Env> {
 	private readonly admissionAuthority: SqliteAdmissionAuthority;
 
+	/**
+	 * The constructor creates fresh storage or validates existing storage synchronously in one transaction.
+	 * It throws on incompatible state without repair or identity replacement.
+	 *
+	 * It then wires private admission bookkeeping.
+	 * The vault exposes no content mutation methods.
+	 */
 	constructor(ctx: DurableObjectState, env: Env) {
 		super(ctx, env);
 		initializeVaultStorage(

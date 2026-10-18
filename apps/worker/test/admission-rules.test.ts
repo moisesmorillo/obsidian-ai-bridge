@@ -41,6 +41,7 @@ const descriptor: OperationDescriptor = {
 	precondition: { kind: "none" },
 };
 
+/** Capture a synchronous policy error for assertions about failure precedence. */
 function admissionCheckFailure(check: () => void): unknown {
 	try {
 		check();
@@ -267,10 +268,12 @@ describe("admission rules", () => {
 			"0000000000000000000000000000000b",
 		);
 	});
+	/** Prepare full intent and return its canonical operation fingerprint. */
 	const fingerprintFor = async (
 		intent: OperationIntent,
 		auth: AuthorizationContext = context,
 	) => (await prepareOperation(auth, intent)).fingerprint;
+	/** Prepare descriptor metadata and return its reservation fingerprint. */
 	const descriptorFingerprintFor = async (
 		value: OperationDescriptor,
 		auth: AuthorizationContext = context,

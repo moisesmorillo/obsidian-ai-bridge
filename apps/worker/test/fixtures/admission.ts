@@ -1,5 +1,6 @@
 import { SCHEMA_V1_RELATIONAL_STATEMENTS } from "@worker/test-fixtures/schema-v1";
 
+/** Test-only FTS5 DDL that completes the canonical schema-v1 fixture. It does not define production FTS state. */
 const FTS_SCHEMA = `CREATE VIRTUAL TABLE files_fts USING fts5(
  path UNINDEXED, content, tokenize = 'trigram case_sensitive 0 remove_diacritics 1'
 );`;

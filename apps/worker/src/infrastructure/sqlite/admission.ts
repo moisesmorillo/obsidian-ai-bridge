@@ -38,6 +38,7 @@ import {
 	drizzle,
 } from "drizzle-orm/durable-sqlite";
 
+/** Official inferred Drizzle callback type for synchronous SQLite work inside infrastructure. */
 type VaultTransaction = Parameters<
 	Parameters<DrizzleSqliteDODatabase<typeof vaultSchema>["transaction"]>[0]
 >[0];
@@ -49,6 +50,7 @@ const MAX_VAULT_ADMISSIONS = 1_024;
 export class SqliteAdmissionAuthority {
 	private readonly db;
 
+	/** Create a Drizzle session over native storage and retain the authority's clock and ticket-ID ports. Schema bootstrap stays separate. */
 	constructor(
 		storage: DurableObjectStorage,
 		private readonly ports: { now: () => number; newTicketId: () => string },
@@ -357,6 +359,7 @@ export class SqliteAdmissionAuthority {
 	}
 }
 
+/** Drizzle-inferred persisted row used to condition changes on observed ledger values. */
 type AdmissionRow = typeof operationAdmissions.$inferSelect;
 
 /** Match every observed admission field so completion changes only the row that it read. */
@@ -530,6 +533,7 @@ function checkVaultLimit(
 	};
 }
 
+/** Build a typed refusal from a known failure. Callers propagate other exceptions. */
 function denied(
 	failure: AdmissionFailure,
 ): RequestAdmissionResult & AdmissionResult {

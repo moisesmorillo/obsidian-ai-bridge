@@ -34,6 +34,7 @@ export type PreparedOperation = PreparedDescriptor &
 
 /** Holds one admission failure without exposing file content. */
 export class AdmissionDenied extends Error {
+	/** Store the canonical failure and use its kind as the Error message. */
 	constructor(readonly failure: AdmissionFailure) {
 		super(failure.kind);
 	}
@@ -56,6 +57,7 @@ export function requiredScope(op: OperationIntent["op"]): VaultScope {
 	}
 }
 
+/** Throw when a new operation kind lacks an explicit scope rule. */
 function assertNever(value: never): never {
 	throw new Error(`Unhandled admission operation: ${value}`);
 }

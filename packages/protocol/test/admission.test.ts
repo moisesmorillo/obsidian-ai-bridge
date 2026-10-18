@@ -407,6 +407,7 @@ describe("admission contracts", () => {
 		).toBe(false);
 	});
 	it("bounds descriptor and intent envelopes at 16 KiB", () => {
+		/** Pad identity fields so context-plus-member JSON reaches an exact UTF-8 byte target. */
 		const makeContext = (
 			target: number,
 			member: { descriptor: unknown } | { intent: unknown },

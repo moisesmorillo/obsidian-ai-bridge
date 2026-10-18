@@ -29,13 +29,16 @@ import { eq, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/durable-sqlite";
 import { describe, expect, it } from "vitest";
 
+/** SHA-256 digest for an empty payload in canonical test intents. */
 const EMPTY_PAYLOAD_HASH =
 	"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 const firstReplacementEpoch = "fedcba9876543210fedcba9876543210";
 const secondReplacementEpoch = "abcdef0123456789abcdef0123456789";
 const initialTime = 1_000_000;
 
+/** Mutable fake Unix clock in milliseconds for exact ticket deadline tests. */
 type Clock = { value: number };
+/** Raw stored admission columns, including expired rows that cleanup did not remove. */
 type AdmissionTestRow = {
 	id: string;
 	client_id: string;
@@ -46,6 +49,7 @@ type AdmissionTestRow = {
 	expires_at: number;
 	state: "reserved" | "active" | "uncertain";
 };
+/** Test-only row data for path identity, revision, sequence, SHA-256, UTF-8 size, tombstone state, epoch, and time. */
 type FileFixture = {
 	path: string;
 	pathKey: string;
@@ -59,6 +63,7 @@ type FileFixture = {
 	updatedAt: number;
 };
 
+/** Prepared test authorization with its active ticket identity and original Unix-millisecond deadline. */
 type ActiveTicket = {
 	context: AuthorizationContext;
 	intent: OperationIntent;
@@ -67,6 +72,7 @@ type ActiveTicket = {
 	expiresAt: number;
 };
 
+/** Build deterministic authorization contexts for tests without token verification. */
 function contextFor(
 	clientId = "task3-client",
 	grantId = "task3-grant",
@@ -75,6 +81,7 @@ function contextFor(
 	return { client_id: clientId, grant_id: grantId, scopes };
 }
 
+/** Read the stored epoch and return an empty sentinel when its metadata row is absent. */
 function currentEpoch(storage: DurableObjectStorage): string {
 	return (
 		storage.sql
@@ -83,6 +90,7 @@ function currentEpoch(storage: DurableObjectStorage): string {
 	);
 }
 
+/** Read a named metadata value as a number, using zero when the row is absent. */
 function currentMetaNumber(storage: DurableObjectStorage, key: string): number {
 	return Number(
 		storage.sql
@@ -91,6 +99,7 @@ function currentMetaNumber(storage: DurableObjectStorage, key: string): number {
 	);
 }
 
+/** Build an authority with test-controlled milliseconds and deterministic ticket identifiers. */
 function createAuthority(
 	storage: DurableObjectStorage,
 	clock: Clock = { value: initialTime },
@@ -103,6 +112,7 @@ function createAuthority(
 	});
 }
 
+/** Build a zero-byte put intent with a caller-selected precondition. Defaults use an absent-path condition and an empty payload. */
 function putIntent(
 	epoch: string,
 	path: string,
@@ -119,6 +129,7 @@ function putIntent(
 	};
 }
 
+/** Build a zero-byte read intent with no revision precondition. */
 function readIntent(path: string): OperationIntent {
 	return {
 		op: "read",
@@ -129,6 +140,7 @@ function readIntent(path: string): OperationIntent {
 	};
 }
 
+/** Prepare and authorize a test intent, then return its immutable operation and original deadline. */
 async function openActiveTicket(
 	_storage: DurableObjectStorage,
 	authority: SqliteAdmissionAuthority,
@@ -148,12 +160,14 @@ async function openActiveTicket(
 	};
 }
 
+/** Read all physical admission rows, including expired rows that await cleanup. */
 function admissionRows(storage: DurableObjectStorage): AdmissionTestRow[] {
 	return storage.sql
 		.exec<AdmissionTestRow>("SELECT * FROM operation_admissions ORDER BY id")
 		.toArray();
 }
 
+/** Capture application tables and FTS rows that commit tests may observe or change. */
 function captureCompleteState(storage: DurableObjectStorage) {
 	return {
 		vault: captureVaultState(storage),
@@ -182,6 +196,7 @@ function captureCompleteState(storage: DurableObjectStorage) {
 	};
 }
 
+/** Return a synchronous error for assertions, or undefined when the callback succeeds. */
 function captureSynchronousError(run: () => void): unknown {
 	try {
 		run();
@@ -191,6 +206,7 @@ function captureSynchronousError(run: () => void): unknown {
 	}
 }
 
+/** Run only admission consumption in the official Drizzle transaction used by the caller. */
 function consumeInCallerTransaction(
 	storage: DurableObjectStorage,
 	authority: SqliteAdmissionAuthority,
@@ -204,6 +220,7 @@ function consumeInCallerTransaction(
 	});
 }
 
+/** Assert full state equality except removal of the selected admission row. */
 function expectOnlyAdmissionConsumed(
 	storage: DurableObjectStorage,
 	before: ReturnType<typeof captureCompleteState>,
@@ -215,6 +232,7 @@ function expectOnlyAdmissionConsumed(
 	});
 }
 
+/** Assert the denial class and exact structured failure returned by the guard. */
 function expectAdmissionFailure(
 	error: unknown,
 	failure: AdmissionFailure,
@@ -223,6 +241,7 @@ function expectAdmissionFailure(
 	if (error instanceof AdmissionDenied) expect(error.failure).toEqual(failure);
 }
 
+/** Hash UTF-8 bytes with Web Crypto SHA-256 and return lowercase hexadecimal. */
 async function hashText(value: string): Promise<string> {
 	const digest = await crypto.subtle.digest(
 		"SHA-256",
@@ -233,6 +252,12 @@ async function hashText(value: string): Promise<string> {
 	).join("");
 }
 
+/**
+ * Seed valid file, history, feed, and metadata rows in native test storage.
+ * Hashes and sizes use UTF-8 bytes.
+ *
+ * Live Markdown also updates FTS. Tombstones store null content and the empty hash.
+ */
 async function seedFile(
 	storage: DurableObjectStorage,
 	input: {
@@ -330,6 +355,7 @@ async function seedFile(
 	return row;
 }
 
+/** Replace current file metadata and append matching history and feed rows for stale-revision tests. */
 async function replaceFileRevision(
 	storage: DurableObjectStorage,
 	input: { path: string; revision: number; content: string; now: number },
@@ -403,6 +429,7 @@ async function replaceFileRevision(
 	return row;
 }
 
+/** Write generic test-only fixture rows after consumption in the same caller transaction. A forced error verifies rollback without modeling content algorithms. */
 async function consumeAndWriteFixtureEffect(
 	storage: DurableObjectStorage,
 	authority: SqliteAdmissionAuthority,
@@ -496,6 +523,7 @@ async function consumeAndWriteFixtureEffect(
 	}
 }
 
+/** Read revoked grant identities and first timestamps in grant order. Timestamps use Unix milliseconds. */
 function revokedGrantRows(
 	storage: DurableObjectStorage,
 ): { grant_id: string; at: number }[] {

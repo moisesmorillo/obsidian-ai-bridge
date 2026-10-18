@@ -7,9 +7,22 @@ import { EpochSchema, ETagSchema } from "@protocol/schemas/etag";
 import { PathSchema } from "@protocol/schemas/path";
 import { z } from "zod";
 
+/** Adds closed-object checks without changing canonical admission refinements. */
+const [firstAdmissionFailure, ...otherAdmissionFailures] =
+	AdmissionFailureSchema.options;
+
+/** Rejects unknown admission fields for file contracts and preserves canonical union refinements. */
+const StrictAdmissionFailureSchema = z.intersection(
+	AdmissionFailureSchema,
+	z.union([
+		firstAdmissionFailure.strict(),
+		...otherAdmissionFailures.map((variant) => variant.strict()),
+	]),
+);
+
 /** Canonical failure details returned by file and idempotency policies. */
 export const FileFailureSchema = z.union([
-	AdmissionFailureSchema,
+	StrictAdmissionFailureSchema,
 	z.object({ kind: z.literal("operation_expired") }).strict(),
 	z.discriminatedUnion("kind", [
 		z.object({ kind: z.literal("invalid_path") }).strict(),

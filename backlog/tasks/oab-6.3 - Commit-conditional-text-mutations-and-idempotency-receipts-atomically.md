@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-10-15 00:38'
-updated_date: '2026-10-18 19:59'
+updated_date: '2026-10-18 20:52'
 labels:
   - F1
 dependencies:
@@ -58,4 +58,10 @@ Task 1 still needs independent review. Tasks 2 through 4 and all four acceptance
 The LSP probe confirmed no clean files. All 16 outcomes were inconclusive.
 
 Earlier failed quality gates and observers remain in private execution evidence.
+
+Task 1 review repair passed parent validation with 488 tests. The strict file failure boundary rejects unknown admission fields and preserves canonical admission checks. Nine regression cases protect nested failure boundaries, metadata rules, and existing admission parsing.
+
+The parent kept the qualified RED tests unchanged. This repair failed the documentation gate once before a comment change. Fresh checks passed all compiler groups, documentation, Biome, builds, doctor, and diff validation.
+
+Wrangler used dry-run only. Independent corrective review remains pending. All four acceptance criteria remain unchecked.
 <!-- SECTION:NOTES:END -->

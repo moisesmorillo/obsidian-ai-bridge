@@ -1,7 +1,9 @@
 import type { FileHttpFailure, FileHttpFailureInput } from "@protocol/index";
 import {
+	AdmissionFailureSchema,
 	encodeFileFailure,
 	FileFailureSchema,
+	FileHttpFailureInputSchema,
 	FileHttpFailureSchema,
 	MutationReceiptSchema,
 	MutationSuccessSchema,
@@ -477,6 +479,92 @@ describe("canonical failure DTO", () => {
 		);
 	});
 
+	it("keeps existing admission parsing behavior outside file contracts", () => {
+		expect(
+			AdmissionFailureSchema.parse({
+				kind: "invalid_request",
+				secret: "stripped",
+			}),
+		).toEqual({ kind: "invalid_request" });
+	});
+
+	it("rejects unknown fields on a simple admission failure", () => {
+		expect(
+			accepts(FileFailureSchema, {
+				kind: "invalid_request",
+				secret: "hidden",
+			}),
+		).toBe(false);
+	});
+
+	it("rejects unknown fields on an admission failure with details", () => {
+		expect(
+			accepts(FileFailureSchema, {
+				kind: "admission_limited",
+				retry_after_seconds: 4,
+				secret: "hidden",
+			}),
+		).toBe(false);
+	});
+
+	it("rejects unknown fields on precondition failure details", () => {
+		expect(
+			accepts(FileFailureSchema, {
+				kind: "precondition_failed",
+				etag,
+				hash,
+				deleted: false,
+				secret: "hidden",
+			}),
+		).toBe(false);
+	});
+
+	it("rejects unknown simple admission fields in mutation results", () => {
+		expect(
+			accepts(TextMutationResultSchema, {
+				ok: false,
+				failure: { kind: "invalid_request", secret: "hidden" },
+			}),
+		).toBe(false);
+	});
+
+	it("rejects unknown admission detail fields in start results", () => {
+		expect(
+			accepts(TextMutationBeginResultSchema, {
+				ok: false,
+				failure: {
+					kind: "admission_limited",
+					retry_after_seconds: 4,
+					secret: "hidden",
+				},
+			}),
+		).toBe(false);
+	});
+
+	it("rejects unknown precondition details in read results", () => {
+		expect(
+			accepts(TextReadResultSchema, {
+				ok: false,
+				failure: {
+					kind: "precondition_failed",
+					etag,
+					hash,
+					deleted: false,
+					secret: "hidden",
+				},
+			}),
+		).toBe(false);
+	});
+
+	it("rejects unknown fields in HTTP failure inputs", () => {
+		expect(
+			accepts(FileHttpFailureInputSchema, {
+				kind: "invalid_request",
+				secret: "hidden",
+			}),
+		).toBe(false);
+	});
+
 	it("preserves the existing path in parsed collision evidence", () => {
 		expect(
 			FileFailureSchema.safeParse({
@@ -522,6 +610,17 @@ describe("canonical failure DTO", () => {
 	it("rejects precondition metadata with missing fields", () => {
 		expect(
 			accepts(FileFailureSchema, { kind: "precondition_failed", etag, hash }),
+		).toBe(false);
+	});
+
+	it("rejects an empty current hash for a live precondition", () => {
+		expect(
+			accepts(FileFailureSchema, {
+				kind: "precondition_failed",
+				etag,
+				hash: "",
+				deleted: false,
+			}),
 		).toBe(false);
 	});
 

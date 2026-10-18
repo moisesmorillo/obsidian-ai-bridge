@@ -1,7 +1,7 @@
 {
 	"version": "6",
 	"dialect": "sqlite",
-	"id": "99ba1ef2-fa72-487a-8d10-a435690592d0",
+	"id": "8cdf33ad-abf8-47db-9244-394c8b4da3c7",
 	"prevId": "00000000-0000-0000-0000-000000000000",
 	"tables": {
 		"blob_refs": {
@@ -407,6 +407,88 @@
 			"compositePrimaryKeys": {},
 			"uniqueConstraints": {},
 			"checkConstraints": {}
+		},
+		"operation_admissions": {
+			"name": "operation_admissions",
+			"columns": {
+				"id": {
+					"name": "id",
+					"type": "text",
+					"primaryKey": true,
+					"notNull": true,
+					"autoincrement": false
+				},
+				"client_id": {
+					"name": "client_id",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true,
+					"autoincrement": false
+				},
+				"grant_id": {
+					"name": "grant_id",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true,
+					"autoincrement": false
+				},
+				"epoch": {
+					"name": "epoch",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true,
+					"autoincrement": false
+				},
+				"fingerprint": {
+					"name": "fingerprint",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true,
+					"autoincrement": false
+				},
+				"admitted_at": {
+					"name": "admitted_at",
+					"type": "integer",
+					"primaryKey": false,
+					"notNull": true,
+					"autoincrement": false
+				},
+				"expires_at": {
+					"name": "expires_at",
+					"type": "integer",
+					"primaryKey": false,
+					"notNull": true,
+					"autoincrement": false
+				},
+				"state": {
+					"name": "state",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true,
+					"autoincrement": false
+				}
+			},
+			"indexes": {
+				"operation_admissions_client_expiry": {
+					"name": "operation_admissions_client_expiry",
+					"columns": ["client_id", "expires_at"],
+					"isUnique": false
+				},
+				"operation_admissions_expiry": {
+					"name": "operation_admissions_expiry",
+					"columns": ["expires_at"],
+					"isUnique": false
+				}
+			},
+			"foreignKeys": {},
+			"compositePrimaryKeys": {},
+			"uniqueConstraints": {},
+			"checkConstraints": {
+				"operation_admissions_state_check": {
+					"name": "operation_admissions_state_check",
+					"value": "\"operation_admissions\".\"state\" IN ('reserved', 'active', 'uncertain')"
+				}
+			}
 		},
 		"receipts": {
 			"name": "receipts",

@@ -4,7 +4,11 @@ import { readViteAliases } from "@obsidian-ai-bridge/tooling/vite-aliases";
 import { defineConfig } from "vitest/config";
 
 const repositoryRoot = fileURLToPath(new URL("../../", import.meta.url));
-const aliases = readViteAliases(repositoryRoot, ["@worker/*", "@protocol/*"]);
+const aliases = readViteAliases(repositoryRoot, [
+	"@worker/test-fixtures/*",
+	"@worker/*",
+	"@protocol/*",
+]);
 
 export default defineConfig({
 	resolve: { alias: aliases },

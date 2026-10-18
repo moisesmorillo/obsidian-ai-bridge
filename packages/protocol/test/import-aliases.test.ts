@@ -93,6 +93,7 @@ const workspaces = [
 	{ name: "plugin", packageJson: pluginPackage, tsconfig: pluginTsconfig },
 ];
 const expectedSharedPaths = {
+	"@worker/test-fixtures/*": ["./apps/worker/test/fixtures/*"],
 	"@protocol/*": ["./packages/protocol/src/*"],
 	"@tooling/*": ["./tooling/*"],
 	"@worker/*": ["./apps/worker/src/*"],

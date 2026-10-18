@@ -155,6 +155,32 @@ export const revokedGrants = sqliteTable(
 	(table) => [primaryKey({ columns: [table.grantId] })],
 );
 
+/** Persist admission ownership across reserved, active, and uncertain states. Deadlines use original Unix milliseconds. Expired rows still count until bounded cleanup removes them. */
+export const operationAdmissions = sqliteTable(
+	"operation_admissions",
+	{
+		id: text("id").primaryKey().notNull(),
+		clientId: text("client_id").notNull(),
+		grantId: text("grant_id").notNull(),
+		epoch: text("epoch").notNull(),
+		fingerprint: text("fingerprint").notNull(),
+		admittedAt: integer("admitted_at").notNull(),
+		expiresAt: integer("expires_at").notNull(),
+		state: text("state").notNull(),
+	},
+	(table) => [
+		check(
+			"operation_admissions_state_check",
+			sql`${table.state} IN ('reserved', 'active', 'uncertain')`,
+		),
+		index("operation_admissions_client_expiry").on(
+			table.clientId,
+			table.expiresAt,
+		),
+		index("operation_admissions_expiry").on(table.expiresAt),
+	],
+);
+
 /** Stores referenced content hashes and byte sizes. These rows describe references, not proof that external bytes exist or match their hash. */
 export const blobRefs = sqliteTable(
 	"blob_refs",
@@ -195,4 +221,5 @@ export const vaultSchema = {
 	revokedGrants,
 	blobRefs,
 	exports,
+	operationAdmissions,
 };

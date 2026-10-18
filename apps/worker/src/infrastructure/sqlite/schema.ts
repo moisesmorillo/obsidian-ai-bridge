@@ -103,9 +103,8 @@ function isCanonicalSafeInteger(value: string, nonNegative: boolean): boolean {
 }
 
 /**
- * Creates an empty generated-v1 vault once, or validates an existing generated-v1 store.
- * Only the canonical generated initial schema is supported; the unpublished pre-ORM preview
- * form fails closed. Existing state is never repaired, replaced, or assigned a new epoch.
+ * Creates a fresh canonical schema-version-2 vault or validates an existing version-2 store.
+ * Version-1 and other unsupported stores fail without migration, repair, replacement, or epoch changes.
  * All DDL and initial metadata writes run synchronously in one Durable SQLite transaction.
  * @param storage - The native storage belonging to this vault Durable Object.
  * @param createEpoch - Called only during fresh initialization; an invalid result aborts the transaction.

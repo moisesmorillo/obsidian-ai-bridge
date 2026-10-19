@@ -210,12 +210,14 @@ Admission deletion cascades claim deletion. The admission owns the fingerprint, 
 ### 5.3 R2 layout
 
 - `blobs/<sha256>`: immutable. Written **before** the DO transaction that references it (§6.3). Unreferenced blobs are harmless; no automatic GC in v1 (§16).
+- Blob PUT requests declare both `X-Content-SHA256` (64 lowercase hexadecimal characters) and `X-Content-Size` (canonical nonnegative decimal, at most 25,000,000). They must appear together. Existing inline clients may omit both. A supplied declaration binds the exact raw request bytes and is verified before publication.
 
 ### 5.4 Storage rule for text vs blob
 
 - `.md` and `.canvas` files ≤ 1,000,000 bytes are stored inline (`kind='text'`) and `.md` content is indexed (`.canvas` JSON is stored inline but not indexed).
-- Every other file, and any `.md`/`.canvas` file > 1,000,000 bytes, is `kind='blob'`: bytes in R2, metadata in SQLite, **not indexed**, readable by range through the Worker. An oversized `.md`/`.canvas` is listed with `large: true`; the plugin panel shows it as "synced, not searchable".
+- Every other file, and any `.md`/`.canvas` file > 1,000,000 bytes, is `kind='blob'`: bytes in R2, metadata in SQLite, **not indexed**, readable by range through the Worker. `large` is true only for Markdown or Canvas stored as a blob above 1,000,000 bytes. The plugin panel shows such a file as "synced, not searchable".
 - An `update` or `append` whose resulting text would exceed 1,000,000 bytes fails with `413 text_too_large`. The note must be split by the user or agent. This keeps every text commit atomic in SQLite.
+- Blob range reads accept one satisfiable `bytes=start-end` selection. Multiple, malformed, or unsatisfiable ranges fail with `416`; a selection cannot exceed 1,000,000 bytes.
 
 ## 6. Sync API
 

@@ -20,6 +20,12 @@ export {
 	TextMutationIntentSchema,
 	VaultScopeSchema,
 } from "@protocol/schemas/admission";
+export type { ByteRangeSelection } from "@protocol/schemas/blobs";
+export {
+	BlobDeclarationSchema,
+	BlobMetadataSchema,
+	selectByteRange,
+} from "@protocol/schemas/blobs";
 export { TextPayloadSchema } from "@protocol/schemas/content";
 export { EpochSchema, ETagSchema } from "@protocol/schemas/etag";
 export {
@@ -67,6 +73,7 @@ export type {
 	TextMutationIntent,
 	VaultScope,
 } from "@protocol/types/admission";
+export type { BlobDeclaration, BlobMetadata } from "@protocol/types/blobs";
 export type { TextPayload } from "@protocol/types/content";
 export type { ETagParts } from "@protocol/types/etag";
 export type {

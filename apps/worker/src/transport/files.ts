@@ -9,6 +9,7 @@ import {
 	EpochSchema,
 	encodeFileFailure,
 	IdempotencyKeySchema,
+	normalizePath,
 	parseETag,
 	TextMutationDescriptorSchema,
 	TextReadRequestSchema,
@@ -37,9 +38,8 @@ export function createFileRouter(
 	router.all("/*", async (context) => {
 		const identity = await resolveIdentity(context.req.raw);
 		if (identity === null) return errorResponse({ kind: "unauthorized" });
-		const path = context.req.path.slice("/v1/files/".length);
-		if (!path || path.includes("?") || path.includes("#"))
-			return errorResponse({ kind: "invalid_path" });
+		const path = filePathFromRequest(context.req.raw);
+		if (path === undefined) return errorResponse({ kind: "invalid_path" });
 		if (context.req.method === "GET") {
 			if (!identity.scopes.includes("vault:read"))
 				return errorResponse({ kind: "forbidden_scope" });
@@ -133,6 +133,18 @@ export function createFileRouter(
 		});
 	});
 	return router;
+}
+
+/** Decode the raw file URL path once, then apply the canonical path contract. */
+function filePathFromRequest(request: Request): string | undefined {
+	const pathname = new URL(request.url).pathname;
+	const prefix = "/v1/files/";
+	if (!pathname.startsWith(prefix)) return undefined;
+	try {
+		return normalizePath(decodeURIComponent(pathname.slice(prefix.length)));
+	} catch {
+		return undefined;
+	}
 }
 
 /** Return an authoritative epoch mismatch after operation-specific policy checks. */

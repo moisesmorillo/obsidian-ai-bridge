@@ -105,6 +105,158 @@ describe("conditional text HTTP lifecycle", () => {
 		);
 	});
 
+	it("uses decoded URL paths as the exact native file identity", async () => {
+		/** Literal URL representations and independently specified canonical Vault paths. */
+		const pathCases = [
+			{ requestPath: "notes/100%25.md", path: "notes/100%.md" },
+			{
+				requestPath: "notes/literal%2520.md",
+				path: "notes/literal%20.md",
+			},
+			{
+				requestPath: "notes/literal%20.md",
+				path: "notes/literal .md",
+			},
+			{
+				requestPath: "notes/literal%252F.md",
+				path: "notes/literal%2F.md",
+			},
+			{ requestPath: "notes/a%23b.md", path: "notes/a#b.md" },
+			{ requestPath: "notes/a%3Fb.md", path: "notes/a?b.md" },
+			{
+				requestPath: "notes/caf%C3%A9%20notes.md",
+				path: "notes/café notes.md",
+			},
+			{
+				requestPath: "notes/nested%2Fchild.md",
+				path: "notes/nested/child.md",
+				plainPath: "notes/nested/child.md",
+			},
+		] as const;
+		/** Build a test Worker URL from one raw path representation. */
+		const fileUrl = (path: string) => `https://worker.invalid/v1/files/${path}`;
+
+		for (const item of pathCases) {
+			const encodedUrl = fileUrl(item.requestPath);
+			const plainUrl = fileUrl(
+				"plainPath" in item ? item.plainPath : item.requestPath,
+			);
+			const firstContent = `created:${item.path}`;
+			const created = await SELF.fetch(encodedUrl, {
+				method: "PUT",
+				headers: {
+					"If-None-Match": "*",
+					"X-Vault-Epoch": TEXT_FIXTURE_EPOCH,
+				},
+				body: firstContent,
+			});
+			expect(created.status).toBe(201);
+			expect(await created.json()).toMatchObject({ path: item.path });
+			const firstEtag = created.headers.get("ETag");
+			expect(firstEtag).toBeTypeOf("string");
+
+			const firstRead = await SELF.fetch(plainUrl, {
+				headers: { "X-Vault-Epoch": TEXT_FIXTURE_EPOCH },
+			});
+			expect(firstRead.status).toBe(200);
+			expect(
+				TextReadResponseSchema.parse(await firstRead.json()),
+			).toMatchObject({
+				path: item.path,
+				content: firstContent,
+			});
+
+			const updated = await SELF.fetch(plainUrl, {
+				method: "PUT",
+				headers: {
+					"If-Match": firstEtag ?? "",
+					"X-Vault-Epoch": TEXT_FIXTURE_EPOCH,
+				},
+				body: `updated:${item.path}`,
+			});
+			expect(updated.status).toBe(200);
+			expect(await updated.json()).toMatchObject({ path: item.path });
+			const updatedEtag = updated.headers.get("ETag");
+			expect(updatedEtag).toBeTypeOf("string");
+
+			const historical = await SELF.fetch(`${encodedUrl}?rev=1`, {
+				headers: { "X-Vault-Epoch": TEXT_FIXTURE_EPOCH },
+			});
+			expect(historical.status).toBe(200);
+			expect(
+				TextReadResponseSchema.parse(await historical.json()),
+			).toMatchObject({
+				path: item.path,
+				content: firstContent,
+			});
+
+			const deleted = await SELF.fetch(encodedUrl, {
+				method: "DELETE",
+				headers: { "If-Match": updatedEtag ?? "" },
+			});
+			expect(deleted.status).toBe(200);
+			expect(await deleted.json()).toMatchObject({
+				path: item.path,
+				deleted: true,
+			});
+		}
+
+		const stub = env.VAULTS.get(env.VAULTS.idFromName("worker.invalid"));
+		const native = await runInDurableObject(stub, async (_instance, state) => ({
+			paths: state.storage.sql
+				.exec("SELECT path FROM files ORDER BY path")
+				.toArray()
+				.map((row) => row.path),
+			revisions: state.storage.sql
+				.exec("SELECT path, rev FROM revisions ORDER BY path, rev")
+				.toArray(),
+		}));
+		const expectedPaths = pathCases.map((item) => item.path).sort();
+		expect(native.paths).toEqual(expectedPaths);
+		expect(new Set(native.paths).size).toBe(pathCases.length);
+		expect(native.revisions).toEqual(
+			expectedPaths.flatMap((path) => [1, 2, 3].map((rev) => ({ path, rev }))),
+		);
+		for (const item of pathCases)
+			if (!expectedPaths.some((path) => path === item.requestPath))
+				expect(native.paths).not.toContain(item.requestPath);
+
+		const beforeInvalid = native;
+		for (const requestPath of [
+			"notes/bad%ZZ.md",
+			"notes/bad%.md",
+			"notes/%2e%2Fdot.md",
+			"notes/%2e%2e%2Fescape.md",
+			"notes/back%5Cslash.md",
+			"notes//empty-segment.md",
+			"notes/%2Fleading-segment.md",
+		]) {
+			const invalid = await SELF.fetch(fileUrl(requestPath), {
+				method: "PUT",
+				headers: {
+					"If-None-Match": "*",
+					"X-Vault-Epoch": TEXT_FIXTURE_EPOCH,
+				},
+				body: "must not publish",
+			});
+			expect(invalid.status).toBe(400);
+			expect(await invalid.json()).toMatchObject({ error: "invalid_path" });
+		}
+		const afterInvalid = await runInDurableObject(
+			stub,
+			async (_instance, state) => ({
+				paths: state.storage.sql
+					.exec("SELECT path FROM files ORDER BY path")
+					.toArray()
+					.map((row) => row.path),
+				revisions: state.storage.sql
+					.exec("SELECT path, rev FROM revisions ORDER BY path, rev")
+					.toArray(),
+			}),
+		);
+		expect(afterInvalid).toEqual(beforeInvalid);
+	});
+
 	it("publishes exact bytes and retains each observed revision", async () => {
 		const created = await SELF.fetch(url, {
 			method: "PUT",

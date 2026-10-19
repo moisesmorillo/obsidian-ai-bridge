@@ -4,6 +4,8 @@ import type {
 	AdmissionFinishResult,
 	AdmissionResult,
 	AuthorizationContext,
+	CurrentEpochOperation,
+	CurrentEpochResult,
 	IdempotencyKey,
 	OperationDescriptor,
 	OperationIntent,
@@ -65,6 +67,14 @@ export class Vault extends DurableObject<Env> {
 				now: Date.now,
 			},
 		);
+	}
+
+	/** Read current epoch metadata after current revocation and operation scope checks. */
+	getCurrentEpoch(
+		context: AuthorizationContext,
+		operation: CurrentEpochOperation,
+	): Promise<CurrentEpochResult> {
+		return this.admissionAuthority.getCurrentEpoch(context, operation);
 	}
 
 	/** Reserve request capacity before the Worker reads or buffers a body. */

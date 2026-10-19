@@ -4,12 +4,17 @@ import type {
 	AdmissionFinishResult,
 	AdmissionResult,
 	AuthorizationContext,
+	CurrentEpochOperation,
+	CurrentEpochResult,
 	OperationDescriptor,
 	OperationIntent,
 	RequestAdmissionResult,
 } from "@obsidian-ai-bridge/protocol";
 import {
 	AuthorizationContextSchema,
+	CurrentEpochRequestSchema,
+	CurrentEpochResultSchema,
+	EpochSchema,
 	formatETag,
 	OperationTicketSchema,
 	parseETag,
@@ -24,6 +29,7 @@ import {
 	assertAdmissionAllowed,
 	prepareDescriptor,
 	prepareOperation,
+	requiredScope,
 } from "@worker/application/admission";
 import { FileOperationDenied } from "@worker/application/files";
 import {
@@ -57,6 +63,44 @@ export class SqliteAdmissionAuthority {
 		private readonly ports: { now: () => number; newTicketId: () => string },
 	) {
 		this.db = drizzle(storage, { schema: vaultSchema });
+	}
+
+	/** Return the current epoch after revocation and operation-scope checks, without reserving a ticket. */
+	async getCurrentEpoch(
+		context: AuthorizationContext,
+		operation: CurrentEpochOperation,
+	): Promise<CurrentEpochResult> {
+		const request = CurrentEpochRequestSchema.safeParse({ operation });
+		const identity = AuthorizationContextSchema.safeParse(context);
+		if (!request.success || !identity.success)
+			return { ok: false, failure: { kind: "invalid_request" } };
+		try {
+			return this.db.transaction((tx) => {
+				const revoked = tx
+					.select({ grantId: revokedGrants.grantId })
+					.from(revokedGrants)
+					.where(eq(revokedGrants.grantId, identity.data.grant_id))
+					.all();
+				if (revoked.length > 0)
+					return { ok: false, failure: { kind: "revoked" } };
+				if (!identity.data.scopes.includes(requiredScope(operation)))
+					return { ok: false, failure: { kind: "forbidden_scope" } };
+				const row = tx
+					.select({ value: meta.value })
+					.from(meta)
+					.where(eq(meta.key, "epoch"))
+					.all()[0];
+				if (!row) throw new Error("Missing vault epoch metadata");
+				return CurrentEpochResultSchema.parse({
+					ok: true,
+					current_epoch: EpochSchema.parse(row.value),
+				});
+			});
+		} catch (error) {
+			if (error instanceof AdmissionDenied)
+				return { ok: false, failure: error.failure };
+			throw error;
+		}
 	}
 
 	/** Validate policy and reserve one durable client slot before body processing. */

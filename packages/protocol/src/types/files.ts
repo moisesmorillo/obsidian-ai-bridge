@@ -1,4 +1,7 @@
 import type {
+	CurrentEpochOperationSchema,
+	CurrentEpochRequestSchema,
+	CurrentEpochResultSchema,
 	FileFailureSchema,
 	FileHttpFailureInputSchema,
 	FileHttpFailureSchema,
@@ -11,6 +14,13 @@ import type {
 	TextReadResultSchema,
 } from "@protocol/schemas/files";
 import type { z } from "zod";
+
+/** Operation supported by the read-only current epoch capability. */
+export type CurrentEpochOperation = z.infer<typeof CurrentEpochOperationSchema>;
+/** Validated current epoch request with the intended policy scope. */
+export type CurrentEpochRequest = z.infer<typeof CurrentEpochRequestSchema>;
+/** Current authoritative epoch or a canonical policy failure. */
+export type CurrentEpochResult = z.infer<typeof CurrentEpochResultSchema>;
 
 /** Canonical failure returned by file and idempotency policies. */
 export type FileFailure = z.infer<typeof FileFailureSchema>;

@@ -1,6 +1,8 @@
 import type { FileHttpFailure, FileHttpFailureInput } from "@protocol/index";
 import {
 	AdmissionFailureSchema,
+	CurrentEpochRequestSchema,
+	CurrentEpochResultSchema,
 	encodeFileFailure,
 	FileFailureSchema,
 	FileHttpFailureInputSchema,
@@ -83,6 +85,39 @@ function encodedFailure(
 		return undefined;
 	}
 }
+
+describe("current epoch metadata contract", () => {
+	it("accepts only the supported read and text mutation operations", () => {
+		expect(CurrentEpochRequestSchema.parse({ operation: "put" })).toEqual({
+			operation: "put",
+		});
+		expect(
+			CurrentEpochRequestSchema.safeParse({ operation: "append" }).success,
+		).toBe(false);
+		expect(
+			CurrentEpochRequestSchema.safeParse({ operation: "read", extra: true })
+				.success,
+		).toBe(false);
+	});
+
+	it("accepts a canonical epoch or authority failure", () => {
+		expect(
+			CurrentEpochResultSchema.parse({ ok: true, current_epoch: epoch }),
+		).toEqual({ ok: true, current_epoch: epoch });
+		expect(
+			CurrentEpochResultSchema.parse({
+				ok: false,
+				failure: { kind: "revoked" },
+			}),
+		).toEqual({ ok: false, failure: { kind: "revoked" } });
+		expect(
+			CurrentEpochResultSchema.safeParse({
+				ok: true,
+				current_epoch: "not-an-epoch",
+			}).success,
+		).toBe(false);
+	});
+});
 
 describe("text mutation contracts", () => {
 	it("accepts a PUT descriptor with an absent condition", () => {

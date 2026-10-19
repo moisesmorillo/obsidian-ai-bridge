@@ -40,6 +40,20 @@ export const FileFailureSchema = z.union([
 	]),
 ]);
 
+/** Supported operation that can request the current vault epoch without an admission. */
+export const CurrentEpochOperationSchema = z.enum(["read", "put", "delete"]);
+
+/** Authorized metadata request for the current epoch and operation scope. */
+export const CurrentEpochRequestSchema = z
+	.object({ operation: CurrentEpochOperationSchema })
+	.strict();
+
+/** Current epoch result or a canonical authority failure. */
+export const CurrentEpochResultSchema = z.discriminatedUnion("ok", [
+	z.object({ ok: z.literal(true), current_epoch: EpochSchema }).strict(),
+	z.object({ ok: z.literal(false), failure: FileFailureSchema }).strict(),
+]);
+
 /** Error codes supported by the canonical HTTP failure encoder. */
 const FileHttpErrorSchema = z.enum([
 	"invalid_request",

@@ -23,6 +23,9 @@ export {
 export { TextPayloadSchema } from "@protocol/schemas/content";
 export { EpochSchema, ETagSchema } from "@protocol/schemas/etag";
 export {
+	CurrentEpochOperationSchema,
+	CurrentEpochRequestSchema,
+	CurrentEpochResultSchema,
 	FileFailureSchema,
 	FileHttpFailureInputSchema,
 	FileHttpFailureSchema,
@@ -57,6 +60,9 @@ export type {
 export type { TextPayload } from "@protocol/types/content";
 export type { ETagParts } from "@protocol/types/etag";
 export type {
+	CurrentEpochOperation,
+	CurrentEpochRequest,
+	CurrentEpochResult,
 	FileFailure,
 	FileHttpFailure,
 	FileHttpFailureInput,

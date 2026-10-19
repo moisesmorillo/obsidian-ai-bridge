@@ -1,8 +1,31 @@
-import { Hono } from "hono";
+import type { Env } from "@worker/env";
+import { createWorker } from "@worker/transport/worker";
+
+/** Deny all production identities until an approved authentication adapter exists. */
+async function resolveIdentity(_request: Request) {
+	return null;
+}
+
+/** Select the vault named by the request host after identity validation. */
+function resolveVault(env: Env, request: Request) {
+	const stub = env.VAULTS.get(env.VAULTS.idFromName(new URL(request.url).host));
+	return {
+		getCurrentEpoch: async (...args: Parameters<typeof stub.getCurrentEpoch>) =>
+			await stub.getCurrentEpoch(...args),
+		beginMutation: async (...args: Parameters<typeof stub.beginMutation>) =>
+			await stub.beginMutation(...args),
+		authorize: async (...args: Parameters<typeof stub.authorize>) =>
+			await stub.authorize(...args),
+		commitText: async (...args: Parameters<typeof stub.commitText>) =>
+			await stub.commitText(...args),
+		finishAdmission: async (...args: Parameters<typeof stub.finishAdmission>) =>
+			await stub.finishAdmission(...args),
+		readText: async (...args: Parameters<typeof stub.readText>) =>
+			await stub.readText(...args),
+	};
+}
+
+const worker = createWorker(resolveIdentity, resolveVault);
 
 export { Vault } from "@worker/infrastructure/durable-object/vault";
-
-/** Intentionally exports an empty router: no routes or runtime effects exist yet. */
-const app = new Hono();
-
-export default app;
+export default worker;

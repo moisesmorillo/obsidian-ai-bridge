@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-10-15 00:38'
-updated_date: '2026-10-19 16:04'
+updated_date: '2026-10-19 16:30'
 labels:
   - F1
 dependencies:
@@ -34,7 +34,7 @@ Sections5.1 and6.1 need operations beyond PUT without weakening lost-response, c
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-Plan review pending: docs/superpowers/plans/2026-10-19-f1-history-mutations.md. First complete the owner-approved OAB-6.8.1 measurement prerequisite against existing publication. Then add canonical command contracts, native rename/append/history/restore, and real HTTP tests. Restore with as_conflict_copy true writes the same path, preserves displaced history, and checks the current ETag. Each implementation task owns RED, GREEN, bun run check, and its commit. Independent task reviews, whole-branch review, and human branch review precede publication. No product implementation starts before plan approval.
+Owner approved plan pn-d60fcc: docs/superpowers/plans/2026-10-19-f1-history-mutations.md. OAB-6.8.1 measurement prerequisite passed independent review at c2661ff. Continue with canonical command contracts, native rename/append/history/restore, and real HTTP tests. Restore with as_conflict_copy true writes the same path, preserves displaced history, and checks the current ETag. Each task owns RED, GREEN, full checks, and its commit. Independent task reviews, whole-branch review, and human branch review precede publication.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -43,4 +43,6 @@ Plan review pending: docs/superpowers/plans/2026-10-19-f1-history-mutations.md. 
 Planning starts from fetched origin/main at 58b074f after merged PR 10 and PR 11. Use isolated feature/oab-6.4. Preserve the original checkout. The owner explicitly approved measurements first and in-place restore semantics. No Cloudflare resource changes, personal-vault access, or dependency additions are authorized.
 
 The owner approved plan review pn-d60fcc. Start Task 1 measurements before any new mutation SQL. Use task-owned implementation and independent reviews.
+
+OAB-6.8.1 passed independent review at c2661ff. Parent accepted its bounded native measurements. T1-R1 corrected stale approval wording in both task plans. Continue approved Task 2 only. OAB-6.4 acceptance criteria remain unchecked.
 <!-- SECTION:NOTES:END -->

@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-10-15 00:38'
-updated_date: '2026-10-19 16:30'
+updated_date: '2026-10-19 17:05'
 labels:
   - F1
 dependencies:
@@ -45,4 +45,6 @@ Planning starts from fetched origin/main at 58b074f after merged PR 10 and PR 11
 The owner approved plan review pn-d60fcc. Start Task 1 measurements before any new mutation SQL. Use task-owned implementation and independent reviews.
 
 OAB-6.8.1 passed independent review at c2661ff. Parent accepted its bounded native measurements. T1-R1 corrected stale approval wording in both task plans. Continue approved Task 2 only. OAB-6.4 acceptance criteria remain unchecked.
+
+Task 2 accepted at 2620b6d after independent corrective review f10474d8. T2-R1 fixed: native preparation tests reject forged append size and changed rename/restore bodies with old identity. Omitted and false restore flags share one fingerprint. T2-R2 fixed: prepared commands expose deep readonly types and runtime frozen snapshots. Type RED first showed three unused ts-expect-error diagnostics before the type correction. Initial Task 2 import failures did not prove functional RED. Keep the working implementation and record that process exception. Final parent bg_run bec0ca373 passed docs:check and full check: 610 tests, zero failed, exit 0. Source and dry-run builds passed. Task 3 can now start. Native and HTTP enforcement remain pending, and all OAB-6.4 acceptance criteria remain unchecked.
 <!-- SECTION:NOTES:END -->

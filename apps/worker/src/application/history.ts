@@ -6,6 +6,7 @@ import {
 	AuthorizationContextSchema,
 	type FileCommand,
 	FileCommandSchema,
+	type FileFailure,
 	type HistoryRequest,
 	type HistoryResult,
 	type OperationDescriptor,
@@ -71,8 +72,7 @@ export interface HistoryVaultGateway {
 		context: AuthorizationContext,
 		request: HistoryRequest,
 	): Promise<
-		| { ok: true; entries: HistoryResult }
-		| { ok: false; failure: { kind: string } }
+		{ ok: true; entries: HistoryResult } | { ok: false; failure: FileFailure }
 	>;
 }
 

@@ -1,4 +1,5 @@
 import type { AuthorizationContext } from "@obsidian-ai-bridge/protocol";
+import type { HistoryVaultGateway } from "@worker/application/history";
 import type { TextVaultGateway } from "@worker/application/text-files";
 import type { Env } from "@worker/env";
 import { createWorker } from "@worker/transport/worker";
@@ -50,7 +51,7 @@ const worker = createWorker(
 				return TEST_IDENTITY;
 		}
 	},
-	(env: Env, request: Request): TextVaultGateway => {
+	(env: Env, request: Request): TextVaultGateway & HistoryVaultGateway => {
 		const stub = env.VAULTS.get(
 			env.VAULTS.idFromName(new URL(request.url).host),
 		);
@@ -98,6 +99,21 @@ const worker = createWorker(
 					throw new Error("Simulated RPC response loss");
 				return result;
 			},
+			beginRenameSource: async (...args) =>
+				await stub.beginRenameSource(...args),
+			authorizeRenameSource: async (...args) =>
+				await stub.authorizeRenameSource(...args),
+			commitFileCommand: async (...args) => {
+				const result = await stub.commitFileCommand(...args);
+				if (
+					(shouldFailAfter(request, "commitFileCommand") ||
+						request.headers.get("X-Test-Lose-Commit-Response") === "true") &&
+					result.ok
+				)
+					throw new Error("Simulated committed response loss");
+				return result;
+			},
+			readHistory: async (...args) => await stub.readHistory(...args),
 		};
 	},
 );

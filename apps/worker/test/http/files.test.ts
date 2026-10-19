@@ -23,6 +23,7 @@ type PendingBody = {
 	send: () => void;
 	wasSent: () => boolean;
 	wasCancelled: () => boolean;
+	wasReadRequested: () => boolean;
 };
 
 /** Hold one real request body until the test releases its bytes. */
@@ -32,35 +33,41 @@ function createPendingBody(content: string): PendingBody {
 	let markReady: (() => void) | undefined;
 	let sent = false;
 	let cancelled = false;
+	let readRequested = false;
 	const ready = new Promise<void>((resolve) => {
 		markReady = resolve;
 	});
-	const body = new ReadableStream<Uint8Array>({
-		/** Mark the exact point when the Worker starts reading its request body. */
-		pull(controller) {
-			markReady?.();
-			return new Promise<void>((resolve) => {
-				resolvePull = resolve;
-				release = () => {
-					sent = true;
-					controller.enqueue(new TextEncoder().encode(content));
-					controller.close();
-					resolve();
-				};
-			});
+	const body = new ReadableStream<Uint8Array>(
+		{
+			/** Signal when a stream consumer requests body data. */
+			pull(controller) {
+				readRequested = true;
+				markReady?.();
+				return new Promise<void>((resolve) => {
+					resolvePull = resolve;
+					release = () => {
+						sent = true;
+						controller.enqueue(new TextEncoder().encode(content));
+						controller.close();
+						resolve();
+					};
+				});
+			},
+			/** Record cancellation and let any pending pull finish. */
+			cancel() {
+				cancelled = true;
+				resolvePull?.();
+			},
 		},
-		/** Record cancellation and let any pending pull finish. */
-		cancel() {
-			cancelled = true;
-			resolvePull?.();
-		},
-	});
+		{ highWaterMark: 0 },
+	);
 	return {
 		body,
 		ready,
 		send: () => release?.(),
 		wasSent: () => sent,
 		wasCancelled: () => cancelled,
+		wasReadRequested: () => readRequested,
 	};
 }
 
@@ -83,6 +90,21 @@ describe("conditional text HTTP lifecycle", () => {
 			);
 		});
 	});
+	it("waits for reader demand before signaling request-body readiness", async () => {
+		const pending = createPendingBody("reader demanded these bytes");
+		await Promise.resolve();
+		expect(pending.wasReadRequested()).toBe(false);
+
+		const reader = pending.body.getReader();
+		const read = reader.read();
+		await pending.ready;
+		expect(pending.wasReadRequested()).toBe(true);
+		pending.send();
+		expect(new TextDecoder().decode((await read).value)).toBe(
+			"reader demanded these bytes",
+		);
+	});
+
 	it("publishes exact bytes and retains each observed revision", async () => {
 		const created = await SELF.fetch(url, {
 			method: "PUT",

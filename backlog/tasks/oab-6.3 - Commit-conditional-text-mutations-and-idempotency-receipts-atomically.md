@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-10-15 00:38'
-updated_date: '2026-10-19 03:27'
+updated_date: '2026-10-19 03:41'
 labels:
   - F1
 dependencies:
@@ -114,4 +114,6 @@ Task 3 corrective review and acceptance remain pending. Task 4 and all acceptanc
 Task 4 exposed a real interface gap: mutation descriptor validation rejects missing epochs before authority, but epoch_mismatch needs current_epoch. The parent approved a narrow epoch query through Vault and the application gateway. It checks current revocation and intended operation scope before returning metadata. It never replaces the publication epoch guard. Extra scope is limited to canonical protocol contracts, existing admission policy seams, composition, Task 4 code, and covering tests. No guessed epoch, content probe, dependency, deployment, or broader protocol change is approved.
 
 Task 4 adds Worker-to-DO text routes with production identity denial. A narrow epoch query supplies authoritative missing-observation failures without mutation effects. Parent review R1-R4 corrections cover actual actor eviction, cancellation, deterministic body readiness, public canonical failure encoding, and unexpected RPC errors. Repair RED reached the expected 500 assertion and received 400 after a committed response loss. Final check passed 548 tests: 251 native Worker, 14 HTTP, 229 protocol, 52 tooling, and 2 plugin. Documentation checks and dry-run builds passed. Worker dry-run upload is 752.53 KiB, or 126.41 KiB gzip. Production source and bundle scans exclude test identity markers. No parent test rerun. Four active editor probes are inconclusive, with zero confirmed clean files. Streaming and response-loss evidence uses the pinned local Workers runtime, not deployed Cloudflare. Independent task review and whole-branch reviews remain open.
+
+Independent Task 4 review approved with one readiness finding. R1-R3 are fixed. R4 remained open because default stream prefetch could signal readiness before reader demand. The repair sets highWaterMark to zero and adds a direct read-demand regression. Repair RED reached the no-reader assertion and received true instead of false. The final HTTP suite passed 15 tests. The full check passed 549 tests: 251 native Worker, 15 HTTP, 229 protocol, 52 tooling, and 2 plugin. The worker summary said 548, but its suite counts sum to 549. Parent verified the saved output and did not rerun tests. The repair changes one test file and its helper comment. One active editor probe remains inconclusive, with zero confirmed clean files. Scoped independent review remains open.
 <!-- SECTION:NOTES:END -->

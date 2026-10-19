@@ -210,7 +210,7 @@ Admission deletion cascades claim deletion. The admission owns the fingerprint, 
 ### 5.3 R2 layout
 
 - `blobs/<sha256>`: immutable. Written **before** the DO transaction that references it (§6.3). Unreferenced blobs are harmless; no automatic GC in v1 (§16).
-- Blob PUT requests declare both `X-Content-SHA256` (64 lowercase hexadecimal characters) and `X-Content-Size` (canonical nonnegative decimal, at most 25,000,000). They must appear together. Existing inline clients may omit both. A supplied declaration binds the exact raw request bytes and is verified before publication.
+- Blob PUT requests declare both `X-Content-SHA256` (64 lowercase hexadecimal characters) and `X-Content-Size` (canonical nonnegative decimal without leading zeroes, at most 25,000,000). They must appear together. Existing inline clients may omit both. A supplied declaration binds the exact raw request bytes and is verified before publication.
 
 ### 5.4 Storage rule for text vs blob
 
@@ -241,7 +241,7 @@ Base `/v1`. JSON unless noted. Authentication: `Authorization: Bearer <access to
 
 ### 6.2 Status and error codes
 
-Errors are `{error: <code>, message, ...details}`. Codes: `epoch_mismatch`, `cursor_expired`, `revision_pruned`, `precondition_failed` (412, body includes current `etag`, `hash`, `deleted`, `renamed_to` when applicable; current text ≤ 1 MB is included **only when the client holds `vault:read`**, otherwise omitted), `path_collision` (409, includes `existing_path`), `path_occupied`, `tombstone`, `text_too_large`, `blob_too_large`, `invalid_path`, `idempotency_mismatch` (422), `operation_expired` (409), `idempotency_in_progress` (409), `idempotency_key_required` (428), `forbidden_scope` (403), `revoked` (401), `importing` (503 with `Retry-After`), `vault_retired` (410, includes `new_vault_id`), `capacity_exceeded` (507), `query_too_short`, `query_too_long`.
+Errors are `{error: <code>, message, ...details}`. Codes: `epoch_mismatch`, `cursor_expired`, `revision_pruned`, `precondition_failed` (412, body includes current `etag`, `hash`, `deleted`, `renamed_to` when applicable; current text ≤ 1 MB is included **only when the client holds `vault:read`**, otherwise omitted), `path_collision` (409, includes `existing_path`), `path_occupied`, `tombstone`, `text_too_large`, `blob_too_large`, `blob_integrity_mismatch` (422), `blob_storage_unavailable` (503 with `Retry-After` from 1 through 300 seconds), `invalid_path`, `idempotency_mismatch` (422), `operation_expired` (409), `idempotency_in_progress` (409), `idempotency_key_required` (428), `forbidden_scope` (403), `revoked` (401), `importing` (503 with `Retry-After`), `vault_retired` (410, includes `new_vault_id`), `capacity_exceeded` (507), `query_too_short`, `query_too_long`.
 
 ### 6.3 Mutation algorithm (inside the DO)
 

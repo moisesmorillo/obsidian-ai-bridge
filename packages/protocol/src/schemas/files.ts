@@ -24,6 +24,13 @@ const StrictAdmissionFailureSchema = z.intersection(
 export const FileFailureSchema = z.union([
 	StrictAdmissionFailureSchema,
 	z.object({ kind: z.literal("operation_expired") }).strict(),
+	z.object({ kind: z.literal("blob_integrity_mismatch") }).strict(),
+	z
+		.object({
+			kind: z.literal("blob_storage_unavailable"),
+			retry_after_seconds: z.number().int().min(1).max(300),
+		})
+		.strict(),
 	z.discriminatedUnion("kind", [
 		z.object({ kind: z.literal("invalid_path") }).strict(),
 		z.object({ kind: z.literal("not_found") }).strict(),
@@ -81,6 +88,8 @@ const FileHttpErrorSchema = z.enum([
 	"precondition_failed",
 	"text_too_large",
 	"blob_too_large",
+	"blob_integrity_mismatch",
+	"blob_storage_unavailable",
 	"idempotency_mismatch",
 	"admission_limited",
 	"not_implemented",
@@ -108,6 +117,8 @@ export const FILE_HTTP_MESSAGES = Object.freeze({
 	precondition_failed: "The file state does not match the precondition.",
 	text_too_large: "The text is larger than the size limit.",
 	blob_too_large: "The blob is larger than the size limit.",
+	blob_integrity_mismatch: "The blob does not match its declared identity.",
+	blob_storage_unavailable: "Blob storage cannot verify this request now.",
 	idempotency_mismatch: "This key belongs to a different operation.",
 	admission_limited: "The vault cannot accept another operation now.",
 	not_implemented: "The service does not support this operation.",
@@ -136,6 +147,7 @@ const FileHttpStatusSchema = z.union([
 	z.literal(428),
 	z.literal(429),
 	z.literal(500),
+	z.literal(503),
 	z.literal(501),
 ]);
 
@@ -155,6 +167,8 @@ export const FILE_HTTP_STATUSES = Object.freeze({
 	precondition_failed: 412,
 	text_too_large: 413,
 	blob_too_large: 413,
+	blob_integrity_mismatch: 422,
+	blob_storage_unavailable: 503,
 	idempotency_mismatch: 422,
 	admission_limited: 429,
 	not_implemented: 501,
@@ -263,7 +277,11 @@ export const FileHttpFailureSchema = z
 		status: FileHttpStatusSchema,
 		body: FileHttpFailureBodySchema,
 		headers: z
-			.object({ "Retry-After": z.string().regex(/^[1-9][0-9]*$/) })
+			.object({
+				"Retry-After": z
+					.string()
+					.regex(/^(?:[1-9]|[1-9][0-9]|[12][0-9]{2}|300)$/),
+			})
 			.strict()
 			.optional(),
 	})
@@ -276,16 +294,24 @@ export const FileHttpFailureSchema = z
 			});
 		}
 		const hasRetryAfter = result.headers?.["Retry-After"] !== undefined;
-		if (result.body.error === "admission_limited" && !hasRetryAfter) {
+		if (
+			(result.body.error === "admission_limited" ||
+				result.body.error === "blob_storage_unavailable") &&
+			!hasRetryAfter
+		) {
 			ctx.addIssue({
 				code: "custom",
-				message: "admission limit needs Retry-After",
+				message: "retryable failure needs Retry-After",
 			});
 		}
-		if (result.body.error !== "admission_limited" && hasRetryAfter) {
+		if (
+			result.body.error !== "admission_limited" &&
+			result.body.error !== "blob_storage_unavailable" &&
+			hasRetryAfter
+		) {
 			ctx.addIssue({
 				code: "custom",
-				message: "Retry-After is not valid here",
+				message: "Retry-After is not valid for this failure",
 			});
 		}
 	});

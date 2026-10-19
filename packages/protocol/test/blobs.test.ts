@@ -1,4 +1,5 @@
 import {
+	BlobDeclarationHeadersSchema,
 	BlobDeclarationSchema,
 	BlobMetadataSchema,
 	selectByteRange,
@@ -6,6 +7,27 @@ import {
 import { describe, expect, it } from "vitest";
 
 describe("blob protocol contracts", () => {
+	it("parses paired declaration headers and preserves undeclared inline requests", () => {
+		expect(BlobDeclarationHeadersSchema.parse({})).toBeUndefined();
+		expect(
+			BlobDeclarationHeadersSchema.parse({
+				"x-content-sha256": "a".repeat(64),
+				"x-content-size": "25000000",
+			}),
+		).toEqual({ payload_hash: "a".repeat(64), size: 25_000_000 });
+		for (const headers of [
+			{ "x-content-sha256": "a".repeat(64) },
+			{ "x-content-size": "1" },
+			{ "x-content-sha256": "a".repeat(64), "x-content-size": "01" },
+			{ "x-content-sha256": "a".repeat(64), "x-content-size": "+1" },
+			{ "x-content-sha256": "a".repeat(64), "x-content-size": "25000001" },
+		]) {
+			expect(BlobDeclarationHeadersSchema.safeParse(headers).success).toBe(
+				false,
+			);
+		}
+	});
+
 	it("validates digest and canonical declaration sizes", () => {
 		for (const payload_hash of [
 			"A".repeat(64),

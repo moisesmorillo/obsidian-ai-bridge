@@ -510,6 +510,28 @@ describe("canonical failure DTO", () => {
 		expect(accepts(FileFailureSchema, failure)).toBe(true);
 	});
 
+	it("accepts blob failures and bounds the storage retry delay", () => {
+		expect(
+			accepts(FileFailureSchema, { kind: "blob_integrity_mismatch" }),
+		).toBe(true);
+		for (const retry_after_seconds of [1, 300]) {
+			expect(
+				accepts(FileFailureSchema, {
+					kind: "blob_storage_unavailable",
+					retry_after_seconds,
+				}),
+			).toBe(true);
+		}
+		for (const retry_after_seconds of [0, 301, 1.5]) {
+			expect(
+				accepts(FileFailureSchema, {
+					kind: "blob_storage_unavailable",
+					retry_after_seconds,
+				}),
+			).toBe(false);
+		}
+	});
+
 	it("preserves operation-expired failure acceptance", () => {
 		expect(accepts(FileFailureSchema, { kind: "operation_expired" })).toBe(
 			true,
@@ -735,6 +757,31 @@ describe("canonical failure DTO", () => {
 		).toBe(false);
 	});
 
+	it("requires a positive bounded Retry-After for blob storage failures", () => {
+		const body = {
+			status: 503,
+			body: {
+				error: "blob_storage_unavailable",
+				message: "Blob storage cannot verify this request now.",
+			},
+		};
+		expect(accepts(FileHttpFailureSchema, body)).toBe(false);
+		for (const retry of ["0", "01", "301", "999999"]) {
+			expect(
+				accepts(FileHttpFailureSchema, {
+					...body,
+					headers: { "Retry-After": retry },
+				}),
+			).toBe(false);
+		}
+		expect(
+			accepts(FileHttpFailureSchema, {
+				...body,
+				headers: { "Retry-After": "300" },
+			}),
+		).toBe(true);
+	});
+
 	it("rejects Retry-After for a non-limited failure", () => {
 		expect(
 			accepts(FileHttpFailureSchema, {
@@ -822,6 +869,18 @@ describe("file failure HTTP mapping", () => {
 			422,
 			"idempotency_mismatch",
 			"This key belongs to a different operation.",
+		],
+		[
+			{ kind: "blob_integrity_mismatch" },
+			422,
+			"blob_integrity_mismatch",
+			"The blob does not match its declared identity.",
+		],
+		[
+			{ kind: "blob_storage_unavailable", retry_after_seconds: 30 },
+			503,
+			"blob_storage_unavailable",
+			"Blob storage cannot verify this request now.",
 		],
 		[
 			{ kind: "admission_limited", retry_after_seconds: 7 },
@@ -942,7 +1001,7 @@ describe("file failure HTTP mapping", () => {
 		});
 	});
 
-	it("uses Retry-After only for admission limits and preserves the delay", () => {
+	it("encodes bounded Retry-After only for admission and blob storage failures", () => {
 		expect(
 			encodedFailure({ kind: "admission_limited", retry_after_seconds: 7 }),
 		).toEqual({
@@ -952,6 +1011,19 @@ describe("file failure HTTP mapping", () => {
 				message: "The vault cannot accept another operation now.",
 			},
 			headers: { "Retry-After": "7" },
+		});
+		expect(
+			encodedFailure({
+				kind: "blob_storage_unavailable",
+				retry_after_seconds: 300,
+			}),
+		).toEqual({
+			status: 503,
+			body: {
+				error: "blob_storage_unavailable",
+				message: "Blob storage cannot verify this request now.",
+			},
+			headers: { "Retry-After": "300" },
 		});
 		expect(encodedFailure({ kind: "not_found" })).toEqual({
 			status: 404,

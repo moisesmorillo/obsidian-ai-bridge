@@ -22,6 +22,7 @@ export {
 } from "@protocol/schemas/admission";
 export type { ByteRangeSelection } from "@protocol/schemas/blobs";
 export {
+	BlobDeclarationHeadersSchema,
 	BlobDeclarationSchema,
 	BlobMetadataSchema,
 	selectByteRange,

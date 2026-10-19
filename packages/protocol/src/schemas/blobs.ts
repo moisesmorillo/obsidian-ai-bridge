@@ -10,6 +10,53 @@ export const BlobDeclarationSchema = z
 	})
 	.strict();
 
+/** Parses the optional wire declaration pair; absence preserves inline request compatibility. */
+export const BlobDeclarationHeadersSchema = z
+	.object({
+		"x-content-sha256": z.string().optional(),
+		"x-content-size": z.string().optional(),
+	})
+	.strict()
+	.superRefine((headers, ctx) => {
+		if (
+			(headers["x-content-sha256"] === undefined) !==
+			(headers["x-content-size"] === undefined)
+		) {
+			ctx.addIssue({
+				code: "custom",
+				message: "blob declaration headers must appear together",
+			});
+		}
+		if (
+			headers["x-content-size"] !== undefined &&
+			!/^(?:0|[1-9][0-9]*)$/.test(headers["x-content-size"])
+		) {
+			ctx.addIssue({
+				code: "custom",
+				message: "blob size header is not canonical decimal",
+			});
+		}
+	})
+	.transform((headers, ctx) => {
+		const payload_hash = headers["x-content-sha256"];
+		const size = headers["x-content-size"];
+		if (payload_hash === undefined || size === undefined) return undefined;
+		const declaration = BlobDeclarationSchema.safeParse({
+			payload_hash,
+			size: Number(size),
+		});
+		if (!declaration.success) {
+			ctx.addIssue({
+				code: "custom",
+				message: declaration.error.issues
+					.map((issue) => issue.message)
+					.join("; "),
+			});
+			return z.NEVER;
+		}
+		return declaration.data;
+	});
+
 /** Immutable blob metadata returned with an authorized file observation. */
 export const BlobMetadataSchema = z
 	.object({

@@ -10,12 +10,22 @@ describe("shared body budget", () => {
 	});
 
 	it("does_not_release_a_slot_twice", () => {
-		const release = tryAcquireBodySlot();
-		expect(release).toBeTypeOf("function");
-		release?.();
-		release?.();
-		const slots = Array.from({ length: 4 }, () => tryAcquireBodySlot());
-		expect(slots.filter(Boolean)).toHaveLength(4);
-		for (const slot of slots) slot?.();
+		const held = Array.from({ length: 3 }, () => tryAcquireBodySlot());
+		const fourth = tryAcquireBodySlot();
+		const acquiredAfterRelease: Array<(() => void) | undefined> = [];
+		try {
+			expect(held.every(Boolean)).toBe(true);
+			expect(fourth).toBeTypeOf("function");
+			fourth?.();
+			fourth?.();
+			acquiredAfterRelease.push(tryAcquireBodySlot());
+			acquiredAfterRelease.push(tryAcquireBodySlot());
+			expect(acquiredAfterRelease[0]).toBeTypeOf("function");
+			expect(acquiredAfterRelease[1]).toBeUndefined();
+		} finally {
+			for (const release of acquiredAfterRelease) release?.();
+			fourth?.();
+			for (const release of held) release?.();
+		}
 	});
 });

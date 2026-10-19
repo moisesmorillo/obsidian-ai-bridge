@@ -38,7 +38,10 @@ export function encodeFileFailure(
 		status: FILE_HTTP_STATUSES[failure.kind],
 		body,
 	};
-	if (failure.kind === "admission_limited") {
+	if (
+		failure.kind === "admission_limited" ||
+		failure.kind === "blob_storage_unavailable"
+	) {
 		result.headers = {
 			"Retry-After": BigInt(failure.retry_after_seconds).toString(10),
 		};

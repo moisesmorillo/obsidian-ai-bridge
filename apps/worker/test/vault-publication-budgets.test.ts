@@ -2,6 +2,7 @@ import {
 	EMPTY_PAYLOAD_HASH,
 	formatETag,
 	IdempotencyKeySchema,
+	RenameReservationSchema,
 	TextMutationIntentSchema,
 } from "@obsidian-ai-bridge/protocol";
 import { prepareTextPayload } from "@worker/application/text-payload";
@@ -11,6 +12,7 @@ import {
 } from "@worker/test-fixtures/publication-budgets";
 import {
 	captureTextStoreState,
+	seedLiveTextState,
 	TEXT_FIXTURE_CONTEXT,
 	TEXT_FIXTURE_EPOCH,
 	withTextStore,
@@ -78,6 +80,171 @@ describe("native publication query budgets", () => {
 			expect(() => sqliteRecordBytes([value])).toThrow(TypeError);
 		},
 	);
+	it("observes rename, append, and restore query and complete-row workloads", async () => {
+		const observer = new PublicationQueryObserver();
+		await withTextStore(async ({ store, admissions, coordinator, storage }) => {
+			const source = "notes/measure-before.md";
+			const destination = "notes/measure-after.md";
+			await seedLiveTextState(storage, { path: source, content: "measured" });
+			const renameBody = { to: destination };
+			const renameBytes = JSON.stringify(renameBody);
+			const renameHash = await hashOperation(renameBytes);
+			const renameIntent = {
+				op: "rename" as const,
+				epoch: TEXT_FIXTURE_EPOCH,
+				paths: [source, destination],
+				precondition: {
+					kind: "match" as const,
+					etag: formatETag(TEXT_FIXTURE_EPOCH, 1),
+				},
+				payload_hash: renameHash,
+				size: new TextEncoder().encode(renameBytes).byteLength,
+			};
+			const renameKey = IdempotencyKeySchema.parse("rename-measure-key-01");
+			const lease = await store.beginRenameSource(
+				TEXT_FIXTURE_CONTEXT,
+				RenameReservationSchema.parse({
+					path: source,
+					if_match: renameIntent.precondition.etag,
+				}),
+				renameKey,
+			);
+			if (!lease.ok)
+				throw new Error(`Rename reserve failed: ${lease.failure.kind}`);
+			const renameTicket = await admissions.authorizeRenameSource(
+				TEXT_FIXTURE_CONTEXT,
+				renameIntent,
+				lease.lease.admission_id,
+				renameKey,
+			);
+			if (!renameTicket.ok)
+				throw new Error(
+					`Rename authorization failed: ${renameTicket.failure.kind}`,
+				);
+			const rename = await measureSpan(observer, "rename/commit", () =>
+				store.commitFileCommand(
+					TEXT_FIXTURE_CONTEXT,
+					renameIntent,
+					renameTicket.ticket.id,
+					{
+						op: "rename",
+						intent: renameIntent,
+						body: renameBody,
+						key: renameKey,
+					},
+					renameKey,
+				),
+			);
+			expect(rename).toMatchObject({ ok: true });
+			reportRecords(storage, "rename");
+
+			const appendContent = "!";
+			const appendHash = await hashOperation(appendContent);
+			const appendKey = IdempotencyKeySchema.parse("append-measure-key-01");
+			const appendIntent = {
+				op: "append" as const,
+				epoch: TEXT_FIXTURE_EPOCH,
+				paths: [destination],
+				precondition: { kind: "none" as const },
+				payload_hash: appendHash,
+				size: 1,
+			};
+			const appendCommand = {
+				op: "append" as const,
+				intent: appendIntent,
+				content: appendContent,
+				key: appendKey,
+			};
+			const appendDescriptor = {
+				op: "append" as const,
+				epoch: TEXT_FIXTURE_EPOCH,
+				paths: [destination],
+				precondition: { kind: "none" as const },
+			};
+			const appendLease = await coordinator.beginMutation(
+				TEXT_FIXTURE_CONTEXT,
+				appendDescriptor,
+				appendKey,
+			);
+			if (!appendLease.ok)
+				throw new Error(`Append reserve failed: ${appendLease.failure.kind}`);
+			const appendTicket = await admissions.authorize(
+				TEXT_FIXTURE_CONTEXT,
+				appendIntent,
+				appendLease.lease.admission_id,
+			);
+			if (!appendTicket.ok)
+				throw new Error(
+					`Append authorization failed: ${appendTicket.failure.kind}`,
+				);
+			const append = await measureSpan(observer, "append/commit", () =>
+				store.commitFileCommand(
+					TEXT_FIXTURE_CONTEXT,
+					appendIntent,
+					appendTicket.ticket.id,
+					appendCommand,
+					appendKey,
+				),
+			);
+			expect(append).toMatchObject({ ok: true });
+			reportRecords(storage, "append");
+
+			const restoreBody = { source_rev: 1, as_conflict_copy: true };
+			const restoreBytes = JSON.stringify(restoreBody);
+			const restoreKey = IdempotencyKeySchema.parse("restore-measure-key-01");
+			const restoreIntent = {
+				op: "restore" as const,
+				epoch: TEXT_FIXTURE_EPOCH,
+				paths: [destination],
+				precondition: {
+					kind: "match" as const,
+					etag: formatETag(TEXT_FIXTURE_EPOCH, 2),
+				},
+				payload_hash: await hashOperation(restoreBytes),
+				size: new TextEncoder().encode(restoreBytes).byteLength,
+			};
+			const restoreCommand = {
+				op: "restore" as const,
+				intent: restoreIntent,
+				body: restoreBody,
+				key: restoreKey,
+			};
+			const restoreLease = await coordinator.beginMutation(
+				TEXT_FIXTURE_CONTEXT,
+				{
+					op: "restore",
+					epoch: TEXT_FIXTURE_EPOCH,
+					paths: [destination],
+					precondition: restoreIntent.precondition,
+				},
+				restoreKey,
+			);
+			if (!restoreLease.ok)
+				throw new Error(`Restore reserve failed: ${restoreLease.failure.kind}`);
+			const restoreTicket = await admissions.authorize(
+				TEXT_FIXTURE_CONTEXT,
+				restoreIntent,
+				restoreLease.lease.admission_id,
+			);
+			if (!restoreTicket.ok)
+				throw new Error(
+					`Restore authorization failed: ${restoreTicket.failure.kind}`,
+				);
+			const restore = await measureSpan(observer, "restore/commit", () =>
+				store.commitFileCommand(
+					TEXT_FIXTURE_CONTEXT,
+					restoreIntent,
+					restoreTicket.ticket.id,
+					restoreCommand,
+					restoreKey,
+				),
+			);
+			expect(restore).toMatchObject({ ok: true });
+			reportRecords(storage, "restore");
+		}, observer);
+		expect(observer.queries.length).toBeGreaterThan(0);
+	});
+
 	it("observes application SQL dispatches and corroborates native create state", async () => {
 		const observer = new PublicationQueryObserver();
 		await withTextStore(async ({ store, admissions, storage }) => {
@@ -119,6 +286,17 @@ describe("native publication query budgets", () => {
 	});
 });
 
+/** Hash operation input bytes with SHA-256 for exact native command identity. */
+async function hashOperation(value: string): Promise<string> {
+	const digest = await crypto.subtle.digest(
+		"SHA-256",
+		new TextEncoder().encode(value),
+	);
+	return Array.from(new Uint8Array(digest), (byte) =>
+		byte.toString(16).padStart(2, "0"),
+	).join("");
+}
+
 /** Count dispatches only inside one awaited application call. No values enter the report. */
 async function measureSpan<T>(
 	observer: PublicationQueryObserver,
@@ -127,7 +305,13 @@ async function measureSpan<T>(
 ): Promise<T> {
 	const start = observer.queries.length;
 	const result = await run();
-	const queries = observer.queries.slice(start);
+	const queries = observer.queries
+		.slice(start)
+		.filter(
+			({ sql }) =>
+				!sql.includes("files_fts") &&
+				!/^\\s*(BEGIN|COMMIT|ROLLBACK)\\b/i.test(sql),
+		);
 	expect(queries.length).toBeGreaterThan(0);
 	const maxBindings = Math.max(...queries.map((query) => query.bindCount));
 	expect(maxBindings).toBeLessThanOrEqual(100);

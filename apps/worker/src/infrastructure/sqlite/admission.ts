@@ -16,6 +16,7 @@ import {
 	CurrentEpochResultSchema,
 	EpochSchema,
 	formatETag,
+	IdempotencyKeySchema,
 	OperationTicketSchema,
 	parseETag,
 	pathKey,
@@ -33,8 +34,13 @@ import {
 } from "@worker/application/admission";
 import { FileOperationDenied } from "@worker/application/files";
 import {
+	type PreparedRenameSourceReservation,
+	prepareRenameSourceReservation,
+} from "@worker/application/history";
+import {
 	files,
 	meta,
+	mutationClaims,
 	operationAdmissions,
 	revokedGrants,
 	vaultSchema,
@@ -128,6 +134,110 @@ export class SqliteAdmissionAuthority {
 			if (error instanceof AdmissionDenied) return denied(error.failure);
 			throw error;
 		}
+	}
+
+	/** Reserve a validated source-only rename lease through the shared native limits. */
+	reserveRenameSource(
+		context: AuthorizationContext,
+		prepared: PreparedRenameSourceReservation,
+	): RequestAdmissionResult {
+		return this.db.transaction((tx) =>
+			this.reserveRenameSourceInTransaction(tx, context, prepared),
+		);
+	}
+
+	/** Validate client, grant, scope, revocation, and observed epoch for a source lease. */
+	assertRenameSourcePolicyInTransaction(
+		tx: VaultTransaction,
+		context: AuthorizationContext,
+		prepared: PreparedRenameSourceReservation,
+	): AuthorizationContext {
+		const identity = AuthorizationContextSchema.safeParse(context);
+		if (
+			!identity.success ||
+			identity.data.client_id !== prepared.context.client_id ||
+			identity.data.grant_id !== prepared.context.grant_id
+		)
+			throw new AdmissionDenied({ kind: "invalid_request" });
+		const revoked = tx
+			.select({ grantId: revokedGrants.grantId })
+			.from(revokedGrants)
+			.where(eq(revokedGrants.grantId, identity.data.grant_id))
+			.all();
+		if (revoked.length > 0) throw new AdmissionDenied({ kind: "revoked" });
+		if (!identity.data.scopes.includes("vault:write"))
+			throw new AdmissionDenied({ kind: "forbidden_scope" });
+		const epochRow = tx
+			.select({ value: meta.value })
+			.from(meta)
+			.where(eq(meta.key, "epoch"))
+			.all()[0];
+		if (!epochRow) throw new Error("Missing vault epoch metadata");
+		const currentEpoch = EpochSchema.parse(epochRow.value);
+		if (currentEpoch !== prepared.epoch)
+			throw new AdmissionDenied({
+				kind: "epoch_mismatch",
+				current_epoch: currentEpoch,
+			});
+		return identity.data;
+	}
+
+	/** Reserve a source lease in the caller transaction without treating it as a complete descriptor. */
+	reserveRenameSourceInTransaction(
+		tx: VaultTransaction,
+		context: AuthorizationContext,
+		prepared: PreparedRenameSourceReservation,
+		allowStaleSource = false,
+	): RequestAdmissionResult {
+		let identity: AuthorizationContext;
+		let currentEpoch: string;
+		try {
+			identity = this.assertRenameSourcePolicyInTransaction(
+				tx,
+				context,
+				prepared,
+			);
+			currentEpoch = prepared.epoch;
+		} catch (error) {
+			if (error instanceof AdmissionDenied) return denied(error.failure);
+			throw error;
+		}
+		const source = tx
+			.select()
+			.from(files)
+			.where(eq(files.path, prepared.reservation.path))
+			.all()[0];
+		const expected = parseETag(prepared.reservation.if_match);
+		if (
+			expected.epoch !== currentEpoch ||
+			(!allowStaleSource &&
+				(!source || source.deleted === 1 || expected.rev !== source.rev))
+		)
+			return denied({ kind: "precondition_failed" });
+		const now = this.ports.now();
+		const expiresAt = now + 60_000;
+		if (!Number.isSafeInteger(now) || !Number.isSafeInteger(expiresAt))
+			return denied({ kind: "invalid_request" });
+		cleanupExpiredAdmissions(tx, identity.client_id, now);
+		const clientLimit = checkClientLimit(tx, identity.client_id, now);
+		if (clientLimit) return denied(clientLimit);
+		const vaultLimit = checkVaultLimit(tx, now);
+		if (vaultLimit) return denied(vaultLimit);
+		const id = nextAdmissionId(tx, () => this.ports.newTicketId());
+		if (!id) return denied({ kind: "invalid_request" });
+		tx.insert(operationAdmissions)
+			.values({
+				id,
+				clientId: identity.client_id,
+				grantId: identity.grant_id,
+				epoch: currentEpoch,
+				fingerprint: prepared.fingerprint,
+				admittedAt: now,
+				expiresAt,
+				state: "reserved",
+			})
+			.run();
+		return { ok: true, lease: { admission_id: id, expires_at: expiresAt } };
 	}
 
 	/** Reserve one prepared descriptor inside the caller's transaction using the existing policy and limits. */
@@ -253,6 +363,107 @@ export class SqliteAdmissionAuthority {
 		});
 	}
 
+	/** Bind a complete rename to its source lease and retain the original deadline. */
+	async authorizeRenameSource(
+		context: AuthorizationContext,
+		intent: OperationIntent,
+		admissionId: string,
+		key?: string,
+	): Promise<AdmissionResult> {
+		let prepared: PreparedOperation;
+		try {
+			prepared = await prepareOperation(context, intent);
+		} catch (error) {
+			if (error instanceof AdmissionDenied) return denied(error.failure);
+			throw error;
+		}
+		const sourcePath = prepared.intent.paths[0];
+		if (
+			prepared.intent.op !== "rename" ||
+			!sourcePath ||
+			prepared.intent.precondition.kind !== "match"
+		)
+			return denied({ kind: "invalid_request" });
+		const sourceLease = await prepareRenameSourceReservation(context, {
+			path: sourcePath,
+			if_match: prepared.intent.precondition.etag,
+			...(prepared.intent.epoch === undefined
+				? {}
+				: { epoch: prepared.intent.epoch }),
+		});
+		return this.db.transaction((tx) => {
+			let currentEpoch: string;
+			try {
+				currentEpoch = assertPolicyInTransaction(tx, context, prepared);
+			} catch (error) {
+				if (error instanceof AdmissionDenied) return denied(error.failure);
+				throw error;
+			}
+			const now = this.ports.now();
+			if (key !== undefined && !IdempotencyKeySchema.safeParse(key).success)
+				return denied({ kind: "invalid_request" });
+			const claim = tx
+				.select()
+				.from(mutationClaims)
+				.where(eq(mutationClaims.admissionId, admissionId))
+				.all()[0];
+			if (
+				key === undefined
+					? claim !== undefined
+					: claim?.clientId !== context.client_id || claim.key !== key
+			)
+				return denied({ kind: "invalid_ticket" });
+			const reserved = tx
+				.select()
+				.from(operationAdmissions)
+				.where(eq(operationAdmissions.id, admissionId))
+				.all()[0];
+			if (
+				!Number.isSafeInteger(now) ||
+				!reserved ||
+				reserved.clientId !== context.client_id ||
+				reserved.grantId !== context.grant_id ||
+				reserved.epoch !== currentEpoch ||
+				reserved.fingerprint !== sourceLease.fingerprint ||
+				reserved.state !== "reserved" ||
+				reserved.expiresAt <= now
+			)
+				return denied({ kind: "invalid_ticket" });
+			tx.update(operationAdmissions)
+				.set({ state: "active", fingerprint: prepared.fingerprint })
+				.where(
+					and(
+						eq(operationAdmissions.id, reserved.id),
+						eq(operationAdmissions.clientId, reserved.clientId),
+						eq(operationAdmissions.grantId, reserved.grantId),
+						eq(operationAdmissions.epoch, reserved.epoch),
+						eq(operationAdmissions.fingerprint, reserved.fingerprint),
+						eq(operationAdmissions.admittedAt, reserved.admittedAt),
+						eq(operationAdmissions.expiresAt, reserved.expiresAt),
+						eq(operationAdmissions.state, "reserved"),
+						gt(operationAdmissions.expiresAt, now),
+					),
+				)
+				.run();
+			const active = tx
+				.select()
+				.from(operationAdmissions)
+				.where(eq(operationAdmissions.id, reserved.id))
+				.all()[0];
+			if (
+				active?.state !== "active" ||
+				active.fingerprint !== prepared.fingerprint ||
+				active.admittedAt !== reserved.admittedAt ||
+				active.expiresAt !== reserved.expiresAt
+			)
+				return denied({ kind: "invalid_ticket" });
+			return {
+				ok: true,
+				ticket: { id: active.id, expires_at: active.expiresAt },
+			};
+		});
+	}
+
 	/** Authorize full intent, binding its reservation or charging one active slot. */
 	async authorize(
 		context: AuthorizationContext,
@@ -349,6 +560,47 @@ export class SqliteAdmissionAuthority {
 			if (error instanceof AdmissionDenied) return denied(error.failure);
 			throw error;
 		}
+	}
+
+	/** Check native policy, ticket identity, deadline, and key ownership without consuming the ticket. */
+	assertActiveTicketInTransaction(
+		tx: VaultTransaction,
+		context: AuthorizationContext,
+		operation: PreparedOperation,
+		ticketId: string,
+		key?: string,
+	): void {
+		const currentEpoch = assertPolicyInTransaction(tx, context, operation);
+		const now = this.ports.now();
+		const observed = tx
+			.select()
+			.from(operationAdmissions)
+			.where(eq(operationAdmissions.id, ticketId))
+			.all()[0];
+		if (
+			!Number.isSafeInteger(now) ||
+			!observed ||
+			observed.state !== "active" ||
+			observed.clientId !== context.client_id ||
+			observed.grantId !== context.grant_id ||
+			observed.epoch !== currentEpoch ||
+			observed.fingerprint !== operation.fingerprint ||
+			observed.expiresAt <= now
+		)
+			throw new AdmissionDenied({ kind: "invalid_ticket" });
+		if (key !== undefined && !IdempotencyKeySchema.safeParse(key).success)
+			throw new AdmissionDenied({ kind: "invalid_request" });
+		const claim = tx
+			.select()
+			.from(mutationClaims)
+			.where(eq(mutationClaims.admissionId, ticketId))
+			.all()[0];
+		if (
+			key === undefined
+				? claim !== undefined
+				: claim?.clientId !== context.client_id || claim.key !== key
+		)
+			throw new AdmissionDenied({ kind: "invalid_ticket" });
 	}
 
 	/** Check policy, ticket ownership, expiry, fingerprint, and file preconditions in the caller transaction. */

@@ -3,7 +3,6 @@ import {
 	EMPTY_PAYLOAD_HASH,
 	formatETag,
 	IdempotencyKeySchema,
-	OperationDescriptorSchema,
 	TextMutationIntentSchema,
 } from "@obsidian-ai-bridge/protocol";
 import { prepareTextPayload } from "@worker/application/text-payload";
@@ -94,19 +93,150 @@ async function commitMutation(
 }
 
 describe("native conditional text storage", () => {
-	it("fails closed for non-text paths and operations outside PUT and DELETE", async () => {
+	it("renames a live text file with one feed row and retained source history", async () => {
 		await withTextStore(async (fixture) => {
+			const source = "notes/before.md";
+			const destination = "notes/after.md";
+			await seedLiveTextState(fixture.storage, {
+				path: source,
+				content: "original",
+			});
+			const body = { to: destination };
+			const command = {
+				op: "rename" as const,
+				intent: {
+					op: "rename" as const,
+					epoch: TEXT_FIXTURE_EPOCH,
+					paths: [source, destination],
+					precondition: {
+						kind: "match" as const,
+						etag: formatETag(TEXT_FIXTURE_EPOCH, 1),
+					},
+					payload_hash: await hashTextBytes(JSON.stringify(body)),
+					size: new TextEncoder().encode(JSON.stringify(body)).byteLength,
+				},
+				body,
+			};
+			const descriptor = {
+				op: "rename" as const,
+				epoch: TEXT_FIXTURE_EPOCH,
+				paths: [source, destination],
+				precondition: command.intent.precondition,
+			};
+			const reservation = await fixture.coordinator.beginMutation(
+				TEXT_FIXTURE_CONTEXT,
+				descriptor,
+			);
+			if (!reservation.ok)
+				throw new Error(`Reservation failed: ${reservation.failure.kind}`);
+			const admission = await fixture.admissions.authorize(
+				TEXT_FIXTURE_CONTEXT,
+				command.intent,
+				reservation.lease.admission_id,
+			);
+			if (!admission.ok)
+				throw new Error(`Authorization failed: ${admission.failure.kind}`);
+			const result = await fixture.store.commitFileCommand(
+				TEXT_FIXTURE_CONTEXT,
+				command.intent,
+				admission.ticket.id,
+				command,
+			);
+			expect(result).toMatchObject({
+				ok: true,
+				response: { body: { path: destination, seq: 2 } },
+			});
 			expect(
-				await fixture.store.beginMutation(
-					TEXT_FIXTURE_CONTEXT,
-					OperationDescriptorSchema.parse({
-						op: "append",
-						epoch: TEXT_FIXTURE_EPOCH,
-						paths: ["notes/page.md"],
-						precondition: { kind: "none" },
-					}),
-				),
-			).toEqual({ ok: false, failure: { kind: "invalid_request" } });
+				fixture.storage.sql
+					.exec("SELECT path, rev, deleted FROM files ORDER BY path")
+					.toArray(),
+			).toEqual([
+				{ path: destination, rev: 1, deleted: 0 },
+				{ path: source, rev: 2, deleted: 1 },
+			]);
+			expect(
+				fixture.storage.sql
+					.exec(
+						"SELECT seq, op, path, from_path, from_rev FROM changes ORDER BY seq",
+					)
+					.toArray(),
+			).toEqual([
+				{ seq: 1, op: "put", path: source, from_path: null, from_rev: null },
+				{
+					seq: 2,
+					op: "rename",
+					path: destination,
+					from_path: source,
+					from_rev: 2,
+				},
+			]);
+			const historical = await fixture.store.readText(TEXT_FIXTURE_CONTEXT, {
+				path: source,
+				epoch: TEXT_FIXTURE_EPOCH,
+				rev: 1,
+			});
+			expect(historical).toMatchObject({
+				ok: true,
+				body: { content: "original" },
+			});
+		});
+	});
+	it("appends exact UTF-8 input to the authorized live text revision", async () => {
+		await withTextStore(async (fixture) => {
+			const path = "notes/append.md";
+			await seedLiveTextState(fixture.storage, {
+				path,
+				content: "A\uFEFF\u0000",
+			});
+			const command = {
+				op: "append" as const,
+				intent: {
+					op: "append" as const,
+					epoch: TEXT_FIXTURE_EPOCH,
+					paths: [path],
+					precondition: { kind: "none" as const },
+					payload_hash: await hashTextBytes("é"),
+					size: new TextEncoder().encode("é").byteLength,
+				},
+				content: "é",
+				key: IdempotencyKeySchema.parse("append-key-0001"),
+			};
+			const descriptor = {
+				op: "append" as const,
+				epoch: TEXT_FIXTURE_EPOCH,
+				paths: [path],
+				precondition: { kind: "none" as const },
+			};
+			const reservation = await fixture.coordinator.beginMutation(
+				TEXT_FIXTURE_CONTEXT,
+				descriptor,
+				command.key,
+			);
+			if (!reservation.ok)
+				throw new Error(`Reservation failed: ${reservation.failure.kind}`);
+			const admission = await fixture.admissions.authorize(
+				TEXT_FIXTURE_CONTEXT,
+				command.intent,
+				reservation.lease.admission_id,
+			);
+			if (!admission.ok)
+				throw new Error(`Authorization failed: ${admission.failure.kind}`);
+			const result = await fixture.store.commitFileCommand(
+				TEXT_FIXTURE_CONTEXT,
+				command.intent,
+				admission.ticket.id,
+				command,
+			);
+			expect(result).toMatchObject({ ok: true });
+			expect(
+				fixture.storage.sql
+					.exec("SELECT content FROM files WHERE path = ?", path)
+					.toArray(),
+			).toEqual([{ content: "A\uFEFF\u0000é" }]);
+		});
+	});
+	it("keeps the text PUT and DELETE commit API closed to append intents", async () => {
+		await withTextStore(async (fixture) => {
 			const unsupportedIntent = TextMutationIntentSchema.parse({
 				op: "put",
 				epoch: TEXT_FIXTURE_EPOCH,

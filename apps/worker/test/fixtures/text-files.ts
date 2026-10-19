@@ -1,4 +1,4 @@
-import { env, runInDurableObject } from "cloudflare:test";
+import { env, evictDurableObject, runInDurableObject } from "cloudflare:test";
 import type { AuthorizationContext } from "@obsidian-ai-bridge/protocol";
 import { pathKey } from "@obsidian-ai-bridge/protocol";
 import { prepareTextPayload } from "@worker/application/text-payload";
@@ -115,6 +115,31 @@ export async function seedLiveTextState(
 	storage.sql.exec(
 		"INSERT INTO mutation_claims(client_id,key,admission_id) VALUES ('unrelated-client','unrelated-key-01','ffffffffffffffffffffffffffffffff')",
 	);
+}
+
+/** Access a real native Vault stub with an explicit eviction seam. */
+export type EvictableTextVault = Readonly<{
+	stub: ReturnType<typeof env.VAULTS.get>;
+	evict: () => Promise<void>;
+}>;
+
+/** Seed one real Vault actor so its committed rows survive a controlled eviction. */
+export async function createEvictableTextVault(
+	path: string,
+	content: string,
+): Promise<EvictableTextVault> {
+	const stub = env.VAULTS.get(env.VAULTS.newUniqueId());
+	await runInDurableObject(stub, async (_instance, state) => {
+		clearTestVault(state.storage);
+		state.storage.sql.exec("PRAGMA foreign_keys = ON");
+		initializeVaultStorage(
+			state.storage,
+			() => TEXT_FIXTURE_EPOCH,
+			() => Date.now(),
+		);
+		await seedLiveTextState(state.storage, { path, content });
+	});
+	return Object.freeze({ stub, evict: () => evictDurableObject(stub) });
 }
 
 /** Create a real SQLite vault and all Task 3 collaborators inside a disposable Durable Object. */

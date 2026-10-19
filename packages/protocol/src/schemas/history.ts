@@ -1,6 +1,7 @@
+import { parseETag } from "@protocol/codecs/etag";
 import { OperationIntentSchema } from "@protocol/schemas/admission";
 import { FullTextContentSchema } from "@protocol/schemas/content";
-import { EpochSchema } from "@protocol/schemas/etag";
+import { EpochSchema, ETagSchema } from "@protocol/schemas/etag";
 import { MutationReceiptSchema } from "@protocol/schemas/files";
 import { IdempotencyKeySchema } from "@protocol/schemas/idempotency";
 import { PathSchema } from "@protocol/schemas/path";
@@ -16,6 +17,26 @@ export const RestoreRequestSchema = z
 		as_conflict_copy: z.boolean().optional(),
 	})
 	.strict();
+
+/** Capacity-only rename reservation metadata, bound to the source's exact observed ETag. */
+export const RenameReservationSchema = z
+	.object({
+		path: PathSchema,
+		if_match: ETagSchema,
+		epoch: EpochSchema.optional(),
+	})
+	.strict()
+	.superRefine((reservation, ctx) => {
+		if (
+			reservation.epoch !== undefined &&
+			reservation.epoch !== parseETag(reservation.if_match).epoch
+		) {
+			ctx.addIssue({
+				code: "custom",
+				message: "rename reservation epoch must match its source ETag",
+			});
+		}
+	});
 
 /** Current-vault history query without revision content. */
 export const HistoryRequestSchema = z
@@ -79,7 +100,8 @@ export const FileCommandSchema = z.discriminatedUnion("op", [
 		.superRefine((command, ctx) => {
 			if (
 				command.intent.paths.length !== 2 ||
-				command.body.to !== command.intent.paths[1]
+				command.body.to !== command.intent.paths[1] ||
+				command.intent.precondition.kind !== "match"
 			) {
 				ctx.addIssue({
 					code: "custom",
@@ -116,7 +138,10 @@ export const FileCommandSchema = z.discriminatedUnion("op", [
 		})
 		.strict()
 		.superRefine((command, ctx) => {
-			if (command.intent.paths.length !== 1) {
+			if (
+				command.intent.paths.length !== 1 ||
+				command.intent.precondition.kind !== "match"
+			) {
 				ctx.addIssue({
 					code: "custom",
 					message: "restore command needs one path",

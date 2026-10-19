@@ -43,6 +43,7 @@ export {
 	HistoryRequestSchema,
 	HistoryResultSchema,
 	RenameRequestSchema,
+	RenameReservationSchema,
 	RenameResultSchema,
 	RestoreRequestSchema,
 } from "@protocol/schemas/history";
@@ -89,6 +90,7 @@ export type {
 	HistoryRequest,
 	HistoryResult,
 	RenameRequest,
+	RenameReservation,
 	RenameResult,
 	RestoreRequest,
 } from "@protocol/types/history";

@@ -4,6 +4,7 @@ import type {
 	HistoryRequestSchema,
 	HistoryResultSchema,
 	RenameRequestSchema,
+	RenameReservationSchema,
 	RenameResultSchema,
 	RestoreRequestSchema,
 } from "@protocol/schemas/history";
@@ -17,6 +18,8 @@ export type HistoryEntry = z.infer<typeof HistoryEntrySchema>;
 export type HistoryRequest = z.infer<typeof HistoryRequestSchema>;
 /** Ascending retained revision metadata. */
 export type HistoryResult = z.infer<typeof HistoryResultSchema>;
+/** Capacity-only source metadata for a rename before body validation. */
+export type RenameReservation = z.infer<typeof RenameReservationSchema>;
 /** Normalized rename destination body. */
 export type RenameRequest = z.infer<typeof RenameRequestSchema>;
 /** Successful rename receipt. */

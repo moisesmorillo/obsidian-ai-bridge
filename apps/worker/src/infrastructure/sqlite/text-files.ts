@@ -1,8 +1,11 @@
 import type {
 	AuthorizationContext,
+	HistoryRequest,
 	IdempotencyKey,
 	MutationReceipt,
 	OperationDescriptor,
+	OperationIntent,
+	RenameReservation,
 	TextMutationBeginResult,
 	TextMutationIntent,
 	TextMutationResult,
@@ -14,6 +17,7 @@ import {
 	EMPTY_PAYLOAD_HASH,
 	EpochSchema,
 	formatETag,
+	OperationDescriptorSchema,
 	pathKey,
 	TextMutationDescriptorSchema,
 	TextMutationIntentSchema,
@@ -26,11 +30,13 @@ import {
 	prepareOperation,
 } from "@worker/application/admission";
 import { FileOperationDenied } from "@worker/application/files";
+import type { ImmutableFileCommand } from "@worker/application/history";
 import { prepareTextPayload } from "@worker/application/text-payload";
 import {
 	assertPolicyInTransaction,
 	type VaultTransaction,
 } from "@worker/infrastructure/sqlite/admission";
+import { SqliteHistoryStore } from "@worker/infrastructure/sqlite/history";
 import type { SqliteMutationCoordinator } from "@worker/infrastructure/sqlite/mutations";
 import {
 	changes,
@@ -46,6 +52,7 @@ import { drizzle } from "drizzle-orm/durable-sqlite";
 /** Stores and reads exact inline text through native SQLite transactions. */
 export class SqliteTextStore {
 	private readonly db;
+	private readonly history: SqliteHistoryStore;
 
 	/** Bind the native store, atomic coordinator, and Unix-millisecond clock. */
 	constructor(
@@ -54,6 +61,7 @@ export class SqliteTextStore {
 		private readonly ports: { now: () => number; logger?: Logger },
 	) {
 		this.db = drizzle(storage, { schema: vaultSchema, logger: ports.logger });
+		this.history = new SqliteHistoryStore(storage, coordinator, ports);
 	}
 
 	/** Reserve a ticket and optional idempotency claim for a text mutation. */
@@ -62,15 +70,29 @@ export class SqliteTextStore {
 		descriptor: OperationDescriptor,
 		key?: IdempotencyKey,
 	): Promise<TextMutationBeginResult> {
-		const parsed = TextMutationDescriptorSchema.safeParse(descriptor);
+		const parsed = OperationDescriptorSchema.safeParse(descriptor);
 		if (!parsed.success)
 			return { ok: false, failure: { kind: "invalid_request" } };
 		const path = parsed.data.paths[0];
 		if (path === undefined)
 			return { ok: false, failure: { kind: "invalid_request" } };
+		if (parsed.data.op === "append") {
+			if (parsed.data.epoch === undefined)
+				return { ok: false, failure: { kind: "invalid_request" } };
+			if (key === undefined)
+				return { ok: false, failure: { kind: "idempotency_key_required" } };
+			if (!path.endsWith(".md") && !path.endsWith(".canvas"))
+				return { ok: false, failure: { kind: "not_implemented" } };
+			return this.coordinator.beginMutation(context, parsed.data, key);
+		}
+		if (parsed.data.op === "restore")
+			return this.coordinator.beginMutation(context, parsed.data, key);
+		const textDescriptor = TextMutationDescriptorSchema.safeParse(parsed.data);
+		if (!textDescriptor.success)
+			return { ok: false, failure: { kind: "invalid_request" } };
 		if (!path.endsWith(".md") && !path.endsWith(".canvas"))
 			return { ok: false, failure: { kind: "not_implemented" } };
-		return this.coordinator.beginMutation(context, parsed.data, key);
+		return this.coordinator.beginMutation(context, textDescriptor.data, key);
 	}
 
 	/** Recompute payload identity, consume the ticket, and publish text plus receipt atomically. */
@@ -136,6 +158,37 @@ export class SqliteTextStore {
 				return { ok: false, failure: error.failure };
 			throw error;
 		}
+	}
+
+	/** Reserve rename source capacity before the body reveals its destination. */
+	beginRenameSource(
+		context: AuthorizationContext,
+		reservation: RenameReservation,
+		key?: IdempotencyKey,
+	) {
+		return this.coordinator.beginRenameSource(context, reservation, key);
+	}
+
+	/** Commit one native history command through the shared admission coordinator. */
+	commitFileCommand(
+		context: AuthorizationContext,
+		intent: OperationIntent,
+		ticketId: string,
+		command: ImmutableFileCommand,
+		key?: IdempotencyKey,
+	): Promise<TextMutationResult> {
+		return this.history.commitFileCommand(
+			context,
+			intent,
+			ticketId,
+			command,
+			key,
+		);
+	}
+
+	/** Read retained content-free history metadata after native policy checks. */
+	readHistory(context: AuthorizationContext, request: HistoryRequest) {
+		return this.history.readHistory(context, request);
 	}
 
 	/** Read one current or selected historical text row from a policy-checked snapshot. */

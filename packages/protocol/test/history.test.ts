@@ -1,8 +1,10 @@
 import {
 	FileCommandSchema,
+	formatETag,
 	HistoryRequestSchema,
 	HistoryResultSchema,
 	RenameRequestSchema,
+	RenameReservationSchema,
 	RestoreRequestSchema,
 } from "@obsidian-ai-bridge/protocol";
 import { describe, expect, it } from "vitest";
@@ -14,6 +16,23 @@ describe("canonical history contracts", () => {
 		});
 		expect(
 			RenameRequestSchema.safeParse({ to: "note.md", extra: true }).success,
+		).toBe(false);
+	});
+
+	it("validates the namespaced source-only rename reservation independently", () => {
+		const epoch = "a".repeat(32);
+		expect(
+			RenameReservationSchema.parse({
+				path: "notes/café.md",
+				if_match: formatETag(epoch, 3),
+			}),
+		).toEqual({ path: "notes/café.md", if_match: formatETag(epoch, 3) });
+		expect(
+			RenameReservationSchema.safeParse({
+				path: "note.md",
+				if_match: formatETag(epoch, 3),
+				epoch: "b".repeat(32),
+			}).success,
 		).toBe(false);
 	});
 

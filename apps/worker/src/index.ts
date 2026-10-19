@@ -23,6 +23,11 @@ function resolveVault(
 			await stub.authorize(...args),
 		commitText: async (...args: Parameters<typeof stub.commitText>) =>
 			await stub.commitText(...args),
+		commitBlob: async (...args: Parameters<typeof stub.commitBlob>) =>
+			await stub.commitBlob(...args),
+		readBlobMetadata: async (
+			...args: Parameters<typeof stub.readBlobMetadata>
+		) => await stub.readBlobMetadata(...args),
 		finishAdmission: async (...args: Parameters<typeof stub.finishAdmission>) =>
 			await stub.finishAdmission(...args),
 		readText: async (...args: Parameters<typeof stub.readText>) =>

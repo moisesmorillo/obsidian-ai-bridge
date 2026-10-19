@@ -5,5 +5,8 @@
 	"durable_objects": {
 		"bindings": [{ "name": "VAULTS", "class_name": "Vault" }]
 	},
+	"r2_buckets": [
+		{ "binding": "R2_BUCKET", "bucket_name": "oab-immutable-blobs" }
+	],
 	"migrations": [{ "tag": "v1", "new_sqlite_classes": ["Vault"] }]
 }

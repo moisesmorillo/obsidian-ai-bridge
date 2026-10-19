@@ -333,6 +333,51 @@ export class SqliteMutationCoordinator {
 		);
 	}
 
+	/** Recheck current policy and active ticket before a blob adapter performs asynchronous metadata I/O. */
+	preflight(
+		context: AuthorizationContext,
+		operation: PreparedOperation,
+		ticketId: string,
+		key?: IdempotencyKey,
+	): TextMutationResult | undefined {
+		return this.db.transaction((tx) => {
+			try {
+				assertPolicyInTransaction(tx, context, operation);
+			} catch (error) {
+				if (error instanceof AdmissionDenied)
+					return { ok: false, failure: error.failure };
+				throw error;
+			}
+			if (key !== undefined) {
+				const replay = this.replayReceiptInTransaction(
+					tx,
+					context,
+					operation,
+					ticketId,
+					key,
+				);
+				if (replay) return replay;
+			}
+			try {
+				this.admissions.assertActiveTicketInTransaction(
+					tx,
+					context,
+					operation,
+					ticketId,
+					key,
+				);
+			} catch (error) {
+				if (
+					error instanceof AdmissionDenied ||
+					error instanceof FileOperationDenied
+				)
+					return { ok: false, failure: error.failure };
+				throw error;
+			}
+			return undefined;
+		});
+	}
+
 	/** Check policy, replay receipts, and atomically consume, publish, and store successful results. */
 	commit(
 		context: AuthorizationContext,

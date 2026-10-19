@@ -17,10 +17,11 @@ import type {
 	TextReadResult,
 } from "@obsidian-ai-bridge/protocol";
 import { EMPTY_PAYLOAD_HASH } from "@obsidian-ai-bridge/protocol";
+import type { BlobVaultGateway } from "@worker/application/blobs";
 import { FileOperationDenied } from "@worker/application/files";
 
 /** Promise-based boundary to the Durable Object text authority. */
-export interface TextVaultGateway {
+export interface TextVaultGateway extends BlobVaultGateway {
 	/** Return authoritative epoch metadata after revocation and scope checks without an admission. */
 	getCurrentEpoch(
 		context: AuthorizationContext,

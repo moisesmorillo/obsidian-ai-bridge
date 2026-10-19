@@ -33,6 +33,67 @@ async function createIntent(path: string, content: string) {
 }
 
 describe("native publication query budgets", () => {
+	it("measures verified blob publication dispatches and complete row sizes", async () => {
+		const observer = new PublicationQueryObserver();
+		const hash = "9".repeat(64);
+		const blobStore = {
+			head: async () => ({ hash, size: 1_500_000 }),
+			putVerified: async () => ({ hash, size: 1_500_000 }),
+		};
+		await withTextStore(
+			async ({ store, admissions, storage }) => {
+				const intent = {
+					op: "put" as const,
+					epoch: TEXT_FIXTURE_EPOCH,
+					paths: ["notes/budget.md"],
+					precondition: { kind: "absent" as const },
+					payload_hash: hash,
+					size: 1_500_000,
+				};
+				const lease = await store.beginMutation(TEXT_FIXTURE_CONTEXT, intent);
+				if (!lease.ok)
+					throw new Error(`Reservation failed: ${lease.failure.kind}`);
+				const ticket = await admissions.authorize(
+					TEXT_FIXTURE_CONTEXT,
+					intent,
+					lease.lease.admission_id,
+				);
+				if (!ticket.ok)
+					throw new Error(`Authorization failed: ${ticket.failure.kind}`);
+				const start = observer.queries.length;
+				const result = await store.commitBlob(
+					TEXT_FIXTURE_CONTEXT,
+					intent,
+					ticket.ticket.id,
+				);
+				expect(result).toMatchObject({ ok: true });
+				const queries = observer.queries.slice(start);
+				expect(queries.length).toBeGreaterThan(0);
+				expect(
+					Math.max(...queries.map((query) => query.bindCount)),
+				).toBeLessThanOrEqual(100);
+				const sizes = [
+					{ table: "files", query: "SELECT * FROM files" },
+					{ table: "revisions", query: "SELECT * FROM revisions" },
+					{ table: "blob_refs", query: "SELECT * FROM blob_refs" },
+				].map(({ table, query }) => {
+					const row = storage.sql.exec(query).toArray().at(-1);
+					if (!row) throw new Error(`No ${table} row was published`);
+					return [table, sqliteRecordBytes(Object.values(row))];
+				});
+				console.info(
+					JSON.stringify({
+						span: "blob/commit",
+						dispatches: queries.length,
+						maxBindings: Math.max(...queries.map((query) => query.bindCount)),
+						encodedRecordBytes: sizes,
+					}),
+				);
+			},
+			observer,
+			blobStore,
+		);
+	});
 	it.each([
 		{ values: [], bytes: 1 },
 		{ values: [null], bytes: 2 },

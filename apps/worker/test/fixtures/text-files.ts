@@ -1,6 +1,7 @@
 import { env, evictDurableObject, runInDurableObject } from "cloudflare:test";
 import type { AuthorizationContext } from "@obsidian-ai-bridge/protocol";
 import { pathKey } from "@obsidian-ai-bridge/protocol";
+import type { BlobStore } from "@worker/application/blobs";
 import { prepareTextPayload } from "@worker/application/text-payload";
 import { SqliteAdmissionAuthority } from "@worker/infrastructure/sqlite/admission";
 import { SqliteMutationCoordinator } from "@worker/infrastructure/sqlite/mutations";
@@ -44,6 +45,9 @@ export function captureTextStoreState(storage: DurableObjectStorage) {
 			.toArray(),
 		receipts: storage.sql
 			.exec("SELECT * FROM receipts ORDER BY client_id, key")
+			.toArray(),
+		blobRefs: storage.sql
+			.exec("SELECT * FROM blob_refs ORDER BY hash")
 			.toArray(),
 		admissions: storage.sql
 			.exec("SELECT * FROM operation_admissions ORDER BY id")
@@ -146,6 +150,7 @@ export async function createEvictableTextVault(
 export async function withTextStore(
 	assert: (fixture: TextStoreFixture) => Promise<void>,
 	logger?: Logger,
+	blobStore?: BlobStore,
 ): Promise<void> {
 	const stub = env.VAULTS.get(env.VAULTS.newUniqueId());
 	await runInDurableObject(stub, async (_instance, state) => {
@@ -171,6 +176,7 @@ export async function withTextStore(
 		const store = new SqliteTextStore(storage, coordinator, {
 			now: () => now,
 			logger,
+			blobStore,
 		});
 		await assert({
 			storage,

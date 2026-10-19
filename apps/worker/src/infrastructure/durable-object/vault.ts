@@ -20,6 +20,7 @@ import type {
 } from "@obsidian-ai-bridge/protocol";
 import type { ImmutableFileCommand } from "@worker/application/history";
 import type { Env } from "@worker/env";
+import { R2BlobStore } from "@worker/infrastructure/r2/blobs";
 import { SqliteAdmissionAuthority } from "@worker/infrastructure/sqlite/admission";
 import { SqliteMutationCoordinator } from "@worker/infrastructure/sqlite/mutations";
 import {
@@ -68,6 +69,7 @@ export class Vault extends DurableObject<Env> {
 			this.mutationCoordinator,
 			{
 				now: Date.now,
+				blobStore: new R2BlobStore(env.R2_BUCKET),
 			},
 		);
 	}
@@ -137,6 +139,21 @@ export class Vault extends DurableObject<Env> {
 	/** Read retained content-free revision metadata after native policy checks. */
 	readHistory(context: AuthorizationContext, request: HistoryRequest) {
 		return this.textStore.readHistory(context, request);
+	}
+
+	/** Verify storage evidence and atomically publish a blob reference. */
+	commitBlob(
+		context: AuthorizationContext,
+		intent: TextMutationIntent,
+		ticketId: string,
+		key?: IdempotencyKey,
+	): Promise<TextMutationResult> {
+		return this.textStore.commitBlob(context, intent, ticketId, key);
+	}
+
+	/** Read immutable metadata for a current or retained blob revision. */
+	readBlobMetadata(context: AuthorizationContext, request: TextReadRequest) {
+		return this.textStore.readBlobMetadata(context, request);
 	}
 
 	/** Read current or selected historical inline text. */

@@ -235,7 +235,7 @@ describe("native conditional text storage", () => {
 			).toEqual([{ content: "A\uFEFF\u0000é" }]);
 		});
 	});
-	it("keeps the text PUT and DELETE commit API closed to append intents", async () => {
+	it("admits binary PUT and DELETE while keeping append restricted to text paths", async () => {
 		await withTextStore(async (fixture) => {
 			const unsupportedIntent = TextMutationIntentSchema.parse({
 				op: "put",
@@ -261,7 +261,30 @@ describe("native conditional text storage", () => {
 					paths: ["archive/data.bin"],
 					precondition: { kind: "absent" },
 				}),
+			).toMatchObject({ ok: true });
+			expect(
+				await fixture.store.beginMutation(
+					TEXT_FIXTURE_CONTEXT,
+					{
+						op: "append",
+						epoch: TEXT_FIXTURE_EPOCH,
+						paths: ["archive/data.bin"],
+						precondition: { kind: "none" },
+					},
+					IdempotencyKeySchema.parse("binary-append-key-01"),
+				),
 			).toEqual({ ok: false, failure: { kind: "not_implemented" } });
+			expect(
+				await fixture.store.beginMutation(TEXT_FIXTURE_CONTEXT, {
+					op: "delete",
+					epoch: TEXT_FIXTURE_EPOCH,
+					paths: ["archive/data.bin"],
+					precondition: {
+						kind: "match",
+						etag: formatETag(TEXT_FIXTURE_EPOCH, 1),
+					},
+				}),
+			).toMatchObject({ ok: true });
 		});
 	});
 	it("publishes create, update, delete, and recreate as exact per-path revisions", async () => {

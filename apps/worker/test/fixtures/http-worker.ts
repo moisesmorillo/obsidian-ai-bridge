@@ -87,6 +87,8 @@ const worker = createWorker(
 					throw new Error("Simulated committed response loss");
 				return result;
 			},
+			commitBlob: async (...args) => await stub.commitBlob(...args),
+			readBlobMetadata: async (...args) => await stub.readBlobMetadata(...args),
 			finishAdmission: async (...args) => {
 				const result = await stub.finishAdmission(...args);
 				if (shouldFailAfter(request, "finishAdmission"))

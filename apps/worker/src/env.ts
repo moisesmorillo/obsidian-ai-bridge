@@ -3,6 +3,7 @@ import type { Vault } from "@worker/infrastructure/durable-object/vault";
 /** Native Worker capabilities shared by deployment typing and the Workers test environment. */
 interface WorkerBindings {
 	VAULTS: DurableObjectNamespace<Vault>;
+	R2_BUCKET: R2Bucket;
 }
 
 /** Explicit environment contract consumed by the Vault adapter, not a runtime validation schema. */

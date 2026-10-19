@@ -3,6 +3,7 @@ import {
 	AuthorizationContextSchema,
 	type FileCommand,
 	FileCommandSchema,
+	OperationIntentSchema,
 } from "@obsidian-ai-bridge/protocol";
 import {
 	AdmissionDenied,
@@ -10,9 +11,18 @@ import {
 	prepareOperation,
 } from "@worker/application/admission";
 
+/** Maps every nested object and array to a readonly TypeScript contract. */
+type DeepReadonly<T> = T extends (...args: never[]) => unknown
+	? T
+	: T extends readonly unknown[]
+		? { readonly [Key in keyof T]: DeepReadonly<T[Key]> }
+		: T extends object
+			? { readonly [Key in keyof T]: DeepReadonly<T[Key]> }
+			: T;
+
 /** Immutable validated command and its canonical admission fingerprint. */
 export type PreparedHistoryCommand = Readonly<{
-	command: FileCommand;
+	command: DeepReadonly<FileCommand>;
 	operation: PreparedOperation;
 }>;
 
@@ -27,16 +37,16 @@ async function sha256(bytes: Uint8Array): Promise<string> {
 }
 
 /** Freezes parsed command data recursively so caller changes cannot alter async work. */
-function deepFreeze<T>(value: T): T {
+function deepFreeze<T>(value: T): DeepReadonly<T> {
 	if (value !== null && typeof value === "object" && !Object.isFrozen(value)) {
 		for (const child of Object.values(value)) deepFreeze(child);
 		Object.freeze(value);
 	}
-	return value;
+	return value as DeepReadonly<T>;
 }
 
 /** Returns exact canonical command bytes or exact UTF-8 append input bytes. */
-function commandBytes(command: FileCommand): Uint8Array {
+function commandBytes(command: DeepReadonly<FileCommand>): Uint8Array {
 	if (command.op === "append") return new TextEncoder().encode(command.content);
 	const body =
 		command.op === "rename"
@@ -65,6 +75,9 @@ export async function prepareHistoryCommand(
 	) {
 		throw new AdmissionDenied({ kind: "invalid_request" });
 	}
-	const operation = await prepareOperation(contextSnapshot, snapshot.intent);
+	const operation = await prepareOperation(
+		AuthorizationContextSchema.parse(contextSnapshot),
+		OperationIntentSchema.parse(snapshot.intent),
+	);
 	return Object.freeze({ command: snapshot, operation });
 }

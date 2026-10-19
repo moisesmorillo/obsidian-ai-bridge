@@ -61,8 +61,8 @@ describe("canonical history contracts", () => {
 					paths: ["note.md"],
 					precondition: { kind: "none" },
 					payload_hash:
-						"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-					size: 0,
+						"2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881",
+					size: 1,
 				},
 			}).success,
 		).toBe(true);

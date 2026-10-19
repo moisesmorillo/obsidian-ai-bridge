@@ -2,7 +2,10 @@ import type {
 	AuthorizationContext,
 	FileCommand,
 } from "@obsidian-ai-bridge/protocol";
-import { prepareHistoryCommand } from "@worker/application/history";
+import {
+	type PreparedHistoryCommand,
+	prepareHistoryCommand,
+} from "@worker/application/history";
 import { describe, expect, it } from "vitest";
 
 const context: AuthorizationContext = {
@@ -12,12 +15,29 @@ const context: AuthorizationContext = {
 };
 const epoch = "a".repeat(32);
 
+/** Confirms that prepared nested command fields reject TypeScript writes. */
+function assertPreparedCommandIsReadonly(
+	command: PreparedHistoryCommand["command"],
+): void {
+	if (command.op === "rename") {
+		// @ts-expect-error Runtime command snapshots are recursively frozen.
+		command.body.to = "changed.md";
+	}
+	// @ts-expect-error Intent paths are immutable in prepared commands.
+	command.intent.paths[0] = "changed.md";
+	if (command.intent.precondition.kind === "match") {
+		// @ts-expect-error Preconditions are immutable in prepared commands.
+		command.intent.precondition.etag = `"${epoch}.2"`;
+	}
+}
+
+void assertPreparedCommandIsReadonly;
+
 /** Hashes fixture bytes so each command carries a hand-controlled valid digest. */
 async function digest(bytes: Uint8Array): Promise<string> {
-	const result = await crypto.subtle.digest(
-		"SHA-256",
-		bytes.slice().buffer as ArrayBuffer,
-	);
+	const input = new Uint8Array(bytes.byteLength);
+	input.set(bytes);
+	const result = await crypto.subtle.digest("SHA-256", input);
 	return Array.from(new Uint8Array(result), (byte) =>
 		byte.toString(16).padStart(2, "0"),
 	).join("");
@@ -84,9 +104,17 @@ describe("prepareHistoryCommand", () => {
 		);
 
 		/** Builds a restore command with canonical optional-flag encoding. */
-		const restore = async (source_rev: number, as_conflict_copy = false) => {
-			const body = { source_rev, as_conflict_copy };
-			const bytes = new TextEncoder().encode(JSON.stringify(body));
+		const restore = async (source_rev: number, as_conflict_copy?: boolean) => {
+			const body = {
+				source_rev,
+				...(as_conflict_copy === undefined ? {} : { as_conflict_copy }),
+			};
+			const bytes = new TextEncoder().encode(
+				JSON.stringify({
+					source_rev,
+					as_conflict_copy: as_conflict_copy ?? false,
+				}),
+			);
 			const command: FileCommand = {
 				op: "restore",
 				body,
@@ -101,6 +129,9 @@ describe("prepareHistoryCommand", () => {
 		};
 		expect((await restore(4)).operation.fingerprint).not.toBe(
 			(await restore(5)).operation.fingerprint,
+		);
+		expect((await restore(4)).operation.fingerprint).toBe(
+			(await restore(4, false)).operation.fingerprint,
 		);
 		expect((await restore(4)).operation.fingerprint).not.toBe(
 			(await restore(4, true)).operation.fingerprint,
@@ -128,6 +159,83 @@ describe("prepareHistoryCommand", () => {
 			"to.md",
 		);
 		expect(prepared.operation.client_id).toBe("client-a");
+		expect(Object.isFrozen(prepared.command)).toBe(true);
+		if (prepared.command.op === "rename") {
+			expect(Object.isFrozen(prepared.command.body)).toBe(true);
+			expect(Object.isFrozen(prepared.command.intent.paths)).toBe(true);
+			expect(Object.isFrozen(prepared.command.intent.precondition)).toBe(true);
+		}
+	});
+
+	it("rejects changed command bodies and forged append metadata", async () => {
+		const renameBody = { to: "to.md" };
+		const renameBytes = new TextEncoder().encode(JSON.stringify(renameBody));
+		const renameCommand: FileCommand = {
+			op: "rename",
+			body: renameBody,
+			intent: intent(
+				"rename",
+				["from.md", "to.md"],
+				await digest(renameBytes),
+				renameBytes.byteLength,
+			),
+		};
+		await expect(
+			prepareHistoryCommand(context, {
+				...renameCommand,
+				body: { to: "changed.md" },
+				intent: {
+					...renameCommand.intent,
+					paths: ["from.md", "changed.md"],
+				},
+			}),
+		).rejects.toMatchObject({ failure: { kind: "invalid_request" } });
+
+		const restoreBody = { source_rev: 4 };
+		const restoreBytes = new TextEncoder().encode(
+			JSON.stringify({ source_rev: 4, as_conflict_copy: false }),
+		);
+		const restoreCommand: FileCommand = {
+			op: "restore",
+			body: restoreBody,
+			intent: intent(
+				"restore",
+				["note.md"],
+				await digest(restoreBytes),
+				restoreBytes.byteLength,
+			),
+		};
+		await expect(
+			prepareHistoryCommand(context, {
+				...restoreCommand,
+				body: { source_rev: 5 },
+			}),
+		).rejects.toMatchObject({ failure: { kind: "invalid_request" } });
+
+		const appendContent = "é";
+		const appendBytes = new TextEncoder().encode(appendContent);
+		const appendCommand: FileCommand = {
+			op: "append",
+			content: appendContent,
+			key: "key-123456",
+			intent: {
+				op: "append",
+				epoch,
+				paths: ["note.md"],
+				precondition: { kind: "none" },
+				payload_hash: await digest(appendBytes),
+				size: appendBytes.byteLength,
+			},
+		};
+		await expect(
+			prepareHistoryCommand(context, {
+				...appendCommand,
+				intent: {
+					...appendCommand.intent,
+					size: appendCommand.intent.size + 1,
+				},
+			}),
+		).rejects.toMatchObject({ failure: { kind: "invalid_request" } });
 	});
 
 	it("binds exact append UTF-8 bytes and rejects a forged descriptor hash", async () => {

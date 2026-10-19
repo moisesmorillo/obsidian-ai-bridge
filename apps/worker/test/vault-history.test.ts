@@ -515,6 +515,237 @@ describe("native history mutations", () => {
 		});
 	});
 
+	it("preserves restore claim ownership when a native caller omits or changes its key", async () => {
+		await withTextStore(async (fixture) => {
+			const path = "notes/restore-key-ownership.md";
+			await seedLiveTextState(fixture.storage, { path, content: "retained" });
+			const key = IdempotencyKeySchema.parse("restore-key-owner-01");
+			const command = await restoreCommand(path, 1, 1, key, true);
+			const descriptor = {
+				op: "restore" as const,
+				epoch: TEXT_FIXTURE_EPOCH,
+				paths: [path],
+				precondition: command.intent.precondition,
+			};
+			const lease = await fixture.store.beginMutation(
+				TEXT_FIXTURE_CONTEXT,
+				descriptor,
+				key,
+			);
+			if (!lease.ok) throw new Error("Restore reservation failed");
+			const admission = await fixture.admissions.authorize(
+				TEXT_FIXTURE_CONTEXT,
+				command.intent,
+				lease.lease.admission_id,
+			);
+			if (!admission.ok) throw new Error("Restore authorization failed");
+			const omittedKey = FileCommandSchema.parse({
+				op: "restore",
+				intent: command.intent,
+				body: command.body,
+			});
+			const before = captureTextStoreState(fixture.storage);
+			const omitted = await fixture.store.commitFileCommand(
+				TEXT_FIXTURE_CONTEXT,
+				command.intent,
+				admission.ticket.id,
+				omittedKey,
+			);
+			expect(omitted).toEqual({
+				ok: false,
+				failure: { kind: "invalid_ticket" },
+			});
+			expect(captureTextStoreState(fixture.storage)).toEqual(before);
+
+			const wrongKey = IdempotencyKeySchema.parse("restore-wrong-key-01");
+			const wrongCommand = FileCommandSchema.parse({
+				op: "restore",
+				intent: command.intent,
+				body: command.body,
+				key: wrongKey,
+			});
+			const wrong = await fixture.store.commitFileCommand(
+				TEXT_FIXTURE_CONTEXT,
+				command.intent,
+				admission.ticket.id,
+				wrongCommand,
+				wrongKey,
+			);
+			expect(wrong).toEqual({ ok: false, failure: { kind: "invalid_ticket" } });
+			expect(captureTextStoreState(fixture.storage)).toEqual(before);
+
+			const committed = await fixture.store.commitFileCommand(
+				TEXT_FIXTURE_CONTEXT,
+				command.intent,
+				admission.ticket.id,
+				command,
+				key,
+			);
+			expect(committed.ok).toBe(true);
+			const afterCommit = captureTextStoreState(fixture.storage);
+			expect(
+				await fixture.store.commitFileCommand(
+					TEXT_FIXTURE_CONTEXT,
+					command.intent,
+					admission.ticket.id,
+					command,
+					key,
+				),
+			).toEqual(committed);
+			expect(captureTextStoreState(fixture.storage)).toEqual(afterCommit);
+		});
+	});
+
+	it("preserves keyed rename claim ownership across direct commits", async () => {
+		await withTextStore(async (fixture) => {
+			const source = "notes/rename-key-ownership.md";
+			const destination = "notes/rename-key-result.md";
+			await seedLiveTextState(fixture.storage, {
+				path: source,
+				content: "source",
+			});
+			const body = { to: destination };
+			const payload = JSON.stringify(body);
+			const key = IdempotencyKeySchema.parse("rename-key-owner-01");
+			const intent = {
+				op: "rename" as const,
+				epoch: TEXT_FIXTURE_EPOCH,
+				paths: [source, destination],
+				precondition: {
+					kind: "match" as const,
+					etag: formatETag(TEXT_FIXTURE_EPOCH, 1),
+				},
+				payload_hash: await hashBytes(payload),
+				size: new TextEncoder().encode(payload).byteLength,
+			};
+			const reservation = RenameReservationSchema.parse({
+				path: source,
+				if_match: intent.precondition.etag,
+			});
+			const lease = await fixture.store.beginRenameSource(
+				TEXT_FIXTURE_CONTEXT,
+				reservation,
+				key,
+			);
+			if (!lease.ok) throw new Error("Rename reservation failed");
+			const admission = await fixture.admissions.authorizeRenameSource(
+				TEXT_FIXTURE_CONTEXT,
+				intent,
+				lease.lease.admission_id,
+				key,
+			);
+			if (!admission.ok) throw new Error("Rename authorization failed");
+			const command = FileCommandSchema.parse({
+				op: "rename",
+				intent,
+				body,
+				key,
+			});
+			const omittedKey = FileCommandSchema.parse({
+				op: "rename",
+				intent,
+				body,
+			});
+			const before = captureTextStoreState(fixture.storage);
+			const omitted = await fixture.store.commitFileCommand(
+				TEXT_FIXTURE_CONTEXT,
+				intent,
+				admission.ticket.id,
+				omittedKey,
+			);
+			expect(omitted).toEqual({
+				ok: false,
+				failure: { kind: "invalid_ticket" },
+			});
+			expect(captureTextStoreState(fixture.storage)).toEqual(before);
+
+			const wrongKey = IdempotencyKeySchema.parse("rename-wrong-key-01");
+			const wrongCommand = FileCommandSchema.parse({
+				op: "rename",
+				intent,
+				body,
+				key: wrongKey,
+			});
+			const wrong = await fixture.store.commitFileCommand(
+				TEXT_FIXTURE_CONTEXT,
+				intent,
+				admission.ticket.id,
+				wrongCommand,
+				wrongKey,
+			);
+			expect(wrong).toEqual({ ok: false, failure: { kind: "invalid_ticket" } });
+			expect(captureTextStoreState(fixture.storage)).toEqual(before);
+
+			const committed = await fixture.store.commitFileCommand(
+				TEXT_FIXTURE_CONTEXT,
+				intent,
+				admission.ticket.id,
+				command,
+				key,
+			);
+			expect(committed.ok).toBe(true);
+			const afterCommit = captureTextStoreState(fixture.storage);
+			expect(
+				await fixture.store.commitFileCommand(
+					TEXT_FIXTURE_CONTEXT,
+					intent,
+					admission.ticket.id,
+					command,
+					key,
+				),
+			).toEqual(committed);
+			expect(captureTextStoreState(fixture.storage)).toEqual(afterCommit);
+		});
+	});
+
+	it("accepts an unkeyed rename source lease and native commit", async () => {
+		await withTextStore(async (fixture) => {
+			const source = "notes/rename-unkeyed-source.md";
+			const destination = "notes/rename-unkeyed-destination.md";
+			await seedLiveTextState(fixture.storage, {
+				path: source,
+				content: "unkeyed",
+			});
+			const body = { to: destination };
+			const payload = JSON.stringify(body);
+			const intent = {
+				op: "rename" as const,
+				epoch: TEXT_FIXTURE_EPOCH,
+				paths: [source, destination],
+				precondition: {
+					kind: "match" as const,
+					etag: formatETag(TEXT_FIXTURE_EPOCH, 1),
+				},
+				payload_hash: await hashBytes(payload),
+				size: new TextEncoder().encode(payload).byteLength,
+			};
+			const reservation = RenameReservationSchema.parse({
+				path: source,
+				if_match: intent.precondition.etag,
+			});
+			const lease = await fixture.store.beginRenameSource(
+				TEXT_FIXTURE_CONTEXT,
+				reservation,
+			);
+			if (!lease.ok) throw new Error("Unkeyed rename reservation failed");
+			const admission = await fixture.admissions.authorizeRenameSource(
+				TEXT_FIXTURE_CONTEXT,
+				intent,
+				lease.lease.admission_id,
+			);
+			if (!admission.ok) throw new Error("Unkeyed rename authorization failed");
+			const command = FileCommandSchema.parse({ op: "rename", intent, body });
+			expect(
+				await fixture.store.commitFileCommand(
+					TEXT_FIXTURE_CONTEXT,
+					intent,
+					admission.ticket.id,
+					command,
+				),
+			).toMatchObject({ ok: true });
+		});
+	});
+
 	it("rolls back rename at the safe-integer source revision boundary", async () => {
 		await withTextStore(async (fixture) => {
 			const source = "notes/max-revision.md";

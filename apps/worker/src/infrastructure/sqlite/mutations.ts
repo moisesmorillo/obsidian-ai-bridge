@@ -400,6 +400,13 @@ export class SqliteMutationCoordinator {
 			}
 
 			try {
+				this.admissions.assertActiveTicketInTransaction(
+					tx,
+					context,
+					operation,
+					ticketId,
+					key,
+				);
 				this.admissions.consumeInTransaction(tx, context, operation, ticketId);
 			} catch (error) {
 				if (

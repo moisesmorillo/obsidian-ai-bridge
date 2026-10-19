@@ -10,7 +10,6 @@ import {
 	FileCommandSchema,
 	HistoryRequestSchema,
 	IdempotencyKeySchema,
-	normalizePath,
 	OperationDescriptorSchema,
 	parseETag,
 	RenameRequestSchema,
@@ -24,6 +23,7 @@ import {
 } from "@worker/application/history";
 import type { TextVaultGateway } from "@worker/application/text-files";
 import type { Env } from "@worker/env";
+import { decodeAndNormalizePath } from "@worker/transport/path";
 import { Hono } from "hono";
 
 /** Maximum actual UTF-8 request bytes read for any inline history command. */
@@ -218,7 +218,10 @@ export function createHistoryRouter(
 		if (!identity.scopes.includes("vault:read"))
 			return errorResponse({ kind: "forbidden_scope" });
 		const pathname = new URL(context.req.url).pathname;
-		const path = decodeRoutePath(pathname, "/v1/history/");
+		const prefix = "/v1/history/";
+		const path = pathname.startsWith(prefix)
+			? decodeAndNormalizePath(pathname.slice(prefix.length))
+			: undefined;
 		if (path === undefined) return errorResponse({ kind: "invalid_path" });
 		if (new URL(context.req.url).search)
 			return errorResponse({ kind: "invalid_request" });
@@ -230,19 +233,6 @@ export function createHistoryRouter(
 		return context.json(result.entries);
 	});
 	return router;
-}
-
-/** Extract and decode a route path once after checking its literal prefix. */
-export function decodeRoutePath(
-	pathname: string,
-	prefix: string,
-): string | undefined {
-	if (!pathname.startsWith(prefix)) return undefined;
-	try {
-		return normalizePath(decodeURIComponent(pathname.slice(prefix.length)));
-	} catch {
-		return undefined;
-	}
 }
 
 /** Read a body under its actual byte ceiling and cancel on failure or abort. */

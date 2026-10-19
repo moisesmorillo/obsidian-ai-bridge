@@ -9,7 +9,6 @@ import {
 	EpochSchema,
 	encodeFileFailure,
 	IdempotencyKeySchema,
-	normalizePath,
 	parseETag,
 	TextMutationDescriptorSchema,
 	TextReadRequestSchema,
@@ -23,6 +22,7 @@ import {
 import { prepareTextPayload } from "@worker/application/text-payload";
 import type { Env } from "@worker/env";
 import { handleHistoryCommand } from "@worker/transport/history";
+import { decodeAndNormalizePath } from "@worker/transport/path";
 import { Hono } from "hono";
 
 /** Maximum actual request body size accepted for inline text, in bytes. */
@@ -166,16 +166,12 @@ function fileCommandFromPath(
 	for (const operation of ["rename", "append", "restore"] as const) {
 		const suffix = `:${operation}`;
 		if (!pathname.endsWith(suffix)) continue;
-		try {
-			return {
-				path: normalizePath(
-					decodeURIComponent(pathname.slice(prefix.length, -suffix.length)),
-				),
-				operation,
-			};
-		} catch {
-			return { path: undefined, operation };
-		}
+		return {
+			path: decodeAndNormalizePath(
+				pathname.slice(prefix.length, -suffix.length),
+			),
+			operation,
+		};
 	}
 	return undefined;
 }
@@ -185,11 +181,7 @@ function filePathFromRequest(request: Request): string | undefined {
 	const pathname = new URL(request.url).pathname;
 	const prefix = "/v1/files/";
 	if (!pathname.startsWith(prefix)) return undefined;
-	try {
-		return normalizePath(decodeURIComponent(pathname.slice(prefix.length)));
-	} catch {
-		return undefined;
-	}
+	return decodeAndNormalizePath(pathname.slice(prefix.length));
 }
 
 /** Return an authoritative epoch mismatch after operation-specific policy checks. */

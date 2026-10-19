@@ -589,6 +589,58 @@ describe("history mutation HTTP routes", () => {
 		});
 	});
 
+	it("decodes double-encoded percent paths once on command and history routes", async () => {
+		/** Publish one text fixture through its encoded file route. */
+		const put = (encodedPath: string, content: string) =>
+			SELF.fetch(`https://worker.invalid/v1/files/${encodedPath}`, {
+				method: "PUT",
+				headers: { "If-None-Match": "*", "X-Vault-Epoch": TEXT_FIXTURE_EPOCH },
+				body: content,
+			});
+		const commandPercent = await put(
+			"notes/command%2520name.md",
+			"percent-name",
+		);
+		const commandSpace = await put("notes/command%20name.md", "space-name");
+		const command = await SELF.fetch(
+			"https://worker.invalid/v1/files/notes/command%2520name.md:rename",
+			{
+				method: "POST",
+				headers: { "If-Match": commandPercent.headers.get("ETag") ?? "" },
+				body: JSON.stringify({ to: "notes/renamed-percent.md" }),
+			},
+		);
+		expect(command.status).toBe(201);
+		const renamed = await SELF.fetch(
+			"https://worker.invalid/v1/files/notes/renamed-percent.md",
+			{ headers: { "X-Vault-Epoch": TEXT_FIXTURE_EPOCH } },
+		);
+		const separateSpace = await SELF.fetch(
+			"https://worker.invalid/v1/files/notes/command%20name.md",
+			{ headers: { "X-Vault-Epoch": TEXT_FIXTURE_EPOCH } },
+		);
+		expect(((await renamed.json()) as { content: string }).content).toBe(
+			"percent-name",
+		);
+		expect(((await separateSpace.json()) as { content: string }).content).toBe(
+			"space-name",
+		);
+
+		const historyPercent = await put("notes/history%2520name.md", "percent");
+		const historySpace = await put("notes/history%20name.md", "space-content");
+		const percentHistory = await SELF.fetch(
+			"https://worker.invalid/v1/history/notes/history%2520name.md",
+		);
+		const spaceHistory = await SELF.fetch(
+			"https://worker.invalid/v1/history/notes/history%20name.md",
+		);
+		expect(await percentHistory.json()).toMatchObject([{ size: 7 }]);
+		expect(await spaceHistory.json()).toMatchObject([{ size: 13 }]);
+		expect(historyPercent.status).toBe(201);
+		expect(historySpace.status).toBe(201);
+		expect(commandSpace.status).toBe(201);
+	});
+
 	it("routes only literal raw command suffixes and decodes file paths once", async () => {
 		for (const item of [
 			{ encoded: "notes/literal%3Arename.md", path: "notes/literal:rename.md" },

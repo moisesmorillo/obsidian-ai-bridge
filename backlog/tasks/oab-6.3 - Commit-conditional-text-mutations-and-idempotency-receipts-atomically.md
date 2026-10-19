@@ -1,11 +1,11 @@
 ---
 id: OAB-6.3
 title: Commit conditional text mutations and idempotency receipts atomically
-status: In Progress
+status: Done
 assignee:
   - '@pi'
 created_date: '2026-10-15 00:38'
-updated_date: '2026-10-19 04:07'
+updated_date: '2026-10-19 11:39'
 labels:
   - F1
 dependencies:
@@ -25,10 +25,10 @@ Sections5 and6 require revision-safe publication and deterministic retries after
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Text PUT, DELETE and exact reads enforce observed epochs and ETags, tombstones, case-insensitive path identity and monotonic revisions across delete/recreate.
-- [ ] #2 Lost-response retries, same-key different-payload, in-flight duplicates, client-scoped keys and UUIDv7 age/skew limits satisfy AC-01/17/27/38 without duplicate revisions or content leakage.
-- [ ] #3 A failed mutation leaves files, revisions, changes, FTS, counters and receipts unchanged; append/rename/restore can reuse the same atomic guarantees without duplicating policy.
-- [ ] #4 Real Worker/DO integration tests cover the actual HTTP boundary with a test-only identity fixture while the default production composition continues to fail closed.
+- [x] #1 Text PUT, DELETE and exact reads enforce observed epochs and ETags, tombstones, case-insensitive path identity and monotonic revisions across delete/recreate.
+- [x] #2 Lost-response retries, same-key different-payload, in-flight duplicates, client-scoped keys and UUIDv7 age/skew limits satisfy AC-01/17/27/38 without duplicate revisions or content leakage.
+- [x] #3 A failed mutation leaves files, revisions, changes, FTS, counters and receipts unchanged; append/rename/restore can reuse the same atomic guarantees without duplicating policy.
+- [x] #4 Real Worker/DO integration tests cover the actual HTTP boundary with a test-only identity fixture while the default production composition continues to fail closed.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -120,4 +120,18 @@ Independent Task 4 review approved with one readiness finding. R1-R3 are fixed. 
 Final whole-branch code review requests changes for WB-R1. Hono routing-path decoding preserves percent and reserved escapes, so the adapter can send a different filename to native authority. Design review approves the bounded slice with its stated follow-ups. Prior findings remain closed or explicitly deferred. The parent assigned a two-file transport and HTTP regression repair. It must decode the original URL path exactly once, then use canonical path normalization. Publication, human branch review, and task closure remain blocked until the final reviewer confirms the correction.
 
 WB-R1 repair decodes the original URL pathname exactly once and then uses public canonical path normalization. A real SELF request reached product RED: HTTP 201 returned notes/100%25.md instead of notes/100%.md. The final regression checks exact returned, native, current, historical, updated, and deleted identities. It keeps literal percent-looking and space names distinct. Encoded dot segments and malformed paths return invalid_path without file or revision effects. Fixture ordering and cross-case spelling assertion failures remain test setup history. The final full check passed 550 tests: 251 native Worker, 16 HTTP, 229 protocol, 52 tooling, and 2 plugin. Documentation, type, lint, and dry-run builds passed. Worker dry-run upload is 752.93 KiB, or 126.52 KiB gzip. Parent inspected source and saved evidence without repeating tests. Two editor probes remain inconclusive. The final Sol reviewer must confirm closure before human review or publication.
+
+Final whole-branch reviewer f431df1f approved code and design with notes at 6171bd6. WB-R1 is fixed and no actionable finding remains. Human branch review pn-6bcd8c approved the same source without requested changes. All four acceptance criteria are proven by native and real HTTP regression evidence. The parent closes only OAB-6.3. No later task starts, no local merge occurs, and publication uses the existing PR default.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Implemented conditional inline text PUT, DELETE, and exact current/history reads through native Durable Object storage. Publication, file history, feed, FTS, counters, and idempotency receipts share one synchronous transaction.
+
+Canonical contracts and fresh schema 3 preserve exact observed revisions, client-scoped replay, collision visibility, and original admission deadlines. Worker routes reserve before body consumption and keep production identity denial. A single raw URL decode preserves exact filenames.
+
+Validation: bun run check passed 550 tests, plus lint, documentation, type, schema-drift, and dry-run build gates. Final Sol code/design review approved with notes. Human review pn-6bcd8c approved without requested changes.
+
+Limits: Task 3 initial functional RED remains an accepted process exception. OAB-6.8.1 defers SQL/full-row measurements before aggregate qualification or budget changes. Editor probes remain inconclusive, and local-runtime tests do not prove deployment or aggregate capacity.
+<!-- SECTION:FINAL_SUMMARY:END -->

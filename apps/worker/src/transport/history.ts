@@ -337,7 +337,7 @@ async function decodeRenameCommand(
 	return command.data;
 }
 
-/** Build restore identity from canonical conflict metadata and observed source ETag. */
+/** Build restore identity from canonical metadata and the observed current destination ETag. */
 async function decodeRestoreCommand(
 	bytes: Uint8Array,
 	path: string,

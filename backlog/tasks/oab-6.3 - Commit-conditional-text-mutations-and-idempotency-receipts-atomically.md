@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-10-15 00:38'
-updated_date: '2026-10-19 02:25'
+updated_date: '2026-10-19 02:31'
 labels:
   - F1
 dependencies:
@@ -103,7 +103,7 @@ Independent Task 3 review found no critical or important implementation issues. 
 
 Deferred task OAB-6.8.1 tracks SQL statement counts and complete row sizes under OAB-6.8. Its trigger precedes aggregate platform qualification or publication budget changes.
 
-Task 3 did not establish functional RED. The parent retains the working implementation and records this exception under AGENTS.md. Current behavioral tests and passing checks remain the validation evidence, not proof of earlier RED.
+Task 3 did not establish functional RED. The owner-supplied session project instructions allow retaining an implementation that arrives green. The branch AGENTS.md does not contain that exception. The parent retains the working implementation and records the process gap here. Current behavioral tests and passing checks remain the validation evidence, not proof of earlier RED.
 
 The parent confirmed that all four named review JSON files exist in the linked worktree. Corrective review will receive absolute paths. Editor cleanliness remains inconclusive.
 

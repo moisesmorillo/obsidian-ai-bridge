@@ -39,6 +39,7 @@ import {
 	revisions,
 	vaultSchema,
 } from "@worker/infrastructure/sqlite/schema-model";
+import type { Logger } from "drizzle-orm";
 import { and, eq, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/durable-sqlite";
 
@@ -50,9 +51,9 @@ export class SqliteTextStore {
 	constructor(
 		storage: DurableObjectStorage,
 		private readonly coordinator: SqliteMutationCoordinator,
-		private readonly ports: { now: () => number },
+		private readonly ports: { now: () => number; logger?: Logger },
 	) {
-		this.db = drizzle(storage, { schema: vaultSchema });
+		this.db = drizzle(storage, { schema: vaultSchema, logger: ports.logger });
 	}
 
 	/** Reserve a ticket and optional idempotency claim for a text mutation. */

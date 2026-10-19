@@ -39,6 +39,7 @@ import {
 	revokedGrants,
 	vaultSchema,
 } from "@worker/infrastructure/sqlite/schema-model";
+import type { Logger } from "drizzle-orm";
 import { and, asc, count, eq, gt, inArray, lte } from "drizzle-orm";
 import {
 	type DrizzleSqliteDODatabase,
@@ -60,9 +61,13 @@ export class SqliteAdmissionAuthority {
 	/** Create a Drizzle session over native storage and retain the authority's clock and ticket-ID ports. Schema bootstrap stays separate. */
 	constructor(
 		storage: DurableObjectStorage,
-		private readonly ports: { now: () => number; newTicketId: () => string },
+		private readonly ports: {
+			now: () => number;
+			newTicketId: () => string;
+			logger?: Logger;
+		},
 	) {
-		this.db = drizzle(storage, { schema: vaultSchema });
+		this.db = drizzle(storage, { schema: vaultSchema, logger: ports.logger });
 	}
 
 	/** Return the current epoch after revocation and operation-scope checks, without reserving a ticket. */

@@ -7,6 +7,7 @@ import { SqliteMutationCoordinator } from "@worker/infrastructure/sqlite/mutatio
 import { initializeVaultStorage } from "@worker/infrastructure/sqlite/schema";
 import { SqliteTextStore } from "@worker/infrastructure/sqlite/text-files";
 import { clearTestVault } from "@worker/test-fixtures/admission";
+import type { Logger } from "drizzle-orm";
 
 /** Fixed epoch used by isolated native text-store fixtures. */
 export const TEXT_FIXTURE_EPOCH = "0123456789abcdef0123456789abcdef";
@@ -119,6 +120,7 @@ export async function seedLiveTextState(
 /** Create a real SQLite vault and all Task 3 collaborators inside a disposable Durable Object. */
 export async function withTextStore(
 	assert: (fixture: TextStoreFixture) => Promise<void>,
+	logger?: Logger,
 ): Promise<void> {
 	const stub = env.VAULTS.get(env.VAULTS.newUniqueId());
 	await runInDurableObject(stub, async (_instance, state) => {
@@ -135,11 +137,16 @@ export async function withTextStore(
 		const admissions = new SqliteAdmissionAuthority(storage, {
 			now: () => now,
 			newTicketId: () => (++sequence).toString(16).padStart(32, "0"),
+			logger,
 		});
 		const coordinator = new SqliteMutationCoordinator(storage, admissions, {
 			now: () => now,
+			logger,
 		});
-		const store = new SqliteTextStore(storage, coordinator, { now: () => now });
+		const store = new SqliteTextStore(storage, coordinator, {
+			now: () => now,
+			logger,
+		});
 		await assert({
 			storage,
 			admissions,

@@ -29,6 +29,7 @@ import {
 	receipts,
 	vaultSchema,
 } from "@worker/infrastructure/sqlite/schema-model";
+import type { Logger } from "drizzle-orm";
 import { and, eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/durable-sqlite";
 
@@ -38,9 +39,9 @@ export class SqliteMutationCoordinator {
 	constructor(
 		storage: DurableObjectStorage,
 		private readonly admissions: SqliteAdmissionAuthority,
-		private readonly ports: { now: () => number },
+		private readonly ports: { now: () => number; logger?: Logger },
 	) {
-		this.db = drizzle(storage, { schema: vaultSchema });
+		this.db = drizzle(storage, { schema: vaultSchema, logger: ports.logger });
 	}
 
 	private readonly db;

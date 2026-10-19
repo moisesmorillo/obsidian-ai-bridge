@@ -9,6 +9,8 @@ export const RELATIONAL_SCHEMA_STATEMENTS = [
 	'CREATE UNIQUE INDEX `files_live_key` ON `files` (`path_key`) WHERE "files"."deleted" = 0;',
 	"CREATE INDEX `files_key` ON `files` (`path_key`);",
 	"CREATE TABLE `meta` (\n\t`key` text PRIMARY KEY,\n\t`value` text NOT NULL\n);",
+	"CREATE TABLE `mutation_claims` (\n\t`client_id` text NOT NULL,\n\t`key` text NOT NULL,\n\t`admission_id` text NOT NULL,\n\tPRIMARY KEY(`client_id`, `key`),\n\tFOREIGN KEY (`admission_id`) REFERENCES `operation_admissions`(`id`) ON UPDATE no action ON DELETE cascade\n);",
+	"CREATE UNIQUE INDEX `mutation_claims_admission` ON `mutation_claims` (`admission_id`);",
 	"CREATE TABLE `operation_admissions` (\n\t`id` text PRIMARY KEY NOT NULL,\n\t`client_id` text NOT NULL,\n\t`grant_id` text NOT NULL,\n\t`epoch` text NOT NULL,\n\t`fingerprint` text NOT NULL,\n\t`admitted_at` integer NOT NULL,\n\t`expires_at` integer NOT NULL,\n\t`state` text NOT NULL,\n\tCONSTRAINT \"operation_admissions_state_check\" CHECK(\"operation_admissions\".\"state\" IN ('reserved', 'active', 'uncertain'))\n);",
 	"CREATE INDEX `operation_admissions_client_expiry` ON `operation_admissions` (`client_id`,`expires_at`);",
 	"CREATE INDEX `operation_admissions_expiry` ON `operation_admissions` (`expires_at`);",

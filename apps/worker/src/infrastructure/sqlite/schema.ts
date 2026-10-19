@@ -8,7 +8,7 @@ import {
 } from "drizzle-orm/durable-sqlite";
 
 /** Persisted SQLite schema version; incompatible changes require an explicit version boundary. */
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 /** Narrow FTS5 DDL unsupported by the relational model and kept at its engine-specific seam. */
 const FTS_SCHEMA = `CREATE VIRTUAL TABLE files_fts USING fts5(
@@ -103,8 +103,8 @@ function isCanonicalSafeInteger(value: string, nonNegative: boolean): boolean {
 }
 
 /**
- * Creates a fresh canonical schema-version-2 vault or validates an existing version-2 store.
- * Version-1 and other unsupported stores fail without migration, repair, replacement, or epoch changes.
+ * Creates a fresh canonical schema-version-3 vault or validates an existing version-3 store.
+ * Version-1, version-2, and other unsupported stores fail without migration, repair, replacement, or epoch changes.
  * All DDL and initial metadata writes run synchronously in one Durable SQLite transaction.
  * @param storage - The native storage belonging to this vault Durable Object.
  * @param createEpoch - Called only during fresh initialization; an invalid result aborts the transaction.
@@ -116,6 +116,13 @@ export function initializeVaultStorage(
 	createEpoch: () => string,
 	now: () => number,
 ): void {
+	storage.sql.exec("PRAGMA foreign_keys = ON");
+	const foreignKeys = storage.sql
+		.exec<{ foreign_keys: number }>("PRAGMA foreign_keys")
+		.toArray()[0]?.foreign_keys;
+	if (foreignKeys !== 1)
+		throw new Error("SQLite foreign-key enforcement is unavailable");
+
 	const db = drizzle(storage, { schema: vaultSchema });
 	db.transaction((tx) => {
 		const catalogObjects = tx.all<CatalogObject>(

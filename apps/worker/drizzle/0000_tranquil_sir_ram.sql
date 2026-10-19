@@ -68,6 +68,15 @@ CREATE TABLE `meta` (
 	`value` text NOT NULL
 );
 --> statement-breakpoint
+CREATE TABLE `mutation_claims` (
+	`client_id` text NOT NULL,
+	`key` text NOT NULL,
+	`admission_id` text NOT NULL,
+	PRIMARY KEY(`client_id`, `key`),
+	FOREIGN KEY (`admission_id`) REFERENCES `operation_admissions`(`id`) ON UPDATE no action ON DELETE cascade
+);
+--> statement-breakpoint
+CREATE UNIQUE INDEX `mutation_claims_admission` ON `mutation_claims` (`admission_id`);--> statement-breakpoint
 CREATE TABLE `operation_admissions` (
 	`id` text PRIMARY KEY NOT NULL,
 	`client_id` text NOT NULL,

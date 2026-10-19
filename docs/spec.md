@@ -166,7 +166,7 @@ CREATE TABLE blob_refs (hash TEXT PRIMARY KEY, size INTEGER NOT NULL, first_ref_
 CREATE TABLE exports (id TEXT PRIMARY KEY, started_at INTEGER, finished_at INTEGER, status TEXT, head_seq INTEGER, calls_this_hour INTEGER, hour_started_at INTEGER, commit_sha TEXT, error TEXT);
 ```
 
-The canonical initial application schema version is `2`. Version-1 stores fail closed without writes. Initialization does not migrate or repair unsupported stores.
+The canonical initial schema version is 3. Versions 1 and 2 fail closed without writes. The service does not migrate or repair unsupported storage.
 
 Version 2 adds `operation_admissions`:
 
@@ -194,6 +194,18 @@ At 1,024 or more retained rows, admission returns `admission_limited` with a pos
 For global denial, the retry delay uses the earliest retained expiry across the vault. Its value is `max(1, ceil((earliest_expiry - now) / 1000))` seconds.
 
 A record expires when `expires_at <= now`. Reservations and active tickets use a 60-second deadline. Uncertain work keeps its original deadline and charged slot.
+
+Version 3 adds the `mutation_claims` table:
+
+| Column | Contract |
+| --- | --- |
+| `client_id` | `TEXT NOT NULL` |
+| `key` | `TEXT NOT NULL` |
+| `admission_id` | `TEXT NOT NULL REFERENCES operation_admissions(id) ON DELETE CASCADE` |
+
+The composite primary key is `(client_id, key)`. The unique `mutation_claims_admission` index covers `admission_id`. Claims link client keys to retained admissions.
+
+Admission deletion cascades claim deletion. The admission owns the fingerprint, grant, epoch, state, and original deadline.
 
 ### 5.3 R2 layout
 

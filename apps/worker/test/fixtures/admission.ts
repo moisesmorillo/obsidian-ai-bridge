@@ -10,6 +10,7 @@ export function clearTestVault(storage: DurableObjectStorage): void {
 	storage.transactionSync(() => {
 		storage.sql.exec("DROP TABLE IF EXISTS files_fts");
 		for (const statement of [
+			"DROP TABLE IF EXISTS mutation_claims",
 			"DROP TABLE IF EXISTS operation_admissions",
 			"DROP TABLE IF EXISTS export_pins",
 			"DROP TABLE IF EXISTS revoked_grants",

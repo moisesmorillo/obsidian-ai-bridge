@@ -1,7 +1,7 @@
 {
 	"version": "6",
 	"dialect": "sqlite",
-	"id": "8cdf33ad-abf8-47db-9244-394c8b4da3c7",
+	"id": "6d785fad-a0f6-4380-89f9-a8775e5072ec",
 	"prevId": "00000000-0000-0000-0000-000000000000",
 	"tables": {
 		"blob_refs": {
@@ -405,6 +405,58 @@
 			"indexes": {},
 			"foreignKeys": {},
 			"compositePrimaryKeys": {},
+			"uniqueConstraints": {},
+			"checkConstraints": {}
+		},
+		"mutation_claims": {
+			"name": "mutation_claims",
+			"columns": {
+				"client_id": {
+					"name": "client_id",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true,
+					"autoincrement": false
+				},
+				"key": {
+					"name": "key",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true,
+					"autoincrement": false
+				},
+				"admission_id": {
+					"name": "admission_id",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true,
+					"autoincrement": false
+				}
+			},
+			"indexes": {
+				"mutation_claims_admission": {
+					"name": "mutation_claims_admission",
+					"columns": ["admission_id"],
+					"isUnique": true
+				}
+			},
+			"foreignKeys": {
+				"mutation_claims_admission_id_operation_admissions_id_fk": {
+					"name": "mutation_claims_admission_id_operation_admissions_id_fk",
+					"tableFrom": "mutation_claims",
+					"tableTo": "operation_admissions",
+					"columnsFrom": ["admission_id"],
+					"columnsTo": ["id"],
+					"onDelete": "cascade",
+					"onUpdate": "no action"
+				}
+			},
+			"compositePrimaryKeys": {
+				"mutation_claims_client_id_key_pk": {
+					"columns": ["client_id", "key"],
+					"name": "mutation_claims_client_id_key_pk"
+				}
+			},
 			"uniqueConstraints": {},
 			"checkConstraints": {}
 		},

@@ -25,6 +25,7 @@ import {
 	prepareDescriptor,
 	prepareOperation,
 } from "@worker/application/admission";
+import { FileOperationDenied } from "@worker/application/files";
 import {
 	files,
 	meta,
@@ -39,7 +40,7 @@ import {
 } from "drizzle-orm/durable-sqlite";
 
 /** Official inferred Drizzle callback type for synchronous SQLite work inside infrastructure. */
-type VaultTransaction = Parameters<
+export type VaultTransaction = Parameters<
 	Parameters<DrizzleSqliteDODatabase<typeof vaultSchema>["transaction"]>[0]
 >[0];
 
@@ -71,37 +72,72 @@ export class SqliteAdmissionAuthority {
 			throw error;
 		}
 		try {
-			return this.db.transaction((tx) => {
-				const currentEpoch = assertPolicy(tx, context, prepared);
-				const now = this.ports.now();
-				const expiresAt = now + 60_000;
-				if (!Number.isSafeInteger(now) || !Number.isSafeInteger(expiresAt))
-					return denied({ kind: "invalid_request" });
-				cleanupExpiredAdmissions(tx, context.client_id, now);
-				const limitFailure = checkClientLimit(tx, context.client_id, now);
-				if (limitFailure) return denied(limitFailure);
-				const vaultLimitFailure = checkVaultLimit(tx, now);
-				if (vaultLimitFailure) return denied(vaultLimitFailure);
-				const id = nextAdmissionId(tx, () => this.ports.newTicketId());
-				if (!id) return denied({ kind: "invalid_request" });
-				tx.insert(operationAdmissions)
-					.values({
-						id,
-						clientId: context.client_id,
-						grantId: context.grant_id,
-						epoch: currentEpoch,
-						fingerprint: prepared.descriptorFingerprint,
-						admittedAt: now,
-						expiresAt,
-						state: "reserved",
-					})
-					.run();
-				return { ok: true, lease: { admission_id: id, expires_at: expiresAt } };
-			});
+			return this.db.transaction((tx) =>
+				this.reserveInTransaction(tx, context, prepared),
+			);
 		} catch (error) {
 			if (error instanceof AdmissionDenied) return denied(error.failure);
 			throw error;
 		}
+	}
+
+	/** Reserve one prepared descriptor inside the caller's transaction using the existing policy and limits. */
+	reserveInTransaction(
+		tx: VaultTransaction,
+		context: AuthorizationContext,
+		prepared: PreparedDescriptor,
+	): RequestAdmissionResult {
+		const currentEpoch = assertPolicyInTransaction(tx, context, prepared);
+		const now = this.ports.now();
+		const expiresAt = now + 60_000;
+		if (!Number.isSafeInteger(now) || !Number.isSafeInteger(expiresAt))
+			return denied({ kind: "invalid_request" });
+		cleanupExpiredAdmissions(tx, context.client_id, now);
+		const limitFailure = checkClientLimit(tx, context.client_id, now);
+		if (limitFailure) return denied(limitFailure);
+		const vaultLimitFailure = checkVaultLimit(tx, now);
+		if (vaultLimitFailure) return denied(vaultLimitFailure);
+		const id = nextAdmissionId(tx, () => this.ports.newTicketId());
+		if (!id) return denied({ kind: "invalid_request" });
+		tx.insert(operationAdmissions)
+			.values({
+				id,
+				clientId: context.client_id,
+				grantId: context.grant_id,
+				epoch: currentEpoch,
+				fingerprint: prepared.descriptorFingerprint,
+				admittedAt: now,
+				expiresAt,
+				state: "reserved",
+			})
+			.run();
+		return { ok: true, lease: { admission_id: id, expires_at: expiresAt } };
+	}
+
+	/** Delete only an observed admission that matches its client, grant, epoch, full fingerprint, and ID. */
+	settleMatchingInTransaction(
+		tx: VaultTransaction,
+		context: AuthorizationContext,
+		operation: PreparedOperation,
+		ticketId: string,
+	): void {
+		const currentEpoch = assertPolicyInTransaction(tx, context, operation);
+		const observed = tx
+			.select()
+			.from(operationAdmissions)
+			.where(eq(operationAdmissions.id, ticketId))
+			.all()[0];
+		if (
+			!observed ||
+			operation.client_id !== context.client_id ||
+			observed.id !== ticketId ||
+			observed.clientId !== context.client_id ||
+			observed.grantId !== context.grant_id ||
+			observed.epoch !== currentEpoch ||
+			observed.fingerprint !== operation.fingerprint
+		)
+			return;
+		tx.delete(operationAdmissions).where(admissionRowPredicate(observed)).run();
 	}
 
 	/** Settle or retain only an admission owned by the verified client and grant. */
@@ -183,7 +219,7 @@ export class SqliteAdmissionAuthority {
 		}
 		try {
 			return this.db.transaction((tx) => {
-				const currentEpoch = assertPolicy(tx, context, prepared);
+				const currentEpoch = assertPolicyInTransaction(tx, context, prepared);
 				const now = this.ports.now();
 				if (!Number.isSafeInteger(now))
 					return denied({ kind: "invalid_request" });
@@ -273,7 +309,7 @@ export class SqliteAdmissionAuthority {
 		operation: PreparedOperation,
 		ticketId: string,
 	): void {
-		const currentEpoch = assertPolicy(tx, context, operation);
+		const currentEpoch = assertPolicyInTransaction(tx, context, operation);
 		if (operation.intent.op === "read")
 			throw new AdmissionDenied({ kind: "invalid_ticket" });
 		const now = this.ports.now();
@@ -301,37 +337,86 @@ export class SqliteAdmissionAuthority {
 			if (path === undefined)
 				throw new AdmissionDenied({ kind: "invalid_ticket" });
 			const current = tx
-				.select({ rev: files.rev, hash: files.hash, deleted: files.deleted })
+				.select({
+					rev: files.rev,
+					hash: files.hash,
+					deleted: files.deleted,
+					content: files.content,
+				})
 				.from(files)
 				.where(eq(files.path, path))
 				.limit(1)
 				.all()[0];
 			if (!current) throw new AdmissionDenied({ kind: "precondition_failed" });
 			const expectedTag = parseETag(precondition.etag);
-			if (expectedTag.epoch !== currentEpoch || expectedTag.rev !== current.rev)
+			if (
+				expectedTag.epoch !== currentEpoch ||
+				expectedTag.rev !== current.rev
+			) {
 				throw new AdmissionDenied({
 					kind: "precondition_failed",
 					etag: formatETag(currentEpoch, current.rev),
 					hash: current.hash,
 					deleted: current.deleted === 1,
+					...(context.scopes.includes("vault:read") &&
+					current.deleted === 0 &&
+					current.content !== null
+						? { content: current.content }
+						: {}),
 				});
+			}
+			if (operation.intent.op === "put" && current.deleted === 1) {
+				const alias = tx
+					.select({ path: files.path })
+					.from(files)
+					.where(and(eq(files.pathKey, pathKey(path)), eq(files.deleted, 0)))
+					.all()
+					.find(({ path: existingPath }) => existingPath !== path);
+				if (alias) {
+					if (alias.path === null)
+						throw new AdmissionDenied({ kind: "invalid_ticket" });
+					throw new FileOperationDenied({
+						kind: "path_collision",
+						existing_path: alias.path,
+					});
+				}
+			}
 		} else if (precondition.kind === "absent") {
 			const path = operation.intent.paths[0];
 			if (path === undefined)
 				throw new AdmissionDenied({ kind: "invalid_ticket" });
 			const current = tx
-				.select({ rev: files.rev, hash: files.hash, deleted: files.deleted })
+				.select({
+					path: files.path,
+					rev: files.rev,
+					hash: files.hash,
+					deleted: files.deleted,
+					content: files.content,
+				})
 				.from(files)
 				.where(and(eq(files.pathKey, pathKey(path)), eq(files.deleted, 0)))
 				.limit(1)
 				.all()[0];
-			if (current)
+			if (current) {
+				if (current.path === null)
+					throw new AdmissionDenied({ kind: "invalid_ticket" });
+				if (current.path !== path)
+					throw new FileOperationDenied({
+						kind: "path_collision",
+						existing_path: current.path,
+					});
 				throw new AdmissionDenied({
 					kind: "precondition_failed",
 					etag: formatETag(currentEpoch, current.rev),
 					hash: current.hash,
 					deleted: current.deleted === 1,
+					...(context.scopes.includes("vault:read") &&
+					current.deleted === 0 &&
+					current.content !== null
+						? { content: current.content }
+						: {}),
 				});
+			}
 		}
 
 		const consumed = tx
@@ -395,7 +480,7 @@ function sameAdmissionRow(
 }
 
 /** Check revocation before epoch within the caller's transaction, then return the current epoch. */
-function assertPolicy(
+export function assertPolicyInTransaction(
 	tx: VaultTransaction,
 	context: AuthorizationContext,
 	operation: PreparedDescriptor | PreparedOperation,

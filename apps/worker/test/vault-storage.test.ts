@@ -5,6 +5,7 @@ import {
 	generateEpoch,
 	initializeVaultStorage,
 	SCHEMA,
+	SCHEMA_VERSION,
 } from "@worker/infrastructure/sqlite/schema";
 import { RELATIONAL_SCHEMA_STATEMENTS } from "@worker/infrastructure/sqlite/schema.generated";
 import { clearTestVault } from "@worker/test-fixtures/admission";
@@ -51,7 +52,7 @@ describe("Vault SQLite persistence", () => {
 		expect(ftsDdl).toContain(
 			"tokenize = 'trigram case_sensitive 0 remove_diacritics 1'",
 		);
-		expect(RELATIONAL_SCHEMA_STATEMENTS).toHaveLength(15);
+		expect(RELATIONAL_SCHEMA_STATEMENTS).toHaveLength(17);
 	});
 
 	it("initializes the frozen schema and canonical metadata", async () => {
@@ -85,7 +86,7 @@ describe("Vault SQLite persistence", () => {
 				expect.arrayContaining(["files_live_key", "files_key"]),
 			);
 			const data = metadata(state.storage);
-			expect(data.schema_version).toBe("2");
+			expect(data.schema_version).toBe("3");
 			expect(EpochSchema.safeParse(data.epoch).success).toBe(true);
 			expect(data.head_seq).toBe("0");
 			expect(data.live_file_count).toBe("0");
@@ -187,7 +188,7 @@ describe("Vault SQLite persistence", () => {
 				"INSERT INTO files(path,path_key,rev,seq,hash,size,kind,deleted,updated_at,origin) VALUES ('keep.md','keep.md',1,1,'hash',0,'text',0,10,'test')",
 			);
 			state.storage.sql.exec(
-				"UPDATE meta SET value = '3' WHERE key = 'schema_version'",
+				"UPDATE meta SET value = '99' WHERE key = 'schema_version'",
 			);
 			let replacementRequested = false;
 			expect(() =>
@@ -209,7 +210,8 @@ describe("Vault SQLite persistence", () => {
 			).toHaveLength(1);
 			expect(metadata(state.storage).epoch).toBe(before.epoch);
 			state.storage.sql.exec(
-				"UPDATE meta SET value = '2' WHERE key = 'schema_version'",
+				"UPDATE meta SET value = ? WHERE key = 'schema_version'",
+				String(SCHEMA_VERSION),
 			);
 			state.storage.sql.exec("DROP INDEX files_key");
 			expect(() =>

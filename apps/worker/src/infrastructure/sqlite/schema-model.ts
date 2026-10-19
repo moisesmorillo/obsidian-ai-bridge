@@ -181,6 +181,22 @@ export const operationAdmissions = sqliteTable(
 	],
 );
 
+/** Links each client-scoped idempotency key to its exact retained admission owner. Admission deletion cascades claim removal. */
+export const mutationClaims = sqliteTable(
+	"mutation_claims",
+	{
+		clientId: text("client_id").notNull(),
+		key: text("key").notNull(),
+		admissionId: text("admission_id")
+			.notNull()
+			.references(() => operationAdmissions.id, { onDelete: "cascade" }),
+	},
+	(table) => [
+		primaryKey({ columns: [table.clientId, table.key] }),
+		uniqueIndex("mutation_claims_admission").on(table.admissionId),
+	],
+);
+
 /** Stores referenced content hashes and byte sizes. These rows describe references, not proof that external bytes exist or match their hash. */
 export const blobRefs = sqliteTable(
 	"blob_refs",
@@ -222,4 +238,5 @@ export const vaultSchema = {
 	blobRefs,
 	exports,
 	operationAdmissions,
+	mutationClaims,
 };

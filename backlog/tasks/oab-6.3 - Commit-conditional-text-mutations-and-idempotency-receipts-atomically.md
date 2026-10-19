@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-10-15 00:38'
-updated_date: '2026-10-18 20:52'
+updated_date: '2026-10-19 00:26'
 labels:
   - F1
 dependencies:
@@ -40,6 +40,8 @@ Approved by the owner through Plannotator pn-37ad1c. Plan: docs/superpowers/plan
 3. Implement conditional inline PUT, DELETE, and exact reads through the real Vault.
 4. Add real Worker-to-DO HTTP tests with a test-only identity entry and production default denial.
 Owner approved breaking storage changes without legacy migration. Fresh schema v3 rejects unsupported stores without repair or reset. Historical reads need X-Vault-Epoch. User selected subagents. Parent owns validation, Backlog, commits, and publication. No new dependencies or deployment. Human plan approval is complete. Frozen baseline passed all 369 tests before Task 1.
+
+Owner-approved workflow update: implementers now own task edits, debugging, RED/GREEN cycles, tests, and validation. The parent retains coordination, Backlog, commits, review, acceptance, and publication. This update replaces earlier parent-only validation instructions.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -64,4 +66,18 @@ Task 1 review repair passed parent validation with 488 tests. The strict file fa
 The parent kept the qualified RED tests unchanged. This repair failed the documentation gate once before a comment change. Fresh checks passed all compiler groups, documentation, Biome, builds, doctor, and diff validation.
 
 Wrangler used dry-run only. Independent corrective review remains pending. All four acceptance criteria remain unchecked.
+
+The parent accepted Task 1 after independent corrective review at 22d3df312691dbcbd74f08fade3ed92e4f41f1ff.
+
+Task 2 implementation passed native tests and bun run check. The full suite passed 515 tests: 52 tooling, 227 protocol, 234 Worker, and 2 plugin tests. Lint, documentation, all workspace typechecks, and dry-run builds passed.
+
+The parent verified saved output without repeating completed checks. The focused mutation and admission suites passed 58 tests. The source manifest retains 139 inputs, including the deleted schema tombstone.
+
+The coordinator no longer changes fingerprint mismatch classification based on unrelated active admissions. The new R1 regression first failed with invalid_ticket and then passed with idempotency_mismatch.
+
+The unrelated retry case retains its fixture and exact ownership snapshots. Its corrected expectation now matches the fingerprint contract. The separate claim-ID mismatch case still returns invalid_ticket.
+
+Earlier import-order, collision-expectation, and focused-suite failures remain recorded. Independent Task 2 review and acceptance remain pending. All four acceptance criteria remain unchecked.
+
+The owner approved autonomous whole-task subagent execution. AGENTS.md now records implementer-owned edits, debugging, tests, and validation. The parent retains coordination, review, acceptance, and publication.
 <!-- SECTION:NOTES:END -->

@@ -63,6 +63,20 @@ History: this repository was restarted from scratch on 2026-10-11. Any agent mem
 
 Human review: when the `plannotator` tool is available (Pi), open the plan file with it (`annotate`) right after writing a plan and wait for the feedback message before implementing; before finishing a branch, open a `review` of the branch diff against `main` and address every annotation before the pull request. Without the tool, present the plan and the diff in the conversation instead.
 
+## Subagent execution
+
+Use subagents to complete approved tasks, not individual edits. Give each implementer a clear scope, contracts, and acceptance criteria.
+
+Implementers own their edits, debugging, RED/GREEN cycles, and task validation, including `bun run check`. They report actual commands, results, and remaining risks. The parent coordinates dependencies, reviews completed diffs and evidence, and manages acceptance and publication.
+
+Do not pause for routine edits, formatting, or comments. After an edit mismatch, read the current file and repair only the remaining changes. Ask only for real blockers, conflicting instructions, scope changes, or actions that need owner approval.
+
+Group questions and report progress at task boundaries. Do not ask the parent to approve each intermediate edit. Use independent subagents in parallel only when dependencies and write isolation allow it.
+
+Keep one writer per worktree. Preserve failing evidence and all mandatory checks. Do not weaken tests to finish faster.
+
+Stop and report agent-launch or runtime failures. Do not switch execution modes or models without approval. Mandatory human review and deployment restrictions remain in force.
+
 <!-- BACKLOG.MD GUIDELINES START -->
 <!-- backlog.md-instructions-version: 1.53.0 -->
 <CRITICAL_INSTRUCTION>

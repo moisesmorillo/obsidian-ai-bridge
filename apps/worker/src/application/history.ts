@@ -94,6 +94,16 @@ export type PreparedHistoryCommand = Readonly<{
 	operation: PreparedOperation;
 }>;
 
+/** Distinguish a source-only rename lease from a complete file descriptor. */
+type MutationReservation =
+	| { kind: "rename"; reservation: RenameReservation }
+	| { kind: "file"; descriptor: OperationDescriptor };
+
+/** A validated capacity reservation, before a complete command binds to it. */
+type ReservationValidation =
+	| { ok: true; reservation: MutationReservation }
+	| { ok: false; failure: FileFailure };
+
 /** Reserve before body reads, then authorize and publish one immutable command. */
 export async function executeFileCommand(
 	gateway: HistoryVaultGateway,
@@ -102,33 +112,20 @@ export async function executeFileCommand(
 	key: string | undefined,
 	readCommand: () => Promise<FileCommand>,
 ): Promise<TextMutationResult> {
-	const parsedRename = RenameReservationSchema.safeParse(descriptor);
-	const renameReservation = parsedRename.success
-		? parsedRename.data
-		: undefined;
-	const parsedDescriptor = renameReservation
-		? undefined
-		: OperationDescriptorSchema.safeParse(descriptor);
-	const normalDescriptor = parsedDescriptor?.success
-		? parsedDescriptor.data
-		: undefined;
-	if (!renameReservation && !normalDescriptor)
-		return { ok: false, failure: { kind: "invalid_request" } };
-	if (
-		normalDescriptor &&
-		normalDescriptor.op !== "append" &&
-		normalDescriptor.op !== "restore"
-	)
-		return { ok: false, failure: { kind: "invalid_request" } };
-	if (normalDescriptor?.op === "append" && key === undefined)
-		return { ok: false, failure: { kind: "idempotency_key_required" } };
-	if (normalDescriptor?.op === "append" && normalDescriptor.epoch === undefined)
-		return { ok: false, failure: { kind: "invalid_request" } };
-	const reservation = renameReservation
-		? await gateway.beginRenameSource(context, renameReservation, key)
-		: normalDescriptor
-			? await gateway.beginMutation(context, normalDescriptor, key)
-			: { ok: false as const, failure: { kind: "invalid_request" as const } };
+	const validation = validateMutationReservation(descriptor, key);
+	if (!validation.ok) return { ok: false, failure: validation.failure };
+	const reservation =
+		validation.reservation.kind === "rename"
+			? await gateway.beginRenameSource(
+					context,
+					validation.reservation.reservation,
+					key,
+				)
+			: await gateway.beginMutation(
+					context,
+					validation.reservation.descriptor,
+					key,
+				);
 	if (!reservation.ok) return { ok: false, failure: reservation.failure };
 	let preserveAdmission = false;
 	try {
@@ -138,51 +135,24 @@ export async function executeFileCommand(
 		const parsedSnapshot = parsedCommand.data;
 		const prepared = await prepareHistoryCommand(context, parsedSnapshot);
 		const command = prepared.command;
-		if (renameReservation) {
-			if (
-				command.op !== "rename" ||
-				command.intent.paths[0] !== renameReservation.path ||
-				command.intent.precondition.kind !== "match" ||
-				command.intent.precondition.etag !== renameReservation.if_match ||
-				(renameReservation.epoch !== undefined &&
-					command.intent.epoch !== renameReservation.epoch) ||
-				command.key !== key
-			)
-				throw new AdmissionDenied({ kind: "invalid_request" });
-		} else if (
-			!normalDescriptor ||
-			command.op === "rename" ||
-			JSON.stringify({
-				op: command.intent.op,
-				epoch: command.intent.epoch,
-				paths: command.intent.paths,
-				precondition: command.intent.precondition,
-			}) !==
-				JSON.stringify({
-					op: normalDescriptor.op,
-					epoch: normalDescriptor.epoch,
-					paths: normalDescriptor.paths,
-					precondition: normalDescriptor.precondition,
-				})
-		)
-			throw new AdmissionDenied({ kind: "invalid_request" });
 		const intent = OperationIntentSchema.parse(prepared.command.intent);
-		if ((command.key ?? undefined) !== key)
+		if (!commandMatchesReservation(command, validation.reservation, key))
 			throw new AdmissionDenied({ kind: "invalid_request" });
 		let authorized: AdmissionResult;
 		try {
-			authorized = renameReservation
-				? await gateway.authorizeRenameSource(
-						context,
-						intent,
-						reservation.lease.admission_id,
-						key,
-					)
-				: await gateway.authorize(
-						context,
-						intent,
-						reservation.lease.admission_id,
-					);
+			authorized =
+				validation.reservation.kind === "rename"
+					? await gateway.authorizeRenameSource(
+							context,
+							intent,
+							reservation.lease.admission_id,
+							key,
+						)
+					: await gateway.authorize(
+							context,
+							intent,
+							reservation.lease.admission_id,
+						);
 		} catch (error) {
 			preserveAdmission = true;
 			await gateway.finishAdmission(
@@ -237,6 +207,82 @@ export async function executeFileCommand(
 			return { ok: false, failure: error.failure };
 		throw error;
 	}
+}
+
+/** Validate one source-only rename lease or complete file-operation reservation. */
+function validateMutationReservation(
+	descriptor: OperationDescriptor | RenameReservation,
+	key: string | undefined,
+): ReservationValidation {
+	const parsedRename = RenameReservationSchema.safeParse(descriptor);
+	const renameReservation = parsedRename.success
+		? parsedRename.data
+		: undefined;
+	const parsedDescriptor = renameReservation
+		? undefined
+		: OperationDescriptorSchema.safeParse(descriptor);
+	const normalDescriptor = parsedDescriptor?.success
+		? parsedDescriptor.data
+		: undefined;
+	if (!renameReservation && !normalDescriptor)
+		return { ok: false, failure: { kind: "invalid_request" } };
+	if (
+		normalDescriptor &&
+		normalDescriptor.op !== "append" &&
+		normalDescriptor.op !== "restore"
+	)
+		return { ok: false, failure: { kind: "invalid_request" } };
+	if (normalDescriptor?.op === "append" && key === undefined)
+		return { ok: false, failure: { kind: "idempotency_key_required" } };
+	if (normalDescriptor?.op === "append" && normalDescriptor.epoch === undefined)
+		return { ok: false, failure: { kind: "invalid_request" } };
+	if (renameReservation)
+		return {
+			ok: true,
+			reservation: { kind: "rename", reservation: renameReservation },
+		};
+	if (!normalDescriptor)
+		return { ok: false, failure: { kind: "invalid_request" } };
+	return {
+		ok: true,
+		reservation: { kind: "file", descriptor: normalDescriptor },
+	};
+}
+
+/** Match exact command identity and key to its validated capacity reservation. */
+function commandMatchesReservation(
+	command: ImmutableFileCommand,
+	reservation: MutationReservation,
+	key: string | undefined,
+): boolean {
+	if (reservation.kind === "rename") {
+		const source = reservation.reservation;
+		return (
+			command.op === "rename" &&
+			command.intent.paths[0] === source.path &&
+			command.intent.precondition.kind === "match" &&
+			command.intent.precondition.etag === source.if_match &&
+			(source.epoch === undefined || command.intent.epoch === source.epoch) &&
+			command.key === key
+		);
+	}
+	const descriptor = reservation.descriptor;
+	return (
+		command.op !== "rename" &&
+		JSON.stringify({
+			op: command.intent.op,
+			epoch: command.intent.epoch,
+			paths: command.intent.paths,
+			precondition: command.intent.precondition,
+		}) ===
+			JSON.stringify({
+				op: descriptor.op,
+				epoch: descriptor.epoch,
+				paths: descriptor.paths,
+				precondition: descriptor.precondition,
+			}) &&
+		(command.key ?? undefined) === key
+	);
 }
 
 /** Hashes bytes with SHA-256 and returns lowercase hexadecimal output. */

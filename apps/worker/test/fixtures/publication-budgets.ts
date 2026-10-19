@@ -27,6 +27,27 @@ function varintSize(value: number): number {
 }
 
 /**
+ * Encode one safe integer as its SQLite serial type and payload width in bytes.
+ * Zero and one use serial types 8 and 9 with no payload bytes.
+ */
+function integerRecordEncoding(value: number): {
+	serial: number;
+	payload: number;
+} {
+	if (value === 0) return { serial: 8, payload: 0 };
+	if (value === 1) return { serial: 9, payload: 0 };
+	if (value >= -128 && value <= 127) return { serial: 1, payload: 1 };
+	if (value >= -32_768 && value <= 32_767) return { serial: 2, payload: 2 };
+	if (value >= -8_388_608 && value <= 8_388_607)
+		return { serial: 3, payload: 3 };
+	if (value >= -2_147_483_648 && value <= 2_147_483_647)
+		return { serial: 4, payload: 4 };
+	if (value >= -140_737_488_355_328 && value <= 140_737_488_355_327)
+		return { serial: 5, payload: 6 };
+	return { serial: 6, payload: 8 };
+}
+
+/**
  * Measure a SQLite record in bytes, with UTF-8 text, serial types, and the complete header.
  * Nulls, blobs, and safe integers use SQLite storage widths, including payload-free zero and one.
  * Reject other values. B-tree cells, rowids, indexes, and page overhead are separate database costs.
@@ -44,33 +65,7 @@ export function sqliteRecordBytes(values: readonly unknown[]): number {
 		}
 		if (typeof value !== "number" || !Number.isSafeInteger(value))
 			throw new TypeError("SQLite record value is not supported");
-		const width =
-			value === 0 || value === 1
-				? 0
-				: value >= -128 && value <= 127
-					? 1
-					: value >= -32768 && value <= 32767
-						? 2
-						: value >= -8_388_608 && value <= 8_388_607
-							? 3
-							: value >= -2_147_483_648 && value <= 2_147_483_647
-								? 4
-								: value >= -140_737_488_355_328 && value <= 140_737_488_355_327
-									? 6
-									: 8;
-		return {
-			serial:
-				width === 0
-					? value === 0
-						? 8
-						: 9
-					: width === 6
-						? 5
-						: width === 8
-							? 6
-							: width,
-			payload: width,
-		};
+		return integerRecordEncoding(value);
 	});
 	const payloadBytes = payloadSizes.reduce(
 		(sum, item) => sum + item.payload,

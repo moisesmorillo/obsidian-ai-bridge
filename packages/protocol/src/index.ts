@@ -37,6 +37,15 @@ export {
 	TextReadResponseSchema,
 	TextReadResultSchema,
 } from "@protocol/schemas/files";
+export {
+	FileCommandSchema,
+	HistoryEntrySchema,
+	HistoryRequestSchema,
+	HistoryResultSchema,
+	RenameRequestSchema,
+	RenameResultSchema,
+	RestoreRequestSchema,
+} from "@protocol/schemas/history";
 export { IdempotencyKeySchema } from "@protocol/schemas/idempotency";
 export { PathSchema } from "@protocol/schemas/path";
 export type {
@@ -74,5 +83,14 @@ export type {
 	TextReadResponse,
 	TextReadResult,
 } from "@protocol/types/files";
+export type {
+	FileCommand,
+	HistoryEntry,
+	HistoryRequest,
+	HistoryResult,
+	RenameRequest,
+	RenameResult,
+	RestoreRequest,
+} from "@protocol/types/history";
 export type { IdempotencyKey } from "@protocol/types/idempotency";
 export type { Path } from "@protocol/types/path";

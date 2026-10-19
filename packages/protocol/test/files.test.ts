@@ -87,13 +87,15 @@ function encodedFailure(
 }
 
 describe("current epoch metadata contract", () => {
-	it("accepts only the supported read and text mutation operations", () => {
+	it("accepts the current read, text mutation, and history mutation operations", () => {
 		expect(CurrentEpochRequestSchema.parse({ operation: "put" })).toEqual({
 			operation: "put",
 		});
-		expect(
-			CurrentEpochRequestSchema.safeParse({ operation: "append" }).success,
-		).toBe(false);
+		for (const operation of ["rename", "append", "restore"] as const) {
+			expect(CurrentEpochRequestSchema.parse({ operation })).toEqual({
+				operation,
+			});
+		}
 		expect(
 			CurrentEpochRequestSchema.safeParse({ operation: "read", extra: true })
 				.success,
@@ -832,6 +834,25 @@ describe("file failure HTTP mapping", () => {
 			501,
 			"not_implemented",
 			"The service does not support this operation.",
+		],
+		[{ kind: "tombstone" }, 409, "tombstone", "The path is deleted."],
+		[
+			{ kind: "path_occupied" },
+			409,
+			"path_occupied",
+			"The destination path is occupied.",
+		],
+		[
+			{ kind: "idempotency_key_required" },
+			428,
+			"idempotency_key_required",
+			"The idempotency key is required.",
+		],
+		[
+			{ kind: "unsupported_append_kind" },
+			415,
+			"unsupported_append_kind",
+			"The file kind does not support append.",
 		],
 		[
 			{ kind: "unauthorized" },

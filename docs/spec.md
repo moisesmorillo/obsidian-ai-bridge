@@ -234,7 +234,7 @@ Base `/v1`. JSON unless noted. Authentication: `Authorization: Bearer <access to
 | `POST` | `/v1/files/*path:rename` | write | Body `{to}`. Requires `If-Match` of source. Destination must be free on `path_key` (or equal, case-only rename). One `rename` change entry carrying `from_path`, `from_rev` (new tombstone of source), `path = to`, `rev = to_rev`, `hash`. Receivers never wait for a later `put`: the entry has everything needed, and bytes are fetched by `GET /v1/files/to?rev=to_rev` when the local copy cannot be reused |
 | `POST` | `/v1/files/*path:append` | write | Body raw text. **`Idempotency-Key` and `X-Vault-Epoch` required** (`428 idempotency_key_required` / `409 epoch_mismatch`). Appends at end of **current** text revision inside the transaction. No `If-Match` needed. `409 tombstone` if path is deleted; `404` if never existed; `413` if result exceeds 1 MB; `415` if path is a blob |
 | `GET` | `/v1/history/*path` | read | Retained revisions `[{rev, hash, size, deleted, origin, at}]` |
-| `POST` | `/v1/files/*path:restore` | write | Body `{source_rev}` plus optional `{as_conflict_copy: true}`. **Requires `If-Match` with the current ETag of the destination** (live or tombstone), so a retry after a lost response cannot resurrect a note someone deleted again. Creates a new revision with the bytes of `source_rev`. If path is live and `as_conflict_copy` is false → `409 path_occupied` |
+| `POST` | `/v1/files/*path:restore` | write | Body `{source_rev}` plus optional `{as_conflict_copy: true}`. **Requires `If-Match` with the current ETag of the destination** (live or tombstone), so a retry after a lost response cannot resurrect a note someone deleted again. Creates a new revision with the bytes of `source_rev`. If path is live and `as_conflict_copy` is false → `409 path_occupied`. `as_conflict_copy: true` restores in place at the same path, with the exact current destination ETag, and retains the displaced revision |
 | `GET` | `/v1/search?q=&limit=` | read | §10 |
 
 ### 6.2 Status and error codes
@@ -415,7 +415,7 @@ Transport: Streamable HTTP at `/mcp`. Auth: Bearer token from §9; resource meta
 | `get_history` | read | `path` | retained revisions |
 | `restore_note` | write | `path`, `source_etag`, `current_etag`, `as_conflict_copy?` | new `etag`. `412` if `current_etag` is stale |
 
-All tools call the same DO operations as `/v1`. A successful mutation enters the feed and reaches every enrolled device by the normal pull, with `origin` set to the agent's client id and shown in the panel.
+All tools call the same DO operations as `/v1`. A successful mutation enters the feed and reaches every enrolled device by the normal pull, with `origin` set to the agent's client id and shown in the panel. Restore with `as_conflict_copy: true` writes in place at the same path and retains the displaced revision.
 
 ## 9. OAuth and authorization
 

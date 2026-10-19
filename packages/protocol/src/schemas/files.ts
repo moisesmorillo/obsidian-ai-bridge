@@ -37,11 +37,22 @@ export const FileFailureSchema = z.union([
 		z.object({ kind: z.literal("revision_pruned") }).strict(),
 		z.object({ kind: z.literal("idempotency_mismatch") }).strict(),
 		z.object({ kind: z.literal("not_implemented") }).strict(),
+		z.object({ kind: z.literal("tombstone") }).strict(),
+		z.object({ kind: z.literal("path_occupied") }).strict(),
+		z.object({ kind: z.literal("idempotency_key_required") }).strict(),
+		z.object({ kind: z.literal("unsupported_append_kind") }).strict(),
 	]),
 ]);
 
 /** Supported operation that can request the current vault epoch without an admission. */
-export const CurrentEpochOperationSchema = z.enum(["read", "put", "delete"]);
+export const CurrentEpochOperationSchema = z.enum([
+	"read",
+	"put",
+	"delete",
+	"rename",
+	"append",
+	"restore",
+]);
 
 /** Authorized metadata request for the current epoch and operation scope. */
 export const CurrentEpochRequestSchema = z
@@ -73,6 +84,10 @@ const FileHttpErrorSchema = z.enum([
 	"idempotency_mismatch",
 	"admission_limited",
 	"not_implemented",
+	"tombstone",
+	"path_occupied",
+	"idempotency_key_required",
+	"unsupported_append_kind",
 	"unauthorized",
 	"internal_error",
 ]);
@@ -96,6 +111,10 @@ export const FILE_HTTP_MESSAGES = Object.freeze({
 	idempotency_mismatch: "This key belongs to a different operation.",
 	admission_limited: "The vault cannot accept another operation now.",
 	not_implemented: "The service does not support this operation.",
+	tombstone: "The path is deleted.",
+	path_occupied: "The destination path is occupied.",
+	idempotency_key_required: "The idempotency key is required.",
+	unsupported_append_kind: "The file kind does not support append.",
 	unauthorized: "Authentication is not valid.",
 	internal_error: "The service cannot complete the request.",
 } as const) satisfies Readonly<
@@ -112,7 +131,9 @@ const FileHttpStatusSchema = z.union([
 	z.literal(410),
 	z.literal(412),
 	z.literal(413),
+	z.literal(415),
 	z.literal(422),
+	z.literal(428),
 	z.literal(429),
 	z.literal(500),
 	z.literal(501),
@@ -137,6 +158,10 @@ export const FILE_HTTP_STATUSES = Object.freeze({
 	idempotency_mismatch: 422,
 	admission_limited: 429,
 	not_implemented: 501,
+	tombstone: 409,
+	path_occupied: 409,
+	idempotency_key_required: 428,
+	unsupported_append_kind: 415,
 	unauthorized: 401,
 	internal_error: 500,
 } as const) satisfies Readonly<

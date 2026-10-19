@@ -4,7 +4,7 @@
 	"type": "module",
 	"scripts": {
 		"typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p test/tsconfig.json && tsc --noEmit -p tooling/tsconfig.json && bun tooling/generate-runtime-schema.ts --check",
-		"test": "vitest run",
+		"test": "vitest run --config vitest.config.ts && vitest run --config vitest.http.config.ts",
 		"build": "wrangler deploy --dry-run --outdir dist",
 		"db:generate": "drizzle-kit generate --config tooling/drizzle.config.ts && bun ../../node_modules/.bin/biome format --write drizzle/meta/*.json && bun tooling/generate-runtime-schema.ts"
 	},

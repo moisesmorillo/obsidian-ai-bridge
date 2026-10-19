@@ -15,6 +15,7 @@ import {
 	AdmissionDenied,
 	prepareOperation,
 } from "@worker/application/admission";
+import { FileOperationDenied } from "@worker/application/files";
 import { SqliteAdmissionAuthority } from "@worker/infrastructure/sqlite/admission";
 import {
 	changes,
@@ -1108,14 +1109,13 @@ describe("atomic admission consumption and revocation", () => {
 				active.operation,
 				active.ticketId,
 			);
-			expectAdmissionFailure(error, {
-				kind: "precondition_failed",
-				etag: formatETag(epoch, 1),
-				hash: existing.hash,
-				deleted: false,
-			});
-			if (error instanceof AdmissionDenied)
-				expect(error.failure).not.toHaveProperty("content");
+			expect(error).toBeInstanceOf(FileOperationDenied);
+			if (error instanceof FileOperationDenied)
+				expect(error.failure).toEqual({
+					kind: "path_collision",
+					existing_path: existing.path,
+				});
+			expect(error).not.toHaveProperty("failure.content");
 			expect(captureCompleteState(state.storage)).toEqual(before);
 		});
 	});

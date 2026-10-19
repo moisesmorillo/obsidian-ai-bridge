@@ -58,6 +58,17 @@ describe("R2 blob integrity evidence", () => {
 		expect(await store.head("a".repeat(64))).toBeUndefined();
 	});
 
+	it("does not attest a missing R2 object and looks up its exact content key", async () => {
+		const hash = "b".repeat(64);
+		const bucket = bucketWithHead(null);
+		const head = vi.fn(bucket.head.bind(bucket));
+		bucket.head = head;
+		const store = new R2BlobStore(bucket);
+
+		expect(await store.head(hash)).toBeUndefined();
+		expect(head).toHaveBeenCalledExactlyOnceWith(`blobs/${hash}`);
+	});
+
 	it("returns the stored checksum rather than trusting ETag or custom metadata", async () => {
 		const hash = "a".repeat(64);
 		const checksum = Uint8Array.from({ length: 32 }, () => 0xaa).buffer;

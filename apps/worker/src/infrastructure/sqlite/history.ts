@@ -32,7 +32,7 @@ import {
 	vaultSchema,
 } from "@worker/infrastructure/sqlite/schema-model";
 import type { Logger } from "drizzle-orm";
-import { and, eq, sql } from "drizzle-orm";
+import { and, asc, eq, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/durable-sqlite";
 
 /** Parsed native command with no mutable nested fields. */
@@ -150,6 +150,7 @@ export class SqliteHistoryStore {
 					})
 					.from(revisions)
 					.where(eq(revisions.path, parsed.data.path))
+					.orderBy(asc(revisions.rev))
 					.all();
 				return {
 					ok: true as const,

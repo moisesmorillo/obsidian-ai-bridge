@@ -1213,6 +1213,143 @@ describe("native history mutations", () => {
 		});
 	});
 
+	it("returns ordered metadata for multiple retained revisions without content", async () => {
+		await withTextStore(async (fixture) => {
+			const path = "notes/ordered-history.md";
+			const otherPath = "notes/unrelated-history.md";
+			await seedLiveTextState(fixture.storage, { path, content: "first" });
+			const updateIntent = await putIntent(
+				path,
+				"second",
+				formatETag(TEXT_FIXTURE_EPOCH, 1),
+			);
+			const updateTicket = await authorizeTicket(
+				fixture,
+				path,
+				"history-order-update",
+				1,
+				"second",
+			);
+			expect(
+				await fixture.store.commitText(
+					TEXT_FIXTURE_CONTEXT,
+					updateIntent,
+					updateTicket,
+					"second",
+					IdempotencyKeySchema.parse("history-order-update"),
+				),
+			).toMatchObject({ ok: true });
+			const deleteIntent = TextMutationIntentSchema.parse({
+				op: "delete",
+				epoch: TEXT_FIXTURE_EPOCH,
+				paths: [path],
+				precondition: {
+					kind: "match",
+					etag: formatETag(TEXT_FIXTURE_EPOCH, 2),
+				},
+				payload_hash: EMPTY_PAYLOAD_HASH,
+				size: 0,
+			});
+			const deleteKey = IdempotencyKeySchema.parse("history-order-delete");
+			const deleteLease = await fixture.coordinator.beginMutation(
+				TEXT_FIXTURE_CONTEXT,
+				{
+					op: "delete",
+					epoch: TEXT_FIXTURE_EPOCH,
+					paths: [path],
+					precondition: deleteIntent.precondition,
+				},
+				deleteKey,
+			);
+			if (!deleteLease.ok) throw new Error("History DELETE reservation failed");
+			const deleteAdmission = await fixture.admissions.authorize(
+				TEXT_FIXTURE_CONTEXT,
+				deleteIntent,
+				deleteLease.lease.admission_id,
+			);
+			if (!deleteAdmission.ok)
+				throw new Error("History DELETE authorization failed");
+			expect(
+				await fixture.store.commitText(
+					TEXT_FIXTURE_CONTEXT,
+					deleteIntent,
+					deleteAdmission.ticket.id,
+					undefined,
+					deleteKey,
+				),
+			).toMatchObject({ ok: true });
+			fixture.storage.sql.exec(
+				"DELETE FROM revisions WHERE path = ? AND rev = 2",
+				path,
+			);
+			fixture.storage.sql.exec(
+				"INSERT INTO revisions(path,rev,hash,size,kind,content,deleted,origin,at) VALUES (?, 9, ?, 3, 'text', 'one', 0, 'other-client', 329), (?, 10, ?, 3, 'text', 'two', 0, 'other-client', 330)",
+				otherPath,
+				"a".repeat(64),
+				otherPath,
+				"b".repeat(64),
+			);
+			let reverseProbe: number[] = [];
+			let pragmaError: string | undefined;
+			let pragmaSet = false;
+			try {
+				fixture.storage.sql.exec("PRAGMA reverse_unordered_selects = ON");
+				pragmaSet = true;
+				reverseProbe = fixture.storage.sql
+					.exec(
+						"SELECT rev, hash, size, deleted, origin, at FROM revisions WHERE path = ?",
+						path,
+					)
+					.toArray()
+					.map(({ rev }) => Number(rev));
+			} catch (error) {
+				pragmaError = error instanceof Error ? error.message : String(error);
+			}
+			const reversedUnorderedScan =
+				reverseProbe.length > 1 && reverseProbe[0] > reverseProbe[1];
+			console.info(
+				JSON.stringify({
+					capability: "reverse_unordered_selects",
+					available: reversedUnorderedScan,
+					reverseProbe,
+					pragmaError,
+				}),
+			);
+			try {
+				const history = await fixture.store.readHistory(TEXT_FIXTURE_CONTEXT, {
+					path,
+					epoch: TEXT_FIXTURE_EPOCH,
+				});
+				expect(history).toEqual({
+					ok: true,
+					entries: [
+						{
+							rev: 1,
+							hash: await hashBytes("first"),
+							size: 5,
+							deleted: false,
+							origin: "seed-client",
+							at: 321,
+						},
+						{
+							rev: 3,
+							hash: "",
+							size: 0,
+							deleted: true,
+							origin: TEXT_FIXTURE_CONTEXT.client_id,
+							at: 10_000,
+						},
+					],
+				});
+				expect(JSON.stringify(history)).not.toContain("first");
+				expect(JSON.stringify(history)).not.toContain("second");
+			} finally {
+				if (pragmaSet)
+					fixture.storage.sql.exec("PRAGMA reverse_unordered_selects = OFF");
+			}
+		});
+	});
+
 	it("returns ordered history metadata without content fields", async () => {
 		await withTextStore(async (fixture) => {
 			const path = "notes/history.md";

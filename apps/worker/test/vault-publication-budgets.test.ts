@@ -17,7 +17,7 @@ import {
 	TEXT_FIXTURE_EPOCH,
 	withTextStore,
 } from "@worker/test-fixtures/text-files";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 /** Build a create intent from native test content. */
 async function createIntent(path: string, content: string) {
@@ -245,6 +245,52 @@ describe("native publication query budgets", () => {
 		expect(observer.queries.length).toBeGreaterThan(0);
 	});
 
+	it("counts explicit Markdown FTS statements in native publication measurements", async () => {
+		const observer = new PublicationQueryObserver();
+		const report = vi.spyOn(console, "info").mockImplementation(() => {});
+		let applicationQueries: Array<{ sql: string; bindCount: number }> = [];
+		try {
+			await withTextStore(async ({ store, admissions }) => {
+				const path = "notes/fts-dispatch-count.md";
+				const content = "measured Markdown FTS dispatch";
+				const intent = await createIntent(path, content);
+				const begin = await store.beginMutation(TEXT_FIXTURE_CONTEXT, {
+					op: intent.op,
+					epoch: intent.epoch,
+					paths: intent.paths,
+					precondition: intent.precondition,
+				});
+				if (!begin.ok)
+					throw new Error("Markdown publication reservation failed");
+				const authorized = await admissions.authorize(
+					TEXT_FIXTURE_CONTEXT,
+					intent,
+					begin.lease.admission_id,
+				);
+				if (!authorized.ok)
+					throw new Error("Markdown publication authorization failed");
+				const start = observer.queries.length;
+				const result = await measureSpan(observer, "markdown/fts-count", () =>
+					store.commitText(
+						TEXT_FIXTURE_CONTEXT,
+						intent,
+						authorized.ticket.id,
+						content,
+					),
+				);
+				expect(result).toMatchObject({ ok: true });
+				applicationQueries = observer.queries.slice(start);
+			}, observer);
+			const measured = JSON.parse(String(report.mock.calls[0]?.[0]));
+			expect(measured.dispatches).toBe(applicationQueries.length);
+			expect(
+				applicationQueries.some(({ sql }) => sql.includes("files_fts")),
+			).toBe(true);
+		} finally {
+			report.mockRestore();
+		}
+	});
+
 	it("observes application SQL dispatches and corroborates native create state", async () => {
 		const observer = new PublicationQueryObserver();
 		await withTextStore(async ({ store, admissions, storage }) => {
@@ -297,7 +343,7 @@ async function hashOperation(value: string): Promise<string> {
 	).join("");
 }
 
-/** Count dispatches only inside one awaited application call. No values enter the report. */
+/** Count every observed application SQL dispatch in one awaited call; never log parameter values. */
 async function measureSpan<T>(
 	observer: PublicationQueryObserver,
 	name: string,
@@ -305,13 +351,7 @@ async function measureSpan<T>(
 ): Promise<T> {
 	const start = observer.queries.length;
 	const result = await run();
-	const queries = observer.queries
-		.slice(start)
-		.filter(
-			({ sql }) =>
-				!sql.includes("files_fts") &&
-				!/^\\s*(BEGIN|COMMIT|ROLLBACK)\\b/i.test(sql),
-		);
+	const queries = observer.queries.slice(start);
 	expect(queries.length).toBeGreaterThan(0);
 	const maxBindings = Math.max(...queries.map((query) => query.bindCount));
 	expect(maxBindings).toBeLessThanOrEqual(100);
@@ -646,7 +686,7 @@ describe("maximum native publication workloads", () => {
 							beforeUpdateBytes,
 						runtimeMemory: "unmeasured",
 						boundary:
-							"application dispatch only, excludes internal FTS SQL and implicit transaction control. Setup and measurement queries excluded. No aggregate headroom claim.",
+							"Observed application SQL dispatches only. Internal SQLite work outside the observer is not counted. Setup and measurement queries are excluded. No aggregate headroom claim.",
 					}),
 				);
 			}, observer);

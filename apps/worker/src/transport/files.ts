@@ -9,18 +9,20 @@ import {
 	EpochSchema,
 	encodeFileFailure,
 	IdempotencyKeySchema,
-	normalizePath,
 	parseETag,
 	TextMutationDescriptorSchema,
 	TextReadRequestSchema,
 } from "@obsidian-ai-bridge/protocol";
 import { FileOperationDenied } from "@worker/application/files";
+import type { HistoryVaultGateway } from "@worker/application/history";
 import {
 	executeTextMutation,
 	type TextVaultGateway,
 } from "@worker/application/text-files";
 import { prepareTextPayload } from "@worker/application/text-payload";
 import type { Env } from "@worker/env";
+import { handleHistoryCommand } from "@worker/transport/history";
+import { decodeAndNormalizePath } from "@worker/transport/path";
 import { Hono } from "hono";
 
 /** Maximum actual request body size accepted for inline text, in bytes. */
@@ -29,7 +31,10 @@ const MAX_TEXT_BYTES = 1_000_000;
 /** Register current and historical inline text routes behind injected identity and vault authority. */
 export function createFileRouter(
 	resolveIdentity: (request: Request) => Promise<AuthorizationContext | null>,
-	resolveVault: (env: Env, request: Request) => TextVaultGateway,
+	resolveVault: (
+		env: Env,
+		request: Request,
+	) => TextVaultGateway & HistoryVaultGateway,
 ): Hono<{ Bindings: Env }> {
 	const router = new Hono<{ Bindings: Env }>();
 	router.onError((_error, _context) =>
@@ -38,6 +43,21 @@ export function createFileRouter(
 	router.all("/*", async (context) => {
 		const identity = await resolveIdentity(context.req.raw);
 		if (identity === null) return errorResponse({ kind: "unauthorized" });
+		const rawPath = new URL(context.req.url).pathname;
+		const command = fileCommandFromPath(rawPath);
+		if (command !== undefined) {
+			if (context.req.method !== "POST")
+				return errorResponse({ kind: "not_found" });
+			const { path, operation } = command;
+			if (path === undefined) return errorResponse({ kind: "invalid_path" });
+			return handleHistoryCommand(
+				context.req.raw,
+				identity,
+				resolveVault(context.env, context.req.raw),
+				path,
+				operation,
+			);
+		}
 		const path = filePathFromRequest(context.req.raw);
 		if (path === undefined) return errorResponse({ kind: "invalid_path" });
 		if (context.req.method === "GET") {
@@ -135,16 +155,33 @@ export function createFileRouter(
 	return router;
 }
 
+/** Find a literal command suffix before decoding the source path exactly once. */
+function fileCommandFromPath(
+	pathname: string,
+):
+	| { path: string | undefined; operation: "rename" | "append" | "restore" }
+	| undefined {
+	const prefix = "/v1/files/";
+	if (!pathname.startsWith(prefix)) return undefined;
+	for (const operation of ["rename", "append", "restore"] as const) {
+		const suffix = `:${operation}`;
+		if (!pathname.endsWith(suffix)) continue;
+		return {
+			path: decodeAndNormalizePath(
+				pathname.slice(prefix.length, -suffix.length),
+			),
+			operation,
+		};
+	}
+	return undefined;
+}
+
 /** Decode the raw file URL path once, then apply the canonical path contract. */
 function filePathFromRequest(request: Request): string | undefined {
 	const pathname = new URL(request.url).pathname;
 	const prefix = "/v1/files/";
 	if (!pathname.startsWith(prefix)) return undefined;
-	try {
-		return normalizePath(decodeURIComponent(pathname.slice(prefix.length)));
-	} catch {
-		return undefined;
-	}
+	return decodeAndNormalizePath(pathname.slice(prefix.length));
 }
 
 /** Return an authoritative epoch mismatch after operation-specific policy checks. */

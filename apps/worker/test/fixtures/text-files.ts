@@ -1,4 +1,4 @@
-import { env, runInDurableObject } from "cloudflare:test";
+import { env, evictDurableObject, runInDurableObject } from "cloudflare:test";
 import type { AuthorizationContext } from "@obsidian-ai-bridge/protocol";
 import { pathKey } from "@obsidian-ai-bridge/protocol";
 import { prepareTextPayload } from "@worker/application/text-payload";
@@ -7,6 +7,7 @@ import { SqliteMutationCoordinator } from "@worker/infrastructure/sqlite/mutatio
 import { initializeVaultStorage } from "@worker/infrastructure/sqlite/schema";
 import { SqliteTextStore } from "@worker/infrastructure/sqlite/text-files";
 import { clearTestVault } from "@worker/test-fixtures/admission";
+import type { Logger } from "drizzle-orm";
 
 /** Fixed epoch used by isolated native text-store fixtures. */
 export const TEXT_FIXTURE_EPOCH = "0123456789abcdef0123456789abcdef";
@@ -116,9 +117,35 @@ export async function seedLiveTextState(
 	);
 }
 
+/** Access a real native Vault stub with an explicit eviction seam. */
+export type EvictableTextVault = Readonly<{
+	stub: ReturnType<typeof env.VAULTS.get>;
+	evict: () => Promise<void>;
+}>;
+
+/** Seed one real Vault actor so its committed rows survive a controlled eviction. */
+export async function createEvictableTextVault(
+	path: string,
+	content: string,
+): Promise<EvictableTextVault> {
+	const stub = env.VAULTS.get(env.VAULTS.newUniqueId());
+	await runInDurableObject(stub, async (_instance, state) => {
+		clearTestVault(state.storage);
+		state.storage.sql.exec("PRAGMA foreign_keys = ON");
+		initializeVaultStorage(
+			state.storage,
+			() => TEXT_FIXTURE_EPOCH,
+			() => Date.now(),
+		);
+		await seedLiveTextState(state.storage, { path, content });
+	});
+	return Object.freeze({ stub, evict: () => evictDurableObject(stub) });
+}
+
 /** Create a real SQLite vault and all Task 3 collaborators inside a disposable Durable Object. */
 export async function withTextStore(
 	assert: (fixture: TextStoreFixture) => Promise<void>,
+	logger?: Logger,
 ): Promise<void> {
 	const stub = env.VAULTS.get(env.VAULTS.newUniqueId());
 	await runInDurableObject(stub, async (_instance, state) => {
@@ -135,11 +162,16 @@ export async function withTextStore(
 		const admissions = new SqliteAdmissionAuthority(storage, {
 			now: () => now,
 			newTicketId: () => (++sequence).toString(16).padStart(32, "0"),
+			logger,
 		});
 		const coordinator = new SqliteMutationCoordinator(storage, admissions, {
 			now: () => now,
+			logger,
 		});
-		const store = new SqliteTextStore(storage, coordinator, { now: () => now });
+		const store = new SqliteTextStore(storage, coordinator, {
+			now: () => now,
+			logger,
+		});
 		await assert({
 			storage,
 			admissions,

@@ -6,9 +6,11 @@ import type {
 	AuthorizationContext,
 	CurrentEpochOperation,
 	CurrentEpochResult,
+	HistoryRequest,
 	IdempotencyKey,
 	OperationDescriptor,
 	OperationIntent,
+	RenameReservation,
 	RequestAdmissionResult,
 	TextMutationBeginResult,
 	TextMutationIntent,
@@ -16,6 +18,7 @@ import type {
 	TextReadRequest,
 	TextReadResult,
 } from "@obsidian-ai-bridge/protocol";
+import type { ImmutableFileCommand } from "@worker/application/history";
 import type { Env } from "@worker/env";
 import { SqliteAdmissionAuthority } from "@worker/infrastructure/sqlite/admission";
 import { SqliteMutationCoordinator } from "@worker/infrastructure/sqlite/mutations";
@@ -94,6 +97,15 @@ export class Vault extends DurableObject<Env> {
 		return this.textStore.beginMutation(context, descriptor, key);
 	}
 
+	/** Reserve source capacity before a rename body reveals its destination. */
+	beginRenameSource(
+		context: AuthorizationContext,
+		reservation: RenameReservation,
+		key?: IdempotencyKey,
+	): Promise<TextMutationBeginResult> {
+		return this.textStore.beginRenameSource(context, reservation, key);
+	}
+
 	/** Publish validated inline text through the atomic SQLite coordinator. */
 	commitText(
 		context: AuthorizationContext,
@@ -103,6 +115,28 @@ export class Vault extends DurableObject<Env> {
 		key?: IdempotencyKey,
 	): Promise<TextMutationResult> {
 		return this.textStore.commitText(context, intent, ticketId, content, key);
+	}
+
+	/** Commit a native rename, append, or restore command through the SQLite history owner. */
+	commitFileCommand(
+		context: AuthorizationContext,
+		intent: OperationIntent,
+		ticketId: string,
+		command: ImmutableFileCommand,
+		key?: IdempotencyKey,
+	): Promise<TextMutationResult> {
+		return this.textStore.commitFileCommand(
+			context,
+			intent,
+			ticketId,
+			command,
+			key,
+		);
+	}
+
+	/** Read retained content-free revision metadata after native policy checks. */
+	readHistory(context: AuthorizationContext, request: HistoryRequest) {
+		return this.textStore.readHistory(context, request);
 	}
 
 	/** Read current or selected historical inline text. */
@@ -120,6 +154,21 @@ export class Vault extends DurableObject<Env> {
 		completion: AdmissionCompletion,
 	): AdmissionFinishResult {
 		return this.admissionAuthority.finish(context, ticketId, completion);
+	}
+
+	/** Bind a complete rename command to its source-only capacity lease. */
+	authorizeRenameSource(
+		context: AuthorizationContext,
+		intent: OperationIntent,
+		admissionId: string,
+		key?: string,
+	): Promise<AdmissionResult> {
+		return this.admissionAuthority.authorizeRenameSource(
+			context,
+			intent,
+			admissionId,
+			key,
+		);
 	}
 
 	/** Authorize a complete bounded intent, optionally binding a prior reservation. */

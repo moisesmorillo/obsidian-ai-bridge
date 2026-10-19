@@ -278,9 +278,7 @@ export const FileHttpFailureSchema = z
 		body: FileHttpFailureBodySchema,
 		headers: z
 			.object({
-				"Retry-After": z
-					.string()
-					.regex(/^(?:[1-9]|[1-9][0-9]|[12][0-9]{2}|300)$/),
+				"Retry-After": z.string().regex(/^[1-9][0-9]*$/),
 			})
 			.strict()
 			.optional(),
@@ -293,7 +291,8 @@ export const FileHttpFailureSchema = z
 				message: "failure status does not match error",
 			});
 		}
-		const hasRetryAfter = result.headers?.["Retry-After"] !== undefined;
+		const retryAfter = result.headers?.["Retry-After"];
+		const hasRetryAfter = retryAfter !== undefined;
 		if (
 			(result.body.error === "admission_limited" ||
 				result.body.error === "blob_storage_unavailable") &&
@@ -302,6 +301,16 @@ export const FileHttpFailureSchema = z
 			ctx.addIssue({
 				code: "custom",
 				message: "retryable failure needs Retry-After",
+			});
+		}
+		if (
+			result.body.error === "blob_storage_unavailable" &&
+			retryAfter !== undefined &&
+			!/^(?:[1-9]|[1-9][0-9]|[12][0-9]{2}|300)$/.test(retryAfter)
+		) {
+			ctx.addIssue({
+				code: "custom",
+				message: "blob storage retry delay must be between 1 and 300 seconds",
 			});
 		}
 		if (

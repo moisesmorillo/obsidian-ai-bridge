@@ -1001,6 +1001,21 @@ describe("file failure HTTP mapping", () => {
 		});
 	});
 
+	it("preserves admission Retry-After values above the blob storage bound", () => {
+		const encoded = encodeFileFailure({
+			kind: "admission_limited",
+			retry_after_seconds: 301,
+		});
+		expect(FileHttpFailureSchema.parse(encoded)).toEqual({
+			status: 429,
+			body: {
+				error: "admission_limited",
+				message: "The vault cannot accept another operation now.",
+			},
+			headers: { "Retry-After": "301" },
+		});
+	});
+
 	it("encodes bounded Retry-After only for admission and blob storage failures", () => {
 		expect(
 			encodedFailure({ kind: "admission_limited", retry_after_seconds: 7 }),

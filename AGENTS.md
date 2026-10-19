@@ -2,7 +2,7 @@
 
 Sources of truth: `docs/spec.md` says what the product does; `Backlog.md` says what is in progress and what is deferred. There is no roadmap, no milestone marker, no qualification report. This file is read natively by Claude Code and by pi; there is no `CLAUDE.md`.
 
-Per task: pick a Backlog.md task; write the failing test first; implement; run `bun run check`; run the code-review skill; close the task. Evidence is a passing test, not a document.
+Per task: pick a Backlog.md task; write the failing test first; implement; run `bun run check`; run the code-review skill; close the task. Evidence is a passing test, not a document. If an implementation arrives green without an earlier failing test, keep it. Add the missing test and record the exception in the task notes. Do not delete and rebuild. Do not commit evidence, progress, or review-record documents; a passing test and the pull request are the record.
 
 Invariants no change may break: every mutation is conditional on the exact observed revision; absence never deletes; an obsolete revision never overwrites; every collision leaves two visible files or revisions.
 
@@ -61,7 +61,7 @@ Production source must not import tooling or its Node and parser dependencies.
 
 History: this repository was restarted from scratch on 2026-10-11. Any agent memory, note or document dated before that describes the legacy codebase and does not apply.
 
-Human review: when the `plannotator` tool is available (Pi), open the plan file with it (`annotate`) right after writing a plan and wait for the feedback message before implementing; before finishing a branch, open a `review` of the branch diff against `main` and address every annotation before the pull request. Without the tool, present the plan and the diff in the conversation instead.
+Human review: when the `plannotator` tool is available (Pi), open the plan file with it (`annotate`) right after writing a plan and wait for the feedback message before implementing; before finishing a branch, open a `review` of the branch diff against `main` and address every annotation before the pull request. Without the tool, present the plan and the diff in the conversation instead. Open one review per plan and one per branch, not one per task. Batch open decisions into one `ask_user_question` per plan.
 
 ## Subagent execution
 
@@ -100,3 +100,7 @@ Do not edit Backlog task, draft, document, decision, or milestone markdown files
 
 </CRITICAL_INSTRUCTION>
 <!-- BACKLOG.MD GUIDELINES END -->
+
+## Subagent execution
+
+The worker owns the whole task: failing test, implementation, `bun run check`, and the commit. The parent does not approve each step and does not re-run the worker's tests between steps. The parent reviews once per task with one reviewer subagent and once per branch before the pull request. Escalate to the owner only a real blocker, a scope change, or a decision the plan does not settle. Do not write a workflow controller inside a product task. Use the native `subagent` async run plus one reviewer. If a scripted workflow fails, add a deferred Backlog task.

@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-10-15 00:38'
-updated_date: '2026-10-19 00:26'
+updated_date: '2026-10-19 01:32'
 labels:
   - F1
 dependencies:
@@ -80,4 +80,22 @@ The unrelated retry case retains its fixture and exact ownership snapshots. Its 
 Earlier import-order, collision-expectation, and focused-suite failures remain recorded. Independent Task 2 review and acceptance remain pending. All four acceptance criteria remain unchecked.
 
 The owner approved autonomous whole-task subagent execution. AGENTS.md now records implementer-owned edits, debugging, tests, and validation. The parent retains coordination, review, acceptance, and publication.
+
+Task 2 passed independent review and parent acceptance at b954fa9bd8b6c14d1c0fd49fff2bb553808df86b.
+
+Task 3 adds conditional inline publication and exact current or historical reads. The parent reviewed all four changed files.
+
+The focused native suite passed 15 tests. The full check passed 530 tests: 52 tooling, 227 protocol, 249 Worker, and 2 plugin tests.
+
+Lint, documentation, four typechecks, and three builds passed. Wrangler used dry-run only. The parent inspected saved output without another test run.
+
+Native tests cover safe numeric boundaries and exact UPDATE and DELETE rollback snapshots. Later receipt and counter failures also restore FTS state.
+
+The observed database grew from 151552 to 2150400 bytes with a 1000000-byte Canvas payload. The receipt body used 190 bytes.
+
+Statement counts remain unmeasured. The editor probe returned four inconclusive results and no confirmed clean files.
+
+Initial failures do not prove functional RED. They include fixture errors and helper exceptions. The parent preserves this process gap without a retroactive TDD claim.
+
+Task 3 independent review and acceptance remain pending. Task 4 remains pending. All four acceptance criteria remain unchecked.
 <!-- SECTION:NOTES:END -->

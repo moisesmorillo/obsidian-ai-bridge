@@ -4,7 +4,11 @@ import {
 	runInDurableObject,
 	SELF,
 } from "cloudflare:test";
-import { TextReadResponseSchema } from "@obsidian-ai-bridge/protocol";
+import {
+	encodeFileFailure,
+	MutationSuccessSchema,
+	TextReadResponseSchema,
+} from "@obsidian-ai-bridge/protocol";
 import { initializeVaultStorage } from "@worker/infrastructure/sqlite/schema";
 import { clearTestVault } from "@worker/test-fixtures/admission";
 import testWorker from "@worker/test-fixtures/http-worker";
@@ -69,6 +73,28 @@ function createPendingBody(content: string): PendingBody {
 		wasCancelled: () => cancelled,
 		wasReadRequested: () => readRequested,
 	};
+}
+
+/** Hash the escaped fixture response with bounded writes, without a complete JSON fixture allocation. */
+async function escapedFailureDigest(
+	emptyBody: string,
+	marker: number,
+): Promise<ArrayBuffer> {
+	const digest = new (
+		crypto as Crypto & { DigestStream: typeof DigestStream }
+	).DigestStream("SHA-256");
+	const writer = digest.getWriter();
+	const encoder = new TextEncoder();
+	// Canonical encoding places this fixture's content last. Remove its closing quote and brace only.
+	expect(emptyBody.endsWith('"content":""}')).toBe(true);
+	await writer.write(encoder.encode(emptyBody.slice(0, -2)));
+	const chunk = encoder.encode("\\u0000".repeat(8_192));
+	for (let count = 0; count < 999_999; count += 8_192) {
+		await writer.write(chunk.subarray(0, Math.min(8_192, 999_999 - count) * 6));
+	}
+	await writer.write(encoder.encode(`${marker}"}`));
+	await writer.close();
+	return digest.digest;
 }
 
 /** Exercise conditional create, update, history, delete, and recreation through the Worker and real Vault binding. */
@@ -886,6 +912,195 @@ describe("conditional text HTTP lifecycle", () => {
 			[201, 201, 201, 201, 429].sort(),
 		);
 	});
+
+	it.each([32, 1_000_000])(
+		"characterizes four ordinary HTTP inline operations with %i source bytes each",
+		async (size) => {
+			const bodies = Array.from({ length: 4 }, (_, index) =>
+				createPendingBody(String(index).repeat(size)),
+			);
+			const requests = bodies.map((pending, index) =>
+				SELF.fetch(`https://worker.invalid/v1/files/retention-${index}.md`, {
+					method: "PUT",
+					headers: {
+						"If-None-Match": "*",
+						"X-Vault-Epoch": TEXT_FIXTURE_EPOCH,
+					},
+					body: pending.body,
+				}),
+			);
+			try {
+				await Promise.all(bodies.map((pending) => pending.ready));
+				expect(bodies.every((pending) => pending.wasReadRequested())).toBe(
+					true,
+				);
+			} finally {
+				for (const pending of bodies) pending.send();
+			}
+			const responses = await Promise.all(requests);
+			for (const response of responses) {
+				expect(response.status).toBe(201);
+				await response.body?.cancel();
+			}
+			for (let index = 0; index < 4; index++) {
+				const read = await SELF.fetch(
+					`https://worker.invalid/v1/files/retention-${index}.md`,
+				);
+				const body = TextReadResponseSchema.parse(await read.json());
+				if (body.content === null) throw new Error("Expected inline text");
+				expect(body.content.length).toBe(size);
+				expect(new TextEncoder().encode(body.content).byteLength).toBe(size);
+				expect(body.content[0]).toBe(String(index));
+				expect(body.content[size - 1]).toBe(String(index));
+			}
+			console.info(
+				"HTTP_INLINE_RETENTION",
+				JSON.stringify({
+					operations: 4,
+					sourceBytes: size,
+					contentUnits: size,
+				}),
+			);
+		},
+	);
+
+	it("characterizes slow escaped failure responses and cancellation without caller gates", async () => {
+		const expectedSizes: number[] = [];
+		const expectedDigests: ArrayBuffer[] = [];
+		for (let index = 0; index < 4; index++) {
+			const created = await SELF.fetch(
+				`https://worker.invalid/v1/files/escaped-${index}.canvas`,
+				{
+					method: "PUT",
+					headers: {
+						"If-None-Match": "*",
+						"X-Vault-Epoch": TEXT_FIXTURE_EPOCH,
+					},
+					body: "\0".repeat(999_999) + String(index),
+				},
+			);
+			expect(created.status).toBe(201);
+			const metadata = MutationSuccessSchema.parse(await created.json());
+			const empty = encodeFileFailure({
+				kind: "precondition_failed",
+				etag: metadata.etag,
+				hash: metadata.hash,
+				deleted: false,
+				content: "",
+			});
+			const emptyBody = JSON.stringify(empty.body);
+			expectedSizes.push(
+				new TextEncoder().encode(emptyBody).byteLength + 999_999 * 6 + 1,
+			);
+			expectedDigests.push(await escapedFailureDigest(emptyBody, index));
+		}
+		/** Start four real HTTP mutations without a result wait or an actor gate. */
+		const failFour = () =>
+			Promise.all(
+				Array.from({ length: 4 }, (_, index) =>
+					SELF.fetch(
+						`https://worker.invalid/v1/files/escaped-${index}.canvas`,
+						{
+							method: "PUT",
+							headers: {
+								"If-None-Match": "*",
+								"X-Vault-Epoch": TEXT_FIXTURE_EPOCH,
+							},
+							body: String(index + 4).repeat(1_000_000),
+						},
+					),
+				),
+			);
+		const first = await failFour();
+		const second: Response[] = [];
+		try {
+			for (const response of first) {
+				expect(response.status).toBe(412);
+				expect(response.bodyUsed).toBe(false);
+			}
+			// The test consumer reads no first-wave body before the second HTTP wave completes.
+			second.push(...(await failFour()));
+			for (const response of second) expect(response.status).toBe(412);
+			const unreadFirstWaveAtSecondCompletion = first.filter(
+				(response) => !response.bodyUsed,
+			).length;
+			expect(unreadFirstWaveAtSecondCompletion).toBe(4);
+			const completedBytes: number[] = [];
+			for (let index = 0; index < first.length; index++) {
+				const response = first[index];
+				if (!response?.body) throw new Error("Expected a failure body");
+				const reader = response.body.getReader({ mode: "byob" });
+				let total = 0;
+				const digest = new (
+					crypto as Crypto & { DigestStream: typeof DigestStream }
+				).DigestStream("SHA-256");
+				const writer = digest.getWriter();
+				try {
+					for (;;) {
+						const item = await reader.read(new Uint8Array(65_536));
+						if (item.done) break;
+						total += item.value.byteLength;
+						await writer.write(item.value);
+						expect(item.value.byteLength).toBeLessThanOrEqual(65_536);
+					}
+				} finally {
+					reader.releaseLock();
+				}
+				await writer.close();
+				expect(new Uint8Array(await digest.digest)).toEqual(
+					new Uint8Array(expectedDigests[index] ?? new ArrayBuffer(0)),
+				);
+				expect(total).toBe(expectedSizes[index]);
+				completedBytes.push(total);
+			}
+			for (const response of second) {
+				if (!response.body)
+					throw new Error("Expected a cancellable failure body");
+				const reader = response.body.getReader({ mode: "byob" });
+				try {
+					const prefix = await reader.read(new Uint8Array(65_536));
+					expect(prefix.done).toBe(false);
+					expect(prefix.value?.byteLength).toBeGreaterThan(0);
+					await reader.cancel("Slow HTTP consumer stopped");
+				} finally {
+					reader.releaseLock();
+				}
+			}
+			const stub = env.VAULTS.get(env.VAULTS.idFromName("worker.invalid"));
+			const rows = await runInDurableObject(stub, async (_instance, state) => ({
+				admissions: state.storage.sql
+					.exec("SELECT count(*) AS n FROM operation_admissions")
+					.toArray()[0]?.n,
+				files: state.storage.sql
+					.exec("SELECT rev, size FROM files ORDER BY path")
+					.toArray(),
+			}));
+			expect(rows.admissions).toBe(0);
+			expect(rows.files).toHaveLength(4);
+			expect(
+				rows.files.every((row) => row.rev === 1 && row.size === 1_000_000),
+			).toBe(true);
+			console.info(
+				"HTTP_FAILURE_RETENTION",
+				JSON.stringify({
+					firstWave: first.length,
+					unreadFirstWaveAtSecondCompletion,
+					secondWave: second.length,
+					sourceBytes: 1_000_000,
+					proposedBytes: 1_000_000,
+					contentUnits: 1_000_000,
+					completedBytes,
+					cancelledResponses: second.length,
+					admissions: rows.admissions,
+				}),
+			);
+		} finally {
+			for (const response of [...first, ...second]) {
+				if (response.body && !response.body.locked)
+					await response.body.cancel();
+			}
+		}
+	}, 15_000);
 
 	it("returns epoch mismatch for malformed observations and historical reads without a header", async () => {
 		const malformed = await SELF.fetch(url, {

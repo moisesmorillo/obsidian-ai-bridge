@@ -45,6 +45,11 @@ The owner selected both decisions in one question set:
 
 The slot covers PUT, append, rename, and restore body work. It remains charged until its related asynchronous work settles.
 
+The owner later approved one runtime flag after an isolated native comparison: `unhandled_rejection_after_microtask_checkpoint`.
+Add only this flag to `apps/worker/wrangler.jsonc`. Keep the compatibility date and dependency pins unchanged.
+The experiment preserves original cancellation timing and still reports a deliberate genuine unhandled rejection.
+Repeat native probes, adapter tests, full checks, and independent review before adapter acceptance. Do not deploy.
+
 ## Contract and publication sequence
 
 1. Validate identity, scope, path, epoch, preconditions, and canonical declaration syntax without reading request bytes.
@@ -121,7 +126,7 @@ Primary documentation retrieved on 2026-10-19:
 | Active body work | `N <= 4` across clients, grants, paths, and vault hosts in one Worker isolate | Fifth request gets 429 without a queue |
 | Blob application buffers | Target `4 requests * 4 buffers * 65,536 bytes = 1,048,576 bytes` | Verify buffer ownership and pending writes in tests |
 | Inline source bytes | `4 * 1,000,000 = 4,000,000 bytes` | The same slots cover inline and command bodies |
-| Inline retained copies | Inventory actual byte arrays, UTF-16 strings, validation copies, RPC payloads, and failure bodies | Target at most 32 MiB of upload-owned retained data across four requests |
+| Active application data | Inventory Worker backing arrays, strings, validation copies, active authority values, and response preparation | At most 32 MiB under the final owner scope below |
 | Blob size | `4 * 25,000,000 = 100,000,000 bytes` can reach R2 concurrently | Streamed bytes are not a heap allocation budget |
 | New upload I/O | Worker HEAD + optional PUT + post-race HEAD, then Vault HEAD | At most four R2 operations across both invocations, without in-request retries |
 | Outgoing connection fan-out | At most one R2 operation and one authority RPC pending in the upload sequence | Below six per invocation. Count native behavior in integration tests |
@@ -135,9 +140,25 @@ The 32 MiB target is not a measured runtime result. Task 3 must replace it with 
 Do not call a four-slot counter alone proof of the memory target.
 Native stream queues, platform internals, garbage collection, routing, authentication, and unrelated reads also use isolate memory.
 The difference between 128 MB and application buffers is not proven headroom for those costs.
-This plan bounds upload-owned retention. It does not certify total isolate RSS or the general OAB-6.8 runtime envelope.
-If upload-owned retention cannot meet the target, stop before acceptance. Do not defer an OAB-6.5 acceptance failure.
-Keep broader memory and CPU qualification explicitly outside this result. Do not change deployment limits or claim deployed measurements.
+This plan bounds active application retention under the final owner scope below. It does not certify total isolate RSS.
+An active application-data failure still blocks acceptance. Native retention follows the explicit owner deferral, not an inferred passing result.
+Keep broader memory and CPU qualification outside this result. Do not change deployment limits or claim deployed measurements.
+
+### Final owner decision on criterion 4
+
+The owner settles the criterion on 2026-10-20. This decision replaces the earlier native-retention scope and its acceptance gates.
+
+> The 32 MiB limit covers only data our application creates and retains: Worker buffers, strings, validation copies, and authority application values during active operations.
+> Native workerd buffers, transport-retained RPC results, and fragments retained by native layers remain outside this limit.
+> Close R1 as "intentionally deferred" and measure native retention during OAB-6.8 runtime-envelope work in a real deployment.
+
+Source: owner decision on criterion 4, 2026-10-20. The quotation above is an English translation.
+
+R1 disposition: **intentionally deferred**, not proved safe and not a measured heap breach.
+Deferred task: **OAB-6.8.2**. Trigger: real-deployment native-retention measurement during OAB-6.8 runtime-envelope work.
+Deployment still needs explicit authorization. The four-slot cap and all integrity, CAS, receipt, and file-size rules remain unchanged.
+Complete whole-branch review, human branch review, and the PR without another criterion proposal or criterion review.
+Ask the owner only if `bun run check` fails or a specification change becomes necessary.
 
 ## Review focus
 
@@ -170,8 +191,9 @@ Keep broader memory and CPU qualification explicitly outside this result. Do not
 - Add `BlobMetadataSchema` with path, ETag, hash, size, blob kind, deletion state, origin, timestamp, and `large`.
 - `large` is true only for Markdown/Canvas stored as a blob above 1,000,000 bytes.
 - Add canonical single-byte-range selection. Reject multiple, malformed, unsatisfiable, or over-1,000,000-byte selections.
-- Export `tryAcquireBodySlot(): (() => void) | undefined` from `application/body-budget.ts`.
+- Export `tryAcquireBodySlot(responseProduction?: Promise<void>): (() => void) | undefined` from `application/body-budget.ts`.
 - The release function is idempotent. Acquisition has no asynchronous gap and no pending-request collection.
+- Keep capacity until operation work and optional owned response production both settle.
 
 **Tests:** `packages/protocol/test/blobs.test.ts`, failure-codec tests, and `apps/worker/test/body-budget.test.ts`.
 
@@ -218,7 +240,8 @@ Keep broader memory and CPU qualification explicitly outside this result. Do not
 - Complete `BlobStore.putVerified` with the streaming and conditional-race policy above.
 - Add `executeBlobPut` in `application/blobs.ts`, using the existing reservation, authorization, finish, and receipt policies.
 - Wire one isolate-scoped body budget instance into production and test transport composition.
-- Keep the slot across body handling, upload, authority calls, and cleanup. No per-router or per-client counter substitutes for it.
+- Keep the slot across body handling, upload, authority calls, cleanup, and owned response production.
+- No per-router or per-client counter substitutes for the shared slot.
 - Preserve existing inline JSON GET responses. Blob GET returns raw bytes with the authoritative file ETag.
 - Blob responses expose `Accept-Ranges: bytes`, exact `Content-Length`, and `X-File-Large: true|false`.
 - Single range GET returns 206 with exact `Content-Range`. Whole-object GET streams without whole-object buffering.

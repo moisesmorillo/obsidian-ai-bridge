@@ -4,7 +4,10 @@ import { R2BlobStore } from "@worker/infrastructure/r2/blobs";
 import { initializeVaultStorage } from "@worker/infrastructure/sqlite/schema";
 import { clearTestVault } from "@worker/test-fixtures/admission";
 import testWorker from "@worker/test-fixtures/http-worker";
-import { TEXT_FIXTURE_EPOCH } from "@worker/test-fixtures/text-files";
+import {
+	captureTextStoreState,
+	TEXT_FIXTURE_EPOCH,
+} from "@worker/test-fixtures/text-files";
 import { createWorker } from "@worker/transport/worker";
 import { beforeEach, describe, expect, it } from "vitest";
 
@@ -693,5 +696,113 @@ describe("declared blob HTTP", () => {
 		expect(put.status).toBe(201);
 		const get = await SELF.fetch(url);
 		expect(new Uint8Array(await get.arrayBuffer())).toEqual(bytes);
+	});
+	it.each(["live", "missing", "deleted", "large"] as const)(
+		"rejects append from authoritative %s blob state without mutation",
+		async (state) => {
+			const bytes =
+				state === "large"
+					? new Uint8Array(1_500_000).fill(97)
+					: new Uint8Array([0, 255, 1, 128]);
+			const hash = await digest(bytes);
+			const url = `https://blob.invalid/v1/files/append-state.${state === "large" ? "md" : "bin"}`;
+			if (state !== "missing") {
+				const created = await SELF.fetch(url, {
+					method: "PUT",
+					headers: {
+						"If-None-Match": "*",
+						"X-Vault-Epoch": TEXT_FIXTURE_EPOCH,
+						"X-Content-SHA256": hash,
+						"X-Content-Size": String(bytes.byteLength),
+					},
+					body: bytes,
+				});
+				expect(created.status).toBe(201);
+				if (state === "deleted")
+					expect(
+						(
+							await SELF.fetch(url, {
+								method: "DELETE",
+								headers: { "If-Match": created.headers.get("ETag") ?? "" },
+							})
+						).status,
+					).toBe(200);
+			}
+			const stub = env.VAULTS.get(env.VAULTS.idFromName("blob.invalid"));
+			const before = await runInDurableObject(
+				stub,
+				async (_instance, objectState) =>
+					captureTextStoreState(objectState.storage),
+			);
+			const object = await env.R2_BUCKET.get(`blobs/${hash}`);
+			const beforeHash =
+				object === null
+					? null
+					: await digest(new Uint8Array(await object.arrayBuffer()));
+			const append = await SELF.fetch(`${url}:append`, {
+				method: "POST",
+				headers: {
+					"X-Vault-Epoch": TEXT_FIXTURE_EPOCH,
+					"Idempotency-Key": "binary-append-http-key",
+				},
+				body: "x",
+			});
+			expect(append.status).toBe(
+				state === "missing" ? 404 : state === "deleted" ? 409 : 415,
+			);
+			expect(await append.json()).toMatchObject({
+				error:
+					state === "missing"
+						? "not_found"
+						: state === "deleted"
+							? "tombstone"
+							: "unsupported_append_kind",
+			});
+			const after = await runInDurableObject(
+				stub,
+				async (_instance, objectState) =>
+					captureTextStoreState(objectState.storage),
+			);
+			expect(after).toEqual(before);
+			const preserved = await env.R2_BUCKET.get(`blobs/${hash}`);
+			expect(
+				preserved === null
+					? null
+					: await digest(new Uint8Array(await preserved.arrayBuffer())),
+			).toBe(beforeHash);
+		},
+	);
+	it("checks binary append policy before it discloses state or reads a body", async () => {
+		for (const [extra, status] of [
+			[{ "X-Test-Identity": "read" }, 403],
+			[{ "X-Test-Identity": "revoked" }, 401],
+			[{ "X-Vault-Epoch": "a".repeat(32) }, 409],
+			[{ "Idempotency-Key": "" }, 400],
+		] as const) {
+			const request = new Request(
+				"https://blob.invalid/v1/files/private.bin:append",
+				{
+					method: "POST",
+					headers: {
+						"X-Vault-Epoch": TEXT_FIXTURE_EPOCH,
+						"Idempotency-Key": "binary-policy-key",
+						...extra,
+					},
+					body: "x",
+				},
+			);
+			expect((await testWorker.fetch(request, env)).status).toBe(status);
+			expect(request.bodyUsed).toBe(false);
+		}
+		const request = new Request(
+			"https://blob.invalid/v1/files/private.bin:append",
+			{
+				method: "POST",
+				headers: { "X-Vault-Epoch": TEXT_FIXTURE_EPOCH },
+				body: "x",
+			},
+		);
+		expect((await testWorker.fetch(request, env)).status).toBe(428);
+		expect(request.bodyUsed).toBe(false);
 	});
 });

@@ -765,113 +765,135 @@ describe("native append commands", () => {
 		});
 	});
 
-	it("returns a tombstone refusal without changing the retained state", async () => {
-		await withTextStore(async (fixture) => {
-			const path = "notes/tombstone-append.md";
-			await seedLiveTextState(fixture.storage, { path, content: "deleted" });
-			fixture.storage.sql.exec(
-				"UPDATE files SET rev = 2, seq = 2, hash = '', size = 0, content = NULL, deleted = 1 WHERE path = ?",
-				path,
-			);
-			fixture.storage.sql.exec(
-				"INSERT INTO revisions(path,rev,hash,size,kind,content,deleted,origin,at) VALUES (?, 2, '', 0, 'text', NULL, 1, 'seed-client', 322)",
-				path,
-			);
-			fixture.storage.sql.exec(
-				"UPDATE meta SET value = '0' WHERE key = 'live_file_count'",
-			);
-			const command = await appendCommand(path, "x", "append-tombstone-key");
-			const ticket = await authorizeAppend(fixture, command);
-			const before = captureTextStoreState(fixture.storage);
-			const result = await fixture.store.commitFileCommand(
-				TEXT_FIXTURE_CONTEXT,
-				command.intent,
-				ticket,
-				command,
-				command.key,
-			);
-			expect(result).toEqual({ ok: false, failure: { kind: "tombstone" } });
-			expect(captureTextStoreState(fixture.storage)).toEqual(before);
-		});
-	});
+	it.each(["notes/tombstone-append.md", "archive/deleted.bin"])(
+		"returns a tombstone refusal for %s without changing retained state",
+		async (path) => {
+			await withTextStore(async (fixture) => {
+				await seedLiveTextState(fixture.storage, { path, content: "deleted" });
+				if (path.endsWith(".bin")) {
+					fixture.storage.sql.exec(
+						"UPDATE files SET kind = 'blob', content = NULL, blob_hash = hash WHERE path = ?",
+						path,
+					);
+					fixture.storage.sql.exec(
+						"UPDATE revisions SET kind = 'blob', content = NULL, blob_hash = hash WHERE path = ?",
+						path,
+					);
+				}
 
-	it("rejects blob references without reading blob bytes or changing state", async () => {
-		await withTextStore(async (fixture) => {
-			const path = "archive/append-target.md";
-			fixture.storage.sql.exec(
-				"INSERT INTO files(path,path_key,rev,seq,hash,size,kind,content,blob_hash,deleted,updated_at,origin) VALUES (?, ?, 1, 1, ?, 8, 'blob', NULL, ?, 0, 321, 'seed-client')",
-				path,
-				path.toLowerCase(),
-				"a".repeat(64),
-				"a".repeat(64),
-			);
-			fixture.storage.sql.exec(
-				"UPDATE meta SET value = '1' WHERE key = 'live_file_count'",
-			);
-			const command = await appendCommand(path, "x", "append-blob-key-001");
-			const ticket = await authorizeAppend(fixture, command);
-			const before = captureTextStoreState(fixture.storage);
-			const result = await fixture.store.commitFileCommand(
-				TEXT_FIXTURE_CONTEXT,
-				command.intent,
-				ticket,
-				command,
-				command.key,
-			);
-			expect(result).toEqual({
-				ok: false,
-				failure: { kind: "unsupported_append_kind" },
+				fixture.storage.sql.exec(
+					"UPDATE files SET rev = 2, seq = 2, hash = '', size = 0, content = NULL, blob_hash = NULL, deleted = 1 WHERE path = ?",
+					path,
+				);
+				fixture.storage.sql.exec(
+					"INSERT INTO revisions(path,rev,hash,size,kind,content,deleted,origin,at) VALUES (?, 2, '', 0, ?, NULL, 1, 'seed-client', 322)",
+					path,
+					path.endsWith(".bin") ? "blob" : "text",
+				);
+				fixture.storage.sql.exec(
+					"UPDATE meta SET value = '0' WHERE key = 'live_file_count'",
+				);
+				const command = await appendCommand(path, "x", "append-tombstone-key");
+				const ticket = await authorizeAppend(fixture, command);
+				const before = captureTextStoreState(fixture.storage);
+				const result = await fixture.store.commitFileCommand(
+					TEXT_FIXTURE_CONTEXT,
+					command.intent,
+					ticket,
+					command,
+					command.key,
+				);
+				expect(result).toEqual({ ok: false, failure: { kind: "tombstone" } });
+				expect(captureTextStoreState(fixture.storage)).toEqual(before);
 			});
-			expect(captureTextStoreState(fixture.storage)).toEqual(before);
-		});
-	});
+		},
+	);
 
-	it("returns not-found without publication for an absent path", async () => {
-		await withTextStore(async (fixture) => {
-			const path = "notes/missing-append.md";
-			const content = "x";
-			const key = IdempotencyKeySchema.parse("append-missing-key-1");
-			const command = {
-				op: "append" as const,
-				intent: {
+	it.each([
+		{ path: "archive/append-target.bin", size: 8 },
+		{ path: "notes/large-append.md", size: 1_500_000 },
+	])(
+		"rejects blob reference $path without reading bytes or changing state",
+		async ({ path, size }) => {
+			await withTextStore(async (fixture) => {
+				fixture.storage.sql.exec(
+					"INSERT INTO files(path,path_key,rev,seq,hash,size,kind,content,blob_hash,deleted,updated_at,origin) VALUES (?, ?, 1, 1, ?, ?, 'blob', NULL, ?, 0, 321, 'seed-client')",
+					path,
+					path.toLowerCase(),
+					"a".repeat(64),
+					size,
+					"a".repeat(64),
+				);
+				fixture.storage.sql.exec(
+					"UPDATE meta SET value = '1' WHERE key = 'live_file_count'",
+				);
+				const command = await appendCommand(path, "x", "append-blob-key-001");
+				const ticket = await authorizeAppend(fixture, command);
+				const before = captureTextStoreState(fixture.storage);
+				const result = await fixture.store.commitFileCommand(
+					TEXT_FIXTURE_CONTEXT,
+					command.intent,
+					ticket,
+					command,
+					command.key,
+				);
+				expect(result).toEqual({
+					ok: false,
+					failure: { kind: "unsupported_append_kind" },
+				});
+				expect(captureTextStoreState(fixture.storage)).toEqual(before);
+			});
+		},
+	);
+
+	it.each(["notes/missing-append.md", "archive/missing-append.bin"])(
+		"returns not-found without publication for absent %s",
+		async (path) => {
+			await withTextStore(async (fixture) => {
+				const content = "x";
+				const key = IdempotencyKeySchema.parse("append-missing-key-1");
+				const command = {
 					op: "append" as const,
-					epoch: TEXT_FIXTURE_EPOCH,
-					paths: [path],
-					precondition: { kind: "none" as const },
-					payload_hash: await hashBytes(content),
-					size: 1,
-				},
-				content,
-				key,
-			};
-			const reservation = await fixture.coordinator.beginMutation(
-				TEXT_FIXTURE_CONTEXT,
-				{
-					op: "append",
-					epoch: TEXT_FIXTURE_EPOCH,
-					paths: [path],
-					precondition: { kind: "none" },
-				},
-				key,
-			);
-			if (!reservation.ok)
-				throw new Error(`Reservation failed: ${reservation.failure.kind}`);
-			const admission = await fixture.admissions.authorize(
-				TEXT_FIXTURE_CONTEXT,
-				command.intent,
-				reservation.lease.admission_id,
-			);
-			if (!admission.ok)
-				throw new Error(`Authorization failed: ${admission.failure.kind}`);
-			const before = captureTextStoreState(fixture.storage);
-			const result = await fixture.store.commitFileCommand(
-				TEXT_FIXTURE_CONTEXT,
-				command.intent,
-				admission.ticket.id,
-				command,
-			);
-			expect(result).toEqual({ ok: false, failure: { kind: "not_found" } });
-			expect(captureTextStoreState(fixture.storage)).toEqual(before);
-		});
-	});
+					intent: {
+						op: "append" as const,
+						epoch: TEXT_FIXTURE_EPOCH,
+						paths: [path],
+						precondition: { kind: "none" as const },
+						payload_hash: await hashBytes(content),
+						size: 1,
+					},
+					content,
+					key,
+				};
+				const reservation = await fixture.coordinator.beginMutation(
+					TEXT_FIXTURE_CONTEXT,
+					{
+						op: "append",
+						epoch: TEXT_FIXTURE_EPOCH,
+						paths: [path],
+						precondition: { kind: "none" },
+					},
+					key,
+				);
+				if (!reservation.ok)
+					throw new Error(`Reservation failed: ${reservation.failure.kind}`);
+				const admission = await fixture.admissions.authorize(
+					TEXT_FIXTURE_CONTEXT,
+					command.intent,
+					reservation.lease.admission_id,
+				);
+				if (!admission.ok)
+					throw new Error(`Authorization failed: ${admission.failure.kind}`);
+				const before = captureTextStoreState(fixture.storage);
+				const result = await fixture.store.commitFileCommand(
+					TEXT_FIXTURE_CONTEXT,
+					command.intent,
+					admission.ticket.id,
+					command,
+				);
+				expect(result).toEqual({ ok: false, failure: { kind: "not_found" } });
+				expect(captureTextStoreState(fixture.storage)).toEqual(before);
+			});
+		},
+	);
 });

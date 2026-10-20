@@ -93,8 +93,6 @@ export class SqliteTextStore {
 				return { ok: false, failure: { kind: "invalid_request" } };
 			if (key === undefined)
 				return { ok: false, failure: { kind: "idempotency_key_required" } };
-			if (!path.endsWith(".md") && !path.endsWith(".canvas"))
-				return { ok: false, failure: { kind: "not_implemented" } };
 			return this.coordinator.beginMutation(context, parsed.data, key);
 		}
 		if (parsed.data.op === "restore")

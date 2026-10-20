@@ -1,6 +1,7 @@
 {
 	"name": "obsidian-ai-bridge-worker",
 	"compatibility_date": "2025-07-12",
+	"compatibility_flags": ["unhandled_rejection_after_microtask_checkpoint"],
 	"main": "src/index.ts",
 	"durable_objects": {
 		"bindings": [{ "name": "VAULTS", "class_name": "Vault" }]

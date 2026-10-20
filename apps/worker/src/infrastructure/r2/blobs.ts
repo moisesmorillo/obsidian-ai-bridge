@@ -1,5 +1,8 @@
-import type { BlobDeclaration } from "@obsidian-ai-bridge/protocol";
-import type { BlobEvidence, BlobStore } from "@worker/application/blobs";
+import type {
+	BlobDeclaration,
+	ByteRangeSelection,
+} from "@obsidian-ai-bridge/protocol";
+import type { BlobContentStore, BlobEvidence } from "@worker/application/blobs";
 import { FileOperationDenied } from "@worker/application/files";
 
 /** Maximum raw blob bytes under the publication contract. */
@@ -10,9 +13,43 @@ const MAX_READ_SIZE = 65_536;
 const workerCrypto = crypto as Crypto & { DigestStream: typeof DigestStream };
 
 /** R2-backed immutable blob capability used by Vault publication. */
-export class R2BlobStore implements BlobStore {
+export class R2BlobStore implements BlobContentStore {
 	/** Bind one R2 bucket as the immutable blob namespace. */
 	constructor(private readonly bucket: R2Bucket) {}
+
+	/** Stream checksum-attested immutable content without an application response buffer. */
+	async read(
+		hash: string,
+		size: number,
+		range?: ByteRangeSelection,
+	): Promise<ReadableStream<Uint8Array>> {
+		try {
+			const object = await this.bucket.get(
+				`blobs/${hash}`,
+				range === undefined
+					? undefined
+					: {
+							range: {
+								offset: range.start,
+								length: range.end - range.start + 1,
+							},
+						},
+			);
+			const evidence = objectEvidence(object, `blobs/${hash}`);
+			if (
+				!object ||
+				!evidence ||
+				evidence.hash !== hash ||
+				evidence.size !== size
+			) {
+				await object?.body.cancel();
+				throw storageUnavailable();
+			}
+			return object.body;
+		} catch {
+			throw storageUnavailable();
+		}
+	}
 
 	/** Return actual R2 checksum evidence, not the caller's claimed digest. */
 	async head(hash: string): Promise<BlobEvidence | undefined> {

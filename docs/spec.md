@@ -210,14 +210,21 @@ Admission deletion cascades claim deletion. The admission owns the fingerprint, 
 ### 5.3 R2 layout
 
 - `blobs/<sha256>`: immutable. Written **before** the DO transaction that references it (§6.3). Unreferenced blobs are harmless; no automatic GC in v1 (§16).
-- Blob PUT requests declare both `X-Content-SHA256` (64 lowercase hexadecimal characters) and `X-Content-Size` (canonical nonnegative decimal without leading zeroes, at most 25,000,000). They must appear together. Existing inline clients may omit both. A supplied declaration binds the exact raw request bytes and is verified before publication.
+- Blob PUT requests declare both `X-Content-SHA256` and `X-Content-Size`. The digest contains exactly 64 lowercase hexadecimal characters. The size is a canonical nonnegative decimal without leading zeroes, at most 25,000,000.
+- Both headers must appear together. Existing inline clients may omit both. A supplied declaration binds the exact raw bytes and is verified before publication, also for inline text.
+- Missing blob declarations or malformed headers return `400 invalid_request`. Declared or measured blob overflow returns `413 blob_too_large`. Other measured length or digest mismatches return `422 blob_integrity_mismatch`.
+- Blob declarations do not need transport `Content-Length`. A supplied transport length must match the declared size. Conflicting lengths return `400 invalid_request` before body demand.
+- Uploads use create-only writes and stored SHA-256 evidence. They never replace or delete an immutable object. Storage failures return `503 blob_storage_unavailable` with `Retry-After`.
 
 ### 5.4 Storage rule for text vs blob
 
 - `.md` and `.canvas` files ≤ 1,000,000 bytes are stored inline (`kind='text'`) and `.md` content is indexed (`.canvas` JSON is stored inline but not indexed).
 - Every other file, and any `.md`/`.canvas` file > 1,000,000 bytes, is `kind='blob'`: bytes in R2, metadata in SQLite, **not indexed**, readable by range through the Worker. `large` is true only for Markdown or Canvas stored as a blob above 1,000,000 bytes. The plugin panel shows such a file as "synced, not searchable".
 - An `update` or `append` whose resulting text would exceed 1,000,000 bytes fails with `413 text_too_large`. The note must be split by the user or agent. This keeps every text commit atomic in SQLite.
-- Blob range reads accept one satisfiable `bytes=start-end` selection. Multiple, malformed, or unsatisfiable ranges fail with `416`; a selection cannot exceed 1,000,000 bytes.
+- Blob GET streams raw bytes with `Content-Type: application/octet-stream`. Successful responses expose the authoritative file `ETag`, exact `Content-Length`, `Accept-Ranges: bytes`, and `X-File-Large: true|false`.
+- Whole-object GET streams without a complete application buffer. Current and retained reads select an authoritative reference before storage access. Inline GET keeps its JSON response.
+- Blob range reads accept one satisfiable `bytes=start-end` selection. Multiple, malformed, unsatisfiable, or excessive explicit ranges return `416` with `Content-Range: bytes */size`.
+- An open-ended `bytes=start-` selection returns at most the next 1,000,000 bytes. Successful range reads return `206` with exact `Content-Range`. A selected range never exceeds 1,000,000 bytes.
 
 ## 6. Sync API
 
@@ -258,6 +265,10 @@ Errors are `{error: <code>, message, ...details}`. Codes: `epoch_mismatch`, `cur
 5. In one SQLite transaction: check precondition against `files` (`rev`, `deleted`, collision on `path_key`); write `revisions`; upsert `files`; insert `changes`; update `files_fts` (delete old row, insert new for text); insert `blob_refs` if blob; insert receipt; update `meta.head_seq`; update capacity counters.
 6. Return response. A failed transaction leaves no partial state. A Worker crash between R2 write and DO commit leaves only an unreferenced blob, and only for an already authorized operation.
 
+The Vault checks current authority again after asynchronous storage work. Revocation, expiry, epoch changes, or stale revisions block publication. A matching committed receipt replays under current policy without another upload.
+
+Unknown storage or authority results retain admission until its original deadline. Retries do not extend that admission deadline. Authorized uploads can leave verified orphans, but no failure path deletes an object.
+
 ### 6.4 Idempotency contract
 
 - Key: one per **operation instance**, scoped to the client id: receipts are keyed by `(client_id, key)`, so two clients may use the same string without colliding.
@@ -270,6 +281,12 @@ Errors are `{error: <code>, message, ...details}`. Codes: `epoch_mismatch`, `cur
 - MCP: `append_to_note` **requires** `idempotency_key` in its input schema; the other mutating tools accept it optionally and are protected by their `etag`/create-only preconditions. No server heuristic de-duplicates appends.
 
 ### 6.5 Request limits
+
+Four body-bearing mutations share synchronous slots across clients, vault hosts, and router instances in one Worker isolate. PUT, append, rename, and restore use this budget. The fifth request receives `429 admission_limited` and `Retry-After: 1`, without body demand or durable reservation.
+
+A slot covers body handling, storage, authority calls, and cleanup. Cancellation or ticket expiry does not release a slot before started work settles. Permanently blocked work can exhaust slots and cause safe refusals.
+
+Native body reads request at most 65,536 bytes at a time. Inline readers use one fixed 1,000,000-byte allocation and do not retain borrowed chunks. Blob reads and writes use bounded native streams, without a complete blob buffer.
 
 Body ≤ 26 MB (25 MB blob + headers). Manifest page ≤ 20,000 rows. Feed page ≤ 1,000 entries. Search ≤ 50 results. Range reads ≤ 1 MB per response. Concurrency per client: the plugin runs at most 4 in-flight requests; the Worker returns `429` with `Retry-After` above 16 concurrent requests per client.
 

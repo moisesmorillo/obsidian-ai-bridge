@@ -3,6 +3,7 @@ import type {
 	AdmissionFinishResult,
 	AdmissionResult,
 	AuthorizationContext,
+	BlobDeclaration,
 	CurrentEpochOperation,
 	CurrentEpochResult,
 	IdempotencyKey,
@@ -18,6 +19,7 @@ import type {
 } from "@obsidian-ai-bridge/protocol";
 import { EMPTY_PAYLOAD_HASH } from "@obsidian-ai-bridge/protocol";
 import type { BlobVaultGateway } from "@worker/application/blobs";
+import { tryAcquireBodySlot } from "@worker/application/body-budget";
 import { FileOperationDenied } from "@worker/application/files";
 
 /** Promise-based boundary to the Durable Object text authority. */
@@ -67,6 +69,46 @@ export async function executeTextMutation(
 	descriptor: TextMutationDescriptor,
 	key: IdempotencyKey | undefined,
 	readPayload: () => Promise<TextPayload>,
+	declaration?: BlobDeclaration,
+): Promise<TextMutationResult> {
+	if (descriptor.op === "put") {
+		const release = tryAcquireBodySlot();
+		if (release === undefined)
+			return {
+				ok: false,
+				failure: { kind: "admission_limited", retry_after_seconds: 1 },
+			};
+		try {
+			return await executeTextMutationWithSlot(
+				gateway,
+				context,
+				descriptor,
+				key,
+				readPayload,
+				declaration,
+			);
+		} finally {
+			release();
+		}
+	}
+	return executeTextMutationWithSlot(
+		gateway,
+		context,
+		descriptor,
+		key,
+		readPayload,
+		declaration,
+	);
+}
+
+/** Run the complete reservation and body lifetime after the caller acquires capacity. */
+async function executeTextMutationWithSlot(
+	gateway: TextVaultGateway,
+	context: AuthorizationContext,
+	descriptor: TextMutationDescriptor,
+	key: IdempotencyKey | undefined,
+	readPayload: () => Promise<TextPayload>,
+	declaration?: BlobDeclaration,
 ): Promise<TextMutationResult> {
 	const reservation = await gateway.beginMutation(context, descriptor, key);
 	if (!reservation.ok) return reservation;
@@ -76,6 +118,12 @@ export async function executeTextMutation(
 			descriptor.op === "delete"
 				? { content: "", payload_hash: EMPTY_PAYLOAD_HASH, size: 0 }
 				: await readPayload();
+		if (
+			declaration !== undefined &&
+			(payload.payload_hash !== declaration.payload_hash ||
+				payload.size !== declaration.size)
+		)
+			throw new FileOperationDenied({ kind: "blob_integrity_mismatch" });
 	} catch (error) {
 		try {
 			await gateway.finishAdmission(
@@ -90,7 +138,9 @@ export async function executeTextMutation(
 			ok: false,
 			failure:
 				error instanceof FileOperationDenied
-					? error.failure
+					? declaration !== undefined && error.failure.kind === "text_too_large"
+						? { kind: "blob_integrity_mismatch" }
+						: error.failure
 					: { kind: "invalid_request" },
 		};
 	}

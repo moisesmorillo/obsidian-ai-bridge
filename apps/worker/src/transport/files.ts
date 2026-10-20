@@ -13,6 +13,11 @@ import {
 	TextMutationDescriptorSchema,
 	TextReadRequestSchema,
 } from "@obsidian-ai-bridge/protocol";
+import {
+	type BlobContentStore,
+	executeBlobPut,
+	usesBlobStorage,
+} from "@worker/application/blobs";
 import { FileOperationDenied } from "@worker/application/files";
 import type { HistoryVaultGateway } from "@worker/application/history";
 import {
@@ -21,6 +26,11 @@ import {
 } from "@worker/application/text-files";
 import { prepareTextPayload } from "@worker/application/text-payload";
 import type { Env } from "@worker/env";
+import {
+	parseBlobDeclaration,
+	readBlobResponse,
+} from "@worker/transport/blobs";
+import { readInlineBody } from "@worker/transport/body";
 import { handleHistoryCommand } from "@worker/transport/history";
 import { decodeAndNormalizePath } from "@worker/transport/path";
 import { Hono } from "hono";
@@ -35,10 +45,15 @@ export function createFileRouter(
 		env: Env,
 		request: Request,
 	) => TextVaultGateway & HistoryVaultGateway,
+	resolveBlobs: (env: Env) => BlobContentStore,
 ): Hono<{ Bindings: Env }> {
 	const router = new Hono<{ Bindings: Env }>();
-	router.onError((_error, _context) =>
-		errorResponse({ kind: "internal_error" }),
+	router.onError((error) =>
+		errorResponse(
+			error instanceof FileOperationDenied
+				? error.failure
+				: { kind: "internal_error" },
+		),
 	);
 	router.all("/*", async (context) => {
 		const identity = await resolveIdentity(context.req.raw);
@@ -91,7 +106,17 @@ export function createFileRouter(
 			const parsed = TextReadRequestSchema.safeParse(request);
 			if (!parsed.success) return errorResponse({ kind: "invalid_request" });
 			const result = await gateway.readText(identity, parsed.data);
-			if (!result.ok) return errorResponse(result.failure);
+			if (!result.ok) {
+				if (result.failure.kind === "not_implemented")
+					return readBlobResponse(
+						gateway,
+						resolveBlobs(context.env),
+						identity,
+						parsed.data,
+						context.req.raw.headers.get("Range"),
+					);
+				return errorResponse(result.failure);
+			}
 			return context.json(result.body, 200, { ETag: result.body.etag });
 		}
 		if (context.req.method !== "PUT" && context.req.method !== "DELETE")
@@ -140,13 +165,34 @@ export function createFileRouter(
 		const parsed = TextMutationDescriptorSchema.safeParse(descriptor);
 		if (!parsed.success) return errorResponse({ kind: "invalid_request" });
 		const gateway = resolveVault(context.env, context.req.raw);
-		const result = await executeTextMutation(
-			gateway,
-			identity,
-			parsed.data,
-			key?.success ? key.data : undefined,
-			() => readBoundedText(context.req.raw),
-		);
+		const declaration =
+			context.req.method === "PUT"
+				? parseBlobDeclaration(context.req.raw)
+				: undefined;
+		const isBlob =
+			context.req.method === "PUT" && usesBlobStorage(path, declaration);
+		if (isBlob && declaration === undefined)
+			return errorResponse({ kind: "invalid_request" });
+		const result =
+			isBlob && declaration !== undefined
+				? await executeBlobPut(
+						gateway,
+						resolveBlobs(context.env),
+						identity,
+						parsed.data,
+						key?.success ? key.data : undefined,
+						declaration,
+						context.req.raw.body ?? new Blob([]).stream(),
+						context.req.raw.signal,
+					)
+				: await executeTextMutation(
+						gateway,
+						identity,
+						parsed.data,
+						key?.success ? key.data : undefined,
+						() => readBoundedText(context.req.raw),
+						declaration,
+					);
 		if (!result.ok) return errorResponse(result.failure);
 		return context.json(result.response.body, result.response.status, {
 			ETag: result.response.body.etag,
@@ -200,43 +246,7 @@ async function currentEpochMismatch(
 
 /** Read no more than the inline text byte ceiling, regardless of Content-Length. */
 async function readBoundedText(request: Request) {
-	const reader = request.body?.getReader();
-	if (!reader) return prepareTextPayload(new Uint8Array());
-	const chunks: Uint8Array[] = [];
-	let size = 0;
-	let aborted = request.signal.aborted;
-	/** Cancel a pending body read when the caller aborts the Request. */
-	const cancelOnAbort = () => {
-		aborted = true;
-		void reader.cancel("Request aborted").catch(() => undefined);
-	};
-	request.signal.addEventListener("abort", cancelOnAbort, { once: true });
-	try {
-		while (true) {
-			if (aborted) throw new FileOperationDenied({ kind: "invalid_request" });
-			const { done, value } = await reader.read();
-			if (aborted) throw new FileOperationDenied({ kind: "invalid_request" });
-			if (done) break;
-			size += value.byteLength;
-			if (size > MAX_TEXT_BYTES) {
-				await reader.cancel();
-				throw new FileOperationDenied({ kind: "text_too_large" });
-			}
-			chunks.push(value);
-		}
-	} catch (error) {
-		await reader.cancel(error).catch(() => undefined);
-		throw error;
-	} finally {
-		request.signal.removeEventListener("abort", cancelOnAbort);
-	}
-	const bytes = new Uint8Array(size);
-	let offset = 0;
-	for (const chunk of chunks) {
-		bytes.set(chunk, offset);
-		offset += chunk.byteLength;
-	}
-	return prepareTextPayload(bytes);
+	return prepareTextPayload(await readInlineBody(request, MAX_TEXT_BYTES));
 }
 
 /** Encode a canonical failure without exposing thrown exception details. */

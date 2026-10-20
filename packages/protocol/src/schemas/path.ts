@@ -2,9 +2,9 @@ import { z } from "zod";
 
 /** Checks path byte length, segment count, separators, and control characters. */
 function isValidPath(path: string): boolean {
+	if (new TextEncoder().encode(path).byteLength > 512) return false;
 	const segments = path.split("/");
 	return (
-		new TextEncoder().encode(path).byteLength <= 512 &&
 		segments.length <= 32 &&
 		segments.every(
 			(segment) => segment !== "" && segment !== "." && segment !== "..",

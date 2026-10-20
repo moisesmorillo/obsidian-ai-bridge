@@ -1,12 +1,17 @@
+import { AdmissionResultSchema } from "@protocol/schemas/admission";
 import { ETagSchema } from "@protocol/schemas/etag";
+import { TextMutationResultSchema } from "@protocol/schemas/files";
 import { PathSchema } from "@protocol/schemas/path";
 import { z } from "zod";
+
+/** Maximum immutable blob bytes accepted by declarations and authoritative metadata. */
+const MAX_BLOB_BYTES = 25_000_000;
 
 /** Declared SHA-256 identity and exact byte count for one request body. */
 export const BlobDeclarationSchema = z
 	.object({
 		payload_hash: z.string().regex(/^[0-9a-f]{64}$/),
-		size: z.number().int().nonnegative().safe().max(25_000_000),
+		size: z.number().int().nonnegative().safe().max(MAX_BLOB_BYTES),
 	})
 	.strict();
 
@@ -46,12 +51,17 @@ export const BlobDeclarationHeadersSchema = z
 			size: Number(size),
 		});
 		if (!declaration.success) {
-			ctx.addIssue({
-				code: "custom",
-				message: declaration.error.issues
-					.map((issue) => issue.message)
-					.join("; "),
-			});
+			for (const issue of declaration.error.issues) {
+				if (issue.path[0] === "size" && Number(size) > MAX_BLOB_BYTES) {
+					ctx.addIssue({
+						code: "too_big",
+						origin: "number",
+						maximum: MAX_BLOB_BYTES,
+						inclusive: true,
+						path: ["size"],
+					});
+				} else ctx.addIssue({ ...issue });
+			}
 			return z.NEVER;
 		}
 		return declaration.data;
@@ -63,7 +73,7 @@ export const BlobMetadataSchema = z
 		path: PathSchema,
 		etag: ETagSchema,
 		hash: z.string().regex(/^(?:[0-9a-f]{64})?$/),
-		size: z.number().int().nonnegative().safe().max(25_000_000),
+		size: z.number().int().nonnegative().safe().max(MAX_BLOB_BYTES),
 		kind: z.literal("blob"),
 		deleted: z.boolean(),
 		origin: z.string(),
@@ -134,3 +144,9 @@ export function selectByteRange(
 	}
 	return { start, end };
 }
+
+/** Blob authorization returns a ticket, a current-policy receipt replay, or a canonical failure. */
+export const BlobAuthorizationResultSchema = z.union([
+	AdmissionResultSchema,
+	TextMutationResultSchema,
+]);

@@ -141,6 +141,21 @@ export class Vault extends DurableObject<Env> {
 		return this.textStore.readHistory(context, request);
 	}
 
+	/** Authorize declared bytes or replay a matching current-policy receipt in one authority call. */
+	authorizeBlob(
+		context: AuthorizationContext,
+		intent: TextMutationIntent,
+		admissionId: string,
+		key?: IdempotencyKey,
+	) {
+		return this.mutationCoordinator.authorizeBlob(
+			context,
+			intent,
+			admissionId,
+			key,
+		);
+	}
+
 	/** Verify storage evidence and atomically publish a blob reference. */
 	commitBlob(
 		context: AuthorizationContext,

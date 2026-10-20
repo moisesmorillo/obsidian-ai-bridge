@@ -1,4 +1,5 @@
 import {
+	BlobAuthorizationResultSchema,
 	BlobDeclarationHeadersSchema,
 	BlobDeclarationSchema,
 	BlobMetadataSchema,
@@ -101,5 +102,53 @@ describe("blob protocol contracts", () => {
 			start: 0,
 			end: 999_999,
 		});
+	});
+	it("preserves canonical size-overflow issues for HTTP error selection", () => {
+		for (const size of ["25000001", "9".repeat(400)]) {
+			const result = BlobDeclarationHeadersSchema.safeParse({
+				"x-content-sha256": "a".repeat(64),
+				"x-content-size": size,
+			});
+			expect(result.success).toBe(false);
+			if (result.success) throw new Error("Expected declared overflow");
+			expect(
+				result.error.issues.every(
+					(issue) => issue.code === "too_big" && issue.path[0] === "size",
+				),
+			).toBe(true);
+		}
+	});
+	it("accepts ticket or receipt authority results without a second upload contract", () => {
+		expect(
+			BlobAuthorizationResultSchema.safeParse({
+				ok: true,
+				ticket: { id: "a".repeat(32), expires_at: 60_000 },
+			}).success,
+		).toBe(true);
+		expect(
+			BlobAuthorizationResultSchema.safeParse({
+				ok: false,
+				failure: { kind: "revoked" },
+			}).success,
+		).toBe(true);
+		expect(
+			BlobAuthorizationResultSchema.safeParse({
+				ok: true,
+				response: {
+					status: 201,
+					body: {
+						path: "file.bin",
+						etag: '"0123456789abcdef0123456789abcdef.1"',
+						seq: 1,
+						hash: "a".repeat(64),
+						size: 0,
+						deleted: false,
+					},
+				},
+			}).success,
+		).toBe(true);
+		expect(BlobAuthorizationResultSchema.safeParse({ ok: true }).success).toBe(
+			false,
+		);
 	});
 });

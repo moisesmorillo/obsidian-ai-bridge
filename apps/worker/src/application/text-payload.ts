@@ -24,13 +24,7 @@ export async function prepareTextPayload(
 		throw new FileOperationDenied({ kind: "invalid_request" });
 	}
 
-	const encoded = new TextEncoder().encode(content);
-	if (
-		encoded.byteLength !== originalSize ||
-		!encoded.every((byte, index) => byte === bytes[index])
-	) {
-		throw new FileOperationDenied({ kind: "invalid_request" });
-	}
+	// Fatal UTF-8 decoding preserves exact bytes, including a BOM with ignoreBOM enabled.
 
 	const hashInput = new Uint8Array(originalSize);
 	hashInput.set(bytes);

@@ -24,6 +24,7 @@ import {
 } from "@worker/application/history";
 import type { TextVaultGateway } from "@worker/application/text-files";
 import type { Env } from "@worker/env";
+import { readInlineBody } from "@worker/transport/body";
 import { decodeAndNormalizePath } from "@worker/transport/path";
 import { Hono } from "hono";
 
@@ -247,7 +248,7 @@ async function decodeHistoryCommand(
 	path: string,
 	commandRequest: ValidatedHistoryCommandRequest,
 ): Promise<FileCommand> {
-	const bytes = await readBounded(request, MAX_COMMAND_BYTES);
+	const bytes = await readInlineBody(request, MAX_COMMAND_BYTES);
 	switch (commandRequest.operation) {
 		case "append":
 			return decodeAppendCommand(
@@ -308,7 +309,7 @@ async function decodeRenameCommand(
 ): Promise<FileCommand> {
 	let json: unknown;
 	try {
-		json = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+		json = parseCommandJson(bytes);
 	} catch {
 		throw new FileOperationDenied({ kind: "invalid_request" });
 	}
@@ -348,7 +349,7 @@ async function decodeRestoreCommand(
 ): Promise<FileCommand> {
 	let json: unknown;
 	try {
-		json = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+		json = parseCommandJson(bytes);
 	} catch {
 		throw new FileOperationDenied({ kind: "invalid_request" });
 	}
@@ -410,50 +411,6 @@ export function createHistoryRouter(
 	return router;
 }
 
-/** Read a body under its actual byte ceiling and cancel on failure or abort. */
-async function readBounded(
-	request: Request,
-	limit: number,
-): Promise<Uint8Array> {
-	const reader = request.body?.getReader();
-	if (reader === undefined) return new Uint8Array();
-	const chunks: Uint8Array[] = [];
-	let size = 0;
-	/** Cancel any pending stream read when the request aborts. */
-	const cancel = () => {
-		void reader.cancel("Request aborted").catch(() => undefined);
-	};
-	request.signal.addEventListener("abort", cancel, { once: true });
-	try {
-		while (true) {
-			if (request.signal.aborted)
-				throw new FileOperationDenied({ kind: "invalid_request" });
-			const item = await reader.read();
-			if (request.signal.aborted)
-				throw new FileOperationDenied({ kind: "invalid_request" });
-			if (item.done) break;
-			size += item.value.byteLength;
-			if (size > limit) {
-				await reader.cancel();
-				throw new FileOperationDenied({ kind: "text_too_large" });
-			}
-			chunks.push(item.value);
-		}
-	} catch (error) {
-		await reader.cancel(error).catch(() => undefined);
-		throw error;
-	} finally {
-		request.signal.removeEventListener("abort", cancel);
-	}
-	const bytes = new Uint8Array(size);
-	let offset = 0;
-	for (const chunk of chunks) {
-		bytes.set(chunk, offset);
-		offset += chunk.byteLength;
-	}
-	return bytes;
-}
-
 /** Return the lowercase SHA-256 digest for exact request bytes. */
 async function hashBytes(bytes: Uint8Array): Promise<string> {
 	const digest = await crypto.subtle.digest("SHA-256", bytes.slice());
@@ -469,4 +426,69 @@ function errorResponse(failure: FileHttpFailureInput): Response {
 		status: result.status,
 		headers: result.headers,
 	});
+}
+
+/**
+ * Bound malformed JSON graphs before canonical rename or restore validation.
+ * Canonical schema field counts bound distinct keys. Duplicate keys keep standard JSON semantics.
+ */
+function parseCommandJson(bytes: Uint8Array): unknown {
+	const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+	const keys = new Set<string>();
+	const maxKeys = Math.max(
+		Object.keys(RenameRequestSchema.shape).length,
+		Object.keys(RestoreRequestSchema.shape).length,
+	);
+	let opened = false;
+	let closed = false;
+	let inString = false;
+	let escaped = false;
+	let keyPosition = true;
+	let stringStart = 0;
+	for (let index = 0; index < text.length; index++) {
+		const character = text[index];
+		if (inString) {
+			if (escaped) {
+				escaped = false;
+				continue;
+			}
+			if (character === "\\") {
+				escaped = true;
+				continue;
+			}
+			if (character !== '"') continue;
+			inString = false;
+			if (keyPosition) {
+				const key: unknown = JSON.parse(text.slice(stringStart, index + 1));
+				if (typeof key !== "string")
+					throw new FileOperationDenied({ kind: "invalid_request" });
+				keys.add(key);
+				if (keys.size > maxKeys)
+					throw new FileOperationDenied({ kind: "invalid_request" });
+				keyPosition = false;
+			}
+			continue;
+		}
+		if (/\s/.test(character)) continue;
+		if (!opened) {
+			if (character !== "{")
+				throw new FileOperationDenied({ kind: "invalid_request" });
+			opened = true;
+			continue;
+		}
+		if (closed || character === "{" || character === "[" || character === "]")
+			throw new FileOperationDenied({ kind: "invalid_request" });
+		if (character === "}") {
+			closed = true;
+			continue;
+		}
+		if (character === '"') {
+			inString = true;
+			stringStart = index;
+			continue;
+		}
+		if (character === ",") keyPosition = true;
+	}
+	// Only flat scalar objects reach JSON.parse. Repeated keys keep standard JSON semantics.
+	return JSON.parse(text);
 }

@@ -856,6 +856,37 @@ describe("conditional text HTTP lifecycle", () => {
 		expect(state.revisions).toHaveLength(1);
 	});
 
+	it("refuses a fifth body before it reads or reserves admission", async () => {
+		const pending = Array.from({ length: 5 }, (_, index) =>
+			createPendingBody(`pending-${index}`),
+		);
+		const requests = pending.map((body, index) =>
+			SELF.fetch(`https://worker.invalid/v1/files/slot-${index}.md`, {
+				method: "PUT",
+				headers: {
+					"If-None-Match": "*",
+					"X-Vault-Epoch": TEXT_FIXTURE_EPOCH,
+				},
+				body: body.body,
+				duplex: "half",
+			} as RequestInit),
+		);
+		try {
+			await Promise.all(pending.slice(0, 4).map((body) => body.ready));
+			await Promise.resolve();
+			expect(pending.slice(0, 4).every((body) => body.wasReadRequested())).toBe(
+				true,
+			);
+			expect(pending[4]?.wasReadRequested()).toBe(false);
+		} finally {
+			for (const body of pending) body.send();
+		}
+		const responses = await Promise.all(requests);
+		expect(responses.map((response) => response.status).sort()).toEqual(
+			[201, 201, 201, 201, 429].sort(),
+		);
+	});
+
 	it("returns epoch mismatch for malformed observations and historical reads without a header", async () => {
 		const malformed = await SELF.fetch(url, {
 			method: "PUT",

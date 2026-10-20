@@ -22,6 +22,7 @@ export {
 } from "@protocol/schemas/admission";
 export type { ByteRangeSelection } from "@protocol/schemas/blobs";
 export {
+	BlobAuthorizationResultSchema,
 	BlobDeclarationHeadersSchema,
 	BlobDeclarationSchema,
 	BlobMetadataSchema,
@@ -74,7 +75,11 @@ export type {
 	TextMutationIntent,
 	VaultScope,
 } from "@protocol/types/admission";
-export type { BlobDeclaration, BlobMetadata } from "@protocol/types/blobs";
+export type {
+	BlobAuthorizationResult,
+	BlobDeclaration,
+	BlobMetadata,
+} from "@protocol/types/blobs";
 export type { TextPayload } from "@protocol/types/content";
 export type { ETagParts } from "@protocol/types/etag";
 export type {

@@ -1,13 +1,11 @@
 import type {
 	AuthorizationContext,
 	FileCommand,
-	FileHttpFailureInput,
 	OperationDescriptor,
 	RenameReservation,
 } from "@obsidian-ai-bridge/protocol";
 import {
 	EpochSchema,
-	encodeFileFailure,
 	FileCommandSchema,
 	HistoryRequestSchema,
 	IdempotencyKeySchema,
@@ -25,6 +23,10 @@ import {
 import type { TextVaultGateway } from "@worker/application/text-files";
 import type { Env } from "@worker/env";
 import { readInlineBody } from "@worker/transport/body";
+import {
+	fileFailureResponse as errorResponse,
+	withMutationResponse,
+} from "@worker/transport/mutation-response";
 import { decodeAndNormalizePath } from "@worker/transport/path";
 import { Hono } from "hono";
 
@@ -78,17 +80,20 @@ export async function handleHistoryCommand(
 	);
 	if (!validation.ok) return validation.response;
 	const commandRequest = validation.request;
-	const result = await executeFileCommand(
-		gateway,
-		identity,
-		commandRequest.descriptor,
-		commandRequest.key,
-		() => decodeHistoryCommand(request, path, commandRequest),
-	);
-	if (!result.ok) return errorResponse(result.failure);
-	return Response.json(result.response.body, {
-		status: result.response.status,
-		headers: { ETag: result.response.body.etag },
+	return withMutationResponse(async (responseProduction) => {
+		const result = await executeFileCommand(
+			gateway,
+			identity,
+			commandRequest.descriptor,
+			commandRequest.key,
+			() => decodeHistoryCommand(request, path, commandRequest),
+			responseProduction,
+		);
+		if (!result.ok) return errorResponse(result.failure);
+		return Response.json(result.response.body, {
+			status: result.response.status,
+			headers: { ETag: result.response.body.etag },
+		});
 	});
 }
 
@@ -417,15 +422,6 @@ async function hashBytes(bytes: Uint8Array): Promise<string> {
 	return Array.from(new Uint8Array(digest), (byte) =>
 		byte.toString(16).padStart(2, "0"),
 	).join("");
-}
-
-/** Encode a transport or canonical domain failure without exception details. */
-function errorResponse(failure: FileHttpFailureInput): Response {
-	const result = encodeFileFailure(failure);
-	return Response.json(result.body, {
-		status: result.status,
-		headers: result.headers,
-	});
 }
 
 /**

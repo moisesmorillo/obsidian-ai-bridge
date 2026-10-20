@@ -1,5 +1,8 @@
 export { formatETag, parseETag } from "@protocol/codecs/etag";
-export { encodeFileFailure } from "@protocol/codecs/files";
+export {
+	encodeFileFailure,
+	encodeFileFailureBodyChunks,
+} from "@protocol/codecs/files";
 export { normalizePath, pathKey } from "@protocol/codecs/path";
 export {
 	AdmissionCompletionSchema,

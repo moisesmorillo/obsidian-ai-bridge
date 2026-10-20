@@ -79,7 +79,10 @@ export type BlobPutGateway = Pick<
 	"beginMutation" | "authorizeBlob" | "commitBlob" | "finishAdmission"
 >;
 
-/** Authorize declared bytes before storage and retain capacity until all started work settles. */
+/**
+ * Authorize declared bytes before storage and retain capacity until all started operation work settles.
+ * Optional response production also holds capacity after operation cleanup.
+ */
 export async function executeBlobPut(
 	gateway: BlobPutGateway,
 	store: BlobStore,
@@ -89,8 +92,9 @@ export async function executeBlobPut(
 	declaration: BlobDeclaration,
 	body: ReadableStream<Uint8Array>,
 	signal: AbortSignal,
+	responseProduction?: Promise<void>,
 ): Promise<TextMutationResult> {
-	const release = tryAcquireBodySlot();
+	const release = tryAcquireBodySlot(responseProduction);
 	if (!release)
 		return {
 			ok: false,

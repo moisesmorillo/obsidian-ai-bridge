@@ -1,9 +1,11 @@
+import { createHash } from "node:crypto";
 import type { FileHttpFailure, FileHttpFailureInput } from "@protocol/index";
 import {
 	AdmissionFailureSchema,
 	CurrentEpochRequestSchema,
 	CurrentEpochResultSchema,
 	encodeFileFailure,
+	encodeFileFailureBodyChunks,
 	FileFailureSchema,
 	FileHttpFailureInputSchema,
 	FileHttpFailureSchema,
@@ -18,7 +20,7 @@ import {
 	TextReadResponseSchema,
 	TextReadResultSchema,
 } from "@protocol/index";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { ZodType } from "zod";
 
 const epoch = "0000000000000000000000000000000a";
@@ -927,6 +929,14 @@ describe("file failure HTTP mapping", () => {
 		],
 	] as const)("maps %s", (failure, status, error, message) => {
 		const encoded = encodedFailure(failure);
+		if (encoded)
+			expect(
+				JSON.parse(
+					Buffer.concat([
+						...encodeFileFailureBodyChunks(encoded.body),
+					]).toString(),
+				),
+			).toEqual(encoded.body);
 		expect(encoded).toMatchObject({ status, body: { error, message } });
 	});
 
@@ -1052,5 +1062,63 @@ describe("file failure HTTP mapping", () => {
 			status: 404,
 			body: { error: "not_found", message: "The file does not exist." },
 		});
+	});
+});
+
+describe("bounded failure JSON", () => {
+	it.each([
+		'"\\\u0000\ufeffcafé😀',
+		`${"a".repeat(8191)}😀z`,
+		`${"a".repeat(8191)}\ud800x\udc00`,
+	])("preserves_exact_string_code_units", (content) => {
+		const body = {
+			error: "precondition_failed",
+			message: "fixture",
+			content,
+			deleted: false,
+		} as const;
+		const chunks = [...encodeFileFailureBodyChunks(body)];
+		expect(chunks.every((chunk) => chunk.byteLength <= 65_536)).toBe(true);
+		expect(JSON.parse(Buffer.concat(chunks).toString())).toEqual(body);
+	});
+
+	it("bounds_escaping_without_whole_content_stringify", () => {
+		const body = encodeFileFailure({
+			kind: "precondition_failed",
+			etag,
+			hash,
+			deleted: false,
+			content: "\u0000".repeat(1_000_000),
+		}).body;
+		const stringify = JSON.stringify;
+		const spy = vi
+			.spyOn(JSON, "stringify")
+			.mockImplementation((value, ...rest) => {
+				if (typeof value === "string")
+					expect(value.length).toBeLessThanOrEqual(8192);
+				else expect(value).not.toBe(body);
+				// Keep the test observer from retaining string windows or encoded chunk history.
+				spy.mockClear();
+				return stringify(value, ...rest);
+			});
+		try {
+			const actual = createHash("sha256");
+			let length = 0;
+			for (const chunk of encodeFileFailureBodyChunks(body)) {
+				expect(chunk.byteLength).toBeLessThanOrEqual(65_536);
+				length += chunk.byteLength;
+				actual.update(chunk);
+			}
+			const expected = createHash("sha256");
+			const empty = stringify({ ...body, content: "" });
+			expected.update(empty.slice(0, -2));
+			for (let index = 0; index < 1000; index++)
+				expected.update("\\u0000".repeat(1000));
+			expected.update('"}');
+			expect(length).toBe(6_000_000 + empty.length);
+			expect(actual.digest("hex")).toBe(expected.digest("hex"));
+		} finally {
+			spy.mockRestore();
+		}
 	});
 });

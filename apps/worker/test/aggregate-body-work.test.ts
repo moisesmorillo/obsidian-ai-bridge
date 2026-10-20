@@ -1,6 +1,7 @@
 import { env, runInDurableObject } from "cloudflare:test";
 import type { AuthorizationContext } from "@obsidian-ai-bridge/protocol";
 import { FileCommandSchema } from "@obsidian-ai-bridge/protocol";
+import { executeBlobPut } from "@worker/application/blobs";
 import { tryAcquireBodySlot } from "@worker/application/body-budget";
 import {
 	executeFileCommand,
@@ -17,6 +18,7 @@ import {
 	TEXT_FIXTURE_EPOCH,
 } from "@worker/test-fixtures/text-files";
 import { readInlineBody } from "@worker/transport/body";
+import { withMutationResponse } from "@worker/transport/mutation-response";
 import { createWorker } from "@worker/transport/worker";
 import { describe, expect, it } from "vitest";
 
@@ -140,6 +142,155 @@ async function admissions(host: string) {
 }
 /** Shared isolate ownership and native source observations cover all body-bearing operations. */
 describe("aggregate body ownership", () => {
+	it.each(["rename", "restore"] as const)(
+		"shares_pending_response_producers_across_PUT_blob_append_and_%s",
+		async (command) => {
+			const host = `response-shared-${command}.invalid`;
+			await initialize(host);
+			const stub = env.VAULTS.get(env.VAULTS.idFromName(host));
+			await runInDurableObject(stub, async (_instance, state) => {
+				state.storage.sql.exec(
+					"INSERT INTO revoked_grants(grant_id, at) VALUES (?, ?)",
+					"response-revoked",
+					10,
+				);
+			});
+			const context: AuthorizationContext = {
+				client_id: "response-client",
+				grant_id: "response-revoked",
+				scopes: ["vault:read", "vault:write"],
+			};
+			const descriptor = {
+				op: "put",
+				epoch: TEXT_FIXTURE_EPOCH,
+				paths: ["new.md"],
+				precondition: { kind: "absent" },
+			} as const;
+			const declaration = { payload_hash: "0".repeat(64), size: 1 };
+			const producers = Array.from({ length: 4 }, () => source(1, 65));
+			const responses = await Promise.all(
+				producers.map((producer, index) =>
+					withMutationResponse(async (done) => {
+						const result =
+							index === 0
+								? await executeTextMutation(
+										stub,
+										context,
+										{ ...descriptor, paths: ["new.md"] },
+										undefined,
+										async () => {
+											throw new Error("Revoked body demand");
+										},
+										undefined,
+										done,
+									)
+								: index === 1
+									? await executeBlobPut(
+											stub,
+											new R2BlobStore(env.R2_BUCKET),
+											context,
+											{ ...descriptor, paths: ["new.bin"] },
+											undefined,
+											declaration,
+											new Blob([]).stream(),
+											new AbortController().signal,
+											done,
+										)
+									: await executeFileCommand(
+											stub,
+											context,
+											index === 2
+												? {
+														op: "append",
+														epoch: TEXT_FIXTURE_EPOCH,
+														paths: ["source.md"],
+														precondition: { kind: "none" },
+													}
+												: command === "rename"
+													? {
+															path: "source.md",
+															if_match: `"${TEXT_FIXTURE_EPOCH}.1"`,
+														}
+													: {
+															op: "restore",
+															epoch: TEXT_FIXTURE_EPOCH,
+															paths: ["source.md"],
+															precondition: {
+																kind: "match",
+																etag: `"${TEXT_FIXTURE_EPOCH}.1"`,
+															},
+														},
+											"response-command",
+											async () => {
+												throw new Error("Revoked command demand");
+											},
+											done,
+										);
+						expect(result).toMatchObject({
+							ok: false,
+							failure: { kind: "revoked" },
+						});
+						return new Response(producer.body);
+					}),
+				),
+			);
+			const worker = createWorker(
+				identity,
+				() => stub,
+				() => new R2BlobStore(env.R2_BUCKET),
+			);
+			const fifth = source(1, 66);
+			try {
+				const refused = await worker.fetch(
+					new Request(`https://${host}/v1/files/fifth.md`, {
+						method: "PUT",
+						headers: {
+							"If-None-Match": "*",
+							"X-Vault-Epoch": TEXT_FIXTURE_EPOCH,
+						},
+						body: fifth.body,
+					}),
+					env,
+				);
+				expect(refused.status).toBe(429);
+				expect(refused.headers.get("Retry-After")).toBe("1");
+				expect(await refused.json()).toMatchObject({
+					error: "admission_limited",
+				});
+				expect(fifth.stats().reads).toBe(0);
+				expect(await admissions(host)).toHaveLength(0);
+				await responses[0]?.body?.cancel();
+				const next = await worker.fetch(
+					new Request(`https://${host}/v1/files/next.md`, {
+						method: "PUT",
+						headers: {
+							"If-None-Match": "*",
+							"X-Vault-Epoch": TEXT_FIXTURE_EPOCH,
+						},
+						body: "new",
+					}),
+					env,
+				);
+				expect(next.status).toBe(201);
+				const full = tryAcquireBodySlot();
+				full?.();
+				expect(full).toBeUndefined();
+				await next.text();
+				const free = tryAcquireBodySlot();
+				try {
+					expect(free).toBeTypeOf("function");
+					const extra = tryAcquireBodySlot();
+					extra?.();
+					expect(extra).toBeUndefined();
+				} finally {
+					free?.();
+				}
+			} finally {
+				for (const producer of producers) producer.resume();
+				for (const response of responses) await response.body?.cancel();
+			}
+		},
+	);
 	it("holds four distinct native 25 MB uploads across clients, hosts, and router instances", async () => {
 		const hosts = Array.from(
 			{ length: 5 },
@@ -247,7 +398,7 @@ describe("aggregate body ownership", () => {
 			);
 		} finally {
 			for (const item of sources) item.resume();
-			await Promise.all(uploads);
+			for (const response of await Promise.all(uploads)) await response.text();
 		}
 		const results = await Promise.all(uploads);
 		expect(results.map((result) => result.status)).toEqual([
@@ -345,7 +496,8 @@ describe("aggregate body ownership", () => {
 				);
 			} finally {
 				for (const item of sources) item.resume();
-				await Promise.all(uploads);
+				for (const response of await Promise.all(uploads))
+					await response.text();
 			}
 			expect(
 				(await Promise.all(uploads)).map((response) => response.status),

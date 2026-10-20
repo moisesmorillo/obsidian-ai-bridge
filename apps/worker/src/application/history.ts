@@ -105,15 +105,19 @@ type ReservationValidation =
 	| { ok: true; reservation: MutationReservation }
 	| { ok: false; failure: FileFailure };
 
-/** Reserve before body reads, then authorize and publish one immutable command. */
+/**
+ * Reserve before body demand, then authorize and publish one immutable command.
+ * Optional response production also holds capacity after operation cleanup.
+ */
 export async function executeFileCommand(
 	gateway: HistoryVaultGateway,
 	context: AuthorizationContext,
 	descriptor: OperationDescriptor | RenameReservation,
 	key: string | undefined,
 	readCommand: () => Promise<FileCommand>,
+	responseProduction?: Promise<void>,
 ): Promise<TextMutationResult> {
-	const release = tryAcquireBodySlot();
+	const release = tryAcquireBodySlot(responseProduction);
 	if (release === undefined)
 		return {
 			ok: false,

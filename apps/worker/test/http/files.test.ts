@@ -294,6 +294,7 @@ describe("conditional text HTTP lifecycle", () => {
 		});
 		expect(created.status).toBe(201);
 		const firstEtag = created.headers.get("ETag");
+		await created.text();
 		expect(firstEtag).toBe('"0123456789abcdef0123456789abcdef.1"');
 		const first = await SELF.fetch(url, {
 			headers: { "X-Vault-Epoch": "0123456789abcdef0123456789abcdef" },
@@ -313,6 +314,7 @@ describe("conditional text HTTP lifecycle", () => {
 		});
 		expect(updated.status).toBe(200);
 		const secondEtag = updated.headers.get("ETag");
+		await updated.text();
 		const history = await SELF.fetch(`${url}?rev=1`, {
 			headers: { "X-Vault-Epoch": "0123456789abcdef0123456789abcdef" },
 		});
@@ -339,6 +341,7 @@ describe("conditional text HTTP lifecycle", () => {
 		expect(recreated.headers.get("ETag")).toBe(
 			'"0123456789abcdef0123456789abcdef.4"',
 		);
+		await recreated.text();
 	});
 
 	it("returns the authoritative epoch before it reads a missing observation body", async () => {
@@ -426,6 +429,7 @@ describe("conditional text HTTP lifecycle", () => {
 			env,
 		);
 		expect(duplicate.status).toBe(409);
+		await duplicate.text();
 		expect(firstBody.wasSent()).toBe(false);
 
 		await runInDurableObject(stub, async (_instance, state) => {
@@ -461,7 +465,9 @@ describe("conditional text HTTP lifecycle", () => {
 		);
 		expect(replacementOwner).not.toBe(owner);
 		firstBody.send();
-		expect((await first).status).toBe(409);
+		const firstResponse = await first;
+		expect(firstResponse.status).toBe(409);
+		await firstResponse.text();
 		const retainedOwner = await runInDurableObject(
 			stub,
 			async (_instance, state) =>
@@ -474,7 +480,9 @@ describe("conditional text HTTP lifecycle", () => {
 		);
 		expect(retainedOwner).toBe(replacementOwner);
 		replacementBody.send();
-		expect((await replacement).status).toBe(201);
+		const replacementResponse = await replacement;
+		expect(replacementResponse.status).toBe(201);
+		await replacementResponse.text();
 	});
 
 	it("cancels an expired body without settling its replacement claim", async () => {
@@ -542,7 +550,9 @@ describe("conditional text HTTP lifecycle", () => {
 		);
 		expect(replacementOwner).not.toBe(originalOwner);
 		abort.abort();
-		expect((await first).status).toBe(400);
+		const firstResponse = await first;
+		expect(firstResponse.status).toBe(400);
+		await firstResponse.text();
 		expect(originalBody.wasCancelled()).toBe(true);
 		const retained = await runInDurableObject(
 			stub,
@@ -559,7 +569,9 @@ describe("conditional text HTTP lifecycle", () => {
 		expect(retained.owner).toBe(replacementOwner);
 		expect(retained.revisions).toHaveLength(0);
 		replacementBody.send();
-		expect((await replacement).status).toBe(201);
+		const replacementResponse = await replacement;
+		expect(replacementResponse.status).toBe(201);
+		await replacementResponse.text();
 	});
 
 	it("preserves a slow keyed reservation across real Durable Object eviction", async () => {
@@ -602,6 +614,7 @@ describe("conditional text HTTP lifecycle", () => {
 		});
 		const duplicate = await testWorker.fetch(duplicateRequest, env);
 		expect(duplicate.status).toBe(409);
+		await duplicate.text();
 		expect(duplicateRequest.bodyUsed).toBe(false);
 		expect(body.wasSent()).toBe(false);
 
@@ -617,7 +630,9 @@ describe("conditional text HTTP lifecycle", () => {
 		);
 		expect(restoredOwner).toBe(priorOwner);
 		body.send();
-		expect((await first).status).toBe(201);
+		const firstResponse = await first;
+		expect(firstResponse.status).toBe(201);
+		await firstResponse.text();
 	});
 
 	it("rejects repeated selectors, unsupported methods, and actual bytes over the ceiling", async () => {
@@ -641,6 +656,7 @@ describe("conditional text HTTP lifecycle", () => {
 			env,
 		);
 		expect(oversized.status).toBe(413);
+		await oversized.text();
 	});
 
 	it("rejects unexpected DELETE bodies without consuming them", async () => {
@@ -672,17 +688,20 @@ describe("conditional text HTTP lifecycle", () => {
 			body: "one",
 		});
 		const etag = created.headers.get("ETag") ?? "";
-		await SELF.fetch(url, {
+		await created.text();
+		const update = await SELF.fetch(url, {
 			method: "PUT",
 			headers: { "If-Match": etag, "X-Vault-Epoch": TEXT_FIXTURE_EPOCH },
 			body: "two",
 		});
+		await update.text();
 		const stale = await SELF.fetch(url, {
 			method: "PUT",
 			headers: { "If-Match": etag, "X-Vault-Epoch": TEXT_FIXTURE_EPOCH },
 			body: "stale",
 		});
 		expect(stale.status).toBe(412);
+		await stale.text();
 
 		const stub = env.VAULTS.get(env.VAULTS.idFromName("worker.invalid"));
 		await runInDurableObject(stub, async (_instance, state) => {
@@ -731,7 +750,9 @@ describe("conditional text HTTP lifecycle", () => {
 		});
 		expect(first.status).toBe(201);
 		expect(retry.status).toBe(201);
+		await retry.text();
 		expect(retry.headers.get("ETag")).toBe(first.headers.get("ETag"));
+		await first.text();
 		const history = await SELF.fetch(`${url}?rev=1`, {
 			headers: { "X-Vault-Epoch": TEXT_FIXTURE_EPOCH },
 		});
@@ -750,6 +771,7 @@ describe("conditional text HTTP lifecycle", () => {
 			env,
 		);
 		expect(lost.status).toBe(500);
+		await lost.text();
 		const retry = await SELF.fetch(url, {
 			method: "PUT",
 			headers: {
@@ -760,6 +782,7 @@ describe("conditional text HTTP lifecycle", () => {
 			body: "original bytes",
 		});
 		expect(retry.status).toBe(201);
+		await retry.text();
 		const stub = env.VAULTS.get(env.VAULTS.idFromName("worker.invalid"));
 		const counts = await runInDurableObject(stub, async (_instance, state) => ({
 			revisions: state.storage.sql
@@ -789,6 +812,7 @@ describe("conditional text HTTP lifecycle", () => {
 			env,
 		);
 		expect(response.status).toBe(400);
+		await response.text();
 		const stub = env.VAULTS.get(env.VAULTS.idFromName("worker.invalid"));
 		const state = await runInDurableObject(
 			stub,
@@ -864,6 +888,7 @@ describe("conditional text HTTP lifecycle", () => {
 			body: "committed bytes",
 		});
 		expect(settle.status).toBe(201);
+		await settle.text();
 		const stub = env.VAULTS.get(env.VAULTS.idFromName("worker.invalid"));
 		const state = await runInDurableObject(
 			stub,
@@ -911,6 +936,7 @@ describe("conditional text HTTP lifecycle", () => {
 		expect(responses.map((response) => response.status).sort()).toEqual(
 			[201, 201, 201, 201, 429].sort(),
 		);
+		for (const response of responses) await response.text();
 	});
 
 	it.each([32, 1_000_000])(
@@ -940,7 +966,7 @@ describe("conditional text HTTP lifecycle", () => {
 			const responses = await Promise.all(requests);
 			for (const response of responses) {
 				expect(response.status).toBe(201);
-				await response.body?.cancel();
+				await response.text();
 			}
 			for (let index = 0; index < 4; index++) {
 				const read = await SELF.fetch(
@@ -963,6 +989,39 @@ describe("conditional text HTTP lifecycle", () => {
 			);
 		},
 	);
+
+	it("preserves_exact_authorized_failure_JSON_and_excludes_write_only_content", async () => {
+		const content = `\ufeff"\\\u0000café😀${"z".repeat(8191)}😀`;
+		const created = await SELF.fetch(url, {
+			method: "PUT",
+			headers: { "If-None-Match": "*", "X-Vault-Epoch": TEXT_FIXTURE_EPOCH },
+			body: content,
+		});
+		const metadata = MutationSuccessSchema.parse(await created.json());
+		for (const identity of ["read-write", "write"]) {
+			const failure = await SELF.fetch(url, {
+				method: "PUT",
+				headers: {
+					"If-None-Match": "*",
+					"X-Vault-Epoch": TEXT_FIXTURE_EPOCH,
+					"X-Test-Identity": identity,
+				},
+				body: "replacement",
+			});
+			expect(failure.status).toBe(412);
+			expect(failure.headers.get("Content-Type")).toBe("application/json");
+			expect(failure.headers.has("Retry-After")).toBe(false);
+			const body = await failure.json();
+			const canonical = encodeFileFailure({
+				kind: "precondition_failed",
+				etag: metadata.etag,
+				hash: metadata.hash,
+				deleted: false,
+				...(identity === "write" ? {} : { content }),
+			});
+			expect(body).toEqual(canonical.body);
+		}
+	});
 
 	it("characterizes slow escaped failure responses and cancellation without caller gates", async () => {
 		const expectedSizes: number[] = [];
@@ -1013,6 +1072,7 @@ describe("conditional text HTTP lifecycle", () => {
 			);
 		const first = await failFour();
 		const second: Response[] = [];
+		const retry: Response[] = [];
 		try {
 			for (const response of first) {
 				expect(response.status).toBe(412);
@@ -1020,7 +1080,15 @@ describe("conditional text HTTP lifecycle", () => {
 			}
 			// The test consumer reads no first-wave body before the second HTTP wave completes.
 			second.push(...(await failFour()));
-			for (const response of second) expect(response.status).toBe(412);
+			// Native transport can consume a producer before the client reads its body.
+			// This schedule observes refusal now, not a general rule about unread remote bodies.
+			for (const response of second) {
+				expect(response.status).toBe(429);
+				expect(response.headers.get("Retry-After")).toBe("1");
+				expect(await response.json()).toMatchObject({
+					error: "admission_limited",
+				});
+			}
 			const unreadFirstWaveAtSecondCompletion = first.filter(
 				(response) => !response.bodyUsed,
 			).length;
@@ -1053,7 +1121,10 @@ describe("conditional text HTTP lifecycle", () => {
 				expect(total).toBe(expectedSizes[index]);
 				completedBytes.push(total);
 			}
-			for (const response of second) {
+			// After complete production, repeat the failures and retain bounded client cancellation coverage.
+			retry.push(...(await failFour()));
+			for (const response of retry) {
+				expect(response.status).toBe(412);
 				if (!response.body)
 					throw new Error("Expected a cancellable failure body");
 				const reader = response.body.getReader({ mode: "byob" });
@@ -1085,17 +1156,18 @@ describe("conditional text HTTP lifecycle", () => {
 				JSON.stringify({
 					firstWave: first.length,
 					unreadFirstWaveAtSecondCompletion,
-					secondWave: second.length,
+					secondWaveStatuses: second.map((response) => response.status),
+					retryWave: retry.length,
 					sourceBytes: 1_000_000,
 					proposedBytes: 1_000_000,
 					contentUnits: 1_000_000,
 					completedBytes,
-					cancelledResponses: second.length,
+					cancelledResponses: retry.length,
 					admissions: rows.admissions,
 				}),
 			);
 		} finally {
-			for (const response of [...first, ...second]) {
+			for (const response of [...first, ...second, ...retry]) {
 				if (response.body && !response.body.locked)
 					await response.body.cancel();
 			}

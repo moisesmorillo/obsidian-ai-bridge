@@ -55,6 +55,7 @@ describe("declared blob HTTP", () => {
 				},
 				body: bytes,
 			});
+			await put.text();
 			expect(put.status).toBe(201);
 			const get = await SELF.fetch(url);
 			expect(get.status).toBe(200);
@@ -156,6 +157,7 @@ describe("declared blob HTTP", () => {
 			},
 			body: bytes,
 		});
+		await put.text();
 		expect(put.status).toBe(201);
 		for (const [range, status, selected] of [
 			["bytes=0-4", 206, "bytes 0-4/1500000"],
@@ -191,6 +193,7 @@ describe("declared blob HTTP", () => {
 			},
 			body: "inline",
 		});
+		await update.text();
 		expect(update.status).toBe(200);
 		const retained = await SELF.fetch(`${url}?rev=1`, {
 			headers: { "X-Vault-Epoch": TEXT_FIXTURE_EPOCH, Range: "bytes=0-4" },
@@ -250,6 +253,7 @@ describe("declared blob HTTP", () => {
 		});
 		const before = await env.R2_BUCKET.list();
 		const response = await testWorker.fetch(request, env);
+		await response.text();
 		expect(response.status).toBe(401);
 		expect(request.bodyUsed).toBe(false);
 		expect(await env.R2_BUCKET.list()).toEqual(before);
@@ -271,6 +275,7 @@ describe("declared blob HTTP", () => {
 					body: bytes,
 				},
 			);
+			await response.text();
 			expect(response.status).toBe(201);
 			const get = await SELF.fetch("https://blob.invalid/v1/files/exact.md");
 			expect(await get.json()).toMatchObject({
@@ -347,12 +352,14 @@ describe("declared blob HTTP", () => {
 			headers: { ...headers, "X-Test-Lose-Commit-Response": "true" },
 			body: bytes,
 		});
+		await lost.text();
 		expect(lost.status).toBe(500);
 		const retry = await SELF.fetch(url, {
 			method: "PUT",
 			headers,
 			body: bytes,
 		});
+		await retry.text();
 		expect(retry.status).toBe(201);
 		const state = await runInDurableObject(
 			env.VAULTS.get(env.VAULTS.idFromName("blob.invalid")),
@@ -382,6 +389,7 @@ describe("declared blob HTTP", () => {
 			},
 			body: bytes,
 		});
+		await created.text();
 		expect(created.status).toBe(201);
 		const denied = await SELF.fetch(url, {
 			headers: { "X-Test-Identity": "revoked" },
@@ -418,6 +426,7 @@ describe("declared blob HTTP", () => {
 			},
 			body: bytes,
 		});
+		await response.text();
 		expect(response.status).toBe(201);
 		const get = await SELF.fetch(url);
 		expect(get.headers.get("X-File-Large")).toBe("true");
@@ -553,12 +562,14 @@ describe("declared blob HTTP", () => {
 			},
 			body: bytes,
 		});
+		await created.text();
 		expect(created.status).toBe(201);
 		const renamed = await SELF.fetch(`${source}:rename`, {
 			method: "POST",
 			headers: { "If-Match": created.headers.get("ETag") ?? "" },
 			body: JSON.stringify({ to: "target.bin" }),
 		});
+		await renamed.text();
 		expect(renamed.status).toBe(201);
 		const renamedBytes = await SELF.fetch(target);
 		expect(new Uint8Array(await renamedBytes.arrayBuffer())).toEqual(bytes);
@@ -579,6 +590,7 @@ describe("declared blob HTTP", () => {
 			headers: { "If-Match": deleted.headers.get("ETag") ?? "" },
 			body: JSON.stringify({ source_rev: 1 }),
 		});
+		await restored.text();
 		expect(restored.status).toBe(201);
 		const restoredBytes = await SELF.fetch(target);
 		expect(new Uint8Array(await restoredBytes.arrayBuffer())).toEqual(bytes);
@@ -593,6 +605,7 @@ describe("declared blob HTTP", () => {
 			headers: { "If-None-Match": "*", "X-Vault-Epoch": TEXT_FIXTURE_EPOCH },
 			body: "old inline",
 		});
+		await first.text();
 		const bytes = new Uint8Array(1_500_000).fill(97);
 		const updated = await SELF.fetch(url, {
 			method: "PUT",
@@ -604,6 +617,7 @@ describe("declared blob HTTP", () => {
 			},
 			body: bytes,
 		});
+		await updated.text();
 		expect(updated.status).toBe(200);
 		const retained = await SELF.fetch(`${url}?rev=1`, {
 			headers: { "X-Vault-Epoch": TEXT_FIXTURE_EPOCH },
@@ -647,6 +661,7 @@ describe("declared blob HTTP", () => {
 			headers: { "If-None-Match": "*", "X-Vault-Epoch": TEXT_FIXTURE_EPOCH },
 			body: "source",
 		});
+		await first.text();
 		const malformed = [
 			'{"to":{"nested":[]}}',
 			'{"to":"target.md","extra":1,"third":2}',
@@ -658,6 +673,7 @@ describe("declared blob HTTP", () => {
 				headers: { "If-Match": first.headers.get("ETag") ?? "" },
 				body,
 			});
+			await rejected.text();
 			expect(rejected.status).toBe(400);
 		}
 		const target = 'literal{"}.md';
@@ -693,6 +709,7 @@ describe("declared blob HTTP", () => {
 		});
 		expect(request.headers.has("Content-Length")).toBe(false);
 		const put = await testWorker.fetch(request, env);
+		await put.text();
 		expect(put.status).toBe(201);
 		const get = await SELF.fetch(url);
 		expect(new Uint8Array(await get.arrayBuffer())).toEqual(bytes);
@@ -717,6 +734,7 @@ describe("declared blob HTTP", () => {
 					},
 					body: bytes,
 				});
+				await created.text();
 				expect(created.status).toBe(201);
 				if (state === "deleted")
 					expect(

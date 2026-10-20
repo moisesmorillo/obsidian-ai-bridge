@@ -284,7 +284,11 @@ Unknown storage or authority results retain admission until its original deadlin
 
 Four body-bearing mutations share synchronous slots across clients, vault hosts, and router instances in one Worker isolate. PUT, append, rename, and restore use this budget. The fifth request receives `429 admission_limited` and `Retry-After: 1`, without body demand or durable reservation.
 
-A slot covers body handling, storage, authority calls, and cleanup. Cancellation or ticket expiry does not release a slot before started work settles. Permanently blocked work can exhaust slots and cause safe refusals.
+A slot covers body handling, storage, authority calls, cleanup, and application-owned response preparation and production. Operation cleanup and response production must both settle before slot reuse. Response production ends after producer EOF or cancellation cleanup, not after the final chunk enters a stream.
+
+This boundary does not prove client receipt or release by the last native owner. Cancellation or ticket expiry does not release a slot before started work settles. Permanently blocked work can exhaust slots and cause safe refusals.
+
+Mutation failure responses preserve complete authorized text through bounded JSON chunks. Encoding does not create a complete escaped content string or a complete JSON body. Response reads and encoded chunks stay at or below 65,536 bytes.
 
 Native body reads request at most 65,536 bytes at a time. Inline readers use one fixed 1,000,000-byte allocation and do not retain borrowed chunks. Blob reads and writes use bounded native streams, without a complete blob buffer.
 

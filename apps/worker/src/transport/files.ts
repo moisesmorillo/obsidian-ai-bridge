@@ -1,13 +1,11 @@
 import type {
 	AuthorizationContext,
 	CurrentEpochOperation,
-	FileHttpFailureInput,
 	TextMutationDescriptor,
 	TextReadRequest,
 } from "@obsidian-ai-bridge/protocol";
 import {
 	EpochSchema,
-	encodeFileFailure,
 	IdempotencyKeySchema,
 	parseETag,
 	TextMutationDescriptorSchema,
@@ -32,6 +30,10 @@ import {
 } from "@worker/transport/blobs";
 import { readInlineBody } from "@worker/transport/body";
 import { handleHistoryCommand } from "@worker/transport/history";
+import {
+	fileFailureResponse as errorResponse,
+	withMutationResponse,
+} from "@worker/transport/mutation-response";
 import { decodeAndNormalizePath } from "@worker/transport/path";
 import { Hono } from "hono";
 
@@ -173,30 +175,40 @@ export function createFileRouter(
 			context.req.method === "PUT" && usesBlobStorage(path, declaration);
 		if (isBlob && declaration === undefined)
 			return errorResponse({ kind: "invalid_request" });
-		const result =
-			isBlob && declaration !== undefined
-				? await executeBlobPut(
-						gateway,
-						resolveBlobs(context.env),
-						identity,
-						parsed.data,
-						key?.success ? key.data : undefined,
-						declaration,
-						context.req.raw.body ?? new Blob([]).stream(),
-						context.req.raw.signal,
-					)
-				: await executeTextMutation(
-						gateway,
-						identity,
-						parsed.data,
-						key?.success ? key.data : undefined,
-						() => readBoundedText(context.req.raw),
-						declaration,
-					);
-		if (!result.ok) return errorResponse(result.failure);
-		return context.json(result.response.body, result.response.status, {
-			ETag: result.response.body.etag,
-		});
+		/** Bind response production only to PUT. DELETE does not acquire body capacity. */
+		const execute = async (
+			responseProduction?: Promise<void>,
+		): Promise<Response> => {
+			const result =
+				isBlob && declaration !== undefined
+					? await executeBlobPut(
+							gateway,
+							resolveBlobs(context.env),
+							identity,
+							parsed.data,
+							key?.success ? key.data : undefined,
+							declaration,
+							context.req.raw.body ?? new Blob([]).stream(),
+							context.req.raw.signal,
+							responseProduction,
+						)
+					: await executeTextMutation(
+							gateway,
+							identity,
+							parsed.data,
+							key?.success ? key.data : undefined,
+							() => readBoundedText(context.req.raw),
+							declaration,
+							responseProduction,
+						);
+			if (!result.ok) return errorResponse(result.failure);
+			return context.json(result.response.body, result.response.status, {
+				ETag: result.response.body.etag,
+			});
+		};
+		return context.req.method === "PUT"
+			? withMutationResponse(execute)
+			: execute();
 	});
 	return router;
 }
@@ -247,13 +259,4 @@ async function currentEpochMismatch(
 /** Read no more than the inline text byte ceiling, regardless of Content-Length. */
 async function readBoundedText(request: Request) {
 	return prepareTextPayload(await readInlineBody(request, MAX_TEXT_BYTES));
-}
-
-/** Encode a canonical failure without exposing thrown exception details. */
-function errorResponse(failure: FileHttpFailureInput): Response {
-	const result = encodeFileFailure(failure);
-	return Response.json(result.body, {
-		status: result.status,
-		headers: result.headers,
-	});
 }

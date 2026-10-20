@@ -62,7 +62,10 @@ export interface TextVaultGateway extends BlobVaultGateway {
 	): Promise<TextReadResult>;
 }
 
-/** Reserve capacity before reading bytes, then authorize and publish one conditional mutation. */
+/**
+ * Reserve PUT capacity before body demand, then authorize and publish the exact mutation.
+ * Optional response production retains that capacity after operation cleanup. DELETE does not acquire a body slot.
+ */
 export async function executeTextMutation(
 	gateway: TextVaultGateway,
 	context: AuthorizationContext,
@@ -70,9 +73,10 @@ export async function executeTextMutation(
 	key: IdempotencyKey | undefined,
 	readPayload: () => Promise<TextPayload>,
 	declaration?: BlobDeclaration,
+	responseProduction?: Promise<void>,
 ): Promise<TextMutationResult> {
 	if (descriptor.op === "put") {
-		const release = tryAcquireBodySlot();
+		const release = tryAcquireBodySlot(responseProduction);
 		if (release === undefined)
 			return {
 				ok: false,

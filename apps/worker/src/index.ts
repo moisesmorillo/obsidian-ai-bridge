@@ -1,6 +1,7 @@
 import type { HistoryVaultGateway } from "@worker/application/history";
 import type { TextVaultGateway } from "@worker/application/text-files";
 import type { Env } from "@worker/env";
+import { R2BlobStore } from "@worker/infrastructure/r2/blobs";
 import { createWorker } from "@worker/transport/worker";
 
 /** Deny all production identities until an approved authentication adapter exists. */
@@ -23,6 +24,13 @@ function resolveVault(
 			await stub.authorize(...args),
 		commitText: async (...args: Parameters<typeof stub.commitText>) =>
 			await stub.commitText(...args),
+		authorizeBlob: async (...args: Parameters<typeof stub.authorizeBlob>) =>
+			await stub.authorizeBlob(...args),
+		commitBlob: async (...args: Parameters<typeof stub.commitBlob>) =>
+			await stub.commitBlob(...args),
+		readBlobMetadata: async (
+			...args: Parameters<typeof stub.readBlobMetadata>
+		) => await stub.readBlobMetadata(...args),
 		finishAdmission: async (...args: Parameters<typeof stub.finishAdmission>) =>
 			await stub.finishAdmission(...args),
 		readText: async (...args: Parameters<typeof stub.readText>) =>
@@ -41,7 +49,11 @@ function resolveVault(
 	};
 }
 
-const worker = createWorker(resolveIdentity, resolveVault);
+const worker = createWorker(
+	resolveIdentity,
+	resolveVault,
+	(env) => new R2BlobStore(env.R2_BUCKET),
+);
 
 export { Vault } from "@worker/infrastructure/durable-object/vault";
 export default worker;

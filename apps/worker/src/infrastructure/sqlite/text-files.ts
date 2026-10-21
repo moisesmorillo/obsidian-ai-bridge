@@ -14,6 +14,8 @@ import type {
 	TextReadResult,
 } from "@obsidian-ai-bridge/protocol";
 import {
+	BlobDeclarationSchema,
+	BlobMetadataSchema,
 	EMPTY_PAYLOAD_HASH,
 	EpochSchema,
 	formatETag,
@@ -29,6 +31,11 @@ import {
 	type PreparedOperation,
 	prepareOperation,
 } from "@worker/application/admission";
+import type {
+	BlobEvidence,
+	BlobMetadataReadResult,
+	BlobStore,
+} from "@worker/application/blobs";
 import { FileOperationDenied } from "@worker/application/files";
 import type { ImmutableFileCommand } from "@worker/application/history";
 import { prepareTextPayload } from "@worker/application/text-payload";
@@ -39,6 +46,7 @@ import {
 import { SqliteHistoryStore } from "@worker/infrastructure/sqlite/history";
 import type { SqliteMutationCoordinator } from "@worker/infrastructure/sqlite/mutations";
 import {
+	blobRefs,
 	changes,
 	files,
 	meta,
@@ -58,7 +66,11 @@ export class SqliteTextStore {
 	constructor(
 		storage: DurableObjectStorage,
 		private readonly coordinator: SqliteMutationCoordinator,
-		private readonly ports: { now: () => number; logger?: Logger },
+		private readonly ports: {
+			now: () => number;
+			logger?: Logger;
+			blobStore?: BlobStore;
+		},
 	) {
 		this.db = drizzle(storage, { schema: vaultSchema, logger: ports.logger });
 		this.history = new SqliteHistoryStore(storage, coordinator, ports);
@@ -81,8 +93,6 @@ export class SqliteTextStore {
 				return { ok: false, failure: { kind: "invalid_request" } };
 			if (key === undefined)
 				return { ok: false, failure: { kind: "idempotency_key_required" } };
-			if (!path.endsWith(".md") && !path.endsWith(".canvas"))
-				return { ok: false, failure: { kind: "not_implemented" } };
 			return this.coordinator.beginMutation(context, parsed.data, key);
 		}
 		if (parsed.data.op === "restore")
@@ -90,7 +100,12 @@ export class SqliteTextStore {
 		const textDescriptor = TextMutationDescriptorSchema.safeParse(parsed.data);
 		if (!textDescriptor.success)
 			return { ok: false, failure: { kind: "invalid_request" } };
-		if (!path.endsWith(".md") && !path.endsWith(".canvas"))
+		if (
+			!path.endsWith(".md") &&
+			!path.endsWith(".canvas") &&
+			parsed.data.op !== "put" &&
+			parsed.data.op !== "delete"
+		)
 			return { ok: false, failure: { kind: "not_implemented" } };
 		return this.coordinator.beginMutation(context, textDescriptor.data, key);
 	}
@@ -108,6 +123,7 @@ export class SqliteTextStore {
 			return { ok: false, failure: { kind: "invalid_request" } };
 		const operationIntent = parsed.data;
 		if (
+			operationIntent.op !== "delete" &&
 			!operationIntent.paths[0]?.endsWith(".md") &&
 			!operationIntent.paths[0]?.endsWith(".canvas")
 		)
@@ -160,6 +176,80 @@ export class SqliteTextStore {
 		}
 	}
 
+	/** Verify immutable R2 evidence, then atomically publish one blob reference. */
+	async commitBlob(
+		context: AuthorizationContext,
+		intent: TextMutationIntent,
+		ticketId: string,
+		key?: IdempotencyKey,
+	): Promise<TextMutationResult> {
+		const parsed = TextMutationIntentSchema.safeParse(intent);
+		if (!parsed.success || parsed.data.op !== "put")
+			return { ok: false, failure: { kind: "invalid_request" } };
+		const operationIntent = parsed.data;
+		const path = operationIntent.paths[0] ?? "";
+		if (
+			operationIntent.size <= 1_000_000 &&
+			(path.endsWith(".md") || path.endsWith(".canvas"))
+		)
+			return { ok: false, failure: { kind: "invalid_request" } };
+		if (!this.ports.blobStore)
+			return {
+				ok: false,
+				failure: { kind: "blob_storage_unavailable", retry_after_seconds: 1 },
+			};
+		let operation: PreparedOperation;
+		try {
+			operation = await prepareOperation(context, operationIntent);
+		} catch (error) {
+			if (error instanceof AdmissionDenied)
+				return { ok: false, failure: error.failure };
+			throw error;
+		}
+		const preflight = this.coordinator.preflight(
+			context,
+			operation,
+			ticketId,
+			key,
+		);
+		if (preflight) return preflight;
+		const declaration = BlobDeclarationSchema.parse({
+			payload_hash: operationIntent.payload_hash,
+			size: operationIntent.size,
+		});
+		let evidence: BlobEvidence | undefined;
+		try {
+			evidence = await this.ports.blobStore.head(declaration.payload_hash);
+		} catch {
+			return {
+				ok: false,
+				failure: { kind: "blob_storage_unavailable", retry_after_seconds: 1 },
+			};
+		}
+		if (!evidence)
+			return {
+				ok: false,
+				failure: { kind: "blob_storage_unavailable", retry_after_seconds: 1 },
+			};
+		if (
+			evidence.hash !== declaration.payload_hash ||
+			evidence.size !== declaration.size
+		)
+			return { ok: false, failure: { kind: "blob_integrity_mismatch" } };
+		const now = this.ports.now();
+		if (!Number.isSafeInteger(now))
+			return { ok: false, failure: { kind: "invalid_request" } };
+		try {
+			return this.coordinator.commit(context, operation, ticketId, key, (tx) =>
+				publishBlob(tx, context, operationIntent, now),
+			);
+		} catch (error) {
+			if (error instanceof FileOperationDenied)
+				return { ok: false, failure: error.failure };
+			throw error;
+		}
+	}
+
 	/** Reserve rename source capacity before the body reveals its destination. */
 	beginRenameSource(
 		context: AuthorizationContext,
@@ -189,6 +279,75 @@ export class SqliteTextStore {
 	/** Read retained content-free history metadata after native policy checks. */
 	readHistory(context: AuthorizationContext, request: HistoryRequest) {
 		return this.history.readHistory(context, request);
+	}
+
+	/** Read immutable current or retained blob metadata after native policy checks. */
+	async readBlobMetadata(
+		context: AuthorizationContext,
+		request: TextReadRequest,
+	): Promise<BlobMetadataReadResult> {
+		const parsed = TextReadRequestSchema.safeParse(request);
+		if (!parsed.success)
+			return { ok: false, failure: { kind: "invalid_request" } };
+		const value = parsed.data;
+		const descriptor: OperationDescriptor = {
+			op: "read",
+			paths: [value.path],
+			precondition: { kind: "none" },
+			...(value.epoch === undefined ? {} : { epoch: value.epoch }),
+		};
+		try {
+			return await this.db.transaction((tx) => {
+				const epoch = assertPolicyInTransaction(tx, context, {
+					client_id: context.client_id,
+					descriptor,
+					descriptorFingerprint: "",
+				});
+				const row =
+					value.rev === undefined
+						? tx.select().from(files).where(eq(files.path, value.path)).all()[0]
+						: tx
+								.select()
+								.from(revisions)
+								.where(
+									and(
+										eq(revisions.path, value.path),
+										eq(revisions.rev, value.rev),
+									),
+								)
+								.all()[0];
+				if (!row)
+					return {
+						ok: false,
+						failure: {
+							kind: value.rev === undefined ? "not_found" : "revision_pruned",
+						},
+					};
+				if (row.kind !== "blob")
+					return { ok: false, failure: { kind: "not_implemented" } };
+				const deleted = row.deleted === 1;
+				const body = BlobMetadataSchema.parse({
+					path: row.path,
+					etag: formatETag(epoch, row.rev),
+					hash: deleted ? "" : row.hash,
+					size: deleted ? 0 : row.size,
+					kind: "blob",
+					deleted,
+					origin: row.origin,
+					updated_at: "at" in row ? row.at : row.updatedAt,
+					large:
+						!deleted &&
+						((row.path ?? "").toLowerCase().endsWith(".md") ||
+							(row.path ?? "").toLowerCase().endsWith(".canvas")) &&
+						row.size > 1_000_000,
+				});
+				return { ok: true, body };
+			});
+		} catch (error) {
+			if (error instanceof AdmissionDenied)
+				return { ok: false, failure: error.failure };
+			throw error;
+		}
 	}
 
 	/** Read one current or selected historical text row from a policy-checked snapshot. */
@@ -305,6 +464,110 @@ export class SqliteTextStore {
 }
 
 /** Write one revision, feed row, file head, counters, and Markdown search row in the coordinator transaction. */
+function publishBlob(
+	tx: VaultTransaction,
+	context: AuthorizationContext,
+	intent: TextMutationIntent,
+	now: number,
+): MutationReceipt {
+	const path = intent.paths[0];
+	if (path === undefined) throw new Error("Blob mutation has no path");
+	const prior = tx.select().from(files).where(eq(files.path, path)).all()[0];
+	const revision = (prior?.rev ?? 0) + 1;
+	if (!Number.isSafeInteger(revision) || revision <= 0)
+		throw new FileOperationDenied({ kind: "invalid_request" });
+	const existingRef = tx
+		.select()
+		.from(blobRefs)
+		.where(eq(blobRefs.hash, intent.payload_hash))
+		.all()[0];
+	if (existingRef && existingRef.size !== intent.size)
+		throw new FileOperationDenied({ kind: "blob_integrity_mismatch" });
+	const head = parseCounter(
+		tx
+			.select({ value: meta.value })
+			.from(meta)
+			.where(eq(meta.key, "head_seq"))
+			.all()[0]?.value,
+	);
+	const live = parseCounter(
+		tx
+			.select({ value: meta.value })
+			.from(meta)
+			.where(eq(meta.key, "live_file_count"))
+			.all()[0]?.value,
+	);
+	const change = tx
+		.insert(changes)
+		.values({
+			op: "put",
+			path,
+			rev: revision,
+			hash: intent.payload_hash,
+			origin: context.client_id,
+			at: now,
+		})
+		.returning({ seq: changes.seq })
+		.all()[0];
+	if (!change || !Number.isSafeInteger(change.seq) || change.seq <= head)
+		throw new FileOperationDenied({ kind: "invalid_request" });
+	const values = {
+		path,
+		pathKey: pathKey(path),
+		rev: revision,
+		seq: change.seq,
+		hash: intent.payload_hash,
+		size: intent.size,
+		kind: "blob",
+		content: null,
+		blobHash: intent.payload_hash,
+		deleted: 0,
+		updatedAt: now,
+		origin: context.client_id,
+	};
+	if (prior) tx.update(files).set(values).where(eq(files.path, path)).run();
+	else tx.insert(files).values(values).run();
+	tx.insert(revisions)
+		.values({ ...values, at: now })
+		.run();
+	tx.insert(blobRefs)
+		.values({ hash: intent.payload_hash, size: intent.size, firstRefAt: now })
+		.onConflictDoNothing()
+		.run();
+	tx.run(sql`DELETE FROM files_fts WHERE path = ${path}`);
+	if (prior?.deleted !== 0) {
+		if (!Number.isSafeInteger(live + 1))
+			throw new FileOperationDenied({ kind: "invalid_request" });
+		tx.update(meta)
+			.set({ value: String(live + 1) })
+			.where(eq(meta.key, "live_file_count"))
+			.run();
+	}
+	tx.update(meta)
+		.set({ value: String(change.seq) })
+		.where(eq(meta.key, "head_seq"))
+		.run();
+	const epoch = EpochSchema.parse(
+		tx
+			.select({ value: meta.value })
+			.from(meta)
+			.where(eq(meta.key, "epoch"))
+			.all()[0]?.value,
+	);
+	return {
+		status: prior && prior.deleted === 0 ? 200 : 201,
+		body: {
+			path,
+			etag: formatETag(epoch, revision),
+			seq: change.seq,
+			hash: intent.payload_hash,
+			size: intent.size,
+			deleted: false,
+		},
+	};
+}
+
+/** Write one revision, feed row, file head, counters, and Markdown search row in the coordinator transaction. */
 function publishText(
 	tx: VaultTransaction,
 	context: AuthorizationContext,
@@ -315,8 +578,6 @@ function publishText(
 	const path = intent.paths[0];
 	if (path === undefined) throw new Error("Text mutation has no path");
 	const prior = tx.select().from(files).where(eq(files.path, path)).all()[0];
-	if (prior?.kind === "blob")
-		throw new FileOperationDenied({ kind: "not_implemented" });
 	const priorRevision = prior?.rev ?? 0;
 	const revision = priorRevision + 1;
 	const headText = tx
@@ -373,9 +634,9 @@ function publishText(
 		seq: change.seq,
 		hash,
 		size,
-		kind: "text",
+		kind: deleted ? (prior?.kind ?? "text") : "text",
 		content: deleted ? null : (content ?? null),
-		blobHash: null,
+		blobHash: deleted ? (prior?.blobHash ?? null) : null,
 		deleted: deleted ? 1 : 0,
 		updatedAt: at,
 		origin: context.client_id,

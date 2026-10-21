@@ -175,8 +175,6 @@ export class SqliteHistoryStore {
 	): Promise<TextMutationResult> {
 		const path = command.intent.paths[0];
 		if (!path) return { ok: false, failure: { kind: "invalid_request" } };
-		if (!path.endsWith(".md") && !path.endsWith(".canvas"))
-			return { ok: false, failure: { kind: "not_implemented" } };
 		const replay = this.coordinator.replayIfPresent(
 			context,
 			operation,

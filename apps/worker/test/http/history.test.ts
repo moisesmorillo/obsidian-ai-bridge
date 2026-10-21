@@ -51,6 +51,7 @@ describe("history mutation HTTP routes", () => {
 			headers: { "If-None-Match": "*", "X-Vault-Epoch": TEXT_FIXTURE_EPOCH },
 			body: "original",
 		});
+		await created.text();
 		const sourceTag = created.headers.get("ETag");
 		const renamed = await SELF.fetch(`${base}:rename`, {
 			method: "POST",
@@ -60,6 +61,7 @@ describe("history mutation HTTP routes", () => {
 			},
 			body: JSON.stringify({ to: "notes/destination.md" }),
 		});
+		await renamed.text();
 		expect(renamed.status).toBe(201);
 		expect(renamed.headers.get("ETag")).toBe(
 			'"0123456789abcdef0123456789abcdef.1"',
@@ -92,6 +94,7 @@ describe("history mutation HTTP routes", () => {
 				body: "later",
 			},
 		);
+		await later.text();
 		expect(later.status).toBe(200);
 		const history = await SELF.fetch(
 			"https://worker.invalid/v1/history/notes/destination.md",
@@ -117,6 +120,7 @@ describe("history mutation HTTP routes", () => {
 			headers: { "If-None-Match": "*", "X-Vault-Epoch": TEXT_FIXTURE_EPOCH },
 			body: "start",
 		});
+		await created.text();
 		expect(created.status).toBe(201);
 		const appended = await SELF.fetch(`${url}:append`, {
 			method: "POST",
@@ -126,6 +130,7 @@ describe("history mutation HTTP routes", () => {
 			},
 			body: "\uFEFF\u0000尾",
 		});
+		await appended.text();
 		expect(appended.status).toBe(200);
 		const deleted = await SELF.fetch(url, {
 			method: "DELETE",
@@ -139,12 +144,14 @@ describe("history mutation HTTP routes", () => {
 			},
 			body: "blocked",
 		});
+		await tombstoneAppend.text();
 		expect(tombstoneAppend.status).toBe(409);
 		const restored = await SELF.fetch(`${url}:restore`, {
 			method: "POST",
 			headers: { "If-Match": deleted.headers.get("ETag") ?? "" },
 			body: JSON.stringify({ source_rev: 2 }),
 		});
+		await restored.text();
 		expect(restored.status).toBe(201);
 		const content = await SELF.fetch(url, {
 			headers: { "X-Vault-Epoch": TEXT_FIXTURE_EPOCH },
@@ -157,6 +164,7 @@ describe("history mutation HTTP routes", () => {
 			headers: { "X-Vault-Epoch": TEXT_FIXTURE_EPOCH },
 			body: "x",
 		});
+		await missingKey.text();
 		expect(missingKey.status).toBe(428);
 	});
 
@@ -167,6 +175,7 @@ describe("history mutation HTTP routes", () => {
 			headers: { "If-None-Match": "*", "X-Vault-Epoch": TEXT_FIXTURE_EPOCH },
 			body: "source",
 		});
+		await created.text();
 		const body = pendingBody(JSON.stringify({ to: "destination.md" }));
 		const renamePromise = SELF.fetch(`${url}:rename`, {
 			method: "POST",
@@ -190,6 +199,7 @@ describe("history mutation HTTP routes", () => {
 		expect(deleted.status).toBe(200);
 		body.release();
 		const response = await renamePromise;
+		await response.text();
 		expect(response.status).toBe(412);
 	});
 
@@ -202,6 +212,7 @@ describe("history mutation HTTP routes", () => {
 				body: "private bytes",
 			},
 		);
+		await created.text();
 		const denied = await SELF.fetch(
 			"https://worker.invalid/v1/history/private.md",
 			{ headers: { "X-Test-Identity": "write" } },
@@ -248,6 +259,7 @@ describe("history mutation HTTP routes", () => {
 			headers: { "If-None-Match": "*", "X-Vault-Epoch": TEXT_FIXTURE_EPOCH },
 			body: "secret current content",
 		});
+		await created.text();
 		const updated = await SELF.fetch(url, {
 			method: "PUT",
 			headers: {
@@ -256,6 +268,7 @@ describe("history mutation HTTP routes", () => {
 			},
 			body: "new current content",
 		});
+		await updated.text();
 		const denied = await SELF.fetch(`${url}:restore`, {
 			method: "POST",
 			headers: {
@@ -288,7 +301,9 @@ describe("history mutation HTTP routes", () => {
 				body: content,
 			});
 		const source = await put("source.md", "source");
+		await source.text();
 		const destination = await put("destination.md", "old destination");
+		await destination.text();
 		const collision = await SELF.fetch(
 			"https://worker.invalid/v1/files/source.md:rename",
 			{
@@ -310,6 +325,7 @@ describe("history mutation HTTP routes", () => {
 				body: JSON.stringify({ to: "Source.md" }),
 			},
 		);
+		await caseOnly.text();
 		expect(caseOnly.status).toBe(201);
 		const deletedDestination = await SELF.fetch(
 			"https://worker.invalid/v1/files/destination.md",
@@ -331,6 +347,7 @@ describe("history mutation HTTP routes", () => {
 				body: JSON.stringify({ to: "destination.md" }),
 			},
 		);
+		await intoTombstone.text();
 		expect(intoTombstone.status).toBe(201);
 		expect(intoTombstone.headers.get("ETag")).toBe(
 			'"0123456789abcdef0123456789abcdef.3"',
@@ -345,6 +362,7 @@ describe("history mutation HTTP routes", () => {
 			headers: { "If-None-Match": "*", "X-Vault-Epoch": TEXT_FIXTURE_EPOCH },
 			body: "base",
 		});
+		await created.text();
 		const headers = {
 			"Idempotency-Key": "http-append-replay-01",
 			"X-Vault-Epoch": TEXT_FIXTURE_EPOCH,
@@ -355,12 +373,14 @@ describe("history mutation HTTP routes", () => {
 			headers,
 			body: "+tail",
 		});
+		await lost.text();
 		expect(lost.status).toBe(500);
 		const replay = await SELF.fetch(`${url}:append`, {
 			method: "POST",
 			headers: { ...headers, "X-Test-Lose-Commit-Response": "false" },
 			body: "+tail",
 		});
+		await replay.text();
 		expect(replay.status).toBe(200);
 		expect(replay.headers.get("ETag")).toBe(
 			'"0123456789abcdef0123456789abcdef.2"',
@@ -408,6 +428,7 @@ describe("history mutation HTTP routes", () => {
 				body: "x",
 			},
 		);
+		await missingKey.text();
 		expect(missingKey.status).toBe(428);
 		const absent = await SELF.fetch(
 			"https://worker.invalid/v1/files/missing.md:append",
@@ -420,6 +441,7 @@ describe("history mutation HTTP routes", () => {
 				body: "x",
 			},
 		);
+		await absent.text();
 		expect(absent.status).toBe(404);
 		const staleEpoch = await SELF.fetch(
 			"https://worker.invalid/v1/files/missing.md:append",
@@ -432,6 +454,7 @@ describe("history mutation HTTP routes", () => {
 				body: "x",
 			},
 		);
+		await staleEpoch.text();
 		expect(staleEpoch.status).toBe(409);
 		const oversized = await SELF.fetch(
 			"https://worker.invalid/v1/files/missing.md:append",
@@ -444,6 +467,7 @@ describe("history mutation HTTP routes", () => {
 				body: "x".repeat(1_000_001),
 			},
 		);
+		await oversized.text();
 		expect(oversized.status).toBe(413);
 		const blobPath = "blob.md";
 		const blob = await SELF.fetch(
@@ -454,6 +478,7 @@ describe("history mutation HTTP routes", () => {
 				body: "inline before blob promotion",
 			},
 		);
+		await blob.text();
 		await runInDurableObject(
 			env.VAULTS.get(env.VAULTS.idFromName("worker.invalid")),
 			async (_instance, state) => {
@@ -476,6 +501,7 @@ describe("history mutation HTTP routes", () => {
 				body: "x",
 			},
 		);
+		await unsupported.text();
 		expect(blob.status).toBe(201);
 		expect(unsupported.status).toBe(415);
 	});
@@ -487,6 +513,7 @@ describe("history mutation HTTP routes", () => {
 			headers: { "If-None-Match": "*", "X-Vault-Epoch": TEXT_FIXTURE_EPOCH },
 			body: "retained",
 		});
+		await created.text();
 		const updated = await SELF.fetch(url, {
 			method: "PUT",
 			headers: {
@@ -495,6 +522,7 @@ describe("history mutation HTTP routes", () => {
 			},
 			body: "current",
 		});
+		await updated.text();
 		const occupied = await SELF.fetch(`${url}:restore`, {
 			method: "POST",
 			headers: { "If-Match": updated.headers.get("ETag") ?? "" },
@@ -511,6 +539,7 @@ describe("history mutation HTTP routes", () => {
 			headers: restoreHeaders,
 			body: JSON.stringify({ source_rev: 1, as_conflict_copy: true }),
 		});
+		await lost.text();
 		expect(lost.status).toBe(500);
 		const afterRestore = await SELF.fetch(url, {
 			headers: { "X-Vault-Epoch": TEXT_FIXTURE_EPOCH },
@@ -524,6 +553,7 @@ describe("history mutation HTTP routes", () => {
 			headers: { "If-Match": updated.headers.get("ETag") ?? "" },
 			body: JSON.stringify({ source_rev: 1, as_conflict_copy: true }),
 		});
+		await staleRetry.text();
 		expect(deleted.status).toBe(200);
 		expect(staleRetry.status).toBe(412);
 		await runInDurableObject(
@@ -544,6 +574,7 @@ describe("history mutation HTTP routes", () => {
 			headers: { "If-Match": current.headers.get("ETag") ?? "" },
 			body: JSON.stringify({ source_rev: 1, as_conflict_copy: true }),
 		});
+		await pruned.text();
 		expect(pruned.status).toBe(410);
 	});
 
@@ -554,6 +585,7 @@ describe("history mutation HTTP routes", () => {
 			headers: { "If-None-Match": "*", "X-Vault-Epoch": TEXT_FIXTURE_EPOCH },
 			body: "retained",
 		});
+		await created.text();
 		const deleted = await SELF.fetch(url, {
 			method: "DELETE",
 			headers: { "If-Match": created.headers.get("ETag") ?? "" },
@@ -567,6 +599,7 @@ describe("history mutation HTTP routes", () => {
 			headers: restoreHeaders,
 			body: JSON.stringify({ source_rev: 1 }),
 		});
+		await first.text();
 		expect(first.status).toBe(201);
 		const secondDelete = await SELF.fetch(url, {
 			method: "DELETE",
@@ -577,6 +610,7 @@ describe("history mutation HTTP routes", () => {
 			headers: restoreHeaders,
 			body: JSON.stringify({ source_rev: 1 }),
 		});
+		await replay.text();
 		expect(secondDelete.status).toBe(200);
 		expect(replay.status).toBe(201);
 		expect(replay.headers.get("ETag")).toBe(first.headers.get("ETag"));
@@ -601,7 +635,9 @@ describe("history mutation HTTP routes", () => {
 			"notes/command%2520name.md",
 			"percent-name",
 		);
+		await commandPercent.text();
 		const commandSpace = await put("notes/command%20name.md", "space-name");
+		await commandSpace.text();
 		const command = await SELF.fetch(
 			"https://worker.invalid/v1/files/notes/command%2520name.md:rename",
 			{
@@ -610,6 +646,7 @@ describe("history mutation HTTP routes", () => {
 				body: JSON.stringify({ to: "notes/renamed-percent.md" }),
 			},
 		);
+		await command.text();
 		expect(command.status).toBe(201);
 		const renamed = await SELF.fetch(
 			"https://worker.invalid/v1/files/notes/renamed-percent.md",
@@ -627,7 +664,9 @@ describe("history mutation HTTP routes", () => {
 		);
 
 		const historyPercent = await put("notes/history%2520name.md", "percent");
+		await historyPercent.text();
 		const historySpace = await put("notes/history%20name.md", "space-content");
+		await historySpace.text();
 		const percentHistory = await SELF.fetch(
 			"https://worker.invalid/v1/history/notes/history%2520name.md",
 		);
@@ -673,6 +712,7 @@ describe("history mutation HTTP routes", () => {
 					body: "blocked",
 				},
 			);
+			await result.text();
 			expect(result.status).toBe(400);
 		}
 	});

@@ -1,9 +1,11 @@
+import { createHash } from "node:crypto";
 import type { FileHttpFailure, FileHttpFailureInput } from "@protocol/index";
 import {
 	AdmissionFailureSchema,
 	CurrentEpochRequestSchema,
 	CurrentEpochResultSchema,
 	encodeFileFailure,
+	encodeFileFailureBodyChunks,
 	FileFailureSchema,
 	FileHttpFailureInputSchema,
 	FileHttpFailureSchema,
@@ -18,7 +20,7 @@ import {
 	TextReadResponseSchema,
 	TextReadResultSchema,
 } from "@protocol/index";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { ZodType } from "zod";
 
 const epoch = "0000000000000000000000000000000a";
@@ -510,6 +512,28 @@ describe("canonical failure DTO", () => {
 		expect(accepts(FileFailureSchema, failure)).toBe(true);
 	});
 
+	it("accepts blob failures and bounds the storage retry delay", () => {
+		expect(
+			accepts(FileFailureSchema, { kind: "blob_integrity_mismatch" }),
+		).toBe(true);
+		for (const retry_after_seconds of [1, 300]) {
+			expect(
+				accepts(FileFailureSchema, {
+					kind: "blob_storage_unavailable",
+					retry_after_seconds,
+				}),
+			).toBe(true);
+		}
+		for (const retry_after_seconds of [0, 301, 1.5]) {
+			expect(
+				accepts(FileFailureSchema, {
+					kind: "blob_storage_unavailable",
+					retry_after_seconds,
+				}),
+			).toBe(false);
+		}
+	});
+
 	it("preserves operation-expired failure acceptance", () => {
 		expect(accepts(FileFailureSchema, { kind: "operation_expired" })).toBe(
 			true,
@@ -735,6 +759,31 @@ describe("canonical failure DTO", () => {
 		).toBe(false);
 	});
 
+	it("requires a positive bounded Retry-After for blob storage failures", () => {
+		const body = {
+			status: 503,
+			body: {
+				error: "blob_storage_unavailable",
+				message: "Blob storage cannot verify this request now.",
+			},
+		};
+		expect(accepts(FileHttpFailureSchema, body)).toBe(false);
+		for (const retry of ["0", "01", "301", "999999"]) {
+			expect(
+				accepts(FileHttpFailureSchema, {
+					...body,
+					headers: { "Retry-After": retry },
+				}),
+			).toBe(false);
+		}
+		expect(
+			accepts(FileHttpFailureSchema, {
+				...body,
+				headers: { "Retry-After": "300" },
+			}),
+		).toBe(true);
+	});
+
 	it("rejects Retry-After for a non-limited failure", () => {
 		expect(
 			accepts(FileHttpFailureSchema, {
@@ -824,6 +873,18 @@ describe("file failure HTTP mapping", () => {
 			"This key belongs to a different operation.",
 		],
 		[
+			{ kind: "blob_integrity_mismatch" },
+			422,
+			"blob_integrity_mismatch",
+			"The blob does not match its declared identity.",
+		],
+		[
+			{ kind: "blob_storage_unavailable", retry_after_seconds: 30 },
+			503,
+			"blob_storage_unavailable",
+			"Blob storage cannot verify this request now.",
+		],
+		[
 			{ kind: "admission_limited", retry_after_seconds: 7 },
 			429,
 			"admission_limited",
@@ -868,6 +929,14 @@ describe("file failure HTTP mapping", () => {
 		],
 	] as const)("maps %s", (failure, status, error, message) => {
 		const encoded = encodedFailure(failure);
+		if (encoded)
+			expect(
+				JSON.parse(
+					Buffer.concat([
+						...encodeFileFailureBodyChunks(encoded.body),
+					]).toString(),
+				),
+			).toEqual(encoded.body);
 		expect(encoded).toMatchObject({ status, body: { error, message } });
 	});
 
@@ -942,7 +1011,22 @@ describe("file failure HTTP mapping", () => {
 		});
 	});
 
-	it("uses Retry-After only for admission limits and preserves the delay", () => {
+	it("preserves admission Retry-After values above the blob storage bound", () => {
+		const encoded = encodeFileFailure({
+			kind: "admission_limited",
+			retry_after_seconds: 301,
+		});
+		expect(FileHttpFailureSchema.parse(encoded)).toEqual({
+			status: 429,
+			body: {
+				error: "admission_limited",
+				message: "The vault cannot accept another operation now.",
+			},
+			headers: { "Retry-After": "301" },
+		});
+	});
+
+	it("encodes bounded Retry-After only for admission and blob storage failures", () => {
 		expect(
 			encodedFailure({ kind: "admission_limited", retry_after_seconds: 7 }),
 		).toEqual({
@@ -952,6 +1036,19 @@ describe("file failure HTTP mapping", () => {
 				message: "The vault cannot accept another operation now.",
 			},
 			headers: { "Retry-After": "7" },
+		});
+		expect(
+			encodedFailure({
+				kind: "blob_storage_unavailable",
+				retry_after_seconds: 300,
+			}),
+		).toEqual({
+			status: 503,
+			body: {
+				error: "blob_storage_unavailable",
+				message: "Blob storage cannot verify this request now.",
+			},
+			headers: { "Retry-After": "300" },
 		});
 		expect(encodedFailure({ kind: "not_found" })).toEqual({
 			status: 404,
@@ -965,5 +1062,63 @@ describe("file failure HTTP mapping", () => {
 			status: 404,
 			body: { error: "not_found", message: "The file does not exist." },
 		});
+	});
+});
+
+describe("bounded failure JSON", () => {
+	it.each([
+		'"\\\u0000\ufeffcafé😀',
+		`${"a".repeat(8191)}😀z`,
+		`${"a".repeat(8191)}\ud800x\udc00`,
+	])("preserves_exact_string_code_units", (content) => {
+		const body = {
+			error: "precondition_failed",
+			message: "fixture",
+			content,
+			deleted: false,
+		} as const;
+		const chunks = [...encodeFileFailureBodyChunks(body)];
+		expect(chunks.every((chunk) => chunk.byteLength <= 65_536)).toBe(true);
+		expect(JSON.parse(Buffer.concat(chunks).toString())).toEqual(body);
+	});
+
+	it("bounds_escaping_without_whole_content_stringify", () => {
+		const body = encodeFileFailure({
+			kind: "precondition_failed",
+			etag,
+			hash,
+			deleted: false,
+			content: "\u0000".repeat(1_000_000),
+		}).body;
+		const stringify = JSON.stringify;
+		const spy = vi
+			.spyOn(JSON, "stringify")
+			.mockImplementation((value, ...rest) => {
+				if (typeof value === "string")
+					expect(value.length).toBeLessThanOrEqual(8192);
+				else expect(value).not.toBe(body);
+				// Keep the test observer from retaining string windows or encoded chunk history.
+				spy.mockClear();
+				return stringify(value, ...rest);
+			});
+		try {
+			const actual = createHash("sha256");
+			let length = 0;
+			for (const chunk of encodeFileFailureBodyChunks(body)) {
+				expect(chunk.byteLength).toBeLessThanOrEqual(65_536);
+				length += chunk.byteLength;
+				actual.update(chunk);
+			}
+			const expected = createHash("sha256");
+			const empty = stringify({ ...body, content: "" });
+			expected.update(empty.slice(0, -2));
+			for (let index = 0; index < 1000; index++)
+				expected.update("\\u0000".repeat(1000));
+			expected.update('"}');
+			expect(length).toBe(6_000_000 + empty.length);
+			expect(actual.digest("hex")).toBe(expected.digest("hex"));
+		} finally {
+			spy.mockRestore();
+		}
 	});
 });

@@ -1,0 +1,152 @@
+import { AdmissionResultSchema } from "@protocol/schemas/admission";
+import { ETagSchema } from "@protocol/schemas/etag";
+import { TextMutationResultSchema } from "@protocol/schemas/files";
+import { PathSchema } from "@protocol/schemas/path";
+import { z } from "zod";
+
+/** Maximum immutable blob bytes accepted by declarations and authoritative metadata. */
+const MAX_BLOB_BYTES = 25_000_000;
+
+/** Declared SHA-256 identity and exact byte count for one request body. */
+export const BlobDeclarationSchema = z
+	.object({
+		payload_hash: z.string().regex(/^[0-9a-f]{64}$/),
+		size: z.number().int().nonnegative().safe().max(MAX_BLOB_BYTES),
+	})
+	.strict();
+
+/** Parses the optional wire declaration pair; absence preserves inline request compatibility. */
+export const BlobDeclarationHeadersSchema = z
+	.object({
+		"x-content-sha256": z.string().optional(),
+		"x-content-size": z.string().optional(),
+	})
+	.strict()
+	.superRefine((headers, ctx) => {
+		if (
+			(headers["x-content-sha256"] === undefined) !==
+			(headers["x-content-size"] === undefined)
+		) {
+			ctx.addIssue({
+				code: "custom",
+				message: "blob declaration headers must appear together",
+			});
+		}
+		if (
+			headers["x-content-size"] !== undefined &&
+			!/^(?:0|[1-9][0-9]*)$/.test(headers["x-content-size"])
+		) {
+			ctx.addIssue({
+				code: "custom",
+				message: "blob size header is not canonical decimal",
+			});
+		}
+	})
+	.transform((headers, ctx) => {
+		const payload_hash = headers["x-content-sha256"];
+		const size = headers["x-content-size"];
+		if (payload_hash === undefined || size === undefined) return undefined;
+		const declaration = BlobDeclarationSchema.safeParse({
+			payload_hash,
+			size: Number(size),
+		});
+		if (!declaration.success) {
+			for (const issue of declaration.error.issues) {
+				if (issue.path[0] === "size" && Number(size) > MAX_BLOB_BYTES) {
+					ctx.addIssue({
+						code: "too_big",
+						origin: "number",
+						maximum: MAX_BLOB_BYTES,
+						inclusive: true,
+						path: ["size"],
+					});
+				} else ctx.addIssue({ ...issue });
+			}
+			return z.NEVER;
+		}
+		return declaration.data;
+	});
+
+/** Immutable blob metadata returned with an authorized file observation. */
+export const BlobMetadataSchema = z
+	.object({
+		path: PathSchema,
+		etag: ETagSchema,
+		hash: z.string().regex(/^(?:[0-9a-f]{64})?$/),
+		size: z.number().int().nonnegative().safe().max(MAX_BLOB_BYTES),
+		kind: z.literal("blob"),
+		deleted: z.boolean(),
+		origin: z.string(),
+		updated_at: z.number().int().safe(),
+		large: z.boolean(),
+	})
+	.strict()
+	.superRefine((metadata, ctx) => {
+		if (metadata.deleted) {
+			if (metadata.hash !== "" || metadata.size !== 0 || metadata.large) {
+				ctx.addIssue({
+					code: "custom",
+					message: "tombstone metadata must be empty",
+				});
+			}
+			return;
+		}
+		if (metadata.hash.length !== 64) {
+			ctx.addIssue({
+				code: "custom",
+				message: "live blob metadata needs a hash",
+			});
+		}
+		const large =
+			/\.(?:md|canvas)$/i.test(metadata.path) && metadata.size > 1_000_000;
+		if (metadata.large !== large) {
+			ctx.addIssue({
+				code: "custom",
+				message: "large marker does not match blob path and size",
+			});
+		}
+	});
+
+/** A selected inclusive byte interval with a bounded response length. */
+export interface ByteRangeSelection {
+	/** First selected byte, inclusive. */
+	start: number;
+	/** Last selected byte, inclusive. */
+	end: number;
+}
+
+/** Selects one valid HTTP byte range, or returns undefined for invalid requests. */
+export function selectByteRange(
+	value: string,
+	size: number,
+): ByteRangeSelection | undefined {
+	if (
+		!Number.isSafeInteger(size) ||
+		size <= 0 ||
+		!/^bytes=(?:0|[1-9][0-9]*)-(?:0|[1-9][0-9]*)?$/.test(value)
+	)
+		return undefined;
+	const match = /^bytes=(0|[1-9][0-9]*)-(?:(0|[1-9][0-9]*))?$/.exec(value);
+	if (!match) return undefined;
+	const start = Number(match[1]);
+	const requestedEnd = match[2] === undefined ? size - 1 : Number(match[2]);
+	if (
+		!Number.isSafeInteger(start) ||
+		!Number.isSafeInteger(requestedEnd) ||
+		start >= size ||
+		requestedEnd < start
+	)
+		return undefined;
+	const end = Math.min(requestedEnd, size - 1);
+	if (end - start + 1 > 1_000_000) {
+		if (match[2] !== undefined) return undefined;
+		return { start, end: start + 999_999 };
+	}
+	return { start, end };
+}
+
+/** Blob authorization returns a ticket, a current-policy receipt replay, or a canonical failure. */
+export const BlobAuthorizationResultSchema = z.union([
+	AdmissionResultSchema,
+	TextMutationResultSchema,
+]);

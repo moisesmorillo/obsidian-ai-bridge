@@ -24,6 +24,7 @@ import {
 	type PreparedOperation,
 	prepareOperation,
 } from "@worker/application/admission";
+import { tryAcquireBodySlot } from "@worker/application/body-budget";
 import { FileOperationDenied } from "@worker/application/files";
 
 /** Native operations required to authorize and publish one file command. */
@@ -104,8 +105,39 @@ type ReservationValidation =
 	| { ok: true; reservation: MutationReservation }
 	| { ok: false; failure: FileFailure };
 
-/** Reserve before body reads, then authorize and publish one immutable command. */
+/**
+ * Reserve before body demand, then authorize and publish one immutable command.
+ * Optional response production also holds capacity after operation cleanup.
+ */
 export async function executeFileCommand(
+	gateway: HistoryVaultGateway,
+	context: AuthorizationContext,
+	descriptor: OperationDescriptor | RenameReservation,
+	key: string | undefined,
+	readCommand: () => Promise<FileCommand>,
+	responseProduction?: Promise<void>,
+): Promise<TextMutationResult> {
+	const release = tryAcquireBodySlot(responseProduction);
+	if (release === undefined)
+		return {
+			ok: false,
+			failure: { kind: "admission_limited", retry_after_seconds: 1 },
+		};
+	try {
+		return await executeFileCommandWithSlot(
+			gateway,
+			context,
+			descriptor,
+			key,
+			readCommand,
+		);
+	} finally {
+		release();
+	}
+}
+
+/** Run one command's reservation, body, authority, commit, and settlement lifetime. */
+async function executeFileCommandWithSlot(
 	gateway: HistoryVaultGateway,
 	context: AuthorizationContext,
 	descriptor: OperationDescriptor | RenameReservation,

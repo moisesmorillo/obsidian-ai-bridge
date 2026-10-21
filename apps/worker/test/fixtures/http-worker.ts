@@ -2,6 +2,7 @@ import type { AuthorizationContext } from "@obsidian-ai-bridge/protocol";
 import type { HistoryVaultGateway } from "@worker/application/history";
 import type { TextVaultGateway } from "@worker/application/text-files";
 import type { Env } from "@worker/env";
+import { R2BlobStore } from "@worker/infrastructure/r2/blobs";
 import { createWorker } from "@worker/transport/worker";
 
 /** Fixed test-only identity with all implemented file scopes. */
@@ -87,6 +88,19 @@ const worker = createWorker(
 					throw new Error("Simulated committed response loss");
 				return result;
 			},
+			authorizeBlob: async (...args) => await stub.authorizeBlob(...args),
+			/** Lose only a confirmed blob result so exact receipt retries exercise the HTTP boundary. */
+			commitBlob: async (...args) => {
+				const result = await stub.commitBlob(...args);
+				if (
+					(shouldFailAfter(request, "commitBlob") ||
+						request.headers.get("X-Test-Lose-Commit-Response") === "true") &&
+					result.ok
+				)
+					throw new Error("Simulated committed response loss");
+				return result;
+			},
+			readBlobMetadata: async (...args) => await stub.readBlobMetadata(...args),
 			finishAdmission: async (...args) => {
 				const result = await stub.finishAdmission(...args);
 				if (shouldFailAfter(request, "finishAdmission"))
@@ -116,6 +130,7 @@ const worker = createWorker(
 			readHistory: async (...args) => await stub.readHistory(...args),
 		};
 	},
+	(env) => new R2BlobStore(env.R2_BUCKET),
 );
 
 export { Vault } from "@worker/infrastructure/durable-object/vault";

@@ -1,0 +1,744 @@
+import { env, runInDurableObject } from "cloudflare:test";
+import type { AuthorizationContext } from "@obsidian-ai-bridge/protocol";
+import { FileCommandSchema } from "@obsidian-ai-bridge/protocol";
+import { executeBlobPut } from "@worker/application/blobs";
+import { tryAcquireBodySlot } from "@worker/application/body-budget";
+import {
+	executeFileCommand,
+	type HistoryVaultGateway,
+} from "@worker/application/history";
+import type { TextVaultGateway } from "@worker/application/text-files";
+import { executeTextMutation } from "@worker/application/text-files";
+import { prepareTextPayload } from "@worker/application/text-payload";
+import { R2BlobStore } from "@worker/infrastructure/r2/blobs";
+import { initializeVaultStorage } from "@worker/infrastructure/sqlite/schema";
+import { clearTestVault } from "@worker/test-fixtures/admission";
+import {
+	seedLiveTextState,
+	TEXT_FIXTURE_EPOCH,
+} from "@worker/test-fixtures/text-files";
+import { readInlineBody } from "@worker/transport/body";
+import { withMutationResponse } from "@worker/transport/mutation-response";
+import { createWorker } from "@worker/transport/worker";
+import { describe, expect, it } from "vitest";
+
+/** Resolve controlled waits without retaining request bytes. */
+function gate() {
+	/** Default release does nothing until the Promise executor installs its resolver. */
+	let release = () => {};
+	const promise = new Promise<void>((resolve) => {
+		release = resolve;
+	});
+	return { promise, release };
+}
+/** Initialize one real authority per host, with command source history. */
+async function initialize(host: string) {
+	const stub = env.VAULTS.get(env.VAULTS.idFromName(host));
+	await runInDurableObject(stub, async (_instance, state) => {
+		clearTestVault(state.storage);
+		state.storage.sql.exec("PRAGMA foreign_keys = ON");
+		initializeVaultStorage(
+			state.storage,
+			() => TEXT_FIXTURE_EPOCH,
+			() => 10_000,
+		);
+		await seedLiveTextState(state.storage, { path: "source.md", content: "" });
+		state.storage.sql.exec("DELETE FROM mutation_claims");
+		state.storage.sql.exec("DELETE FROM operation_admissions");
+	});
+}
+/** Observe native byte-source demand while holding EOF across active storage or body work. */
+function source(size: number, fill: number, prefix?: Uint8Array) {
+	const reached = gate();
+	const resume = gate();
+	let supplied = 0;
+	let reads = 0;
+	let maxView = 0;
+	let pending = 0;
+	let maxPending = 0;
+	const body = new ReadableStream<Uint8Array>(
+		{
+			type: "bytes",
+			/** Supply only the requested native BYOB view and stop at a controlled EOF wait. */
+			async pull(controller) {
+				reads++;
+				pending++;
+				maxPending = Math.max(maxPending, pending);
+				try {
+					if (!("byobRequest" in controller))
+						throw new Error("Expected byte source controller");
+					const request = controller.byobRequest;
+					if (!request?.view) throw new Error("Expected a native BYOB request");
+					const view = new Uint8Array(
+						request.view.buffer,
+						request.view.byteOffset,
+						request.view.byteLength,
+					);
+					maxView = Math.max(maxView, view.byteLength);
+					if (supplied === size) {
+						reached.release();
+						await resume.promise;
+						controller.close();
+						request.respond(0);
+						return;
+					}
+					const length = Math.min(size - supplied, view.byteLength);
+					view.fill(fill, 0, length);
+					if (prefix && supplied < prefix.byteLength)
+						view.set(
+							prefix.subarray(
+								supplied,
+								Math.min(prefix.byteLength, supplied + length),
+							),
+						);
+					supplied += length;
+					request.respond(length);
+				} finally {
+					pending--;
+				}
+			},
+		},
+		{ highWaterMark: 0 },
+	);
+	return {
+		body,
+		reached: reached.promise,
+		resume: resume.release,
+		stats: () => ({ supplied, reads, maxView, pending, maxPending }),
+	};
+}
+/** Hash generated fixture bytes without allocating a complete blob in the test isolate. */
+async function repeatedHash(size: number, fill: number) {
+	const digest = new (
+		crypto as Crypto & { DigestStream: typeof DigestStream }
+	).DigestStream("SHA-256");
+	const writer = digest.getWriter();
+	const chunk = new Uint8Array(65_536).fill(fill);
+	for (let offset = 0; offset < size; offset += chunk.byteLength)
+		await writer.write(
+			chunk.subarray(0, Math.min(chunk.byteLength, size - offset)),
+		);
+	await writer.close();
+	return Array.from(new Uint8Array(await digest.digest), (byte) =>
+		byte.toString(16).padStart(2, "0"),
+	).join("");
+}
+/** Distinct request headers select distinct test-only identities, never the production entry. */
+async function identity(request: Request): Promise<AuthorizationContext> {
+	const client = request.headers.get("X-Aggregate-Client") ?? "aggregate-fifth";
+	return {
+		client_id: client,
+		grant_id: `${client}-grant`,
+		scopes: ["vault:read", "vault:write", "vault:delete"],
+	};
+}
+/** Inspect admission ownership before any held request completes. */
+async function admissions(host: string) {
+	return runInDurableObject(
+		env.VAULTS.get(env.VAULTS.idFromName(host)),
+		async (_instance, state) =>
+			state.storage.sql.exec("SELECT * FROM operation_admissions").toArray(),
+	);
+}
+/** Shared isolate ownership and native source observations cover all body-bearing operations. */
+describe("aggregate body ownership", () => {
+	it.each(["rename", "restore"] as const)(
+		"shares_pending_response_producers_across_PUT_blob_append_and_%s",
+		async (command) => {
+			const host = `response-shared-${command}.invalid`;
+			await initialize(host);
+			const stub = env.VAULTS.get(env.VAULTS.idFromName(host));
+			await runInDurableObject(stub, async (_instance, state) => {
+				state.storage.sql.exec(
+					"INSERT INTO revoked_grants(grant_id, at) VALUES (?, ?)",
+					"response-revoked",
+					10,
+				);
+			});
+			const context: AuthorizationContext = {
+				client_id: "response-client",
+				grant_id: "response-revoked",
+				scopes: ["vault:read", "vault:write"],
+			};
+			const descriptor = {
+				op: "put",
+				epoch: TEXT_FIXTURE_EPOCH,
+				paths: ["new.md"],
+				precondition: { kind: "absent" },
+			} as const;
+			const declaration = { payload_hash: "0".repeat(64), size: 1 };
+			const producers = Array.from({ length: 4 }, () => source(1, 65));
+			const responses = await Promise.all(
+				producers.map((producer, index) =>
+					withMutationResponse(async (done) => {
+						const result =
+							index === 0
+								? await executeTextMutation(
+										stub,
+										context,
+										{ ...descriptor, paths: ["new.md"] },
+										undefined,
+										async () => {
+											throw new Error("Revoked body demand");
+										},
+										undefined,
+										done,
+									)
+								: index === 1
+									? await executeBlobPut(
+											stub,
+											new R2BlobStore(env.R2_BUCKET),
+											context,
+											{ ...descriptor, paths: ["new.bin"] },
+											undefined,
+											declaration,
+											new Blob([]).stream(),
+											new AbortController().signal,
+											done,
+										)
+									: await executeFileCommand(
+											stub,
+											context,
+											index === 2
+												? {
+														op: "append",
+														epoch: TEXT_FIXTURE_EPOCH,
+														paths: ["source.md"],
+														precondition: { kind: "none" },
+													}
+												: command === "rename"
+													? {
+															path: "source.md",
+															if_match: `"${TEXT_FIXTURE_EPOCH}.1"`,
+														}
+													: {
+															op: "restore",
+															epoch: TEXT_FIXTURE_EPOCH,
+															paths: ["source.md"],
+															precondition: {
+																kind: "match",
+																etag: `"${TEXT_FIXTURE_EPOCH}.1"`,
+															},
+														},
+											"response-command",
+											async () => {
+												throw new Error("Revoked command demand");
+											},
+											done,
+										);
+						expect(result).toMatchObject({
+							ok: false,
+							failure: { kind: "revoked" },
+						});
+						return new Response(producer.body);
+					}),
+				),
+			);
+			const worker = createWorker(
+				identity,
+				() => stub,
+				() => new R2BlobStore(env.R2_BUCKET),
+			);
+			const fifth = source(1, 66);
+			try {
+				const refused = await worker.fetch(
+					new Request(`https://${host}/v1/files/fifth.md`, {
+						method: "PUT",
+						headers: {
+							"If-None-Match": "*",
+							"X-Vault-Epoch": TEXT_FIXTURE_EPOCH,
+						},
+						body: fifth.body,
+					}),
+					env,
+				);
+				expect(refused.status).toBe(429);
+				expect(refused.headers.get("Retry-After")).toBe("1");
+				expect(await refused.json()).toMatchObject({
+					error: "admission_limited",
+				});
+				expect(fifth.stats().reads).toBe(0);
+				expect(await admissions(host)).toHaveLength(0);
+				await responses[0]?.body?.cancel();
+				const next = await worker.fetch(
+					new Request(`https://${host}/v1/files/next.md`, {
+						method: "PUT",
+						headers: {
+							"If-None-Match": "*",
+							"X-Vault-Epoch": TEXT_FIXTURE_EPOCH,
+						},
+						body: "new",
+					}),
+					env,
+				);
+				expect(next.status).toBe(201);
+				const full = tryAcquireBodySlot();
+				full?.();
+				expect(full).toBeUndefined();
+				await next.text();
+				const free = tryAcquireBodySlot();
+				try {
+					expect(free).toBeTypeOf("function");
+					const extra = tryAcquireBodySlot();
+					extra?.();
+					expect(extra).toBeUndefined();
+				} finally {
+					free?.();
+				}
+			} finally {
+				for (const producer of producers) producer.resume();
+				for (const response of responses) await response.body?.cancel();
+			}
+		},
+	);
+	it("holds four distinct native 25 MB uploads across clients, hosts, and router instances", async () => {
+		const hosts = Array.from(
+			{ length: 5 },
+			(_, index) => `aggregate-blob-${index}.invalid`,
+		);
+		for (const host of hosts) await initialize(host);
+		let pendingPuts = 0;
+		let maxPendingPuts = 0;
+		let putCalls = 0;
+		/** Forward native operations unchanged and observe pending native writes only. */
+		const bucket: R2Bucket = {
+			head: (...args) => env.R2_BUCKET.head(...args),
+			get: (...args: Parameters<R2Bucket["get"]>) => env.R2_BUCKET.get(...args),
+			put: async (...args) => {
+				putCalls++;
+				pendingPuts++;
+				maxPendingPuts = Math.max(maxPendingPuts, pendingPuts);
+				try {
+					return await env.R2_BUCKET.put(...args);
+				} finally {
+					pendingPuts--;
+				}
+			},
+			delete: (...args) => env.R2_BUCKET.delete(...args),
+			list: (...args) => env.R2_BUCKET.list(...args),
+			createMultipartUpload: (...args) =>
+				env.R2_BUCKET.createMultipartUpload(...args),
+			resumeMultipartUpload: (...args) =>
+				env.R2_BUCKET.resumeMultipartUpload(...args),
+		};
+		const sources = Array.from({ length: 5 }, (_, index) =>
+			source(25_000_000, 31 + index),
+		);
+		const hashes = await Promise.all(
+			sources.map((_, index) => repeatedHash(25_000_000, 31 + index)),
+		);
+		const workers = sources.map(() =>
+			createWorker(
+				identity,
+				(bindings, request) =>
+					bindings.VAULTS.get(
+						bindings.VAULTS.idFromName(new URL(request.url).host),
+					),
+				() => new R2BlobStore(bucket),
+			),
+		);
+		const uploads = sources.slice(0, 4).map((item, index) => {
+			const worker = workers[index];
+			if (!worker) throw new Error("Expected router");
+			return Promise.resolve(
+				worker.fetch(
+					new Request(`https://${hosts[index]}/v1/files/content.bin`, {
+						method: "PUT",
+						headers: {
+							"If-None-Match": "*",
+							"X-Vault-Epoch": TEXT_FIXTURE_EPOCH,
+							"X-Content-SHA256": hashes[index] ?? "",
+							"X-Content-Size": "25000000",
+							"X-Aggregate-Client": `aggregate-${index}`,
+						},
+						body: item.body,
+					}),
+					env,
+				),
+			);
+		});
+		try {
+			await Promise.all(sources.slice(0, 4).map((item) => item.reached));
+			expect(pendingPuts).toBe(4);
+			expect(maxPendingPuts).toBe(4);
+			const fifth = sources[4];
+			const worker = workers[4];
+			if (!fifth || !worker) throw new Error("Expected fifth request");
+			const refused = await worker.fetch(
+				new Request(`https://${hosts[4]}/v1/files/fifth.bin`, {
+					method: "PUT",
+					headers: {
+						"If-None-Match": "*",
+						"X-Vault-Epoch": TEXT_FIXTURE_EPOCH,
+						"X-Content-SHA256": hashes[4] ?? "",
+						"X-Content-Size": "25000000",
+					},
+					body: fifth.body,
+				}),
+				env,
+			);
+			expect(refused.status).toBe(429);
+			expect(refused.headers.get("Retry-After")).toBe("1");
+			expect(fifth.stats().reads).toBe(0);
+			expect(await admissions(hosts[4] ?? "")).toHaveLength(0);
+			for (const item of sources.slice(0, 4)) {
+				expect(item.stats().supplied).toBe(25_000_000);
+				expect(item.stats().maxView).toBeLessThanOrEqual(65_536);
+				expect(item.stats().maxPending).toBe(1);
+				expect(item.stats().pending).toBe(1);
+			}
+			console.info(
+				"AGGREGATE_NATIVE_BLOB",
+				JSON.stringify({
+					sources: sources.map((item) => item.stats()),
+					pendingPuts,
+					maxPendingPuts,
+					putCalls,
+				}),
+			);
+		} finally {
+			for (const item of sources) item.resume();
+			for (const response of await Promise.all(uploads)) await response.text();
+		}
+		const results = await Promise.all(uploads);
+		expect(results.map((result) => result.status)).toEqual([
+			201, 201, 201, 201,
+		]);
+		expect(pendingPuts).toBe(0);
+		expect(putCalls).toBe(4);
+	}, 15_000);
+	it.each(["rename", "restore"] as const)(
+		"shares slots across inline PUT, blob PUT, append, and %s",
+		async (command) => {
+			const hosts = Array.from(
+				{ length: 5 },
+				(_, index) => `aggregate-${command}-${index}.invalid`,
+			);
+			for (const host of hosts) await initialize(host);
+			const bodyPrefix = new TextEncoder().encode(
+				command === "rename"
+					? '{"to":"target.md"}'
+					: '{"source_rev":1,"as_conflict_copy":true}',
+			);
+			const sources = [
+				source(1_000_000, 97),
+				source(1_000_001, 101),
+				source(1_000_000, 97),
+				source(1_000_000, 32, bodyPrefix),
+				source(1, 97),
+			];
+			const worker = createWorker(
+				identity,
+				(bindings, request) =>
+					bindings.VAULTS.get(
+						bindings.VAULTS.idFromName(new URL(request.url).host),
+					),
+				(bindings) => new R2BlobStore(bindings.R2_BUCKET),
+			);
+			const hash = await repeatedHash(1_000_001, 101);
+			const uploads = sources.slice(0, 4).map((item, index) => {
+				const operation = index === 2 ? "append" : command;
+				const path =
+					index < 2
+						? `content-${index}.${index === 0 ? "md" : "bin"}`
+						: `source.md:${operation}`;
+				const headers = new Headers({
+					"X-Vault-Epoch": TEXT_FIXTURE_EPOCH,
+					"X-Aggregate-Client": `mixed-${index}`,
+				});
+				if (index < 2) headers.set("If-None-Match", "*");
+				if (index === 1) {
+					headers.set("X-Content-SHA256", hash);
+					headers.set("X-Content-Size", "1000001");
+				}
+				if (index === 2) headers.set("Idempotency-Key", "aggregate-append-key");
+				if (index === 3) headers.set("If-Match", `"${TEXT_FIXTURE_EPOCH}.1"`);
+				return Promise.resolve(
+					worker.fetch(
+						new Request(`https://${hosts[index]}/v1/files/${path}`, {
+							method: index < 2 ? "PUT" : "POST",
+							headers,
+							body: item.body,
+						}),
+						env,
+					),
+				);
+			});
+			try {
+				await Promise.all(sources.slice(0, 4).map((item) => item.reached));
+				const fifth = sources[4];
+				if (!fifth) throw new Error("Expected fifth body");
+				const refused = await worker.fetch(
+					new Request(
+						`https://${hosts[4]}/v1/files/source.md:${command === "rename" ? "restore" : "rename"}`,
+						{
+							method: "POST",
+							headers: {
+								"If-Match": `"${TEXT_FIXTURE_EPOCH}.1"`,
+								"X-Vault-Epoch": TEXT_FIXTURE_EPOCH,
+							},
+							body: fifth.body,
+						},
+					),
+					env,
+				);
+				expect(refused.status).toBe(429);
+				expect(fifth.stats().reads).toBe(0);
+				expect(await admissions(hosts[4] ?? "")).toHaveLength(0);
+				for (const item of sources.slice(0, 4)) {
+					expect(item.stats().maxView).toBeLessThanOrEqual(65_536);
+					expect(item.stats().maxPending).toBe(1);
+				}
+				console.info(
+					"AGGREGATE_NATIVE_MIXED",
+					command,
+					JSON.stringify(sources.map((item) => item.stats())),
+				);
+			} finally {
+				for (const item of sources) item.resume();
+				for (const response of await Promise.all(uploads))
+					await response.text();
+			}
+			expect(
+				(await Promise.all(uploads)).map((response) => response.status),
+			).toEqual([201, 201, 200, command === "rename" ? 201 : 200]);
+		},
+		15_000,
+	);
+	it("bounds four inline payloads and full failure bodies across native RPC delivery waits", async () => {
+		const hosts = Array.from(
+			{ length: 5 },
+			(_, index) => `aggregate-inline-rpc-${index}.invalid`,
+		);
+		const waits = hosts.slice(0, 4).map(() => gate());
+		const entered = hosts.slice(0, 4).map(() => gate());
+		const observed: {
+			inputUnits: number;
+			failureUnits: number;
+			inputBytes: number;
+		}[] = [];
+		for (const host of hosts) {
+			const stub = env.VAULTS.get(env.VAULTS.idFromName(host));
+			await runInDurableObject(stub, async (_instance, state) => {
+				clearTestVault(state.storage);
+				state.storage.sql.exec("PRAGMA foreign_keys = ON");
+				initializeVaultStorage(
+					state.storage,
+					() => TEXT_FIXTURE_EPOCH,
+					() => 10_000,
+				);
+				await seedLiveTextState(state.storage, {
+					path: "source.md",
+					content: "\0".repeat(1_000_000),
+				});
+				state.storage.sql.exec("DELETE FROM mutation_claims");
+				state.storage.sql.exec("DELETE FROM operation_admissions");
+			});
+		}
+		const sources = hosts.map(() => source(1_000_000, 0));
+		const requests = sources.map(
+			(item, index) =>
+				new Request(`https://${hosts[index]}/v1/files/source.md`, {
+					method: "PUT",
+					body: item.body,
+				}),
+		);
+		const uploads = requests.slice(0, 4).map((request, index) => {
+			const stub = env.VAULTS.get(env.VAULTS.idFromName(hosts[index] ?? ""));
+			const authority: TextVaultGateway = {
+				getCurrentEpoch: (...args) => stub.getCurrentEpoch(...args),
+				beginMutation: (...args) => stub.beginMutation(...args),
+				authorize: (...args) => stub.authorize(...args),
+				authorizeBlob: (...args) => stub.authorizeBlob(...args),
+				commitBlob: (...args) => stub.commitBlob(...args),
+				readBlobMetadata: (...args) => stub.readBlobMetadata(...args),
+				readText: (...args) => stub.readText(...args),
+				finishAdmission: (...args) => stub.finishAdmission(...args),
+				commitText: async (...args) => {
+					const result = await stub.commitText(...args);
+					expect(result).toMatchObject({
+						ok: false,
+						failure: { kind: "precondition_failed" },
+					});
+					if (result.ok || result.failure.kind !== "precondition_failed")
+						throw new Error("Expected full observed failure");
+					observed.push({
+						inputUnits: args[3]?.length ?? 0,
+						failureUnits: result.failure.content?.length ?? 0,
+						inputBytes: new TextEncoder().encode(args[3]).byteLength,
+					});
+					entered[index]?.release();
+					await waits[index]?.promise;
+					return result;
+				},
+			};
+			return executeTextMutation(
+				authority,
+				{
+					client_id: `rpc-client-${index}`,
+					grant_id: `rpc-grant-${index}`,
+					scopes: ["vault:read", "vault:write"],
+				},
+				{
+					op: "put",
+					epoch: TEXT_FIXTURE_EPOCH,
+					paths: ["source.md"],
+					precondition: { kind: "absent" },
+				},
+				undefined,
+				async () => prepareTextPayload(await readInlineBody(request)),
+			);
+		});
+		for (const item of sources.slice(0, 4)) item.resume();
+		try {
+			await Promise.all(entered.map((item) => item.promise));
+			expect(observed).toHaveLength(4);
+			for (const item of observed)
+				expect(item).toEqual({
+					inputUnits: 1_000_000,
+					failureUnits: 1_000_000,
+					inputBytes: 1_000_000,
+				});
+			const fifth = requests[4];
+			if (!fifth) throw new Error("Expected fifth request");
+			const denied = await executeTextMutation(
+				env.VAULTS.get(env.VAULTS.idFromName(hosts[4] ?? "")),
+				{
+					client_id: "rpc-fifth",
+					grant_id: "rpc-fifth-grant",
+					scopes: ["vault:write"],
+				},
+				{
+					op: "put",
+					epoch: TEXT_FIXTURE_EPOCH,
+					paths: ["fifth.md"],
+					precondition: { kind: "absent" },
+				},
+				undefined,
+				async () => prepareTextPayload(await readInlineBody(fifth)),
+			);
+			expect(denied).toMatchObject({
+				ok: false,
+				failure: { kind: "admission_limited" },
+			});
+			expect(sources[4]?.stats().reads).toBe(0);
+			expect(await admissions(hosts[4] ?? "")).toHaveLength(0);
+			console.info("AGGREGATE_INLINE_RPC_DELIVERY", JSON.stringify(observed));
+		} finally {
+			for (const wait of waits) wait.release();
+			await Promise.all(uploads);
+		}
+		const results = await Promise.all(uploads);
+		for (const result of results)
+			expect(result).toMatchObject({
+				ok: false,
+				failure: { kind: "precondition_failed" },
+			});
+	});
+	it.each(["append", "rename", "restore"] as const)(
+		"keeps %s charged until non-cancellable authority cleanup delivery settles",
+		async (op) => {
+			const host = `command-lifetime-${op}.invalid`;
+			await initialize(host);
+			const stub = env.VAULTS.get(env.VAULTS.idFromName(host));
+			const entered = gate();
+			const resume = gate();
+			const body =
+				op === "append"
+					? ""
+					: JSON.stringify(
+							op === "rename"
+								? { to: "target.md" }
+								: { source_rev: 1, as_conflict_copy: true },
+						);
+			const bytes = new TextEncoder().encode(body);
+			const hash = Array.from(
+				new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)),
+				(byte) => byte.toString(16).padStart(2, "0"),
+			).join("");
+			const match = { kind: "match", etag: `"${TEXT_FIXTURE_EPOCH}.1"` };
+			const command = FileCommandSchema.parse({
+				op,
+				intent: {
+					op,
+					epoch: TEXT_FIXTURE_EPOCH,
+					paths: op === "rename" ? ["source.md", "target.md"] : ["source.md"],
+					precondition: op === "append" ? { kind: "none" } : match,
+					payload_hash: hash,
+					size: bytes.byteLength,
+				},
+				key: "lifetime-command",
+				...(op === "append" ? { content: "" } : { body: JSON.parse(body) }),
+			});
+			const {
+				payload_hash: _hash,
+				size: _size,
+				...descriptor
+			} = command.intent;
+			const authority: HistoryVaultGateway = {
+				beginMutation: (...args) => stub.beginMutation(...args),
+				beginRenameSource: (...args) => stub.beginRenameSource(...args),
+				authorize: (...args) => stub.authorize(...args),
+				authorizeRenameSource: (...args) => stub.authorizeRenameSource(...args),
+				commitFileCommand: (...args) => stub.commitFileCommand(...args),
+				readHistory: (...args) => stub.readHistory(...args),
+				finishAdmission: async (...args) => {
+					const result = await stub.finishAdmission(...args);
+					entered.release();
+					await resume.promise;
+					return result;
+				},
+			};
+			const context: AuthorizationContext = {
+				client_id: `lifetime-${op}`,
+				grant_id: `lifetime-${op}-grant`,
+				scopes: ["vault:read", "vault:write"],
+			};
+			const operation = executeFileCommand(
+				authority,
+				context,
+				op === "rename"
+					? { path: "source.md", if_match: match.etag }
+					: descriptor,
+				"lifetime-command",
+				async () => command,
+			);
+			await entered.promise;
+			const held = [
+				tryAcquireBodySlot(),
+				tryAcquireBodySlot(),
+				tryAcquireBodySlot(),
+			];
+			let bodyReads = 0;
+			try {
+				expect(held.every((release) => release !== undefined)).toBe(true);
+				const refused = await executeTextMutation(
+					stub,
+					context,
+					{
+						op: "put",
+						epoch: TEXT_FIXTURE_EPOCH,
+						paths: ["fifth.md"],
+						precondition: { kind: "absent" },
+					},
+					undefined,
+					async () => {
+						bodyReads++;
+						return prepareTextPayload(new Uint8Array());
+					},
+				);
+				expect(refused).toMatchObject({
+					ok: false,
+					failure: { kind: "admission_limited" },
+				});
+				expect(bodyReads).toBe(0);
+				expect(await admissions(host)).toHaveLength(0);
+			} finally {
+				resume.release();
+				for (const release of held) release?.();
+				await operation;
+			}
+			expect((await operation).ok).toBe(true);
+		},
+	);
+});

@@ -1,5 +1,8 @@
 export { formatETag, parseETag } from "@protocol/codecs/etag";
-export { encodeFileFailure } from "@protocol/codecs/files";
+export {
+	encodeFileFailure,
+	encodeFileFailureBodyChunks,
+} from "@protocol/codecs/files";
 export { normalizePath, pathKey } from "@protocol/codecs/path";
 export {
 	AdmissionCompletionSchema,
@@ -20,6 +23,14 @@ export {
 	TextMutationIntentSchema,
 	VaultScopeSchema,
 } from "@protocol/schemas/admission";
+export type { ByteRangeSelection } from "@protocol/schemas/blobs";
+export {
+	BlobAuthorizationResultSchema,
+	BlobDeclarationHeadersSchema,
+	BlobDeclarationSchema,
+	BlobMetadataSchema,
+	selectByteRange,
+} from "@protocol/schemas/blobs";
 export { TextPayloadSchema } from "@protocol/schemas/content";
 export { EpochSchema, ETagSchema } from "@protocol/schemas/etag";
 export {
@@ -67,6 +78,11 @@ export type {
 	TextMutationIntent,
 	VaultScope,
 } from "@protocol/types/admission";
+export type {
+	BlobAuthorizationResult,
+	BlobDeclaration,
+	BlobMetadata,
+} from "@protocol/types/blobs";
 export type { TextPayload } from "@protocol/types/content";
 export type { ETagParts } from "@protocol/types/etag";
 export type {

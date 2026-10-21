@@ -1,10 +1,12 @@
 import type { AuthorizationContext } from "@obsidian-ai-bridge/protocol";
 import {
 	EMPTY_PAYLOAD_HASH,
+	FileCommandSchema,
 	formatETag,
 	IdempotencyKeySchema,
 	TextMutationIntentSchema,
 } from "@obsidian-ai-bridge/protocol";
+import { executeFileCommand } from "@worker/application/history";
 import { prepareTextPayload } from "@worker/application/text-payload";
 import type { TextStoreFixture } from "@worker/test-fixtures/text-files";
 import {
@@ -235,7 +237,7 @@ describe("native conditional text storage", () => {
 			).toEqual([{ content: "A\uFEFF\u0000é" }]);
 		});
 	});
-	it("keeps the text PUT and DELETE commit API closed to append intents", async () => {
+	it("admits binary mutations and rejects append from authoritative state", async () => {
 		await withTextStore(async (fixture) => {
 			const unsupportedIntent = TextMutationIntentSchema.parse({
 				op: "put",
@@ -261,7 +263,62 @@ describe("native conditional text storage", () => {
 					paths: ["archive/data.bin"],
 					precondition: { kind: "absent" },
 				}),
-			).toEqual({ ok: false, failure: { kind: "not_implemented" } });
+			).toMatchObject({ ok: true });
+			const before = captureTextStoreState(fixture.storage);
+			const command = FileCommandSchema.parse({
+				op: "append",
+				intent: {
+					op: "append",
+					epoch: TEXT_FIXTURE_EPOCH,
+					paths: ["archive/data.bin"],
+					precondition: { kind: "none" },
+					payload_hash: EMPTY_PAYLOAD_HASH,
+					size: 0,
+				},
+				content: "",
+				key: "binary-append-key-01",
+			});
+			const gateway = {
+				beginMutation: fixture.store.beginMutation.bind(fixture.store),
+				beginRenameSource: fixture.store.beginRenameSource.bind(fixture.store),
+				authorize: fixture.admissions.authorize.bind(fixture.admissions),
+				authorizeRenameSource: fixture.admissions.authorizeRenameSource.bind(
+					fixture.admissions,
+				),
+				commitFileCommand: fixture.store.commitFileCommand.bind(fixture.store),
+				finishAdmission: fixture.admissions.finish.bind(fixture.admissions),
+				readHistory: fixture.store.readHistory.bind(fixture.store),
+			};
+			let bodyReads = 0;
+			const result = await executeFileCommand(
+				gateway,
+				TEXT_FIXTURE_CONTEXT,
+				{
+					op: "append",
+					epoch: TEXT_FIXTURE_EPOCH,
+					paths: ["archive/data.bin"],
+					precondition: { kind: "none" },
+				},
+				command.key,
+				async () => {
+					bodyReads++;
+					return command;
+				},
+			);
+			expect(result).toEqual({ ok: false, failure: { kind: "not_found" } });
+			expect(bodyReads).toBe(1);
+			expect(captureTextStoreState(fixture.storage)).toEqual(before);
+			expect(
+				await fixture.store.beginMutation(TEXT_FIXTURE_CONTEXT, {
+					op: "delete",
+					epoch: TEXT_FIXTURE_EPOCH,
+					paths: ["archive/data.bin"],
+					precondition: {
+						kind: "match",
+						etag: formatETag(TEXT_FIXTURE_EPOCH, 1),
+					},
+				}),
+			).toMatchObject({ ok: true });
 		});
 	});
 	it("publishes create, update, delete, and recreate as exact per-path revisions", async () => {

@@ -1,10 +1,12 @@
 import type {
 	AuthorizationContext,
+	BlobAuthorizationResult,
 	IdempotencyKey,
 	MutationReceipt,
 	OperationDescriptor,
 	RenameReservation,
 	TextMutationBeginResult,
+	TextMutationIntent,
 	TextMutationResult,
 } from "@obsidian-ai-bridge/protocol";
 import {
@@ -16,6 +18,7 @@ import {
 	type PreparedDescriptor,
 	type PreparedOperation,
 	prepareDescriptor,
+	prepareOperation,
 } from "@worker/application/admission";
 import { FileOperationDenied } from "@worker/application/files";
 import {
@@ -249,6 +252,34 @@ export class SqliteMutationCoordinator {
 		});
 	}
 
+	/** Bind the upload ticket and check receipts in one RPC, before external content effects. */
+	async authorizeBlob(
+		context: AuthorizationContext,
+		intent: TextMutationIntent,
+		admissionId: string,
+		key?: IdempotencyKey,
+	): Promise<BlobAuthorizationResult> {
+		if (intent.op !== "put")
+			return { ok: false, failure: { kind: "invalid_request" } };
+		const authorized = await this.admissions.authorize(
+			context,
+			intent,
+			admissionId,
+		);
+		if (!authorized.ok) return authorized;
+		try {
+			const operation = await prepareOperation(context, intent);
+			return (
+				this.preflight(context, operation, authorized.ticket.id, key) ??
+				authorized
+			);
+		} catch (error) {
+			if (error instanceof AdmissionDenied)
+				return { ok: false, failure: error.failure };
+			throw error;
+		}
+	}
+
 	/** Return an existing same-key receipt before append reads current file state. */
 	replayIfPresent(
 		context: AuthorizationContext,
@@ -331,6 +362,51 @@ export class SqliteMutationCoordinator {
 			ticketId,
 			key,
 		);
+	}
+
+	/** Recheck current policy and active ticket before a blob adapter performs asynchronous metadata I/O. */
+	preflight(
+		context: AuthorizationContext,
+		operation: PreparedOperation,
+		ticketId: string,
+		key?: IdempotencyKey,
+	): TextMutationResult | undefined {
+		return this.db.transaction((tx) => {
+			try {
+				assertPolicyInTransaction(tx, context, operation);
+			} catch (error) {
+				if (error instanceof AdmissionDenied)
+					return { ok: false, failure: error.failure };
+				throw error;
+			}
+			if (key !== undefined) {
+				const replay = this.replayReceiptInTransaction(
+					tx,
+					context,
+					operation,
+					ticketId,
+					key,
+				);
+				if (replay) return replay;
+			}
+			try {
+				this.admissions.assertActiveTicketInTransaction(
+					tx,
+					context,
+					operation,
+					ticketId,
+					key,
+				);
+			} catch (error) {
+				if (
+					error instanceof AdmissionDenied ||
+					error instanceof FileOperationDenied
+				)
+					return { ok: false, failure: error.failure };
+				throw error;
+			}
+			return undefined;
+		});
 	}
 
 	/** Check policy, replay receipts, and atomically consume, publish, and store successful results. */

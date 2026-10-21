@@ -1,11 +1,11 @@
 ---
 id: OAB-6.5
 title: Verify declared blob integrity before authoritative publication
-status: In Progress
+status: Done
 assignee:
   - '@pi'
 created_date: '2026-10-15 00:38'
-updated_date: '2026-10-20 23:30'
+updated_date: '2026-10-21 00:19'
 labels:
   - F1
 dependencies:
@@ -27,10 +27,10 @@ Owner explicitly selected declared SHA-256 and byte size for blob PUT during F1 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Canonical protocol schemas and useful API documentation define the approved declared SHA-256/byte-size requirements and errors; the affected spec contract is amended through this task rather than a new spec-only review round.
-- [ ] #2 Actual size and digest are verified with bounded backpressure before any DO reference is committed; forged hashes, declared-length mismatch, unknown transport length, cancellation and R2 failure cannot corrupt an existing content-addressed object.
-- [ ] #3 Binaries and oversized Markdown/canvas obey the 25 MB blob and 1 MB inline rules; exact bytes, large markers, range reads and search exclusion satisfy AC-16, while revoked uploads satisfy AC-28.
-- [ ] #4 Aggregate application-retained upload data stays within 32 MiB across clients in one isolate, including Worker buffers, strings, validation copies, and active authority values. Native workerd buffers, transport-retained RPC results, and native-layer fragments remain outside this limit. Retry after R2 success or an uncertain response stays safe and leaves at most authorized unreferenced blobs.
+- [x] #1 Canonical protocol schemas and useful API documentation define the approved declared SHA-256/byte-size requirements and errors; the affected spec contract is amended through this task rather than a new spec-only review round.
+- [x] #2 Actual size and digest are verified with bounded backpressure before any DO reference is committed; forged hashes, declared-length mismatch, unknown transport length, cancellation and R2 failure cannot corrupt an existing content-addressed object.
+- [x] #3 Binaries and oversized Markdown/canvas obey the 25 MB blob and 1 MB inline rules; exact bytes, large markers, range reads and search exclusion satisfy AC-16, while revoked uploads satisfy AC-28.
+- [x] #4 Aggregate application-retained upload data stays within 32 MiB across clients in one isolate, including Worker buffers, strings, validation copies, and active authority values. Native workerd buffers, transport-retained RPC results, and native-layer fragments remain outside this limit. Retry after R2 success or an uncertain response stays safe and leaves at most authorized unreferenced blobs.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -103,4 +103,16 @@ Approved response-lifetime correction commits 55e3d65e84e00bd4d168c9f3919e418ba4
 Independent Luna high review of 0a05329..55e3d65 finds no new code defect. The local response-lifetime corrective unit is OK. Reviewed scope includes complete corrective source/tests, canonical schema, route callers, and spec section 6.5. The reviewer inspected actual final check/docs/focused/RED logs, without repeating full checks. Closure: early response slot release, whole escaped JSON, owned read/cancel cleanup, discarded test responses, and exact-read-size assumption are resolved. Structural ownership is cohesive across budget, application, transport, and protocol. R1 remains P1/MAJOR and blocks overall acceptance. Missing terms are native-rooted authority results and earlier emitted application backing after producer EOF. This is a missing bound, not a proved heap breach. Independent-isolate totals and total deployment RSS stay outside scope. Report: ~/.pi/agent/artifacts/obsidian-ai-bridge/oab-6.5/response-lifetime.MmyYFT/independent-review.md. No new architecture, source change, whole-branch review, push, PR, deployment, or task closure follows without resolution of the acceptance boundary.
 
 R1 closure: intentionally deferred by the final owner decision on criterion 4, 2026-10-20. Owner decision, English translation: "The 32 MiB limit covers only data our application creates and retains: Worker buffers, strings, validation copies, and authority application values while an operation is active. Native workerd buffers, transport-retained RPC results, and fragments retained by native layers remain outside the limit. Close R1 as intentionally deferred." This replaces the earlier expanded native-retention acceptance scope. It does not prove native safety, last-owner release, or platform headroom. Deferred task OAB-6.8.2 triggers real-deployment native-retention measurement during OAB-6.8 runtime-envelope work. Deployment still needs explicit authorization. Plans now state this scope. No spec change is needed: section 6.5 already limits response ownership to application preparation and production. Proceed to final branch code review and human diff review, then PR.
+
+Final branch review APPROVE at 3f0d7fc91594b7772c5a30bb470ce42ccf007a4a against 2584149f0f4865f707ce6452bdc5bf1167efbad4. All 48 changed files and resulting safety owners were reviewed. Documentation scope includes spec, approved plans, task scope, and semantic TSDoc. Slot, stream, storage evidence, policy/CAS, and receipt state owners remain cohesive. No actionable finding remains under the final owner boundary. R1 is intentionally deferred by owner decision to OAB-6.8.2, not proved natively bounded. Fresh final bun run check passes 864 tests across 42 files, exit 0. Lint, docs, types, schema checks, and dry-run builds pass. Human branch review pn-8b67e1 approves the same complete diff with no changes requested. Finalization changes only task metadata after that review. External reports, logs, scratch, and stopped design remain preserved under ~/.pi/agent/artifacts/obsidian-ai-bridge/oab-6.5/branch-final.drULg5/. No deployment, resource change, personal-vault access, merge, or new task implementation occurred.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Verified declared SHA-256 and size before immutable blob publication. Added bounded upload and response streams, exact blob reads and ranges, atomic references, and shared body capacity.
+
+Final check passes 864 tests across 42 files. Independent branch review and human review approve the implementation. Test-first exceptions remain explicit in the notes.
+
+Criterion 4 follows the final application-only 32 MiB owner scope. R1 is intentionally deferred to OAB-6.8.2 for native measurements during deployed runtime-envelope work. No native headroom, deployment, or client qualification is claimed.
+<!-- SECTION:FINAL_SUMMARY:END -->

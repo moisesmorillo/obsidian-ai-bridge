@@ -74,6 +74,59 @@ describe("canonical bounded read contracts", () => {
 		).toBe(false);
 	});
 
+	it("accepts large Markdown and Canvas manifest blobs", () => {
+		for (const path of ["large.md", "large.canvas"]) {
+			const entry = {
+				path,
+				etag: formatETag(epoch, 4),
+				seq: 4,
+				hash,
+				size: 1_000_001,
+				kind: "blob",
+				deleted: false,
+				large: true,
+			};
+			expect(
+				ManifestPageSchema.safeParse({
+					epoch,
+					head_seq: 4,
+					entries: [entry],
+					next_page: null,
+				}).success,
+			).toBe(true);
+		}
+	});
+
+	it("orders manifest paths by SQLite binary UTF-8 order", () => {
+		const paths = ["a/\uE000.md", "a/\u{10000}.md"];
+		const entries = paths.map((path, index) => ({
+			path,
+			etag: formatETag(epoch, index + 1),
+			seq: index + 1,
+			hash,
+			size: 1,
+			kind: "text",
+			deleted: false,
+			large: false,
+		}));
+		expect(
+			ManifestPageSchema.safeParse({
+				epoch,
+				head_seq: 2,
+				entries,
+				next_page: null,
+			}).success,
+		).toBe(true);
+		expect(
+			ManifestPageSchema.safeParse({
+				epoch,
+				head_seq: 2,
+				entries: [...entries].reverse(),
+				next_page: null,
+			}).success,
+		).toBe(false);
+	});
+
 	it("enforces tombstone metadata and page size caps", () => {
 		const base = {
 			path: "note.md",
@@ -142,6 +195,23 @@ describe("canonical bounded read contracts", () => {
 				epoch,
 				head_seq: 3,
 				entries: [{ ...entry, rev: 2 }],
+			}).success,
+		).toBe(false);
+		expect(
+			ChangesPageSchema.safeParse({
+				epoch,
+				head_seq: 3,
+				entries: [
+					{
+						seq: 3,
+						op: "restore",
+						path: "restored.md",
+						etag: formatETag(epoch, 3),
+						hash,
+						origin: "device",
+						at: 1,
+					},
+				],
 			}).success,
 		).toBe(false);
 	});
@@ -242,12 +312,21 @@ describe("canonical bounded read contracts", () => {
 		);
 	});
 
-	it("accepts only feed limits from 1 through 1000", () => {
+	it("validates feed limits only on request queries", () => {
 		for (const limit of [0, -1, 1001, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
-			expect(
-				ChangesPageSchema.safeParse({ epoch, head_seq: 0, entries: [], limit })
-					.success,
-			).toBe(false);
+			expect(ReadQuerySchema.safeParse({ limit: String(limit) }).success).toBe(
+				false,
+			);
 		}
+		expect(ReadQuerySchema.safeParse({ limit: "1" }).success).toBe(true);
+		expect(ReadQuerySchema.safeParse({ limit: "1000" }).success).toBe(true);
+		expect(
+			ChangesPageSchema.safeParse({
+				epoch,
+				head_seq: 0,
+				entries: [],
+				limit: 1000,
+			}).success,
+		).toBe(false);
 	});
 });

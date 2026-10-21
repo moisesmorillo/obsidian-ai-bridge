@@ -8,6 +8,19 @@ const SafeSequenceSchema = z.number().int().nonnegative().safe();
 /** Lowercase hexadecimal SHA-256 digest of live content. */
 const Sha256Schema = z.string().regex(/^[0-9a-f]{64}$/);
 
+/** Compares bounded UTF-8 path bytes in the order used by SQLite BINARY. */
+function compareSqliteBinaryPath(left: string, right: string): number {
+	const encoder = new TextEncoder();
+	const leftBytes = encoder.encode(left);
+	const rightBytes = encoder.encode(right);
+	const sharedLength = Math.min(leftBytes.length, rightBytes.length);
+	for (let index = 0; index < sharedLength; index += 1) {
+		if (leftBytes[index] !== rightBytes[index])
+			return leftBytes[index] - rightBytes[index];
+	}
+	return leftBytes.length - rightBytes.length;
+}
+
 /** Exact vault summary returned before bounded read traversal. */
 export const VaultReadResultSchema = z
 	.object({
@@ -56,7 +69,7 @@ export const ManifestEntrySchema = z
 			(entry.deleted ||
 				entry.kind !== "blob" ||
 				entry.size <= 1_000_000 ||
-				!/\\.(?:md|canvas)$/i.test(entry.path))
+				!/\.(?:md|canvas)$/i.test(entry.path))
 		)
 			ctx.addIssue({
 				code: "custom",
@@ -86,7 +99,12 @@ export const ManifestPageSchema = z
 					message: "manifest ETag epoch does not match page epoch",
 				});
 		for (let i = 1; i < page.entries.length; i++)
-			if (page.entries[i - 1].path >= page.entries[i].path)
+			if (
+				compareSqliteBinaryPath(
+					page.entries[i - 1].path,
+					page.entries[i].path,
+				) >= 0
+			)
 				ctx.addIssue({
 					code: "custom",
 					message: "manifest paths must ascend in binary order",
@@ -98,7 +116,7 @@ export const ChangeEntrySchema = z.discriminatedUnion("op", [
 	z
 		.object({
 			seq: z.number().int().positive().safe(),
-			op: z.enum(["put", "delete", "restore"]),
+			op: z.enum(["put", "delete"]),
 			path: PathSchema,
 			etag: ETagSchema,
 			hash: z.union([Sha256Schema, z.literal("")]),
@@ -134,7 +152,6 @@ export const ChangesPageSchema = z
 		epoch: EpochSchema,
 		head_seq: SafeSequenceSchema,
 		entries: z.array(ChangeEntrySchema).max(1000),
-		limit: z.number().int().min(1).max(1000).safe().optional(),
 	})
 	.strict()
 	.superRefine((page, ctx) => {

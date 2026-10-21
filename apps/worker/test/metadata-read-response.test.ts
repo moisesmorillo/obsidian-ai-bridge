@@ -185,6 +185,75 @@ describe("metadata HTTP response demand", () => {
 		for (const release of held) release?.();
 	});
 	it.each([false, true])(
+		"preserves batch outcome certainty when cancellation overlaps a failed RPC %s",
+		async (unknown) => {
+			const fixture = controlledGateway();
+			const original = fixture.gateway.readBatch;
+			const finishing = barrier<void>();
+			const cleanup = barrier<void>();
+			fixture.gateway.readBatch = async (...args) => {
+				if (fixture.state.calls !== 1) return original(...args);
+				fixture.state.calls++;
+				fixture.started.resolve();
+				await fixture.release.promise;
+				if (unknown) throw new Error("Lost pending batch RPC");
+				return { ok: false, failure: { kind: "cursor_expired" } };
+			};
+			fixture.gateway.finishAdmission = async (
+				_identity,
+				_ticket,
+				completion,
+			) => {
+				fixture.state.finished.push(completion);
+				finishing.resolve();
+				await cleanup.promise;
+				return { ok: true };
+			};
+			const app = (await import("hono")).Hono;
+			const worker = new app<{ Bindings: Env }>().route(
+				"/v1",
+				createReadRouter(
+					async () => identity,
+					() => fixture.gateway,
+				),
+			);
+			const response = await worker.fetch(
+				new Request("https://metadata.invalid/v1/manifest"),
+				{} as Env,
+			);
+			expect(response.status).toBe(200);
+			if (!response.body) throw new Error("Read response has no body");
+			const reader = response.body.getReader();
+			const held = Array.from({ length: 3 }, () => tryAcquireReadSlot());
+			const drain = (async () => {
+				while (!(await reader.read()).done) {
+					/* Consume the first batch before the RPC barrier. */
+				}
+			})();
+			await fixture.started.promise;
+			const cancelled = reader.cancel();
+			expect(tryAcquireReadSlot()).toBeUndefined();
+			expect(fixture.state.finished).toEqual([]);
+			fixture.release.resolve();
+			await finishing.promise;
+			expect(tryAcquireReadSlot()).toBeUndefined();
+			cleanup.resolve();
+			await Promise.all([drain, cancelled]);
+			const free = tryAcquireReadSlot();
+			try {
+				expect(fixture.state.calls).toBe(2);
+				expect(fixture.state.finished).toEqual([
+					unknown ? "uncertain" : "settled",
+				]);
+				expect(free).toBeTypeOf("function");
+			} finally {
+				free?.();
+				for (const release of held) release?.();
+			}
+		},
+	);
+
+	it.each([false, true])(
 		"fails the stream rather than closing partial JSON after a later batch fault %s",
 		async (unknown) => {
 			const fixture = controlledGateway();

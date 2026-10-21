@@ -1,4 +1,5 @@
 import type { AdmissionCompletion } from "@obsidian-ai-bridge/protocol";
+import { ReadBatchFailure } from "@worker/application/reads";
 import {
 	encodeJsonChunks,
 	ownedReadResponse,
@@ -98,6 +99,71 @@ describe("owned read response", () => {
 		await Promise.all([read, cancelled]);
 		expect(released).toBe(true);
 	});
+	it.each([
+		"known producer",
+		"unknown producer",
+		"unknown cancellation",
+	] as const)(
+		"preserves joined outcome certainty for %s without early slot release",
+		async (fault) => {
+			const work = barrier<IteratorResult<Uint8Array>>();
+			const started = barrier<void>();
+			const cancellation = barrier<void>();
+			const cancelling = barrier<void>();
+			const cleanup = barrier<void>();
+			const finishing = barrier<void>();
+			const finished: AdmissionCompletion[] = [];
+			let released = false;
+			const response = ownedReadResponse(
+				{
+					next: () => {
+						started.resolve();
+						return work.promise;
+					},
+					cancel: () => {
+						cancelling.resolve();
+						return cancellation.promise;
+					},
+				},
+				{
+					finish: async (completion) => {
+						finished.push(completion);
+						finishing.resolve();
+						await cleanup.promise;
+						return { ok: true };
+					},
+				},
+				() => {
+					released = true;
+				},
+			);
+			if (!response.body) throw new Error("Read response has no body");
+			const reader = response.body.getReader();
+			const read = reader.read();
+			await started.promise;
+			const cancelled = reader.cancel();
+			await cancelling.promise;
+			work.reject(
+				fault === "unknown producer"
+					? new Error("Lost pending RPC")
+					: new ReadBatchFailure({ kind: "cursor_expired" }),
+			);
+			expect(released).toBe(false);
+			expect(finished).toEqual([]);
+			if (fault === "unknown cancellation")
+				cancellation.reject(new Error("Cancellation failed"));
+			else cancellation.resolve();
+			await finishing.promise;
+			expect(released).toBe(false);
+			cleanup.resolve();
+			await Promise.all([read, cancelled]);
+			expect(finished).toEqual([
+				fault === "known producer" ? "settled" : "uncertain",
+			]);
+			expect(released).toBe(true);
+		},
+	);
+
 	it("keeps unknown producer faults uncertain and observes rejected cleanup", async () => {
 		let released = false;
 		const finished: AdmissionCompletion[] = [];

@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-10-15 00:38'
-updated_date: '2026-10-21 22:27'
+updated_date: '2026-10-21 22:38'
 labels:
   - F1
 dependencies:
@@ -40,6 +40,8 @@ Owner approved docs/superpowers/plans/2026-10-21-bounded-authoritative-reads.md 
 Execution partition for approved unit 3: complete three serial components with one writer at a time. Component 3A owns lazy metadata traversal and response mechanics. Component 3B owns current/exact content and blob/range admission plus cancellation. Component 3C owns the final HTTP recovery/AC matrix and acceptance mapping. Each component owns checks and a commit. The existing unit review remains after complete integration. This changes delivery boundaries only, not scope or contracts.
 
 Owner execution decision: use openai/gpt-6.1-sol:medium as the sole writer for all remaining integration components. Preserve the current worktree and changes. Complete the full approved contract and commit only after bun run check passes. No more routine questions before human branch review. Independent unit and whole-branch reviews still apply.
+
+Review R1 correction: add barrier regressions for cancellation concurrent with known and unknown batch faults. Preserve known failure certainty in joined response cleanup. Keep pending work and cleanup charged until settlement. Run focused lifecycle tests, documentation checks, and the complete check before commit. Leave task closure to the parent.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -52,4 +54,6 @@ The sole integration writer connects lazy manifest, history, and feed sessions t
 Self-review found two contract gaps. Content selection checked ticket epoch before the requested epoch. A real RPC regression failed with invalid_ticket instead of epoch_mismatch. Both native selectors now check current policy first, then the active ticket, in the same transaction. The cursor decoder also accepted nonzero base64url padding bits. A protocol regression failed before canonical re-encoding validation. Focused tests pass after both corrections. The first complete check found three old history tests that retained unread GET bodies. Those tests now consume each body after using its headers. No mutation assertion changed.
 
 The complete focused integration run passes: four application/response files with 28 tests, and five real HTTP files with 93 tests. The obsolete unbounded history router is removed. Direct native history callers stay unchanged because native regressions still use them. Self-review covers lazy traversal, shared response ownership, content ticket fencing, canonical failure mapping, documentation, and inward imports. Independent task and branch review remain pending. The task stays In Progress with all acceptance boxes unchanged.
+
+Review R1 correction: two barrier regressions reproduced known batch failure cancellation as uncertain instead of settled. The RED run passed 13 tests and failed both known-result assertions. Joined response cleanup now treats canonical ReadBatchFailure as known. Unknown producer and cancellation faults stay uncertain. No pending-work join or local release order changed. The focused lifecycle run passes four files and 33 tests. Task and acceptance status stay unchanged for independent review.
 <!-- SECTION:NOTES:END -->

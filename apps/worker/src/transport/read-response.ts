@@ -56,7 +56,11 @@ export function ownedReadResponse(
 			signal?.removeEventListener("abort", abort);
 			try {
 				await owner.finish(
-					results.some((result) => result.status === "rejected")
+					results.some(
+						(result) =>
+							result.status === "rejected" &&
+							!(result.reason instanceof ReadBatchFailure),
+					)
 						? "uncertain"
 						: completion,
 				);

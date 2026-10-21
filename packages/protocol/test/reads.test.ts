@@ -295,12 +295,21 @@ describe("canonical bounded read contracts", () => {
 			MetadataBatchRequestSchema.safeParse({ ...request, limit: 65 }).success,
 		).toBe(false);
 		expect(
-			MetadataBatchResultSchema.safeParse({ rows: [], next_path: null })
-				.success,
+			MetadataBatchResultSchema.safeParse({
+				collection: "manifest",
+				rows: [],
+			}).success,
 		).toBe(true);
 		expect(
 			MetadataBatchResultSchema.safeParse({
+				collection: "manifest",
 				rows: Array.from({ length: 66 }, () => ({ path: "note.md" })),
+			}).success,
+		).toBe(false);
+		expect(
+			MetadataBatchResultSchema.safeParse({
+				collection: "manifest",
+				rows: [{ rev: 1 }],
 			}).success,
 		).toBe(false);
 		expect(

@@ -329,22 +329,26 @@ export const MetadataHistoryRowSchema = z
 /** Internal immutable feed row, with numeric source revision only for SQLite traversal. */
 export const MetadataChangeRowSchema = ChangeEntrySchema;
 /** Metadata batch can include one lookahead row beyond its requested batch size. */
-export const MetadataBatchResultSchema = z
-	.object({
-		rows: z
-			.array(
-				z.union([
-					MetadataManifestRowSchema,
-					MetadataHistoryRowSchema,
-					MetadataChangeRowSchema,
-				]),
-			)
-			.max(65),
-		next_path: PathSchema.nullable().optional(),
-		next_rev: SafeSequenceSchema.nullable().optional(),
-		next_seq: SafeSequenceSchema.nullable().optional(),
-	})
-	.strict();
+export const MetadataBatchResultSchema = z.discriminatedUnion("collection", [
+	z
+		.object({
+			collection: z.literal("manifest"),
+			rows: z.array(MetadataManifestRowSchema).max(65),
+		})
+		.strict(),
+	z
+		.object({
+			collection: z.literal("history"),
+			rows: z.array(MetadataHistoryRowSchema).max(65),
+		})
+		.strict(),
+	z
+		.object({
+			collection: z.literal("changes"),
+			rows: z.array(MetadataChangeRowSchema).max(65),
+		})
+		.strict(),
+]);
 
 /** Rejects unrecognized or repeated query values before route policy runs. */
 export const ReadQuerySchema = z

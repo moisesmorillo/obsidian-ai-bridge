@@ -8,6 +8,8 @@ import type {
 	CurrentEpochResult,
 	HistoryRequest,
 	IdempotencyKey,
+	MetadataBatchRequest,
+	MetadataBatchResult,
 	OperationDescriptor,
 	OperationIntent,
 	RenameReservation,
@@ -17,12 +19,14 @@ import type {
 	TextMutationResult,
 	TextReadRequest,
 	TextReadResult,
+	VaultReadResult,
 } from "@obsidian-ai-bridge/protocol";
 import type { ImmutableFileCommand } from "@worker/application/history";
 import type { Env } from "@worker/env";
 import { R2BlobStore } from "@worker/infrastructure/r2/blobs";
 import { SqliteAdmissionAuthority } from "@worker/infrastructure/sqlite/admission";
 import { SqliteMutationCoordinator } from "@worker/infrastructure/sqlite/mutations";
+import { SqliteReadStore } from "@worker/infrastructure/sqlite/reads";
 import {
 	generateEpoch,
 	initializeVaultStorage,
@@ -34,6 +38,7 @@ export class Vault extends DurableObject<Env> {
 	private readonly admissionAuthority: SqliteAdmissionAuthority;
 	private readonly mutationCoordinator: SqliteMutationCoordinator;
 	private readonly textStore: SqliteTextStore;
+	private readonly readStore: SqliteReadStore;
 
 	/**
 	 * The constructor creates fresh storage or validates existing storage synchronously in one transaction.
@@ -64,6 +69,9 @@ export class Vault extends DurableObject<Env> {
 			this.admissionAuthority,
 			{ now: Date.now },
 		);
+		this.readStore = new SqliteReadStore(ctx.storage, this.admissionAuthority, {
+			now: Date.now,
+		});
 		this.textStore = new SqliteTextStore(
 			ctx.storage,
 			this.mutationCoordinator,
@@ -134,6 +142,32 @@ export class Vault extends DurableObject<Env> {
 			command,
 			key,
 		);
+	}
+
+	/** Return aggregate vault metadata through an owned native read ticket. */
+	readVault(
+		context: AuthorizationContext,
+		admissionId: string,
+	): Promise<VaultReadResult> {
+		return this.readStore.readVault(context, admissionId);
+	}
+
+	/** Capture a path's current upper revision for bounded history traversal. */
+	readHistoryUpper(
+		context: AuthorizationContext,
+		admissionId: string,
+		path: string,
+	) {
+		return this.readStore.readHistoryUpper(context, admissionId, path);
+	}
+
+	/** Read one bounded native metadata batch without selecting content fields. */
+	readBatch(
+		context: AuthorizationContext,
+		request: MetadataBatchRequest,
+		admissionId: string,
+	): Promise<MetadataBatchResult> {
+		return this.readStore.readBatch(context, request, admissionId);
 	}
 
 	/** Read retained content-free revision metadata after native policy checks. */

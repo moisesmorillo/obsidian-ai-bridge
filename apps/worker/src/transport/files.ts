@@ -18,6 +18,7 @@ import {
 } from "@worker/application/blobs";
 import { FileOperationDenied } from "@worker/application/files";
 import type { HistoryVaultGateway } from "@worker/application/history";
+import { assertReadDemand } from "@worker/application/read-demand";
 import {
 	executeTextMutation,
 	type TextVaultGateway,
@@ -78,6 +79,7 @@ export function createFileRouter(
 		if (context.req.method === "GET") {
 			if (!identity.scopes.includes("vault:read"))
 				return errorResponse({ kind: "forbidden_scope" });
+			assertReadDemand(context.req.raw.signal);
 			const query = new URL(context.req.url).searchParams;
 			if (
 				[...query.keys()].some(

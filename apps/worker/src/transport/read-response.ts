@@ -2,6 +2,7 @@ import type {
 	AdmissionCompletion,
 	AdmissionFinishResult,
 } from "@obsidian-ai-bridge/protocol";
+import { ReadAborted } from "@worker/application/read-demand";
 import { ReadBatchFailure } from "@worker/application/reads";
 
 /** Maximum encoded bytes produced by one response demand. */
@@ -59,7 +60,10 @@ export function ownedReadResponse(
 					results.some(
 						(result) =>
 							result.status === "rejected" &&
-							!(result.reason instanceof ReadBatchFailure),
+							!(
+								result.reason instanceof ReadBatchFailure ||
+								result.reason instanceof ReadAborted
+							),
 					)
 						? "uncertain"
 						: completion,
@@ -113,7 +117,9 @@ export function ownedReadResponse(
 				try {
 					await finish(
 						true,
-						error instanceof ReadBatchFailure ? "settled" : "uncertain",
+						error instanceof ReadBatchFailure || error instanceof ReadAborted
+							? "settled"
+							: "uncertain",
 						error,
 					);
 				} catch {

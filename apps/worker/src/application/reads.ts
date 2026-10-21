@@ -26,6 +26,7 @@ import {
 } from "@obsidian-ai-bridge/protocol";
 import { AdmissionDenied } from "@worker/application/admission";
 import { FileOperationDenied } from "@worker/application/files";
+import { assertReadDemand, ReadAborted } from "@worker/application/read-demand";
 
 /** Native operations needed for one read admission across every batch. */
 export interface ReadVaultGateway {
@@ -106,10 +107,12 @@ export type ReadOutcome<T> =
 export async function readVault(
 	gateway: ReadVaultGateway,
 	context: AuthorizationContext,
+	signal?: AbortSignal,
 ): Promise<ReadOutcome<VaultReadResult>> {
-	const begun = await beginRead(gateway, context, []);
+	const begun = await beginRead(gateway, context, [], signal);
 	if (!begun.ok) return begun;
 	try {
+		assertReadDemand(signal);
 		const response = await gateway.readVault(context, begun.ticket.id);
 		if (!response.ok)
 			return finishReadFailure(
@@ -118,6 +121,7 @@ export async function readVault(
 				begun.ticket.id,
 				response.failure,
 			);
+		assertReadDemand(signal);
 		return createReadSession(gateway, context, begun.ticket.id, response.body);
 	} catch (error) {
 		return finishKnownFailure(gateway, context, begun.ticket.id, error);
@@ -129,14 +133,16 @@ export async function openManifestRead(
 	gateway: ReadVaultGateway,
 	context: AuthorizationContext,
 	token?: string,
+	signal?: AbortSignal,
 ): Promise<
 	ReadOutcome<
 		LazyReadSession<ManifestEntry, Omit<ManifestPage, "entries" | "next_page">>
 	>
 > {
-	const begun = await beginRead(gateway, context, []);
+	const begun = await beginRead(gateway, context, [], signal);
 	if (!begun.ok) return begun;
 	try {
+		assertReadDemand(signal);
 		const summary = await gateway.readVault(context, begun.ticket.id);
 		if (!summary.ok)
 			return finishReadFailure(
@@ -145,6 +151,7 @@ export async function openManifestRead(
 				begun.ticket.id,
 				summary.failure,
 			);
+		assertReadDemand(signal);
 		const cursor =
 			token === undefined
 				? undefined
@@ -193,6 +200,7 @@ export async function openManifestRead(
 							head_seq: head,
 							last_path: after,
 						}),
+			signal,
 		);
 		return { ok: true, body: lazy, finish: lazy.finish };
 	} catch (error) {
@@ -206,10 +214,12 @@ export async function openHistoryRead(
 	context: AuthorizationContext,
 	path: string,
 	token?: string,
+	signal?: AbortSignal,
 ): Promise<ReadOutcome<LazyReadSession<HistoryPageEntry, { epoch: string }>>> {
-	const begun = await beginRead(gateway, context, [path]);
+	const begun = await beginRead(gateway, context, [path], signal);
 	if (!begun.ok) return begun;
 	try {
+		assertReadDemand(signal);
 		const result = await gateway.readHistoryUpper(
 			context,
 			begun.ticket.id,
@@ -222,6 +232,7 @@ export async function openHistoryRead(
 				begun.ticket.id,
 				result.failure,
 			);
+		assertReadDemand(signal);
 		const upper = result.body;
 		const cursor =
 			token === undefined
@@ -287,6 +298,7 @@ export async function openHistoryRead(
 							upper_etag: upperEtag,
 							last_etag: formatETag(upper.epoch, after),
 						}),
+			signal,
 		);
 		return { ok: true, body: lazy, finish: lazy.finish };
 	} catch (error) {
@@ -301,10 +313,11 @@ export async function openChangesRead(
 	epoch: string,
 	since: number,
 	limit = 1000,
+	signal?: AbortSignal,
 ): Promise<
 	ReadOutcome<LazyReadSession<ChangeEntry, Omit<ChangesPage, "entries">>>
 > {
-	const begun = await beginRead(gateway, context, []);
+	const begun = await beginRead(gateway, context, [], signal);
 	if (!begun.ok) return begun;
 	try {
 		if (
@@ -315,6 +328,7 @@ export async function openChangesRead(
 			limit > 1000
 		)
 			throw new FileOperationDenied({ kind: "invalid_request" });
+		assertReadDemand(signal);
 		const summary = await gateway.readVault(context, begun.ticket.id);
 		if (!summary.ok)
 			return finishReadFailure(
@@ -323,6 +337,7 @@ export async function openChangesRead(
 				begun.ticket.id,
 				summary.failure,
 			);
+		assertReadDemand(signal);
 		if (summary.body.epoch !== epoch)
 			throw new FileOperationDenied({
 				kind: "epoch_mismatch",
@@ -356,6 +371,7 @@ export async function openChangesRead(
 				return { rows, more: result.body.rows.length > batchLimit };
 			},
 			() => null,
+			signal,
 		);
 		return { ok: true, body: lazy, finish: lazy.finish };
 	} catch (error) {
@@ -369,6 +385,7 @@ function createLazyTraversal<T, M>(
 	cap: number,
 	fetchBatch: (limit: number) => Promise<{ rows: T[]; more: boolean }>,
 	nextPage: () => string | null,
+	signal?: AbortSignal,
 ): LazyReadSession<T, M> {
 	let count = 0;
 	let stopped = false;
@@ -383,7 +400,9 @@ function createLazyTraversal<T, M>(
 			if (stopped) return { rows: [], done: true, next_page: null };
 			active = (async () => {
 				try {
+					assertReadDemand(signal);
 					const batch = await fetchBatch(Math.min(64, cap - count));
+					assertReadDemand(signal);
 					count += batch.rows.length;
 					const done = !batch.more || count === cap;
 					if (done) stopped = true;
@@ -394,7 +413,9 @@ function createLazyTraversal<T, M>(
 					};
 				} catch (error) {
 					stopped = true;
-					uncertain = !(error instanceof ReadBatchFailure);
+					uncertain = !(
+						error instanceof ReadBatchFailure || error instanceof ReadAborted
+					);
 					throw error;
 				}
 			})();
@@ -483,6 +504,7 @@ async function beginRead(
 	gateway: ReadVaultGateway,
 	context: AuthorizationContext,
 	paths: string[],
+	signal?: AbortSignal,
 ): Promise<
 	| { ok: true; ticket: Extract<AdmissionResult, { ok: true }>["ticket"] }
 	| { ok: false; failure: FileFailure }
@@ -495,6 +517,7 @@ async function beginRead(
 		size: 0,
 	};
 	try {
+		assertReadDemand(signal);
 		const result = await gateway.authorize(context, intent);
 		return result.ok ? { ok: true, ticket: result.ticket } : result;
 	} catch (error) {
@@ -535,13 +558,17 @@ async function finishReadFailure<T>(
 	return { ok: false, failure };
 }
 
-/** Settle known exceptions while allowing unknown transport and storage faults to propagate. */
+/** Settle known policy failures and local aborts. Unknown faults retain their original durable deadline. */
 async function finishKnownFailure<T>(
 	gateway: ReadVaultGateway,
 	context: AuthorizationContext,
 	ticketId: string,
 	error: unknown,
 ): Promise<ReadOutcome<T>> {
+	if (error instanceof ReadAborted) {
+		await gateway.finishAdmission(context, ticketId, "settled");
+		throw error;
+	}
 	if (!isKnownFailure(error)) throw error;
 	await gateway.finishAdmission(context, ticketId, "settled");
 	return { ok: false, failure: error.failure };

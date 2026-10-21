@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-10-15 00:38'
-updated_date: '2026-10-21 22:38'
+updated_date: '2026-10-21 22:56'
 labels:
   - F1
 dependencies:
@@ -42,6 +42,8 @@ Execution partition for approved unit 3: complete three serial components with o
 Owner execution decision: use openai/gpt-6.1-sol:medium as the sole writer for all remaining integration components. Preserve the current worktree and changes. Complete the full approved contract and commit only after bun run check passes. No more routine questions before human branch review. Independent unit and whole-branch reviews still apply.
 
 Review R1 correction: add barrier regressions for cancellation concurrent with known and unknown batch faults. Preserve known failure certainty in joined response cleanup. Keep pending work and cleanup charged until settlement. Run focused lifecycle tests, documentation checks, and the complete check before commit. Leave task closure to the parent.
+
+WB-1 correction: add explicit barriers for abort during initial authority, metadata preparation, content selection, and blob preparation. Use one shared demand guard across existing read owners. Stop later demand but join started work and cleanup. Preserve known and unknown outcomes and R1. Run focused and full checks, commit, and retain review gates.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -56,4 +58,6 @@ Self-review found two contract gaps. Content selection checked ticket epoch befo
 The complete focused integration run passes: four application/response files with 28 tests, and five real HTTP files with 93 tests. The obsolete unbounded history router is removed. Direct native history callers stay unchanged because native regressions still use them. Self-review covers lazy traversal, shared response ownership, content ticket fencing, canonical failure mapping, documentation, and inward imports. Independent task and branch review remain pending. The task stays In Progress with all acceptance boxes unchanged.
 
 Review R1 correction: two barrier regressions reproduced known batch failure cancellation as uncertain instead of settled. The RED run passed 13 tests and failed both known-result assertions. Joined response cleanup now treats canonical ReadBatchFailure as known. Unknown producer and cancellation faults stay uncertain. No pending-work join or local release order changed. The focused lifecycle run passes four files and 33 tests. Task and acceptance status stay unchanged for independent review.
+
+WB-1 RED: pre-response abort barriers failed 10 of 22 tests before correction. Authorization, summary, history ceiling, text selection, and blob metadata continued into later demand after abort. A shared local demand checkpoint now stops new work. Existing owners still join started RPC/R2 work and cleanup. The checkpoint adds no protocol failure or admission ledger. Known authority failures retain their response. Unknown authority/storage results retain uncertainty and original deadlines. R1 regressions stay unchanged. Focused lifecycle tests pass four files and 60 tests, including already-aborted input, pending storage, signal-aborted batches, and cleanup barriers. Independent finding closure and human review remain pending.
 <!-- SECTION:NOTES:END -->

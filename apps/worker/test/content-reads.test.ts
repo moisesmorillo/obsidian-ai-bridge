@@ -78,6 +78,279 @@ function store(read: BlobContentStore["read"]): BlobContentStore {
 }
 
 describe("content read ownership", () => {
+	it.each(["authorize", "readText", "readBlobMetadata"] as const)(
+		"stops content demand after abort during %s and waits for cleanup",
+		async (stage) => {
+			const finished: AdmissionCompletion[] = [];
+			const authority = gateway(finished);
+			const started = barrier<void>();
+			const work = barrier<void>();
+			const finishing = barrier<void>();
+			const cleanup = barrier<void>();
+			const demands: string[] = [];
+			for (const method of [
+				"authorize",
+				"readText",
+				"readBlobMetadata",
+			] as const) {
+				// Each wrapper keeps its method's exact call signature.
+				if (method === "authorize") {
+					const call = authority.authorize;
+					authority.authorize = async (...args) => {
+						demands.push(method);
+						if (stage === method) {
+							started.resolve();
+							await work.promise;
+						}
+						return call(...args);
+					};
+				} else if (method === "readText") {
+					const call = authority.readText;
+					authority.readText = async (...args) => {
+						demands.push(method);
+						if (stage === method) {
+							started.resolve();
+							await work.promise;
+						}
+						return call(...args);
+					};
+				} else {
+					const call = authority.readBlobMetadata;
+					authority.readBlobMetadata = async (...args) => {
+						demands.push(method);
+						if (stage === method) {
+							started.resolve();
+							await work.promise;
+						}
+						return call(...args);
+					};
+				}
+			}
+			authority.finishAdmission = async (_identity, _ticket, completion) => {
+				finished.push(completion);
+				finishing.resolve();
+				await cleanup.promise;
+				return { ok: true };
+			};
+			const abort = new AbortController();
+			const held = Array.from({ length: 3 }, () => tryAcquireReadSlot());
+			const pending = readContentResponse(
+				authority,
+				() =>
+					store(async () => {
+						demands.push("storage");
+						return new Blob(["bytes"]).stream();
+					}),
+				identity,
+				{ path: "a.bin" },
+				new Request("https://content.invalid/v1/files/a.bin", {
+					signal: abort.signal,
+				}),
+			);
+			await started.promise;
+			abort.abort();
+			expect(tryAcquireReadSlot()).toBeUndefined();
+			expect(finished).toEqual([]);
+			work.resolve();
+			await finishing.promise;
+			expect(tryAcquireReadSlot()).toBeUndefined();
+			cleanup.resolve();
+			const response = await pending;
+			await response.body?.cancel();
+			const free = tryAcquireReadSlot();
+			try {
+				const expected = ["authorize", "readText", "readBlobMetadata"];
+				expect(demands).toEqual(expected.slice(0, expected.indexOf(stage) + 1));
+				expect(finished).toEqual(["settled"]);
+				expect(free).toBeTypeOf("function");
+			} finally {
+				free?.();
+				for (const release of held) release?.();
+			}
+		},
+	);
+	it("does not authorize already-aborted content input", async () => {
+		const finished: AdmissionCompletion[] = [];
+		const authority = gateway(finished);
+		let demanded = false;
+		authority.authorize = async () => {
+			demanded = true;
+			return { ok: false, failure: { kind: "revoked" } };
+		};
+		const abort = new AbortController();
+		abort.abort();
+		const response = await readContentResponse(
+			authority,
+			() =>
+				store(async () => {
+					throw new Error("Unexpected storage");
+				}),
+			identity,
+			{ path: "a.bin" },
+			new Request("https://content.invalid/v1/files/a.bin", {
+				signal: abort.signal,
+			}),
+		);
+		await response.body?.cancel();
+		expect(demanded).toBe(false);
+		expect(finished).toEqual([]);
+	});
+
+	it.each(["authorize", "readText", "readBlobMetadata", "storage"] as const)(
+		"does not convert an unknown %s fault into a known abort",
+		async (stage) => {
+			const finished: AdmissionCompletion[] = [];
+			const authority = gateway(finished);
+			const started = barrier<void>();
+			const work = barrier<void>();
+			const finishing = barrier<void>();
+			const cleanup = barrier<void>();
+			authority.finishAdmission = async (_identity, _ticket, completion) => {
+				finished.push(completion);
+				finishing.resolve();
+				await cleanup.promise;
+				return { ok: true };
+			};
+			if (stage !== "storage")
+				authority[stage] = async () => {
+					started.resolve();
+					await work.promise;
+					throw new Error("Unknown authority result");
+				};
+			const abort = new AbortController();
+			const held = Array.from({ length: 3 }, () => tryAcquireReadSlot());
+			const pending = readContentResponse(
+				authority,
+				() =>
+					store(async () => {
+						if (stage === "storage") {
+							started.resolve();
+							await work.promise;
+						}
+						throw new Error("Unknown storage result");
+					}),
+				identity,
+				{ path: "a.bin" },
+				new Request("https://content.invalid/v1/files/a.bin", {
+					signal: abort.signal,
+				}),
+			);
+			await started.promise;
+			abort.abort();
+			expect(tryAcquireReadSlot()).toBeUndefined();
+			expect(finished).toEqual([]);
+			work.resolve();
+			if (stage !== "authorize") {
+				await finishing.promise;
+				expect(tryAcquireReadSlot()).toBeUndefined();
+				cleanup.resolve();
+			}
+			const response = await pending;
+			await response.text();
+			for (const release of held) release?.();
+			expect(finished).toEqual(stage === "authorize" ? [] : ["uncertain"]);
+		},
+	);
+	it("joins storage that starts before abort without demanding response bytes", async () => {
+		const finished: AdmissionCompletion[] = [];
+		const authority = gateway(finished);
+		const started = barrier<void>();
+		const storage = barrier<ReadableStream<Uint8Array>>();
+		const cancelling = barrier<void>();
+		const cancellation = barrier<void>();
+		const finishing = barrier<void>();
+		const cleanup = barrier<void>();
+		let reads = 0;
+		authority.finishAdmission = async (_identity, _ticket, completion) => {
+			finished.push(completion);
+			finishing.resolve();
+			await cleanup.promise;
+			return { ok: true };
+		};
+		const abort = new AbortController();
+		const held = Array.from({ length: 3 }, () => tryAcquireReadSlot());
+		const pending = readContentResponse(
+			authority,
+			() =>
+				store(async () => {
+					started.resolve();
+					return storage.promise;
+				}),
+			identity,
+			{ path: "a.bin" },
+			new Request("https://content.invalid/v1/files/a.bin", {
+				signal: abort.signal,
+			}),
+		);
+		await started.promise;
+		abort.abort();
+		expect(tryAcquireReadSlot()).toBeUndefined();
+		expect(finished).toEqual([]);
+		storage.resolve(
+			new ReadableStream<Uint8Array>({
+				type: "bytes",
+				/** Count any byte demand after the request aborts. */
+				pull() {
+					reads++;
+				},
+				/** Hold cancellation cleanup behind an explicit barrier. */
+				cancel() {
+					cancelling.resolve();
+					return cancellation.promise;
+				},
+			}),
+		);
+		const response = await pending;
+		await cancelling.promise;
+		expect(tryAcquireReadSlot()).toBeUndefined();
+		expect(finished).toEqual([]);
+		cancellation.resolve();
+		await finishing.promise;
+		expect(tryAcquireReadSlot()).toBeUndefined();
+		cleanup.resolve();
+		await expect(response.arrayBuffer()).rejects.toThrow();
+		const free = tryAcquireReadSlot();
+		try {
+			expect(reads).toBe(0);
+			expect(finished).toEqual(["settled"]);
+			expect(free).toBeTypeOf("function");
+		} finally {
+			free?.();
+			for (const release of held) release?.();
+		}
+	});
+	it("preserves a known policy failure that completes after abort", async () => {
+		const finished: AdmissionCompletion[] = [];
+		const authority = gateway(finished);
+		const started = barrier<void>();
+		const work = barrier<void>();
+		authority.readText = async () => {
+			started.resolve();
+			await work.promise;
+			return { ok: false, failure: { kind: "revoked" } };
+		};
+		const abort = new AbortController();
+		const pending = readContentResponse(
+			authority,
+			() =>
+				store(async () => {
+					throw new Error("Unexpected storage demand");
+				}),
+			identity,
+			{ path: "a.bin" },
+			new Request("https://content.invalid/v1/files/a.bin", {
+				signal: abort.signal,
+			}),
+		);
+		await started.promise;
+		abort.abort();
+		work.resolve();
+		const response = await pending;
+		expect(response.status).toBe(401);
+		expect(await response.json()).toMatchObject({ error: "revoked" });
+		expect(finished).toEqual(["settled"]);
+	});
+
 	it("retains a shared slot across pending R2 selection, read, cancellation, and durable cleanup", async () => {
 		const finished: AdmissionCompletion[] = [];
 		const authority = gateway(finished);

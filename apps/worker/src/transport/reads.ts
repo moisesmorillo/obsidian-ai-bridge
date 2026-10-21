@@ -7,6 +7,7 @@ import {
 	ReadQuerySchema,
 } from "@obsidian-ai-bridge/protocol";
 import { tryAcquireReadSlot } from "@worker/application/read-budget";
+import { ReadAborted } from "@worker/application/read-demand";
 import type {
 	LazyReadSession,
 	ReadBatch,
@@ -53,7 +54,8 @@ export function createReadRouter(
 			prepared,
 			slot,
 			resolveVault,
-			(gateway, identity) => readVault(gateway, identity),
+			(gateway, identity) =>
+				readVault(gateway, identity, context.req.raw.signal),
 		);
 	});
 	router.get("/manifest", async (context) => {
@@ -70,7 +72,12 @@ export function createReadRouter(
 			slot,
 			resolveVault,
 			(gateway, identity) =>
-				openManifestRead(gateway, identity, parsed.query.page),
+				openManifestRead(
+					gateway,
+					identity,
+					parsed.query.page,
+					context.req.raw.signal,
+				),
 		);
 	});
 	router.get("/changes", async (context) => {
@@ -97,6 +104,7 @@ export function createReadRouter(
 					parsed.query.epoch as string,
 					Number(parsed.query.since),
 					limit,
+					context.req.raw.signal,
 				),
 			false,
 		);
@@ -120,7 +128,13 @@ export function createReadRouter(
 			slot,
 			resolveVault,
 			(gateway, identity) =>
-				openHistoryRead(gateway, identity, path, parsed.query.page),
+				openHistoryRead(
+					gateway,
+					identity,
+					path,
+					parsed.query.page,
+					context.req.raw.signal,
+				),
 		);
 	});
 	return router;
@@ -218,7 +232,9 @@ async function produceLazy<T, M>(
 		try {
 			await session.cancel();
 			await session.finish(
-				error instanceof ReadBatchFailure ? "settled" : "uncertain",
+				error instanceof ReadBatchFailure || error instanceof ReadAborted
+					? "settled"
+					: "uncertain",
 			);
 		} finally {
 			releaseSlot();

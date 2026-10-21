@@ -11,6 +11,7 @@ import type {
 	BlobVaultGateway,
 } from "@worker/application/blobs";
 import { FileOperationDenied } from "@worker/application/files";
+import { assertReadDemand } from "@worker/application/read-demand";
 
 /** Parse paired declarations and reject conflicting transport sizes before body demand. */
 export function parseBlobDeclaration(
@@ -48,7 +49,9 @@ export async function readBlobResponse(
 	request: TextReadRequest,
 	rangeHeader: string | null,
 	admissionId: string,
+	signal?: AbortSignal,
 ): Promise<Response> {
+	assertReadDemand(signal);
 	const selected = await gateway.readBlobMetadata(
 		identity,
 		request,
@@ -61,6 +64,7 @@ export async function readBlobResponse(
 			headers: failure.headers,
 		});
 	}
+	assertReadDemand(signal);
 	const metadata = selected.body;
 	if (metadata.deleted) {
 		const failure = encodeFileFailure({ kind: "tombstone" });

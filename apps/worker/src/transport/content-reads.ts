@@ -7,6 +7,7 @@ import { AdmissionDenied } from "@worker/application/admission";
 import type { BlobContentStore } from "@worker/application/blobs";
 import { FileOperationDenied } from "@worker/application/files";
 import { tryAcquireReadSlot } from "@worker/application/read-budget";
+import { assertReadDemand, ReadAborted } from "@worker/application/read-demand";
 import type { TextVaultGateway } from "@worker/application/text-files";
 import { readBlobResponse } from "@worker/transport/blobs";
 import { fileFailureResponse } from "@worker/transport/mutation-response";
@@ -47,6 +48,7 @@ export async function readContentResponse(
 		return cleanup;
 	};
 	try {
+		assertReadDemand(request.signal);
 		const begun = await gateway.authorize(identity, {
 			op: "read",
 			paths: [selection.path],
@@ -59,6 +61,7 @@ export async function readContentResponse(
 			return fileFailureResponse(begun.failure);
 		}
 		ticket = begun.ticket.id;
+		assertReadDemand(request.signal);
 		const selected = await gateway.readText(identity, selection, ticket);
 		if (!selected.ok) {
 			if (selected.failure.kind !== "not_implemented") {
@@ -66,6 +69,7 @@ export async function readContentResponse(
 				release();
 				return fileFailureResponse(selected.failure);
 			}
+			assertReadDemand(request.signal);
 			const response = await readBlobResponse(
 				gateway,
 				store(),
@@ -73,6 +77,7 @@ export async function readContentResponse(
 				selection,
 				request.headers.get("Range"),
 				ticket,
+				request.signal,
 			);
 			if (!response.ok || response.body === null) {
 				await finish("settled");
@@ -87,6 +92,7 @@ export async function readContentResponse(
 				request.signal,
 			);
 		}
+		assertReadDemand(request.signal);
 		return ownedReadResponse(
 			jsonReadSource(encodeJsonChunks(selected.body)),
 			{ finish },
@@ -103,7 +109,10 @@ export async function readContentResponse(
 		const known =
 			error instanceof FileOperationDenied || error instanceof AdmissionDenied;
 		try {
-			if (ticket !== undefined) await finish(known ? "settled" : "uncertain");
+			if (ticket !== undefined)
+				await finish(
+					known || error instanceof ReadAborted ? "settled" : "uncertain",
+				);
 		} catch {
 			/* Unknown cleanup keeps the durable ticket at its original deadline. */
 		} finally {

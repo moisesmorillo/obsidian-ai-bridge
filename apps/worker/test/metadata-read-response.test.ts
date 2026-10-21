@@ -110,6 +110,246 @@ function controlledGateway() {
 }
 
 describe("metadata HTTP response demand", () => {
+	it.each([
+		["/v1/vault", "authorize"],
+		["/v1/manifest", "authorize"],
+		["/v1/history/files/a.md", "authorize"],
+		[`/v1/changes?epoch=${epoch}&since=0`, "authorize"],
+		["/v1/manifest", "readVault"],
+		["/v1/history/files/a.md", "readHistoryUpper"],
+		["/v1/manifest", "readBatch"],
+	] as const)(
+		"stops preparation after abort for %s during %s",
+		async (route, stage) => {
+			const fixture = controlledGateway();
+			const started = barrier<void>();
+			const work = barrier<void>();
+			const finishing = barrier<void>();
+			const cleanup = barrier<void>();
+			const demands: string[] = [];
+			const original = { ...fixture.gateway };
+			fixture.gateway.authorize = async (...args) => {
+				demands.push("authorize");
+				if (stage === "authorize") {
+					started.resolve();
+					await work.promise;
+				}
+				return original.authorize(...args);
+			};
+			fixture.gateway.readVault = async (...args) => {
+				demands.push("readVault");
+				if (stage === "readVault") {
+					started.resolve();
+					await work.promise;
+				}
+				return original.readVault(...args);
+			};
+			fixture.gateway.readHistoryUpper = async (...args) => {
+				demands.push("readHistoryUpper");
+				if (stage === "readHistoryUpper") {
+					started.resolve();
+					await work.promise;
+				}
+				return original.readHistoryUpper(...args);
+			};
+			fixture.gateway.readBatch = async (...args) => {
+				demands.push("readBatch");
+				if (stage === "readBatch") {
+					started.resolve();
+					await work.promise;
+				}
+				return original.readBatch(...args);
+			};
+			fixture.gateway.finishAdmission = async (
+				_identity,
+				_ticket,
+				completion,
+			) => {
+				fixture.state.finished.push(completion);
+				finishing.resolve();
+				await cleanup.promise;
+				return { ok: true };
+			};
+			const app = (await import("hono")).Hono;
+			const worker = new app<{ Bindings: Env }>().route(
+				"/v1",
+				createReadRouter(
+					async () => identity,
+					() => fixture.gateway,
+				),
+			);
+			const abort = new AbortController();
+			const held = Array.from({ length: 3 }, () => tryAcquireReadSlot());
+			const pending = worker.fetch(
+				new Request(`https://metadata.invalid${route}`, {
+					signal: abort.signal,
+				}),
+				{} as Env,
+			);
+			await started.promise;
+			abort.abort();
+			const stoppedDemands = [...demands];
+			expect(tryAcquireReadSlot()).toBeUndefined();
+			expect(fixture.state.finished).toEqual([]);
+			work.resolve();
+			await finishing.promise;
+			expect(tryAcquireReadSlot()).toBeUndefined();
+			cleanup.resolve();
+			const response = await pending;
+			await response.body?.cancel();
+			const free = tryAcquireReadSlot();
+			try {
+				expect(demands).toEqual(stoppedDemands);
+				expect(fixture.state.finished).toEqual(["settled"]);
+				expect(free).toBeTypeOf("function");
+			} finally {
+				free?.();
+				for (const release of held) release?.();
+			}
+		},
+	);
+
+	it.each([
+		"/v1/vault",
+		"/v1/manifest",
+		"/v1/history/files/a.md",
+		`/v1/changes?epoch=${epoch}&since=0`,
+	])("does not authorize already-aborted metadata input %s", async (route) => {
+		const fixture = controlledGateway();
+		let demands = 0;
+		fixture.gateway.authorize = async () => {
+			demands++;
+			return { ok: false, failure: { kind: "revoked" } };
+		};
+		const app = (await import("hono")).Hono;
+		const worker = new app<{ Bindings: Env }>().route(
+			"/v1",
+			createReadRouter(
+				async () => identity,
+				() => fixture.gateway,
+			),
+		);
+		const abort = new AbortController();
+		abort.abort();
+		const response = await worker.fetch(
+			new Request(`https://metadata.invalid${route}`, { signal: abort.signal }),
+			{} as Env,
+		);
+		expect(response.status).toBe(500);
+		await response.text();
+		expect(demands).toBe(0);
+		expect(fixture.state.finished).toEqual([]);
+	});
+	it.each(["authorize", "readVault", "readHistoryUpper", "readBatch"] as const)(
+		"retains unknown %s outcomes when preparation aborts",
+		async (stage) => {
+			const fixture = controlledGateway();
+			const started = barrier<void>();
+			const work = barrier<void>();
+			fixture.gateway[stage] = async () => {
+				started.resolve();
+				await work.promise;
+				throw new Error("Unknown native result");
+			};
+			const app = (await import("hono")).Hono;
+			const worker = new app<{ Bindings: Env }>().route(
+				"/v1",
+				createReadRouter(
+					async () => identity,
+					() => fixture.gateway,
+				),
+			);
+			const abort = new AbortController();
+			const held = Array.from({ length: 3 }, () => tryAcquireReadSlot());
+			const route =
+				stage === "readHistoryUpper"
+					? "/v1/history/files/a.md"
+					: "/v1/manifest";
+			const pending = worker.fetch(
+				new Request(`https://metadata.invalid${route}`, {
+					signal: abort.signal,
+				}),
+				{} as Env,
+			);
+			await started.promise;
+			abort.abort();
+			expect(tryAcquireReadSlot()).toBeUndefined();
+			expect(fixture.state.finished).toEqual([]);
+			work.resolve();
+			const response = await pending;
+			expect(response.status).toBe(500);
+			await response.text();
+			for (const release of held) release?.();
+			expect(fixture.state.finished).toEqual(
+				stage === "readBatch" ? ["uncertain"] : [],
+			);
+		},
+	);
+
+	it.each([false, true])(
+		"joins a signal-aborted active batch and preserves certainty %s",
+		async (unknown) => {
+			const fixture = controlledGateway();
+			const original = fixture.gateway.readBatch;
+			const finishing = barrier<void>();
+			const cleanup = barrier<void>();
+			fixture.gateway.readBatch = async (...args) => {
+				const result = await original(...args);
+				if (fixture.state.calls === 2 && unknown)
+					throw new Error("Lost active batch");
+				return result;
+			};
+			fixture.gateway.finishAdmission = async (
+				_identity,
+				_ticket,
+				completion,
+			) => {
+				fixture.state.finished.push(completion);
+				finishing.resolve();
+				await cleanup.promise;
+				return { ok: true };
+			};
+			const app = (await import("hono")).Hono;
+			const worker = new app<{ Bindings: Env }>().route(
+				"/v1",
+				createReadRouter(
+					async () => identity,
+					() => fixture.gateway,
+				),
+			);
+			const abort = new AbortController();
+			const held = Array.from({ length: 3 }, () => tryAcquireReadSlot());
+			const response = await worker.fetch(
+				new Request("https://metadata.invalid/v1/manifest", {
+					signal: abort.signal,
+				}),
+				{} as Env,
+			);
+			const drain = response.text();
+			const failed = expect(drain).rejects.toThrow();
+			await fixture.started.promise;
+			abort.abort();
+			expect(tryAcquireReadSlot()).toBeUndefined();
+			expect(fixture.state.finished).toEqual([]);
+			fixture.release.resolve();
+			await finishing.promise;
+			expect(tryAcquireReadSlot()).toBeUndefined();
+			cleanup.resolve();
+			await failed;
+			const free = tryAcquireReadSlot();
+			try {
+				expect(fixture.state.calls).toBe(2);
+				expect(fixture.state.finished).toEqual([
+					unknown ? "uncertain" : "settled",
+				]);
+				expect(free).toBeTypeOf("function");
+			} finally {
+				free?.();
+				for (const release of held) release?.();
+			}
+		},
+	);
+
 	it("shares read capacity across router instances, clients, and vault hosts", async () => {
 		const responses: Response[] = [];
 		const fixture = controlledGateway();

@@ -75,7 +75,7 @@ Group questions and report progress at task boundaries. Do not ask the parent to
 
 Keep one writer per worktree. Preserve failing evidence and all mandatory checks. Do not weaken tests to finish faster.
 
-Stop and report agent-launch or runtime failures. Do not switch execution modes or models without approval. Mandatory human review and deployment restrictions remain in force.
+Stop and report agent-launch or runtime failures. Do not switch execution modes or models without approval, except the escalation that the global instructions pre-authorize. Mandatory human review and deployment restrictions remain in force.
 
 <!-- BACKLOG.MD GUIDELINES START -->
 <!-- backlog.md-instructions-version: 1.53.0 -->

@@ -28,7 +28,9 @@ describe("native authoritative reads", () => {
 		expect(authorized.ok).toBe(true);
 		if (!authorized.ok) return;
 		const result = await stub.readVault(context, authorized.ticket.id);
-		expect(result).toMatchObject({
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		expect(result.body).toMatchObject({
 			head_seq: 0,
 			counts: { live: 0, deleted: 0 },
 			limits: {
@@ -42,14 +44,17 @@ describe("native authoritative reads", () => {
 			context,
 			{
 				collection: "manifest",
-				epoch: result.epoch,
-				head_seq: result.head_seq,
+				epoch: result.body.epoch,
+				head_seq: result.body.head_seq,
 				after_path: null,
 				limit: 64,
 			},
 			authorized.ticket.id,
 		);
-		expect(batch).toEqual({ collection: "manifest", rows: [] });
+		expect(batch).toEqual({
+			ok: true,
+			body: { collection: "manifest", rows: [] },
+		});
 		await stub.finishAdmission(context, authorized.ticket.id, "settled");
 	});
 
@@ -97,36 +102,68 @@ describe("native authoritative reads", () => {
 		expect(authorized.ok).toBe(true);
 		if (!authorized.ok) return;
 		const summary = await stub.readVault(context, authorized.ticket.id);
-		expect(summary.counts).toEqual({ live: 66, deleted: 1 });
+		expect(summary.ok).toBe(true);
+		if (!summary.ok) return;
+		expect(summary.body.counts).toEqual({ live: 66, deleted: 1 });
 		const first = await stub.readBatch(
 			context,
 			{
 				collection: "manifest",
-				epoch: summary.epoch,
-				head_seq: summary.head_seq,
+				epoch: summary.body.epoch,
+				head_seq: summary.body.head_seq,
 				after_path: null,
 				limit: 64,
 			},
 			authorized.ticket.id,
 		);
-		expect(first.collection).toBe("manifest");
-		if (first.collection !== "manifest") return;
-		expect(first.rows).toHaveLength(65);
-		expect(first.rows[0]).toMatchObject({
+		expect(first.ok).toBe(true);
+		if (!first.ok) return;
+		expect(first.body.collection).toBe("manifest");
+		if (first.body.collection !== "manifest") return;
+		expect(first.body.rows).toHaveLength(65);
+		expect(first.body.rows[0]).toMatchObject({
 			path: "media/large.md",
 			kind: "blob",
 			large: true,
 		});
-		expect(first.rows[0]).not.toHaveProperty("content");
+		expect(first.body.rows[0]).not.toHaveProperty("content");
 		expect(
-			first.rows.find((row) => row.path === "notes/deleted.md"),
+			first.body.rows.find((row) => row.path === "notes/deleted.md"),
 		).toMatchObject({
 			deleted: true,
 			hash: "",
 			size: 0,
 			large: false,
 		});
-		expect(first.rows[0]).not.toHaveProperty("content");
+		expect(first.body.rows[0]).not.toHaveProperty("content");
 		await stub.finishAdmission(context, authorized.ticket.id, "settled");
+	});
+
+	it("preserves canonical policy failures across the Durable Object read boundary", async () => {
+		const stub = env.VAULTS.get(env.VAULTS.newUniqueId());
+		const authorized = await stub.authorize(context, {
+			op: "read",
+			paths: [],
+			precondition: { kind: "none" },
+			payload_hash: EMPTY_PAYLOAD_HASH,
+			size: 0,
+		});
+		expect(authorized.ok).toBe(true);
+		if (!authorized.ok) return;
+		const result = await stub.readBatch(
+			context,
+			{
+				collection: "manifest",
+				epoch: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+				head_seq: 0,
+				after_path: null,
+				limit: 64,
+			},
+			authorized.ticket.id,
+		);
+		expect(result).toMatchObject({
+			ok: false,
+			failure: { kind: "epoch_mismatch", current_epoch: expect.any(String) },
+		});
 	});
 });

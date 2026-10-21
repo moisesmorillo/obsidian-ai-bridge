@@ -3,17 +3,29 @@ import type {
 	ChangesPageSchema,
 	HistoryPageEntrySchema,
 	HistoryPageSchema,
+	HistoryUpperResponseSchema,
 	ManifestEntrySchema,
 	ManifestPageSchema,
 	MetadataBatchRequestSchema,
+	MetadataBatchResponseSchema,
 	MetadataBatchResultSchema,
 	ReadCursorContextSchema,
 	ReadCursorSchema,
+	ReadFailureResponseSchema,
 	ReadQuerySchema,
+	VaultReadResponseSchema,
 	VaultReadResultSchema,
 } from "@protocol/schemas/reads";
 import type { z } from "zod";
 
+/** Canonical read failure wrapper returned across Durable Object RPC. */
+export type ReadFailureResponse = z.infer<typeof ReadFailureResponseSchema>;
+/** Native vault summary response with structured policy failure details. */
+export type VaultReadResponse = z.infer<typeof VaultReadResponseSchema>;
+/** Native metadata batch response with structured policy failure details. */
+export type MetadataBatchResponse = z.infer<typeof MetadataBatchResponseSchema>;
+/** Captured history upper revision response with structured policy failures. */
+export type HistoryUpperResponse = z.infer<typeof HistoryUpperResponseSchema>;
 /** Current vault summary with live and tombstone counts and published limits. */
 export type VaultReadResult = z.infer<typeof VaultReadResultSchema>;
 /** Current manifest row identified by its epoch-bound ETag. */

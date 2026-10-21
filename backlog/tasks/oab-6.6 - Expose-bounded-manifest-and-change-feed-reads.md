@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-10-15 00:38'
-updated_date: '2026-10-21 16:59'
+updated_date: '2026-10-21 18:40'
 labels:
   - F1
 dependencies:
@@ -37,3 +37,9 @@ Sections6.1 and7.3 require complete authoritative reads during concurrent public
 <!-- SECTION:PLAN:BEGIN -->
 Owner approved docs/superpowers/plans/2026-10-21-bounded-authoritative-reads.md in Plannotator pn-08b6dd. Complete three sequential work units: canonical read contracts, native authoritative reads, and bounded Worker transport. Each implementer owns RED/GREEN tests, bun run check, and commits. Each unit gets an independent review. Then review the complete branch, get human branch review, and create the PR. History uses {epoch, entries, next_page}. Keep physical pruning and runtime-envelope work in OAB-6.8. Keep native retention intentionally deferred to OAB-6.8.2.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Unit 2 retained-code exception: commit e83c8a10955d3cbecbfbfbb2472e727ea9ebda49 arrived green without valid pre-implementation real-DO RED evidence. The first command used the wrong Vitest environment. Keep the working implementation. Add the missing native regressions and capture genuine failing assertions before corrections. The unit remains incomplete until the approved coverage and ownership contracts pass. No acceptance criterion is checked.
+<!-- SECTION:NOTES:END -->

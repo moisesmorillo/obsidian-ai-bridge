@@ -6,10 +6,12 @@ import type {
 	AuthorizationContext,
 	CurrentEpochOperation,
 	CurrentEpochResult,
+	FileFailure,
 	HistoryRequest,
+	HistoryUpperResponse,
 	IdempotencyKey,
 	MetadataBatchRequest,
-	MetadataBatchResult,
+	MetadataBatchResponse,
 	OperationDescriptor,
 	OperationIntent,
 	RenameReservation,
@@ -19,8 +21,10 @@ import type {
 	TextMutationResult,
 	TextReadRequest,
 	TextReadResult,
-	VaultReadResult,
+	VaultReadResponse,
 } from "@obsidian-ai-bridge/protocol";
+import { AdmissionDenied } from "@worker/application/admission";
+import { FileOperationDenied } from "@worker/application/files";
 import type { ImmutableFileCommand } from "@worker/application/history";
 import type { Env } from "@worker/env";
 import { R2BlobStore } from "@worker/infrastructure/r2/blobs";
@@ -32,6 +36,16 @@ import {
 	initializeVaultStorage,
 } from "@worker/infrastructure/sqlite/schema";
 import { SqliteTextStore } from "@worker/infrastructure/sqlite/text-files";
+
+/** Return structured native policy failures and propagate uncertain storage faults. */
+function nativeReadFailure(error: unknown): {
+	ok: false;
+	failure: FileFailure;
+} {
+	if (error instanceof AdmissionDenied || error instanceof FileOperationDenied)
+		return { ok: false, failure: error.failure };
+	throw error;
+}
 
 /** SQLite-backed authority for one isolated vault id. */
 export class Vault extends DurableObject<Env> {
@@ -144,30 +158,51 @@ export class Vault extends DurableObject<Env> {
 		);
 	}
 
-	/** Return aggregate vault metadata through an owned native read ticket. */
-	readVault(
+	/** Return aggregate metadata or a canonical known policy failure across Durable Object RPC. */
+	async readVault(
 		context: AuthorizationContext,
 		admissionId: string,
-	): Promise<VaultReadResult> {
-		return this.readStore.readVault(context, admissionId);
+	): Promise<VaultReadResponse> {
+		try {
+			return {
+				ok: true,
+				body: await this.readStore.readVault(context, admissionId),
+			};
+		} catch (error) {
+			return nativeReadFailure(error);
+		}
 	}
 
-	/** Capture a path's current upper revision for bounded history traversal. */
-	readHistoryUpper(
+	/** Capture a path's history ceiling or return a canonical known policy failure. */
+	async readHistoryUpper(
 		context: AuthorizationContext,
 		admissionId: string,
 		path: string,
-	) {
-		return this.readStore.readHistoryUpper(context, admissionId, path);
+	): Promise<HistoryUpperResponse> {
+		try {
+			return {
+				ok: true,
+				body: await this.readStore.readHistoryUpper(context, admissionId, path),
+			};
+		} catch (error) {
+			return nativeReadFailure(error);
+		}
 	}
 
-	/** Read one bounded native metadata batch without selecting content fields. */
-	readBatch(
+	/** Read one bounded metadata batch or return its canonical known policy failure. */
+	async readBatch(
 		context: AuthorizationContext,
 		request: MetadataBatchRequest,
 		admissionId: string,
-	): Promise<MetadataBatchResult> {
-		return this.readStore.readBatch(context, request, admissionId);
+	): Promise<MetadataBatchResponse> {
+		try {
+			return {
+				ok: true,
+				body: await this.readStore.readBatch(context, request, admissionId),
+			};
+		} catch (error) {
+			return nativeReadFailure(error);
+		}
 	}
 
 	/** Read retained content-free revision metadata after native policy checks. */

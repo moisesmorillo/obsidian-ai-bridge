@@ -128,17 +128,17 @@ export class SqliteReadStore {
 			readIntent(paths, undefined),
 		);
 		return this.db.transaction((tx) => {
-			this.admissions.assertActiveTicketInTransaction(
-				tx,
-				context,
-				operation,
-				admissionId,
-			);
 			assertVaultReadPolicy(
 				tx,
 				context,
 				parsed.epoch,
 				parsed.collection === "history" ? parsed.path : undefined,
+			);
+			this.admissions.assertActiveTicketInTransaction(
+				tx,
+				context,
+				operation,
+				admissionId,
 			);
 			const authoritativeHead = Number(readMeta(tx, "head_seq"));
 			if (
@@ -320,19 +320,27 @@ function readMeta(tx: VaultTransaction, key: string): string {
 	return row.value;
 }
 
-/** Find the first retained sequence whose timestamp is at or after the inclusive cutoff. */
+/** Use the inclusive 30-day Unix-millisecond cutoff for feed availability. Rows at the cutoff remain available.
+ * Raise the sequence floor past every expired row so clock rollback cannot expose an expired later entry.
+ */
 function feedFloor(tx: VaultTransaction, now: number): number {
 	const cutoff = now - 30 * 24 * 60 * 60 * 1000;
-	const first = tx
-		.select({ seq: changes.seq })
+	const boundary = tx
+		.select({
+			firstRetained: sql<
+				number | null
+			>`min(case when ${changes.at} >= ${cutoff} then ${changes.seq} end)`,
+			lastExpired: sql<
+				number | null
+			>`max(case when ${changes.at} < ${cutoff} then ${changes.seq} end)`,
+		})
 		.from(changes)
-		.where(sql`${changes.at} >= ${cutoff}`)
-		.orderBy(asc(changes.seq))
-		.limit(1)
 		.all()[0];
-	return (
-		first?.seq ??
-		Number(readMeta(tx, "head_seq")) +
-			(Number(readMeta(tx, "head_seq")) === 0 ? 0 : 1)
-	);
+	const head = Number(readMeta(tx, "head_seq"));
+	if (head === 0) return 0;
+	const firstRetained = boundary?.firstRetained ?? null;
+	const lastExpired = boundary?.lastExpired ?? null;
+	const retainedFloor = firstRetained ?? head + 1;
+	const expiryFloor = lastExpired === null ? 0 : lastExpired + 1;
+	return Math.max(retainedFloor, expiryFloor);
 }

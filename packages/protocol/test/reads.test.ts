@@ -294,6 +294,17 @@ describe("canonical bounded read contracts", () => {
 		expect(
 			MetadataBatchRequestSchema.safeParse({ ...request, limit: 65 }).success,
 		).toBe(false);
+		const historyRequest = {
+			collection: "history",
+			epoch,
+			path: "notes/item.md",
+			upper_etag: formatETag(epoch, 2),
+			after_rev: 3,
+			limit: 64,
+		};
+		expect(MetadataBatchRequestSchema.safeParse(historyRequest).success).toBe(
+			false,
+		);
 		expect(
 			MetadataBatchResultSchema.safeParse({
 				collection: "manifest",

@@ -8,91 +8,128 @@ import type {
 	FileFailure,
 	HistoryPage,
 	HistoryPageEntry,
+	HistoryUpperResponse,
 	ManifestEntry,
 	ManifestPage,
 	MetadataBatchRequest,
-	MetadataBatchResult,
+	MetadataBatchResponse,
 	OperationIntent,
+	VaultReadResponse,
 	VaultReadResult,
 } from "@obsidian-ai-bridge/protocol";
 import {
+	decodeReadCursor,
 	EMPTY_PAYLOAD_HASH,
 	encodeReadCursor,
+	formatETag,
+	parseETag,
 } from "@obsidian-ai-bridge/protocol";
-import { formatETag, parseETag } from "@protocol/codecs/etag";
-import { decodeReadCursor } from "@protocol/codecs/reads";
 import { AdmissionDenied } from "@worker/application/admission";
 import { FileOperationDenied } from "@worker/application/files";
 
-/** Native methods needed to hold one authorized read across its bounded batches. */
+/** Native operations needed for one read admission across every batch. */
 export interface ReadVaultGateway {
-	/** Reserve one reusable read ticket for the full public response. */
+	/** Create one reusable active ticket for the complete public read. */
 	authorize(
 		context: AuthorizationContext,
 		intent: OperationIntent,
 	): Promise<AdmissionResult>;
-	/** Settle known work or retain uncertain work to the original ticket deadline. */
+	/** Settle known work or retain uncertain work to its original deadline. */
 	finishAdmission(
 		context: AuthorizationContext,
 		ticketId: string,
 		completion: AdmissionCompletion,
 	): AdmissionFinishResult | Promise<AdmissionFinishResult>;
-	/** Read the aggregate summary while the same response ticket remains active. */
+	/** Read aggregate vault metadata through the active ticket. */
 	readVault(
 		context: AuthorizationContext,
 		admissionId: string,
-	): Promise<VaultReadResult>;
-	/** Read one metadata-only batch after native ticket and current policy checks. */
+	): Promise<VaultReadResponse>;
+	/** Read one bounded metadata batch through the active ticket. */
 	readBatch(
 		context: AuthorizationContext,
 		request: MetadataBatchRequest,
 		admissionId: string,
-	): Promise<MetadataBatchResult>;
-	/** Capture the path's current revision ceiling without returning revision rows. */
+	): Promise<MetadataBatchResponse>;
+	/** Capture the current history ceiling without returning revision rows. */
 	readHistoryUpper(
 		context: AuthorizationContext,
 		admissionId: string,
 		path: string,
-	): Promise<{ epoch: string; head_seq: number; upper_etag: string | null }>;
+	): Promise<HistoryUpperResponse>;
 }
 
-/** Read the authorized aggregate summary without selecting current file rows. */
+/** Successful read result with the admission owner retained until response completion. */
+export interface ReadSession<T> {
+	readonly ok: true;
+	readonly body: T;
+	/** Settle once after response production, or retain an uncertain ticket to its deadline. */
+	finish(completion: AdmissionCompletion): Promise<AdmissionFinishResult>;
+}
+
+/** Read outcome whose successful branch owns a deferred admission settlement hook. */
+export type ReadOutcome<T> =
+	| ReadSession<T>
+	| {
+			ok: false;
+			failure: FileFailure;
+	  };
+
+/** Read the authorized aggregate summary and return its admission owner to transport. */
 export async function readVault(
 	gateway: ReadVaultGateway,
 	context: AuthorizationContext,
-) {
-	const begun = await beginRead(gateway, context, [], undefined);
+): Promise<ReadOutcome<VaultReadResult>> {
+	const begun = await beginRead(gateway, context, []);
 	if (!begun.ok) return begun;
 	try {
-		const body = await gateway.readVault(context, begun.ticket.id);
-		await gateway.finishAdmission(context, begun.ticket.id, "settled");
-		return { ok: true as const, body };
+		const response = await gateway.readVault(context, begun.ticket.id);
+		if (!response.ok)
+			return finishReadFailure(
+				gateway,
+				context,
+				begun.ticket.id,
+				response.failure,
+			);
+		return createReadSession(gateway, context, begun.ticket.id, response.body);
 	} catch (error) {
-		await gateway.finishAdmission(context, begun.ticket.id, "uncertain");
-		return failure(error);
+		return finishKnownFailure(gateway, context, begun.ticket.id, error);
 	}
 }
 
-/** Read one manifest page with keyset batches and a cursor bound to its first head. */
+/** Read one manifest page and retain its admission until transport settles the response. */
 export async function readManifest(
 	gateway: ReadVaultGateway,
 	context: AuthorizationContext,
 	token?: string,
-) {
-	const begun = await beginRead(gateway, context, [], undefined);
+): Promise<ReadOutcome<ManifestPage>> {
+	const begun = await beginRead(gateway, context, []);
 	if (!begun.ok) return begun;
 	try {
-		const summary = await gateway.readVault(context, begun.ticket.id);
+		const summaryResponse = await gateway.readVault(context, begun.ticket.id);
+		if (!summaryResponse.ok)
+			return finishReadFailure(
+				gateway,
+				context,
+				begun.ticket.id,
+				summaryResponse.failure,
+			);
+		const summary = summaryResponse.body;
 		const cursor =
 			token === undefined
 				? undefined
-				: decodeReadCursor(token, { kind: "manifest", epoch: summary.epoch });
+				: decodeCursor(
+						token,
+						{ kind: "manifest", epoch: summary.epoch },
+						summary.epoch,
+					);
 		const head =
 			cursor?.kind === "manifest" ? cursor.head_seq : summary.head_seq;
 		let afterPath = cursor?.kind === "manifest" ? cursor.last_path : null;
 		const entries: ManifestEntry[] = [];
 		let more = false;
 		while (entries.length < 256) {
+			const limit = Math.min(64, 256 - entries.length);
 			const result = await gateway.readBatch(
 				context,
 				{
@@ -100,25 +137,53 @@ export async function readManifest(
 					epoch: summary.epoch,
 					head_seq: head,
 					after_path: afterPath,
-					limit: Math.min(64, 256 - entries.length),
+					limit,
 				},
 				begun.ticket.id,
 			);
-			if (result.collection !== "manifest")
+			if (!result.ok)
+				return finishReadFailure(
+					gateway,
+					context,
+					begun.ticket.id,
+					result.failure,
+				);
+			if (result.body.collection !== "manifest")
 				throw new Error("Native manifest batch returned another collection");
-			const available = result.rows.slice(0, 256 - entries.length);
-			entries.push(...available);
-			if (result.rows.length > available.length) {
-				more = true;
+			const batch = result.body;
+			const consumed = batch.rows.slice(0, limit);
+			entries.push(...consumed);
+			const last = consumed.at(-1);
+			if (entries.length === 256) {
+				if (batch.rows.length > consumed.length) more = true;
+				else if (last && batch.rows.length === limit) {
+					const lookahead = await gateway.readBatch(
+						context,
+						{
+							collection: "manifest",
+							epoch: summary.epoch,
+							head_seq: head,
+							after_path: last.path,
+							limit: 1,
+						},
+						begun.ticket.id,
+					);
+					if (!lookahead.ok)
+						return finishReadFailure(
+							gateway,
+							context,
+							begun.ticket.id,
+							lookahead.failure,
+						);
+					if (lookahead.body.collection !== "manifest")
+						throw new Error(
+							"Native manifest batch returned another collection",
+						);
+					more = lookahead.body.rows.length > 0;
+				}
 				break;
 			}
-			const last = available.at(-1);
-			if (
-				!last ||
-				result.rows.length <
-					Math.min(64, 256 - entries.length + available.length)
-			)
-				break;
+			if (!last || batch.rows.length < limit) break;
 			afterPath = last.path;
 		}
 		const lastPath = entries.at(-1)?.path;
@@ -132,67 +197,64 @@ export async function readManifest(
 						last_path: lastPath,
 					})
 				: null;
-		await gateway.finishAdmission(context, begun.ticket.id, "settled");
-		return {
-			ok: true as const,
-			body: {
-				epoch: summary.epoch,
-				head_seq: head,
-				entries,
-				next_page,
-			} satisfies ManifestPage,
-		};
+		return createReadSession(gateway, context, begun.ticket.id, {
+			epoch: summary.epoch,
+			head_seq: head,
+			entries,
+			next_page,
+		});
 	} catch (error) {
-		await gateway.finishAdmission(context, begun.ticket.id, "settled");
-		return failure(error);
+		return finishKnownFailure(gateway, context, begun.ticket.id, error);
 	}
 }
 
-/** Read a bounded retained history page through its first observed upper revision. */
+/** Read retained history through the first observed upper revision and keep the ticket open. */
 export async function readHistory(
 	gateway: ReadVaultGateway,
 	context: AuthorizationContext,
 	path: string,
 	token?: string,
-) {
-	const begun = await beginRead(gateway, context, [path], undefined);
+): Promise<ReadOutcome<HistoryPage>> {
+	const begun = await beginRead(gateway, context, [path]);
 	if (!begun.ok) return begun;
 	try {
-		const upper = await gateway.readHistoryUpper(
+		const upperResponse = await gateway.readHistoryUpper(
 			context,
 			begun.ticket.id,
 			path,
 		);
+		if (!upperResponse.ok)
+			return finishReadFailure(
+				gateway,
+				context,
+				begun.ticket.id,
+				upperResponse.failure,
+			);
+		const upper = upperResponse.body;
 		const cursor =
 			token === undefined
 				? undefined
-				: decodeReadCursor(token, {
-						kind: "history",
-						epoch: upper.epoch,
-						path,
-					});
+				: decodeCursor(
+						token,
+						{ kind: "history", epoch: upper.epoch, path },
+						upper.epoch,
+					);
 		if (upper.upper_etag === null) {
-			if (token !== undefined)
-				throw new Error("History cursor has no current path");
-			await gateway.finishAdmission(context, begun.ticket.id, "settled");
-			return {
-				ok: true as const,
-				body: {
-					epoch: upper.epoch,
-					entries: [],
-					next_page: null,
-				} satisfies HistoryPage,
-			};
+			if (cursor) throw new FileOperationDenied({ kind: "invalid_request" });
+			return createReadSession(gateway, context, begun.ticket.id, {
+				epoch: upper.epoch,
+				entries: [],
+				next_page: null,
+			});
 		}
 		const upperEtag =
 			cursor?.kind === "history" ? cursor.upper_etag : upper.upper_etag;
-		const afterEtag = cursor?.kind === "history" ? cursor.last_etag : undefined;
-		const afterRev = afterEtag === undefined ? null : parseETag(afterEtag).rev;
+		let afterRev =
+			cursor?.kind === "history" ? parseETag(cursor.last_etag).rev : null;
 		const entries: HistoryPageEntry[] = [];
-		let after = afterRev;
 		let more = false;
 		while (entries.length < 256) {
-			const remaining = 256 - entries.length;
+			const limit = Math.min(64, 256 - entries.length);
 			const result = await gateway.readBatch(
 				context,
 				{
@@ -200,16 +262,24 @@ export async function readHistory(
 					epoch: upper.epoch,
 					path,
 					upper_etag: upperEtag,
-					after_rev: after,
-					limit: Math.min(64, remaining),
+					after_rev: afterRev,
+					limit,
 				},
 				begun.ticket.id,
 			);
-			if (result.collection !== "history")
+			if (!result.ok)
+				return finishReadFailure(
+					gateway,
+					context,
+					begun.ticket.id,
+					result.failure,
+				);
+			if (result.body.collection !== "history")
 				throw new Error("Native history batch returned another collection");
-			const page = result.rows.slice(0, remaining);
+			const batch = result.body;
+			const consumed = batch.rows.slice(0, limit);
 			entries.push(
-				...page.map((row) => ({
+				...consumed.map((row) => ({
 					etag: formatETag(upper.epoch, row.rev),
 					hash: row.hash,
 					size: row.size,
@@ -218,13 +288,37 @@ export async function readHistory(
 					at: row.at,
 				})),
 			);
-			if (result.rows.length > page.length) {
-				more = true;
+			const last = consumed.at(-1);
+			if (entries.length === 256) {
+				if (batch.rows.length > consumed.length) more = true;
+				else if (last && batch.rows.length === limit) {
+					const lookahead = await gateway.readBatch(
+						context,
+						{
+							collection: "history",
+							epoch: upper.epoch,
+							path,
+							upper_etag: upperEtag,
+							after_rev: last.rev,
+							limit: 1,
+						},
+						begun.ticket.id,
+					);
+					if (!lookahead.ok)
+						return finishReadFailure(
+							gateway,
+							context,
+							begun.ticket.id,
+							lookahead.failure,
+						);
+					if (lookahead.body.collection !== "history")
+						throw new Error("Native history batch returned another collection");
+					more = lookahead.body.rows.length > 0;
+				}
 				break;
 			}
-			const last = page.at(-1);
-			if (!last || result.rows.length < Math.min(64, remaining)) break;
-			after = parseETag(formatETag(upper.epoch, last.rev)).rev;
+			if (!last || batch.rows.length < limit) break;
+			afterRev = last.rev;
 		}
 		const lastEntry = entries.at(-1);
 		const next_page =
@@ -240,101 +334,211 @@ export async function readHistory(
 						last_etag: lastEntry.etag,
 					})
 				: null;
-		await gateway.finishAdmission(context, begun.ticket.id, "settled");
-		return {
-			ok: true as const,
-			body: { epoch: upper.epoch, entries, next_page } satisfies HistoryPage,
-		};
+		return createReadSession(gateway, context, begun.ticket.id, {
+			epoch: upper.epoch,
+			entries,
+			next_page,
+		});
 	} catch (error) {
-		await gateway.finishAdmission(context, begun.ticket.id, "settled");
-		return failure(error);
+		return finishKnownFailure(gateway, context, begun.ticket.id, error);
 	}
 }
 
-/** Read an ascending immutable feed page through the first observed head. */
+/** Read ascending feed entries at the first observed head with a validated public limit. */
 export async function readChanges(
 	gateway: ReadVaultGateway,
 	context: AuthorizationContext,
 	epoch: string,
 	since: number,
 	limit = 1000,
-) {
-	const begun = await beginRead(gateway, context, [], undefined);
+): Promise<ReadOutcome<ChangesPage>> {
+	const begun = await beginRead(gateway, context, []);
 	if (!begun.ok) return begun;
 	try {
-		const summary = await gateway.readVault(context, begun.ticket.id);
+		if (
+			!Number.isSafeInteger(since) ||
+			since < 0 ||
+			!Number.isSafeInteger(limit) ||
+			limit < 1 ||
+			limit > 1000
+		)
+			throw new FileOperationDenied({ kind: "invalid_request" });
+		const summaryResponse = await gateway.readVault(context, begun.ticket.id);
+		if (!summaryResponse.ok)
+			return finishReadFailure(
+				gateway,
+				context,
+				begun.ticket.id,
+				summaryResponse.failure,
+			);
+		const summary = summaryResponse.body;
 		if (summary.epoch !== epoch)
 			throw new FileOperationDenied({
 				kind: "epoch_mismatch",
 				current_epoch: summary.epoch,
 			});
-		let after = since;
 		const entries: ChangeEntry[] = [];
+		let after = since;
 		while (entries.length < limit) {
-			const request = {
-				collection: "changes" as const,
-				epoch,
-				head_seq: summary.head_seq,
-				after_seq: after,
-				limit: Math.min(64, limit - entries.length),
-			};
-			const result = await gateway.readBatch(context, request, begun.ticket.id);
-			if (result.collection !== "changes")
+			const batchLimit = Math.min(64, limit - entries.length);
+			const result = await gateway.readBatch(
+				context,
+				{
+					collection: "changes",
+					epoch,
+					head_seq: summary.head_seq,
+					after_seq: after,
+					limit: batchLimit,
+				},
+				begun.ticket.id,
+			);
+			if (!result.ok)
+				return finishReadFailure(
+					gateway,
+					context,
+					begun.ticket.id,
+					result.failure,
+				);
+			if (result.body.collection !== "changes")
 				throw new Error("Native changes batch returned another collection");
-			const page = result.rows.slice(0, limit - entries.length);
-			entries.push(...page);
-			if (
-				result.rows.length > page.length ||
-				result.rows.length < request.limit
-			)
+			const batch = result.body;
+			const consumed = batch.rows.slice(0, batchLimit);
+			entries.push(...consumed);
+			const last = consumed.at(-1);
+			if (entries.length === limit) {
+				if (batch.rows.length > consumed.length) break;
+				if (last && batch.rows.length === batchLimit) {
+					const lookahead = await gateway.readBatch(
+						context,
+						{
+							collection: "changes",
+							epoch,
+							head_seq: summary.head_seq,
+							after_seq: last.seq,
+							limit: 1,
+						},
+						begun.ticket.id,
+					);
+					if (!lookahead.ok)
+						return finishReadFailure(
+							gateway,
+							context,
+							begun.ticket.id,
+							lookahead.failure,
+						);
+					if (lookahead.body.collection !== "changes")
+						throw new Error("Native changes batch returned another collection");
+				}
 				break;
-			const last = page.at(-1);
-			if (!last) break;
+			}
+			if (!last || batch.rows.length < batchLimit) break;
 			after = last.seq;
 		}
-		await gateway.finishAdmission(context, begun.ticket.id, "settled");
-		return {
-			ok: true as const,
-			body: {
-				epoch,
-				head_seq: summary.head_seq,
-				entries,
-			} satisfies ChangesPage,
-		};
+		return createReadSession(gateway, context, begun.ticket.id, {
+			epoch,
+			head_seq: summary.head_seq,
+			entries,
+		});
 	} catch (error) {
-		await gateway.finishAdmission(context, begun.ticket.id, "settled");
-		return failure(error);
+		return finishKnownFailure(gateway, context, begun.ticket.id, error);
 	}
 }
 
-/** Authorize a reusable body-free read ticket with its canonical path ownership. */
+/** Authorize the canonical body-free read intent before cursor or data demand. */
 async function beginRead(
 	gateway: ReadVaultGateway,
 	context: AuthorizationContext,
 	paths: string[],
-	epoch: string | undefined,
-) {
+): Promise<
+	| { ok: true; ticket: Extract<AdmissionResult, { ok: true }>["ticket"] }
+	| { ok: false; failure: FileFailure }
+> {
 	const intent = {
 		op: "read" as const,
 		paths,
 		precondition: { kind: "none" as const },
 		payload_hash: EMPTY_PAYLOAD_HASH,
 		size: 0,
-		...(epoch === undefined ? {} : { epoch }),
 	};
 	try {
 		const result = await gateway.authorize(context, intent);
-		return result.ok
-			? { ok: true as const, ticket: result.ticket }
-			: { ok: false as const, failure: result.failure };
+		return result.ok ? { ok: true, ticket: result.ticket } : result;
 	} catch (error) {
-		return failure(error);
+		if (isKnownFailure(error)) return { ok: false, failure: error.failure };
+		throw error;
 	}
 }
 
-/** Map native policy exceptions to canonical safe failures. */
-function failure(error: unknown): { ok: false; failure: FileFailure } {
-	if (error instanceof AdmissionDenied || error instanceof FileOperationDenied)
-		return { ok: false, failure: error.failure };
-	return { ok: false, failure: { kind: "invalid_request" } };
+/** Keep one admission active until its caller reports response completion or uncertainty. */
+function createReadSession<T>(
+	gateway: ReadVaultGateway,
+	context: AuthorizationContext,
+	ticketId: string,
+	body: T,
+): ReadSession<T> {
+	let finishResult: Promise<AdmissionFinishResult> | undefined;
+	return {
+		ok: true,
+		body,
+		/** Apply the response owner's completion once and keep the same promise on repeats. */
+		finish(completion) {
+			finishResult ??= Promise.resolve(
+				gateway.finishAdmission(context, ticketId, completion),
+			);
+			return finishResult;
+		},
+	};
+}
+
+/** Settle only known policy or validation failures, then return their canonical response. */
+async function finishReadFailure<T>(
+	gateway: ReadVaultGateway,
+	context: AuthorizationContext,
+	ticketId: string,
+	failure: FileFailure,
+): Promise<ReadOutcome<T>> {
+	await gateway.finishAdmission(context, ticketId, "settled");
+	return { ok: false, failure };
+}
+
+/** Settle known exceptions while allowing unknown transport and storage faults to propagate. */
+async function finishKnownFailure<T>(
+	gateway: ReadVaultGateway,
+	context: AuthorizationContext,
+	ticketId: string,
+	error: unknown,
+): Promise<ReadOutcome<T>> {
+	if (!isKnownFailure(error)) throw error;
+	await gateway.finishAdmission(context, ticketId, "settled");
+	return { ok: false, failure: error.failure };
+}
+
+/** Identify failures with a safe canonical response rather than uncertain storage errors. */
+function isKnownFailure(
+	error: unknown,
+): error is AdmissionDenied | FileOperationDenied {
+	return (
+		error instanceof AdmissionDenied || error instanceof FileOperationDenied
+	);
+}
+
+/** Decode a seek hint after authorization and preserve stale-epoch recovery details. */
+function decodeCursor(
+	token: string,
+	context: Parameters<typeof decodeReadCursor>[1],
+	currentEpoch: string,
+) {
+	try {
+		return decodeReadCursor(token, context);
+	} catch (error) {
+		if (
+			error instanceof Error &&
+			error.message === "read cursor epoch does not match"
+		)
+			throw new FileOperationDenied({
+				kind: "epoch_mismatch",
+				current_epoch: currentEpoch,
+			});
+		throw new FileOperationDenied({ kind: "invalid_request" });
+	}
 }

@@ -1,5 +1,6 @@
 import { parseETag } from "@protocol/codecs/etag";
 import { EpochSchema, ETagSchema } from "@protocol/schemas/etag";
+import { FileFailureSchema } from "@protocol/schemas/files";
 import { PathSchema } from "@protocol/schemas/path";
 import { z } from "zod";
 
@@ -295,10 +296,16 @@ export const MetadataBatchRequestSchema = z.discriminatedUnion("collection", [
 		})
 		.strict()
 		.superRefine((request, ctx) => {
-			if (parseETag(request.upper_etag).epoch !== request.epoch)
+			const upper = parseETag(request.upper_etag);
+			if (upper.epoch !== request.epoch)
 				ctx.addIssue({
 					code: "custom",
 					message: "history batch upper ETag epoch must match",
+				});
+			if (request.after_rev !== null && request.after_rev > upper.rev)
+				ctx.addIssue({
+					code: "custom",
+					message: "history batch position cannot exceed its upper revision",
 				});
 		}),
 	z
@@ -348,6 +355,40 @@ export const MetadataBatchResultSchema = z.discriminatedUnion("collection", [
 			rows: z.array(MetadataChangeRowSchema).max(65),
 		})
 		.strict(),
+]);
+
+/** Canonical failures returned by native read operations across Durable Object RPC. */
+export const ReadFailureResponseSchema = z
+	.object({ ok: z.literal(false), failure: FileFailureSchema })
+	.strict();
+
+/** Native vault summary or a canonical read-policy failure. */
+export const VaultReadResponseSchema = z.discriminatedUnion("ok", [
+	z.object({ ok: z.literal(true), body: VaultReadResultSchema }).strict(),
+	ReadFailureResponseSchema,
+]);
+
+/** Native bounded batch or a canonical read-policy failure. */
+export const MetadataBatchResponseSchema = z.discriminatedUnion("ok", [
+	z.object({ ok: z.literal(true), body: MetadataBatchResultSchema }).strict(),
+	ReadFailureResponseSchema,
+]);
+
+/** Initial history observation with the current ceiling, or a canonical failure. */
+export const HistoryUpperResponseSchema = z.discriminatedUnion("ok", [
+	z
+		.object({
+			ok: z.literal(true),
+			body: z
+				.object({
+					epoch: EpochSchema,
+					head_seq: SafeSequenceSchema,
+					upper_etag: ETagSchema.nullable(),
+				})
+				.strict(),
+		})
+		.strict(),
+	ReadFailureResponseSchema,
 ]);
 
 /** Rejects unrecognized or repeated query values before route policy runs. */

@@ -4,6 +4,7 @@ export {
 	encodeFileFailureBodyChunks,
 } from "@protocol/codecs/files";
 export { normalizePath, pathKey } from "@protocol/codecs/path";
+export { decodeReadCursor, encodeReadCursor } from "@protocol/codecs/reads";
 export {
 	AdmissionCompletionSchema,
 	AdmissionFailureSchema,
@@ -60,6 +61,23 @@ export {
 } from "@protocol/schemas/history";
 export { IdempotencyKeySchema } from "@protocol/schemas/idempotency";
 export { PathSchema } from "@protocol/schemas/path";
+export {
+	ChangeEntrySchema,
+	ChangesPageSchema,
+	HistoryPageEntrySchema,
+	HistoryPageSchema,
+	ManifestEntrySchema,
+	ManifestPageSchema,
+	MetadataBatchRequestSchema,
+	MetadataBatchResultSchema,
+	MetadataChangeRowSchema,
+	MetadataHistoryRowSchema,
+	MetadataManifestRowSchema,
+	ReadCursorContextSchema,
+	ReadCursorSchema,
+	ReadQuerySchema,
+	VaultReadResultSchema,
+} from "@protocol/schemas/reads";
 export type {
 	AdmissionCompletion,
 	AdmissionFailure,
@@ -112,3 +130,17 @@ export type {
 } from "@protocol/types/history";
 export type { IdempotencyKey } from "@protocol/types/idempotency";
 export type { Path } from "@protocol/types/path";
+export type {
+	ChangeEntry,
+	ChangesPage,
+	HistoryPage,
+	HistoryPageEntry,
+	ManifestEntry,
+	ManifestPage,
+	MetadataBatchRequest,
+	MetadataBatchResult,
+	ReadCursor,
+	ReadCursorContext,
+	ReadQuery,
+	VaultReadResult,
+} from "@protocol/types/reads";

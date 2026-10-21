@@ -248,6 +248,26 @@ describe("canonical bounded read contracts", () => {
 		).toThrow();
 	});
 
+	it("rejects alternate base64url encodings with nonzero padding bits", () => {
+		const alphabet =
+			"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+		for (const path of ["a.md", "aa.md", "aaa.md"]) {
+			const token = encodeReadCursor({
+				version: 1,
+				kind: "manifest",
+				epoch,
+				head_seq: 0,
+				last_path: path,
+			});
+			if (token.length % 4 === 0) continue;
+			const alternate =
+				token.slice(0, -1) + alphabet[alphabet.indexOf(token.at(-1) ?? "") + 1];
+			expect(() =>
+				decodeReadCursor(alternate, { kind: "manifest", epoch }),
+			).toThrow();
+		}
+	});
+
 	it("exposes history ETags without bare revisions and encodes cursor expiry", () => {
 		const page = {
 			epoch,

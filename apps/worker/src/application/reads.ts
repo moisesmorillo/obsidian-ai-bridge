@@ -67,6 +67,33 @@ export interface ReadSession<T> {
 	finish(completion: AdmissionCompletion): Promise<AdmissionFinishResult>;
 }
 
+/** One demanded metadata batch and its page-completion state. */
+export interface ReadBatch<T> {
+	readonly rows: readonly T[];
+	readonly done: boolean;
+	readonly next_page: string | null;
+}
+
+/** Lazy page session that keeps native demand and durable admission under response ownership. */
+export interface LazyReadSession<T, M> {
+	readonly ok: true;
+	readonly body: M;
+	/** Read at most one bounded native batch after downstream demand. */
+	readBatch(): Promise<ReadBatch<T>>;
+	/** Stop future demand and wait for any started native batch. */
+	cancel(): Promise<void>;
+	/** Settle once after response EOF or cancellation cleanup. */
+	finish(completion: AdmissionCompletion): Promise<AdmissionFinishResult>;
+}
+
+/** Preserve a canonical batch failure across the lazy session boundary. */
+export class ReadBatchFailure extends Error {
+	/** Preserve the native policy failure for settlement by the admission owner. */
+	constructor(readonly failure: FileFailure) {
+		super("Metadata batch returned a policy failure");
+	}
+}
+
 /** Read outcome whose successful branch owns a deferred admission settlement hook. */
 export type ReadOutcome<T> =
 	| ReadSession<T>
@@ -97,140 +124,105 @@ export async function readVault(
 	}
 }
 
-/** Read one manifest page and retain its admission until transport settles the response. */
-export async function readManifest(
+/** Open a manifest keyset traversal without demanding a metadata batch. */
+export async function openManifestRead(
 	gateway: ReadVaultGateway,
 	context: AuthorizationContext,
 	token?: string,
-): Promise<ReadOutcome<ManifestPage>> {
+): Promise<
+	ReadOutcome<
+		LazyReadSession<ManifestEntry, Omit<ManifestPage, "entries" | "next_page">>
+	>
+> {
 	const begun = await beginRead(gateway, context, []);
 	if (!begun.ok) return begun;
 	try {
-		const summaryResponse = await gateway.readVault(context, begun.ticket.id);
-		if (!summaryResponse.ok)
+		const summary = await gateway.readVault(context, begun.ticket.id);
+		if (!summary.ok)
 			return finishReadFailure(
 				gateway,
 				context,
 				begun.ticket.id,
-				summaryResponse.failure,
+				summary.failure,
 			);
-		const summary = summaryResponse.body;
 		const cursor =
 			token === undefined
 				? undefined
 				: decodeCursor(
 						token,
-						{ kind: "manifest", epoch: summary.epoch },
-						summary.epoch,
+						{ kind: "manifest", epoch: summary.body.epoch },
+						summary.body.epoch,
 					);
+		const epoch = summary.body.epoch;
 		const head =
-			cursor?.kind === "manifest" ? cursor.head_seq : summary.head_seq;
-		let afterPath = cursor?.kind === "manifest" ? cursor.last_path : null;
-		const entries: ManifestEntry[] = [];
-		let more = false;
-		while (entries.length < 256) {
-			const limit = Math.min(64, 256 - entries.length);
-			const result = await gateway.readBatch(
-				context,
-				{
-					collection: "manifest",
-					epoch: summary.epoch,
-					head_seq: head,
-					after_path: afterPath,
-					limit,
-				},
-				begun.ticket.id,
-			);
-			if (!result.ok)
-				return finishReadFailure(
-					gateway,
-					context,
-					begun.ticket.id,
-					result.failure,
-				);
-			if (result.body.collection !== "manifest")
-				throw new Error("Native manifest batch returned another collection");
-			const batch = result.body;
-			const consumed = batch.rows.slice(0, limit);
-			entries.push(...consumed);
-			const last = consumed.at(-1);
-			if (entries.length === 256) {
-				if (batch.rows.length > consumed.length) more = true;
-				else if (last && batch.rows.length === limit) {
-					const lookahead = await gateway.readBatch(
-						context,
-						{
-							collection: "manifest",
-							epoch: summary.epoch,
-							head_seq: head,
-							after_path: last.path,
-							limit: 1,
-						},
-						begun.ticket.id,
-					);
-					if (!lookahead.ok)
-						return finishReadFailure(
-							gateway,
-							context,
-							begun.ticket.id,
-							lookahead.failure,
-						);
-					if (lookahead.body.collection !== "manifest")
-						throw new Error(
-							"Native manifest batch returned another collection",
-						);
-					more = lookahead.body.rows.length > 0;
-				}
-				break;
-			}
-			if (!last || batch.rows.length < limit) break;
-			afterPath = last.path;
-		}
-		const lastPath = entries.at(-1)?.path;
-		const next_page =
-			more && lastPath !== undefined
-				? encodeReadCursor({
-						version: 1,
-						kind: "manifest",
-						epoch: summary.epoch,
-						head_seq: head,
-						last_path: lastPath,
-					})
-				: null;
-		return createReadSession(gateway, context, begun.ticket.id, {
-			epoch: summary.epoch,
+			cursor?.kind === "manifest" ? cursor.head_seq : summary.body.head_seq;
+		let after = cursor?.kind === "manifest" ? cursor.last_path : null;
+		const owner = createReadSession(gateway, context, begun.ticket.id, {
+			epoch,
 			head_seq: head,
-			entries,
-			next_page,
 		});
+		const lazy = createLazyTraversal(
+			owner,
+			256,
+			async (limit) => {
+				const result = await gateway.readBatch(
+					context,
+					{
+						collection: "manifest",
+						epoch,
+						head_seq: head,
+						after_path: after,
+						limit,
+					},
+					begun.ticket.id,
+				);
+				if (!result.ok) throw new ReadBatchFailure(result.failure);
+				if (result.body.collection !== "manifest")
+					throw new Error("Unexpected metadata collection");
+				const rows = result.body.rows.slice(0, limit);
+				after = rows.at(-1)?.path ?? after;
+				return { rows, more: result.body.rows.length > limit };
+			},
+			() =>
+				after === null
+					? null
+					: encodeReadCursor({
+							version: 1,
+							kind: "manifest",
+							epoch,
+							head_seq: head,
+							last_path: after,
+						}),
+		);
+		return { ok: true, body: lazy, finish: lazy.finish };
 	} catch (error) {
 		return finishKnownFailure(gateway, context, begun.ticket.id, error);
 	}
 }
 
-/** Read retained history through the first observed upper revision and keep the ticket open. */
-export async function readHistory(
+/** Open history under its first observed revision ceiling without collecting rows. */
+export async function openHistoryRead(
 	gateway: ReadVaultGateway,
 	context: AuthorizationContext,
 	path: string,
 	token?: string,
-): Promise<ReadOutcome<HistoryPage>> {
+): Promise<ReadOutcome<LazyReadSession<HistoryPageEntry, { epoch: string }>>> {
 	const begun = await beginRead(gateway, context, [path]);
 	if (!begun.ok) return begun;
 	try {
-		const upperResponse = await gateway.readHistoryUpper(
+		const result = await gateway.readHistoryUpper(
 			context,
 			begun.ticket.id,
 			path,
 		);
-		if (!upperResponse.ok)
+		if (!result.ok)
 			return finishReadFailure(
 				gateway,
 				context,
 				begun.ticket.id,
-				upperResponse.failure,
+				result.failure,
 			);
-		const upper = upperResponse.body;
+		const upper = result.body;
 		const cursor =
 			token === undefined
 				? undefined
@@ -239,119 +231,79 @@ export async function readHistory(
 						{ kind: "history", epoch: upper.epoch, path },
 						upper.epoch,
 					);
-		if (upper.upper_etag === null) {
-			if (cursor) throw new FileOperationDenied({ kind: "invalid_request" });
-			return createReadSession(gateway, context, begun.ticket.id, {
-				epoch: upper.epoch,
-				entries: [],
-				next_page: null,
-			});
-		}
+		if (upper.upper_etag === null && cursor)
+			throw new FileOperationDenied({ kind: "invalid_request" });
 		const upperEtag =
 			cursor?.kind === "history" ? cursor.upper_etag : upper.upper_etag;
-		let afterRev =
+		const head = cursor?.kind === "history" ? cursor.head_seq : upper.head_seq;
+		let after =
 			cursor?.kind === "history" ? parseETag(cursor.last_etag).rev : null;
-		const entries: HistoryPageEntry[] = [];
-		let more = false;
-		while (entries.length < 256) {
-			const limit = Math.min(64, 256 - entries.length);
-			const result = await gateway.readBatch(
-				context,
-				{
-					collection: "history",
-					epoch: upper.epoch,
-					path,
-					upper_etag: upperEtag,
-					after_rev: afterRev,
-					limit,
-				},
-				begun.ticket.id,
-			);
-			if (!result.ok)
-				return finishReadFailure(
-					gateway,
+		const owner = createReadSession(gateway, context, begun.ticket.id, {
+			epoch: upper.epoch,
+		});
+		const lazy = createLazyTraversal(
+			owner,
+			256,
+			async (limit) => {
+				if (upperEtag === null) return { rows: [], more: false };
+				const batch = await gateway.readBatch(
 					context,
-					begun.ticket.id,
-					result.failure,
-				);
-			if (result.body.collection !== "history")
-				throw new Error("Native history batch returned another collection");
-			const batch = result.body;
-			const consumed = batch.rows.slice(0, limit);
-			entries.push(
-				...consumed.map((row) => ({
-					etag: formatETag(upper.epoch, row.rev),
-					hash: row.hash,
-					size: row.size,
-					deleted: row.deleted,
-					origin: row.origin,
-					at: row.at,
-				})),
-			);
-			const last = consumed.at(-1);
-			if (entries.length === 256) {
-				if (batch.rows.length > consumed.length) more = true;
-				else if (last && batch.rows.length === limit) {
-					const lookahead = await gateway.readBatch(
-						context,
-						{
-							collection: "history",
-							epoch: upper.epoch,
-							path,
-							upper_etag: upperEtag,
-							after_rev: last.rev,
-							limit: 1,
-						},
-						begun.ticket.id,
-					);
-					if (!lookahead.ok)
-						return finishReadFailure(
-							gateway,
-							context,
-							begun.ticket.id,
-							lookahead.failure,
-						);
-					if (lookahead.body.collection !== "history")
-						throw new Error("Native history batch returned another collection");
-					more = lookahead.body.rows.length > 0;
-				}
-				break;
-			}
-			if (!last || batch.rows.length < limit) break;
-			afterRev = last.rev;
-		}
-		const lastEntry = entries.at(-1);
-		const next_page =
-			more && lastEntry
-				? encodeReadCursor({
-						version: 1,
-						kind: "history",
+					{
+						collection: "history",
 						epoch: upper.epoch,
-						head_seq:
-							cursor?.kind === "history" ? cursor.head_seq : upper.head_seq,
 						path,
 						upper_etag: upperEtag,
-						last_etag: lastEntry.etag,
-					})
-				: null;
-		return createReadSession(gateway, context, begun.ticket.id, {
-			epoch: upper.epoch,
-			entries,
-			next_page,
-		});
+						after_rev: after,
+						limit,
+					},
+					begun.ticket.id,
+				);
+				if (!batch.ok) throw new ReadBatchFailure(batch.failure);
+				if (batch.body.collection !== "history")
+					throw new Error("Unexpected metadata collection");
+				const consumed = batch.body.rows.slice(0, limit);
+				after = consumed.at(-1)?.rev ?? after;
+				return {
+					rows: consumed.map((row) => ({
+						etag: formatETag(upper.epoch, row.rev),
+						hash: row.hash,
+						size: row.size,
+						deleted: row.deleted,
+						origin: row.origin,
+						at: row.at,
+					})),
+					more: batch.body.rows.length > limit,
+				};
+			},
+			() =>
+				after === null || upperEtag === null
+					? null
+					: encodeReadCursor({
+							version: 1,
+							kind: "history",
+							epoch: upper.epoch,
+							head_seq: head,
+							path,
+							upper_etag: upperEtag,
+							last_etag: formatETag(upper.epoch, after),
+						}),
+		);
+		return { ok: true, body: lazy, finish: lazy.finish };
 	} catch (error) {
 		return finishKnownFailure(gateway, context, begun.ticket.id, error);
 	}
 }
 
-/** Read ascending feed entries at the first observed head with a validated public limit. */
-export async function readChanges(
+/** Open an immutable feed traversal at the captured head with a bounded public limit. */
+export async function openChangesRead(
 	gateway: ReadVaultGateway,
 	context: AuthorizationContext,
 	epoch: string,
 	since: number,
 	limit = 1000,
-): Promise<ReadOutcome<ChangesPage>> {
+): Promise<
+	ReadOutcome<LazyReadSession<ChangeEntry, Omit<ChangesPage, "entries">>>
+> {
 	const begun = await beginRead(gateway, context, []);
 	if (!begun.ok) return begun;
 	try {
@@ -363,85 +315,167 @@ export async function readChanges(
 			limit > 1000
 		)
 			throw new FileOperationDenied({ kind: "invalid_request" });
-		const summaryResponse = await gateway.readVault(context, begun.ticket.id);
-		if (!summaryResponse.ok)
+		const summary = await gateway.readVault(context, begun.ticket.id);
+		if (!summary.ok)
 			return finishReadFailure(
 				gateway,
 				context,
 				begun.ticket.id,
-				summaryResponse.failure,
+				summary.failure,
 			);
-		const summary = summaryResponse.body;
-		if (summary.epoch !== epoch)
+		if (summary.body.epoch !== epoch)
 			throw new FileOperationDenied({
 				kind: "epoch_mismatch",
-				current_epoch: summary.epoch,
+				current_epoch: summary.body.epoch,
 			});
-		const entries: ChangeEntry[] = [];
 		let after = since;
-		while (entries.length < limit) {
-			const batchLimit = Math.min(64, limit - entries.length);
-			const result = await gateway.readBatch(
-				context,
-				{
-					collection: "changes",
-					epoch,
-					head_seq: summary.head_seq,
-					after_seq: after,
-					limit: batchLimit,
-				},
-				begun.ticket.id,
-			);
-			if (!result.ok)
-				return finishReadFailure(
-					gateway,
-					context,
-					begun.ticket.id,
-					result.failure,
-				);
-			if (result.body.collection !== "changes")
-				throw new Error("Native changes batch returned another collection");
-			const batch = result.body;
-			const consumed = batch.rows.slice(0, batchLimit);
-			entries.push(...consumed);
-			const last = consumed.at(-1);
-			if (entries.length === limit) {
-				if (batch.rows.length > consumed.length) break;
-				if (last && batch.rows.length === batchLimit) {
-					const lookahead = await gateway.readBatch(
-						context,
-						{
-							collection: "changes",
-							epoch,
-							head_seq: summary.head_seq,
-							after_seq: last.seq,
-							limit: 1,
-						},
-						begun.ticket.id,
-					);
-					if (!lookahead.ok)
-						return finishReadFailure(
-							gateway,
-							context,
-							begun.ticket.id,
-							lookahead.failure,
-						);
-					if (lookahead.body.collection !== "changes")
-						throw new Error("Native changes batch returned another collection");
-				}
-				break;
-			}
-			if (!last || batch.rows.length < batchLimit) break;
-			after = last.seq;
-		}
-		return createReadSession(gateway, context, begun.ticket.id, {
+		const owner = createReadSession(gateway, context, begun.ticket.id, {
 			epoch,
-			head_seq: summary.head_seq,
-			entries,
+			head_seq: summary.body.head_seq,
 		});
+		const lazy = createLazyTraversal(
+			owner,
+			limit,
+			async (batchLimit) => {
+				const result = await gateway.readBatch(
+					context,
+					{
+						collection: "changes",
+						epoch,
+						head_seq: summary.body.head_seq,
+						after_seq: after,
+						limit: batchLimit,
+					},
+					begun.ticket.id,
+				);
+				if (!result.ok) throw new ReadBatchFailure(result.failure);
+				if (result.body.collection !== "changes")
+					throw new Error("Unexpected metadata collection");
+				const rows = result.body.rows.slice(0, batchLimit);
+				after = rows.at(-1)?.seq ?? after;
+				return { rows, more: result.body.rows.length > batchLimit };
+			},
+			() => null,
+		);
+		return { ok: true, body: lazy, finish: lazy.finish };
 	} catch (error) {
 		return finishKnownFailure(gateway, context, begun.ticket.id, error);
 	}
+}
+
+/** Own one active batch, page capacity, cancellation, and failure certainty for every collection. */
+function createLazyTraversal<T, M>(
+	owner: ReadSession<M>,
+	cap: number,
+	fetchBatch: (limit: number) => Promise<{ rows: T[]; more: boolean }>,
+	nextPage: () => string | null,
+): LazyReadSession<T, M> {
+	let count = 0;
+	let stopped = false;
+	let uncertain = false;
+	let active: Promise<ReadBatch<T>> | undefined;
+	return {
+		ok: true,
+		body: owner.body,
+		/** Demand one batch, and retain unknown authority outcomes to the original deadline. */
+		async readBatch() {
+			if (active) return active;
+			if (stopped) return { rows: [], done: true, next_page: null };
+			active = (async () => {
+				try {
+					const batch = await fetchBatch(Math.min(64, cap - count));
+					count += batch.rows.length;
+					const done = !batch.more || count === cap;
+					if (done) stopped = true;
+					return {
+						rows: batch.rows,
+						done,
+						next_page: done && batch.more ? nextPage() : null,
+					};
+				} catch (error) {
+					stopped = true;
+					uncertain = !(error instanceof ReadBatchFailure);
+					throw error;
+				}
+			})();
+			try {
+				return await active;
+			} finally {
+				active = undefined;
+			}
+		},
+		/** Join the started batch before the response owner settles its ticket. */
+		async cancel() {
+			stopped = true;
+			if (active) await active.catch(() => undefined);
+		},
+		/** Never settle an unknown authority result as known completed work. */
+		async finish(completion) {
+			return owner.finish(uncertain ? "uncertain" : completion);
+		},
+	};
+}
+
+/** Collect the shared lazy traversal for bounded non-HTTP callers only. */
+async function collectRead<T, M>(
+	opened: ReadOutcome<LazyReadSession<T, M>>,
+): Promise<ReadOutcome<M & { entries: T[]; next_page: string | null }>> {
+	if (!opened.ok) return opened;
+	const entries: T[] = [];
+	try {
+		let batch: ReadBatch<T>;
+		do {
+			batch = await opened.body.readBatch();
+			entries.push(...batch.rows);
+		} while (!batch.done);
+		return {
+			ok: true,
+			body: { ...opened.body.body, entries, next_page: batch.next_page },
+			finish: opened.body.finish,
+		};
+	} catch (error) {
+		await opened.body.cancel();
+		if (error instanceof ReadBatchFailure) {
+			await opened.body.finish("settled");
+			return { ok: false, failure: error.failure };
+		}
+		throw error;
+	}
+}
+
+/** Collect a bounded manifest page with the same keyset policy as HTTP. */
+export async function readManifest(
+	gateway: ReadVaultGateway,
+	context: AuthorizationContext,
+	token?: string,
+): Promise<ReadOutcome<ManifestPage>> {
+	return collectRead(await openManifestRead(gateway, context, token));
+}
+
+/** Collect a bounded history page with the same revision ceiling as HTTP. */
+export async function readHistory(
+	gateway: ReadVaultGateway,
+	context: AuthorizationContext,
+	path: string,
+	token?: string,
+): Promise<ReadOutcome<HistoryPage>> {
+	return collectRead(await openHistoryRead(gateway, context, path, token));
+}
+
+/** Collect a bounded feed for non-HTTP callers without a second traversal policy. */
+export async function readChanges(
+	gateway: ReadVaultGateway,
+	context: AuthorizationContext,
+	epoch: string,
+	since: number,
+	limit = 1000,
+): Promise<ReadOutcome<ChangesPage>> {
+	const result = await collectRead(
+		await openChangesRead(gateway, context, epoch, since, limit),
+	);
+	if (!result.ok) return result;
+	const { next_page: _next, ...body } = result.body;
+	return { ...result, body };
 }
 
 /** Authorize the canonical body-free read intent before cursor or data demand. */
@@ -482,7 +516,7 @@ function createReadSession<T>(
 		body,
 		/** Apply the response owner's completion once and keep the same promise on repeats. */
 		finish(completion) {
-			finishResult ??= Promise.resolve(
+			finishResult ??= Promise.resolve().then(() =>
 				gateway.finishAdmission(context, ticketId, completion),
 			);
 			return finishResult;

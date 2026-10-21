@@ -92,6 +92,7 @@ export class Vault extends DurableObject<Env> {
 			{
 				now: Date.now,
 				blobStore: new R2BlobStore(env.R2_BUCKET),
+				admissions: this.admissionAuthority,
 			},
 		);
 	}
@@ -235,17 +236,22 @@ export class Vault extends DurableObject<Env> {
 		return this.textStore.commitBlob(context, intent, ticketId, key);
 	}
 
-	/** Read immutable metadata for a current or retained blob revision. */
-	readBlobMetadata(context: AuthorizationContext, request: TextReadRequest) {
-		return this.textStore.readBlobMetadata(context, request);
+	/** Select blob metadata under current policy and the optional response ticket. Public HTTP reads always supply that ticket. */
+	readBlobMetadata(
+		context: AuthorizationContext,
+		request: TextReadRequest,
+		admissionId?: string,
+	) {
+		return this.textStore.readBlobMetadata(context, request, admissionId);
 	}
 
-	/** Read current or selected historical inline text. */
+	/** Select inline text under current policy and the optional response ticket. Public HTTP reads always supply that ticket. */
 	readText(
 		context: AuthorizationContext,
 		request: TextReadRequest,
+		admissionId?: string,
 	): Promise<TextReadResult> {
-		return this.textStore.readText(context, request);
+		return this.textStore.readText(context, request, admissionId);
 	}
 
 	/** Close an owned admission after a known or uncertain operation outcome. */

@@ -56,10 +56,11 @@ export interface BlobVaultGateway {
 		admissionId: string,
 		key?: IdempotencyKey,
 	): Promise<BlobAuthorizationResult>;
-	/** Read immutable metadata selected by epoch, path, and optional revision. */
+	/** Select immutable blob metadata under the active response ticket and current read policy. */
 	readBlobMetadata(
 		context: AuthorizationContext,
 		request: TextReadRequest,
+		admissionId: string,
 	): Promise<BlobMetadataReadResult>;
 }
 

@@ -42,13 +42,18 @@ export function parseBlobDeclaration(
 
 /** Select authority before storage access, then stream only the selected immutable bytes. */
 export async function readBlobResponse(
-	gateway: BlobVaultGateway,
+	gateway: Pick<BlobVaultGateway, "readBlobMetadata">,
 	store: BlobContentStore,
 	identity: AuthorizationContext,
 	request: TextReadRequest,
 	rangeHeader: string | null,
+	admissionId: string,
 ): Promise<Response> {
-	const selected = await gateway.readBlobMetadata(identity, request);
+	const selected = await gateway.readBlobMetadata(
+		identity,
+		request,
+		admissionId,
+	);
 	if (!selected.ok) {
 		const failure = encodeFileFailure(selected.failure);
 		return Response.json(failure.body, {

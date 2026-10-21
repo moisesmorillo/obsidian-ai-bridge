@@ -294,7 +294,11 @@ Mutation failure responses preserve complete authorized text through bounded JSO
 
 Native body reads request at most 65,536 bytes at a time. Inline readers use one fixed 1,000,000-byte allocation and do not retain borrowed chunks. Blob reads and writes use bounded native streams, without a complete blob buffer.
 
-Body ≤ 26 MB (25 MB blob + headers). Manifest page ≤ 20,000 rows. Feed page ≤ 1,000 entries. Search ≤ 50 results. Range reads ≤ 1 MB per response. Concurrency per client: the plugin runs at most 4 in-flight requests; the Worker returns `429` with `Retry-After` above 16 concurrent requests per client.
+Four authoritative reads share separate isolate-local slots across routes, clients, vault hosts, and router instances. The fifth read returns `429 admission_limited` and `Retry-After: 1` before metadata or R2 demand.
+
+Each successful read keeps one durable admission through response production and cleanup. Metadata responses demand one bounded batch at a time. Response encoding never creates a complete escaped inline string or JSON page. Cancellation joins started RPC, storage reads, and cleanup before slot reuse. Unknown authority results keep the original admission deadline. Producer EOF does not prove client receipt or native release.
+
+Body ≤ 26 MB (25 MB blob + headers). Manifest page ≤ 256 rows. Feed page ≤ 1,000 entries. Search ≤ 50 results. Range reads ≤ 1 MB per response. Concurrency per client: the plugin runs at most 4 in-flight requests; the Worker returns `429` with `Retry-After` above 16 concurrent requests per client.
 
 ## 7. Plugin
 

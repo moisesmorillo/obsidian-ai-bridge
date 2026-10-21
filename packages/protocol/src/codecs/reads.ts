@@ -13,10 +13,7 @@ export function encodeReadCursor(cursor: ReadCursor): string {
 	const bytes = new TextEncoder().encode(JSON.stringify(parsed));
 	let binary = "";
 	for (const byte of bytes) binary += String.fromCharCode(byte);
-	return btoa(binary)
-		.replaceAll("+", "-")
-		.replaceAll("/", "_")
-		.replace(/=+$/, "");
+	return encodeBase64Url(binary);
 }
 
 /** Decodes a bounded cursor and checks collection and epoch bindings before use. */
@@ -33,6 +30,9 @@ export function decodeReadCursor(
 		token.replaceAll("-", "+").replaceAll("_", "/") +
 			"=".repeat((4 - (token.length % 4)) % 4),
 	);
+	const canonical = encodeBase64Url(binary);
+	if (canonical !== token)
+		throw new Error("read cursor encoding is not canonical");
 	const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
 	let decoded: unknown;
 	try {
@@ -53,4 +53,12 @@ export function decodeReadCursor(
 	)
 		throw new Error("history cursor path does not match");
 	return cursor;
+}
+
+/** Encode binary bytes as canonical unpadded base64url for both creation and validation. */
+function encodeBase64Url(binary: string): string {
+	return btoa(binary)
+		.replaceAll("+", "-")
+		.replaceAll("/", "_")
+		.replace(/=+$/, "");
 }

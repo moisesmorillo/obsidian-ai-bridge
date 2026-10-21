@@ -1,5 +1,6 @@
 import type { AuthorizationContext } from "@obsidian-ai-bridge/protocol";
 import type { HistoryVaultGateway } from "@worker/application/history";
+import type { ReadVaultGateway } from "@worker/application/reads";
 import type { TextVaultGateway } from "@worker/application/text-files";
 import type { Env } from "@worker/env";
 import { R2BlobStore } from "@worker/infrastructure/r2/blobs";
@@ -52,7 +53,10 @@ const worker = createWorker(
 				return TEST_IDENTITY;
 		}
 	},
-	(env: Env, request: Request): TextVaultGateway & HistoryVaultGateway => {
+	(
+		env: Env,
+		request: Request,
+	): TextVaultGateway & HistoryVaultGateway & ReadVaultGateway => {
 		const stub = env.VAULTS.get(
 			env.VAULTS.idFromName(new URL(request.url).host),
 		);
@@ -71,8 +75,8 @@ const worker = createWorker(
 					throw new Error("Simulated RPC response loss");
 				return result;
 			},
-			authorize: async (...args) => {
-				const result = await stub.authorize(...args);
+			authorize: async (context, intent, admissionId?: string) => {
+				const result = await stub.authorize(context, intent, admissionId);
 				if (shouldFailAfter(request, "authorize"))
 					throw new Error("Simulated RPC response loss");
 				return result;
@@ -128,6 +132,24 @@ const worker = createWorker(
 				return result;
 			},
 			readHistory: async (...args) => await stub.readHistory(...args),
+			readVault: async (...args) => {
+				const result = await stub.readVault(...args);
+				if (shouldFailAfter(request, "readVault"))
+					throw new Error("Simulated RPC response loss");
+				return result;
+			},
+			readHistoryUpper: async (...args) => {
+				const result = await stub.readHistoryUpper(...args);
+				if (shouldFailAfter(request, "readHistoryUpper"))
+					throw new Error("Simulated RPC response loss");
+				return result;
+			},
+			readBatch: async (...args) => {
+				const result = await stub.readBatch(...args);
+				if (shouldFailAfter(request, "readBatch"))
+					throw new Error("Simulated RPC response loss");
+				return result;
+			},
 		};
 	},
 	(env) => new R2BlobStore(env.R2_BUCKET),

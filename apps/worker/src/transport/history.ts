@@ -7,7 +7,6 @@ import type {
 import {
 	EpochSchema,
 	FileCommandSchema,
-	HistoryRequestSchema,
 	IdempotencyKeySchema,
 	OperationDescriptorSchema,
 	parseETag,
@@ -21,14 +20,11 @@ import {
 	type HistoryVaultGateway,
 } from "@worker/application/history";
 import type { TextVaultGateway } from "@worker/application/text-files";
-import type { Env } from "@worker/env";
 import { readInlineBody } from "@worker/transport/body";
 import {
 	fileFailureResponse as errorResponse,
 	withMutationResponse,
 } from "@worker/transport/mutation-response";
-import { decodeAndNormalizePath } from "@worker/transport/path";
-import { Hono } from "hono";
 
 /** Maximum actual UTF-8 request bytes read for any inline history command. */
 const MAX_COMMAND_BYTES = 1_000_000;
@@ -384,36 +380,6 @@ async function decodeRestoreCommand(
 	if (!command.success)
 		throw new FileOperationDenied({ kind: "invalid_request" });
 	return command.data;
-}
-
-/** Register current content-free history reads with decoded canonical paths. */
-export function createHistoryRouter(
-	resolveIdentity: (request: Request) => Promise<AuthorizationContext | null>,
-	resolveVault: (env: Env, request: Request) => HistoryVaultGateway,
-): Hono<{ Bindings: Env }> {
-	const router = new Hono<{ Bindings: Env }>();
-	router.onError(() => errorResponse({ kind: "internal_error" }));
-	router.get("/*", async (context) => {
-		const identity = await resolveIdentity(context.req.raw);
-		if (identity === null) return errorResponse({ kind: "unauthorized" });
-		if (!identity.scopes.includes("vault:read"))
-			return errorResponse({ kind: "forbidden_scope" });
-		const pathname = new URL(context.req.url).pathname;
-		const prefix = "/v1/history/";
-		const path = pathname.startsWith(prefix)
-			? decodeAndNormalizePath(pathname.slice(prefix.length))
-			: undefined;
-		if (path === undefined) return errorResponse({ kind: "invalid_path" });
-		if (new URL(context.req.url).search)
-			return errorResponse({ kind: "invalid_request" });
-		const gateway = resolveVault(context.env, context.req.raw);
-		const request = HistoryRequestSchema.safeParse({ path });
-		if (!request.success) return errorResponse({ kind: "invalid_path" });
-		const result = await gateway.readHistory(identity, request.data);
-		if (!result.ok) return errorResponse(result.failure);
-		return context.json(result.entries);
-	});
-	return router;
 }
 
 /** Return the lowercase SHA-256 digest for exact request bytes. */

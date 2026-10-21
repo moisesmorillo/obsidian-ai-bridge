@@ -9,6 +9,9 @@ import {
 	parseETag,
 } from "@obsidian-ai-bridge/protocol";
 import {
+	openChangesRead,
+	openHistoryRead,
+	openManifestRead,
 	type ReadVaultGateway,
 	readChanges,
 	readHistory,
@@ -227,6 +230,50 @@ function changesGateway(rows: ChangeEntry[]) {
 }
 
 describe("application bounded read traversal", () => {
+	it("opens a manifest session before data demand and reads one bounded batch on demand", async () => {
+		const rows = Array.from({ length: 130 }, (_, index) => manifestRow(index));
+		const { gateway, state } = manifestGateway(rows);
+		const session = await openManifestRead(gateway, context);
+		expect(session.ok).toBe(true);
+		if (!session.ok) return;
+		expect(state.batches).toBe(0);
+		expect(session.body.body).toEqual({ epoch, head_seq: rows.length });
+		expect(state.batches).toBe(0);
+		const first = await session.body.readBatch();
+		expect(first.rows).toEqual(rows.slice(0, 64));
+		expect(first.done).toBe(false);
+		expect(state.batches).toBe(1);
+		await session.body.cancel();
+		await session.finish("settled");
+	});
+	it("opens history and feed sessions without batch demand", async () => {
+		const history = historyGateway(
+			Array.from({ length: 130 }, (_, i) => historyRow(i + 1)),
+		);
+		const feed = changesGateway(
+			Array.from({ length: 130 }, (_, i) => changeRow(i + 1)),
+		);
+		for (const gateway of [history.gateway, feed.gateway]) {
+			const original = gateway.readBatch;
+			let calls = 0;
+			gateway.readBatch = async (...args) => {
+				calls++;
+				return original(...args);
+			};
+			const opened =
+				gateway === history.gateway
+					? await openHistoryRead(gateway, context, "files/history.md")
+					: await openChangesRead(gateway, context, epoch, 0);
+			expect(opened.ok).toBe(true);
+			if (!opened.ok) return;
+			expect(calls).toBe(0);
+			expect((await opened.body.readBatch()).rows).toHaveLength(64);
+			expect(calls).toBe(1);
+			await opened.body.cancel();
+			await opened.finish("settled");
+		}
+	});
+
 	it("consumes lookahead rows without shortening or skipping a 256-entry page", async () => {
 		const rows = Array.from({ length: 257 }, (_, index) => manifestRow(index));
 		const { gateway, state } = manifestGateway(rows);

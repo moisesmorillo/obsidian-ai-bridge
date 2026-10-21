@@ -55,10 +55,11 @@ export interface TextVaultGateway extends BlobVaultGateway {
 		ticketId: string,
 		completion: AdmissionCompletion,
 	): Promise<AdmissionFinishResult>;
-	/** Read current or selected history after the authority checks read scope and epoch. */
+	/** Select current or retained text under the active response ticket and current read policy. */
 	readText(
 		context: AuthorizationContext,
 		request: TextReadRequest,
+		admissionId: string,
 	): Promise<TextReadResult>;
 }
 

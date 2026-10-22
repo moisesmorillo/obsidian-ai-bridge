@@ -1,11 +1,11 @@
 ---
 id: OAB-6.7
 title: Search live Markdown with literal trigram semantics
-status: In Progress
+status: Done
 assignee:
   - '@pi'
 created_date: '2026-10-15 00:38'
-updated_date: '2026-10-22T13:46:00Z'
+updated_date: '2026-10-22T13:51:00Z'
 labels:
   - F1
 dependencies:
@@ -26,10 +26,10 @@ Section10 requires literal case/diacritic-insensitive substring search, not a qu
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The real DO FTS5 search passes every AC-15 example, including punctuation, internal quotes, literal AND and cafe matching café.
-- [ ] #2 Unicode query length 3–200 and result limits 1–50/default 20 are validated; ranking/snippets follow section 10 without interpreting user operators.
-- [ ] #3 Only live inline Markdown is indexed; canvas, blobs, oversized Markdown and tombstones remain excluded with accurate coverage counts.
-- [ ] #4 Mutation rollback, rename/delete/recreate and concurrent reads cannot expose an index inconsistent with authoritative state.
+- [x] #1 The real DO FTS5 search passes every AC-15 example, including punctuation, internal quotes, literal AND and cafe matching café.
+- [x] #2 Unicode query length 3–200 and result limits 1–50/default 20 are validated; ranking/snippets follow section 10 without interpreting user operators.
+- [x] #3 Only live inline Markdown is indexed; canvas, blobs, oversized Markdown and tombstones remain excluded with accurate coverage counts.
+- [x] #4 Mutation rollback, rename/delete/recreate and concurrent reads cannot expose an index inconsistent with authoritative state.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -74,4 +74,12 @@ T1-P2 closed: `SearchQuerySchema` owns Unicode code-point bounds and failure ide
 WB1 closed: A real HTTP test filled all 16 durable client admissions. Before the fix, it failed because `Retry-After` was absent. The observed assertion was `expected 0 to be greater than 0`, with exit 1. `failureResponse` now forwards encoder headers. Isolate read-slot refusal now uses `encodeFileFailure` through that same response path. The regression checks status 429, canonical body, and positive `Retry-After`.
 Typing correction: `makeGateway` now implements `SearchVaultGateway` directly. Test tickets use a 32-character ID and `expires_at`. No unchecked double cast remains.
 Focused checks passed: protocol search tests (4), application search tests (6), and Worker HTTP search tests (11). `bun run docs:check` passed. `bun run check` passed lint, docs, type checks, 590 Worker unit tests, 104 Worker HTTP tests, 267 protocol tests, 52 tooling tests, 2 plugin tests, and builds. Expected network-disconnect and trigger-failure logs came from deliberate lifecycle and rollback tests. Task stays In Progress.
+
+Final acceptance at implementation revision 71ede0e8fced84d89a0dad3b18effa6ec35952fd. Independent task review d62f8ee3 accepted the feature with T1-P2. Parent whole-branch review found WB1 and checked the complete change against the specification. Correction review 3eff7735 returned APPROVE and closed T1-P2, WB1, and the typed test-double correction with source and regression evidence. Human branch review pn-75ac54 approved the complete branch without changes. All four acceptance criteria now have the test mapping above. Documentation review covered changed protocol schemas, derived types, internal helpers, native store methods, application ownership, transport, fixtures, and specification details. The native transaction remains cohesive. Canonical schemas own value policy, transport owns URL syntax, and the shared response owner owns EOF/cancellation settlement. No actionable finding remains open. The parent accepts the recorded native/HTTP TDD exception and retains the added coverage. The final bookkeeping tree receives bun run check before publication. No deployment, personal-vault access, plugin qualification, aggregate memory claim, or F1 closure applies.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Completed literal Markdown search through real Worker and Vault DO paths. Canonical query limits, native ranking, bounded plain-text snippets, epoch-bound ETags, and exact coverage counts preserve the approved contract. Atomic rollback and mutation/interleaving tests protect index consistency. Shared response ownership preserves admission through cancellation and EOF. A genuine regression exposed lost Retry-After on durable admission refusal, and the correction uses canonical failure headers. Worker validation passed all checks with 590 Worker unit, 104 HTTP, 267 protocol, 52 tooling, and 2 plugin tests. Independent and human reviews approved implementation 71ede0e. The native/HTTP TDD exception remains explicit. OAB-6.8 and OAB-6.8.2 retain runtime-envelope and deployed-retention work.
+<!-- SECTION:FINAL_SUMMARY:END -->

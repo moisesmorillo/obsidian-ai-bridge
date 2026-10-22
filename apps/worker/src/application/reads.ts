@@ -527,8 +527,8 @@ async function beginRead(
 }
 
 /** Keep one admission active until its caller reports response completion or uncertainty. */
-function createReadSession<T>(
-	gateway: ReadVaultGateway,
+export function createReadSession<T>(
+	gateway: Pick<ReadVaultGateway, "finishAdmission">,
 	context: AuthorizationContext,
 	ticketId: string,
 	body: T,

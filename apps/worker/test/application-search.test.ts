@@ -101,6 +101,39 @@ describe("application search", () => {
 		);
 	});
 
+	it("joins a started native search before settling an aborted request", async () => {
+		const observed = makeGateway({ ok: true, body });
+		let markStarted!: () => void;
+		let releaseSearch!: () => void;
+		const started = new Promise<void>((resolve) => {
+			markStarted = resolve;
+		});
+		const held = new Promise<void>((resolve) => {
+			releaseSearch = resolve;
+		});
+		observed.search.mockImplementation(async () => {
+			markStarted();
+			await held;
+			return { ok: true, body };
+		});
+		const controller = new AbortController();
+		const pending = readSearch(
+			observed.gateway,
+			context,
+			{ query: "abc", limit: 20 },
+			controller.signal,
+		);
+		await started;
+		controller.abort();
+		releaseSearch();
+		await expect(pending).rejects.toThrow();
+		expect(observed.finishAdmission).toHaveBeenCalledWith(
+			context,
+			"ticket",
+			"settled",
+		);
+	});
+
 	it("retains unknown search outcomes instead of settling their tickets", async () => {
 		const observed = makeGateway({ ok: true, body });
 		observed.search.mockRejectedValue(new Error("uncertain RPC outcome"));

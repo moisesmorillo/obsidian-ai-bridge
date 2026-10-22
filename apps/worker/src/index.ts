@@ -1,4 +1,5 @@
 import type { HistoryVaultGateway } from "@worker/application/history";
+import type { ReadVaultGateway } from "@worker/application/reads";
 import type { SearchVaultGateway } from "@worker/application/search";
 import type { TextVaultGateway } from "@worker/application/text-files";
 import type { Env } from "@worker/env";
@@ -14,7 +15,10 @@ async function resolveIdentity(_request: Request) {
 function resolveVault(
 	env: Env,
 	request: Request,
-): TextVaultGateway & HistoryVaultGateway & SearchVaultGateway {
+): TextVaultGateway &
+	HistoryVaultGateway &
+	ReadVaultGateway &
+	SearchVaultGateway {
 	const stub = env.VAULTS.get(env.VAULTS.idFromName(new URL(request.url).host));
 	return {
 		getCurrentEpoch: async (...args: Parameters<typeof stub.getCurrentEpoch>) =>

@@ -16,7 +16,8 @@ import type { ReadOutcome, ReadVaultGateway } from "@worker/application/reads";
 import { createReadSession } from "@worker/application/reads";
 
 /** Native search gateway operations that extend the shared read authority. */
-export interface SearchVaultGateway extends ReadVaultGateway {
+export interface SearchVaultGateway
+	extends Pick<ReadVaultGateway, "authorize" | "finishAdmission"> {
 	/** Select bounded literal search results under the active read ticket. */
 	search(
 		context: AuthorizationContext,

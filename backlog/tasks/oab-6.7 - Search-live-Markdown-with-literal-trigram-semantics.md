@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-10-15 00:38'
-updated_date: '2026-10-22T13:07:00Z'
+updated_date: '2026-10-22T13:25:00Z'
 labels:
   - F1
 dependencies:
@@ -52,4 +52,18 @@ Evidence: the initial protocol search test run returned exit 1 with four failed 
 Commands passed: `cd packages/protocol && bun run test -- search.test.ts`; `cd apps/worker && bunx --no-install vitest run --config vitest.config.ts test/vault-search.test.ts test/application-search.test.ts test/search-response.test.ts test/entry.test.ts`; `cd apps/worker && bunx --no-install vitest run --config vitest.http.config.ts test/http/search.test.ts`; `bun run docs:check`; `bun run check`. The final check passed lint, documentation checks, type checks, all tests, and builds.
 
 TDD limit: the initial protocol RED was observed before protocol implementation. Native and HTTP tests were added after their implementation, so no pre-implementation native or HTTP RED was observed. One first HTTP run correctly rejected `OR` because it had only two code points; the test query changed to `OR `, which then passed. No earlier mutation implementation was changed.
+
+Acceptance evidence added after c77bc17; retained the implementation and did not invent earlier RED results. Native and HTTP suites start green because they characterize the implemented search behavior. The earlier protocol RED remains the only pre-implementation RED.
+
+AC 1: `apps/worker/test/http/search.test.ts` tests `cafe`/`café`, uppercase input, AC-15 literals, quotes, operators, and SQL-looking text through the real DO. `apps/worker/test/vault-search.test.ts` tests native FTS and literal matches.
+
+AC 2: `packages/protocol/test/search.test.ts` covers Unicode code-point boundaries, passthrough, limit schema boundaries/default, strict result shape, ETags, and finite scores. `apps/worker/test/vault-search.test.ts` covers native score ordering, binary tie order, 20/50 limits, and 1,024-code-point snippets. `apps/worker/test/http/search.test.ts` covers default 20, maximum 50, strict syntax, and safe failures.
+
+AC 3: `apps/worker/test/vault-search.test.ts` covers live Markdown, Canvas, attachments, oversized blob metadata, and tombstones with coverage counts. `apps/worker/test/http/search.test.ts` publishes a real 1,500,000-byte Markdown blob and confirms exclusion with coverage count.
+
+AC 4: `apps/worker/test/vault-search.test.ts` forces a trigger failure after FTS changes and checks prior result body/ETag, empty replacement query, coverage, and head sequence. It tests real append, rename from Markdown to Canvas and back, delete/recreate, and restore. It gates the application gateway before native search RPC, commits a real mutation, then checks the returned snippet, ETag, path, and coverage all match the committed state.
+
+Authority/lifetime evidence: the native search matrix tests current revocation, read-scope denial, expired, foreign, and old-epoch tickets. `apps/worker/test/application-search.test.ts` tests abort before authorization, during authorization, and during search, plus unknown RPC retention. `apps/worker/test/http/search.test.ts` checks invalid syntax uses no admission, a post-search RPC fault retains its active ticket, and search shares the four slots with manifest, vault, and content reads.
+
+Validation after these additions: focused native/application suites passed 19 tests; focused HTTP suite passed 8 tests. `bun run docs:check` passed. `bun run check` passed lint, docs, types, 590 worker unit tests, 101 worker HTTP tests, protocol/tooling/plugin tests, and builds. The expected post-FTS failure appears in Cloudflare test runtime logs, while its test passes and proves rollback.
 <!-- SECTION:NOTES:END -->

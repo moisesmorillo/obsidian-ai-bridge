@@ -1,9 +1,21 @@
 import { env, runInDurableObject, SELF } from "cloudflare:test";
+import { pathKey } from "@obsidian-ai-bridge/protocol";
 import { initializeVaultStorage } from "@worker/infrastructure/sqlite/schema";
 import { clearTestVault } from "@worker/test-fixtures/admission";
 import testWorker from "@worker/test-fixtures/http-worker";
 import { TEXT_FIXTURE_EPOCH } from "@worker/test-fixtures/text-files";
 import { beforeEach, describe, expect, it } from "vitest";
+
+/** Hash exact blob bytes for the AC-16 search-exclusion request. */
+async function digest(bytes: Uint8Array): Promise<string> {
+	const hash = await crypto.subtle.digest(
+		"SHA-256",
+		new Uint8Array(bytes).buffer,
+	);
+	return Array.from(new Uint8Array(hash), (byte) =>
+		byte.toString(16).padStart(2, "0"),
+	).join("");
+}
 
 /** Exercise strict search requests against the real Worker and Vault Durable Object. */
 describe("literal search HTTP route", () => {
@@ -58,6 +70,69 @@ describe("literal search HTTP route", () => {
 		}
 	});
 
+	it("excludes an AC-16 oversized Markdown blob and reports its coverage", async () => {
+		const bytes = new Uint8Array(1_500_000).fill(0x61);
+		bytes.set(new TextEncoder().encode("needle"), 0);
+		const response = await SELF.fetch(
+			"https://worker.invalid/v1/files/oversized.md",
+			{
+				method: "PUT",
+				headers: {
+					"If-None-Match": "*",
+					"X-Vault-Epoch": TEXT_FIXTURE_EPOCH,
+					"X-Content-SHA256": await digest(bytes),
+					"X-Content-Size": String(bytes.byteLength),
+				},
+				body: bytes,
+			},
+		);
+		expect(response.status).toBe(201);
+		await response.text();
+		const search = await SELF.fetch(
+			"https://worker.invalid/v1/search?q=needle",
+		);
+		expect(search.status).toBe(200);
+		expect(await search.json()).toMatchObject({
+			results: [],
+			indexed_files: 0,
+			unindexed_large_files: 1,
+		});
+	});
+
+	it("uses the default 20 limit and accepts the maximum 50 limit", async () => {
+		const stub = env.VAULTS.get(env.VAULTS.idFromName("worker.invalid"));
+		await runInDurableObject(stub, (_instance, state) => {
+			for (let index = 0; index < 25; index += 1) {
+				const path = `notes/default-${String(index).padStart(2, "0")}.md`;
+				state.storage.sql.exec(
+					"INSERT INTO files(path,path_key,rev,seq,hash,size,kind,content,deleted,updated_at,origin) VALUES (?, ?, 1, ?, ?, 14, 'text', 'default needle', 0, 10, 'seed')",
+					path,
+					pathKey(path),
+					index + 1,
+					"a".repeat(64),
+				);
+				state.storage.sql.exec(
+					"INSERT INTO files_fts(path,content) VALUES (?, 'default needle')",
+					path,
+				);
+			}
+		});
+		const defaultResponse = await SELF.fetch(
+			"https://worker.invalid/v1/search?q=needle",
+		);
+		expect(defaultResponse.status).toBe(200);
+		expect(
+			((await defaultResponse.json()) as { results: unknown[] }).results,
+		).toHaveLength(20);
+		const maximumResponse = await SELF.fetch(
+			"https://worker.invalid/v1/search?q=needle&limit=50",
+		);
+		expect(maximumResponse.status).toBe(200);
+		expect(
+			((await maximumResponse.json()) as { results: unknown[] }).results,
+		).toHaveLength(25);
+	});
+
 	it("keeps indexed results in step with update and delete mutations", async () => {
 		const url = "https://worker.invalid/v1/files/mutable.md";
 		const first = await SELF.fetch(url, {
@@ -102,19 +177,63 @@ describe("literal search HTTP route", () => {
 		).toEqual([]);
 	});
 
-	it("shares the four response slots with other read routes", async () => {
+	it("shares four response slots across search, manifest, vault, and content reads", async () => {
+		const created = await SELF.fetch(
+			"https://worker.invalid/v1/files/slot.md",
+			{
+				method: "PUT",
+				headers: { "If-None-Match": "*", "X-Vault-Epoch": TEXT_FIXTURE_EPOCH },
+				body: "slot content",
+			},
+		);
+		expect(created.status).toBe(201);
+		await created.text();
+		const routes = [
+			"/v1/search?q=slot",
+			"/v1/manifest",
+			"/v1/vault",
+			"/v1/files/slot.md",
+		];
 		const responses = await Promise.all(
-			Array.from({ length: 5 }, () =>
-				testWorker.fetch(
-					new Request("https://worker.invalid/v1/search?q=abc"),
-					env,
-				),
+			routes.map((route) =>
+				testWorker.fetch(new Request(`https://worker.invalid${route}`), env),
 			),
 		);
-		expect(responses.map((response) => response.status).sort()).toEqual([
-			200, 200, 200, 200, 429,
+		expect(responses.map((response) => response.status)).toEqual([
+			200, 200, 200, 200,
 		]);
+		const limited = await testWorker.fetch(
+			new Request("https://worker.invalid/v1/search?q=slot"),
+			env,
+		);
+		expect(limited.status).toBe(429);
+		expect(Number(limited.headers.get("Retry-After"))).toBeGreaterThan(0);
+		await limited.text();
 		for (const response of responses) await response.text();
+	});
+
+	it("keeps an unknown post-search RPC outcome charged and returns a safe error", async () => {
+		const response = await testWorker.fetch(
+			new Request("https://worker.invalid/v1/search?q=private-query", {
+				headers: { "X-Test-Fail-RPC": "search" },
+			}),
+			env,
+		);
+		expect(response.status).toBe(500);
+		const text = await response.text();
+		expect(text).toContain("internal_error");
+		for (const secret of ["private-query", "token", "SQL", "exception"])
+			expect(text).not.toContain(secret);
+		const stub = env.VAULTS.get(env.VAULTS.idFromName("worker.invalid"));
+		const active = await runInDurableObject(stub, (_instance, state) =>
+			state.storage.sql
+				.exec(
+					"SELECT id, expires_at FROM operation_admissions WHERE state = 'active'",
+				)
+				.toArray(),
+		);
+		expect(active).toHaveLength(1);
+		expect(active[0]?.expires_at).toBeGreaterThan(Date.now());
 	});
 
 	it("checks read scope before native search demand", async () => {
@@ -152,5 +271,10 @@ describe("literal search HTTP route", () => {
 		);
 		expect(long.status).toBe(400);
 		expect(await long.json()).toMatchObject({ error: "query_too_long" });
+		const stub = env.VAULTS.get(env.VAULTS.idFromName("worker.invalid"));
+		const admissions = await runInDurableObject(stub, (_instance, state) =>
+			state.storage.sql.exec("SELECT id FROM operation_admissions").toArray(),
+		);
+		expect(admissions).toEqual([]);
 	});
 });

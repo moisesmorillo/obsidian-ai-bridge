@@ -1,5 +1,6 @@
 import type { AuthorizationContext } from "@obsidian-ai-bridge/protocol";
 import type { HistoryVaultGateway } from "@worker/application/history";
+import type { ReadVaultGateway } from "@worker/application/reads";
 import type { SearchVaultGateway } from "@worker/application/search";
 import type { TextVaultGateway } from "@worker/application/text-files";
 import type { Env } from "@worker/env";
@@ -56,7 +57,10 @@ const worker = createWorker(
 	(
 		env: Env,
 		request: Request,
-	): TextVaultGateway & HistoryVaultGateway & SearchVaultGateway => {
+	): TextVaultGateway &
+		HistoryVaultGateway &
+		ReadVaultGateway &
+		SearchVaultGateway => {
 		const stub = env.VAULTS.get(
 			env.VAULTS.idFromName(new URL(request.url).host),
 		);

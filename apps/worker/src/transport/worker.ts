@@ -1,6 +1,7 @@
 import type { AuthorizationContext } from "@obsidian-ai-bridge/protocol";
 import type { BlobContentStore } from "@worker/application/blobs";
 import type { HistoryVaultGateway } from "@worker/application/history";
+import type { ReadVaultGateway } from "@worker/application/reads";
 import type { SearchVaultGateway } from "@worker/application/search";
 import type { TextVaultGateway } from "@worker/application/text-files";
 import type { Env } from "@worker/env";
@@ -15,7 +16,10 @@ export function createWorker(
 	resolveVault: (
 		env: Env,
 		request: Request,
-	) => TextVaultGateway & HistoryVaultGateway & SearchVaultGateway,
+	) => TextVaultGateway &
+		HistoryVaultGateway &
+		ReadVaultGateway &
+		SearchVaultGateway,
 	resolveBlobs: (env: Env) => BlobContentStore,
 ): Hono<{ Bindings: Env }> {
 	const app = new Hono<{ Bindings: Env }>();

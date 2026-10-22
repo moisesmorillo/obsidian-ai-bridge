@@ -4,12 +4,19 @@ import {
 	SearchRequestSchema,
 	SearchResponseSchema,
 	SearchResultSchema,
+	searchQueryFailure,
 } from "@obsidian-ai-bridge/protocol";
 import { describe, expect, it } from "vitest";
 
 describe("search protocol", () => {
 	it("validates query code points and preserves literal input", () => {
 		const astral = "😀";
+		expect(searchQueryFailure(`${astral}a`)).toBe("query_too_short");
+		expect(searchQueryFailure(`${astral}ab`)).toBeUndefined();
+		expect(searchQueryFailure(`${astral}${"a".repeat(199)}`)).toBeUndefined();
+		expect(searchQueryFailure(`${astral}${"a".repeat(200)}`)).toBe(
+			"query_too_long",
+		);
 		expect(SearchRequestSchema.safeParse({ query: "ab" }).success).toBe(false);
 		expect(SearchRequestSchema.parse({ query: `${astral}ab` }).query).toBe(
 			`${astral}ab`,

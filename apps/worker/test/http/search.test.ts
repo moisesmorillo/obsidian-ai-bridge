@@ -1,5 +1,9 @@
 import { env, runInDurableObject, SELF } from "cloudflare:test";
-import { pathKey } from "@obsidian-ai-bridge/protocol";
+import {
+	type AuthorizationContext,
+	EMPTY_PAYLOAD_HASH,
+	pathKey,
+} from "@obsidian-ai-bridge/protocol";
 import { initializeVaultStorage } from "@worker/infrastructure/sqlite/schema";
 import { clearTestVault } from "@worker/test-fixtures/admission";
 import testWorker from "@worker/test-fixtures/http-worker";
@@ -68,6 +72,34 @@ describe("literal search HTTP route", () => {
 			expect(body.results[0]?.snippet).not.toMatch(/<b>|<\/b>/);
 			expect(Number.isFinite(body.results[0]?.score)).toBe(true);
 		}
+	});
+
+	it("returns the canonical retry header when durable client admission is full", async () => {
+		const stub = env.VAULTS.get(env.VAULTS.idFromName("worker.invalid"));
+		const identity: AuthorizationContext = {
+			client_id: "http-test-client",
+			grant_id: "http-test-grant",
+			scopes: ["vault:read", "vault:write", "vault:delete"],
+		};
+		for (let index = 0; index < 16; index += 1) {
+			const authorized = await stub.authorize(identity, {
+				op: "read",
+				paths: [],
+				precondition: { kind: "none" },
+				payload_hash: EMPTY_PAYLOAD_HASH,
+				size: 0,
+			});
+			expect(authorized.ok, `durable admission ${index}`).toBe(true);
+		}
+		const response = await SELF.fetch(
+			"https://worker.invalid/v1/search?q=capacity",
+		);
+		expect(response.status).toBe(429);
+		expect(await response.json()).toEqual({
+			error: "admission_limited",
+			message: "The vault cannot accept another operation now.",
+		});
+		expect(Number(response.headers.get("Retry-After"))).toBeGreaterThan(0);
 	});
 
 	it("excludes an AC-16 oversized Markdown blob and reports its coverage", async () => {
@@ -234,6 +266,73 @@ describe("literal search HTTP route", () => {
 		);
 		expect(active).toHaveLength(1);
 		expect(active[0]?.expires_at).toBeGreaterThan(Date.now());
+	});
+
+	it("validates 2, 3, 200, and 201 Unicode code points at HTTP", async () => {
+		const cases = [
+			{ query: "😀a", status: 400, failure: "query_too_short" },
+			{ query: "😀ab", status: 200 },
+			{ query: `😀${"a".repeat(199)}`, status: 200 },
+			{ query: `😀${"a".repeat(200)}`, status: 400, failure: "query_too_long" },
+		] as const;
+		const stub = env.VAULTS.get(env.VAULTS.idFromName("worker.invalid"));
+		for (const item of cases) {
+			const before = await runInDurableObject(
+				stub,
+				(_instance, state) =>
+					state.storage.sql
+						.exec("SELECT id FROM operation_admissions")
+						.toArray().length,
+			);
+			const response = await SELF.fetch(
+				`https://worker.invalid/v1/search?q=${encodeURIComponent(item.query)}`,
+			);
+			expect(response.status).toBe(item.status);
+			if ("failure" in item) {
+				expect(await response.json()).toMatchObject({ error: item.failure });
+				const after = await runInDurableObject(
+					stub,
+					(_instance, state) =>
+						state.storage.sql
+							.exec("SELECT id FROM operation_admissions")
+							.toArray().length,
+				);
+				expect(after).toBe(before);
+			} else await response.json();
+		}
+	});
+
+	it("validates limit range through HTTP and accepts both endpoints", async () => {
+		const stub = env.VAULTS.get(env.VAULTS.idFromName("worker.invalid"));
+		for (const limit of ["0", "51"]) {
+			const before = await runInDurableObject(
+				stub,
+				(_instance, state) =>
+					state.storage.sql
+						.exec("SELECT id FROM operation_admissions")
+						.toArray().length,
+			);
+			const response = await SELF.fetch(
+				`https://worker.invalid/v1/search?q=abc&limit=${limit}`,
+			);
+			expect(response.status).toBe(400);
+			expect(await response.json()).toMatchObject({ error: "invalid_request" });
+			const after = await runInDurableObject(
+				stub,
+				(_instance, state) =>
+					state.storage.sql
+						.exec("SELECT id FROM operation_admissions")
+						.toArray().length,
+			);
+			expect(after).toBe(before);
+		}
+		for (const limit of ["1", "50"]) {
+			const response = await SELF.fetch(
+				`https://worker.invalid/v1/search?q=abc&limit=${limit}`,
+			);
+			expect(response.status).toBe(200);
+			await response.json();
+		}
 	});
 
 	it("checks read scope before native search demand", async () => {

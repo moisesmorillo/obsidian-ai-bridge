@@ -5,7 +5,9 @@ import type {
 } from "@obsidian-ai-bridge/protocol";
 import {
 	encodeFileFailure,
+	SearchLimitSchema,
 	SearchRequestSchema,
+	searchQueryFailure,
 } from "@obsidian-ai-bridge/protocol";
 import { tryAcquireReadSlot } from "@worker/application/read-budget";
 import { ReadAborted } from "@worker/application/read-demand";
@@ -34,18 +36,11 @@ export function createSearchRouter(
 		if (!identity.scopes.includes("vault:read"))
 			return failureResponse({ kind: "forbidden_scope" });
 		const release = tryAcquireReadSlot();
-		if (!release) {
-			return new Response(
-				JSON.stringify({
-					error: "admission_limited",
-					message: "The vault cannot accept another operation now.",
-				}),
-				{
-					status: 429,
-					headers: { "Content-Type": "application/json", "Retry-After": "1" },
-				},
-			);
-		}
+		if (!release)
+			return failureResponse({
+				kind: "admission_limited",
+				retry_after_seconds: 1,
+			});
 		let outcome: ReadOutcome<SearchResult>;
 		try {
 			outcome = await readSearch(
@@ -96,23 +91,26 @@ function parseSearchQuery(request: Request) {
 			ok: false as const,
 			failure: { kind: "invalid_request" as const },
 		};
-	const length = Array.from(query).length;
-	if (length < 3)
+	const queryFailure = searchQueryFailure(query);
+	if (queryFailure !== undefined)
+		return { ok: false as const, failure: { kind: queryFailure } };
+	const rawLimit = params.get("limit");
+	if (rawLimit !== null && !/^(?:0|[1-9][0-9]*)$/.test(rawLimit))
 		return {
 			ok: false as const,
-			failure: { kind: "query_too_short" as const },
+			failure: { kind: "invalid_request" as const },
 		};
-	if (length > 200)
-		return { ok: false as const, failure: { kind: "query_too_long" as const } };
-	const rawLimit = params.get("limit");
-	if (rawLimit !== null && !/^(?:[1-9]|[1-4][0-9]|50)$/.test(rawLimit))
+	const parsedLimit = SearchLimitSchema.safeParse(
+		rawLimit === null ? undefined : Number(rawLimit),
+	);
+	if (!parsedLimit.success)
 		return {
 			ok: false as const,
 			failure: { kind: "invalid_request" as const },
 		};
 	const requestValue = SearchRequestSchema.parse({
 		query,
-		...(rawLimit === null ? {} : { limit: Number(rawLimit) }),
+		limit: parsedLimit.data,
 	});
 	return { ok: true as const, request: requestValue };
 }
@@ -122,6 +120,9 @@ function failureResponse(failure: FileHttpFailureInput): Response {
 	const encoded = encodeFileFailure(failure);
 	return new Response(JSON.stringify(encoded.body), {
 		status: encoded.status,
-		headers: { "Content-Type": "application/json" },
+		headers: {
+			"Content-Type": "application/json",
+			...encoded.headers,
+		},
 	});
 }

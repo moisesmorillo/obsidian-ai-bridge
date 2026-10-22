@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-10-15 00:38'
-updated_date: '2026-10-22T13:25:00Z'
+updated_date: '2026-10-22T13:46:00Z'
 labels:
   - F1
 dependencies:
@@ -66,4 +66,12 @@ AC 4: `apps/worker/test/vault-search.test.ts` forces a trigger failure after FTS
 Authority/lifetime evidence: the native search matrix tests current revocation, read-scope denial, expired, foreign, and old-epoch tickets. `apps/worker/test/application-search.test.ts` tests abort before authorization, during authorization, and during search, plus unknown RPC retention. `apps/worker/test/http/search.test.ts` checks invalid syntax uses no admission, a post-search RPC fault retains its active ticket, and search shares the four slots with manifest, vault, and content reads.
 
 Validation after these additions: focused native/application suites passed 19 tests; focused HTTP suite passed 8 tests. `bun run docs:check` passed. `bun run check` passed lint, docs, types, 590 worker unit tests, 101 worker HTTP tests, protocol/tooling/plugin tests, and builds. The expected post-FTS failure appears in Cloudflare test runtime logs, while its test passes and proves rollback.
+
+Independent task review d62f8ee3 inspected base2c5cbe5 through cfc8bc6 and returned spec compliance OK and task quality OK with notes. T1-P2 remains open: transport duplicates canonical query-length and limit policy. Whole-branch review at cfc8bc6 found WB1: search failureResponse discards encodeFileFailure headers, so a native admission_limited response loses Retry-After. The isolate-only refusal uses a separate hand-written response. This violates canonical retry behavior when durable client/vault capacity fills across requests. Correct both through canonical validation and failure encoding, with HTTP boundary and durable-refusal regressions. Structural review: native search owns one atomic policy/result/coverage transaction, application owns admission plus demand checks, and the existing response owner owns EOF/cancellation settlement. No mutation owner changed. Review scope includes all changed TypeScript declarations, tests, composition, specification details, and the approved plan. Platform-wide memory and deployed retention remain outside the evidence boundary.
+
+Correction wave at cfc8bc6.
+T1-P2 closed: `SearchQuerySchema` owns Unicode code-point bounds and failure identity. `SearchLimitSchema` owns the 1–50 range and default 20. Transport retains only canonical integer spelling checks. Real HTTP tests cover query lengths 2, 3, 200, and 201 with astral characters. They cover limits 0, 1, 50, and 51. Invalid queries and limits add no admission rows. Protocol tests confirm exact query text and canonical short/long failures.
+WB1 closed: A real HTTP test filled all 16 durable client admissions. Before the fix, it failed because `Retry-After` was absent. The observed assertion was `expected 0 to be greater than 0`, with exit 1. `failureResponse` now forwards encoder headers. Isolate read-slot refusal now uses `encodeFileFailure` through that same response path. The regression checks status 429, canonical body, and positive `Retry-After`.
+Typing correction: `makeGateway` now implements `SearchVaultGateway` directly. Test tickets use a 32-character ID and `expires_at`. No unchecked double cast remains.
+Focused checks passed: protocol search tests (4), application search tests (6), and Worker HTTP search tests (11). `bun run docs:check` passed. `bun run check` passed lint, docs, type checks, 590 Worker unit tests, 104 Worker HTTP tests, 267 protocol tests, 52 tooling tests, 2 plugin tests, and builds. Expected network-disconnect and trigger-failure logs came from deliberate lifecycle and rollback tests. Task stays In Progress.
 <!-- SECTION:NOTES:END -->

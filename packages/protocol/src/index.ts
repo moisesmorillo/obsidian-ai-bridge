@@ -84,9 +84,13 @@ export {
 } from "@protocol/schemas/reads";
 export {
 	SearchHitSchema,
+	SearchLimitSchema,
+	SearchQueryFailureSchema,
+	SearchQuerySchema,
 	SearchRequestSchema,
 	SearchResponseSchema,
 	SearchResultSchema,
+	searchQueryFailure,
 } from "@protocol/schemas/search";
 export type {
 	AdmissionCompletion,

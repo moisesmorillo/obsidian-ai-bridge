@@ -1,6 +1,12 @@
 import type {
+	AdmissionCompletion,
+	AdmissionFinishResult,
+	AdmissionResult,
 	AuthorizationContext,
+	OperationIntent,
+	SearchRequest,
 	SearchResponse,
+	SearchResult,
 } from "@obsidian-ai-bridge/protocol";
 import { EMPTY_PAYLOAD_HASH } from "@obsidian-ai-bridge/protocol";
 import type { SearchVaultGateway } from "@worker/application/search";
@@ -12,26 +18,40 @@ const context: AuthorizationContext = {
 	grant_id: "app-search-grant",
 	scopes: ["vault:read"],
 };
-const body = {
+const body: SearchResult = {
 	epoch: "0123456789abcdef0123456789abcdef",
 	results: [],
 	indexed_files: 0,
 	unindexed_large_files: 0,
 };
+const ticketId = "0123456789abcdef0123456789abcdef";
 
 /** Build the smallest gateway that observes search authorization and settlement. */
 function makeGateway(response: SearchResponse) {
-	const authorize = vi.fn(async () => ({
-		ok: true as const,
-		ticket: { id: "ticket" },
-	}));
-	const search = vi.fn(async () => response);
-	const finishAdmission = vi.fn(async () => ({ ok: true as const }));
-	const gateway = {
-		authorize,
-		search,
-		finishAdmission,
-	} as unknown as SearchVaultGateway;
+	const authorize = vi.fn(
+		async (
+			_context: AuthorizationContext,
+			_intent: OperationIntent,
+		): Promise<AdmissionResult> => ({
+			ok: true,
+			ticket: { id: ticketId, expires_at: Number.MAX_SAFE_INTEGER },
+		}),
+	);
+	const search = vi.fn(
+		async (
+			_context: AuthorizationContext,
+			_request: SearchRequest,
+			_admissionId: string,
+		): Promise<SearchResponse> => response,
+	);
+	const finishAdmission = vi.fn(
+		async (
+			_context: AuthorizationContext,
+			_ticketId: string,
+			_completion: AdmissionCompletion,
+		): Promise<AdmissionFinishResult> => ({ ok: true }),
+	);
+	const gateway: SearchVaultGateway = { authorize, search, finishAdmission };
 	return { gateway, authorize, search, finishAdmission };
 }
 
@@ -52,7 +72,7 @@ describe("application search", () => {
 		expect(observed.search).toHaveBeenCalledWith(
 			context,
 			{ query: "abc", limit: 20 },
-			"ticket",
+			ticketId,
 		);
 		expect(outcome.ok).toBe(true);
 		if (outcome.ok) await outcome.finish("settled");
@@ -79,8 +99,12 @@ describe("application search", () => {
 		let authorize: (() => void) | undefined;
 		observed.authorize.mockImplementation(
 			() =>
-				new Promise<{ ok: true; ticket: { id: string } }>((resolve) => {
-					authorize = () => resolve({ ok: true, ticket: { id: "ticket" } });
+				new Promise<AdmissionResult>((resolve) => {
+					authorize = () =>
+						resolve({
+							ok: true,
+							ticket: { id: ticketId, expires_at: Number.MAX_SAFE_INTEGER },
+						});
 				}),
 		);
 		const controller = new AbortController();
@@ -96,7 +120,7 @@ describe("application search", () => {
 		expect(observed.search).not.toHaveBeenCalled();
 		expect(observed.finishAdmission).toHaveBeenCalledWith(
 			context,
-			"ticket",
+			ticketId,
 			"settled",
 		);
 	});
@@ -129,7 +153,7 @@ describe("application search", () => {
 		await expect(pending).rejects.toThrow();
 		expect(observed.finishAdmission).toHaveBeenCalledWith(
 			context,
-			"ticket",
+			ticketId,
 			"settled",
 		);
 	});
@@ -153,7 +177,7 @@ describe("application search", () => {
 		});
 		expect(observed.finishAdmission).toHaveBeenCalledWith(
 			context,
-			"ticket",
+			ticketId,
 			"settled",
 		);
 	});

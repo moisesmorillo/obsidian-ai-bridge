@@ -12,7 +12,6 @@ describe("default-deny Worker entry point", () => {
 	});
 
 	it.each([
-		["GET", "/v1/vault"],
 		["GET", "/mcp"],
 		["GET", "/owner/clients"],
 		["GET", "/unknown"],
@@ -22,6 +21,18 @@ describe("default-deny Worker entry point", () => {
 		});
 
 		expect(response.status).toBe(404);
+	});
+
+	it.each([
+		"/v1/vault",
+		"/v1/manifest",
+		"/v1/changes?epoch=0123456789abcdef0123456789abcdef&since=0",
+		"/v1/history/note.md",
+		"/v1/files/note.md",
+		"/v1/files/note.md?rev=1",
+	])("denies production read %s before Vault selection", async (route) => {
+		const response = await SELF.fetch(`https://worker.invalid${route}`);
+		expect(response.status).toBe(401);
 	});
 
 	it("denies a registered production file route before body processing", async () => {

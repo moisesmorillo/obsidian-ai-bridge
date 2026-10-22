@@ -18,17 +18,16 @@ import {
 } from "@worker/application/blobs";
 import { FileOperationDenied } from "@worker/application/files";
 import type { HistoryVaultGateway } from "@worker/application/history";
+import { assertReadDemand } from "@worker/application/read-demand";
 import {
 	executeTextMutation,
 	type TextVaultGateway,
 } from "@worker/application/text-files";
 import { prepareTextPayload } from "@worker/application/text-payload";
 import type { Env } from "@worker/env";
-import {
-	parseBlobDeclaration,
-	readBlobResponse,
-} from "@worker/transport/blobs";
+import { parseBlobDeclaration } from "@worker/transport/blobs";
 import { readInlineBody } from "@worker/transport/body";
+import { readContentResponse } from "@worker/transport/content-reads";
 import { handleHistoryCommand } from "@worker/transport/history";
 import {
 	fileFailureResponse as errorResponse,
@@ -80,12 +79,18 @@ export function createFileRouter(
 		if (context.req.method === "GET") {
 			if (!identity.scopes.includes("vault:read"))
 				return errorResponse({ kind: "forbidden_scope" });
+			assertReadDemand(context.req.raw.signal);
 			const query = new URL(context.req.url).searchParams;
 			if (
 				[...query.keys()].some(
 					(key) => !["rev", "offset", "length"].includes(key),
 				) ||
-				["rev", "offset", "length"].some((key) => query.getAll(key).length > 1)
+				["rev", "offset", "length"].some(
+					(key) =>
+						query.getAll(key).length > 1 ||
+						(query.has(key) &&
+							!/^(?:0|[1-9][0-9]*)$/.test(query.get(key) ?? "")),
+				)
 			)
 				return errorResponse({ kind: "invalid_request" });
 			const rev = query.has("rev") ? Number(query.get("rev")) : undefined;
@@ -107,19 +112,13 @@ export function createFileRouter(
 			};
 			const parsed = TextReadRequestSchema.safeParse(request);
 			if (!parsed.success) return errorResponse({ kind: "invalid_request" });
-			const result = await gateway.readText(identity, parsed.data);
-			if (!result.ok) {
-				if (result.failure.kind === "not_implemented")
-					return readBlobResponse(
-						gateway,
-						resolveBlobs(context.env),
-						identity,
-						parsed.data,
-						context.req.raw.headers.get("Range"),
-					);
-				return errorResponse(result.failure);
-			}
-			return context.json(result.body, 200, { ETag: result.body.etag });
+			return readContentResponse(
+				gateway,
+				() => resolveBlobs(context.env),
+				identity,
+				parsed.data,
+				context.req.raw,
+			);
 		}
 		if (context.req.method !== "PUT" && context.req.method !== "DELETE")
 			return errorResponse({ kind: "not_found" });

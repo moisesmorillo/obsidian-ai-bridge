@@ -6,8 +6,12 @@ import type {
 	AuthorizationContext,
 	CurrentEpochOperation,
 	CurrentEpochResult,
+	FileFailure,
 	HistoryRequest,
+	HistoryUpperResponse,
 	IdempotencyKey,
+	MetadataBatchRequest,
+	MetadataBatchResponse,
 	OperationDescriptor,
 	OperationIntent,
 	RenameReservation,
@@ -17,23 +21,38 @@ import type {
 	TextMutationResult,
 	TextReadRequest,
 	TextReadResult,
+	VaultReadResponse,
 } from "@obsidian-ai-bridge/protocol";
+import { AdmissionDenied } from "@worker/application/admission";
+import { FileOperationDenied } from "@worker/application/files";
 import type { ImmutableFileCommand } from "@worker/application/history";
 import type { Env } from "@worker/env";
 import { R2BlobStore } from "@worker/infrastructure/r2/blobs";
 import { SqliteAdmissionAuthority } from "@worker/infrastructure/sqlite/admission";
 import { SqliteMutationCoordinator } from "@worker/infrastructure/sqlite/mutations";
+import { SqliteReadStore } from "@worker/infrastructure/sqlite/reads";
 import {
 	generateEpoch,
 	initializeVaultStorage,
 } from "@worker/infrastructure/sqlite/schema";
 import { SqliteTextStore } from "@worker/infrastructure/sqlite/text-files";
 
+/** Return structured native policy failures and propagate uncertain storage faults. */
+function nativeReadFailure(error: unknown): {
+	ok: false;
+	failure: FileFailure;
+} {
+	if (error instanceof AdmissionDenied || error instanceof FileOperationDenied)
+		return { ok: false, failure: error.failure };
+	throw error;
+}
+
 /** SQLite-backed authority for one isolated vault id. */
 export class Vault extends DurableObject<Env> {
 	private readonly admissionAuthority: SqliteAdmissionAuthority;
 	private readonly mutationCoordinator: SqliteMutationCoordinator;
 	private readonly textStore: SqliteTextStore;
+	private readonly readStore: SqliteReadStore;
 
 	/**
 	 * The constructor creates fresh storage or validates existing storage synchronously in one transaction.
@@ -64,12 +83,16 @@ export class Vault extends DurableObject<Env> {
 			this.admissionAuthority,
 			{ now: Date.now },
 		);
+		this.readStore = new SqliteReadStore(ctx.storage, this.admissionAuthority, {
+			now: Date.now,
+		});
 		this.textStore = new SqliteTextStore(
 			ctx.storage,
 			this.mutationCoordinator,
 			{
 				now: Date.now,
 				blobStore: new R2BlobStore(env.R2_BUCKET),
+				admissions: this.admissionAuthority,
 			},
 		);
 	}
@@ -136,6 +159,53 @@ export class Vault extends DurableObject<Env> {
 		);
 	}
 
+	/** Return aggregate metadata or a canonical known policy failure across Durable Object RPC. */
+	async readVault(
+		context: AuthorizationContext,
+		admissionId: string,
+	): Promise<VaultReadResponse> {
+		try {
+			return {
+				ok: true,
+				body: await this.readStore.readVault(context, admissionId),
+			};
+		} catch (error) {
+			return nativeReadFailure(error);
+		}
+	}
+
+	/** Capture a path's history ceiling or return a canonical known policy failure. */
+	async readHistoryUpper(
+		context: AuthorizationContext,
+		admissionId: string,
+		path: string,
+	): Promise<HistoryUpperResponse> {
+		try {
+			return {
+				ok: true,
+				body: await this.readStore.readHistoryUpper(context, admissionId, path),
+			};
+		} catch (error) {
+			return nativeReadFailure(error);
+		}
+	}
+
+	/** Read one bounded metadata batch or return its canonical known policy failure. */
+	async readBatch(
+		context: AuthorizationContext,
+		request: MetadataBatchRequest,
+		admissionId: string,
+	): Promise<MetadataBatchResponse> {
+		try {
+			return {
+				ok: true,
+				body: await this.readStore.readBatch(context, request, admissionId),
+			};
+		} catch (error) {
+			return nativeReadFailure(error);
+		}
+	}
+
 	/** Read retained content-free revision metadata after native policy checks. */
 	readHistory(context: AuthorizationContext, request: HistoryRequest) {
 		return this.textStore.readHistory(context, request);
@@ -166,17 +236,22 @@ export class Vault extends DurableObject<Env> {
 		return this.textStore.commitBlob(context, intent, ticketId, key);
 	}
 
-	/** Read immutable metadata for a current or retained blob revision. */
-	readBlobMetadata(context: AuthorizationContext, request: TextReadRequest) {
-		return this.textStore.readBlobMetadata(context, request);
+	/** Select blob metadata under current policy and the optional response ticket. Public HTTP reads always supply that ticket. */
+	readBlobMetadata(
+		context: AuthorizationContext,
+		request: TextReadRequest,
+		admissionId?: string,
+	) {
+		return this.textStore.readBlobMetadata(context, request, admissionId);
 	}
 
-	/** Read current or selected historical inline text. */
+	/** Select inline text under current policy and the optional response ticket. Public HTTP reads always supply that ticket. */
 	readText(
 		context: AuthorizationContext,
 		request: TextReadRequest,
+		admissionId?: string,
 	): Promise<TextReadResult> {
-		return this.textStore.readText(context, request);
+		return this.textStore.readText(context, request, admissionId);
 	}
 
 	/** Close an owned admission after a known or uncertain operation outcome. */

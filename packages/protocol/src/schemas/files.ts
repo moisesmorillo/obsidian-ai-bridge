@@ -24,6 +24,7 @@ const StrictAdmissionFailureSchema = z.intersection(
 export const FileFailureSchema = z.union([
 	StrictAdmissionFailureSchema,
 	z.object({ kind: z.literal("operation_expired") }).strict(),
+	z.object({ kind: z.literal("cursor_expired") }).strict(),
 	z.object({ kind: z.literal("blob_integrity_mismatch") }).strict(),
 	z
 		.object({
@@ -85,6 +86,7 @@ const FileHttpErrorSchema = z.enum([
 	"idempotency_in_progress",
 	"invalid_ticket",
 	"revision_pruned",
+	"cursor_expired",
 	"precondition_failed",
 	"text_too_large",
 	"blob_too_large",
@@ -114,6 +116,7 @@ export const FILE_HTTP_MESSAGES = Object.freeze({
 	idempotency_in_progress: "An operation with this key is not complete.",
 	invalid_ticket: "The operation ticket is not valid.",
 	revision_pruned: "This revision is no longer available.",
+	cursor_expired: "This read cursor is no longer valid.",
 	precondition_failed: "The file state does not match the precondition.",
 	text_too_large: "The text is larger than the size limit.",
 	blob_too_large: "The blob is larger than the size limit.",
@@ -164,6 +167,7 @@ export const FILE_HTTP_STATUSES = Object.freeze({
 	idempotency_in_progress: 409,
 	invalid_ticket: 409,
 	revision_pruned: 410,
+	cursor_expired: 410,
 	precondition_failed: 412,
 	text_too_large: 413,
 	blob_too_large: 413,

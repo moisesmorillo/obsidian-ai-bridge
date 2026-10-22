@@ -100,10 +100,22 @@ describe("history mutation HTTP routes", () => {
 			"https://worker.invalid/v1/history/notes/destination.md",
 		);
 		expect(history.status).toBe(200);
-		expect(await history.json()).toMatchObject([
-			{ rev: 1, size: 8, deleted: false },
-			{ rev: 2, size: 5, deleted: false },
-		]);
+		expect(await history.json()).toMatchObject({
+			epoch: TEXT_FIXTURE_EPOCH,
+			entries: [
+				{
+					etag: '"0123456789abcdef0123456789abcdef.1"',
+					size: 8,
+					deleted: false,
+				},
+				{
+					etag: '"0123456789abcdef0123456789abcdef.2"',
+					size: 5,
+					deleted: false,
+				},
+			],
+			next_page: null,
+		});
 		const pinned = await SELF.fetch(
 			"https://worker.invalid/v1/files/notes/destination.md?rev=1",
 			{
@@ -223,7 +235,17 @@ describe("history mutation HTTP routes", () => {
 		);
 		expect(allowed.status).toBe(200);
 		const entries = await allowed.json();
-		expect(entries).toMatchObject([{ rev: 1, size: 13, deleted: false }]);
+		expect(entries).toMatchObject({
+			epoch: TEXT_FIXTURE_EPOCH,
+			entries: [
+				{
+					etag: '"0123456789abcdef0123456789abcdef.1"',
+					size: 13,
+					deleted: false,
+				},
+			],
+			next_page: null,
+		});
 		expect(JSON.stringify(entries)).not.toContain("private bytes");
 		const writeDenied = await SELF.fetch(
 			"https://worker.invalid/v1/files/private.md",
@@ -339,6 +361,7 @@ describe("history mutation HTTP routes", () => {
 			{ headers: { "X-Vault-Epoch": TEXT_FIXTURE_EPOCH } },
 		);
 		const sourceTag = currentSource.headers.get("ETag");
+		await currentSource.text();
 		const intoTombstone = await SELF.fetch(
 			"https://worker.invalid/v1/files/Source.md:rename",
 			{
@@ -544,6 +567,7 @@ describe("history mutation HTTP routes", () => {
 		const afterRestore = await SELF.fetch(url, {
 			headers: { "X-Vault-Epoch": TEXT_FIXTURE_EPOCH },
 		});
+		await afterRestore.text();
 		const deleted = await SELF.fetch(url, {
 			method: "DELETE",
 			headers: { "If-Match": afterRestore.headers.get("ETag") ?? "" },
@@ -569,6 +593,7 @@ describe("history mutation HTTP routes", () => {
 		const current = await SELF.fetch(url, {
 			headers: { "X-Vault-Epoch": TEXT_FIXTURE_EPOCH },
 		});
+		await current.text();
 		const pruned = await SELF.fetch(`${url}:restore`, {
 			method: "POST",
 			headers: { "If-Match": current.headers.get("ETag") ?? "" },
@@ -673,8 +698,12 @@ describe("history mutation HTTP routes", () => {
 		const spaceHistory = await SELF.fetch(
 			"https://worker.invalid/v1/history/notes/history%20name.md",
 		);
-		expect(await percentHistory.json()).toMatchObject([{ size: 7 }]);
-		expect(await spaceHistory.json()).toMatchObject([{ size: 13 }]);
+		expect(await percentHistory.json()).toMatchObject({
+			entries: [{ size: 7 }],
+		});
+		expect(await spaceHistory.json()).toMatchObject({
+			entries: [{ size: 13 }],
+		});
 		expect(historyPercent.status).toBe(201);
 		expect(historySpace.status).toBe(201);
 		expect(commandSpace.status).toBe(201);

@@ -41,6 +41,7 @@ import type { ImmutableFileCommand } from "@worker/application/history";
 import { prepareTextPayload } from "@worker/application/text-payload";
 import {
 	assertPolicyInTransaction,
+	type SqliteAdmissionAuthority,
 	type VaultTransaction,
 } from "@worker/infrastructure/sqlite/admission";
 import { SqliteHistoryStore } from "@worker/infrastructure/sqlite/history";
@@ -70,6 +71,8 @@ export class SqliteTextStore {
 			now: () => number;
 			logger?: Logger;
 			blobStore?: BlobStore;
+			/** Optional for direct native callers. Public response reads always supply the shared authority and a ticket. */
+			admissions?: SqliteAdmissionAuthority;
 		},
 	) {
 		this.db = drizzle(storage, { schema: vaultSchema, logger: ports.logger });
@@ -281,10 +284,11 @@ export class SqliteTextStore {
 		return this.history.readHistory(context, request);
 	}
 
-	/** Read immutable current or retained blob metadata after native policy checks. */
+	/** Select blob metadata under current policy. A supplied response ticket also fences selection in the same transaction. */
 	async readBlobMetadata(
 		context: AuthorizationContext,
 		request: TextReadRequest,
+		admissionId?: string,
 	): Promise<BlobMetadataReadResult> {
 		const parsed = TextReadRequestSchema.safeParse(request);
 		if (!parsed.success)
@@ -296,6 +300,17 @@ export class SqliteTextStore {
 			precondition: { kind: "none" },
 			...(value.epoch === undefined ? {} : { epoch: value.epoch }),
 		};
+		const operation =
+			admissionId === undefined
+				? undefined
+				: await prepareOperation(context, {
+						op: "read",
+						paths: [value.path],
+						precondition: { kind: "none" },
+						payload_hash: EMPTY_PAYLOAD_HASH,
+						size: 0,
+					});
+
 		try {
 			return await this.db.transaction((tx) => {
 				const epoch = assertPolicyInTransaction(tx, context, {
@@ -303,6 +318,16 @@ export class SqliteTextStore {
 					descriptor,
 					descriptorFingerprint: "",
 				});
+				if (operation !== undefined && admissionId !== undefined) {
+					if (!this.ports.admissions)
+						throw new Error("Content read admission authority is absent");
+					this.ports.admissions.assertActiveTicketInTransaction(
+						tx,
+						context,
+						operation,
+						admissionId,
+					);
+				}
 				const row =
 					value.rev === undefined
 						? tx.select().from(files).where(eq(files.path, value.path)).all()[0]
@@ -350,10 +375,11 @@ export class SqliteTextStore {
 		}
 	}
 
-	/** Read one current or selected historical text row from a policy-checked snapshot. */
+	/** Select text under current policy. A supplied response ticket also fences selection in the same transaction. */
 	async readText(
 		context: AuthorizationContext,
 		request: TextReadRequest,
+		admissionId?: string,
 	): Promise<TextReadResult> {
 		const parsed = TextReadRequestSchema.safeParse(request);
 		if (!parsed.success)
@@ -365,6 +391,17 @@ export class SqliteTextStore {
 			precondition: { kind: "none" },
 			...(value.epoch === undefined ? {} : { epoch: value.epoch }),
 		};
+		const operation =
+			admissionId === undefined
+				? undefined
+				: await prepareOperation(context, {
+						op: "read",
+						paths: [value.path],
+						precondition: { kind: "none" },
+						payload_hash: EMPTY_PAYLOAD_HASH,
+						size: 0,
+					});
+
 		try {
 			const result = await this.db.transaction((tx) => {
 				const epoch = assertPolicyInTransaction(tx, context, {
@@ -372,6 +409,16 @@ export class SqliteTextStore {
 					descriptor,
 					descriptorFingerprint: "",
 				});
+				if (operation !== undefined && admissionId !== undefined) {
+					if (!this.ports.admissions)
+						throw new Error("Content read admission authority is absent");
+					this.ports.admissions.assertActiveTicketInTransaction(
+						tx,
+						context,
+						operation,
+						admissionId,
+					);
+				}
 				const revision = value.rev;
 				const row =
 					revision === undefined

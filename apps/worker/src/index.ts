@@ -1,5 +1,6 @@
 import type { HistoryVaultGateway } from "@worker/application/history";
 import type { ReadVaultGateway } from "@worker/application/reads";
+import type { SearchVaultGateway } from "@worker/application/search";
 import type { TextVaultGateway } from "@worker/application/text-files";
 import type { Env } from "@worker/env";
 import { R2BlobStore } from "@worker/infrastructure/r2/blobs";
@@ -14,7 +15,10 @@ async function resolveIdentity(_request: Request) {
 function resolveVault(
 	env: Env,
 	request: Request,
-): TextVaultGateway & HistoryVaultGateway & ReadVaultGateway {
+): TextVaultGateway &
+	HistoryVaultGateway &
+	ReadVaultGateway &
+	SearchVaultGateway {
 	const stub = env.VAULTS.get(env.VAULTS.idFromName(new URL(request.url).host));
 	return {
 		getCurrentEpoch: async (...args: Parameters<typeof stub.getCurrentEpoch>) =>
@@ -54,6 +58,8 @@ function resolveVault(
 		) => await stub.readHistoryUpper(...args),
 		readBatch: async (...args: Parameters<typeof stub.readBatch>) =>
 			await stub.readBatch(...args),
+		search: async (...args: Parameters<typeof stub.search>) =>
+			await stub.search(...args),
 	};
 }
 

@@ -82,6 +82,16 @@ export {
 	VaultReadResponseSchema,
 	VaultReadResultSchema,
 } from "@protocol/schemas/reads";
+export {
+	SearchHitSchema,
+	SearchLimitSchema,
+	SearchQueryFailureSchema,
+	SearchQuerySchema,
+	SearchRequestSchema,
+	SearchResponseSchema,
+	SearchResultSchema,
+	searchQueryFailure,
+} from "@protocol/schemas/search";
 export type {
 	AdmissionCompletion,
 	AdmissionFailure,
@@ -152,3 +162,9 @@ export type {
 	VaultReadResponse,
 	VaultReadResult,
 } from "@protocol/types/reads";
+export type {
+	SearchHit,
+	SearchRequest,
+	SearchResponse,
+	SearchResult,
+} from "@protocol/types/search";

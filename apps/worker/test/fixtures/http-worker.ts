@@ -1,6 +1,7 @@
 import type { AuthorizationContext } from "@obsidian-ai-bridge/protocol";
 import type { HistoryVaultGateway } from "@worker/application/history";
 import type { ReadVaultGateway } from "@worker/application/reads";
+import type { SearchVaultGateway } from "@worker/application/search";
 import type { TextVaultGateway } from "@worker/application/text-files";
 import type { Env } from "@worker/env";
 import { R2BlobStore } from "@worker/infrastructure/r2/blobs";
@@ -56,7 +57,10 @@ const worker = createWorker(
 	(
 		env: Env,
 		request: Request,
-	): TextVaultGateway & HistoryVaultGateway & ReadVaultGateway => {
+	): TextVaultGateway &
+		HistoryVaultGateway &
+		ReadVaultGateway &
+		SearchVaultGateway => {
 		const stub = env.VAULTS.get(
 			env.VAULTS.idFromName(new URL(request.url).host),
 		);
@@ -147,6 +151,12 @@ const worker = createWorker(
 			readBatch: async (...args) => {
 				const result = await stub.readBatch(...args);
 				if (shouldFailAfter(request, "readBatch"))
+					throw new Error("Simulated RPC response loss");
+				return result;
+			},
+			search: async (...args) => {
+				const result = await stub.search(...args);
+				if (shouldFailAfter(request, "search"))
 					throw new Error("Simulated RPC response loss");
 				return result;
 			},

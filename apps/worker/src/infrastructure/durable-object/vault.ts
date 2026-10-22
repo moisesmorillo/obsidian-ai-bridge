@@ -16,6 +16,8 @@ import type {
 	OperationIntent,
 	RenameReservation,
 	RequestAdmissionResult,
+	SearchRequest,
+	SearchResponse,
 	TextMutationBeginResult,
 	TextMutationIntent,
 	TextMutationResult,
@@ -35,6 +37,7 @@ import {
 	generateEpoch,
 	initializeVaultStorage,
 } from "@worker/infrastructure/sqlite/schema";
+import { SqliteSearchStore } from "@worker/infrastructure/sqlite/search";
 import { SqliteTextStore } from "@worker/infrastructure/sqlite/text-files";
 
 /** Return structured native policy failures and propagate uncertain storage faults. */
@@ -53,6 +56,7 @@ export class Vault extends DurableObject<Env> {
 	private readonly mutationCoordinator: SqliteMutationCoordinator;
 	private readonly textStore: SqliteTextStore;
 	private readonly readStore: SqliteReadStore;
+	private readonly searchStore: SqliteSearchStore;
 
 	/**
 	 * The constructor creates fresh storage or validates existing storage synchronously in one transaction.
@@ -86,6 +90,10 @@ export class Vault extends DurableObject<Env> {
 		this.readStore = new SqliteReadStore(ctx.storage, this.admissionAuthority, {
 			now: Date.now,
 		});
+		this.searchStore = new SqliteSearchStore(
+			ctx.storage,
+			this.admissionAuthority,
+		);
 		this.textStore = new SqliteTextStore(
 			ctx.storage,
 			this.mutationCoordinator,
@@ -200,6 +208,22 @@ export class Vault extends DurableObject<Env> {
 			return {
 				ok: true,
 				body: await this.readStore.readBatch(context, request, admissionId),
+			};
+		} catch (error) {
+			return nativeReadFailure(error);
+		}
+	}
+
+	/** Run literal Markdown search and return canonical policy failures across RPC. */
+	async search(
+		context: AuthorizationContext,
+		request: SearchRequest,
+		admissionId: string,
+	): Promise<SearchResponse> {
+		try {
+			return {
+				ok: true,
+				body: await this.searchStore.search(context, request, admissionId),
 			};
 		} catch (error) {
 			return nativeReadFailure(error);

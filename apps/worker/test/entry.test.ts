@@ -28,6 +28,7 @@ describe("default-deny Worker entry point", () => {
 		"/v1/manifest",
 		"/v1/changes?epoch=0123456789abcdef0123456789abcdef&since=0",
 		"/v1/history/note.md",
+		"/v1/search?q=abc",
 		"/v1/files/note.md",
 		"/v1/files/note.md?rev=1",
 	])("denies production read %s before Vault selection", async (route) => {

@@ -24,6 +24,8 @@ const StrictAdmissionFailureSchema = z.intersection(
 export const FileFailureSchema = z.union([
 	StrictAdmissionFailureSchema,
 	z.object({ kind: z.literal("operation_expired") }).strict(),
+	z.object({ kind: z.literal("query_too_short") }).strict(),
+	z.object({ kind: z.literal("query_too_long") }).strict(),
 	z.object({ kind: z.literal("cursor_expired") }).strict(),
 	z.object({ kind: z.literal("blob_integrity_mismatch") }).strict(),
 	z
@@ -76,6 +78,8 @@ export const CurrentEpochResultSchema = z.discriminatedUnion("ok", [
 /** Error codes supported by the canonical HTTP failure encoder. */
 const FileHttpErrorSchema = z.enum([
 	"invalid_request",
+	"query_too_short",
+	"query_too_long",
 	"invalid_path",
 	"revoked",
 	"forbidden_scope",
@@ -106,6 +110,8 @@ const FileHttpErrorSchema = z.enum([
 /** Fixed safe messages for implemented domain and transport failures. */
 export const FILE_HTTP_MESSAGES = Object.freeze({
 	invalid_request: "The request is not valid.",
+	query_too_short: "The search query is too short.",
+	query_too_long: "The search query is too long.",
 	invalid_path: "The path is not valid.",
 	revoked: "The grant no longer allows access.",
 	forbidden_scope: "The grant does not allow this operation.",
@@ -157,6 +163,8 @@ const FileHttpStatusSchema = z.union([
 /** HTTP status assigned to each implemented error code. */
 export const FILE_HTTP_STATUSES = Object.freeze({
 	invalid_request: 400,
+	query_too_short: 400,
+	query_too_long: 400,
 	invalid_path: 400,
 	revoked: 401,
 	forbidden_scope: 403,

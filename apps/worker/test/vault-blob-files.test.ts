@@ -124,6 +124,49 @@ describe("native blob publication", () => {
 						putTicket.ticket.id,
 					),
 				).toMatchObject({ ok: true });
+				const encoder = new TextEncoder();
+				const revisionBytes = encoder.encode(
+					JSON.stringify([
+						source,
+						1,
+						hash,
+						4,
+						"blob",
+						null,
+						hash,
+						0,
+						TEXT_FIXTURE_CONTEXT.client_id,
+						10_000,
+					]),
+				).byteLength;
+				const changeBytes = encoder.encode(
+					JSON.stringify([
+						1,
+						"put",
+						source,
+						1,
+						hash,
+						null,
+						null,
+						TEXT_FIXTURE_CONTEXT.client_id,
+						10_000,
+					]),
+				).byteLength;
+				expect(
+					fixture.storage.sql
+						.exec(
+							"SELECT key, value FROM meta WHERE key LIKE 'history_%_bytes' ORDER BY key",
+						)
+						.toArray(),
+				).toEqual([
+					{ key: "history_changes_bytes", value: String(changeBytes) },
+					{
+						key: "history_pressure_bytes",
+						value: String(revisionBytes + changeBytes),
+					},
+					{ key: "history_receipts_bytes", value: "0" },
+					{ key: "history_revisions_bytes", value: String(revisionBytes) },
+				]);
 				const renameBody = { to: destination };
 				const renameText = JSON.stringify(renameBody);
 				const renameDigest = await crypto.subtle.digest(

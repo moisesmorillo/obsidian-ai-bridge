@@ -81,12 +81,12 @@ The proposal uses these policy interpretations. Approval covers them unless the 
 - Use `sql.databaseSize` for the 2 GB total cap, including admission storage.
 - Use logical payload-byte counters for `revisions`, `receipts`, and `changes`, not FTS or physical table pages.
 - Maintain category counters and their sum in `meta` within the same publication or pruning transaction.
-- Use deterministic UTF-8 row payload encoding. Exclude SQLite allocation overhead, indexes, FTS, and external R2 object bytes.
+- Encode each complete row as a JSON array in SQLite column order. Count UTF-8 bytes of the JSON text. Preserve null values. Exclude SQLite allocation overhead, indexes, FTS, and external R2 object bytes.
 - Do not add dependencies, deploy, change Cloudflare resources, or touch the personal vault.
 - Keep application code independent of Cloudflare SDKs. Composition only wires owners.
 - Use the Backlog CLI for task changes. Do not create progress or review-record documents.
 - Document named semantic declarations with useful TSDoc. Keep comments true to callers and failure behavior.
-- Preserve the frozen schema compatibility policy. Do not silently migrate or repair incompatible stores.
+- Preserve the frozen schema compatibility policy. The owner approved schema version 4 for required logical history counters. Reject versions 1 through 3 without writes, migration, repair, zero backfill, or epoch replacement.
 
 ## Evidence and feasibility gates
 
@@ -148,6 +148,8 @@ A storage compatibility change needs a named version boundary and an approved sp
 - Add deterministic UTF-8 logical payload encoding for complete revision, receipt, and change row payloads.
 - Track `revisions`, `receipts`, `changes`, and total logical bytes in `meta`. Update them with publication, including receipt insertion.
 - Keep logical accounting separate from `sql.databaseSize`. Do not count FTS, indexes, allocator overhead, or external blob bytes as logical payload.
+- Use schema version 4 for the five required history metadata keys. Fresh v4 stores start at zero. Existing v3 and older stores fail closed without backfill or repair.
+- Count revision fields in `path`, `rev`, `hash`, `size`, `kind`, `content`, `blob_hash`, `deleted`, `origin`, `at` order. Count receipt fields in `client_id`, `key`, `fingerprint`, `status`, `body`, `at` order. Count change fields in `seq`, `op`, `path`, `rev`, `hash`, `from_path`, `from_rev`, `origin`, `at` order.
 
 - [x] Test native transaction-visible allocation, rollback, free-page reuse, and missing `dbstat`.
 - [ ] Preserve the two passing native capability tests. No further exact-attribution gate applies.

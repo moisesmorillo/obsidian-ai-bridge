@@ -166,7 +166,7 @@ CREATE TABLE blob_refs (hash TEXT PRIMARY KEY, size INTEGER NOT NULL, first_ref_
 CREATE TABLE exports (id TEXT PRIMARY KEY, started_at INTEGER, finished_at INTEGER, status TEXT, head_seq INTEGER, calls_this_hour INTEGER, hour_started_at INTEGER, commit_sha TEXT, error TEXT);
 ```
 
-The canonical initial schema version is 3. Versions 1 and 2 fail closed without writes. The service does not migrate or repair unsupported storage.
+The canonical schema version is 4. Versions 1, 2, and 3 fail closed without writes. The service does not migrate or repair unsupported storage. Version 4 requires `history_revisions_bytes`, `history_receipts_bytes`, `history_changes_bytes`, `history_pressure_bytes`, and `history_reduced` metadata keys. Fresh version-4 vaults initialize these values to zero. Existing version-3 vaults need an explicit future migration and receive no counter backfill in this version.
 
 Version 2 adds `operation_admissions`:
 
@@ -206,6 +206,18 @@ Version 3 adds the `mutation_claims` table:
 The composite primary key is `(client_id, key)`. The unique `mutation_claims_admission` index covers `admission_id`. Claims link client keys to retained admissions.
 
 Admission deletion cascades claim deletion. The admission owns the fingerprint, grant, epoch, state, and original deadline.
+
+Version 4 adds the mandatory logical history counters to `meta`:
+
+| Key | Initial value | Meaning |
+| --- | --- | --- |
+| `history_revisions_bytes` | `0` | UTF-8 logical payload bytes for retained revision rows |
+| `history_receipts_bytes` | `0` | UTF-8 logical payload bytes for retained receipt rows |
+| `history_changes_bytes` | `0` | UTF-8 logical payload bytes for retained change rows |
+| `history_pressure_bytes` | `0` | Sum of the three category counters |
+| `history_reduced` | `0` | Sticky history-reduced attention state |
+
+Version 4 does not change relational table DDL. Versions 1 through 3 remain unsupported and receive no migration, repair, or counter backfill.
 
 ### 5.3 R2 layout
 
@@ -549,7 +561,7 @@ The 2 GB total cap uses `sql.databaseSize`, including admission storage. Logical
 
 History pressure uses logical payload bytes from `revisions`, `receipts`, and `changes`. Transactional `meta` counters track each category and their sum. Publication updates these counters in the same transaction as its rows and receipt. Pruning subtracts the deleted payload bytes in its deletion transaction.
 
-Use deterministic UTF-8 payload encoding with explicit tests for Unicode, null values, and complete row payloads. Exclude SQLite allocation overhead, indexes, FTS storage, and external R2 object bytes from these logical counters. Logical payload bytes do not claim exact physical table storage.
+Encode each complete row as a JSON array in its SQLite column order. Measure the UTF-8 byte length of that JSON text. Revision columns are `path`, `rev`, `hash`, `size`, `kind`, `content`, `blob_hash`, `deleted`, `origin`, and `at`. Receipt columns are `client_id`, `key`, `fingerprint`, `status`, `body`, and `at`. Change columns are `seq`, `op`, `path`, `rev`, `hash`, `from_path`, `from_rev`, `origin`, and `at`. Null values remain JSON `null`. Test Unicode, null content, and blob references. Exclude SQLite allocation overhead, indexes, FTS storage, and external R2 object bytes from these logical counters. Logical payload bytes do not claim exact physical table storage.
 
 The pinned workerd SQLite runtime does not expose `dbstat`. Native tests on 2026-10-22 returned `no such table: dbstat: SQLITE_ERROR`. Exact per-table page attribution is not a prerequisite for logical history accounting. No platform investigation task applies.
 

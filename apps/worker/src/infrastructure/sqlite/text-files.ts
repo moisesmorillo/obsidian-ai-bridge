@@ -44,6 +44,11 @@ import {
 	type SqliteAdmissionAuthority,
 	type VaultTransaction,
 } from "@worker/infrastructure/sqlite/admission";
+import {
+	addLogicalPayload,
+	changeLogicalPayloadBytes,
+	revisionLogicalPayloadBytes,
+} from "@worker/infrastructure/sqlite/capacity";
 import { SqliteHistoryStore } from "@worker/infrastructure/sqlite/history";
 import type { SqliteMutationCoordinator } from "@worker/infrastructure/sqlite/mutations";
 import {
@@ -558,6 +563,19 @@ function publishBlob(
 		.all()[0];
 	if (!change || !Number.isSafeInteger(change.seq) || change.seq <= head)
 		throw new FileOperationDenied({ kind: "invalid_request" });
+	addLogicalPayload(
+		tx,
+		"changes",
+		changeLogicalPayloadBytes({
+			seq: change.seq,
+			op: "put",
+			path,
+			rev: revision,
+			hash: intent.payload_hash,
+			origin: context.client_id,
+			at: now,
+		}),
+	);
 	const values = {
 		path,
 		pathKey: pathKey(path),
@@ -577,6 +595,22 @@ function publishBlob(
 	tx.insert(revisions)
 		.values({ ...values, at: now })
 		.run();
+	addLogicalPayload(
+		tx,
+		"revisions",
+		revisionLogicalPayloadBytes({
+			path,
+			rev: revision,
+			hash: intent.payload_hash,
+			size: intent.size,
+			kind: "blob",
+			content: null,
+			blobHash: intent.payload_hash,
+			deleted: 0,
+			origin: context.client_id,
+			at: now,
+		}),
+	);
 	tx.insert(blobRefs)
 		.values({ hash: intent.payload_hash, size: intent.size, firstRefAt: now })
 		.onConflictDoNothing()
@@ -674,6 +708,19 @@ function publishText(
 		.all()[0];
 	if (!change || !Number.isSafeInteger(change.seq) || change.seq <= head)
 		throw new Error("Unsafe text change sequence");
+	addLogicalPayload(
+		tx,
+		"changes",
+		changeLogicalPayloadBytes({
+			seq: change.seq,
+			op: deleted ? "delete" : "put",
+			path,
+			rev: revision,
+			hash,
+			origin: context.client_id,
+			at,
+		}),
+	);
 	const values = {
 		path,
 		pathKey: pathKey(path),
@@ -693,6 +740,22 @@ function publishText(
 	tx.insert(revisions)
 		.values({ ...values, at })
 		.run();
+	addLogicalPayload(
+		tx,
+		"revisions",
+		revisionLogicalPayloadBytes({
+			path,
+			rev: revision,
+			hash,
+			size,
+			kind: values.kind,
+			content: values.content,
+			blobHash: values.blobHash,
+			deleted: values.deleted,
+			origin: context.client_id,
+			at,
+		}),
+	);
 	tx.run(sql`DELETE FROM files_fts WHERE path = ${path}`);
 	if (!deleted && path.endsWith(".md"))
 		tx.run(

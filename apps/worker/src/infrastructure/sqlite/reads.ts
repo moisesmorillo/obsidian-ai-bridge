@@ -20,6 +20,7 @@ import type {
 	VaultTransaction,
 } from "@worker/infrastructure/sqlite/admission";
 import { assertPolicyInTransaction } from "@worker/infrastructure/sqlite/admission";
+import { readCapacitySummary } from "@worker/infrastructure/sqlite/capacity";
 import {
 	changes,
 	files,
@@ -37,7 +38,7 @@ export class SqliteReadStore {
 
 	/** Bind the vault database and clock used for exact 30-day feed eligibility. */
 	constructor(
-		storage: DurableObjectStorage,
+		private readonly storage: DurableObjectStorage,
 		private readonly admissions: SqliteAdmissionAuthority,
 		private readonly ports: { now: () => number; logger?: Logger },
 	) {
@@ -80,6 +81,7 @@ export class SqliteReadStore {
 					text_bytes: 1_000_000,
 					blob_bytes: 25_000_000,
 				},
+				...readCapacitySummary(tx, this.storage),
 			});
 		});
 	}

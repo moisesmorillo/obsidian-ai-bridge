@@ -23,6 +23,11 @@ import {
 	assertPolicyInTransaction,
 	type VaultTransaction,
 } from "@worker/infrastructure/sqlite/admission";
+import {
+	addLogicalPayload,
+	changeLogicalPayloadBytes,
+	revisionLogicalPayloadBytes,
+} from "@worker/infrastructure/sqlite/capacity";
 import type { SqliteMutationCoordinator } from "@worker/infrastructure/sqlite/mutations";
 import {
 	changes,
@@ -365,6 +370,22 @@ function publishRename(
 			at: now,
 		})
 		.run();
+	addLogicalPayload(
+		tx,
+		"revisions",
+		revisionLogicalPayloadBytes({
+			path: sourcePath,
+			rev: fromRev,
+			hash: "",
+			size: 0,
+			kind: source.kind,
+			content: null,
+			blobHash: null,
+			deleted: 1,
+			origin: context.client_id,
+			at: now,
+		}),
+	);
 	const change = tx
 		.insert(changes)
 		.values({
@@ -380,6 +401,21 @@ function publishRename(
 		.returning({ seq: changes.seq })
 		.all()[0];
 	if (!change || change.seq !== seq) throw new Error("Rename sequence changed");
+	addLogicalPayload(
+		tx,
+		"changes",
+		changeLogicalPayloadBytes({
+			seq: change.seq,
+			op: "rename",
+			path: destinationPath,
+			rev: toRev,
+			hash: source.hash,
+			fromPath: sourcePath,
+			fromRev,
+			origin: context.client_id,
+			at: now,
+		}),
+	);
 	const moved = {
 		...source,
 		path: destinationPath,
@@ -407,6 +443,22 @@ function publishRename(
 			at: now,
 		})
 		.run();
+	addLogicalPayload(
+		tx,
+		"revisions",
+		revisionLogicalPayloadBytes({
+			path: destinationPath,
+			rev: toRev,
+			hash: source.hash,
+			size: source.size,
+			kind: source.kind,
+			content: source.content,
+			blobHash: source.blobHash,
+			deleted: 0,
+			origin: context.client_id,
+			at: now,
+		}),
+	);
 	tx.run(
 		sql`DELETE FROM files_fts WHERE path = ${sourcePath} OR path = ${destinationPath}`,
 	);
@@ -515,6 +567,19 @@ function publishTextCommand(
 		.all()[0];
 	if (!change || change.seq !== seq)
 		throw new Error("Mutation sequence changed");
+	addLogicalPayload(
+		tx,
+		"changes",
+		changeLogicalPayloadBytes({
+			seq: change.seq,
+			op: "put",
+			path,
+			rev,
+			hash,
+			origin: context.client_id,
+			at: now,
+		}),
+	);
 	const values = {
 		path,
 		pathKey: pathKey(path),
@@ -534,6 +599,22 @@ function publishTextCommand(
 	tx.insert(revisions)
 		.values({ ...values, at: now })
 		.run();
+	addLogicalPayload(
+		tx,
+		"revisions",
+		revisionLogicalPayloadBytes({
+			path,
+			rev,
+			hash,
+			size,
+			kind,
+			content: kind === "text" ? content : null,
+			blobHash,
+			deleted: 0,
+			origin: context.client_id,
+			at: now,
+		}),
+	);
 	tx.run(sql`DELETE FROM files_fts WHERE path = ${path}`);
 	if (kind === "text" && path.endsWith(".md"))
 		tx.run(

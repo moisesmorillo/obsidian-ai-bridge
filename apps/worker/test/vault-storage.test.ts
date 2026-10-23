@@ -86,10 +86,15 @@ describe("Vault SQLite persistence", () => {
 				expect.arrayContaining(["files_live_key", "files_key"]),
 			);
 			const data = metadata(state.storage);
-			expect(data.schema_version).toBe("3");
+			expect(data.schema_version).toBe("4");
 			expect(EpochSchema.safeParse(data.epoch).success).toBe(true);
 			expect(data.head_seq).toBe("0");
 			expect(data.live_file_count).toBe("0");
+			expect(data.history_revisions_bytes).toBe("0");
+			expect(data.history_receipts_bytes).toBe("0");
+			expect(data.history_changes_bytes).toBe("0");
+			expect(data.history_pressure_bytes).toBe("0");
+			expect(data.history_reduced).toBe("0");
 			expect(Number.isSafeInteger(Number(data.created_at))).toBe(true);
 			expect(new TextEncoder().encode(SCHEMA).byteLength).toBeLessThanOrEqual(
 				8192,
@@ -180,6 +185,31 @@ describe("Vault SQLite persistence", () => {
 		});
 	});
 
+	it("rejects version-3 storage without migration or counter backfill", async () => {
+		const stub = env.VAULTS.get(env.VAULTS.newUniqueId());
+		await runInDurableObject(stub, (_instance, state) => {
+			state.storage.sql.exec(
+				"INSERT INTO files(path,path_key,rev,seq,hash,size,kind,deleted,updated_at,origin) VALUES ('legacy.md','legacy.md',1,1,'hash',0,'text',0,10,'test')",
+			);
+			state.storage.sql.exec(
+				"UPDATE meta SET value = '3' WHERE key = 'schema_version'",
+			);
+			state.storage.sql.exec(
+				"DELETE FROM meta WHERE key LIKE 'history_%_bytes' OR key = 'history_reduced'",
+			);
+			const before = metadata(state.storage);
+			expect(() =>
+				initializeVaultStorage(state.storage, createEpoch, () => 20),
+			).toThrow(/Unsupported vault schema version/);
+			expect(metadata(state.storage)).toEqual(before);
+			expect(
+				state.storage.sql
+					.exec("SELECT path FROM files WHERE path = 'legacy.md'")
+					.toArray(),
+			).toHaveLength(1);
+		});
+	});
+
 	it("rejects corrupt or unsupported schema without changing data", async () => {
 		const stub = env.VAULTS.get(env.VAULTS.newUniqueId());
 		await runInDurableObject(stub, (_instance, state) => {
@@ -237,6 +267,8 @@ describe("Vault SQLite persistence", () => {
 				["head_seq", "9007199254740992"],
 				["head_seq", "00"],
 				["live_file_count", "9007199254740992"],
+				["history_pressure_bytes", "1"],
+				["history_reduced", "2"],
 				["created_at", "1e3"],
 				["created_at", "001"],
 			] as const;

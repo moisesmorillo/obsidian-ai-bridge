@@ -1,5 +1,8 @@
 import { createHash } from "node:crypto";
-import type { FileHttpFailure, FileHttpFailureInput } from "@protocol/index";
+import type {
+	FileHttpFailure,
+	FileHttpFailureInput,
+} from "@obsidian-ai-bridge/protocol";
 import {
 	AdmissionFailureSchema,
 	CurrentEpochRequestSchema,
@@ -19,7 +22,7 @@ import {
 	TextReadRequestSchema,
 	TextReadResponseSchema,
 	TextReadResultSchema,
-} from "@protocol/index";
+} from "@obsidian-ai-bridge/protocol";
 import { describe, expect, it, vi } from "vitest";
 import type { ZodType } from "zod";
 
@@ -797,6 +800,12 @@ describe("canonical failure DTO", () => {
 
 describe("file failure HTTP mapping", () => {
 	it.each([
+		[
+			{ kind: "capacity_exceeded" },
+			507,
+			"capacity_exceeded",
+			"The vault has reached its storage limit.",
+		],
 		[
 			{ kind: "invalid_request" },
 			400,

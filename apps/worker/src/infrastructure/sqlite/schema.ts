@@ -7,8 +7,8 @@ import {
 	drizzle,
 } from "drizzle-orm/durable-sqlite";
 
-/** Persisted SQLite schema version; incompatible changes require an explicit version boundary. */
-export const SCHEMA_VERSION = 3;
+/** Persisted schema version; version 4 requires logical history counters and rejects older stores. */
+export const SCHEMA_VERSION = 4;
 
 /** Narrow FTS5 DDL unsupported by the relational model and kept at its engine-specific seam. */
 const FTS_SCHEMA = `CREATE VIRTUAL TABLE files_fts USING fts5(
@@ -181,6 +181,11 @@ function createFreshVault(
 			{ key: "head_seq", value: "0" },
 			{ key: "created_at", value: String(createdAt) },
 			{ key: "live_file_count", value: "0" },
+			{ key: "history_revisions_bytes", value: "0" },
+			{ key: "history_receipts_bytes", value: "0" },
+			{ key: "history_changes_bytes", value: "0" },
+			{ key: "history_pressure_bytes", value: "0" },
+			{ key: "history_reduced", value: "0" },
 		])
 		.run();
 }
@@ -225,7 +230,17 @@ function readAndValidateMetadata(tx: VaultTransaction): void {
 	}
 	if (metadata.get("schema_version") !== String(SCHEMA_VERSION))
 		throw new Error("Unsupported vault schema version");
-	for (const key of ["epoch", "head_seq", "created_at", "live_file_count"]) {
+	for (const key of [
+		"epoch",
+		"head_seq",
+		"created_at",
+		"live_file_count",
+		"history_revisions_bytes",
+		"history_receipts_bytes",
+		"history_changes_bytes",
+		"history_pressure_bytes",
+		"history_reduced",
+	]) {
 		if (typeof metadata.get(key) !== "string")
 			throw new Error(`Missing vault metadata: ${key}`);
 	}
@@ -233,9 +248,37 @@ function readAndValidateMetadata(tx: VaultTransaction): void {
 		throw new Error("Invalid vault epoch");
 	if (
 		!isCanonicalSafeInteger(metadata.get("head_seq") ?? "", true) ||
-		!isCanonicalSafeInteger(metadata.get("live_file_count") ?? "", true)
+		!isCanonicalSafeInteger(metadata.get("live_file_count") ?? "", true) ||
+		!isCanonicalSafeInteger(
+			metadata.get("history_revisions_bytes") ?? "",
+			true,
+		) ||
+		!isCanonicalSafeInteger(
+			metadata.get("history_receipts_bytes") ?? "",
+			true,
+		) ||
+		!isCanonicalSafeInteger(
+			metadata.get("history_changes_bytes") ?? "",
+			true,
+		) ||
+		!isCanonicalSafeInteger(
+			metadata.get("history_pressure_bytes") ?? "",
+			true,
+		) ||
+		!isCanonicalSafeInteger(metadata.get("history_reduced") ?? "", true)
 	)
 		throw new Error("Invalid numeric vault metadata");
+	const revisionBytes = Number(metadata.get("history_revisions_bytes"));
+	const receiptBytes = Number(metadata.get("history_receipts_bytes"));
+	const changeBytes = Number(metadata.get("history_changes_bytes"));
+	const historyBytes = Number(metadata.get("history_pressure_bytes"));
+	const historyReduced = Number(metadata.get("history_reduced"));
+	if (
+		revisionBytes + receiptBytes + changeBytes !== historyBytes ||
+		!Number.isSafeInteger(historyBytes) ||
+		(historyReduced !== 0 && historyReduced !== 1)
+	)
+		throw new Error("Invalid logical history metadata");
 	if (!isCanonicalSafeInteger(metadata.get("created_at") ?? "", false))
 		throw new Error("Invalid vault creation time");
 }

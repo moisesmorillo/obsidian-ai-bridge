@@ -32,6 +32,14 @@ describe("canonical bounded read contracts", () => {
 					text_bytes: 1_000_000,
 					blob_bytes: 25_000_000,
 				},
+				capacity: {
+					database_bytes: 1_000,
+					database_limit_bytes: 2_000_000_000,
+					live_file_limit: 10_000,
+					history_pressure_bytes: 900,
+					referenced_blob_bytes: 100,
+				},
+				attention: ["storage_high", "blob_storage_high"],
 			}).success,
 		).toBe(true);
 		expect(
@@ -72,6 +80,30 @@ describe("canonical bounded read contracts", () => {
 				next_page: null,
 			}).success,
 		).toBe(false);
+	});
+
+	it("rejects unknown capacity and attention fields", () => {
+		const result = VaultReadResultSchema.safeParse({
+			epoch,
+			head_seq: 0,
+			counts: { live: 0, deleted: 0 },
+			limits: {
+				manifest_page: 256,
+				feed_page: 1000,
+				text_bytes: 1_000_000,
+				blob_bytes: 25_000_000,
+			},
+			capacity: {
+				database_bytes: 1,
+				database_limit_bytes: 2_000_000_000,
+				live_file_limit: 10_000,
+				history_pressure_bytes: 1,
+				referenced_blob_bytes: 0,
+				extra: true,
+			},
+			attention: [],
+		});
+		expect(result.success).toBe(false);
 	});
 
 	it("accepts large Markdown and Canvas manifest blobs", () => {

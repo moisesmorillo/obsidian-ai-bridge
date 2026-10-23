@@ -314,11 +314,11 @@ function publishMetadata(tx: VaultTransaction) {
 }
 
 describe("vault mutation claim bootstrap", () => {
-	it("uses schema version 3", () => {
-		expect(SCHEMA_VERSION).toBe(3);
+	it("uses schema version 4", () => {
+		expect(SCHEMA_VERSION).toBe(4);
 	});
 
-	it("stores schema version 3 on fresh native storage", async () => {
+	it("stores schema version 4 on fresh native storage", async () => {
 		await withNativeStorage((storage) => {
 			clearTestVault(storage);
 			initializeVaultStorage(
@@ -332,7 +332,7 @@ describe("vault mutation claim bootstrap", () => {
 						"SELECT value FROM meta WHERE key = 'schema_version'",
 					)
 					.toArray(),
-			).toEqual([{ value: "3" }]);
+			).toEqual([{ value: "4" }]);
 		});
 	});
 

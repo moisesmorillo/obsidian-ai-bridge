@@ -1,10 +1,11 @@
 ---
 id: OAB-6.9
 title: Verify F1 server acceptance without claiming client qualification
-status: To Do
-assignee: []
-created_date: '2026-10-15 00:38'
-updated_date: '2026-10-23T02:05:00Z'
+status: In Progress
+assignee:
+  - '@pi'
+created_date: 2026-10-15 00:38
+updated_date: '2026-10-23T21:31:00Z'
 labels:
   - F1
 dependencies:
@@ -39,3 +40,19 @@ Contract corrections from the 2026-10-23 F1 audit are part of this task (criteri
 - [ ] #11 README.md reflects the F1 state. The sentence 'F1 has not started' is gone.
 - [ ] #12 Vault.reserveAdmission RPC and the unused collectors readManifest, readHistory, readChanges in application/reads.ts are removed with their tests.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+Plan for owner review: docs/superpowers/plans/2026-10-23-f1-server-acceptance.md. Implementation waits for approval. One implementer owns three sequential slices: protocol and HTTP corrections with durable rename hints, one extension case policy, then executable F1 acceptance coverage and unused API removal. Preserve native and HTTP coverage while removing obsolete collector wrappers. Each slice includes RED/GREEN, docs checks, full checks, and a commit. Independent task review, session-model branch review, human branch review, and actual remote CI precede closure. Owner choices: server-only F1 exit, case-insensitive Markdown/Canvas extensions, and rename hints for the source tombstone lifetime. The plan includes a fresh schema version without migration. OAB-6.8.2 stays Deferred. No admission or slot model change, deployment, personal-vault access, platform probe tests, or evidence documents.
+
+The owner approved the complete plan in Plannotator pn-a27c0b. Execute all three slices with one implementer. Keep the task and parent gate open until independent reviews, human branch review, and actual remote CI support closure. No deployment applies.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Planning starts from main at 9233c22 after merged PR #18. OAB-6.8 is Done. OAB-6.8.2 stays Deferred. No deployment or personal-vault access applies. Implementation waits for owner plan approval.
+
+Planning baseline at 9233c22 passed frozen installation and bun run check: 1052 tests, documentation, formatting, types, schema drift checks, and local dry-run builds. Native suites passed 621 tests. HTTP suites passed 108 tests. Tooling, protocol, and plugin passed 52, 269, and 2 tests. These results do not prove deployed runtime headroom. The owner chose the three contract decisions through one structured question batch.
+<!-- SECTION:NOTES:END -->

@@ -1,11 +1,11 @@
 ---
 id: OAB-6.9
 title: Verify F1 server acceptance without claiming client qualification
-status: In Progress
+status: Done
 assignee:
   - '@pi'
 created_date: 2026-10-15 00:38
-updated_date: '2026-10-23T23:25:00Z'
+updated_date: '2026-10-23T23:56:00Z'
 labels:
   - F1
 dependencies:
@@ -27,18 +27,18 @@ Contract corrections from the 2026-10-23 F1 audit are part of this task (criteri
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Every named F1 acceptance case maps to executable real Worker/DO assertions and an explicit statement of the portion actually proven; omissions block phase closure.
-- [ ] #2 Client-only portions such as base advancement, stale-feed no-ops and local conflict copies remain visibly unqualified until real plugin tests; any required section 14 gate interpretation is explicitly approved before OAB6 is closed.
-- [ ] #3 Default-deny authentication boundaries, canonical protocol contracts, all existing tests, full bun run check and actual remote CI pass on the reviewed final head.
-- [ ] #4 OAB6 closes only with objective exit evidence and applicable explicit owner authorizations; no document or passing foundation test substitutes for product acceptance.
-- [ ] #5 AC-06 has an HTTP test: DELETE with a stale If-Match returns 412.
-- [ ] #6 precondition_failed includes renamed_to when the file was renamed (spec.md:253).
-- [ ] #7 DELETE accepts X-Vault-Epoch like every mutation (spec.md:241). It no longer returns 400 for that header.
-- [ ] #8 GET with rev and without X-Vault-Epoch returns 410 revision_pruned (spec.md:240), not 409.
-- [ ] #9 The protocol error union includes importing and vault_retired (spec.md:253).
-- [ ] #10 Text, FTS and large classification of .md and .canvas use one case rule (spec.md:221).
-- [ ] #11 README.md reflects the F1 state. The sentence 'F1 has not started' is gone.
-- [ ] #12 Vault.reserveAdmission RPC and the unused collectors readManifest, readHistory, readChanges in application/reads.ts are removed with their tests.
+- [x] #1 Every named F1 acceptance case maps to executable real Worker/DO assertions and an explicit statement of the portion actually proven; omissions block phase closure.
+- [x] #2 Client-only portions such as base advancement, stale-feed no-ops and local conflict copies remain visibly unqualified until real plugin tests; any required section 14 gate interpretation is explicitly approved before OAB6 is closed.
+- [x] #3 Default-deny authentication boundaries, canonical protocol contracts, all existing tests, full bun run check and actual remote CI pass on the reviewed final head.
+- [x] #4 OAB6 closes only with objective exit evidence and applicable explicit owner authorizations; no document or passing foundation test substitutes for product acceptance.
+- [x] #5 AC-06 has an HTTP test: DELETE with a stale If-Match returns 412.
+- [x] #6 precondition_failed includes renamed_to when the file was renamed (spec.md:253).
+- [x] #7 DELETE accepts X-Vault-Epoch like every mutation (spec.md:241). It no longer returns 400 for that header.
+- [x] #8 GET with rev and without X-Vault-Epoch returns 410 revision_pruned (spec.md:240), not 409.
+- [x] #9 The protocol error union includes importing and vault_retired (spec.md:253).
+- [x] #10 Text, FTS and large classification of .md and .canvas use one case rule (spec.md:221).
+- [x] #11 README.md reflects the F1 state. The sentence 'F1 has not started' is gone.
+- [x] #12 Vault.reserveAdmission RPC and the unused collectors readManifest, readHistory, readChanges in application/reads.ts are removed with their tests.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -47,6 +47,8 @@ Contract corrections from the 2026-10-23 F1 audit are part of this task (criteri
 Plan for owner review: docs/superpowers/plans/2026-10-23-f1-server-acceptance.md. Implementation waits for approval. One implementer owns three sequential slices: protocol and HTTP corrections with durable rename hints, one extension case policy, then executable F1 acceptance coverage and unused API removal. Preserve native and HTTP coverage while removing obsolete collector wrappers. Each slice includes RED/GREEN, docs checks, full checks, and a commit. Independent task review, session-model branch review, human branch review, and actual remote CI precede closure. Owner choices: server-only F1 exit, case-insensitive Markdown/Canvas extensions, and rename hints for the source tombstone lifetime. The plan includes a fresh schema version without migration. OAB-6.8.2 stays Deferred. No admission or slot model change, deployment, personal-vault access, platform probe tests, or evidence documents.
 
 The owner approved the complete plan in Plannotator pn-a27c0b. Execute all three slices with one implementer. Keep the task and parent gate open until independent reviews, human branch review, and actual remote CI support closure. No deployment applies.
+
+Implementation and technical reviews complete. The owner approved the complete branch in pn-9ee75c without changes. Remote push CI 40042205138 passed on reviewed head 07996a6. The parent accepts all twelve criteria within the approved server-only F1 boundary. Historical draft and open-gate notes above describe earlier states. Any later metadata-only closure commit still needs exact-head remote CI before the final completion claim.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -91,4 +93,12 @@ Scoped correction for review findings TR-1 and TR-2. TR-1: added real Worker/DO 
 WB-1 correction: added deterministic real HTTP/DO cases for AC-06 stale DELETE and AC-18 stale rename after a newer live PUT. Each test saves the create ETag, commits revision 2, sends the stale mutation with the original ETag, and expects 412 precondition_failed. Full files, revisions, changes, and receipts snapshots remain equal after each rejected request. The rename test also checks that its destination never exists. The concurrent PUT/DELETE/rename test remains as a separate race assertion and no longer claims deterministic AC-06 coverage. Test-first exception: both new deterministic cases passed on their first run because production behavior was correct. The focused race and new-case run passed 3 tests. The full files suite passed 31 tests. bun run docs:check passed. bun run check passed lint, docs, typecheck, tests, and dry-run builds. Full-check totals: 52 tooling, 2 plugin, 277 protocol, 761 native Worker, and 120 HTTP tests. Total: 1,212. Existing injected network and SQLite errors came from fault tests. OAB-6.9 remains In Progress and acceptance criteria remain unchecked.
 
 Independent task review 23d5d2d8 reviewed 9233c22..11b7e0c. TR-1 required real server UUIDv7-window evidence. TR-2 identified unsafe-selector validation order. Correction 29e8c22 and scoped review 290c2ba9 close both. Whole-branch session-model review 441b299e reviewed 9233c22..29e8c22 and independently passed 1210 tests plus all configured gates. WB-1 identified nondeterministic AC-06/AC-18 proof. Test correction 7b1d6ca adds deterministic live-edit sequences, exact full-state snapshots, and absent rename destination. Scoped review 6beba51d closes WB-1 with no fix-introduced finding. Structural candidates include SQLite admission/history/text publication, HTTP files transport, lazy reads, and protocol schemas/codecs. Reviewers confirm coherent policy ownership and useful semantic documentation. Latest worker full check passes 1212 tests plus docs, lint, types, schema drift, and dry-run builds. Test-first exceptions remain explicit. All technical findings have closure evidence. Human branch review and actual remote CI remain open. OAB-6.8.2 stays Deferred. No deployment or personal-vault access applies.
+
+Final acceptance: AC1 maps every named F1 case to real HTTP/DO assertions and explicit proof limits. TR-1 adds UUIDv7 authority evidence. WB-1 adds deterministic AC-06/AC-18 live-edit evidence. AC2 follows the owner choice and spec section 14: plugin base advancement, stale-feed apply, conflict copies, MCP transport, deployed authentication, and native headroom remain unqualified. AC3 uses production default-deny entry tests, canonical schemas, the latest 1212-test full check, and actual remote CI 40042205138 on 07996a6. AC4 follows explicit owner server-only exit approval and human branch approval pn-9ee75c. AC5 has deterministic stale DELETE HTTP coverage. AC6 stores immediate renamed_to atomically with the source tombstone and tests pruning, restart, rollback, replacement, and redaction. AC7 accepts DELETE epoch observations and preserves exact ETag conditions. AC8 returns revision_pruned for valid historical selectors without an epoch and invalid_request for invalid selectors. AC9 adds importing/vault_retired canonical contracts only. AC10 uses the canonical classifier and SQL parity with all 68 extension cases. AC11 updates README to current server scope. AC12 removes obsolete RPC and eager collectors while preserving lazy demand, limits, interleavings, and internal authority APIs. No technical finding remains open. No deployment or personal-vault access occurred. OAB-6.8.2 remains Deferred.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Complete F1 server acceptance with real Worker/DO assertions and explicit client proof limits. Correct HTTP failures, durable rename hints, schema version 6, canonical error contracts, and extension case policy. Remove obsolete APIs and update README/spec. Task and whole-branch reviews close TR-1, TR-2, and WB-1. Human branch review pn-9ee75c approved without changes. Latest full check passes 1212 tests and all configured gates. Actual remote CI 40042205138 passes on reviewed head 07996a6. Server-only exit does not qualify plugin sync, MCP/OAuth, deployed authentication, devices, or native runtime headroom. OAB-6.8.2 stays Deferred. No deployment or personal-vault access occurred.
+<!-- SECTION:FINAL_SUMMARY:END -->

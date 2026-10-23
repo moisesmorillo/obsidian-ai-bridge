@@ -103,26 +103,26 @@ Preserve existing correct implementation. For a new regression, observe an asser
 
 **Interfaces:** Preserve existing gateway signatures. Extend inferred canonical failure types with optional `renamed_to`. Add canonical `importing` and `vault_retired` variants, with bounded retry seconds and `new_vault_id` respectively. Reuse existing vault identity validation or define its schema in protocol if no owner exists.
 
-- [ ] Add RED tests for stale DELETE with `X-Vault-Epoch`: expect 412, unchanged bytes, and unchanged publication state.
-- [ ] Test DELETE with current, stale, absent, malformed, and conflicting epoch observations. Preserve scope and revocation precedence.
-- [ ] Accept an explicit canonical DELETE epoch. Keep header-free DELETE compatible when its quoted If-Match supplies the epoch.
-- [ ] Reject conflicting header and ETag epochs as `invalid_request`. Return `epoch_mismatch` for an obsolete epoch.
-- [ ] Add historical GET tests without an epoch: expect 410 `revision_pruned` for inline and blob paths.
-- [ ] Keep malformed or obsolete explicit epoch handling distinct from missing historical selection authority.
-- [ ] Add canonical schema and encoder tests for `importing` with `Retry-After`, and `vault_retired` with `new_vault_id`.
-- [ ] Do not implement import, activation, retirement, OAuth, or owner endpoints. This slice adds error contracts only.
-- [ ] Add rename-source failure tests for stale PUT, DELETE, and rename requests. Assert the exact immediate `renamed_to` path.
-- [ ] Test hint survival after native retention removes the matching feed row, and after object restart.
-- [ ] Test hint replacement through recreate, restore, ordinary delete, and another rename. Assert transaction rollback preserves the previous hint.
-- [ ] Add protocol refinement tests that reject hints outside complete tombstone precondition details.
-- [ ] Test read-authorized and write-only failures. Never include note content without `vault:read`.
-- [ ] Test bounded failure encoding with a maximum-length destination path and escaping-heavy current content.
-- [ ] Run focused tests and record their assertion failures before product edits.
-- [ ] Add the nullable current-row hint, schema version 6, generated DDL, and atomic transition handling.
-- [ ] Extend fail-closed schema tests for version 5 and malformed current definitions. Preserve all data on rejection.
-- [ ] Extend existing row-budget assertions to cover the current schema without a new platform probe suite.
-- [ ] Run focused suites, `bun run docs:check`, and `bun run check`. Expect all checks to pass.
-- [ ] Commit with `fix(worker): correct F1 failure contracts`.
+- [x] Add RED tests for stale DELETE with `X-Vault-Epoch`: expect 412, unchanged bytes, and unchanged publication state.
+- [x] Test DELETE with current, stale, absent, malformed, and conflicting epoch observations. Preserve scope and revocation precedence.
+- [x] Accept an explicit canonical DELETE epoch. Keep header-free DELETE compatible when its quoted If-Match supplies the epoch.
+- [x] Reject conflicting header and ETag epochs as `invalid_request`. Return `epoch_mismatch` for an obsolete epoch.
+- [x] Add historical GET tests without an epoch: expect 410 `revision_pruned` for inline and blob paths.
+- [x] Keep malformed or obsolete explicit epoch handling distinct from missing historical selection authority.
+- [x] Add canonical schema and encoder tests for `importing` with `Retry-After`, and `vault_retired` with `new_vault_id`.
+- [x] Do not implement import, activation, retirement, OAuth, or owner endpoints. This slice adds error contracts only.
+- [x] Add rename-source failure tests for stale PUT, DELETE, and rename requests. Assert the exact immediate `renamed_to` path.
+- [x] Test hint survival after native retention removes the matching feed row, and after object restart.
+- [x] Test hint replacement through recreate, restore, ordinary delete, and another rename. Assert transaction rollback preserves the previous hint.
+- [x] Add protocol refinement tests that reject hints outside complete tombstone precondition details.
+- [x] Test read-authorized and write-only failures. Never include note content without `vault:read`.
+- [x] Test bounded failure encoding with a maximum-length destination path and escaping-heavy current content.
+- [x] Run focused tests and record their assertion failures before product edits.
+- [x] Add the nullable current-row hint, schema version 6, generated DDL, and atomic transition handling.
+- [x] Extend fail-closed schema tests for version 5 and malformed current definitions. Preserve all data on rejection.
+- [x] Extend existing row-budget assertions to cover the current schema without a new platform probe suite.
+- [x] Run focused suites, `bun run docs:check`, and `bun run check`. Expect all checks to pass.
+- [x] Commit with `fix(worker): correct F1 failure contracts`.
 
 ## Slice 2: Use one extension case policy
 
@@ -135,15 +135,15 @@ Preserve existing correct implementation. For a new regression, observe an asser
 
 **Interfaces:** Export `classifyFilePath(path: string): "markdown" | "canvas" | "other"` from protocol. This pure classification does not normalize or change path identity. SQL coverage predicates must match it, with parity tests for every extension case.
 
-- [ ] Add RED classification tests for lowercase, uppercase, mixed case, near matches, and names without an extension.
-- [ ] Add native and HTTP tests at 1,000,000 and 1,000,001 bytes for Markdown and Canvas case variants.
-- [ ] Assert exact bytes, storage kind, large flags, range reads, FTS membership, and coverage counts.
-- [ ] Test create, update, append, rename, delete, recreate, and restore across the extension matrix.
-- [ ] Assert Canvas stays outside FTS. Preserve literal search, ranking, and query limits.
-- [ ] Observe the focused failures before changing classifiers and SQL predicates.
-- [ ] Reuse the canonical classifier across JavaScript consumers. Keep SQL mechanics in SQLite infrastructure.
-- [ ] Run focused suites, `bun run docs:check`, and `bun run check`. Expect all checks to pass.
-- [ ] Commit with `fix(protocol): unify file extension case rules`.
+- [x] Add RED classification tests for lowercase, uppercase, mixed case, near matches, and names without an extension.
+- [x] Add native and HTTP tests at 1,000,000 and 1,000,001 bytes for Markdown and Canvas case variants.
+- [x] Assert exact bytes, storage kind, large flags, range reads, FTS membership, and coverage counts.
+- [x] Test create, update, append, rename, delete, recreate, and restore across the extension matrix.
+- [x] Assert Canvas stays outside FTS. Preserve literal search, ranking, and query limits.
+- [x] Observe the focused failures before changing classifiers and SQL predicates.
+- [x] Reuse the canonical classifier across JavaScript consumers. Keep SQL mechanics in SQLite infrastructure.
+- [x] Run focused suites, `bun run docs:check`, and `bun run check`. Expect all checks to pass.
+- [x] Commit with `fix(protocol): unify file extension case rules`.
 
 ## Slice 3: Complete executable F1 acceptance and remove unused APIs
 
@@ -157,17 +157,17 @@ Preserve existing correct implementation. For a new regression, observe an asser
 
 **Interfaces:** Keep `beginMutation`, `authorize`, `openManifestRead`, `openHistoryRead`, and `openChangesRead`. Remove only Vault RPC `reserveAdmission`, the three eager application collectors, their private collection helper, and unused imports. Keep the admission authority's internal reservation mechanics and the separate native history gateway.
 
-- [ ] Give every F1 acceptance ID below an executable named server assertion and a statement of its proof boundary.
-- [ ] Add missing assertions before product corrections. Do not replace assertions with metadata-only mappings.
-- [ ] Replace collector-based tests with direct lazy-session demand and explicit settlement. Preserve ordering, ceilings, expiry, and interleaving assertions.
-- [ ] Replace obsolete RPC tests with supported mutation admission calls. Preserve distributed client/global limit and authorization checks.
-- [ ] Remove unused APIs and tests that prove only their existence. Do not recreate eager collectors under another name.
-- [ ] Update README to describe implemented Worker behavior and default-deny production authentication.
-- [ ] State that plugin sync, MCP/OAuth service, deployment, and device acceptance remain outside this result.
-- [ ] Record the owner-approved server-only F1 interpretation in section 14. Preserve each later client acceptance obligation.
-- [ ] Run protocol, native, HTTP, and production-entry tests. Confirm test identity headers cannot bypass production authentication.
-- [ ] Run `bun run docs:check` and `bun run check`. Expect all checks to pass.
-- [ ] Commit with `test(worker): complete F1 server acceptance`.
+- [x] Give every F1 acceptance ID below an executable named server assertion and a statement of its proof boundary.
+- [x] Add missing assertions before product corrections. Do not replace assertions with metadata-only mappings.
+- [x] Replace collector-based tests with direct lazy-session demand and explicit settlement. Preserve ordering, ceilings, expiry, and interleaving assertions.
+- [x] Replace obsolete RPC tests with supported mutation admission calls. Preserve distributed client/global limit and authorization checks.
+- [x] Remove unused APIs and tests that prove only their existence. Do not recreate eager collectors under another name.
+- [x] Update README to describe implemented Worker behavior and default-deny production authentication.
+- [x] State that plugin sync, MCP/OAuth service, deployment, and device acceptance remain outside this result.
+- [x] Record the owner-approved server-only F1 interpretation in section 14. Preserve each later client acceptance obligation.
+- [x] Run protocol, native, HTTP, and production-entry tests. Confirm test identity headers cannot bypass production authentication.
+- [x] Run `bun run docs:check` and `bun run check`. Expect all checks to pass.
+- [x] Commit with `test(worker): complete F1 server acceptance`.
 
 ### Executable coverage contract
 

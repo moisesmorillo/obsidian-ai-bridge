@@ -936,7 +936,7 @@ describe("native history mutations", () => {
 		});
 	});
 
-	it("uses destination lifetime revision after ten retained tombstone revisions", async () => {
+	it("AC-26 server: uses destination revision eleven after ten tombstone revisions", async () => {
 		await withTextStore(async (fixture) => {
 			const source = "notes/restore-source.md";
 			const destination = "notes/retired-target.md";

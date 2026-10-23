@@ -118,7 +118,7 @@ describe("real HTTP recovery and server acceptance", () => {
 		expect(expired.status).toBe(410);
 		expect(await expired.json()).toMatchObject({ error: "cursor_expired" });
 	});
-	it("AC-12 server: expires a 40-day feed position and returns explicit tombstones in reconciliation", async () => {
+	it("AC-12 server: expires a 40-day feed position and returns explicit tombstones", async () => {
 		const created = await put("deleted.md", "old");
 		const deleted = await SELF.fetch(`https://${host}/v1/files/deleted.md`, {
 			method: "DELETE",
@@ -149,7 +149,7 @@ describe("real HTTP recovery and server acceptance", () => {
 			next_page: null,
 		});
 	});
-	it("AC-21 server: keeps the captured page head, returns newer rows, and needs an explicit current fallback", async () => {
+	it("AC-21 server: keeps the captured head and reports newer immutable feed rows", async () => {
 		await seedRows(257);
 		const firstResponse = await get("manifest");
 		const first = await firstResponse.json<ManifestPage>();
@@ -187,7 +187,7 @@ describe("real HTTP recovery and server acceptance", () => {
 			entries: [{ etag: updated, seq: 258 }],
 		});
 	});
-	it("AC-25 server: preserves older feed identities after current content advances to revision three", async () => {
+	it("AC-25 server: preserves an older feed identity after current content advances", async () => {
 		const one = await put("note.md", "one");
 		const two = await put("note.md", "two", one);
 		const before = await get(`changes?epoch=${epoch}&since=1&limit=1`);
@@ -201,7 +201,7 @@ describe("real HTTP recovery and server acceptance", () => {
 		expect(replay.entries).toEqual(oldFeed.entries);
 		expect(replay.entries).toMatchObject([{ seq: 2, etag: two }]);
 	});
-	it("AC-40 server: preserves rename source tombstone identity below a later source revision", async () => {
+	it("AC-40 server: preserves rename tombstone identity below a later source revision", async () => {
 		const one = await put("source.md", "source");
 		const renamed = await SELF.fetch(
 			`https://${host}/v1/files/source.md:rename`,

@@ -13,9 +13,6 @@ import {
 	openHistoryRead,
 	openManifestRead,
 	type ReadVaultGateway,
-	readChanges,
-	readHistory,
-	readManifest,
 } from "@worker/application/reads";
 import { describe, expect, it } from "vitest";
 
@@ -253,6 +250,7 @@ function changesGateway(rows: ChangeEntry[]) {
 	return { gateway, finished: () => finished };
 }
 
+/** Drain bounded batches to assert keyset page output through lazy sessions. */
 describe("application bounded read traversal", () => {
 	it("opens a manifest session before data demand and reads one bounded batch on demand", async () => {
 		const rows = Array.from({ length: 130 }, (_, index) => manifestRow(index));
@@ -301,25 +299,31 @@ describe("application bounded read traversal", () => {
 	it("consumes lookahead rows without shortening or skipping a 256-entry page", async () => {
 		const rows = Array.from({ length: 257 }, (_, index) => manifestRow(index));
 		const { gateway, state } = manifestGateway(rows);
-		const first = await readManifest(gateway, context);
-		expect(first).toMatchObject({ ok: true });
+		const first = await openManifestRead(gateway, context);
+		expect(first.ok).toBe(true);
 		if (!first.ok) return;
-		expect(first.body.entries.map((row) => row.path)).toEqual(
+		const firstRows: ManifestEntry[] = [];
+		let firstBatch = await first.body.readBatch();
+		firstRows.push(...firstBatch.rows);
+		while (!firstBatch.done) {
+			firstBatch = await first.body.readBatch();
+			firstRows.push(...firstBatch.rows);
+		}
+		expect(firstRows.map((row) => row.path)).toEqual(
 			rows.slice(0, 256).map((row) => row.path),
 		);
-		expect(first.body.next_page).toBeTypeOf("string");
+		expect(firstBatch.next_page).toBeTypeOf("string");
 		expect(state.finished).toEqual([]);
-		const second = await readManifest(
+		const second = await openManifestRead(
 			gateway,
 			context,
-			first.body.next_page ?? undefined,
+			firstBatch.next_page ?? undefined,
 		);
-		expect(second).toMatchObject({ ok: true });
+		expect(second.ok).toBe(true);
 		if (!second.ok) return;
-		expect(second.body.entries.map((row) => row.path)).toEqual([
-			rows[256].path,
-		]);
-		expect(second.body.next_page).toBeNull();
+		const secondBatch = await second.body.readBatch();
+		expect(secondBatch.rows.map((row) => row.path)).toEqual([rows[256].path]);
+		expect(secondBatch.next_page).toBeNull();
 		expect(state.finished).toEqual([]);
 		expect(state.limits.every((limit) => limit >= 1 && limit <= 64)).toBe(true);
 		expect(state.batches).toBeGreaterThan(4);
@@ -336,27 +340,35 @@ describe("application bounded read traversal", () => {
 				manifestRow(index),
 			);
 			const { gateway } = manifestGateway(rows);
-			const first = await readManifest(gateway, context);
+			const first = await openManifestRead(gateway, context);
 			expect(first.ok).toBe(true);
 			if (!first.ok) return;
-			expect(first.body.entries.map((row) => row.path)).toEqual(
+			const firstRows: ManifestEntry[] = [];
+			let firstBatch = await first.body.readBatch();
+			firstRows.push(...firstBatch.rows);
+			while (!firstBatch.done) {
+				firstBatch = await first.body.readBatch();
+				firstRows.push(...firstBatch.rows);
+			}
+			expect(firstRows.map((row) => row.path)).toEqual(
 				rows.slice(0, 256).map((row) => row.path),
 			);
 			if (count > 256) {
-				expect(first.body.next_page).not.toBeNull();
-				const second = await readManifest(
+				expect(firstBatch.next_page).not.toBeNull();
+				const second = await openManifestRead(
 					gateway,
 					context,
-					first.body.next_page ?? undefined,
+					firstBatch.next_page ?? undefined,
 				);
 				expect(second.ok).toBe(true);
 				if (!second.ok) return;
-				expect(second.body.entries.map((row) => row.path)).toEqual(
+				const secondBatch = await second.body.readBatch();
+				expect(secondBatch.rows.map((row) => row.path)).toEqual(
 					rows.slice(256).map((row) => row.path),
 				);
 				await second.finish("settled");
 			} else {
-				expect(first.body.next_page).toBeNull();
+				expect(firstBatch.next_page).toBeNull();
 			}
 			await first.finish("settled");
 		},
@@ -367,24 +379,32 @@ describe("application bounded read traversal", () => {
 			historyRow(index + 1),
 		);
 		const { gateway } = historyGateway(rows);
-		const first = await readHistory(gateway, context, "files/history.md");
+		const first = await openHistoryRead(gateway, context, "files/history.md");
 		expect(first.ok).toBe(true);
 		if (!first.ok) return;
-		expect(
-			first.body.entries.map((entry) => parseETag(entry.etag).rev),
-		).toEqual(rows.slice(0, 256).map((row) => row.rev));
-		expect(first.body.next_page).not.toBeNull();
-		const second = await readHistory(
+		const firstRows: Array<{ etag: string }> = [];
+		let firstBatch = await first.body.readBatch();
+		firstRows.push(...firstBatch.rows);
+		while (!firstBatch.done) {
+			firstBatch = await first.body.readBatch();
+			firstRows.push(...firstBatch.rows);
+		}
+		expect(firstRows.map((entry) => parseETag(entry.etag).rev)).toEqual(
+			rows.slice(0, 256).map((row) => row.rev),
+		);
+		expect(firstBatch.next_page).not.toBeNull();
+		const second = await openHistoryRead(
 			gateway,
 			context,
 			"files/history.md",
-			first.body.next_page ?? undefined,
+			firstBatch.next_page ?? undefined,
 		);
 		expect(second.ok).toBe(true);
 		if (!second.ok) return;
-		expect(
-			second.body.entries.map((entry) => parseETag(entry.etag).rev),
-		).toEqual([257]);
+		const secondBatch = await second.body.readBatch();
+		expect(secondBatch.rows.map((entry) => parseETag(entry.etag).rev)).toEqual([
+			257,
+		]);
 		await first.finish("settled");
 		await second.finish("settled");
 	});
@@ -394,25 +414,34 @@ describe("application bounded read traversal", () => {
 			changeRow(index + 1),
 		);
 		const { gateway } = changesGateway(rows);
-		const first = await readChanges(gateway, context, epoch, 0);
+		const first = await openChangesRead(gateway, context, epoch, 0);
 		expect(first.ok).toBe(true);
 		if (!first.ok) return;
-		expect(first.body.entries.map((entry) => entry.seq)).toEqual(
+		const firstRows: ChangeEntry[] = [];
+		let firstBatch = await first.body.readBatch();
+		firstRows.push(...firstBatch.rows);
+		while (!firstBatch.done) {
+			firstBatch = await first.body.readBatch();
+			firstRows.push(...firstBatch.rows);
+		}
+		expect(firstRows.map((entry) => entry.seq)).toEqual(
 			rows.slice(0, 1000).map((row) => row.seq),
 		);
-		const second = await readChanges(gateway, context, epoch, 1000);
+		const second = await openChangesRead(gateway, context, epoch, 1000);
 		expect(second.ok).toBe(true);
 		if (!second.ok) return;
-		expect(second.body.entries.map((entry) => entry.seq)).toEqual([1001]);
+		const secondBatch = await second.body.readBatch();
+		expect(secondBatch.rows.map((entry) => entry.seq)).toEqual([1001]);
 		await first.finish("settled");
 		await second.finish("settled");
 	});
 
 	it("keeps the read ticket until background work and response production settle", async () => {
 		const { gateway, state } = manifestGateway([manifestRow(0)]);
-		const session = await readManifest(gateway, context);
+		const session = await openManifestRead(gateway, context);
 		expect(session.ok).toBe(true);
 		if (!session.ok) return;
+		await session.body.readBatch();
 		/** Release the started asynchronous read work. */
 		let releaseWork = () => {};
 		/** Release response-body production after its final read. */
@@ -444,7 +473,7 @@ describe("application bounded read traversal", () => {
 			last_path: "files/old.md",
 		});
 		const { gateway } = manifestGateway([]);
-		const result = await readManifest(gateway, context, cursor);
+		const result = await openManifestRead(gateway, context, cursor);
 		expect(result).toEqual({
 			ok: false,
 			failure: { kind: "epoch_mismatch", current_epoch: epoch },
@@ -462,12 +491,12 @@ describe("application bounded read traversal", () => {
 			upper_etag: formatETag(epoch, 1),
 			last_etag: formatETag(epoch, 1),
 		});
-		const wrongKind = await readManifest(gateway, context, historyCursor);
+		const wrongKind = await openManifestRead(gateway, context, historyCursor);
 		expect(wrongKind).toEqual({
 			ok: false,
 			failure: { kind: "invalid_request" },
 		});
-		const malformed = await readManifest(gateway, context, "not-a-cursor");
+		const malformed = await openManifestRead(gateway, context, "not-a-cursor");
 		expect(malformed).toEqual({
 			ok: false,
 			failure: { kind: "invalid_request" },
@@ -482,7 +511,7 @@ describe("application bounded read traversal", () => {
 			upper_etag: formatETag(epoch, 1),
 			last_etag: formatETag(epoch, 1),
 		});
-		const wrongPath = await readHistory(
+		const wrongPath = await openHistoryRead(
 			history.gateway,
 			context,
 			"files/history.md",
@@ -505,8 +534,15 @@ describe("application bounded read traversal", () => {
 			if (calls === 2) return { ok: false, failure: { kind: "revoked" } };
 			return readBatch(...args);
 		};
-		const result = await readManifest(gateway, context);
-		expect(result).toEqual({ ok: false, failure: { kind: "revoked" } });
+		const session = await openManifestRead(gateway, context);
+		expect(session.ok).toBe(true);
+		if (!session.ok) return;
+		await session.body.readBatch();
+		await expect(session.body.readBatch()).rejects.toMatchObject({
+			failure: { kind: "revoked" },
+		});
+		await session.body.cancel();
+		await session.finish("settled");
 		expect(calls).toBe(2);
 		expect(state.finished).toEqual(["settled"]);
 	});
@@ -516,9 +552,14 @@ describe("application bounded read traversal", () => {
 		gateway.readBatch = async () => {
 			throw new Error("SQLite unavailable");
 		};
-		await expect(readManifest(gateway, context)).rejects.toThrow(
+		const session = await openManifestRead(gateway, context);
+		expect(session.ok).toBe(true);
+		if (!session.ok) return;
+		await expect(session.body.readBatch()).rejects.toThrow(
 			"SQLite unavailable",
 		);
-		expect(state.finished).toEqual([]);
+		await session.body.cancel();
+		await session.finish("settled");
+		expect(state.finished).toEqual(["uncertain"]);
 	});
 });

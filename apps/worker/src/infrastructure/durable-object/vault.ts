@@ -15,7 +15,6 @@ import type {
 	OperationDescriptor,
 	OperationIntent,
 	RenameReservation,
-	RequestAdmissionResult,
 	SearchRequest,
 	SearchResponse,
 	TextMutationBeginResult,
@@ -146,14 +145,6 @@ export class Vault extends DurableObject<Env> {
 		operation: CurrentEpochOperation,
 	): Promise<CurrentEpochResult> {
 		return this.admissionAuthority.getCurrentEpoch(context, operation);
-	}
-
-	/** Reserve request capacity before the Worker reads or buffers a body. */
-	reserveAdmission(
-		context: AuthorizationContext,
-		descriptor: OperationDescriptor,
-	): Promise<RequestAdmissionResult> {
-		return this.admissionAuthority.reserve(context, descriptor);
 	}
 
 	/** Start a keyed or unkeyed text mutation admission. */

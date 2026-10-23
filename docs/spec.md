@@ -642,10 +642,12 @@ Each case is a test (Worker: `@cloudflare/vitest-pool-workers` against the real 
 
 No disposable demos; every phase ships the same code.
 
+F1 is a server-only gate. Local protocol, real Durable Object, and Worker HTTP tests establish only the tested Worker behavior. Independent task review, human branch review, and actual remote CI must also pass before F1 exit. This evidence does not qualify plugin sync, conflict copies, offline recovery, MCP/OAuth transport, deployed authentication, or device effects. Keep those obligations in their later phase gates. Keep OAB-6.8.2 Deferred.
+
 | Phase | Deliverable | Entry | Exit |
 | --- | --- | --- | --- |
 | F0 | New repo: Bun monorepo (`apps/worker`, `apps/plugin`, `packages/protocol` with Zod schemas shared by Worker, plugin and tests), `AGENTS.md`, Backlog.md initialized with tasks and deferred items, CI (Biome, typecheck, Vitest) | Spec approved | `bun run check` green on first commit |
-| F1 | Worker: DO schema, all `/v1` endpoints, authorize/commit tickets, idempotency, search, limits, revocation table; tests with real DO | F0 | AC-01, 03–06 (server side), 11, 12, 14, 15, 16, 17, 18, 21, 22, 25, 26, 27, 28, 29, 34, 38, 40, 43 |
+| F1 | Worker: DO schema, all `/v1` endpoints, authorize/commit tickets, idempotency, search, limits, revocation table; tests with real DO | F0 | Server portions of AC-01, 03–06, 11, 12, 14, 15, 16, 17, 18, 21, 22, 25, 26, 27, 28, 29, 34, 38, 40, and 43, plus independent task review, human branch review, and actual remote CI |
 | F2 | OAuth (provider + Access), MCP server and tools, owner console (clients, revoke) | F1 | MCP Inspector, Claude Code and ChatGPT web connect; read and write work; AC-08. Owner verifies Developer mode and iPhone availability in their ChatGPT account; result recorded, owner decides on mobile client strategy |
 | F3 | Plugin Desktop: enrollment, hydration, feed, publish, Option B, status panel, Sync now | F2 | Two test vaults on the Mac pass AC-02, 03, 04, 05, 06, 09, 10, 13, 20, 24, 30, 31, 32, 33, 39; AC-09 run against real ChatGPT |
 | F3b | Backup: alarm-driven incremental export to the private backup repo, verification, restore into a new vault | F1 | AC-07, 23, 35, 36, 37, 41, 42, 44 against a synthetic 500-file vault (about one hour of paced export) |

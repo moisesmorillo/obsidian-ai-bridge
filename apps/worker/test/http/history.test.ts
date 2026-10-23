@@ -131,7 +131,7 @@ describe("history mutation HTTP routes", () => {
 		expect(await pinned.json()).toMatchObject({ content: "original" });
 	});
 
-	it("keeps the immediate rename hint through stale failures, feed pruning, and restart", async () => {
+	it("AC-05/18 server: keeps the rename hint after stale source edits and failures", async () => {
 		const source = "https://worker.invalid/v1/files/notes/source.md";
 		const created = await SELF.fetch(source, {
 			method: "PUT",
@@ -542,7 +542,7 @@ describe("history mutation HTTP routes", () => {
 		expect(created.status).toBe(201);
 	});
 
-	it("requires write scope and redacts current content from write-only failures", async () => {
+	it("AC-27 server: redacts current content from write-only failures", async () => {
 		const url = "https://worker.invalid/v1/files/private-restore.md";
 		const created = await SELF.fetch(url, {
 			method: "PUT",
@@ -582,7 +582,7 @@ describe("history mutation HTTP routes", () => {
 		expect(JSON.stringify(failure)).not.toContain("new current content");
 	});
 
-	it("returns one rename feed entry for collision, case-only rename, and tombstone destination", async () => {
+	it("AC-14 server: allows case-only rename and rejects canonical path collisions", async () => {
 		/** Create one text file through the real conditional HTTP route. */
 		const put = async (path: string, content: string) =>
 			SELF.fetch(`https://worker.invalid/v1/files/${path}`, {
@@ -646,7 +646,7 @@ describe("history mutation HTTP routes", () => {
 		expect(deletedDestination.status).toBe(200);
 	});
 
-	it("replays a committed append after a lost HTTP response without appending twice", async () => {
+	it("AC-29 server: replays a keyed append after a lost HTTP response", async () => {
 		const url = "https://worker.invalid/v1/files/replay.md";
 		const created = await SELF.fetch(url, {
 			method: "PUT",
@@ -685,7 +685,7 @@ describe("history mutation HTTP routes", () => {
 		expect(created.status).toBe(201);
 	});
 
-	it("reports canonical append precondition and size failures", async () => {
+	it("AC-22/29 server: rejects tombstone and oversized append requests", async () => {
 		const conflictingCondition = await SELF.fetch(
 			"https://worker.invalid/v1/files/missing.md:append",
 			{

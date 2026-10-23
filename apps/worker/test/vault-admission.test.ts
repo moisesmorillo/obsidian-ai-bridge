@@ -173,13 +173,13 @@ describe("Vault durable admission", () => {
 		});
 	});
 
-	it("reserves a native lease before any body preparation", async () => {
+	it("begins a mutation lease before any body preparation", async () => {
 		const stub = env.VAULTS.get(env.VAULTS.newUniqueId());
 		let liveEpoch = "";
 		await runInDurableObject(stub, (_instance, state) => {
 			liveEpoch = currentEpoch(state.storage);
 		});
-		const result = await stub.reserveAdmission(authorized, {
+		const result = await stub.beginMutation(authorized, {
 			...writeDescriptor,
 			epoch: liveEpoch,
 		});
@@ -204,7 +204,7 @@ describe("Vault durable admission", () => {
 		const descriptor = { ...writeDescriptor, epoch: liveEpoch };
 		const results = await Promise.all(
 			Array.from({ length: 17 }, (_, index) =>
-				(index % 2 === 0 ? firstStub : secondStub).reserveAdmission(
+				(index % 2 === 0 ? firstStub : secondStub).beginMutation(
 					{ ...authorized, grant_id: `grant-${index}` },
 					descriptor,
 				),
@@ -214,7 +214,7 @@ describe("Vault durable admission", () => {
 		const denied = results.filter((result) => !result.ok);
 		const secondClientResults = await Promise.all(
 			Array.from({ length: 17 }, () =>
-				firstStub.reserveAdmission(
+				firstStub.beginMutation(
 					{ ...authorized, client_id: "client-two" },
 					descriptor,
 				),

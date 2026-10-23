@@ -44,7 +44,7 @@ describe("literal search HTTP route", () => {
 		});
 	});
 
-	it("returns literal matching text and epoch-bound coverage", async () => {
+	it("AC-15 server: returns literal search matches and epoch-bound coverage", async () => {
 		const write = await SELF.fetch(
 			"https://worker.invalid/v1/files/search.md",
 			{
@@ -111,7 +111,7 @@ describe("literal search HTTP route", () => {
 		expect(Number(response.headers.get("Retry-After"))).toBeGreaterThan(0);
 	});
 
-	it("excludes an AC-16 oversized Markdown blob and reports its coverage", async () => {
+	it("AC-16 server: excludes an oversized Markdown blob from indexed search", async () => {
 		const bytes = new Uint8Array(1_500_000).fill(0x61);
 		bytes.set(new TextEncoder().encode("needle"), 0);
 		const response = await SELF.fetch(

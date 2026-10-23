@@ -752,7 +752,121 @@ describe("conditional text HTTP lifecycle", () => {
 		expect(response.status).toBe(400);
 	});
 
-	it("rejects old epochs, stale ETags, and canonical path collisions", async () => {
+	it("AC-03/04/05/06 server: one concurrent mutation wins against one observed revision", async () => {
+		const source = "https://worker.invalid/v1/files/notes/race-source.md";
+		const created = await SELF.fetch(source, {
+			method: "PUT",
+			headers: { "If-None-Match": "*", "X-Vault-Epoch": TEXT_FIXTURE_EPOCH },
+			body: "base",
+		});
+		const observedTag = created.headers.get("ETag") ?? "";
+		await created.text();
+		const sharedHeaders = {
+			"If-Match": observedTag,
+			"X-Vault-Epoch": TEXT_FIXTURE_EPOCH,
+		};
+		const [write, deletion, rename] = await Promise.all([
+			SELF.fetch(source, {
+				method: "PUT",
+				headers: sharedHeaders,
+				body: "write",
+			}),
+			SELF.fetch(source, { method: "DELETE", headers: sharedHeaders }),
+			SELF.fetch(`${source}:rename`, {
+				method: "POST",
+				headers: sharedHeaders,
+				body: JSON.stringify({ to: "notes/race-destination.md" }),
+			}),
+		]);
+		const responses = [write, deletion, rename];
+		const bodies = await Promise.all(
+			responses.map((response) => response.text()),
+		);
+		expect(
+			responses.filter(
+				(response) => response.status >= 200 && response.status < 300,
+			),
+		).toHaveLength(1);
+		expect(
+			responses.filter((response) => response.status === 412),
+		).toHaveLength(2);
+		const winner = responses.find(
+			(response) => response.status >= 200 && response.status < 300,
+		);
+		expect(winner).toBeDefined();
+		const state = await runInDurableObject(
+			env.VAULTS.get(env.VAULTS.idFromName("worker.invalid")),
+			(_instance, durableState) => ({
+				files: durableState.storage.sql
+					.exec("SELECT path, rev, deleted, content FROM files ORDER BY path")
+					.toArray(),
+				revisions: durableState.storage.sql
+					.exec("SELECT path, rev FROM revisions ORDER BY path, rev")
+					.toArray(),
+			}),
+		);
+		expect(state.revisions).toHaveLength(winner === rename ? 3 : 2);
+		const sourceState = state.files.find(
+			(file) => file.path === "notes/race-source.md",
+		);
+		expect(sourceState).toMatchObject({ path: "notes/race-source.md", rev: 2 });
+		if (winner === write)
+			expect(sourceState).toMatchObject({ content: "write", deleted: 0 });
+		if (winner === deletion)
+			expect(sourceState).toMatchObject({ content: null, deleted: 1 });
+		if (winner === rename) {
+			expect(sourceState).toMatchObject({ content: null, deleted: 1 });
+			expect(state.files).toContainEqual(
+				expect.objectContaining({
+					path: "notes/race-destination.md",
+					rev: 1,
+					content: "base",
+					deleted: 0,
+				}),
+			);
+		}
+		const failures = responses
+			.map((response, index) => ({ response, body: bodies[index] }))
+			.filter(({ response }) => response.status === 412)
+			.map(({ body }) => JSON.parse(body));
+		expect(failures).toHaveLength(2);
+		for (const failure of failures)
+			expect(failure).toMatchObject({ error: "precondition_failed" });
+	});
+
+	it("AC-11 server: retains a distinct revision when identical bytes produce the same hash", async () => {
+		const first = await SELF.fetch(url, {
+			method: "PUT",
+			headers: { "If-None-Match": "*", "X-Vault-Epoch": TEXT_FIXTURE_EPOCH },
+			body: "identical bytes",
+		});
+		const firstTag = first.headers.get("ETag") ?? "";
+		await first.text();
+		const second = await SELF.fetch(url, {
+			method: "PUT",
+			headers: { "If-Match": firstTag, "X-Vault-Epoch": TEXT_FIXTURE_EPOCH },
+			body: "identical bytes",
+		});
+		const secondTag = second.headers.get("ETag");
+		await second.text();
+		const rows = await runInDurableObject(
+			env.VAULTS.get(env.VAULTS.idFromName("worker.invalid")),
+			(_instance, state) =>
+				state.storage.sql
+					.exec(
+						"SELECT rev, hash FROM revisions WHERE path = ? ORDER BY rev",
+						url.split("/v1/files/")[1],
+					)
+					.toArray(),
+		);
+		expect(first.status).toBe(201);
+		expect(second.status).toBe(200);
+		expect(secondTag).not.toBe(firstTag);
+		expect(rows).toHaveLength(2);
+		expect(rows[1].hash).toBe(rows[0].hash);
+	});
+
+	it("AC-14/34 server: rejects path collisions and old-epoch mutation requests", async () => {
 		const oldEpoch = await SELF.fetch(url, {
 			method: "PUT",
 			headers: {
@@ -816,7 +930,7 @@ describe("conditional text HTTP lifecycle", () => {
 		});
 	});
 
-	it("replays the original receipt after the client retries the same key and bytes", async () => {
+	it("AC-01 server: returns one receipt after the same key and bytes retry", async () => {
 		const headers = {
 			"If-None-Match": "*",
 			"X-Vault-Epoch": TEXT_FIXTURE_EPOCH,
@@ -843,7 +957,7 @@ describe("conditional text HTTP lifecycle", () => {
 		expect(history.status).toBe(200);
 	});
 
-	it("retries through HTTP after the test entry loses a committed RPC response", async () => {
+	it("AC-01 server: retries through HTTP after a committed response is lost", async () => {
 		const headers = {
 			"If-None-Match": "*",
 			"X-Vault-Epoch": TEXT_FIXTURE_EPOCH,
@@ -1074,7 +1188,7 @@ describe("conditional text HTTP lifecycle", () => {
 		},
 	);
 
-	it("preserves_exact_authorized_failure_JSON_and_excludes_write_only_content", async () => {
+	it("AC-27 server: returns write-only stale metadata without current content", async () => {
 		const content = `\ufeff"\\\u0000café😀${"z".repeat(8191)}😀`;
 		const created = await SELF.fetch(url, {
 			method: "PUT",

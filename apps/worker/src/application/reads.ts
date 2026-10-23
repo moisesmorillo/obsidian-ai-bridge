@@ -6,7 +6,6 @@ import type {
 	ChangeEntry,
 	ChangesPage,
 	FileFailure,
-	HistoryPage,
 	HistoryPageEntry,
 	HistoryUpperResponse,
 	ManifestEntry,
@@ -435,68 +434,6 @@ function createLazyTraversal<T, M>(
 			return owner.finish(uncertain ? "uncertain" : completion);
 		},
 	};
-}
-
-/** Collect the shared lazy traversal for bounded non-HTTP callers only. */
-async function collectRead<T, M>(
-	opened: ReadOutcome<LazyReadSession<T, M>>,
-): Promise<ReadOutcome<M & { entries: T[]; next_page: string | null }>> {
-	if (!opened.ok) return opened;
-	const entries: T[] = [];
-	try {
-		let batch: ReadBatch<T>;
-		do {
-			batch = await opened.body.readBatch();
-			entries.push(...batch.rows);
-		} while (!batch.done);
-		return {
-			ok: true,
-			body: { ...opened.body.body, entries, next_page: batch.next_page },
-			finish: opened.body.finish,
-		};
-	} catch (error) {
-		await opened.body.cancel();
-		if (error instanceof ReadBatchFailure) {
-			await opened.body.finish("settled");
-			return { ok: false, failure: error.failure };
-		}
-		throw error;
-	}
-}
-
-/** Collect a bounded manifest page with the same keyset policy as HTTP. */
-export async function readManifest(
-	gateway: ReadVaultGateway,
-	context: AuthorizationContext,
-	token?: string,
-): Promise<ReadOutcome<ManifestPage>> {
-	return collectRead(await openManifestRead(gateway, context, token));
-}
-
-/** Collect a bounded history page with the same revision ceiling as HTTP. */
-export async function readHistory(
-	gateway: ReadVaultGateway,
-	context: AuthorizationContext,
-	path: string,
-	token?: string,
-): Promise<ReadOutcome<HistoryPage>> {
-	return collectRead(await openHistoryRead(gateway, context, path, token));
-}
-
-/** Collect a bounded feed for non-HTTP callers without a second traversal policy. */
-export async function readChanges(
-	gateway: ReadVaultGateway,
-	context: AuthorizationContext,
-	epoch: string,
-	since: number,
-	limit = 1000,
-): Promise<ReadOutcome<ChangesPage>> {
-	const result = await collectRead(
-		await openChangesRead(gateway, context, epoch, since, limit),
-	);
-	if (!result.ok) return result;
-	const { next_page: _next, ...body } = result.body;
-	return { ...result, body };
 }
 
 /** Authorize the canonical body-free read intent before cursor or data demand. */

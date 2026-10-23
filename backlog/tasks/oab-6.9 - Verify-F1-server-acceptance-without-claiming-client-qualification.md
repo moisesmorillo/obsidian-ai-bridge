@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: 2026-10-15 00:38
-updated_date: '2026-10-23T22:27:00Z'
+updated_date: '2026-10-23T22:53:00Z'
 labels:
   - F1
 dependencies:
@@ -73,4 +73,14 @@ Found one remaining case mismatch in `usesBlobStorage` and three case-sensitive 
 Test-first exceptions: the exhaustive protocol classifier test and the 68-case lifecycle test characterize the pre-existing classifier and mutation policy, so they passed on first run after implementation began. The HTTP matrix first exceeded Vitest’s 5-second default; it then exceeded 60 seconds because it repeated full GETs for every path. The test now checks authoritative hashes and metadata for every case and exact body and range reads for six representative cases. It passes in about 12 seconds. Full `bun run check` first exposed the native lifecycle test’s 5-second default timeout. The test now uses 30 seconds, and the full check passes.
 
 Final validation: `bun run docs:check` passed. `bun run check` passed with 52 tooling, 2 plugin, 277 protocol, 761 native Worker, and 112 HTTP tests, 1,204 total. Slice 3 remains incomplete. OAB-6.9 status stays In Progress and acceptance criteria stay unchecked. The pre-existing README change stays uncommitted.
+
+Slice 3 implementation completed at 945b2241e4a3f3d41a053c992deba04e0098fc7e. Removed the Vault reserveAdmission RPC and the three eager application collectors with collectRead. Kept SqliteAdmissionAuthority.reserve and the native history gateway. Updated tests to use beginMutation and lazy reads while preserving interleavings, caps, expiry, authorization, and response ownership. Added named server acceptance cases across the required F1 IDs. Added concurrent write, delete, and rename assertions against one observed ETag. Added equal-hash, distinct-revision coverage. Updated section 14 with the approved server-only gate and retained later plugin, MCP, deployment, and device limits. README now states production identity resolution denies access by default. The pre-existing README edit remains unstaged. OAB-6.9 and OAB-6 remain In Progress. Acceptance criteria remain unchecked. OAB-6.8.2 remains Deferred.
+
+Test-first exception: the new concurrent mutation and identical-byte assertions passed against the existing implementation before the API cleanup. They characterize existing CAS behavior. One strengthened SQL-row assertion first expected Boolean deletion values, but native SQLite returns 0 or 1. The focused test failed, then passed after the assertion matched the persisted integer form. Focused HTTP files tests passed 25. Focused native tests passed 89. Full bun run check passed with 52 tooling, 2 plugin, 277 protocol, 761 native Worker, and 114 HTTP tests. Lint, docs, typecheck, and dry-run builds passed. Expected injected network and SQLite errors appeared in test logs. No deployment or personal-vault access occurred.
+
+Remaining duties: independent task review, full branch review, human review, remote CI, and publication. Do not close this task or its parent gate before those duties pass.
+
+Correction: Slice 3 uses the final branch commit titled `test(worker): complete F1 server acceptance`. The earlier hash in this note preceded inclusion of the Backlog CLI note and is not the final commit. Read the current branch log for the final hash.
+
+Read API adaptation exception: the real interleaving test first kept the old eager RPC expectation. It failed because opening a session reads metadata only. Updated the test to assert zero batch calls before demand and four bounded batches after reading the page. The later full check passed.
 <!-- SECTION:NOTES:END -->

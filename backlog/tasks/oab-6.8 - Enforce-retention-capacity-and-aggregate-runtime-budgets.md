@@ -4,8 +4,8 @@ title: Enforce retention capacity and aggregate runtime budgets
 status: In Progress
 assignee:
   - '@pi'
-created_date: '2026-10-15 00:38'
-updated_date: '2026-10-23T04:07:00Z'
+created_date: 2026-10-15 00:38
+updated_date: '2026-10-23T19:00:00Z'
 labels:
   - F1
 dependencies:
@@ -52,4 +52,6 @@ Unit 1 stopped at the approved native feasibility gate. The initial native attri
 Unit 2 worker b3fedf96 stopped at its 1800000ms runtime timeout. No Unit 2 commit or report exists. Preserve all partial work: nine tracked files and three new retention/test files. Focused retention, alarm, documentation, and type checks appear in its log. The full check failed one native cursor-expiry regression in vault-read-admission.test.ts: the pruned-empty-feed case resolved an empty feed instead of rejecting. The parent did not repeat tests. Same-worker recovery must inspect this exact failure, preserve prior evidence, finish validation, and report the final state. No execution-mode or model change applies.
 
 Unit 1 accepted at 2c54d1c after review 1cf3d264. Its non-blocking summary and evidence notes closed in Unit 2. Owner confirms pre-production schema breaks without migrations. Unit 2 completed at 75e6776 after same-worker timeout recovery and passed review a9a2b677. Its full check passed 1039 tests. The cursor fixture now records its simulated durable pruned boundary without weakening old-cursor rejection. Unit 3 completed at 472bd54, then review eaf8ff21 found two local evidence gaps. Correction 73dc5ae adds real HTTP response-lifetime overlap and replaces the false full-response allocation model with source-backed named-value arithmetic. Scoped review d3c7161c plus skill follow-up 2842ec5b closes U3-R1 and U3-R2. Direct execution already owns body slots. The actual corrected gap was HTTP response ownership. The 16000000-byte named-value subtotal is not complete application or process memory. Latest worker full check passed tooling 52, protocol 269, plugin 2, native 614, and HTTP 107 tests. Documentation, types, and dry-run builds passed. No acceptance box is checked yet. Whole-branch and human branch reviews remain open. Deployed native retention stays deferred under OAB-6.8.2. No deployment applies.
+
+Whole-branch review examined f30435f..0682409 and found WB-R1 stale-precondition precedence and WB-R2 local aggregate payload evidence gaps. Correction commits ad2f82c and 3478056 close both. Admission now validates current preconditions before capacity and ticket consumption. Native and HTTP tests cover separate cap conditions, occupied create/collision, write-only 412, state preservation, and receipt replay. Retention selects identities and accounts one revision payload at a time. Tests exercise ordinary and pressure pruning over 49 maximum escaping-heavy revisions, plus simultaneous routed body/read payloads. Session-model scoped review aa3e583a APPROVE at 3478056. It confirms all prior finding closures and no fix-introduced or structural issue. The reviewer independently ran bun run check: 1052 tests across 64 files passed, exit 0. Formatting, docs, types, and dry-run builds passed. Frontend payload allowance is below 24000000 bytes. Separate DO retention payload allowance is 20050572 bytes. These are named local payload allowances, not complete heap/process proof. OAB-6.8.2 remains deferred. Human branch review remains pending. The earlier empty-command guard block was a worker error, not a tool outage. No product data or remote resources changed.
 <!-- SECTION:NOTES:END -->

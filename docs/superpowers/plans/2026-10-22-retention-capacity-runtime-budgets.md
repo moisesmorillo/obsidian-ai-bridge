@@ -10,7 +10,7 @@
 
 **Spec:** `docs/spec.md`, sections 5.2, 6.4, 6.5, 11.1, 12, and 13.
 
-**State:** Draft for owner approval. No product implementation is authorized by this document alone.
+**State:** Owner approved pn-71230a. The owner then approved logical history accounting and continuation with the same worker. No second plan review applies.
 
 ## Planning checklist
 
@@ -18,7 +18,7 @@
 - [x] Read the task, direct dependencies, measurement subtasks, and relevant source owners.
 - [x] Check published platform limits and distinguish them from pinned-runtime evidence.
 - [x] Prepare sequential work units and acceptance tests.
-- [ ] Receive owner plan approval before product edits.
+- [x] Receive owner plan approval before product edits.
 - [ ] Execute the approved units with one writer at a time.
 - [ ] Complete independent task review, whole-branch review, and human branch review.
 
@@ -78,7 +78,10 @@ The proposal uses these policy interpretations. Approval covers them unless the 
 - Keep feed and receipts for 30 days. Preserve the UUIDv7 acceptance window of 25 days plus 5 minutes.
 - Keep ordinary history for 30 days. Pressure pruning never crosses the 7-day floor or removes an export pin.
 - Raise visible history-reduced attention when pressure pruning removes otherwise retained revisions.
-- Include admission storage in the total database observation. Do not replace physical bytes with content lengths.
+- Use `sql.databaseSize` for the 2 GB total cap, including admission storage.
+- Use logical payload-byte counters for `revisions`, `receipts`, and `changes`, not FTS or physical table pages.
+- Maintain category counters and their sum in `meta` within the same publication or pruning transaction.
+- Use deterministic UTF-8 row payload encoding. Exclude SQLite allocation overhead, indexes, FTS, and external R2 object bytes.
 - Do not add dependencies, deploy, change Cloudflare resources, or touch the personal vault.
 - Keep application code independent of Cloudflare SDKs. Composition only wires owners.
 - Use the Backlog CLI for task changes. Do not create progress or review-record documents.
@@ -98,14 +101,13 @@ Sources:
 
 Published limits can differ from the pinned runtime. Use native tests before code depends on an API or storage observation.
 
-Two native checks come first after approval:
+Native tests confirm transaction-visible `sql.databaseSize`, rollback, and free-page reuse. The pinned runtime rejects `dbstat` with `no such table: dbstat: SQLITE_ERROR`.
 
-- Check whether `sql.databaseSize` reflects allocation inside a transaction before commit and returns to its old value after rollback.
-- Check whether native SQLite exposes exact storage attribution for revisions, receipts, FTS tables, and their indexes.
+The owner resolved this blocker with a specification decision. Exact native table attribution no longer gates implementation.
 
-Do not assume `dbstat` exists. Do not substitute total database size for the specified history-pressure group.
+Keep the 2 GB physical cap. Use transactional logical payload-byte counters for history pressure across `revisions`, `receipts`, and `changes`.
 
-If exact attribution is unavailable, stop that unit and report the named blocker. A logical byte counter needs an explicit specification decision.
+Do not start a platform investigation task, change dependencies, or claim that logical counters measure physical table storage.
 
 Check free-page reuse separately from physical shrink. Deleting history does not itself prove that allocated database bytes decrease.
 
@@ -143,9 +145,14 @@ A storage compatibility change needs a named version boundary and an approved sp
 - `assertCanPublish(tx, operation)` checks current limits after authorization and receipt replay, before new publication.
 - `assertPublishedSize(tx, operation)` checks native database allocation after publication and receipt insertion, before transaction commit.
 - Both hooks throw `FileOperationDenied` for known capacity refusals. The outer transaction must roll back all publication effects.
+- Add deterministic UTF-8 logical payload encoding for complete revision, receipt, and change row payloads.
+- Track `revisions`, `receipts`, `changes`, and total logical bytes in `meta`. Update them with publication, including receipt insertion.
+- Keep logical accounting separate from `sql.databaseSize`. Do not count FTS, indexes, allocator overhead, or external blob bytes as logical payload.
 
-- [ ] Write native tests for transaction-visible database allocation, rollback, free-page reuse, and exact storage attribution.
-- [ ] Run those tests first. Record actual capability results. Stop on an unsupported prerequisite, not on a guessed replacement.
+- [x] Test native transaction-visible allocation, rollback, free-page reuse, and missing `dbstat`.
+- [ ] Preserve the two passing native capability tests. No further exact-attribution gate applies.
+- [ ] Write failing counter tests for Unicode payloads, null content, blob-reference rows, receipt replay, and rollback.
+- [ ] Verify counter deltas for create, update, DELETE, append, rename, restore, and keyed receipts within publication transactions.
 - [ ] Write failing tests at 9,999, 10,000, and competing admissions for the final live-file slot.
 - [ ] Write failing tests for create, update, blob publication, append, rename, restore, delete, and replay at capacity.
 - [ ] Use native growth with small test thresholds to reject a commit that crosses its database budget.
@@ -172,7 +179,8 @@ A storage compatibility change needs a named version boundary and an approved sp
 - Native metadata stores durable category progress, the removed feed prefix boundary, and sticky history-reduced attention.
 - Use the existing `meta` table for compatible added state. Validate it without silently repairing malformed storage.
 - Effective feed eligibility is the maximum of the persisted pruned boundary and the existing time-derived boundary.
-- Persist progress and deletion atomically. Repeated alarm delivery must not skip data or lower the feed boundary.
+- Persist progress, deletion, and logical payload counter decrements atomically. Repeated delivery must not skip data or lower the feed boundary.
+- Pressure uses the sum of logical `revisions`, `receipts`, and `changes` payload bytes. FTS and physical table pages do not enter that sum.
 
 - [ ] Write failing exact-cutoff tests for 30-day feed, receipt, and ordinary history retention.
 - [ ] Test receipt retention against UUIDv7 keys at minus 25 days, plus 5 minutes, and after receipt expiry.
@@ -266,6 +274,8 @@ The plan maps all four criteria to native or HTTP tests. It keeps deployed measu
 
 Capacity uses the common publication transaction, not transport authority. Retention keeps permanent rows and a durable feed boundary.
 
-The main feasibility risk is native storage attribution. Its first-unit gate prevents an unsupported size model from silently changing retention policy.
+The native gate found missing `dbstat`. The owner approved logical history accounting and kept `sql.databaseSize` for the total cap.
 
-No product code, test code, dependency declaration, runtime configuration, or specification changed during planning.
+The owner directs continuation with the same worker and no second plan review. Ask again only for a failed `bun run check` or another specification change.
+
+No platform investigation task applies. Deployment remains unauthorized. Preserve the native capability tests and the original blocker evidence.

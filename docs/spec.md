@@ -530,7 +530,7 @@ Backup repository configured, one export `complete` and verified, and one restor
 | Files per vault | 10,000 | `507 capacity_exceeded`; *attention* |
 | Path | 512 bytes, 32 segments | `400 invalid_path` |
 | Feed retention (`changes`) | 30 days | Older cursor → `410 cursor_expired` → full reconciliation |
-| Revision retention (`revisions`) | 30 days, **floor 7 days** (floor approved by owner, §17.1); revisions pinned by an export are exempt | Pruned nightly. If `revisions` + FTS + receipts exceed **1 GB**, prune oldest beyond the 7-day floor and raise *attention* "history reduced"; never below 7 days, never silently |
+| Revision retention (`revisions`) | 30 days, **floor 7 days** (floor approved by owner, §17.1); revisions pinned by an export are exempt | Pruned nightly. If logical payload bytes in `revisions` + `receipts` + `changes` exceed **1 GB**, prune oldest revisions beyond the 7-day floor. Raise *attention* "history reduced". Never cross the floor or remove export pins. |
 | Tombstones (`files.deleted=1`) | kept forever | Negligible size; guarantees deletes are never inferred |
 | Receipts | 30 days (accept window 25 days + 5 min skew) | §6.4 |
 | DO SQLite total | **2 GB** product envelope, including admission storage. Needs Workers Paid. | Alert at 1.5 GB. At 2 GB, every mutation except `delete` returns `507 capacity_exceeded`. Every mutation writes a revision row, so content cannot be accepted without its revision. Reads continue. Raising this envelope is a v2 decision. |
@@ -544,6 +544,16 @@ Cloudflare lists 10 GB per SQLite Durable Object on Workers Paid and 1 GB on Wor
 SQL queries accept at most 100 bound parameters. Tables can have at most 100 columns. Each string, BLOB, or table row can use at most 2 MB.
 
 The [SQLite storage API](https://developers.cloudflare.com/durable-objects/api/sqlite-storage-api/), read 2026-10-17, states that `sql.databaseSize` returns database bytes. It also states that `transactionSync` rolls back when its synchronous callback throws.
+
+The 2 GB total cap uses `sql.databaseSize`, including admission storage. Logical history counters do not replace this physical database observation.
+
+History pressure uses logical payload bytes from `revisions`, `receipts`, and `changes`. Transactional `meta` counters track each category and their sum. Publication updates these counters in the same transaction as its rows and receipt. Pruning subtracts the deleted payload bytes in its deletion transaction.
+
+Use deterministic UTF-8 payload encoding with explicit tests for Unicode, null values, and complete row payloads. Exclude SQLite allocation overhead, indexes, FTS storage, and external R2 object bytes from these logical counters. Logical payload bytes do not claim exact physical table storage.
+
+The pinned workerd SQLite runtime does not expose `dbstat`. Native tests on 2026-10-22 returned `no such table: dbstat: SQLITE_ERROR`. Exact per-table page attribution is not a prerequisite for logical history accounting. No platform investigation task applies.
+
+The owner approved this accounting contract for OAB-6.8 on 2026-10-22. The 30-day retention policy, 7-day floor, permanent tombstones, and export-pin protection remain unchanged.
 
 We did not verify the deployment account tier. This specification does not claim full-product Workers Free support. Admission storage feasibility uses the smaller 1 GB Workers Free limit.
 

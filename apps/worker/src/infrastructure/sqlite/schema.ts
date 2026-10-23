@@ -7,8 +7,8 @@ import {
 	drizzle,
 } from "drizzle-orm/durable-sqlite";
 
-/** Persisted schema version; version 5 requires durable retention progress and rejects older stores. */
-export const SCHEMA_VERSION = 5;
+/** Persisted schema version; version 6 adds current-row rename destinations and rejects older stores. */
+export const SCHEMA_VERSION = 6;
 
 /** Narrow FTS5 DDL unsupported by the relational model and kept at its engine-specific seam. */
 const FTS_SCHEMA = `CREATE VIRTUAL TABLE files_fts USING fts5(
@@ -106,8 +106,8 @@ function isCanonicalSafeInteger(value: string, nonNegative: boolean): boolean {
 }
 
 /**
- * Creates a fresh canonical schema-version-5 vault or validates an existing version-5 store.
- * Versions 1 through 4 and other unsupported stores fail without migration, repair, replacement, or epoch changes.
+ * Creates a fresh canonical schema-version-6 vault or validates an existing version-6 store.
+ * Versions 1 through 5 and other unsupported stores fail without migration, repair, replacement, or epoch changes.
  * All DDL and initial metadata writes run synchronously in one Durable SQLite transaction.
  * @param storage - The native storage belonging to this vault Durable Object.
  * @param createEpoch - Called only during fresh initialization; an invalid result aborts the transaction.

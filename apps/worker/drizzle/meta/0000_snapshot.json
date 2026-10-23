@@ -1,7 +1,7 @@
 {
 	"version": "6",
 	"dialect": "sqlite",
-	"id": "6d785fad-a0f6-4380-89f9-a8775e5072ec",
+	"id": "757f1167-b951-4b30-89e9-3c85c89d415c",
 	"prevId": "00000000-0000-0000-0000-000000000000",
 	"tables": {
 		"blob_refs": {
@@ -333,6 +333,13 @@
 				},
 				"blob_hash": {
 					"name": "blob_hash",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": false,
+					"autoincrement": false
+				},
+				"renamed_to": {
+					"name": "renamed_to",
 					"type": "text",
 					"primaryKey": false,
 					"notNull": false,

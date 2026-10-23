@@ -776,7 +776,7 @@ describe("native conditional text storage", () => {
 		});
 	});
 
-	it("replays original compact receipts after later edits and scopes keys by client", async () => {
+	it("AC-38 server: keeps receipts independent when clients share an idempotency key", async () => {
 		await withTextStore(async (fixture) => {
 			const path = "notes/replay.md";
 			const originalIntent = await putIntent(path, "original", {

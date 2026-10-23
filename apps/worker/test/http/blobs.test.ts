@@ -142,7 +142,7 @@ describe("declared blob HTTP", () => {
 			expect(request.bodyUsed).toBe(false);
 		},
 	);
-	it("selects large Markdown and current or retained exact ranges", async () => {
+	it("AC-16 server: preserves large Markdown bytes and exact range reads", async () => {
 		const bytes = new Uint8Array(1_500_000).fill(97);
 		bytes.set([0xef, 0xbb, 0xbf, 0xc3, 0xa9]);
 		const hash = await digest(bytes);
@@ -202,6 +202,13 @@ describe("declared blob HTTP", () => {
 		expect(new Uint8Array(await retained.arrayBuffer())).toEqual(
 			bytes.subarray(0, 5),
 		);
+		const missingEpoch = await SELF.fetch(`${url}?rev=1`, {
+			headers: { Range: "bytes=0-4" },
+		});
+		expect(missingEpoch.status).toBe(410);
+		expect(await missingEpoch.json()).toMatchObject({
+			error: "revision_pruned",
+		});
 		const current = await SELF.fetch(url);
 		expect(await current.json()).toMatchObject({
 			content: "inline",
@@ -337,7 +344,7 @@ describe("declared blob HTTP", () => {
 		expect(response.status).toBe(413);
 		expect(await response.json()).toMatchObject({ error: "blob_too_large" });
 	});
-	it("replays a lost blob authority result with one revision, change, and receipt", async () => {
+	it("AC-01/16 server: replays a lost blob result with one revision and receipt", async () => {
 		const bytes = new Uint8Array([255, 0, 1]);
 		const headers = {
 			"If-None-Match": "*",
@@ -432,7 +439,7 @@ describe("declared blob HTTP", () => {
 		expect(get.headers.get("X-File-Large")).toBe("true");
 		expect(await digest(new Uint8Array(await get.arrayBuffer()))).toBe(hash);
 	});
-	it("gets no R2 capability effect or source demand for a revoked 20 MB declaration", async () => {
+	it("AC-28 server: rejects a revoked 20 MB declaration before body demand", async () => {
 		let operations = 0;
 		let demand = 0;
 		const native = new R2BlobStore(env.R2_BUCKET);

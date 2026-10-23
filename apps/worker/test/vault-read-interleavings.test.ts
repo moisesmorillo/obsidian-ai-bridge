@@ -9,8 +9,11 @@ import {
 	pathKey,
 	TextMutationIntentSchema,
 } from "@obsidian-ai-bridge/protocol";
-import type { ReadVaultGateway } from "@worker/application/reads";
-import { readChanges, readManifest } from "@worker/application/reads";
+import {
+	openChangesRead,
+	openManifestRead,
+	type ReadVaultGateway,
+} from "@worker/application/reads";
 import { prepareTextPayload } from "@worker/application/text-payload";
 import { initializeVaultStorage } from "@worker/infrastructure/sqlite/schema";
 import { clearTestVault } from "@worker/test-fixtures/admission";
@@ -258,7 +261,18 @@ describe("real mutation interleavings during bounded reads", () => {
 		]);
 		const readRpcCalls: string[] = [];
 		const gateway = readGateway(stub, (method) => readRpcCalls.push(method));
-		const first = await readManifest(gateway, context);
+		const first = await openManifestRead(gateway, context);
+		expect(readRpcCalls).toEqual(["authorize", "readVault"]);
+		expect(first.ok).toBe(true);
+		if (!first.ok) return;
+		const firstEntries = [];
+		let firstBatch = await first.body.readBatch();
+		firstEntries.push(...firstBatch.rows);
+		while (!firstBatch.done) {
+			firstBatch = await first.body.readBatch();
+			firstEntries.push(...firstBatch.rows);
+		}
+		expect(firstEntries).toHaveLength(256);
 		expect(readRpcCalls).toEqual([
 			"authorize",
 			"readVault",
@@ -267,12 +281,9 @@ describe("real mutation interleavings during bounded reads", () => {
 			"readBatch",
 			"readBatch",
 		]);
-		expect(first.ok).toBe(true);
-		if (!first.ok) return;
-		expect(first.body.entries).toHaveLength(256);
-		expect(first.body.head_seq).toBe(260);
-		expect(first.body.next_page).not.toBeNull();
-		await first.finish?.("settled");
+		expect(first.body.body.head_seq).toBe(260);
+		expect(firstBatch.next_page).not.toBeNull();
+		await first.finish("settled");
 		expect(readRpcCalls.at(-1)).toBe("finishAdmission");
 		expect(readRpcCalls).toHaveLength(7);
 
@@ -349,61 +360,75 @@ describe("real mutation interleavings during bounded reads", () => {
 		});
 		await commitCommand(stub, rename);
 
-		const second = await readManifest(
+		const second = await openManifestRead(
 			gateway,
 			context,
-			first.body.next_page ?? undefined,
+			firstBatch.next_page ?? undefined,
 		);
 		expect(second.ok).toBe(true);
 		if (!second.ok) return;
-		expect(second.body.head_seq).toBe(first.body.head_seq);
-		expect(second.body.entries.map((entry) => entry.path)).not.toContain(
+		const secondEntries = [];
+		let secondBatch = await second.body.readBatch();
+		secondEntries.push(...secondBatch.rows);
+		while (!secondBatch.done) {
+			secondBatch = await second.body.readBatch();
+			secondEntries.push(...secondBatch.rows);
+		}
+		expect(second.body.body.head_seq).toBe(first.body.body.head_seq);
+		expect(secondEntries.map((entry) => entry.path)).not.toContain(
 			renameBody.to,
 		);
 		expect(
-			second.body.entries.find((entry) => entry.path === "zzzz-put.md"),
+			secondEntries.find((entry) => entry.path === "zzzz-put.md"),
 		).toMatchObject({
 			seq: 261,
 			etag: formatETag(epoch, 1),
 		});
 		expect(
-			second.body.entries.find((entry) => entry.path === deletedPath),
+			secondEntries.find((entry) => entry.path === deletedPath),
 		).toMatchObject({
 			seq: 263,
 			etag: formatETag(epoch, 3),
 		});
 		expect(
-			second.body.entries.find((entry) => entry.path === appendPath),
+			secondEntries.find((entry) => entry.path === appendPath),
 		).toMatchObject({
 			seq: 264,
 			etag: formatETag(epoch, 2),
 		});
 		expect(
-			second.body.entries.find((entry) => entry.path === restorePath),
+			secondEntries.find((entry) => entry.path === restorePath),
 		).toMatchObject({
 			seq: 266,
 			etag: formatETag(epoch, 3),
 		});
 		expect(
-			second.body.entries.find((entry) => entry.path === renameSource),
+			secondEntries.find((entry) => entry.path === renameSource),
 		).toMatchObject({
 			seq: 267,
 			etag: formatETag(epoch, 2),
 			deleted: true,
 		});
-		const feed = await readChanges(
+		const feed = await openChangesRead(
 			gateway,
 			context,
 			epoch,
-			first.body.head_seq,
+			first.body.body.head_seq,
 		);
 		expect(feed.ok).toBe(true);
 		if (!feed.ok) return;
-		expect(feed.body.head_seq).toBe(267);
-		expect(feed.body.entries.map((entry) => entry.seq)).toEqual([
+		const feedEntries = [];
+		let feedBatch = await feed.body.readBatch();
+		feedEntries.push(...feedBatch.rows);
+		while (!feedBatch.done) {
+			feedBatch = await feed.body.readBatch();
+			feedEntries.push(...feedBatch.rows);
+		}
+		expect(feed.body.body.head_seq).toBe(267);
+		expect(feedEntries.map((entry) => entry.seq)).toEqual([
 			261, 262, 263, 264, 265, 266, 267,
 		]);
-		expect(feed.body.entries.map((entry) => entry.op)).toEqual([
+		expect(feedEntries.map((entry) => entry.op)).toEqual([
 			"put",
 			"delete",
 			"put",
@@ -412,7 +437,7 @@ describe("real mutation interleavings during bounded reads", () => {
 			"put",
 			"rename",
 		]);
-		expect(feed.body.entries).toMatchObject([
+		expect(feedEntries).toMatchObject([
 			{ path: "zzzz-put.md", etag: formatETag(epoch, 1) },
 			{ path: deletedPath, etag: formatETag(epoch, 2) },
 			{ path: deletedPath, etag: formatETag(epoch, 3) },

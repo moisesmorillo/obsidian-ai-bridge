@@ -1,5 +1,6 @@
 export { formatETag, parseETag } from "@protocol/codecs/etag";
 export {
+	classifyFilePath,
 	encodeFileFailure,
 	encodeFileFailureBodyChunks,
 } from "@protocol/codecs/files";
@@ -92,6 +93,7 @@ export {
 	SearchResultSchema,
 	searchQueryFailure,
 } from "@protocol/schemas/search";
+export { VaultIdSchema } from "@protocol/schemas/vault";
 export type {
 	AdmissionCompletion,
 	AdmissionFailure,

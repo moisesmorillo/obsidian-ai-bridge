@@ -890,7 +890,13 @@ describe("native history mutations", () => {
 			});
 			expect(stale).toEqual({
 				ok: false,
-				failure: { kind: "precondition_failed" },
+				failure: {
+					kind: "precondition_failed",
+					etag: formatETag(TEXT_FIXTURE_EPOCH, 1),
+					hash: await hashBytes("source"),
+					deleted: false,
+					content: "source",
+				},
 			});
 			let before: ReturnType<typeof captureTextStoreState> | undefined;
 			const identical = await commitRename(
@@ -920,12 +926,17 @@ describe("native history mutations", () => {
 			);
 			expect(deleted).toEqual({
 				ok: false,
-				failure: { kind: "precondition_failed" },
+				failure: {
+					kind: "precondition_failed",
+					etag: formatETag(TEXT_FIXTURE_EPOCH, 2),
+					hash: "",
+					deleted: true,
+				},
 			});
 		});
 	});
 
-	it("uses destination lifetime revision after ten retained tombstone revisions", async () => {
+	it("AC-26 server: uses destination revision eleven after ten tombstone revisions", async () => {
 		await withTextStore(async (fixture) => {
 			const source = "notes/restore-source.md";
 			const destination = "notes/retired-target.md";

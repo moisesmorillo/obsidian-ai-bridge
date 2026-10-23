@@ -10,7 +10,7 @@ function uuidV7At(timestamp: number): string {
 	return `${hex.slice(0, 8)}-${hex.slice(8)}-7000-8000-000000000000`;
 }
 
-describe("idempotency time window", () => {
+describe("AC-17 server idempotency time window", () => {
 	it.each([now - 26 * 86_400_000, now + 10 * 60_000])(
 		"rejects out-of-window UUIDv7 timestamp %s",
 		(timestamp) => {

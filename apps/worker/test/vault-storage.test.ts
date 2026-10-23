@@ -91,7 +91,10 @@ describe("Vault SQLite persistence", () => {
 				expect.arrayContaining(["files_live_key", "files_key"]),
 			);
 			const data = metadata(state.storage);
-			expect(data.schema_version).toBe("5");
+			expect(data.schema_version).toBe("6");
+			expect(schemaDefinition(state.storage, "files")).toContain(
+				"`renamed_to` text",
+			);
 			expect(EpochSchema.safeParse(data.epoch).success).toBe(true);
 			expect(data.head_seq).toBe("0");
 			expect(data.live_file_count).toBe("0");
@@ -185,6 +188,30 @@ describe("Vault SQLite persistence", () => {
 			expect(tableNames(state.storage)).toEqual(
 				expect.arrayContaining(["meta", "files", "files_fts"]),
 			);
+		});
+	});
+
+	it("rejects version-5 storage without migration or identity replacement", async () => {
+		const stub = env.VAULTS.get(env.VAULTS.newUniqueId());
+		await runInDurableObject(stub, (_instance, state) => {
+			state.storage.sql.exec(
+				"INSERT INTO files(path,path_key,rev,seq,hash,size,kind,deleted,updated_at,origin) VALUES ('legacy.md','legacy.md',1,1,'hash',0,'text',0,10,'test')",
+			);
+			state.storage.sql.exec(
+				"UPDATE meta SET value = '5' WHERE key = 'schema_version'",
+			);
+			const before = metadata(state.storage);
+			const identity = before.epoch;
+			expect(() =>
+				initializeVaultStorage(state.storage, createEpoch, () => 20),
+			).toThrow(/Unsupported vault schema version/);
+			expect(metadata(state.storage)).toEqual(before);
+			expect(metadata(state.storage).epoch).toBe(identity);
+			expect(
+				state.storage.sql
+					.exec("SELECT path FROM files WHERE path = 'legacy.md'")
+					.toArray(),
+			).toHaveLength(1);
 		});
 	});
 

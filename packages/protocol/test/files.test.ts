@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import type {
 	FileHttpFailure,
 	FileHttpFailureInput,
@@ -7,6 +6,7 @@ import {
 	AdmissionFailureSchema,
 	CurrentEpochRequestSchema,
 	CurrentEpochResultSchema,
+	classifyFilePath,
 	encodeFileFailure,
 	encodeFileFailureBodyChunks,
 	FileFailureSchema,
@@ -22,6 +22,7 @@ import {
 	TextReadRequestSchema,
 	TextReadResponseSchema,
 	TextReadResultSchema,
+	VaultIdSchema,
 } from "@obsidian-ai-bridge/protocol";
 import { describe, expect, it, vi } from "vitest";
 import type { ZodType } from "zod";
@@ -75,6 +76,29 @@ const readResponse = {
 	truncated: false,
 } as const;
 
+/** Builds every ASCII letter-case combination of a file extension. */
+function extensionCaseVariants(extension: string): string[] {
+	return Array.from({ length: 1 << extension.length }, (_, mask) =>
+		Array.from(extension, (letter, index) =>
+			mask & (1 << index) ? letter.toUpperCase() : letter,
+		).join(""),
+	);
+}
+
+/** Combines encoded chunks for test assertions without using Node-only Buffer APIs. */
+function concatenateChunks(chunks: Iterable<Uint8Array>): Uint8Array {
+	const values = [...chunks];
+	const result = new Uint8Array(
+		values.reduce((length, chunk) => length + chunk.byteLength, 0),
+	);
+	let offset = 0;
+	for (const value of values) {
+		result.set(value, offset);
+		offset += value.byteLength;
+	}
+	return result;
+}
+
 /** Shows whether a schema accepts one DTO fixture. */
 function accepts(schema: ZodType, value: unknown): boolean {
 	return schema.safeParse(value).success;
@@ -91,6 +115,22 @@ function encodedFailure(
 	}
 }
 
+describe("file extension classification", () => {
+	it("classifies every ASCII case variant and rejects near matches", () => {
+		for (const extension of extensionCaseVariants("md"))
+			expect(classifyFilePath(`notes/file.${extension}`)).toBe("markdown");
+		for (const extension of extensionCaseVariants("canvas"))
+			expect(classifyFilePath(`notes/file.${extension}`)).toBe("canvas");
+		for (const path of [
+			"notes/file.md.backup",
+			"notes/file.md2",
+			"notes/file.canvas.backup",
+			"notes/no-extension",
+		])
+			expect(classifyFilePath(path)).toBe("other");
+	});
+});
+
 describe("current epoch metadata contract", () => {
 	it("accepts the current read, text mutation, and history mutation operations", () => {
 		expect(CurrentEpochRequestSchema.parse({ operation: "put" })).toEqual({
@@ -105,6 +145,29 @@ describe("current epoch metadata contract", () => {
 			CurrentEpochRequestSchema.safeParse({ operation: "read", extra: true })
 				.success,
 		).toBe(false);
+	});
+
+	it("encodes canonical importing and retired-vault response details", () => {
+		expect(
+			encodeFileFailure({ kind: "importing", retry_after_seconds: 30 }),
+		).toEqual({
+			status: 503,
+			body: { error: "importing", message: "The vault is still importing." },
+			headers: { "Retry-After": "30" },
+		});
+		expect(
+			encodeFileFailure({
+				kind: "vault_retired",
+				new_vault_id: "vault.example",
+			}),
+		).toEqual({
+			status: 410,
+			body: {
+				error: "vault_retired",
+				message: "The vault has moved to a new identity.",
+				new_vault_id: "vault.example",
+			},
+		});
 	});
 
 	it("accepts a canonical epoch or authority failure", () => {
@@ -645,6 +708,115 @@ describe("canonical failure DTO", () => {
 		expect(accepts(FileFailureSchema, { kind: "path_collision" })).toBe(false);
 	});
 
+	it("accepts renamed_to only with a complete tombstone precondition", () => {
+		const failure = {
+			kind: "precondition_failed",
+			etag,
+			hash: "",
+			deleted: true,
+			renamed_to: "archive/new.md",
+		};
+		expect(FileFailureSchema.safeParse(failure).success).toBe(true);
+		expect(
+			FileFailureSchema.safeParse({ ...failure, deleted: false }).success,
+		).toBe(false);
+		expect(FileFailureSchema.safeParse({ ...failure, hash }).success).toBe(
+			false,
+		);
+		expect(
+			FileFailureSchema.safeParse({ ...failure, etag: undefined }).success,
+		).toBe(false);
+		expect(
+			FileFailureSchema.safeParse({
+				kind: "not_found",
+				renamed_to: "archive/new.md",
+			}).success,
+		).toBe(false);
+	});
+
+	it("validates bounded printable Vault identities", () => {
+		expect(VaultIdSchema.safeParse("vault.example").success).toBe(true);
+		expect(VaultIdSchema.safeParse("a".repeat(256)).success).toBe(false);
+		expect(VaultIdSchema.safeParse("vault\nname").success).toBe(false);
+	});
+
+	it("accepts canonical importing and vault_retired failures", () => {
+		expect(
+			FileFailureSchema.safeParse({
+				kind: "importing",
+				retry_after_seconds: 30,
+			}).success,
+		).toBe(true);
+		expect(
+			FileFailureSchema.safeParse({
+				kind: "importing",
+				retry_after_seconds: 301,
+			}).success,
+		).toBe(false);
+		expect(
+			FileFailureSchema.safeParse({
+				kind: "vault_retired",
+				new_vault_id: "vault.example",
+			}).success,
+		).toBe(true);
+		expect(
+			FileFailureSchema.safeParse({ kind: "vault_retired", new_vault_id: "" })
+				.success,
+		).toBe(false);
+	});
+
+	it("rejects HTTP rename hints outside complete tombstone details", () => {
+		const base = {
+			status: 412,
+			body: {
+				error: "precondition_failed",
+				message: "The file state does not match the precondition.",
+				etag,
+				hash,
+				deleted: false,
+				renamed_to: "archive/new.md",
+			},
+		};
+		expect(FileHttpFailureSchema.safeParse(base).success).toBe(false);
+	});
+
+	it("encodes the immediate rename destination with tombstone details", () => {
+		expect(
+			encodeFileFailure({
+				kind: "precondition_failed",
+				etag,
+				hash: "",
+				deleted: true,
+				renamed_to: "archive/new.md",
+			}),
+		).toMatchObject({ body: { renamed_to: "archive/new.md", deleted: true } });
+	});
+
+	it("encodes maximum rename hints and bounded escaping-heavy failure content", () => {
+		const destination = "a".repeat(512);
+		const renamed = encodeFileFailure({
+			kind: "precondition_failed",
+			etag,
+			hash: "",
+			deleted: true,
+			renamed_to: destination,
+		}).body;
+		const current = encodeFileFailure({
+			kind: "precondition_failed",
+			etag,
+			hash,
+			deleted: false,
+			content: '\\"\\\\\\n'.repeat(100_000),
+		}).body;
+		for (const body of [renamed, current]) {
+			const chunks = [...encodeFileFailureBodyChunks(body)];
+			expect(chunks.every((chunk) => chunk.byteLength <= 65_536)).toBe(true);
+			expect(
+				JSON.parse(new TextDecoder().decode(concatenateChunks(chunks))),
+			).toEqual(body);
+		}
+	});
+
 	it("accepts precondition metadata without full content", () => {
 		expect(
 			accepts(FileFailureSchema, {
@@ -941,9 +1113,9 @@ describe("file failure HTTP mapping", () => {
 		if (encoded)
 			expect(
 				JSON.parse(
-					Buffer.concat([
-						...encodeFileFailureBodyChunks(encoded.body),
-					]).toString(),
+					new TextDecoder().decode(
+						concatenateChunks(encodeFileFailureBodyChunks(encoded.body)),
+					),
 				),
 			).toEqual(encoded.body);
 		expect(encoded).toMatchObject({ status, body: { error, message } });
@@ -1088,10 +1260,12 @@ describe("bounded failure JSON", () => {
 		} as const;
 		const chunks = [...encodeFileFailureBodyChunks(body)];
 		expect(chunks.every((chunk) => chunk.byteLength <= 65_536)).toBe(true);
-		expect(JSON.parse(Buffer.concat(chunks).toString())).toEqual(body);
+		expect(
+			JSON.parse(new TextDecoder().decode(concatenateChunks(chunks))),
+		).toEqual(body);
 	});
 
-	it("bounds_escaping_without_whole_content_stringify", () => {
+	it("bounds_escaping_without_whole_content_stringify", async () => {
 		const body = encodeFileFailure({
 			kind: "precondition_failed",
 			etag,
@@ -1111,21 +1285,27 @@ describe("bounded failure JSON", () => {
 				return stringify(value, ...rest);
 			});
 		try {
-			const actual = createHash("sha256");
+			const actualChunks = [...encodeFileFailureBodyChunks(body)];
 			let length = 0;
-			for (const chunk of encodeFileFailureBodyChunks(body)) {
+			for (const chunk of actualChunks) {
 				expect(chunk.byteLength).toBeLessThanOrEqual(65_536);
 				length += chunk.byteLength;
-				actual.update(chunk);
 			}
-			const expected = createHash("sha256");
 			const empty = stringify({ ...body, content: "" });
-			expected.update(empty.slice(0, -2));
-			for (let index = 0; index < 1000; index++)
-				expected.update("\\u0000".repeat(1000));
-			expected.update('"}');
+			const expectedText = `${empty.slice(0, -2)}${"\\u0000".repeat(1_000_000)}"}`;
+
 			expect(length).toBe(6_000_000 + empty.length);
-			expect(actual.digest("hex")).toBe(expected.digest("hex"));
+			const actualBytes = concatenateChunks(actualChunks);
+			const actualBuffer = new ArrayBuffer(actualBytes.byteLength);
+			new Uint8Array(actualBuffer).set(actualBytes);
+			const actualDigest = await crypto.subtle.digest("SHA-256", actualBuffer);
+			const expectedDigest = await crypto.subtle.digest(
+				"SHA-256",
+				new TextEncoder().encode(expectedText),
+			);
+			expect(Array.from(new Uint8Array(actualDigest))).toEqual(
+				Array.from(new Uint8Array(expectedDigest)),
+			);
 		} finally {
 			spy.mockRestore();
 		}

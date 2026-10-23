@@ -5,6 +5,7 @@ import {
 import { FullTextContentSchema } from "@protocol/schemas/content";
 import { EpochSchema, ETagSchema } from "@protocol/schemas/etag";
 import { PathSchema } from "@protocol/schemas/path";
+import { VaultIdSchema } from "@protocol/schemas/vault";
 import { z } from "zod";
 
 /** Adds closed-object checks without changing canonical admission refinements. */
@@ -34,6 +35,15 @@ export const FileFailureSchema = z.union([
 			kind: z.literal("blob_storage_unavailable"),
 			retry_after_seconds: z.number().int().min(1).max(300),
 		})
+		.strict(),
+	z
+		.object({
+			kind: z.literal("importing"),
+			retry_after_seconds: z.number().int().min(1).max(300),
+		})
+		.strict(),
+	z
+		.object({ kind: z.literal("vault_retired"), new_vault_id: VaultIdSchema })
 		.strict(),
 	z.discriminatedUnion("kind", [
 		z.object({ kind: z.literal("invalid_path") }).strict(),
@@ -107,6 +117,8 @@ const FileHttpErrorSchema = z.enum([
 	"unsupported_append_kind",
 	"unauthorized",
 	"internal_error",
+	"importing",
+	"vault_retired",
 ]);
 
 /** Fixed safe messages for implemented domain and transport failures. */
@@ -140,6 +152,8 @@ export const FILE_HTTP_MESSAGES = Object.freeze({
 	unsupported_append_kind: "The file kind does not support append.",
 	unauthorized: "Authentication is not valid.",
 	internal_error: "The service cannot complete the request.",
+	importing: "The vault is still importing.",
+	vault_retired: "The vault has moved to a new identity.",
 } as const) satisfies Readonly<
 	Record<z.infer<typeof FileHttpErrorSchema>, string>
 >;
@@ -195,6 +209,8 @@ export const FILE_HTTP_STATUSES = Object.freeze({
 	unsupported_append_kind: 415,
 	unauthorized: 401,
 	internal_error: 500,
+	importing: 503,
+	vault_retired: 410,
 } as const) satisfies Readonly<
 	Record<
 		z.infer<typeof FileHttpErrorSchema>,
@@ -216,6 +232,8 @@ const FileHttpFailureBodySchema = z
 		deleted: z.boolean().optional(),
 		content: FullTextContentSchema.optional(),
 		existing_path: PathSchema.optional(),
+		renamed_to: PathSchema.optional(),
+		new_vault_id: VaultIdSchema.optional(),
 	})
 	.strict()
 	.superRefine((body, ctx) => {
@@ -241,6 +259,18 @@ const FileHttpFailureBodySchema = z
 			ctx.addIssue({
 				code: "custom",
 				message: "existing path is not valid here",
+			});
+		}
+		if (body.error === "vault_retired" && body.new_vault_id === undefined) {
+			ctx.addIssue({
+				code: "custom",
+				message: "new vault identity is missing",
+			});
+		}
+		if (body.error !== "vault_retired" && body.new_vault_id !== undefined) {
+			ctx.addIssue({
+				code: "custom",
+				message: "new vault identity is not valid here",
 			});
 		}
 		const preconditionDetails = [
@@ -280,6 +310,18 @@ const FileHttpFailureBodySchema = z
 				message: "empty hash needs tombstone metadata",
 			});
 		}
+		if (
+			body.renamed_to !== undefined &&
+			(body.error !== "precondition_failed" ||
+				!preconditionDetails.every(Boolean) ||
+				body.deleted !== true ||
+				body.hash !== "")
+		) {
+			ctx.addIssue({
+				code: "custom",
+				message: "rename destination needs complete tombstone details",
+			});
+		}
 		if (body.content !== undefined && !preconditionDetails.every(Boolean)) {
 			ctx.addIssue({
 				code: "custom",
@@ -312,7 +354,8 @@ export const FileHttpFailureSchema = z
 		const hasRetryAfter = retryAfter !== undefined;
 		if (
 			(result.body.error === "admission_limited" ||
-				result.body.error === "blob_storage_unavailable") &&
+				result.body.error === "blob_storage_unavailable" ||
+				result.body.error === "importing") &&
 			!hasRetryAfter
 		) {
 			ctx.addIssue({
@@ -321,7 +364,8 @@ export const FileHttpFailureSchema = z
 			});
 		}
 		if (
-			result.body.error === "blob_storage_unavailable" &&
+			(result.body.error === "blob_storage_unavailable" ||
+				result.body.error === "importing") &&
 			retryAfter !== undefined &&
 			!/^(?:[1-9]|[1-9][0-9]|[12][0-9]{2}|300)$/.test(retryAfter)
 		) {
@@ -333,6 +377,7 @@ export const FileHttpFailureSchema = z
 		if (
 			result.body.error !== "admission_limited" &&
 			result.body.error !== "blob_storage_unavailable" &&
+			result.body.error !== "importing" &&
 			hasRetryAfter
 		) {
 			ctx.addIssue({

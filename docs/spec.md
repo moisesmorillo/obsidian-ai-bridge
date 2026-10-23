@@ -115,6 +115,7 @@ CREATE TABLE files (
   kind        TEXT NOT NULL CHECK (kind IN ('text','blob')),
   content     TEXT,                      -- kind='text' only, ≤ 1 MB
   blob_hash   TEXT,                      -- kind='blob' only → R2 key blobs/<hash>
+  renamed_to  TEXT,                      -- immediate rename destination on a source tombstone only
   deleted     INTEGER NOT NULL DEFAULT 0,
   updated_at  INTEGER NOT NULL,          -- unix ms
   origin      TEXT NOT NULL              -- client id
@@ -166,7 +167,9 @@ CREATE TABLE blob_refs (hash TEXT PRIMARY KEY, size INTEGER NOT NULL, first_ref_
 CREATE TABLE exports (id TEXT PRIMARY KEY, started_at INTEGER, finished_at INTEGER, status TEXT, head_seq INTEGER, calls_this_hour INTEGER, hour_started_at INTEGER, commit_sha TEXT, error TEXT);
 ```
 
-The canonical schema version is 5. Versions 1 through 4 fail closed without writes. The service does not migrate or repair unsupported storage. Version 4 adds `history_revisions_bytes`, `history_receipts_bytes`, `history_changes_bytes`, `history_pressure_bytes`, and `history_reduced` metadata. Version 5 adds `retention_category` and `retention_pruned_feed_seq`. Fresh version-5 vaults initialize all history counters and the feed boundary to zero. Existing stores need an explicit future migration and receive no backfill or repair in this version.
+The canonical schema version is 6. Versions 1 through 5 fail closed without writes. The service does not migrate or repair unsupported storage. Version 4 adds `history_revisions_bytes`, `history_receipts_bytes`, `history_changes_bytes`, `history_pressure_bytes`, and `history_reduced` metadata. Version 5 adds `retention_category` and `retention_pruned_feed_seq`. Version 6 adds nullable `files.renamed_to` for the immediate destination of a source rename tombstone. Fresh version-6 vaults initialize all history counters and the feed boundary to zero. Existing stores need an explicit future migration and receive no backfill or repair in this version.
+
+A rename writes the immediate destination path to the source tombstone in the same transaction as the destination row and change entry. The hint survives feed pruning and remains until a later mutation replaces the source row. Recreate, restore, ordinary delete, and rename to another destination clear or replace any prior hint. Live rows and ordinary delete tombstones have no hint. The hint is diagnostic metadata, not a redirect.
 
 Version 2 adds `operation_admissions`:
 
@@ -237,6 +240,8 @@ Versions 4 and 5 do not change relational table DDL. Versions 1 through 4 remain
 
 ### 5.4 Storage rule for text vs blob
 
+The final file extension selects Markdown or Canvas behavior. The ASCII letters in `.md` and `.canvas` match without case distinctions. This rule does not change path identity. Near matches such as `.md.backup` and `.canvas2` are other file types.
+
 - `.md` and `.canvas` files ≤ 1,000,000 bytes are stored inline (`kind='text'`) and `.md` content is indexed (`.canvas` JSON is stored inline but not indexed).
 - Every other file, and any `.md`/`.canvas` file > 1,000,000 bytes, is `kind='blob'`: bytes in R2, metadata in SQLite, **not indexed**, readable by range through the Worker. `large` is true only for Markdown or Canvas stored as a blob above 1,000,000 bytes. The plugin panel shows such a file as "synced, not searchable".
 - An `update` or `append` whose resulting text would exceed 1,000,000 bytes fails with `413 text_too_large`. The note must be split by the user or agent. This keeps every text commit atomic in SQLite.
@@ -256,9 +261,9 @@ Base `/v1`. JSON unless noted. Authentication: `Authorization: Bearer <access to
 | `GET` | `/v1/vault` | read | `{epoch, head_seq, counts, limits, capacity, attention}` |
 | `GET` | `/v1/manifest?page=<token>` | read | `{epoch, head_seq, entries, next_page}` with path, epoch-bound `etag`, `seq, hash, size, kind, deleted, large`; pages contain at most 256 rows and include tombstones |
 | `GET` | `/v1/changes?epoch=E&since=S&limit=N` | read | `{epoch, head_seq, entries}` with immutable feed rows, `seq > S`, ascending, and at most 1,000 entries. `409 epoch_mismatch` if E ≠ epoch. `410 cursor_expired` if S is older than the oldest retained `seq` |
-| `GET` | `/v1/files/*path?rev=R` | read | Content and metadata. Without `rev`: current, `ETag`, and optional `X-Vault-Epoch` observation. With `rev`: send `X-Vault-Epoch` to select that exact revision from `revisions`, or receive `410 revision_pruned`. Range reads via `Range: bytes=` (blob) or `?offset=&length=` (text, in UTF-16 code units as Obsidian uses). Response always carries `ETag` |
+| `GET` | `/v1/files/*path?rev=R` | read | Content and metadata. Without `rev`: current, `ETag`, and optional `X-Vault-Epoch` observation. With `rev`: send `X-Vault-Epoch` to select that exact revision from `revisions`; without the epoch, receive `410 revision_pruned`. Range reads via `Range: bytes=` (blob) or `?offset=&length=` (text, in UTF-16 code units as Obsidian uses). Response always carries `ETag` |
 | `PUT` | `/v1/files/*path` | write | Create or update. Requires `If-Match: "<etag>"` or `If-None-Match: *` **plus `X-Vault-Epoch`** (every mutation carries the epoch the client observed; `409 epoch_mismatch` otherwise). Body raw bytes; kind is decided by §5.4 (extension and size), not by `Content-Type`. Returns `201/200` with new `ETag`, `seq` |
-| `DELETE` | `/v1/files/*path` | delete | Requires `If-Match`. Creates tombstone |
+| `DELETE` | `/v1/files/*path` | delete | Requires `If-Match`. Accepts optional `X-Vault-Epoch`; if supplied, it must match the ETag epoch. Header-free DELETE remains compatible because `If-Match` supplies the observed epoch. A stale ETag returns `412` without changing the file. Creates a tombstone |
 | `POST` | `/v1/files/*path:rename` | write | Body `{to}`. Requires `If-Match` of source. Destination must be free on `path_key` (or equal, case-only rename). One `rename` change entry carrying `from_path`, `from_rev` (new tombstone of source), `path = to`, `rev = to_rev`, `hash`. Receivers never wait for a later `put`: the entry has everything needed, and bytes are fetched by `GET /v1/files/to?rev=to_rev` when the local copy cannot be reused |
 | `POST` | `/v1/files/*path:append` | write | Body raw text. **`Idempotency-Key` and `X-Vault-Epoch` required** (`428 idempotency_key_required` / `409 epoch_mismatch`). Appends at end of **current** text revision inside the transaction. No `If-Match` needed. `409 tombstone` if path is deleted; `404` if never existed; `413` if result exceeds 1 MB; `415` if path is a blob |
 | `GET` | `/v1/history/*path?page=<token>` | read | `{epoch, entries, next_page}` with at most 256 retained revision entries. Entries expose epoch-bound `etag`, `hash, size, deleted, origin, at`, never content or bare `rev`. |
@@ -269,7 +274,7 @@ Base `/v1`. JSON unless noted. Authentication: `Authorization: Bearer <access to
 
 Read ETags use the canonical quoted form `"<epoch>.<rev>"`; every read ETag carries its matching vault epoch. Manifest pages sort by SQLite binary path order. History pages sort by ascending ETag revision. Continuation tokens are versioned base64url seek hints, capped at 4,096 encoded bytes, and bind collection, epoch, captured head, and last emitted identity. History tokens also bind the exact path and first-page upper ETag. A token does not grant authorization. Read pages never materialize the full vault. Internal metadata batches contain at most 64 rows plus one lookahead row. The changes endpoint validates `limit` as an integer from 1 through 1,000, default 1,000. Query values reject duplicates, unknown names, malformed values, negative values, unsafe integers, and values above their bounds.
 
-Errors are `{error: <code>, message, ...details}`. `cursor_expired` uses HTTP 410 and a fixed safe message. Codes: `epoch_mismatch`, `cursor_expired`, `revision_pruned`, `precondition_failed` (412, body includes current `etag`, `hash`, `deleted`, `renamed_to` when applicable; current text ≤ 1 MB is included **only when the client holds `vault:read`**, otherwise omitted), `path_collision` (409, includes `existing_path`), `path_occupied`, `tombstone`, `text_too_large`, `blob_too_large`, `blob_integrity_mismatch` (422), `blob_storage_unavailable` (503 with `Retry-After` from 1 through 300 seconds), `invalid_path`, `idempotency_mismatch` (422), `operation_expired` (409), `idempotency_in_progress` (409), `idempotency_key_required` (428), `forbidden_scope` (403), `revoked` (401), `importing` (503 with `Retry-After`), `vault_retired` (410, includes `new_vault_id`), `capacity_exceeded` (507), `query_too_short`, `query_too_long`.
+Errors are `{error: <code>, message, ...details}`. `precondition_failed.renamed_to` appears only with complete tombstone details for a renamed source and identifies the immediate destination. It is never a live redirect. `importing` is HTTP 503 with `Retry-After` from 1 through 300 seconds. `vault_retired` is HTTP 410 and carries a bounded `new_vault_id`. `cursor_expired` uses HTTP 410 and a fixed safe message. Codes: `epoch_mismatch`, `cursor_expired`, `revision_pruned`, `precondition_failed` (412, body includes current `etag`, `hash`, `deleted`, `renamed_to` when applicable; current text ≤ 1 MB is included **only when the client holds `vault:read`**, otherwise omitted), `path_collision` (409, includes `existing_path`), `path_occupied`, `tombstone`, `text_too_large`, `blob_too_large`, `blob_integrity_mismatch` (422), `blob_storage_unavailable` (503 with `Retry-After` from 1 through 300 seconds), `invalid_path`, `idempotency_mismatch` (422), `operation_expired` (409), `idempotency_in_progress` (409), `idempotency_key_required` (428), `forbidden_scope` (403), `revoked` (401), `importing` (503 with `Retry-After`), `vault_retired` (410, includes `new_vault_id`), `capacity_exceeded` (507), `query_too_short`, `query_too_long`.
 
 ### 6.3 Mutation algorithm (inside the DO)
 
@@ -495,10 +500,10 @@ KV propagation is eventually consistent (60 s or more), so the DO is the authori
 
 ## 10. Search contract
 
-- Index: `files_fts` over `content` of live `kind='text'` **`.md`** rows (`.canvas` is stored inline but not indexed); tokenizer `trigram case_sensitive 0 remove_diacritics 1`. Rows are deleted/inserted in the same transaction as the file mutation, so the index is never stale relative to `head_seq`.
+- Index: `files_fts` over `content` of live `kind='text'` Markdown rows whose final `.md` extension matches without ASCII case distinctions (`.canvas` is stored inline but not indexed). Near suffixes such as `.md.backup` are other file types. The tokenizer is `trigram case_sensitive 0 remove_diacritics 1`. Rows are deleted/inserted in the same transaction as the file mutation, so the index is never stale relative to `head_seq`.
 - Semantics: **literal substring match**, case-insensitive, diacritic-insensitive, no stemming, no operators. The query is sent as a single quoted FTS phrase with internal `"` doubled, so `AND`, `OR`, `*`, `-`, `:` and quotes are literal.
 - Limits: query length is 3–200 Unicode code points (`400 query_too_short` / `query_too_long`); `limit` is 1–50, default 20. Results use ascending native `bm25` score, with SQLite binary path order for ties. Each plain-text snippet uses at most 64 FTS tokens and 1,024 Unicode code points. ETags use the response epoch.
-- `GET /v1/search?q=<query>&limit=<integer>` returns `{epoch, results, indexed_files, unindexed_large_files}`. `indexed_files` counts live indexed Markdown rows. `unindexed_large_files` counts live Markdown blob rows above 1,000,000 bytes. Canvas and other attachments do not count.
+- `GET /v1/search?q=<query>&limit=<integer>` returns `{epoch, results, indexed_files, unindexed_large_files}`. Both coverage counts use the same case-insensitive final-extension rule as storage. `indexed_files` counts live indexed Markdown rows. `unindexed_large_files` counts live Markdown blob rows above 1,000,000 bytes. Canvas and other attachments do not count.
 - The route rejects missing or duplicate `q`, duplicate or unknown parameters, and noncanonical integer limits with `400 invalid_request`. It preserves query spaces, punctuation, quotes, and Unicode without trimming or normalization.
 - Acceptance examples (§13 AC-15): `bge-m3`, `wrangler.jsonc`, `If-Match`, `/v1/files`, `cafe` matching `café`, `"quoted"`, `AND` as a literal word, a two-character query rejected.
 - Path/title search: `list_notes(prefix)` and client-side filtering; no `LIKE` on the server (DO limits patterns to 50 bytes and the diacritic-folded index does not accelerate `LIKE`).
@@ -637,10 +642,12 @@ Each case is a test (Worker: `@cloudflare/vitest-pool-workers` against the real 
 
 No disposable demos; every phase ships the same code.
 
+F1 is a server-only gate. Local protocol, real Durable Object, and Worker HTTP tests establish only the tested Worker behavior. Independent task review, human branch review, and actual remote CI must also pass before F1 exit. This evidence does not qualify plugin sync, conflict copies, offline recovery, MCP/OAuth transport, deployed authentication, or device effects. Keep those obligations in their later phase gates. Keep OAB-6.8.2 Deferred.
+
 | Phase | Deliverable | Entry | Exit |
 | --- | --- | --- | --- |
 | F0 | New repo: Bun monorepo (`apps/worker`, `apps/plugin`, `packages/protocol` with Zod schemas shared by Worker, plugin and tests), `AGENTS.md`, Backlog.md initialized with tasks and deferred items, CI (Biome, typecheck, Vitest) | Spec approved | `bun run check` green on first commit |
-| F1 | Worker: DO schema, all `/v1` endpoints, authorize/commit tickets, idempotency, search, limits, revocation table; tests with real DO | F0 | AC-01, 03–06 (server side), 11, 12, 14, 15, 16, 17, 18, 21, 22, 25, 26, 27, 28, 29, 34, 38, 40, 43 |
+| F1 | Worker: DO schema, all `/v1` endpoints, authorize/commit tickets, idempotency, search, limits, revocation table; tests with real DO | F0 | Server portions of AC-01, 03–06, 11, 12, 14, 15, 16, 17, 18, 21, 22, 25, 26, 27, 28, 29, 34, 38, 40, and 43, plus independent task review, human branch review, and actual remote CI |
 | F2 | OAuth (provider + Access), MCP server and tools, owner console (clients, revoke) | F1 | MCP Inspector, Claude Code and ChatGPT web connect; read and write work; AC-08. Owner verifies Developer mode and iPhone availability in their ChatGPT account; result recorded, owner decides on mobile client strategy |
 | F3 | Plugin Desktop: enrollment, hydration, feed, publish, Option B, status panel, Sync now | F2 | Two test vaults on the Mac pass AC-02, 03, 04, 05, 06, 09, 10, 13, 20, 24, 30, 31, 32, 33, 39; AC-09 run against real ChatGPT |
 | F3b | Backup: alarm-driven incremental export to the private backup repo, verification, restore into a new vault | F1 | AC-07, 23, 35, 36, 37, 41, 42, 44 against a synthetic 500-file vault (about one hour of paced export) |

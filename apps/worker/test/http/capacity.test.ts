@@ -163,7 +163,7 @@ describe("vault capacity HTTP behavior", () => {
 		expect(checkedBeforeCommit).toBe(true);
 	});
 
-	it("shows the product capacity summary and returns 507 while reads and deletes continue", async () => {
+	it("AC-43 server: returns 507 at capacity while reads and deletes continue", async () => {
 		await seedLiveFileLimit();
 		const summary = await SELF.fetch("https://worker.invalid/v1/vault");
 		expect(summary.status).toBe(200);

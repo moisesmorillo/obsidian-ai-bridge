@@ -11,6 +11,7 @@ import type {
 	TextMutationResult,
 	TextReadRequest,
 } from "@obsidian-ai-bridge/protocol";
+import { classifyFilePath } from "@obsidian-ai-bridge/protocol";
 import { tryAcquireBodySlot } from "@worker/application/body-budget";
 import { FileOperationDenied } from "@worker/application/files";
 import type { TextVaultGateway } from "@worker/application/text-files";
@@ -168,5 +169,7 @@ export function usesBlobStorage(
 	path: string,
 	declaration: BlobDeclaration | undefined,
 ): boolean {
-	return !/\.(?:md|canvas)$/.test(path) || (declaration?.size ?? 0) > 1_000_000;
+	return (
+		classifyFilePath(path) === "other" || (declaration?.size ?? 0) > 1_000_000
+	);
 }

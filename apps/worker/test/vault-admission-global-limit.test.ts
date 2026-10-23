@@ -6,6 +6,7 @@ import type {
 	OperationDescriptor,
 	OperationIntent,
 	RequestAdmissionResult,
+	TextMutationBeginResult,
 } from "@obsidian-ai-bridge/protocol";
 import {
 	prepareDescriptor,
@@ -18,12 +19,16 @@ const emptyPayloadHash =
 	"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 const states = ["reserved", "active", "uncertain"] as const;
 const operationKinds = ["reserve", "authorize"] as const;
+const vaultOperationKinds = ["beginMutation", "authorize"] as const;
 /** Admission insertion path exercised by reservation and full authorization tests. */
 type OperationKind = (typeof operationKinds)[number];
 /** Persisted lifecycle states seeded and checked by native tests. */
 type AdmissionTestState = (typeof states)[number];
 /** Result union returned by either request reservation or operation authorization. */
-type AdmissionResultForKind = RequestAdmissionResult | AdmissionResult;
+type AdmissionResultForKind =
+	| RequestAdmissionResult
+	| AdmissionResult
+	| TextMutationBeginResult;
 
 /** Raw SQL projection of the persisted admission ledger, including expired rows. */
 type AdmissionTestRow = {
@@ -425,7 +430,7 @@ async function expectCleanupSuccess(
 }
 
 describe("vault aggregate admission limit", () => {
-	it.each(operationKinds)(
+	it.each(vaultOperationKinds)(
 		"limits concurrent %s insertions across two stubs and clients",
 		async (kind) => {
 			const id = env.VAULTS.newUniqueId();
@@ -446,10 +451,10 @@ describe("vault aggregate admission limit", () => {
 			const left = contextFor("race-client-left", "race-grant-left");
 			const right = contextFor("race-client-right", "race-grant-right");
 			const results = await Promise.all(
-				kind === "reserve"
+				kind === "beginMutation"
 					? [
-							firstStub.reserveAdmission(left, descriptorFor(epoch)),
-							secondStub.reserveAdmission(right, descriptorFor(epoch)),
+							firstStub.beginMutation(left, descriptorFor(epoch)),
+							secondStub.beginMutation(right, descriptorFor(epoch)),
 						]
 					: [
 							firstStub.authorize(left, intentFor(epoch)),
@@ -503,8 +508,8 @@ describe("vault aggregate admission limit", () => {
 
 			const fresh = contextFor("fresh-global-client", "fresh-global-grant");
 			const freshResult =
-				kind === "reserve"
-					? await firstStub.reserveAdmission(fresh, descriptorFor(epoch))
+				kind === "beginMutation"
+					? await firstStub.beginMutation(fresh, descriptorFor(epoch))
 					: await firstStub.authorize(fresh, intentFor(epoch));
 			expect.soft(freshResult).toMatchObject({
 				ok: false,

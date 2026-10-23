@@ -94,24 +94,33 @@ export function createFileRouter(
 			)
 				return errorResponse({ kind: "invalid_request" });
 			const rev = query.has("rev") ? Number(query.get("rev")) : undefined;
+			const offset = query.has("offset")
+				? Number(query.get("offset"))
+				: undefined;
+			const length = query.has("length")
+				? Number(query.get("length"))
+				: undefined;
 			const epochHeader = context.req.header("X-Vault-Epoch");
-			const gateway = resolveVault(context.env, context.req.raw);
 			if (
-				(epochHeader !== undefined &&
-					!EpochSchema.safeParse(epochHeader).success) ||
-				(rev !== undefined && epochHeader === undefined)
+				epochHeader !== undefined &&
+				!EpochSchema.safeParse(epochHeader).success
 			)
-				return currentEpochMismatch(gateway, identity, "read");
-			const epoch = epochHeader;
+				return errorResponse({ kind: "invalid_request" });
+			// This placeholder validates selectors only and never reaches the gateway.
+			const validationEpoch =
+				epochHeader ?? (rev === undefined ? undefined : "a".repeat(32));
 			const request: TextReadRequest = {
 				path,
-				...(epoch === undefined ? {} : { epoch }),
+				...(validationEpoch === undefined ? {} : { epoch: validationEpoch }),
 				...(rev === undefined ? {} : { rev }),
-				...(query.has("offset") ? { offset: Number(query.get("offset")) } : {}),
-				...(query.has("length") ? { length: Number(query.get("length")) } : {}),
+				...(offset === undefined ? {} : { offset }),
+				...(length === undefined ? {} : { length }),
 			};
 			const parsed = TextReadRequestSchema.safeParse(request);
 			if (!parsed.success) return errorResponse({ kind: "invalid_request" });
+			if (rev !== undefined && epochHeader === undefined)
+				return errorResponse({ kind: "revision_pruned" });
+			const gateway = resolveVault(context.env, context.req.raw);
 			return readContentResponse(
 				gateway,
 				() => resolveBlobs(context.env),
@@ -139,18 +148,28 @@ export function createFileRouter(
 			const gateway = resolveVault(context.env, context.req.raw);
 			return currentEpochMismatch(gateway, identity, "put");
 		}
-		if (context.req.method === "DELETE" && (!match || none || epoch))
+		if (context.req.method === "DELETE" && (!match || none))
 			return errorResponse({ kind: "invalid_request" });
 		if (context.req.method === "DELETE" && context.req.raw.body !== null)
 			return errorResponse({ kind: "invalid_request" });
+		let matchEpoch: string | undefined;
 		if (match) {
 			try {
-				if (epoch && parseETag(match).epoch !== epoch)
+				matchEpoch = parseETag(match).epoch;
+				if (epoch && matchEpoch !== epoch)
 					return errorResponse({ kind: "invalid_request" });
 			} catch {
 				return errorResponse({ kind: "invalid_request" });
 			}
 		}
+		if (
+			context.req.method === "DELETE" &&
+			epoch !== undefined &&
+			!EpochSchema.safeParse(epoch).success
+		)
+			return errorResponse({ kind: "invalid_request" });
+		const effectiveEpoch =
+			epoch ?? (context.req.method === "DELETE" ? matchEpoch : undefined);
 		const key =
 			keyHeader === undefined
 				? undefined
@@ -161,7 +180,7 @@ export function createFileRouter(
 			op: context.req.method === "PUT" ? "put" : "delete",
 			paths: [path],
 			precondition: match ? { kind: "match", etag: match } : { kind: "absent" },
-			...(epoch === undefined ? {} : { epoch }),
+			...(effectiveEpoch === undefined ? {} : { epoch: effectiveEpoch }),
 		};
 		const parsed = TextMutationDescriptorSchema.safeParse(descriptor);
 		if (!parsed.success) return errorResponse({ kind: "invalid_request" });

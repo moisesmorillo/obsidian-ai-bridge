@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: 2026-10-15 00:38
-updated_date: '2026-10-23T22:53:00Z'
+updated_date: '2026-10-23T22:56:00Z'
 labels:
   - F1
 dependencies:
@@ -83,4 +83,6 @@ Remaining duties: independent task review, full branch review, human review, rem
 Correction: Slice 3 uses the final branch commit titled `test(worker): complete F1 server acceptance`. The earlier hash in this note preceded inclusion of the Backlog CLI note and is not the final commit. Read the current branch log for the final hash.
 
 Read API adaptation exception: the real interleaving test first kept the old eager RPC expectation. It failed because opening a session reads metadata only. Updated the test to assert zero batch calls before demand and four bounded batches after reading the page. The later full check passed.
+
+README delivery correction: the tested README content is now committed with `docs: update README for F1 server status`. The earlier note that README remains unstaged described the prior Slice 3 handoff. This follow-up commits the required README change. No source changes or acceptance-criterion updates were made.
 <!-- SECTION:NOTES:END -->

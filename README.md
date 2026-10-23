@@ -1,12 +1,10 @@
 # obsidian-ai-bridge
 
-One Obsidian vault, synchronized across Mac, iPad and iPhone through a private Cloudflare Worker, and reachable by authorized AI agents over MCP. This is the intended product, not current behavior: synchronization is not implemented or deployed, and no device behavior or sync measurements are claimed.
+The project implements a private Cloudflare Worker with SQLite Vault authority, conditional file operations, history, search, blob storage, and bounded reads. Plugin synchronization, MCP/OAuth service, and deployment are not implemented or qualified.
 
 ## Current status
 
-The F0 foundation is complete and merged in [PR #3](https://github.com/moisesmorillo/obsidian-ai-bridge/pull/3). Its frozen installation, lint, configured typechecks, 49 tests and local builds passed both locally and in actual [push CI](https://github.com/moisesmorillo/obsidian-ai-bridge/actions/runs/38321019882) and [PR CI](https://github.com/moisesmorillo/obsidian-ai-bridge/actions/runs/38321022414).
-
-This is foundation evidence, not qualification of all 44 product acceptance cases. The Worker entry point still has no API routes, and the plugin lifecycle is inert; synchronization and the authorization service are not implemented or deployed. F1 has not started.
+The Worker implementation and its local protocol, native Durable Object, and HTTP tests provide server-side acceptance evidence. Production identity resolution denies access by default. Local tests do not qualify plugin behavior, MCP/OAuth transport, deployed authentication, or device behavior. OAB-6.9 remains open until independent review, human branch review, and remote CI complete.
 
 ## Local development
 
@@ -21,9 +19,9 @@ mise exec -- bun run check
 
 `bun run check` runs Biome formatting/lint checks, TypeScript checks for all workspaces, Vitest suites, and package builds. It includes a Wrangler dry-run build only; it does not deploy or modify Cloudflare resources. The current workspace responsibilities are:
 
-- `apps/worker`: Cloudflare Worker entry point (Hono); API and synchronization behavior are not implemented.
+- `apps/worker`: Cloudflare Worker routes, SQLite Vault authority, blob reads and writes, history, search, and conditional mutation behavior.
 - `apps/plugin`: Obsidian plugin artifact and lifecycle; synchronization behavior is not implemented.
-- `packages/protocol`: shared Zod protocol schemas and types that define identity contracts for future Worker/plugin interfaces and are currently exercised by tests; the production entry points do not yet import or use these wire interfaces.
+- `packages/protocol`: canonical Zod schemas, derived types, and codecs shared by Worker interfaces.
 
 ## Project records
 

@@ -2,6 +2,8 @@ import { env, runInDurableObject } from "cloudflare:test";
 import {
 	type AuthorizationContext,
 	EMPTY_PAYLOAD_HASH,
+	encodeFileFailure,
+	encodeFileFailureBodyChunks,
 } from "@obsidian-ai-bridge/protocol";
 import { tryAcquireBodySlot } from "@worker/application/body-budget";
 import { tryAcquireReadSlot } from "@worker/application/read-budget";
@@ -144,25 +146,67 @@ describe("aggregate runtime budgets", () => {
 		expect(admissions).toHaveLength(16);
 	});
 
-	it("derives the maximum inline application-owned input and response values", () => {
+	it("derives an application-owned subtotal from bounded failure encoder chunks", () => {
 		const maximumTextBytes = 1_000_000;
-		const simultaneousBodySlots = 4;
-		const input = "\0".repeat(maximumTextBytes);
-		const responseFragment = JSON.stringify({ content: input });
-		const encodedFragmentBytes = new TextEncoder().encode(
-			responseFragment,
-		).byteLength;
-		const ownedUtf16Bytes = input.length * 2;
-		const responseFragmentUtf16Bytes = responseFragment.length * 2;
-		const derivedBodyOwnedBytes =
-			simultaneousBodySlots *
-			(maximumTextBytes * 2 +
-				ownedUtf16Bytes * 2 +
-				responseFragmentUtf16Bytes +
-				encodedFragmentBytes);
-		expect(ownedUtf16Bytes).toBe(2_000_000);
-		expect(responseFragmentUtf16Bytes).toBe(12_000_028);
-		expect(encodedFragmentBytes).toBe(6_000_014);
-		expect(derivedBodyOwnedBytes).toBe(96_000_168);
+		const bodySlots = 4;
+		const utf16UnitBytes = 2;
+		// Match the protocol encoder window and the response owner's bounded BYOB read.
+		const maximumWindowUnits = 8_192;
+		// JSON escaping can use six ASCII characters for one UTF-16 code unit.
+		const maximumEscapedCharsPerUnit = 6;
+		const responseReadBytes = 65_536;
+		const content = "\0".repeat(maximumTextBytes);
+		const failure = encodeFileFailure({
+			kind: "precondition_failed",
+			etag: `"${TEXT_FIXTURE_EPOCH}.1"`,
+			hash: "a".repeat(64),
+			deleted: false,
+			content,
+		});
+		let maximumEncodedChunkBytes = 0;
+		for (const chunk of encodeFileFailureBodyChunks(failure.body))
+			maximumEncodedChunkBytes = Math.max(
+				maximumEncodedChunkBytes,
+				chunk.byteLength,
+			);
+
+		const inputBufferBytes = maximumTextBytes;
+		const hashInputBytes = maximumTextBytes;
+		const maximumInputByobBytes = 65_536;
+		const inputUtf16Bytes = maximumTextBytes * utf16UnitBytes;
+		const inputReadPhaseBytes = inputBufferBytes + maximumInputByobBytes;
+		const inputPreparationPhaseBytes =
+			inputBufferBytes + hashInputBytes + inputUtf16Bytes;
+		const pendingRpcUtf16Bytes = maximumTextBytes * 2 * utf16UnitBytes;
+		const failureUtf16Bytes = maximumTextBytes * utf16UnitBytes;
+		const windowUtf16Bytes = maximumWindowUnits * utf16UnitBytes;
+		const escapedJsonWindowUtf16Bytes =
+			(maximumWindowUnits * maximumEscapedCharsPerUnit + 2) * utf16UnitBytes;
+		const slicedEscapedWindowUtf16Bytes =
+			maximumWindowUnits * maximumEscapedCharsPerUnit * utf16UnitBytes;
+		const encodedWindowBytes = maximumWindowUnits * maximumEscapedCharsPerUnit;
+		const encoderWorkingBytes =
+			windowUtf16Bytes +
+			escapedJsonWindowUtf16Bytes +
+			slicedEscapedWindowUtf16Bytes +
+			encodedWindowBytes +
+			responseReadBytes;
+		const responsePhaseBytes = failureUtf16Bytes + encoderWorkingBytes;
+		const perSlotOwnedValueBytes = Math.max(
+			inputReadPhaseBytes,
+			inputPreparationPhaseBytes,
+			pendingRpcUtf16Bytes,
+			responsePhaseBytes,
+		);
+		const derivedOwnedValueBytes = bodySlots * perSlotOwnedValueBytes;
+
+		expect(maximumEncodedChunkBytes).toBe(encodedWindowBytes);
+		expect(maximumEncodedChunkBytes).toBeLessThan(responseReadBytes);
+		expect(inputReadPhaseBytes).toBe(1_065_536);
+		expect(inputPreparationPhaseBytes).toBe(4_000_000);
+		expect(pendingRpcUtf16Bytes).toBe(4_000_000);
+		expect(encoderWorkingBytes).toBe(327_684);
+		expect(responsePhaseBytes).toBe(2_327_684);
+		expect(derivedOwnedValueBytes).toBe(16_000_000);
 	});
 });

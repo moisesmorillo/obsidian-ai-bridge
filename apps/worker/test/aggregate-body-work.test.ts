@@ -743,6 +743,192 @@ describe("aggregate body ownership", () => {
 				failure: { kind: "precondition_failed" },
 			});
 	});
+	it("holds four routed PUT and metadata slots until response cleanup settles", async () => {
+		const hosts = Array.from(
+			{ length: 5 },
+			(_, index) => `aggregate-http-slots-${index}.invalid`,
+		);
+		for (const host of hosts) await initialize(host);
+		const commitEntered = hosts.slice(0, 4).map(() => gate());
+		const commitResume = hosts.slice(0, 4).map(() => gate());
+		const finishEntered = gate();
+		const finishResume = gate();
+		const commitHold = new Map(
+			hosts.slice(0, 4).map((host, index) => [host, index]),
+		);
+		const calls = new Map<string, number>();
+		let holdFirstReadCleanup = false;
+		/** Delay selected real DO responses while recording RPC starts per host. */
+		function observedVault(host: string): ReturnType<typeof env.VAULTS.get> {
+			const stub = env.VAULTS.get(env.VAULTS.idFromName(host));
+			return new Proxy(stub, {
+				/** Count a real authority call and gate its result at the selected lifecycle point. */
+				get(target, property) {
+					const method = Reflect.get(target, property, target);
+					if (typeof method !== "function" || typeof property !== "string")
+						return method;
+					return async (...args: unknown[]) => {
+						const key = `${host}:${property}`;
+						calls.set(key, (calls.get(key) ?? 0) + 1);
+						const result = await Reflect.apply(method, target, args);
+						const index = commitHold.get(host);
+						if (property === "commitText" && index !== undefined) {
+							commitEntered[index]?.release();
+							await commitResume[index]?.promise;
+						}
+						if (
+							property === "finishAdmission" &&
+							host === hosts[0] &&
+							holdFirstReadCleanup
+						) {
+							finishEntered.release();
+							await finishResume.promise;
+						}
+						return result;
+					};
+				},
+			});
+		}
+		const worker = createWorker(
+			identity,
+			(_bindings, request) => observedVault(new URL(request.url).host),
+			(bindings) => new R2BlobStore(bindings.R2_BUCKET),
+		);
+		const sources = hosts.map((_, index) => source(1_000_000, 31 + index));
+		const mutationRequests = sources.slice(0, 4).map((item, index) =>
+			worker.fetch(
+				new Request(`https://${hosts[index]}/v1/files/inline.md`, {
+					method: "PUT",
+					headers: {
+						"If-None-Match": "*",
+						"X-Vault-Epoch": TEXT_FIXTURE_EPOCH,
+						"X-Aggregate-Client": `aggregate-http-${index}`,
+					},
+					body: item.body,
+				}),
+				env,
+			),
+		);
+		const mutationResponses: Response[] = [];
+		const metadataResponses: Response[] = [];
+		const deniedBody = source(1, 66);
+		try {
+			await Promise.all(sources.slice(0, 4).map((item) => item.reached));
+			for (const item of sources.slice(0, 4)) item.resume();
+			await Promise.all(commitEntered.map((item) => item.promise));
+
+			for (const host of hosts.slice(0, 4)) {
+				const response = await worker.fetch(
+					new Request(`https://${host}/v1/vault`),
+					env,
+				);
+				expect(response.status).toBe(200);
+				metadataResponses.push(response);
+			}
+			const refusedRead = await worker.fetch(
+				new Request(`https://${hosts[4]}/v1/vault`),
+				env,
+			);
+			expect(refusedRead.status).toBe(429);
+			expect(refusedRead.headers.get("Retry-After")).toBe("1");
+			await refusedRead.text();
+			const refusedReadHost = hosts[4];
+			if (!refusedReadHost) throw new Error("Expected fifth host");
+			expect(
+				[...calls.keys()].some((key) => key.startsWith(`${refusedReadHost}:`)),
+			).toBe(false);
+
+			const refusedBody = await worker.fetch(
+				new Request(`https://${hosts[4]}/v1/files/fifth.md`, {
+					method: "PUT",
+					headers: {
+						"If-None-Match": "*",
+						"X-Vault-Epoch": TEXT_FIXTURE_EPOCH,
+					},
+					body: deniedBody.body,
+				}),
+				env,
+			);
+			expect(refusedBody.status).toBe(429);
+			expect(refusedBody.headers.get("Retry-After")).toBe("1");
+			await refusedBody.json();
+			expect(deniedBody.stats().reads).toBe(0);
+			expect(
+				[...calls.keys()].some((key) => key.startsWith(`${refusedReadHost}:`)),
+			).toBe(false);
+
+			for (const release of commitResume) release.release();
+			mutationResponses.push(...(await Promise.all(mutationRequests)));
+			expect(mutationResponses.map((response) => response.status)).toEqual([
+				201, 201, 201, 201,
+			]);
+
+			const refusedAfterCommit = await worker.fetch(
+				new Request(`https://${hosts[4]}/v1/files/still-held.md`, {
+					method: "PUT",
+					headers: {
+						"If-None-Match": "*",
+						"X-Vault-Epoch": TEXT_FIXTURE_EPOCH,
+					},
+					body: deniedBody.body,
+				}),
+				env,
+			);
+			expect(refusedAfterCommit.status).toBe(429);
+			await refusedAfterCommit.text();
+			expect(deniedBody.stats().reads).toBe(0);
+			expect(
+				[...calls.keys()].some((key) => key.startsWith(`${refusedReadHost}:`)),
+			).toBe(false);
+
+			const firstRead = metadataResponses[0];
+			if (!firstRead?.body) throw new Error("Expected metadata response body");
+			holdFirstReadCleanup = true;
+			const readCleanup = firstRead.body.cancel();
+			await finishEntered.promise;
+			const refusedDuringCleanup = await worker.fetch(
+				new Request(`https://${hosts[4]}/v1/vault`),
+				env,
+			);
+			expect(refusedDuringCleanup.status).toBe(429);
+			await refusedDuringCleanup.text();
+			holdFirstReadCleanup = false;
+			finishResume.release();
+			await readCleanup;
+			const recoveredRead = await worker.fetch(
+				new Request(`https://${hosts[4]}/v1/vault`),
+				env,
+			);
+			expect(recoveredRead.status).toBe(200);
+			await recoveredRead.body?.cancel();
+
+			const firstMutation = mutationResponses[0];
+			if (!firstMutation?.body)
+				throw new Error("Expected mutation response body");
+			await firstMutation.body.cancel();
+			const recoveredBody = await worker.fetch(
+				new Request(`https://${hosts[4]}/v1/files/recovered.md`, {
+					method: "PUT",
+					headers: {
+						"If-None-Match": "*",
+						"X-Vault-Epoch": TEXT_FIXTURE_EPOCH,
+					},
+					body: "recovered",
+				}),
+				env,
+			);
+			expect(recoveredBody.status).toBe(201);
+			await recoveredBody.body?.cancel();
+		} finally {
+			holdFirstReadCleanup = false;
+			finishResume.release();
+			for (const release of commitResume) release.release();
+			for (const item of sources) item.resume();
+			await Promise.allSettled(mutationRequests);
+			for (const response of mutationResponses) await response.body?.cancel();
+			for (const response of metadataResponses) await response.body?.cancel();
+		}
+	}, 20_000);
 	it.each(["append", "rename", "restore"] as const)(
 		"keeps %s charged until non-cancellable authority cleanup delivery settles",
 		async (op) => {

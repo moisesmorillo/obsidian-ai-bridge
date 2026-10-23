@@ -95,6 +95,260 @@ async function commitMutation(
 }
 
 describe("native conditional text storage", () => {
+	it("counts deterministic UTF-8 payloads for Unicode and nullable row fields", async () => {
+		await withTextStore(async (fixture) => {
+			const path = "notes/été.md";
+			const content = "café🙂\u0000";
+			const intent = await putIntent(path, content, { kind: "absent" });
+			const result = await commitMutation(
+				fixture,
+				intent,
+				content,
+				"logical-byte-key-01",
+			);
+			expect(result.ok).toBe(true);
+			const encoder = new TextEncoder();
+			const revision = fixture.storage.sql
+				.exec<{ hash: string; size: number; origin: string; at: number }>(
+					"SELECT hash, size, origin, at FROM revisions WHERE path = ?",
+					path,
+				)
+				.toArray()[0];
+			const receipt = fixture.storage.sql
+				.exec<{
+					client_id: string;
+					key: string;
+					fingerprint: string;
+					status: number;
+					body: string;
+					at: number;
+				}>("SELECT client_id, key, fingerprint, status, body, at FROM receipts")
+				.toArray()[0];
+			expect(revision).toBeDefined();
+			expect(receipt).toBeDefined();
+			const expected = {
+				revisions: encoder.encode(
+					JSON.stringify([
+						path,
+						1,
+						revision?.hash,
+						revision?.size,
+						"text",
+						content,
+						null,
+						0,
+						revision?.origin,
+						revision?.at,
+					]),
+				).byteLength,
+				receipts: encoder.encode(
+					JSON.stringify([
+						receipt?.client_id,
+						receipt?.key,
+						receipt?.fingerprint,
+						receipt?.status,
+						receipt?.body,
+						receipt?.at,
+					]),
+				).byteLength,
+				changes: encoder.encode(
+					JSON.stringify([
+						1,
+						"put",
+						path,
+						1,
+						revision?.hash,
+						null,
+						null,
+						TEXT_FIXTURE_CONTEXT.client_id,
+						10_000,
+					]),
+				).byteLength,
+			};
+			const counters = Object.fromEntries(
+				fixture.storage.sql
+					.exec<{ key: string; value: string }>(
+						"SELECT key, value FROM meta WHERE key LIKE 'history_%_bytes' ORDER BY key",
+					)
+					.toArray()
+					.map(({ key, value }) => [key, Number(value)]),
+			);
+			expect(counters).toEqual({
+				history_changes_bytes: expected.changes,
+				history_pressure_bytes:
+					expected.revisions + expected.receipts + expected.changes,
+				history_receipts_bytes: expected.receipts,
+				history_revisions_bytes: expected.revisions,
+			});
+		});
+	});
+
+	it("serializes competing creates for the final configured live-file slot", async () => {
+		const limits = {
+			databaseAlertBytes: 1_500_000_000,
+			databaseLimitBytes: 2_000_000_000,
+			liveFileLimit: 1,
+			historyPressureLimitBytes: 1_000_000_000,
+			blobAlertBytes: 4_000_000_000,
+		};
+		await withTextStore(
+			async (fixture) => {
+				const results = await Promise.all([
+					commitMutation(
+						fixture,
+						await putIntent("notes/competitor-a.md", "a", { kind: "absent" }),
+						"a",
+						"last-slot-a-0001",
+					),
+					commitMutation(
+						fixture,
+						await putIntent("notes/competitor-b.md", "b", { kind: "absent" }),
+						"b",
+						"last-slot-b-0001",
+					),
+				]);
+				expect(results.filter((result) => result.ok)).toHaveLength(1);
+				expect(results.filter((result) => !result.ok)).toEqual([
+					{ ok: false, failure: { kind: "capacity_exceeded" } },
+				]);
+			},
+			undefined,
+			undefined,
+			limits,
+		);
+	});
+
+	it("admits the 10,000th live file and keeps replay and delete available at capacity", async () => {
+		await withTextStore(async (fixture) => {
+			fixture.storage.transactionSync(() => {
+				for (let index = 0; index < 9_999; index += 1) {
+					const path = `seed/${index}.txt`;
+					fixture.storage.sql.exec(
+						"INSERT INTO files(path,path_key,rev,seq,hash,size,kind,content,deleted,updated_at,origin) VALUES (?, ?, 1, 0, '', 0, 'text', NULL, 0, 10000, 'seed')",
+						path,
+						path,
+					);
+				}
+				fixture.storage.sql.exec(
+					"UPDATE meta SET value = '9999' WHERE key = 'live_file_count'",
+				);
+			});
+			const path = "notes/last-slot.md";
+			const content = "last slot";
+			const intent = await putIntent(path, content, { kind: "absent" });
+			const authorized = await authorizeMutation(
+				fixture,
+				intent,
+				"last-file-slot-01",
+			);
+			const first = await fixture.store.commitText(
+				TEXT_FIXTURE_CONTEXT,
+				intent,
+				authorized.ticketId,
+				content,
+				authorized.idempotencyKey,
+			);
+			expect(first).toMatchObject({ ok: true, response: { status: 201 } });
+			const countersBeforeReplay = fixture.storage.sql
+				.exec(
+					"SELECT key, value FROM meta WHERE key LIKE 'history_%_bytes' ORDER BY key",
+				)
+				.toArray();
+			expect(
+				await fixture.store.commitText(
+					TEXT_FIXTURE_CONTEXT,
+					intent,
+					authorized.ticketId,
+					content,
+					authorized.idempotencyKey,
+				),
+			).toEqual(first);
+			expect(
+				fixture.storage.sql
+					.exec(
+						"SELECT key, value FROM meta WHERE key LIKE 'history_%_bytes' ORDER BY key",
+					)
+					.toArray(),
+			).toEqual(countersBeforeReplay);
+			expect(
+				await commitMutation(
+					fixture,
+					await putIntent("notes/over-limit.md", "x", { kind: "absent" }),
+					"x",
+					"over-file-limit-1",
+				),
+			).toEqual({ ok: false, failure: { kind: "capacity_exceeded" } });
+			expect(
+				await commitMutation(
+					fixture,
+					await putIntent(path, "updated", {
+						kind: "match",
+						etag: formatETag(TEXT_FIXTURE_EPOCH, 1),
+					}),
+					"updated",
+					"over-file-limit-2",
+				),
+			).toEqual({ ok: false, failure: { kind: "capacity_exceeded" } });
+			const deletion = TextMutationIntentSchema.parse({
+				op: "delete",
+				epoch: TEXT_FIXTURE_EPOCH,
+				paths: [path],
+				precondition: {
+					kind: "match",
+					etag: formatETag(TEXT_FIXTURE_EPOCH, 1),
+				},
+				payload_hash: EMPTY_PAYLOAD_HASH,
+				size: 0,
+			});
+			expect(
+				await commitMutation(fixture, deletion, undefined, "delete-at-cap-01"),
+			).toMatchObject({ ok: true, response: { body: { deleted: true } } });
+		});
+	});
+
+	it("rolls back every publication row when real native growth crosses a small database limit", async () => {
+		const limits = {
+			databaseAlertBytes: 1,
+			databaseLimitBytes: Number.MAX_SAFE_INTEGER,
+			liveFileLimit: 10_000,
+			historyPressureLimitBytes: 1,
+			blobAlertBytes: 1,
+		};
+		await withTextStore(
+			async (fixture) => {
+				const databaseBytes = fixture.storage.sql.databaseSize;
+				const cap = databaseBytes + 8_192;
+				limits.databaseLimitBytes = cap;
+				const path = "notes/native-growth.md";
+				const content = "growth-λ🙂".repeat(4_000);
+				const intent = await putIntent(path, content, { kind: "absent" });
+				const authorized = await authorizeMutation(
+					fixture,
+					intent,
+					"native-growth-key-01",
+				);
+				const before = captureTextStoreState(fixture.storage);
+				const beforeBytes = fixture.storage.sql.databaseSize;
+				const result = await fixture.store.commitText(
+					TEXT_FIXTURE_CONTEXT,
+					intent,
+					authorized.ticketId,
+					content,
+					authorized.idempotencyKey,
+				);
+				expect(result).toEqual({
+					ok: false,
+					failure: { kind: "capacity_exceeded" },
+				});
+				expect(captureTextStoreState(fixture.storage)).toEqual(before);
+				expect(fixture.storage.sql.databaseSize).toBe(beforeBytes);
+			},
+			undefined,
+			undefined,
+			limits,
+		);
+	});
+
 	it("renames a live text file with one feed row and retained source history", async () => {
 		await withTextStore(async (fixture) => {
 			const source = "notes/before.md";

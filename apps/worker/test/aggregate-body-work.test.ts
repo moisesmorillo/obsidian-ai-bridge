@@ -1,6 +1,9 @@
 import { env, runInDurableObject } from "cloudflare:test";
 import type { AuthorizationContext } from "@obsidian-ai-bridge/protocol";
-import { FileCommandSchema } from "@obsidian-ai-bridge/protocol";
+import {
+	FileCommandSchema,
+	VaultReadResultSchema,
+} from "@obsidian-ai-bridge/protocol";
 import { executeBlobPut } from "@worker/application/blobs";
 import { tryAcquireBodySlot } from "@worker/application/body-budget";
 import {
@@ -299,13 +302,40 @@ describe("aggregate body ownership", () => {
 		for (const host of hosts) await initialize(host);
 		let pendingPuts = 0;
 		let maxPendingPuts = 0;
-		let putCalls = 0;
-		/** Forward native operations unchanged and observe pending native writes only. */
+		const r2Calls = { head: 0, get: 0, put: 0, delete: 0, list: 0 };
+		const rpcCalls = new Map<string, number>();
+		/** Count each actual Durable Object RPC by host and method for upload admission. */
+		function observeVault(host: string): ReturnType<typeof env.VAULTS.get> {
+			const stub = env.VAULTS.get(env.VAULTS.idFromName(host));
+			return new Proxy(stub, {
+				/** Count one forwarded RPC method without changing its arguments or result. */
+				get(target, property) {
+					const method = Reflect.get(target, property, target);
+					if (typeof method !== "function" || typeof property !== "string")
+						return method;
+					return (...args: unknown[]) => {
+						const key = `${host}:${property}`;
+						rpcCalls.set(key, (rpcCalls.get(key) ?? 0) + 1);
+						return Reflect.apply(method, target, args);
+					};
+				},
+			});
+		}
+		/** Forward native operations and count storage calls separately from pending writes. */
 		const bucket: R2Bucket = {
-			head: (...args) => env.R2_BUCKET.head(...args),
-			get: (...args: Parameters<R2Bucket["get"]>) => env.R2_BUCKET.get(...args),
+			/** Count one native metadata lookup and forward the exact key. */
+			head: (...args) => {
+				r2Calls.head += 1;
+				return env.R2_BUCKET.head(...args);
+			},
+			/** Count one native object read and forward the exact request. */
+			get: (...args: Parameters<R2Bucket["get"]>) => {
+				r2Calls.get += 1;
+				return env.R2_BUCKET.get(...args);
+			},
+			/** Count native uploads and measure concurrent pending PUT calls. */
 			put: async (...args) => {
-				putCalls++;
+				r2Calls.put += 1;
 				pendingPuts++;
 				maxPendingPuts = Math.max(maxPendingPuts, pendingPuts);
 				try {
@@ -314,10 +344,20 @@ describe("aggregate body ownership", () => {
 					pendingPuts--;
 				}
 			},
-			delete: (...args) => env.R2_BUCKET.delete(...args),
-			list: (...args) => env.R2_BUCKET.list(...args),
+			/** Count one native object delete and forward the exact request. */
+			delete: (...args) => {
+				r2Calls.delete += 1;
+				return env.R2_BUCKET.delete(...args);
+			},
+			/** Count one native listing request and forward its options. */
+			list: (...args) => {
+				r2Calls.list += 1;
+				return env.R2_BUCKET.list(...args);
+			},
+			/** Forward unused multipart creation without changing bucket behavior. */
 			createMultipartUpload: (...args) =>
 				env.R2_BUCKET.createMultipartUpload(...args),
+			/** Forward unused multipart resume without changing bucket behavior. */
 			resumeMultipartUpload: (...args) =>
 				env.R2_BUCKET.resumeMultipartUpload(...args),
 		};
@@ -330,10 +370,7 @@ describe("aggregate body ownership", () => {
 		const workers = sources.map(() =>
 			createWorker(
 				identity,
-				(bindings, request) =>
-					bindings.VAULTS.get(
-						bindings.VAULTS.idFromName(new URL(request.url).host),
-					),
+				(_bindings, request) => observeVault(new URL(request.url).host),
 				() => new R2BlobStore(bucket),
 			),
 		);
@@ -393,7 +430,7 @@ describe("aggregate body ownership", () => {
 					sources: sources.map((item) => item.stats()),
 					pendingPuts,
 					maxPendingPuts,
-					putCalls,
+					r2Calls,
 				}),
 			);
 		} finally {
@@ -405,7 +442,27 @@ describe("aggregate body ownership", () => {
 			201, 201, 201, 201,
 		]);
 		expect(pendingPuts).toBe(0);
-		expect(putCalls).toBe(4);
+		expect(r2Calls).toEqual({
+			head: 4,
+			get: 0,
+			put: 4,
+			delete: 0,
+			list: 0,
+		});
+		for (const host of hosts.slice(0, 4)) {
+			expect(
+				Object.fromEntries(
+					[...rpcCalls]
+						.filter(([key]) => key.startsWith(`${host}:`))
+						.map(([key, count]) => [key.slice(host.length + 1), count]),
+				),
+			).toEqual({
+				beginMutation: 1,
+				authorizeBlob: 1,
+				commitBlob: 1,
+				finishAdmission: 1,
+			});
+		}
 	}, 15_000);
 	it.each(["rename", "restore"] as const)(
 		"shares slots across inline PUT, blob PUT, append, and %s",
@@ -517,6 +574,12 @@ describe("aggregate body ownership", () => {
 			failureUnits: number;
 			inputBytes: number;
 		}[] = [];
+		const rpcCalls = {
+			beginMutation: 0,
+			authorize: 0,
+			commitText: 0,
+			finishAdmission: 0,
+		};
 		for (const host of hosts) {
 			const stub = env.VAULTS.get(env.VAULTS.idFromName(host));
 			await runInDurableObject(stub, async (_instance, state) => {
@@ -547,14 +610,24 @@ describe("aggregate body ownership", () => {
 			const stub = env.VAULTS.get(env.VAULTS.idFromName(hosts[index] ?? ""));
 			const authority: TextVaultGateway = {
 				getCurrentEpoch: (...args) => stub.getCurrentEpoch(...args),
-				beginMutation: (...args) => stub.beginMutation(...args),
-				authorize: (...args) => stub.authorize(...args),
+				beginMutation: (...args) => {
+					rpcCalls.beginMutation += 1;
+					return stub.beginMutation(...args);
+				},
+				authorize: (...args) => {
+					rpcCalls.authorize += 1;
+					return stub.authorize(...args);
+				},
 				authorizeBlob: (...args) => stub.authorizeBlob(...args),
 				commitBlob: (...args) => stub.commitBlob(...args),
 				readBlobMetadata: (...args) => stub.readBlobMetadata(...args),
 				readText: (...args) => stub.readText(...args),
-				finishAdmission: (...args) => stub.finishAdmission(...args),
+				finishAdmission: (...args) => {
+					rpcCalls.finishAdmission += 1;
+					return stub.finishAdmission(...args);
+				},
 				commitText: async (...args) => {
+					rpcCalls.commitText += 1;
 					const result = await stub.commitText(...args);
 					expect(result).toMatchObject({
 						ok: false,
@@ -592,6 +665,12 @@ describe("aggregate body ownership", () => {
 		for (const item of sources.slice(0, 4)) item.resume();
 		try {
 			await Promise.all(entered.map((item) => item.promise));
+			expect(rpcCalls).toEqual({
+				beginMutation: 4,
+				authorize: 4,
+				commitText: 4,
+				finishAdmission: 0,
+			});
 			expect(observed).toHaveLength(4);
 			for (const item of observed)
 				expect(item).toEqual({
@@ -599,6 +678,32 @@ describe("aggregate body ownership", () => {
 					failureUnits: 1_000_000,
 					inputBytes: 1_000_000,
 				});
+			const readWorker = createWorker(
+				identity,
+				(bindings, request) =>
+					bindings.VAULTS.get(
+						bindings.VAULTS.idFromName(new URL(request.url).host),
+					),
+				(bindings) => new R2BlobStore(bindings.R2_BUCKET),
+			);
+			const metadataResponses = await Promise.all(
+				hosts
+					.slice(0, 4)
+					.map((host) =>
+						readWorker.fetch(new Request(`https://${host}/v1/vault`), env),
+					),
+			);
+			expect(metadataResponses.map((response) => response.status)).toEqual([
+				200, 200, 200, 200,
+			]);
+			const fifthRead = await readWorker.fetch(
+				new Request(`https://${hosts[4]}/v1/vault`),
+				env,
+			);
+			expect(fifthRead.status).toBe(429);
+			expect(fifthRead.headers.get("Retry-After")).toBe("1");
+			await fifthRead.text();
+			for (const response of metadataResponses) await response.body?.cancel();
 			const fifth = requests[4];
 			if (!fifth) throw new Error("Expected fifth request");
 			const denied = await executeTextMutation(
@@ -629,12 +734,262 @@ describe("aggregate body ownership", () => {
 			await Promise.all(uploads);
 		}
 		const results = await Promise.all(uploads);
+		expect(rpcCalls).toEqual({
+			beginMutation: 4,
+			authorize: 4,
+			commitText: 4,
+			finishAdmission: 4,
+		});
 		for (const result of results)
 			expect(result).toMatchObject({
 				ok: false,
 				failure: { kind: "precondition_failed" },
 			});
 	});
+	it("holds four routed PUT and metadata slots until response cleanup settles", async () => {
+		const hosts = Array.from(
+			{ length: 5 },
+			(_, index) => `aggregate-http-slots-${index}.invalid`,
+		);
+		for (const host of hosts) await initialize(host);
+		const commitEntered = hosts.slice(0, 4).map(() => gate());
+		const commitResume = hosts.slice(0, 4).map(() => gate());
+		const finishEntered = gate();
+		const finishResume = gate();
+		const commitHold = new Map(
+			hosts.slice(0, 4).map((host, index) => [host, index]),
+		);
+		const calls = new Map<string, number>();
+		let holdFirstReadCleanup = false;
+		/** Delay selected real DO responses while recording RPC starts per host. */
+		function observedVault(host: string): ReturnType<typeof env.VAULTS.get> {
+			const stub = env.VAULTS.get(env.VAULTS.idFromName(host));
+			return new Proxy(stub, {
+				/** Count a real authority call and gate its result at the selected lifecycle point. */
+				get(target, property) {
+					const method = Reflect.get(target, property, target);
+					if (typeof method !== "function" || typeof property !== "string")
+						return method;
+					return async (...args: unknown[]) => {
+						const key = `${host}:${property}`;
+						calls.set(key, (calls.get(key) ?? 0) + 1);
+						const result = await Reflect.apply(method, target, args);
+						const index = commitHold.get(host);
+						if (property === "commitText" && index !== undefined) {
+							commitEntered[index]?.release();
+							await commitResume[index]?.promise;
+						}
+						if (
+							property === "finishAdmission" &&
+							host === hosts[0] &&
+							holdFirstReadCleanup
+						) {
+							finishEntered.release();
+							await finishResume.promise;
+						}
+						return result;
+					};
+				},
+			});
+		}
+		const worker = createWorker(
+			identity,
+			(_bindings, request) => observedVault(new URL(request.url).host),
+			(bindings) => new R2BlobStore(bindings.R2_BUCKET),
+		);
+		const sources = hosts.map((_, index) => source(1_000_000, 31 + index));
+		const mutationRequests = sources.slice(0, 4).map((item, index) =>
+			worker.fetch(
+				new Request(`https://${hosts[index]}/v1/files/inline.md`, {
+					method: "PUT",
+					headers: {
+						"If-None-Match": "*",
+						"X-Vault-Epoch": TEXT_FIXTURE_EPOCH,
+						"X-Aggregate-Client": `aggregate-http-${index}`,
+					},
+					body: item.body,
+				}),
+				env,
+			),
+		);
+		const mutationResponses: Response[] = [];
+		const metadataResponses: Response[] = [];
+		const deniedBody = source(1, 66);
+		try {
+			await Promise.all(sources.slice(0, 4).map((item) => item.reached));
+			for (const item of sources.slice(0, 4)) item.resume();
+			await Promise.all(commitEntered.map((item) => item.promise));
+
+			for (const [index, host] of hosts.slice(0, 4).entries()) {
+				const response = await worker.fetch(
+					new Request(
+						index < 3
+							? `https://${host}/v1/files/inline.md`
+							: `https://${host}/v1/vault`,
+						index < 3
+							? { headers: { "X-Vault-Epoch": TEXT_FIXTURE_EPOCH } }
+							: undefined,
+					),
+					env,
+				);
+				expect(response.status).toBe(200);
+				metadataResponses.push(response);
+			}
+			const mutationOwners = 4;
+			const maximumMutationPhaseBytes = 4_000_000;
+			const inlineReadOwners = 3;
+			const maximumInlineUtf16Bytes = 1_000_000 * 2;
+			const stringWindowBytes = 8_192 * 2;
+			const escapedWindowBytes = 8_192 * 6 * 2;
+			const encodedStringBytes = 8_192 * 6;
+			const responseChunkBytes = 65_536;
+			const inlineReadEncoderBytes =
+				stringWindowBytes +
+				escapedWindowBytes * 2 +
+				encodedStringBytes +
+				responseChunkBytes;
+			const safeInteger = Number.MAX_SAFE_INTEGER;
+			const maximumMetadataSummary = VaultReadResultSchema.parse({
+				epoch: TEXT_FIXTURE_EPOCH,
+				head_seq: safeInteger,
+				counts: { live: safeInteger, deleted: safeInteger },
+				limits: {
+					manifest_page: 256,
+					feed_page: 1_000,
+					text_bytes: 1_000_000,
+					blob_bytes: 25_000_000,
+				},
+				capacity: {
+					database_bytes: safeInteger,
+					database_limit_bytes: 2_000_000_000,
+					live_file_limit: 10_000,
+					history_pressure_bytes: safeInteger,
+					referenced_blob_bytes: safeInteger,
+				},
+				attention: [
+					"storage_high",
+					"capacity_exceeded",
+					"history_reduced",
+					"blob_storage_high",
+				],
+			});
+			const metadataSummaryBytes = new TextEncoder().encode(
+				JSON.stringify(maximumMetadataSummary),
+			).byteLength;
+			const metadataResponseOwnerBytes =
+				metadataSummaryBytes * 2 + responseChunkBytes;
+			const simultaneousOwnedPayloadBytes =
+				mutationOwners * maximumMutationPhaseBytes +
+				inlineReadOwners * (maximumInlineUtf16Bytes + inlineReadEncoderBytes) +
+				metadataResponseOwnerBytes;
+			const refusedRead = await worker.fetch(
+				new Request(`https://${hosts[4]}/v1/vault`),
+				env,
+			);
+			expect(refusedRead.status).toBe(429);
+			expect(refusedRead.headers.get("Retry-After")).toBe("1");
+			await refusedRead.text();
+			const refusedReadHost = hosts[4];
+			if (!refusedReadHost) throw new Error("Expected fifth host");
+			expect(
+				[...calls.keys()].some((key) => key.startsWith(`${refusedReadHost}:`)),
+			).toBe(false);
+
+			const refusedBody = await worker.fetch(
+				new Request(`https://${hosts[4]}/v1/files/fifth.md`, {
+					method: "PUT",
+					headers: {
+						"If-None-Match": "*",
+						"X-Vault-Epoch": TEXT_FIXTURE_EPOCH,
+					},
+					body: deniedBody.body,
+				}),
+				env,
+			);
+			expect(refusedBody.status).toBe(429);
+			expect(refusedBody.headers.get("Retry-After")).toBe("1");
+			await refusedBody.json();
+			expect(deniedBody.stats().reads).toBe(0);
+			expect(
+				[...calls.keys()].some((key) => key.startsWith(`${refusedReadHost}:`)),
+			).toBe(false);
+
+			for (const release of commitResume) release.release();
+			mutationResponses.push(...(await Promise.all(mutationRequests)));
+			expect(mutationResponses).toHaveLength(4);
+			expect(metadataResponses).toHaveLength(4);
+			expect(metadataSummaryBytes).toBeLessThan(1_024);
+			expect(simultaneousOwnedPayloadBytes).toBeLessThan(24_000_000);
+			expect(mutationResponses.map((response) => response.status)).toEqual([
+				201, 201, 201, 201,
+			]);
+
+			const refusedAfterCommit = await worker.fetch(
+				new Request(`https://${hosts[4]}/v1/files/still-held.md`, {
+					method: "PUT",
+					headers: {
+						"If-None-Match": "*",
+						"X-Vault-Epoch": TEXT_FIXTURE_EPOCH,
+					},
+					body: deniedBody.body,
+				}),
+				env,
+			);
+			expect(refusedAfterCommit.status).toBe(429);
+			await refusedAfterCommit.text();
+			expect(deniedBody.stats().reads).toBe(0);
+			expect(
+				[...calls.keys()].some((key) => key.startsWith(`${refusedReadHost}:`)),
+			).toBe(false);
+
+			const firstRead = metadataResponses[0];
+			if (!firstRead?.body) throw new Error("Expected metadata response body");
+			holdFirstReadCleanup = true;
+			const readCleanup = firstRead.body.cancel();
+			await finishEntered.promise;
+			const refusedDuringCleanup = await worker.fetch(
+				new Request(`https://${hosts[4]}/v1/vault`),
+				env,
+			);
+			expect(refusedDuringCleanup.status).toBe(429);
+			await refusedDuringCleanup.text();
+			holdFirstReadCleanup = false;
+			finishResume.release();
+			await readCleanup;
+			const recoveredRead = await worker.fetch(
+				new Request(`https://${hosts[4]}/v1/vault`),
+				env,
+			);
+			expect(recoveredRead.status).toBe(200);
+			await recoveredRead.body?.cancel();
+
+			const firstMutation = mutationResponses[0];
+			if (!firstMutation?.body)
+				throw new Error("Expected mutation response body");
+			await firstMutation.body.cancel();
+			const recoveredBody = await worker.fetch(
+				new Request(`https://${hosts[4]}/v1/files/recovered.md`, {
+					method: "PUT",
+					headers: {
+						"If-None-Match": "*",
+						"X-Vault-Epoch": TEXT_FIXTURE_EPOCH,
+					},
+					body: "recovered",
+				}),
+				env,
+			);
+			expect(recoveredBody.status).toBe(201);
+			await recoveredBody.body?.cancel();
+		} finally {
+			holdFirstReadCleanup = false;
+			finishResume.release();
+			for (const release of commitResume) release.release();
+			for (const item of sources) item.resume();
+			await Promise.allSettled(mutationRequests);
+			for (const response of mutationResponses) await response.body?.cancel();
+			for (const response of metadataResponses) await response.body?.cancel();
+		}
+	}, 20_000);
 	it.each(["append", "rename", "restore"] as const)(
 		"keeps %s charged until non-cancellable authority cleanup delivery settles",
 		async (op) => {

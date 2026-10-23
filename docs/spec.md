@@ -166,7 +166,7 @@ CREATE TABLE blob_refs (hash TEXT PRIMARY KEY, size INTEGER NOT NULL, first_ref_
 CREATE TABLE exports (id TEXT PRIMARY KEY, started_at INTEGER, finished_at INTEGER, status TEXT, head_seq INTEGER, calls_this_hour INTEGER, hour_started_at INTEGER, commit_sha TEXT, error TEXT);
 ```
 
-The canonical initial schema version is 3. Versions 1 and 2 fail closed without writes. The service does not migrate or repair unsupported storage.
+The canonical schema version is 5. Versions 1 through 4 fail closed without writes. The service does not migrate or repair unsupported storage. Version 4 adds `history_revisions_bytes`, `history_receipts_bytes`, `history_changes_bytes`, `history_pressure_bytes`, and `history_reduced` metadata. Version 5 adds `retention_category` and `retention_pruned_feed_seq`. Fresh version-5 vaults initialize all history counters and the feed boundary to zero. Existing stores need an explicit future migration and receive no backfill or repair in this version.
 
 Version 2 adds `operation_admissions`:
 
@@ -207,6 +207,25 @@ The composite primary key is `(client_id, key)`. The unique `mutation_claims_adm
 
 Admission deletion cascades claim deletion. The admission owns the fingerprint, grant, epoch, state, and original deadline.
 
+Version 4 adds the mandatory logical history counters to `meta`:
+
+| Key | Initial value | Meaning |
+| --- | --- | --- |
+| `history_revisions_bytes` | `0` | UTF-8 logical payload bytes for retained revision rows |
+| `history_receipts_bytes` | `0` | UTF-8 logical payload bytes for retained receipt rows |
+| `history_changes_bytes` | `0` | UTF-8 logical payload bytes for retained change rows |
+| `history_pressure_bytes` | `0` | Sum of the three category counters |
+| `history_reduced` | `0` | Sticky history-reduced attention state |
+
+Version 5 adds durable retention progress to `meta`:
+
+| Key | Initial value | Meaning |
+| --- | --- | --- |
+| `retention_category` | `changes` | Next category to examine after interruption |
+| `retention_pruned_feed_seq` | `0` | Monotonic lower cursor bound, one past the highest feed sequence removed by retention |
+
+Versions 4 and 5 do not change relational table DDL. Versions 1 through 4 remain unsupported and receive no migration, repair, or counter backfill.
+
 ### 5.3 R2 layout
 
 - `blobs/<sha256>`: immutable. Written **before** the DO transaction that references it (§6.3). Unreferenced blobs are harmless; no automatic GC in v1 (§16).
@@ -234,7 +253,7 @@ Base `/v1`. JSON unless noted. Authentication: `Authorization: Bearer <access to
 
 | Method | Path | Scope | Purpose |
 | --- | --- | --- | --- |
-| `GET` | `/v1/vault` | read | `{epoch, head_seq, counts, limits}` |
+| `GET` | `/v1/vault` | read | `{epoch, head_seq, counts, limits, capacity, attention}` |
 | `GET` | `/v1/manifest?page=<token>` | read | `{epoch, head_seq, entries, next_page}` with path, epoch-bound `etag`, `seq, hash, size, kind, deleted, large`; pages contain at most 256 rows and include tombstones |
 | `GET` | `/v1/changes?epoch=E&since=S&limit=N` | read | `{epoch, head_seq, entries}` with immutable feed rows, `seq > S`, ascending, and at most 1,000 entries. `409 epoch_mismatch` if E ≠ epoch. `410 cursor_expired` if S is older than the oldest retained `seq` |
 | `GET` | `/v1/files/*path?rev=R` | read | Content and metadata. Without `rev`: current, `ETag`, and optional `X-Vault-Epoch` observation. With `rev`: send `X-Vault-Epoch` to select that exact revision from `revisions`, or receive `410 revision_pruned`. Range reads via `Range: bytes=` (blob) or `?offset=&length=` (text, in UTF-16 code units as Obsidian uses). Response always carries `ETag` |
@@ -530,7 +549,7 @@ Backup repository configured, one export `complete` and verified, and one restor
 | Files per vault | 10,000 | `507 capacity_exceeded`; *attention* |
 | Path | 512 bytes, 32 segments | `400 invalid_path` |
 | Feed retention (`changes`) | 30 days | Older cursor → `410 cursor_expired` → full reconciliation |
-| Revision retention (`revisions`) | 30 days, **floor 7 days** (floor approved by owner, §17.1); revisions pinned by an export are exempt | Pruned nightly. If `revisions` + FTS + receipts exceed **1 GB**, prune oldest beyond the 7-day floor and raise *attention* "history reduced"; never below 7 days, never silently |
+| Revision retention (`revisions`) | 30 days, **floor 7 days** (floor approved by owner, §17.1); revisions pinned by an export are exempt | Pruned nightly. If logical payload bytes in `revisions` + `receipts` + `changes` exceed **1 GB**, prune oldest revisions beyond the 7-day floor. Raise *attention* "history reduced". Never cross the floor or remove export pins. |
 | Tombstones (`files.deleted=1`) | kept forever | Negligible size; guarantees deletes are never inferred |
 | Receipts | 30 days (accept window 25 days + 5 min skew) | §6.4 |
 | DO SQLite total | **2 GB** product envelope, including admission storage. Needs Workers Paid. | Alert at 1.5 GB. At 2 GB, every mutation except `delete` returns `507 capacity_exceeded`. Every mutation writes a revision row, so content cannot be accepted without its revision. Reads continue. Raising this envelope is a v2 decision. |
@@ -544,6 +563,16 @@ Cloudflare lists 10 GB per SQLite Durable Object on Workers Paid and 1 GB on Wor
 SQL queries accept at most 100 bound parameters. Tables can have at most 100 columns. Each string, BLOB, or table row can use at most 2 MB.
 
 The [SQLite storage API](https://developers.cloudflare.com/durable-objects/api/sqlite-storage-api/), read 2026-10-17, states that `sql.databaseSize` returns database bytes. It also states that `transactionSync` rolls back when its synchronous callback throws.
+
+The 2 GB total cap uses `sql.databaseSize`, including admission storage. Logical history counters do not replace this physical database observation. Retention runs in synchronous transactions of at most 64 selected feed rows or 49 composite-key rows. The native Vault alarm owner schedules continuation separately from the next nightly 03:00 UTC cycle.
+
+History pressure uses logical payload bytes from `revisions`, `receipts`, and `changes`. Transactional `meta` counters track each category and their sum. Publication updates these counters in the same transaction as its rows and receipt. Pruning subtracts the deleted payload bytes in its deletion transaction.
+
+Encode each complete row as a JSON array in its SQLite column order. Measure the UTF-8 byte length of that JSON text. Revision columns are `path`, `rev`, `hash`, `size`, `kind`, `content`, `blob_hash`, `deleted`, `origin`, and `at`. Receipt columns are `client_id`, `key`, `fingerprint`, `status`, `body`, and `at`. Change columns are `seq`, `op`, `path`, `rev`, `hash`, `from_path`, `from_rev`, `origin`, and `at`. Null values remain JSON `null`. Test Unicode, null content, and blob references. Exclude SQLite allocation overhead, indexes, FTS storage, and external R2 object bytes from these logical counters. Logical payload bytes do not claim exact physical table storage.
+
+The pinned workerd SQLite runtime does not expose `dbstat`. Native tests on 2026-10-22 returned `no such table: dbstat: SQLITE_ERROR`. Exact per-table page attribution is not a prerequisite for logical history accounting. No platform investigation task applies.
+
+The owner approved this accounting contract for OAB-6.8 on 2026-10-22. The 30-day retention policy, 7-day floor, permanent tombstones, and export-pin protection remain unchanged.
 
 We did not verify the deployment account tier. This specification does not claim full-product Workers Free support. Admission storage feasibility uses the smaller 1 GB Workers Free limit.
 

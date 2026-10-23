@@ -4,6 +4,7 @@ import { pathKey } from "@obsidian-ai-bridge/protocol";
 import type { BlobStore } from "@worker/application/blobs";
 import { prepareTextPayload } from "@worker/application/text-payload";
 import { SqliteAdmissionAuthority } from "@worker/infrastructure/sqlite/admission";
+import type { SqliteCapacityLimits } from "@worker/infrastructure/sqlite/capacity";
 import { SqliteMutationCoordinator } from "@worker/infrastructure/sqlite/mutations";
 import { initializeVaultStorage } from "@worker/infrastructure/sqlite/schema";
 import { SqliteTextStore } from "@worker/infrastructure/sqlite/text-files";
@@ -151,6 +152,7 @@ export async function withTextStore(
 	assert: (fixture: TextStoreFixture) => Promise<void>,
 	logger?: Logger,
 	blobStore?: BlobStore,
+	capacityLimits?: SqliteCapacityLimits,
 ): Promise<void> {
 	const stub = env.VAULTS.get(env.VAULTS.newUniqueId());
 	await runInDurableObject(stub, async (_instance, state) => {
@@ -169,10 +171,15 @@ export async function withTextStore(
 			newTicketId: () => (++sequence).toString(16).padStart(32, "0"),
 			logger,
 		});
-		const coordinator = new SqliteMutationCoordinator(storage, admissions, {
-			now: () => now,
-			logger,
-		});
+		const coordinator = new SqliteMutationCoordinator(
+			storage,
+			admissions,
+			{
+				now: () => now,
+				logger,
+			},
+			capacityLimits,
+		);
 		const store = new SqliteTextStore(storage, coordinator, {
 			now: () => now,
 			logger,

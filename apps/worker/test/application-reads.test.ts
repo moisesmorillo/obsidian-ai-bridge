@@ -69,6 +69,14 @@ function manifestGateway(rows: ManifestEntry[]) {
 					text_bytes: 1_000_000 as const,
 					blob_bytes: 25_000_000 as const,
 				},
+				capacity: {
+					database_bytes: 0,
+					database_limit_bytes: 2_000_000_000,
+					live_file_limit: 10_000,
+					history_pressure_bytes: 0,
+					referenced_blob_bytes: 0,
+				},
+				attention: [],
 			},
 		}),
 		readBatch: async (
@@ -135,6 +143,14 @@ function historyGateway(rows: ReturnType<typeof historyRow>[]) {
 					text_bytes: 1_000_000,
 					blob_bytes: 25_000_000,
 				},
+				capacity: {
+					database_bytes: 0,
+					database_limit_bytes: 2_000_000_000,
+					live_file_limit: 10_000,
+					history_pressure_bytes: 0,
+					referenced_blob_bytes: 0,
+				},
+				attention: [],
 			},
 		}),
 		readHistoryUpper: async () => ({
@@ -203,6 +219,14 @@ function changesGateway(rows: ChangeEntry[]) {
 					text_bytes: 1_000_000,
 					blob_bytes: 25_000_000,
 				},
+				capacity: {
+					database_bytes: 0,
+					database_limit_bytes: 2_000_000_000,
+					live_file_limit: 10_000,
+					history_pressure_bytes: 0,
+					referenced_blob_bytes: 0,
+				},
+				attention: [],
 			},
 		}),
 		readHistoryUpper: async () => ({

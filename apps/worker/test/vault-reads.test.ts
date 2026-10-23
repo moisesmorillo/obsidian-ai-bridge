@@ -39,6 +39,14 @@ describe("native authoritative reads", () => {
 				text_bytes: 1_000_000,
 				blob_bytes: 25_000_000,
 			},
+			capacity: {
+				database_bytes: expect.any(Number),
+				database_limit_bytes: 2_000_000_000,
+				live_file_limit: 10_000,
+				history_pressure_bytes: 0,
+				referenced_blob_bytes: 0,
+			},
+			attention: [],
 		});
 		const batch = await stub.readBatch(
 			context,
@@ -89,6 +97,10 @@ describe("native authoritative reads", () => {
 				"b".repeat(64),
 			);
 			state.storage.sql.exec(
+				"INSERT INTO blob_refs(hash,size,first_ref_at) VALUES (?, 1000001, 10)",
+				"b".repeat(64),
+			);
+			state.storage.sql.exec(
 				"UPDATE meta SET value = '67' WHERE key = 'head_seq'",
 			);
 		});
@@ -105,6 +117,7 @@ describe("native authoritative reads", () => {
 		expect(summary.ok).toBe(true);
 		if (!summary.ok) return;
 		expect(summary.body.counts).toEqual({ live: 66, deleted: 1 });
+		expect(summary.body.capacity.referenced_blob_bytes).toBe(1_000_001);
 		const first = await stub.readBatch(
 			context,
 			{

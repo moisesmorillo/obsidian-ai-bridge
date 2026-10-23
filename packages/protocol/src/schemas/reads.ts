@@ -38,6 +38,23 @@ export const VaultReadResultSchema = z
 				blob_bytes: z.literal(25_000_000),
 			})
 			.strict(),
+		capacity: z
+			.object({
+				database_bytes: SafeSequenceSchema,
+				database_limit_bytes: z.literal(2_000_000_000),
+				live_file_limit: z.literal(10_000),
+				history_pressure_bytes: SafeSequenceSchema,
+				referenced_blob_bytes: SafeSequenceSchema,
+			})
+			.strict(),
+		attention: z.array(
+			z.enum([
+				"storage_high",
+				"capacity_exceeded",
+				"history_reduced",
+				"blob_storage_high",
+			]),
+		),
 	})
 	.strict();
 

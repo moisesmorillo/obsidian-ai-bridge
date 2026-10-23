@@ -21,6 +21,10 @@ import type {
 } from "@worker/infrastructure/sqlite/admission";
 import { assertPolicyInTransaction } from "@worker/infrastructure/sqlite/admission";
 import {
+	readCapacitySummary,
+	readCounter,
+} from "@worker/infrastructure/sqlite/capacity";
+import {
 	changes,
 	files,
 	meta,
@@ -37,7 +41,7 @@ export class SqliteReadStore {
 
 	/** Bind the vault database and clock used for exact 30-day feed eligibility. */
 	constructor(
-		storage: DurableObjectStorage,
+		private readonly storage: DurableObjectStorage,
 		private readonly admissions: SqliteAdmissionAuthority,
 		private readonly ports: { now: () => number; logger?: Logger },
 	) {
@@ -80,6 +84,7 @@ export class SqliteReadStore {
 					text_bytes: 1_000_000,
 					blob_bytes: 25_000_000,
 				},
+				...readCapacitySummary(tx, this.storage),
 			});
 		});
 	}
@@ -340,7 +345,9 @@ function feedFloor(tx: VaultTransaction, now: number): number {
 	if (head === 0) return 0;
 	const firstRetained = boundary?.firstRetained ?? null;
 	const lastExpired = boundary?.lastExpired ?? null;
-	const retainedFloor = firstRetained ?? head + 1;
+	const retainedFloor = firstRetained ?? 0;
 	const expiryFloor = lastExpired === null ? 0 : lastExpired + 1;
-	return Math.max(retainedFloor, expiryFloor);
+	const timeDerivedFloor = Math.max(retainedFloor, expiryFloor);
+	const prunedFloor = readCounter(tx, "retention_pruned_feed_seq");
+	return Math.max(timeDerivedFloor, prunedFloor);
 }

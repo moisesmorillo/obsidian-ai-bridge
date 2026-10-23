@@ -32,6 +32,12 @@ import {
 	type VaultTransaction,
 } from "@worker/infrastructure/sqlite/admission";
 import {
+	addLogicalPayload,
+	receiptLogicalPayloadBytes,
+	type SqliteCapacityLimits,
+	SqliteCapacityPolicy,
+} from "@worker/infrastructure/sqlite/capacity";
+import {
 	mutationClaims,
 	operationAdmissions,
 	receipts,
@@ -48,11 +54,14 @@ export class SqliteMutationCoordinator {
 		storage: DurableObjectStorage,
 		private readonly admissions: SqliteAdmissionAuthority,
 		private readonly ports: { now: () => number; logger?: Logger },
+		capacityLimits?: SqliteCapacityLimits,
 	) {
 		this.db = drizzle(storage, { schema: vaultSchema, logger: ports.logger });
+		this.capacity = new SqliteCapacityPolicy(storage, capacityLimits);
 	}
 
 	private readonly db;
+	private readonly capacity: SqliteCapacityPolicy;
 
 	/** Validate a descriptor and reserve its admission with an optional durable key claim. */
 	async beginMutation(
@@ -483,6 +492,12 @@ export class SqliteMutationCoordinator {
 					ticketId,
 					key,
 				);
+				this.admissions.assertPreconditionsInTransaction(
+					tx,
+					context,
+					operation,
+				);
+				this.capacity.assertCanPublish(tx, operation.descriptor);
 				this.admissions.consumeInTransaction(tx, context, operation, ticketId);
 			} catch (error) {
 				if (
@@ -505,7 +520,20 @@ export class SqliteMutationCoordinator {
 						at: now,
 					})
 					.run();
+				addLogicalPayload(
+					tx,
+					"receipts",
+					receiptLogicalPayloadBytes({
+						clientId: context.client_id,
+						key,
+						fingerprint: operation.fingerprint,
+						status: response.status,
+						body: JSON.stringify(response.body),
+						at: now,
+					}),
+				);
 			}
+			this.capacity.assertPublishedSize(tx, operation.descriptor);
 			return { ok: true, response };
 		});
 	}

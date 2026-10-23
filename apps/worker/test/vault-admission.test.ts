@@ -156,8 +156,8 @@ function contentState(storage: DurableObjectStorage) {
 }
 
 describe("Vault durable admission", () => {
-	it("uses canonical schema version 3", () => {
-		expect(SCHEMA_VERSION).toBe(3);
+	it("uses canonical schema version 5", () => {
+		expect(SCHEMA_VERSION).toBe(5);
 	});
 
 	it("creates an admission table in native storage", async () => {

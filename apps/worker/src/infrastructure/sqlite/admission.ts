@@ -603,35 +603,13 @@ export class SqliteAdmissionAuthority {
 			throw new AdmissionDenied({ kind: "invalid_ticket" });
 	}
 
-	/** Check policy, ticket ownership, expiry, fingerprint, and file preconditions in the caller transaction. */
-	consumeInTransaction(
+	/** Check the authoritative file precondition without consuming its ticket. */
+	assertPreconditionsInTransaction(
 		tx: VaultTransaction,
 		context: AuthorizationContext,
 		operation: PreparedOperation,
-		ticketId: string,
 	): void {
 		const currentEpoch = assertPolicyInTransaction(tx, context, operation);
-		if (operation.intent.op === "read")
-			throw new AdmissionDenied({ kind: "invalid_ticket" });
-		const now = this.ports.now();
-		if (!Number.isSafeInteger(now))
-			throw new AdmissionDenied({ kind: "invalid_request" });
-
-		const observed = tx
-			.select()
-			.from(operationAdmissions)
-			.where(eq(operationAdmissions.id, ticketId))
-			.all()[0];
-		if (
-			observed?.state !== "active" ||
-			observed.clientId !== context.client_id ||
-			observed.grantId !== context.grant_id ||
-			observed.epoch !== currentEpoch ||
-			observed.fingerprint !== operation.fingerprint ||
-			observed.expiresAt <= now
-		)
-			throw new AdmissionDenied({ kind: "invalid_ticket" });
-
 		const precondition = operation.intent.precondition;
 		if (precondition.kind === "match") {
 			const path = operation.intent.paths[0];
@@ -719,6 +697,38 @@ export class SqliteAdmissionAuthority {
 				});
 			}
 		}
+	}
+
+	/** Check policy, ticket ownership, expiry, fingerprint, and file preconditions in the caller transaction. */
+	consumeInTransaction(
+		tx: VaultTransaction,
+		context: AuthorizationContext,
+		operation: PreparedOperation,
+		ticketId: string,
+	): void {
+		const currentEpoch = assertPolicyInTransaction(tx, context, operation);
+		if (operation.intent.op === "read")
+			throw new AdmissionDenied({ kind: "invalid_ticket" });
+		const now = this.ports.now();
+		if (!Number.isSafeInteger(now))
+			throw new AdmissionDenied({ kind: "invalid_request" });
+
+		const observed = tx
+			.select()
+			.from(operationAdmissions)
+			.where(eq(operationAdmissions.id, ticketId))
+			.all()[0];
+		if (
+			observed?.state !== "active" ||
+			observed.clientId !== context.client_id ||
+			observed.grantId !== context.grant_id ||
+			observed.epoch !== currentEpoch ||
+			observed.fingerprint !== operation.fingerprint ||
+			observed.expiresAt <= now
+		)
+			throw new AdmissionDenied({ kind: "invalid_ticket" });
+
+		this.assertPreconditionsInTransaction(tx, context, operation);
 
 		const consumed = tx
 			.delete(operationAdmissions)

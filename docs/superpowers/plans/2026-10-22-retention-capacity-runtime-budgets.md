@@ -19,8 +19,8 @@
 - [x] Check published platform limits and distinguish them from pinned-runtime evidence.
 - [x] Prepare sequential work units and acceptance tests.
 - [x] Receive owner plan approval before product edits.
-- [ ] Execute the approved units with one writer at a time.
-- [ ] Complete independent task review, whole-branch review, and human branch review.
+- [x] Execute the approved units with one writer at a time.
+- [x] Complete independent task review, whole-branch review, and human branch review.
 
 ## Repository and dependency state
 

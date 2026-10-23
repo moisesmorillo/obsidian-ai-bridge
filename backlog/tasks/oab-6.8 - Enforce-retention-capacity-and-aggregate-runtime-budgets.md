@@ -1,11 +1,11 @@
 ---
 id: OAB-6.8
 title: Enforce retention capacity and aggregate runtime budgets
-status: In Progress
+status: Done
 assignee:
   - '@pi'
 created_date: 2026-10-15 00:38
-updated_date: '2026-10-23T19:00:00Z'
+updated_date: '2026-10-23T19:22:00Z'
 labels:
   - F1
 dependencies:
@@ -26,10 +26,10 @@ Section12 budgets apply to the whole vault and shared Worker isolate, not just i
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The 10,000-file / 2 GB envelope and attention thresholds are enforced without off-by-one admission races; reads/deletes remain available at the declared cap, satisfying AC-43.
-- [ ] #2 Feed/receipt/history retention honors 30 days, the 25-day + 5-minute receipt safety, the 7-day history floor and export pins; tombstones and lifetime revision identity survive pruning.
-- [ ] #3 Per-client concurrency above 16 yields 429 with Retry-After under distributed Worker interleavings, not only within a single isolate.
-- [ ] #4 Aggregate memory, SQL row/parameter limits, connection/subrequest counts and slow-stream/cancellation recovery have explicit bounded behavior and executable checks; unmeasured claims are not reported as proven platform headroom.
+- [x] #1 The 10,000-file / 2 GB envelope and attention thresholds are enforced without off-by-one admission races; reads/deletes remain available at the declared cap, satisfying AC-43.
+- [x] #2 Feed/receipt/history retention honors 30 days, the 25-day + 5-minute receipt safety, the 7-day history floor and export pins; tombstones and lifetime revision identity survive pruning.
+- [x] #3 Per-client concurrency above 16 yields 429 with Retry-After under distributed Worker interleavings, not only within a single isolate.
+- [x] #4 Aggregate memory, SQL row/parameter limits, connection/subrequest counts and slow-stream/cancellation recovery have explicit bounded behavior and executable checks; unmeasured claims are not reported as proven platform headroom.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -40,6 +40,8 @@ Draft plan: docs/superpowers/plans/2026-10-22-retention-capacity-runtime-budgets
 Owner approved the plan in Plannotator pn-71230a. Execute its sequential work units with native feasibility gates first. Deployment remains unauthorized.
 
 Owner resolution after the native gate: keep sql.databaseSize for the 2 GB total cap. Use logical payload bytes for revisions, receipts, and changes. Maintain category counters and their sum in meta within the publication transaction. Pruning subtracts deleted payload bytes atomically. Record missing dbstat in spec section 12. Do not create an investigation task. The owner approves the spec and plan amendment without another plan review. Resume Unit 1 with the same worker. Do not ask again before the PR except for a failed bun run check or another specification change.
+
+Execution complete within the approved local-evidence scope. The owner approved the final branch in Plannotator pn-4e9f04 without changes. Earlier draft/gate paragraphs record historical states. Native dbstat absence led to the approved logical history-payload accounting amendment. All three implementation units, correction waves, independent task reviews, and scoped final branch review are complete. Deployed native retention stays deferred to OAB-6.8.2.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -54,4 +56,12 @@ Unit 2 worker b3fedf96 stopped at its 1800000ms runtime timeout. No Unit 2 commi
 Unit 1 accepted at 2c54d1c after review 1cf3d264. Its non-blocking summary and evidence notes closed in Unit 2. Owner confirms pre-production schema breaks without migrations. Unit 2 completed at 75e6776 after same-worker timeout recovery and passed review a9a2b677. Its full check passed 1039 tests. The cursor fixture now records its simulated durable pruned boundary without weakening old-cursor rejection. Unit 3 completed at 472bd54, then review eaf8ff21 found two local evidence gaps. Correction 73dc5ae adds real HTTP response-lifetime overlap and replaces the false full-response allocation model with source-backed named-value arithmetic. Scoped review d3c7161c plus skill follow-up 2842ec5b closes U3-R1 and U3-R2. Direct execution already owns body slots. The actual corrected gap was HTTP response ownership. The 16000000-byte named-value subtotal is not complete application or process memory. Latest worker full check passed tooling 52, protocol 269, plugin 2, native 614, and HTTP 107 tests. Documentation, types, and dry-run builds passed. No acceptance box is checked yet. Whole-branch and human branch reviews remain open. Deployed native retention stays deferred under OAB-6.8.2. No deployment applies.
 
 Whole-branch review examined f30435f..0682409 and found WB-R1 stale-precondition precedence and WB-R2 local aggregate payload evidence gaps. Correction commits ad2f82c and 3478056 close both. Admission now validates current preconditions before capacity and ticket consumption. Native and HTTP tests cover separate cap conditions, occupied create/collision, write-only 412, state preservation, and receipt replay. Retention selects identities and accounts one revision payload at a time. Tests exercise ordinary and pressure pruning over 49 maximum escaping-heavy revisions, plus simultaneous routed body/read payloads. Session-model scoped review aa3e583a APPROVE at 3478056. It confirms all prior finding closures and no fix-introduced or structural issue. The reviewer independently ran bun run check: 1052 tests across 64 files passed, exit 0. Formatting, docs, types, and dry-run builds passed. Frontend payload allowance is below 24000000 bytes. Separate DO retention payload allowance is 20050572 bytes. These are named local payload allowances, not complete heap/process proof. OAB-6.8.2 remains deferred. Human branch review remains pending. The earlier empty-command guard block was a worker error, not a tool outage. No product data or remote resources changed.
+
+Acceptance evidence: AC1 uses vault-capacity and HTTP capacity tests for exact live-file/physical database caps, summaries, precondition precedence, replay, and recovery. AC2 uses retention/alarm and cursor tests for bounded ordinary/pressure pruning, receipt/feed/history ages, pins, tombstones, lifetime revisions, and durable feed expiry. AC3 uses global admission tests across separate local coordinators sharing the native authority to enforce the distributed 16-operation client ceiling and retry metadata. AC4 uses native publication row/parameter measurements, distributed claims, real routed aggregate body/read response ownership tests, retention identity/payload tests, and SQL/stream/cancellation checks. Payload checks do not prove whole-process or native headroom. OAB-6.8.2 owns the explicitly deferred deployed evidence and remains Deferred. Human review pn-4e9f04 approved the complete branch without changes. Earlier notes describe historical states, not unresolved blockers. No missing-test exception claims RED for the characterization cases added after ad2f82c.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Enforce atomic vault capacity, observable pressure, bounded durable retention, distributed per-client admission, and separate frontend/DO payload allowances. Keep tombstones, pins, lifetime revisions, exact preconditions, atomic FTS publication, receipt replay, and recovery paths. Reject incompatible pre-production schemas without repair or migration. Task and branch reviews closed all findings. Human review pn-4e9f04 approved without changes. Latest reviewed check passed 1052 tests plus docs, formatting, types, and dry-run builds. Deployed native retention and full-process observations remain deferred to OAB-6.8.2. No deployment or remote-resource change ran.
+<!-- SECTION:FINAL_SUMMARY:END -->

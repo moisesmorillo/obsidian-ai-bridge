@@ -344,6 +344,90 @@ describe("conditional text HTTP lifecycle", () => {
 		await recreated.text();
 	});
 
+	it("accepts a current DELETE epoch and rejects a stale epoch without changing bytes", async () => {
+		const created = await SELF.fetch(url, {
+			method: "PUT",
+			headers: {
+				"If-None-Match": "*",
+				"X-Vault-Epoch": TEXT_FIXTURE_EPOCH,
+			},
+			body: "authoritative bytes",
+		});
+		const etag = created.headers.get("ETag");
+		await created.text();
+		const stub = env.VAULTS.get(env.VAULTS.idFromName("worker.invalid"));
+		const before = await runInDurableObject(stub, async (_instance, state) =>
+			state.storage.sql
+				.exec("SELECT path, rev, hash, deleted, seq FROM files ORDER BY path")
+				.toArray(),
+		);
+		const malformed = await SELF.fetch(url, {
+			method: "DELETE",
+			headers: { "If-Match": etag ?? "", "X-Vault-Epoch": "invalid" },
+		});
+		expect(malformed.status).toBe(400);
+		const conflicting = await SELF.fetch(url, {
+			method: "DELETE",
+			headers: {
+				"If-Match": etag ?? "",
+				"X-Vault-Epoch": "fedcba9876543210fedcba9876543210",
+			},
+		});
+		expect(conflicting.status).toBe(400);
+		const scopeDenied = await SELF.fetch(url, {
+			method: "DELETE",
+			headers: {
+				"X-Test-Identity": "write",
+				"If-Match": etag ?? "",
+				"X-Vault-Epoch": "invalid",
+			},
+		});
+		expect(scopeDenied.status).toBe(403);
+		const revoked = await SELF.fetch(url, {
+			method: "DELETE",
+			headers: {
+				"X-Test-Identity": "revoked",
+				"If-Match": etag ?? "",
+				"X-Vault-Epoch": TEXT_FIXTURE_EPOCH,
+			},
+		});
+		expect(revoked.status).toBe(401);
+
+		const staleEpoch = "fedcba9876543210fedcba9876543210";
+		const stale = await SELF.fetch(url, {
+			method: "DELETE",
+			headers: {
+				"If-Match": `"${staleEpoch}.1"`,
+				"X-Vault-Epoch": staleEpoch,
+			},
+		});
+		expect(stale.status).toBe(409);
+		expect(await stale.json()).toMatchObject({ error: "epoch_mismatch" });
+		const after = await runInDurableObject(stub, async (_instance, state) =>
+			state.storage.sql
+				.exec("SELECT path, rev, hash, deleted, seq FROM files ORDER BY path")
+				.toArray(),
+		);
+		expect(after).toEqual(before);
+		const current = await SELF.fetch(url, {
+			method: "DELETE",
+			headers: { "If-Match": etag ?? "", "X-Vault-Epoch": TEXT_FIXTURE_EPOCH },
+		});
+		expect(current.status).toBe(200);
+	});
+
+	it("returns revision_pruned when a historical read omits the epoch", async () => {
+		const created = await SELF.fetch(url, {
+			method: "PUT",
+			headers: { "If-None-Match": "*", "X-Vault-Epoch": TEXT_FIXTURE_EPOCH },
+			body: "revision one",
+		});
+		await created.text();
+		const historical = await SELF.fetch(`${url}?rev=1`);
+		expect(historical.status).toBe(410);
+		expect(await historical.json()).toMatchObject({ error: "revision_pruned" });
+	});
+
 	it("returns the authoritative epoch before it reads a missing observation body", async () => {
 		const request = new Request(url, {
 			method: "PUT",
@@ -1174,7 +1258,7 @@ describe("conditional text HTTP lifecycle", () => {
 		}
 	}, 15_000);
 
-	it("returns epoch mismatch for malformed observations and historical reads without a header", async () => {
+	it("rejects malformed mutation epochs and marks historical reads without an epoch pruned", async () => {
 		const malformed = await SELF.fetch(url, {
 			method: "PUT",
 			body: "no condition",
@@ -1190,9 +1274,19 @@ describe("conditional text HTTP lifecycle", () => {
 			current_epoch: "0123456789abcdef0123456789abcdef",
 		});
 		const historical = await SELF.fetch(`${url}?rev=1`);
-		expect(historical.status).toBe(409);
-		expect(await historical.json()).toMatchObject({
-			current_epoch: "0123456789abcdef0123456789abcdef",
+		expect(historical.status).toBe(410);
+		expect(await historical.json()).toMatchObject({ error: "revision_pruned" });
+		const malformedHistoricalEpoch = await SELF.fetch(`${url}?rev=1`, {
+			headers: { "X-Vault-Epoch": "invalid" },
+		});
+		expect(malformedHistoricalEpoch.status).toBe(400);
+		const obsoleteHistoricalEpoch = await SELF.fetch(`${url}?rev=1`, {
+			headers: { "X-Vault-Epoch": "fedcba9876543210fedcba9876543210" },
+		});
+		expect(obsoleteHistoricalEpoch.status).toBe(409);
+		expect(await obsoleteHistoricalEpoch.json()).toMatchObject({
+			error: "epoch_mismatch",
+			current_epoch: TEXT_FIXTURE_EPOCH,
 		});
 	});
 });

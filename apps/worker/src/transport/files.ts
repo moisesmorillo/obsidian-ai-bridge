@@ -96,12 +96,13 @@ export function createFileRouter(
 			const rev = query.has("rev") ? Number(query.get("rev")) : undefined;
 			const epochHeader = context.req.header("X-Vault-Epoch");
 			const gateway = resolveVault(context.env, context.req.raw);
+			if (rev !== undefined && epochHeader === undefined)
+				return errorResponse({ kind: "revision_pruned" });
 			if (
-				(epochHeader !== undefined &&
-					!EpochSchema.safeParse(epochHeader).success) ||
-				(rev !== undefined && epochHeader === undefined)
+				epochHeader !== undefined &&
+				!EpochSchema.safeParse(epochHeader).success
 			)
-				return currentEpochMismatch(gateway, identity, "read");
+				return errorResponse({ kind: "invalid_request" });
 			const epoch = epochHeader;
 			const request: TextReadRequest = {
 				path,
@@ -139,18 +140,28 @@ export function createFileRouter(
 			const gateway = resolveVault(context.env, context.req.raw);
 			return currentEpochMismatch(gateway, identity, "put");
 		}
-		if (context.req.method === "DELETE" && (!match || none || epoch))
+		if (context.req.method === "DELETE" && (!match || none))
 			return errorResponse({ kind: "invalid_request" });
 		if (context.req.method === "DELETE" && context.req.raw.body !== null)
 			return errorResponse({ kind: "invalid_request" });
+		let matchEpoch: string | undefined;
 		if (match) {
 			try {
-				if (epoch && parseETag(match).epoch !== epoch)
+				matchEpoch = parseETag(match).epoch;
+				if (epoch && matchEpoch !== epoch)
 					return errorResponse({ kind: "invalid_request" });
 			} catch {
 				return errorResponse({ kind: "invalid_request" });
 			}
 		}
+		if (
+			context.req.method === "DELETE" &&
+			epoch !== undefined &&
+			!EpochSchema.safeParse(epoch).success
+		)
+			return errorResponse({ kind: "invalid_request" });
+		const effectiveEpoch =
+			epoch ?? (context.req.method === "DELETE" ? matchEpoch : undefined);
 		const key =
 			keyHeader === undefined
 				? undefined
@@ -161,7 +172,7 @@ export function createFileRouter(
 			op: context.req.method === "PUT" ? "put" : "delete",
 			paths: [path],
 			precondition: match ? { kind: "match", etag: match } : { kind: "absent" },
-			...(epoch === undefined ? {} : { epoch }),
+			...(effectiveEpoch === undefined ? {} : { epoch: effectiveEpoch }),
 		};
 		const parsed = TextMutationDescriptorSchema.safeParse(descriptor);
 		if (!parsed.success) return errorResponse({ kind: "invalid_request" });

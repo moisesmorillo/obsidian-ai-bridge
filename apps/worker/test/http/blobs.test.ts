@@ -202,6 +202,13 @@ describe("declared blob HTTP", () => {
 		expect(new Uint8Array(await retained.arrayBuffer())).toEqual(
 			bytes.subarray(0, 5),
 		);
+		const missingEpoch = await SELF.fetch(`${url}?rev=1`, {
+			headers: { Range: "bytes=0-4" },
+		});
+		expect(missingEpoch.status).toBe(410);
+		expect(await missingEpoch.json()).toMatchObject({
+			error: "revision_pruned",
+		});
 		const current = await SELF.fetch(url);
 		expect(await current.json()).toMatchObject({
 			content: "inline",

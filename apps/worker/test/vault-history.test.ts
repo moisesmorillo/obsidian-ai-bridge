@@ -890,7 +890,13 @@ describe("native history mutations", () => {
 			});
 			expect(stale).toEqual({
 				ok: false,
-				failure: { kind: "precondition_failed" },
+				failure: {
+					kind: "precondition_failed",
+					etag: formatETag(TEXT_FIXTURE_EPOCH, 1),
+					hash: await hashBytes("source"),
+					deleted: false,
+					content: "source",
+				},
 			});
 			let before: ReturnType<typeof captureTextStoreState> | undefined;
 			const identical = await commitRename(
@@ -920,7 +926,12 @@ describe("native history mutations", () => {
 			);
 			expect(deleted).toEqual({
 				ok: false,
-				failure: { kind: "precondition_failed" },
+				failure: {
+					kind: "precondition_failed",
+					etag: formatETag(TEXT_FIXTURE_EPOCH, 2),
+					hash: "",
+					deleted: true,
+				},
 			});
 		});
 	});

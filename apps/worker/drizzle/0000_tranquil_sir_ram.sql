@@ -55,6 +55,7 @@ CREATE TABLE `files` (
 	`kind` text NOT NULL,
 	`content` text,
 	`blob_hash` text,
+	`renamed_to` text,
 	`deleted` integer DEFAULT 0 NOT NULL,
 	`updated_at` integer NOT NULL,
 	`origin` text NOT NULL,

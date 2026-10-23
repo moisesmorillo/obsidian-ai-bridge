@@ -191,6 +191,7 @@ export const AdmissionFailureSchema = z
 				.regex(/^(?:[0-9a-f]{64})?$/)
 				.optional(),
 			deleted: z.boolean().optional(),
+			renamed_to: PathSchema.optional(),
 			content: FullTextContentSchema.optional(),
 		}),
 	])
@@ -217,6 +218,17 @@ export const AdmissionFailureSchema = z
 			ctx.addIssue({
 				code: "custom",
 				message: "current content needs complete revision metadata",
+			});
+		}
+		if (
+			failure.renamed_to !== undefined &&
+			(!metadata.every(Boolean) ||
+				failure.deleted !== true ||
+				failure.hash !== "")
+		) {
+			ctx.addIssue({
+				code: "custom",
+				message: "rename destination needs complete tombstone metadata",
 			});
 		}
 	});

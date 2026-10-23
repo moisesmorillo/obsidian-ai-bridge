@@ -1,4 +1,10 @@
-import { env, runInDurableObject, SELF } from "cloudflare:test";
+import {
+	env,
+	evictDurableObject,
+	runInDurableObject,
+	SELF,
+} from "cloudflare:test";
+import { SqliteRetentionStore } from "@worker/infrastructure/sqlite/retention";
 import { initializeVaultStorage } from "@worker/infrastructure/sqlite/schema";
 import { clearTestVault } from "@worker/test-fixtures/admission";
 import { TEXT_FIXTURE_EPOCH } from "@worker/test-fixtures/text-files";
@@ -123,6 +129,268 @@ describe("history mutation HTTP routes", () => {
 			},
 		);
 		expect(await pinned.json()).toMatchObject({ content: "original" });
+	});
+
+	it("keeps the immediate rename hint through stale failures, feed pruning, and restart", async () => {
+		const source = "https://worker.invalid/v1/files/notes/source.md";
+		const created = await SELF.fetch(source, {
+			method: "PUT",
+			headers: { "If-None-Match": "*", "X-Vault-Epoch": TEXT_FIXTURE_EPOCH },
+			body: "source bytes",
+		});
+		const originalTag = created.headers.get("ETag");
+		await created.text();
+		const renamed = await SELF.fetch(`${source}:rename`, {
+			method: "POST",
+			headers: {
+				"If-Match": originalTag ?? "",
+				"X-Vault-Epoch": TEXT_FIXTURE_EPOCH,
+			},
+			body: JSON.stringify({ to: "notes/destination.md" }),
+		});
+		await renamed.text();
+		expect(renamed.status).toBe(201);
+		const destination = "https://worker.invalid/v1/files/notes/destination.md";
+		const currentDestination = await SELF.fetch(destination, {
+			method: "PUT",
+			headers: {
+				"If-Match": renamed.headers.get("ETag") ?? "",
+				"X-Vault-Epoch": TEXT_FIXTURE_EPOCH,
+			},
+			body: "current destination bytes",
+		});
+		await currentDestination.text();
+		const readAuthorizedFailure = await SELF.fetch(destination, {
+			method: "PUT",
+			headers: {
+				"If-Match": renamed.headers.get("ETag") ?? "",
+				"X-Vault-Epoch": TEXT_FIXTURE_EPOCH,
+			},
+			body: "stale bytes",
+		});
+		expect(readAuthorizedFailure.status).toBe(412);
+		expect(await readAuthorizedFailure.json()).toMatchObject({
+			content: "current destination bytes",
+		});
+		const writeOnlyDestination = await SELF.fetch(destination, {
+			method: "PUT",
+			headers: {
+				"X-Test-Identity": "write",
+				"If-Match": renamed.headers.get("ETag") ?? "",
+				"X-Vault-Epoch": TEXT_FIXTURE_EPOCH,
+			},
+			body: "stale bytes",
+		});
+		expect(writeOnlyDestination.status).toBe(412);
+		expect(await writeOnlyDestination.json()).not.toHaveProperty("content");
+
+		const writeOnly = await SELF.fetch(source, {
+			method: "PUT",
+			headers: {
+				"X-Test-Identity": "write",
+				"If-Match": originalTag ?? "",
+				"X-Vault-Epoch": TEXT_FIXTURE_EPOCH,
+			},
+			body: "must not publish",
+		});
+		expect(writeOnly.status).toBe(412);
+		const writeBody = (await writeOnly.json()) as Record<string, unknown>;
+		expect(writeBody).toMatchObject({
+			error: "precondition_failed",
+			hash: "",
+			deleted: true,
+			renamed_to: "notes/destination.md",
+		});
+		expect(writeBody).not.toHaveProperty("content");
+
+		const stub = env.VAULTS.get(env.VAULTS.idFromName("worker.invalid"));
+		const beforeStaleDelete = await runInDurableObject(
+			stub,
+			(_instance, state) => ({
+				files: state.storage.sql
+					.exec("SELECT * FROM files ORDER BY path")
+					.toArray(),
+				revisions: state.storage.sql
+					.exec("SELECT * FROM revisions ORDER BY path, rev")
+					.toArray(),
+				changes: state.storage.sql
+					.exec("SELECT * FROM changes ORDER BY seq")
+					.toArray(),
+				head: state.storage.sql
+					.exec("SELECT value FROM meta WHERE key = 'head_seq'")
+					.toArray(),
+			}),
+		);
+		const staleDelete = await SELF.fetch(source, {
+			method: "DELETE",
+			headers: {
+				"If-Match": originalTag ?? "",
+				"X-Vault-Epoch": TEXT_FIXTURE_EPOCH,
+			},
+		});
+		expect(staleDelete.status).toBe(412);
+		expect(await staleDelete.json()).toMatchObject({
+			error: "precondition_failed",
+			deleted: true,
+			hash: "",
+			renamed_to: "notes/destination.md",
+		});
+
+		const staleRename = await SELF.fetch(`${source}:rename`, {
+			method: "POST",
+			headers: {
+				"If-Match": originalTag ?? "",
+				"X-Vault-Epoch": TEXT_FIXTURE_EPOCH,
+			},
+			body: JSON.stringify({ to: "notes/other.md" }),
+		});
+		expect(staleRename.status).toBe(412);
+		expect(await staleRename.json()).toMatchObject({
+			renamed_to: "notes/destination.md",
+		});
+		const afterStaleFailures = await runInDurableObject(
+			stub,
+			(_instance, state) => ({
+				files: state.storage.sql
+					.exec("SELECT * FROM files ORDER BY path")
+					.toArray(),
+				revisions: state.storage.sql
+					.exec("SELECT * FROM revisions ORDER BY path, rev")
+					.toArray(),
+				changes: state.storage.sql
+					.exec("SELECT * FROM changes ORDER BY seq")
+					.toArray(),
+				head: state.storage.sql
+					.exec("SELECT value FROM meta WHERE key = 'head_seq'")
+					.toArray(),
+			}),
+		);
+		expect(afterStaleFailures).toEqual(beforeStaleDelete);
+		const destinationBytes = await SELF.fetch(destination);
+		const destinationBody = (await destinationBytes.json()) as {
+			content: string;
+		};
+		expect(destinationBody.content).toBe("current destination bytes");
+		await runInDurableObject(stub, (_instance, state) => {
+			state.storage.sql.exec("UPDATE changes SET at = 1 WHERE op = 'rename'");
+			const retention = new SqliteRetentionStore(state.storage);
+			let result = retention.runBatch(40 * 24 * 60 * 60 * 1000);
+			for (let count = 0; result.more && count < 8; count += 1)
+				result = retention.runBatch(40 * 24 * 60 * 60 * 1000);
+			expect(
+				state.storage.sql
+					.exec("SELECT seq FROM changes WHERE op = 'rename'")
+					.toArray(),
+			).toHaveLength(0);
+			expect(
+				state.storage.sql
+					.exec("SELECT renamed_to FROM files WHERE path = 'notes/source.md'")
+					.toArray(),
+			).toEqual([{ renamed_to: "notes/destination.md" }]);
+		});
+		await evictDurableObject(stub);
+		await runInDurableObject(stub, (_instance, state) => {
+			expect(
+				state.storage.sql
+					.exec("SELECT renamed_to FROM files WHERE path = 'notes/source.md'")
+					.toArray(),
+			).toEqual([{ renamed_to: "notes/destination.md" }]);
+			expect(
+				state.storage.sql
+					.exec("SELECT content FROM files WHERE path = 'notes/destination.md'")
+					.toArray(),
+			).toEqual([{ content: "current destination bytes" }]);
+			state.storage.sql.exec(
+				"CREATE TRIGGER reject_recreate AFTER UPDATE ON meta WHEN NEW.key = 'head_seq' BEGIN SELECT RAISE(ABORT, 'injected recreate rollback'); END",
+			);
+		});
+
+		const failedRecreate = await SELF.fetch(source, {
+			method: "PUT",
+			headers: { "If-None-Match": "*", "X-Vault-Epoch": TEXT_FIXTURE_EPOCH },
+			body: "recreated bytes",
+		});
+		expect(failedRecreate.status).toBe(500);
+		await runInDurableObject(stub, (_instance, state) => {
+			state.storage.sql.exec("DROP TRIGGER reject_recreate");
+			expect(
+				state.storage.sql
+					.exec(
+						"SELECT deleted, renamed_to FROM files WHERE path = 'notes/source.md'",
+					)
+					.toArray(),
+			).toEqual([{ deleted: 1, renamed_to: "notes/destination.md" }]);
+		});
+
+		const recreated = await SELF.fetch(source, {
+			method: "PUT",
+			headers: { "If-None-Match": "*", "X-Vault-Epoch": TEXT_FIXTURE_EPOCH },
+			body: "recreated bytes",
+		});
+		expect(recreated.status).toBe(201);
+		await runInDurableObject(stub, (_instance, state) => {
+			expect(
+				state.storage.sql
+					.exec(
+						"SELECT deleted, renamed_to FROM files WHERE path = 'notes/source.md'",
+					)
+					.toArray(),
+			).toEqual([{ deleted: 0, renamed_to: null }]);
+		});
+
+		const deleted = await SELF.fetch(source, {
+			method: "DELETE",
+			headers: { "If-Match": recreated.headers.get("ETag") ?? "" },
+		});
+		expect(deleted.status).toBe(200);
+		const deletedBody = (await deleted.json()) as { etag: string };
+		await runInDurableObject(stub, (_instance, state) => {
+			expect(
+				state.storage.sql
+					.exec(
+						"SELECT deleted, renamed_to FROM files WHERE path = 'notes/source.md'",
+					)
+					.toArray(),
+			).toEqual([{ deleted: 1, renamed_to: null }]);
+		});
+
+		const restored = await SELF.fetch(`${source}:restore`, {
+			method: "POST",
+			headers: {
+				"If-Match": deletedBody.etag,
+				"X-Vault-Epoch": TEXT_FIXTURE_EPOCH,
+			},
+			body: JSON.stringify({ source_rev: 1 }),
+		});
+		expect(restored.status).toBe(201);
+		await runInDurableObject(stub, (_instance, state) => {
+			expect(
+				state.storage.sql
+					.exec(
+						"SELECT deleted, renamed_to FROM files WHERE path = 'notes/source.md'",
+					)
+					.toArray(),
+			).toEqual([{ deleted: 0, renamed_to: null }]);
+		});
+
+		const renamedAgain = await SELF.fetch(`${source}:rename`, {
+			method: "POST",
+			headers: {
+				"If-Match": restored.headers.get("ETag") ?? "",
+				"X-Vault-Epoch": TEXT_FIXTURE_EPOCH,
+			},
+			body: JSON.stringify({ to: "notes/final.md" }),
+		});
+		expect(renamedAgain.status).toBe(201);
+		await runInDurableObject(stub, (_instance, state) => {
+			expect(
+				state.storage.sql
+					.exec(
+						"SELECT deleted, renamed_to FROM files WHERE path = 'notes/source.md'",
+					)
+					.toArray(),
+			).toEqual([{ deleted: 1, renamed_to: "notes/final.md" }]);
+		});
 	});
 
 	it("appends exact UTF-8 bytes and restores against the observed tombstone ETag", async () => {

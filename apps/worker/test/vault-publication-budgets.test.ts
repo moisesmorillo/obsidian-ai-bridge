@@ -425,13 +425,14 @@ async function measureSpan<T>(
 /** Measure every stored column in native schema order, not a JSON representation of the row. */
 function reportRecords(storage: DurableObjectStorage, workload: string): void {
 	for (const [table, columns] of [
-		["files", 12],
+		["files", 13],
 		["revisions", 10],
 		["receipts", 6],
 	] as const) {
 		const rows = storage.sql.exec(`SELECT * FROM ${table}`).toArray();
 		expect(rows.length).toBeGreaterThan(0);
 		const sizes = rows.map((row) => {
+			if (table === "files") expect(row).toHaveProperty("renamed_to");
 			const values = Object.values(row);
 			expect(values).toHaveLength(columns);
 			for (const value of values) {

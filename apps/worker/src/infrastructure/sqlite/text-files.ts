@@ -16,6 +16,7 @@ import type {
 import {
 	BlobDeclarationSchema,
 	BlobMetadataSchema,
+	classifyFilePath,
 	EMPTY_PAYLOAD_HASH,
 	EpochSchema,
 	formatETag,
@@ -109,8 +110,7 @@ export class SqliteTextStore {
 		if (!textDescriptor.success)
 			return { ok: false, failure: { kind: "invalid_request" } };
 		if (
-			!path.endsWith(".md") &&
-			!path.endsWith(".canvas") &&
+			classifyFilePath(path) === "other" &&
 			parsed.data.op !== "put" &&
 			parsed.data.op !== "delete"
 		)
@@ -132,8 +132,7 @@ export class SqliteTextStore {
 		const operationIntent = parsed.data;
 		if (
 			operationIntent.op !== "delete" &&
-			!operationIntent.paths[0]?.endsWith(".md") &&
-			!operationIntent.paths[0]?.endsWith(".canvas")
+			classifyFilePath(operationIntent.paths[0] ?? "") === "other"
 		)
 			return { ok: false, failure: { kind: "not_implemented" } };
 		if (operationIntent.op === "delete") {
@@ -196,10 +195,7 @@ export class SqliteTextStore {
 			return { ok: false, failure: { kind: "invalid_request" } };
 		const operationIntent = parsed.data;
 		const path = operationIntent.paths[0] ?? "";
-		if (
-			operationIntent.size <= 1_000_000 &&
-			(path.endsWith(".md") || path.endsWith(".canvas"))
-		)
+		if (operationIntent.size <= 1_000_000 && classifyFilePath(path) !== "other")
 			return { ok: false, failure: { kind: "invalid_request" } };
 		if (!this.ports.blobStore)
 			return {
@@ -367,8 +363,7 @@ export class SqliteTextStore {
 					updated_at: "at" in row ? row.at : row.updatedAt,
 					large:
 						!deleted &&
-						((row.path ?? "").toLowerCase().endsWith(".md") ||
-							(row.path ?? "").toLowerCase().endsWith(".canvas")) &&
+						classifyFilePath(row.path ?? "") !== "other" &&
 						row.size > 1_000_000,
 				});
 				return { ok: true, body };
@@ -586,6 +581,7 @@ function publishBlob(
 		kind: "blob",
 		content: null,
 		blobHash: intent.payload_hash,
+		renamedTo: null,
 		deleted: 0,
 		updatedAt: now,
 		origin: context.client_id,
@@ -593,7 +589,18 @@ function publishBlob(
 	if (prior) tx.update(files).set(values).where(eq(files.path, path)).run();
 	else tx.insert(files).values(values).run();
 	tx.insert(revisions)
-		.values({ ...values, at: now })
+		.values({
+			path,
+			rev: revision,
+			hash: intent.payload_hash,
+			size: intent.size,
+			kind: "blob",
+			content: null,
+			blobHash: intent.payload_hash,
+			deleted: 0,
+			origin: context.client_id,
+			at: now,
+		})
 		.run();
 	addLogicalPayload(
 		tx,
@@ -731,6 +738,7 @@ function publishText(
 		kind: deleted ? (prior?.kind ?? "text") : "text",
 		content: deleted ? null : (content ?? null),
 		blobHash: deleted ? (prior?.blobHash ?? null) : null,
+		renamedTo: null,
 		deleted: deleted ? 1 : 0,
 		updatedAt: at,
 		origin: context.client_id,
@@ -738,7 +746,18 @@ function publishText(
 	if (prior) tx.update(files).set(values).where(eq(files.path, path)).run();
 	else tx.insert(files).values(values).run();
 	tx.insert(revisions)
-		.values({ ...values, at })
+		.values({
+			path,
+			rev: revision,
+			hash,
+			size,
+			kind: values.kind,
+			content: values.content,
+			blobHash: values.blobHash,
+			deleted: values.deleted,
+			origin: context.client_id,
+			at,
+		})
 		.run();
 	addLogicalPayload(
 		tx,
@@ -757,7 +776,7 @@ function publishText(
 		}),
 	);
 	tx.run(sql`DELETE FROM files_fts WHERE path = ${path}`);
-	if (!deleted && path.endsWith(".md"))
+	if (!deleted && classifyFilePath(path) === "markdown")
 		tx.run(
 			sql`INSERT INTO files_fts(path, content) VALUES (${path}, ${content ?? ""})`,
 		);

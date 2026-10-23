@@ -5,6 +5,7 @@ import type {
 	VaultReadResult,
 } from "@obsidian-ai-bridge/protocol";
 import {
+	classifyFilePath,
 	EMPTY_PAYLOAD_HASH,
 	formatETag,
 	MetadataBatchRequestSchema,
@@ -188,8 +189,7 @@ export class SqliteReadStore {
 							row.kind === "blob" &&
 							row.size > 1_000_000 &&
 							typeof row.path === "string" &&
-							(row.path.toLowerCase().endsWith(".md") ||
-								row.path.toLowerCase().endsWith(".canvas")),
+							classifyFilePath(row.path) !== "other",
 					})),
 				});
 			}

@@ -208,12 +208,31 @@ export class SqliteAdmissionAuthority {
 			.where(eq(files.path, prepared.reservation.path))
 			.all()[0];
 		const expected = parseETag(prepared.reservation.if_match);
+		if (expected.epoch !== currentEpoch)
+			return denied({ kind: "epoch_mismatch", current_epoch: currentEpoch });
 		if (
-			expected.epoch !== currentEpoch ||
-			(!allowStaleSource &&
-				(!source || source.deleted === 1 || expected.rev !== source.rev))
-		)
-			return denied({ kind: "precondition_failed" });
+			!allowStaleSource &&
+			(!source || source.deleted === 1 || expected.rev !== source.rev)
+		) {
+			return denied(
+				source === undefined
+					? { kind: "precondition_failed" }
+					: {
+							kind: "precondition_failed",
+							etag: formatETag(currentEpoch, source.rev),
+							hash: source.hash,
+							deleted: source.deleted === 1,
+							...(source.deleted === 1 && source.renamedTo !== null
+								? { renamed_to: source.renamedTo }
+								: {}),
+							...(identity.scopes.includes("vault:read") &&
+							source.deleted === 0 &&
+							source.content !== null
+								? { content: source.content }
+								: {}),
+						},
+			);
+		}
 		const now = this.ports.now();
 		const expiresAt = now + 60_000;
 		if (!Number.isSafeInteger(now) || !Number.isSafeInteger(expiresAt))
@@ -621,6 +640,7 @@ export class SqliteAdmissionAuthority {
 					hash: files.hash,
 					deleted: files.deleted,
 					content: files.content,
+					renamedTo: files.renamedTo,
 				})
 				.from(files)
 				.where(eq(files.path, path))
@@ -637,6 +657,9 @@ export class SqliteAdmissionAuthority {
 					etag: formatETag(currentEpoch, current.rev),
 					hash: current.hash,
 					deleted: current.deleted === 1,
+					...(current.deleted === 1 && current.renamedTo !== null
+						? { renamed_to: current.renamedTo }
+						: {}),
 					...(context.scopes.includes("vault:read") &&
 					current.deleted === 0 &&
 					current.content !== null

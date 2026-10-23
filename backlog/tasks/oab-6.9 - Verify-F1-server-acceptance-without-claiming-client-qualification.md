@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: 2026-10-15 00:38
-updated_date: '2026-10-23T21:31:00Z'
+updated_date: '2026-10-23T22:10:00Z'
 labels:
   - F1
 dependencies:
@@ -55,4 +55,14 @@ The owner approved the complete plan in Plannotator pn-a27c0b. Execute all three
 Planning starts from main at 9233c22 after merged PR #18. OAB-6.8 is Done. OAB-6.8.2 stays Deferred. No deployment or personal-vault access applies. Implementation waits for owner plan approval.
 
 Planning baseline at 9233c22 passed frozen installation and bun run check: 1052 tests, documentation, formatting, types, schema drift checks, and local dry-run builds. Native suites passed 621 tests. HTTP suites passed 108 tests. Tooling, protocol, and plugin passed 52, 269, and 2 tests. These results do not prove deployed runtime headroom. The owner chose the three contract decisions through one structured question batch.
+
+Partial implementation only. Added HTTP coverage and behavior for DELETE X-Vault-Epoch acceptance, stale-epoch rejection without publication changes, and historical GET without epoch returning 410 revision_pruned. Added protocol classifyFilePath and used it for Worker storage, FTS, and large-file classification. Test-first evidence: RED bun run --cwd apps/worker test -- test/http/files.test.ts -t accepts-a-current-DELETE-epoch failed with 400 instead of 409. GREEN same focused command passed. Protocol RED bun run --cwd packages/protocol test -- test/files.test.ts -t extension-classification failed because classifyFilePath was absent. GREEN same command passed. First full check failed because an existing historical-read assertion expected 409. Updated it to the approved 410 contract. Final bun run check passed: 52 tooling, 2 plugin, 270 protocol, 621 native Worker, 110 HTTP tests; lint, docs, typecheck, and builds passed. Remaining approved slices are incomplete: durable renamed_to schema v6 and failure contracts, full extension parity matrix, acceptance mapping and coverage expansion, collector and reserveAdmission removal, README/spec amendments, three required commits, complete manual self-review, and remote CI. Acceptance criteria remain unchecked. No Cloudflare actions or personal-vault access occurred.
+
+Slice 1 implementation completed. Fresh schema version 6 stores nullable renamed_to on current source tombstones. Failure DTOs now cover renamed_to, importing with bounded Retry-After, and vault_retired with a bounded VaultId. DELETE and historical GET HTTP contracts match the approved plan. Atomic rename, retention, restart, scope redaction, rollback, recreation, deletion, restore, and later rename tests pass.
+
+Focused results: protocol file tests passed (120); storage, admission, publication-budget, and mutation-claim tests passed (156); HTTP file, history, and blob tests passed (74). Full bun run check passed: 52 tooling, 2 plugin, 277 protocol, 622 native Worker, and 111 HTTP tests. Lint, docs, typecheck, and dry-run builds passed.
+
+Test-first exception: several characterization assertions for already-applied HTTP behavior and the rename transition sequence passed on first run. Existing tests now assert enriched live and tombstone failure details. The full check first found stale native assertions that expected only the failure kind; those assertions now verify canonical current metadata.
+
+The pre-existing extension classifier edits remain in shared protocol and Worker source files. This Slice 1 commit includes them because those source and test files overlap with the failure and rename changes. README changes remain outside this commit. Slice 2 parity tests and Slice 3 coverage mapping, unused API removal, and README amendments remain incomplete. Task status and acceptance criteria remain open.
 <!-- SECTION:NOTES:END -->

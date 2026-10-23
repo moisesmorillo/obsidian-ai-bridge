@@ -5,6 +5,7 @@ import type {
 	TextMutationResult,
 } from "@obsidian-ai-bridge/protocol";
 import {
+	classifyFilePath,
 	EpochSchema,
 	FileCommandSchema,
 	formatETag,
@@ -351,6 +352,7 @@ function publishRename(
 		size: 0,
 		content: null,
 		blobHash: null,
+		renamedTo: destinationPath,
 		deleted: 1,
 		updatedAt: now,
 		origin: context.client_id,
@@ -424,6 +426,7 @@ function publishRename(
 		seq,
 		updatedAt: now,
 		origin: context.client_id,
+		renamedTo: null,
 		deleted: 0,
 	};
 	if (destination)
@@ -462,7 +465,10 @@ function publishRename(
 	tx.run(
 		sql`DELETE FROM files_fts WHERE path = ${sourcePath} OR path = ${destinationPath}`,
 	);
-	if (source.kind === "text" && destinationPath.endsWith(".md"))
+	if (
+		source.kind === "text" &&
+		classifyFilePath(destinationPath) === "markdown"
+	)
 		tx.run(
 			sql`INSERT INTO files_fts(path, content) VALUES (${destinationPath}, ${source.content ?? ""})`,
 		);
@@ -590,6 +596,7 @@ function publishTextCommand(
 		kind,
 		content: kind === "text" ? content : null,
 		blobHash,
+		renamedTo: null,
 		deleted: 0,
 		updatedAt: now,
 		origin: context.client_id,
@@ -597,7 +604,18 @@ function publishTextCommand(
 	if (prior) tx.update(files).set(values).where(eq(files.path, path)).run();
 	else tx.insert(files).values(values).run();
 	tx.insert(revisions)
-		.values({ ...values, at: now })
+		.values({
+			path,
+			rev,
+			hash,
+			size,
+			kind,
+			content: kind === "text" ? content : null,
+			blobHash,
+			deleted: 0,
+			origin: context.client_id,
+			at: now,
+		})
 		.run();
 	addLogicalPayload(
 		tx,
@@ -616,7 +634,7 @@ function publishTextCommand(
 		}),
 	);
 	tx.run(sql`DELETE FROM files_fts WHERE path = ${path}`);
-	if (kind === "text" && path.endsWith(".md"))
+	if (kind === "text" && classifyFilePath(path) === "markdown")
 		tx.run(
 			sql`INSERT INTO files_fts(path, content) VALUES (${path}, ${content})`,
 		);

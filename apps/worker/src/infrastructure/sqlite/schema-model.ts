@@ -45,6 +45,8 @@ export const files = sqliteTable(
 		content: text("content"),
 		/** Content-addressed reference for blob rows. The reference alone does not prove external-byte integrity. */
 		blobHash: text("blob_hash"),
+		/** Immediate destination retained on rename tombstones for stale-write diagnostics. */
+		renamedTo: text("renamed_to"),
 		deleted: integer("deleted").notNull().default(0),
 		updatedAt: integer("updated_at").notNull(),
 		origin: text("origin").notNull(),

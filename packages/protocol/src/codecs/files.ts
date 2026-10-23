@@ -8,6 +8,16 @@ import type {
 	FileHttpFailureInput,
 } from "@protocol/types/files";
 
+/** Classify storage and indexing behavior by extension without normalizing path identity. */
+export function classifyFilePath(
+	path: string,
+): "markdown" | "canvas" | "other" {
+	const extension = path.slice(path.lastIndexOf("/") + 1).toLowerCase();
+	if (extension.endsWith(".md")) return "markdown";
+	if (extension.endsWith(".canvas")) return "canvas";
+	return "other";
+}
+
 /** Encodes only canonical failure details with fixed safe messages and status codes. */
 export function encodeFileFailure(
 	failure: FileHttpFailureInput,
@@ -29,6 +39,8 @@ export function encodeFileFailure(
 			if (failure.hash !== undefined) body.hash = failure.hash;
 			if (failure.deleted !== undefined) body.deleted = failure.deleted;
 			if (failure.content !== undefined) body.content = failure.content;
+			if (failure.renamed_to !== undefined)
+				body.renamed_to = failure.renamed_to;
 			break;
 		default:
 			break;
@@ -38,9 +50,12 @@ export function encodeFileFailure(
 		status: FILE_HTTP_STATUSES[failure.kind],
 		body,
 	};
+	if (failure.kind === "vault_retired")
+		body.new_vault_id = failure.new_vault_id;
 	if (
 		failure.kind === "admission_limited" ||
-		failure.kind === "blob_storage_unavailable"
+		failure.kind === "blob_storage_unavailable" ||
+		failure.kind === "importing"
 	) {
 		result.headers = {
 			"Retry-After": BigInt(failure.retry_after_seconds).toString(10),

@@ -243,8 +243,31 @@ export function capacityAttention(
 	return attention;
 }
 
+/** Subtract deleted history bytes from one category and the aggregate in the same transaction. */
+export function subtractLogicalPayload(
+	tx: VaultTransaction,
+	category: "revisions" | "receipts" | "changes",
+	bytes: number,
+): void {
+	if (!Number.isSafeInteger(bytes) || bytes < 0)
+		throw new Error("Invalid logical payload byte decrement");
+	const categoryKey = `history_${category}_bytes`;
+	const categoryBytes = readCounter(tx, categoryKey);
+	const totalBytes = readCounter(tx, "history_pressure_bytes");
+	if (categoryBytes < bytes || totalBytes < bytes)
+		throw new Error("Logical history counter underflow");
+	tx.update(meta)
+		.set({ value: String(categoryBytes - bytes) })
+		.where(eq(meta.key, categoryKey))
+		.run();
+	tx.update(meta)
+		.set({ value: String(totalBytes - bytes) })
+		.where(eq(meta.key, "history_pressure_bytes"))
+		.run();
+}
+
 /** Read one canonical nonnegative counter from the transaction. */
-function readCounter(tx: VaultTransaction, key: string): number {
+export function readCounter(tx: VaultTransaction, key: string): number {
 	const value = tx
 		.select({ value: meta.value })
 		.from(meta)

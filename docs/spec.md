@@ -166,7 +166,7 @@ CREATE TABLE blob_refs (hash TEXT PRIMARY KEY, size INTEGER NOT NULL, first_ref_
 CREATE TABLE exports (id TEXT PRIMARY KEY, started_at INTEGER, finished_at INTEGER, status TEXT, head_seq INTEGER, calls_this_hour INTEGER, hour_started_at INTEGER, commit_sha TEXT, error TEXT);
 ```
 
-The canonical schema version is 4. Versions 1, 2, and 3 fail closed without writes. The service does not migrate or repair unsupported storage. Version 4 requires `history_revisions_bytes`, `history_receipts_bytes`, `history_changes_bytes`, `history_pressure_bytes`, and `history_reduced` metadata keys. Fresh version-4 vaults initialize these values to zero. Existing version-3 vaults need an explicit future migration and receive no counter backfill in this version.
+The canonical schema version is 5. Versions 1 through 4 fail closed without writes. The service does not migrate or repair unsupported storage. Version 4 adds `history_revisions_bytes`, `history_receipts_bytes`, `history_changes_bytes`, `history_pressure_bytes`, and `history_reduced` metadata. Version 5 adds `retention_category` and `retention_pruned_feed_seq`. Fresh version-5 vaults initialize all history counters and the feed boundary to zero. Existing stores need an explicit future migration and receive no backfill or repair in this version.
 
 Version 2 adds `operation_admissions`:
 
@@ -217,7 +217,14 @@ Version 4 adds the mandatory logical history counters to `meta`:
 | `history_pressure_bytes` | `0` | Sum of the three category counters |
 | `history_reduced` | `0` | Sticky history-reduced attention state |
 
-Version 4 does not change relational table DDL. Versions 1 through 3 remain unsupported and receive no migration, repair, or counter backfill.
+Version 5 adds durable retention progress to `meta`:
+
+| Key | Initial value | Meaning |
+| --- | --- | --- |
+| `retention_category` | `changes` | Next category to examine after interruption |
+| `retention_pruned_feed_seq` | `0` | Monotonic lower cursor bound, one past the highest feed sequence removed by retention |
+
+Versions 4 and 5 do not change relational table DDL. Versions 1 through 4 remain unsupported and receive no migration, repair, or counter backfill.
 
 ### 5.3 R2 layout
 
@@ -246,7 +253,7 @@ Base `/v1`. JSON unless noted. Authentication: `Authorization: Bearer <access to
 
 | Method | Path | Scope | Purpose |
 | --- | --- | --- | --- |
-| `GET` | `/v1/vault` | read | `{epoch, head_seq, counts, limits}` |
+| `GET` | `/v1/vault` | read | `{epoch, head_seq, counts, limits, capacity, attention}` |
 | `GET` | `/v1/manifest?page=<token>` | read | `{epoch, head_seq, entries, next_page}` with path, epoch-bound `etag`, `seq, hash, size, kind, deleted, large`; pages contain at most 256 rows and include tombstones |
 | `GET` | `/v1/changes?epoch=E&since=S&limit=N` | read | `{epoch, head_seq, entries}` with immutable feed rows, `seq > S`, ascending, and at most 1,000 entries. `409 epoch_mismatch` if E ≠ epoch. `410 cursor_expired` if S is older than the oldest retained `seq` |
 | `GET` | `/v1/files/*path?rev=R` | read | Content and metadata. Without `rev`: current, `ETag`, and optional `X-Vault-Epoch` observation. With `rev`: send `X-Vault-Epoch` to select that exact revision from `revisions`, or receive `410 revision_pruned`. Range reads via `Range: bytes=` (blob) or `?offset=&length=` (text, in UTF-16 code units as Obsidian uses). Response always carries `ETag` |
@@ -557,7 +564,7 @@ SQL queries accept at most 100 bound parameters. Tables can have at most 100 col
 
 The [SQLite storage API](https://developers.cloudflare.com/durable-objects/api/sqlite-storage-api/), read 2026-10-17, states that `sql.databaseSize` returns database bytes. It also states that `transactionSync` rolls back when its synchronous callback throws.
 
-The 2 GB total cap uses `sql.databaseSize`, including admission storage. Logical history counters do not replace this physical database observation.
+The 2 GB total cap uses `sql.databaseSize`, including admission storage. Logical history counters do not replace this physical database observation. Retention runs in synchronous transactions of at most 64 selected feed rows or 49 composite-key rows. The native Vault alarm owner schedules continuation separately from the next nightly 03:00 UTC cycle.
 
 History pressure uses logical payload bytes from `revisions`, `receipts`, and `changes`. Transactional `meta` counters track each category and their sum. Publication updates these counters in the same transaction as its rows and receipt. Pruning subtracts the deleted payload bytes in its deletion transaction.
 

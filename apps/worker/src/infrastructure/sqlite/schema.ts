@@ -7,8 +7,8 @@ import {
 	drizzle,
 } from "drizzle-orm/durable-sqlite";
 
-/** Persisted schema version; version 4 requires logical history counters and rejects older stores. */
-export const SCHEMA_VERSION = 4;
+/** Persisted schema version; version 5 requires durable retention progress and rejects older stores. */
+export const SCHEMA_VERSION = 5;
 
 /** Narrow FTS5 DDL unsupported by the relational model and kept at its engine-specific seam. */
 const FTS_SCHEMA = `CREATE VIRTUAL TABLE files_fts USING fts5(
@@ -17,6 +17,9 @@ const FTS_SCHEMA = `CREATE VIRTUAL TABLE files_fts USING fts5(
 
 /** Frozen §5.2 bootstrap DDL composed from generated relational SQL and the FTS5 statement. */
 export const SCHEMA = [...RELATIONAL_SCHEMA_STATEMENTS, FTS_SCHEMA].join("\n");
+
+/** Platform catalog table used to persist native Durable Object alarm state. */
+const ALARM_METADATA_TABLE = "_cf_METADATA";
 
 /** SQLite catalog kinds used by this module's private frozen-DDL compatibility check. */
 type SchemaObjectKind = "table" | "index";
@@ -103,8 +106,8 @@ function isCanonicalSafeInteger(value: string, nonNegative: boolean): boolean {
 }
 
 /**
- * Creates a fresh canonical schema-version-3 vault or validates an existing version-3 store.
- * Version-1, version-2, and other unsupported stores fail without migration, repair, replacement, or epoch changes.
+ * Creates a fresh canonical schema-version-5 vault or validates an existing version-5 store.
+ * Versions 1 through 4 and other unsupported stores fail without migration, repair, replacement, or epoch changes.
  * All DDL and initial metadata writes run synchronously in one Durable SQLite transaction.
  * @param storage - The native storage belonging to this vault Durable Object.
  * @param createEpoch - Called only during fresh initialization; an invalid result aborts the transaction.
@@ -129,7 +132,8 @@ export function initializeVaultStorage(
 			"SELECT type, name, sql FROM sqlite_master",
 		);
 		const applicationObjects = catalogObjects.filter(
-			({ name }) => !name.startsWith("sqlite_"),
+			({ name }) =>
+				!name.startsWith("sqlite_") && name !== ALARM_METADATA_TABLE,
 		);
 		if (applicationObjects.length === 0) {
 			createFreshVault(tx, createEpoch, now);
@@ -186,6 +190,8 @@ function createFreshVault(
 			{ key: "history_changes_bytes", value: "0" },
 			{ key: "history_pressure_bytes", value: "0" },
 			{ key: "history_reduced", value: "0" },
+			{ key: "retention_category", value: "changes" },
+			{ key: "retention_pruned_feed_seq", value: "0" },
 		])
 		.run();
 }
@@ -206,6 +212,8 @@ function rejectUnexpectedCatalogObjects(
 	const expectedNames = new Set(FROZEN_SCHEMA_OBJECTS.map(({ name }) => name));
 	for (const actual of catalogObjects) {
 		if (expectedNames.has(actual.name)) continue;
+		if (actual.type === "table" && actual.name === ALARM_METADATA_TABLE)
+			continue;
 		if (actual.name.startsWith("sqlite_")) continue;
 		if (actual.type === "table" && tableKinds.get(actual.name) === "shadow")
 			continue;
@@ -240,6 +248,8 @@ function readAndValidateMetadata(tx: VaultTransaction): void {
 		"history_changes_bytes",
 		"history_pressure_bytes",
 		"history_reduced",
+		"retention_category",
+		"retention_pruned_feed_seq",
 	]) {
 		if (typeof metadata.get(key) !== "string")
 			throw new Error(`Missing vault metadata: ${key}`);
@@ -265,7 +275,11 @@ function readAndValidateMetadata(tx: VaultTransaction): void {
 			metadata.get("history_pressure_bytes") ?? "",
 			true,
 		) ||
-		!isCanonicalSafeInteger(metadata.get("history_reduced") ?? "", true)
+		!isCanonicalSafeInteger(metadata.get("history_reduced") ?? "", true) ||
+		!isCanonicalSafeInteger(
+			metadata.get("retention_pruned_feed_seq") ?? "",
+			true,
+		)
 	)
 		throw new Error("Invalid numeric vault metadata");
 	const revisionBytes = Number(metadata.get("history_revisions_bytes"));
@@ -273,10 +287,21 @@ function readAndValidateMetadata(tx: VaultTransaction): void {
 	const changeBytes = Number(metadata.get("history_changes_bytes"));
 	const historyBytes = Number(metadata.get("history_pressure_bytes"));
 	const historyReduced = Number(metadata.get("history_reduced"));
+	const headSequence = Number(metadata.get("head_seq"));
+	const prunedFeedSequence = Number(metadata.get("retention_pruned_feed_seq"));
+	const retentionCategory = metadata.get("retention_category");
 	if (
 		revisionBytes + receiptBytes + changeBytes !== historyBytes ||
 		!Number.isSafeInteger(historyBytes) ||
-		(historyReduced !== 0 && historyReduced !== 1)
+		(historyReduced !== 0 && historyReduced !== 1) ||
+		!Number.isSafeInteger(headSequence + 1) ||
+		prunedFeedSequence > headSequence + 1 ||
+		![
+			"changes",
+			"receipts",
+			"ordinary_revisions",
+			"pressure_revisions",
+		].includes(retentionCategory ?? "")
 	)
 		throw new Error("Invalid logical history metadata");
 	if (!isCanonicalSafeInteger(metadata.get("created_at") ?? "", false))

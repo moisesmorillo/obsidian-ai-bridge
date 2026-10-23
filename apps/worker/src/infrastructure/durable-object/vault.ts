@@ -33,6 +33,7 @@ import { R2BlobStore } from "@worker/infrastructure/r2/blobs";
 import { SqliteAdmissionAuthority } from "@worker/infrastructure/sqlite/admission";
 import { SqliteMutationCoordinator } from "@worker/infrastructure/sqlite/mutations";
 import { SqliteReadStore } from "@worker/infrastructure/sqlite/reads";
+import { SqliteRetentionStore } from "@worker/infrastructure/sqlite/retention";
 import {
 	generateEpoch,
 	initializeVaultStorage,
@@ -50,13 +51,30 @@ function nativeReadFailure(error: unknown): {
 	throw error;
 }
 
-/** SQLite-backed authority for one isolated vault id. */
+/** Delay between bounded maintenance batches after an alarm finds more work. */
+const RETENTION_CONTINUATION_MS = 60_000;
+/** UTC hour for the next full retention cycle after a batch completes. */
+const RETENTION_NIGHTLY_HOUR_UTC = 3;
+
+/** Return the next 03:00 UTC maintenance deadline, never the current instant. */
+function nextRetentionNightly(now: number): number {
+	const next = new Date(now);
+	next.setUTCHours(RETENTION_NIGHTLY_HOUR_UTC, 0, 0, 0);
+	if (next.getTime() <= now) next.setUTCDate(next.getUTCDate() + 1);
+	return next.getTime();
+}
+
+/** SQLite-backed authority and alarm owner for one isolated vault id. */
 export class Vault extends DurableObject<Env> {
+	/** Blocks request dispatch until fresh native alarm scheduling completes. */
+	private readonly initialization: Promise<void>;
 	private readonly admissionAuthority: SqliteAdmissionAuthority;
 	private readonly mutationCoordinator: SqliteMutationCoordinator;
 	private readonly textStore: SqliteTextStore;
 	private readonly readStore: SqliteReadStore;
 	private readonly searchStore: SqliteSearchStore;
+	/** Applies one bounded SQLite retention batch for each native alarm. */
+	private readonly retentionStore: SqliteRetentionStore;
 
 	/**
 	 * The constructor creates fresh storage or validates existing storage synchronously in one transaction.
@@ -94,6 +112,11 @@ export class Vault extends DurableObject<Env> {
 			ctx.storage,
 			this.admissionAuthority,
 		);
+		this.retentionStore = new SqliteRetentionStore(ctx.storage);
+		this.initialization = ctx.blockConcurrencyWhile(async () => {
+			if ((await ctx.storage.getAlarm()) === null)
+				await ctx.storage.setAlarm(nextRetentionNightly(Date.now()));
+		});
 		this.textStore = new SqliteTextStore(
 			ctx.storage,
 			this.mutationCoordinator,
@@ -102,6 +125,18 @@ export class Vault extends DurableObject<Env> {
 				blobStore: new R2BlobStore(env.R2_BUCKET),
 				admissions: this.admissionAuthority,
 			},
+		);
+	}
+
+	/** Run one retention transaction and schedule continuation or the next nightly cycle.
+	 * A future export owner must join this native alarm dispatch and choose its next deadline.
+	 */
+	async alarm(): Promise<void> {
+		await this.initialization;
+		const now = Date.now();
+		const result = this.retentionStore.runBatch(now);
+		await this.ctx.storage.setAlarm(
+			result.more ? now + RETENTION_CONTINUATION_MS : nextRetentionNightly(now),
 		);
 	}
 

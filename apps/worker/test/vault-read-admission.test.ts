@@ -80,6 +80,9 @@ describe("native read feed admission and retention", () => {
 				).rejects.toMatchObject({ failure: { kind: "cursor_expired" } });
 				storage.sql.exec("DELETE FROM changes");
 				storage.sql.exec("UPDATE meta SET value = '5' WHERE key = 'head_seq'");
+				storage.sql.exec(
+					"UPDATE meta SET value = '6' WHERE key = 'retention_pruned_feed_seq'",
+				);
 				const emptyTicket = await authorizeRead();
 				await expect(
 					reads.readBatch(

@@ -20,7 +20,10 @@ import type {
 	VaultTransaction,
 } from "@worker/infrastructure/sqlite/admission";
 import { assertPolicyInTransaction } from "@worker/infrastructure/sqlite/admission";
-import { readCapacitySummary } from "@worker/infrastructure/sqlite/capacity";
+import {
+	readCapacitySummary,
+	readCounter,
+} from "@worker/infrastructure/sqlite/capacity";
 import {
 	changes,
 	files,
@@ -342,7 +345,9 @@ function feedFloor(tx: VaultTransaction, now: number): number {
 	if (head === 0) return 0;
 	const firstRetained = boundary?.firstRetained ?? null;
 	const lastExpired = boundary?.lastExpired ?? null;
-	const retainedFloor = firstRetained ?? head + 1;
+	const retainedFloor = firstRetained ?? 0;
 	const expiryFloor = lastExpired === null ? 0 : lastExpired + 1;
-	return Math.max(retainedFloor, expiryFloor);
+	const timeDerivedFloor = Math.max(retainedFloor, expiryFloor);
+	const prunedFloor = readCounter(tx, "retention_pruned_feed_seq");
+	return Math.max(timeDerivedFloor, prunedFloor);
 }

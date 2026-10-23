@@ -1,4 +1,9 @@
-import { env, runInDurableObject, SELF } from "cloudflare:test";
+import {
+	env,
+	evictDurableObject,
+	runInDurableObject,
+	SELF,
+} from "cloudflare:test";
 import {
 	type AuthorizationContext,
 	type ChangesPage,
@@ -88,6 +93,30 @@ describe("real HTTP recovery and server acceptance", () => {
 				"INSERT INTO revoked_grants(grant_id,at) VALUES ('http-revoked-grant', 1)",
 			);
 		});
+	});
+	it("retains empty-feed cursor expiry evidence after physical pruning and restart", async () => {
+		await put("expired-feed.md", "expired");
+		await runInDurableObject(vault(), async (instance, state) => {
+			state.storage.sql.exec(
+				"UPDATE changes SET at = ?",
+				Date.now() - 31 * 86_400_000,
+			);
+			await instance.alarm();
+			expect(
+				state.storage.sql.exec("SELECT seq FROM changes").toArray(),
+			).toEqual([]);
+			expect(
+				state.storage.sql
+					.exec(
+						"SELECT value FROM meta WHERE key = 'retention_pruned_feed_seq'",
+					)
+					.toArray(),
+			).toEqual([{ value: "2" }]);
+		});
+		await evictDurableObject(vault());
+		const expired = await get(`changes?epoch=${epoch}&since=0`);
+		expect(expired.status).toBe(410);
+		expect(await expired.json()).toMatchObject({ error: "cursor_expired" });
 	});
 	it("AC-12 server: expires a 40-day feed position and returns explicit tombstones in reconciliation", async () => {
 		const created = await put("deleted.md", "old");

@@ -20,6 +20,31 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 const url = "https://worker.invalid/v1/files/Note.md";
 
+/** Creates a UUIDv7 key with a Unix-millisecond timestamp. */
+function uuidV7At(timestamp: number): string {
+	const hex = timestamp.toString(16).padStart(12, "0");
+	return `${hex.slice(0, 8)}-${hex.slice(8)}-7000-8000-000000000000`;
+}
+
+/** Snapshot current files and mutation history to prove rejected keys have no effects. */
+async function textMutationSnapshot() {
+	const stub = env.VAULTS.get(env.VAULTS.idFromName("worker.invalid"));
+	return runInDurableObject(stub, (_instance, state) => ({
+		files: state.storage.sql
+			.exec("SELECT * FROM files ORDER BY path")
+			.toArray(),
+		revisions: state.storage.sql
+			.exec("SELECT * FROM revisions ORDER BY path, rev")
+			.toArray(),
+		changes: state.storage.sql
+			.exec("SELECT * FROM changes ORDER BY seq")
+			.toArray(),
+		receipts: state.storage.sql
+			.exec("SELECT * FROM receipts ORDER BY client_id, key")
+			.toArray(),
+	}));
+}
+
 /** Pending request payload and release state used to observe durable reservation timing. */
 type PendingBody = {
 	body: ReadableStream<Uint8Array>;
@@ -416,7 +441,7 @@ describe("conditional text HTTP lifecycle", () => {
 		expect(current.status).toBe(200);
 	});
 
-	it("returns revision_pruned when a historical read omits the epoch", async () => {
+	it("returns revision_pruned for a valid historical read without an epoch", async () => {
 		const created = await SELF.fetch(url, {
 			method: "PUT",
 			headers: { "If-None-Match": "*", "X-Vault-Epoch": TEXT_FIXTURE_EPOCH },
@@ -427,6 +452,19 @@ describe("conditional text HTTP lifecycle", () => {
 		expect(historical.status).toBe(410);
 		expect(await historical.json()).toMatchObject({ error: "revision_pruned" });
 	});
+
+	it.each([
+		"?rev=9007199254740992",
+		"?rev=1&offset=9007199254740992",
+		"?rev=1&length=9007199254740992",
+	])(
+		"rejects unsafe historical selectors before missing-epoch recovery: %s",
+		async (query) => {
+			const response = await SELF.fetch(`${url}${query}`);
+			expect(response.status).toBe(400);
+			expect(await response.json()).toMatchObject({ error: "invalid_request" });
+		},
+	);
 
 	it("returns the authoritative epoch before it reads a missing observation body", async () => {
 		const request = new Request(url, {
@@ -928,6 +966,62 @@ describe("conditional text HTTP lifecycle", () => {
 			error: "path_collision",
 			existing_path: "notes/CAFÉ.md",
 		});
+	});
+
+	it("AC-17 server: rejects stale and future keys without effects, then commits a four-minute-future key once", async () => {
+		const now = Date.now();
+		const oldKey = uuidV7At(now - 26 * 86_400_000);
+		const tooFarFutureKey = uuidV7At(now + 10 * 60_000);
+		const acceptedFutureKey = uuidV7At(now + 4 * 60_000);
+		const initialState = await textMutationSnapshot();
+
+		for (const key of [oldKey, tooFarFutureKey]) {
+			const rejected = await SELF.fetch(url, {
+				method: "PUT",
+				headers: {
+					"If-None-Match": "*",
+					"X-Vault-Epoch": TEXT_FIXTURE_EPOCH,
+					"Idempotency-Key": key,
+				},
+				body: "rejected UUIDv7 key",
+			});
+			expect(rejected.status).toBe(409);
+			expect(await rejected.json()).toMatchObject({
+				error: "operation_expired",
+			});
+			expect(await textMutationSnapshot()).toEqual(initialState);
+		}
+
+		const headers = {
+			"If-None-Match": "*",
+			"X-Vault-Epoch": TEXT_FIXTURE_EPOCH,
+			"Idempotency-Key": acceptedFutureKey,
+		};
+		const first = await SELF.fetch(url, {
+			method: "PUT",
+			headers,
+			body: "accepted four-minute future key",
+		});
+		const firstBody = await first.json();
+		const retry = await SELF.fetch(url, {
+			method: "PUT",
+			headers,
+			body: "accepted four-minute future key",
+		});
+		const retryBody = await retry.json();
+		expect(first.status).toBe(201);
+		expect(retry.status).toBe(201);
+		expect(retryBody).toEqual(firstBody);
+		const state = await textMutationSnapshot();
+		expect(state.files).toHaveLength(1);
+		expect(state.files[0]).toMatchObject({
+			path: "Note.md",
+			rev: 1,
+			content: "accepted four-minute future key",
+		});
+		expect(state.revisions).toHaveLength(1);
+		expect(state.changes).toHaveLength(1);
+		expect(state.receipts).toHaveLength(1);
 	});
 
 	it("AC-01 server: returns one receipt after the same key and bytes retry", async () => {

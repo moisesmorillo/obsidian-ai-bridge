@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: 2026-10-15 00:38
-updated_date: '2026-10-23T22:56:00Z'
+updated_date: '2026-10-23T23:09:00Z'
 labels:
   - F1
 dependencies:
@@ -85,4 +85,6 @@ Correction: Slice 3 uses the final branch commit titled `test(worker): complete 
 Read API adaptation exception: the real interleaving test first kept the old eager RPC expectation. It failed because opening a session reads metadata only. Updated the test to assert zero batch calls before demand and four bounded batches after reading the page. The later full check passed.
 
 README delivery correction: the tested README content is now committed with `docs: update README for F1 server status`. The earlier note that README remains unstaged described the prior Slice 3 handoff. This follow-up commits the required README change. No source changes or acceptance-criterion updates were made.
+
+Scoped correction for review findings TR-1 and TR-2. TR-1: added real Worker/DO HTTP coverage for UUIDv7 keys 26 days old and 10 minutes in the future. Each rejection returns operation_expired and leaves files, revisions, changes, and receipts unchanged. A four-minute-future key commits once, and a same-key retry returns the same response with one file, revision, change, and receipt. TR-2: validate historical revision, offset, and length selectors before returning revision_pruned when the epoch is absent. A canonical placeholder is used only for schema validation and never reaches the gateway. Valid historical selectors without an epoch still return revision_pruned. RED: focused HTTP tests first showed all three unsafe selectors returned 410 instead of 400. Characterization: the AC-17 mutation test passed on its first run against existing behavior. Focused files suite passed 29 tests. bun run docs:check passed. bun run check passed lint, docs, typecheck, tests, and dry-run builds. Test totals: 52 tooling, 2 plugin, 277 protocol, 761 native Worker, 118 HTTP. Total: 1,210. Existing injected network and SQLite failure logs came from test fault cases. OAB-6.9 remains In Progress and acceptance criteria remain unchecked. The scoped correction is committed.
 <!-- SECTION:NOTES:END -->

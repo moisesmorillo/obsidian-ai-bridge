@@ -94,25 +94,33 @@ export function createFileRouter(
 			)
 				return errorResponse({ kind: "invalid_request" });
 			const rev = query.has("rev") ? Number(query.get("rev")) : undefined;
+			const offset = query.has("offset")
+				? Number(query.get("offset"))
+				: undefined;
+			const length = query.has("length")
+				? Number(query.get("length"))
+				: undefined;
 			const epochHeader = context.req.header("X-Vault-Epoch");
-			const gateway = resolveVault(context.env, context.req.raw);
-			if (rev !== undefined && epochHeader === undefined)
-				return errorResponse({ kind: "revision_pruned" });
 			if (
 				epochHeader !== undefined &&
 				!EpochSchema.safeParse(epochHeader).success
 			)
 				return errorResponse({ kind: "invalid_request" });
-			const epoch = epochHeader;
+			// This placeholder validates selectors only and never reaches the gateway.
+			const validationEpoch =
+				epochHeader ?? (rev === undefined ? undefined : "a".repeat(32));
 			const request: TextReadRequest = {
 				path,
-				...(epoch === undefined ? {} : { epoch }),
+				...(validationEpoch === undefined ? {} : { epoch: validationEpoch }),
 				...(rev === undefined ? {} : { rev }),
-				...(query.has("offset") ? { offset: Number(query.get("offset")) } : {}),
-				...(query.has("length") ? { length: Number(query.get("length")) } : {}),
+				...(offset === undefined ? {} : { offset }),
+				...(length === undefined ? {} : { length }),
 			};
 			const parsed = TextReadRequestSchema.safeParse(request);
 			if (!parsed.success) return errorResponse({ kind: "invalid_request" });
+			if (rev !== undefined && epochHeader === undefined)
+				return errorResponse({ kind: "revision_pruned" });
+			const gateway = resolveVault(context.env, context.req.raw);
 			return readContentResponse(
 				gateway,
 				() => resolveBlobs(context.env),

@@ -790,7 +790,139 @@ describe("conditional text HTTP lifecycle", () => {
 		expect(response.status).toBe(400);
 	});
 
-	it("AC-03/04/05/06 server: one concurrent mutation wins against one observed revision", async () => {
+	it("AC-06 server: rejects a stale DELETE after a newer live PUT", async () => {
+		const source = "https://worker.invalid/v1/files/notes/stale-delete.md";
+		const created = await SELF.fetch(source, {
+			method: "PUT",
+			headers: {
+				"If-None-Match": "*",
+				"X-Vault-Epoch": TEXT_FIXTURE_EPOCH,
+			},
+			body: "initial bytes",
+		});
+		const originalTag = created.headers.get("ETag") ?? "";
+		await created.text();
+		expect(created.status).toBe(201);
+		expect(originalTag).not.toBe("");
+
+		const edited = await SELF.fetch(source, {
+			method: "PUT",
+			headers: {
+				"If-Match": originalTag,
+				"X-Vault-Epoch": TEXT_FIXTURE_EPOCH,
+				"Idempotency-Key": "ac06-live-edit-01",
+			},
+			body: "newer live bytes",
+		});
+		await edited.text();
+		expect(edited.status).toBe(200);
+		const stateBeforeDelete = await textMutationSnapshot();
+		expect(stateBeforeDelete.files).toContainEqual(
+			expect.objectContaining({
+				path: "notes/stale-delete.md",
+				rev: 2,
+				content: "newer live bytes",
+				deleted: 0,
+			}),
+		);
+		expect(stateBeforeDelete.revisions).toHaveLength(2);
+		expect(stateBeforeDelete.changes).toHaveLength(2);
+		expect(stateBeforeDelete.receipts).toHaveLength(1);
+
+		const deletion = await SELF.fetch(source, {
+			method: "DELETE",
+			headers: {
+				"If-Match": originalTag,
+				"X-Vault-Epoch": TEXT_FIXTURE_EPOCH,
+				"Idempotency-Key": "ac06-stale-delete-01",
+			},
+		});
+		expect(deletion.status).toBe(412);
+		expect(await deletion.json()).toMatchObject({
+			error: "precondition_failed",
+		});
+		const stateAfterDelete = await textMutationSnapshot();
+		expect(stateAfterDelete).toEqual(stateBeforeDelete);
+		expect(stateAfterDelete.files).toContainEqual(
+			expect.objectContaining({
+				path: "notes/stale-delete.md",
+				rev: 2,
+				content: "newer live bytes",
+				deleted: 0,
+			}),
+		);
+	});
+
+	it("AC-18 server: rejects a stale rename after a newer live PUT", async () => {
+		const source = "https://worker.invalid/v1/files/notes/stale-rename.md";
+		const destinationPath = "notes/stale-rename-destination.md";
+		const created = await SELF.fetch(source, {
+			method: "PUT",
+			headers: {
+				"If-None-Match": "*",
+				"X-Vault-Epoch": TEXT_FIXTURE_EPOCH,
+			},
+			body: "initial bytes",
+		});
+		const originalTag = created.headers.get("ETag") ?? "";
+		await created.text();
+		expect(created.status).toBe(201);
+		expect(originalTag).not.toBe("");
+
+		const edited = await SELF.fetch(source, {
+			method: "PUT",
+			headers: {
+				"If-Match": originalTag,
+				"X-Vault-Epoch": TEXT_FIXTURE_EPOCH,
+				"Idempotency-Key": "ac18-live-edit-01",
+			},
+			body: "newer live bytes",
+		});
+		await edited.text();
+		expect(edited.status).toBe(200);
+		const stateBeforeRename = await textMutationSnapshot();
+		expect(stateBeforeRename.files).toContainEqual(
+			expect.objectContaining({
+				path: "notes/stale-rename.md",
+				rev: 2,
+				content: "newer live bytes",
+				deleted: 0,
+			}),
+		);
+		expect(stateBeforeRename.files).not.toContainEqual(
+			expect.objectContaining({ path: destinationPath }),
+		);
+		expect(stateBeforeRename.revisions).toHaveLength(2);
+		expect(stateBeforeRename.changes).toHaveLength(2);
+		expect(stateBeforeRename.receipts).toHaveLength(1);
+
+		const rename = await SELF.fetch(`${source}:rename`, {
+			method: "POST",
+			headers: {
+				"If-Match": originalTag,
+				"X-Vault-Epoch": TEXT_FIXTURE_EPOCH,
+				"Idempotency-Key": "ac18-stale-rename-01",
+			},
+			body: JSON.stringify({ to: destinationPath }),
+		});
+		expect(rename.status).toBe(412);
+		expect(await rename.json()).toMatchObject({ error: "precondition_failed" });
+		const stateAfterRename = await textMutationSnapshot();
+		expect(stateAfterRename).toEqual(stateBeforeRename);
+		expect(stateAfterRename.files).toContainEqual(
+			expect.objectContaining({
+				path: "notes/stale-rename.md",
+				rev: 2,
+				content: "newer live bytes",
+				deleted: 0,
+			}),
+		);
+		expect(stateAfterRename.files).not.toContainEqual(
+			expect.objectContaining({ path: destinationPath }),
+		);
+	});
+
+	it("server race: one concurrent mutation wins against one observed revision", async () => {
 		const source = "https://worker.invalid/v1/files/notes/race-source.md";
 		const created = await SELF.fetch(source, {
 			method: "PUT",

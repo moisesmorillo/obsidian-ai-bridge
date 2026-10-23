@@ -36,12 +36,8 @@ const RETENTION_CATEGORIES = [
 type RetentionCategory = (typeof RETENTION_CATEGORIES)[number];
 /** Internal pressure threshold, lowerable only by native tests. */
 type RetentionLimits = Readonly<{ historyPressureLimitBytes: number }>;
-/** Complete change row selected for feed-boundary and counter updates. */
-type ChangeRow = typeof changes.$inferSelect;
-/** Complete receipt row selected for exact logical-byte decrements. */
-type ReceiptRow = typeof receipts.$inferSelect;
-/** Complete revision row selected for exact logical-byte decrements. */
-type RevisionRow = typeof revisions.$inferSelect;
+/** Selected durable identity for one revision payload. */
+type RevisionIdentity = Readonly<{ path: string; rev: number }>;
 
 /** Applies one bounded retention batch to one vault's SQLite history. */
 export class SqliteRetentionStore {
@@ -90,8 +86,7 @@ export class SqliteRetentionStore {
 							orderedCategories(nextCategory).some((next) =>
 								hasEligibleRows(tx, next, now, this.historyPressureLimitBytes),
 							),
-						historyReduced:
-							candidate === "pressure_revisions" && deleted.length > 0,
+						historyReduced: candidate === "pressure_revisions" && deleted > 0,
 					};
 				}
 			}
@@ -105,7 +100,7 @@ export class SqliteRetentionStore {
 		tx: VaultTransaction,
 		category: RetentionCategory,
 		now: number,
-	): (ChangeRow | ReceiptRow | RevisionRow)[] | null {
+	): number | null {
 		const cutoff30 = now - 30 * DAY_MS;
 		if (category === "changes") {
 			const selected = tx
@@ -134,7 +129,7 @@ export class SqliteRetentionStore {
 			subtractLogicalPayload(tx, "changes", bytes);
 			const boundary = Math.max(...selected.map(({ seq }) => seq)) + 1;
 			writeMaxCounter(tx, "retention_pruned_feed_seq", boundary);
-			return selected;
+			return selected.length;
 		}
 		if (category === "receipts") {
 			const selected = tx
@@ -162,7 +157,7 @@ export class SqliteRetentionStore {
 				});
 			}
 			subtractLogicalPayload(tx, "receipts", bytes);
-			return selected;
+			return selected.length;
 		}
 		const pressure = category === "pressure_revisions";
 		const ageCutoff = pressure ? now - 7 * DAY_MS : cutoff30;
@@ -183,8 +178,8 @@ export class SqliteRetentionStore {
 		const overPressure = pressure
 			? sql`CAST((SELECT value FROM meta WHERE key = 'history_pressure_bytes') AS INTEGER) > ${this.historyPressureLimitBytes}`
 			: sql`1 = 1`;
-		const selected = tx
-			.select()
+		const selected: RevisionIdentity[] = tx
+			.select({ path: revisions.path, rev: revisions.rev })
 			.from(revisions)
 			.where(
 				and(
@@ -198,11 +193,20 @@ export class SqliteRetentionStore {
 			.limit(BATCH_SIZE)
 			.all();
 		if (selected.length === 0) return null;
-		const deleted: RevisionRow[] = [];
-		for (const row of selected) {
-			tx.delete(revisions)
-				.where(and(eq(revisions.path, row.path), eq(revisions.rev, row.rev)))
-				.run();
+		let deleted = 0;
+		for (const identity of selected) {
+			const row = tx
+				.select()
+				.from(revisions)
+				.where(
+					and(
+						eq(revisions.path, identity.path),
+						eq(revisions.rev, identity.rev),
+					),
+				)
+				.limit(1)
+				.all()[0];
+			if (!row) continue;
 			const rowBytes = revisionLogicalPayloadBytes({
 				path: row.path,
 				rev: row.rev,
@@ -215,8 +219,11 @@ export class SqliteRetentionStore {
 				origin: row.origin,
 				at: row.at,
 			});
-			deleted.push(row);
+			tx.delete(revisions)
+				.where(and(eq(revisions.path, row.path), eq(revisions.rev, row.rev)))
+				.run();
 			subtractLogicalPayload(tx, "revisions", rowBytes);
+			deleted += 1;
 			if (
 				pressure &&
 				readCounter(tx, "history_pressure_bytes") <=

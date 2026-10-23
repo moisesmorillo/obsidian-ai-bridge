@@ -1,4 +1,5 @@
 import {
+	type AuthorizationContext,
 	FileCommandSchema,
 	formatETag,
 	IdempotencyKeySchema,
@@ -209,6 +210,83 @@ describe("SQLite capacity observations", () => {
 				history_revisions_bytes: revisionBytes,
 			});
 		});
+	});
+
+	it("returns stale-precondition refusal before capacity without consuming admission state", async () => {
+		const limits = {
+			databaseAlertBytes: 1,
+			databaseLimitBytes: 1,
+			liveFileLimit: 1,
+			historyPressureLimitBytes: 1,
+			blobAlertBytes: 1,
+		};
+		await withTextStore(
+			async (fixture) => {
+				const path = "notes/source.md";
+				await seedLiveTextState(fixture.storage, {
+					path,
+					content: "revision two",
+					revision: 2,
+				});
+				const context: AuthorizationContext = {
+					...TEXT_FIXTURE_CONTEXT,
+					scopes: ["vault:write"],
+				};
+				const payload = await prepareTextPayload(new TextEncoder().encode("x"));
+				const intent = TextMutationIntentSchema.parse({
+					op: "put",
+					epoch: TEXT_FIXTURE_EPOCH,
+					paths: [path],
+					precondition: {
+						kind: "match",
+						etag: formatETag(TEXT_FIXTURE_EPOCH, 1),
+					},
+					payload_hash: payload.payload_hash,
+					size: payload.size,
+				});
+				const lease = await fixture.coordinator.beginMutation(context, {
+					op: "put",
+					epoch: TEXT_FIXTURE_EPOCH,
+					paths: [path],
+					precondition: intent.precondition,
+				});
+				expect(lease.ok).toBe(true);
+				if (!lease.ok) return;
+				const admission = await fixture.admissions.authorize(
+					context,
+					intent,
+					lease.lease.admission_id,
+				);
+				expect(admission.ok).toBe(true);
+				if (!admission.ok) return;
+				const before = captureTextStoreState(fixture.storage);
+				const result = await fixture.store.commitText(
+					context,
+					intent,
+					admission.ticket.id,
+					payload.content,
+				);
+				expect(result).toMatchObject({
+					ok: false,
+					failure: {
+						kind: "precondition_failed",
+						etag: formatETag(TEXT_FIXTURE_EPOCH, 2),
+					},
+				});
+				if (!result.ok) expect("content" in result.failure).toBe(false);
+				else throw new Error("Expected stale precondition refusal");
+				const after = captureTextStoreState(fixture.storage);
+				expect(after.files).toEqual(before.files);
+				expect(after.revisions).toEqual(before.revisions);
+				expect(after.changes).toEqual(before.changes);
+				expect(after.meta).toEqual(before.meta);
+				expect(after.admissions).toEqual(before.admissions);
+				expect(after.claims).toEqual(before.claims);
+			},
+			undefined,
+			undefined,
+			limits,
+		);
 	});
 
 	it("refuses blob, append, rename, and restore publication at the live-file cap", async () => {

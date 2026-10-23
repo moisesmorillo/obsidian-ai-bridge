@@ -492,6 +492,11 @@ export class SqliteMutationCoordinator {
 					ticketId,
 					key,
 				);
+				this.admissions.assertPreconditionsInTransaction(
+					tx,
+					context,
+					operation,
+				);
 				this.capacity.assertCanPublish(tx, operation.descriptor);
 				this.admissions.consumeInTransaction(tx, context, operation, ticketId);
 			} catch (error) {

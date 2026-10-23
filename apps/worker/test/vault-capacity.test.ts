@@ -212,82 +212,261 @@ describe("SQLite capacity observations", () => {
 		});
 	});
 
-	it("returns stale-precondition refusal before capacity without consuming admission state", async () => {
-		const limits = {
-			databaseAlertBytes: 1,
-			databaseLimitBytes: 1,
-			liveFileLimit: 1,
-			historyPressureLimitBytes: 1,
-			blobAlertBytes: 1,
-		};
+	it.each([
+		[
+			"live-file cap",
+			{
+				databaseAlertBytes: 2_000_000_000,
+				databaseLimitBytes: 2_100_000_000,
+				liveFileLimit: 1,
+				historyPressureLimitBytes: 1_000_000_000,
+				blobAlertBytes: 4_000_000_000,
+			},
+		],
+		[
+			"database cap only",
+			{
+				databaseAlertBytes: 1,
+				databaseLimitBytes: 1,
+				liveFileLimit: 2,
+				historyPressureLimitBytes: 1,
+				blobAlertBytes: 1,
+			},
+		],
+	] as const)(
+		"returns stale-precondition refusal before the %s without consuming admission state",
+		async (_capacity, limits) => {
+			await withTextStore(
+				async (fixture) => {
+					const path = "notes/source.md";
+					await seedLiveTextState(fixture.storage, {
+						path,
+						content: "revision two",
+						revision: 2,
+					});
+					const liveCount = fixture.storage.sql
+						.exec<{ count: number }>(
+							"SELECT count(*) AS count FROM files WHERE deleted = 0",
+						)
+						.toArray()[0]?.count;
+					if (_capacity === "live-file cap") {
+						expect(liveCount).toBe(limits.liveFileLimit);
+						expect(fixture.storage.sql.databaseSize).toBeLessThan(
+							limits.databaseLimitBytes,
+						);
+					} else {
+						expect(liveCount).toBeLessThan(limits.liveFileLimit);
+						expect(fixture.storage.sql.databaseSize).toBeGreaterThanOrEqual(
+							limits.databaseLimitBytes,
+						);
+					}
+					const context: AuthorizationContext = {
+						...TEXT_FIXTURE_CONTEXT,
+						scopes: ["vault:write"],
+					};
+					const payload = await prepareTextPayload(
+						new TextEncoder().encode("x"),
+					);
+					const intent = TextMutationIntentSchema.parse({
+						op: "put",
+						epoch: TEXT_FIXTURE_EPOCH,
+						paths: [path],
+						precondition: {
+							kind: "match",
+							etag: formatETag(TEXT_FIXTURE_EPOCH, 1),
+						},
+						payload_hash: payload.payload_hash,
+						size: payload.size,
+					});
+					const lease = await fixture.coordinator.beginMutation(context, {
+						op: "put",
+						epoch: TEXT_FIXTURE_EPOCH,
+						paths: [path],
+						precondition: intent.precondition,
+					});
+					expect(lease.ok).toBe(true);
+					if (!lease.ok) return;
+					const admission = await fixture.admissions.authorize(
+						context,
+						intent,
+						lease.lease.admission_id,
+					);
+					expect(admission.ok).toBe(true);
+					if (!admission.ok) return;
+					const before = captureTextStoreState(fixture.storage);
+					const result = await fixture.store.commitText(
+						context,
+						intent,
+						admission.ticket.id,
+						payload.content,
+					);
+					expect(result).toMatchObject({
+						ok: false,
+						failure: {
+							kind: "precondition_failed",
+							etag: formatETag(TEXT_FIXTURE_EPOCH, 2),
+						},
+					});
+					if (!result.ok) expect("content" in result.failure).toBe(false);
+					else throw new Error("Expected stale precondition refusal");
+					const after = captureTextStoreState(fixture.storage);
+					expect(after.files).toEqual(before.files);
+					expect(after.revisions).toEqual(before.revisions);
+					expect(after.changes).toEqual(before.changes);
+					expect(after.receipts).toEqual(before.receipts);
+					expect(after.blobRefs).toEqual(before.blobRefs);
+					expect(after.meta).toEqual(before.meta);
+					expect(after.admissions).toEqual(before.admissions);
+					expect(after.claims).toEqual(before.claims);
+				},
+				undefined,
+				undefined,
+				limits,
+			);
+		},
+	);
+
+	it("replays a matching receipt at live-file capacity without changing publication state", async () => {
 		await withTextStore(
 			async (fixture) => {
-				const path = "notes/source.md";
-				await seedLiveTextState(fixture.storage, {
-					path,
-					content: "revision two",
-					revision: 2,
-				});
-				const context: AuthorizationContext = {
-					...TEXT_FIXTURE_CONTEXT,
-					scopes: ["vault:write"],
-				};
-				const payload = await prepareTextPayload(new TextEncoder().encode("x"));
+				const context = TEXT_FIXTURE_CONTEXT;
+				const path = "notes/receipt.md";
+				const key = IdempotencyKeySchema.parse("capacity-receipt-replay-01");
+				const payload = await prepareTextPayload(
+					new TextEncoder().encode("saved"),
+				);
 				const intent = TextMutationIntentSchema.parse({
 					op: "put",
 					epoch: TEXT_FIXTURE_EPOCH,
 					paths: [path],
-					precondition: {
-						kind: "match",
-						etag: formatETag(TEXT_FIXTURE_EPOCH, 1),
-					},
+					precondition: { kind: "absent" },
 					payload_hash: payload.payload_hash,
 					size: payload.size,
 				});
-				const lease = await fixture.coordinator.beginMutation(context, {
-					op: "put",
-					epoch: TEXT_FIXTURE_EPOCH,
-					paths: [path],
-					precondition: intent.precondition,
-				});
-				expect(lease.ok).toBe(true);
-				if (!lease.ok) return;
+				const lease = await fixture.coordinator.beginMutation(
+					context,
+					{
+						op: "put",
+						epoch: TEXT_FIXTURE_EPOCH,
+						paths: [path],
+						precondition: intent.precondition,
+					},
+					key,
+				);
+				if (!lease.ok) throw new Error(lease.failure.kind);
 				const admission = await fixture.admissions.authorize(
 					context,
 					intent,
 					lease.lease.admission_id,
 				);
-				expect(admission.ok).toBe(true);
-				if (!admission.ok) return;
-				const before = captureTextStoreState(fixture.storage);
-				const result = await fixture.store.commitText(
+				if (!admission.ok) throw new Error(admission.failure.kind);
+				const first = await fixture.store.commitText(
 					context,
 					intent,
 					admission.ticket.id,
 					payload.content,
+					key,
 				);
-				expect(result).toMatchObject({
-					ok: false,
-					failure: {
-						kind: "precondition_failed",
-						etag: formatETag(TEXT_FIXTURE_EPOCH, 2),
-					},
-				});
-				if (!result.ok) expect("content" in result.failure).toBe(false);
-				else throw new Error("Expected stale precondition refusal");
-				const after = captureTextStoreState(fixture.storage);
-				expect(after.files).toEqual(before.files);
-				expect(after.revisions).toEqual(before.revisions);
-				expect(after.changes).toEqual(before.changes);
-				expect(after.meta).toEqual(before.meta);
-				expect(after.admissions).toEqual(before.admissions);
-				expect(after.claims).toEqual(before.claims);
+				expect(first.ok).toBe(true);
+				const beforeReplay = captureTextStoreState(fixture.storage);
+				const replay = await fixture.store.commitText(
+					context,
+					intent,
+					admission.ticket.id,
+					payload.content,
+					key,
+				);
+				expect(replay).toEqual(first);
+				expect(captureTextStoreState(fixture.storage)).toEqual(beforeReplay);
 			},
 			undefined,
 			undefined,
-			limits,
+			{
+				databaseAlertBytes: 2_000_000_000,
+				databaseLimitBytes: 2_100_000_000,
+				liveFileLimit: 1,
+				historyPressureLimitBytes: 1_000_000_000,
+				blobAlertBytes: 4_000_000_000,
+			},
 		);
 	});
+
+	it.each([
+		["occupied create path", "notes/source.md", "precondition_failed"],
+		["case-fold path collision", "Notes/Source.md", "path_collision"],
+	] as const)(
+		"returns %s before live-file capacity without consuming admission state",
+		async (_case, path, failure) => {
+			await withTextStore(
+				async (fixture) => {
+					await seedLiveTextState(fixture.storage, {
+						path: "notes/source.md",
+						content: "current",
+					});
+					const context: AuthorizationContext = {
+						...TEXT_FIXTURE_CONTEXT,
+						scopes: ["vault:write"],
+					};
+					const payload = await prepareTextPayload(
+						new TextEncoder().encode("new"),
+					);
+					const intent = TextMutationIntentSchema.parse({
+						op: "put",
+						epoch: TEXT_FIXTURE_EPOCH,
+						paths: [path],
+						precondition: { kind: "absent" },
+						payload_hash: payload.payload_hash,
+						size: payload.size,
+					});
+					const lease = await fixture.coordinator.beginMutation(context, {
+						op: "put",
+						epoch: TEXT_FIXTURE_EPOCH,
+						paths: [path],
+						precondition: intent.precondition,
+					});
+					if (!lease.ok) throw new Error(lease.failure.kind);
+					const admission = await fixture.admissions.authorize(
+						context,
+						intent,
+						lease.lease.admission_id,
+					);
+					if (!admission.ok) throw new Error(admission.failure.kind);
+					const before = captureTextStoreState(fixture.storage);
+					const result = await fixture.store.commitText(
+						context,
+						intent,
+						admission.ticket.id,
+						payload.content,
+					);
+					expect(result).toMatchObject({
+						ok: false,
+						failure:
+							failure === "path_collision"
+								? { kind: failure, existing_path: "notes/source.md" }
+								: { kind: failure },
+					});
+					const after = captureTextStoreState(fixture.storage);
+					expect(after.files).toEqual(before.files);
+					expect(after.revisions).toEqual(before.revisions);
+					expect(after.changes).toEqual(before.changes);
+					expect(after.receipts).toEqual(before.receipts);
+					expect(after.blobRefs).toEqual(before.blobRefs);
+					expect(after.meta).toEqual(before.meta);
+					expect(after.admissions).toEqual(before.admissions);
+					expect(after.claims).toEqual(before.claims);
+				},
+				undefined,
+				undefined,
+				{
+					databaseAlertBytes: 2_000_000_000,
+					databaseLimitBytes: 2_100_000_000,
+					liveFileLimit: 1,
+					historyPressureLimitBytes: 1_000_000_000,
+					blobAlertBytes: 4_000_000_000,
+				},
+			);
+		},
+	);
 
 	it("refuses blob, append, rename, and restore publication at the live-file cap", async () => {
 		const capacityLimits = {

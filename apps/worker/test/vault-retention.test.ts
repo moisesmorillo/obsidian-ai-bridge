@@ -139,6 +139,112 @@ function uuidV7(timestamp: number): string {
 }
 
 describe("SQLite bounded durable retention", () => {
+	it.each(["ordinary_revisions", "pressure_revisions"] as const)(
+		"bounds one-at-a-time payload ownership for 49 maximum escaping-heavy %s identities",
+		async (category) => {
+			await withTextStore(async (fixture) => {
+				const content = "\u0000".repeat(1_000_000);
+				let selectedBytes = 0;
+				for (let index = 0; index < 49; index += 1)
+					selectedBytes += insertRevision(
+						fixture,
+						`payload/${String(index).padStart(2, "0")}.md`,
+						1,
+						NOW - (category === "ordinary_revisions" ? 31 : 8) * DAY,
+						content,
+					);
+				const pinnedBytes = insertRevision(
+					fixture,
+					"payload/pinned.md",
+					1,
+					NOW - 31 * DAY,
+					"pinned",
+				);
+				const floorBytes = insertRevision(
+					fixture,
+					"payload/floor.md",
+					1,
+					NOW - 7 * DAY,
+					"floor",
+				);
+				fixture.storage.sql.exec(
+					"INSERT INTO export_pins(export_id,path,rev) VALUES ('payload-pin','payload/pinned.md',1)",
+				);
+				const initialBytes = counter(fixture, "history_revisions_bytes");
+				const observer = new PublicationQueryObserver();
+				const retention = new SqliteRetentionStore(
+					fixture.storage,
+					category === "pressure_revisions"
+						? { historyPressureLimitBytes: initialBytes - selectedBytes }
+						: undefined,
+					observer,
+				);
+				let result = retention.runBatch(NOW);
+				let batches = 1;
+				while (result.more && batches < 8) {
+					result = retention.runBatch(NOW);
+					batches += 1;
+				}
+
+				const contentSelects = observer.queries.filter(
+					({ sql: statement }) =>
+						statement.startsWith("select") && statement.includes('"content"'),
+				);
+				const identitySelect = observer.queries.find(
+					({ sql: statement }) =>
+						statement.startsWith("select") &&
+						statement.includes('"revisions"."path"') &&
+						statement.includes('"revisions"."rev"') &&
+						statement.includes("limit"),
+				);
+				const maximumContentUnits = 1_000_000;
+				const activePayloadBytes = maximumContentUnits * 2;
+				const escapedJsonUtf16Bytes = (maximumContentUnits * 6 + 2) * 2;
+				const encodedJsonBytes = maximumContentUnits * 6;
+				const selectedIdentityTextBytes = 49 * (512 * 2 + 8);
+				const peakOwnedPayloadBytes =
+					activePayloadBytes +
+					escapedJsonUtf16Bytes +
+					encodedJsonBytes +
+					selectedIdentityTextBytes;
+
+				expect(batches).toBeGreaterThan(0);
+				expect(result.more).toBe(false);
+				expect(result.historyReduced).toBe(category === "pressure_revisions");
+				expect(contentSelects).toHaveLength(49);
+				expect(
+					contentSelects.every(
+						({ sql: statement, bindCount }) =>
+							statement.includes("limit ?") && bindCount === 3,
+					),
+				).toBe(true);
+				expect(identitySelect?.sql).toContain('"revisions"."path"');
+				expect(identitySelect?.sql).toContain('"revisions"."rev"');
+				expect(identitySelect?.sql).toContain('"revisions"."at" asc');
+				expect(identitySelect?.bindCount).toBe(3);
+				expect(identitySelect?.sql).not.toContain('"content"');
+				expect(peakOwnedPayloadBytes).toBeLessThanOrEqual(20_100_000);
+				expect(counter(fixture, "history_revisions_bytes")).toBe(
+					pinnedBytes + floorBytes,
+				);
+				expect(counter(fixture, "history_pressure_bytes")).toBe(
+					pinnedBytes +
+						floorBytes +
+						counter(fixture, "history_receipts_bytes") +
+						counter(fixture, "history_changes_bytes"),
+				);
+				expect(
+					fixture.storage.sql
+						.exec("SELECT path FROM revisions ORDER BY path")
+						.toArray(),
+				).toEqual([
+					{ path: "payload/floor.md" },
+					{ path: "payload/pinned.md" },
+				]);
+			});
+		},
+		60_000,
+	);
 	it("keeps rows exactly at 30 days and removes rows older than the cutoff", async () => {
 		await withTextStore(async (fixture) => {
 			const cutoff = NOW - 30 * DAY;

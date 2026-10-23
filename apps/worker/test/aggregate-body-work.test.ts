@@ -1,6 +1,9 @@
 import { env, runInDurableObject } from "cloudflare:test";
 import type { AuthorizationContext } from "@obsidian-ai-bridge/protocol";
-import { FileCommandSchema } from "@obsidian-ai-bridge/protocol";
+import {
+	FileCommandSchema,
+	VaultReadResultSchema,
+} from "@obsidian-ai-bridge/protocol";
 import { executeBlobPut } from "@worker/application/blobs";
 import { tryAcquireBodySlot } from "@worker/application/body-budget";
 import {
@@ -817,14 +820,68 @@ describe("aggregate body ownership", () => {
 			for (const item of sources.slice(0, 4)) item.resume();
 			await Promise.all(commitEntered.map((item) => item.promise));
 
-			for (const host of hosts.slice(0, 4)) {
+			for (const [index, host] of hosts.slice(0, 4).entries()) {
 				const response = await worker.fetch(
-					new Request(`https://${host}/v1/vault`),
+					new Request(
+						index < 3
+							? `https://${host}/v1/files/inline.md`
+							: `https://${host}/v1/vault`,
+						index < 3
+							? { headers: { "X-Vault-Epoch": TEXT_FIXTURE_EPOCH } }
+							: undefined,
+					),
 					env,
 				);
 				expect(response.status).toBe(200);
 				metadataResponses.push(response);
 			}
+			const mutationOwners = 4;
+			const maximumMutationPhaseBytes = 4_000_000;
+			const inlineReadOwners = 3;
+			const maximumInlineUtf16Bytes = 1_000_000 * 2;
+			const stringWindowBytes = 8_192 * 2;
+			const escapedWindowBytes = 8_192 * 6 * 2;
+			const encodedStringBytes = 8_192 * 6;
+			const responseChunkBytes = 65_536;
+			const inlineReadEncoderBytes =
+				stringWindowBytes +
+				escapedWindowBytes * 2 +
+				encodedStringBytes +
+				responseChunkBytes;
+			const safeInteger = Number.MAX_SAFE_INTEGER;
+			const maximumMetadataSummary = VaultReadResultSchema.parse({
+				epoch: TEXT_FIXTURE_EPOCH,
+				head_seq: safeInteger,
+				counts: { live: safeInteger, deleted: safeInteger },
+				limits: {
+					manifest_page: 256,
+					feed_page: 1_000,
+					text_bytes: 1_000_000,
+					blob_bytes: 25_000_000,
+				},
+				capacity: {
+					database_bytes: safeInteger,
+					database_limit_bytes: 2_000_000_000,
+					live_file_limit: 10_000,
+					history_pressure_bytes: safeInteger,
+					referenced_blob_bytes: safeInteger,
+				},
+				attention: [
+					"storage_high",
+					"capacity_exceeded",
+					"history_reduced",
+					"blob_storage_high",
+				],
+			});
+			const metadataSummaryBytes = new TextEncoder().encode(
+				JSON.stringify(maximumMetadataSummary),
+			).byteLength;
+			const metadataResponseOwnerBytes =
+				metadataSummaryBytes * 2 + responseChunkBytes;
+			const simultaneousOwnedPayloadBytes =
+				mutationOwners * maximumMutationPhaseBytes +
+				inlineReadOwners * (maximumInlineUtf16Bytes + inlineReadEncoderBytes) +
+				metadataResponseOwnerBytes;
 			const refusedRead = await worker.fetch(
 				new Request(`https://${hosts[4]}/v1/vault`),
 				env,
@@ -859,6 +916,10 @@ describe("aggregate body ownership", () => {
 
 			for (const release of commitResume) release.release();
 			mutationResponses.push(...(await Promise.all(mutationRequests)));
+			expect(mutationResponses).toHaveLength(4);
+			expect(metadataResponses).toHaveLength(4);
+			expect(metadataSummaryBytes).toBeLessThan(1_024);
+			expect(simultaneousOwnedPayloadBytes).toBeLessThan(24_000_000);
 			expect(mutationResponses.map((response) => response.status)).toEqual([
 				201, 201, 201, 201,
 			]);

@@ -75,20 +75,32 @@ async function seedRows(
 	});
 }
 
-/** Route application reads through real Durable Object RPC methods. */
+/** Route application reads through real Durable Object RPC methods and record each method start. */
 function readGateway(
 	stub: ReturnType<typeof env.VAULTS.get>,
+	recordCall: (method: string) => void = () => {},
 ): ReadVaultGateway {
 	return {
-		authorize: (readContext, intent) => stub.authorize(readContext, intent),
-		finishAdmission: (readContext, ticketId, completion) =>
-			stub.finishAdmission(readContext, ticketId, completion),
-		readVault: (readContext, admissionId) =>
-			stub.readVault(readContext, admissionId),
-		readHistoryUpper: (readContext, admissionId, path) =>
-			stub.readHistoryUpper(readContext, admissionId, path),
-		readBatch: (readContext, request, admissionId) =>
-			stub.readBatch(readContext, request, admissionId),
+		authorize: (readContext, intent) => {
+			recordCall("authorize");
+			return stub.authorize(readContext, intent);
+		},
+		finishAdmission: (readContext, ticketId, completion) => {
+			recordCall("finishAdmission");
+			return stub.finishAdmission(readContext, ticketId, completion);
+		},
+		readVault: (readContext, admissionId) => {
+			recordCall("readVault");
+			return stub.readVault(readContext, admissionId);
+		},
+		readHistoryUpper: (readContext, admissionId, path) => {
+			recordCall("readHistoryUpper");
+			return stub.readHistoryUpper(readContext, admissionId, path);
+		},
+		readBatch: (readContext, request, admissionId) => {
+			recordCall("readBatch");
+			return stub.readBatch(readContext, request, admissionId);
+		},
 	};
 }
 
@@ -244,13 +256,25 @@ describe("real mutation interleavings during bounded reads", () => {
 			restorePath,
 			renameSource,
 		]);
-		const gateway = readGateway(stub);
+		const readRpcCalls: string[] = [];
+		const gateway = readGateway(stub, (method) => readRpcCalls.push(method));
 		const first = await readManifest(gateway, context);
+		expect(readRpcCalls).toEqual([
+			"authorize",
+			"readVault",
+			"readBatch",
+			"readBatch",
+			"readBatch",
+			"readBatch",
+		]);
 		expect(first.ok).toBe(true);
 		if (!first.ok) return;
 		expect(first.body.entries).toHaveLength(256);
 		expect(first.body.head_seq).toBe(260);
 		expect(first.body.next_page).not.toBeNull();
+		await first.finish?.("settled");
+		expect(readRpcCalls.at(-1)).toBe("finishAdmission");
+		expect(readRpcCalls).toHaveLength(7);
 
 		await commitText(
 			stub,

@@ -299,13 +299,40 @@ describe("aggregate body ownership", () => {
 		for (const host of hosts) await initialize(host);
 		let pendingPuts = 0;
 		let maxPendingPuts = 0;
-		let putCalls = 0;
-		/** Forward native operations unchanged and observe pending native writes only. */
+		const r2Calls = { head: 0, get: 0, put: 0, delete: 0, list: 0 };
+		const rpcCalls = new Map<string, number>();
+		/** Count each actual Durable Object RPC by host and method for upload admission. */
+		function observeVault(host: string): ReturnType<typeof env.VAULTS.get> {
+			const stub = env.VAULTS.get(env.VAULTS.idFromName(host));
+			return new Proxy(stub, {
+				/** Count one forwarded RPC method without changing its arguments or result. */
+				get(target, property) {
+					const method = Reflect.get(target, property, target);
+					if (typeof method !== "function" || typeof property !== "string")
+						return method;
+					return (...args: unknown[]) => {
+						const key = `${host}:${property}`;
+						rpcCalls.set(key, (rpcCalls.get(key) ?? 0) + 1);
+						return Reflect.apply(method, target, args);
+					};
+				},
+			});
+		}
+		/** Forward native operations and count storage calls separately from pending writes. */
 		const bucket: R2Bucket = {
-			head: (...args) => env.R2_BUCKET.head(...args),
-			get: (...args: Parameters<R2Bucket["get"]>) => env.R2_BUCKET.get(...args),
+			/** Count one native metadata lookup and forward the exact key. */
+			head: (...args) => {
+				r2Calls.head += 1;
+				return env.R2_BUCKET.head(...args);
+			},
+			/** Count one native object read and forward the exact request. */
+			get: (...args: Parameters<R2Bucket["get"]>) => {
+				r2Calls.get += 1;
+				return env.R2_BUCKET.get(...args);
+			},
+			/** Count native uploads and measure concurrent pending PUT calls. */
 			put: async (...args) => {
-				putCalls++;
+				r2Calls.put += 1;
 				pendingPuts++;
 				maxPendingPuts = Math.max(maxPendingPuts, pendingPuts);
 				try {
@@ -314,10 +341,20 @@ describe("aggregate body ownership", () => {
 					pendingPuts--;
 				}
 			},
-			delete: (...args) => env.R2_BUCKET.delete(...args),
-			list: (...args) => env.R2_BUCKET.list(...args),
+			/** Count one native object delete and forward the exact request. */
+			delete: (...args) => {
+				r2Calls.delete += 1;
+				return env.R2_BUCKET.delete(...args);
+			},
+			/** Count one native listing request and forward its options. */
+			list: (...args) => {
+				r2Calls.list += 1;
+				return env.R2_BUCKET.list(...args);
+			},
+			/** Forward unused multipart creation without changing bucket behavior. */
 			createMultipartUpload: (...args) =>
 				env.R2_BUCKET.createMultipartUpload(...args),
+			/** Forward unused multipart resume without changing bucket behavior. */
 			resumeMultipartUpload: (...args) =>
 				env.R2_BUCKET.resumeMultipartUpload(...args),
 		};
@@ -330,10 +367,7 @@ describe("aggregate body ownership", () => {
 		const workers = sources.map(() =>
 			createWorker(
 				identity,
-				(bindings, request) =>
-					bindings.VAULTS.get(
-						bindings.VAULTS.idFromName(new URL(request.url).host),
-					),
+				(_bindings, request) => observeVault(new URL(request.url).host),
 				() => new R2BlobStore(bucket),
 			),
 		);
@@ -393,7 +427,7 @@ describe("aggregate body ownership", () => {
 					sources: sources.map((item) => item.stats()),
 					pendingPuts,
 					maxPendingPuts,
-					putCalls,
+					r2Calls,
 				}),
 			);
 		} finally {
@@ -405,7 +439,27 @@ describe("aggregate body ownership", () => {
 			201, 201, 201, 201,
 		]);
 		expect(pendingPuts).toBe(0);
-		expect(putCalls).toBe(4);
+		expect(r2Calls).toEqual({
+			head: 4,
+			get: 0,
+			put: 4,
+			delete: 0,
+			list: 0,
+		});
+		for (const host of hosts.slice(0, 4)) {
+			expect(
+				Object.fromEntries(
+					[...rpcCalls]
+						.filter(([key]) => key.startsWith(`${host}:`))
+						.map(([key, count]) => [key.slice(host.length + 1), count]),
+				),
+			).toEqual({
+				beginMutation: 1,
+				authorizeBlob: 1,
+				commitBlob: 1,
+				finishAdmission: 1,
+			});
+		}
 	}, 15_000);
 	it.each(["rename", "restore"] as const)(
 		"shares slots across inline PUT, blob PUT, append, and %s",
@@ -517,6 +571,12 @@ describe("aggregate body ownership", () => {
 			failureUnits: number;
 			inputBytes: number;
 		}[] = [];
+		const rpcCalls = {
+			beginMutation: 0,
+			authorize: 0,
+			commitText: 0,
+			finishAdmission: 0,
+		};
 		for (const host of hosts) {
 			const stub = env.VAULTS.get(env.VAULTS.idFromName(host));
 			await runInDurableObject(stub, async (_instance, state) => {
@@ -547,14 +607,24 @@ describe("aggregate body ownership", () => {
 			const stub = env.VAULTS.get(env.VAULTS.idFromName(hosts[index] ?? ""));
 			const authority: TextVaultGateway = {
 				getCurrentEpoch: (...args) => stub.getCurrentEpoch(...args),
-				beginMutation: (...args) => stub.beginMutation(...args),
-				authorize: (...args) => stub.authorize(...args),
+				beginMutation: (...args) => {
+					rpcCalls.beginMutation += 1;
+					return stub.beginMutation(...args);
+				},
+				authorize: (...args) => {
+					rpcCalls.authorize += 1;
+					return stub.authorize(...args);
+				},
 				authorizeBlob: (...args) => stub.authorizeBlob(...args),
 				commitBlob: (...args) => stub.commitBlob(...args),
 				readBlobMetadata: (...args) => stub.readBlobMetadata(...args),
 				readText: (...args) => stub.readText(...args),
-				finishAdmission: (...args) => stub.finishAdmission(...args),
+				finishAdmission: (...args) => {
+					rpcCalls.finishAdmission += 1;
+					return stub.finishAdmission(...args);
+				},
 				commitText: async (...args) => {
+					rpcCalls.commitText += 1;
 					const result = await stub.commitText(...args);
 					expect(result).toMatchObject({
 						ok: false,
@@ -592,6 +662,12 @@ describe("aggregate body ownership", () => {
 		for (const item of sources.slice(0, 4)) item.resume();
 		try {
 			await Promise.all(entered.map((item) => item.promise));
+			expect(rpcCalls).toEqual({
+				beginMutation: 4,
+				authorize: 4,
+				commitText: 4,
+				finishAdmission: 0,
+			});
 			expect(observed).toHaveLength(4);
 			for (const item of observed)
 				expect(item).toEqual({
@@ -599,6 +675,32 @@ describe("aggregate body ownership", () => {
 					failureUnits: 1_000_000,
 					inputBytes: 1_000_000,
 				});
+			const readWorker = createWorker(
+				identity,
+				(bindings, request) =>
+					bindings.VAULTS.get(
+						bindings.VAULTS.idFromName(new URL(request.url).host),
+					),
+				(bindings) => new R2BlobStore(bindings.R2_BUCKET),
+			);
+			const metadataResponses = await Promise.all(
+				hosts
+					.slice(0, 4)
+					.map((host) =>
+						readWorker.fetch(new Request(`https://${host}/v1/vault`), env),
+					),
+			);
+			expect(metadataResponses.map((response) => response.status)).toEqual([
+				200, 200, 200, 200,
+			]);
+			const fifthRead = await readWorker.fetch(
+				new Request(`https://${hosts[4]}/v1/vault`),
+				env,
+			);
+			expect(fifthRead.status).toBe(429);
+			expect(fifthRead.headers.get("Retry-After")).toBe("1");
+			await fifthRead.text();
+			for (const response of metadataResponses) await response.body?.cancel();
 			const fifth = requests[4];
 			if (!fifth) throw new Error("Expected fifth request");
 			const denied = await executeTextMutation(
@@ -629,6 +731,12 @@ describe("aggregate body ownership", () => {
 			await Promise.all(uploads);
 		}
 		const results = await Promise.all(uploads);
+		expect(rpcCalls).toEqual({
+			beginMutation: 4,
+			authorize: 4,
+			commitText: 4,
+			finishAdmission: 4,
+		});
 		for (const result of results)
 			expect(result).toMatchObject({
 				ok: false,

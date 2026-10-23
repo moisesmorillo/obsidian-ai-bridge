@@ -76,6 +76,7 @@ export class SqliteSearchStore {
 				.all()[0]?.value;
 			if (!epoch) throw new Error("Missing vault epoch");
 			const phrase = `"${parsed.query.replaceAll('"', '""')}"`;
+			// SQLite lower folds ASCII extension letters to match the protocol classifier.
 			const rows = tx
 				.select({
 					path: files.path,
@@ -90,7 +91,7 @@ export class SqliteSearchStore {
 						sql`${filesFts} MATCH ${phrase}`,
 						eq(files.deleted, 0),
 						eq(files.kind, "text"),
-						sql`substr(${files.path}, -3) = '.md'`,
+						sql`substr(lower(${files.path}), -3) = '.md'`,
 					),
 				)
 				.orderBy(sql`bm25(${filesFts})`, sql`${files.path} COLLATE BINARY`)
@@ -105,7 +106,7 @@ export class SqliteSearchStore {
 						and(
 							eq(files.deleted, 0),
 							eq(files.kind, "text"),
-							sql`substr(${files.path}, -3) = '.md'`,
+							sql`substr(lower(${files.path}), -3) = '.md'`,
 						),
 					)
 					.all()[0]?.count ?? 0;
@@ -118,7 +119,7 @@ export class SqliteSearchStore {
 							eq(files.deleted, 0),
 							eq(files.kind, "blob"),
 							sql`${files.size} > 1000000`,
-							sql`substr(${files.path}, -3) = '.md'`,
+							sql`substr(lower(${files.path}), -3) = '.md'`,
 						),
 					)
 					.all()[0]?.count ?? 0;

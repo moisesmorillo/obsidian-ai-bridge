@@ -34,6 +34,15 @@ function barrier() {
 	return { reached, held, arrive, release };
 }
 
+/** Build every ASCII letter-case combination of a file extension. */
+function extensionCaseVariants(extension: string): string[] {
+	return Array.from({ length: 1 << extension.length }, (_, mask) =>
+		Array.from(extension, (letter, index) =>
+			mask & (1 << index) ? letter.toUpperCase() : letter,
+		).join(""),
+	);
+}
+
 /** Hash exact UTF-8 text for real native mutation descriptors. */
 async function hashText(value: string): Promise<string> {
 	const digest = await crypto.subtle.digest(
@@ -285,6 +294,233 @@ describe("native vault search", () => {
 		await stub.finishAdmission(context, authorized.ticket.id, "settled");
 	});
 
+	it("indexes all Markdown case variants and excludes all Canvas variants", async () => {
+		const stub = env.VAULTS.get(env.VAULTS.newUniqueId());
+		await runInDurableObject(stub, async (_instance, state) => {
+			clearTestVault(state.storage);
+			initializeVaultStorage(
+				state.storage,
+				() => epoch,
+				() => 10_000,
+			);
+		});
+		let index = 0;
+		const markdownPaths: string[] = [];
+		for (const extension of extensionCaseVariants("md")) {
+			const path = `notes/markdown-${index}.${extension}`;
+			markdownPaths.push(path);
+			await putText(
+				stub,
+				path,
+				"matrixneedle markdown",
+				undefined,
+				`search-matrix-put-${index++}`,
+			);
+		}
+		for (const extension of extensionCaseVariants("canvas")) {
+			const path = `notes/canvas-${index}.${extension}`;
+			await putText(
+				stub,
+				path,
+				"matrixneedle canvas",
+				undefined,
+				`search-matrix-put-${index++}`,
+			);
+		}
+		const response = await searchNative(stub, "matrixneedle", 50);
+		expect(response).toMatchObject({
+			ok: true,
+			body: {
+				indexed_files: 4,
+				unindexed_large_files: 0,
+				results: markdownPaths.map((path) => expect.objectContaining({ path })),
+			},
+		});
+	});
+
+	it("keeps all extension case variants classified through every text lifecycle transition", async () => {
+		const stub = env.VAULTS.get(env.VAULTS.newUniqueId());
+		await runInDurableObject(stub, async (_instance, state) => {
+			clearTestVault(state.storage);
+			initializeVaultStorage(
+				state.storage,
+				() => epoch,
+				() => 10_000,
+			);
+		});
+		const variants = [
+			...extensionCaseVariants("md"),
+			...extensionCaseVariants("canvas"),
+		];
+		const entries = variants.map((extension, index) => ({
+			path: `notes/source-${index}.${extension}`,
+			moved: `notes/moved-${index}.${extension}`,
+		}));
+		const markdownOriginalPaths = new Set(
+			entries
+				.filter((entry) => entry.path.toLowerCase().endsWith(".md"))
+				.map((entry) => entry.path),
+		);
+		const markdownMovedPaths = new Set(
+			entries
+				.filter((entry) => entry.moved.toLowerCase().endsWith(".md"))
+				.map((entry) => entry.moved),
+		);
+
+		for (const [index, entry] of entries.entries())
+			await putText(
+				stub,
+				entry.path,
+				`phasecreated ${index}`,
+				undefined,
+				`case-life-create-${index}`,
+			);
+		const createdSearch = await searchNative(stub, "phasecreated", 50);
+		expect(createdSearch).toMatchObject({
+			ok: true,
+			body: { indexed_files: 4, unindexed_large_files: 0 },
+		});
+		if (createdSearch.ok)
+			expect(
+				new Set(createdSearch.body.results.map((result) => result.path)),
+			).toEqual(markdownOriginalPaths);
+
+		for (const [index, entry] of entries.entries())
+			await putText(
+				stub,
+				entry.path,
+				`phaseupdated ${index}`,
+				1,
+				`case-life-update-${index}`,
+			);
+		const updatedSearch = await searchNative(stub, "phaseupdated", 50);
+		expect(updatedSearch).toMatchObject({
+			ok: true,
+			body: { indexed_files: 4 },
+		});
+		if (updatedSearch.ok)
+			expect(
+				new Set(updatedSearch.body.results.map((result) => result.path)),
+			).toEqual(markdownOriginalPaths);
+
+		const appendContent = " phaseappended";
+		for (const [index, entry] of entries.entries()) {
+			const intent = {
+				op: "append" as const,
+				epoch,
+				paths: [entry.path],
+				precondition: { kind: "none" as const },
+				payload_hash: await hashText(appendContent),
+				size: new TextEncoder().encode(appendContent).byteLength,
+			};
+			await commitCommand(
+				stub,
+				FileCommandSchema.parse({
+					op: "append",
+					intent,
+					content: appendContent,
+					key: `case-life-append-${index}`,
+				}),
+			);
+		}
+		const appendedSearch = await searchNative(stub, "phaseappended", 50);
+		expect(appendedSearch).toMatchObject({
+			ok: true,
+			body: { indexed_files: 4 },
+		});
+		if (appendedSearch.ok)
+			expect(
+				new Set(appendedSearch.body.results.map((result) => result.path)),
+			).toEqual(markdownOriginalPaths);
+
+		for (const [index, entry] of entries.entries()) {
+			const body = { to: entry.moved };
+			const payload = JSON.stringify(body);
+			await commitCommand(
+				stub,
+				FileCommandSchema.parse({
+					op: "rename",
+					intent: {
+						op: "rename",
+						epoch,
+						paths: [entry.path, entry.moved],
+						precondition: { kind: "match", etag: formatETag(epoch, 3) },
+						payload_hash: await hashText(payload),
+						size: new TextEncoder().encode(payload).byteLength,
+					},
+					body,
+					key: `case-life-rename-${index}`,
+				}),
+			);
+		}
+		const renamedSearch = await searchNative(stub, "phaseappended", 50);
+		expect(renamedSearch).toMatchObject({
+			ok: true,
+			body: { indexed_files: 4 },
+		});
+		if (renamedSearch.ok)
+			expect(
+				new Set(renamedSearch.body.results.map((result) => result.path)),
+			).toEqual(markdownMovedPaths);
+
+		for (const [index, entry] of entries.entries())
+			await deleteText(stub, entry.moved, 1, `case-life-delete-${index}`);
+		const deletedSearch = await searchNative(stub, "phaseappended", 50);
+		expect(deletedSearch).toMatchObject({
+			ok: true,
+			body: { indexed_files: 0, results: [] },
+		});
+
+		for (const [index, entry] of entries.entries())
+			await putText(
+				stub,
+				entry.moved,
+				`phaserecreated ${index}`,
+				2,
+				`case-life-recreate-${index}`,
+			);
+		const recreatedSearch = await searchNative(stub, "phaserecreated", 50);
+		expect(recreatedSearch).toMatchObject({
+			ok: true,
+			body: { indexed_files: 4 },
+		});
+		if (recreatedSearch.ok)
+			expect(
+				new Set(recreatedSearch.body.results.map((result) => result.path)),
+			).toEqual(markdownMovedPaths);
+
+		for (const [index, entry] of entries.entries()) {
+			await deleteText(stub, entry.moved, 3, `case-life-delete-again-${index}`);
+			const body = { source_rev: 1, as_conflict_copy: false };
+			const payload = JSON.stringify(body);
+			await commitCommand(
+				stub,
+				FileCommandSchema.parse({
+					op: "restore",
+					intent: {
+						op: "restore",
+						epoch,
+						paths: [entry.moved],
+						precondition: { kind: "match", etag: formatETag(epoch, 4) },
+						payload_hash: await hashText(payload),
+						size: new TextEncoder().encode(payload).byteLength,
+					},
+					body,
+					key: `case-life-restore-${index}`,
+				}),
+			);
+		}
+		const restoredSearch = await searchNative(stub, "phaseappended", 50);
+		expect(restoredSearch).toMatchObject({
+			ok: true,
+			body: { indexed_files: 4 },
+		});
+		if (restoredSearch.ok)
+			expect(
+				new Set(restoredSearch.body.results.map((result) => result.path)),
+			).toEqual(markdownMovedPaths);
+	}, 30_000);
+
 	it("tracks append, rename across Markdown and Canvas, delete, recreate, and restore", async () => {
 		const stub = env.VAULTS.get(env.VAULTS.newUniqueId());
 		await runInDurableObject(stub, async (_instance, state) => {
@@ -295,7 +531,7 @@ describe("native vault search", () => {
 				() => 10_000,
 			);
 		});
-		const path = "notes/lifecycle.md";
+		const path = "notes/lifecycle.Md";
 		await putText(
 			stub,
 			path,
@@ -326,7 +562,7 @@ describe("native vault search", () => {
 			body: { results: [{ path, etag: `"${epoch}.2"` }] },
 		});
 
-		const canvasPath = "notes/lifecycle.canvas";
+		const canvasPath = "notes/lifecycle.CaNvAs";
 		const renameCanvasBody = { to: canvasPath };
 		const renameCanvasBytes = JSON.stringify(renameCanvasBody);
 		await commitCommand(
@@ -350,7 +586,7 @@ describe("native vault search", () => {
 			body: { results: [], indexed_files: 0 },
 		});
 
-		const markdownPath = "notes/lifecycle-return.md";
+		const markdownPath = "notes/lifecycle-return.mD";
 		const renameBackBody = { to: markdownPath };
 		const renameBackBytes = JSON.stringify(renameBackBody);
 		await commitCommand(
@@ -392,7 +628,7 @@ describe("native vault search", () => {
 			body: { results: [{ path: markdownPath, etag: `"${epoch}.3"` }] },
 		});
 
-		const restorePath = "notes/lifecycle-restore.md";
+		const restorePath = "notes/lifecycle-restore.MD";
 		await putText(
 			stub,
 			restorePath,

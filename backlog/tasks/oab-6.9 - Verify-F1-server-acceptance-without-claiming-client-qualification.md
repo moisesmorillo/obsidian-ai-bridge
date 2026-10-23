@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: 2026-10-15 00:38
-updated_date: '2026-10-23T22:10:00Z'
+updated_date: '2026-10-23T22:27:00Z'
 labels:
   - F1
 dependencies:
@@ -65,4 +65,12 @@ Focused results: protocol file tests passed (120); storage, admission, publicati
 Test-first exception: several characterization assertions for already-applied HTTP behavior and the rename transition sequence passed on first run. Existing tests now assert enriched live and tombstone failure details. The full check first found stale native assertions that expected only the failure kind; those assertions now verify canonical current metadata.
 
 The pre-existing extension classifier edits remain in shared protocol and Worker source files. This Slice 1 commit includes them because those source and test files overlap with the failure and rename changes. README changes remain outside this commit. Slice 2 parity tests and Slice 3 coverage mapping, unused API removal, and README amendments remain incomplete. Task status and acceptance criteria remain open.
+
+Slice 2 implementation completed. Reused the existing canonical classifier and added exhaustive case-matrix coverage. The matrix tests all four Markdown and all 64 Canvas ASCII case combinations. HTTP tests write 1,000,000-byte and 1,000,001-byte files for every extension case. They verify hashes, manifest kind and large fields, representative exact GET and ranges, FTS membership, and search coverage counts. Native mutations cover create, update, append, rename, delete, recreate, and restore across all 68 cases. The HTTP near-match test confirms `.md.backup` remains a blob and stays outside search coverage.
+
+Found one remaining case mismatch in `usesBlobStorage` and three case-sensitive Markdown suffix predicates in SQLite search. RED for the extension policy test showed 66 failures across uppercase and mixed-case suffixes. RED for native search showed only one of four Markdown variants in search results and `indexed_files`. RED for HTTP showed an uppercase `.Md` inline write returned 400. Updated the application to use the protocol classifier. Updated SQLite suffix predicates to fold ASCII case.
+
+Test-first exceptions: the exhaustive protocol classifier test and the 68-case lifecycle test characterize the pre-existing classifier and mutation policy, so they passed on first run after implementation began. The HTTP matrix first exceeded Vitest’s 5-second default; it then exceeded 60 seconds because it repeated full GETs for every path. The test now checks authoritative hashes and metadata for every case and exact body and range reads for six representative cases. It passes in about 12 seconds. Full `bun run check` first exposed the native lifecycle test’s 5-second default timeout. The test now uses 30 seconds, and the full check passes.
+
+Final validation: `bun run docs:check` passed. `bun run check` passed with 52 tooling, 2 plugin, 277 protocol, 761 native Worker, and 112 HTTP tests, 1,204 total. Slice 3 remains incomplete. OAB-6.9 status stays In Progress and acceptance criteria stay unchecked. The pre-existing README change stays uncommitted.
 <!-- SECTION:NOTES:END -->

@@ -76,6 +76,15 @@ const readResponse = {
 	truncated: false,
 } as const;
 
+/** Builds every ASCII letter-case combination of a file extension. */
+function extensionCaseVariants(extension: string): string[] {
+	return Array.from({ length: 1 << extension.length }, (_, mask) =>
+		Array.from(extension, (letter, index) =>
+			mask & (1 << index) ? letter.toUpperCase() : letter,
+		).join(""),
+	);
+}
+
 /** Combines encoded chunks for test assertions without using Node-only Buffer APIs. */
 function concatenateChunks(chunks: Iterable<Uint8Array>): Uint8Array {
 	const values = [...chunks];
@@ -107,11 +116,18 @@ function encodedFailure(
 }
 
 describe("file extension classification", () => {
-	it("matches Markdown and Canvas extensions without changing path identity", () => {
-		expect(classifyFilePath("notes/UPPER.MD")).toBe("markdown");
-		expect(classifyFilePath("notes/mIxEd.CaNvAs")).toBe("canvas");
-		expect(classifyFilePath("notes/file.md.backup")).toBe("other");
-		expect(classifyFilePath("notes/no-extension")).toBe("other");
+	it("classifies every ASCII case variant and rejects near matches", () => {
+		for (const extension of extensionCaseVariants("md"))
+			expect(classifyFilePath(`notes/file.${extension}`)).toBe("markdown");
+		for (const extension of extensionCaseVariants("canvas"))
+			expect(classifyFilePath(`notes/file.${extension}`)).toBe("canvas");
+		for (const path of [
+			"notes/file.md.backup",
+			"notes/file.md2",
+			"notes/file.canvas.backup",
+			"notes/no-extension",
+		])
+			expect(classifyFilePath(path)).toBe("other");
 	});
 });
 

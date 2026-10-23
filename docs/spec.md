@@ -240,6 +240,8 @@ Versions 4 and 5 do not change relational table DDL. Versions 1 through 4 remain
 
 ### 5.4 Storage rule for text vs blob
 
+The final file extension selects Markdown or Canvas behavior. The ASCII letters in `.md` and `.canvas` match without case distinctions. This rule does not change path identity. Near matches such as `.md.backup` and `.canvas2` are other file types.
+
 - `.md` and `.canvas` files ≤ 1,000,000 bytes are stored inline (`kind='text'`) and `.md` content is indexed (`.canvas` JSON is stored inline but not indexed).
 - Every other file, and any `.md`/`.canvas` file > 1,000,000 bytes, is `kind='blob'`: bytes in R2, metadata in SQLite, **not indexed**, readable by range through the Worker. `large` is true only for Markdown or Canvas stored as a blob above 1,000,000 bytes. The plugin panel shows such a file as "synced, not searchable".
 - An `update` or `append` whose resulting text would exceed 1,000,000 bytes fails with `413 text_too_large`. The note must be split by the user or agent. This keeps every text commit atomic in SQLite.
@@ -498,10 +500,10 @@ KV propagation is eventually consistent (60 s or more), so the DO is the authori
 
 ## 10. Search contract
 
-- Index: `files_fts` over `content` of live `kind='text'` **`.md`** rows (`.canvas` is stored inline but not indexed); tokenizer `trigram case_sensitive 0 remove_diacritics 1`. Rows are deleted/inserted in the same transaction as the file mutation, so the index is never stale relative to `head_seq`.
+- Index: `files_fts` over `content` of live `kind='text'` Markdown rows whose final `.md` extension matches without ASCII case distinctions (`.canvas` is stored inline but not indexed). Near suffixes such as `.md.backup` are other file types. The tokenizer is `trigram case_sensitive 0 remove_diacritics 1`. Rows are deleted/inserted in the same transaction as the file mutation, so the index is never stale relative to `head_seq`.
 - Semantics: **literal substring match**, case-insensitive, diacritic-insensitive, no stemming, no operators. The query is sent as a single quoted FTS phrase with internal `"` doubled, so `AND`, `OR`, `*`, `-`, `:` and quotes are literal.
 - Limits: query length is 3–200 Unicode code points (`400 query_too_short` / `query_too_long`); `limit` is 1–50, default 20. Results use ascending native `bm25` score, with SQLite binary path order for ties. Each plain-text snippet uses at most 64 FTS tokens and 1,024 Unicode code points. ETags use the response epoch.
-- `GET /v1/search?q=<query>&limit=<integer>` returns `{epoch, results, indexed_files, unindexed_large_files}`. `indexed_files` counts live indexed Markdown rows. `unindexed_large_files` counts live Markdown blob rows above 1,000,000 bytes. Canvas and other attachments do not count.
+- `GET /v1/search?q=<query>&limit=<integer>` returns `{epoch, results, indexed_files, unindexed_large_files}`. Both coverage counts use the same case-insensitive final-extension rule as storage. `indexed_files` counts live indexed Markdown rows. `unindexed_large_files` counts live Markdown blob rows above 1,000,000 bytes. Canvas and other attachments do not count.
 - The route rejects missing or duplicate `q`, duplicate or unknown parameters, and noncanonical integer limits with `400 invalid_request`. It preserves query spaces, punctuation, quotes, and Unicode without trimming or normalization.
 - Acceptance examples (§13 AC-15): `bge-m3`, `wrangler.jsonc`, `If-Match`, `/v1/files`, `cafe` matching `café`, `"quoted"`, `AND` as a literal word, a two-character query rejected.
 - Path/title search: `list_notes(prefix)` and client-side filtering; no `LIKE` on the server (DO limits patterns to 50 bytes and the diacritic-folded index does not accelerate `LIKE`).

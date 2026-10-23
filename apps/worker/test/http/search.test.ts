@@ -10,6 +10,15 @@ import testWorker from "@worker/test-fixtures/http-worker";
 import { TEXT_FIXTURE_EPOCH } from "@worker/test-fixtures/text-files";
 import { beforeEach, describe, expect, it } from "vitest";
 
+/** Build every ASCII letter-case combination of a file extension. */
+function extensionCaseVariants(extension: string): string[] {
+	return Array.from({ length: 1 << extension.length }, (_, mask) =>
+		Array.from(extension, (letter, index) =>
+			mask & (1 << index) ? letter.toUpperCase() : letter,
+		).join(""),
+	);
+}
+
 /** Hash exact blob bytes for the AC-16 search-exclusion request. */
 async function digest(bytes: Uint8Array): Promise<string> {
 	const hash = await crypto.subtle.digest(
@@ -131,6 +140,194 @@ describe("literal search HTTP route", () => {
 		});
 	});
 
+	it("applies exact size, storage, range, FTS, and coverage rules to every extension case", async () => {
+		const inlineText = `matrixneedle${"x".repeat(1_000_000 - "matrixneedle".length)}`;
+		const inlineBytes = new TextEncoder().encode(inlineText);
+		const largeBytes = new Uint8Array(1_000_001).fill(0x78);
+		largeBytes.set(new TextEncoder().encode("matrixneedle"), 0);
+		largeBytes[largeBytes.length - 1] = 0x21;
+		const inlineHash = await digest(inlineBytes);
+		const largeHash = await digest(largeBytes);
+		const variants = [
+			...extensionCaseVariants("md"),
+			...extensionCaseVariants("canvas"),
+		];
+		const expectedRows: {
+			path: string;
+			kind: string;
+			size: number;
+			hash: string;
+			large: boolean;
+		}[] = [];
+		const markdownInlinePaths: string[] = [];
+
+		for (const [index, extension] of variants.entries()) {
+			const inlinePath = `matrix/inline-${index}.${extension}`;
+			const inlineUrl = `https://worker.invalid/v1/files/${inlinePath}`;
+			const inlineWrite = await SELF.fetch(inlineUrl, {
+				method: "PUT",
+				headers: { "If-None-Match": "*", "X-Vault-Epoch": TEXT_FIXTURE_EPOCH },
+				body: inlineBytes.slice(),
+			});
+			expect(inlineWrite.status, inlinePath).toBe(201);
+			await inlineWrite.text();
+			expectedRows.push({
+				path: inlinePath,
+				kind: "text",
+				size: 1_000_000,
+				hash: inlineHash,
+				large: false,
+			});
+			if (extension.toLowerCase() === "md")
+				markdownInlinePaths.push(inlinePath);
+
+			const largePath = `matrix/large-${index}.${extension}`;
+			const largeUrl = `https://worker.invalid/v1/files/${largePath}`;
+			const largeWrite = await SELF.fetch(largeUrl, {
+				method: "PUT",
+				headers: {
+					"If-None-Match": "*",
+					"X-Vault-Epoch": TEXT_FIXTURE_EPOCH,
+					"X-Content-SHA256": largeHash,
+					"X-Content-Size": "1000001",
+				},
+				body: largeBytes.slice(),
+			});
+			expect(largeWrite.status, largePath).toBe(201);
+			await largeWrite.text();
+			expectedRows.push({
+				path: largePath,
+				kind: "blob",
+				size: 1_000_001,
+				hash: largeHash,
+				large: true,
+			});
+		}
+
+		for (const extension of ["md", "MD", "mD", "canvas", "CANVAS", "cAnVaS"]) {
+			const index = variants.indexOf(extension);
+			const inlineUrl = `https://worker.invalid/v1/files/matrix/inline-${index}.${extension}`;
+			const inlineRead = await SELF.fetch(inlineUrl);
+			expect(inlineRead.status).toBe(200);
+			const inlineBody = (await inlineRead.json()) as {
+				content: string;
+				hash: string;
+				kind: string;
+				size: number;
+			};
+			expect(inlineBody).toMatchObject({
+				content: inlineText,
+				hash: inlineHash,
+				kind: "text",
+				size: 1_000_000,
+			});
+			expect(new TextEncoder().encode(inlineBody.content)).toEqual(inlineBytes);
+
+			const largeUrl = `https://worker.invalid/v1/files/matrix/large-${index}.${extension}`;
+			const firstRange = await SELF.fetch(largeUrl, {
+				headers: { Range: "bytes=0-999999" },
+			});
+			expect(firstRange.status).toBe(206);
+			expect(firstRange.headers.get("X-File-Large")).toBe("true");
+			const firstBytes = new Uint8Array(await firstRange.arrayBuffer());
+			const lastRange = await SELF.fetch(largeUrl, {
+				headers: { Range: "bytes=1000000-1000000" },
+			});
+			expect(lastRange.status).toBe(206);
+			const lastBytes = new Uint8Array(await lastRange.arrayBuffer());
+			expect(firstBytes).toEqual(largeBytes.subarray(0, 1_000_000));
+			expect(lastBytes).toEqual(largeBytes.subarray(1_000_000));
+		}
+
+		const nearPath = "matrix/near.md.backup";
+		const nearBytes = new TextEncoder().encode("near");
+		const nearWrite = await SELF.fetch(
+			`https://worker.invalid/v1/files/${nearPath}`,
+			{
+				method: "PUT",
+				headers: {
+					"If-None-Match": "*",
+					"X-Vault-Epoch": TEXT_FIXTURE_EPOCH,
+					"X-Content-SHA256": await digest(nearBytes),
+					"X-Content-Size": String(nearBytes.byteLength),
+				},
+				body: nearBytes,
+			},
+		);
+		expect(nearWrite.status).toBe(201);
+		await nearWrite.text();
+		const nearHash = await digest(nearBytes);
+		const nearRead = await SELF.fetch(
+			`https://worker.invalid/v1/files/${nearPath}`,
+		);
+		expect(nearRead.headers.get("X-File-Large")).toBe("false");
+		expect(new Uint8Array(await nearRead.arrayBuffer())).toEqual(nearBytes);
+		expectedRows.push({
+			path: nearPath,
+			kind: "blob",
+			size: 4,
+			hash: nearHash,
+			large: false,
+		});
+
+		const manifest = await SELF.fetch("https://worker.invalid/v1/manifest");
+		expect(manifest.status).toBe(200);
+		const manifestBody = (await manifest.json()) as {
+			entries: {
+				path: string;
+				kind: string;
+				size: number;
+				hash: string;
+				large: boolean;
+			}[];
+		};
+		expect(manifestBody.entries).toHaveLength(expectedRows.length);
+		const entryByPath = new Map(
+			manifestBody.entries.map((entry) => [entry.path, entry]),
+		);
+		for (const expected of expectedRows)
+			expect(entryByPath.get(expected.path)).toMatchObject(expected);
+
+		const search = await SELF.fetch(
+			"https://worker.invalid/v1/search?q=matrixneedle&limit=50",
+		);
+		expect(search.status).toBe(200);
+		const searchBody = (await search.json()) as {
+			results: { path: string }[];
+			indexed_files: number;
+			unindexed_large_files: number;
+		};
+		expect(searchBody).toMatchObject({
+			indexed_files: 4,
+			unindexed_large_files: 4,
+		});
+		expect(new Set(searchBody.results.map((entry) => entry.path))).toEqual(
+			new Set(markdownInlinePaths),
+		);
+
+		const stub = env.VAULTS.get(env.VAULTS.idFromName("worker.invalid"));
+		await runInDurableObject(stub, (_instance, state) => {
+			const rows = state.storage.sql
+				.exec("SELECT path,kind,size,hash FROM files ORDER BY path")
+				.toArray();
+			expect(rows).toHaveLength(expectedRows.length);
+			expect(rows).toEqual(
+				expectedRows
+					.map(({ path, kind, size, hash }) => ({ path, kind, size, hash }))
+					.sort((left, right) =>
+						left.path < right.path ? -1 : left.path > right.path ? 1 : 0,
+					),
+			);
+			const indexed = state.storage.sql
+				.exec("SELECT path FROM files_fts ORDER BY path")
+				.toArray();
+			expect(indexed).toHaveLength(4);
+			expect(indexed.map((row) => row.path).sort()).toEqual(
+				markdownInlinePaths.sort(),
+			);
+		});
+	}, 60_000);
+
 	it("uses the default 20 limit and accepts the maximum 50 limit", async () => {
 		const stub = env.VAULTS.get(env.VAULTS.idFromName("worker.invalid"));
 		await runInDurableObject(stub, (_instance, state) => {
@@ -166,7 +363,7 @@ describe("literal search HTTP route", () => {
 	});
 
 	it("keeps indexed results in step with update and delete mutations", async () => {
-		const url = "https://worker.invalid/v1/files/mutable.md";
+		const url = "https://worker.invalid/v1/files/mutable.MD";
 		const first = await SELF.fetch(url, {
 			method: "PUT",
 			headers: { "If-None-Match": "*", "X-Vault-Epoch": TEXT_FIXTURE_EPOCH },

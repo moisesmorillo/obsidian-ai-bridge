@@ -1,5 +1,10 @@
 import { env, runInDurableObject } from "cloudflare:test";
 import type { AuthorizationContext } from "@obsidian-ai-bridge/protocol";
+import {
+	MAX_OAUTH_GRANTS,
+	MAX_PENDING_CONSENTS,
+	SqliteClientRegistry,
+} from "@worker/infrastructure/sqlite/clients";
 import { describe, expect, it } from "vitest";
 
 describe("durable client registry", () => {
@@ -178,6 +183,186 @@ describe("durable client registry", () => {
 		expect((await stub.revokeClient(ownerSubject, clientId))?.grants).toEqual(
 			[],
 		);
+	});
+
+	it("revokes one client at the registry ceiling with bounded results and stable denial rows", async () => {
+		const ownerSubject = "synthetic-owner";
+		const clientId = "registry-near-cap-client";
+		const stub = env.VAULTS.get(
+			env.VAULTS.idFromName(`registry-near-cap-${crypto.randomUUID()}`),
+		);
+		const consent = await stub.beginClientConsent(
+			ownerSubject,
+			clientId,
+			"Near-cap client",
+		);
+		await runInDurableObject(stub, (_instance, state) => {
+			for (let offset = 0; offset < MAX_OAUTH_GRANTS; offset += 512) {
+				const count = Math.min(512, MAX_OAUTH_GRANTS - offset);
+				state.storage.sql.exec(
+					`WITH RECURSIVE seq(n) AS (SELECT 0 UNION ALL SELECT n + 1 FROM seq WHERE n < ?)
+					INSERT INTO client_grants (client_id, grant_id, owner_subject, generation, consent_id, created_at, cleanup_pending)
+					SELECT ?, printf('near-cap-grant-%05d', n + ?), ?, 0, printf('near-cap-consent-%05d', n + ?), 1, 0 FROM seq`,
+					count - 1,
+					clientId,
+					offset,
+					ownerSubject,
+					offset,
+				);
+			}
+			state.storage.sql.exec(
+				"INSERT INTO client_consents (consent_id, client_id, owner_subject, generation, created_at) SELECT printf('near-cap-pending-%04d', n), ?, ?, 0, 1 FROM (WITH RECURSIVE seq(n) AS (SELECT 0 UNION ALL SELECT n + 1 FROM seq WHERE n < ?) SELECT n FROM seq)",
+				clientId,
+				ownerSubject,
+				MAX_PENDING_CONSENTS - 2,
+			);
+			state.storage.sql.exec(
+				"INSERT INTO revoked_grants (grant_id, at) SELECT grant_id, 1700000000000 + CAST(substr(grant_id, -5) AS INTEGER) FROM client_grants WHERE client_id = ? AND CAST(substr(grant_id, -5) AS INTEGER) < 10",
+				clientId,
+			);
+			state.storage.sql.exec(
+				"UPDATE client_grants SET cleanup_pending = 1 WHERE client_id = ? AND CAST(substr(grant_id, -5) AS INTEGER) BETWEEN 5 AND 9",
+				clientId,
+			);
+			const grantRows = state.storage.sql
+				.exec(
+					"SELECT COUNT(*) AS total FROM client_grants WHERE client_id = ?",
+					clientId,
+				)
+				.toArray()[0] as { total: number };
+			const consentRows = state.storage.sql
+				.exec(
+					"SELECT COUNT(*) AS total FROM client_consents WHERE client_id = ?",
+					clientId,
+				)
+				.toArray()[0] as { total: number };
+			expect(grantRows.total).toBe(MAX_OAUTH_GRANTS);
+			expect(consentRows.total).toBe(MAX_PENDING_CONSENTS);
+		});
+
+		await runInDurableObject(stub, (_instance, state) => {
+			state.storage.sql.exec(
+				`CREATE TRIGGER reject_near_cap_denial BEFORE INSERT ON revoked_grants
+				WHEN NEW.grant_id = 'near-cap-grant-04000'
+				BEGIN SELECT RAISE(ABORT, 'injected near-cap denial failure'); END`,
+			);
+			const registry = new SqliteClientRegistry(state.storage, () =>
+				Date.now(),
+			);
+			expect(() => registry.revokeClient(ownerSubject, clientId)).toThrow();
+			const client = state.storage.sql
+				.exec(
+					"SELECT generation FROM client_generations WHERE client_id = ?",
+					clientId,
+				)
+				.toArray()[0] as { generation: number };
+			const status = state.storage.sql
+				.exec(
+					"SELECT SUM(cleanup_pending) AS pending FROM client_grants WHERE client_id = ?",
+					clientId,
+				)
+				.toArray()[0] as { pending: number };
+			const denied = state.storage.sql
+				.exec(
+					"SELECT COUNT(*) AS total FROM revoked_grants WHERE grant_id LIKE 'near-cap-grant-%'",
+				)
+				.toArray()[0] as { total: number };
+			const pendingConsents = state.storage.sql
+				.exec(
+					"SELECT COUNT(*) AS total FROM client_consents WHERE client_id = ?",
+					clientId,
+				)
+				.toArray()[0] as { total: number };
+			expect(client.generation).toBe(consent.generation);
+			expect(status.pending).toBe(5);
+			expect(denied.total).toBe(10);
+			expect(pendingConsents.total).toBe(MAX_PENDING_CONSENTS);
+			state.storage.sql.exec("DROP TRIGGER reject_near_cap_denial");
+		});
+
+		const first = await stub.revokeClient(ownerSubject, clientId);
+		expect(first).toMatchObject({
+			generation: consent.generation + 1,
+			cleanupPending: true,
+		});
+		expect(first?.grants).toEqual(
+			Array.from(
+				{ length: 16 },
+				(_, index) => `near-cap-grant-${String(index + 5).padStart(5, "0")}`,
+			),
+		);
+		await runInDurableObject(stub, (_instance, state) => {
+			const grants = state.storage.sql
+				.exec(
+					"SELECT COUNT(*) AS total, SUM(cleanup_pending) AS pending FROM client_grants WHERE client_id = ?",
+					clientId,
+				)
+				.toArray()[0] as { total: number; pending: number };
+			const denied = state.storage.sql
+				.exec(
+					"SELECT COUNT(*) AS total FROM revoked_grants WHERE grant_id LIKE 'near-cap-grant-%'",
+				)
+				.toArray()[0] as { total: number };
+			const consentRows = state.storage.sql
+				.exec(
+					"SELECT COUNT(*) AS total FROM client_consents WHERE client_id = ?",
+					clientId,
+				)
+				.toArray()[0] as { total: number };
+			const priorDenials = state.storage.sql
+				.exec(
+					"SELECT grant_id, at FROM revoked_grants WHERE grant_id LIKE 'near-cap-grant-%' AND CAST(substr(grant_id, -5) AS INTEGER) < 10 ORDER BY grant_id",
+				)
+				.toArray();
+			const generation = state.storage.sql
+				.exec(
+					"SELECT generation FROM client_generations WHERE client_id = ?",
+					clientId,
+				)
+				.toArray()[0] as { generation: number };
+			expect(grants).toEqual({
+				total: MAX_OAUTH_GRANTS,
+				pending: MAX_OAUTH_GRANTS - 5,
+			});
+			expect(denied.total).toBe(MAX_OAUTH_GRANTS);
+			expect(consentRows.total).toBe(0);
+			expect(generation.generation).toBe(consent.generation + 1);
+			expect(priorDenials).toEqual(
+				Array.from({ length: 10 }, (_, index) => ({
+					grant_id: `near-cap-grant-${String(index).padStart(5, "0")}`,
+					at: 1_700_000_000_000 + index,
+				})),
+			);
+		});
+
+		for (const grantId of first?.grants ?? [])
+			await stub.markGrantCleanupComplete(clientId, grantId);
+		const retried = await stub.revokeClient(ownerSubject, clientId);
+		expect(retried).toMatchObject({
+			generation: consent.generation + 2,
+			cleanupPending: true,
+		});
+		expect(retried?.grants).toEqual(
+			Array.from(
+				{ length: 16 },
+				(_, index) => `near-cap-grant-${String(index + 21).padStart(5, "0")}`,
+			),
+		);
+		await runInDurableObject(stub, (_instance, state) => {
+			const pending = state.storage.sql
+				.exec(
+					"SELECT COUNT(*) AS total FROM client_grants WHERE client_id = ? AND cleanup_pending = 1",
+					clientId,
+				)
+				.toArray()[0] as { total: number };
+			const retained = state.storage.sql
+				.exec(
+					"SELECT COUNT(*) AS total FROM revoked_grants WHERE grant_id LIKE 'near-cap-grant-%'",
+				)
+				.toArray()[0] as { total: number };
+			expect(pending.total).toBe(MAX_OAUTH_GRANTS - 21);
+			expect(retained.total).toBe(MAX_OAUTH_GRANTS);
+		});
 	});
 
 	it("consumes browser-bound owner state once and denies another browser", async () => {

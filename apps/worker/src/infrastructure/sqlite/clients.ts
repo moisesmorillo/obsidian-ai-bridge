@@ -21,7 +21,7 @@ export const MAX_OAUTH_CLIENTS = 1_024;
 /** Maximum durable OAuth grants across one vault registry. */
 export const MAX_OAUTH_GRANTS = 8_192;
 /** Maximum active provider consent fences in one vault registry. */
-const MAX_PENDING_CONSENTS = 1_024;
+export const MAX_PENDING_CONSENTS = 1_024;
 /** Provider consent records expire at the same ten-minute bound as their browser handle. */
 const CONSENT_TTL_MS = 10 * 60 * 1_000;
 /** Maximum provider grants selected for cleanup by one owner request. */
@@ -242,7 +242,12 @@ export class SqliteClientRegistry {
 		});
 	}
 
-	/** Atomically advance the client fence and durably deny every known grant before cleanup. */
+	/**
+	 * Fence the client and deny all known grants in one atomic registry transaction.
+	 *
+	 * The callback issues six data statements. Its bounded scans touch at most 8,192
+	 * client-grant rows per pass and 1,024 consent rows; only 16 cleanup IDs return.
+	 */
 	revokeClient(
 		ownerSubject: string,
 		clientId: string,
@@ -259,16 +264,13 @@ export class SqliteClientRegistry {
 				sql`UPDATE client_generations SET generation = ${generation} WHERE client_id = ${clientId}`,
 			);
 			tx.run(sql`DELETE FROM client_consents WHERE client_id = ${clientId}`);
-			const grants = tx.all<GrantIdRow>(
-				sql`SELECT grant_id FROM client_grants WHERE client_id = ${clientId} ORDER BY grant_id`,
-			);
 			tx.run(
 				sql`UPDATE client_grants SET cleanup_pending = 1 WHERE client_id = ${clientId} AND grant_id NOT IN (SELECT grant_id FROM revoked_grants)`,
 			);
-			for (const grant of grants)
-				tx.run(
-					sql`INSERT INTO revoked_grants (grant_id, at) VALUES (${grant.grant_id}, ${this.now()}) ON CONFLICT(grant_id) DO NOTHING`,
-				);
+			const revokedAt = this.now();
+			tx.run(
+				sql`INSERT INTO revoked_grants (grant_id, at) SELECT grant_id, ${revokedAt} FROM client_grants WHERE client_id = ${clientId} ON CONFLICT(grant_id) DO NOTHING`,
+			);
 			const pendingRows = tx.all<GrantIdRow>(
 				sql`SELECT grant_id FROM client_grants WHERE client_id = ${clientId} AND cleanup_pending = 1 ORDER BY grant_id LIMIT ${MAX_GRANT_CLEANUP_BATCH + 1}`,
 			);

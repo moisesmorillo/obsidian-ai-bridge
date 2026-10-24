@@ -1,6 +1,6 @@
 import type {
 	ClientRegistryGateway,
-	OwnerCleanupBudget,
+	OwnerCleanupExternalCallBudget,
 } from "@worker/application/clients";
 import {
 	consumeOwnerCsrf,
@@ -21,8 +21,8 @@ const OWNER_BROWSER_COOKIE = "__Host-oab-owner";
 const OWNER_STATE_TTL_MS = 10 * 60 * 1000;
 /** Maximum accepted owner form body. */
 const OWNER_FORM_LIMIT = 4_096;
-/** Cap KV and Durable Object operations, including CSRF, for one revocation request. */
-const OWNER_CLEANUP_OPERATION_LIMIT = 48;
+/** Cap provider KV calls and registry RPCs, including CSRF, but not inner DO SQL. */
+const OWNER_CLEANUP_EXTERNAL_CALL_LIMIT = 48;
 
 /** Resolve the authoritative registry for the configured canonical service vault. */
 export type OwnerRegistryResolver = (
@@ -177,10 +177,10 @@ export function createOwnerHandler(
 		if (!browserId || !isUuid(browserId) || !isUuid(form.state))
 			return context.text("Invalid owner form", 400);
 		const registry = resolveRegistry(context.env, context.req.raw);
-		const budget: OwnerCleanupBudget = {
-			remaining: OWNER_CLEANUP_OPERATION_LIMIT,
+		const budget: OwnerCleanupExternalCallBudget = {
+			remainingCalls: OWNER_CLEANUP_EXTERNAL_CALL_LIMIT,
 		};
-		budget.remaining -= 1;
+		budget.remainingCalls -= 1;
 		const accepted = await consumeOwnerCsrf(registry, {
 			owner_subject: owner.subject,
 			browser_id: browserId,

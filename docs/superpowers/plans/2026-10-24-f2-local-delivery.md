@@ -142,7 +142,7 @@ These probes do not prove complete F2 behavior. No platform capability probe rem
 
 Workers Paid is the accepted product plan in section 2. Current published limits include 128 MB per isolate and 30 seconds default HTTP CPU.
 
-Current Paid subrequest default is 10,000. Bound owner cleanup below 50 remote operations anyway. Do not assume a deployed account configuration.
+Current Paid subrequest default is 10,000. Keep owner revocation below 50 counted external KV and registry RPC calls. Owner Access verification may add one JWKS fetch outside this call budget. Do not assume a deployed account configuration.
 
 | Boundary | Budget and limit behavior |
 | --- | --- |
@@ -153,7 +153,7 @@ Current Paid subrequest default is 10,000. Bound owner cleanup below 50 remote o
 | Mixed traffic | MCP also uses existing read or mutation admission. Tests overlap MCP output, REST bodies, and REST responses. These static bounds do not prove a combined heap peak below 128 MB. REST owners, parsed structure overhead, SDK copies, and native allocations remain separate unmeasured terms. |
 | Metadata output | At most 256 result rows and 1,000,000 estimated output bytes. Read one bounded batch at a time. Excess returns an explicit error, never partial success. |
 | Owner pages | At most 32 clients or grants per page. Escape every untrusted field. Do not collect all KV grants. |
-| Owner revocation | One DO transaction closes the client generation and denies registered grants. Cleanup spends from a 48-operation request budget that counts CSRF and registry RPCs plus every provider KV list/delete. It removes one token per list/delete step and leaves incomplete grants pending for a later request. |
+| Owner revocation | One DO transaction closes the generation and denies all grants before cleanup. At most 48 counted external calls cover provider KV list/delete and registry RPCs, including CSRF. One JWKS fetch may occur outside this budget. The denial callback issues six data statements. Each of three grant-range statements processes at most 8,192 rows. The anti-join reads at most 8,192 retained denials, conflict checks at most 8,192 denial keys, and consent deletion scans at most 1,024 rows. It changes at most 8,192 cleanup flags and inserts at most 8,192 denials. The final select may inspect at most 8,192 rows, returns at most 17 candidates, and sends at most 16 cleanup IDs. These are source bounds, not measured SQL page reads, CPU, or heap. |
 | Token callback | One bounded DO call records or verifies a grant before token issue. Refresh does not create duplicate registry rows. |
 | Access keys | One endpoint, 65,536 response bytes, 5-second timeout, at most 16 keys, and a 5-minute cache. Unknown keys or fetch failures deny access. Never follow JWT-supplied key URLs. |
 | Durable registry | Enforce a finite local registry ceiling before token issue. Use 1,024 clients and 8,192 grant rows per vault. Deny new entries at capacity. Existing reads and revocation continue. |

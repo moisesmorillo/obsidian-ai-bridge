@@ -11,7 +11,7 @@ import {
 	VaultScopeSchema,
 } from "@obsidian-ai-bridge/protocol";
 import type {
-	OwnerCleanupBudget,
+	OwnerCleanupExternalCallBudget,
 	ProviderGrantCleanup,
 } from "@worker/application/clients";
 import type { Env } from "@worker/env";
@@ -271,21 +271,21 @@ export function createProviderGrantCleanup(env: Env): ProviderGrantCleanup {
 		async cleanupStep(
 			grantId: string,
 			ownerSubject: string,
-			budget: OwnerCleanupBudget,
+			budget: OwnerCleanupExternalCallBudget,
 		): Promise<boolean> {
-			if (budget.remaining < 3) return false;
-			budget.remaining -= 1;
+			if (budget.remainingCalls < 3) return false;
+			budget.remainingCalls -= 1;
 			const tokens = await kv.list({
 				prefix: `token:${ownerSubject}:${grantId}:`,
 				limit: 1,
 			});
 			const token = tokens.keys[0];
 			if (token) {
-				budget.remaining -= 1;
+				budget.remainingCalls -= 1;
 				await kv.delete(token.name);
 				return false;
 			}
-			budget.remaining -= 1;
+			budget.remainingCalls -= 1;
 			await kv.delete(`grant:${ownerSubject}:${grantId}`);
 			return true;
 		},

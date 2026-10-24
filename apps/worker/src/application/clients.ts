@@ -63,19 +63,19 @@ export interface ClientRegistryGateway {
 	}): Promise<boolean>;
 }
 
-/** Spend count shared across KV and Durable Object operations in one owner request. */
-export interface OwnerCleanupBudget {
-	/** Number of provider and registry operations still allowed in this request. */
-	remaining: number;
+/** Count provider KV calls and registry RPCs only; an Access-key fetch is outside this budget. */
+export interface OwnerCleanupExternalCallBudget {
+	/** External KV and registry RPC calls still allowed during one owner request. */
+	remainingCalls: number;
 }
 
-/** Provider cleanup step that spends from the owner request's shared operation budget. */
+/** Provider cleanup step that spends external KV calls from the owner request budget. */
 export interface ProviderGrantCleanup {
 	/** Delete one page item or the empty grant record, returning true only after full removal. */
 	cleanupStep(
 		grantId: string,
 		ownerSubject: string,
-		budget: OwnerCleanupBudget,
+		budget: OwnerCleanupExternalCallBudget,
 	): Promise<boolean>;
 }
 
@@ -144,37 +144,38 @@ export async function renameClient(
 	return registry.renameClient(ownerSubject, clientId, name);
 }
 
-/** Persist each cleanup confirmation after authoritative grant denial already committed. */
+/** Commit atomic denial first, then spend the remaining external-call budget on provider cleanup. */
 export async function revokeClient(
 	registry: ClientRegistryGateway,
 	provider: ProviderGrantCleanup,
 	ownerSubject: string,
 	clientId: string,
-	budget: OwnerCleanupBudget,
+	budget: OwnerCleanupExternalCallBudget,
 ): Promise<{ generation: number; cleanup_pending: boolean } | null> {
-	if (budget.remaining < 1) throw new Error("Owner cleanup budget is empty");
-	budget.remaining -= 1;
+	if (budget.remainingCalls < 1)
+		throw new Error("Owner cleanup external-call budget is empty");
+	budget.remainingCalls -= 1;
 	const durable = await registry.revokeClient(ownerSubject, clientId);
 	if (!durable) return null;
 	let cleanupPending = durable.cleanup_pending;
 	for (const grantId of durable.grants) {
 		try {
-			while (budget.remaining >= 3) {
+			while (budget.remainingCalls >= 3) {
 				const complete = await provider.cleanupStep(
 					grantId,
 					ownerSubject,
 					budget,
 				);
 				if (!complete) continue;
-				if (budget.remaining < 1) {
+				if (budget.remainingCalls < 1) {
 					cleanupPending = true;
 					break;
 				}
-				budget.remaining -= 1;
+				budget.remainingCalls -= 1;
 				await registry.markGrantCleanupComplete(clientId, grantId);
 				break;
 			}
-			if (budget.remaining < 3) cleanupPending = true;
+			if (budget.remainingCalls < 3) cleanupPending = true;
 		} catch {
 			cleanupPending = true;
 		}

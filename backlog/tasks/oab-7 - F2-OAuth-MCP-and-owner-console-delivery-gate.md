@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: 2026-10-12 15:13
-updated_date: '2026-10-24T14:30:00Z'
+updated_date: '2026-10-24T14:34:00Z'
 labels:
   - phase-gate
   - F2
@@ -28,7 +28,7 @@ Track F2 against docs/spec.md §14. Intent-only; research/decompose when selecte
 - [ ] #1 F1 is complete before F2 starts.
 - [ ] #2 §14 F2 exit checks and account decision are evidenced.
 - [ ] #3 Service deployment/resource operations have separate explicit owner authorization.
-- [ ] #4 Cleanup from F1 review: the extension-case tests in apps/worker/test/blob-put.test.ts, apps/worker/test/vault-search.test.ts and apps/worker/test/http/files.test.ts use at most four representative forms per extension for real HTTP writes and SQLite runs. The full ASCII case combination stays only in packages/protocol/test/files.test.ts as a unit test of classifyFilePath. Test count and runtime go down. Coverage of the case rule stays.
+- [x] #4 Cleanup from F1 review: the extension-case tests in apps/worker/test/blob-put.test.ts, apps/worker/test/vault-search.test.ts and apps/worker/test/http/files.test.ts use at most four representative forms per extension for real HTTP writes and SQLite runs. The full ASCII case combination stays only in packages/protocol/test/files.test.ts as a unit test of classifyFilePath. Test count and runtime go down. Coverage of the case rule stays.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -45,4 +45,6 @@ Reconciled after merged F0: this is a committed section14 phase entry/exit gate,
 Owner selected F2 research and decomposition after merged PR #20. Plan only the criterion 4 cleanup first. Implementation waits for plan review. No deployment, Cloudflare resource action, personal-vault access, or later phase work is authorized.
 
 Owner approved OAB-7.1 plan pn-e4a1f7 and explicitly requested implementation, one worker, one reviewer, human branch review, and a PR. Worker commit 9f2ef63 completes the local cleanup. Future tasks remain To Do. No OAuth, MCP, plugin, deployed, or device behavior is qualified by this change.
+
+OAB-7.1 completes cleanup criterion 4 in PR #21 after independent, session-model, and human reviews plus actual remote CI. The actual exhaustive HTTP matrix was in http/search.test.ts. http/files.test.ts remains unchanged and passes. OAB-7 stays In Progress. OAB-7.2 through OAB-7.8 remain To Do. Deployment and real-client tasks still need explicit owner authorization. F1 server-only acceptance, default-deny production identity, and all later evidence boundaries remain unchanged.
 <!-- SECTION:NOTES:END -->

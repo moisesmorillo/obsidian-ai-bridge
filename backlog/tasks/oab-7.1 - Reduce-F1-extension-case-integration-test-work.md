@@ -1,11 +1,11 @@
 ---
 id: OAB-7.1
 title: Reduce F1 extension-case integration test work
-status: In Progress
+status: Done
 assignee:
   - '@pi'
 created_date: '2026-10-24T00:05:00Z'
-updated_date: '2026-10-24T14:31:00Z'
+updated_date: '2026-10-24T14:34:00Z'
 labels:
   - F2
   - tests
@@ -52,4 +52,12 @@ Independent task review bd0154eb approved spec compliance and quality at 9f2ef63
 Session-model whole-branch review: APPROVE at 99dd487674f7cb55a0498c04c64d1eec0bee0cc1 against main 3534d79, including all 13 changed files and task evidence. No actionable findings. The three test modules stay cohesive. Their test matrices do not own production rules or state transitions. No new contracts or named semantic declarations enter TypeScript. Documentation review covered the approved cleanup plan, F2 decomposition, task criteria, test descriptions, authorization labels, and evidence notes. The actual HTTP matrix path is correct and the named file-route tests stay unchanged. The parent inspected raw worker session results for RED, focused timings, 1092 passing full-check tests, and dry-run build completion. Active LSP checks returned no findings but could not confirm clean files, so compiler evidence comes from the full check. No production, protocol, dependency, timeout, or configuration change exists. No new design, platform capability, or runtime resource budget enters this test-only branch. Remote CI and human branch approval remain pending. Scope excludes deployed, real-client, plugin, and device qualification.
 
 Owner approved the complete branch review pn-8df521 at 71ad4085ba4c9e5649e1b6db5b89cc3c7319a531 with no requested changes. The only later edit records this approval. Publish the requested PR and verify actual remote CI before closure.
+
+Remote evidence: PR https://github.com/moisesmorillo/obsidian-ai-bridge/pull/21. Push run https://github.com/moisesmorillo/obsidian-ai-bridge/actions/runs/40102916636 and pull-request run https://github.com/moisesmorillo/obsidian-ai-bridge/actions/runs/40102921347 both completed successfully at exact head d793b062657e7469c375781716e113876161f7e3. The final closure edit changes only Backlog status and notes. No test or source change follows the approved and tested implementation.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Complete the approved test-only cleanup in PR #21. Policy cases fell 136 to 16, HTTP matrix writes fell 137 to 17, and SQLite forms per transition fell 68 to eight. Exhaustive protocol classification and all selected behavior assertions remain. Focused medians fell 3.27s to 1.83s for Worker tests and 12.46s to 11.47s for HTTP tests. The full check passed 1092 tests plus lint, documentation, types, schema drift, and local builds. Independent and session-model reviews approved the change. Owner approved pn-8df521. Push CI 40102916636 and PR CI 40102921347 passed at d793b062657e7469c375781716e113876161f7e3. No production behavior, deployment, dependency, or later phase changed. OAB-7 stays open.
+<!-- SECTION:FINAL_SUMMARY:END -->

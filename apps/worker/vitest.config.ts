@@ -5,6 +5,6 @@ export default defineConfig(
 	createWorkerTestConfig(
 		"src/index.ts",
 		["test/**/*.test.ts"],
-		["test/http/**"],
+		["test/http/**", "test/f2/**"],
 	),
 );

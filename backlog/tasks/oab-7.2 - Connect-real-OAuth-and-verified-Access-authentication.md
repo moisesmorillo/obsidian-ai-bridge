@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-10-24T00:05:00Z'
-updated_date: '2026-10-24T15:41:00Z'
+updated_date: '2026-10-24T16:32:00Z'
 labels:
   - F2
   - auth
@@ -41,4 +41,12 @@ Use docs/superpowers/plans/2026-10-24-f2-local-delivery.md, Task 1. Plan review 
 
 <!-- SECTION:NOTES:BEGIN -->
 Owner approved the combined local F2 plan in pn-1365dd. Execute OAB-7.2 through OAB-7.6 in order on this branch. One worker owns each task. One fresh reviewer follows each task. No deployment or later phase is authorized.
+
+Partial implementation only: added pinned OAuth/jose packages, optional configuration bindings, and the owner-only Access verifier with two focused tests. Focused tests and bun run check passed. Production OAuth composition, consent, F2 production-entry suites, and full criteria remain incomplete. No commit created. Full evidence and limits: .superpowers/sdd/2026-10-24-f2-local-delivery/task-1-report.md. Task remains In Progress for parent review and continuation.
+
+Completed OAB-7.2 local OAuth and Access composition. Added OAuth provider and jose for OAuth flows, discovery, consent primitives, token validation, and Access JWT/JWKS verification. The first two Access tests arrived green without RED. Per repository rule, I preserved them, added production-entry RED coverage before the OAuth implementation, and recorded this exception. OAuth RED output included discovery returning 404 instead of 200 before provider composition. F2 GREEN passed: 2 files and 19 tests. bun run docs:check and bun run check passed. The Worker build used dry-run only. No deployment or Cloudflare resource operation occurred. Task remains In Progress for independent review.
+
+The initial partial note above is superseded by the completed report in .superpowers/sdd/2026-10-24-f2-local-delivery/task-1-report.md. Commit 96fe91d0c72a8c28d49a43c5ed2402f673896f0c contains the complete local implementation. The report records test evidence, limits, and Task 2 integration seams. OAB-7.2 remains In Progress for independent review.
+
+Correction: the complete implementation commit is 36ecb297cd46188a9c79de43104046da42518a01. The earlier hash in these notes is stale.
 <!-- SECTION:NOTES:END -->

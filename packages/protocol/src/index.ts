@@ -25,6 +25,14 @@ export {
 	TextMutationIntentSchema,
 	VaultScopeSchema,
 } from "@protocol/schemas/admission";
+export type { LocalAuthConfiguration } from "@protocol/schemas/auth";
+export {
+	AccessAudienceSchema,
+	AccessTeamDomainSchema,
+	LocalAuthConfigurationSchema,
+	OwnerSubjectSchema,
+	ServiceOriginSchema,
+} from "@protocol/schemas/auth";
 export type { ByteRangeSelection } from "@protocol/schemas/blobs";
 export {
 	BlobAuthorizationResultSchema,

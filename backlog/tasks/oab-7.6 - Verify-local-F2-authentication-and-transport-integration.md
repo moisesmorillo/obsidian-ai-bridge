@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-10-24T00:05:00Z'
-updated_date: '2026-10-24T21:29:00Z'
+updated_date: '2026-10-24T21:52:00Z'
 labels:
   - F2
   - acceptance
@@ -51,4 +51,14 @@ RED/GREEN checkpoints: first focused integration run passed immediately after te
 Final validation: `bun run docs:check` passed. `git diff --check` passed. `bun run check` passed with 52 tooling, 282 protocol, 2 plugin, 643 native Worker, 120 HTTP, and 91 F2 tests. Lint, docs, all type checks, and builds passed. Wrangler used `--dry-run` only. Self-review loaded the code-review skill and TypeScript profile. No implementation blocker found. Review covered API semantics, authorization and epoch denial, shared real DO authority, response estimates versus encoded chunks, bounded metadata, and worktree scope. OAB-7.6 stays In Progress for independent review; later acceptance and publication gates remain open.
 
 Commit: aa98818 test(worker): verify local F2 authentication and transports. OAB-7.6 remains In Progress for independent review.
+
+Corrective review findings F1, F2, and F3: fixed in tests and API documentation. F1 now pauses the real Durable Object finishAdmission call after response cancellation. While cleanup waits, the test proves REST read and MCP envelope capacity refuse competing requests with 429. It then releases cleanup, confirms capacity reuse, and releases all gates in finally. F2 adds gated worst-case MCP output, two held maximum-size REST bodies, three held REST responses, shared admission checks, competing refusal checks, actual encoded byte and chunk measurements, exact stored bodies, size/hash/origin, and publication side effects. F3 now defines one 128-byte list base allowance, entry JSON bytes, and comma bytes. It distinguishes the estimate from the full JSON-RPC frame and chunk bound. No production behavior changed. The existing Worker passed; coverage is postimplementation.
+
+RED/GREEN: F1 focused test first passed 1 test. The mixed test first failed because it expected four active admissions after two gated REST writes. Real DO state showed six: four reads and two writes. Corrected the test to expect six. Focused command passed 2 tests: cd apps/worker && bunx vitest run --config vitest.f2.config.ts test/f2/mcp-reads.test.ts -t 'delayed real cleanup|worst-case MCP output with gated REST bodies'.
+
+Validation: bun run docs:check passed. git diff --check passed. cd apps/worker && bunx vitest run --config vitest.f2.config.ts passed 7 files and 93 tests. bun run check passed with lint, docs, all workspace type checks, tests (52 tooling, 282 protocol, 2 plugin, 643 Worker, 120 HTTP, 93 F2; 1,192 total), and builds. Wrangler used --dry-run. Existing expected injected failure and disconnect reports appeared in negative-control tests. Self-review found no blockers or actionable findings. Local tests do not prove native heap use, deployed Access policy, client receipt, or plugin/device state. OAB-7.6 remains In Progress for independent review. See .superpowers/sdd/2026-10-24-f2-local-delivery/task-5-report.md.
+
+Corrective commit: e4676aa test(worker): verify MCP cleanup and aggregate limits. Commit includes the new F1/F2 integration tests and F3 API wording only. git diff --cached --name-only is empty. Keep this task In Progress for independent review.
+
+Record corrections: the Task 5 implementation commit is ea63ccb4a6863f08c746035ef3b161dec7c483b6, not aa98818. The aggregate test uses two representative 65,536-byte REST bodies, not maximum-size REST bodies. The worst-case escaped MCP response contains a 1,000,000-byte note. The correction source commit is e4676aa969fec17e3337d6066ed4e8301723c218. Scoped review remains pending.
 <!-- SECTION:NOTES:END -->

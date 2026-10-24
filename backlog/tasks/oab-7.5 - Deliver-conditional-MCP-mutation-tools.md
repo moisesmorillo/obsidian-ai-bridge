@@ -4,6 +4,7 @@ title: Deliver conditional MCP mutation tools
 status: To Do
 assignee: []
 created_date: '2026-10-24T00:05:00Z'
+updated_date: '2026-10-24T15:31:00Z'
 labels:
   - F2
   - MCP
@@ -28,3 +29,9 @@ Agents need section 8 mutations through the existing authoritative operations. A
 - [ ] #3 Every tool enforces its scope and DO revocation. Write does not imply delete. Agent origin and mutation feed entries remain correct.
 - [ ] #4 All results carry epoch and bounded errors. Local tests preserve every data-safety invariant without claiming plugin delivery or real-client success.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+Use docs/superpowers/plans/2026-10-24-f2-local-delivery.md, Task 4. After OAB-7.4, deliver exact-revision MCP mutations and client-scoped receipt tests.
+<!-- SECTION:PLAN:END -->

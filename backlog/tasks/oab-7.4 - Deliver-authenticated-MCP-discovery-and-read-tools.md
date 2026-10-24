@@ -4,6 +4,7 @@ title: Deliver authenticated MCP discovery and read tools
 status: To Do
 assignee: []
 created_date: '2026-10-24T00:05:00Z'
+updated_date: '2026-10-24T15:31:00Z'
 labels:
   - F2
   - MCP
@@ -28,3 +29,9 @@ F2 clients need Streamable HTTP and read tools over existing application operati
 - [ ] #3 Every result carries the current epoch. ETag fragment checks prevent mixed revisions. Scope and DO revocation checks cover each tool call.
 - [ ] #4 Local protocol tests exercise real MCP messages and production composition without treating them as real-client or deployed qualification.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+Use docs/superpowers/plans/2026-10-24-f2-local-delivery.md, Task 3. After OAB-7.3, deliver authenticated MCP discovery and read tools through existing application operations.
+<!-- SECTION:PLAN:END -->

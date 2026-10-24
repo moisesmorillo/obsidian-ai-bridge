@@ -1,9 +1,11 @@
 ---
 id: OAB-7.2
 title: Connect real OAuth and verified Access authentication
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@pi'
 created_date: '2026-10-24T00:05:00Z'
+updated_date: '2026-10-24T15:41:00Z'
 labels:
   - F2
   - auth
@@ -28,3 +30,15 @@ The production entry returns no identity. F2 needs the specified real OAuth path
 - [ ] #3 REST receives only validated client, grant, and scope context. Invalid, expired, malformed, or failed-refresh credentials fail closed. Write never implies delete.
 - [ ] #4 Real local Worker tests cover the production composition, not only injected identities. No Cloudflare deployment or resource action occurs.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+Use docs/superpowers/plans/2026-10-24-f2-local-delivery.md, Task 1. Plan review precedes implementation. Add real OAuth and verified Access, then complete the task test and review cycle.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Owner approved the combined local F2 plan in pn-1365dd. Execute OAB-7.2 through OAB-7.6 in order on this branch. One worker owns each task. One fresh reviewer follows each task. No deployment or later phase is authorized.
+<!-- SECTION:NOTES:END -->

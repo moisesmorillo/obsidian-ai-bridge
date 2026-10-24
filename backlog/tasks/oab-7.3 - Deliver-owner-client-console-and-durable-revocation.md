@@ -4,6 +4,7 @@ title: Deliver owner client console and durable revocation
 status: To Do
 assignee: []
 created_date: '2026-10-24T00:05:00Z'
+updated_date: '2026-10-24T15:31:00Z'
 labels:
   - F2
   - owner
@@ -28,3 +29,9 @@ F1 stores revoked grants and checks them, but exposes no owner console. F2 needs
 - [ ] #3 Revocation covers the selected client grants, preserves committed data, and never depends on KV propagation for immediate denial.
 - [ ] #4 Tests cover invalid Access claims, unauthorized callers, repeat revocation, operation races, and provider failures. No plugin or deployed behavior is claimed.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+Use docs/superpowers/plans/2026-10-24-f2-local-delivery.md, Task 2. After OAB-7.2, deliver the owner console and authoritative grant revocation with race tests.
+<!-- SECTION:PLAN:END -->

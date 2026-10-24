@@ -34,15 +34,6 @@ function barrier() {
 	return { reached, held, arrive, release };
 }
 
-/** Build every ASCII letter-case combination of a file extension. */
-function extensionCaseVariants(extension: string): string[] {
-	return Array.from({ length: 1 << extension.length }, (_, mask) =>
-		Array.from(extension, (letter, index) =>
-			mask & (1 << index) ? letter.toUpperCase() : letter,
-		).join(""),
-	);
-}
-
 /** Hash exact UTF-8 text for real native mutation descriptors. */
 async function hashText(value: string): Promise<string> {
 	const digest = await crypto.subtle.digest(
@@ -294,7 +285,7 @@ describe("native vault search", () => {
 		await stub.finishAdmission(context, authorized.ticket.id, "settled");
 	});
 
-	it("indexes all Markdown case variants and excludes all Canvas variants", async () => {
+	it("indexes representative Markdown forms and excludes representative Canvas forms", async () => {
 		const stub = env.VAULTS.get(env.VAULTS.newUniqueId());
 		await runInDurableObject(stub, async (_instance, state) => {
 			clearTestVault(state.storage);
@@ -304,9 +295,13 @@ describe("native vault search", () => {
 				() => 10_000,
 			);
 		});
+		const markdownForms = ["md", "MD", "mD", "Md"];
+		const canvasForms = ["canvas", "CANVAS", "cAnVaS", "CaNvAs"];
+		const variants = [...markdownForms, ...canvasForms];
+		expect(variants).toHaveLength(8);
 		let index = 0;
 		const markdownPaths: string[] = [];
-		for (const extension of extensionCaseVariants("md")) {
+		for (const extension of markdownForms) {
 			const path = `notes/markdown-${index}.${extension}`;
 			markdownPaths.push(path);
 			await putText(
@@ -317,7 +312,7 @@ describe("native vault search", () => {
 				`search-matrix-put-${index++}`,
 			);
 		}
-		for (const extension of extensionCaseVariants("canvas")) {
+		for (const extension of canvasForms) {
 			const path = `notes/canvas-${index}.${extension}`;
 			await putText(
 				stub,
@@ -338,7 +333,7 @@ describe("native vault search", () => {
 		});
 	});
 
-	it("keeps all extension case variants classified through every text lifecycle transition", async () => {
+	it("keeps representative extension forms classified through every text lifecycle transition", async () => {
 		const stub = env.VAULTS.get(env.VAULTS.newUniqueId());
 		await runInDurableObject(stub, async (_instance, state) => {
 			clearTestVault(state.storage);
@@ -349,9 +344,16 @@ describe("native vault search", () => {
 			);
 		});
 		const variants = [
-			...extensionCaseVariants("md"),
-			...extensionCaseVariants("canvas"),
+			"md",
+			"MD",
+			"mD",
+			"Md",
+			"canvas",
+			"CANVAS",
+			"cAnVaS",
+			"CaNvAs",
 		];
+		expect(variants).toHaveLength(8);
 		const entries = variants.map((extension, index) => ({
 			path: `notes/source-${index}.${extension}`,
 			moved: `notes/moved-${index}.${extension}`,

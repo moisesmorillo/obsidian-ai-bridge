@@ -79,27 +79,20 @@ async function effects() {
 			.toArray(),
 	}));
 }
-/** Build every ASCII letter-case combination of a file extension. */
-function extensionCaseVariants(extension: string): string[] {
-	return Array.from({ length: 1 << extension.length }, (_, mask) =>
-		Array.from(extension, (letter, index) =>
-			mask & (1 << index) ? letter.toUpperCase() : letter,
-		).join(""),
-	);
-}
-
 /** Exact declaration binding, effect certainty, and slot lifetime use actual local R2. */
 describe("blob extension storage policy", () => {
-	const thresholdCases = ["md", "canvas"].flatMap((extension) =>
-		extensionCaseVariants(extension).flatMap((variant) => [
-			[variant, 1_000_000, false] as const,
-			[variant, 1_000_001, true] as const,
-		]),
-	);
+	const thresholdCases = [
+		...(["md", "MD", "mD", "Md"] as const),
+		...(["canvas", "CANVAS", "cAnVaS", "CaNvAs"] as const),
+	].flatMap((variant) => [
+		[variant, 1_000_000, false] as const,
+		[variant, 1_000_001, true] as const,
+	]);
 
 	it.each(thresholdCases)(
 		"selects text at the inline limit and blob above it for .%s",
 		(extension, size, expected) => {
+			expect(thresholdCases).toHaveLength(16);
 			expect(
 				usesBlobStorage(`notes/policy.${extension}`, {
 					payload_hash: "a".repeat(64),

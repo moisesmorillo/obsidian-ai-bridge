@@ -4,7 +4,7 @@ title: Verify local F2 authentication and transport integration
 status: To Do
 assignee: []
 created_date: '2026-10-24T00:05:00Z'
-updated_date: '2026-10-24T15:31:00Z'
+updated_date: '2026-10-24T20:13:00Z'
 labels:
   - F2
   - acceptance
@@ -34,4 +34,6 @@ Separate local production-path evidence from deployment and external-client evid
 
 <!-- SECTION:PLAN:BEGIN -->
 Use docs/superpowers/plans/2026-10-24-f2-local-delivery.md, Task 5. After OAB-7.5, complete local production-path integration, contracts, reviews, and one pull request. Do not deploy or start OAB-8.
+
+Integration carryover from Task 3: verify actual encoded result sizes against the documented list estimate, including long JSON-RPC IDs and framing. Keep per-chunk bounds distinct from complete response sizes. Record exact limits and test evidence. This stays within planned aggregate transport validation.
 <!-- SECTION:PLAN:END -->

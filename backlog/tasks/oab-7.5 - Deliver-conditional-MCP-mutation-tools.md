@@ -1,10 +1,11 @@
 ---
 id: OAB-7.5
 title: Deliver conditional MCP mutation tools
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@pi'
 created_date: '2026-10-24T00:05:00Z'
-updated_date: '2026-10-24T15:31:00Z'
+updated_date: '2026-10-24T20:13:00Z'
 labels:
   - F2
   - MCP
@@ -35,3 +36,9 @@ Agents need section 8 mutations through the existing authoritative operations. A
 <!-- SECTION:PLAN:BEGIN -->
 Use docs/superpowers/plans/2026-10-24-f2-local-delivery.md, Task 4. After OAB-7.4, deliver exact-revision MCP mutations and client-scoped receipt tests.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+OAB-7.4 passed independent and scoped review at 39e7b48. Start Task 4 from the approved plan. Preserve transferred read ownership and current jose pin. Add conditional MCP commands through the existing application authority. No deployment or later phase action applies.
+<!-- SECTION:NOTES:END -->

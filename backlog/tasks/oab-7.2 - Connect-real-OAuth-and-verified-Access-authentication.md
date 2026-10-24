@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-10-24T00:05:00Z'
-updated_date: '2026-10-24T16:32:00Z'
+updated_date: '2026-10-24T16:34:00Z'
 labels:
   - F2
   - auth
@@ -49,4 +49,6 @@ Completed OAB-7.2 local OAuth and Access composition. Added OAuth provider and j
 The initial partial note above is superseded by the completed report in .superpowers/sdd/2026-10-24-f2-local-delivery/task-1-report.md. Commit 96fe91d0c72a8c28d49a43c5ed2402f673896f0c contains the complete local implementation. The report records test evidence, limits, and Task 2 integration seams. OAB-7.2 remains In Progress for independent review.
 
 Correction: the complete implementation commit is 36ecb297cd46188a9c79de43104046da42518a01. The earlier hash in these notes is stale.
+
+Code review found a duplicate OAuth scope list. OAuth now reads accepted scopes from the canonical VaultScopeSchema. The discovery regression assertion and full check passed. Review correction commit: a142d2547e541ec47cf76dec69c22d0ee71fdcd4. The task remains In Progress for independent parent review.
 <!-- SECTION:NOTES:END -->

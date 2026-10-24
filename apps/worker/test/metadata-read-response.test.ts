@@ -94,6 +94,7 @@ function controlledGateway() {
 							kind: "text",
 							large: false,
 							seq: i + 1,
+							updated_at: i + 1,
 						})),
 					},
 				};

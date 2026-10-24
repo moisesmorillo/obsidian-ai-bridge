@@ -94,6 +94,25 @@ export {
 	RestoreRequestSchema,
 } from "@protocol/schemas/history";
 export { IdempotencyKeySchema } from "@protocol/schemas/idempotency";
+export {
+	McpGetHistoryInputSchema,
+	McpGetHistoryToolSchema,
+	McpHistoryOutputSchema,
+	McpHistoryResultSchema,
+	McpListNotesInputSchema,
+	McpListNotesOutputSchema,
+	McpListNotesResultSchema,
+	McpListNotesToolSchema,
+	McpReadNoteInputSchema,
+	McpReadNoteOutputSchema,
+	McpReadNoteResultSchema,
+	McpReadNoteToolSchema,
+	McpSearchNotesInputSchema,
+	McpSearchNotesOutputSchema,
+	McpSearchNotesResultSchema,
+	McpSearchNotesToolSchema,
+	McpToolErrorSchema,
+} from "@protocol/schemas/mcp";
 export { PathSchema } from "@protocol/schemas/path";
 export {
 	ChangeEntrySchema,
@@ -178,6 +197,17 @@ export type {
 	RestoreRequest,
 } from "@protocol/types/history";
 export type { IdempotencyKey } from "@protocol/types/idempotency";
+export type {
+	McpGetHistoryInput,
+	McpHistoryResult,
+	McpListNotesInput,
+	McpListNotesResult,
+	McpReadNoteInput,
+	McpReadNoteResult,
+	McpSearchNotesInput,
+	McpSearchNotesResult,
+	McpToolError,
+} from "@protocol/types/mcp";
 export type { Path } from "@protocol/types/path";
 export type {
 	ChangeEntry,
@@ -190,6 +220,7 @@ export type {
 	MetadataBatchRequest,
 	MetadataBatchResponse,
 	MetadataBatchResult,
+	MetadataManifestRow,
 	ReadCursor,
 	ReadCursorContext,
 	ReadFailureResponse,

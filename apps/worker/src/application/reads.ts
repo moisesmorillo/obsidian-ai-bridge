@@ -8,10 +8,10 @@ import type {
 	FileFailure,
 	HistoryPageEntry,
 	HistoryUpperResponse,
-	ManifestEntry,
 	ManifestPage,
 	MetadataBatchRequest,
 	MetadataBatchResponse,
+	MetadataManifestRow,
 	OperationIntent,
 	VaultReadResponse,
 	VaultReadResult,
@@ -135,7 +135,10 @@ export async function openManifestRead(
 	signal?: AbortSignal,
 ): Promise<
 	ReadOutcome<
-		LazyReadSession<ManifestEntry, Omit<ManifestPage, "entries" | "next_page">>
+		LazyReadSession<
+			MetadataManifestRow,
+			Omit<ManifestPage, "entries" | "next_page">
+		>
 	>
 > {
 	const begun = await beginRead(gateway, context, [], signal);

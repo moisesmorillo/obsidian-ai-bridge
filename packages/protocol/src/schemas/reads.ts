@@ -58,8 +58,8 @@ export const VaultReadResultSchema = z
 	})
 	.strict();
 
-/** One current path row, including tombstones, in the manifest. */
-export const ManifestEntrySchema = z
+/** Shared public and internal fields for current manifest metadata. */
+const ManifestEntryFieldsSchema = z
 	.object({
 		path: PathSchema,
 		etag: ETagSchema,
@@ -70,35 +70,44 @@ export const ManifestEntrySchema = z
 		deleted: z.boolean(),
 		large: z.boolean(),
 	})
-	.strict()
-	.superRefine((entry, ctx) => {
-		if (entry.deleted && (entry.hash !== "" || entry.size !== 0 || entry.large))
-			ctx.addIssue({
-				code: "custom",
-				message: "tombstone manifest metadata must be empty",
-			});
-		if (!entry.deleted && entry.hash === "")
-			ctx.addIssue({
-				code: "custom",
-				message: "live manifest metadata needs a hash",
-			});
-		if (
-			entry.large &&
-			(entry.deleted ||
-				entry.kind !== "blob" ||
-				entry.size <= 1_000_000 ||
-				!/\.(?:md|canvas)$/i.test(entry.path))
-		)
-			ctx.addIssue({
-				code: "custom",
-				message: "large marks only oversized live Markdown or Canvas blobs",
-			});
-		if (!entry.deleted && entry.hash.length !== 64)
-			ctx.addIssue({
-				code: "custom",
-				message: "live manifest metadata needs a hash",
-			});
-	});
+	.strict();
+
+/** Preserve live, tombstone, and large-file invariants across manifest boundaries. */
+function refineManifestEntry(
+	entry: z.infer<typeof ManifestEntryFieldsSchema>,
+	ctx: z.RefinementCtx,
+): void {
+	if (entry.deleted && (entry.hash !== "" || entry.size !== 0 || entry.large))
+		ctx.addIssue({
+			code: "custom",
+			message: "tombstone manifest metadata must be empty",
+		});
+	if (!entry.deleted && entry.hash === "")
+		ctx.addIssue({
+			code: "custom",
+			message: "live manifest metadata needs a hash",
+		});
+	if (
+		entry.large &&
+		(entry.deleted ||
+			entry.kind !== "blob" ||
+			entry.size <= 1_000_000 ||
+			!/\.(?:md|canvas)$/i.test(entry.path))
+	)
+		ctx.addIssue({
+			code: "custom",
+			message: "large marks only oversized live Markdown or Canvas blobs",
+		});
+	if (!entry.deleted && entry.hash.length !== 64)
+		ctx.addIssue({
+			code: "custom",
+			message: "live manifest metadata needs a hash",
+		});
+}
+
+/** One public current path row, including tombstones, in the manifest. */
+export const ManifestEntrySchema =
+	ManifestEntryFieldsSchema.superRefine(refineManifestEntry);
 
 /** One bounded page of manifest metadata at a captured vault head. */
 export const ManifestPageSchema = z
@@ -336,8 +345,12 @@ export const MetadataBatchRequestSchema = z.discriminatedUnion("collection", [
 		.strict(),
 ]);
 
-/** Internal manifest metadata row, without content bytes. */
-export const MetadataManifestRowSchema = ManifestEntrySchema;
+/** Internal manifest metadata row with its storage-authoritative update time. */
+export const MetadataManifestRowSchema = ManifestEntryFieldsSchema.extend({
+	updated_at: SafeSequenceSchema,
+})
+	.strict()
+	.superRefine(refineManifestEntry);
 /** Internal history metadata row, with a numeric seek revision but no content. */
 export const MetadataHistoryRowSchema = z
 	.object({

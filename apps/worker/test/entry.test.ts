@@ -11,8 +11,15 @@ describe("default-deny Worker entry point", () => {
 		expect(response.status).toBe(404);
 	});
 
+	it("returns 405 for unsupported MCP GET transport", async () => {
+		const response = await SELF.fetch("https://worker.invalid/mcp", {
+			method: "GET",
+		});
+
+		expect(response.status).toBe(405);
+	});
+
 	it.each([
-		["GET", "/mcp"],
 		["GET", "/owner/clients"],
 		["GET", "/unknown"],
 	] as const)("returns 404 for %s %s", async (method, path) => {

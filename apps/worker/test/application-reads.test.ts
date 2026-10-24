@@ -4,8 +4,8 @@ import {
 	type ChangeEntry,
 	encodeReadCursor,
 	formatETag,
-	type ManifestEntry,
 	type MetadataBatchRequest,
+	type MetadataManifestRow,
 	parseETag,
 } from "@obsidian-ai-bridge/protocol";
 import {
@@ -24,7 +24,7 @@ const context: AuthorizationContext = {
 };
 
 /** Build one valid live manifest row with a stable ordered path. */
-function manifestRow(index: number): ManifestEntry {
+function manifestRow(index: number): MetadataManifestRow {
 	const path = `files/${String(index).padStart(4, "0")}.md`;
 	return {
 		path,
@@ -35,11 +35,12 @@ function manifestRow(index: number): ManifestEntry {
 		kind: "text",
 		deleted: false,
 		large: false,
+		updated_at: index + 1,
 	};
 }
 
 /** Create a typed in-memory gateway that applies native 64-row keyset limits. */
-function manifestGateway(rows: ManifestEntry[]) {
+function manifestGateway(rows: MetadataManifestRow[]) {
 	const state = {
 		batches: 0,
 		finished: [] as AdmissionCompletion[],
@@ -302,7 +303,7 @@ describe("application bounded read traversal", () => {
 		const first = await openManifestRead(gateway, context);
 		expect(first.ok).toBe(true);
 		if (!first.ok) return;
-		const firstRows: ManifestEntry[] = [];
+		const firstRows: MetadataManifestRow[] = [];
 		let firstBatch = await first.body.readBatch();
 		firstRows.push(...firstBatch.rows);
 		while (!firstBatch.done) {
@@ -343,7 +344,7 @@ describe("application bounded read traversal", () => {
 			const first = await openManifestRead(gateway, context);
 			expect(first.ok).toBe(true);
 			if (!first.ok) return;
-			const firstRows: ManifestEntry[] = [];
+			const firstRows: MetadataManifestRow[] = [];
 			let firstBatch = await first.body.readBatch();
 			firstRows.push(...firstBatch.rows);
 			while (!firstBatch.done) {

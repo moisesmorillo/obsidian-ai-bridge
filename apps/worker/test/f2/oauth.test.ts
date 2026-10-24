@@ -703,6 +703,167 @@ describe("production OAuth entry", () => {
 		expect((await post(expiringCookie, expiringHandle)).status).toBe(400);
 	});
 
+	it("connects production OAuth, REST, MCP, refresh, and scoped client access", async () => {
+		const assertion = await ownerAssertion();
+		const dynamic = await registerPublicClient(
+			"https://flow.test/callback",
+			"Dynamic integration client",
+		);
+		const preRegisteredOptions = createOAuthOptions(
+			env,
+			createAuthorizeHandler(),
+			createAuthorizeHandler(),
+		);
+		const api = getOAuthApi(
+			requireValue(preRegisteredOptions, "provider options"),
+			env,
+		);
+		const preRegistered = await api.createClient({
+			redirectUris: ["https://registered.test/callback"],
+			grantTypes: ["authorization_code", "refresh_token"],
+			responseTypes: ["code"],
+			tokenEndpointAuthMethod: "none",
+		});
+		for (const [clientId, redirectUri] of [
+			[dynamic.client_id, "https://flow.test/callback"],
+			[preRegistered.clientId, "https://registered.test/callback"],
+		] as const) {
+			const token = await issueAccessToken(
+				clientId,
+				assertion,
+				"vault:read vault:write",
+				redirectUri,
+			);
+			const summary = await SELF.fetch("https://service.test/v1/vault", {
+				headers: { authorization: `Bearer ${token.access_token}` },
+			});
+			const { epoch } = (await summary.json()) as { epoch: string };
+			const path = `integration/${clientId}.md`;
+			const written = await SELF.fetch(
+				`https://service.test/v1/files/${encodeURIComponent(path)}`,
+				{
+					method: "PUT",
+					headers: {
+						authorization: `Bearer ${token.access_token}`,
+						"If-None-Match": "*",
+						"X-Vault-Epoch": epoch,
+					},
+					body: "REST creates; MCP reads and updates.",
+				},
+			);
+			expect(written.status).toBe(201);
+			await written.text();
+			const initialEtag = requireValue(
+				written.headers.get("etag"),
+				"REST write ETag",
+			);
+			const read = await SELF.fetch(`https://service.test/mcp`, {
+				method: "POST",
+				headers: {
+					authorization: `Bearer ${token.access_token}`,
+					"content-type": "application/json",
+					accept: "application/json, text/event-stream",
+				},
+				body: JSON.stringify({
+					jsonrpc: "2.0",
+					id: `read-${clientId}`,
+					method: "tools/call",
+					params: { name: "read_note", arguments: { path } },
+				}),
+			});
+			expect(read.status).toBe(200);
+			expect(await read.text()).toContain(
+				"REST creates; MCP reads and updates.",
+			);
+			const updated = await SELF.fetch("https://service.test/mcp", {
+				method: "POST",
+				headers: {
+					authorization: `Bearer ${token.access_token}`,
+					"content-type": "application/json",
+					accept: "application/json, text/event-stream",
+				},
+				body: JSON.stringify({
+					jsonrpc: "2.0",
+					id: `write-${clientId}`,
+					method: "tools/call",
+					params: {
+						name: "update_note",
+						arguments: {
+							path,
+							etag: initialEtag,
+							content: "MCP updates; REST verifies.",
+						},
+					},
+				}),
+			});
+			expect(updated.status).toBe(200);
+			await updated.text();
+			const verified = await SELF.fetch(
+				`https://service.test/v1/files/${encodeURIComponent(path)}`,
+				{ headers: { authorization: `Bearer ${token.access_token}` } },
+			);
+			expect(verified.status).toBe(200);
+			expect(await verified.text()).toContain("MCP updates; REST verifies.");
+			const refreshed = await SELF.fetch("https://service.test/oauth/token", {
+				method: "POST",
+				headers: { "content-type": "application/x-www-form-urlencoded" },
+				body: new URLSearchParams({
+					grant_type: "refresh_token",
+					client_id: clientId,
+					refresh_token: token.refresh_token,
+					scope: "vault:read",
+					resource: "https://service.test",
+				}),
+			});
+			expect(refreshed.status).toBe(200);
+			const rotated = (await refreshed.json()) as { access_token: string };
+			const deniedWrite = await SELF.fetch(
+				`https://service.test/v1/files/${encodeURIComponent(path)}`,
+				{
+					method: "PUT",
+					headers: {
+						authorization: `Bearer ${rotated.access_token}`,
+						"If-Match": initialEtag,
+						"X-Vault-Epoch": epoch,
+					},
+					body: "read-only refresh cannot write",
+				},
+			);
+			expect(deniedWrite.status).toBe(403);
+		}
+		const writeOnlyClient = await registerPublicClient(
+			"https://flow.test/callback",
+			"Independent write-only client",
+		);
+		const writeOnly = await issueAccessToken(
+			writeOnlyClient.client_id,
+			assertion,
+			"vault:write",
+		);
+		const deniedRestRead = await SELF.fetch("https://service.test/v1/vault", {
+			headers: { authorization: `Bearer ${writeOnly.access_token}` },
+		});
+		expect(deniedRestRead.status).toBe(403);
+		const deniedMcpRead = await SELF.fetch("https://service.test/mcp", {
+			method: "POST",
+			headers: {
+				authorization: `Bearer ${writeOnly.access_token}`,
+				"content-type": "application/json",
+				accept: "application/json, text/event-stream",
+			},
+			body: JSON.stringify({
+				jsonrpc: "2.0",
+				id: "write-only-read-denial",
+				method: "tools/call",
+				params: { name: "list_notes", arguments: {} },
+			}),
+		});
+		expect(deniedMcpRead.status).toBe(403);
+		const denialBody = await deniedMcpRead.text();
+		expect(denialBody).not.toContain("epoch");
+		expect(denialBody).not.toContain("MCP updates; REST verifies.");
+	});
+
 	it("commits durable denial before provider cleanup and blocks the next REST and refresh requests", async () => {
 		const assertion = await ownerAssertion();
 		const client = await registerPublicClient();
@@ -730,6 +891,10 @@ describe("production OAuth entry", () => {
 		expect(committed.status).toBe(201);
 		await committed.text();
 		const kv = requireValue(env.OAUTH_KV, "OAuth KV binding");
+		const providerGrantPrefix = "grant:synthetic-owner:";
+		const providerGrantsBefore = (
+			await kv.list({ prefix: providerGrantPrefix })
+		).keys.map((key) => key.name);
 		const deleteKey = kv.delete.bind(kv);
 		vi.spyOn(kv, "delete").mockImplementation(async (key) => {
 			if (key.startsWith("token:") || key.startsWith("grant:"))
@@ -788,6 +953,35 @@ describe("production OAuth entry", () => {
 		});
 		expect(rest.status).toBe(401);
 		expect(await rest.text()).toContain("revoked");
+		const mcp = await SELF.fetch("https://service.test/mcp", {
+			method: "POST",
+			headers: {
+				authorization: `Bearer ${token.access_token}`,
+				"content-type": "application/json",
+				accept: "application/json, text/event-stream",
+			},
+			body: JSON.stringify({
+				jsonrpc: "2.0",
+				id: "revoked-next-request",
+				method: "tools/call",
+				params: {
+					name: "read_note",
+					arguments: { path: "committed-before-revoke.md" },
+				},
+			}),
+		});
+		expect(mcp.status).toBe(401);
+		const mcpDenial = await mcp.text();
+		expect(mcpDenial).toContain("revoked");
+		expect(mcpDenial).not.toContain(epoch);
+		expect(mcpDenial).not.toContain(
+			"Committed data survives client revocation.",
+		);
+		expect(
+			(await kv.list({ prefix: providerGrantPrefix })).keys.map(
+				(key) => key.name,
+			),
+		).toEqual(expect.arrayContaining(providerGrantsBefore));
 		const pendingPage = await SELF.fetch("https://service.test/owner/clients", {
 			headers: { "Cf-Access-Jwt-Assertion": assertion },
 		});

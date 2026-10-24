@@ -45,6 +45,166 @@ async function seedMcpManifestRows(
 afterEach(() => vi.unstubAllGlobals());
 
 describe("production MCP transport", () => {
+	it("streams a worst-case escaped note with bounded chunks and JSON-RPC framing", async () => {
+		const { token } = await issueToken();
+		const auth = { authorization: `Bearer ${token}` };
+		const summary = await SELF.fetch("https://service.test/v1/vault", {
+			headers: auth,
+		});
+		const { epoch } = (await summary.json()) as { epoch: string };
+		const path = `Escaped/escaped-${crypto.randomUUID()}.canvas`;
+		const content = "\0".repeat(1_000_000);
+		const written = await SELF.fetch(
+			`https://service.test/v1/files/${encodeURIComponent(path)}`,
+			{
+				method: "PUT",
+				headers: {
+					...auth,
+					"If-None-Match": "*",
+					"X-Vault-Epoch": epoch,
+				},
+				body: content,
+			},
+		);
+		expect(written.status).toBe(201);
+		await written.text();
+		const longId = `request-${"x".repeat(70_000)}`;
+		const response = await productionWorker.fetch(
+			new Request("https://service.test/mcp", {
+				method: "POST",
+				headers: {
+					...auth,
+					"content-type": "application/json",
+					accept: "application/json, text/event-stream",
+				},
+				body: JSON.stringify({
+					jsonrpc: "2.0",
+					id: longId,
+					method: "tools/call",
+					params: { name: "read_note", arguments: { path } },
+				}),
+			}),
+			env,
+		);
+		expect(response.status).toBe(200);
+		const reader = response.body?.getReader();
+		if (!reader) throw new Error("MCP response has no stream");
+		let encodedBytes = 0;
+		let maximumChunkBytes = 0;
+		let trailingText = "";
+		let echoedLongId = false;
+		try {
+			for (;;) {
+				const item = await reader.read();
+				if (item.done) break;
+				encodedBytes += item.value.byteLength;
+				maximumChunkBytes = Math.max(maximumChunkBytes, item.value.byteLength);
+				trailingText = trailingText + new TextDecoder().decode(item.value);
+				if (trailingText.includes(longId)) echoedLongId = true;
+				trailingText = trailingText.slice(-longId.length);
+			}
+		} finally {
+			await reader.cancel();
+		}
+		expect(echoedLongId).toBe(true);
+		expect(encodedBytes).toBeGreaterThan(6_000_000 + longId.length);
+		expect(maximumChunkBytes).toBeLessThanOrEqual(65_536);
+	});
+
+	it("rejects an oversized declared envelope before body demand", async () => {
+		const { token } = await issueToken();
+		let pulls = 0;
+		const body = new ReadableStream<Uint8Array>(
+			{
+				/** Count pulls so the declared-size rejection proves no body demand. */
+				pull() {
+					pulls += 1;
+				},
+			},
+			{ highWaterMark: 0 },
+		);
+		const response = await productionWorker.fetch(
+			new Request("https://service.test/mcp", {
+				method: "POST",
+				headers: {
+					authorization: `Bearer ${token}`,
+					"content-type": "application/json",
+					accept: "application/json, text/event-stream",
+					"content-length": "6100001",
+				},
+				body,
+			}),
+			env,
+		);
+		expect(response.status).toBe(413);
+		expect(pulls).toBe(0);
+		await response.body?.cancel();
+	});
+
+	it("owns one envelope slot before body demand and rejects competing traffic", async () => {
+		const { token } = await issueToken();
+		const controller = new AbortController();
+		/** Signal that the first request reached its body reader. */
+		let firstPull = () => {};
+		const reachedBody = new Promise<void>((resolve) => {
+			firstPull = resolve;
+		});
+		const firstBody = new ReadableStream<Uint8Array>(
+			{
+				/** Hold body demand until the competing request tests admission. */
+				pull() {
+					firstPull();
+				},
+			},
+			{ highWaterMark: 0 },
+		);
+		const first = productionWorker.fetch(
+			new Request("https://service.test/mcp", {
+				method: "POST",
+				signal: controller.signal,
+				headers: {
+					authorization: `Bearer ${token}`,
+					"content-type": "application/json",
+					accept: "application/json, text/event-stream",
+				},
+				body: firstBody,
+			}),
+			env,
+		);
+		let competingPulls = 0;
+		try {
+			await reachedBody;
+			const competing = await productionWorker.fetch(
+				new Request("https://service.test/mcp", {
+					method: "POST",
+					headers: {
+						authorization: `Bearer ${token}`,
+						"content-type": "application/json",
+						accept: "application/json, text/event-stream",
+					},
+					body: new ReadableStream<Uint8Array>(
+						{
+							/** Count competing body demand after the slot refusal. */
+							pull() {
+								competingPulls += 1;
+							},
+						},
+						{ highWaterMark: 0 },
+					),
+				}),
+				env,
+			);
+			expect(competing.status).toBe(429);
+			expect(competingPulls).toBe(0);
+			controller.abort();
+			const aborted = await first;
+			expect(aborted.status).toBe(500);
+			await aborted.body?.cancel();
+		} finally {
+			controller.abort();
+		}
+	});
+
 	it("keeps OAuth challenges on unauthenticated MCP requests", async () => {
 		const response = await SELF.fetch("https://service.test/mcp", {
 			method: "POST",

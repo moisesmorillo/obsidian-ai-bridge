@@ -251,6 +251,56 @@ describe("production MCP mutation safety", () => {
 		});
 	});
 
+	it("accepts the worst-case escaped note envelope within the canonical wire limit", async () => {
+		const reader = await issueToken();
+		const { token, clientId } = await issueToken("vault:write");
+		const epoch = await epochFor(reader.token);
+		const path = `Agents/worst-escaped-${crypto.randomUUID()}.md`;
+		const content = "\0".repeat(1_000_000);
+		const envelope = JSON.stringify({
+			jsonrpc: "2.0",
+			id: "worst-escaped-input",
+			method: "tools/call",
+			params: {
+				name: "create_note",
+				arguments: { path, content, epoch },
+			},
+		});
+		const wireBytes = new TextEncoder().encode(envelope);
+		expect(wireBytes.byteLength).toBeGreaterThan(6_000_000);
+		expect(wireBytes.byteLength).toBeLessThanOrEqual(6_100_000);
+		const response = await productionWorker.fetch(
+			new Request("https://service.test/mcp", {
+				method: "POST",
+				headers: {
+					authorization: `Bearer ${token}`,
+					"content-type": "application/json",
+					accept: "application/json, text/event-stream",
+				},
+				body: wireBytes,
+			}),
+			env,
+		);
+		const result = await receipt(response);
+		expect(result.epoch).toBe(epoch);
+		const vault = env.VAULTS.get(env.VAULTS.idFromName("service.test"));
+		const stored = await runInDurableObject(vault, (_instance, state) =>
+			state.storage.sql
+				.exec(
+					"SELECT size, length(CAST(content AS BLOB)) AS bytes, origin FROM files WHERE path = ?",
+					path,
+				)
+				.toArray(),
+		);
+		expect(stored).toEqual([
+			expect.objectContaining({
+				size: 1_000_000,
+				bytes: 1_000_000,
+				origin: clientId,
+			}),
+		]);
+	});
+
 	it("rejects stale mutation epochs and malformed restore ETags without a publication", async () => {
 		const { token } = await issueToken("vault:read vault:write vault:delete");
 		const epoch = await epochFor(token);

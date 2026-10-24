@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-10-24T00:05:00Z'
-updated_date: '2026-10-24T16:34:00Z'
+updated_date: '2026-10-24T16:35:00Z'
 labels:
   - F2
   - auth
@@ -51,4 +51,6 @@ The initial partial note above is superseded by the completed report in .superpo
 Correction: the complete implementation commit is 36ecb297cd46188a9c79de43104046da42518a01. The earlier hash in these notes is stale.
 
 Code review found a duplicate OAuth scope list. OAuth now reads accepted scopes from the canonical VaultScopeSchema. The discovery regression assertion and full check passed. Review correction commit: a142d2547e541ec47cf76dec69c22d0ee71fdcd4. The task remains In Progress for independent parent review.
+
+Hash correction: commit 36ecb297cd46188a9c79de43104046da42518a01 was amended before review. The current implementation commit is 1154a411a520251bdd3ac816cae6f2899570814b.
 <!-- SECTION:NOTES:END -->

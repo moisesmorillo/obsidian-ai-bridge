@@ -67,9 +67,12 @@ export async function currentMcpEpoch(
 	gateway: McpNotesGateway,
 	identity: AuthorizationContext,
 ): Promise<McpEpochOutcome> {
-	if (!identity.scopes.includes("vault:read"))
-		return { ok: false, failure: { kind: "forbidden_scope" } };
-	const result = await gateway.getCurrentEpoch(identity, "read");
+	const operation = identity.scopes.includes("vault:read")
+		? "read"
+		: identity.scopes.includes("vault:write")
+			? "put"
+			: "delete";
+	const result = await gateway.getCurrentEpoch(identity, operation);
 	return result.ok
 		? { ok: true, epoch: result.current_epoch }
 		: { ok: false, failure: result.failure };

@@ -262,19 +262,20 @@ export async function handleMcpHttp(
 	const identity = await resolveIdentity(request);
 	if (identity === null)
 		return httpFailure(401, "unauthorized", true, env.SERVICE_ORIGIN);
-	if (!identity.scopes.includes("vault:read"))
+	if (
+		!identity.scopes.some((scope) =>
+			["vault:read", "vault:write", "vault:delete"].includes(scope),
+		)
+	)
 		return httpFailure(403, "forbidden_scope", true, env.SERVICE_ORIGIN);
 	const releaseEnvelope = acquireMcpEnvelope();
 	if (!releaseEnvelope)
 		return new Response(null, { status: 429, headers: { "retry-after": "1" } });
-	const releaseRead = tryAcquireReadSlot();
-	if (!releaseRead) {
-		releaseEnvelope();
-		return new Response(null, { status: 429, headers: { "retry-after": "1" } });
-	}
-	/** Release both isolate slots after the request response owner settles. */
+	let releaseRead: (() => void) | undefined;
+	/** Release every isolate slot acquired by this tool request. */
 	const release = () => {
-		releaseRead();
+		releaseRead?.();
+		releaseRead = undefined;
 		releaseEnvelope();
 	};
 	let readOwner: McpReadOwner | undefined;
@@ -310,7 +311,36 @@ export async function handleMcpHttp(
 		)
 			return ownedHttpFailure(400, "invalid_request", release, request.signal);
 		const message: JSONRPCMessage = parsedMessage;
+		const callName =
+			"method" in message && message.method === "tools/call"
+				? (message as { params?: { name?: unknown } }).params?.name
+				: undefined;
+		const readTools = new Set([
+			"list_notes",
+			"read_note",
+			"search_notes",
+			"get_history",
+		]);
+		if (typeof callName === "string" && readTools.has(callName)) {
+			if (!identity.scopes.includes("vault:read")) {
+				release();
+				return httpFailure(403, "forbidden_scope", true, env.SERVICE_ORIGIN);
+			}
+			releaseRead = tryAcquireReadSlot();
+			if (!releaseRead) {
+				releaseEnvelope();
+				return new Response(null, {
+					status: 429,
+					headers: { "retry-after": "1" },
+				});
+			}
+		}
 		let boundaryFailure: string | undefined;
+		/** Resolve mutation body-slot ownership after its response owner settles. */
+		let resolveResponseProduction: () => void = () => {};
+		const responseProduction = new Promise<void>((resolve) => {
+			resolveResponseProduction = resolve;
+		});
 		const server = createMcpServer(
 			identity,
 			gateway,
@@ -318,6 +348,8 @@ export async function handleMcpHttp(
 			(owner: McpReadOwner) => {
 				readOwner = owner;
 			},
+			responseProduction,
+			resolveResponseProduction,
 			request.signal,
 			(kind: string) => {
 				boundaryFailure = kind;

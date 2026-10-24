@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-10-24T00:05:00Z'
-updated_date: '2026-10-24T20:13:00Z'
+updated_date: '2026-10-24T20:38:00Z'
 labels:
   - F2
   - MCP
@@ -40,5 +40,5 @@ Use docs/superpowers/plans/2026-10-24-f2-local-delivery.md, Task 4. After OAB-7.
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-OAB-7.4 passed independent and scoped review at 39e7b48. Start Task 4 from the approved plan. Preserve transferred read ownership and current jose pin. Add conditional MCP commands through the existing application authority. No deployment or later phase action applies.
+OAB-7.4 passed independent review at 39e7b48. Preserve the current jose pin. This task uses the existing application authority and remains local. Added canonical mutation schemas and production MCP tools for create, update, append, delete, and restore. Tool scopes are checked in Worker. Production tests cover all five mutations, stale create epoch, stale update ETag, append same-key retry, changed payload mismatch, client-scoped key isolation, denied delete scope, and denied read calls. The F2 MCP focused suite passed 9 tests. docs:check and bun run check passed. Task remains In Progress for independent review. Remaining test cases are listed in the task-4 report.
 <!-- SECTION:NOTES:END -->

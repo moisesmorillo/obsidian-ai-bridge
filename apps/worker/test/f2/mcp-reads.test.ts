@@ -268,6 +268,11 @@ describe("production MCP transport", () => {
 			result?: { tools?: { name: string }[] };
 		};
 		expect(toolResult.result?.tools?.map((tool) => tool.name)).toEqual([
+			"create_note",
+			"update_note",
+			"append_to_note",
+			"delete_note",
+			"restore_note",
 			"list_notes",
 			"read_note",
 			"search_notes",
@@ -968,10 +973,155 @@ describe("production MCP transport", () => {
 		}
 	});
 
-	it("denies every discovery and read call without read scope", async () => {
+	it("runs all five conditional mutation tools through OAuth and the production DO", async () => {
+		const { token } = await issueToken("vault:read vault:write vault:delete");
+		const auth = { authorization: `Bearer ${token}` };
+		const summary = await SELF.fetch("https://service.test/v1/vault", {
+			headers: auth,
+		});
+		const { epoch } = (await summary.json()) as { epoch: string };
+		const path = "Agents/mcp-mutation-cycle.md";
+		/** Send one tool request with the test client's verified bearer token. */
+		const call = (name: string, args: Record<string, unknown>) =>
+			postMcp(token, {
+				jsonrpc: "2.0",
+				id: 1,
+				method: "tools/call",
+				params: { name, arguments: args },
+			});
+		/** Decode the structured mutation receipt from one MCP HTTP response. */
+		const result = async (response: Response) =>
+			(await response.clone().json()) as {
+				result?: { structuredContent?: { epoch?: string; etag?: string } };
+			};
+		const created = await call("create_note", {
+			path,
+			content: "first",
+			epoch,
+		});
+		expect(created.status).toBe(200);
+		const firstEtag = (await result(created)).result?.structuredContent?.etag;
+		expect(firstEtag).toBeTruthy();
+		const updated = await call("update_note", {
+			path,
+			content: "second",
+			etag: firstEtag,
+		});
+		expect(updated.status).toBe(200);
+		const secondEtag = (await result(updated)).result?.structuredContent?.etag;
+		const staleUpdate = await call("update_note", {
+			path,
+			content: "stale",
+			etag: firstEtag,
+		});
+		expect(staleUpdate.status).toBe(200);
+		expect((await result(staleUpdate)).result?.structuredContent).toMatchObject(
+			{ epoch, code: "precondition_failed" },
+		);
+		expect(
+			(await result(staleUpdate)).result?.structuredContent,
+		).not.toHaveProperty("content");
+		const staleCreate = await call("create_note", {
+			path,
+			content: "duplicate",
+			epoch: `a${"0".repeat(31)}`,
+		});
+		expect(staleCreate.status).toBe(200);
+		expect((await result(staleCreate)).result?.structuredContent).toMatchObject(
+			{ epoch, code: "epoch_mismatch" },
+		);
+		const appended = await call("append_to_note", {
+			path,
+			text: " third",
+			epoch,
+			idempotency_key: "append-key-00001",
+		});
+		expect(appended.status).toBe(200);
+		const thirdEtag = (await result(appended)).result?.structuredContent?.etag;
+		const appendRetry = await call("append_to_note", {
+			path,
+			text: " third",
+			epoch,
+			idempotency_key: "append-key-00001",
+		});
+		expect((await result(appendRetry)).result?.structuredContent?.etag).toBe(
+			thirdEtag,
+		);
+		const changedRetry = await call("append_to_note", {
+			path,
+			text: " changed",
+			epoch,
+			idempotency_key: "append-key-00001",
+		});
+		expect(
+			(await result(changedRetry)).result?.structuredContent,
+		).toMatchObject({
+			epoch,
+			code: "idempotency_mismatch",
+		});
+		const secondClient = await issueToken(
+			"vault:read vault:write vault:delete",
+		);
+		const otherClientAppend = await postMcp(secondClient.token, {
+			jsonrpc: "2.0",
+			id: 1,
+			method: "tools/call",
+			params: {
+				name: "append_to_note",
+				arguments: {
+					path,
+					text: " third",
+					epoch,
+					idempotency_key: "append-key-00001",
+				},
+			},
+		});
+		expect(otherClientAppend.status).toBe(200);
+		const otherClientEtag = (await result(otherClientAppend)).result
+			?.structuredContent?.etag;
+		expect(otherClientEtag).not.toBe(thirdEtag);
+		const deleted = await call("delete_note", { path, etag: otherClientEtag });
+		expect(deleted.status).toBe(200);
+		const deletedEtag = (await result(deleted)).result?.structuredContent?.etag;
+		const restored = await call("restore_note", {
+			path,
+			source_etag: firstEtag,
+			current_etag: deletedEtag,
+			as_conflict_copy: true,
+		});
+		expect(restored.status).toBe(200);
+		expect((await result(restored)).result?.structuredContent).toMatchObject({
+			epoch,
+		});
+		expect(secondEtag).not.toBe(firstEtag);
+	});
+
+	it("denies delete without delete scope while write remains independent", async () => {
 		const { token } = await issueToken("vault:write");
+		const response = await postMcp(token, {
+			jsonrpc: "2.0",
+			id: 1,
+			method: "tools/call",
+			params: {
+				name: "delete_note",
+				arguments: { path: "Agents/missing.md", etag: `"${"a".repeat(32)}.1"` },
+			},
+		});
+		expect(response.status).toBe(403);
+		expect(response.headers.get("www-authenticate")).toContain("Bearer");
+		expect(await response.text()).not.toContain("epoch");
+	});
+
+	it("allows protocol discovery but denies read calls without read scope", async () => {
+		const { token } = await issueToken("vault:write");
+		const discovery = await postMcp(token, {
+			jsonrpc: "2.0",
+			id: 1,
+			method: "tools/list",
+		});
+		expect(discovery.status).toBe(200);
+		await discovery.text();
 		for (const message of [
-			{ jsonrpc: "2.0", id: 1, method: "tools/list" },
 			{
 				jsonrpc: "2.0",
 				id: 2,

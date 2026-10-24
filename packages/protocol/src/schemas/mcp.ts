@@ -1,4 +1,6 @@
+import { FullTextContentSchema } from "@protocol/schemas/content";
 import { EpochSchema, ETagSchema } from "@protocol/schemas/etag";
+import { IdempotencyKeySchema } from "@protocol/schemas/idempotency";
 import { PathSchema } from "@protocol/schemas/path";
 import { HistoryPageEntrySchema } from "@protocol/schemas/reads";
 import {
@@ -34,6 +36,83 @@ export const McpSearchNotesInputSchema = z
 /** Validate a history request for one canonical vault path. */
 export const McpGetHistoryInputSchema = z.object({ path: PathSchema }).strict();
 
+/** Strict create-only MCP note request with an explicit vault generation. */
+export const McpCreateNoteInputSchema = z
+	.object({
+		path: PathSchema,
+		content: FullTextContentSchema,
+		epoch: EpochSchema,
+		idempotency_key: IdempotencyKeySchema.optional(),
+	})
+	.strict();
+
+/** Exact-revision replacement request. */
+export const McpUpdateNoteInputSchema = z
+	.object({
+		path: PathSchema,
+		content: FullTextContentSchema,
+		etag: ETagSchema,
+		idempotency_key: IdempotencyKeySchema.optional(),
+	})
+	.strict();
+
+/** Append request bound to the caller's explicit epoch and required receipt key. */
+export const McpAppendToNoteInputSchema = z
+	.object({
+		path: PathSchema,
+		text: FullTextContentSchema,
+		epoch: EpochSchema,
+		idempotency_key: IdempotencyKeySchema,
+	})
+	.strict();
+
+/** Exact-revision delete request. */
+export const McpDeleteNoteInputSchema = z
+	.object({
+		path: PathSchema,
+		etag: ETagSchema,
+	})
+	.strict();
+
+/** Restore request with both selected source and exact current revision ETags. */
+export const McpRestoreNoteInputSchema = z
+	.object({
+		path: PathSchema,
+		source_etag: ETagSchema,
+		current_etag: ETagSchema,
+		as_conflict_copy: z.boolean().optional(),
+	})
+	.strict();
+
+/** One bounded epoch-bearing mutation receipt. */
+export const McpMutationOutputSchema = z
+	.object({
+		epoch: EpochSchema,
+		etag: ETagSchema,
+	})
+	.strict();
+
+/** JSON Schema projection of the epoch-bearing mutation receipt. */
+export const McpMutationOutputToolSchema = z.toJSONSchema(
+	McpMutationOutputSchema,
+);
+
+/** JSON Schema form consumed by the MCP SDK without duplicating input policy. */
+/** JSON Schema projection of the canonical create request. */
+export const McpCreateNoteToolSchema = z.toJSONSchema(McpCreateNoteInputSchema);
+/** JSON Schema projection of the canonical exact-update request. */
+export const McpUpdateNoteToolSchema = z.toJSONSchema(McpUpdateNoteInputSchema);
+/** JSON Schema projection of the canonical idempotent append request. */
+export const McpAppendToNoteToolSchema = z.toJSONSchema(
+	McpAppendToNoteInputSchema,
+);
+/** JSON Schema projection of the canonical exact-delete request. */
+export const McpDeleteNoteToolSchema = z.toJSONSchema(McpDeleteNoteInputSchema);
+/** JSON Schema projection of the canonical exact-revision restore request. */
+export const McpRestoreNoteToolSchema = z.toJSONSchema(
+	McpRestoreNoteInputSchema,
+);
+
 /** JSON Schema form consumed by the MCP SDK without duplicating input policy. */
 export const McpListNotesToolSchema = z.toJSONSchema(McpListNotesInputSchema);
 /** JSON Schema form consumed by the MCP SDK without duplicating input policy. */
@@ -44,6 +123,19 @@ export const McpSearchNotesToolSchema = z.toJSONSchema(
 );
 /** JSON Schema form consumed by the MCP SDK without duplicating input policy. */
 export const McpGetHistoryToolSchema = z.toJSONSchema(McpGetHistoryInputSchema);
+
+/** Strict canonical machine-readable input for create_note. */
+export type McpCreateNoteInput = z.infer<typeof McpCreateNoteInputSchema>;
+/** Strict canonical machine-readable input for update_note. */
+export type McpUpdateNoteInput = z.infer<typeof McpUpdateNoteInputSchema>;
+/** Strict canonical machine-readable input for append_to_note. */
+export type McpAppendToNoteInput = z.infer<typeof McpAppendToNoteInputSchema>;
+/** Strict canonical machine-readable input for delete_note. */
+export type McpDeleteNoteInput = z.infer<typeof McpDeleteNoteInputSchema>;
+/** Strict canonical machine-readable input for restore_note. */
+export type McpRestoreNoteInput = z.infer<typeof McpRestoreNoteInputSchema>;
+/** Epoch-bearing mutation receipt returned without duplicate note content. */
+export type McpMutationOutput = z.infer<typeof McpMutationOutputSchema>;
 
 /** Structured list result with an explicit bound and current epoch. */
 export const McpListNotesResultSchema = z

@@ -95,6 +95,12 @@ export {
 } from "@protocol/schemas/history";
 export { IdempotencyKeySchema } from "@protocol/schemas/idempotency";
 export {
+	McpAppendToNoteInputSchema,
+	McpAppendToNoteToolSchema,
+	McpCreateNoteInputSchema,
+	McpCreateNoteToolSchema,
+	McpDeleteNoteInputSchema,
+	McpDeleteNoteToolSchema,
 	McpGetHistoryInputSchema,
 	McpGetHistoryToolSchema,
 	McpHistoryOutputSchema,
@@ -103,15 +109,21 @@ export {
 	McpListNotesOutputSchema,
 	McpListNotesResultSchema,
 	McpListNotesToolSchema,
+	McpMutationOutputSchema,
+	McpMutationOutputToolSchema,
 	McpReadNoteInputSchema,
 	McpReadNoteOutputSchema,
 	McpReadNoteResultSchema,
 	McpReadNoteToolSchema,
+	McpRestoreNoteInputSchema,
+	McpRestoreNoteToolSchema,
 	McpSearchNotesInputSchema,
 	McpSearchNotesOutputSchema,
 	McpSearchNotesResultSchema,
 	McpSearchNotesToolSchema,
 	McpToolErrorSchema,
+	McpUpdateNoteInputSchema,
+	McpUpdateNoteToolSchema,
 } from "@protocol/schemas/mcp";
 export { PathSchema } from "@protocol/schemas/path";
 export {
@@ -198,15 +210,21 @@ export type {
 } from "@protocol/types/history";
 export type { IdempotencyKey } from "@protocol/types/idempotency";
 export type {
+	McpAppendToNoteInput,
+	McpCreateNoteInput,
+	McpDeleteNoteInput,
 	McpGetHistoryInput,
 	McpHistoryResult,
 	McpListNotesInput,
 	McpListNotesResult,
+	McpMutationOutput,
 	McpReadNoteInput,
 	McpReadNoteResult,
+	McpRestoreNoteInput,
 	McpSearchNotesInput,
 	McpSearchNotesResult,
 	McpToolError,
+	McpUpdateNoteInput,
 } from "@protocol/types/mcp";
 export type { Path } from "@protocol/types/path";
 export type {

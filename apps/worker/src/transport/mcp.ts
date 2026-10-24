@@ -11,20 +11,42 @@ import type {
 	McpSearchNotesInput,
 } from "@obsidian-ai-bridge/protocol";
 import {
+	McpAppendToNoteInputSchema,
+	McpAppendToNoteToolSchema,
+	McpCreateNoteInputSchema,
+	McpCreateNoteToolSchema,
+	McpDeleteNoteInputSchema,
+	McpDeleteNoteToolSchema,
 	McpGetHistoryInputSchema,
 	McpGetHistoryToolSchema,
 	McpHistoryOutputSchema,
 	McpListNotesInputSchema,
 	McpListNotesOutputSchema,
 	McpListNotesToolSchema,
+	McpMutationOutputToolSchema,
 	McpReadNoteInputSchema,
 	McpReadNoteOutputSchema,
 	McpReadNoteToolSchema,
+	McpRestoreNoteInputSchema,
+	McpRestoreNoteToolSchema,
 	McpSearchNotesInputSchema,
 	McpSearchNotesOutputSchema,
 	McpSearchNotesToolSchema,
+	McpUpdateNoteInputSchema,
+	McpUpdateNoteToolSchema,
 } from "@obsidian-ai-bridge/protocol";
 import type { BlobContentStore } from "@worker/application/blobs";
+import type {
+	McpMutationGateway,
+	McpMutationOutcome,
+} from "@worker/application/mcp-mutations";
+import {
+	appendMcpNote,
+	createMcpNote,
+	deleteMcpNote,
+	restoreMcpNote,
+	updateMcpNote,
+} from "@worker/application/mcp-mutations";
 import type {
 	McpNotesGateway,
 	McpReadOutcome,
@@ -68,6 +90,10 @@ async function toolOutcome<T extends object>(
 	reportBoundaryFailure: (kind: string) => void,
 	adoptReadOwner: (owner: McpReadOwner) => void,
 ) {
+	if (!identity.scopes.includes("vault:read")) {
+		reportBoundaryFailure("forbidden_scope");
+		throw new Error("forbidden_scope");
+	}
 	if (outcome.owner) adoptReadOwner(outcome.owner);
 	if (outcome.ok)
 		return {
@@ -88,12 +114,152 @@ export function createMcpServer(
 	gateway: McpNotesGateway,
 	store: BlobContentStore,
 	adoptReadOwner: (owner: McpReadOwner) => void,
+	responseProduction: Promise<void>,
+	resolveResponseProduction: () => void,
 	signal?: AbortSignal,
 	reportBoundaryFailure: (kind: string) => void = () => {},
 ): McpServer {
 	const server = new McpServer(
 		{ name: "obsidian-ai-bridge", version: "1.0.0" },
 		{ instructions: MCP_INSTRUCTIONS },
+	);
+	const mutationGateway = gateway as McpNotesGateway & McpMutationGateway;
+	/** Transfer one mutation owner and encode its authorized receipt or failure. */
+	const mutationResult = async (outcome: McpMutationOutcome) => {
+		adoptReadOwner({
+			...outcome.owner,
+			finish: async (completion) => {
+				try {
+					return await outcome.owner.finish(completion);
+				} finally {
+					resolveResponseProduction();
+				}
+			},
+		});
+		if (outcome.ok)
+			return {
+				content: [],
+				structuredContent: { epoch: outcome.epoch, etag: outcome.etag },
+			};
+		if (
+			outcome.failure.kind === "forbidden_scope" ||
+			outcome.failure.kind === "revoked"
+		) {
+			reportBoundaryFailure(outcome.failure.kind);
+			throw new Error(outcome.failure.kind);
+		}
+		if (outcome.epoch === undefined) {
+			reportBoundaryFailure(outcome.failure.kind);
+			throw new Error(outcome.failure.kind);
+		}
+		return toolFailure(outcome.failure, outcome.epoch);
+	};
+	/** Enforce the tool scope in Worker before calling the durable application path. */
+	const mutationCall = async (
+		scope: "vault:write" | "vault:delete",
+		run: () => Promise<McpMutationOutcome>,
+	) => {
+		if (!identity.scopes.includes(scope)) {
+			reportBoundaryFailure("forbidden_scope");
+			throw new Error("forbidden_scope");
+		}
+		return mutationResult(await run());
+	};
+	server.registerTool(
+		"create_note",
+		{
+			description: "Create a note only at an absent path and current epoch.",
+			inputSchema: fromJsonSchema(McpCreateNoteToolSchema as JsonSchemaType),
+			outputSchema: fromJsonSchema(
+				McpMutationOutputToolSchema as JsonSchemaType,
+			),
+		},
+		async (input: unknown) =>
+			mutationCall("vault:write", () =>
+				createMcpNote(
+					mutationGateway,
+					identity,
+					McpCreateNoteInputSchema.parse(input),
+					responseProduction,
+				),
+			),
+	);
+	server.registerTool(
+		"update_note",
+		{
+			description: "Replace a note at its exact current ETag.",
+			inputSchema: fromJsonSchema(McpUpdateNoteToolSchema as JsonSchemaType),
+			outputSchema: fromJsonSchema(
+				McpMutationOutputToolSchema as JsonSchemaType,
+			),
+		},
+		async (input: unknown) =>
+			mutationCall("vault:write", () =>
+				updateMcpNote(
+					mutationGateway,
+					identity,
+					McpUpdateNoteInputSchema.parse(input),
+					responseProduction,
+				),
+			),
+	);
+	server.registerTool(
+		"append_to_note",
+		{
+			description: "Append one immutable payload using its required retry key.",
+			inputSchema: fromJsonSchema(McpAppendToNoteToolSchema as JsonSchemaType),
+			outputSchema: fromJsonSchema(
+				McpMutationOutputToolSchema as JsonSchemaType,
+			),
+		},
+		async (input: unknown) =>
+			mutationCall("vault:write", () =>
+				appendMcpNote(
+					mutationGateway,
+					identity,
+					McpAppendToNoteInputSchema.parse(input),
+					responseProduction,
+				),
+			),
+	);
+	server.registerTool(
+		"delete_note",
+		{
+			description: "Delete a note at its exact current ETag.",
+			inputSchema: fromJsonSchema(McpDeleteNoteToolSchema as JsonSchemaType),
+			outputSchema: fromJsonSchema(
+				McpMutationOutputToolSchema as JsonSchemaType,
+			),
+		},
+		async (input: unknown) =>
+			mutationCall("vault:delete", () =>
+				deleteMcpNote(
+					mutationGateway,
+					identity,
+					McpDeleteNoteInputSchema.parse(input),
+					responseProduction,
+				),
+			),
+	);
+	server.registerTool(
+		"restore_note",
+		{
+			description:
+				"Restore a retained revision under exact current and source ETags.",
+			inputSchema: fromJsonSchema(McpRestoreNoteToolSchema as JsonSchemaType),
+			outputSchema: fromJsonSchema(
+				McpMutationOutputToolSchema as JsonSchemaType,
+			),
+		},
+		async (input: unknown) =>
+			mutationCall("vault:write", () =>
+				restoreMcpNote(
+					mutationGateway,
+					identity,
+					McpRestoreNoteInputSchema.parse(input),
+					responseProduction,
+				),
+			),
 	);
 	server.registerTool(
 		"list_notes",

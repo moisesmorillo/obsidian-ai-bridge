@@ -1,6 +1,7 @@
 import { env, SELF } from "cloudflare:test";
 import { getOAuthApi } from "@cloudflare/workers-oauth-provider";
 import { VaultScopeSchema } from "@obsidian-ai-bridge/protocol";
+import type { Env } from "@worker/env";
 import productionWorker from "@worker/index";
 import {
 	createAuthorizeHandler,
@@ -176,6 +177,120 @@ async function revokeOwnerClient(
 		},
 	);
 	expect(response.status).toBe(303);
+}
+
+/** Create an authorization code without exchanging it so a test can control its callback order. */
+async function createAuthorizationCode(
+	clientId: string,
+	assertion: string,
+): Promise<{ code: string; verifier: string }> {
+	const { verifier, challenge } = createPkce();
+	const query = new URLSearchParams({
+		response_type: "code",
+		client_id: clientId,
+		redirect_uri: "https://flow.test/callback",
+		scope: "vault:read",
+		state: "controlled-race",
+		code_challenge: await challenge,
+		code_challenge_method: "S256",
+		resource: "https://service.test",
+	});
+	const consent = await SELF.fetch(`https://service.test/authorize?${query}`, {
+		headers: { "Cf-Access-Jwt-Assertion": assertion },
+	});
+	const cookie = consent.headers.get("set-cookie")?.split(";")[0] ?? "";
+	const handle = requireValue(
+		(await consent.text()).match(/name="handle" value="([^"]+)"/)?.[1],
+		"consent handle",
+	);
+	const approved = await SELF.fetch("https://service.test/authorize/consent", {
+		method: "POST",
+		redirect: "manual",
+		headers: {
+			"content-type": "application/x-www-form-urlencoded",
+			cookie,
+			"Cf-Access-Jwt-Assertion": assertion,
+		},
+		body: new URLSearchParams({ handle, decision: "approve" }),
+	});
+	const redirect = new URL(
+		requireValue(approved.headers.get("location"), "authorization redirect"),
+	);
+	return {
+		code: requireValue(redirect.searchParams.get("code"), "authorization code"),
+		verifier,
+	};
+}
+
+/** Pause the real registry RPC before or after its durable transaction for race tests. */
+function holdGrantRegistration(
+	bindings: Env,
+	position: "before" | "after",
+): { env: Env; reached: Promise<void>; release: () => void } {
+	/** Signals after the callback reaches the selected RPC boundary. */
+	let signalReached = () => {};
+	/** Releases the callback to finish the real grant-registration RPC. */
+	let resumeRegistration = () => {};
+	const reached = new Promise<void>((resolve) => {
+		signalReached = resolve;
+	});
+	const gate = new Promise<void>((resolve) => {
+		resumeRegistration = resolve;
+	});
+	const namespace = new Proxy(bindings.VAULTS, {
+		/** Wraps namespace lookup while preserving its other Worker binding methods. */
+		get(target, property) {
+			const value = Reflect.get(target, property, target);
+			if (property !== "get")
+				return typeof value === "function" ? value.bind(target) : value;
+			return (id: Parameters<typeof bindings.VAULTS.get>[0]) => {
+				const stub = target.get(id);
+				/** Calls the actual Durable Object method through the RPC stub. */
+				const register = (
+					...args: Parameters<typeof stub.registerClientGrant>
+				) => stub.registerClientGrant(...args);
+				/** Stops callback progress on the requested side of durable registration. */
+				const intercept = async (
+					...args: Parameters<typeof stub.registerClientGrant>
+				) => {
+					if (position === "before") {
+						signalReached();
+						await gate;
+						return register(...args);
+					}
+					const result = await register(...args);
+					signalReached();
+					await gate;
+					return result;
+				};
+				return new Proxy(stub, {
+					/** Replaces only grant registration with its controlled test wrapper. */
+					get(targetStub, method) {
+						if (method === "registerClientGrant") return intercept;
+						return Reflect.get(targetStub, method, targetStub);
+					},
+				});
+			};
+		},
+	});
+	const controlledEnv = new Proxy(bindings, {
+		/** Supplies the wrapped namespace and delegates every other binding unchanged. */
+		get(target, property) {
+			return property === "VAULTS"
+				? namespace
+				: Reflect.get(target, property, target);
+		},
+	}) as Env;
+	return { env: controlledEnv, reached, release: resumeRegistration };
+}
+
+/** Build a real production token request that uses the controlled Worker environment. */
+function exchangeRequest(body: URLSearchParams): Request {
+	return new Request("https://service.test/oauth/token", {
+		method: "POST",
+		headers: { "content-type": "application/x-www-form-urlencoded" },
+		body,
+	});
 }
 
 /** Mark one stored access token as expired to test the production token check. */
@@ -783,6 +898,156 @@ describe("production OAuth entry", () => {
 			}),
 		});
 		expect(exchange.status).not.toBe(200);
+	});
+
+	it("rejects authorization-code access when revocation follows durable grant registration", async () => {
+		const assertion = await ownerAssertion();
+		const client = await registerPublicClient();
+		const pending = await createAuthorizationCode(client.client_id, assertion);
+		const gate = holdGrantRegistration(env, "after");
+		const exchange = productionWorker.fetch(
+			exchangeRequest(
+				new URLSearchParams({
+					grant_type: "authorization_code",
+					client_id: client.client_id,
+					code: pending.code,
+					redirect_uri: "https://flow.test/callback",
+					code_verifier: pending.verifier,
+					resource: "https://service.test",
+				}),
+			),
+			gate.env,
+		);
+		await gate.reached;
+		await revokeOwnerClient(assertion, client.client_id);
+		gate.release();
+		const response = await exchange;
+		expect(response.status).toBe(200);
+		const token = (await response.json()) as {
+			access_token: string;
+			refresh_token: string;
+		};
+		const rest = await SELF.fetch("https://service.test/v1/vault", {
+			headers: { authorization: `Bearer ${token.access_token}` },
+		});
+		expect(rest.status).toBe(401);
+		expect(await rest.text()).toContain("revoked");
+		const refresh = await SELF.fetch("https://service.test/oauth/token", {
+			method: "POST",
+			headers: { "content-type": "application/x-www-form-urlencoded" },
+			body: new URLSearchParams({
+				grant_type: "refresh_token",
+				client_id: client.client_id,
+				refresh_token: token.refresh_token,
+				resource: "https://service.test",
+			}),
+		});
+		expect(refresh.status).not.toBe(200);
+	});
+
+	it("rejects authorization-code issuance when revocation precedes grant registration", async () => {
+		const assertion = await ownerAssertion();
+		const client = await registerPublicClient();
+		const pending = await createAuthorizationCode(client.client_id, assertion);
+		const gate = holdGrantRegistration(env, "before");
+		const exchange = productionWorker.fetch(
+			exchangeRequest(
+				new URLSearchParams({
+					grant_type: "authorization_code",
+					client_id: client.client_id,
+					code: pending.code,
+					redirect_uri: "https://flow.test/callback",
+					code_verifier: pending.verifier,
+					resource: "https://service.test",
+				}),
+			),
+			gate.env,
+		);
+		await gate.reached;
+		await revokeOwnerClient(assertion, client.client_id);
+		gate.release();
+		const response = await exchange;
+		expect(response.status).toBe(400);
+		expect(((await response.json()) as { error: string }).error).toBe(
+			"invalid_grant",
+		);
+	});
+
+	it("rejects refreshed access and refresh after revocation follows durable grant registration", async () => {
+		const assertion = await ownerAssertion();
+		const client = await registerPublicClient();
+		const original = await issueAccessToken(
+			client.client_id,
+			assertion,
+			"vault:read",
+		);
+		const gate = holdGrantRegistration(env, "after");
+		const refresh = productionWorker.fetch(
+			exchangeRequest(
+				new URLSearchParams({
+					grant_type: "refresh_token",
+					client_id: client.client_id,
+					refresh_token: original.refresh_token,
+					resource: "https://service.test",
+				}),
+			),
+			gate.env,
+		);
+		await gate.reached;
+		await revokeOwnerClient(assertion, client.client_id);
+		gate.release();
+		const response = await refresh;
+		expect(response.status).toBe(200);
+		const token = (await response.json()) as {
+			access_token: string;
+			refresh_token: string;
+		};
+		const rest = await SELF.fetch("https://service.test/v1/vault", {
+			headers: { authorization: `Bearer ${token.access_token}` },
+		});
+		expect(rest.status).toBe(401);
+		expect(await rest.text()).toContain("revoked");
+		const refreshAgain = await SELF.fetch("https://service.test/oauth/token", {
+			method: "POST",
+			headers: { "content-type": "application/x-www-form-urlencoded" },
+			body: new URLSearchParams({
+				grant_type: "refresh_token",
+				client_id: client.client_id,
+				refresh_token: token.refresh_token,
+				resource: "https://service.test",
+			}),
+		});
+		expect(refreshAgain.status).not.toBe(200);
+	});
+
+	it("rejects refresh-token issuance when revocation precedes grant registration", async () => {
+		const assertion = await ownerAssertion();
+		const client = await registerPublicClient();
+		const original = await issueAccessToken(
+			client.client_id,
+			assertion,
+			"vault:read",
+		);
+		const gate = holdGrantRegistration(env, "before");
+		const refresh = productionWorker.fetch(
+			exchangeRequest(
+				new URLSearchParams({
+					grant_type: "refresh_token",
+					client_id: client.client_id,
+					refresh_token: original.refresh_token,
+					resource: "https://service.test",
+				}),
+			),
+			gate.env,
+		);
+		await gate.reached;
+		await revokeOwnerClient(assertion, client.client_id);
+		gate.release();
+		const response = await refresh;
+		expect(response.status).toBe(400);
+		expect(((await response.json()) as { error: string }).error).toBe(
+			"invalid_grant",
+		);
 	});
 
 	it("keeps write-only tokens from reading or deleting", async () => {

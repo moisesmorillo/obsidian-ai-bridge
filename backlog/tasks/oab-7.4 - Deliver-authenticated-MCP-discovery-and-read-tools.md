@@ -1,10 +1,11 @@
 ---
 id: OAB-7.4
 title: Deliver authenticated MCP discovery and read tools
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@pi'
 created_date: '2026-10-24T00:05:00Z'
-updated_date: '2026-10-24T15:31:00Z'
+updated_date: '2026-10-24T17:48:00Z'
 labels:
   - F2
   - MCP
@@ -35,3 +36,9 @@ F2 clients need Streamable HTTP and read tools over existing application operati
 <!-- SECTION:PLAN:BEGIN -->
 Use docs/superpowers/plans/2026-10-24-f2-local-delivery.md, Task 3. After OAB-7.3, deliver authenticated MCP discovery and read tools through existing application operations.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+OAB-7.3 passed independent and scoped reviews at aad9ea3. Start Task 3 from the approved plan. Use the existing production OAuth identity, durable revocation, and application operations. Local MCP work only.
+<!-- SECTION:NOTES:END -->

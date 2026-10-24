@@ -1,4 +1,4 @@
-import { env, SELF } from "cloudflare:test";
+import { env, runInDurableObject, SELF } from "cloudflare:test";
 import productionWorker from "@worker/index";
 import {
 	activeAdmissionStates,
@@ -40,6 +40,93 @@ async function seedMcpManifestRows(
 		expect(created.status).toBe(201);
 		await created.text();
 	}
+}
+
+/** Pause one finishAdmission RPC while preserving the real Durable Object cleanup call. */
+function holdReadCleanup(bindings: typeof env): {
+	environment: typeof env;
+	reached: Promise<void>;
+	release: () => void;
+} {
+	/** Signal that a real response owner reached Durable Object cleanup. */
+	let signalReached = () => {};
+	/** Resume the real Durable Object cleanup after contention assertions. */
+	let resumeCleanup = () => {};
+	const reached = new Promise<void>((resolve) => {
+		signalReached = resolve;
+	});
+	const gate = new Promise<void>((resolve) => {
+		resumeCleanup = resolve;
+	});
+	const namespace = new Proxy(bindings.VAULTS, {
+		/** Preserve the namespace API and wrap only stubs for cleanup gating. */
+		get(target, property) {
+			const value = Reflect.get(target, property, target);
+			if (property !== "get")
+				return typeof value === "function" ? value.bind(target) : value;
+			/** Return one real stub with only finishAdmission delayed by the test gate. */
+			return (id: Parameters<typeof bindings.VAULTS.get>[0]) => {
+				const stub = target.get(id);
+				/** Run the actual durable cleanup after the test releases its barrier. */
+				const delayedFinish = async (
+					...args: Parameters<typeof stub.finishAdmission>
+				) => {
+					signalReached();
+					await gate;
+					return stub.finishAdmission(...args);
+				};
+				return new Proxy(stub, {
+					/** Keep all stub RPCs unchanged except the controlled cleanup method. */
+					get(targetStub, method) {
+						if (method === "finishAdmission") return delayedFinish;
+						return Reflect.get(targetStub, method, targetStub);
+					},
+				});
+			};
+		},
+	});
+	const environment = new Proxy(bindings, {
+		/** Supply the wrapped namespace and delegate every other binding unchanged. */
+		get(target, property) {
+			return property === "VAULTS"
+				? namespace
+				: Reflect.get(target, property, target);
+		},
+	}) as typeof env;
+	return { environment, reached, release: resumeCleanup };
+}
+
+/** Hold one request-body source until the test releases its explicit barrier. */
+function holdBodyBytes(value: string): {
+	body: ReadableStream<Uint8Array>;
+	requested: Promise<void>;
+	release: () => void;
+	bytes: number;
+} {
+	const payload = new TextEncoder().encode(value);
+	/** Signal that production code requested the gated body bytes. */
+	let signalRequested = () => {};
+	/** Release the request body after concurrent traffic reaches its barrier. */
+	let releaseBody = () => {};
+	const requested = new Promise<void>((resolve) => {
+		signalRequested = resolve;
+	});
+	const gate = new Promise<void>((resolve) => {
+		releaseBody = resolve;
+	});
+	const body = new ReadableStream<Uint8Array>(
+		{
+			/** Deliver the exact request bytes only after the explicit test release. */
+			async pull(controller) {
+				signalRequested();
+				await gate;
+				controller.enqueue(payload);
+				controller.close();
+			},
+		},
+		{ highWaterMark: 0 },
+	);
+	return { body, requested, release: releaseBody, bytes: payload.byteLength };
 }
 
 afterEach(() => vi.unstubAllGlobals());
@@ -109,6 +196,281 @@ describe("production MCP transport", () => {
 		expect(echoedLongId).toBe(true);
 		expect(encodedBytes).toBeGreaterThan(6_000_000 + longId.length);
 		expect(maximumChunkBytes).toBeLessThanOrEqual(65_536);
+	});
+
+	it("runs worst-case MCP output with gated REST bodies and slow REST responses", async () => {
+		const { token, clientId } = await issueToken();
+		const auth = { authorization: `Bearer ${token}` };
+		const summary = await SELF.fetch("https://service.test/v1/vault", {
+			headers: auth,
+		});
+		const { epoch } = (await summary.json()) as { epoch: string };
+		const escapedPath = `Escaped/aggregate-${crypto.randomUUID()}.canvas`;
+		const escapedNote = "\0".repeat(1_000_000);
+		const seeded = await SELF.fetch(
+			`https://service.test/v1/files/${encodeURIComponent(escapedPath)}`,
+			{
+				method: "PUT",
+				headers: {
+					...auth,
+					"If-None-Match": "*",
+					"X-Vault-Epoch": epoch,
+				},
+				body: escapedNote,
+			},
+		);
+		expect(seeded.status).toBe(201);
+		await seeded.text();
+		const restReads: Response[] = [];
+		let mcpResponse: Response | undefined;
+		let mcpReader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+		const restBodyContents = ["R".repeat(65_536), "S".repeat(65_536)];
+		const bodyGates = restBodyContents.map(holdBodyBytes);
+		const restWrites: Promise<Response>[] = [];
+		try {
+			const slowRest = await productionWorker.fetch(
+				new Request(
+					`https://service.test/v1/files/${encodeURIComponent(escapedPath)}`,
+					{ headers: auth },
+				),
+				env,
+			);
+			restReads.push(slowRest);
+			for (let index = 0; index < 2; index += 1)
+				restReads.push(
+					await productionWorker.fetch(
+						new Request("https://service.test/v1/manifest", {
+							headers: auth,
+						}),
+						env,
+					),
+				);
+			const longId = `aggregate-${"i".repeat(70_000)}`;
+			mcpResponse = await productionWorker.fetch(
+				new Request("https://service.test/mcp", {
+					method: "POST",
+					headers: {
+						...auth,
+						"content-type": "application/json",
+						accept: "application/json, text/event-stream",
+					},
+					body: JSON.stringify({
+						jsonrpc: "2.0",
+						id: longId,
+						method: "tools/call",
+						params: {
+							name: "read_note",
+							arguments: { path: escapedPath },
+						},
+					}),
+				}),
+				env,
+			);
+			expect(restReads.every((response) => response.status === 200)).toBe(true);
+			expect(mcpResponse.status).toBe(200);
+			mcpReader = mcpResponse.body?.getReader();
+			if (!mcpReader) throw new Error("Expected MCP output stream");
+			const firstMcpChunk = await mcpReader.read();
+			if (firstMcpChunk.done) throw new Error("Expected streamed MCP output");
+			let mcpEncodedBytes = firstMcpChunk.value.byteLength;
+			let maximumMcpChunkBytes = firstMcpChunk.value.byteLength;
+			let mcpScan = new TextDecoder().decode(firstMcpChunk.value);
+			let longIdObserved = mcpScan.includes(longId);
+			mcpScan = mcpScan.slice(-longId.length);
+			expect(maximumMcpChunkBytes).toBeLessThanOrEqual(65_536);
+			expect(await activeAdmissionStates(clientId)).toHaveLength(4);
+			expect(restReads[0]?.bodyUsed).toBe(false);
+			const competingRest = await productionWorker.fetch(
+				new Request("https://service.test/v1/vault", { headers: auth }),
+				env,
+			);
+			expect(competingRest.status).toBe(429);
+			let competingMcpBodyPulls = 0;
+			const competingMcp = await productionWorker.fetch(
+				new Request("https://service.test/mcp", {
+					method: "POST",
+					headers: {
+						...auth,
+						"content-type": "application/json",
+						accept: "application/json, text/event-stream",
+					},
+					body: new ReadableStream<Uint8Array>(
+						{
+							/** Count body demand refused by the held MCP envelope. */
+							pull() {
+								competingMcpBodyPulls += 1;
+							},
+						},
+						{ highWaterMark: 0 },
+					),
+				}),
+				env,
+			);
+			expect(competingMcp.status).toBe(429);
+			expect(competingMcpBodyPulls).toBe(0);
+			const writePaths = bodyGates.map(
+				(_, index) =>
+					`REST/aggregate-body-${index}-${crypto.randomUUID()}.canvas`,
+			);
+			for (let index = 0; index < bodyGates.length; index += 1) {
+				const gate = bodyGates[index];
+				const path = writePaths[index];
+				if (!gate || !path) throw new Error("Missing gated REST body");
+				restWrites.push(
+					productionWorker.fetch(
+						new Request(
+							`https://service.test/v1/files/${encodeURIComponent(path)}`,
+							{
+								method: "PUT",
+								headers: {
+									...auth,
+									"If-None-Match": "*",
+									"X-Vault-Epoch": epoch,
+									"Content-Length": String(gate.bytes),
+								},
+								body: gate.body,
+								duplex: "half",
+							} as RequestInit,
+						),
+						env,
+					),
+				);
+			}
+			await Promise.all(bodyGates.map((gate) => gate.requested));
+			expect(await activeAdmissionStates(clientId)).toHaveLength(6);
+			for (const gate of bodyGates) gate.release();
+			const writeResponses = await Promise.all(restWrites);
+			const actualBodies: string[] = [];
+			for (const [index, response] of writeResponses.entries()) {
+				expect(response.status).toBe(201);
+				const receipt = (await response.json()) as {
+					size: number;
+					hash: string;
+				};
+				const expected = restBodyContents[index];
+				if (expected === undefined)
+					throw new Error("Missing expected REST body");
+				expect(receipt.size).toBe(bodyGates[index]?.bytes);
+				expect(receipt.hash).toBe(
+					await digestHex(new TextEncoder().encode(expected)),
+				);
+				actualBodies.push(expected);
+			}
+			const vault = env.VAULTS.get(env.VAULTS.idFromName("service.test"));
+			const stored = await runInDurableObject(vault, (_instance, state) =>
+				state.storage.sql
+					.exec(
+						"SELECT path, content, size, hash, origin FROM files WHERE path IN (?, ?) ORDER BY path",
+						...writePaths,
+					)
+					.toArray(),
+			);
+			expect(stored).toHaveLength(2);
+			for (const [index, row] of stored.entries()) {
+				expect(row).toMatchObject({
+					path: writePaths[index],
+					content: actualBodies[index],
+					size: 65_536,
+					hash: await digestHex(
+						new TextEncoder().encode(actualBodies[index] ?? ""),
+					),
+					origin: clientId,
+				});
+			}
+			const escapedStored = await runInDurableObject(
+				vault,
+				(_instance, state) =>
+					state.storage.sql
+						.exec(
+							"SELECT size, length(CAST(content AS BLOB)) AS bytes, hash, origin FROM files WHERE path = ?",
+							escapedPath,
+						)
+						.toArray(),
+			);
+			expect(escapedStored).toEqual([
+				expect.objectContaining({
+					size: 1_000_000,
+					bytes: 1_000_000,
+					hash: await digestHex(new TextEncoder().encode(escapedNote)),
+					origin: clientId,
+				}),
+			]);
+			const publications = await runInDurableObject(vault, (_instance, state) =>
+				state.storage.sql
+					.exec(
+						"SELECT path, rev, op, origin FROM changes WHERE path IN (?, ?, ?) ORDER BY seq",
+						escapedPath,
+						...writePaths,
+					)
+					.toArray(),
+			);
+			expect(publications).toHaveLength(3);
+			expect(publications.map((row) => row.path)).toEqual(
+				[escapedPath, ...writePaths].sort(),
+			);
+			expect(
+				publications.every(
+					(row) => row.rev === 1 && row.op === "put" && row.origin === clientId,
+				),
+			).toBe(true);
+
+			/** Count encoded bytes and enforce chunk bounds without collecting a full response. */
+			const measureResponse = async (
+				response: Response,
+				expectedId?: string,
+			) => {
+				const reader = response.body?.getReader();
+				if (!reader) throw new Error("Expected a streamed response");
+				let total = 0;
+				let maximumChunk = 0;
+				let scan = "";
+				let idFound = expectedId === undefined;
+				try {
+					for (;;) {
+						const item = await reader.read();
+						if (item.done) break;
+						total += item.value.byteLength;
+						maximumChunk = Math.max(maximumChunk, item.value.byteLength);
+						scan += new TextDecoder().decode(item.value);
+						if (expectedId && scan.includes(expectedId)) idFound = true;
+						scan = scan.slice(-(expectedId?.length ?? 32));
+					}
+				} finally {
+					await reader.cancel();
+				}
+				expect(maximumChunk).toBeLessThanOrEqual(65_536);
+				return { total, idFound };
+			};
+			for (;;) {
+				const item = await mcpReader.read();
+				if (item.done) break;
+				mcpEncodedBytes += item.value.byteLength;
+				maximumMcpChunkBytes = Math.max(
+					maximumMcpChunkBytes,
+					item.value.byteLength,
+				);
+				mcpScan += new TextDecoder().decode(item.value);
+				if (mcpScan.includes(longId)) longIdObserved = true;
+				mcpScan = mcpScan.slice(-longId.length);
+			}
+			expect(longIdObserved).toBe(true);
+			expect(mcpEncodedBytes).toBeGreaterThan(6_000_000 + longId.length);
+			expect(maximumMcpChunkBytes).toBeLessThanOrEqual(65_536);
+			const heldRest = restReads[0];
+			if (!heldRest) throw new Error("Missing held REST response");
+			const restMeasurement = await measureResponse(heldRest);
+			expect(restMeasurement.total).toBeGreaterThan(6_000_000);
+			expect(await activeAdmissionStates(clientId)).toHaveLength(2);
+		} finally {
+			for (const gate of bodyGates) gate.release();
+			await mcpReader?.cancel().catch(() => undefined);
+			for (const response of restReads)
+				await response.body?.cancel().catch(() => undefined);
+			await mcpResponse?.body?.cancel().catch(() => undefined);
+			await Promise.all(
+				restWrites.map((pending) => pending.catch(() => undefined)),
+			);
+		}
 	});
 
 	it("rejects an oversized declared envelope before body demand", async () => {
@@ -948,6 +1310,108 @@ describe("production MCP transport", () => {
 			expect(await activeAdmissionStates(clientId)).toEqual([]);
 		} finally {
 			await cancelledReader.cancel();
+		}
+	});
+
+	it("keeps shared read and MCP envelope slots through delayed real cleanup", async () => {
+		const { token, clientId } = await issueToken();
+		const cleanup = holdReadCleanup(env);
+		const auth = { authorization: `Bearer ${token}` };
+		const restResponses: Response[] = [];
+		let mcpResponse: Response | undefined;
+		let cancelMcp: Promise<void> | undefined;
+		try {
+			for (let index = 0; index < 3; index += 1)
+				restResponses.push(
+					await productionWorker.fetch(
+						new Request("https://service.test/v1/manifest", {
+							headers: auth,
+						}),
+						cleanup.environment,
+					),
+				);
+			mcpResponse = await productionWorker.fetch(
+				new Request("https://service.test/mcp", {
+					method: "POST",
+					headers: {
+						...auth,
+						"content-type": "application/json",
+						accept: "application/json, text/event-stream",
+					},
+					body: JSON.stringify({
+						jsonrpc: "2.0",
+						id: "gated-cleanup-list",
+						method: "tools/call",
+						params: { name: "list_notes", arguments: {} },
+					}),
+				}),
+				cleanup.environment,
+			);
+			expect(restResponses.every((response) => response.status === 200)).toBe(
+				true,
+			);
+			expect(mcpResponse.status).toBe(200);
+			const reader = mcpResponse.body?.getReader();
+			if (!reader) throw new Error("MCP response has no body");
+			cancelMcp = reader.cancel();
+			await cleanup.reached;
+			expect(await activeAdmissionStates(clientId)).toHaveLength(4);
+			const competingRest = await productionWorker.fetch(
+				new Request("https://service.test/v1/vault", { headers: auth }),
+				cleanup.environment,
+			);
+			expect(competingRest.status).toBe(429);
+			const competingMcp = await productionWorker.fetch(
+				new Request("https://service.test/mcp", {
+					method: "POST",
+					headers: {
+						...auth,
+						"content-type": "application/json",
+						accept: "application/json, text/event-stream",
+					},
+					body: JSON.stringify({
+						jsonrpc: "2.0",
+						id: "envelope-still-owned",
+						method: "tools/list",
+					}),
+				}),
+				cleanup.environment,
+			);
+			expect(competingMcp.status).toBe(429);
+			expect(competingMcp.headers.get("retry-after")).toBe("1");
+			cleanup.release();
+			await cancelMcp;
+			expect(await activeAdmissionStates(clientId)).toHaveLength(3);
+			const reusedRest = await productionWorker.fetch(
+				new Request("https://service.test/v1/vault", { headers: auth }),
+				cleanup.environment,
+			);
+			expect(reusedRest.status).toBe(200);
+			await reusedRest.body?.cancel();
+			const reusedMcp = await productionWorker.fetch(
+				new Request("https://service.test/mcp", {
+					method: "POST",
+					headers: {
+						...auth,
+						"content-type": "application/json",
+						accept: "application/json, text/event-stream",
+					},
+					body: JSON.stringify({
+						jsonrpc: "2.0",
+						id: "envelope-released",
+						method: "tools/list",
+					}),
+				}),
+				cleanup.environment,
+			);
+			expect(reusedMcp.status).toBe(200);
+			await reusedMcp.text();
+		} finally {
+			cleanup.release();
+			await cancelMcp?.catch(() => undefined);
+			for (const response of restResponses)
+				await response.body?.cancel().catch(() => undefined);
+			await mcpResponse?.body?.cancel().catch(() => undefined);
 		}
 	});
 

@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-10-24T00:05:00Z'
-updated_date: '2026-10-24T16:35:00Z'
+updated_date: '2026-10-24T16:43:00Z'
 labels:
   - F2
   - auth
@@ -53,4 +53,6 @@ Correction: the complete implementation commit is 36ecb297cd46188a9c79de43104046
 Code review found a duplicate OAuth scope list. OAuth now reads accepted scopes from the canonical VaultScopeSchema. The discovery regression assertion and full check passed. Review correction commit: a142d2547e541ec47cf76dec69c22d0ee71fdcd4. The task remains In Progress for independent parent review.
 
 Hash correction: commit 36ecb297cd46188a9c79de43104046da42518a01 was amended before review. The current implementation commit is 1154a411a520251bdd3ac816cae6f2899570814b.
+
+OAB72-1 closure evidence: production-entry consent tests reject missing, unknown, duplicate, and non-string decision fields with 400, no redirect code or new grant, then approve with the same browser-bound handle. Explicit approval and denial cases remain. RED: cd apps/worker && bunx vitest run --config vitest.f2.config.ts test/f2/oauth.test.ts -t 'requires one explicit consent decision before it consumes the handle' failed as expected with 302 instead of 400. GREEN: the focused test passed, then the F2 suite passed with 2 files and 20 tests. bun run docs:check and bun run check passed. OAB-7.2 remains In Progress pending scoped re-review.
 <!-- SECTION:NOTES:END -->

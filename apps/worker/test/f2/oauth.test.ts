@@ -410,6 +410,77 @@ describe("production OAuth entry", () => {
 		expect((await exchange(verifier)).status).not.toBe(200);
 	});
 
+	it("requires one explicit consent decision before it consumes the handle", async () => {
+		const assertion = await ownerAssertion();
+		const client = await registerPublicClient();
+		const { challenge } = createPkce();
+		const query = new URLSearchParams({
+			response_type: "code",
+			client_id: client.client_id,
+			redirect_uri: "https://flow.test/callback",
+			scope: "vault:read",
+			state: "explicit-decision-state",
+			code_challenge: await challenge,
+			code_challenge_method: "S256",
+			resource: "https://service.test",
+		});
+		const consent = await SELF.fetch(
+			`https://service.test/authorize?${query}`,
+			{ headers: { "Cf-Access-Jwt-Assertion": assertion } },
+		);
+		const handle = requireValue(
+			(await consent.text()).match(/name="handle" value="([^"]+)"/)?.[1],
+			"consent handle",
+		);
+		const cookie = requireValue(
+			consent.headers.get("set-cookie")?.split(";")[0],
+			"consent cookie",
+		);
+		const kv = requireValue(env.OAUTH_KV, "OAuth KV binding");
+		const grantPrefix = "grant:synthetic-owner:";
+		const grantsBefore = (await kv.list({ prefix: grantPrefix })).keys.map(
+			(key) => key.name,
+		);
+		/** Submit one or more decision fields with the real owner and browser bindings. */
+		const submitConsent = (decisions: (string | File)[]) => {
+			const body = new FormData();
+			body.set("handle", handle);
+			for (const decision of decisions) body.append("decision", decision);
+			return SELF.fetch("https://service.test/authorize/consent", {
+				method: "POST",
+				redirect: "manual",
+				headers: {
+					cookie,
+					"Cf-Access-Jwt-Assertion": assertion,
+				},
+				body,
+			});
+		};
+		const malformedDecisions: (string | File)[][] = [
+			[],
+			["maybe"],
+			["approve", "deny"],
+			[new File(["approve"], "decision.txt")],
+		];
+		for (const decisions of malformedDecisions) {
+			const response = await submitConsent(decisions);
+			expect(response.status).toBe(400);
+			expect(response.headers.get("location")).toBeNull();
+			expect(
+				(await kv.list({ prefix: grantPrefix })).keys.map((key) => key.name),
+			).toEqual(grantsBefore);
+		}
+		const approved = await submitConsent(["approve"]);
+		expect(approved.status).toBe(302);
+		const redirect = new URL(
+			requireValue(approved.headers.get("location"), "authorization redirect"),
+		);
+		expect(redirect.searchParams.get("code")).toEqual(expect.any(String));
+		expect((await kv.list({ prefix: grantPrefix })).keys).toHaveLength(
+			grantsBefore.length + 1,
+		);
+	});
+
 	it("rejects forged, expired, reused, and foreign-browser consent handles and permits denial", async () => {
 		const assertion = await ownerAssertion();
 		const client = await registerPublicClient();

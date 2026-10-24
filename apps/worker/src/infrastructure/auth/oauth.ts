@@ -175,9 +175,17 @@ export function createAuthorizeHandler(): ExportedHandler<Env> {
 				headers: context.req.raw.headers,
 			});
 			const form = await context.req.formData();
+			const decisions = form.getAll("decision");
+			if (
+				decisions.length !== 1 ||
+				typeof decisions[0] !== "string" ||
+				(decisions[0] !== "approve" && decisions[0] !== "deny")
+			)
+				return context.text("Invalid consent decision", 400);
+			const decision = decisions[0];
 			const handle = String(form.get("handle") ?? "");
 			const api = getOAuthApi(options, context.env);
-			if (form.get("decision") === "deny") {
+			if (decision === "deny") {
 				const denied = await api.denyConsent(browserRequest, handle);
 				return new Response(null, {
 					status: 302,

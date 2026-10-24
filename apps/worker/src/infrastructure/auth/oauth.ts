@@ -7,13 +7,14 @@ import {
 	type AuthorizationContext,
 	AuthorizationContextSchema,
 	LocalAuthConfigurationSchema,
+	VaultScopeSchema,
 } from "@obsidian-ai-bridge/protocol";
 import type { Env } from "@worker/env";
 import { verifyOwnerAccess } from "@worker/infrastructure/auth/access";
 import { Hono } from "hono";
 
 /** OAuth scope vocabulary accepted by this resource. */
-const SCOPES = ["vault:read", "vault:write", "vault:delete"] as const;
+const SCOPES = VaultScopeSchema.options;
 
 /** Internal request field added only after provider token validation. */
 const CONTEXT_HEADER = "X-OAB-Verified-Authorization";

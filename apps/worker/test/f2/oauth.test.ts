@@ -1,5 +1,6 @@
 import { env, SELF } from "cloudflare:test";
 import { getOAuthApi } from "@cloudflare/workers-oauth-provider";
+import { VaultScopeSchema } from "@obsidian-ai-bridge/protocol";
 import productionWorker from "@worker/index";
 import {
 	createAuthorizeHandler,
@@ -181,6 +182,7 @@ describe("production OAuth entry", () => {
 			"authorization_code",
 			"refresh_token",
 		]);
+		expect(metadata.scopes_supported).toEqual(VaultScopeSchema.options);
 		const resource = await SELF.fetch(
 			"https://service.test/.well-known/oauth-protected-resource",
 		);

@@ -1,5 +1,6 @@
 import type {
 	AdmissionCompletion,
+	AdmissionFinishResult,
 	AuthorizationContext,
 	FileFailure,
 	McpHistoryResult,
@@ -23,21 +24,37 @@ import type { SearchVaultGateway } from "@worker/application/search";
 import { readSearch } from "@worker/application/search";
 import type { TextVaultGateway } from "@worker/application/text-files";
 
+/** Estimated JSON bytes allowed for one structured MCP list result. */
+const MCP_LIST_RESULT_BYTES_LIMIT = 65_536;
+/** Bound manifest traversal to a safe integer while retaining only bounded batches. */
+const MCP_MANIFEST_SCAN_LIMIT = Number.MAX_SAFE_INTEGER;
+
 /** Gateways required to map MCP reads to the existing durable read operations. */
 export type McpNotesGateway = TextVaultGateway &
 	HistoryVaultGateway &
 	ReadVaultGateway &
 	SearchVaultGateway;
 
-/** One bounded MCP read result or canonical application failure. */
+/** Durable read authority transferred to the MCP response producer. */
+export interface McpReadOwner {
+	/** Known application completion, or uncertain work that must keep its deadline. */
+	readonly completion: AdmissionCompletion;
+	/** Cancel and join any started read work before owner settlement. */
+	cancel(): Promise<void>;
+	/** Settle after response EOF or cancellation cleanup. */
+	finish(completion: AdmissionCompletion): Promise<AdmissionFinishResult>;
+}
+
+/** One bounded MCP read result or canonical application failure with optional authority. */
 export type McpReadOutcome<T extends object> =
-	| { ok: true; epoch: string; value: T }
+	| { ok: true; epoch: string; value: T; owner?: McpReadOwner }
 	| {
 			ok: false;
 			failure:
 				| FileFailure
 				| { kind: "result_too_large" }
 				| { kind: "internal_error" };
+			owner?: McpReadOwner;
 	  };
 
 /** Current epoch or the authoritative scope and revocation failure. */
@@ -58,14 +75,13 @@ export async function currentMcpEpoch(
 		: { ok: false, failure: result.failure };
 }
 
-/** Keep lazy read admission until batch work and cancellation cleanup settle. */
+/** Keep lazy read admission with its MCP result until response ownership settles it. */
 async function settleMcpRead<T extends object, Row, Metadata>(
 	session: LazyReadSession<Row, Metadata>,
 	read: () => Promise<McpReadOutcome<T>>,
 ): Promise<McpReadOutcome<T>> {
 	let completion: AdmissionCompletion = "settled";
-	let outcome: McpReadOutcome<T> | undefined;
-	let aborted = false;
+	let outcome: McpReadOutcome<T>;
 	try {
 		outcome = await read();
 	} catch (error) {
@@ -73,31 +89,56 @@ async function settleMcpRead<T extends object, Row, Metadata>(
 			error instanceof ReadBatchFailure || error instanceof ReadAborted
 				? "settled"
 				: "uncertain";
-		if (error instanceof ReadAborted) aborted = true;
-		else if (error instanceof ReadBatchFailure)
-			outcome = { ok: false, failure: error.failure };
-		else outcome = { ok: false, failure: { kind: "internal_error" } };
+		outcome = {
+			ok: false,
+			failure:
+				error instanceof ReadAborted
+					? { kind: "invalid_request" }
+					: error instanceof ReadBatchFailure
+						? error.failure
+						: { kind: "internal_error" },
+		};
 	}
-	let cleanupFailed = false;
-	try {
-		await session.cancel();
-	} catch {
-		completion = "uncertain";
-		cleanupFailed = true;
-	}
-	let finishSucceeded = false;
-	try {
-		finishSucceeded = (await session.finish(completion)).ok;
-	} catch {
-		finishSucceeded = false;
-	}
-	if (aborted) throw new ReadAborted();
-	if (cleanupFailed || !finishSucceeded)
-		return { ok: false, failure: { kind: "internal_error" } };
-	return outcome ?? { ok: false, failure: { kind: "internal_error" } };
+	return {
+		...outcome,
+		owner: createMcpReadOwner(
+			completion,
+			() => session.cancel(),
+			(completion) => session.finish(completion),
+		),
+	};
 }
 
-/** Read at most 256 manifest rows and reject excess data without partial success. */
+/** Combine application certainty with response producer completion before durable finish. */
+function createMcpReadOwner(
+	completion: AdmissionCompletion,
+	cancel: () => Promise<void>,
+	finish: (completion: AdmissionCompletion) => Promise<AdmissionFinishResult>,
+): McpReadOwner {
+	let finished: Promise<AdmissionFinishResult> | undefined;
+	return {
+		completion,
+		cancel,
+		/** Keep one settlement promise across repeated response callbacks. */
+		finish(responseCompletion) {
+			const effectiveCompletion =
+				completion === "uncertain" || responseCompletion === "uncertain"
+					? "uncertain"
+					: "settled";
+			finished ??= finish(effectiveCompletion);
+			return finished;
+		},
+	};
+}
+
+/** Estimate one serialized list row without materializing the enclosing MCP response. */
+function estimateMcpListEntryBytes(
+	entry: McpListNotesResult["entries"][number],
+): number {
+	return new TextEncoder().encode(JSON.stringify(entry)).byteLength;
+}
+
+/** Traverse bounded manifest batches and bound only matching MCP result rows and bytes. */
 export async function listMcpNotes(
 	gateway: McpNotesGateway,
 	identity: AuthorizationContext,
@@ -105,10 +146,17 @@ export async function listMcpNotes(
 	includeLarge = false,
 	signal?: AbortSignal,
 ): Promise<McpReadOutcome<Pick<McpListNotesResult, "entries">>> {
-	const opened = await openManifestRead(gateway, identity, undefined, signal);
+	const opened = await openManifestRead(
+		gateway,
+		identity,
+		undefined,
+		signal,
+		MCP_MANIFEST_SCAN_LIMIT,
+	);
 	if (!opened.ok) return { ok: false, failure: opened.failure };
 	return settleMcpRead(opened.body, async () => {
 		const entries: McpListNotesResult["entries"][number][] = [];
+		let estimatedBytes = 128;
 		for (;;) {
 			const batch = await opened.body.readBatch();
 			for (const row of batch.rows) {
@@ -119,17 +167,23 @@ export async function listMcpNotes(
 					(prefix !== undefined && !row.path.startsWith(prefix))
 				)
 					continue;
-				if (entries.length === 256)
-					return { ok: false, failure: { kind: "result_too_large" } };
 				if (row.updated_at === undefined)
 					return { ok: false, failure: { kind: "internal_error" } };
-				entries.push({
+				const entry = {
 					path: row.path,
 					etag: row.etag,
 					size: row.size,
 					updated_at: row.updated_at,
 					large: row.large,
-				});
+				};
+				const nextBytes =
+					estimatedBytes +
+					estimateMcpListEntryBytes(entry) +
+					(entries.length > 0 ? 1 : 0);
+				if (entries.length >= 256 || nextBytes > MCP_LIST_RESULT_BYTES_LIMIT)
+					return { ok: false, failure: { kind: "result_too_large" } };
+				entries.push(entry);
+				estimatedBytes = nextBytes;
 			}
 			if (batch.next_page !== null)
 				return { ok: false, failure: { kind: "result_too_large" } };
@@ -139,7 +193,7 @@ export async function listMcpNotes(
 	});
 }
 
-/** Read one selected text revision and compare its ETag before returning its fragment. */
+/** Read one selected revision and transfer its admission with the bounded fragment. */
 export async function readMcpNote(
 	gateway: Pick<
 		TextVaultGateway,
@@ -159,91 +213,107 @@ export async function readMcpNote(
 	});
 	if (!begun.ok) return { ok: false, failure: begun.failure };
 	let completion: AdmissionCompletion = "settled";
+	let outcome: McpReadOutcome<Omit<McpReadNoteResult, "epoch">>;
 	try {
-		if (signal?.aborted)
-			return { ok: false, failure: { kind: "invalid_request" } };
-		completion = "uncertain";
-		const selected = await gateway.readText(
-			identity,
-			{ path: input.path, offset: input.offset, length: input.length },
-			begun.ticket.id,
-		);
-		completion = "settled";
-		if (signal?.aborted)
-			throw new DOMException("Request aborted", "AbortError");
-		if (!selected.ok) {
-			if (selected.failure.kind !== "not_implemented")
-				return { ok: false, failure: selected.failure };
+		outcome = await (async () => {
+			if (signal?.aborted)
+				return { ok: false, failure: { kind: "invalid_request" } };
 			completion = "uncertain";
-			const blob = await gateway.readBlobMetadata(
+			const selected = await gateway.readText(
 				identity,
-				{ path: input.path },
+				{ path: input.path, offset: input.offset, length: input.length },
 				begun.ticket.id,
 			);
 			completion = "settled";
 			if (signal?.aborted)
 				throw new DOMException("Request aborted", "AbortError");
-			if (!blob.ok) return { ok: false, failure: blob.failure };
-			const epoch = blob.body.etag.slice(1, 33);
-			if (input.etag !== undefined && input.etag !== blob.body.etag)
-				return {
-					ok: true,
-					epoch,
-					value: { path: input.path, etag: blob.body.etag, truncated: true },
-				};
-			if (blob.body.deleted)
-				return { ok: false, failure: { kind: "not_found" } };
-			try {
-				const content = await readBlobTextFragment(
-					store,
-					blob.body.hash,
-					blob.body.size,
-					input.offset ?? 0,
-					input.length ?? 1_000_000,
-					signal,
+			if (!selected.ok) {
+				if (selected.failure.kind !== "not_implemented")
+					return { ok: false, failure: selected.failure };
+				completion = "uncertain";
+				const blob = await gateway.readBlobMetadata(
+					identity,
+					{ path: input.path },
+					begun.ticket.id,
 				);
+				completion = "settled";
+				if (signal?.aborted)
+					throw new DOMException("Request aborted", "AbortError");
+				if (!blob.ok) return { ok: false, failure: blob.failure };
+				const epoch = blob.body.etag.slice(1, 33);
+				if (input.etag !== undefined && input.etag !== blob.body.etag)
+					return {
+						ok: true,
+						epoch,
+						value: { path: input.path, etag: blob.body.etag, truncated: true },
+					};
+				if (blob.body.deleted)
+					return { ok: false, failure: { kind: "not_found" } };
+				try {
+					const content = await readBlobTextFragment(
+						store,
+						blob.body.hash,
+						blob.body.size,
+						input.offset ?? 0,
+						input.length ?? 1_000_000,
+						signal,
+					);
+					return {
+						ok: true,
+						epoch,
+						value: { path: input.path, etag: blob.body.etag, ...content },
+					};
+				} catch (error) {
+					if (signal?.aborted)
+						return { ok: false, failure: { kind: "invalid_request" } };
+					return {
+						ok: false,
+						failure:
+							error instanceof RangeError
+								? { kind: "result_too_large" }
+								: { kind: "internal_error" },
+					};
+				}
+			}
+			const epoch = selected.body.etag.slice(1, 33);
+			if (input.etag !== undefined && input.etag !== selected.body.etag)
 				return {
 					ok: true,
 					epoch,
-					value: { path: input.path, etag: blob.body.etag, ...content },
+					value: {
+						path: input.path,
+						etag: selected.body.etag,
+						truncated: selected.body.truncated,
+					},
 				};
-			} catch (error) {
-				if (signal?.aborted) throw error;
-				return {
-					ok: false,
-					failure:
-						error instanceof RangeError
-							? { kind: "result_too_large" }
-							: { kind: "internal_error" },
-				};
-			}
-		}
-		const epoch = selected.body.etag.slice(1, 33);
-		if (input.etag !== undefined && input.etag !== selected.body.etag)
+			if (selected.body.deleted)
+				return { ok: false, failure: { kind: "not_found" } };
 			return {
 				ok: true,
 				epoch,
 				value: {
 					path: input.path,
 					etag: selected.body.etag,
+					content: selected.body.content ?? "",
 					truncated: selected.body.truncated,
 				},
 			};
-		if (selected.body.deleted)
-			return { ok: false, failure: { kind: "not_found" } };
-		return {
-			ok: true,
-			epoch,
-			value: {
-				path: input.path,
-				etag: selected.body.etag,
-				content: selected.body.content ?? "",
-				truncated: selected.body.truncated,
-			},
+		})();
+	} catch {
+		outcome = {
+			ok: false,
+			failure: signal?.aborted
+				? { kind: "invalid_request" }
+				: { kind: "internal_error" },
 		};
-	} finally {
-		await gateway.finishAdmission(identity, begun.ticket.id, completion);
 	}
+	const owner = createMcpReadOwner(
+		completion,
+		async () => {},
+		(effectiveCompletion) =>
+			gateway.finishAdmission(identity, begun.ticket.id, effectiveCompletion),
+	);
+	return { ...outcome, owner };
 }
 
 /** Stream immutable UTF-8 bytes and retain only one bounded UTF-16 fragment. */
@@ -297,7 +367,7 @@ async function readBlobTextFragment(
 	}
 }
 
-/** Search under existing read admission and preserve canonical coverage counts. */
+/** Search under existing read admission and transfer it to response production. */
 export async function searchMcpNotes(
 	gateway: McpNotesGateway,
 	identity: AuthorizationContext,
@@ -313,12 +383,20 @@ export async function searchMcpNotes(
 	);
 	if (!result.ok) return { ok: false, failure: result.failure };
 	const epoch = result.body.epoch;
-	await result.finish("settled");
 	const { epoch: _epoch, ...value } = result.body;
-	return { ok: true, epoch, value };
+	return {
+		ok: true,
+		epoch,
+		value,
+		owner: createMcpReadOwner(
+			"settled",
+			async () => {},
+			(completion) => result.finish(completion),
+		),
+	};
 }
 
-/** Read at most 256 retained history rows and reject excess data without truncation. */
+/** Read bounded retained history and transfer its admission to response production. */
 export async function historyMcpNote(
 	gateway: McpNotesGateway,
 	identity: AuthorizationContext,

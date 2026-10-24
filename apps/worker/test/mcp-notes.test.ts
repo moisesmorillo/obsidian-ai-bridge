@@ -97,7 +97,11 @@ describe("MCP note read cancellation", () => {
 		expect(settled).toBe(false);
 		expect(tryAcquireReadSlot()).toBeUndefined();
 		cancellationCleanup.resolve();
-		await expect(read).rejects.toMatchObject({ name: "AbortError" });
+		await expect(read).resolves.toMatchObject({
+			ok: false,
+			failure: { kind: "invalid_request" },
+			owner: { completion: "settled" },
+		});
 		const reusedSlot = tryAcquireReadSlot();
 		expect(reusedSlot).toBeDefined();
 		reusedSlot?.();
@@ -133,9 +137,19 @@ describe("MCP note read cancellation", () => {
 				throw new Error("unexpected blob content read");
 			},
 		};
-		await expect(
-			readMcpNote(gateway, identity, { path: "Agents/read.md" }, store),
-		).rejects.toBe(failure);
+		const outcome = await readMcpNote(
+			gateway,
+			identity,
+			{ path: "Agents/read.md" },
+			store,
+		);
+		expect(outcome).toMatchObject({
+			ok: false,
+			failure: { kind: "internal_error" },
+			owner: { completion: "uncertain" },
+		});
+		expect(completion).toBeUndefined();
+		if (outcome.owner) await outcome.owner.finish("settled");
 		expect(completion).toBe("uncertain");
 	});
 });

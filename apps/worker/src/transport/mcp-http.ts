@@ -10,7 +10,10 @@ import {
 import type { AuthorizationContext } from "@obsidian-ai-bridge/protocol";
 import { McpToolErrorSchema } from "@obsidian-ai-bridge/protocol";
 import type { BlobContentStore } from "@worker/application/blobs";
-import type { McpNotesGateway } from "@worker/application/mcp-notes";
+import type {
+	McpNotesGateway,
+	McpReadOwner,
+} from "@worker/application/mcp-notes";
 import { currentMcpEpoch } from "@worker/application/mcp-notes";
 import { tryAcquireReadSlot } from "@worker/application/read-budget";
 import type { Env } from "@worker/env";
@@ -86,15 +89,22 @@ async function readEnvelope(request: Request): Promise<string> {
 	}
 }
 
-/** Encode one SDK JSON-RPC message as demand-driven JSON bytes. */
+/** Provide a no-op owner for SDK failures without an application admission. */
+const EMPTY_MCP_READ_OWNER = { finish: async () => ({ ok: true as const }) };
+
+/** Keep the read owner and local slots through JSON production and cancellation. */
 function encodedResponse(
 	message: JSONRPCMessage,
 	release: () => void,
 	signal: AbortSignal,
+	owner?: McpReadOwner,
 ): Response {
 	return ownedReadResponse(
-		jsonReadSource(encodeJsonChunks(message)),
-		{ finish: async () => ({ ok: true }) },
+		jsonReadSource(
+			encodeJsonChunks(message),
+			() => owner?.cancel() ?? Promise.resolve(),
+		),
+		owner ?? EMPTY_MCP_READ_OWNER,
 		release,
 		{
 			headers: {
@@ -167,20 +177,59 @@ class McpJsonTransport implements Transport {
 	}
 }
 
-/** Return a bounded HTTP failure without creating an MCP tool result. */
-function httpFailure(
-	status: number,
-	code: string,
-	challenge = false,
+/** Build no-store headers and an optional OAuth resource challenge. */
+function httpFailureHeaders(
+	challenge: boolean,
 	serviceOrigin?: string,
-): Response {
+): Headers {
 	const headers = new Headers({ "cache-control": "no-store" });
 	if (challenge && serviceOrigin)
 		headers.set(
 			"www-authenticate",
 			`Bearer resource_metadata="${serviceOrigin}/.well-known/oauth-protected-resource"`,
 		);
-	return Response.json({ error: code }, { status, headers });
+	return headers;
+}
+
+/** Return one eager HTTP failure before read ownership starts. */
+function httpFailure(
+	status: number,
+	code: string,
+	challenge = false,
+	serviceOrigin?: string,
+): Response {
+	return Response.json(
+		{ error: code },
+		{
+			status,
+			headers: httpFailureHeaders(challenge, serviceOrigin),
+		},
+	);
+}
+
+/** Keep an acquired read slot and durable owner through a bounded HTTP error body. */
+function ownedHttpFailure(
+	status: number,
+	code: string,
+	release: () => void,
+	signal: AbortSignal,
+	challenge = false,
+	serviceOrigin?: string,
+	owner?: McpReadOwner,
+): Response {
+	return ownedReadResponse(
+		jsonReadSource(
+			encodeJsonChunks({ error: code }),
+			() => owner?.cancel() ?? Promise.resolve(),
+		),
+		owner ?? EMPTY_MCP_READ_OWNER,
+		release,
+		{
+			status,
+			headers: httpFailureHeaders(challenge, serviceOrigin),
+		},
+		signal,
+	);
 }
 
 /** Handle one authenticated stateless Streamable HTTP MCP request. */
@@ -228,57 +277,66 @@ export async function handleMcpHttp(
 		releaseRead();
 		releaseEnvelope();
 	};
+	let readOwner: McpReadOwner | undefined;
+	let closeServer: (() => Promise<void>) | undefined;
 	try {
 		const gateway = resolveGateway(env, request);
 		const epoch = await currentMcpEpoch(gateway, identity);
-		if (!epoch.ok) {
-			release();
-			return httpFailure(
+		if (!epoch.ok)
+			return ownedHttpFailure(
 				epoch.failure.kind === "revoked" ? 401 : 403,
 				epoch.failure.kind,
+				release,
+				request.signal,
 				true,
 				env.SERVICE_ORIGIN,
 			);
-		}
 		const protocolVersion = request.headers.get("mcp-protocol-version");
 		if (
 			protocolVersion !== null &&
 			!SUPPORTED_PROTOCOL_VERSIONS.includes(protocolVersion)
-		) {
-			release();
-			return httpFailure(400, "unsupported_protocol_version");
-		}
+		)
+			return ownedHttpFailure(
+				400,
+				"unsupported_protocol_version",
+				release,
+				request.signal,
+			);
 		const body = await readEnvelope(request);
 		const parsedMessage: unknown = JSON.parse(body);
 		if (
 			!isJSONRPCRequest(parsedMessage) &&
 			!isJSONRPCNotification(parsedMessage)
-		) {
-			release();
-			return httpFailure(400, "invalid_request");
-		}
+		)
+			return ownedHttpFailure(400, "invalid_request", release, request.signal);
 		const message: JSONRPCMessage = parsedMessage;
 		let boundaryFailure: string | undefined;
 		const server = createMcpServer(
 			identity,
 			gateway,
 			resolveBlobs(env),
+			(owner: McpReadOwner) => {
+				readOwner = owner;
+			},
 			request.signal,
 			(kind: string) => {
 				boundaryFailure = kind;
 			},
 		);
 		const transport = new McpJsonTransport(epoch.epoch);
+		closeServer = () => server.close();
 		await server.connect(transport);
 		const response = await transport.receive(message);
 		if (boundaryFailure !== undefined) {
 			await server.close();
-			release();
-			return httpFailure(
+			return ownedHttpFailure(
 				boundaryFailure === "revoked" ? 401 : 403,
 				boundaryFailure,
+				release,
+				request.signal,
 				true,
 				env.SERVICE_ORIGIN,
+				readOwner,
 			);
 		}
 		if (response === null) {
@@ -289,14 +347,38 @@ export async function handleMcpHttp(
 				headers: { "cache-control": "no-store" },
 			});
 		}
-		const httpResponse = encodedResponse(response, release, request.signal);
 		await server.close();
-		return httpResponse;
+		return encodedResponse(response, release, request.signal, readOwner);
 	} catch (error) {
-		release();
+		await closeServer?.().catch(() => undefined);
 		if (error instanceof RangeError)
-			return httpFailure(413, "request_too_large");
-		if (error instanceof SyntaxError) return httpFailure(400, "invalid_json");
-		return httpFailure(500, "internal_error");
+			return ownedHttpFailure(
+				413,
+				"request_too_large",
+				release,
+				request.signal,
+				false,
+				undefined,
+				readOwner,
+			);
+		if (error instanceof SyntaxError)
+			return ownedHttpFailure(
+				400,
+				"invalid_json",
+				release,
+				request.signal,
+				false,
+				undefined,
+				readOwner,
+			);
+		return ownedHttpFailure(
+			500,
+			"internal_error",
+			release,
+			request.signal,
+			false,
+			undefined,
+			readOwner,
+		);
 	}
 }

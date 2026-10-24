@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-10-24T00:05:00Z'
-updated_date: '2026-10-24T19:27:00Z'
+updated_date: '2026-10-24T20:08:00Z'
 labels:
   - F2
   - MCP
@@ -47,4 +47,6 @@ Approved dependency: add @modelcontextprotocol/server@2.4.0 for MCP dispatch, pr
 Owner override: the owner checked the npm registry latest endpoint and selected exact jose@6.2.13, which supports Web APIs and Cloudflare/workerd. This replaces the earlier jose@6.1.3 pin without a new plan review. Access and OAuth compatibility checks passed on jose@6.2.13: 2 files and 26 tests.
 
 Task 3 implementation is complete locally. `bun run check` passed lint, docs:check, all typechecks, builds, and 1,142 tests across 72 files. Focused MCP, Access/OAuth, protocol, application-read, and cancellation suites passed. The MCP lazy-read adapter retains uncertain admissions after unknown failures and waits for cancellation cleanup. Internal manifest timestamps do not change the public REST manifest shape. Review found no blocking issue. Tests run locally do not qualify deployed Worker behavior or remote MCP client interoperability. Keep this task In Progress for independent review.
+
+OAB74-1 and OAB74-2 review corrections are implemented locally. MCP list traversal now scans bounded metadata batches under one admission and limits only matching rows and estimated bytes. Internal read owners stay with MCP response production through EOF or cancellation cleanup. Production tests check late prefix matches, byte overflow without partial rows, real DO admission state, EOF/cancellation settlement, and shared REST/MCP slots. `bun run check` passed lint, docs checks, typechecks, all tests, and builds with 1,146 tests across workspace suites. Limits: EOF does not prove client receipt or native release. Local tests do not qualify deployed behavior or remote MCP clients. Keep this task In Progress for parent scoped review.
 <!-- SECTION:NOTES:END -->

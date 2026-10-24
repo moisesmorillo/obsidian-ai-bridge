@@ -28,6 +28,7 @@ import type { BlobContentStore } from "@worker/application/blobs";
 import type {
 	McpNotesGateway,
 	McpReadOutcome,
+	McpReadOwner,
 } from "@worker/application/mcp-notes";
 import {
 	currentMcpEpoch,
@@ -59,13 +60,15 @@ function toolFailure(failure: { kind: string }, epoch: string) {
 	};
 }
 
-/** Resolve application failures with the current authorized epoch before tool output. */
+/** Transfer read ownership before output and resolve failures with the current epoch. */
 async function toolOutcome<T extends object>(
 	gateway: McpNotesGateway,
 	identity: AuthorizationContext,
 	outcome: McpReadOutcome<T>,
 	reportBoundaryFailure: (kind: string) => void,
+	adoptReadOwner: (owner: McpReadOwner) => void,
 ) {
+	if (outcome.owner) adoptReadOwner(outcome.owner);
 	if (outcome.ok)
 		return {
 			content: [],
@@ -79,11 +82,12 @@ async function toolOutcome<T extends object>(
 	return toolFailure(outcome.failure, current.epoch);
 }
 
-/** Build an SDK server and bind read tools to canonical schemas and existing application operations. */
+/** Build the MCP server and transfer each read owner to response production. */
 export function createMcpServer(
 	identity: AuthorizationContext,
 	gateway: McpNotesGateway,
 	store: BlobContentStore,
+	adoptReadOwner: (owner: McpReadOwner) => void,
 	signal?: AbortSignal,
 	reportBoundaryFailure: (kind: string) => void = () => {},
 ): McpServer {
@@ -111,6 +115,7 @@ export function createMcpServer(
 					signal,
 				),
 				reportBoundaryFailure,
+				adoptReadOwner,
 			);
 		},
 	);
@@ -128,6 +133,7 @@ export function createMcpServer(
 				identity,
 				await readMcpNote(gateway, identity, parsed, store, signal),
 				reportBoundaryFailure,
+				adoptReadOwner,
 			);
 		},
 	);
@@ -154,6 +160,7 @@ export function createMcpServer(
 					signal,
 				),
 				reportBoundaryFailure,
+				adoptReadOwner,
 			);
 		},
 	);
@@ -171,6 +178,7 @@ export function createMcpServer(
 				identity,
 				await historyMcpNote(gateway, identity, parsed.path, signal),
 				reportBoundaryFailure,
+				adoptReadOwner,
 			);
 		},
 	);

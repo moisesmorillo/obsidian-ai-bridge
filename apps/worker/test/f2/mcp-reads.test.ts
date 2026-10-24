@@ -1,4 +1,4 @@
-import { env, SELF } from "cloudflare:test";
+import { env, runInDurableObject, SELF } from "cloudflare:test";
 import productionWorker from "@worker/index";
 import { exportJWK, generateKeyPair, SignJWT } from "jose";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -113,6 +113,7 @@ async function digestHex(bytes: Uint8Array): Promise<string> {
 async function seedMcpManifestRows(
 	token: string,
 	count: number,
+	prefix = "Agents/overflow-",
 ): Promise<void> {
 	const auth = { authorization: `Bearer ${token}` };
 	const summary = await SELF.fetch("https://service.test/v1/vault", {
@@ -120,7 +121,7 @@ async function seedMcpManifestRows(
 	});
 	const epoch = ((await summary.json()) as { epoch: string }).epoch;
 	for (let index = 0; index < count; index++) {
-		const path = `Agents/overflow-${String(index).padStart(3, "0")}.md`;
+		const path = `${prefix}${String(index).padStart(3, "0")}.md`;
 		const created = await SELF.fetch(`https://service.test/v1/files/${path}`, {
 			method: "PUT",
 			headers: {
@@ -133,6 +134,20 @@ async function seedMcpManifestRows(
 		expect(created.status).toBe(201);
 		await created.text();
 	}
+}
+
+/** Read active durable admission states for one real OAuth client. */
+async function activeAdmissionStates(clientId: string): Promise<string[]> {
+	const vault = env.VAULTS.get(env.VAULTS.idFromName("service.test"));
+	return runInDurableObject(vault, (_instance, state) =>
+		state.storage.sql
+			.exec(
+				"SELECT state FROM operation_admissions WHERE client_id = ? ORDER BY state",
+				clientId,
+			)
+			.toArray()
+			.map((row) => String(row.state)),
+	);
 }
 
 /** Send one real MCP JSON message to the production Worker entry point. */
@@ -688,15 +703,14 @@ describe("production MCP transport", () => {
 			env,
 		);
 		expect(oversizedEnvelope.status).toBe(413);
-		expect(
-			(
-				await postMcp(
-					token,
-					{ jsonrpc: "2.0", id: 9, method: "ping" },
-					{ "mcp-protocol-version": "2099-01-01" },
-				)
-			).status,
-		).toBe(400);
+		await oversizedEnvelope.text();
+		const unsupportedVersion = await postMcp(
+			token,
+			{ jsonrpc: "2.0", id: 9, method: "ping" },
+			{ "mcp-protocol-version": "2099-01-01" },
+		);
+		expect(unsupportedVersion.status).toBe(400);
+		await unsupportedVersion.text();
 		const unknown = await postMcp(token, {
 			jsonrpc: "2.0",
 			id: 10,
@@ -785,6 +799,172 @@ describe("production MCP transport", () => {
 			expect(revoked.status, JSON.stringify(message)).toBe(401);
 			expect(revoked.headers.get("www-authenticate")).toContain("Bearer");
 			expect(await revoked.text()).not.toContain("epoch");
+		}
+	});
+
+	it("filters late prefix matches across metadata pages", async () => {
+		const { token } = await issueToken();
+		const prefix = `Z-mcp-late-${crypto.randomUUID()}/`;
+		await seedMcpManifestRows(token, 256, `A-mcp-scan-${crypto.randomUUID()}/`);
+		await seedMcpManifestRows(token, 2, prefix);
+		const listed = await postMcp(token, {
+			jsonrpc: "2.0",
+			id: 1,
+			method: "tools/call",
+			params: { name: "list_notes", arguments: { prefix } },
+		});
+		const listedResult = (await listed.json()) as {
+			result?: {
+				isError?: boolean;
+				structuredContent?: { entries?: { path: string }[] };
+			};
+		};
+		expect(listedResult.result?.isError).not.toBe(true);
+		expect(listedResult.result?.structuredContent?.entries).toHaveLength(2);
+		expect(
+			listedResult.result?.structuredContent?.entries?.every((entry) =>
+				entry.path.startsWith(prefix),
+			),
+		).toBe(true);
+	});
+
+	it("rejects byte-heavy matching prefixes without partial rows", async () => {
+		const { token, clientId } = await issueToken();
+		const widePrefix = `MCP-wide-${crypto.randomUUID()}/${"w".repeat(420)}/`;
+		await seedMcpManifestRows(token, 256, widePrefix);
+		const wideList = await postMcp(token, {
+			jsonrpc: "2.0",
+			id: 2,
+			method: "tools/call",
+			params: { name: "list_notes", arguments: { prefix: widePrefix } },
+		});
+		expect(await activeAdmissionStates(clientId)).toEqual(["active"]);
+		const wideResult = (await wideList.json()) as {
+			result?: {
+				isError?: boolean;
+				structuredContent?: { code?: string; entries?: unknown[] };
+			};
+		};
+		expect(wideResult.result?.isError).toBe(true);
+		expect(wideResult.result?.structuredContent?.code).toBe("result_too_large");
+		expect(wideResult.result?.structuredContent?.entries).toBeUndefined();
+		expect(await activeAdmissionStates(clientId)).toEqual([]);
+	});
+
+	it("keeps real durable admission until MCP response EOF and cancellation", async () => {
+		const { token, clientId } = await issueToken();
+		await seedMcpManifestRows(
+			token,
+			256,
+			`MCP-lifecycle-${crypto.randomUUID()}/`,
+		);
+		/** Start a production list request without consuming its response body. */
+		const request = () =>
+			productionWorker.fetch(
+				new Request("https://service.test/mcp", {
+					method: "POST",
+					headers: {
+						authorization: `Bearer ${token}`,
+						"content-type": "application/json",
+						accept: "application/json, text/event-stream",
+					},
+					body: JSON.stringify({
+						jsonrpc: "2.0",
+						id: 1,
+						method: "tools/call",
+						params: { name: "list_notes", arguments: {} },
+					}),
+				}),
+				env,
+			);
+
+		const response = await request();
+		expect(response.status).toBe(200);
+		const reader = response.body?.getReader();
+		if (!reader) throw new Error("MCP response has no body");
+		try {
+			expect(await activeAdmissionStates(clientId)).toEqual(["active"]);
+			let chunks = 0;
+			for (;;) {
+				const item = await reader.read();
+				if (item.done) break;
+				chunks += 1;
+				if (chunks === 1)
+					expect(await activeAdmissionStates(clientId)).toEqual(["active"]);
+			}
+			expect(chunks).toBeGreaterThan(1);
+			expect(await activeAdmissionStates(clientId)).toEqual([]);
+		} finally {
+			await reader.cancel();
+		}
+
+		const cancelled = await request();
+		const cancelledReader = cancelled.body?.getReader();
+		if (!cancelledReader) throw new Error("MCP response has no body");
+		try {
+			expect(await activeAdmissionStates(clientId)).toEqual(["active"]);
+			await cancelledReader.read();
+			expect(await activeAdmissionStates(clientId)).toEqual(["active"]);
+			await cancelledReader.cancel();
+			expect(await activeAdmissionStates(clientId)).toEqual([]);
+		} finally {
+			await cancelledReader.cancel();
+		}
+	});
+
+	it("keeps MCP and REST reads on the same four isolate slots", async () => {
+		const { token } = await issueToken();
+		await seedMcpManifestRows(token, 256, `MCP-shared-${crypto.randomUUID()}/`);
+		const auth = { authorization: `Bearer ${token}` };
+		const restResponses: Response[] = [];
+		let mcpResponse: Response | undefined;
+		try {
+			for (let index = 0; index < 3; index += 1)
+				restResponses.push(
+					await productionWorker.fetch(
+						new Request("https://service.test/v1/manifest", {
+							headers: auth,
+						}),
+						env,
+					),
+				);
+			mcpResponse = await productionWorker.fetch(
+				new Request("https://service.test/mcp", {
+					method: "POST",
+					headers: {
+						...auth,
+						"content-type": "application/json",
+						accept: "application/json, text/event-stream",
+					},
+					body: JSON.stringify({
+						jsonrpc: "2.0",
+						id: 1,
+						method: "tools/call",
+						params: { name: "list_notes", arguments: {} },
+					}),
+				}),
+				env,
+			);
+			expect(restResponses.every((response) => response.status === 200)).toBe(
+				true,
+			);
+			expect(mcpResponse.status).toBe(200);
+			const limited = await productionWorker.fetch(
+				new Request("https://service.test/v1/vault", { headers: auth }),
+				env,
+			);
+			expect(limited.status).toBe(429);
+			await restResponses[0].body?.cancel();
+			const available = await productionWorker.fetch(
+				new Request("https://service.test/v1/vault", { headers: auth }),
+				env,
+			);
+			expect(available.status).toBe(200);
+			await available.body?.cancel();
+		} finally {
+			for (const response of restResponses.slice(1))
+				await response.body?.cancel();
+			await mcpResponse?.body?.cancel();
 		}
 	});
 

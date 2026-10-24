@@ -2,7 +2,7 @@ import { env, SELF } from "cloudflare:test";
 import worker from "@worker/index";
 import { describe, expect, it } from "vitest";
 
-describe("default-deny Worker entry point", () => {
+describe("production entry without OAuth configuration", () => {
 	it("resolves the private workspace alias to the default-deny handler", async () => {
 		const response = await worker.fetch(
 			new Request("https://worker.invalid/unknown"),
@@ -11,24 +11,27 @@ describe("default-deny Worker entry point", () => {
 		expect(response.status).toBe(404);
 	});
 
-	it("returns 405 for unsupported MCP GET transport", async () => {
+	it("denies MCP traffic when OAuth configuration is unavailable", async () => {
 		const response = await SELF.fetch("https://worker.invalid/mcp", {
 			method: "GET",
 		});
 
-		expect(response.status).toBe(405);
+		expect(response.status).toBe(503);
 	});
 
 	it.each([
 		["GET", "/owner/clients"],
 		["GET", "/unknown"],
-	] as const)("returns 404 for %s %s", async (method, path) => {
-		const response = await SELF.fetch(`https://worker.invalid${path}`, {
-			method,
-		});
+	] as const)(
+		"denies %s %s when OAuth configuration is unavailable",
+		async (method, path) => {
+			const response = await SELF.fetch(`https://worker.invalid${path}`, {
+				method,
+			});
 
-		expect(response.status).toBe(404);
-	});
+			expect(response.status).toBe(503);
+		},
+	);
 
 	it.each([
 		"/v1/vault",
@@ -40,7 +43,7 @@ describe("default-deny Worker entry point", () => {
 		"/v1/files/note.md?rev=1",
 	])("denies production read %s before Vault selection", async (route) => {
 		const response = await SELF.fetch(`https://worker.invalid${route}`);
-		expect(response.status).toBe(401);
+		expect(response.status).toBe(503);
 	});
 
 	it("denies a registered production file route before body processing", async () => {
@@ -55,7 +58,7 @@ describe("default-deny Worker entry point", () => {
 			body: "must not reach a Vault",
 		});
 		const response = await worker.fetch(request, env);
-		expect(response.status).toBe(401);
+		expect(response.status).toBe(503);
 		expect(request.bodyUsed).toBe(false);
 	});
 });

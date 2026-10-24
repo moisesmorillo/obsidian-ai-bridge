@@ -63,10 +63,20 @@ export interface ClientRegistryGateway {
 	}): Promise<boolean>;
 }
 
-/** Provider-only cleanup capability. Authoritative denial always occurs before this call. */
+/** Spend count shared across KV and Durable Object operations in one owner request. */
+export interface OwnerCleanupBudget {
+	/** Number of provider and registry operations still allowed in this request. */
+	remaining: number;
+}
+
+/** Provider cleanup step that spends from the owner request's shared operation budget. */
 export interface ProviderGrantCleanup {
-	/** Remove one provider grant and its tokens from the configured store. */
-	revokeGrant(grantId: string, ownerSubject: string): Promise<void>;
+	/** Delete one page item or the empty grant record, returning true only after full removal. */
+	cleanupStep(
+		grantId: string,
+		ownerSubject: string,
+		budget: OwnerCleanupBudget,
+	): Promise<boolean>;
 }
 
 /** Persist an owner-authorized consent fence before the provider issues authorization code. */
@@ -140,14 +150,31 @@ export async function revokeClient(
 	provider: ProviderGrantCleanup,
 	ownerSubject: string,
 	clientId: string,
+	budget: OwnerCleanupBudget,
 ): Promise<{ generation: number; cleanup_pending: boolean } | null> {
+	if (budget.remaining < 1) throw new Error("Owner cleanup budget is empty");
+	budget.remaining -= 1;
 	const durable = await registry.revokeClient(ownerSubject, clientId);
 	if (!durable) return null;
 	let cleanupPending = durable.cleanup_pending;
 	for (const grantId of durable.grants) {
 		try {
-			await provider.revokeGrant(grantId, ownerSubject);
-			await registry.markGrantCleanupComplete(clientId, grantId);
+			while (budget.remaining >= 3) {
+				const complete = await provider.cleanupStep(
+					grantId,
+					ownerSubject,
+					budget,
+				);
+				if (!complete) continue;
+				if (budget.remaining < 1) {
+					cleanupPending = true;
+					break;
+				}
+				budget.remaining -= 1;
+				await registry.markGrantCleanupComplete(clientId, grantId);
+				break;
+			}
+			if (budget.remaining < 3) cleanupPending = true;
 		} catch {
 			cleanupPending = true;
 		}

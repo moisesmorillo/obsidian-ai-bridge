@@ -155,7 +155,12 @@ const worker = {
 		const provider = createOAuthWorker(env, api, createLocalAuthHandler());
 		return provider
 			? provider.fetch(request, env, executionContext)
-			: Promise.resolve(api.fetch(request, env, executionContext));
+			: Promise.resolve(
+					new Response("OAuth is not configured", {
+						status: 503,
+						headers: { "cache-control": "no-store" },
+					}),
+				);
 	},
 };
 

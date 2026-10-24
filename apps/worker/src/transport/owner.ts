@@ -1,5 +1,7 @@
-import { getOAuthApi } from "@cloudflare/workers-oauth-provider";
-import type { ClientRegistryGateway } from "@worker/application/clients";
+import type {
+	ClientRegistryGateway,
+	OwnerCleanupBudget,
+} from "@worker/application/clients";
 import {
 	consumeOwnerCsrf,
 	listClientGrants,
@@ -10,7 +12,7 @@ import {
 } from "@worker/application/clients";
 import type { Env } from "@worker/env";
 import { verifyOwnerAccess } from "@worker/infrastructure/auth/access";
-import { createOAuthOptions } from "@worker/infrastructure/auth/oauth";
+import { createProviderGrantCleanup } from "@worker/infrastructure/auth/oauth";
 import { Hono } from "hono";
 
 /** Browser cookie that binds one-use owner form state to this browser. */
@@ -19,6 +21,8 @@ const OWNER_BROWSER_COOKIE = "__Host-oab-owner";
 const OWNER_STATE_TTL_MS = 10 * 60 * 1000;
 /** Maximum accepted owner form body. */
 const OWNER_FORM_LIMIT = 4_096;
+/** Cap KV and Durable Object operations, including CSRF, for one revocation request. */
+const OWNER_CLEANUP_OPERATION_LIMIT = 48;
 
 /** Resolve the authoritative registry for the configured canonical service vault. */
 export type OwnerRegistryResolver = (
@@ -173,6 +177,10 @@ export function createOwnerHandler(
 		if (!browserId || !isUuid(browserId) || !isUuid(form.state))
 			return context.text("Invalid owner form", 400);
 		const registry = resolveRegistry(context.env, context.req.raw);
+		const budget: OwnerCleanupBudget = {
+			remaining: OWNER_CLEANUP_OPERATION_LIMIT,
+		};
+		budget.remaining -= 1;
 		const accepted = await consumeOwnerCsrf(registry, {
 			owner_subject: owner.subject,
 			browser_id: browserId,
@@ -182,18 +190,13 @@ export function createOwnerHandler(
 		if (!accepted) return context.text("Invalid owner form", 403);
 		if (!context.env.OAUTH_KV)
 			return context.text("OAuth cleanup is unavailable", 503);
-		const options = createOAuthOptions(
-			context.env,
-			{ fetch: async () => new Response(null, { status: 401 }) },
-			app,
-		);
-		if (!options) return context.text("OAuth cleanup is unavailable", 503);
-		const provider = getOAuthApi(options, context.env);
+		const provider = createProviderGrantCleanup(context.env);
 		const result = await revokeClient(
 			registry,
 			provider,
 			owner.subject,
 			context.req.param("clientId"),
+			budget,
 		);
 		if (!result) return context.text("Client not found", 404);
 		return Response.redirect(

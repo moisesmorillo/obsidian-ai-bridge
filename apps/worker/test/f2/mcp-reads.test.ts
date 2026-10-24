@@ -132,6 +132,38 @@ function holdBodyBytes(value: string): {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("production MCP transport", () => {
+	it.each([
+		[
+			"low-byte high-element envelope",
+			`{"jsonrpc":"2.0","id":1,"method":"ping","params":{"padding":[${"null,".repeat(20_000)}null]}}`,
+		],
+		[
+			"excessively nested envelope",
+			`{"jsonrpc":"2.0","id":1,"method":"ping","params":{"padding":${"[".repeat(80)}0${"]".repeat(80)}}}`,
+		],
+		[
+			"low-byte high-key envelope",
+			`{"jsonrpc":"2.0","id":1,"method":"ping","params":{"padding":{${Array.from({ length: 20_000 }, (_, index) => `"k${index}":0`).join(",")}}}}`,
+		],
+	])("rejects %s before full JSON parsing", async (_label, body) => {
+		const { token } = await issueToken();
+		const response = await productionWorker.fetch(
+			new Request("https://service.test/mcp", {
+				method: "POST",
+				headers: {
+					authorization: `Bearer ${token}`,
+					"content-type": "application/json",
+					accept: "application/json, text/event-stream",
+				},
+				body,
+			}),
+			env,
+		);
+		const responseBody = await response.text();
+		expect(response.status).toBe(413);
+		expect(responseBody).toContain("request_too_complex");
+	});
+
 	it("streams a worst-case escaped note with bounded chunks and JSON-RPC framing", async () => {
 		const { token } = await issueToken();
 		const auth = { authorization: `Bearer ${token}` };

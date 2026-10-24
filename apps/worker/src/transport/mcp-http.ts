@@ -36,6 +36,12 @@ import {
 
 /** Maximum wire bytes accepted for one MCP envelope. */
 const MCP_BODY_LIMIT = 6_100_000;
+/** Limit nesting before the SDK sees a materialized JSON value. */
+const MCP_MAX_DEPTH = 64;
+/** Bound all container separators and string tokens in the decoded envelope. */
+const MCP_MAX_STRUCTURAL_TOKENS = 65_536;
+/** Bound comma separators within one individual container. */
+const MCP_MAX_CONTAINER_ITEMS = 16_384;
 let mcpEnvelopeActive = false;
 
 /** Hold one MCP request across body demand, dispatch, response production, and cancellation. */
@@ -96,6 +102,55 @@ async function readEnvelope(request: Request): Promise<string> {
 		);
 	} catch {
 		throw new SyntaxError("MCP request body is not valid UTF-8");
+	}
+}
+
+/** Scan JSON delimiters and string tokens before JSON.parse can build a full object tree. */
+function checkEnvelopeStructure(source: string): void {
+	const containerCommas = new Uint32Array(MCP_MAX_DEPTH);
+	let depth = 0;
+	let containers = 0;
+	let separators = 0;
+	let strings = 0;
+	for (let index = 0; index < source.length; index += 1) {
+		const character = source[index];
+		if (character === '"') {
+			strings += 1;
+			if (strings > MCP_MAX_STRUCTURAL_TOKENS)
+				throw new RangeError("MCP request exceeds structural complexity limit");
+			for (index += 1; index < source.length; index += 1) {
+				if (source[index] === "\\") {
+					index += 1;
+					continue;
+				}
+				if (source[index] === '"') break;
+			}
+			continue;
+		}
+		if (character === "{" || character === "[") {
+			depth += 1;
+			containers += 1;
+			if (depth > MCP_MAX_DEPTH || containers > MCP_MAX_STRUCTURAL_TOKENS)
+				throw new RangeError("MCP request exceeds structural complexity limit");
+			containerCommas[depth - 1] = 0;
+			continue;
+		}
+		if (character === "}" || character === "]") {
+			depth = Math.max(0, depth - 1);
+			continue;
+		}
+		if (character === ",") {
+			separators += 1;
+			if (separators > MCP_MAX_STRUCTURAL_TOKENS)
+				throw new RangeError("MCP request exceeds structural complexity limit");
+			if (depth > 0) {
+				containerCommas[depth - 1] += 1;
+				if (containerCommas[depth - 1] >= MCP_MAX_CONTAINER_ITEMS)
+					throw new RangeError(
+						"MCP request exceeds structural complexity limit",
+					);
+			}
+		}
 	}
 }
 
@@ -333,6 +388,7 @@ export async function handleMcpHttp(
 				request.signal,
 			);
 		const body = await readEnvelope(request);
+		checkEnvelopeStructure(body);
 		const parsedMessage: unknown = JSON.parse(body);
 		if (
 			!isJSONRPCRequest(parsedMessage) &&
@@ -437,7 +493,9 @@ export async function handleMcpHttp(
 		if (error instanceof RangeError)
 			return ownedHttpFailure(
 				413,
-				"request_too_large",
+				error.message.includes("structural complexity")
+					? "request_too_complex"
+					: "request_too_large",
 				release,
 				request.signal,
 				false,

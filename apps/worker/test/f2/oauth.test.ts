@@ -388,6 +388,104 @@ describe("production OAuth entry", () => {
 		).toBe(401);
 	});
 
+	it.each([
+		["missing OAuth KV", { OAUTH_KV: undefined }],
+		["invalid owner configuration", { OWNER_SUBJECT: "" }],
+	] as const)(
+		"denies protected production traffic before identity, vault, or body demand with %s",
+		async (_label, override) => {
+			const vaultCalls = { lookup: 0, read: 0, mutation: 0 };
+			const vaults = new Proxy(env.VAULTS, {
+				/** Observe namespace access and any subsequent vault authority call. */
+				get(target, property) {
+					if (property === "get")
+						return (id: Parameters<typeof env.VAULTS.get>[0]) => {
+							vaultCalls.lookup += 1;
+							const stub = target.get(id);
+							return new Proxy(stub, {
+								/** Count read or mutation authority calls after namespace selection. */
+								get(stubTarget, method) {
+									const operation = Reflect.get(stubTarget, method, stubTarget);
+									if (typeof operation !== "function") return operation;
+									return (...args: unknown[]) => {
+										const name = String(method);
+										if (name.startsWith("read")) vaultCalls.read += 1;
+										if (
+											/^(begin|authorize|commit|finish|revoke|rename|register)/.test(
+												name,
+											)
+										)
+											vaultCalls.mutation += 1;
+										return Reflect.apply(operation, stubTarget, args);
+									};
+								},
+							});
+						};
+					const value = Reflect.get(target, property, target);
+					return typeof value === "function" ? value.bind(target) : value;
+				},
+			});
+			const guardedEnv = new Proxy(env, {
+				/** Override only the test configuration and vault namespace. */
+				get(target, property) {
+					if (property in override)
+						return override[property as keyof typeof override];
+					return property === "VAULTS"
+						? vaults
+						: Reflect.get(target, property, target);
+				},
+			}) as Env;
+			let bodyPulls = 0;
+			const body = new ReadableStream<Uint8Array>(
+				{
+					/** Count request-body demand on the protected production path. */
+					pull() {
+						bodyPulls += 1;
+					},
+				},
+				{ highWaterMark: 0 },
+			);
+			const request = new Request("https://service.test/v1/files/private.md", {
+				method: "PUT",
+				headers: {
+					authorization: "Bearer not-a-provider-token",
+					"X-OAB-Verified-Authorization": JSON.stringify({
+						client_id: "forged",
+						grant_id: "forged",
+						scopes: ["vault:read", "vault:write", "vault:delete"],
+					}),
+				},
+				body,
+			});
+			const response = await productionWorker.fetch(request, guardedEnv);
+			expect(response.status).toBeGreaterThanOrEqual(400);
+			expect(vaultCalls).toEqual({ lookup: 0, read: 0, mutation: 0 });
+			expect(bodyPulls).toBe(0);
+			expect(request.bodyUsed).toBe(false);
+		},
+	);
+
+	it("uses provider-validated identity instead of a forged internal header when configured", async () => {
+		const client = await registerPublicClient();
+		const assertion = await ownerAssertion();
+		const token = await issueAccessToken(
+			client.client_id,
+			assertion,
+			"vault:read",
+		);
+		const response = await SELF.fetch("https://service.test/v1/vault", {
+			headers: {
+				authorization: `Bearer ${token.access_token}`,
+				"X-OAB-Verified-Authorization": JSON.stringify({
+					client_id: "forged",
+					grant_id: "forged",
+					scopes: ["vault:write", "vault:delete"],
+				}),
+			},
+		});
+		expect(response.status).toBe(200);
+	});
+
 	it("registers public clients through production OAuth", async () => {
 		const client = await registerPublicClient();
 		expect(client.client_id).toEqual(expect.any(String));
@@ -862,6 +960,165 @@ describe("production OAuth entry", () => {
 		const denialBody = await deniedMcpRead.text();
 		expect(denialBody).not.toContain("epoch");
 		expect(denialBody).not.toContain("MCP updates; REST verifies.");
+	});
+
+	it("bounds paged provider cleanup and resumes interrupted real grant cleanup", async () => {
+		const assertion = await ownerAssertion();
+		const client = await registerPublicClient();
+		const token = await issueAccessToken(
+			client.client_id,
+			assertion,
+			"vault:read",
+		);
+		const vault = env.VAULTS.get(env.VAULTS.idFromName("service.test"));
+		const grant = (
+			await vault.listClientGrants("synthetic-owner", client.client_id)
+		).grants[0]?.grant_id;
+		if (!grant)
+			throw new Error("Provider grant is missing from the durable registry");
+		const kv = requireValue(env.OAUTH_KV, "OAuth KV binding");
+		const prefix = `token:synthetic-owner:${grant}:`;
+		for (let index = 0; index < 25; index += 1)
+			await kv.put(
+				`${prefix}page-test-${String(index).padStart(2, "0")}`,
+				"{}",
+			);
+
+		/** Count every provider KV and registry RPC during one owner request. */
+		const createTrackedEnv = (failTokenDeleteAt?: number) => {
+			const counts = { kv: 0, list: 0, get: 0, delete: 0, registry: 0 };
+			let tokenDeletes = 0;
+			const trackedKv = new Proxy(kv, {
+				/** Count provider list, get, and delete calls while preserving real KV state. */
+				get(target, property) {
+					const value = Reflect.get(target, property, target);
+					if (!["list", "get", "delete"].includes(String(property)))
+						return typeof value === "function" ? value.bind(target) : value;
+					return async (...args: unknown[]) => {
+						counts.kv += 1;
+						if (property === "list") counts.list += 1;
+						if (property === "get") counts.get += 1;
+						if (property === "delete") {
+							counts.delete += 1;
+							if (String(args[0]).startsWith("token:")) {
+								tokenDeletes += 1;
+								if (tokenDeletes === failTokenDeleteAt)
+									throw new Error("Synthetic interrupted token deletion");
+							}
+						}
+						return await Reflect.apply(value, target, args);
+					};
+				},
+			});
+			const vaults = new Proxy(env.VAULTS, {
+				/** Return a real stub that counts cleanup-related registry RPCs. */
+				get(target, property) {
+					const value = Reflect.get(target, property, target);
+					if (property !== "get")
+						return typeof value === "function" ? value.bind(target) : value;
+					return (id: Parameters<typeof env.VAULTS.get>[0]) => {
+						const stub = target.get(id);
+						return new Proxy(stub, {
+							/** Count only CSRF, durable denial, and cleanup-completion RPCs. */
+							get(stubTarget, method) {
+								const operation = Reflect.get(stubTarget, method, stubTarget);
+								if (
+									![
+										"consumeOwnerCsrf",
+										"revokeClient",
+										"markGrantCleanupComplete",
+									].includes(String(method))
+								)
+									return operation;
+								return async (...args: unknown[]) => {
+									counts.registry += 1;
+									return await Reflect.apply(operation, stubTarget, args);
+								};
+							},
+						});
+					};
+				},
+			});
+			const bindings = new Proxy(env, {
+				/** Supply counted bindings and delegate all unrelated bindings unchanged. */
+				get(target, property) {
+					if (property === "OAUTH_KV") return trackedKv;
+					if (property === "VAULTS") return vaults;
+					return Reflect.get(target, property, target);
+				},
+			}) as Env;
+			return { bindings, counts };
+		};
+
+		/** Submit a fresh browser-bound owner revocation using the supplied Worker bindings. */
+		async function revokeWith(bindings: Env): Promise<Response> {
+			const page = await SELF.fetch("https://service.test/owner/clients", {
+				headers: { "Cf-Access-Jwt-Assertion": assertion },
+			});
+			const html = await page.text();
+			const csrf = requireValue(
+				html.match(/name="csrf" value="([^"]+)"/)?.[1],
+				"owner csrf",
+			);
+			const cookie = requireValue(
+				page.headers.get("set-cookie")?.split(";")[0],
+				"owner cookie",
+			);
+			return productionWorker.fetch(
+				new Request(
+					`https://service.test/owner/clients/${encodeURIComponent(client.client_id)}/revoke`,
+					{
+						method: "POST",
+						redirect: "manual",
+						headers: {
+							"content-type": "application/x-www-form-urlencoded",
+							origin: "https://service.test",
+							cookie,
+							"Cf-Access-Jwt-Assertion": assertion,
+						},
+						body: new URLSearchParams({ csrf }),
+					},
+				),
+				bindings,
+			);
+		}
+
+		const first = createTrackedEnv();
+		const firstResponse = await revokeWith(first.bindings);
+		expect(firstResponse.status).toBe(303);
+		expect(first.counts.registry).toBe(2);
+		expect(first.counts.list).toBe(22);
+		expect(first.counts.delete).toBe(22);
+		expect(first.counts.get).toBe(0);
+		expect(first.counts.registry + first.counts.kv).toBe(46);
+		const denied = await SELF.fetch("https://service.test/v1/vault", {
+			headers: { authorization: `Bearer ${token.access_token}` },
+		});
+		expect(denied.status).toBe(401);
+
+		const interrupted = createTrackedEnv(3);
+		const interruptedResponse = await revokeWith(interrupted.bindings);
+		expect(interruptedResponse.status).toBe(303);
+		expect(interrupted.counts.registry).toBe(2);
+		expect(interrupted.counts.list).toBe(3);
+		expect(interrupted.counts.delete).toBe(3);
+		expect(interrupted.counts.registry + interrupted.counts.kv).toBe(8);
+
+		const recovery = createTrackedEnv();
+		const recovered = await revokeWith(recovery.bindings);
+		expect(recovered.status).toBe(303);
+		expect(recovery.counts.registry + recovery.counts.kv).toBeLessThanOrEqual(
+			48,
+		);
+		expect((await kv.list({ prefix })).keys).toEqual([]);
+		expect(
+			await kv.get(`grant:synthetic-owner:${grant}`, { type: "json" }),
+		).toBeNull();
+		const grants = await vault.listClientGrants(
+			"synthetic-owner",
+			client.client_id,
+		);
+		expect(grants.grants[0]?.cleanup_pending).toBe(false);
 	});
 
 	it("commits durable denial before provider cleanup and blocks the next REST and refresh requests", async () => {

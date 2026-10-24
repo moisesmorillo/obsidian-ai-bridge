@@ -1572,7 +1572,7 @@ describe("atomic admission consumption and revocation", () => {
 					ticket_id: ticketId,
 				}),
 			});
-			expect(response.status).toBe(404);
+			expect(response.status).toBe(503);
 		}
 	});
 });

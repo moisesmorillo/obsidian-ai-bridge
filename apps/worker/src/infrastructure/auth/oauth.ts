@@ -10,6 +10,10 @@ import {
 	LocalAuthConfigurationSchema,
 	VaultScopeSchema,
 } from "@obsidian-ai-bridge/protocol";
+import type {
+	OwnerCleanupBudget,
+	ProviderGrantCleanup,
+} from "@worker/application/clients";
 import type { Env } from "@worker/env";
 import { verifyOwnerAccess } from "@worker/infrastructure/auth/access";
 import { Hono } from "hono";
@@ -256,6 +260,36 @@ export function createAuthorizeHandler(): ExportedHandler<Env> {
 		}
 	});
 	return app;
+}
+
+/** Adapt provider KV token cleanup to one bounded list/delete step per budget allowance. */
+export function createProviderGrantCleanup(env: Env): ProviderGrantCleanup {
+	const kv = env.OAUTH_KV;
+	if (!kv) throw new Error("OAuth KV is not configured");
+	return {
+		/** Remove one token at a time, then the grant, without provider-wide page traversal. */
+		async cleanupStep(
+			grantId: string,
+			ownerSubject: string,
+			budget: OwnerCleanupBudget,
+		): Promise<boolean> {
+			if (budget.remaining < 3) return false;
+			budget.remaining -= 1;
+			const tokens = await kv.list({
+				prefix: `token:${ownerSubject}:${grantId}:`,
+				limit: 1,
+			});
+			const token = tokens.keys[0];
+			if (token) {
+				budget.remaining -= 1;
+				await kv.delete(token.name);
+				return false;
+			}
+			budget.remaining -= 1;
+			await kv.delete(`grant:${ownerSubject}:${grantId}`);
+			return true;
+		},
+	};
 }
 
 /** Read the authenticated context added only by the provider's validated API handler. */

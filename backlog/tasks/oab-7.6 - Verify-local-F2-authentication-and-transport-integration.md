@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-10-24T00:05:00Z'
-updated_date: '2026-10-24T21:52:00Z'
+updated_date: '2026-10-24T23:20:00Z'
 labels:
   - F2
   - acceptance
@@ -61,4 +61,10 @@ Validation: bun run docs:check passed. git diff --check passed. cd apps/worker &
 Corrective commit: e4676aa test(worker): verify MCP cleanup and aggregate limits. Commit includes the new F1/F2 integration tests and F3 API wording only. git diff --cached --name-only is empty. Keep this task In Progress for independent review.
 
 Record corrections: the Task 5 implementation commit is ea63ccb4a6863f08c746035ef3b161dec7c483b6, not aa98818. The aggregate test uses two representative 65,536-byte REST bodies, not maximum-size REST bodies. The worst-case escaped MCP response contains a 1,000,000-byte note. The correction source commit is e4676aa969fec17e3337d6066ed4e8301723c218. Scoped review remains pending.
+
+Corrective work started from branch review findings BR-01 through BR-03. Root causes confirmed in production dispatch, MCP parsing, and pinned provider 1.2.4 cleanup source. OAB-7.6 remains In Progress.
+
+BR-01 closed: production-entry tests failed first for absent KV (400) and invalid origin (404), then passed after provider-unavailable requests stopped before API dispatch. BR-02 closed: a pre-parse structural scanner bounds depth, containers, separators, strings, and per-container separators; high-element, deep nesting, high-key, and worst-escaped tests pass. BR-03 implementation and real provider-state test cover per-request operation budgeting and interruption recovery. The BR-03 end-to-end test followed the adapter implementation due to integration wiring, recorded as a TDD exception in branch-fix-report.md. OAB-7.6 stays In Progress for scoped re-review.
+
+Corrective validation: cd apps/worker && bunx vitest run --config vitest.f2.config.ts passed 7 files/100 tests. Focused production OAuth regressions passed 4 tests. Focused MCP structure and escaped-output regressions passed 4 tests. Existing entry suite passed 12 tests and admission-commit suite passed 31 tests after updating unconfigured-entry expectations. bun run docs:check and git diff --check passed. Final bun run check passed lint, docs, type checks, 1,199 total tests (52 tooling, 282 protocol, 2 plugin, 643 Worker, 120 HTTP, 100 F2), and dry-run builds. Self-review loaded code-review and TypeScript profile. No blocker in this corrective slice. Native heap and SDK-copy sizes remain unmeasured. OAB-7.6 stays In Progress for required scoped re-review. Full report: .superpowers/sdd/2026-10-24-f2-local-delivery/branch-fix-report.md.
 <!-- SECTION:NOTES:END -->

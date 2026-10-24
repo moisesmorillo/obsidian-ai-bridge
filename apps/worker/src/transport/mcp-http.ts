@@ -1,5 +1,7 @@
 import {
+	INVALID_PARAMS,
 	isCallToolResult,
+	isJSONRPCErrorResponse,
 	isJSONRPCNotification,
 	isJSONRPCRequest,
 	isJSONRPCResultResponse,
@@ -126,18 +128,29 @@ function encodedResponse(
 	);
 }
 
-/** Add the pre-authorized epoch to SDK-generated tool validation errors. */
+/** Add the authorized epoch and preserve missing-key failures across SDK argument validation. */
 function withAuthorizedEpoch(
 	message: JSONRPCMessage,
 	epoch: string,
 	inputFailure?: FileFailure,
 ): JSONRPCMessage {
-	if (!isJSONRPCResultResponse(message) || !isCallToolResult(message.result))
+	if (isJSONRPCErrorResponse(message)) {
+		if (
+			inputFailure?.kind !== "idempotency_key_required" ||
+			message.error.code !== INVALID_PARAMS
+		)
+			return message;
+	} else if (
+		!isJSONRPCResultResponse(message) ||
+		!isCallToolResult(message.result) ||
+		!message.result.isError ||
+		message.result.structuredContent !== undefined
+	)
 		return message;
-	if (!message.result.isError || message.result.structuredContent !== undefined)
-		return message;
+	if (message.id === undefined || message.id === null) return message;
 	return {
-		...message,
+		jsonrpc: "2.0",
+		id: message.id,
 		result: {
 			content: [],
 			isError: true,

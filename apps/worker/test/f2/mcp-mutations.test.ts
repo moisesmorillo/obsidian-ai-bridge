@@ -19,6 +19,20 @@ import {
 } from "@worker/test-fixtures/f2-mcp";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+/** Wire argument forms that cannot supply an append key, including an omitted field. */
+const MISSING_APPEND_ARGUMENTS = [
+	{ label: "omitted", input: undefined },
+	{ label: "null", input: null },
+	{ label: "string", input: "not-an-object" },
+	{ label: "number", input: 42 },
+	{ label: "boolean", input: false },
+	{ label: "empty array", input: [] },
+	{
+		label: "array with a nested key",
+		input: [{ idempotency_key: "array-item-key" }],
+	},
+] as const;
+
 /** Send a tool call through production OAuth, MCP dispatch, and the real DO. */
 function call(token: string, name: string, args: object) {
 	return postMcp(token, {
@@ -359,6 +373,100 @@ describe("production MCP mutation safety", () => {
 			epoch,
 			code: "idempotency_key_required",
 		});
+		expect(await published(path)).toEqual(before);
+	});
+
+	it.each(MISSING_APPEND_ARGUMENTS)(
+		"returns 428 for $label append arguments without a key",
+		async ({ label, input }) => {
+			const reader = await issueToken();
+			const writer = await issueToken("vault:write");
+			const epoch = await epochFor(reader.token);
+			const path = `Agents/absent-append-${label.replaceAll(" ", "-")}.md`;
+			await receipt(
+				await call(reader.token, "create_note", {
+					path,
+					epoch,
+					content: "OAB75-1 protected content",
+				}),
+			);
+			const before = await published(path);
+			const response = await postMcp(writer.token, {
+				jsonrpc: "2.0",
+				id: 1,
+				method: "tools/call",
+				params: {
+					name: "append_to_note",
+					...(input === undefined ? {} : { arguments: input }),
+				},
+			});
+			const result = await failure(response, epoch, "idempotency_key_required");
+			expect(response.status).toBe(428);
+			expect(result).not.toHaveProperty("content");
+			expect(await published(path)).toEqual(before);
+			expect(await activeAdmissionStates(writer.clientId)).toEqual([]);
+		},
+	);
+
+	it.each([null, "", "short", "k".repeat(129), 42, false, {}])(
+		"keeps an invalid supplied append key distinct from an absent key: %j",
+		async (key) => {
+			const { token } = await issueToken();
+			const epoch = await epochFor(token);
+			const response = await call(token, "append_to_note", {
+				path: "Agents/invalid-supplied-key.md",
+				epoch,
+				text: "no publication",
+				idempotency_key: key,
+			});
+			await failure(response, epoch, "invalid_request");
+			expect(response.status).toBe(200);
+			expect((await published("Agents/invalid-supplied-key.md")).files).toEqual(
+				[],
+			);
+		},
+	);
+
+	it("checks identity, scope, and DO revocation before absent append arguments", async () => {
+		const reader = await issueToken("vault:read");
+		const writer = await issueToken();
+		const revoked = await issueToken("vault:write");
+		const epoch = await epochFor(reader.token);
+		const path = "Agents/absent-append-authority.md";
+		const content = "OAB75-1 protected content";
+		await receipt(
+			await call(writer.token, "create_note", { path, epoch, content }),
+		);
+		const before = await published(path);
+		await env.VAULTS.get(env.VAULTS.idFromName("service.test")).revokeClient(
+			"synthetic-owner",
+			revoked.clientId,
+		);
+		for (const { input } of MISSING_APPEND_ARGUMENTS) {
+			for (const [token, status, code] of [
+				["", 401, "unauthorized"],
+				[reader.token, 403, "forbidden_scope"],
+				[revoked.token, 401, "revoked"],
+			] as const) {
+				const response = await postMcp(token, {
+					jsonrpc: "2.0",
+					id: 1,
+					method: "tools/call",
+					params: {
+						name: "append_to_note",
+						...(input === undefined ? {} : { arguments: input }),
+					},
+				});
+				const body = await response.text();
+				expect(response.status).toBe(status);
+				expect(response.headers.get("www-authenticate")).toContain("Bearer");
+				if (code === "unauthorized") expect(body).toBe("");
+				else expect(body).toContain(code);
+				expect(body).not.toContain('"epoch"');
+				expect(body).not.toContain(epoch);
+				expect(body).not.toContain(content);
+			}
+		}
 		expect(await published(path)).toEqual(before);
 	});
 

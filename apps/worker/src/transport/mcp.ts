@@ -139,9 +139,9 @@ export function mutationInputFailure(
 	if (parsed.success) return undefined;
 	if (
 		name === "append_to_note" &&
-		typeof input === "object" &&
-		input !== null &&
-		!("idempotency_key" in input)
+		(typeof input !== "object" ||
+			input === null ||
+			!("idempotency_key" in input))
 	)
 		return { kind: "idempotency_key_required" };
 	if (

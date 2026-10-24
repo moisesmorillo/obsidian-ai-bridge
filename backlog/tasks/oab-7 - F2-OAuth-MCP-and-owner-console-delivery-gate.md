@@ -3,8 +3,8 @@ id: OAB-7
 title: F2 OAuth MCP and owner console delivery gate
 status: To Do
 assignee: []
-created_date: '2026-10-12 15:13'
-updated_date: '2026-10-13 10:04'
+created_date: 2026-10-12 15:13
+updated_date: '2026-10-24T00:01:00Z'
 labels:
   - phase-gate
   - F2
@@ -27,6 +27,7 @@ Track F2 against docs/spec.md §14. Intent-only; research/decompose when selecte
 - [ ] #1 F1 is complete before F2 starts.
 - [ ] #2 §14 F2 exit checks and account decision are evidenced.
 - [ ] #3 Service deployment/resource operations have separate explicit owner authorization.
+- [ ] #4 Cleanup from F1 review: the extension-case tests in apps/worker/test/blob-put.test.ts, apps/worker/test/vault-search.test.ts and apps/worker/test/http/files.test.ts use at most four representative forms per extension for real HTTP writes and SQLite runs. The full ASCII case combination stays only in packages/protocol/test/files.test.ts as a unit test of classifyFilePath. Test count and runtime go down. Coverage of the case rule stays.
 <!-- AC:END -->
 
 ## Implementation Notes

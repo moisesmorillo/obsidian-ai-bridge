@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-10-24T00:05:00Z'
-updated_date: '2026-10-24T14:30:00Z'
+updated_date: '2026-10-24T14:31:00Z'
 labels:
   - F2
   - tests
@@ -50,4 +50,6 @@ Durable command and timing record: from apps/worker, bun x vitest run --config v
 Independent task review bd0154eb approved spec compliance and quality at 9f2ef635d80bb092ce9952162db3d3bf4ac2693a against 2d2fc40. No actionable finding remains. Documentation scope: changed test descriptions and removed case generators. No new semantic declaration needs TSDoc. Structural scope: the three test modules keep their test responsibilities and do not own production policy. Reviewer inspected the complete task diff and worker evidence without rerunning tests. No remote CI or human branch approval is claimed yet.
 
 Session-model whole-branch review: APPROVE at 99dd487674f7cb55a0498c04c64d1eec0bee0cc1 against main 3534d79, including all 13 changed files and task evidence. No actionable findings. The three test modules stay cohesive. Their test matrices do not own production rules or state transitions. No new contracts or named semantic declarations enter TypeScript. Documentation review covered the approved cleanup plan, F2 decomposition, task criteria, test descriptions, authorization labels, and evidence notes. The actual HTTP matrix path is correct and the named file-route tests stay unchanged. The parent inspected raw worker session results for RED, focused timings, 1092 passing full-check tests, and dry-run build completion. Active LSP checks returned no findings but could not confirm clean files, so compiler evidence comes from the full check. No production, protocol, dependency, timeout, or configuration change exists. No new design, platform capability, or runtime resource budget enters this test-only branch. Remote CI and human branch approval remain pending. Scope excludes deployed, real-client, plugin, and device qualification.
+
+Owner approved the complete branch review pn-8df521 at 71ad4085ba4c9e5649e1b6db5b89cc3c7319a531 with no requested changes. The only later edit records this approval. Publish the requested PR and verify actual remote CI before closure.
 <!-- SECTION:NOTES:END -->

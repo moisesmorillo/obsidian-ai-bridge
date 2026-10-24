@@ -1,5 +1,6 @@
 import { FullTextContentSchema } from "@protocol/schemas/content";
 import { EpochSchema, ETagSchema } from "@protocol/schemas/etag";
+import { FileHttpFailureSchema } from "@protocol/schemas/files";
 import { IdempotencyKeySchema } from "@protocol/schemas/idempotency";
 import { PathSchema } from "@protocol/schemas/path";
 import { HistoryPageEntrySchema } from "@protocol/schemas/reads";
@@ -205,5 +206,13 @@ export const McpToolErrorSchema = z
 		epoch: EpochSchema,
 		code: z.string().min(1).max(64),
 		message: z.string().min(1).max(512),
+		etag: ETagSchema.optional(),
+		hash: FileHttpFailureSchema.shape.body.shape.hash,
+		deleted: z.boolean().optional(),
+		content: FullTextContentSchema.optional(),
+		existing_path: PathSchema.optional(),
+		renamed_to: PathSchema.optional(),
+		current_epoch: EpochSchema.optional(),
+		new_vault_id: FileHttpFailureSchema.shape.body.shape.new_vault_id,
 	})
 	.strict();

@@ -4,7 +4,11 @@ import { z } from "zod";
 export const FullTextContentSchema = z.string().superRefine((content, ctx) => {
 	const bytes = new TextEncoder().encode(content);
 	if (bytes.byteLength > 1_000_000) {
-		ctx.addIssue({ code: "custom", message: "text input too large" });
+		ctx.addIssue({
+			code: "custom",
+			message: "text input too large",
+			params: { failure: "text_too_large" },
+		});
 	}
 	const decoded = new TextDecoder("utf-8", {
 		fatal: true,

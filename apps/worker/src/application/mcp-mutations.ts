@@ -1,4 +1,5 @@
 import {
+	type AdmissionCompletion,
 	type AuthorizationContext,
 	type FileCommand,
 	type FileFailure,
@@ -24,7 +25,12 @@ export type McpMutationGateway = TextVaultGateway & HistoryVaultGateway;
 /** Result of one MCP write with its operation-specific epoch and response owner. */
 export type McpMutationOutcome =
 	| { ok: true; epoch: string; etag: string; owner: McpReadOwner }
-	| { ok: false; failure: FileFailure; epoch?: string; owner: McpReadOwner };
+	| {
+			ok: false;
+			failure: FileFailure | { kind: "internal_error" };
+			epoch?: string;
+			owner: McpReadOwner;
+	  };
 
 /** Create the response owner after the authoritative operation has settled. */
 function settledMutationOwner(): McpReadOwner {
@@ -47,9 +53,39 @@ async function runMutation(
 	op: "put" | "delete" | "append" | "restore",
 	expectedEpoch: string,
 	_operationProduction: Promise<void>,
-	operation: () => Promise<Awaited<ReturnType<typeof executeTextMutation>>>,
+	operation: (
+		ownedGateway: McpMutationGateway,
+	) => Promise<Awaited<ReturnType<typeof executeTextMutation>>>,
 ): Promise<McpMutationOutcome> {
-	const owner = settledMutationOwner();
+	const settlements = new Map<string, AdmissionCompletion>();
+	const owner: McpReadOwner = {
+		completion: "settled",
+		/** All mutation work settles before the response transfers ownership. */
+		async cancel() {},
+		/** Keep known durable admissions until response EOF or cancellation cleanup. */
+		async finish(completion) {
+			for (const [ticket, known] of settlements) {
+				const result = await gateway.finishAdmission(
+					identity,
+					ticket,
+					completion === "uncertain" ? completion : known,
+				);
+				if (!result.ok) return result;
+				settlements.delete(ticket);
+			}
+			return { ok: true };
+		},
+	};
+	const ownedGateway: McpMutationGateway = {
+		...gateway,
+		/** Retain known cleanup for the response owner. Unknown work keeps its original durable deadline. */
+		async finishAdmission(context, ticket, completion) {
+			if (completion === "uncertain")
+				return gateway.finishAdmission(context, ticket, completion);
+			settlements.set(ticket, completion);
+			return { ok: true };
+		},
+	};
 	if (!identity.scopes.includes(scope))
 		return { ok: false, failure: { kind: "forbidden_scope" }, owner };
 	const current = await gateway.getCurrentEpoch(identity, op);
@@ -61,7 +97,10 @@ async function runMutation(
 			epoch: current.current_epoch,
 			owner,
 		};
-	const result = await operation();
+	const result = await operation(ownedGateway).catch(() => ({
+		ok: false as const,
+		failure: { kind: "internal_error" as const },
+	}));
 	if (result.ok)
 		return {
 			ok: true,
@@ -99,9 +138,9 @@ export function createMcpNote(
 		"put",
 		input.epoch,
 		responseProduction,
-		() =>
+		(ownedGateway) =>
 			executeTextMutation(
-				gateway,
+				ownedGateway,
 				identity,
 				descriptor,
 				input.idempotency_key,
@@ -133,9 +172,9 @@ export function updateMcpNote(
 		"put",
 		epoch,
 		responseProduction,
-		() =>
+		(ownedGateway) =>
 			executeTextMutation(
-				gateway,
+				ownedGateway,
 				identity,
 				descriptor,
 				input.idempotency_key,
@@ -180,13 +219,13 @@ export function appendMcpNote(
 		"append",
 		input.epoch,
 		responseProduction,
-		async () => {
+		async (ownedGateway) => {
 			const prepared = await prepareTextPayload(
 				new TextEncoder().encode(input.text),
 			);
 			command.intent.payload_hash = prepared.payload_hash;
 			return executeFileCommand(
-				gateway,
+				ownedGateway,
 				identity,
 				descriptor,
 				input.idempotency_key,
@@ -218,9 +257,9 @@ export function deleteMcpNote(
 		"delete",
 		epoch,
 		responseProduction,
-		() =>
+		(ownedGateway) =>
 			executeTextMutation(
-				gateway,
+				ownedGateway,
 				identity,
 				descriptor,
 				undefined,
@@ -271,7 +310,10 @@ export async function restoreMcpNote(
 			payload_hash: "0".repeat(64),
 			size: 0,
 		},
-		body: { source_rev: source.rev, as_conflict_copy: input.as_conflict_copy },
+		body: {
+			source_rev: source.rev,
+			as_conflict_copy: input.as_conflict_copy ?? false,
+		},
 	};
 	return runMutation(
 		gateway,
@@ -280,13 +322,25 @@ export async function restoreMcpNote(
 		"restore",
 		current.epoch,
 		responseProduction,
-		() =>
+		(ownedGateway) =>
 			executeFileCommand(
-				gateway,
+				ownedGateway,
 				identity,
 				descriptor,
 				undefined,
-				async () => command,
+				async () => {
+					const payload = await prepareTextPayload(
+						new TextEncoder().encode(JSON.stringify(command.body)),
+					);
+					return {
+						...command,
+						intent: {
+							...command.intent,
+							payload_hash: payload.payload_hash,
+							size: payload.size,
+						},
+					};
+				},
 				responseProduction,
 			),
 	);

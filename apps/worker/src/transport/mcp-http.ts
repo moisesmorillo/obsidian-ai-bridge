@@ -8,7 +8,11 @@ import {
 	type Transport,
 } from "@modelcontextprotocol/server";
 import type { AuthorizationContext } from "@obsidian-ai-bridge/protocol";
-import { McpToolErrorSchema } from "@obsidian-ai-bridge/protocol";
+import {
+	encodeFileFailure,
+	type FileFailure,
+	McpToolErrorSchema,
+} from "@obsidian-ai-bridge/protocol";
 import type { BlobContentStore } from "@worker/application/blobs";
 import type {
 	McpNotesGateway,
@@ -17,7 +21,11 @@ import type {
 import { currentMcpEpoch } from "@worker/application/mcp-notes";
 import { tryAcquireReadSlot } from "@worker/application/read-budget";
 import type { Env } from "@worker/env";
-import { createMcpServer } from "@worker/transport/mcp";
+import {
+	createMcpServer,
+	mcpMutationScope,
+	mutationInputFailure,
+} from "@worker/transport/mcp";
 import {
 	encodeJsonChunks,
 	jsonReadSource,
@@ -98,6 +106,7 @@ function encodedResponse(
 	release: () => void,
 	signal: AbortSignal,
 	owner?: McpReadOwner,
+	status = 200,
 ): Response {
 	return ownedReadResponse(
 		jsonReadSource(
@@ -107,6 +116,7 @@ function encodedResponse(
 		owner ?? EMPTY_MCP_READ_OWNER,
 		release,
 		{
+			status,
 			headers: {
 				"content-type": "application/json",
 				"cache-control": "no-store",
@@ -120,6 +130,7 @@ function encodedResponse(
 function withAuthorizedEpoch(
 	message: JSONRPCMessage,
 	epoch: string,
+	inputFailure?: FileFailure,
 ): JSONRPCMessage {
 	if (!isJSONRPCResultResponse(message) || !isCallToolResult(message.result))
 		return message;
@@ -132,7 +143,7 @@ function withAuthorizedEpoch(
 			isError: true,
 			structuredContent: McpToolErrorSchema.parse({
 				epoch,
-				code: "invalid_request",
+				code: inputFailure?.kind ?? "invalid_request",
 				message: "Tool input failed canonical schema validation.",
 			}),
 		},
@@ -148,14 +159,19 @@ class McpJsonTransport implements Transport {
 	private pending: Promise<JSONRPCMessage | null> | undefined;
 
 	/** Keep the checked epoch for SDK validation errors before tool callbacks. */
-	constructor(private readonly epoch: string) {}
+	constructor(
+		private readonly epoch: string,
+		private readonly inputFailure?: FileFailure,
+	) {}
 
 	/** Start this single-request transport. */
 	async start(): Promise<void> {}
 
 	/** Deliver an SDK response through the owning HTTP response stream. */
 	async send(message: JSONRPCMessage): Promise<void> {
-		this.resolveMessage?.(withAuthorizedEpoch(message, this.epoch));
+		this.resolveMessage?.(
+			withAuthorizedEpoch(message, this.epoch, this.inputFailure),
+		);
 	}
 
 	/** Close this stateless request transport. */
@@ -313,8 +329,18 @@ export async function handleMcpHttp(
 		const message: JSONRPCMessage = parsedMessage;
 		const callName =
 			"method" in message && message.method === "tools/call"
-				? (message as { params?: { name?: unknown } }).params?.name
+				? message.params?.name
 				: undefined;
+		const mutationScope = mcpMutationScope(callName);
+		if (mutationScope !== undefined && !identity.scopes.includes(mutationScope))
+			return ownedHttpFailure(
+				403,
+				"forbidden_scope",
+				release,
+				request.signal,
+				true,
+				env.SERVICE_ORIGIN,
+			);
 		const readTools = new Set([
 			"list_notes",
 			"read_note",
@@ -355,7 +381,11 @@ export async function handleMcpHttp(
 				boundaryFailure = kind;
 			},
 		);
-		const transport = new McpJsonTransport(epoch.epoch);
+		const inputFailure = mutationInputFailure(
+			callName,
+			message.params?.arguments,
+		);
+		const transport = new McpJsonTransport(epoch.epoch, inputFailure);
 		closeServer = () => server.close();
 		await server.connect(transport);
 		const response = await transport.receive(message);
@@ -380,7 +410,15 @@ export async function handleMcpHttp(
 			});
 		}
 		await server.close();
-		return encodedResponse(response, release, request.signal, readOwner);
+		return encodedResponse(
+			response,
+			release,
+			request.signal,
+			readOwner,
+			inputFailure?.kind === "idempotency_key_required"
+				? encodeFileFailure(inputFailure).status
+				: 200,
+		);
 	} catch (error) {
 		await closeServer?.().catch(() => undefined);
 		if (error instanceof RangeError)

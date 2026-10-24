@@ -5,12 +5,14 @@ import {
 } from "@modelcontextprotocol/server";
 import type {
 	AuthorizationContext,
+	FileFailure,
 	McpGetHistoryInput,
 	McpListNotesInput,
 	McpReadNoteInput,
 	McpSearchNotesInput,
 } from "@obsidian-ai-bridge/protocol";
 import {
+	encodeFileFailure,
 	McpAppendToNoteInputSchema,
 	McpAppendToNoteToolSchema,
 	McpCreateNoteInputSchema,
@@ -32,6 +34,7 @@ import {
 	McpSearchNotesInputSchema,
 	McpSearchNotesOutputSchema,
 	McpSearchNotesToolSchema,
+	McpToolErrorSchema,
 	McpUpdateNoteInputSchema,
 	McpUpdateNoteToolSchema,
 } from "@obsidian-ai-bridge/protocol";
@@ -69,17 +72,86 @@ const MCP_INSTRUCTIONS = [
 	"Always generate a fresh idempotency key for each append. Reuse that key only to retry the same append with the same text. Receipts last 30 days. A retry after receipt expiry can append the text again.",
 ].join(" ");
 
-/** Return one canonical failure with bounded details and no note content. */
-function toolFailure(failure: { kind: string }, epoch: string) {
+/** One Worker scope policy for mutation dispatch and invalid-input refusals. */
+const MCP_MUTATION_SCOPES = new Map<string, "vault:write" | "vault:delete">([
+	["create_note", "vault:write"],
+	["update_note", "vault:write"],
+	["append_to_note", "vault:write"],
+	["delete_note", "vault:delete"],
+	["restore_note", "vault:write"],
+]);
+
+/** Select the mutation scope before SDK argument validation can return a tool error. */
+export function mcpMutationScope(name: unknown) {
+	return typeof name === "string" ? MCP_MUTATION_SCOPES.get(name) : undefined;
+}
+
+/** Preserve canonical authorized failure details without another text representation. */
+function toolFailure(
+	failure:
+		| FileFailure
+		| { kind: "result_too_large" }
+		| { kind: "internal_error" },
+	epoch: string,
+	createOnly = false,
+) {
+	const body =
+		failure.kind === "result_too_large"
+			? {
+					error: failure.kind,
+					message: "Narrow the request to reduce the result size.",
+				}
+			: encodeFileFailure(failure).body;
+	const { error, ...details } = body;
+	const occupied = createOnly && error === "precondition_failed";
 	return {
 		content: [],
 		isError: true,
-		structuredContent: {
+		structuredContent: McpToolErrorSchema.parse({
 			epoch,
-			code: failure.kind,
-			message: failure.kind.slice(0, 128),
-		},
+			...details,
+			...(occupied
+				? {
+						content: undefined,
+						message: encodeFileFailure({ kind: "path_occupied" }).body.message,
+					}
+				: {}),
+			code: occupied ? "path_occupied" : error,
+		}),
 	};
+}
+
+/** Classify canonical mutation validation failures that need a specific public condition. */
+export function mutationInputFailure(
+	name: unknown,
+	input: unknown,
+): FileFailure | undefined {
+	const schema =
+		name === "create_note"
+			? McpCreateNoteInputSchema
+			: name === "update_note"
+				? McpUpdateNoteInputSchema
+				: name === "append_to_note"
+					? McpAppendToNoteInputSchema
+					: undefined;
+	if (!schema) return undefined;
+	const parsed = schema.safeParse(input);
+	if (parsed.success) return undefined;
+	if (
+		name === "append_to_note" &&
+		typeof input === "object" &&
+		input !== null &&
+		!("idempotency_key" in input)
+	)
+		return { kind: "idempotency_key_required" };
+	if (
+		parsed.error.issues.some(
+			(issue) =>
+				issue.code === "custom" && issue.params?.failure === "text_too_large",
+		)
+	)
+		return { kind: "text_too_large" };
+	return undefined;
 }
 
 /** Transfer read ownership before output and resolve failures with the current epoch. */
@@ -123,9 +195,12 @@ export function createMcpServer(
 		{ name: "obsidian-ai-bridge", version: "1.0.0" },
 		{ instructions: MCP_INSTRUCTIONS },
 	);
-	const mutationGateway = gateway as McpNotesGateway & McpMutationGateway;
+	const mutationGateway: McpMutationGateway = gateway;
 	/** Transfer one mutation owner and encode its authorized receipt or failure. */
-	const mutationResult = async (outcome: McpMutationOutcome) => {
+	const mutationResult = async (
+		outcome: McpMutationOutcome,
+		createOnly: boolean,
+	) => {
 		adoptReadOwner({
 			...outcome.owner,
 			finish: async (completion) => {
@@ -152,18 +227,20 @@ export function createMcpServer(
 			reportBoundaryFailure(outcome.failure.kind);
 			throw new Error(outcome.failure.kind);
 		}
-		return toolFailure(outcome.failure, outcome.epoch);
+		return toolFailure(outcome.failure, outcome.epoch, createOnly);
 	};
 	/** Enforce the tool scope in Worker before calling the durable application path. */
 	const mutationCall = async (
-		scope: "vault:write" | "vault:delete",
+		name: string,
 		run: () => Promise<McpMutationOutcome>,
+		createOnly = false,
 	) => {
-		if (!identity.scopes.includes(scope)) {
+		const scope = mcpMutationScope(name);
+		if (scope === undefined || !identity.scopes.includes(scope)) {
 			reportBoundaryFailure("forbidden_scope");
 			throw new Error("forbidden_scope");
 		}
-		return mutationResult(await run());
+		return mutationResult(await run(), createOnly);
 	};
 	server.registerTool(
 		"create_note",
@@ -175,13 +252,16 @@ export function createMcpServer(
 			),
 		},
 		async (input: unknown) =>
-			mutationCall("vault:write", () =>
-				createMcpNote(
-					mutationGateway,
-					identity,
-					McpCreateNoteInputSchema.parse(input),
-					responseProduction,
-				),
+			mutationCall(
+				"create_note",
+				() =>
+					createMcpNote(
+						mutationGateway,
+						identity,
+						McpCreateNoteInputSchema.parse(input),
+						responseProduction,
+					),
+				true,
 			),
 	);
 	server.registerTool(
@@ -194,7 +274,7 @@ export function createMcpServer(
 			),
 		},
 		async (input: unknown) =>
-			mutationCall("vault:write", () =>
+			mutationCall("update_note", () =>
 				updateMcpNote(
 					mutationGateway,
 					identity,
@@ -213,7 +293,7 @@ export function createMcpServer(
 			),
 		},
 		async (input: unknown) =>
-			mutationCall("vault:write", () =>
+			mutationCall("append_to_note", () =>
 				appendMcpNote(
 					mutationGateway,
 					identity,
@@ -232,7 +312,7 @@ export function createMcpServer(
 			),
 		},
 		async (input: unknown) =>
-			mutationCall("vault:delete", () =>
+			mutationCall("delete_note", () =>
 				deleteMcpNote(
 					mutationGateway,
 					identity,
@@ -252,7 +332,7 @@ export function createMcpServer(
 			),
 		},
 		async (input: unknown) =>
-			mutationCall("vault:write", () =>
+			mutationCall("restore_note", () =>
 				restoreMcpNote(
 					mutationGateway,
 					identity,

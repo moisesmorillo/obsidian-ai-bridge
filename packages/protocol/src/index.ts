@@ -25,12 +25,37 @@ export {
 	TextMutationIntentSchema,
 	VaultScopeSchema,
 } from "@protocol/schemas/admission";
-export type { LocalAuthConfiguration } from "@protocol/schemas/auth";
+export type {
+	BeginClientConsentRequest,
+	BeginClientConsentResult,
+	ListClientGrantsResult,
+	ListClientsResult,
+	LocalAuthConfiguration,
+	RegisterClientGrantRequest,
+} from "@protocol/schemas/auth";
 export {
 	AccessAudienceSchema,
 	AccessTeamDomainSchema,
+	BeginClientConsentRequestSchema,
+	BeginClientConsentResultSchema,
+	ClientGenerationSchema,
+	ClientIdSchema,
+	ConsentIdSchema,
+	ListClientGrantsRequestSchema,
+	ListClientGrantsResultSchema,
+	ListClientsRequestSchema,
+	ListClientsResultSchema,
 	LocalAuthConfigurationSchema,
+	OwnerClientSchema,
+	OwnerCsrfConsumeRequestSchema,
+	OwnerCsrfStateRequestSchema,
+	OwnerGrantSchema,
 	OwnerSubjectSchema,
+	RegisterClientGrantRequestSchema,
+	RegisterClientGrantResultSchema,
+	RenameClientRequestSchema,
+	RevokeClientRequestSchema,
+	RevokeClientResultSchema,
 	ServiceOriginSchema,
 } from "@protocol/schemas/auth";
 export type { ByteRangeSelection } from "@protocol/schemas/blobs";

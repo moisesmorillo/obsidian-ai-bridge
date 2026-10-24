@@ -7,16 +7,31 @@ import {
 	drizzle,
 } from "drizzle-orm/durable-sqlite";
 
-/** Persisted schema version; version 6 adds current-row rename destinations and rejects older stores. */
-export const SCHEMA_VERSION = 6;
+/** Persisted schema version; version 7 adds owner registry and browser-state tables. */
+export const SCHEMA_VERSION = 7;
 
 /** Narrow FTS5 DDL unsupported by the relational model and kept at its engine-specific seam. */
 const FTS_SCHEMA = `CREATE VIRTUAL TABLE files_fts USING fts5(
  path UNINDEXED, content, tokenize = 'trigram case_sensitive 0 remove_diacritics 1'
 );`;
 
-/** Frozen §5.2 bootstrap DDL composed from generated relational SQL and the FTS5 statement. */
-export const SCHEMA = [...RELATIONAL_SCHEMA_STATEMENTS, FTS_SCHEMA].join("\n");
+/** Schema-7 owner registry DDL. These tables are additive and migrate schema 6 in one transaction. */
+const OWNER_REGISTRY_SCHEMA = [
+	`CREATE TABLE client_generations (client_id TEXT PRIMARY KEY NOT NULL, owner_subject TEXT NOT NULL, generation INTEGER NOT NULL, name TEXT NOT NULL, created_at INTEGER NOT NULL, last_seen_at INTEGER);`,
+	`CREATE TABLE client_consents (consent_id TEXT PRIMARY KEY NOT NULL, client_id TEXT NOT NULL, owner_subject TEXT NOT NULL, generation INTEGER NOT NULL, created_at INTEGER NOT NULL);`,
+	`CREATE TABLE client_grants (client_id TEXT NOT NULL, grant_id TEXT NOT NULL UNIQUE, owner_subject TEXT NOT NULL, generation INTEGER NOT NULL, consent_id TEXT NOT NULL, created_at INTEGER NOT NULL, cleanup_pending INTEGER NOT NULL, PRIMARY KEY(client_id, grant_id));`,
+	`CREATE TABLE owner_csrf_states (state TEXT PRIMARY KEY NOT NULL, owner_subject TEXT NOT NULL, browser_id TEXT NOT NULL, expires_at INTEGER NOT NULL);`,
+] as const;
+
+/** Frozen bootstrap DDL, including F2 owner tables. */
+export const SCHEMA = [
+	...RELATIONAL_SCHEMA_STATEMENTS,
+	FTS_SCHEMA,
+	...OWNER_REGISTRY_SCHEMA,
+].join("\n");
+
+/** Historical schema-6 DDL used only to validate an exact supported upgrade source. */
+const SCHEMA_6 = [...RELATIONAL_SCHEMA_STATEMENTS, FTS_SCHEMA].join("\n");
 
 /** Platform catalog table used to persist native Durable Object alarm state. */
 const ALARM_METADATA_TABLE = "_cf_METADATA";
@@ -48,29 +63,6 @@ interface FrozenSchemaObject {
 function normalizeSchemaSql(sql: string): string {
 	return sql.trim().replace(/;\s*$/, "").replace(/\s+/g, " ");
 }
-
-/**
- * Derived from the sole DDL source rather than a second schema map. Assumes controlled,
- * semicolon-delimited statements without embedded semicolons and the supported CREATE TABLE,
- * CREATE INDEX, and CREATE VIRTUAL TABLE headers; it does not parse arbitrary SQL.
- */
-const FROZEN_SCHEMA_OBJECTS: FrozenSchemaObject[] = SCHEMA.split(";")
-	.map((statement) => statement.trim())
-	.filter(Boolean)
-	.map((sql) => {
-		const header =
-			/^CREATE\s+(?:UNIQUE\s+|VIRTUAL\s+)?(TABLE|INDEX)\s+[`"]?([A-Za-z_][A-Za-z_0-9]*)\b[`"]?/i.exec(
-				sql,
-			);
-		const [, kind, name] = header ?? [];
-		if (!kind || !name)
-			throw new Error("Invalid frozen vault schema statement");
-		return {
-			name,
-			kind: kind.toLowerCase() as SchemaObjectKind,
-			sql: normalizeSchemaSql(sql),
-		};
-	});
 
 /** Generates a canonical 128-bit epoch, resampling at most eight invalid entropy samples.
  * @param fillRandom - Fills and returns a 16-byte buffer; other lengths fail, while invalid epochs retry.
@@ -106,8 +98,8 @@ function isCanonicalSafeInteger(value: string, nonNegative: boolean): boolean {
 }
 
 /**
- * Creates a fresh canonical schema-version-6 vault or validates an existing version-6 store.
- * Versions 1 through 5 and other unsupported stores fail without migration, repair, replacement, or epoch changes.
+ * Creates a fresh schema-7 vault, upgrades an exact schema-6 store, or validates schema 7.
+ * Older and unsupported stores fail without repair, replacement, or epoch changes.
  * All DDL and initial metadata writes run synchronously in one Durable SQLite transaction.
  * @param storage - The native storage belonging to this vault Durable Object.
  * @param createEpoch - Called only during fresh initialization; an invalid result aborts the transaction.
@@ -148,9 +140,27 @@ export function initializeVaultStorage(
 				.all<{ name: string; type: string }>("PRAGMA table_list")
 				.map(({ name, type }) => [name, type]),
 		);
-		rejectUnexpectedCatalogObjects(catalogObjects, tableKinds);
-		readAndValidateMetadata(tx);
-		validateExpectedObjects(actualObjects);
+		rejectUnexpectedCatalogObjects(catalogObjects, tableKinds, SCHEMA);
+		if (!actualObjects.has("meta"))
+			throw new Error("Missing vault metadata table");
+		const version = readSchemaVersion(tx);
+		if (version === "6") {
+			rejectUnexpectedCatalogObjects(catalogObjects, tableKinds, SCHEMA_6);
+			readAndValidateMetadata(tx, "6");
+			validateExpectedObjects(actualObjects, SCHEMA_6);
+			upgradeSchema6(tx);
+			readAndValidateMetadata(tx, String(SCHEMA_VERSION));
+			const upgradedObjects = new Map(
+				tx
+					.all<CatalogObject>("SELECT type, name, sql FROM sqlite_master")
+					.map((object) => [object.name, object]),
+			);
+			validateExpectedObjects(upgradedObjects, SCHEMA);
+			return;
+		}
+		rejectUnexpectedCatalogObjects(catalogObjects, tableKinds, SCHEMA);
+		readAndValidateMetadata(tx, String(SCHEMA_VERSION));
+		validateExpectedObjects(actualObjects, SCHEMA);
 	});
 }
 
@@ -172,6 +182,7 @@ function createFreshVault(
 	for (const statement of RELATIONAL_SCHEMA_STATEMENTS)
 		tx.run(sql.raw(statement));
 	tx.run(sql.raw(FTS_SCHEMA));
+	for (const statement of OWNER_REGISTRY_SCHEMA) tx.run(sql.raw(statement));
 	const epoch = createEpoch();
 	if (!EpochSchema.safeParse(epoch).success)
 		throw new Error("Invalid vault epoch");
@@ -208,8 +219,9 @@ function createFreshVault(
 function rejectUnexpectedCatalogObjects(
 	catalogObjects: CatalogObject[],
 	tableKinds: Map<string, string>,
+	schema = SCHEMA,
 ): void {
-	const expectedNames = new Set(FROZEN_SCHEMA_OBJECTS.map(({ name }) => name));
+	const expectedNames = new Set(schemaObjects(schema).map(({ name }) => name));
 	for (const actual of catalogObjects) {
 		if (expectedNames.has(actual.name)) continue;
 		if (actual.type === "table" && actual.name === ALARM_METADATA_TABLE)
@@ -229,14 +241,56 @@ function rejectUnexpectedCatalogObjects(
  *
  * @throws If metadata lacks a field, uses an unsupported version, or contains malformed or invalid values.
  */
-function readAndValidateMetadata(tx: VaultTransaction): void {
+function readSchemaVersion(tx: VaultTransaction): string {
+	const row = tx
+		.select()
+		.from(meta)
+		.all()
+		.find(({ key }) => key === "schema_version");
+	if (!row || typeof row.value !== "string")
+		throw new Error("Missing vault schema version");
+	return row.value;
+}
+
+/** Upgrade one exact schema-6 store without changing its epoch or existing rows. */
+function upgradeSchema6(tx: VaultTransaction): void {
+	for (const statement of OWNER_REGISTRY_SCHEMA) tx.run(sql.raw(statement));
+	tx.run(
+		sql`UPDATE meta SET value = ${String(SCHEMA_VERSION)} WHERE key = 'schema_version'`,
+	);
+}
+
+/** Parse controlled frozen DDL to compare exact catalog names, kinds, and definitions. */
+function schemaObjects(schema: string): FrozenSchemaObject[] {
+	return schema
+		.split(";")
+		.map((statement) => statement.trim())
+		.filter(Boolean)
+		.map((sql) => {
+			const header =
+				/^CREATE\s+(?:UNIQUE\s+|VIRTUAL\s+)?(TABLE|INDEX)\s+[`"]?([A-Za-z_][A-Za-z_0-9]*)\b[`"]?/i.exec(
+					sql,
+				);
+			const [, kind, name] = header ?? [];
+			if (!kind || !name)
+				throw new Error("Invalid frozen vault schema statement");
+			return {
+				name,
+				kind: kind.toLowerCase() as SchemaObjectKind,
+				sql: normalizeSchemaSql(sql),
+			};
+		});
+}
+
+/** Validate identity, schema version, counters, and history consistency without repairing metadata. */
+function readAndValidateMetadata(tx: VaultTransaction, version: string): void {
 	const metadata = new Map<string, string>();
 	for (const row of tx.select().from(meta).all()) {
 		if (typeof row.key !== "string" || typeof row.value !== "string")
 			throw new Error("Malformed vault metadata row");
 		metadata.set(row.key, row.value);
 	}
-	if (metadata.get("schema_version") !== String(SCHEMA_VERSION))
+	if (metadata.get("schema_version") !== version)
 		throw new Error("Unsupported vault schema version");
 	for (const key of [
 		"epoch",
@@ -318,8 +372,9 @@ function readAndValidateMetadata(tx: VaultTransaction): void {
  */
 function validateExpectedObjects(
 	actualObjects: Map<string, CatalogObject>,
+	schema = SCHEMA,
 ): void {
-	for (const expected of FROZEN_SCHEMA_OBJECTS) {
+	for (const expected of schemaObjects(schema)) {
 		const actual = actualObjects.get(expected.name);
 		if (!actual)
 			throw new Error(`Missing vault ${expected.kind}: ${expected.name}`);

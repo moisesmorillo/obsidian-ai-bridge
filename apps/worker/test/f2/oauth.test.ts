@@ -114,10 +114,12 @@ async function issueAccessToken(
 			client_name: "Named client",
 		}),
 	});
-	const redirect = requireValue(
-		approved.headers.get("location"),
-		"authorization redirect",
-	);
+	const location = approved.headers.get("location");
+	if (!location)
+		throw new Error(
+			`authorization redirect missing with ${approved.status}: ${await approved.text()}`,
+		);
+	const redirect = location;
 	const code = requireValue(
 		new URL(redirect).searchParams.get("code"),
 		"authorization code",
@@ -140,6 +142,40 @@ async function issueAccessToken(
 		refresh_token: string;
 		scope: string;
 	};
+}
+
+/** Revoke one client through the production owner form with verified Access and CSRF. */
+async function revokeOwnerClient(
+	assertion: string,
+	clientId: string,
+): Promise<void> {
+	const page = await SELF.fetch("https://service.test/owner/clients", {
+		headers: { "Cf-Access-Jwt-Assertion": assertion },
+	});
+	const html = await page.text();
+	const csrf = requireValue(
+		html.match(/name="csrf" value="([^"]+)"/)?.[1],
+		"owner csrf state",
+	);
+	const cookie = requireValue(
+		page.headers.get("set-cookie")?.split(";")[0],
+		"owner browser cookie",
+	);
+	const response = await SELF.fetch(
+		`https://service.test/owner/clients/${encodeURIComponent(clientId)}/revoke`,
+		{
+			method: "POST",
+			redirect: "manual",
+			headers: {
+				"content-type": "application/x-www-form-urlencoded",
+				origin: "https://service.test",
+				cookie,
+				"Cf-Access-Jwt-Assertion": assertion,
+			},
+			body: new URLSearchParams({ csrf }),
+		},
+	);
+	expect(response.status).toBe(303);
 }
 
 /** Mark one stored access token as expired to test the production token check. */
@@ -168,6 +204,7 @@ async function expireAccessToken(token: string): Promise<void> {
 afterEach(() => {
 	vi.useRealTimers();
 	vi.unstubAllGlobals();
+	vi.restoreAllMocks();
 });
 
 describe("production OAuth entry", () => {
@@ -549,6 +586,203 @@ describe("production OAuth entry", () => {
 			`transaction:${hash}`,
 		);
 		expect((await post(expiringCookie, expiringHandle)).status).toBe(400);
+	});
+
+	it("commits durable denial before provider cleanup and blocks the next REST and refresh requests", async () => {
+		const assertion = await ownerAssertion();
+		const client = await registerPublicClient();
+		const token = await issueAccessToken(
+			client.client_id,
+			assertion,
+			"vault:read vault:write",
+		);
+		const summary = await SELF.fetch("https://service.test/v1/vault", {
+			headers: { authorization: `Bearer ${token.access_token}` },
+		});
+		const epoch = ((await summary.json()) as { epoch: string }).epoch;
+		const committed = await SELF.fetch(
+			"https://service.test/v1/files/committed-before-revoke.md",
+			{
+				method: "PUT",
+				headers: {
+					authorization: `Bearer ${token.access_token}`,
+					"If-None-Match": "*",
+					"X-Vault-Epoch": epoch,
+				},
+				body: "Committed data survives client revocation.",
+			},
+		);
+		expect(committed.status).toBe(201);
+		await committed.text();
+		const kv = requireValue(env.OAUTH_KV, "OAuth KV binding");
+		const deleteKey = kv.delete.bind(kv);
+		vi.spyOn(kv, "delete").mockImplementation(async (key) => {
+			if (key.startsWith("token:") || key.startsWith("grant:"))
+				throw new Error("synthetic provider cleanup failure");
+			await deleteKey(key);
+		});
+		const page = await SELF.fetch("https://service.test/owner/clients", {
+			headers: { "Cf-Access-Jwt-Assertion": assertion },
+		});
+		expect(page.status).toBe(200);
+		const html = await page.text();
+		expect(html).toContain(client.client_id);
+		const csrf = requireValue(
+			html.match(/name="csrf" value="([^"]+)"/)?.[1],
+			"owner csrf state",
+		);
+		const cookie = requireValue(
+			page.headers.get("set-cookie")?.split(";")[0],
+			"owner browser cookie",
+		);
+		const revoked = await SELF.fetch(
+			`https://service.test/owner/clients/${encodeURIComponent(client.client_id)}/revoke`,
+			{
+				method: "POST",
+				redirect: "manual",
+				headers: {
+					"content-type": "application/x-www-form-urlencoded",
+					origin: "https://service.test",
+					cookie,
+					"Cf-Access-Jwt-Assertion": assertion,
+				},
+				body: new URLSearchParams({ csrf }),
+			},
+		);
+		expect(revoked.status).toBe(303);
+		const reconnected = await issueAccessToken(
+			client.client_id,
+			assertion,
+			"vault:read",
+		);
+		const preserved = await SELF.fetch(
+			"https://service.test/v1/files/committed-before-revoke.md",
+			{
+				headers: {
+					authorization: `Bearer ${reconnected.access_token}`,
+					"X-Vault-Epoch": epoch,
+				},
+			},
+		);
+		expect(preserved.status).toBe(200);
+		expect(((await preserved.json()) as { content: string }).content).toBe(
+			"Committed data survives client revocation.",
+		);
+		const rest = await SELF.fetch("https://service.test/v1/vault", {
+			headers: { authorization: `Bearer ${token.access_token}` },
+		});
+		expect(rest.status).toBe(401);
+		expect(await rest.text()).toContain("revoked");
+		const pendingPage = await SELF.fetch("https://service.test/owner/clients", {
+			headers: { "Cf-Access-Jwt-Assertion": assertion },
+		});
+		const nextState = await pendingPage.text();
+		const grantPage = await SELF.fetch(
+			`https://service.test/owner/clients/${encodeURIComponent(client.client_id)}/grants`,
+			{ headers: { "Cf-Access-Jwt-Assertion": assertion } },
+		);
+		expect(await grantPage.text()).toContain("provider cleanup pending");
+		const retryCsrf = requireValue(
+			nextState.match(/name="csrf" value="([^"]+)"/)?.[1],
+			"retry csrf state",
+		);
+		const retryCookie = requireValue(
+			pendingPage.headers.get("set-cookie")?.split(";")[0],
+			"retry browser cookie",
+		);
+		const repeated = await SELF.fetch(
+			`https://service.test/owner/clients/${encodeURIComponent(client.client_id)}/revoke`,
+			{
+				method: "POST",
+				redirect: "manual",
+				headers: {
+					"content-type": "application/x-www-form-urlencoded",
+					origin: "https://service.test",
+					cookie: retryCookie,
+					"Cf-Access-Jwt-Assertion": assertion,
+				},
+				body: new URLSearchParams({ csrf: retryCsrf }),
+			},
+		);
+		expect(repeated.status).toBe(303);
+		const stillPending = await SELF.fetch(
+			`https://service.test/owner/clients/${encodeURIComponent(client.client_id)}/grants`,
+			{ headers: { "Cf-Access-Jwt-Assertion": assertion } },
+		);
+		expect(await stillPending.text()).toContain("provider cleanup pending");
+		const refresh = await SELF.fetch("https://service.test/oauth/token", {
+			method: "POST",
+			headers: { "content-type": "application/x-www-form-urlencoded" },
+			body: new URLSearchParams({
+				grant_type: "refresh_token",
+				client_id: client.client_id,
+				refresh_token: token.refresh_token,
+				resource: "https://service.test",
+			}),
+		});
+		expect(refresh.status).not.toBe(200);
+	});
+
+	it("rejects an authorization code after its consent generation is revoked", async () => {
+		const assertion = await ownerAssertion();
+		const client = await registerPublicClient();
+		const { verifier, challenge } = createPkce();
+		const query = new URLSearchParams({
+			response_type: "code",
+			client_id: client.client_id,
+			redirect_uri: "https://flow.test/callback",
+			scope: "vault:read",
+			state: "revoke-before-exchange",
+			code_challenge: await challenge,
+			code_challenge_method: "S256",
+			resource: "https://service.test",
+		});
+		const consent = await SELF.fetch(
+			`https://service.test/authorize?${query}`,
+			{ headers: { "Cf-Access-Jwt-Assertion": assertion } },
+		);
+		const cookie = consent.headers.get("set-cookie")?.split(";")[0] ?? "";
+		const handle = requireValue(
+			(await consent.text()).match(/name="handle" value="([^"]+)"/)?.[1],
+			"consent handle",
+		);
+		const approved = await SELF.fetch(
+			"https://service.test/authorize/consent",
+			{
+				method: "POST",
+				redirect: "manual",
+				headers: {
+					"content-type": "application/x-www-form-urlencoded",
+					cookie,
+					"Cf-Access-Jwt-Assertion": assertion,
+				},
+				body: new URLSearchParams({
+					handle,
+					decision: "approve",
+				}),
+			},
+		);
+		const redirect = new URL(
+			requireValue(approved.headers.get("location"), "authorization redirect"),
+		);
+		const code = requireValue(
+			redirect.searchParams.get("code"),
+			"authorization code",
+		);
+		await revokeOwnerClient(assertion, client.client_id);
+		const exchange = await SELF.fetch("https://service.test/oauth/token", {
+			method: "POST",
+			headers: { "content-type": "application/x-www-form-urlencoded" },
+			body: new URLSearchParams({
+				grant_type: "authorization_code",
+				client_id: client.client_id,
+				code,
+				redirect_uri: "https://flow.test/callback",
+				code_verifier: verifier,
+				resource: "https://service.test",
+			}),
+		});
+		expect(exchange.status).not.toBe(200);
 	});
 
 	it("keeps write-only tokens from reading or deleting", async () => {

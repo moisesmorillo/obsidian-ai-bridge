@@ -1,5 +1,6 @@
 import {
 	getOAuthApi,
+	OAuthError,
 	OAuthProvider,
 	type OAuthProviderOptions,
 } from "@cloudflare/workers-oauth-provider";
@@ -104,6 +105,9 @@ export function createOAuthOptions(
 			grantId,
 			scope,
 			requestedScope,
+			userId,
+			props,
+			env: callbackEnv,
 		}) => {
 			if (grantType !== "authorization_code" && grantType !== "refresh_token") {
 				throw new Error("Unsupported grant type");
@@ -111,8 +115,32 @@ export function createOAuthOptions(
 			if (scope.some((item) => !(SCOPES as readonly string[]).includes(item))) {
 				throw new Error("Unknown scope");
 			}
+			const generation = props?.generation;
+			const consentId = props?.consent_id;
+			const registry = callbackEnv.VAULTS.get(
+				callbackEnv.VAULTS.idFromName(
+					new URL(callbackEnv.SERVICE_ORIGIN as string).host,
+				),
+			);
+			const accepted = await registry.registerClientGrant({
+				owner_subject: userId,
+				client_id: clientId,
+				grant_id: grantId,
+				generation,
+				consent_id: consentId,
+			});
+			if (!accepted)
+				throw new OAuthError("invalid_grant", {
+					description: "Client consent is no longer current",
+				});
 			return {
-				newProps: { client_id: clientId, grant_id: grantId },
+				newProps: {
+					...props,
+					client_id: clientId,
+					grant_id: grantId,
+					generation,
+					consent_id: consentId,
+				},
 				accessTokenScope: [...requestedScope],
 			};
 		},
@@ -196,12 +224,24 @@ export function createAuthorizeHandler(): ExportedHandler<Env> {
 			const name = String(form.get("client_name") ?? "")
 				.trim()
 				.slice(0, 80);
+			const registry = context.env.VAULTS.get(
+				context.env.VAULTS.idFromName(new URL(context.env.SERVICE_ORIGIN).host),
+			);
+			const fence = await registry.beginClientConsent(
+				owner.subject,
+				consent.request.clientId,
+				name || "OAuth client",
+			);
 			const result = await api.completeAuthorization({
 				request: consent.request,
 				userId: owner.subject,
 				metadata: { client_name: name },
 				scope: [...consent.request.scope],
-				props: { client_id: consent.request.clientId },
+				props: {
+					client_id: consent.request.clientId,
+					generation: fence.generation,
+					consent_id: fence.consent_id,
+				},
 			});
 			return new Response(null, {
 				status: 302,

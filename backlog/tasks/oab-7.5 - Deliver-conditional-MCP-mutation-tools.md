@@ -1,11 +1,11 @@
 ---
 id: OAB-7.5
 title: Deliver conditional MCP mutation tools
-status: In Progress
+status: Done
 assignee:
   - '@pi'
 created_date: '2026-10-24T00:05:00Z'
-updated_date: '2026-10-24T21:06:00Z'
+updated_date: '2026-10-24T21:10:00Z'
 labels:
   - F2
   - MCP
@@ -25,10 +25,10 @@ Agents need section 8 mutations through the existing authoritative operations. A
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 create_note, update_note, append_to_note, delete_note, and restore_note use the same DO operations as REST and canonical protocol schemas.
-- [ ] #2 Tests cover exact ETags, stale epochs, collisions, tombstones, size limits, required append keys, retries, and per-client receipt isolation.
-- [ ] #3 Every tool enforces its scope and DO revocation. Write does not imply delete. Agent origin and mutation feed entries remain correct.
-- [ ] #4 All results carry epoch and bounded errors. Local tests preserve every data-safety invariant without claiming plugin delivery or real-client success.
+- [x] #1 create_note, update_note, append_to_note, delete_note, and restore_note use the same DO operations as REST and canonical protocol schemas.
+- [x] #2 Tests cover exact ETags, stale epochs, collisions, tombstones, size limits, required append keys, retries, and per-client receipt isolation.
+- [x] #3 Every tool enforces its scope and DO revocation. Write does not imply delete. Agent origin and mutation feed entries remain correct.
+- [x] #4 All results carry epoch and bounded errors. Local tests preserve every data-safety invariant without claiming plugin delivery or real-client success.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -49,4 +49,12 @@ OAB-7.4 passed independent review at 39e7b48. Preserve the current jose pin. Thi
 Escalation completed the remaining production-entry safety matrix without rebuilding commit 16c89e5. Added 22 regressions in test/f2/mcp-mutations.test.ts. Tests use real provider tokens, production MCP, local native DO storage, and deterministic real-RPC pauses. Passing postimplementation tests remain, as the owner approved. Real RED evidence exposed restore payload binding, lost conflict details, byte-limit classification, missing append-key 428 behavior, early durable cleanup, invalid-input scope ordering, and lost authority-response classification. Fixed those causes only. Scope-specific DO epoch checks remain. Known cleanup transfers through response EOF/cancel. Unknown work keeps its original deadline. The parent ruled that create-only means no live destination. Preserve exact-tombstone recreation and revision monotonicity, as docs/spec.md:97-99,265-270,464-471 state. The native admission test remains unchanged. Focused command: cd apps/worker && bunx vitest run --config vitest.f2.config.ts test/f2/mcp-mutations.test.ts test/f2/mcp-reads.test.ts. Result: 31 passed, exit 0. Biome formatting, bun run docs:check, Worker typecheck, and git diff --check passed. Final bun run check passed: 1170 tests across 73 files. Counts: tooling 52, protocol 282, plugin 2, Worker native 643, HTTP 120, F2 71. All checks and dry-run builds exited 0. Expected disconnect and injected rollback diagnostics remain. Self-review used the code-review skill and TypeScript profile over the complete OAB-7.5 range from 939c163 through the final overlay. Reviewed scope mapping, canonical schemas, immutable receipts, exact epochs/ETags, restore history, public feed origin, and response ownership. No open task-scope finding remains. Detailed matrix and closure evidence remain in the ignored task-4 report. Keep In Progress and leave independent review pending. No dependency, deployment, push, external service, personal vault, plugin behavior, or later-task work occurred.
 
 OAB75-1 implementation closure: added 15 production-entry regressions before the correction. Seven absent argument forms now return HTTP 428 idempotency_key_required with the current epoch. Forms cover omitted, null, string, number, boolean, empty array, and an array with a nested key. Seven supplied invalid-key cases remain invalid_request rather than missing-key failures. One test checks identity, scope, and real DO revocation across all seven forms. Denials contain no epoch or protected content. RED command: cd apps/worker && bunx vitest run --config vitest.f2.config.ts test/f2/mcp-mutations.test.ts -t "append arguments|absent key". Observed exit 1: 7 failed, 8 passed, 22 skipped. The wrapper exited zero and recorded that test exit. Omitted input returned generic invalid_request. Non-object forms reached SDK validation and returned INVALID_PARAMS. The narrow transport correction maps only missing-key INVALID_PARAMS responses to the existing epoch-bearing failure. Canonical input schemas, command authority, tombstone behavior, ownership, size handling, and retry policy remain unchanged. GREEN focused command: cd apps/worker && bunx vitest run --config vitest.f2.config.ts test/f2/mcp-mutations.test.ts test/f2/mcp-reads.test.ts. Result: 46 passed, exit 0. Biome checked three files. bun run docs:check and git diff --check passed. Final bun run check passed 1185 tests across 73 files, exit 0. Counts: tooling 52, protocol 282, plugin 2, native Worker 643, HTTP 120, F2 86. All typechecks and dry-run builds passed. Scoped self-review used the code-review skill and TypeScript profile. OAB75-1 is fixed in implementation and ready for scoped re-review. No other behavior changed. Full evidence remains in the ignored task-4-report.md. Keep In Progress.
+
+Independent review at ba26b26 found OAB75-1: absent append arguments missed the required 428 response. Correction 89170e7 adds omitted/null/scalar/array classification after authorization and preserves invalid supplied keys. Scoped review 6319cf56 approves the closure, specification, and quality. Review covers canonical schemas, application command mapping, DO authority, response ownership, structural policy, documentation, and real production-entry assertions. Focused RED records 7 failures. GREEN passes 46 tests. Final check passes 1,185 tests across 73 files. Denied identity/scope/revocation precedes classification and exposes no epoch or content. Local checks do not qualify deployed behavior or external clients.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Deliver five conditional MCP tools through existing authoritative operations. Preserve exact epochs/ETags, collisions, monotonic tombstone recreation, append keys and client receipts, revocation, history, origin/feed, and response ownership. Production tests cover UTF-8 limits, lost responses, immutable retries, deterministic revoke races, stale restore retries, and read-scope conflict content. Commit 16c89e5 implements the tools. Commits ba26b26 and 89170e7 complete safety coverage and review corrections. Independent and scoped reviews approve. Full check passes 1,185 tests. No deployment or external-client claim applies.
+<!-- SECTION:FINAL_SUMMARY:END -->

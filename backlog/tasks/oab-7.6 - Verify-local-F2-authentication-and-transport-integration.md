@@ -1,10 +1,11 @@
 ---
 id: OAB-7.6
 title: Verify local F2 authentication and transport integration
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@pi'
 created_date: '2026-10-24T00:05:00Z'
-updated_date: '2026-10-24T20:13:00Z'
+updated_date: '2026-10-24T21:10:00Z'
 labels:
   - F2
   - acceptance
@@ -37,3 +38,9 @@ Use docs/superpowers/plans/2026-10-24-f2-local-delivery.md, Task 5. After OAB-7.
 
 Integration carryover from Task 3: verify actual encoded result sizes against the documented list estimate, including long JSON-RPC IDs and framing. Keep per-chunk bounds distinct from complete response sizes. Record exact limits and test evidence. This stays within planned aggregate transport validation.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+OAB-7.5 passed independent and scoped reviews at 89170e7. Start Task 5 from the approved plan. Complete production-composition integration, aggregate resource/lifecycle tests, and public API documentation. Carry the Task 3 encoded-size estimate note into explicit tests. Keep deployment, real external clients, and parent F2 gate completion outside this local task.
+<!-- SECTION:NOTES:END -->

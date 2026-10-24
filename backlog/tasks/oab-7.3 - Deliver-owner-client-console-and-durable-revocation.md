@@ -1,10 +1,11 @@
 ---
 id: OAB-7.3
 title: Deliver owner client console and durable revocation
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@pi'
 created_date: '2026-10-24T00:05:00Z'
-updated_date: '2026-10-24T15:31:00Z'
+updated_date: '2026-10-24T16:46:00Z'
 labels:
   - F2
   - owner
@@ -35,3 +36,9 @@ F1 stores revoked grants and checks them, but exposes no owner console. F2 needs
 <!-- SECTION:PLAN:BEGIN -->
 Use docs/superpowers/plans/2026-10-24-f2-local-delivery.md, Task 2. After OAB-7.2, deliver the owner console and authoritative grant revocation with race tests.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+OAB-7.2 passed independent review and scoped consent correction review at 3026486. Start Task 2 from the approved combined plan. Preserve the production identity path and explicit consent guard. Work remains local only.
+<!-- SECTION:NOTES:END -->

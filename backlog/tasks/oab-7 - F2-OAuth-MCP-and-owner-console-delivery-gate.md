@@ -1,10 +1,11 @@
 ---
 id: OAB-7
 title: F2 OAuth MCP and owner console delivery gate
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@pi'
 created_date: 2026-10-12 15:13
-updated_date: '2026-10-24T00:01:00Z'
+updated_date: '2026-10-24T00:06:00Z'
 labels:
   - phase-gate
   - F2
@@ -30,8 +31,16 @@ Track F2 against docs/spec.md §14. Intent-only; research/decompose when selecte
 - [ ] #4 Cleanup from F1 review: the extension-case tests in apps/worker/test/blob-put.test.ts, apps/worker/test/vault-search.test.ts and apps/worker/test/http/files.test.ts use at most four representative forms per extension for real HTTP writes and SQLite runs. The full ASCII case combination stays only in packages/protocol/test/files.test.ts as a unit test of classifyFilePath. Test count and runtime go down. Coverage of the case rule stays.
 <!-- AC:END -->
 
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+Research and decomposition only. Main matches merged PR #20 at 3534d79. Use isolated branch chore/oab-7-f2-planning. Ordered tasks: OAB-7.1 criterion 4 test cleanup, OAB-7.2 real OAuth and verified Access, OAB-7.3 owner clients and durable revocation, OAB-7.4 MCP discovery and reads, OAB-7.5 conditional MCP mutations, OAB-7.6 local integration, OAB-7.7 authorized deployment, OAB-7.8 authorized real-client checks and owner account decision. Each task depends on the previous task. Only OAB-7.1 receives a plan now. Review docs/superpowers/plans/2026-10-24-f2-test-cleanup.md before implementation. The last two tasks need explicit owner authorization and stay last. Preserve F1 server-only acceptance, default-deny until real OAuth replaces it, all AC-08 obligations, and later phase gates. No OAB-8 or later task starts.
+<!-- SECTION:PLAN:END -->
+
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
 Reconciled after merged F0: this is a committed section14 phase entry/exit gate, not a trigger-based deferred feature or an implementation task. Its original acceptance cases and dependency edges are unchanged. Dependency readiness only permits selection for research and decomposition; it does not authorize implementation, deployment or personal-vault access.
+
+Owner selected F2 research and decomposition after merged PR #20. Plan only the criterion 4 cleanup first. Implementation waits for plan review. No deployment, Cloudflare resource action, personal-vault access, or later phase work is authorized.
 <!-- SECTION:NOTES:END -->

@@ -1,11 +1,11 @@
 ---
 id: OAB-7.6
 title: Verify local F2 authentication and transport integration
-status: In Progress
+status: Done
 assignee:
   - '@pi'
 created_date: '2026-10-24T00:05:00Z'
-updated_date: '2026-10-24T23:43:00Z'
+updated_date: '2026-10-25T13:53:00Z'
 labels:
   - F2
   - acceptance
@@ -25,10 +25,10 @@ Separate local production-path evidence from deployment and external-client evid
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Tests connect consent, token issue, REST and MCP reads and writes, refresh, scope denial, and owner revocation through production composition.
-- [ ] #2 Local AC-08 evidence proves authoritative denial within one request despite stale KV. It does not claim device status or preserved plugin queues.
-- [ ] #3 bun run check and technical reviews pass. Document implemented API contracts and commands without logging secrets or note bodies.
-- [ ] #4 The remaining deployed checks and owner account decision stay open. F1 server-only scope and later plugin gates remain unchanged.
+- [x] #1 Tests connect consent, token issue, REST and MCP reads and writes, refresh, scope denial, and owner revocation through production composition.
+- [x] #2 Local AC-08 evidence proves authoritative denial within one request despite stale KV. It does not claim device status or preserved plugin queues.
+- [x] #3 bun run check and technical reviews pass. Document implemented API contracts and commands without logging secrets or note bodies.
+- [x] #4 The remaining deployed checks and owner account decision stay open. F1 server-only scope and later plugin gates remain unchanged.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -73,4 +73,12 @@ BR-03 scoped follow-up against rereview base 318fc1fa: retained the 48-call cap 
 Final branch technical review covers main 860e462 through 08000cf. It found BR-01, BR-02, and BR-03. Corrections 318fc1f and 6299451 close these findings. Scoped reviews accept BR-01 fail-closed dispatch and BR-02 pre-parse structural bounds. The final scoped review accepts BR-03 at 62994517ce8d325fa9034196bb67956c5a8441d6. Provider cleanup stays incremental. Atomic denial uses bounded set-based SQLite work. External calls and local SQL use separate units. The near-cap test covers 8,192 grants and 1,024 consents with rollback. Final recorded validation passes 1,200 tests, lint, documentation, types, and dry-run builds.
 
 Documentation scope includes canonical protocol schemas, named TypeScript declarations, docs/api/f2.md, and plan resource statements. Structural review covers composition, trusted identity, registry policy, application adapters, transport ownership, canonical contracts, and tests. Every actionable task and branch finding has an explicit closure. Native heap, SDK copy sizes, SQLite CPU, deployed Access, external clients, and plugin/device behavior remain unqualified. The provider distribution source was unavailable to scoped reviewers. The worker records local pinned-source inspection and real KV adapter tests. No deployment occurred. Keep OAB-7.6 In Progress for the owner branch review and publication. Keep OAB-7 and later deployed gates open.
+
+Owner approved the complete branch in Plannotator pn-00c428 without changes. Final publication check at 0622674 passed bun run check. Counts are 52 tooling, 282 protocol, 2 plugin, 643 native Worker, 120 HTTP, and 101 F2 tests. Total is 1,200 tests across 73 files. Lint, docs, all type checks, and dry-run builds passed. The summary formatter failed after the check. The parent read the complete saved log and confirmed every suite and build exited zero. No check rerun was needed. Publication follows this record. OAB-7 and deployed gates remain open.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Complete local production OAuth, Access, owner console, REST, and nine MCP tool integration. Tests prove connected flows, scoped authority, stale-KV revocation, bounded envelopes and JSON structure, incremental provider cleanup, atomic registry denial, and response cleanup ownership. API documentation describes implemented contracts and limits. Task reviews, complete branch review, and scoped corrections close every actionable local finding. Owner branch review approved without changes. Final check passes 1,200 tests and all lint, docs, types, and dry-run builds. No deployment, external-client, native-heap, or plugin/device qualification claim applies. Parent OAB-7 and OAB-7.7/OAB-7.8 remain open.
+<!-- SECTION:FINAL_SUMMARY:END -->

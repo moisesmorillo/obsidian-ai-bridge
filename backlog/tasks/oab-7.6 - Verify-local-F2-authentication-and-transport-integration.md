@@ -1,11 +1,11 @@
 ---
 id: OAB-7.6
 title: Verify local F2 authentication and transport integration
-status: In Progress
+status: Done
 assignee:
   - '@pi'
 created_date: '2026-10-24T00:05:00Z'
-updated_date: '2026-10-25T14:07:00Z'
+updated_date: '2026-10-25T14:11:00Z'
 labels:
   - F2
   - acceptance
@@ -81,6 +81,8 @@ Remote CI on PR 22 failed in both push and pull-request runs at 22287d7. Both lo
 CI timeout correction: source review confirms legitimate integration workload, not a hang. Set only the two remote-failing MCP cases to a bounded 15,000 ms per-test timeout. Both CI logs failed those cases at 5,000 ms. Focused tests passed (2), the full MCP read suite passed (17), docs:check passed, and bun run check passed (1,200 tests). No production behavior or assertions changed. No remote rerun occurred. Keep In Progress for parent scoped review and latest remote CI. Evidence: the two tracked MCP cases and PR 22 CI logs.
 
 Scoped review approves the bounded timeout correction. The minor temporary-report pointer now refers to tracked test cases and actual PR CI logs. Scratch reports stay local and outside Git. Source assertions, identity, setup row counts, and production behavior remain unchanged. Latest remote CI remains pending.
+
+Corrected remote CI passes on exact source commit 2b327602e03f6754fa4b57acbdfc5b6583002d92. GitHub pull-request run 40200778169 and push run 40200774979 both conclude success. PR 22 reports CLEAN. Scoped review approves the two bounded integration timeouts. The minor scratch-report pointer has a tracked evidence replacement. Local final validation passes 1,200 tests. All task and branch findings have explicit closure. Owner branch review pn-00c428 approved without changes. Close local OAB-7.6. Keep OAB-7 and deployed gates open. This status-only record follows the verified source result.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary

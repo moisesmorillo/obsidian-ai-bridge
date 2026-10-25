@@ -617,6 +617,7 @@ describe("production MCP transport", () => {
 		expect(response.headers.get("www-authenticate")).toContain("Bearer");
 	});
 
+	// A 15,000 ms bound covers 256 serial production writes and preserves hang detection.
 	it("serves MCP initialization, discovery, and read operations through real OAuth and DO state", async () => {
 		const { token, clientId } = await issueToken();
 		const auth = { authorization: `Bearer ${token}` };
@@ -1233,8 +1234,9 @@ describe("production MCP transport", () => {
 			expect(revoked.headers.get("www-authenticate")).toContain("Bearer");
 			expect(await revoked.text()).not.toContain("epoch");
 		}
-	});
+	}, 15_000);
 
+	// A 15,000 ms bound covers 258 serial writes and preserves hang detection.
 	it("filters late prefix matches across metadata pages", async () => {
 		const { token } = await issueToken();
 		const prefix = `Z-mcp-late-${crypto.randomUUID()}/`;
@@ -1259,7 +1261,7 @@ describe("production MCP transport", () => {
 				entry.path.startsWith(prefix),
 			),
 		).toBe(true);
-	});
+	}, 15_000);
 
 	it("rejects byte-heavy matching prefixes without partial rows", async () => {
 		const { token, clientId } = await issueToken();

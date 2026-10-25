@@ -1,11 +1,11 @@
 ---
 id: OAB-7.6
 title: Verify local F2 authentication and transport integration
-status: Done
+status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-10-24T00:05:00Z'
-updated_date: '2026-10-25T13:53:00Z'
+updated_date: '2026-10-25T14:07:00Z'
 labels:
   - F2
   - acceptance
@@ -75,6 +75,12 @@ Final branch technical review covers main 860e462 through 08000cf. It found BR-0
 Documentation scope includes canonical protocol schemas, named TypeScript declarations, docs/api/f2.md, and plan resource statements. Structural review covers composition, trusted identity, registry policy, application adapters, transport ownership, canonical contracts, and tests. Every actionable task and branch finding has an explicit closure. Native heap, SDK copy sizes, SQLite CPU, deployed Access, external clients, and plugin/device behavior remain unqualified. The provider distribution source was unavailable to scoped reviewers. The worker records local pinned-source inspection and real KV adapter tests. No deployment occurred. Keep OAB-7.6 In Progress for the owner branch review and publication. Keep OAB-7 and later deployed gates open.
 
 Owner approved the complete branch in Plannotator pn-00c428 without changes. Final publication check at 0622674 passed bun run check. Counts are 52 tooling, 282 protocol, 2 plugin, 643 native Worker, 120 HTTP, and 101 F2 tests. Total is 1,200 tests across 73 files. Lint, docs, all type checks, and dry-run builds passed. The summary formatter failed after the check. The parent read the complete saved log and confirmed every suite and build exited zero. No check rerun was needed. Publication follows this record. OAB-7 and deployed gates remain open.
+
+Remote CI on PR 22 failed in both push and pull-request runs at 22287d7. Both logs report the same two five-second MCP test timeouts. The cases cover initialization/read operations and late prefix matches. All other F2 cases pass. Local final check passed 1,200 tests. This does not replace remote evidence. Reopen OAB-7.6 while the worker finds the cause and preserves all assertions. Failed run IDs are 40199703034 and 40199706431. Keep the worktree and deployment gate unchanged.
+
+CI timeout correction: source review confirms legitimate integration workload, not a hang. Set only the two remote-failing MCP cases to a bounded 15,000 ms per-test timeout. Both CI logs failed those cases at 5,000 ms. Focused tests passed (2), the full MCP read suite passed (17), docs:check passed, and bun run check passed (1,200 tests). No production behavior or assertions changed. No remote rerun occurred. Keep In Progress for parent scoped review and latest remote CI. Evidence: the two tracked MCP cases and PR 22 CI logs.
+
+Scoped review approves the bounded timeout correction. The minor temporary-report pointer now refers to tracked test cases and actual PR CI logs. Scratch reports stay local and outside Git. Source assertions, identity, setup row counts, and production behavior remain unchanged. Latest remote CI remains pending.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary

@@ -4,14 +4,17 @@
 	"type": "module",
 	"scripts": {
 		"typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p test/tsconfig.json && tsc --noEmit -p tooling/tsconfig.json && bun tooling/generate-runtime-schema.ts --check",
-		"test": "vitest run --config vitest.config.ts && vitest run --config vitest.http.config.ts",
+		"test": "vitest run --config vitest.config.ts && vitest run --config vitest.http.config.ts && vitest run --config vitest.f2.config.ts",
 		"build": "wrangler deploy --dry-run --outdir dist",
 		"db:generate": "drizzle-kit generate --config tooling/drizzle.config.ts && bun ../../node_modules/.bin/biome format --write drizzle/meta/*.json && bun tooling/generate-runtime-schema.ts"
 	},
 	"dependencies": {
+		"@cloudflare/workers-oauth-provider": "1.2.4",
+		"@modelcontextprotocol/server": "2.4.0",
 		"@obsidian-ai-bridge/protocol": "workspace:*",
 		"drizzle-orm": "0.45.4",
-		"hono": "4.9.6"
+		"hono": "4.9.6",
+		"jose": "6.2.13"
 	},
 	"devDependencies": {
 		"@cloudflare/vitest-plugin": "1.4.0",

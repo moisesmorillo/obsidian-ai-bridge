@@ -25,6 +25,39 @@ export {
 	TextMutationIntentSchema,
 	VaultScopeSchema,
 } from "@protocol/schemas/admission";
+export type {
+	BeginClientConsentRequest,
+	BeginClientConsentResult,
+	ListClientGrantsResult,
+	ListClientsResult,
+	LocalAuthConfiguration,
+	RegisterClientGrantRequest,
+} from "@protocol/schemas/auth";
+export {
+	AccessAudienceSchema,
+	AccessTeamDomainSchema,
+	BeginClientConsentRequestSchema,
+	BeginClientConsentResultSchema,
+	ClientGenerationSchema,
+	ClientIdSchema,
+	ConsentIdSchema,
+	ListClientGrantsRequestSchema,
+	ListClientGrantsResultSchema,
+	ListClientsRequestSchema,
+	ListClientsResultSchema,
+	LocalAuthConfigurationSchema,
+	OwnerClientSchema,
+	OwnerCsrfConsumeRequestSchema,
+	OwnerCsrfStateRequestSchema,
+	OwnerGrantSchema,
+	OwnerSubjectSchema,
+	RegisterClientGrantRequestSchema,
+	RegisterClientGrantResultSchema,
+	RenameClientRequestSchema,
+	RevokeClientRequestSchema,
+	RevokeClientResultSchema,
+	ServiceOriginSchema,
+} from "@protocol/schemas/auth";
 export type { ByteRangeSelection } from "@protocol/schemas/blobs";
 export {
 	BlobAuthorizationResultSchema,
@@ -61,6 +94,37 @@ export {
 	RestoreRequestSchema,
 } from "@protocol/schemas/history";
 export { IdempotencyKeySchema } from "@protocol/schemas/idempotency";
+export {
+	McpAppendToNoteInputSchema,
+	McpAppendToNoteToolSchema,
+	McpCreateNoteInputSchema,
+	McpCreateNoteToolSchema,
+	McpDeleteNoteInputSchema,
+	McpDeleteNoteToolSchema,
+	McpGetHistoryInputSchema,
+	McpGetHistoryToolSchema,
+	McpHistoryOutputSchema,
+	McpHistoryResultSchema,
+	McpListNotesInputSchema,
+	McpListNotesOutputSchema,
+	McpListNotesResultSchema,
+	McpListNotesToolSchema,
+	McpMutationOutputSchema,
+	McpMutationOutputToolSchema,
+	McpReadNoteInputSchema,
+	McpReadNoteOutputSchema,
+	McpReadNoteResultSchema,
+	McpReadNoteToolSchema,
+	McpRestoreNoteInputSchema,
+	McpRestoreNoteToolSchema,
+	McpSearchNotesInputSchema,
+	McpSearchNotesOutputSchema,
+	McpSearchNotesResultSchema,
+	McpSearchNotesToolSchema,
+	McpToolErrorSchema,
+	McpUpdateNoteInputSchema,
+	McpUpdateNoteToolSchema,
+} from "@protocol/schemas/mcp";
 export { PathSchema } from "@protocol/schemas/path";
 export {
 	ChangeEntrySchema,
@@ -145,6 +209,23 @@ export type {
 	RestoreRequest,
 } from "@protocol/types/history";
 export type { IdempotencyKey } from "@protocol/types/idempotency";
+export type {
+	McpAppendToNoteInput,
+	McpCreateNoteInput,
+	McpDeleteNoteInput,
+	McpGetHistoryInput,
+	McpHistoryResult,
+	McpListNotesInput,
+	McpListNotesResult,
+	McpMutationOutput,
+	McpReadNoteInput,
+	McpReadNoteResult,
+	McpRestoreNoteInput,
+	McpSearchNotesInput,
+	McpSearchNotesResult,
+	McpToolError,
+	McpUpdateNoteInput,
+} from "@protocol/types/mcp";
 export type { Path } from "@protocol/types/path";
 export type {
 	ChangeEntry,
@@ -157,6 +238,7 @@ export type {
 	MetadataBatchRequest,
 	MetadataBatchResponse,
 	MetadataBatchResult,
+	MetadataManifestRow,
 	ReadCursor,
 	ReadCursorContext,
 	ReadFailureResponse,

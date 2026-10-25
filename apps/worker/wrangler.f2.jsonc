@@ -1,0 +1,20 @@
+{
+	"name": "obsidian-bridge-f2-tests",
+	"compatibility_date": "2025-07-12",
+	"compatibility_flags": ["unhandled_rejection_after_microtask_checkpoint"],
+	"main": "src/index.ts",
+	"durable_objects": {
+		"bindings": [{ "name": "VAULTS", "class_name": "Vault" }]
+	},
+	"r2_buckets": [
+		{ "binding": "R2_BUCKET", "bucket_name": "oab-f2-test-blobs" }
+	],
+	"kv_namespaces": [{ "binding": "OAUTH_KV", "id": "oab-f2-local-kv" }],
+	"vars": {
+		"SERVICE_ORIGIN": "https://service.test",
+		"ACCESS_TEAM_DOMAIN": "https://team.test",
+		"ACCESS_AUDIENCE": "synthetic-access-app",
+		"OWNER_SUBJECT": "synthetic-owner"
+	},
+	"migrations": [{ "tag": "v1", "new_sqlite_classes": ["Vault"] }]
+}

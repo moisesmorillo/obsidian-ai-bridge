@@ -6,9 +6,11 @@ import {
 	FileFailureSchema,
 	formatETag,
 	HistoryPageSchema,
+	ManifestEntrySchema,
 	ManifestPageSchema,
 	MetadataBatchRequestSchema,
 	MetadataBatchResultSchema,
+	MetadataManifestRowSchema,
 	ReadCursorSchema,
 	ReadQuerySchema,
 	VaultReadResultSchema,
@@ -80,6 +82,22 @@ describe("canonical bounded read contracts", () => {
 				next_page: null,
 			}).success,
 		).toBe(false);
+	});
+
+	it("keeps storage update times out of the public manifest shape", () => {
+		const entry = {
+			path: "note.md",
+			etag: formatETag(epoch, 1),
+			seq: 1,
+			hash,
+			size: 4,
+			kind: "text",
+			deleted: false,
+			large: false,
+			updated_at: 7,
+		};
+		expect(ManifestEntrySchema.safeParse(entry).success).toBe(false);
+		expect(MetadataManifestRowSchema.safeParse(entry).success).toBe(true);
 	});
 
 	it("rejects unknown capacity and attention fields", () => {

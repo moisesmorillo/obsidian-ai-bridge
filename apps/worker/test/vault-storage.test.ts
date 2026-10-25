@@ -79,6 +79,10 @@ describe("Vault SQLite persistence", () => {
 					"blob_refs",
 					"exports",
 					"operation_admissions",
+					"client_generations",
+					"client_consents",
+					"client_grants",
+					"owner_csrf_states",
 				]),
 			);
 			const indexes = state.storage.sql
@@ -91,7 +95,7 @@ describe("Vault SQLite persistence", () => {
 				expect.arrayContaining(["files_live_key", "files_key"]),
 			);
 			const data = metadata(state.storage);
-			expect(data.schema_version).toBe("6");
+			expect(data.schema_version).toBe(String(SCHEMA_VERSION));
 			expect(schemaDefinition(state.storage, "files")).toContain(
 				"`renamed_to` text",
 			);

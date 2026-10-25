@@ -8,6 +8,7 @@ export function createWorkerTestConfig(
 	main: string,
 	include: string[],
 	exclude: string[],
+	configPath = "./wrangler.jsonc",
 ): UserConfig {
 	const repositoryRoot = fileURLToPath(new URL("../../../", import.meta.url));
 	const aliases = readViteAliases(repositoryRoot, [
@@ -17,9 +18,7 @@ export function createWorkerTestConfig(
 	]);
 	return {
 		resolve: { alias: aliases },
-		plugins: [
-			cloudflareTest({ main, wrangler: { configPath: "./wrangler.jsonc" } }),
-		],
+		plugins: [cloudflareTest({ main, wrangler: { configPath } })],
 		test: { fsModuleCache: false, include, exclude },
 	};
 }

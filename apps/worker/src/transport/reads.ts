@@ -1,6 +1,8 @@
 import type {
 	AuthorizationContext,
 	FileHttpFailureInput,
+	ManifestEntry,
+	ManifestPage,
 } from "@obsidian-ai-bridge/protocol";
 import {
 	encodeFileFailure,
@@ -33,6 +35,41 @@ import { Hono } from "hono";
 
 /** Retry delay returned when all isolate read slots have owners. */
 const READ_RETRY_AFTER = "1";
+
+/** Remove the MCP-only update time before transport exposes public manifest rows. */
+function openPublicManifestRead(
+	gateway: ReadVaultGateway,
+	identity: AuthorizationContext,
+	token: string | undefined,
+	signal: AbortSignal,
+): Promise<
+	ReadOutcome<
+		LazyReadSession<ManifestEntry, Omit<ManifestPage, "entries" | "next_page">>
+	>
+> {
+	return openManifestRead(gateway, identity, token, signal).then((opened) => {
+		if (!opened.ok) return opened;
+		const source = opened.body;
+		const session: LazyReadSession<
+			ManifestEntry,
+			Omit<ManifestPage, "entries" | "next_page">
+		> = {
+			ok: true,
+			body: source.body,
+			/** Read one public batch without internal update times. */
+			async readBatch() {
+				const batch = await source.readBatch();
+				return {
+					...batch,
+					rows: batch.rows.map(({ updated_at: _updatedAt, ...entry }) => entry),
+				};
+			},
+			cancel: () => source.cancel(),
+			finish: (completion) => source.finish(completion),
+		};
+		return { ok: true, body: session, finish: session.finish };
+	});
+}
 
 /** Register bounded metadata reads and hold one shared isolate slot through response EOF. */
 export function createReadRouter(
@@ -72,7 +109,7 @@ export function createReadRouter(
 			slot,
 			resolveVault,
 			(gateway, identity) =>
-				openManifestRead(
+				openPublicManifestRead(
 					gateway,
 					identity,
 					parsed.query.page,

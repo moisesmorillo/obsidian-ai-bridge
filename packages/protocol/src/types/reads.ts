@@ -9,6 +9,7 @@ import type {
 	MetadataBatchRequestSchema,
 	MetadataBatchResponseSchema,
 	MetadataBatchResultSchema,
+	MetadataManifestRowSchema,
 	ReadCursorContextSchema,
 	ReadCursorSchema,
 	ReadFailureResponseSchema,
@@ -30,6 +31,8 @@ export type HistoryUpperResponse = z.infer<typeof HistoryUpperResponseSchema>;
 export type VaultReadResult = z.infer<typeof VaultReadResultSchema>;
 /** Current manifest row identified by its epoch-bound ETag. */
 export type ManifestEntry = z.infer<typeof ManifestEntrySchema>;
+/** Internal current manifest row with storage-authoritative update time. */
+export type MetadataManifestRow = z.infer<typeof MetadataManifestRowSchema>;
 /** One bounded page from a captured manifest traversal. */
 export type ManifestPage = z.infer<typeof ManifestPageSchema>;
 /** Immutable entry in the changes feed, including rename source identity. */

@@ -35,6 +35,26 @@ describe("protocol contract modules", () => {
 		expect(Object.keys(etagCodecs).sort()).toEqual(["formatETag", "parseETag"]);
 	});
 
+	/** The exported configuration schema accepts absence but rejects unsafe origins. */
+	it("validates canonical local authentication settings and accepts missing values", () => {
+		const schema = protocol.LocalAuthConfigurationSchema;
+		expect(schema.parse({})).toEqual({});
+		expect(
+			schema.safeParse({
+				SERVICE_ORIGIN: "https://service.test",
+				ACCESS_TEAM_DOMAIN: "https://team.test",
+				ACCESS_AUDIENCE: "synthetic-audience",
+				OWNER_SUBJECT: "synthetic-owner",
+			}).success,
+		).toBe(true);
+		expect(
+			schema.safeParse({ SERVICE_ORIGIN: "https://service.test/path" }).success,
+		).toBe(false);
+		expect(schema.safeParse({ OWNER_SUBJECT: "bad:subject" }).success).toBe(
+			false,
+		);
+	});
+
 	it("re-exports identical public schema and codec references", () => {
 		expect(protocol.PathSchema).toBe(pathSchemas.PathSchema);
 		expect(protocol.EpochSchema).toBe(etagSchemas.EpochSchema);

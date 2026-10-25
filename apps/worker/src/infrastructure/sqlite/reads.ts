@@ -165,6 +165,7 @@ export class SqliteReadStore {
 						size: files.size,
 						kind: files.kind,
 						deleted: files.deleted,
+						updated_at: files.updatedAt,
 					})
 					.from(files)
 					.$dynamic();
@@ -184,6 +185,7 @@ export class SqliteReadStore {
 						size: row.deleted ? 0 : row.size,
 						kind: row.kind,
 						deleted: row.deleted === 1,
+						updated_at: row.updated_at,
 						large:
 							row.deleted === 0 &&
 							row.kind === "blob" &&

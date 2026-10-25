@@ -6,6 +6,7 @@ import type { SearchVaultGateway } from "@worker/application/search";
 import type { TextVaultGateway } from "@worker/application/text-files";
 import type { Env } from "@worker/env";
 import { createFileRouter } from "@worker/transport/files";
+import { handleMcpHttp } from "@worker/transport/mcp-http";
 import { createReadRouter } from "@worker/transport/reads";
 import { createSearchRouter } from "@worker/transport/search";
 import { Hono } from "hono";
@@ -29,5 +30,14 @@ export function createWorker(
 	);
 	app.route("/v1", createReadRouter(resolveIdentity, resolveVault));
 	app.route("/v1", createSearchRouter(resolveIdentity, resolveVault));
+	app.all("/mcp", (context) =>
+		handleMcpHttp(
+			context.req.raw,
+			context.env,
+			resolveIdentity,
+			resolveVault,
+			resolveBlobs,
+		),
+	);
 	return app;
 }

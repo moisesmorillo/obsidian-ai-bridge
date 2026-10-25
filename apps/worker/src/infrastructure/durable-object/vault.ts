@@ -24,12 +24,24 @@ import type {
 	TextReadResult,
 	VaultReadResponse,
 } from "@obsidian-ai-bridge/protocol";
+import {
+	BeginClientConsentRequestSchema,
+	ListClientGrantsRequestSchema,
+	ListClientGrantsResultSchema,
+	ListClientsRequestSchema,
+	ListClientsResultSchema,
+	OwnerCsrfConsumeRequestSchema,
+	RegisterClientGrantRequestSchema,
+	RenameClientRequestSchema,
+	RevokeClientRequestSchema,
+} from "@obsidian-ai-bridge/protocol";
 import { AdmissionDenied } from "@worker/application/admission";
 import { FileOperationDenied } from "@worker/application/files";
 import type { ImmutableFileCommand } from "@worker/application/history";
 import type { Env } from "@worker/env";
 import { R2BlobStore } from "@worker/infrastructure/r2/blobs";
 import { SqliteAdmissionAuthority } from "@worker/infrastructure/sqlite/admission";
+import { SqliteClientRegistry } from "@worker/infrastructure/sqlite/clients";
 import { SqliteMutationCoordinator } from "@worker/infrastructure/sqlite/mutations";
 import { SqliteReadStore } from "@worker/infrastructure/sqlite/reads";
 import { SqliteRetentionStore } from "@worker/infrastructure/sqlite/retention";
@@ -68,6 +80,7 @@ export class Vault extends DurableObject<Env> {
 	/** Blocks request dispatch until fresh native alarm scheduling completes. */
 	private readonly initialization: Promise<void>;
 	private readonly admissionAuthority: SqliteAdmissionAuthority;
+	private readonly clientRegistry: SqliteClientRegistry;
 	private readonly mutationCoordinator: SqliteMutationCoordinator;
 	private readonly textStore: SqliteTextStore;
 	private readonly readStore: SqliteReadStore;
@@ -92,6 +105,7 @@ export class Vault extends DurableObject<Env> {
 				}),
 			Date.now,
 		);
+		this.clientRegistry = new SqliteClientRegistry(ctx.storage, Date.now);
 		this.admissionAuthority = new SqliteAdmissionAuthority(ctx.storage, {
 			now: Date.now,
 			newTicketId: () =>
@@ -136,6 +150,95 @@ export class Vault extends DurableObject<Env> {
 		const result = this.retentionStore.runBatch(now);
 		await this.ctx.storage.setAlarm(
 			result.more ? now + RETENTION_CONTINUATION_MS : nextRetentionNightly(now),
+		);
+	}
+
+	/** Persist a pending owner consent fence for the supplied client. */
+	beginClientConsent(ownerSubject: string, clientId: string, name: string) {
+		const request = BeginClientConsentRequestSchema.parse({
+			owner_subject: ownerSubject,
+			client_id: clientId,
+		});
+		return this.clientRegistry.beginClientConsent(
+			request.owner_subject,
+			request.client_id,
+			name,
+		);
+	}
+
+	/** Register a provider grant only while its consent generation remains current. */
+	registerClientGrant(input: unknown): boolean {
+		const request = RegisterClientGrantRequestSchema.parse(input);
+		return this.clientRegistry.registerClientGrant(request);
+	}
+
+	/** Return a bounded page of clients for the configured owner. */
+	listClients(ownerSubject: string, cursor?: string) {
+		const request = ListClientsRequestSchema.parse({
+			owner_subject: ownerSubject,
+			cursor,
+		});
+		return ListClientsResultSchema.parse(
+			this.clientRegistry.listClients(request.owner_subject, request.cursor),
+		);
+	}
+
+	/** List one bounded grant page for an owner-selected client. */
+	listClientGrants(ownerSubject: string, clientId: string, cursor?: string) {
+		const request = ListClientGrantsRequestSchema.parse({
+			owner_subject: ownerSubject,
+			client_id: clientId,
+			cursor,
+		});
+		return ListClientGrantsResultSchema.parse(
+			this.clientRegistry.listClientGrants(
+				request.owner_subject,
+				request.client_id,
+				request.cursor,
+			),
+		);
+	}
+
+	/** Rename one client owned by the verified subject. */
+	renameClient(ownerSubject: string, clientId: string, name: string): boolean {
+		const request = RenameClientRequestSchema.parse({
+			owner_subject: ownerSubject,
+			client_id: clientId,
+			name,
+		});
+		return this.clientRegistry.renameClient(
+			request.owner_subject,
+			request.client_id,
+			request.name,
+		);
+	}
+
+	/** Close the current generation and insert all grant denials in one transaction. */
+	revokeClient(ownerSubject: string, clientId: string) {
+		const request = RevokeClientRequestSchema.parse({
+			owner_subject: ownerSubject,
+			client_id: clientId,
+		});
+		return this.clientRegistry.revokeClient(
+			request.owner_subject,
+			request.client_id,
+		);
+	}
+
+	/** Confirm one grant cleanup after the provider removes it. */
+	markGrantCleanupComplete(clientId: string, grantId: string): void {
+		this.clientRegistry.markGrantCleanupComplete(clientId, grantId);
+	}
+
+	/** Persist a short-lived browser-bound owner form state. */
+	storeOwnerCsrf(input: unknown): void {
+		this.clientRegistry.storeOwnerCsrf(input);
+	}
+
+	/** Consume one owner form state once for its bound browser and subject. */
+	consumeOwnerCsrf(input: unknown): boolean {
+		return this.clientRegistry.consumeOwnerCsrf(
+			OwnerCsrfConsumeRequestSchema.parse(input),
 		);
 	}
 

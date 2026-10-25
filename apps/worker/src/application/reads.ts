@@ -8,10 +8,10 @@ import type {
 	FileFailure,
 	HistoryPageEntry,
 	HistoryUpperResponse,
-	ManifestEntry,
 	ManifestPage,
 	MetadataBatchRequest,
 	MetadataBatchResponse,
+	MetadataManifestRow,
 	OperationIntent,
 	VaultReadResponse,
 	VaultReadResult,
@@ -127,20 +127,26 @@ export async function readVault(
 	}
 }
 
-/** Open a manifest keyset traversal without demanding a metadata batch. */
+/** Open one manifest traversal with a caller row cap; default to the public 256-row page. */
 export async function openManifestRead(
 	gateway: ReadVaultGateway,
 	context: AuthorizationContext,
 	token?: string,
 	signal?: AbortSignal,
+	rowLimit = 256,
 ): Promise<
 	ReadOutcome<
-		LazyReadSession<ManifestEntry, Omit<ManifestPage, "entries" | "next_page">>
+		LazyReadSession<
+			MetadataManifestRow,
+			Omit<ManifestPage, "entries" | "next_page">
+		>
 	>
 > {
 	const begun = await beginRead(gateway, context, [], signal);
 	if (!begun.ok) return begun;
 	try {
+		if (!Number.isSafeInteger(rowLimit) || rowLimit < 1)
+			throw new FileOperationDenied({ kind: "invalid_request" });
 		assertReadDemand(signal);
 		const summary = await gateway.readVault(context, begun.ticket.id);
 		if (!summary.ok)
@@ -169,7 +175,7 @@ export async function openManifestRead(
 		});
 		const lazy = createLazyTraversal(
 			owner,
-			256,
+			rowLimit,
 			async (limit) => {
 				const result = await gateway.readBatch(
 					context,

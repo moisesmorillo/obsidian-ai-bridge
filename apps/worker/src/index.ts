@@ -1,14 +1,26 @@
+import type { AuthorizationContext } from "@obsidian-ai-bridge/protocol";
+import { AuthorizationContextSchema } from "@obsidian-ai-bridge/protocol";
+import type { ClientRegistryGateway } from "@worker/application/clients";
 import type { HistoryVaultGateway } from "@worker/application/history";
 import type { ReadVaultGateway } from "@worker/application/reads";
 import type { SearchVaultGateway } from "@worker/application/search";
 import type { TextVaultGateway } from "@worker/application/text-files";
 import type { Env } from "@worker/env";
+import {
+	createAuthorizeHandler,
+	createOAuthWorker,
+	readVerifiedAuthorization,
+} from "@worker/infrastructure/auth/oauth";
 import { R2BlobStore } from "@worker/infrastructure/r2/blobs";
+import { createOwnerHandler } from "@worker/transport/owner";
 import { createWorker } from "@worker/transport/worker";
 
-/** Deny all production identities until an approved authentication adapter exists. */
-async function resolveIdentity(_request: Request) {
-	return null;
+/** Read the provider-validated client, grant, and token scopes for each REST request. */
+async function resolveIdentity(
+	request: Request,
+): Promise<AuthorizationContext | null> {
+	const identity = readVerifiedAuthorization(request);
+	return identity ? AuthorizationContextSchema.parse(identity) : null;
 }
 
 /** Select the vault named by the request host after identity validation. */
@@ -63,11 +75,94 @@ function resolveVault(
 	};
 }
 
-const worker = createWorker(
-	resolveIdentity,
-	resolveVault,
-	(env) => new R2BlobStore(env.R2_BUCKET),
-);
+/** Expose only owner registry capabilities for the host-selected canonical vault. */
+function resolveClientRegistry(
+	env: Env,
+	request: Request,
+): ClientRegistryGateway {
+	const stub = env.VAULTS.get(env.VAULTS.idFromName(new URL(request.url).host));
+	return {
+		beginClientConsent: async (...args) =>
+			await stub.beginClientConsent(...args),
+		registerClientGrant: async (...args) =>
+			await stub.registerClientGrant(...args),
+		listClients: async (...args) => await stub.listClients(...args),
+		listClientGrants: async (...args) => await stub.listClientGrants(...args),
+		renameClient: async (...args) => await stub.renameClient(...args),
+		revokeClient: async (...args) => {
+			const result = await stub.revokeClient(...args);
+			return result
+				? {
+						generation: result.generation,
+						cleanup_pending: result.cleanupPending,
+						grants: result.grants,
+					}
+				: null;
+		},
+		markGrantCleanupComplete: async (...args) =>
+			await stub.markGrantCleanupComplete(...args),
+		storeOwnerCsrf: async (...args) => await stub.storeOwnerCsrf(...args),
+		consumeOwnerCsrf: async (...args) => await stub.consumeOwnerCsrf(...args),
+	};
+}
+
+/** Route Access-protected owner pages and provider consent through one default handler. */
+function createLocalAuthHandler(): ExportedHandler<Env> {
+	const consent = createAuthorizeHandler();
+	const owner = createOwnerHandler(resolveClientRegistry);
+	return {
+		/** Route owner pages to verified Access handlers and all other local auth paths to consent. */
+		fetch(request, env, context) {
+			const handler = new URL(request.url).pathname.startsWith("/owner/")
+				? owner
+				: consent;
+			if (!handler.fetch)
+				return Promise.resolve(
+					new Response("Handler unavailable", { status: 500 }),
+				);
+			return handler.fetch(request, env, context);
+		},
+	};
+}
+
+/** Dispatch REST only through the OAuth provider's validated resource-server handler. */
+const worker = {
+	/** Route OAuth and REST requests without deriving the service origin from Host. */
+	fetch(
+		request: Request,
+		env?: Env,
+		context?: ExecutionContext,
+	): Promise<Response> {
+		if (!env)
+			return Promise.resolve(new Response("Not found", { status: 404 }));
+		if (
+			env.SERVICE_ORIGIN &&
+			new URL(request.url).origin !== env.SERVICE_ORIGIN
+		) {
+			return Promise.resolve(new Response("Not found", { status: 404 }));
+		}
+		const executionContext =
+			context ??
+			({
+				waitUntil: (_promise: Promise<unknown>) => undefined,
+				passThroughOnException: () => undefined,
+			} as ExecutionContext);
+		const api = createWorker(
+			resolveIdentity,
+			resolveVault,
+			(bindings) => new R2BlobStore(bindings.R2_BUCKET),
+		);
+		const provider = createOAuthWorker(env, api, createLocalAuthHandler());
+		return provider
+			? provider.fetch(request, env, executionContext)
+			: Promise.resolve(
+					new Response("OAuth is not configured", {
+						status: 503,
+						headers: { "cache-control": "no-store" },
+					}),
+				);
+	},
+};
 
 export { Vault } from "@worker/infrastructure/durable-object/vault";
 export default worker;

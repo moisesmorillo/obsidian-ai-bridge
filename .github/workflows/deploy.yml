@@ -1,0 +1,93 @@
+name: Deploy F2 Worker
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - apps/worker/**
+      - packages/**
+      - bun.lock
+      - package.json
+      - mise.toml
+      - .github/workflows/deploy.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: f2-production-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: github.actor == github.repository_owner && github.triggering_actor == github.repository_owner && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: jdx/mise-action@08ae2a091c038e1e05ec6f5115dc5c69d5a2a6b8 # v5.1.2
+        with:
+          version: 2026.10.8
+      - name: Install workspace dependencies
+        run: bun install --frozen-lockfile
+      - name: Deploy Worker
+        working-directory: apps/worker
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_DEPLOY_TOKEN }}
+          OWNER_SUBJECT: ${{ secrets.OWNER_SUBJECT }}
+        shell: bash
+        run: |
+          set +x
+          set -eu
+
+          if [ -z "${CLOUDFLARE_API_TOKEN:-}" ]; then
+            echo "CLOUDFLARE_DEPLOY_TOKEN is missing." >&2
+            exit 1
+          fi
+          if [ -z "${OWNER_SUBJECT:-}" ]; then
+            echo "OWNER_SUBJECT is missing." >&2
+            exit 1
+          fi
+
+          umask 077
+          output_file="$(mktemp)"
+          cleanup_output_file() {
+            rm -f "$output_file"
+          }
+          trap cleanup_output_file EXIT
+
+          if bunx --no-install wrangler deploy --config wrangler.production.jsonc --var "OWNER_SUBJECT:${OWNER_SUBJECT:?Set OWNER_SUBJECT before deployment}" >"$output_file" 2>&1; then
+            :
+          else
+            deploy_status=$?
+            echo "Wrangler deployment failed. Raw output was withheld." >&2
+            exit "$deploy_status"
+          fi
+
+          version_ids="$(grep -Eo "Current Version ID: [0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}" "$output_file" | sed "s/^Current Version ID: //")" || true
+          version_count="$(printf "%s\n" "$version_ids" | grep -c . || true)"
+          if [ "$version_count" -ne 1 ]; then
+            echo "Wrangler output did not contain exactly one version ID. Raw output was withheld." >&2
+            exit 1
+          fi
+
+          printf "Deployed Worker version: %s\n" "$version_ids"
+          printf "F2 Worker deployed from source revision %s as version %s.\n" "$GITHUB_SHA" "$version_ids" >>"$GITHUB_STEP_SUMMARY"
+      - name: Check public resource metadata
+        shell: bash
+        run: |
+          set -eu
+          if status="$(curl --silent --show-error --output /dev/null --connect-timeout 10 --max-time 30 --write-out "%{http_code}" "https://obsidian-bridge.mmorillo.dev/.well-known/oauth-protected-resource")"; then
+            :
+          else
+            echo "Public resource metadata request failed." >&2
+            exit 1
+          fi
+          if [ "$status" != 200 ]; then
+            echo "Public resource metadata check returned HTTP $status, not HTTP 200." >&2
+            exit 1
+          fi
+          echo "Public resource metadata check returned HTTP 200."

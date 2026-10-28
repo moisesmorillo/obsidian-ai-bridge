@@ -1,11 +1,11 @@
 ---
 id: OAB-25
 title: Deploy the F2 Worker script from GitHub Actions on merge to main
-status: In Progress
+status: Done
 assignee:
   - '@pi'
 created_date: '2026-10-28T16:19:00Z'
-updated_date: '2026-10-28T18:05:00Z'
+updated_date: '2026-10-28T18:30:00Z'
 labels:
   - F2
   - deployed-service
@@ -34,7 +34,7 @@ The F2 Worker script is deployed by hand from the owner Mac with the owner Wrang
 - [x] #1 A `deploy.yml` workflow runs after a merge to main and after a manual `workflow_dispatch`, and it only runs for the repository owner as actor.
 - [x] #2 The workflow runs the same pinned Wrangler command as `docs/api/f2.md` from `apps/worker`, with `OWNER_SUBJECT` read from a GitHub secret and never printed in logs.
 - [x] #3 The Cloudflare token used by the workflow comes from an OpenTofu `cloudflare_account_token` in cloudflare-infra with Workers Scripts Write only, and its creation is recorded with the PR link in the task notes.
-- [ ] #4 A deploy run is confirmed by the Worker version id in the run log and by a public check of `/.well-known/oauth-protected-resource` after the run.
+- [x] #4 A deploy run is confirmed by the Worker version id in the run log and by a public check of `/.well-known/oauth-protected-resource` after the run.
 - [x] #5 `docs/api/f2.md` describes the CI deployment and keeps the manual command as the fallback.
 <!-- AC:END -->
 
@@ -56,4 +56,12 @@ Owner-approved scope addition: push path filter is exactly apps/worker/**, packa
 Baseline: bun install --frozen-lockfile and bun run check passed before changes. Final checks passed: bun run docs:check and bun run check. The final suite ran 74 test files with 1,208 tests, and all workspace builds passed. Shellcheck passed both workflow scripts. Ruby parsed workflow YAML, and git diff --check passed. The temporary offline fixtures passed 11 shell cases plus exact path-filter checks. Direct execution of extracted workflow scripts was blocked by the command safety gate, so fixture cases exercised equivalent shell decision behavior rather than invoking the extracted workflow scripts.
 
 Independent task review and final whole-branch review examined revision ff65b35aba3d06023af9accb62e1c4ef17f416a5 against main 935d42f. Both found no actionable defect. Documentation scope: workflow behavior, docs/api/f2.md, and task notes. Structural candidate: deploy.yml coherently owns deployment orchestration, actor and ref gates, concurrency, private output capture, and public status checks. No TypeScript changed. Reviewers examined worker validation evidence without test reruns. Limits: equivalent-shell fixtures, no real deployment, and no remote public check. No findings need closure. Criterion 4 stays pending until the first owner-authorized deployment.
+
+First CI deployment 2026-10-28: run https://github.com/moisesmorillo/obsidian-ai-bridge/actions/runs/40745615356 on merge commit 2333123 (PR #28), event push, actor owner. All steps succeeded. The Deploy Worker step printed "Deployed Worker version: 196df3e7-c7c3-4d98-ba7b-906a0cfc5f9f" and the job summary carries the source revision. The last step returned HTTP 200 from /.well-known/oauth-protected-resource. Public checks after the run: the metadata lists scopes_supported vault:read and vault:write, /authorize and /owner/clients still answer 302 to Access. No secret value appeared in the log. The owner assistant verified the run with gh run view and curl.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+The F2 Worker now deploys from GitHub Actions. deploy.yml runs on push to main for the six deployment paths and on manual dispatch, owner-only, with one production concurrency group. It uses the pinned Wrangler command with CLOUDFLARE_DEPLOY_TOKEN (OpenTofu token with Workers Scripts Read and Write, delivered by cloudflare-infra PR #18 through a GitHub App) and the OWNER_SUBJECT secret. The first run deployed version 196df3e7-c7c3-4d98-ba7b-906a0cfc5f9f and the public metadata check passed. docs/api/f2.md keeps the manual command as the fallback. check.yml now runs once per pull request. Risk: the token covers every Worker script in the account, not only this one.
+<!-- SECTION:FINAL_SUMMARY:END -->

@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-10-28T19:31:00Z'
-updated_date: '2026-10-28T20:09:00Z'
+updated_date: '2026-10-28T20:14:00Z'
 labels: []
 dependencies:
   - OAB-7
@@ -39,4 +39,8 @@ Implement docs/superpowers/plans/2026-10-28-device-journal.md after owner approv
 
 <!-- SECTION:NOTES:BEGIN -->
 Recovery: the prior worker session ended when the owner closed the Orca tab. Its earlier RED output is unavailable, so no earlier RED evidence is claimed. I preserved the recovered implementation, tests, all eight OAB-8.2 through OAB-8.8 subtask files, and the OAB-8 parent update. I added focused regressions and observed these RED results against the recovered implementation: plugin device-journal tests failed 3 assertions for mutable inputs, attention-blocked retry, and rename-destination ordering; lifecycle tests failed the stale open-after-unload assertion; protocol schema tests failed the same-source-and-destination rename assertion; journal tests failed for sending a persisted resolved operation. An initial lifecycle run timed out because its deferred localStorage test double blocked read-back. I corrected the test double, reran, and observed the intended lifecycle failure. GREEN: plugin tests 28 passed; protocol tests 289 passed; documentation check passed. Before final integration, bun run check passed with 201 Biome files, all workspace typechecks, 56 tooling tests, 289 protocol tests, 27 plugin tests, 868 Worker tests, and all builds. It ran before the final resolved-operation guard and needs to run again after integration.
+
+Integration evidence: implementation commit a126bbaa1d8f9911e775308337303098e91236ec was merged with main at a4ec7ffe030e5a4d367820eacdada24a8f894b7e using a normal merge, with no force push. Integrated HEAD is recorded in the recovery report. Post-merge bun run check passed: Biome checked 201 files; docs:check passed; all four workspace typechecks passed; 77 test files passed with 1,241 tests total (tooling 56, protocol 289, plugin 28, Worker 868); protocol, plugin, and Worker builds passed. Worker tests printed their expected injected network/SQLite failure diagnostics but exited 0. The Worker build used Wrangler dry-run only. No resources were deployed or changed.
+
+Correction: the integrated HEAD is eb345883b196458e1bf8f9d8335c8202a353ad01, a merge commit with implementation parent a126bbaa1d8f9911e775308337303098e91236ec and main parent a4ec7ffe030e5a4d367820eacdada24a8f894b7e. The required post-integration bun run check completed at this HEAD and passed.
 <!-- SECTION:NOTES:END -->

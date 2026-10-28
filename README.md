@@ -1,12 +1,12 @@
 # obsidian-ai-bridge
 
-The project implements a private Cloudflare Worker with SQLite Vault authority, conditional file operations, history, search, blob storage, bounded reads, OAuth, MCP, and an owner console. The F2 Worker is deployed at `https://obsidian-bridge.mmorillo.dev`.
+The project implements a private Cloudflare Worker with SQLite Vault authority, conditional file operations, history, search, blob storage, bounded reads, OAuth, MCP, and an owner console. The original F2 Worker serves `https://obsidian-bridge.mmorillo.dev` until the owner transfers the domain to the renamed production Worker.
 
 ## Current status
 
 Independent public checks on 2026-10-28 confirmed canonical OAuth discovery, Access login redirection for `/authorize`, denial for unauthenticated REST and MCP requests, OAuth protocol errors for invalid registration and token requests, and no service responses from the known `workers.dev` hostname. The `/owner` root returned `404`; the implemented owner route is `/owner/clients`. The configured preview URL setting is false, and deployment output emitted no preview URL.
 
-Public deployment evidence for OAB-7.7 is recorded. These checks do not prove Access policy contents, successful login or consent, authenticated vault operations, revocation, plugin behavior, or device behavior. The owner subject remains unconfirmed against an Access assertion. OAB-7.8 and full F2 exit remain open.
+Public deployment evidence for OAB-7.7 is recorded for the original Worker. The production script name is now `obsidian-ai-bridge`. Its merge deployment creates a new Durable Object namespace beside the original script. The Vault contains only four synthetic notes under `oab-7.8/`, so no migration is needed. The public workflow check reaches the original script until the cloudflare-infra assistant transfers the custom domain through OpenTofu. Only the owner deletes the original script after the transfer. These checks do not prove Access policy contents, successful login or consent, authenticated vault operations, revocation, plugin behavior, or device behavior. The owner subject remains unconfirmed against an Access assertion. OAB-7.8 and full F2 exit remain open.
 
 ## Local development
 

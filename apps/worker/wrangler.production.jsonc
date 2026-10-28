@@ -1,5 +1,5 @@
 {
-	"name": "obsidian-ai-bridge-f2",
+	"name": "obsidian-ai-bridge",
 	"account_id": "cb1688e69610249def9ac8e0448d5040",
 	"compatibility_date": "2025-07-12",
 	"compatibility_flags": ["unhandled_rejection_after_microtask_checkpoint"],

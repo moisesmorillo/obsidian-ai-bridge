@@ -14,7 +14,7 @@ const productionConfig = JSON.parse(productionConfigText) as Record<
 
 describe("production Worker configuration", () => {
 	it("uses the production Worker name, canonical origin, and disabled alternate routes", () => {
-		expect(productionConfig.name).toBe("obsidian-ai-bridge-f2");
+		expect(productionConfig.name).toBe("obsidian-ai-bridge");
 		expect(productionConfig.account_id).toBe(
 			"cb1688e69610249def9ac8e0448d5040",
 		);

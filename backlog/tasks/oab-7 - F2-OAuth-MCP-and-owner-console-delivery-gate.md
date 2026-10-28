@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: 2026-10-12 15:13
-updated_date: '2026-10-24T14:34:00Z'
+updated_date: '2026-10-28T16:49:00Z'
 labels:
   - phase-gate
   - F2
@@ -25,9 +25,9 @@ Track F2 against docs/spec.md §14. Intent-only; research/decompose when selecte
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 F1 is complete before F2 starts.
+- [x] #1 F1 is complete before F2 starts.
 - [ ] #2 §14 F2 exit checks and account decision are evidenced.
-- [ ] #3 Service deployment/resource operations have separate explicit owner authorization.
+- [x] #3 Service deployment/resource operations have separate explicit owner authorization.
 - [x] #4 Cleanup from F1 review: the extension-case tests in apps/worker/test/blob-put.test.ts, apps/worker/test/vault-search.test.ts and apps/worker/test/http/files.test.ts use at most four representative forms per extension for real HTTP writes and SQLite runs. The full ASCII case combination stays only in packages/protocol/test/files.test.ts as a unit test of classifyFilePath. Test count and runtime go down. Coverage of the case rule stays.
 <!-- AC:END -->
 
@@ -47,4 +47,22 @@ Owner selected F2 research and decomposition after merged PR #20. Plan only the 
 Owner approved OAB-7.1 plan pn-e4a1f7 and explicitly requested implementation, one worker, one reviewer, human branch review, and a PR. Worker commit 9f2ef63 completes the local cleanup. Future tasks remain To Do. No OAuth, MCP, plugin, deployed, or device behavior is qualified by this change.
 
 OAB-7.1 completes cleanup criterion 4 in PR #21 after independent, session-model, and human reviews plus actual remote CI. The actual exhaustive HTTP matrix was in http/search.test.ts. http/files.test.ts remains unchanged and passes. OAB-7 stays In Progress. OAB-7.2 through OAB-7.8 remain To Do. Deployment and real-client tasks still need explicit owner authorization. F1 server-only acceptance, default-deny production identity, and all later evidence boundaries remain unchanged.
+
+Gate review after OAB-7.8 owner evidence on 2026-10-28. AC #1: OAB-6 is Done with the owner-approved server-only F1 exit and completed review/CI evidence. AC #3: OAB-7.7 records separate owner authority for the original deployment and resource boundary.
+
+The owner also authorized the 16:18Z scope-fix deployment of PR #24 f84a225, Worker version 0527d86b-0edd-4b56-915f-aa652a38bc5f. This closure gives no new deployment or resource authority. AC #4 remains complete through OAB-7.1.
+
+Section 14 F2 exit evidence now includes successful real Inspector, Claude Code, and ChatGPT web connections with synthetic read/write checks. OAB-7.8 records exact supplied UTC times and results. Developer mode and custom apps work in the owner account.
+
+The same connector works on iPhone. The owner chose the custom ChatGPT app for iPhone. Real revocation proved the next DO request returned 401 revoked before provider cleanup at 15:12:42Z.
+
+The owner Access login passed at 15:03Z.
+
+AC #2 stays unchecked and OAB-7 stays In Progress. Spec section 14 includes AC-08 without a server-only exception for F2. The DO denial portion has evidence.
+
+Plugin revoked status, stopped publishing and applying, and preservation of local files and queues do not. ChatGPT iPhone reads do not prove those Obsidian plugin effects. OAB-7.8 closes its client/account scope, not the complete F2 gate.
+
+No specification change or waiver belongs to this task. OAB-8 and later phases stay unstarted. S1 privacy and S2 console visibility remain open as Deferred OAB-26 and OAB-27, with their triggers.
+
+No personal-vault access or cleanup occurred.
 <!-- SECTION:NOTES:END -->

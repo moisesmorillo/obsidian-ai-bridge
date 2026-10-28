@@ -142,10 +142,17 @@ describe("device journal protocol schemas", () => {
 			path: "a.md",
 			precondition: { kind: "absent" },
 		};
+		const singleOperationState = {
+			version: 1,
+			device_id: uuid,
+			pending_ops: [operation],
+		};
+		expect(DeviceStateSchema.safeParse(singleOperationState).success).toBe(
+			true,
+		);
 		expect(
 			DeviceStateSchema.safeParse({
-				version: 2,
-				device_id: uuid,
+				...singleOperationState,
 				pending_ops: [operation, operation],
 			}).success,
 		).toBe(false);

@@ -1,11 +1,11 @@
 ---
 id: OAB-7.7
 title: Deploy F2 service and Access policy with owner authorization
-status: In Progress
+status: Done
 assignee:
   - '@pi'
 created_date: '2026-10-24T00:05:00Z'
-updated_date: '2026-10-28T02:48:00Z'
+updated_date: '2026-10-28T02:55:00Z'
 labels:
   - F2
   - needs-owner-authorization
@@ -78,4 +78,14 @@ Task 4 local acceptance review. Checked AC #1 based on the owner-authorized acco
 Final whole-branch review approved revision 8cf77dd3f4673ae75182ca01e5088363ac14001a against main 9c45682ee9f46a24668c0baacef0906db212af0e. Reviewer inspected all six changed files, authority boundaries, configuration tests, deployment and public evidence, documentation semantics, and prior finding closures. No actionable findings remain. Reviewer ran docs:check and diff check successfully and reviewed the worker full-check result of 1203 tests across 74 files. Authenticated client use, revocation, first-login subject comparison, and F2 exit remain OAB-7.8 obligations. Human branch review, publication, and remote CI remain pending.
 
 Public branch review correction: remove the owner subject from tracked production config, deployment tests, plan text, and unpublished branch history. Keep exact-subject verification unchanged. The owner supplies the value locally through the environment or an ignored local file. Pinned Wrangler deployment must use the explicit nonempty shell guard shown in the API guide and branch plan. CI checks and builds only, so no GitHub deployment secret is needed. Ignore .unipi/ without changing its local content. Preserve other deployment identifiers and the historical source revision and Worker version. No redeployment or Cloudflare change is authorized or performed for this correction.
+
+Final documentation consistency correction: the Task 2 future-deployment example in the existing plan now includes the explicit nonempty OWNER_SUBJECT shell guard. The historical deployment command and source SHA remain historical facts. Human review pn-625da3 contained only the two approved findings. The owner approved option 1. The scoped reviewer approved both corrections at c3cbc14. Mark both comments addressed. No source/runtime change, redeployment, or Cloudflare operation occurred. Authenticated client behavior, owner-subject confirmation against a verified JWT, and F2 exit remain outside this task. Push, pull request, remote CI, and worktree cleanup remain pending.
+
+Final correction validation: bun run docs:check passed. bun run check passed with lint, docs, all four workspace type checks, 1,204 tests across 74 files, and builds. The check ran with .unipi/ present and ignored. Its settings-version.json SHA-256 remained b9f64b5acb865d00ab4e108df212fe01a413df83db8a1da9ba965201b2991a8f. A scan against the original owner input found no owner-subject value in tracked files. No source/runtime changes, redeployment, or Cloudflare operation occurred. Original deployed source remains 5ab265b8c0ee4835e48ca265518f80f744597dcd and Worker version remains 066110dc-be65-460d-9883-cb7bf4c5dbfe. No authenticated client flow or F2 exit claim. Push, PR, remote CI, and worktree cleanup remain pending.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Closed OAB-7.7 after deployed evidence, the owner-approved corrections, and scoped branch review. The plan and public deployment guide now use the guarded owner-subject override. The owner subject is absent from tracked files and sanitized branch history. Exact-subject runtime verification and the deployed Worker version remain unchanged. bun run docs:check and bun run check passed, including 1,204 tests across 74 files. No deployment or Cloudflare change occurred. No authenticated client flow or F2 exit claim. Push, pull request, remote CI, and worktree cleanup remain pending.
+<!-- SECTION:FINAL_SUMMARY:END -->

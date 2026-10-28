@@ -1,11 +1,11 @@
 ---
 id: OAB-7.7
 title: Deploy F2 service and Access policy with owner authorization
-status: In Progress
+status: Done
 assignee:
   - '@pi'
 created_date: '2026-10-24T00:05:00Z'
-updated_date: '2026-10-28T03:07:00Z'
+updated_date: '2026-10-28T03:13:00Z'
 labels:
   - F2
   - needs-owner-authorization
@@ -86,10 +86,12 @@ Final correction validation: bun run docs:check passed. bun run check passed wit
 PR #23 opened at https://github.com/moisesmorillo/obsidian-ai-bridge/pull/23. Initial push and pull-request CI runs failed in the pre-existing vault-retention-alarm.test.ts assertion at line 90. Both ran during the last minute before 03:00 UTC. The production scheduler correctly returns the next 03:00 instant, but the test assumes it is always more than 60000 ms away. Logs: runs 40624032845 and 40624038467. Reopen task until a deterministic boundary reproduction, test-only correction, independent scoped review, and remote CI pass. No production scheduling or deployed Worker change is planned.
 
 PR #23 CI test-only correction: the native CI logs showed vault-retention-alarm.test.ts failed at 02:59 UTC because its > 60-second assertion rejected the valid 03:00 UTC deadline. A standalone deterministic check at 2026-10-28T02:59:30Z observed the expected assertion exit code 1: 1793156400000 is not greater than 1793156430000. Vitest fake time changes the test callback clock but does not control the Durable Object isolate. The revised native test brackets the final alarm call and requires its stored alarm to equal the next 03:00 UTC deadline calculated from a timestamp in that bracket. It preserves native SQLite pruning, continuation bounds, alarm resumption, and the maintenance-fault test. Fixed boundary expectation cases cover 02:59:30, exactly 03:00, and 03:00:01. Focused test passed 5/5. bun run docs:check passed. bun run check passed with lint, docs, all workspace type checks, 1,207 tests across 74 files, and builds. No production source, dependency, workflow, deployment, or Cloudflare changes. .unipi remained unchanged. Task stays In Progress pending scoped review and remote CI.
+
+Scoped review approved the test-only nightly-alarm correction at ad68aac. The exact next 03:00 UTC assertion replaces the invalid minimum-one-minute assumption and preserves native SQLite, continuation, resumption, and fault checks. No production scheduler or deployed Worker changed. Local docs:check and full check passed 1207 tests across 74 files. PR #23 is open at https://github.com/moisesmorillo/obsidian-ai-bridge/pull/23. Remote push run 40625216990 and pull-request run 40625220469 both passed at ad68aac. The parent confirmed both via gh pr checks --watch. The final task-record commit changes documentation only. Preserve local UniPi state and scratch files outside the worktree, then remove the worktree after publication. No merge, OAB-7.8, authenticated client test, or personal vault access.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
-Closed OAB-7.7 after deployed evidence, the owner-approved corrections, and scoped branch review. The plan and public deployment guide now use the guarded owner-subject override. The owner subject is absent from tracked files and sanitized branch history. Exact-subject runtime verification and the deployed Worker version remain unchanged. bun run docs:check and bun run check passed, including 1,204 tests across 74 files. No deployment or Cloudflare change occurred. No authenticated client flow or F2 exit claim. Push, pull request, remote CI, and worktree cleanup remain pending.
+Deployed the F2 Worker with owner-supplied storage and Access settings. OpenTofu owns KV, R2, the custom domain, and Access. The Worker deployment applied the existing Vault migration v1. Public checks confirmed canonical discovery, Access redirects, authentication denials, OAuth errors, and no service response from the known workers.dev host. Human and independent reviews resolved all findings. UniPi files stay local. Public history contains no actual owner subject. Corrected an existing clock-sensitive test without changing production scheduling. Local checks passed 1207 tests across 74 files. Both remote CI runs passed on PR #23. OAB-7.8 and full F2 exit remain open. Owner-subject confirmation and authenticated clients remain outside this task.
 <!-- SECTION:FINAL_SUMMARY:END -->

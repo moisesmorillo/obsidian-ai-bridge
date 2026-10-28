@@ -4,6 +4,7 @@ title: Publish local edits and resolve delete and rename conflicts
 status: To Do
 assignee: []
 created_date: '2026-10-28T19:31:00Z'
+updated_date: '2026-10-28T20:58:00Z'
 labels: []
 dependencies:
   - OAB-8.4
@@ -26,3 +27,9 @@ Connect vault events and startup hash scans to conditional publication and renam
 - [ ] #3 AC-33 resolves rename sides separately. Newer source revisions survive replay. Deletes and renames come only from live vault events. Missing startup files restore from the server.
 - [ ] #4 Publication handles 412, path collisions, size limits, expired operations, and bounded retry with Retry-After. Local link rewrites publish as ordinary puts.
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+OAB-8.1 branch review obligation: DeviceJournal.resolve ignores outcome.kind and removes rejected operations. The publisher must secure and verify the conflict copy before it resolves a rejected operation. Alternatively, change resolve to retain rejected operations. OAB-8.2 does not change rejection handling.
+<!-- SECTION:NOTES:END -->

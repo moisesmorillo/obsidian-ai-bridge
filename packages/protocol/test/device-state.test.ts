@@ -15,6 +15,20 @@ const common = {
 };
 
 describe("device journal protocol schemas", () => {
+	it("reads old journal documents and accepts an optional enrolled client id", () => {
+		const oldState = { version: 1, device_id: uuid, pending_ops: [] };
+		expect(DeviceStateSchema.safeParse(oldState).success).toBe(true);
+		expect(
+			DeviceStateSchema.safeParse({
+				...oldState,
+				client_id: "registered-client",
+			}).success,
+		).toBe(true);
+		expect(
+			DeviceStateSchema.safeParse({ ...oldState, client_id: "" }).success,
+		).toBe(false);
+	});
+
 	it.each([
 		{
 			...common,

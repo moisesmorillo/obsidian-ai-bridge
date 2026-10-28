@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-10-24T00:05:00Z'
-updated_date: '2026-10-28T16:07:00Z'
+updated_date: '2026-10-28T16:08:00Z'
 labels:
   - F2
   - needs-owner-authorization
@@ -71,4 +71,6 @@ Assessment S2, owner console state: SqliteClientRegistry.listClients counts all 
 Task review d542b059 approved the local correction with no actionable findings. Scope: 06b3816..502db7e, including a099750. The reviewer checked the installed provider requiredScopes contract: it advertises metadata and challenge scopes, not global enforcement. Existing route and DO checks retain operation-specific authority. Existing tests cover read-only refresh and write-only denial of reads. The new test covers real local OAuth from discovered scopes through MCP initialize. Documentation and structural review found cohesive provider and transport owners with canonical protocol scope vocabulary. The reviewer used the worker test evidence and did not rerun checks. Deployment and named-client/account evidence remain open.
 
 Final whole-branch review ddff785a approved 181e09101ce77bac05546222696432b45d4b9007..25e3ffa44b0776a7103af44d74582c8f0a3145c4 with no actionable finding in the local correction. It covered all six changed files, installed provider behavior, narrower-token tests, both MCP revoked denial paths, and task evidence. Documentation review covered changed declarations, helper contracts, API docs, and spec sections 9.3/9.5. OAuth and MCP HTTP owners remain cohesive, with protocol vocabulary and durable authority unchanged. S1 identity disclosure and S2 console state remain explicitly open with their triggers. The reviewer confirmed git diff --check exit 0 and reviewed the worker RED/GREEN and full-check evidence without rerunning unchanged tests. Hosted CI and new deployed results did not form part of that review. Human branch review and publication follow. Deployment still needs separate owner authorization.
+
+Human branch review pn-474aa1 approved the complete branch with no changes requested. Publish the reviewed correction and task evidence through a pull request. Keep OAB-7.8 In Progress and AC #1/#3 open. No deployment authorization exists.
 <!-- SECTION:NOTES:END -->

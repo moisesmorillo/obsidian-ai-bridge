@@ -1,11 +1,11 @@
 ---
 id: OAB-8.1
 title: Persist device operations and immutable retry payloads
-status: In Progress
+status: Done
 assignee:
   - '@pi'
 created_date: '2026-10-28T19:31:00Z'
-updated_date: '2026-10-28T20:32:00Z'
+updated_date: '2026-10-28T20:50:00Z'
 labels: []
 dependencies:
   - OAB-7
@@ -23,10 +23,10 @@ A desktop restart must not change an operation that might reach the server. Deli
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Device-local state uses one validated localStorage document with write read-back checks. Missing state creates a device identity. Invalid or failed storage preserves prior state and blocks operation release.
-- [ ] #2 Before an operation becomes sent, its payload exists at .ai-bridge/pending/<key> and passes SHA-256 verification. Restart returns the same key, bytes, path, and precondition.
-- [ ] #3 A newer edit replaces only a queued operation with a fresh UUIDv7 key. An edit behind a sent operation stays separate and cannot become sendable before its predecessor resolves.
-- [ ] #4 Tests cover corrupt state, write failure, payload failure, restart, and concurrent queue requests. Plugin load performs no network or note mutation. bun run check passes.
+- [x] #1 Device-local state uses one validated localStorage document with write read-back checks. Missing state creates a device identity. Invalid or failed storage preserves prior state and blocks operation release.
+- [x] #2 Before an operation becomes sent, its payload exists at .ai-bridge/pending/<key> and passes SHA-256 verification. Restart returns the same key, bytes, path, and precondition.
+- [x] #3 A newer edit replaces only a queued operation with a fresh UUIDv7 key. An edit behind a sent operation stays separate and cannot become sendable before its predecessor resolves.
+- [x] #4 Tests cover corrupt state, write failure, payload failure, restart, and concurrent queue requests. Plugin load performs no network or note mutation. bun run check passes.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -51,4 +51,12 @@ MAJOR review finding closure: fixed queued-operation ordering in DeviceJournal.p
 MINOR review finding closure: corrected packages/protocol/test/device-state.test.ts so duplicate-key validation uses a version-1 state. The test now also proves that the matching single-operation state is valid. Unsupported-version rejection stays in its own assertion. Negative control: temporarily removed the DeviceStateSchema unique-key refinement, then ran bun run --cwd packages/protocol test -- test/device-state.test.ts. It failed at the duplicate-key assertion with expected false and received true, while the other six tests passed. Restored the schema source and reran the focused protocol test successfully: 7/7. The restored schema has no diff. bun run docs:check passed. The first full check found one formatting issue in the test. Biome fixed it. The final bun run check passed with all 1,247 tests across 77 files, all workspace typechecks, and all builds. No product behavior changed.
 
 Independent task review found the overlapping-operation send barrier gap. Correction 7d2975d passed scoped review with APPROVE. Final whole-branch review examined all 21 changed files against main a4ec7ff at 7d2975d. It found no blocking implementation issue and one MINOR duplicate-key test masking issue. Correction 1c2a527 uses version 1 and a positive single-operation assertion. Scoped re-review confirms fixed with no production or schema change. Structural candidates: DeviceJournal owns transitions and the ordering matrix; adapter owns persistence mechanics; protocol owns persisted validation and path identity; main owns lifecycle fencing. Documentation scope includes all changed semantic declarations, tests, plan, and task decomposition. Full checks passed with 1247 tests across 77 files. Limits: no real Obsidian crash, two-vault, OAuth, revoked-device, or ChatGPT proof. Those remain in later OAB-8 tasks. Human branch review is next.
+
+Owner approved the complete branch diff in Plannotator pn-7478de with no changes requested. Acceptance evidence: AC1 uses schema corruption, missing state, dropped writes, throwing storage, and read-back tests. AC2 uses payload integrity and restart retry tests. AC3 uses UUIDv7 replacement, immutable sent bytes, predecessor ordering, rename overlap, and canonical path tests. AC4 uses storage, concurrency, and lifecycle tests plus the final full check: 1247 tests across 77 files, all typechecks and builds. Main a4ec7ff is an ancestor of this branch. No deployment or resource change occurred.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Added the durable desktop device journal, verified localStorage persistence, immutable payload files, serialized queue transitions, and lifecycle fencing. Added canonical protocol schemas and failure/restart regressions. Full checks passed with 1247 tests. Independent task and whole-branch reviews passed after corrections. Owner approved the branch diff. Full device synchronization and F3 proof remain in OAB-8.2 through OAB-8.8.
+<!-- SECTION:FINAL_SUMMARY:END -->

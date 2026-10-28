@@ -1,11 +1,11 @@
 ---
 id: OAB-7.7
 title: Deploy F2 service and Access policy with owner authorization
-status: Done
+status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-10-24T00:05:00Z'
-updated_date: '2026-10-28T02:55:00Z'
+updated_date: '2026-10-28T03:07:00Z'
 labels:
   - F2
   - needs-owner-authorization
@@ -82,6 +82,10 @@ Public branch review correction: remove the owner subject from tracked productio
 Final documentation consistency correction: the Task 2 future-deployment example in the existing plan now includes the explicit nonempty OWNER_SUBJECT shell guard. The historical deployment command and source SHA remain historical facts. Human review pn-625da3 contained only the two approved findings. The owner approved option 1. The scoped reviewer approved both corrections at c3cbc14. Mark both comments addressed. No source/runtime change, redeployment, or Cloudflare operation occurred. Authenticated client behavior, owner-subject confirmation against a verified JWT, and F2 exit remain outside this task. Push, pull request, remote CI, and worktree cleanup remain pending.
 
 Final correction validation: bun run docs:check passed. bun run check passed with lint, docs, all four workspace type checks, 1,204 tests across 74 files, and builds. The check ran with .unipi/ present and ignored. Its settings-version.json SHA-256 remained b9f64b5acb865d00ab4e108df212fe01a413df83db8a1da9ba965201b2991a8f. A scan against the original owner input found no owner-subject value in tracked files. No source/runtime changes, redeployment, or Cloudflare operation occurred. Original deployed source remains 5ab265b8c0ee4835e48ca265518f80f744597dcd and Worker version remains 066110dc-be65-460d-9883-cb7bf4c5dbfe. No authenticated client flow or F2 exit claim. Push, PR, remote CI, and worktree cleanup remain pending.
+
+PR #23 opened at https://github.com/moisesmorillo/obsidian-ai-bridge/pull/23. Initial push and pull-request CI runs failed in the pre-existing vault-retention-alarm.test.ts assertion at line 90. Both ran during the last minute before 03:00 UTC. The production scheduler correctly returns the next 03:00 instant, but the test assumes it is always more than 60000 ms away. Logs: runs 40624032845 and 40624038467. Reopen task until a deterministic boundary reproduction, test-only correction, independent scoped review, and remote CI pass. No production scheduling or deployed Worker change is planned.
+
+PR #23 CI test-only correction: the native CI logs showed vault-retention-alarm.test.ts failed at 02:59 UTC because its > 60-second assertion rejected the valid 03:00 UTC deadline. A standalone deterministic check at 2026-10-28T02:59:30Z observed the expected assertion exit code 1: 1793156400000 is not greater than 1793156430000. Vitest fake time changes the test callback clock but does not control the Durable Object isolate. The revised native test brackets the final alarm call and requires its stored alarm to equal the next 03:00 UTC deadline calculated from a timestamp in that bracket. It preserves native SQLite pruning, continuation bounds, alarm resumption, and the maintenance-fault test. Fixed boundary expectation cases cover 02:59:30, exactly 03:00, and 03:00:01. Focused test passed 5/5. bun run docs:check passed. bun run check passed with lint, docs, all workspace type checks, 1,207 tests across 74 files, and builds. No production source, dependency, workflow, deployment, or Cloudflare changes. .unipi remained unchanged. Task stays In Progress pending scoped review and remote CI.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary

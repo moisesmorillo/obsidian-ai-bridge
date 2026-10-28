@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-10-24T00:05:00Z'
-updated_date: '2026-10-28T16:02:00Z'
+updated_date: '2026-10-28T16:05:00Z'
 labels:
   - F2
   - needs-owner-authorization
@@ -67,4 +67,6 @@ Local verification completed: `bunx biome check --write apps/worker/src/infrastr
 Assessment S1, provider identity disclosure: confirmed in createAuthorizeHandler, which passes owner.subject as completeAuthorization.userId. The installed provider constructs codes and tokens with a userId prefix. This exposes a stable identity to browser history and client logs. It is a privacy concern, not a bearer credential or an Access bypass by itself. An opaque provider identity is preferable, but a safe change also needs stable identity mapping, token callback owner matching, provider KV cleanup, and compatibility with existing grants. A one-line userId replacement would break those paths. Keep this finding open outside the scope correction. Trigger: design and test the identity transition before broader third-party client use. Do not record actual codes, tokens, or subjects.
 
 Assessment S2, owner console state: SqliteClientRegistry.listClients counts all retained client_grants. revokeClient inserts durable denials and keeps those grant rows. markGrantCleanupComplete clears cleanup_pending but does not delete grant history. OwnerClientSchema and OwnerGrantSchema expose no revoked state, and owner.ts renders the count and Revoke action without such a label. Retention and the repeated Revoke button do not mean the grant remains authorized. The real first-request denial proves enforcement. Spec section 9.5 and OAB-7.3 need durable revocation, not deletion of registry history. The explicit revoked device display in AC-08 remains a plugin obligation. Console state remains an operator visibility gap. Trigger: add authoritative active/revoked/cleanup display and tests before relying on this console for client-state decisions. Keep this finding open outside the scope correction.
+
+Task review d542b059 approved the local correction with no actionable findings. Scope: 06b3816..502db7e, including a099750. The reviewer checked the installed provider requiredScopes contract: it advertises metadata and challenge scopes, not global enforcement. Existing route and DO checks retain operation-specific authority. Existing tests cover read-only refresh and write-only denial of reads. The new test covers real local OAuth from discovered scopes through MCP initialize. Documentation and structural review found cohesive provider and transport owners with canonical protocol scope vocabulary. The reviewer used the worker test evidence and did not rerun checks. Deployment and named-client/account evidence remain open.
 <!-- SECTION:NOTES:END -->

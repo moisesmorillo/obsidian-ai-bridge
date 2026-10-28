@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-10-28T16:19:00Z'
-updated_date: '2026-10-28T17:59:00Z'
+updated_date: '2026-10-28T18:05:00Z'
 labels:
   - F2
   - deployed-service
@@ -54,4 +54,6 @@ Token evidence: https://github.com/moisesmorillo/cloudflare-infra/pull/18. The o
 Owner-approved scope addition: push path filter is exactly apps/worker/**, packages/**, bun.lock, package.json, mise.toml, and .github/workflows/deploy.yml. workflow_dispatch has no paths filter. docs/api/f2.md says merges outside these paths do not deploy and the owner can dispatch manually. Synthetic fixtures covered success, missing and invalid version IDs, ambiguous version IDs, deployment failure, each missing secret, HTTP 200, non-200, redirect, network failure, and push-versus-dispatch path semantics. No existing workflow-test pattern was found. No workflow-test framework or dependency was added. Criterion 4 remains unchecked pending the first owner-authorized CI deployment. No local deploy or dispatch occurred.
 
 Baseline: bun install --frozen-lockfile and bun run check passed before changes. Final checks passed: bun run docs:check and bun run check. The final suite ran 74 test files with 1,208 tests, and all workspace builds passed. Shellcheck passed both workflow scripts. Ruby parsed workflow YAML, and git diff --check passed. The temporary offline fixtures passed 11 shell cases plus exact path-filter checks. Direct execution of extracted workflow scripts was blocked by the command safety gate, so fixture cases exercised equivalent shell decision behavior rather than invoking the extracted workflow scripts.
+
+Independent task review and final whole-branch review examined revision ff65b35aba3d06023af9accb62e1c4ef17f416a5 against main 935d42f. Both found no actionable defect. Documentation scope: workflow behavior, docs/api/f2.md, and task notes. Structural candidate: deploy.yml coherently owns deployment orchestration, actor and ref gates, concurrency, private output capture, and public status checks. No TypeScript changed. Reviewers examined worker validation evidence without test reruns. Limits: equivalent-shell fixtures, no real deployment, and no remote public check. No findings need closure. Criterion 4 stays pending until the first owner-authorized deployment.
 <!-- SECTION:NOTES:END -->

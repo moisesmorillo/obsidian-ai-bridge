@@ -7,6 +7,9 @@
 		"typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.tools.json",
 		"build": "bun run build.ts"
 	},
+	"dependencies": {
+		"@obsidian-ai-bridge/protocol": "workspace:*"
+	},
 	"devDependencies": {
 		"@codemirror/view": "6.43.13",
 		"esbuild": "0.28.2",

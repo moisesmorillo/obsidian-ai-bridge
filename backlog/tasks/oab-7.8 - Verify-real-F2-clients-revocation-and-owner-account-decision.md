@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-10-24T00:05:00Z'
-updated_date: '2026-10-28T16:05:00Z'
+updated_date: '2026-10-28T16:07:00Z'
 labels:
   - F2
   - needs-owner-authorization
@@ -69,4 +69,6 @@ Assessment S1, provider identity disclosure: confirmed in createAuthorizeHandler
 Assessment S2, owner console state: SqliteClientRegistry.listClients counts all retained client_grants. revokeClient inserts durable denials and keeps those grant rows. markGrantCleanupComplete clears cleanup_pending but does not delete grant history. OwnerClientSchema and OwnerGrantSchema expose no revoked state, and owner.ts renders the count and Revoke action without such a label. Retention and the repeated Revoke button do not mean the grant remains authorized. The real first-request denial proves enforcement. Spec section 9.5 and OAB-7.3 need durable revocation, not deletion of registry history. The explicit revoked device display in AC-08 remains a plugin obligation. Console state remains an operator visibility gap. Trigger: add authoritative active/revoked/cleanup display and tests before relying on this console for client-state decisions. Keep this finding open outside the scope correction.
 
 Task review d542b059 approved the local correction with no actionable findings. Scope: 06b3816..502db7e, including a099750. The reviewer checked the installed provider requiredScopes contract: it advertises metadata and challenge scopes, not global enforcement. Existing route and DO checks retain operation-specific authority. Existing tests cover read-only refresh and write-only denial of reads. The new test covers real local OAuth from discovered scopes through MCP initialize. Documentation and structural review found cohesive provider and transport owners with canonical protocol scope vocabulary. The reviewer used the worker test evidence and did not rerun checks. Deployment and named-client/account evidence remain open.
+
+Final whole-branch review ddff785a approved 181e09101ce77bac05546222696432b45d4b9007..25e3ffa44b0776a7103af44d74582c8f0a3145c4 with no actionable finding in the local correction. It covered all six changed files, installed provider behavior, narrower-token tests, both MCP revoked denial paths, and task evidence. Documentation review covered changed declarations, helper contracts, API docs, and spec sections 9.3/9.5. OAuth and MCP HTTP owners remain cohesive, with protocol vocabulary and durable authority unchanged. S1 identity disclosure and S2 console state remain explicitly open with their triggers. The reviewer confirmed git diff --check exit 0 and reviewed the worker RED/GREEN and full-check evidence without rerunning unchanged tests. Hosted CI and new deployed results did not form part of that review. Human branch review and publication follow. Deployment still needs separate owner authorization.
 <!-- SECTION:NOTES:END -->

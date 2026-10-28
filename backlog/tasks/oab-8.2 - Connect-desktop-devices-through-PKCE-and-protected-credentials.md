@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-10-28T19:31:00Z'
-updated_date: '2026-10-28T21:34:00Z'
+updated_date: '2026-10-28T22:22:00Z'
 labels: []
 dependencies:
   - OAB-8.1
@@ -178,4 +178,6 @@ Real Connect acceptance, two-vault synchronization, and ChatGPT account steps re
 Owner approved scope expansion: add tested Worker support for obsidian://ai-bridge/callback. Deploy only through the normal main-merge pipeline. Live registration currently rejects the private callback. No direct Cloudflare changes.
 
 Worker callback policy regression test was run RED before the policy edit: bun run --filter @obsidian-ai-bridge/worker test -- oauth.test.ts -t 'exact Obsidian private callback' returned observed exit 1 because registration returned 400. The OAuth policy then passed the same focused test. Session, storage, and journal tests were added after their initial implementations, so those tests did not have a prior RED run. They now pass in bun run check.
+
+Review record: task review at 47ee53b requested origin binding, shared persistence admission, canonical callback ownership, and accurate discovery TSDoc. Fix 39cf367 addressed all four. Scoped review approved. Whole-branch review at 39cf367 found lowercase provider token incompatibility, refresh during consent replacing reconnect credentials, terminal status, settings-save ownership, and repeated protocol contracts. Fix 124886f addressed all five. Final scoped review approved 124886f. Each finding has direct regression evidence. No actionable finding remains. Documentation scope: changed TypeScript declarations, host ports, schemas, persistence, lifecycle, and API comments. Structural candidates: DeviceSession, credential storage, journal, main/settings, Worker OAuth adapter, and canonical schemas. Reviewers assessed responsibility ownership and cross-method state transitions. Final bun run check passed: tooling 56, protocol 296, plugin 68, Worker 869, total 1289 tests. Direct transport and settings tests pass. Limits: no installed Obsidian routing, live consent, or direct deployment. OAB-8.8 owns installed-host proof. Current deployed private callback remains blocked until normal merge deployment. Human branch review follows before closure.
 <!-- SECTION:NOTES:END -->

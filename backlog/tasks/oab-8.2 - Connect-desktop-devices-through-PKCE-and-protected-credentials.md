@@ -1,11 +1,11 @@
 ---
 id: OAB-8.2
 title: Connect desktop devices through PKCE and protected credentials
-status: In Progress
+status: Done
 assignee:
   - '@pi'
 created_date: '2026-10-28T19:31:00Z'
-updated_date: '2026-10-28T22:22:00Z'
+updated_date: '2026-10-28T22:58:00Z'
 labels: []
 dependencies:
   - OAB-8.1
@@ -23,9 +23,9 @@ Give each test vault its own enrolled device identity without placing credential
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Connect uses browser PKCE, validates callback state, exchanges the code, and handles cancelled or failed consent safely.
-- [ ] #2 Tokens use secretStorage when available. The localStorage fallback has a visible unencrypted-storage warning. No token, code, or verifier reaches logs or data.json.
-- [ ] #3 Refresh rotation and failed refresh stop unauthorized work. Reconnect does not discard journal entries or local files. Automated lifecycle and transport tests pass.
+- [x] #1 Connect uses browser PKCE, validates callback state, exchanges the code, and handles cancelled or failed consent safely.
+- [x] #2 Tokens use secretStorage when available. The localStorage fallback has a visible unencrypted-storage warning. No token, code, or verifier reaches logs or data.json.
+- [x] #3 Refresh rotation and failed refresh stop unauthorized work. Reconnect does not discard journal entries or local files. Automated lifecycle and transport tests pass.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -170,6 +170,8 @@ The worker selects exact internal signatures and records them in useful TSDoc. T
 
 The parent automates browser steps that need no owner action. Record only client IDs, times, and results.
 Real Connect acceptance, two-vault synchronization, and ChatGPT account steps remain in OAB-8.8.
+
+Final solution details: credentials bind to service_origin and client identity. Shared credential write admission covers persistence, identity, verification, and rollback. Refresh checks active credential ownership independently of consent generation. Protocol normalizes Bearer token spelling and owns the shared callback URI. Main serializes settings saves and fences stale lifecycle completions.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -180,4 +182,12 @@ Owner approved scope expansion: add tested Worker support for obsidian://ai-brid
 Worker callback policy regression test was run RED before the policy edit: bun run --filter @obsidian-ai-bridge/worker test -- oauth.test.ts -t 'exact Obsidian private callback' returned observed exit 1 because registration returned 400. The OAuth policy then passed the same focused test. Session, storage, and journal tests were added after their initial implementations, so those tests did not have a prior RED run. They now pass in bun run check.
 
 Review record: task review at 47ee53b requested origin binding, shared persistence admission, canonical callback ownership, and accurate discovery TSDoc. Fix 39cf367 addressed all four. Scoped review approved. Whole-branch review at 39cf367 found lowercase provider token incompatibility, refresh during consent replacing reconnect credentials, terminal status, settings-save ownership, and repeated protocol contracts. Fix 124886f addressed all five. Final scoped review approved 124886f. Each finding has direct regression evidence. No actionable finding remains. Documentation scope: changed TypeScript declarations, host ports, schemas, persistence, lifecycle, and API comments. Structural candidates: DeviceSession, credential storage, journal, main/settings, Worker OAuth adapter, and canonical schemas. Reviewers assessed responsibility ownership and cross-method state transitions. Final bun run check passed: tooling 56, protocol 296, plugin 68, Worker 869, total 1289 tests. Direct transport and settings tests pass. Limits: no installed Obsidian routing, live consent, or direct deployment. OAB-8.8 owns installed-host proof. Current deployed private callback remains blocked until normal merge deployment. Human branch review follows before closure.
+
+Human branch review pn-683187 approved the complete branch with no requested changes. Final code revision 124886f passed 1289 tests. Later commits change Backlog records only. AC1 evidence: session and local Worker PKCE tests cover state, denial, failure, expiry, issuer, replay, cancellation, lowercase provider response, and code exchange. AC2 evidence: credential storage, transport, settings, and lifecycle tests prove preferred secretStorage, warned localStorage fallback, safe outputs, origin binding, and non-secret saveData. AC3 evidence: refresh rotation/failure, exact reconnect races, settings unload/order, and journal identity/queue tests pass. The original plugin tests lacked earlier RED evidence. The task records that allowed exception. Both correction waves contain RED/GREEN regression evidence.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Completed desktop PKCE enrollment, protected device credentials, requestUrl transport, refresh rotation, safe reconnect, and settings controls. Worker policy now accepts only the specified Obsidian private callback. Independent task and branch reviews found issues. Regression fixes resolved every finding, and the owner approved the branch. Final bun run check passed with 1289 tests, plus lint, docs, type checks, and builds. OAB-8.5 records the conflict-copy-before-rejection obligation. No personal vault, direct deployment, or real browser consent was used. Installed-host Connect proof remains in OAB-8.8. Main merge deploys the Worker callback policy.
+<!-- SECTION:FINAL_SUMMARY:END -->

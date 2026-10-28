@@ -1,6 +1,10 @@
+import { ServiceOriginSchema } from "@protocol/schemas/auth";
 import { z } from "zod";
 
-/** OAuth discovery metadata accepted only when every endpoint uses the configured service origin. */
+/** Canonical Obsidian callback URI supported by the desktop OAuth flow. */
+export const DEVICE_CALLBACK_URI = "obsidian://ai-bridge/callback";
+
+/** Validates discovery DTO shape and URL syntax before service-origin checks. */
 export const DeviceDiscoverySchema = z
 	.object({
 		issuer: z.string().url(),
@@ -30,9 +34,10 @@ export const DeviceTokenResponseSchema = z
 	})
 	.passthrough();
 
-/** One validated token set stored atomically under a device-scoped local key. */
+/** Token set bound to its issuing HTTPS origin and stored under a device-scoped local key. */
 export const DeviceCredentialSchema = z
 	.object({
+		service_origin: ServiceOriginSchema,
 		client_id: z.string().min(1).max(2048),
 		access_token: z.string().min(1),
 		refresh_token: z.string().min(1),
@@ -44,7 +49,7 @@ export const DeviceCredentialSchema = z
 
 /** Inferred validated token record. Secrets must remain outside the device journal and synced settings. */
 export type DeviceCredential = z.infer<typeof DeviceCredentialSchema>;
-/** Inferred OAuth service discovery DTO before endpoint-origin checks. */
+/** Inferred untrusted discovery DTO before issuer and endpoint-origin checks. */
 export type DeviceDiscovery = z.infer<typeof DeviceDiscoverySchema>;
 /** Inferred public-client registration response. */
 export type DeviceRegistrationResponse = z.infer<

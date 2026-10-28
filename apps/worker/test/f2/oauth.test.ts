@@ -1,6 +1,9 @@
 import { env, SELF } from "cloudflare:test";
 import { getOAuthApi } from "@cloudflare/workers-oauth-provider";
-import { VaultScopeSchema } from "@obsidian-ai-bridge/protocol";
+import {
+	DEVICE_CALLBACK_URI,
+	VaultScopeSchema,
+} from "@obsidian-ai-bridge/protocol";
 import type { Env } from "@worker/env";
 import productionWorker from "@worker/index";
 import {
@@ -528,14 +531,14 @@ describe("production OAuth entry", () => {
 
 	it("registers and exchanges codes for only the exact Obsidian private callback", async () => {
 		const client = await registerPublicClient(
-			"obsidian://ai-bridge/callback",
+			DEVICE_CALLBACK_URI,
 			"Obsidian desktop",
 		);
 		const token = await issueAccessToken(
 			client.client_id,
 			await ownerAssertion(),
 			"vault:read vault:write vault:delete",
-			"obsidian://ai-bridge/callback",
+			DEVICE_CALLBACK_URI,
 		);
 		expect(token.access_token).toEqual(expect.any(String));
 		for (const redirectUri of [

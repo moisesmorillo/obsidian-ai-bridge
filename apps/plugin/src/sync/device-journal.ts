@@ -195,10 +195,14 @@ export class DeviceJournal {
 		});
 	}
 
-	/** Stores one enrolled client identity without changing pending operation evidence. */
-	async setClientId(clientId: string): Promise<void> {
+	/** Stores identity only when its session predicate still holds at queued commit admission. */
+	async setClientId(
+		clientId: string,
+		isCurrent: () => boolean = () => true,
+	): Promise<void> {
 		return this.serialize(async () => {
 			this.assertOpen();
+			if (!isCurrent()) throw new Error("Client identity update is stale");
 			const next = DeviceStateSchema.parse({
 				...this.state,
 				client_id: clientId,

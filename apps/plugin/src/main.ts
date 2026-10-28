@@ -132,9 +132,9 @@ export default class AIBridgePlugin extends Plugin {
 			openBrowser: (url) => {
 				window.open(url, "_blank", "noopener,noreferrer");
 			},
-			setClientId: (clientId) => {
+			setClientId: (clientId, isCurrent) => {
 				if (!this.journal) throw new Error("Device journal is unavailable");
-				return journal.setClientId(clientId);
+				return journal.setClientId(clientId, isCurrent);
 			},
 			statusChanged: (status) => {
 				this.sessionStatus = status;

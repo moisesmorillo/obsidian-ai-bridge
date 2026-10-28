@@ -1,16 +1,18 @@
 import {
 	ClientIdSchema,
+	DEVICE_CALLBACK_URI,
 	type DeviceCredential,
 	DeviceCredentialSchema,
 	DeviceDiscoverySchema,
 	DeviceRegistrationResponseSchema,
 	DeviceTokenResponseSchema,
 } from "@obsidian-ai-bridge/protocol";
-import type { CredentialStorage } from "@plugin/infrastructure/credential-storage";
+import type {
+	CredentialStorage,
+	CredentialWriteTransaction,
+} from "@plugin/infrastructure/credential-storage";
 import type { OAuthTransport } from "@plugin/infrastructure/oauth-transport";
 
-/** Exact private-use callback registered by the Worker for Obsidian enrollment. */
-const CALLBACK_URI = "obsidian://ai-bridge/callback";
 /** Permissions requested by a device during the approved enrollment flow. */
 const SCOPES = ["vault:read", "vault:write", "vault:delete"] as const;
 /** Maximum in-memory lifetime for one uncompleted browser consent request. */
@@ -33,8 +35,8 @@ export interface DeviceSessionHost {
 	getClientId(): string | null;
 	/** Opens only the constructed authorization URL in the external browser. */
 	openBrowser(url: string): void;
-	/** Persists the registered identity in serialized local journal state. */
-	setClientId(clientId: string): Promise<void>;
+	/** Persists identity only when this session generation still owns journal admission. */
+	setClientId(clientId: string, isCurrent: () => boolean): Promise<void>;
 	/** Publishes a fixed safe status without sensitive OAuth response values. */
 	statusChanged(status: DeviceSessionStatus): void;
 }
@@ -99,7 +101,7 @@ export class DeviceSession {
 					contentType: "application/json",
 					body: JSON.stringify({
 						client_name: "Obsidian desktop",
-						redirect_uris: [CALLBACK_URI],
+						redirect_uris: [DEVICE_CALLBACK_URI],
 						grant_types: ["authorization_code", "refresh_token"],
 						response_types: ["code"],
 						token_endpoint_auth_method: "none",
@@ -132,7 +134,7 @@ export class DeviceSession {
 			for (const [key, value] of Object.entries({
 				response_type: "code",
 				client_id: registration.client_id,
-				redirect_uri: CALLBACK_URI,
+				redirect_uri: DEVICE_CALLBACK_URI,
 				scope: SCOPES.join(" "),
 				state,
 				code_challenge: challenge,
@@ -153,10 +155,11 @@ export class DeviceSession {
 
 	/** Restores validated device credentials after restart without requesting protected data. */
 	async restore(): Promise<void> {
-		this.assertOpen();
+		const generation = this.generation;
+		this.assertCurrent(generation);
 		try {
 			const stored = await this.host.credentials.read();
-			this.assertOpen();
+			this.assertCurrent(generation);
 			this.credential = stored ? DeviceCredentialSchema.parse(stored) : null;
 			if (this.credential) this.assertCredentialIdentity(this.credential);
 			this.setStatus(this.credential ? "connected" : "disconnected");
@@ -201,7 +204,7 @@ export class DeviceSession {
 				grant_type: "authorization_code",
 				client_id: pending.clientId,
 				code: params.code,
-				redirect_uri: CALLBACK_URI,
+				redirect_uri: DEVICE_CALLBACK_URI,
 				code_verifier: pending.verifier,
 				resource: this.serviceOrigin,
 			});
@@ -215,25 +218,35 @@ export class DeviceSession {
 			this.assertCurrent(generation);
 			const credential = this.makeCredential(pending.clientId, token);
 			const previousCredential = this.credential;
-			await this.host.credentials.write(credential);
-			this.assertCurrent(generation);
-			try {
-				await this.host.setClientId(pending.clientId);
-			} catch {
+			await this.host.credentials.runWriteTransaction(async (transaction) => {
+				this.assertCurrent(generation);
+				let writeAttempted = false;
 				try {
-					if (previousCredential)
-						await this.host.credentials.write(previousCredential);
-					else await this.host.credentials.clear();
-				} catch {
-					this.credential = null;
-					this.setStatus("reconnect");
+					writeAttempted = true;
+					await transaction.write(credential);
+					this.assertCurrent(generation);
+					await this.host.setClientId(pending.clientId, () =>
+						this.ownsGeneration(generation),
+					);
+				} catch (error) {
+					if (writeAttempted) {
+						try {
+							if (previousCredential)
+								await transaction.write(previousCredential);
+							else await transaction.clear();
+						} catch {
+							this.credential = null;
+							this.setStatus("reconnect");
+						}
+					}
+					throw error;
 				}
-				throw new Error("Device identity persistence failed");
+			});
+			if (this.ownsGeneration(generation)) {
+				this.credential = credential;
+				this.pending = null;
+				this.setStatus("connected");
 			}
-			this.assertCurrent(generation);
-			this.credential = credential;
-			this.pending = null;
-			this.setStatus("connected");
 		} catch {
 			if (generation === this.generation && !this.closed) {
 				this.pending = null;
@@ -306,9 +319,10 @@ export class DeviceSession {
 
 	/** Returns usable credentials after one serialized, verified refresh if they expire soon. */
 	private async getCredential(): Promise<DeviceCredential> {
+		const generation = this.generation;
 		if (!this.credential) {
 			const stored = await this.host.credentials.read();
-			this.assertOpen();
+			this.assertCurrent(generation);
 			if (stored) {
 				try {
 					const validated = DeviceCredentialSchema.parse(stored);
@@ -322,9 +336,10 @@ export class DeviceSession {
 		}
 		const current = this.credential;
 		if (!current) throw new Error("Reconnect is required");
+		this.assertCredentialIdentity(current);
 		if (current.expires_at > this.now() + 30_000) return current;
 		const refresh = this.refreshTail.then(async () => {
-			this.assertOpen();
+			this.assertCurrent(generation);
 			if (this.credential && this.credential.expires_at > this.now() + 30_000)
 				return;
 			const body = new URLSearchParams({
@@ -342,9 +357,23 @@ export class DeviceSession {
 				}),
 			);
 			const next = this.makeCredential(current.client_id, token);
-			await this.host.credentials.write(next);
-			this.assertOpen();
-			this.credential = next;
+			await this.host.credentials.runWriteTransaction(
+				async (transaction: CredentialWriteTransaction) => {
+					this.assertCurrent(generation);
+					try {
+						await transaction.write(next);
+						this.assertCurrent(generation);
+					} catch (error) {
+						try {
+							await transaction.write(current);
+						} catch {
+							this.credential = null;
+						}
+						throw error;
+					}
+				},
+			);
+			if (this.ownsGeneration(generation)) this.credential = next;
 		});
 		this.refreshTail = refresh.then(
 			() => undefined,
@@ -353,7 +382,7 @@ export class DeviceSession {
 		try {
 			await refresh;
 		} catch {
-			this.setStatus("reconnect");
+			if (this.ownsGeneration(generation)) this.setStatus("reconnect");
 			throw new Error("Reconnect is required");
 		}
 		if (!this.credential) throw new Error("Reconnect is required");
@@ -375,6 +404,7 @@ export class DeviceSession {
 		if (!SCOPES.every((required) => scope.includes(required)))
 			throw new Error("OAuth token has insufficient device scopes");
 		return DeviceCredentialSchema.parse({
+			service_origin: this.serviceOrigin,
 			client_id: ClientIdSchema.parse(clientId),
 			access_token: token.access_token,
 			refresh_token: token.refresh_token,
@@ -384,9 +414,12 @@ export class DeviceSession {
 		});
 	}
 
-	/** Blocks token use when the persisted device identity differs from the credential client. */
+	/** Blocks token use when service origin or persisted journal identity differs from credentials. */
 	private assertCredentialIdentity(credential: DeviceCredential): void {
-		if (this.host.getClientId() !== credential.client_id)
+		if (
+			credential.service_origin !== this.serviceOrigin ||
+			this.host.getClientId() !== credential.client_id
+		)
 			throw new Error("Stored device identity does not match credentials");
 	}
 
@@ -395,6 +428,11 @@ export class DeviceSession {
 		this.assertOpen();
 		if (generation !== this.generation)
 			throw new Error("Authorization is stale");
+	}
+
+	/** Reports whether this callback or refresh still owns the current live generation. */
+	private ownsGeneration(generation: number): boolean {
+		return !this.closed && generation === this.generation;
 	}
 
 	/** Throws when the plugin lifecycle no longer owns this controller. */

@@ -7,6 +7,7 @@ import {
 import {
 	type AuthorizationContext,
 	AuthorizationContextSchema,
+	DEVICE_CALLBACK_URI,
 	LocalAuthConfigurationSchema,
 	VaultScopeSchema,
 } from "@obsidian-ai-bridge/protocol";
@@ -48,7 +49,7 @@ function hasUnapprovedPrivateRedirectUri(value: unknown): boolean {
 			return (
 				protocol !== "https:" &&
 				protocol !== "http:" &&
-				uri !== "obsidian://ai-bridge/callback"
+				uri !== DEVICE_CALLBACK_URI
 			);
 		} catch {
 			return false;

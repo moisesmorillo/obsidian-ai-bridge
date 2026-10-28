@@ -74,6 +74,7 @@ export type {
 	DeviceTokenResponse,
 } from "@protocol/schemas/device-auth";
 export {
+	DEVICE_CALLBACK_URI,
 	DeviceCredentialSchema,
 	DeviceDiscoverySchema,
 	DeviceRegistrationResponseSchema,

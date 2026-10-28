@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { ObsidianCredentialStorage } from "../src/infrastructure/credential-storage";
 
 const credential = {
+	service_origin: "https://service.test",
 	client_id: "client-a",
 	access_token: "synthetic-access",
 	refresh_token: "synthetic-refresh",
@@ -68,6 +69,40 @@ describe("ObsidianCredentialStorage", () => {
 		expect(await store.read()).toEqual(credential);
 		expect(store.warning).toBe("tokens stored unencrypted on this device");
 		expect(host.values.size).toBe(1);
+	});
+
+	it("serializes credential transactions shared by multiple sessions", async () => {
+		const host = createApp();
+		const store = new ObsidianCredentialStorage(
+			host.app,
+			"018f47b2-5c00-7000-8000-000000000001",
+		);
+		let releaseFirst: (() => void) | undefined;
+		let markFirstStarted: (() => void) | undefined;
+		const firstStarted = new Promise<void>((resolve) => {
+			markFirstStarted = resolve;
+		});
+		const first = store.runWriteTransaction(async (transaction) => {
+			await transaction.write(credential);
+			markFirstStarted?.();
+			await new Promise<void>((resolve) => {
+				releaseFirst = resolve;
+			});
+		});
+		await firstStarted;
+		let secondStarted = false;
+		const second = store.runWriteTransaction(async (transaction) => {
+			secondStarted = true;
+			await transaction.write({
+				...credential,
+				access_token: "next-access",
+			});
+		});
+		await Promise.resolve();
+		expect(secondStarted).toBe(false);
+		releaseFirst?.();
+		await Promise.all([first, second]);
+		expect((await store.read())?.access_token).toBe("next-access");
 	});
 
 	it("does not fall back after secretStorage write errors", async () => {

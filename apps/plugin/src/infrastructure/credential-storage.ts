@@ -5,6 +5,16 @@ import {
 import type { App } from "obsidian";
 
 /** Credential persistence capability with a safe UI warning for localStorage fallback. */
+export interface CredentialWriteTransaction {
+	/** Reads the current validated record while the writer owns admission. */
+	read(): Promise<DeviceCredential | null>;
+	/** Writes and verifies a record without reacquiring the shared writer queue. */
+	write(credential: DeviceCredential): Promise<void>;
+	/** Clears and verifies the record without reacquiring the shared writer queue. */
+	clear(): Promise<void>;
+}
+
+/** Serializes credential commits shared by every session built from one device store. */
 export interface CredentialStorage {
 	/** Safe warning shown when the record uses unencrypted localStorage fallback. */
 	readonly warning: string | null;
@@ -14,6 +24,10 @@ export interface CredentialStorage {
 	write(credential: DeviceCredential): Promise<void>;
 	/** Removes credentials and verifies absence during failed first enrollment rollback. */
 	clear(): Promise<void>;
+	/** Holds shared write admission until credential and journal identity updates settle. */
+	runWriteTransaction<T>(
+		action: (transaction: CredentialWriteTransaction) => Promise<T>,
+	): Promise<T>;
 }
 
 /** Stores one validated credential record in device secret storage or local-only fallback. */
@@ -21,6 +35,8 @@ export class ObsidianCredentialStorage implements CredentialStorage {
 	readonly warning: string | null;
 	private readonly secretId: string;
 	private readonly localKey: string;
+	/** Shared admission queue for all sessions using this device-keyed store. */
+	private writeTail: Promise<void> = Promise.resolve();
 
 	/** Selects one stable per-device key and never changes stores after a write error. */
 	constructor(
@@ -45,8 +61,57 @@ export class ObsidianCredentialStorage implements CredentialStorage {
 		return decoded === null ? null : DeviceCredentialSchema.parse(decoded);
 	}
 
-	/** Writes and reads back one credential record; failures never trigger another store. */
+	/** Writes and reads back one record through the shared device-store queue. */
 	async write(credential: DeviceCredential): Promise<void> {
+		return this.runWriteTransaction(async (transaction) =>
+			transaction.write(credential),
+		);
+	}
+
+	/** Clears one device record through the shared device-store queue. */
+	async clear(): Promise<void> {
+		return this.runWriteTransaction(async (transaction) => transaction.clear());
+	}
+
+	/** Holds shared write admission until credential and journal identity updates settle. */
+	async runWriteTransaction<T>(
+		action: (transaction: CredentialWriteTransaction) => Promise<T>,
+	): Promise<T> {
+		const result = this.writeTail.then(async () => {
+			let active = true;
+			/** Rejects transaction callbacks that escaped the serialized write lifetime. */
+			const assertActive = () => {
+				if (!active)
+					throw new Error("Credential write transaction is no longer active");
+			};
+			try {
+				return await action({
+					read: async () => {
+						assertActive();
+						return this.read();
+					},
+					write: async (credential) => {
+						assertActive();
+						return this.writeUnlocked(credential);
+					},
+					clear: async () => {
+						assertActive();
+						return this.clearUnlocked();
+					},
+				});
+			} finally {
+				active = false;
+			}
+		});
+		this.writeTail = result.then(
+			() => undefined,
+			() => undefined,
+		);
+		return result;
+	}
+
+	/** Writes and verifies one credential without acquiring the shared queue again. */
+	private async writeUnlocked(credential: DeviceCredential): Promise<void> {
 		const validated = DeviceCredentialSchema.parse(credential);
 		const serialized = JSON.stringify(validated);
 		if (this.app.secretStorage) {
@@ -59,8 +124,8 @@ export class ObsidianCredentialStorage implements CredentialStorage {
 			throw new Error("Credential storage did not verify");
 	}
 
-	/** Clears one device record and verifies absence without switching storage backends. */
-	async clear(): Promise<void> {
+	/** Clears and verifies one record without acquiring the shared queue again. */
+	private async clearUnlocked(): Promise<void> {
 		if (this.app.secretStorage) {
 			this.app.secretStorage.setSecret(this.secretId, "null");
 		} else {

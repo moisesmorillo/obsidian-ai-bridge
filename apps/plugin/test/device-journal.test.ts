@@ -63,6 +63,68 @@ describe("DeviceJournal", () => {
 		expect(journal.snapshot().pending_ops).toHaveLength(2);
 	});
 
+	it("rejects queued client identity persistence after its session is canceled", async () => {
+		const journal = await DeviceJournal.open(storage);
+		let releasePayload: (() => void) | undefined;
+		let markPayloadStarted: (() => void) | undefined;
+		const payloadStarted = new Promise<void>((resolve) => {
+			markPayloadStarted = resolve;
+		});
+		const writePayload = storage.writePayload.bind(storage);
+		storage.writePayload = async (path, value) => {
+			markPayloadStarted?.();
+			await new Promise<void>((resolve) => {
+				releasePayload = resolve;
+			});
+			await writePayload(path, value);
+		};
+		const operation = journal.enqueue(
+			{ op: "put", path: "notes/a.md", precondition },
+			bytes,
+		);
+		await payloadStarted;
+		let sessionActive = true;
+		const queuedIdentity = journal.setClientId(
+			"late-client",
+			() => sessionActive,
+		);
+		sessionActive = false;
+		releasePayload?.();
+		await operation;
+		await expect(queuedIdentity).rejects.toThrow();
+		expect(journal.snapshot().client_id).toBeUndefined();
+		expect(journal.snapshot().pending_ops).toHaveLength(1);
+	});
+
+	it("preserves a queued operation when close rejects queued client identity persistence", async () => {
+		const journal = await DeviceJournal.open(storage);
+		const operation = await journal.enqueue(
+			{ op: "put", path: "notes/a.md", precondition },
+			bytes,
+		);
+		let releasePayload: ((value: Uint8Array) => void) | undefined;
+		let markPayloadStarted: (() => void) | undefined;
+		const payloadStarted = new Promise<void>((resolve) => {
+			markPayloadStarted = resolve;
+		});
+		storage.readPayload = async () =>
+			new Promise((resolve) => {
+				releasePayload = resolve;
+				markPayloadStarted?.();
+			});
+		const send = journal.prepareSend(operation.key, precondition);
+		await payloadStarted;
+		const identity = journal.setClientId("late-client");
+		journal.close();
+		releasePayload?.(bytes.slice());
+		await expect(send).rejects.toThrow("closed");
+		await expect(identity).rejects.toThrow("closed");
+		expect(journal.snapshot().pending_ops[0]?.key).toBe(operation.key);
+		expect(
+			(storage.state as { pending_ops: unknown[] }).pending_ops,
+		).toHaveLength(1);
+	});
+
 	it("rejects corrupt state without replacing it", async () => {
 		storage.state = { version: 77, device_id: "bad", pending_ops: [] };
 		await expect(DeviceJournal.open(storage)).rejects.toThrow();

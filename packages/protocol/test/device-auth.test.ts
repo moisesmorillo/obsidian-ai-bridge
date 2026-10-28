@@ -3,6 +3,7 @@ import {
 	DEVICE_CALLBACK_URI,
 	DeviceCredentialSchema,
 	DeviceDiscoverySchema,
+	DeviceRegistrationResponseSchema,
 	DeviceTokenResponseSchema,
 } from "../src/schemas/device-auth";
 
@@ -15,6 +16,21 @@ describe("device enrollment protocol schemas", () => {
 				token_type: "Bearer",
 				expires_in: "3600",
 			}).success,
+		).toBe(false);
+	});
+
+	it("normalizes bearer token types and rejects unsupported types", () => {
+		const response = {
+			access_token: "access",
+			refresh_token: "refresh",
+			token_type: "bearer",
+			expires_in: 3600,
+			scope: "vault:read vault:write vault:delete",
+		};
+		expect(DeviceTokenResponseSchema.parse(response).token_type).toBe("Bearer");
+		expect(
+			DeviceTokenResponseSchema.safeParse({ ...response, token_type: "mac" })
+				.success,
 		).toBe(false);
 	});
 
@@ -59,6 +75,26 @@ describe("device enrollment protocol schemas", () => {
 		expect(
 			DeviceCredentialSchema.safeParse({ ...valid, extra: "not accepted" })
 				.success,
+		).toBe(false);
+		expect(
+			DeviceCredentialSchema.safeParse({
+				...valid,
+				scope: ["vault:read", "vault:write", "vault:admin"],
+			}).success,
+		).toBe(false);
+	});
+
+	it("reuses bounded client IDs across registration and credentials", () => {
+		const maximumClientId = "c".repeat(2048);
+		expect(
+			DeviceRegistrationResponseSchema.safeParse({
+				client_id: maximumClientId,
+			}).success,
+		).toBe(true);
+		expect(
+			DeviceRegistrationResponseSchema.safeParse({
+				client_id: `${maximumClientId}c`,
+			}).success,
 		).toBe(false);
 	});
 

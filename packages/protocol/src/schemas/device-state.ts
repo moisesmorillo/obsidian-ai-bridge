@@ -1,3 +1,4 @@
+import { ClientIdSchema } from "@protocol/schemas/auth";
 import { EpochSchema } from "@protocol/schemas/etag";
 import { PathSchema } from "@protocol/schemas/path";
 import { z } from "zod";
@@ -118,7 +119,7 @@ export const DeviceStateSchema = z
 	.object({
 		version: z.literal(1),
 		device_id: DeviceOperationKeySchema,
-		client_id: z.string().min(1).max(2048).optional(),
+		client_id: ClientIdSchema.optional(),
 		pending_ops: z
 			.array(PendingOperationSchema)
 			.refine(

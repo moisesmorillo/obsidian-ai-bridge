@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
 	DeviceSession,
 	type DeviceSessionHost,
+	type DeviceSessionStatus,
 } from "../src/auth/device-session";
 import type {
 	CredentialStorage,
@@ -75,6 +76,7 @@ class FakeTransport implements OAuthTransport {
 	readonly calls: { url: string; options?: Record<string, unknown> }[] = [];
 	discoveryOverride: unknown = null;
 	failTokenRequests = false;
+	tokenType = "Bearer";
 	beforeRefreshResponse: (() => Promise<void>) | null = null;
 
 	/** Binds synthetic discovery endpoints to one test service origin. */
@@ -101,12 +103,18 @@ class FakeTransport implements OAuthTransport {
 			return { client_id: "synthetic-client" };
 		if (url.endsWith("oauth/token")) {
 			if (this.failTokenRequests) throw new Error("synthetic exchange failure");
-			if (String(options?.body ?? "").includes("grant_type=refresh_token"))
-				await this.beforeRefreshResponse?.();
+			const isRefresh = String(options?.body ?? "").includes(
+				"grant_type=refresh_token",
+			);
+			if (isRefresh) await this.beforeRefreshResponse?.();
 			return {
-				access_token: "synthetic-access-token",
-				refresh_token: "synthetic-refresh-token",
-				token_type: "Bearer",
+				access_token: isRefresh
+					? "rotated-old-access-token"
+					: "synthetic-access-token",
+				refresh_token: isRefresh
+					? "rotated-old-refresh-token"
+					: "synthetic-refresh-token",
+				token_type: this.tokenType,
 				expires_in: 3600,
 				scope: "vault:read vault:write vault:delete",
 			};
@@ -124,6 +132,7 @@ function createSession(
 ) {
 	const transport = new FakeTransport(serviceOrigin);
 	let browserUrl = "";
+	const statuses: DeviceSessionStatus[] = [];
 	let failBrowser = false;
 	let clientIdPersistence: (() => Promise<void>) | null = null;
 	let failClientId = false;
@@ -142,7 +151,7 @@ function createSession(
 			if (!isCurrent()) throw new Error("synthetic stale identity write");
 			identity.clientId = value;
 		},
-		statusChanged: () => {},
+		statusChanged: (status) => statuses.push(status),
 	};
 	return {
 		session: new DeviceSession(serviceOrigin, host, now),
@@ -152,6 +161,7 @@ function createSession(
 		credentials,
 		browserUrl: () => browserUrl,
 		clientId: () => identity.clientId,
+		statuses: () => [...statuses],
 		setBrowserFailure: (value: boolean) => {
 			failBrowser = value;
 		},
@@ -180,6 +190,7 @@ describe("DeviceSession", () => {
 		await expect(
 			test.session.callback({ code: "synthetic-code", state: "wrong" }),
 		).rejects.toThrow();
+		expect(test.statuses().at(-1)).toBe("connecting");
 		expect(
 			test.transport.calls.filter((call) => call.url.endsWith("oauth/token")),
 		).toHaveLength(0);
@@ -239,6 +250,7 @@ describe("DeviceSession", () => {
 			test.transport.calls.filter((call) => call.url.endsWith("oauth/token")),
 		).toHaveLength(0);
 		expect(test.credentials.value).toBeNull();
+		expect(test.statuses().at(-1)).toBe("reconnect");
 	});
 
 	it("reports a browser-launch failure without retaining pending consent", async () => {
@@ -249,6 +261,7 @@ describe("DeviceSession", () => {
 		await expect(
 			test.session.callback({ code: "synthetic-code", state: "any-state" }),
 		).rejects.toThrow();
+		expect(test.statuses().at(-1)).toBe("reconnect");
 		expect(
 			test.transport.calls.filter((call) => call.url.endsWith("oauth/token")),
 		).toHaveLength(0);
@@ -283,12 +296,14 @@ describe("DeviceSession", () => {
 		const auth = new URL(test.browserUrl());
 		const state = auth.searchParams.get("state") ?? "";
 		await expect(test.session.callback({ state })).rejects.toThrow();
+		expect(test.statuses().at(-1)).toBe("reconnect");
 		await test.session.connect();
 		const nextAuth = new URL(test.browserUrl());
 		const nextState = nextAuth.searchParams.get("state") ?? "";
 		await expect(
 			test.session.callback({ error: "access_denied", state: nextState }),
 		).rejects.toThrow();
+		expect(test.statuses().at(-1)).toBe("reconnect");
 		expect(
 			test.transport.calls.filter((call) => call.url.endsWith("oauth/token")),
 		).toHaveLength(0);
@@ -301,6 +316,7 @@ describe("DeviceSession", () => {
 				state: expiring.searchParams.get("state") ?? "",
 			}),
 		).rejects.toThrow("expired");
+		expect(test.statuses().at(-1)).toBe("reconnect");
 		expect(
 			test.transport.calls.filter((call) => call.url.endsWith("oauth/token")),
 		).toHaveLength(0);
@@ -332,6 +348,7 @@ describe("DeviceSession", () => {
 			}),
 		).rejects.toThrow();
 		expect(test.credentials.value?.client_id).toBe("old-client");
+		expect(test.statuses().at(-1)).toBe("connected");
 	});
 
 	it("restores old credentials when journal identity persistence fails", async () => {
@@ -357,6 +374,30 @@ describe("DeviceSession", () => {
 			}),
 		).rejects.toThrow();
 		expect(test.credentials.value?.client_id).toBe("old-client");
+	});
+
+	it("normalizes lowercase bearer values on exchange and refresh", async () => {
+		const test = createSession(() => 10_000);
+		test.transport.tokenType = "bearer";
+		await test.session.connect();
+		const auth = new URL(test.browserUrl());
+		await test.session.callback({
+			code: "synthetic-code",
+			state: auth.searchParams.get("state") ?? "",
+		});
+		expect(test.credentials.value?.token_type).toBe("Bearer");
+		const exchangedCredential = test.credentials.value;
+		expect(exchangedCredential).not.toBeNull();
+		if (!exchangedCredential) throw new Error("Credential was not stored");
+		test.credentials.value = { ...exchangedCredential, expires_at: 10_000 };
+		await test.session.restore();
+		await expect(test.session.request("/v1/vault")).resolves.toEqual({
+			ok: true,
+		});
+		expect(test.credentials.value?.token_type).toBe("Bearer");
+		expect(
+			test.transport.calls.filter((call) => call.url.endsWith("oauth/token")),
+		).toHaveLength(2);
 	});
 
 	it("blocks protected requests after the refresh server rejects a token", async () => {
@@ -464,7 +505,7 @@ describe("DeviceSession", () => {
 		).toBe(false);
 	});
 
-	it("serializes refresh persistence against a successful reconnect", async () => {
+	it("keeps callback credentials when same-generation refresh finishes late", async () => {
 		const test = createSession(() => 10_000);
 		test.credentials.value = {
 			service_origin: "https://service.test",
@@ -487,33 +528,28 @@ describe("DeviceSession", () => {
 				releaseRefresh = resolve;
 				markRefreshStarted?.();
 			});
+		await test.session.connect();
 		const request = test.session.request("/v1/vault");
 		await refreshStarted;
-		await test.session.connect();
 		const auth = new URL(test.browserUrl());
-		let releaseIdentity: (() => void) | undefined;
-		let markIdentityStarted: (() => void) | undefined;
-		const identityStarted = new Promise<void>((resolve) => {
-			markIdentityStarted = resolve;
-		});
-		test.setClientIdPersistence(
-			() =>
-				new Promise((resolve) => {
-					releaseIdentity = resolve;
-					markIdentityStarted?.();
-				}),
-		);
-		const callback = test.session.callback({
+		await test.session.callback({
 			code: "new-code",
 			state: auth.searchParams.get("state") ?? "",
 		});
-		await identityStarted;
 		releaseRefresh?.();
-		releaseIdentity?.();
-		await callback;
-		await expect(request).rejects.toThrow();
+		await expect(request).resolves.toEqual({ ok: true });
+		expect(test.clientId()).toBe("synthetic-client");
 		expect(test.credentials.value?.client_id).toBe("synthetic-client");
 		expect(test.credentials.value?.access_token).toBe("synthetic-access-token");
+		const protectedCall = test.transport.calls.find((call) =>
+			call.url.endsWith("/v1/vault"),
+		);
+		expect(protectedCall?.options?.headers).toEqual({
+			authorization: "Bearer synthetic-access-token",
+		});
+		expect(JSON.stringify(protectedCall?.options)).not.toContain(
+			"rotated-old-access-token",
+		);
 	});
 
 	it("cancels queued journal identity persistence before it changes state", async () => {

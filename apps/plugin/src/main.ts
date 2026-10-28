@@ -32,6 +32,10 @@ export default class AIBridgePlugin extends Plugin {
 	private sessionStatus: DeviceSessionStatus = "disconnected";
 	/** Fences asynchronous journal opens when unload or a newer load occurs. */
 	private lifecycleGeneration = 0;
+	/** Orders server URL saves and fences every older settings callback. */
+	private serverSettingsGeneration = 0;
+	/** Serializes settings writes so the latest accepted URL persists last. */
+	private settingsSaveTail: Promise<void> = Promise.resolve();
 	/** Safe user-facing reason when local journal initialization cannot proceed. */
 	attentionReason: string | null = null;
 
@@ -86,15 +90,36 @@ export default class AIBridgePlugin extends Plugin {
 				this.settingsValue,
 				() => this.session ?? this.createSession(),
 				this.credentials,
-				async (url) => {
-					const nextSession = this.buildSession(url);
-					await this.saveData({ serverUrl: url });
-					this.session?.close();
-					this.settingsValue.serverUrl = url;
-					this.session = nextSession;
-					this.sessionStatus = "disconnected";
-					this.settingsTab?.refreshStatus();
+				(url) => {
+					const update = ++this.serverSettingsGeneration;
+					const save = this.settingsSaveTail.then(async () => {
+						if (!this.ownsServerSettingsUpdate(generation, update))
+							throw new Error("Server setting update is stale");
+						const nextSession = this.buildSession(url);
+						try {
+							await this.saveData({ serverUrl: url });
+						} catch (error) {
+							nextSession.close();
+							throw error;
+						}
+						if (!this.ownsServerSettingsUpdate(generation, update)) {
+							nextSession.close();
+							throw new Error("Server setting update is stale");
+						}
+						const previousSession = this.session;
+						this.session = nextSession;
+						this.settingsValue.serverUrl = url;
+						this.sessionStatus = "disconnected";
+						previousSession?.close();
+						this.settingsTab?.refreshStatus();
+					});
+					this.settingsSaveTail = save.then(
+						() => undefined,
+						() => undefined,
+					);
+					return save;
 				},
+
 				() => this.sessionStatus,
 			);
 			this.addSettingTab(this.settingsTab);
@@ -107,10 +132,19 @@ export default class AIBridgePlugin extends Plugin {
 	/** Blocks session and journal actions immediately without deleting local data. */
 	onunload(): void {
 		this.lifecycleGeneration += 1;
+		this.serverSettingsGeneration += 1;
 		this.session?.close();
 		this.journal?.close();
 		this.session = null;
 		this.journal = null;
+	}
+
+	/** Checks that one queued URL save still owns its plugin lifecycle and update order. */
+	private ownsServerSettingsUpdate(lifecycle: number, update: number): boolean {
+		return (
+			lifecycle === this.lifecycleGeneration &&
+			update === this.serverSettingsGeneration
+		);
 	}
 
 	/** Builds a controller from the current service setting and device-local storage. */

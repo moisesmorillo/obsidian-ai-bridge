@@ -1,4 +1,5 @@
-import { ServiceOriginSchema } from "@protocol/schemas/auth";
+import { VaultScopeSchema } from "@protocol/schemas/admission";
+import { ClientIdSchema, ServiceOriginSchema } from "@protocol/schemas/auth";
 import { z } from "zod";
 
 /** Canonical Obsidian callback URI supported by the desktop OAuth flow. */
@@ -20,14 +21,20 @@ export const DeviceDiscoverySchema = z
 
 /** OAuth public-client registration accepted before browser consent. */
 export const DeviceRegistrationResponseSchema = z
-	.object({ client_id: z.string().min(1).max(2048) })
+	.object({ client_id: ClientIdSchema })
 	.passthrough();
 
 /** OAuth authorization-code and refresh response fields consumed by the session controller. */
 export const DeviceTokenResponseSchema = z
 	.object({
 		access_token: z.string().min(1),
-		token_type: z.string().min(1),
+		token_type: z
+			.string()
+			.min(1)
+			.refine((value) => value.toLowerCase() === "bearer", {
+				message: "token type must be Bearer",
+			})
+			.transform(() => "Bearer" as const),
 		expires_in: z.number().int().positive().safe(),
 		refresh_token: z.string().min(1),
 		scope: z.string().optional(),
@@ -38,12 +45,12 @@ export const DeviceTokenResponseSchema = z
 export const DeviceCredentialSchema = z
 	.object({
 		service_origin: ServiceOriginSchema,
-		client_id: z.string().min(1).max(2048),
+		client_id: ClientIdSchema,
 		access_token: z.string().min(1),
 		refresh_token: z.string().min(1),
 		token_type: z.literal("Bearer"),
 		expires_at: z.number().int().positive().safe(),
-		scope: z.array(z.enum(["vault:read", "vault:write", "vault:delete"])),
+		scope: z.array(VaultScopeSchema),
 	})
 	.strict();
 

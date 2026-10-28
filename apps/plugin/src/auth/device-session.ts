@@ -5,7 +5,9 @@ import {
 	DeviceCredentialSchema,
 	DeviceDiscoverySchema,
 	DeviceRegistrationResponseSchema,
+	type DeviceTokenResponse,
 	DeviceTokenResponseSchema,
+	VaultScopeSchema,
 } from "@obsidian-ai-bridge/protocol";
 import type {
 	CredentialStorage,
@@ -14,7 +16,7 @@ import type {
 import type { OAuthTransport } from "@plugin/infrastructure/oauth-transport";
 
 /** Permissions requested by a device during the approved enrollment flow. */
-const SCOPES = ["vault:read", "vault:write", "vault:delete"] as const;
+const SCOPES = VaultScopeSchema.options;
 /** Maximum in-memory lifetime for one uncompleted browser consent request. */
 const CONSENT_LIFETIME_MS = 10 * 60 * 1000;
 
@@ -184,17 +186,17 @@ export class DeviceSession {
 		if (!pending || pending.generation !== this.generation)
 			throw new Error("No active device authorization");
 		if (this.now() >= pending.expiresAt) {
-			this.pending = null;
+			this.finishConsentAsFailed(pending);
 			throw new Error("Device authorization is expired");
 		}
 		if (params.state !== pending.state)
 			throw new Error("Device authorization state is invalid");
 		if (params.iss && params.iss !== pending.issuer) {
-			this.pending = null;
+			this.finishConsentAsFailed(pending);
 			throw new Error("Device authorization issuer is invalid");
 		}
 		if (Boolean(params.code) === Boolean(params.error) || !params.code) {
-			this.pending = null;
+			this.finishConsentAsFailed(pending);
 			throw new Error("Device authorization was not approved");
 		}
 		const generation = pending.generation;
@@ -228,6 +230,10 @@ export class DeviceSession {
 					await this.host.setClientId(pending.clientId, () =>
 						this.ownsGeneration(generation),
 					);
+					if (this.ownsGeneration(generation)) {
+						this.credential = credential;
+						this.pending = null;
+					}
 				} catch (error) {
 					if (writeAttempted) {
 						try {
@@ -242,11 +248,7 @@ export class DeviceSession {
 					throw error;
 				}
 			});
-			if (this.ownsGeneration(generation)) {
-				this.credential = credential;
-				this.pending = null;
-				this.setStatus("connected");
-			}
+			if (this.ownsGeneration(generation)) this.setStatus("connected");
 		} catch {
 			if (generation === this.generation && !this.closed) {
 				this.pending = null;
@@ -267,6 +269,9 @@ export class DeviceSession {
 			throw new Error("API request must use the configured service origin");
 		const credential = await this.getCredential();
 		this.assertOpen();
+		if (this.credential !== credential)
+			throw new Error("Device credentials changed before request");
+		this.assertCredentialIdentity(credential);
 		const response = await this.host.transport.request(url.toString(), {
 			method: options.method ?? "GET",
 			body: options.body,
@@ -340,8 +345,12 @@ export class DeviceSession {
 		if (current.expires_at > this.now() + 30_000) return current;
 		const refresh = this.refreshTail.then(async () => {
 			this.assertCurrent(generation);
-			if (this.credential && this.credential.expires_at > this.now() + 30_000)
-				return;
+			if (this.credential !== current) {
+				if (this.credential && this.credential.expires_at > this.now() + 30_000)
+					return;
+				throw new Error("Device credentials changed during refresh");
+			}
+			if (this.credential.expires_at > this.now() + 30_000) return;
 			const body = new URLSearchParams({
 				grant_type: "refresh_token",
 				client_id: current.client_id,
@@ -360,9 +369,20 @@ export class DeviceSession {
 			await this.host.credentials.runWriteTransaction(
 				async (transaction: CredentialWriteTransaction) => {
 					this.assertCurrent(generation);
+					if (this.credential !== current) {
+						if (
+							this.credential &&
+							this.credential.expires_at > this.now() + 30_000
+						)
+							return;
+						throw new Error("Device credentials changed during refresh");
+					}
 					try {
 						await transaction.write(next);
 						this.assertCurrent(generation);
+						if (this.credential !== current)
+							throw new Error("Device credentials changed during refresh");
+						this.credential = next;
 					} catch (error) {
 						try {
 							await transaction.write(current);
@@ -373,7 +393,6 @@ export class DeviceSession {
 					}
 				},
 			);
-			if (this.ownsGeneration(generation)) this.credential = next;
 		});
 		this.refreshTail = refresh.then(
 			() => undefined,
@@ -382,7 +401,8 @@ export class DeviceSession {
 		try {
 			await refresh;
 		} catch {
-			if (this.ownsGeneration(generation)) this.setStatus("reconnect");
+			if (this.ownsGeneration(generation) && this.credential === current)
+				this.setStatus("reconnect");
 			throw new Error("Reconnect is required");
 		}
 		if (!this.credential) throw new Error("Reconnect is required");
@@ -392,13 +412,7 @@ export class DeviceSession {
 	/** Builds a canonical record and rejects token responses that omit requested device scopes. */
 	private makeCredential(
 		clientId: string,
-		token: {
-			access_token: string;
-			refresh_token: string;
-			token_type: string;
-			expires_in: number;
-			scope?: string;
-		},
+		token: DeviceTokenResponse,
 	): DeviceCredential {
 		const scope = token.scope ? token.scope.split(" ") : [...SCOPES];
 		if (!SCOPES.every((required) => scope.includes(required)))
@@ -412,6 +426,13 @@ export class DeviceSession {
 			expires_at: this.now() + token.expires_in * 1000,
 			scope,
 		});
+	}
+
+	/** Restores the visible terminal state after one consent callback fails. */
+	private finishConsentAsFailed(pending: PendingConsent): void {
+		if (!this.ownsGeneration(pending.generation)) return;
+		this.pending = null;
+		this.setStatus(this.credential ? "connected" : "reconnect");
 	}
 
 	/** Blocks token use when service origin or persisted journal identity differs from credentials. */

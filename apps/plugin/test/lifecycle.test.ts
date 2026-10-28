@@ -7,6 +7,8 @@ const host = vi.hoisted(() => ({
 		| ((params: Record<string, string | "true">) => void)
 		| null,
 	settingsTab: null as unknown,
+	serverUrlChange: null as ((url: string) => Promise<void>) | null,
+	saveDataAction: null as ((data: unknown) => Promise<void>) | null,
 	state: null as unknown,
 	failSave: false,
 	loadState: null as (() => unknown) | null,
@@ -56,9 +58,25 @@ vi.mock("obsidian", () => ({
 			},
 		};
 		requestUrl = (..._args: unknown[]) => host.calls.push("requestUrl");
-		saveData = (..._args: unknown[]) => host.calls.push("saveData");
+		saveData = (...args: unknown[]) => {
+			host.calls.push("saveData");
+			return host.saveDataAction?.(args[0]);
+		};
 		saveSecretStorage = (..._args: unknown[]) =>
 			host.calls.push("saveSecretStorage");
+	},
+}));
+
+vi.mock("../src/settings", () => ({
+	/** Captures the URL update callback without rendering Obsidian controls. */
+	AIBridgeSettingTab: class {
+		/** Captures constructor policy so lifecycle tests can invoke server updates. */
+		constructor(...args: unknown[]) {
+			host.serverUrlChange = args[5] as (url: string) => Promise<void>;
+		}
+
+		/** Satisfies the composition status-refresh call. */
+		refreshStatus(): void {}
 	},
 }));
 
@@ -73,6 +91,8 @@ describe("AIBridgePlugin device-local lifecycle", () => {
 		host.protocolAction = "";
 		host.protocolHandler = null;
 		host.settingsTab = null;
+		host.serverUrlChange = null;
+		host.saveDataAction = null;
 		host.state = null;
 		host.failSave = false;
 		host.loadState = null;
@@ -150,6 +170,67 @@ describe("AIBridgePlugin device-local lifecycle", () => {
 		finishRead?.(null);
 		await opening;
 		expect(close).toHaveBeenCalledOnce();
+		close.mockRestore();
+	});
+
+	it("closes a settings candidate when unload occurs during saveData", async () => {
+		const close = vi.spyOn(DeviceSession.prototype, "close");
+		const plugin = new AIBridgePlugin({} as App, {} as PluginManifest);
+		await plugin.onload();
+		let releaseSave: (() => void) | undefined;
+		let markSaveStarted: (() => void) | undefined;
+		const saveStarted = new Promise<void>((resolve) => {
+			markSaveStarted = resolve;
+		});
+		host.saveDataAction = () =>
+			new Promise((resolve) => {
+				releaseSave = resolve;
+				markSaveStarted?.();
+			});
+		const update = host.serverUrlChange;
+		if (!update) throw new Error("Settings callback was not registered");
+		const pending = update("https://next-service.test");
+		await saveStarted;
+		plugin.onunload();
+		releaseSave?.();
+		await expect(pending).rejects.toThrow();
+		expect(close).toHaveBeenCalledTimes(2);
+		close.mockRestore();
+	});
+
+	it("serializes overlapping server URL saves and keeps the latest update", async () => {
+		const close = vi.spyOn(DeviceSession.prototype, "close");
+		const plugin = new AIBridgePlugin({} as App, {} as PluginManifest);
+		await plugin.onload();
+		let releaseFirst: (() => void) | undefined;
+		let markFirstStarted: (() => void) | undefined;
+		const firstStarted = new Promise<void>((resolve) => {
+			markFirstStarted = resolve;
+		});
+		const savedUrls: string[] = [];
+		host.saveDataAction = async (data) => {
+			const url = (data as { serverUrl: string }).serverUrl;
+			savedUrls.push(url);
+			if (url === "https://first-service.test")
+				await new Promise<void>((resolve) => {
+					releaseFirst = resolve;
+					markFirstStarted?.();
+				});
+		};
+		const update = host.serverUrlChange;
+		if (!update) throw new Error("Settings callback was not registered");
+		const first = update("https://first-service.test");
+		await firstStarted;
+		const second = update("https://second-service.test");
+		releaseFirst?.();
+		await expect(first).rejects.toThrow();
+		await second;
+		expect(savedUrls).toEqual([
+			"https://first-service.test",
+			"https://second-service.test",
+		]);
+		expect(close).toHaveBeenCalledTimes(2);
+		plugin.onunload();
 		close.mockRestore();
 	});
 

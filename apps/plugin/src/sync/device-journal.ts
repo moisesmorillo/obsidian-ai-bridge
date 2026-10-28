@@ -5,6 +5,7 @@ import {
 	DeviceStateSchema,
 	type PendingOperation,
 	PendingOperationSchema,
+	pathKey,
 } from "@obsidian-ai-bridge/protocol";
 
 /** User-safe attention text used when local journal storage cannot be verified. */
@@ -78,7 +79,7 @@ export class DeviceJournal {
 		return new DeviceJournal(storage, state);
 	}
 
-	/** Stores payload bytes before publishing a queued operation in confirmed state. */
+	/** Persists payload bytes before enqueue and coalesces only a same-type queued operation without later dependents. */
 	async enqueue(
 		input: EnqueueInput,
 		bytes: Uint8Array,
@@ -87,6 +88,7 @@ export class DeviceJournal {
 		const capturedBytes = bytes.slice();
 		return this.serialize(async () => {
 			this.assertOpen();
+			const inputPathKey = pathKey(capturedInput.path);
 			const key = createUuidV7();
 			const payloadRef = `${DEVICE_PAYLOAD_DIRECTORY}${key}`;
 			const payload = capturedBytes;
@@ -101,12 +103,21 @@ export class DeviceJournal {
 				throw error;
 			}
 			this.assertOpen();
+			const replaceIndex = this.state.pending_ops.findIndex(
+				(operation, index, operations) =>
+					operation.state === "queued" &&
+					operation.op === capturedInput.op &&
+					pathKey(operation.path) === inputPathKey &&
+					!operations
+						.slice(index + 1)
+						.some(
+							(later) =>
+								later.state !== "resolved" &&
+								operationsConflict(operation, later),
+						),
+			);
 			const nextOps = this.state.pending_ops.filter(
-				(operation) =>
-					!(
-						operation.path === capturedInput.path &&
-						operation.state === "queued"
-					),
+				(_operation, index) => index !== replaceIndex,
 			);
 			const operation = PendingOperationSchema.parse({
 				...capturedInput,
@@ -125,7 +136,7 @@ export class DeviceJournal {
 		});
 	}
 
-	/** Confirms sent metadata before returning immutable retry bytes to a publisher. */
+	/** Requires earlier overlapping operations to resolve before confirming and releasing immutable retry bytes. */
 	async prepareSend(
 		key: string,
 		precondition: PendingOperation["precondition"],
@@ -133,16 +144,19 @@ export class DeviceJournal {
 		const capturedPrecondition = structuredClone(precondition);
 		return this.serialize(async () => {
 			this.assertOpen();
-			const current = this.state.pending_ops.find((item) => item.key === key);
+			const currentIndex = this.state.pending_ops.findIndex(
+				(item) => item.key === key,
+			);
+			const current = this.state.pending_ops[currentIndex];
 			if (!current) throw new Error("Unknown operation");
 			if (current.state === "resolved")
 				throw new Error("Resolved operations cannot be sent");
-			const predecessor = this.state.pending_ops.some(
-				(item) =>
-					item.state === "sent" &&
-					item.key !== key &&
-					operationsConflict(item, current),
-			);
+			const predecessor = this.state.pending_ops
+				.slice(0, currentIndex)
+				.some(
+					(item) =>
+						item.state !== "resolved" && operationsConflict(item, current),
+				);
 			if (predecessor) throw new Error("A predecessor is unresolved");
 			if (this.attentionReasonValue !== null)
 				throw new Error(this.attentionReasonValue);
@@ -248,7 +262,7 @@ async function persistVerified(
 		throw new Error("Device state write did not verify");
 }
 
-/** Finds operation ordering conflicts when source or rename destination paths overlap. */
+/** Checks source and rename-destination overlap by canonical lowercased NFC path identity. */
 function operationsConflict(
 	left: PendingOperation,
 	right: PendingOperation,
@@ -256,7 +270,9 @@ function operationsConflict(
 	const leftPaths = left.op === "rename" ? [left.path, left.to] : [left.path];
 	const rightPaths =
 		right.op === "rename" ? [right.path, right.to] : [right.path];
-	return leftPaths.some((leftPath) => rightPaths.includes(leftPath));
+	const leftKeys = leftPaths.map(pathKey);
+	const rightKeys = rightPaths.map(pathKey);
+	return leftKeys.some((leftKey) => rightKeys.includes(leftKey));
 }
 
 /** Compares precondition evidence by meaning, independent of object property order. */

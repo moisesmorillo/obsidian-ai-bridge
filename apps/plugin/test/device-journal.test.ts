@@ -324,6 +324,120 @@ describe("DeviceJournal", () => {
 		expect(journal.attentionReason).not.toBeNull();
 	});
 
+	it("blocks a queued edit behind a queued rename destination until its receipt", async () => {
+		const journal = await DeviceJournal.open(storage);
+		const rename = await journal.enqueue(
+			{
+				op: "rename",
+				path: "notes/a.md",
+				to: "notes/b.md",
+				precondition,
+			},
+			bytes,
+		);
+		const destinationEdit = await journal.enqueue(
+			{ op: "put", path: "notes/b.md", precondition },
+			bytes,
+		);
+
+		await expect(
+			journal.prepareSend(destinationEdit.key, precondition),
+		).rejects.toThrow("predecessor");
+		await journal.prepareSend(rename.key, precondition);
+		await journal.resolve(rename.key, { kind: "receipt" });
+		const ready = await journal.prepareSend(destinationEdit.key, precondition);
+		expect(ready.operation.key).toBe(destinationEdit.key);
+	});
+
+	it("blocks case-variant paths that identify the same queued file", async () => {
+		const journal = await DeviceJournal.open(storage);
+		await journal.enqueue(
+			{
+				op: "rename",
+				path: "notes/A.md",
+				to: "notes/B.md",
+				precondition,
+			},
+			bytes,
+		);
+		const later = await journal.enqueue(
+			{ op: "put", path: "notes/a.md", precondition },
+			bytes,
+		);
+
+		await expect(journal.prepareSend(later.key, precondition)).rejects.toThrow(
+			"predecessor",
+		);
+	});
+
+	it.each(["notes/a.md", "notes/b.md"])(
+		"blocks a queued rename after an overlapping source or destination operation at %s",
+		async (earlierPath) => {
+			const journal = await DeviceJournal.open(storage);
+			await journal.enqueue(
+				{ op: "put", path: earlierPath, precondition },
+				bytes,
+			);
+			const rename = await journal.enqueue(
+				{
+					op: "rename",
+					path: "notes/a.md",
+					to: "notes/b.md",
+					precondition,
+				},
+				bytes,
+			);
+
+			await expect(
+				journal.prepareSend(rename.key, precondition),
+			).rejects.toThrow("predecessor");
+		},
+	);
+
+	it("keeps an earlier queued operation when a later dependent operation follows it", async () => {
+		const journal = await DeviceJournal.open(storage);
+		const initialEdit = await journal.enqueue(
+			{ op: "put", path: "notes/a.md", precondition },
+			bytes,
+		);
+		const rename = await journal.enqueue(
+			{
+				op: "rename",
+				path: "notes/a.md",
+				to: "notes/b.md",
+				precondition,
+			},
+			bytes,
+		);
+		const newerEdit = await journal.enqueue(
+			{ op: "put", path: "notes/a.md", precondition },
+			bytes,
+		);
+
+		expect(
+			journal
+				.snapshot()
+				.pending_ops.map((operation: typeof initialEdit) => operation.key),
+		).toEqual([initialEdit.key, rename.key, newerEdit.key]);
+	});
+
+	it("prepares unrelated queued paths concurrently", async () => {
+		const journal = await DeviceJournal.open(storage);
+		const [first, second] = await Promise.all([
+			journal.enqueue({ op: "put", path: "notes/a.md", precondition }, bytes),
+			journal.enqueue({ op: "put", path: "notes/b.md", precondition }, bytes),
+		]);
+		const results = await Promise.all([
+			journal.prepareSend(first.key, precondition),
+			journal.prepareSend(second.key, precondition),
+		]);
+
+		expect(results.map((result) => result.operation.key)).toEqual([
+			first.key,
+			second.key,
+		]);
+	});
+
 	it("orders an operation behind a sent rename that targets its path", async () => {
 		const journal = await DeviceJournal.open(storage);
 		const rename = await journal.enqueue(

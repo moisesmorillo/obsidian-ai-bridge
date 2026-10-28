@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-10-28T19:31:00Z'
-updated_date: '2026-10-28T20:14:00Z'
+updated_date: '2026-10-28T20:23:00Z'
 labels: []
 dependencies:
   - OAB-7
@@ -45,4 +45,6 @@ Integration evidence: implementation commit a126bbaa1d8f9911e775308337303098e912
 Correction: the integrated HEAD is eb345883b196458e1bf8f9d8335c8202a353ad01, a merge commit with implementation parent a126bbaa1d8f9911e775308337303098e91236ec and main parent a4ec7ffe030e5a4d367820eacdada24a8f894b7e. The required post-integration bun run check completed at this HEAD and passed.
 
 Manual implementation review at integrated commit eb345883b196458e1bf8f9d8335c8202a353ad01: inspected DeviceJournal, ObsidianDeviceStorage, canonical device-state schemas, plugin lifecycle, tests, and public protocol exports. The journal owns transitions, ordering, retries, immutable copies, and confirmed-state publication. The schema owns persisted shape validation; the host adapter owns localStorage and confined payload mechanics; main owns lifecycle fencing. No network or note mutation exists. No implementation blocker remained. TSDoc coverage was checked for changed semantic declarations, and docs:check passed. Review limits: no real Obsidian crash or two-vault test; the approved OAB-8.1 scope uses automated storage and lifecycle tests. Parent review and branch review remain pending.
+
+MAJOR review finding closure: fixed queued-operation ordering in DeviceJournal.prepareSend. It now rejects a candidate when any earlier unresolved operation conflicts by canonical pathKey identity across source and rename destination paths. This blocks queued rename A-to-B before queued edits to B, earlier source and destination operations before a later rename, and case variants that share pathKey. Sent operation metadata and exact paths remain unchanged. Queue coalescing now replaces only the latest safe same-type queued operation. It retains an older queued operation when a later unresolved operation depends on it, so replacing that operation cannot move dependent work ahead. RED: bun run --cwd apps/plugin test -- test/device-journal.test.ts failed 5 new assertions (queued rename destination, case identity, reverse source overlap, reverse destination overlap, and coalescing order). After the first correction, the case-alias test exposed that same-path puts correctly coalesced, so I changed that fixture to use a case-variant path overlapping a queued rename source. GREEN: focused suite passed 25/25. bun run docs:check passed. bun run check first found Biome import and formatting issues, which I fixed. The next full bun run check passed: 201 Biome files, all four workspace typechecks, 1,247 tests across 77 files (tooling 56, protocol 289, plugin 34, Worker 868), all builds. Finding is fixed at source and regression tests, not deferred.
 <!-- SECTION:NOTES:END -->

@@ -67,6 +67,20 @@ export {
 	selectByteRange,
 } from "@protocol/schemas/blobs";
 export { TextPayloadSchema } from "@protocol/schemas/content";
+export type {
+	DevicePrecondition,
+	DeviceState,
+	PendingOperation,
+} from "@protocol/schemas/device-state";
+export {
+	DEVICE_PAYLOAD_DIRECTORY,
+	DeviceOperationKeySchema,
+	DevicePayloadHashSchema,
+	DevicePayloadReferenceSchema,
+	DevicePreconditionSchema,
+	DeviceStateSchema,
+	PendingOperationSchema,
+} from "@protocol/schemas/device-state";
 export { EpochSchema, ETagSchema } from "@protocol/schemas/etag";
 export {
 	CurrentEpochOperationSchema,

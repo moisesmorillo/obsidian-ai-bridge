@@ -15,6 +15,9 @@
     },
     "apps/plugin": {
       "name": "@obsidian-ai-bridge/plugin",
+      "dependencies": {
+        "@obsidian-ai-bridge/protocol": "workspace:*",
+      },
       "devDependencies": {
         "@codemirror/view": "6.43.13",
         "@obsidian-ai-bridge/tooling": "workspace:*",

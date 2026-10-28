@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-10-24T00:05:00Z'
-updated_date: '2026-10-28T15:51:00Z'
+updated_date: '2026-10-28T16:01:00Z'
 labels:
   - F2
   - needs-owner-authorization
@@ -59,4 +59,8 @@ AC #4 boundary: actual plugin evidence must prove revoked status and preservatio
 Leftover deployed state from owner checks: probe noscope revoked, probe rw revoked, MCP Inspector 7.8 active with an empty-scope token, and synthetic note oab-7.8/20261028-curl-01.md. Do not remove this state without owner authority.
 
 Findings for assessment: provider authorization codes contain the owner subject as their user-id prefix. Consider an opaque provider identity without changing durable authority or existing grants silently. Revoked clients still show View grants (1) and Revoke with no revoked state. Assess against the spec and OAB-7.3. The owner authorized the local scope correction with TDD on this branch, checks, review, and a pull request. No deployment or Cloudflare resource change is authorized.
+
+Local scope correction: RED command `cd apps/worker && bunx vitest run --config vitest.f2.config.ts test/f2/oauth.test.ts test/f2/mcp-reads.test.ts -t 'publishes configured issuer|keeps OAuth challenges on unauthenticated MCP requests'` exited 1. Both new assertions failed: protected-resource `scopes_supported` was undefined, and the 401 Bearer challenge lacked `scope`. GREEN command `cd apps/worker && bunx vitest run --config vitest.f2.config.ts test/f2/oauth.test.ts test/f2/mcp-reads.test.ts` passed 39 tests. The real OAuth test selects scopes from protected-resource metadata, completes authorization and token exchange, then MCP initialize returns 200. MCP invalid-token challenge retains `resource_metadata` and advertises exactly `vault:read vault:write`. The DO-level revoked 401 still has no `WWW-Authenticate`. No deployment or Cloudflare change occurred.
+
+Local verification completed: `bunx biome check --write apps/worker/src/infrastructure/auth/oauth.ts apps/worker/src/transport/mcp-http.ts apps/worker/test/f2/oauth.test.ts apps/worker/test/f2/mcp-reads.test.ts apps/worker/test/f2/mcp-mutations.test.ts` passed with no formatting changes. `bun run docs:check` passed. Focused F2 command `cd apps/worker && bunx vitest run --config vitest.f2.config.ts test/f2/oauth.test.ts test/f2/mcp-reads.test.ts test/f2/mcp-mutations.test.ts` passed 77 tests. `bun run check` passed: lint, docs, typecheck, tests, and dry-run builds all exited 0. Test logs included expected injected Worker network and SQLite exceptions; all suites passed. AC #1 and #3 and the parent F2 gate remain open pending authorized deployment and named-client/account checks. Provider subject disclosure and owner console revoked state remain outside this correction. No deployment, Cloudflare change, or vault access occurred.
 <!-- SECTION:NOTES:END -->

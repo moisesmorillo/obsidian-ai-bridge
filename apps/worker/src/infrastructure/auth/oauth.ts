@@ -96,6 +96,9 @@ export function createOAuthOptions(
 				};
 		},
 		scopesSupported: [...SCOPES],
+		requiredScopes: SCOPES.filter(
+			(scope) => scope === "vault:read" || scope === "vault:write",
+		),
 		resourceMetadata: {
 			resource: serviceOrigin,
 			resource_name: "Obsidian AI Bridge",

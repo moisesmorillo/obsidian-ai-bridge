@@ -1,11 +1,11 @@
 ---
 id: OAB-7
 title: F2 OAuth MCP and owner console delivery gate
-status: In Progress
+status: Done
 assignee:
   - '@pi'
 created_date: 2026-10-12 15:13
-updated_date: '2026-10-28T16:49:00Z'
+updated_date: '2026-10-28T17:25:00Z'
 labels:
   - phase-gate
   - F2
@@ -26,7 +26,7 @@ Track F2 against docs/spec.md §14. Intent-only; research/decompose when selecte
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [x] #1 F1 is complete before F2 starts.
-- [ ] #2 §14 F2 exit checks and account decision are evidenced.
+- [x] #2 §14 F2 exit checks and account decision are evidenced.
 - [x] #3 Service deployment/resource operations have separate explicit owner authorization.
 - [x] #4 Cleanup from F1 review: the extension-case tests in apps/worker/test/blob-put.test.ts, apps/worker/test/vault-search.test.ts and apps/worker/test/http/files.test.ts use at most four representative forms per extension for real HTTP writes and SQLite runs. The full ASCII case combination stays only in packages/protocol/test/files.test.ts as a unit test of classifyFilePath. Test count and runtime go down. Coverage of the case rule stays.
 <!-- AC:END -->
@@ -65,4 +65,12 @@ Plugin revoked status, stopped publishing and applying, and preservation of loca
 No specification change or waiver belongs to this task. OAB-8 and later phases stay unstarted. S1 privacy and S2 console visibility remain open as Deferred OAB-26 and OAB-27, with their triggers.
 
 No personal-vault access or cleanup occurred.
+
+Exit decision 2026-10-28: decision-1 accepts the F2 exit on server and real-client evidence from OAB-7.8 (Access login, Inspector 2.12.0, Claude Code 2.1.311, ChatGPT web and iPhone, same-token revocation 401 revoked). The device part of AC-08 moves to OAB-8 as an F3 exit obligation and is not waived. Criterion 2 is checked with that boundary. Deployed revision for the evidence: Worker version 0527d86b (PR #24, f84a225). Open findings stay in Deferred OAB-26 and OAB-27.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+F2 delivered: real OAuth with Access, MCP server and tools, owner console with durable revocation, deployed service on obsidian-bridge.mmorillo.dev. All eight subtasks are Done. Exit evidence: three named clients plus curl completed real read and write checks, same-token revocation returned 401 revoked on the first request, the owner confirmed Developer mode and iPhone availability and chose the custom ChatGPT app on iPhone. Decision-1 carries the device part of AC-08 into OAB-8. Risks: OAB-26 identity disclosure in authorization codes and OAB-27 console revoked state remain Deferred. OAB-8 needs explicit owner authorization.
+<!-- SECTION:FINAL_SUMMARY:END -->

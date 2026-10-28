@@ -1,7 +1,7 @@
 {
 	"$schema": "https://biomejs.dev/schemas/2.5.15/schema.json",
 	"files": {
-		"includes": ["**", "!.superpowers", "!**/dist", "!**/.vitest"]
+		"includes": ["**", "!.superpowers", "!**/.unipi", "!**/dist", "!**/.vitest"]
 	},
 	"linter": {
 		"rules": {

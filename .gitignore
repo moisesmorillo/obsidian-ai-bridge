@@ -8,5 +8,6 @@ coverage/
 *.log
 .DS_Store
 .pi/
+.unipi/
 .ai-bridge/
 .claude/settings.local.json

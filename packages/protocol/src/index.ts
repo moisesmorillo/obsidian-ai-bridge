@@ -68,6 +68,18 @@ export {
 } from "@protocol/schemas/blobs";
 export { TextPayloadSchema } from "@protocol/schemas/content";
 export type {
+	DeviceCredential,
+	DeviceDiscovery,
+	DeviceRegistrationResponse,
+	DeviceTokenResponse,
+} from "@protocol/schemas/device-auth";
+export {
+	DeviceCredentialSchema,
+	DeviceDiscoverySchema,
+	DeviceRegistrationResponseSchema,
+	DeviceTokenResponseSchema,
+} from "@protocol/schemas/device-auth";
+export type {
 	DevicePrecondition,
 	DeviceState,
 	PendingOperation,

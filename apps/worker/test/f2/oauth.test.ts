@@ -526,6 +526,70 @@ describe("production OAuth entry", () => {
 		expect(response.status).toBe(200);
 	});
 
+	it("registers and exchanges codes for only the exact Obsidian private callback", async () => {
+		const client = await registerPublicClient(
+			"obsidian://ai-bridge/callback",
+			"Obsidian desktop",
+		);
+		const token = await issueAccessToken(
+			client.client_id,
+			await ownerAssertion(),
+			"vault:read vault:write vault:delete",
+			"obsidian://ai-bridge/callback",
+		);
+		expect(token.access_token).toEqual(expect.any(String));
+		for (const redirectUri of [
+			"otherapp://callback",
+			"http://remote.test/callback",
+		]) {
+			const rejected = await SELF.fetch("https://service.test/oauth/register", {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({
+					client_name: "Rejected redirect client",
+					redirect_uris: [redirectUri],
+					grant_types: ["authorization_code", "refresh_token"],
+					response_types: ["code"],
+					token_endpoint_auth_method: "none",
+				}),
+			});
+			expect(rejected.status).toBe(400);
+		}
+		const options = createOAuthOptions(
+			env,
+			createAuthorizeHandler(),
+			createAuthorizeHandler(),
+		);
+		const providerApi = getOAuthApi(
+			requireValue(options, "OAuth provider options"),
+			env,
+		);
+		const preRegistered = await providerApi.createClient({
+			redirectUris: ["otherapp://callback"],
+			grantTypes: ["authorization_code", "refresh_token"],
+			responseTypes: ["code"],
+			tokenEndpointAuthMethod: "none",
+		});
+		const { challenge } = createPkce();
+		const authorization = new URLSearchParams({
+			response_type: "code",
+			client_id: preRegistered.clientId,
+			redirect_uri: "otherapp://callback",
+			scope: "vault:read",
+			state: "private-callback-policy",
+			code_challenge: await challenge,
+			code_challenge_method: "S256",
+			resource: "https://service.test",
+		});
+		expect(
+			(
+				await SELF.fetch(`https://service.test/authorize?${authorization}`, {
+					headers: { "Cf-Access-Jwt-Assertion": await ownerAssertion() },
+				})
+			).status,
+		).toBe(400);
+	});
+
 	it("registers public clients through production OAuth", async () => {
 		const client = await registerPublicClient();
 		expect(client.client_id).toEqual(expect.any(String));

@@ -48,6 +48,21 @@ describe("DeviceJournal", () => {
 		expect((await DeviceJournal.open(storage)).snapshot().device_id).toBe(id);
 	});
 
+	it("serializes client identity changes without losing queued operations", async () => {
+		const journal = await DeviceJournal.open(storage);
+		const operation = await journal.enqueue(
+			{ op: "put", path: "notes/a.md", precondition },
+			bytes,
+		);
+		await Promise.all([
+			journal.setClientId("registered-client"),
+			journal.enqueue({ op: "put", path: "notes/b.md", precondition }, bytes),
+		]);
+		expect(journal.snapshot().client_id).toBe("registered-client");
+		expect(journal.snapshot().pending_ops[0]?.key).toBe(operation.key);
+		expect(journal.snapshot().pending_ops).toHaveLength(2);
+	});
+
 	it("rejects corrupt state without replacing it", async () => {
 		storage.state = { version: 77, device_id: "bad", pending_ops: [] };
 		await expect(DeviceJournal.open(storage)).rejects.toThrow();

@@ -38,6 +38,24 @@ function escapeHtml(value: string): string {
 	});
 }
 
+/** Reject private redirect schemes except the one callback routed by the Obsidian adapter. */
+function hasUnapprovedPrivateRedirectUri(value: unknown): boolean {
+	if (!Array.isArray(value)) return false;
+	return value.some((uri) => {
+		if (typeof uri !== "string") return false;
+		try {
+			const protocol = new URL(uri).protocol;
+			return (
+				protocol !== "https:" &&
+				protocol !== "http:" &&
+				uri !== "obsidian://ai-bridge/callback"
+			);
+		} catch {
+			return false;
+		}
+	});
+}
+
 /** Build fixed-origin provider options with strict grants and validated scopes. */
 export function createOAuthOptions(
 	env: Env,
@@ -77,8 +95,14 @@ export function createOAuthOptions(
 		clientRegistrationEndpoint: `${serviceOrigin}/oauth/register`,
 		clientIdMetadataDocumentEnabled: false,
 		allowTokenExchangeGrant: false,
+		allowPrivateUseRedirectUris: true,
 		disallowPublicClientRegistration: false,
 		clientRegistrationCallback: ({ clientMetadata }) => {
+			if (hasUnapprovedPrivateRedirectUri(clientMetadata.redirect_uris))
+				return {
+					code: "invalid_client_metadata",
+					description: "Only the Obsidian AI Bridge callback is supported",
+				};
 			const grants = clientMetadata.grant_types;
 			const responses = clientMetadata.response_types;
 			if (
@@ -172,6 +196,7 @@ export function createAuthorizeHandler(): ExportedHandler<Env> {
 			const api = getOAuthApi(options, context.env);
 			const authRequest = await api.parseAuthRequest(context.req.raw);
 			if (
+				hasUnapprovedPrivateRedirectUri([authRequest.redirectUri]) ||
 				authRequest.codeChallengeMethod !== "S256" ||
 				!authRequest.codeChallenge ||
 				authRequest.scope.some(

@@ -195,6 +195,18 @@ export class DeviceJournal {
 		});
 	}
 
+	/** Stores one enrolled client identity without changing pending operation evidence. */
+	async setClientId(clientId: string): Promise<void> {
+		return this.serialize(async () => {
+			this.assertOpen();
+			const next = DeviceStateSchema.parse({
+				...this.state,
+				client_id: clientId,
+			});
+			await this.commit(next);
+		});
+	}
+
 	/** Removes an operation only after explicit receipt or rejection evidence persists. */
 	async resolve(key: string, _outcome: ResolutionOutcome): Promise<void> {
 		await this.serialize(async () => {

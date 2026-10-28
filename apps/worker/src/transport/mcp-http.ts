@@ -373,7 +373,7 @@ export async function handleMcpHttp(
 				epoch.failure.kind,
 				release,
 				request.signal,
-				true,
+				epoch.failure.kind !== "revoked",
 				env.SERVICE_ORIGIN,
 			);
 		const protocolVersion = request.headers.get("mcp-protocol-version");
@@ -465,7 +465,7 @@ export async function handleMcpHttp(
 				boundaryFailure,
 				release,
 				request.signal,
-				true,
+				boundaryFailure !== "revoked",
 				env.SERVICE_ORIGIN,
 				readOwner,
 			);

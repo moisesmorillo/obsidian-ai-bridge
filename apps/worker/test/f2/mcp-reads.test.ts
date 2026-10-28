@@ -614,7 +614,9 @@ describe("production MCP transport", () => {
 			}),
 		});
 		expect(response.status).toBe(401);
-		expect(response.headers.get("www-authenticate")).toContain("Bearer");
+		expect(response.headers.get("www-authenticate")).toBe(
+			'Bearer realm="OAuth", resource_metadata="https://service.test/.well-known/oauth-protected-resource", scope="vault:read vault:write"',
+		);
 	});
 
 	// A 15,000 ms bound covers 256 serial production writes and preserves hang detection.
@@ -1231,7 +1233,7 @@ describe("production MCP transport", () => {
 		]) {
 			const revoked = await postMcp(token, message);
 			expect(revoked.status, JSON.stringify(message)).toBe(401);
-			expect(revoked.headers.get("www-authenticate")).toContain("Bearer");
+			expect(revoked.headers.get("www-authenticate")).toBeNull();
 			expect(await revoked.text()).not.toContain("epoch");
 		}
 	}, 15_000);

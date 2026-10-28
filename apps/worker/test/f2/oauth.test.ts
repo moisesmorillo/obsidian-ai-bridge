@@ -338,8 +338,12 @@ describe("production OAuth entry", () => {
 		const resource = await SELF.fetch(
 			"https://service.test/.well-known/oauth-protected-resource",
 		);
-		expect(((await resource.json()) as { resource?: unknown }).resource).toBe(
-			"https://service.test",
+		const resourceMetadata = (await resource.json()) as Record<string, unknown>;
+		expect(resourceMetadata.resource).toBe("https://service.test");
+		expect(resourceMetadata.scopes_supported).toEqual(
+			VaultScopeSchema.options.filter(
+				(scope) => scope === "vault:read" || scope === "vault:write",
+			),
 		);
 		expect(
 			(
@@ -348,6 +352,42 @@ describe("production OAuth entry", () => {
 				)
 			).status,
 		).toBe(404);
+	});
+
+	it("uses protected-resource scopes for a real OAuth token and MCP initialize", async () => {
+		const resource = await SELF.fetch(
+			"https://service.test/.well-known/oauth-protected-resource",
+		);
+		const metadata = (await resource.json()) as {
+			scopes_supported: string[];
+		};
+		const scopes = metadata.scopes_supported.join(" ");
+		const client = await registerPublicClient();
+		const token = await issueAccessToken(
+			client.client_id,
+			await ownerAssertion(),
+			scopes,
+		);
+		const response = await SELF.fetch("https://service.test/mcp", {
+			method: "POST",
+			headers: {
+				authorization: `Bearer ${token.access_token}`,
+				"content-type": "application/json",
+				accept: "application/json, text/event-stream",
+			},
+			body: JSON.stringify({
+				jsonrpc: "2.0",
+				id: 1,
+				method: "initialize",
+				params: {
+					protocolVersion: "2025-03-26",
+					capabilities: {},
+					clientInfo: { name: "scope-discovery-test", version: "1" },
+				},
+			}),
+		});
+		expect(response.status).toBe(200);
+		await response.text();
 	});
 
 	it("denies unauthenticated owner and REST requests before durable work", async () => {
@@ -1228,6 +1268,7 @@ describe("production OAuth entry", () => {
 			}),
 		});
 		expect(mcp.status).toBe(401);
+		expect(mcp.headers.get("www-authenticate")).toBeNull();
 		const mcpDenial = await mcp.text();
 		expect(mcpDenial).toContain("revoked");
 		expect(mcpDenial).not.toContain(epoch);

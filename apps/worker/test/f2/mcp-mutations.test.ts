@@ -509,7 +509,10 @@ describe("production MCP mutation safety", () => {
 				});
 				const body = await response.text();
 				expect(response.status).toBe(status);
-				expect(response.headers.get("www-authenticate")).toContain("Bearer");
+				if (code === "revoked")
+					expect(response.headers.get("www-authenticate")).toBeNull();
+				else
+					expect(response.headers.get("www-authenticate")).toContain("Bearer");
 				if (code === "unauthorized") expect(body).toBe("");
 				else expect(body).toContain(code);
 				expect(body).not.toContain('"epoch"');

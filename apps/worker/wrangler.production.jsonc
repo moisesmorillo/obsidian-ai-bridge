@@ -1,0 +1,27 @@
+{
+	"name": "obsidian-ai-bridge-f2",
+	"account_id": "cb1688e69610249def9ac8e0448d5040",
+	"compatibility_date": "2025-07-12",
+	"compatibility_flags": ["unhandled_rejection_after_microtask_checkpoint"],
+	"main": "src/index.ts",
+	"workers_dev": false,
+	"preview_urls": false,
+	"vars": {
+		"SERVICE_ORIGIN": "https://obsidian-bridge.mmorillo.dev",
+		"ACCESS_TEAM_DOMAIN": "https://mmorillo.cloudflareaccess.com",
+		"ACCESS_AUDIENCE": "814c82665e70c64298202c81873612c44297520b8947a9b08ac2742206b5a377"
+	},
+	"durable_objects": {
+		"bindings": [{ "name": "VAULTS", "class_name": "Vault" }]
+	},
+	"kv_namespaces": [
+		{
+			"binding": "OAUTH_KV",
+			"id": "afb1eaa5d1e444e98fd3b7c705d26d5f"
+		}
+	],
+	"r2_buckets": [
+		{ "binding": "R2_BUCKET", "bucket_name": "oab-f2-immutable-blobs" }
+	],
+	"migrations": [{ "tag": "v1", "new_sqlite_classes": ["Vault"] }]
+}

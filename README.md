@@ -1,10 +1,12 @@
 # obsidian-ai-bridge
 
-The project implements a private Cloudflare Worker with SQLite Vault authority, conditional file operations, history, search, blob storage, and bounded reads. Plugin synchronization, MCP/OAuth service, and deployment are not implemented or qualified.
+The project implements a private Cloudflare Worker with SQLite Vault authority, conditional file operations, history, search, blob storage, bounded reads, OAuth, MCP, and an owner console. The F2 Worker is deployed at `https://obsidian-bridge.mmorillo.dev`.
 
 ## Current status
 
-The Worker implementation and its local protocol, native Durable Object, and HTTP tests provide server-side acceptance evidence. Production identity resolution denies access by default. Local tests do not qualify plugin behavior, MCP/OAuth transport, deployed authentication, or device behavior. OAB-6.9 remains open until independent review, human branch review, and remote CI complete.
+Independent public checks on 2026-10-28 confirmed canonical OAuth discovery, Access login redirection for `/authorize`, denial for unauthenticated REST and MCP requests, OAuth protocol errors for invalid registration and token requests, and no service responses from the known `workers.dev` hostname. The `/owner` root returned `404`; the implemented owner route is `/owner/clients`. The configured preview URL setting is false, and deployment output emitted no preview URL.
+
+Public deployment evidence for OAB-7.7 is recorded. These checks do not prove Access policy contents, successful login or consent, authenticated vault operations, revocation, plugin behavior, or device behavior. The owner subject remains unconfirmed against an Access assertion. OAB-7.8 and full F2 exit remain open.
 
 ## Local development
 

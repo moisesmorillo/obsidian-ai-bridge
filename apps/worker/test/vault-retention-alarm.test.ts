@@ -4,6 +4,27 @@ import { describe, expect, it } from "vitest";
 
 /** Milliseconds in one retention day for the alarm continuation fixture. */
 const DAY_MS = 24 * 60 * 60 * 1000;
+/** UTC hour used by the native retention scheduler after its final batch. */
+const RETENTION_NIGHTLY_HOUR_UTC = 3;
+
+/** Return the next 03:00 UTC deadline after a given epoch timestamp. */
+function expectedNextNightlyDeadline(now: number): number {
+	const current = new Date(now);
+	const todayAtNightly = Date.UTC(
+		current.getUTCFullYear(),
+		current.getUTCMonth(),
+		current.getUTCDate(),
+		RETENTION_NIGHTLY_HOUR_UTC,
+	);
+	return now < todayAtNightly
+		? todayAtNightly
+		: Date.UTC(
+				current.getUTCFullYear(),
+				current.getUTCMonth(),
+				current.getUTCDate() + 1,
+				RETENTION_NIGHTLY_HOUR_UTC,
+			);
+}
 
 /** Insert expired feed rows and set their complete logical byte counters. */
 function seedExpiredFeed(
@@ -51,6 +72,28 @@ function seedExpiredFeed(
 
 /** Run actual Vault alarm delivery against native SQLite retention. */
 describe("Vault retention alarm lifecycle", () => {
+	it.each([
+		[
+			"the final minute before 03:00 UTC",
+			"2026-10-28T02:59:30.000Z",
+			"2026-10-28T03:00:00.000Z",
+		],
+		[
+			"the exact 03:00 UTC boundary",
+			"2026-10-28T03:00:00.000Z",
+			"2026-10-29T03:00:00.000Z",
+		],
+		[
+			"after the 03:00 UTC boundary",
+			"2026-10-28T03:00:01.000Z",
+			"2026-10-29T03:00:00.000Z",
+		],
+	])("expects the next nightly deadline at %s", (_case, now, expected) => {
+		expect(expectedNextNightlyDeadline(Date.parse(now))).toBe(
+			Date.parse(expected),
+		);
+	});
+
 	it("schedules bounded continuation separately from the nightly cycle and resumes after each alarm", async () => {
 		const stub = env.VAULTS.get(env.VAULTS.newUniqueId());
 		await runInDurableObject(stub, async (instance, state) => {
@@ -74,7 +117,9 @@ describe("Vault retention alarm lifecycle", () => {
 			expect(continuation).toBeGreaterThan(Date.now());
 			expect(continuation).toBeLessThanOrEqual(Date.now() + 60_000);
 
+			const beforeNightlyAlarm = Date.now();
 			await instance.alarm();
+			const afterNightlyAlarm = Date.now();
 
 			expect(
 				state.storage.sql.exec("SELECT seq FROM changes").toArray(),
@@ -87,7 +132,11 @@ describe("Vault retention alarm lifecycle", () => {
 					.toArray(),
 			).toEqual([{ value: "66" }]);
 			const nightly = await state.storage.getAlarm();
-			expect(nightly).toBeGreaterThan(Date.now() + 60_000);
+			const deadlinesDuringAlarm = new Set([
+				expectedNextNightlyDeadline(beforeNightlyAlarm),
+				expectedNextNightlyDeadline(afterNightlyAlarm),
+			]);
+			expect([...deadlinesDuringAlarm]).toContain(nightly);
 		});
 	});
 

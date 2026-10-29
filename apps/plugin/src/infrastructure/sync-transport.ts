@@ -1,9 +1,11 @@
+import type { DevicePrecondition } from "@obsidian-ai-bridge/protocol";
 import {
 	ChangesPageSchema,
 	DevicePayloadHashSchema,
 	FileHttpFailureSchema,
 	type ManifestPage,
 	ManifestPageSchema,
+	MutationSuccessSchema,
 	parseETag,
 	TextReadResponseSchema,
 	type VaultReadResult,
@@ -164,6 +166,32 @@ export class SyncTransport {
 		return (await this.readPinned(path, epoch, rev)).text;
 	}
 
+	/** Returns authoritative pinned or current text metadata for publication recovery. */
+	async readAuthority(path: string, epoch: string, rev: number) {
+		return this.readResolved(path, epoch, rev);
+	}
+
+	/** Hashes the current path response and returns its server-owned tombstone revision. */
+	async readCurrentAuthority(path: string) {
+		const current = await this.readCurrent(path);
+		const identity = parseETag(current.etag);
+		return current.deleted
+			? {
+					deleted: true as const,
+					text: null,
+					epoch: current.epoch,
+					rev: identity.rev,
+					hash: "" as const,
+				}
+			: {
+					deleted: false as const,
+					text: current.text,
+					epoch: current.epoch,
+					rev: identity.rev,
+					hash: await hashText(current.text),
+				};
+	}
+
 	/** Reads current live text or tombstone with its validated epoch and revision. */
 	async readCurrent(
 		path: string,
@@ -193,11 +221,96 @@ export class SyncTransport {
 				: body.content === null || body.length !== body.content.length)
 		)
 			throw new Error("Current text metadata is invalid");
-		if (body.deleted)
+		if (body.deleted) {
+			if (body.hash !== "" || body.size !== 0)
+				throw new Error("Current text metadata is invalid");
 			return { deleted: true, text: null, etag, epoch: identity.epoch };
-		if (body.content === null)
+		}
+		if (
+			body.content === null ||
+			body.size !== new TextEncoder().encode(body.content).byteLength ||
+			(await hashText(body.content)) !== body.hash
+		)
 			throw new Error("Current text metadata is invalid");
 		return { deleted: false, text: body.content, etag, epoch: identity.epoch };
+	}
+
+	/** Publishes one immutable text file under its exact create or revision precondition. */
+	async put(
+		path: string,
+		text: string,
+		precondition: DevicePrecondition,
+		key: string,
+		epoch: string,
+	) {
+		const headers = mutationHeaders(precondition, key, epoch);
+		return this.readMutation(
+			await this.request(`/v1/files/${encodePath(path)}`, {
+				method: "PUT",
+				body: text,
+				headers,
+			}),
+		);
+	}
+
+	/** Publishes one event-authorized delete under its exact observed source revision. */
+	async delete(path: string, precondition: DevicePrecondition, key: string) {
+		if (precondition.kind !== "match")
+			throw new Error("Delete needs an observed source revision");
+		return this.readMutation(
+			await this.request(`/v1/files/${encodePath(path)}`, {
+				method: "DELETE",
+				headers: {
+					"if-match": `"${precondition.epoch}.${precondition.rev}"`,
+					"x-vault-epoch": precondition.epoch,
+					"idempotency-key": key,
+				},
+			}),
+		);
+	}
+
+	/** Publishes one event-authorized rename under its exact observed source revision. */
+	async rename(
+		path: string,
+		to: string,
+		precondition: DevicePrecondition,
+		key: string,
+	) {
+		if (precondition.kind !== "match")
+			throw new Error("Rename needs an observed source revision");
+		return this.readMutation(
+			await this.request(`/v1/files/${encodePath(path)}:rename`, {
+				method: "POST",
+				body: JSON.stringify({ to }),
+				headers: {
+					"if-match": `"${precondition.epoch}.${precondition.rev}"`,
+					"x-vault-epoch": precondition.epoch,
+					"idempotency-key": key,
+					"content-type": "application/json",
+				},
+			}),
+		);
+	}
+
+	/** Parses mutation body and header into one validated receipt authority. */
+	private readMutation(response: OAuthTransportResponse) {
+		const receipt = MutationSuccessSchema.parse(parseJson(response.text));
+		const header = response.headers.etag;
+		if (
+			(response.status !== 200 && response.status !== 201) ||
+			!header ||
+			header !== receipt.etag
+		)
+			throw new Error("Mutation response ETag is invalid");
+		return {
+			status: response.status,
+			path: receipt.path,
+			etag: receipt.etag,
+			seq: receipt.seq,
+			size: receipt.size,
+			hash: receipt.hash,
+			deleted: receipt.deleted,
+		};
 	}
 
 	/** Publishes one immutable local text file only when the remote path remains absent. */
@@ -260,6 +373,25 @@ export class SyncTransport {
 		}
 		return response;
 	}
+}
+
+/** Binds each mutation to its exact observed precondition and current vault epoch. */
+function mutationHeaders(
+	precondition: DevicePrecondition,
+	key: string,
+	epoch: string,
+): Record<string, string> {
+	return precondition.kind === "absent"
+		? {
+				"if-none-match": "*",
+				"x-vault-epoch": epoch,
+				"idempotency-key": key,
+			}
+		: {
+				"if-match": `"${precondition.epoch}.${precondition.rev}"`,
+				"x-vault-epoch": precondition.epoch,
+				"idempotency-key": key,
+			};
 }
 
 /** Encodes each canonical path component without changing its slash boundaries. */

@@ -56,13 +56,14 @@ export const DevicePayloadReferenceSchema = z
 
 /** Validates the byte digest used to detect payload corruption before release. */
 export const DevicePayloadHashSchema = z.string().regex(/^[0-9a-f]{64}$/i);
-/** Shared persisted fields bind each key to immutable payload bytes and retry state. */
+/** Shared persisted fields bind each key to immutable payload bytes and durable retry eligibility. */
 const commonOperationShape = {
 	key: DeviceOperationKeySchema,
 	payload_hash: DevicePayloadHashSchema,
 	payload_ref: DevicePayloadReferenceSchema,
 	created_at: z.number().int().nonnegative(),
 	attempts: z.number().int().nonnegative(),
+	retry_at: z.number().int().nonnegative().optional(),
 	state: z.enum(["queued", "sent", "resolved"]),
 };
 

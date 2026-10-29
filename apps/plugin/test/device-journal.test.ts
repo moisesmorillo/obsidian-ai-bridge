@@ -41,6 +41,21 @@ describe("DeviceJournal", () => {
 		storage = new MemoryStorage();
 	});
 
+	it("drops only a queued put after the rename receipt confirms its exact payload hash", async () => {
+		const journal = await DeviceJournal.open(storage);
+		const queued = await journal.enqueue(
+			{ op: "put", path: "notes/renamed.md", precondition },
+			bytes,
+		);
+
+		await journal.discardQueued(queued.key);
+
+		expect(journal.snapshot().pending_ops).toEqual([]);
+		await expect(
+			journal.readPayload(queued.payload_ref, queued.payload_hash),
+		).resolves.toEqual(bytes);
+	});
+
 	it("persists a verified apply transition and consumes only exact-hash echoes", async () => {
 		const journal = await DeviceJournal.open(storage);
 		const change = {

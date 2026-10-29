@@ -581,6 +581,19 @@ export class DeviceJournal {
 		});
 	}
 
+	/** Reads one operation payload only after verifying its immutable SHA-256 identity. */
+	async readPayload(
+		reference: string,
+		expectedHash: string,
+	): Promise<Uint8Array> {
+		const bytes = await this.storage.readPayload(reference);
+		if ((await digest(bytes)) !== expectedHash) {
+			this.attentionReasonValue = DEVICE_JOURNAL_ATTENTION_REASON;
+			throw new Error("Payload verification failed");
+		}
+		return bytes.slice();
+	}
+
 	/** Stores identity only when its session predicate still holds at queued commit admission. */
 	async setClientId(
 		clientId: string,
@@ -597,19 +610,95 @@ export class DeviceJournal {
 		});
 	}
 
-	/** Removes an operation only after explicit receipt or rejection evidence persists. */
-	async resolve(key: string, _outcome: ResolutionOutcome): Promise<void> {
+	/** Removes a sent operation after a receipt; rejected operations need retained recovery evidence. */
+	async resolve(key: string, outcome: ResolutionOutcome): Promise<void> {
 		await this.serialize(async () => {
 			this.assertOpen();
-			if (
-				!this.state.pending_ops.some(
-					(item) => item.key === key && item.state === "sent",
-				)
-			)
-				throw new Error("Only a sent operation can resolve");
+			const operation = this.state.pending_ops.find(
+				(item) => item.key === key && item.state === "sent",
+			);
+			if (!operation) throw new Error("Only a sent operation can resolve");
+			const attention =
+				outcome.kind === "rejection"
+					? [
+							...this.state.attention,
+							{
+								path: operation.path,
+								reason: "Rejected operation retained for recovery",
+								operation,
+							},
+						]
+					: this.state.attention;
 			await this.commit({
 				...this.state,
 				pending_ops: this.state.pending_ops.filter((item) => item.key !== key),
+				attention,
+			});
+		});
+	}
+
+	/** Drops one unsent queue reference after confirmed remote state makes its bytes redundant. */
+	async discardQueued(key: string): Promise<void> {
+		return this.serialize(async () => {
+			this.assertOpen();
+			if (
+				!this.state.pending_ops.some(
+					(item) => item.key === key && item.state === "queued",
+				)
+			)
+				throw new Error("Only a queued operation can be discarded");
+			await this.commit({
+				...this.state,
+				pending_ops: this.state.pending_ops.filter((item) => item.key !== key),
+			});
+		});
+	}
+
+	/** Persists a bounded retry deadline and attempt count without changing sent request identity. */
+	async defer(key: string, retryAt: number): Promise<void> {
+		return this.serialize(async () => {
+			this.assertOpen();
+			const operation = this.state.pending_ops.find(
+				(item) => item.key === key && item.state === "sent",
+			);
+			if (!operation) throw new Error("Only a sent operation can defer");
+			await this.commit({
+				...this.state,
+				pending_ops: this.state.pending_ops.map((item) =>
+					item.key === key
+						? { ...item, attempts: item.attempts + 1, retry_at: retryAt }
+						: item,
+				),
+			});
+		});
+	}
+
+	/** Retains a rejected sent operation and its payload reference until recovery completes. */
+	async recordRejected(
+		operation: PendingOperation,
+		reason: string,
+		attentionPath = operation.path,
+	): Promise<void> {
+		const parsed = PendingOperationSchema.parse(operation);
+		await this.serialize(async () => {
+			this.assertOpen();
+			const sent = this.state.pending_ops.find(
+				(item) => item.key === parsed.key && item.state === "sent",
+			);
+			if (!sent || JSON.stringify(sent) !== JSON.stringify(parsed))
+				throw new Error("Rejected operation identity changed");
+			const attention = this.state.attention.filter(
+				(item) => item.operation?.key !== parsed.key,
+			);
+			await this.commit({
+				...this.state,
+				pending_ops: this.state.pending_ops.filter(
+					(item) => item.key !== parsed.key,
+				),
+				attention: [
+					...attention,
+					{ path: attentionPath, reason, operation: parsed },
+				],
 			});
 		});
 	}

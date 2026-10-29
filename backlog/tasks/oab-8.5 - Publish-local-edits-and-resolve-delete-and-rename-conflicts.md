@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-10-28T19:31:00Z'
-updated_date: '2026-10-29T16:44:00Z'
+updated_date: '2026-10-29T16:50:00Z'
 labels: []
 dependencies:
   - OAB-8.4
@@ -123,4 +123,6 @@ Finding and ownership closure:
 - Stateful matrix reviewed: queued versus sent operations, source versus destination, receipt versus current observation, older versus newer confirmed base, local absent/dirty/confirmed text, retry/restart, pending conflict attention, and lifecycle close. Tests cover the material R3 cross-products. No separate policy owner or new layer was added.
 - No new blocker appeared in the bounded self-review. Parent corrective review and branch acceptance remain pending. No task closure, push, pull request, or worktree removal occurred.
 - Limits: no live service, deployment, real vault, or hosted CI proof ran. No dependency, Worker source, or protocol schema changed. OAB-8.6, OAB-8.7, and OAB-8.8 remain outside scope.
+
+Final whole-branch review approved main 9b06569 through 0161d3d. Reviewed source: 5577b03. Reviewer closed F1-F3 and R1-R4 with code and regression evidence. R3 separates current observation, guarded confirmed apply, and receipt-produced authority. Rename receipts authorize destination successors only. The stateful structural gate passed for publication, journal, text apply, reconciliation, transport, protocol schema, event adapter, and composition. Documentation audit covered changed semantic declarations, private helpers, ports, schemas, tests, and task notes. All four criteria have automated evidence within the approved text-only scope. Worker check passed 90 files and 1452 tests. Focused checks passed 5 files and 157 tests. Reviewer Git checks passed. No hosted CI, live service, real vault, or two-device proof ran. Owner diff review remains pending.
 <!-- SECTION:NOTES:END -->

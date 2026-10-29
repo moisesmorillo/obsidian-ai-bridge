@@ -15,8 +15,15 @@ const common = {
 };
 
 describe("device journal protocol schemas", () => {
-	it("reads old journal documents and accepts an optional enrolled client id", () => {
+	it("reads old journal documents with defaults for remote apply state", () => {
 		const oldState = { version: 1, device_id: uuid, pending_ops: [] };
+		const parsed = DeviceStateSchema.parse(oldState);
+		expect(parsed).toMatchObject({
+			pending_apply: [],
+			base: {},
+			expected_writes: {},
+			attention: [],
+		});
 		expect(DeviceStateSchema.safeParse(oldState).success).toBe(true);
 		expect(
 			DeviceStateSchema.safeParse({
@@ -51,6 +58,31 @@ describe("device journal protocol schemas", () => {
 		},
 	])("accepts a valid $op operation", (operation) => {
 		expect(PendingOperationSchema.safeParse(operation).success).toBe(true);
+	});
+
+	it("rejects incomplete or invalid durable apply steps", () => {
+		const change = {
+			seq: 1,
+			op: "put",
+			path: "notes/a.md",
+			etag: `"${"b".repeat(32)}.2"`,
+			hash: "c".repeat(64),
+			origin: "remote",
+			at: 1,
+		};
+		const state = { version: 1, device_id: uuid, pending_ops: [] };
+		expect(
+			DeviceStateSchema.safeParse({
+				...state,
+				pending_apply: [{ change, step: "copied" }],
+			}).success,
+		).toBe(false);
+		expect(
+			DeviceStateSchema.safeParse({
+				...state,
+				pending_apply: [{ change, step: "unknown" }],
+			}).success,
+		).toBe(false);
 	});
 
 	it("rejects epochs and revisions outside the canonical safe range", () => {

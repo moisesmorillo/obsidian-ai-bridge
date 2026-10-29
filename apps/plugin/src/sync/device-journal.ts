@@ -1,10 +1,16 @@
 import {
+	ChangeEntrySchema,
 	DEVICE_PAYLOAD_DIRECTORY,
+	type DeviceBaseEntry,
+	DeviceBaseEntrySchema,
 	type DevicePrecondition,
 	type DeviceState,
 	DeviceStateSchema,
+	type PendingApply,
+	PendingApplySchema,
 	type PendingOperation,
 	PendingOperationSchema,
+	parseETag,
 	pathKey,
 } from "@obsidian-ai-bridge/protocol";
 
@@ -133,6 +139,220 @@ export class DeviceJournal {
 				pending_ops: [...nextOps, operation],
 			});
 			return cloneOperation(operation);
+		});
+	}
+
+	/** Records one validated remote change before any filesystem effect can start. */
+	async beginApply(change: unknown): Promise<void> {
+		const parsedChange = ChangeEntrySchema.parse(change);
+		return this.serialize(async () => {
+			this.assertOpen();
+			const current = this.state.pending_apply[0];
+			if (current && current.change.seq !== parsedChange.seq)
+				throw new Error("Another remote apply is pending");
+			if (current) {
+				if (JSON.stringify(current.change) !== JSON.stringify(parsedChange))
+					throw new Error("Remote apply identity changed");
+				return;
+			}
+			await this.commit({
+				...this.state,
+				pending_apply: [{ change: parsedChange, step: "prepared" }],
+			});
+		});
+	}
+
+	/** Persists conflict identity and step before the next guarded vault effect. */
+	async updateApply(pending: PendingApply): Promise<void> {
+		const parsed = PendingApplySchema.parse(pending);
+		return this.serialize(async () => {
+			this.assertOpen();
+			const current = this.state.pending_apply[0];
+			if (
+				!current ||
+				JSON.stringify(current.change) !== JSON.stringify(parsed.change)
+			)
+				throw new Error("Remote apply identity changed");
+			const transitionAllowed =
+				(current.step === "prepared" &&
+					(parsed.step === "prepared" || parsed.step === "named")) ||
+				(current.step === "named" &&
+					(parsed.step === "named" || parsed.step === "copied")) ||
+				(current.step === "copied" &&
+					(parsed.step === "copied" || parsed.step === "effect_confirmed")) ||
+				(current.step === "effect_confirmed" &&
+					parsed.step === "effect_confirmed");
+			if (!transitionAllowed)
+				throw new Error(
+					"Remote apply step cannot move backward or skip a step",
+				);
+			if (
+				current.conflict_path !== undefined &&
+				(JSON.stringify(current.conflict_path) !==
+					JSON.stringify(parsed.conflict_path) ||
+					JSON.stringify(current.conflict_source) !==
+						JSON.stringify(parsed.conflict_source) ||
+					JSON.stringify(current.conflict_mode) !==
+						JSON.stringify(parsed.conflict_mode) ||
+					JSON.stringify(current.conflict_hash) !==
+						JSON.stringify(parsed.conflict_hash))
+			)
+				throw new Error("Conflict copy identity is immutable");
+			await this.commit({ ...this.state, pending_apply: [parsed] });
+		});
+	}
+
+	/** Persists one expected exact content hash without advancing confirmed base. */
+	async setExpectedWrite(path: string, hash: string): Promise<void> {
+		return this.serialize(async () => {
+			this.assertOpen();
+			await this.commit({
+				...this.state,
+				expected_writes: { ...this.state.expected_writes, [path]: hash },
+			});
+		});
+	}
+
+	/** Removes an expected echo after its guarded vault effect refuses to write. */
+	async clearExpectedWrite(path: string): Promise<void> {
+		return this.serialize(async () => {
+			this.assertOpen();
+			if (this.state.expected_writes[path] === undefined) return;
+			const expected_writes = { ...this.state.expected_writes };
+			delete expected_writes[path];
+			await this.commit({ ...this.state, expected_writes });
+		});
+	}
+
+	/** Consumes only an exact expected hash and persists its removal as a separate transition. */
+	async consumeExpectedWrite(path: string, hash: string): Promise<boolean> {
+		return this.serialize(async () => {
+			this.assertOpen();
+			if (this.state.expected_writes[path] !== hash) return false;
+			const expected_writes = { ...this.state.expected_writes };
+			delete expected_writes[path];
+			await this.commit({ ...this.state, expected_writes });
+			return true;
+		});
+	}
+
+	/** Commits both sides of one confirmed rename in the same verified document. */
+	async completeRenameApply(
+		fromPath: string,
+		fromBase: DeviceBaseEntry | null,
+		toPath: string,
+		toBase: DeviceBaseEntry | null,
+	): Promise<void> {
+		const source =
+			fromBase === null ? null : DeviceBaseEntrySchema.parse(fromBase);
+		const destination =
+			toBase === null ? null : DeviceBaseEntrySchema.parse(toBase);
+		return this.serialize(async () => {
+			this.assertOpen();
+			const pending = this.state.pending_apply[0];
+			if (pending?.change.op !== "rename")
+				throw new Error("No remote rename is pending");
+			if (
+				pending.change.from_path !== fromPath ||
+				pending.change.path !== toPath
+			)
+				throw new Error("Remote rename identity changed");
+			const expectedFromRev = parseETag(pending.change.from_etag).rev;
+			const expectedToRev = parseETag(pending.change.etag).rev;
+			if (
+				(source !== null &&
+					(!source.deleted || source.rev !== expectedFromRev)) ||
+				(destination !== null &&
+					(destination.deleted ||
+						destination.rev !== expectedToRev ||
+						destination.hash !== pending.change.hash))
+			)
+				throw new Error(
+					"Confirmed rename base does not match its remote revisions",
+				);
+			const expected_writes = { ...this.state.expected_writes };
+			delete expected_writes[fromPath];
+			delete expected_writes[toPath];
+			await this.commit({
+				...this.state,
+				base: {
+					...this.state.base,
+					...(source ? { [fromPath]: source } : {}),
+					...(destination ? { [toPath]: destination } : {}),
+				},
+				pending_apply: [],
+				expected_writes,
+			});
+		});
+	}
+
+	/** Clears an obsolete feed entry while preserving every newer confirmed base. */
+	async ignoreApply(path: string, revision: number): Promise<void> {
+		return this.serialize(async () => {
+			this.assertOpen();
+			const pending = this.state.pending_apply[0];
+			if (!pending || pending.change.path !== path)
+				throw new Error("Remote apply identity changed");
+			if ((this.state.base[path]?.rev ?? 0) < revision)
+				throw new Error("Remote apply is not obsolete");
+			const expected_writes = { ...this.state.expected_writes };
+			delete expected_writes[path];
+			await this.commit({
+				...this.state,
+				pending_apply: [],
+				expected_writes,
+			});
+		});
+	}
+
+	/** Persists a path-specific blocker without changing base or pending operation bytes. */
+	async recordAttention(path: string, reason: string): Promise<void> {
+		return this.serialize(async () => {
+			this.assertOpen();
+			const attention = this.state.attention.filter(
+				(item) => item.path !== path,
+			);
+			await this.commit({
+				...this.state,
+				attention: [...attention, { path, reason }],
+			});
+		});
+	}
+
+	/** Commits confirmed remote revision metadata and clears its durable apply marker. */
+	async completeApply(path: string, base: DeviceBaseEntry): Promise<void> {
+		const parsed = DeviceBaseEntrySchema.parse(base);
+		return this.serialize(async () => {
+			this.assertOpen();
+			const pending = this.state.pending_apply[0];
+			if (
+				!pending ||
+				pending.change.op === "rename" ||
+				pending.change.path !== path
+			)
+				throw new Error("Remote apply identity changed");
+			const revision = parseETag(pending.change.etag).rev;
+			if (parsed.rev !== revision)
+				throw new Error(
+					"Confirmed base revision does not match the remote entry",
+				);
+			if (
+				(pending.change.op === "delete" && !parsed.deleted) ||
+				(pending.change.op === "put" &&
+					(parsed.deleted || parsed.hash !== pending.change.hash))
+			)
+				throw new Error(
+					"Confirmed base content does not match the remote entry",
+				);
+			const nextBase = { ...this.state.base, [path]: parsed };
+			const expected_writes = { ...this.state.expected_writes };
+			delete expected_writes[path];
+			await this.commit({
+				...this.state,
+				base: nextBase,
+				pending_apply: [],
+				expected_writes,
+			});
 		});
 	}
 

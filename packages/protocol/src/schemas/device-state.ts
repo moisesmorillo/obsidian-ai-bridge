@@ -1,6 +1,7 @@
 import { ClientIdSchema } from "@protocol/schemas/auth";
 import { EpochSchema } from "@protocol/schemas/etag";
 import { PathSchema } from "@protocol/schemas/path";
+import { ChangeEntrySchema } from "@protocol/schemas/reads";
 import { z } from "zod";
 
 /** UUIDv7 keys identify one immutable operation instance and its payload path. */
@@ -114,7 +115,77 @@ export const PendingOperationSchema = z
 /** Inferred persisted operation type; callers must preserve every sent field exactly. */
 export type PendingOperation = z.infer<typeof PendingOperationSchema>;
 
-/** Canonical single-document device journal state for this journal-only delivery. */
+/** A server revision confirmed at one canonical path, or its confirmed tombstone. */
+export const DeviceBaseEntrySchema = z.discriminatedUnion("deleted", [
+	z
+		.object({
+			deleted: z.literal(false),
+			rev: z.number().int().positive().safe(),
+			hash: DevicePayloadHashSchema,
+		})
+		.strict(),
+	z
+		.object({
+			deleted: z.literal(true),
+			rev: z.number().int().positive().safe(),
+		})
+		.strict(),
+]);
+
+/** One persisted step in an idempotent remote apply or its conflict recovery. */
+export const PendingApplySchema = z
+	.object({
+		change: ChangeEntrySchema,
+		step: z.enum(["prepared", "named", "copied", "effect_confirmed"]),
+		conflict_path: DevicePathSchema.optional(),
+		conflict_source: DevicePathSchema.optional(),
+		conflict_mode: z.enum(["local", "remote"]).optional(),
+		conflict_hash: DevicePayloadHashSchema.optional(),
+	})
+	.strict()
+	.superRefine((pending, context) => {
+		if (
+			(pending.conflict_path === undefined) !==
+				(pending.conflict_hash === undefined) ||
+			(pending.conflict_path === undefined) !==
+				(pending.conflict_source === undefined) ||
+			(pending.conflict_path === undefined) !==
+				(pending.conflict_mode === undefined)
+		)
+			context.addIssue({
+				code: "custom",
+				message: "Conflict paths and hash must be stored together",
+			});
+		if (
+			(pending.step === "named" || pending.step === "copied") &&
+			pending.conflict_path === undefined
+		)
+			context.addIssue({
+				code: "custom",
+				message: "Conflict recovery steps need verified identity",
+			});
+	});
+
+/** Inferred validated step for resumable remote apply. */
+export type PendingApply = z.infer<typeof PendingApplySchema>;
+/** Inferred confirmed local base state for one remote path. */
+export type DeviceBaseEntry = z.infer<typeof DeviceBaseEntrySchema>;
+
+/** Expected local echo hashes are separate from confirmed base revisions. */
+export const DeviceExpectedWritesSchema = z.record(
+	DevicePathSchema,
+	DevicePayloadHashSchema,
+);
+
+/** Durable user-visible blocker for a path that needs explicit resolution. */
+export const DeviceAttentionSchema = z
+	.object({
+		path: DevicePathSchema,
+		reason: z.string().min(1),
+	})
+	.strict();
+
+/** Canonical single-document device journal state for local and remote transitions. */
 export const DeviceStateSchema = z
 	.object({
 		version: z.literal(1),
@@ -128,6 +199,10 @@ export const DeviceStateSchema = z
 					operations.length,
 				"Operation keys must be unique",
 			),
+		base: z.record(DevicePathSchema, DeviceBaseEntrySchema).default({}),
+		pending_apply: z.array(PendingApplySchema).max(1).default([]),
+		expected_writes: DeviceExpectedWritesSchema.default({}),
+		attention: z.array(DeviceAttentionSchema).default([]),
 	})
 	.strict();
 

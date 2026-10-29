@@ -13,6 +13,61 @@ export class ObsidianTextVault implements TextVault {
 		return file ? this.vault.read(file) : null;
 	}
 
+	/** Reads exact bytes from a current file without text decoding. */
+	async readBinary(path: string): Promise<Uint8Array | null> {
+		const file = this.fileAt(path);
+		return file ? new Uint8Array(await this.vault.readBinary(file)) : null;
+	}
+
+	/** Returns host adapter mtime and size for an exact path, or null when absent. */
+	async stat(path: string): Promise<{ mtime: number; size: number } | null> {
+		const stat = await this.vault.adapter.stat(path);
+		return stat?.type === "file"
+			? { mtime: stat.mtime, size: stat.size }
+			: null;
+	}
+
+	/** Creates exact bytes only when no exact or case-folded path collision exists. */
+	async createBinary(path: string, bytes: Uint8Array): Promise<boolean> {
+		if (this.fileAt(path) || this.hasPathKeyCollision(path)) return false;
+		await this.ensureParent(path);
+		const copy = bytes.slice();
+		try {
+			await this.vault.createBinary(path, copy.buffer as ArrayBuffer);
+		} catch {
+			return false;
+		}
+		const created = await this.readBinary(path);
+		return created !== null && equalBytes(created, bytes);
+	}
+
+	/** Removes only verified recovery bytes from the hash-addressed pre-apply directory. */
+	async removeRecoveryCopy(
+		path: string,
+		expectedHash: string,
+	): Promise<boolean> {
+		const prefix = ".ai-bridge/pre-apply/";
+		if (
+			path !== `${prefix}${expectedHash}` ||
+			!/^[a-f0-9]{64}$/.test(expectedHash)
+		)
+			return false;
+		const bytes = await this.readBinary(path);
+		if (!bytes || (await digestBytes(bytes)) !== expectedHash) return false;
+		await this.vault.adapter.remove(path);
+		return this.fileAt(path) === null;
+	}
+
+	/** Replaces exact file bytes; the application layer owns its pre-write stat guard. */
+	async modifyBinary(path: string, bytes: Uint8Array): Promise<boolean> {
+		const file = this.fileAt(path);
+		if (!file) return false;
+		const copy = bytes.slice();
+		await this.vault.modifyBinary(file, copy.buffer as ArrayBuffer);
+		const written = await this.readBinary(path);
+		return written !== null && equalBytes(written, bytes);
+	}
+
 	/** Lists current vault file paths for collision checks without changing them. */
 	async list(): Promise<string[]> {
 		return this.vault.getFiles().map((file) => file.path);
@@ -52,12 +107,43 @@ export class ObsidianTextVault implements TextVault {
 		return (await this.read(path)) === text;
 	}
 
+	/** Moves exact observed binary bytes to Obsidian trash without text decoding. */
+	async trashBinary(path: string, expected: Uint8Array): Promise<boolean> {
+		const file = this.fileAt(path);
+		if (!file) return false;
+		const current = await this.readBinary(path);
+		if (!current || !equalBytes(current, expected)) return false;
+		await this.vault.trash(file, false);
+		return this.fileAt(path) !== file;
+	}
+
 	/** Moves a text file to local Obsidian trash after a best-effort exact-text recheck. */
 	async trash(path: string, expected: string): Promise<boolean> {
 		const file = this.fileAt(path);
 		if (!file || (await this.vault.read(file)) !== expected) return false;
 		await this.vault.trash(file, false);
 		return this.fileAt(path) !== file;
+	}
+
+	/** Renames exact bytes after source and destination checks without text conversion. */
+	async renameBinary(
+		from: string,
+		to: string,
+		expected: Uint8Array,
+	): Promise<boolean> {
+		const source = this.fileAt(from);
+		if (!source || this.fileAt(to) || this.hasPathKeyCollision(to))
+			return false;
+		const bytes = await this.readBinary(from);
+		if (!bytes || !equalBytes(bytes, expected)) return false;
+		await this.ensureParent(to);
+		await this.vault.rename(source, to);
+		const moved = await this.readBinary(to);
+		return (
+			this.fileAt(from) === null &&
+			moved !== null &&
+			equalBytes(moved, expected)
+		);
 	}
 
 	/** Renames without link rewriting after source and destination checks. */
@@ -102,4 +188,20 @@ export class ObsidianTextVault implements TextVault {
 			}
 		}
 	}
+}
+
+/** Hashes exact bytes without text conversion. */
+async function digestBytes(bytes: Uint8Array): Promise<string> {
+	const digest = await crypto.subtle.digest("SHA-256", bytes.slice().buffer);
+	return [...new Uint8Array(digest)]
+		.map((byte) => byte.toString(16).padStart(2, "0"))
+		.join("");
+}
+
+/** Compares bytes by length and value without decoding them. */
+function equalBytes(left: Uint8Array, right: Uint8Array): boolean {
+	return (
+		left.byteLength === right.byteLength &&
+		left.every((value, index) => value === right[index])
+	);
 }

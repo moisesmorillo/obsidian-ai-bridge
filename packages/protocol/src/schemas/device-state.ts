@@ -146,6 +146,8 @@ export const PendingConflictCopySchema = z
 		device_name: z.string().min(1).optional(),
 		verified: z.boolean().optional(),
 		hash: DevicePayloadHashSchema,
+		kind: z.enum(["text", "blob"]).optional(),
+		purpose: z.enum(["conflict", "pre_apply"]).optional(),
 	})
 	.strict();
 
@@ -156,6 +158,7 @@ export type PendingConflictCopy = z.infer<typeof PendingConflictCopySchema>;
 export const PendingApplySchema = z
 	.object({
 		change: ChangeEntrySchema,
+		content_kind: z.enum(["text", "blob"]).optional(),
 		step: z.enum(["prepared", "named", "copied"]),
 		conflict_path: DevicePathSchema.optional(),
 		conflict_source: DevicePathSchema.optional(),
@@ -215,6 +218,32 @@ export const PendingApplySchema = z
 				});
 		}
 		if (pending.conflict_copies) {
+			const blobCopies = pending.conflict_copies.filter(
+				(copy) => copy.kind === "blob",
+			);
+			const validBlobPlans =
+				pending.change.op === "rename"
+					? blobCopies.length > 0 &&
+						blobCopies.every(
+							(copy) =>
+								copy.purpose === "conflict" &&
+								(copy.side === "rename_source" ||
+									copy.side === "rename_destination"),
+						)
+					: blobCopies.length === 2 &&
+						blobCopies.filter((copy) => copy.purpose === "conflict").length ===
+							1 &&
+						blobCopies.filter((copy) => copy.purpose === "pre_apply").length ===
+							1 &&
+						blobCopies[0]?.hash === blobCopies[1]?.hash &&
+						blobCopies[0]?.source === blobCopies[1]?.source;
+			if (blobCopies.length > 0 && !validBlobPlans)
+				context.addIssue({
+					code: "custom",
+					message:
+						"Binary conflict state needs durable visible and recovery copies",
+					path: ["conflict_copies"],
+				});
 			const seenPaths = new Set<string>();
 			for (const [index, copy] of pending.conflict_copies.entries()) {
 				if (seenPaths.has(copy.path))
@@ -224,6 +253,29 @@ export const PendingApplySchema = z
 						path: ["conflict_copies", index],
 					});
 				seenPaths.add(copy.path);
+				if (
+					copy.purpose !== undefined &&
+					(copy.kind !== "blob" || copy.mode !== "local")
+				)
+					context.addIssue({
+						code: "custom",
+						message: "Binary copy purpose needs a local blob identity",
+						path: ["conflict_copies", index, "purpose"],
+					});
+				if (copy.kind === "blob") {
+					const validPurposePath =
+						copy.purpose === "pre_apply"
+							? copy.side === "path" &&
+								copy.path === `.ai-bridge/pre-apply/${copy.hash}`
+							: copy.purpose === "conflict" &&
+								!copy.path.startsWith(".ai-bridge/pre-apply/");
+					if (copy.mode !== "local" || !copy.purpose || !validPurposePath)
+						context.addIssue({
+							code: "custom",
+							message: "Binary copy identity or path is invalid",
+							path: ["conflict_copies", index],
+						});
+				}
 				if (copy.mode === "remote") {
 					if (pending.change.op !== "put")
 						context.addIssue({

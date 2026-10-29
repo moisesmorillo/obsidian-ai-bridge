@@ -2,6 +2,8 @@ import { classifyFilePath, PathSchema } from "@obsidian-ai-bridge/protocol";
 
 /** Server-matched raw-byte ceiling for inline Markdown and Canvas enrollment. */
 const INLINE_TEXT_LIMIT_BYTES = 1_000_000;
+/** Maximum raw file size accepted by the blob protocol. */
+const BLOB_LIMIT_BYTES = 25_000_000;
 /** Spec §7.8 attachment extensions admitted as blobs but not decoded as text. */
 const ATTACHMENT_EXTENSIONS = new Set([
 	"png",
@@ -26,7 +28,7 @@ const ATTACHMENT_EXTENSIONS = new Set([
 export function classifyEnrollmentPath(
 	path: string,
 	size: number,
-): "text" | "blob" | "excluded" {
+): "text" | "blob" | "excluded" | "unsupported" {
 	if (
 		!PathSchema.safeParse(path).success ||
 		!Number.isSafeInteger(size) ||
@@ -41,8 +43,11 @@ export function classifyEnrollmentPath(
 	)
 		return "excluded";
 	const kind = classifyFilePath(path);
-	if (kind === "markdown" || kind === "canvas")
+	if (kind === "markdown" || kind === "canvas") {
+		if (size > BLOB_LIMIT_BYTES) return "unsupported";
 		return size <= INLINE_TEXT_LIMIT_BYTES ? "text" : "blob";
+	}
 	const extension = path.slice(path.lastIndexOf(".") + 1).toLowerCase();
-	return ATTACHMENT_EXTENSIONS.has(extension) ? "blob" : "excluded";
+	if (!ATTACHMENT_EXTENSIONS.has(extension)) return "excluded";
+	return size > BLOB_LIMIT_BYTES ? "unsupported" : "blob";
 }

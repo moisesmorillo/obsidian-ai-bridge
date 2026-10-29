@@ -149,8 +149,11 @@ export class DeviceJournal {
 		});
 	}
 
-	/** Records one validated remote change before any filesystem effect can start. */
-	async beginApply(change: unknown): Promise<void> {
+	/** Records one validated remote change and optional manifest content kind before effects. */
+	async beginApply(
+		change: unknown,
+		contentKind?: "text" | "blob",
+	): Promise<void> {
 		const parsedChange = ChangeEntrySchema.parse(change);
 		return this.serialize(async () => {
 			this.assertOpen();
@@ -160,11 +163,22 @@ export class DeviceJournal {
 			if (current) {
 				if (JSON.stringify(current.change) !== JSON.stringify(parsedChange))
 					throw new Error("Remote apply identity changed");
+				if (contentKind && current.content_kind !== contentKind)
+					await this.commit({
+						...this.state,
+						pending_apply: [{ ...current, content_kind: contentKind }],
+					});
 				return;
 			}
 			await this.commit({
 				...this.state,
-				pending_apply: [{ change: parsedChange, step: "prepared" }],
+				pending_apply: [
+					{
+						change: parsedChange,
+						step: "prepared",
+						...(contentKind ? { content_kind: contentKind } : {}),
+					},
+				],
 			});
 		});
 	}

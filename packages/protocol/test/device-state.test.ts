@@ -103,6 +103,85 @@ describe("device journal protocol schemas", () => {
 		).toBe(false);
 	});
 
+	it("accepts durable binary conflict and pre-apply copy identities", () => {
+		const change = {
+			seq: 1,
+			op: "put" as const,
+			path: "notes/photo.png",
+			etag: `"${"b".repeat(32)}.2"`,
+			hash: "c".repeat(64),
+			origin: "remote",
+			at: 1,
+		};
+		const hash = "d".repeat(64);
+		const conflict = {
+			path: "notes/photo (conflict Device 2026-10-29 0000 r2).png",
+			source: "notes/photo.png",
+			side: "path" as const,
+			mode: "local" as const,
+			device_name: "Device",
+			hash,
+			kind: "blob" as const,
+			purpose: "conflict" as const,
+		};
+		const recovery = {
+			...conflict,
+			path: `.ai-bridge/pre-apply/${hash}`,
+			purpose: "pre_apply" as const,
+		};
+		const rename = {
+			seq: 2,
+			op: "rename" as const,
+			path: "notes/photo-renamed.png",
+			from_path: "notes/photo.png",
+			from_etag: `"${"b".repeat(32)}.1"`,
+			etag: `"${"b".repeat(32)}.2"`,
+			hash,
+			origin: "remote",
+			at: 2,
+		};
+		expect(
+			PendingApplySchema.safeParse({
+				change: rename,
+				step: "named",
+				conflict_copies: [
+					{
+						...conflict,
+						path: "notes/photo (conflict Device).png",
+						side: "rename_source",
+					},
+					{
+						...conflict,
+						path: "notes/photo-renamed (conflict Device).png",
+						source: "notes/photo-renamed.png",
+						side: "rename_destination",
+					},
+				],
+			}).success,
+		).toBe(true);
+		expect(
+			PendingApplySchema.safeParse({
+				change,
+				content_kind: "blob",
+				step: "prepared",
+			}).success,
+		).toBe(true);
+		expect(
+			PendingApplySchema.safeParse({
+				change,
+				step: "named",
+				conflict_copies: [conflict, recovery],
+			}).success,
+		).toBe(true);
+		expect(
+			PendingApplySchema.safeParse({
+				change,
+				step: "named",
+				conflict_copies: [{ ...recovery, path: "notes/other.png" }],
+			}).success,
+		).toBe(false);
+	});
+
 	it("accepts and rejects only recoverable persisted apply state combinations", () => {
 		const put = {
 			seq: 1,

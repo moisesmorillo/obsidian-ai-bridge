@@ -36,6 +36,7 @@ class MemoryStorage {
 /** Provides guarded in-memory text effects for apply tests. */
 class MemoryVault implements TextVault {
 	files = new Map<string, string>();
+	binaryFiles = new Map<string, Uint8Array>();
 	fileSizes = new Map<string, number>();
 	reads: string[] = [];
 	writes = 0;
@@ -47,18 +48,45 @@ class MemoryVault implements TextVault {
 		this.reads.push(path);
 		return this.files.get(path) ?? null;
 	}
+	/** Reads exact attachment bytes without text conversion. */
+	async readBinary(path: string): Promise<Uint8Array | null> {
+		const bytes = this.binaryFiles.get(path);
+		if (bytes) return bytes.slice();
+		const text = this.files.get(path);
+		return text === undefined ? null : new TextEncoder().encode(text);
+	}
+	/** Returns stable test metadata for a current binary path. */
+	async stat(path: string): Promise<{ mtime: number; size: number } | null> {
+		const bytes = this.binaryFiles.get(path);
+		return bytes ? { mtime: 1, size: bytes.byteLength } : null;
+	}
+	/** Creates exact bytes at an absent path. */
+	async createBinary(path: string, bytes: Uint8Array): Promise<boolean> {
+		if (this.files.has(path) || this.binaryFiles.has(path)) return false;
+		this.binaryFiles.set(path, bytes.slice());
+		return true;
+	}
+	/** Replaces exact bytes at an existing path. */
+	async modifyBinary(path: string, bytes: Uint8Array): Promise<boolean> {
+		if (!this.binaryFiles.has(path) && !this.files.has(path)) return false;
+		this.files.delete(path);
+		this.binaryFiles.set(path, bytes.slice());
+		return true;
+	}
 	/** Returns fixture bytes without decoding unsupported files. */
 	async size(path: string): Promise<number | null> {
 		const text = this.files.get(path);
 		return (
 			this.fileSizes.get(path) ??
-			(text === undefined ? null : new TextEncoder().encode(text).length)
+			(text === undefined
+				? (this.binaryFiles.get(path)?.byteLength ?? null)
+				: new TextEncoder().encode(text).length)
 		);
 	}
 	/** Lists every current text path. */
 	async list(): Promise<string[]> {
 		if (this.listError) throw this.listError;
-		return [...this.files.keys()];
+		return [...this.files.keys(), ...this.binaryFiles.keys()];
 	}
 	/** Changes text only when the observed value still matches. */
 	async process(
@@ -129,8 +157,16 @@ class MemoryRemote implements ReconciliationRemote {
 	feed: ReconciliationChangesPage[] = [];
 	texts = new Map<string, string>();
 	blobPaths = new Set<string>();
+	blobs = new Map<number, Uint8Array>();
 	created: Array<{ path: string; text: string; epoch: string; key: string }> =
 		[];
+	createdBlobs: Array<{
+		path: string;
+		bytes: Uint8Array;
+		hash: string;
+		epoch: string;
+		key: string;
+	}> = [];
 	createError: Error | null = null;
 	createErrors: Error[] = [];
 	changeError: Error | null = null;
@@ -171,11 +207,48 @@ class MemoryRemote implements ReconciliationRemote {
 		if (this.blobPaths.has(path)) throw new UnsupportedRemoteTextError(path);
 		return this.texts.get(String(rev)) ?? null;
 	}
+	/** Returns one exact test blob revision with its server identity. */
+	async readBlob(
+		path: string,
+		requestEpoch: string,
+		rev: number,
+		hashValue: string,
+	) {
+		if (!this.blobPaths.has(path)) throw new Error("Unexpected blob read");
+		const bytes = this.blobs.get(rev);
+		if (!bytes) throw new Error("Missing test blob revision");
+		return { bytes: bytes.slice(), epoch: requestEpoch, rev, hash: hashValue };
+	}
 	/** Returns one verified test text revision without changing its identity. */
 	async readResolved(path: string, epoch: string, rev: number) {
 		const text = await this.read(path, epoch, rev);
 		if (text === null) throw new Error("Pinned test text is missing");
 		return { text, epoch, rev, hash: await hash(text) };
+	}
+	/** Creates exact binary bytes and returns their confirmed authority. */
+	async createBlob(
+		path: string,
+		bytes: Uint8Array,
+		hashValue: string,
+		currentEpoch: string,
+		key: string,
+	) {
+		this.createdBlobs.push({
+			path,
+			bytes: bytes.slice(),
+			hash: hashValue,
+			epoch: currentEpoch,
+			key,
+		});
+		return {
+			status: 201,
+			path,
+			etag: `"${currentEpoch}.5"`,
+			seq: 5,
+			size: bytes.byteLength,
+			hash: hashValue,
+			deleted: false,
+		};
 	}
 	/** Creates text and returns its confirmed epoch-bound revision. */
 	async createText(
@@ -224,6 +297,14 @@ async function reopen(context: Awaited<ReturnType<typeof setup>>) {
 		context.remote,
 	);
 	return { ...context, journal, controller };
+}
+
+/** Hashes exact fixture bytes without text conversion. */
+async function hashBytes(bytes: Uint8Array): Promise<string> {
+	const digest = await crypto.subtle.digest("SHA-256", bytes.slice().buffer);
+	return [...new Uint8Array(digest)]
+		.map((byte) => byte.toString(16).padStart(2, "0"))
+		.join("");
 }
 
 /** Hashes test fixture text with the production-compatible UTF-8 algorithm. */
@@ -369,8 +450,57 @@ describe("ReconciliationController", () => {
 		expect(context.journal.snapshot().cursor).toBe(6);
 	});
 
-	it("does not decode or apply a manifest blob tombstone", async () => {
-		context.vault.files.set("assets/old.pdf", "binary placeholder");
+	it("publishes exact local attachment bytes during enrollment", async () => {
+		const bytes = new Uint8Array([0, 255, 128]);
+		context.vault.binaryFiles.set("assets/local.png", bytes.slice());
+
+		await context.controller.enroll();
+
+		expect(context.remote.createdBlobs).toHaveLength(1);
+		expect(context.remote.createdBlobs[0]?.bytes).toEqual(bytes);
+		expect(context.journal.snapshot().base["assets/local.png"]).toEqual({
+			deleted: false,
+			rev: 5,
+			hash: await hashBytes(bytes),
+		});
+		expect(context.journal.snapshot().pending_ops).toEqual([]);
+	});
+
+	it("hydrates exact binary bytes from a manifest blob row", async () => {
+		const bytes = new Uint8Array([0, 255, 128]);
+		const digest = await crypto.subtle.digest("SHA-256", bytes.slice().buffer);
+		const hashValue = [...new Uint8Array(digest)]
+			.map((byte) => byte.toString(16).padStart(2, "0"))
+			.join("");
+		context.remote.entries = [
+			{
+				path: "assets/photo.png",
+				etag: `"${epoch}.2"`,
+				seq: 2,
+				hash: hashValue,
+				kind: "blob",
+				deleted: false,
+			},
+		];
+		context.remote.blobPaths.add("assets/photo.png");
+		context.remote.blobs.set(2, bytes);
+
+		await context.controller.reconcile();
+
+		expect(context.vault.binaryFiles.get("assets/photo.png")).toEqual(bytes);
+		expect(context.journal.snapshot().base["assets/photo.png"]).toEqual({
+			deleted: false,
+			rev: 2,
+			hash: hashValue,
+		});
+		expect(context.journal.snapshot().attention).not.toContainEqual(
+			expect.objectContaining({ path: "assets/photo.png" }),
+		);
+	});
+
+	it("preserves local binary bytes as visible conflict data for a manifest tombstone", async () => {
+		const localBytes = new Uint8Array([0, 255, 3]);
+		context.vault.binaryFiles.set("assets/old.pdf", localBytes);
 		context.remote.entries = [
 			{
 				path: "assets/old.pdf",
@@ -383,23 +513,35 @@ describe("ReconciliationController", () => {
 		];
 		await context.controller.enroll();
 		expect(context.vault.reads).not.toContain("assets/old.pdf");
-		expect(context.vault.files.get("assets/old.pdf")).toBe(
-			"binary placeholder",
-		);
+		expect(context.vault.binaryFiles.get("assets/old.pdf")).toEqual(localBytes);
+		expect(
+			[...context.vault.binaryFiles.entries()].some(
+				([path, bytes]) =>
+					path.includes("conflict") &&
+					bytes.every((byte, index) => byte === localBytes[index]),
+			),
+		).toBe(true);
+		expect(context.journal.snapshot().base["assets/old.pdf"]).toMatchObject({
+			deleted: true,
+			rev: 2,
+		});
 		expect(context.journal.snapshot().attention).toContainEqual({
 			path: "assets/old.pdf",
-			reason: "Blob synchronization is not available yet",
+			reason: "Local binary bytes remain visible after the remote delete",
 		});
 	});
 
-	it("records blob tombstones without decoding or deleting local binary bytes", async () => {
-		context.vault.files.set("assets/file.pdf", "binary placeholder");
+	it("preserves local binary bytes for an authoritative feed tombstone", async () => {
+		const localBytes = new Uint8Array([1, 2, 255]);
+		context.vault.binaryFiles.set("assets/file.pdf", localBytes);
 		await context.controller.enroll();
+		const editedBytes = new Uint8Array([7, 8, 9]);
+		context.vault.binaryFiles.set("assets/file.pdf", editedBytes);
 		context.remote.entries = [
 			{
 				path: "assets/file.pdf",
-				etag: `"${epoch}.5"`,
-				seq: 5,
+				etag: `"${epoch}.6"`,
+				seq: 6,
 				hash: "",
 				kind: "blob",
 				deleted: true,
@@ -407,13 +549,13 @@ describe("ReconciliationController", () => {
 		];
 		context.remote.feed.push({
 			epoch,
-			head_seq: 5,
+			head_seq: 6,
 			entries: [
 				{
-					seq: 5,
+					seq: 6,
 					op: "delete",
 					path: "assets/file.pdf",
-					etag: `"${epoch}.5"`,
+					etag: `"${epoch}.6"`,
 					hash: "",
 					origin: "remote",
 					at: 5,
@@ -422,19 +564,26 @@ describe("ReconciliationController", () => {
 		});
 		await context.controller.replay();
 		expect(context.vault.reads).not.toContain("assets/file.pdf");
-		expect(context.vault.files.get("assets/file.pdf")).toBe(
-			"binary placeholder",
+		expect(context.vault.binaryFiles.get("assets/file.pdf")).toEqual(
+			editedBytes,
 		);
-		expect(context.journal.snapshot().cursor).toBe(5);
+		expect(context.journal.snapshot().cursor).toBe(6);
+		expect(context.journal.snapshot().base["assets/file.pdf"]).toMatchObject({
+			deleted: true,
+			rev: 6,
+		});
 		expect(context.journal.snapshot().attention).toContainEqual({
 			path: "assets/file.pdf",
-			reason: "Delete row is not a confirmed inline-text revision",
+			reason: "Local binary bytes remain visible after the remote delete",
 		});
 	});
 
-	it("records authoritative feed blobs without reading them as local text", async () => {
+	it("applies authoritative feed blobs without decoding them as local text", async () => {
 		await context.controller.enroll();
 		context.remote.blobPaths.add("assets/photo.png");
+		const blobBytes = new Uint8Array([0, 254, 5]);
+		const blobHash = await hashBytes(blobBytes);
+		context.remote.blobs.set(5, blobBytes);
 		const following = "after the blob";
 		context.remote.texts.set("6", following);
 		context.remote.feed.push({
@@ -446,7 +595,7 @@ describe("ReconciliationController", () => {
 					op: "put",
 					path: "assets/photo.png",
 					etag: `"${epoch}.5"`,
-					hash: "b".repeat(64),
+					hash: blobHash,
 					origin: "remote",
 					at: 5,
 				},
@@ -463,13 +612,15 @@ describe("ReconciliationController", () => {
 		});
 		await context.controller.replay();
 		expect(context.vault.reads).not.toContain("assets/photo.png");
+		expect(context.vault.binaryFiles.get("assets/photo.png")).toEqual(
+			blobBytes,
+		);
 		expect(context.vault.files.get("after-blob.md")).toBe(following);
 		expect(context.journal.snapshot().cursor).toBe(6);
 		expect(context.journal.snapshot().pending_apply).toEqual([]);
-		expect(context.journal.snapshot().attention).toContainEqual({
-			path: "assets/photo.png",
-			reason: "Blob synchronization is not available yet",
-		});
+		expect(context.journal.snapshot().attention).not.toContainEqual(
+			expect.objectContaining({ path: "assets/photo.png" }),
+		);
 	});
 
 	it("skips an obsolete put before an unavailable historical read", async () => {
@@ -792,10 +943,12 @@ describe("ReconciliationController", () => {
 		});
 	});
 
-	it("admits only inline enrollment files and records local blobs without reading them", async () => {
+	it("publishes inline text and reconciles oversized Markdown as exact blob bytes", async () => {
 		context.vault.files.set("note.md", "inline");
 		context.vault.files.set("drawing.canvas", '{"nodes":[]}');
-		context.vault.files.set("image.png", "binary placeholder");
+		context.vault.binaryFiles.set("image.png", new Uint8Array([0, 255]));
+		const localLarge = new TextEncoder().encode("do not decode");
+		const remoteLarge = new Uint8Array([9, 8, 7]);
 		context.vault.files.set("large.md", "do not decode");
 		context.vault.fileSizes.set("large.md", 1_000_001);
 		context.remote.entries = [
@@ -803,12 +956,13 @@ describe("ReconciliationController", () => {
 				path: "large.md",
 				etag: `"${epoch}.2"`,
 				seq: 2,
-				hash: await hash("server inline text"),
-				kind: "text",
+				hash: await hashBytes(remoteLarge),
+				kind: "blob",
 				deleted: false,
 			},
 		];
-		context.remote.texts.set("2", "server inline text");
+		context.remote.blobPaths.add("large.md");
+		context.remote.blobs.set(2, remoteLarge);
 		for (const path of [
 			".obsidian/config.md",
 			".trash/old.md",
@@ -823,14 +977,16 @@ describe("ReconciliationController", () => {
 			"note.md",
 			"drawing.canvas",
 		]);
+		expect(context.remote.createdBlobs.map((item) => item.path)).toEqual([
+			"image.png",
+		]);
 		expect(context.vault.reads).not.toContain("image.png");
 		expect(context.vault.reads).not.toContain("large.md");
-		for (const path of ["image.png", "large.md"])
-			expect(
-				context.journal
-					.snapshot()
-					.attention.some((item: { path: string }) => item.path === path),
-			).toBe(true);
+		expect(context.vault.binaryFiles.get("large.md")).toEqual(remoteLarge);
+		expect(context.vault.binaryFiles.get("large.md")).not.toEqual(localLarge);
+		expect(context.journal.snapshot().attention).toContainEqual(
+			expect.objectContaining({ path: "large.md" }),
+		);
 		for (const path of [".ai-bridge/pending/journal", ".obsidian/config.md"])
 			expect(context.vault.reads).not.toContain(path);
 	});

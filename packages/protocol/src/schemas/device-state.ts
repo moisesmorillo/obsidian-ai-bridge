@@ -136,10 +136,11 @@ export const DeviceBaseEntrySchema = z.discriminatedUnion("deleted", [
 export const PendingApplySchema = z
 	.object({
 		change: ChangeEntrySchema,
-		step: z.enum(["prepared", "named", "copied", "effect_confirmed"]),
+		step: z.enum(["prepared", "named", "copied"]),
 		conflict_path: DevicePathSchema.optional(),
 		conflict_source: DevicePathSchema.optional(),
 		conflict_mode: z.enum(["local", "remote"]).optional(),
+		conflict_device_name: z.string().min(1).optional(),
 		conflict_hash: DevicePayloadHashSchema.optional(),
 	})
 	.strict()
@@ -156,13 +157,21 @@ export const PendingApplySchema = z
 				code: "custom",
 				message: "Conflict paths and hash must be stored together",
 			});
-		if (
-			(pending.step === "named" || pending.step === "copied") &&
-			pending.conflict_path === undefined
-		)
+		const hasConflict = pending.conflict_path !== undefined;
+		if ((pending.step === "named" || pending.step === "copied") !== hasConflict)
 			context.addIssue({
 				code: "custom",
-				message: "Conflict recovery steps need verified identity",
+				message: "Conflict identity must match the persisted apply step",
+			});
+		if (pending.conflict_device_name !== undefined && !hasConflict)
+			context.addIssue({
+				code: "custom",
+				message: "Conflict device names need persisted conflict identity",
+			});
+		if (pending.conflict_mode === "remote" && pending.change.op !== "put")
+			context.addIssue({
+				code: "custom",
+				message: "Remote collision copies only support put entries",
 			});
 	});
 

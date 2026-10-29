@@ -178,10 +178,7 @@ export class DeviceJournal {
 					(parsed.step === "prepared" || parsed.step === "named")) ||
 				(current.step === "named" &&
 					(parsed.step === "named" || parsed.step === "copied")) ||
-				(current.step === "copied" &&
-					(parsed.step === "copied" || parsed.step === "effect_confirmed")) ||
-				(current.step === "effect_confirmed" &&
-					parsed.step === "effect_confirmed");
+				(current.step === "copied" && parsed.step === "copied");
 			if (!transitionAllowed)
 				throw new Error(
 					"Remote apply step cannot move backward or skip a step",
@@ -194,6 +191,8 @@ export class DeviceJournal {
 						JSON.stringify(parsed.conflict_source) ||
 					JSON.stringify(current.conflict_mode) !==
 						JSON.stringify(parsed.conflict_mode) ||
+					JSON.stringify(current.conflict_device_name) !==
+						JSON.stringify(parsed.conflict_device_name) ||
 					JSON.stringify(current.conflict_hash) !==
 						JSON.stringify(parsed.conflict_hash))
 			)

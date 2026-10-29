@@ -1,6 +1,11 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { DeviceJournal } from "../src/sync/device-journal";
-import { TextApplyEngine, type TextVault } from "../src/sync/text-apply";
+import {
+	type PinnedTextProvider,
+	TextApplyEngine,
+	type TextApplyOptions,
+	type TextVault,
+} from "../src/sync/text-apply";
 
 /** Stores device state and note text for isolated apply tests. */
 class MemoryStorage {
@@ -27,6 +32,7 @@ class MemoryStorage {
 class MemoryVault implements TextVault {
 	files = new Map<string, string>();
 	beforeProcess: (() => void) | null = null;
+	refuseTrash: ((path: string) => boolean) | null = null;
 	/** Reads current text or reports an absent exact path. */
 	async read(path: string): Promise<string | null> {
 		return this.files.get(path) ?? null;
@@ -54,6 +60,7 @@ class MemoryVault implements TextVault {
 	}
 	/** Removes a path to emulate an accepted local-trash operation. */
 	async trash(path: string, _expected: string): Promise<boolean> {
+		if (this.refuseTrash?.(path)) return false;
 		if (!this.files.has(path)) return false;
 		this.files.delete(path);
 		return true;
@@ -102,6 +109,16 @@ async function hash(text: string): Promise<string> {
 		.join("");
 }
 
+/** Builds an apply engine with a stable test device name unless a case overrides it. */
+function makeEngine(
+	journal: DeviceJournal,
+	vault: TextVault,
+	pinnedText: PinnedTextProvider,
+	options: TextApplyOptions = { deviceName: "Test Device" },
+): TextApplyEngine {
+	return new TextApplyEngine(journal, vault, pinnedText, options);
+}
+
 describe("TextApplyEngine", () => {
 	let storage: MemoryStorage;
 	let journal: DeviceJournal;
@@ -114,7 +131,7 @@ describe("TextApplyEngine", () => {
 		journal = await DeviceJournal.open(storage);
 		vault = new MemoryVault();
 		const remoteChange = { ...change, hash: await hash(remoteText) };
-		engine = new TextApplyEngine(journal, vault, {
+		engine = makeEngine(journal, vault, {
 			read: async (_path, _epoch, rev) => (rev === 2 ? remoteText : null),
 		});
 		Object.assign(change, remoteChange);
@@ -128,7 +145,7 @@ describe("TextApplyEngine", () => {
 			storage,
 			journal,
 		);
-		engine = new TextApplyEngine(journal, vault, {
+		engine = makeEngine(journal, vault, {
 			read: async (_path, _epoch, rev) => (rev === 2 ? remoteText : null),
 		});
 		await engine.apply(change);
@@ -154,7 +171,7 @@ describe("TextApplyEngine", () => {
 			if (pending.step === "copied")
 				throw new Error("simulated crash after copied");
 		};
-		engine = new TextApplyEngine(journal, vault, {
+		engine = makeEngine(journal, vault, {
 			read: async (_path, _epoch, rev) => (rev === 2 ? remoteText : null),
 		});
 		vault.beforeProcess = () => {
@@ -167,7 +184,7 @@ describe("TextApplyEngine", () => {
 		expect(journal.snapshot().pending_apply[0]?.step).toBe("copied");
 		journal.close();
 		journal = await DeviceJournal.open(storage);
-		engine = new TextApplyEngine(journal, vault, {
+		engine = makeEngine(journal, vault, {
 			read: async (_path, _epoch, rev) => (rev === 2 ? remoteText : null),
 		});
 		await engine.resume();
@@ -187,7 +204,7 @@ describe("TextApplyEngine", () => {
 		journal.completeApply = async () => {
 			throw new Error("simulated crash before base commit");
 		};
-		engine = new TextApplyEngine(journal, vault, {
+		engine = makeEngine(journal, vault, {
 			read: async (_path, _epoch, rev) => (rev === 2 ? remoteText : null),
 		});
 		await expect(engine.apply(change)).rejects.toThrow(
@@ -196,7 +213,7 @@ describe("TextApplyEngine", () => {
 		expect(vault.files.get(change.path)).toBe(remoteText);
 		journal.close();
 		journal = await DeviceJournal.open(storage);
-		engine = new TextApplyEngine(journal, vault, {
+		engine = makeEngine(journal, vault, {
 			read: async (_path, _epoch, rev) => (rev === 2 ? remoteText : null),
 		});
 		await engine.resume();
@@ -212,7 +229,7 @@ describe("TextApplyEngine", () => {
 			storage,
 			journal,
 		);
-		engine = new TextApplyEngine(journal, vault, {
+		engine = makeEngine(journal, vault, {
 			read: async (_path, _epoch, rev) => (rev === 2 ? remoteText : null),
 		});
 		vault.beforeProcess = () => {
@@ -230,7 +247,7 @@ describe("TextApplyEngine", () => {
 		vault.files.set(conflictPath as string, "edited copy");
 		journal.close();
 		journal = await DeviceJournal.open(storage);
-		engine = new TextApplyEngine(journal, vault, {
+		engine = makeEngine(journal, vault, {
 			read: async (_path, _epoch, rev) => (rev === 2 ? remoteText : null),
 		});
 		await engine.resume();
@@ -271,12 +288,225 @@ describe("TextApplyEngine", () => {
 		await journal.beginApply(change);
 		journal.close();
 		journal = await DeviceJournal.open(storage);
-		engine = new TextApplyEngine(journal, vault, {
+		engine = makeEngine(journal, vault, {
 			read: async (_path, _epoch, rev) => (rev === 2 ? remoteText : null),
 		});
 		await engine.resume();
 		expect(vault.files.get(change.path)).toBe(remoteText);
 		expect(journal.snapshot().base[change.path]?.rev).toBe(2);
+	});
+
+	it("applies a clean destination-only rename without a conflict copy", async () => {
+		const destinationBaseText = "clean destination bytes";
+		vault.files.set("notes/b.md", destinationBaseText);
+		journal = await seedBase(
+			"notes/b.md",
+			await hash(destinationBaseText),
+			storage,
+			journal,
+		);
+		engine = makeEngine(
+			journal,
+			vault,
+			{ read: async (_path, _epoch, rev) => (rev === 3 ? remoteText : null) },
+			{ deviceName: "Moises Mac" },
+		);
+		await engine.apply({
+			...change,
+			op: "rename",
+			path: "notes/b.md",
+			hash: await hash(remoteText),
+			etag: `"${epoch}.3"`,
+			from_path: "notes/a.md",
+			from_etag: `"${epoch}.2"`,
+		});
+		expect(vault.files.get("notes/b.md")).toBe(remoteText);
+		expect(
+			[...vault.files.keys()].some((path) => path.includes("(conflict ")),
+		).toBe(false);
+		expect(journal.snapshot().base["notes/b.md"]).toEqual({
+			deleted: false,
+			rev: 3,
+			hash: await hash(remoteText),
+		});
+	});
+
+	it("does not commit a source tombstone when trash refuses a remote-equal destination rename", async () => {
+		vault.files.set("notes/a.md", remoteText);
+		vault.files.set("notes/b.md", remoteText);
+		journal = await seedBase(
+			"notes/a.md",
+			await hash(remoteText),
+			storage,
+			journal,
+		);
+		vault.refuseTrash = (path) => path === "notes/a.md";
+		engine = makeEngine(
+			journal,
+			vault,
+			{ read: async () => remoteText },
+			{ deviceName: "Moises Mac" },
+		);
+		await engine.apply({
+			...change,
+			op: "rename",
+			path: "notes/b.md",
+			hash: await hash(remoteText),
+			etag: `"${epoch}.3"`,
+			from_path: "notes/a.md",
+			from_etag: `"${epoch}.2"`,
+		});
+		expect(vault.files.get("notes/a.md")).toBe(remoteText);
+		expect(journal.snapshot().base["notes/a.md"]).toEqual({
+			deleted: false,
+			rev: 1,
+			hash: await hash(remoteText),
+		});
+		expect(journal.snapshot().pending_apply).toHaveLength(1);
+		expect(journal.snapshot().attention).toHaveLength(1);
+	});
+
+	it("does not commit a source tombstone when trash refuses after a rename destination write", async () => {
+		vault.files.set("notes/a.md", remoteText);
+		journal = await seedBase(
+			"notes/a.md",
+			await hash(remoteText),
+			storage,
+			journal,
+		);
+		vault.rename = async () => false;
+		vault.refuseTrash = (path) => path === "notes/a.md";
+		engine = makeEngine(
+			journal,
+			vault,
+			{ read: async () => remoteText },
+			{ deviceName: "Moises Mac" },
+		);
+		await engine.apply({
+			...change,
+			op: "rename",
+			path: "notes/b.md",
+			hash: await hash(remoteText),
+			etag: `"${epoch}.3"`,
+			from_path: "notes/a.md",
+			from_etag: `"${epoch}.2"`,
+		});
+		expect(vault.files.get("notes/a.md")).toBe(remoteText);
+		expect(vault.files.get("notes/b.md")).toBe(remoteText);
+		expect(journal.snapshot().base["notes/a.md"]?.rev).toBe(1);
+		expect(journal.snapshot().pending_apply).toHaveLength(1);
+		expect(journal.snapshot().attention).toHaveLength(1);
+	});
+
+	it("keeps a source visible and pending when trash refuses during rename recovery", async () => {
+		const source = "dirty source bytes";
+		vault.files.set("notes/a.md", source);
+		journal = await seedBase(
+			"notes/a.md",
+			await hash("older source"),
+			storage,
+			journal,
+		);
+		vault.refuseTrash = (path) => path === "notes/a.md";
+		engine = makeEngine(
+			journal,
+			vault,
+			{ read: async () => remoteText },
+			{ deviceName: "Moises Mac" },
+		);
+		await engine.apply({
+			...change,
+			op: "rename",
+			path: "notes/b.md",
+			hash: await hash(remoteText),
+			etag: `"${epoch}.3"`,
+			from_path: "notes/a.md",
+			from_etag: `"${epoch}.2"`,
+		});
+		expect(vault.files.get("notes/a.md")).toBe(source);
+		expect(journal.snapshot().base["notes/a.md"]?.rev).toBe(1);
+		expect(journal.snapshot().pending_apply).toHaveLength(1);
+		expect(journal.snapshot().attention).toHaveLength(1);
+	});
+
+	it("keeps conflict naming metadata stable after restart and engine option changes", async () => {
+		vault.files.set(change.path, "base bytes");
+		journal = await seedBase(
+			change.path,
+			await hash("base bytes"),
+			storage,
+			journal,
+		);
+		const update = journal.updateApply.bind(journal);
+		journal.updateApply = async (pending) => {
+			await update(pending);
+			if (pending.step === "named")
+				throw new Error("simulated stop after naming");
+		};
+		engine = makeEngine(
+			journal,
+			vault,
+			{ read: async () => remoteText },
+			{ deviceName: "Moises Mac" },
+		);
+		vault.beforeProcess = () => {
+			vault.files.set(change.path, "dirty local bytes");
+			vault.beforeProcess = null;
+		};
+		await expect(engine.apply(change)).rejects.toThrow(
+			"simulated stop after naming",
+		);
+		const pending = journal.snapshot().pending_apply[0];
+		expect(pending?.conflict_device_name).toBe("Moises Mac");
+		const conflictPath = pending?.conflict_path;
+		expect(conflictPath).toContain("(conflict Moises Mac ");
+		journal.close();
+		journal = await DeviceJournal.open(storage);
+		engine = makeEngine(
+			journal,
+			vault,
+			{ read: async () => remoteText },
+			{ deviceName: "Other Name" },
+		);
+		await engine.resume();
+		expect(
+			[...vault.files.keys()].filter((path) => path === conflictPath),
+		).toHaveLength(1);
+		expect(journal.snapshot().pending_apply).toEqual([]);
+	});
+
+	it("fences pinned fetch completion and queued apply work after close", async () => {
+		let markStarted: (() => void) | undefined;
+		let release: ((text: string) => void) | undefined;
+		const started = new Promise<void>((resolve) => {
+			markStarted = resolve;
+		});
+		const fetch = new Promise<string>((resolve) => {
+			release = resolve;
+		});
+		engine = makeEngine(
+			journal,
+			vault,
+			{
+				read: async () => {
+					markStarted?.();
+					return fetch;
+				},
+			},
+			{ deviceName: "Moises Mac" },
+		);
+		vault.files.set(change.path, remoteText);
+		const first = engine.apply(change);
+		await started;
+		const second = engine.apply({ ...change, seq: 2, path: "notes/queued.md" });
+		engine.close();
+		release?.(remoteText);
+		await expect(first).rejects.toThrow("closed");
+		await expect(second).rejects.toThrow("closed");
+		expect(vault.files.get(change.path)).toBe(remoteText);
+		expect(journal.snapshot().base[change.path]).toBeUndefined();
+		expect(journal.snapshot().pending_apply[0]?.step).toBe("prepared");
+		expect(journal.snapshot().base["notes/queued.md"]).toBeUndefined();
 	});
 
 	it("keeps a newer rename destination base while applying only the dirty source side", async () => {
@@ -301,7 +531,7 @@ describe("TextApplyEngine", () => {
 			from_etag: `"${epoch}.2"`,
 		};
 		vault.files.set(rename.path, "newer destination");
-		engine = new TextApplyEngine(journal, vault, { read: async () => null });
+		engine = makeEngine(journal, vault, { read: async () => null });
 		await engine.apply(rename);
 		expect(vault.files.get("notes/b.md")).toBe("newer destination");
 		expect(vault.files.has("notes/a.md")).toBe(false);
@@ -311,6 +541,110 @@ describe("TextApplyEngine", () => {
 		});
 		expect(journal.snapshot().base["notes/b.md"]?.rev).toBe(5);
 	});
+
+	it.each([
+		{ op: "delete", step: "named" },
+		{ op: "delete", step: "copied" },
+		{ op: "rename", step: "named" },
+		{ op: "rename", step: "copied" },
+	] as const)(
+		"recovers a local $op conflict at persisted $step after restart",
+		async ({ op, step }) => {
+			const source = "dirty local source";
+			vault.files.set("notes/a.md", source);
+			journal = await seedBase(
+				"notes/a.md",
+				await hash("old source"),
+				storage,
+				journal,
+			);
+			const update = journal.updateApply.bind(journal);
+			journal.updateApply = async (pending) => {
+				await update(pending);
+				if (pending.step === step) throw new Error(`stopped at ${step}`);
+			};
+			engine = makeEngine(
+				journal,
+				vault,
+				{ read: async () => remoteText },
+				{ deviceName: "Moises Mac" },
+			);
+			const changeToApply =
+				op === "delete"
+					? { ...change, op: "delete" as const, hash: "" }
+					: {
+							...change,
+							op: "rename" as const,
+							path: "notes/b.md",
+							from_path: "notes/a.md",
+							from_etag: `"${epoch}.2"`,
+						};
+			await expect(engine.apply(changeToApply)).rejects.toThrow(
+				`stopped at ${step}`,
+			);
+			expect(journal.snapshot().pending_apply[0]?.step).toBe(step);
+			journal.close();
+			journal = await DeviceJournal.open(storage);
+			engine = makeEngine(journal, vault, { read: async () => remoteText });
+			await engine.resume();
+			expect(journal.snapshot().pending_apply).toEqual([]);
+			if (op === "delete") {
+				expect(journal.snapshot().base["notes/a.md"]).toEqual({
+					deleted: true,
+					rev: 2,
+				});
+			} else {
+				expect(journal.snapshot().base["notes/a.md"]).toEqual({
+					deleted: true,
+					rev: 2,
+				});
+				expect(journal.snapshot().base["notes/b.md"]).toEqual({
+					deleted: false,
+					rev: 2,
+					hash: await hash(remoteText),
+				});
+			}
+		},
+	);
+
+	it.each(["named", "copied"] as const)(
+		"recovers a persisted remote %s conflict step after restart",
+		async (step) => {
+			const collidingPath = "notes/CAFÉ.md";
+			vault.files.set(collidingPath, "local collision bytes");
+			const update = journal.updateApply.bind(journal);
+			journal.updateApply = async (pending) => {
+				await update(pending);
+				if (pending.step === step) throw new Error(`stopped at ${step}`);
+			};
+			engine = makeEngine(
+				journal,
+				vault,
+				{ read: async () => remoteText },
+				{ deviceName: "Moises Mac" },
+			);
+			await expect(
+				engine.apply({ ...change, path: "notes/café.md" }),
+			).rejects.toThrow(`stopped at ${step}`);
+			const pending = journal.snapshot().pending_apply[0];
+			expect(pending?.step).toBe(step);
+			expect(pending?.conflict_device_name).toBe("Moises Mac");
+			const conflictPath = pending?.conflict_path;
+			expect(conflictPath).toContain("(conflict Moises Mac ");
+			journal.close();
+			journal = await DeviceJournal.open(storage);
+			engine = makeEngine(
+				journal,
+				vault,
+				{ read: async () => remoteText },
+				{ deviceName: "Other Name" },
+			);
+			await engine.resume();
+			expect(vault.files.get(conflictPath as string)).toBe(remoteText);
+			expect(journal.snapshot().pending_apply).toEqual([]);
+			expect(journal.snapshot().base["notes/café.md"]?.rev).toBe(2);
+		},
+	);
 
 	it("preserves a case-folded path collision and stores pinned remote text as a conflict copy", async () => {
 		const collidingPath = "notes/CAFÉ.md";
@@ -377,7 +711,7 @@ describe("TextApplyEngine", () => {
 		journal.close();
 		storage.state = state;
 		journal = await DeviceJournal.open(storage);
-		engine = new TextApplyEngine(journal, vault, {
+		engine = makeEngine(journal, vault, {
 			read: async () => remoteText,
 		});
 		await engine.apply(change);
@@ -389,7 +723,7 @@ describe("TextApplyEngine", () => {
 		const local = "base bytes";
 		vault.files.set(change.path, local);
 		journal = await seedBase(change.path, await hash(local), storage, journal);
-		engine = new TextApplyEngine(journal, vault, { read: async () => null });
+		engine = makeEngine(journal, vault, { read: async () => null });
 		await engine.apply({
 			...change,
 			op: "delete",
@@ -408,7 +742,7 @@ describe("TextApplyEngine", () => {
 		const remoteHash = await hash(local);
 		vault.files.set("notes/a.md", local);
 		journal = await seedBase("notes/a.md", remoteHash, storage, journal);
-		engine = new TextApplyEngine(journal, vault, { read: async () => local });
+		engine = makeEngine(journal, vault, { read: async () => local });
 		await engine.apply({
 			...change,
 			op: "rename",
@@ -439,7 +773,7 @@ describe("TextApplyEngine", () => {
 			storage,
 			journal,
 		);
-		engine = new TextApplyEngine(journal, vault, {
+		engine = makeEngine(journal, vault, {
 			read: async (_path, _epoch, rev) => (rev === 2 ? remoteText : null),
 		});
 		vault.beforeProcess = () => {

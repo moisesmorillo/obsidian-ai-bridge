@@ -29,6 +29,12 @@ export interface TextVault {
 	rename(from: string, to: string, expected: string): Promise<boolean>;
 }
 
+/** Names conflict copies with one friendly device name for this engine lifetime. */
+export interface TextApplyOptions {
+	/** Stable display name stored with conflict recovery metadata. */
+	deviceName: string;
+}
+
 /** Fetches immutable remote text by its exact path and server revision. */
 export interface PinnedTextProvider {
 	/** Returns text pinned to the exact epoch and revision, or null when unavailable. */
@@ -39,13 +45,18 @@ export interface PinnedTextProvider {
 export class TextApplyEngine {
 	private tail: Promise<void> = Promise.resolve();
 	private closed = false;
+	private readonly deviceName: string;
 
 	/** Binds journal authority to text effects and a pinned-revision reader. */
 	constructor(
 		private readonly journal: DeviceJournal,
 		private readonly vault: TextVault,
 		private readonly pinnedText: PinnedTextProvider,
-	) {}
+		options: TextApplyOptions,
+	) {
+		this.deviceName = options.deviceName.trim();
+		if (!this.deviceName) throw new Error("A friendly device name is required");
+	}
 
 	/** Validates and applies one immutable remote entry without discarding newer local bytes. */
 	apply(change: ChangeEntry): Promise<void> {
@@ -56,7 +67,7 @@ export class TextApplyEngine {
 	/** Resumes the one verified pending transition after a plugin restart. */
 	resume(): Promise<void> {
 		return this.serialize(async () => {
-			const pending = this.journal.snapshot().pending_apply[0];
+			const pending = this.activeJournal.snapshot().pending_apply[0];
 			if (pending) await this.applyEntry(pending.change);
 		});
 	}
@@ -69,17 +80,17 @@ export class TextApplyEngine {
 	/** Runs one accepted entry or continues its persisted conflict step. */
 	private async applyEntry(change: ChangeEntry): Promise<void> {
 		this.assertOpen();
-		const state = this.journal.snapshot();
+		const state = this.activeJournal.snapshot();
 		const pending = state.pending_apply[0];
 		if (pending && pending.change.seq !== change.seq)
 			throw new Error("Another remote apply is pending");
 		if (!pending) {
-			await this.journal.beginApply(change);
+			await this.activeJournal.beginApply(change);
 			const base =
 				state.base[change.op === "rename" ? change.path : change.path];
 			const revision = parseETag(change.etag).rev;
 			if (change.op !== "rename" && base && revision <= base.rev) {
-				await this.journal.ignoreApply(change.path, revision);
+				await this.activeJournal.ignoreApply(change.path, revision);
 				return;
 			}
 			if (change.op === "rename") {
@@ -107,7 +118,7 @@ export class TextApplyEngine {
 				change.hash,
 			);
 			if (local === remote) {
-				await this.journal.completeApply(change.path, {
+				await this.activeJournal.completeApply(change.path, {
 					deleted: false,
 					rev: remoteRev,
 					hash: change.hash,
@@ -120,18 +131,18 @@ export class TextApplyEngine {
 					await this.startRemoteCollision(change, remote);
 					return;
 				}
-				await this.journal.setExpectedWrite(change.path, change.hash);
+				await this.activeJournal.setExpectedWrite(change.path, change.hash);
 				await this.effect(() => this.vault.create(change.path, remote));
 				const createdText = await this.vault.read(change.path);
 				if (createdText === remote) {
-					await this.journal.completeApply(change.path, {
+					await this.activeJournal.completeApply(change.path, {
 						deleted: false,
 						rev: remoteRev,
 						hash: change.hash,
 					});
 					return;
 				}
-				await this.journal.clearExpectedWrite(change.path);
+				await this.activeJournal.clearExpectedWrite(change.path);
 				if (createdText !== null)
 					await this.startConflict(change, change.path, createdText);
 				else throw new Error("Remote create was not confirmed");
@@ -140,20 +151,20 @@ export class TextApplyEngine {
 			const clean =
 				base?.deleted === false && (await digest(local)) === base.hash;
 			if (clean) {
-				await this.journal.setExpectedWrite(change.path, change.hash);
+				await this.activeJournal.setExpectedWrite(change.path, change.hash);
 				if (
 					await this.effect(() =>
 						this.vault.process(change.path, local, remote),
 					)
 				) {
-					await this.journal.completeApply(change.path, {
+					await this.activeJournal.completeApply(change.path, {
 						deleted: false,
 						rev: remoteRev,
 						hash: change.hash,
 					});
 					return;
 				}
-				await this.journal.clearExpectedWrite(change.path);
+				await this.activeJournal.clearExpectedWrite(change.path);
 			}
 			const current = await this.vault.read(change.path);
 			if (current === null)
@@ -162,7 +173,7 @@ export class TextApplyEngine {
 			return;
 		}
 		if (local === null) {
-			await this.journal.completeApply(change.path, {
+			await this.activeJournal.completeApply(change.path, {
 				deleted: true,
 				rev: remoteRev,
 			});
@@ -179,7 +190,7 @@ export class TextApplyEngine {
 			(await this.vault.read(change.path)) !== null
 		)
 			throw new Error("Obsidian trash did not confirm the remote delete");
-		await this.journal.completeApply(change.path, {
+		await this.activeJournal.completeApply(change.path, {
 			deleted: true,
 			rev: remoteRev,
 		});
@@ -198,7 +209,7 @@ export class TextApplyEngine {
 		const destinationPending =
 			destinationBase === undefined || destinationBase.rev < toRev;
 		if (!sourcePending && !destinationPending) {
-			await this.journal.completeRenameApply(
+			await this.activeJournal.completeRenameApply(
 				change.from_path,
 				null,
 				change.path,
@@ -223,14 +234,14 @@ export class TextApplyEngine {
 			destination === null
 		) {
 			if (source !== null) {
-				await this.journal.setExpectedWrite(change.path, change.hash);
+				await this.activeJournal.setExpectedWrite(change.path, change.hash);
 				const renamedFile = await this.effect(() =>
 					this.vault.rename(change.from_path, change.path, source),
 				);
 				if (renamedFile) {
 					const renamed = await this.vault.read(change.path);
 					if (renamed !== null && (await digest(renamed)) === change.hash) {
-						await this.journal.completeRenameApply(
+						await this.activeJournal.completeRenameApply(
 							change.from_path,
 							{ deleted: true, rev: fromRev },
 							change.path,
@@ -243,7 +254,7 @@ export class TextApplyEngine {
 						return;
 					}
 				}
-				await this.journal.clearExpectedWrite(change.path);
+				await this.activeJournal.clearExpectedWrite(change.path);
 			}
 		}
 		if (sourcePending && source !== null && !sourceClean) {
@@ -254,13 +265,15 @@ export class TextApplyEngine {
 			if (sourcePending) {
 				if (
 					source !== null &&
-					!(await this.effect(() =>
-						this.vault.trash(change.from_path, source),
-					)) &&
-					(await this.vault.read(change.from_path)) !== null
-				)
-					throw new Error("Obsidian trash did not confirm the rename source");
-				await this.journal.completeRenameApply(
+					!(await this.confirmRenameSourceTrash(change.from_path, source))
+				) {
+					await this.attend(
+						change.from_path,
+						"Obsidian trash did not confirm the rename source",
+					);
+					return;
+				}
+				await this.activeJournal.completeRenameApply(
 					change.from_path,
 					{ deleted: true, rev: fromRev },
 					change.path,
@@ -272,14 +285,16 @@ export class TextApplyEngine {
 		const remote = await this.fetchText(change.path, change.etag, change.hash);
 		const current = await this.vault.read(change.path);
 		if (current === remote) {
-			if (sourcePending) {
-				const sourceText = await this.vault.read(change.from_path);
-				if (sourceText !== null)
-					await this.effect(() =>
-						this.vault.trash(change.from_path, sourceText),
+			if (sourcePending && source !== null) {
+				if (!(await this.confirmRenameSourceTrash(change.from_path, source))) {
+					await this.attend(
+						change.from_path,
+						"Obsidian trash did not confirm the rename source",
 					);
+					return;
+				}
 			}
-			await this.journal.completeRenameApply(
+			await this.activeJournal.completeRenameApply(
 				change.from_path,
 				sourcePending ? { deleted: true, rev: fromRev } : null,
 				change.path,
@@ -287,27 +302,38 @@ export class TextApplyEngine {
 			);
 			return;
 		}
-		if (current !== null) {
+		const destinationClean =
+			current !== null &&
+			destinationBase?.deleted === false &&
+			(await digest(current)) === destinationBase.hash;
+		if (current !== null && !destinationClean) {
 			await this.startConflict(change, change.path, current);
 			return;
 		}
-		await this.journal.setExpectedWrite(change.path, change.hash);
-		const applied =
-			current === null
-				? await this.effect(() => this.vault.create(change.path, remote))
-				: await this.effect(() =>
-						this.vault.process(change.path, current, remote),
-					);
-		if ((await this.vault.read(change.path)) !== remote) {
-			if (!applied) await this.journal.clearExpectedWrite(change.path);
+		const destinationApplied = await this.applyRemoteText(
+			change.path,
+			change.hash,
+			current,
+			remote,
+		);
+		if (!destinationApplied) {
+			const latest = await this.vault.read(change.path);
+			if (latest !== null) {
+				await this.startConflict(change, change.path, latest);
+				return;
+			}
 			throw new Error("Remote rename destination was not confirmed");
 		}
-		if (sourcePending) {
-			const sourceText = await this.vault.read(change.from_path);
-			if (sourceText !== null)
-				await this.effect(() => this.vault.trash(change.from_path, sourceText));
+		if (sourcePending && source !== null) {
+			if (!(await this.confirmRenameSourceTrash(change.from_path, source))) {
+				await this.attend(
+					change.from_path,
+					"Obsidian trash did not confirm the rename source",
+				);
+				return;
+			}
 		}
-		await this.journal.completeRenameApply(
+		await this.activeJournal.completeRenameApply(
 			change.from_path,
 			sourcePending ? { deleted: true, rev: fromRev } : null,
 			change.path,
@@ -357,7 +383,7 @@ export class TextApplyEngine {
 						pending.change.path,
 						"Remote collision copy did not verify",
 					);
-				await this.journal.updateApply({ ...pending, step: "copied" });
+				await this.activeJournal.updateApply({ ...pending, step: "copied" });
 			} else {
 				if (current === null) {
 					const original = await this.vault.read(pending.conflict_source);
@@ -385,10 +411,10 @@ export class TextApplyEngine {
 						"Conflict copy was edited before the apply finished",
 					);
 				}
-				await this.journal.updateApply({ ...pending, step: "copied" });
+				await this.activeJournal.updateApply({ ...pending, step: "copied" });
 			}
 		}
-		const updated = this.journal.snapshot().pending_apply[0];
+		const updated = this.activeJournal.snapshot().pending_apply[0];
 		if (updated?.step === "copied") {
 			const conflict = updated.conflict_path
 				? await this.vault.read(updated.conflict_path)
@@ -402,11 +428,11 @@ export class TextApplyEngine {
 					"Conflict copy changed during remote apply",
 				);
 			if (updated.conflict_mode === "remote") {
-				await this.journal.recordAttention(
+				await this.activeJournal.recordAttention(
 					updated.change.path,
 					"Remote path collides with a local case-folded or Unicode-equivalent path",
 				);
-				await this.journal.completeApply(updated.change.path, {
+				await this.activeJournal.completeApply(updated.change.path, {
 					deleted: false,
 					rev: parseETag(updated.change.etag).rev,
 					hash: updated.conflict_hash as string,
@@ -424,7 +450,7 @@ export class TextApplyEngine {
 						change.path,
 						"Obsidian trash did not confirm the remote delete",
 					);
-				await this.journal.completeApply(change.path, {
+				await this.activeJournal.completeApply(change.path, {
 					deleted: true,
 					rev: parseETag(change.etag).rev,
 				});
@@ -444,25 +470,26 @@ export class TextApplyEngine {
 						? await this.vault.read(change.from_path)
 						: null;
 					if (source !== null) {
-						if (
+						const sourceHash = await digest(source);
+						const sourceWasCopied =
 							updated.conflict_source === change.from_path &&
-							(await digest(source)) !== updated.conflict_hash
-						)
+							sourceHash === updated.conflict_hash;
+						const sourceIsClean =
+							sourceBase?.deleted === false && sourceHash === sourceBase.hash;
+						if (!sourceWasCopied && !sourceIsClean)
 							return this.attend(
 								change.from_path,
-								"Conflict source changed after its copy was saved",
+								"Rename source changed after its recovery copy was saved",
 							);
 						if (
-							!(await this.effect(() =>
-								this.vault.trash(change.from_path, source),
-							))
+							!(await this.confirmRenameSourceTrash(change.from_path, source))
 						)
 							return this.attend(
 								change.from_path,
 								"Obsidian trash did not confirm the rename source",
 							);
 					}
-					await this.journal.completeRenameApply(
+					await this.activeJournal.completeRenameApply(
 						change.from_path,
 						sourcePending ? { deleted: true, rev: fromRev } : null,
 						change.path,
@@ -477,24 +504,38 @@ export class TextApplyEngine {
 				change.hash,
 			);
 			const current = await this.vault.read(change.path);
+			const currentBase = state.base[change.path];
+			const renameDestinationClean =
+				change.op === "rename" &&
+				current !== null &&
+				currentBase?.deleted === false &&
+				(await digest(current)) === currentBase.hash;
 			if (
 				current !== null &&
 				current !== remote &&
-				(await digest(current)) !== updated.conflict_hash
+				(await digest(current)) !== updated.conflict_hash &&
+				!renameDestinationClean
 			) {
 				return this.attend(
 					change.path,
 					"Local text changed after its conflict copy was saved",
 				);
 			}
-			await this.journal.setExpectedWrite(change.path, change.hash);
-			if (current === null)
-				await this.effect(() => this.vault.create(change.path, remote));
-			else
-				await this.effect(() =>
-					this.vault.process(change.path, current, remote),
-				);
-			if ((await this.vault.read(change.path)) !== remote)
+			const destinationConfirmed =
+				change.op === "rename"
+					? await this.applyRemoteText(
+							change.path,
+							change.hash,
+							current,
+							remote,
+						)
+					: await this.applyRemoteText(
+							change.path,
+							change.hash,
+							current,
+							remote,
+						);
+			if (!destinationConfirmed)
 				return this.attend(
 					change.path,
 					"Remote text was not confirmed after conflict copy",
@@ -507,18 +548,19 @@ export class TextApplyEngine {
 				if (sourcePending) {
 					const source = await this.vault.read(change.from_path);
 					if (source !== null) {
-						if (
+						const sourceHash = await digest(source);
+						const sourceWasCopied =
 							updated.conflict_source === change.from_path &&
-							(await digest(source)) !== updated.conflict_hash
-						)
+							sourceHash === updated.conflict_hash;
+						const sourceIsClean =
+							sourceBase?.deleted === false && sourceHash === sourceBase.hash;
+						if (!sourceWasCopied && !sourceIsClean)
 							return this.attend(
 								change.from_path,
-								"Conflict source changed after its copy was saved",
+								"Rename source changed after its recovery copy was saved",
 							);
 						if (
-							!(await this.effect(() =>
-								this.vault.trash(change.from_path, source),
-							))
+							!(await this.confirmRenameSourceTrash(change.from_path, source))
 						)
 							return this.attend(
 								change.from_path,
@@ -526,7 +568,7 @@ export class TextApplyEngine {
 							);
 					}
 				}
-				await this.journal.completeRenameApply(
+				await this.activeJournal.completeRenameApply(
 					change.from_path,
 					sourcePending ? { deleted: true, rev: fromRev } : null,
 					change.path,
@@ -537,7 +579,7 @@ export class TextApplyEngine {
 					},
 				);
 			} else {
-				await this.journal.completeApply(change.path, {
+				await this.activeJournal.completeApply(change.path, {
 					deleted: false,
 					rev: parseETag(change.etag).rev,
 					hash: change.hash,
@@ -545,11 +587,37 @@ export class TextApplyEngine {
 			}
 			return;
 		}
-		if (updated?.step === "prepared" || updated?.step === "effect_confirmed") {
+		if (updated?.step === "prepared") {
 			const change = updated.change;
 			if (change.op === "rename") await this.applyRename(change, state);
 			else await this.applyPathChange(change, state.base[change.path] ?? null);
 		}
+	}
+
+	/** Applies pinned text with an exact path guard and confirms the stored bytes. */
+	private async applyRemoteText(
+		path: string,
+		hash: string,
+		expected: string | null,
+		remote: string,
+	): Promise<boolean> {
+		await this.activeJournal.setExpectedWrite(path, hash);
+		const applied =
+			expected === null
+				? await this.effect(() => this.vault.create(path, remote))
+				: await this.effect(() => this.vault.process(path, expected, remote));
+		if ((await this.vault.read(path)) === remote) return true;
+		if (!applied) await this.activeJournal.clearExpectedWrite(path);
+		return false;
+	}
+
+	/** Confirms the observed rename source no longer exists after local trash. */
+	private async confirmRenameSourceTrash(
+		path: string,
+		expected: string,
+	): Promise<boolean> {
+		await this.effect(() => this.vault.trash(path, expected));
+		return (await this.vault.read(path)) === null;
 	}
 
 	/** Records pinned remote bytes under a deterministic name when a local path key collides. */
@@ -560,22 +628,23 @@ export class TextApplyEngine {
 		const conflictHash = await digest(remoteText);
 		const conflictPath = conflictName(
 			change.path,
-			this.journal.snapshot().device_id,
+			this.deviceName,
 			parseETag(change.etag).rev,
 			change.at,
 		);
-		await this.journal.updateApply({
+		await this.activeJournal.updateApply({
 			change,
 			step: "named",
 			conflict_path: conflictPath,
 			conflict_source: change.path,
 			conflict_mode: "remote",
+			conflict_device_name: this.deviceName,
 			conflict_hash: conflictHash,
 		});
 		await this.resumePending(
-			this.journal.snapshot()
+			this.activeJournal.snapshot()
 				.pending_apply[0] as DeviceState["pending_apply"][number],
-			this.journal.snapshot(),
+			this.activeJournal.snapshot(),
 		);
 	}
 
@@ -594,29 +663,30 @@ export class TextApplyEngine {
 		const rev = parseETag(change.etag).rev;
 		const conflictPath = conflictName(
 			sourcePath,
-			this.journal.snapshot().device_id,
+			this.deviceName,
 			rev,
 			change.at,
 		);
-		await this.journal.updateApply({
+		await this.activeJournal.updateApply({
 			change,
 			step: "named",
 			conflict_path: conflictPath,
 			conflict_source: sourcePath,
 			conflict_mode: "local",
+			conflict_device_name: this.deviceName,
 			conflict_hash: conflictHash,
 		});
 		await this.resumePending(
-			this.journal.snapshot()
+			this.activeJournal.snapshot()
 				.pending_apply[0] as DeviceState["pending_apply"][number],
-			this.journal.snapshot(),
+			this.activeJournal.snapshot(),
 		);
 	}
 
 	/** Stores a durable blocker and leaves all current files and base revisions intact. */
 	private async attend(path: string, reason: string): Promise<void> {
-		const state = this.journal.snapshot();
-		await this.journal.recordAttention(path, reason);
+		const state = this.activeJournal.snapshot();
+		await this.activeJournal.recordAttention(path, reason);
 		if (state.pending_apply.length) return;
 	}
 
@@ -628,9 +698,11 @@ export class TextApplyEngine {
 	): Promise<string> {
 		const { epoch, rev } = parseETag(etag);
 		const text = await this.pinnedText.read(path, epoch, rev);
+		this.assertOpen();
 		if (text === null) throw new Error("Pinned remote text is unavailable");
 		if ((await digest(text)) !== expectedHash)
 			throw new Error("Pinned remote text hash mismatch");
+		this.assertOpen();
 		return text;
 	}
 
@@ -665,6 +737,12 @@ export class TextApplyEngine {
 		return result;
 	}
 
+	/** Provides the journal only while this engine can start a durable transition. */
+	private get activeJournal(): DeviceJournal {
+		this.assertOpen();
+		return this.journal;
+	}
+
 	/** Rejects queued work after unload without assuming Obsidian canceled an effect. */
 	private assertOpen(): void {
 		if (this.closed) throw new Error("Text apply engine is closed");
@@ -685,7 +763,7 @@ async function digest(text: string): Promise<string> {
 /** Builds the path-bound, revision-stable conflict name used across retries. */
 function conflictName(
 	path: string,
-	deviceId: string,
+	deviceName: string,
 	rev: number,
 	timestamp: number,
 ): string {
@@ -700,5 +778,6 @@ function conflictName(
 		.slice(0, 16)
 		.replace("T", " ")
 		.replace(":", "");
-	return `${directory}${stem} (conflict ${deviceId} ${time} r${rev})${extension}`;
+	const safeDeviceName = deviceName.trim().replace(/[\p{Cc}\\/:*?"<>|]/gu, "_");
+	return `${directory}${stem} (conflict ${safeDeviceName} ${time} r${rev})${extension}`;
 }

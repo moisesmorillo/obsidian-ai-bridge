@@ -102,7 +102,7 @@ describe("DeviceJournal", () => {
 				conflict_mode: "local",
 				conflict_hash: "d".repeat(64),
 			}),
-		).rejects.toThrow("backward");
+		).rejects.toThrow();
 	});
 
 	it("rejects a confirmed base that does not match the pending revision and content", async () => {

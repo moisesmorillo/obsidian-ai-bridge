@@ -17,6 +17,14 @@ Maintainability and documentation rules:
 - Do not create empty layers or one interface per function. A review should ask whether a contract/documentation-only change improperly forces unrelated implementation edits.
 - Use repo-relative or `~/` paths in durable documentation and `$HOME` in shell examples; never hardcode an owner's personal home directory.
 
+## Session start
+
+Run `backlog instructions overview`. Find the gate task with status In Progress. Run `backlog task list --plain --ready -p <gate>` and take the first subtask. Read the gate task notes. They hold the standing authorizations for the phase. Read the notes of the previous subtask. Read the spec sections and the acceptance cases that the subtask names. Update `main` before you create the worktree.
+
+Create the worktree with the harness command when one exists: `orca worktree create` inside Orca, `herdr worktree create` inside Herdr, `git worktree add` elsewhere. Set the subtask In Progress with the CLI. Write one plan and open it for review. Implement after the approval. Open the branch review, open the pull request, remove the worktree, report, and stop. The owner merges. A kickoff of one line is enough: "Pick the next ready subtask of the In Progress gate and do it."
+
+Inside Orca, the built-in browser automates OAuth consent against the deployed service. Load the `harness-browser` skill. Owner-manual steps are the Access PIN login and the ChatGPT account.
+
 ## Documentation and semantic review
 
 Load the `code-review` skill before reviewing implementation, tests, or executable configuration.

@@ -48,7 +48,8 @@ export function createPublication(
 	);
 	const publication = new PublicationController(journal, textVault, remote, {
 		now: options.now,
-		recoverPrecondition: () => reconciliation.replay(),
+		recoverPrecondition: (operation) =>
+			reconciliation.recoverPrecondition(operation),
 	});
 	const events = options.registerEvents
 		? new VaultEventAdapter(vault, publication, options.onEventError)

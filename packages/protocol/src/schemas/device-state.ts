@@ -67,7 +67,7 @@ const commonOperationShape = {
 	state: z.enum(["queued", "sent", "resolved"]),
 };
 
-/** Canonical validated persistence contract for one put/delete/rename operation. */
+/** Canonical durable mutation contract, including immutable retry bytes and optional rename or dependent-delete recovery evidence. */
 export const PendingOperationSchema = z
 	.discriminatedUnion("op", [
 		z
@@ -84,6 +84,8 @@ export const PendingOperationSchema = z
 				op: z.literal("delete"),
 				path: DevicePathSchema,
 				precondition: DevicePreconditionSchema,
+				/** Sent parent whose confirmed receipt supplies this delete's live revision. */
+				depends_on: DeviceOperationKeySchema.optional(),
 			})
 			.strict(),
 		z
@@ -93,6 +95,8 @@ export const PendingOperationSchema = z
 				path: DevicePathSchema,
 				to: DevicePathSchema,
 				precondition: DevicePreconditionSchema,
+				/** Hash of old source bytes retained for stale-rename recovery after feed replay. */
+				source_hash: DevicePayloadHashSchema.optional(),
 			})
 			.strict(),
 	])

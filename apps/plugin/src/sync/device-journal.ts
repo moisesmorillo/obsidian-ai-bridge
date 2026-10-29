@@ -31,15 +31,21 @@ export interface DeviceJournalStorage {
 	writePayload(path: string, bytes: Uint8Array): Promise<void>;
 }
 
-/** Input for one local mutation; generated metadata and payload authority stay journal-owned. */
+/** Local mutation intent; the journal owns generated identity, while optional evidence links rename recovery or dependent deletes. */
 export type EnqueueInput =
 	| { op: "put"; path: string; precondition: DevicePrecondition }
-	| { op: "delete"; path: string; precondition: DevicePrecondition }
+	| {
+			op: "delete";
+			path: string;
+			precondition: DevicePrecondition;
+			depends_on?: string;
+	  }
 	| {
 			op: "rename";
 			path: string;
 			to: string;
 			precondition: DevicePrecondition;
+			source_hash?: string;
 	  };
 
 /** Caller-supplied evidence for an explicit server receipt or rejection. */
@@ -610,30 +616,67 @@ export class DeviceJournal {
 		});
 	}
 
-	/** Removes a sent operation after a receipt; rejected operations need retained recovery evidence. */
+	/** Resolves sent work, rebases later conflicts after receipt, and blocks dependent deletes after rejection. */
 	async resolve(key: string, outcome: ResolutionOutcome): Promise<void> {
 		await this.serialize(async () => {
 			this.assertOpen();
-			const operation = this.state.pending_ops.find(
+			const index = this.state.pending_ops.findIndex(
 				(item) => item.key === key && item.state === "sent",
 			);
+			const operation = this.state.pending_ops[index];
 			if (!operation) throw new Error("Only a sent operation can resolve");
+			const blocked =
+				outcome.kind === "rejection"
+					? this.state.pending_ops.filter(
+							(item) => item.op === "delete" && item.depends_on === key,
+						)
+					: [];
 			const attention =
 				outcome.kind === "rejection"
 					? [
-							...this.state.attention,
+							...this.state.attention.filter(
+								(item) =>
+									item.operation?.key !== key &&
+									!blocked.some(
+										(operation) => item.operation?.key === operation.key,
+									),
+							),
 							{
 								path: operation.path,
 								reason: "Rejected operation retained for recovery",
 								operation,
 							},
+							...blocked.map((item) => ({
+								path: item.path,
+								reason: "Delete intent was blocked by its rejected create",
+								operation: item,
+							})),
 						]
 					: this.state.attention;
-			await this.commit({
-				...this.state,
-				pending_ops: this.state.pending_ops.filter((item) => item.key !== key),
-				attention,
+			const pending_ops = this.state.pending_ops.flatMap((item, itemIndex) => {
+				if (
+					item.key === key ||
+					blocked.some((operation) => operation.key === item.key)
+				)
+					return [];
+				if (
+					outcome.kind !== "receipt" ||
+					item.state !== "queued" ||
+					itemIndex <= index ||
+					!operationsConflict(operation, item)
+				)
+					return [item];
+				const base = this.state.base[item.path];
+				const precondition: DevicePrecondition =
+					base && this.state.epoch
+						? { kind: "match", epoch: this.state.epoch, rev: base.rev }
+						: { kind: "absent" };
+				if (item.op !== "delete" || item.depends_on !== key)
+					return [{ ...item, precondition }];
+				const { depends_on: _dependency, ...resolved } = item;
+				return [{ ...resolved, precondition }];
 			});
+			await this.commit({ ...this.state, pending_ops, attention });
 		});
 	}
 
@@ -650,6 +693,35 @@ export class DeviceJournal {
 			await this.commit({
 				...this.state,
 				pending_ops: this.state.pending_ops.filter((item) => item.key !== key),
+			});
+		});
+	}
+
+	/** Retains a queued intent in attention when its live local evidence no longer matches. */
+	async recordQueuedRejected(
+		operation: PendingOperation,
+		reason: string,
+	): Promise<void> {
+		const parsed = PendingOperationSchema.parse(operation);
+		await this.serialize(async () => {
+			this.assertOpen();
+			const queued = this.state.pending_ops.find(
+				(item) => item.key === parsed.key && item.state === "queued",
+			);
+			if (!queued || JSON.stringify(queued) !== JSON.stringify(parsed))
+				throw new Error("Queued operation identity changed");
+			const attention = this.state.attention.filter(
+				(item) => item.operation?.key !== parsed.key,
+			);
+			await this.commit({
+				...this.state,
+				pending_ops: this.state.pending_ops.filter(
+					(item) => item.key !== parsed.key,
+				),
+				attention: [
+					...attention,
+					{ path: parsed.path, reason, operation: parsed },
+				],
 			});
 		});
 	}
@@ -673,7 +745,7 @@ export class DeviceJournal {
 		});
 	}
 
-	/** Retains a rejected sent operation and its payload reference until recovery completes. */
+	/** Retains rejected sent evidence and moves dependent deletes to attention until recovery completes. */
 	async recordRejected(
 		operation: PendingOperation,
 		reason: string,
@@ -687,17 +759,29 @@ export class DeviceJournal {
 			);
 			if (!sent || JSON.stringify(sent) !== JSON.stringify(parsed))
 				throw new Error("Rejected operation identity changed");
+			const blocked = this.state.pending_ops.filter(
+				(item) => item.op === "delete" && item.depends_on === parsed.key,
+			);
 			const attention = this.state.attention.filter(
-				(item) => item.operation?.key !== parsed.key,
+				(item) =>
+					item.operation?.key !== parsed.key &&
+					!blocked.some((operation) => item.operation?.key === operation.key),
 			);
 			await this.commit({
 				...this.state,
 				pending_ops: this.state.pending_ops.filter(
-					(item) => item.key !== parsed.key,
+					(item) =>
+						item.key !== parsed.key &&
+						!blocked.some((operation) => item.key === operation.key),
 				),
 				attention: [
 					...attention,
 					{ path: attentionPath, reason, operation: parsed },
+					...blocked.map((operation) => ({
+						path: operation.path,
+						reason: "Delete intent was blocked by its rejected create",
+						operation,
+					})),
 				],
 			});
 		});

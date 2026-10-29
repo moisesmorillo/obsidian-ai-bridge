@@ -72,8 +72,8 @@ export type PublicationEvent =
 export interface PublicationOptions {
 	/** Returns current Unix milliseconds for retry and UUID creation decisions. */
 	now(): number;
-	/** Replays remote changes through the shared text apply engine after a 412. */
-	recoverPrecondition(): Promise<void>;
+	/** Replays 412 evidence and applies current rename source authority without changing feed cursor identity. */
+	recoverPrecondition(operation: PendingOperation): Promise<void>;
 }
 
 /** Serializes startup detection, live event admission, immutable sends, and safe restore. */
@@ -207,6 +207,29 @@ export class PublicationController {
 			}
 			const state = this.journal.snapshot();
 			const base = state.base[parsed.path];
+			if (parsed.type === "delete" && (!base || base.deleted)) {
+				const pending = state.pending_ops.filter(
+					(item) => item.op === "put" && item.path === parsed.path,
+				);
+				const sentCreate = pending.find(
+					(item) =>
+						item.state === "sent" && item.precondition.kind === "absent",
+				);
+				for (const item of pending)
+					if (item.state === "queued")
+						await this.journal.discardQueued(item.key);
+				if (sentCreate && state.epoch)
+					await this.journal.enqueue(
+						{
+							op: "delete",
+							path: parsed.path,
+							precondition: { kind: "absent" },
+							depends_on: sentCreate.key,
+						},
+						new Uint8Array(),
+					);
+				return;
+			}
 			if (!base || base.deleted || !state.epoch) return;
 			const precondition = {
 				kind: "match" as const,
@@ -222,7 +245,13 @@ export class PublicationController {
 			}
 			if (parsed.type === "rename") {
 				await this.journal.enqueue(
-					{ op: "rename", path: parsed.path, to: parsed.to, precondition },
+					{
+						op: "rename",
+						path: parsed.path,
+						to: parsed.to,
+						precondition,
+						source_hash: base.hash,
+					},
 					new Uint8Array(),
 				);
 			}
@@ -247,6 +276,23 @@ export class PublicationController {
 				)
 					continue;
 				this.assertOpen();
+				if (operation.state === "queued" && operation.op === "put") {
+					const admission = await this.refreshQueuedPut(operation);
+					if (admission === "skip") continue;
+					if (admission === "block") break;
+				}
+				if (
+					operation.state === "queued" &&
+					operation.op === "delete" &&
+					!operation.depends_on &&
+					!this.hasLiveBase(operation.path)
+				) {
+					await this.journal.recordQueuedRejected(
+						operation,
+						"Delete has no confirmed live source revision",
+					);
+					break;
+				}
 				if (!(await this.send(operation))) break;
 			}
 		});
@@ -259,11 +305,10 @@ export class PublicationController {
 
 	/** Sends immutable bytes once and commits only the authoritative receipt metadata. */
 	private async send(operation: PendingOperation): Promise<boolean> {
-		const precondition =
-			operation.state === "sent"
-				? operation.precondition
-				: this.currentPrecondition(operation);
-		const saved = await this.journal.prepareSend(operation.key, precondition);
+		const saved = await this.journal.prepareSend(
+			operation.key,
+			operation.precondition,
+		);
 		this.assertOpen();
 		const payload = saved.bytes;
 		try {
@@ -370,8 +415,9 @@ export class PublicationController {
 			return true;
 		}
 		if (error.status === 412) {
-			await this.options.recoverPrecondition();
+			await this.options.recoverPrecondition(operation);
 			this.assertOpen();
+			if (operation.op === "rename") await this.recoverStaleRename(operation);
 			const reason =
 				operation.op === "delete"
 					? "Offline delete was cancelled by a newer remote change"
@@ -410,6 +456,101 @@ export class PublicationController {
 			error.retryAfter ? Number(error.retryAfter) : 0,
 		);
 		return true;
+	}
+
+	/** Checks queued bytes against current local text and base before first send; sent retries remain untouched. */
+	private async refreshQueuedPut(
+		operation: Extract<PendingOperation, { op: "put" }>,
+	): Promise<"ready" | "skip" | "block"> {
+		const saved = await this.journal.readPayload(
+			operation.payload_ref,
+			operation.payload_hash,
+		);
+		const local = await this.vault.read(operation.path);
+		this.assertOpen();
+		if (local === null) {
+			await this.journal.recordQueuedRejected(
+				operation,
+				"Queued text is absent from the local vault",
+			);
+			return "block";
+		}
+		const localBytes = new TextEncoder().encode(local);
+		const localHash = await digest(localBytes);
+		const base = this.journal.snapshot().base[operation.path];
+		if (base?.deleted === false && base.hash === localHash) {
+			if (operation.payload_hash !== localHash) {
+				if (!(await this.hasVisiblePayload(operation.path, saved))) {
+					await this.journal.recordQueuedRejected(
+						operation,
+						"Queued bytes need a visible recovery copy",
+					);
+					return "block";
+				}
+			}
+			await this.journal.discardQueued(operation.key);
+			return "skip";
+		}
+		if (operation.payload_hash === localHash) return "ready";
+		await this.journal.recordQueuedRejected(
+			operation,
+			"Local text changed after publication was queued",
+		);
+		await this.enqueuePut(operation.path, local);
+		return "block";
+	}
+
+	/** Confirms one stale payload remains visible before the journal releases its reference. */
+	private async hasVisiblePayload(
+		sourcePath: string,
+		bytes: Uint8Array,
+	): Promise<boolean> {
+		const expectedHash = await digest(bytes);
+		for (const path of await this.vault.list()) {
+			if (path === sourcePath) continue;
+			const text = await this.vault.read(path);
+			if (
+				text !== null &&
+				(await digest(new TextEncoder().encode(text))) === expectedHash
+			)
+				return true;
+		}
+		return false;
+	}
+
+	/** Checks whether one path has a confirmed live revision for a conditional mutation. */
+	private hasLiveBase(path: string): boolean {
+		return this.journal.snapshot().base[path]?.deleted === false;
+	}
+
+	/** Restores the remote source and safely removes or republishes the moved destination. */
+	private async recoverStaleRename(
+		operation: Extract<PendingOperation, { op: "rename" }>,
+	): Promise<void> {
+		if (!operation.source_hash || operation.precondition.kind !== "match")
+			return;
+		const source = this.journal.snapshot().base[operation.path];
+		if (!source || source.deleted || source.rev <= operation.precondition.rev)
+			return;
+		const destination = await this.vault.read(operation.to);
+		this.assertOpen();
+		if (destination === null) return;
+		if (
+			(await digest(new TextEncoder().encode(destination))) ===
+			operation.source_hash
+		) {
+			await this.vault.trash(operation.to, destination);
+			this.assertOpen();
+			const remaining = await this.vault.read(operation.to);
+			if (remaining === null) return;
+			if (
+				(await digest(new TextEncoder().encode(remaining))) ===
+				operation.source_hash
+			)
+				throw new Error("Clean stale rename destination remains in the vault");
+		}
+		const latest = await this.vault.read(operation.to);
+		if (latest !== null) await this.enqueuePut(operation.to, latest);
 	}
 
 	/** Restores missing text at its pinned revision without advancing revision authority. */
@@ -507,15 +648,6 @@ export class PublicationController {
 		)
 			throw new Error("Receipt conflicts with the confirmed base identity");
 		await this.journal.setBase(path, base);
-	}
-
-	/** Chooses exact original operation evidence for sent work or current base for queued work. */
-	private currentPrecondition(operation: PendingOperation): DevicePrecondition {
-		const state = this.journal.snapshot();
-		if (operation.state === "sent") return operation.precondition;
-		const base = state.base[operation.path];
-		if (!base || !state.epoch) return { kind: "absent" };
-		return { kind: "match", epoch: state.epoch, rev: base.rev };
 	}
 
 	/** Persists bounded exponential retry and honors Retry-After up to five minutes. */

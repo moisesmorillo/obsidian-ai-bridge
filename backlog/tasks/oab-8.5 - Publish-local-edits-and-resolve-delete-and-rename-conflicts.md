@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-10-28T19:31:00Z'
-updated_date: '2026-10-29T15:14:00Z'
+updated_date: '2026-10-29T15:46:00Z'
 labels: []
 dependencies:
   - OAB-8.4
@@ -58,4 +58,21 @@ Review scope:
 - No blockers found in this self-review. Parent review remains required.
 - No live service or real Obsidian vault test ran. No deployment or vault access occurred.
 - OAB-8.6 owns blob work. OAB-8.7 owns scheduling and lifecycle activation. Task remains In Progress.
+
+Corrective review for F1–F3:
+
+- F1 RED: `cd apps/plugin && bunx vitest run test/publication.test.ts` showed stale queued bytes sent with the newer revision after scan, then remote apply. GREEN: `does not send scan bytes after a newer remote apply changes the base and file` checks this interleaving. Queued puts now check current bytes and base before first send. Sent retries keep their original bytes and precondition. The test `keeps sent payload and precondition immutable after a newer remote apply` checks that rule.
+- F2 RED: both stale-rename cursor cases failed before recovery changes. GREEN: `recovers a clean before`, `clean after`, `edited before`, and `edited after` stale rename cases pass. Rename records keep the old source hash. Recovery replays changes, reads current source authority, and applies it through TextApplyEngine. Recovery trashes only exact unchanged moved bytes. Edited destination text gets a new queued put. A simulated interruption after trash, journal reopen, and retry also pass. Cursor assertions stay at the feed head.
+- F3 RED: create-delete before flush and a sent-create dependency case failed before the fixes. GREEN: `cancels an unsent create when a live delete arrives before flush`, `preserves a sent create and queues its delete after the receipt`, and `blocks a dependent delete when its sent create is rejected` pass. A queued create is cancelled. A sent create remains immutable. Its dependent delete waits for a receipt and then uses the new live revision. Rejection moves both operations to attention.
+
+Transition ownership review:
+- DeviceJournal owns durable operation identity, exact preconditions, payload evidence, receipt rebasing, and dependent-delete transitions. Its serializer commits these state changes.
+- PublicationController owns live event admission, queued-put validation, outbound requests, and response classification. It never refreshes a sent operation. Conditional server preconditions protect any race after local validation.
+- ReconciliationController owns feed replay and the cursor-independent current-source read. TextApplyEngine owns guarded local apply and conflict copies. `createPublication` wires them to one journal, vault, and remote adapter.
+- Policy rows covered: queued or sent put with current, stale, missing, or changed local text; clean or edited rename destination with cursor before or after the feed change; create-delete before send, after uncertain send, receipt, and rejection; mutation receipt versus feed cursor. Tests cover these transitions and the post-trash restart boundary.
+- Self-review found no open blockers in these findings. Parent review remains required. No real vault or live service test ran. OAB-8.6 and OAB-8.7 remain out of scope.
+
+Validation after correction: `bun run docs:check` passed. `bun run check` passed lint, docs, typecheck, tests, and build. All 90 test files and 1,440 tests passed. Worker fault-injection tests printed expected error logs. All worker test groups passed.
+
+Correction to the earlier OAB-8.1 review note: DeviceJournal.resolve now distinguishes receipts from rejections. It retains rejected sent evidence, rebases queued conflicts after receipts, and moves dependent deletes to attention after rejection.
 <!-- SECTION:NOTES:END -->

@@ -1,4 +1,7 @@
-import type { DevicePrecondition } from "@obsidian-ai-bridge/protocol";
+import type {
+	DevicePrecondition,
+	PendingOperation,
+} from "@obsidian-ai-bridge/protocol";
 import { describe, expect, it } from "vitest";
 import {
 	DeviceJournal,
@@ -10,8 +13,12 @@ import {
 	type PublicationReceipt,
 	type PublicationRemote,
 } from "../src/sync/publication";
+import {
+	ReconciliationController,
+	type ReconciliationRemote,
+} from "../src/sync/reconciliation";
 import { SyncTransportError } from "../src/sync/remote-text";
-import type { TextVault } from "../src/sync/text-apply";
+import { TextApplyEngine, type TextVault } from "../src/sync/text-apply";
 
 const epoch = "a".repeat(32);
 
@@ -42,6 +49,7 @@ class MemoryStorage implements DeviceJournalStorage {
 /** Models guarded text operations and confirmed files without Obsidian host types. */
 class MemoryVault implements TextVault {
 	readonly files = new Map<string, string>();
+	afterTrash: (() => void) | null = null;
 	/** Returns exact current text or null for an absent path. */
 	async read(path: string): Promise<string | null> {
 		return this.files.get(path) ?? null;
@@ -77,6 +85,7 @@ class MemoryVault implements TextVault {
 	async trash(path: string, expected: string): Promise<boolean> {
 		if (this.files.get(path) !== expected) return false;
 		this.files.delete(path);
+		this.afterTrash?.();
 		return true;
 	}
 	/** Moves only an exact source value into an absent destination. */
@@ -448,6 +457,99 @@ describe("PublicationController", () => {
 		controller.close();
 	});
 
+	it("cancels an unsent create when a live delete arrives before flush", async () => {
+		const { controller, journal, remote, vault } = await openController();
+		vault.files.set("new.md", "not yet published");
+		await controller.observe({ type: "create", path: "new.md" });
+		vault.files.delete("new.md");
+
+		await controller.observe({ type: "delete", path: "new.md" });
+		await controller.flush();
+
+		expect(journal.snapshot().pending_ops).toEqual([]);
+		expect(remote.writes).toEqual([]);
+		expect(remote.deletes).toEqual([]);
+		controller.close();
+	});
+
+	it("preserves a sent create and queues its delete after the receipt", async () => {
+		let now = 1_800_000_000_000;
+		const { controller, journal, remote, vault } = await openController(
+			undefined,
+			undefined,
+			undefined,
+			() => now,
+		);
+		vault.files.set("new.md", "uncertain create");
+		await controller.observe({ type: "create", path: "new.md" });
+		remote.failure = new Error("Create response was lost");
+		await controller.flush();
+		const sent = journal.snapshot().pending_ops[0];
+		if (!sent) throw new Error("Expected a sent create");
+		vault.files.delete("new.md");
+		await controller.observe({ type: "delete", path: "new.md" });
+
+		expect(journal.snapshot().pending_ops).toMatchObject([
+			{ key: sent.key, state: "sent", op: "put" },
+			{ state: "queued", op: "delete", depends_on: sent.key },
+		]);
+		now += 2_000;
+		await controller.flush();
+
+		expect(remote.writes).toHaveLength(2);
+		expect(remote.writes[0]?.key).toBe(sent.key);
+		expect(remote.writes[1]?.precondition).toEqual({ kind: "absent" });
+		expect(remote.deletes[0]?.precondition).toEqual({
+			kind: "match",
+			epoch,
+			rev: 1,
+		});
+		expect(journal.snapshot().pending_ops).toEqual([]);
+		expect(journal.snapshot().base["new.md"]).toEqual({
+			deleted: true,
+			rev: 2,
+		});
+		controller.close();
+	});
+
+	it("blocks a dependent delete when its sent create is rejected", async () => {
+		let now = 1_800_000_000_000;
+		const { controller, journal, remote, vault } = await openController(
+			undefined,
+			undefined,
+			undefined,
+			() => now,
+		);
+		vault.files.set("new.md", "uncertain create");
+		await controller.observe({ type: "create", path: "new.md" });
+		remote.failure = new Error("Create response was lost");
+		await controller.flush();
+		const sent = journal.snapshot().pending_ops[0];
+		if (!sent) throw new Error("Expected a sent create");
+		vault.files.delete("new.md");
+		await controller.observe({ type: "delete", path: "new.md" });
+		now += 2_000;
+		remote.failure = new SyncTransportError(412, "precondition_failed");
+
+		await controller.flush();
+
+		expect(remote.deletes).toEqual([]);
+		expect(journal.snapshot().pending_ops).toEqual([]);
+		expect(journal.snapshot().attention).toMatchObject([
+			{ operation: { key: sent.key, state: "sent", op: "put" } },
+			{
+				path: "new.md",
+				reason: "Delete intent was blocked by its rejected create",
+				operation: {
+					state: "queued",
+					op: "delete",
+					depends_on: sent.key,
+				},
+			},
+		]);
+		controller.close();
+	});
+
 	it("does not restore a file while an explicit live delete is pending", async () => {
 		const { controller, journal, vault } = await openController();
 		await journal.setBase("note.md", {
@@ -502,6 +604,317 @@ describe("PublicationController", () => {
 			hash: await digestText("local edit"),
 		});
 		controller.close();
+	});
+
+	it("does not send scan bytes after a newer remote apply changes the base and file", async () => {
+		const { controller, journal, remote, vault } = await openController();
+		const oldBase = "old confirmed text";
+		await journal.setBase("note.md", {
+			deleted: false,
+			rev: 1,
+			hash: await digestText(oldBase),
+		});
+		vault.files.set("note.md", "queued local bytes");
+		await controller.scan();
+		const newerText = "new authoritative text";
+		const engine = new TextApplyEngine(
+			journal,
+			vault,
+			{ read: async () => newerText },
+			{ deviceName: "Test Device" },
+		);
+		await engine.apply({
+			seq: 5,
+			op: "put",
+			path: "note.md",
+			etag: `"${epoch}.5"`,
+			hash: await digestText(newerText),
+			origin: "remote",
+			at: 5,
+		});
+
+		await controller.flush();
+
+		expect(await vault.read("note.md")).toBe(newerText);
+		expect(journal.snapshot().base["note.md"]).toEqual({
+			deleted: false,
+			rev: 5,
+			hash: await digestText(newerText),
+		});
+		expect(remote.writes).toEqual([]);
+		expect(journal.snapshot().pending_ops).toEqual([]);
+		expect(
+			[...vault.files.entries()].some(
+				([path, text]) =>
+					path.includes("(conflict ") && text === "queued local bytes",
+			),
+		).toBe(true);
+		controller.close();
+		engine.close();
+	});
+
+	it.each([
+		{ cursor: 1, destination: "original source bytes", label: "clean before" },
+		{ cursor: 2, destination: "original source bytes", label: "clean after" },
+		{
+			cursor: 1,
+			destination: "edited destination bytes",
+			label: "edited before",
+		},
+		{
+			cursor: 2,
+			destination: "edited destination bytes",
+			label: "edited after",
+		},
+	] as const)(
+		"recovers a $label stale rename when the feed cursor is $cursor",
+		async ({ cursor, destination }) => {
+			const storage = new MemoryStorage();
+			const vault = new MemoryVault();
+			const journal = await DeviceJournal.open(storage);
+			await journal.resetEpoch(epoch);
+			const oldSource = "original source bytes";
+			const currentSource = "new remote source bytes";
+			const oldHash = await digestText(oldSource);
+			const currentHash = await digestText(currentSource);
+			await journal.setBase("x.md", {
+				deleted: false,
+				rev: 1,
+				hash: oldHash,
+			});
+			await journal.setCursor(epoch, cursor);
+			vault.files.set("y.md", destination);
+			let feedReads = 0;
+			const published: Array<{
+				path: string;
+				text: string;
+				precondition: DevicePrecondition;
+			}> = [];
+			const remote: PublicationRemote &
+				ReconciliationRemote & {
+					/** Reads exact text for the matching current source revision only. */
+					read(
+						path: string,
+						epoch: string,
+						rev: number,
+					): Promise<string | null>;
+				} = {
+				readAuthority: async (_path, requestEpoch, rev) => ({
+					deleted: false,
+					text: currentSource,
+					epoch: requestEpoch,
+					rev,
+					hash: currentHash,
+				}),
+				readCurrentAuthority: async () => ({
+					deleted: false,
+					text: currentSource,
+					epoch,
+					rev: 2,
+					hash: currentHash,
+				}),
+				read: async (_path, _requestEpoch, rev) =>
+					rev === 2 ? currentSource : null,
+				manifest: async () => {
+					throw new Error("Unexpected manifest read");
+				},
+				changes: async (_requestEpoch, since) => {
+					feedReads += 1;
+					return {
+						epoch,
+						head_seq: 2,
+						entries:
+							since < 2
+								? [
+										{
+											seq: 2,
+											op: "put" as const,
+											path: "x.md",
+											etag: `"${epoch}.2"`,
+											hash: currentHash,
+											origin: "remote",
+											at: 2,
+										},
+									]
+								: [],
+					};
+				},
+				createText: async () => {
+					throw new Error("Unexpected enrollment create");
+				},
+				put: async (path, text, precondition, _key) => {
+					published.push({ path, text, precondition });
+					return {
+						status: 201,
+						path,
+						etag: `"${epoch}.3"`,
+						seq: 3,
+						size: new TextEncoder().encode(text).byteLength,
+						hash: await digestText(text),
+						deleted: false,
+					};
+				},
+				delete: async () => {
+					throw new Error("Unexpected delete");
+				},
+				rename: async () => {
+					throw new SyncTransportError(412, "precondition_failed");
+				},
+			};
+			const engine = new TextApplyEngine(journal, vault, remote, {
+				deviceName: "Test Device",
+			});
+			const reconciliation = new ReconciliationController(
+				journal,
+				engine,
+				vault,
+				remote,
+			);
+			let activeReconciliation = reconciliation;
+			let activeJournal = journal;
+			let activeController = new PublicationController(journal, vault, remote, {
+				now: () => 1_800_000_000_000,
+				recoverPrecondition: (operation) =>
+					activeReconciliation.recoverPrecondition(operation),
+			});
+			await activeController.observe({
+				type: "rename",
+				path: "x.md",
+				to: "y.md",
+			});
+
+			if (cursor === 2 && destination === oldSource) {
+				vault.afterTrash = () => {
+					vault.afterTrash = null;
+					throw new Error("simulated interruption after trash");
+				};
+				await expect(activeController.flush()).rejects.toThrow(
+					"simulated interruption after trash",
+				);
+				expect(journal.snapshot().pending_ops[0]).toMatchObject({
+					state: "sent",
+					source_hash: oldHash,
+				});
+				expect(await vault.read("y.md")).toBeNull();
+				activeController.close();
+				activeReconciliation.close();
+				activeJournal = await DeviceJournal.open(storage);
+				const restartedEngine = new TextApplyEngine(
+					activeJournal,
+					vault,
+					remote,
+					{ deviceName: "Test Device" },
+				);
+				activeReconciliation = new ReconciliationController(
+					activeJournal,
+					restartedEngine,
+					vault,
+					remote,
+				);
+				activeController = new PublicationController(
+					activeJournal,
+					vault,
+					remote,
+					{
+						now: () => 1_800_000_000_000,
+						recoverPrecondition: (operation) =>
+							activeReconciliation.recoverPrecondition(operation),
+					},
+				);
+				await activeController.flush();
+			} else {
+				await activeController.flush();
+				if (destination !== oldSource) await activeController.flush();
+			}
+
+			expect(feedReads).toBe(cursor === 2 && destination === oldSource ? 2 : 1);
+			expect(activeJournal.snapshot().cursor).toBe(2);
+			expect(await vault.read("x.md")).toBe(currentSource);
+			expect(activeJournal.snapshot().base["x.md"]).toEqual({
+				deleted: false,
+				rev: 2,
+				hash: currentHash,
+			});
+			const rejectedRename = activeJournal
+				.snapshot()
+				.attention.find(
+					(item: { operation?: PendingOperation }) =>
+						item.operation?.op === "rename",
+				)?.operation;
+			expect(rejectedRename).toMatchObject({ source_hash: oldHash });
+			if (destination === oldSource) {
+				expect(await vault.read("y.md")).toBeNull();
+				expect(published).toEqual([]);
+			} else {
+				expect(await vault.read("y.md")).toBe(destination);
+				expect(published).toEqual([
+					{
+						path: "y.md",
+						text: destination,
+						precondition: { kind: "absent" },
+					},
+				]);
+			}
+			expect(activeJournal.snapshot().pending_ops).toEqual([]);
+			activeController.close();
+			activeReconciliation.close();
+		},
+	);
+
+	it("keeps sent payload and precondition immutable after a newer remote apply", async () => {
+		let now = 1_800_000_000_000;
+		const { controller, journal, remote, vault } = await openController(
+			undefined,
+			undefined,
+			undefined,
+			() => now,
+		);
+		const oldBase = "old confirmed text";
+		await journal.setBase("note.md", {
+			deleted: false,
+			rev: 1,
+			hash: await digestText(oldBase),
+		});
+		vault.files.set("note.md", "sent local bytes");
+		await controller.scan();
+		remote.failure = new Error("Response was lost");
+		await controller.flush();
+		const sent = journal.snapshot().pending_ops[0];
+		if (!sent) throw new Error("Expected a sent operation");
+		const engine = new TextApplyEngine(
+			journal,
+			vault,
+			{ read: async () => "new remote text" },
+			{ deviceName: "Test Device" },
+		);
+		await engine.apply({
+			seq: 5,
+			op: "put",
+			path: "note.md",
+			etag: `"${epoch}.5"`,
+			hash: await digestText("new remote text"),
+			origin: "remote",
+			at: 5,
+		});
+		now += 2_000;
+		remote.failure = new SyncTransportError(412, "precondition_failed");
+
+		await controller.flush();
+
+		expect(remote.writes).toHaveLength(2);
+		expect(remote.writes[0]).toMatchObject({
+			key: sent.key,
+			text: "sent local bytes",
+			precondition: { kind: "match", epoch, rev: 1 },
+		});
+		expect(remote.writes[1]).toEqual(remote.writes[0]);
+		expect(journal.snapshot().pending_ops).toEqual([]);
+		expect(journal.snapshot().attention.at(-1)?.operation).toMatchObject({
+			key: sent.key,
+			state: "sent",
+		});
+		controller.close();
+		engine.close();
 	});
 
 	it("keeps a lost sent payload immutable when a later scan sees another edit", async () => {

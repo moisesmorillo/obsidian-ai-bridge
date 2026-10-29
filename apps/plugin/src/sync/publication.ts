@@ -1,4 +1,5 @@
 import type {
+	DeviceBaseEntry,
 	DevicePrecondition,
 	PendingOperation,
 } from "@obsidian-ai-bridge/protocol";
@@ -95,6 +96,7 @@ export class PublicationController {
 			this.assertOpen();
 			const state = this.journal.snapshot();
 			const localPaths = await this.vault.list();
+			this.assertOpen();
 			const canonicalLocalPaths = new Set(localPaths.map(pathKey));
 			const pendingRenameTargets = new Set(
 				state.pending_ops
@@ -105,20 +107,25 @@ export class PublicationController {
 				this.assertOpen();
 				if (pendingRenameTargets.has(pathKey(path))) continue;
 				const size = await this.vault.size(path);
+				this.assertOpen();
 				if (size === null) continue;
 				const admission = classifyEnrollmentPath(path, size);
 				if (admission === "excluded") continue;
 				if (admission === "blob") {
+					this.assertOpen();
 					await this.journal.recordAttention(
 						path,
 						"Blob synchronization is not available yet",
 					);
 					continue;
 				}
+				this.assertOpen();
 				const text = await this.vault.read(path);
+				this.assertOpen();
 				if (text === null) continue;
 				const bytes = new TextEncoder().encode(text);
 				if (bytes.byteLength > 1_000_000) {
+					this.assertOpen();
 					await this.journal.recordAttention(
 						path,
 						"Inline text exceeds the publication size limit",
@@ -126,9 +133,11 @@ export class PublicationController {
 					continue;
 				}
 				const hash = await digest(bytes);
+				this.assertOpen();
 				const base = state.base[path];
 				if (base?.deleted === false && base.hash === hash) continue;
 				if (base && !state.epoch) {
+					this.assertOpen();
 					await this.journal.recordAttention(
 						path,
 						"Confirmed base has no vault epoch",
@@ -136,6 +145,7 @@ export class PublicationController {
 					continue;
 				}
 				if (await this.hasPendingPut(path, hash)) continue;
+				this.assertOpen();
 				await this.journal.enqueue(
 					{
 						op: "put",
@@ -158,6 +168,7 @@ export class PublicationController {
 				)
 					continue;
 				const current = await this.vault.list();
+				this.assertOpen();
 				if (current.some((item) => pathKey(item) === pathKey(path))) continue;
 				await this.restoreMissing(path, base.rev);
 			}
@@ -167,15 +178,20 @@ export class PublicationController {
 	/** Admits only explicit in-scope live create, modify, delete, and rename events. */
 	observe(event: PublicationEvent): Promise<void> {
 		const parsed = validateEvent(event);
+		const eventState = this.journal.snapshot();
+		const observedBase = eventState.base[parsed.path];
+		const observedEpoch = eventState.epoch;
 		return this.serialize(async () => {
 			this.assertOpen();
 			if (classifyEnrollmentPath(parsed.path, 0) === "excluded") return;
 			if (parsed.type === "create" || parsed.type === "modify") {
 				const size = await this.vault.size(parsed.path);
+				this.assertOpen();
 				if (size === null) return;
 				const admission = classifyEnrollmentPath(parsed.path, size);
 				if (admission === "excluded") return;
 				if (admission === "blob") {
+					this.assertOpen();
 					await this.journal.recordAttention(
 						parsed.path,
 						"Blob synchronization is not available yet",
@@ -184,20 +200,26 @@ export class PublicationController {
 				}
 				const expected = this.journal.snapshot().expected_writes[parsed.path];
 				const text = await this.vault.read(parsed.path);
+				this.assertOpen();
 				if (text === null) return;
 				const hash = await digest(new TextEncoder().encode(text));
+				this.assertOpen();
 				if (expected === hash) {
+					this.assertOpen();
 					await this.journal.consumeExpectedWrite(parsed.path, hash);
 					return;
 				}
+				this.assertOpen();
 				await this.enqueuePut(parsed.path, text);
 				return;
 			}
 			if (parsed.type === "rename") {
 				const size = await this.vault.size(parsed.to);
+				this.assertOpen();
 				const admission = classifyEnrollmentPath(parsed.to, size ?? 0);
 				if (admission === "excluded") return;
 				if (admission === "blob") {
+					this.assertOpen();
 					await this.journal.recordAttention(
 						parsed.to,
 						"Blob synchronization is not available yet",
@@ -207,6 +229,27 @@ export class PublicationController {
 			}
 			const state = this.journal.snapshot();
 			const base = state.base[parsed.path];
+			const sourceText = await this.vault.read(parsed.path);
+			this.assertOpen();
+			const staleEvent =
+				!this.journal.matchesBase(parsed.path, observedBase, observedEpoch) ||
+				sourceText !== null;
+			if (staleEvent) {
+				if (parsed.type === "rename") {
+					const destination = await this.vault.read(parsed.to);
+					this.assertOpen();
+					if (destination !== null) {
+						this.assertOpen();
+						await this.enqueuePut(parsed.to, destination);
+					}
+				} else {
+					await this.journal.recordAttention(
+						parsed.path,
+						"Live delete was superseded by newer local or remote state",
+					);
+				}
+				return;
+			}
 			if (parsed.type === "delete" && (!base || base.deleted)) {
 				const pending = state.pending_ops.filter(
 					(item) => item.op === "put" && item.path === parsed.path,
@@ -216,9 +259,12 @@ export class PublicationController {
 						item.state === "sent" && item.precondition.kind === "absent",
 				);
 				for (const item of pending)
-					if (item.state === "queued")
+					if (item.state === "queued") {
+						this.assertOpen();
 						await this.journal.discardQueued(item.key);
-				if (sentCreate && state.epoch)
+					}
+				if (sentCreate && state.epoch) {
+					this.assertOpen();
 					await this.journal.enqueue(
 						{
 							op: "delete",
@@ -228,6 +274,7 @@ export class PublicationController {
 						},
 						new Uint8Array(),
 					);
+				}
 				return;
 			}
 			if (!base || base.deleted || !state.epoch) return;
@@ -237,6 +284,7 @@ export class PublicationController {
 				rev: base.rev,
 			};
 			if (parsed.type === "delete") {
+				this.assertOpen();
 				await this.journal.enqueue(
 					{ op: "delete", path: parsed.path, precondition },
 					new Uint8Array(),
@@ -244,6 +292,7 @@ export class PublicationController {
 				return;
 			}
 			if (parsed.type === "rename") {
+				this.assertOpen();
 				await this.journal.enqueue(
 					{
 						op: "rename",
@@ -278,6 +327,7 @@ export class PublicationController {
 				this.assertOpen();
 				if (operation.state === "queued" && operation.op === "put") {
 					const admission = await this.refreshQueuedPut(operation);
+					this.assertOpen();
 					if (admission === "skip") continue;
 					if (admission === "block") break;
 				}
@@ -287,6 +337,7 @@ export class PublicationController {
 					!operation.depends_on &&
 					!this.hasLiveBase(operation.path)
 				) {
+					this.assertOpen();
 					await this.journal.recordQueuedRejected(
 						operation,
 						"Delete has no confirmed live source revision",
@@ -298,7 +349,7 @@ export class PublicationController {
 		});
 	}
 
-	/** Fences event admission and prevents late responses from changing durable state. */
+	/** Stops new event work and blocks later effects after awaits. It cannot cancel an effect already started. */
 	close(): void {
 		this.closed = true;
 	}
@@ -336,35 +387,52 @@ export class PublicationController {
 						receipt.size !== payload.byteLength))
 			)
 				throw new Error("Mutation receipt identity is invalid");
+			const successorBases: Record<string, DeviceBaseEntry> = {};
 			if (saved.operation.op === "rename") {
+				this.assertOpen();
 				const source = await this.remote.readCurrentAuthority(
 					saved.operation.path,
 				);
 				this.assertOpen();
-				if (!source.deleted || source.epoch !== identity.epoch)
-					throw new Error("Rename source tombstone is not authoritative");
-				await this.setBaseIfNewer(saved.operation.path, {
-					deleted: true,
-					rev: source.rev,
-				});
+				if (source.epoch !== identity.epoch)
+					throw new Error("Rename source belongs to a different vault epoch");
+				const sourceBase: DeviceBaseEntry = source.deleted
+					? { deleted: true, rev: source.rev }
+					: {
+							deleted: false,
+							rev: source.rev,
+							hash: DevicePayloadHashSchema.parse(source.hash),
+						};
+				successorBases[saved.operation.path] = sourceBase;
+				await this.setBaseIfNewer(saved.operation.path, sourceBase);
+				this.assertOpen();
 			}
 			if (saved.operation.op !== "delete") {
-				const hash = DevicePayloadHashSchema.parse(receipt.hash);
-				await this.setBaseIfNewer(receipt.path, {
+				const destinationBase: DeviceBaseEntry = {
 					deleted: false,
 					rev: identity.rev,
-					hash,
-				});
+					hash: DevicePayloadHashSchema.parse(receipt.hash),
+				};
+				successorBases[receipt.path] = destinationBase;
+				await this.setBaseIfNewer(receipt.path, destinationBase);
+				this.assertOpen();
 			} else {
-				await this.setBaseIfNewer(saved.operation.path, {
+				const deletedBase: DeviceBaseEntry = {
 					deleted: true,
 					rev: identity.rev,
-				});
+				};
+				successorBases[saved.operation.path] = deletedBase;
+				await this.setBaseIfNewer(saved.operation.path, deletedBase);
+				this.assertOpen();
 			}
 			if (saved.operation.op === "rename")
 				await this.reconcileRenameDestination(saved.operation, receipt.hash);
 			this.assertOpen();
-			await this.journal.resolve(saved.operation.key, { kind: "receipt" });
+			await this.journal.resolve(
+				saved.operation.key,
+				{ kind: "receipt" },
+				successorBases,
+			);
 			return true;
 		} catch (error) {
 			this.assertOpen();
@@ -424,6 +492,7 @@ export class PublicationController {
 					: operation.op === "rename"
 						? "Offline rename was resolved against newer remote state"
 						: "Local text met newer remote content";
+			this.assertOpen();
 			await this.journal.recordRejected(operation, reason);
 			return true;
 		}
@@ -466,6 +535,7 @@ export class PublicationController {
 			operation.payload_ref,
 			operation.payload_hash,
 		);
+		this.assertOpen();
 		const local = await this.vault.read(operation.path);
 		this.assertOpen();
 		if (local === null) {
@@ -480,7 +550,10 @@ export class PublicationController {
 		const base = this.journal.snapshot().base[operation.path];
 		if (base?.deleted === false && base.hash === localHash) {
 			if (operation.payload_hash !== localHash) {
-				if (!(await this.hasVisiblePayload(operation.path, saved))) {
+				const visible = await this.hasVisiblePayload(operation.path, saved);
+				this.assertOpen();
+				if (!visible) {
+					this.assertOpen();
 					await this.journal.recordQueuedRejected(
 						operation,
 						"Queued bytes need a visible recovery copy",
@@ -488,14 +561,17 @@ export class PublicationController {
 					return "block";
 				}
 			}
+			this.assertOpen();
 			await this.journal.discardQueued(operation.key);
 			return "skip";
 		}
 		if (operation.payload_hash === localHash) return "ready";
+		this.assertOpen();
 		await this.journal.recordQueuedRejected(
 			operation,
 			"Local text changed after publication was queued",
 		);
+		this.assertOpen();
 		await this.enqueuePut(operation.path, local);
 		return "block";
 	}
@@ -506,9 +582,14 @@ export class PublicationController {
 		bytes: Uint8Array,
 	): Promise<boolean> {
 		const expectedHash = await digest(bytes);
-		for (const path of await this.vault.list()) {
+		this.assertOpen();
+		const paths = await this.vault.list();
+		this.assertOpen();
+		for (const path of paths) {
 			if (path === sourcePath) continue;
+			this.assertOpen();
 			const text = await this.vault.read(path);
+			this.assertOpen();
 			if (
 				text !== null &&
 				(await digest(new TextEncoder().encode(text))) === expectedHash
@@ -532,6 +613,7 @@ export class PublicationController {
 		const source = this.journal.snapshot().base[operation.path];
 		if (!source || source.deleted || source.rev <= operation.precondition.rev)
 			return;
+		this.assertOpen();
 		const destination = await this.vault.read(operation.to);
 		this.assertOpen();
 		if (destination === null) return;
@@ -539,9 +621,11 @@ export class PublicationController {
 			(await digest(new TextEncoder().encode(destination))) ===
 			operation.source_hash
 		) {
+			this.assertOpen();
 			await this.vault.trash(operation.to, destination);
 			this.assertOpen();
 			const remaining = await this.vault.read(operation.to);
+			this.assertOpen();
 			if (remaining === null) return;
 			if (
 				(await digest(new TextEncoder().encode(remaining))) ===
@@ -549,26 +633,53 @@ export class PublicationController {
 			)
 				throw new Error("Clean stale rename destination remains in the vault");
 		}
+		this.assertOpen();
 		const latest = await this.vault.read(operation.to);
-		if (latest !== null) await this.enqueuePut(operation.to, latest);
+		this.assertOpen();
+		if (latest !== null) {
+			this.assertOpen();
+			await this.enqueuePut(operation.to, latest);
+		}
 	}
 
 	/** Restores missing text at its pinned revision without advancing revision authority. */
 	private async restoreMissing(path: string, rev: number): Promise<void> {
+		this.assertOpen();
 		const state = this.journal.snapshot();
 		const base = state.base[path];
 		if (!base || base.deleted || !state.epoch || base.rev !== rev) return;
 		if ((await this.vault.read(path)) !== null) return;
+		this.assertOpen();
 		const remote = await this.remote.readAuthority(path, state.epoch, rev);
 		this.assertOpen();
 		if (remote.deleted || remote.rev !== rev || remote.epoch !== state.epoch)
 			throw new Error("Startup restore revision is not authoritative");
+		if (!this.journal.matchesBase(path, base, state.epoch)) return;
+		this.assertOpen();
+		if ((await this.vault.read(path)) !== null) return;
+		this.assertOpen();
 		await this.journal.setExpectedWrite(path, remote.hash);
-		if (!(await this.vault.create(path, remote.text))) {
+		if (this.closed) {
+			await this.journal.clearExpectedWrite(path);
+			this.assertOpen();
+		}
+		this.assertOpen();
+		const created = await this.vault.create(path, remote.text);
+		if (this.closed) {
+			await this.journal.clearExpectedWrite(path);
+			this.assertOpen();
+		}
+		if (!created) {
 			await this.journal.clearExpectedWrite(path);
 			return;
 		}
-		if ((await this.vault.read(path)) !== remote.text) {
+		this.assertOpen();
+		const written = await this.vault.read(path);
+		if (this.closed) {
+			await this.journal.clearExpectedWrite(path);
+			this.assertOpen();
+		}
+		if (written !== remote.text) {
 			await this.journal.clearExpectedWrite(path);
 			throw new Error("Startup restore bytes were not confirmed");
 		}
@@ -578,6 +689,7 @@ export class PublicationController {
 	private async enqueuePut(path: string, text: string): Promise<void> {
 		const bytes = new TextEncoder().encode(text);
 		if (bytes.byteLength > 1_000_000) {
+			this.assertOpen();
 			await this.journal.recordAttention(
 				path,
 				"Inline text exceeds the publication size limit",
@@ -586,7 +698,9 @@ export class PublicationController {
 		}
 		const state = this.journal.snapshot();
 		const base = state.base[path];
-		if (base?.deleted === false && base.hash === (await digest(bytes))) return;
+		const hash = await digest(bytes);
+		this.assertOpen();
+		if (base?.deleted === false && base.hash === hash) return;
 		if (base && !state.epoch) {
 			await this.journal.recordAttention(
 				path,
@@ -612,9 +726,12 @@ export class PublicationController {
 		operation: Extract<PendingOperation, { op: "rename" }>,
 		remoteHash: string,
 	): Promise<void> {
+		this.assertOpen();
 		const local = await this.vault.read(operation.to);
+		this.assertOpen();
 		if (local === null) return;
 		const localHash = await digest(new TextEncoder().encode(local));
+		this.assertOpen();
 		const queuedPuts = this.journal
 			.snapshot()
 			.pending_ops.filter(
@@ -624,12 +741,17 @@ export class PublicationController {
 					item.state === "queued",
 			);
 		if (localHash === remoteHash) {
-			for (const queued of queuedPuts)
+			for (const queued of queuedPuts) {
+				this.assertOpen();
 				await this.journal.discardQueued(queued.key);
+			}
 			return;
 		}
-		if (!(await this.hasPendingPut(operation.to, localHash)))
+		this.assertOpen();
+		if (!(await this.hasPendingPut(operation.to, localHash))) {
+			this.assertOpen();
 			await this.enqueuePut(operation.to, local);
+		}
 	}
 
 	/** Keeps a newer feed base when a delayed receipt confirms an older sent revision. */
@@ -670,10 +792,12 @@ export class PublicationController {
 	private async hasPendingPut(path: string, hash: string): Promise<boolean> {
 		for (const operation of this.journal.snapshot().pending_ops) {
 			if (operation.op !== "put" || operation.path !== path) continue;
+			this.assertOpen();
 			const saved = await this.journal.readPayload(
 				operation.payload_ref,
 				operation.payload_hash,
 			);
+			this.assertOpen();
 			if ((await digest(saved)) === hash) return true;
 		}
 		return false;

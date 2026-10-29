@@ -26,12 +26,15 @@ const epoch = "a".repeat(32);
 class MemoryStorage implements DeviceJournalStorage {
 	state: unknown = null;
 	payloads = new Map<string, Uint8Array>();
+	/** Pauses the next durable state write for lifecycle interleaving tests. */
+	beforeWriteState: (() => Promise<void>) | null = null;
 	/** Returns the last complete JSON-compatible device state. */
 	async readState(): Promise<unknown> {
 		return this.state;
 	}
 	/** Stores a defensive full-document copy for verified journal writes. */
 	async writeState(state: unknown): Promise<void> {
+		await this.beforeWriteState?.();
 		this.state = structuredClone(state);
 	}
 	/** Reads exact saved payload bytes or reports a missing immutable reference. */
@@ -49,9 +52,20 @@ class MemoryStorage implements DeviceJournalStorage {
 /** Models guarded text operations and confirmed files without Obsidian host types. */
 class MemoryVault implements TextVault {
 	readonly files = new Map<string, string>();
+	/** Records host create attempts to prove disposal blocks new file effects. */
+	readonly creates: Array<{ path: string; text: string }> = [];
+	/** Records trash attempts so lifecycle tests can reject new destructive effects. */
+	readonly trashes: Array<{ path: string; expected: string }> = [];
+	/** Pauses one vault read to test disposal between observation and a later effect. */
+	beforeRead: ((path: string) => Promise<void>) | null = null;
 	afterTrash: (() => void) | null = null;
 	/** Returns exact current text or null for an absent path. */
 	async read(path: string): Promise<string | null> {
+		const beforeRead = this.beforeRead;
+		if (beforeRead) {
+			this.beforeRead = null;
+			await beforeRead(path);
+		}
 		return this.files.get(path) ?? null;
 	}
 	/** Returns all current paths for startup scan and collision checks. */
@@ -77,12 +91,14 @@ class MemoryVault implements TextVault {
 	}
 	/** Creates text only when the exact path does not exist. */
 	async create(path: string, text: string): Promise<boolean> {
+		this.creates.push({ path, text });
 		if (this.files.has(path)) return false;
 		this.files.set(path, text);
 		return true;
 	}
 	/** Removes only the exact observed value from the test vault. */
 	async trash(path: string, expected: string): Promise<boolean> {
+		this.trashes.push({ path, expected });
 		if (this.files.get(path) !== expected) return false;
 		this.files.delete(path);
 		this.afterTrash?.();
@@ -107,6 +123,13 @@ class MemoryRemote implements PublicationRemote {
 	}> = [];
 	readonly deletes: Array<{
 		path: string;
+		precondition: DevicePrecondition;
+		key: string;
+	}> = [];
+	/** Records conditional rename attempts for stale-event assertions. */
+	readonly renames: Array<{
+		path: string;
+		to: string;
 		precondition: DevicePrecondition;
 		key: string;
 	}> = [];
@@ -179,7 +202,13 @@ class MemoryRemote implements PublicationRemote {
 		};
 	}
 	/** Returns destination metadata without inventing source revision authority. */
-	async rename(_path: string, to: string): Promise<PublicationReceipt> {
+	async rename(
+		path: string,
+		to: string,
+		precondition: DevicePrecondition,
+		key: string,
+	): Promise<PublicationReceipt> {
+		this.renames.push({ path, to, precondition, key });
 		return {
 			status: 201,
 			path: to,
@@ -269,6 +298,41 @@ describe("PublicationController", () => {
 		controller.close();
 	});
 
+	it("does not create startup text after disposal during expected-write persistence", async () => {
+		const storage = new MemoryStorage();
+		const { controller, journal, vault } = await openController(storage);
+		await journal.setBase("note.md", {
+			deleted: false,
+			rev: 6,
+			hash: "b".repeat(64),
+		});
+		/** Signals that expected-write persistence reached the pause point. */
+		let announceWrite: () => void = () => {};
+		/** Releases the persisted write after the controller closes. */
+		let releaseWrite: () => void = () => {};
+		const writeStarted = new Promise<void>((resolve) => {
+			announceWrite = resolve;
+		});
+		const writeGate = new Promise<void>((resolve) => {
+			releaseWrite = resolve;
+		});
+		storage.beforeWriteState = async () => {
+			storage.beforeWriteState = null;
+			announceWrite();
+			await writeGate;
+		};
+		const scan = controller.scan();
+		await writeStarted;
+		controller.close();
+		releaseWrite();
+
+		await expect(scan).rejects.toThrow("Publication controller is closed");
+
+		expect(vault.creates).toEqual([]);
+		expect(await vault.read("note.md")).toBeNull();
+		expect(journal.snapshot().expected_writes).toEqual({});
+	});
+
 	it("publishes post-rename local edits as puts after the server rename settles", async () => {
 		const storage = new MemoryStorage();
 		const vault = new MemoryVault();
@@ -351,6 +415,101 @@ describe("PublicationController", () => {
 		]);
 		expect(journal.snapshot().pending_ops).toEqual([]);
 		controller.close();
+	});
+
+	it("resolves a rename receipt after a newer source recreation and restart", async () => {
+		const now = 1_800_000_000_000;
+		const storage = new MemoryStorage();
+		const vault = new MemoryVault();
+		const journal = await DeviceJournal.open(storage);
+		await journal.resetEpoch(epoch);
+		const movedText = "renamed source bytes";
+		const recreatedText = "new source revision";
+		const movedHash = await digestText(movedText);
+		const recreatedHash = await digestText(recreatedText);
+		await journal.setBase("source.md", {
+			deleted: false,
+			rev: 1,
+			hash: movedHash,
+		});
+		vault.files.set("target.md", movedText);
+		let renameCalls = 0;
+		let sourceText = movedText;
+		let sourceRev = 1;
+		let storedReceipt: PublicationReceipt | null = null;
+		const remote: PublicationRemote = {
+			readAuthority: async () => {
+				throw new Error("Unexpected pinned read");
+			},
+			readCurrentAuthority: async () => ({
+				deleted: false,
+				text: sourceText,
+				epoch,
+				rev: sourceRev,
+				hash: await digestText(sourceText),
+			}),
+			put: async () => {
+				throw new Error("Unexpected put");
+			},
+			delete: async () => {
+				throw new Error("Unexpected delete");
+			},
+			rename: async (_path, to) => {
+				renameCalls += 1;
+				if (storedReceipt) return storedReceipt;
+				storedReceipt = {
+					status: 201,
+					path: to,
+					etag: `"${epoch}.2"`,
+					seq: 2,
+					size: new TextEncoder().encode(movedText).byteLength,
+					hash: movedHash,
+					deleted: false,
+				};
+				sourceText = recreatedText;
+				sourceRev = 3;
+				throw new Error("Committed rename response was lost");
+			},
+		};
+		const first = new PublicationController(journal, vault, remote, {
+			now: () => now,
+			recoverPrecondition: async () => {},
+		});
+		await first.observe({
+			type: "rename",
+			path: "source.md",
+			to: "target.md",
+		});
+		await first.flush();
+		expect(journal.snapshot().pending_ops[0]).toMatchObject({ state: "sent" });
+		first.close();
+		const restartedJournal = await DeviceJournal.open(storage);
+		const restarted = new PublicationController(
+			restartedJournal,
+			vault,
+			remote,
+			{
+				now: () => now + 2_000,
+				recoverPrecondition: async () => {},
+			},
+		);
+
+		await restarted.flush();
+
+		expect(renameCalls).toBe(2);
+		expect(restartedJournal.snapshot().pending_ops).toEqual([]);
+		expect(restartedJournal.snapshot().base["source.md"]).toEqual({
+			deleted: false,
+			rev: 3,
+			hash: recreatedHash,
+		});
+		expect(restartedJournal.snapshot().base["target.md"]).toEqual({
+			deleted: false,
+			rev: 2,
+			hash: movedHash,
+		});
+		expect(restartedJournal.snapshot().cursor).toBeNull();
+		restarted.close();
 	});
 
 	it("admits a live case-only rename with distinct canonical spellings", async () => {
@@ -512,6 +671,127 @@ describe("PublicationController", () => {
 		controller.close();
 	});
 
+	it("does not delete a newer edit after a delayed create receipt", async () => {
+		let now = 1_800_000_000_000;
+		const storage = new MemoryStorage();
+		const vault = new MemoryVault();
+		const journal = await DeviceJournal.open(storage);
+		await journal.resetEpoch(epoch);
+		const createdText = "created locally";
+		const remoteEdit = "another device edit";
+		let serverRev = 0;
+		let serverText = "";
+		let storedReceipt: PublicationReceipt | null = null;
+		const writes: Array<{ key: string; precondition: DevicePrecondition }> = [];
+		const deletes: Array<{ key: string; precondition: DevicePrecondition }> =
+			[];
+		const remote: PublicationRemote = {
+			readAuthority: async () => {
+				throw new Error("Unexpected pinned read");
+			},
+			readCurrentAuthority: async () => ({
+				deleted: false,
+				text: serverText,
+				epoch,
+				rev: serverRev,
+				hash: await digestText(serverText),
+			}),
+			put: async (path, text, precondition, key) => {
+				writes.push({ key, precondition });
+				if (!storedReceipt) {
+					serverRev = 1;
+					serverText = text;
+					storedReceipt = {
+						status: 201,
+						path,
+						etag: `"${epoch}.1"`,
+						seq: 1,
+						size: new TextEncoder().encode(text).byteLength,
+						hash: await digestText(text),
+						deleted: false,
+					};
+					throw new Error("Committed create response was lost");
+				}
+				return storedReceipt;
+			},
+			delete: async (path, precondition, key) => {
+				deletes.push({ key, precondition });
+				if (precondition.kind !== "match" || precondition.rev !== serverRev)
+					throw new SyncTransportError(412, "precondition_failed");
+				serverRev += 1;
+				serverText = "";
+				return {
+					status: 200,
+					path,
+					etag: `"${epoch}.${serverRev}"`,
+					seq: serverRev,
+					size: 0,
+					hash: "",
+					deleted: true,
+				};
+			},
+			rename: async () => {
+				throw new Error("Unexpected rename");
+			},
+		};
+		const controller = new PublicationController(journal, vault, remote, {
+			now: () => now,
+			recoverPrecondition: async () => {},
+		});
+		vault.files.set("note.md", createdText);
+		await controller.observe({ type: "create", path: "note.md" });
+		await controller.flush();
+		const created = journal.snapshot().pending_ops[0];
+		if (!created) throw new Error("Expected a sent create");
+		vault.files.delete("note.md");
+		await controller.observe({ type: "delete", path: "note.md" });
+		const engine = new TextApplyEngine(
+			journal,
+			vault,
+			{ read: async () => remoteEdit },
+			{ deviceName: "Test Device" },
+		);
+		await engine.apply({
+			seq: 2,
+			op: "put",
+			path: "note.md",
+			etag: `"${epoch}.2"`,
+			hash: await digestText(remoteEdit),
+			origin: "remote",
+			at: 2,
+		});
+		serverRev = 2;
+		serverText = remoteEdit;
+		now += 2_000;
+
+		await controller.flush();
+
+		expect(writes).toHaveLength(2);
+		expect(writes[1]).toEqual({
+			key: created.key,
+			precondition: { kind: "absent" },
+		});
+		expect(deletes).toEqual([]);
+		expect(serverText).toBe(remoteEdit);
+		expect(await vault.read("note.md")).toBe(remoteEdit);
+		expect(journal.snapshot().base["note.md"]).toEqual({
+			deleted: false,
+			rev: 2,
+			hash: await digestText(remoteEdit),
+		});
+		expect(journal.snapshot().pending_ops).toEqual([]);
+		expect(
+			journal
+				.snapshot()
+				.attention.some(
+					(item: { operation?: PendingOperation }) =>
+						item.operation?.op === "delete",
+				),
+		).toBe(true);
+		controller.close();
+		engine.close();
+	});
+
 	it("blocks a dependent delete when its sent create is rejected", async () => {
 		let now = 1_800_000_000_000;
 		const { controller, journal, remote, vault } = await openController(
@@ -548,6 +828,219 @@ describe("PublicationController", () => {
 			},
 		]);
 		controller.close();
+	});
+
+	it("rejects a delayed delete when remote apply restores a newer revision", async () => {
+		/** Signals that an unrelated mutation blocks the publication queue. */
+		let announceRequest: () => void = () => {};
+		/** Releases that mutation after reconciliation restores the target. */
+		let releaseResponse: () => void = () => {};
+		const requestStarted = new Promise<void>((resolve) => {
+			announceRequest = resolve;
+		});
+		const responseGate = new Promise<void>((resolve) => {
+			releaseResponse = resolve;
+		});
+		const remote = new MemoryRemote();
+		remote.beforeReceipt = async () => {
+			announceRequest();
+			await responseGate;
+		};
+		const { controller, journal, vault } = await openController(
+			undefined,
+			undefined,
+			remote,
+		);
+		const oldText = "revision one";
+		await journal.setBase("target.md", {
+			deleted: false,
+			rev: 1,
+			hash: await digestText(oldText),
+		});
+		vault.files.set("target.md", oldText);
+		vault.files.set("blocker.md", "unrelated publication");
+		await controller.observe({ type: "create", path: "blocker.md" });
+		const flush = controller.flush();
+		await requestStarted;
+		vault.files.delete("target.md");
+		const deletion = controller.observe({ type: "delete", path: "target.md" });
+		const newerText = "restored remote revision two";
+		const engine = new TextApplyEngine(
+			journal,
+			vault,
+			{ read: async () => newerText },
+			{ deviceName: "Test Device" },
+		);
+		await engine.apply({
+			seq: 2,
+			op: "put",
+			path: "target.md",
+			etag: `"${epoch}.2"`,
+			hash: await digestText(newerText),
+			origin: "remote",
+			at: 2,
+		});
+		releaseResponse();
+		await flush;
+		await deletion;
+
+		await controller.flush();
+
+		expect(remote.deletes).toEqual([]);
+		expect(await vault.read("target.md")).toBe(newerText);
+		expect(journal.snapshot().base["target.md"]).toMatchObject({
+			rev: 2,
+			hash: await digestText(newerText),
+		});
+		controller.close();
+		engine.close();
+	});
+
+	it("does not admit a rename against a source restored after its event", async () => {
+		/** Signals that an unrelated mutation blocks the publication queue. */
+		let announceRequest: () => void = () => {};
+		/** Releases that mutation after reconciliation restores the source. */
+		let releaseResponse: () => void = () => {};
+		const requestStarted = new Promise<void>((resolve) => {
+			announceRequest = resolve;
+		});
+		const responseGate = new Promise<void>((resolve) => {
+			releaseResponse = resolve;
+		});
+		const remote = new MemoryRemote();
+		remote.beforeReceipt = async () => {
+			announceRequest();
+			await responseGate;
+		};
+		const { controller, journal, vault } = await openController(
+			undefined,
+			undefined,
+			remote,
+		);
+		const oldText = "source revision one";
+		await journal.setBase("source.md", {
+			deleted: false,
+			rev: 1,
+			hash: await digestText(oldText),
+		});
+		vault.files.set("target.md", oldText);
+		vault.files.set("blocker.md", "unrelated publication");
+		await controller.observe({ type: "create", path: "blocker.md" });
+		const flush = controller.flush();
+		await requestStarted;
+		const rename = controller.observe({
+			type: "rename",
+			path: "source.md",
+			to: "target.md",
+		});
+		const newerText = "source revision two";
+		const engine = new TextApplyEngine(
+			journal,
+			vault,
+			{ read: async () => newerText },
+			{ deviceName: "Test Device" },
+		);
+		await engine.apply({
+			seq: 2,
+			op: "put",
+			path: "source.md",
+			etag: `"${epoch}.2"`,
+			hash: await digestText(newerText),
+			origin: "remote",
+			at: 2,
+		});
+		releaseResponse();
+		await flush;
+		await rename;
+
+		expect(remote.renames).toEqual([]);
+		expect(await vault.read("source.md")).toBe(newerText);
+		expect(await vault.read("target.md")).toBe(oldText);
+		expect(
+			journal
+				.snapshot()
+				.pending_ops.some(
+					(operation: PendingOperation) => operation.op === "rename",
+				),
+		).toBe(false);
+		expect(journal.snapshot().pending_ops).toMatchObject([
+			{ op: "put", path: "target.md", precondition: { kind: "absent" } },
+		]);
+		controller.close();
+		engine.close();
+	});
+
+	it("does not trash a stale rename destination after disposal during its read", async () => {
+		const storage = new MemoryStorage();
+		const vault = new MemoryVault();
+		const journal = await DeviceJournal.open(storage);
+		await journal.resetEpoch(epoch);
+		const oldText = "moved source bytes";
+		await journal.setBase("source.md", {
+			deleted: false,
+			rev: 1,
+			hash: await digestText(oldText),
+		});
+		vault.files.set("target.md", oldText);
+		const remote: PublicationRemote = {
+			readAuthority: async () => {
+				throw new Error("Unexpected pinned read");
+			},
+			readCurrentAuthority: async () => ({
+				deleted: false,
+				text: "new source bytes",
+				epoch,
+				rev: 2,
+				hash: await digestText("new source bytes"),
+			}),
+			put: async () => {
+				throw new Error("Unexpected put");
+			},
+			delete: async () => {
+				throw new Error("Unexpected delete");
+			},
+			rename: async () => {
+				throw new SyncTransportError(412, "precondition_failed");
+			},
+		};
+		const controller = new PublicationController(journal, vault, remote, {
+			now: () => 1_800_000_000_000,
+			recoverPrecondition: async () =>
+				journal.setBase("source.md", {
+					deleted: false,
+					rev: 2,
+					hash: await digestText("new source bytes"),
+				}),
+		});
+		await controller.observe({
+			type: "rename",
+			path: "source.md",
+			to: "target.md",
+		});
+		/** Signals that stale rename cleanup reached its destination read. */
+		let announceRead: () => void = () => {};
+		/** Releases the read after publication closes. */
+		let releaseRead: () => void = () => {};
+		const readStarted = new Promise<void>((resolve) => {
+			announceRead = resolve;
+		});
+		const readGate = new Promise<void>((resolve) => {
+			releaseRead = resolve;
+		});
+		vault.beforeRead = async (path) => {
+			if (path !== "target.md") return;
+			announceRead();
+			await readGate;
+		};
+		const flushing = controller.flush();
+		await readStarted;
+		controller.close();
+		releaseRead();
+
+		await expect(flushing).rejects.toThrow("Publication controller is closed");
+
+		expect(vault.trashes).toEqual([]);
+		expect(await vault.read("target.md")).toBe(oldText);
 	});
 
 	it("does not restore a file while an explicit live delete is pending", async () => {

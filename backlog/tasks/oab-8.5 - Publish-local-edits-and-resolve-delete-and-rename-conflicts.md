@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-10-28T19:31:00Z'
-updated_date: '2026-10-29T15:46:00Z'
+updated_date: '2026-10-29T16:21:00Z'
 labels: []
 dependencies:
   - OAB-8.4
@@ -75,4 +75,19 @@ Transition ownership review:
 Validation after correction: `bun run docs:check` passed. `bun run check` passed lint, docs, typecheck, tests, and build. All 90 test files and 1,440 tests passed. Worker fault-injection tests printed expected error logs. All worker test groups passed.
 
 Correction to the earlier OAB-8.1 review note: DeviceJournal.resolve now distinguishes receipts from rejections. It retains rejected sent evidence, rebases queued conflicts after receipts, and moves dependent deletes to attention after rejection.
+
+Whole-branch review corrections for R1–R4:
+
+- RED: `cd apps/plugin && bunx vitest run test/publication.test.ts` first showed four failures for R1, R2 delete, R2 rename, and R4 restore disposal. After adding R3 restart coverage, five regressions failed. Each failure matched its stated unsafe interleaving. GREEN: all 32 publication tests pass.
+- R1: the fake server commits create revision 1, loses its response, accepts a remote edit at revision 2, then returns the stored revision-1 receipt. `does not delete a newer edit after a delayed create receipt` confirms the dependent delete is not sent. DeviceJournal.resolve uses supplied successor authority, not a later base. It moves the delete to attention when current base differs from the create receipt.
+- R2: `rejects a delayed delete when remote apply restores a newer revision` holds an unrelated send, admits delete at revision 1, applies revision 2, then releases the callback. No delete request targets revision 2. The event captures epoch and base before queue wait. It checks continued absence and base identity before admission. `does not admit a rename against a source restored after its event` also blocks the stale rename and preserves target bytes as a put.
+- R3: `resolves a rename receipt after a newer source recreation and restart` commits a rename, loses its receipt, recreates the source at revision 3, restarts the journal, then receives the stored destination receipt at revision 2. Recovery records source revision 3 from current authority, destination revision 2 from the receipt, and resolves the operation. No source revision is invented.
+- R4: `does not create startup text after disposal during expected-write persistence` pauses the durable marker write, closes publication, then releases it. The expected-write marker clears and no create starts. `does not trash a stale rename destination after disposal during its read` checks the cleanup fence. Scan and event paths also check lifecycle after awaited host reads and before new effects.
+
+Transition and ownership review:
+- DeviceJournal owns event-base comparison and durable successor transitions. Publication captures event authority synchronously, checks continued local absence, and sends only the captured precondition. Publication passes exact mutation receipt bases to journal resolution.
+- Rename destination authority comes from its mutation receipt. Rename source authority comes from a separate current read. TextApplyEngine and ReconciliationController own guarded remote apply and feed replay. Composition still uses one journal and transport. No file split was needed.
+- Cross-state tests cover queued and sent work, receipt and current-base divergence, delayed destructive events, rename receipt plus source recreation, retry after restart, and disposal during persistence and cleanup. Exact preconditions and lifecycle checks protect races after admission. The prior stateful ownership concern now has targeted cross-product evidence. Parent whole-branch acceptance remains pending.
+
+Validation: `bun run docs:check` passed. `bun run check` passed lint, docs, typecheck, tests, and build. All 90 test files and 1,446 tests passed. Worker fault-injection cases printed expected error logs. All worker test groups passed. The task remains In Progress.
 <!-- SECTION:NOTES:END -->

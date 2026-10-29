@@ -616,8 +616,12 @@ export class DeviceJournal {
 		});
 	}
 
-	/** Resolves sent work, rebases later conflicts after receipt, and blocks dependent deletes after rejection. */
-	async resolve(key: string, outcome: ResolutionOutcome): Promise<void> {
+	/** Resolves sent work with confirmed successor bases, never from later journal state. */
+	async resolve(
+		key: string,
+		outcome: ResolutionOutcome,
+		successorBases: Readonly<Record<string, DeviceBaseEntry>> = {},
+	): Promise<void> {
 		await this.serialize(async () => {
 			this.assertOpen();
 			const index = this.state.pending_ops.findIndex(
@@ -625,38 +629,54 @@ export class DeviceJournal {
 			);
 			const operation = this.state.pending_ops[index];
 			if (!operation) throw new Error("Only a sent operation can resolve");
-			const blocked =
-				outcome.kind === "rejection"
-					? this.state.pending_ops.filter(
-							(item) => item.op === "delete" && item.depends_on === key,
-						)
+			const dependentDeletes = this.state.pending_ops.filter(
+				(item) => item.op === "delete" && item.depends_on === key,
+			);
+			const rejectedDeletes =
+				outcome.kind === "rejection" ? dependentDeletes : [];
+			const staleDeletes =
+				outcome.kind === "receipt"
+					? dependentDeletes.filter((item) => {
+							const successorBase = successorBases[item.path];
+							const currentBase = this.state.base[item.path];
+							return (
+								!successorBase ||
+								!currentBase ||
+								!sameBaseEntry(currentBase, successorBase)
+							);
+						})
 					: [];
-			const attention =
-				outcome.kind === "rejection"
+			const blocked = [...rejectedDeletes, ...staleDeletes];
+			const attention = [
+				...this.state.attention.filter(
+					(item) =>
+						item.operation?.key !== key &&
+						!blocked.some((operation) => item.operation?.key === operation.key),
+				),
+				...(outcome.kind === "rejection"
 					? [
-							...this.state.attention.filter(
-								(item) =>
-									item.operation?.key !== key &&
-									!blocked.some(
-										(operation) => item.operation?.key === operation.key,
-									),
-							),
 							{
 								path: operation.path,
 								reason: "Rejected operation retained for recovery",
 								operation,
 							},
-							...blocked.map((item) => ({
-								path: item.path,
-								reason: "Delete intent was blocked by its rejected create",
-								operation: item,
-							})),
 						]
-					: this.state.attention;
+					: []),
+				...rejectedDeletes.map((item) => ({
+					path: item.path,
+					reason: "Delete intent was blocked by its rejected create",
+					operation: item,
+				})),
+				...staleDeletes.map((item) => ({
+					path: item.path,
+					reason: "Delete intent no longer matches its create receipt",
+					operation: item,
+				})),
+			];
 			const pending_ops = this.state.pending_ops.flatMap((item, itemIndex) => {
 				if (
 					item.key === key ||
-					blocked.some((operation) => operation.key === item.key)
+					blocked.some((candidate) => candidate.key === item.key)
 				)
 					return [];
 				if (
@@ -666,11 +686,13 @@ export class DeviceJournal {
 					!operationsConflict(operation, item)
 				)
 					return [item];
-				const base = this.state.base[item.path];
-				const precondition: DevicePrecondition =
-					base && this.state.epoch
-						? { kind: "match", epoch: this.state.epoch, rev: base.rev }
-						: { kind: "absent" };
+				const successorBase = successorBases[item.path];
+				if (!successorBase || !this.state.epoch) return [item];
+				const precondition: DevicePrecondition = {
+					kind: "match",
+					epoch: this.state.epoch,
+					rev: successorBase.rev,
+				};
 				if (item.op !== "delete" || item.depends_on !== key)
 					return [{ ...item, precondition }];
 				const { depends_on: _dependency, ...resolved } = item;
@@ -792,6 +814,17 @@ export class DeviceJournal {
 		return DeviceStateSchema.parse(structuredClone(this.state));
 	}
 
+	/** Checks whether captured event authority still matches this path and epoch. */
+	matchesBase(
+		path: string,
+		base: DeviceBaseEntry | undefined,
+		epoch: string | undefined,
+	): boolean {
+		return (
+			this.state.epoch === epoch && sameBaseEntry(this.state.base[path], base)
+		);
+	}
+
 	/** Blocks actions immediately without deleting any confirmed state or payload. */
 	close(): void {
 		this.closed = true;
@@ -848,6 +881,19 @@ function operationsConflict(
 	const leftKeys = leftPaths.map(pathKey);
 	const rightKeys = rightPaths.map(pathKey);
 	return leftKeys.some((leftKey) => rightKeys.includes(leftKey));
+}
+
+/** Compares confirmed base evidence by revision and content, including absence. */
+function sameBaseEntry(
+	left: DeviceBaseEntry | undefined,
+	right: DeviceBaseEntry | undefined,
+): boolean {
+	if (!left || !right) return left === right;
+	return (
+		left.deleted === right.deleted &&
+		left.rev === right.rev &&
+		(left.deleted || (!right.deleted && left.hash === right.hash))
+	);
 }
 
 /** Compares precondition evidence by meaning, independent of object property order. */

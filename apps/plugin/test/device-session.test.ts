@@ -81,6 +81,23 @@ class FakeTransport implements OAuthTransport {
 
 	/** Binds synthetic discovery endpoints to one test service origin. */
 	constructor(private readonly serviceOrigin = origin) {}
+	/** Returns a controlled raw response and records request headers for auth checks. */
+	async requestResponse(
+		url: string,
+		options?: Record<string, unknown>,
+	): Promise<{
+		status: number;
+		headers: Record<string, string>;
+		text: string;
+	}> {
+		this.calls.push({ url, options });
+		return {
+			status: 410,
+			headers: { etag: '"epoch.9"', "x-vault-epoch": "epoch" },
+			text: "\ufeffexact\r\ntext\n",
+		};
+	}
+
 	/** Returns fixed metadata or synthetic tokens and records no secret output. */
 	async request(
 		url: string,
@@ -178,6 +195,33 @@ function createSession(
 }
 
 describe("DeviceSession", () => {
+	it("keeps authorization authoritative for safe raw sync responses", async () => {
+		const test = createSession();
+		await test.session.connect();
+		const auth = new URL(test.browserUrl());
+		await test.session.callback({
+			code: "synthetic-code",
+			state: auth.searchParams.get("state") ?? "",
+		});
+		const response = Reflect.get(test.session, "requestResponse") as (
+			path: string,
+			options: Record<string, unknown>,
+		) => Promise<unknown>;
+		await expect(
+			response.call(test.session, "/v1/files/a.md", {
+				headers: { authorization: "Bearer attacker", "if-none-match": "*" },
+			}),
+		).resolves.toEqual({
+			status: 410,
+			headers: { etag: '"epoch.9"', "x-vault-epoch": "epoch" },
+			text: "\ufeffexact\r\ntext\n",
+		});
+		expect(test.transport.calls.at(-1)?.options?.headers).toEqual({
+			authorization: "Bearer synthetic-access-token",
+			"if-none-match": "*",
+		});
+	});
+
 	it("starts browser PKCE and stores credentials only after a matching callback", async () => {
 		const test = createSession();
 		await test.session.connect();

@@ -30,6 +30,18 @@ export interface TextVault {
 	rename(from: string, to: string, expected: string): Promise<boolean>;
 }
 
+/** Signals that a pruned revision now uses one validated current row identity. */
+class PinnedRevisionRebased extends Error {
+	/** Replacement change identity already persisted in the journal. */
+	readonly change: ChangeEntry;
+
+	/** Carries the new epoch-bound row into the serialized apply retry. */
+	constructor(change: ChangeEntry) {
+		super("Pinned revision identity changed");
+		this.change = change;
+	}
+}
+
 /** Names conflict copies with one friendly device name for this engine lifetime. */
 export interface TextApplyOptions {
 	/** Stable display name stored with conflict recovery metadata. */
@@ -40,6 +52,12 @@ export interface TextApplyOptions {
 export interface PinnedTextProvider {
 	/** Returns text pinned to the exact epoch and revision, or null when unavailable. */
 	read(path: string, epoch: string, rev: number): Promise<string | null>;
+	/** Reads pinned text with identity replacement when a pruned revision falls back to current. */
+	readResolved?(
+		path: string,
+		epoch: string,
+		rev: number,
+	): Promise<{ text: string; epoch: string; rev: number; hash: string }>;
 }
 
 /** Serializes revision-pinned text changes and recovers durable conflict steps. */
@@ -62,20 +80,30 @@ export class TextApplyEngine {
 	/** Validates and applies one immutable remote entry without discarding newer local bytes. */
 	apply(change: ChangeEntry): Promise<void> {
 		const parsed = ChangeEntrySchema.parse(structuredClone(change));
-		return this.serialize(() => this.applyEntry(parsed));
+		return this.serialize(() => this.applyWithFallback(parsed));
 	}
 
 	/** Resumes the one verified pending transition after a plugin restart. */
 	resume(): Promise<void> {
 		return this.serialize(async () => {
 			const pending = this.activeJournal.snapshot().pending_apply[0];
-			if (pending) await this.applyEntry(pending.change);
+			if (pending) await this.applyWithFallback(pending.change);
 		});
 	}
 
 	/** Fences queued work after plugin unload without claiming host effects were canceled. */
 	close(): void {
 		this.closed = true;
+	}
+
+	/** Repeats one accepted entry after the journal commits a pruned-revision replacement. */
+	private async applyWithFallback(change: ChangeEntry): Promise<void> {
+		try {
+			await this.applyEntry(change);
+		} catch (error) {
+			if (!(error instanceof PinnedRevisionRebased)) throw error;
+			await this.applyEntry(error.change);
+		}
 	}
 
 	/** Runs one accepted entry or continues its persisted conflict step. */
@@ -107,7 +135,12 @@ export class TextApplyEngine {
 		if (change.op === "rename") return false;
 		const revision = parseETag(change.etag).rev;
 		const base = state.base[change.path];
-		if (!base || revision > base.rev) return false;
+		if (
+			!base ||
+			revision > base.rev ||
+			state.stale_base_paths.includes(change.path)
+		)
+			return false;
 		await this.activeJournal.ignoreApply(change.path, revision);
 		return true;
 	}
@@ -214,9 +247,14 @@ export class TextApplyEngine {
 		const toRev = parseETag(change.etag).rev;
 		const sourceBase = state.base[change.from_path];
 		const destinationBase = state.base[change.path];
-		const sourcePending = sourceBase !== undefined && sourceBase.rev < fromRev;
+		const staleBases = state.stale_base_paths;
+		const sourcePending =
+			sourceBase !== undefined &&
+			(sourceBase.rev < fromRev || staleBases.includes(change.from_path));
 		const destinationPending =
-			destinationBase === undefined || destinationBase.rev < toRev;
+			destinationBase === undefined ||
+			destinationBase.rev < toRev ||
+			staleBases.includes(change.path);
 		if (!sourcePending && !destinationPending) {
 			await this.activeJournal.completeRenameApply(
 				change.from_path,
@@ -495,11 +533,14 @@ export class TextApplyEngine {
 			const fromRev = parseETag(change.from_etag).rev;
 			const sourceBase = state.base[change.from_path];
 			const sourcePending =
-				sourceBase !== undefined && sourceBase.rev < fromRev;
+				sourceBase !== undefined &&
+				(sourceBase.rev < fromRev ||
+					state.stale_base_paths.includes(change.from_path));
 			const destinationBase = state.base[change.path];
 			const destinationPending =
 				destinationBase === undefined ||
-				destinationBase.rev < parseETag(change.etag).rev;
+				destinationBase.rev < parseETag(change.etag).rev ||
+				state.stale_base_paths.includes(change.path);
 			if (!destinationPending) {
 				const source = sourcePending
 					? await this.vault.read(change.from_path)
@@ -579,7 +620,9 @@ export class TextApplyEngine {
 			const fromRev = parseETag(change.from_etag).rev;
 			const sourceBase = state.base[change.from_path];
 			const sourcePending =
-				sourceBase !== undefined && sourceBase.rev < fromRev;
+				sourceBase !== undefined &&
+				(sourceBase.rev < fromRev ||
+					state.stale_base_paths.includes(change.from_path));
 			if (sourcePending) {
 				const source = await this.vault.read(change.from_path);
 				if (source !== null) {
@@ -762,6 +805,27 @@ export class TextApplyEngine {
 		expectedHash: string,
 	): Promise<string> {
 		const { epoch, rev } = parseETag(etag);
+		if (this.pinnedText.readResolved) {
+			const result = await this.pinnedText.readResolved(path, epoch, rev);
+			this.assertOpen();
+			if (result.epoch !== epoch || (await digest(result.text)) !== result.hash)
+				throw new Error("Current fallback text metadata is invalid");
+			if (result.rev !== rev) {
+				const pending = this.activeJournal.snapshot().pending_apply[0];
+				if (!pending)
+					throw new Error("Pinned fallback has no durable apply identity");
+				const rebased = {
+					...pending.change,
+					etag: `"${epoch}.${result.rev}"`,
+					hash: result.hash,
+				};
+				await this.activeJournal.rebasePendingApply(rebased);
+				throw new PinnedRevisionRebased(rebased);
+			}
+			if (result.hash !== expectedHash)
+				throw new Error("Pinned remote text hash mismatch");
+			return result.text;
+		}
 		const text = await this.pinnedText.read(path, epoch, rev);
 		this.assertOpen();
 		if (text === null) throw new Error("Pinned remote text is unavailable");

@@ -137,6 +137,34 @@ describe("TextApplyEngine", () => {
 		Object.assign(change, remoteChange);
 	});
 
+	it("replaces a pruned revision identity before applying current bytes", async () => {
+		const newerText = "current revision bytes";
+		const newerHash = await hash(newerText);
+		vault.files.set(change.path, "base bytes");
+		journal = await seedBase(
+			change.path,
+			await hash("base bytes"),
+			storage,
+			journal,
+		);
+		engine = makeEngine(journal, vault, {
+			read: async () => null,
+			readResolved: async () => ({
+				text: newerText,
+				epoch,
+				rev: 3,
+				hash: newerHash,
+			}),
+		});
+		await engine.apply(change);
+		expect(vault.files.get(change.path)).toBe(newerText);
+		expect(journal.snapshot().base[change.path]).toEqual({
+			deleted: false,
+			rev: 3,
+			hash: newerHash,
+		});
+	});
+
 	it("applies pinned text only when current bytes match the confirmed base", async () => {
 		vault.files.set(change.path, "base bytes");
 		journal = await seedBase(

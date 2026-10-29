@@ -162,6 +162,30 @@ export class DeviceJournal {
 		});
 	}
 
+	/** Replaces a pruned pinned row before effects while retaining verified local conflict identities. */
+	async rebasePendingApply(
+		change: DeviceState["pending_apply"][number]["change"],
+	): Promise<void> {
+		const parsedChange = ChangeEntrySchema.parse(change);
+		return this.serialize(async () => {
+			this.assertOpen();
+			const current = this.state.pending_apply[0];
+			if (!current || current.change.seq !== parsedChange.seq)
+				throw new Error("Pinned fallback does not match the pending feed row");
+			if (
+				current.change.path !== parsedChange.path ||
+				current.change.op !== parsedChange.op
+			)
+				throw new Error("Pinned fallback changed the row path or operation");
+			const oldEpoch = parseETag(current.change.etag).epoch;
+			const newEpoch = parseETag(parsedChange.etag).epoch;
+			if (oldEpoch !== newEpoch)
+				throw new Error("Pinned fallback changed the vault epoch");
+			const rebased: PendingApply = { ...current, change: parsedChange };
+			await this.commit({ ...this.state, pending_apply: [rebased] });
+		});
+	}
+
 	/** Persists conflict identity and step before the next guarded vault effect. */
 	async updateApply(pending: PendingApply): Promise<void> {
 		const parsed = PendingApplySchema.parse(pending);
@@ -201,6 +225,90 @@ export class DeviceJournal {
 			)
 				throw new Error("Conflict copy identity is immutable");
 			await this.commit({ ...this.state, pending_apply: [parsed] });
+		});
+	}
+
+	/** Records one confirmed base without allowing an older observed revision to replace it. */
+	async setBase(path: string, base: DeviceBaseEntry): Promise<void> {
+		const parsed = DeviceBaseEntrySchema.parse(base);
+		return this.serialize(async () => {
+			this.assertOpen();
+			const previous = this.state.base[path];
+			if (
+				previous &&
+				parsed.rev < previous.rev &&
+				!this.state.stale_base_paths.includes(path)
+			)
+				throw new Error("Confirmed base revision cannot regress");
+			await this.commit({
+				...this.state,
+				base: { ...this.state.base, [path]: parsed },
+				stale_base_paths: this.state.stale_base_paths.filter(
+					(item) => item !== path,
+				),
+			});
+		});
+	}
+
+	/** Persists one epoch-bound feed position without allowing cursor regression. */
+	async setCursor(epoch: string, cursor: number): Promise<void> {
+		return this.serialize(async () => {
+			this.assertOpen();
+			if (this.state.epoch !== epoch) throw new Error("Cursor epoch is stale");
+			if (this.state.cursor !== null && cursor < this.state.cursor)
+				throw new Error("Feed cursor cannot regress");
+			await this.commit({ ...this.state, cursor });
+		});
+	}
+
+	/** Changes epoch and invalidates old conditional work while preserving hashes and payloads. */
+	async resetEpoch(epoch: string): Promise<void> {
+		return this.serialize(async () => {
+			this.assertOpen();
+			if (this.state.epoch === epoch) return;
+			const previousEpoch = this.state.epoch;
+			const hasUnboundOperations = this.state.pending_ops.length > 0;
+			const operations =
+				previousEpoch || hasUnboundOperations ? this.state.pending_ops : [];
+			const attention = this.state.attention;
+			await this.commit({
+				...this.state,
+				epoch,
+				cursor: null,
+				reconciliation: null,
+				pending_apply: [],
+				expected_writes: {},
+				pending_ops: operations.length > 0 ? [] : this.state.pending_ops,
+				stale_base_paths:
+					previousEpoch || Object.keys(this.state.base).length > 0
+						? [
+								...new Set([
+									...this.state.stale_base_paths,
+									...Object.keys(this.state.base),
+								]),
+							]
+						: this.state.stale_base_paths,
+				attention: [
+					...attention,
+					...operations.map((operation) => ({
+						path: operation.path,
+						reason: "Operation belongs to an old vault epoch",
+						operation,
+					})),
+				],
+			});
+		});
+	}
+
+	/** Saves one validated page boundary before a reconciliation worker advances. */
+	async setReconciliationCheckpoint(
+		checkpoint: DeviceState["reconciliation"],
+	): Promise<void> {
+		return this.serialize(async () => {
+			this.assertOpen();
+			if (checkpoint && checkpoint.epoch !== this.state.epoch)
+				throw new Error("Reconciliation checkpoint epoch is stale");
+			await this.commit({ ...this.state, reconciliation: checkpoint });
 		});
 	}
 
@@ -265,12 +373,14 @@ export class DeviceJournal {
 				(source !== null &&
 					(!source.deleted ||
 						source.rev !== expectedFromRev ||
-						source.rev <= (this.state.base[fromPath]?.rev ?? 0))) ||
+						(source.rev <= (this.state.base[fromPath]?.rev ?? 0) &&
+							!this.state.stale_base_paths.includes(fromPath)))) ||
 				(destination !== null &&
 					(destination.deleted ||
 						destination.rev !== expectedToRev ||
 						destination.hash !== pending.change.hash ||
-						destination.rev <= (this.state.base[toPath]?.rev ?? 0)))
+						(destination.rev <= (this.state.base[toPath]?.rev ?? 0) &&
+							!this.state.stale_base_paths.includes(toPath))))
 			)
 				throw new Error(
 					"Confirmed rename base does not match its remote revisions",
@@ -285,6 +395,9 @@ export class DeviceJournal {
 					...(source ? { [fromPath]: source } : {}),
 					...(destination ? { [toPath]: destination } : {}),
 				},
+				stale_base_paths: this.state.stale_base_paths.filter(
+					(path) => path !== fromPath && path !== toPath,
+				),
 				pending_apply: [],
 				expected_writes,
 			});
@@ -341,7 +454,10 @@ export class DeviceJournal {
 				throw new Error(
 					"Confirmed base revision does not match the remote entry",
 				);
-			if (parsed.rev <= (this.state.base[path]?.rev ?? 0))
+			if (
+				parsed.rev <= (this.state.base[path]?.rev ?? 0) &&
+				!this.state.stale_base_paths.includes(path)
+			)
 				throw new Error("Confirmed base revision cannot regress or repeat");
 			if (
 				(pending.change.op === "delete" && !parsed.deleted) ||
@@ -357,6 +473,9 @@ export class DeviceJournal {
 			await this.commit({
 				...this.state,
 				base: nextBase,
+				stale_base_paths: this.state.stale_base_paths.filter(
+					(item) => item !== path,
+				),
 				pending_apply: [],
 				expected_writes,
 			});

@@ -13,7 +13,10 @@ import type {
 	CredentialStorage,
 	CredentialWriteTransaction,
 } from "@plugin/infrastructure/credential-storage";
-import type { OAuthTransport } from "@plugin/infrastructure/oauth-transport";
+import type {
+	OAuthTransport,
+	OAuthTransportResponse,
+} from "@plugin/infrastructure/oauth-transport";
 
 /** Permissions requested by a device during the approved enrollment flow. */
 const SCOPES = VaultScopeSchema.options;
@@ -277,6 +280,43 @@ export class DeviceSession {
 			body: options.body,
 			headers: { authorization: `Bearer ${credential.access_token}` },
 		});
+		this.assertOpen();
+		return response;
+	}
+
+	/** Sends an authenticated request and preserves safe raw metadata for sync reads. */
+	async requestResponse(
+		path: string,
+		options: {
+			method?: string;
+			body?: string;
+			headers?: Record<string, string>;
+		} = {},
+	): Promise<OAuthTransportResponse> {
+		this.assertOpen();
+		const url = new URL(path, this.serviceOrigin);
+		if (url.origin !== this.serviceOrigin || url.protocol !== "https:")
+			throw new Error("API request must use the configured service origin");
+		const credential = await this.getCredential();
+		this.assertOpen();
+		if (this.credential !== credential)
+			throw new Error("Device credentials changed before request");
+		this.assertCredentialIdentity(credential);
+		const requestResponse = this.host.transport.requestResponse;
+		if (!requestResponse)
+			throw new Error("Safe response transport is unavailable");
+		const response = await requestResponse.call(
+			this.host.transport,
+			url.toString(),
+			{
+				method: options.method ?? "GET",
+				body: options.body,
+				headers: {
+					...options.headers,
+					authorization: `Bearer ${credential.access_token}`,
+				},
+			},
+		);
 		this.assertOpen();
 		return response;
 	}

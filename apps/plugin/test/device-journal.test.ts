@@ -159,6 +159,43 @@ describe("DeviceJournal", () => {
 		expect(journal.snapshot().pending_apply).toHaveLength(1);
 	});
 
+	it("resets epoch progress and preserves old operation metadata in attention", async () => {
+		const journal = await DeviceJournal.open(storage);
+		const operation = await journal.enqueue(
+			{ op: "put", path: "notes/a.md", precondition },
+			bytes,
+		);
+		const oldBase = { deleted: false as const, rev: 8, hash: "d".repeat(64) };
+		const setBase = Reflect.get(journal, "setBase") as (
+			path: string,
+			base: typeof oldBase,
+		) => Promise<void>;
+		const setCursor = Reflect.get(journal, "setCursor") as (
+			epoch: string,
+			cursor: number,
+		) => Promise<void>;
+		const resetEpoch = Reflect.get(journal, "resetEpoch") as (
+			epoch: string,
+		) => Promise<void>;
+		await resetEpoch.call(journal, precondition.epoch);
+		await setBase.call(journal, "notes/a.md", oldBase);
+		await setCursor.call(journal, precondition.epoch, 7);
+		await resetEpoch.call(journal, "c".repeat(32));
+
+		const state = journal.snapshot();
+		expect(state.epoch).toBe("c".repeat(32));
+		expect(state.cursor).toBeNull();
+		expect(state.base["notes/a.md"]).toEqual(oldBase);
+		expect(state.stale_base_paths).toContain("notes/a.md");
+		expect(state.pending_ops).toEqual([]);
+		expect(state.attention).toContainEqual({
+			path: operation.path,
+			reason: "Operation belongs to an old vault epoch",
+			operation,
+		});
+		expect(await storage.readPayload(operation.payload_ref)).toEqual(bytes);
+	});
+
 	it("creates and reuses a stable device identity", async () => {
 		const first = await DeviceJournal.open(storage);
 		const id = first.snapshot().device_id;

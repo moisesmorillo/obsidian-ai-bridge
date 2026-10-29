@@ -270,11 +270,37 @@ export const DeviceExpectedWritesSchema = z.record(
 	DevicePayloadHashSchema,
 );
 
-/** Durable user-visible blocker for a path that needs explicit resolution. */
+/** One saved manifest boundary and offset for restartable reconciliation. */
+export const ReconciliationCheckpointSchema = z
+	.object({
+		epoch: EpochSchema,
+		head_seq: z.number().int().nonnegative().safe(),
+		page_token: z.string().max(4096).nullable(),
+		page_number: z.number().int().nonnegative().safe(),
+		local_paths: z.array(DevicePathSchema),
+		local_index: z.number().int().nonnegative().safe(),
+		pending_paths: z.array(DevicePathSchema),
+	})
+	.strict()
+	.superRefine((checkpoint, context) => {
+		if (checkpoint.local_index > checkpoint.local_paths.length)
+			context.addIssue({
+				code: "custom",
+				message: "Local scan offset exceeds its saved path list",
+			});
+	});
+
+/** Inferred durable manifest traversal and local enrollment progress. */
+export type ReconciliationCheckpoint = z.infer<
+	typeof ReconciliationCheckpointSchema
+>;
+
+/** Durable user-visible blocker; old-epoch operations retain full retry identity. */
 export const DeviceAttentionSchema = z
 	.object({
 		path: DevicePathSchema,
 		reason: z.string().min(1),
+		operation: PendingOperationSchema.optional(),
 	})
 	.strict();
 
@@ -284,6 +310,8 @@ export const DeviceStateSchema = z
 		version: z.literal(1),
 		device_id: DeviceOperationKeySchema,
 		client_id: ClientIdSchema.optional(),
+		epoch: EpochSchema.optional(),
+		cursor: z.number().int().nonnegative().safe().nullable().default(null),
 		pending_ops: z
 			.array(PendingOperationSchema)
 			.refine(
@@ -293,8 +321,10 @@ export const DeviceStateSchema = z
 				"Operation keys must be unique",
 			),
 		base: z.record(DevicePathSchema, DeviceBaseEntrySchema).default({}),
+		stale_base_paths: z.array(DevicePathSchema).default([]),
 		pending_apply: z.array(PendingApplySchema).max(1).default([]),
 		expected_writes: DeviceExpectedWritesSchema.default({}),
+		reconciliation: ReconciliationCheckpointSchema.nullable().default(null),
 		attention: z.array(DeviceAttentionSchema).default([]),
 	})
 	.strict();

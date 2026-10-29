@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
+import { SyncTransportError } from "../src/infrastructure/sync-transport";
 import { DeviceJournal } from "../src/sync/device-journal";
 import {
 	type ReconciliationChangesPage,
@@ -40,6 +41,7 @@ class MemoryVault implements TextVault {
 	writes = 0;
 	processGate: { started: () => void; wait: Promise<void> } | null = null;
 	createGate: { started: () => void; wait: Promise<void> } | null = null;
+	listError: Error | null = null;
 	/** Reads one current text path. */
 	async read(path: string): Promise<string | null> {
 		this.reads.push(path);
@@ -55,6 +57,7 @@ class MemoryVault implements TextVault {
 	}
 	/** Lists every current text path. */
 	async list(): Promise<string[]> {
+		if (this.listError) throw this.listError;
 		return [...this.files.keys()];
 	}
 	/** Changes text only when the observed value still matches. */
@@ -129,6 +132,7 @@ class MemoryRemote implements ReconciliationRemote {
 	created: Array<{ path: string; text: string; epoch: string; key: string }> =
 		[];
 	createError: Error | null = null;
+	createErrors: Error[] = [];
 	changeError: Error | null = null;
 	onCreate: (() => void) | null = null;
 	/** Captures the epoch and head at traversal start. */
@@ -182,7 +186,8 @@ class MemoryRemote implements ReconciliationRemote {
 	) {
 		this.created.push({ path, text, epoch: currentEpoch, key });
 		this.onCreate?.();
-		if (this.createError) throw this.createError;
+		const nextError = this.createErrors.shift() ?? this.createError;
+		if (nextError) throw nextError;
 		return { status: 201, headers: { etag: `"${epoch}.5"` }, text: "" };
 	}
 }
@@ -236,6 +241,61 @@ describe("ReconciliationController", () => {
 	let context: Awaited<ReturnType<typeof setup>>;
 	beforeEach(async () => {
 		context = await setup();
+	});
+
+	it.each(["vault list", "checkpoint save"] as const)(
+		"resumes after epoch reset when the first %s step fails",
+		async (failurePoint) => {
+			const text = "recovered after initial checkpoint failure";
+			context.remote.entries = [
+				{
+					path: "recovered-initial.md",
+					etag: `"${epoch}.2"`,
+					seq: 2,
+					hash: await hash(text),
+					kind: "text",
+					deleted: false,
+				},
+			];
+			context.remote.texts.set("2", text);
+			if (failurePoint === "vault list") {
+				context.vault.listError = new Error("vault list failed");
+			} else {
+				const setCheckpoint = context.journal.setReconciliationCheckpoint.bind(
+					context.journal,
+				);
+				context.journal.setReconciliationCheckpoint = async (checkpoint) => {
+					if (checkpoint) throw new Error("checkpoint save failed");
+					await setCheckpoint(checkpoint);
+				};
+			}
+
+			await expect(context.controller.enroll()).rejects.toThrow(
+				failurePoint === "vault list"
+					? "vault list failed"
+					: "checkpoint save failed",
+			);
+			expect(context.journal.snapshot()).toMatchObject({
+				epoch,
+				cursor: null,
+				reconciliation: null,
+			});
+			context.vault.listError = null;
+			context = await reopen(context);
+
+			await context.controller.resume();
+
+			expect(context.vault.files.get("recovered-initial.md")).toBe(text);
+			expect(context.journal.snapshot().cursor).toBe(4);
+			expect(context.journal.snapshot().reconciliation).toBeNull();
+		},
+	);
+
+	it("does not enroll a fresh disconnected journal during resume", async () => {
+		await context.controller.resume();
+		expect(context.remote.manifestCalls).toEqual([]);
+		expect(context.journal.snapshot().epoch).toBeUndefined();
+		expect(context.journal.snapshot().cursor).toBeNull();
 	});
 
 	it("fences a pending apply effect when the controller closes", async () => {
@@ -633,6 +693,93 @@ describe("ReconciliationController", () => {
 			context.journal.snapshot().base["closed-in-flight.md"],
 		).toBeUndefined();
 	});
+
+	it.each([
+		[409, "path_collision"],
+		[409, "operation_expired"],
+		[422, "idempotency_mismatch"],
+		[413, "text_too_large"],
+	] as const)(
+		"records terminal enrollment failure HTTP %s %s and continues",
+		async (status, code) => {
+			context.vault.files.set("a-rejected.md", "first local text");
+			context.vault.files.set("b-created.md", "second local text");
+			const existingPath = code === "path_collision" ? "a-existing.md" : null;
+			const error = new SyncTransportError(status, code, existingPath);
+			context.remote.createErrors.push(error);
+			await context.controller.enroll();
+
+			expect(context.remote.created.map((item) => item.path)).toEqual([
+				"a-rejected.md",
+				"b-created.md",
+			]);
+			expect(context.journal.snapshot().pending_ops).toEqual([]);
+			expect(context.journal.snapshot().cursor).toBe(4);
+			expect(context.journal.snapshot().attention).toContainEqual({
+				path: existingPath ?? "a-rejected.md",
+				reason: `Enrollment create rejected (${code}) for a-rejected.md`,
+			});
+			await context.controller.resume();
+			expect(context.remote.created).toHaveLength(2);
+		},
+	);
+
+	it("does not retry a terminal create after a crash before local index advance", async () => {
+		context.vault.files.set("terminal.md", "local text");
+		context.remote.createErrors.push(
+			new SyncTransportError(409, "operation_expired"),
+		);
+		const setCheckpoint = context.journal.setReconciliationCheckpoint.bind(
+			context.journal,
+		);
+		let failLocalProgress = true;
+		context.journal.setReconciliationCheckpoint = async (checkpoint) => {
+			if (
+				failLocalProgress &&
+				checkpoint?.stage === "local" &&
+				checkpoint.local_index === 1
+			) {
+				failLocalProgress = false;
+				throw new Error("local progress failed");
+			}
+			await setCheckpoint(checkpoint);
+		};
+
+		await expect(context.controller.enroll()).rejects.toThrow(
+			"local progress failed",
+		);
+		expect(context.remote.created).toHaveLength(1);
+		expect(context.journal.snapshot().pending_ops).toEqual([]);
+		context = await reopen(context);
+
+		await context.controller.resume();
+
+		expect(context.remote.created).toHaveLength(1);
+		expect(context.journal.snapshot().cursor).toBe(4);
+		expect(context.journal.snapshot().attention).toContainEqual({
+			path: "terminal.md",
+			reason: "Enrollment create rejected (operation_expired) for terminal.md",
+		});
+	});
+
+	it.each([
+		[401, "unauthorized"],
+		[429, "admission_limited"],
+	] as const)(
+		"keeps HTTP %s %s enrollment outcome uncertain",
+		async (status, code) => {
+			context.vault.files.set("uncertain.md", "local text");
+			context.remote.createErrors.push(new SyncTransportError(status, code));
+
+			await expect(context.controller.enroll()).rejects.toMatchObject({
+				status,
+				code,
+			});
+			expect(context.remote.created).toHaveLength(1);
+			expect(context.journal.snapshot().pending_ops[0]?.state).toBe("sent");
+			expect(context.journal.snapshot().attention).toEqual([]);
+		},
+	);
 
 	it("uploads a local UTF-8 BOM without changing the immutable bytes", async () => {
 		const text = "\ufeff# heading\r\nUnicode: café\n";

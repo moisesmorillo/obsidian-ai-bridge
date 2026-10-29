@@ -1,6 +1,7 @@
 import {
 	type ChangesPage,
 	DevicePayloadHashSchema,
+	type DeviceState,
 	type ManifestEntry,
 	type ManifestPage,
 	parseETag,
@@ -8,8 +9,14 @@ import {
 } from "@obsidian-ai-bridge/protocol";
 import type { DeviceJournal } from "@plugin/sync/device-journal";
 import { classifyEnrollmentPath } from "@plugin/sync/enrollment-scope";
-import { UnsupportedRemoteTextError } from "@plugin/sync/remote-text";
+import {
+	SyncTransportError,
+	UnsupportedRemoteTextError,
+} from "@plugin/sync/remote-text";
 import type { TextApplyEngine, TextVault } from "@plugin/sync/text-apply";
+
+/** Prefix that lets restart recovery identify rejected enrollment paths in attention. */
+const ENROLLMENT_REJECTION_PREFIX = "Enrollment create rejected (";
 
 /** Canonical manifest row, including tombstone and content-kind authority. */
 export type ReconciliationManifestEntry = Pick<
@@ -65,10 +72,10 @@ export class ReconciliationController {
 	/** Resumes saved apply work and any durable manifest traversal after restart. */
 	resume(): Promise<void> {
 		return this.serialize(async () => {
-			if (this.journal.snapshot().reconciliation)
-				await this.runReconciliation();
-			else if (this.journal.snapshot().cursor !== null)
-				await this.runReplayWithRecovery();
+			const state = this.journal.snapshot();
+			if (state.reconciliation) await this.runReconciliation();
+			else if (state.cursor !== null) await this.runReplayWithRecovery();
+			else if (state.epoch !== undefined) await this.runReconciliation();
 		});
 	}
 
@@ -230,17 +237,36 @@ export class ReconciliationController {
 				this.assertOpen();
 				const path = checkpoint.local_paths[index];
 				if (path && !checkpoint.remote_paths.includes(path)) {
-					try {
-						await this.publishLocalCreate(path, checkpoint.epoch);
-						this.assertOpen();
-					} catch (error) {
-						if (
-							getStatus(error) !== 412 &&
-							!(restartOnSnapshotChange && isRecoveryError(error))
+					if (
+						hasTerminalEnrollmentAttention(
+							this.journal.snapshot().attention,
+							path,
 						)
-							throw error;
-						await this.journal.setReconciliationCheckpoint(null);
-						return this.runReconciliation(false);
+					) {
+						const rejected = this.journal
+							.snapshot()
+							.pending_ops.filter(
+								(operation) =>
+									operation.state === "sent" &&
+									operation.op === "put" &&
+									operation.path === path &&
+									operation.precondition.kind === "absent",
+							);
+						for (const operation of rejected)
+							await this.journal.resolve(operation.key, { kind: "rejection" });
+					} else {
+						try {
+							await this.publishLocalCreate(path, checkpoint.epoch);
+							this.assertOpen();
+						} catch (error) {
+							if (
+								getStatus(error) !== 412 &&
+								!(restartOnSnapshotChange && isRecoveryError(error))
+							)
+								throw error;
+							await this.journal.setReconciliationCheckpoint(null);
+							return this.runReconciliation(false);
+						}
 					}
 				}
 				checkpoint = {
@@ -281,7 +307,7 @@ export class ReconciliationController {
 		}
 	}
 
-	/** Reads one saved snapshot page and retries only a stale page token once. */
+	/** Retries page one after a recovery error and returns continuation errors to traversal. */
 	private async readManifestPage(
 		pageToken: string | null,
 		restartOnSnapshotChange: boolean,
@@ -447,6 +473,21 @@ export class ReconciliationController {
 			this.assertOpen();
 		} catch (error) {
 			this.assertOpen();
+			if (isTerminalEnrollmentFailure(error)) {
+				const attentionPath =
+					error.code === "path_collision" && error.existingPath
+						? error.existingPath
+						: path;
+				const failure = error.code ?? `HTTP ${error.status}`;
+				await this.journal.recordAttention(
+					attentionPath,
+					`${ENROLLMENT_REJECTION_PREFIX}${failure}) for ${path}`,
+				);
+				this.assertOpen();
+				await this.journal.resolve(saved.operation.key, { kind: "rejection" });
+				this.assertOpen();
+				return;
+			}
 			if (getStatus(error) === 412) {
 				await this.journal.resolve(saved.operation.key, { kind: "rejection" });
 				this.assertOpen();
@@ -592,6 +633,32 @@ function isRecoveryError(error: unknown): boolean {
 	const candidate = error as { code?: unknown };
 	return (
 		candidate.code === "epoch_mismatch" || candidate.code === "cursor_expired"
+	);
+}
+
+/** Selects only terminal enrollment statuses with their validated protocol codes. */
+function isTerminalEnrollmentFailure(
+	error: unknown,
+): error is SyncTransportError {
+	return (
+		error instanceof SyncTransportError &&
+		((error.status === 409 &&
+			(error.code === "path_collision" ||
+				error.code === "operation_expired")) ||
+			(error.status === 422 && error.code === "idempotency_mismatch") ||
+			error.status === 413)
+	);
+}
+
+/** Finds durable terminal enrollment attention for one local source path. */
+function hasTerminalEnrollmentAttention(
+	attention: DeviceState["attention"],
+	path: string,
+): boolean {
+	return attention.some(
+		(item) =>
+			item.reason.startsWith(ENROLLMENT_REJECTION_PREFIX) &&
+			item.reason.endsWith(` for ${path}`),
 	);
 }
 

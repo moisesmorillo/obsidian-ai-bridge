@@ -10,7 +10,12 @@ import {
 	VaultReadResultSchema,
 } from "@obsidian-ai-bridge/protocol";
 import type { OAuthTransportResponse } from "@plugin/infrastructure/oauth-transport";
-import { UnsupportedRemoteTextError } from "@plugin/sync/remote-text";
+import {
+	SyncTransportError,
+	UnsupportedRemoteTextError,
+} from "@plugin/sync/remote-text";
+
+export { SyncTransportError } from "@plugin/sync/remote-text";
 
 /** Authenticated response capability consumed without exposing the session credential. */
 export interface SyncResponseSession {
@@ -23,22 +28,6 @@ export interface SyncResponseSession {
 			headers?: Record<string, string>;
 		},
 	): Promise<OAuthTransportResponse>;
-}
-
-/** Safe protocol error retaining only validated HTTP status and error code. */
-export class SyncTransportError extends Error {
-	/** The HTTP status received from the service. */
-	readonly status: number;
-	/** Validated protocol error code, when the body matches the canonical shape. */
-	readonly code: string | null;
-
-	/** Creates a safe diagnostic without retaining response text or headers. */
-	constructor(status: number, code: string | null) {
-		super("Sync request failed");
-		this.name = "SyncTransportError";
-		this.status = status;
-		this.code = code;
-	}
 }
 
 /** Exact pinned text and the validated authority identity returned by its response. */
@@ -244,17 +233,30 @@ export class SyncTransport {
 		);
 		if (response.status < 200 || response.status >= 300) {
 			let code: string | null = null;
+			let existingPath: string | null = null;
+			let retryAfter: string | null = null;
 			try {
 				const body = parseJson(response.text);
+				const retryHeader = response.headers["retry-after"];
 				const failure = FileHttpFailureSchema.parse({
 					status: response.status,
 					body,
+					...(retryHeader === undefined
+						? {}
+						: { headers: { "Retry-After": retryHeader } }),
 				});
 				code = failure.body.error;
+				existingPath = failure.body.existing_path ?? null;
+				retryAfter = failure.headers?.["Retry-After"] ?? null;
 			} catch {
 				code = null;
 			}
-			throw new SyncTransportError(response.status, code);
+			throw new SyncTransportError(
+				response.status,
+				code,
+				existingPath,
+				retryAfter,
+			);
 		}
 		return response;
 	}

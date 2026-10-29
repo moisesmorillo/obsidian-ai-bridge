@@ -2,6 +2,8 @@ import type { ManifestPage } from "@obsidian-ai-bridge/protocol";
 import { TFile, type Vault } from "obsidian";
 import { describe, expect, it } from "vitest";
 import type { DeviceSession } from "../src/auth/device-session";
+import type { OAuthTransportResponse } from "../src/infrastructure/oauth-transport";
+import type { SyncResponseSession } from "../src/infrastructure/sync-transport";
 import { createReconciliation } from "../src/sync/create-reconciliation";
 import {
 	DeviceJournal,
@@ -73,7 +75,7 @@ class WorkerSession {
 		});
 	}
 	/** Returns a protocol response for the requested production endpoint. */
-	async requestResponse(path: string) {
+	async requestResponse(path: string): Promise<OAuthTransportResponse> {
 		const requestPath = new URL(path).pathname + new URL(path).search;
 		this.calls.push(requestPath);
 		if (requestPath.startsWith("/v1/manifest"))
@@ -96,9 +98,17 @@ class WorkerSession {
 }
 
 /** Runs production reconciliation composition against a guarded fake Obsidian vault. */
-async function runComposition(session: WorkerSession) {
-	const files: TFile[] = [];
-	const content = new Map<string, string>();
+async function runComposition(
+	session: SyncResponseSession,
+	localFiles: Record<string, string> = {},
+) {
+	const files: TFile[] = Object.entries(localFiles).map(([path, value]) =>
+		Object.assign(new TFile(), {
+			path,
+			stat: { size: new TextEncoder().encode(value).byteLength },
+		}),
+	);
+	const content = new Map(Object.entries(localFiles));
 	const host = {
 		getFiles: () => files,
 		getAbstractFileByPath: (path: string) =>
@@ -148,6 +158,62 @@ describe("createReconciliation", () => {
 			"/v1/manifest",
 			`/v1/files/remote.md?rev=2`,
 		]);
+		expect(result.journal.snapshot().cursor).toBe(4);
+	});
+
+	it("continues enrollment after a canonical path_collision response", async () => {
+		const calls: string[] = [];
+		const session = {
+			/** Returns canonical responses for manifest and create requests. */
+			async requestResponse(path: string): Promise<OAuthTransportResponse> {
+				const url = new URL(path);
+				const route = url.pathname + url.search;
+				calls.push(route);
+				if (route === "/v1/manifest")
+					return {
+						status: 200,
+						headers: { "content-type": "application/json" },
+						text: JSON.stringify({
+							epoch,
+							head_seq: 4,
+							entries: [],
+							next_page: null,
+						}),
+					};
+				if (route === "/v1/files/notes/a.md")
+					return {
+						status: 409,
+						headers: { "content-type": "application/json" },
+						text: JSON.stringify({
+							error: "path_collision",
+							message: "Another file uses this path key.",
+							existing_path: "notes/A.md",
+						}),
+					};
+				if (route === "/v1/files/notes/b.md")
+					return {
+						status: 201,
+						headers: { etag: `"${epoch}.5"` },
+						text: "",
+					};
+				throw new Error(`Unexpected path ${path}`);
+			},
+		};
+		const result = await runComposition(session, {
+			"notes/a.md": "first local note",
+			"notes/b.md": "second local note",
+		});
+
+		expect(calls).toEqual([
+			"/v1/manifest",
+			"/v1/files/notes/a.md",
+			"/v1/files/notes/b.md",
+		]);
+		expect(result.journal.snapshot().pending_ops).toEqual([]);
+		expect(result.journal.snapshot().attention).toContainEqual({
+			path: "notes/A.md",
+			reason: "Enrollment create rejected (path_collision) for notes/a.md",
+		});
 		expect(result.journal.snapshot().cursor).toBe(4);
 	});
 });

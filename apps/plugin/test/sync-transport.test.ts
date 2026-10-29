@@ -224,6 +224,50 @@ describe("SyncTransport", () => {
 		).resolves.toMatchObject({ text, epoch, rev: 8 });
 	});
 
+	it("preserves canonical collision and retry details without response text", async () => {
+		const collisionSession = new ResponseSession();
+		collisionSession.responses.push({
+			status: 409,
+			headers: {},
+			text: JSON.stringify({
+				error: "path_collision",
+				message: "Another file uses this path key.",
+				existing_path: "notes/Existing.md",
+			}),
+		});
+		const collisionTransport = new SyncTransport(
+			"https://service.test",
+			collisionSession,
+		);
+		await expect(
+			collisionTransport.createText("notes/a.md", "text", epoch, "key"),
+		).rejects.toMatchObject({
+			message: "Sync request failed",
+			status: 409,
+			code: "path_collision",
+			existingPath: "notes/Existing.md",
+		});
+
+		const limitedSession = new ResponseSession();
+		limitedSession.responses.push({
+			status: 429,
+			headers: { "retry-after": "20" },
+			text: JSON.stringify({
+				error: "admission_limited",
+				message: "The vault cannot accept another operation now.",
+			}),
+		});
+		const limitedTransport = new SyncTransport(
+			"https://service.test",
+			limitedSession,
+		);
+		await expect(limitedTransport.vault()).rejects.toMatchObject({
+			status: 429,
+			code: "admission_limited",
+			retryAfter: "20",
+		});
+	});
+
 	it("preserves validated status and error code without exposing response text", async () => {
 		const session = new ResponseSession();
 		session.responses.push({

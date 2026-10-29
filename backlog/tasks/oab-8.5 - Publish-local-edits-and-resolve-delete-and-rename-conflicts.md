@@ -1,11 +1,11 @@
 ---
 id: OAB-8.5
 title: Publish local edits and resolve delete and rename conflicts
-status: In Progress
+status: Done
 assignee:
   - '@pi'
 created_date: '2026-10-28T19:31:00Z'
-updated_date: '2026-10-29T16:50:00Z'
+updated_date: '2026-10-29T17:00:00Z'
 labels: []
 dependencies:
   - OAB-8.4
@@ -23,10 +23,10 @@ Connect vault events and startup hash scans to conditional publication and renam
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Automated AC-03, AC-04, AC-05, and AC-06 cover offline edits and confirmed remote precedence. AC-24 fetches destination bytes by destination revision.
-- [ ] #2 AC-30 retains sent keys and bytes after a lost response. Later edits receive separate keys and the correct next precondition. Receipt sequence never advances the feed cursor.
-- [ ] #3 AC-33 resolves rename sides separately. Newer source revisions survive replay. Deletes and renames come only from live vault events. Missing startup files restore from the server.
-- [ ] #4 Publication handles 412, path collisions, size limits, expired operations, and bounded retry with Retry-After. Local link rewrites publish as ordinary puts.
+- [x] #1 Automated AC-03, AC-04, AC-05, and AC-06 cover offline edits and confirmed remote precedence. AC-24 fetches destination bytes by destination revision.
+- [x] #2 AC-30 retains sent keys and bytes after a lost response. Later edits receive separate keys and the correct next precondition. Receipt sequence never advances the feed cursor.
+- [x] #3 AC-33 resolves rename sides separately. Newer source revisions survive replay. Deletes and renames come only from live vault events. Missing startup files restore from the server.
+- [x] #4 Publication handles 412, path collisions, size limits, expired operations, and bounded retry with Retry-After. Local link rewrites publish as ordinary puts.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -125,4 +125,12 @@ Finding and ownership closure:
 - Limits: no live service, deployment, real vault, or hosted CI proof ran. No dependency, Worker source, or protocol schema changed. OAB-8.6, OAB-8.7, and OAB-8.8 remain outside scope.
 
 Final whole-branch review approved main 9b06569 through 0161d3d. Reviewed source: 5577b03. Reviewer closed F1-F3 and R1-R4 with code and regression evidence. R3 separates current observation, guarded confirmed apply, and receipt-produced authority. Rename receipts authorize destination successors only. The stateful structural gate passed for publication, journal, text apply, reconciliation, transport, protocol schema, event adapter, and composition. Documentation audit covered changed semantic declarations, private helpers, ports, schemas, tests, and task notes. All four criteria have automated evidence within the approved text-only scope. Worker check passed 90 files and 1452 tests. Focused checks passed 5 files and 157 tests. Reviewer Git checks passed. No hosted CI, live service, real vault, or two-device proof ran. Owner diff review remains pending.
+
+Owner approved complete branch diff in Plannotator pn-0c5487 with no requested changes. Parent verified source and tests match checked source 5577b03. Later commits change task notes only. Complete-range whitespace check passed. Final acceptance uses worker test evidence and independent review. Real-device proof remains OAB-8.8.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Added conditional local text publication, immutable retries, live-event admission, startup restoration, and shared conflict recovery. Exact event and receipt authority protects newer remote edits. Guarded apply preserves recreated rename sources and local conflict bytes. Worker check passed 90 files and 1452 tests. Focused checks passed 5 files and 157 tests. Independent task and whole-branch reviews closed every finding. Owner approved the branch diff. No live service or real vault proof ran. OAB-8.6, OAB-8.7, and OAB-8.8 retain their separate scope.
+<!-- SECTION:FINAL_SUMMARY:END -->

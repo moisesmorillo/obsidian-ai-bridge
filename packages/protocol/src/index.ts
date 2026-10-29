@@ -85,6 +85,7 @@ export type {
 	DevicePrecondition,
 	DeviceState,
 	PendingApply,
+	PendingConflictCopy,
 	PendingOperation,
 } from "@protocol/schemas/device-state";
 export {
@@ -98,6 +99,7 @@ export {
 	DevicePreconditionSchema,
 	DeviceStateSchema,
 	PendingApplySchema,
+	PendingConflictCopySchema,
 	PendingOperationSchema,
 } from "@protocol/schemas/device-state";
 export { EpochSchema, ETagSchema } from "@protocol/schemas/etag";

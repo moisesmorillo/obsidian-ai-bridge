@@ -56,8 +56,7 @@ export const DevicePayloadReferenceSchema = z
 
 /** Validates the byte digest used to detect payload corruption before release. */
 export const DevicePayloadHashSchema = z.string().regex(/^[0-9a-f]{64}$/i);
-/** Shared persisted metadata required for every durable operation. */
-/** Shared persisted operation fields that bind each key to immutable payload bytes. */
+/** Shared persisted fields bind each key to immutable payload bytes and retry state. */
 const commonOperationShape = {
 	key: DeviceOperationKeySchema,
 	payload_hash: DevicePayloadHashSchema,
@@ -132,7 +131,22 @@ export const DeviceBaseEntrySchema = z.discriminatedUnion("deleted", [
 		.strict(),
 ]);
 
-/** One persisted step in an idempotent remote apply or its conflict recovery. */
+/** One exact local or pinned-remote version tracked by a durable apply transition. */
+export const PendingConflictCopySchema = z
+	.object({
+		path: DevicePathSchema,
+		source: DevicePathSchema,
+		side: z.enum(["path", "rename_source", "rename_destination"]),
+		mode: z.enum(["local", "remote"]),
+		device_name: z.string().min(1).optional(),
+		hash: DevicePayloadHashSchema,
+	})
+	.strict();
+
+/** Inferred identity for one durably preserved local or remote version. */
+export type PendingConflictCopy = z.infer<typeof PendingConflictCopySchema>;
+
+/** One durable apply step with legacy or per-side conflict-copy recovery metadata. */
 export const PendingApplySchema = z
 	.object({
 		change: ChangeEntrySchema,
@@ -142,37 +156,107 @@ export const PendingApplySchema = z
 		conflict_mode: z.enum(["local", "remote"]).optional(),
 		conflict_device_name: z.string().min(1).optional(),
 		conflict_hash: DevicePayloadHashSchema.optional(),
+		conflict_copies: z
+			.array(PendingConflictCopySchema)
+			.min(1)
+			.max(2)
+			.optional(),
 	})
 	.strict()
 	.superRefine((pending, context) => {
+		const legacyFields = [
+			pending.conflict_path,
+			pending.conflict_source,
+			pending.conflict_mode,
+			pending.conflict_hash,
+		];
+		const hasLegacyIdentity = pending.conflict_path !== undefined;
+		const hasConflictCopies = pending.conflict_copies !== undefined;
 		if (
-			(pending.conflict_path === undefined) !==
-				(pending.conflict_hash === undefined) ||
-			(pending.conflict_path === undefined) !==
-				(pending.conflict_source === undefined) ||
-			(pending.conflict_path === undefined) !==
-				(pending.conflict_mode === undefined)
+			legacyFields.some((field) => field !== undefined) &&
+			legacyFields.some((field) => field === undefined)
 		)
 			context.addIssue({
 				code: "custom",
-				message: "Conflict paths and hash must be stored together",
+				message: "Legacy conflict identity fields must be stored together",
 			});
-		const hasConflict = pending.conflict_path !== undefined;
+		if (hasConflictCopies && legacyFields.some((field) => field !== undefined))
+			context.addIssue({
+				code: "custom",
+				message: "Conflict copies cannot mix legacy and per-side identity",
+			});
+		const hasConflict = hasLegacyIdentity || hasConflictCopies;
 		if ((pending.step === "named" || pending.step === "copied") !== hasConflict)
 			context.addIssue({
 				code: "custom",
 				message: "Conflict identity must match the persisted apply step",
 			});
-		if (pending.conflict_device_name !== undefined && !hasConflict)
+		if (pending.conflict_device_name !== undefined && !hasLegacyIdentity)
 			context.addIssue({
 				code: "custom",
-				message: "Conflict device names need persisted conflict identity",
+				message: "Legacy conflict names need legacy conflict identity",
 			});
-		if (pending.conflict_mode === "remote" && pending.change.op !== "put")
-			context.addIssue({
-				code: "custom",
-				message: "Remote collision copies only support put entries",
-			});
+		if (hasLegacyIdentity && pending.conflict_mode === "remote") {
+			if (pending.change.op !== "put")
+				context.addIssue({
+					code: "custom",
+					message: "Remote collision copies only support put entries",
+				});
+			if (pending.conflict_hash !== pending.change.hash)
+				context.addIssue({
+					code: "custom",
+					message: "Remote conflict hash must match the pinned put hash",
+				});
+		}
+		if (pending.conflict_copies) {
+			const seenPaths = new Set<string>();
+			const seenSources = new Set<string>();
+			const seenSides = new Set<string>();
+			for (const [index, copy] of pending.conflict_copies.entries()) {
+				if (seenPaths.has(copy.path) || seenSources.has(copy.source))
+					context.addIssue({
+						code: "custom",
+						message: "Conflict copy paths and sources must be unique",
+						path: ["conflict_copies", index],
+					});
+				seenPaths.add(copy.path);
+				seenSources.add(copy.source);
+				if (seenSides.has(copy.side))
+					context.addIssue({
+						code: "custom",
+						message: "Conflict sides must be unique",
+						path: ["conflict_copies", index, "side"],
+					});
+				seenSides.add(copy.side);
+				if (copy.mode === "remote") {
+					if (pending.change.op !== "put")
+						context.addIssue({
+							code: "custom",
+							message: "Remote collision copies only support put entries",
+							path: ["conflict_copies", index, "mode"],
+						});
+					if (copy.hash !== pending.change.hash)
+						context.addIssue({
+							code: "custom",
+							message: "Remote conflict hash must match the pinned put hash",
+							path: ["conflict_copies", index, "hash"],
+						});
+				}
+				const validSide =
+					pending.change.op === "rename"
+						? (copy.side === "rename_source" &&
+								copy.source === pending.change.from_path) ||
+							(copy.side === "rename_destination" &&
+								copy.source === pending.change.path)
+						: copy.side === "path" && copy.source === pending.change.path;
+				if (!validSide)
+					context.addIssue({
+						code: "custom",
+						message: "Conflict-copy side must match its operation path",
+						path: ["conflict_copies", index, "side"],
+					});
+			}
+		}
 	});
 
 /** Inferred validated step for resumable remote apply. */

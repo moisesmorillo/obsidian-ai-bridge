@@ -122,6 +122,29 @@ describe("device journal protocol schemas", () => {
 				step: "copied",
 				...localCopy,
 				conflict_mode: "remote" as const,
+				conflict_hash: put.hash,
+			},
+			{
+				change: rename,
+				step: "named",
+				conflict_copies: [
+					{
+						path: "notes/a (conflict Device 2026-10-29 0000 r2).md",
+						source: "notes/a.md",
+						side: "rename_source",
+						mode: "local",
+						device_name: "Moises Mac",
+						hash: "d".repeat(64),
+					},
+					{
+						path: "notes/b (conflict Device 2026-10-29 0000 r2).md",
+						source: "notes/b.md",
+						side: "rename_destination",
+						mode: "local",
+						device_name: "Moises Mac",
+						hash: "e".repeat(64),
+					},
+				],
 			},
 		];
 		for (const pending of accepted)
@@ -149,6 +172,25 @@ describe("device journal protocol schemas", () => {
 				conflict_mode: "remote",
 			},
 			{ change: rename, step: "copied", ...localCopy, conflict_mode: "remote" },
+			{
+				change: put,
+				step: "copied",
+				...localCopy,
+				conflict_mode: "remote",
+			},
+			{
+				change: put,
+				step: "copied",
+				conflict_copies: [
+					{
+						path: "notes/a (conflict Device 2026-10-29 0000 r2).md",
+						source: "notes/a.md",
+						side: "path",
+						mode: "remote",
+						hash: "d".repeat(64),
+					},
+				],
+			},
 			{ change: put, step: "effect_confirmed" },
 			{ change: put, step: "prepared", ...localCopy },
 			{ change: put, step: "prepared", conflict_device_name: "Moises Mac" },

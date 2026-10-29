@@ -184,9 +184,12 @@ export class DeviceJournal {
 					"Remote apply step cannot move backward or skip a step",
 				);
 			if (
-				current.conflict_path !== undefined &&
+				(current.conflict_path !== undefined ||
+					current.conflict_copies !== undefined) &&
 				(JSON.stringify(current.conflict_path) !==
 					JSON.stringify(parsed.conflict_path) ||
+					JSON.stringify(current.conflict_copies) !==
+						JSON.stringify(parsed.conflict_copies) ||
 					JSON.stringify(current.conflict_source) !==
 						JSON.stringify(parsed.conflict_source) ||
 					JSON.stringify(current.conflict_mode) !==
@@ -235,7 +238,7 @@ export class DeviceJournal {
 		});
 	}
 
-	/** Commits both sides of one confirmed rename in the same verified document. */
+	/** Commits confirmed rename sides atomically and rejects base revision repeats or regression. */
 	async completeRenameApply(
 		fromPath: string,
 		fromBase: DeviceBaseEntry | null,
@@ -260,11 +263,14 @@ export class DeviceJournal {
 			const expectedToRev = parseETag(pending.change.etag).rev;
 			if (
 				(source !== null &&
-					(!source.deleted || source.rev !== expectedFromRev)) ||
+					(!source.deleted ||
+						source.rev !== expectedFromRev ||
+						source.rev <= (this.state.base[fromPath]?.rev ?? 0))) ||
 				(destination !== null &&
 					(destination.deleted ||
 						destination.rev !== expectedToRev ||
-						destination.hash !== pending.change.hash))
+						destination.hash !== pending.change.hash ||
+						destination.rev <= (this.state.base[toPath]?.rev ?? 0)))
 			)
 				throw new Error(
 					"Confirmed rename base does not match its remote revisions",
@@ -318,7 +324,7 @@ export class DeviceJournal {
 		});
 	}
 
-	/** Commits confirmed remote revision metadata and clears its durable apply marker. */
+	/** Commits a strictly newer confirmed revision and clears its durable apply marker. */
 	async completeApply(path: string, base: DeviceBaseEntry): Promise<void> {
 		const parsed = DeviceBaseEntrySchema.parse(base);
 		return this.serialize(async () => {
@@ -335,6 +341,8 @@ export class DeviceJournal {
 				throw new Error(
 					"Confirmed base revision does not match the remote entry",
 				);
+			if (parsed.rev <= (this.state.base[path]?.rev ?? 0))
+				throw new Error("Confirmed base revision cannot regress or repeat");
 			if (
 				(pending.change.op === "delete" && !parsed.deleted) ||
 				(pending.change.op === "put" &&

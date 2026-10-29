@@ -193,6 +193,26 @@ describe("TextApplyEngine", () => {
 		expect(journal.snapshot().pending_apply).toEqual([]);
 	});
 
+	it("keeps local bytes when a conflict copy changes during pinned fetch", async () => {
+		const localText = "user bytes";
+		vault.files.set(change.path, localText);
+		engine = makeEngine(journal, vault, {
+			read: async () => {
+				const copyPath = [...vault.files.keys()].find((path) =>
+					path.includes("(conflict "),
+				);
+				if (copyPath) vault.files.set(copyPath, "edited copy");
+				return remoteText;
+			},
+		});
+		await engine.apply(change);
+		expect(vault.files.get(change.path)).toBe(localText);
+		expect(journal.snapshot().attention).toContainEqual({
+			path: change.path,
+			reason: "Conflict copy changed during remote apply",
+		});
+	});
+
 	it("recovers a confirmed file effect before its base commit", async () => {
 		vault.files.set(change.path, "base bytes");
 		journal = await seedBase(
@@ -242,7 +262,8 @@ describe("TextApplyEngine", () => {
 			throw new Error("simulated crash after conflict create");
 		};
 		await expect(engine.apply(change)).rejects.toThrow("simulated crash");
-		const conflictPath = journal.snapshot().pending_apply[0]?.conflict_path;
+		const conflictPath =
+			journal.snapshot().pending_apply[0]?.conflict_copies?.[0]?.path;
 		expect(conflictPath).toBeDefined();
 		vault.files.set(conflictPath as string, "edited copy");
 		journal.close();
@@ -457,8 +478,8 @@ describe("TextApplyEngine", () => {
 			"simulated stop after naming",
 		);
 		const pending = journal.snapshot().pending_apply[0];
-		expect(pending?.conflict_device_name).toBe("Moises Mac");
-		const conflictPath = pending?.conflict_path;
+		expect(pending?.conflict_copies?.[0]?.device_name).toBe("Moises Mac");
+		const conflictPath = pending?.conflict_copies?.[0]?.path;
 		expect(conflictPath).toContain("(conflict Moises Mac ");
 		journal.close();
 		journal = await DeviceJournal.open(storage);
@@ -628,8 +649,8 @@ describe("TextApplyEngine", () => {
 			).rejects.toThrow(`stopped at ${step}`);
 			const pending = journal.snapshot().pending_apply[0];
 			expect(pending?.step).toBe(step);
-			expect(pending?.conflict_device_name).toBe("Moises Mac");
-			const conflictPath = pending?.conflict_path;
+			expect(pending?.conflict_copies?.[0]?.device_name).toBe("Moises Mac");
+			const conflictPath = pending?.conflict_copies?.[0]?.path;
 			expect(conflictPath).toContain("(conflict Moises Mac ");
 			journal.close();
 			journal = await DeviceJournal.open(storage);
@@ -693,6 +714,263 @@ describe("TextApplyEngine", () => {
 		});
 		expect(vault.files.size).toBe(1);
 	});
+
+	it.each(["put", "delete"] as const)(
+		"rechecks an obsolete %s after a crash before ignore",
+		async (op) => {
+			const newerText = "revision three bytes";
+			vault.files.set(change.path, newerText);
+			journal = await seedBase(
+				change.path,
+				await hash(newerText),
+				storage,
+				journal,
+			);
+			const state = journal.snapshot();
+			state.base[change.path] = {
+				deleted: false,
+				rev: 3,
+				hash: await hash(newerText),
+			};
+			journal.close();
+			storage.state = state;
+			journal = await DeviceJournal.open(storage);
+			const ignore = journal.ignoreApply.bind(journal);
+			journal.ignoreApply = async (..._args) => {
+				throw new Error("simulated crash before ignore");
+			};
+			const obsolete = {
+				...change,
+				op,
+				hash: op === "put" ? change.hash : "",
+			};
+			engine = makeEngine(journal, vault, { read: async () => remoteText });
+			await expect(engine.apply(obsolete)).rejects.toThrow(
+				"simulated crash before ignore",
+			);
+			expect(journal.snapshot().pending_apply[0]?.step).toBe("prepared");
+			journal.ignoreApply = ignore;
+			journal.close();
+			journal = await DeviceJournal.open(storage);
+			engine = makeEngine(journal, vault, { read: async () => remoteText });
+			await engine.resume();
+			expect(vault.files.get(change.path)).toBe(newerText);
+			expect(journal.snapshot().base[change.path]).toEqual({
+				deleted: false,
+				rev: 3,
+				hash: await hash(newerText),
+			});
+			expect(journal.snapshot().pending_apply).toEqual([]);
+		},
+	);
+
+	it("keeps changed bytes visible when a copied delete resumes", async () => {
+		const original = "dirty before delete";
+		const changed = "edited after copied";
+		vault.files.set(change.path, original);
+		journal = await seedBase(
+			change.path,
+			await hash("older base"),
+			storage,
+			journal,
+		);
+		const update = journal.updateApply.bind(journal);
+		journal.updateApply = async (pending) => {
+			await update(pending);
+			if (pending.step === "copied") throw new Error("crash after copied");
+		};
+		engine = makeEngine(journal, vault, { read: async () => null });
+		await expect(
+			engine.apply({ ...change, op: "delete", hash: "" }),
+		).rejects.toThrow("crash after copied");
+		vault.files.set(change.path, changed);
+		journal.close();
+		journal = await DeviceJournal.open(storage);
+		engine = makeEngine(journal, vault, { read: async () => null });
+		await engine.resume();
+		expect(vault.files.get(change.path)).toBe(changed);
+		expect(
+			[...vault.files.entries()].some(
+				([path, text]) => path.includes("(conflict ") && text === original,
+			),
+		).toBe(true);
+		expect(journal.snapshot().base[change.path]?.rev).toBe(1);
+		expect(journal.snapshot().pending_apply).toHaveLength(1);
+		expect(journal.snapshot().attention).toContainEqual({
+			path: change.path,
+			reason: "Local text changed after its conflict copy was saved",
+		});
+	});
+
+	it("keeps recreated bytes visible after trash and before delete base commit", async () => {
+		const original = "dirty before delete";
+		const recreated = "recreated after trash";
+		vault.files.set(change.path, original);
+		journal = await seedBase(
+			change.path,
+			await hash("older base"),
+			storage,
+			journal,
+		);
+		journal.completeApply = async () => {
+			throw new Error("crash after trash before base commit");
+		};
+		engine = makeEngine(journal, vault, { read: async () => null });
+		await expect(
+			engine.apply({ ...change, op: "delete", hash: "" }),
+		).rejects.toThrow("crash after trash before base commit");
+		expect(vault.files.has(change.path)).toBe(false);
+		vault.files.set(change.path, recreated);
+		journal.close();
+		journal = await DeviceJournal.open(storage);
+		engine = makeEngine(journal, vault, { read: async () => null });
+		await engine.resume();
+		expect(vault.files.get(change.path)).toBe(recreated);
+		expect(
+			[...vault.files.entries()].some(
+				([path, text]) => path.includes("(conflict ") && text === original,
+			),
+		).toBe(true);
+		expect(journal.snapshot().base[change.path]?.rev).toBe(1);
+		expect(journal.snapshot().pending_apply).toHaveLength(1);
+		expect(journal.snapshot().attention).toContainEqual({
+			path: change.path,
+			reason: "Local text changed after its conflict copy was saved",
+		});
+	});
+
+	it("preserves distinct dirty rename sides and applies the pinned destination", async () => {
+		const sourceText = "dirty source bytes";
+		const destinationText = "dirty destination bytes";
+		const sourcePath = "notes/a.md";
+		const destinationPath = "notes/b.md";
+		vault.files.set(sourcePath, sourceText);
+		vault.files.set(destinationPath, destinationText);
+		journal = await seedBase(
+			sourcePath,
+			await hash("source base"),
+			storage,
+			journal,
+		);
+		const state = journal.snapshot();
+		state.base[destinationPath] = {
+			deleted: false,
+			rev: 1,
+			hash: await hash("destination base"),
+		};
+		journal.close();
+		storage.state = state;
+		journal = await DeviceJournal.open(storage);
+		const rename = {
+			...change,
+			op: "rename" as const,
+			path: destinationPath,
+			hash: await hash(remoteText),
+			etag: `"${epoch}.3"`,
+			from_path: sourcePath,
+			from_etag: `"${epoch}.2"`,
+		};
+		engine = makeEngine(journal, vault, { read: async () => remoteText });
+		await engine.apply(rename);
+		const conflictFiles = [...vault.files.entries()].filter(([path]) =>
+			path.includes("(conflict "),
+		);
+		expect(conflictFiles).toHaveLength(2);
+		expect(conflictFiles.map(([, text]) => text).sort()).toEqual(
+			[sourceText, destinationText].sort(),
+		);
+		expect(vault.files.get(destinationPath)).toBe(remoteText);
+		expect(vault.files.has(sourcePath)).toBe(false);
+		expect(journal.snapshot().base[sourcePath]).toEqual({
+			deleted: true,
+			rev: 2,
+		});
+		expect(journal.snapshot().base[destinationPath]).toEqual({
+			deleted: false,
+			rev: 3,
+			hash: await hash(remoteText),
+		});
+	});
+
+	it.each(["named", "source_copy", "destination_copy", "copied"] as const)(
+		"resumes dual-dirty rename after the %s boundary",
+		async (boundary) => {
+			const sourceText = "dirty source bytes";
+			const destinationText = "dirty destination bytes";
+			const sourcePath = "notes/a.md";
+			const destinationPath = "notes/b.md";
+			vault.files.set(sourcePath, sourceText);
+			vault.files.set(destinationPath, destinationText);
+			journal = await seedBase(
+				sourcePath,
+				await hash("source base"),
+				storage,
+				journal,
+			);
+			const state = journal.snapshot();
+			state.base[destinationPath] = {
+				deleted: false,
+				rev: 1,
+				hash: await hash("destination base"),
+			};
+			journal.close();
+			storage.state = state;
+			journal = await DeviceJournal.open(storage);
+			const rename = {
+				...change,
+				op: "rename" as const,
+				path: destinationPath,
+				hash: await hash(remoteText),
+				etag: `"${epoch}.3"`,
+				from_path: sourcePath,
+				from_etag: `"${epoch}.2"`,
+			};
+			if (boundary === "named" || boundary === "copied") {
+				const update = journal.updateApply.bind(journal);
+				journal.updateApply = async (pending) => {
+					await update(pending);
+					if (pending.step === boundary)
+						throw new Error(`stopped at ${boundary}`);
+				};
+			}
+			const create = vault.create.bind(vault);
+			let copiesCreated = 0;
+			vault.create = async (path, text) => {
+				const result = await create(path, text);
+				if (result && path.includes("(conflict ")) {
+					copiesCreated += 1;
+					if (
+						(boundary === "source_copy" && copiesCreated === 1) ||
+						(boundary === "destination_copy" && copiesCreated === 2)
+					)
+						throw new Error(`stopped at ${boundary}`);
+				}
+				return result;
+			};
+			engine = makeEngine(journal, vault, { read: async () => remoteText });
+			await expect(engine.apply(rename)).rejects.toThrow(
+				`stopped at ${boundary}`,
+			);
+			const pending = journal.snapshot().pending_apply[0];
+			expect(pending?.conflict_copies).toHaveLength(2);
+			expect(pending?.conflict_copies?.[0]?.side).toBe("rename_source");
+			expect(pending?.conflict_copies?.[1]?.side).toBe("rename_destination");
+			expect(pending?.conflict_copies?.[0]?.source).toBe(sourcePath);
+			expect(pending?.conflict_copies?.[1]?.source).toBe(destinationPath);
+			journal.close();
+			journal = await DeviceJournal.open(storage);
+			engine = makeEngine(journal, vault, { read: async () => remoteText });
+			await engine.resume();
+			expect(vault.files.get(destinationPath)).toBe(remoteText);
+			expect(vault.files.has(sourcePath)).toBe(false);
+			expect(
+				[...vault.files.values()].filter(
+					(text) => text === sourceText || text === destinationText,
+				),
+			).toHaveLength(2);
+			expect(journal.snapshot().pending_apply).toEqual([]);
+		},
+	);
 
 	it("ignores an obsolete put revision without changing local bytes", async () => {
 		vault.files.set(change.path, "newer local bytes");

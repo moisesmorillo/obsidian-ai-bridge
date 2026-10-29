@@ -105,6 +105,37 @@ describe("DeviceJournal", () => {
 		).rejects.toThrow();
 	});
 
+	it("rejects a confirmed apply revision that would regress a newer base", async () => {
+		const path = "notes/a.md";
+		const deviceId = "018f47b2-5c00-7000-8000-000000000001";
+		storage.state = {
+			version: 1,
+			device_id: deviceId,
+			pending_ops: [],
+			base: { [path]: { deleted: false, rev: 3, hash: "d".repeat(64) } },
+		};
+		const journal = await DeviceJournal.open(storage);
+		const change = {
+			seq: 1,
+			op: "put" as const,
+			path,
+			etag: `"${precondition.epoch}.2"`,
+			hash: "c".repeat(64),
+			origin: "remote",
+			at: 1,
+		};
+		await journal.beginApply(change);
+		await expect(
+			journal.completeApply(path, {
+				deleted: false,
+				rev: 2,
+				hash: change.hash,
+			}),
+		).rejects.toThrow("regress");
+		expect(journal.snapshot().base[path]?.rev).toBe(3);
+		expect(journal.snapshot().pending_apply).toHaveLength(1);
+	});
+
 	it("rejects a confirmed base that does not match the pending revision and content", async () => {
 		const journal = await DeviceJournal.open(storage);
 		const change = {

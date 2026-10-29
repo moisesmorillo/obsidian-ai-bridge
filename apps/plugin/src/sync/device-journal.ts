@@ -616,11 +616,11 @@ export class DeviceJournal {
 		});
 	}
 
-	/** Resolves sent work with confirmed successor bases, never from later journal state. */
+	/** Resolves sent work with its receipt-produced base. Rename receipts authorize only destination successors, never source successors. */
 	async resolve(
 		key: string,
 		outcome: ResolutionOutcome,
-		successorBases: Readonly<Record<string, DeviceBaseEntry>> = {},
+		receiptBase?: DeviceBaseEntry,
 	): Promise<void> {
 		await this.serialize(async () => {
 			this.assertOpen();
@@ -629,6 +629,11 @@ export class DeviceJournal {
 			);
 			const operation = this.state.pending_ops[index];
 			if (!operation) throw new Error("Only a sent operation can resolve");
+			const receiptPath =
+				operation.op === "rename" ? operation.to : operation.path;
+			const successorBase = receiptBase
+				? DeviceBaseEntrySchema.parse(receiptBase)
+				: undefined;
 			const dependentDeletes = this.state.pending_ops.filter(
 				(item) => item.op === "delete" && item.depends_on === key,
 			);
@@ -637,9 +642,9 @@ export class DeviceJournal {
 			const staleDeletes =
 				outcome.kind === "receipt"
 					? dependentDeletes.filter((item) => {
-							const successorBase = successorBases[item.path];
 							const currentBase = this.state.base[item.path];
 							return (
+								item.path !== receiptPath ||
 								!successorBase ||
 								!currentBase ||
 								!sameBaseEntry(currentBase, successorBase)
@@ -686,8 +691,8 @@ export class DeviceJournal {
 					!operationsConflict(operation, item)
 				)
 					return [item];
-				const successorBase = successorBases[item.path];
-				if (!successorBase || !this.state.epoch) return [item];
+				if (item.path !== receiptPath || !successorBase || !this.state.epoch)
+					return [item];
 				const precondition: DevicePrecondition = {
 					kind: "match",
 					epoch: this.state.epoch,

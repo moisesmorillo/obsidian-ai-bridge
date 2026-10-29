@@ -12,7 +12,7 @@ import {
 import type { DeviceJournal } from "@plugin/sync/device-journal";
 import { classifyEnrollmentPath } from "@plugin/sync/enrollment-scope";
 import { SyncTransportError } from "@plugin/sync/remote-text";
-import type { TextVault } from "@plugin/sync/text-apply";
+import type { TextApplyEngine, TextVault } from "@plugin/sync/text-apply";
 
 /** Validated text authority returned for a pinned or current server read. */
 export type PublicationRead =
@@ -69,8 +69,10 @@ export type PublicationEvent =
 	| { type: "delete"; path: string }
 	| { type: "rename"; path: string; to: string };
 
-/** Deterministic time and bounded backoff policy for one controller lifetime. */
+/** Shared apply ownership, deterministic time, and conflict recovery for one controller lifetime. */
 export interface PublicationOptions {
+	/** Shares guarded local apply with reconciliation. Current observations never become receipt authority. */
+	applyEngine: TextApplyEngine;
 	/** Returns current Unix milliseconds for retry and UUID creation decisions. */
 	now(): number;
 	/** Replays 412 evidence and applies current rename source authority without changing feed cursor identity. */
@@ -354,7 +356,7 @@ export class PublicationController {
 		this.closed = true;
 	}
 
-	/** Sends immutable bytes once and commits only the authoritative receipt metadata. */
+	/** Applies current rename source state before settlement. Only receipt-produced state can authorize queued successors. */
 	private async send(operation: PendingOperation): Promise<boolean> {
 		const saved = await this.journal.prepareSend(
 			operation.key,
@@ -387,7 +389,6 @@ export class PublicationController {
 						receipt.size !== payload.byteLength))
 			)
 				throw new Error("Mutation receipt identity is invalid");
-			const successorBases: Record<string, DeviceBaseEntry> = {};
 			if (saved.operation.op === "rename") {
 				this.assertOpen();
 				const source = await this.remote.readCurrentAuthority(
@@ -396,42 +397,28 @@ export class PublicationController {
 				this.assertOpen();
 				if (source.epoch !== identity.epoch)
 					throw new Error("Rename source belongs to a different vault epoch");
-				const sourceBase: DeviceBaseEntry = source.deleted
-					? { deleted: true, rev: source.rev }
-					: {
-							deleted: false,
-							rev: source.rev,
-							hash: DevicePayloadHashSchema.parse(source.hash),
-						};
-				successorBases[saved.operation.path] = sourceBase;
-				await this.setBaseIfNewer(saved.operation.path, sourceBase);
+				await this.options.applyEngine.applyCurrent(
+					saved.operation.path,
+					source,
+				);
 				this.assertOpen();
 			}
-			if (saved.operation.op !== "delete") {
-				const destinationBase: DeviceBaseEntry = {
-					deleted: false,
-					rev: identity.rev,
-					hash: DevicePayloadHashSchema.parse(receipt.hash),
-				};
-				successorBases[receipt.path] = destinationBase;
-				await this.setBaseIfNewer(receipt.path, destinationBase);
-				this.assertOpen();
-			} else {
-				const deletedBase: DeviceBaseEntry = {
-					deleted: true,
-					rev: identity.rev,
-				};
-				successorBases[saved.operation.path] = deletedBase;
-				await this.setBaseIfNewer(saved.operation.path, deletedBase);
-				this.assertOpen();
-			}
+			const receiptBase: DeviceBaseEntry = receipt.deleted
+				? { deleted: true, rev: identity.rev }
+				: {
+						deleted: false,
+						rev: identity.rev,
+						hash: DevicePayloadHashSchema.parse(receipt.hash),
+					};
+			await this.setBaseIfNewer(receipt.path, receiptBase);
+			this.assertOpen();
 			if (saved.operation.op === "rename")
 				await this.reconcileRenameDestination(saved.operation, receipt.hash);
 			this.assertOpen();
 			await this.journal.resolve(
 				saved.operation.key,
 				{ kind: "receipt" },
-				successorBases,
+				receiptBase,
 			);
 			return true;
 		} catch (error) {

@@ -101,21 +101,7 @@ export class ReconciliationController {
 			const current = await this.remote.readCurrentAuthority(operation.path);
 			this.assertOpen();
 			if (current.deleted) return;
-			const state = this.journal.snapshot();
-			if (!state.epoch || current.epoch !== state.epoch)
-				throw new Error("Rename source belongs to a different vault epoch");
-			const seq = (state.cursor ?? 0) + 1;
-			if (!Number.isSafeInteger(seq))
-				throw new Error("Rename recovery sequence is invalid");
-			await this.applyEngine.apply({
-				seq,
-				op: "put",
-				path: operation.path,
-				etag: `"${current.epoch}.${current.rev}"`,
-				hash: current.hash,
-				origin: "stale_rename_recovery",
-				at: 0,
-			});
+			await this.applyEngine.applyCurrent(operation.path, current);
 		});
 	}
 

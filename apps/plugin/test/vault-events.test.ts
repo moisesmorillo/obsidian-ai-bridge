@@ -10,7 +10,7 @@ import {
 	type PublicationReceipt,
 	type PublicationRemote,
 } from "../src/sync/publication";
-import type { TextVault } from "../src/sync/text-apply";
+import { TextApplyEngine, type TextVault } from "../src/sync/text-apply";
 
 const epoch = "a".repeat(32);
 
@@ -119,11 +119,23 @@ describe("VaultEventAdapter", () => {
 		} as unknown as Vault;
 		const journal = await DeviceJournal.open(new MemoryStorage());
 		await journal.resetEpoch(epoch);
+		const textVault = new MemoryVault();
 		const controller = new PublicationController(
 			journal,
-			new MemoryVault(),
+			textVault,
 			new UnusedRemote(),
 			{
+				applyEngine: new TextApplyEngine(
+					journal,
+					textVault,
+					{
+						/** Rejects remote apply in this event-admission test. */
+						read: async () => {
+							throw new Error("Unexpected apply read");
+						},
+					},
+					{ deviceName: "Test Device" },
+				),
 				now: () => 1_800_000_000_000,
 				recoverPrecondition: async () => {},
 			},

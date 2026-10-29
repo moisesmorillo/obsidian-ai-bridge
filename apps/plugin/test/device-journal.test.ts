@@ -1,3 +1,4 @@
+import type { PendingOperation } from "@obsidian-ai-bridge/protocol";
 import { beforeEach, describe, expect, it } from "vitest";
 import { DeviceJournal } from "../src/sync/device-journal";
 
@@ -514,6 +515,74 @@ describe("DeviceJournal", () => {
 		const sent = await journal.prepareSend(successor.key, precondition);
 		expect(sent.operation.precondition).toEqual(precondition);
 	});
+
+	it.each([false, true])(
+		"limits rename receipt authority to destination with newer source base=%s",
+		async (newerSource) => {
+			const journal = await DeviceJournal.open(storage);
+			await journal.resetEpoch(precondition.epoch);
+			const rename = await journal.enqueue(
+				{ op: "rename", path: "notes/a.md", to: "notes/b.md", precondition },
+				new Uint8Array(),
+			);
+			await journal.prepareSend(rename.key, precondition);
+			const source = await journal.enqueue(
+				{ op: "put", path: "notes/a.md", precondition },
+				bytes,
+			);
+			const destination = await journal.enqueue(
+				{ op: "put", path: "notes/b.md", precondition: { kind: "absent" } },
+				bytes,
+			);
+			if (newerSource)
+				await journal.setBase("notes/a.md", {
+					deleted: false,
+					rev: 6,
+					hash: "c".repeat(64),
+				});
+			const receiptBase = {
+				deleted: false as const,
+				rev: 5,
+				hash: "d".repeat(64),
+			};
+			await journal.setBase("notes/b.md", receiptBase);
+			await journal.resolve(rename.key, { kind: "receipt" }, receiptBase);
+			expect(
+				journal
+					.snapshot()
+					.pending_ops.find(
+						(item: PendingOperation) => item.key === source.key,
+					),
+			).toEqual(source);
+			expect(
+				journal
+					.snapshot()
+					.pending_ops.find(
+						(item: PendingOperation) => item.key === destination.key,
+					)?.precondition,
+			).toEqual({
+				kind: "match",
+				epoch: precondition.epoch,
+				rev: 5,
+			});
+			const sent = await journal.prepareSend(source.key, source.precondition);
+			await journal.setBase("notes/a.md", {
+				deleted: false,
+				rev: 7,
+				hash: "e".repeat(64),
+			});
+			await expect(
+				journal.prepareSend(source.key, {
+					kind: "match",
+					epoch: precondition.epoch,
+					rev: 7,
+				}),
+			).rejects.toThrow("Sent precondition is immutable");
+			const retry = await journal.prepareSend(source.key, source.precondition);
+			expect(retry.operation).toEqual(sent.operation);
+			expect(retry.bytes).toEqual(bytes);
+		},
+	);
 
 	it("retains concurrent unrelated enqueues and defensive copies", async () => {
 		const journal = await DeviceJournal.open(storage);

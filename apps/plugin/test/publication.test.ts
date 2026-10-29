@@ -232,6 +232,28 @@ async function digestText(text: string): Promise<string> {
 		.join("");
 }
 
+/** Binds guarded apply to the same journal, vault, and pinned publication reads. */
+function createApplyEngine(
+	journal: DeviceJournal,
+	vault: TextVault,
+	remote: PublicationRemote,
+): TextApplyEngine {
+	return new TextApplyEngine(
+		journal,
+		vault,
+		{
+			/** Reads only the exact revision that the guarded apply accepts. */
+			async read(path, requestEpoch, rev) {
+				const authority = await remote.readAuthority(path, requestEpoch, rev);
+				expect(authority.epoch).toBe(requestEpoch);
+				expect(authority.rev).toBe(rev);
+				return authority.deleted ? null : authority.text;
+			},
+		},
+		{ deviceName: "Test Device" },
+	);
+}
+
 /** Opens the real journal and controller around in-memory effect ports. */
 async function openController(
 	storage = new MemoryStorage(),
@@ -243,6 +265,7 @@ async function openController(
 	const journal = await DeviceJournal.open(storage);
 	await journal.resetEpoch(epoch);
 	const controller = new PublicationController(journal, vault, remote, {
+		applyEngine: createApplyEngine(journal, vault, remote),
 		now,
 		recoverPrecondition,
 	});
@@ -281,6 +304,7 @@ describe("PublicationController", () => {
 			rename: remote.rename.bind(remote),
 		};
 		const recovery = new PublicationController(journal, vault, recoveryRemote, {
+			applyEngine: createApplyEngine(journal, vault, recoveryRemote),
 			now: () => 1_800_000_000_000,
 			recoverPrecondition: async () => {},
 		});
@@ -387,6 +411,7 @@ describe("PublicationController", () => {
 			}),
 		};
 		const controller = new PublicationController(journal, vault, remote, {
+			applyEngine: createApplyEngine(journal, vault, remote),
 			now: () => 1_800_000_000_000,
 			recoverPrecondition: async () => {},
 		});
@@ -438,8 +463,17 @@ describe("PublicationController", () => {
 		let sourceRev = 1;
 		let storedReceipt: PublicationReceipt | null = null;
 		const remote: PublicationRemote = {
-			readAuthority: async () => {
-				throw new Error("Unexpected pinned read");
+			readAuthority: async (path, requestEpoch, rev) => {
+				expect(path).toBe("source.md");
+				expect(requestEpoch).toBe(epoch);
+				expect(rev).toBe(3);
+				return {
+					deleted: false,
+					text: recreatedText,
+					epoch,
+					rev,
+					hash: recreatedHash,
+				};
 			},
 			readCurrentAuthority: async () => ({
 				deleted: false,
@@ -472,6 +506,7 @@ describe("PublicationController", () => {
 			},
 		};
 		const first = new PublicationController(journal, vault, remote, {
+			applyEngine: createApplyEngine(journal, vault, remote),
 			now: () => now,
 			recoverPrecondition: async () => {},
 		});
@@ -484,11 +519,13 @@ describe("PublicationController", () => {
 		expect(journal.snapshot().pending_ops[0]).toMatchObject({ state: "sent" });
 		first.close();
 		const restartedJournal = await DeviceJournal.open(storage);
+		const restartedEngine = createApplyEngine(restartedJournal, vault, remote);
 		const restarted = new PublicationController(
 			restartedJournal,
 			vault,
 			remote,
 			{
+				applyEngine: restartedEngine,
 				now: () => now + 2_000,
 				recoverPrecondition: async () => {},
 			},
@@ -496,6 +533,7 @@ describe("PublicationController", () => {
 
 		await restarted.flush();
 
+		expect(await vault.read("source.md")).toBe(recreatedText);
 		expect(renameCalls).toBe(2);
 		expect(restartedJournal.snapshot().pending_ops).toEqual([]);
 		expect(restartedJournal.snapshot().base["source.md"]).toEqual({
@@ -508,6 +546,368 @@ describe("PublicationController", () => {
 			rev: 2,
 			hash: movedHash,
 		});
+		expect(restartedJournal.snapshot().cursor).toBeNull();
+		const reconciliation = new ReconciliationController(
+			restartedJournal,
+			restartedEngine,
+			vault,
+			{
+				manifest: async () => {
+					throw new Error("Unexpected manifest read");
+				},
+				createText: async () => {
+					throw new Error("Unexpected enrollment create");
+				},
+				changes: async (requestEpoch, since) => {
+					expect(requestEpoch).toBe(epoch);
+					expect(since).toBe(1);
+					return {
+						epoch,
+						head_seq: 3,
+						entries: [
+							{
+								seq: 2,
+								op: "rename",
+								from_path: "source.md",
+								from_etag: `"${epoch}.2"`,
+								path: "target.md",
+								etag: `"${epoch}.2"`,
+								hash: movedHash,
+								origin: "device",
+								at: 0,
+							},
+							{
+								seq: 3,
+								op: "put",
+								path: "source.md",
+								etag: `"${epoch}.3"`,
+								hash: recreatedHash,
+								origin: "other_device",
+								at: 0,
+							},
+						],
+					};
+				},
+			},
+		);
+		await restartedJournal.setCursor(epoch, 1);
+		await reconciliation.replay();
+		expect(await vault.read("source.md")).toBe(recreatedText);
+		expect(await vault.read("target.md")).toBe(movedText);
+		expect(restartedJournal.snapshot().pending_apply).toEqual([]);
+		expect(restartedJournal.snapshot().cursor).toBe(3);
+		restarted.close();
+		reconciliation.close();
+	});
+
+	it.each(["none", "restart", "edited_copy"])(
+		"preserves source authority after a lost rename receipt with recovery=%s",
+		async (recovery) => {
+			const storage = new MemoryStorage();
+			const vault = new MemoryVault();
+			let journal = await DeviceJournal.open(storage);
+			await journal.resetEpoch(epoch);
+			const moved = "original source bytes";
+			const local = "new local source bytes";
+			const remoteText = "other device source bytes";
+			const movedHash = await digestText(moved);
+			const remoteHash = await digestText(remoteText);
+			await journal.setBase("source.md", {
+				deleted: false,
+				rev: 1,
+				hash: movedHash,
+			});
+			vault.files.set("target.md", moved);
+			let now = 1_800_000_000_000;
+			let storedReceipt: PublicationReceipt | null = null;
+			const renameKeys: string[] = [];
+			const puts: Array<{
+				path: string;
+				text: string;
+				precondition: DevicePrecondition;
+			}> = [];
+			let currentSource = moved;
+			let currentRev = 1;
+			const remote: PublicationRemote = {
+				readAuthority: async (path, requestEpoch, rev) => {
+					expect(path).toBe("source.md");
+					expect(requestEpoch).toBe(epoch);
+					expect(rev).toBe(3);
+					return {
+						deleted: false,
+						text: remoteText,
+						epoch,
+						rev,
+						hash: remoteHash,
+					};
+				},
+				readCurrentAuthority: async () => ({
+					deleted: false,
+					text: currentSource,
+					epoch,
+					rev: currentRev,
+					hash: await digestText(currentSource),
+				}),
+				put: async (path, text, precondition) => {
+					puts.push({ path, text, precondition });
+					if (path === "source.md") currentSource = text;
+					return {
+						status: 201,
+						path,
+						etag: `"${epoch}.4"`,
+						seq: 4,
+						size: new TextEncoder().encode(text).byteLength,
+						hash: await digestText(text),
+						deleted: false,
+					};
+				},
+				delete: async () => {
+					throw new Error("Unexpected delete");
+				},
+				rename: async (_path, to, _precondition, key) => {
+					renameKeys.push(key);
+					if (storedReceipt) return storedReceipt;
+					storedReceipt = {
+						status: 201,
+						path: to,
+						etag: `"${epoch}.2"`,
+						seq: 2,
+						size: new TextEncoder().encode(moved).byteLength,
+						hash: movedHash,
+						deleted: false,
+					};
+					throw new Error("Committed rename response was lost");
+				},
+			};
+			let controller = new PublicationController(journal, vault, remote, {
+				applyEngine: createApplyEngine(journal, vault, remote),
+				now: () => now,
+				recoverPrecondition: async () => {},
+			});
+			await controller.observe({
+				type: "rename",
+				path: "source.md",
+				to: "target.md",
+			});
+			await controller.flush();
+			const rename = journal.snapshot().pending_ops[0];
+			vault.files.set("source.md", local);
+			await controller.observe({ type: "create", path: "source.md" });
+			const sourcePut = journal.snapshot().pending_ops[1];
+			expect(sourcePut).toMatchObject({
+				state: "queued",
+				precondition: { kind: "match", epoch, rev: 1 },
+			});
+			currentSource = remoteText;
+			currentRev = 3;
+			now += 2_000;
+			if (recovery !== "none") {
+				const create = vault.create.bind(vault);
+				/** Stops after the durable conflict name reaches a visible file. */
+				vault.create = async (path, text) => {
+					const result = await create(path, text);
+					vault.create = create;
+					throw new Error(`Interrupted after conflict create: ${result}`);
+				};
+			}
+			await controller.flush();
+			if (recovery !== "none") {
+				expect(journal.snapshot().pending_ops[0]?.key).toBe(rename?.key);
+				expect(journal.snapshot().base["source.md"]?.rev).toBe(1);
+				expect(journal.snapshot().pending_ops[1]).toEqual(sourcePut);
+				if (recovery === "edited_copy") {
+					const copyPath = [...vault.files.keys()].find((path) =>
+						path.includes("conflict Test Device"),
+					);
+					expect(copyPath).toBeDefined();
+					if (!copyPath) throw new Error("Expected visible conflict copy");
+					vault.files.set(copyPath, "edited conflict copy");
+				}
+				controller.close();
+				journal = await DeviceJournal.open(storage);
+				controller = new PublicationController(journal, vault, remote, {
+					applyEngine: createApplyEngine(journal, vault, remote),
+					now: () => now,
+					recoverPrecondition: async () => {},
+				});
+				now += 4_000;
+				await controller.flush();
+				if (recovery === "edited_copy") {
+					expect(currentSource).toBe(remoteText);
+					expect(await vault.read("source.md")).toBe(local);
+					expect(journal.snapshot().base["source.md"]?.rev).toBe(1);
+					expect(journal.snapshot().pending_ops[0]?.key).toBe(rename?.key);
+					expect(journal.snapshot().pending_ops[1]).toEqual(sourcePut);
+					expect(journal.snapshot().pending_apply).toHaveLength(1);
+					expect(journal.snapshot().attention).toEqual(
+						expect.arrayContaining([
+							expect.objectContaining({
+								reason: "Conflict copy was edited before the apply finished",
+							}),
+						]),
+					);
+					expect(puts).toEqual([]);
+					controller.close();
+					return;
+				}
+			}
+			expect(currentSource).toBe(remoteText);
+			expect(await vault.read("source.md")).toBe(remoteText);
+			expect(await vault.read("target.md")).toBe(moved);
+			const copies = [...vault.files].filter(
+				([path, text]) => path !== "source.md" && text === local,
+			);
+			expect(copies).toHaveLength(1);
+			expect(copies[0]?.[0]).toContain("conflict Test Device");
+			expect(puts).toEqual([]);
+			expect(journal.snapshot().pending_ops).toEqual([]);
+			expect(journal.snapshot().base["source.md"]).toEqual({
+				deleted: false,
+				rev: 3,
+				hash: remoteHash,
+			});
+			expect(journal.snapshot().cursor).toBeNull();
+			expect(new Set(renameKeys)).toEqual(new Set([rename?.key]));
+			controller.close();
+			journal = await DeviceJournal.open(storage);
+			controller = new PublicationController(journal, vault, remote, {
+				applyEngine: createApplyEngine(journal, vault, remote),
+				now: () => now,
+				recoverPrecondition: async () => {},
+			});
+			await controller.flush();
+			expect(puts).toEqual([]);
+			expect([...vault.files].filter(([, text]) => text === local)).toEqual(
+				copies,
+			);
+			await controller.scan();
+			await controller.flush();
+			expect(puts).toEqual([
+				{ path: copies[0]?.[0], text: local, precondition: { kind: "absent" } },
+			]);
+			expect(currentSource).toBe(remoteText);
+			controller.close();
+		},
+	);
+
+	it("keeps source successor authority from newer confirmed apply, not an older rename observation", async () => {
+		const storage = new MemoryStorage();
+		const vault = new MemoryVault();
+		const remote = new MemoryRemote();
+		const journal = await DeviceJournal.open(storage);
+		await journal.resetEpoch(epoch);
+		const moved = "original rename bytes";
+		const observed = "source revision three";
+		const confirmed = "source revision four";
+		const local = "edit after confirmed source revision four";
+		const movedHash = await digestText(moved);
+		await journal.setBase("source.md", {
+			deleted: false,
+			rev: 1,
+			hash: movedHash,
+		});
+		vault.files.set("target.md", moved);
+		let now = 1_800_000_000_000;
+		let receiptLost = false;
+		remote.rename = async () => {
+			if (!receiptLost) {
+				receiptLost = true;
+				throw new Error("Committed rename response was lost");
+			}
+			return {
+				status: 201,
+				path: "target.md",
+				etag: `"${epoch}.2"`,
+				seq: 2,
+				size: new TextEncoder().encode(moved).byteLength,
+				hash: movedHash,
+				deleted: false,
+			};
+		};
+		remote.readAuthority = async (path, requestEpoch, rev) => {
+			expect(path).toBe("source.md");
+			expect(requestEpoch).toBe(epoch);
+			expect(rev).toBe(4);
+			return {
+				deleted: false,
+				text: confirmed,
+				epoch,
+				rev,
+				hash: await digestText(confirmed),
+			};
+		};
+		remote.readCurrentAuthority = async () => ({
+			deleted: false,
+			text: observed,
+			epoch,
+			rev: 3,
+			hash: await digestText(observed),
+		});
+		const engine = createApplyEngine(journal, vault, remote);
+		const controller = new PublicationController(journal, vault, remote, {
+			applyEngine: engine,
+			now: () => now,
+			recoverPrecondition: async () => {},
+		});
+		await controller.observe({
+			type: "rename",
+			path: "source.md",
+			to: "target.md",
+		});
+		await controller.flush();
+		await engine.apply({
+			seq: 4,
+			op: "put",
+			path: "source.md",
+			etag: `"${epoch}.4"`,
+			hash: await digestText(confirmed),
+			origin: "other_device",
+			at: 0,
+		});
+		expect(await vault.read("source.md")).toBe(confirmed);
+		vault.files.set("source.md", local);
+		await controller.observe({ type: "modify", path: "source.md" });
+		const sourcePut = journal.snapshot().pending_ops[1];
+		remote.put = async (path, text, precondition, key) => {
+			remote.writes.push({ path, text, precondition, key });
+			throw new Error("Source put response was lost");
+		};
+		now += 2_000;
+		await controller.flush();
+		expect(remote.writes).toEqual([
+			{
+				path: "source.md",
+				text: local,
+				key: sourcePut?.key,
+				precondition: { kind: "match", epoch, rev: 4 },
+			},
+		]);
+		expect(journal.snapshot().base["source.md"]).toEqual({
+			deleted: false,
+			rev: 4,
+			hash: await digestText(confirmed),
+		});
+		expect(await vault.read("source.md")).toBe(local);
+		expect(journal.snapshot().pending_ops[0]).toMatchObject({
+			state: "sent",
+			key: sourcePut?.key,
+		});
+		controller.close();
+		const restartedJournal = await DeviceJournal.open(storage);
+		const restarted = new PublicationController(
+			restartedJournal,
+			vault,
+			remote,
+			{
+				applyEngine: createApplyEngine(restartedJournal, vault, remote),
+				now: () => now,
+				recoverPrecondition: async () => {},
+			},
+		);
+		now += 2_000;
+		await restarted.flush();
+		expect(remote.writes).toHaveLength(2);
+		expect(remote.writes[1]).toEqual(remote.writes[0]);
 		expect(restartedJournal.snapshot().cursor).toBeNull();
 		restarted.close();
 	});
@@ -735,6 +1135,7 @@ describe("PublicationController", () => {
 			},
 		};
 		const controller = new PublicationController(journal, vault, remote, {
+			applyEngine: createApplyEngine(journal, vault, remote),
 			now: () => now,
 			recoverPrecondition: async () => {},
 		});
@@ -1004,6 +1405,7 @@ describe("PublicationController", () => {
 			},
 		};
 		const controller = new PublicationController(journal, vault, remote, {
+			applyEngine: createApplyEngine(journal, vault, remote),
 			now: () => 1_800_000_000_000,
 			recoverPrecondition: async () =>
 				journal.setBase("source.md", {
@@ -1266,6 +1668,7 @@ describe("PublicationController", () => {
 			let activeReconciliation = reconciliation;
 			let activeJournal = journal;
 			let activeController = new PublicationController(journal, vault, remote, {
+				applyEngine: engine,
 				now: () => 1_800_000_000_000,
 				recoverPrecondition: (operation) =>
 					activeReconciliation.recoverPrecondition(operation),
@@ -1309,6 +1712,7 @@ describe("PublicationController", () => {
 					vault,
 					remote,
 					{
+						applyEngine: restartedEngine,
 						now: () => 1_800_000_000_000,
 						recoverPrecondition: (operation) =>
 							activeReconciliation.recoverPrecondition(operation),
@@ -1588,6 +1992,7 @@ describe("PublicationController", () => {
 		const firstJournal = await DeviceJournal.open(storage);
 		await firstJournal.resetEpoch(epoch);
 		const first = new PublicationController(firstJournal, vault, remote, {
+			applyEngine: createApplyEngine(firstJournal, vault, remote),
 			now: () => now,
 			recoverPrecondition: async () => {},
 		});
@@ -1605,6 +2010,7 @@ describe("PublicationController", () => {
 			vault,
 			remote,
 			{
+				applyEngine: createApplyEngine(restartedJournal, vault, remote),
 				now: () => now,
 				recoverPrecondition: async () => {},
 			},

@@ -47,6 +47,7 @@ export function createPublication(
 		remote,
 	);
 	const publication = new PublicationController(journal, textVault, remote, {
+		applyEngine,
 		now: options.now,
 		recoverPrecondition: (operation) =>
 			reconciliation.recoverPrecondition(operation),

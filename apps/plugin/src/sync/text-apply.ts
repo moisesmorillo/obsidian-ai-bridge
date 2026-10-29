@@ -90,6 +90,38 @@ export class TextApplyEngine {
 		return this.serialize(() => this.applyWithFallback(parsed));
 	}
 
+	/**
+	 * Applies observations through pinned reads and guarded effects. Resumes durable recovery first and rejects if attention blocks completion.
+	 * Its local work sequence never advances the feed cursor.
+	 */
+	applyCurrent(path: string, authority: ResolvedPinnedText): Promise<void> {
+		const observed = structuredClone(authority);
+		return this.serialize(async () => {
+			const pending = this.activeJournal.snapshot().pending_apply[0];
+			if (pending) await this.applyWithFallback(pending.change);
+			const state = this.activeJournal.snapshot();
+			if (state.pending_apply.length)
+				throw new Error(
+					"Current authority apply is blocked by pending recovery",
+				);
+			if (state.epoch !== observed.epoch)
+				throw new Error("Current authority belongs to a different vault epoch");
+			await this.applyWithFallback(
+				ChangeEntrySchema.parse({
+					seq: (state.cursor ?? 0) + 1,
+					op: observed.deleted ? "delete" : "put",
+					path,
+					etag: `"${observed.epoch}.${observed.rev}"`,
+					hash: observed.hash,
+					origin: "current_authority",
+					at: 0,
+				}),
+			);
+			if (this.activeJournal.snapshot().pending_apply.length)
+				throw new Error("Current authority apply needs conflict recovery");
+		});
+	}
+
 	/** Resumes the one verified pending transition after a plugin restart. */
 	resume(): Promise<void> {
 		return this.serialize(async () => {

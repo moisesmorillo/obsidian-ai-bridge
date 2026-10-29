@@ -4,9 +4,10 @@ title: Synchronize blobs with guarded apply and recovery copies
 status: To Do
 assignee: []
 created_date: '2026-10-28T19:31:00Z'
+updated_date: '2026-10-29T17:16:00Z'
 labels: []
 dependencies:
-  - OAB-8.5
+  - OAB-8.9
 documentation:
   - docs/spec.md
 parent_task_id: OAB-8

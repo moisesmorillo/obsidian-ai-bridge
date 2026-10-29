@@ -8,7 +8,6 @@ export class SyncTransportError extends Error {
 	readonly existingPath: string | null;
 	/** Validated retry delay in seconds, when the failure supports it. */
 	readonly retryAfter: string | null;
-
 	/** Stores status and validated optional fields without retaining response bodies. */
 	constructor(
 		status: number,

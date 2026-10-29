@@ -4,6 +4,7 @@ import {
 	type DeviceState,
 	type ManifestEntry,
 	type ManifestPage,
+	type PendingOperation,
 	parseETag,
 	type ReconciliationCheckpoint,
 } from "@obsidian-ai-bridge/protocol";
@@ -13,7 +14,11 @@ import {
 	SyncTransportError,
 	UnsupportedRemoteTextError,
 } from "@plugin/sync/remote-text";
-import type { TextApplyEngine, TextVault } from "@plugin/sync/text-apply";
+import type {
+	ResolvedPinnedText,
+	TextApplyEngine,
+	TextVault,
+} from "@plugin/sync/text-apply";
 
 /** Prefix that lets restart recovery identify rejected enrollment paths in attention. */
 const ENROLLMENT_REJECTION_PREFIX = "Enrollment create rejected (";
@@ -44,6 +49,8 @@ export interface ReconciliationRemote {
 		epoch: string,
 		key: string,
 	): Promise<{ status: number; headers: Record<string, string>; text: string }>;
+	/** Reads current path authority when stale local rename recovery needs a cursor-independent source. */
+	readCurrentAuthority?(path: string): Promise<ResolvedPinnedText>;
 }
 
 /** Serializes enrollment, full hydration, restart recovery, and bounded feed replay. */
@@ -82,6 +89,20 @@ export class ReconciliationController {
 	/** Replays feed rows in ascending sequence and persists each accepted cursor. */
 	replay(): Promise<void> {
 		return this.serialize(() => this.runReplayWithRecovery());
+	}
+
+	/** Replays changes and applies current source authority without advancing the feed cursor. */
+	recoverPrecondition(operation: PendingOperation): Promise<void> {
+		return this.serialize(async () => {
+			await this.runReplayWithRecovery();
+			if (operation.op !== "rename") return;
+			if (!this.remote.readCurrentAuthority)
+				throw new Error("Rename recovery needs current source authority");
+			const current = await this.remote.readCurrentAuthority(operation.path);
+			this.assertOpen();
+			if (current.deleted) return;
+			await this.applyEngine.applyCurrent(operation.path, current);
+		});
 	}
 
 	/** Shares one serialized recovery policy for explicit replay and restart resume. */

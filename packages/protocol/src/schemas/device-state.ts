@@ -56,17 +56,18 @@ export const DevicePayloadReferenceSchema = z
 
 /** Validates the byte digest used to detect payload corruption before release. */
 export const DevicePayloadHashSchema = z.string().regex(/^[0-9a-f]{64}$/i);
-/** Shared persisted fields bind each key to immutable payload bytes and retry state. */
+/** Shared persisted fields bind each key to immutable payload bytes and durable retry eligibility. */
 const commonOperationShape = {
 	key: DeviceOperationKeySchema,
 	payload_hash: DevicePayloadHashSchema,
 	payload_ref: DevicePayloadReferenceSchema,
 	created_at: z.number().int().nonnegative(),
 	attempts: z.number().int().nonnegative(),
+	retry_at: z.number().int().nonnegative().optional(),
 	state: z.enum(["queued", "sent", "resolved"]),
 };
 
-/** Canonical validated persistence contract for one put/delete/rename operation. */
+/** Canonical durable mutation contract, including immutable retry bytes and optional rename or dependent-delete recovery evidence. */
 export const PendingOperationSchema = z
 	.discriminatedUnion("op", [
 		z
@@ -83,6 +84,8 @@ export const PendingOperationSchema = z
 				op: z.literal("delete"),
 				path: DevicePathSchema,
 				precondition: DevicePreconditionSchema,
+				/** Sent parent whose confirmed receipt supplies this delete's live revision. */
+				depends_on: DeviceOperationKeySchema.optional(),
 			})
 			.strict(),
 		z
@@ -92,6 +95,8 @@ export const PendingOperationSchema = z
 				path: DevicePathSchema,
 				to: DevicePathSchema,
 				precondition: DevicePreconditionSchema,
+				/** Hash of old source bytes retained for stale-rename recovery after feed replay. */
+				source_hash: DevicePayloadHashSchema.optional(),
 			})
 			.strict(),
 	])

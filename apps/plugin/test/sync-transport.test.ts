@@ -99,6 +99,34 @@ describe("SyncTransport", () => {
 		).rejects.toBeInstanceOf(UnsupportedRemoteTextError);
 	});
 
+	it("rejects current text when its declared digest does not match its bytes", async () => {
+		const session = new ResponseSession();
+		const etag = `"${epoch}.8"`;
+		session.responses.push({
+			status: 200,
+			headers: { etag },
+			text: JSON.stringify({
+				path: "notes/a.md",
+				etag,
+				hash: "d".repeat(64),
+				size: 5,
+				kind: "text",
+				deleted: false,
+				origin: "client",
+				updated_at: 0,
+				content: "bytes",
+				offset: 0,
+				length: 5,
+				truncated: false,
+			}),
+		});
+		const transport = new SyncTransport("https://service.test", session);
+
+		await expect(transport.readCurrentAuthority("notes/a.md")).rejects.toThrow(
+			"Current text metadata is invalid",
+		);
+	});
+
 	it("replaces a pruned pinned read with current text identity", async () => {
 		const session = new ResponseSession();
 		session.responses.push({
@@ -222,6 +250,140 @@ describe("SyncTransport", () => {
 		await expect(
 			readResolved.call(transport, "notes/a.md", epoch, 4),
 		).resolves.toMatchObject({ text, epoch, rev: 8 });
+	});
+
+	it("sends create-only mutation epoch and validates its canonical receipt", async () => {
+		const session = new ResponseSession();
+		const etag = `"${epoch}.5"`;
+		session.responses.push({
+			status: 201,
+			headers: { etag },
+			text: JSON.stringify({
+				path: "notes/a.md",
+				etag,
+				seq: 7,
+				hash: "c".repeat(64),
+				size: 4,
+				deleted: false,
+			}),
+		});
+		const transport = new SyncTransport("https://service.test", session);
+
+		await expect(
+			transport.put(
+				"notes/a.md",
+				"text",
+				{ kind: "absent" },
+				"operation-key",
+				epoch,
+			),
+		).resolves.toEqual({
+			status: 201,
+			path: "notes/a.md",
+			etag,
+			seq: 7,
+			size: 4,
+			hash: "c".repeat(64),
+			deleted: false,
+		});
+		expect(session.calls[0]?.options?.headers).toEqual({
+			"if-none-match": "*",
+			"x-vault-epoch": epoch,
+			"idempotency-key": "operation-key",
+		});
+	});
+
+	it("sends delete and rename with their exact source ETag preconditions", async () => {
+		const session = new ResponseSession();
+		const deleteEtag = `"${epoch}.5"`;
+		const renameEtag = `"${epoch}.6"`;
+		session.responses.push(
+			{
+				status: 200,
+				headers: { etag: deleteEtag },
+				text: JSON.stringify({
+					path: "notes/a.md",
+					etag: deleteEtag,
+					seq: 8,
+					hash: "",
+					size: 0,
+					deleted: true,
+				}),
+			},
+			{
+				status: 201,
+				headers: { etag: renameEtag },
+				text: JSON.stringify({
+					path: "notes/b.md",
+					etag: renameEtag,
+					seq: 9,
+					hash: "c".repeat(64),
+					size: 4,
+					deleted: false,
+				}),
+			},
+		);
+		const transport = new SyncTransport("https://service.test", session);
+		const precondition = { kind: "match" as const, epoch, rev: 4 };
+
+		await transport.delete("notes/a.md", precondition, "delete-key");
+		await transport.rename(
+			"notes/a.md",
+			"notes/b.md",
+			precondition,
+			"rename-key",
+		);
+
+		expect(session.calls[0]?.options?.headers).toEqual({
+			"if-match": `"${epoch}.4"`,
+			"x-vault-epoch": epoch,
+			"idempotency-key": "delete-key",
+		});
+		expect(session.calls[1]?.path).toBe(
+			"https://service.test/v1/files/notes/a.md:rename",
+		);
+		expect(session.calls[1]?.options).toMatchObject({
+			method: "POST",
+			body: JSON.stringify({ to: "notes/b.md" }),
+			headers: {
+				"if-match": `"${epoch}.4"`,
+				"x-vault-epoch": epoch,
+				"idempotency-key": "rename-key",
+			},
+		});
+	});
+
+	it("preserves canonical status and code for a rename precondition failure", async () => {
+		const session = new ResponseSession();
+		session.responses.push({
+			status: 412,
+			headers: {},
+			text: JSON.stringify({
+				error: "precondition_failed",
+				message: "The file state does not match the precondition.",
+				etag: `"${epoch}.6"`,
+				hash: "",
+				deleted: true,
+				renamed_to: "notes/renamed.md",
+			}),
+		});
+		const transport = new SyncTransport("https://service.test", session);
+
+		await expect(
+			transport.rename(
+				"notes/a.md",
+				"notes/renamed.md",
+				{
+					kind: "match",
+					epoch,
+					rev: 4,
+				},
+				"rename-key",
+			),
+		).rejects.toMatchObject({
+			status: 412,
+			code: "precondition_failed",
+		});
 	});
 
 	it("preserves canonical collision and retry details without response text", async () => {

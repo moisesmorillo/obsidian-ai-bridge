@@ -31,15 +31,21 @@ export interface DeviceJournalStorage {
 	writePayload(path: string, bytes: Uint8Array): Promise<void>;
 }
 
-/** Input for one local mutation; generated metadata and payload authority stay journal-owned. */
+/** Local mutation intent; the journal owns generated identity, while optional evidence links rename recovery or dependent deletes. */
 export type EnqueueInput =
 	| { op: "put"; path: string; precondition: DevicePrecondition }
-	| { op: "delete"; path: string; precondition: DevicePrecondition }
+	| {
+			op: "delete";
+			path: string;
+			precondition: DevicePrecondition;
+			depends_on?: string;
+	  }
 	| {
 			op: "rename";
 			path: string;
 			to: string;
 			precondition: DevicePrecondition;
+			source_hash?: string;
 	  };
 
 /** Caller-supplied evidence for an explicit server receipt or rejection. */
@@ -581,6 +587,19 @@ export class DeviceJournal {
 		});
 	}
 
+	/** Reads one operation payload only after verifying its immutable SHA-256 identity. */
+	async readPayload(
+		reference: string,
+		expectedHash: string,
+	): Promise<Uint8Array> {
+		const bytes = await this.storage.readPayload(reference);
+		if ((await digest(bytes)) !== expectedHash) {
+			this.attentionReasonValue = DEVICE_JOURNAL_ATTENTION_REASON;
+			throw new Error("Payload verification failed");
+		}
+		return bytes.slice();
+	}
+
 	/** Stores identity only when its session predicate still holds at queued commit admission. */
 	async setClientId(
 		clientId: string,
@@ -597,16 +616,107 @@ export class DeviceJournal {
 		});
 	}
 
-	/** Removes an operation only after explicit receipt or rejection evidence persists. */
-	async resolve(key: string, _outcome: ResolutionOutcome): Promise<void> {
+	/** Resolves sent work with its receipt-produced base. Rename receipts authorize only destination successors, never source successors. */
+	async resolve(
+		key: string,
+		outcome: ResolutionOutcome,
+		receiptBase?: DeviceBaseEntry,
+	): Promise<void> {
 		await this.serialize(async () => {
+			this.assertOpen();
+			const index = this.state.pending_ops.findIndex(
+				(item) => item.key === key && item.state === "sent",
+			);
+			const operation = this.state.pending_ops[index];
+			if (!operation) throw new Error("Only a sent operation can resolve");
+			const receiptPath =
+				operation.op === "rename" ? operation.to : operation.path;
+			const successorBase = receiptBase
+				? DeviceBaseEntrySchema.parse(receiptBase)
+				: undefined;
+			const dependentDeletes = this.state.pending_ops.filter(
+				(item) => item.op === "delete" && item.depends_on === key,
+			);
+			const rejectedDeletes =
+				outcome.kind === "rejection" ? dependentDeletes : [];
+			const staleDeletes =
+				outcome.kind === "receipt"
+					? dependentDeletes.filter((item) => {
+							const currentBase = this.state.base[item.path];
+							return (
+								item.path !== receiptPath ||
+								!successorBase ||
+								!currentBase ||
+								!sameBaseEntry(currentBase, successorBase)
+							);
+						})
+					: [];
+			const blocked = [...rejectedDeletes, ...staleDeletes];
+			const attention = [
+				...this.state.attention.filter(
+					(item) =>
+						item.operation?.key !== key &&
+						!blocked.some((operation) => item.operation?.key === operation.key),
+				),
+				...(outcome.kind === "rejection"
+					? [
+							{
+								path: operation.path,
+								reason: "Rejected operation retained for recovery",
+								operation,
+							},
+						]
+					: []),
+				...rejectedDeletes.map((item) => ({
+					path: item.path,
+					reason: "Delete intent was blocked by its rejected create",
+					operation: item,
+				})),
+				...staleDeletes.map((item) => ({
+					path: item.path,
+					reason: "Delete intent no longer matches its create receipt",
+					operation: item,
+				})),
+			];
+			const pending_ops = this.state.pending_ops.flatMap((item, itemIndex) => {
+				if (
+					item.key === key ||
+					blocked.some((candidate) => candidate.key === item.key)
+				)
+					return [];
+				if (
+					outcome.kind !== "receipt" ||
+					item.state !== "queued" ||
+					itemIndex <= index ||
+					!operationsConflict(operation, item)
+				)
+					return [item];
+				if (item.path !== receiptPath || !successorBase || !this.state.epoch)
+					return [item];
+				const precondition: DevicePrecondition = {
+					kind: "match",
+					epoch: this.state.epoch,
+					rev: successorBase.rev,
+				};
+				if (item.op !== "delete" || item.depends_on !== key)
+					return [{ ...item, precondition }];
+				const { depends_on: _dependency, ...resolved } = item;
+				return [{ ...resolved, precondition }];
+			});
+			await this.commit({ ...this.state, pending_ops, attention });
+		});
+	}
+
+	/** Drops one unsent queue reference after confirmed remote state makes its bytes redundant. */
+	async discardQueued(key: string): Promise<void> {
+		return this.serialize(async () => {
 			this.assertOpen();
 			if (
 				!this.state.pending_ops.some(
-					(item) => item.key === key && item.state === "sent",
+					(item) => item.key === key && item.state === "queued",
 				)
 			)
-				throw new Error("Only a sent operation can resolve");
+				throw new Error("Only a queued operation can be discarded");
 			await this.commit({
 				...this.state,
 				pending_ops: this.state.pending_ops.filter((item) => item.key !== key),
@@ -614,9 +724,110 @@ export class DeviceJournal {
 		});
 	}
 
+	/** Retains a queued intent in attention when its live local evidence no longer matches. */
+	async recordQueuedRejected(
+		operation: PendingOperation,
+		reason: string,
+	): Promise<void> {
+		const parsed = PendingOperationSchema.parse(operation);
+		await this.serialize(async () => {
+			this.assertOpen();
+			const queued = this.state.pending_ops.find(
+				(item) => item.key === parsed.key && item.state === "queued",
+			);
+			if (!queued || JSON.stringify(queued) !== JSON.stringify(parsed))
+				throw new Error("Queued operation identity changed");
+			const attention = this.state.attention.filter(
+				(item) => item.operation?.key !== parsed.key,
+			);
+			await this.commit({
+				...this.state,
+				pending_ops: this.state.pending_ops.filter(
+					(item) => item.key !== parsed.key,
+				),
+				attention: [
+					...attention,
+					{ path: parsed.path, reason, operation: parsed },
+				],
+			});
+		});
+	}
+
+	/** Persists a bounded retry deadline and attempt count without changing sent request identity. */
+	async defer(key: string, retryAt: number): Promise<void> {
+		return this.serialize(async () => {
+			this.assertOpen();
+			const operation = this.state.pending_ops.find(
+				(item) => item.key === key && item.state === "sent",
+			);
+			if (!operation) throw new Error("Only a sent operation can defer");
+			await this.commit({
+				...this.state,
+				pending_ops: this.state.pending_ops.map((item) =>
+					item.key === key
+						? { ...item, attempts: item.attempts + 1, retry_at: retryAt }
+						: item,
+				),
+			});
+		});
+	}
+
+	/** Retains rejected sent evidence and moves dependent deletes to attention until recovery completes. */
+	async recordRejected(
+		operation: PendingOperation,
+		reason: string,
+		attentionPath = operation.path,
+	): Promise<void> {
+		const parsed = PendingOperationSchema.parse(operation);
+		await this.serialize(async () => {
+			this.assertOpen();
+			const sent = this.state.pending_ops.find(
+				(item) => item.key === parsed.key && item.state === "sent",
+			);
+			if (!sent || JSON.stringify(sent) !== JSON.stringify(parsed))
+				throw new Error("Rejected operation identity changed");
+			const blocked = this.state.pending_ops.filter(
+				(item) => item.op === "delete" && item.depends_on === parsed.key,
+			);
+			const attention = this.state.attention.filter(
+				(item) =>
+					item.operation?.key !== parsed.key &&
+					!blocked.some((operation) => item.operation?.key === operation.key),
+			);
+			await this.commit({
+				...this.state,
+				pending_ops: this.state.pending_ops.filter(
+					(item) =>
+						item.key !== parsed.key &&
+						!blocked.some((operation) => item.key === operation.key),
+				),
+				attention: [
+					...attention,
+					{ path: attentionPath, reason, operation: parsed },
+					...blocked.map((operation) => ({
+						path: operation.path,
+						reason: "Delete intent was blocked by its rejected create",
+						operation,
+					})),
+				],
+			});
+		});
+	}
+
 	/** Returns an isolated copy of the last confirmed validated state. */
 	snapshot(): DeviceState {
 		return DeviceStateSchema.parse(structuredClone(this.state));
+	}
+
+	/** Checks whether captured event authority still matches this path and epoch. */
+	matchesBase(
+		path: string,
+		base: DeviceBaseEntry | undefined,
+		epoch: string | undefined,
+	): boolean {
+		return (
+			this.state.epoch === epoch && sameBaseEntry(this.state.base[path], base)
+		);
 	}
 
 	/** Blocks actions immediately without deleting any confirmed state or payload. */
@@ -675,6 +886,19 @@ function operationsConflict(
 	const leftKeys = leftPaths.map(pathKey);
 	const rightKeys = rightPaths.map(pathKey);
 	return leftKeys.some((leftKey) => rightKeys.includes(leftKey));
+}
+
+/** Compares confirmed base evidence by revision and content, including absence. */
+function sameBaseEntry(
+	left: DeviceBaseEntry | undefined,
+	right: DeviceBaseEntry | undefined,
+): boolean {
+	if (!left || !right) return left === right;
+	return (
+		left.deleted === right.deleted &&
+		left.rev === right.rev &&
+		(left.deleted || (!right.deleted && left.hash === right.hash))
+	);
 }
 
 /** Compares precondition evidence by meaning, independent of object property order. */

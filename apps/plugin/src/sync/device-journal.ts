@@ -693,13 +693,19 @@ export class DeviceJournal {
 					return [item];
 				if (item.path !== receiptPath || !successorBase || !this.state.epoch)
 					return [item];
-				const precondition: DevicePrecondition = {
-					kind: "match",
-					epoch: this.state.epoch,
-					rev: successorBase.rev,
-				};
+				const canRebase =
+					item.precondition.kind === "absent" ||
+					(item.precondition.epoch === this.state.epoch &&
+						item.precondition.rev < successorBase.rev);
+				const precondition = canRebase
+					? {
+							kind: "match" as const,
+							epoch: this.state.epoch,
+							rev: successorBase.rev,
+						}
+					: item.precondition;
 				if (item.op !== "delete" || item.depends_on !== key)
-					return [{ ...item, precondition }];
+					return canRebase ? [{ ...item, precondition }] : [item];
 				const { depends_on: _dependency, ...resolved } = item;
 				return [{ ...resolved, precondition }];
 			});

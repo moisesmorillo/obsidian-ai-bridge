@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-10-28T19:31:00Z'
-updated_date: '2026-10-29T16:21:00Z'
+updated_date: '2026-10-29T16:44:00Z'
 labels: []
 dependencies:
   - OAB-8.4
@@ -79,15 +79,48 @@ Correction to the earlier OAB-8.1 review note: DeviceJournal.resolve now disting
 Whole-branch review corrections for R1–R4:
 
 - RED: `cd apps/plugin && bunx vitest run test/publication.test.ts` first showed four failures for R1, R2 delete, R2 rename, and R4 restore disposal. After adding R3 restart coverage, five regressions failed. Each failure matched its stated unsafe interleaving. GREEN: all 32 publication tests pass.
-- R1: the fake server commits create revision 1, loses its response, accepts a remote edit at revision 2, then returns the stored revision-1 receipt. `does not delete a newer edit after a delayed create receipt` confirms the dependent delete is not sent. DeviceJournal.resolve uses supplied successor authority, not a later base. It moves the delete to attention when current base differs from the create receipt.
+- R1: the fake server commits create revision 1, loses its response, accepts a remote edit at revision 2, then returns the stored revision-1 receipt. `does not delete a newer edit after a delayed create receipt` confirms the dependent delete is not sent. DeviceJournal.resolve uses supplied receipt-produced authority, not a later base. It moves the delete to attention when current base differs from the create receipt.
 - R2: `rejects a delayed delete when remote apply restores a newer revision` holds an unrelated send, admits delete at revision 1, applies revision 2, then releases the callback. No delete request targets revision 2. The event captures epoch and base before queue wait. It checks continued absence and base identity before admission. `does not admit a rename against a source restored after its event` also blocks the stale rename and preserves target bytes as a put.
-- R3: `resolves a rename receipt after a newer source recreation and restart` commits a rename, loses its receipt, recreates the source at revision 3, restarts the journal, then receives the stored destination receipt at revision 2. Recovery records source revision 3 from current authority, destination revision 2 from the receipt, and resolves the operation. No source revision is invented.
+- R3, earlier pass: the restart test checked metadata but did not check source bytes or queued source edits. The later review showed that this pass did not close R3. Current-source metadata was not receipt-produced evidence or confirmed local apply. See the bounded correction below.
 - R4: `does not create startup text after disposal during expected-write persistence` pauses the durable marker write, closes publication, then releases it. The expected-write marker clears and no create starts. `does not trash a stale rename destination after disposal during its read` checks the cleanup fence. Scan and event paths also check lifecycle after awaited host reads and before new effects.
 
 Transition and ownership review:
-- DeviceJournal owns event-base comparison and durable successor transitions. Publication captures event authority synchronously, checks continued local absence, and sends only the captured precondition. Publication passes exact mutation receipt bases to journal resolution.
-- Rename destination authority comes from its mutation receipt. Rename source authority comes from a separate current read. TextApplyEngine and ReconciliationController own guarded remote apply and feed replay. Composition still uses one journal and transport. No file split was needed.
+- DeviceJournal owns event-base comparison and durable successor transitions. Publication captures event authority synchronously, checks continued local absence, and sends only the captured precondition. Publication passes only the mutation receipt base to journal resolution.
+- Rename destination authority comes from its mutation receipt. Current-source reads are observations, not receipt-produced evidence. TextApplyEngine owns guarded local apply before source base confirmation. ReconciliationController owns feed replay. The earlier pass bypassed this source boundary. See the bounded correction below.
 - Cross-state tests cover queued and sent work, receipt and current-base divergence, delayed destructive events, rename receipt plus source recreation, retry after restart, and disposal during persistence and cleanup. Exact preconditions and lifecycle checks protect races after admission. The prior stateful ownership concern now has targeted cross-product evidence. Parent whole-branch acceptance remains pending.
 
 Validation: `bun run docs:check` passed. `bun run check` passed lint, docs, typecheck, tests, and build. All 90 test files and 1,446 tests passed. Worker fault-injection cases printed expected error logs. All worker test groups passed. The task remains In Progress.
+
+Escalation: authority transition ownership remains open after three review rounds. Final branch review at e0808d1 retains R3: successful rename recovery confirms unrelated current source metadata without guarded apply and can authorize a queued source overwrite. Escalate only remaining R3 scope to a fresh worker on session model openai/gpt-6.1-sol at high thinking. Preserve all closed F1-F3 and R1/R2/R4 regressions.
+
+Bounded R3 correction after escalation:
+
+- The authority defect remained open after three review rounds at e0808d1. This fresh-context correction changes only R3 and its authority boundary.
+- Reviewed source revision: 5577b031e7b4bcfe2a56eae536114ea7cfc37a7c. The parent escalation note remains intact. Task status remains In Progress.
+- Root cause: publication treated a current source observation as both confirmed local state and rename-produced successor evidence. Those meanings are different.
+- Publication now sends current source observations through the shared TextApplyEngine before receipt settlement. The engine uses pinned reads and guarded effects. Dirty local source text reaches a visible conflict copy before remote text replaces it. Source revisions come only from server observations or feed rows.
+- DeviceJournal.resolve now accepts one receipt-produced base, not an arbitrary path-to-base map. The journal selects the receipt path from the sent operation. For rename, only the destination can receive receipt successor authority. Source successors keep their observed preconditions. A newer confirmed source base does not change that rule.
+- TextApplyEngine.applyCurrent owns cursor-independent apply identity and durable recovery. It resumes saved work first. It rejects completion if attention leaves apply work pending. Publication retains the sent rename and blocks overlapping successors in that case. Reconciliation uses this same apply boundary for stale-rename source recovery.
+
+RED and GREEN evidence:
+
+- Before implementation, `cd apps/plugin && bunx vitest run test/publication.test.ts` returned 3 failures and 31 passes. The wrapper recorded observed exit 1 and returned 0. The restart case showed missing source text. The queued-source case showed that local text overwrote the remote source. The interruption case showed premature operation settlement.
+- Before the journal API change, `cd apps/plugin && bunx vitest run test/device-journal.test.ts` returned 2 failures and 35 passes. The wrapper recorded observed exit 1 and returned 0. These tests pin destination-only receipt authority with and without a newer confirmed source base.
+- The first focused correction run returned 2 failures and 153 passes. The new journal tests wrongly expected a changed sent precondition to pass. The existing send barrier correctly refused it. The tests now assert refusal, unchanged operation identity, and exact retry bytes.
+- Final focused command: `cd apps/plugin && bunx vitest run test/publication.test.ts test/device-journal.test.ts test/reconciliation.test.ts test/text-apply.test.ts test/vault-events.test.ts`. All 5 files and 157 tests passed, exit 0. Publication has 36 tests. Journal has 37 tests.
+- The restart regression now checks recreated source bytes before actual ReconciliationController feed replay. It then replays rename revision 2 and source put revision 3. Both visible paths survive. Only feed replay advances the cursor.
+- Queued-source regressions cover normal receipt retry, restart after conflict creation, and an edited conflict copy. Remote source bytes survive. Local conflict bytes remain visible. No source put occurs automatically. A normal scan publishes the verified conflict copy with an absent precondition.
+- A newer confirmed source test applies revision 4 before the old rename receipt returns. A later local edit keeps its revision-4 precondition despite a revision-3 observation. Its lost-response retry keeps the same key, bytes, and precondition after restart.
+- TDD exception: the newer-confirmed-source and edited-conflict-copy audit cases were added after the correction. Both passed. The main source-recreation and queued-overwrite regressions failed before implementation.
+- Biome formatting passed. `bun run docs:check` passed, exit 0. `bun run check` passed lint, docs, typecheck, tests, and build, exit 0. All 90 files and 1,452 tests passed. Worker fault-injection cases printed expected error logs. Worker build used dry-run mode.
+
+Finding and ownership closure:
+
+- R3: fixed in this self-review. Source observation no longer confirms bytes or authorizes a queued source edit. Guarded apply confirms source state. Receipt resolution authorizes only its produced path. Tests prove visible bytes, conflict copies, feed replay, interrupted recovery, and immutable source retries.
+- R3 documentation: corrected send TSDoc and the earlier task claims. Current observations, guarded apply, and receipt-produced authority now have distinct contracts.
+- F1, F2, F3, R1, R2, and R4: existing regression tests remain unchanged and pass. Queued validation, stale-rename cleanup, dependent deletes, delayed-event guards, and disposal fences remain intact.
+- Structural candidates: publication owns event admission, send policy, receipt classification, and retry. Journal owns durable identity and destination-only successor transitions. TextApplyEngine owns guarded local effects and confirmed bases. Reconciliation owns ordered feed replay. Composition shares one engine. Transport still owns canonical response validation. Event adapter still owns event delivery and disposal. Protocol schemas remain unchanged.
+- Stateful matrix reviewed: queued versus sent operations, source versus destination, receipt versus current observation, older versus newer confirmed base, local absent/dirty/confirmed text, retry/restart, pending conflict attention, and lifecycle close. Tests cover the material R3 cross-products. No separate policy owner or new layer was added.
+- No new blocker appeared in the bounded self-review. Parent corrective review and branch acceptance remain pending. No task closure, push, pull request, or worktree removal occurred.
+- Limits: no live service, deployment, real vault, or hosted CI proof ran. No dependency, Worker source, or protocol schema changed. OAB-8.6, OAB-8.7, and OAB-8.8 remain outside scope.
 <!-- SECTION:NOTES:END -->

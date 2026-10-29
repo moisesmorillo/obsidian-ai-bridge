@@ -122,6 +122,7 @@ class MemoryRemote implements ReconciliationRemote {
 	>();
 	manifestCalls: Array<string | null> = [];
 	vaultCalls = 0;
+	readCalls: Array<{ path: string; rev: number }> = [];
 	feed: ReconciliationChangesPage[] = [];
 	texts = new Map<string, string>();
 	blobPaths = new Set<string>();
@@ -162,6 +163,7 @@ class MemoryRemote implements ReconciliationRemote {
 		_epoch: string,
 		rev: number,
 	): Promise<string | null> {
+		this.readCalls.push({ path, rev });
 		if (this.blobPaths.has(path)) throw new UnsupportedRemoteTextError(path);
 		return this.texts.get(String(rev)) ?? null;
 	}
@@ -410,6 +412,83 @@ describe("ReconciliationController", () => {
 		});
 	});
 
+	it("skips an obsolete put before an unavailable historical read", async () => {
+		const path = "already-current.md";
+		const text = "newer confirmed bytes";
+		await context.controller.enroll();
+		await context.journal.setBase(path, {
+			deleted: false,
+			rev: 8,
+			hash: await hash(text),
+		});
+		context.vault.files.set(path, text);
+		context.remote.feed.push({
+			epoch,
+			head_seq: 5,
+			entries: [
+				{
+					seq: 5,
+					op: "put",
+					path,
+					etag: `"${epoch}.7"`,
+					hash: "b".repeat(64),
+					origin: "remote",
+					at: 5,
+				},
+			],
+		});
+
+		await expect(context.controller.replay()).resolves.toBeUndefined();
+		expect(context.remote.readCalls).toEqual([]);
+		expect(context.vault.files.get(path)).toBe(text);
+		expect(context.journal.snapshot().cursor).toBe(5);
+	});
+
+	it("applies a source-only rename without reading its unavailable destination", async () => {
+		const source = "rename-source.md";
+		const destination = "rename-destination.md";
+		const sourceText = "source content";
+		const destinationText = "already confirmed destination";
+		await context.controller.enroll();
+		context.vault.files.set(source, sourceText);
+		await context.journal.setBase(source, {
+			deleted: false,
+			rev: 1,
+			hash: await hash(sourceText),
+		});
+		await context.journal.setBase(destination, {
+			deleted: false,
+			rev: 10,
+			hash: await hash(destinationText),
+		});
+		context.remote.feed.push({
+			epoch,
+			head_seq: 5,
+			entries: [
+				{
+					seq: 5,
+					op: "rename",
+					path: destination,
+					etag: `"${epoch}.3"`,
+					hash: await hash(destinationText),
+					origin: "remote",
+					at: 5,
+					from_path: source,
+					from_etag: `"${epoch}.2"`,
+				},
+			],
+		});
+
+		await expect(context.controller.replay()).resolves.toBeUndefined();
+		expect(context.remote.readCalls).toEqual([]);
+		expect(context.vault.files.has(source)).toBe(false);
+		expect(context.journal.snapshot().base[source]).toEqual({
+			deleted: true,
+			rev: 2,
+		});
+		expect(context.journal.snapshot().cursor).toBe(5);
+	});
+
 	it("applies ascending feed rows and persists each latest sequence", async () => {
 		const first = "feed one";
 		const second = "feed two";
@@ -472,6 +551,36 @@ describe("ReconciliationController", () => {
 		expect(context.journal.snapshot().reconciliation).toBeNull();
 	});
 
+	it.each([
+		[409, "epoch_mismatch"],
+		[410, "cursor_expired"],
+	] as const)(
+		"recovers from HTTP %s %s when resuming",
+		async (status, code) => {
+			await context.controller.enroll();
+			const text = `resumed after ${code}`;
+			context.remote.entries = [
+				{
+					path: "resumed-recovery.md",
+					etag: `"${epoch}.3"`,
+					seq: 3,
+					hash: await hash(text),
+					kind: "text",
+					deleted: false,
+				},
+			];
+			context.remote.texts.set("3", text);
+			context.remote.changeError = Object.assign(new Error("safe failure"), {
+				status,
+				code,
+			});
+			await expect(context.controller.resume()).resolves.toBeUndefined();
+			expect(context.vault.files.get("resumed-recovery.md")).toBe(text);
+			expect(context.journal.snapshot().cursor).toBe(4);
+			expect(context.journal.snapshot().reconciliation).toBeNull();
+		},
+	);
+
 	it("records an equal path base without rewriting local text", async () => {
 		const text = "same\r\n";
 		context.vault.files.set("same.md", text);
@@ -493,6 +602,36 @@ describe("ReconciliationController", () => {
 			rev: 3,
 			hash: await hash(text),
 		});
+	});
+
+	it("does not start an enrollment request after close during payload admission", async () => {
+		context.vault.files.set("closed-before-send.md", "local text");
+		const prepareSend = context.journal.prepareSend.bind(context.journal);
+		context.journal.prepareSend = async (...args) => {
+			const saved = await prepareSend(...args);
+			context.controller.close();
+			return saved;
+		};
+
+		await expect(context.controller.enroll()).rejects.toThrow(
+			"Reconciliation controller is closed",
+		);
+		expect(context.remote.created).toEqual([]);
+		expect(context.journal.snapshot().pending_ops[0]?.state).toBe("sent");
+	});
+
+	it("keeps a sent enrollment uncertain when close races its response", async () => {
+		context.vault.files.set("closed-in-flight.md", "local text");
+		context.remote.onCreate = () => context.controller.close();
+
+		await expect(context.controller.enroll()).rejects.toThrow(
+			"Reconciliation controller is closed",
+		);
+		expect(context.remote.created).toHaveLength(1);
+		expect(context.journal.snapshot().pending_ops[0]?.state).toBe("sent");
+		expect(
+			context.journal.snapshot().base["closed-in-flight.md"],
+		).toBeUndefined();
 	});
 
 	it("uploads a local UTF-8 BOM without changing the immutable bytes", async () => {
@@ -619,6 +758,65 @@ describe("ReconciliationController", () => {
 		expect(context.remote.manifestCalls).toEqual([null, null, "page-2"]);
 		expect(context.journal.snapshot().cursor).toBe(7);
 		expect(context.journal.snapshot().reconciliation).toBeNull();
+	});
+
+	it("restarts manifest traversal when live continuation membership displaces saved work", async () => {
+		const first = "already captured";
+		const inserted = "concurrent insert";
+		const pending = "displaced row";
+		/** Builds one exact manifest row for restart traversal fixtures. */
+		const row = async (path: string, rev: number, text: string) => ({
+			path,
+			etag: `"${epoch}.${rev}"`,
+			seq: rev,
+			hash: await hash(text),
+			kind: "text" as const,
+			deleted: false,
+		});
+		await context.journal.resetEpoch(epoch);
+		await context.journal.setReconciliationCheckpoint({
+			epoch,
+			head_seq: 7,
+			stage: "manifest",
+			page_token: "page-2",
+			page_number: 1,
+			local_paths: [],
+			local_index: 0,
+			pending_paths: ["displaced.md"],
+			remote_paths: ["first.md", "displaced.md"],
+		});
+		context.remote.pages.set(null, {
+			epoch,
+			head_seq: 7,
+			entries: [await row("first.md", 5, first)],
+			next_page: "page-2",
+		});
+		context.remote.pages.set("page-2", {
+			epoch,
+			head_seq: 7,
+			entries: [
+				await row("inserted.md", 6, inserted),
+				await row("first.md", 5, first),
+			],
+			next_page: "page-3",
+		});
+		context.remote.pages.set("page-3", {
+			epoch,
+			head_seq: 7,
+			entries: [await row("displaced.md", 7, pending)],
+			next_page: null,
+		});
+		context.remote.texts.set("5", first);
+		context.remote.texts.set("6", inserted);
+		context.remote.texts.set("7", pending);
+
+		await expect(context.controller.resume()).resolves.toBeUndefined();
+		expect(context.vault.files.get("inserted.md")).toBe(inserted);
+		expect(context.vault.files.get("displaced.md")).toBe(pending);
+		expect(context.journal.snapshot().cursor).toBe(7);
+		expect(context.journal.snapshot().reconciliation).toBeNull();
+		expect(context.remote.manifestCalls[0]).toBe("page-2");
+		expect(context.remote.manifestCalls).toContain(null);
 	});
 
 	it("restarts after a fetched page before its first row effect", async () => {

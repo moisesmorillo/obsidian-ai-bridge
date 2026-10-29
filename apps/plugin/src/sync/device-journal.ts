@@ -8,6 +8,7 @@ import {
 	DeviceStateSchema,
 	type PendingApply,
 	PendingApplySchema,
+	type PendingConflictCopy,
 	type PendingOperation,
 	PendingOperationSchema,
 	parseETag,
@@ -162,9 +163,10 @@ export class DeviceJournal {
 		});
 	}
 
-	/** Replaces a pruned pinned row before effects while retaining verified local conflict identities. */
+	/** Replaces pruned revision authority while retaining durable local and verified remote copies. */
 	async rebasePendingApply(
 		change: DeviceState["pending_apply"][number]["change"],
+		conflictCopies?: PendingConflictCopy[],
 	): Promise<void> {
 		const parsedChange = ChangeEntrySchema.parse(change);
 		return this.serialize(async () => {
@@ -174,14 +176,24 @@ export class DeviceJournal {
 				throw new Error("Pinned fallback does not match the pending feed row");
 			if (
 				current.change.path !== parsedChange.path ||
-				current.change.op !== parsedChange.op
+				(current.change.op !== parsedChange.op &&
+					!(current.change.op === "put" && parsedChange.op === "delete"))
 			)
 				throw new Error("Pinned fallback changed the row path or operation");
 			const oldEpoch = parseETag(current.change.etag).epoch;
 			const newEpoch = parseETag(parsedChange.etag).epoch;
 			if (oldEpoch !== newEpoch)
 				throw new Error("Pinned fallback changed the vault epoch");
-			const rebased: PendingApply = { ...current, change: parsedChange };
+			const rebased: PendingApply =
+				conflictCopies === undefined
+					? { ...current, change: parsedChange }
+					: conflictCopies.length === 0
+						? { change: parsedChange, step: "prepared" }
+						: {
+								change: parsedChange,
+								step: "named",
+								conflict_copies: conflictCopies,
+							};
 			await this.commit({ ...this.state, pending_apply: [rebased] });
 		});
 	}
@@ -428,7 +440,7 @@ export class DeviceJournal {
 		return this.serialize(async () => {
 			this.assertOpen();
 			const attention = this.state.attention.filter(
-				(item) => item.path !== path,
+				(item) => item.path !== path || item.operation !== undefined,
 			);
 			await this.commit({
 				...this.state,
@@ -452,7 +464,7 @@ export class DeviceJournal {
 			)
 				throw new Error("Remote apply identity changed");
 			const attention = this.state.attention.filter(
-				(item) => item.path !== path,
+				(item) => item.path !== path || item.operation !== undefined,
 			);
 			const expected_writes = { ...this.state.expected_writes };
 			delete expected_writes[path];

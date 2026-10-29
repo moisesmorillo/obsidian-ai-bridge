@@ -67,20 +67,24 @@ export class ReconciliationController {
 		return this.serialize(async () => {
 			if (this.journal.snapshot().reconciliation)
 				await this.runReconciliation();
-			else if (this.journal.snapshot().cursor !== null) await this.runReplay();
+			else if (this.journal.snapshot().cursor !== null)
+				await this.runReplayWithRecovery();
 		});
 	}
 
 	/** Replays feed rows in ascending sequence and persists each accepted cursor. */
 	replay(): Promise<void> {
-		return this.serialize(async () => {
-			try {
-				await this.runReplay();
-			} catch (error) {
-				if (!isRecoveryError(error)) throw error;
-				await this.runReconciliation();
-			}
-		});
+		return this.serialize(() => this.runReplayWithRecovery());
+	}
+
+	/** Shares one serialized recovery policy for explicit replay and restart resume. */
+	private async runReplayWithRecovery(): Promise<void> {
+		try {
+			await this.runReplay();
+		} catch (error) {
+			if (!isRecoveryError(error)) throw error;
+			await this.runReconciliation();
+		}
 	}
 
 	/** Fences new work after plugin unload without claiming in-flight host work stopped. */
@@ -162,8 +166,12 @@ export class ReconciliationController {
 			}
 			const pagePaths = page.entries.map((entry) => entry.path);
 			let pendingPaths: string[] = [...checkpoint.pending_paths];
-			if (pendingPaths.some((path) => !pagePaths.includes(path)))
-				throw new Error("Saved manifest paths do not match the page snapshot");
+			if (pendingPaths.some((path) => !pagePaths.includes(path))) {
+				if (!restartOnSnapshotChange)
+					throw new Error("Manifest membership changed during restart");
+				await this.journal.setReconciliationCheckpoint(null);
+				return this.runReconciliation(true);
+			}
 			const remotePaths: string[] = [...checkpoint.remote_paths];
 			for (const entry of page.entries)
 				if (!remotePaths.includes(entry.path)) remotePaths.push(entry.path);
@@ -224,6 +232,7 @@ export class ReconciliationController {
 				if (path && !checkpoint.remote_paths.includes(path)) {
 					try {
 						await this.publishLocalCreate(path, checkpoint.epoch);
+						this.assertOpen();
 					} catch (error) {
 						if (
 							getStatus(error) !== 412 &&
@@ -366,7 +375,9 @@ export class ReconciliationController {
 
 	/** Queues and sends only create-only operations with unchanged immutable payloads. */
 	private async publishLocalCreate(path: string, epoch: string): Promise<void> {
+		this.assertOpen();
 		const size = await this.localVault.size(path);
+		this.assertOpen();
 		if (size === null) return;
 		const admission = classifyEnrollmentPath(path, size);
 		if (admission === "excluded") return;
@@ -378,6 +389,7 @@ export class ReconciliationController {
 			return;
 		}
 		const text = await this.localVault.read(path);
+		this.assertOpen();
 		if (text === null) return;
 		if (new TextEncoder().encode(text).byteLength > 1_000_000) {
 			await this.journal.recordAttention(
@@ -403,6 +415,7 @@ export class ReconciliationController {
 		const saved = await this.journal.prepareSend(operation.key, {
 			kind: "absent",
 		});
+		this.assertOpen();
 		if (saved.operation.state !== "sent")
 			throw new Error("Enrollment create was not persisted");
 		const payload = new TextDecoder("utf-8", {
@@ -410,12 +423,14 @@ export class ReconciliationController {
 			ignoreBOM: true,
 		}).decode(saved.bytes);
 		try {
+			this.assertOpen();
 			const response = await this.remote.createText(
 				path,
 				payload,
 				epoch,
 				saved.operation.key,
 			);
+			this.assertOpen();
 			if (response.status !== 200 && response.status !== 201)
 				throw new Error("Enrollment create was not accepted");
 			const etag = response.headers.etag;
@@ -427,10 +442,14 @@ export class ReconciliationController {
 				rev: parseETag(etag).rev,
 				hash,
 			});
+			this.assertOpen();
 			await this.journal.resolve(saved.operation.key, { kind: "receipt" });
+			this.assertOpen();
 		} catch (error) {
+			this.assertOpen();
 			if (getStatus(error) === 412) {
 				await this.journal.resolve(saved.operation.key, { kind: "rejection" });
+				this.assertOpen();
 				throw error;
 			}
 			throw error;
@@ -494,7 +513,7 @@ export class ReconciliationController {
 		return false;
 	}
 
-	/** Prefetches text before local reads and records unsupported blobs before cursor advance. */
+	/** Applies only admitted text work and records unsupported blobs before cursor advance. */
 	private async applyChange(
 		change: ReconciliationChangesPage["entries"][number],
 	): Promise<void> {
@@ -510,7 +529,6 @@ export class ReconciliationController {
 			return;
 		}
 		try {
-			await this.applyEngine.preflight(change);
 			await this.applyEngine.apply(change);
 		} catch (error) {
 			if (!(error instanceof UnsupportedRemoteTextError)) throw error;

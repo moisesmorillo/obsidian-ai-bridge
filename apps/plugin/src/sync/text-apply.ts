@@ -50,16 +50,21 @@ export interface TextApplyOptions {
 	deviceName: string;
 }
 
+/** Current or pinned remote authority returned for one requested epoch and revision. */
+export type ResolvedPinnedText =
+	| { deleted?: false; text: string; epoch: string; rev: number; hash: string }
+	| { deleted: true; text: null; epoch: string; rev: number; hash: "" };
+
 /** Fetches immutable remote text by its exact path and server revision. */
 export interface PinnedTextProvider {
 	/** Returns text pinned to the exact epoch and revision, or null when unavailable. */
 	read(path: string, epoch: string, rev: number): Promise<string | null>;
-	/** Reads pinned text with identity replacement when a pruned revision falls back to current. */
+	/** Returns validated current live text or tombstone after a pruned revision. */
 	readResolved?(
 		path: string,
 		epoch: string,
 		rev: number,
-	): Promise<{ text: string; epoch: string; rev: number; hash: string }>;
+	): Promise<ResolvedPinnedText>;
 }
 
 /** Serializes revision-pinned text changes and recovers durable conflict steps. */
@@ -67,10 +72,6 @@ export class TextApplyEngine {
 	private tail: Promise<void> = Promise.resolve();
 	private closed = false;
 	private readonly deviceName: string;
-	private readonly prefetched = new Map<
-		string,
-		{ text: string; epoch: string; rev: number; hash: string }
-	>();
 
 	/** Binds journal authority to text effects and a pinned-revision reader. */
 	constructor(
@@ -86,14 +87,7 @@ export class TextApplyEngine {
 	/** Validates and applies one immutable remote entry without discarding newer local bytes. */
 	apply(change: ChangeEntry): Promise<void> {
 		const parsed = ChangeEntrySchema.parse(structuredClone(change));
-		const key = `${parsed.path}\\0${parsed.etag}\\0${parsed.hash}`;
-		return this.serialize(async () => {
-			try {
-				await this.applyWithFallback(parsed);
-			} finally {
-				this.prefetched.delete(key);
-			}
-		});
+		return this.serialize(() => this.applyWithFallback(parsed));
 	}
 
 	/** Resumes the one verified pending transition after a plugin restart. */
@@ -102,33 +96,6 @@ export class TextApplyEngine {
 			const pending = this.activeJournal.snapshot().pending_apply[0];
 			if (pending) await this.applyWithFallback(pending.change);
 		});
-	}
-
-	/** Reads and validates remote content before an apply can inspect local bytes. */
-	async preflight(change: ChangeEntry): Promise<void> {
-		const parsed = ChangeEntrySchema.parse(change);
-		if (parsed.op === "delete") return;
-		this.assertOpen();
-		const { epoch, rev } = parseETag(parsed.etag);
-		let resolved: { text: string; epoch: string; rev: number; hash: string };
-		if (this.pinnedText.readResolved) {
-			resolved = await this.pinnedText.readResolved(parsed.path, epoch, rev);
-		} else {
-			const text = await this.pinnedText.read(parsed.path, epoch, rev);
-			if (text === null) throw new Error("Pinned remote text is unavailable");
-			resolved = { text, epoch, rev, hash: await digest(text) };
-		}
-		this.assertOpen();
-		if (
-			resolved.epoch !== epoch ||
-			(await digest(resolved.text)) !== resolved.hash ||
-			(resolved.rev === rev && resolved.hash !== parsed.hash)
-		)
-			throw new Error("Pinned remote text metadata is invalid");
-		this.prefetched.set(
-			`${parsed.path}\\0${parsed.etag}\\0${parsed.hash}`,
-			resolved,
-		);
 	}
 
 	/** Fences queued work after plugin unload without claiming host effects were canceled. */
@@ -528,6 +495,11 @@ export class TextApplyEngine {
 		}
 		const remoteCopy = copies.find((copy) => copy.mode === "remote");
 		if (remoteCopy) {
+			await this.fetchText(
+				pending.change.path,
+				pending.change.etag,
+				pending.change.hash,
+			);
 			await this.activeJournal.recordAttention(
 				pending.change.path,
 				"Remote path collides with a local case-folded or Unicode-equivalent path",
@@ -845,43 +817,42 @@ export class TextApplyEngine {
 		expectedHash: string,
 	): Promise<string> {
 		const { epoch, rev } = parseETag(etag);
-		const prefetchedKey = `${path}\\0${etag}\\0${expectedHash}`;
-		const prefetched = this.prefetched.get(prefetchedKey);
-		this.prefetched.delete(prefetchedKey);
-		if (prefetched) {
-			if (prefetched.epoch !== epoch)
-				throw new Error("Pinned remote text epoch mismatch");
-			if (prefetched.rev !== rev) {
-				const pending = this.activeJournal.snapshot().pending_apply[0];
-				if (!pending)
-					throw new Error("Pinned fallback has no durable apply identity");
-				const rebased = {
-					...pending.change,
-					etag: `"${epoch}.${prefetched.rev}"`,
-					hash: prefetched.hash,
-				};
-				await this.activeJournal.rebasePendingApply(rebased);
-				throw new PinnedRevisionRebased(rebased);
-			}
-			if (prefetched.hash !== expectedHash)
-				throw new Error("Pinned remote text hash mismatch");
-			return prefetched.text;
-		}
 		if (this.pinnedText.readResolved) {
 			const result = await this.pinnedText.readResolved(path, epoch, rev);
 			this.assertOpen();
-			if (result.epoch !== epoch || (await digest(result.text)) !== result.hash)
+			if (
+				result.epoch !== epoch ||
+				(result.deleted === true
+					? result.hash !== "" || result.text !== null
+					: result.text === null || (await digest(result.text)) !== result.hash)
+			)
 				throw new Error("Current fallback text metadata is invalid");
-			if (result.rev !== rev) {
+			if (result.rev !== rev || result.deleted === true) {
 				const pending = this.activeJournal.snapshot().pending_apply[0];
 				if (!pending)
 					throw new Error("Pinned fallback has no durable apply identity");
-				const rebased = {
-					...pending.change,
-					etag: `"${epoch}.${result.rev}"`,
-					hash: result.hash,
-				};
-				await this.activeJournal.rebasePendingApply(rebased);
+				if (result.deleted === true && pending.change.op !== "put")
+					throw new Error(
+						"Current tombstone cannot replace this remote operation",
+					);
+				const rebased: ChangeEntry =
+					result.deleted === true
+						? {
+								...pending.change,
+								op: "delete",
+								etag: `"${epoch}.${result.rev}"`,
+								hash: "",
+							}
+						: {
+								...pending.change,
+								etag: `"${epoch}.${result.rev}"`,
+								hash: result.hash,
+							};
+				const copies =
+					pending.step === "prepared"
+						? undefined
+						: await this.rebaseConflictCopies(pending, result);
+				await this.activeJournal.rebasePendingApply(rebased, copies);
 				throw new PinnedRevisionRebased(rebased);
 			}
 			if (result.hash !== expectedHash)
@@ -895,6 +866,53 @@ export class TextApplyEngine {
 			throw new Error("Pinned remote text hash mismatch");
 		this.assertOpen();
 		return text;
+	}
+
+	/** Keeps verified copies and replaces only unsaved remote-copy plans after fallback. */
+	private async rebaseConflictCopies(
+		pending: DeviceState["pending_apply"][number],
+		resolved: ResolvedPinnedText,
+	): Promise<PendingConflictCopy[]> {
+		const next: PendingConflictCopy[] = [];
+		const copies = conflictCopiesFor(pending);
+		const hasRemotePlan = copies.some((copy) => copy.mode === "remote");
+		let hasCurrentRemote = false;
+		for (const copy of copies) {
+			if (copy.mode === "local") {
+				next.push(copy);
+				continue;
+			}
+			const saved = await this.vault.read(copy.path);
+			this.assertOpen();
+			if (saved !== null) {
+				if ((await digest(saved)) !== copy.hash)
+					throw new Error("Conflict copy changed before revision rebase");
+				if (resolved.deleted !== true) {
+					next.push({ ...copy, verified: true });
+					hasCurrentRemote ||= copy.hash === resolved.hash;
+				} else {
+					next.push({ ...copy, mode: "local", verified: undefined });
+				}
+			}
+		}
+		if (hasRemotePlan && resolved.deleted !== true && !hasCurrentRemote) {
+			const side =
+				pending.change.op === "rename" ? "rename_destination" : "path";
+			next.push({
+				path: conflictName(
+					pending.change.path,
+					this.deviceName,
+					resolved.rev,
+					pending.change.at,
+				),
+				source: pending.change.path,
+				side,
+				mode: "remote",
+				device_name: this.deviceName,
+				hash: resolved.hash,
+			});
+		}
+		return next;
 	}
 
 	/** Finds a different exact path with the same canonical case-folded path key. */

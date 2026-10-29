@@ -143,6 +143,47 @@ describe("SyncTransport", () => {
 		expect(session.calls).toHaveLength(2);
 	});
 
+	it("accepts a canonical current text tombstone after a pruned pinned read", async () => {
+		const session = new ResponseSession();
+		session.responses.push({
+			status: 410,
+			headers: {},
+			text: JSON.stringify({
+				error: "revision_pruned",
+				message: "This revision is no longer available.",
+			}),
+		});
+		const etag = `"${epoch}.8"`;
+		session.responses.push({
+			status: 200,
+			headers: { etag, "content-type": "application/json" },
+			text: JSON.stringify({
+				path: "notes/a.md",
+				etag,
+				hash: "",
+				size: 0,
+				kind: "text",
+				deleted: true,
+				origin: "device",
+				updated_at: 1,
+				content: null,
+				offset: 0,
+				length: 0,
+				truncated: false,
+			}),
+		});
+		const transport = new SyncTransport("https://service.test", session);
+		await expect(
+			transport.readResolved("notes/a.md", epoch, 4),
+		).resolves.toEqual({
+			deleted: true,
+			text: null,
+			epoch,
+			rev: 8,
+			hash: "",
+		});
+	});
+
 	it("preserves BOM, CRLF, and Unicode in production-JSON prune fallback", async () => {
 		const session = new ResponseSession();
 		session.responses.push({

@@ -196,6 +196,54 @@ describe("DeviceJournal", () => {
 		expect(await storage.readPayload(operation.payload_ref)).toEqual(bytes);
 	});
 
+	it("retains every archived operation when attention changes for its path", async () => {
+		const journal = await DeviceJournal.open(storage);
+		const path = "notes/a.md";
+		const sent = await journal.enqueue(
+			{ op: "put", path, precondition },
+			bytes,
+		);
+		await journal.prepareSend(sent.key, precondition);
+		const queued = await journal.enqueue(
+			{ op: "delete", path, precondition },
+			new TextEncoder().encode("second immutable operation"),
+		);
+		await journal.resetEpoch("c".repeat(32));
+
+		await journal.recordAttention(path, "A new path-level blocker");
+		await journal.skipApplyForAttention(path, 8, "A feed-level blocker");
+
+		const attention: Array<{
+			path: string;
+			reason: string;
+			operation?: { key: string; state: string; path: string };
+		}> = journal.snapshot().attention;
+		const preserved = attention.filter((item) => item.operation?.path === path);
+		expect(preserved.map((item) => item.operation?.key)).toEqual([
+			sent.key,
+			queued.key,
+		]);
+		expect(preserved.map((item) => item.operation?.state).sort()).toEqual([
+			"queued",
+			"sent",
+		]);
+		expect(
+			journal
+				.snapshot()
+				.attention.filter(
+					(item: {
+						path: string;
+						reason: string;
+						operation?: { key: string; state: string; path: string };
+					}) => item.path === path && item.operation === undefined,
+				),
+		).toEqual([{ path, reason: "A feed-level blocker" }]);
+		expect(await storage.readPayload(sent.payload_ref)).toEqual(bytes);
+		expect(await storage.readPayload(queued.payload_ref)).toEqual(
+			new TextEncoder().encode("second immutable operation"),
+		);
+	});
+
 	it("creates and reuses a stable device identity", async () => {
 		const first = await DeviceJournal.open(storage);
 		const id = first.snapshot().device_id;

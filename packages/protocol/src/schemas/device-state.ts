@@ -131,7 +131,7 @@ export const DeviceBaseEntrySchema = z.discriminatedUnion("deleted", [
 		.strict(),
 ]);
 
-/** One exact local or pinned-remote version tracked by a durable apply transition. */
+/** One local or remote copy plan. Verified marks a visible remote copy that rebasing must preserve. */
 export const PendingConflictCopySchema = z
 	.object({
 		path: DevicePathSchema,
@@ -139,6 +139,7 @@ export const PendingConflictCopySchema = z
 		side: z.enum(["path", "rename_source", "rename_destination"]),
 		mode: z.enum(["local", "remote"]),
 		device_name: z.string().min(1).optional(),
+		verified: z.boolean().optional(),
 		hash: DevicePayloadHashSchema,
 	})
 	.strict();
@@ -210,24 +211,14 @@ export const PendingApplySchema = z
 		}
 		if (pending.conflict_copies) {
 			const seenPaths = new Set<string>();
-			const seenSources = new Set<string>();
-			const seenSides = new Set<string>();
 			for (const [index, copy] of pending.conflict_copies.entries()) {
-				if (seenPaths.has(copy.path) || seenSources.has(copy.source))
+				if (seenPaths.has(copy.path))
 					context.addIssue({
 						code: "custom",
 						message: "Conflict copy paths and sources must be unique",
 						path: ["conflict_copies", index],
 					});
 				seenPaths.add(copy.path);
-				seenSources.add(copy.source);
-				if (seenSides.has(copy.side))
-					context.addIssue({
-						code: "custom",
-						message: "Conflict sides must be unique",
-						path: ["conflict_copies", index, "side"],
-					});
-				seenSides.add(copy.side);
 				if (copy.mode === "remote") {
 					if (pending.change.op !== "put")
 						context.addIssue({
@@ -235,7 +226,7 @@ export const PendingApplySchema = z
 							message: "Remote collision copies only support put entries",
 							path: ["conflict_copies", index, "mode"],
 						});
-					if (copy.hash !== pending.change.hash)
+					if (copy.hash !== pending.change.hash && copy.verified !== true)
 						context.addIssue({
 							code: "custom",
 							message: "Remote conflict hash must match the pinned put hash",

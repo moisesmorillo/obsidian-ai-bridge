@@ -130,15 +130,18 @@ export class SyncTransport {
 		return { text: body.content, epoch, rev };
 	}
 
-	/** Reads pinned text or replaces a pruned row with validated current revision metadata. */
+	/** Reads pinned text or returns validated current live text or tombstone after pruning. */
 	async readResolved(
 		path: string,
 		epoch: string,
 		rev: number,
-	): Promise<{ text: string; epoch: string; rev: number; hash: string }> {
+	): Promise<
+		| { deleted: false; text: string; epoch: string; rev: number; hash: string }
+		| { deleted: true; text: null; epoch: string; rev: number; hash: "" }
+	> {
 		try {
 			const pinned = await this.readPinned(path, epoch, rev);
-			return { ...pinned, hash: await hashText(pinned.text) };
+			return { ...pinned, deleted: false, hash: await hashText(pinned.text) };
 		} catch (error) {
 			if (
 				!(error instanceof SyncTransportError) ||
@@ -150,7 +153,16 @@ export class SyncTransport {
 		if (current.epoch !== epoch)
 			throw new Error("Current fallback changed the vault epoch");
 		const identity = parseETag(current.etag);
+		if (current.deleted)
+			return {
+				deleted: true,
+				text: null,
+				epoch: current.epoch,
+				rev: identity.rev,
+				hash: "",
+			};
 		return {
+			deleted: false,
 			text: current.text,
 			epoch: current.epoch,
 			rev: identity.rev,
@@ -163,10 +175,13 @@ export class SyncTransport {
 		return (await this.readPinned(path, epoch, rev)).text;
 	}
 
-	/** Reads current remote metadata and exact text after a pinned revision was pruned. */
+	/** Reads current live text or tombstone with its validated epoch and revision. */
 	async readCurrent(
 		path: string,
-	): Promise<{ text: string; etag: string; epoch: string }> {
+	): Promise<
+		| { deleted: false; text: string; etag: string; epoch: string }
+		| { deleted: true; text: null; etag: string; epoch: string }
+	> {
 		const response = await this.request(`/v1/files/${encodePath(path)}`);
 		if (
 			response.headers["content-type"]
@@ -182,14 +197,18 @@ export class SyncTransport {
 		if (
 			body.path !== path ||
 			body.etag !== etag ||
-			body.deleted ||
-			body.content === null ||
 			body.offset !== 0 ||
 			body.truncated ||
-			body.length !== body.content.length
+			(body.deleted
+				? body.content !== null || body.length !== 0
+				: body.content === null || body.length !== body.content.length)
 		)
 			throw new Error("Current text metadata is invalid");
-		return { text: body.content, etag, epoch: identity.epoch };
+		if (body.deleted)
+			return { deleted: true, text: null, etag, epoch: identity.epoch };
+		if (body.content === null)
+			throw new Error("Current text metadata is invalid");
+		return { deleted: false, text: body.content, etag, epoch: identity.epoch };
 	}
 
 	/** Publishes one immutable local text file only when the remote path remains absent. */

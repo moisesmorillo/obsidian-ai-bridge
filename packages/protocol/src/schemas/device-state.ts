@@ -131,7 +131,7 @@ export const DeviceBaseEntrySchema = z.discriminatedUnion("deleted", [
 		.strict(),
 ]);
 
-/** One exact local or pinned-remote version tracked by a durable apply transition. */
+/** One local or remote copy plan. Verified marks a visible remote copy that rebasing must preserve. */
 export const PendingConflictCopySchema = z
 	.object({
 		path: DevicePathSchema,
@@ -139,6 +139,7 @@ export const PendingConflictCopySchema = z
 		side: z.enum(["path", "rename_source", "rename_destination"]),
 		mode: z.enum(["local", "remote"]),
 		device_name: z.string().min(1).optional(),
+		verified: z.boolean().optional(),
 		hash: DevicePayloadHashSchema,
 	})
 	.strict();
@@ -210,24 +211,14 @@ export const PendingApplySchema = z
 		}
 		if (pending.conflict_copies) {
 			const seenPaths = new Set<string>();
-			const seenSources = new Set<string>();
-			const seenSides = new Set<string>();
 			for (const [index, copy] of pending.conflict_copies.entries()) {
-				if (seenPaths.has(copy.path) || seenSources.has(copy.source))
+				if (seenPaths.has(copy.path))
 					context.addIssue({
 						code: "custom",
 						message: "Conflict copy paths and sources must be unique",
 						path: ["conflict_copies", index],
 					});
 				seenPaths.add(copy.path);
-				seenSources.add(copy.source);
-				if (seenSides.has(copy.side))
-					context.addIssue({
-						code: "custom",
-						message: "Conflict sides must be unique",
-						path: ["conflict_copies", index, "side"],
-					});
-				seenSides.add(copy.side);
 				if (copy.mode === "remote") {
 					if (pending.change.op !== "put")
 						context.addIssue({
@@ -235,7 +226,7 @@ export const PendingApplySchema = z
 							message: "Remote collision copies only support put entries",
 							path: ["conflict_copies", index, "mode"],
 						});
-					if (copy.hash !== pending.change.hash)
+					if (copy.hash !== pending.change.hash && copy.verified !== true)
 						context.addIssue({
 							code: "custom",
 							message: "Remote conflict hash must match the pinned put hash",
@@ -270,11 +261,57 @@ export const DeviceExpectedWritesSchema = z.record(
 	DevicePayloadHashSchema,
 );
 
-/** Durable user-visible blocker for a path that needs explicit resolution. */
+/** Saved snapshot, page progress, remote paths, and local phase for safe restart. */
+export const ReconciliationCheckpointSchema = z
+	.object({
+		epoch: EpochSchema,
+		head_seq: z.number().int().nonnegative().safe(),
+		stage: z.enum(["manifest", "local", "cursor"]).optional(),
+		page_token: z.string().max(4096).nullable(),
+		page_number: z.number().int().nonnegative().safe(),
+		local_paths: z.array(DevicePathSchema),
+		local_index: z.number().int().nonnegative().safe(),
+		pending_paths: z.array(DevicePathSchema),
+		remote_paths: z.array(DevicePathSchema).optional(),
+	})
+	.strict()
+	.transform((checkpoint) => {
+		const needsRemotePathMigration = checkpoint.remote_paths === undefined;
+		return {
+			...checkpoint,
+			stage: needsRemotePathMigration
+				? "manifest"
+				: (checkpoint.stage ??
+					(checkpoint.page_number > 0 &&
+					checkpoint.page_token === null &&
+					checkpoint.pending_paths.length === 0
+						? "local"
+						: "manifest")),
+			page_token: needsRemotePathMigration ? null : checkpoint.page_token,
+			page_number: needsRemotePathMigration ? 0 : checkpoint.page_number,
+			pending_paths: needsRemotePathMigration ? [] : checkpoint.pending_paths,
+			remote_paths: checkpoint.remote_paths ?? [],
+		};
+	})
+	.superRefine((checkpoint, context) => {
+		if (checkpoint.local_index > checkpoint.local_paths.length)
+			context.addIssue({
+				code: "custom",
+				message: "Local scan offset exceeds its saved path list",
+			});
+	});
+
+/** Inferred durable manifest traversal and local enrollment progress. */
+export type ReconciliationCheckpoint = z.infer<
+	typeof ReconciliationCheckpointSchema
+>;
+
+/** Durable user-visible blocker; old-epoch operations retain full retry identity. */
 export const DeviceAttentionSchema = z
 	.object({
 		path: DevicePathSchema,
 		reason: z.string().min(1),
+		operation: PendingOperationSchema.optional(),
 	})
 	.strict();
 
@@ -284,6 +321,8 @@ export const DeviceStateSchema = z
 		version: z.literal(1),
 		device_id: DeviceOperationKeySchema,
 		client_id: ClientIdSchema.optional(),
+		epoch: EpochSchema.optional(),
+		cursor: z.number().int().nonnegative().safe().nullable().default(null),
 		pending_ops: z
 			.array(PendingOperationSchema)
 			.refine(
@@ -293,8 +332,10 @@ export const DeviceStateSchema = z
 				"Operation keys must be unique",
 			),
 		base: z.record(DevicePathSchema, DeviceBaseEntrySchema).default({}),
+		stale_base_paths: z.array(DevicePathSchema).default([]),
 		pending_apply: z.array(PendingApplySchema).max(1).default([]),
 		expected_writes: DeviceExpectedWritesSchema.default({}),
+		reconciliation: ReconciliationCheckpointSchema.nullable().default(null),
 		attention: z.array(DeviceAttentionSchema).default([]),
 	})
 	.strict();

@@ -87,6 +87,7 @@ export type {
 	PendingApply,
 	PendingConflictCopy,
 	PendingOperation,
+	ReconciliationCheckpoint,
 } from "@protocol/schemas/device-state";
 export {
 	DEVICE_PAYLOAD_DIRECTORY,
@@ -101,6 +102,7 @@ export {
 	PendingApplySchema,
 	PendingConflictCopySchema,
 	PendingOperationSchema,
+	ReconciliationCheckpointSchema,
 } from "@protocol/schemas/device-state";
 export { EpochSchema, ETagSchema } from "@protocol/schemas/etag";
 export {

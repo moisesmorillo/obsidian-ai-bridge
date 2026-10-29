@@ -31,6 +31,26 @@ describe("ObsidianOAuthTransport", () => {
 		});
 	});
 
+	it("preserves exact response text and safe metadata for sync reads", async () => {
+		requestUrlMock.mockResolvedValue({
+			status: 410,
+			headers: { etag: '"epoch.9"', "x-vault-epoch": "epoch" },
+			text: "\ufeffline one\r\nline two\n",
+		});
+		const transport = new ObsidianOAuthTransport();
+		const requestResponse = Reflect.get(transport, "requestResponse") as (
+			url: string,
+			options?: Record<string, unknown>,
+		) => Promise<unknown>;
+		await expect(
+			requestResponse.call(transport, "https://service.test/v1/files/a.md"),
+		).resolves.toEqual({
+			status: 410,
+			headers: { etag: '"epoch.9"', "x-vault-epoch": "epoch" },
+			text: "\ufeffline one\r\nline two\n",
+		});
+	});
+
 	it("hides host errors and non-success response bodies", async () => {
 		const transport = new ObsidianOAuthTransport();
 		requestUrlMock.mockResolvedValue({ status: 400, text: "provider secret" });

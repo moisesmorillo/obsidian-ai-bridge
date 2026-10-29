@@ -3,6 +3,7 @@ import {
 	DeviceStateSchema,
 	PendingApplySchema,
 	PendingOperationSchema,
+	ReconciliationCheckpointSchema,
 } from "../src/schemas/device-state";
 
 const uuid = "018f47b2-5c00-7000-8000-000000000001";
@@ -59,6 +60,22 @@ describe("device journal protocol schemas", () => {
 		},
 	])("accepts a valid $op operation", (operation) => {
 		expect(PendingOperationSchema.safeParse(operation).success).toBe(true);
+	});
+
+	it("restarts legacy checkpoints when their remote path index is absent", () => {
+		const parsed = ReconciliationCheckpointSchema.parse({
+			epoch: "b".repeat(32),
+			head_seq: 4,
+			page_token: null,
+			page_number: 1,
+			local_paths: [],
+			local_index: 0,
+			pending_paths: [],
+		});
+		expect(parsed.stage).toBe("manifest");
+		expect(parsed.page_token).toBeNull();
+		expect(parsed.page_number).toBe(0);
+		expect(parsed.remote_paths).toEqual([]);
 	});
 
 	it("rejects incomplete or invalid durable apply steps", () => {

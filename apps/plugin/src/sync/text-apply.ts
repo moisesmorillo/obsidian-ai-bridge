@@ -16,6 +16,8 @@ export interface TextVault {
 	read(path: string): Promise<string | null>;
 	/** Lists current paths so case-folded and Unicode-key collisions stay visible. */
 	list(): Promise<string[]>;
+	/** Returns raw file size without decoding content, or null when the path is absent. */
+	size(path: string): Promise<number | null>;
 	/** Replaces text only when the exact current value still matches expected. */
 	process(
 		path: string,
@@ -30,16 +32,39 @@ export interface TextVault {
 	rename(from: string, to: string, expected: string): Promise<boolean>;
 }
 
+/** Signals that a pruned revision now uses one validated current row identity. */
+class PinnedRevisionRebased extends Error {
+	/** Replacement change identity already persisted in the journal. */
+	readonly change: ChangeEntry;
+
+	/** Carries the new epoch-bound row into the serialized apply retry. */
+	constructor(change: ChangeEntry) {
+		super("Pinned revision identity changed");
+		this.change = change;
+	}
+}
+
 /** Names conflict copies with one friendly device name for this engine lifetime. */
 export interface TextApplyOptions {
 	/** Stable display name stored with conflict recovery metadata. */
 	deviceName: string;
 }
 
+/** Current or pinned remote authority returned for one requested epoch and revision. */
+export type ResolvedPinnedText =
+	| { deleted?: false; text: string; epoch: string; rev: number; hash: string }
+	| { deleted: true; text: null; epoch: string; rev: number; hash: "" };
+
 /** Fetches immutable remote text by its exact path and server revision. */
 export interface PinnedTextProvider {
 	/** Returns text pinned to the exact epoch and revision, or null when unavailable. */
 	read(path: string, epoch: string, rev: number): Promise<string | null>;
+	/** Returns validated current live text or tombstone after a pruned revision. */
+	readResolved?(
+		path: string,
+		epoch: string,
+		rev: number,
+	): Promise<ResolvedPinnedText>;
 }
 
 /** Serializes revision-pinned text changes and recovers durable conflict steps. */
@@ -62,20 +87,30 @@ export class TextApplyEngine {
 	/** Validates and applies one immutable remote entry without discarding newer local bytes. */
 	apply(change: ChangeEntry): Promise<void> {
 		const parsed = ChangeEntrySchema.parse(structuredClone(change));
-		return this.serialize(() => this.applyEntry(parsed));
+		return this.serialize(() => this.applyWithFallback(parsed));
 	}
 
 	/** Resumes the one verified pending transition after a plugin restart. */
 	resume(): Promise<void> {
 		return this.serialize(async () => {
 			const pending = this.activeJournal.snapshot().pending_apply[0];
-			if (pending) await this.applyEntry(pending.change);
+			if (pending) await this.applyWithFallback(pending.change);
 		});
 	}
 
 	/** Fences queued work after plugin unload without claiming host effects were canceled. */
 	close(): void {
 		this.closed = true;
+	}
+
+	/** Repeats one accepted entry after the journal commits a pruned-revision replacement. */
+	private async applyWithFallback(change: ChangeEntry): Promise<void> {
+		try {
+			await this.applyEntry(change);
+		} catch (error) {
+			if (!(error instanceof PinnedRevisionRebased)) throw error;
+			await this.applyEntry(error.change);
+		}
 	}
 
 	/** Runs one accepted entry or continues its persisted conflict step. */
@@ -107,7 +142,12 @@ export class TextApplyEngine {
 		if (change.op === "rename") return false;
 		const revision = parseETag(change.etag).rev;
 		const base = state.base[change.path];
-		if (!base || revision > base.rev) return false;
+		if (
+			!base ||
+			revision > base.rev ||
+			state.stale_base_paths.includes(change.path)
+		)
+			return false;
 		await this.activeJournal.ignoreApply(change.path, revision);
 		return true;
 	}
@@ -214,9 +254,14 @@ export class TextApplyEngine {
 		const toRev = parseETag(change.etag).rev;
 		const sourceBase = state.base[change.from_path];
 		const destinationBase = state.base[change.path];
-		const sourcePending = sourceBase !== undefined && sourceBase.rev < fromRev;
+		const staleBases = state.stale_base_paths;
+		const sourcePending =
+			sourceBase !== undefined &&
+			(sourceBase.rev < fromRev || staleBases.includes(change.from_path));
 		const destinationPending =
-			destinationBase === undefined || destinationBase.rev < toRev;
+			destinationBase === undefined ||
+			destinationBase.rev < toRev ||
+			staleBases.includes(change.path);
 		if (!sourcePending && !destinationPending) {
 			await this.activeJournal.completeRenameApply(
 				change.from_path,
@@ -450,6 +495,11 @@ export class TextApplyEngine {
 		}
 		const remoteCopy = copies.find((copy) => copy.mode === "remote");
 		if (remoteCopy) {
+			await this.fetchText(
+				pending.change.path,
+				pending.change.etag,
+				pending.change.hash,
+			);
 			await this.activeJournal.recordAttention(
 				pending.change.path,
 				"Remote path collides with a local case-folded or Unicode-equivalent path",
@@ -495,11 +545,14 @@ export class TextApplyEngine {
 			const fromRev = parseETag(change.from_etag).rev;
 			const sourceBase = state.base[change.from_path];
 			const sourcePending =
-				sourceBase !== undefined && sourceBase.rev < fromRev;
+				sourceBase !== undefined &&
+				(sourceBase.rev < fromRev ||
+					state.stale_base_paths.includes(change.from_path));
 			const destinationBase = state.base[change.path];
 			const destinationPending =
 				destinationBase === undefined ||
-				destinationBase.rev < parseETag(change.etag).rev;
+				destinationBase.rev < parseETag(change.etag).rev ||
+				state.stale_base_paths.includes(change.path);
 			if (!destinationPending) {
 				const source = sourcePending
 					? await this.vault.read(change.from_path)
@@ -579,7 +632,9 @@ export class TextApplyEngine {
 			const fromRev = parseETag(change.from_etag).rev;
 			const sourceBase = state.base[change.from_path];
 			const sourcePending =
-				sourceBase !== undefined && sourceBase.rev < fromRev;
+				sourceBase !== undefined &&
+				(sourceBase.rev < fromRev ||
+					state.stale_base_paths.includes(change.from_path));
 			if (sourcePending) {
 				const source = await this.vault.read(change.from_path);
 				if (source !== null) {
@@ -762,6 +817,48 @@ export class TextApplyEngine {
 		expectedHash: string,
 	): Promise<string> {
 		const { epoch, rev } = parseETag(etag);
+		if (this.pinnedText.readResolved) {
+			const result = await this.pinnedText.readResolved(path, epoch, rev);
+			this.assertOpen();
+			if (
+				result.epoch !== epoch ||
+				(result.deleted === true
+					? result.hash !== "" || result.text !== null
+					: result.text === null || (await digest(result.text)) !== result.hash)
+			)
+				throw new Error("Current fallback text metadata is invalid");
+			if (result.rev !== rev || result.deleted === true) {
+				const pending = this.activeJournal.snapshot().pending_apply[0];
+				if (!pending)
+					throw new Error("Pinned fallback has no durable apply identity");
+				if (result.deleted === true && pending.change.op !== "put")
+					throw new Error(
+						"Current tombstone cannot replace this remote operation",
+					);
+				const rebased: ChangeEntry =
+					result.deleted === true
+						? {
+								...pending.change,
+								op: "delete",
+								etag: `"${epoch}.${result.rev}"`,
+								hash: "",
+							}
+						: {
+								...pending.change,
+								etag: `"${epoch}.${result.rev}"`,
+								hash: result.hash,
+							};
+				const copies =
+					pending.step === "prepared"
+						? undefined
+						: await this.rebaseConflictCopies(pending, result);
+				await this.activeJournal.rebasePendingApply(rebased, copies);
+				throw new PinnedRevisionRebased(rebased);
+			}
+			if (result.hash !== expectedHash)
+				throw new Error("Pinned remote text hash mismatch");
+			return result.text;
+		}
 		const text = await this.pinnedText.read(path, epoch, rev);
 		this.assertOpen();
 		if (text === null) throw new Error("Pinned remote text is unavailable");
@@ -769,6 +866,53 @@ export class TextApplyEngine {
 			throw new Error("Pinned remote text hash mismatch");
 		this.assertOpen();
 		return text;
+	}
+
+	/** Keeps verified copies and replaces only unsaved remote-copy plans after fallback. */
+	private async rebaseConflictCopies(
+		pending: DeviceState["pending_apply"][number],
+		resolved: ResolvedPinnedText,
+	): Promise<PendingConflictCopy[]> {
+		const next: PendingConflictCopy[] = [];
+		const copies = conflictCopiesFor(pending);
+		const hasRemotePlan = copies.some((copy) => copy.mode === "remote");
+		let hasCurrentRemote = false;
+		for (const copy of copies) {
+			if (copy.mode === "local") {
+				next.push(copy);
+				continue;
+			}
+			const saved = await this.vault.read(copy.path);
+			this.assertOpen();
+			if (saved !== null) {
+				if ((await digest(saved)) !== copy.hash)
+					throw new Error("Conflict copy changed before revision rebase");
+				if (resolved.deleted !== true) {
+					next.push({ ...copy, verified: true });
+					hasCurrentRemote ||= copy.hash === resolved.hash;
+				} else {
+					next.push({ ...copy, mode: "local", verified: undefined });
+				}
+			}
+		}
+		if (hasRemotePlan && resolved.deleted !== true && !hasCurrentRemote) {
+			const side =
+				pending.change.op === "rename" ? "rename_destination" : "path";
+			next.push({
+				path: conflictName(
+					pending.change.path,
+					this.deviceName,
+					resolved.rev,
+					pending.change.at,
+				),
+				source: pending.change.path,
+				side,
+				mode: "remote",
+				device_name: this.deviceName,
+				hash: resolved.hash,
+			});
+		}
+		return next;
 	}
 
 	/** Finds a different exact path with the same canonical case-folded path key. */

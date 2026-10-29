@@ -41,6 +41,11 @@ class MemoryVault implements TextVault {
 	async list(): Promise<string[]> {
 		return [...this.files.keys()];
 	}
+	/** Returns fixture text size without changing the file. */
+	async size(path: string): Promise<number | null> {
+		const text = this.files.get(path);
+		return text === undefined ? null : new TextEncoder().encode(text).length;
+	}
 	/** Applies text only when the exact observed value remains unchanged. */
 	async process(
 		path: string,
@@ -135,6 +140,116 @@ describe("TextApplyEngine", () => {
 			read: async (_path, _epoch, rev) => (rev === 2 ? remoteText : null),
 		});
 		Object.assign(change, remoteChange);
+	});
+
+	it("replaces a pruned revision identity before applying current bytes", async () => {
+		const newerText = "current revision bytes";
+		const newerHash = await hash(newerText);
+		vault.files.set(change.path, "base bytes");
+		journal = await seedBase(
+			change.path,
+			await hash("base bytes"),
+			storage,
+			journal,
+		);
+		engine = makeEngine(journal, vault, {
+			read: async () => null,
+			readResolved: async () => ({
+				text: newerText,
+				epoch,
+				rev: 3,
+				hash: newerHash,
+			}),
+		});
+		await engine.apply(change);
+		expect(vault.files.get(change.path)).toBe(newerText);
+		expect(journal.snapshot().base[change.path]).toEqual({
+			deleted: false,
+			rev: 3,
+			hash: newerHash,
+		});
+	});
+
+	it("applies a current tombstone after a pruned put revision", async () => {
+		const baseText = "confirmed before prune";
+		vault.files.set(change.path, baseText);
+		journal = await seedBase(
+			change.path,
+			await hash(baseText),
+			storage,
+			journal,
+		);
+		engine = makeEngine(journal, vault, {
+			read: async () => null,
+			readResolved: async () => ({
+				deleted: true,
+				text: null,
+				epoch,
+				rev: 3,
+				hash: "",
+			}),
+		});
+
+		await engine.apply(change);
+
+		expect(vault.files.has(change.path)).toBe(false);
+		expect(journal.snapshot().base[change.path]).toEqual({
+			deleted: true,
+			rev: 3,
+		});
+		expect(journal.snapshot().pending_apply).toEqual([]);
+	});
+
+	it("rebases a pruned pinned row after a saved conflict name", async () => {
+		const oldText = "remote pinned bytes";
+		const currentText = "remote current bytes";
+		const currentHash = await hash(currentText);
+		const localText = "local dirty bytes";
+		vault.files.set(change.path, localText);
+		journal = await seedBase(
+			change.path,
+			await hash("previous base"),
+			storage,
+			journal,
+		);
+		const updateApply = journal.updateApply.bind(journal);
+		journal.updateApply = async (pending) => {
+			await updateApply(pending);
+			if (pending.step === "named")
+				throw new Error("simulated stop after conflict name");
+		};
+		engine = makeEngine(journal, vault, {
+			read: async () => oldText,
+			readResolved: async () => ({
+				text: oldText,
+				epoch,
+				rev: 2,
+				hash: await hash(oldText),
+			}),
+		});
+		const oldChange = { ...change, hash: await hash(oldText) };
+		await expect(engine.apply(oldChange)).rejects.toThrow("simulated stop");
+		expect(journal.snapshot().pending_apply[0]?.step).toBe("named");
+		journal.close();
+		journal = await DeviceJournal.open(storage);
+		engine = makeEngine(journal, vault, {
+			read: async () => null,
+			readResolved: async () => ({
+				text: currentText,
+				epoch,
+				rev: 3,
+				hash: currentHash,
+			}),
+		});
+		await engine.resume();
+		expect(vault.files.get(change.path)).toBe(currentText);
+		expect([...vault.files.values()]).toContain(localText);
+		expect(journal.snapshot().pending_apply).toEqual([]);
+		expect(journal.snapshot().base[change.path]).toEqual({
+			deleted: false,
+			rev: 3,
+			hash: currentHash,
+		});
 	});
 
 	it("applies pinned text only when current bytes match the confirmed base", async () => {
@@ -664,6 +779,102 @@ describe("TextApplyEngine", () => {
 			expect(vault.files.get(conflictPath as string)).toBe(remoteText);
 			expect(journal.snapshot().pending_apply).toEqual([]);
 			expect(journal.snapshot().base["notes/café.md"]?.rev).toBe(2);
+		},
+	);
+
+	it.each([false, true])(
+		"rebases an unsaved or verified remote conflict copy after pruning (saved=%s)",
+		async (saved) => {
+			const collidingPath = "notes/CAFÉ.md";
+			const applyPath = "notes/café.md";
+			const currentText = "new current remote bytes";
+			vault.files.set(collidingPath, "local collision bytes");
+			const update = journal.updateApply.bind(journal);
+			journal.updateApply = async (pending) => {
+				await update(pending);
+				if (pending.step === "named") throw new Error("stopped at named");
+			};
+			engine = makeEngine(
+				journal,
+				vault,
+				{ read: async () => remoteText },
+				{ deviceName: "Test Device" },
+			);
+			await expect(
+				engine.apply({ ...change, path: applyPath }),
+			).rejects.toThrow("stopped at named");
+			const oldCopy = journal.snapshot().pending_apply[0]?.conflict_copies?.[0];
+			expect(oldCopy?.mode).toBe("remote");
+			if (saved && oldCopy) vault.files.set(oldCopy.path, remoteText);
+			journal.close();
+			journal = await DeviceJournal.open(storage);
+			engine = makeEngine(journal, vault, {
+				read: async () => null,
+				readResolved: async () => ({
+					text: currentText,
+					epoch,
+					rev: 3,
+					hash: await hash(currentText),
+				}),
+			});
+
+			await engine.resume();
+
+			expect(vault.files.get(collidingPath)).toBe("local collision bytes");
+			if (saved) expect(vault.files.get(oldCopy?.path ?? "")).toBe(remoteText);
+			const visibleRemote = [...vault.files.entries()].filter(
+				([path]) => path.includes("(conflict ") && path !== oldCopy?.path,
+			);
+			expect(visibleRemote).toHaveLength(1);
+			expect(visibleRemote[0]?.[1]).toBe(currentText);
+			expect(journal.snapshot().pending_apply).toEqual([]);
+			expect(journal.snapshot().base[applyPath]).toEqual({
+				deleted: false,
+				rev: 3,
+				hash: await hash(currentText),
+			});
+		},
+	);
+
+	it.each([false, true])(
+		"applies a pruned current tombstone around a remote conflict plan (saved=%s)",
+		async (saved) => {
+			const collidingPath = "notes/CAFÉ.md";
+			const applyPath = "notes/café.md";
+			vault.files.set(collidingPath, "local collision bytes");
+			const update = journal.updateApply.bind(journal);
+			journal.updateApply = async (pending) => {
+				await update(pending);
+				if (pending.step === "named") throw new Error("stopped at named");
+			};
+			engine = makeEngine(journal, vault, { read: async () => remoteText });
+			await expect(
+				engine.apply({ ...change, path: applyPath }),
+			).rejects.toThrow("stopped at named");
+			const oldCopy = journal.snapshot().pending_apply[0]?.conflict_copies?.[0];
+			if (saved && oldCopy) vault.files.set(oldCopy.path, remoteText);
+			journal.close();
+			journal = await DeviceJournal.open(storage);
+			engine = makeEngine(journal, vault, {
+				read: async () => null,
+				readResolved: async () => ({
+					deleted: true,
+					text: null,
+					epoch,
+					rev: 3,
+					hash: "",
+				}),
+			});
+
+			await engine.resume();
+
+			expect(vault.files.get(collidingPath)).toBe("local collision bytes");
+			if (saved) expect(vault.files.get(oldCopy?.path ?? "")).toBe(remoteText);
+			expect(journal.snapshot().base[applyPath]).toEqual({
+				deleted: true,
+				rev: 3,
+			});
+			expect(journal.snapshot().pending_apply).toEqual([]);
 		},
 	);
 

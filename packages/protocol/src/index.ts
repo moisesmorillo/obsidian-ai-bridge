@@ -81,17 +81,25 @@ export {
 	DeviceTokenResponseSchema,
 } from "@protocol/schemas/device-auth";
 export type {
+	DeviceBaseEntry,
 	DevicePrecondition,
 	DeviceState,
+	PendingApply,
+	PendingConflictCopy,
 	PendingOperation,
 } from "@protocol/schemas/device-state";
 export {
 	DEVICE_PAYLOAD_DIRECTORY,
+	DeviceAttentionSchema,
+	DeviceBaseEntrySchema,
+	DeviceExpectedWritesSchema,
 	DeviceOperationKeySchema,
 	DevicePayloadHashSchema,
 	DevicePayloadReferenceSchema,
 	DevicePreconditionSchema,
 	DeviceStateSchema,
+	PendingApplySchema,
+	PendingConflictCopySchema,
 	PendingOperationSchema,
 } from "@protocol/schemas/device-state";
 export { EpochSchema, ETagSchema } from "@protocol/schemas/etag";

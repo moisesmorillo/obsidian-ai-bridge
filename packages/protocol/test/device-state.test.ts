@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
 	DeviceStateSchema,
+	PendingApplySchema,
 	PendingOperationSchema,
 } from "../src/schemas/device-state";
 
@@ -15,8 +16,15 @@ const common = {
 };
 
 describe("device journal protocol schemas", () => {
-	it("reads old journal documents and accepts an optional enrolled client id", () => {
+	it("reads old journal documents with defaults for remote apply state", () => {
 		const oldState = { version: 1, device_id: uuid, pending_ops: [] };
+		const parsed = DeviceStateSchema.parse(oldState);
+		expect(parsed).toMatchObject({
+			pending_apply: [],
+			base: {},
+			expected_writes: {},
+			attention: [],
+		});
 		expect(DeviceStateSchema.safeParse(oldState).success).toBe(true);
 		expect(
 			DeviceStateSchema.safeParse({
@@ -51,6 +59,143 @@ describe("device journal protocol schemas", () => {
 		},
 	])("accepts a valid $op operation", (operation) => {
 		expect(PendingOperationSchema.safeParse(operation).success).toBe(true);
+	});
+
+	it("rejects incomplete or invalid durable apply steps", () => {
+		const change = {
+			seq: 1,
+			op: "put",
+			path: "notes/a.md",
+			etag: `"${"b".repeat(32)}.2"`,
+			hash: "c".repeat(64),
+			origin: "remote",
+			at: 1,
+		};
+		const state = { version: 1, device_id: uuid, pending_ops: [] };
+		expect(
+			DeviceStateSchema.safeParse({
+				...state,
+				pending_apply: [{ change, step: "copied" }],
+			}).success,
+		).toBe(false);
+		expect(
+			DeviceStateSchema.safeParse({
+				...state,
+				pending_apply: [{ change, step: "unknown" }],
+			}).success,
+		).toBe(false);
+	});
+
+	it("accepts and rejects only recoverable persisted apply state combinations", () => {
+		const put = {
+			seq: 1,
+			op: "put" as const,
+			path: "notes/a.md",
+			etag: `"${"b".repeat(32)}.2"`,
+			hash: "c".repeat(64),
+			origin: "remote",
+			at: 1,
+		};
+		const deletion = { ...put, seq: 2, op: "delete" as const, hash: "" };
+		const rename = {
+			...put,
+			seq: 3,
+			op: "rename" as const,
+			path: "notes/b.md",
+			from_path: "notes/a.md",
+			from_etag: `"${"b".repeat(32)}.1"`,
+		};
+		const localCopy = {
+			conflict_path: "notes/a (conflict Device 2026-10-29 0000 r2).md",
+			conflict_source: "notes/a.md",
+			conflict_mode: "local" as const,
+			conflict_device_name: "Moises Mac",
+			conflict_hash: "d".repeat(64),
+		};
+		const accepted = [
+			{ change: put, step: "prepared" },
+			{ change: put, step: "named", ...localCopy },
+			{ change: deletion, step: "copied", ...localCopy },
+			{ change: rename, step: "named", ...localCopy },
+			{
+				change: put,
+				step: "copied",
+				...localCopy,
+				conflict_mode: "remote" as const,
+				conflict_hash: put.hash,
+			},
+			{
+				change: rename,
+				step: "named",
+				conflict_copies: [
+					{
+						path: "notes/a (conflict Device 2026-10-29 0000 r2).md",
+						source: "notes/a.md",
+						side: "rename_source",
+						mode: "local",
+						device_name: "Moises Mac",
+						hash: "d".repeat(64),
+					},
+					{
+						path: "notes/b (conflict Device 2026-10-29 0000 r2).md",
+						source: "notes/b.md",
+						side: "rename_destination",
+						mode: "local",
+						device_name: "Moises Mac",
+						hash: "e".repeat(64),
+					},
+				],
+			},
+		];
+		for (const pending of accepted)
+			expect(PendingApplySchema.safeParse(pending).success).toBe(true);
+		const { conflict_device_name: _legacyName, ...legacyCopy } = localCopy;
+		expect(
+			PendingApplySchema.safeParse({
+				change: put,
+				step: "named",
+				...legacyCopy,
+			}).success,
+		).toBe(true);
+		expect(
+			PendingApplySchema.safeParse({
+				change: put,
+				step: "copied",
+				...legacyCopy,
+			}).success,
+		).toBe(true);
+		for (const pending of [
+			{
+				change: deletion,
+				step: "named",
+				...localCopy,
+				conflict_mode: "remote",
+			},
+			{ change: rename, step: "copied", ...localCopy, conflict_mode: "remote" },
+			{
+				change: put,
+				step: "copied",
+				...localCopy,
+				conflict_mode: "remote",
+			},
+			{
+				change: put,
+				step: "copied",
+				conflict_copies: [
+					{
+						path: "notes/a (conflict Device 2026-10-29 0000 r2).md",
+						source: "notes/a.md",
+						side: "path",
+						mode: "remote",
+						hash: "d".repeat(64),
+					},
+				],
+			},
+			{ change: put, step: "effect_confirmed" },
+			{ change: put, step: "prepared", ...localCopy },
+			{ change: put, step: "prepared", conflict_device_name: "Moises Mac" },
+		])
+			expect(PendingApplySchema.safeParse(pending).success).toBe(false);
 	});
 
 	it("rejects epochs and revisions outside the canonical safe range", () => {

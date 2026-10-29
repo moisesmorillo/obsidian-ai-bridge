@@ -41,6 +41,124 @@ describe("DeviceJournal", () => {
 		storage = new MemoryStorage();
 	});
 
+	it("persists a verified apply transition and consumes only exact-hash echoes", async () => {
+		const journal = await DeviceJournal.open(storage);
+		const change = {
+			seq: 1,
+			op: "put" as const,
+			path: "notes/a.md",
+			etag: `"${precondition.epoch}.2"`,
+			hash: "c".repeat(64),
+			origin: "remote",
+			at: 1,
+		};
+		await journal.beginApply(change);
+		await journal.setExpectedWrite("notes/a.md", change.hash);
+		expect(
+			await journal.consumeExpectedWrite("notes/a.md", "d".repeat(64)),
+		).toBe(false);
+		expect(await journal.consumeExpectedWrite("notes/a.md", change.hash)).toBe(
+			true,
+		);
+		expect(journal.snapshot().base["notes/a.md"]).toBeUndefined();
+		await journal.completeApply("notes/a.md", {
+			deleted: false,
+			rev: 2,
+			hash: change.hash,
+		});
+		expect(journal.snapshot().base["notes/a.md"]).toEqual({
+			deleted: false,
+			rev: 2,
+			hash: change.hash,
+		});
+	});
+
+	it("rejects backward durable apply steps", async () => {
+		const journal = await DeviceJournal.open(storage);
+		const change = {
+			seq: 3,
+			op: "put" as const,
+			path: "notes/a.md",
+			etag: `"${precondition.epoch}.4"`,
+			hash: "c".repeat(64),
+			origin: "remote",
+			at: 3,
+		};
+		await journal.beginApply(change);
+		await journal.updateApply({
+			change,
+			step: "named",
+			conflict_path: "notes/a (conflict device 2026-10-29 0000 r4).md",
+			conflict_source: change.path,
+			conflict_mode: "local",
+			conflict_hash: "d".repeat(64),
+		});
+		await expect(
+			journal.updateApply({
+				change,
+				step: "prepared",
+				conflict_path: "notes/a (conflict device 2026-10-29 0000 r4).md",
+				conflict_source: change.path,
+				conflict_mode: "local",
+				conflict_hash: "d".repeat(64),
+			}),
+		).rejects.toThrow();
+	});
+
+	it("rejects a confirmed apply revision that would regress a newer base", async () => {
+		const path = "notes/a.md";
+		const deviceId = "018f47b2-5c00-7000-8000-000000000001";
+		storage.state = {
+			version: 1,
+			device_id: deviceId,
+			pending_ops: [],
+			base: { [path]: { deleted: false, rev: 3, hash: "d".repeat(64) } },
+		};
+		const journal = await DeviceJournal.open(storage);
+		const change = {
+			seq: 1,
+			op: "put" as const,
+			path,
+			etag: `"${precondition.epoch}.2"`,
+			hash: "c".repeat(64),
+			origin: "remote",
+			at: 1,
+		};
+		await journal.beginApply(change);
+		await expect(
+			journal.completeApply(path, {
+				deleted: false,
+				rev: 2,
+				hash: change.hash,
+			}),
+		).rejects.toThrow("regress");
+		expect(journal.snapshot().base[path]?.rev).toBe(3);
+		expect(journal.snapshot().pending_apply).toHaveLength(1);
+	});
+
+	it("rejects a confirmed base that does not match the pending revision and content", async () => {
+		const journal = await DeviceJournal.open(storage);
+		const change = {
+			seq: 2,
+			op: "put" as const,
+			path: "notes/a.md",
+			etag: `"${precondition.epoch}.3"`,
+			hash: "c".repeat(64),
+			origin: "remote",
+			at: 2,
+		};
+		await journal.beginApply(change);
+		await expect(
+			journal.completeApply(change.path, {
+				deleted: false,
+				rev: 2,
+				hash: "d".repeat(64),
+			}),
+		).rejects.toThrow();
+		expect(journal.snapshot().base[change.path]).toBeUndefined();
+		expect(journal.snapshot().pending_apply).toHaveLength(1);
+	});
+
 	it("creates and reuses a stable device identity", async () => {
 		const first = await DeviceJournal.open(storage);
 		const id = first.snapshot().device_id;

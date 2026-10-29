@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-10-28T19:31:00Z'
-updated_date: '2026-10-29T20:29:00Z'
+updated_date: '2026-10-29T20:37:00Z'
 labels: []
 dependencies:
   - OAB-8.5
@@ -76,4 +76,12 @@ Final validation: `bun run docs:check` passed; `git diff --check` passed; `bun r
 The owner-approved Obsidian binary residual window remains: a change after the second stat and during durable-copy/write I/O can replace current disk bytes, but the observed bytes remain in the seven-day recovery copy. No independent task or branch reviewer ran in this worker pass. Keep this task In Progress for parent review; do not check acceptance criteria or claim closure.
 
 Validation count correction: `bun run check` passed 91 test files and 1,503 tests: tooling 5/56, protocol 16/300, plugin 17/278, Worker 53/869.
+
+Task-review corrective pass for revision 698a4b9, report `/Users/moisesmorillo/.pi/agent/sessions/--Users-moisesmorillo-workspace-moisesmorillo-obsidian-ai-bridge--/subagent-artifacts/1c692234-7ea2-4dd2-bf70-fe122914faea_code-review_output.md`:
+
+- F1 fixed: `PublicationController.observe` now reads the expected hash for blob paths, hashes the current exact bytes, and consumes the expected marker only when the hash matches. A different concurrent edit does not consume the marker and still becomes its own immutable queued payload. The test covers both matching echo and different bytes. RED: `cd apps/plugin && bunx vitest run test/publication.test.ts` failed because the matching echo queued a put. GREEN: the same command passed 42 tests.
+- F2 fixed: `.pi/plans/oab-8.6-blob-sync.md` now says to keep `TextApplyEngine` named as-is. The plan is ignored and is not part of the commit.
+- Reviewed source: `apps/plugin/src/sync/publication.ts` blob and text event paths, `apps/plugin/src/sync/device-journal.ts` expected-write operations, `apps/plugin/src/sync/text-apply.ts` expected markers before binary effects, `apps/plugin/test/publication.test.ts`, and the changed plan line. Exact `consumeExpectedWrite` keeps the journal authority check; controller `assertOpen` fences the awaited transition. Different bytes retain their expected marker and queue under current observed authority.
+- Validation after correction: `bunx biome check apps/plugin/src/sync/publication.ts apps/plugin/test/publication.test.ts` passed without warnings; `bun run docs:check` passed; `git diff --check` passed; `bun run check` passed lint, docs, all typechecks, 91 test files and 1,504 tests, and builds. The Worker build used dry-run mode.
+- The task remains In Progress. No push or pull request was made.
 <!-- SECTION:NOTES:END -->

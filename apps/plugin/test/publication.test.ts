@@ -1333,6 +1333,42 @@ describe("PublicationController", () => {
 		controller.close();
 	});
 
+	it("consumes exact blob apply echoes and queues different concurrent bytes", async () => {
+		const { controller, journal, vault } = await openController();
+		const path = "assets/echo.png";
+		const appliedBytes = new Uint8Array([0, 255, 1]);
+		const appliedHash = await digestBytesForTest(appliedBytes);
+		await journal.setExpectedWrite(path, appliedHash);
+		vault.binaryFiles.set(path, appliedBytes.slice());
+
+		await controller.observe({ type: "modify", path });
+
+		expect(journal.snapshot().pending_ops).toEqual([]);
+		expect(journal.snapshot().expected_writes[path]).toBeUndefined();
+
+		const concurrentBytes = new Uint8Array([2, 254, 3]);
+		await journal.setExpectedWrite(path, appliedHash);
+		vault.binaryFiles.set(path, concurrentBytes.slice());
+
+		await controller.observe({ type: "modify", path });
+
+		const pending = journal.snapshot().pending_ops;
+		expect(pending).toHaveLength(1);
+		expect(pending[0]).toMatchObject({
+			op: "put",
+			path,
+			precondition: { kind: "absent" },
+		});
+		expect(
+			await journal.readPayload(
+				pending[0]?.payload_ref ?? "",
+				pending[0]?.payload_hash ?? "",
+			),
+		).toEqual(concurrentBytes);
+		expect(journal.snapshot().expected_writes[path]).toBe(appliedHash);
+		controller.close();
+	});
+
 	it("stops after revocation and keeps every unsent operation and payload", async () => {
 		const { controller, journal, remote, vault, storage } =
 			await openController();

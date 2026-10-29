@@ -243,11 +243,20 @@ export class PublicationController {
 					return;
 				}
 				if (admission === "blob") {
+					const expected = this.journal.snapshot().expected_writes[parsed.path];
 					const bytes = await this.vault.readBinary?.(parsed.path);
 					this.assertOpen();
 					if (!bytes) return;
 					const hash = await digest(bytes);
 					this.assertOpen();
+					if (expected === hash) {
+						const consumed = await this.journal.consumeExpectedWrite(
+							parsed.path,
+							hash,
+						);
+						this.assertOpen();
+						if (consumed) return;
+					}
 					const current = this.journal.snapshot();
 					const base = current.base[parsed.path];
 					if (base?.deleted === false && base.hash === hash) return;

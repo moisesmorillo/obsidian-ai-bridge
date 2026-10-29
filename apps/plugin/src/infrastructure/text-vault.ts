@@ -18,6 +18,11 @@ export class ObsidianTextVault implements TextVault {
 		return this.vault.getFiles().map((file) => file.path);
 	}
 
+	/** Returns raw file size without decoding content, or null when the path is absent. */
+	async size(path: string): Promise<number | null> {
+		return this.fileAt(path)?.stat.size ?? null;
+	}
+
 	/** Uses Vault.process so its callback compares the exact observed text atomically. */
 	async process(
 		path: string,

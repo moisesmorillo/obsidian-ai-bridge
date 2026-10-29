@@ -437,6 +437,34 @@ export class DeviceJournal {
 		});
 	}
 
+	/** Clears an unsupported remote apply and records attention without claiming a base. */
+	async skipApplyForAttention(
+		path: string,
+		sequence: number,
+		reason: string,
+	): Promise<void> {
+		return this.serialize(async () => {
+			this.assertOpen();
+			const pending = this.state.pending_apply[0];
+			if (
+				pending &&
+				(pending.change.path !== path || pending.change.seq !== sequence)
+			)
+				throw new Error("Remote apply identity changed");
+			const attention = this.state.attention.filter(
+				(item) => item.path !== path,
+			);
+			const expected_writes = { ...this.state.expected_writes };
+			delete expected_writes[path];
+			await this.commit({
+				...this.state,
+				pending_apply: [],
+				expected_writes,
+				attention: [...attention, { path, reason }],
+			});
+		});
+	}
+
 	/** Commits a strictly newer confirmed revision and clears its durable apply marker. */
 	async completeApply(path: string, base: DeviceBaseEntry): Promise<void> {
 		const parsed = DeviceBaseEntrySchema.parse(base);

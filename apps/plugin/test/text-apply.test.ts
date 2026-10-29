@@ -41,6 +41,11 @@ class MemoryVault implements TextVault {
 	async list(): Promise<string[]> {
 		return [...this.files.keys()];
 	}
+	/** Returns fixture text size without changing the file. */
+	async size(path: string): Promise<number | null> {
+		const text = this.files.get(path);
+		return text === undefined ? null : new TextEncoder().encode(text).length;
+	}
 	/** Applies text only when the exact observed value remains unchanged. */
 	async process(
 		path: string,
@@ -162,6 +167,58 @@ describe("TextApplyEngine", () => {
 			deleted: false,
 			rev: 3,
 			hash: newerHash,
+		});
+	});
+
+	it("rebases a pruned pinned row after a saved conflict name", async () => {
+		const oldText = "remote pinned bytes";
+		const currentText = "remote current bytes";
+		const currentHash = await hash(currentText);
+		const localText = "local dirty bytes";
+		vault.files.set(change.path, localText);
+		journal = await seedBase(
+			change.path,
+			await hash("previous base"),
+			storage,
+			journal,
+		);
+		const updateApply = journal.updateApply.bind(journal);
+		journal.updateApply = async (pending) => {
+			await updateApply(pending);
+			if (pending.step === "named")
+				throw new Error("simulated stop after conflict name");
+		};
+		engine = makeEngine(journal, vault, {
+			read: async () => oldText,
+			readResolved: async () => ({
+				text: oldText,
+				epoch,
+				rev: 2,
+				hash: await hash(oldText),
+			}),
+		});
+		const oldChange = { ...change, hash: await hash(oldText) };
+		await expect(engine.apply(oldChange)).rejects.toThrow("simulated stop");
+		expect(journal.snapshot().pending_apply[0]?.step).toBe("named");
+		journal.close();
+		journal = await DeviceJournal.open(storage);
+		engine = makeEngine(journal, vault, {
+			read: async () => null,
+			readResolved: async () => ({
+				text: currentText,
+				epoch,
+				rev: 3,
+				hash: currentHash,
+			}),
+		});
+		await engine.resume();
+		expect(vault.files.get(change.path)).toBe(currentText);
+		expect([...vault.files.values()]).toContain(localText);
+		expect(journal.snapshot().pending_apply).toEqual([]);
+		expect(journal.snapshot().base[change.path]).toEqual({
+			deleted: false,
+			rev: 3,
+			hash: currentHash,
 		});
 	});
 

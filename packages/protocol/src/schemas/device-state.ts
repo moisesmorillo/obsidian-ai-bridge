@@ -270,18 +270,38 @@ export const DeviceExpectedWritesSchema = z.record(
 	DevicePayloadHashSchema,
 );
 
-/** One saved manifest boundary and offset for restartable reconciliation. */
+/** Saved snapshot, page progress, remote paths, and local phase for safe restart. */
 export const ReconciliationCheckpointSchema = z
 	.object({
 		epoch: EpochSchema,
 		head_seq: z.number().int().nonnegative().safe(),
+		stage: z.enum(["manifest", "local", "cursor"]).optional(),
 		page_token: z.string().max(4096).nullable(),
 		page_number: z.number().int().nonnegative().safe(),
 		local_paths: z.array(DevicePathSchema),
 		local_index: z.number().int().nonnegative().safe(),
 		pending_paths: z.array(DevicePathSchema),
+		remote_paths: z.array(DevicePathSchema).optional(),
 	})
 	.strict()
+	.transform((checkpoint) => {
+		const needsRemotePathMigration = checkpoint.remote_paths === undefined;
+		return {
+			...checkpoint,
+			stage: needsRemotePathMigration
+				? "manifest"
+				: (checkpoint.stage ??
+					(checkpoint.page_number > 0 &&
+					checkpoint.page_token === null &&
+					checkpoint.pending_paths.length === 0
+						? "local"
+						: "manifest")),
+			page_token: needsRemotePathMigration ? null : checkpoint.page_token,
+			page_number: needsRemotePathMigration ? 0 : checkpoint.page_number,
+			pending_paths: needsRemotePathMigration ? [] : checkpoint.pending_paths,
+			remote_paths: checkpoint.remote_paths ?? [],
+		};
+	})
 	.superRefine((checkpoint, context) => {
 		if (checkpoint.local_index > checkpoint.local_paths.length)
 			context.addIssue({

@@ -4,13 +4,13 @@ import {
 	type ManifestEntry,
 	type ManifestPage,
 	parseETag,
-	type VaultReadResult,
+	type ReconciliationCheckpoint,
 } from "@obsidian-ai-bridge/protocol";
 import type { DeviceJournal } from "@plugin/sync/device-journal";
+import { classifyEnrollmentPath } from "@plugin/sync/enrollment-scope";
+import { UnsupportedRemoteTextError } from "@plugin/sync/remote-text";
 import type { TextApplyEngine, TextVault } from "@plugin/sync/text-apply";
 
-/** Canonical protocol observations used at the reconciliation boundary. */
-export type ReconciliationVault = Pick<VaultReadResult, "epoch" | "head_seq">;
 /** Canonical manifest row, including tombstone and content-kind authority. */
 export type ReconciliationManifestEntry = Pick<
 	ManifestEntry,
@@ -26,8 +26,6 @@ export type ReconciliationChangesPage = ChangesPage;
 
 /** Remote reads and enrollment creates consumed by the reconciliation controller. */
 export interface ReconciliationRemote {
-	/** Captures current epoch and head before a full manifest traversal. */
-	vault(): Promise<ReconciliationVault>;
 	/** Returns one manifest page for its saved seek token. */
 	manifest(pageToken: string | null): Promise<ReconciliationManifestPage>;
 	/** Returns one page of immutable changes after a saved cursor. */
@@ -88,6 +86,7 @@ export class ReconciliationController {
 	/** Fences new work after plugin unload without claiming in-flight host work stopped. */
 	close(): void {
 		this.closed = true;
+		this.applyEngine.close();
 	}
 
 	/** Traverses manifest pages and local files while persisting restart boundaries. */
@@ -95,109 +94,225 @@ export class ReconciliationController {
 		restartOnSnapshotChange = true,
 	): Promise<void> {
 		this.assertOpen();
-		const vault = await this.remote.vault();
-		this.assertOpen();
-		let state = this.journal.snapshot();
-		if (state.epoch !== vault.epoch) await this.journal.resetEpoch(vault.epoch);
-		await this.applyEngine.resume();
-		state = this.journal.snapshot();
-		let checkpoint = state.reconciliation;
-		if (
-			!checkpoint ||
-			checkpoint.epoch !== vault.epoch ||
-			checkpoint.head_seq !== vault.head_seq
-		) {
+		let checkpoint: ReconciliationCheckpoint | null =
+			this.journal.snapshot().reconciliation;
+		let page: ReconciliationManifestPage | null = null;
+		if (!checkpoint) {
+			page = await this.readManifestPage(null, restartOnSnapshotChange);
+			await this.journal.resetEpoch(page.epoch);
 			checkpoint = {
-				epoch: vault.epoch,
-				head_seq: vault.head_seq,
+				epoch: page.epoch,
+				head_seq: page.head_seq,
+				stage: "manifest",
 				page_token: null,
 				page_number: 0,
 				local_paths: await this.localVault.list(),
 				local_index: 0,
-				pending_paths: [],
+				pending_paths: page.entries.map((entry) => entry.path),
+				remote_paths: page.entries.map((entry) => entry.path),
 			};
 			await this.journal.setReconciliationCheckpoint(checkpoint);
-		}
-
-		let pageToken = checkpoint.page_token;
-		let pageNumber = checkpoint.page_number;
-		while (true) {
-			this.assertOpen();
-			let page: ReconciliationManifestPage;
+		} else if (checkpoint.stage === "manifest") {
 			try {
-				page = await this.remote.manifest(pageToken);
+				page = await this.readManifestPage(
+					checkpoint.page_token,
+					restartOnSnapshotChange,
+				);
 			} catch (error) {
-				if (restartOnSnapshotChange && isRecoveryError(error))
-					return this.runReconciliation(false);
-				throw error;
+				if (!restartOnSnapshotChange || !isRecoveryError(error)) throw error;
+				await this.journal.setReconciliationCheckpoint(null);
+				return this.runReconciliation(false);
 			}
+			if (
+				page.epoch !== checkpoint.epoch ||
+				page.head_seq !== checkpoint.head_seq
+			) {
+				if (!restartOnSnapshotChange)
+					throw new Error("Manifest snapshot changed during reconciliation");
+				await this.journal.resetEpoch(page.epoch);
+				await this.journal.setReconciliationCheckpoint(null);
+				return this.runReconciliation(false);
+			}
+		}
+		await this.resumeApply();
+
+		while (checkpoint.stage === "manifest") {
 			this.assertOpen();
-			if (page.epoch !== vault.epoch || page.head_seq !== vault.head_seq) {
-				if (restartOnSnapshotChange) return this.runReconciliation(false);
-				throw new Error("Manifest snapshot changed during reconciliation");
+			if (!page) {
+				try {
+					page = await this.readManifestPage(
+						checkpoint.page_token,
+						restartOnSnapshotChange,
+					);
+				} catch (error) {
+					if (!restartOnSnapshotChange || !isRecoveryError(error)) throw error;
+					await this.journal.setReconciliationCheckpoint(null);
+					return this.runReconciliation(false);
+				}
 			}
-			const remaining = page.entries.map((entry) => entry.path);
-			for (const entry of page.entries) {
-				this.assertOpen();
-				await this.applyManifestEntry(entry);
-				remaining.shift();
+			if (
+				page.epoch !== checkpoint.epoch ||
+				page.head_seq !== checkpoint.head_seq
+			) {
+				if (!restartOnSnapshotChange)
+					throw new Error("Manifest snapshot changed during reconciliation");
+				await this.journal.resetEpoch(page.epoch);
+				await this.journal.setReconciliationCheckpoint(null);
+				return this.runReconciliation(false);
+			}
+			const pagePaths = page.entries.map((entry) => entry.path);
+			let pendingPaths: string[] = [...checkpoint.pending_paths];
+			if (pendingPaths.some((path) => !pagePaths.includes(path)))
+				throw new Error("Saved manifest paths do not match the page snapshot");
+			const remotePaths: string[] = [...checkpoint.remote_paths];
+			for (const entry of page.entries)
+				if (!remotePaths.includes(entry.path)) remotePaths.push(entry.path);
+			if (pendingPaths.length === 0 && page.entries.length > 0) {
+				pendingPaths = page.entries.map((entry) => entry.path);
 				checkpoint = {
 					...checkpoint,
-					page_token: pageToken,
-					page_number: pageNumber,
-					pending_paths: [...remaining],
+					pending_paths: pendingPaths,
+					remote_paths: remotePaths,
+				};
+				await this.journal.setReconciliationCheckpoint(checkpoint);
+			} else if (
+				JSON.stringify(remotePaths) !== JSON.stringify(checkpoint.remote_paths)
+			) {
+				checkpoint = { ...checkpoint, remote_paths: remotePaths };
+				await this.journal.setReconciliationCheckpoint(checkpoint);
+			}
+			for (const entry of page.entries) {
+				if (!pendingPaths.includes(entry.path)) continue;
+				this.assertOpen();
+				await this.applyManifestEntry(entry);
+				pendingPaths = pendingPaths.filter((path) => path !== entry.path);
+				checkpoint = {
+					...checkpoint,
+					pending_paths: pendingPaths,
 				};
 				await this.journal.setReconciliationCheckpoint(checkpoint);
 			}
-			pageToken = page.next_page;
-			pageNumber += 1;
 			checkpoint = {
 				...checkpoint,
-				page_token: pageToken,
-				page_number: pageNumber,
+				page_token: page.next_page,
+				page_number: checkpoint.page_number + 1,
 				pending_paths: [],
+				stage: page.next_page === null ? "local" : "manifest",
 			};
 			await this.journal.setReconciliationCheckpoint(checkpoint);
-			if (pageToken === null) break;
+			page = null;
 		}
 
-		checkpoint = this.journal.snapshot().reconciliation ?? checkpoint;
-		const remotePaths = new Set<string>();
-		let next: string | null = null;
-		do {
-			const page = await this.remote.manifest(next);
-			for (const row of page.entries) remotePaths.add(row.path);
-			next = page.next_page;
-		} while (next !== null);
-		for (
-			let index = checkpoint.local_index;
-			index < checkpoint.local_paths.length;
-			index += 1
-		) {
-			this.assertOpen();
-			const path = checkpoint.local_paths[index];
-			if (path && !remotePaths.has(path))
-				await this.publishLocalCreate(path, vault.epoch);
-			checkpoint = {
-				...checkpoint,
-				local_index: index + 1,
-			};
+		if (checkpoint.stage === "local") {
+			const resolvedPaths = await this.resolveSentCreates(checkpoint.epoch);
+			if (resolvedPaths.length > 0) {
+				checkpoint = {
+					...checkpoint,
+					remote_paths: [
+						...new Set([...checkpoint.remote_paths, ...resolvedPaths]),
+					],
+				};
+				await this.journal.setReconciliationCheckpoint(checkpoint);
+			}
+			for (
+				let index = checkpoint.local_index;
+				index < checkpoint.local_paths.length;
+				index += 1
+			) {
+				this.assertOpen();
+				const path = checkpoint.local_paths[index];
+				if (path && !checkpoint.remote_paths.includes(path)) {
+					try {
+						await this.publishLocalCreate(path, checkpoint.epoch);
+					} catch (error) {
+						if (
+							getStatus(error) !== 412 &&
+							!(restartOnSnapshotChange && isRecoveryError(error))
+						)
+							throw error;
+						await this.journal.setReconciliationCheckpoint(null);
+						return this.runReconciliation(false);
+					}
+				}
+				checkpoint = {
+					...checkpoint,
+					local_index: index + 1,
+				};
+				await this.journal.setReconciliationCheckpoint(checkpoint);
+			}
+			checkpoint = { ...checkpoint, stage: "cursor" };
 			await this.journal.setReconciliationCheckpoint(checkpoint);
 		}
-		await this.journal.setCursor(vault.epoch, vault.head_seq);
+		await this.journal.setCursor(checkpoint.epoch, checkpoint.head_seq);
 		await this.journal.setReconciliationCheckpoint(null);
+	}
+
+	/** Resolves response-lost creates only when a current manifest confirms their hash. */
+	private async resolveSentCreates(epoch: string): Promise<string[]> {
+		const sent = this.journal
+			.snapshot()
+			.pending_ops.filter((operation) => operation.state === "sent");
+		if (sent.length === 0) return [];
+		const hashes = new Map(
+			sent.map((operation) => [operation.path, operation.payload_hash]),
+		);
+		const resolvedPaths: string[] = [];
+		let page = await this.remote.manifest(null);
+		if (page.epoch !== epoch) return resolvedPaths;
+		while (true) {
+			for (const entry of page.entries) {
+				if (hashes.get(entry.path) !== entry.hash || entry.kind !== "text")
+					continue;
+				await this.applyManifestEntry(entry);
+				resolvedPaths.push(entry.path);
+			}
+			if (page.next_page === null) return resolvedPaths;
+			page = await this.remote.manifest(page.next_page);
+			if (page.epoch !== epoch) return resolvedPaths;
+		}
+	}
+
+	/** Reads one saved snapshot page and retries only a stale page token once. */
+	private async readManifestPage(
+		pageToken: string | null,
+		restartOnSnapshotChange: boolean,
+	): Promise<ReconciliationManifestPage> {
+		try {
+			return await this.remote.manifest(pageToken);
+		} catch (error) {
+			if (restartOnSnapshotChange && isRecoveryError(error)) {
+				if (pageToken !== null) throw error;
+				await this.journal.setReconciliationCheckpoint(null);
+				return this.remote.manifest(null);
+			}
+			throw error;
+		}
 	}
 
 	/** Applies text rows through TextApplyEngine and records unsupported rows as attention. */
 	private async applyManifestEntry(
 		entry: ReconciliationManifestEntry,
 	): Promise<void> {
-		if (entry.kind !== "text" && !entry.deleted) {
+		const remoteAdmission = classifyEnrollmentPath(entry.path, 0);
+		if (remoteAdmission === "excluded") return;
+		if (entry.kind !== "text" || remoteAdmission === "blob") {
 			await this.journal.recordAttention(
 				entry.path,
 				"Blob synchronization is not available yet",
 			);
 			return;
+		}
+		const localSize = await this.localVault.size(entry.path);
+		if (localSize !== null) {
+			const localAdmission = classifyEnrollmentPath(entry.path, localSize);
+			if (localAdmission === "excluded") return;
+			if (localAdmission === "blob") {
+				await this.journal.recordAttention(
+					entry.path,
+					"Blob synchronization is not available yet",
+				);
+				return;
+			}
 		}
 		const epoch = parseETag(entry.etag).epoch;
 		const revision = parseETag(entry.etag).rev;
@@ -224,7 +339,7 @@ export class ReconciliationController {
 			origin: "manifest",
 			at: 0,
 		};
-		await this.applyEngine.apply(change);
+		await this.applyChange(change);
 		if (epoch !== this.journal.snapshot().epoch)
 			throw new Error("Manifest row belongs to a stale epoch");
 		await this.acknowledgeObservedCreate(entry);
@@ -251,8 +366,26 @@ export class ReconciliationController {
 
 	/** Queues and sends only create-only operations with unchanged immutable payloads. */
 	private async publishLocalCreate(path: string, epoch: string): Promise<void> {
+		const size = await this.localVault.size(path);
+		if (size === null) return;
+		const admission = classifyEnrollmentPath(path, size);
+		if (admission === "excluded") return;
+		if (admission === "blob") {
+			await this.journal.recordAttention(
+				path,
+				"Blob synchronization is not available yet",
+			);
+			return;
+		}
 		const text = await this.localVault.read(path);
 		if (text === null) return;
+		if (new TextEncoder().encode(text).byteLength > 1_000_000) {
+			await this.journal.recordAttention(
+				path,
+				"Inline text exceeds the enrollment size limit",
+			);
+			return;
+		}
 		let operation = this.journal
 			.snapshot()
 			.pending_ops.find(
@@ -272,9 +405,10 @@ export class ReconciliationController {
 		});
 		if (saved.operation.state !== "sent")
 			throw new Error("Enrollment create was not persisted");
-		const payload = new TextDecoder("utf-8", { fatal: true }).decode(
-			saved.bytes,
-		);
+		const payload = new TextDecoder("utf-8", {
+			fatal: true,
+			ignoreBOM: true,
+		}).decode(saved.bytes);
 		try {
 			const response = await this.remote.createText(
 				path,
@@ -297,8 +431,7 @@ export class ReconciliationController {
 		} catch (error) {
 			if (getStatus(error) === 412) {
 				await this.journal.resolve(saved.operation.key, { kind: "rejection" });
-				await this.runReconciliation();
-				return;
+				throw error;
 			}
 			throw error;
 		}
@@ -309,26 +442,100 @@ export class ReconciliationController {
 		this.assertOpen();
 		const state = this.journal.snapshot();
 		if (!state.epoch || state.cursor === null) return this.runReconciliation();
-		await this.applyEngine.resume();
+		await this.resumeApply();
 		const page = await this.remote.changes(state.epoch, state.cursor);
 		this.assertOpen();
 		if (page.epoch !== state.epoch) return this.runReconciliation();
 		for (const entry of page.entries) {
 			this.assertOpen();
 			if (entry.seq <= (this.journal.snapshot().cursor ?? 0)) continue;
-			if (entry.op !== "delete" && entry.hash === "") {
+			if (classifyEnrollmentPath(entry.path, 0) === "excluded") {
+				await this.journal.setCursor(state.epoch, entry.seq);
+				continue;
+			}
+			if (entry.op === "delete" && !(await this.isConfirmedTextDelete(entry))) {
+				await this.journal.recordAttention(
+					entry.path,
+					"Delete row is not a confirmed inline-text revision",
+				);
+			} else if (entry.op !== "delete" && entry.hash === "") {
 				await this.journal.recordAttention(
 					entry.path,
 					"Remote entry has no text content",
 				);
 			} else {
-				await this.applyEngine.apply(entry);
+				await this.applyChange(entry);
 			}
 			await this.journal.setCursor(state.epoch, entry.seq);
 		}
 		const latest = this.journal.snapshot().cursor ?? 0;
 		if (page.entries.length === 0 && page.head_seq > latest)
 			await this.journal.setCursor(state.epoch, page.head_seq);
+	}
+
+	/** Confirms a delete's exact revision and text kind from the current manifest row. */
+	private async isConfirmedTextDelete(
+		change: ReconciliationChangesPage["entries"][number],
+	): Promise<boolean> {
+		let page = await this.remote.manifest(null);
+		const epoch = this.journal.snapshot().epoch;
+		while (page.epoch === epoch) {
+			const row = page.entries.find((entry) => entry.path === change.path);
+			if (row)
+				return (
+					row.etag === change.etag &&
+					row.seq === change.seq &&
+					row.deleted &&
+					row.kind === "text"
+				);
+			if (page.next_page === null) return false;
+			page = await this.remote.manifest(page.next_page);
+		}
+		return false;
+	}
+
+	/** Prefetches text before local reads and records unsupported blobs before cursor advance. */
+	private async applyChange(
+		change: ReconciliationChangesPage["entries"][number],
+	): Promise<void> {
+		const size = await this.localVault.size(change.path);
+		const admission = classifyEnrollmentPath(change.path, size ?? 0);
+		if (admission === "excluded") return;
+		if (admission === "blob") {
+			await this.journal.skipApplyForAttention(
+				change.path,
+				change.seq,
+				"Blob synchronization is not available yet",
+			);
+			return;
+		}
+		try {
+			await this.applyEngine.preflight(change);
+			await this.applyEngine.apply(change);
+		} catch (error) {
+			if (!(error instanceof UnsupportedRemoteTextError)) throw error;
+			await this.journal.skipApplyForAttention(
+				change.path,
+				change.seq,
+				"Blob synchronization is not available yet",
+			);
+		}
+	}
+
+	/** Clears an unsupported recovered row without claiming its remote base. */
+	private async resumeApply(): Promise<void> {
+		try {
+			await this.applyEngine.resume();
+		} catch (error) {
+			if (!(error instanceof UnsupportedRemoteTextError)) throw error;
+			const pending = this.journal.snapshot().pending_apply[0];
+			if (!pending || pending.change.path !== error.path) throw error;
+			await this.journal.skipApplyForAttention(
+				pending.change.path,
+				pending.change.seq,
+				"Blob synchronization is not available yet",
+			);
+		}
 	}
 
 	/** Orders public entry points and keeps the admission queue live after one rejection. */

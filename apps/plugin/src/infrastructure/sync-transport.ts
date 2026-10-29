@@ -5,10 +5,12 @@ import {
 	type ManifestPage,
 	ManifestPageSchema,
 	parseETag,
+	TextReadResponseSchema,
 	type VaultReadResult,
 	VaultReadResultSchema,
 } from "@obsidian-ai-bridge/protocol";
 import type { OAuthTransportResponse } from "@plugin/infrastructure/oauth-transport";
+import { UnsupportedRemoteTextError } from "@plugin/sync/remote-text";
 
 /** Authenticated response capability consumed without exposing the session credential. */
 export interface SyncResponseSession {
@@ -99,14 +101,33 @@ export class SyncTransport {
 		const response = await this.request(`/v1/files/${encodedPath}?${query}`, {
 			headers: { "x-vault-epoch": epoch },
 		});
+		if (
+			response.headers["content-type"]
+				?.split(";", 1)[0]
+				?.trim()
+				.toLowerCase() === "application/octet-stream"
+		)
+			throw new UnsupportedRemoteTextError(path);
 		const etag = response.headers.etag;
-		const responseEpoch = response.headers["x-vault-epoch"];
-		if (!etag || responseEpoch !== epoch)
-			throw new Error("Pinned text metadata is invalid");
+		if (!etag) throw new Error("Pinned text metadata is invalid");
+		const body = TextReadResponseSchema.parse(parseJson(response.text));
 		const identity = parseETag(etag);
-		if (identity.epoch !== epoch || identity.rev !== rev)
+		const bodyIdentity = parseETag(body.etag);
+		if (
+			body.path !== path ||
+			body.etag !== etag ||
+			bodyIdentity.epoch !== epoch ||
+			bodyIdentity.rev !== rev ||
+			identity.epoch !== epoch ||
+			identity.rev !== rev ||
+			body.deleted ||
+			body.content === null ||
+			body.offset !== 0 ||
+			body.truncated ||
+			body.length !== body.content.length
+		)
 			throw new Error("Pinned text revision does not match its request");
-		return { text: response.text, epoch, rev };
+		return { text: body.content, epoch, rev };
 	}
 
 	/** Reads pinned text or replaces a pruned row with validated current revision metadata. */
@@ -147,11 +168,28 @@ export class SyncTransport {
 		path: string,
 	): Promise<{ text: string; etag: string; epoch: string }> {
 		const response = await this.request(`/v1/files/${encodePath(path)}`);
+		if (
+			response.headers["content-type"]
+				?.split(";", 1)[0]
+				?.trim()
+				.toLowerCase() === "application/octet-stream"
+		)
+			throw new UnsupportedRemoteTextError(path);
 		const etag = response.headers.etag;
-		const epoch = response.headers["x-vault-epoch"];
-		if (!etag || !epoch || parseETag(etag).epoch !== epoch)
+		if (!etag) throw new Error("Current text metadata is invalid");
+		const body = TextReadResponseSchema.parse(parseJson(response.text));
+		const identity = parseETag(etag);
+		if (
+			body.path !== path ||
+			body.etag !== etag ||
+			body.deleted ||
+			body.content === null ||
+			body.offset !== 0 ||
+			body.truncated ||
+			body.length !== body.content.length
+		)
 			throw new Error("Current text metadata is invalid");
-		return { text: response.text, etag, epoch };
+		return { text: body.content, etag, epoch: identity.epoch };
 	}
 
 	/** Publishes one immutable local text file only when the remote path remains absent. */

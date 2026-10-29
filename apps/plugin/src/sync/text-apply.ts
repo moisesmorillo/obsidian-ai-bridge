@@ -16,6 +16,8 @@ export interface TextVault {
 	read(path: string): Promise<string | null>;
 	/** Lists current paths so case-folded and Unicode-key collisions stay visible. */
 	list(): Promise<string[]>;
+	/** Returns raw file size without decoding content, or null when the path is absent. */
+	size(path: string): Promise<number | null>;
 	/** Replaces text only when the exact current value still matches expected. */
 	process(
 		path: string,
@@ -65,6 +67,10 @@ export class TextApplyEngine {
 	private tail: Promise<void> = Promise.resolve();
 	private closed = false;
 	private readonly deviceName: string;
+	private readonly prefetched = new Map<
+		string,
+		{ text: string; epoch: string; rev: number; hash: string }
+	>();
 
 	/** Binds journal authority to text effects and a pinned-revision reader. */
 	constructor(
@@ -80,7 +86,14 @@ export class TextApplyEngine {
 	/** Validates and applies one immutable remote entry without discarding newer local bytes. */
 	apply(change: ChangeEntry): Promise<void> {
 		const parsed = ChangeEntrySchema.parse(structuredClone(change));
-		return this.serialize(() => this.applyWithFallback(parsed));
+		const key = `${parsed.path}\\0${parsed.etag}\\0${parsed.hash}`;
+		return this.serialize(async () => {
+			try {
+				await this.applyWithFallback(parsed);
+			} finally {
+				this.prefetched.delete(key);
+			}
+		});
 	}
 
 	/** Resumes the one verified pending transition after a plugin restart. */
@@ -89,6 +102,33 @@ export class TextApplyEngine {
 			const pending = this.activeJournal.snapshot().pending_apply[0];
 			if (pending) await this.applyWithFallback(pending.change);
 		});
+	}
+
+	/** Reads and validates remote content before an apply can inspect local bytes. */
+	async preflight(change: ChangeEntry): Promise<void> {
+		const parsed = ChangeEntrySchema.parse(change);
+		if (parsed.op === "delete") return;
+		this.assertOpen();
+		const { epoch, rev } = parseETag(parsed.etag);
+		let resolved: { text: string; epoch: string; rev: number; hash: string };
+		if (this.pinnedText.readResolved) {
+			resolved = await this.pinnedText.readResolved(parsed.path, epoch, rev);
+		} else {
+			const text = await this.pinnedText.read(parsed.path, epoch, rev);
+			if (text === null) throw new Error("Pinned remote text is unavailable");
+			resolved = { text, epoch, rev, hash: await digest(text) };
+		}
+		this.assertOpen();
+		if (
+			resolved.epoch !== epoch ||
+			(await digest(resolved.text)) !== resolved.hash ||
+			(resolved.rev === rev && resolved.hash !== parsed.hash)
+		)
+			throw new Error("Pinned remote text metadata is invalid");
+		this.prefetched.set(
+			`${parsed.path}\\0${parsed.etag}\\0${parsed.hash}`,
+			resolved,
+		);
 	}
 
 	/** Fences queued work after plugin unload without claiming host effects were canceled. */
@@ -805,6 +845,28 @@ export class TextApplyEngine {
 		expectedHash: string,
 	): Promise<string> {
 		const { epoch, rev } = parseETag(etag);
+		const prefetchedKey = `${path}\\0${etag}\\0${expectedHash}`;
+		const prefetched = this.prefetched.get(prefetchedKey);
+		this.prefetched.delete(prefetchedKey);
+		if (prefetched) {
+			if (prefetched.epoch !== epoch)
+				throw new Error("Pinned remote text epoch mismatch");
+			if (prefetched.rev !== rev) {
+				const pending = this.activeJournal.snapshot().pending_apply[0];
+				if (!pending)
+					throw new Error("Pinned fallback has no durable apply identity");
+				const rebased = {
+					...pending.change,
+					etag: `"${epoch}.${prefetched.rev}"`,
+					hash: prefetched.hash,
+				};
+				await this.activeJournal.rebasePendingApply(rebased);
+				throw new PinnedRevisionRebased(rebased);
+			}
+			if (prefetched.hash !== expectedHash)
+				throw new Error("Pinned remote text hash mismatch");
+			return prefetched.text;
+		}
 		if (this.pinnedText.readResolved) {
 			const result = await this.pinnedText.readResolved(path, epoch, rev);
 			this.assertOpen();

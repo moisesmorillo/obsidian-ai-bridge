@@ -1,4 +1,7 @@
-import { pathKey } from "@obsidian-ai-bridge/protocol";
+import {
+	type PendingConflictCopy,
+	pathKey,
+} from "@obsidian-ai-bridge/protocol";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { OAuthTransportResponse } from "../src/infrastructure/oauth-transport";
 import {
@@ -38,7 +41,7 @@ class MemoryStorage {
 	}
 }
 
-/** Provides guarded in-memory text effects for apply tests. */
+/** Provides guarded in-memory text and byte effects for apply tests. */
 class MemoryVault implements TextVault {
 	files = new Map<string, string>();
 	binaryFiles = new Map<string, Uint8Array>();
@@ -53,7 +56,7 @@ class MemoryVault implements TextVault {
 		this.reads.push(path);
 		return this.files.get(path) ?? null;
 	}
-	/** Reads exact attachment bytes without text conversion. */
+	/** Reads binary fixture bytes or the exact UTF-8 bytes of a text fixture. */
 	async readBinary(path: string): Promise<Uint8Array | null> {
 		const bytes = this.binaryFiles.get(path);
 		if (bytes) return bytes.slice();
@@ -76,15 +79,16 @@ class MemoryVault implements TextVault {
 		this.binaryFiles.set(path, bytes.slice());
 		return true;
 	}
-	/** Moves exact binary bytes to the test trash only when they still match. */
+	/** Moves text or binary file bytes to the test trash only when they still match. */
 	async trashBinary(path: string, expected: Uint8Array): Promise<boolean> {
-		const current = this.binaryFiles.get(path);
+		const current = await this.readBinary(path);
 		if (
 			!current ||
 			current.byteLength !== expected.byteLength ||
 			!current.every((byte, index) => byte === expected[index])
 		)
 			return false;
+		this.files.delete(path);
 		this.binaryFiles.delete(path);
 		return true;
 	}
@@ -348,6 +352,24 @@ async function hash(text: string): Promise<string> {
 		.map((byte) => byte.toString(16).padStart(2, "0"))
 		.join("");
 }
+
+/** Crosses local copy representation, durable step, current kind, rename effects, and interruption after authority or safeguard rebasing. */
+const localRecoveryCases = [false, true].flatMap((byteCopies) =>
+	(["named", "copied"] as const).flatMap((step) =>
+		(["unchanged", "text", "blob", "deleted"] as const).flatMap((kind) =>
+			(kind === "unchanged"
+				? (["none"] as const)
+				: !byteCopies && kind === "blob"
+					? (["none", "authority", "safeguards"] as const)
+					: (["none", "authority"] as const)
+			).flatMap((restartAt) =>
+				(!byteCopies && kind === "blob" ? [false, true] : [false]).map(
+					(rename) => ({ byteCopies, step, kind, restartAt, rename }),
+				),
+			),
+		),
+	),
+);
 
 describe("ReconciliationController", () => {
 	let context: Awaited<ReturnType<typeof setup>>;
@@ -714,6 +736,346 @@ describe("ReconciliationController", () => {
 			});
 			expect(context.journal.snapshot().cursor).toBe(6);
 			expect(context.journal.snapshot().pending_apply).toEqual([]);
+		},
+	);
+
+	it.each(localRecoveryCases)(
+		"resumes local recovery bytes=$byteCopies step=$step kind=$kind restart=$restartAt rename=$rename",
+		async ({ byteCopies, step, kind, restartAt, rename }) => {
+			const path = "notes/local-recovery-matrix.md";
+			const source = "notes/local-recovery-source.md";
+			const sourceText = "dirty local rename source";
+			const oldText = "original inline authority";
+			const oldHash = await hash(oldText);
+			const localText = "\uFEFFdirty local\r\ntext";
+			const local = byteCopies
+				? new Uint8Array(1_000_001).fill(0x61)
+				: new TextEncoder().encode(localText);
+			if (byteCopies) local.set([0xff, 0x28]);
+			const localHash = await hashBytes(local);
+			const currentText =
+				kind === "unchanged" ? oldText : "newer inline authority";
+			const currentBlob = new Uint8Array(1_000_002).fill(0x62);
+			currentBlob.set([0xc3, 0x28]);
+			const currentHash =
+				kind === "deleted"
+					? ""
+					: kind === "blob"
+						? await hashBytes(currentBlob)
+						: await hash(currentText);
+			const revision = kind === "unchanged" ? 2 : 3;
+			const followingPath = "after-local-recovery.md";
+			const following = "later feed content";
+			const followingHash = await hash(following);
+			let restarted = false;
+			const transport = new SyncTransport("https://service.test", {
+				requestResponse: async (url): Promise<OAuthTransportResponse> => {
+					const request = new URL(url);
+					const isFollowing = request.pathname.endsWith(followingPath);
+					if (
+						restarted &&
+						!isFollowing &&
+						kind !== "unchanged" &&
+						request.searchParams.get("rev") === "2"
+					) {
+						return {
+							status: 410,
+							headers: {},
+							text: JSON.stringify({
+								error: "revision_pruned",
+								message: "This revision is no longer available.",
+							}),
+						};
+					}
+					if (restarted && !isFollowing && kind === "blob")
+						return {
+							status: 200,
+							headers: {
+								etag: `"${epoch}.3"`,
+								"content-type": "application/octet-stream",
+								"content-length": String(currentBlob.byteLength),
+							},
+							text: "",
+							arrayBuffer: currentBlob.slice().buffer,
+						};
+					const deleted = restarted && !isFollowing && kind === "deleted";
+					const text = isFollowing
+						? following
+						: restarted
+							? currentText
+							: oldText;
+					const etag = `"${epoch}.${isFollowing ? 6 : restarted ? revision : 2}"`;
+					return {
+						status: 200,
+						headers: { etag, "content-type": "application/json" },
+						text: JSON.stringify({
+							path: isFollowing ? followingPath : path,
+							etag,
+							hash: deleted
+								? ""
+								: isFollowing
+									? followingHash
+									: restarted
+										? currentHash
+										: oldHash,
+							size: deleted ? 0 : new TextEncoder().encode(text).byteLength,
+							kind: "text",
+							deleted,
+							origin: "remote",
+							updated_at: 5,
+							content: deleted ? null : text,
+							offset: 0,
+							length: deleted ? 0 : text.length,
+							truncated: false,
+						}),
+					};
+				},
+			});
+			await context.journal.resetEpoch(epoch);
+			await context.journal.setCursor(epoch, 4);
+			await context.journal.setBase(path, {
+				deleted: false,
+				rev: 1,
+				hash: await hash("confirmed base"),
+			});
+			if (byteCopies) context.vault.binaryFiles.set(path, local.slice());
+			else context.vault.files.set(path, localText);
+			if (rename) {
+				context.vault.files.set(source, sourceText);
+				await context.journal.setBase(source, {
+					deleted: false,
+					rev: 1,
+					hash: await hash("confirmed source"),
+				});
+			}
+			const update = context.journal.updateApply.bind(context.journal);
+			context.journal.updateApply = async (pending) => {
+				await update(pending);
+				if (pending.step === step)
+					throw new Error("stop at local recovery step");
+			};
+			let engine = new TextApplyEngine(
+				context.journal,
+				context.vault,
+				transport,
+				{ deviceName: "test" },
+			);
+			const row = {
+				seq: 5,
+				...(rename
+					? {
+							op: "rename" as const,
+							from_path: source,
+							from_etag: `"${epoch}.2"`,
+						}
+					: { op: "put" as const }),
+				path,
+				etag: `"${epoch}.2"`,
+				hash: oldHash,
+				origin: "remote",
+				at: 5,
+			};
+			await expect(engine.apply(row)).rejects.toThrow(
+				"stop at local recovery step",
+			);
+			expectExactBytes(
+				(await context.vault.readBinary(path)) ?? undefined,
+				local,
+			);
+			expect(context.journal.snapshot().base[path]?.rev).toBe(1);
+			expect(context.journal.snapshot().cursor).toBe(4);
+			const copies: PendingConflictCopy[] =
+				context.journal.snapshot().pending_apply[0]?.conflict_copies ?? [];
+			const visibleCopies = copies.filter(
+				(copy) => copy.purpose !== "pre_apply",
+			);
+			const visible = visibleCopies.find((copy) => copy.source === path);
+			if (!visible) throw new Error("Missing visible local copy plan");
+			expect(visible.hash).toBe(localHash);
+			engine.close();
+			context.journal.close();
+			restarted = true;
+			context = {
+				...context,
+				journal: await DeviceJournal.open(context.storage),
+			};
+			engine = new TextApplyEngine(context.journal, context.vault, transport, {
+				deviceName: "test",
+			});
+			if (restartAt !== "none") {
+				const rebase = context.journal.rebasePendingApply.bind(context.journal);
+				context.journal.rebasePendingApply = async (change, plans) => {
+					await rebase(change, plans);
+					if (
+						restartAt === "authority" ||
+						plans?.some((copy) => copy.purpose === "pre_apply")
+					)
+						throw new Error("stop after durable local rebase");
+				};
+				await expect(engine.resume()).rejects.toThrow(
+					"stop after durable local rebase",
+				);
+				const saved = context.journal.snapshot().pending_apply[0];
+				if (restartAt === "authority")
+					expect(saved?.conflict_copies).toEqual(copies);
+				else {
+					expect(saved?.step).toBe("named");
+					expect(saved?.conflict_copies).toContainEqual(
+						expect.objectContaining(visible),
+					);
+					expect(saved?.conflict_copies).toContainEqual(
+						expect.objectContaining({
+							path: `.ai-bridge/pre-apply/${localHash}`,
+							hash: localHash,
+							kind: "blob",
+							purpose: "pre_apply",
+						}),
+					);
+				}
+				expect(context.journal.snapshot().base[path]?.rev).toBe(1);
+				engine.close();
+				context.journal.close();
+				context = {
+					...context,
+					journal: await DeviceJournal.open(context.storage),
+				};
+				engine = new TextApplyEngine(
+					context.journal,
+					context.vault,
+					transport,
+					{ deviceName: "test" },
+				);
+			}
+			const events: string[] = [];
+			let readbackBeforeBase = false;
+			const read = context.vault.readBinary.bind(context.vault);
+			context.vault.readBinary = async (source) => {
+				const bytes = await read(source);
+				if (source === path) {
+					events.push("read");
+					if (events.includes("write") && !readbackBeforeBase) {
+						expect(context.journal.snapshot().base[path]?.rev).toBe(1);
+						expectExactBytes(bytes ?? undefined, currentBlob);
+						readbackBeforeBase = true;
+					}
+				}
+				return bytes;
+			};
+			context.vault.stat = async (source) => {
+				if (source === path) events.push("stat");
+				const bytes = await context.vault.readBinary(source);
+				return bytes ? { mtime: 1, size: bytes.byteLength } : null;
+			};
+			const modify = context.vault.modifyBinary.bind(context.vault);
+			context.vault.modifyBinary = async (source, bytes) => {
+				if (source === path) {
+					expectExactBytes(
+						(await context.vault.readBinary(visible.path)) ?? undefined,
+						local,
+					);
+					expectExactBytes(
+						(await context.vault.readBinary(
+							`.ai-bridge/pre-apply/${localHash}`,
+						)) ?? undefined,
+						local,
+					);
+					expect(
+						events.filter((event) => event === "stat").length,
+					).toBeGreaterThanOrEqual(2);
+					expect(
+						context.journal.snapshot().pending_apply[0]?.conflict_copies,
+					).toContainEqual(expect.objectContaining(visible));
+					expect(context.journal.snapshot().base[path]?.rev).toBe(1);
+					events.push("write");
+				}
+				return modify(source, bytes);
+			};
+			context.controller = new ReconciliationController(
+				context.journal,
+				engine,
+				context.vault,
+				context.remote,
+			);
+			context.remote.feed.push({
+				epoch,
+				head_seq: 6,
+				entries: [
+					row,
+					{
+						seq: 6,
+						op: "put",
+						path: followingPath,
+						etag: `"${epoch}.6"`,
+						hash: followingHash,
+						origin: "remote",
+						at: 6,
+					},
+				],
+			});
+			await context.controller.resume();
+			await engine.resume();
+			await context.controller.resume();
+
+			expectExactBytes(
+				(await context.vault.readBinary(visible.path)) ?? undefined,
+				local,
+			);
+			expect(
+				(await context.vault.list()).filter((source) =>
+					source.includes("conflict"),
+				),
+			).toHaveLength(visibleCopies.length);
+			for (const copy of visibleCopies) {
+				expectExactBytes(
+					(await context.vault.readBinary(copy.path)) ?? undefined,
+					copy.source === path ? local : new TextEncoder().encode(sourceText),
+				);
+			}
+			if (rename) {
+				expect(await context.vault.readBinary(source)).toBeNull();
+				expect(context.journal.snapshot().base[source]).toEqual({
+					deleted: true,
+					rev: 2,
+				});
+			}
+			if (kind === "deleted") {
+				expect(await context.vault.readBinary(path)).toBeNull();
+				expect(context.journal.snapshot().base[path]).toEqual({
+					deleted: true,
+					rev: revision,
+				});
+			} else {
+				expectExactBytes(
+					(await context.vault.readBinary(path)) ?? undefined,
+					kind === "blob" ? currentBlob : new TextEncoder().encode(currentText),
+				);
+				expect(context.journal.snapshot().base[path]).toEqual({
+					deleted: false,
+					rev: revision,
+					hash: currentHash,
+				});
+			}
+			if (kind === "blob") {
+				expect(readbackBeforeBase).toBe(true);
+				expect(events).toContain("write");
+				expect(events.slice(events.indexOf("write") + 1)).toContain("read");
+				expectExactBytes(
+					(await context.vault.readBinary(
+						`.ai-bridge/pre-apply/${localHash}`,
+					)) ?? undefined,
+					local,
+				);
+			}
+			expect(context.vault.files.get(followingPath)).toBe(following);
+			expect(context.journal.snapshot().pending_apply).toEqual([]);
+			expect(context.journal.snapshot().cursor).toBe(6);
+			expect(
+				context.journal
+					.snapshot()
+					.attention.some((item: { reason: string }) =>
+						item.reason.includes("not available"),
+					),
+			).toBe(false);
 		},
 	);
 

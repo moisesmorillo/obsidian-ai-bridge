@@ -1854,13 +1854,130 @@ export class TextApplyEngine {
 		return true;
 	}
 
-	/** Completes verified conflict copies before it commits the pinned remote effect. */
+	/**
+	 * Adds byte safeguards to verified local text plans without changing visible paths, sources, hashes, or device names.
+	 * The journal returns to named through explicit plan rebasing, never through a backward updateApply transition.
+	 */
+	private async prepareBlobRecovery(
+		pending: DeviceState["pending_apply"][number],
+		copies: PendingConflictCopy[],
+		state: DeviceState,
+	): Promise<void> {
+		const change = pending.change;
+		if (change.op === "delete")
+			throw new Error("Blob replacement needs live authority");
+		const readBinary = this.vault.readBinary;
+		if (!readBinary)
+			throw new Error("Binary recovery capability is unavailable");
+		for (const copy of copies) {
+			const saved = await readBinary.call(this.vault, copy.path);
+			this.assertOpen();
+			if (!saved || (await digestBytes(saved)) !== copy.hash)
+				return this.attend(
+					copy.path,
+					"Local recovery bytes changed before blob replacement",
+				);
+		}
+		const current = await readBinary.call(this.vault, change.path);
+		this.assertOpen();
+		const currentHash = current === null ? null : await digestBytes(current);
+		if (
+			change.op === "put" &&
+			(current === null || currentHash === change.hash)
+		) {
+			await this.applyBlobChange(
+				{ ...change, op: "put" },
+				state.base[change.path] ?? null,
+			);
+			return;
+		}
+		const plans: PendingConflictCopy[] = copies.map((copy) => ({
+			...copy,
+			kind: "blob",
+			purpose: copy.purpose ?? "conflict",
+		}));
+		if (currentHash !== null && currentHash !== change.hash) {
+			const visible = plans.find(
+				(copy) =>
+					copy.source === change.path &&
+					copy.purpose === "conflict" &&
+					copy.hash === currentHash,
+			);
+			const base = state.base[change.path];
+			const cleanRenameDestination =
+				change.op === "rename" &&
+				base?.deleted === false &&
+				base.hash === currentHash;
+			if (!visible && !cleanRenameDestination)
+				return this.attend(
+					change.path,
+					"Local bytes changed after text conflict preservation",
+				);
+			if (
+				!plans.some(
+					(copy) =>
+						copy.source === change.path &&
+						copy.purpose === "pre_apply" &&
+						copy.hash === currentHash,
+				)
+			) {
+				plans.push({
+					path: `.ai-bridge/pre-apply/${currentHash}`,
+					source: change.path,
+					side: change.op === "rename" ? "rename_destination" : "path",
+					mode: "local",
+					device_name: visible?.device_name ?? this.deviceName,
+					hash: currentHash,
+					kind: "blob",
+					purpose: "pre_apply",
+				});
+			}
+		}
+		await this.activeJournal.rebasePendingApply(change, plans);
+		const rebased = this.activeJournal.snapshot().pending_apply[0];
+		if (!rebased) throw new Error("Blob recovery plans were not saved");
+		const next = { ...rebased, content_kind: "blob" as const };
+		await this.activeJournal.updateApply(next);
+		await this.resumePending(next);
+	}
+
+	/** Selects local recovery authority independently of text or byte copy representation before guarded effects. */
 	private async finishCopiedApply(
 		pending: DeviceState["pending_apply"][number],
 		state: DeviceState,
 	): Promise<void> {
 		const copies = conflictCopiesFor(pending);
-		if (pending.content_kind === "text" && pending.change.op === "put") {
+		const change = pending.change;
+		const destinationBase = state.base[change.path];
+		const destinationPending =
+			change.op !== "rename" ||
+			destinationBase === undefined ||
+			destinationBase.rev < parseETag(change.etag).rev ||
+			state.stale_base_paths.includes(change.path);
+		let resolved: ResolvedPinnedBlob | undefined;
+		if (
+			copies.every((copy) => copy.mode === "local") &&
+			this.pinnedText.readResolvedBlob &&
+			destinationPending &&
+			(change.op === "put" || change.op === "rename")
+		) {
+			resolved =
+				change.op === "rename"
+					? await this.resolvePinnedContent(change)
+					: await this.resolvePinnedContent({ ...change, op: "put" });
+			if (
+				resolved.kind === "blob" &&
+				copies.some((copy) => copy.kind !== "blob")
+			) {
+				await this.prepareBlobRecovery(pending, copies, state);
+				return;
+			}
+		}
+		if (
+			copies.some((copy) => copy.kind === "blob") &&
+			pending.content_kind === "text" &&
+			pending.change.op === "put"
+		) {
 			const binaryCopies = copies.filter((copy) => copy.kind === "blob");
 			if (binaryCopies.length !== 2)
 				return this.attend(
@@ -2008,7 +2125,6 @@ export class TextApplyEngine {
 			});
 			return;
 		}
-		const change = pending.change;
 		if (change.op === "delete") {
 			const current = await this.vault.read(change.path);
 			if (current !== null) {
@@ -2089,7 +2205,10 @@ export class TextApplyEngine {
 				return;
 			}
 		}
-		const remote = await this.fetchText(change.path, change.etag, change.hash);
+		const remote =
+			resolved?.kind === "text"
+				? resolved.text
+				: await this.fetchText(change.path, change.etag, change.hash);
 		const destination = await this.vault.read(change.path);
 		if (destination !== null && destination !== remote) {
 			const copy = copies.find(

@@ -183,7 +183,7 @@ export class DeviceJournal {
 		});
 	}
 
-	/** Replaces pruned authority while retaining copy identities and their content-kind recovery route when copies remain. */
+	/** Replaces apply authority or copy plans and retains their content-kind recovery route when plans remain. */
 	async rebasePendingApply(
 		change: DeviceState["pending_apply"][number]["change"],
 		conflictCopies?: PendingConflictCopy[],

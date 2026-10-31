@@ -223,6 +223,15 @@ async function seedBase(
 	return DeviceJournal.open(storage);
 }
 
+/** Checks length and every byte without deep object comparisons of large fixtures. */
+function expectExactBytes(
+	actual: Uint8Array | undefined,
+	expected: Uint8Array,
+): void {
+	expect(actual?.byteLength).toBe(expected.byteLength);
+	expect(actual?.every((byte, index) => byte === expected[index])).toBe(true);
+}
+
 /** Hashes exact test bytes with Web Crypto. */
 async function hashBytes(bytes: Uint8Array): Promise<string> {
 	const digest = await crypto.subtle.digest("SHA-256", bytes.slice().buffer);
@@ -699,56 +708,83 @@ describe("TextApplyEngine", () => {
 		expect(journal.snapshot().base[path]).toEqual({ deleted: true, rev: 2 });
 	});
 
-	it("preserves invalid UTF-8 bytes when oversized Markdown changes to inline text", async () => {
-		const path = "notes/invalid-large.md";
-		const localBytes = new Uint8Array(1_000_001).fill(0x61);
-		localBytes.set([0xc3, 0x28], 0);
-		const remoteText = "new inline markdown";
-		const localHash = await hashBytes(localBytes);
-		const remoteHash = await hash(remoteText);
-		const etag = `"${epoch}.2"`;
-		vault.binaryFiles.set(path, localBytes.slice());
-		vault.mtimeByPath.set(path, 10);
-		await journal.setBase(path, { deleted: false, rev: 1, hash: localHash });
-		const transport = new SyncTransport("https://service.test", {
-			requestResponse: async () => ({
-				status: 200,
-				headers: { etag, "content-type": "application/json" },
-				text: JSON.stringify({
-					path,
-					etag,
-					hash: remoteHash,
-					size: new TextEncoder().encode(remoteText).byteLength,
-					kind: "text",
-					deleted: false,
-					origin: "remote",
-					updated_at: 2,
-					content: remoteText,
-					offset: 0,
-					length: remoteText.length,
-					truncated: false,
+	it.each(["feed", "manifest-kind", "current"] as const)(
+		"preserves invalid UTF-8 bytes when oversized Markdown changes to inline text through %s",
+		async (caller) => {
+			const path = "notes/invalid-large.md";
+			const localBytes = new Uint8Array(1_000_001).fill(0x61);
+			localBytes.set([0xc3, 0x28], 0);
+			const remoteText = "new inline markdown";
+			const localHash = await hashBytes(localBytes);
+			const remoteHash = await hash(remoteText);
+			const etag = `"${epoch}.2"`;
+			vault.binaryFiles.set(path, localBytes.slice());
+			vault.mtimeByPath.set(path, 10);
+			const transport = new SyncTransport("https://service.test", {
+				requestResponse: async () => ({
+					status: 200,
+					headers: { etag, "content-type": "application/json" },
+					text: JSON.stringify({
+						path,
+						etag,
+						hash: remoteHash,
+						size: new TextEncoder().encode(remoteText).byteLength,
+						kind: "text",
+						deleted: false,
+						origin: "remote",
+						updated_at: 2,
+						content: remoteText,
+						offset: 0,
+						length: remoteText.length,
+						truncated: false,
+					}),
 				}),
-			}),
-		});
-		engine = makeEngine(journal, vault, transport);
+			});
+			await journal.resetEpoch(epoch);
+			await journal.setCursor(epoch, 0);
+			await journal.setBase(path, { deleted: false, rev: 1, hash: localHash });
+			vault.read = async (source) => {
+				const bytes = vault.binaryFiles.get(source);
+				return bytes
+					? new TextDecoder().decode(bytes)
+					: (vault.files.get(source) ?? null);
+			};
+			engine = makeEngine(journal, vault, transport);
 
-		await engine.apply({ ...change, path, etag, hash: remoteHash });
+			if (caller === "current") {
+				await engine.applyCurrent(path, {
+					text: remoteText,
+					epoch,
+					rev: 2,
+					hash: remoteHash,
+				});
+			} else {
+				await engine.apply(
+					{ ...change, path, etag, hash: remoteHash },
+					caller === "manifest-kind" ? "text" : undefined,
+				);
+			}
 
-		const conflict = [...vault.binaryFiles.entries()].find(([copyPath]) =>
-			copyPath.includes("(conflict Test Device"),
-		);
-		expect(conflict?.[1]).toEqual(localBytes);
-		expect(vault.binaryFiles.get(`.ai-bridge/pre-apply/${localHash}`)).toEqual(
-			localBytes,
-		);
-		expect(vault.files.get(path)).toBe(remoteText);
-		expect(vault.binaryFiles.has(path)).toBe(false);
-		expect(journal.snapshot().base[path]).toEqual({
-			deleted: false,
-			rev: 2,
-			hash: remoteHash,
-		});
-	});
+			const conflict = [...vault.binaryFiles.entries()].find(([copyPath]) =>
+				copyPath.includes("(conflict Test Device"),
+			);
+			expect(conflict).toBeDefined();
+			expectExactBytes(conflict?.[1], localBytes);
+			expectExactBytes(
+				vault.binaryFiles.get(`.ai-bridge/pre-apply/${localHash}`),
+				localBytes,
+			);
+			expect(vault.files.get(path)).toBe(remoteText);
+			expect(vault.binaryFiles.has(path)).toBe(false);
+			expect(journal.snapshot().base[path]).toEqual({
+				deleted: false,
+				rev: 2,
+				hash: remoteHash,
+			});
+			expect(journal.snapshot().pending_apply).toEqual([]);
+			expect(journal.snapshot().cursor).toBe(0);
+		},
+	);
 
 	it("uses pinned text kind when an oversized Markdown file shrinks", async () => {
 		const path = "notes/large.md";
@@ -1170,6 +1206,77 @@ describe("TextApplyEngine", () => {
 			rev: 3,
 			hash: currentHash,
 		});
+	});
+
+	it("reuses copied blob plans when pruning supplies newer inline authority", async () => {
+		const path = "notes/copied-kind-change.md";
+		const local = new Uint8Array(1_000_001).fill(0x61);
+		local.set([0xff, 0x28]);
+		const localHash = await hashBytes(local);
+		const oldRemote = new Uint8Array(1_000_002).fill(0x62);
+		const oldHash = await hashBytes(oldRemote);
+		const currentText = "current inline bytes";
+		const currentHash = await hash(currentText);
+		const remoteChange = { ...change, path, hash: oldHash };
+		vault.binaryFiles.set(path, local.slice());
+		await journal.setBase(path, { deleted: false, rev: 1, hash: localHash });
+		const update = journal.updateApply.bind(journal);
+		journal.updateApply = async (pending) => {
+			await update(pending);
+			if (pending.step === "copied") throw new Error("stop after copied blob");
+		};
+		engine = makeEngine(journal, vault, {
+			read: async () => null,
+			readResolvedBlob: async () => ({
+				kind: "blob",
+				bytes: oldRemote,
+				epoch,
+				rev: 2,
+				hash: oldHash,
+			}),
+		});
+		await expect(engine.apply(remoteChange, "blob")).rejects.toThrow(
+			"stop after copied blob",
+		);
+		const copies = journal.snapshot().pending_apply[0]?.conflict_copies;
+		expect(copies).toHaveLength(2);
+		for (const copy of copies ?? [])
+			expectExactBytes(vault.binaryFiles.get(copy.path), local);
+		journal.close();
+		journal = await DeviceJournal.open(storage);
+		engine = makeEngine(journal, vault, {
+			read: async () => currentText,
+			readResolved: async () => ({
+				text: currentText,
+				epoch,
+				rev: 3,
+				hash: currentHash,
+			}),
+			readResolvedBlob: async () => ({
+				kind: "text",
+				text: currentText,
+				epoch,
+				rev: 3,
+				hash: currentHash,
+			}),
+		});
+
+		await engine.resume();
+		await engine.resume();
+
+		for (const copy of copies ?? [])
+			expectExactBytes(vault.binaryFiles.get(copy.path), local);
+		expect(
+			[...vault.binaryFiles.keys()].filter((name) => name.includes("conflict")),
+		).toHaveLength(1);
+		expect(vault.binaryFiles.has(path)).toBe(false);
+		expect(vault.files.get(path)).toBe(currentText);
+		expect(journal.snapshot().base[path]).toEqual({
+			deleted: false,
+			rev: 3,
+			hash: currentHash,
+		});
+		expect(journal.snapshot().pending_apply).toEqual([]);
 	});
 
 	it("applies current text when a pruned blob path changed content kind", async () => {

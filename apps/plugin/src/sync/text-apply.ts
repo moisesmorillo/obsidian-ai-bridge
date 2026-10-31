@@ -496,7 +496,10 @@ export class TextApplyEngine {
 							hash: remote.hash,
 						};
 			if (remote.kind === "text") {
-				await this.activeJournal.rebasePendingApply(rebased, []);
+				await this.activeJournal.rebasePendingApply(
+					rebased,
+					pending.conflict_copies ?? [],
+				);
 				await this.applyInlineTextAfterBlob(
 					rebased as ChangeEntry & { op: "put" },
 					base,
@@ -711,12 +714,21 @@ export class TextApplyEngine {
 			);
 	}
 
-	/** Preserves exact local bytes before a pinned inline-text revision replaces a blob path. */
+	/** Preserves local blob bytes for inline authority and resumes existing copy identities without naming them again. */
 	private async applyInlineTextAfterBlob(
 		change: ChangeEntry & { op: "put" },
 		base: DeviceBaseEntry | null,
 		remoteText: string,
 	): Promise<void> {
+		const pending = this.activeJournal.snapshot().pending_apply[0];
+		if (pending?.conflict_copies?.some((copy) => copy.kind === "blob")) {
+			await this.activeJournal.updateApply({
+				...pending,
+				content_kind: "text",
+			});
+			await this.resumePending({ ...pending, content_kind: "text" });
+			return;
+		}
 		const readBinary = this.vault.readBinary;
 		const stat = this.vault.stat;
 		if (!readBinary || !stat) {
@@ -775,13 +787,12 @@ export class TextApplyEngine {
 			step: "named",
 			conflict_copies: [conflictCopy, recoveryCopy],
 		});
-		const pending = this.activeJournal.snapshot().pending_apply[0];
-		if (!pending)
-			throw new Error("Inline-text recovery identity was not saved");
-		await this.resumePending(pending);
+		const named = this.activeJournal.snapshot().pending_apply[0];
+		if (!named) throw new Error("Inline-text recovery identity was not saved");
+		await this.resumePending(named);
 	}
 
-	/** Applies one put or delete after exact observed bytes and durable conflict checks. */
+	/** Selects local byte preservation independently of remote kind before guarded put or delete effects. */
 	private async applyPathChange(
 		change: Extract<ChangeEntry, { op: "put" | "delete" }>,
 		base: DeviceBaseEntry | null,
@@ -792,21 +803,25 @@ export class TextApplyEngine {
 		const size = await this.vault.size(change.path);
 		this.assertOpen();
 		const admission = classifyEnrollmentPath(change.path, size ?? 0);
-		const isBlob =
-			contentKind === undefined ? admission === "blob" : contentKind === "blob";
-		if (!forceText && isBlob && change.op === "put") {
+		const preserveLocalBytes = admission === "blob";
+		const readRemoteAsBlob =
+			contentKind === "blob" ||
+			(contentKind === undefined && preserveLocalBytes);
+		if (!forceText && readRemoteAsBlob && change.op === "put") {
 			await this.applyBlobChange(change as ChangeEntry & { op: "put" }, base);
 			return;
 		}
-		if (!forceText && isBlob && change.op === "delete") {
+		if (
+			!forceText &&
+			(preserveLocalBytes || contentKind === "blob") &&
+			change.op === "delete"
+		) {
 			await this.applyBlobDelete(
 				change as ChangeEntry & { op: "delete" },
 				base,
 			);
 			return;
 		}
-		const local = await this.vault.read(change.path);
-		this.assertOpen();
 		if (change.op === "put") {
 			let remote: string;
 			try {
@@ -816,6 +831,16 @@ export class TextApplyEngine {
 				await this.applyBlobChange(change as ChangeEntry & { op: "put" }, base);
 				return;
 			}
+			if (!forceText && preserveLocalBytes) {
+				await this.applyInlineTextAfterBlob(
+					{ ...change, op: "put" },
+					base,
+					remote,
+				);
+				return;
+			}
+			const local = await this.vault.read(change.path);
+			this.assertOpen();
 			if (local === remote) {
 				await this.activeJournal.completeApply(change.path, {
 					deleted: false,
@@ -871,6 +896,8 @@ export class TextApplyEngine {
 			await this.startConflict(change, change.path, current);
 			return;
 		}
+		const local = await this.vault.read(change.path);
+		this.assertOpen();
 		if (local === null) {
 			await this.activeJournal.completeApply(change.path, {
 				deleted: true,

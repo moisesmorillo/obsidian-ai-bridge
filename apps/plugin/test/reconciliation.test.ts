@@ -317,6 +317,15 @@ async function reopen(context: Awaited<ReturnType<typeof setup>>) {
 	return { ...context, journal, controller };
 }
 
+/** Checks length and every byte without deep object comparisons of large fixtures. */
+function expectExactBytes(
+	actual: Uint8Array | undefined,
+	expected: Uint8Array,
+): void {
+	expect(actual?.byteLength).toBe(expected.byteLength);
+	expect(actual?.every((byte, index) => byte === expected[index])).toBe(true);
+}
+
 /** Hashes exact fixture bytes without text conversion. */
 async function hashBytes(bytes: Uint8Array): Promise<string> {
 	const digest = await crypto.subtle.digest("SHA-256", bytes.slice().buffer);
@@ -515,6 +524,194 @@ describe("ReconciliationController", () => {
 			expect.objectContaining({ path: "assets/photo.png" }),
 		);
 	});
+
+	it("hydrates inline manifest authority after exact invalid-byte Markdown preservation", async () => {
+		const path = "notes/invalid-manifest.md";
+		const local = new Uint8Array(1_000_001).fill(0x61);
+		local.set([0xc3, 0x28]);
+		const localHash = await hashBytes(local);
+		const remoteText = "manifest inline text";
+		const remoteHash = await hash(remoteText);
+		context.vault.binaryFiles.set(path, local.slice());
+		context.vault.read = async (source) => {
+			context.vault.reads.push(source);
+			const bytes = context.vault.binaryFiles.get(source);
+			return bytes
+				? new TextDecoder().decode(bytes)
+				: (context.vault.files.get(source) ?? null);
+		};
+		context.remote.entries = [
+			{
+				path,
+				etag: `"${epoch}.2"`,
+				seq: 2,
+				hash: remoteHash,
+				kind: "text",
+				deleted: false,
+			},
+		];
+		context.remote.texts.set("2", remoteText);
+
+		await context.controller.reconcile();
+
+		const conflicts = [...context.vault.binaryFiles.entries()].filter(
+			([copyPath]) => copyPath.includes("(conflict test"),
+		);
+		expect(conflicts).toHaveLength(1);
+		expectExactBytes(conflicts[0]?.[1], local);
+		expectExactBytes(
+			context.vault.binaryFiles.get(`.ai-bridge/pre-apply/${localHash}`),
+			local,
+		);
+		expect(context.vault.binaryFiles.has(path)).toBe(false);
+		expect(context.vault.files.get(path)).toBe(remoteText);
+		expect(context.journal.snapshot().base[path]).toEqual({
+			deleted: false,
+			rev: 2,
+			hash: remoteHash,
+		});
+		expect(context.journal.snapshot().pending_apply).toEqual([]);
+		expect(context.journal.snapshot().cursor).toBe(4);
+	});
+
+	it.each([false, true])(
+		"resumes copied blob-to-inline work after pruning and continues the feed (restart after rebase=%s)",
+		async (restartAfterRebase) => {
+			const path = "notes/pruned-inline.md";
+			const local = new Uint8Array(1_000_001).fill(0x61);
+			local.set([0xff, 0x00]);
+			const localHash = await hashBytes(local);
+			const oldText = "old inline authority";
+			const currentText = "newer inline authority";
+			const oldHash = await hash(oldText);
+			const currentHash = await hash(currentText);
+			const following = "feed continues after inline recovery";
+			const row = {
+				seq: 5,
+				op: "put" as const,
+				path,
+				etag: `"${epoch}.2"`,
+				hash: oldHash,
+				origin: "remote",
+				at: 5,
+			};
+			await context.journal.resetEpoch(epoch);
+			await context.journal.setCursor(epoch, 4);
+			await context.journal.setBase(path, {
+				deleted: false,
+				rev: 1,
+				hash: localHash,
+			});
+			context.vault.binaryFiles.set(path, local.slice());
+			Object.assign(context.remote, {
+				readResolvedBlob: async () => ({
+					kind: "text" as const,
+					text: oldText,
+					epoch,
+					rev: 2,
+					hash: oldHash,
+				}),
+			});
+			context.remote.texts.set("2", oldText);
+			context.remote.feed.push({ epoch, head_seq: 5, entries: [row] });
+			const updateApply = context.journal.updateApply.bind(context.journal);
+			context.journal.updateApply = async (pending) => {
+				await updateApply(pending);
+				if (pending.step === "copied")
+					throw new Error("stop after durable copies");
+			};
+
+			await expect(context.controller.replay()).rejects.toThrow(
+				"stop after durable copies",
+			);
+			const copied = context.journal.snapshot().pending_apply[0];
+			expect(copied).toMatchObject({ step: "copied", content_kind: "text" });
+			const copies = copied?.conflict_copies;
+			expect(copies).toHaveLength(2);
+			for (const copy of copies ?? [])
+				expectExactBytes(context.vault.binaryFiles.get(copy.path), local);
+			expect(context.journal.snapshot().base[path]?.rev).toBe(1);
+			expect(context.journal.snapshot().cursor).toBe(4);
+
+			context = await reopen(context);
+			context.remote.readResolved = async (source, requestEpoch, rev) => {
+				if (source === path)
+					return {
+						text: currentText,
+						epoch: requestEpoch,
+						rev: 3,
+						hash: currentHash,
+					};
+				const text = context.remote.texts.get(String(rev));
+				if (text === undefined) throw new Error("Missing following text");
+				return { text, epoch: requestEpoch, rev, hash: await hash(text) };
+			};
+			Object.assign(context.remote, {
+				readResolvedBlob: async () => ({
+					kind: "text" as const,
+					text: currentText,
+					epoch,
+					rev: 3,
+					hash: currentHash,
+				}),
+			});
+			if (restartAfterRebase) {
+				const rebase = context.journal.rebasePendingApply.bind(context.journal);
+				context.journal.rebasePendingApply = async (change, plans) => {
+					await rebase(change, plans);
+					throw new Error("stop after durable rebase");
+				};
+				await expect(context.controller.resume()).rejects.toThrow(
+					"stop after durable rebase",
+				);
+				expect(context.journal.snapshot().pending_apply[0]).toMatchObject({
+					content_kind: "text",
+					conflict_copies: copies,
+					change: { etag: `"${epoch}.3"`, hash: currentHash },
+				});
+				context = await reopen(context);
+			}
+			context.remote.texts.set("6", following);
+			context.remote.feed.push({
+				epoch,
+				head_seq: 6,
+				entries: [
+					row,
+					{
+						seq: 6,
+						op: "put",
+						path: "after-inline-recovery.md",
+						etag: `"${epoch}.6"`,
+						hash: await hash(following),
+						origin: "remote",
+						at: 6,
+					},
+				],
+			});
+			await context.controller.resume();
+			await context.controller.resume();
+
+			for (const copy of copies ?? [])
+				expectExactBytes(context.vault.binaryFiles.get(copy.path), local);
+			expect(
+				[...context.vault.binaryFiles.keys()].filter((name) =>
+					name.includes("conflict"),
+				),
+			).toHaveLength(1);
+			expect(context.vault.binaryFiles.has(path)).toBe(false);
+			expect(context.vault.files.get(path)).toBe(currentText);
+			expect(context.vault.files.get("after-inline-recovery.md")).toBe(
+				following,
+			);
+			expect(context.journal.snapshot().base[path]).toEqual({
+				deleted: false,
+				rev: 3,
+				hash: currentHash,
+			});
+			expect(context.journal.snapshot().cursor).toBe(6);
+			expect(context.journal.snapshot().pending_apply).toEqual([]);
+		},
+	);
 
 	it("preserves dirty binary bytes and applies a manifest tombstone", async () => {
 		const localBytes = new Uint8Array([0, 255, 3]);

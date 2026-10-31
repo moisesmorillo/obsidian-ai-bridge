@@ -183,7 +183,7 @@ export class DeviceJournal {
 		});
 	}
 
-	/** Replaces pruned revision authority while retaining durable local and verified remote copies. */
+	/** Replaces pruned authority while retaining copy identities and their content-kind recovery route when copies remain. */
 	async rebasePendingApply(
 		change: DeviceState["pending_apply"][number]["change"],
 		conflictCopies?: PendingConflictCopy[],
@@ -212,6 +212,9 @@ export class DeviceJournal {
 						: {
 								change: parsedChange,
 								step: "named",
+								...(current.content_kind
+									? { content_kind: current.content_kind }
+									: {}),
 								conflict_copies: conflictCopies,
 							};
 			await this.commit({ ...this.state, pending_apply: [rebased] });

@@ -1,4 +1,7 @@
-import { pathKey } from "@obsidian-ai-bridge/protocol";
+import {
+	type PendingConflictCopy,
+	pathKey,
+} from "@obsidian-ai-bridge/protocol";
 import { beforeEach, describe, expect, it } from "vitest";
 import { SyncTransport } from "../src/infrastructure/sync-transport";
 import { DeviceJournal } from "../src/sync/device-journal";
@@ -865,6 +868,169 @@ describe("TextApplyEngine", () => {
 			hash: remoteHash,
 		});
 	});
+
+	it.each(["source", "destination", "both"] as const)(
+		"preserves invalid-byte %s sides before an inline rename and resumes copied work",
+		async (side) => {
+			const source = "notes/inline-rename-source.md";
+			const destination = "notes/inline-rename-destination.md";
+			const baseText = "confirmed small text";
+			const sourceBytes =
+				side === "destination"
+					? new TextEncoder().encode("dirty inline source")
+					: new Uint8Array(1_000_001).fill(0x61);
+			if (side !== "destination") sourceBytes.set([0xff, 0x28]);
+			const destinationBytes =
+				side === "source"
+					? new TextEncoder().encode(baseText)
+					: new Uint8Array(1_000_002).fill(0x62);
+			if (side !== "source") destinationBytes.set([0xc3, 0x28]);
+			const inlineRemote = "pinned inline rename result";
+			const remoteHash = await hash(inlineRemote);
+			const rename = {
+				seq: 5,
+				op: "rename" as const,
+				path: destination,
+				from_path: source,
+				from_etag: `"${epoch}.2"`,
+				etag: `"${epoch}.3"`,
+				hash: remoteHash,
+				origin: "remote",
+				at: 5,
+			};
+			await journal.setBase(source, {
+				deleted: false,
+				rev: 1,
+				hash: await hash(baseText),
+			});
+			await journal.setBase(destination, {
+				deleted: false,
+				rev: 1,
+				hash: await hash(baseText),
+			});
+			if (side === "destination")
+				vault.files.set(source, new TextDecoder().decode(sourceBytes));
+			else vault.binaryFiles.set(source, sourceBytes.slice());
+			if (side === "source") vault.files.set(destination, baseText);
+			else vault.binaryFiles.set(destination, destinationBytes.slice());
+			vault.read = async (path) => {
+				const bytes = vault.binaryFiles.get(path);
+				return bytes
+					? new TextDecoder().decode(bytes)
+					: (vault.files.get(path) ?? null);
+			};
+			const transport = new SyncTransport("https://service.test", {
+				requestResponse: async () => ({
+					status: 200,
+					headers: { etag: rename.etag, "content-type": "application/json" },
+					text: JSON.stringify({
+						path: destination,
+						etag: rename.etag,
+						hash: remoteHash,
+						size: new TextEncoder().encode(inlineRemote).byteLength,
+						kind: "text",
+						deleted: false,
+						origin: "remote",
+						updated_at: 5,
+						content: inlineRemote,
+						offset: 0,
+						length: inlineRemote.length,
+						truncated: false,
+					}),
+				}),
+			});
+			const update = journal.updateApply.bind(journal);
+			journal.updateApply = async (pending) => {
+				await update(pending);
+				if (pending.step === "copied")
+					throw new Error("stop after rename copies");
+			};
+			engine = makeEngine(journal, vault, transport);
+			await expect(engine.apply(rename)).rejects.toThrow(
+				"stop after rename copies",
+			);
+			const copies: PendingConflictCopy[] =
+				journal.snapshot().pending_apply[0]?.conflict_copies ?? [];
+			const sourceCopy = copies.find((copy) => copy.side === "rename_source");
+			expect(sourceCopy).toBeDefined();
+			expectExactBytes(
+				(await vault.readBinary(sourceCopy?.path ?? "")) ?? undefined,
+				sourceBytes,
+			);
+			if (side !== "source") {
+				const destinationCopy = copies.find(
+					(copy) =>
+						copy.side === "rename_destination" && copy.purpose !== "pre_apply",
+				);
+				expect(destinationCopy).toBeDefined();
+				expectExactBytes(
+					(await vault.readBinary(destinationCopy?.path ?? "")) ?? undefined,
+					destinationBytes,
+				);
+			}
+			expect(journal.snapshot().base[source]?.rev).toBe(1);
+			expect(journal.snapshot().base[destination]?.rev).toBe(1);
+			expect(copies.some((copy) => copy.purpose === "pre_apply")).toBe(true);
+			for (const copy of copies) {
+				if (copy.purpose === "pre_apply") vault.mtimeByPath.set(copy.path, 1);
+			}
+			journal.close();
+			engine.close();
+			journal = await DeviceJournal.open(storage);
+			engine = makeEngine(journal, vault, transport);
+			if (side !== "source") {
+				vault.afterBinaryTrash = () => {
+					if (vault.binaryTrashes.at(-1) === destination)
+						throw new Error("stop after destination trash");
+				};
+				await expect(engine.resume()).rejects.toThrow(
+					"stop after destination trash",
+				);
+				expect(await vault.readBinary(destination)).toBeNull();
+				expect(journal.snapshot().pending_apply[0]?.conflict_copies).toEqual(
+					copies,
+				);
+				vault.afterBinaryTrash = null;
+				journal.close();
+				engine.close();
+				journal = await DeviceJournal.open(storage);
+				engine = makeEngine(journal, vault, transport);
+			}
+			await engine.resume();
+			await engine.resume();
+
+			for (const copy of copies) {
+				expectExactBytes(
+					(await vault.readBinary(copy.path)) ?? undefined,
+					copy.side === "rename_source" ? sourceBytes : destinationBytes,
+				);
+				if (copy.purpose === "pre_apply") {
+					expect(vault.mtimeByPath.get(copy.path)).toBeGreaterThan(1);
+					expect(vault.removedRecovery).not.toContain(copy.path);
+				}
+			}
+			expectExactBytes(
+				(await vault.readBinary(destination)) ?? undefined,
+				new TextEncoder().encode(inlineRemote),
+			);
+			expect(await vault.readBinary(source)).toBeNull();
+			expect(journal.snapshot().base[source]).toEqual({
+				deleted: true,
+				rev: 2,
+			});
+			expect(journal.snapshot().base[destination]).toEqual({
+				deleted: false,
+				rev: 3,
+				hash: remoteHash,
+			});
+			expect(journal.snapshot().pending_apply).toEqual([]);
+			expect(
+				[...vault.binaryFiles.keys(), ...vault.files.keys()].filter((path) =>
+					path.includes("conflict"),
+				),
+			).toHaveLength(side === "source" ? 1 : 2);
+		},
+	);
 
 	it("does not read a pruned rename destination when only its source is pending", async () => {
 		const sourcePath = "notes/source.md";

@@ -1,6 +1,10 @@
 import { pathKey } from "@obsidian-ai-bridge/protocol";
 import { beforeEach, describe, expect, it } from "vitest";
-import { SyncTransportError } from "../src/infrastructure/sync-transport";
+import type { OAuthTransportResponse } from "../src/infrastructure/oauth-transport";
+import {
+	SyncTransport,
+	SyncTransportError,
+} from "../src/infrastructure/sync-transport";
 import { DeviceJournal } from "../src/sync/device-journal";
 import {
 	type ReconciliationChangesPage,
@@ -710,6 +714,194 @@ describe("ReconciliationController", () => {
 			});
 			expect(context.journal.snapshot().cursor).toBe(6);
 			expect(context.journal.snapshot().pending_apply).toEqual([]);
+		},
+	);
+
+	it.each([false, true])(
+		"keeps copied recovery through pruned inline authority becoming a blob (restart after rebase=%s)",
+		async (restartAfterRebase) => {
+			const path = "notes/inline-to-blob-recovery.md";
+			const local = new Uint8Array(1_000_001).fill(0x61);
+			local.set([0xff, 0x28]);
+			const localHash = await hashBytes(local);
+			const oldText = "old inline target";
+			const oldHash = await hash(oldText);
+			const current = new Uint8Array(1_000_002).fill(0x62);
+			current.set([0xc3, 0x28]);
+			const currentHash = await hashBytes(current);
+			const following = "later feed text";
+			const followingPath = "after-kind-recovery.md";
+			const followingHash = await hash(following);
+			let pruned = false;
+			const transport = new SyncTransport("https://service.test", {
+				requestResponse: async (url): Promise<OAuthTransportResponse> => {
+					const request = new URL(url);
+					if (pruned && request.pathname.endsWith(path)) {
+						if (request.searchParams.get("rev") === "2")
+							return {
+								status: 410,
+								headers: {},
+								text: JSON.stringify({
+									error: "revision_pruned",
+									message: "This revision is no longer available.",
+								}),
+							};
+						return {
+							status: 200,
+							headers: {
+								etag: `"${epoch}.3"`,
+								"content-type": "application/octet-stream",
+								"content-length": String(current.byteLength),
+							},
+							text: "",
+							arrayBuffer: current.slice().buffer,
+						};
+					}
+					const isFollowing = request.pathname.endsWith(followingPath);
+					const text = isFollowing ? following : oldText;
+					const etag = `"${epoch}.${isFollowing ? 6 : 2}"`;
+					return {
+						status: 200,
+						headers: { etag, "content-type": "application/json" },
+						text: JSON.stringify({
+							path: isFollowing ? followingPath : path,
+							etag,
+							hash: isFollowing ? followingHash : oldHash,
+							size: new TextEncoder().encode(text).byteLength,
+							kind: "text",
+							deleted: false,
+							origin: "remote",
+							updated_at: 5,
+							content: text,
+							offset: 0,
+							length: text.length,
+							truncated: false,
+						}),
+					};
+				},
+			});
+			await context.journal.resetEpoch(epoch);
+			await context.journal.setCursor(epoch, 4);
+			await context.journal.setBase(path, {
+				deleted: false,
+				rev: 1,
+				hash: localHash,
+			});
+			context.vault.binaryFiles.set(path, local.slice());
+			const update = context.journal.updateApply.bind(context.journal);
+			context.journal.updateApply = async (pending) => {
+				await update(pending);
+				if (pending.step === "copied")
+					throw new Error("stop after kind-change copies");
+			};
+			const engine = new TextApplyEngine(
+				context.journal,
+				context.vault,
+				transport,
+				{ deviceName: "test" },
+			);
+			const row = {
+				seq: 5,
+				op: "put" as const,
+				path,
+				etag: `"${epoch}.2"`,
+				hash: oldHash,
+				origin: "remote",
+				at: 5,
+			};
+			await expect(engine.apply(row)).rejects.toThrow(
+				"stop after kind-change copies",
+			);
+			const copies =
+				context.journal.snapshot().pending_apply[0]?.conflict_copies;
+			expect(copies).toHaveLength(2);
+			engine.close();
+			context.journal.close();
+			pruned = true;
+			context = {
+				...context,
+				journal: await DeviceJournal.open(context.storage),
+			};
+			let resumed = new TextApplyEngine(
+				context.journal,
+				context.vault,
+				transport,
+				{ deviceName: "test" },
+			);
+			if (restartAfterRebase) {
+				const rebase = context.journal.rebasePendingApply.bind(context.journal);
+				context.journal.rebasePendingApply = async (change, plans) => {
+					await rebase(change, plans);
+					throw new Error("stop after blob authority rebase");
+				};
+				await expect(resumed.resume()).rejects.toThrow(
+					"stop after blob authority rebase",
+				);
+				expect(
+					context.journal.snapshot().pending_apply[0]?.conflict_copies,
+				).toEqual(copies);
+				resumed.close();
+				context.journal.close();
+				context = {
+					...context,
+					journal: await DeviceJournal.open(context.storage),
+				};
+				resumed = new TextApplyEngine(
+					context.journal,
+					context.vault,
+					transport,
+					{ deviceName: "test" },
+				);
+			}
+			context.controller = new ReconciliationController(
+				context.journal,
+				resumed,
+				context.vault,
+				context.remote,
+			);
+			context.remote.feed.push({
+				epoch,
+				head_seq: 6,
+				entries: [
+					row,
+					{
+						seq: 6,
+						op: "put",
+						path: followingPath,
+						etag: `"${epoch}.6"`,
+						hash: followingHash,
+						origin: "remote",
+						at: 6,
+					},
+				],
+			});
+			await context.controller.resume();
+			await resumed.resume();
+			await context.controller.resume();
+
+			for (const copy of copies ?? [])
+				expectExactBytes(context.vault.binaryFiles.get(copy.path), local);
+			expect(
+				[...context.vault.binaryFiles.keys()].filter((copyPath) =>
+					copyPath.includes("conflict"),
+				),
+			).toHaveLength(1);
+			expectExactBytes(context.vault.binaryFiles.get(path), current);
+			expect(context.vault.files.get(followingPath)).toBe(following);
+			expect(context.journal.snapshot().base[path]).toEqual({
+				deleted: false,
+				rev: 3,
+				hash: currentHash,
+			});
+			expect(context.journal.snapshot().pending_apply).toEqual([]);
+			expect(context.journal.snapshot().cursor).toBe(6);
+			expect(
+				context.journal
+					.snapshot()
+					.attention.some((item: { reason: string }) =>
+						item.reason.includes("not available"),
+					),
+			).toBe(false);
 		},
 	);
 

@@ -13,12 +13,17 @@ import {
 /** Stores device state and note text for isolated apply tests. */
 class MemoryStorage {
 	state: unknown = null;
+	failWriteState = false;
 	/** Reads the raw persisted journal document. */
 	async readState(): Promise<unknown> {
 		return this.state;
 	}
 	/** Replaces the test journal document with a defensive copy. */
 	async writeState(value: unknown): Promise<void> {
+		if (this.failWriteState) {
+			this.failWriteState = false;
+			throw new Error("injected journal write failure");
+		}
 		this.state = structuredClone(value);
 	}
 	/** Rejects payload access because these apply tests do not enqueue operations. */
@@ -43,6 +48,7 @@ class MemoryVault implements TextVault {
 	beforeBinaryRead: ((path: string) => void) | null = null;
 	beforeSecondStat: (() => void) | null = null;
 	beforeProcess: (() => void) | null = null;
+	afterBinaryTrash: (() => void) | null = null;
 	refuseTrash: ((path: string) => boolean) | null = null;
 	failNextBinaryModify = false;
 	failBinaryModifyPath: string | null = null;
@@ -123,9 +129,17 @@ class MemoryVault implements TextVault {
 	async trashBinary(path: string, expected: Uint8Array): Promise<boolean> {
 		this.binaryTrashes.push(path);
 		const bytes = this.binaryFiles.get(path);
-		if (!bytes || (await hashBytes(bytes)) !== (await hashBytes(expected)))
+		const text = this.files.get(path);
+		const observed =
+			bytes ?? (text === undefined ? null : new TextEncoder().encode(text));
+		if (
+			!observed ||
+			(await hashBytes(observed)) !== (await hashBytes(expected))
+		)
 			return false;
 		this.binaryFiles.delete(path);
+		this.files.delete(path);
+		this.afterBinaryTrash?.();
 		return true;
 	}
 	/** Replaces exact binary test bytes and confirms the write. */
@@ -559,6 +573,93 @@ describe("TextApplyEngine", () => {
 		expect(vault.binaryFiles.get(rename.from_path)).toEqual(source);
 	});
 
+	it("resumes a binary delete after trash succeeded before journal completion", async () => {
+		const path = "assets/crash-delete.png";
+		const previous = new Uint8Array([110, 111]);
+		const local = new Uint8Array([112, 113]);
+		const previousHash = await hashBytes(previous);
+		const localHash = await hashBytes(local);
+		vault.binaryFiles.set(path, local.slice());
+		await journal.setBase(path, { deleted: false, rev: 1, hash: previousHash });
+		engine = makeEngine(journal, vault, {
+			read: async () => {
+				throw new UnsupportedRemoteTextError(path);
+			},
+		});
+		vault.afterBinaryTrash = () => {
+			storage.failWriteState = true;
+		};
+		const remoteDelete = { ...change, op: "delete" as const, path, hash: "" };
+
+		await expect(engine.apply(remoteDelete, "blob")).rejects.toThrow(
+			"injected journal write failure",
+		);
+		expect(vault.binaryFiles.has(path)).toBe(false);
+		expect(journal.snapshot().pending_apply[0]?.step).toBe("copied");
+		expect(vault.binaryFiles.get(`.ai-bridge/pre-apply/${localHash}`)).toEqual(
+			local,
+		);
+		engine.close();
+		const restartedJournal = await DeviceJournal.open(storage);
+		const restartedEngine = makeEngine(restartedJournal, vault, {
+			read: async () => {
+				throw new UnsupportedRemoteTextError(path);
+			},
+		});
+
+		await restartedEngine.resume();
+
+		expect(restartedJournal.snapshot().base[path]).toEqual({
+			deleted: true,
+			rev: 2,
+		});
+		expect(restartedJournal.snapshot().pending_apply).toEqual([]);
+		expect(vault.binaryFiles.has(path)).toBe(false);
+	});
+
+	it("blocks copied binary delete recovery when different bytes reappear", async () => {
+		const path = "assets/recreated-delete.png";
+		const previous = new Uint8Array([120, 121]);
+		const local = new Uint8Array([122, 123]);
+		const recreated = new Uint8Array([124, 125]);
+		const previousHash = await hashBytes(previous);
+		vault.binaryFiles.set(path, local.slice());
+		await journal.setBase(path, { deleted: false, rev: 1, hash: previousHash });
+		engine = makeEngine(journal, vault, {
+			read: async () => {
+				throw new UnsupportedRemoteTextError(path);
+			},
+		});
+		vault.afterBinaryTrash = () => {
+			storage.failWriteState = true;
+		};
+		const remoteDelete = { ...change, op: "delete" as const, path, hash: "" };
+		await expect(engine.apply(remoteDelete, "blob")).rejects.toThrow(
+			"injected journal write failure",
+		);
+		vault.binaryFiles.set(path, recreated.slice());
+		engine.close();
+		const restartedJournal = await DeviceJournal.open(storage);
+		const restartedEngine = makeEngine(restartedJournal, vault, {
+			read: async () => {
+				throw new UnsupportedRemoteTextError(path);
+			},
+		});
+
+		await restartedEngine.resume();
+
+		expect(vault.binaryFiles.get(path)).toEqual(recreated);
+		expect(restartedJournal.snapshot().base[path]).toEqual({
+			deleted: false,
+			rev: 1,
+			hash: previousHash,
+		});
+		expect(restartedJournal.snapshot().pending_apply).toHaveLength(1);
+		expect(restartedJournal.snapshot().attention).toContainEqual(
+			expect.objectContaining({ path }),
+		);
+	});
+
 	it("copies dirty binary bytes before confirming a remote delete", async () => {
 		const previous = new Uint8Array([10, 11]);
 		const local = new Uint8Array([12, 13]);
@@ -596,6 +697,57 @@ describe("TextApplyEngine", () => {
 			local,
 		);
 		expect(journal.snapshot().base[path]).toEqual({ deleted: true, rev: 2 });
+	});
+
+	it("preserves invalid UTF-8 bytes when oversized Markdown changes to inline text", async () => {
+		const path = "notes/invalid-large.md";
+		const localBytes = new Uint8Array(1_000_001).fill(0x61);
+		localBytes.set([0xc3, 0x28], 0);
+		const remoteText = "new inline markdown";
+		const localHash = await hashBytes(localBytes);
+		const remoteHash = await hash(remoteText);
+		const etag = `"${epoch}.2"`;
+		vault.binaryFiles.set(path, localBytes.slice());
+		vault.mtimeByPath.set(path, 10);
+		await journal.setBase(path, { deleted: false, rev: 1, hash: localHash });
+		const transport = new SyncTransport("https://service.test", {
+			requestResponse: async () => ({
+				status: 200,
+				headers: { etag, "content-type": "application/json" },
+				text: JSON.stringify({
+					path,
+					etag,
+					hash: remoteHash,
+					size: new TextEncoder().encode(remoteText).byteLength,
+					kind: "text",
+					deleted: false,
+					origin: "remote",
+					updated_at: 2,
+					content: remoteText,
+					offset: 0,
+					length: remoteText.length,
+					truncated: false,
+				}),
+			}),
+		});
+		engine = makeEngine(journal, vault, transport);
+
+		await engine.apply({ ...change, path, etag, hash: remoteHash });
+
+		const conflict = [...vault.binaryFiles.entries()].find(([copyPath]) =>
+			copyPath.includes("(conflict Test Device"),
+		);
+		expect(conflict?.[1]).toEqual(localBytes);
+		expect(vault.binaryFiles.get(`.ai-bridge/pre-apply/${localHash}`)).toEqual(
+			localBytes,
+		);
+		expect(vault.files.get(path)).toBe(remoteText);
+		expect(vault.binaryFiles.has(path)).toBe(false);
+		expect(journal.snapshot().base[path]).toEqual({
+			deleted: false,
+			rev: 2,
+			hash: remoteHash,
+		});
 	});
 
 	it("uses pinned text kind when an oversized Markdown file shrinks", async () => {
@@ -675,6 +827,111 @@ describe("TextApplyEngine", () => {
 			deleted: false,
 			rev: 2,
 			hash: remoteHash,
+		});
+	});
+
+	it("does not read a pruned rename destination when only its source is pending", async () => {
+		const sourcePath = "notes/source.md";
+		const destinationPath = "notes/destination.md";
+		const source = "source bytes";
+		const sourceHash = await hash(source);
+		const destinationHash = await hash("newer destination bytes");
+		const rename = {
+			seq: 2,
+			op: "rename" as const,
+			path: destinationPath,
+			from_path: sourcePath,
+			from_etag: `"${epoch}.2"`,
+			etag: `"${epoch}.3"`,
+			hash: await hash("renamed bytes"),
+			origin: "remote",
+			at: 3,
+		};
+		vault.files.set(sourcePath, source);
+		await journal.setBase(sourcePath, {
+			deleted: false,
+			rev: 1,
+			hash: sourceHash,
+		});
+		await journal.setBase(destinationPath, {
+			deleted: false,
+			rev: 4,
+			hash: destinationHash,
+		});
+		let transportCalls = 0;
+		const transport = new SyncTransport("https://service.test", {
+			requestResponse: async () => {
+				transportCalls += 1;
+				return {
+					status: 200,
+					headers: {
+						etag: `"${epoch}.5"`,
+						"content-type": "application/json",
+					},
+					text: JSON.stringify({
+						path: destinationPath,
+						etag: `"${epoch}.5"`,
+						hash: "",
+						kind: "text",
+						deleted: true,
+						origin: "remote",
+						updated_at: 5,
+					}),
+				};
+			},
+		});
+		engine = makeEngine(journal, vault, transport);
+
+		await engine.apply(rename);
+
+		expect(transportCalls).toBe(0);
+		expect(vault.files.has(sourcePath)).toBe(false);
+		expect(journal.snapshot().base[sourcePath]).toEqual({
+			deleted: true,
+			rev: 2,
+		});
+		expect(journal.snapshot().base[destinationPath]).toEqual({
+			deleted: false,
+			rev: 4,
+			hash: destinationHash,
+		});
+	});
+
+	it("does not read a pruned rename destination when neither side is pending", async () => {
+		const sourcePath = "notes/obsolete-source.md";
+		const destinationPath = "notes/obsolete-destination.md";
+		const destinationHash = await hash("newer destination bytes");
+		const rename = {
+			seq: 2,
+			op: "rename" as const,
+			path: destinationPath,
+			from_path: sourcePath,
+			from_etag: `"${epoch}.2"`,
+			etag: `"${epoch}.3"`,
+			hash: await hash("renamed bytes"),
+			origin: "remote",
+			at: 3,
+		};
+		await journal.setBase(sourcePath, { deleted: true, rev: 3 });
+		await journal.setBase(destinationPath, {
+			deleted: false,
+			rev: 4,
+			hash: destinationHash,
+		});
+		const transport = new SyncTransport("https://service.test", {
+			requestResponse: async () => {
+				throw new Error("obsolete rename must not read the destination");
+			},
+		});
+		engine = makeEngine(journal, vault, transport);
+
+		await engine.apply(rename);
+
+		expect(journal.snapshot().pending_apply).toEqual([]);
+		expect(journal.snapshot().base[destinationPath]).toEqual({
+			deleted: false,
+			rev: 4,
+			hash: destinationHash,
 		});
 	});
 

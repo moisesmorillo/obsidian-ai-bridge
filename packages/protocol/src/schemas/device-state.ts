@@ -168,7 +168,7 @@ export const PendingApplySchema = z
 		conflict_copies: z
 			.array(PendingConflictCopySchema)
 			.min(1)
-			.max(2)
+			.max(3)
 			.optional(),
 	})
 	.strict()
@@ -221,22 +221,38 @@ export const PendingApplySchema = z
 			const blobCopies = pending.conflict_copies.filter(
 				(copy) => copy.kind === "blob",
 			);
+			const validRemoteBlobCollision =
+				pending.change.op === "put" &&
+				blobCopies.length === 1 &&
+				blobCopies[0]?.purpose === "conflict" &&
+				blobCopies[0]?.mode === "remote" &&
+				blobCopies[0]?.side === "path" &&
+				blobCopies[0]?.source === pending.change.path &&
+				blobCopies[0]?.hash === pending.change.hash;
+			const validRenameBlobPlans =
+				pending.change.op === "rename" &&
+				blobCopies.length > 0 &&
+				blobCopies.every((copy) =>
+					copy.purpose === "pre_apply"
+						? copy.mode === "local" &&
+							copy.side === "rename_destination" &&
+							copy.source === pending.change.path
+						: copy.purpose === "conflict" &&
+							copy.mode === "local" &&
+							(copy.side === "rename_source" ||
+								copy.side === "rename_destination"),
+				);
 			const validBlobPlans =
 				pending.change.op === "rename"
-					? blobCopies.length > 0 &&
-						blobCopies.every(
-							(copy) =>
-								copy.purpose === "conflict" &&
-								(copy.side === "rename_source" ||
-									copy.side === "rename_destination"),
-						)
-					: blobCopies.length === 2 &&
-						blobCopies.filter((copy) => copy.purpose === "conflict").length ===
-							1 &&
-						blobCopies.filter((copy) => copy.purpose === "pre_apply").length ===
-							1 &&
-						blobCopies[0]?.hash === blobCopies[1]?.hash &&
-						blobCopies[0]?.source === blobCopies[1]?.source;
+					? validRenameBlobPlans
+					: validRemoteBlobCollision ||
+						(blobCopies.length === 2 &&
+							blobCopies.filter((copy) => copy.purpose === "conflict")
+								.length === 1 &&
+							blobCopies.filter((copy) => copy.purpose === "pre_apply")
+								.length === 1 &&
+							blobCopies[0]?.hash === blobCopies[1]?.hash &&
+							blobCopies[0]?.source === blobCopies[1]?.source);
 			if (blobCopies.length > 0 && !validBlobPlans)
 				context.addIssue({
 					code: "custom",
@@ -253,23 +269,33 @@ export const PendingApplySchema = z
 						path: ["conflict_copies", index],
 					});
 				seenPaths.add(copy.path);
-				if (
-					copy.purpose !== undefined &&
-					(copy.kind !== "blob" || copy.mode !== "local")
-				)
+				if (copy.purpose !== undefined && copy.kind !== "blob")
 					context.addIssue({
 						code: "custom",
-						message: "Binary copy purpose needs a local blob identity",
+						message: "Binary copy purpose needs a blob identity",
 						path: ["conflict_copies", index, "purpose"],
 					});
 				if (copy.kind === "blob") {
 					const validPurposePath =
 						copy.purpose === "pre_apply"
-							? copy.side === "path" &&
+							? (copy.side === "path" ||
+									(pending.change.op === "rename" &&
+										copy.side === "rename_destination")) &&
 								copy.path === `.ai-bridge/pre-apply/${copy.hash}`
 							: copy.purpose === "conflict" &&
 								!copy.path.startsWith(".ai-bridge/pre-apply/");
-					if (copy.mode !== "local" || !copy.purpose || !validPurposePath)
+					const validRemoteConflict =
+						copy.mode === "remote" &&
+						copy.purpose === "conflict" &&
+						pending.change.op === "put" &&
+						copy.side === "path" &&
+						copy.source === pending.change.path &&
+						copy.hash === pending.change.hash;
+					if (
+						!copy.purpose ||
+						!validPurposePath ||
+						(copy.mode !== "local" && !validRemoteConflict)
+					)
 						context.addIssue({
 							code: "custom",
 							message: "Binary copy identity or path is invalid",

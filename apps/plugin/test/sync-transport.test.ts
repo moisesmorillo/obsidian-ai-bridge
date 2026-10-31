@@ -24,6 +24,37 @@ class ResponseSession {
 const epoch = "a".repeat(32);
 
 describe("SyncTransport", () => {
+	it("reads and validates exact current blob bytes for rename recovery", async () => {
+		const session = new ResponseSession();
+		const bytes = new Uint8Array([0, 254, 7]);
+		const result = await crypto.subtle.digest("SHA-256", bytes);
+		const hash = [...new Uint8Array(result)]
+			.map((byte) => byte.toString(16).padStart(2, "0"))
+			.join("");
+		session.responses.push({
+			status: 200,
+			headers: {
+				etag: `"${epoch}.4"`,
+				"content-type": "application/octet-stream",
+				"content-length": String(bytes.byteLength),
+			},
+			text: "",
+			arrayBuffer: bytes.slice().buffer,
+		});
+		const transport = new SyncTransport("https://service.test", session);
+
+		await expect(
+			transport.readCurrentBlobAuthority("assets/a.png"),
+		).resolves.toEqual({
+			kind: "blob",
+			bytes,
+			epoch,
+			rev: 4,
+			hash,
+		});
+		expect(session.calls[0]?.path).toContain("/v1/files/assets/a.png");
+	});
+
 	it("reads exact pinned text with epoch and revision metadata", async () => {
 		const session = new ResponseSession();
 		session.responses.push({

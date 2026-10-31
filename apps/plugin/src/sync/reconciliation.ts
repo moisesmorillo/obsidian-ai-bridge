@@ -15,6 +15,7 @@ import {
 	UnsupportedRemoteTextError,
 } from "@plugin/sync/remote-text";
 import type {
+	ResolvedPinnedBlob,
 	ResolvedPinnedText,
 	TextApplyEngine,
 	TextVault,
@@ -67,6 +68,10 @@ export interface ReconciliationRemote {
 	}>;
 	/** Reads current path authority when stale local rename recovery needs a cursor-independent source. */
 	readCurrentAuthority?(path: string): Promise<ResolvedPinnedText>;
+	/** Reads exact current bytes when stale rename recovery finds a binary source. */
+	readCurrentBlobAuthority?(
+		path: string,
+	): Promise<Extract<ResolvedPinnedBlob, { kind: "blob" }>>;
 }
 
 /** Serializes enrollment, full hydration, restart recovery, and bounded feed replay. */
@@ -114,8 +119,22 @@ export class ReconciliationController {
 			if (operation.op !== "rename") return;
 			if (!this.remote.readCurrentAuthority)
 				throw new Error("Rename recovery needs current source authority");
-			const current = await this.remote.readCurrentAuthority(operation.path);
+			let current: ResolvedPinnedText | ResolvedPinnedBlob;
+			try {
+				current = await this.remote.readCurrentAuthority(operation.path);
+			} catch (error) {
+				if (
+					!(error instanceof UnsupportedRemoteTextError) ||
+					!this.remote.readCurrentBlobAuthority
+				)
+					throw error;
+				current = await this.remote.readCurrentBlobAuthority(operation.path);
+			}
 			this.assertOpen();
+			if ("kind" in current && current.kind === "blob") {
+				await this.applyEngine.applyCurrent(operation.path, current);
+				return;
+			}
 			if (current.deleted) return;
 			await this.applyEngine.applyCurrent(operation.path, current);
 		});

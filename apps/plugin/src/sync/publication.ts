@@ -722,6 +722,33 @@ export class PublicationController {
 		if (!source || source.deleted || source.rev <= operation.precondition.rev)
 			return;
 		this.assertOpen();
+		const destinationBytes = await this.vault.readBinary?.(operation.to);
+		this.assertOpen();
+		if (destinationBytes) {
+			const observedHash = await digest(destinationBytes);
+			this.assertOpen();
+			if (observedHash === operation.source_hash) {
+				const current = await this.vault.readBinary?.(operation.to);
+				this.assertOpen();
+				if (!current) return;
+				const currentHash = await digest(current);
+				this.assertOpen();
+				if (currentHash === operation.source_hash) {
+					const trashBinary = this.vault.trashBinary;
+					if (trashBinary) {
+						await trashBinary.call(this.vault, operation.to, current);
+						this.assertOpen();
+						const remaining = await this.vault.readBinary?.(operation.to);
+						this.assertOpen();
+						if (!remaining) return;
+					}
+				}
+			}
+			const remaining = await this.vault.readBinary?.(operation.to);
+			this.assertOpen();
+			if (remaining) await this.enqueueBinaryPut(operation.to, remaining);
+			return;
+		}
 		const destination = await this.vault.read(operation.to);
 		this.assertOpen();
 		if (destination === null) return;
@@ -800,7 +827,7 @@ export class PublicationController {
 		}
 	}
 
-	/** Restores exact bytes after a text read confirms that the pinned row is a blob. */
+	/** Restores missing content from validated pinned or current authority. */
 	private async restoreMissingBlob(
 		path: string,
 		epoch: string,
@@ -832,24 +859,40 @@ export class PublicationController {
 		if ((await this.vault.size(path)) !== null) return;
 		this.assertOpen();
 		await this.journal.setExpectedWrite(path, expectedHash);
+		if (this.closed) {
+			await this.journal.clearExpectedWrite(path);
+			this.assertOpen();
+		}
+		this.assertOpen();
 		let created = false;
 		if (current.kind === "blob") {
-			if (!this.vault.createBinary) {
+			const createBinary = this.vault.createBinary;
+			if (!createBinary) {
 				await this.journal.clearExpectedWrite(path);
 				return;
 			}
-			created = await this.vault.createBinary(path, current.bytes);
+			created = await createBinary.call(this.vault, path, current.bytes);
 		} else {
 			created = await this.vault.create(path, current.text);
+		}
+		if (this.closed) {
+			await this.journal.clearExpectedWrite(path);
+			this.assertOpen();
 		}
 		if (!created) {
 			await this.journal.clearExpectedWrite(path);
 			return;
 		}
+		this.assertOpen();
 		const written =
 			current.kind === "blob"
 				? await this.vault.readBinary?.(path)
 				: await this.vault.read(path);
+		if (this.closed) {
+			await this.journal.clearExpectedWrite(path);
+			this.assertOpen();
+		}
+		this.assertOpen();
 		const actualHash =
 			written instanceof Uint8Array
 				? await digest(written)
@@ -860,12 +903,55 @@ export class PublicationController {
 			await this.journal.clearExpectedWrite(path);
 			throw new Error("Startup restore bytes were not confirmed");
 		}
-		if (current.rev > base.rev)
+		if (current.rev > base.rev) {
 			await this.journal.setBase(path, {
 				deleted: false,
 				rev: current.rev,
 				hash: current.hash,
 			});
+			this.assertOpen();
+		}
+	}
+
+	/** Queues exact moved binary bytes under the latest confirmed destination base. */
+	private async enqueueBinaryPut(
+		path: string,
+		bytes: Uint8Array,
+	): Promise<void> {
+		this.assertOpen();
+		const admission = classifyEnrollmentPath(path, bytes.byteLength);
+		if (admission === "unsupported") {
+			await this.journal.recordAttention(
+				path,
+				"File exceeds the 25 MB sync limit",
+			);
+			return;
+		}
+		const hash = await digest(bytes);
+		this.assertOpen();
+		const state = this.journal.snapshot();
+		const base = state.base[path];
+		if (base?.deleted === false && base.hash === hash) return;
+		if (base && !state.epoch) {
+			await this.journal.recordAttention(
+				path,
+				"Confirmed base has no vault epoch",
+			);
+			return;
+		}
+		if (await this.hasPendingPut(path, hash)) return;
+		this.assertOpen();
+		await this.journal.enqueue(
+			{
+				op: "put",
+				path,
+				precondition:
+					base && state.epoch
+						? { kind: "match", epoch: state.epoch, rev: base.rev }
+						: { kind: "absent" },
+			},
+			bytes,
+		);
 	}
 
 	/** Replaces only unsent work with the newest current local bytes and exact base. */

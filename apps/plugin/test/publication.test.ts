@@ -57,6 +57,8 @@ class MemoryVault implements TextVault {
 	readonly files = new Map<string, string>();
 	readonly binaryFiles = new Map<string, Uint8Array>();
 	readonly binaryReads: string[] = [];
+	readonly binaryCreates: string[] = [];
+	readonly binaryTrashes: string[] = [];
 	readonly sizeOverrides = new Map<string, number>();
 	/** Records host create attempts to prove disposal blocks new file effects. */
 	readonly creates: Array<{ path: string; text: string }> = [];
@@ -85,6 +87,7 @@ class MemoryVault implements TextVault {
 	}
 	/** Creates exact bytes only at an absent path. */
 	async createBinary(path: string, bytes: Uint8Array): Promise<boolean> {
+		this.binaryCreates.push(path);
 		if (this.files.has(path) || this.binaryFiles.has(path)) return false;
 		this.binaryFiles.set(path, bytes.slice());
 		return true;
@@ -93,6 +96,19 @@ class MemoryVault implements TextVault {
 	async modifyBinary(path: string, bytes: Uint8Array): Promise<boolean> {
 		if (!this.binaryFiles.has(path)) return false;
 		this.binaryFiles.set(path, bytes.slice());
+		return true;
+	}
+	/** Trashes binary bytes only when they still match the exact observed buffer. */
+	async trashBinary(path: string, expected: Uint8Array): Promise<boolean> {
+		this.binaryTrashes.push(path);
+		const current = this.binaryFiles.get(path);
+		if (
+			!current ||
+			current.byteLength !== expected.byteLength ||
+			!current.every((byte, index) => byte === expected[index])
+		)
+			return false;
+		this.binaryFiles.delete(path);
 		return true;
 	}
 	/** Measures current UTF-8 text bytes or returns null for an absent path. */
@@ -159,6 +175,7 @@ class MemoryRemote implements PublicationRemote {
 		key: string;
 	}> = [];
 	private revision = 0;
+	readBlobAuthority: PublicationRemote["readBlobAuthority"] = undefined;
 	failure: unknown = null;
 	beforeReceipt: (() => Promise<void>) | null = null;
 	receiptHashOverride: string | null = null;
@@ -635,6 +652,48 @@ describe("PublicationController", () => {
 			hash: "b".repeat(64),
 		});
 		controller.close();
+	});
+
+	it("does not create restored binary bytes after close during expected-write persistence", async () => {
+		const storage = new MemoryStorage();
+		const { controller, journal, remote, vault } =
+			await openController(storage);
+		const path = "assets/closed-restore.png";
+		const bytes = new Uint8Array([0, 255, 7]);
+		const hash = await digestBytesForTest(bytes);
+		await journal.setBase(path, { deleted: false, rev: 2, hash });
+		remote.readAuthority = async () => {
+			throw new UnsupportedRemoteTextError(path);
+		};
+		remote.readBlobAuthority = async (_path, requestEpoch) => ({
+			kind: "blob",
+			bytes: bytes.slice(),
+			epoch: requestEpoch,
+			rev: 2,
+			hash,
+		});
+		let resumeWrite!: () => void;
+		let startWrite!: () => void;
+		const started = new Promise<void>((resolve) => {
+			startWrite = resolve;
+		});
+		const blocked = new Promise<void>((resolve) => {
+			resumeWrite = resolve;
+		});
+		storage.beforeWriteState = async () => {
+			storage.beforeWriteState = null;
+			startWrite();
+			await blocked;
+		};
+
+		const scan = controller.scan();
+		await started;
+		controller.close();
+		resumeWrite();
+		await expect(scan).rejects.toThrow("Publication controller is closed");
+
+		expect(vault.binaryCreates).toEqual([]);
+		expect(vault.binaryFiles.has(path)).toBe(false);
 	});
 
 	it("restores a missing blob from its current revision after pruning", async () => {
@@ -1943,6 +2002,77 @@ describe("PublicationController", () => {
 		controller.close();
 		engine.close();
 	});
+
+	it.each([
+		{ edited: false, bytes: [71, 72], label: "unchanged" },
+		{ edited: true, bytes: [73, 74], label: "edited" },
+	] as const)(
+		"recovers a rejected binary rename with an $label moved destination",
+		async ({ edited, bytes: byteValues }) => {
+			const storage = new MemoryStorage();
+			const vault = new MemoryVault();
+			const journal = await DeviceJournal.open(storage);
+			await journal.resetEpoch(epoch);
+			const sourcePath = "assets/source.png";
+			const destinationPath = "assets/destination.png";
+			const original = new Uint8Array([71, 72]);
+			const destination = new Uint8Array(byteValues);
+			const sourceHash = await digestBytesForTest(original);
+			const currentHash = await digestBytesForTest(new Uint8Array([75, 76]));
+			await journal.setBase(sourcePath, {
+				deleted: false,
+				rev: 1,
+				hash: sourceHash,
+			});
+			vault.binaryFiles.set(destinationPath, destination.slice());
+			const remote = new MemoryRemote();
+			remote.rename = async () => {
+				throw new SyncTransportError(412, "precondition_failed");
+			};
+			const applyEngine = createApplyEngine(journal, vault, remote);
+			const controller = new PublicationController(journal, vault, remote, {
+				applyEngine,
+				now: () => 1_800_000_000_000,
+				recoverPrecondition: async () =>
+					journal.setBase(sourcePath, {
+						deleted: false,
+						rev: 2,
+						hash: currentHash,
+					}),
+			});
+			await controller.observe({
+				type: "rename",
+				path: sourcePath,
+				to: destinationPath,
+			});
+
+			await controller.flush();
+
+			if (edited) {
+				expect(vault.binaryFiles.get(destinationPath)).toEqual(destination);
+				expect(journal.snapshot().pending_ops).toContainEqual(
+					expect.objectContaining({
+						op: "put",
+						path: destinationPath,
+						state: "queued",
+					}),
+				);
+				await controller.flush();
+				expect(remote.blobWrites).toContainEqual(
+					expect.objectContaining({
+						path: destinationPath,
+						bytes: destination,
+					}),
+				);
+			} else {
+				expect(vault.binaryFiles.has(destinationPath)).toBe(false);
+				expect(vault.binaryTrashes).toEqual([destinationPath]);
+				expect(journal.snapshot().pending_ops).toEqual([]);
+			}
+			controller.close();
+			applyEngine.close();
+		},
+	);
 
 	it.each([
 		{ cursor: 1, destination: "original source bytes", label: "clean before" },

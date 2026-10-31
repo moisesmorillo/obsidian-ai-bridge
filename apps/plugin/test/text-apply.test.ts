@@ -1,4 +1,6 @@
+import { pathKey } from "@obsidian-ai-bridge/protocol";
 import { beforeEach, describe, expect, it } from "vitest";
+import { SyncTransport } from "../src/infrastructure/sync-transport";
 import { DeviceJournal } from "../src/sync/device-journal";
 import { UnsupportedRemoteTextError } from "../src/sync/remote-text";
 import {
@@ -33,12 +35,17 @@ class MemoryStorage {
 class MemoryVault implements TextVault {
 	files = new Map<string, string>();
 	binaryFiles = new Map<string, Uint8Array>();
+	sizeOverrides = new Map<string, number>();
 	mtimeByPath = new Map<string, number>();
 	removedRecovery: string[] = [];
 	statCalls = 0;
+	binaryTrashes: string[] = [];
+	beforeBinaryRead: ((path: string) => void) | null = null;
 	beforeSecondStat: (() => void) | null = null;
 	beforeProcess: (() => void) | null = null;
 	refuseTrash: ((path: string) => boolean) | null = null;
+	failNextBinaryModify = false;
+	failBinaryModifyPath: string | null = null;
 	/** Reads current text or reports an absent exact path. */
 	async read(path: string): Promise<string | null> {
 		return this.files.get(path) ?? null;
@@ -49,23 +56,32 @@ class MemoryVault implements TextVault {
 	}
 	/** Reads raw test bytes without decoding them. */
 	async readBinary(path: string): Promise<Uint8Array | null> {
-		return this.binaryFiles.get(path)?.slice() ?? null;
+		this.beforeBinaryRead?.(path);
+		const binary = this.binaryFiles.get(path);
+		if (binary) return binary.slice();
+		const text = this.files.get(path);
+		return text === undefined ? null : new TextEncoder().encode(text);
 	}
 	/** Returns controlled host metadata and injects a write before the second stat. */
 	async stat(path: string): Promise<{ mtime: number; size: number } | null> {
 		this.statCalls += 1;
 		if (this.statCalls === 2) this.beforeSecondStat?.();
-		const bytes = this.binaryFiles.get(path);
+		const bytes = await this.readBinary(path);
 		return bytes
 			? {
-					mtime: this.mtimeByPath.get(path) ?? (this.statCalls === 1 ? 1 : 2),
+					mtime: this.mtimeByPath.get(path) ?? 1,
 					size: bytes.byteLength,
 				}
 			: null;
 	}
 	/** Creates a binary test file only at an absent path. */
 	async createBinary(path: string, bytes: Uint8Array): Promise<boolean> {
-		if (this.binaryFiles.has(path) || this.files.has(path)) return false;
+		if (
+			[...this.files.keys(), ...this.binaryFiles.keys()].some(
+				(current) => current === path || pathKey(current) === pathKey(path),
+			)
+		)
+			return false;
 		this.binaryFiles.set(path, bytes.slice());
 		this.mtimeByPath.set(path, Date.now());
 		return true;
@@ -105,6 +121,7 @@ class MemoryVault implements TextVault {
 	}
 	/** Moves exact binary test bytes to the fake trash when they still match. */
 	async trashBinary(path: string, expected: Uint8Array): Promise<boolean> {
+		this.binaryTrashes.push(path);
 		const bytes = this.binaryFiles.get(path);
 		if (!bytes || (await hashBytes(bytes)) !== (await hashBytes(expected)))
 			return false;
@@ -113,15 +130,25 @@ class MemoryVault implements TextVault {
 	}
 	/** Replaces exact binary test bytes and confirms the write. */
 	async modifyBinary(path: string, bytes: Uint8Array): Promise<boolean> {
-		if (!this.binaryFiles.has(path)) return false;
+		if (this.failNextBinaryModify || this.failBinaryModifyPath === path) {
+			this.failNextBinaryModify = false;
+			this.failBinaryModifyPath = null;
+			return false;
+		}
+		if (!this.binaryFiles.has(path) && !this.files.has(path)) return false;
+		this.files.delete(path);
 		this.binaryFiles.set(path, bytes.slice());
 		this.mtimeByPath.set(path, Date.now());
 		return true;
 	}
 	/** Returns fixture text size without changing the file. */
 	async size(path: string): Promise<number | null> {
+		const override = this.sizeOverrides.get(path);
+		if (override !== undefined) return override;
 		const text = this.files.get(path);
-		return text === undefined ? null : new TextEncoder().encode(text).length;
+		return text === undefined
+			? (this.binaryFiles.get(path)?.byteLength ?? null)
+			: new TextEncoder().encode(text).length;
 	}
 	/** Applies text only when the exact observed value remains unchanged. */
 	async process(
@@ -239,8 +266,10 @@ describe("TextApplyEngine", () => {
 			hash: remoteHash,
 		};
 		vault.binaryFiles.set(blobChange.path, source.slice());
-		vault.beforeSecondStat = () =>
+		vault.beforeSecondStat = () => {
 			vault.binaryFiles.set(blobChange.path, changed.slice());
+			vault.mtimeByPath.set(blobChange.path, 2);
+		};
 		journal = await seedBase(blobChange.path, sourceHash, storage, journal);
 		engine = makeEngine(journal, vault, {
 			read: async () => {
@@ -280,12 +309,15 @@ describe("TextApplyEngine", () => {
 			);
 		if (!conflictPlan)
 			throw new Error("Expected persisted binary conflict identity");
-		vault.binaryFiles.set(conflictPlan.path, changed.slice());
+		expect(vault.binaryFiles.get(conflictPlan.path)).toEqual(changed);
+		expect(
+			vault.binaryFiles.get(`.ai-bridge/pre-apply/${await hashBytes(changed)}`),
+		).toEqual(changed);
 		journal.close();
 		const restartedJournal = await DeviceJournal.open(storage);
 		const restartedVault = new MemoryVault();
-		restartedVault.binaryFiles.set(blobChange.path, changed.slice());
-		restartedVault.binaryFiles.set(conflictPlan.path, changed.slice());
+		for (const [path, bytes] of vault.binaryFiles)
+			restartedVault.binaryFiles.set(path, bytes.slice());
 		restartedVault.mtimeByPath.set(blobChange.path, 10);
 		const restartedEngine = makeEngine(restartedJournal, restartedVault, {
 			read: async () => {
@@ -313,6 +345,373 @@ describe("TextApplyEngine", () => {
 			remoteBytes,
 		);
 		expect(restartedJournal.snapshot().base[blobChange.path]).toEqual({
+			deleted: false,
+			rev: 2,
+			hash: remoteHash,
+		});
+	});
+
+	it("preserves remote blob bytes as a visible copy after a path-key collision", async () => {
+		const path = "assets/photo.png";
+		const localPath = "assets/PHOTO.png";
+		const local = new Uint8Array([40, 41]);
+		const remote = new Uint8Array([42, 43]);
+		const remoteHash = await hashBytes(remote);
+		vault.binaryFiles.set(localPath, local.slice());
+		engine = makeEngine(journal, vault, {
+			read: async () => null,
+			readBlob: async (_path, requestEpoch, rev) => ({
+				bytes: remote.slice(),
+				epoch: requestEpoch,
+				rev,
+				hash: remoteHash,
+			}),
+		});
+
+		await engine.apply({ ...change, path, hash: remoteHash }, "blob");
+
+		expect(vault.binaryFiles.get(localPath)).toEqual(local);
+		const remoteCopies = [...vault.binaryFiles.entries()].filter(
+			([copyPath]) => copyPath !== localPath && copyPath !== path,
+		);
+		expect(remoteCopies).toHaveLength(1);
+		expect(remoteCopies[0]?.[1]).toEqual(remote);
+		expect(journal.snapshot().attention).toContainEqual(
+			expect.objectContaining({ path }),
+		);
+		expect(journal.snapshot().pending_apply).toEqual([]);
+	});
+
+	it("refreshes retention when copied binary work resumes after its copy expires", async () => {
+		const now = Date.now();
+		const path = "assets/expired-copy.png";
+		const local = new Uint8Array([101, 102]);
+		const remote = new Uint8Array([103, 104]);
+		const localHash = await hashBytes(local);
+		const remoteHash = await hashBytes(remote);
+		const blobChange = { ...change, path, hash: remoteHash };
+		vault.binaryFiles.set(path, local.slice());
+		vault.mtimeByPath.set(path, 10);
+		await journal.setBase(path, {
+			deleted: false,
+			rev: 1,
+			hash: await hashBytes(new Uint8Array([105, 106])),
+		});
+		const provider: PinnedTextProvider = {
+			read: async () => null,
+			readBlob: async (_path, requestEpoch, rev) => ({
+				bytes: remote.slice(),
+				epoch: requestEpoch,
+				rev,
+				hash: remoteHash,
+			}),
+		};
+		engine = makeEngine(journal, vault, provider, {
+			deviceName: "Test Device",
+			now: () => now,
+		});
+		vault.failBinaryModifyPath = path;
+
+		await expect(engine.apply(blobChange)).rejects.toThrow(
+			"Binary write was not confirmed",
+		);
+
+		const recoveryPath = `.ai-bridge/pre-apply/${localHash}`;
+		expect(journal.snapshot().pending_apply[0]?.step).toBe("copied");
+		expect(vault.binaryFiles.get(recoveryPath)).toEqual(local);
+		vault.mtimeByPath.set(recoveryPath, now - 8 * 24 * 60 * 60 * 1000);
+		engine.close();
+		const restartedJournal = await DeviceJournal.open(storage);
+		const restartedEngine = makeEngine(restartedJournal, vault, provider, {
+			deviceName: "Test Device",
+			now: () => now,
+		});
+
+		await restartedEngine.resume();
+		await restartedEngine.apply(blobChange);
+
+		expect(vault.binaryFiles.get(path)).toEqual(remote);
+		expect(vault.binaryFiles.get(recoveryPath)).toEqual(local);
+		expect(vault.removedRecovery).not.toContain(recoveryPath);
+		expect(restartedJournal.snapshot().pending_apply).toEqual([]);
+	});
+
+	it("retains a clean binary rename destination before replacement and restart", async () => {
+		const sourcePath = "assets/missing-source.png";
+		const destinationPath = "assets/clean-destination.png";
+		const previous = new Uint8Array([90, 91]);
+		const remote = new Uint8Array([92, 93, 94]);
+		const previousHash = await hashBytes(previous);
+		const remoteHash = await hashBytes(remote);
+		const rename = {
+			seq: 2,
+			op: "rename" as const,
+			path: destinationPath,
+			from_path: sourcePath,
+			from_etag: `"${epoch}.1"`,
+			etag: `"${epoch}.2"`,
+			hash: remoteHash,
+			origin: "remote",
+			at: 2,
+		};
+		vault.binaryFiles.set(destinationPath, previous.slice());
+		vault.mtimeByPath.set(destinationPath, 10);
+		await journal.setBase(destinationPath, {
+			deleted: false,
+			rev: 1,
+			hash: previousHash,
+		});
+		const provider: PinnedTextProvider = {
+			read: async () => null,
+			readBlob: async (_path, requestEpoch, rev) => ({
+				bytes: remote.slice(),
+				epoch: requestEpoch,
+				rev,
+				hash: remoteHash,
+			}),
+		};
+		engine = makeEngine(journal, vault, provider);
+		vault.failBinaryModifyPath = destinationPath;
+
+		await expect(engine.apply(rename)).rejects.toThrow(
+			"Binary rename destination was not confirmed",
+		);
+
+		const preApplyPath = `.ai-bridge/pre-apply/${previousHash}`;
+		expect(vault.binaryFiles.get(destinationPath)).toEqual(previous);
+		expect(vault.binaryFiles.get(preApplyPath)).toEqual(previous);
+		expect(journal.snapshot().pending_apply[0]?.step).toBe("copied");
+		engine.close();
+		const restartedJournal = await DeviceJournal.open(storage);
+		const restartedEngine = makeEngine(restartedJournal, vault, provider);
+
+		await restartedEngine.resume();
+
+		expect(vault.binaryFiles.get(destinationPath)).toEqual(remote);
+		expect(vault.binaryFiles.get(preApplyPath)).toEqual(previous);
+		expect(restartedJournal.snapshot().pending_apply).toEqual([]);
+	});
+
+	it("does not trash a clean binary delete after close during stat", async () => {
+		const bytes = new Uint8Array([20, 21]);
+		const path = "assets/closed-delete.png";
+		const hashValue = await hashBytes(bytes);
+		vault.binaryFiles.set(path, bytes.slice());
+		vault.mtimeByPath.set(path, 10);
+		await journal.setBase(path, { deleted: false, rev: 1, hash: hashValue });
+		vault.beforeSecondStat = () => engine.close();
+
+		await expect(
+			engine.apply({ ...change, op: "delete", path, hash: "" }, "blob"),
+		).rejects.toThrow("Text apply engine is closed");
+
+		expect(vault.binaryTrashes).toEqual([]);
+		expect(vault.binaryFiles.get(path)).toEqual(bytes);
+	});
+
+	it("does not trash a binary rename source after close during observation", async () => {
+		const source = new Uint8Array([30, 31]);
+		const destination = new Uint8Array([32, 33]);
+		const sourceHash = await hashBytes(source);
+		const destinationHash = await hashBytes(destination);
+		const rename = {
+			seq: 2,
+			op: "rename" as const,
+			path: "assets/newer-destination.png",
+			from_path: "assets/closing-source.png",
+			from_etag: `"${epoch}.2"`,
+			etag: `"${epoch}.3"`,
+			hash: await hashBytes(new Uint8Array([34, 35])),
+			origin: "remote",
+			at: 3,
+		};
+		vault.binaryFiles.set(rename.from_path, source.slice());
+		vault.binaryFiles.set(rename.path, destination.slice());
+		await journal.setBase(rename.from_path, {
+			deleted: false,
+			rev: 1,
+			hash: sourceHash,
+		});
+		await journal.setBase(rename.path, {
+			deleted: false,
+			rev: 4,
+			hash: destinationHash,
+		});
+		let sourceReads = 0;
+		vault.beforeBinaryRead = (path) => {
+			if (path === rename.from_path && ++sourceReads === 2) engine.close();
+		};
+		engine = makeEngine(journal, vault, {
+			read: async () => null,
+			readBlob: async (_path, requestEpoch, rev) => ({
+				bytes: source.slice(),
+				epoch: requestEpoch,
+				rev,
+				hash: sourceHash,
+			}),
+		});
+
+		await expect(engine.apply(rename)).rejects.toThrow(
+			"Text apply engine is closed",
+		);
+
+		expect(vault.binaryTrashes).toEqual([]);
+		expect(vault.binaryFiles.get(rename.from_path)).toEqual(source);
+	});
+
+	it("copies dirty binary bytes before confirming a remote delete", async () => {
+		const previous = new Uint8Array([10, 11]);
+		const local = new Uint8Array([12, 13]);
+		const path = "assets/dirty-delete.png";
+		const remoteDelete = {
+			...change,
+			op: "delete" as const,
+			path,
+			hash: "",
+		};
+		const previousHash = await hashBytes(previous);
+		const localHash = await hashBytes(local);
+		vault.binaryFiles.set(path, local.slice());
+		vault.mtimeByPath.set(path, 10);
+		await journal.setBase(path, {
+			deleted: false,
+			rev: 1,
+			hash: previousHash,
+		});
+		engine = makeEngine(journal, vault, {
+			read: async () => {
+				throw new UnsupportedRemoteTextError(path);
+			},
+		});
+
+		await engine.apply(remoteDelete, "blob");
+
+		const copies = [...vault.binaryFiles.entries()].filter(([copyPath]) =>
+			copyPath.includes("conflict"),
+		);
+		expect(vault.binaryFiles.has(path)).toBe(false);
+		expect(copies).toHaveLength(1);
+		expect(copies[0]?.[1]).toEqual(local);
+		expect(vault.binaryFiles.get(`.ai-bridge/pre-apply/${localHash}`)).toEqual(
+			local,
+		);
+		expect(journal.snapshot().base[path]).toEqual({ deleted: true, rev: 2 });
+	});
+
+	it("uses pinned text kind when an oversized Markdown file shrinks", async () => {
+		const path = "notes/large.md";
+		const localText = "l".repeat(1_000_001);
+		const remoteText = "r".repeat(100_000);
+		const remoteHash = await hash(remoteText);
+		const etag = `"${epoch}.2"`;
+		vault.files.set(path, localText);
+		await journal.setBase(path, {
+			deleted: false,
+			rev: 1,
+			hash: await hash(localText),
+		});
+		const transport = new SyncTransport("https://service.test", {
+			requestResponse: async () => ({
+				status: 200,
+				headers: { etag, "content-type": "application/json" },
+				text: JSON.stringify({
+					path,
+					etag,
+					hash: remoteHash,
+					size: new TextEncoder().encode(remoteText).byteLength,
+					kind: "text",
+					deleted: false,
+					origin: "remote",
+					updated_at: 2,
+					content: remoteText,
+					offset: 0,
+					length: remoteText.length,
+					truncated: false,
+				}),
+			}),
+		});
+		engine = makeEngine(journal, vault, transport);
+
+		await engine.apply({ ...change, path, etag, hash: remoteHash });
+
+		expect(vault.files.get(path)).toBe(remoteText);
+		expect(journal.snapshot().base[path]).toEqual({
+			deleted: false,
+			rev: 2,
+			hash: remoteHash,
+		});
+	});
+
+	it("uses pinned blob kind when small Markdown grows beyond inline text", async () => {
+		const path = "notes/growing.md";
+		const localText = "previous small text";
+		const remoteBytes = new Uint8Array(1_000_001).fill(0x61);
+		const remoteHash = await hashBytes(remoteBytes);
+		const etag = `"${epoch}.2"`;
+		vault.files.set(path, localText);
+		await journal.setBase(path, {
+			deleted: false,
+			rev: 1,
+			hash: await hash(localText),
+		});
+		const transport = new SyncTransport("https://service.test", {
+			requestResponse: async () => ({
+				status: 200,
+				headers: {
+					etag,
+					"content-type": "application/octet-stream",
+					"content-length": String(remoteBytes.byteLength),
+				},
+				text: "",
+				arrayBuffer: remoteBytes.slice().buffer,
+			}),
+		});
+		engine = makeEngine(journal, vault, transport);
+
+		await engine.apply({ ...change, path, etag, hash: remoteHash });
+
+		expect(vault.binaryFiles.get(path)).toEqual(remoteBytes);
+		expect(journal.snapshot().base[path]).toEqual({
+			deleted: false,
+			rev: 2,
+			hash: remoteHash,
+		});
+	});
+
+	it("hydrates an absent oversized Markdown rename target from its pinned blob", async () => {
+		const path = "notes/new-large.md";
+		const bytes = new Uint8Array(1_000_001).fill(0x62);
+		const remoteHash = await hashBytes(bytes);
+		const etag = `"${epoch}.2"`;
+		const rename = {
+			seq: 2,
+			op: "rename" as const,
+			path,
+			from_path: "notes/old-large.md",
+			from_etag: `"${epoch}.1"`,
+			etag,
+			hash: remoteHash,
+			origin: "remote",
+			at: 2,
+		};
+		const transport = new SyncTransport("https://service.test", {
+			requestResponse: async () => ({
+				status: 200,
+				headers: {
+					etag,
+					"content-type": "application/octet-stream",
+					"content-length": String(bytes.byteLength),
+				},
+				text: "",
+				arrayBuffer: bytes.slice().buffer,
+			}),
+		});
+		engine = makeEngine(journal, vault, transport);
+
+		await engine.apply(rename);
+
+		expect(vault.binaryFiles.get(path)).toEqual(bytes);
+		expect(journal.snapshot().base[path]).toEqual({
 			deleted: false,
 			rev: 2,
 			hash: remoteHash,
@@ -421,7 +820,7 @@ describe("TextApplyEngine", () => {
 		});
 	});
 
-	it("keeps dirty binary rename source bytes beside the remote destination", async () => {
+	it("preserves dirty binary rename bytes and applies the remote source and destination effects", async () => {
 		const source = new Uint8Array([41, 42]);
 		const remote = new Uint8Array([43, 44]);
 		const baseHash = await hashBytes(new Uint8Array([39, 40]));
@@ -458,7 +857,7 @@ describe("TextApplyEngine", () => {
 
 		await engine.apply(rename);
 
-		expect(vault.binaryFiles.get(rename.from_path)).toEqual(source);
+		expect(vault.binaryFiles.has(rename.from_path)).toBe(false);
 		expect(vault.binaryFiles.get(rename.path)).toEqual(remote);
 		expect(
 			[...vault.binaryFiles.entries()].some(

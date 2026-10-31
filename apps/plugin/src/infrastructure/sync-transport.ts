@@ -135,7 +135,7 @@ export class SyncTransport {
 		return this.readPinnedBlob(path, epoch, rev, hash);
 	}
 
-	/** Returns pinned blob bytes or validated current authority after revision pruning. */
+	/** Resolves exact pinned content or newer current authority after pruning. */
 	async readResolvedBlob(
 		path: string,
 		epoch: string,
@@ -152,17 +152,71 @@ export class SyncTransport {
 		| { kind: "text"; text: string; hash: string; epoch: string; rev: number }
 		| { kind: "deleted"; text: null; hash: ""; epoch: string; rev: number }
 	> {
+		let pinned: OAuthTransportResponse | null = null;
 		try {
-			return {
-				kind: "blob",
-				...(await this.readPinnedBlob(path, epoch, rev, expectedHash)),
-			};
+			const query = new URLSearchParams({ rev: String(rev) });
+			pinned = await this.request(`/v1/files/${encodePath(path)}?${query}`, {
+				headers: { "x-vault-epoch": epoch },
+			});
 		} catch (error) {
 			if (
 				!(error instanceof SyncTransportError) ||
 				error.code !== "revision_pruned"
 			)
 				throw error;
+		}
+		if (pinned) {
+			const pinnedETag = pinned.headers.etag;
+			const pinnedIdentity = pinnedETag ? parseETag(pinnedETag) : null;
+			const pinnedType = pinned.headers["content-type"]
+				?.split(";", 1)[0]
+				?.trim()
+				.toLowerCase();
+			if (
+				!pinnedIdentity ||
+				pinnedIdentity.epoch !== epoch ||
+				pinnedIdentity.rev !== rev
+			)
+				throw new Error("Pinned content identity is invalid");
+			if (pinnedType === "application/octet-stream") {
+				const size = pinned.headers["content-length"];
+				const bytes = pinned.arrayBuffer
+					? new Uint8Array(pinned.arrayBuffer.slice(0))
+					: null;
+				const hash = DevicePayloadHashSchema.parse(expectedHash);
+				if (
+					!bytes ||
+					!/^(0|[1-9][0-9]*)$/.test(size ?? "") ||
+					!Number.isSafeInteger(Number(size)) ||
+					Number(size) > 25_000_000 ||
+					Number(size) !== bytes.byteLength ||
+					(await hashBytes(bytes)) !== hash
+				)
+					throw new Error("Pinned blob response metadata is invalid");
+				return { kind: "blob", bytes, hash, epoch, rev };
+			}
+			const body = TextReadResponseSchema.parse(parseJson(pinned.text));
+			if (
+				body.path !== path ||
+				body.etag !== pinnedETag ||
+				body.offset !== 0 ||
+				body.truncated
+			)
+				throw new Error("Pinned text response metadata is invalid");
+			if (body.deleted) {
+				if (body.content !== null || body.length !== 0 || body.hash !== "")
+					throw new Error("Pinned text tombstone metadata is invalid");
+				return { kind: "deleted", text: null, hash: "", epoch, rev };
+			}
+			if (
+				body.content === null ||
+				body.length !== body.content.length ||
+				body.size !== new TextEncoder().encode(body.content).byteLength ||
+				(await hashText(body.content)) !== body.hash ||
+				body.hash !== expectedHash
+			)
+				throw new Error("Pinned text response metadata is invalid");
+			return { kind: "text", text: body.content, hash: body.hash, epoch, rev };
 		}
 		const response = await this.request(`/v1/files/${encodePath(path)}`);
 		const responseEpoch = response.headers["x-vault-epoch"];
@@ -250,7 +304,7 @@ export class SyncTransport {
 		};
 	}
 
-	/** Implements pinned binary authority and current fallback for startup restore. */
+	/** Resolves pinned binary authority and current text or blob fallback for restore. */
 	async readBlobAuthority(
 		path: string,
 		epoch: string,
@@ -369,6 +423,41 @@ export class SyncTransport {
 					rev: identity.rev,
 					hash: await hashText(current.text),
 				};
+	}
+
+	/** Reads current exact blob bytes and validates their identity and size. */
+	async readCurrentBlobAuthority(path: string) {
+		const response = await this.request(`/v1/files/${encodePath(path)}`);
+		if (
+			response.headers["content-type"]
+				?.split(";", 1)[0]
+				?.trim()
+				.toLowerCase() !== "application/octet-stream"
+		)
+			throw new UnsupportedRemoteTextError(path);
+		const etag = response.headers.etag;
+		const identity = etag ? parseETag(etag) : null;
+		const size = response.headers["content-length"];
+		const bytes = response.arrayBuffer
+			? new Uint8Array(response.arrayBuffer.slice(0))
+			: null;
+		if (
+			!identity ||
+			!bytes ||
+			!/^(0|[1-9][0-9]*)$/.test(size ?? "") ||
+			!Number.isSafeInteger(Number(size)) ||
+			Number(size) > 25_000_000 ||
+			Number(size) !== bytes.byteLength
+		)
+			throw new Error("Current blob authority metadata is invalid");
+		const hash = await hashBytes(bytes);
+		return {
+			kind: "blob" as const,
+			bytes,
+			epoch: identity.epoch,
+			rev: identity.rev,
+			hash,
+		};
 	}
 
 	/** Reads current live text or tombstone with its validated epoch and revision. */

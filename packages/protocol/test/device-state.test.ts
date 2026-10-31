@@ -62,6 +62,99 @@ describe("device journal protocol schemas", () => {
 		expect(PendingOperationSchema.safeParse(operation).success).toBe(true);
 	});
 
+	it("accepts one durable remote blob copy for a colliding path", () => {
+		const path = "assets/photo.png";
+		const hash = "c".repeat(64);
+		const pending = {
+			change: {
+				seq: 2,
+				op: "put",
+				path,
+				etag: `"${"b".repeat(32)}.2"`,
+				hash,
+				origin: "remote",
+				at: 2,
+			},
+			content_kind: "blob",
+			step: "named",
+			conflict_copies: [
+				{
+					path: "assets/photo (conflict Test Device 1970-01-01 0000 r2).png",
+					source: path,
+					side: "path",
+					mode: "remote",
+					hash,
+					kind: "blob",
+					purpose: "conflict",
+				},
+			],
+		};
+
+		expect(PendingApplySchema.safeParse(pending).success).toBe(true);
+	});
+
+	it("accepts a rename destination pre-apply recovery copy", () => {
+		const path = "assets/new.png";
+		const oldHash = "d".repeat(64);
+		const pending = {
+			change: {
+				seq: 2,
+				op: "rename",
+				path,
+				from_path: "assets/old.png",
+				from_etag: `"${"b".repeat(32)}.1"`,
+				etag: `"${"b".repeat(32)}.2"`,
+				hash: "e".repeat(64),
+				origin: "remote",
+				at: 2,
+			},
+			content_kind: "blob",
+			step: "copied",
+			conflict_copies: [
+				{
+					path: `.ai-bridge/pre-apply/${oldHash}`,
+					source: path,
+					side: "rename_destination",
+					mode: "local",
+					device_name: "Test Device",
+					hash: oldHash,
+					kind: "blob",
+					purpose: "pre_apply",
+				},
+			],
+		};
+
+		expect(PendingApplySchema.safeParse(pending).success).toBe(true);
+		const completeRenamePlan = {
+			...pending,
+			step: "named",
+			conflict_copies: [
+				{
+					path: "assets/old (conflict Test Device 1970-01-01 0000 r1).png",
+					source: "assets/old.png",
+					side: "rename_source",
+					mode: "local",
+					device_name: "Test Device",
+					hash: "f".repeat(64),
+					kind: "blob",
+					purpose: "conflict",
+				},
+				{
+					path: "assets/new (conflict Test Device 1970-01-01 0000 r2).png",
+					source: path,
+					side: "rename_destination",
+					mode: "local",
+					device_name: "Test Device",
+					hash: "a".repeat(64),
+					kind: "blob",
+					purpose: "conflict",
+				},
+				pending.conflict_copies[0],
+			],
+		};
+		expect(PendingApplySchema.safeParse(completeRenamePlan).success).toBe(true);
+	});
+
 	it("restarts legacy checkpoints when their remote path index is absent", () => {
 		const parsed = ReconciliationCheckpointSchema.parse({
 			epoch: "b".repeat(32),

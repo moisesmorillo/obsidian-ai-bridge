@@ -1,3 +1,4 @@
+import { pathKey } from "@obsidian-ai-bridge/protocol";
 import { beforeEach, describe, expect, it } from "vitest";
 import { SyncTransportError } from "../src/infrastructure/sync-transport";
 import { DeviceJournal } from "../src/sync/device-journal";
@@ -62,8 +63,25 @@ class MemoryVault implements TextVault {
 	}
 	/** Creates exact bytes at an absent path. */
 	async createBinary(path: string, bytes: Uint8Array): Promise<boolean> {
-		if (this.files.has(path) || this.binaryFiles.has(path)) return false;
+		if (
+			[...this.files.keys(), ...this.binaryFiles.keys()].some(
+				(current) => current === path || pathKey(current) === pathKey(path),
+			)
+		)
+			return false;
 		this.binaryFiles.set(path, bytes.slice());
+		return true;
+	}
+	/** Moves exact binary bytes to the test trash only when they still match. */
+	async trashBinary(path: string, expected: Uint8Array): Promise<boolean> {
+		const current = this.binaryFiles.get(path);
+		if (
+			!current ||
+			current.byteLength !== expected.byteLength ||
+			!current.every((byte, index) => byte === expected[index])
+		)
+			return false;
+		this.binaryFiles.delete(path);
 		return true;
 	}
 	/** Replaces exact bytes at an existing path. */
@@ -498,7 +516,7 @@ describe("ReconciliationController", () => {
 		);
 	});
 
-	it("preserves local binary bytes as visible conflict data for a manifest tombstone", async () => {
+	it("preserves dirty binary bytes and applies a manifest tombstone", async () => {
 		const localBytes = new Uint8Array([0, 255, 3]);
 		context.vault.binaryFiles.set("assets/old.pdf", localBytes);
 		context.remote.entries = [
@@ -513,7 +531,7 @@ describe("ReconciliationController", () => {
 		];
 		await context.controller.enroll();
 		expect(context.vault.reads).not.toContain("assets/old.pdf");
-		expect(context.vault.binaryFiles.get("assets/old.pdf")).toEqual(localBytes);
+		expect(context.vault.binaryFiles.has("assets/old.pdf")).toBe(false);
 		expect(
 			[...context.vault.binaryFiles.entries()].some(
 				([path, bytes]) =>
@@ -527,11 +545,11 @@ describe("ReconciliationController", () => {
 		});
 		expect(context.journal.snapshot().attention).toContainEqual({
 			path: "assets/old.pdf",
-			reason: "Local binary bytes remain visible after the remote delete",
+			reason: "Local binary bytes were preserved as a conflict copy",
 		});
 	});
 
-	it("preserves local binary bytes for an authoritative feed tombstone", async () => {
+	it("preserves dirty binary bytes and applies an authoritative feed tombstone", async () => {
 		const localBytes = new Uint8Array([1, 2, 255]);
 		context.vault.binaryFiles.set("assets/file.pdf", localBytes);
 		await context.controller.enroll();
@@ -564,9 +582,14 @@ describe("ReconciliationController", () => {
 		});
 		await context.controller.replay();
 		expect(context.vault.reads).not.toContain("assets/file.pdf");
-		expect(context.vault.binaryFiles.get("assets/file.pdf")).toEqual(
-			editedBytes,
-		);
+		expect(context.vault.binaryFiles.has("assets/file.pdf")).toBe(false);
+		expect(
+			[...context.vault.binaryFiles.entries()].some(
+				([path, bytes]) =>
+					path.includes("conflict") &&
+					bytes.every((byte, index) => byte === editedBytes[index]),
+			),
+		).toBe(true);
 		expect(context.journal.snapshot().cursor).toBe(6);
 		expect(context.journal.snapshot().base["assets/file.pdf"]).toMatchObject({
 			deleted: true,
@@ -574,8 +597,121 @@ describe("ReconciliationController", () => {
 		});
 		expect(context.journal.snapshot().attention).toContainEqual({
 			path: "assets/file.pdf",
-			reason: "Local binary bytes remain visible after the remote delete",
+			reason: "Local binary bytes were preserved as a conflict copy",
 		});
+	});
+
+	it("applies exact current blob authority during a rejected rename recovery", async () => {
+		const path = "assets/rename-source.png";
+		const bytes = new Uint8Array([81, 82, 255]);
+		const currentHash = await hashBytes(bytes);
+		const oldHash = await hashBytes(new Uint8Array([83, 84]));
+		await context.journal.resetEpoch(epoch);
+		await context.journal.setCursor(epoch, 0);
+		await context.journal.setBase(path, {
+			deleted: false,
+			rev: 1,
+			hash: oldHash,
+		});
+		context.remote.blobPaths.add(path);
+		context.remote.blobs.set(5, bytes);
+		const remote = context.remote as typeof context.remote & {
+			readCurrentAuthority: (source: string) => Promise<never>;
+			readCurrentBlobAuthority: (source: string) => Promise<{
+				kind: "blob";
+				bytes: Uint8Array;
+				epoch: string;
+				rev: number;
+				hash: string;
+			}>;
+		};
+		remote.readCurrentAuthority = async () => {
+			throw new UnsupportedRemoteTextError(path);
+		};
+		remote.readCurrentBlobAuthority = async () => ({
+			kind: "blob",
+			bytes: bytes.slice(),
+			epoch,
+			rev: 5,
+			hash: currentHash,
+		});
+		await context.journal.enqueue(
+			{
+				op: "rename",
+				path,
+				to: "assets/rename-target.png",
+				precondition: { kind: "match", epoch, rev: 1 },
+				source_hash: oldHash,
+			},
+			new Uint8Array(),
+		);
+		const operation = context.journal.snapshot().pending_ops[0];
+		if (!operation) throw new Error("Missing binary rename fixture");
+
+		await context.controller.recoverPrecondition(operation);
+
+		expect(context.vault.binaryFiles.get(path)).toEqual(bytes);
+		expect(context.journal.snapshot().base[path]).toEqual({
+			deleted: false,
+			rev: 5,
+			hash: currentHash,
+		});
+	});
+
+	it("preserves a colliding feed blob and continues to later feed entries", async () => {
+		const path = "assets/photo.png";
+		const localPath = "assets/PHOTO.png";
+		const localBytes = new Uint8Array([61, 62]);
+		const remoteBytes = new Uint8Array([63, 64]);
+		const remoteHash = await hashBytes(remoteBytes);
+		const following = "feed continued after the binary collision";
+		context.vault.binaryFiles.set(localPath, localBytes);
+		await context.journal.resetEpoch(epoch);
+		await context.journal.setCursor(epoch, 0);
+		context.remote.blobPaths.add(path);
+		context.remote.blobs.set(5, remoteBytes);
+		context.remote.texts.set("6", following);
+		context.remote.feed.push({
+			epoch,
+			head_seq: 6,
+			entries: [
+				{
+					seq: 5,
+					op: "put",
+					path,
+					etag: `"${epoch}.5"`,
+					hash: remoteHash,
+					origin: "remote",
+					at: 5,
+				},
+				{
+					seq: 6,
+					op: "put",
+					path: "after-binary-collision.md",
+					etag: `"${epoch}.6"`,
+					hash: await hash(following),
+					origin: "remote",
+					at: 6,
+				},
+			],
+		});
+
+		await context.controller.replay();
+
+		expect(context.vault.binaryFiles.get(localPath)).toEqual(localBytes);
+		const visibleRemoteCopies = [...context.vault.binaryFiles.entries()].filter(
+			([copyPath]) => copyPath.includes("conflict"),
+		);
+		expect(visibleRemoteCopies).toHaveLength(1);
+		expect(visibleRemoteCopies[0]?.[1]).toEqual(remoteBytes);
+		expect(context.vault.files.get("after-binary-collision.md")).toBe(
+			following,
+		);
+		expect(context.journal.snapshot().cursor).toBe(6);
+		expect(context.journal.snapshot().pending_apply).toEqual([]);
+		expect(context.journal.snapshot().attention).toContainEqual(
+			expect.objectContaining({ path }),
+		);
 	});
 
 	it("applies authoritative feed blobs without decoding them as local text", async () => {

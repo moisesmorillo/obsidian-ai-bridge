@@ -51,7 +51,7 @@ export interface PublicationRemote {
 		key: string,
 		epoch: string,
 	): Promise<PublicationReceipt>;
-	/** Sends exact immutable bytes through the Worker blob authorize/upload/commit flow. */
+	/** Sends one conditional PUT with exact immutable bytes. The Worker owns authorize, upload, and commit. */
 	putBlob?(
 		path: string,
 		bytes: Uint8Array,
@@ -309,12 +309,9 @@ export class PublicationController {
 				sourceText !== null;
 			if (staleEvent) {
 				if (parsed.type === "rename") {
-					const destination = await this.vault.read(parsed.to);
-					this.assertOpen();
-					if (destination !== null) {
-						this.assertOpen();
-						await this.enqueuePut(parsed.to, destination);
-					}
+					const destination = await this.readRenameDestination(parsed.to);
+					if (destination !== null)
+						await this.enqueueBinaryPut(parsed.to, destination);
 				} else {
 					await this.journal.recordAttention(
 						parsed.path,
@@ -990,16 +987,39 @@ export class PublicationController {
 		);
 	}
 
-	/** Queues a local edit after a successful rename and drops a redundant exact put. */
+	/** Selects the reader from current destination admission, never from saved payload size or receipt kind. */
+	private async readRenameDestination(
+		path: string,
+	): Promise<Uint8Array | null> {
+		const size = await this.vault.size(path);
+		this.assertOpen();
+		if (size === null) return null;
+		const admission = classifyEnrollmentPath(path, size);
+		if (admission === "excluded") return null;
+		if (admission === "unsupported") {
+			await this.journal.recordAttention(
+				path,
+				"File exceeds the 25 MB sync limit",
+			);
+			return null;
+		}
+		const bytes =
+			admission === "blob"
+				? await this.vault.readBinary?.(path)
+				: await this.readTextBytes(path);
+		this.assertOpen();
+		return bytes ?? null;
+	}
+
+	/** Queues exact current bytes after a successful rename and drops a redundant exact put. */
 	private async reconcileRenameDestination(
 		operation: Extract<PendingOperation, { op: "rename" }>,
 		remoteHash: string,
 	): Promise<void> {
 		this.assertOpen();
-		const local = await this.vault.read(operation.to);
-		this.assertOpen();
+		const local = await this.readRenameDestination(operation.to);
 		if (local === null) return;
-		const localHash = await digest(new TextEncoder().encode(local));
+		const localHash = await digest(local);
 		this.assertOpen();
 		const queuedPuts = this.journal
 			.snapshot()
@@ -1019,7 +1039,7 @@ export class PublicationController {
 		this.assertOpen();
 		if (!(await this.hasPendingPut(operation.to, localHash))) {
 			this.assertOpen();
-			await this.enqueuePut(operation.to, local);
+			await this.enqueueBinaryPut(operation.to, local);
 		}
 	}
 

@@ -154,7 +154,7 @@ export const PendingConflictCopySchema = z
 /** Inferred identity for one durably preserved local or remote version. */
 export type PendingConflictCopy = z.infer<typeof PendingConflictCopySchema>;
 
-/** One durable apply step with legacy or per-side conflict-copy recovery metadata. */
+/** One durable apply step. Clean blob puts can use one confined pre-apply plan without a visible conflict. */
 export const PendingApplySchema = z
 	.object({
 		change: ChangeEntrySchema,
@@ -242,10 +242,19 @@ export const PendingApplySchema = z
 							(copy.side === "rename_source" ||
 								copy.side === "rename_destination"),
 				);
+			const validCleanPutRecovery =
+				pending.change.op === "put" &&
+				pending.conflict_copies.length === 1 &&
+				blobCopies.length === 1 &&
+				blobCopies[0]?.purpose === "pre_apply" &&
+				blobCopies[0]?.mode === "local" &&
+				blobCopies[0]?.side === "path" &&
+				blobCopies[0]?.source === pending.change.path;
 			const validBlobPlans =
 				pending.change.op === "rename"
 					? validRenameBlobPlans
 					: validRemoteBlobCollision ||
+						validCleanPutRecovery ||
 						(blobCopies.length === 2 &&
 							blobCopies.filter((copy) => copy.purpose === "conflict")
 								.length === 1 &&
@@ -257,7 +266,7 @@ export const PendingApplySchema = z
 				context.addIssue({
 					code: "custom",
 					message:
-						"Binary conflict state needs durable visible and recovery copies",
+						"Binary recovery needs valid visible copies or one clean put pre-apply plan",
 					path: ["conflict_copies"],
 				});
 			const seenPaths = new Set<string>();

@@ -1,8 +1,11 @@
-import { pathKey } from "@obsidian-ai-bridge/protocol";
+import { DevicePayloadHashSchema, pathKey } from "@obsidian-ai-bridge/protocol";
 import type { TextVault } from "@plugin/sync/text-apply";
 import { TFile, type Vault } from "obsidian";
 
-/** Uses Obsidian Vault effects while rechecking exact observed text before mutation. */
+/** Confines hidden recovery bytes to one hash-addressed directory outside the Vault index. */
+const RECOVERY_DIRECTORY = ".ai-bridge/pre-apply";
+
+/** Uses Vault effects for visible files and adapter effects for confined hidden recovery bytes. */
 export class ObsidianTextVault implements TextVault {
 	/** Binds the host vault whose text effects this adapter guards. */
 	constructor(private readonly vault: Vault) {}
@@ -15,20 +18,31 @@ export class ObsidianTextVault implements TextVault {
 
 	/** Reads exact bytes from a current file without text decoding. */
 	async readBinary(path: string): Promise<Uint8Array | null> {
+		if (path.startsWith(".ai-bridge/")) {
+			if (
+				!isRecoveryPath(path) ||
+				(await this.vault.adapter.stat(path))?.type !== "file"
+			)
+				return null;
+			return new Uint8Array(await this.vault.adapter.readBinary(path));
+		}
 		const file = this.fileAt(path);
 		return file ? new Uint8Array(await this.vault.readBinary(file)) : null;
 	}
 
-	/** Returns host adapter mtime and size for an exact path, or null when absent. */
+	/** Returns adapter mtime and size for a file. Invalid hidden paths and absent files return null. */
 	async stat(path: string): Promise<{ mtime: number; size: number } | null> {
+		if (path.startsWith(".ai-bridge/") && !isRecoveryPath(path)) return null;
 		const stat = await this.vault.adapter.stat(path);
 		return stat?.type === "file"
 			? { mtime: stat.mtime, size: stat.size }
 			: null;
 	}
 
-	/** Creates exact bytes only when no exact or case-folded path collision exists. */
+	/** Creates visible bytes without collisions, or reuses equal hidden recovery bytes without replacement. */
 	async createBinary(path: string, bytes: Uint8Array): Promise<boolean> {
+		if (path.startsWith(".ai-bridge/"))
+			return this.writeRecoveryCopy(path, bytes, false);
 		if (this.fileAt(path) || this.hasPathKeyCollision(path)) return false;
 		await this.ensureParent(path);
 		const copy = bytes.slice();
@@ -46,20 +60,21 @@ export class ObsidianTextVault implements TextVault {
 		path: string,
 		expectedHash: string,
 	): Promise<boolean> {
-		const prefix = ".ai-bridge/pre-apply/";
 		if (
-			path !== `${prefix}${expectedHash}` ||
-			!/^[a-f0-9]{64}$/.test(expectedHash)
+			!isRecoveryPath(path) ||
+			path !== `${RECOVERY_DIRECTORY}/${expectedHash}`
 		)
 			return false;
 		const bytes = await this.readBinary(path);
 		if (!bytes || (await digestBytes(bytes)) !== expectedHash) return false;
 		await this.vault.adapter.remove(path);
-		return this.fileAt(path) === null;
+		return (await this.vault.adapter.stat(path)) === null;
 	}
 
-	/** Replaces exact file bytes; the application layer owns its pre-write stat guard. */
+	/** Replaces visible bytes or refreshes equal hidden recovery bytes. The engine owns mutation admission and stat guards. */
 	async modifyBinary(path: string, bytes: Uint8Array): Promise<boolean> {
+		if (path.startsWith(".ai-bridge/"))
+			return this.writeRecoveryCopy(path, bytes, true);
 		const file = this.fileAt(path);
 		if (!file) return false;
 		const copy = bytes.slice();
@@ -68,9 +83,13 @@ export class ObsidianTextVault implements TextVault {
 		return written !== null && equalBytes(written, bytes);
 	}
 
-	/** Lists current vault file paths for collision checks without changing them. */
+	/** Lists indexed files and confined hidden recovery files so engine cleanup can inspect their retention times. */
 	async list(): Promise<string[]> {
-		return this.vault.getFiles().map((file) => file.path);
+		const visible = this.vault.getFiles().map((file) => file.path);
+		if ((await this.vault.adapter.stat(RECOVERY_DIRECTORY))?.type !== "folder")
+			return visible;
+		const hidden = await this.vault.adapter.list(RECOVERY_DIRECTORY);
+		return [...new Set([...visible, ...hidden.files.filter(isRecoveryPath)])];
 	}
 
 	/** Returns raw file size without decoding content, or null when the path is absent. */
@@ -157,7 +176,51 @@ export class ObsidianTextVault implements TextVault {
 		return this.fileAt(to) === source && this.fileAt(from) === null;
 	}
 
-	/** Returns only a real Obsidian text file at one exact path. */
+	/** Creates or refreshes confined recovery bytes. Observed hash or byte mismatches stop the write. The engine owns effect admission. */
+	private async writeRecoveryCopy(
+		path: string,
+		bytes: Uint8Array,
+		refresh: boolean,
+	): Promise<boolean> {
+		if (
+			!isRecoveryPath(path) ||
+			(await digestBytes(bytes)) !== path.slice(RECOVERY_DIRECTORY.length + 1)
+		)
+			return false;
+		const adapter = this.vault.adapter;
+		const existingStat = await adapter.stat(path);
+		if (existingStat) {
+			if (existingStat.type !== "file") return false;
+			const existing = await this.readBinary(path);
+			if (!existing || !equalBytes(existing, bytes)) return false;
+			if (!refresh) return true;
+		} else {
+			if (refresh) return false;
+			for (const directory of [".ai-bridge", RECOVERY_DIRECTORY]) {
+				const stat = await adapter.stat(directory);
+				if (stat?.type === "folder") continue;
+				if (stat) return false;
+				try {
+					await adapter.mkdir(directory);
+				} catch {
+					if ((await adapter.stat(directory))?.type !== "folder") return false;
+				}
+			}
+		}
+		const beforeWrite = await this.readBinary(path);
+		if (beforeWrite && !equalBytes(beforeWrite, bytes)) return false;
+		if (!refresh && beforeWrite) return true;
+		if (refresh && !beforeWrite) return false;
+		try {
+			await adapter.writeBinary(path, bytes.slice().buffer as ArrayBuffer);
+		} catch {
+			return false;
+		}
+		const written = await this.readBinary(path);
+		return written !== null && equalBytes(written, bytes);
+	}
+
+	/** Returns only a real Obsidian file at one exact indexed path. */
 	private fileAt(path: string): TFile | null {
 		const file = this.vault.getAbstractFileByPath(path);
 		return file instanceof TFile ? file : null;
@@ -188,6 +251,15 @@ export class ObsidianTextVault implements TextVault {
 			}
 		}
 	}
+}
+
+/** Accepts only a direct child whose name is a canonical SHA-256 payload hash. */
+function isRecoveryPath(path: string): boolean {
+	const prefix = `${RECOVERY_DIRECTORY}/`;
+	return (
+		path.startsWith(prefix) &&
+		DevicePayloadHashSchema.safeParse(path.slice(prefix.length)).success
+	);
 }
 
 /** Hashes exact bytes without text conversion. */

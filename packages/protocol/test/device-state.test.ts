@@ -62,6 +62,56 @@ describe("device journal protocol schemas", () => {
 		expect(PendingOperationSchema.safeParse(operation).success).toBe(true);
 	});
 
+	it.each(["named", "copied"] as const)(
+		"accepts only confined local pre-apply put recovery at %s",
+		(step) => {
+			const path = "assets/clean.png";
+			const hash = "c".repeat(64);
+			const recovery = {
+				path: `.ai-bridge/pre-apply/${hash}`,
+				source: path,
+				side: "path",
+				mode: "local",
+				hash,
+				kind: "blob",
+				purpose: "pre_apply",
+			};
+			const pending = {
+				change: {
+					seq: 2,
+					op: "put",
+					path,
+					etag: `"${"b".repeat(32)}.2"`,
+					hash: "d".repeat(64),
+					origin: "remote",
+					at: 2,
+				},
+				content_kind: "blob",
+				step,
+				conflict_copies: [recovery],
+			};
+			expect(PendingApplySchema.safeParse(pending).success).toBe(true);
+			for (const invalid of [
+				{ ...pending, change: { ...pending.change, op: "delete", hash: "" } },
+				{ ...pending, conflict_copies: [{ ...recovery, mode: "remote" }] },
+				{
+					...pending,
+					conflict_copies: [{ ...recovery, source: "assets/other.png" }],
+				},
+				{
+					...pending,
+					conflict_copies: [{ ...recovery, path: "assets/visible.png" }],
+				},
+				{
+					...pending,
+					conflict_copies: [{ ...recovery, side: "rename_destination" }],
+				},
+				{ ...pending, conflict_copies: [{ ...recovery, purpose: "conflict" }] },
+			])
+				expect(PendingApplySchema.safeParse(invalid).success).toBe(false);
+		},
+	);
+
 	it("accepts one durable remote blob copy for a colliding path", () => {
 		const path = "assets/photo.png";
 		const hash = "c".repeat(64);

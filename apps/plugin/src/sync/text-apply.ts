@@ -547,7 +547,10 @@ export class TextApplyEngine {
 				change,
 				content_kind: "blob",
 				step: "named",
-				conflict_copies: [localCopy, recoveryCopy],
+				conflict_copies:
+					clean && sameStat(firstStat, secondStat)
+						? [recoveryCopy]
+						: [localCopy, recoveryCopy],
 			});
 			if (!sameStat(firstStat, secondStat)) {
 				const named = this.activeJournal.snapshot().pending_apply[0];
@@ -565,22 +568,27 @@ export class TextApplyEngine {
 			(copy) => copy.purpose === "pre_apply",
 		);
 		if (
-			!conflictCopy ||
 			!recoveryCopy ||
-			conflictCopy.hash !== observedHash ||
 			recoveryCopy.hash !== observedHash ||
-			conflictCopy.source !== change.path
+			recoveryCopy.source !== change.path ||
+			(!conflictCopy && !clean) ||
+			(conflictCopy !== undefined &&
+				(conflictCopy.hash !== observedHash ||
+					conflictCopy.source !== change.path))
 		)
 			return this.attend(
 				change.path,
 				"Binary recovery identity changed before apply completed",
 			);
-		const conflictBytes = await this.vault.readBinary(conflictCopy.path);
+		const conflictBytes = conflictCopy
+			? await this.vault.readBinary(conflictCopy.path)
+			: null;
 		const recoveryBytes = await this.vault.readBinary(recoveryCopy.path);
 		if (
-			!conflictBytes ||
+			(conflictCopy !== undefined &&
+				(!conflictBytes ||
+					(await digestBytes(conflictBytes)) !== observedHash)) ||
 			!recoveryBytes ||
-			(await digestBytes(conflictBytes)) !== observedHash ||
 			(await digestBytes(recoveryBytes)) !== observedHash
 		)
 			return this.attend(
@@ -867,7 +875,7 @@ export class TextApplyEngine {
 
 	/**
 	 * Validates pinned bytes and kind before effects. Invalid identity or bytes stop the apply.
-	 * Newer authority retains copy identities in the journal before a serialized retry.
+	 * Newer authority retains visible copy identities, but explicit tombstones release replacement-only plans without removing their stored bytes.
 	 */
 	private async resolvePinnedContent(
 		change: ChangeEntry & { op: "put" | "rename" },
@@ -916,9 +924,14 @@ export class TextApplyEngine {
 				etag: `"${remote.epoch}.${remote.rev}"`,
 				hash: remote.hash,
 			});
+			const replacementOnly =
+				pending.conflict_copies?.length === 1 &&
+				pending.conflict_copies[0]?.purpose === "pre_apply";
 			await this.activeJournal.rebasePendingApply(
 				rebased,
-				pending.conflict_copies,
+				remote.kind === "deleted" && replacementOnly
+					? []
+					: pending.conflict_copies,
 			);
 			throw new PinnedRevisionRebased(rebased);
 		}
@@ -1712,12 +1725,17 @@ export class TextApplyEngine {
 		const change = pending.change;
 		const conflict = copies.find((copy) => copy.purpose === "conflict");
 		const recovery = copies.find((copy) => copy.purpose === "pre_apply");
-		if (!conflict || !recovery || conflict.hash !== recovery.hash)
+		const base = this.activeJournal.snapshot().base[change.path];
+		if (
+			!recovery ||
+			(conflict && conflict.hash !== recovery.hash) ||
+			(!conflict && (base?.deleted !== false || base.hash !== recovery.hash))
+		)
 			return this.attend(
 				change.path,
 				"Inline-text recovery identity is invalid",
 			);
-		for (const copy of [conflict, recovery]) {
+		for (const copy of copies) {
 			const saved = await this.vault.readBinary?.(copy.path);
 			this.assertOpen();
 			if (!saved || (await digestBytes(saved)) !== copy.hash)
@@ -1769,15 +1787,16 @@ export class TextApplyEngine {
 			!(await this.replacePreservedBytesWithText(
 				change.path,
 				change.hash,
-				conflict.hash,
+				recovery.hash,
 				remote,
 			))
 		)
 			return;
-		await this.activeJournal.recordAttention(
-			change.path,
-			"Local binary bytes were preserved as a conflict copy",
-		);
+		if (conflict)
+			await this.activeJournal.recordAttention(
+				change.path,
+				"Local binary bytes were preserved as a conflict copy",
+			);
 		await this.activeJournal.completeApply(change.path, {
 			deleted: false,
 			rev: parseETag(change.etag).rev,
@@ -1788,7 +1807,7 @@ export class TextApplyEngine {
 
 	/**
 	 * Replaces exact preserved bytes with inline text and accepts absence after an earlier confirmed trash.
-	 * The caller must verify visible and recovery copies before this effect.
+	 * The caller must verify recovery bytes and any visible conflict copies before this effect.
 	 */
 	private async replacePreservedBytesWithText(
 		path: string,
@@ -1979,7 +1998,7 @@ export class TextApplyEngine {
 			pending.change.op === "put"
 		) {
 			const binaryCopies = copies.filter((copy) => copy.kind === "blob");
-			if (binaryCopies.length !== 2)
+			if (binaryCopies.length !== 1 && binaryCopies.length !== 2)
 				return this.attend(
 					pending.change.path,
 					"Inline-text replacement has incomplete binary recovery identity",

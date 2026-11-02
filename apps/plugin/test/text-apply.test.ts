@@ -280,6 +280,242 @@ describe("TextApplyEngine", () => {
 		Object.assign(change, remoteChange);
 	});
 
+	it.each(["apply", "named", "copied", "effect"] as const)(
+		"applies a clean blob with only pre-apply recovery after %s",
+		async (stopAt) => {
+			const path = "assets/clean-put.png";
+			const local = new Uint8Array([0xff, 0x28, 1]);
+			const remote = new Uint8Array([0xfe, 0x28, 2]);
+			const localHash = await hashBytes(local);
+			const remoteHash = await hashBytes(remote);
+			const recoveryPath = `.ai-bridge/pre-apply/${localHash}`;
+			const now = Date.now();
+			vault.binaryFiles.set(path, local.slice());
+			await journal.setBase(path, { deleted: false, rev: 1, hash: localHash });
+			const provider: PinnedTextProvider = {
+				read: async () => null,
+				readBlob: async (_path, requestEpoch, rev) => ({
+					bytes: remote.slice(),
+					epoch: requestEpoch,
+					rev,
+					hash: remoteHash,
+				}),
+			};
+			engine = makeEngine(journal, vault, provider, {
+				deviceName: "Test Device",
+				now: () => now,
+			});
+			const update = journal.updateApply.bind(journal);
+			journal.updateApply = async (pending) => {
+				await update(pending);
+				if (pending.step === stopAt)
+					throw new Error("stop at clean recovery step");
+			};
+			const modify = vault.modifyBinary.bind(vault);
+			vault.modifyBinary = async (source, bytes) => {
+				if (source === path) {
+					expect(journal.snapshot().pending_apply[0]?.conflict_copies).toEqual([
+						expect.objectContaining({
+							path: recoveryPath,
+							source: path,
+							hash: localHash,
+							purpose: "pre_apply",
+							kind: "blob",
+						}),
+					]);
+					expect(vault.binaryFiles.get(recoveryPath)).toEqual(local);
+					expect(journal.snapshot().base[path]?.rev).toBe(1);
+				}
+				const result = await modify(source, bytes);
+				if (source === path && stopAt === "effect")
+					storage.failWriteState = true;
+				return result;
+			};
+			const row = { ...change, path, hash: remoteHash };
+			if (stopAt === "apply") await engine.apply(row, "blob");
+			else {
+				await expect(engine.apply(row, "blob")).rejects.toThrow(
+					stopAt === "effect"
+						? "injected journal write failure"
+						: "stop at clean recovery step",
+				);
+				expect(journal.snapshot().base[path]?.rev).toBe(1);
+				expect(
+					journal.snapshot().pending_apply[0]?.conflict_copies,
+				).toHaveLength(1);
+				if (vault.binaryFiles.has(recoveryPath))
+					vault.mtimeByPath.set(recoveryPath, now - 8 * 24 * 60 * 60 * 1000);
+				engine.close();
+				journal.close();
+				journal = await DeviceJournal.open(storage);
+				vault.modifyBinary = modify;
+				engine = makeEngine(journal, vault, provider, {
+					deviceName: "Test Device",
+					now: () => now,
+				});
+				await engine.resume();
+			}
+			await engine.resume();
+			await engine.apply(row, "blob");
+			expect(vault.binaryFiles.get(path)).toEqual(remote);
+			expect(vault.binaryFiles.get(recoveryPath)).toEqual(local);
+			expect(vault.mtimeByPath.get(recoveryPath)).toBeGreaterThanOrEqual(now);
+			expect(vault.removedRecovery).not.toContain(recoveryPath);
+			expect(
+				(await vault.list()).filter((source) => source.includes("conflict")),
+			).toEqual([]);
+			expect(journal.snapshot().attention).toEqual([]);
+			expect(journal.snapshot().base[path]).toEqual({
+				deleted: false,
+				rev: 2,
+				hash: remoteHash,
+			});
+			expect(journal.snapshot().pending_apply).toEqual([]);
+		},
+	);
+
+	it.each(
+		(["named", "copied"] as const).flatMap((step) =>
+			(["text", "blob", "deleted"] as const).map((kind) => ({ step, kind })),
+		),
+	)(
+		"rebases clean $step recovery to current $kind authority without a conflict",
+		async ({ step, kind }) => {
+			const path = "assets/clean-rebased.png";
+			const local = new Uint8Array([0xff, 0x28, 1]);
+			const localHash = await hashBytes(local);
+			const first = new Uint8Array([2, 3]);
+			const firstHash = await hashBytes(first);
+			const currentText = "new inline authority";
+			const current =
+				kind === "text"
+					? new TextEncoder().encode(currentText)
+					: new Uint8Array([4, 5]);
+			const currentHash = kind === "deleted" ? "" : await hashBytes(current);
+			let restarted = false;
+			vault.binaryFiles.set(path, local.slice());
+			await journal.setBase(path, { deleted: false, rev: 1, hash: localHash });
+			const provider: PinnedTextProvider = {
+				read: async () => null,
+				readResolvedBlob: async () =>
+					!restarted
+						? { kind: "blob", bytes: first, hash: firstHash, epoch, rev: 2 }
+						: kind === "deleted"
+							? { kind, text: null, hash: "", epoch, rev: 3 }
+							: kind === "text"
+								? { kind, text: currentText, hash: currentHash, epoch, rev: 3 }
+								: { kind, bytes: current, hash: currentHash, epoch, rev: 3 },
+			};
+			const update = journal.updateApply.bind(journal);
+			journal.updateApply = async (pending) => {
+				await update(pending);
+				if (pending.step === step)
+					throw new Error("stop at clean authority step");
+			};
+			engine = makeEngine(journal, vault, provider);
+			await expect(
+				engine.apply({ ...change, path, hash: firstHash }, "blob"),
+			).rejects.toThrow("stop at clean authority step");
+			expect(journal.snapshot().pending_apply[0]?.conflict_copies).toHaveLength(
+				1,
+			);
+			engine.close();
+			journal.close();
+			restarted = true;
+			journal = await DeviceJournal.open(storage);
+			engine = makeEngine(journal, vault, provider);
+			await engine.resume();
+			await engine.resume();
+			expect(
+				vault.binaryFiles.get(`.ai-bridge/pre-apply/${localHash}`),
+			).toEqual(local);
+			expect(
+				(await vault.list()).filter((source) => source.includes("conflict")),
+			).toEqual([]);
+			expect(journal.snapshot().attention).toEqual([]);
+			expect(journal.snapshot().pending_apply).toEqual([]);
+			if (kind === "deleted") {
+				expect(await vault.readBinary(path)).toBeNull();
+				expect(journal.snapshot().base[path]).toEqual({
+					deleted: true,
+					rev: 3,
+				});
+			} else {
+				expect(await vault.readBinary(path)).toEqual(current);
+				expect(journal.snapshot().base[path]).toEqual({
+					deleted: false,
+					rev: 3,
+					hash: currentHash,
+				});
+			}
+		},
+	);
+
+	it.each(["named", "copied"] as const)(
+		"keeps changed local bytes intact during pre-apply-only %s recovery",
+		async (step) => {
+			const path = "assets/changed-clean-plan.png";
+			const preserved = new Uint8Array([1, 2]);
+			const edited = new Uint8Array([3, 4]);
+			const remote = new Uint8Array([5, 6]);
+			const preservedHash = await hashBytes(preserved);
+			const remoteHash = await hashBytes(remote);
+			const recoveryPath = `.ai-bridge/pre-apply/${preservedHash}`;
+			const row = { ...change, path, hash: remoteHash };
+			await journal.setBase(path, {
+				deleted: false,
+				rev: 1,
+				hash: preservedHash,
+			});
+			await journal.beginApply(row, "blob");
+			await journal.updateApply({
+				change: row,
+				content_kind: "blob",
+				step: "named",
+				conflict_copies: [
+					{
+						path: recoveryPath,
+						source: path,
+						side: "path",
+						mode: "local",
+						hash: preservedHash,
+						kind: "blob",
+						purpose: "pre_apply",
+					},
+				],
+			});
+			const pending = journal.snapshot().pending_apply[0];
+			if (!pending) throw new Error("Missing clean recovery plan");
+			if (step === "copied") await journal.updateApply({ ...pending, step });
+			vault.binaryFiles.set(path, edited.slice());
+			vault.binaryFiles.set(recoveryPath, preserved.slice());
+			engine = makeEngine(journal, vault, {
+				read: async () => null,
+				readBlob: async (_path, requestEpoch, rev) => ({
+					bytes: remote,
+					hash: remoteHash,
+					epoch: requestEpoch,
+					rev,
+				}),
+			});
+			await engine.resume();
+			expect(vault.binaryFiles.get(path)).toEqual(edited);
+			expect(vault.binaryFiles.get(recoveryPath)).toEqual(preserved);
+			expect(journal.snapshot().base[path]).toEqual({
+				deleted: false,
+				rev: 1,
+				hash: preservedHash,
+			});
+			expect(journal.snapshot().pending_apply).toHaveLength(1);
+			expect(journal.snapshot().attention).toContainEqual(
+				expect.objectContaining({
+					path,
+					reason: "Binary recovery identity changed before apply completed",
+				}),
+			);
+		},
+	);
+
 	it("preserves bytes when mtime changes after binary hash verification", async () => {
 		const source = new Uint8Array([1, 2, 3]);
 		const changed = new Uint8Array([4, 5, 6]);
@@ -1378,14 +1614,17 @@ describe("TextApplyEngine", () => {
 		const path = "notes/copied-kind-change.md";
 		const local = new Uint8Array(1_000_001).fill(0x61);
 		local.set([0xff, 0x28]);
-		const localHash = await hashBytes(local);
 		const oldRemote = new Uint8Array(1_000_002).fill(0x62);
 		const oldHash = await hashBytes(oldRemote);
 		const currentText = "current inline bytes";
 		const currentHash = await hash(currentText);
 		const remoteChange = { ...change, path, hash: oldHash };
 		vault.binaryFiles.set(path, local.slice());
-		await journal.setBase(path, { deleted: false, rev: 1, hash: localHash });
+		await journal.setBase(path, {
+			deleted: false,
+			rev: 1,
+			hash: await hash("confirmed before local edit"),
+		});
 		const update = journal.updateApply.bind(journal);
 		journal.updateApply = async (pending) => {
 			await update(pending);

@@ -4,9 +4,11 @@ title: Expose sync status and control one serialized desktop loop
 status: To Do
 assignee: []
 created_date: '2026-10-28T19:31:00Z'
+updated_date: '2026-11-02T22:27:00Z'
 labels: []
 dependencies:
   - OAB-8.6
+  - OAB-8.9
 documentation:
   - docs/spec.md
 parent_task_id: OAB-8
@@ -26,3 +28,9 @@ Make the complete synchronizer usable from Obsidian without falsely claiming set
 - [ ] #3 AC-08 device tests show revoked, stop publishing and applying, preserve files and queued work, and offer Reconnect. Pause preserves queues and stops effects.
 - [ ] #4 Panel reports unsupported files, storage failures, operation failures, and server backup/capacity state without treating absent telemetry as success. Unload releases host resources.
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Owner decision 2026-11-02: close the OAB-8.9 journal successor fix before the status panel. OAB-8.9 is now a direct dependency so the launcher takes it first.
+<!-- SECTION:NOTES:END -->

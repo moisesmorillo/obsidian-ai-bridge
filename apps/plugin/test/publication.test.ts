@@ -463,6 +463,7 @@ describe("PublicationController", () => {
 			}
 			controller.close();
 		},
+		30_000,
 	);
 
 	it.each(["assets/stale.png", "notes/stale.md"])(

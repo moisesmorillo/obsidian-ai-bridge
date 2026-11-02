@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@pi'
 created_date: '2026-10-28T19:31:00Z'
-updated_date: '2026-11-02T19:48:00Z'
+updated_date: '2026-11-02T21:40:00Z'
 labels: []
 dependencies:
   - OAB-8.5
@@ -135,6 +135,8 @@ Accepted deferrals, exactly three: OAB-31 tracks reader selection from saved rat
 Semantic self-review scope: 597a035 plus main metadata and this bounded correction. TextApplyEngine remains the shared recovery/effect policy owner. Canonical protocol schemas own persisted shapes. DeviceJournal owns legal steps and confirmed completion. Publication owns current-byte admission, immutable sends, and receipt settlement. ObsidianTextVault owns indexed versus hidden host storage mechanics, not lifecycle policy. SyncTransport and enrollment scope remain unchanged. Clean versus dirty observation, named/copied/effect restarts, pruned kinds, copy corruption, and changed local bytes map to explicit guards and behavioral tests. Hidden storage stays behind the existing port. Confirmed effects alone advance bases. Only reconciliation advances the feed cursor. R1-R14, F1/F2, OAB-8.5, and narrow OAB-8.9 regressions remain green. The approved binary I/O residual window remains. Live-device proof remains deferred. No Worker source, dependency, live service, personal vault, deployment, push, PR, or task closure changed.
 
 Final acceptance: Owner approved the corrected branch diff in Plannotator pn-12f4ce with no changes. Whole-branch review approved source 597a035. Bounded corrective review approved source 3e9e6c8 and closed all four submitted owner findings. Documentation and structural audits cover the shared engine, canonical state schema, journal, publication, transport, hidden storage adapter, and affected tests. AC1 uses real AC-31 changed-byte preservation tests. AC2 uses double-stat, verified adapter-backed recovery, named/copied restarts, readback, and seven-day retention tests. AC3 uses extension/exclusion/size boundaries, exact immutable payloads, conditional PUT transport, and rename publication tests. Final worker check passed 91 files and 1597 tests, exit 0. Parent verified HEAD matches the reviewed source and the working tree is clean. Owner accepts Deferred tasks OAB-31, OAB-32, and OAB-33 with triggers. Keep both dependency edges. The narrow OAB-8.9 authority fix is present unchanged as 3990939. Other OAB-8.9 criteria remain separate. No live-device or deployed-service proof ran. OAB-8.7 and OAB-8.8 remain separate.
+
+Hosted CI repair: Two ubuntu-latest runs exceeded 5,000 ms (7.1 s and 8.5 s) only for the 1,000,001-byte Markdown case. Set 30,000 ms only on the exact blob rename receipt recovery it.each. Keep the payload boundary and every assertion unchanged. OAB-8.6 remains Done.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary

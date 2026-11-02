@@ -1,11 +1,11 @@
 ---
 id: OAB-8.6
 title: Synchronize blobs with guarded apply and recovery copies
-status: In Progress
+status: Done
 assignee:
   - '@pi'
 created_date: '2026-10-28T19:31:00Z'
-updated_date: '2026-11-02T18:11:00Z'
+updated_date: '2026-11-02T19:48:00Z'
 labels: []
 dependencies:
   - OAB-8.5
@@ -24,9 +24,9 @@ Complete attachment and oversized text handling through the existing blob protoc
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 AC-31 changes mtime between hash verification and writing. Apply stops and preserves the current bytes as a conflict copy.
-- [ ] #2 Binary apply uses double stat, durable pre-apply bytes, read-back verification, and seven-day recovery retention. Base advances only after confirmed bytes.
-- [ ] #3 Scope matches section 7.8, including 25 MB limits and all exclusions. Binary and oversized text publication uses immutable journal payloads and the authorize/commit protocol.
+- [x] #1 AC-31 changes mtime between hash verification and writing. Apply stops and preserves the current bytes as a conflict copy.
+- [x] #2 Binary apply uses double stat, durable pre-apply bytes, read-back verification, and seven-day recovery retention. Base advances only after confirmed bytes.
+- [x] #3 Scope matches section 7.8, including 25 MB limits and all exclusions. Binary and oversized text publication uses immutable journal payloads and the authorize/commit protocol.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -133,4 +133,12 @@ Validation: Biome and bun run docs:check pass. Focused plugin checks pass seven 
 Accepted deferrals, exactly three: OAB-31 tracks reader selection from saved rather than current queued-put size. Trigger: OAB-8.8 qualification or a size transition during a queued wait. OAB-32 tracks unsupported apply admission before complete content reads. Trigger: OAB-8.8 qualification. OAB-33 tracks automatic continuation after another local edit during named byte recovery. Trigger: OAB-8.7 recovery controls or repeated-edit evidence in OAB-8.8. The current attention stop preserves local bytes and pending identity. These tasks record owner deferral, bounded risk, explicit triggers, and testable acceptance. Searches found no duplicate tasks. No speculative implementation plan or separate safety-stop task exists.
 
 Semantic self-review scope: 597a035 plus main metadata and this bounded correction. TextApplyEngine remains the shared recovery/effect policy owner. Canonical protocol schemas own persisted shapes. DeviceJournal owns legal steps and confirmed completion. Publication owns current-byte admission, immutable sends, and receipt settlement. ObsidianTextVault owns indexed versus hidden host storage mechanics, not lifecycle policy. SyncTransport and enrollment scope remain unchanged. Clean versus dirty observation, named/copied/effect restarts, pruned kinds, copy corruption, and changed local bytes map to explicit guards and behavioral tests. Hidden storage stays behind the existing port. Confirmed effects alone advance bases. Only reconciliation advances the feed cursor. R1-R14, F1/F2, OAB-8.5, and narrow OAB-8.9 regressions remain green. The approved binary I/O residual window remains. Live-device proof remains deferred. No Worker source, dependency, live service, personal vault, deployment, push, PR, or task closure changed.
+
+Final acceptance: Owner approved the corrected branch diff in Plannotator pn-12f4ce with no changes. Whole-branch review approved source 597a035. Bounded corrective review approved source 3e9e6c8 and closed all four submitted owner findings. Documentation and structural audits cover the shared engine, canonical state schema, journal, publication, transport, hidden storage adapter, and affected tests. AC1 uses real AC-31 changed-byte preservation tests. AC2 uses double-stat, verified adapter-backed recovery, named/copied restarts, readback, and seven-day retention tests. AC3 uses extension/exclusion/size boundaries, exact immutable payloads, conditional PUT transport, and rename publication tests. Final worker check passed 91 files and 1597 tests, exit 0. Parent verified HEAD matches the reviewed source and the working tree is clean. Owner accepts Deferred tasks OAB-31, OAB-32, and OAB-33 with triggers. Keep both dependency edges. The narrow OAB-8.9 authority fix is present unchanged as 3990939. Other OAB-8.9 criteria remain separate. No live-device or deployed-service proof ran. OAB-8.7 and OAB-8.8 remain separate.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Added exact-byte blob and oversized-text synchronization through the existing conditional PUT protocol. Guarded apply preserves conflict bytes and seven-day recovery copies in adapter storage. Recovery retains identity across restart, pruning, kind changes, and rename sides. Clean blob puts create no visible conflicts. The narrow journal fix preserves successor revisions. Full check passed 91 files and 1597 tests. Independent reviews and owner diff review passed. Three bounded deferrals remain in OAB-31, OAB-32, and OAB-33. The accepted binary I/O window remains. Live-device proof stays in OAB-8.8.
+<!-- SECTION:FINAL_SUMMARY:END -->

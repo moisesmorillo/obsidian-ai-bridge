@@ -814,7 +814,210 @@ describe("PublicationController", () => {
 			rev: 6,
 			hash: "b".repeat(64),
 		});
+		expect(journal.snapshot().expected_writes).toEqual({});
 		controller.close();
+	});
+
+	it("restores text authority returned by the binary read fallback without a host event", async () => {
+		const { journal, remote, vault } = await openController();
+		const path = "assets/text-fallback.png";
+		const text = "remote text fallback";
+		const hash = await digestText(text);
+		await journal.setBase(path, { deleted: false, rev: 2, hash });
+		remote.readAuthority = async () => {
+			throw new UnsupportedRemoteTextError(path);
+		};
+		remote.readBlobAuthority = async (_path, requestEpoch) => ({
+			kind: "text",
+			text,
+			epoch: requestEpoch,
+			rev: 3,
+			hash,
+		});
+		const recovery = new PublicationController(journal, vault, remote, {
+			applyEngine: createApplyEngine(journal, vault, remote),
+			now: () => 1_800_000_000_000,
+			recoverPrecondition: async () => {},
+		});
+
+		await recovery.scan();
+
+		expect(await vault.read(path)).toBe(text);
+		expect(journal.snapshot().expected_writes).toEqual({});
+		expect(journal.snapshot().base[path]).toEqual({
+			deleted: false,
+			rev: 3,
+			hash,
+		});
+	});
+
+	it("does not confirm a startup restore after failed text readback", async () => {
+		const { journal, remote, vault } = await openController();
+		const path = "note.md";
+		const originalRead = vault.read.bind(vault);
+		await journal.setBase(path, {
+			deleted: false,
+			rev: 6,
+			hash: "b".repeat(64),
+		});
+		remote.readAuthority = async (_path, requestEpoch, rev) => ({
+			deleted: false,
+			text: "remote exact bytes",
+			epoch: requestEpoch,
+			rev,
+			hash: "b".repeat(64),
+		});
+		vault.read = async (readPath) =>
+			readPath === path ? "unverified readback" : originalRead(readPath);
+		const recovery = new PublicationController(journal, vault, remote, {
+			applyEngine: createApplyEngine(journal, vault, remote),
+			now: () => 1_800_000_000_000,
+			recoverPrecondition: async () => {},
+		});
+
+		await expect(recovery.scan()).rejects.toThrow(
+			"Startup restore bytes were not confirmed",
+		);
+
+		expect(journal.snapshot().base[path]).toEqual({
+			deleted: false,
+			rev: 6,
+			hash: "b".repeat(64),
+		});
+		expect(journal.snapshot().expected_writes).toEqual({});
+	});
+
+	it("recovers a plain delete rejected by a newer remote revision before recording attention", async () => {
+		const storage = new MemoryStorage();
+		const journal = await DeviceJournal.open(storage);
+		await journal.resetEpoch(epoch);
+		await journal.setCursor(epoch, 0);
+		const vault = new MemoryVault();
+		const oldText = "confirmed revision one";
+		const remoteText = "remote edit at revision two";
+		const remoteHash = await digestText(remoteText);
+		await journal.setBase("note.md", {
+			deleted: false,
+			rev: 1,
+			hash: await digestText(oldText),
+		});
+		vault.files.set("note.md", oldText);
+		const remote: PublicationRemote & ReconciliationRemote = {
+			manifest: async () => ({
+				epoch,
+				head_seq: 2,
+				next_page: null,
+				entries: [],
+			}),
+			changes: async (_requestEpoch, since) => ({
+				epoch,
+				head_seq: 2,
+				entries:
+					since < 2
+						? [
+								{
+									seq: 2,
+									op: "put",
+									path: "note.md",
+									etag: `"${epoch}.2"`,
+									hash: remoteHash,
+									origin: "other-device",
+									at: 2,
+								},
+							]
+						: [],
+			}),
+			createText: async () => {
+				throw new Error("Unexpected enrollment create");
+			},
+			readAuthority: async (_path, requestEpoch, rev) => ({
+				deleted: false,
+				text: remoteText,
+				epoch: requestEpoch,
+				rev,
+				hash: remoteHash,
+			}),
+			readCurrentAuthority: async () => {
+				throw new Error("Unexpected current authority read");
+			},
+			put: async () => {
+				throw new Error("Unexpected put");
+			},
+			delete: async (path, precondition, key) => {
+				deleteRequests.push({ path, precondition, key });
+				throw new SyncTransportError(412, "precondition_failed");
+			},
+			rename: async () => {
+				throw new Error("Unexpected rename");
+			},
+		};
+		const deleteRequests: Array<{
+			path: string;
+			precondition: DevicePrecondition;
+			key: string;
+		}> = [];
+		const engine = createApplyEngine(journal, vault, remote);
+		const reconciliation = new ReconciliationController(
+			journal,
+			engine,
+			vault,
+			remote,
+		);
+		let stateAtRejection: ReturnType<DeviceJournal["snapshot"]> | undefined;
+		const controller = new PublicationController(journal, vault, remote, {
+			applyEngine: engine,
+			now: () => 1_800_000_000_000,
+			recoverPrecondition: async (operation) => {
+				await reconciliation.recoverPrecondition(operation);
+				stateAtRejection = journal.snapshot();
+				expect(await vault.read("note.md")).toBe(remoteText);
+				expect(stateAtRejection.base["note.md"]).toEqual({
+					deleted: false,
+					rev: 2,
+					hash: remoteHash,
+				});
+			},
+		});
+
+		vault.files.delete("note.md");
+		await controller.observe({ type: "delete", path: "note.md" });
+		const operation = journal.snapshot().pending_ops[0];
+		expect(operation?.op).toBe("delete");
+		await controller.flush();
+
+		expect(deleteRequests).toHaveLength(1);
+		expect(deleteRequests[0]?.precondition).toEqual({
+			kind: "match",
+			epoch,
+			rev: 1,
+		});
+		expect(await vault.read("note.md")).toBe(remoteText);
+		expect(journal.snapshot().cursor).toBe(2);
+		expect(journal.snapshot().base["note.md"]).toEqual({
+			deleted: false,
+			rev: 2,
+			hash: remoteHash,
+		});
+		expect(journal.snapshot().pending_ops).toEqual([]);
+		expect(stateAtRejection?.attention).toEqual([]);
+		expect(journal.snapshot().attention).toHaveLength(1);
+		expect(journal.snapshot().attention[0]).toMatchObject({
+			path: "note.md",
+			reason: "Offline delete was cancelled by a newer remote change",
+			operation: {
+				key: operation?.key,
+				op: "delete",
+				precondition: { kind: "match", epoch, rev: 1 },
+				state: "sent",
+			},
+		});
+		const persisted = await DeviceJournal.open(storage);
+		expect(persisted.snapshot().cursor).toBe(2);
+		expect(persisted.snapshot().attention).toEqual(
+			journal.snapshot().attention,
+		);
+		controller.close();
+		reconciliation.close();
 	});
 
 	it("does not create restored binary bytes after close during expected-write persistence", async () => {
@@ -897,6 +1100,7 @@ describe("PublicationController", () => {
 		await recovery.scan();
 
 		expect(vault.binaryFiles.get("assets/restore.png")).toEqual(currentBytes);
+		expect(journal.snapshot().expected_writes).toEqual({});
 		expect(journal.snapshot().base["assets/restore.png"]).toEqual({
 			deleted: false,
 			rev: 3,

@@ -112,7 +112,7 @@ export class ReconciliationController {
 		return this.serialize(() => this.runReplayWithRecovery());
 	}
 
-	/** Replays changes and applies current source authority without advancing the feed cursor. */
+	/** Replays changes and persists each accepted cursor. Direct rename-source authority reads do not advance it. */
 	recoverPrecondition(operation: PendingOperation): Promise<void> {
 		return this.serialize(async () => {
 			await this.runReplayWithRecovery();

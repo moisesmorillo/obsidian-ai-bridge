@@ -98,7 +98,7 @@ export interface PublicationOptions {
 	applyEngine: TextApplyEngine;
 	/** Returns current Unix milliseconds for retry and UUID creation decisions. */
 	now(): number;
-	/** Replays 412 evidence and applies current rename source authority without changing feed cursor identity. */
+	/** Replays feed rows and persists accepted cursors. A direct rename-source read does not advance the cursor. */
 	recoverPrecondition(operation: PendingOperation): Promise<void>;
 }
 
@@ -822,6 +822,7 @@ export class PublicationController {
 			await this.journal.clearExpectedWrite(path);
 			throw new Error("Startup restore bytes were not confirmed");
 		}
+		await this.journal.clearExpectedWrite(path);
 	}
 
 	/** Restores missing content from validated pinned or current authority. */
@@ -908,6 +909,7 @@ export class PublicationController {
 			});
 			this.assertOpen();
 		}
+		await this.journal.clearExpectedWrite(path);
 	}
 
 	/** Queues exact moved binary bytes under the latest confirmed destination base. */

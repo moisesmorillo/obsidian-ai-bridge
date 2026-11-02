@@ -5,10 +5,11 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-10-28T19:31:00Z'
-updated_date: '2026-10-31T05:36:00Z'
+updated_date: '2026-11-02T18:09:00Z'
 labels: []
 dependencies:
   - OAB-8.5
+  - OAB-8.9
 documentation:
   - docs/spec.md
 parent_task_id: OAB-8

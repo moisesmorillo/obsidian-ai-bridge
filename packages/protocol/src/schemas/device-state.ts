@@ -146,16 +146,19 @@ export const PendingConflictCopySchema = z
 		device_name: z.string().min(1).optional(),
 		verified: z.boolean().optional(),
 		hash: DevicePayloadHashSchema,
+		kind: z.enum(["text", "blob"]).optional(),
+		purpose: z.enum(["conflict", "pre_apply"]).optional(),
 	})
 	.strict();
 
 /** Inferred identity for one durably preserved local or remote version. */
 export type PendingConflictCopy = z.infer<typeof PendingConflictCopySchema>;
 
-/** One durable apply step with legacy or per-side conflict-copy recovery metadata. */
+/** One durable apply step. Clean blob puts can use one confined pre-apply plan without a visible conflict. */
 export const PendingApplySchema = z
 	.object({
 		change: ChangeEntrySchema,
+		content_kind: z.enum(["text", "blob"]).optional(),
 		step: z.enum(["prepared", "named", "copied"]),
 		conflict_path: DevicePathSchema.optional(),
 		conflict_source: DevicePathSchema.optional(),
@@ -165,7 +168,7 @@ export const PendingApplySchema = z
 		conflict_copies: z
 			.array(PendingConflictCopySchema)
 			.min(1)
-			.max(2)
+			.max(3)
 			.optional(),
 	})
 	.strict()
@@ -215,6 +218,57 @@ export const PendingApplySchema = z
 				});
 		}
 		if (pending.conflict_copies) {
+			const blobCopies = pending.conflict_copies.filter(
+				(copy) => copy.kind === "blob",
+			);
+			const validRemoteBlobCollision =
+				pending.change.op === "put" &&
+				blobCopies.length === 1 &&
+				blobCopies[0]?.purpose === "conflict" &&
+				blobCopies[0]?.mode === "remote" &&
+				blobCopies[0]?.side === "path" &&
+				blobCopies[0]?.source === pending.change.path &&
+				blobCopies[0]?.hash === pending.change.hash;
+			const validRenameBlobPlans =
+				pending.change.op === "rename" &&
+				blobCopies.length > 0 &&
+				blobCopies.every((copy) =>
+					copy.purpose === "pre_apply"
+						? copy.mode === "local" &&
+							copy.side === "rename_destination" &&
+							copy.source === pending.change.path
+						: copy.purpose === "conflict" &&
+							copy.mode === "local" &&
+							(copy.side === "rename_source" ||
+								copy.side === "rename_destination"),
+				);
+			const validCleanPutRecovery =
+				pending.change.op === "put" &&
+				pending.conflict_copies.length === 1 &&
+				blobCopies.length === 1 &&
+				blobCopies[0]?.purpose === "pre_apply" &&
+				blobCopies[0]?.mode === "local" &&
+				blobCopies[0]?.side === "path" &&
+				blobCopies[0]?.source === pending.change.path;
+			const validBlobPlans =
+				pending.change.op === "rename"
+					? validRenameBlobPlans
+					: validRemoteBlobCollision ||
+						validCleanPutRecovery ||
+						(blobCopies.length === 2 &&
+							blobCopies.filter((copy) => copy.purpose === "conflict")
+								.length === 1 &&
+							blobCopies.filter((copy) => copy.purpose === "pre_apply")
+								.length === 1 &&
+							blobCopies[0]?.hash === blobCopies[1]?.hash &&
+							blobCopies[0]?.source === blobCopies[1]?.source);
+			if (blobCopies.length > 0 && !validBlobPlans)
+				context.addIssue({
+					code: "custom",
+					message:
+						"Binary recovery needs valid visible copies or one clean put pre-apply plan",
+					path: ["conflict_copies"],
+				});
 			const seenPaths = new Set<string>();
 			for (const [index, copy] of pending.conflict_copies.entries()) {
 				if (seenPaths.has(copy.path))
@@ -224,6 +278,39 @@ export const PendingApplySchema = z
 						path: ["conflict_copies", index],
 					});
 				seenPaths.add(copy.path);
+				if (copy.purpose !== undefined && copy.kind !== "blob")
+					context.addIssue({
+						code: "custom",
+						message: "Binary copy purpose needs a blob identity",
+						path: ["conflict_copies", index, "purpose"],
+					});
+				if (copy.kind === "blob") {
+					const validPurposePath =
+						copy.purpose === "pre_apply"
+							? (copy.side === "path" ||
+									(pending.change.op === "rename" &&
+										copy.side === "rename_destination")) &&
+								copy.path === `.ai-bridge/pre-apply/${copy.hash}`
+							: copy.purpose === "conflict" &&
+								!copy.path.startsWith(".ai-bridge/pre-apply/");
+					const validRemoteConflict =
+						copy.mode === "remote" &&
+						copy.purpose === "conflict" &&
+						pending.change.op === "put" &&
+						copy.side === "path" &&
+						copy.source === pending.change.path &&
+						copy.hash === pending.change.hash;
+					if (
+						!copy.purpose ||
+						!validPurposePath ||
+						(copy.mode !== "local" && !validRemoteConflict)
+					)
+						context.addIssue({
+							code: "custom",
+							message: "Binary copy identity or path is invalid",
+							path: ["conflict_copies", index],
+						});
+				}
 				if (copy.mode === "remote") {
 					if (pending.change.op !== "put")
 						context.addIssue({

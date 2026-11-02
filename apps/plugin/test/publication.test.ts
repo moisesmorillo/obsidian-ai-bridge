@@ -17,7 +17,10 @@ import {
 	ReconciliationController,
 	type ReconciliationRemote,
 } from "../src/sync/reconciliation";
-import { SyncTransportError } from "../src/sync/remote-text";
+import {
+	SyncTransportError,
+	UnsupportedRemoteTextError,
+} from "../src/sync/remote-text";
 import { TextApplyEngine, type TextVault } from "../src/sync/text-apply";
 
 const epoch = "a".repeat(32);
@@ -52,6 +55,11 @@ class MemoryStorage implements DeviceJournalStorage {
 /** Models guarded text operations and confirmed files without Obsidian host types. */
 class MemoryVault implements TextVault {
 	readonly files = new Map<string, string>();
+	readonly binaryFiles = new Map<string, Uint8Array>();
+	readonly binaryReads: string[] = [];
+	readonly binaryCreates: string[] = [];
+	readonly binaryTrashes: string[] = [];
+	readonly sizeOverrides = new Map<string, number>();
 	/** Records host create attempts to prove disposal blocks new file effects. */
 	readonly creates: Array<{ path: string; text: string }> = [];
 	/** Records trash attempts so lifecycle tests can reject new destructive effects. */
@@ -70,14 +78,47 @@ class MemoryVault implements TextVault {
 	}
 	/** Returns all current paths for startup scan and collision checks. */
 	async list(): Promise<string[]> {
-		return [...this.files.keys()];
+		return [...this.files.keys(), ...this.binaryFiles.keys()];
+	}
+	/** Reads an exact binary fixture without decoding its bytes. */
+	async readBinary(path: string): Promise<Uint8Array | null> {
+		this.binaryReads.push(path);
+		return this.binaryFiles.get(path)?.slice() ?? null;
+	}
+	/** Creates exact bytes only at an absent path. */
+	async createBinary(path: string, bytes: Uint8Array): Promise<boolean> {
+		this.binaryCreates.push(path);
+		if (this.files.has(path) || this.binaryFiles.has(path)) return false;
+		this.binaryFiles.set(path, bytes.slice());
+		return true;
+	}
+	/** Replaces exact bytes at a current binary path. */
+	async modifyBinary(path: string, bytes: Uint8Array): Promise<boolean> {
+		if (!this.binaryFiles.has(path)) return false;
+		this.binaryFiles.set(path, bytes.slice());
+		return true;
+	}
+	/** Trashes binary bytes only when they still match the exact observed buffer. */
+	async trashBinary(path: string, expected: Uint8Array): Promise<boolean> {
+		this.binaryTrashes.push(path);
+		const current = this.binaryFiles.get(path);
+		if (
+			!current ||
+			current.byteLength !== expected.byteLength ||
+			!current.every((byte, index) => byte === expected[index])
+		)
+			return false;
+		this.binaryFiles.delete(path);
+		return true;
 	}
 	/** Measures current UTF-8 text bytes or returns null for an absent path. */
 	async size(path: string): Promise<number | null> {
+		const override = this.sizeOverrides.get(path);
+		if (override !== undefined) return override;
 		const text = this.files.get(path);
-		return text === undefined
-			? null
-			: new TextEncoder().encode(text).byteLength;
+		return text !== undefined
+			? new TextEncoder().encode(text).byteLength
+			: (this.binaryFiles.get(path)?.byteLength ?? null);
 	}
 	/** Replaces bytes only when the current value equals the observed value. */
 	async process(
@@ -92,7 +133,7 @@ class MemoryVault implements TextVault {
 	/** Creates text only when the exact path does not exist. */
 	async create(path: string, text: string): Promise<boolean> {
 		this.creates.push({ path, text });
-		if (this.files.has(path)) return false;
+		if (this.files.has(path) || this.binaryFiles.has(path)) return false;
 		this.files.set(path, text);
 		return true;
 	}
@@ -134,6 +175,7 @@ class MemoryRemote implements PublicationRemote {
 		key: string;
 	}> = [];
 	private revision = 0;
+	readBlobAuthority: PublicationRemote["readBlobAuthority"] = undefined;
 	failure: unknown = null;
 	beforeReceipt: (() => Promise<void>) | null = null;
 	receiptHashOverride: string | null = null;
@@ -156,6 +198,33 @@ class MemoryRemote implements PublicationRemote {
 	async readCurrentAuthority(_path: string): Promise<PublicationRead> {
 		throw new Error("Unexpected current read");
 	}
+	/** Records immutable blob bytes and returns their exact receipt identity. */
+	async putBlob(
+		path: string,
+		bytes: Uint8Array,
+		hash: string,
+		precondition: DevicePrecondition,
+		key: string,
+		_epoch: string,
+	): Promise<PublicationReceipt> {
+		this.blobWrites.push({ path, bytes: bytes.slice(), precondition, key });
+		this.revision += 1;
+		return {
+			status: 201,
+			path,
+			etag: `"${epoch}.${this.revision}"`,
+			seq: this.revision + 7,
+			size: bytes.byteLength,
+			hash,
+			deleted: false,
+		};
+	}
+	readonly blobWrites: Array<{
+		path: string;
+		bytes: Uint8Array;
+		precondition: DevicePrecondition;
+		key: string;
+	}> = [];
 	/** Records immutable put identity and returns a valid next-revision receipt. */
 	async put(
 		path: string,
@@ -221,6 +290,14 @@ class MemoryRemote implements PublicationRemote {
 	}
 }
 
+/** Hashes exact test bytes with the publication SHA-256 identity. */
+async function digestBytesForTest(bytes: Uint8Array): Promise<string> {
+	const digest = await crypto.subtle.digest("SHA-256", bytes.slice().buffer);
+	return [...new Uint8Array(digest)]
+		.map((byte) => byte.toString(16).padStart(2, "0"))
+		.join("");
+}
+
 /** Hashes test text with the same raw UTF-8 rule used by the publication contract. */
 async function digestText(text: string): Promise<string> {
 	const result = await crypto.subtle.digest(
@@ -273,6 +350,424 @@ async function openController(
 }
 
 describe("PublicationController", () => {
+	it.each(
+		[false, true].flatMap((changed) =>
+			["assets/renamed.png", "notes/renamed.md"].map((to) => ({ changed, to })),
+		),
+	)(
+		"keeps exact blob rename receipt recovery changed=$changed to=$to",
+		async ({ changed, to }) => {
+			const { controller, journal, vault, remote } = await openController();
+			const source = to.endsWith(".md")
+				? "notes/source.md"
+				: "assets/source.png";
+			const byteVault: TextVault = vault;
+			byteVault.stat = async (path) => {
+				const bytes = await vault.readBinary(path);
+				return bytes ? { mtime: 1, size: bytes.byteLength } : null;
+			};
+			const original = new Uint8Array(to.endsWith(".md") ? 1_000_001 : 4).fill(
+				0x61,
+			);
+			original.set([0xff, 0xc3, 0x28, 0]);
+			const edited = original.slice();
+			edited[3] = 9;
+			const originalHash = await digestBytesForTest(original);
+			const textReads: string[] = [];
+			const read = vault.read.bind(vault);
+			vault.read = async (path) => {
+				textReads.push(path);
+				const bytes = vault.binaryFiles.get(path);
+				return bytes ? new TextDecoder().decode(bytes) : read(path);
+			};
+			vault.binaryFiles.set(to, original.slice());
+			await journal.setBase(source, {
+				deleted: false,
+				rev: 1,
+				hash: originalHash,
+			});
+			let queued: PendingOperation | undefined;
+			remote.readCurrentAuthority = async (path) => {
+				expect(path).toBe(source);
+				return { deleted: true, text: null, epoch, rev: 2, hash: "" };
+			};
+			remote.rename = async (path, destination, precondition, key) => {
+				remote.renames.push({ path, to: destination, precondition, key });
+				if (changed) {
+					vault.binaryFiles.set(to, edited.slice());
+					queued = await journal.enqueue(
+						{ op: "put", path: to, precondition: { kind: "absent" } },
+						edited,
+					);
+				}
+				return {
+					status: 201,
+					path: destination,
+					etag: `"${epoch}.2"`,
+					seq: 9,
+					size: original.byteLength,
+					hash: originalHash,
+					deleted: false,
+				};
+			};
+			remote.putBlob = async (path, bytes, _hash, precondition, key) => {
+				remote.blobWrites.push({
+					path,
+					bytes: bytes.slice(),
+					precondition,
+					key,
+				});
+				throw new Error("hold immutable blob retry");
+			};
+			await controller.observe({ type: "rename", path: source, to });
+			await controller.flush();
+			await controller.flush();
+			expect(textReads).not.toContain(to);
+			expect(journal.snapshot().base[to]).toEqual({
+				deleted: false,
+				rev: 2,
+				hash: originalHash,
+			});
+			expect(journal.snapshot().base[source]).toEqual({
+				deleted: true,
+				rev: 2,
+			});
+			expect(journal.snapshot().cursor).toBeNull();
+			expect(journal.snapshot().attention).toEqual([]);
+			if (changed) {
+				expect(journal.snapshot().pending_ops).toHaveLength(1);
+				const pending = journal.snapshot().pending_ops[0];
+				expect(pending).toMatchObject({
+					key: queued?.key,
+					payload_hash: await digestBytesForTest(edited),
+					precondition: { kind: "match", epoch, rev: 2 },
+					state: "sent",
+				});
+				expect(
+					await journal.readPayload(
+						pending?.payload_ref ?? "",
+						pending?.payload_hash ?? "",
+					),
+				).toEqual(edited);
+				expect(remote.blobWrites).toEqual([
+					{
+						path: to,
+						bytes: edited,
+						precondition: { kind: "match", epoch, rev: 2 },
+						key: queued?.key,
+					},
+				]);
+			} else {
+				expect(journal.snapshot().pending_ops).toEqual([]);
+				expect(remote.blobWrites).toEqual([]);
+			}
+			controller.close();
+		},
+	);
+
+	it.each(["assets/stale.png", "notes/stale.md"])(
+		"queues current blob bytes for a stale rename event at %s",
+		async (to) => {
+			const { controller, journal, vault, remote } = await openController();
+			const source = "notes/recreated-source.md";
+			const bytes = new Uint8Array(to.endsWith(".md") ? 1_000_001 : 4).fill(
+				0x61,
+			);
+			bytes.set([0xff, 0xc3, 0x28, 0]);
+			vault.binaryFiles.set(to, bytes.slice());
+			vault.files.set(source, "recreated source");
+			await journal.setBase(source, {
+				deleted: false,
+				rev: 3,
+				hash: await digestText("old source"),
+			});
+			const sourceBase = journal.snapshot().base[source];
+			const textReads: string[] = [];
+			const read = vault.read.bind(vault);
+			vault.read = async (path) => {
+				textReads.push(path);
+				const binary = vault.binaryFiles.get(path);
+				return binary ? new TextDecoder().decode(binary) : read(path);
+			};
+			await controller.observe({ type: "rename", path: source, to });
+			const pending = journal.snapshot().pending_ops[0];
+			expect(textReads).not.toContain(to);
+			expect(journal.snapshot().pending_ops).toHaveLength(1);
+			expect(pending).toMatchObject({
+				op: "put",
+				path: to,
+				payload_hash: await digestBytesForTest(bytes),
+				state: "queued",
+				precondition: { kind: "absent" },
+			});
+			expect(
+				await journal.readPayload(
+					pending?.payload_ref ?? "",
+					pending?.payload_hash ?? "",
+				),
+			).toEqual(bytes);
+			expect(journal.snapshot().base[source]).toEqual(sourceBase);
+			expect(vault.files.get(source)).toBe("recreated source");
+			expect(remote.renames).toEqual([]);
+			controller.close();
+		},
+	);
+
+	it("sends a blob-like queued successor with its newer feed revision after a late receipt", async () => {
+		const storage = new MemoryStorage();
+		const journal = await DeviceJournal.open(storage);
+		await journal.resetEpoch(epoch);
+		await journal.setCursor(epoch, 0);
+		const vault = new MemoryVault();
+		const versionText = new Map<number, string>();
+		const receipts = new Map<string, PublicationReceipt>();
+		const requests: Array<{
+			key: string;
+			precondition: DevicePrecondition;
+			text: string;
+		}> = [];
+		let serverRev = 0;
+		let serverText = "";
+		let loseFirstResponse = true;
+		const remote: PublicationRemote & ReconciliationRemote = {
+			manifest: async () => ({
+				epoch,
+				head_seq: 2,
+				next_page: null,
+				entries: [],
+			}),
+			changes: async (_requestEpoch, since) => ({
+				epoch,
+				head_seq: 2,
+				entries:
+					since < 2
+						? [
+								{
+									seq: 2,
+									op: "put" as const,
+									path: "note.md",
+									etag: `"${epoch}.2"`,
+									hash: await digestText("feed revision two"),
+									origin: "other-device",
+									at: 2,
+								},
+							]
+						: [],
+			}),
+			createText: async () => {
+				throw new Error("Unexpected enrollment create");
+			},
+			readAuthority: async (path, requestEpoch, rev) => {
+				const text = versionText.get(rev);
+				if (path !== "note.md" || !text)
+					throw new Error("Unexpected pinned authority read");
+				return {
+					deleted: false,
+					text,
+					epoch: requestEpoch,
+					rev,
+					hash: await digestText(text),
+				};
+			},
+			readCurrentAuthority: async () => {
+				throw new Error("Unexpected current read");
+			},
+			put: async (path, text, precondition, key) => {
+				requests.push({
+					key,
+					precondition: structuredClone(precondition),
+					text,
+				});
+				const saved = receipts.get(key);
+				if (saved) return saved;
+				const matches =
+					precondition.kind === "absent"
+						? serverRev === 0
+						: precondition.epoch === epoch && precondition.rev === serverRev;
+				if (!matches) throw new SyncTransportError(412, "precondition_failed");
+				serverRev += 1;
+				serverText = text;
+				versionText.set(serverRev, text);
+				const receipt = {
+					status: 201,
+					path,
+					etag: `"${epoch}.${serverRev}"`,
+					seq: serverRev,
+					size: new TextEncoder().encode(text).byteLength,
+					hash: await digestText(text),
+					deleted: false,
+				};
+				receipts.set(key, receipt);
+				if (loseFirstResponse) {
+					loseFirstResponse = false;
+					throw new Error("Response lost after commit");
+				}
+				return receipt;
+			},
+			delete: async () => {
+				throw new Error("Unexpected delete");
+			},
+			rename: async () => {
+				throw new Error("Unexpected rename");
+			},
+		};
+		const engine = createApplyEngine(journal, vault, remote);
+		const reconciliation = new ReconciliationController(
+			journal,
+			engine,
+			vault,
+			remote,
+		);
+		let now = 1_800_000_000_000;
+		const controller = new PublicationController(journal, vault, remote, {
+			applyEngine: engine,
+			now: () => now,
+			recoverPrecondition: (operation) =>
+				reconciliation.recoverPrecondition(operation),
+		});
+
+		vault.files.set("note.md", "first create");
+		await controller.observe({ type: "create", path: "note.md" });
+		await controller.flush();
+		expect(serverRev).toBe(1);
+		versionText.set(2, "feed revision two");
+		serverRev = 2;
+		serverText = "feed revision two";
+		await reconciliation.replay();
+		expect(journal.snapshot().base["note.md"]).toEqual({
+			deleted: false,
+			rev: 2,
+			hash: await digestText("feed revision two"),
+		});
+		vault.files.set("note.md", "later edit after feed revision two");
+		await controller.observe({ type: "modify", path: "note.md" });
+		now += 3_000;
+		await controller.flush();
+
+		expect(requests.map((request) => request.precondition)).toEqual([
+			{ kind: "absent" },
+			{ kind: "absent" },
+			{ kind: "match", epoch, rev: 2 },
+		]);
+		expect(serverRev).toBe(3);
+		expect(serverText).toBe("later edit after feed revision two");
+		expect(journal.snapshot().attention).toEqual([]);
+	});
+
+	it("sends a binary successor with the newer confirmed revision after a lost blob response", async () => {
+		let now = 1_800_000_000_000;
+		const { controller, journal, remote, vault } = await openController(
+			new MemoryStorage(),
+			new MemoryVault(),
+			new MemoryRemote(),
+			() => now,
+		);
+		const path = "notes/photo.png";
+		const firstBytes = new Uint8Array([0, 255, 1]);
+		const externalBytes = new Uint8Array([2, 254, 3]);
+		const successorBytes = new Uint8Array([4, 253, 5]);
+		const receipts = new Map<string, PublicationReceipt>();
+		const requests: Array<{
+			key: string;
+			precondition: DevicePrecondition;
+			bytes: Uint8Array;
+		}> = [];
+		let serverRev = 0;
+		let serverBytes = new Uint8Array();
+		let loseFirstResponse = true;
+		remote.putBlob = async (requestPath, bytes, hash, precondition, key) => {
+			requests.push({
+				key,
+				precondition: structuredClone(precondition),
+				bytes: bytes.slice(),
+			});
+			const receipt = receipts.get(key);
+			if (receipt) return receipt;
+			const matches =
+				precondition.kind === "absent"
+					? serverRev === 0
+					: precondition.epoch === epoch && precondition.rev === serverRev;
+			if (!matches) throw new SyncTransportError(412, "precondition_failed");
+			serverRev += 1;
+			serverBytes = bytes.slice();
+			const accepted = {
+				status: 201,
+				path: requestPath,
+				etag: `"${epoch}.${serverRev}"`,
+				seq: serverRev,
+				size: bytes.byteLength,
+				hash,
+				deleted: false,
+			};
+			receipts.set(key, accepted);
+			if (loseFirstResponse) {
+				loseFirstResponse = false;
+				throw new Error("Blob response lost after commit");
+			}
+			return accepted;
+		};
+
+		vault.binaryFiles.set(path, firstBytes);
+		await controller.observe({ type: "create", path });
+		await controller.flush();
+		expect(serverRev).toBe(1);
+		const first = journal.snapshot().pending_ops[0];
+		if (!first) throw new Error("Expected a sent blob operation");
+		serverRev = 2;
+		serverBytes = externalBytes.slice();
+		await journal.setBase(path, {
+			deleted: false,
+			rev: 2,
+			hash: await digestBytesForTest(externalBytes),
+		});
+		vault.binaryFiles.set(path, externalBytes.slice());
+		await controller.observe({ type: "modify", path });
+		now += 3_000;
+		vault.binaryFiles.set(path, successorBytes.slice());
+		await controller.observe({ type: "modify", path });
+		await controller.flush();
+
+		expect(requests.map((request) => request.precondition)).toEqual([
+			{ kind: "absent" },
+			{ kind: "absent" },
+			{ kind: "match", epoch, rev: 2 },
+		]);
+		expect(requests[0]?.key).toBe(first.key);
+		expect(requests[1]?.key).toBe(first.key);
+		expect(requests[2]?.key).not.toBe(first.key);
+		expect(requests[1]?.bytes).toEqual(firstBytes);
+		expect(requests[2]?.bytes).toEqual(successorBytes);
+		expect(serverRev).toBe(3);
+		expect(serverBytes).toEqual(successorBytes);
+		expect(journal.snapshot().attention).toEqual([]);
+	});
+
+	it("reports oversized files without reading their bytes", async () => {
+		const { controller, journal, vault } = await openController();
+		vault.binaryFiles.set("notes/huge.pdf", new Uint8Array([0]));
+		vault.sizeOverrides.set("notes/huge.pdf", 25_000_001);
+		await controller.scan();
+		expect(vault.binaryReads).not.toContain("notes/huge.pdf");
+		expect(journal.snapshot().attention).toContainEqual(
+			expect.objectContaining({ path: "notes/huge.pdf" }),
+		);
+	});
+
+	it("publishes exact attachment bytes through an immutable journal payload", async () => {
+		const { controller, journal, remote, vault } = await openController();
+		const source = new Uint8Array([0, 255, 128]);
+		vault.binaryFiles.set("notes/image.png", source.slice());
+		await controller.scan();
+		const queued = journal.snapshot().pending_ops[0];
+		expect(queued?.state).toBe("queued");
+		if (!queued) throw new Error("Expected a queued binary operation");
+		await controller.flush();
+		expect(remote.blobWrites).toHaveLength(1);
+		expect(remote.blobWrites[0]?.bytes).toEqual(new Uint8Array([0, 255, 128]));
+		expect(remote.blobWrites[0]?.key).toBe(queued.key);
+		expect(journal.snapshot().base["notes/image.png"]?.deleted).toBe(false);
+	});
+
 	it("restores a startup-missing file at the confirmed base without publishing a delete", async () => {
 		const { controller, journal, remote, vault } = await openController();
 		await journal.setBase("note.md", {
@@ -320,6 +815,93 @@ describe("PublicationController", () => {
 			hash: "b".repeat(64),
 		});
 		controller.close();
+	});
+
+	it("does not create restored binary bytes after close during expected-write persistence", async () => {
+		const storage = new MemoryStorage();
+		const { controller, journal, remote, vault } =
+			await openController(storage);
+		const path = "assets/closed-restore.png";
+		const bytes = new Uint8Array([0, 255, 7]);
+		const hash = await digestBytesForTest(bytes);
+		await journal.setBase(path, { deleted: false, rev: 2, hash });
+		remote.readAuthority = async () => {
+			throw new UnsupportedRemoteTextError(path);
+		};
+		remote.readBlobAuthority = async (_path, requestEpoch) => ({
+			kind: "blob",
+			bytes: bytes.slice(),
+			epoch: requestEpoch,
+			rev: 2,
+			hash,
+		});
+		let resumeWrite!: () => void;
+		let startWrite!: () => void;
+		const started = new Promise<void>((resolve) => {
+			startWrite = resolve;
+		});
+		const blocked = new Promise<void>((resolve) => {
+			resumeWrite = resolve;
+		});
+		storage.beforeWriteState = async () => {
+			storage.beforeWriteState = null;
+			startWrite();
+			await blocked;
+		};
+
+		const scan = controller.scan();
+		await started;
+		controller.close();
+		resumeWrite();
+		await expect(scan).rejects.toThrow("Publication controller is closed");
+
+		expect(vault.binaryCreates).toEqual([]);
+		expect(vault.binaryFiles.has(path)).toBe(false);
+	});
+
+	it("restores a missing blob from its current revision after pruning", async () => {
+		const { journal, remote, vault } = await openController();
+		const oldBytes = new Uint8Array([1, 2]);
+		const currentBytes = new Uint8Array([3, 4]);
+		const oldHash = await digestBytesForTest(oldBytes);
+		const currentHash = await digestBytesForTest(currentBytes);
+		await journal.setBase("assets/restore.png", {
+			deleted: false,
+			rev: 2,
+			hash: oldHash,
+		});
+		const recoveryRemote: PublicationRemote = {
+			readAuthority: async () => {
+				throw new UnsupportedRemoteTextError("assets/restore.png");
+			},
+			readBlobAuthority: async (_path, requestEpoch) => ({
+				kind: "blob",
+				bytes: currentBytes.slice(),
+				epoch: requestEpoch,
+				rev: 3,
+				hash: currentHash,
+			}),
+			readCurrentAuthority: async () => {
+				throw new Error("Unexpected current text read");
+			},
+			put: remote.put.bind(remote),
+			delete: remote.delete.bind(remote),
+			rename: remote.rename.bind(remote),
+		};
+		const recovery = new PublicationController(journal, vault, recoveryRemote, {
+			applyEngine: createApplyEngine(journal, vault, recoveryRemote),
+			now: () => 1_800_000_000_000,
+			recoverPrecondition: async () => {},
+		});
+
+		await recovery.scan();
+
+		expect(vault.binaryFiles.get("assets/restore.png")).toEqual(currentBytes);
+		expect(journal.snapshot().base["assets/restore.png"]).toEqual({
+			deleted: false,
+			rev: 3,
+			hash: currentHash,
+		});
 	});
 
 	it("does not create startup text after disposal during expected-write persistence", async () => {
@@ -973,6 +1555,42 @@ describe("PublicationController", () => {
 		controller.close();
 	});
 
+	it("consumes exact blob apply echoes and queues different concurrent bytes", async () => {
+		const { controller, journal, vault } = await openController();
+		const path = "assets/echo.png";
+		const appliedBytes = new Uint8Array([0, 255, 1]);
+		const appliedHash = await digestBytesForTest(appliedBytes);
+		await journal.setExpectedWrite(path, appliedHash);
+		vault.binaryFiles.set(path, appliedBytes.slice());
+
+		await controller.observe({ type: "modify", path });
+
+		expect(journal.snapshot().pending_ops).toEqual([]);
+		expect(journal.snapshot().expected_writes[path]).toBeUndefined();
+
+		const concurrentBytes = new Uint8Array([2, 254, 3]);
+		await journal.setExpectedWrite(path, appliedHash);
+		vault.binaryFiles.set(path, concurrentBytes.slice());
+
+		await controller.observe({ type: "modify", path });
+
+		const pending = journal.snapshot().pending_ops;
+		expect(pending).toHaveLength(1);
+		expect(pending[0]).toMatchObject({
+			op: "put",
+			path,
+			precondition: { kind: "absent" },
+		});
+		expect(
+			await journal.readPayload(
+				pending[0]?.payload_ref ?? "",
+				pending[0]?.payload_hash ?? "",
+			),
+		).toEqual(concurrentBytes);
+		expect(journal.snapshot().expected_writes[path]).toBe(appliedHash);
+		controller.close();
+	});
+
 	it("stops after revocation and keeps every unsent operation and payload", async () => {
 		const { controller, journal, remote, vault, storage } =
 			await openController();
@@ -1547,6 +2165,77 @@ describe("PublicationController", () => {
 		controller.close();
 		engine.close();
 	});
+
+	it.each([
+		{ edited: false, bytes: [71, 72], label: "unchanged" },
+		{ edited: true, bytes: [73, 74], label: "edited" },
+	] as const)(
+		"recovers a rejected binary rename with an $label moved destination",
+		async ({ edited, bytes: byteValues }) => {
+			const storage = new MemoryStorage();
+			const vault = new MemoryVault();
+			const journal = await DeviceJournal.open(storage);
+			await journal.resetEpoch(epoch);
+			const sourcePath = "assets/source.png";
+			const destinationPath = "assets/destination.png";
+			const original = new Uint8Array([71, 72]);
+			const destination = new Uint8Array(byteValues);
+			const sourceHash = await digestBytesForTest(original);
+			const currentHash = await digestBytesForTest(new Uint8Array([75, 76]));
+			await journal.setBase(sourcePath, {
+				deleted: false,
+				rev: 1,
+				hash: sourceHash,
+			});
+			vault.binaryFiles.set(destinationPath, destination.slice());
+			const remote = new MemoryRemote();
+			remote.rename = async () => {
+				throw new SyncTransportError(412, "precondition_failed");
+			};
+			const applyEngine = createApplyEngine(journal, vault, remote);
+			const controller = new PublicationController(journal, vault, remote, {
+				applyEngine,
+				now: () => 1_800_000_000_000,
+				recoverPrecondition: async () =>
+					journal.setBase(sourcePath, {
+						deleted: false,
+						rev: 2,
+						hash: currentHash,
+					}),
+			});
+			await controller.observe({
+				type: "rename",
+				path: sourcePath,
+				to: destinationPath,
+			});
+
+			await controller.flush();
+
+			if (edited) {
+				expect(vault.binaryFiles.get(destinationPath)).toEqual(destination);
+				expect(journal.snapshot().pending_ops).toContainEqual(
+					expect.objectContaining({
+						op: "put",
+						path: destinationPath,
+						state: "queued",
+					}),
+				);
+				await controller.flush();
+				expect(remote.blobWrites).toContainEqual(
+					expect.objectContaining({
+						path: destinationPath,
+						bytes: destination,
+					}),
+				);
+			} else {
+				expect(vault.binaryFiles.has(destinationPath)).toBe(false);
+				expect(vault.binaryTrashes).toEqual([destinationPath]);
+				expect(journal.snapshot().pending_ops).toEqual([]);
+			}
+			controller.close();
+			applyEngine.close();
+		},
+	);
 
 	it.each([
 		{ cursor: 1, destination: "original source bytes", label: "clean before" },

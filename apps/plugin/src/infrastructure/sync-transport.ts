@@ -26,7 +26,7 @@ export interface SyncResponseSession {
 		path: string,
 		options?: {
 			method?: string;
-			body?: string;
+			body?: string | ArrayBuffer;
 			headers?: Record<string, string>;
 		},
 	): Promise<OAuthTransportResponse>;
@@ -39,6 +39,18 @@ export interface PinnedText {
 	/** Epoch that authorizes the returned revision. */
 	epoch: string;
 	/** Numeric revision parsed from the canonical ETag. */
+	rev: number;
+}
+
+/** Exact blob bytes and the server identity validated by response metadata. */
+export interface PinnedBlob {
+	/** Raw bytes without text decoding or normalization. */
+	bytes: Uint8Array;
+	/** SHA-256 identity declared by the validated response. */
+	hash: string;
+	/** Server-authoritative vault epoch. */
+	epoch: string;
+	/** Server-authoritative file revision. */
 	rev: number;
 }
 
@@ -79,6 +91,227 @@ export class SyncTransport {
 		const query = new URLSearchParams({ epoch, since: String(since) });
 		const response = await this.request(`/v1/changes?${query}`);
 		return ChangesPageSchema.parse(parseJson(response.text));
+	}
+
+	/** Reads one exact binary revision and verifies size, hash, epoch, and ETag. */
+	async readPinnedBlob(
+		path: string,
+		epoch: string,
+		rev: number,
+		expectedHash: string,
+	): Promise<PinnedBlob> {
+		const response = await this.request(
+			`/v1/files/${encodePath(path)}?${new URLSearchParams({ rev: String(rev) })}`,
+			{ headers: { "x-vault-epoch": epoch } },
+		);
+		const etag = response.headers.etag;
+		const identity = etag ? parseETag(etag) : null;
+		const size = response.headers["content-length"];
+		const hash = DevicePayloadHashSchema.parse(expectedHash);
+		const bytes = response.arrayBuffer
+			? new Uint8Array(response.arrayBuffer.slice(0))
+			: null;
+		if (
+			response.headers["content-type"]
+				?.split(";", 1)[0]
+				?.trim()
+				.toLowerCase() !== "application/octet-stream" ||
+			!identity ||
+			identity.epoch !== epoch ||
+			identity.rev !== rev ||
+			!bytes ||
+			!/^(0|[1-9][0-9]*)$/.test(size ?? "") ||
+			!Number.isSafeInteger(Number(size)) ||
+			Number(size) > 25_000_000 ||
+			Number(size) !== bytes.byteLength ||
+			(await hashBytes(bytes)) !== hash
+		)
+			throw new Error("Pinned blob response metadata is invalid");
+		return { bytes, hash, epoch, rev };
+	}
+
+	/** Implements the apply port for exact, digest-checked blob reads. */
+	async readBlob(path: string, epoch: string, rev: number, hash: string) {
+		return this.readPinnedBlob(path, epoch, rev, hash);
+	}
+
+	/** Resolves exact pinned content or newer current authority after pruning. */
+	async readResolvedBlob(
+		path: string,
+		epoch: string,
+		rev: number,
+		expectedHash: string,
+	): Promise<
+		| {
+				kind: "blob";
+				bytes: Uint8Array;
+				hash: string;
+				epoch: string;
+				rev: number;
+		  }
+		| { kind: "text"; text: string; hash: string; epoch: string; rev: number }
+		| { kind: "deleted"; text: null; hash: ""; epoch: string; rev: number }
+	> {
+		let pinned: OAuthTransportResponse | null = null;
+		try {
+			const query = new URLSearchParams({ rev: String(rev) });
+			pinned = await this.request(`/v1/files/${encodePath(path)}?${query}`, {
+				headers: { "x-vault-epoch": epoch },
+			});
+		} catch (error) {
+			if (
+				!(error instanceof SyncTransportError) ||
+				error.code !== "revision_pruned"
+			)
+				throw error;
+		}
+		if (pinned) {
+			const pinnedETag = pinned.headers.etag;
+			const pinnedIdentity = pinnedETag ? parseETag(pinnedETag) : null;
+			const pinnedType = pinned.headers["content-type"]
+				?.split(";", 1)[0]
+				?.trim()
+				.toLowerCase();
+			if (
+				!pinnedIdentity ||
+				pinnedIdentity.epoch !== epoch ||
+				pinnedIdentity.rev !== rev
+			)
+				throw new Error("Pinned content identity is invalid");
+			if (pinnedType === "application/octet-stream") {
+				const size = pinned.headers["content-length"];
+				const bytes = pinned.arrayBuffer
+					? new Uint8Array(pinned.arrayBuffer.slice(0))
+					: null;
+				const hash = DevicePayloadHashSchema.parse(expectedHash);
+				if (
+					!bytes ||
+					!/^(0|[1-9][0-9]*)$/.test(size ?? "") ||
+					!Number.isSafeInteger(Number(size)) ||
+					Number(size) > 25_000_000 ||
+					Number(size) !== bytes.byteLength ||
+					(await hashBytes(bytes)) !== hash
+				)
+					throw new Error("Pinned blob response metadata is invalid");
+				return { kind: "blob", bytes, hash, epoch, rev };
+			}
+			const body = TextReadResponseSchema.parse(parseJson(pinned.text));
+			if (
+				body.path !== path ||
+				body.etag !== pinnedETag ||
+				body.offset !== 0 ||
+				body.truncated
+			)
+				throw new Error("Pinned text response metadata is invalid");
+			if (body.deleted) {
+				if (body.content !== null || body.length !== 0 || body.hash !== "")
+					throw new Error("Pinned text tombstone metadata is invalid");
+				return { kind: "deleted", text: null, hash: "", epoch, rev };
+			}
+			if (
+				body.content === null ||
+				body.length !== body.content.length ||
+				body.size !== new TextEncoder().encode(body.content).byteLength ||
+				(await hashText(body.content)) !== body.hash ||
+				body.hash !== expectedHash
+			)
+				throw new Error("Pinned text response metadata is invalid");
+			return { kind: "text", text: body.content, hash: body.hash, epoch, rev };
+		}
+		const response = await this.request(`/v1/files/${encodePath(path)}`);
+		const responseEpoch = response.headers["x-vault-epoch"];
+		const etag = response.headers.etag;
+		const identity = etag ? parseETag(etag) : null;
+		if (
+			(responseEpoch !== undefined && responseEpoch !== epoch) ||
+			!identity ||
+			identity.epoch !== epoch
+		)
+			throw new Error("Current blob fallback identity is invalid");
+		/** Rejects fallback authority older than the requested revision or divergent at equal revision. */
+		const assertFallbackRevision = (currentRev: number, hash: string) => {
+			if (currentRev < rev || (currentRev === rev && hash !== expectedHash))
+				throw new Error(
+					"Current blob fallback revision is not newer authority",
+				);
+		};
+		const contentType = response.headers["content-type"]
+			?.split(";", 1)[0]
+			?.trim()
+			.toLowerCase();
+		if (contentType === "application/octet-stream") {
+			const size = response.headers["content-length"];
+			const bytes = response.arrayBuffer
+				? new Uint8Array(response.arrayBuffer.slice(0))
+				: null;
+			if (
+				!bytes ||
+				!/^(0|[1-9][0-9]*)$/.test(size ?? "") ||
+				!Number.isSafeInteger(Number(size)) ||
+				Number(size) > 25_000_000 ||
+				Number(size) !== bytes.byteLength
+			)
+				throw new Error("Current blob fallback size is invalid");
+			const hash = await hashBytes(bytes);
+			assertFallbackRevision(identity.rev, hash);
+			return {
+				kind: "blob",
+				bytes,
+				hash,
+				epoch,
+				rev: identity.rev,
+			};
+		}
+		const body = TextReadResponseSchema.parse(parseJson(response.text));
+		if (
+			body.path !== path ||
+			body.etag !== etag ||
+			body.offset !== 0 ||
+			body.truncated
+		)
+			throw new Error("Current blob fallback text metadata is invalid");
+		if (body.deleted) {
+			if (
+				body.content !== null ||
+				body.length !== 0 ||
+				body.hash !== "" ||
+				body.size !== 0
+			)
+				throw new Error("Current blob fallback tombstone is invalid");
+			assertFallbackRevision(identity.rev, "");
+			return {
+				kind: "deleted",
+				text: null,
+				hash: "",
+				epoch,
+				rev: identity.rev,
+			};
+		}
+		if (
+			body.content === null ||
+			body.length !== body.content.length ||
+			body.size !== new TextEncoder().encode(body.content).byteLength ||
+			(await hashText(body.content)) !== body.hash
+		)
+			throw new Error("Current blob fallback text metadata is invalid");
+		assertFallbackRevision(identity.rev, body.hash);
+		return {
+			kind: "text",
+			text: body.content,
+			hash: body.hash,
+			epoch,
+			rev: identity.rev,
+		};
+	}
+
+	/** Resolves pinned binary authority and current text or blob fallback for restore. */
+	async readBlobAuthority(
+		path: string,
+		epoch: string,
+		rev: number,
+		hash: string,
+	) {
+		return this.readResolvedBlob(path, epoch, rev, hash);
 	}
 
 	/** Reads one exact historical revision and validates its response epoch and ETag. */
@@ -192,6 +425,41 @@ export class SyncTransport {
 				};
 	}
 
+	/** Reads current exact blob bytes and validates their identity and size. */
+	async readCurrentBlobAuthority(path: string) {
+		const response = await this.request(`/v1/files/${encodePath(path)}`);
+		if (
+			response.headers["content-type"]
+				?.split(";", 1)[0]
+				?.trim()
+				.toLowerCase() !== "application/octet-stream"
+		)
+			throw new UnsupportedRemoteTextError(path);
+		const etag = response.headers.etag;
+		const identity = etag ? parseETag(etag) : null;
+		const size = response.headers["content-length"];
+		const bytes = response.arrayBuffer
+			? new Uint8Array(response.arrayBuffer.slice(0))
+			: null;
+		if (
+			!identity ||
+			!bytes ||
+			!/^(0|[1-9][0-9]*)$/.test(size ?? "") ||
+			!Number.isSafeInteger(Number(size)) ||
+			Number(size) > 25_000_000 ||
+			Number(size) !== bytes.byteLength
+		)
+			throw new Error("Current blob authority metadata is invalid");
+		const hash = await hashBytes(bytes);
+		return {
+			kind: "blob" as const,
+			bytes,
+			epoch: identity.epoch,
+			rev: identity.rev,
+			hash,
+		};
+	}
+
 	/** Reads current live text or tombstone with its validated epoch and revision. */
 	async readCurrent(
 		path: string,
@@ -233,6 +501,36 @@ export class SyncTransport {
 		)
 			throw new Error("Current text metadata is invalid");
 		return { deleted: false, text: body.content, etag, epoch: identity.epoch };
+	}
+
+	/** Publishes exact immutable bytes with the Worker blob integrity declarations. */
+	async putBlob(
+		path: string,
+		bytes: Uint8Array,
+		hash: string,
+		precondition: DevicePrecondition,
+		key: string,
+		epoch: string,
+	) {
+		if (
+			bytes.byteLength > 25_000_000 ||
+			!DevicePayloadHashSchema.safeParse(hash).success ||
+			(await hashBytes(bytes)) !== hash
+		)
+			throw new Error("Blob payload identity is invalid");
+		const headers = mutationHeaders(precondition, key, epoch);
+		headers["x-content-sha256"] = hash;
+		headers["x-content-size"] = String(bytes.byteLength);
+		return this.readMutation(
+			await this.request(`/v1/files/${encodePath(path)}`, {
+				method: "PUT",
+				body: bytes.buffer.slice(
+					bytes.byteOffset,
+					bytes.byteOffset + bytes.byteLength,
+				) as ArrayBuffer,
+				headers,
+			}),
+		);
 	}
 
 	/** Publishes one immutable text file under its exact create or revision precondition. */
@@ -313,6 +611,38 @@ export class SyncTransport {
 		};
 	}
 
+	/** Publishes exact bytes only when the remote path remains absent. */
+	async createBlob(
+		path: string,
+		bytes: Uint8Array,
+		hash: string,
+		epoch: string,
+		key: string,
+	): Promise<ReturnType<SyncTransport["readMutation"]>> {
+		if (
+			bytes.byteLength > 25_000_000 ||
+			!DevicePayloadHashSchema.safeParse(hash).success ||
+			(await hashBytes(bytes)) !== hash
+		)
+			throw new Error("Blob payload identity is invalid");
+		return this.readMutation(
+			await this.request(`/v1/files/${encodePath(path)}`, {
+				method: "PUT",
+				body: bytes.buffer.slice(
+					bytes.byteOffset,
+					bytes.byteOffset + bytes.byteLength,
+				) as ArrayBuffer,
+				headers: {
+					"if-none-match": "*",
+					"x-vault-epoch": epoch,
+					"idempotency-key": key,
+					"x-content-sha256": hash,
+					"x-content-size": String(bytes.byteLength),
+				},
+			}),
+		);
+	}
+
 	/** Publishes one immutable local text file only when the remote path remains absent. */
 	async createText(
 		path: string,
@@ -336,7 +666,7 @@ export class SyncTransport {
 		path: string,
 		options: {
 			method?: string;
-			body?: string;
+			body?: string | ArrayBuffer;
 			headers?: Record<string, string>;
 		} = {},
 	): Promise<OAuthTransportResponse> {
@@ -410,10 +740,13 @@ type JsonValue =
 
 /** Hashes exact UTF-8 response text for pinned identity verification. */
 async function hashText(text: string): Promise<string> {
-	const digest = await crypto.subtle.digest(
-		"SHA-256",
-		new TextEncoder().encode(text),
-	);
+	return hashBytes(new TextEncoder().encode(text));
+}
+
+/** Hashes an exact byte sequence without text decoding or normalization. */
+async function hashBytes(bytes: Uint8Array): Promise<string> {
+	const copy = bytes.slice();
+	const digest = await crypto.subtle.digest("SHA-256", copy.buffer);
 	return DevicePayloadHashSchema.parse(
 		[...new Uint8Array(digest)]
 			.map((byte) => byte.toString(16).padStart(2, "0"))

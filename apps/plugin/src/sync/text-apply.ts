@@ -9,11 +9,25 @@ import {
 	pathKey,
 } from "@obsidian-ai-bridge/protocol";
 import type { DeviceJournal } from "@plugin/sync/device-journal";
+import { classifyEnrollmentPath } from "@plugin/sync/enrollment-scope";
+import { UnsupportedRemoteTextError } from "@plugin/sync/remote-text";
 
-/** Exact text effects required from a vault without exposing Obsidian SDK types. */
+/** Application-owned guarded text and byte effects without Obsidian SDK types. */
 export interface TextVault {
 	/** Reads current UTF-8 text, or null when the path is absent. */
 	read(path: string): Promise<string | null>;
+	/** Reads exact file bytes without text decoding, or null when the path is absent. */
+	readBinary?(path: string): Promise<Uint8Array | null>;
+	/** Returns mtime and size from the host adapter for a binary race guard. */
+	stat?(path: string): Promise<{ mtime: number; size: number } | null>;
+	/** Creates exact bytes only when the exact path and path key are absent. */
+	createBinary?(path: string, bytes: Uint8Array): Promise<boolean>;
+	/** Replaces current bytes after the caller completes its host stat guard. */
+	modifyBinary?(path: string, bytes: Uint8Array): Promise<boolean>;
+	/** Moves exact observed binary bytes to Obsidian trash without decoding them. */
+	trashBinary?(path: string, expected: Uint8Array): Promise<boolean>;
+	/** Removes only a hash-verified file under the pre-apply recovery directory. */
+	removeRecoveryCopy?(path: string, expectedHash: string): Promise<boolean>;
 	/** Lists current paths so case-folded and Unicode-key collisions stay visible. */
 	list(): Promise<string[]>;
 	/** Returns raw file size without decoding content, or null when the path is absent. */
@@ -28,8 +42,14 @@ export interface TextVault {
 	create(path: string, text: string): Promise<boolean>;
 	/** Moves a current file to Obsidian trash without permanent deletion. */
 	trash(path: string, expected: string): Promise<boolean>;
-	/** Renames without link rewriting when source bytes and destination absence still hold. */
+	/** Renames without link rewriting when source text and destination absence still hold. */
 	rename(from: string, to: string, expected: string): Promise<boolean>;
+	/** Renames exact binary bytes only while the destination remains absent. */
+	renameBinary?(
+		from: string,
+		to: string,
+		expected: Uint8Array,
+	): Promise<boolean>;
 }
 
 /** Signals that a pruned revision now uses one validated current row identity. */
@@ -48,6 +68,8 @@ class PinnedRevisionRebased extends Error {
 export interface TextApplyOptions {
 	/** Stable display name stored with conflict recovery metadata. */
 	deviceName: string;
+	/** Clock in Unix milliseconds for recovery retention checks. */
+	now?: () => number;
 }
 
 /** Current or pinned remote authority returned for one requested epoch and revision. */
@@ -55,10 +77,36 @@ export type ResolvedPinnedText =
 	| { deleted?: false; text: string; epoch: string; rev: number; hash: string }
 	| { deleted: true; text: null; epoch: string; rev: number; hash: "" };
 
-/** Fetches immutable remote text by its exact path and server revision. */
+/** Validated exact or current authority across text, blob, and tombstone kinds. */
+export type ResolvedPinnedBlob =
+	| {
+			kind: "blob";
+			bytes: Uint8Array;
+			epoch: string;
+			rev: number;
+			hash: string;
+	  }
+	| { kind: "text"; text: string; epoch: string; rev: number; hash: string }
+	| { kind: "deleted"; text: null; epoch: string; rev: number; hash: "" };
+
+/** Reads pinned text or exact bytes and exposes validated current authority after revision pruning. */
 export interface PinnedTextProvider {
 	/** Returns text pinned to the exact epoch and revision, or null when unavailable. */
 	read(path: string, epoch: string, rev: number): Promise<string | null>;
+	/** Returns exact bytes pinned to a validated file identity when the row is a blob. */
+	readBlob?(
+		path: string,
+		epoch: string,
+		rev: number,
+		hash: string,
+	): Promise<{ bytes: Uint8Array; epoch: string; rev: number; hash: string }>;
+	/** Returns exact pinned content or current content after revision pruning. */
+	readResolvedBlob?(
+		path: string,
+		epoch: string,
+		rev: number,
+		hash: string,
+	): Promise<ResolvedPinnedBlob>;
 	/** Returns validated current live text or tombstone after a pruned revision. */
 	readResolved?(
 		path: string,
@@ -67,13 +115,14 @@ export interface PinnedTextProvider {
 	): Promise<ResolvedPinnedText>;
 }
 
-/** Serializes revision-pinned text changes and recovers durable conflict steps. */
+/** Owns shared text and byte apply policy, durable conflict recovery, and revision completion. */
 export class TextApplyEngine {
 	private tail: Promise<void> = Promise.resolve();
 	private closed = false;
 	private readonly deviceName: string;
+	private readonly now: () => number;
 
-	/** Binds journal authority to text effects and a pinned-revision reader. */
+	/** Binds journal authority to guarded text and byte effects and a pinned-revision reader. */
 	constructor(
 		private readonly journal: DeviceJournal,
 		private readonly vault: TextVault,
@@ -81,20 +130,29 @@ export class TextApplyEngine {
 		options: TextApplyOptions,
 	) {
 		this.deviceName = options.deviceName.trim();
+		this.now = options.now ?? Date.now;
 		if (!this.deviceName) throw new Error("A friendly device name is required");
 	}
 
 	/** Validates and applies one immutable remote entry without discarding newer local bytes. */
-	apply(change: ChangeEntry): Promise<void> {
+	apply(change: ChangeEntry, contentKind?: "text" | "blob"): Promise<void> {
 		const parsed = ChangeEntrySchema.parse(structuredClone(change));
-		return this.serialize(() => this.applyWithFallback(parsed));
+		return this.serialize(async () => {
+			await this.pruneRecoveryCopies();
+			await this.applyWithFallback(parsed, contentKind);
+		});
 	}
 
 	/**
-	 * Applies observations through pinned reads and guarded effects. Resumes durable recovery first and rejects if attention blocks completion.
-	 * Its local work sequence never advances the feed cursor.
+	 * Applies current text, blob, or tombstone authority through pinned reads and guarded effects.
+	 * It resumes durable work and does not advance the feed cursor.
 	 */
-	applyCurrent(path: string, authority: ResolvedPinnedText): Promise<void> {
+	applyCurrent(
+		path: string,
+		authority:
+			| ResolvedPinnedText
+			| Extract<ResolvedPinnedBlob, { kind: "blob" }>,
+	): Promise<void> {
 		const observed = structuredClone(authority);
 		return this.serialize(async () => {
 			const pending = this.activeJournal.snapshot().pending_apply[0];
@@ -106,16 +164,18 @@ export class TextApplyEngine {
 				);
 			if (state.epoch !== observed.epoch)
 				throw new Error("Current authority belongs to a different vault epoch");
+			const isBlob = "kind" in observed && observed.kind === "blob";
 			await this.applyWithFallback(
 				ChangeEntrySchema.parse({
 					seq: (state.cursor ?? 0) + 1,
-					op: observed.deleted ? "delete" : "put",
+					op: "deleted" in observed && observed.deleted ? "delete" : "put",
 					path,
 					etag: `"${observed.epoch}.${observed.rev}"`,
 					hash: observed.hash,
 					origin: "current_authority",
 					at: 0,
 				}),
+				isBlob ? "blob" : "text",
 			);
 			if (this.activeJournal.snapshot().pending_apply.length)
 				throw new Error("Current authority apply needs conflict recovery");
@@ -125,6 +185,7 @@ export class TextApplyEngine {
 	/** Resumes the one verified pending transition after a plugin restart. */
 	resume(): Promise<void> {
 		return this.serialize(async () => {
+			await this.pruneRecoveryCopies();
 			const pending = this.activeJournal.snapshot().pending_apply[0];
 			if (pending) await this.applyWithFallback(pending.change);
 		});
@@ -136,31 +197,42 @@ export class TextApplyEngine {
 	}
 
 	/** Repeats one accepted entry after the journal commits a pruned-revision replacement. */
-	private async applyWithFallback(change: ChangeEntry): Promise<void> {
+	private async applyWithFallback(
+		change: ChangeEntry,
+		contentKind?: "text" | "blob",
+	): Promise<void> {
 		try {
-			await this.applyEntry(change);
+			await this.applyEntry(change, contentKind);
 		} catch (error) {
 			if (!(error instanceof PinnedRevisionRebased)) throw error;
-			await this.applyEntry(error.change);
+			await this.applyEntry(error.change, contentKind);
 		}
 	}
 
 	/** Runs one accepted entry or continues its persisted conflict step. */
-	private async applyEntry(change: ChangeEntry): Promise<void> {
+	private async applyEntry(
+		change: ChangeEntry,
+		contentKind?: "text" | "blob",
+	): Promise<void> {
 		this.assertOpen();
 		const state = this.activeJournal.snapshot();
 		const pending = state.pending_apply[0];
 		if (pending && pending.change.seq !== change.seq)
 			throw new Error("Another remote apply is pending");
 		if (!pending) {
-			await this.activeJournal.beginApply(change);
+			await this.activeJournal.beginApply(change, contentKind);
 			const current = this.activeJournal.snapshot();
 			if (await this.ignoreObsolete(change, current)) return;
 			if (change.op === "rename") {
 				await this.applyRename(change, current);
 				return;
 			}
-			await this.applyPathChange(change, current.base[change.path] ?? null);
+			await this.applyPathChange(
+				change,
+				current.base[change.path] ?? null,
+				false,
+				current.pending_apply[0]?.content_kind,
+			);
 			return;
 		}
 		await this.resumePending(pending);
@@ -184,20 +256,515 @@ export class TextApplyEngine {
 		return true;
 	}
 
-	/** Applies one put or delete after exact observed bytes and durable conflict checks. */
+	/** Removes only expired, verified recovery files that no pending apply needs. */
+	private async pruneRecoveryCopies(): Promise<void> {
+		if (
+			!this.vault.stat ||
+			!this.vault.readBinary ||
+			!this.vault.removeRecoveryCopy
+		)
+			return;
+		const protectedPaths = new Set(
+			this.activeJournal
+				.snapshot()
+				.pending_apply.flatMap(
+					(pending) =>
+						pending.conflict_copies
+							?.filter((copy) => copy.purpose === "pre_apply")
+							.map((copy) => copy.path) ?? [],
+				),
+		);
+		const cutoff = this.now() - 7 * 24 * 60 * 60 * 1000;
+		const paths = await this.vault.list();
+		this.assertOpen();
+		for (const path of paths) {
+			const prefix = ".ai-bridge/pre-apply/";
+			if (!path.startsWith(prefix) || protectedPaths.has(path)) continue;
+			const hash = path.slice(prefix.length);
+			if (!DevicePayloadHashSchema.safeParse(hash).success) continue;
+			const stat = await this.vault.stat(path);
+			this.assertOpen();
+			if (!stat || stat.mtime > cutoff) continue;
+			const bytes = await this.vault.readBinary(path);
+			this.assertOpen();
+			if (
+				!bytes ||
+				bytes.byteLength !== stat.size ||
+				(await digestBytes(bytes)) !== hash
+			)
+				continue;
+			this.assertOpen();
+			await this.vault.removeRecoveryCopy(path, hash);
+			this.assertOpen();
+		}
+	}
+
+	/** Applies a blob tombstone after exact-byte checks and required conflict copies. */
+	private async applyBlobDelete(
+		change: ChangeEntry & { op: "delete" },
+		base: DeviceBaseEntry | null,
+	): Promise<void> {
+		if (!this.vault.readBinary || !this.vault.stat) {
+			await this.attend(
+				change.path,
+				"Binary delete capabilities are unavailable",
+			);
+			return;
+		}
+		const firstStat = await this.vault.stat(change.path);
+		this.assertOpen();
+		const local = await this.vault.readBinary(change.path);
+		this.assertOpen();
+		if (!local) {
+			await this.activeJournal.completeApply(change.path, {
+				deleted: true,
+				rev: parseETag(change.etag).rev,
+			});
+			return;
+		}
+		const localHash = await digestBytes(local);
+		const clean = base?.deleted === false && localHash === base.hash;
+		const secondStat = await this.vault.stat(change.path);
+		this.assertOpen();
+		let observed = local;
+		if (!sameStat(firstStat, secondStat)) {
+			const changed = await this.vault.readBinary(change.path);
+			this.assertOpen();
+			if (!changed)
+				throw new Error("Changed binary disappeared during delete apply");
+			observed = changed;
+		}
+		const observedHash = await digestBytes(observed);
+		if (!clean || !sameStat(firstStat, secondStat)) {
+			const pending = this.activeJournal.snapshot().pending_apply[0];
+			if (!pending)
+				throw new Error("Binary delete has no durable apply identity");
+			if (!pending.conflict_copies) {
+				if (!this.vault.createBinary)
+					throw new Error("Binary delete recovery capability is unavailable");
+				const revision = parseETag(change.etag).rev;
+				const conflictPath = conflictName(
+					change.path,
+					this.deviceName,
+					revision,
+					change.at,
+				);
+				const common: PendingConflictCopy = {
+					path: conflictPath,
+					source: change.path,
+					side: "path",
+					mode: "local",
+					device_name: this.deviceName,
+					hash: observedHash,
+					kind: "blob",
+					purpose: "conflict",
+				};
+				await this.activeJournal.updateApply({
+					change,
+					content_kind: "blob",
+					step: "named",
+					conflict_copies: [
+						common,
+						{
+							...common,
+							path: `.ai-bridge/pre-apply/${observedHash}`,
+							purpose: "pre_apply",
+						},
+					],
+				});
+				if (!sameStat(firstStat, secondStat)) {
+					const named = this.activeJournal.snapshot().pending_apply[0];
+					if (named) await this.persistBinaryConflictCopies(named);
+					throw new Error(
+						"Binary changed during observation; retry after conflict preservation",
+					);
+				}
+				const saved = this.activeJournal.snapshot().pending_apply[0];
+				if (saved) await this.resumePending(saved);
+				return;
+			}
+			const copy = pending.conflict_copies.find(
+				(candidate) =>
+					candidate.kind === "blob" && candidate.purpose === "conflict",
+			);
+			if (!copy || copy.hash !== observedHash)
+				return this.attend(
+					change.path,
+					"Local binary changed after delete recovery was named",
+				);
+			await this.activeJournal.recordAttention(
+				change.path,
+				"Local binary bytes were preserved as a conflict copy",
+			);
+			await this.activeJournal.completeApply(change.path, {
+				deleted: true,
+				rev: parseETag(change.etag).rev,
+			});
+			return;
+		}
+		const beforeTrash = await this.vault.readBinary(change.path);
+		this.assertOpen();
+		const beforeTrashStat = await this.vault.stat(change.path);
+		this.assertOpen();
+		if (
+			!beforeTrash ||
+			(await digestBytes(beforeTrash)) !== localHash ||
+			!sameStat(firstStat, beforeTrashStat)
+		)
+			throw new Error("Binary changed before remote delete");
+		if (!this.vault.trashBinary)
+			throw new Error("Binary trash capability is unavailable");
+		const trashed = await this.effect(
+			() =>
+				this.vault.trashBinary?.(change.path, beforeTrash) ??
+				Promise.resolve(false),
+		);
+		if (!trashed)
+			throw new Error("Obsidian trash did not confirm the binary delete");
+		const remaining = await this.vault.readBinary(change.path);
+		this.assertOpen();
+		if (remaining) throw new Error("Binary file remains after remote delete");
+		await this.activeJournal.completeApply(change.path, {
+			deleted: true,
+			rev: parseETag(change.etag).rev,
+		});
+	}
+
+	/** Applies pinned content after resolving its kind and preserving exact local bytes. */
+	private async applyBlobChange(
+		change: ChangeEntry & { op: "put" },
+		base: DeviceBaseEntry | null,
+	): Promise<void> {
+		if (
+			(!this.pinnedText.readBlob && !this.pinnedText.readResolvedBlob) ||
+			!this.vault.readBinary ||
+			!this.vault.stat
+		)
+			throw new Error("Binary apply capabilities are unavailable");
+		const identity = parseETag(change.etag);
+		const remote = await this.resolvePinnedContent(change);
+		if (remote.kind === "text") {
+			await this.applyInlineTextAfterBlob(change, base, remote.text);
+			return;
+		}
+		if (remote.kind === "deleted")
+			throw new Error("Pinned put revision is deleted");
+		const firstStat = await this.vault.stat(change.path);
+		this.assertOpen();
+		const local = await this.vault.readBinary(change.path);
+		this.assertOpen();
+		if (local === null) {
+			if (firstStat !== null || !this.vault.createBinary)
+				throw new Error("Binary create precondition changed");
+			const collision = (await this.vault.list()).find(
+				(current) =>
+					current !== change.path && pathKey(current) === pathKey(change.path),
+			);
+			this.assertOpen();
+			if (collision) {
+				await this.startRemoteBlobCollision(change);
+				return;
+			}
+			await this.activeJournal.setExpectedWrite(change.path, change.hash);
+			this.assertOpen();
+			const createdPath = await this.effect(
+				async () =>
+					(await this.vault.createBinary?.(change.path, remote.bytes)) ?? false,
+			);
+			const created = await this.vault.readBinary(change.path);
+			this.assertOpen();
+			if (created && (await digestBytes(created)) === change.hash) {
+				await this.activeJournal.completeApply(change.path, {
+					deleted: false,
+					rev: identity.rev,
+					hash: change.hash,
+				});
+				return;
+			}
+			await this.activeJournal.clearExpectedWrite(change.path);
+			this.assertOpen();
+			const lateCollision = (await this.vault.list()).find(
+				(current) =>
+					current !== change.path && pathKey(current) === pathKey(change.path),
+			);
+			this.assertOpen();
+			if (!createdPath && lateCollision) {
+				await this.startRemoteBlobCollision(change);
+				return;
+			}
+			throw new Error("Binary create was not confirmed");
+		}
+		const localHash = await digestBytes(local);
+		if (localHash === change.hash) {
+			await this.activeJournal.completeApply(change.path, {
+				deleted: false,
+				rev: identity.rev,
+				hash: change.hash,
+			});
+			return;
+		}
+		const clean = base?.deleted === false && localHash === base.hash;
+		const secondStat = await this.vault.stat(change.path);
+		this.assertOpen();
+		let observed = local;
+		if (!sameStat(firstStat, secondStat)) {
+			const changed = await this.vault.readBinary(change.path);
+			this.assertOpen();
+			if (!changed) throw new Error("Changed binary disappeared during apply");
+			observed = changed;
+		}
+		const observedHash = await digestBytes(observed);
+		const pending = this.activeJournal.snapshot().pending_apply[0];
+		const blobCopies = pending?.conflict_copies?.filter(
+			(copy) => copy.kind === "blob",
+		);
+		if (!blobCopies) {
+			if (!pending || !this.vault.createBinary)
+				throw new Error("Binary conflict recovery capability is unavailable");
+			const conflictPath = conflictName(
+				change.path,
+				this.deviceName,
+				identity.rev,
+				change.at,
+			);
+			const recoveryPath = `.ai-bridge/pre-apply/${observedHash}`;
+			const localCopy: PendingConflictCopy = {
+				path: conflictPath,
+				source: change.path,
+				side: "path",
+				mode: "local",
+				device_name: this.deviceName,
+				hash: observedHash,
+				kind: "blob",
+				purpose: "conflict",
+			};
+			const recoveryCopy: PendingConflictCopy = {
+				...localCopy,
+				path: recoveryPath,
+				purpose: "pre_apply",
+			};
+			await this.activeJournal.updateApply({
+				change,
+				content_kind: "blob",
+				step: "named",
+				conflict_copies:
+					clean && sameStat(firstStat, secondStat)
+						? [recoveryCopy]
+						: [localCopy, recoveryCopy],
+			});
+			if (!sameStat(firstStat, secondStat)) {
+				const named = this.activeJournal.snapshot().pending_apply[0];
+				if (named) await this.persistBinaryConflictCopies(named);
+				throw new Error(
+					"Binary changed during observation; retry after conflict preservation",
+				);
+			}
+			const saved = this.activeJournal.snapshot().pending_apply[0];
+			if (saved) await this.resumePending(saved);
+			return;
+		}
+		const conflictCopy = blobCopies.find((copy) => copy.purpose === "conflict");
+		const recoveryCopy = blobCopies.find(
+			(copy) => copy.purpose === "pre_apply",
+		);
+		if (
+			!recoveryCopy ||
+			recoveryCopy.hash !== observedHash ||
+			recoveryCopy.source !== change.path ||
+			(!conflictCopy && !clean) ||
+			(conflictCopy !== undefined &&
+				(conflictCopy.hash !== observedHash ||
+					conflictCopy.source !== change.path))
+		)
+			return this.attend(
+				change.path,
+				"Binary recovery identity changed before apply completed",
+			);
+		const conflictBytes = conflictCopy
+			? await this.vault.readBinary(conflictCopy.path)
+			: null;
+		const recoveryBytes = await this.vault.readBinary(recoveryCopy.path);
+		if (
+			(conflictCopy !== undefined &&
+				(!conflictBytes ||
+					(await digestBytes(conflictBytes)) !== observedHash)) ||
+			!recoveryBytes ||
+			(await digestBytes(recoveryBytes)) !== observedHash
+		)
+			return this.attend(
+				change.path,
+				"Binary recovery bytes are missing or corrupt",
+			);
+		if (!sameStat(firstStat, secondStat))
+			throw new Error(
+				"Binary changed during observation; retry after conflict preservation",
+			);
+		const beforeWrite = await this.vault.stat(change.path);
+		this.assertOpen();
+		const latest = await this.vault.readBinary(change.path);
+		this.assertOpen();
+		if (
+			!latest ||
+			(await digestBytes(latest)) !== observedHash ||
+			!sameStat(beforeWrite, await this.vault.stat(change.path))
+		)
+			throw new Error("Binary changed again during conflict preservation");
+		if (!this.vault.modifyBinary)
+			throw new Error("Binary write capability is unavailable");
+		await this.activeJournal.setExpectedWrite(change.path, change.hash);
+		const written = await this.effect(
+			async () =>
+				(await this.vault.modifyBinary?.(change.path, remote.bytes)) ?? false,
+		);
+		if (!written) {
+			await this.activeJournal.clearExpectedWrite(change.path);
+			throw new Error("Binary write was not confirmed");
+		}
+		const readBack = await this.vault.readBinary(change.path);
+		this.assertOpen();
+		if (!readBack || (await digestBytes(readBack)) !== change.hash) {
+			await this.activeJournal.clearExpectedWrite(change.path);
+			throw new Error("Binary read-back did not match remote bytes");
+		}
+		await this.activeJournal.completeApply(change.path, {
+			deleted: false,
+			rev: identity.rev,
+			hash: change.hash,
+		});
+		if (!clean)
+			await this.activeJournal.recordAttention(
+				change.path,
+				"Local binary bytes were preserved as a conflict copy",
+			);
+	}
+
+	/** Preserves local blob bytes for inline authority and resumes existing copy identities without naming them again. */
+	private async applyInlineTextAfterBlob(
+		change: ChangeEntry & { op: "put" },
+		base: DeviceBaseEntry | null,
+		remoteText: string,
+	): Promise<void> {
+		const pending = this.activeJournal.snapshot().pending_apply[0];
+		if (pending?.conflict_copies?.some((copy) => copy.kind === "blob")) {
+			await this.activeJournal.updateApply({
+				...pending,
+				content_kind: "text",
+			});
+			await this.resumePending({ ...pending, content_kind: "text" });
+			return;
+		}
+		const readBinary = this.vault.readBinary;
+		const stat = this.vault.stat;
+		if (!readBinary || !stat) {
+			await this.applyPathChange(change, base, true, "text");
+			return;
+		}
+		const localBytes = await readBinary.call(this.vault, change.path);
+		this.assertOpen();
+		if (!localBytes) {
+			await this.applyPathChange(change, base, true, "text");
+			return;
+		}
+		const remoteBytes = new TextEncoder().encode(remoteText);
+		if ((await digestBytes(localBytes)) === (await digestBytes(remoteBytes))) {
+			await this.activeJournal.completeApply(change.path, {
+				deleted: false,
+				rev: parseETag(change.etag).rev,
+				hash: change.hash,
+			});
+			return;
+		}
+		if (!this.vault.createBinary)
+			throw new Error("Binary-to-text recovery capabilities are unavailable");
+		const firstStat = await stat.call(this.vault, change.path);
+		this.assertOpen();
+		const observed = await readBinary.call(this.vault, change.path);
+		this.assertOpen();
+		const secondStat = await stat.call(this.vault, change.path);
+		this.assertOpen();
+		if (
+			!observed ||
+			(await digestBytes(observed)) !== (await digestBytes(localBytes)) ||
+			!sameStat(firstStat, secondStat)
+		)
+			throw new Error("Binary changed before inline-text recovery was named");
+		const observedHash = await digestBytes(observed);
+		const revision = parseETag(change.etag).rev;
+		const conflictCopy: PendingConflictCopy = {
+			path: conflictName(change.path, this.deviceName, revision, change.at),
+			source: change.path,
+			side: "path",
+			mode: "local",
+			device_name: this.deviceName,
+			hash: observedHash,
+			kind: "blob",
+			purpose: "conflict",
+		};
+		const recoveryCopy: PendingConflictCopy = {
+			...conflictCopy,
+			path: `.ai-bridge/pre-apply/${observedHash}`,
+			purpose: "pre_apply",
+		};
+		await this.activeJournal.updateApply({
+			change,
+			content_kind: "text",
+			step: "named",
+			conflict_copies: [conflictCopy, recoveryCopy],
+		});
+		const named = this.activeJournal.snapshot().pending_apply[0];
+		if (!named) throw new Error("Inline-text recovery identity was not saved");
+		await this.resumePending(named);
+	}
+
+	/** Selects local byte preservation independently of remote kind before guarded put or delete effects. */
 	private async applyPathChange(
 		change: Extract<ChangeEntry, { op: "put" | "delete" }>,
 		base: DeviceBaseEntry | null,
+		forceText = false,
+		contentKind?: "text" | "blob",
 	): Promise<void> {
 		const remoteRev = parseETag(change.etag).rev;
-		const local = await this.vault.read(change.path);
+		const size = await this.vault.size(change.path);
 		this.assertOpen();
-		if (change.op === "put") {
-			const remote = await this.fetchText(
-				change.path,
-				change.etag,
-				change.hash,
+		const admission = classifyEnrollmentPath(change.path, size ?? 0);
+		const preserveLocalBytes = admission === "blob";
+		const readRemoteAsBlob =
+			contentKind === "blob" ||
+			(contentKind === undefined && preserveLocalBytes);
+		if (!forceText && readRemoteAsBlob && change.op === "put") {
+			await this.applyBlobChange(change as ChangeEntry & { op: "put" }, base);
+			return;
+		}
+		if (
+			!forceText &&
+			(preserveLocalBytes || contentKind === "blob") &&
+			change.op === "delete"
+		) {
+			await this.applyBlobDelete(
+				change as ChangeEntry & { op: "delete" },
+				base,
 			);
+			return;
+		}
+		if (change.op === "put") {
+			let remote: string;
+			try {
+				remote = await this.fetchText(change.path, change.etag, change.hash);
+			} catch (error) {
+				if (!(error instanceof UnsupportedRemoteTextError)) throw error;
+				await this.applyBlobChange(change as ChangeEntry & { op: "put" }, base);
+				return;
+			}
+			if (!forceText && preserveLocalBytes) {
+				await this.applyInlineTextAfterBlob(
+					{ ...change, op: "put" },
+					base,
+					remote,
+				);
+				return;
+			}
+			const local = await this.vault.read(change.path);
+			this.assertOpen();
 			if (local === remote) {
 				await this.activeJournal.completeApply(change.path, {
 					deleted: false,
@@ -253,6 +820,8 @@ export class TextApplyEngine {
 			await this.startConflict(change, change.path, current);
 			return;
 		}
+		const local = await this.vault.read(change.path);
+		this.assertOpen();
 		if (local === null) {
 			await this.activeJournal.completeApply(change.path, {
 				deleted: true,
@@ -277,13 +846,477 @@ export class TextApplyEngine {
 		});
 	}
 
-	/** Saves a dirty source before completing the destination side of a remote rename. */
+	/** Saves colliding pinned blob bytes as a durable visible remote conflict copy. */
+	private async startRemoteBlobCollision(
+		change: ChangeEntry & { op: "put" },
+	): Promise<void> {
+		const identity = parseETag(change.etag);
+		const copy: PendingConflictCopy = {
+			path: conflictName(change.path, this.deviceName, identity.rev, change.at),
+			source: change.path,
+			side: "path",
+			mode: "remote",
+			hash: change.hash,
+			kind: "blob",
+			purpose: "conflict",
+		};
+		await this.activeJournal.updateApply({
+			change,
+			content_kind: "blob",
+			step: "named",
+			conflict_copies: [copy],
+		});
+		this.assertOpen();
+		const pending = this.activeJournal.snapshot().pending_apply[0];
+		if (!pending)
+			throw new Error("Remote binary collision has no durable apply identity");
+		await this.resumePending(pending);
+	}
+
+	/**
+	 * Validates pinned bytes and kind before effects. Invalid identity or bytes stop the apply.
+	 * Newer authority retains visible copy identities, but explicit tombstones release replacement-only plans without removing their stored bytes.
+	 */
+	private async resolvePinnedContent(
+		change: ChangeEntry & { op: "put" | "rename" },
+	): Promise<ResolvedPinnedBlob> {
+		const identity = parseETag(change.etag);
+		const remote = this.pinnedText.readResolvedBlob
+			? await this.pinnedText.readResolvedBlob(
+					change.path,
+					identity.epoch,
+					identity.rev,
+					change.hash,
+				)
+			: this.pinnedText.readBlob
+				? {
+						kind: "blob" as const,
+						...(await this.pinnedText.readBlob(
+							change.path,
+							identity.epoch,
+							identity.rev,
+							change.hash,
+						)),
+					}
+				: null;
+		this.assertOpen();
+		if (!remote) throw new Error("Kind-aware content reader is unavailable");
+		if (
+			remote.epoch !== identity.epoch ||
+			remote.rev < identity.rev ||
+			(remote.rev === identity.rev && remote.hash !== change.hash) ||
+			(remote.kind === "blob" &&
+				(await digestBytes(remote.bytes)) !== remote.hash) ||
+			(remote.kind === "text" && (await digest(remote.text)) !== remote.hash) ||
+			(remote.kind === "deleted" &&
+				(remote.hash !== "" || remote.text !== null))
+		)
+			throw new Error("Pinned content identity or bytes are invalid");
+		if (remote.kind === "deleted" && change.op === "rename")
+			throw new Error("Remote rename destination is deleted");
+		if (remote.rev > identity.rev) {
+			const pending = this.activeJournal.snapshot().pending_apply[0];
+			if (!pending)
+				throw new Error("Pinned fallback has no durable apply identity");
+			const rebased = ChangeEntrySchema.parse({
+				...pending.change,
+				...(remote.kind === "deleted" ? { op: "delete" } : {}),
+				etag: `"${remote.epoch}.${remote.rev}"`,
+				hash: remote.hash,
+			});
+			const replacementOnly =
+				pending.conflict_copies?.length === 1 &&
+				pending.conflict_copies[0]?.purpose === "pre_apply";
+			await this.activeJournal.rebasePendingApply(
+				rebased,
+				remote.kind === "deleted" && replacementOnly
+					? []
+					: pending.conflict_copies,
+			);
+			throw new PinnedRevisionRebased(rebased);
+		}
+		return remote;
+	}
+
+	/** Preserves pending local rename sides as exact bytes independently of the remote destination kind. */
+	private async applyBlobRename(
+		change: Extract<ChangeEntry, { op: "rename" }>,
+		state: DeviceState,
+	): Promise<void> {
+		if (
+			!this.vault.readBinary ||
+			!this.vault.stat ||
+			(!this.pinnedText.readBlob && !this.pinnedText.readResolvedBlob)
+		) {
+			await this.attend(
+				change.path,
+				"Binary rename capabilities are unavailable",
+			);
+			return;
+		}
+		const fromRev = parseETag(change.from_etag).rev;
+		const toIdentity = parseETag(change.etag);
+		const sourceBase = state.base[change.from_path];
+		const destinationBase = state.base[change.path];
+		const sourcePending =
+			sourceBase !== undefined &&
+			(sourceBase.rev < fromRev ||
+				state.stale_base_paths.includes(change.from_path));
+		const destinationPending =
+			destinationBase === undefined ||
+			destinationBase.rev < toIdentity.rev ||
+			state.stale_base_paths.includes(change.path);
+		if (!sourcePending && !destinationPending) {
+			await this.activeJournal.completeRenameApply(
+				change.from_path,
+				null,
+				change.path,
+				null,
+			);
+			return;
+		}
+		const source = sourcePending
+			? await this.vault.readBinary(change.from_path)
+			: null;
+		const destination = destinationPending
+			? await this.vault.readBinary(change.path)
+			: null;
+		const sourceHash = source ? await digestBytes(source) : null;
+		const destinationHash = destination ? await digestBytes(destination) : null;
+		const sourceClean =
+			source !== null &&
+			sourceBase?.deleted === false &&
+			sourceHash === sourceBase.hash;
+		const destinationClean =
+			destination !== null &&
+			destinationBase?.deleted === false &&
+			destinationHash === destinationBase.hash;
+		if (
+			sourceClean &&
+			sourceHash === change.hash &&
+			destinationPending &&
+			destination === null
+		) {
+			const firstStat = await this.vault.stat(change.from_path);
+			await this.resolvePinnedContent(change);
+			const sourceNow = await this.vault.readBinary(change.from_path);
+			if (
+				!sourceNow ||
+				(await digestBytes(sourceNow)) !== sourceHash ||
+				!sameStat(firstStat, await this.vault.stat(change.from_path))
+			)
+				throw new Error("Binary rename source changed before move");
+			if (!this.vault.renameBinary)
+				throw new Error("Binary rename effect is unavailable");
+			await this.activeJournal.setExpectedWrite(change.path, change.hash);
+			const moved = await this.effect(
+				async () =>
+					this.vault.renameBinary?.(change.from_path, change.path, sourceNow) ??
+					false,
+			);
+			const renamed = await this.vault.readBinary(change.path);
+			this.assertOpen();
+			if (moved && renamed && (await digestBytes(renamed)) === change.hash) {
+				await this.activeJournal.completeRenameApply(
+					change.from_path,
+					{ deleted: true, rev: fromRev },
+					change.path,
+					{ deleted: false, rev: toIdentity.rev, hash: change.hash },
+				);
+				return;
+			}
+			await this.activeJournal.clearExpectedWrite(change.path);
+		}
+		const pending = this.activeJournal.snapshot().pending_apply[0];
+		if (!pending)
+			throw new Error("Binary rename has no durable apply identity");
+		if (pending.conflict_copies) {
+			await this.finishBinaryRename(change, state, pending.conflict_copies);
+			return;
+		}
+		const conflictCopies: PendingConflictCopy[] = [];
+		if (sourcePending && source && !sourceClean) {
+			conflictCopies.push({
+				path: conflictName(
+					change.from_path,
+					this.deviceName,
+					fromRev,
+					change.at,
+				),
+				source: change.from_path,
+				side: "rename_source",
+				mode: "local",
+				device_name: this.deviceName,
+				hash: sourceHash as string,
+				kind: "blob",
+				purpose: "conflict",
+			});
+		}
+		if (
+			destinationPending &&
+			destination &&
+			!destinationClean &&
+			destinationHash !== change.hash
+		) {
+			conflictCopies.push({
+				path: conflictName(
+					change.path,
+					this.deviceName,
+					toIdentity.rev,
+					change.at,
+				),
+				source: change.path,
+				side: "rename_destination",
+				mode: "local",
+				device_name: this.deviceName,
+				hash: destinationHash as string,
+				kind: "blob",
+				purpose: "conflict",
+			});
+		}
+		if (destinationPending && destination && destinationHash !== change.hash) {
+			const preApplyHash = destinationHash as string;
+			conflictCopies.push({
+				path: `.ai-bridge/pre-apply/${preApplyHash}`,
+				source: change.path,
+				side: "rename_destination",
+				mode: "local",
+				device_name: this.deviceName,
+				hash: preApplyHash,
+				kind: "blob",
+				purpose: "pre_apply",
+			});
+		}
+		if (conflictCopies.length) {
+			await this.activeJournal.updateApply({
+				change,
+				content_kind: "blob",
+				step: "named",
+				conflict_copies: conflictCopies,
+			});
+			const saved = this.activeJournal.snapshot().pending_apply[0];
+			if (saved) await this.resumePending(saved);
+			return;
+		}
+		await this.finishBinaryRename(change, state, []);
+	}
+
+	/** Completes byte-preserved rename sides with binary effects or atomic inline text effects as their local representation allows. */
+	private async finishBinaryRename(
+		change: Extract<ChangeEntry, { op: "rename" }>,
+		state: DeviceState,
+		copies: PendingConflictCopy[],
+	): Promise<void> {
+		if (
+			(!this.pinnedText.readBlob && !this.pinnedText.readResolvedBlob) ||
+			!this.vault.readBinary ||
+			!this.vault.stat
+		)
+			throw new Error("Binary rename capabilities are unavailable");
+		const fromRev = parseETag(change.from_etag).rev;
+		const toIdentity = parseETag(change.etag);
+		for (const copy of copies) {
+			const saved = await this.vault.readBinary?.(copy.path);
+			this.assertOpen();
+			if (!saved || (await digestBytes(saved)) !== copy.hash)
+				return this.attend(
+					copy.path,
+					"Binary rename conflict copy changed before apply",
+				);
+		}
+		const sourceBase = state.base[change.from_path];
+		const destinationBase = state.base[change.path];
+		const sourcePending =
+			sourceBase !== undefined &&
+			(sourceBase.rev < fromRev ||
+				state.stale_base_paths.includes(change.from_path));
+		const destinationPending =
+			destinationBase === undefined ||
+			destinationBase.rev < toIdentity.rev ||
+			state.stale_base_paths.includes(change.path);
+		const remote = destinationPending
+			? await this.resolvePinnedContent(change)
+			: null;
+		this.assertOpen();
+		const source = await this.vault.readBinary(change.from_path);
+		this.assertOpen();
+		const destination = await this.vault.readBinary(change.path);
+		this.assertOpen();
+		const sourceHash = source ? await digestBytes(source) : null;
+		const destinationHash = destination ? await digestBytes(destination) : null;
+		const destinationClean =
+			destination !== null &&
+			destinationBase?.deleted === false &&
+			destinationHash === destinationBase.hash;
+		const destinationCopy = copies.find(
+			(copy) =>
+				copy.side === "rename_destination" && copy.purpose === "conflict",
+		);
+		const destinationCopied = destinationCopy?.hash === destinationHash;
+		const destinationChanged =
+			destinationPending &&
+			destination !== null &&
+			destinationHash !== change.hash &&
+			!destinationClean;
+		if (destinationChanged && !destinationCopied)
+			return this.attend(
+				change.path,
+				"Binary rename destination changed after conflict preservation",
+			);
+		if (
+			destinationPending &&
+			(!destinationChanged || destinationCopied) &&
+			destinationHash !== change.hash &&
+			remote &&
+			remote.kind !== "deleted"
+		) {
+			const beforeStat = await this.vault.stat(change.path);
+			this.assertOpen();
+			const current = await this.vault.readBinary(change.path);
+			this.assertOpen();
+			const afterStat = await this.vault.stat(change.path);
+			this.assertOpen();
+			if (
+				(destination === null && current !== null) ||
+				(destination !== null &&
+					(!current || (await digestBytes(current)) !== destinationHash)) ||
+				!sameStat(beforeStat, afterStat)
+			)
+				throw new Error("Binary rename destination changed before apply");
+			const preApplyCopy = copies.find(
+				(copy) =>
+					copy.side === "rename_destination" && copy.purpose === "pre_apply",
+			);
+			if (destination !== null && destinationHash !== change.hash) {
+				if (!preApplyCopy || preApplyCopy.hash !== destinationHash)
+					return this.attend(
+						change.path,
+						"Binary rename destination has no verified pre-apply copy",
+					);
+				const recovery = await this.vault.readBinary(preApplyCopy.path);
+				this.assertOpen();
+				if (!recovery || (await digestBytes(recovery)) !== destinationHash)
+					return this.attend(
+						preApplyCopy.path,
+						"Binary rename pre-apply copy changed before replacement",
+					);
+			}
+			await this.activeJournal.setExpectedWrite(change.path, change.hash);
+			this.assertOpen();
+			let written: boolean;
+			if (remote.kind === "text") {
+				const destinationSize = await this.vault.size(change.path);
+				this.assertOpen();
+				if (
+					classifyEnrollmentPath(change.path, destinationSize ?? 0) === "blob"
+				) {
+					written = await this.replacePreservedBytesWithText(
+						change.path,
+						change.hash,
+						destinationHash as string,
+						remote.text,
+					);
+				} else {
+					const expected = await this.vault.read(change.path);
+					this.assertOpen();
+					if (
+						expected === null
+							? destinationHash !== null
+							: (await digest(expected)) !== destinationHash
+					)
+						return this.attend(
+							change.path,
+							"Inline rename destination changed before guarded apply",
+						);
+					written = await this.applyRemoteText(
+						change.path,
+						change.hash,
+						expected,
+						remote.text,
+					);
+				}
+			} else {
+				written =
+					destination === null
+						? await this.effect(
+								async () =>
+									this.vault.createBinary?.(change.path, remote.bytes) ?? false,
+							)
+						: this.vault.modifyBinary
+							? await this.effect(
+									async () =>
+										this.vault.modifyBinary?.(change.path, remote.bytes) ??
+										false,
+								)
+							: false;
+			}
+			const writtenBytes = await this.vault.readBinary(change.path);
+			this.assertOpen();
+			if (
+				!written ||
+				!writtenBytes ||
+				(await digestBytes(writtenBytes)) !== change.hash
+			) {
+				await this.activeJournal.clearExpectedWrite(change.path);
+				throw new Error("Binary rename destination was not confirmed");
+			}
+		}
+		const sourceClean =
+			source !== null &&
+			sourceBase?.deleted === false &&
+			sourceHash === sourceBase.hash;
+		const sourceCopy = copies.find(
+			(copy) => copy.side === "rename_source" && copy.purpose === "conflict",
+		);
+		const sourceCopied = sourceCopy?.hash === sourceHash;
+		if (sourcePending && source && !sourceClean && !sourceCopied)
+			return this.attend(
+				change.from_path,
+				"Binary rename source changed after conflict preservation",
+			);
+		if (sourcePending && source && (sourceClean || sourceCopied)) {
+			if (sourceCopied && sourceCopy) {
+				const saved = await this.vault.readBinary(sourceCopy.path);
+				this.assertOpen();
+				if (!saved || (await digestBytes(saved)) !== sourceCopy.hash)
+					return this.attend(
+						change.from_path,
+						"Binary rename source conflict copy changed before trash",
+					);
+			}
+			const trashBinary = this.vault.trashBinary;
+			if (!trashBinary)
+				throw new Error("Binary rename source trash is unavailable");
+			const trashed = await this.effect(() =>
+				trashBinary.call(this.vault, change.from_path, source),
+			);
+			const remainingSource = await this.vault.readBinary(change.from_path);
+			this.assertOpen();
+			if (!trashed || remainingSource)
+				throw new Error("Binary rename source was not moved to Obsidian trash");
+		}
+		if (destinationChanged || (sourcePending && !sourceClean))
+			await this.activeJournal.recordAttention(
+				change.path,
+				"Local binary rename sides remain visible as conflict copies",
+			);
+		await this.activeJournal.completeRenameApply(
+			change.from_path,
+			sourcePending ? { deleted: true, rev: fromRev } : null,
+			change.path,
+			destinationPending
+				? { deleted: false, rev: toIdentity.rev, hash: change.hash }
+				: null,
+		);
+	}
+
+	/** Admits each pending local rename side before remote-kind dispatch and preserves dirty sides before effects. */
 	private async applyRename(
 		change: Extract<ChangeEntry, { op: "rename" }>,
 		state: DeviceState,
 	): Promise<void> {
 		const fromRev = parseETag(change.from_etag).rev;
-		const toRev = parseETag(change.etag).rev;
+		const toIdentity = parseETag(change.etag);
 		const sourceBase = state.base[change.from_path];
 		const destinationBase = state.base[change.path];
 		const staleBases = state.stale_base_paths;
@@ -292,7 +1325,7 @@ export class TextApplyEngine {
 			(sourceBase.rev < fromRev || staleBases.includes(change.from_path));
 		const destinationPending =
 			destinationBase === undefined ||
-			destinationBase.rev < toRev ||
+			destinationBase.rev < toIdentity.rev ||
 			staleBases.includes(change.path);
 		if (!sourcePending && !destinationPending) {
 			await this.activeJournal.completeRenameApply(
@@ -303,6 +1336,31 @@ export class TextApplyEngine {
 			);
 			return;
 		}
+		const sourceSize = sourcePending
+			? await this.vault.size(change.from_path)
+			: null;
+		this.assertOpen();
+		const destinationSize = destinationPending
+			? await this.vault.size(change.path)
+			: null;
+		this.assertOpen();
+		if (
+			(sourcePending &&
+				classifyEnrollmentPath(change.from_path, sourceSize ?? 0) === "blob") ||
+			(destinationPending &&
+				classifyEnrollmentPath(change.path, destinationSize ?? 0) === "blob")
+		) {
+			await this.applyBlobRename(change, state);
+			return;
+		}
+		if (destinationPending && this.pinnedText.readResolvedBlob) {
+			const remote = await this.resolvePinnedContent(change);
+			if (remote.kind === "blob") {
+				await this.applyBlobRename(change, state);
+				return;
+			}
+		}
+		const toRev = toIdentity.rev;
 		const source = sourcePending
 			? await this.vault.read(change.from_path)
 			: null;
@@ -456,6 +1514,60 @@ export class TextApplyEngine {
 		);
 	}
 
+	/** Saves and verifies every named binary copy before recording the copied step. */
+	private async persistBinaryConflictCopies(
+		pending: DeviceState["pending_apply"][number],
+	): Promise<void> {
+		for (const copy of conflictCopiesFor(pending).filter(
+			(candidate) => candidate.kind === "blob",
+		)) {
+			this.assertOpen();
+			const readBinary = this.vault.readBinary;
+			const createBinary = this.vault.createBinary;
+			if (!readBinary || !createBinary) {
+				await this.attend(
+					copy.source,
+					"Binary recovery capability is unavailable",
+				);
+				return;
+			}
+			const existing = await readBinary.call(this.vault, copy.path);
+			this.assertOpen();
+			if (existing) {
+				if ((await digestBytes(existing)) !== copy.hash) {
+					await this.attend(
+						copy.source,
+						"Binary recovery copy was edited before apply finished",
+					);
+					return;
+				}
+				continue;
+			}
+			const source = await readBinary.call(this.vault, copy.source);
+			this.assertOpen();
+			if (!source || (await digestBytes(source)) !== copy.hash) {
+				await this.attend(
+					copy.source,
+					"Local binary changed before its recovery copy was saved",
+				);
+				return;
+			}
+			await this.effect(() => createBinary.call(this.vault, copy.path, source));
+			this.assertOpen();
+			const saved = await readBinary.call(this.vault, copy.path);
+			this.assertOpen();
+			if (!saved || (await digestBytes(saved)) !== copy.hash) {
+				await this.attend(
+					copy.path,
+					"Binary recovery path contains different bytes",
+				);
+				return;
+			}
+		}
+		await this.activeJournal.updateApply({ ...pending, step: "copied" });
+		this.assertOpen();
+	}
+
 	/** Continues a durable conflict copy before retrying the same pinned remote effect. */
 	private async resumePending(
 		pending: DeviceState["pending_apply"][number],
@@ -463,6 +1575,94 @@ export class TextApplyEngine {
 		if (pending.step === "named") {
 			const copies = conflictCopiesFor(pending);
 			for (const copy of copies) {
+				if (copy.kind === "blob") {
+					if (!this.vault.readBinary || !this.vault.createBinary)
+						return this.attend(
+							copy.source,
+							"Binary recovery capability is unavailable",
+						);
+					const existingBytes = await this.vault.readBinary(copy.path);
+					if (existingBytes) {
+						if ((await digestBytes(existingBytes)) !== copy.hash)
+							return this.attend(
+								copy.source,
+								"Binary recovery copy was edited before apply finished",
+							);
+						if (copy.purpose === "pre_apply") {
+							if (!this.vault.modifyBinary)
+								return this.attend(
+									copy.path,
+									"Recovery retention clock could not be refreshed",
+								);
+							const refreshed = await this.effect(
+								async () =>
+									(await this.vault.modifyBinary?.(copy.path, existingBytes)) ??
+									false,
+							);
+							if (!refreshed)
+								return this.attend(
+									copy.path,
+									"Recovery retention clock could not be refreshed",
+								);
+						}
+						continue;
+					}
+					let sourceBytes: Uint8Array;
+					if (copy.mode === "remote") {
+						const identity = parseETag(pending.change.etag);
+						const remote = this.pinnedText.readResolvedBlob
+							? await this.pinnedText.readResolvedBlob(
+									pending.change.path,
+									identity.epoch,
+									identity.rev,
+									copy.hash,
+								)
+							: this.pinnedText.readBlob
+								? {
+										kind: "blob" as const,
+										...(await this.pinnedText.readBlob(
+											pending.change.path,
+											identity.epoch,
+											identity.rev,
+											copy.hash,
+										)),
+									}
+								: null;
+						if (
+							remote?.kind !== "blob" ||
+							remote.epoch !== identity.epoch ||
+							remote.rev !== identity.rev ||
+							remote.hash !== copy.hash ||
+							(await digestBytes(remote.bytes)) !== copy.hash
+						)
+							return this.attend(
+								copy.source,
+								"Pinned remote binary conflict changed before it was saved",
+							);
+						sourceBytes = remote.bytes;
+					} else {
+						const localBytes = await this.vault.readBinary(copy.source);
+						if (!localBytes || (await digestBytes(localBytes)) !== copy.hash)
+							return this.attend(
+								copy.source,
+								"Local binary changed before its recovery copy was saved",
+							);
+						sourceBytes = localBytes;
+					}
+					this.assertOpen();
+					await this.effect(
+						async () =>
+							this.vault.createBinary?.(copy.path, sourceBytes) ?? false,
+					);
+					const savedBytes = await this.vault.readBinary(copy.path);
+					this.assertOpen();
+					if (!savedBytes || (await digestBytes(savedBytes)) !== copy.hash)
+						return this.attend(
+							copy.path,
+							"Binary recovery path contains different bytes",
+						);
+					continue;
+				}
 				const existing = await this.vault.read(copy.path);
 				if (existing !== null) {
 					if ((await digest(existing)) !== copy.hash)
@@ -508,16 +1708,417 @@ export class TextApplyEngine {
 			if (await this.ignoreObsolete(change, current)) return;
 			if (change.op === "rename") await this.applyRename(change, current);
 			else
-				await this.applyPathChange(change, current.base[change.path] ?? null);
+				await this.applyPathChange(
+					change,
+					current.base[change.path] ?? null,
+					false,
+					updated.content_kind,
+				);
 		}
 	}
 
-	/** Completes verified conflict copies before it commits the pinned remote effect. */
+	/** Verifies byte copies and resolves current content kind before completing an inline replacement or changing its recovery route. */
+	private async finishBlobToTextApply(
+		pending: DeviceState["pending_apply"][number],
+		copies: PendingConflictCopy[],
+	): Promise<void> {
+		const change = pending.change;
+		const conflict = copies.find((copy) => copy.purpose === "conflict");
+		const recovery = copies.find((copy) => copy.purpose === "pre_apply");
+		const base = this.activeJournal.snapshot().base[change.path];
+		if (
+			!recovery ||
+			(conflict && conflict.hash !== recovery.hash) ||
+			(!conflict && (base?.deleted !== false || base.hash !== recovery.hash))
+		)
+			return this.attend(
+				change.path,
+				"Inline-text recovery identity is invalid",
+			);
+		for (const copy of copies) {
+			const saved = await this.vault.readBinary?.(copy.path);
+			this.assertOpen();
+			if (!saved || (await digestBytes(saved)) !== copy.hash)
+				return this.attend(
+					copy.path,
+					"Inline-text recovery bytes are missing or corrupt",
+				);
+			if (copy.purpose === "pre_apply") {
+				const modifyBinary = this.vault.modifyBinary;
+				if (!modifyBinary)
+					return this.attend(
+						copy.path,
+						"Recovery retention clock could not be refreshed",
+					);
+				const refreshed = await this.effect(() =>
+					modifyBinary.call(this.vault, copy.path, saved),
+				);
+				if (!refreshed)
+					return this.attend(
+						copy.path,
+						"Recovery retention clock could not be refreshed",
+					);
+				const verified = await this.vault.readBinary?.(copy.path);
+				this.assertOpen();
+				if (!verified || (await digestBytes(verified)) !== copy.hash)
+					return this.attend(
+						copy.path,
+						"Recovery bytes changed during retention refresh",
+					);
+			}
+		}
+		let remote: string;
+		if (this.pinnedText.readResolvedBlob) {
+			if (change.op !== "put")
+				throw new Error("Inline recovery needs put authority");
+			const resolved = await this.resolvePinnedContent({
+				...change,
+				op: "put",
+			});
+			if (resolved.kind !== "text") {
+				const rerouted = { ...pending, content_kind: "blob" as const };
+				await this.activeJournal.updateApply(rerouted);
+				await this.finishCopiedApply(rerouted, this.activeJournal.snapshot());
+				return;
+			}
+			remote = resolved.text;
+		} else remote = await this.fetchText(change.path, change.etag, change.hash);
+		if (
+			!(await this.replacePreservedBytesWithText(
+				change.path,
+				change.hash,
+				recovery.hash,
+				remote,
+			))
+		)
+			return;
+		if (conflict)
+			await this.activeJournal.recordAttention(
+				change.path,
+				"Local binary bytes were preserved as a conflict copy",
+			);
+		await this.activeJournal.completeApply(change.path, {
+			deleted: false,
+			rev: parseETag(change.etag).rev,
+			hash: change.hash,
+		});
+		this.assertOpen();
+	}
+
+	/**
+	 * Replaces exact preserved bytes with inline text and accepts absence after an earlier confirmed trash.
+	 * The caller must verify recovery bytes and any visible conflict copies before this effect.
+	 */
+	private async replacePreservedBytesWithText(
+		path: string,
+		remoteHash: string,
+		preservedHash: string,
+		remote: string,
+	): Promise<boolean> {
+		const readBinary = this.vault.readBinary;
+		if (!readBinary) throw new Error("Binary read capability is unavailable");
+		const current = await readBinary.call(this.vault, path);
+		this.assertOpen();
+		const currentIsRemote =
+			current !== null && (await digestBytes(current)) === remoteHash;
+		if (
+			current &&
+			!currentIsRemote &&
+			(await digestBytes(current)) !== preservedHash
+		) {
+			await this.attend(
+				path,
+				"Local bytes changed after inline-text preservation",
+			);
+			return false;
+		}
+		await this.activeJournal.setExpectedWrite(path, remoteHash);
+		this.assertOpen();
+		if (current && !currentIsRemote) {
+			const trashBinary = this.vault.trashBinary;
+			if (!trashBinary)
+				throw new Error(
+					"Binary trash capability is unavailable for text replacement",
+				);
+			const trashed = await this.effect(() =>
+				trashBinary.call(this.vault, path, current),
+			);
+			this.assertOpen();
+			const remaining = await readBinary.call(this.vault, path);
+			this.assertOpen();
+			if (!trashed || remaining !== null)
+				throw new Error(
+					"Binary path remained after inline-text replacement trash",
+				);
+		}
+		const existingText = await this.vault.read(path);
+		this.assertOpen();
+		if (existingText === null) {
+			const created = await this.effect(() => this.vault.create(path, remote));
+			this.assertOpen();
+			if (!created) {
+				await this.activeJournal.clearExpectedWrite(path);
+				throw new Error("Inline remote text create was not confirmed");
+			}
+		} else if (existingText !== remote) {
+			await this.activeJournal.clearExpectedWrite(path);
+			await this.attend(
+				path,
+				"Unexpected text appeared during blob replacement",
+			);
+			return false;
+		}
+		if ((await this.vault.read(path)) !== remote)
+			throw new Error("Inline remote text read-back did not match");
+		return true;
+	}
+
+	/**
+	 * Adds byte safeguards to verified local text plans without changing visible paths, sources, hashes, or device names.
+	 * The journal returns to named through explicit plan rebasing, never through a backward updateApply transition.
+	 */
+	private async prepareBlobRecovery(
+		pending: DeviceState["pending_apply"][number],
+		copies: PendingConflictCopy[],
+		state: DeviceState,
+	): Promise<void> {
+		const change = pending.change;
+		if (change.op === "delete")
+			throw new Error("Blob replacement needs live authority");
+		const readBinary = this.vault.readBinary;
+		if (!readBinary)
+			throw new Error("Binary recovery capability is unavailable");
+		for (const copy of copies) {
+			const saved = await readBinary.call(this.vault, copy.path);
+			this.assertOpen();
+			if (!saved || (await digestBytes(saved)) !== copy.hash)
+				return this.attend(
+					copy.path,
+					"Local recovery bytes changed before blob replacement",
+				);
+		}
+		const current = await readBinary.call(this.vault, change.path);
+		this.assertOpen();
+		const currentHash = current === null ? null : await digestBytes(current);
+		if (
+			change.op === "put" &&
+			(current === null || currentHash === change.hash)
+		) {
+			await this.applyBlobChange(
+				{ ...change, op: "put" },
+				state.base[change.path] ?? null,
+			);
+			return;
+		}
+		const plans: PendingConflictCopy[] = copies.map((copy) => ({
+			...copy,
+			kind: "blob",
+			purpose: copy.purpose ?? "conflict",
+		}));
+		if (currentHash !== null && currentHash !== change.hash) {
+			const visible = plans.find(
+				(copy) =>
+					copy.source === change.path &&
+					copy.purpose === "conflict" &&
+					copy.hash === currentHash,
+			);
+			const base = state.base[change.path];
+			const cleanRenameDestination =
+				change.op === "rename" &&
+				base?.deleted === false &&
+				base.hash === currentHash;
+			if (!visible && !cleanRenameDestination)
+				return this.attend(
+					change.path,
+					"Local bytes changed after text conflict preservation",
+				);
+			if (
+				!plans.some(
+					(copy) =>
+						copy.source === change.path &&
+						copy.purpose === "pre_apply" &&
+						copy.hash === currentHash,
+				)
+			) {
+				plans.push({
+					path: `.ai-bridge/pre-apply/${currentHash}`,
+					source: change.path,
+					side: change.op === "rename" ? "rename_destination" : "path",
+					mode: "local",
+					device_name: visible?.device_name ?? this.deviceName,
+					hash: currentHash,
+					kind: "blob",
+					purpose: "pre_apply",
+				});
+			}
+		}
+		await this.activeJournal.rebasePendingApply(change, plans);
+		const rebased = this.activeJournal.snapshot().pending_apply[0];
+		if (!rebased) throw new Error("Blob recovery plans were not saved");
+		const next = { ...rebased, content_kind: "blob" as const };
+		await this.activeJournal.updateApply(next);
+		await this.resumePending(next);
+	}
+
+	/** Selects local recovery authority independently of text or byte copy representation before guarded effects. */
 	private async finishCopiedApply(
 		pending: DeviceState["pending_apply"][number],
 		state: DeviceState,
 	): Promise<void> {
 		const copies = conflictCopiesFor(pending);
+		const change = pending.change;
+		const destinationBase = state.base[change.path];
+		const destinationPending =
+			change.op !== "rename" ||
+			destinationBase === undefined ||
+			destinationBase.rev < parseETag(change.etag).rev ||
+			state.stale_base_paths.includes(change.path);
+		let resolved: ResolvedPinnedBlob | undefined;
+		if (
+			copies.every((copy) => copy.mode === "local") &&
+			this.pinnedText.readResolvedBlob &&
+			destinationPending &&
+			(change.op === "put" || change.op === "rename")
+		) {
+			resolved =
+				change.op === "rename"
+					? await this.resolvePinnedContent(change)
+					: await this.resolvePinnedContent({ ...change, op: "put" });
+			if (
+				resolved.kind === "blob" &&
+				copies.some((copy) => copy.kind !== "blob")
+			) {
+				await this.prepareBlobRecovery(pending, copies, state);
+				return;
+			}
+		}
+		if (
+			copies.some((copy) => copy.kind === "blob") &&
+			pending.content_kind === "text" &&
+			pending.change.op === "put"
+		) {
+			const binaryCopies = copies.filter((copy) => copy.kind === "blob");
+			if (binaryCopies.length !== 1 && binaryCopies.length !== 2)
+				return this.attend(
+					pending.change.path,
+					"Inline-text replacement has incomplete binary recovery identity",
+				);
+			await this.finishBlobToTextApply(pending, binaryCopies);
+			return;
+		}
+		if (copies.some((copy) => copy.kind === "blob")) {
+			const change = pending.change;
+			const binaryCopies = copies.filter((copy) => copy.kind === "blob");
+			for (const copy of binaryCopies) {
+				const bytes = await this.vault.readBinary?.(copy.path);
+				this.assertOpen();
+				if (!bytes || (await digestBytes(bytes)) !== copy.hash)
+					return this.attend(
+						copy.path,
+						"Binary recovery copy changed during apply",
+					);
+				if (copy.purpose === "pre_apply") {
+					const modifyBinary = this.vault.modifyBinary;
+					if (!modifyBinary)
+						return this.attend(
+							copy.path,
+							"Recovery retention clock could not be refreshed",
+						);
+					const refreshed = await this.effect(() =>
+						modifyBinary.call(this.vault, copy.path, bytes),
+					);
+					if (!refreshed)
+						return this.attend(
+							copy.path,
+							"Recovery retention clock could not be refreshed",
+						);
+					const saved = await this.vault.readBinary?.(copy.path);
+					this.assertOpen();
+					if (!saved || (await digestBytes(saved)) !== copy.hash)
+						return this.attend(
+							copy.path,
+							"Recovery copy changed while its retention clock refreshed",
+						);
+				}
+			}
+			const remoteCopy = binaryCopies.find((copy) => copy.mode === "remote");
+			if (remoteCopy && change.op === "put") {
+				await this.activeJournal.recordAttention(
+					change.path,
+					"Remote binary path collides with a local case-folded or Unicode-equivalent path",
+				);
+				await this.activeJournal.completeApply(change.path, {
+					deleted: false,
+					rev: parseETag(change.etag).rev,
+					hash: change.hash,
+				});
+				return;
+			}
+			if (change.op === "rename") {
+				await this.finishBinaryRename(change, state, binaryCopies);
+				return;
+			}
+			if (change.op === "delete") {
+				const localCopy = binaryCopies.find(
+					(copy) => copy.purpose === "conflict",
+				);
+				if (!localCopy)
+					return this.attend(
+						change.path,
+						"Binary delete has no verified conflict identity",
+					);
+				const readBinary = this.vault.readBinary;
+				if (!readBinary)
+					return this.attend(
+						change.path,
+						"Binary read capability is unavailable after conflict preservation",
+					);
+				const local = await readBinary.call(this.vault, change.path);
+				this.assertOpen();
+				if (local && (await digestBytes(local)) !== localCopy.hash)
+					return this.attend(
+						change.path,
+						"Local binary changed after delete recovery copy",
+					);
+				if (local) {
+					const trashBinary = this.vault.trashBinary;
+					if (!trashBinary)
+						return this.attend(
+							change.path,
+							"Binary trash capability is unavailable after conflict preservation",
+						);
+					const trashed = await this.effect(() =>
+						trashBinary.call(this.vault, change.path, local),
+					);
+					const remaining = await readBinary.call(this.vault, change.path);
+					this.assertOpen();
+					if (!trashed || remaining)
+						return this.attend(
+							change.path,
+							"Obsidian trash did not confirm the binary delete",
+						);
+				}
+				await this.activeJournal.recordAttention(
+					change.path,
+					"Local binary bytes were preserved as a conflict copy",
+				);
+				await this.activeJournal.completeApply(change.path, {
+					deleted: true,
+					rev: parseETag(change.etag).rev,
+				});
+				return;
+			}
+			if (change.op !== "put")
+				return this.attend(
+					change.path,
+					"Binary recovery cannot complete this entry",
+				);
+			await this.applyBlobChange(
+				change as ChangeEntry & { op: "put" },
+				state.base[change.path] ?? null,
+			);
+			return;
+		}
 		for (const copy of copies) {
 			if (!(await this.conflictCopyIsVerified(copy)))
 				return this.attend(
@@ -543,7 +2144,6 @@ export class TextApplyEngine {
 			});
 			return;
 		}
-		const change = pending.change;
 		if (change.op === "delete") {
 			const current = await this.vault.read(change.path);
 			if (current !== null) {
@@ -624,7 +2224,10 @@ export class TextApplyEngine {
 				return;
 			}
 		}
-		const remote = await this.fetchText(change.path, change.etag, change.hash);
+		const remote =
+			resolved?.kind === "text"
+				? resolved.text
+				: await this.fetchText(change.path, change.etag, change.hash);
 		const destination = await this.vault.read(change.path);
 		if (destination !== null && destination !== remote) {
 			const copy = copies.find(
@@ -988,6 +2591,23 @@ export class TextApplyEngine {
 	private assertOpen(): void {
 		if (this.closed) throw new Error("Text apply engine is closed");
 	}
+}
+
+/** Compares nullable host file metadata used to detect a binary race. */
+function sameStat(
+	left: { mtime: number; size: number } | null,
+	right: { mtime: number; size: number } | null,
+): boolean {
+	return left?.mtime === right?.mtime && left?.size === right?.size;
+}
+
+/** Hashes exact bytes with Web Crypto for blob identity and recovery verification. */
+async function digestBytes(bytes: Uint8Array): Promise<string> {
+	const copy = bytes.slice();
+	const hash = await crypto.subtle.digest("SHA-256", copy.buffer);
+	return [...new Uint8Array(hash)]
+		.map((byte) => byte.toString(16).padStart(2, "0"))
+		.join("");
 }
 
 /** Hashes UTF-8 text with Web Crypto for revision and conflict-copy verification. */

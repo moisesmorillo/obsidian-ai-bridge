@@ -1,5 +1,13 @@
+import {
+	type PendingConflictCopy,
+	pathKey,
+} from "@obsidian-ai-bridge/protocol";
 import { beforeEach, describe, expect, it } from "vitest";
-import { SyncTransportError } from "../src/infrastructure/sync-transport";
+import type { OAuthTransportResponse } from "../src/infrastructure/oauth-transport";
+import {
+	SyncTransport,
+	SyncTransportError,
+} from "../src/infrastructure/sync-transport";
 import { DeviceJournal } from "../src/sync/device-journal";
 import {
 	type ReconciliationChangesPage,
@@ -33,9 +41,10 @@ class MemoryStorage {
 	}
 }
 
-/** Provides guarded in-memory text effects for apply tests. */
+/** Provides guarded in-memory text and byte effects for apply tests. */
 class MemoryVault implements TextVault {
 	files = new Map<string, string>();
+	binaryFiles = new Map<string, Uint8Array>();
 	fileSizes = new Map<string, number>();
 	reads: string[] = [];
 	writes = 0;
@@ -47,18 +56,63 @@ class MemoryVault implements TextVault {
 		this.reads.push(path);
 		return this.files.get(path) ?? null;
 	}
+	/** Reads binary fixture bytes or the exact UTF-8 bytes of a text fixture. */
+	async readBinary(path: string): Promise<Uint8Array | null> {
+		const bytes = this.binaryFiles.get(path);
+		if (bytes) return bytes.slice();
+		const text = this.files.get(path);
+		return text === undefined ? null : new TextEncoder().encode(text);
+	}
+	/** Returns stable test metadata for a current binary path. */
+	async stat(path: string): Promise<{ mtime: number; size: number } | null> {
+		const bytes = this.binaryFiles.get(path);
+		return bytes ? { mtime: 1, size: bytes.byteLength } : null;
+	}
+	/** Creates exact bytes at an absent path. */
+	async createBinary(path: string, bytes: Uint8Array): Promise<boolean> {
+		if (
+			[...this.files.keys(), ...this.binaryFiles.keys()].some(
+				(current) => current === path || pathKey(current) === pathKey(path),
+			)
+		)
+			return false;
+		this.binaryFiles.set(path, bytes.slice());
+		return true;
+	}
+	/** Moves text or binary file bytes to the test trash only when they still match. */
+	async trashBinary(path: string, expected: Uint8Array): Promise<boolean> {
+		const current = await this.readBinary(path);
+		if (
+			!current ||
+			current.byteLength !== expected.byteLength ||
+			!current.every((byte, index) => byte === expected[index])
+		)
+			return false;
+		this.files.delete(path);
+		this.binaryFiles.delete(path);
+		return true;
+	}
+	/** Replaces exact bytes at an existing path. */
+	async modifyBinary(path: string, bytes: Uint8Array): Promise<boolean> {
+		if (!this.binaryFiles.has(path) && !this.files.has(path)) return false;
+		this.files.delete(path);
+		this.binaryFiles.set(path, bytes.slice());
+		return true;
+	}
 	/** Returns fixture bytes without decoding unsupported files. */
 	async size(path: string): Promise<number | null> {
 		const text = this.files.get(path);
 		return (
 			this.fileSizes.get(path) ??
-			(text === undefined ? null : new TextEncoder().encode(text).length)
+			(text === undefined
+				? (this.binaryFiles.get(path)?.byteLength ?? null)
+				: new TextEncoder().encode(text).length)
 		);
 	}
 	/** Lists every current text path. */
 	async list(): Promise<string[]> {
 		if (this.listError) throw this.listError;
-		return [...this.files.keys()];
+		return [...this.files.keys(), ...this.binaryFiles.keys()];
 	}
 	/** Changes text only when the observed value still matches. */
 	async process(
@@ -129,8 +183,16 @@ class MemoryRemote implements ReconciliationRemote {
 	feed: ReconciliationChangesPage[] = [];
 	texts = new Map<string, string>();
 	blobPaths = new Set<string>();
+	blobs = new Map<number, Uint8Array>();
 	created: Array<{ path: string; text: string; epoch: string; key: string }> =
 		[];
+	createdBlobs: Array<{
+		path: string;
+		bytes: Uint8Array;
+		hash: string;
+		epoch: string;
+		key: string;
+	}> = [];
 	createError: Error | null = null;
 	createErrors: Error[] = [];
 	changeError: Error | null = null;
@@ -171,11 +233,48 @@ class MemoryRemote implements ReconciliationRemote {
 		if (this.blobPaths.has(path)) throw new UnsupportedRemoteTextError(path);
 		return this.texts.get(String(rev)) ?? null;
 	}
+	/** Returns one exact test blob revision with its server identity. */
+	async readBlob(
+		path: string,
+		requestEpoch: string,
+		rev: number,
+		hashValue: string,
+	) {
+		if (!this.blobPaths.has(path)) throw new Error("Unexpected blob read");
+		const bytes = this.blobs.get(rev);
+		if (!bytes) throw new Error("Missing test blob revision");
+		return { bytes: bytes.slice(), epoch: requestEpoch, rev, hash: hashValue };
+	}
 	/** Returns one verified test text revision without changing its identity. */
 	async readResolved(path: string, epoch: string, rev: number) {
 		const text = await this.read(path, epoch, rev);
 		if (text === null) throw new Error("Pinned test text is missing");
 		return { text, epoch, rev, hash: await hash(text) };
+	}
+	/** Creates exact binary bytes and returns their confirmed authority. */
+	async createBlob(
+		path: string,
+		bytes: Uint8Array,
+		hashValue: string,
+		currentEpoch: string,
+		key: string,
+	) {
+		this.createdBlobs.push({
+			path,
+			bytes: bytes.slice(),
+			hash: hashValue,
+			epoch: currentEpoch,
+			key,
+		});
+		return {
+			status: 201,
+			path,
+			etag: `"${currentEpoch}.5"`,
+			seq: 5,
+			size: bytes.byteLength,
+			hash: hashValue,
+			deleted: false,
+		};
 	}
 	/** Creates text and returns its confirmed epoch-bound revision. */
 	async createText(
@@ -226,6 +325,23 @@ async function reopen(context: Awaited<ReturnType<typeof setup>>) {
 	return { ...context, journal, controller };
 }
 
+/** Checks length and every byte without deep object comparisons of large fixtures. */
+function expectExactBytes(
+	actual: Uint8Array | undefined,
+	expected: Uint8Array,
+): void {
+	expect(actual?.byteLength).toBe(expected.byteLength);
+	expect(actual?.every((byte, index) => byte === expected[index])).toBe(true);
+}
+
+/** Hashes exact fixture bytes without text conversion. */
+async function hashBytes(bytes: Uint8Array): Promise<string> {
+	const digest = await crypto.subtle.digest("SHA-256", bytes.slice().buffer);
+	return [...new Uint8Array(digest)]
+		.map((byte) => byte.toString(16).padStart(2, "0"))
+		.join("");
+}
+
 /** Hashes test fixture text with the production-compatible UTF-8 algorithm. */
 async function hash(text: string): Promise<string> {
 	const result = await crypto.subtle.digest(
@@ -236,6 +352,24 @@ async function hash(text: string): Promise<string> {
 		.map((byte) => byte.toString(16).padStart(2, "0"))
 		.join("");
 }
+
+/** Crosses local copy representation, durable step, current kind, rename effects, and interruption after authority or safeguard rebasing. */
+const localRecoveryCases = [false, true].flatMap((byteCopies) =>
+	(["named", "copied"] as const).flatMap((step) =>
+		(["unchanged", "text", "blob", "deleted"] as const).flatMap((kind) =>
+			(kind === "unchanged"
+				? (["none"] as const)
+				: !byteCopies && kind === "blob"
+					? (["none", "authority", "safeguards"] as const)
+					: (["none", "authority"] as const)
+			).flatMap((restartAt) =>
+				(!byteCopies && kind === "blob" ? [false, true] : [false]).map(
+					(rename) => ({ byteCopies, step, kind, restartAt, rename }),
+				),
+			),
+		),
+	),
+);
 
 describe("ReconciliationController", () => {
 	let context: Awaited<ReturnType<typeof setup>>;
@@ -369,8 +503,773 @@ describe("ReconciliationController", () => {
 		expect(context.journal.snapshot().cursor).toBe(6);
 	});
 
-	it("does not decode or apply a manifest blob tombstone", async () => {
-		context.vault.files.set("assets/old.pdf", "binary placeholder");
+	it("publishes exact local attachment bytes during enrollment", async () => {
+		const bytes = new Uint8Array([0, 255, 128]);
+		context.vault.binaryFiles.set("assets/local.png", bytes.slice());
+
+		await context.controller.enroll();
+
+		expect(context.remote.createdBlobs).toHaveLength(1);
+		expect(context.remote.createdBlobs[0]?.bytes).toEqual(bytes);
+		expect(context.journal.snapshot().base["assets/local.png"]).toEqual({
+			deleted: false,
+			rev: 5,
+			hash: await hashBytes(bytes),
+		});
+		expect(context.journal.snapshot().pending_ops).toEqual([]);
+	});
+
+	it("hydrates exact binary bytes from a manifest blob row", async () => {
+		const bytes = new Uint8Array([0, 255, 128]);
+		const digest = await crypto.subtle.digest("SHA-256", bytes.slice().buffer);
+		const hashValue = [...new Uint8Array(digest)]
+			.map((byte) => byte.toString(16).padStart(2, "0"))
+			.join("");
+		context.remote.entries = [
+			{
+				path: "assets/photo.png",
+				etag: `"${epoch}.2"`,
+				seq: 2,
+				hash: hashValue,
+				kind: "blob",
+				deleted: false,
+			},
+		];
+		context.remote.blobPaths.add("assets/photo.png");
+		context.remote.blobs.set(2, bytes);
+
+		await context.controller.reconcile();
+
+		expect(context.vault.binaryFiles.get("assets/photo.png")).toEqual(bytes);
+		expect(context.journal.snapshot().base["assets/photo.png"]).toEqual({
+			deleted: false,
+			rev: 2,
+			hash: hashValue,
+		});
+		expect(context.journal.snapshot().attention).not.toContainEqual(
+			expect.objectContaining({ path: "assets/photo.png" }),
+		);
+	});
+
+	it("hydrates inline manifest authority after exact invalid-byte Markdown preservation", async () => {
+		const path = "notes/invalid-manifest.md";
+		const local = new Uint8Array(1_000_001).fill(0x61);
+		local.set([0xc3, 0x28]);
+		const localHash = await hashBytes(local);
+		const remoteText = "manifest inline text";
+		const remoteHash = await hash(remoteText);
+		context.vault.binaryFiles.set(path, local.slice());
+		context.vault.read = async (source) => {
+			context.vault.reads.push(source);
+			const bytes = context.vault.binaryFiles.get(source);
+			return bytes
+				? new TextDecoder().decode(bytes)
+				: (context.vault.files.get(source) ?? null);
+		};
+		context.remote.entries = [
+			{
+				path,
+				etag: `"${epoch}.2"`,
+				seq: 2,
+				hash: remoteHash,
+				kind: "text",
+				deleted: false,
+			},
+		];
+		context.remote.texts.set("2", remoteText);
+
+		await context.controller.reconcile();
+
+		const conflicts = [...context.vault.binaryFiles.entries()].filter(
+			([copyPath]) => copyPath.includes("(conflict test"),
+		);
+		expect(conflicts).toHaveLength(1);
+		expectExactBytes(conflicts[0]?.[1], local);
+		expectExactBytes(
+			context.vault.binaryFiles.get(`.ai-bridge/pre-apply/${localHash}`),
+			local,
+		);
+		expect(context.vault.binaryFiles.has(path)).toBe(false);
+		expect(context.vault.files.get(path)).toBe(remoteText);
+		expect(context.journal.snapshot().base[path]).toEqual({
+			deleted: false,
+			rev: 2,
+			hash: remoteHash,
+		});
+		expect(context.journal.snapshot().pending_apply).toEqual([]);
+		expect(context.journal.snapshot().cursor).toBe(4);
+	});
+
+	it.each([false, true])(
+		"resumes copied blob-to-inline work after pruning and continues the feed (restart after rebase=%s)",
+		async (restartAfterRebase) => {
+			const path = "notes/pruned-inline.md";
+			const local = new Uint8Array(1_000_001).fill(0x61);
+			local.set([0xff, 0x00]);
+			const localHash = await hashBytes(local);
+			const oldText = "old inline authority";
+			const currentText = "newer inline authority";
+			const oldHash = await hash(oldText);
+			const currentHash = await hash(currentText);
+			const following = "feed continues after inline recovery";
+			const row = {
+				seq: 5,
+				op: "put" as const,
+				path,
+				etag: `"${epoch}.2"`,
+				hash: oldHash,
+				origin: "remote",
+				at: 5,
+			};
+			await context.journal.resetEpoch(epoch);
+			await context.journal.setCursor(epoch, 4);
+			await context.journal.setBase(path, {
+				deleted: false,
+				rev: 1,
+				hash: localHash,
+			});
+			context.vault.binaryFiles.set(path, local.slice());
+			Object.assign(context.remote, {
+				readResolvedBlob: async () => ({
+					kind: "text" as const,
+					text: oldText,
+					epoch,
+					rev: 2,
+					hash: oldHash,
+				}),
+			});
+			context.remote.texts.set("2", oldText);
+			context.remote.feed.push({ epoch, head_seq: 5, entries: [row] });
+			const updateApply = context.journal.updateApply.bind(context.journal);
+			context.journal.updateApply = async (pending) => {
+				await updateApply(pending);
+				if (pending.step === "copied")
+					throw new Error("stop after durable copies");
+			};
+
+			await expect(context.controller.replay()).rejects.toThrow(
+				"stop after durable copies",
+			);
+			const copied = context.journal.snapshot().pending_apply[0];
+			expect(copied).toMatchObject({ step: "copied", content_kind: "text" });
+			const copies = copied?.conflict_copies;
+			expect(copies).toHaveLength(2);
+			for (const copy of copies ?? [])
+				expectExactBytes(context.vault.binaryFiles.get(copy.path), local);
+			expect(context.journal.snapshot().base[path]?.rev).toBe(1);
+			expect(context.journal.snapshot().cursor).toBe(4);
+
+			context = await reopen(context);
+			context.remote.readResolved = async (source, requestEpoch, rev) => {
+				if (source === path)
+					return {
+						text: currentText,
+						epoch: requestEpoch,
+						rev: 3,
+						hash: currentHash,
+					};
+				const text = context.remote.texts.get(String(rev));
+				if (text === undefined) throw new Error("Missing following text");
+				return { text, epoch: requestEpoch, rev, hash: await hash(text) };
+			};
+			Object.assign(context.remote, {
+				readResolvedBlob: async () => ({
+					kind: "text" as const,
+					text: currentText,
+					epoch,
+					rev: 3,
+					hash: currentHash,
+				}),
+			});
+			if (restartAfterRebase) {
+				const rebase = context.journal.rebasePendingApply.bind(context.journal);
+				context.journal.rebasePendingApply = async (change, plans) => {
+					await rebase(change, plans);
+					throw new Error("stop after durable rebase");
+				};
+				await expect(context.controller.resume()).rejects.toThrow(
+					"stop after durable rebase",
+				);
+				expect(context.journal.snapshot().pending_apply[0]).toMatchObject({
+					content_kind: "text",
+					conflict_copies: copies,
+					change: { etag: `"${epoch}.3"`, hash: currentHash },
+				});
+				context = await reopen(context);
+			}
+			context.remote.texts.set("6", following);
+			context.remote.feed.push({
+				epoch,
+				head_seq: 6,
+				entries: [
+					row,
+					{
+						seq: 6,
+						op: "put",
+						path: "after-inline-recovery.md",
+						etag: `"${epoch}.6"`,
+						hash: await hash(following),
+						origin: "remote",
+						at: 6,
+					},
+				],
+			});
+			await context.controller.resume();
+			await context.controller.resume();
+
+			for (const copy of copies ?? [])
+				expectExactBytes(context.vault.binaryFiles.get(copy.path), local);
+			expect(
+				[...context.vault.binaryFiles.keys()].filter((name) =>
+					name.includes("conflict"),
+				),
+			).toHaveLength(1);
+			expect(context.vault.binaryFiles.has(path)).toBe(false);
+			expect(context.vault.files.get(path)).toBe(currentText);
+			expect(context.vault.files.get("after-inline-recovery.md")).toBe(
+				following,
+			);
+			expect(context.journal.snapshot().base[path]).toEqual({
+				deleted: false,
+				rev: 3,
+				hash: currentHash,
+			});
+			expect(context.journal.snapshot().cursor).toBe(6);
+			expect(context.journal.snapshot().pending_apply).toEqual([]);
+		},
+	);
+
+	it.each(localRecoveryCases)(
+		"resumes local recovery bytes=$byteCopies step=$step kind=$kind restart=$restartAt rename=$rename",
+		async ({ byteCopies, step, kind, restartAt, rename }) => {
+			const path = "notes/local-recovery-matrix.md";
+			const source = "notes/local-recovery-source.md";
+			const sourceText = "dirty local rename source";
+			const oldText = "original inline authority";
+			const oldHash = await hash(oldText);
+			const localText = "\uFEFFdirty local\r\ntext";
+			const local = byteCopies
+				? new Uint8Array(1_000_001).fill(0x61)
+				: new TextEncoder().encode(localText);
+			if (byteCopies) local.set([0xff, 0x28]);
+			const localHash = await hashBytes(local);
+			const currentText =
+				kind === "unchanged" ? oldText : "newer inline authority";
+			const currentBlob = new Uint8Array(1_000_002).fill(0x62);
+			currentBlob.set([0xc3, 0x28]);
+			const currentHash =
+				kind === "deleted"
+					? ""
+					: kind === "blob"
+						? await hashBytes(currentBlob)
+						: await hash(currentText);
+			const revision = kind === "unchanged" ? 2 : 3;
+			const followingPath = "after-local-recovery.md";
+			const following = "later feed content";
+			const followingHash = await hash(following);
+			let restarted = false;
+			const transport = new SyncTransport("https://service.test", {
+				requestResponse: async (url): Promise<OAuthTransportResponse> => {
+					const request = new URL(url);
+					const isFollowing = request.pathname.endsWith(followingPath);
+					if (
+						restarted &&
+						!isFollowing &&
+						kind !== "unchanged" &&
+						request.searchParams.get("rev") === "2"
+					) {
+						return {
+							status: 410,
+							headers: {},
+							text: JSON.stringify({
+								error: "revision_pruned",
+								message: "This revision is no longer available.",
+							}),
+						};
+					}
+					if (restarted && !isFollowing && kind === "blob")
+						return {
+							status: 200,
+							headers: {
+								etag: `"${epoch}.3"`,
+								"content-type": "application/octet-stream",
+								"content-length": String(currentBlob.byteLength),
+							},
+							text: "",
+							arrayBuffer: currentBlob.slice().buffer,
+						};
+					const deleted = restarted && !isFollowing && kind === "deleted";
+					const text = isFollowing
+						? following
+						: restarted
+							? currentText
+							: oldText;
+					const etag = `"${epoch}.${isFollowing ? 6 : restarted ? revision : 2}"`;
+					return {
+						status: 200,
+						headers: { etag, "content-type": "application/json" },
+						text: JSON.stringify({
+							path: isFollowing ? followingPath : path,
+							etag,
+							hash: deleted
+								? ""
+								: isFollowing
+									? followingHash
+									: restarted
+										? currentHash
+										: oldHash,
+							size: deleted ? 0 : new TextEncoder().encode(text).byteLength,
+							kind: "text",
+							deleted,
+							origin: "remote",
+							updated_at: 5,
+							content: deleted ? null : text,
+							offset: 0,
+							length: deleted ? 0 : text.length,
+							truncated: false,
+						}),
+					};
+				},
+			});
+			await context.journal.resetEpoch(epoch);
+			await context.journal.setCursor(epoch, 4);
+			await context.journal.setBase(path, {
+				deleted: false,
+				rev: 1,
+				hash: await hash("confirmed base"),
+			});
+			if (byteCopies) context.vault.binaryFiles.set(path, local.slice());
+			else context.vault.files.set(path, localText);
+			if (rename) {
+				context.vault.files.set(source, sourceText);
+				await context.journal.setBase(source, {
+					deleted: false,
+					rev: 1,
+					hash: await hash("confirmed source"),
+				});
+			}
+			const update = context.journal.updateApply.bind(context.journal);
+			context.journal.updateApply = async (pending) => {
+				await update(pending);
+				if (pending.step === step)
+					throw new Error("stop at local recovery step");
+			};
+			let engine = new TextApplyEngine(
+				context.journal,
+				context.vault,
+				transport,
+				{ deviceName: "test" },
+			);
+			const row = {
+				seq: 5,
+				...(rename
+					? {
+							op: "rename" as const,
+							from_path: source,
+							from_etag: `"${epoch}.2"`,
+						}
+					: { op: "put" as const }),
+				path,
+				etag: `"${epoch}.2"`,
+				hash: oldHash,
+				origin: "remote",
+				at: 5,
+			};
+			await expect(engine.apply(row)).rejects.toThrow(
+				"stop at local recovery step",
+			);
+			expectExactBytes(
+				(await context.vault.readBinary(path)) ?? undefined,
+				local,
+			);
+			expect(context.journal.snapshot().base[path]?.rev).toBe(1);
+			expect(context.journal.snapshot().cursor).toBe(4);
+			const copies: PendingConflictCopy[] =
+				context.journal.snapshot().pending_apply[0]?.conflict_copies ?? [];
+			const visibleCopies = copies.filter(
+				(copy) => copy.purpose !== "pre_apply",
+			);
+			const visible = visibleCopies.find((copy) => copy.source === path);
+			if (!visible) throw new Error("Missing visible local copy plan");
+			expect(visible.hash).toBe(localHash);
+			engine.close();
+			context.journal.close();
+			restarted = true;
+			context = {
+				...context,
+				journal: await DeviceJournal.open(context.storage),
+			};
+			engine = new TextApplyEngine(context.journal, context.vault, transport, {
+				deviceName: "test",
+			});
+			if (restartAt !== "none") {
+				const rebase = context.journal.rebasePendingApply.bind(context.journal);
+				context.journal.rebasePendingApply = async (change, plans) => {
+					await rebase(change, plans);
+					if (
+						restartAt === "authority" ||
+						plans?.some((copy) => copy.purpose === "pre_apply")
+					)
+						throw new Error("stop after durable local rebase");
+				};
+				await expect(engine.resume()).rejects.toThrow(
+					"stop after durable local rebase",
+				);
+				const saved = context.journal.snapshot().pending_apply[0];
+				if (restartAt === "authority")
+					expect(saved?.conflict_copies).toEqual(copies);
+				else {
+					expect(saved?.step).toBe("named");
+					expect(saved?.conflict_copies).toContainEqual(
+						expect.objectContaining(visible),
+					);
+					expect(saved?.conflict_copies).toContainEqual(
+						expect.objectContaining({
+							path: `.ai-bridge/pre-apply/${localHash}`,
+							hash: localHash,
+							kind: "blob",
+							purpose: "pre_apply",
+						}),
+					);
+				}
+				expect(context.journal.snapshot().base[path]?.rev).toBe(1);
+				engine.close();
+				context.journal.close();
+				context = {
+					...context,
+					journal: await DeviceJournal.open(context.storage),
+				};
+				engine = new TextApplyEngine(
+					context.journal,
+					context.vault,
+					transport,
+					{ deviceName: "test" },
+				);
+			}
+			const events: string[] = [];
+			let readbackBeforeBase = false;
+			const read = context.vault.readBinary.bind(context.vault);
+			context.vault.readBinary = async (source) => {
+				const bytes = await read(source);
+				if (source === path) {
+					events.push("read");
+					if (events.includes("write") && !readbackBeforeBase) {
+						expect(context.journal.snapshot().base[path]?.rev).toBe(1);
+						expectExactBytes(bytes ?? undefined, currentBlob);
+						readbackBeforeBase = true;
+					}
+				}
+				return bytes;
+			};
+			context.vault.stat = async (source) => {
+				if (source === path) events.push("stat");
+				const bytes = await context.vault.readBinary(source);
+				return bytes ? { mtime: 1, size: bytes.byteLength } : null;
+			};
+			const modify = context.vault.modifyBinary.bind(context.vault);
+			context.vault.modifyBinary = async (source, bytes) => {
+				if (source === path) {
+					expectExactBytes(
+						(await context.vault.readBinary(visible.path)) ?? undefined,
+						local,
+					);
+					expectExactBytes(
+						(await context.vault.readBinary(
+							`.ai-bridge/pre-apply/${localHash}`,
+						)) ?? undefined,
+						local,
+					);
+					expect(
+						events.filter((event) => event === "stat").length,
+					).toBeGreaterThanOrEqual(2);
+					expect(
+						context.journal.snapshot().pending_apply[0]?.conflict_copies,
+					).toContainEqual(expect.objectContaining(visible));
+					expect(context.journal.snapshot().base[path]?.rev).toBe(1);
+					events.push("write");
+				}
+				return modify(source, bytes);
+			};
+			context.controller = new ReconciliationController(
+				context.journal,
+				engine,
+				context.vault,
+				context.remote,
+			);
+			context.remote.feed.push({
+				epoch,
+				head_seq: 6,
+				entries: [
+					row,
+					{
+						seq: 6,
+						op: "put",
+						path: followingPath,
+						etag: `"${epoch}.6"`,
+						hash: followingHash,
+						origin: "remote",
+						at: 6,
+					},
+				],
+			});
+			await context.controller.resume();
+			await engine.resume();
+			await context.controller.resume();
+
+			expectExactBytes(
+				(await context.vault.readBinary(visible.path)) ?? undefined,
+				local,
+			);
+			expect(
+				(await context.vault.list()).filter((source) =>
+					source.includes("conflict"),
+				),
+			).toHaveLength(visibleCopies.length);
+			for (const copy of visibleCopies) {
+				expectExactBytes(
+					(await context.vault.readBinary(copy.path)) ?? undefined,
+					copy.source === path ? local : new TextEncoder().encode(sourceText),
+				);
+			}
+			if (rename) {
+				expect(await context.vault.readBinary(source)).toBeNull();
+				expect(context.journal.snapshot().base[source]).toEqual({
+					deleted: true,
+					rev: 2,
+				});
+			}
+			if (kind === "deleted") {
+				expect(await context.vault.readBinary(path)).toBeNull();
+				expect(context.journal.snapshot().base[path]).toEqual({
+					deleted: true,
+					rev: revision,
+				});
+			} else {
+				expectExactBytes(
+					(await context.vault.readBinary(path)) ?? undefined,
+					kind === "blob" ? currentBlob : new TextEncoder().encode(currentText),
+				);
+				expect(context.journal.snapshot().base[path]).toEqual({
+					deleted: false,
+					rev: revision,
+					hash: currentHash,
+				});
+			}
+			if (kind === "blob") {
+				expect(readbackBeforeBase).toBe(true);
+				expect(events).toContain("write");
+				expect(events.slice(events.indexOf("write") + 1)).toContain("read");
+				expectExactBytes(
+					(await context.vault.readBinary(
+						`.ai-bridge/pre-apply/${localHash}`,
+					)) ?? undefined,
+					local,
+				);
+			}
+			expect(context.vault.files.get(followingPath)).toBe(following);
+			expect(context.journal.snapshot().pending_apply).toEqual([]);
+			expect(context.journal.snapshot().cursor).toBe(6);
+			expect(
+				context.journal
+					.snapshot()
+					.attention.some((item: { reason: string }) =>
+						item.reason.includes("not available"),
+					),
+			).toBe(false);
+		},
+	);
+
+	it.each([false, true])(
+		"keeps copied recovery through pruned inline authority becoming a blob (restart after rebase=%s)",
+		async (restartAfterRebase) => {
+			const path = "notes/inline-to-blob-recovery.md";
+			const local = new Uint8Array(1_000_001).fill(0x61);
+			local.set([0xff, 0x28]);
+			const localHash = await hashBytes(local);
+			const oldText = "old inline target";
+			const oldHash = await hash(oldText);
+			const current = new Uint8Array(1_000_002).fill(0x62);
+			current.set([0xc3, 0x28]);
+			const currentHash = await hashBytes(current);
+			const following = "later feed text";
+			const followingPath = "after-kind-recovery.md";
+			const followingHash = await hash(following);
+			let pruned = false;
+			const transport = new SyncTransport("https://service.test", {
+				requestResponse: async (url): Promise<OAuthTransportResponse> => {
+					const request = new URL(url);
+					if (pruned && request.pathname.endsWith(path)) {
+						if (request.searchParams.get("rev") === "2")
+							return {
+								status: 410,
+								headers: {},
+								text: JSON.stringify({
+									error: "revision_pruned",
+									message: "This revision is no longer available.",
+								}),
+							};
+						return {
+							status: 200,
+							headers: {
+								etag: `"${epoch}.3"`,
+								"content-type": "application/octet-stream",
+								"content-length": String(current.byteLength),
+							},
+							text: "",
+							arrayBuffer: current.slice().buffer,
+						};
+					}
+					const isFollowing = request.pathname.endsWith(followingPath);
+					const text = isFollowing ? following : oldText;
+					const etag = `"${epoch}.${isFollowing ? 6 : 2}"`;
+					return {
+						status: 200,
+						headers: { etag, "content-type": "application/json" },
+						text: JSON.stringify({
+							path: isFollowing ? followingPath : path,
+							etag,
+							hash: isFollowing ? followingHash : oldHash,
+							size: new TextEncoder().encode(text).byteLength,
+							kind: "text",
+							deleted: false,
+							origin: "remote",
+							updated_at: 5,
+							content: text,
+							offset: 0,
+							length: text.length,
+							truncated: false,
+						}),
+					};
+				},
+			});
+			await context.journal.resetEpoch(epoch);
+			await context.journal.setCursor(epoch, 4);
+			await context.journal.setBase(path, {
+				deleted: false,
+				rev: 1,
+				hash: localHash,
+			});
+			context.vault.binaryFiles.set(path, local.slice());
+			const update = context.journal.updateApply.bind(context.journal);
+			context.journal.updateApply = async (pending) => {
+				await update(pending);
+				if (pending.step === "copied")
+					throw new Error("stop after kind-change copies");
+			};
+			const engine = new TextApplyEngine(
+				context.journal,
+				context.vault,
+				transport,
+				{ deviceName: "test" },
+			);
+			const row = {
+				seq: 5,
+				op: "put" as const,
+				path,
+				etag: `"${epoch}.2"`,
+				hash: oldHash,
+				origin: "remote",
+				at: 5,
+			};
+			await expect(engine.apply(row)).rejects.toThrow(
+				"stop after kind-change copies",
+			);
+			const copies =
+				context.journal.snapshot().pending_apply[0]?.conflict_copies;
+			expect(copies).toHaveLength(2);
+			engine.close();
+			context.journal.close();
+			pruned = true;
+			context = {
+				...context,
+				journal: await DeviceJournal.open(context.storage),
+			};
+			let resumed = new TextApplyEngine(
+				context.journal,
+				context.vault,
+				transport,
+				{ deviceName: "test" },
+			);
+			if (restartAfterRebase) {
+				const rebase = context.journal.rebasePendingApply.bind(context.journal);
+				context.journal.rebasePendingApply = async (change, plans) => {
+					await rebase(change, plans);
+					throw new Error("stop after blob authority rebase");
+				};
+				await expect(resumed.resume()).rejects.toThrow(
+					"stop after blob authority rebase",
+				);
+				expect(
+					context.journal.snapshot().pending_apply[0]?.conflict_copies,
+				).toEqual(copies);
+				resumed.close();
+				context.journal.close();
+				context = {
+					...context,
+					journal: await DeviceJournal.open(context.storage),
+				};
+				resumed = new TextApplyEngine(
+					context.journal,
+					context.vault,
+					transport,
+					{ deviceName: "test" },
+				);
+			}
+			context.controller = new ReconciliationController(
+				context.journal,
+				resumed,
+				context.vault,
+				context.remote,
+			);
+			context.remote.feed.push({
+				epoch,
+				head_seq: 6,
+				entries: [
+					row,
+					{
+						seq: 6,
+						op: "put",
+						path: followingPath,
+						etag: `"${epoch}.6"`,
+						hash: followingHash,
+						origin: "remote",
+						at: 6,
+					},
+				],
+			});
+			await context.controller.resume();
+			await resumed.resume();
+			await context.controller.resume();
+
+			for (const copy of copies ?? [])
+				expectExactBytes(context.vault.binaryFiles.get(copy.path), local);
+			expect(
+				[...context.vault.binaryFiles.keys()].filter((copyPath) =>
+					copyPath.includes("conflict"),
+				),
+			).toHaveLength(1);
+			expectExactBytes(context.vault.binaryFiles.get(path), current);
+			expect(context.vault.files.get(followingPath)).toBe(following);
+			expect(context.journal.snapshot().base[path]).toEqual({
+				deleted: false,
+				rev: 3,
+				hash: currentHash,
+			});
+			expect(context.journal.snapshot().pending_apply).toEqual([]);
+			expect(context.journal.snapshot().cursor).toBe(6);
+			expect(
+				context.journal
+					.snapshot()
+					.attention.some((item: { reason: string }) =>
+						item.reason.includes("not available"),
+					),
+			).toBe(false);
+		},
+	);
+
+	it("preserves dirty binary bytes and applies a manifest tombstone", async () => {
+		const localBytes = new Uint8Array([0, 255, 3]);
+		context.vault.binaryFiles.set("assets/old.pdf", localBytes);
 		context.remote.entries = [
 			{
 				path: "assets/old.pdf",
@@ -383,23 +1282,35 @@ describe("ReconciliationController", () => {
 		];
 		await context.controller.enroll();
 		expect(context.vault.reads).not.toContain("assets/old.pdf");
-		expect(context.vault.files.get("assets/old.pdf")).toBe(
-			"binary placeholder",
-		);
+		expect(context.vault.binaryFiles.has("assets/old.pdf")).toBe(false);
+		expect(
+			[...context.vault.binaryFiles.entries()].some(
+				([path, bytes]) =>
+					path.includes("conflict") &&
+					bytes.every((byte, index) => byte === localBytes[index]),
+			),
+		).toBe(true);
+		expect(context.journal.snapshot().base["assets/old.pdf"]).toMatchObject({
+			deleted: true,
+			rev: 2,
+		});
 		expect(context.journal.snapshot().attention).toContainEqual({
 			path: "assets/old.pdf",
-			reason: "Blob synchronization is not available yet",
+			reason: "Local binary bytes were preserved as a conflict copy",
 		});
 	});
 
-	it("records blob tombstones without decoding or deleting local binary bytes", async () => {
-		context.vault.files.set("assets/file.pdf", "binary placeholder");
+	it("preserves dirty binary bytes and applies an authoritative feed tombstone", async () => {
+		const localBytes = new Uint8Array([1, 2, 255]);
+		context.vault.binaryFiles.set("assets/file.pdf", localBytes);
 		await context.controller.enroll();
+		const editedBytes = new Uint8Array([7, 8, 9]);
+		context.vault.binaryFiles.set("assets/file.pdf", editedBytes);
 		context.remote.entries = [
 			{
 				path: "assets/file.pdf",
-				etag: `"${epoch}.5"`,
-				seq: 5,
+				etag: `"${epoch}.6"`,
+				seq: 6,
 				hash: "",
 				kind: "blob",
 				deleted: true,
@@ -407,13 +1318,13 @@ describe("ReconciliationController", () => {
 		];
 		context.remote.feed.push({
 			epoch,
-			head_seq: 5,
+			head_seq: 6,
 			entries: [
 				{
-					seq: 5,
+					seq: 6,
 					op: "delete",
 					path: "assets/file.pdf",
-					etag: `"${epoch}.5"`,
+					etag: `"${epoch}.6"`,
 					hash: "",
 					origin: "remote",
 					at: 5,
@@ -422,19 +1333,144 @@ describe("ReconciliationController", () => {
 		});
 		await context.controller.replay();
 		expect(context.vault.reads).not.toContain("assets/file.pdf");
-		expect(context.vault.files.get("assets/file.pdf")).toBe(
-			"binary placeholder",
-		);
-		expect(context.journal.snapshot().cursor).toBe(5);
+		expect(context.vault.binaryFiles.has("assets/file.pdf")).toBe(false);
+		expect(
+			[...context.vault.binaryFiles.entries()].some(
+				([path, bytes]) =>
+					path.includes("conflict") &&
+					bytes.every((byte, index) => byte === editedBytes[index]),
+			),
+		).toBe(true);
+		expect(context.journal.snapshot().cursor).toBe(6);
+		expect(context.journal.snapshot().base["assets/file.pdf"]).toMatchObject({
+			deleted: true,
+			rev: 6,
+		});
 		expect(context.journal.snapshot().attention).toContainEqual({
 			path: "assets/file.pdf",
-			reason: "Delete row is not a confirmed inline-text revision",
+			reason: "Local binary bytes were preserved as a conflict copy",
 		});
 	});
 
-	it("records authoritative feed blobs without reading them as local text", async () => {
+	it("applies exact current blob authority during a rejected rename recovery", async () => {
+		const path = "assets/rename-source.png";
+		const bytes = new Uint8Array([81, 82, 255]);
+		const currentHash = await hashBytes(bytes);
+		const oldHash = await hashBytes(new Uint8Array([83, 84]));
+		await context.journal.resetEpoch(epoch);
+		await context.journal.setCursor(epoch, 0);
+		await context.journal.setBase(path, {
+			deleted: false,
+			rev: 1,
+			hash: oldHash,
+		});
+		context.remote.blobPaths.add(path);
+		context.remote.blobs.set(5, bytes);
+		const remote = context.remote as typeof context.remote & {
+			readCurrentAuthority: (source: string) => Promise<never>;
+			readCurrentBlobAuthority: (source: string) => Promise<{
+				kind: "blob";
+				bytes: Uint8Array;
+				epoch: string;
+				rev: number;
+				hash: string;
+			}>;
+		};
+		remote.readCurrentAuthority = async () => {
+			throw new UnsupportedRemoteTextError(path);
+		};
+		remote.readCurrentBlobAuthority = async () => ({
+			kind: "blob",
+			bytes: bytes.slice(),
+			epoch,
+			rev: 5,
+			hash: currentHash,
+		});
+		await context.journal.enqueue(
+			{
+				op: "rename",
+				path,
+				to: "assets/rename-target.png",
+				precondition: { kind: "match", epoch, rev: 1 },
+				source_hash: oldHash,
+			},
+			new Uint8Array(),
+		);
+		const operation = context.journal.snapshot().pending_ops[0];
+		if (!operation) throw new Error("Missing binary rename fixture");
+
+		await context.controller.recoverPrecondition(operation);
+
+		expect(context.vault.binaryFiles.get(path)).toEqual(bytes);
+		expect(context.journal.snapshot().base[path]).toEqual({
+			deleted: false,
+			rev: 5,
+			hash: currentHash,
+		});
+	});
+
+	it("preserves a colliding feed blob and continues to later feed entries", async () => {
+		const path = "assets/photo.png";
+		const localPath = "assets/PHOTO.png";
+		const localBytes = new Uint8Array([61, 62]);
+		const remoteBytes = new Uint8Array([63, 64]);
+		const remoteHash = await hashBytes(remoteBytes);
+		const following = "feed continued after the binary collision";
+		context.vault.binaryFiles.set(localPath, localBytes);
+		await context.journal.resetEpoch(epoch);
+		await context.journal.setCursor(epoch, 0);
+		context.remote.blobPaths.add(path);
+		context.remote.blobs.set(5, remoteBytes);
+		context.remote.texts.set("6", following);
+		context.remote.feed.push({
+			epoch,
+			head_seq: 6,
+			entries: [
+				{
+					seq: 5,
+					op: "put",
+					path,
+					etag: `"${epoch}.5"`,
+					hash: remoteHash,
+					origin: "remote",
+					at: 5,
+				},
+				{
+					seq: 6,
+					op: "put",
+					path: "after-binary-collision.md",
+					etag: `"${epoch}.6"`,
+					hash: await hash(following),
+					origin: "remote",
+					at: 6,
+				},
+			],
+		});
+
+		await context.controller.replay();
+
+		expect(context.vault.binaryFiles.get(localPath)).toEqual(localBytes);
+		const visibleRemoteCopies = [...context.vault.binaryFiles.entries()].filter(
+			([copyPath]) => copyPath.includes("conflict"),
+		);
+		expect(visibleRemoteCopies).toHaveLength(1);
+		expect(visibleRemoteCopies[0]?.[1]).toEqual(remoteBytes);
+		expect(context.vault.files.get("after-binary-collision.md")).toBe(
+			following,
+		);
+		expect(context.journal.snapshot().cursor).toBe(6);
+		expect(context.journal.snapshot().pending_apply).toEqual([]);
+		expect(context.journal.snapshot().attention).toContainEqual(
+			expect.objectContaining({ path }),
+		);
+	});
+
+	it("applies authoritative feed blobs without decoding them as local text", async () => {
 		await context.controller.enroll();
 		context.remote.blobPaths.add("assets/photo.png");
+		const blobBytes = new Uint8Array([0, 254, 5]);
+		const blobHash = await hashBytes(blobBytes);
+		context.remote.blobs.set(5, blobBytes);
 		const following = "after the blob";
 		context.remote.texts.set("6", following);
 		context.remote.feed.push({
@@ -446,7 +1482,7 @@ describe("ReconciliationController", () => {
 					op: "put",
 					path: "assets/photo.png",
 					etag: `"${epoch}.5"`,
-					hash: "b".repeat(64),
+					hash: blobHash,
 					origin: "remote",
 					at: 5,
 				},
@@ -463,13 +1499,15 @@ describe("ReconciliationController", () => {
 		});
 		await context.controller.replay();
 		expect(context.vault.reads).not.toContain("assets/photo.png");
+		expect(context.vault.binaryFiles.get("assets/photo.png")).toEqual(
+			blobBytes,
+		);
 		expect(context.vault.files.get("after-blob.md")).toBe(following);
 		expect(context.journal.snapshot().cursor).toBe(6);
 		expect(context.journal.snapshot().pending_apply).toEqual([]);
-		expect(context.journal.snapshot().attention).toContainEqual({
-			path: "assets/photo.png",
-			reason: "Blob synchronization is not available yet",
-		});
+		expect(context.journal.snapshot().attention).not.toContainEqual(
+			expect.objectContaining({ path: "assets/photo.png" }),
+		);
 	});
 
 	it("skips an obsolete put before an unavailable historical read", async () => {
@@ -792,10 +1830,12 @@ describe("ReconciliationController", () => {
 		});
 	});
 
-	it("admits only inline enrollment files and records local blobs without reading them", async () => {
+	it("publishes inline text and reconciles oversized Markdown as exact blob bytes", async () => {
 		context.vault.files.set("note.md", "inline");
 		context.vault.files.set("drawing.canvas", '{"nodes":[]}');
-		context.vault.files.set("image.png", "binary placeholder");
+		context.vault.binaryFiles.set("image.png", new Uint8Array([0, 255]));
+		const localLarge = new TextEncoder().encode("do not decode");
+		const remoteLarge = new Uint8Array([9, 8, 7]);
 		context.vault.files.set("large.md", "do not decode");
 		context.vault.fileSizes.set("large.md", 1_000_001);
 		context.remote.entries = [
@@ -803,12 +1843,13 @@ describe("ReconciliationController", () => {
 				path: "large.md",
 				etag: `"${epoch}.2"`,
 				seq: 2,
-				hash: await hash("server inline text"),
-				kind: "text",
+				hash: await hashBytes(remoteLarge),
+				kind: "blob",
 				deleted: false,
 			},
 		];
-		context.remote.texts.set("2", "server inline text");
+		context.remote.blobPaths.add("large.md");
+		context.remote.blobs.set(2, remoteLarge);
 		for (const path of [
 			".obsidian/config.md",
 			".trash/old.md",
@@ -823,14 +1864,16 @@ describe("ReconciliationController", () => {
 			"note.md",
 			"drawing.canvas",
 		]);
+		expect(context.remote.createdBlobs.map((item) => item.path)).toEqual([
+			"image.png",
+		]);
 		expect(context.vault.reads).not.toContain("image.png");
 		expect(context.vault.reads).not.toContain("large.md");
-		for (const path of ["image.png", "large.md"])
-			expect(
-				context.journal
-					.snapshot()
-					.attention.some((item: { path: string }) => item.path === path),
-			).toBe(true);
+		expect(context.vault.binaryFiles.get("large.md")).toEqual(remoteLarge);
+		expect(context.vault.binaryFiles.get("large.md")).not.toEqual(localLarge);
+		expect(context.journal.snapshot().attention).toContainEqual(
+			expect.objectContaining({ path: "large.md" }),
+		);
 		for (const path of [".ai-bridge/pending/journal", ".obsidian/config.md"])
 			expect(context.vault.reads).not.toContain(path);
 	});

@@ -11,8 +11,15 @@ import {
 } from "@obsidian-ai-bridge/protocol";
 import type { DeviceJournal } from "@plugin/sync/device-journal";
 import { classifyEnrollmentPath } from "@plugin/sync/enrollment-scope";
-import { SyncTransportError } from "@plugin/sync/remote-text";
-import type { TextApplyEngine, TextVault } from "@plugin/sync/text-apply";
+import {
+	SyncTransportError,
+	UnsupportedRemoteTextError,
+} from "@plugin/sync/remote-text";
+import type {
+	ResolvedPinnedBlob,
+	TextApplyEngine,
+	TextVault,
+} from "@plugin/sync/text-apply";
 
 /** Validated text authority returned for a pinned or current server read. */
 export type PublicationRead =
@@ -29,10 +36,26 @@ export interface PublicationRemote {
 	): Promise<PublicationRead>;
 	/** Reads current path identity, including its authoritative tombstone revision. */
 	readCurrentAuthority(path: string): Promise<PublicationRead>;
+	/** Reads a pinned binary revision or current file kind after revision pruning. */
+	readBlobAuthority?(
+		path: string,
+		epoch: string,
+		rev: number,
+		hash: string,
+	): Promise<ResolvedPinnedBlob>;
 	/** Sends one immutable text put under its exact create or revision precondition. */
 	put(
 		path: string,
 		text: string,
+		precondition: DevicePrecondition,
+		key: string,
+		epoch: string,
+	): Promise<PublicationReceipt>;
+	/** Sends one conditional PUT with exact immutable bytes. The Worker owns authorize, upload, and commit. */
+	putBlob?(
+		path: string,
+		bytes: Uint8Array,
+		hash: string,
 		precondition: DevicePrecondition,
 		key: string,
 		epoch: string,
@@ -113,11 +136,31 @@ export class PublicationController {
 				if (size === null) continue;
 				const admission = classifyEnrollmentPath(path, size);
 				if (admission === "excluded") continue;
-				if (admission === "blob") {
-					this.assertOpen();
+				if (admission === "unsupported") {
 					await this.journal.recordAttention(
 						path,
-						"Blob synchronization is not available yet",
+						"File exceeds the 25 MB sync limit",
+					);
+					continue;
+				}
+				if (admission === "blob") {
+					const bytes = await this.vault.readBinary?.(path);
+					this.assertOpen();
+					if (!bytes) continue;
+					const hash = await digest(bytes);
+					this.assertOpen();
+					const base = state.base[path];
+					if (base?.deleted === false && base.hash === hash) continue;
+					if (await this.hasPendingPut(path, hash)) continue;
+					await this.journal.enqueue(
+						{
+							op: "put",
+							path,
+							precondition: base
+								? { kind: "match", epoch: state.epoch ?? "", rev: base.rev }
+								: { kind: "absent" },
+						},
+						bytes,
 					);
 					continue;
 				}
@@ -192,11 +235,40 @@ export class PublicationController {
 				if (size === null) return;
 				const admission = classifyEnrollmentPath(parsed.path, size);
 				if (admission === "excluded") return;
-				if (admission === "blob") {
-					this.assertOpen();
+				if (admission === "unsupported") {
 					await this.journal.recordAttention(
 						parsed.path,
-						"Blob synchronization is not available yet",
+						"File exceeds the 25 MB sync limit",
+					);
+					return;
+				}
+				if (admission === "blob") {
+					const expected = this.journal.snapshot().expected_writes[parsed.path];
+					const bytes = await this.vault.readBinary?.(parsed.path);
+					this.assertOpen();
+					if (!bytes) return;
+					const hash = await digest(bytes);
+					this.assertOpen();
+					if (expected === hash) {
+						const consumed = await this.journal.consumeExpectedWrite(
+							parsed.path,
+							hash,
+						);
+						this.assertOpen();
+						if (consumed) return;
+					}
+					const current = this.journal.snapshot();
+					const base = current.base[parsed.path];
+					if (base?.deleted === false && base.hash === hash) return;
+					await this.journal.enqueue(
+						{
+							op: "put",
+							path: parsed.path,
+							precondition: base
+								? { kind: "match", epoch: current.epoch ?? "", rev: base.rev }
+								: { kind: "absent" },
+						},
+						bytes,
 					);
 					return;
 				}
@@ -220,11 +292,10 @@ export class PublicationController {
 				this.assertOpen();
 				const admission = classifyEnrollmentPath(parsed.to, size ?? 0);
 				if (admission === "excluded") return;
-				if (admission === "blob") {
-					this.assertOpen();
+				if (admission === "unsupported") {
 					await this.journal.recordAttention(
 						parsed.to,
-						"Blob synchronization is not available yet",
+						"File exceeds the 25 MB sync limit",
 					);
 					return;
 				}
@@ -238,12 +309,9 @@ export class PublicationController {
 				sourceText !== null;
 			if (staleEvent) {
 				if (parsed.type === "rename") {
-					const destination = await this.vault.read(parsed.to);
-					this.assertOpen();
-					if (destination !== null) {
-						this.assertOpen();
-						await this.enqueuePut(parsed.to, destination);
-					}
+					const destination = await this.readRenameDestination(parsed.to);
+					if (destination !== null)
+						await this.enqueueBinaryPut(parsed.to, destination);
 				} else {
 					await this.journal.recordAttention(
 						parsed.path,
@@ -434,6 +502,20 @@ export class PublicationController {
 		epoch: string,
 	): Promise<PublicationReceipt> {
 		if (operation.op === "put") {
+			if (classifyEnrollmentPath(operation.path, bytes.byteLength) === "blob") {
+				if (!this.remote.putBlob)
+					throw new Error(
+						"Blob publication is not supported by this transport",
+					);
+				return this.remote.putBlob(
+					operation.path,
+					bytes,
+					operation.payload_hash,
+					operation.precondition,
+					operation.key,
+					epoch,
+				);
+			}
 			const text = new TextDecoder("utf-8", {
 				fatal: true,
 				ignoreBOM: true,
@@ -523,16 +605,26 @@ export class PublicationController {
 			operation.payload_hash,
 		);
 		this.assertOpen();
-		const local = await this.vault.read(operation.path);
-		this.assertOpen();
-		if (local === null) {
-			await this.journal.recordQueuedRejected(
-				operation,
-				"Queued text is absent from the local vault",
+		const admission = classifyEnrollmentPath(operation.path, saved.byteLength);
+		if (admission === "unsupported") {
+			await this.journal.recordAttention(
+				operation.path,
+				"File exceeds the 25 MB sync limit",
 			);
 			return "block";
 		}
-		const localBytes = new TextEncoder().encode(local);
+		const isBlob = admission === "blob";
+		const localBytes = isBlob
+			? await this.vault.readBinary?.(operation.path)
+			: await this.readTextBytes(operation.path);
+		this.assertOpen();
+		if (localBytes === null || localBytes === undefined) {
+			await this.journal.recordQueuedRejected(
+				operation,
+				"Queued file is absent from the local vault",
+			);
+			return "block";
+		}
 		const localHash = await digest(localBytes);
 		const base = this.journal.snapshot().base[operation.path];
 		if (base?.deleted === false && base.hash === localHash) {
@@ -556,11 +648,37 @@ export class PublicationController {
 		this.assertOpen();
 		await this.journal.recordQueuedRejected(
 			operation,
-			"Local text changed after publication was queued",
+			"Local file changed after publication was queued",
 		);
 		this.assertOpen();
-		await this.enqueuePut(operation.path, local);
+		if (isBlob) {
+			const state = this.journal.snapshot();
+			const base = state.base[operation.path];
+			await this.journal.enqueue(
+				{
+					op: "put",
+					path: operation.path,
+					precondition: base
+						? { kind: "match", epoch: state.epoch ?? "", rev: base.rev }
+						: { kind: "absent" },
+				},
+				localBytes,
+			);
+		} else {
+			await this.enqueuePut(
+				operation.path,
+				new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
+					localBytes,
+				),
+			);
+		}
 		return "block";
+	}
+
+	/** Reads exact in-scope text bytes or null for an absent path. */
+	private async readTextBytes(path: string): Promise<Uint8Array | null> {
+		const text = await this.vault.read(path);
+		return text === null ? null : new TextEncoder().encode(text);
 	}
 
 	/** Confirms one stale payload remains visible before the journal releases its reference. */
@@ -601,6 +719,33 @@ export class PublicationController {
 		if (!source || source.deleted || source.rev <= operation.precondition.rev)
 			return;
 		this.assertOpen();
+		const destinationBytes = await this.vault.readBinary?.(operation.to);
+		this.assertOpen();
+		if (destinationBytes) {
+			const observedHash = await digest(destinationBytes);
+			this.assertOpen();
+			if (observedHash === operation.source_hash) {
+				const current = await this.vault.readBinary?.(operation.to);
+				this.assertOpen();
+				if (!current) return;
+				const currentHash = await digest(current);
+				this.assertOpen();
+				if (currentHash === operation.source_hash) {
+					const trashBinary = this.vault.trashBinary;
+					if (trashBinary) {
+						await trashBinary.call(this.vault, operation.to, current);
+						this.assertOpen();
+						const remaining = await this.vault.readBinary?.(operation.to);
+						this.assertOpen();
+						if (!remaining) return;
+					}
+				}
+			}
+			const remaining = await this.vault.readBinary?.(operation.to);
+			this.assertOpen();
+			if (remaining) await this.enqueueBinaryPut(operation.to, remaining);
+			return;
+		}
 		const destination = await this.vault.read(operation.to);
 		this.assertOpen();
 		if (destination === null) return;
@@ -635,15 +780,22 @@ export class PublicationController {
 		const state = this.journal.snapshot();
 		const base = state.base[path];
 		if (!base || base.deleted || !state.epoch || base.rev !== rev) return;
-		if ((await this.vault.read(path)) !== null) return;
+		if ((await this.vault.size(path)) !== null) return;
 		this.assertOpen();
-		const remote = await this.remote.readAuthority(path, state.epoch, rev);
+		let remote: PublicationRead;
+		try {
+			remote = await this.remote.readAuthority(path, state.epoch, rev);
+		} catch (error) {
+			if (!(error instanceof UnsupportedRemoteTextError)) throw error;
+			await this.restoreMissingBlob(path, state.epoch, base);
+			return;
+		}
 		this.assertOpen();
 		if (remote.deleted || remote.rev !== rev || remote.epoch !== state.epoch)
 			throw new Error("Startup restore revision is not authoritative");
 		if (!this.journal.matchesBase(path, base, state.epoch)) return;
 		this.assertOpen();
-		if ((await this.vault.read(path)) !== null) return;
+		if ((await this.vault.size(path)) !== null) return;
 		this.assertOpen();
 		await this.journal.setExpectedWrite(path, remote.hash);
 		if (this.closed) {
@@ -670,6 +822,133 @@ export class PublicationController {
 			await this.journal.clearExpectedWrite(path);
 			throw new Error("Startup restore bytes were not confirmed");
 		}
+	}
+
+	/** Restores missing content from validated pinned or current authority. */
+	private async restoreMissingBlob(
+		path: string,
+		epoch: string,
+		base: Extract<DeviceBaseEntry, { deleted: false }>,
+	): Promise<void> {
+		if (!this.remote.readBlobAuthority) return;
+		const current = await this.remote.readBlobAuthority(
+			path,
+			epoch,
+			base.rev,
+			base.hash,
+		);
+		this.assertOpen();
+		if (current.epoch !== epoch || current.rev < base.rev)
+			throw new Error("Binary startup restore authority is stale");
+		if (current.kind === "deleted") return;
+		const expectedHash = current.hash;
+		if (
+			current.kind === "blob" &&
+			(await digest(current.bytes)) !== expectedHash
+		)
+			throw new Error("Binary startup restore bytes do not match their hash");
+		if (
+			current.kind === "text" &&
+			(await digest(new TextEncoder().encode(current.text))) !== expectedHash
+		)
+			throw new Error("Text startup restore bytes do not match their hash");
+		if (!this.journal.matchesBase(path, base, epoch)) return;
+		if ((await this.vault.size(path)) !== null) return;
+		this.assertOpen();
+		await this.journal.setExpectedWrite(path, expectedHash);
+		if (this.closed) {
+			await this.journal.clearExpectedWrite(path);
+			this.assertOpen();
+		}
+		this.assertOpen();
+		let created = false;
+		if (current.kind === "blob") {
+			const createBinary = this.vault.createBinary;
+			if (!createBinary) {
+				await this.journal.clearExpectedWrite(path);
+				return;
+			}
+			created = await createBinary.call(this.vault, path, current.bytes);
+		} else {
+			created = await this.vault.create(path, current.text);
+		}
+		if (this.closed) {
+			await this.journal.clearExpectedWrite(path);
+			this.assertOpen();
+		}
+		if (!created) {
+			await this.journal.clearExpectedWrite(path);
+			return;
+		}
+		this.assertOpen();
+		const written =
+			current.kind === "blob"
+				? await this.vault.readBinary?.(path)
+				: await this.vault.read(path);
+		if (this.closed) {
+			await this.journal.clearExpectedWrite(path);
+			this.assertOpen();
+		}
+		this.assertOpen();
+		const actualHash =
+			written instanceof Uint8Array
+				? await digest(written)
+				: written === null
+					? ""
+					: await digest(new TextEncoder().encode(written));
+		if (actualHash !== expectedHash) {
+			await this.journal.clearExpectedWrite(path);
+			throw new Error("Startup restore bytes were not confirmed");
+		}
+		if (current.rev > base.rev) {
+			await this.journal.setBase(path, {
+				deleted: false,
+				rev: current.rev,
+				hash: current.hash,
+			});
+			this.assertOpen();
+		}
+	}
+
+	/** Queues exact moved binary bytes under the latest confirmed destination base. */
+	private async enqueueBinaryPut(
+		path: string,
+		bytes: Uint8Array,
+	): Promise<void> {
+		this.assertOpen();
+		const admission = classifyEnrollmentPath(path, bytes.byteLength);
+		if (admission === "unsupported") {
+			await this.journal.recordAttention(
+				path,
+				"File exceeds the 25 MB sync limit",
+			);
+			return;
+		}
+		const hash = await digest(bytes);
+		this.assertOpen();
+		const state = this.journal.snapshot();
+		const base = state.base[path];
+		if (base?.deleted === false && base.hash === hash) return;
+		if (base && !state.epoch) {
+			await this.journal.recordAttention(
+				path,
+				"Confirmed base has no vault epoch",
+			);
+			return;
+		}
+		if (await this.hasPendingPut(path, hash)) return;
+		this.assertOpen();
+		await this.journal.enqueue(
+			{
+				op: "put",
+				path,
+				precondition:
+					base && state.epoch
+						? { kind: "match", epoch: state.epoch, rev: base.rev }
+						: { kind: "absent" },
+			},
+			bytes,
+		);
 	}
 
 	/** Replaces only unsent work with the newest current local bytes and exact base. */
@@ -708,16 +987,39 @@ export class PublicationController {
 		);
 	}
 
-	/** Queues a local edit after a successful rename and drops a redundant exact put. */
+	/** Selects the reader from current destination admission, never from saved payload size or receipt kind. */
+	private async readRenameDestination(
+		path: string,
+	): Promise<Uint8Array | null> {
+		const size = await this.vault.size(path);
+		this.assertOpen();
+		if (size === null) return null;
+		const admission = classifyEnrollmentPath(path, size);
+		if (admission === "excluded") return null;
+		if (admission === "unsupported") {
+			await this.journal.recordAttention(
+				path,
+				"File exceeds the 25 MB sync limit",
+			);
+			return null;
+		}
+		const bytes =
+			admission === "blob"
+				? await this.vault.readBinary?.(path)
+				: await this.readTextBytes(path);
+		this.assertOpen();
+		return bytes ?? null;
+	}
+
+	/** Queues exact current bytes after a successful rename and drops a redundant exact put. */
 	private async reconcileRenameDestination(
 		operation: Extract<PendingOperation, { op: "rename" }>,
 		remoteHash: string,
 	): Promise<void> {
 		this.assertOpen();
-		const local = await this.vault.read(operation.to);
-		this.assertOpen();
+		const local = await this.readRenameDestination(operation.to);
 		if (local === null) return;
-		const localHash = await digest(new TextEncoder().encode(local));
+		const localHash = await digest(local);
 		this.assertOpen();
 		const queuedPuts = this.journal
 			.snapshot()
@@ -737,7 +1039,7 @@ export class PublicationController {
 		this.assertOpen();
 		if (!(await this.hasPendingPut(operation.to, localHash))) {
 			this.assertOpen();
-			await this.enqueuePut(operation.to, local);
+			await this.enqueueBinaryPut(operation.to, local);
 		}
 	}
 

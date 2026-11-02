@@ -1,8 +1,11 @@
-import { pathKey } from "@obsidian-ai-bridge/protocol";
+import { DevicePayloadHashSchema, pathKey } from "@obsidian-ai-bridge/protocol";
 import type { TextVault } from "@plugin/sync/text-apply";
 import { TFile, type Vault } from "obsidian";
 
-/** Uses Obsidian Vault effects while rechecking exact observed text before mutation. */
+/** Confines hidden recovery bytes to one hash-addressed directory outside the Vault index. */
+const RECOVERY_DIRECTORY = ".ai-bridge/pre-apply";
+
+/** Uses Vault effects for visible files and adapter effects for confined hidden recovery bytes. */
 export class ObsidianTextVault implements TextVault {
 	/** Binds the host vault whose text effects this adapter guards. */
 	constructor(private readonly vault: Vault) {}
@@ -13,9 +16,80 @@ export class ObsidianTextVault implements TextVault {
 		return file ? this.vault.read(file) : null;
 	}
 
-	/** Lists current vault file paths for collision checks without changing them. */
+	/** Reads exact bytes from a current file without text decoding. */
+	async readBinary(path: string): Promise<Uint8Array | null> {
+		if (path.startsWith(".ai-bridge/")) {
+			if (
+				!isRecoveryPath(path) ||
+				(await this.vault.adapter.stat(path))?.type !== "file"
+			)
+				return null;
+			return new Uint8Array(await this.vault.adapter.readBinary(path));
+		}
+		const file = this.fileAt(path);
+		return file ? new Uint8Array(await this.vault.readBinary(file)) : null;
+	}
+
+	/** Returns adapter mtime and size for a file. Invalid hidden paths and absent files return null. */
+	async stat(path: string): Promise<{ mtime: number; size: number } | null> {
+		if (path.startsWith(".ai-bridge/") && !isRecoveryPath(path)) return null;
+		const stat = await this.vault.adapter.stat(path);
+		return stat?.type === "file"
+			? { mtime: stat.mtime, size: stat.size }
+			: null;
+	}
+
+	/** Creates visible bytes without collisions, or reuses equal hidden recovery bytes without replacement. */
+	async createBinary(path: string, bytes: Uint8Array): Promise<boolean> {
+		if (path.startsWith(".ai-bridge/"))
+			return this.writeRecoveryCopy(path, bytes, false);
+		if (this.fileAt(path) || this.hasPathKeyCollision(path)) return false;
+		await this.ensureParent(path);
+		const copy = bytes.slice();
+		try {
+			await this.vault.createBinary(path, copy.buffer as ArrayBuffer);
+		} catch {
+			return false;
+		}
+		const created = await this.readBinary(path);
+		return created !== null && equalBytes(created, bytes);
+	}
+
+	/** Removes only verified recovery bytes from the hash-addressed pre-apply directory. */
+	async removeRecoveryCopy(
+		path: string,
+		expectedHash: string,
+	): Promise<boolean> {
+		if (
+			!isRecoveryPath(path) ||
+			path !== `${RECOVERY_DIRECTORY}/${expectedHash}`
+		)
+			return false;
+		const bytes = await this.readBinary(path);
+		if (!bytes || (await digestBytes(bytes)) !== expectedHash) return false;
+		await this.vault.adapter.remove(path);
+		return (await this.vault.adapter.stat(path)) === null;
+	}
+
+	/** Replaces visible bytes or refreshes equal hidden recovery bytes. The engine owns mutation admission and stat guards. */
+	async modifyBinary(path: string, bytes: Uint8Array): Promise<boolean> {
+		if (path.startsWith(".ai-bridge/"))
+			return this.writeRecoveryCopy(path, bytes, true);
+		const file = this.fileAt(path);
+		if (!file) return false;
+		const copy = bytes.slice();
+		await this.vault.modifyBinary(file, copy.buffer as ArrayBuffer);
+		const written = await this.readBinary(path);
+		return written !== null && equalBytes(written, bytes);
+	}
+
+	/** Lists indexed files and confined hidden recovery files so engine cleanup can inspect their retention times. */
 	async list(): Promise<string[]> {
-		return this.vault.getFiles().map((file) => file.path);
+		const visible = this.vault.getFiles().map((file) => file.path);
+		if ((await this.vault.adapter.stat(RECOVERY_DIRECTORY))?.type !== "folder")
+			return visible;
+		const hidden = await this.vault.adapter.list(RECOVERY_DIRECTORY);
+		return [...new Set([...visible, ...hidden.files.filter(isRecoveryPath)])];
 	}
 
 	/** Returns raw file size without decoding content, or null when the path is absent. */
@@ -52,12 +126,43 @@ export class ObsidianTextVault implements TextVault {
 		return (await this.read(path)) === text;
 	}
 
+	/** Moves exact observed binary bytes to Obsidian trash without text decoding. */
+	async trashBinary(path: string, expected: Uint8Array): Promise<boolean> {
+		const file = this.fileAt(path);
+		if (!file) return false;
+		const current = await this.readBinary(path);
+		if (!current || !equalBytes(current, expected)) return false;
+		await this.vault.trash(file, false);
+		return this.fileAt(path) !== file;
+	}
+
 	/** Moves a text file to local Obsidian trash after a best-effort exact-text recheck. */
 	async trash(path: string, expected: string): Promise<boolean> {
 		const file = this.fileAt(path);
 		if (!file || (await this.vault.read(file)) !== expected) return false;
 		await this.vault.trash(file, false);
 		return this.fileAt(path) !== file;
+	}
+
+	/** Renames exact bytes after source and destination checks without text conversion. */
+	async renameBinary(
+		from: string,
+		to: string,
+		expected: Uint8Array,
+	): Promise<boolean> {
+		const source = this.fileAt(from);
+		if (!source || this.fileAt(to) || this.hasPathKeyCollision(to))
+			return false;
+		const bytes = await this.readBinary(from);
+		if (!bytes || !equalBytes(bytes, expected)) return false;
+		await this.ensureParent(to);
+		await this.vault.rename(source, to);
+		const moved = await this.readBinary(to);
+		return (
+			this.fileAt(from) === null &&
+			moved !== null &&
+			equalBytes(moved, expected)
+		);
 	}
 
 	/** Renames without link rewriting after source and destination checks. */
@@ -71,7 +176,51 @@ export class ObsidianTextVault implements TextVault {
 		return this.fileAt(to) === source && this.fileAt(from) === null;
 	}
 
-	/** Returns only a real Obsidian text file at one exact path. */
+	/** Creates or refreshes confined recovery bytes. Observed hash or byte mismatches stop the write. The engine owns effect admission. */
+	private async writeRecoveryCopy(
+		path: string,
+		bytes: Uint8Array,
+		refresh: boolean,
+	): Promise<boolean> {
+		if (
+			!isRecoveryPath(path) ||
+			(await digestBytes(bytes)) !== path.slice(RECOVERY_DIRECTORY.length + 1)
+		)
+			return false;
+		const adapter = this.vault.adapter;
+		const existingStat = await adapter.stat(path);
+		if (existingStat) {
+			if (existingStat.type !== "file") return false;
+			const existing = await this.readBinary(path);
+			if (!existing || !equalBytes(existing, bytes)) return false;
+			if (!refresh) return true;
+		} else {
+			if (refresh) return false;
+			for (const directory of [".ai-bridge", RECOVERY_DIRECTORY]) {
+				const stat = await adapter.stat(directory);
+				if (stat?.type === "folder") continue;
+				if (stat) return false;
+				try {
+					await adapter.mkdir(directory);
+				} catch {
+					if ((await adapter.stat(directory))?.type !== "folder") return false;
+				}
+			}
+		}
+		const beforeWrite = await this.readBinary(path);
+		if (beforeWrite && !equalBytes(beforeWrite, bytes)) return false;
+		if (!refresh && beforeWrite) return true;
+		if (refresh && !beforeWrite) return false;
+		try {
+			await adapter.writeBinary(path, bytes.slice().buffer as ArrayBuffer);
+		} catch {
+			return false;
+		}
+		const written = await this.readBinary(path);
+		return written !== null && equalBytes(written, bytes);
+	}
+
+	/** Returns only a real Obsidian file at one exact indexed path. */
 	private fileAt(path: string): TFile | null {
 		const file = this.vault.getAbstractFileByPath(path);
 		return file instanceof TFile ? file : null;
@@ -102,4 +251,29 @@ export class ObsidianTextVault implements TextVault {
 			}
 		}
 	}
+}
+
+/** Accepts only a direct child whose name is a canonical SHA-256 payload hash. */
+function isRecoveryPath(path: string): boolean {
+	const prefix = `${RECOVERY_DIRECTORY}/`;
+	return (
+		path.startsWith(prefix) &&
+		DevicePayloadHashSchema.safeParse(path.slice(prefix.length)).success
+	);
+}
+
+/** Hashes exact bytes without text conversion. */
+async function digestBytes(bytes: Uint8Array): Promise<string> {
+	const digest = await crypto.subtle.digest("SHA-256", bytes.slice().buffer);
+	return [...new Uint8Array(digest)]
+		.map((byte) => byte.toString(16).padStart(2, "0"))
+		.join("");
+}
+
+/** Compares bytes by length and value without decoding them. */
+function equalBytes(left: Uint8Array, right: Uint8Array): boolean {
+	return (
+		left.byteLength === right.byteLength &&
+		left.every((value, index) => value === right[index])
+	);
 }

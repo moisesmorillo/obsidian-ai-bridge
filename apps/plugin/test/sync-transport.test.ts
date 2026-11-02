@@ -9,6 +9,7 @@ class ResponseSession {
 		status: number;
 		headers: Record<string, string>;
 		text: string;
+		arrayBuffer?: ArrayBuffer;
 	}> = [];
 
 	/** Returns the next response without changing its text representation. */
@@ -23,6 +24,37 @@ class ResponseSession {
 const epoch = "a".repeat(32);
 
 describe("SyncTransport", () => {
+	it("reads and validates exact current blob bytes for rename recovery", async () => {
+		const session = new ResponseSession();
+		const bytes = new Uint8Array([0, 254, 7]);
+		const result = await crypto.subtle.digest("SHA-256", bytes);
+		const hash = [...new Uint8Array(result)]
+			.map((byte) => byte.toString(16).padStart(2, "0"))
+			.join("");
+		session.responses.push({
+			status: 200,
+			headers: {
+				etag: `"${epoch}.4"`,
+				"content-type": "application/octet-stream",
+				"content-length": String(bytes.byteLength),
+			},
+			text: "",
+			arrayBuffer: bytes.slice().buffer,
+		});
+		const transport = new SyncTransport("https://service.test", session);
+
+		await expect(
+			transport.readCurrentBlobAuthority("assets/a.png"),
+		).resolves.toEqual({
+			kind: "blob",
+			bytes,
+			epoch,
+			rev: 4,
+			hash,
+		});
+		expect(session.calls[0]?.path).toContain("/v1/files/assets/a.png");
+	});
+
 	it("reads exact pinned text with epoch and revision metadata", async () => {
 		const session = new ResponseSession();
 		session.responses.push({
@@ -444,6 +476,138 @@ describe("SyncTransport", () => {
 		await expect(transport.vault()).rejects.toMatchObject({
 			status: 410,
 			code: "cursor_expired",
+		});
+	});
+
+	it("reads pinned binary bytes only when identity, size, and digest match", async () => {
+		const session = new ResponseSession();
+		const bytes = new Uint8Array([0, 255, 128]);
+		const hash = [
+			...new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)),
+		]
+			.map((byte) => byte.toString(16).padStart(2, "0"))
+			.join("");
+		session.responses.push({
+			status: 200,
+			headers: {
+				etag: `"${epoch}.4"`,
+				"content-type": "application/octet-stream",
+				"content-length": "3",
+			},
+			text: "",
+			arrayBuffer: bytes.buffer.slice(0),
+		});
+		const transport = new SyncTransport("https://service.test", session);
+		await expect(
+			transport.readPinnedBlob("notes/a.png", epoch, 4, hash),
+		).resolves.toEqual({
+			bytes,
+			hash,
+			epoch,
+			rev: 4,
+		});
+	});
+
+	it("rejects pinned binary bytes with a bad declared digest", async () => {
+		const session = new ResponseSession();
+		session.responses.push({
+			status: 200,
+			headers: {
+				etag: `"${epoch}.4"`,
+				"content-type": "application/octet-stream",
+				"content-length": "2",
+			},
+			text: "",
+			arrayBuffer: new Uint8Array([0, 255]).buffer,
+		});
+		const transport = new SyncTransport("https://service.test", session);
+		await expect(
+			transport.readPinnedBlob("notes/a.png", epoch, 4, "a".repeat(64)),
+		).rejects.toThrow("Pinned blob response metadata is invalid");
+	});
+
+	it("falls back from a pruned blob revision to the exact current binary bytes", async () => {
+		const session = new ResponseSession();
+		session.responses.push({
+			status: 410,
+			headers: { "content-type": "application/json" },
+			text: JSON.stringify({
+				error: "revision_pruned",
+				message: "This revision is no longer available.",
+			}),
+		});
+		const bytes = new Uint8Array([0, 255, 128]);
+		const hash = [
+			...new Uint8Array(
+				await crypto.subtle.digest("SHA-256", bytes.slice().buffer),
+			),
+		]
+			.map((byte) => byte.toString(16).padStart(2, "0"))
+			.join("");
+		session.responses.push({
+			status: 200,
+			headers: {
+				"content-type": "application/octet-stream",
+				"content-length": String(bytes.byteLength),
+				etag: `"${epoch}.8"`,
+				"x-vault-epoch": epoch,
+			},
+			text: "",
+			arrayBuffer: bytes.buffer.slice(0),
+		});
+		const transport = new SyncTransport("https://service.test", session);
+		await expect(
+			transport.readResolvedBlob("notes/a.png", epoch, 4, "c".repeat(64)),
+		).resolves.toEqual({
+			kind: "blob",
+			bytes,
+			hash,
+			epoch,
+			rev: 8,
+		});
+	});
+
+	it("sends binary payload bytes with canonical integrity declarations", async () => {
+		const session = new ResponseSession();
+		const bytes = new Uint8Array([0, 255, 128]);
+		const hash = [
+			...new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)),
+		]
+			.map((byte) => byte.toString(16).padStart(2, "0"))
+			.join("");
+		const etag = `"${epoch}.5"`;
+		session.responses.push({
+			status: 201,
+			headers: { etag },
+			text: JSON.stringify({
+				path: "notes/a.png",
+				etag,
+				seq: 7,
+				hash,
+				size: bytes.byteLength,
+				deleted: false,
+			}),
+		});
+		const transport = new SyncTransport("https://service.test", session);
+		await expect(
+			transport.putBlob(
+				"notes/a.png",
+				bytes,
+				hash,
+				{ kind: "absent" },
+				"key",
+				epoch,
+			),
+		).resolves.toMatchObject({ hash, size: bytes.byteLength });
+		const request = session.calls[0]?.options;
+		expect(request?.body).toBeInstanceOf(ArrayBuffer);
+		expect(new Uint8Array(request?.body as ArrayBuffer)).toEqual(bytes);
+		expect(request?.headers).toMatchObject({
+			"if-none-match": "*",
+			"x-vault-epoch": epoch,
+			"idempotency-key": "key",
+			"x-content-sha256": hash,
+			"x-content-size": "3",
 		});
 	});
 });

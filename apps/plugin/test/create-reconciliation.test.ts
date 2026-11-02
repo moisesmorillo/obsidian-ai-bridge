@@ -110,6 +110,13 @@ async function runComposition(
 	);
 	const content = new Map(Object.entries(localFiles));
 	const host = {
+		adapter: {
+			stat: async (path: string) => {
+				const file = files.find((candidate) => candidate.path === path);
+				return file ? { type: "file", mtime: 1, size: file.stat.size } : null;
+			},
+			list: async () => ({ files: [], folders: [] }),
+		},
 		getFiles: () => files,
 		getAbstractFileByPath: (path: string) =>
 			files.find((file) => file.path === path) ?? null,

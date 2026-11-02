@@ -9,6 +9,8 @@ export interface OAuthTransportResponse {
 	headers: Record<string, string>;
 	/** Exact response text as returned by Obsidian requestUrl. */
 	text: string;
+	/** Exact response bytes when the host exposes an ArrayBuffer body. */
+	arrayBuffer?: ArrayBuffer;
 }
 
 /** Safe response boundary that never returns a host error or response body in exceptions. */
@@ -58,6 +60,7 @@ export class ObsidianOAuthTransport implements OAuthTransport {
 					]),
 				),
 				text: response.text,
+				arrayBuffer: response.arrayBuffer,
 			};
 		} catch {
 			throw new Error("OAuth request failed");

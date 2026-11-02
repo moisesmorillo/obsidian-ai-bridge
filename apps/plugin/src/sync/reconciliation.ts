@@ -15,6 +15,7 @@ import {
 	UnsupportedRemoteTextError,
 } from "@plugin/sync/remote-text";
 import type {
+	ResolvedPinnedBlob,
 	ResolvedPinnedText,
 	TextApplyEngine,
 	TextVault,
@@ -49,8 +50,28 @@ export interface ReconciliationRemote {
 		epoch: string,
 		key: string,
 	): Promise<{ status: number; headers: Record<string, string>; text: string }>;
+	/** Creates exact binary bytes only under an absent precondition. */
+	createBlob?(
+		path: string,
+		bytes: Uint8Array,
+		hash: string,
+		epoch: string,
+		key: string,
+	): Promise<{
+		status: number;
+		path: string;
+		etag: string;
+		seq: number;
+		size: number;
+		hash: string;
+		deleted: boolean;
+	}>;
 	/** Reads current path authority when stale local rename recovery needs a cursor-independent source. */
 	readCurrentAuthority?(path: string): Promise<ResolvedPinnedText>;
+	/** Reads exact current bytes when stale rename recovery finds a binary source. */
+	readCurrentBlobAuthority?(
+		path: string,
+	): Promise<Extract<ResolvedPinnedBlob, { kind: "blob" }>>;
 }
 
 /** Serializes enrollment, full hydration, restart recovery, and bounded feed replay. */
@@ -98,8 +119,22 @@ export class ReconciliationController {
 			if (operation.op !== "rename") return;
 			if (!this.remote.readCurrentAuthority)
 				throw new Error("Rename recovery needs current source authority");
-			const current = await this.remote.readCurrentAuthority(operation.path);
+			let current: ResolvedPinnedText | ResolvedPinnedBlob;
+			try {
+				current = await this.remote.readCurrentAuthority(operation.path);
+			} catch (error) {
+				if (
+					!(error instanceof UnsupportedRemoteTextError) ||
+					!this.remote.readCurrentBlobAuthority
+				)
+					throw error;
+				current = await this.remote.readCurrentBlobAuthority(operation.path);
+			}
 			this.assertOpen();
+			if ("kind" in current && current.kind === "blob") {
+				await this.applyEngine.applyCurrent(operation.path, current);
+				return;
+			}
 			if (current.deleted) return;
 			await this.applyEngine.applyCurrent(operation.path, current);
 		});
@@ -317,8 +352,7 @@ export class ReconciliationController {
 		if (page.epoch !== epoch) return resolvedPaths;
 		while (true) {
 			for (const entry of page.entries) {
-				if (hashes.get(entry.path) !== entry.hash || entry.kind !== "text")
-					continue;
+				if (hashes.get(entry.path) !== entry.hash) continue;
 				await this.applyManifestEntry(entry);
 				resolvedPaths.push(entry.path);
 			}
@@ -351,40 +385,51 @@ export class ReconciliationController {
 	): Promise<void> {
 		const remoteAdmission = classifyEnrollmentPath(entry.path, 0);
 		if (remoteAdmission === "excluded") return;
-		if (entry.kind !== "text" || remoteAdmission === "blob") {
+		const localSize = await this.localVault.size(entry.path);
+		const localAdmission =
+			localSize === null
+				? remoteAdmission
+				: classifyEnrollmentPath(entry.path, localSize);
+		if (localAdmission === "excluded") return;
+		if (localAdmission === "unsupported") {
 			await this.journal.recordAttention(
 				entry.path,
-				"Blob synchronization is not available yet",
+				"File exceeds the supported synchronization size",
 			);
 			return;
 		}
-		const localSize = await this.localVault.size(entry.path);
-		if (localSize !== null) {
-			const localAdmission = classifyEnrollmentPath(entry.path, localSize);
-			if (localAdmission === "excluded") return;
-			if (localAdmission === "blob") {
-				await this.journal.recordAttention(
-					entry.path,
-					"Blob synchronization is not available yet",
-				);
-				return;
-			}
-		}
+		const isBlob =
+			entry.kind === "blob" ||
+			remoteAdmission === "blob" ||
+			localAdmission === "blob";
 		const epoch = parseETag(entry.etag).epoch;
 		const revision = parseETag(entry.etag).rev;
-		const local = await this.localVault.read(entry.path);
-		if (
-			!entry.deleted &&
-			local !== null &&
-			(await hashText(local)) === entry.hash
-		) {
-			await this.journal.setBase(entry.path, {
-				deleted: false,
-				rev: revision,
-				hash: entry.hash,
-			});
-			await this.acknowledgeObservedCreate(entry);
-			return;
+		if (isBlob && !entry.deleted && this.localVault.readBinary) {
+			const localBytes = await this.localVault.readBinary(entry.path);
+			if (localBytes && (await hashBytes(localBytes)) === entry.hash) {
+				await this.journal.setBase(entry.path, {
+					deleted: false,
+					rev: revision,
+					hash: entry.hash,
+				});
+				await this.acknowledgeObservedCreate(entry);
+				return;
+			}
+		} else if (!isBlob) {
+			const local = await this.localVault.read(entry.path);
+			if (
+				!entry.deleted &&
+				local !== null &&
+				(await hashText(local)) === entry.hash
+			) {
+				await this.journal.setBase(entry.path, {
+					deleted: false,
+					rev: revision,
+					hash: entry.hash,
+				});
+				await this.acknowledgeObservedCreate(entry);
+				return;
+			}
 		}
 		const change = {
 			seq: entry.seq,
@@ -395,7 +440,7 @@ export class ReconciliationController {
 			origin: "manifest",
 			at: 0,
 		};
-		await this.applyChange(change);
+		await this.applyChange(change, entry.kind);
 		if (epoch !== this.journal.snapshot().epoch)
 			throw new Error("Manifest row belongs to a stale epoch");
 		await this.acknowledgeObservedCreate(entry);
@@ -405,7 +450,7 @@ export class ReconciliationController {
 	private async acknowledgeObservedCreate(
 		entry: ReconciliationManifestEntry,
 	): Promise<void> {
-		if (entry.deleted || entry.kind !== "text") return;
+		if (entry.deleted) return;
 		const operations = this.journal
 			.snapshot()
 			.pending_ops.filter(
@@ -428,11 +473,15 @@ export class ReconciliationController {
 		if (size === null) return;
 		const admission = classifyEnrollmentPath(path, size);
 		if (admission === "excluded") return;
-		if (admission === "blob") {
+		if (admission === "unsupported") {
 			await this.journal.recordAttention(
 				path,
-				"Blob synchronization is not available yet",
+				"File exceeds the supported synchronization size",
 			);
+			return;
+		}
+		if (admission === "blob") {
+			await this.publishLocalBlobCreate(path, epoch, size);
 			return;
 		}
 		const text = await this.localVault.read(path);
@@ -518,6 +567,95 @@ export class ReconciliationController {
 		}
 	}
 
+	/** Publishes one immutable local blob create after persisting its exact bytes. */
+	private async publishLocalBlobCreate(
+		path: string,
+		epoch: string,
+		expectedSize: number,
+	): Promise<void> {
+		if (!this.localVault.readBinary || !this.remote.createBlob) {
+			await this.journal.recordAttention(
+				path,
+				"Binary enrollment capability is unavailable",
+			);
+			return;
+		}
+		const bytes = await this.localVault.readBinary(path);
+		this.assertOpen();
+		if (!bytes || bytes.byteLength !== expectedSize) return;
+		const hash = await hashBytes(bytes);
+		let operation = this.journal
+			.snapshot()
+			.pending_ops.find(
+				(item) =>
+					item.op === "put" &&
+					item.path === path &&
+					item.precondition.kind === "absent" &&
+					item.payload_hash === hash,
+			);
+		if (!operation) {
+			operation = await this.journal.enqueue(
+				{ op: "put", path, precondition: { kind: "absent" } },
+				bytes,
+			);
+		}
+		const saved = await this.journal.prepareSend(operation.key, {
+			kind: "absent",
+		});
+		this.assertOpen();
+		if (
+			saved.operation.state !== "sent" ||
+			(await hashBytes(saved.bytes)) !== hash
+		)
+			throw new Error("Binary enrollment payload identity changed");
+		try {
+			const receipt = await this.remote.createBlob(
+				path,
+				saved.bytes,
+				hash,
+				epoch,
+				saved.operation.key,
+			);
+			this.assertOpen();
+			const identity = parseETag(receipt.etag);
+			if (
+				(receipt.status !== 200 && receipt.status !== 201) ||
+				receipt.path !== path ||
+				identity.epoch !== epoch ||
+				receipt.hash !== hash ||
+				receipt.size !== saved.bytes.byteLength ||
+				receipt.deleted
+			)
+				throw new Error("Binary enrollment receipt is invalid");
+			await this.journal.setBase(path, {
+				deleted: false,
+				rev: identity.rev,
+				hash,
+			});
+			await this.journal.resolve(saved.operation.key, { kind: "receipt" });
+		} catch (error) {
+			this.assertOpen();
+			if (isTerminalEnrollmentFailure(error)) {
+				const attentionPath =
+					error.code === "path_collision" && error.existingPath
+						? error.existingPath
+						: path;
+				const failure = error.code ?? `HTTP ${error.status}`;
+				await this.journal.recordAttention(
+					attentionPath,
+					`${ENROLLMENT_REJECTION_PREFIX}${failure}) for ${path}`,
+				);
+				await this.journal.resolve(saved.operation.key, { kind: "rejection" });
+				return;
+			}
+			if (getStatus(error) === 412) {
+				await this.journal.resolve(saved.operation.key, { kind: "rejection" });
+				throw error;
+			}
+			throw error;
+		}
+	}
+
 	/** Replays one feed page and advances cursor only after apply or durable attention. */
 	private async runReplay(): Promise<void> {
 		this.assertOpen();
@@ -534,12 +672,17 @@ export class ReconciliationController {
 				await this.journal.setCursor(state.epoch, entry.seq);
 				continue;
 			}
-			if (entry.op === "delete" && !(await this.isConfirmedTextDelete(entry))) {
-				await this.journal.recordAttention(
-					entry.path,
-					"Delete row is not a confirmed inline-text revision",
-				);
-			} else if (entry.op !== "delete" && entry.hash === "") {
+			if (entry.op === "delete") {
+				const contentKind = await this.confirmedDeleteKind(entry);
+				if (!contentKind) {
+					await this.journal.recordAttention(
+						entry.path,
+						"Delete row is not a confirmed manifest revision",
+					);
+				} else {
+					await this.applyChange(entry, contentKind);
+				}
+			} else if (entry.hash === "") {
 				await this.journal.recordAttention(
 					entry.path,
 					"Remote entry has no text content",
@@ -554,44 +697,42 @@ export class ReconciliationController {
 			await this.journal.setCursor(state.epoch, page.head_seq);
 	}
 
-	/** Confirms a delete's exact revision and text kind from the current manifest row. */
-	private async isConfirmedTextDelete(
+	/** Confirms a delete's exact revision and kind from the current manifest row. */
+	private async confirmedDeleteKind(
 		change: ReconciliationChangesPage["entries"][number],
-	): Promise<boolean> {
+	): Promise<"text" | "blob" | null> {
 		let page = await this.remote.manifest(null);
 		const epoch = this.journal.snapshot().epoch;
 		while (page.epoch === epoch) {
 			const row = page.entries.find((entry) => entry.path === change.path);
 			if (row)
-				return (
-					row.etag === change.etag &&
-					row.seq === change.seq &&
-					row.deleted &&
-					row.kind === "text"
-				);
-			if (page.next_page === null) return false;
+				return row.etag === change.etag && row.seq === change.seq && row.deleted
+					? row.kind
+					: null;
+			if (page.next_page === null) return null;
 			page = await this.remote.manifest(page.next_page);
 		}
-		return false;
+		return null;
 	}
 
-	/** Applies only admitted text work and records unsupported blobs before cursor advance. */
+	/** Applies admitted work and records unsupported rows before cursor advance. */
 	private async applyChange(
 		change: ReconciliationChangesPage["entries"][number],
+		contentKind?: "text" | "blob",
 	): Promise<void> {
 		const size = await this.localVault.size(change.path);
 		const admission = classifyEnrollmentPath(change.path, size ?? 0);
 		if (admission === "excluded") return;
-		if (admission === "blob") {
+		if (admission === "unsupported") {
 			await this.journal.skipApplyForAttention(
 				change.path,
 				change.seq,
-				"Blob synchronization is not available yet",
+				"File exceeds the supported synchronization size",
 			);
 			return;
 		}
 		try {
-			await this.applyEngine.apply(change);
+			await this.applyEngine.apply(change, contentKind);
 		} catch (error) {
 			if (!(error instanceof UnsupportedRemoteTextError)) throw error;
 			await this.journal.skipApplyForAttention(
@@ -635,6 +776,16 @@ export class ReconciliationController {
 	private assertOpen(): void {
 		if (this.closed) throw new Error("Reconciliation controller is closed");
 	}
+}
+
+/** Hashes exact binary bytes without text decoding. */
+async function hashBytes(bytes: Uint8Array): Promise<string> {
+	const digest = await crypto.subtle.digest("SHA-256", bytes.slice().buffer);
+	return DevicePayloadHashSchema.parse(
+		[...new Uint8Array(digest)]
+			.map((byte) => byte.toString(16).padStart(2, "0"))
+			.join(""),
+	);
 }
 
 /** Hashes exact UTF-8 text for equality and create-only payload verification. */

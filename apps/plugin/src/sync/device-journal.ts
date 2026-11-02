@@ -149,8 +149,11 @@ export class DeviceJournal {
 		});
 	}
 
-	/** Records one validated remote change before any filesystem effect can start. */
-	async beginApply(change: unknown): Promise<void> {
+	/** Records one validated remote change and optional manifest content kind before effects. */
+	async beginApply(
+		change: unknown,
+		contentKind?: "text" | "blob",
+	): Promise<void> {
 		const parsedChange = ChangeEntrySchema.parse(change);
 		return this.serialize(async () => {
 			this.assertOpen();
@@ -160,16 +163,27 @@ export class DeviceJournal {
 			if (current) {
 				if (JSON.stringify(current.change) !== JSON.stringify(parsedChange))
 					throw new Error("Remote apply identity changed");
+				if (contentKind && current.content_kind !== contentKind)
+					await this.commit({
+						...this.state,
+						pending_apply: [{ ...current, content_kind: contentKind }],
+					});
 				return;
 			}
 			await this.commit({
 				...this.state,
-				pending_apply: [{ change: parsedChange, step: "prepared" }],
+				pending_apply: [
+					{
+						change: parsedChange,
+						step: "prepared",
+						...(contentKind ? { content_kind: contentKind } : {}),
+					},
+				],
 			});
 		});
 	}
 
-	/** Replaces pruned revision authority while retaining durable local and verified remote copies. */
+	/** Replaces apply authority or copy plans and retains their content-kind recovery route when plans remain. */
 	async rebasePendingApply(
 		change: DeviceState["pending_apply"][number]["change"],
 		conflictCopies?: PendingConflictCopy[],
@@ -198,6 +212,9 @@ export class DeviceJournal {
 						: {
 								change: parsedChange,
 								step: "named",
+								...(current.content_kind
+									? { content_kind: current.content_kind }
+									: {}),
 								conflict_copies: conflictCopies,
 							};
 			await this.commit({ ...this.state, pending_apply: [rebased] });
@@ -693,13 +710,19 @@ export class DeviceJournal {
 					return [item];
 				if (item.path !== receiptPath || !successorBase || !this.state.epoch)
 					return [item];
-				const precondition: DevicePrecondition = {
-					kind: "match",
-					epoch: this.state.epoch,
-					rev: successorBase.rev,
-				};
+				const canRebase =
+					item.precondition.kind === "absent" ||
+					(item.precondition.epoch === this.state.epoch &&
+						item.precondition.rev < successorBase.rev);
+				const precondition = canRebase
+					? {
+							kind: "match" as const,
+							epoch: this.state.epoch,
+							rev: successorBase.rev,
+						}
+					: item.precondition;
 				if (item.op !== "delete" || item.depends_on !== key)
-					return [{ ...item, precondition }];
+					return canRebase ? [{ ...item, precondition }] : [item];
 				const { depends_on: _dependency, ...resolved } = item;
 				return [{ ...resolved, precondition }];
 			});

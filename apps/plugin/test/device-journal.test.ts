@@ -497,6 +497,89 @@ describe("DeviceJournal", () => {
 		expect(results[1]?.status).toBe("rejected");
 	});
 
+	it("never lowers a newer queued match after a late receipt", async () => {
+		const journal = await DeviceJournal.open(storage);
+		await journal.resetEpoch(precondition.epoch);
+		const create = await journal.enqueue(
+			{ op: "put", path: "notes/a.md", precondition: { kind: "absent" } },
+			bytes,
+		);
+		await journal.prepareSend(create.key, { kind: "absent" });
+		await journal.setBase("notes/a.md", {
+			deleted: false,
+			rev: 2,
+			hash: "c".repeat(64),
+		});
+		const successorPrecondition = {
+			kind: "match" as const,
+			epoch: precondition.epoch,
+			rev: 2,
+		};
+		const successor = await journal.enqueue(
+			{ op: "put", path: "notes/a.md", precondition: successorPrecondition },
+			new TextEncoder().encode("later edit"),
+		);
+
+		await journal.resolve(
+			create.key,
+			{ kind: "receipt" },
+			{
+				deleted: false,
+				rev: 1,
+				hash: "d".repeat(64),
+			},
+		);
+
+		expect(
+			journal
+				.snapshot()
+				.pending_ops.find(
+					(operation: PendingOperation) => operation.key === successor.key,
+				)?.precondition,
+		).toEqual(successorPrecondition);
+	});
+
+	it.each([
+		{
+			label: "rebases an older same-epoch match",
+			precondition: { kind: "match" as const, epoch: "a".repeat(32), rev: 1 },
+			want: { kind: "match" as const, epoch: "a".repeat(32), rev: 2 },
+		},
+		{
+			label: "keeps a match from another epoch",
+			precondition: { kind: "match" as const, epoch: "c".repeat(32), rev: 1 },
+			want: { kind: "match" as const, epoch: "c".repeat(32), rev: 1 },
+		},
+	])("$label", async ({ precondition: queuedPrecondition, want }) => {
+		const journal = await DeviceJournal.open(storage);
+		await journal.resetEpoch("a".repeat(32));
+		const sent = await journal.enqueue(
+			{ op: "put", path: "notes/a.md", precondition: { kind: "absent" } },
+			bytes,
+		);
+		await journal.prepareSend(sent.key, { kind: "absent" });
+		const queued = await journal.enqueue(
+			{ op: "put", path: "notes/a.md", precondition: queuedPrecondition },
+			bytes,
+		);
+		await journal.resolve(
+			sent.key,
+			{ kind: "receipt" },
+			{
+				deleted: false,
+				rev: 2,
+				hash: "d".repeat(64),
+			},
+		);
+		expect(
+			journal
+				.snapshot()
+				.pending_ops.find(
+					(operation: PendingOperation) => operation.key === queued.key,
+				)?.precondition,
+		).toEqual(want);
+	});
+
 	it("does not guess a queued successor precondition after resolution", async () => {
 		const journal = await DeviceJournal.open(storage);
 		const first = await journal.enqueue(

@@ -4,6 +4,7 @@ title: Measure cadence for plugin-caused vault events
 status: Deferred
 assignee: []
 created_date: '2026-11-03T00:36:00Z'
+updated_date: '2026-11-03T00:45:00Z'
 labels: []
 dependencies: []
 parent_task_id: OAB-8.7
@@ -14,7 +15,7 @@ ordinal: 55000
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-Trigger: the OAB-8.7 F4 review measurement raised uncertainty about plugin-generated vault events. The lifecycle controller updates recent activity for explicit host events. Plugin-created or modified files can produce events that echo suppression consumes before the controller sees them. Measure the effect and distinguish plugin-generated events from genuine user edits.
+Trigger: F4 measurement. Plugin-caused vault events reach the lifecycle controller, set activeSince, and can force the 15-second cadence before publication consumes echoes. Measure this effect and distinguish plugin-generated events from genuine user edits. Preserve echo suppression and durable local intent. Owner deferred this policy during OAB-8.7 branch review.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria

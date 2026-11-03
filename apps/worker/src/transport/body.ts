@@ -39,6 +39,7 @@ export async function readInlineBody(
 				throw new FileOperationDenied({ kind: "invalid_request" });
 			if (item.done) break;
 			const chunk = item.value;
+			if (chunk.byteLength === 0) continue;
 			if (size + chunk.byteLength > limit)
 				throw new FileOperationDenied({ kind: "text_too_large" });
 			// Reject an oversized borrowed backing buffer instead of retaining a small view of it.

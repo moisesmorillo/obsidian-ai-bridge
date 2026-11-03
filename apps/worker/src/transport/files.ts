@@ -150,7 +150,10 @@ export function createFileRouter(
 		}
 		if (context.req.method === "DELETE" && (!match || none))
 			return errorResponse({ kind: "invalid_request" });
-		if (context.req.method === "DELETE" && context.req.raw.body !== null)
+		if (
+			context.req.method === "DELETE" &&
+			!(await hasEmptyDeleteBody(context.req.raw))
+		)
 			return errorResponse({ kind: "invalid_request" });
 		let matchEpoch: string | undefined;
 		if (match) {
@@ -278,4 +281,13 @@ async function currentEpochMismatch(
 /** Read no more than the inline text byte ceiling, regardless of Content-Length. */
 async function readBoundedText(request: Request) {
 	return prepareTextPayload(await readInlineBody(request, MAX_TEXT_BYTES));
+}
+
+/** Accept only EOF before the first byte, mapping all body failures to invalid_request. */
+async function hasEmptyDeleteBody(request: Request): Promise<boolean> {
+	try {
+		return (await readInlineBody(request, 0)).byteLength === 0;
+	} catch {
+		return false;
+	}
 }

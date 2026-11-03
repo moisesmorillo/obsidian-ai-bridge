@@ -28,6 +28,51 @@ describe("readInlineBody", () => {
 		});
 		expect(cancelled).toBe(true);
 	});
+	it("accepts an empty view with a nonempty backing buffer", async () => {
+		const body = new ReadableStream<Uint8Array>({
+			/** Yield no bytes, although the borrowed view retains a nonempty backing buffer. */
+			start(controller) {
+				controller.enqueue(new Uint8Array(8).subarray(0, 0));
+				controller.close();
+			},
+		});
+		const request = new Request("https://body.invalid", {
+			method: "PUT",
+			body,
+		});
+		expect(request.body).not.toBeNull();
+		expect(await readInlineBody(request, 0)).toEqual(new Uint8Array());
+	});
+	it("rejects a byte after an empty view and cancels the source", async () => {
+		let stage = 0;
+		let cancelled = false;
+		const body = new ReadableStream<Uint8Array>(
+			{
+				/** Yield an empty view before the first actual body byte. */
+				pull(controller) {
+					if (stage === 0) {
+						stage++;
+						controller.enqueue(new Uint8Array(8).subarray(0, 0));
+						return;
+					}
+					controller.enqueue(new Uint8Array([1]));
+				},
+				/** Record cancellation after the bounded reader rejects the actual byte. */
+				cancel() {
+					cancelled = true;
+				},
+			},
+			{ highWaterMark: 0 },
+		);
+		const request = new Request("https://body.invalid", {
+			method: "PUT",
+			body,
+		});
+		await expect(readInlineBody(request, 0)).rejects.toMatchObject({
+			failure: { kind: "text_too_large" },
+		});
+		expect(cancelled).toBe(true);
+	});
 	it("owns one fixed backing allocation instead of a retained source-chunk list", async () => {
 		const body = new ReadableStream<Uint8Array>({
 			/** Supply distinct borrowed backing buffers that the reader must copy without retaining. */

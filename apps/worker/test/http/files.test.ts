@@ -785,13 +785,138 @@ describe("conditional text HTTP lifecycle", () => {
 		await oversized.text();
 	});
 
-	it("rejects unexpected DELETE bodies without consuming them", async () => {
-		const response = await SELF.fetch(url, {
-			method: "DELETE",
-			headers: { "If-Match": '"0123456789abcdef0123456789abcdef.1"' },
-			body: "unexpected",
+	it("accepts a non-null empty DELETE stream and writes a tombstone", async () => {
+		const created = await SELF.fetch(url, {
+			method: "PUT",
+			headers: {
+				"If-None-Match": "*",
+				"X-Vault-Epoch": TEXT_FIXTURE_EPOCH,
+			},
+			body: "delete this note",
 		});
+		const etag = created.headers.get("ETag") ?? "";
+		await created.text();
+		const stream = new ReadableStream<Uint8Array>({
+			/** Close the request stream without yielding body bytes. */
+			start(controller) {
+				controller.close();
+			},
+		});
+		const request = new Request(url, {
+			method: "DELETE",
+			headers: { "If-Match": etag },
+			body: stream,
+		});
+		expect(request.body).not.toBeNull();
+
+		const response = await testWorker.fetch(request, env);
+		expect(response.status).toBe(200);
+		expect(await response.json()).toMatchObject({
+			path: "Note.md",
+			deleted: true,
+		});
+		expect((await textMutationSnapshot()).files).toContainEqual(
+			expect.objectContaining({ path: "Note.md", rev: 2, deleted: 1 }),
+		);
+	});
+
+	it("checks a stale revision after an empty DELETE stream without mutation", async () => {
+		const created = await SELF.fetch(url, {
+			method: "PUT",
+			headers: {
+				"If-None-Match": "*",
+				"X-Vault-Epoch": TEXT_FIXTURE_EPOCH,
+			},
+			body: "initial bytes",
+		});
+		const staleEtag = created.headers.get("ETag") ?? "";
+		await created.text();
+		const updated = await SELF.fetch(url, {
+			method: "PUT",
+			headers: {
+				"If-Match": staleEtag,
+				"X-Vault-Epoch": TEXT_FIXTURE_EPOCH,
+				"Idempotency-Key": "delete-empty-stream-update",
+			},
+			body: "newer bytes",
+		});
+		await updated.text();
+		const before = await textMutationSnapshot();
+		const request = new Request(url, {
+			method: "DELETE",
+			headers: { "If-Match": staleEtag },
+			body: new ReadableStream<Uint8Array>({
+				/** Close the request stream without yielding body bytes. */
+				start(controller) {
+					controller.close();
+				},
+			}),
+		});
+		expect(request.body).not.toBeNull();
+
+		const response = await testWorker.fetch(request, env);
+		expect(response.status).toBe(412);
+		expect(await response.json()).toMatchObject({
+			error: "precondition_failed",
+		});
+		expect(await textMutationSnapshot()).toEqual(before);
+	});
+
+	it("rejects DELETE body bytes without changing file state", async () => {
+		const created = await SELF.fetch(url, {
+			method: "PUT",
+			headers: {
+				"If-None-Match": "*",
+				"X-Vault-Epoch": TEXT_FIXTURE_EPOCH,
+			},
+			body: "keep this note",
+		});
+		const etag = created.headers.get("ETag") ?? "";
+		await created.text();
+		const before = await textMutationSnapshot();
+		let cancelled = false;
+		const body = new ReadableStream<Uint8Array>(
+			{
+				/** Supply one byte so the DELETE validator must cancel further demand. */
+				pull(controller) {
+					controller.enqueue(new Uint8Array([1]));
+				},
+				/** Record that the bounded reader stopped after the first body byte. */
+				cancel() {
+					cancelled = true;
+				},
+			},
+			{ highWaterMark: 0 },
+		);
+		const request = new Request(url, {
+			method: "DELETE",
+			headers: { "If-Match": etag },
+			body,
+		});
+		expect(request.body).not.toBeNull();
+		const response = await testWorker.fetch(request, env);
 		expect(response.status).toBe(400);
+		expect(await response.json()).toMatchObject({ error: "invalid_request" });
+		expect(cancelled).toBe(true);
+		expect(await textMutationSnapshot()).toEqual(before);
+
+		const failedBody = new ReadableStream<Uint8Array>({
+			/** Fail body reads so the transport must map the stream error to invalid_request. */
+			start(controller) {
+				controller.error(new Error("request body failed"));
+			},
+		});
+		const failedRequest = new Request(url, {
+			method: "DELETE",
+			headers: { "If-Match": etag },
+			body: failedBody,
+		});
+		const failedResponse = await testWorker.fetch(failedRequest, env);
+		expect(failedResponse.status).toBe(400);
+		expect(await failedResponse.json()).toMatchObject({
+			error: "invalid_request",
+		});
+		expect(await textMutationSnapshot()).toEqual(before);
 	});
 
 	it("AC-06 server: rejects a stale DELETE after a newer live PUT", async () => {

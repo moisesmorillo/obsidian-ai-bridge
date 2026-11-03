@@ -209,15 +209,23 @@ export function submitConsentAndDispatch(
 		...collectCallbackUrls(pageUrl),
 	];
 	const unique = [...new Set(candidates)];
-	if (unique.length !== 1) throw new Error("Callback capture unavailable");
-	dispatchCapturedCallback(
-		id,
-		vaultName,
-		pageId,
-		expectedPageId,
-		unique[0],
-		options,
-	);
+	if (unique.length !== 1) {
+		cancelPendingAuthorization(id, vaultName, options);
+		throw new Error("Callback capture unavailable");
+	}
+	try {
+		dispatchCapturedCallback(
+			id,
+			vaultName,
+			pageId,
+			expectedPageId,
+			unique[0],
+			options,
+		);
+	} catch {
+		cancelPendingAuthorization(id, vaultName, options);
+		throw new Error("Device callback was not accepted");
+	}
 }
 
 /** Captures one PKCE URL, restores the browser opener, and writes only to ignored scratch. */
@@ -338,6 +346,35 @@ export function createCaseScript(
 		}
 		return "OAB8CASE:" + JSON.stringify({ caseId: ${JSON.stringify(caseId)}, status });
 	})()`;
+}
+
+/** Cancels pending consent after a failed single-submit capture or dispatch. */
+function cancelPendingAuthorization(
+	id: DesktopVaultId,
+	vaultName: string,
+	options: { executable?: string },
+): void {
+	const target = assertAuthorizedVault(id, authorizedVaults()[id]);
+	const script = `(async () => {
+		if (app.vault.adapter.getBasePath() !== ${JSON.stringify(target)}) return "OAB8CANCEL:blocked";
+		const plugin = app.plugins.plugins?.["ai-bridge"];
+		if (!plugin?.session?.cancel) return "OAB8CANCEL:failed";
+		plugin.session.cancel();
+		return plugin.session.pending ? "OAB8CANCEL:failed" : "OAB8CANCEL:passed";
+	})()`;
+	const output = invokeScopedObsidian(
+		id,
+		vaultName,
+		"eval",
+		[`code=${script}`],
+		options,
+	);
+	const marker = output.lastIndexOf("OAB8CANCEL:");
+	if (
+		marker < 0 ||
+		output.slice(marker + "OAB8CANCEL:".length).trim() !== "passed"
+	)
+		throw new Error("Could not cancel pending authorization");
 }
 
 /** Finds one page URL from tab-list JSON without exposing its callback values. */

@@ -9,6 +9,7 @@ import {
 	createInstallScript,
 	dispatchCapturedCallback,
 	hasCapturedCallback,
+	inspectAc02ServiceRevision,
 	parseInstalledPluginArtifact,
 	runHostCase,
 	runScopedObsidian,
@@ -163,6 +164,12 @@ describe("desktop acceptance safety", () => {
 			serviceRevision: null,
 			strongResponseETag: false,
 		});
+	});
+
+	it("limits AC-02 service reads to the named fixture path family", () => {
+		expect(() =>
+			inspectAc02ServiceRevision("dev-1", "unused", "oab-8.8/other.md"),
+		).toThrow("Unauthorized AC-02 service path");
 	});
 
 	it("returns installed artifact hashes after host read-back", () => {

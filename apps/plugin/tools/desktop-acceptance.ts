@@ -565,6 +565,8 @@ export function inspectAc02ServiceRevision(
 ): Ac02ServiceRevisionInspection {
 	const target = assertAuthorizedVault(id, authorizedVaults()[id]);
 	const canonicalPath = PathSchema.parse(path);
+	if (!canonicalPath.startsWith("oab-8.8/ac-02-"))
+		throw new Error("Unauthorized AC-02 service path");
 	const script = `(async () => {
 		const target = ${JSON.stringify(target)};
 		const path = ${JSON.stringify(canonicalPath)};

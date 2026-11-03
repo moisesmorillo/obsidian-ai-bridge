@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-10-28T19:31:00Z'
-updated_date: '2026-11-03T00:43:00Z'
+updated_date: '2026-11-03T00:51:00Z'
 labels: []
 dependencies:
   - OAB-8.6
@@ -54,4 +54,6 @@ Owner findings: settled status now stays pending after a cycle failure, even if 
 RED evidence: controller tests failed for missing resume intervals, invalid-path blocking, and final busy status. A fresh-start test failed with false old-epoch attention when enrollment was disabled. Projection, generic 401, focus, and disclosure tests failed before their fixes. GREEN evidence: targeted tests passed, 6 files and 79 tests. bun run docs:check passed. bun run check passed with 96 test files and 1,625 tests. Formatting, typecheck, and builds passed. Expected Worker injected-failure diagnostics remained and the check exited 0.
 
 Created Deferred task OAB-8.7.1 for the F4 event-cadence measurement. It will distinguish plugin-generated effects from genuine user edits without losing echo suppression or local intent. This cadence change is deferred and not implemented here. OAB-8.7 remains In Progress and every acceptance criterion remains unchecked.
+
+Keyboard-focus correction (2026-11-03): The reviewer found focus loss when the Pause label changes to Resume. A new test focuses Pause, renders paused status, and checks focus on Resume. The test failed before the panel change. Panel actions now use stable focus IDs for refresh restoration. Visible labels and aria-expanded behavior remain unchanged. Focused panel tests passed, 1 file and 4 tests. bun run docs:check passed. bun run check passed with 96 files and 1,626 tests. Formatting, typecheck, and builds passed. OAB-8.7 remains In Progress and acceptance checks remain unchecked. No live service or vault test ran.
 <!-- SECTION:NOTES:END -->

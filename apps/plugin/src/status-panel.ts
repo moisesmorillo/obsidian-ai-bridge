@@ -26,9 +26,10 @@ export class SyncStatusPanel {
 	/** Replaces panel content with current safe status and keyboard-operable controls. */
 	render(container: HTMLElement, status: SyncStatusProjection): void {
 		const active = document.activeElement;
-		const activeLabel =
+		const activeFocusId =
 			active?.tagName.toUpperCase() === "BUTTON" && container.contains(active)
-				? active.getAttribute("aria-label")
+				? (active.getAttribute("data-focus-id") ??
+					active.getAttribute("aria-label"))
 				: null;
 		container.replaceChildren();
 		const heading = document.createElement("h3");
@@ -66,6 +67,7 @@ export class SyncStatusPanel {
 				status.state === "paused"
 					? this.actions.resume()
 					: this.actions.pause(),
+			"pause-resume",
 		);
 		if (status.state === "revoked" || status.state === "disconnected")
 			this.addButton(container, "Reconnect", () => this.actions.reconnect());
@@ -87,9 +89,9 @@ export class SyncStatusPanel {
 				this.actions.openPath(item.path),
 			);
 		}
-		if (activeLabel) {
+		if (activeFocusId) {
 			const replacement = Array.from(container.querySelectorAll("button")).find(
-				(button) => button.getAttribute("aria-label") === activeLabel,
+				(button) => button.getAttribute("data-focus-id") === activeFocusId,
 			);
 			replacement?.focus();
 		}
@@ -105,6 +107,7 @@ export class SyncStatusPanel {
 		button.type = "button";
 		button.textContent = label;
 		button.setAttribute("aria-label", label);
+		button.setAttribute("data-focus-id", label);
 		button.setAttribute("aria-expanded", "false");
 		const list = document.createElement("ul");
 		list.hidden = true;
@@ -121,16 +124,18 @@ export class SyncStatusPanel {
 		container.append(button, list);
 	}
 
-	/** Adds an action whose visible name also supplies its accessible name. */
+	/** Adds one labelled action with stable identity across status-driven label changes. */
 	private addButton(
 		container: HTMLElement,
 		label: string,
 		action: () => void,
+		focusId = label,
 	): void {
 		const button = document.createElement("button");
 		button.type = "button";
 		button.textContent = label;
 		button.setAttribute("aria-label", label);
+		button.setAttribute("data-focus-id", focusId);
 		button.addEventListener("click", action);
 		container.append(button);
 	}

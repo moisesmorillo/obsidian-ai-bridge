@@ -134,6 +134,29 @@ describe("SyncStatusPanel", () => {
 		expect(activeElement).toBe(container.findButton("Show unsupported files"));
 	});
 
+	it("moves focus from Pause to Resume after a pause status refresh", () => {
+		vi.stubGlobal("document", documentStub);
+		const container = new FakeElement("div");
+		const panel = new SyncStatusPanel({
+			syncNow: () => undefined,
+			pause: () => undefined,
+			resume: () => undefined,
+			reconnect: () => undefined,
+			openPath: () => undefined,
+			unsupportedFiles: () => [],
+			excludedFiles: () => [],
+		});
+		panel.render(container as unknown as HTMLElement, makeStatus());
+		container.findButton("Pause")?.focus();
+
+		panel.render(container as unknown as HTMLElement, {
+			...makeStatus(),
+			state: "paused",
+		});
+
+		expect(activeElement).toBe(container.findButton("Resume"));
+	});
+
 	it("tracks disclosure state on the file-list toggle", () => {
 		vi.stubGlobal("document", documentStub);
 		const container = new FakeElement("div");

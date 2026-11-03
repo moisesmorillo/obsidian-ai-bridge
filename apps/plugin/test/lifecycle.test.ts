@@ -4,8 +4,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 interface CapturedSyncActions {
 	/** Requests one immediate synchronization cycle. */
 	syncNow(): void;
-	/** Requests full local-index reconciliation. */
-	rebuild(): void;
 }
 
 const host = vi.hoisted(() => ({
@@ -245,30 +243,22 @@ describe("AIBridgePlugin device-local lifecycle", () => {
 		close.mockRestore();
 	});
 
-	it("catches rejected Sync now and Rebuild promises at the settings boundary", async () => {
+	it("catches rejected Sync now promises at the settings boundary", async () => {
 		const plugin = new AIBridgePlugin({} as App, {} as PluginManifest);
 		await plugin.onload();
 		const failure = new Error("cycle failed");
 		const syncNow = Promise.reject<void>(failure);
-		const rebuild = Promise.reject<void>(failure);
 		const syncNowCatch = vi.spyOn(syncNow, "catch");
-		const rebuildCatch = vi.spyOn(rebuild, "catch");
 		Reflect.set(plugin, "desktopSync", {
 			/** Returns the controlled rejected cycle promise. */
 			syncNow: () => syncNow,
-			/** Returns the controlled rejected reconciliation promise. */
-			rebuild: () => rebuild,
 			/** Satisfies plugin teardown for the injected controller double. */
 			close: () => undefined,
 		});
 		host.syncActions?.syncNow();
-		host.syncActions?.rebuild();
-		await Promise.all([
-			expect(syncNow).rejects.toThrow("cycle failed"),
-			expect(rebuild).rejects.toThrow("cycle failed"),
-		]);
+		await expect(syncNow).rejects.toThrow("cycle failed");
 		expect(syncNowCatch).toHaveBeenCalledOnce();
-		expect(rebuildCatch).toHaveBeenCalledOnce();
+		expect(host.syncActions).not.toHaveProperty("rebuild");
 		plugin.onunload();
 	});
 

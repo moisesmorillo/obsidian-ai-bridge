@@ -1,5 +1,7 @@
+import { PathSchema } from "@obsidian-ai-bridge/protocol";
 import { describe, expect, it, vi } from "vitest";
 import { DesktopSyncController } from "../src/sync/desktop-sync";
+import { classifyEnrollmentPath } from "../src/sync/enrollment-scope";
 
 describe("DesktopSyncController", () => {
 	it("serializes overlapping triggers and starts one cycle immediately", async () => {
@@ -28,14 +30,11 @@ describe("DesktopSyncController", () => {
 		controller.close();
 	});
 
-	it("reports rejected cycle and rebuild work without breaking queue settlement", async () => {
+	it("reports a rejected cycle without breaking queue settlement", async () => {
 		const failure = new Error("controlled failure");
 		const onError = vi.fn();
 		const controller = new DesktopSyncController({
 			cycle: async () => {
-				throw failure;
-			},
-			rebuild: async () => {
 				throw failure;
 			},
 			onError,
@@ -48,9 +47,110 @@ describe("DesktopSyncController", () => {
 		});
 
 		await expect(controller.syncNow()).rejects.toBe(failure);
-		await expect(controller.rebuild()).rejects.toBe(failure);
 		await controller.waitForIdle();
-		expect(onError).toHaveBeenCalledTimes(2);
+		expect(onError).toHaveBeenCalledOnce();
+		controller.close();
+	});
+
+	it("restores polling after resuming an already-started empty controller", async () => {
+		const delays: number[] = [];
+		const controller = new DesktopSyncController({
+			cycle: async () => undefined,
+			host: {
+				setTimeout: () => 1,
+				clearTimeout: () => undefined,
+				setInterval: (_callback, delay) => {
+					delays.push(delay);
+					return delays.length;
+				},
+				clearInterval: () => undefined,
+			},
+		});
+
+		await controller.start();
+		controller.pause();
+		await controller.resume();
+
+		expect(delays).toHaveLength(2);
+		expect(controller.isBusy).toBe(false);
+		controller.close();
+	});
+
+	it("restores polling while it drains retained events on resume", async () => {
+		const delays: number[] = [];
+		const observed: string[] = [];
+		const controller = new DesktopSyncController({
+			cycle: async () => undefined,
+			onEvent: async (event) => {
+				observed.push(event.path);
+			},
+			host: {
+				setTimeout: () => 1,
+				clearTimeout: () => undefined,
+				setInterval: (_callback, delay) => {
+					delays.push(delay);
+					return delays.length;
+				},
+				clearInterval: () => undefined,
+			},
+		});
+
+		await controller.start();
+		controller.pause();
+		await controller.observe({ type: "modify", path: "kept.md" });
+		await controller.resume();
+
+		expect(delays).toHaveLength(2);
+		expect(observed).toEqual(["kept.md"]);
+		expect(controller.isBusy).toBe(false);
+		controller.close();
+	});
+
+	it("drops terminal invalid paths before they can block valid queued events", async () => {
+		const events: string[] = [];
+		const cycles = vi.fn(async () => undefined);
+		const controller = new DesktopSyncController({
+			cycle: cycles,
+			onEvent: async (event) => {
+				PathSchema.parse(event.path);
+				events.push(event.path);
+			},
+			host: {
+				setTimeout: () => 1,
+				clearTimeout: () => undefined,
+				setInterval: () => 2,
+				clearInterval: () => undefined,
+			},
+		});
+		const invalidPath = `folder/${"x".repeat(600)}.md`;
+		expect(classifyEnrollmentPath(invalidPath, 0)).toBe("excluded");
+
+		await controller.observe({ type: "create", path: invalidPath });
+		await controller.observe({ type: "create", path: "valid/note.md" });
+		await controller.syncNow();
+
+		expect(events).toEqual(["valid/note.md"]);
+		expect(cycles).toHaveBeenCalledOnce();
+		expect(controller.isBusy).toBe(false);
+		controller.close();
+	});
+
+	it("emits an idle status after the cycle promise settles", async () => {
+		let controller: DesktopSyncController;
+		const busySnapshots: boolean[] = [];
+		controller = new DesktopSyncController({
+			cycle: async () => undefined,
+			onStateChanged: () => busySnapshots.push(controller.isBusy),
+			host: {
+				setTimeout: () => 1,
+				clearTimeout: () => undefined,
+				setInterval: () => 2,
+				clearInterval: () => undefined,
+			},
+		});
+
+		await controller.syncNow();
+		expect(busySnapshots.at(-1)).toBe(false);
 		controller.close();
 	});
 

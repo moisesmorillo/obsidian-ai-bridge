@@ -25,7 +25,7 @@ import type { App, ObsidianProtocolData, PluginManifest } from "obsidian";
 /** Default canonical HTTPS service origin stored as a non-secret plugin setting. */
 const DEFAULT_SERVER_URL = "https://obsidian-bridge.mmorillo.dev";
 
-/** Owns device-local enrollment and journal admission without starting synchronization or note effects. */
+/** Owns device-local enrollment and starts serialized synchronization after connection restore. */
 export default class AIBridgePlugin extends Plugin {
 	/** Active journal for this plugin lifecycle, or null when unavailable. */
 	private journal: DeviceJournal | null = null;
@@ -163,11 +163,6 @@ export default class AIBridgePlugin extends Plugin {
 					resume: () => {
 						this.runSyncAction(() => this.resumeSync());
 					},
-					rebuild: () => {
-						this.runSyncAction(
-							() => this.desktopSync?.rebuild() ?? Promise.resolve(),
-						);
-					},
 					reconnect: () => {
 						void this.session?.connect().catch(() => undefined);
 					},
@@ -189,16 +184,8 @@ export default class AIBridgePlugin extends Plugin {
 	onunload(): void {
 		this.lifecycleGeneration += 1;
 		this.serverSettingsGeneration += 1;
-		this.desktopSync?.close();
-		this.vaultEvents?.dispose();
-		if (this.visibilityHandler) {
-			document.removeEventListener("visibilitychange", this.visibilityHandler);
-			window.removeEventListener("focus", this.visibilityHandler);
-			window.removeEventListener("blur", this.visibilityHandler);
-		}
-		this.composition?.dispose();
+		this.releaseSyncOwners();
 		this.desktopSync = null;
-		this.composition = null;
 		this.session?.close();
 		this.journal?.close();
 		this.session = null;
@@ -262,6 +249,8 @@ export default class AIBridgePlugin extends Plugin {
 				if (!this.vaultSummary)
 					this.vaultSummary = await composition.readVaultSummary();
 				await composition.reconciliation.resume();
+				if (this.journal?.snapshot().epoch === undefined)
+					await composition.reconciliation.enroll();
 				await composition.publication.scan();
 				await composition.publication.flush();
 				await composition.reconciliation.replay();
@@ -276,8 +265,6 @@ export default class AIBridgePlugin extends Plugin {
 		};
 		this.desktopSync = new DesktopSyncController({
 			cycle: runCycle,
-			rebuild: () =>
-				this.composition?.reconciliation.reconcile() ?? Promise.resolve(),
 			onEvent: (event) =>
 				this.composition?.publication.observe(event) ?? Promise.resolve(),
 			host: {
@@ -330,21 +317,9 @@ export default class AIBridgePlugin extends Plugin {
 
 	/** Fences and settles old lifecycle work before a server or session replacement. */
 	private async stopSync(): Promise<void> {
-		const controller = this.desktopSync;
-		controller?.close();
-		this.vaultEvents?.dispose();
-		if (this.visibilityHandler) {
-			document.removeEventListener("visibilitychange", this.visibilityHandler);
-			window.removeEventListener("focus", this.visibilityHandler);
-			window.removeEventListener("blur", this.visibilityHandler);
-		}
-		this.visibilityHandler = null;
-		this.composition?.dispose();
+		const controller = this.releaseSyncOwners();
 		await controller?.waitForIdle();
 		if (controller === this.desktopSync) this.desktopSync = null;
-		this.vaultEvents = null;
-		this.composition = null;
-		this.vaultSummary = null;
 	}
 
 	/** Waits for fenced work before constructing fresh effect owners and resuming. */
@@ -364,6 +339,16 @@ export default class AIBridgePlugin extends Plugin {
 	/** Closes effect owners immediately after a confirmed revocation, preserving journal state. */
 	private async handleRevocation(): Promise<void> {
 		this.syncRevoked = true;
+		const controller = this.releaseSyncOwners();
+		this.settingsTab?.refreshStatus();
+		await controller?.waitForIdle();
+		if (controller === this.desktopSync) this.desktopSync = null;
+		if (!this.syncRevoked && this.sessionStatus === "connected")
+			this.startSync();
+	}
+
+	/** Closes timer, event, and application owners before any session replacement. */
+	private releaseSyncOwners(): DesktopSyncController | null {
 		const controller = this.desktopSync;
 		controller?.close();
 		this.vaultEvents?.dispose();
@@ -376,11 +361,8 @@ export default class AIBridgePlugin extends Plugin {
 		this.composition?.dispose();
 		this.vaultEvents = null;
 		this.composition = null;
-		this.settingsTab?.refreshStatus();
-		await controller?.waitForIdle();
-		if (controller === this.desktopSync) this.desktopSync = null;
-		if (!this.syncRevoked && this.sessionStatus === "connected")
-			this.startSync();
+		this.vaultSummary = null;
+		return controller;
 	}
 
 	/** Projects only verified journal data and validated feed observations. */

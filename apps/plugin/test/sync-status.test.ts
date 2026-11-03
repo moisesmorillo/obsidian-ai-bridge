@@ -38,6 +38,22 @@ describe("projectSyncStatus", () => {
 		).toBe("pending");
 	});
 
+	it("does not call a previously confirmed head settled after a failed poll", () => {
+		const input = {
+			state,
+			session: "connected" as const,
+			head: { epoch: "epoch", head_seq: 4 },
+			persisted: true,
+			active: false,
+			failure: "The latest poll failed",
+			paused: false,
+			revoked: false,
+		};
+
+		expect(projectSyncStatus(input).state).not.toBe("settled");
+		expect(projectSyncStatus(input).failure).toBe("The latest poll failed");
+	});
+
 	it("prioritizes safe attention and persistence failure states", () => {
 		const input = {
 			state,

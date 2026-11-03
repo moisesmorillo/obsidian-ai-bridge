@@ -1,4 +1,14 @@
+import { classifyEnrollmentPath } from "@plugin/sync/enrollment-scope";
 import type { PublicationEvent } from "@plugin/sync/publication";
+
+/** Excludes canonical path failures before they enter the retry queue. */
+function isTerminallyExcluded(event: PublicationEvent): boolean {
+	return (
+		classifyEnrollmentPath(event.path, 0) === "excluded" ||
+		(event.type === "rename" &&
+			classifyEnrollmentPath(event.to, 0) === "excluded")
+	);
+}
 
 /** Host-owned timer functions used to test scheduling without platform globals. */
 export interface DesktopSyncHost {
@@ -20,8 +30,6 @@ export interface DesktopSyncHost {
 export interface DesktopSyncOptions {
 	/** Runs shared recovery, scan, publication, and feed effects as one cycle. */
 	cycle(): Promise<void>;
-	/** Runs complete manifest reconciliation for the explicit rebuild command. */
-	rebuild?(): Promise<void>;
 	/** Admits explicit local event intent before the next full sync cycle. */
 	onEvent?(event: PublicationEvent): Promise<void>;
 	/** Owns platform timer and foreground-state capabilities. */
@@ -58,7 +66,7 @@ export class DesktopSyncController {
 	/** Binds effects to one host lifecycle; closing fences later work but cannot cancel started effects. */
 	constructor(private readonly options: DesktopSyncOptions) {}
 
-	/** Starts immediate recovery and installs host polling exactly once. */
+	/** Installs polling on first start and requests immediate recovery. */
 	start(): Promise<void> {
 		if (this.closed) return Promise.resolve();
 		if (!this.started) {
@@ -83,24 +91,22 @@ export class DesktopSyncController {
 		});
 		this.workActive = true;
 		this.options.onStateChanged?.();
-		const shared = run.finally(() => {
+		let shared: Promise<void>;
+		shared = run.finally(() => {
 			this.workActive = false;
+			if (this.cyclePromise === shared) this.cyclePromise = null;
 			this.options.onStateChanged?.();
 		});
 		this.cyclePromise = shared;
-		this.tail = shared
-			.catch((error: unknown) => {
-				this.options.onError?.(error);
-			})
-			.finally(() => {
-				if (this.cyclePromise === shared) this.cyclePromise = null;
-			});
+		this.tail = shared.catch((error: unknown) => {
+			this.options.onError?.(error);
+		});
 		return shared;
 	}
 
 	/** Saves local event intent in order without running network or apply effects while paused. */
 	observe(event: PublicationEvent): Promise<void> {
-		if (this.closed) return Promise.resolve();
+		if (this.closed || isTerminallyExcluded(event)) return Promise.resolve();
 		this.activeSince = Date.now();
 		if (this.paused) {
 			this.events.push(event);
@@ -129,15 +135,17 @@ export class DesktopSyncController {
 		this.options.onStateChanged?.();
 	}
 
-	/** Waits for old serialized work, then replays saved intent before immediate recovery. */
+	/** Restores polling after old work settles, then replays queued intent or recovery. */
 	async resume(): Promise<void> {
 		if (this.closed) return;
 		this.paused = false;
 		this.options.onStateChanged?.();
 		await this.tail;
+		this.started = true;
+		this.schedulePolling();
 		const hasEvents = this.events.length > 0;
 		await this.drainEvents();
-		if (!hasEvents) await this.start();
+		if (!hasEvents) await this.syncNow();
 	}
 
 	/** Reschedules the host budget and triggers immediate recovery when the window becomes visible. */
@@ -152,24 +160,6 @@ export class DesktopSyncController {
 	/** Waits until all work admitted before the call settles after close fences new work. */
 	async waitForIdle(): Promise<void> {
 		await this.tail;
-	}
-
-	/** Rebuilds through the caller's full reconciliation cycle. */
-	rebuild(): Promise<void> {
-		if (this.closed || this.paused) return Promise.resolve();
-		const run = this.tail.then(async () => {
-			if (this.closed || this.paused) return;
-			this.workActive = true;
-			this.options.onStateChanged?.();
-			try {
-				await (this.options.rebuild ?? this.options.cycle)();
-			} finally {
-				this.workActive = false;
-				this.options.onStateChanged?.();
-			}
-		});
-		this.tail = run.catch((error: unknown) => this.options.onError?.(error));
-		return run;
 	}
 
 	/** Closes timer ownership immediately and lets already-started work settle. */

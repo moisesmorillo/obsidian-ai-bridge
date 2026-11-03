@@ -8,8 +8,6 @@ export interface SyncStatusActions {
 	pause(): void;
 	/** Waits for prior work and resumes queued event intent and recovery. */
 	resume(): void;
-	/** Runs full manifest reconciliation without inferring deletes from absence. */
-	rebuild(): void;
 	/** Starts browser authorization for a revoked or disconnected device. */
 	reconnect(): void;
 	/** Opens a local path without changing its synchronization authority. */
@@ -27,6 +25,11 @@ export class SyncStatusPanel {
 
 	/** Replaces panel content with current safe status and keyboard-operable controls. */
 	render(container: HTMLElement, status: SyncStatusProjection): void {
+		const active = document.activeElement;
+		const activeLabel =
+			active?.tagName.toUpperCase() === "BUTTON" && container.contains(active)
+				? active.getAttribute("aria-label")
+				: null;
 		container.replaceChildren();
 		const heading = document.createElement("h3");
 		heading.textContent = `Sync status: ${status.state}`;
@@ -64,9 +67,6 @@ export class SyncStatusPanel {
 					? this.actions.resume()
 					: this.actions.pause(),
 		);
-		this.addButton(container, "Rebuild local index", () =>
-			this.actions.rebuild(),
-		);
 		if (status.state === "revoked" || status.state === "disconnected")
 			this.addButton(container, "Reconnect", () => this.actions.reconnect());
 		this.addFileList(container, "Show unsupported files", () =>
@@ -87,6 +87,12 @@ export class SyncStatusPanel {
 				this.actions.openPath(item.path),
 			);
 		}
+		if (activeLabel) {
+			const replacement = Array.from(container.querySelectorAll("button")).find(
+				(button) => button.getAttribute("aria-label") === activeLabel,
+			);
+			replacement?.focus();
+		}
 	}
 
 	/** Shows one requested file category as plain text without treating files as sync authority. */
@@ -99,6 +105,7 @@ export class SyncStatusPanel {
 		button.type = "button";
 		button.textContent = label;
 		button.setAttribute("aria-label", label);
+		button.setAttribute("aria-expanded", "false");
 		const list = document.createElement("ul");
 		list.hidden = true;
 		button.addEventListener("click", () => {
@@ -109,6 +116,7 @@ export class SyncStatusPanel {
 				list.append(item);
 			}
 			list.hidden = !list.hidden;
+			button.setAttribute("aria-expanded", String(!list.hidden));
 		});
 		container.append(button, list);
 	}

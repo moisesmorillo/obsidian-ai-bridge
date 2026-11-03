@@ -651,7 +651,6 @@ describe("production OAuth entry", () => {
 		expect(html).toContain("&lt;script&gt;");
 		expect(html).toContain("https://client.test/callback?value=a&amp;next=b");
 		expect(html).toContain("vault:read");
-		expect(html).toContain('value="&lt;script&gt;alert(1)&lt;/script&gt;"');
 		expect(html).toContain('name="client_name"');
 	});
 

@@ -1,11 +1,11 @@
 ---
 id: OAB-8.7
 title: Expose sync status and control one serialized desktop loop
-status: In Progress
+status: Done
 assignee:
   - '@pi'
 created_date: '2026-10-28T19:31:00Z'
-updated_date: '2026-11-03T00:53:00Z'
+updated_date: '2026-11-03T00:56:00Z'
 labels: []
 dependencies:
   - OAB-8.6
@@ -24,16 +24,16 @@ Make the complete synchronizer usable from Obsidian without falsely claiming set
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 One serialized loop uses 15, 60, and 300 second polling, two-second event debounce, immediate load/resume/Sync now, and at most four network requests.
-- [ ] #2 Status panel shows section 7.9 states and per-path reasons with labelled keyboard controls. Settled needs empty queues, confirmed cursor/head equality, and persisted state.
-- [ ] #3 AC-08 device tests show revoked, stop publishing and applying, preserve files and queued work, and offer Reconnect. Pause preserves queues and stops effects.
-- [ ] #4 Panel reports unsupported files, storage failures, operation failures, and server backup/capacity state without treating absent telemetry as success. Unload releases host resources.
+- [x] #1 One serialized loop uses 15, 60, and 300 second polling, two-second event debounce, immediate load/resume/Sync now, and at most four network requests.
+- [x] #2 Status panel shows section 7.9 states and per-path reasons with labelled keyboard controls. Settled needs empty queues, confirmed cursor/head equality, and persisted state.
+- [x] #3 AC-08 device tests show revoked, stop publishing and applying, preserve files and queued work, and offer Reconnect. Pause preserves queues and stops effects.
+- [x] #4 Panel reports unsupported files, storage failures, operation failures, and server backup/capacity state without treating absent telemetry as success. Unload releases host resources.
 <!-- AC:END -->
 
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-Approved plan: .pi/plans/oab-8.7-desktop-loop.md. One worker implements the serialized lifecycle controller and truthful status panel. Preserve shared effect owners and exact revision authority. Run RED/GREEN tests, docs:check, and bun run check. Independent task review, whole-branch review, and owner branch review precede publication.
+Delivered one serialized desktop lifecycle controller around shared publication and reconciliation. Added truthful status, accessible controls, safe revocation, and lifecycle cleanup. Removed Rebuild under owner approval because same-epoch reconciliation does not meet its contract. OAB-34 defers backup telemetry until F3b export delivery. OAB-8.7.1 defers plugin-event cadence policy until F4 measurement. Worker completed tests and full checks. Independent task, whole-branch, corrective, and owner reviews completed.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -58,4 +58,12 @@ Created Deferred task OAB-8.7.1 for the F4 event-cadence measurement. It will di
 Keyboard-focus correction (2026-11-03): The reviewer found focus loss when the Pause label changes to Resume. A new test focuses Pause, renders paused status, and checks focus on Resume. The test failed before the panel change. Panel actions now use stable focus IDs for refresh restoration. Visible labels and aria-expanded behavior remain unchanged. Focused panel tests passed, 1 file and 4 tests. bun run docs:check passed. bun run check passed with 96 files and 1,626 tests. Formatting, typecheck, and builds passed. OAB-8.7 remains In Progress and acceptance checks remain unchecked. No live service or vault test ran.
 
 Review closure at source 999ddb7027eb4aa539139bb8e549cb66f61b5a60: task review and bounded corrective reviews close all findings from the whole-branch review and owner feedback. F1 restores polls after pause. F2 enrolls before publication. F3 excludes invalid paths before retry admission. F4 clears busy ownership before final refresh. F5 removes Rebuild under owner approval. Failure blocks stale-head settled status. Stable action identities preserve Pause-to-Resume focus. DOM tests cover focus and aria-expanded. Generic 401 does not claim revoked. Shared releaseSyncOwners owns teardown. Class and status TSDoc now match effects and evidence. Structural audit covers desktop lifecycle, main host wiring, shared composition, pure status policy, and panel rendering. No competing mutation or protocol owner exists. Full worker check passes 96 files and 1626 tests. Reviewers inspect worker evidence without rerunning checks. Real-host, two-vault, and deployed-service proof remain in OAB-8.8. OAB-34 backup telemetry and OAB-8.7.1 F4 cadence measurement remain Deferred. Original behavioral RED exception remains recorded. Owner branch diff review remains pending.
+
+Final acceptance: Owner approved branch review pn-d64017 with no changes. Reviewed implementation source is 999ddb7027eb4aa539139bb8e549cb66f61b5a60. Later commits change Backlog metadata only. Criterion 1 uses controller interval, debounce, immediate-trigger, serialized request, and resume tests. Criterion 2 uses pure status settlement and failure tests plus DOM focus, labels, and disclosure tests. Criterion 3 uses real composition tests for publication and feed revocation, retained payloads, delayed effects, pause, unload, and session replacement. Criterion 4 uses scope lists, storage and operation failure projections, validated capacity, explicit unknown backup telemetry, and host cleanup tests. Owner accepts the two named deferrals. Full worker check passed 96 files and 1626 tests, exit 0. Independent reviewers closed every actionable finding. No live service, test-vault, personal-vault, or Cloudflare action ran. The original missing behavioral RED exception remains in these notes. OAB-8.8 owns real-host proof. OAB-8 remains In Progress.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Connected the existing desktop synchronization services through one serialized lifecycle loop. Added truthful status, safe pause and revocation, labelled controls, accessible refresh, and cleanup. Regression tests cover enrollment ordering, resumed polling, invalid events, delayed effects, stale heads, and focus transitions. Worker check passed 1626 tests. Independent reviews and owner branch review approved the source. Rebuild is absent under owner approval. OAB-34 and OAB-8.7.1 remain Deferred. Live proof stays in OAB-8.8.
+<!-- SECTION:FINAL_SUMMARY:END -->

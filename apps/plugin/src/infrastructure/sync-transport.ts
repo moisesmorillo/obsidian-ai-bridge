@@ -62,6 +62,7 @@ export class SyncTransport {
 	constructor(
 		serviceOrigin: string,
 		private readonly session: SyncResponseSession,
+		private readonly onRevoked?: () => void,
 	) {
 		const url = new URL(serviceOrigin);
 		if (url.protocol !== "https:" || url.origin !== serviceOrigin)
@@ -694,6 +695,7 @@ export class SyncTransport {
 			} catch {
 				code = null;
 			}
+			if (response.status === 401 && code === "revoked") this.onRevoked?.();
 			throw new SyncTransportError(
 				response.status,
 				code,

@@ -78,6 +78,12 @@ export interface ReconciliationRemote {
 export class ReconciliationController {
 	private tail: Promise<void> = Promise.resolve();
 	private closed = false;
+	private lastHeadValue: { epoch: string; head_seq: number } | null = null;
+
+	/** Latest validated feed head. Null means no successful feed response exists. */
+	get lastHead(): { epoch: string; head_seq: number } | null {
+		return this.lastHeadValue ? { ...this.lastHeadValue } : null;
+	}
 
 	/** Binds one verified journal, guarded text engine, local vault, and remote adapter. */
 	constructor(
@@ -664,6 +670,7 @@ export class ReconciliationController {
 		await this.resumeApply();
 		const page = await this.remote.changes(state.epoch, state.cursor);
 		this.assertOpen();
+		this.lastHeadValue = { epoch: page.epoch, head_seq: page.head_seq };
 		if (page.epoch !== state.epoch) return this.runReconciliation();
 		for (const entry of page.entries) {
 			this.assertOpen();

@@ -1,6 +1,7 @@
 import { DevicePayloadHashSchema, pathKey } from "@obsidian-ai-bridge/protocol";
+import { TFile } from "@plugin/obsidian-api";
 import type { TextVault } from "@plugin/sync/text-apply";
-import { TFile, type Vault } from "obsidian";
+import type { Vault } from "obsidian";
 
 /** Confines hidden recovery bytes to one hash-addressed directory outside the Vault index. */
 const RECOVERY_DIRECTORY = ".ai-bridge/pre-apply";

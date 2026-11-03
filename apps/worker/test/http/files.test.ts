@@ -318,6 +318,7 @@ describe("conditional text HTTP lifecycle", () => {
 			body: "first text",
 		});
 		expect(created.status).toBe(201);
+		expect(created.headers.get("Cache-Control")).toBe("no-transform");
 		const firstEtag = created.headers.get("ETag");
 		await created.text();
 		expect(firstEtag).toBe('"0123456789abcdef0123456789abcdef.1"');
@@ -325,6 +326,7 @@ describe("conditional text HTTP lifecycle", () => {
 			headers: { "X-Vault-Epoch": "0123456789abcdef0123456789abcdef" },
 		});
 		expect(first.status).toBe(200);
+		expect(first.headers.get("Cache-Control")).toBe("no-transform");
 		expect(TextReadResponseSchema.parse(await first.json()).content).toBe(
 			"first text",
 		);
@@ -338,12 +340,14 @@ describe("conditional text HTTP lifecycle", () => {
 			body: "second text",
 		});
 		expect(updated.status).toBe(200);
+		expect(updated.headers.get("Cache-Control")).toBe("no-transform");
 		const secondEtag = updated.headers.get("ETag");
 		await updated.text();
 		const history = await SELF.fetch(`${url}?rev=1`, {
 			headers: { "X-Vault-Epoch": "0123456789abcdef0123456789abcdef" },
 		});
 		expect(history.status).toBe(200);
+		expect(history.headers.get("Cache-Control")).toBe("no-transform");
 		expect(TextReadResponseSchema.parse(await history.json()).content).toBe(
 			"first text",
 		);

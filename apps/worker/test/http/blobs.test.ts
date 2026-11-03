@@ -59,6 +59,7 @@ describe("declared blob HTTP", () => {
 			expect(put.status).toBe(201);
 			const get = await SELF.fetch(url);
 			expect(get.status).toBe(200);
+			expect(get.headers.get("Cache-Control")).toBe("no-transform");
 			expect(get.headers.get("ETag")).toBe(put.headers.get("ETag"));
 			expect(get.headers.get("Content-Length")).toBe(String(size));
 			expect(get.headers.get("Accept-Ranges")).toBe("bytes");
@@ -171,6 +172,7 @@ describe("declared blob HTTP", () => {
 		] as const) {
 			const get = await SELF.fetch(url, { headers: { Range: range } });
 			expect(get.status).toBe(status);
+			expect(get.headers.get("Cache-Control")).toBe("no-transform");
 			expect(get.headers.get("Content-Range")).toBe(selected);
 			expect(get.headers.get("ETag")).toBe(put.headers.get("ETag"));
 			if (status === 206) {
@@ -199,6 +201,7 @@ describe("declared blob HTTP", () => {
 			headers: { "X-Vault-Epoch": TEXT_FIXTURE_EPOCH, Range: "bytes=0-4" },
 		});
 		expect(retained.status).toBe(206);
+		expect(retained.headers.get("Cache-Control")).toBe("no-transform");
 		expect(new Uint8Array(await retained.arrayBuffer())).toEqual(
 			bytes.subarray(0, 5),
 		);

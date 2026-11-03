@@ -100,6 +100,7 @@ export async function readContentResponse(
 			{
 				headers: {
 					ETag: selected.body.etag,
+					"Cache-Control": "no-transform",
 					"Content-Type": "application/json; charset=UTF-8",
 				},
 			},

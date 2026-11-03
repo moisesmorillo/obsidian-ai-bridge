@@ -222,6 +222,7 @@ export function createFileRouter(
 			if (!result.ok) return errorResponse(result.failure);
 			return context.json(result.response.body, result.response.status, {
 				ETag: result.response.body.etag,
+				"Cache-Control": "no-transform",
 			});
 		};
 		return context.req.method === "PUT"

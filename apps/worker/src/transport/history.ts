@@ -88,7 +88,10 @@ export async function handleHistoryCommand(
 		if (!result.ok) return errorResponse(result.failure);
 		return Response.json(result.response.body, {
 			status: result.response.status,
-			headers: { ETag: result.response.body.etag },
+			headers: {
+				ETag: result.response.body.etag,
+				"Cache-Control": "no-transform",
+			},
 		});
 	});
 }

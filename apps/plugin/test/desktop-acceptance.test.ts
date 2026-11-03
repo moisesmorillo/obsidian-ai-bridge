@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { formatETag } from "@obsidian-ai-bridge/protocol";
 import { describe, expect, it } from "vitest";
 import {
 	assertAuthorizedVault,
@@ -11,6 +12,7 @@ import {
 	parseInstalledPluginArtifact,
 	runHostCase,
 	runScopedObsidian,
+	safeAc02ServiceRevision,
 	safeAc04BaselineInspection,
 	safeAc20Inspection,
 	safeCaseResult,
@@ -113,6 +115,54 @@ describe("desktop acceptance safety", () => {
 		expect(script).toContain("app.plugins.manifests[id] = manifest");
 		expect(script).toContain("await app.plugins.loadPlugin(id)");
 		expect(script).toContain('app.plugins.manifests[id]?.version !== "0.1.0"');
+	});
+
+	it("requires a canonical strong ETag for successful service revision evidence", () => {
+		const strongETag = formatETag("a".repeat(32), 8);
+		const valid = safeAc02ServiceRevision({
+			statusClass: "2xx",
+			pathMatches: true,
+			etag: strongETag,
+		});
+		expect(valid).toEqual({
+			statusClass: "2xx",
+			pathMatches: true,
+			serviceRevision: 8,
+			strongResponseETag: true,
+		});
+		expect(JSON.stringify(valid)).not.toContain(strongETag);
+		for (const etag of [
+			undefined,
+			null,
+			`W/${strongETag}`,
+			strongETag.replace(".8", ".0"),
+		])
+			expect(() =>
+				safeAc02ServiceRevision({
+					statusClass: "2xx",
+					pathMatches: true,
+					etag,
+				}),
+			).toThrow("Invalid AC-02 service revision evidence");
+		expect(() =>
+			safeAc02ServiceRevision({
+				statusClass: "2xx",
+				pathMatches: false,
+				etag: strongETag,
+			}),
+		).toThrow("Invalid AC-02 service revision evidence");
+		expect(
+			safeAc02ServiceRevision({
+				statusClass: "4xx",
+				pathMatches: false,
+				etag: null,
+			}),
+		).toEqual({
+			statusClass: "4xx",
+			pathMatches: false,
+			serviceRevision: null,
+			strongResponseETag: false,
+		});
 	});
 
 	it("returns installed artifact hashes after host read-back", () => {

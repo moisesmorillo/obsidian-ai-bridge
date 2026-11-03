@@ -4,7 +4,11 @@ import { readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { FileHttpErrorSchema } from "@obsidian-ai-bridge/protocol";
+import {
+	FileHttpErrorSchema,
+	PathSchema,
+	parseETag,
+} from "@obsidian-ai-bridge/protocol";
 import {
 	DEVICE_JOURNAL_FAILURE_STAGES,
 	type DeviceJournalFailureStage,
@@ -491,7 +495,7 @@ export function safeAc04BaselineInspection(
 	const deleted = Reflect.get(value, "deleted");
 	const strongResponseETag = Reflect.get(value, "strongResponseETag");
 	if (
-		!["1xx", "2xx", "3xx", "4xx", "5xx", "other"].includes(statusClass) ||
+		!isHttpStatusClass(statusClass) ||
 		typeof pathMatches !== "boolean" ||
 		(baselineRevisionChanged !== null &&
 			typeof baselineRevisionChanged !== "boolean") ||
@@ -506,6 +510,124 @@ export function safeAc04BaselineInspection(
 		deleted,
 		strongResponseETag,
 	};
+}
+
+/** Describes one safe current-file revision result without returning its ETag. */
+export interface Ac02ServiceRevisionInspection {
+	/** HTTP status class without the exact response number. */
+	statusClass: Ac04BaselineInspection["statusClass"];
+	/** True only when the response body identifies the requested path. */
+	pathMatches: boolean;
+	/** Revision parsed from a canonical strong ETag, or null without authority. */
+	serviceRevision: number | null;
+	/** True only when the success response contains a canonical strong ETag. */
+	strongResponseETag: boolean;
+}
+
+/** Validates a safe AC-02 service read and parses its strong ETag revision. */
+export function safeAc02ServiceRevision(
+	value: unknown,
+): Ac02ServiceRevisionInspection {
+	if (!value || typeof value !== "object")
+		throw new Error("Invalid AC-02 service revision evidence");
+	const statusClass = Reflect.get(value, "statusClass");
+	const pathMatches = Reflect.get(value, "pathMatches");
+	const etag = Reflect.get(value, "etag");
+	if (!isHttpStatusClass(statusClass) || typeof pathMatches !== "boolean")
+		throw new Error("Invalid AC-02 service revision evidence");
+	if (statusClass !== "2xx")
+		return {
+			statusClass,
+			pathMatches,
+			serviceRevision: null,
+			strongResponseETag: false,
+		};
+	if (!pathMatches || typeof etag !== "string")
+		throw new Error("Invalid AC-02 service revision evidence");
+	try {
+		return {
+			statusClass,
+			pathMatches,
+			serviceRevision: parseETag(etag).rev,
+			strongResponseETag: true,
+		};
+	} catch {
+		throw new Error("Invalid AC-02 service revision evidence");
+	}
+}
+
+/** Reads one service ETag through the exact authorized vault and returns only its revision. */
+export function inspectAc02ServiceRevision(
+	id: DesktopVaultId,
+	vaultName: string,
+	path: string,
+	options: { executable?: string } = {},
+): Ac02ServiceRevisionInspection {
+	const target = assertAuthorizedVault(id, authorizedVaults()[id]);
+	const canonicalPath = PathSchema.parse(path);
+	const script = `(async () => {
+		const target = ${JSON.stringify(target)};
+		const path = ${JSON.stringify(canonicalPath)};
+		if (app.vault.adapter.getBasePath() !== target) throw Error("Vault path mismatch");
+		const plugin = app.plugins.plugins?.["ai-bridge"];
+		if (!plugin?.session?.requestResponse) throw Error("Plugin session unavailable");
+		let statusClass = "other";
+		try {
+			const response = await plugin.session.requestResponse("/v1/files/" + path.split("/").map(encodeURIComponent).join("/"), { method: "GET" });
+			statusClass = response.status >= 100 && response.status < 600 ? Math.floor(response.status / 100) + "xx" : "other";
+			const etag = typeof response.headers.etag === "string" ? response.headers.etag : null;
+			let pathMatches = false;
+			if (response.status >= 200 && response.status < 300) {
+				try {
+					const body = JSON.parse(response.text);
+					pathMatches =
+						body?.path === path &&
+						body?.etag === etag &&
+						typeof body.deleted === "boolean";
+				} catch {}
+			}
+			return "OAB8AC02REVISION:" + JSON.stringify({ statusClass, pathMatches, etag });
+		} catch {
+			return "OAB8AC02REVISION:" + JSON.stringify({ statusClass, pathMatches: false, etag: null });
+		}
+	})()`;
+	const output = invokeScopedObsidian(
+		id,
+		vaultName,
+		"eval",
+		[`code=${script}`],
+		options,
+	);
+	const marker = "OAB8AC02REVISION:";
+	const markerIndex = output.lastIndexOf(marker);
+	if (markerIndex < 0)
+		throw new Error("AC-02 service revision result was unavailable");
+	let evidence: unknown;
+	try {
+		evidence = JSON.parse(
+			output
+				.slice(markerIndex + marker.length)
+				.trim()
+				.replace(/^['"]|['"]$/g, ""),
+		);
+	} catch {
+		throw new Error("AC-02 service revision result was invalid");
+	}
+	return safeAc02ServiceRevision(evidence);
+}
+
+/** Accepts only the closed HTTP status classes used by safe service evidence. */
+function isHttpStatusClass(
+	value: unknown,
+): value is Ac04BaselineInspection["statusClass"] {
+	return (
+		value === "1xx" ||
+		value === "2xx" ||
+		value === "3xx" ||
+		value === "4xx" ||
+		value === "5xx" ||
+		value === "other"
+	);
 }
 
 /** Creates an exact-vault script for one read-only GET of the fixed AC-04 path. */

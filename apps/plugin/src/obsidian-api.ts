@@ -9,4 +9,5 @@ export {
 	PluginSettingTab,
 	requestUrl,
 	Setting,
+	TFile,
 } from "obsidian";

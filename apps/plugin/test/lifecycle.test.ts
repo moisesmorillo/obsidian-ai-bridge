@@ -1,5 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+/** Sync commands captured from the plugin settings composition. */
+interface CapturedSyncActions {
+	/** Requests one immediate synchronization cycle. */
+	syncNow(): void;
+}
+
 const host = vi.hoisted(() => ({
 	calls: [] as string[],
 	protocolAction: "",
@@ -8,6 +14,7 @@ const host = vi.hoisted(() => ({
 		| null,
 	settingsTab: null as unknown,
 	serverUrlChange: null as ((url: string) => Promise<void>) | null,
+	syncActions: null as CapturedSyncActions | null,
 	saveDataAction: null as ((data: unknown) => Promise<void>) | null,
 	state: null as unknown,
 	failSave: false,
@@ -73,6 +80,7 @@ vi.mock("../src/settings", () => ({
 		/** Captures constructor policy so lifecycle tests can invoke server updates. */
 		constructor(...args: unknown[]) {
 			host.serverUrlChange = args[5] as (url: string) => Promise<void>;
+			host.syncActions = args[8] as CapturedSyncActions;
 		}
 
 		/** Satisfies the composition status-refresh call. */
@@ -92,6 +100,7 @@ describe("AIBridgePlugin device-local lifecycle", () => {
 		host.protocolHandler = null;
 		host.settingsTab = null;
 		host.serverUrlChange = null;
+		host.syncActions = null;
 		host.saveDataAction = null;
 		host.state = null;
 		host.failSave = false;
@@ -232,6 +241,25 @@ describe("AIBridgePlugin device-local lifecycle", () => {
 		expect(close).toHaveBeenCalledTimes(2);
 		plugin.onunload();
 		close.mockRestore();
+	});
+
+	it("catches rejected Sync now promises at the settings boundary", async () => {
+		const plugin = new AIBridgePlugin({} as App, {} as PluginManifest);
+		await plugin.onload();
+		const failure = new Error("cycle failed");
+		const syncNow = Promise.reject<void>(failure);
+		const syncNowCatch = vi.spyOn(syncNow, "catch");
+		Reflect.set(plugin, "desktopSync", {
+			/** Returns the controlled rejected cycle promise. */
+			syncNow: () => syncNow,
+			/** Satisfies plugin teardown for the injected controller double. */
+			close: () => undefined,
+		});
+		host.syncActions?.syncNow();
+		await expect(syncNow).rejects.toThrow("cycle failed");
+		expect(syncNowCatch).toHaveBeenCalledOnce();
+		expect(host.syncActions).not.toHaveProperty("rebuild");
+		plugin.onunload();
 	});
 
 	it("records journal initialization failure as attention without erasing state", async () => {

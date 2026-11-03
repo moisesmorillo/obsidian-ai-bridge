@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { SyncTransport } from "../src/infrastructure/sync-transport";
 import { UnsupportedRemoteTextError } from "../src/sync/remote-text";
 
@@ -609,5 +609,38 @@ describe("SyncTransport", () => {
 			"x-content-sha256": hash,
 			"x-content-size": "3",
 		});
+	});
+
+	it("notifies lifecycle owners only for a validated revoked response", async () => {
+		const session = new ResponseSession();
+		const revoked = vi.fn();
+		const transport = new SyncTransport(
+			"https://service.test",
+			session,
+			revoked,
+		);
+		session.responses.push({
+			status: 401,
+			headers: {},
+			text: JSON.stringify({
+				error: "revoked",
+				message: "The grant no longer allows access.",
+			}),
+		});
+		await expect(transport.vault()).rejects.toMatchObject({
+			status: 401,
+			code: "revoked",
+		});
+		expect(revoked).toHaveBeenCalledOnce();
+		session.responses.push({
+			status: 401,
+			headers: {},
+			text: JSON.stringify({
+				error: "invalid_token",
+				message: "Expired token",
+			}),
+		});
+		await expect(transport.vault()).rejects.toMatchObject({ status: 401 });
+		expect(revoked).toHaveBeenCalledOnce();
 	});
 });

@@ -1822,6 +1822,28 @@ describe("PublicationController", () => {
 		controller.close();
 	});
 
+	it("does not report a generic 401 as device revocation", async () => {
+		const { controller, journal, remote, vault } = await openController();
+		vault.files.set("private.md", "local text");
+		await controller.scan();
+		remote.failure = new SyncTransportError(401, "unauthorized");
+
+		await controller.flush();
+
+		expect(
+			journal
+				.snapshot()
+				.attention.some(
+					(item: { reason: string }) =>
+						item.reason === "Device authorization was revoked",
+				),
+		).toBe(false);
+		expect(journal.snapshot().attention).toContainEqual(
+			expect.objectContaining({ path: "private.md", reason: "unauthorized" }),
+		);
+		controller.close();
+	});
+
 	it("retains rejected payload evidence after a text size refusal", async () => {
 		const { controller, journal, remote, storage, vault } =
 			await openController();

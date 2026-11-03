@@ -1,10 +1,13 @@
-import type {
-	PublicationController,
-	PublicationEvent,
-} from "@plugin/sync/publication";
+import type { PublicationEvent } from "@plugin/sync/publication";
 import type { EventRef, Vault } from "obsidian";
 
-/** Routes explicit Obsidian file events into one publication admission queue. */
+/** Host event boundary that routes local intent to the single lifecycle owner. */
+export interface VaultEventObserver {
+	/** Admits one ordered explicit vault event through the current synchronization lifecycle. */
+	observe(event: PublicationEvent): Promise<void>;
+}
+
+/** Routes explicit Obsidian file events into one lifecycle admission queue. */
 export class VaultEventAdapter {
 	private readonly references: EventRef[] = [];
 	private closed = false;
@@ -12,7 +15,7 @@ export class VaultEventAdapter {
 	/** Registers live file callbacks without starting polling or automatic synchronization. */
 	constructor(
 		private readonly vault: Vault,
-		private readonly publication: PublicationController,
+		private readonly observer: VaultEventObserver,
 		private readonly onError: (error: unknown) => void,
 	) {
 		this.references.push(
@@ -41,6 +44,6 @@ export class VaultEventAdapter {
 	/** Reports asynchronous event failures to the composition owner without hiding them. */
 	private send(event: PublicationEvent): void {
 		if (this.closed) return;
-		void this.publication.observe(event).catch(this.onError);
+		void this.observer.observe(event).catch(this.onError);
 	}
 }

@@ -4,6 +4,8 @@ import type {
 } from "@plugin/auth/device-session";
 import type { CredentialStorage } from "@plugin/infrastructure/credential-storage";
 import { PluginSettingTab, Setting } from "@plugin/obsidian-api";
+import { type SyncStatusActions, SyncStatusPanel } from "@plugin/status-panel";
+import type { SyncStatusProjection } from "@plugin/sync/sync-status";
 import type { App, Plugin } from "obsidian";
 
 /** Non-secret user settings for the desktop enrollment endpoint. */
@@ -15,6 +17,7 @@ export interface AIBridgeSettings {
 export class AIBridgeSettingTab extends PluginSettingTab {
 	/** Current safe status element, or null before the settings page renders. */
 	private statusElement: HTMLElement | null = null;
+	private syncElement: HTMLElement | null = null;
 
 	/** Binds non-secret settings and controller access to the plugin settings host. */
 	constructor(
@@ -25,6 +28,8 @@ export class AIBridgeSettingTab extends PluginSettingTab {
 		private readonly credentials: CredentialStorage,
 		private readonly onServerUrlChange: (url: string) => Promise<void>,
 		private readonly getStatus: () => DeviceSessionStatus,
+		private readonly syncProjection?: () => SyncStatusProjection | null,
+		private readonly syncActions?: SyncStatusActions,
 	) {
 		super(app, plugin);
 	}
@@ -72,6 +77,10 @@ export class AIBridgeSettingTab extends PluginSettingTab {
 		this.statusElement = containerEl.createEl("p", {
 			text: `Status: ${this.getStatus()}`,
 		});
+		this.syncElement = containerEl.createEl("div", {
+			cls: "ai-bridge-sync-status",
+		});
+		this.renderSyncStatus();
 		if (this.credentials.warning)
 			containerEl.createEl("p", { text: this.credentials.warning });
 	}
@@ -79,5 +88,17 @@ export class AIBridgeSettingTab extends PluginSettingTab {
 	/** Updates the visible status with a fixed enum value and no OAuth response data. */
 	refreshStatus(): void {
 		this.statusElement?.setText(`Status: ${this.getStatus()}`);
+		this.renderSyncStatus();
+	}
+
+	/** Refreshes the safe sync projection without exposing transport or credential data. */
+	private renderSyncStatus(): void {
+		if (!this.syncElement || !this.syncProjection || !this.syncActions) return;
+		const projection = this.syncProjection();
+		if (projection)
+			new SyncStatusPanel(this.syncActions).render(
+				this.syncElement,
+				projection,
+			);
 	}
 }

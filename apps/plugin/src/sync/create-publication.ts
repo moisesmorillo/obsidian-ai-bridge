@@ -1,3 +1,4 @@
+import type { VaultReadResult } from "@obsidian-ai-bridge/protocol";
 import type { DeviceSession } from "@plugin/auth/device-session";
 import { SyncTransport } from "@plugin/infrastructure/sync-transport";
 import { ObsidianTextVault } from "@plugin/infrastructure/text-vault";
@@ -16,12 +17,16 @@ export interface CreatePublicationOptions {
 	registerEvents?: boolean;
 	/** Receives event callback failures so the lifecycle owner can report attention. */
 	onEventError(error: unknown): void;
+	/** Fires only for a validated 401 revoked response before controller effects resume. */
+	onRevoked?(): void;
 }
 
 /** Shared text synchronization services and their caller-owned disposal boundary. */
 export interface PublicationComposition {
 	publication: PublicationController;
 	reconciliation: ReconciliationController;
+	/** Reads one canonical vault summary for enrollment and capacity status. */
+	readVaultSummary(): Promise<VaultReadResult>;
 	/** Fences publication, disposes optional event listeners, and closes the shared apply engine. */
 	dispose(): void;
 }
@@ -35,7 +40,7 @@ export function createPublication(
 	deviceName: string,
 	options: CreatePublicationOptions,
 ): PublicationComposition {
-	const remote = new SyncTransport(serviceOrigin, session);
+	const remote = new SyncTransport(serviceOrigin, session, options.onRevoked);
 	const textVault = new ObsidianTextVault(vault);
 	const applyEngine = new TextApplyEngine(journal, textVault, remote, {
 		deviceName,
@@ -59,6 +64,7 @@ export function createPublication(
 	return {
 		publication,
 		reconciliation,
+		readVaultSummary: () => remote.vault(),
 		/** Fences all shared effects and releases optional host event listeners. */
 		dispose() {
 			if (disposed) return;

@@ -565,7 +565,7 @@ export class PublicationController {
 			await this.journal.recordRejected(operation, reason);
 			return true;
 		}
-		if (error.status === 401) {
+		if (error.status === 401 && error.code === "revoked") {
 			await this.journal.recordAttention(
 				operation.path,
 				"Device authorization was revoked",

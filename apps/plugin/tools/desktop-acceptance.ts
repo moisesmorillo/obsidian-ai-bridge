@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, resolve } from "node:path";
@@ -110,7 +111,7 @@ export function safeCaseResult(
 	return { caseId, evidence, status };
 }
 
-/** Runs one explicitly targeted Obsidian CLI command without exposing its output. */
+/** Runs one explicitly targeted Obsidian CLI command without printing its output. */
 export function runScopedObsidian(
 	id: DesktopVaultId,
 	vaultName: string,
@@ -840,13 +841,72 @@ function invokeScopedObsidian(
 	return result.stdout;
 }
 
-/** Installs the checked-in plugin bundle through the exact target vault's Obsidian adapter. */
+/** Describes a plugin artifact read back from an authorized Obsidian vault. */
+export interface InstalledPluginArtifact {
+	/** Version read from the installed plugin manifest. */
+	version: string;
+	/** SHA-256 of the installed main.js text. */
+	mainSha256: string;
+	/** SHA-256 of the installed manifest.json text. */
+	manifestSha256: string;
+}
+
+/** Validates the exact bundle fingerprints returned by the host after installation. */
+export function parseInstalledPluginArtifact(
+	output: string,
+	expected: InstalledPluginArtifact,
+): InstalledPluginArtifact {
+	const marker = "OAB8INSTALL:";
+	const markerIndex = output.lastIndexOf(marker);
+	if (markerIndex < 0)
+		throw new Error("Plugin artifact verification was unavailable");
+	const resultText = output
+		.slice(markerIndex + marker.length)
+		.trim()
+		.replace(/^['"]|['"]$/g, "");
+	let result: unknown;
+	try {
+		result = JSON.parse(resultText);
+	} catch {
+		throw new Error("Plugin artifact verification was invalid");
+	}
+	if (
+		!result ||
+		typeof result !== "object" ||
+		!("status" in result) ||
+		result.status !== "passed" ||
+		!("version" in result) ||
+		typeof result.version !== "string" ||
+		!("mainSha256" in result) ||
+		typeof result.mainSha256 !== "string" ||
+		!/^[a-f0-9]{64}$/.test(result.mainSha256) ||
+		!("manifestSha256" in result) ||
+		typeof result.manifestSha256 !== "string" ||
+		!/^[a-f0-9]{64}$/.test(result.manifestSha256)
+	)
+		throw new Error("Plugin artifact verification was invalid");
+	if (
+		result.version !== expected.version ||
+		result.mainSha256 !== expected.mainSha256 ||
+		result.manifestSha256 !== expected.manifestSha256
+	)
+		throw new Error(
+			"Installed plugin artifact does not match the checked bundle",
+		);
+	return {
+		version: result.version,
+		mainSha256: result.mainSha256,
+		manifestSha256: result.manifestSha256,
+	};
+}
+
+/** Installs and hashes the checked-in bundle through one exact target vault. */
 export async function installScopedPlugin(
 	id: DesktopVaultId,
 	vaultName: string,
 	distDirectory: string,
 	options: { executable?: string } = {},
-): Promise<string> {
+): Promise<InstalledPluginArtifact> {
 	const target = assertAuthorizedVault(id, authorizedVaults()[id]);
 	const manifestText = await readFile(
 		resolve(distDirectory, "manifest.json"),
@@ -863,8 +923,22 @@ export async function installScopedPlugin(
 	)
 		throw new Error("Unexpected plugin artifact identity");
 	const mainText = await readFile(resolve(distDirectory, "main.js"), "utf8");
+	const expected: InstalledPluginArtifact = {
+		version: manifest.version,
+		mainSha256: createHash("sha256").update(mainText, "utf8").digest("hex"),
+		manifestSha256: createHash("sha256")
+			.update(manifestText, "utf8")
+			.digest("hex"),
+	};
 	const script = createInstallScript(id, target, manifestText, mainText);
-	runScopedObsidian(id, vaultName, "eval", [`code=${script}`], options);
+	const installOutput = invokeScopedObsidian(
+		id,
+		vaultName,
+		"eval",
+		[`code=${script}`],
+		options,
+	);
+	parseInstalledPluginArtifact(installOutput, expected);
 	runScopedObsidian(
 		id,
 		vaultName,
@@ -874,15 +948,28 @@ export async function installScopedPlugin(
 	);
 	const verifyScript = `(async () => {
 		const pluginId = ${JSON.stringify(manifest.id)};
+		const adapter = app.vault.adapter;
+		if (adapter.getBasePath() !== ${JSON.stringify(target)}) throw Error("Vault path mismatch");
 		if (!app.plugins.enabledPlugins.has(pluginId) || !app.plugins.plugins?.[pluginId]) throw Error("Plugin is not active");
 		if (app.plugins.manifests?.[pluginId]?.version !== ${JSON.stringify(manifest.version)}) throw Error("Plugin revision mismatch");
-		return JSON.stringify({ status: "passed" });
+		const directory = ".obsidian/plugins/" + pluginId;
+		/** Computes SHA-256 over UTF-8 text for installed artifact identity. */
+		const hash = async (text) => Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text)))).map((byte) => byte.toString(16).padStart(2, "0")).join("");
+		const mainText = await adapter.read(directory + "/main.js");
+		const manifestText = await adapter.read(directory + "/manifest.json");
+		return "OAB8INSTALL:" + JSON.stringify({ status: "passed", version: app.plugins.manifests[pluginId].version, mainSha256: await hash(mainText), manifestSha256: await hash(manifestText) });
 	})()`;
-	runScopedObsidian(id, vaultName, "eval", [`code=${verifyScript}`], options);
-	return manifest.version;
+	const verifyOutput = invokeScopedObsidian(
+		id,
+		vaultName,
+		"eval",
+		[`code=${verifyScript}`],
+		options,
+	);
+	return parseInstalledPluginArtifact(verifyOutput, expected);
 }
 
-/** Creates an Obsidian-host script that refuses mismatched existing files before writing. */
+/** Creates a host script that preserves differing files and verifies loaded artifact hashes. */
 export function createInstallScript(
 	id: DesktopVaultId,
 	target: string,
@@ -921,12 +1008,17 @@ export function createInstallScript(
 		manifest.dir = directory;
 		app.plugins.manifests[id] = manifest;
 		if (!(await adapter.exists(directory))) await adapter.mkdir(directory);
+		/** Computes SHA-256 over UTF-8 text for backup and artifact identity. */
+		const hash = async (text) => Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text)))).map((byte) => byte.toString(16).padStart(2, "0")).join("");
 		for (const [name, content] of [["manifest.json", manifestText], ["main.js", bundle]]) {
 			const path = directory + "/" + name;
 			if (await adapter.exists(path)) {
 				const old = await adapter.read(path);
 				if (old !== content) {
-					const backup = path + ".oab-8.8-backup";
+					const firstBackup = path + ".oab-8.8-backup";
+					let backup = firstBackup;
+					if (await adapter.exists(backup) && await adapter.read(backup) !== old)
+						backup = path + ".oab-8.8-backup-" + await hash(old);
 					if (await adapter.exists(backup)) {
 						if (await adapter.read(backup) !== old) throw Error("Plugin backup differs");
 					} else {
@@ -946,7 +1038,12 @@ export function createInstallScript(
 		await app.plugins.enablePlugin(id);
 		if (!app.plugins.enabledPlugins.has(id)) throw Error("Plugin did not enable");
 		if (app.plugins.manifests[id]?.version !== ${expectedVersion}) throw Error("Plugin revision mismatch");
-		return JSON.stringify({ status: "passed" });
+		const mainFile = directory + "/main.js";
+		const manifestFile = directory + "/manifest.json";
+		const installedMain = await adapter.read(mainFile);
+		const installedManifest = await adapter.read(manifestFile);
+		if (installedMain !== bundle || installedManifest !== manifestText) throw Error("Plugin artifact mismatch");
+		return "OAB8INSTALL:" + JSON.stringify({ status: "passed", version: app.plugins.manifests[id].version, mainSha256: await hash(installedMain), manifestSha256: await hash(installedManifest) });
 	})()`;
 }
 
@@ -967,8 +1064,10 @@ async function runCommand(arguments_: readonly string[]): Promise<void> {
 		return;
 	}
 	const distDirectory = fileURLToPath(new URL("../dist/", import.meta.url));
-	const version = await installScopedPlugin(id, vaultName, distDirectory);
-	console.log(`Installed plugin version ${version} in ${id}`);
+	const artifact = await installScopedPlugin(id, vaultName, distDirectory);
+	console.log(
+		`Installed plugin version ${artifact.version} in ${id} with main SHA-256 ${artifact.mainSha256} and manifest SHA-256 ${artifact.manifestSha256}`,
+	);
 }
 
 if (

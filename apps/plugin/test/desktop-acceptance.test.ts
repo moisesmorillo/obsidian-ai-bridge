@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
 	assertAuthorizedVault,
@@ -7,6 +8,7 @@ import {
 	createInstallScript,
 	dispatchCapturedCallback,
 	hasCapturedCallback,
+	parseInstalledPluginArtifact,
 	runHostCase,
 	runScopedObsidian,
 	safeAc04BaselineInspection,
@@ -101,6 +103,7 @@ describe("desktop acceptance safety", () => {
 			script.indexOf("adapter.mkdir(directory)"),
 		);
 		expect(script).toContain('path + ".oab-8.8-backup"');
+		expect(script).toContain('path + ".oab-8.8-backup-" + await hash(old)');
 		expect(script).toContain("await adapter.write(backup, old)");
 		expect(script.indexOf("await adapter.write(backup, old)")).toBeLessThan(
 			script.indexOf("await adapter.write(path, content)"),
@@ -110,6 +113,113 @@ describe("desktop acceptance safety", () => {
 		expect(script).toContain("app.plugins.manifests[id] = manifest");
 		expect(script).toContain("await app.plugins.loadPlugin(id)");
 		expect(script).toContain('app.plugins.manifests[id]?.version !== "0.1.0"');
+	});
+
+	it("returns installed artifact hashes after host read-back", () => {
+		const script = createInstallScript(
+			"dev-1",
+			"/Users/test/vaults/obsidian-ai-bridge-dev",
+			'{"id":"ai-bridge","version":"0.1.0"}',
+			"synthetic bundle",
+			"/Users/test",
+		);
+		expect(script).toContain("OAB8INSTALL:");
+		expect(script).toContain("await adapter.read(mainFile)");
+		expect(script.indexOf("app.plugins.enablePlugin(id)")).toBeLessThan(
+			script.indexOf("OAB8INSTALL:"),
+		);
+	});
+
+	it("accepts only the expected installed artifact fingerprints", () => {
+		const expected = {
+			version: "0.1.0",
+			mainSha256: "a".repeat(64),
+			manifestSha256: "b".repeat(64),
+		};
+		const result = { status: "passed", ...expected };
+		expect(
+			parseInstalledPluginArtifact(
+				`OAB8INSTALL:${JSON.stringify(result)}`,
+				expected,
+			),
+		).toEqual(expected);
+		expect(() => parseInstalledPluginArtifact("eval failed", expected)).toThrow(
+			"Plugin artifact verification was unavailable",
+		);
+		expect(() =>
+			parseInstalledPluginArtifact(
+				`OAB8INSTALL:${JSON.stringify({ ...result, mainSha256: "c".repeat(64) })}`,
+				expected,
+			),
+		).toThrow("Installed plugin artifact does not match the checked bundle");
+	});
+
+	it("keeps every differing plugin file before it writes the checked bundle", async () => {
+		const basePath = vaults["dev-1"];
+		const mainPath = ".obsidian/plugins/ai-bridge/main.js";
+		const manifestPath = ".obsidian/plugins/ai-bridge/manifest.json";
+		const firstBackup = `${mainPath}.oab-8.8-backup`;
+		const manifestText = '{"id":"ai-bridge","version":"0.1.0"}';
+		const oldBundle = "current altered bundle";
+		const checkedBundle = "checked bundle";
+		const files = new Map<string, string>([
+			[mainPath, oldBundle],
+			[firstBackup, "earlier bundle"],
+			[manifestPath, manifestText],
+		]);
+		const folders = new Set([".obsidian/plugins/ai-bridge"]);
+		const enabled = new Set(["ai-bridge"]);
+		const app = {
+			vault: {
+				adapter: {
+					getBasePath: () => basePath,
+					exists: async (path: string) => files.has(path) || folders.has(path),
+					mkdir: async (path: string) => {
+						folders.add(path);
+					},
+					read: async (path: string) => {
+						const value = files.get(path);
+						if (value === undefined) throw new Error("missing plugin file");
+						return value;
+					},
+					write: async (path: string, content: string) => {
+						files.set(path, content);
+					},
+				},
+			},
+			plugins: {
+				manifests: {} as Record<string, { version?: string }>,
+				enabledPlugins: enabled,
+				loadPlugin: async () => undefined,
+				disablePlugin: async (id: string) => {
+					enabled.delete(id);
+				},
+				enablePlugin: async (id: string) => {
+					enabled.add(id);
+				},
+			},
+		};
+		const script = createInstallScript(
+			"dev-1",
+			basePath,
+			manifestText,
+			checkedBundle,
+			"/Users/test",
+		);
+		const execute = new Function("app", `return ${script}`) as (
+			app: unknown,
+		) => Promise<string>;
+		const output = await execute(app);
+		const expected = {
+			version: "0.1.0",
+			mainSha256: createHash("sha256").update(checkedBundle).digest("hex"),
+			manifestSha256: createHash("sha256").update(manifestText).digest("hex"),
+		};
+		expect(parseInstalledPluginArtifact(output, expected)).toEqual(expected);
+		expect(files.get(firstBackup)).toBe("earlier bundle");
+		const preservedCurrentPath = `${mainPath}.oab-8.8-backup-${createHash("sha256").update(oldBundle).digest("hex")}`;
+		expect(files.get(preservedCurrentPath)).toBe(oldBundle);
+		expect(files.get(mainPath)).toBe(checkedBundle);
 	});
 
 	it("accepts only a canonical authorization URL without callback credentials", () => {

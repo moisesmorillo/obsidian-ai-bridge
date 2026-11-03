@@ -626,6 +626,25 @@ export class PublicationController {
 			: await this.readTextBytes(operation.path);
 		this.assertOpen();
 		if (localBytes === null || localBytes === undefined) {
+			// Discard this queued PUT only after a confirmed tombstone and visible bytes make it redundant.
+			const state = this.journal.snapshot();
+			const base = state.base[operation.path];
+			if (
+				!isBlob &&
+				state.epoch !== undefined &&
+				base?.deleted === true &&
+				!state.stale_base_paths.includes(operation.path)
+			) {
+				const visible = await this.hasVisiblePayload(operation.path, saved);
+				this.assertOpen();
+				if (
+					visible &&
+					this.journal.matchesBase(operation.path, base, state.epoch)
+				) {
+					await this.journal.discardQueued(operation.key);
+					return "skip";
+				}
+			}
 			await this.journal.recordQueuedRejected(
 				operation,
 				"Queued file is absent from the local vault",

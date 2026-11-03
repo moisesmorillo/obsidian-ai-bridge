@@ -6,7 +6,6 @@ import {
 import { ObsidianCredentialStorage } from "@plugin/infrastructure/credential-storage";
 import { ObsidianDeviceStorage } from "@plugin/infrastructure/device-storage";
 import { ObsidianOAuthTransport } from "@plugin/infrastructure/oauth-transport";
-import { consumeStartupSyncFence } from "@plugin/infrastructure/startup-sync-fence";
 import { VaultEventAdapter } from "@plugin/infrastructure/vault-events";
 import { Notice, Plugin } from "@plugin/obsidian-api";
 import { type AIBridgeSettings, AIBridgeSettingTab } from "@plugin/settings";
@@ -49,6 +48,8 @@ export default class AIBridgePlugin extends Plugin {
 	private visibilityHandler: (() => void) | null = null;
 	/** Tracks safe lifecycle presentation independently from the credential status. */
 	private syncPaused = false;
+	/** Keeps status callbacks from starting sync before credential restore completes. */
+	private sessionRestoreComplete = false;
 	private syncActive = false;
 	private syncRevoked = false;
 	private syncFailure: string | null = null;
@@ -79,6 +80,7 @@ export default class AIBridgePlugin extends Plugin {
 	/** Opens validated device state and wires consent callback and settings controls. */
 	async onload(): Promise<void> {
 		const generation = ++this.lifecycleGeneration;
+		this.sessionRestoreComplete = false;
 		try {
 			const stored = await this.loadData();
 			if (stored && typeof stored === "object") {
@@ -109,10 +111,8 @@ export default class AIBridgePlugin extends Plugin {
 				session.close();
 				return;
 			}
-			if (this.sessionStatus === "connected") {
-				if (consumeStartupSyncFence()) this.syncPaused = true;
-				this.startSync();
-			}
+			this.sessionRestoreComplete = true;
+			if (this.sessionStatus === "connected") this.startSync();
 			this.registerObsidianProtocolHandler(
 				"ai-bridge/callback",
 				(params: ObsidianProtocolData) => {
@@ -223,6 +223,7 @@ export default class AIBridgePlugin extends Plugin {
 	/** Blocks session and journal actions immediately without deleting local data. */
 	onunload(): void {
 		this.lifecycleGeneration += 1;
+		this.sessionRestoreComplete = false;
 		this.settingsUpdateGeneration += 1;
 		this.releaseSyncOwners();
 		this.desktopSync = null;
@@ -268,7 +269,7 @@ export default class AIBridgePlugin extends Plugin {
 				this.sessionStatus = status;
 				if (status === "connected") {
 					this.syncRevoked = false;
-					this.startSync();
+					if (this.sessionRestoreComplete) this.startSync();
 				}
 				this.settingsTab?.refreshStatus();
 			},

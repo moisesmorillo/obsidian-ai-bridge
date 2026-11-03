@@ -5,7 +5,6 @@ import {
 	createAc20FixtureScript,
 	createCaseScript,
 	createInstallScript,
-	createPausedReloadScript,
 	dispatchCapturedCallback,
 	hasCapturedCallback,
 	runHostCase,
@@ -13,7 +12,6 @@ import {
 	safeAc04BaselineInspection,
 	safeAc20Inspection,
 	safeCaseResult,
-	safePausedReloadResult,
 	submitConsentAndDispatch,
 	validateAuthorizationUrl,
 	validateCallbackUrl,
@@ -62,58 +60,6 @@ describe("desktop acceptance safety", () => {
 		expect(script).toContain("baselineRevisionChanged");
 		expect(script).not.toContain('method: "DELETE"');
 		expect(script).not.toContain("JSON.stringify(body)");
-	});
-
-	it("creates a reload script that fences startup and restores the fence", () => {
-		const script = createPausedReloadScript(vaults["dev-1"], "/Users/test");
-		const pauseGuard = script.indexOf(
-			'currentPlugin?.syncStatus?.()?.state !== "paused"',
-		);
-		const fenceSet = script.indexOf(
-			'globalThis["__oab8DesktopStartupFence"] = true',
-		);
-		expect(pauseGuard).toBeGreaterThan(0);
-		expect(pauseGuard).toBeLessThan(fenceSet);
-		expect(fenceSet).toBeLessThan(
-			script.indexOf("await app.plugins.disablePlugin(id)"),
-		);
-		expect(script).toContain("await app.plugins.loadPlugin(id)");
-		expect(script).toContain("await app.plugins.enablePlugin(id)");
-		expect(script).toContain('return "OAB8PAUSEDRELOAD:"');
-		expect(script).toContain('delete globalThis["__oab8DesktopStartupFence"]');
-		expect(script).not.toContain("resumeSync");
-		expect(script).not.toContain("syncNow");
-	});
-
-	it("accepts only a paused reload result with no active startup fence", () => {
-		expect(
-			safePausedReloadResult({
-				sessionStatus: "connected",
-				syncState: "paused",
-				pendingOperationCount: 1,
-				pendingApplyCount: 0,
-				controllerBusy: false,
-				startupFenceRestored: true,
-				privateValue: "secret",
-			}),
-		).toEqual({
-			sessionStatus: "connected",
-			syncState: "paused",
-			pendingOperationCount: 1,
-			pendingApplyCount: 0,
-			controllerBusy: false,
-			startupFenceRestored: true,
-		});
-		expect(() =>
-			safePausedReloadResult({
-				sessionStatus: "connected",
-				syncState: "pending",
-				pendingOperationCount: 1,
-				pendingApplyCount: 0,
-				controllerBusy: false,
-				startupFenceRestored: false,
-			}),
-		).toThrow("Invalid paused reload result");
 	});
 
 	it("accepts only the exact authorized vault path", () => {

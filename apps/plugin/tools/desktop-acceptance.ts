@@ -4,7 +4,6 @@ import { homedir } from "node:os";
 import { isAbsolute, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { FileHttpErrorSchema } from "@obsidian-ai-bridge/protocol";
-import { OAB8_STARTUP_SYNC_FENCE } from "@plugin/infrastructure/startup-sync-fence";
 import {
 	DEVICE_JOURNAL_FAILURE_STAGES,
 	type DeviceJournalFailureStage,
@@ -561,108 +560,6 @@ export function inspectAc04Baseline(
 		);
 	} catch {
 		throw new Error("AC-04 baseline result was invalid");
-	}
-}
-
-/** Safe result returned by a reload that consumed its temporary startup fence. */
-export interface PausedReloadInspection {
-	/** Current authorization state after the awaited plugin reload. */
-	sessionStatus: "connected";
-	/** Sync must remain paused until the owner presses Resume. */
-	syncState: "paused";
-	/** Number of durable pending operations after reload. */
-	pendingOperationCount: number;
-	/** Number of durable pending applies after reload. */
-	pendingApplyCount: number;
-	/** False only when no event, timer, or synchronization work remains. */
-	controllerBusy: false;
-	/** True only when the one-shot startup fence no longer exists. */
-	startupFenceRestored: true;
-}
-
-/** Validates one paused reload result and discards all unlisted host fields. */
-export function safePausedReloadResult(value: unknown): PausedReloadInspection {
-	if (!value || typeof value !== "object")
-		throw new Error("Invalid paused reload result");
-	const sessionStatus = Reflect.get(value, "sessionStatus");
-	const syncState = Reflect.get(value, "syncState");
-	const pendingOperationCount = Reflect.get(value, "pendingOperationCount");
-	const pendingApplyCount = Reflect.get(value, "pendingApplyCount");
-	const controllerBusy = Reflect.get(value, "controllerBusy");
-	const startupFenceRestored = Reflect.get(value, "startupFenceRestored");
-	if (
-		sessionStatus !== "connected" ||
-		syncState !== "paused" ||
-		![pendingOperationCount, pendingApplyCount].every(
-			(count) =>
-				typeof count === "number" && Number.isSafeInteger(count) && count >= 0,
-		) ||
-		controllerBusy !== false ||
-		startupFenceRestored !== true
-	)
-		throw new Error("Invalid paused reload result");
-	return {
-		sessionStatus,
-		syncState,
-		pendingOperationCount,
-		pendingApplyCount,
-		controllerBusy,
-		startupFenceRestored,
-	};
-}
-
-/** Creates an exact-vault reload script that blocks startup sync until owner Resume. */
-export function createPausedReloadScript(
-	target: string,
-	home = homedir(),
-): string {
-	const authorizedTarget = assertAuthorizedVault("dev-1", target, home);
-	const targetValue = JSON.stringify(authorizedTarget);
-	const fenceKey = JSON.stringify(OAB8_STARTUP_SYNC_FENCE);
-	return `(async () => {
-		if (app.vault.adapter.getBasePath() !== ${targetValue}) throw Error("Vault path mismatch");
-		const id = "ai-bridge";
-		if (!app.plugins.enabledPlugins.has(id)) throw Error("Plugin is not enabled");
-		const currentPlugin = app.plugins.plugins?.[id];
-		if (currentPlugin?.syncStatus?.()?.state !== "paused" || currentPlugin?.desktopSync?.isBusy !== false) throw Error("Plugin must be paused and idle before reload");
-		globalThis[${fenceKey}] = true;
-		try {
-			await app.plugins.disablePlugin(id);
-			await app.plugins.loadPlugin(id);
-			await app.plugins.enablePlugin(id);
-			const plugin = app.plugins.plugins?.[id];
-			const journal = plugin?.journal?.snapshot?.();
-			const status = plugin?.syncStatus?.();
-			const controller = plugin?.desktopSync;
-			if (!app.plugins.enabledPlugins.has(id) || !journal || !status || !controller) throw Error("Plugin reload state unavailable");
-			return "OAB8PAUSEDRELOAD:" + JSON.stringify({ sessionStatus: plugin.sessionStatus, syncState: status.state, pendingOperationCount: journal.pending_ops?.length, pendingApplyCount: journal.pending_apply?.length, controllerBusy: controller.isBusy, startupFenceRestored: !Reflect.has(globalThis, ${fenceKey}) });
-		} finally {
-			delete globalThis[${fenceKey}];
-		}
-	})()`;
-}
-
-/** Reloads one enabled plugin in its exact vault and returns only safe paused state. */
-export function reloadDev1PluginPaused(
-	vaultName: string,
-	options: { executable?: string } = {},
-): PausedReloadInspection {
-	const script = createPausedReloadScript(authorizedVaults()["dev-1"]);
-	const output = invokeScopedObsidian(
-		"dev-1",
-		vaultName,
-		"eval",
-		[`code=${script}`],
-		options,
-	);
-	const marker = output.lastIndexOf("OAB8PAUSEDRELOAD:");
-	if (marker < 0) throw new Error("Paused reload result was unavailable");
-	try {
-		return safePausedReloadResult(
-			JSON.parse(output.slice(marker + "OAB8PAUSEDRELOAD:".length).trim()),
-		);
-	} catch {
-		throw new Error("Paused reload result was invalid");
 	}
 }
 

@@ -95,10 +95,11 @@ vi.mock("../src/settings", () => ({
 }));
 
 import type { App, PluginManifest } from "obsidian";
-import { DeviceSession } from "../src/auth/device-session";
-import { OAB8_STARTUP_SYNC_FENCE } from "../src/infrastructure/startup-sync-fence";
+import {
+	DeviceSession,
+	type DeviceSessionHost,
+} from "../src/auth/device-session";
 import AIBridgePlugin from "../src/main";
-import { DesktopSyncController } from "../src/sync/desktop-sync";
 import { DeviceJournal } from "../src/sync/device-journal";
 
 describe("AIBridgePlugin device-local lifecycle", () => {
@@ -117,7 +118,7 @@ describe("AIBridgePlugin device-local lifecycle", () => {
 		host.loadState = null;
 	});
 
-	it("consumes a one-shot startup fence before a connected session can sync", async () => {
+	it("defers sync until connected credential restore completes", async () => {
 		vi.stubGlobal("window", {
 			setTimeout: () => 1,
 			clearTimeout: () => undefined,
@@ -133,43 +134,33 @@ describe("AIBridgePlugin device-local lifecycle", () => {
 			removeEventListener: () => undefined,
 		});
 		const plugin = new AIBridgePlugin({} as App, {} as PluginManifest);
-		const startupFenceKey = OAB8_STARTUP_SYNC_FENCE;
-		Reflect.set(globalThis, startupFenceKey, true);
+		const startSync = vi.fn();
+		Reflect.set(plugin, "startSync", startSync);
+		let startsDuringRestore = -1;
 		const restore = vi
 			.spyOn(DeviceSession.prototype, "restore")
 			.mockImplementation(async () => {
-				Reflect.set(plugin, "sessionStatus", "connected");
+				const session = Reflect.get(plugin, "session");
+				const sessionHost = Reflect.get(session, "host") as DeviceSessionHost;
+				sessionHost.statusChanged("connected");
+				startsDuringRestore = startSync.mock.calls.length;
 			});
-		const resume = vi
-			.spyOn(DesktopSyncController.prototype, "resume")
-			.mockResolvedValue();
 
 		try {
 			await plugin.onload();
-			const status = Reflect.apply(
-				Reflect.get(plugin, "syncStatus") as () => unknown,
-				plugin,
-				[],
-			);
-			expect(Reflect.get(plugin, "desktopSync")).not.toBeNull();
-			expect(status).toMatchObject({ state: "paused" });
-			expect(Reflect.has(globalThis, startupFenceKey)).toBe(false);
-			await Reflect.apply(
-				Reflect.get(plugin, "resumeSync") as () => Promise<void>,
-				plugin,
-				[],
-			);
-			expect(resume).toHaveBeenCalledOnce();
-			expect(host.calls).not.toContain("requestUrl");
+			expect(startsDuringRestore).toBe(0);
+			expect(startSync).toHaveBeenCalledOnce();
+			const session = Reflect.get(plugin, "session");
+			const sessionHost = Reflect.get(session, "host") as DeviceSessionHost;
+			sessionHost.statusChanged("connected");
+			expect(startSync).toHaveBeenCalledTimes(2);
 		} finally {
-			Reflect.deleteProperty(globalThis, startupFenceKey);
 			plugin.onunload();
+			Reflect.deleteProperty(plugin, "startSync");
 			restore.mockRestore();
-			resume.mockRestore();
 			vi.unstubAllGlobals();
 		}
 	});
-
 	it("opens one local journal without network requests or vault mutation", async () => {
 		const plugin = new AIBridgePlugin({} as App, {} as PluginManifest);
 		await plugin.onload();

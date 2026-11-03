@@ -1,12 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
 	assertAuthorizedVault,
+	createAc20FixtureScript,
 	createCaseScript,
 	createInstallScript,
 	dispatchCapturedCallback,
 	hasCapturedCallback,
 	runHostCase,
 	runScopedObsidian,
+	safeAc20Inspection,
 	safeCaseResult,
 	submitConsentAndDispatch,
 	validateAuthorizationUrl,
@@ -99,6 +101,171 @@ describe("desktop acceptance safety", () => {
 			"obsidian://ai-bridge/callback?code=c&code=other&state=s",
 		])
 			expect(() => validateCallbackUrl(url)).toThrow("Invalid device callback");
+	});
+
+	it("projects AC-20 inspection counts without returning file data", () => {
+		expect(
+			safeAc20Inspection({
+				sessionStatus: "connected",
+				syncState: "settled",
+				localFixtureCount: 3,
+				liveBaseCount: 3,
+				localBaseFileCount: 3,
+				ac20LiveBaseCount: 3,
+				serviceLiveCount: 3,
+				displayedLiveCount: 0,
+				hasEpoch: true,
+				hasCursor: true,
+				pendingOperationCount: 0,
+				pendingApplyCount: 0,
+				noteBody: "private note body",
+			}),
+		).toEqual({
+			sessionStatus: "connected",
+			syncState: "settled",
+			localFixtureCount: 3,
+			liveBaseCount: 3,
+			localBaseFileCount: 3,
+			ac20LiveBaseCount: 3,
+			serviceLiveCount: 3,
+			displayedLiveCount: 0,
+			hasEpoch: true,
+			hasCursor: true,
+			pendingOperationCount: 0,
+			pendingApplyCount: 0,
+		});
+		expect(() => safeAc20Inspection({ serviceLiveCount: -1 })).toThrow(
+			"Invalid AC-20 inspection result",
+		);
+	});
+
+	it("prepares dev-2 enrollment fixtures only before its first hydration", async () => {
+		const script = createAc20FixtureScript(
+			"dev-2",
+			"prepare-dev2",
+			vaults["dev-2"],
+			"/Users/test",
+		);
+		const files = new Map<string, string>();
+		const folders = new Set<string>();
+		const app = {
+			vault: {
+				adapter: {
+					getBasePath: () => vaults["dev-2"],
+					exists: async (path: string) => files.has(path) || folders.has(path),
+					read: async (path: string) => {
+						const value = files.get(path);
+						if (value === undefined) throw new Error("missing fixture");
+						return value;
+					},
+				},
+				createFolder: async (path: string) => {
+					folders.add(path);
+				},
+				create: async (path: string, content: string) => {
+					if (files.has(path)) throw new Error("fixture path exists");
+					files.set(path, content);
+					return { path };
+				},
+			},
+			plugins: {
+				plugins: {
+					"ai-bridge": {
+						sessionStatus: "disconnected",
+						session: { pending: null },
+						journal: {
+							snapshot: () => ({
+								epoch: undefined,
+								cursor: null,
+								base: {},
+								pending_ops: [],
+								pending_apply: [],
+								attention: [],
+							}),
+						},
+					},
+				},
+			},
+		};
+		const execute = new Function("app", `return ${script}`) as (
+			app: unknown,
+		) => Promise<string>;
+		expect(await execute(app)).toBe("OAB8AC20:local-fixtures-ready");
+		expect([...files.keys()].sort()).toEqual([
+			"oab-8.8/ac-20/different.md",
+			"oab-8.8/ac-20/equal.md",
+			"oab-8.8/ac-20/local-only.md",
+		]);
+		expect(files.has("oab-8.8/ac-20/remote-only.md")).toBe(false);
+	});
+
+	it("seeds only dev-1 local AC-20 remote candidates", async () => {
+		const script = createAc20FixtureScript(
+			"dev-1",
+			"seed-dev1",
+			vaults["dev-1"],
+			"/Users/test",
+		);
+		const files = new Map<string, string>();
+		const folders = new Set<string>();
+		const app = {
+			vault: {
+				adapter: {
+					getBasePath: () => vaults["dev-1"],
+					exists: async (path: string) => files.has(path) || folders.has(path),
+					read: async (path: string) => {
+						const value = files.get(path);
+						if (value === undefined) throw new Error("missing fixture");
+						return value;
+					},
+				},
+				createFolder: async (path: string) => {
+					folders.add(path);
+				},
+				create: async (path: string, content: string) => {
+					if (files.has(path)) throw new Error("fixture path exists");
+					files.set(path, content);
+					return { path };
+				},
+			},
+			plugins: {
+				plugins: {
+					"ai-bridge": {
+						sessionStatus: "connected",
+						syncStatus: () => ({ state: "settled" }),
+						journal: {
+							snapshot: () => ({
+								epoch: "epoch",
+								pending_ops: [],
+								pending_apply: [],
+								attention: [],
+							}),
+						},
+					},
+				},
+			},
+		};
+		const execute = new Function("app", `return ${script}`) as (
+			app: unknown,
+		) => Promise<string>;
+		expect(await execute(app)).toBe("OAB8AC20:remote-fixtures-local");
+		expect([...files.keys()].sort()).toEqual([
+			"oab-8.8/ac-20/different.md",
+			"oab-8.8/ac-20/equal.md",
+			"oab-8.8/ac-20/remote-only.md",
+		]);
+		expect(files.has("oab-8.8/ac-20/local-only.md")).toBe(false);
+	});
+
+	it("rejects AC-20 fixture phases for the wrong vault", () => {
+		expect(() =>
+			createAc20FixtureScript(
+				"dev-1",
+				"prepare-dev2",
+				vaults["dev-1"],
+				"/Users/test",
+			),
+		).toThrow("AC-20 fixture phase does not match the vault");
 	});
 
 	it("checks captured callback metadata without returning private values", () => {

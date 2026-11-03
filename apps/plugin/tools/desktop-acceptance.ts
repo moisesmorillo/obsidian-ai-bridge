@@ -316,6 +316,243 @@ export function runHostCase(
 	}
 }
 
+/** Safe counts and lifecycle flags used to verify AC-20 enrollment preconditions. */
+export interface Ac20VaultInspection {
+	/** Current local authorization state. */
+	sessionStatus: "disconnected" | "connecting" | "connected" | "reconnect";
+	/** Current safe synchronization state, or null when no projection exists. */
+	syncState:
+		| "disconnected"
+		| "syncing"
+		| "settled"
+		| "pending"
+		| "attention"
+		| "revoked"
+		| "paused"
+		| "backup failed"
+		| null;
+	/** Number of local files in the AC-20 fixture directory. */
+	localFixtureCount: number;
+	/** Number of live paths recorded in the local journal base. */
+	liveBaseCount: number;
+	/** Number of live base paths that exist in the local Obsidian index. */
+	localBaseFileCount: number;
+	/** Number of live AC-20 paths recorded in the local journal base. */
+	ac20LiveBaseCount: number;
+	/** Live file count from a direct service summary, or null before connection. */
+	serviceLiveCount: number | null;
+	/** Live file count currently shown by the cached status projection. */
+	displayedLiveCount: number | null;
+	/** True when the local journal has an epoch. */
+	hasEpoch: boolean;
+	/** True when the local journal has a non-null feed cursor. */
+	hasCursor: boolean;
+	/** Number of durable pending operations. */
+	pendingOperationCount: number;
+	/** Number of durable pending apply steps. */
+	pendingApplyCount: number;
+}
+
+/** Projects only fixed AC-20 inspection fields and discards host output data. */
+export function safeAc20Inspection(value: unknown): Ac20VaultInspection {
+	if (!value || typeof value !== "object")
+		throw new Error("Invalid AC-20 inspection result");
+	const sessionStatus = Reflect.get(value, "sessionStatus");
+	const syncState = Reflect.get(value, "syncState");
+	const counts = [
+		"localFixtureCount",
+		"liveBaseCount",
+		"localBaseFileCount",
+		"ac20LiveBaseCount",
+		"pendingOperationCount",
+		"pendingApplyCount",
+	].map((key) => Reflect.get(value, key));
+	const serviceLiveCount = Reflect.get(value, "serviceLiveCount");
+	const displayedLiveCount = Reflect.get(value, "displayedLiveCount");
+	const hasEpoch = Reflect.get(value, "hasEpoch");
+	const hasCursor = Reflect.get(value, "hasCursor");
+	if (
+		!["disconnected", "connecting", "connected", "reconnect"].includes(
+			sessionStatus,
+		) ||
+		![
+			"disconnected",
+			"syncing",
+			"settled",
+			"pending",
+			"attention",
+			"revoked",
+			"paused",
+			"backup failed",
+			null,
+		].includes(syncState) ||
+		counts.some(
+			(count) =>
+				typeof count !== "number" || !Number.isSafeInteger(count) || count < 0,
+		) ||
+		![serviceLiveCount, displayedLiveCount].every(
+			(count) =>
+				count === null ||
+				(typeof count === "number" &&
+					Number.isSafeInteger(count) &&
+					count >= 0),
+		) ||
+		typeof hasEpoch !== "boolean" ||
+		typeof hasCursor !== "boolean"
+	)
+		throw new Error("Invalid AC-20 inspection result");
+	return {
+		sessionStatus,
+		syncState,
+		localFixtureCount: counts[0],
+		liveBaseCount: counts[1],
+		localBaseFileCount: counts[2],
+		ac20LiveBaseCount: counts[3],
+		serviceLiveCount,
+		displayedLiveCount,
+		hasEpoch,
+		hasCursor,
+		pendingOperationCount: counts[4],
+		pendingApplyCount: counts[5],
+	};
+}
+
+/** Reads safe AC-20 file and service counts through the exact authorized vault. */
+export function inspectAc20Vault(
+	id: DesktopVaultId,
+	vaultName: string,
+	options: { executable?: string } = {},
+): Ac20VaultInspection {
+	const target = assertAuthorizedVault(id, authorizedVaults()[id]);
+	const script = `(async () => {
+		if (app.vault.adapter.getBasePath() !== ${JSON.stringify(target)}) throw new Error("Vault path mismatch");
+		const plugin = app.plugins.plugins?.["ai-bridge"];
+		if (!plugin?.journal?.snapshot || !plugin?.syncStatus) throw new Error("Plugin state unavailable");
+		const journal = plugin.journal.snapshot();
+		const status = plugin.syncStatus();
+		const summary = plugin.composition?.readVaultSummary ? await plugin.composition.readVaultSummary() : null;
+		const base = journal.base ?? {};
+		const localPaths = new Set(app.vault.getFiles().map((file) => file.path));
+		const liveBasePaths = Object.entries(base).filter(([, entry]) => !entry.deleted);
+		const prefix = "oab-8.8/ac-20/";
+		const result = {
+			sessionStatus: plugin.sessionStatus,
+			syncState: status?.state ?? null,
+			localFixtureCount: [...localPaths].filter((path) => path.startsWith(prefix)).length,
+			liveBaseCount: liveBasePaths.length,
+			localBaseFileCount: liveBasePaths.filter(([path]) => localPaths.has(path)).length,
+			ac20LiveBaseCount: liveBasePaths.filter(([path]) => path.startsWith(prefix)).length,
+			serviceLiveCount: summary?.counts?.live ?? null,
+			displayedLiveCount: status?.counts?.live ?? null,
+			hasEpoch: journal.epoch !== undefined,
+			hasCursor: journal.cursor !== undefined && journal.cursor !== null,
+			pendingOperationCount: journal.pending_ops?.length ?? 0,
+			pendingApplyCount: journal.pending_apply?.length ?? 0
+		};
+		return "OAB8AC20INSPECT:" + JSON.stringify(result);
+	})()`;
+	const output = invokeScopedObsidian(
+		id,
+		vaultName,
+		"eval",
+		[`code=${script}`],
+		options,
+	);
+	const marker = output.lastIndexOf("OAB8AC20INSPECT:");
+	if (marker < 0) throw new Error("AC-20 inspection was unavailable");
+	try {
+		return safeAc20Inspection(
+			JSON.parse(output.slice(marker + "OAB8AC20INSPECT:".length).trim()),
+		);
+	} catch {
+		throw new Error("AC-20 inspection result was invalid");
+	}
+}
+
+/** Selects a safe local fixture phase for the approved two-device enrollment case. */
+export type Ac20FixturePhase = "seed-dev1" | "prepare-dev2";
+
+/** Synthetic text for the four first-hydration outcomes. */
+const AC20_FIXTURES = {
+	equal: {
+		path: "oab-8.8/ac-20/equal.md",
+		content: "OAB-8.8 AC-20 shared equal fixture.\n",
+	},
+	localOnly: {
+		path: "oab-8.8/ac-20/local-only.md",
+		content: "OAB-8.8 AC-20 local-only fixture.\n",
+	},
+	remoteOnly: {
+		path: "oab-8.8/ac-20/remote-only.md",
+		content: "OAB-8.8 AC-20 remote-only fixture.\n",
+	},
+	differentRemote: {
+		path: "oab-8.8/ac-20/different.md",
+		content: "OAB-8.8 AC-20 remote-side fixture.\n",
+	},
+	differentLocal: {
+		path: "oab-8.8/ac-20/different.md",
+		content: "OAB-8.8 AC-20 local-side fixture.\n",
+	},
+};
+
+/** Builds a guarded Obsidian script to seed dev-1 or prepare disconnected dev-2. */
+export function createAc20FixtureScript(
+	id: DesktopVaultId,
+	phase: Ac20FixturePhase,
+	resolvedPath: string,
+	home = homedir(),
+): string {
+	const target = assertAuthorizedVault(id, resolvedPath, home);
+	if (
+		(phase === "seed-dev1" && id !== "dev-1") ||
+		(phase === "prepare-dev2" && id !== "dev-2")
+	)
+		throw new Error("AC-20 fixture phase does not match the vault");
+	const fixtures =
+		phase === "seed-dev1"
+			? [
+					AC20_FIXTURES.equal,
+					AC20_FIXTURES.remoteOnly,
+					AC20_FIXTURES.differentRemote,
+				]
+			: [
+					AC20_FIXTURES.equal,
+					AC20_FIXTURES.localOnly,
+					AC20_FIXTURES.differentLocal,
+				];
+	const fixturePaths = Object.values(AC20_FIXTURES).map(({ path }) => path);
+	return `(async () => {
+		const target = ${JSON.stringify(target)};
+		const adapter = app.vault.adapter;
+		if (adapter.getBasePath() !== target) throw new Error("Vault path mismatch");
+		const plugin = app.plugins.plugins?.["ai-bridge"];
+		const journal = plugin?.journal?.snapshot?.();
+		if (!journal) throw new Error("Device journal unavailable");
+		const fixtures = ${JSON.stringify(fixtures)};
+		const allPaths = ${JSON.stringify(fixturePaths)};
+		const base = journal.base ?? {};
+		if (${JSON.stringify(phase)} === "prepare-dev2") {
+			if (plugin.sessionStatus !== "disconnected" || plugin.session?.pending) throw new Error("Dev-2 is not disconnected");
+			if (journal.epoch !== undefined || (journal.cursor !== undefined && journal.cursor !== null) || Object.keys(base).length > 0 || journal.pending_ops?.length || journal.pending_apply?.length || journal.attention?.length) throw new Error("Dev-2 already has sync state");
+			for (const path of allPaths) if (Object.prototype.hasOwnProperty.call(base, path)) throw new Error("Dev-2 fixture already has a base");
+			if (await adapter.exists(${JSON.stringify(AC20_FIXTURES.remoteOnly.path)})) throw new Error("Remote-only fixture exists in dev-2");
+		} else {
+			if (plugin.sessionStatus !== "connected" || journal.epoch === undefined || plugin.syncStatus?.().state !== "settled" || journal.pending_ops?.length || journal.pending_apply?.length || journal.attention?.length) throw new Error("Dev-1 is not settled");
+		}
+		for (const fixture of fixtures) {
+			const { path, content } = fixture;
+			if (await adapter.exists(path)) {
+				if (await adapter.read(path) !== content) throw new Error("Fixture path contains different bytes");
+				continue;
+			}
+			for (const folder of ["oab-8.8", "oab-8.8/ac-20"]) if (!(await adapter.exists(folder))) await app.vault.createFolder(folder);
+			await app.vault.create(path, content);
+		}
+		return ${JSON.stringify(phase === "seed-dev1" ? "OAB8AC20:remote-fixtures-local" : "OAB8AC20:local-fixtures-ready")};
+	})()`;
+}
+
 /** Adds a failure-safe cleanup boundary to trusted case code without returning its data. */
 export function createCaseScript(
 	caseId: string,

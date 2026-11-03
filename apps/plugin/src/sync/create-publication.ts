@@ -6,6 +6,7 @@ import { VaultEventAdapter } from "@plugin/infrastructure/vault-events";
 import type { DeviceJournal } from "@plugin/sync/device-journal";
 import { PublicationController } from "@plugin/sync/publication";
 import { ReconciliationController } from "@plugin/sync/reconciliation";
+import type { DeleteResponseDiagnostic } from "@plugin/sync/remote-text";
 import { TextApplyEngine } from "@plugin/sync/text-apply";
 import type { Vault } from "obsidian";
 
@@ -19,6 +20,10 @@ export interface CreatePublicationOptions {
 	onEventError(error: unknown): void;
 	/** Fires only for a validated 401 revoked response before controller effects resume. */
 	onRevoked?(): void;
+	/** Captures safe DELETE response classes, or clears stale metadata before a retry. */
+	onDeleteResponseDiagnostic?(
+		diagnostic: DeleteResponseDiagnostic | null,
+	): void;
 }
 
 /** Shared text synchronization services and their caller-owned disposal boundary. */
@@ -40,7 +45,12 @@ export function createPublication(
 	deviceName: string,
 	options: CreatePublicationOptions,
 ): PublicationComposition {
-	const remote = new SyncTransport(serviceOrigin, session, options.onRevoked);
+	const remote = new SyncTransport(
+		serviceOrigin,
+		session,
+		options.onRevoked,
+		options.onDeleteResponseDiagnostic,
+	);
 	const textVault = new ObsidianTextVault(vault);
 	const applyEngine = new TextApplyEngine(journal, textVault, remote, {
 		deviceName,
@@ -56,6 +66,7 @@ export function createPublication(
 		now: options.now,
 		recoverPrecondition: (operation) =>
 			reconciliation.recoverPrecondition(operation),
+		onDeleteResponseDiagnostic: options.onDeleteResponseDiagnostic,
 	});
 	const events = options.registerEvents
 		? new VaultEventAdapter(vault, publication, options.onEventError)

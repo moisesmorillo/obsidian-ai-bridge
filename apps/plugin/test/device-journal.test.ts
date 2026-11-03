@@ -462,6 +462,26 @@ describe("DeviceJournal", () => {
 		expect(journal.attentionStage).toBe("payload_read");
 	});
 
+	it("reports a payload hash operation failure without changing block policy", async () => {
+		const journal = await DeviceJournal.open(storage);
+		const operation = await journal.enqueue(
+			{ op: "put", path: "notes/a.md", precondition },
+			bytes,
+		);
+		const digest = vi
+			.spyOn(crypto.subtle, "digest")
+			.mockRejectedValue(new Error("digest failed"));
+		try {
+			await expect(
+				journal.readPayload(operation.payload_ref, operation.payload_hash),
+			).rejects.toThrow("digest failed");
+			expect(journal.attentionReason).toBeNull();
+			expect(journal.attentionStage).toBe("payload_hash_error");
+		} finally {
+			digest.mockRestore();
+		}
+	});
+
 	it("reports state read-back failure separately from a state write failure", async () => {
 		const journal = await DeviceJournal.open(storage);
 		storage.throwStateRead = true;

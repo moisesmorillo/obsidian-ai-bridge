@@ -6,6 +6,7 @@ import {
 import { ObsidianCredentialStorage } from "@plugin/infrastructure/credential-storage";
 import { ObsidianDeviceStorage } from "@plugin/infrastructure/device-storage";
 import { ObsidianOAuthTransport } from "@plugin/infrastructure/oauth-transport";
+import { consumeStartupSyncFence } from "@plugin/infrastructure/startup-sync-fence";
 import { VaultEventAdapter } from "@plugin/infrastructure/vault-events";
 import { Notice, Plugin } from "@plugin/obsidian-api";
 import { type AIBridgeSettings, AIBridgeSettingTab } from "@plugin/settings";
@@ -19,6 +20,7 @@ import {
 	DeviceJournal,
 } from "@plugin/sync/device-journal";
 import { classifyEnrollmentPath } from "@plugin/sync/enrollment-scope";
+import type { DeleteResponseDiagnostic } from "@plugin/sync/remote-text";
 import { projectSyncStatus } from "@plugin/sync/sync-status";
 import type { App, ObsidianProtocolData, PluginManifest } from "obsidian";
 
@@ -50,6 +52,8 @@ export default class AIBridgePlugin extends Plugin {
 	private syncActive = false;
 	private syncRevoked = false;
 	private syncFailure: string | null = null;
+	/** Safe metadata from the latest DELETE response, retained across pause. */
+	private deleteResponseDiagnostic: DeleteResponseDiagnostic | null = null;
 	private vaultSummary: VaultReadResult | null = null;
 	/** Non-secret server and local device labels persisted in this plugin's settings. */
 	private settingsValue: AIBridgeSettings = {
@@ -105,7 +109,10 @@ export default class AIBridgePlugin extends Plugin {
 				session.close();
 				return;
 			}
-			if (this.sessionStatus === "connected") this.startSync();
+			if (this.sessionStatus === "connected") {
+				if (consumeStartupSyncFence()) this.syncPaused = true;
+				this.startSync();
+			}
 			this.registerObsidianProtocolHandler(
 				"ai-bridge/callback",
 				(params: ObsidianProtocolData) => {
@@ -332,7 +339,9 @@ export default class AIBridgePlugin extends Plugin {
 		document.addEventListener("visibilitychange", this.visibilityHandler);
 		window.addEventListener("focus", this.visibilityHandler);
 		window.addEventListener("blur", this.visibilityHandler);
-		this.runSyncAction(() => this.desktopSync?.start() ?? Promise.resolve());
+		if (this.syncPaused) this.desktopSync.pause();
+		else
+			this.runSyncAction(() => this.desktopSync?.start() ?? Promise.resolve());
 	}
 
 	/** Creates one shared publication and apply composition for the active session lifetime. */
@@ -349,6 +358,10 @@ export default class AIBridgePlugin extends Plugin {
 				now: Date.now,
 				registerEvents: false,
 				onEventError: () => this.reportSyncFailure(),
+				onDeleteResponseDiagnostic: (diagnostic) => {
+					this.deleteResponseDiagnostic = diagnostic;
+					this.settingsTab?.refreshStatus();
+				},
 				onRevoked: () => {
 					this.runSyncAction(() => this.handleRevocation());
 				},
@@ -416,6 +429,7 @@ export default class AIBridgePlugin extends Plugin {
 				head: this.composition?.reconciliation.lastHead ?? null,
 				persisted: this.journal.attentionReason === null,
 				storageFailureStage: this.journal.attentionStage,
+				deleteResponseDiagnostic: this.deleteResponseDiagnostic,
 				active: this.syncActive || (this.desktopSync?.isBusy ?? false),
 				failure: this.syncFailure,
 				paused: this.syncPaused,

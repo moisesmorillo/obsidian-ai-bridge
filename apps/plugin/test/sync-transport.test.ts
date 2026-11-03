@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import { SyncTransport } from "../src/infrastructure/sync-transport";
-import { UnsupportedRemoteTextError } from "../src/sync/remote-text";
+import {
+	SyncTransportError,
+	UnsupportedRemoteTextError,
+} from "../src/sync/remote-text";
 
 /** Captures authenticated transport URLs and returns controlled protocol responses. */
 class ResponseSession {
@@ -24,6 +27,122 @@ class ResponseSession {
 const epoch = "a".repeat(32);
 
 describe("SyncTransport", () => {
+	it("classifies a rejected delete response without retaining raw response data", async () => {
+		const session = new ResponseSession();
+		session.responses.push({
+			status: 400,
+			headers: { etag: `"${epoch}.4"` },
+			text: JSON.stringify({
+				error: "invalid_request",
+				message: "The request is not valid.",
+			}),
+		});
+		const diagnostics: unknown[] = [];
+		const transport = new SyncTransport(
+			"https://service.test",
+			session,
+			undefined,
+			(diagnostic) => diagnostics.push(diagnostic),
+		);
+
+		const error = await transport
+			.delete(
+				"oab-8.8/ac-04/shared.md",
+				{ kind: "match", epoch, rev: 1 },
+				"private-operation-key",
+			)
+			.catch((caught: unknown) => caught);
+
+		expect(error).toBeInstanceOf(SyncTransportError);
+		expect(error).toMatchObject({
+			statusClass: "4xx",
+			code: "invalid_request",
+			responseETagClass: "strong",
+			message: "Sync request failed",
+		});
+		expect(Object.keys(error as object)).not.toContain("text");
+		expect(JSON.stringify(error)).not.toContain("private-operation-key");
+		expect(diagnostics).toEqual([
+			{
+				statusClass: "4xx",
+				errorKind: "invalid_request",
+				responseETagClass: "strong",
+			},
+		]);
+		expect(JSON.stringify(diagnostics)).not.toContain("private-operation-key");
+		expect(JSON.stringify(diagnostics)).not.toContain(
+			"oab-8.8/ac-04/shared.md",
+		);
+	});
+
+	it("captures strong ETag class for a successful delete receipt", async () => {
+		const session = new ResponseSession();
+		session.responses.push({
+			status: 200,
+			headers: { etag: `"${epoch}.2"` },
+			text: JSON.stringify({
+				path: "oab-8.8/ac-04/shared.md",
+				etag: `"${epoch}.2"`,
+				seq: 2,
+				size: 0,
+				hash: "",
+				deleted: true,
+			}),
+		});
+		const diagnostics: unknown[] = [];
+		const transport = new SyncTransport(
+			"https://service.test",
+			session,
+			undefined,
+			(diagnostic) => diagnostics.push(diagnostic),
+		);
+
+		await expect(
+			transport.delete(
+				"oab-8.8/ac-04/shared.md",
+				{ kind: "match", epoch, rev: 1 },
+				"private-operation-key",
+			),
+		).resolves.toMatchObject({ status: 200, deleted: true });
+		expect(diagnostics).toEqual([
+			{
+				statusClass: "2xx",
+				errorKind: null,
+				responseETagClass: "strong",
+			},
+		]);
+	});
+
+	it("redacts a noncanonical response body and classifies a weak ETag", async () => {
+		const session = new ResponseSession();
+		session.responses.push({
+			status: 400,
+			headers: { etag: 'W/"private-value"' },
+			text: JSON.stringify({
+				error: "invalid_request",
+				message: "private token must not appear",
+			}),
+		});
+		const transport = new SyncTransport("https://service.test", session);
+
+		const error = await transport
+			.delete(
+				"oab-8.8/ac-04/shared.md",
+				{ kind: "match", epoch, rev: 1 },
+				"private-operation-key",
+			)
+			.catch((caught: unknown) => caught);
+
+		expect(error).toMatchObject({
+			statusClass: "4xx",
+			code: null,
+			responseETagClass: "weak",
+			message: "Sync request failed",
+		});
+		expect(JSON.stringify(error)).not.toContain("private token");
+		expect(JSON.stringify(error)).not.toContain("private-value");
+	});
+
 	it("reads and validates exact current blob bytes for rename recovery", async () => {
 		const session = new ResponseSession();
 		const bytes = new Uint8Array([0, 254, 7]);

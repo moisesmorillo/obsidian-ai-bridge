@@ -259,6 +259,11 @@ class MemoryRemote implements PublicationRemote {
 		key: string,
 	): Promise<PublicationReceipt> {
 		this.deletes.push({ path, precondition, key });
+		if (this.failure) {
+			const error = this.failure;
+			this.failure = null;
+			throw error;
+		}
 		const rev = precondition.kind === "match" ? precondition.rev + 1 : 2;
 		return {
 			status: 200,
@@ -350,6 +355,40 @@ async function openController(
 }
 
 describe("PublicationController", () => {
+	it("clears prior DELETE metadata before a new attempt", async () => {
+		const { journal, remote, vault } = await openController();
+		const path = "oab-8.8/ac-04/shared.md";
+		await journal.setBase(path, {
+			deleted: false,
+			rev: 1,
+			hash: await digestText("shared baseline"),
+		});
+		await journal.enqueue(
+			{
+				op: "delete",
+				path,
+				precondition: { kind: "match", epoch, rev: 1 },
+			},
+			new Uint8Array(),
+		);
+		remote.failure = new Error("request failed");
+		const diagnostics: unknown[] = [];
+		const controller = new PublicationController(journal, vault, remote, {
+			applyEngine: createApplyEngine(journal, vault, remote),
+			now: () => 1_800_000_000_000,
+			recoverPrecondition: async () => {},
+			onDeleteResponseDiagnostic: (diagnostic) => {
+				diagnostics.push(diagnostic);
+			},
+		});
+
+		await controller.flush();
+
+		expect(diagnostics).toEqual([null]);
+		expect(journal.snapshot().pending_ops).toHaveLength(1);
+		expect(journal.snapshot().pending_ops[0]?.state).toBe("sent");
+	});
+
 	it.each(
 		[false, true].flatMap((changed) =>
 			["assets/renamed.png", "notes/renamed.md"].map((to) => ({ changed, to })),

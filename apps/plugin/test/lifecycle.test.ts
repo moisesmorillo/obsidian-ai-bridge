@@ -49,6 +49,9 @@ vi.mock("obsidian", () => ({
 				create: (..._args: unknown[]) => host.calls.push("vault.create"),
 				modify: (..._args: unknown[]) => host.calls.push("vault.modify"),
 				delete: (..._args: unknown[]) => host.calls.push("vault.delete"),
+				getFiles: () => [],
+				on: () => ({}),
+				offref: () => undefined,
 				adapter: {
 					exists: async () => false,
 					mkdir: async () => undefined,
@@ -93,7 +96,9 @@ vi.mock("../src/settings", () => ({
 
 import type { App, PluginManifest } from "obsidian";
 import { DeviceSession } from "../src/auth/device-session";
+import { OAB8_STARTUP_SYNC_FENCE } from "../src/infrastructure/startup-sync-fence";
 import AIBridgePlugin from "../src/main";
+import { DesktopSyncController } from "../src/sync/desktop-sync";
 import { DeviceJournal } from "../src/sync/device-journal";
 
 describe("AIBridgePlugin device-local lifecycle", () => {
@@ -110,6 +115,59 @@ describe("AIBridgePlugin device-local lifecycle", () => {
 		host.state = null;
 		host.failSave = false;
 		host.loadState = null;
+	});
+
+	it("consumes a one-shot startup fence before a connected session can sync", async () => {
+		vi.stubGlobal("window", {
+			setTimeout: () => 1,
+			clearTimeout: () => undefined,
+			setInterval: () => 2,
+			clearInterval: () => undefined,
+			addEventListener: () => undefined,
+			removeEventListener: () => undefined,
+		});
+		vi.stubGlobal("document", {
+			visibilityState: "hidden",
+			hasFocus: () => false,
+			addEventListener: () => undefined,
+			removeEventListener: () => undefined,
+		});
+		const plugin = new AIBridgePlugin({} as App, {} as PluginManifest);
+		const startupFenceKey = OAB8_STARTUP_SYNC_FENCE;
+		Reflect.set(globalThis, startupFenceKey, true);
+		const restore = vi
+			.spyOn(DeviceSession.prototype, "restore")
+			.mockImplementation(async () => {
+				Reflect.set(plugin, "sessionStatus", "connected");
+			});
+		const resume = vi
+			.spyOn(DesktopSyncController.prototype, "resume")
+			.mockResolvedValue();
+
+		try {
+			await plugin.onload();
+			const status = Reflect.apply(
+				Reflect.get(plugin, "syncStatus") as () => unknown,
+				plugin,
+				[],
+			);
+			expect(Reflect.get(plugin, "desktopSync")).not.toBeNull();
+			expect(status).toMatchObject({ state: "paused" });
+			expect(Reflect.has(globalThis, startupFenceKey)).toBe(false);
+			await Reflect.apply(
+				Reflect.get(plugin, "resumeSync") as () => Promise<void>,
+				plugin,
+				[],
+			);
+			expect(resume).toHaveBeenCalledOnce();
+			expect(host.calls).not.toContain("requestUrl");
+		} finally {
+			Reflect.deleteProperty(globalThis, startupFenceKey);
+			plugin.onunload();
+			restore.mockRestore();
+			resume.mockRestore();
+			vi.unstubAllGlobals();
+		}
 	});
 
 	it("opens one local journal without network requests or vault mutation", async () => {

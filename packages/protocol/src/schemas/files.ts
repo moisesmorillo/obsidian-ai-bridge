@@ -87,7 +87,7 @@ export const CurrentEpochResultSchema = z.discriminatedUnion("ok", [
 ]);
 
 /** Error codes supported by the canonical HTTP failure encoder. */
-const FileHttpErrorSchema = z.enum([
+export const FileHttpErrorSchema = z.enum([
 	"invalid_request",
 	"query_too_short",
 	"query_too_long",

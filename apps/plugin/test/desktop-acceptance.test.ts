@@ -1,15 +1,19 @@
 import { describe, expect, it } from "vitest";
 import {
 	assertAuthorizedVault,
+	createAc04BaselineScript,
 	createAc20FixtureScript,
 	createCaseScript,
 	createInstallScript,
+	createPausedReloadScript,
 	dispatchCapturedCallback,
 	hasCapturedCallback,
 	runHostCase,
 	runScopedObsidian,
+	safeAc04BaselineInspection,
 	safeAc20Inspection,
 	safeCaseResult,
+	safePausedReloadResult,
 	submitConsentAndDispatch,
 	validateAuthorizationUrl,
 	validateCallbackUrl,
@@ -21,6 +25,97 @@ const vaults = {
 };
 
 describe("desktop acceptance safety", () => {
+	it("projects only safe AC-04 revision comparison fields", () => {
+		expect(
+			safeAc04BaselineInspection({
+				statusClass: "2xx",
+				pathMatches: true,
+				baselineRevisionChanged: false,
+				deleted: false,
+				strongResponseETag: true,
+				content: "private note body",
+				etag: "private etag",
+				operationKey: "private key",
+			}),
+		).toEqual({
+			statusClass: "2xx",
+			pathMatches: true,
+			baselineRevisionChanged: false,
+			deleted: false,
+			strongResponseETag: true,
+		});
+		expect(() =>
+			safeAc04BaselineInspection({
+				statusClass: "200",
+				pathMatches: true,
+				baselineRevisionChanged: false,
+				deleted: false,
+				strongResponseETag: true,
+			}),
+		).toThrow("Invalid AC-04 baseline result");
+	});
+
+	it("builds a fixed-path current GET without response content output", () => {
+		const script = createAc04BaselineScript(vaults["dev-1"], "/Users/test");
+		expect(script).toContain('const path = "oab-8.8/ac-04/shared.md"');
+		expect(script).toContain('method: "GET"');
+		expect(script).toContain("baselineRevisionChanged");
+		expect(script).not.toContain('method: "DELETE"');
+		expect(script).not.toContain("JSON.stringify(body)");
+	});
+
+	it("creates a reload script that fences startup and restores the fence", () => {
+		const script = createPausedReloadScript(vaults["dev-1"], "/Users/test");
+		const pauseGuard = script.indexOf(
+			'currentPlugin?.syncStatus?.()?.state !== "paused"',
+		);
+		const fenceSet = script.indexOf(
+			'globalThis["__oab8DesktopStartupFence"] = true',
+		);
+		expect(pauseGuard).toBeGreaterThan(0);
+		expect(pauseGuard).toBeLessThan(fenceSet);
+		expect(fenceSet).toBeLessThan(
+			script.indexOf("await app.plugins.disablePlugin(id)"),
+		);
+		expect(script).toContain("await app.plugins.loadPlugin(id)");
+		expect(script).toContain("await app.plugins.enablePlugin(id)");
+		expect(script).toContain('return "OAB8PAUSEDRELOAD:"');
+		expect(script).toContain('delete globalThis["__oab8DesktopStartupFence"]');
+		expect(script).not.toContain("resumeSync");
+		expect(script).not.toContain("syncNow");
+	});
+
+	it("accepts only a paused reload result with no active startup fence", () => {
+		expect(
+			safePausedReloadResult({
+				sessionStatus: "connected",
+				syncState: "paused",
+				pendingOperationCount: 1,
+				pendingApplyCount: 0,
+				controllerBusy: false,
+				startupFenceRestored: true,
+				privateValue: "secret",
+			}),
+		).toEqual({
+			sessionStatus: "connected",
+			syncState: "paused",
+			pendingOperationCount: 1,
+			pendingApplyCount: 0,
+			controllerBusy: false,
+			startupFenceRestored: true,
+		});
+		expect(() =>
+			safePausedReloadResult({
+				sessionStatus: "connected",
+				syncState: "pending",
+				pendingOperationCount: 1,
+				pendingApplyCount: 0,
+				controllerBusy: false,
+				startupFenceRestored: false,
+			}),
+		).toThrow("Invalid paused reload result");
+	});
+
 	it("accepts only the exact authorized vault path", () => {
 		expect(assertAuthorizedVault("dev-1", vaults["dev-1"], "/Users/test")).toBe(
 			vaults["dev-1"],
@@ -109,6 +204,12 @@ describe("desktop acceptance safety", () => {
 				sessionStatus: "connected",
 				syncState: "settled",
 				storageFailureStage: "payload_read",
+				deleteResponseDiagnostic: {
+					statusClass: "4xx",
+					errorKind: "invalid_request",
+					responseETagClass: "strong",
+					responseBody: "private response body",
+				},
 				localFixtureCount: 3,
 				liveBaseCount: 3,
 				localBaseFileCount: 3,
@@ -125,6 +226,11 @@ describe("desktop acceptance safety", () => {
 			sessionStatus: "connected",
 			syncState: "settled",
 			storageFailureStage: "payload_read",
+			deleteResponseDiagnostic: {
+				statusClass: "4xx",
+				errorKind: "invalid_request",
+				responseETagClass: "strong",
+			},
 			localFixtureCount: 3,
 			liveBaseCount: 3,
 			localBaseFileCount: 3,
@@ -151,6 +257,17 @@ describe("desktop acceptance safety", () => {
 				hasCursor: false,
 				pendingOperationCount: 0,
 				pendingApplyCount: 0,
+			}),
+		).toThrow("Invalid AC-20 inspection result");
+		expect(() =>
+			safeAc20Inspection({
+				sessionStatus: "connected",
+				syncState: "paused",
+				deleteResponseDiagnostic: {
+					statusClass: "4xx",
+					errorKind: "private token",
+					responseETagClass: "strong",
+				},
 			}),
 		).toThrow("Invalid AC-20 inspection result");
 		expect(() => safeAc20Inspection({ serviceLiveCount: -1 })).toThrow(

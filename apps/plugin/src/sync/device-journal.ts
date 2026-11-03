@@ -663,7 +663,14 @@ export class DeviceJournal {
 			this.attentionStageValue = "payload_read";
 			throw error;
 		}
-		if ((await digest(bytes)) !== expectedHash) {
+		let actualHash: string;
+		try {
+			actualHash = await digest(bytes);
+		} catch (error) {
+			this.attentionStageValue = "payload_hash_error";
+			throw error;
+		}
+		if (actualHash !== expectedHash) {
 			this.markAttention("payload_hash_mismatch");
 			throw new Error("Payload verification failed");
 		}

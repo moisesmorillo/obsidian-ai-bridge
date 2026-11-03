@@ -13,6 +13,10 @@ import {
 } from "@obsidian-ai-bridge/protocol";
 import type { OAuthTransportResponse } from "@plugin/infrastructure/oauth-transport";
 import {
+	type CanonicalSyncErrorKind,
+	classifyHttpStatus,
+	type DeleteResponseDiagnostic,
+	type ResponseETagClass,
 	SyncTransportError,
 	UnsupportedRemoteTextError,
 } from "@plugin/sync/remote-text";
@@ -63,6 +67,9 @@ export class SyncTransport {
 		serviceOrigin: string,
 		private readonly session: SyncResponseSession,
 		private readonly onRevoked?: () => void,
+		private readonly onDeleteResponseDiagnostic?: (
+			diagnostic: DeleteResponseDiagnostic,
+		) => void,
 	) {
 		const url = new URL(serviceOrigin);
 		if (url.protocol !== "https:" || url.origin !== serviceOrigin)
@@ -556,16 +563,38 @@ export class SyncTransport {
 	async delete(path: string, precondition: DevicePrecondition, key: string) {
 		if (precondition.kind !== "match")
 			throw new Error("Delete needs an observed source revision");
-		return this.readMutation(
-			await this.request(`/v1/files/${encodePath(path)}`, {
+		let response: OAuthTransportResponse;
+		try {
+			response = await this.request(`/v1/files/${encodePath(path)}`, {
 				method: "DELETE",
 				headers: {
 					"if-match": `"${precondition.epoch}.${precondition.rev}"`,
 					"x-vault-epoch": precondition.epoch,
 					"idempotency-key": key,
 				},
-			}),
-		);
+			});
+		} catch (error) {
+			this.onDeleteResponseDiagnostic?.(
+				error instanceof SyncTransportError
+					? {
+							statusClass: error.statusClass,
+							errorKind: error.code,
+							responseETagClass: error.responseETagClass,
+						}
+					: {
+							statusClass: null,
+							errorKind: null,
+							responseETagClass: "unavailable",
+						},
+			);
+			throw error;
+		}
+		this.onDeleteResponseDiagnostic?.({
+			statusClass: classifyHttpStatus(response.status),
+			errorKind: null,
+			responseETagClass: classifyResponseETag(response.headers.etag),
+		});
+		return this.readMutation(response);
 	}
 
 	/** Publishes one event-authorized rename under its exact observed source revision. */
@@ -676,7 +705,7 @@ export class SyncTransport {
 			options,
 		);
 		if (response.status < 200 || response.status >= 300) {
-			let code: string | null = null;
+			let code: CanonicalSyncErrorKind | null = null;
 			let existingPath: string | null = null;
 			let retryAfter: string | null = null;
 			try {
@@ -701,9 +730,22 @@ export class SyncTransport {
 				code,
 				existingPath,
 				retryAfter,
+				classifyResponseETag(response.headers.etag),
 			);
 		}
 		return response;
+	}
+}
+
+/** Classifies one response ETag without retaining or exposing its value. */
+function classifyResponseETag(value: string | undefined): ResponseETagClass {
+	if (value === undefined) return "missing";
+	if (value.startsWith("W/")) return "weak";
+	try {
+		parseETag(value);
+		return "strong";
+	} catch {
+		return "invalid";
 	}
 }
 

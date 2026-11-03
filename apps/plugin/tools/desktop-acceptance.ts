@@ -3,10 +3,13 @@ import { readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { FileHttpErrorSchema } from "@obsidian-ai-bridge/protocol";
+import { OAB8_STARTUP_SYNC_FENCE } from "@plugin/infrastructure/startup-sync-fence";
 import {
 	DEVICE_JOURNAL_FAILURE_STAGES,
 	type DeviceJournalFailureStage,
 } from "@plugin/sync/device-journal";
+import type { DeleteResponseDiagnostic } from "@plugin/sync/remote-text";
 
 /** Identifies one authorized desktop vault and the exact path that Obsidian must resolve. */
 export type DesktopVaultId = "dev-1" | "dev-2";
@@ -337,6 +340,8 @@ export interface Ac20VaultInspection {
 		| null;
 	/** Fixed non-secret journal failure stage, or null when no stage is recorded. */
 	storageFailureStage: DeviceJournalFailureStage | null;
+	/** Safe metadata from the latest DELETE response, or null before one. */
+	deleteResponseDiagnostic: DeleteResponseDiagnostic | null;
 	/** Number of local files in the AC-20 fixture directory. */
 	localFixtureCount: number;
 	/** Number of live paths recorded in the local journal base. */
@@ -359,13 +364,42 @@ export interface Ac20VaultInspection {
 	pendingApplyCount: number;
 }
 
-/** Projects only fixed AC-20 inspection fields and discards host output data. */
+/** Validates canonical DELETE metadata and discards every unlisted host field. */
+function safeDeleteResponseDiagnostic(
+	value: unknown,
+): DeleteResponseDiagnostic | null {
+	if (value === null || value === undefined) return null;
+	if (typeof value !== "object")
+		throw new Error("Invalid AC-20 inspection result");
+	const statusClass = Reflect.get(value, "statusClass");
+	const errorKind = Reflect.get(value, "errorKind");
+	const responseETagClass = Reflect.get(value, "responseETagClass");
+	if (
+		!["1xx", "2xx", "3xx", "4xx", "5xx", "other", null].includes(statusClass) ||
+		(errorKind !== null && !FileHttpErrorSchema.safeParse(errorKind).success) ||
+		!["strong", "weak", "missing", "invalid", "unavailable"].includes(
+			responseETagClass,
+		)
+	)
+		throw new Error("Invalid AC-20 inspection result");
+	return {
+		statusClass: statusClass as DeleteResponseDiagnostic["statusClass"],
+		errorKind: errorKind as DeleteResponseDiagnostic["errorKind"],
+		responseETagClass:
+			responseETagClass as DeleteResponseDiagnostic["responseETagClass"],
+	};
+}
+
+/** Projects fixed AC-20 counts, journal stages, and canonical DELETE metadata. */
 export function safeAc20Inspection(value: unknown): Ac20VaultInspection {
 	if (!value || typeof value !== "object")
 		throw new Error("Invalid AC-20 inspection result");
 	const sessionStatus = Reflect.get(value, "sessionStatus");
 	const syncState = Reflect.get(value, "syncState");
 	const storageFailureStage = Reflect.get(value, "storageFailureStage") ?? null;
+	const deleteResponseDiagnostic = safeDeleteResponseDiagnostic(
+		Reflect.get(value, "deleteResponseDiagnostic"),
+	);
 	const counts = [
 		"localFixtureCount",
 		"liveBaseCount",
@@ -408,7 +442,7 @@ export function safeAc20Inspection(value: unknown): Ac20VaultInspection {
 		typeof hasCursor !== "boolean" ||
 		(storageFailureStage !== null &&
 			!DEVICE_JOURNAL_FAILURE_STAGES.some(
-				(stage) => stage === storageFailureStage,
+				(stage: DeviceJournalFailureStage) => stage === storageFailureStage,
 			))
 	)
 		throw new Error("Invalid AC-20 inspection result");
@@ -417,6 +451,7 @@ export function safeAc20Inspection(value: unknown): Ac20VaultInspection {
 		syncState,
 		storageFailureStage:
 			storageFailureStage as DeviceJournalFailureStage | null,
+		deleteResponseDiagnostic,
 		localFixtureCount: counts[0],
 		liveBaseCount: counts[1],
 		localBaseFileCount: counts[2],
@@ -428,6 +463,207 @@ export function safeAc20Inspection(value: unknown): Ac20VaultInspection {
 		pendingOperationCount: counts[4],
 		pendingApplyCount: counts[5],
 	};
+}
+
+/** Safe revision comparison from a fixed current-file GET without file identity values. */
+export interface Ac04BaselineInspection {
+	/** HTTP status class without the exact response number. */
+	statusClass: "1xx" | "2xx" | "3xx" | "4xx" | "5xx" | "other";
+	/** True only when the response path matches the fixed AC-04 path. */
+	pathMatches: boolean;
+	/** True or false when a strong ETag validates, otherwise null. */
+	baselineRevisionChanged: boolean | null;
+	/** Current tombstone state when response metadata validates, otherwise null. */
+	deleted: boolean | null;
+	/** True only when the response ETag is a canonical strong ETag. */
+	strongResponseETag: boolean;
+}
+
+/** Validates one AC-04 result and discards all values outside its safe fields. */
+export function safeAc04BaselineInspection(
+	value: unknown,
+): Ac04BaselineInspection {
+	if (!value || typeof value !== "object")
+		throw new Error("Invalid AC-04 baseline result");
+	const statusClass = Reflect.get(value, "statusClass");
+	const pathMatches = Reflect.get(value, "pathMatches");
+	const baselineRevisionChanged = Reflect.get(value, "baselineRevisionChanged");
+	const deleted = Reflect.get(value, "deleted");
+	const strongResponseETag = Reflect.get(value, "strongResponseETag");
+	if (
+		!["1xx", "2xx", "3xx", "4xx", "5xx", "other"].includes(statusClass) ||
+		typeof pathMatches !== "boolean" ||
+		(baselineRevisionChanged !== null &&
+			typeof baselineRevisionChanged !== "boolean") ||
+		(deleted !== null && typeof deleted !== "boolean") ||
+		typeof strongResponseETag !== "boolean"
+	)
+		throw new Error("Invalid AC-04 baseline result");
+	return {
+		statusClass,
+		pathMatches,
+		baselineRevisionChanged,
+		deleted,
+		strongResponseETag,
+	};
+}
+
+/** Creates an exact-vault script for one read-only GET of the fixed AC-04 path. */
+export function createAc04BaselineScript(
+	target: string,
+	home = homedir(),
+): string {
+	const authorizedTarget = assertAuthorizedVault("dev-1", target, home);
+	const targetValue = JSON.stringify(authorizedTarget);
+	const path = "oab-8.8/ac-04/shared.md";
+	return `(async () => {
+		if (app.vault.adapter.getBasePath() !== ${targetValue}) throw Error("Vault path mismatch");
+		const plugin = app.plugins.plugins?.["ai-bridge"];
+		if (!plugin?.session?.requestResponse) throw Error("Plugin session unavailable");
+		const path = ${JSON.stringify(path)};
+		try {
+			const response = await plugin.session.requestResponse("/v1/files/" + path.split("/").map(encodeURIComponent).join("/"), { method: "GET" });
+			const statusClass = response.status >= 100 && response.status < 600 ? Math.floor(response.status / 100) + "xx" : "other";
+			const etag = response.headers.etag;
+			const match = typeof etag === "string" ? /^"(?=.*[a-f])[0-9a-f]{32}\\.([1-9][0-9]*)"$/.exec(etag) : null;
+			const revision = match ? Number(match[1]) : null;
+			const strongResponseETag = revision !== null && Number.isSafeInteger(revision);
+			if (response.status !== 200) return "OAB8AC04BASELINE:" + JSON.stringify({ statusClass, pathMatches: false, baselineRevisionChanged: null, deleted: null, strongResponseETag });
+			let body;
+			try { body = JSON.parse(response.text); } catch { return "OAB8AC04BASELINE:" + JSON.stringify({ statusClass, pathMatches: false, baselineRevisionChanged: null, deleted: null, strongResponseETag }); }
+			const pathMatches = body?.path === path;
+			const identityMatches = pathMatches && body?.etag === etag && typeof body.deleted === "boolean";
+			return "OAB8AC04BASELINE:" + JSON.stringify({ statusClass, pathMatches, baselineRevisionChanged: identityMatches && strongResponseETag ? revision !== 1 : null, deleted: identityMatches ? body.deleted : null, strongResponseETag });
+		} catch {
+			return "OAB8AC04BASELINE:" + JSON.stringify({ statusClass: "other", pathMatches: false, baselineRevisionChanged: null, deleted: null, strongResponseETag: false });
+		}
+	})()`;
+}
+
+/** Reads the fixed AC-04 service path through the exact authorized vault session. */
+export function inspectAc04Baseline(
+	vaultName: string,
+	options: { executable?: string } = {},
+): Ac04BaselineInspection {
+	const script = createAc04BaselineScript(authorizedVaults()["dev-1"]);
+	const output = invokeScopedObsidian(
+		"dev-1",
+		vaultName,
+		"eval",
+		[`code=${script}`],
+		options,
+	);
+	const marker = output.lastIndexOf("OAB8AC04BASELINE:");
+	if (marker < 0) throw new Error("AC-04 baseline result was unavailable");
+	try {
+		return safeAc04BaselineInspection(
+			JSON.parse(output.slice(marker + "OAB8AC04BASELINE:".length).trim()),
+		);
+	} catch {
+		throw new Error("AC-04 baseline result was invalid");
+	}
+}
+
+/** Safe result returned by a reload that consumed its temporary startup fence. */
+export interface PausedReloadInspection {
+	/** Current authorization state after the awaited plugin reload. */
+	sessionStatus: "connected";
+	/** Sync must remain paused until the owner presses Resume. */
+	syncState: "paused";
+	/** Number of durable pending operations after reload. */
+	pendingOperationCount: number;
+	/** Number of durable pending applies after reload. */
+	pendingApplyCount: number;
+	/** False only when no event, timer, or synchronization work remains. */
+	controllerBusy: false;
+	/** True only when the one-shot startup fence no longer exists. */
+	startupFenceRestored: true;
+}
+
+/** Validates one paused reload result and discards all unlisted host fields. */
+export function safePausedReloadResult(value: unknown): PausedReloadInspection {
+	if (!value || typeof value !== "object")
+		throw new Error("Invalid paused reload result");
+	const sessionStatus = Reflect.get(value, "sessionStatus");
+	const syncState = Reflect.get(value, "syncState");
+	const pendingOperationCount = Reflect.get(value, "pendingOperationCount");
+	const pendingApplyCount = Reflect.get(value, "pendingApplyCount");
+	const controllerBusy = Reflect.get(value, "controllerBusy");
+	const startupFenceRestored = Reflect.get(value, "startupFenceRestored");
+	if (
+		sessionStatus !== "connected" ||
+		syncState !== "paused" ||
+		![pendingOperationCount, pendingApplyCount].every(
+			(count) =>
+				typeof count === "number" && Number.isSafeInteger(count) && count >= 0,
+		) ||
+		controllerBusy !== false ||
+		startupFenceRestored !== true
+	)
+		throw new Error("Invalid paused reload result");
+	return {
+		sessionStatus,
+		syncState,
+		pendingOperationCount,
+		pendingApplyCount,
+		controllerBusy,
+		startupFenceRestored,
+	};
+}
+
+/** Creates an exact-vault reload script that blocks startup sync until owner Resume. */
+export function createPausedReloadScript(
+	target: string,
+	home = homedir(),
+): string {
+	const authorizedTarget = assertAuthorizedVault("dev-1", target, home);
+	const targetValue = JSON.stringify(authorizedTarget);
+	const fenceKey = JSON.stringify(OAB8_STARTUP_SYNC_FENCE);
+	return `(async () => {
+		if (app.vault.adapter.getBasePath() !== ${targetValue}) throw Error("Vault path mismatch");
+		const id = "ai-bridge";
+		if (!app.plugins.enabledPlugins.has(id)) throw Error("Plugin is not enabled");
+		const currentPlugin = app.plugins.plugins?.[id];
+		if (currentPlugin?.syncStatus?.()?.state !== "paused" || currentPlugin?.desktopSync?.isBusy !== false) throw Error("Plugin must be paused and idle before reload");
+		globalThis[${fenceKey}] = true;
+		try {
+			await app.plugins.disablePlugin(id);
+			await app.plugins.loadPlugin(id);
+			await app.plugins.enablePlugin(id);
+			const plugin = app.plugins.plugins?.[id];
+			const journal = plugin?.journal?.snapshot?.();
+			const status = plugin?.syncStatus?.();
+			const controller = plugin?.desktopSync;
+			if (!app.plugins.enabledPlugins.has(id) || !journal || !status || !controller) throw Error("Plugin reload state unavailable");
+			return "OAB8PAUSEDRELOAD:" + JSON.stringify({ sessionStatus: plugin.sessionStatus, syncState: status.state, pendingOperationCount: journal.pending_ops?.length, pendingApplyCount: journal.pending_apply?.length, controllerBusy: controller.isBusy, startupFenceRestored: !Reflect.has(globalThis, ${fenceKey}) });
+		} finally {
+			delete globalThis[${fenceKey}];
+		}
+	})()`;
+}
+
+/** Reloads one enabled plugin in its exact vault and returns only safe paused state. */
+export function reloadDev1PluginPaused(
+	vaultName: string,
+	options: { executable?: string } = {},
+): PausedReloadInspection {
+	const script = createPausedReloadScript(authorizedVaults()["dev-1"]);
+	const output = invokeScopedObsidian(
+		"dev-1",
+		vaultName,
+		"eval",
+		[`code=${script}`],
+		options,
+	);
+	const marker = output.lastIndexOf("OAB8PAUSEDRELOAD:");
+	if (marker < 0) throw new Error("Paused reload result was unavailable");
+	try {
+		return safePausedReloadResult(
+			JSON.parse(output.slice(marker + "OAB8PAUSEDRELOAD:".length).trim()),
+		);
+	} catch {
+		throw new Error("Paused reload result was invalid");
+	}
 }
 
 /** Reads safe AC-20 file and service counts through the exact authorized vault. */
@@ -452,6 +688,7 @@ export function inspectAc20Vault(
 			sessionStatus: plugin.sessionStatus,
 			syncState: status?.state ?? null,
 			storageFailureStage: status?.storageFailureStage ?? null,
+			deleteResponseDiagnostic: status?.deleteResponseDiagnostic ?? null,
 			localFixtureCount: [...localPaths].filter((path) => path.startsWith(prefix)).length,
 			liveBaseCount: liveBasePaths.length,
 			localBaseFileCount: liveBasePaths.filter(([path]) => localPaths.has(path)).length,

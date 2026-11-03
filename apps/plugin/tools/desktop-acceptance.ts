@@ -3,6 +3,10 @@ import { readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+	DEVICE_JOURNAL_FAILURE_STAGES,
+	type DeviceJournalFailureStage,
+} from "@plugin/sync/device-journal";
 
 /** Identifies one authorized desktop vault and the exact path that Obsidian must resolve. */
 export type DesktopVaultId = "dev-1" | "dev-2";
@@ -331,6 +335,8 @@ export interface Ac20VaultInspection {
 		| "paused"
 		| "backup failed"
 		| null;
+	/** Fixed non-secret journal failure stage, or null when no stage is recorded. */
+	storageFailureStage: DeviceJournalFailureStage | null;
 	/** Number of local files in the AC-20 fixture directory. */
 	localFixtureCount: number;
 	/** Number of live paths recorded in the local journal base. */
@@ -359,6 +365,7 @@ export function safeAc20Inspection(value: unknown): Ac20VaultInspection {
 		throw new Error("Invalid AC-20 inspection result");
 	const sessionStatus = Reflect.get(value, "sessionStatus");
 	const syncState = Reflect.get(value, "syncState");
+	const storageFailureStage = Reflect.get(value, "storageFailureStage") ?? null;
 	const counts = [
 		"localFixtureCount",
 		"liveBaseCount",
@@ -398,12 +405,18 @@ export function safeAc20Inspection(value: unknown): Ac20VaultInspection {
 					count >= 0),
 		) ||
 		typeof hasEpoch !== "boolean" ||
-		typeof hasCursor !== "boolean"
+		typeof hasCursor !== "boolean" ||
+		(storageFailureStage !== null &&
+			!DEVICE_JOURNAL_FAILURE_STAGES.some(
+				(stage) => stage === storageFailureStage,
+			))
 	)
 		throw new Error("Invalid AC-20 inspection result");
 	return {
 		sessionStatus,
 		syncState,
+		storageFailureStage:
+			storageFailureStage as DeviceJournalFailureStage | null,
 		localFixtureCount: counts[0],
 		liveBaseCount: counts[1],
 		localBaseFileCount: counts[2],
@@ -438,6 +451,7 @@ export function inspectAc20Vault(
 		const result = {
 			sessionStatus: plugin.sessionStatus,
 			syncState: status?.state ?? null,
+			storageFailureStage: status?.storageFailureStage ?? null,
 			localFixtureCount: [...localPaths].filter((path) => path.startsWith(prefix)).length,
 			liveBaseCount: liveBasePaths.length,
 			localBaseFileCount: liveBasePaths.filter(([path]) => localPaths.has(path)).length,

@@ -102,6 +102,7 @@ function makeStatus(): SyncStatusProjection {
 		backup: "unknown",
 		capacity: "unknown",
 		storageFailure: false,
+		storageFailureStage: null,
 		failure: null,
 		counts: null,
 		capacityWarnings: [],

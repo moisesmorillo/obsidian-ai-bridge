@@ -108,6 +108,7 @@ describe("desktop acceptance safety", () => {
 			safeAc20Inspection({
 				sessionStatus: "connected",
 				syncState: "settled",
+				storageFailureStage: "payload_read",
 				localFixtureCount: 3,
 				liveBaseCount: 3,
 				localBaseFileCount: 3,
@@ -123,6 +124,7 @@ describe("desktop acceptance safety", () => {
 		).toEqual({
 			sessionStatus: "connected",
 			syncState: "settled",
+			storageFailureStage: "payload_read",
 			localFixtureCount: 3,
 			liveBaseCount: 3,
 			localBaseFileCount: 3,
@@ -134,6 +136,23 @@ describe("desktop acceptance safety", () => {
 			pendingOperationCount: 0,
 			pendingApplyCount: 0,
 		});
+		expect(() =>
+			safeAc20Inspection({
+				sessionStatus: "connected",
+				syncState: "attention",
+				storageFailureStage: "private failure text",
+				localFixtureCount: 0,
+				liveBaseCount: 0,
+				localBaseFileCount: 0,
+				ac20LiveBaseCount: 0,
+				serviceLiveCount: null,
+				displayedLiveCount: null,
+				hasEpoch: false,
+				hasCursor: false,
+				pendingOperationCount: 0,
+				pendingApplyCount: 0,
+			}),
+		).toThrow("Invalid AC-20 inspection result");
 		expect(() => safeAc20Inspection({ serviceLiveCount: -1 })).toThrow(
 			"Invalid AC-20 inspection result",
 		);

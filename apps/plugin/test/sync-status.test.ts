@@ -54,6 +54,22 @@ describe("projectSyncStatus", () => {
 		expect(projectSyncStatus(input).failure).toBe("The latest poll failed");
 	});
 
+	it("projects a fixed journal failure stage without changing attention", () => {
+		const projected = projectSyncStatus({
+			state,
+			session: "connected",
+			head: null,
+			persisted: false,
+			storageFailureStage: "payload_read",
+			active: false,
+			paused: false,
+			revoked: false,
+		});
+
+		expect(projected.state).toBe("attention");
+		expect(projected.storageFailureStage).toBe("payload_read");
+	});
+
 	it("prioritizes safe attention and persistence failure states", () => {
 		const input = {
 			state,

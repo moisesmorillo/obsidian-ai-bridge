@@ -2,6 +2,7 @@ import type {
 	DeviceState,
 	VaultReadResult,
 } from "@obsidian-ai-bridge/protocol";
+import type { DeviceJournalFailureStage } from "@plugin/sync/device-journal";
 
 /** Confirmed feed boundary; null means no validated observation exists. */
 export interface RemoteHeadObservation {
@@ -19,6 +20,8 @@ export interface SyncStatusInput {
 	head: RemoteHeadObservation | null;
 	/** True only when local journal state passes its persistence and payload checks. */
 	persisted: boolean;
+	/** Fixed non-secret stage for the current blocking journal failure, if any. */
+	storageFailureStage?: DeviceJournalFailureStage | null;
 	/** True while a serialized cycle or event owns synchronization work. */
 	active: boolean;
 	/** Safe recent cycle failure; it blocks settled until a later successful cycle. */
@@ -51,6 +54,8 @@ export interface SyncStatusProjection {
 	capacity: "unknown" | { used: number; limit: number };
 	/** True when journal persistence or payload integrity cannot be verified. */
 	storageFailure: boolean;
+	/** Fixed non-secret journal failure stage, or null when no stage is recorded. */
+	storageFailureStage: DeviceJournalFailureStage | null;
 	/** Safe latest synchronization failure; it cannot establish settled state. */
 	failure: string | null;
 	/** Live-file and tombstone counts from the latest validated server summary. */
@@ -106,6 +111,7 @@ export function projectSyncStatus(
 				}
 			: "unknown",
 		storageFailure: !input.persisted,
+		storageFailureStage: input.storageFailureStage ?? null,
 		failure: input.failure ?? null,
 		counts: remoteSummary ? remoteSummary.counts : null,
 		capacityWarnings: remoteSummary ? [...remoteSummary.attention] : [],

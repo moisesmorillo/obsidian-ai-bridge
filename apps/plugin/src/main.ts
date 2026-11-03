@@ -415,6 +415,7 @@ export default class AIBridgePlugin extends Plugin {
 				session: this.sessionStatus,
 				head: this.composition?.reconciliation.lastHead ?? null,
 				persisted: this.journal.attentionReason === null,
+				storageFailureStage: this.journal.attentionStage,
 				active: this.syncActive || (this.desktopSync?.isBusy ?? false),
 				failure: this.syncFailure,
 				paused: this.syncPaused,

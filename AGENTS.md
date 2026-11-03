@@ -69,7 +69,7 @@ Production source must not import tooling or its Node and parser dependencies.
 
 History: this repository was restarted from scratch on 2026-10-11. Any agent memory, note or document dated before that describes the legacy codebase and does not apply.
 
-Human review: when the `plannotator` tool is available (Pi), open the plan file with it (`annotate`) right after writing a plan and wait for the feedback message before implementing; before finishing a branch, open a `review` of the branch diff against `main` and address every annotation before the pull request. Without the tool, present the plan and the diff in the conversation instead. Open one review per plan and one per branch, not one per task. Batch open decisions into one `ask_user_question` per plan.
+Human review: when the `plannotator` tool is available (Pi), open the plan file with it (`annotate`) right after writing a plan and wait for the feedback message before implementing; before finishing a branch, open a `review` of the branch diff against `main` and address every annotation before the pull request. Without the tool, present the plan and the diff in the conversation instead. Open one review per plan and one per branch, not one per task. Put open decisions in an "Owner decisions" section of the plan. One plan approval settles them. Ask a separate question before the plan only when the answer changes the plan structure.
 
 ## Subagent execution
 

@@ -115,6 +115,7 @@ function makeVault(): Vault {
 class EnrollmentSession {
 	requests: string[] = [];
 	closed = false;
+	vaultReadCount = 0;
 
 	/** Supplies only the validated responses needed by the real startup cycle. */
 	async requestResponse(
@@ -127,7 +128,10 @@ class EnrollmentSession {
 			return response({
 				epoch,
 				head_seq: 0,
-				counts: { live: 0, deleted: 0 },
+				counts: {
+					live: this.vaultReadCount++ === 0 ? 0 : 1,
+					deleted: 0,
+				},
 				limits: {
 					manifest_page: 256,
 					feed_page: 1000,
@@ -257,6 +261,15 @@ describe("plugin startup enrollment", () => {
 		expect(session.requests).toContain("GET /v1/manifest");
 		expect(session.requests).toContain("PUT /v1/files/notes/fresh.md");
 		expect(session.requests).toContain("GET /v1/changes");
+		const status = Reflect.apply(
+			Reflect.get(plugin, "syncStatus") as () => {
+				counts: { live: number } | null;
+			},
+			plugin,
+			[],
+		);
+		expect(status?.counts?.live).toBe(1);
+		expect(session.vaultReadCount).toBe(2);
 
 		plugin.onunload();
 		vi.unstubAllGlobals();

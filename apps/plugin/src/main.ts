@@ -288,6 +288,13 @@ export default class AIBridgePlugin extends Plugin {
 				await composition.publication.scan();
 				await composition.publication.flush();
 				await composition.reconciliation.replay();
+				const summary = await composition.readVaultSummary();
+				if (
+					this.composition === composition &&
+					!this.syncPaused &&
+					!this.syncRevoked
+				)
+					this.vaultSummary = summary;
 			} catch {
 				this.syncFailure =
 					"Sync request failed. The device will retry on the next cycle.";

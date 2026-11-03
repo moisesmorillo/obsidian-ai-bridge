@@ -24,6 +24,8 @@ import type { App, ObsidianProtocolData, PluginManifest } from "obsidian";
 
 /** Default canonical HTTPS service origin stored as a non-secret plugin setting. */
 const DEFAULT_SERVER_URL = "https://obsidian-bridge.mmorillo.dev";
+/** Safe fallback label for settings data that has no local device name. */
+const DEFAULT_DEVICE_NAME = "Obsidian desktop";
 
 /** Owns device-local enrollment and starts serialized synchronization after connection restore. */
 export default class AIBridgePlugin extends Plugin {
@@ -49,15 +51,18 @@ export default class AIBridgePlugin extends Plugin {
 	private syncRevoked = false;
 	private syncFailure: string | null = null;
 	private vaultSummary: VaultReadResult | null = null;
-	/** Non-secret server URL persisted in synced settings. */
-	private settingsValue: AIBridgeSettings = { serverUrl: DEFAULT_SERVER_URL };
+	/** Non-secret server and local device labels persisted in this plugin's settings. */
+	private settingsValue: AIBridgeSettings = {
+		serverUrl: DEFAULT_SERVER_URL,
+		deviceName: DEFAULT_DEVICE_NAME,
+	};
 	/** Safe enrollment status shown in settings. */
 	private sessionStatus: DeviceSessionStatus = "disconnected";
 	/** Fences asynchronous journal opens when unload or a newer load occurs. */
 	private lifecycleGeneration = 0;
-	/** Orders server URL saves and fences every older settings callback. */
-	private serverSettingsGeneration = 0;
-	/** Serializes settings writes so the latest accepted URL persists last. */
+	/** Orders non-secret settings saves and fences every older update callback. */
+	private settingsUpdateGeneration = 0;
+	/** Serializes settings writes so the latest accepted values persist last. */
 	private settingsSaveTail: Promise<void> = Promise.resolve();
 	/** Safe user-facing reason when local journal initialization cannot proceed. */
 	attentionReason: string | null = null;
@@ -72,12 +77,16 @@ export default class AIBridgePlugin extends Plugin {
 		const generation = ++this.lifecycleGeneration;
 		try {
 			const stored = await this.loadData();
-			if (
-				stored &&
-				typeof stored === "object" &&
-				typeof stored.serverUrl === "string"
-			)
-				this.settingsValue.serverUrl = stored.serverUrl;
+			if (stored && typeof stored === "object") {
+				if (typeof stored.serverUrl === "string")
+					this.settingsValue.serverUrl = stored.serverUrl;
+				if (
+					typeof stored.deviceName === "string" &&
+					stored.deviceName.trim().length > 0 &&
+					stored.deviceName.length <= 80
+				)
+					this.settingsValue.deviceName = stored.deviceName;
+			}
 			const journal = await DeviceJournal.open(
 				new ObsidianDeviceStorage(this.app),
 			);
@@ -115,18 +124,18 @@ export default class AIBridgePlugin extends Plugin {
 				() => this.session ?? this.createSession(),
 				this.credentials,
 				(url) => {
-					const update = ++this.serverSettingsGeneration;
+					const update = ++this.settingsUpdateGeneration;
 					const save = this.settingsSaveTail.then(async () => {
-						if (!this.ownsServerSettingsUpdate(generation, update))
+						if (!this.ownsSettingsUpdate(generation, update))
 							throw new Error("Server setting update is stale");
 						const nextSession = this.buildSession(url);
 						try {
-							await this.saveData({ serverUrl: url });
+							await this.saveData({ ...this.settingsValue, serverUrl: url });
 						} catch (error) {
 							nextSession.close();
 							throw error;
 						}
-						if (!this.ownsServerSettingsUpdate(generation, update)) {
+						if (!this.ownsSettingsUpdate(generation, update)) {
 							nextSession.close();
 							throw new Error("Server setting update is stale");
 						}
@@ -137,6 +146,30 @@ export default class AIBridgePlugin extends Plugin {
 						this.sessionStatus = "disconnected";
 						previousSession?.close();
 						this.settingsTab?.refreshStatus();
+					});
+					this.settingsSaveTail = save.then(
+						() => undefined,
+						() => undefined,
+					);
+					return save;
+				},
+				(name) => {
+					const update = ++this.settingsUpdateGeneration;
+					const save = this.settingsSaveTail.then(async () => {
+						if (!this.ownsSettingsUpdate(generation, update))
+							throw new Error("Device name update is stale");
+						if (!name.trim() || name.length > 80)
+							throw new Error("Device name is invalid");
+						await this.saveData({ ...this.settingsValue, deviceName: name });
+						if (!this.ownsSettingsUpdate(generation, update))
+							throw new Error("Device name update is stale");
+						const restartSync =
+							this.sessionStatus === "connected" &&
+							!this.syncPaused &&
+							!this.syncRevoked;
+						await this.stopSync();
+						this.settingsValue.deviceName = name;
+						if (restartSync) this.startSync();
 					});
 					this.settingsSaveTail = save.then(
 						() => undefined,
@@ -183,7 +216,7 @@ export default class AIBridgePlugin extends Plugin {
 	/** Blocks session and journal actions immediately without deleting local data. */
 	onunload(): void {
 		this.lifecycleGeneration += 1;
-		this.serverSettingsGeneration += 1;
+		this.settingsUpdateGeneration += 1;
 		this.releaseSyncOwners();
 		this.desktopSync = null;
 		this.session?.close();
@@ -192,11 +225,11 @@ export default class AIBridgePlugin extends Plugin {
 		this.journal = null;
 	}
 
-	/** Checks that one queued URL save still owns its plugin lifecycle and update order. */
-	private ownsServerSettingsUpdate(lifecycle: number, update: number): boolean {
+	/** Checks that one queued settings save still owns its plugin lifecycle and update order. */
+	private ownsSettingsUpdate(lifecycle: number, update: number): boolean {
 		return (
 			lifecycle === this.lifecycleGeneration &&
-			update === this.serverSettingsGeneration
+			update === this.settingsUpdateGeneration
 		);
 	}
 
@@ -215,6 +248,7 @@ export default class AIBridgePlugin extends Plugin {
 		return new DeviceSession(serverUrl, {
 			transport: new ObsidianOAuthTransport(),
 			credentials: this.credentials,
+			getDeviceName: () => this.settingsValue.deviceName,
 			getClientId: () => journal.snapshot().client_id ?? null,
 			openBrowser: (url) => {
 				window.open(url, "_blank", "noopener,noreferrer");
@@ -303,7 +337,7 @@ export default class AIBridgePlugin extends Plugin {
 			this.session,
 			this.journal,
 			this.app.vault,
-			"Obsidian desktop",
+			this.settingsValue.deviceName,
 			{
 				now: Date.now,
 				registerEvents: false,

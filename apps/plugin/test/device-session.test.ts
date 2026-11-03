@@ -146,6 +146,7 @@ function createSession(
 	serviceOrigin = origin,
 	credentials = new MemoryCredentials(),
 	identity = { clientId: "" },
+	deviceName = "Obsidian desktop",
 ) {
 	const transport = new FakeTransport(serviceOrigin);
 	let browserUrl = "";
@@ -156,6 +157,7 @@ function createSession(
 	const host: DeviceSessionHost = {
 		transport,
 		credentials,
+		getDeviceName: () => deviceName,
 		getClientId: () => identity.clientId || null,
 		openBrowser: (url) => {
 			if (failBrowser) throw new Error("synthetic browser failure");
@@ -195,6 +197,23 @@ function createSession(
 }
 
 describe("DeviceSession", () => {
+	it("registers the configured local device name for consent", async () => {
+		const test = createSession(
+			Date.now,
+			origin,
+			new MemoryCredentials(),
+			{ clientId: "" },
+			"oab-8.8 dev-1",
+		);
+		await test.session.connect();
+		const request = test.transport.calls.find((call) =>
+			call.url.endsWith("oauth/register"),
+		);
+		expect(JSON.parse(String(request?.options?.body)).client_name).toBe(
+			"oab-8.8 dev-1",
+		);
+	});
+
 	it("keeps authorization authoritative for safe raw sync responses", async () => {
 		const test = createSession();
 		await test.session.connect();
@@ -241,6 +260,29 @@ describe("DeviceSession", () => {
 		await test.session.callback({
 			code: "synthetic-code",
 			state: auth.searchParams.get("state") ?? "",
+		});
+		expect(test.credentials.value?.access_token).toBe("synthetic-access-token");
+	});
+
+	it("rejects a callback from a superseded consent request", async () => {
+		const test = createSession();
+		await test.session.connect();
+		const stale = new URL(test.browserUrl());
+		await test.session.connect();
+		const current = new URL(test.browserUrl());
+		await expect(
+			test.session.callback({
+				code: "synthetic-code",
+				state: stale.searchParams.get("state") ?? "",
+			}),
+		).rejects.toThrow();
+		expect(test.statuses().at(-1)).toBe("connecting");
+		expect(
+			test.transport.calls.filter((call) => call.url.endsWith("oauth/token")),
+		).toHaveLength(0);
+		await test.session.callback({
+			code: "synthetic-code",
+			state: current.searchParams.get("state") ?? "",
 		});
 		expect(test.credentials.value?.access_token).toBe("synthetic-access-token");
 	});

@@ -13,7 +13,9 @@ const host = vi.hoisted(() => ({
 		| ((params: Record<string, string | "true">) => void)
 		| null,
 	settingsTab: null as unknown,
+	settingsData: null as unknown,
 	serverUrlChange: null as ((url: string) => Promise<void>) | null,
+	deviceNameChange: null as ((name: string) => Promise<void>) | null,
 	syncActions: null as CapturedSyncActions | null,
 	saveDataAction: null as ((data: unknown) => Promise<void>) | null,
 	state: null as unknown,
@@ -29,7 +31,7 @@ vi.mock("obsidian", () => ({
 		throw new Error("requestUrl should not run in lifecycle tests");
 	},
 	Plugin: class {
-		loadData = async () => undefined;
+		loadData = async () => host.settingsData;
 		/** Captures the route and callback registered by the plugin lifecycle. */
 		registerObsidianProtocolHandler = (
 			action: string,
@@ -75,12 +77,13 @@ vi.mock("obsidian", () => ({
 }));
 
 vi.mock("../src/settings", () => ({
-	/** Captures the URL update callback without rendering Obsidian controls. */
+	/** Captures settings callbacks without rendering Obsidian controls. */
 	AIBridgeSettingTab: class {
-		/** Captures constructor policy so lifecycle tests can invoke server updates. */
+		/** Captures server, device-name, and sync callbacks from plugin composition. */
 		constructor(...args: unknown[]) {
 			host.serverUrlChange = args[5] as (url: string) => Promise<void>;
-			host.syncActions = args[8] as CapturedSyncActions;
+			host.deviceNameChange = args[6] as (name: string) => Promise<void>;
+			host.syncActions = args[9] as CapturedSyncActions;
 		}
 
 		/** Satisfies the composition status-refresh call. */
@@ -99,7 +102,9 @@ describe("AIBridgePlugin device-local lifecycle", () => {
 		host.protocolAction = "";
 		host.protocolHandler = null;
 		host.settingsTab = null;
+		host.settingsData = null;
 		host.serverUrlChange = null;
+		host.deviceNameChange = null;
 		host.syncActions = null;
 		host.saveDataAction = null;
 		host.state = null;
@@ -205,6 +210,43 @@ describe("AIBridgePlugin device-local lifecycle", () => {
 		await expect(pending).rejects.toThrow();
 		expect(close).toHaveBeenCalledTimes(2);
 		close.mockRestore();
+	});
+
+	it("persists the local device name with existing non-secret settings", async () => {
+		const plugin = new AIBridgePlugin({} as App, {} as PluginManifest);
+		await plugin.onload();
+		const saved: unknown[] = [];
+		host.saveDataAction = async (data) => {
+			saved.push(structuredClone(data));
+		};
+		const update = host.deviceNameChange;
+		if (!update) throw new Error("Device name callback was not registered");
+		await update("oab-8.8 dev-1");
+		expect(saved).toEqual([
+			{
+				serverUrl: "https://obsidian-bridge.mmorillo.dev",
+				deviceName: "oab-8.8 dev-1",
+			},
+		]);
+		expect(Reflect.get(plugin, "settingsValue")).toEqual({
+			serverUrl: "https://obsidian-bridge.mmorillo.dev",
+			deviceName: "oab-8.8 dev-1",
+		});
+		plugin.onunload();
+	});
+
+	it("loads an existing local device name from plugin settings", async () => {
+		host.settingsData = {
+			serverUrl: "https://saved-service.test",
+			deviceName: "oab-8.8 dev-2",
+		};
+		const plugin = new AIBridgePlugin({} as App, {} as PluginManifest);
+		await plugin.onload();
+		expect(Reflect.get(plugin, "settingsValue")).toEqual({
+			serverUrl: "https://saved-service.test",
+			deviceName: "oab-8.8 dev-2",
+		});
+		plugin.onunload();
 	});
 
 	it("serializes overlapping server URL saves and keeps the latest update", async () => {

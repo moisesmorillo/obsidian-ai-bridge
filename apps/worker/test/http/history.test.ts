@@ -69,6 +69,7 @@ describe("history mutation HTTP routes", () => {
 		});
 		await renamed.text();
 		expect(renamed.status).toBe(201);
+		expect(renamed.headers.get("Cache-Control")).toBe("no-transform");
 		expect(renamed.headers.get("ETag")).toBe(
 			'"0123456789abcdef0123456789abcdef.1"',
 		);

@@ -90,12 +90,14 @@ export async function readBlobResponse(
 			headers: {
 				"Content-Range": `bytes */${metadata.size}`,
 				ETag: metadata.etag,
+				"Cache-Control": "no-transform",
 				"Accept-Ranges": "bytes",
 			},
 		});
 	const body = await store.read(metadata.hash, metadata.size, range);
 	const headers = new Headers({
 		ETag: metadata.etag,
+		"Cache-Control": "no-transform",
 		"Accept-Ranges": "bytes",
 		"Content-Type": "application/octet-stream",
 		"Content-Length": String(

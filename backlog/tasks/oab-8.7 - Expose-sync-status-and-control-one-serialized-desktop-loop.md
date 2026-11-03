@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-10-28T19:31:00Z'
-updated_date: '2026-11-03T00:51:00Z'
+updated_date: '2026-11-03T00:53:00Z'
 labels: []
 dependencies:
   - OAB-8.6
@@ -56,4 +56,6 @@ RED evidence: controller tests failed for missing resume intervals, invalid-path
 Created Deferred task OAB-8.7.1 for the F4 event-cadence measurement. It will distinguish plugin-generated effects from genuine user edits without losing echo suppression or local intent. This cadence change is deferred and not implemented here. OAB-8.7 remains In Progress and every acceptance criterion remains unchecked.
 
 Keyboard-focus correction (2026-11-03): The reviewer found focus loss when the Pause label changes to Resume. A new test focuses Pause, renders paused status, and checks focus on Resume. The test failed before the panel change. Panel actions now use stable focus IDs for refresh restoration. Visible labels and aria-expanded behavior remain unchanged. Focused panel tests passed, 1 file and 4 tests. bun run docs:check passed. bun run check passed with 96 files and 1,626 tests. Formatting, typecheck, and builds passed. OAB-8.7 remains In Progress and acceptance checks remain unchecked. No live service or vault test ran.
+
+Review closure at source 999ddb7027eb4aa539139bb8e549cb66f61b5a60: task review and bounded corrective reviews close all findings from the whole-branch review and owner feedback. F1 restores polls after pause. F2 enrolls before publication. F3 excludes invalid paths before retry admission. F4 clears busy ownership before final refresh. F5 removes Rebuild under owner approval. Failure blocks stale-head settled status. Stable action identities preserve Pause-to-Resume focus. DOM tests cover focus and aria-expanded. Generic 401 does not claim revoked. Shared releaseSyncOwners owns teardown. Class and status TSDoc now match effects and evidence. Structural audit covers desktop lifecycle, main host wiring, shared composition, pure status policy, and panel rendering. No competing mutation or protocol owner exists. Full worker check passes 96 files and 1626 tests. Reviewers inspect worker evidence without rerunning checks. Real-host, two-vault, and deployed-service proof remain in OAB-8.8. OAB-34 backup telemetry and OAB-8.7.1 F4 cadence measurement remain Deferred. Original behavioral RED exception remains recorded. Owner branch diff review remains pending.
 <!-- SECTION:NOTES:END -->

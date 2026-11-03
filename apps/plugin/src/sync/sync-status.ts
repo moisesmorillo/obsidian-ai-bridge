@@ -10,7 +10,6 @@ export interface RemoteHeadObservation {
 }
 
 /** Inputs that distinguish durable authority from lifecycle and presentation state. */
-/** Inputs that distinguish durable authority from lifecycle and presentation state. */
 export interface SyncStatusInput {
 	state: DeviceState;
 	session: "disconnected" | "connecting" | "connected" | "reconnect";

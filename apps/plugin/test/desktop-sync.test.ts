@@ -28,6 +28,32 @@ describe("DesktopSyncController", () => {
 		controller.close();
 	});
 
+	it("reports rejected cycle and rebuild work without breaking queue settlement", async () => {
+		const failure = new Error("controlled failure");
+		const onError = vi.fn();
+		const controller = new DesktopSyncController({
+			cycle: async () => {
+				throw failure;
+			},
+			rebuild: async () => {
+				throw failure;
+			},
+			onError,
+			host: {
+				setTimeout: () => 1,
+				clearTimeout: () => undefined,
+				setInterval: () => 2,
+				clearInterval: () => undefined,
+			},
+		});
+
+		await expect(controller.syncNow()).rejects.toBe(failure);
+		await expect(controller.rebuild()).rejects.toBe(failure);
+		await controller.waitForIdle();
+		expect(onError).toHaveBeenCalledTimes(2);
+		controller.close();
+	});
+
 	it("retains ordered events during pause and drains them on resume", async () => {
 		const observed: string[] = [];
 		const controller = new DesktopSyncController({

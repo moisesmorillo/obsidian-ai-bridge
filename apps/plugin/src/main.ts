@@ -149,7 +149,9 @@ export default class AIBridgePlugin extends Plugin {
 				() => this.syncStatus(),
 				{
 					syncNow: () => {
-						void this.desktopSync?.syncNow();
+						this.runSyncAction(
+							() => this.desktopSync?.syncNow() ?? Promise.resolve(),
+						);
 					},
 					pause: () => {
 						this.syncPaused = true;
@@ -159,10 +161,12 @@ export default class AIBridgePlugin extends Plugin {
 						this.settingsTab?.refreshStatus();
 					},
 					resume: () => {
-						void this.resumeSync();
+						this.runSyncAction(() => this.resumeSync());
 					},
 					rebuild: () => {
-						void this.desktopSync?.rebuild();
+						this.runSyncAction(
+							() => this.desktopSync?.rebuild() ?? Promise.resolve(),
+						);
 					},
 					reconnect: () => {
 						void this.session?.connect().catch(() => undefined);
@@ -284,21 +288,23 @@ export default class AIBridgePlugin extends Plugin {
 				isVisible: () =>
 					document.visibilityState === "visible" && document.hasFocus(),
 			},
-			onError: () => this.settingsTab?.refreshStatus(),
+			onError: () => this.reportSyncFailure(),
 			onStateChanged: () => this.settingsTab?.refreshStatus(),
 		});
 		this.vaultEvents = new VaultEventAdapter(
 			this.app.vault,
 			this.desktopSync,
-			() => this.settingsTab?.refreshStatus(),
+			() => this.reportSyncFailure(),
 		);
 		this.visibilityHandler = () => {
-			void this.desktopSync?.visibilityChanged();
+			this.runSyncAction(
+				() => this.desktopSync?.visibilityChanged() ?? Promise.resolve(),
+			);
 		};
 		document.addEventListener("visibilitychange", this.visibilityHandler);
 		window.addEventListener("focus", this.visibilityHandler);
 		window.addEventListener("blur", this.visibilityHandler);
-		void this.desktopSync.start().then(() => this.settingsTab?.refreshStatus());
+		this.runSyncAction(() => this.desktopSync?.start() ?? Promise.resolve());
 	}
 
 	/** Creates one shared publication and apply composition for the active session lifetime. */
@@ -314,8 +320,10 @@ export default class AIBridgePlugin extends Plugin {
 			{
 				now: Date.now,
 				registerEvents: false,
-				onEventError: () => this.settingsTab?.refreshStatus(),
-				onRevoked: () => this.handleRevocation(),
+				onEventError: () => this.reportSyncFailure(),
+				onRevoked: () => {
+					this.runSyncAction(() => this.handleRevocation());
+				},
 			},
 		);
 	}
@@ -391,6 +399,22 @@ export default class AIBridgePlugin extends Plugin {
 			},
 			this.vaultSummary,
 		);
+	}
+
+	/** Reports a fixed safe failure message for one rejected lifecycle action. */
+	private reportSyncFailure(): void {
+		this.syncFailure =
+			"Sync request failed. The device will retry on the next cycle.";
+		this.settingsTab?.refreshStatus();
+	}
+
+	/** Consumes rejected host actions so window and UI callbacks cannot leak rejections. */
+	private runSyncAction(action: () => Promise<void>): void {
+		try {
+			void action().catch(() => this.reportSyncFailure());
+		} catch {
+			this.reportSyncFailure();
+		}
 	}
 
 	/** Lists vault paths that match one scope class only when the owner requests them. */

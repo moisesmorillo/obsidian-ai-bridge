@@ -13,6 +13,7 @@ import {
 	DEVICE_JOURNAL_FAILURE_STAGES,
 	type DeviceJournalFailureStage,
 } from "@plugin/sync/device-journal";
+import { classifyEnrollmentPath } from "@plugin/sync/enrollment-scope";
 import type {
 	CanonicalSyncErrorKind,
 	DeleteResponseDiagnostic,
@@ -84,6 +85,16 @@ const SAFE_CASE_FAILURE_CODES = [
 	"AC33_ASSERT_SOURCE_ONLY_REPLAY",
 	"AC33_ASSERT_FINAL_STATE",
 	"AC33_CLEANUP_RESTORE_FAILED",
+	"AC13_ASSERT_TARGET_VAULT",
+	"AC13_ASSERT_PLUGIN_CONTROLS",
+	"AC13_ASSERT_INITIAL_STATE",
+	"AC13_ASSERT_MANIFEST_SNAPSHOT",
+	"AC13_ASSERT_EXCLUDED_FILE",
+	"AC13_ASSERT_ELIGIBLE_FIXTURES",
+	"AC13_ASSERT_CONTROLLED_EPOCH",
+	"AC13_ASSERT_ACTUAL_EPOCH_RECOVERY",
+	"AC13_ASSERT_FINAL_STATE",
+	"AC13_CLEANUP_RESTORE_FAILED",
 	"unexpected-assertion-error",
 	"unexpected-type-error",
 	"unexpected-range-error",
@@ -140,6 +151,12 @@ const SAFE_CASE_FAILURE_BOUNDARIES = [
 	"AC33_WAIT_FINAL_IDLE",
 	"AC33_READ_FINAL_SOURCE",
 	"AC33_READ_FINAL_DESTINATION",
+	"AC13_READ_INITIAL_MANIFEST",
+	"AC13_READ_EXCLUDED_AUTHORITY",
+	"AC13_CONTROLLED_RECONCILE",
+	"AC13_READ_ACTUAL_MANIFEST",
+	"AC13_RESTORE_RECONCILE",
+	"AC13_WAIT_FINAL_IDLE",
 ] as const;
 
 /** Error classes allowed in diagnostics from a wrapped case operation. */
@@ -539,6 +556,49 @@ export async function captureAuthorizationUrl(
 	return destination;
 }
 
+/** Parses one host result and projects only the fixed safe case fields. */
+export function parseSafeCaseResult(
+	output: string,
+	caseId: string,
+	evidence: DesktopCaseSummary["evidence"],
+): DesktopCaseSummary {
+	const marker = output.lastIndexOf("OAB8CASE:");
+	if (marker < 0) throw new Error("Obsidian case result was unavailable");
+	const start = output.indexOf("{", marker + "OAB8CASE:".length);
+	if (start < 0) throw new Error("Obsidian case result was unavailable");
+	let depth = 0;
+	let inString = false;
+	let escaped = false;
+	let end = -1;
+	for (let index = start; index < output.length; index += 1) {
+		const character = output[index];
+		if (inString) {
+			if (escaped) escaped = false;
+			else if (character === "\\") escaped = true;
+			else if (character === '"') inString = false;
+			continue;
+		}
+		if (character === '"') inString = true;
+		else if (character === "{") depth += 1;
+		else if (character === "}") {
+			depth -= 1;
+			if (depth === 0) {
+				end = index + 1;
+				break;
+			}
+		}
+	}
+	if (end < 0) throw new Error("Obsidian case result was unavailable");
+	try {
+		const result: unknown = JSON.parse(output.slice(start, end));
+		if (!result || typeof result !== "object" || Array.isArray(result))
+			throw new Error("Invalid case result object");
+		return safeCaseResult(caseId, evidence, result as Record<string, unknown>);
+	} catch {
+		throw new Error("Obsidian case result was invalid");
+	}
+}
+
 /** Runs one case as one host evaluation and returns only its fixed safe status fields. */
 export function runHostCase(
 	id: DesktopVaultId,
@@ -557,20 +617,7 @@ export function runHostCase(
 		[`code=${script}`],
 		options,
 	);
-	const marker = output.lastIndexOf("OAB8CASE:");
-	if (marker < 0) throw new Error("Obsidian case result was unavailable");
-	const payload = output.slice(marker + "OAB8CASE:".length).trim();
-	const objectEnd = payload.indexOf("}");
-	if (objectEnd < 0) throw new Error("Obsidian case result was unavailable");
-	try {
-		return safeCaseResult(
-			caseId,
-			evidence,
-			JSON.parse(payload.slice(0, objectEnd + 1)),
-		);
-	} catch {
-		throw new Error("Obsidian case result was invalid");
-	}
+	return parseSafeCaseResult(output, caseId, evidence);
 }
 
 /** Safe counts and lifecycle flags used to verify AC-20 enrollment preconditions. */
@@ -1847,5 +1894,116 @@ const finalState=plugin.journal.snapshot(),finalSource=await withCaseBoundary("A
 if(finalState.epoch!==observedEpoch||finalState.cursor!==capturedHead||finalState.reconciliation||finalState.pending_ops.length||finalState.pending_apply.length||finalState.base[destination]?.rev!==renamedDestination.rev||finalState.base[destination]?.hash!==sourceHash||finalState.base[source]?.deleted!==true||finalState.base[source]?.rev!==renamedSource.rev||!finalSource.deleted||finalSource.rev!==renamedSource.rev||finalDestination.deleted||finalDestination.rev!==renamedDestination.rev||finalDestination.hash!==sourceHash||app.vault.getAbstractFileByPath(source)||app.vault.getFiles().filter((file)=>file.path===destination).length!==1)throw Error("AC33_ASSERT_FINAL_STATE");
 `.trim(),
 		cleanup: `if(globalThis.__oab8Ac33Restore&&!globalThis.__oab8Ac33Restore())throw Error("AC33_CLEANUP_RESTORE_FAILED");delete globalThis.__oab8Ac33Restore;`,
+	};
+}
+
+/** Separates excluded local files from eligible AC-13 checks and reports eligible mismatches. */
+export function classifyAc13PreflightFiles<
+	T extends {
+		path: string;
+		size: number;
+		baseMatches: boolean;
+		serviceMatches: boolean;
+	},
+>(files: readonly T[]): { eligible: T[]; excluded: T[]; blockers: T[] } {
+	const excluded = files.filter(
+		(file) => classifyEnrollmentPath(file.path, file.size) === "excluded",
+	);
+	const eligible = files.filter(
+		(file) => classifyEnrollmentPath(file.path, file.size) !== "excluded",
+	);
+	const blockers = eligible.filter(
+		(file) => !file.baseMatches || !file.serviceMatches,
+	);
+	return { eligible, excluded, blockers };
+}
+
+/** Captures the excluded local files that the controlled AC-13 case must preserve. */
+export interface Ac13ExcludedFileScope {
+	/** Every excluded path in the local and service inventory. */
+	excludedPaths: readonly string[];
+	/** Excluded local files whose bytes must remain unchanged. */
+	excludedLocalFiles: readonly { path: string; size: number }[];
+	/** Excluded local files with no live base or service entry. */
+	localOnlyExcludedPaths: readonly string[];
+}
+
+/** Builds one controlled AC-13 epoch recovery without changing service authority. */
+export function createAc13CaseScripts(
+	scope: Ac13ExcludedFileScope,
+): DesktopCaseScripts {
+	const excludedPaths = [
+		...new Set(scope.excludedPaths.map((path) => PathSchema.parse(path))),
+	];
+	const excludedLocalFiles = scope.excludedLocalFiles.map(({ path, size }) => ({
+		path: PathSchema.parse(path),
+		size,
+	}));
+	const localOnlyExcludedPaths = [
+		...new Set(
+			scope.localOnlyExcludedPaths.map((path) => PathSchema.parse(path)),
+		),
+	];
+	const excludedPathSet = new Set(excludedPaths);
+	if (
+		excludedPaths.length !== scope.excludedPaths.length ||
+		localOnlyExcludedPaths.length !== scope.localOnlyExcludedPaths.length ||
+		excludedPaths.some(
+			(path) => classifyEnrollmentPath(path, 0) !== "excluded",
+		) ||
+		excludedLocalFiles.some(
+			(file) =>
+				!excludedPathSet.has(file.path) ||
+				classifyEnrollmentPath(file.path, file.size) !== "excluded",
+		) ||
+		localOnlyExcludedPaths.some(
+			(path) =>
+				!excludedPathSet.has(path) ||
+				!excludedLocalFiles.some((file) => file.path === path),
+		)
+	)
+		throw new Error("Unauthorized AC-13 excluded file scope");
+	const target = authorizedVaults()["dev-2"];
+	return {
+		action: `
+if(app.vault.adapter.getBasePath()!==${JSON.stringify(target)})throw Error("AC13_ASSERT_TARGET_VAULT");
+const plugin=app.plugins.plugins?.["ai-bridge"],reconciliation=plugin?.composition?.reconciliation;
+if(!plugin?.journal?.snapshot||!plugin.composition?.publication||!reconciliation?.reconcile||!plugin.desktopSync||plugin.sessionStatus!=="connected"||plugin.syncPaused!==false)throw Error("AC13_ASSERT_PLUGIN_CONTROLS");
+await plugin.desktopSync.waitForIdle();
+const remote=Reflect.get(plugin.composition.publication,"remote"),stateBefore=plugin.journal.snapshot(),expectedExcludedPaths=new Set(${JSON.stringify(excludedPaths)}),expectedExcludedLocal=${JSON.stringify(excludedLocalFiles)},localOnlyExcludedPaths=${JSON.stringify(localOnlyExcludedPaths)};
+if(!remote?.manifest||!remote.readCurrentAuthority||globalThis.__oab8Ac13Restore||stateBefore.pending_ops.length||stateBefore.pending_apply.length||stateBefore.reconciliation||plugin.desktopSync.isBusy||!stateBefore.epoch||stateBefore.cursor===null||!stateBefore.client_id)throw Error("AC13_ASSERT_INITIAL_STATE");
+const readManifestSnapshot=async(boundary)=>{const entries=[],tokens=new Set();let token=null,epoch=null,head=null;do{const page=await withCaseBoundary(boundary,()=>remote.manifest(token));if(epoch!==null&&(page.epoch!==epoch||page.head_seq!==head))throw Error("AC13_ASSERT_MANIFEST_SNAPSHOT");epoch=page.epoch;head=page.head_seq;entries.push(...page.entries);token=page.next_page;if(token!==null){if(tokens.has(token))throw Error("AC13_ASSERT_MANIFEST_SNAPSHOT");tokens.add(token);}}while(token!==null);if(epoch===null||head===null||new Set(entries.map((entry)=>entry.path)).size!==entries.length)throw Error("AC13_ASSERT_MANIFEST_SNAPSHOT");return{epoch,head,entries};};
+const initial=await readManifestSnapshot("AC13_READ_INITIAL_MANIFEST");
+if(initial.epoch!==stateBefore.epoch||initial.head!==stateBefore.cursor)throw Error("AC13_ASSERT_INITIAL_STATE");
+const localSnapshot=async()=>{const files=app.vault.getFiles(),result=[];for(const file of files){const bytes=new Uint8Array(await app.vault.readBinary(file)),digest=await crypto.subtle.digest("SHA-256",bytes),hash=Array.from(new Uint8Array(digest)).map((byte)=>byte.toString(16).padStart(2,"0")).join("");result.push({path:file.path,size:bytes.byteLength,hash});}return result.sort((left,right)=>left.path.localeCompare(right.path));};
+const sameSnapshot=(left,right)=>left.length===right.length&&left.every((item,index)=>item.path===right[index].path&&item.size===right[index].size&&item.hash===right[index].hash);
+const filesBefore=await localSnapshot(),localByPath=new Map(filesBefore.map((file)=>[file.path,file])),entryByPath=new Map(initial.entries.map((entry)=>[entry.path,entry]));
+const actualExcludedLocal=filesBefore.filter((file)=>expectedExcludedPaths.has(file.path));
+if(actualExcludedLocal.length!==expectedExcludedLocal.length||expectedExcludedLocal.some((expected)=>{const actual=localByPath.get(expected.path);return !actual||actual.size!==expected.size;}))throw Error("AC13_ASSERT_EXCLUDED_FILE");
+for(const path of localOnlyExcludedPaths){if(Object.hasOwn(stateBefore.base,path)||entryByPath.has(path))throw Error("AC13_ASSERT_EXCLUDED_FILE");let absent=false;try{await withCaseBoundary("AC13_READ_EXCLUDED_AUTHORITY",()=>remote.readCurrentAuthority(path));}catch(error){absent=readBoundaryDetails(error)?.status===404;if(!absent)throw error;}if(!absent)throw Error("AC13_ASSERT_EXCLUDED_FILE");}
+const eligibleFiles=filesBefore.filter((file)=>!expectedExcludedPaths.has(file.path)),eligibleBase=Object.entries(stateBefore.base).filter(([path,base])=>!expectedExcludedPaths.has(path)&&base.deleted!==true),eligibleService=initial.entries.filter((entry)=>!expectedExcludedPaths.has(entry.path)&&!entry.deleted);
+const eligiblePreflightPassed=eligibleFiles.length>0&&eligibleFiles.every((file)=>{const base=stateBefore.base[file.path],entry=entryByPath.get(file.path);return Boolean(base&&base.deleted!==true&&base.hash===file.hash&&entry&&!entry.deleted&&entry.hash===file.hash);})&&eligibleBase.every(([path,base])=>{const file=localByPath.get(path),entry=entryByPath.get(path);return Boolean(file&&file.hash===base.hash&&entry&&!entry.deleted&&entry.hash===base.hash);})&&eligibleService.every((entry)=>{const file=localByPath.get(entry.path),base=stateBefore.base[entry.path];return Boolean(file&&file.hash===entry.hash&&base&&base.deleted!==true&&base.hash===entry.hash);});
+if(!eligiblePreflightPassed)throw Error("AC13_ASSERT_ELIGIBLE_FIXTURES");
+const originalManifest=remote.manifest,observedEpoch=initial.epoch,observedHead=initial.head,controlledEpoch=(observedEpoch[0]==="a"?"b":"a")+observedEpoch.slice(1),attentionBefore=JSON.stringify(stateBefore.attention);
+let controllerPaused=false,restoreComplete=false,controllerResumeFailed=false;
+const restoreManifest=()=>{remote.manifest=originalManifest;return remote.manifest===originalManifest;};
+const restore=async()=>{if(restoreComplete)return{wrapperRestored:true,controllerResumed:!controllerResumeFailed};if(!restoreManifest())return{wrapperRestored:false,controllerResumed:false};restoreComplete=true;if(controllerPaused){const resume=plugin.desktopSync.resume();controllerPaused=false;try{await resume;await plugin.desktopSync.waitForIdle();}catch{controllerResumeFailed=true;}}return{wrapperRestored:remote.manifest===originalManifest,controllerResumed:!controllerResumeFailed};};
+globalThis.__oab8Ac13Restore=restore;
+controllerPaused=true;plugin.desktopSync.pause();
+remote.manifest=async function(token){const page=await originalManifest.call(remote,token);if(page.epoch!==observedEpoch||page.head_seq!==observedHead)throw Error("AC13_ASSERT_MANIFEST_SNAPSHOT");return{...page,epoch:controlledEpoch};};
+try{await withCaseBoundary("AC13_CONTROLLED_RECONCILE",()=>reconciliation.reconcile());}finally{if(!restoreManifest())throw Error("AC13_CLEANUP_RESTORE_FAILED");}
+const controlledState=plugin.journal.snapshot(),filesAfterControlled=await localSnapshot();
+if(controlledState.epoch!==controlledEpoch||controlledState.cursor!==observedHead||controlledState.reconciliation||controlledState.pending_ops.length||controlledState.pending_apply.length||controlledState.device_id!==stateBefore.device_id||controlledState.client_id!==stateBefore.client_id||JSON.stringify(controlledState.attention)!==attentionBefore||!sameSnapshot(filesBefore,filesAfterControlled)||localOnlyExcludedPaths.some((path)=>Object.hasOwn(controlledState.base,path)))throw Error("AC13_ASSERT_CONTROLLED_EPOCH");
+const current=await readManifestSnapshot("AC13_READ_ACTUAL_MANIFEST");
+if(current.epoch!==observedEpoch||current.head!==observedHead)throw Error("AC13_ASSERT_MANIFEST_SNAPSHOT");
+await withCaseBoundary("AC13_RESTORE_RECONCILE",()=>reconciliation.reconcile());
+const restoredState=plugin.journal.snapshot();
+if(restoredState.epoch!==observedEpoch||restoredState.cursor!==observedHead||restoredState.reconciliation||restoredState.pending_ops.length||restoredState.pending_apply.length||restoredState.device_id!==stateBefore.device_id||restoredState.client_id!==stateBefore.client_id||JSON.stringify(restoredState.attention)!==attentionBefore||!sameSnapshot(filesBefore,await localSnapshot())||localOnlyExcludedPaths.some((path)=>Object.hasOwn(restoredState.base,path)))throw Error("AC13_ASSERT_ACTUAL_EPOCH_RECOVERY");
+await plugin.desktopSync.resume();controllerPaused=false;
+await withCaseBoundary("AC13_WAIT_FINAL_IDLE",()=>plugin.desktopSync.waitForIdle());
+const finalState=plugin.journal.snapshot(),finalManifest=await readManifestSnapshot("AC13_READ_ACTUAL_MANIFEST");
+if(plugin.sessionStatus!=="connected"||plugin.syncPaused!==false||plugin.desktopSync.isBusy||finalManifest.epoch!==observedEpoch||finalManifest.head!==observedHead||finalState.epoch!==observedEpoch||finalState.cursor!==observedHead||finalState.reconciliation||finalState.pending_ops.length||finalState.pending_apply.length||finalState.device_id!==stateBefore.device_id||finalState.client_id!==stateBefore.client_id||JSON.stringify(finalState.attention)!==attentionBefore||!sameSnapshot(filesBefore,await localSnapshot())||localOnlyExcludedPaths.some((path)=>Object.hasOwn(finalState.base,path))||remote.manifest!==originalManifest)throw Error("AC13_ASSERT_FINAL_STATE");
+`.trim(),
+		cleanup: `const restore=globalThis.__oab8Ac13Restore;if(restore){let result=null;try{result=await restore();}catch{}if(result?.wrapperRestored)delete globalThis.__oab8Ac13Restore;if(!result?.wrapperRestored||!result?.controllerResumed)throw Error("AC13_CLEANUP_RESTORE_FAILED");}`,
 	};
 }

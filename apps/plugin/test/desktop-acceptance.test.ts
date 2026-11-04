@@ -4,7 +4,9 @@ import { describe, expect, it } from "vitest";
 import { SyncTransportError } from "../src/sync/remote-text";
 import {
 	assertAuthorizedVault,
+	classifyAc13PreflightFiles,
 	createAc04BaselineScript,
+	createAc13CaseScripts,
 	createAc20FixtureScript,
 	createAc30CaseScripts,
 	createAc31CaseScripts,
@@ -16,6 +18,7 @@ import {
 	hasCapturedCallback,
 	inspectAc02ServiceRevision,
 	parseInstalledPluginArtifact,
+	parseSafeCaseResult,
 	runHostCase,
 	runScopedObsidian,
 	safeAc02ServiceRevision,
@@ -691,6 +694,26 @@ describe("desktop acceptance safety", () => {
 		}
 	});
 
+	it("parses nested host failure details before safe projection", () => {
+		const output =
+			'CLI result OAB8CASE:{"caseId":"AC-13","status":"failed","failureStage":"action","failureReason":"SYNC_TRANSPORT_4XX","failureDetails":{"boundary":"AC13_READ_ACTUAL_MANIFEST","errorClass":"SyncTransportError","status":410,"code":"revision_pruned"},"cleanupStatus":"passed"} trailing output';
+
+		expect(parseSafeCaseResult(output, "AC-13", "controlled")).toEqual({
+			caseId: "AC-13",
+			evidence: "controlled",
+			status: "failed",
+			failureStage: "action",
+			failureReason: "SYNC_TRANSPORT_4XX",
+			failureDetails: {
+				boundary: "AC13_READ_ACTUAL_MANIFEST",
+				errorClass: "SyncTransportError",
+				status: 410,
+				code: "revision_pruned",
+			},
+			cleanupStatus: "passed",
+		});
+	});
+
 	it("drops invalid case transport status and error codes", () => {
 		const summary = safeCaseResult("AC-31", "service", {
 			status: "failed",
@@ -735,6 +758,106 @@ describe("desktop acceptance safety", () => {
 		expect(() => createAc1032CaseScripts("oab-8.8/unrelated.md")).toThrow(
 			"Unauthorized AC-10/32 fixture path",
 		);
+	});
+
+	it("does not block AC-13 preflight on canonically excluded local files", () => {
+		const excluded = {
+			path: "oab-8.8/ac-31-blob-stat-race-20261104-01.bin",
+			size: 1_100_003,
+			baseMatches: false,
+			serviceMatches: false,
+		};
+		const eligible = {
+			path: "oab-8.8/ac-13-clean.md",
+			size: 32,
+			baseMatches: true,
+			serviceMatches: true,
+		};
+		expect(classifyAc13PreflightFiles([excluded, eligible])).toEqual({
+			eligible: [eligible],
+			excluded: [excluded],
+			blockers: [],
+		});
+		expect(
+			classifyAc13PreflightFiles([{ ...eligible, baseMatches: false }])
+				.blockers,
+		).toEqual([{ ...eligible, baseMatches: false }]);
+	});
+
+	it("separates AC-13 wrapper restoration from resume settlement", async () => {
+		const path = "oab-8.8/ac-31-blob-stat-race-20261104-01.bin";
+		const scripts = createAc13CaseScripts({
+			excludedPaths: [path],
+			excludedLocalFiles: [{ path, size: 1_100_003 }],
+			localOnlyExcludedPaths: [path],
+		});
+		Reflect.set(globalThis, "__oab8Ac13Restore", async () => ({
+			wrapperRestored: true,
+			controllerResumed: false,
+		}));
+		const failedResumeScript = createCaseScript("AC-13", "", scripts.cleanup);
+		const failedResume = (
+			new Function(`return ${failedResumeScript}`) as () => Promise<string>
+		)();
+		expect(
+			JSON.parse((await failedResume).slice("OAB8CASE:".length)),
+		).toMatchObject({
+			status: "failed",
+			failureStage: "cleanup",
+			failureReason: "AC13_CLEANUP_RESTORE_FAILED",
+			cleanupStatus: "failed",
+		});
+		expect(globalThis).not.toHaveProperty("__oab8Ac13Restore");
+
+		Reflect.set(globalThis, "__oab8Ac13Restore", async () => ({
+			wrapperRestored: false,
+			controllerResumed: false,
+		}));
+		const failedWrapperScript = createCaseScript("AC-13", "", scripts.cleanup);
+		const failedWrapper = (
+			new Function(`return ${failedWrapperScript}`) as () => Promise<string>
+		)();
+		expect(
+			JSON.parse((await failedWrapper).slice("OAB8CASE:".length)),
+		).toMatchObject({
+			status: "failed",
+			failureStage: "cleanup",
+			failureReason: "AC13_CLEANUP_RESTORE_FAILED",
+			cleanupStatus: "failed",
+		});
+		expect(globalThis).toHaveProperty("__oab8Ac13Restore");
+		Reflect.deleteProperty(globalThis, "__oab8Ac13Restore");
+	});
+
+	it("builds controlled AC-13 epoch recovery with excluded-file preservation", () => {
+		const path = "oab-8.8/ac-31-blob-stat-race-20261104-01.bin";
+		const scripts = createAc13CaseScripts({
+			excludedPaths: [path],
+			excludedLocalFiles: [{ path, size: 1_100_003 }],
+			localOnlyExcludedPaths: [path],
+		});
+		expect(scripts.action).toContain("AC13_ASSERT_TARGET_VAULT");
+		expect(scripts.action).toContain("reconciliation.reconcile()");
+		expect(scripts.action).toContain(
+			"sameSnapshot(filesBefore,filesAfterControlled)",
+		);
+		expect(scripts.action).toContain("controlledState.epoch!==controlledEpoch");
+		expect(scripts.action).toContain("restoredState.epoch!==observedEpoch");
+		expect(scripts.action).toContain("localOnlyExcludedPaths.some");
+		expect(scripts.cleanup).toContain("AC13_CLEANUP_RESTORE_FAILED");
+		expect(
+			() =>
+				new Function(
+					createCaseScript("AC-13", scripts.action, scripts.cleanup),
+				),
+		).not.toThrow();
+		expect(() =>
+			createAc13CaseScripts({
+				excludedPaths: ["oab-8.8/not-excluded.md"],
+				excludedLocalFiles: [],
+				localOnlyExcludedPaths: [],
+			}),
+		).toThrow("Unauthorized AC-13 excluded file scope");
 	});
 
 	it("builds the controlled AC-33 hydration and feed replay case", () => {

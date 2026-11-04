@@ -8,6 +8,18 @@ import {
 import { describe, expect, it } from "vitest";
 
 describe("durable client registry", () => {
+	it("does not infer active authority from a registered client without grants", async () => {
+		const clientId = `ungranted-${crypto.randomUUID()}`;
+		const ownerSubject = "synthetic-owner";
+		const stub = env.VAULTS.get(
+			env.VAULTS.idFromName(`ungranted-${crypto.randomUUID()}`),
+		);
+		await stub.beginClientConsent(ownerSubject, clientId, "No grant client");
+		expect(await stub.listClients(ownerSubject)).toMatchObject({
+			clients: [{ client_id: clientId, grant_count: 0, active_grant_count: 0 }],
+		});
+	});
+
 	it("fences callbacks across revocation and allows fresh consent without clearing old denial", async () => {
 		const clientId = `registry-${crypto.randomUUID()}`;
 		const ownerSubject = "synthetic-owner";
@@ -27,6 +39,9 @@ describe("durable client registry", () => {
 			consent_id: first.consent_id,
 		};
 		expect(await stub.registerClientGrant(callbackBeforeRevoke)).toBe(true);
+		expect(await stub.listClients(ownerSubject)).toMatchObject({
+			clients: [{ grant_count: 1, active_grant_count: 1 }],
+		});
 		const context: AuthorizationContext = {
 			client_id: clientId,
 			grant_id: callbackBeforeRevoke.grant_id,
@@ -47,16 +62,35 @@ describe("durable client registry", () => {
 		const revoked = await stub.revokeClient(ownerSubject, clientId);
 		expect(revoked).not.toBeNull();
 		expect(revoked?.grants).toEqual([callbackBeforeRevoke.grant_id]);
+		expect(await stub.listClients(ownerSubject)).toMatchObject({
+			clients: [{ grant_count: 1, active_grant_count: 0 }],
+		});
+		expect(await stub.listClientGrants(ownerSubject, clientId)).toMatchObject({
+			grants: [
+				{
+					grant_id: callbackBeforeRevoke.grant_id,
+					revoked: true,
+					cleanup_pending: true,
+				},
+			],
+		});
 		await expect(stub.getCurrentEpoch(context, "read")).resolves.toEqual({
 			ok: false,
 			failure: { kind: "revoked" },
 		});
-		expect(
-			await stub.registerClientGrant({
-				...callbackBeforeRevoke,
-				grant_id: `late-${crypto.randomUUID()}`,
-			}),
-		).toBe(false);
+		await stub.markGrantCleanupComplete(
+			clientId,
+			callbackBeforeRevoke.grant_id,
+		);
+		expect(await stub.listClientGrants(ownerSubject, clientId)).toMatchObject({
+			grants: [
+				expect.objectContaining({ revoked: true, cleanup_pending: false }),
+			],
+		});
+		await expect(stub.getCurrentEpoch(context, "read")).resolves.toEqual({
+			ok: false,
+			failure: { kind: "revoked" },
+		});
 		await expect(
 			stub.authorize(
 				context,
@@ -64,6 +98,12 @@ describe("durable client registry", () => {
 				reservation.lease.admission_id,
 			),
 		).resolves.toEqual({ ok: false, failure: { kind: "revoked" } });
+		expect(
+			await stub.registerClientGrant({
+				...callbackBeforeRevoke,
+				grant_id: `late-${crypto.randomUUID()}`,
+			}),
+		).toBe(false);
 		const second = await stub.beginClientConsent(
 			ownerSubject,
 			clientId,
@@ -77,6 +117,23 @@ describe("durable client registry", () => {
 			consent_id: second.consent_id,
 		};
 		expect(await stub.registerClientGrant(freshGrant)).toBe(true);
+		expect(await stub.listClients(ownerSubject)).toMatchObject({
+			clients: [{ grant_count: 2, active_grant_count: 1 }],
+		});
+		expect(await stub.listClientGrants(ownerSubject, clientId)).toMatchObject({
+			grants: expect.arrayContaining([
+				expect.objectContaining({
+					grant_id: callbackBeforeRevoke.grant_id,
+					revoked: true,
+					cleanup_pending: false,
+				}),
+				expect.objectContaining({
+					grant_id: freshGrant.grant_id,
+					revoked: false,
+					cleanup_pending: false,
+				}),
+			]),
+		});
 		await expect(stub.getCurrentEpoch(context, "read")).resolves.toEqual({
 			ok: false,
 			failure: { kind: "revoked" },
@@ -89,6 +146,9 @@ describe("durable client registry", () => {
 		expect(
 			listing.clients.find((client) => client.client_id === clientId)?.name,
 		).toBe("Reconnected name");
+		expect(await stub.listClients("another-owner")).toMatchObject({
+			clients: [],
+		});
 		await runInDurableObject(stub, (_instance, state) => {
 			expect(
 				state.storage.sql
@@ -175,6 +235,14 @@ describe("durable client registry", () => {
 		expect(first?.cleanupPending).toBe(true);
 		for (const grantId of first?.grants ?? [])
 			await stub.markGrantCleanupComplete(clientId, grantId);
+		expect(await stub.listClients(ownerSubject)).toMatchObject({
+			clients: [{ grant_count: 17, active_grant_count: 0 }],
+		});
+		expect(await stub.listClientGrants(ownerSubject, clientId)).toMatchObject({
+			grants: expect.arrayContaining([
+				expect.objectContaining({ revoked: true, cleanup_pending: false }),
+			]),
+		});
 		const second = await stub.revokeClient(ownerSubject, clientId);
 		expect(second?.grants).toHaveLength(1);
 		expect(second?.cleanupPending).toBe(false);

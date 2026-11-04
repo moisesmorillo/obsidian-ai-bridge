@@ -1225,7 +1225,23 @@ describe("production OAuth entry", () => {
 			"synthetic-owner",
 			client.client_id,
 		);
-		expect(grants.grants[0]?.cleanup_pending).toBe(false);
+		expect(grants.grants[0]).toMatchObject({
+			revoked: true,
+			cleanup_pending: false,
+		});
+		const listedClients = await vault.listClients("synthetic-owner");
+		expect(
+			listedClients.clients.find((item) => item.client_id === client.client_id),
+		).toMatchObject({
+			grant_count: 1,
+			active_grant_count: 0,
+			cleanup_pending_count: 0,
+		});
+		const grantPage = await SELF.fetch(
+			`https://service.test/owner/clients/${encodeURIComponent(client.client_id)}/grants`,
+			{ headers: { "Cf-Access-Jwt-Assertion": assertion } },
+		);
+		expect(await grantPage.text()).toContain("provider cleanup complete");
 	});
 
 	it("commits durable denial before provider cleanup and blocks the next REST and refresh requests", async () => {

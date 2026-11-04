@@ -745,6 +745,7 @@ describe("desktop acceptance safety", () => {
 			'remote.put(source,sourceText,{kind:"absent"}',
 		);
 		expect(scripts.action).toContain("reconciliation.replay()");
+		expect(scripts.action).toContain("AC33_CONTROLLED_HYDRATION_STOP");
 		expect(scripts.action).toContain("destinationAbsence");
 		expect(scripts.action).toContain("crypto.randomUUID()");
 		expect(scripts.action).toContain(

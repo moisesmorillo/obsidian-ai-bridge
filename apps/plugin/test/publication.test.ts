@@ -680,6 +680,8 @@ describe("PublicationController", () => {
 		await controller.observe({ type: "create", path: "note.md" });
 		await controller.flush();
 		expect(serverRev).toBe(1);
+		now += 3_000;
+		await controller.flush();
 		versionText.set(2, "feed revision two");
 		serverRev = 2;
 		serverText = "feed revision two";
@@ -691,7 +693,6 @@ describe("PublicationController", () => {
 		});
 		vault.files.set("note.md", "later edit after feed revision two");
 		await controller.observe({ type: "modify", path: "note.md" });
-		now += 3_000;
 		await controller.flush();
 
 		expect(requests.map((request) => request.precondition)).toEqual([

@@ -250,6 +250,8 @@ describe("late receipt successor authority", () => {
 		await publication.observe({ type: "create", path: "note.md" });
 		await publication.flush();
 		expect(serverRev).toBe(1);
+		now += 3_000;
+		await publication.flush();
 
 		versionText.set(2, "feed revision two");
 		serverRev = 2;
@@ -263,7 +265,6 @@ describe("late receipt successor authority", () => {
 
 		vault.files.set("note.md", "later edit after feed revision two");
 		await publication.observe({ type: "modify", path: "note.md" });
-		now += 3_000;
 		await publication.flush();
 
 		expect(requests.map((request) => request.precondition)).toEqual([

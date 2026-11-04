@@ -2929,8 +2929,21 @@ describe("ReconciliationController", () => {
 		expect(context.journal.snapshot().pending_ops[0]?.state).toBe("sent");
 		context = await reopen(context);
 		context.remote.createError = null;
+		const successor = "later local edit";
+		context.vault.files.set("lost.md", successor);
 		await context.controller.resume();
 		expect(context.remote.created).toHaveLength(1);
+		expect(context.vault.files.get("lost.md")).toBe(successor);
+		expect(
+			[...context.vault.files.keys()].filter((path) =>
+				path.includes("conflict"),
+			),
+		).toEqual([]);
+		expect(context.journal.snapshot().base["lost.md"]).toEqual({
+			deleted: false,
+			rev: 2,
+			hash: hashValue,
+		});
 		expect(context.journal.snapshot().pending_ops).toEqual([]);
 	});
 

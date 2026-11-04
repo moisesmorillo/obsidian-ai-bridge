@@ -6,6 +6,7 @@ import {
 	type ManifestPage,
 	type PendingOperation,
 	parseETag,
+	pathKey,
 	type ReconciliationCheckpoint,
 } from "@obsidian-ai-bridge/protocol";
 import type { DeviceJournal } from "@plugin/sync/device-journal";
@@ -118,10 +119,18 @@ export class ReconciliationController {
 		return this.serialize(() => this.runReplayWithRecovery());
 	}
 
-	/** Replays changes and persists each accepted cursor. Direct rename-source authority reads do not advance it. */
+	/** Replays after a confirmed 412, allowing only that rejected sent operation's paths to reconcile. */
 	recoverPrecondition(operation: PendingOperation): Promise<void> {
 		return this.serialize(async () => {
-			await this.runReplayWithRecovery();
+			const savedOperation = this.journal
+				.snapshot()
+				.pending_ops.find((pending) => pending.key === operation.key);
+			const rejectedOperationKey =
+				savedOperation?.state === "sent" &&
+				JSON.stringify(savedOperation) === JSON.stringify(operation)
+					? operation.key
+					: undefined;
+			await this.runReplayWithRecovery(rejectedOperationKey);
 			if (operation.op !== "rename") return;
 			if (!this.remote.readCurrentAuthority)
 				throw new Error("Rename recovery needs current source authority");
@@ -146,13 +155,26 @@ export class ReconciliationController {
 		});
 	}
 
-	/** Shares one serialized recovery policy for explicit replay and restart resume. */
-	private async runReplayWithRecovery(): Promise<void> {
+	/** Shares replay recovery while preserving sent-operation deferral across cursor recovery. */
+	private async runReplayWithRecovery(
+		rejectedOperationKey?: string,
+	): Promise<void> {
 		try {
-			await this.runReplay();
+			await this.runReplay(rejectedOperationKey);
 		} catch (error) {
 			if (!isRecoveryError(error)) throw error;
-			await this.runReconciliation();
+			if (
+				isCursorExpiredError(error) &&
+				this.journal
+					.snapshot()
+					.pending_ops.some(
+						(operation) =>
+							operation.state === "sent" &&
+							operation.key !== rejectedOperationKey,
+					)
+			)
+				return;
+			await this.runReconciliation(true, rejectedOperationKey);
 		}
 	}
 
@@ -162,9 +184,10 @@ export class ReconciliationController {
 		this.applyEngine.close();
 	}
 
-	/** Traverses manifest pages and local files while persisting restart boundaries. */
+	/** Traverses manifest pages while retaining checkpoints before unresolved sent paths. */
 	private async runReconciliation(
 		restartOnSnapshotChange = true,
+		rejectedOperationKey?: string,
 	): Promise<void> {
 		this.assertOpen();
 		let checkpoint: ReconciliationCheckpoint | null =
@@ -261,7 +284,15 @@ export class ReconciliationController {
 			for (const entry of page.entries) {
 				if (!pendingPaths.includes(entry.path)) continue;
 				this.assertOpen();
-				await this.applyManifestEntry(entry);
+				const resolvedSentCreate = await this.resolveSentCreate(
+					entry,
+					rejectedOperationKey,
+				);
+				if (
+					!resolvedSentCreate &&
+					!(await this.applyManifestEntry(entry, rejectedOperationKey))
+				)
+					return;
 				pendingPaths = pendingPaths.filter((path) => path !== entry.path);
 				checkpoint = {
 					...checkpoint,
@@ -344,28 +375,67 @@ export class ReconciliationController {
 		await this.journal.setReconciliationCheckpoint(null);
 	}
 
-	/** Resolves response-lost creates only when a current manifest confirms their hash. */
+	/** Resolves only absent-precondition creates that a current manifest confirms by hash. */
 	private async resolveSentCreates(epoch: string): Promise<string[]> {
 		const sent = this.journal
 			.snapshot()
 			.pending_ops.filter((operation) => operation.state === "sent");
 		if (sent.length === 0) return [];
 		const hashes = new Map(
-			sent.map((operation) => [operation.path, operation.payload_hash]),
+			sent
+				.filter(
+					(operation) =>
+						operation.op === "put" && operation.precondition.kind === "absent",
+				)
+				.map((operation) => [pathKey(operation.path), operation.payload_hash]),
 		);
+		if (hashes.size === 0) return [];
 		const resolvedPaths: string[] = [];
 		let page = await this.remote.manifest(null);
 		if (page.epoch !== epoch) return resolvedPaths;
 		while (true) {
 			for (const entry of page.entries) {
-				if (hashes.get(entry.path) !== entry.hash) continue;
-				await this.applyManifestEntry(entry);
-				resolvedPaths.push(entry.path);
+				if (entry.deleted || hashes.get(pathKey(entry.path)) !== entry.hash)
+					continue;
+				if (await this.resolveSentCreate(entry)) resolvedPaths.push(entry.path);
 			}
 			if (page.next_page === null) return resolvedPaths;
 			page = await this.remote.manifest(page.next_page);
 			if (page.epoch !== epoch) return resolvedPaths;
 		}
+	}
+
+	/**
+	 * Resolves an absent-precondition PUT only when manifest epoch, path, and payload hash match.
+	 * Records confirmed base authority without applying bytes over a local successor.
+	 */
+	private async resolveSentCreate(
+		entry: ReconciliationManifestEntry,
+		rejectedOperationKey?: string,
+	): Promise<boolean> {
+		if (entry.deleted) return false;
+		const operation = this.journal
+			.snapshot()
+			.pending_ops.find(
+				(pending) =>
+					pending.state === "sent" &&
+					pending.key !== rejectedOperationKey &&
+					pending.op === "put" &&
+					pending.precondition.kind === "absent" &&
+					pathKey(pending.path) === pathKey(entry.path) &&
+					pending.payload_hash === entry.hash,
+			);
+		const identity = parseETag(entry.etag);
+		if (!operation || identity.epoch !== this.journal.snapshot().epoch)
+			return false;
+		const base = {
+			deleted: false as const,
+			rev: identity.rev,
+			hash: entry.hash,
+		};
+		await this.journal.setBase(entry.path, base);
+		await this.journal.resolve(operation.key, { kind: "receipt" }, base);
+		return true;
 	}
 
 	/** Retries page one after a recovery error and returns continuation errors to traversal. */
@@ -385,24 +455,27 @@ export class ReconciliationController {
 		}
 	}
 
-	/** Applies text rows through TextApplyEngine and records unsupported rows as attention. */
+	/** Applies one manifest row only after sent-operation authority allows classification. */
 	private async applyManifestEntry(
 		entry: ReconciliationManifestEntry,
-	): Promise<void> {
+		rejectedOperationKey?: string,
+	): Promise<boolean> {
+		if (this.hasUnresolvedSentOperation([entry.path], rejectedOperationKey))
+			return false;
 		const remoteAdmission = classifyEnrollmentPath(entry.path, 0);
-		if (remoteAdmission === "excluded") return;
+		if (remoteAdmission === "excluded") return true;
 		const localSize = await this.localVault.size(entry.path);
 		const localAdmission =
 			localSize === null
 				? remoteAdmission
 				: classifyEnrollmentPath(entry.path, localSize);
-		if (localAdmission === "excluded") return;
+		if (localAdmission === "excluded") return true;
 		if (localAdmission === "unsupported") {
 			await this.journal.recordAttention(
 				entry.path,
 				"File exceeds the supported synchronization size",
 			);
-			return;
+			return true;
 		}
 		const isBlob =
 			entry.kind === "blob" ||
@@ -419,7 +492,7 @@ export class ReconciliationController {
 					hash: entry.hash,
 				});
 				await this.acknowledgeObservedCreate(entry);
-				return;
+				return true;
 			}
 		} else if (!isBlob) {
 			const local = await this.localVault.read(entry.path);
@@ -434,7 +507,7 @@ export class ReconciliationController {
 					hash: entry.hash,
 				});
 				await this.acknowledgeObservedCreate(entry);
-				return;
+				return true;
 			}
 		}
 		const change = {
@@ -450,6 +523,7 @@ export class ReconciliationController {
 		if (epoch !== this.journal.snapshot().epoch)
 			throw new Error("Manifest row belongs to a stale epoch");
 		await this.acknowledgeObservedCreate(entry);
+		return true;
 	}
 
 	/** Resolves a sent create only after the manifest confirms its exact payload hash. */
@@ -662,16 +736,18 @@ export class ReconciliationController {
 		}
 	}
 
-	/** Replays one feed page and advances cursor only after apply or durable attention. */
-	private async runReplay(): Promise<void> {
+	/** Replays feed rows in order and leaves the cursor before any unresolved sent path. */
+	private async runReplay(rejectedOperationKey?: string): Promise<void> {
 		this.assertOpen();
 		const state = this.journal.snapshot();
-		if (!state.epoch || state.cursor === null) return this.runReconciliation();
+		if (!state.epoch || state.cursor === null)
+			return this.runReconciliation(true, rejectedOperationKey);
 		await this.resumeApply();
 		const page = await this.remote.changes(state.epoch, state.cursor);
 		this.assertOpen();
 		this.lastHeadValue = { epoch: page.epoch, head_seq: page.head_seq };
-		if (page.epoch !== state.epoch) return this.runReconciliation();
+		if (page.epoch !== state.epoch)
+			return this.runReconciliation(true, rejectedOperationKey);
 		let manifestRows: Map<string, ReconciliationManifestEntry | null> | null =
 			null;
 		for (const entry of page.entries) {
@@ -681,6 +757,13 @@ export class ReconciliationController {
 				await this.journal.setCursor(state.epoch, entry.seq);
 				continue;
 			}
+			if (
+				this.hasUnresolvedSentOperation(
+					entry.op === "rename" ? [entry.path, entry.from_path] : [entry.path],
+					rejectedOperationKey,
+				)
+			)
+				return;
 			if (entry.op === "delete") {
 				const revision = parseETag(entry.etag);
 				const base = this.journal.snapshot().base[entry.path];
@@ -715,6 +798,25 @@ export class ReconciliationController {
 		const latest = this.journal.snapshot().cursor ?? 0;
 		if (page.entries.length === 0 && page.head_seq > latest)
 			await this.journal.setCursor(state.epoch, page.head_seq);
+	}
+
+	/** Defers overlapping sent paths except the exact journal operation rejected by 412 recovery. */
+	private hasUnresolvedSentOperation(
+		paths: string[],
+		rejectedOperationKey?: string,
+	): boolean {
+		const entryPaths = new Set(paths.map(pathKey));
+		const operations = this.journal
+			.snapshot()
+			.pending_ops.filter(
+				(operation) =>
+					operation.state === "sent" && operation.key !== rejectedOperationKey,
+			);
+		return operations.some((operation) => {
+			const operationPaths = [operation.path];
+			if (operation.op === "rename") operationPaths.push(operation.to);
+			return operationPaths.some((path) => entryPaths.has(pathKey(path)));
+		});
 	}
 
 	/** Reads one full manifest snapshot so every feed delete shares its authority rows. */
@@ -840,11 +942,19 @@ async function hashText(text: string): Promise<string> {
 
 /** Routes only validated epoch and cursor errors to full reconciliation. */
 function isRecoveryError(error: unknown): boolean {
+	return isEpochMismatchError(error) || isCursorExpiredError(error);
+}
+
+/** Identifies confirmed epoch changes that invalidate old-epoch sent work. */
+function isEpochMismatchError(error: unknown): boolean {
 	if (!error || typeof error !== "object") return false;
-	const candidate = error as { code?: unknown };
-	return (
-		candidate.code === "epoch_mismatch" || candidate.code === "cursor_expired"
-	);
+	return (error as { code?: unknown }).code === "epoch_mismatch";
+}
+
+/** Identifies same-epoch cursor expiry, which sent work must defer. */
+function isCursorExpiredError(error: unknown): boolean {
+	if (!error || typeof error !== "object") return false;
+	return (error as { code?: unknown }).code === "cursor_expired";
 }
 
 /** Selects only terminal enrollment statuses with their validated protocol codes. */

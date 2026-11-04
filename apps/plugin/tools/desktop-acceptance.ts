@@ -1766,7 +1766,7 @@ if(!plugin?.journal?.snapshot||!plugin.composition?.publication||!plugin.desktop
 await plugin.desktopSync.waitForIdle();
 const stateBefore=plugin.journal.snapshot();
 if(stateBefore.pending_ops.length||stateBefore.pending_apply.length||stateBefore.reconciliation||plugin.desktopSync.isBusy)throw Error("AC30_ASSERT_INITIAL_STATE");
-const path="oab-8.8/ac-30-response-lost-20261104-04.md";
+const path="oab-8.8/ac-30-response-lost-20261104-05.md";
 if(app.vault.getAbstractFileByPath(path))throw Error("AC30_ASSERT_FIXTURE_ABSENT");
 const remote=Reflect.get(plugin.composition.publication,"remote");
 if(!remote?.put||!remote.readCurrentAuthority||globalThis.__oab8Ac30Restore)throw Error("AC30_ASSERT_REMOTE_CAPABILITIES");

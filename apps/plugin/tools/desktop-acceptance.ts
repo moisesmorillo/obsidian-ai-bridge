@@ -18,11 +18,27 @@ import type { DeleteResponseDiagnostic } from "@plugin/sync/remote-text";
 /** Identifies one authorized desktop vault and the exact path that Obsidian must resolve. */
 export type DesktopVaultId = "dev-1" | "dev-2";
 
-/** Limits host results to non-secret evidence fields. */
+/** Fixed synthetic action checks that may appear in host failure summaries. */
+const SAFE_CASE_FAILURE_CODES = [
+	"AC30_PRECONDITION_FAILED",
+	"AC30_FIRST_BOUNDARY_FAILED",
+	"AC30_SUCCESSOR_BOUNDARY_FAILED",
+] as const;
+
+/** Safe failure labels returned after exact allowlist matching. */
+type SafeCaseFailureReason =
+	| (typeof SAFE_CASE_FAILURE_CODES)[number]
+	| "unknown-error"
+	| "cleanup-error";
+
+/** Limits host results to safe evidence fields and truthful cleanup state. */
 export interface DesktopCaseSummary {
 	caseId: string;
 	evidence: "service" | "controlled" | "local";
 	status: "passed" | "failed" | "blocked";
+	failureStage: "action" | "cleanup" | "unknown" | null;
+	failureReason: SafeCaseFailureReason | null;
+	cleanupStatus: "passed" | "failed" | "unknown";
 }
 
 /** Returns the only two vault paths that this acceptance driver may target. */
@@ -103,16 +119,63 @@ export function validateCallbackUrl(value: string): void {
 	}
 }
 
-/** Builds a summary from explicit safe fields and discards every other result value. */
+/** Builds a safe case summary and replaces unrecognized diagnostics with generic labels. */
 export function safeCaseResult(
 	caseId: string,
 	evidence: DesktopCaseSummary["evidence"],
 	result: Record<string, unknown>,
 ): DesktopCaseSummary {
-	const status = result.status;
-	if (status !== "passed" && status !== "failed" && status !== "blocked")
+	const reportedStatus = result.status;
+	if (
+		reportedStatus !== "passed" &&
+		reportedStatus !== "failed" &&
+		reportedStatus !== "blocked"
+	)
 		throw new Error("Invalid case status");
-	return { caseId, evidence, status };
+	const cleanupStatus =
+		result.cleanupStatus === "passed" || result.cleanupStatus === "failed"
+			? result.cleanupStatus
+			: "unknown";
+	const status =
+		reportedStatus === "passed" && cleanupStatus !== "passed"
+			? "failed"
+			: reportedStatus;
+	const failureStage =
+		status === "passed"
+			? null
+			: result.failureStage === "action" || result.failureStage === "cleanup"
+				? result.failureStage
+				: cleanupStatus === "failed"
+					? "cleanup"
+					: "unknown";
+	const failureReason =
+		status === "passed"
+			? null
+			: isSafeCaseFailureReason(result.failureReason)
+				? result.failureReason
+				: failureStage === "cleanup"
+					? "cleanup-error"
+					: "unknown-error";
+	return {
+		caseId,
+		evidence,
+		status,
+		failureStage,
+		failureReason,
+		cleanupStatus,
+	};
+}
+
+/** Accepts only fixed failure labels and rejects arbitrary host exception text. */
+function isSafeCaseFailureReason(
+	value: unknown,
+): value is SafeCaseFailureReason {
+	return (
+		typeof value === "string" &&
+		(SAFE_CASE_FAILURE_CODES.some((code) => code === value) ||
+			value === "unknown-error" ||
+			value === "cleanup-error")
+	);
 }
 
 /** Runs one explicitly targeted Obsidian CLI command without printing its output. */
@@ -826,7 +889,7 @@ export function createAc20FixtureScript(
 	})()`;
 }
 
-/** Adds a failure-safe cleanup boundary to trusted case code without returning its data. */
+/** Adds failure-safe cleanup and returns only allowlisted diagnostic fields. */
 export function createCaseScript(
 	caseId: string,
 	actionScript: string,
@@ -842,19 +905,37 @@ export function createCaseScript(
 	)
 		throw new Error("Invalid acceptance case ID");
 	return `(async () => {
+		const safeFailureCodes = ${JSON.stringify(SAFE_CASE_FAILURE_CODES)};
+		const classifyActionFailure = (error) => {
+			try {
+				const message = error instanceof Error ? error.message : null;
+				return safeFailureCodes.includes(message) ? message : "unknown-error";
+			} catch {
+				return "unknown-error";
+			}
+		};
 		let status = "passed";
+		let failureStage = null;
+		let failureReason = null;
+		let cleanupStatus = "failed";
 		try {
 			await (async () => { ${actionScript} })();
+		} catch (error) {
+			status = "failed";
+			failureStage = "action";
+			failureReason = classifyActionFailure(error);
+		}
+		try {
+			await (async () => { ${cleanupScript} })();
+			cleanupStatus = "passed";
 		} catch {
 			status = "failed";
-		} finally {
-			try {
-				await (async () => { ${cleanupScript} })();
-			} catch {
-				status = "failed";
+			if (failureStage === null) {
+				failureStage = "cleanup";
+				failureReason = "cleanup-error";
 			}
 		}
-		return "OAB8CASE:" + JSON.stringify({ caseId: ${JSON.stringify(caseId)}, status });
+		return "OAB8CASE:" + JSON.stringify({ caseId: ${JSON.stringify(caseId)}, status, failureStage, failureReason, cleanupStatus });
 	})()`;
 }
 

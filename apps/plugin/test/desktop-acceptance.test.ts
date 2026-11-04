@@ -606,14 +606,65 @@ describe("desktop acceptance safety", () => {
 		const result = (
 			new Function(`return ${script}`) as () => Promise<string>
 		)();
-		expect(await result).toBe('OAB8CASE:{"caseId":"AC-02","status":"failed"}');
+		expect(JSON.parse((await result).slice("OAB8CASE:".length))).toEqual({
+			caseId: "AC-02",
+			status: "failed",
+			failureStage: "action",
+			failureReason: "unknown-error",
+			cleanupStatus: "passed",
+		});
 		expect(globalThis).toHaveProperty("oab88CleanupRan", true);
 		Reflect.deleteProperty(globalThis, "oab88CleanupRan");
+	});
+
+	it("returns a safe allowlisted failure reason and cleanup status", async () => {
+		const script = createCaseScript(
+			"AC-30",
+			"throw Error('AC30_FIRST_BOUNDARY_FAILED')",
+			"globalThis.oab88CleanupRan = true",
+		);
+		const result = (
+			new Function(`return ${script}`) as () => Promise<string>
+		)();
+		expect(JSON.parse((await result).slice("OAB8CASE:".length))).toEqual({
+			caseId: "AC-30",
+			status: "failed",
+			failureStage: "action",
+			failureReason: "AC30_FIRST_BOUNDARY_FAILED",
+			cleanupStatus: "passed",
+		});
+		expect(globalThis).toHaveProperty("oab88CleanupRan", true);
+		Reflect.deleteProperty(globalThis, "oab88CleanupRan");
+	});
+
+	it("hides unknown failure text and reports failed cleanup", async () => {
+		const script = createCaseScript(
+			"AC-02",
+			"throw Error('private note bytes and bearer token')",
+			"throw Error('authorization URL and operation key')",
+		);
+		const result = (
+			new Function(`return ${script}`) as () => Promise<string>
+		)();
+		const serialized = await result;
+		expect(JSON.parse(serialized.slice("OAB8CASE:".length))).toEqual({
+			caseId: "AC-02",
+			status: "failed",
+			failureStage: "action",
+			failureReason: "unknown-error",
+			cleanupStatus: "failed",
+		});
+		expect(serialized).not.toMatch(
+			/private note bytes|bearer token|authorization URL|operation key/,
+		);
 	});
 
 	it("summarizes results without returning secret or note values", () => {
 		const summary = safeCaseResult("AC-02", "controlled", {
 			status: "passed",
+			failureStage: null,
+			failureReason: null,
+			cleanupStatus: "passed",
 			token: "secret-token",
 			authorizationCode: "private-code",
 			cookie: "session-cookie",
@@ -625,6 +676,9 @@ describe("desktop acceptance safety", () => {
 			caseId: "AC-02",
 			evidence: "controlled",
 			status: "passed",
+			failureStage: null,
+			failureReason: null,
+			cleanupStatus: "passed",
 		});
 		expect(JSON.stringify(summary)).not.toMatch(
 			/secret-token|private-code|session-cookie|private note bytes/,
@@ -632,5 +686,20 @@ describe("desktop acceptance safety", () => {
 		expect(() =>
 			safeCaseResult("AC-02", "controlled", { status: "unknown" }),
 		).toThrow("Invalid case status");
+		expect(
+			safeCaseResult("AC-30", "controlled", {
+				status: "failed",
+				failureStage: "action",
+				failureReason: "Bearer private-token",
+				cleanupStatus: "passed",
+			}),
+		).toEqual({
+			caseId: "AC-30",
+			evidence: "controlled",
+			status: "failed",
+			failureStage: "action",
+			failureReason: "unknown-error",
+			cleanupStatus: "passed",
+		});
 	});
 });

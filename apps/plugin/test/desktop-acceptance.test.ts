@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { formatETag } from "@obsidian-ai-bridge/protocol";
 import { describe, expect, it } from "vitest";
+import { SyncTransportError } from "../src/sync/remote-text";
 import {
 	assertAuthorizedVault,
 	createAc04BaselineScript,
@@ -639,6 +640,77 @@ describe("desktop acceptance safety", () => {
 		Reflect.deleteProperty(globalThis, "oab88CleanupRan");
 	});
 
+	it("reports validated transport details at read and mutation boundaries", async () => {
+		const cases = [
+			{
+				boundary: "AC31_READ_BASE_AUTHORITY",
+				error: new SyncTransportError(410, "revision_pruned"),
+				status: 410,
+				code: "revision_pruned",
+			},
+			{
+				boundary: "AC31_MUTATE_REMOTE_BLOB",
+				error: new SyncTransportError(
+					412,
+					"precondition_failed",
+					"private/path.md",
+				),
+				status: 412,
+				code: "precondition_failed",
+			},
+		] as const;
+
+		for (const testCase of cases) {
+			const script = createCaseScript(
+				"AC-31",
+				`await withCaseBoundary(${JSON.stringify(testCase.boundary)}, async () => { throw errorUnderTest; });`,
+				"",
+			);
+			const execute = new Function("errorUnderTest", `return ${script}`) as (
+				errorUnderTest: SyncTransportError,
+			) => Promise<string>;
+			const result = await execute(testCase.error);
+			const summary = JSON.parse(result.slice("OAB8CASE:".length));
+
+			expect(summary).toMatchObject({
+				caseId: "AC-31",
+				status: "failed",
+				failureStage: "action",
+				failureReason: `SYNC_TRANSPORT_${Math.floor(testCase.status / 100)}XX`,
+				failureDetails: {
+					boundary: testCase.boundary,
+					errorClass: "SyncTransportError",
+					status: testCase.status,
+					code: testCase.code,
+				},
+				cleanupStatus: "passed",
+			});
+			expect(result).not.toContain("private/path.md");
+		}
+	});
+
+	it("drops invalid case transport status and error codes", () => {
+		const summary = safeCaseResult("AC-31", "service", {
+			status: "failed",
+			failureStage: "action",
+			failureReason: "SYNC_TRANSPORT_4XX",
+			failureDetails: {
+				boundary: "AC31_READ_BASE_AUTHORITY",
+				errorClass: "SyncTransportError",
+				status: 999,
+				code: "private-code",
+			},
+			cleanupStatus: "passed",
+		});
+
+		expect(summary.failureDetails).toEqual({
+			boundary: "AC31_READ_BASE_AUTHORITY",
+			errorClass: "SyncTransportError",
+			status: null,
+			code: null,
+		});
+	});
+
 	it("keeps recovered AC-30 and Markdown AC-31 diagnostics unique", async () => {
 		const ac30 = createAc30CaseScripts("/Users/test");
 		const ac31 = createAc31CaseScripts(
@@ -684,6 +756,10 @@ describe("desktop acceptance safety", () => {
 		).toThrow("Unauthorized AC-31 fixture path");
 		expect(ac30.action).toContain("AC30_TIMEOUT_FIRST_BOUNDARY_WAIT");
 		expect(ac31.action).toContain("AC31_TIMEOUT_STAT_RACE_INJECTION");
+		expect(ac31.action).toContain(
+			'withCaseBoundary("AC31_READ_BASE_AUTHORITY"',
+		);
+		expect(ac31.action).toContain('withCaseBoundary("AC31_MUTATE_REMOTE_BLOB"');
 		expect(ac30.action).not.toMatch(
 			/AC30_(?:PRECONDITION|FIRST_BOUNDARY|SUCCESSOR_BOUNDARY)_FAILED/,
 		);

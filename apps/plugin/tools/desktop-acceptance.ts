@@ -13,7 +13,10 @@ import {
 	DEVICE_JOURNAL_FAILURE_STAGES,
 	type DeviceJournalFailureStage,
 } from "@plugin/sync/device-journal";
-import type { DeleteResponseDiagnostic } from "@plugin/sync/remote-text";
+import type {
+	CanonicalSyncErrorKind,
+	DeleteResponseDiagnostic,
+} from "@plugin/sync/remote-text";
 
 /** Identifies one authorized desktop vault and the exact path that Obsidian must resolve. */
 export type DesktopVaultId = "dev-1" | "dev-2";
@@ -70,11 +73,54 @@ const SAFE_CASE_FAILURE_CODES = [
 	"CLEANUP_TIMEOUT",
 ] as const;
 
+/** Fixed AC-31 operation boundaries that can appear in case diagnostics. */
+const SAFE_CASE_FAILURE_BOUNDARIES = [
+	"AC31_READ_SERVICE_ABSENCE",
+	"AC31_SYNC_BASELINE",
+	"AC31_WAIT_BASELINE_IDLE",
+	"AC31_READ_BASE_AUTHORITY",
+	"AC31_READ_MANIFEST",
+	"AC31_MUTATE_REMOTE_BLOB",
+	"AC31_READ_UPDATED_AUTHORITY",
+	"AC31_SYNC_FINAL_APPLY",
+	"AC31_WAIT_FINAL_IDLE",
+	"AC31_READ_FINAL_AUTHORITY",
+] as const;
+
+/** Error classes allowed in diagnostics from a wrapped case operation. */
+const SAFE_CASE_FAILURE_CLASSES = [
+	"SyncTransportError",
+	"AssertionError",
+	"UnsupportedRemoteTextError",
+	"TimeoutError",
+	"TypeError",
+	"RangeError",
+	"ReferenceError",
+	"SyntaxError",
+	"Error",
+	"other",
+] as const;
+
+/** Canonical HTTP failure codes validated by the protocol package. */
+const SAFE_CASE_TRANSPORT_ERROR_CODES = FileHttpErrorSchema.options;
+
 /** Safe failure labels returned after exact allowlist matching. */
 type SafeCaseFailureReason =
 	| (typeof SAFE_CASE_FAILURE_CODES)[number]
 	| "unknown-error"
 	| "cleanup-error";
+
+/** Safe details for one wrapped external operation boundary. */
+export interface SafeCaseFailureDetails {
+	/** Fixed operation stage from the case script. */
+	boundary: (typeof SAFE_CASE_FAILURE_BOUNDARIES)[number];
+	/** Allowlisted constructor class, without an exception message. */
+	errorClass: (typeof SAFE_CASE_FAILURE_CLASSES)[number];
+	/** Valid HTTP status on a SyncTransportError, or null when unavailable. */
+	status: number | null;
+	/** Canonical protocol error code, or null when not validated. */
+	code: CanonicalSyncErrorKind | null;
+}
 
 /** Limits host results to safe evidence fields and truthful cleanup state. */
 export interface DesktopCaseSummary {
@@ -83,6 +129,8 @@ export interface DesktopCaseSummary {
 	status: "passed" | "failed" | "blocked";
 	failureStage: "action" | "cleanup" | "unknown" | null;
 	failureReason: SafeCaseFailureReason | null;
+	/** Safe class, status, and canonical code from a named operation boundary. */
+	failureDetails?: SafeCaseFailureDetails;
 	cleanupStatus: "passed" | "failed" | "unknown";
 }
 
@@ -201,12 +249,15 @@ export function safeCaseResult(
 				: failureStage === "cleanup"
 					? "cleanup-error"
 					: "unknown-error";
+	const failureDetails =
+		status === "passed" ? null : safeCaseFailureDetails(result.failureDetails);
 	return {
 		caseId,
 		evidence,
 		status,
 		failureStage,
 		failureReason,
+		...(failureDetails ? { failureDetails } : {}),
 		cleanupStatus,
 	};
 }
@@ -221,6 +272,38 @@ function isSafeCaseFailureReason(
 			value === "unknown-error" ||
 			value === "cleanup-error")
 	);
+}
+
+/** Keeps only valid boundary diagnostics and canonical transport metadata. */
+function safeCaseFailureDetails(value: unknown): SafeCaseFailureDetails | null {
+	if (!value || typeof value !== "object") return null;
+	const boundary = Reflect.get(value, "boundary");
+	const errorClass = Reflect.get(value, "errorClass");
+	const rawStatus = Reflect.get(value, "status");
+	const rawCode = Reflect.get(value, "code");
+	if (
+		!SAFE_CASE_FAILURE_BOUNDARIES.some((item) => item === boundary) ||
+		!SAFE_CASE_FAILURE_CLASSES.some((item) => item === errorClass)
+	)
+		return null;
+	return {
+		boundary: boundary as SafeCaseFailureDetails["boundary"],
+		errorClass: errorClass as SafeCaseFailureDetails["errorClass"],
+		status:
+			errorClass === "SyncTransportError" &&
+			typeof rawStatus === "number" &&
+			Number.isInteger(rawStatus) &&
+			rawStatus >= 100 &&
+			rawStatus < 600
+				? rawStatus
+				: null,
+		code:
+			errorClass === "SyncTransportError" &&
+			typeof rawCode === "string" &&
+			FileHttpErrorSchema.safeParse(rawCode).success
+				? (rawCode as CanonicalSyncErrorKind)
+				: null,
+	};
 }
 
 /** Runs one explicitly targeted Obsidian CLI command without printing its output. */
@@ -934,7 +1017,7 @@ export function createAc20FixtureScript(
 	})()`;
 }
 
-/** Adds failure-safe cleanup and returns only allowlisted diagnostic fields. */
+/** Adds failure-safe cleanup and returns allowlisted stage and transport diagnostics. */
 export function createCaseScript(
 	caseId: string,
 	actionScript: string,
@@ -951,25 +1034,63 @@ export function createCaseScript(
 		throw new Error("Invalid acceptance case ID");
 	return `(async () => {
 		const safeFailureCodes = ${JSON.stringify(SAFE_CASE_FAILURE_CODES)};
+		const safeFailureBoundaries = ${JSON.stringify(SAFE_CASE_FAILURE_BOUNDARIES)};
+		const safeFailureClasses = ${JSON.stringify(SAFE_CASE_FAILURE_CLASSES)};
+		const safeTransportErrorCodes = ${JSON.stringify(SAFE_CASE_TRANSPORT_ERROR_CODES)};
+		const boundaryDetailsKey = Symbol("case-boundary-details");
+		const readBoundaryDetails = (error) => {
+			try {
+				return error && typeof error === "object" ? error[boundaryDetailsKey] ?? null : null;
+			} catch {
+				return null;
+			}
+		};
+		const withCaseBoundary = async (boundary, operation) => {
+			try {
+				return await operation();
+			} catch (error) {
+				let errorClass = "other";
+				let status = null;
+				let code = null;
+				try {
+					const name = error && typeof error === "object" ? error.name : null;
+					if (safeFailureClasses.includes(name)) errorClass = name;
+					if (errorClass === "SyncTransportError") {
+						const candidateStatus = error.status;
+						if (Number.isInteger(candidateStatus) && candidateStatus >= 100 && candidateStatus < 600) status = candidateStatus;
+						const candidateCode = error.code;
+						if (safeTransportErrorCodes.includes(candidateCode)) code = candidateCode;
+					}
+				} catch {
+					/* Invalid exception fields stay absent from diagnostics. */
+				}
+				const safeBoundary = safeFailureBoundaries.includes(boundary) ? boundary : null;
+				if (safeBoundary === null) throw error;
+				const wrapped = new Error("Case operation failed");
+				Object.defineProperty(wrapped, boundaryDetailsKey, {
+					value: { boundary: safeBoundary, errorClass, status, code },
+				});
+				throw wrapped;
+			}
+		};
 		const classifyFailure = (error, phase) => {
 			try {
-				if (error && typeof error === "object") {
-					const name = error.name;
-					if (name === "TimeoutError") return phase === "action" ? "ACTION_TIMEOUT" : "CLEANUP_TIMEOUT";
-					if (name === "SyncTransportError") {
-						const status = error.status;
-						if (!Number.isInteger(status) || status < 100 || status >= 600) return "unexpected-sync-transport-error";
-						return "SYNC_TRANSPORT_" + Math.floor(status / 100) + "XX";
-					}
-					const unexpected = {
-						AssertionError: "unexpected-assertion-error",
-						TypeError: "unexpected-type-error",
-						RangeError: "unexpected-range-error",
-						ReferenceError: "unexpected-reference-error",
-						SyntaxError: "unexpected-syntax-error"
-					};
-					if (Object.prototype.hasOwnProperty.call(unexpected, name)) return unexpected[name];
+				const details = readBoundaryDetails(error);
+				const name = details?.errorClass ?? (error && typeof error === "object" ? error.name : null);
+				if (name === "TimeoutError") return phase === "action" ? "ACTION_TIMEOUT" : "CLEANUP_TIMEOUT";
+				if (name === "SyncTransportError") {
+					const status = details?.status ?? (error && typeof error === "object" ? error.status : null);
+					if (!Number.isInteger(status) || status < 100 || status >= 600) return "unexpected-sync-transport-error";
+					return "SYNC_TRANSPORT_" + Math.floor(status / 100) + "XX";
 				}
+				const unexpected = {
+					AssertionError: "unexpected-assertion-error",
+					TypeError: "unexpected-type-error",
+					RangeError: "unexpected-range-error",
+					ReferenceError: "unexpected-reference-error",
+					SyntaxError: "unexpected-syntax-error"
+				};
+				if (Object.prototype.hasOwnProperty.call(unexpected, name)) return unexpected[name];
 				const message = error instanceof Error ? error.message : null;
 				return safeFailureCodes.includes(message) ? message : "unknown-error";
 			} catch {
@@ -979,12 +1100,14 @@ export function createCaseScript(
 		let status = "passed";
 		let failureStage = null;
 		let failureReason = null;
+		let failureDetails = null;
 		let cleanupStatus = "failed";
 		try {
 			await (async () => { ${actionScript} })();
 		} catch (error) {
 			status = "failed";
 			failureStage = "action";
+			failureDetails = readBoundaryDetails(error);
 			failureReason = classifyFailure(error, "action");
 		}
 		try {
@@ -994,11 +1117,12 @@ export function createCaseScript(
 			status = "failed";
 			if (failureStage === null) {
 				failureStage = "cleanup";
+				failureDetails = readBoundaryDetails(error);
 				const cleanupReason = classifyFailure(error, "cleanup");
 				failureReason = safeFailureCodes.includes(cleanupReason) ? cleanupReason : "cleanup-error";
 			}
 		}
-		return "OAB8CASE:" + JSON.stringify({ caseId: ${JSON.stringify(caseId)}, status, failureStage, failureReason, cleanupStatus });
+		return "OAB8CASE:" + JSON.stringify({ caseId: ${JSON.stringify(caseId)}, status, failureStage, failureReason, ...(failureDetails ? { failureDetails } : {}), cleanupStatus });
 	})()`;
 }
 
@@ -1486,20 +1610,20 @@ if(app.vault.getAbstractFileByPath(path))throw Error("AC31_ASSERT_FIXTURE_ABSENT
 const remote=Reflect.get(plugin.composition.publication,"remote");
 if(!remote?.manifest||!remote.putBlob||!remote.readCurrentBlobAuthority||globalThis.__oab8Ac31Restore)throw Error("AC31_ASSERT_REMOTE_CAPABILITIES");
 let absent=false;
-try{await remote.readCurrentBlobAuthority(path);}catch(error){absent=typeof error==="object"&&error!==null&&Reflect.get(error,"status")===404;}
+try{await withCaseBoundary("AC31_READ_SERVICE_ABSENCE",()=>remote.readCurrentBlobAuthority(path));}catch(error){absent=readBoundaryDetails(error)?.status===404;if(!absent)throw error;}
 if(!absent)throw Error("AC31_ASSERT_SERVICE_ABSENT");
 const makeBytes=(char)=>new TextEncoder().encode("# AC-31 blob stat race fixture\\n\\n"+char.repeat(1100000)+"\\n");
 const baseBytes=makeBytes("A"),remoteBytes=makeBytes("B"),raceBytes=makeBytes("C");
 const hashBytes=async(bytes)=>{const digest=await crypto.subtle.digest("SHA-256",bytes);return Array.from(new Uint8Array(digest)).map((byte)=>byte.toString(16).padStart(2,"0")).join("");};
 const baseHash=await hashBytes(baseBytes),remoteHash=await hashBytes(remoteBytes),raceHash=await hashBytes(raceBytes);
 await app.vault.createBinary(path,baseBytes.buffer.slice(0));
-await plugin.desktopSync.syncNow();
-await plugin.desktopSync.waitForIdle();
-const initial=await remote.readCurrentBlobAuthority(path);
+await withCaseBoundary("AC31_SYNC_BASELINE",()=>plugin.desktopSync.syncNow());
+await withCaseBoundary("AC31_WAIT_BASELINE_IDLE",()=>plugin.desktopSync.waitForIdle());
+const initial=await withCaseBoundary("AC31_READ_BASE_AUTHORITY",()=>remote.readCurrentBlobAuthority(path));
 const afterCreate=plugin.journal.snapshot();
 if(initial.kind!=="blob"||initial.rev!==1||initial.hash!==baseHash||afterCreate.base[path]?.rev!==1||afterCreate.base[path]?.hash!==baseHash||afterCreate.pending_ops.length||afterCreate.pending_apply.length)throw Error("AC31_ASSERT_INITIAL_REVISION");
 let pageToken=null,pageEpoch=null,manifestEntry=null;
-do{const page=await remote.manifest(pageToken);if(pageEpoch!==null&&page.epoch!==pageEpoch)throw Error("AC31_ASSERT_MANIFEST_EPOCH_STABLE");pageEpoch=page.epoch;manifestEntry=page.entries.find((entry)=>entry.path===path)??null;pageToken=manifestEntry?null:page.next_page;}while(pageToken!==null);
+do{const page=await withCaseBoundary("AC31_READ_MANIFEST",()=>remote.manifest(pageToken));if(pageEpoch!==null&&page.epoch!==pageEpoch)throw Error("AC31_ASSERT_MANIFEST_EPOCH_STABLE");pageEpoch=page.epoch;manifestEntry=page.entries.find((entry)=>entry.path===path)??null;pageToken=manifestEntry?null:page.next_page;}while(pageToken!==null);
 if(!manifestEntry||manifestEntry.deleted||manifestEntry.kind!=="blob"||pageEpoch!==afterCreate.epoch)throw Error("AC31_ASSERT_MANIFEST_ENTRY_CURRENT");
 const adapter=app.vault.adapter,originalStat=adapter.stat;
 let statCalls=0,raceInjected=false,injectionActive=false,mtimeChanged=false,sizeUnchanged=false;
@@ -1516,8 +1640,8 @@ const wrappedStat=async function(candidatePath){
 };
 try{
  adapter.stat=wrappedStat;
- const updateResponse=await remote.putBlob(path,remoteBytes,remoteHash,{kind:"match",etag:manifestEntry.etag},crypto.randomUUID(),pageEpoch);
- const serviceUpdate=await remote.readCurrentBlobAuthority(path);
+const updateResponse=await withCaseBoundary("AC31_MUTATE_REMOTE_BLOB",()=>remote.putBlob(path,remoteBytes,remoteHash,{kind:"match",etag:manifestEntry.etag},crypto.randomUUID(),pageEpoch));
+const serviceUpdate=await withCaseBoundary("AC31_READ_UPDATED_AUTHORITY",()=>remote.readCurrentBlobAuthority(path));
  if((updateResponse.status!==200&&updateResponse.status!==201)||serviceUpdate.kind!=="blob"||serviceUpdate.rev!==2||serviceUpdate.hash!==remoteHash)throw new Error("AC31_ASSERT_REMOTE_BLOB_UPDATE");
  try{await plugin.desktopSync.syncNow();}catch{}
  await injection;
@@ -1532,13 +1656,13 @@ const conflictPrefix=path.slice(0,path.lastIndexOf("."))+" (conflict";
 const raceCopies=app.vault.getFiles().filter((file)=>file.path.startsWith(conflictPrefix));
 let preservedRaceCopy=false;for(const copy of raceCopies){if(await hashBytes(new Uint8Array(await app.vault.readBinary(copy)))===raceHash)preservedRaceCopy=true;}
 const intermediatePreserved=raceLocalHash===raceHash&&raceCopies.length===1&&preservedRaceCopy&&raceState.base[path]?.rev===1&&raceState.base[path]?.hash===baseHash&&raceState.pending_apply.some((entry)=>entry.change.path===path);
-if(raceState.pending_apply.length)await plugin.desktopSync.syncNow();
-await plugin.desktopSync.waitForIdle();
+if(raceState.pending_apply.length)await withCaseBoundary("AC31_SYNC_FINAL_APPLY",()=>plugin.desktopSync.syncNow());
+await withCaseBoundary("AC31_WAIT_FINAL_IDLE",()=>plugin.desktopSync.waitForIdle());
 const finalState=plugin.journal.snapshot(),finalFile=app.vault.getAbstractFileByPath(path);
 const finalHash=finalFile?await hashBytes(new Uint8Array(await app.vault.readBinary(finalFile))):null;
 const finalCopies=app.vault.getFiles().filter((file)=>file.path.startsWith(conflictPrefix));
 let finalCopyMatches=false;for(const copy of finalCopies){if(await hashBytes(new Uint8Array(await app.vault.readBinary(copy)))===raceHash)finalCopyMatches=true;}
-const authority=await remote.readCurrentBlobAuthority(path);
+const authority=await withCaseBoundary("AC31_READ_FINAL_AUTHORITY",()=>remote.readCurrentBlobAuthority(path));
 if(!intermediatePreserved||!finalFile||finalHash!==remoteHash||authority.rev!==2||authority.hash!==remoteHash||finalCopies.length!==1||!finalCopyMatches||finalState.base[path]?.rev!==2||finalState.base[path]?.hash!==remoteHash||finalState.pending_ops.length||finalState.pending_apply.length||finalState.reconciliation||!finalState.attention.some((item)=>item.path===path))throw new Error("AC31_ASSERT_FINAL_CONFLICT_PRESERVATION");
 `.replace("__AUTHORIZED_TARGET__", target),
 		cleanup: `if(globalThis.__oab8Ac31Restore&&!globalThis.__oab8Ac31Restore())throw Error("AC31_CLEANUP_RESTORE_FAILED");delete globalThis.__oab8Ac31Restore;`,

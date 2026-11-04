@@ -1,11 +1,11 @@
 ---
 id: OAB-35
 title: Emit exact Content-Length on Worker blob reads
-status: In Progress
+status: Done
 assignee:
   - '@pi'
 created_date: '2026-11-04T02:39:00Z'
-updated_date: '2026-11-04T04:53:00Z'
+updated_date: '2026-11-04T11:25:00Z'
 labels: []
 dependencies: []
 references:
@@ -23,10 +23,10 @@ The owner blob probe received all 1,100,033 bytes without Content-Length. Plain 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Full and range blob reads expose Content-Length equal to their exact body size in the Workers test runtime.
-- [ ] #2 Blob bytes and existing response headers stay unchanged, including empty and boundary-size reads.
-- [ ] #3 Documentation checks and the complete project check pass, with counts in task notes.
-- [ ] #4 Owner approves the plan and branch review before pull request publication. No deployment occurs.
+- [x] #1 Full and range blob reads expose Content-Length equal to their exact body size in the Workers test runtime.
+- [x] #2 Blob bytes and existing response headers stay unchanged, including empty and boundary-size reads.
+- [x] #3 Documentation checks and the complete project check pass, with counts in task notes.
+- [x] #4 Owner approves the plan and branch review before pull request publication. No deployment occurs.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -77,4 +77,22 @@ SELF.fetch checks retain exact full and range Content-Length, bytes, and headers
 Full validation: `bun run docs:check` passed. `bun run check` passed lint, documentation, all typechecks, all tests, and all builds. Test counts: Worker core 654/654 across 38 files; Worker HTTP 122/122; Worker F2 103/103; tooling 56/56; protocol 304/304; plugin 397/397. Wrangler 4.45.0 reported an available update. Worker tests printed expected client-disconnect, network-loss, and injected SQLite failure diagnostics.
 
 OAB-36 already tracks prompt cancellation as Deferred. This task references OAB-36. Do not act on OAB-36 unless its stated trigger occurs. OAB-35 remains In Progress for review.
+
+Overlong-source correction: `blobReadSource` now reports EOF only after the BYOB reader sees the underlying stream end. The known-length owner rejects any excess chunk and marks the admission uncertain. Added tests for an overlong full read, uncertain settlement, joined source cancellation, slot retention through cleanup, and underlength failure. Existing exact full and range tests pass. RED before the source fix: `bunx vitest run --config vitest.config.ts test/content-reads.test.ts -t 'rejects overlong full blob storage'` failed because the response succeeded after the source hid its extra byte. Focused owner and content-read tests passed 28/28. Blob HTTP tests with real R2 streams passed 38/38. `bun run docs:check` passed. `bun run check` passed with 96 test files and 1,638 tests: Worker core 656, Worker HTTP 122, Worker F2 103, tooling 56, protocol 304, plugin 397. The direct-socket full-route probe passed: full read 4,096/4,096 bytes with `Content-Length: 4096`; range read 31/31 bytes with `Content-Length: 31`. OAB-35 remains In Progress for independent review and owner approval. No publish, merge, or deployment occurred.
+
+Repair commit: `c65d574` (`fix(worker): validate blob source through EOF`). The commit contains only source and test changes. The OAB-35 task note remains an unstaged metadata edit. Independent review and owner approval remain open.
+
+F1 request-abort repair: The fixed response now holds one pump promise, one idempotent writer-shutdown promise, and one durable-settlement promise. The pump completion joins the current settlement and writer shutdown before local capacity release. This also covers aborts after source EOF and durable settlement while the final writer write remains blocked. The final Response still uses `fixed.readable` directly. Generic JSON stays pull-driven. Updated TSDoc to state that ticket expiry does not release local capacity for unresolved work. Added a regression that reads the first 65,536-byte write, waits for source EOF and settled admission, aborts during the blocked final write, and checks slot retention until reader cancellation settles writer shutdown. RED before the fix: `cd apps/worker && bunx vitest run --config vitest.config.ts test/read-response.test.ts -t 'keeps the slot until an aborted fixed-body write and shutdown settle'` exited 1 with 1 failed and 10 skipped. The slot was released before consumer and writer shutdown. GREEN: focused owner and content-read tests passed 29/29. `bun run docs:check` passed. `bun run check` passed with 96 files and 1,639 tests: Worker core 657, Worker HTTP 122, Worker F2 103, tooling 56, protocol 304, plugin 397. The prior direct-socket proof uses Miniflare 4.20251011.1 and workerd 1.20251011.0. Worker tests use Miniflare 5.20261006.1-alpha. The optional Miniflare 5 socket setup did not accept the prior v4 options. Parent steering stopped further setup. No new MF5 socket evidence exists. OAB-35 remains In Progress. No publish, merge, deployment, or vault access occurred.
+
+F1 repair commit: `d5be0e0` (`fix(worker): join fixed response shutdown before release`). The commit contains only the response-owner change and its regression test. The task note remains an unstaged metadata edit. No publish, merge, deployment, or task closure occurred.
+
+Review closure at d5be0e0: task review and scoped corrections close final native framing, unknown cancellation outcome propagation, function TSDoc, true storage EOF/excess-byte validation, and F1 request-abort production joining. Complete branch review at c65d574 found F1 only. Scoped review of c65d574..d5be0e0 marks F1 ADDRESSED with no new breakage. Final reported full check: 1,639 tests in 96 files, exit 0, with lint, docs, typechecks, and builds passing. Focused ownership tests: 29/29. The valid full-route direct-socket proof uses Miniflare 4 and predates F1. Miniflare 5 probe setup failed configuration validation. Deployed proof remains open for OAB-8.8 after owner merge and CI deployment. Await owner branch approval before publication.
+
+Owner approved the complete branch in Plannotator pn-80f15e with no changes. Source revision: d5be0e0. All actionable review findings are closed. Publication follows this approval. No merge or deployment.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+The final blob response owner now emits native fixed-length bodies for full and range reads. It validates true source EOF, preserves exact bytes and headers, and joins pending reads, writer shutdown, and cleanup before slot reuse. Final docs:check and bun run check passed. The full check reports 1,639 tests across 96 files. Task and whole-branch reviews plus scoped corrections close all actionable findings. Owner approved plan pn-9ebe50 and branch pn-80f15e. Local complete-route direct-socket proof confirms full and range framing with cached Miniflare 4. Worker tests use Miniflare 5. Deployed proof remains for OAB-8.8 after owner merge and CI deployment. Deferred OAB-36 tracks prompt cancellation only after its runtime trigger. No dependency, vault, merge, or deployment change.
+<!-- SECTION:FINAL_SUMMARY:END -->

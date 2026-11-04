@@ -416,6 +416,30 @@ describe("content read ownership", () => {
 		for (const release of held) release?.();
 		expect(finished).toEqual(["settled"]);
 	});
+	it("reports a failed blob source and settles its admission as uncertain", async () => {
+		const finished: AdmissionCompletion[] = [];
+		const response = await readContentResponse(
+			gateway(finished),
+			() =>
+				store(
+					async () =>
+						new ReadableStream<Uint8Array>({
+							/** Fail the real response source before it emits bytes. */
+							start(controller) {
+								controller.error(new Error("Storage stream failed"));
+							},
+						}),
+				),
+			identity,
+			{ path: "a.bin" },
+			new Request("https://content.invalid/v1/files/a.bin"),
+		);
+		if (response.status !== 200) throw new Error("Expected a blob response");
+		await expect(response.arrayBuffer()).rejects.toThrow(
+			"Storage stream failed",
+		);
+		expect(finished).toEqual(["uncertain"]);
+	});
 	it("denies the fifth content read before authority or R2 demand", async () => {
 		const held = Array.from({ length: 4 }, () => tryAcquireReadSlot());
 		const authority = gateway([]);

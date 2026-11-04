@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-11-04T02:39:00Z'
-updated_date: '2026-11-04T02:58:00Z'
+updated_date: '2026-11-04T03:12:00Z'
 labels: []
 dependencies: []
 priority: high
@@ -43,4 +43,8 @@ GREEN: focused HTTP blob suite passed 38/38, exit 0. Full check attempt 1 failed
 Changed files: apps/worker/src/transport/blobs.ts; apps/worker/test/http/blobs.test.ts; apps/worker/test/fixtures/http-worker.ts. Limits: Local Workers tests do not prove deployed framing. OAB-8.8 must repeat the probe after merge and CI deployment. Test output includes uncaught simulated disconnect/network/SQLite errors. Task remains In Progress for parent review.
 
 Correction: The full-check content-reads failures were outside the changed files, but this run does not prove they predated this branch. Treat them as unresolved validation failures, not confirmed baseline failures.
+
+Continuation diagnosis: The three timeout failures came from cancellation not reaching the real storage reader through FixedLengthStream.pipeTo in the Workers test runtime. The known-policy test passed by itself. The later unexpected 429 was a cascade from unreleased read slots after the timeouts. An explicit source-reader/fixed-writer pump now owns source cancellation and pipe settlement. It also stops source demand when request abort races a delayed storage read. Added a source-failure response test. The content-read ownership suite now passes 14/14.
+RED repeated with FINAL regression fixture and base production apps/worker/src/transport/blobs.ts from 2779837. Command: cd apps/worker && bunx vitest run --config vitest.http.config.ts test/http/blobs.test.ts, wrapped to record failure safely. Exit 1, 11 failed and 27 passed. Base streamed full and range requests returned runtime status 500 instead of 200 or 206. Other body checks received error JSON instead of blob bytes, and X-File-Large was absent. This is a clear runtime framing failure with the manual Content-Length and unknown-length stream fixture. Exact log: /tmp/oab35-final-red.log. Restored the implementation after the run.
+Final green checks after repairs: focused blob HTTP tests 38/38; content-read tests 14/14; docs:check passed; bun run check passed. Full check: lint and documentation passed; workspace typechecks passed; tests tooling 56/56, protocol 304/304, plugin 397/397, Worker 649/649 (38 files); protocol, plugin, and Worker builds passed. Wrangler reported an available update warning only. Worker tests emit expected simulated network, client-disconnect, and SQLite failure diagnostics. These did not fail tests.
 <!-- SECTION:NOTES:END -->

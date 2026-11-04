@@ -38,6 +38,12 @@ const SAFE_CASE_FAILURE_CODES = [
 	"AC30_ASSERT_SERVICE_PATH_ABSENT",
 	"AC30_ASSERT_FIRST_COMMIT_AUTHORITY",
 	"AC30_ASSERT_FIRST_COMMIT_QUEUE",
+	"AC30_ASSERT_FIRST_PAYLOAD",
+	"AC30_ASSERT_RETRY_DEADLINE",
+	"AC30_ASSERT_RETRY_WAIT_BOUND",
+	"AC30_ASSERT_RETRY_IDENTITY",
+	"AC30_ASSERT_RETRY_AFTER_WAIT_IDENTITY",
+	"AC30_ASSERT_SUCCESSOR_REQUEST",
 	"AC30_ASSERT_LOCAL_EDIT_READBACK",
 	"AC30_ASSERT_SUCCESSOR_REVISION",
 	"AC30_ASSERT_FINAL_INTERCEPTION_RESTORED",
@@ -1763,61 +1769,75 @@ if(stateBefore.pending_ops.length||stateBefore.pending_apply.length||stateBefore
 const path="oab-8.8/ac-30-response-lost-20261104-04.md";
 if(app.vault.getAbstractFileByPath(path))throw Error("AC30_ASSERT_FIXTURE_ABSENT");
 const remote=Reflect.get(plugin.composition.publication,"remote");
-if(!remote?.createText||!remote.readCurrentAuthority||globalThis.__oab8Ac30Restore)throw Error("AC30_ASSERT_REMOTE_CAPABILITIES");
+if(!remote?.put||!remote.readCurrentAuthority||globalThis.__oab8Ac30Restore)throw Error("AC30_ASSERT_REMOTE_CAPABILITIES");
 let absent=false;
 try{await remote.readCurrentAuthority(path);}catch(error){absent=typeof error==="object"&&error!==null&&Reflect.get(error,"status")===404;}
 if(!absent)throw Error("AC30_ASSERT_SERVICE_PATH_ABSENT");
 const originalText="# AC-30 response-loss fixture\\n\\nOriginal immutable payload.\\n";
 const editedText=originalText+"\\nLocal successor edit.\\n";
-const originalCreateText=remote.createText;
-let callCount=0;
-let firstReceiptETag=null;
-let retryReceiptETag=null;
-let originalPayloadHash=null;
-let retryPayloadMatchesOriginal=false;
-let firstRevision=null;
-let retryRevision=null;
-let releaseGate=()=>{};
-let markReached=()=>{};
-let timer=null;
-let resolveReached;
-let rejectReached;
+const originalPut=remote.put;
+let callCount=0,firstKey=null,retryKey=null,successorKey=null,firstPrecondition=null,successorPrecondition=null;
+let firstReceiptETag=null,retryReceiptETag=null,originalPayloadHash=null,firstOperationIdentity=null;
+let retryPayloadMatchesOriginal=false,successorPayloadMatchesEdited=false,firstRevision=null,retryRevision=null,successorRevision=null,retryStatus=null;
+let releaseGate=()=>{},markReached=()=>{},timer=null,resolveReached,rejectReached;
 const reached=new Promise((resolve,reject)=>{resolveReached=resolve;rejectReached=reject;});
 const gate=new Promise((resolve)=>{releaseGate=resolve;});
 const failAfterTimeout=()=>rejectReached(new Error("AC30_TIMEOUT_FIRST_BOUNDARY_WAIT"));
 timer=setTimeout(failAfterTimeout,30000);
 markReached=()=>{if(timer!==null){clearTimeout(timer);timer=null;}resolveReached();};
 const hashText=async(text)=>{const digest=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(text));return Array.from(new Uint8Array(digest)).map((byte)=>byte.toString(16).padStart(2,"0")).join("");};
+const hashBytes=async(bytes)=>{const digest=await crypto.subtle.digest("SHA-256",bytes);return Array.from(new Uint8Array(digest)).map((byte)=>byte.toString(16).padStart(2,"0")).join("");};
+const identityOf=(operation)=>({key:operation.key,op:operation.op,path:operation.path,created_at:operation.created_at,payload_ref:operation.payload_ref,payload_hash:operation.payload_hash,precondition:operation.precondition});
 const wrapper=async function(){
  const args=arguments;
- if(args[0]!==path)return originalCreateText.apply(this,args);
+ if(args[0]!==path)return originalPut.apply(this,args);
  callCount+=1;
- const text=args[1];
- const response=await originalCreateText.apply(this,args);
+ const text=args[1],precondition=args[2],key=args[3];
+ if(callCount===1){firstKey=key;firstPrecondition=precondition;}
+ if(callCount===2){
+  retryKey=key;
+  retryPayloadMatchesOriginal=await hashText(text)===originalPayloadHash&&key===firstKey&&JSON.stringify(precondition)===JSON.stringify(firstPrecondition);
+  const operation=plugin.journal.snapshot().pending_ops.find((item)=>item.key===firstKey&&item.state==="sent");
+  if(!retryPayloadMatchesOriginal||!operation||JSON.stringify(identityOf(operation))!==JSON.stringify(firstOperationIdentity))throw new Error("AC30_ASSERT_RETRY_IDENTITY");
+ }
+ if(callCount===3){
+  successorKey=key;
+  successorPrecondition=precondition;
+  successorPayloadMatchesEdited=text===editedText&&key!==firstKey&&precondition.kind==="match"&&precondition.epoch===stateBefore.epoch&&precondition.rev===1;
+  if(!successorPayloadMatchesEdited)throw new Error("AC30_ASSERT_SUCCESSOR_REQUEST");
+ }
+ let response;
+ try{response=await originalPut.apply(this,args);}catch(error){if(typeof error==="object"&&error!==null&&Reflect.get(error,"status")===422)retryStatus=422;throw error;}
  if(callCount===1){
   originalPayloadHash=await hashText(text);
   firstReceiptETag=response.etag;
   const authority=await remote.readCurrentAuthority(path);
   if(authority.deleted||authority.rev!==1||authority.hash!==originalPayloadHash)throw new Error("AC30_ASSERT_FIRST_COMMIT_AUTHORITY");
   firstRevision=authority.rev;
-  const pending=plugin.journal.snapshot().pending_ops.filter((operation)=>operation.path===path&&operation.state==="sent"&&operation.op==="put"&&operation.precondition.kind==="absent"&&operation.payload_hash===originalPayloadHash);
-  if(pending.length!==1||Object.prototype.hasOwnProperty.call(plugin.journal.snapshot().base,path))throw new Error("AC30_ASSERT_FIRST_COMMIT_QUEUE");
+  const pending=plugin.journal.snapshot().pending_ops.filter((operation)=>operation.key===key&&operation.path===path&&operation.state==="sent"&&operation.op==="put"&&operation.precondition.kind==="absent"&&operation.payload_hash===originalPayloadHash);
+  if(pending.length!==1||firstPrecondition.kind!=="absent"||Object.prototype.hasOwnProperty.call(plugin.journal.snapshot().base,path))throw new Error("AC30_ASSERT_FIRST_COMMIT_QUEUE");
+  firstOperationIdentity=identityOf(pending[0]);
+  const savedBytes=await plugin.journal.readPayload(pending[0].payload_ref,pending[0].payload_hash);
+  if(await hashBytes(savedBytes)!==originalPayloadHash)throw new Error("AC30_ASSERT_FIRST_PAYLOAD");
   markReached();
   await gate;
   throw new Error("AC30_INJECTED_RESPONSE_LOSS");
  }
  if(callCount===2){
-  retryPayloadMatchesOriginal=await hashText(text)===originalPayloadHash;
   const authority=await remote.readCurrentAuthority(path);
   retryRevision=authority.rev;
   retryReceiptETag=response.etag;
  }
+ if(callCount===3){
+  const authority=await remote.readCurrentAuthority(path);
+  successorRevision=authority.rev;
+ }
  return response;
 };
-globalThis.__oab8Ac30Restore=()=>{remote.createText=originalCreateText;return remote.createText===originalCreateText;};
+globalThis.__oab8Ac30Restore=()=>{remote.put=originalPut;return remote.put===originalPut;};
 let cycle;
 try{
- remote.createText=wrapper;
+ remote.put=wrapper;
  const file=await app.vault.create(path,originalText);
  cycle=plugin.desktopSync.syncNow();
  await reached;
@@ -1825,6 +1845,13 @@ try{
  if(await app.vault.read(file)!==editedText)throw new Error("AC30_ASSERT_LOCAL_EDIT_READBACK");
  releaseGate();
  try{await cycle;}catch{}
+ const retryOperation=plugin.journal.snapshot().pending_ops.find((operation)=>operation.key===firstKey&&operation.state==="sent");
+ const retryAt=retryOperation?.retry_at;
+ if(!retryOperation||!Number.isSafeInteger(retryAt)||!firstOperationIdentity||JSON.stringify(identityOf(retryOperation))!==JSON.stringify(firstOperationIdentity)||retryAt-Date.now()>300000)throw new Error("AC30_ASSERT_RETRY_DEADLINE");
+ const waitStartedAt=Date.now();
+ while(Date.now()<retryAt){const remaining=retryAt-Date.now();if(remaining>300000||Date.now()-waitStartedAt>300000)throw new Error("AC30_ASSERT_RETRY_WAIT_BOUND");await new Promise((resolve)=>setTimeout(resolve,remaining));}
+ const retryAfterWait=plugin.journal.snapshot().pending_ops.find((operation)=>operation.key===firstKey);
+ if(retryAfterWait&&(JSON.stringify(identityOf(retryAfterWait))!==JSON.stringify(firstOperationIdentity)||retryAfterWait.retry_at!==retryAt))throw new Error("AC30_ASSERT_RETRY_AFTER_WAIT_IDENTITY");
  await plugin.desktopSync.syncNow();
  await plugin.desktopSync.waitForIdle();
  const authority=await remote.readCurrentAuthority(path);
@@ -1833,13 +1860,13 @@ try{
  const localText=fileNow?await app.vault.read(fileNow):null;
  const finalHash=localText===null?null:await hashText(localText);
  const base=finalState.base[path];
- if(callCount!==2||!retryPayloadMatchesOriginal||firstRevision!==1||retryRevision!==1||retryReceiptETag!==firstReceiptETag||authority.deleted||authority.rev!==2||authority.hash!==await hashText(editedText)||localText!==editedText||!base||base.deleted||base.rev!==2||base.hash!==await hashText(editedText)||finalHash!==base.hash||finalState.pending_ops.length||finalState.pending_apply.length||finalState.reconciliation||finalState.attention.length!==3)throw new Error("AC30_ASSERT_SUCCESSOR_REVISION");
+ if(callCount!==3||retryKey!==firstKey||successorKey===firstKey||!retryPayloadMatchesOriginal||!successorPayloadMatchesEdited||retryStatus===422||firstRevision!==1||retryRevision!==1||successorRevision!==2||retryReceiptETag!==firstReceiptETag||successorPrecondition.kind!=="match"||successorPrecondition.epoch!==stateBefore.epoch||successorPrecondition.rev!==1||authority.deleted||authority.rev!==2||authority.hash!==await hashText(editedText)||localText!==editedText||!base||base.deleted||base.rev!==2||base.hash!==await hashText(editedText)||finalHash!==base.hash||finalState.pending_ops.length||finalState.pending_apply.length||finalState.reconciliation||finalState.attention.length!==3)throw new Error("AC30_ASSERT_SUCCESSOR_REVISION");
 }finally{
  if(timer!==null)clearTimeout(timer);
  releaseGate();
- remote.createText=originalCreateText;
+ remote.put=originalPut;
 }
-if(remote.createText!==originalCreateText)throw new Error("AC30_ASSERT_FINAL_INTERCEPTION_RESTORED");
+if(remote.put!==originalPut)throw new Error("AC30_ASSERT_FINAL_INTERCEPTION_RESTORED");
 `.replace("__AUTHORIZED_TARGET__", target),
 		cleanup: `if(globalThis.__oab8Ac30Restore&&!globalThis.__oab8Ac30Restore())throw Error("AC30_CLEANUP_RESTORE_FAILED");delete globalThis.__oab8Ac30Restore;`,
 	};

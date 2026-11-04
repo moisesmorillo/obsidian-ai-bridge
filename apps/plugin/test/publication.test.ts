@@ -2,7 +2,8 @@ import type {
 	DevicePrecondition,
 	PendingOperation,
 } from "@obsidian-ai-bridge/protocol";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { DesktopSyncController } from "../src/sync/desktop-sync";
 import {
 	DeviceJournal,
 	type DeviceJournalStorage,
@@ -22,6 +23,10 @@ import {
 	UnsupportedRemoteTextError,
 } from "../src/sync/remote-text";
 import { TextApplyEngine, type TextVault } from "../src/sync/text-apply";
+import {
+	createAc30CaseScripts,
+	createCaseScript,
+} from "../tools/desktop-acceptance";
 
 const epoch = "a".repeat(32);
 
@@ -2809,6 +2814,256 @@ describe("PublicationController", () => {
 		]);
 		expect(journal.snapshot().pending_ops).toEqual([]);
 		controller.close();
+	});
+
+	it("runs generated AC-30 through persisted retry timing and preserves the successor revision", async () => {
+		vi.useFakeTimers();
+		vi.setSystemTime(1_800_000_000_000);
+		const storage = new MemoryStorage();
+		/** Wakes the test after storage records retry state. Journal memory updates after this signal. */
+		let markRetryPersisted = () => {};
+		const retryPersisted = new Promise<void>((resolve) => {
+			markRetryPersisted = resolve;
+		});
+		const writeState = storage.writeState.bind(storage);
+		storage.writeState = async (state) => {
+			await writeState(state);
+			const pending = (state as { pending_ops?: PendingOperation[] })
+				.pending_ops;
+			if (pending?.some((operation) => operation.retry_at !== undefined))
+				markRetryPersisted();
+		};
+		const vault = new MemoryVault();
+		const writes: Array<{
+			key: string;
+			text: string;
+			precondition: DevicePrecondition;
+		}> = [];
+		const commits: Array<{ rev: number; text: string }> = [];
+		/** Wakes the test when the first mutation reaches the fake service. */
+		let markFirstWrite = () => {};
+		const firstWrite = new Promise<void>((resolve) => {
+			markFirstWrite = resolve;
+		});
+		const idempotency = new Map<
+			string,
+			{
+				text: string;
+				precondition: DevicePrecondition;
+				receipt: PublicationReceipt;
+			}
+		>();
+		const serviceFiles = new Map<string, { rev: number; text: string }>();
+		const remote: PublicationRemote = {
+			readAuthority: async () => {
+				throw new Error("Unexpected pinned read");
+			},
+			readCurrentAuthority: async (path) => {
+				const file = serviceFiles.get(path);
+				if (!file) throw new SyncTransportError(404, "not_found");
+				return {
+					deleted: false,
+					text: file.text,
+					epoch,
+					rev: file.rev,
+					hash: await digestText(file.text),
+				};
+			},
+			put: async (path, text, precondition, key) => {
+				if (writes.length === 0) markFirstWrite();
+				writes.push({ key, text, precondition: structuredClone(precondition) });
+				const prior = idempotency.get(key);
+				if (prior) {
+					if (
+						prior.text !== text ||
+						JSON.stringify(prior.precondition) !== JSON.stringify(precondition)
+					)
+						throw new SyncTransportError(422, "idempotency_mismatch");
+					return structuredClone(prior.receipt);
+				}
+				const current = serviceFiles.get(path);
+				if (
+					(precondition.kind === "absent" && current) ||
+					(precondition.kind === "match" &&
+						(!current ||
+							precondition.epoch !== epoch ||
+							precondition.rev !== current.rev))
+				)
+					throw new SyncTransportError(412, "precondition_failed");
+				const rev = (current?.rev ?? 0) + 1;
+				const hash = await digestText(text);
+				const receipt: PublicationReceipt = {
+					status: current ? 200 : 201,
+					path,
+					etag: `"${epoch}.${rev}"`,
+					seq: rev,
+					size: new TextEncoder().encode(text).byteLength,
+					hash,
+					deleted: false,
+				};
+				serviceFiles.set(path, { rev, text });
+				commits.push({ rev, text });
+				idempotency.set(key, {
+					text,
+					precondition: structuredClone(precondition),
+					receipt,
+				});
+				return structuredClone(receipt);
+			},
+			delete: async () => {
+				throw new Error("Unexpected delete");
+			},
+			rename: async () => {
+				throw new Error("Unexpected rename");
+			},
+		};
+		const originalPut = remote.put;
+		const journal = await DeviceJournal.open(storage);
+		await journal.resetEpoch(epoch);
+		const controller = new PublicationController(journal, vault, remote, {
+			applyEngine: createApplyEngine(journal, vault, remote),
+			now: () => Date.now(),
+			recoverPrecondition: async () => {},
+		});
+		await journal.recordAttention("oab-8.8/old-1.md", "retained attention");
+		await journal.recordAttention("oab-8.8/old-2.md", "retained attention");
+		await journal.recordAttention("oab-8.8/old-3.md", "retained attention");
+		let desktopSync: DesktopSyncController;
+		desktopSync = new DesktopSyncController({
+			cycle: async () => {
+				await controller.scan();
+				await controller.flush();
+			},
+			onEvent: (event) => controller.observe(event),
+			host: {
+				setTimeout: (callback, delay) =>
+					setTimeout(callback, delay) as unknown as number,
+				clearTimeout: (handle) =>
+					clearTimeout(handle as unknown as ReturnType<typeof setTimeout>),
+				setInterval: (callback, delay) =>
+					setInterval(callback, delay) as unknown as number,
+				clearInterval: (handle) =>
+					clearInterval(handle as unknown as ReturnType<typeof setInterval>),
+			},
+		});
+		const target = "/Users/test/vaults/obsidian-ai-bridge-dev-2";
+		const app = {
+			vault: {
+				adapter: { getBasePath: () => target },
+				create: async (path: string, text: string) => {
+					if (!(await vault.create(path, text))) throw new Error("Path exists");
+					await desktopSync.observe({ type: "create", path });
+					return { path };
+				},
+				modify: async (file: { path: string }, text: string) => {
+					vault.files.set(file.path, text);
+					await desktopSync.observe({ type: "modify", path: file.path });
+				},
+				read: async (file: { path: string }) => vault.read(file.path),
+				getAbstractFileByPath: (path: string) =>
+					vault.files.has(path) ? { path } : null,
+			},
+			plugins: {
+				plugins: {
+					"ai-bridge": {
+						journal,
+						composition: { publication: controller },
+						desktopSync,
+						sessionStatus: "connected",
+						syncPaused: false,
+					},
+				},
+			},
+		};
+		const originalText =
+			"# AC-30 response-loss fixture\n\nOriginal immutable payload.\n";
+		const scripts = createAc30CaseScripts("/Users/test");
+		const hostScript = createCaseScript(
+			"AC-30",
+			scripts.action,
+			scripts.cleanup,
+		);
+		try {
+			const run = (
+				new Function("app", `return ${hostScript}`) as (
+					app: unknown,
+				) => Promise<string>
+			)(app);
+			await firstWrite;
+			await retryPersisted;
+			for (let index = 0; index < 20; index += 1) {
+				if (
+					journal
+						.snapshot()
+						.pending_ops.some(
+							(operation: PendingOperation) => operation.retry_at !== undefined,
+						)
+				)
+					break;
+				await Promise.resolve();
+			}
+			const firstOperation = journal
+				.snapshot()
+				.pending_ops.find(
+					(operation: PendingOperation) => operation.state === "sent",
+				);
+			if (!firstOperation || firstOperation.retry_at === undefined)
+				throw new Error("Expected the persisted retry deadline");
+			const savedSentOperation = structuredClone(firstOperation);
+			const savedPayload = await journal.readPayload(
+				firstOperation.payload_ref,
+				firstOperation.payload_hash,
+			);
+			expect(firstOperation.retry_at - Date.now()).toBe(2_000);
+			expect(firstOperation.attempts).toBe(1);
+			expect(savedPayload).toEqual(new TextEncoder().encode(originalText));
+			await vi.advanceTimersByTimeAsync(1_999);
+			expect(writes).toHaveLength(1);
+			expect(
+				journal
+					.snapshot()
+					.pending_ops.find(
+						(operation: PendingOperation) =>
+							operation.key === firstOperation.key,
+					),
+			).toEqual(savedSentOperation);
+			await vi.advanceTimersByTimeAsync(1);
+			const output = await run;
+			const summary = JSON.parse(output.slice("OAB8CASE:".length));
+			expect(summary).toMatchObject({
+				status: "passed",
+				failureStage: null,
+				failureReason: null,
+				cleanupStatus: "passed",
+			});
+			expect(remote.put).toBe(originalPut);
+			expect(writes).toHaveLength(3);
+			expect(writes[0]?.key).toBe(writes[1]?.key);
+			expect(writes[2]?.key).not.toBe(writes[0]?.key);
+			expect(writes.map((write) => write.text)).toEqual([
+				"# AC-30 response-loss fixture\n\nOriginal immutable payload.\n",
+				"# AC-30 response-loss fixture\n\nOriginal immutable payload.\n",
+				"# AC-30 response-loss fixture\n\nOriginal immutable payload.\n\nLocal successor edit.\n",
+			]);
+			expect(writes.map((write) => write.precondition)).toEqual([
+				{ kind: "absent" },
+				{ kind: "absent" },
+				{ kind: "match", epoch, rev: 1 },
+			]);
+			expect(commits.map((commit) => commit.rev)).toEqual([1, 2]);
+			expect(commits[1]?.text).toContain("Local successor edit.");
+			expect(journal.snapshot().pending_ops).toEqual([]);
+			expect(
+				journal.snapshot().base["oab-8.8/ac-30-response-lost-20261104-04.md"],
+			).toMatchObject({
+				deleted: false,
+				rev: 2,
+			});
+		} finally {
+			desktopSync.close();
+			controller.close();
+			vi.useRealTimers();
+		}
 	});
 
 	it("keeps a sent operation unresolved when close fences an in-flight receipt", async () => {

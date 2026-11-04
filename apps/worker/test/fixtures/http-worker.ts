@@ -162,7 +162,14 @@ const worker = createWorker(
 			},
 		};
 	},
-	(env) => new R2BlobStore(env.R2_BUCKET),
+	(env) => {
+		const store = new R2BlobStore(env.R2_BUCKET);
+		return {
+			head: (...args) => store.head(...args),
+			putVerified: (...args) => store.putVerified(...args),
+			read: (...args) => store.read(...args),
+		};
+	},
 );
 
 export { Vault } from "@worker/infrastructure/durable-object/vault";

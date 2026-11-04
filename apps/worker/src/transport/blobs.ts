@@ -41,7 +41,9 @@ export function parseBlobDeclaration(
 	return parsed.data;
 }
 
-/** Select authority before storage access, then stream only the selected immutable bytes. */
+/** Select authority before storage access and return the exact selected immutable bytes.
+ * The final response owner applies native fixed-length framing and owns stream cleanup.
+ */
 export async function readBlobResponse(
 	gateway: Pick<BlobVaultGateway, "readBlobMetadata">,
 	store: BlobContentStore,
@@ -95,14 +97,14 @@ export async function readBlobResponse(
 			},
 		});
 	const body = await store.read(metadata.hash, metadata.size, range);
+	const length =
+		range === undefined ? metadata.size : range.end - range.start + 1;
 	const headers = new Headers({
 		ETag: metadata.etag,
 		"Cache-Control": "no-transform",
 		"Accept-Ranges": "bytes",
 		"Content-Type": "application/octet-stream",
-		"Content-Length": String(
-			range === undefined ? metadata.size : range.end - range.start + 1,
-		),
+		"Content-Length": String(length),
 		"X-File-Large": String(metadata.large),
 	});
 	if (range !== undefined)

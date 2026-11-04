@@ -660,14 +660,14 @@ export class DeviceJournal {
 		try {
 			bytes = await this.storage.readPayload(reference);
 		} catch (error) {
-			this.attentionStageValue = "payload_read";
+			this.markAttention("payload_read");
 			throw error;
 		}
 		let actualHash: string;
 		try {
 			actualHash = await digest(bytes);
 		} catch (error) {
-			this.attentionStageValue = "payload_hash_error";
+			this.markAttention("payload_hash_error");
 			throw error;
 		}
 		if (actualHash !== expectedHash) {

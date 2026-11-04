@@ -1,6 +1,10 @@
 import type { PendingOperation } from "@obsidian-ai-bridge/protocol";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { DeviceJournal } from "../src/sync/device-journal";
+import {
+	DEVICE_JOURNAL_ATTENTION_REASON,
+	DeviceJournal,
+} from "../src/sync/device-journal";
+import { projectSyncStatus } from "../src/sync/sync-status";
 
 /** Isolates journal persistence and supports deterministic failure injection. */
 class MemoryStorage {
@@ -447,7 +451,7 @@ describe("DeviceJournal", () => {
 		}
 	});
 
-	it("reports a payload read failure without changing the journal block policy", async () => {
+	it("reports payload-read failure as a blocking storage status", async () => {
 		const journal = await DeviceJournal.open(storage);
 		const operation = await journal.enqueue(
 			{ op: "put", path: "notes/a.md", precondition },
@@ -458,11 +462,26 @@ describe("DeviceJournal", () => {
 		await expect(
 			journal.readPayload(operation.payload_ref, operation.payload_hash),
 		).rejects.toThrow("payload read failed");
-		expect(journal.attentionReason).toBeNull();
+		expect(journal.attentionReason).toBe(DEVICE_JOURNAL_ATTENTION_REASON);
 		expect(journal.attentionStage).toBe("payload_read");
+		const status = projectSyncStatus({
+			state: journal.snapshot(),
+			session: "connected",
+			head: null,
+			persisted: journal.attentionReason === null,
+			storageFailureStage: journal.attentionStage,
+			active: false,
+			paused: false,
+			revoked: false,
+		});
+		expect(status.state).toBe("attention");
+		expect(status.storageFailure).toBe(true);
+		expect(status.storageFailureStage).toBe("payload_read");
+		expect(status.failure).toBeNull();
+		expect(JSON.stringify(status)).not.toContain("payload read failed");
 	});
 
-	it("reports a payload hash operation failure without changing block policy", async () => {
+	it("reports payload hash operation failure as a blocking storage status", async () => {
 		const journal = await DeviceJournal.open(storage);
 		const operation = await journal.enqueue(
 			{ op: "put", path: "notes/a.md", precondition },
@@ -475,8 +494,23 @@ describe("DeviceJournal", () => {
 			await expect(
 				journal.readPayload(operation.payload_ref, operation.payload_hash),
 			).rejects.toThrow("digest failed");
-			expect(journal.attentionReason).toBeNull();
+			expect(journal.attentionReason).toBe(DEVICE_JOURNAL_ATTENTION_REASON);
 			expect(journal.attentionStage).toBe("payload_hash_error");
+			const status = projectSyncStatus({
+				state: journal.snapshot(),
+				session: "connected",
+				head: null,
+				persisted: journal.attentionReason === null,
+				storageFailureStage: journal.attentionStage,
+				active: false,
+				paused: false,
+				revoked: false,
+			});
+			expect(status.state).toBe("attention");
+			expect(status.storageFailure).toBe(true);
+			expect(status.storageFailureStage).toBe("payload_hash_error");
+			expect(status.failure).toBeNull();
+			expect(JSON.stringify(status)).not.toContain("digest failed");
 		} finally {
 			digest.mockRestore();
 		}

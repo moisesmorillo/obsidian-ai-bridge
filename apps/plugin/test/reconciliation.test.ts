@@ -1,5 +1,8 @@
 import {
+	formatETag,
+	ManifestPageSchema,
 	type PendingConflictCopy,
+	parseETag,
 	pathKey,
 } from "@obsidian-ai-bridge/protocol";
 import { beforeEach, describe, expect, it } from "vitest";
@@ -16,6 +19,11 @@ import {
 } from "../src/sync/reconciliation";
 import { UnsupportedRemoteTextError } from "../src/sync/remote-text";
 import { TextApplyEngine, type TextVault } from "../src/sync/text-apply";
+import {
+	authorizedVaults,
+	createAc13CaseScripts,
+	createCaseScript,
+} from "../tools/desktop-acceptance";
 
 const epoch = "a".repeat(32);
 
@@ -375,6 +383,233 @@ describe("ReconciliationController", () => {
 	let context: Awaited<ReturnType<typeof setup>>;
 	beforeEach(async () => {
 		context = await setup();
+	});
+
+	it("runs the generated AC-13 case with consistent controlled and actual epochs", async () => {
+		const eligiblePaths = [
+			"oab-8.8/controlled-one.md",
+			"oab-8.8/controlled-two.md",
+		];
+		const excludedPath = "oab-8.8/ac-31-blob-stat-race-20261104-01.bin";
+		const eligibleText = ["first authority", "second authority"];
+		const entries = await Promise.all(
+			eligiblePaths.map(async (path, index) => {
+				const text = eligibleText[index] ?? "";
+				const rev = index + 1;
+				const contentHash = await hash(text);
+				context.vault.files.set(path, text);
+				await context.journal.setBase(path, {
+					deleted: false,
+					rev,
+					hash: contentHash,
+				});
+				return {
+					path,
+					etag: formatETag(epoch, rev),
+					seq: rev,
+					hash: contentHash,
+					size: new TextEncoder().encode(text).byteLength,
+					kind: "text" as const,
+					deleted: false,
+					large: false,
+				};
+			}),
+		);
+		context.vault.binaryFiles.set(excludedPath, new Uint8Array(1_100_003));
+		await context.journal.resetEpoch(epoch);
+		await context.journal.setCursor(epoch, entries.length);
+		await context.journal.setClientId(crypto.randomUUID());
+		const manifest = {
+			epoch,
+			head_seq: entries.length,
+			entries,
+			next_page: null,
+		};
+		let manifestReads = 0;
+		let failManifestReadAt: number | null = null;
+		let authorityReads = 0;
+		const requestMethods: string[] = [];
+		const transport = new SyncTransport("https://example.test", {
+			requestResponse: async (url, options = {}) => {
+				requestMethods.push(options.method ?? "GET");
+				const parsed = new URL(url);
+				if (parsed.pathname === "/v1/manifest") {
+					manifestReads += 1;
+					if (manifestReads === failManifestReadAt)
+						return { status: 500, headers: {}, text: "{}" };
+					return {
+						status: 200,
+						headers: {},
+						text: JSON.stringify(manifest),
+					};
+				}
+				authorityReads += 1;
+				return { status: 404, headers: {}, text: "{}" };
+			},
+		});
+		const originalManifest = transport.manifest.bind(transport);
+		let currentManifest: typeof originalManifest = originalManifest;
+		const controlledPages: Array<ReturnType<typeof ManifestPageSchema.parse>> =
+			[];
+		Object.defineProperty(transport, "manifest", {
+			configurable: true,
+			get: () => currentManifest,
+			set: (next: typeof originalManifest) => {
+				if (next === originalManifest) {
+					currentManifest = next;
+					return;
+				}
+				currentManifest = async (token) => {
+					const projected = await next.call(transport, token);
+					const validated = ManifestPageSchema.parse(projected);
+					controlledPages.push(validated);
+					return validated;
+				};
+			},
+		});
+		const engine = new TextApplyEngine(
+			context.journal,
+			context.vault,
+			transport,
+			{ deviceName: "test" },
+		);
+		const reconciliation = new ReconciliationController(
+			context.journal,
+			engine,
+			context.vault,
+			transport,
+		);
+		let syncPaused = false;
+		const plugin = {
+			journal: context.journal,
+			composition: {
+				publication: { remote: transport },
+				reconciliation,
+			},
+			desktopSync: {
+				isBusy: false,
+				events: [],
+				waitForIdle: async () => undefined,
+				pause: () => {
+					syncPaused = true;
+				},
+				resume: async () => {
+					syncPaused = false;
+				},
+			},
+			sessionStatus: "connected",
+			syncPaused,
+		};
+		plugin.desktopSync.resume = async () => {
+			syncPaused = false;
+			plugin.syncPaused = false;
+		};
+		const adapter = { getBasePath: () => authorizedVaults()["dev-2"] };
+		const app = {
+			vault: {
+				adapter,
+				getFiles: () =>
+					[
+						...context.vault.files.keys(),
+						...context.vault.binaryFiles.keys(),
+					].map((path) => ({ path })),
+				readBinary: async (file: { path: string }) => {
+					const bytes = await context.vault.readBinary(file.path);
+					return bytes?.buffer.slice(
+						bytes.byteOffset,
+						bytes.byteOffset + bytes.byteLength,
+					);
+				},
+			},
+			plugins: { plugins: { "ai-bridge": plugin } },
+		};
+		const scope = {
+			excludedPaths: [excludedPath],
+			excludedLocalFiles: [{ path: excludedPath, size: 1_100_003 }],
+			localOnlyExcludedPaths: [excludedPath],
+		};
+		const scripts = createAc13CaseScripts(scope);
+		const script = createCaseScript("AC-13", scripts.action, scripts.cleanup);
+		const output = await (
+			new Function("app", `return ${script}`) as (
+				app: unknown,
+			) => Promise<string>
+		)(app);
+		const result = JSON.parse(output.slice("OAB8CASE:".length));
+		const controlledEpoch = (epoch[0] === "a" ? "b" : "a") + epoch.slice(1);
+		expect(result).toMatchObject({
+			status: "passed",
+			failureReason: null,
+			cleanupStatus: "passed",
+		});
+		expect(result.lastCompletedBoundary).toBe("AC13_READ_ACTUAL_MANIFEST");
+		expect(controlledPages).toHaveLength(1);
+		expect(controlledPages[0]?.epoch).toBe(controlledEpoch);
+		for (const [index, entry] of (
+			controlledPages[0]?.entries ?? []
+		).entries()) {
+			const identity = parseETag(entry.etag);
+			expect(identity).toEqual({ epoch: controlledEpoch, rev: index + 1 });
+			expect(entry.etag).toBe(formatETag(controlledEpoch, index + 1));
+		}
+		expect(manifestReads).toBeGreaterThan(2);
+		expect(authorityReads).toBe(1);
+		expect(requestMethods.every((method) => method === "GET")).toBe(true);
+		expect(context.journal.snapshot().epoch).toBe(epoch);
+		expect(context.journal.snapshot().cursor).toBe(entries.length);
+		expect(currentManifest).toBe(originalManifest);
+		expect(syncPaused).toBe(false);
+		expect(plugin.syncPaused).toBe(false);
+		expect(globalThis).not.toHaveProperty("__oab8Ac13Restore");
+		expect(result.caseEvidence.ac13PrecaseFiles.eligible).toHaveLength(2);
+		expect(result.caseEvidence.ac13PrecaseFiles.excluded).toHaveLength(1);
+		failManifestReadAt = manifestReads + 2;
+		plugin.desktopSync.resume = async () => {
+			syncPaused = false;
+			plugin.syncPaused = false;
+			throw new Error("Injected resume failure");
+		};
+		const resumeFailureOutput = await (
+			new Function("app", `return ${script}`) as (
+				app: unknown,
+			) => Promise<string>
+		)(app);
+		const resumeFailure = JSON.parse(
+			resumeFailureOutput.slice("OAB8CASE:".length),
+		);
+		expect(resumeFailure.status).toBe("failed");
+		expect(resumeFailure.cleanupStatus).toBe("failed");
+		expect(currentManifest).toBe(originalManifest);
+		expect(syncPaused).toBe(false);
+		expect(plugin.syncPaused).toBe(false);
+		expect(globalThis).not.toHaveProperty("__oab8Ac13Restore");
+		failManifestReadAt = null;
+		plugin.desktopSync.resume = async () => {
+			syncPaused = false;
+			plugin.syncPaused = false;
+		};
+		const originalState = context.journal.snapshot();
+		const firstEntry = manifest.entries[0];
+		if (!firstEntry) throw new Error("Manifest test row is missing");
+		for (const invalidTag of [
+			"not-an-etag",
+			`W/${formatETag(epoch, 1)}`,
+			`"${"b".repeat(32)}.1"`,
+			`"${epoch}.0"`,
+		]) {
+			firstEntry.etag = invalidTag;
+			const invalidOutput = await (
+				new Function("app", `return ${script}`) as (
+					app: unknown,
+				) => Promise<string>
+			)(app);
+			const invalidResult = JSON.parse(invalidOutput.slice("OAB8CASE:".length));
+			expect(invalidResult.status).toBe("failed");
+			expect(invalidResult.cleanupStatus).toBe("passed");
+			expect(plugin.syncPaused).toBe(false);
+			expect(context.journal.snapshot()).toEqual(originalState);
+			expect(context.vault.writes).toBe(0);
+		}
 	});
 
 	it.each(["vault list", "checkpoint save"] as const)(

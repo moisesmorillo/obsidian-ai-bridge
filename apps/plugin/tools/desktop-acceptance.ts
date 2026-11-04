@@ -53,6 +53,9 @@ const SAFE_CASE_FAILURE_CODES = [
 	"AC31_ASSERT_INITIAL_REVISION",
 	"AC31_ASSERT_MANIFEST_EPOCH_STABLE",
 	"AC31_ASSERT_MANIFEST_ENTRY_CURRENT",
+	"AC31_ASSERT_MANIFEST_ETAG_INVALID",
+	"AC31_ASSERT_MANIFEST_EPOCH_MISMATCH",
+	"AC31_ASSERT_MANIFEST_REVISION_MISMATCH",
 	"AC31_ASSERT_STAT_BEFORE_FILE",
 	"AC31_ASSERT_STAT_MTIME_CHANGED",
 	"AC31_ASSERT_RACE_INJECTION_COMPLETE",
@@ -694,7 +697,7 @@ function savePrivateAc13HashSnapshot(snapshot: {
 	);
 }
 
-/** Runs one case as one host evaluation and returns only its fixed safe status fields. */
+/** Runs an optional read-only preflight before one case and returns safe result fields. */
 export function runHostCase(
 	id: DesktopVaultId,
 	vaultName: string,
@@ -702,8 +705,24 @@ export function runHostCase(
 	evidence: DesktopCaseSummary["evidence"],
 	actionScript: string,
 	cleanupScript: string,
-	options: { executable?: string } = {},
+	options: { executable?: string; preflightScript?: string } = {},
 ): DesktopCaseSummary {
+	if (caseId === "AC-32" && !options.preflightScript)
+		throw new Error("AC1032_PREFLIGHT_REQUIRED");
+	if (options.preflightScript) {
+		const preflight = createCaseScript(caseId, options.preflightScript, "");
+		const preflightOutput = invokeScopedObsidian(
+			id,
+			vaultName,
+			"eval",
+			[`code=${preflight}`],
+			options,
+		);
+		const preflightRecord = readCaseResultRecord(preflightOutput);
+		const preflightSummary = safeCaseResult(caseId, evidence, preflightRecord);
+		if (preflightSummary.status !== "passed")
+			throw new Error("AC1032_FIXTURE_PREFLIGHT_BLOCKED");
+	}
 	const script = createCaseScript(caseId, actionScript, cleanupScript);
 	const output = invokeScopedObsidian(
 		id,
@@ -1698,6 +1717,8 @@ if (
 export interface DesktopCaseScripts {
 	/** Case action source with a fixed authorized vault target. */
 	action: string;
+	/** Read-only eligibility check that runs before the case action when present. */
+	preflight?: string;
 	/** Cleanup source that restores the local transport or adapter interception. */
 	cleanup: string;
 }
@@ -1850,6 +1871,11 @@ if(initial.kind!=="blob"||initial.rev!==1||initial.hash!==baseHash||afterCreate.
 let pageToken=null,pageEpoch=null,manifestEntry=null;
 do{const page=await withCaseBoundary("AC31_READ_MANIFEST",()=>remote.manifest(pageToken));if(pageEpoch!==null&&page.epoch!==pageEpoch)throw Error("AC31_ASSERT_MANIFEST_EPOCH_STABLE");pageEpoch=page.epoch;manifestEntry=page.entries.find((entry)=>entry.path===path)??null;pageToken=manifestEntry?null:page.next_page;}while(pageToken!==null);
 if(!manifestEntry||manifestEntry.deleted||manifestEntry.kind!=="blob"||pageEpoch!==afterCreate.epoch)throw Error("AC31_ASSERT_MANIFEST_ENTRY_CURRENT");
+const manifestIdentityParts=/^"([0-9a-f]{32})\\.([1-9][0-9]*)"$/.exec(manifestEntry.etag);
+if(!manifestIdentityParts)throw Error("AC31_ASSERT_MANIFEST_ETAG_INVALID");
+const manifestIdentity={epoch:manifestIdentityParts[1],rev:Number(manifestIdentityParts[2])};
+if(manifestIdentity.epoch!==pageEpoch)throw Error("AC31_ASSERT_MANIFEST_EPOCH_MISMATCH");
+if(manifestIdentity.rev!==initial.rev)throw Error("AC31_ASSERT_MANIFEST_REVISION_MISMATCH");
 const adapter=app.vault.adapter,originalStat=adapter.stat;
 let statCalls=0,raceInjected=false,injectionActive=false,mtimeChanged=false,sizeUnchanged=false;
 let resolveInjection,rejectInjection;
@@ -1865,7 +1891,7 @@ const wrappedStat=async function(candidatePath){
 };
 try{
  adapter.stat=wrappedStat;
-const updateResponse=await withCaseBoundary("AC31_MUTATE_REMOTE_BLOB",()=>remote.putBlob(path,remoteBytes,remoteHash,{kind:"match",etag:manifestEntry.etag},crypto.randomUUID(),pageEpoch));
+const updateResponse=await withCaseBoundary("AC31_MUTATE_REMOTE_BLOB",()=>remote.putBlob(path,remoteBytes,remoteHash,{kind:"match",epoch:manifestIdentity.epoch,rev:manifestIdentity.rev},crypto.randomUUID(),pageEpoch));
 const serviceUpdate=await withCaseBoundary("AC31_READ_UPDATED_AUTHORITY",()=>remote.readCurrentBlobAuthority(path));
  if((updateResponse.status!==200&&updateResponse.status!==201)||serviceUpdate.kind!=="blob"||serviceUpdate.rev!==2||serviceUpdate.hash!==remoteHash)throw new Error("AC31_ASSERT_REMOTE_BLOB_UPDATE");
  try{await plugin.desktopSync.syncNow();}catch{}
@@ -1896,7 +1922,7 @@ if(!intermediatePreserved||!finalFile||finalHash!==remoteHash||authority.rev!==2
 
 /** Builds one controlled AC-10/32 edit race and preserves both service revisions. */
 export function createAc1032CaseScripts(
-	fixturePath = "oab-8.8/ac-10-32-process-race-20261104-01.md",
+	fixturePath: string,
 ): DesktopCaseScripts {
 	const safeFixturePath = PathSchema.parse(fixturePath);
 	if (
@@ -1905,6 +1931,17 @@ export function createAc1032CaseScripts(
 	)
 		throw new Error("Unauthorized AC-10/32 fixture path");
 	return {
+		preflight: `
+if(app.vault.adapter.getBasePath()!==${JSON.stringify(authorizedVaults()["dev-2"])})throw Error("AC1032_ASSERT_TARGET_VAULT");
+const plugin=app.plugins.plugins?.["ai-bridge"];
+if(!plugin?.composition?.publication)throw Error("AC1032_ASSERT_REMOTE_CAPABILITIES");
+const path=${JSON.stringify(safeFixturePath)},remote=Reflect.get(plugin.composition.publication,"remote");
+if(!remote?.readCurrentAuthority)throw Error("AC1032_ASSERT_REMOTE_CAPABILITIES");
+const localExists=Boolean(app.vault.getAbstractFileByPath(path));
+let serviceExists=true;
+try{await remote.readCurrentAuthority(path);}catch(error){if(error?.status===404)serviceExists=false;else throw Error("AC1032_ASSERT_REMOTE_CAPABILITIES");}
+if(localExists||serviceExists)throw Error("AC1032_ASSERT_FIXTURE_ABSENT");
+`.trim(),
 		action: `
 if(app.vault.adapter.getBasePath()!==${JSON.stringify(authorizedVaults()["dev-2"])})throw Error("AC1032_ASSERT_TARGET_VAULT");
 const plugin=app.plugins.plugins?.["ai-bridge"];
@@ -2100,6 +2137,9 @@ if(!remote?.manifest||!remote.readCurrentAuthority||globalThis.__oab8Ac13Restore
 const readManifestSnapshot=async(boundary)=>{const entries=[],tokens=new Set();let token=null,epoch=null,head=null;do{const page=await withCaseBoundary(boundary,()=>remote.manifest(token));if(epoch!==null&&(page.epoch!==epoch||page.head_seq!==head))throw Error("AC13_ASSERT_MANIFEST_SNAPSHOT");epoch=page.epoch;head=page.head_seq;entries.push(...page.entries);token=page.next_page;if(token!==null){if(tokens.has(token))throw Error("AC13_ASSERT_MANIFEST_SNAPSHOT");tokens.add(token);}}while(token!==null);if(epoch===null||head===null||new Set(entries.map((entry)=>entry.path)).size!==entries.length)throw Error("AC13_ASSERT_MANIFEST_SNAPSHOT");return{epoch,head,entries};};
 const initial=await readManifestSnapshot("AC13_READ_INITIAL_MANIFEST");
 if(initial.epoch!==stateBefore.epoch||initial.head!==stateBefore.cursor)throw Error("AC13_ASSERT_INITIAL_STATE");
+const controlledEpoch=(initial.epoch[0]==="a"?"b":"a")+initial.epoch.slice(1);
+const projectControlledETag=(etag)=>{const value=etag.slice(1,-1).split(".");if(etag[0]!==String.fromCharCode(34)||etag[etag.length-1]!==String.fromCharCode(34)||value.length!==2||value[0]!==initial.epoch||!/^[1-9][0-9]*$/.test(value[1]))throw Error("AC13_ASSERT_MANIFEST_SNAPSHOT");const rev=Number(value[1]);if(!Number.isSafeInteger(rev)||rev<=0)throw Error("AC13_ASSERT_MANIFEST_SNAPSHOT");return String.fromCharCode(34)+controlledEpoch+"."+rev+String.fromCharCode(34);};
+for(const entry of initial.entries)projectControlledETag(entry.etag);
 const localSnapshot=async()=>{const files=app.vault.getFiles(),result=[];for(const file of files){const bytes=new Uint8Array(await app.vault.readBinary(file)),digest=await crypto.subtle.digest("SHA-256",bytes),hash=Array.from(new Uint8Array(digest)).map((byte)=>byte.toString(16).padStart(2,"0")).join("");result.push({path:file.path,size:bytes.byteLength,hash});}return result.sort((left,right)=>left.path.localeCompare(right.path));};
 const sameSnapshot=(left,right)=>left.length===right.length&&left.every((item,index)=>item.path===right[index].path&&item.size===right[index].size&&item.hash===right[index].hash);
 const filesBefore=await localSnapshot(),localByPath=new Map(filesBefore.map((file)=>[file.path,file])),entryByPath=new Map(initial.entries.map((entry)=>[entry.path,entry]));
@@ -2110,13 +2150,13 @@ for(const path of localOnlyExcludedPaths){if(Object.hasOwn(stateBefore.base,path
 const eligibleFiles=filesBefore.filter((file)=>!expectedExcludedPaths.has(file.path)),eligibleBase=Object.entries(stateBefore.base).filter(([path,base])=>!expectedExcludedPaths.has(path)&&base.deleted!==true),eligibleService=initial.entries.filter((entry)=>!expectedExcludedPaths.has(entry.path)&&!entry.deleted);
 const eligiblePreflightPassed=eligibleFiles.length>0&&eligibleFiles.every((file)=>{const base=stateBefore.base[file.path],entry=entryByPath.get(file.path);return Boolean(base&&base.deleted!==true&&base.hash===file.hash&&entry&&!entry.deleted&&entry.hash===file.hash);})&&eligibleBase.every(([path,base])=>{const file=localByPath.get(path),entry=entryByPath.get(path);return Boolean(file&&file.hash===base.hash&&entry&&!entry.deleted&&entry.hash===base.hash);})&&eligibleService.every((entry)=>{const file=localByPath.get(entry.path),base=stateBefore.base[entry.path];return Boolean(file&&file.hash===entry.hash&&base&&base.deleted!==true&&base.hash===entry.hash);});
 if(!eligiblePreflightPassed)throw Error("AC13_ASSERT_ELIGIBLE_FIXTURES");
-const originalManifest=remote.manifest,observedEpoch=initial.epoch,observedHead=initial.head,controlledEpoch=(observedEpoch[0]==="a"?"b":"a")+observedEpoch.slice(1),attentionBefore=JSON.stringify(stateBefore.attention);
+const originalManifest=remote.manifest,observedEpoch=initial.epoch,observedHead=initial.head,attentionBefore=JSON.stringify(stateBefore.attention);
 let controllerPaused=false,restoreComplete=false,controllerResumeFailed=false;
 const restoreManifest=()=>{remote.manifest=originalManifest;return remote.manifest===originalManifest;};
 const restore=async()=>{if(restoreComplete)return{wrapperRestored:true,controllerResumed:!controllerResumeFailed};if(!restoreManifest())return{wrapperRestored:false,controllerResumed:false};restoreComplete=true;if(controllerPaused){const resume=plugin.desktopSync.resume();controllerPaused=false;try{await resume;await plugin.desktopSync.waitForIdle();}catch{controllerResumeFailed=true;}}return{wrapperRestored:remote.manifest===originalManifest,controllerResumed:!controllerResumeFailed};};
 globalThis.__oab8Ac13Restore=restore;
 controllerPaused=true;plugin.desktopSync.pause();
-remote.manifest=async function(token){const page=await originalManifest.call(remote,token);if(page.epoch!==observedEpoch||page.head_seq!==observedHead)throw Error("AC13_ASSERT_MANIFEST_SNAPSHOT");return{...page,epoch:controlledEpoch};};
+remote.manifest=async function(token){const page=await originalManifest.call(remote,token);if(page.epoch!==observedEpoch||page.head_seq!==observedHead)throw Error("AC13_ASSERT_MANIFEST_SNAPSHOT");return{...page,epoch:controlledEpoch,entries:page.entries.map((entry)=>({...entry,etag:projectControlledETag(entry.etag)}))};};
 try{await withCaseBoundary("AC13_CONTROLLED_RECONCILE",()=>reconciliation.reconcile());}finally{if(!restoreManifest())throw Error("AC13_CLEANUP_RESTORE_FAILED");}
 const controlledState=plugin.journal.snapshot(),filesAfterControlled=await localSnapshot();
 if(controlledState.epoch!==controlledEpoch||controlledState.cursor!==observedHead||controlledState.reconciliation||controlledState.pending_ops.length||controlledState.pending_apply.length||controlledState.device_id!==stateBefore.device_id||controlledState.client_id!==stateBefore.client_id||JSON.stringify(controlledState.attention)!==attentionBefore||!sameSnapshot(filesBefore,filesAfterControlled)||localOnlyExcludedPaths.some((path)=>Object.hasOwn(controlledState.base,path)))throw Error("AC13_ASSERT_CONTROLLED_EPOCH");

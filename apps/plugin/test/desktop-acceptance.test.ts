@@ -11,8 +11,12 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { formatETag } from "@obsidian-ai-bridge/protocol";
+import {
+	DevicePreconditionSchema,
+	formatETag,
+} from "@obsidian-ai-bridge/protocol";
 import { describe, expect, it } from "vitest";
+import { SyncTransport } from "../src/infrastructure/sync-transport";
 import { SyncTransportError } from "../src/sync/remote-text";
 import {
 	assertAuthorizedVault,
@@ -963,10 +967,18 @@ describe("desktop acceptance safety", () => {
 			excludedLocalFiles: [{ path, size: 1_100_003 }],
 			localOnlyExcludedPaths: [path],
 		});
-		Reflect.set(globalThis, "__oab8Ac13Restore", async () => ({
-			wrapperRestored: true,
-			controllerResumed: false,
-		}));
+		/** Captures the original transport method for cleanup identity checks. */
+		const originalManifest = async (): Promise<{ controlled: boolean }> => ({
+			controlled: false,
+		});
+		const remote = { manifest: async () => ({ controlled: true }) };
+		Reflect.set(globalThis, "__oab8Ac13Restore", async () => {
+			remote.manifest = originalManifest;
+			return {
+				wrapperRestored: remote.manifest === originalManifest,
+				controllerResumed: false,
+			};
+		});
 		const failedResumeScript = createCaseScript("AC-13", "", scripts.cleanup);
 		const failedResume = (
 			new Function(`return ${failedResumeScript}`) as () => Promise<string>
@@ -980,6 +992,7 @@ describe("desktop acceptance safety", () => {
 			cleanupStatus: "failed",
 		});
 		expect(globalThis).not.toHaveProperty("__oab8Ac13Restore");
+		expect(remote.manifest).toBe(originalManifest);
 
 		Reflect.set(globalThis, "__oab8Ac13Restore", async () => ({
 			wrapperRestored: false,
@@ -1033,6 +1046,111 @@ describe("desktop acceptance safety", () => {
 		).toThrow("Unauthorized AC-13 excluded file scope");
 	});
 
+	it("provides a read-only AC-10/32 preflight for local and service collisions", async () => {
+		const fixturePath = "oab-8.8/ac-10-32-process-race-20261104-02.md";
+		const scripts = createAc1032CaseScripts(fixturePath);
+		expect(scripts.preflight).toBeTypeOf("string");
+		expect(scripts.preflight).toContain("AC1032_ASSERT_FIXTURE_ABSENT");
+		expect(scripts.preflight).not.toContain("create(");
+		expect(scripts.preflight).not.toContain("syncNow(");
+		/** Runs the generated check against one local/service path state. */
+		const runPreflight = async (
+			localExists: boolean,
+			serviceExists: boolean,
+		) => {
+			let serviceReads = 0;
+			let mutations = 0;
+			const remote = {
+				readCurrentAuthority: async () => {
+					serviceReads += 1;
+					if (!serviceExists) throw new SyncTransportError(404, "not_found");
+					return { deleted: false };
+				},
+			};
+			const app = {
+				vault: {
+					adapter: { getBasePath: () => authorizedVaults()["dev-2"] },
+					getAbstractFileByPath: () =>
+						localExists ? { path: fixturePath } : null,
+					create: async () => {
+						mutations += 1;
+					},
+				},
+				plugins: {
+					plugins: {
+						"ai-bridge": { composition: { publication: { remote } } },
+					},
+				},
+			};
+			const script = createCaseScript("AC-32", scripts.preflight ?? "", "");
+			const output = await (
+				new Function("app", `return ${script}`) as (
+					app: unknown,
+				) => Promise<string>
+			)(app);
+			return {
+				summary: JSON.parse(output.slice("OAB8CASE:".length)),
+				serviceReads,
+				mutations,
+			};
+		};
+		for (const [localExists, serviceExists] of [
+			[true, false],
+			[false, true],
+		] as const) {
+			const result = await runPreflight(localExists, serviceExists);
+			expect(result.summary).toMatchObject({
+				status: "failed",
+				failureReason: "AC1032_ASSERT_FIXTURE_ABSENT",
+				cleanupStatus: "passed",
+			});
+			expect(result.serviceReads).toBe(1);
+			expect(result.mutations).toBe(0);
+		}
+		const available = await runPreflight(false, false);
+		expect(available.summary.status).toBe("passed");
+		expect(available.serviceReads).toBe(1);
+		expect(available.mutations).toBe(0);
+		const temp = mkdtempSync(join(tmpdir(), "oab-8.8-ac1032-preflight-"));
+		const invocationLog = join(temp, "eval-calls");
+		const blockedRecord = `OAB8CASE:${JSON.stringify({
+			caseId: "AC-32",
+			status: "failed",
+			failureStage: "action",
+			failureReason: "AC1032_ASSERT_FIXTURE_ABSENT",
+			cleanupStatus: "passed",
+		})}`;
+		const executable = join(temp, "obsidian");
+		writeFileSync(
+			executable,
+			`#!/bin/sh\nif [ "$2" = "vault" ]; then printf '%s\\n' '${authorizedVaults()["dev-2"]}'; else printf 'eval\\n' >> '${invocationLog}'; printf '%s\\n' '${blockedRecord}'; fi\n`,
+			{ mode: 0o700 },
+		);
+		try {
+			expect(() =>
+				runHostCase(
+					"dev-2",
+					"dev-2",
+					"AC-32",
+					"controlled",
+					"throw Error('action must not run')",
+					"",
+					{ executable, preflightScript: scripts.preflight },
+				),
+			).toThrow("AC1032_FIXTURE_PREFLIGHT_BLOCKED");
+			expect(
+				readFileSync(invocationLog, "utf8").trim().split("\\n"),
+			).toHaveLength(1);
+		} finally {
+			rmSync(temp, { recursive: true, force: true });
+		}
+		expect(() =>
+			runHostCase("dev-2", "dev-2", "AC-32", "controlled", "", "", {
+				executable: "/not-run",
+			}),
+		).toThrow("AC1032_PREFLIGHT_REQUIRED");
+	});
+
 	it("builds the controlled AC-33 hydration and feed replay case", () => {
 		const scripts = createAc33CaseScripts();
 		expect(scripts.action).toContain("AC33_ASSERT_TARGET_VAULT");
@@ -1066,6 +1184,160 @@ describe("desktop acceptance safety", () => {
 		expect(() => createAc33CaseScripts("oab-8.8/unrelated.md")).toThrow(
 			"Unauthorized AC-33 fixture path",
 		);
+	});
+
+	it("sends the generated AC-31 blob mutation with its observed revision", async () => {
+		const fixturePath = "oab-8.8/ac-31-blob-stat-race-20261104-03.md";
+		const epoch = "a".repeat(32);
+		const baseBytes = new TextEncoder().encode(
+			`# AC-31 blob stat race fixture\n\n${"A".repeat(1_100_000)}\n`,
+		);
+		const baseHash = createHash("sha256").update(baseBytes).digest("hex");
+		const entryETag = formatETag(epoch, 1);
+		const outbound: Array<{ path: string; options: Record<string, unknown> }> =
+			[];
+		const transport = new SyncTransport("https://service.test", {
+			requestResponse: async (path, options = {}) => {
+				outbound.push({ path, options });
+				return { status: 500, headers: {}, text: "{}" };
+			},
+		});
+		let capturedArguments: unknown[] = [];
+		let created = false;
+		const state = {
+			epoch,
+			cursor: 7,
+			base: {} as Record<string, { rev: number; hash: string }>,
+			pending_ops: [] as unknown[],
+			pending_apply: [] as unknown[],
+			reconciliation: null,
+			attention: [] as unknown[],
+		};
+		const files = new Map<string, Uint8Array>();
+		const adapterPrototype = { stat: async () => null };
+		const adapter = Object.create(adapterPrototype) as {
+			getBasePath: () => string;
+			stat: typeof adapterPrototype.stat;
+		};
+		adapter.getBasePath = () => vaults["dev-2"];
+		const remote = {
+			readCurrentBlobAuthority: async () => {
+				if (!created) throw new SyncTransportError(404, "not_found");
+				return {
+					kind: "blob" as const,
+					rev: 1,
+					hash: baseHash,
+					epoch,
+				};
+			},
+			manifest: async () => ({
+				epoch,
+				head_seq: 7,
+				entries: [
+					{
+						path: fixturePath,
+						etag: entryETag,
+						seq: 7,
+						hash: baseHash,
+						kind: "blob" as const,
+						deleted: false,
+					},
+				],
+				next_page: null,
+			}),
+			putBlob: (...args: unknown[]) => {
+				capturedArguments = args;
+				const [path, bytes, hash, precondition, key, epoch] = args;
+				if (
+					typeof path !== "string" ||
+					!(bytes instanceof Uint8Array) ||
+					typeof hash !== "string" ||
+					typeof key !== "string" ||
+					typeof epoch !== "string"
+				)
+					throw new Error("Generated AC-31 call shape is invalid");
+				return transport.putBlob(
+					path,
+					bytes,
+					hash,
+					DevicePreconditionSchema.parse(precondition),
+					key,
+					epoch,
+				);
+			},
+		};
+		const scripts = createAc31CaseScripts("/Users/test", fixturePath);
+		const app = {
+			vault: {
+				adapter,
+				createBinary: async (path: string, bytes: ArrayBuffer) => {
+					files.set(path, new Uint8Array(bytes));
+					created = true;
+				},
+				getAbstractFileByPath: (path: string) =>
+					files.has(path) ? { path } : null,
+				getFiles: () => [...files.keys()].map((path) => ({ path })),
+				readBinary: async (file: { path: string }) =>
+					files.get(file.path)?.buffer.slice(0),
+			},
+			plugins: {
+				plugins: {
+					"ai-bridge": {
+						journal: {
+							snapshot: () => structuredClone(state),
+						},
+						composition: { publication: { remote } },
+						desktopSync: {
+							isBusy: false,
+							waitForIdle: async () => undefined,
+							syncNow: async () => {
+								const bytes = files.get(fixturePath);
+								if (!bytes) throw new Error("Fixture missing");
+								state.base[fixturePath] = {
+									rev: 1,
+									hash: createHash("sha256").update(bytes).digest("hex"),
+								};
+							},
+						},
+						sessionStatus: "connected",
+						syncPaused: false,
+					},
+				},
+			},
+		};
+		const hostScript = createCaseScript(
+			"AC-31",
+			scripts.action,
+			scripts.cleanup,
+		);
+		const output = await (
+			new Function("app", `return ${hostScript}`) as (
+				app: unknown,
+			) => Promise<string>
+		)(app);
+		const summary = JSON.parse(output.slice("OAB8CASE:".length));
+		const headers = outbound[0]?.options.headers as Record<string, unknown>;
+		expect(summary).toMatchObject({
+			status: "failed",
+			failureStage: "action",
+			failureReason: "SYNC_TRANSPORT_5XX",
+			cleanupStatus: "passed",
+		});
+		expect(capturedArguments).toHaveLength(6);
+		expect(capturedArguments[0]).toBe(fixturePath);
+		expect(capturedArguments[1]).toBeInstanceOf(Uint8Array);
+		expect(capturedArguments[2]).toMatch(/^[a-f0-9]{64}$/);
+		expect(capturedArguments[3]).toEqual({
+			kind: "match",
+			epoch,
+			rev: 1,
+		});
+		expect(capturedArguments[5]).toBe(epoch);
+		expect(headers).toMatchObject({
+			"if-match": formatETag(epoch, 1),
+			"x-vault-epoch": epoch,
+		});
+		expect(JSON.stringify(summary)).not.toContain("private");
 	});
 
 	it("keeps recovered AC-30 and Markdown AC-31 diagnostics unique", async () => {

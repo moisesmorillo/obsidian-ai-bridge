@@ -1,11 +1,11 @@
 ---
 id: OAB-8.8
 title: Prove the desktop gate with two vaults and real ChatGPT
-status: In Progress
+status: Done
 assignee:
   - '@pi'
 created_date: '2026-10-28T19:31:00Z'
-updated_date: '2026-11-04T19:18:00Z'
+updated_date: '2026-11-04T20:56:00Z'
 labels: []
 dependencies:
   - OAB-8.7
@@ -30,7 +30,7 @@ Close F3 only with Obsidian device evidence from the two authorized copies and t
 - [ ] #1 Two Mac test vaults driven by Obsidian pass AC-02, 03, 04, 05, 06, 10, 13, 20, 24, 30, 31, 32, 33, and 39. Automated tests alone do not close the device gate.
 - [x] #2 Real ChatGPT passes the complete AC-09 loop, including automatic note arrival, subsequent reads, offline conflict, and interrupted append retry with one entry.
 - [x] #3 The device part of AC-08 shows revoked and retains files and queued work. Desktop credential storage behavior and the local fallback warning are verified.
-- [ ] #4 Task notes record safe vault origins, actual commands and device results, reviewed revisions, and test limits. F3 closes only after independent review, human branch review, and passing checks.
+- [x] #4 Task notes record safe vault origins, actual commands and device results, reviewed revisions, and test limits. F3 closes only after independent review, human branch review, and passing checks.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -544,4 +544,35 @@ The full check passed 1,725 tests: 56 tooling, 304 protocol, 483 plugin, and 882
 The closure index contains four plugin source/test/tooling files and the three intended Backlog records. Worker files and OAB-35/OAB-36 enter only through upstream merge history. The full branch also retains the reviewed public error-schema export and tooling-alias test changes.
 
 Prepare the closure commit with these records. Leave the task In Progress and criteria 1 and 4 open until the owner branch review. Next: open Plannotator against origin/main and stop for annotations.
+
+Final closure after PR #46: The owner merged the approved branch as c586205a6f4c0909ed2ba7f0bb2c460bd3965725 on main.
+PR: https://github.com/moisesmorillo/obsidian-ai-bridge/pull/46
+
+The independent review chain closed every actionable finding. Human branch review pn-c2ddaf approved ff9bdc3 with no annotations. Fresh local validation passed 1,725 tests, lint, documentation, type checks, and builds.
+
+Check run 41909882792 passed for ff9bdc3. Deploy F2 Worker run 41910335376 passed for merge c586205. Finalization did not start another deployment.
+
+Main advanced through git pull --ff-only. Orca removed the clean feature worktree without force. Final Backlog updates use the CLI in the main checkout.
+
+Criteria 2 and 3 retain their recorded acceptance and evidence limits. Criterion 4 now has completed reviews, human approval, passing checks, and the merged PR record.
+
+Criterion 1 remains unchecked. AC-30 live proof continues in Deferred OAB-37. Actual AC-13 service-epoch proof continues in Deferred OAB-38.
+
+AC-05 automatic link rewriting remains unproven. AC-09 receipts and interruption proof, loaded-source identity, and the historical dev-1 baseline retain their recorded limits. Task closure does not claim a full F3 gate pass.
+
+The supervisor set OAB-8.8 to Done under the owner delegation of 2026-11-03, with these limits and deferred tasks. Dev-1 stays paused and dev-2 stays revoked. No new live case, vault inspection, install, or reload ran during finalization.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Added scoped desktop acceptance tooling, bounded plugin fixes, and the existing canonical HTTP error-schema export.
+
+Twelve desktop cases passed within the recorded limits. Real ChatGPT AC-09 and device revocation AC-08 passed under their recorded acceptance. Fresh local checks passed 1,725 tests and all builds.
+
+PR #46 merged as c586205a6f4c0909ed2ba7f0bb2c460bd3965725. GitHub Check run 41909882792 and Deploy run 41910335376 passed. Independent reviews and human review pn-c2ddaf closed the branch review.
+
+The supervisor set Done under the owner delegation of 2026-11-03, with criteria 2, 3, and 4 checked. Criterion 1 stays unchecked because full desktop proof remains incomplete. OAB-37 and OAB-38 stay Deferred, and all recorded evidence limits remain.
+
+Main is current and Orca removed the feature worktree. Dev-1 stays paused and dev-2 stays revoked.
+<!-- SECTION:FINAL_SUMMARY:END -->

@@ -84,16 +84,22 @@ export const RegisterClientGrantResultSchema = z
 	.object({ accepted: z.boolean() })
 	.strict();
 
-/** Owner-visible grant data without provider secrets or authorization content. */
+/** Owner-visible durable grant state without provider secrets or authorization content. */
 export const OwnerGrantSchema = z
 	.object({
 		grant_id: z.string().min(1).max(255),
 		created_at: z.number().int().nonnegative().safe(),
+		/** True only when the DO stores a durable denial for this grant. */
+		revoked: z.boolean(),
+		/** Provider KV cleanup outcome; false does not prove the provider record exists. */
 		cleanup_pending: z.boolean(),
 	})
 	.strict();
 
-/** One client and its bounded page of known durable grant records. */
+/**
+ * One client projection from durable registry records, separate from provider KV.
+ * Counts describe retained history and durable denial state, not token validity.
+ */
 export const OwnerClientSchema = z
 	.object({
 		client_id: ClientIdSchema,
@@ -101,11 +107,21 @@ export const OwnerClientSchema = z
 		generation: ClientGenerationSchema,
 		created_at: z.number().int().nonnegative().safe(),
 		last_seen_at: z.number().int().nonnegative().safe().nullable(),
+		/** Count of retained registry history, including grants with durable denials. */
 		grant_count: z.number().int().nonnegative().safe(),
+		/** Count of retained grants without a DO denial; this proves registry authority only. */
+		active_grant_count: z.number().int().nonnegative().safe(),
+		/** Count of retained grants awaiting provider KV cleanup. */
+		cleanup_pending_count: z.number().int().nonnegative().safe(),
 		grants: z.array(OwnerGrantSchema).max(32),
 		grants_cursor: ClientPageCursorSchema.nullable(),
 	})
-	.strict();
+	.strict()
+	.refine(
+		(client) =>
+			client.active_grant_count <= client.grant_count &&
+			client.cleanup_pending_count <= client.grant_count,
+	);
 
 /** A paged owner listing. The next cursor never implies provider KV completeness. */
 export const ListClientsResultSchema = z

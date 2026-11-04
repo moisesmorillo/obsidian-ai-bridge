@@ -164,6 +164,248 @@ describe("owned read response", () => {
 		},
 	);
 
+	it("joins a pending read before fixed-body cancellation cleanup", async () => {
+		const work = barrier<IteratorResult<Uint8Array>>();
+		const started = barrier<void>();
+		const cancellationStarted = barrier<void>();
+		const cancellation = barrier<void>();
+		const cleanupStarted = barrier<void>();
+		const cleanup = barrier<void>();
+		const finished: AdmissionCompletion[] = [];
+		let released = false;
+		let cancellationDemanded = false;
+		let calls = 0;
+		const response = ownedReadResponse(
+			{
+				next: () => {
+					calls++;
+					if (calls === 1)
+						return Promise.resolve({
+							done: false,
+							value: new Uint8Array([1]),
+						});
+					started.resolve();
+					return work.promise;
+				},
+				cancel: () => {
+					cancellationDemanded = true;
+					cancellationStarted.resolve();
+					return cancellation.promise;
+				},
+			},
+			{
+				finish: async (completion) => {
+					finished.push(completion);
+					cleanupStarted.resolve();
+					await cleanup.promise;
+					return { ok: true };
+				},
+			},
+			() => {
+				released = true;
+			},
+			{ headers: { "Content-Length": "3" } },
+			undefined,
+			3,
+		);
+		const body = response.body;
+		if (!body) throw new Error("Read response has no body");
+		const reader = body.getReader();
+		const read = reader.read().catch(() => undefined);
+		await started.promise;
+		const cancelled = reader.cancel();
+		await Promise.resolve();
+		const cancellationWasPrompt = cancellationDemanded;
+		work.resolve({ done: false, value: new Uint8Array([2, 3]) });
+		await cancellationStarted.promise;
+		expect(cancellationWasPrompt).toBe(false);
+		expect(finished).toEqual([]);
+		expect(released).toBe(false);
+		cancellation.resolve();
+		await cleanupStarted.promise;
+		expect(finished).toEqual(["settled"]);
+		expect(released).toBe(false);
+		cleanup.resolve();
+		await Promise.all([read, cancelled]);
+		for (let attempt = 0; attempt < 10 && !released; attempt++)
+			await Promise.resolve();
+		expect(released).toBe(true);
+	});
+	it("keeps the slot until an aborted fixed-body write and shutdown settle", async () => {
+		const eofReached = barrier<void>();
+		const durableSettled = barrier<void>();
+		const signal = new AbortController();
+		const finished: AdmissionCompletion[] = [];
+		let nextChunk = 0;
+		let released = false;
+		const chunks = [new Uint8Array(65_536), new Uint8Array(65_536)];
+		const response = ownedReadResponse(
+			{
+				next: () => {
+					const value = chunks[nextChunk];
+					if (value !== undefined) {
+						nextChunk++;
+						return Promise.resolve({ done: false, value });
+					}
+					eofReached.resolve();
+					return Promise.resolve({ done: true, value: undefined });
+				},
+				cancel: async () => {},
+			},
+			{
+				finish: async (completion) => {
+					finished.push(completion);
+					durableSettled.resolve();
+					return { ok: true };
+				},
+			},
+			() => {
+				released = true;
+			},
+			{ headers: { "Content-Length": "131072" } },
+			signal.signal,
+			131072,
+		);
+		if (!response.body) throw new Error("Read response has no body");
+		const reader = response.body.getReader();
+		void reader.closed.catch(() => undefined);
+		let firstWriteBytes = 0;
+		while (firstWriteBytes < 65_536) {
+			const item = await reader.read();
+			firstWriteBytes += item.value?.byteLength ?? 0;
+		}
+		await Promise.all([eofReached.promise, durableSettled.promise]);
+		await Promise.resolve();
+		signal.abort(new Error("Request aborted"));
+		await Promise.resolve();
+		const retainedWhileWriterShutdownPending = !released;
+		const completionBeforeConsumerShutdown = [...finished];
+		await reader.cancel().catch(() => undefined);
+		for (let attempt = 0; attempt < 10 && !released; attempt++)
+			await Promise.resolve();
+		try {
+			expect(retainedWhileWriterShutdownPending).toBe(true);
+			expect(completionBeforeConsumerShutdown).toEqual(["settled"]);
+			expect(released).toBe(true);
+		} finally {
+			signal.abort();
+			await reader.cancel().catch(() => undefined);
+		}
+	});
+	it("marks a rejected fixed-body cancellation uncertain and keeps the slot through cleanup", async () => {
+		const work = barrier<IteratorResult<Uint8Array>>();
+		const started = barrier<void>();
+		const cancelStarted = barrier<void>();
+		const cancelFailure = barrier<void>();
+		const cleanupStarted = barrier<void>();
+		const cleanup = barrier<void>();
+		const finished: AdmissionCompletion[] = [];
+		let released = false;
+		let cancellationCalled = false;
+		let calls = 0;
+		const response = ownedReadResponse(
+			{
+				next: () => {
+					calls++;
+					if (calls === 1)
+						return Promise.resolve({
+							done: false,
+							value: new Uint8Array([1]),
+						});
+					started.resolve();
+					return work.promise;
+				},
+				cancel: () => {
+					cancellationCalled = true;
+					cancelStarted.resolve();
+					return cancelFailure.promise.then(() => {
+						throw new Error("Source cancel failed");
+					});
+				},
+			},
+			{
+				finish: async (completion) => {
+					finished.push(completion);
+					cleanupStarted.resolve();
+					await cleanup.promise;
+					return { ok: true };
+				},
+			},
+			() => {
+				released = true;
+			},
+			{ headers: { "Content-Length": "3" } },
+			undefined,
+			3,
+		);
+		if (!response.body) throw new Error("Read response has no body");
+		const reader = response.body.getReader();
+		const read = reader.read().catch(() => undefined);
+		await started.promise;
+		await reader.cancel();
+		expect(cancellationCalled).toBe(false);
+		expect(finished).toEqual([]);
+		work.resolve({ done: false, value: new Uint8Array([2, 3]) });
+		await cancelStarted.promise;
+		expect(finished).toEqual([]);
+		expect(released).toBe(false);
+		cancelFailure.resolve();
+		await cleanupStarted.promise;
+		expect(finished).toEqual(["uncertain"]);
+		expect(released).toBe(false);
+		cleanup.resolve();
+		await read;
+		for (let attempt = 0; attempt < 10 && !released; attempt++)
+			await Promise.resolve();
+		expect(released).toBe(true);
+	});
+	it("validates known-length EOF and preserves source fault certainty", async () => {
+		for (const [fault, expected] of [
+			["eof", "settled"],
+			["known", "settled"],
+			["unknown", "uncertain"],
+		] as const) {
+			const finished: AdmissionCompletion[] = [];
+			let released = false;
+			let calls = 0;
+			const response = ownedReadResponse(
+				{
+					next: async () => {
+						calls++;
+						if (fault === "eof")
+							return calls === 1
+								? { done: false, value: new Uint8Array([1, 2, 3]) }
+								: { done: true, value: undefined };
+						throw fault === "known"
+							? new ReadBatchFailure({ kind: "cursor_expired" })
+							: new Error("Storage result unknown");
+					},
+					cancel: async () => {},
+				},
+				{
+					finish: async (completion) => {
+						finished.push(completion);
+						return { ok: true };
+					},
+				},
+				() => {
+					released = true;
+				},
+				{ headers: { "Content-Length": "3" } },
+				undefined,
+				3,
+			);
+			if (fault === "eof") {
+				expect(new Uint8Array(await response.arrayBuffer())).toEqual(
+					new Uint8Array([1, 2, 3]),
+				);
+			} else {
+				await expect(response.arrayBuffer()).rejects.toThrow();
+			}
+			expect(finished).toEqual([expected]);
+			expect(released).toBe(true);
+		}
+	});
 	it("keeps unknown producer faults uncertain and observes rejected cleanup", async () => {
 		let released = false;
 		const finished: AdmissionCompletion[] = [];

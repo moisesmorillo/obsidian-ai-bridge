@@ -351,12 +351,12 @@ describe("content read ownership", () => {
 		expect(finished).toEqual(["settled"]);
 	});
 
-	it("retains a shared slot across pending R2 selection, read, cancellation, and durable cleanup", async () => {
+	it("joins a pending fixed-body source read before canceling and releasing its slot", async () => {
 		const finished: AdmissionCompletion[] = [];
 		const authority = gateway(finished);
 		const storageStarted = barrier<void>();
-		const storageResult = barrier<ReadableStream<Uint8Array>>();
 		const readStarted = barrier<void>();
+		const secondChunk = barrier<void>();
 		const cancelStarted = barrier<void>();
 		const cancellation = barrier<void>();
 		const cleanupStarted = barrier<void>();
@@ -368,53 +368,227 @@ describe("content read ownership", () => {
 			return { ok: true };
 		};
 		const held = Array.from({ length: 3 }, () => tryAcquireReadSlot());
-		const request = new Request("https://content.invalid/v1/files/a.bin");
-		const pendingResponse = readContentResponse(
+		let emittedFirstChunk = false;
+		let sourceCancelled = false;
+		const response = await readContentResponse(
 			authority,
 			() =>
 				store(async () => {
 					storageStarted.resolve();
-					return storageResult.promise;
+					return new ReadableStream<Uint8Array>({
+						type: "bytes",
+						/** Keep the second storage read pending until after body cancellation. */
+						async pull(controller) {
+							if (!emittedFirstChunk) {
+								emittedFirstChunk = true;
+								controller.enqueue(new Uint8Array([1, 2, 3]));
+								return;
+							}
+							readStarted.resolve();
+							await secondChunk.promise;
+							controller.enqueue(new Uint8Array([4, 5]));
+						},
+						/** Join source cancellation after the next fixed-stream write fails. */
+						cancel() {
+							sourceCancelled = true;
+							cancelStarted.resolve();
+							return cancellation.promise;
+						},
+					});
 				}),
 			identity,
 			{ path: "a.bin" },
-			request,
-		);
-		await storageStarted.promise;
-		expect(tryAcquireReadSlot()).toBeUndefined();
-		storageResult.resolve(
-			new ReadableStream<Uint8Array>({
-				type: "bytes",
-				/** Hold the R2 read until explicit cancellation. */
-				pull() {
-					readStarted.resolve();
-				},
-				/** Join the explicit R2 cancellation barrier. */
-				cancel() {
-					cancelStarted.resolve();
-					return cancellation.promise;
-				},
+			new Request("https://content.invalid/v1/files/a.bin", {
+				headers: { Range: "bytes=0-7" },
 			}),
 		);
-		const response = await pendingResponse;
+		expect(response.status).toBe(206);
 		if (!response.body) throw new Error("Read response has no body");
 		const reader = response.body.getReader();
-		const read = reader.read();
+		const read = reader.read().catch(() => undefined);
 		await readStarted.promise;
 		const cancelled = reader.cancel();
-		await cancelStarted.promise;
-		expect(tryAcquireReadSlot()).toBeUndefined();
+		await cancelled;
+		expect(sourceCancelled).toBe(false);
 		expect(finished).toEqual([]);
+		expect(tryAcquireReadSlot()).toBeUndefined();
+		secondChunk.resolve();
+		await cancelStarted.promise;
+		expect(finished).toEqual([]);
+		expect(tryAcquireReadSlot()).toBeUndefined();
 		cancellation.resolve();
 		await cleanupStarted.promise;
+		expect(finished).toEqual(["settled"]);
 		expect(tryAcquireReadSlot()).toBeUndefined();
 		cleanup.resolve();
-		await Promise.all([read, cancelled]);
-		const free = tryAcquireReadSlot();
-		expect(free).toBeTypeOf("function");
-		free?.();
-		for (const release of held) release?.();
-		expect(finished).toEqual(["settled"]);
+		await read;
+		let free: (() => void) | undefined;
+		for (let attempt = 0; attempt < 10 && free === undefined; attempt++) {
+			await Promise.resolve();
+			free = tryAcquireReadSlot();
+		}
+		try {
+			expect(free).toBeTypeOf("function");
+		} finally {
+			free?.();
+			for (const release of held) release?.();
+		}
+	});
+	it("rejects overlong full blob storage and keeps its slot through cleanup", async () => {
+		const finished: AdmissionCompletion[] = [];
+		const authority = gateway(finished);
+		const cancellationStarted = barrier<void>();
+		const cancellation = barrier<void>();
+		const cleanupStarted = barrier<void>();
+		const cleanup = barrier<void>();
+		authority.finishAdmission = async (_identity, _ticket, completion) => {
+			finished.push(completion);
+			cleanupStarted.resolve();
+			await cleanup.promise;
+			return { ok: true };
+		};
+		const held = Array.from({ length: 3 }, () => tryAcquireReadSlot());
+		let chunks = 0;
+		let sourceCancelled = false;
+		const response = await readContentResponse(
+			authority,
+			() =>
+				store(
+					async () =>
+						new ReadableStream<Uint8Array>({
+							type: "bytes",
+							/** Return the declared bytes, then one excess byte in a separate pull. */
+							pull(controller) {
+								chunks++;
+								if (chunks === 1) {
+									controller.enqueue(new Uint8Array(100));
+									return;
+								}
+								if (chunks === 2) {
+									controller.enqueue(new Uint8Array([101]));
+									return;
+								}
+								controller.close();
+							},
+							/** Hold cancellation until the test checks slot ownership. */
+							cancel() {
+								sourceCancelled = true;
+								cancellationStarted.resolve();
+								return cancellation.promise;
+							},
+						}),
+				),
+			identity,
+			{ path: "a.bin" },
+			new Request("https://content.invalid/v1/files/a.bin"),
+		);
+		const bodyFailed = response.arrayBuffer().then(
+			() => false,
+			() => true,
+		);
+		await Promise.race([
+			cancellationStarted.promise,
+			cleanupStarted.promise,
+			new Promise((resolve) => setTimeout(resolve, 100)),
+		]);
+		const cancellationJoinedFirst = sourceCancelled && finished.length === 0;
+		const beforeCleanupSlot = tryAcquireReadSlot();
+		const retainedDuringCancellation = beforeCleanupSlot === undefined;
+		beforeCleanupSlot?.();
+		cancellation.resolve();
+		await Promise.race([
+			cleanupStarted.promise,
+			new Promise((resolve) => setTimeout(resolve, 100)),
+		]);
+		const uncertainBeforeRelease = finished.includes("uncertain");
+		const duringCleanupSlot = tryAcquireReadSlot();
+		const retainedDuringCleanup = duringCleanupSlot === undefined;
+		duringCleanupSlot?.();
+		cleanup.resolve();
+		const didFail = await Promise.race([
+			bodyFailed,
+			new Promise<boolean | undefined>((resolve) =>
+				setTimeout(() => resolve(undefined), 100),
+			),
+		]);
+		let free: (() => void) | undefined;
+		for (let attempt = 0; attempt < 10 && free === undefined; attempt++) {
+			await Promise.resolve();
+			free = tryAcquireReadSlot();
+		}
+		try {
+			expect(didFail).toBe(true);
+			expect(cancellationJoinedFirst).toBe(true);
+			expect(retainedDuringCancellation).toBe(true);
+			expect(uncertainBeforeRelease).toBe(true);
+			expect(retainedDuringCleanup).toBe(true);
+			expect(finished).toEqual(["uncertain"]);
+			expect(free).toBeTypeOf("function");
+		} finally {
+			cancellation.resolve();
+			cleanup.resolve();
+			free?.();
+			for (const release of held) release?.();
+		}
+	});
+	it("rejects underlength full blob storage as uncertain", async () => {
+		const finished: AdmissionCompletion[] = [];
+		const response = await readContentResponse(
+			gateway(finished),
+			() => store(async () => new Blob([new Uint8Array(99)]).stream()),
+			identity,
+			{ path: "a.bin" },
+			new Request("https://content.invalid/v1/files/a.bin"),
+		);
+		await expect(response.arrayBuffer()).rejects.toThrow();
+		expect(finished).toEqual(["uncertain"]);
+	});
+	it.each([
+		["full", undefined, 100],
+		["range", "bytes=12-16", 5],
+	] as const)(
+		"passes exact %s length to the final response owner",
+		async (_kind, range, size) => {
+			const finished: AdmissionCompletion[] = [];
+			const selection = new Uint8Array(size).map((_, index) => index + 1);
+			const response = await readContentResponse(
+				gateway(finished),
+				() => store(async () => new Blob([selection]).stream()),
+				identity,
+				{ path: "a.bin" },
+				new Request("https://content.invalid/v1/files/a.bin", {
+					headers: range === undefined ? {} : { Range: range },
+				}),
+			);
+			expect(response.status).toBe(range === undefined ? 200 : 206);
+			expect(response.headers.get("Content-Length")).toBe(String(size));
+			expect(new Uint8Array(await response.arrayBuffer())).toEqual(selection);
+			expect(finished).toEqual(["settled"]);
+		},
+	);
+	it("reports a failed blob source and settles its admission as uncertain", async () => {
+		const finished: AdmissionCompletion[] = [];
+		const response = await readContentResponse(
+			gateway(finished),
+			() =>
+				store(
+					async () =>
+						new ReadableStream<Uint8Array>({
+							/** Fail the real response source before it emits bytes. */
+							start(controller) {
+								controller.error(new Error("Storage stream failed"));
+							},
+						}),
+				),
+			identity,
+			{ path: "a.bin" },
+			new Request("https://content.invalid/v1/files/a.bin"),
+		);
+		if (response.status !== 200) throw new Error("Expected a blob response");
+		await expect(response.arrayBuffer()).rejects.toThrow(
+			"Storage stream failed",
+		);
+		expect(finished).toEqual(["uncertain"]);
 	});
 	it("denies the fifth content read before authority or R2 demand", async () => {
 		const held = Array.from({ length: 4 }, () => tryAcquireReadSlot());

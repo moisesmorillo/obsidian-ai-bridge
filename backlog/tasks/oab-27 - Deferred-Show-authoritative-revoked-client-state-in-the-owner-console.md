@@ -1,11 +1,11 @@
 ---
 id: OAB-27
 title: 'Deferred: Show authoritative revoked client state in the owner console'
-status: In Progress
+status: Done
 assignee:
   - '@pi'
 created_date: '2026-10-28T16:48:00Z'
-updated_date: '2026-11-04T22:53:00Z'
+updated_date: '2026-11-04T22:58:00Z'
 labels:
   - deferred
   - owner-console
@@ -27,9 +27,9 @@ Trigger: before the owner relies on console listings for client-state decisions,
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The console distinguishes active, revoked, and cleanup state from retained grant history with authoritative data.
-- [ ] #2 Tests explain retained revoked clients and removed clients, including repeated revocation and provider cleanup outcomes.
-- [ ] #3 Revoked grants still fail at the DO before reads or writes, regardless of console or provider cleanup state.
+- [x] #1 The console distinguishes active, revoked, and cleanup state from retained grant history with authoritative data.
+- [x] #2 Tests explain retained revoked clients and removed clients, including repeated revocation and provider cleanup outcomes.
+- [x] #3 Revoked grants still fail at the DO before reads or writes, regardless of console or provider cleanup state.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -56,4 +56,12 @@ Limits: no deployment, Cloudflare change, provider service access, or vault acce
 Task review at cc81e8d964b2e1e4f0c4848fd8211bf31091b495: APPROVE WITH NOTES. No blocker or correctness defect. The reviewer verified canonical durable projections, bounded owner filtering, state labels, denial-before-effects tests, documentation, and cohesive ownership. Non-blocking note: nested state expressions at owner.ts 85–92 and 128–133 reduce audit clarity. Carry this note to whole-branch review for explicit disposition. Active lens probe also found these expressions. Two unrelated throwing-call findings lie outside the changed hunks, so they do not form diff findings. Validation uses worker-reported RED/GREEN and full-check evidence, not a reviewer rerun. No remote CI evidence yet.
 
 Whole-branch review at 6558c244d9e20a30604a5a7970834d3a9dc3cfa9 against main 88e3c89: APPROVE WITH NOTES. Reviewed all eight files, canonical contracts, registry transitions, presentation state matrix, SQL limits, owner filtering, escaping, TSDoc, and denial-before-effects evidence. No blocking or correctness finding. Optional NIT disposition: retain the compact presentation expressions for this PR. Registry and HTML tests plus source review cover their mapping. They neither enforce authority nor own durable transitions. A classifier remains an optional readability change, not missing task behavior. Unchanged throwing-call diagnostics remain outside this diff. git diff --check passed. Worker reports full check with 1,728 tests across 98 files. No live-service, remote CI, coverage, or historical-disappearance proof is claimed. Human review follows.
+
+Owner approved human branch review pn-1bfde0 with no changes. Parent accepts all three criteria based on registry and owner HTML tests, cleanup outcome tests, schema tests, and preserved denial-before-effect tests. Optional nested-expression note stays a non-blocking presentation preference with its explicit disposition above. This final metadata update does not change reviewed product or tests. Publish PR 2 and stop for owner merge. OAB-6.8.2 remains for a later session.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+The console now separates durable grant authority, retained history, and provider cleanup. Canonical schemas expose active and pending counts plus per-grant revocation. Tests cover no accepted grants, mixed re-consent history, repeated revocation, cleanup failures and completion, owner filtering, escaped HTML, and DO denial before effects. Worker RED/GREEN and bun run check passed with 1,728 tests. Task and whole-branch review approved with one optional presentation-readability note. Owner approved branch review pn-1bfde0 without changes. Historic Inspector disappearance remains unexplained. No live-service or Cloudflare resource action occurred.
+<!-- SECTION:FINAL_SUMMARY:END -->

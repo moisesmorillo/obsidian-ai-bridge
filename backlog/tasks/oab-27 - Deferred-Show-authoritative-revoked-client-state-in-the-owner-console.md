@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-10-28T16:48:00Z'
-updated_date: '2026-11-04T22:43:00Z'
+updated_date: '2026-11-04T22:49:00Z'
 labels:
   - deferred
   - owner-console
@@ -52,4 +52,6 @@ Focused GREEN: protocol auth schema test passed 2/2. Worker F2 registry, owner, 
 Validation: `bun run docs:check` passed. `bun run check` passed lint, docs, all workspace type checks, tests, and dry-run builds. Results: tooling 56 tests/5 files, protocol 306/17, plugin 483/23, worker 883/53, total 1,728 tests across 98 files. All check phases exited 0. Worker logs include expected injected network and SQLite failures in existing fault tests.
 
 Limits: no deployment, Cloudflare change, provider service access, or vault access occurred. The historic OAB-7.8 Inspector disappearance remains unexplained. This implementation shows durable registry clients after provider cleanup, but does not infer why that historic client listing differed. No provider listing is an authority source, and durable registry state does not prove token currency or expiry.
+
+Task review at cc81e8d964b2e1e4f0c4848fd8211bf31091b495: APPROVE WITH NOTES. No blocker or correctness defect. The reviewer verified canonical durable projections, bounded owner filtering, state labels, denial-before-effects tests, documentation, and cohesive ownership. Non-blocking note: nested state expressions at owner.ts 85–92 and 128–133 reduce audit clarity. Carry this note to whole-branch review for explicit disposition. Active lens probe also found these expressions. Two unrelated throwing-call findings lie outside the changed hunks, so they do not form diff findings. Validation uses worker-reported RED/GREEN and full-check evidence, not a reviewer rerun. No remote CI evidence yet.
 <!-- SECTION:NOTES:END -->

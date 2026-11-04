@@ -25,26 +25,8 @@ import type {
 /** Identifies one authorized desktop vault and the exact path that Obsidian must resolve. */
 export type DesktopVaultId = "dev-1" | "dev-2";
 
-/** Fixed case and error codes that may appear in host failure summaries. */
-const SAFE_CASE_FAILURE_CODES = [
-	"AC30_PRECONDITION_FAILED",
-	"AC30_FIRST_BOUNDARY_FAILED",
-	"AC30_SUCCESSOR_BOUNDARY_FAILED",
-	"AC30_ASSERT_TARGET_VAULT",
-	"AC30_ASSERT_PLUGIN_CONTROLS",
-	"AC30_ASSERT_INITIAL_STATE",
-	"AC30_ASSERT_FIXTURE_ABSENT",
-	"AC30_ASSERT_REMOTE_CAPABILITIES",
-	"AC30_ASSERT_SERVICE_PATH_ABSENT",
-	"AC30_ASSERT_FIRST_COMMIT_AUTHORITY",
-	"AC30_ASSERT_FIRST_COMMIT_QUEUE",
-	"AC30_ASSERT_FIRST_PAYLOAD",
-	"AC30_ASSERT_RETRY_DEADLINE",
-	"AC30_ASSERT_RETRY_WAIT_BOUND",
-	"AC30_ASSERT_RETRY_IDENTITY",
-	"AC30_ASSERT_RETRY_AFTER_WAIT_IDENTITY",
-	"AC30_ASSERT_SUCCESSOR_REQUEST",
-	"AC30_ASSERT_LOCAL_EDIT_READBACK",
+/** Final AC-30 checks that may expose one bounded mismatch observation. */
+const AC30_FINAL_ASSERTION_CODES = [
 	"AC30_ASSERT_FINAL_CALL_COUNT",
 	"AC30_ASSERT_FINAL_RETRY_KEY",
 	"AC30_ASSERT_FINAL_SUCCESSOR_KEY",
@@ -71,6 +53,44 @@ const SAFE_CASE_FAILURE_CODES = [
 	"AC30_ASSERT_FINAL_PENDING_APPLIES",
 	"AC30_ASSERT_FINAL_RECONCILIATION",
 	"AC30_ASSERT_FINAL_ATTENTION_COUNT",
+] as const;
+
+/** Fixed case and error codes that may appear in host failure summaries. */
+const AC30_SAFE_OBSERVATION_STATES = [
+	"match",
+	"absent",
+	"present",
+	"null",
+	"undefined",
+	"string",
+	"boolean",
+	"number",
+	"object",
+	"array",
+	"other",
+] as const;
+
+/** Fixed failure labels accepted by generated case-result parsing. */
+const SAFE_CASE_FAILURE_CODES = [
+	"AC30_PRECONDITION_FAILED",
+	"AC30_FIRST_BOUNDARY_FAILED",
+	"AC30_SUCCESSOR_BOUNDARY_FAILED",
+	"AC30_ASSERT_TARGET_VAULT",
+	"AC30_ASSERT_PLUGIN_CONTROLS",
+	"AC30_ASSERT_INITIAL_STATE",
+	"AC30_ASSERT_FIXTURE_ABSENT",
+	"AC30_ASSERT_REMOTE_CAPABILITIES",
+	"AC30_ASSERT_SERVICE_PATH_ABSENT",
+	"AC30_ASSERT_FIRST_COMMIT_AUTHORITY",
+	"AC30_ASSERT_FIRST_COMMIT_QUEUE",
+	"AC30_ASSERT_FIRST_PAYLOAD",
+	"AC30_ASSERT_RETRY_DEADLINE",
+	"AC30_ASSERT_RETRY_WAIT_BOUND",
+	"AC30_ASSERT_RETRY_IDENTITY",
+	"AC30_ASSERT_RETRY_AFTER_WAIT_IDENTITY",
+	"AC30_ASSERT_SUCCESSOR_REQUEST",
+	"AC30_ASSERT_LOCAL_EDIT_READBACK",
+	...AC30_FINAL_ASSERTION_CODES,
 	"AC30_ASSERT_FINAL_INTERCEPTION_RESTORED",
 	"AC30_INJECTED_RESPONSE_LOSS",
 	"AC30_CLEANUP_RESTORE_FAILED",
@@ -252,6 +272,8 @@ export interface DesktopCaseSummary {
 	lastCompletedBoundary?: SafeCaseFailureBoundary;
 	/** Canonical successful mutation status captured by AC-33. */
 	receiptStatus?: MutationReceipt["status"];
+	/** Sanitized expected and observed values for a failed AC-30 final assertion. */
+	ac30FinalAssertion?: SafeAc30FinalAssertion;
 	/** Safe separation of AC-13 transport-wrapper restoration and controller recovery. */
 	ac13Cleanup?: {
 		wrapperRestored: boolean;
@@ -392,6 +414,18 @@ export function safeCaseResult(
 			: result.receiptStatus;
 	const receiptStatus =
 		MutationReceiptSchema.shape.status.safeParse(rawReceiptStatus);
+	const rawAc30FinalAssertion =
+		caseId === "AC-30" &&
+		status === "failed" &&
+		failureStage === "action" &&
+		caseEvidence &&
+		typeof caseEvidence === "object"
+			? Reflect.get(caseEvidence, "ac30FinalAssertion")
+			: null;
+	const ac30FinalAssertion = safeAc30FinalAssertion(
+		rawAc30FinalAssertion,
+		failureReason,
+	);
 	const rawAc13Cleanup =
 		caseId === "AC-13" && caseEvidence && typeof caseEvidence === "object"
 			? Reflect.get(caseEvidence, "ac13Cleanup")
@@ -416,6 +450,7 @@ export function safeCaseResult(
 		...(status !== "passed" && failureClass ? { failureClass } : {}),
 		...(lastCompletedBoundary ? { lastCompletedBoundary } : {}),
 		...(receiptStatus.success ? { receiptStatus: receiptStatus.data } : {}),
+		...(ac30FinalAssertion ? { ac30FinalAssertion } : {}),
 		...(ac13Cleanup ? { ac13Cleanup } : {}),
 		cleanupStatus,
 	};
@@ -431,6 +466,37 @@ function isSafeCaseFailureReason(
 			value === "unknown-error" ||
 			value === "cleanup-error")
 	);
+}
+
+/** Projects only allowlisted AC-30 assertion values and omits raw identity data. */
+function safeAc30FinalAssertion(
+	value: unknown,
+	failureReason: SafeCaseFailureReason | null,
+): SafeAc30FinalAssertion | null {
+	if (!value || typeof value !== "object") return null;
+	const code = Reflect.get(value, "code");
+	const expected = Reflect.get(value, "expected");
+	const observed = Reflect.get(value, "observed");
+	/** Allows only non-sensitive scalar values in the returned case summary. */
+	const isSafeValue = (
+		candidate: unknown,
+	): candidate is SafeAc30ObservationValue =>
+		typeof candidate === "boolean" ||
+		candidate === null ||
+		(typeof candidate === "number" && Number.isSafeInteger(candidate)) ||
+		AC30_SAFE_OBSERVATION_STATES.some((item) => item === candidate);
+	if (
+		!AC30_FINAL_ASSERTION_CODES.some((item) => item === code) ||
+		code !== failureReason ||
+		!isSafeValue(expected) ||
+		!isSafeValue(observed)
+	)
+		return null;
+	return {
+		code: code as SafeAc30FinalAssertion["code"],
+		expected,
+		observed,
+	};
 }
 
 /** Keeps only valid boundary diagnostics and canonical transport metadata. */
@@ -797,6 +863,20 @@ export function runHostCase(
 	} catch {
 		return { ...summary, privateSnapshotStatus: "failed" };
 	}
+}
+
+/** Values that can describe a mismatch without exposing payloads or identities. */
+type SafeAc30ObservationValue =
+	| boolean
+	| number
+	| null
+	| (typeof AC30_SAFE_OBSERVATION_STATES)[number];
+
+/** Safe expected and observed values for one failed final AC-30 assertion. */
+interface SafeAc30FinalAssertion {
+	code: (typeof AC30_FINAL_ASSERTION_CODES)[number];
+	expected: SafeAc30ObservationValue;
+	observed: SafeAc30ObservationValue;
 }
 
 /** Safe counts and lifecycle flags used to verify AC-20 enrollment preconditions. */
@@ -1318,8 +1398,23 @@ export function createCaseScript(
 		const safeFailureBoundaries = ${JSON.stringify(SAFE_CASE_FAILURE_BOUNDARIES)};
 		const safeFailureClasses = ${JSON.stringify(SAFE_CASE_FAILURE_CLASSES)};
 		const safeTransportErrorCodes = ${JSON.stringify(SAFE_CASE_TRANSPORT_ERROR_CODES)};
+		const ac30FinalAssertionCodes = ${JSON.stringify(AC30_FINAL_ASSERTION_CODES)};
+		const ac30SafeObservationStates = ${JSON.stringify(AC30_SAFE_OBSERVATION_STATES)};
 		const boundaryDetailsKey = Symbol("case-boundary-details");
 		const caseEvidence = {};
+		const safeAc30ObservationValue = (value) => {
+			if (typeof value === "boolean" || value === null) return value;
+			if (typeof value === "number" && Number.isSafeInteger(value)) return value;
+			return ac30SafeObservationStates.includes(value) ? value : "other";
+		};
+		const recordAc30FinalAssertion = (code, expected, observed) => {
+			if (ac30FinalAssertionCodes.includes(code))
+				caseEvidence.ac30FinalAssertion = {
+					code,
+					expected: safeAc30ObservationValue(expected),
+					observed: safeAc30ObservationValue(observed),
+				};
+		};
 		let lastCompletedBoundary = null;
 		const readBoundaryDetails = (error) => {
 			try {
@@ -1791,7 +1886,7 @@ if(!plugin?.journal?.snapshot||!plugin.composition?.publication||!plugin.desktop
 await plugin.desktopSync.waitForIdle();
 const stateBefore=plugin.journal.snapshot();
 if(stateBefore.pending_ops.length||stateBefore.pending_apply.length||stateBefore.reconciliation||plugin.desktopSync.isBusy)throw Error("AC30_ASSERT_INITIAL_STATE");
-const path="oab-8.8/ac-30-response-lost-20261104-05.md";
+const path="oab-8.8/ac-30-response-lost-20261104-06.md";
 if(app.vault.getAbstractFileByPath(path))throw Error("AC30_ASSERT_FIXTURE_ABSENT");
 const remote=Reflect.get(plugin.composition.publication,"remote");
 if(!remote?.put||!remote.readCurrentAuthority||globalThis.__oab8Ac30Restore)throw Error("AC30_ASSERT_REMOTE_CAPABILITIES");
@@ -1885,32 +1980,38 @@ try{
  const localText=fileNow?await app.vault.read(fileNow):null;
  const finalHash=localText===null?null:await hashText(localText);
  const base=finalState.base[path];
- if(callCount!==3)throw new Error("AC30_ASSERT_FINAL_CALL_COUNT");
- if(retryKey!==firstKey)throw new Error("AC30_ASSERT_FINAL_RETRY_KEY");
- if(successorKey===firstKey)throw new Error("AC30_ASSERT_FINAL_SUCCESSOR_KEY");
- if(!retryPayloadMatchesOriginal)throw new Error("AC30_ASSERT_FINAL_RETRY_PAYLOAD");
- if(!successorPayloadMatchesEdited)throw new Error("AC30_ASSERT_FINAL_SUCCESSOR_PAYLOAD");
- if(retryStatus===422)throw new Error("AC30_ASSERT_FINAL_NO_422");
- if(firstRevision!==1)throw new Error("AC30_ASSERT_FINAL_FIRST_REVISION");
- if(retryRevision!==1)throw new Error("AC30_ASSERT_FINAL_RETRY_REVISION");
- if(successorRevision!==2)throw new Error("AC30_ASSERT_SUCCESSOR_REVISION");
- if(retryReceiptETag!==firstReceiptETag)throw new Error("AC30_ASSERT_FINAL_RETRY_ETAG");
- if(successorPrecondition.kind!=="match")throw new Error("AC30_ASSERT_FINAL_PRECONDITION_KIND");
- if(successorPrecondition.epoch!==stateBefore.epoch)throw new Error("AC30_ASSERT_FINAL_PRECONDITION_EPOCH");
- if(successorPrecondition.rev!==1)throw new Error("AC30_ASSERT_FINAL_PRECONDITION_REVISION");
- if(authority.deleted)throw new Error("AC30_ASSERT_FINAL_AUTHORITY_LIVE");
- if(authority.rev!==2)throw new Error("AC30_ASSERT_FINAL_AUTHORITY_REVISION");
- if(authority.hash!==await hashText(editedText))throw new Error("AC30_ASSERT_FINAL_AUTHORITY_HASH");
- if(localText!==editedText)throw new Error("AC30_ASSERT_FINAL_LOCAL_TEXT");
- if(!base)throw new Error("AC30_ASSERT_FINAL_BASE_PRESENT");
- if(base.deleted)throw new Error("AC30_ASSERT_FINAL_BASE_LIVE");
- if(base.rev!==2)throw new Error("AC30_ASSERT_FINAL_BASE_REVISION");
- if(base.hash!==await hashText(editedText))throw new Error("AC30_ASSERT_FINAL_BASE_HASH");
- if(finalHash!==base.hash)throw new Error("AC30_ASSERT_FINAL_LOCAL_HASH");
- if(finalState.pending_ops.length)throw new Error("AC30_ASSERT_FINAL_PENDING_OPERATIONS");
- if(finalState.pending_apply.length)throw new Error("AC30_ASSERT_FINAL_PENDING_APPLIES");
- if(finalState.reconciliation)throw new Error("AC30_ASSERT_FINAL_RECONCILIATION");
- if(finalState.attention.length!==3)throw new Error("AC30_ASSERT_FINAL_ATTENTION_COUNT");
+ const observedType=(value)=>value===null?"null":Array.isArray(value)?"array":typeof value;
+ const observedNumber=(value)=>Number.isSafeInteger(value)?value:observedType(value);
+ const observedKind=(value)=>value==="match"||value==="absent"?value:observedType(value);
+ const failFinal=(code,expected,observed)=>{recordAc30FinalAssertion(code,expected,observed);throw new Error(code);};
+ if(callCount!==3)failFinal("AC30_ASSERT_FINAL_CALL_COUNT",3,observedNumber(callCount));
+ if(retryKey!==firstKey)failFinal("AC30_ASSERT_FINAL_RETRY_KEY",true,retryKey===firstKey);
+ if(successorKey===firstKey)failFinal("AC30_ASSERT_FINAL_SUCCESSOR_KEY",false,successorKey!==firstKey);
+ if(!retryPayloadMatchesOriginal)failFinal("AC30_ASSERT_FINAL_RETRY_PAYLOAD",true,retryPayloadMatchesOriginal);
+ if(!successorPayloadMatchesEdited)failFinal("AC30_ASSERT_FINAL_SUCCESSOR_PAYLOAD",true,successorPayloadMatchesEdited);
+ if(retryStatus===422)failFinal("AC30_ASSERT_FINAL_NO_422",true,retryStatus!==422);
+ if(firstRevision!==1)failFinal("AC30_ASSERT_FINAL_FIRST_REVISION",1,observedNumber(firstRevision));
+ if(retryRevision!==1)failFinal("AC30_ASSERT_FINAL_RETRY_REVISION",1,observedNumber(retryRevision));
+ if(successorRevision!==2)failFinal("AC30_ASSERT_SUCCESSOR_REVISION",2,observedNumber(successorRevision));
+ if(retryReceiptETag!==firstReceiptETag)failFinal("AC30_ASSERT_FINAL_RETRY_ETAG",true,retryReceiptETag===firstReceiptETag);
+ if(successorPrecondition.kind!=="match")failFinal("AC30_ASSERT_FINAL_PRECONDITION_KIND","match",observedKind(successorPrecondition.kind));
+ if(successorPrecondition.epoch!==stateBefore.epoch)failFinal("AC30_ASSERT_FINAL_PRECONDITION_EPOCH",true,successorPrecondition.epoch===stateBefore.epoch);
+ if(successorPrecondition.rev!==1)failFinal("AC30_ASSERT_FINAL_PRECONDITION_REVISION",1,observedNumber(successorPrecondition.rev));
+ if(authority.deleted)failFinal("AC30_ASSERT_FINAL_AUTHORITY_LIVE",false,!!authority.deleted);
+ if(authority.rev!==2)failFinal("AC30_ASSERT_FINAL_AUTHORITY_REVISION",2,observedNumber(authority.rev));
+ const authorityMatchesEditedHash=authority.hash===await hashText(editedText);
+ if(!authorityMatchesEditedHash)failFinal("AC30_ASSERT_FINAL_AUTHORITY_HASH",true,authorityMatchesEditedHash);
+ if(localText!==editedText)failFinal("AC30_ASSERT_FINAL_LOCAL_TEXT",true,localText===editedText);
+ if(!base)failFinal("AC30_ASSERT_FINAL_BASE_PRESENT","present",base?"present":"absent");
+ if(base.deleted)failFinal("AC30_ASSERT_FINAL_BASE_LIVE",false,!!base.deleted);
+ if(base.rev!==2)failFinal("AC30_ASSERT_FINAL_BASE_REVISION",2,observedNumber(base.rev));
+ const baseMatchesEditedHash=base.hash===await hashText(editedText);
+ if(!baseMatchesEditedHash)failFinal("AC30_ASSERT_FINAL_BASE_HASH",true,baseMatchesEditedHash);
+ if(finalHash!==base.hash)failFinal("AC30_ASSERT_FINAL_LOCAL_HASH",true,finalHash===base.hash);
+ if(finalState.pending_ops.length)failFinal("AC30_ASSERT_FINAL_PENDING_OPERATIONS",0,observedNumber(finalState.pending_ops.length));
+ if(finalState.pending_apply.length)failFinal("AC30_ASSERT_FINAL_PENDING_APPLIES",0,observedNumber(finalState.pending_apply.length));
+ if(finalState.reconciliation)failFinal("AC30_ASSERT_FINAL_RECONCILIATION","null",observedType(finalState.reconciliation));
+ if(finalState.attention.length!==3)failFinal("AC30_ASSERT_FINAL_ATTENTION_COUNT",3,observedNumber(finalState.attention.length));
 }finally{
  if(timer!==null)clearTimeout(timer);
  releaseGate();

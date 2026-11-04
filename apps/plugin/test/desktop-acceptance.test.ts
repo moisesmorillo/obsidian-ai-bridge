@@ -1383,6 +1383,10 @@ describe("desktop acceptance safety", () => {
 				"oab-8.8/ac-31-blob-stat-race-20261104-04.bin",
 			),
 		).toThrow("Unauthorized AC-31 fixture path");
+		expect(ac30.action).toContain("oab-8.8/ac-30-response-lost-20261104-06.md");
+		expect(ac30.action).not.toContain(
+			"oab-8.8/ac-30-response-lost-20261104-05.md",
+		);
 		expect(ac30.action).toContain("AC30_TIMEOUT_FIRST_BOUNDARY_WAIT");
 		expect(ac31.action).toContain("AC31_TIMEOUT_STAT_RACE_INJECTION");
 		expect(ac31.action).toContain(
@@ -1573,6 +1577,54 @@ describe("desktop acceptance safety", () => {
 		expect(serialized).not.toMatch(
 			/private note bytes|bearer token|authorization URL|operation key/,
 		);
+	});
+
+	it("sanitizes AC-30 observations before the host result returns", async () => {
+		const script = createCaseScript(
+			"AC-30",
+			'recordAc30FinalAssertion("AC30_ASSERT_FINAL_CALL_COUNT", "private identity", 2); throw Error("AC30_ASSERT_FINAL_CALL_COUNT");',
+			"caseEvidence.cleanupRan=true;",
+		);
+		const output = await (
+			new Function(`return ${script}`) as () => Promise<string>
+		)();
+		const record = JSON.parse(output.slice("OAB8CASE:".length));
+
+		expect(record.caseEvidence).toEqual({
+			ac30FinalAssertion: {
+				code: "AC30_ASSERT_FINAL_CALL_COUNT",
+				expected: "other",
+				observed: 2,
+			},
+			cleanupRan: true,
+		});
+		expect(output).not.toContain("private identity");
+	});
+
+	it("projects only bounded AC-30 assertion observations", () => {
+		const summary = safeCaseResult("AC-30", "controlled", {
+			status: "failed",
+			failureStage: "action",
+			failureReason: "AC30_ASSERT_FINAL_CALL_COUNT",
+			cleanupStatus: "passed",
+			caseEvidence: {
+				ac30FinalAssertion: {
+					code: "AC30_ASSERT_FINAL_CALL_COUNT",
+					expected: 3,
+					observed: 2,
+				},
+				unapproved: "private token and note bytes",
+			},
+		});
+
+		expect(summary).toMatchObject({
+			ac30FinalAssertion: {
+				code: "AC30_ASSERT_FINAL_CALL_COUNT",
+				expected: 3,
+				observed: 2,
+			},
+		});
+		expect(JSON.stringify(summary)).not.toMatch(/private token|note bytes/);
 	});
 
 	it("summarizes results without returning secret or note values", () => {

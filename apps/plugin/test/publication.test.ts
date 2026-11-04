@@ -26,6 +26,7 @@ import { TextApplyEngine, type TextVault } from "../src/sync/text-apply";
 import {
 	createAc30CaseScripts,
 	createCaseScript,
+	safeCaseResult,
 } from "../tools/desktop-acceptance";
 
 const epoch = "a".repeat(32);
@@ -2818,7 +2819,7 @@ describe("PublicationController", () => {
 
 	it("reports the exact generated AC-30 final-state assertion", async () => {
 		const action = createAc30CaseScripts("/Users/test").action;
-		const start = action.indexOf("if(callCount!==3");
+		const start = action.indexOf("const observedType=");
 		const end = action.indexOf("\n}finally{", start);
 		expect(start).toBeGreaterThanOrEqual(0);
 		expect(end).toBeGreaterThan(start);
@@ -2931,20 +2932,58 @@ describe("PublicationController", () => {
 		const bindings = Object.keys(defaults)
 			.map((key) => `const ${key}=__params[${JSON.stringify(key)}];`)
 			.join("\n");
+		const expectedObservations: Record<string, [unknown, unknown]> = {
+			AC30_ASSERT_FINAL_CALL_COUNT: [3, 2],
+			AC30_ASSERT_FINAL_RETRY_KEY: [true, false],
+			AC30_ASSERT_FINAL_SUCCESSOR_KEY: [false, false],
+			AC30_ASSERT_FINAL_RETRY_PAYLOAD: [true, false],
+			AC30_ASSERT_FINAL_SUCCESSOR_PAYLOAD: [true, false],
+			AC30_ASSERT_FINAL_NO_422: [true, false],
+			AC30_ASSERT_FINAL_FIRST_REVISION: [1, 2],
+			AC30_ASSERT_FINAL_RETRY_REVISION: [1, 2],
+			AC30_ASSERT_SUCCESSOR_REVISION: [2, 3],
+			AC30_ASSERT_FINAL_RETRY_ETAG: [true, false],
+			AC30_ASSERT_FINAL_PRECONDITION_KIND: ["match", "absent"],
+			AC30_ASSERT_FINAL_PRECONDITION_EPOCH: [true, false],
+			AC30_ASSERT_FINAL_PRECONDITION_REVISION: [1, 2],
+			AC30_ASSERT_FINAL_AUTHORITY_LIVE: [false, true],
+			AC30_ASSERT_FINAL_AUTHORITY_REVISION: [2, 3],
+			AC30_ASSERT_FINAL_AUTHORITY_HASH: [true, false],
+			AC30_ASSERT_FINAL_LOCAL_TEXT: [true, false],
+			AC30_ASSERT_FINAL_BASE_PRESENT: ["present", "absent"],
+			AC30_ASSERT_FINAL_BASE_LIVE: [false, true],
+			AC30_ASSERT_FINAL_BASE_REVISION: [2, 3],
+			AC30_ASSERT_FINAL_BASE_HASH: [true, false],
+			AC30_ASSERT_FINAL_LOCAL_HASH: [true, false],
+			AC30_ASSERT_FINAL_PENDING_OPERATIONS: [0, 1],
+			AC30_ASSERT_FINAL_PENDING_APPLIES: [0, 1],
+			AC30_ASSERT_FINAL_RECONCILIATION: ["null", "object"],
+			AC30_ASSERT_FINAL_ATTENTION_COUNT: [3, 4],
+		};
 		const observedCodes: unknown[] = [];
-		for (const [, overrides] of scenarios) {
+		for (const [code, overrides] of scenarios) {
 			const hostScript = createCaseScript(
 				"AC-30",
 				`${bindings}\n${finalAssertions}`,
-				"",
+				"caseEvidence.cleanupRan=true;",
 			);
 			const run = new Function("__params", `return ${hostScript}`)({
 				...defaults,
 				...overrides,
 			});
 			const output = await run;
-			const summary = JSON.parse(output.slice("OAB8CASE:".length));
-			observedCodes.push(summary.failureReason);
+			const record = JSON.parse(output.slice("OAB8CASE:".length));
+			observedCodes.push(record.failureReason);
+			expect(record.caseEvidence.cleanupRan).toBe(true);
+			const summary = safeCaseResult("AC-30", "controlled", record);
+			expect(summary.ac30FinalAssertion).toEqual({
+				code,
+				expected: expectedObservations[code]?.[0],
+				observed: expectedObservations[code]?.[1],
+			});
+			expect(JSON.stringify(summary)).not.toMatch(
+				/original-key|successor-key|other-key|same-etag|other-etag|expected-hash|other-hash|edited bytes|other bytes|epoch/,
+			);
 		}
 		expect(observedCodes).toEqual(scenarios.map(([code]) => code));
 		const hostScript = createCaseScript(
@@ -3199,7 +3238,7 @@ describe("PublicationController", () => {
 			expect(commits[1]?.text).toContain("Local successor edit.");
 			expect(journal.snapshot().pending_ops).toEqual([]);
 			expect(
-				journal.snapshot().base["oab-8.8/ac-30-response-lost-20261104-05.md"],
+				journal.snapshot().base["oab-8.8/ac-30-response-lost-20261104-06.md"],
 			).toMatchObject({
 				deleted: false,
 				rev: 2,

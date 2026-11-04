@@ -95,14 +95,17 @@ export async function readBlobResponse(
 			},
 		});
 	const body = await store.read(metadata.hash, metadata.size, range);
+	const length =
+		range === undefined ? metadata.size : range.end - range.start + 1;
+	const fixed = new FixedLengthStream(length);
+	const piping = body.pipeTo(fixed.writable);
+	void piping.catch(() => {});
 	const headers = new Headers({
 		ETag: metadata.etag,
 		"Cache-Control": "no-transform",
 		"Accept-Ranges": "bytes",
 		"Content-Type": "application/octet-stream",
-		"Content-Length": String(
-			range === undefined ? metadata.size : range.end - range.start + 1,
-		),
+		"Content-Length": String(length),
 		"X-File-Large": String(metadata.large),
 	});
 	if (range !== undefined)
@@ -110,7 +113,7 @@ export async function readBlobResponse(
 			"Content-Range",
 			`bytes ${range.start}-${range.end}/${metadata.size}`,
 		);
-	return new Response(body, {
+	return new Response(fixed.readable, {
 		status: range === undefined ? 200 : 206,
 		headers,
 	});

@@ -178,6 +178,9 @@ describe("declared blob HTTP", () => {
 			if (status === 206) {
 				expect(get.headers.get("X-File-Large")).toBe("true");
 				const received = new Uint8Array(await get.arrayBuffer());
+				expect(get.headers.get("Content-Length")).toBe(
+					String(received.byteLength),
+				);
 				if (range === "bytes=0-4")
 					expect(received).toEqual(bytes.subarray(0, 5));
 				else if (range === "bytes=0-999999" || range === "bytes=0-")

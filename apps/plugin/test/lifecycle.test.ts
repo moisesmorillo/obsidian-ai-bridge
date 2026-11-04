@@ -1,9 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { PublicationEvent } from "../src/sync/publication";
 
 /** Sync commands captured from the plugin settings composition. */
 interface CapturedSyncActions {
 	/** Requests one immediate synchronization cycle. */
 	syncNow(): void;
+	/** Pauses the active controller and disposes the current composition. */
+	pause(): void;
+	/** Resumes the active controller after composition setup. */
+	resume(): void;
 }
 
 const host = vi.hoisted(() => ({
@@ -21,6 +26,19 @@ const host = vi.hoisted(() => ({
 	state: null as unknown,
 	failSave: false,
 	loadState: null as (() => unknown) | null,
+	vaultListeners: [] as Array<{
+		event: string;
+		callback: (...args: unknown[]) => void;
+	}>,
+	compositionNames: [] as string[],
+	compositionDisposals: [] as string[],
+	publicationEvents: [] as PublicationEvent[],
+	syncCycles: 0,
+	cycleGate: null as {
+		/** Signals that the controlled synchronization phase reached its wait. */
+		started(): void;
+		wait: Promise<void>;
+	} | null,
 }));
 
 vi.mock("obsidian", () => ({
@@ -50,8 +68,17 @@ vi.mock("obsidian", () => ({
 				modify: (..._args: unknown[]) => host.calls.push("vault.modify"),
 				delete: (..._args: unknown[]) => host.calls.push("vault.delete"),
 				getFiles: () => [],
-				on: () => ({}),
-				offref: () => undefined,
+				on: (event: string, callback: (...args: unknown[]) => void) => {
+					const listener = { event, callback };
+					host.vaultListeners.push(listener);
+					return listener;
+				},
+				offref: (reference: unknown) => {
+					const index = host.vaultListeners.indexOf(
+						reference as (typeof host.vaultListeners)[number],
+					);
+					if (index >= 0) host.vaultListeners.splice(index, 1);
+				},
 				adapter: {
 					exists: async () => false,
 					mkdir: async () => undefined,
@@ -79,6 +106,48 @@ vi.mock("obsidian", () => ({
 	},
 }));
 
+vi.mock("../src/sync/create-publication", () => ({
+	/** Captures the active label while leaving controller and event lifetimes real. */
+	createPublication: (...args: unknown[]) => {
+		const deviceName = args[4] as string;
+		host.compositionNames.push(deviceName);
+		return {
+			publication: {
+				/** Captures explicit events admitted by the real controller. */
+				observe: async (event: PublicationEvent) => {
+					host.publicationEvents.push(structuredClone(event));
+				},
+				scan: async () => undefined,
+				flush: async () => undefined,
+			},
+			reconciliation: {
+				lastHead: null,
+				/** Counts actual controller cycles and waits at a test-selected boundary. */
+				resume: async () => {
+					host.syncCycles += 1;
+					const gate = host.cycleGate;
+					if (!gate) return;
+					host.cycleGate = null;
+					gate.started();
+					await gate.wait;
+				},
+				enroll: async () => undefined,
+				replay: async () => {
+					const gate = host.cycleGate;
+					if (!gate) return;
+					host.cycleGate = null;
+					gate.started();
+					await gate.wait;
+				},
+				close: () => undefined,
+			},
+			readVaultSummary: async () => null,
+			/** Records disposal of one effect composition without closing the controller. */
+			dispose: () => host.compositionDisposals.push(deviceName),
+		};
+	},
+}));
+
 vi.mock("../src/settings", () => ({
 	/** Captures settings callbacks without rendering Obsidian controls. */
 	AIBridgeSettingTab: class {
@@ -99,8 +168,78 @@ import {
 	DeviceSession,
 	type DeviceSessionHost,
 } from "../src/auth/device-session";
+import { VaultEventAdapter } from "../src/infrastructure/vault-events";
 import AIBridgePlugin from "../src/main";
+import { DesktopSyncController } from "../src/sync/desktop-sync";
 import { DeviceJournal } from "../src/sync/device-journal";
+
+/** Starts a plugin with real controller and vault-event owners. */
+async function startConnectedPlugin(
+	connectDuringRestore = true,
+): Promise<AIBridgePlugin> {
+	vi.useFakeTimers();
+	vi.stubGlobal("window", {
+		setTimeout: (callback: () => void, delay: number) =>
+			globalThis.setTimeout(callback, delay),
+		clearTimeout: (handle: number) => globalThis.clearTimeout(handle),
+		setInterval: (callback: () => void, delay: number) =>
+			globalThis.setInterval(callback, delay),
+		clearInterval: (handle: number) => globalThis.clearInterval(handle),
+		addEventListener: () => undefined,
+		removeEventListener: () => undefined,
+	});
+	vi.stubGlobal("document", {
+		visibilityState: "visible",
+		hasFocus: () => true,
+		addEventListener: () => undefined,
+		removeEventListener: () => undefined,
+	});
+	vi.spyOn(DeviceSession.prototype, "restore").mockImplementation(
+		async function (this: DeviceSession) {
+			if (!connectDuringRestore) return;
+			const sessionHost = Reflect.get(this, "host") as DeviceSessionHost;
+			sessionHost.statusChanged("connected");
+		},
+	);
+	const plugin = new AIBridgePlugin({} as App, {} as PluginManifest);
+	await plugin.onload();
+	const controller = Reflect.get(
+		plugin,
+		"desktopSync",
+	) as DesktopSyncController | null;
+	await controller?.waitForIdle();
+	return plugin;
+}
+
+/** Settles queued promise turns after the real controller drains an event. */
+async function settleController(
+	controller: DesktopSyncController,
+): Promise<void> {
+	for (let turn = 0; turn < 6; turn += 1) {
+		await Promise.resolve();
+		await controller.waitForIdle();
+	}
+}
+
+/** Waits for queued sync transitions and any cycle they admitted. */
+async function settleSyncEffects(plugin: AIBridgePlugin): Promise<void> {
+	await (Reflect.get(plugin, "syncEffectTail") as Promise<void>);
+	const controller = Reflect.get(
+		plugin,
+		"desktopSync",
+	) as DesktopSyncController | null;
+	await controller?.waitForIdle();
+	await (Reflect.get(plugin, "syncEffectTail") as Promise<void>);
+}
+
+/** Sends one synthetic Obsidian callback through the registered production adapter. */
+function emitVaultEvent(event: string, ...args: unknown[]): void {
+	const listener = host.vaultListeners.find(
+		(candidate) => candidate.event === event,
+	);
+	if (!listener) throw new Error(`Vault ${event} listener is not registered`);
+	listener.callback(...args);
+}
 
 describe("AIBridgePlugin device-local lifecycle", () => {
 	beforeEach(() => {
@@ -116,6 +255,12 @@ describe("AIBridgePlugin device-local lifecycle", () => {
 		host.state = null;
 		host.failSave = false;
 		host.loadState = null;
+		host.vaultListeners.splice(0);
+		host.compositionNames.splice(0);
+		host.compositionDisposals.splice(0);
+		host.publicationEvents.splice(0);
+		host.syncCycles = 0;
+		host.cycleGate = null;
 	});
 
 	it("defers sync until connected credential restore completes", async () => {
@@ -161,6 +306,101 @@ describe("AIBridgePlugin device-local lifecycle", () => {
 			vi.unstubAllGlobals();
 		}
 	});
+	it("creates a paused controller after connection from a disconnected state", async () => {
+		const plugin = await startConnectedPlugin(false);
+		try {
+			expect(Reflect.get(plugin, "sessionStatus")).toBe("disconnected");
+			expect(Reflect.get(plugin, "desktopSync")).toBeNull();
+			host.syncActions?.pause();
+			await settleSyncEffects(plugin);
+			expect(Reflect.get(plugin, "syncPaused")).toBe(true);
+
+			const session = Reflect.get(plugin, "session") as DeviceSession;
+			const sessionHost = Reflect.get(session, "host") as DeviceSessionHost;
+			sessionHost.statusChanged("connected");
+			await settleSyncEffects(plugin);
+
+			const controller = Reflect.get(plugin, "desktopSync");
+			const adapter = Reflect.get(plugin, "vaultEvents");
+			expect(controller).toBeInstanceOf(DesktopSyncController);
+			expect(adapter).toBeInstanceOf(VaultEventAdapter);
+			expect(Reflect.get(controller, "paused")).toBe(true);
+			expect(host.syncCycles).toBe(0);
+
+			emitVaultEvent("modify", { path: "connected-before-resume.md" });
+			expect((controller as DesktopSyncController).isBusy).toBe(true);
+			expect(host.publicationEvents).toEqual([]);
+			host.syncActions?.resume();
+			await settleSyncEffects(plugin);
+
+			expect(Reflect.get(plugin, "syncPaused")).toBe(false);
+			expect(Reflect.get(plugin, "desktopSync")).toBe(controller);
+			expect(host.publicationEvents).toEqual([
+				{ type: "modify", path: "connected-before-resume.md" },
+			]);
+			expect(host.syncCycles).toBeGreaterThan(0);
+		} finally {
+			plugin.onunload();
+			vi.restoreAllMocks();
+			vi.unstubAllGlobals();
+			vi.useRealTimers();
+		}
+	});
+
+	it("recreates a paused controller after paused server replacement reconnects", async () => {
+		const plugin = await startConnectedPlugin();
+		try {
+			const originalController = Reflect.get(
+				plugin,
+				"desktopSync",
+			) as DesktopSyncController;
+			host.syncActions?.pause();
+			await settleSyncEffects(plugin);
+			const updateServer = host.serverUrlChange;
+			if (!updateServer)
+				throw new Error("Server URL callback was not registered");
+			await updateServer("https://replacement-service.test");
+			expect(Reflect.get(plugin, "desktopSync")).toBeNull();
+			expect(Reflect.get(plugin, "syncPaused")).toBe(true);
+			expect(Reflect.get(plugin, "sessionStatus")).toBe("disconnected");
+			host.syncCycles = 0;
+
+			const replacement = Reflect.get(plugin, "session") as DeviceSession;
+			const replacementHost = Reflect.get(
+				replacement,
+				"host",
+			) as DeviceSessionHost;
+			replacementHost.statusChanged("connected");
+			await settleSyncEffects(plugin);
+
+			const controller = Reflect.get(plugin, "desktopSync");
+			const adapter = Reflect.get(plugin, "vaultEvents");
+			expect(controller).toBeInstanceOf(DesktopSyncController);
+			expect(controller).not.toBe(originalController);
+			expect(adapter).toBeInstanceOf(VaultEventAdapter);
+			expect(Reflect.get(controller, "paused")).toBe(true);
+			expect(host.syncCycles).toBe(0);
+
+			emitVaultEvent("delete", { path: "replacement-before-resume.md" });
+			expect((controller as DesktopSyncController).isBusy).toBe(true);
+			expect(host.publicationEvents).toEqual([]);
+			host.syncActions?.resume();
+			await settleSyncEffects(plugin);
+
+			expect(Reflect.get(plugin, "desktopSync")).toBe(controller);
+			expect(Reflect.get(plugin, "syncPaused")).toBe(false);
+			expect(host.publicationEvents).toEqual([
+				{ type: "delete", path: "replacement-before-resume.md" },
+			]);
+			expect(host.syncCycles).toBeGreaterThan(0);
+		} finally {
+			plugin.onunload();
+			vi.restoreAllMocks();
+			vi.unstubAllGlobals();
+			vi.useRealTimers();
+		}
+	});
+
 	it("opens one local journal without network requests or vault mutation", async () => {
 		const plugin = new AIBridgePlugin({} as App, {} as PluginManifest);
 		await plugin.onload();
@@ -259,6 +499,337 @@ describe("AIBridgePlugin device-local lifecycle", () => {
 		await expect(pending).rejects.toThrow();
 		expect(close).toHaveBeenCalledTimes(2);
 		close.mockRestore();
+	});
+
+	it("keeps the real controller and event adapter across paused and debounced name changes", async () => {
+		const plugin = await startConnectedPlugin();
+		try {
+			const controller = Reflect.get(plugin, "desktopSync");
+			const adapter = Reflect.get(plugin, "vaultEvents");
+			const journal = Reflect.get(plugin, "journal");
+			const journalState = structuredClone(
+				Reflect.get(journal, "snapshot").call(journal),
+			);
+			expect(controller).toBeInstanceOf(DesktopSyncController);
+			expect(adapter).toBeInstanceOf(VaultEventAdapter);
+			const update = host.deviceNameChange;
+			if (!update) throw new Error("Device name callback was not registered");
+
+			host.syncActions?.pause();
+			emitVaultEvent("delete", { path: "paused-delete.md" });
+			await update("device with paused delete");
+			expect(Reflect.get(plugin, "desktopSync")).toBe(controller);
+			expect(Reflect.get(plugin, "vaultEvents")).toBe(adapter);
+			expect(Reflect.get(plugin, "syncPaused")).toBe(true);
+			host.syncActions?.resume();
+			await settleController(controller as DesktopSyncController);
+			expect(Reflect.get(plugin, "syncPaused")).toBe(false);
+			expect(Reflect.get(controller, "paused")).toBe(false);
+			expect(host.publicationEvents).toEqual([
+				{ type: "delete", path: "paused-delete.md" },
+			]);
+
+			host.syncActions?.pause();
+			emitVaultEvent(
+				"rename",
+				{ path: "renamed-target.md" },
+				"rename-source.md",
+			);
+			await update("device with paused rename");
+			expect(Reflect.get(plugin, "desktopSync")).toBe(controller);
+			expect(Reflect.get(plugin, "vaultEvents")).toBe(adapter);
+			host.syncActions?.resume();
+			await settleController(controller as DesktopSyncController);
+			expect(host.publicationEvents).toEqual([
+				{ type: "delete", path: "paused-delete.md" },
+				{
+					type: "rename",
+					path: "rename-source.md",
+					to: "renamed-target.md",
+				},
+			]);
+
+			emitVaultEvent("modify", { path: "debounced-modify.md" });
+			await update("device with debounced event");
+			expect(Reflect.get(plugin, "desktopSync")).toBe(controller);
+			expect(Reflect.get(plugin, "vaultEvents")).toBe(adapter);
+			await settleController(controller as DesktopSyncController);
+			expect(host.publicationEvents).toEqual([
+				{ type: "delete", path: "paused-delete.md" },
+				{
+					type: "rename",
+					path: "rename-source.md",
+					to: "renamed-target.md",
+				},
+				{ type: "modify", path: "debounced-modify.md" },
+			]);
+			expect(
+				host.publicationEvents.filter((event) => event.type === "delete"),
+			).toHaveLength(1);
+			expect(host.compositionNames).toContain("device with paused delete");
+			expect(host.compositionNames).toContain("device with paused rename");
+			expect(host.compositionNames).toContain("device with debounced event");
+			expect(Reflect.get(plugin, "journal")).toBe(journal);
+			expect(Reflect.get(journal, "snapshot").call(journal)).toEqual(
+				journalState,
+			);
+		} finally {
+			plugin.onunload();
+			vi.restoreAllMocks();
+			vi.unstubAllGlobals();
+			vi.useRealTimers();
+		}
+	});
+
+	it("rejects a stale name change after real controller work settles", async () => {
+		const plugin = await startConnectedPlugin();
+		const controller = Reflect.get(
+			plugin,
+			"desktopSync",
+		) as DesktopSyncController;
+		let releaseWork: (() => void) | undefined;
+		let markWorkStarted: (() => void) | undefined;
+		const workStarted = new Promise<void>((resolve) => {
+			markWorkStarted = resolve;
+		});
+		host.cycleGate = {
+			started: () => markWorkStarted?.(),
+			wait: new Promise<void>((resolve) => {
+				releaseWork = resolve;
+			}),
+		};
+		const cycle = controller.syncNow();
+		await workStarted;
+		const update = host.deviceNameChange;
+		if (!update) throw new Error("Device name callback was not registered");
+		const older = update("obsolete device name");
+		for (let turn = 0; turn < 8; turn += 1) await Promise.resolve();
+		const newer = update("current device name");
+		releaseWork?.();
+		await cycle;
+		await expect(older).rejects.toThrow("Device name update is stale");
+		await newer;
+		await settleController(controller);
+
+		expect(Reflect.get(plugin, "desktopSync")).toBe(controller);
+		expect(controller.isBusy).toBe(false);
+		expect(Reflect.get(controller, "closed")).toBe(false);
+		expect(Reflect.get(controller, "paused")).toBe(false);
+		expect(Reflect.get(plugin, "settingsValue")).toMatchObject({
+			deviceName: "current device name",
+		});
+		expect(host.compositionNames).toContain("obsolete device name");
+		expect(host.compositionDisposals).toContain("obsolete device name");
+		expect(host.compositionNames).toContain("current device name");
+		plugin.onunload();
+		vi.restoreAllMocks();
+		vi.unstubAllGlobals();
+		vi.useRealTimers();
+	});
+
+	it("resumes old effects when a newer name save fails during quiescence", async () => {
+		const plugin = await startConnectedPlugin();
+		const controller = Reflect.get(
+			plugin,
+			"desktopSync",
+		) as DesktopSyncController;
+		let releaseWork: (() => void) | undefined;
+		let markWorkStarted: (() => void) | undefined;
+		const workStarted = new Promise<void>((resolve) => {
+			markWorkStarted = resolve;
+		});
+		host.cycleGate = {
+			started: () => markWorkStarted?.(),
+			wait: new Promise<void>((resolve) => {
+				releaseWork = resolve;
+			}),
+		};
+		const cycle = controller.syncNow();
+		await workStarted;
+		const update = host.deviceNameChange;
+		if (!update) throw new Error("Device name callback was not registered");
+		const older = update("older device name");
+		for (let turn = 0; turn < 12; turn += 1) {
+			if (Reflect.get(controller, "paused")) break;
+			await Promise.resolve();
+		}
+		expect(Reflect.get(controller, "paused")).toBe(true);
+		host.saveDataAction = async () => {
+			throw new Error("newer settings write failed");
+		};
+		const newer = update("newer device name");
+		releaseWork?.();
+		await cycle;
+		await expect(older).rejects.toThrow("Device name update is stale");
+		await expect(newer).rejects.toThrow("newer settings write failed");
+		await settleController(controller);
+
+		expect(Reflect.get(plugin, "desktopSync")).toBe(controller);
+		expect(Reflect.get(controller, "closed")).toBe(false);
+		expect(Reflect.get(controller, "paused")).toBe(false);
+		expect(Reflect.get(plugin, "settingsValue")).toMatchObject({
+			deviceName: "Obsidian desktop",
+		});
+		expect(host.compositionDisposals).toContain("older device name");
+		expect(host.compositionDisposals).toContain("newer device name");
+		plugin.onunload();
+		vi.restoreAllMocks();
+		vi.unstubAllGlobals();
+		vi.useRealTimers();
+	});
+
+	it("keeps the active controller when device-name persistence fails", async () => {
+		const plugin = await startConnectedPlugin();
+		const controller = Reflect.get(
+			plugin,
+			"desktopSync",
+		) as DesktopSyncController;
+		const initialCompositionCount = host.compositionNames.length;
+		host.saveDataAction = async () => {
+			throw new Error("settings write failed");
+		};
+		const update = host.deviceNameChange;
+		if (!update) throw new Error("Device name callback was not registered");
+
+		await expect(update("unsaved device name")).rejects.toThrow(
+			"settings write failed",
+		);
+		expect(Reflect.get(plugin, "desktopSync")).toBe(controller);
+		expect(Reflect.get(controller, "paused")).toBe(false);
+		expect(Reflect.get(controller, "closed")).toBe(false);
+		expect(Reflect.get(plugin, "settingsValue")).toMatchObject({
+			deviceName: "Obsidian desktop",
+		});
+		expect(host.compositionNames).toHaveLength(initialCompositionCount + 1);
+		expect(host.compositionDisposals).toContain("unsaved device name");
+		plugin.onunload();
+		vi.restoreAllMocks();
+		vi.unstubAllGlobals();
+		vi.useRealTimers();
+	});
+
+	it("does not install a name composition after unload during controller quiescence", async () => {
+		const plugin = await startConnectedPlugin();
+		const controller = Reflect.get(
+			plugin,
+			"desktopSync",
+		) as DesktopSyncController;
+		let releaseWork: (() => void) | undefined;
+		let markWorkStarted: (() => void) | undefined;
+		const workStarted = new Promise<void>((resolve) => {
+			markWorkStarted = resolve;
+		});
+		host.cycleGate = {
+			started: () => markWorkStarted?.(),
+			wait: new Promise<void>((resolve) => {
+				releaseWork = resolve;
+			}),
+		};
+		const cycle = controller.syncNow();
+		await workStarted;
+		const update = host.deviceNameChange;
+		if (!update) throw new Error("Device name callback was not registered");
+		const pending = update("unloaded device name");
+		for (let turn = 0; turn < 8; turn += 1) await Promise.resolve();
+		plugin.onunload();
+		releaseWork?.();
+		await cycle;
+		await expect(pending).rejects.toThrow("Device name update is stale");
+
+		expect(Reflect.get(plugin, "desktopSync")).toBeNull();
+		expect(host.compositionNames).toContain("unloaded device name");
+		expect(host.compositionDisposals).toContain("unloaded device name");
+		vi.restoreAllMocks();
+		vi.unstubAllGlobals();
+		vi.useRealTimers();
+	});
+
+	it("closes a server candidate that becomes stale during sync shutdown", async () => {
+		const plugin = new AIBridgePlugin({} as App, {} as PluginManifest);
+		await plugin.onload();
+		Reflect.set(plugin, "sessionStatus", "connected");
+		const initialSession = Reflect.get(plugin, "session");
+		const buildSession = Reflect.get(plugin, "buildSession").bind(plugin);
+		const candidates: unknown[] = [];
+		Reflect.set(plugin, "buildSession", (url: string) => {
+			const candidate = buildSession(url);
+			candidates.push(candidate);
+			return candidate;
+		});
+		let releaseShutdown: (() => void) | undefined;
+		let markShutdownStarted: (() => void) | undefined;
+		const shutdownStarted = new Promise<void>((resolve) => {
+			markShutdownStarted = resolve;
+		});
+		let shutdownCount = 0;
+		Reflect.set(
+			plugin,
+			"stopSync",
+			vi.fn(() => {
+				shutdownCount += 1;
+				if (shutdownCount > 1) return Promise.resolve();
+				return new Promise<void>((resolve) => {
+					releaseShutdown = resolve;
+					markShutdownStarted?.();
+				});
+			}),
+		);
+		const update = host.serverUrlChange;
+		if (!update) throw new Error("Server URL callback was not registered");
+		const older = update("https://older-service.test");
+		await shutdownStarted;
+		const staleCandidate = candidates[0] as DeviceSession;
+		const closeStaleCandidate = vi.spyOn(staleCandidate, "close");
+		const newer = update("https://newer-service.test");
+		releaseShutdown?.();
+		await expect(older).rejects.toThrow("Server setting update is stale");
+		await newer;
+
+		expect(candidates).toHaveLength(2);
+		expect(closeStaleCandidate).toHaveBeenCalledOnce();
+		expect(Reflect.get(plugin, "session")).toBe(candidates[1]);
+		expect(Reflect.get(plugin, "session")).not.toBe(initialSession);
+		expect(Reflect.get(plugin, "settingsValue")).toMatchObject({
+			serverUrl: "https://newer-service.test",
+		});
+		plugin.onunload();
+	});
+
+	it("closes a server candidate when unload occurs during sync shutdown", async () => {
+		const plugin = new AIBridgePlugin({} as App, {} as PluginManifest);
+		await plugin.onload();
+		const buildSession = Reflect.get(plugin, "buildSession").bind(plugin);
+		let candidate: DeviceSession | undefined;
+		Reflect.set(plugin, "buildSession", (url: string) => {
+			candidate = buildSession(url);
+			return candidate;
+		});
+		let releaseShutdown: (() => void) | undefined;
+		let markShutdownStarted: (() => void) | undefined;
+		const shutdownStarted = new Promise<void>((resolve) => {
+			markShutdownStarted = resolve;
+		});
+		Reflect.set(
+			plugin,
+			"stopSync",
+			() =>
+				new Promise<void>((resolve) => {
+					releaseShutdown = resolve;
+					markShutdownStarted?.();
+				}),
+		);
+		const update = host.serverUrlChange;
+		if (!update) throw new Error("Server URL callback was not registered");
+		const pending = update("https://unloaded-service.test");
+		await shutdownStarted;
+		if (!candidate) throw new Error("Server candidate was not created");
+		const closeCandidate = vi.spyOn(candidate, "close");
+		plugin.onunload();
+		releaseShutdown?.();
+
+		await expect(pending).rejects.toThrow("Server setting update is stale");
+		expect(closeCandidate).toHaveBeenCalledOnce();
+		expect(Reflect.get(plugin, "session")).toBeNull();
 	});
 
 	it("persists the local device name with existing non-secret settings", async () => {

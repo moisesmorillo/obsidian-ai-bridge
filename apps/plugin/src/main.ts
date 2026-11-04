@@ -69,6 +69,10 @@ export default class AIBridgePlugin extends Plugin {
 	private settingsUpdateGeneration = 0;
 	/** Serializes settings writes so the latest accepted values persist last. */
 	private settingsSaveTail: Promise<void> = Promise.resolve();
+	/** Serializes controller resumes and composition changes around retained event intent. */
+	private syncEffectTail: Promise<void> = Promise.resolve();
+	/** Fences a pending resume when the user selects Pause again. */
+	private syncPauseGeneration = 0;
 	/** Safe user-facing reason when local journal initialization cannot proceed. */
 	attentionReason: string | null = null;
 
@@ -147,6 +151,10 @@ export default class AIBridgePlugin extends Plugin {
 							throw new Error("Server setting update is stale");
 						}
 						await this.stopSync();
+						if (!this.ownsSettingsUpdate(generation, update)) {
+							nextSession.close();
+							throw new Error("Server setting update is stale");
+						}
 						const previousSession = this.session;
 						this.session = nextSession;
 						this.settingsValue.serverUrl = url;
@@ -167,16 +175,26 @@ export default class AIBridgePlugin extends Plugin {
 							throw new Error("Device name update is stale");
 						if (!name.trim() || name.length > 80)
 							throw new Error("Device name is invalid");
-						await this.saveData({ ...this.settingsValue, deviceName: name });
-						if (!this.ownsSettingsUpdate(generation, update))
+						const nextComposition =
+							this.desktopSync && !this.syncRevoked
+								? this.createSyncComposition(name)
+								: null;
+						try {
+							await this.saveData({ ...this.settingsValue, deviceName: name });
+						} catch (error) {
+							nextComposition?.dispose();
+							throw error;
+						}
+						if (!this.ownsSettingsUpdate(generation, update)) {
+							nextComposition?.dispose();
 							throw new Error("Device name update is stale");
-						const restartSync =
-							this.sessionStatus === "connected" &&
-							!this.syncPaused &&
-							!this.syncRevoked;
-						await this.stopSync();
-						this.settingsValue.deviceName = name;
-						if (restartSync) this.startSync();
+						}
+						await this.reconfigureDeviceName(
+							generation,
+							update,
+							name,
+							nextComposition,
+						);
 					});
 					this.settingsSaveTail = save.then(
 						() => undefined,
@@ -194,11 +212,12 @@ export default class AIBridgePlugin extends Plugin {
 						);
 					},
 					pause: () => {
+						const controller = this.desktopSync;
+						this.syncPauseGeneration += 1;
 						this.syncPaused = true;
-						this.desktopSync?.pause();
-						this.composition?.dispose();
-						this.composition = null;
+						controller?.pause();
 						this.settingsTab?.refreshStatus();
+						this.runSyncAction(() => this.disposePausedComposition(controller));
 					},
 					resume: () => {
 						this.runSyncAction(() => this.resumeSync());
@@ -241,6 +260,126 @@ export default class AIBridgePlugin extends Plugin {
 		);
 	}
 
+	/** Disposes pause-scoped effects only after work admitted before Pause settles. */
+	private async disposePausedComposition(
+		controller: DesktopSyncController | null,
+	): Promise<void> {
+		await this.serializeSyncEffect(async () => {
+			await controller?.waitForIdle();
+			if (controller !== this.desktopSync || !this.syncPaused) return;
+			this.composition?.dispose();
+			this.composition = null;
+			this.settingsTab?.refreshStatus();
+		});
+	}
+
+	/** Serializes one controller or composition transition and releases the queue after failure. */
+	private serializeSyncEffect<T>(effect: () => Promise<T>): Promise<T> {
+		const result = this.syncEffectTail.then(effect);
+		this.syncEffectTail = result.then(
+			() => undefined,
+			() => undefined,
+		);
+		return result;
+	}
+
+	/** Replaces only label-dependent effects after the retained controller reaches idle. */
+	private async reconfigureDeviceName(
+		lifecycle: number,
+		update: number,
+		name: string,
+		candidate: PublicationComposition | null,
+	): Promise<void> {
+		await this.serializeSyncEffect(async () => {
+			if (!this.ownsSettingsUpdate(lifecycle, update)) {
+				candidate?.dispose();
+				throw new Error("Device name update is stale");
+			}
+			const controller = this.desktopSync;
+			if (!controller || this.syncRevoked) {
+				candidate?.dispose();
+				this.settingsValue.deviceName = name;
+				if (
+					!controller &&
+					this.sessionStatus === "connected" &&
+					!this.syncPaused &&
+					!this.syncRevoked
+				)
+					this.startSync();
+				this.settingsTab?.refreshStatus();
+				return;
+			}
+
+			const nextComposition = candidate ?? this.createSyncComposition(name);
+			const previousComposition = this.composition;
+			const shouldResume =
+				this.sessionStatus === "connected" &&
+				!this.syncPaused &&
+				!this.syncRevoked;
+			controller.pause();
+			try {
+				await controller.waitForIdle();
+			} catch (error) {
+				nextComposition.dispose();
+				await this.resumeControllerIfOwned(
+					controller,
+					previousComposition,
+					shouldResume,
+				);
+				throw error;
+			}
+
+			if (!this.ownsSettingsUpdate(lifecycle, update)) {
+				nextComposition.dispose();
+				await this.resumeControllerIfOwned(
+					controller,
+					previousComposition,
+					shouldResume,
+				);
+				throw new Error("Device name update is stale");
+			}
+			if (controller !== this.desktopSync || this.syncRevoked) {
+				nextComposition.dispose();
+				this.settingsValue.deviceName = name;
+				this.settingsTab?.refreshStatus();
+				return;
+			}
+
+			this.composition = nextComposition;
+			this.settingsValue.deviceName = name;
+			this.vaultSummary = null;
+			previousComposition?.dispose();
+			await this.resumeControllerIfOwned(
+				controller,
+				nextComposition,
+				shouldResume,
+			);
+			this.settingsTab?.refreshStatus();
+		});
+	}
+
+	/** Resumes only when the controller and expected composition still own active sync. */
+	private async resumeControllerIfOwned(
+		controller: DesktopSyncController,
+		composition: PublicationComposition | null,
+		shouldResume: boolean,
+	): Promise<void> {
+		if (
+			!shouldResume ||
+			controller !== this.desktopSync ||
+			this.composition !== composition ||
+			this.syncPaused ||
+			this.syncRevoked ||
+			this.sessionStatus !== "connected"
+		)
+			return;
+		try {
+			await controller.resume();
+		} catch {
+			this.reportSyncFailure();
+		}
+	}
+
 	/** Builds a controller from the current service setting and device-local storage. */
 	private createSession(): DeviceSession {
 		const nextSession = this.buildSession(this.settingsValue.serverUrl);
@@ -269,14 +408,18 @@ export default class AIBridgePlugin extends Plugin {
 				this.sessionStatus = status;
 				if (status === "connected") {
 					this.syncRevoked = false;
-					if (this.sessionRestoreComplete) this.startSync();
+					if (this.sessionRestoreComplete) {
+						if (!this.desktopSync) this.startSync();
+						else if (!this.syncPaused)
+							this.runSyncAction(() => this.resumeSync());
+					}
 				}
 				this.settingsTab?.refreshStatus();
 			},
 		});
 	}
 
-	/** Creates the shared synchronizer once for a connected session and starts recovery. */
+	/** Creates one retained controller and starts recovery only when sync is not paused. */
 	private startSync(): void {
 		if (this.desktopSync || !this.journal || !this.session) return;
 		this.composition = this.createSyncComposition();
@@ -345,8 +488,10 @@ export default class AIBridgePlugin extends Plugin {
 			this.runSyncAction(() => this.desktopSync?.start() ?? Promise.resolve());
 	}
 
-	/** Creates one shared publication and apply composition for the active session lifetime. */
-	private createSyncComposition(): PublicationComposition {
+	/** Creates one publication and apply composition with the supplied device label. */
+	private createSyncComposition(
+		deviceName = this.settingsValue.deviceName,
+	): PublicationComposition {
 		if (!this.session || !this.journal)
 			throw new Error("Sync session is unavailable");
 		return createPublication(
@@ -354,7 +499,7 @@ export default class AIBridgePlugin extends Plugin {
 			this.session,
 			this.journal,
 			this.app.vault,
-			this.settingsValue.deviceName,
+			deviceName,
 			{
 				now: Date.now,
 				registerEvents: false,
@@ -377,18 +522,29 @@ export default class AIBridgePlugin extends Plugin {
 		if (controller === this.desktopSync) this.desktopSync = null;
 	}
 
-	/** Waits for fenced work before constructing fresh effect owners and resuming. */
+	/** Waits for composition changes before it resumes the retained event owner. */
 	private async resumeSync(): Promise<void> {
-		const controller = this.desktopSync;
-		if (!controller || !this.session || this.syncRevoked) return;
-		await controller.waitForIdle();
-		if (controller !== this.desktopSync || this.sessionStatus !== "connected")
-			return;
-		this.composition = this.createSyncComposition();
-		this.vaultSummary = null;
-		this.syncPaused = false;
-		await controller.resume();
-		this.settingsTab?.refreshStatus();
+		const pauseGeneration = this.syncPauseGeneration;
+		await this.serializeSyncEffect(async () => {
+			const controller = this.desktopSync;
+			if (!controller || !this.session || this.syncRevoked) return;
+			await controller.waitForIdle();
+			if (
+				controller !== this.desktopSync ||
+				this.sessionStatus !== "connected" ||
+				pauseGeneration !== this.syncPauseGeneration
+			)
+				return;
+			if (!this.composition) this.composition = this.createSyncComposition();
+			this.vaultSummary = null;
+			this.syncPaused = false;
+			try {
+				await controller.resume();
+			} catch {
+				this.reportSyncFailure();
+			}
+			this.settingsTab?.refreshStatus();
+		});
 	}
 
 	/** Closes effect owners immediately after a confirmed revocation, preserving journal state. */

@@ -2935,7 +2935,7 @@ describe("PublicationController", () => {
 		const expectedObservations: Record<string, [unknown, unknown]> = {
 			AC30_ASSERT_FINAL_CALL_COUNT: [3, 2],
 			AC30_ASSERT_FINAL_RETRY_KEY: [true, false],
-			AC30_ASSERT_FINAL_SUCCESSOR_KEY: [false, false],
+			AC30_ASSERT_FINAL_SUCCESSOR_KEY: [true, false],
 			AC30_ASSERT_FINAL_RETRY_PAYLOAD: [true, false],
 			AC30_ASSERT_FINAL_SUCCESSOR_PAYLOAD: [true, false],
 			AC30_ASSERT_FINAL_NO_422: [true, false],

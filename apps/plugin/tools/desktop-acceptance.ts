@@ -1986,7 +1986,7 @@ try{
  const failFinal=(code,expected,observed)=>{recordAc30FinalAssertion(code,expected,observed);throw new Error(code);};
  if(callCount!==3)failFinal("AC30_ASSERT_FINAL_CALL_COUNT",3,observedNumber(callCount));
  if(retryKey!==firstKey)failFinal("AC30_ASSERT_FINAL_RETRY_KEY",true,retryKey===firstKey);
- if(successorKey===firstKey)failFinal("AC30_ASSERT_FINAL_SUCCESSOR_KEY",false,successorKey!==firstKey);
+ if(successorKey===firstKey)failFinal("AC30_ASSERT_FINAL_SUCCESSOR_KEY",true,successorKey!==firstKey);
  if(!retryPayloadMatchesOriginal)failFinal("AC30_ASSERT_FINAL_RETRY_PAYLOAD",true,retryPayloadMatchesOriginal);
  if(!successorPayloadMatchesEdited)failFinal("AC30_ASSERT_FINAL_SUCCESSOR_PAYLOAD",true,successorPayloadMatchesEdited);
  if(retryStatus===422)failFinal("AC30_ASSERT_FINAL_NO_422",true,retryStatus!==422);

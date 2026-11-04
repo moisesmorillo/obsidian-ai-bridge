@@ -58,6 +58,29 @@ export interface PinnedBlob {
 	rev: number;
 }
 
+/** Maximum number of bytes accepted for one blob response. */
+const MAX_BLOB_RESPONSE_BYTES = 25_000_000;
+
+/** Accepts body bytes within the cap and any present canonical length that matches them. */
+function readBlobResponseBytes(
+	response: OAuthTransportResponse,
+): Uint8Array | null {
+	if (!response.arrayBuffer) return null;
+	const bytes = new Uint8Array(response.arrayBuffer.slice(0));
+	if (bytes.byteLength > MAX_BLOB_RESPONSE_BYTES) return null;
+	const size = response.headers["content-length"];
+	if (size === undefined) return bytes;
+	if (!/^(0|[1-9][0-9]*)$/.test(size)) return null;
+	const declaredSize = Number(size);
+	if (
+		!Number.isSafeInteger(declaredSize) ||
+		declaredSize > MAX_BLOB_RESPONSE_BYTES ||
+		declaredSize !== bytes.byteLength
+	)
+		return null;
+	return bytes;
+}
+
 /** Authenticated protocol adapter for bounded metadata, feed, pinned reads, and create-only enrollment. */
 export class SyncTransport {
 	private readonly origin: string;
@@ -114,11 +137,8 @@ export class SyncTransport {
 		);
 		const etag = response.headers.etag;
 		const identity = etag ? parseETag(etag) : null;
-		const size = response.headers["content-length"];
 		const hash = DevicePayloadHashSchema.parse(expectedHash);
-		const bytes = response.arrayBuffer
-			? new Uint8Array(response.arrayBuffer.slice(0))
-			: null;
+		const bytes = readBlobResponseBytes(response);
 		if (
 			response.headers["content-type"]
 				?.split(";", 1)[0]
@@ -128,10 +148,6 @@ export class SyncTransport {
 			identity.epoch !== epoch ||
 			identity.rev !== rev ||
 			!bytes ||
-			!/^(0|[1-9][0-9]*)$/.test(size ?? "") ||
-			!Number.isSafeInteger(Number(size)) ||
-			Number(size) > 25_000_000 ||
-			Number(size) !== bytes.byteLength ||
 			(await hashBytes(bytes)) !== hash
 		)
 			throw new Error("Pinned blob response metadata is invalid");
@@ -187,19 +203,9 @@ export class SyncTransport {
 			)
 				throw new Error("Pinned content identity is invalid");
 			if (pinnedType === "application/octet-stream") {
-				const size = pinned.headers["content-length"];
-				const bytes = pinned.arrayBuffer
-					? new Uint8Array(pinned.arrayBuffer.slice(0))
-					: null;
+				const bytes = readBlobResponseBytes(pinned);
 				const hash = DevicePayloadHashSchema.parse(expectedHash);
-				if (
-					!bytes ||
-					!/^(0|[1-9][0-9]*)$/.test(size ?? "") ||
-					!Number.isSafeInteger(Number(size)) ||
-					Number(size) > 25_000_000 ||
-					Number(size) !== bytes.byteLength ||
-					(await hashBytes(bytes)) !== hash
-				)
+				if (!bytes || (await hashBytes(bytes)) !== hash)
 					throw new Error("Pinned blob response metadata is invalid");
 				return { kind: "blob", bytes, hash, epoch, rev };
 			}
@@ -248,18 +254,8 @@ export class SyncTransport {
 			?.trim()
 			.toLowerCase();
 		if (contentType === "application/octet-stream") {
-			const size = response.headers["content-length"];
-			const bytes = response.arrayBuffer
-				? new Uint8Array(response.arrayBuffer.slice(0))
-				: null;
-			if (
-				!bytes ||
-				!/^(0|[1-9][0-9]*)$/.test(size ?? "") ||
-				!Number.isSafeInteger(Number(size)) ||
-				Number(size) > 25_000_000 ||
-				Number(size) !== bytes.byteLength
-			)
-				throw new Error("Current blob fallback size is invalid");
+			const bytes = readBlobResponseBytes(response);
+			if (!bytes) throw new Error("Current blob fallback size is invalid");
 			const hash = await hashBytes(bytes);
 			assertFallbackRevision(identity.rev, hash);
 			return {
@@ -445,18 +441,8 @@ export class SyncTransport {
 			throw new UnsupportedRemoteTextError(path);
 		const etag = response.headers.etag;
 		const identity = etag ? parseETag(etag) : null;
-		const size = response.headers["content-length"];
-		const bytes = response.arrayBuffer
-			? new Uint8Array(response.arrayBuffer.slice(0))
-			: null;
-		if (
-			!identity ||
-			!bytes ||
-			!/^(0|[1-9][0-9]*)$/.test(size ?? "") ||
-			!Number.isSafeInteger(Number(size)) ||
-			Number(size) > 25_000_000 ||
-			Number(size) !== bytes.byteLength
-		)
+		const bytes = readBlobResponseBytes(response);
+		if (!identity || !bytes)
 			throw new Error("Current blob authority metadata is invalid");
 		const hash = await hashBytes(bytes);
 		return {

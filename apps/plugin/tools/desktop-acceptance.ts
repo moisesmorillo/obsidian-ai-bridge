@@ -221,6 +221,11 @@ export interface DesktopCaseSummary {
 	lastCompletedBoundary?: SafeCaseFailureBoundary;
 	/** Canonical successful mutation status captured by AC-33. */
 	receiptStatus?: MutationReceipt["status"];
+	/** Safe separation of AC-13 transport-wrapper restoration and controller recovery. */
+	ac13Cleanup?: {
+		wrapperRestored: boolean;
+		controllerResumed: boolean;
+	};
 	/** Private AC-13 before-case hash snapshot write result. */
 	privateSnapshotStatus?: "saved" | "failed" | "unavailable";
 	cleanupStatus: "passed" | "failed" | "unknown";
@@ -356,6 +361,20 @@ export function safeCaseResult(
 			: result.receiptStatus;
 	const receiptStatus =
 		MutationReceiptSchema.shape.status.safeParse(rawReceiptStatus);
+	const rawAc13Cleanup =
+		caseId === "AC-13" && caseEvidence && typeof caseEvidence === "object"
+			? Reflect.get(caseEvidence, "ac13Cleanup")
+			: null;
+	const ac13Cleanup =
+		rawAc13Cleanup &&
+		typeof rawAc13Cleanup === "object" &&
+		typeof Reflect.get(rawAc13Cleanup, "wrapperRestored") === "boolean" &&
+		typeof Reflect.get(rawAc13Cleanup, "controllerResumed") === "boolean"
+			? {
+					wrapperRestored: Reflect.get(rawAc13Cleanup, "wrapperRestored"),
+					controllerResumed: Reflect.get(rawAc13Cleanup, "controllerResumed"),
+				}
+			: undefined;
 	return {
 		caseId,
 		evidence,
@@ -366,6 +385,7 @@ export function safeCaseResult(
 		...(status !== "passed" && failureClass ? { failureClass } : {}),
 		...(lastCompletedBoundary ? { lastCompletedBoundary } : {}),
 		...(receiptStatus.success ? { receiptStatus: receiptStatus.data } : {}),
+		...(ac13Cleanup ? { ac13Cleanup } : {}),
 		cleanupStatus,
 	};
 }
@@ -2170,6 +2190,6 @@ await withCaseBoundary("AC13_WAIT_FINAL_IDLE",()=>plugin.desktopSync.waitForIdle
 const finalState=plugin.journal.snapshot(),finalManifest=await readManifestSnapshot("AC13_READ_ACTUAL_MANIFEST");
 if(plugin.sessionStatus!=="connected"||plugin.syncPaused!==false||plugin.desktopSync.isBusy||finalManifest.epoch!==observedEpoch||finalManifest.head!==observedHead||finalState.epoch!==observedEpoch||finalState.cursor!==observedHead||finalState.reconciliation||finalState.pending_ops.length||finalState.pending_apply.length||finalState.device_id!==stateBefore.device_id||finalState.client_id!==stateBefore.client_id||JSON.stringify(finalState.attention)!==attentionBefore||!sameSnapshot(filesBefore,await localSnapshot())||localOnlyExcludedPaths.some((path)=>Object.hasOwn(finalState.base,path))||remote.manifest!==originalManifest)throw Error("AC13_ASSERT_FINAL_STATE");
 `.trim(),
-		cleanup: `const restore=globalThis.__oab8Ac13Restore;if(restore){let result=null;try{result=await restore();}catch{}if(result?.wrapperRestored)delete globalThis.__oab8Ac13Restore;if(!result?.wrapperRestored||!result?.controllerResumed)throw Error("AC13_CLEANUP_RESTORE_FAILED");}`,
+		cleanup: `const restore=globalThis.__oab8Ac13Restore;if(restore){let result=null;try{result=await restore();}catch{}caseEvidence.ac13Cleanup={wrapperRestored:result?.wrapperRestored===true,controllerResumed:result?.controllerResumed===true};if(result?.wrapperRestored)delete globalThis.__oab8Ac13Restore;if(!result?.wrapperRestored||!result?.controllerResumed)throw Error("AC13_CLEANUP_RESTORE_FAILED");}`,
 	};
 }

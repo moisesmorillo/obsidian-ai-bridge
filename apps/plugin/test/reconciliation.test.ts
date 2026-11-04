@@ -11,6 +11,7 @@ import {
 	SyncTransport,
 	SyncTransportError,
 } from "../src/infrastructure/sync-transport";
+import { DesktopSyncController } from "../src/sync/desktop-sync";
 import { DeviceJournal } from "../src/sync/device-journal";
 import {
 	type ReconciliationChangesPage,
@@ -23,6 +24,7 @@ import {
 	authorizedVaults,
 	createAc13CaseScripts,
 	createCaseScript,
+	safeCaseResult,
 } from "../tools/desktop-acceptance";
 
 const epoch = "a".repeat(32);
@@ -385,7 +387,7 @@ describe("ReconciliationController", () => {
 		context = await setup();
 	});
 
-	it("runs the generated AC-13 case with consistent controlled and actual epochs", async () => {
+	it("runs generated AC-13 recovery and reports real controller cleanup failure", async () => {
 		const eligiblePaths = [
 			"oab-8.8/controlled-one.md",
 			"oab-8.8/controlled-two.md",
@@ -426,7 +428,6 @@ describe("ReconciliationController", () => {
 			next_page: null,
 		};
 		let manifestReads = 0;
-		let failManifestReadAt: number | null = null;
 		let authorityReads = 0;
 		const requestMethods: string[] = [];
 		const transport = new SyncTransport("https://example.test", {
@@ -435,8 +436,6 @@ describe("ReconciliationController", () => {
 				const parsed = new URL(url);
 				if (parsed.pathname === "/v1/manifest") {
 					manifestReads += 1;
-					if (manifestReads === failManifestReadAt)
-						return { status: 500, headers: {}, text: "{}" };
 					return {
 						status: 200,
 						headers: {},
@@ -479,30 +478,43 @@ describe("ReconciliationController", () => {
 			context.vault,
 			transport,
 		);
-		let syncPaused = false;
+		let timerHandle = 0;
+		const activeIntervals = new Set<number>();
+		let controllerCycleFailures = 0;
+		let controllerCycleCalls = 0;
+		const controllerErrors: unknown[] = [];
+		const desktopSync = new DesktopSyncController({
+			cycle: async () => {
+				controllerCycleCalls += 1;
+				if (controllerCycleFailures > 0) {
+					controllerCycleFailures -= 1;
+					throw new Error("Injected controller cycle failure");
+				}
+				await reconciliation.reconcile();
+			},
+			host: {
+				setTimeout: () => ++timerHandle,
+				clearTimeout: () => undefined,
+				setInterval: () => {
+					const handle = ++timerHandle;
+					activeIntervals.add(handle);
+					return handle;
+				},
+				clearInterval: (handle) => {
+					activeIntervals.delete(handle);
+				},
+			},
+			onError: (error) => controllerErrors.push(error),
+		});
 		const plugin = {
 			journal: context.journal,
 			composition: {
 				publication: { remote: transport },
 				reconciliation,
 			},
-			desktopSync: {
-				isBusy: false,
-				events: [],
-				waitForIdle: async () => undefined,
-				pause: () => {
-					syncPaused = true;
-				},
-				resume: async () => {
-					syncPaused = false;
-				},
-			},
+			desktopSync,
 			sessionStatus: "connected",
-			syncPaused,
-		};
-		plugin.desktopSync.resume = async () => {
-			syncPaused = false;
-			plugin.syncPaused = false;
+			syncPaused: false,
 		};
 		const adapter = { getBasePath: () => authorizedVaults()["dev-2"] };
 		const app = {
@@ -543,6 +555,14 @@ describe("ReconciliationController", () => {
 			cleanupStatus: "passed",
 		});
 		expect(result.lastCompletedBoundary).toBe("AC13_READ_ACTUAL_MANIFEST");
+		expect(result.caseEvidence.ac13Cleanup).toEqual({
+			wrapperRestored: true,
+			controllerResumed: true,
+		});
+		expect(safeCaseResult("AC-13", "controlled", result).ac13Cleanup).toEqual({
+			wrapperRestored: true,
+			controllerResumed: true,
+		});
 		expect(controlledPages).toHaveLength(1);
 		expect(controlledPages[0]?.epoch).toBe(controlledEpoch);
 		for (const [index, entry] of (
@@ -558,17 +578,14 @@ describe("ReconciliationController", () => {
 		expect(context.journal.snapshot().epoch).toBe(epoch);
 		expect(context.journal.snapshot().cursor).toBe(entries.length);
 		expect(currentManifest).toBe(originalManifest);
-		expect(syncPaused).toBe(false);
-		expect(plugin.syncPaused).toBe(false);
+		expect(desktopSync.resume).toBe(DesktopSyncController.prototype.resume);
+		expect(desktopSync.isBusy).toBe(false);
+		expect(controllerCycleCalls).toBe(1);
+		expect(activeIntervals.size).toBe(1);
 		expect(globalThis).not.toHaveProperty("__oab8Ac13Restore");
 		expect(result.caseEvidence.ac13PrecaseFiles.eligible).toHaveLength(2);
 		expect(result.caseEvidence.ac13PrecaseFiles.excluded).toHaveLength(1);
-		failManifestReadAt = manifestReads + 2;
-		plugin.desktopSync.resume = async () => {
-			syncPaused = false;
-			plugin.syncPaused = false;
-			throw new Error("Injected resume failure");
-		};
+		controllerCycleFailures = 2;
 		const resumeFailureOutput = await (
 			new Function("app", `return ${script}`) as (
 				app: unknown,
@@ -578,16 +595,37 @@ describe("ReconciliationController", () => {
 			resumeFailureOutput.slice("OAB8CASE:".length),
 		);
 		expect(resumeFailure.status).toBe("failed");
+		expect(resumeFailure.failureStage).toBe("action");
 		expect(resumeFailure.cleanupStatus).toBe("failed");
+		expect(resumeFailure.caseEvidence.ac13Cleanup).toEqual({
+			wrapperRestored: true,
+			controllerResumed: false,
+		});
+		const safeResumeFailure = safeCaseResult(
+			"AC-13",
+			"controlled",
+			resumeFailure,
+		);
+		expect(safeResumeFailure.ac13Cleanup).toEqual({
+			wrapperRestored: true,
+			controllerResumed: false,
+		});
+		expect(safeResumeFailure).not.toHaveProperty("caseEvidence");
 		expect(currentManifest).toBe(originalManifest);
-		expect(syncPaused).toBe(false);
-		expect(plugin.syncPaused).toBe(false);
 		expect(globalThis).not.toHaveProperty("__oab8Ac13Restore");
-		failManifestReadAt = null;
-		plugin.desktopSync.resume = async () => {
-			syncPaused = false;
-			plugin.syncPaused = false;
-		};
+		await desktopSync.waitForIdle();
+		expect(desktopSync.isBusy).toBe(false);
+		expect(controllerCycleCalls).toBe(3);
+		expect(controllerCycleFailures).toBe(0);
+		expect(controllerErrors).toHaveLength(2);
+		expect(activeIntervals.size).toBe(1);
+		await desktopSync.syncNow();
+		expect(controllerCycleCalls).toBe(4);
+		expect(desktopSync.isBusy).toBe(false);
+		expect(activeIntervals.size).toBe(1);
+		expect(context.journal.snapshot().epoch).toBe(epoch);
+		expect(context.journal.snapshot().cursor).toBe(entries.length);
+		expect(context.vault.writes).toBe(0);
 		const originalState = context.journal.snapshot();
 		const firstEntry = manifest.entries[0];
 		if (!firstEntry) throw new Error("Manifest test row is missing");

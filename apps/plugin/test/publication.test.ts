@@ -3259,7 +3259,7 @@ describe("PublicationController", () => {
 			expect(commits[1]?.text).toContain("Local successor edit.");
 			expect(journal.snapshot().pending_ops).toEqual([]);
 			expect(
-				journal.snapshot().base["oab-8.8/ac-30-response-lost-20261104-06.md"],
+				journal.snapshot().base["oab-37/ac-30-response-lost-20261105-01.md"],
 			).toMatchObject({
 				deleted: false,
 				rev: 2,

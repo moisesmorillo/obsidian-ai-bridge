@@ -12,12 +12,26 @@ import {
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import {
+	type DevicePrecondition,
 	DevicePreconditionSchema,
 	formatETag,
+	type PendingOperation,
 } from "@obsidian-ai-bridge/protocol";
 import { describe, expect, it } from "vitest";
 import { SyncTransport } from "../src/infrastructure/sync-transport";
+import { DesktopSyncController } from "../src/sync/desktop-sync";
+import {
+	DeviceJournal,
+	type DeviceJournalStorage,
+} from "../src/sync/device-journal";
+import {
+	PublicationController,
+	type PublicationReceipt,
+	type PublicationRemote,
+} from "../src/sync/publication";
+import { ReconciliationController } from "../src/sync/reconciliation";
 import { SyncTransportError } from "../src/sync/remote-text";
+import { TextApplyEngine, type TextVault } from "../src/sync/text-apply";
 import {
 	assertAuthorizedVault,
 	authorizedVaults,
@@ -52,6 +66,93 @@ const vaults = {
 	"dev-1": "/Users/test/vaults/obsidian-ai-bridge-dev",
 	"dev-2": "/Users/test/vaults/obsidian-ai-bridge-dev-2",
 };
+const epoch = "a".repeat(32);
+
+/** Keeps exact journal state and immutable payload bytes for the AC-30 harness. */
+class MemoryStorage implements DeviceJournalStorage {
+	state: unknown = null;
+	payloads = new Map<string, Uint8Array>();
+	/** Returns the saved state for journal initialization. */
+	async readState(): Promise<unknown> {
+		return this.state;
+	}
+	/** Stores a detached copy so journal mutations cannot alter saved state. */
+	async writeState(
+		state: Parameters<DeviceJournalStorage["writeState"]>[0],
+	): Promise<void> {
+		this.state = structuredClone(state);
+	}
+	/** Returns a detached copy of one immutable journal payload. */
+	async readPayload(path: string): Promise<Uint8Array> {
+		const bytes = this.payloads.get(path);
+		if (!bytes) throw new Error("Missing synthetic payload");
+		return bytes.slice();
+	}
+	/** Stores a detached copy under the journal-provided payload reference. */
+	async writePayload(path: string, bytes: Uint8Array): Promise<void> {
+		this.payloads.set(path, bytes.slice());
+	}
+}
+
+/** Models exact text-path effects for real publication and reconciliation controllers. */
+class AcceptanceMemoryVault implements TextVault {
+	files = new Map<string, string>();
+	/** Reads exact fixture text, or null when the path has no file. */
+	async read(path: string): Promise<string | null> {
+		return this.files.get(path) ?? null;
+	}
+	/** Lists every synthetic vault path without changing its contents. */
+	async list(): Promise<string[]> {
+		return [...this.files.keys()];
+	}
+	/** Returns UTF-8 byte length, or null when the path has no file. */
+	async size(path: string): Promise<number | null> {
+		const text = this.files.get(path);
+		return text === undefined
+			? null
+			: new TextEncoder().encode(text).byteLength;
+	}
+	/** Changes text only when the current value matches the expected value. */
+	async process(
+		path: string,
+		expected: string | null,
+		next: string,
+	): Promise<boolean> {
+		if ((this.files.get(path) ?? null) !== expected) return false;
+		this.files.set(path, next);
+		return true;
+	}
+	/** Creates a path only when no file already exists. */
+	async create(path: string, text: string): Promise<boolean> {
+		if (this.files.has(path)) return false;
+		this.files.set(path, text);
+		return true;
+	}
+	/** Removes a file only when its current text matches the expected value. */
+	async trash(path: string, expected: string): Promise<boolean> {
+		if (this.files.get(path) !== expected) return false;
+		this.files.delete(path);
+		return true;
+	}
+	/** Moves exact text only when the source matches and destination is absent. */
+	async rename(from: string, to: string, expected: string): Promise<boolean> {
+		if (this.files.get(from) !== expected || this.files.has(to)) return false;
+		this.files.set(to, expected);
+		this.files.delete(from);
+		return true;
+	}
+}
+
+/** Hashes exact UTF-8 fixture text using the production publication digest. */
+async function hashAcceptanceText(text: string): Promise<string> {
+	const digest = await crypto.subtle.digest(
+		"SHA-256",
+		new TextEncoder().encode(text),
+	);
+	return [...new Uint8Array(digest)]
+		.map((byte) => byte.toString(16).padStart(2, "0"))
+		.join("");
+}
 
 describe("desktop acceptance safety", () => {
 	it("projects only safe AC-04 revision comparison fields", () => {
@@ -1340,6 +1441,34 @@ describe("desktop acceptance safety", () => {
 		expect(JSON.stringify(summary)).not.toContain("private");
 	});
 
+	it("uses a fresh AC-37 fixture and the initial attention baseline", () => {
+		const action = createAc30CaseScripts("/Users/test").action;
+
+		expect(action).toContain(
+			'const path="oab-37/ac-30-response-lost-20261105-01.md"',
+		);
+		expect(action).toContain(
+			"const initialAttentionCount=stateBefore.attention.length",
+		);
+		expect(action).toContain(
+			"finalState.attention.length!==expectedAttentionCount",
+		);
+		expect(action).not.toContain("oab-8.8/ac-30-response-lost-20261104-06.md");
+		const customAction = createAc30CaseScripts(
+			"/Users/test",
+			"oab-37/ac-30-response-lost-custom-02.md",
+		).action;
+		expect(customAction).toContain(
+			'const path="oab-37/ac-30-response-lost-custom-02.md"',
+		);
+		expect(() =>
+			createAc30CaseScripts(
+				"/Users/test",
+				"oab-8.8/ac-30-response-lost-old.md",
+			),
+		).toThrow("Unauthorized AC-30 fixture path");
+	});
+
 	it("keeps recovered AC-30 and Markdown AC-31 diagnostics unique", async () => {
 		const ac30 = createAc30CaseScripts("/Users/test");
 		const ac31 = createAc31CaseScripts(
@@ -1383,7 +1512,7 @@ describe("desktop acceptance safety", () => {
 				"oab-8.8/ac-31-blob-stat-race-20261104-04.bin",
 			),
 		).toThrow("Unauthorized AC-31 fixture path");
-		expect(ac30.action).toContain("oab-8.8/ac-30-response-lost-20261104-06.md");
+		expect(ac30.action).toContain("oab-37/ac-30-response-lost-20261105-01.md");
 		expect(ac30.action).not.toContain(
 			"oab-8.8/ac-30-response-lost-20261104-05.md",
 		);
@@ -1582,7 +1711,7 @@ describe("desktop acceptance safety", () => {
 	it("sanitizes AC-30 observations before the host result returns", async () => {
 		const script = createCaseScript(
 			"AC-30",
-			'recordAc30FinalAssertion("AC30_ASSERT_FINAL_CALL_COUNT", "private identity", 2); throw Error("AC30_ASSERT_FINAL_CALL_COUNT");',
+			'recordAc30FinalAssertion("AC30_ASSERT_FINAL_CALL_COUNT", "private identity", 2, { callCount: 2, calls: [{ status: 201, revision: 1 }, { status: 201, revision: 1 }], retryIdentityMatches: true, successorIdentityDistinct: null, retryPayloadMatches: true, successorPayloadMatches: false, retryPreconditionMatches: true, retryReceiptMatches: true, queue: { pendingOperationCount: 1, pendingApplyCount: 0, attentionCount: 4, fixtureOperationCount: 1, otherPathOperationCount: 1, fixtureOperations: [{ ordinal: "retry", state: "sent", operation: "put", preconditionKind: "absent", key: "private-key", path: "private/path.md", payload: "private bytes" }] }, privateData: "private bytes" }); throw Error("AC30_ASSERT_FINAL_CALL_COUNT");',
 			"caseEvidence.cleanupRan=true;",
 		);
 		const output = await (
@@ -1590,41 +1719,328 @@ describe("desktop acceptance safety", () => {
 		)();
 		const record = JSON.parse(output.slice("OAB8CASE:".length));
 
-		expect(record.caseEvidence).toEqual({
-			ac30FinalAssertion: {
-				code: "AC30_ASSERT_FINAL_CALL_COUNT",
-				expected: "other",
-				observed: 2,
+		expect(record.caseEvidence.ac30FinalAssertion).toMatchObject({
+			code: "AC30_ASSERT_FINAL_CALL_COUNT",
+			expected: "other",
+			observed: 2,
+			diagnostic: {
+				callCount: 2,
+				calls: [
+					{ ordinal: "first", status: 201, revision: 1 },
+					{ ordinal: "retry", status: 201, revision: 1 },
+				],
+				retryIdentityMatches: true,
+				successorIdentityDistinct: null,
+				retryPayloadMatches: true,
+				successorPayloadMatches: false,
+				retryPreconditionMatches: true,
+				retryReceiptMatches: true,
+				queue: {
+					pendingOperationCount: 1,
+					pendingApplyCount: 0,
+					attentionCount: 4,
+					fixtureOperationCount: 1,
+					otherPathOperationCount: 1,
+					fixtureOperations: [
+						{
+							ordinal: "retry",
+							state: "sent",
+							operation: "put",
+							preconditionKind: "absent",
+						},
+					],
+				},
 			},
-			cleanupRan: true,
 		});
-		expect(output).not.toContain("private identity");
+		expect(record.caseEvidence.cleanupRan).toBe(true);
+		expect(output).not.toMatch(
+			/private identity|private-key|private\/path|private bytes/,
+		);
+	});
+
+	it("restores the exact AC-30 publication method after fixture creation fails", async () => {
+		/** Provides an inert method whose exact identity the generated action must restore. */
+		const originalPut = async () => {
+			throw new Error("Unexpected publication request");
+		};
+		const remote = {
+			put: originalPut,
+			readCurrentAuthority: async () => {
+				throw Object.assign(new Error("Missing synthetic fixture"), {
+					status: 404,
+				});
+			},
+		};
+		let interceptionInstalled = false;
+		const app = {
+			vault: {
+				adapter: { getBasePath: () => vaults["dev-2"] },
+				getAbstractFileByPath: () => null,
+				create: async () => {
+					interceptionInstalled = remote.put !== originalPut;
+					throw new Error("Injected failure after interception");
+				},
+			},
+			plugins: {
+				plugins: {
+					"ai-bridge": {
+						journal: {
+							snapshot: () => ({
+								epoch,
+								pending_ops: [],
+								pending_apply: [],
+								reconciliation: null,
+								attention: [],
+								base: {},
+							}),
+						},
+						composition: { publication: { remote } },
+						desktopSync: {
+							isBusy: false,
+							waitForIdle: async () => undefined,
+							syncNow: async () => undefined,
+						},
+						sessionStatus: "connected",
+						syncPaused: false,
+					},
+				},
+			},
+		};
+		const script = createCaseScript(
+			"AC-30",
+			createAc30CaseScripts("/Users/test").action,
+			"",
+		);
+
+		try {
+			const output = await (
+				new Function("app", `return ${script}`) as (
+					app: unknown,
+				) => Promise<string>
+			)(app);
+			const record = JSON.parse(output.slice("OAB8CASE:".length));
+
+			expect(interceptionInstalled).toBe(true);
+			expect(remote.put).toBe(originalPut);
+			expect(record).toMatchObject({
+				status: "failed",
+				failureStage: "action",
+				failureReason: "unknown-error",
+				cleanupStatus: "passed",
+			});
+		} finally {
+			Reflect.deleteProperty(globalThis, "__oab8Ac30Restore");
+		}
+	});
+
+	it("rejects retry receipts that differ outside the ETag", async () => {
+		const action = createAc30CaseScripts("/Users/test").action;
+		const start = action.indexOf("const observedType=");
+		const end = action.indexOf("\n}finally{", start);
+		expect(start).toBeGreaterThanOrEqual(0);
+		expect(end).toBeGreaterThan(start);
+		const finalAssertions = action.slice(start, end);
+		const hash = "a".repeat(64);
+		const firstReceipt = {
+			status: 201,
+			path: "oab-37/ac-30-response-lost-20261105-01.md",
+			etag: "private-etag",
+			seq: 1,
+			size: 12,
+			hash,
+			deleted: false,
+		};
+		const retryReceipt = { ...firstReceipt, seq: 2 };
+		const bindings = {
+			callCount: 3,
+			firstKey: "private-first-key",
+			retryKey: "private-first-key",
+			successorKey: "private-successor-key",
+			firstStatus: 201,
+			retryStatus: 201,
+			successorStatus: 201,
+			firstRevision: 1,
+			retryRevision: 1,
+			successorRevision: 2,
+			firstReceipt,
+			retryReceipt,
+			firstReceiptETag: firstReceipt.etag,
+			retryReceiptETag: firstReceipt.etag,
+			retryIdentityMatches: true,
+			successorIdentityDistinct: true,
+			retryPayloadMatchesOriginal: true,
+			successorPayloadMatchesEdited: true,
+			firstPrecondition: { kind: "absent" },
+			retryPrecondition: { kind: "absent" },
+			successorPrecondition: { kind: "match", epoch, rev: 1 },
+			stateBefore: { epoch },
+			path: "oab-37/ac-30-response-lost-20261105-01.md",
+			authority: { deleted: false, rev: 2, hash },
+			hashText: async () => hash,
+			editedText: "private edited bytes",
+			localText: "private edited bytes",
+			base: { deleted: false, rev: 2, hash },
+			finalHash: hash,
+			finalState: {
+				pending_ops: [],
+				pending_apply: [],
+				reconciliation: null,
+				attention: [{}, {}, {}],
+			},
+			initialAttentionCount: 3,
+			timer: null,
+			releaseGate: () => undefined,
+			remote: { put: async () => undefined },
+			originalPut: async () => undefined,
+		};
+		const setup = Object.keys(bindings)
+			.map((key) => `const ${key}=__params[${JSON.stringify(key)}];`)
+			.join("\n");
+		const script = createCaseScript(
+			"AC-30",
+			`${setup}\n${finalAssertions}`,
+			"",
+		);
+		const output = await new Function("__params", `return ${script}`)(bindings);
+		const record = JSON.parse(output.slice("OAB8CASE:".length));
+
+		expect(record).toMatchObject({
+			status: "failed",
+			failureReason: "AC30_ASSERT_FINAL_RETRY_ETAG",
+			caseEvidence: {
+				ac30FinalAssertion: {
+					code: "AC30_ASSERT_FINAL_RETRY_ETAG",
+					expected: true,
+					observed: false,
+					diagnostic: { retryReceiptMatches: false },
+				},
+			},
+		});
+		expect(output).not.toMatch(
+			/private-first-key|private-successor-key|private-etag|private edited bytes|a{64}/,
+		);
 	});
 
 	it("projects only bounded AC-30 assertion observations", () => {
-		const summary = safeCaseResult("AC-30", "controlled", {
-			status: "failed",
-			failureStage: "action",
-			failureReason: "AC30_ASSERT_FINAL_CALL_COUNT",
-			cleanupStatus: "passed",
-			caseEvidence: {
-				ac30FinalAssertion: {
-					code: "AC30_ASSERT_FINAL_CALL_COUNT",
-					expected: 3,
-					observed: 2,
+		const summary = safeCaseResult(
+			"AC-30",
+			"controlled",
+			{
+				status: "failed",
+				failureStage: "action",
+				failureReason: "AC30_ASSERT_FINAL_CALL_COUNT",
+				cleanupStatus: "passed",
+				caseEvidence: {
+					ac30FinalAssertion: {
+						code: "AC30_ASSERT_FINAL_CALL_COUNT",
+						expected: 3,
+						observed: 2,
+						diagnostic: {
+							callCount: 2,
+							calls: [
+								{ status: 201, revision: 1, secret: "private token" },
+								{ status: 201, revision: 1, path: "private/path.md" },
+							],
+							retryIdentityMatches: true,
+							queue: {
+								pendingOperationCount: 1,
+								pendingApplyCount: 0,
+								attentionCount: 4,
+								fixtureOperationCount: 1,
+								otherPathOperationCount: 2,
+								fixtureOperations: [
+									{
+										ordinal: "retry",
+										state: "sent",
+										operation: "put",
+										preconditionKind: "absent",
+										key: "private-key",
+										path: "private/path.md",
+										payload: "private bytes",
+										precondition: { epoch: "private" },
+									},
+								],
+							},
+							secret: "private token",
+						},
+					},
+					unapproved: "private token and note bytes",
 				},
-				unapproved: "private token and note bytes",
 			},
-		});
+			{ includeAc30Diagnostic: true },
+		);
 
 		expect(summary).toMatchObject({
 			ac30FinalAssertion: {
 				code: "AC30_ASSERT_FINAL_CALL_COUNT",
 				expected: 3,
 				observed: 2,
+				diagnostic: {
+					callCount: 2,
+					calls: [
+						{ ordinal: "first", status: 201, revision: 1 },
+						{ ordinal: "retry", status: 201, revision: 1 },
+					],
+					retryIdentityMatches: true,
+					queue: {
+						pendingOperationCount: 1,
+						pendingApplyCount: 0,
+						attentionCount: 4,
+						fixtureOperationCount: 1,
+						otherPathOperationCount: 2,
+						fixtureOperations: [
+							{
+								ordinal: "retry",
+								state: "sent",
+								operation: "put",
+								preconditionKind: "absent",
+							},
+						],
+					},
+				},
 			},
 		});
-		expect(JSON.stringify(summary)).not.toMatch(/private token|note bytes/);
+		expect(JSON.stringify(summary)).not.toMatch(
+			/private token|note bytes|private\/path|private bytes|private-key/,
+		);
+	});
+
+	it("keeps safe AC-30 assertion data when diagnostic getters fail", () => {
+		const diagnostic = new Proxy(
+			{},
+			{
+				/** Simulates a malformed diagnostic getter at the host boundary. */
+				get() {
+					throw new Error("private diagnostic detail");
+				},
+			},
+		);
+		const summary = safeCaseResult(
+			"AC-30",
+			"controlled",
+			{
+				status: "failed",
+				failureStage: "action",
+				failureReason: "AC30_ASSERT_FINAL_CALL_COUNT",
+				cleanupStatus: "passed",
+				caseEvidence: {
+					ac30FinalAssertion: {
+						code: "AC30_ASSERT_FINAL_CALL_COUNT",
+						expected: 3,
+						observed: 2,
+						diagnostic,
+					},
+				},
+			},
+			{ includeAc30Diagnostic: true },
+		);
+
+		expect(summary.ac30FinalAssertion).toMatchObject({
+			code: "AC30_ASSERT_FINAL_CALL_COUNT",
+			expected: 3,
+			observed: 2,
+		});
+		expect(JSON.stringify(summary)).not.toContain("private diagnostic detail");
 	});
 
 	it("summarizes results without returning secret or note values", () => {
@@ -1670,4 +2086,435 @@ describe("desktop acceptance safety", () => {
 			cleanupStatus: "passed",
 		});
 	});
+
+	// OAB-40 owns feed replay, so keep its three timing regressions skipped until that fix lands.
+	const ac30TimingCases = [
+		{ name: "delayed modify admission", eventDelay: 5_000, holdModifyMs: 0 },
+		{
+			name: "debounce before retry wait",
+			eventDelay: 500,
+			holdModifyMs: 1_000,
+		},
+		{
+			name: "debounce while first PUT is held",
+			eventDelay: 0,
+			holdModifyMs: 2_100,
+		},
+	] as const;
+	it.skip.each(ac30TimingCases)(
+		"checks AC-30 feed replay: $name",
+		async (scenario) => {
+			const cases = [scenario] as const;
+			const outcomes: Array<{
+				name: string;
+				status: string;
+				failureReason: string | null;
+				allCalls: number;
+				targetCalls: number;
+				callPaths: string[];
+				feedRowsRead: number;
+				feedSequences: number[];
+				serviceRevision: number;
+				cursor: number | null;
+				canonicalIsOriginal: boolean;
+				localFileStates: Array<{
+					path: string;
+					original: boolean;
+					edited: boolean;
+				}>;
+				pendingOperationCount: number;
+				fixtureRetryKeyEqual: boolean;
+				fixturePreconditions: string[];
+				debounceFired: boolean;
+				debounceBeforeRetryDue: boolean;
+				debounceWhileFirstPutPending: boolean;
+			}> = [];
+
+			for (const scenario of cases) {
+				const storage = new MemoryStorage();
+				const vault = new AcceptanceMemoryVault();
+				const calls: Array<{
+					path: string;
+					text: string;
+					key: string;
+					precondition: DevicePrecondition;
+				}> = [];
+				const versions = new Map<string, { text: string; hash: string }>();
+				const serviceFiles = new Map<
+					string,
+					{ rev: number; text: string; hash: string }
+				>();
+				const receipts = new Map<string, PublicationReceipt>();
+				const feed: Array<{
+					seq: number;
+					op: "put";
+					path: string;
+					etag: string;
+					hash: string;
+					origin: string;
+					at: number;
+				}> = [];
+				const feedReads: number[] = [];
+				const returnedFeedSequences: number[] = [];
+				let sequence = 0;
+				let modifyEventObserved = false;
+				let debounceFired = false;
+				let debounceBeforeRetryDue = false;
+				let debounceWhileFirstPutPending = false;
+				const fixturePath = "oab-37/ac-30-response-lost-20261105-01.md";
+				const originalText =
+					"# AC-30 response-loss fixture\\n\\nOriginal immutable payload.\\n";
+				const editedText = `${originalText}\\nLocal successor edit.\\n`;
+				/** Releases a held synthetic modify event after the chosen timing delay. */
+				let releaseModify = () => {};
+				/** Signals that the synthetic modify callback reached its hold. */
+				let markModifyStarted = () => {};
+				const modifyCanReturn = new Promise<void>((resolve) => {
+					releaseModify = resolve;
+				});
+				const modifyStarted = new Promise<void>((resolve) => {
+					markModifyStarted = resolve;
+				});
+				/** Signals that the synthetic service received its first publication request. */
+				let firstPutStarted = () => {};
+				const firstPut = new Promise<void>((resolve) => {
+					firstPutStarted = resolve;
+				});
+				const remote: PublicationRemote & {
+					manifest: (token: string | null) => Promise<{
+						epoch: string;
+						head_seq: number;
+						next_page: null;
+						entries: [];
+					}>;
+					changes: (
+						requestEpoch: string,
+						since: number,
+					) => Promise<{
+						epoch: string;
+						head_seq: number;
+						entries: typeof feed;
+					}>;
+					createText: () => Promise<never>;
+				} = {
+					readAuthority: async (path, requestEpoch, requestedRevision) => {
+						const version = versions.get(`${path}:${requestedRevision}`);
+						if (!version || requestEpoch !== epoch)
+							throw new Error("Pinned revision unavailable");
+						return {
+							deleted: false,
+							text: version.text,
+							epoch,
+							rev: requestedRevision,
+							hash: version.hash,
+						};
+					},
+					readCurrentAuthority: async (path) => {
+						const file = serviceFiles.get(path);
+						if (!file) throw new SyncTransportError(404, "not_found");
+						return {
+							deleted: false,
+							text: file.text,
+							epoch,
+							rev: file.rev,
+							hash: file.hash,
+						};
+					},
+					put: async (path, text, precondition, key) => {
+						if (calls.length === 0) firstPutStarted();
+						calls.push({
+							path,
+							text,
+							key,
+							precondition: structuredClone(precondition),
+						});
+						const prior = receipts.get(key);
+						if (prior) return structuredClone(prior);
+						const current = serviceFiles.get(path);
+						const valid =
+							precondition.kind === "absent"
+								? current === undefined
+								: precondition.epoch === epoch &&
+									precondition.rev === current?.rev;
+						if (!valid)
+							throw new SyncTransportError(412, "precondition_failed");
+						const fileRevision = (current?.rev ?? 0) + 1;
+						sequence += 1;
+						const hash = await hashAcceptanceText(text);
+						const receipt: PublicationReceipt = {
+							status: current ? 200 : 201,
+							path,
+							etag: formatETag(epoch, fileRevision),
+							seq: sequence,
+							size: new TextEncoder().encode(text).byteLength,
+							hash,
+							deleted: false,
+						};
+						versions.set(`${path}:${fileRevision}`, { text, hash });
+						serviceFiles.set(path, { rev: fileRevision, text, hash });
+						feed.push({
+							seq: sequence,
+							op: "put",
+							path,
+							etag: receipt.etag,
+							hash,
+							origin: "test-device",
+							at: Date.now(),
+						});
+						receipts.set(key, receipt);
+						return structuredClone(receipt);
+					},
+					delete: async () => {
+						throw new Error("Unexpected delete");
+					},
+					rename: async () => {
+						throw new Error("Unexpected rename");
+					},
+					manifest: async () => ({
+						epoch,
+						head_seq: sequence,
+						next_page: null,
+						entries: [],
+					}),
+					changes: async (requestEpoch, since) => {
+						feedReads.push(since);
+						const entries = feed.filter((entry) => entry.seq > since);
+						returnedFeedSequences.push(...entries.map((entry) => entry.seq));
+						return {
+							epoch: requestEpoch,
+							head_seq: sequence,
+							entries,
+						};
+					},
+					createText: async () => {
+						throw new Error("Unexpected enrollment create");
+					},
+				};
+				const journal = await DeviceJournal.open(storage);
+				await journal.resetEpoch(epoch);
+				await journal.setCursor(epoch, 0);
+				for (const suffix of ["one", "two", "three"])
+					await journal.recordAttention(`oab-8.8/${suffix}.md`, "retained");
+				const applyEngine = new TextApplyEngine(
+					journal,
+					vault,
+					{
+						read: async (path, requestEpoch, requestedRevision) => {
+							const authority = await remote.readAuthority(
+								path,
+								requestEpoch,
+								requestedRevision,
+							);
+							return authority.deleted ? null : authority.text;
+						},
+					},
+					{ deviceName: "Synthetic acceptance test" },
+				);
+				const publication = new PublicationController(journal, vault, remote, {
+					applyEngine,
+					now: () => Date.now(),
+					recoverPrecondition: async () => reconciliation.replay(),
+				});
+				const reconciliation = new ReconciliationController(
+					journal,
+					applyEngine,
+					vault,
+					remote,
+				);
+				const desktopSync = new DesktopSyncController({
+					cycle: async () => {
+						await reconciliation.resume();
+						await publication.scan();
+						await publication.flush();
+						await reconciliation.replay();
+					},
+					onEvent: (event) => publication.observe(event),
+					host: {
+						setTimeout: (callback, delay) =>
+							setTimeout(() => {
+								if (modifyEventObserved && delay === 2_000 && !debounceFired) {
+									debounceFired = true;
+									const retryAt = journal
+										.snapshot()
+										.pending_ops.find(
+											(operation: PendingOperation) =>
+												operation.state === "sent",
+										)?.retry_at;
+									debounceWhileFirstPutPending = retryAt === undefined;
+									debounceBeforeRetryDue =
+										retryAt === undefined || retryAt > Date.now();
+								}
+								callback();
+							}, delay) as unknown as number,
+						clearTimeout: (handle) =>
+							clearTimeout(handle as unknown as ReturnType<typeof setTimeout>),
+						setInterval: () => 1,
+						clearInterval: () => undefined,
+					},
+				});
+				const scripts = createAc30CaseScripts("/Users/test");
+				const hostScript = createCaseScript(
+					"AC-30",
+					scripts.action,
+					scripts.cleanup,
+				);
+				const host = {
+					vault: {
+						adapter: { getBasePath: () => vaults["dev-2"] },
+						create: async (path: string, text: string) => {
+							if (!(await vault.create(path, text)))
+								throw new Error("Path exists");
+							await desktopSync.observe({ type: "create", path });
+							return { path };
+						},
+						modify: async (file: { path: string }, text: string) => {
+							vault.files.set(file.path, text);
+							if (scenario.eventDelay > 0)
+								setTimeout(() => {
+									modifyEventObserved = true;
+									void desktopSync.observe({
+										type: "modify",
+										path: file.path,
+									});
+								}, scenario.eventDelay);
+							else {
+								modifyEventObserved = true;
+								await desktopSync.observe({ type: "modify", path: file.path });
+							}
+							if (scenario.holdModifyMs > 0) {
+								markModifyStarted();
+								await modifyCanReturn;
+							}
+							return { path: file.path };
+						},
+						read: async (file: { path: string }) => vault.read(file.path),
+						getAbstractFileByPath: (path: string) =>
+							vault.files.has(path) ? { path } : null,
+					},
+					plugins: {
+						plugins: {
+							"ai-bridge": {
+								journal,
+								composition: { publication },
+								desktopSync,
+								sessionStatus: "connected",
+								syncPaused: false,
+							},
+						},
+					},
+				};
+				try {
+					const run = (
+						new Function("app", `return ${hostScript}`) as (
+							app: unknown,
+						) => Promise<string>
+					)(host);
+					await Promise.race([
+						firstPut,
+						run.then((output) => {
+							throw new Error(output);
+						}),
+					]);
+					if (scenario.holdModifyMs > 0) {
+						await modifyStarted;
+						await new Promise((resolve) =>
+							setTimeout(resolve, scenario.holdModifyMs),
+						);
+						releaseModify();
+					}
+					const output = await run;
+					const record = JSON.parse(output.slice("OAB8CASE:".length));
+					outcomes.push({
+						name: scenario.name,
+						status: record.status,
+						failureReason: record.failureReason,
+						allCalls: calls.length,
+						targetCalls: calls.filter((call) => call.path === fixturePath)
+							.length,
+						callPaths: calls.map((call) =>
+							call.path === fixturePath ? "fixture" : "other",
+						),
+						feedRowsRead: feedReads.length,
+						feedSequences: returnedFeedSequences,
+						serviceRevision: serviceFiles.get(fixturePath)?.rev ?? 0,
+						cursor: journal.snapshot().cursor,
+						canonicalIsOriginal: vault.files.get(fixturePath) === originalText,
+						localFileStates: [...vault.files].map(([path, text]) => ({
+							path: path === fixturePath ? "fixture" : "other",
+							original: text === originalText,
+							edited: text === editedText,
+						})),
+						pendingOperationCount: journal.snapshot().pending_ops.length,
+						fixtureRetryKeyEqual:
+							calls.filter((call) => call.path === fixturePath).length >= 2 &&
+							calls.filter((call) => call.path === fixturePath)[0]?.key ===
+								calls.filter((call) => call.path === fixturePath)[1]?.key,
+						fixturePreconditions: calls
+							.filter((call) => call.path === fixturePath)
+							.map((call) => call.precondition.kind),
+						debounceFired,
+						debounceBeforeRetryDue,
+						debounceWhileFirstPutPending,
+					});
+					if (scenario.eventDelay > 0)
+						await new Promise((resolve) => setTimeout(resolve, 5_000));
+				} finally {
+					desktopSync.close();
+					reconciliation.close();
+					publication.close();
+					journal.close();
+				}
+			}
+
+			expect(
+				outcomes.map(
+					({
+						name,
+						status,
+						failureReason,
+						allCalls,
+						targetCalls,
+						callPaths,
+						serviceRevision,
+						fixtureRetryKeyEqual,
+						fixturePreconditions,
+						debounceFired,
+						debounceBeforeRetryDue,
+						debounceWhileFirstPutPending,
+					}) => ({
+						name,
+						status,
+						failureReason,
+						allCalls,
+						targetCalls,
+						callPaths,
+						serviceRevision,
+						fixtureRetryKeyEqual,
+						fixturePreconditions,
+						debounceFired,
+						debounceBeforeRetryDue,
+						debounceWhileFirstPutPending,
+					}),
+				),
+			).toEqual([
+				{
+					name: scenario.name,
+					status: "passed",
+					failureReason: null,
+					allCalls: 3,
+					targetCalls: 3,
+					callPaths: ["fixture", "fixture", "fixture"],
+					serviceRevision: 2,
+					fixtureRetryKeyEqual: true,
+					fixturePreconditions: ["absent", "absent", "match"],
+					debounceFired: scenario.holdModifyMs > 0,
+					debounceBeforeRetryDue: scenario.holdModifyMs > 0,
+					debounceWhileFirstPutPending:
+						scenario.holdModifyMs > 0 && scenario.eventDelay === 0,
+				},
+			]);
+			expect(outcomes.every((outcome) => outcome.feedRowsRead > 0)).toBe(true);
+		},
+		30_000,
+	);
 });

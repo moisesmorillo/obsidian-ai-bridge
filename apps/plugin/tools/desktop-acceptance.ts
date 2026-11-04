@@ -55,6 +55,22 @@ const AC30_FINAL_ASSERTION_CODES = [
 	"AC30_ASSERT_FINAL_ATTENTION_COUNT",
 ] as const;
 
+/** Fixed request roles assigned by AC-30 call order without exposing operation keys. */
+const AC30_DIAGNOSTIC_CALL_ORDINALS = ["first", "retry", "successor"] as const;
+
+/** Maximum bounded AC-30 call and queue samples exposed in host diagnostics. */
+const AC30_DIAGNOSTIC_SAMPLE_LIMIT = 3;
+
+/** Fixed lifecycle states accepted for pending AC-30 operations. */
+const AC30_DIAGNOSTIC_OPERATION_STATES = [
+	"queued",
+	"sent",
+	"resolved",
+] as const;
+
+/** Fixed mutation kinds accepted for pending AC-30 operation diagnostics. */
+const AC30_DIAGNOSTIC_OPERATION_KINDS = ["put", "delete", "rename"] as const;
+
 /** Fixed case and error codes that may appear in host failure summaries. */
 const AC30_SAFE_OBSERVATION_STATES = [
 	"match",
@@ -272,7 +288,7 @@ export interface DesktopCaseSummary {
 	lastCompletedBoundary?: SafeCaseFailureBoundary;
 	/** Canonical successful mutation status captured by AC-33. */
 	receiptStatus?: MutationReceipt["status"];
-	/** Sanitized expected and observed values for a failed AC-30 final assertion. */
+	/** Sanitized values and optional bounded diagnostics for a failed AC-30 assertion. */
 	ac30FinalAssertion?: SafeAc30FinalAssertion;
 	/** Safe separation of AC-13 transport-wrapper restoration and controller recovery. */
 	ac13Cleanup?: {
@@ -362,11 +378,16 @@ export function validateCallbackUrl(value: string): void {
 	}
 }
 
-/** Builds a safe case summary and replaces unrecognized diagnostics with generic labels. */
+/**
+ * Builds a safe case summary and replaces unrecognized diagnostics with generic labels.
+ *
+ * @param options - Enables AC-30 diagnostic output for host result boundaries.
+ */
 export function safeCaseResult(
 	caseId: string,
 	evidence: DesktopCaseSummary["evidence"],
 	result: Record<string, unknown>,
+	options: { includeAc30Diagnostic?: boolean } = {},
 ): DesktopCaseSummary {
 	const reportedStatus = result.status;
 	if (
@@ -407,10 +428,15 @@ export function safeCaseResult(
 	const lastCompletedBoundary = SAFE_CASE_FAILURE_BOUNDARIES.find(
 		(item) => item === result.lastCompletedBoundary,
 	);
-	const caseEvidence = Reflect.get(result, "caseEvidence");
+	let caseEvidence: unknown;
+	try {
+		caseEvidence = Reflect.get(result, "caseEvidence");
+	} catch {
+		caseEvidence = undefined;
+	}
 	const rawReceiptStatus =
 		caseId === "AC-33" && caseEvidence && typeof caseEvidence === "object"
-			? Reflect.get(caseEvidence, "renameReceiptStatus")
+			? readRecordProperty(caseEvidence, "renameReceiptStatus").value
 			: result.receiptStatus;
 	const receiptStatus =
 		MutationReceiptSchema.shape.status.safeParse(rawReceiptStatus);
@@ -420,24 +446,31 @@ export function safeCaseResult(
 		failureStage === "action" &&
 		caseEvidence &&
 		typeof caseEvidence === "object"
-			? Reflect.get(caseEvidence, "ac30FinalAssertion")
+			? readRecordProperty(caseEvidence, "ac30FinalAssertion").value
 			: null;
 	const ac30FinalAssertion = safeAc30FinalAssertion(
 		rawAc30FinalAssertion,
 		failureReason,
+		options.includeAc30Diagnostic === true,
 	);
 	const rawAc13Cleanup =
 		caseId === "AC-13" && caseEvidence && typeof caseEvidence === "object"
-			? Reflect.get(caseEvidence, "ac13Cleanup")
+			? readRecordProperty(caseEvidence, "ac13Cleanup").value
 			: null;
+	const rawWrapperRestored = readRecordProperty(
+		rawAc13Cleanup,
+		"wrapperRestored",
+	).value;
+	const rawControllerResumed = readRecordProperty(
+		rawAc13Cleanup,
+		"controllerResumed",
+	).value;
 	const ac13Cleanup =
-		rawAc13Cleanup &&
-		typeof rawAc13Cleanup === "object" &&
-		typeof Reflect.get(rawAc13Cleanup, "wrapperRestored") === "boolean" &&
-		typeof Reflect.get(rawAc13Cleanup, "controllerResumed") === "boolean"
+		typeof rawWrapperRestored === "boolean" &&
+		typeof rawControllerResumed === "boolean"
 			? {
-					wrapperRestored: Reflect.get(rawAc13Cleanup, "wrapperRestored"),
-					controllerResumed: Reflect.get(rawAc13Cleanup, "controllerResumed"),
+					wrapperRestored: rawWrapperRestored,
+					controllerResumed: rawControllerResumed,
 				}
 			: undefined;
 	return {
@@ -456,6 +489,22 @@ export function safeCaseResult(
 	};
 }
 
+/** Result of one guarded property read from host evidence. */
+interface SafePropertyRead {
+	/** Untrusted value that still needs validation at its consumer. */
+	value: unknown;
+}
+
+/** Reads one host property without letting a hostile getter stop safe projection. */
+function readRecordProperty(value: unknown, key: string): SafePropertyRead {
+	if (value === null || typeof value !== "object") return { value: undefined };
+	try {
+		return { value: Reflect.get(value, key) };
+	} catch {
+		return { value: undefined };
+	}
+}
+
 /** Accepts only fixed failure labels and rejects arbitrary host exception text. */
 function isSafeCaseFailureReason(
 	value: unknown,
@@ -468,15 +517,20 @@ function isSafeCaseFailureReason(
 	);
 }
 
-/** Projects only allowlisted AC-30 assertion values and omits raw identity data. */
+/**
+ * Projects only allowlisted AC-30 assertion values and omits raw identity data.
+ *
+ * @param includeDiagnostic - Includes only the bounded AC-30 diagnostic projection.
+ */
 function safeAc30FinalAssertion(
 	value: unknown,
 	failureReason: SafeCaseFailureReason | null,
+	includeDiagnostic = false,
 ): SafeAc30FinalAssertion | null {
 	if (!value || typeof value !== "object") return null;
-	const code = Reflect.get(value, "code");
-	const expected = Reflect.get(value, "expected");
-	const observed = Reflect.get(value, "observed");
+	const code = readRecordProperty(value, "code").value;
+	const expected = readRecordProperty(value, "expected").value;
+	const observed = readRecordProperty(value, "observed").value;
 	/** Allows only non-sensitive scalar values in the returned case summary. */
 	const isSafeValue = (
 		candidate: unknown,
@@ -492,10 +546,14 @@ function safeAc30FinalAssertion(
 		!isSafeValue(observed)
 	)
 		return null;
+	const diagnostic = includeDiagnostic
+		? safeAc30Diagnostic(readRecordProperty(value, "diagnostic").value)
+		: null;
 	return {
 		code: code as SafeAc30FinalAssertion["code"],
 		expected,
 		observed,
+		...(diagnostic ? { diagnostic } : {}),
 	};
 }
 
@@ -754,7 +812,9 @@ export function parseSafeCaseResult(
 	caseId: string,
 	evidence: DesktopCaseSummary["evidence"],
 ): DesktopCaseSummary {
-	return safeCaseResult(caseId, evidence, readCaseResultRecord(output));
+	return safeCaseResult(caseId, evidence, readCaseResultRecord(output), {
+		includeAc30Diagnostic: true,
+	});
 }
 
 /** Validates hashed AC-13 fixture evidence before it enters private scratch. */
@@ -836,7 +896,9 @@ export function runHostCase(
 			options,
 		);
 		const preflightRecord = readCaseResultRecord(preflightOutput);
-		const preflightSummary = safeCaseResult(caseId, evidence, preflightRecord);
+		const preflightSummary = safeCaseResult(caseId, evidence, preflightRecord, {
+			includeAc30Diagnostic: true,
+		});
 		if (preflightSummary.status !== "passed")
 			throw new Error("AC1032_FIXTURE_PREFLIGHT_BLOCKED");
 	}
@@ -849,7 +911,9 @@ export function runHostCase(
 		options,
 	);
 	const record = readCaseResultRecord(output);
-	const summary = safeCaseResult(caseId, evidence, record);
+	const summary = safeCaseResult(caseId, evidence, record, {
+		includeAc30Diagnostic: true,
+	});
 	if (caseId !== "AC-13") return summary;
 	try {
 		const caseEvidence = Reflect.get(record, "caseEvidence");
@@ -872,11 +936,226 @@ type SafeAc30ObservationValue =
 	| null
 	| (typeof AC30_SAFE_OBSERVATION_STATES)[number];
 
+/** Ordinal label for one observed AC-30 request without exposing its key. */
+type SafeAc30CallOrdinal = (typeof AC30_DIAGNOSTIC_CALL_ORDINALS)[number];
+
+/** Safe status and revision observed at one AC-30 request boundary. */
+interface SafeAc30CallDiagnostic {
+	/** Stable request role assigned by call order, not by key value. */
+	ordinal: SafeAc30CallOrdinal;
+	/** Valid HTTP response status, or null before a response. */
+	status: number | null;
+	/** Valid service revision, or null before authoritative read-back. */
+	revision: number | null;
+}
+
+/** Safe summary for one pending fixture operation at assertion time. */
+interface SafeAc30QueueOperationDiagnostic {
+	/** Ordinal identity label, or other for an unrelated operation. */
+	ordinal: SafeAc30CallOrdinal | "other";
+	/** Valid publication lifecycle state. */
+	state: (typeof AC30_DIAGNOSTIC_OPERATION_STATES)[number];
+	/** Valid publication operation kind. */
+	operation: (typeof AC30_DIAGNOSTIC_OPERATION_KINDS)[number];
+	/** Valid conditional-write kind without its epoch or revision value. */
+	preconditionKind: "match" | "absent";
+}
+
+/** Safe queue counts and bounded fixture-operation samples at assertion time. */
+interface SafeAc30QueueDiagnostic {
+	/** Number of all pending journal operations, or null when invalid. */
+	pendingOperationCount: number | null;
+	/** Number of pending local applies, or null when invalid. */
+	pendingApplyCount: number | null;
+	/** Number of unresolved attention records, or null when invalid. */
+	attentionCount: number | null;
+	/** Number of queued operations for the authorized fixture path. */
+	fixtureOperationCount: number | null;
+	/** Number of queued operations for other paths, without path values. */
+	otherPathOperationCount: number | null;
+	/** At most three operations, without key, path, payload, or precondition values. */
+	fixtureOperations: SafeAc30QueueOperationDiagnostic[];
+}
+
+/** Safe AC-30 call identity equalities and final queue observations. */
+interface SafeAc30Diagnostic {
+	/** Number of observed fixture requests, bounded to one hundred. */
+	callCount: number | null;
+	/** At most three HTTP status and authoritative revision samples. */
+	calls: SafeAc30CallDiagnostic[];
+	/** Whether retry identity matched the first request identity. */
+	retryIdentityMatches: boolean | null;
+	/** Whether the successor used a key distinct from the first request. */
+	successorIdentityDistinct: boolean | null;
+	/** Whether retry bytes matched the original payload hash. */
+	retryPayloadMatches: boolean | null;
+	/** Whether successor bytes matched the edited payload. */
+	successorPayloadMatches: boolean | null;
+	/** Whether the retry repeated the first conditional-write precondition. */
+	retryPreconditionMatches: boolean | null;
+	/** Whether every retry receipt field matched the first response. */
+	retryReceiptMatches: boolean | null;
+	/** Queue state sampled when the final assertion failed. */
+	queue: SafeAc30QueueDiagnostic;
+}
+
 /** Safe expected and observed values for one failed final AC-30 assertion. */
 interface SafeAc30FinalAssertion {
+	/** Allowlisted final assertion code that matches the safe failure reason. */
 	code: (typeof AC30_FINAL_ASSERTION_CODES)[number];
+	/** Safe expected scalar or state label. */
 	expected: SafeAc30ObservationValue;
+	/** Safe observed scalar or state label. */
 	observed: SafeAc30ObservationValue;
+	/** Bounded call and queue facts when the host requested diagnostic output. */
+	diagnostic?: SafeAc30Diagnostic;
+}
+
+/** Projects one bounded safe diagnostic without returning host identities or payloads. */
+function safeAc30Diagnostic(value: unknown): SafeAc30Diagnostic | null {
+	if (value === null || typeof value !== "object") return null;
+	try {
+		const rawCalls = readRecordProperty(value, "calls").value;
+		const calls = Array.isArray(rawCalls)
+			? rawCalls
+					.slice(0, AC30_DIAGNOSTIC_SAMPLE_LIMIT)
+					.flatMap((item, index) => {
+						if (item === null || typeof item !== "object") return [];
+						const ordinal = AC30_DIAGNOSTIC_CALL_ORDINALS[index];
+						if (!ordinal) return [];
+						return [
+							{
+								ordinal,
+								status: safeDiagnosticInteger(
+									readRecordProperty(item, "status").value,
+									100,
+									599,
+								),
+								revision: safeDiagnosticInteger(
+									readRecordProperty(item, "revision").value,
+									1,
+									Number.MAX_SAFE_INTEGER,
+								),
+							},
+						];
+					})
+			: [];
+		const rawQueue = readRecordProperty(value, "queue").value;
+		const queue =
+			rawQueue !== null && typeof rawQueue === "object" ? rawQueue : null;
+		const rawOperations = queue
+			? readRecordProperty(queue, "fixtureOperations").value
+			: null;
+		const fixtureOperations = Array.isArray(rawOperations)
+			? rawOperations.slice(0, AC30_DIAGNOSTIC_SAMPLE_LIMIT).flatMap((item) => {
+					if (item === null || typeof item !== "object") return [];
+					const rawOrdinal = readRecordProperty(item, "ordinal").value;
+					const ordinal: SafeAc30QueueOperationDiagnostic["ordinal"] =
+						rawOrdinal === "first" ||
+						rawOrdinal === "retry" ||
+						rawOrdinal === "successor"
+							? rawOrdinal
+							: "other";
+					const state = AC30_DIAGNOSTIC_OPERATION_STATES.find(
+						(candidate) =>
+							candidate === readRecordProperty(item, "state").value,
+					);
+					const operation = AC30_DIAGNOSTIC_OPERATION_KINDS.find(
+						(candidate) =>
+							candidate === readRecordProperty(item, "operation").value,
+					);
+					const preconditionKind = readRecordProperty(
+						item,
+						"preconditionKind",
+					).value;
+					if (
+						!state ||
+						!operation ||
+						(preconditionKind !== "match" && preconditionKind !== "absent")
+					)
+						return [];
+					const safePreconditionKind: "match" | "absent" =
+						preconditionKind === "match" ? "match" : "absent";
+					return [
+						{
+							ordinal,
+							state,
+							operation,
+							preconditionKind: safePreconditionKind,
+						},
+					];
+				})
+			: [];
+		/** Keeps only boolean diagnostic facts from untrusted host evidence. */
+		const booleanValue = (key: string): boolean | null => {
+			const candidate = readRecordProperty(value, key).value;
+			return typeof candidate === "boolean" ? candidate : null;
+		};
+		return {
+			callCount: safeDiagnosticInteger(
+				readRecordProperty(value, "callCount").value,
+				0,
+				100,
+			),
+			calls,
+			retryIdentityMatches: booleanValue("retryIdentityMatches"),
+			successorIdentityDistinct: booleanValue("successorIdentityDistinct"),
+			retryPayloadMatches: booleanValue("retryPayloadMatches"),
+			successorPayloadMatches: booleanValue("successorPayloadMatches"),
+			retryPreconditionMatches: booleanValue("retryPreconditionMatches"),
+			retryReceiptMatches: booleanValue("retryReceiptMatches"),
+			queue: {
+				pendingOperationCount: safeDiagnosticInteger(
+					queue
+						? readRecordProperty(queue, "pendingOperationCount").value
+						: null,
+					0,
+					100_000,
+				),
+				pendingApplyCount: safeDiagnosticInteger(
+					queue ? readRecordProperty(queue, "pendingApplyCount").value : null,
+					0,
+					100_000,
+				),
+				attentionCount: safeDiagnosticInteger(
+					queue ? readRecordProperty(queue, "attentionCount").value : null,
+					0,
+					100_000,
+				),
+				fixtureOperationCount: safeDiagnosticInteger(
+					queue
+						? readRecordProperty(queue, "fixtureOperationCount").value
+						: null,
+					0,
+					100_000,
+				),
+				otherPathOperationCount: safeDiagnosticInteger(
+					queue
+						? readRecordProperty(queue, "otherPathOperationCount").value
+						: null,
+					0,
+					100_000,
+				),
+				fixtureOperations,
+			},
+		};
+	} catch {
+		return null;
+	}
+}
+
+/** Returns a bounded integer or null for malformed and out-of-range host data. */
+function safeDiagnosticInteger(
+	value: unknown,
+	minimum: number,
+	maximum: number,
+): number | null {
+	return typeof value === "number" &&
+		Number.isSafeInteger(value) &&
+		value >= minimum &&
+		value <= maximum
+		? value
+		: null;
 }
 
 /** Safe counts and lifecycle flags used to verify AC-20 enrollment preconditions. */
@@ -1399,7 +1678,10 @@ export function createCaseScript(
 		const safeFailureClasses = ${JSON.stringify(SAFE_CASE_FAILURE_CLASSES)};
 		const safeTransportErrorCodes = ${JSON.stringify(SAFE_CASE_TRANSPORT_ERROR_CODES)};
 		const ac30FinalAssertionCodes = ${JSON.stringify(AC30_FINAL_ASSERTION_CODES)};
+		const ac30DiagnosticCallOrdinals = ${JSON.stringify(AC30_DIAGNOSTIC_CALL_ORDINALS)};
 		const ac30SafeObservationStates = ${JSON.stringify(AC30_SAFE_OBSERVATION_STATES)};
+		const ac30DiagnosticOperationStates = ${JSON.stringify(AC30_DIAGNOSTIC_OPERATION_STATES)};
+		const ac30DiagnosticOperationKinds = ${JSON.stringify(AC30_DIAGNOSTIC_OPERATION_KINDS)};
 		const boundaryDetailsKey = Symbol("case-boundary-details");
 		const caseEvidence = {};
 		const safeAc30ObservationValue = (value) => {
@@ -1407,13 +1689,58 @@ export function createCaseScript(
 			if (typeof value === "number" && Number.isSafeInteger(value)) return value;
 			return ac30SafeObservationStates.includes(value) ? value : "other";
 		};
-		const recordAc30FinalAssertion = (code, expected, observed) => {
-			if (ac30FinalAssertionCodes.includes(code))
-				caseEvidence.ac30FinalAssertion = {
+		const safeDiagnosticInteger = (value, minimum, maximum) =>
+			Number.isSafeInteger(value) && value >= minimum && value <= maximum ? value : null;
+		const safeAc30Diagnostic = (value) => {
+			if (!value || typeof value !== "object") return null;
+			try {
+				const queue = value.queue && typeof value.queue === "object" ? value.queue : {};
+				const calls = Array.isArray(value.calls) ? value.calls.slice(0, 3).flatMap((call, index) => {
+					if (!call || typeof call !== "object") return [];
+					return [{ ordinal: ac30DiagnosticCallOrdinals[index], status: safeDiagnosticInteger(call.status, 100, 599), revision: safeDiagnosticInteger(call.revision, 1, Number.MAX_SAFE_INTEGER) }];
+				}) : [];
+				const fixtureOperations = Array.isArray(queue.fixtureOperations) ? queue.fixtureOperations.slice(0, 3).flatMap((operation) => {
+					if (!operation || typeof operation !== "object") return [];
+					const ordinal = ac30DiagnosticCallOrdinals.includes(operation.ordinal) ? operation.ordinal : "other";
+					const state = ac30DiagnosticOperationStates.find((item) => item === operation.state);
+					const kind = ac30DiagnosticOperationKinds.find((item) => item === operation.operation);
+					const preconditionKind = operation.preconditionKind;
+					if (!state || !kind || (preconditionKind !== "match" && preconditionKind !== "absent")) return [];
+					return [{ ordinal, state, operation: kind, preconditionKind }];
+				}) : [];
+				const safeBoolean = (candidate) => typeof candidate === "boolean" ? candidate : null;
+				return {
+					callCount: safeDiagnosticInteger(value.callCount, 0, 100), calls,
+					retryIdentityMatches: safeBoolean(value.retryIdentityMatches),
+					successorIdentityDistinct: safeBoolean(value.successorIdentityDistinct),
+					retryPayloadMatches: safeBoolean(value.retryPayloadMatches),
+					successorPayloadMatches: safeBoolean(value.successorPayloadMatches),
+					retryPreconditionMatches: safeBoolean(value.retryPreconditionMatches),
+					retryReceiptMatches: safeBoolean(value.retryReceiptMatches),
+					queue: {
+						pendingOperationCount: safeDiagnosticInteger(queue.pendingOperationCount, 0, 100000),
+						pendingApplyCount: safeDiagnosticInteger(queue.pendingApplyCount, 0, 100000),
+						attentionCount: safeDiagnosticInteger(queue.attentionCount, 0, 100000),
+						fixtureOperationCount: safeDiagnosticInteger(queue.fixtureOperationCount, 0, 100000),
+						otherPathOperationCount: safeDiagnosticInteger(queue.otherPathOperationCount, 0, 100000),
+						fixtureOperations,
+					},
+				};
+			} catch {
+				return null;
+			}
+		};
+		const recordAc30FinalAssertion = (code, expected, observed, diagnostic) => {
+			if (ac30FinalAssertionCodes.includes(code)) {
+				const assertion = {
 					code,
 					expected: safeAc30ObservationValue(expected),
 					observed: safeAc30ObservationValue(observed),
 				};
+				const safeDiagnostic = safeAc30Diagnostic(diagnostic);
+				if (safeDiagnostic) assertion.diagnostic = safeDiagnostic;
+				caseEvidence.ac30FinalAssertion = assertion;
+			}
 		};
 		let lastCompletedBoundary = null;
 		const readBoundaryDetails = (error) => {
@@ -1869,8 +2196,14 @@ export interface DesktopCaseScripts {
 	cleanup: string;
 }
 
-/** Builds the recovered AC-30 lost-response action with one code per assertion site. */
-export function createAc30CaseScripts(home = homedir()): DesktopCaseScripts {
+/** Builds the recovered AC-30 lost-response action for one fresh fixture path. */
+export function createAc30CaseScripts(
+	home = homedir(),
+	fixturePath = "oab-37/ac-30-response-lost-20261105-01.md",
+): DesktopCaseScripts {
+	const safeFixturePath = PathSchema.parse(fixturePath);
+	if (!/^oab-37\/ac-30-response-lost-[a-zA-Z0-9-]+\.md$/.test(safeFixturePath))
+		throw new Error("Unauthorized AC-30 fixture path");
 	const target = JSON.stringify(
 		assertAuthorizedVault(
 			"dev-2",
@@ -1886,7 +2219,8 @@ if(!plugin?.journal?.snapshot||!plugin.composition?.publication||!plugin.desktop
 await plugin.desktopSync.waitForIdle();
 const stateBefore=plugin.journal.snapshot();
 if(stateBefore.pending_ops.length||stateBefore.pending_apply.length||stateBefore.reconciliation||plugin.desktopSync.isBusy)throw Error("AC30_ASSERT_INITIAL_STATE");
-const path="oab-8.8/ac-30-response-lost-20261104-06.md";
+const initialAttentionCount=stateBefore.attention.length;
+const path=__AC30_FIXTURE_PATH__;
 if(app.vault.getAbstractFileByPath(path))throw Error("AC30_ASSERT_FIXTURE_ABSENT");
 const remote=Reflect.get(plugin.composition.publication,"remote");
 if(!remote?.put||!remote.readCurrentAuthority||globalThis.__oab8Ac30Restore)throw Error("AC30_ASSERT_REMOTE_CAPABILITIES");
@@ -1896,9 +2230,10 @@ if(!absent)throw Error("AC30_ASSERT_SERVICE_PATH_ABSENT");
 const originalText="# AC-30 response-loss fixture\\n\\nOriginal immutable payload.\\n";
 const editedText=originalText+"\\nLocal successor edit.\\n";
 const originalPut=remote.put;
-let callCount=0,firstKey=null,retryKey=null,successorKey=null,firstPrecondition=null,successorPrecondition=null;
-let firstReceiptETag=null,retryReceiptETag=null,originalPayloadHash=null,firstOperationIdentity=null;
-let retryPayloadMatchesOriginal=false,successorPayloadMatchesEdited=false,firstRevision=null,retryRevision=null,successorRevision=null,retryStatus=null;
+let callCount=0,firstKey=null,retryKey=null,successorKey=null,firstPrecondition=null,retryPrecondition=null,successorPrecondition=null;
+let firstReceipt=null,retryReceipt=null,firstReceiptETag=null,retryReceiptETag=null,originalPayloadHash=null,firstOperationIdentity=null;
+let retryPayloadMatchesOriginal=false,successorPayloadMatchesEdited=false,firstRevision=null,retryRevision=null,successorRevision=null,firstStatus=null,retryStatus=null,successorStatus=null;
+let retryIdentityMatches=false,successorIdentityDistinct=null;
 let releaseGate=()=>{},markReached=()=>{},timer=null,resolveReached,rejectReached;
 const reached=new Promise((resolve,reject)=>{resolveReached=resolve;rejectReached=reject;});
 const gate=new Promise((resolve)=>{releaseGate=resolve;});
@@ -1908,6 +2243,7 @@ markReached=()=>{if(timer!==null){clearTimeout(timer);timer=null;}resolveReached
 const hashText=async(text)=>{const digest=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(text));return Array.from(new Uint8Array(digest)).map((byte)=>byte.toString(16).padStart(2,"0")).join("");};
 const hashBytes=async(bytes)=>{const digest=await crypto.subtle.digest("SHA-256",bytes);return Array.from(new Uint8Array(digest)).map((byte)=>byte.toString(16).padStart(2,"0")).join("");};
 const identityOf=(operation)=>({key:operation.key,op:operation.op,path:operation.path,created_at:operation.created_at,payload_ref:operation.payload_ref,payload_hash:operation.payload_hash,precondition:operation.precondition});
+const receiptSnapshot=(receipt)=>({status:receipt.status,path:receipt.path,etag:receipt.etag,seq:receipt.seq,size:receipt.size,hash:receipt.hash,deleted:receipt.deleted});
 const wrapper=async function(){
  const args=arguments;
  if(args[0]!==path)return originalPut.apply(this,args);
@@ -1916,20 +2252,25 @@ const wrapper=async function(){
  if(callCount===1){firstKey=key;firstPrecondition=precondition;}
  if(callCount===2){
   retryKey=key;
+  retryPrecondition=precondition;
   retryPayloadMatchesOriginal=await hashText(text)===originalPayloadHash&&key===firstKey&&JSON.stringify(precondition)===JSON.stringify(firstPrecondition);
   const operation=plugin.journal.snapshot().pending_ops.find((item)=>item.key===firstKey&&item.state==="sent");
   if(!retryPayloadMatchesOriginal||!operation||JSON.stringify(identityOf(operation))!==JSON.stringify(firstOperationIdentity))throw new Error("AC30_ASSERT_RETRY_IDENTITY");
+  retryIdentityMatches=true;
  }
  if(callCount===3){
   successorKey=key;
   successorPrecondition=precondition;
-  successorPayloadMatchesEdited=text===editedText&&key!==firstKey&&precondition.kind==="match"&&precondition.epoch===stateBefore.epoch&&precondition.rev===1;
+  successorIdentityDistinct=key!==firstKey;
+  successorPayloadMatchesEdited=text===editedText&&successorIdentityDistinct&&precondition.kind==="match"&&precondition.epoch===stateBefore.epoch&&precondition.rev===1;
   if(!successorPayloadMatchesEdited)throw new Error("AC30_ASSERT_SUCCESSOR_REQUEST");
  }
  let response;
- try{response=await originalPut.apply(this,args);}catch(error){if(typeof error==="object"&&error!==null&&Reflect.get(error,"status")===422)retryStatus=422;throw error;}
+ try{response=await originalPut.apply(this,args);}catch(error){if(callCount===2&&typeof error==="object"&&error!==null&&Number.isInteger(Reflect.get(error,"status")))retryStatus=Reflect.get(error,"status");throw error;}
  if(callCount===1){
+  firstStatus=response.status;
   originalPayloadHash=await hashText(text);
+  firstReceipt=receiptSnapshot(response);
   firstReceiptETag=response.etag;
   const authority=await remote.readCurrentAuthority(path);
   if(authority.deleted||authority.rev!==1||authority.hash!==originalPayloadHash)throw new Error("AC30_ASSERT_FIRST_COMMIT_AUTHORITY");
@@ -1944,11 +2285,14 @@ const wrapper=async function(){
   throw new Error("AC30_INJECTED_RESPONSE_LOSS");
  }
  if(callCount===2){
+  retryStatus=response.status;
+  retryReceipt=receiptSnapshot(response);
   const authority=await remote.readCurrentAuthority(path);
   retryRevision=authority.rev;
   retryReceiptETag=response.etag;
  }
  if(callCount===3){
+  successorStatus=response.status;
   const authority=await remote.readCurrentAuthority(path);
   successorRevision=authority.rev;
  }
@@ -1983,7 +2327,38 @@ try{
  const observedType=(value)=>value===null?"null":Array.isArray(value)?"array":typeof value;
  const observedNumber=(value)=>Number.isSafeInteger(value)?value:observedType(value);
  const observedKind=(value)=>value==="match"||value==="absent"?value:observedType(value);
- const failFinal=(code,expected,observed)=>{recordAc30FinalAssertion(code,expected,observed);throw new Error(code);};
+ const retryReceiptMatches=typeof firstReceipt==="undefined"||typeof retryReceipt==="undefined"?retryReceiptETag===firstReceiptETag:firstReceipt!==null&&retryReceipt!==null&&firstReceipt.status===retryReceipt.status&&firstReceipt.path===retryReceipt.path&&firstReceipt.etag===retryReceipt.etag&&firstReceipt.seq===retryReceipt.seq&&firstReceipt.size===retryReceipt.size&&firstReceipt.hash===retryReceipt.hash&&firstReceipt.deleted===retryReceipt.deleted;
+ const diagnosticCalls=[];
+ if(callCount>0)diagnosticCalls.push({ordinal:ac30DiagnosticCallOrdinals[0],status:typeof firstStatus==="undefined"?null:firstStatus,revision:firstRevision});
+ if(callCount>1)diagnosticCalls.push({ordinal:ac30DiagnosticCallOrdinals[1],status:retryStatus,revision:retryRevision});
+ if(callCount>2)diagnosticCalls.push({ordinal:ac30DiagnosticCallOrdinals[2],status:typeof successorStatus==="undefined"?null:successorStatus,revision:successorRevision});
+ const pendingOperations=Array.isArray(finalState.pending_ops)?finalState.pending_ops:[];
+ const diagnosticPath=typeof path==="undefined"?null:path;
+ const fixtureOperations=pendingOperations.filter((operation)=>operation!==null&&typeof operation==="object"&&operation.path===diagnosticPath);
+ const diagnostic={
+  callCount,
+  calls:diagnosticCalls,
+  retryIdentityMatches:typeof retryIdentityMatches==="undefined"?null:retryIdentityMatches,
+  successorIdentityDistinct:typeof successorIdentityDistinct==="undefined"?null:successorIdentityDistinct,
+  retryPayloadMatches:retryPayloadMatchesOriginal,
+  successorPayloadMatches:successorPayloadMatchesEdited,
+  retryPreconditionMatches:typeof firstPrecondition!=="undefined"&&typeof retryPrecondition!=="undefined"&&firstPrecondition!==null&&retryPrecondition!==null&&JSON.stringify(firstPrecondition)===JSON.stringify(retryPrecondition),
+  retryReceiptMatches,
+  queue:{
+   pendingOperationCount:pendingOperations.length,
+   pendingApplyCount:finalState.pending_apply.length,
+   attentionCount:finalState.attention.length,
+   fixtureOperationCount:fixtureOperations.length,
+   otherPathOperationCount:pendingOperations.filter((operation)=>operation===null||typeof operation!=="object"||operation.path!==diagnosticPath).length,
+   fixtureOperations:fixtureOperations.slice(0,3).map((operation)=>({
+    ordinal:operation.key===successorKey?"successor":operation.key===firstKey?(operation.state==="sent"?"retry":"first"):"other",
+    state:operation.state,
+    operation:operation.op,
+    preconditionKind:operation.precondition?.kind
+   }))
+  }
+ };
+ const failFinal=(code,expected,observed)=>{recordAc30FinalAssertion(code,expected,observed,diagnostic);throw new Error(code);};
  if(callCount!==3)failFinal("AC30_ASSERT_FINAL_CALL_COUNT",3,observedNumber(callCount));
  if(retryKey!==firstKey)failFinal("AC30_ASSERT_FINAL_RETRY_KEY",true,retryKey===firstKey);
  if(successorKey===firstKey)failFinal("AC30_ASSERT_FINAL_SUCCESSOR_KEY",true,successorKey!==firstKey);
@@ -1993,7 +2368,7 @@ try{
  if(firstRevision!==1)failFinal("AC30_ASSERT_FINAL_FIRST_REVISION",1,observedNumber(firstRevision));
  if(retryRevision!==1)failFinal("AC30_ASSERT_FINAL_RETRY_REVISION",1,observedNumber(retryRevision));
  if(successorRevision!==2)failFinal("AC30_ASSERT_SUCCESSOR_REVISION",2,observedNumber(successorRevision));
- if(retryReceiptETag!==firstReceiptETag)failFinal("AC30_ASSERT_FINAL_RETRY_ETAG",true,retryReceiptETag===firstReceiptETag);
+ if(!retryReceiptMatches)failFinal("AC30_ASSERT_FINAL_RETRY_ETAG",true,retryReceiptMatches);
  if(successorPrecondition.kind!=="match")failFinal("AC30_ASSERT_FINAL_PRECONDITION_KIND","match",observedKind(successorPrecondition.kind));
  if(successorPrecondition.epoch!==stateBefore.epoch)failFinal("AC30_ASSERT_FINAL_PRECONDITION_EPOCH",true,successorPrecondition.epoch===stateBefore.epoch);
  if(successorPrecondition.rev!==1)failFinal("AC30_ASSERT_FINAL_PRECONDITION_REVISION",1,observedNumber(successorPrecondition.rev));
@@ -2011,14 +2386,18 @@ try{
  if(finalState.pending_ops.length)failFinal("AC30_ASSERT_FINAL_PENDING_OPERATIONS",0,observedNumber(finalState.pending_ops.length));
  if(finalState.pending_apply.length)failFinal("AC30_ASSERT_FINAL_PENDING_APPLIES",0,observedNumber(finalState.pending_apply.length));
  if(finalState.reconciliation)failFinal("AC30_ASSERT_FINAL_RECONCILIATION","null",observedType(finalState.reconciliation));
- if(finalState.attention.length!==3)failFinal("AC30_ASSERT_FINAL_ATTENTION_COUNT",3,observedNumber(finalState.attention.length));
+ // Isolated assertion tests omit the startup snapshot. A real run uses its captured baseline.
+ const expectedAttentionCount=typeof initialAttentionCount==="undefined"?3:initialAttentionCount;
+ if(finalState.attention.length!==expectedAttentionCount)failFinal("AC30_ASSERT_FINAL_ATTENTION_COUNT",expectedAttentionCount,observedNumber(finalState.attention.length));
 }finally{
  if(timer!==null)clearTimeout(timer);
  releaseGate();
  remote.put=originalPut;
 }
 if(remote.put!==originalPut)throw new Error("AC30_ASSERT_FINAL_INTERCEPTION_RESTORED");
-`.replace("__AUTHORIZED_TARGET__", target),
+`
+			.replace("__AUTHORIZED_TARGET__", target)
+			.replace("__AC30_FIXTURE_PATH__", JSON.stringify(safeFixturePath)),
 		cleanup: `if(globalThis.__oab8Ac30Restore&&!globalThis.__oab8Ac30Restore())throw Error("AC30_CLEANUP_RESTORE_FAILED");delete globalThis.__oab8Ac30Restore;`,
 	};
 }

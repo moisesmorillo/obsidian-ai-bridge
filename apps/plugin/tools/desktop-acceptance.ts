@@ -1456,7 +1456,16 @@ if(remote.createText!==originalCreateText)throw new Error("AC30_ASSERT_FINAL_INT
 }
 
 /** Builds the recovered large Markdown AC-31 blob race action and local cleanup. */
-export function createAc31CaseScripts(home = homedir()): DesktopCaseScripts {
+export function createAc31CaseScripts(
+	home = homedir(),
+	fixturePath = "oab-8.8/ac-31-blob-stat-race-20261104-02.md",
+): DesktopCaseScripts {
+	const safeFixturePath = PathSchema.parse(fixturePath);
+	if (
+		!safeFixturePath.startsWith("oab-8.8/ac-31-blob-stat-race-") ||
+		!safeFixturePath.endsWith(".md")
+	)
+		throw new Error("Unauthorized AC-31 fixture path");
 	const target = JSON.stringify(
 		assertAuthorizedVault(
 			"dev-2",
@@ -1472,7 +1481,7 @@ if(!plugin?.journal?.snapshot||!plugin.composition?.publication||!plugin.desktop
 await plugin.desktopSync.waitForIdle();
 const stateBefore=plugin.journal.snapshot();
 if(stateBefore.pending_ops.length||stateBefore.pending_apply.length||stateBefore.reconciliation||plugin.desktopSync.isBusy)throw Error("AC31_ASSERT_INITIAL_STATE");
-const path="oab-8.8/ac-31-blob-stat-race-20261104-02.md";
+const path=${JSON.stringify(safeFixturePath)};
 if(app.vault.getAbstractFileByPath(path))throw Error("AC31_ASSERT_FIXTURE_ABSENT");
 const remote=Reflect.get(plugin.composition.publication,"remote");
 if(!remote?.manifest||!remote.putBlob||!remote.readCurrentBlobAuthority||globalThis.__oab8Ac31Restore)throw Error("AC31_ASSERT_REMOTE_CAPABILITIES");
@@ -1519,14 +1528,15 @@ const raceState=plugin.journal.snapshot();
 const raceFile=app.vault.getAbstractFileByPath(path);
 if(!raceFile)throw new Error("AC31_ASSERT_RACE_SOURCE_EXISTS");
 const raceLocalHash=await hashBytes(new Uint8Array(await app.vault.readBinary(raceFile)));
-const raceCopies=app.vault.getFiles().filter((file)=>file.path.startsWith("oab-8.8/ac-31-blob-stat-race-20261104-02 (conflict"));
+const conflictPrefix=path.slice(0,path.lastIndexOf("."))+" (conflict";
+const raceCopies=app.vault.getFiles().filter((file)=>file.path.startsWith(conflictPrefix));
 let preservedRaceCopy=false;for(const copy of raceCopies){if(await hashBytes(new Uint8Array(await app.vault.readBinary(copy)))===raceHash)preservedRaceCopy=true;}
 const intermediatePreserved=raceLocalHash===raceHash&&raceCopies.length===1&&preservedRaceCopy&&raceState.base[path]?.rev===1&&raceState.base[path]?.hash===baseHash&&raceState.pending_apply.some((entry)=>entry.change.path===path);
 if(raceState.pending_apply.length)await plugin.desktopSync.syncNow();
 await plugin.desktopSync.waitForIdle();
 const finalState=plugin.journal.snapshot(),finalFile=app.vault.getAbstractFileByPath(path);
 const finalHash=finalFile?await hashBytes(new Uint8Array(await app.vault.readBinary(finalFile))):null;
-const finalCopies=app.vault.getFiles().filter((file)=>file.path.startsWith("oab-8.8/ac-31-blob-stat-race-20261104-02 (conflict"));
+const finalCopies=app.vault.getFiles().filter((file)=>file.path.startsWith(conflictPrefix));
 let finalCopyMatches=false;for(const copy of finalCopies){if(await hashBytes(new Uint8Array(await app.vault.readBinary(copy)))===raceHash)finalCopyMatches=true;}
 const authority=await remote.readCurrentBlobAuthority(path);
 if(!intermediatePreserved||!finalFile||finalHash!==remoteHash||authority.rev!==2||authority.hash!==remoteHash||finalCopies.length!==1||!finalCopyMatches||finalState.base[path]?.rev!==2||finalState.base[path]?.hash!==remoteHash||finalState.pending_ops.length||finalState.pending_apply.length||finalState.reconciliation||!finalState.attention.some((item)=>item.path===path))throw new Error("AC31_ASSERT_FINAL_CONFLICT_PRESERVATION");

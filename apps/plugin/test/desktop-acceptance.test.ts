@@ -641,7 +641,10 @@ describe("desktop acceptance safety", () => {
 
 	it("keeps recovered AC-30 and Markdown AC-31 diagnostics unique", async () => {
 		const ac30 = createAc30CaseScripts("/Users/test");
-		const ac31 = createAc31CaseScripts("/Users/test");
+		const ac31 = createAc31CaseScripts(
+			"/Users/test",
+			"oab-8.8/ac-31-blob-stat-race-20261104-03.md",
+		);
 		for (const scripts of [ac30, ac31]) {
 			const siteCodes = [
 				...scripts.action.matchAll(/throw (?:new )?Error\("([A-Z0-9_]+)"\)/g),
@@ -663,12 +666,22 @@ describe("desktop acceptance safety", () => {
 			}
 		}
 		expect(ac31.action).toContain(
-			"oab-8.8/ac-31-blob-stat-race-20261104-02.md",
+			"oab-8.8/ac-31-blob-stat-race-20261104-03.md",
 		);
 		expect(ac31.action).toContain(
 			"createBinary(path,baseBytes.buffer.slice(0))",
 		);
 		expect(ac31.action).not.toContain(".bin");
+		expect(ac31.action).toContain("ac-31-blob-stat-race-20261104-03.md");
+		expect(ac31.action).toContain(
+			'const conflictPrefix=path.slice(0,path.lastIndexOf("."))+" (conflict"',
+		);
+		expect(() =>
+			createAc31CaseScripts(
+				"/Users/test",
+				"oab-8.8/ac-31-blob-stat-race-20261104-04.bin",
+			),
+		).toThrow("Unauthorized AC-31 fixture path");
 		expect(ac30.action).toContain("AC30_TIMEOUT_FIRST_BOUNDARY_WAIT");
 		expect(ac31.action).toContain("AC31_TIMEOUT_STAT_RACE_INJECTION");
 		expect(ac30.action).not.toMatch(

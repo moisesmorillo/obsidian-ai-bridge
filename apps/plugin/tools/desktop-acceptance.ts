@@ -23,6 +23,20 @@ const SAFE_CASE_FAILURE_CODES = [
 	"AC30_PRECONDITION_FAILED",
 	"AC30_FIRST_BOUNDARY_FAILED",
 	"AC30_SUCCESSOR_BOUNDARY_FAILED",
+	"unexpected-assertion-error",
+	"unexpected-type-error",
+	"unexpected-range-error",
+	"unexpected-reference-error",
+	"unexpected-syntax-error",
+	"unexpected-sync-transport-error",
+	"SYNC_TRANSPORT_1XX",
+	"SYNC_TRANSPORT_2XX",
+	"SYNC_TRANSPORT_3XX",
+	"SYNC_TRANSPORT_4XX",
+	"SYNC_TRANSPORT_5XX",
+	"SYNC_TRANSPORT_OTHER",
+	"ACTION_TIMEOUT",
+	"CLEANUP_TIMEOUT",
 ] as const;
 
 /** Safe failure labels returned after exact allowlist matching. */
@@ -906,8 +920,25 @@ export function createCaseScript(
 		throw new Error("Invalid acceptance case ID");
 	return `(async () => {
 		const safeFailureCodes = ${JSON.stringify(SAFE_CASE_FAILURE_CODES)};
-		const classifyActionFailure = (error) => {
+		const classifyFailure = (error, phase) => {
 			try {
+				if (error && typeof error === "object") {
+					const name = error.name;
+					if (name === "TimeoutError") return phase === "action" ? "ACTION_TIMEOUT" : "CLEANUP_TIMEOUT";
+					if (name === "SyncTransportError") {
+						const status = error.status;
+						if (!Number.isInteger(status) || status < 100 || status >= 600) return "unexpected-sync-transport-error";
+						return "SYNC_TRANSPORT_" + Math.floor(status / 100) + "XX";
+					}
+					const unexpected = {
+						AssertionError: "unexpected-assertion-error",
+						TypeError: "unexpected-type-error",
+						RangeError: "unexpected-range-error",
+						ReferenceError: "unexpected-reference-error",
+						SyntaxError: "unexpected-syntax-error"
+					};
+					if (Object.prototype.hasOwnProperty.call(unexpected, name)) return unexpected[name];
+				}
 				const message = error instanceof Error ? error.message : null;
 				return safeFailureCodes.includes(message) ? message : "unknown-error";
 			} catch {
@@ -923,16 +954,17 @@ export function createCaseScript(
 		} catch (error) {
 			status = "failed";
 			failureStage = "action";
-			failureReason = classifyActionFailure(error);
+			failureReason = classifyFailure(error, "action");
 		}
 		try {
 			await (async () => { ${cleanupScript} })();
 			cleanupStatus = "passed";
-		} catch {
+		} catch (error) {
 			status = "failed";
 			if (failureStage === null) {
 				failureStage = "cleanup";
-				failureReason = "cleanup-error";
+				const cleanupReason = classifyFailure(error, "cleanup");
+				failureReason = cleanupReason === "CLEANUP_TIMEOUT" ? cleanupReason : "cleanup-error";
 			}
 		}
 		return "OAB8CASE:" + JSON.stringify({ caseId: ${JSON.stringify(caseId)}, status, failureStage, failureReason, cleanupStatus });

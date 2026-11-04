@@ -637,6 +637,80 @@ describe("desktop acceptance safety", () => {
 		Reflect.deleteProperty(globalThis, "oab88CleanupRan");
 	});
 
+	it("classifies safe unexpected errors without their messages", async () => {
+		const cases = [
+			{
+				error: { name: "AssertionError", message: "private detail" },
+				expected: "unexpected-assertion-error",
+			},
+			{
+				error: { name: "TypeError", message: "private detail" },
+				expected: "unexpected-type-error",
+			},
+			{
+				error: { name: "TimeoutError", message: "private detail" },
+				expected: "ACTION_TIMEOUT",
+			},
+			{
+				error: {
+					name: "SyncTransportError",
+					status: 412,
+					message: "private detail",
+				},
+				expected: "SYNC_TRANSPORT_4XX",
+			},
+			{
+				error: {
+					name: "SyncTransportError",
+					status: 503,
+					message: "private detail",
+				},
+				expected: "SYNC_TRANSPORT_5XX",
+			},
+			{
+				error: {
+					name: "SyncTransportError",
+					status: 700,
+					message: "private detail",
+				},
+				expected: "unexpected-sync-transport-error",
+			},
+		];
+		for (const { error, expected } of cases) {
+			const script = createCaseScript(
+				"AC-02",
+				`throw Object.assign(new Error(${JSON.stringify(error.message)}), ${JSON.stringify(error)})`,
+				"globalThis.oab88CleanupRan = true",
+			);
+			const result = (
+				new Function(`return ${script}`) as () => Promise<string>
+			)();
+			const serialized = await result;
+			expect(
+				JSON.parse(serialized.slice("OAB8CASE:".length)).failureReason,
+			).toBe(expected);
+			expect(serialized).not.toContain("private detail");
+		}
+		const cleanupTimeout = createCaseScript(
+			"AC-02",
+			"",
+			"throw Object.assign(new Error('private detail'), { name: 'TimeoutError' })",
+		);
+		const cleanupResult = (
+			new Function(`return ${cleanupTimeout}`) as () => Promise<string>
+		)();
+		const cleanupSerialized = await cleanupResult;
+		expect(
+			JSON.parse(cleanupSerialized.slice("OAB8CASE:".length)),
+		).toMatchObject({
+			failureStage: "cleanup",
+			failureReason: "CLEANUP_TIMEOUT",
+			cleanupStatus: "failed",
+		});
+		expect(cleanupSerialized).not.toContain("private detail");
+		Reflect.deleteProperty(globalThis, "oab88CleanupRan");
+	});
+
 	it("hides unknown failure text and reports failed cleanup", async () => {
 		const script = createCaseScript(
 			"AC-02",

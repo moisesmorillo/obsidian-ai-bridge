@@ -3104,19 +3104,40 @@ describe("PublicationController", () => {
 		const originalPut = remote.put;
 		const journal = await DeviceJournal.open(storage);
 		await journal.resetEpoch(epoch);
+		await journal.setCursor(epoch, 0);
+		const applyEngine = createApplyEngine(journal, vault, remote);
 		const controller = new PublicationController(journal, vault, remote, {
-			applyEngine: createApplyEngine(journal, vault, remote),
+			applyEngine,
 			now: () => Date.now(),
 			recoverPrecondition: async () => {},
 		});
+		const reconciliation = new ReconciliationController(
+			journal,
+			applyEngine,
+			vault,
+			{
+				manifest: async () => ({
+					epoch,
+					head_seq: 0,
+					next_page: null,
+					entries: [],
+				}),
+				changes: async () => ({ epoch, head_seq: 0, entries: [] }),
+				createText: async () => {
+					throw new Error("Unexpected enrollment create");
+				},
+			},
+		);
 		await journal.recordAttention("oab-8.8/old-1.md", "retained attention");
 		await journal.recordAttention("oab-8.8/old-2.md", "retained attention");
 		await journal.recordAttention("oab-8.8/old-3.md", "retained attention");
 		let desktopSync: DesktopSyncController;
 		desktopSync = new DesktopSyncController({
 			cycle: async () => {
+				await reconciliation.resume();
 				await controller.scan();
 				await controller.flush();
+				await reconciliation.replay();
 			},
 			onEvent: (event) => controller.observe(event),
 			host: {
@@ -3245,7 +3266,9 @@ describe("PublicationController", () => {
 			});
 		} finally {
 			desktopSync.close();
+			reconciliation.close();
 			controller.close();
+			journal.close();
 			vi.useRealTimers();
 		}
 	});

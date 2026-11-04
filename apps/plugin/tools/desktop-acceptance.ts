@@ -68,6 +68,22 @@ const SAFE_CASE_FAILURE_CODES = [
 	"AC1032_ASSERT_PROCESS_INTERCEPTION",
 	"AC1032_ASSERT_FINAL_STATE",
 	"AC1032_CLEANUP_RESTORE_FAILED",
+	"AC33_ASSERT_TARGET_VAULT",
+	"AC33_ASSERT_PLUGIN_CONTROLS",
+	"AC33_ASSERT_INITIAL_STATE",
+	"AC33_ASSERT_FIXTURES_ABSENT",
+	"AC33_ASSERT_REMOTE_CAPABILITIES",
+	"AC33_ASSERT_CURRENT_EPOCH",
+	"AC33_ASSERT_SERVICE_ABSENT",
+	"AC33_ASSERT_BASELINE",
+	"AC33_ASSERT_SOURCE_CREATE",
+	"AC33_ASSERT_HYDRATED_SOURCE",
+	"AC33_ASSERT_RENAME_AUTHORITY",
+	"AC33_ASSERT_MANIFEST_SNAPSHOT",
+	"AC33_ASSERT_HYDRATED_DESTINATION",
+	"AC33_ASSERT_SOURCE_ONLY_REPLAY",
+	"AC33_ASSERT_FINAL_STATE",
+	"AC33_CLEANUP_RESTORE_FAILED",
 	"unexpected-assertion-error",
 	"unexpected-type-error",
 	"unexpected-range-error",
@@ -108,6 +124,22 @@ const SAFE_CASE_FAILURE_BOUNDARIES = [
 	"AC1032_WAIT_CONFLICT_SYNC",
 	"AC1032_READ_FINAL_AUTHORITY",
 	"AC1032_READ_CONFLICT_AUTHORITY",
+	"AC33_READ_CURRENT_MANIFEST",
+	"AC33_READ_SERVICE_ABSENCE",
+	"AC33_CREATE_SOURCE",
+	"AC33_HYDRATE_SOURCE",
+	"AC33_READ_SOURCE_AUTHORITY",
+	"AC33_READ_DESTINATION_ABSENCE",
+	"AC33_RENAME_SOURCE",
+	"AC33_READ_RENAMED_SOURCE",
+	"AC33_READ_RENAMED_DESTINATION",
+	"AC33_CAPTURE_MANIFEST",
+	"AC33_HYDRATE_DESTINATION",
+	"AC33_REPLAY_RENAME",
+	"AC33_RESUME_HYDRATION",
+	"AC33_WAIT_FINAL_IDLE",
+	"AC33_READ_FINAL_SOURCE",
+	"AC33_READ_FINAL_DESTINATION",
 ] as const;
 
 /** Error classes allowed in diagnostics from a wrapped case operation. */
@@ -1745,5 +1777,75 @@ const conflictAuthority=await withCaseBoundary("AC1032_READ_CONFLICT_AUTHORITY",
 if(finalAuthority.deleted||finalAuthority.rev!==2||finalAuthority.hash!==remoteHash||conflictAuthority.deleted||conflictAuthority.hash!==userHash||finalState.base[path]?.rev!==2||finalState.base[path]?.hash!==remoteHash||finalState.pending_ops.length||finalState.pending_apply.length||finalState.reconciliation)throw Error("AC1032_ASSERT_FINAL_STATE");
 `.trim(),
 		cleanup: `if(globalThis.__oab8Ac1032Restore&&!globalThis.__oab8Ac1032Restore())throw Error("AC1032_CLEANUP_RESTORE_FAILED");delete globalThis.__oab8Ac1032Restore;`,
+	};
+}
+
+/** Builds a same-epoch AC-33 hydration pause followed by actual feed replay. */
+export function createAc33CaseScripts(
+	fixturePath = "oab-8.8/ac-33-hydration-dest-20261104-01.md",
+): DesktopCaseScripts {
+	const safeFixturePath = PathSchema.parse(fixturePath);
+	if (
+		!safeFixturePath.startsWith("oab-8.8/ac-33-hydration-dest-") ||
+		!safeFixturePath.endsWith(".md")
+	)
+		throw new Error("Unauthorized AC-33 fixture path");
+	const target = authorizedVaults()["dev-2"];
+	return {
+		action: `
+if(app.vault.adapter.getBasePath()!==${JSON.stringify(target)})throw Error("AC33_ASSERT_TARGET_VAULT");
+const plugin=app.plugins.plugins?.["ai-bridge"],reconciliation=plugin?.composition?.reconciliation;
+if(!plugin?.journal?.snapshot||!plugin.composition?.publication||!reconciliation?.reconcile||!reconciliation?.replay||!reconciliation?.resume||!plugin.desktopSync||plugin.sessionStatus!=="connected"||plugin.syncPaused!==false)throw Error("AC33_ASSERT_PLUGIN_CONTROLS");
+await plugin.desktopSync.waitForIdle();
+const stateBefore=plugin.journal.snapshot(),observedEpoch=stateBefore.epoch;
+if(!observedEpoch||stateBefore.cursor===null||stateBefore.pending_ops.length||stateBefore.pending_apply.length||stateBefore.reconciliation||plugin.desktopSync.isBusy)throw Error("AC33_ASSERT_INITIAL_STATE");
+const destination=${JSON.stringify(safeFixturePath)},source=destination.replace("ac-33-hydration-dest-","ac-33-hydration-source-"),sourceText="# AC-33 controlled rename fixture\\n\\nSource bytes\\n";
+if(app.vault.getAbstractFileByPath(source)||app.vault.getAbstractFileByPath(destination))throw Error("AC33_ASSERT_FIXTURES_ABSENT");
+const remote=Reflect.get(plugin.composition.publication,"remote");
+if(!remote?.manifest||!remote?.changes||!remote?.put||!remote?.rename||!remote?.readCurrentAuthority||globalThis.__oab8Ac33Restore)throw Error("AC33_ASSERT_REMOTE_CAPABILITIES");
+const firstPage=await withCaseBoundary("AC33_READ_CURRENT_MANIFEST",()=>remote.manifest(null));
+if(firstPage.epoch!==observedEpoch)throw Error("AC33_ASSERT_CURRENT_EPOCH");
+const expectAbsent=async(path,boundary)=>{try{await withCaseBoundary(boundary,()=>remote.readCurrentAuthority(path));return false;}catch(error){if(readBoundaryDetails(error)?.status===404)return true;throw error;}};
+const sourceAbsent=await expectAbsent(source,"AC33_READ_SERVICE_ABSENCE"),destinationAbsence=await expectAbsent(destination,"AC33_READ_DESTINATION_ABSENCE");
+if(!sourceAbsent||!destinationAbsence)throw Error("AC33_ASSERT_SERVICE_ABSENT");
+const hashText=async(text)=>{const digest=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(text));return Array.from(new Uint8Array(digest)).map((byte)=>byte.toString(16).padStart(2,"0")).join("");};
+const sourceHash=await hashText(sourceText);
+const sourceCreate=await withCaseBoundary("AC33_CREATE_SOURCE",()=>remote.put(source,sourceText,{kind:"absent"},crypto.randomUUID(),observedEpoch));
+const createdSource=await withCaseBoundary("AC33_READ_SOURCE_AUTHORITY",()=>remote.readCurrentAuthority(source));
+if(sourceCreate.status!==201||createdSource.deleted||createdSource.epoch!==observedEpoch||createdSource.rev!==1||createdSource.hash!==sourceHash)throw Error("AC33_ASSERT_SOURCE_CREATE");
+const originalManifest=remote.manifest,capturedEntries=[],capturedTokens=new Set();
+let restoreComplete=false;
+globalThis.__oab8Ac33Restore=()=>{if(restoreComplete)return true;remote.manifest=originalManifest;restoreComplete=remote.manifest===originalManifest;return restoreComplete;};
+remote.manifest=async function(token){const page=await originalManifest.call(remote,token);if(page.epoch!==observedEpoch)throw Error("AC33_ASSERT_CURRENT_EPOCH");return page;};
+await withCaseBoundary("AC33_HYDRATE_SOURCE",()=>reconciliation.reconcile());
+const sourceBefore=await withCaseBoundary("AC33_READ_SOURCE_AUTHORITY",()=>remote.readCurrentAuthority(source)),baseline=plugin.journal.snapshot(),cursorBeforeRename=baseline.cursor,localSource=app.vault.getAbstractFileByPath(source),localSourceHash=localSource?await hashText(await app.vault.read(localSource)):null;
+if(sourceBefore.deleted||sourceBefore.epoch!==observedEpoch||sourceBefore.rev!==1||sourceBefore.hash!==sourceHash||baseline.base[source]?.rev!==1||baseline.base[source]?.hash!==sourceHash||baseline.base[destination]!==undefined||localSourceHash!==sourceHash||baseline.pending_ops.length||baseline.pending_apply.length||baseline.reconciliation||cursorBeforeRename===null)throw Error("AC33_ASSERT_HYDRATED_SOURCE");
+const destinationStillAbsent=await expectAbsent(destination,"AC33_READ_DESTINATION_ABSENCE");
+if(!destinationStillAbsent)throw Error("AC33_ASSERT_SERVICE_ABSENT");
+const renameReceipt=await withCaseBoundary("AC33_RENAME_SOURCE",()=>remote.rename(source,destination,{kind:"match",epoch:observedEpoch,rev:sourceBefore.rev},crypto.randomUUID()));
+const renamedSource=await withCaseBoundary("AC33_READ_RENAMED_SOURCE",()=>remote.readCurrentAuthority(source)),renamedDestination=await withCaseBoundary("AC33_READ_RENAMED_DESTINATION",()=>remote.readCurrentAuthority(destination));
+if(renameReceipt.status!==200||!renamedSource.deleted||renamedSource.rev!==2||renamedDestination.deleted||renamedDestination.epoch!==observedEpoch||renamedDestination.rev!==1||renamedDestination.hash!==sourceHash)throw Error("AC33_ASSERT_RENAME_AUTHORITY");
+let capturedHead=null,capturedEpoch=null,pageToken=null;
+do{const page=await withCaseBoundary("AC33_CAPTURE_MANIFEST",()=>originalManifest.call(remote,pageToken));if(capturedEpoch!==null&&page.epoch!==capturedEpoch)throw Error("AC33_ASSERT_MANIFEST_SNAPSHOT");if(capturedHead!==null&&page.head_seq!==capturedHead)throw Error("AC33_ASSERT_MANIFEST_SNAPSHOT");capturedEpoch=page.epoch;capturedHead=page.head_seq;capturedEntries.push(...page.entries);pageToken=page.next_page;if(pageToken!==null){if(capturedTokens.has(pageToken))throw Error("AC33_ASSERT_MANIFEST_SNAPSHOT");capturedTokens.add(pageToken);}}while(pageToken!==null);
+const destinationEntry=capturedEntries.find((entry)=>entry.path===destination),sourceEntry=capturedEntries.find((entry)=>entry.path===source);
+if(capturedEpoch!==observedEpoch||capturedHead===null||capturedHead<=cursorBeforeRename||new Set(capturedEntries.map((entry)=>entry.path)).size!==capturedEntries.length||capturedEntries.filter((entry)=>entry.path===destination).length!==1||capturedEntries.filter((entry)=>entry.path===source).length!==1||!destinationEntry||destinationEntry.deleted||destinationEntry.hash!==sourceHash||!sourceEntry?.deleted)throw Error("AC33_ASSERT_MANIFEST_SNAPSHOT");
+const continuationToken="ac33-controlled-continuation",remainingEntries=capturedEntries.filter((entry)=>entry.path!==destinationEntry.path),hydrationFirstPage={epoch:observedEpoch,head_seq:capturedHead,entries:[destinationEntry],next_page:continuationToken},hydrationContinuation={epoch:observedEpoch,head_seq:capturedHead,entries:remainingEntries,next_page:null},hydrationStop=new Error("controlled hydration boundary");
+let stoppedAfterDestination=false,allowContinuation=false;
+remote.manifest=async function(token){if(token===null)return hydrationFirstPage;if(token!==continuationToken)throw Error("AC33_ASSERT_MANIFEST_SNAPSHOT");if(!allowContinuation){stoppedAfterDestination=true;throw hydrationStop;}return hydrationContinuation;};
+try{
+let stopObserved=false;try{await withCaseBoundary("AC33_HYDRATE_DESTINATION",()=>reconciliation.reconcile());}catch(error){if(error!==hydrationStop)throw error;stopObserved=true;}
+const hydrated=plugin.journal.snapshot(),destinationFile=app.vault.getAbstractFileByPath(destination),destinationHash=destinationFile?await hashText(await app.vault.read(destinationFile)):null;
+if(!stopObserved||!stoppedAfterDestination||hydrated.epoch!==observedEpoch||hydrated.cursor!==cursorBeforeRename||hydrated.base[destination]?.rev!==renamedDestination.rev||hydrated.base[destination]?.hash!==sourceHash||hydrated.base[source]?.rev!==sourceBefore.rev||!hydrated.reconciliation||hydrated.reconciliation.stage!=="manifest"||hydrated.reconciliation.page_token!==continuationToken||destinationHash!==sourceHash||hydrated.pending_ops.length||hydrated.pending_apply.length)throw Error("AC33_ASSERT_HYDRATED_DESTINATION");
+await withCaseBoundary("AC33_REPLAY_RENAME",()=>reconciliation.replay());
+const replayed=plugin.journal.snapshot(),replayedDestination=app.vault.getAbstractFileByPath(destination);
+if(replayed.base[destination]?.rev!==renamedDestination.rev||replayed.base[destination]?.hash!==sourceHash||replayed.base[source]?.deleted!==true||replayed.base[source]?.rev!==renamedSource.rev||app.vault.getAbstractFileByPath(source)||!replayedDestination||await hashText(await app.vault.read(replayedDestination))!==sourceHash||app.vault.getFiles().filter((file)=>file.path===destination).length!==1)throw Error("AC33_ASSERT_SOURCE_ONLY_REPLAY");
+allowContinuation=true;
+await withCaseBoundary("AC33_RESUME_HYDRATION",()=>reconciliation.resume());
+}finally{if(!globalThis.__oab8Ac33Restore())throw Error("AC33_CLEANUP_RESTORE_FAILED");}
+await withCaseBoundary("AC33_WAIT_FINAL_IDLE",()=>plugin.desktopSync.waitForIdle());
+const finalState=plugin.journal.snapshot(),finalSource=await withCaseBoundary("AC33_READ_FINAL_SOURCE",()=>remote.readCurrentAuthority(source)),finalDestination=await withCaseBoundary("AC33_READ_FINAL_DESTINATION",()=>remote.readCurrentAuthority(destination));
+if(finalState.epoch!==observedEpoch||finalState.cursor!==capturedHead||finalState.reconciliation||finalState.pending_ops.length||finalState.pending_apply.length||finalState.base[destination]?.rev!==renamedDestination.rev||finalState.base[destination]?.hash!==sourceHash||finalState.base[source]?.deleted!==true||finalState.base[source]?.rev!==renamedSource.rev||!finalSource.deleted||finalSource.rev!==renamedSource.rev||finalDestination.deleted||finalDestination.rev!==renamedDestination.rev||finalDestination.hash!==sourceHash||app.vault.getAbstractFileByPath(source)||app.vault.getFiles().filter((file)=>file.path===destination).length!==1)throw Error("AC33_ASSERT_FINAL_STATE");
+`.trim(),
+		cleanup: `if(globalThis.__oab8Ac33Restore&&!globalThis.__oab8Ac33Restore())throw Error("AC33_CLEANUP_RESTORE_FAILED");delete globalThis.__oab8Ac33Restore;`,
 	};
 }

@@ -425,6 +425,30 @@ describe("ReconciliationController", () => {
 		},
 	);
 
+	it("preserves pending identity and attention during same-epoch reconciliation", async () => {
+		await context.journal.resetEpoch(epoch);
+		await context.journal.setCursor(epoch, 4);
+		const pending = await context.journal.enqueue(
+			{
+				op: "put",
+				path: "same-epoch-pending.md",
+				precondition: { kind: "absent" },
+			},
+			new TextEncoder().encode("pending payload"),
+		);
+		await context.journal.recordAttention("same-epoch-attention.md", "Keep me");
+		const before = context.journal.snapshot();
+
+		await context.controller.reconcile();
+
+		const after = context.journal.snapshot();
+		expect(after.epoch).toBe(before.epoch);
+		expect(after.cursor).toBe(4);
+		expect(after.pending_ops).toEqual([pending]);
+		expect(after.attention).toEqual(before.attention);
+		expect(after.pending_apply).toEqual(before.pending_apply);
+	});
+
 	it("does not enroll a fresh disconnected journal during resume", async () => {
 		await context.controller.resume();
 		expect(context.remote.manifestCalls).toEqual([]);
@@ -1542,7 +1566,7 @@ describe("ReconciliationController", () => {
 		expect(context.journal.snapshot().cursor).toBe(5);
 	});
 
-	it("applies a source-only rename without reading its unavailable destination", async () => {
+	it("applies a source-only rename after hydration confirms its destination", async () => {
 		const source = "rename-source.md";
 		const destination = "rename-destination.md";
 		const sourceText = "source content";
@@ -1556,9 +1580,10 @@ describe("ReconciliationController", () => {
 		});
 		await context.journal.setBase(destination, {
 			deleted: false,
-			rev: 10,
+			rev: 3,
 			hash: await hash(destinationText),
 		});
+		context.vault.files.set(destination, destinationText);
 		context.remote.feed.push({
 			epoch,
 			head_seq: 5,
@@ -1580,6 +1605,10 @@ describe("ReconciliationController", () => {
 		await expect(context.controller.replay()).resolves.toBeUndefined();
 		expect(context.remote.readCalls).toEqual([]);
 		expect(context.vault.files.has(source)).toBe(false);
+		expect(context.vault.files.get(destination)).toBe(destinationText);
+		expect(
+			[...context.vault.files.keys()].filter((path) => path === destination),
+		).toHaveLength(1);
 		expect(context.journal.snapshot().base[source]).toEqual({
 			deleted: true,
 			rev: 2,

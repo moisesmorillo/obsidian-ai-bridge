@@ -8,6 +8,7 @@ import {
 	createAc20FixtureScript,
 	createAc30CaseScripts,
 	createAc31CaseScripts,
+	createAc33CaseScripts,
 	createAc1032CaseScripts,
 	createCaseScript,
 	createInstallScript,
@@ -733,6 +734,33 @@ describe("desktop acceptance safety", () => {
 		).not.toThrow();
 		expect(() => createAc1032CaseScripts("oab-8.8/unrelated.md")).toThrow(
 			"Unauthorized AC-10/32 fixture path",
+		);
+	});
+
+	it("builds the controlled AC-33 hydration and feed replay case", () => {
+		const scripts = createAc33CaseScripts();
+		expect(scripts.action).toContain("AC33_ASSERT_TARGET_VAULT");
+		expect(scripts.action).toContain("reconciliation.reconcile()");
+		expect(scripts.action).toContain(
+			'remote.put(source,sourceText,{kind:"absent"}',
+		);
+		expect(scripts.action).toContain("reconciliation.replay()");
+		expect(scripts.action).toContain("destinationAbsence");
+		expect(scripts.action).toContain("crypto.randomUUID()");
+		expect(scripts.action).toContain(
+			'remote.rename(source,destination,{kind:"match",epoch:observedEpoch,rev:sourceBefore.rev}',
+		);
+		expect(scripts.action).toContain("firstPage.epoch!==observedEpoch");
+		expect(scripts.action).toContain("localSourceHash!==sourceHash");
+		expect(scripts.cleanup).toContain("AC33_CLEANUP_RESTORE_FAILED");
+		expect(
+			() =>
+				new Function(
+					createCaseScript("AC-33", scripts.action, scripts.cleanup),
+				),
+		).not.toThrow();
+		expect(() => createAc33CaseScripts("oab-8.8/unrelated.md")).toThrow(
+			"Unauthorized AC-33 fixture path",
 		);
 	});
 

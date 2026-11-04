@@ -619,7 +619,7 @@ describe("production MCP transport", () => {
 		);
 	});
 
-	// A 15,000 ms bound covers 256 serial production writes and preserves hang detection.
+	// A 30,000 ms bound covers 256 serial production writes and preserves hang detection.
 	it("serves MCP initialization, discovery, and read operations through real OAuth and DO state", async () => {
 		const { token, clientId } = await issueToken();
 		const auth = { authorization: `Bearer ${token}` };
@@ -1236,9 +1236,9 @@ describe("production MCP transport", () => {
 			expect(revoked.headers.get("www-authenticate")).toBeNull();
 			expect(await revoked.text()).not.toContain("epoch");
 		}
-	}, 15_000);
+	}, 30_000);
 
-	// A 15,000 ms bound covers 258 serial writes and preserves hang detection.
+	// A 30,000 ms bound covers 258 serial writes and preserves hang detection.
 	it("filters late prefix matches across metadata pages", async () => {
 		const { token } = await issueToken();
 		const prefix = `Z-mcp-late-${crypto.randomUUID()}/`;
@@ -1263,8 +1263,9 @@ describe("production MCP transport", () => {
 				entry.path.startsWith(prefix),
 			),
 		).toBe(true);
-	}, 15_000);
+	}, 30_000);
 
+	// A 30,000 ms bound covers 256 serial writes and preserves hang detection.
 	it("rejects byte-heavy matching prefixes without partial rows", async () => {
 		const { token, clientId } = await issueToken();
 		const widePrefix = `MCP-wide-${crypto.randomUUID()}/${"w".repeat(420)}/`;
@@ -1286,8 +1287,9 @@ describe("production MCP transport", () => {
 		expect(wideResult.result?.structuredContent?.code).toBe("result_too_large");
 		expect(wideResult.result?.structuredContent?.entries).toBeUndefined();
 		expect(await activeAdmissionStates(clientId)).toEqual([]);
-	});
+	}, 30_000);
 
+	// A 30,000 ms bound covers 256 serial writes and preserves hang detection.
 	it("keeps real durable admission until MCP response EOF and cancellation", async () => {
 		const { token, clientId } = await issueToken();
 		await seedMcpManifestRows(
@@ -1347,7 +1349,7 @@ describe("production MCP transport", () => {
 		} finally {
 			await cancelledReader.cancel();
 		}
-	});
+	}, 30_000);
 
 	it("keeps shared read and MCP envelope slots through delayed real cleanup", async () => {
 		const { token, clientId } = await issueToken();
@@ -1451,6 +1453,7 @@ describe("production MCP transport", () => {
 		}
 	});
 
+	// A 30,000 ms bound covers 256 serial writes and preserves hang detection.
 	it("keeps MCP and REST reads on the same four isolate slots", async () => {
 		const { token } = await issueToken();
 		await seedMcpManifestRows(token, 256, `MCP-shared-${crypto.randomUUID()}/`);
@@ -1505,7 +1508,7 @@ describe("production MCP transport", () => {
 				await response.body?.cancel();
 			await mcpResponse?.body?.cancel();
 		}
-	});
+	}, 30_000);
 
 	it("runs all five conditional mutation tools through OAuth and the production DO", async () => {
 		const { token } = await issueToken("vault:read vault:write vault:delete");

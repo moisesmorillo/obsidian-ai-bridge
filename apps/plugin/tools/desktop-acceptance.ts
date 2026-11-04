@@ -1,11 +1,14 @@
 import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
 	FileHttpErrorSchema,
+	type MutationReceipt,
+	MutationReceiptSchema,
 	PathSchema,
 	parseETag,
 } from "@obsidian-ai-bridge/protocol";
@@ -67,6 +70,7 @@ const SAFE_CASE_FAILURE_CODES = [
 	"AC1032_ASSERT_BASELINE",
 	"AC1032_ASSERT_REMOTE_UPDATE",
 	"AC1032_ASSERT_PROCESS_INTERCEPTION",
+	"AC1032_ASSERT_BASE_UNCHANGED_AT_REFUSAL",
 	"AC1032_ASSERT_FINAL_STATE",
 	"AC1032_CLEANUP_RESTORE_FAILED",
 	"AC33_ASSERT_TARGET_VAULT",
@@ -182,12 +186,17 @@ type SafeCaseFailureReason =
 	| "unknown-error"
 	| "cleanup-error";
 
+/** Allowlisted operation boundaries used in safe case diagnostics. */
+type SafeCaseFailureBoundary = (typeof SAFE_CASE_FAILURE_BOUNDARIES)[number];
+/** Allowlisted exception classes used in safe case diagnostics. */
+type SafeCaseFailureClass = (typeof SAFE_CASE_FAILURE_CLASSES)[number];
+
 /** Safe details for one wrapped external operation boundary. */
 export interface SafeCaseFailureDetails {
 	/** Fixed operation stage from the case script. */
-	boundary: (typeof SAFE_CASE_FAILURE_BOUNDARIES)[number];
+	boundary: SafeCaseFailureBoundary;
 	/** Allowlisted constructor class, without an exception message. */
-	errorClass: (typeof SAFE_CASE_FAILURE_CLASSES)[number];
+	errorClass: SafeCaseFailureClass;
 	/** Valid HTTP status on a SyncTransportError, or null when unavailable. */
 	status: number | null;
 	/** Canonical protocol error code, or null when not validated. */
@@ -203,6 +212,14 @@ export interface DesktopCaseSummary {
 	failureReason: SafeCaseFailureReason | null;
 	/** Safe class, status, and canonical code from a named operation boundary. */
 	failureDetails?: SafeCaseFailureDetails;
+	/** Allowlisted class of the first failed action or cleanup. */
+	failureClass?: SafeCaseFailureClass;
+	/** Last named operation boundary that completed before the result. */
+	lastCompletedBoundary?: SafeCaseFailureBoundary;
+	/** Canonical successful mutation status captured by AC-33. */
+	receiptStatus?: MutationReceipt["status"];
+	/** Private AC-13 before-case hash snapshot write result. */
+	privateSnapshotStatus?: "saved" | "failed" | "unavailable";
 	cleanupStatus: "passed" | "failed" | "unknown";
 }
 
@@ -323,6 +340,19 @@ export function safeCaseResult(
 					: "unknown-error";
 	const failureDetails =
 		status === "passed" ? null : safeCaseFailureDetails(result.failureDetails);
+	const failureClass = SAFE_CASE_FAILURE_CLASSES.find(
+		(item) => item === result.failureClass,
+	);
+	const lastCompletedBoundary = SAFE_CASE_FAILURE_BOUNDARIES.find(
+		(item) => item === result.lastCompletedBoundary,
+	);
+	const caseEvidence = Reflect.get(result, "caseEvidence");
+	const rawReceiptStatus =
+		caseId === "AC-33" && caseEvidence && typeof caseEvidence === "object"
+			? Reflect.get(caseEvidence, "renameReceiptStatus")
+			: result.receiptStatus;
+	const receiptStatus =
+		MutationReceiptSchema.shape.status.safeParse(rawReceiptStatus);
 	return {
 		caseId,
 		evidence,
@@ -330,6 +360,9 @@ export function safeCaseResult(
 		failureStage,
 		failureReason,
 		...(failureDetails ? { failureDetails } : {}),
+		...(status !== "passed" && failureClass ? { failureClass } : {}),
+		...(lastCompletedBoundary ? { lastCompletedBoundary } : {}),
+		...(receiptStatus.success ? { receiptStatus: receiptStatus.data } : {}),
 		cleanupStatus,
 	};
 }
@@ -556,12 +589,8 @@ export async function captureAuthorizationUrl(
 	return destination;
 }
 
-/** Parses one host result and projects only the fixed safe case fields. */
-export function parseSafeCaseResult(
-	output: string,
-	caseId: string,
-	evidence: DesktopCaseSummary["evidence"],
-): DesktopCaseSummary {
+/** Finds and parses one balanced safe host-result object. */
+function readCaseResultRecord(output: string): Record<string, unknown> {
 	const marker = output.lastIndexOf("OAB8CASE:");
 	if (marker < 0) throw new Error("Obsidian case result was unavailable");
 	const start = output.indexOf("{", marker + "OAB8CASE:".length);
@@ -593,10 +622,76 @@ export function parseSafeCaseResult(
 		const result: unknown = JSON.parse(output.slice(start, end));
 		if (!result || typeof result !== "object" || Array.isArray(result))
 			throw new Error("Invalid case result object");
-		return safeCaseResult(caseId, evidence, result as Record<string, unknown>);
+		return result as Record<string, unknown>;
 	} catch {
 		throw new Error("Obsidian case result was invalid");
 	}
+}
+
+/** Parses one host result and projects only the fixed safe case fields. */
+export function parseSafeCaseResult(
+	output: string,
+	caseId: string,
+	evidence: DesktopCaseSummary["evidence"],
+): DesktopCaseSummary {
+	return safeCaseResult(caseId, evidence, readCaseResultRecord(output));
+}
+
+/** Validates hashed AC-13 fixture evidence before it enters private scratch. */
+export function parseAc13PrivateHashSnapshot(value: unknown): {
+	eligible: Array<{ path: string; size: number; hash: string }>;
+	excluded: Array<{ path: string; size: number; hash: string }>;
+} {
+	if (!value || typeof value !== "object" || Array.isArray(value))
+		throw new Error("Invalid AC-13 private hash snapshot");
+	/** Validates and projects one eligibility group from the host snapshot. */
+	const parseFiles = (key: "eligible" | "excluded") => {
+		const files = Reflect.get(value, key);
+		if (!Array.isArray(files))
+			throw new Error("Invalid AC-13 private hash snapshot");
+		return files.map((file: unknown) => {
+			if (!file || typeof file !== "object" || Array.isArray(file))
+				throw new Error("Invalid AC-13 private hash snapshot");
+			const path = PathSchema.parse(Reflect.get(file, "path"));
+			const size = Reflect.get(file, "size");
+			const hash = Reflect.get(file, "hash");
+			if (
+				typeof size !== "number" ||
+				!Number.isSafeInteger(size) ||
+				size < 0 ||
+				typeof hash !== "string" ||
+				!/^[0-9a-f]{64}$/.test(hash) ||
+				(classifyEnrollmentPath(path, size) === "excluded") !==
+					(key === "excluded")
+			)
+				throw new Error("Invalid AC-13 private hash snapshot");
+			return { path, size, hash };
+		});
+	};
+	const eligible = parseFiles("eligible");
+	const excluded = parseFiles("excluded");
+	const paths = [...eligible, ...excluded].map((file) => file.path);
+	if (new Set(paths).size !== paths.length)
+		throw new Error("Invalid AC-13 private hash snapshot");
+	return { eligible, excluded };
+}
+
+/** Stores one validated AC-13 hash snapshot in ignored, owner-only scratch. */
+function savePrivateAc13HashSnapshot(snapshot: {
+	eligible: Array<{ path: string; size: number; hash: string }>;
+	excluded: Array<{ path: string; size: number; hash: string }>;
+}): void {
+	const directory = resolve(
+		process.cwd(),
+		".superpowers/sdd/oab-8.8-desktop-gate",
+	);
+	mkdirSync(directory, { recursive: true, mode: 0o700 });
+	chmodSync(directory, 0o700);
+	writeFileSync(
+		resolve(directory, `ac13-precase-hashes-${randomUUID()}.json`),
+		JSON.stringify(snapshot),
+		{ encoding: "utf8", mode: 0o600, flag: "wx" },
+	);
 }
 
 /** Runs one case as one host evaluation and returns only its fixed safe status fields. */
@@ -617,7 +712,21 @@ export function runHostCase(
 		[`code=${script}`],
 		options,
 	);
-	return parseSafeCaseResult(output, caseId, evidence);
+	const record = readCaseResultRecord(output);
+	const summary = safeCaseResult(caseId, evidence, record);
+	if (caseId !== "AC-13") return summary;
+	try {
+		const caseEvidence = Reflect.get(record, "caseEvidence");
+		if (!caseEvidence || typeof caseEvidence !== "object")
+			return { ...summary, privateSnapshotStatus: "unavailable" };
+		const rawSnapshot = Reflect.get(caseEvidence, "ac13PrecaseFiles");
+		if (rawSnapshot === undefined)
+			return { ...summary, privateSnapshotStatus: "unavailable" };
+		savePrivateAc13HashSnapshot(parseAc13PrivateHashSnapshot(rawSnapshot));
+		return { ...summary, privateSnapshotStatus: "saved" };
+	} catch {
+		return { ...summary, privateSnapshotStatus: "failed" };
+	}
 }
 
 /** Safe counts and lifecycle flags used to verify AC-20 enrollment preconditions. */
@@ -1140,6 +1249,8 @@ export function createCaseScript(
 		const safeFailureClasses = ${JSON.stringify(SAFE_CASE_FAILURE_CLASSES)};
 		const safeTransportErrorCodes = ${JSON.stringify(SAFE_CASE_TRANSPORT_ERROR_CODES)};
 		const boundaryDetailsKey = Symbol("case-boundary-details");
+		const caseEvidence = {};
+		let lastCompletedBoundary = null;
 		const readBoundaryDetails = (error) => {
 			try {
 				return error && typeof error === "object" ? error[boundaryDetailsKey] ?? null : null;
@@ -1149,7 +1260,10 @@ export function createCaseScript(
 		};
 		const withCaseBoundary = async (boundary, operation) => {
 			try {
-				return await operation();
+				const result = await operation();
+				if (safeFailureBoundaries.includes(boundary))
+					lastCompletedBoundary = boundary;
+				return result;
 			} catch (error) {
 				let errorClass = "other";
 				let status = null;
@@ -1203,6 +1317,7 @@ export function createCaseScript(
 		let failureStage = null;
 		let failureReason = null;
 		let failureDetails = null;
+		let failureClass = null;
 		let cleanupStatus = "failed";
 		try {
 			await (async () => { ${actionScript} })();
@@ -1210,6 +1325,10 @@ export function createCaseScript(
 			status = "failed";
 			failureStage = "action";
 			failureDetails = readBoundaryDetails(error);
+			const name = error && typeof error === "object" ? error.name : null;
+			failureClass =
+				failureDetails?.errorClass ??
+				(safeFailureClasses.includes(name) ? name : "other");
 			failureReason = classifyFailure(error, "action");
 		}
 		try {
@@ -1220,11 +1339,15 @@ export function createCaseScript(
 			if (failureStage === null) {
 				failureStage = "cleanup";
 				failureDetails = readBoundaryDetails(error);
+				const name = error && typeof error === "object" ? error.name : null;
+				failureClass =
+					failureDetails?.errorClass ??
+					(safeFailureClasses.includes(name) ? name : "other");
 				const cleanupReason = classifyFailure(error, "cleanup");
 				failureReason = safeFailureCodes.includes(cleanupReason) ? cleanupReason : "cleanup-error";
 			}
 		}
-		return "OAB8CASE:" + JSON.stringify({ caseId: ${JSON.stringify(caseId)}, status, failureStage, failureReason, ...(failureDetails ? { failureDetails } : {}), cleanupStatus });
+		return "OAB8CASE:" + JSON.stringify({ caseId: ${JSON.stringify(caseId)}, status, failureStage, failureReason, ...(failureDetails ? { failureDetails } : {}), ...(failureClass ? { failureClass } : {}), ...(lastCompletedBoundary ? { lastCompletedBoundary } : {}), ...(Object.keys(caseEvidence).length ? { caseEvidence } : {}), cleanupStatus });
 	})()`;
 }
 
@@ -1808,11 +1931,12 @@ const update=await withCaseBoundary("AC1032_MUTATE_REMOTE_TEXT",()=>remote.put(p
 const updated=await withCaseBoundary("AC1032_READ_REMOTE_AUTHORITY",()=>remote.readCurrentAuthority(path));
 if((update.status!==200&&update.status!==201)||updated.deleted||updated.rev!==2||updated.hash!==remoteHash)throw Error("AC1032_ASSERT_REMOTE_UPDATE");
 const vault=app.vault,originalProcess=vault.process;
-let raceInjected=false,callbackSawUserEdit=false,callbackLeftUserEdit=false;
+let raceInjected=false,callbackSawUserEdit=false,callbackLeftUserEdit=false,callbackBaseAfterRefusal=null;
 globalThis.__oab8Ac1032Restore=()=>{vault.process=originalProcess;return vault.process===originalProcess;};
-const interceptedProcess=async function(file,callback){if(file?.path!==path||raceInjected)return originalProcess.call(this,file,callback);await vault.modify(file,userText);raceInjected=true;const wrapped=(current)=>{callbackSawUserEdit=current===userText;const next=callback(current);callbackLeftUserEdit=callbackSawUserEdit&&next===current;return next;};return originalProcess.call(this,file,wrapped);};
+const interceptedProcess=async function(file,callback){if(file?.path!==path||raceInjected)return originalProcess.call(this,file,callback);await vault.modify(file,userText);raceInjected=true;const wrapped=(current)=>{callbackSawUserEdit=current===userText;const next=callback(current);callbackLeftUserEdit=callbackSawUserEdit&&next===current;if(callbackLeftUserEdit)callbackBaseAfterRefusal=plugin.journal.snapshot().base[path]??null;return next;};return originalProcess.call(this,file,wrapped);};
 try{vault.process=interceptedProcess;await withCaseBoundary("AC1032_APPLY_REMOTE_CHANGE",()=>plugin.desktopSync.syncNow());await withCaseBoundary("AC1032_WAIT_APPLY_IDLE",()=>plugin.desktopSync.waitForIdle());}finally{vault.process=originalProcess;}
 if(vault.process!==originalProcess||!raceInjected||!callbackSawUserEdit||!callbackLeftUserEdit)throw Error("AC1032_ASSERT_PROCESS_INTERCEPTION");
+if(callbackBaseAfterRefusal?.rev!==seeded.base[path]?.rev||callbackBaseAfterRefusal?.hash!==seeded.base[path]?.hash)throw Error("AC1032_ASSERT_BASE_UNCHANGED_AT_REFUSAL");
 const conflictPrefix=path.slice(0,path.lastIndexOf("."))+" (conflict";
 const localCopies=vault.getFiles().filter((file)=>file.path.startsWith(conflictPrefix));
 let localConflictCopy=null;for(const file of localCopies){if(await hashText(await vault.read(file))===userHash)localConflictCopy=file;}
@@ -1870,8 +1994,9 @@ if(sourceBefore.deleted||sourceBefore.epoch!==observedEpoch||sourceBefore.rev!==
 const destinationStillAbsent=await expectAbsent(destination,"AC33_READ_DESTINATION_ABSENCE");
 if(!destinationStillAbsent)throw Error("AC33_ASSERT_SERVICE_ABSENT");
 const renameReceipt=await withCaseBoundary("AC33_RENAME_SOURCE",()=>remote.rename(source,destination,{kind:"match",epoch:observedEpoch,rev:sourceBefore.rev},crypto.randomUUID()));
+caseEvidence.renameReceiptStatus=renameReceipt.status;
 const renamedSource=await withCaseBoundary("AC33_READ_RENAMED_SOURCE",()=>remote.readCurrentAuthority(source)),renamedDestination=await withCaseBoundary("AC33_READ_RENAMED_DESTINATION",()=>remote.readCurrentAuthority(destination));
-if((renameReceipt.status!==200&&renameReceipt.status!==201)||!renamedSource.deleted||renamedSource.rev!==2||renamedDestination.deleted||renamedDestination.epoch!==observedEpoch||renamedDestination.rev!==1||renamedDestination.hash!==sourceHash)throw Error("AC33_ASSERT_RENAME_AUTHORITY");
+if(!renamedSource.deleted||renamedSource.rev!==2||renamedDestination.deleted||renamedDestination.epoch!==observedEpoch||renamedDestination.rev!==1||renamedDestination.hash!==sourceHash)throw Error("AC33_ASSERT_RENAME_AUTHORITY");
 let capturedHead=null,capturedEpoch=null,pageToken=null;
 do{const page=await withCaseBoundary("AC33_CAPTURE_MANIFEST",()=>originalManifest.call(remote,pageToken));if(capturedEpoch!==null&&page.epoch!==capturedEpoch)throw Error("AC33_ASSERT_MANIFEST_SNAPSHOT");if(capturedHead!==null&&page.head_seq!==capturedHead)throw Error("AC33_ASSERT_MANIFEST_SNAPSHOT");capturedEpoch=page.epoch;capturedHead=page.head_seq;capturedEntries.push(...page.entries);pageToken=page.next_page;if(pageToken!==null){if(capturedTokens.has(pageToken))throw Error("AC33_ASSERT_MANIFEST_SNAPSHOT");capturedTokens.add(pageToken);}}while(pageToken!==null);
 const destinationEntry=capturedEntries.find((entry)=>entry.path===destination),sourceEntry=capturedEntries.find((entry)=>entry.path===source);
@@ -1978,6 +2103,7 @@ if(initial.epoch!==stateBefore.epoch||initial.head!==stateBefore.cursor)throw Er
 const localSnapshot=async()=>{const files=app.vault.getFiles(),result=[];for(const file of files){const bytes=new Uint8Array(await app.vault.readBinary(file)),digest=await crypto.subtle.digest("SHA-256",bytes),hash=Array.from(new Uint8Array(digest)).map((byte)=>byte.toString(16).padStart(2,"0")).join("");result.push({path:file.path,size:bytes.byteLength,hash});}return result.sort((left,right)=>left.path.localeCompare(right.path));};
 const sameSnapshot=(left,right)=>left.length===right.length&&left.every((item,index)=>item.path===right[index].path&&item.size===right[index].size&&item.hash===right[index].hash);
 const filesBefore=await localSnapshot(),localByPath=new Map(filesBefore.map((file)=>[file.path,file])),entryByPath=new Map(initial.entries.map((entry)=>[entry.path,entry]));
+caseEvidence.ac13PrecaseFiles={eligible:filesBefore.filter((file)=>!expectedExcludedPaths.has(file.path)),excluded:filesBefore.filter((file)=>expectedExcludedPaths.has(file.path))};
 const actualExcludedLocal=filesBefore.filter((file)=>expectedExcludedPaths.has(file.path));
 if(actualExcludedLocal.length!==expectedExcludedLocal.length||expectedExcludedLocal.some((expected)=>{const actual=localByPath.get(expected.path);return !actual||actual.size!==expected.size;}))throw Error("AC13_ASSERT_EXCLUDED_FILE");
 for(const path of localOnlyExcludedPaths){if(Object.hasOwn(stateBefore.base,path)||entryByPath.has(path))throw Error("AC13_ASSERT_EXCLUDED_FILE");let absent=false;try{await withCaseBoundary("AC13_READ_EXCLUDED_AUTHORITY",()=>remote.readCurrentAuthority(path));}catch(error){absent=readBoundaryDetails(error)?.status===404;if(!absent)throw error;}if(!absent)throw Error("AC13_ASSERT_EXCLUDED_FILE");}

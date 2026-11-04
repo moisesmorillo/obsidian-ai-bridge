@@ -1,9 +1,22 @@
 import { createHash } from "node:crypto";
+import {
+	chmodSync,
+	mkdirSync,
+	mkdtempSync,
+	readdirSync,
+	readFileSync,
+	rmSync,
+	statSync,
+	writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { formatETag } from "@obsidian-ai-bridge/protocol";
 import { describe, expect, it } from "vitest";
 import { SyncTransportError } from "../src/sync/remote-text";
 import {
 	assertAuthorizedVault,
+	authorizedVaults,
 	classifyAc13PreflightFiles,
 	createAc04BaselineScript,
 	createAc13CaseScripts,
@@ -17,6 +30,7 @@ import {
 	dispatchCapturedCallback,
 	hasCapturedCallback,
 	inspectAc02ServiceRevision,
+	parseAc13PrivateHashSnapshot,
 	parseInstalledPluginArtifact,
 	parseSafeCaseResult,
 	runHostCase,
@@ -619,6 +633,7 @@ describe("desktop acceptance safety", () => {
 			status: "failed",
 			failureStage: "action",
 			failureReason: "unknown-error",
+			failureClass: "Error",
 			cleanupStatus: "passed",
 		});
 		expect(globalThis).toHaveProperty("oab88CleanupRan", true);
@@ -639,6 +654,7 @@ describe("desktop acceptance safety", () => {
 			status: "failed",
 			failureStage: "action",
 			failureReason: "AC30_FIRST_BOUNDARY_FAILED",
+			failureClass: "Error",
 			cleanupStatus: "passed",
 		});
 		expect(globalThis).toHaveProperty("oab88CleanupRan", true);
@@ -668,7 +684,7 @@ describe("desktop acceptance safety", () => {
 		for (const testCase of cases) {
 			const script = createCaseScript(
 				"AC-31",
-				`await withCaseBoundary(${JSON.stringify(testCase.boundary)}, async () => { throw errorUnderTest; });`,
+				`await withCaseBoundary("AC31_READ_SERVICE_ABSENCE", async () => true); await withCaseBoundary(${JSON.stringify(testCase.boundary)}, async () => { throw errorUnderTest; });`,
 				"",
 			);
 			const execute = new Function("errorUnderTest", `return ${script}`) as (
@@ -682,6 +698,8 @@ describe("desktop acceptance safety", () => {
 				status: "failed",
 				failureStage: "action",
 				failureReason: `SYNC_TRANSPORT_${Math.floor(testCase.status / 100)}XX`,
+				failureClass: "SyncTransportError",
+				lastCompletedBoundary: "AC31_READ_SERVICE_ABSENCE",
 				failureDetails: {
 					boundary: testCase.boundary,
 					errorClass: "SyncTransportError",
@@ -696,7 +714,7 @@ describe("desktop acceptance safety", () => {
 
 	it("parses nested host failure details before safe projection", () => {
 		const output =
-			'CLI result OAB8CASE:{"caseId":"AC-13","status":"failed","failureStage":"action","failureReason":"SYNC_TRANSPORT_4XX","failureDetails":{"boundary":"AC13_READ_ACTUAL_MANIFEST","errorClass":"SyncTransportError","status":410,"code":"revision_pruned"},"cleanupStatus":"passed"} trailing output';
+			'CLI result OAB8CASE:{"caseId":"AC-13","status":"failed","failureStage":"action","failureReason":"SYNC_TRANSPORT_4XX","failureDetails":{"boundary":"AC13_READ_ACTUAL_MANIFEST","errorClass":"SyncTransportError","status":410,"code":"revision_pruned"},"failureClass":"SyncTransportError","lastCompletedBoundary":"AC13_CONTROLLED_RECONCILE","cleanupStatus":"passed"} trailing output';
 
 		expect(parseSafeCaseResult(output, "AC-13", "controlled")).toEqual({
 			caseId: "AC-13",
@@ -710,8 +728,43 @@ describe("desktop acceptance safety", () => {
 				status: 410,
 				code: "revision_pruned",
 			},
+			failureClass: "SyncTransportError",
+			lastCompletedBoundary: "AC13_CONTROLLED_RECONCILE",
 			cleanupStatus: "passed",
 		});
+	});
+
+	it("retains only canonical successful mutation receipt statuses", () => {
+		expect(
+			Reflect.get(
+				safeCaseResult("AC-33", "controlled", {
+					status: "passed",
+					caseEvidence: { renameReceiptStatus: 200 },
+					cleanupStatus: "passed",
+				}),
+				"receiptStatus",
+			),
+		).toBe(200);
+		expect(
+			Reflect.get(
+				safeCaseResult("AC-33", "controlled", {
+					status: "passed",
+					caseEvidence: { renameReceiptStatus: 201 },
+					cleanupStatus: "passed",
+				}),
+				"receiptStatus",
+			),
+		).toBe(201);
+		expect(
+			Reflect.get(
+				safeCaseResult("AC-33", "controlled", {
+					status: "passed",
+					caseEvidence: { renameReceiptStatus: 202 },
+					cleanupStatus: "passed",
+				}),
+				"receiptStatus",
+			),
+		).toBeUndefined();
 	});
 
 	it("drops invalid case transport status and error codes", () => {
@@ -743,6 +796,17 @@ describe("desktop acceptance safety", () => {
 		expect(scripts.action).toContain("AC1032_ASSERT_TARGET_VAULT");
 		expect(scripts.action).toContain('"AC1032_APPLY_REMOTE_CHANGE"');
 		expect(scripts.action).toContain("callbackSawUserEdit");
+		expect(scripts.action).toContain("callbackBaseAfterRefusal");
+		const snapshotIndex = scripts.action.indexOf(
+			"callbackBaseAfterRefusal=plugin.journal.snapshot().base[path]??null",
+		);
+		const callbackReturnIndex = scripts.action.indexOf(
+			"return next;",
+			snapshotIndex,
+		);
+		expect(snapshotIndex).toBeGreaterThan(-1);
+		expect(callbackReturnIndex).toBeGreaterThan(snapshotIndex);
+		expect(scripts.action).toContain("AC1032_ASSERT_BASE_UNCHANGED_AT_REFUSAL");
 		expect(scripts.action).toContain(
 			"remote.readCurrentAuthority(localConflictCopy.path)",
 		);
@@ -758,6 +822,114 @@ describe("desktop acceptance safety", () => {
 		expect(() => createAc1032CaseScripts("oab-8.8/unrelated.md")).toThrow(
 			"Unauthorized AC-10/32 fixture path",
 		);
+	});
+
+	it("saves AC-13 before-case hashes in private scratch", () => {
+		const temp = mkdtempSync(join(tmpdir(), "oab8-case-tool-"));
+		const privateDirectory = resolve(
+			process.cwd(),
+			".superpowers/sdd/oab-8.8-desktop-gate",
+		);
+		const snapshotPrefix = "ac13-precase-hashes-";
+		mkdirSync(privateDirectory, { recursive: true, mode: 0o700 });
+		chmodSync(privateDirectory, 0o700);
+		const before = readdirSync(privateDirectory, { withFileTypes: true })
+			.filter(
+				(entry) => entry.isFile() && entry.name.startsWith(snapshotPrefix),
+			)
+			.map((entry) => entry.name);
+		const record = {
+			caseId: "AC-13",
+			status: "passed",
+			failureStage: null,
+			failureReason: null,
+			cleanupStatus: "passed",
+			caseEvidence: {
+				ac13PrecaseFiles: {
+					eligible: [
+						{
+							path: "oab-8.8/ac-13-clean.md",
+							size: 32,
+							hash: "a".repeat(64),
+						},
+					],
+					excluded: [
+						{
+							path: "oab-8.8/ac-31-blob-stat-race-20261104-01.bin",
+							size: 1_100_003,
+							hash: "b".repeat(64),
+						},
+					],
+				},
+			},
+		};
+		const output = `OAB8CASE:${JSON.stringify(record)}`;
+		const executable = join(temp, "obsidian");
+		writeFileSync(
+			executable,
+			`#!/bin/sh\nif [ "$2" = "vault" ]; then printf '%s\\n' '${authorizedVaults()["dev-2"]}'; else printf '%s\\n' '${output}'; fi\n`,
+			{ mode: 0o700 },
+		);
+		try {
+			const summary = runHostCase(
+				"dev-2",
+				"dev-2",
+				"AC-13",
+				"controlled",
+				"",
+				"",
+				{ executable },
+			);
+			expect(summary.privateSnapshotStatus).toBe("saved");
+			const saved = readdirSync(privateDirectory).filter(
+				(name) => name.startsWith(snapshotPrefix) && !before.includes(name),
+			);
+			expect(saved).toHaveLength(1);
+			const savedPath = join(privateDirectory, saved[0]);
+			expect(statSync(savedPath).mode & 0o777).toBe(0o600);
+			expect(JSON.parse(readFileSync(savedPath, "utf8"))).toEqual(
+				record.caseEvidence.ac13PrecaseFiles,
+			);
+		} finally {
+			for (const name of readdirSync(privateDirectory)) {
+				if (name.startsWith(snapshotPrefix) && !before.includes(name))
+					rmSync(join(privateDirectory, name));
+			}
+			rmSync(temp, { recursive: true, force: true });
+		}
+	});
+
+	it("validates private AC-13 before-case hash snapshots by classification", () => {
+		const snapshot = parseAc13PrivateHashSnapshot({
+			eligible: [
+				{
+					path: "oab-8.8/ac-13-clean.md",
+					size: 32,
+					hash: "a".repeat(64),
+				},
+			],
+			excluded: [
+				{
+					path: "oab-8.8/ac-31-blob-stat-race-20261104-01.bin",
+					size: 1_100_003,
+					hash: "b".repeat(64),
+				},
+			],
+		});
+		expect(snapshot.eligible).toHaveLength(1);
+		expect(snapshot.excluded).toHaveLength(1);
+		expect(() =>
+			parseAc13PrivateHashSnapshot({
+				eligible: [
+					{
+						path: "oab-8.8/ac-31-blob-stat-race-20261104-01.bin",
+						size: 1_100_003,
+						hash: "b".repeat(64),
+					},
+				],
+				excluded: [],
+			}),
+		).toThrow("Invalid AC-13 private hash snapshot");
 	});
 
 	it("does not block AC-13 preflight on canonically excluded local files", () => {
@@ -843,6 +1015,7 @@ describe("desktop acceptance safety", () => {
 		);
 		expect(scripts.action).toContain("controlledState.epoch!==controlledEpoch");
 		expect(scripts.action).toContain("restoredState.epoch!==observedEpoch");
+		expect(scripts.action).toContain("caseEvidence.ac13PrecaseFiles");
 		expect(scripts.action).toContain("localOnlyExcludedPaths.some");
 		expect(scripts.cleanup).toContain("AC13_CLEANUP_RESTORE_FAILED");
 		expect(
@@ -868,6 +1041,7 @@ describe("desktop acceptance safety", () => {
 			'remote.put(source,sourceText,{kind:"absent"}',
 		);
 		expect(scripts.action).toContain("reconciliation.replay()");
+		expect(scripts.action).toContain("caseEvidence.renameReceiptStatus");
 		expect(scripts.action).toContain("AC33_CONTROLLED_HYDRATION_STOP");
 		expect(scripts.action).toContain("destinationAbsence");
 		expect(scripts.action).toContain("crypto.randomUUID()");
@@ -875,6 +1049,9 @@ describe("desktop acceptance safety", () => {
 			'remote.rename(source,destination,{kind:"match",epoch:observedEpoch,rev:sourceBefore.rev}',
 		);
 		expect(scripts.action).toContain(
+			"caseEvidence.renameReceiptStatus=renameReceipt.status",
+		);
+		expect(scripts.action).not.toContain(
 			"renameReceipt.status!==200&&renameReceipt.status!==201",
 		);
 		expect(scripts.action).toContain("firstPage.epoch!==observedEpoch");
@@ -1118,6 +1295,7 @@ describe("desktop acceptance safety", () => {
 			status: "failed",
 			failureStage: "action",
 			failureReason: "unknown-error",
+			failureClass: "Error",
 			cleanupStatus: "failed",
 		});
 		expect(serialized).not.toMatch(

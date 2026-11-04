@@ -28,6 +28,7 @@ describe("projectSyncStatus", () => {
 			revoked: false,
 		};
 		expect(projectSyncStatus(input).state).not.toBe("settled");
+		expect(projectSyncStatus(input).deleteResponseDiagnostic).toBeNull();
 		expect(
 			projectSyncStatus({ ...input, head: { epoch: "epoch", head_seq: 4 } })
 				.state,
@@ -52,6 +53,43 @@ describe("projectSyncStatus", () => {
 
 		expect(projectSyncStatus(input).state).not.toBe("settled");
 		expect(projectSyncStatus(input).failure).toBe("The latest poll failed");
+	});
+
+	it("projects safe DELETE response classes without raw response values", () => {
+		const diagnostic = {
+			statusClass: "4xx" as const,
+			errorKind: "invalid_request" as const,
+			responseETagClass: "strong" as const,
+		};
+		const projected = projectSyncStatus({
+			state,
+			session: "connected",
+			head: null,
+			persisted: true,
+			deleteResponseDiagnostic: diagnostic,
+			active: false,
+			paused: true,
+			revoked: false,
+		});
+
+		expect(projected.state).toBe("paused");
+		expect(projected.deleteResponseDiagnostic).toEqual(diagnostic);
+	});
+
+	it("projects a fixed journal failure stage without changing attention", () => {
+		const projected = projectSyncStatus({
+			state,
+			session: "connected",
+			head: null,
+			persisted: false,
+			storageFailureStage: "payload_read",
+			active: false,
+			paused: false,
+			revoked: false,
+		});
+
+		expect(projected.state).toBe("attention");
+		expect(projected.storageFailureStage).toBe("payload_read");
 	});
 
 	it("prioritizes safe attention and persistence failure states", () => {

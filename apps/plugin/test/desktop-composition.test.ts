@@ -1,4 +1,5 @@
-import type { Vault } from "obsidian";
+import type { DeviceState } from "@obsidian-ai-bridge/protocol";
+import { TFile, type Vault } from "obsidian";
 import { describe, expect, it, vi } from "vitest";
 import type { DeviceSession } from "../src/auth/device-session";
 import type { OAuthTransportResponse } from "../src/infrastructure/oauth-transport";
@@ -6,6 +7,7 @@ import { createPublication } from "../src/sync/create-publication";
 import { DesktopSyncController } from "../src/sync/desktop-sync";
 import type { DeviceJournalStorage } from "../src/sync/device-journal";
 import { DeviceJournal } from "../src/sync/device-journal";
+import type { PublicationEvent } from "../src/sync/publication";
 
 const epoch = "a".repeat(32);
 const remoteText = "remote body";
@@ -87,9 +89,7 @@ class MemoryJournalStorage implements DeviceJournalStorage {
 		return this.state;
 	}
 	/** Stores the journal's verified full state document. */
-	async writeState(
-		state: import("@obsidian-ai-bridge/protocol").DeviceState,
-	): Promise<void> {
+	async writeState(state: DeviceState): Promise<void> {
 		this.state = structuredClone(state);
 	}
 	/** Reads one saved immutable payload by its exact reference. */
@@ -100,6 +100,172 @@ class MemoryJournalStorage implements DeviceJournalStorage {
 	async writePayload(path: string, bytes: Uint8Array): Promise<void> {
 		this.payloads.set(path, bytes.slice());
 	}
+}
+
+/** Serves a confirmed tombstone and records publication of one visible local copy. */
+class Ac04DeleteSession {
+	/** Stores safe synthetic publication paths and text for the test assertions. */
+	readonly published: Array<{ path: string; text: string }> = [];
+
+	/** Returns the fixed delete feed, its manifest row, or a validated put receipt. */
+	async requestResponse(
+		url: string,
+		options: {
+			method?: string;
+			body?: string | ArrayBuffer;
+			headers?: Record<string, string>;
+		} = {},
+	): Promise<OAuthTransportResponse> {
+		const parsed = new URL(url);
+		if (parsed.pathname === "/v1/changes") {
+			const since = Number(parsed.searchParams.get("since"));
+			return {
+				status: 200,
+				headers: {},
+				text: JSON.stringify({
+					epoch,
+					head_seq: 1,
+					entries:
+						since < 1
+							? [
+									{
+										seq: 1,
+										op: "delete",
+										path: "notes/shared.md",
+										etag: `"${epoch}.2"`,
+										hash: "",
+										origin: "other-device",
+										at: 1,
+									},
+								]
+							: [],
+				}),
+			};
+		}
+		if (parsed.pathname === "/v1/manifest") {
+			return {
+				status: 200,
+				headers: {},
+				text: JSON.stringify({
+					epoch,
+					head_seq: 1,
+					next_page: null,
+					entries: [
+						{
+							path: "notes/shared.md",
+							etag: `"${epoch}.2"`,
+							seq: 1,
+							hash: "",
+							size: 0,
+							kind: "text",
+							deleted: true,
+							large: false,
+						},
+					],
+				}),
+			};
+		}
+		if (parsed.pathname.startsWith("/v1/files/") && options.method === "PUT") {
+			const path = parsed.pathname
+				.slice("/v1/files/".length)
+				.split("/")
+				.map(decodeURIComponent)
+				.join("/");
+			const text = typeof options.body === "string" ? options.body : "";
+			this.published.push({ path, text });
+			const etag = `"${epoch}.1"`;
+			return {
+				status: 201,
+				headers: { etag },
+				text: JSON.stringify({
+					path,
+					etag,
+					seq: 2,
+					size: new TextEncoder().encode(text).byteLength,
+					hash: await hashText(text),
+					deleted: false,
+				}),
+			};
+		}
+		throw new Error("Unexpected synthetic service request");
+	}
+}
+
+/** Creates a real text adapter host with current file objects and byte counts. */
+function makeTextVault(initialFiles: Record<string, string> = {}) {
+	const contents = new Map(Object.entries(initialFiles));
+	const files = new Map<string, TFile>();
+	const folders = new Map<string, { path: string }>();
+	/** Returns one stable TFile for the current indexed text at a path. */
+	const fileAt = (path: string): TFile | null => {
+		const text = contents.get(path);
+		if (text === undefined) return null;
+		let file = files.get(path);
+		if (!file) {
+			file = Object.assign(new TFile(), {
+				path,
+				stat: { size: new TextEncoder().encode(text).byteLength },
+			}) as TFile;
+			files.set(path, file);
+		} else {
+			Object.assign(file, {
+				stat: { size: new TextEncoder().encode(text).byteLength },
+			});
+		}
+		return file;
+	};
+	const vault = {
+		getAbstractFileByPath: (path: string) =>
+			fileAt(path) ?? folders.get(path) ?? null,
+		getFiles: () =>
+			[...contents.keys()].flatMap((path) => {
+				const file = fileAt(path);
+				return file ? [file] : [];
+			}),
+		createFolder: async (path: string) => {
+			const folder = { path };
+			folders.set(path, folder);
+			return folder;
+		},
+		create: async (path: string, text: string) => {
+			if (contents.has(path)) throw new Error("Synthetic path already exists");
+			contents.set(path, text);
+			return fileAt(path);
+		},
+		read: async (file: TFile) => contents.get(file.path) ?? "",
+		readBinary: async (file: TFile) =>
+			new TextEncoder().encode(contents.get(file.path) ?? "").buffer,
+		modifyBinary: async (file: TFile, bytes: ArrayBuffer) => {
+			contents.set(file.path, new TextDecoder().decode(bytes));
+		},
+		modify: async (file: TFile, text: string) => {
+			contents.set(file.path, text);
+		},
+		process: async (file: TFile, update: (text: string) => string) => {
+			contents.set(file.path, update(contents.get(file.path) ?? ""));
+		},
+		trash: async (file: TFile) => {
+			contents.delete(file.path);
+			files.delete(file.path);
+		},
+		rename: async (file: TFile, path: string) => {
+			const text = contents.get(file.path);
+			if (text === undefined) return;
+			contents.delete(file.path);
+			files.delete(file.path);
+			contents.set(path, text);
+			Object.assign(file, { path });
+			files.set(path, file);
+		},
+		adapter: {
+			stat: async () => null,
+			list: async () => ({ files: [], folders: [] }),
+			readBinary: async () => new ArrayBuffer(0),
+			writeBinary: async () => undefined,
+			remove: async () => undefined,
+		},
+	};
+	return { vault: vault as unknown as Vault, contents };
 }
 
 /** Counts real Obsidian adapter file effects while keeping remote paths absent. */
@@ -378,4 +544,123 @@ describe("real publication composition lifecycle fences", () => {
 		expect(journal.snapshot().pending_ops).toEqual([]);
 		journal.close();
 	});
+
+	it.each([
+		{
+			name: "drops the obsolete queued edit after a confirmed delete preserves its bytes",
+			removeSourceAfterEvent: false,
+			keepsMissingPayloadInAttention: false,
+		},
+		{
+			name: "keeps attention when a confirmed delete leaves no visible payload copy",
+			removeSourceAfterEvent: true,
+			keepsMissingPayloadInAttention: true,
+		},
+	])(
+		"$name",
+		async ({ removeSourceAfterEvent, keepsMissingPayloadInAttention }) => {
+			const sourcePath = "notes/shared.md";
+			const baseText = "confirmed base bytes";
+			const offlineText = "queued offline edit";
+			const offlineBytes = new TextEncoder().encode(offlineText);
+			const session = new Ac04DeleteSession();
+			const { vault, contents } = makeTextVault({ [sourcePath]: offlineText });
+			const journal = await DeviceJournal.open(new MemoryJournalStorage());
+			await journal.resetEpoch(epoch);
+			await journal.setCursor(epoch, 0);
+			await journal.setBase(sourcePath, {
+				deleted: false,
+				rev: 1,
+				hash: await hashText(baseText),
+			});
+			const composition = createPublication(
+				"https://service.test",
+				session as unknown as DeviceSession,
+				journal,
+				vault,
+				"test device",
+				{ now: Date.now, onEventError: () => undefined },
+			);
+			const controller = new DesktopSyncController({
+				cycle: async () => {
+					await composition.reconciliation.resume();
+					await composition.publication.scan();
+					await composition.publication.flush();
+					await composition.reconciliation.replay();
+				},
+				onEvent: async (event: PublicationEvent) => {
+					await composition.publication.observe(event);
+					if (removeSourceAfterEvent) {
+						const source = vault.getAbstractFileByPath(sourcePath);
+						if (source instanceof TFile) await vault.trash(source, false);
+					}
+				},
+				host: {
+					setTimeout: () => 1,
+					clearTimeout: () => undefined,
+					setInterval: () => 2,
+					clearInterval: () => undefined,
+				},
+			});
+
+			try {
+				await controller.observe({ type: "modify", path: sourcePath });
+				await controller.syncNow();
+
+				const state = journal.snapshot();
+				const visibleCopies = [...contents].filter(
+					([path, text]) => path !== sourcePath && text === offlineText,
+				);
+				expect(contents.has(sourcePath)).toBe(false);
+				expect(state.base[sourcePath]).toEqual({ deleted: true, rev: 2 });
+				if (keepsMissingPayloadInAttention) {
+					expect(state.pending_ops.length).toBe(0);
+					expect(visibleCopies.length).toBe(0);
+					expect(session.published.length).toBe(0);
+					expect(state.attention.length).toBe(1);
+					expect(state.attention[0]?.reason).toBe(
+						"Queued file is absent from the local vault",
+					);
+					const retained = state.attention[0]?.operation;
+					if (retained?.op !== "put")
+						throw new Error("Expected retained queued payload evidence");
+					expect(retained.payload_hash === (await hashText(offlineText))).toBe(
+						true,
+					);
+					const saved = await journal.readPayload(
+						retained.payload_ref,
+						retained.payload_hash,
+					);
+					expect(
+						saved.byteLength === offlineBytes.byteLength &&
+							saved.every((byte, index) => byte === offlineBytes[index]),
+					).toBe(true);
+				} else {
+					expect(
+						state.attention.some(
+							(item: DeviceState["attention"][number]) =>
+								item.reason === "Queued file is absent from the local vault",
+						),
+					).toBe(false);
+					expect(state.pending_ops.length).toBe(0);
+					expect(visibleCopies.length).toBe(1);
+					expect(session.published.length).toBe(1);
+					expect(session.published[0]?.text === offlineText).toBe(true);
+					expect(
+						session.published.some((item) => item.path === sourcePath),
+					).toBe(false);
+					const copyPath = visibleCopies[0]?.[0];
+					if (!copyPath) throw new Error("Expected one visible conflict copy");
+					const copyBase = state.base[copyPath];
+					if (!copyBase || copyBase.deleted)
+						throw new Error("Expected a confirmed conflict-copy base");
+					expect(copyBase.hash === (await hashText(offlineText))).toBe(true);
+				}
+			} finally {
+				controller.close();
+				composition.dispose();
+				journal.close();
+			}
+		},
+	);
 });

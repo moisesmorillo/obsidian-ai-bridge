@@ -12,6 +12,7 @@ import {
 import type { DeviceJournal } from "@plugin/sync/device-journal";
 import { classifyEnrollmentPath } from "@plugin/sync/enrollment-scope";
 import {
+	type DeleteResponseDiagnostic,
 	SyncTransportError,
 	UnsupportedRemoteTextError,
 } from "@plugin/sync/remote-text";
@@ -98,6 +99,10 @@ export interface PublicationOptions {
 	applyEngine: TextApplyEngine;
 	/** Returns current Unix milliseconds for retry and UUID creation decisions. */
 	now(): number;
+	/** Captures only safe DELETE response classes, or clears the previous attempt. */
+	onDeleteResponseDiagnostic?(
+		diagnostic: DeleteResponseDiagnostic | null,
+	): void;
 	/** Replays feed rows and persists accepted cursors. A direct rename-source read does not advance the cursor. */
 	recoverPrecondition(operation: PendingOperation): Promise<void>;
 }
@@ -426,6 +431,8 @@ export class PublicationController {
 
 	/** Applies current rename source state before settlement. Only receipt-produced state can authorize queued successors. */
 	private async send(operation: PendingOperation): Promise<boolean> {
+		if (operation.op === "delete")
+			this.options.onDeleteResponseDiagnostic?.(null);
 		const saved = await this.journal.prepareSend(
 			operation.key,
 			operation.precondition,
@@ -619,6 +626,25 @@ export class PublicationController {
 			: await this.readTextBytes(operation.path);
 		this.assertOpen();
 		if (localBytes === null || localBytes === undefined) {
+			// Discard this queued PUT only after a confirmed tombstone and visible bytes make it redundant.
+			const state = this.journal.snapshot();
+			const base = state.base[operation.path];
+			if (
+				!isBlob &&
+				state.epoch !== undefined &&
+				base?.deleted === true &&
+				!state.stale_base_paths.includes(operation.path)
+			) {
+				const visible = await this.hasVisiblePayload(operation.path, saved);
+				this.assertOpen();
+				if (
+					visible &&
+					this.journal.matchesBase(operation.path, base, state.epoch)
+				) {
+					await this.journal.discardQueued(operation.key);
+					return "skip";
+				}
+			}
 			await this.journal.recordQueuedRejected(
 				operation,
 				"Queued file is absent from the local vault",

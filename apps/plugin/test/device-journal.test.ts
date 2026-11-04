@@ -1,6 +1,10 @@
 import type { PendingOperation } from "@obsidian-ai-bridge/protocol";
-import { beforeEach, describe, expect, it } from "vitest";
-import { DeviceJournal } from "../src/sync/device-journal";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+	DEVICE_JOURNAL_ATTENTION_REASON,
+	DeviceJournal,
+} from "../src/sync/device-journal";
+import { projectSyncStatus } from "../src/sync/sync-status";
 
 /** Isolates journal persistence and supports deterministic failure injection. */
 class MemoryStorage {
@@ -9,9 +13,12 @@ class MemoryStorage {
 	failStateWrite = false;
 	throwStateWrite = false;
 	failPayloadWrite = false;
+	throwStateRead = false;
+	throwPayloadRead = false;
 
 	/** Returns the current untrusted state document. */
 	async readState(): Promise<unknown> {
+		if (this.throwStateRead) throw new Error("state read failed");
 		return this.state;
 	}
 	/** Replaces state or simulates a dropped whole-document write. */
@@ -22,6 +29,7 @@ class MemoryStorage {
 	}
 	/** Returns a defensive copy of stored operation bytes. */
 	async readPayload(path: string): Promise<Uint8Array> {
+		if (this.throwPayloadRead) throw new Error("payload read failed");
 		const bytes = this.payloads.get(path);
 		if (!bytes) throw new Error("missing payload");
 		return bytes.slice();
@@ -367,6 +375,7 @@ describe("DeviceJournal", () => {
 		expect(journal.attentionReason).toBe(
 			"Device journal storage needs attention",
 		);
+		expect(journal.attentionStage).toBe("state_readback_mismatch");
 		storage.failStateWrite = false;
 		await journal.enqueue(
 			{ op: "put", path: "notes/a.md", precondition },
@@ -382,6 +391,7 @@ describe("DeviceJournal", () => {
 			journal.enqueue({ op: "put", path: "notes/a.md", precondition }, bytes),
 		).rejects.toThrow("state write failed");
 		expect(journal.snapshot().pending_ops).toEqual([]);
+		expect(journal.attentionStage).toBe("state_write");
 	});
 
 	it("blocks queueing when payload persistence fails", async () => {
@@ -391,6 +401,7 @@ describe("DeviceJournal", () => {
 			journal.enqueue({ op: "put", path: "notes/a.md", precondition }, bytes),
 		).rejects.toThrow("payload write failed");
 		expect(journal.snapshot().pending_ops).toEqual([]);
+		expect(journal.attentionStage).toBe("payload_write");
 	});
 
 	it("rejects a payload that changes after enqueue", async () => {
@@ -403,6 +414,132 @@ describe("DeviceJournal", () => {
 		await expect(
 			journal.prepareSend(operation.key, precondition),
 		).rejects.toThrow("Payload verification failed");
+		expect(journal.attentionStage).toBe("payload_hash_mismatch");
+	});
+
+	it("reports payload-read failure before releasing a sent retry", async () => {
+		const journal = await DeviceJournal.open(storage);
+		const operation = await journal.enqueue(
+			{ op: "delete", path: "notes/a.md", precondition },
+			new Uint8Array(),
+		);
+		await journal.prepareSend(operation.key, precondition);
+		storage.throwPayloadRead = true;
+
+		await expect(
+			journal.prepareSend(operation.key, precondition),
+		).rejects.toThrow("payload read failed");
+		expect(journal.attentionStage).toBe("payload_read");
+	});
+
+	it("reports a payload hash error separately from a hash mismatch", async () => {
+		const journal = await DeviceJournal.open(storage);
+		const operation = await journal.enqueue(
+			{ op: "delete", path: "notes/a.md", precondition },
+			new Uint8Array(),
+		);
+		const digest = vi
+			.spyOn(crypto.subtle, "digest")
+			.mockRejectedValue(new Error("digest failed"));
+		try {
+			await expect(
+				journal.prepareSend(operation.key, precondition),
+			).rejects.toThrow("digest failed");
+			expect(journal.attentionStage).toBe("payload_hash_error");
+		} finally {
+			digest.mockRestore();
+		}
+	});
+
+	it("reports payload-read failure as a blocking storage status", async () => {
+		const journal = await DeviceJournal.open(storage);
+		const operation = await journal.enqueue(
+			{ op: "put", path: "notes/a.md", precondition },
+			bytes,
+		);
+		storage.throwPayloadRead = true;
+
+		await expect(
+			journal.readPayload(operation.payload_ref, operation.payload_hash),
+		).rejects.toThrow("payload read failed");
+		expect(journal.attentionReason).toBe(DEVICE_JOURNAL_ATTENTION_REASON);
+		expect(journal.attentionStage).toBe("payload_read");
+		const status = projectSyncStatus({
+			state: journal.snapshot(),
+			session: "connected",
+			head: null,
+			persisted: journal.attentionReason === null,
+			storageFailureStage: journal.attentionStage,
+			active: false,
+			paused: false,
+			revoked: false,
+		});
+		expect(status.state).toBe("attention");
+		expect(status.storageFailure).toBe(true);
+		expect(status.storageFailureStage).toBe("payload_read");
+		expect(status.failure).toBeNull();
+		expect(JSON.stringify(status)).not.toContain("payload read failed");
+	});
+
+	it("reports payload hash operation failure as a blocking storage status", async () => {
+		const journal = await DeviceJournal.open(storage);
+		const operation = await journal.enqueue(
+			{ op: "put", path: "notes/a.md", precondition },
+			bytes,
+		);
+		const digest = vi
+			.spyOn(crypto.subtle, "digest")
+			.mockRejectedValue(new Error("digest failed"));
+		try {
+			await expect(
+				journal.readPayload(operation.payload_ref, operation.payload_hash),
+			).rejects.toThrow("digest failed");
+			expect(journal.attentionReason).toBe(DEVICE_JOURNAL_ATTENTION_REASON);
+			expect(journal.attentionStage).toBe("payload_hash_error");
+			const status = projectSyncStatus({
+				state: journal.snapshot(),
+				session: "connected",
+				head: null,
+				persisted: journal.attentionReason === null,
+				storageFailureStage: journal.attentionStage,
+				active: false,
+				paused: false,
+				revoked: false,
+			});
+			expect(status.state).toBe("attention");
+			expect(status.storageFailure).toBe(true);
+			expect(status.storageFailureStage).toBe("payload_hash_error");
+			expect(status.failure).toBeNull();
+			expect(JSON.stringify(status)).not.toContain("digest failed");
+		} finally {
+			digest.mockRestore();
+		}
+	});
+
+	it("reports state read-back failure separately from a state write failure", async () => {
+		const journal = await DeviceJournal.open(storage);
+		storage.throwStateRead = true;
+
+		await expect(
+			journal.enqueue({ op: "put", path: "notes/a.md", precondition }, bytes),
+		).rejects.toThrow("state read failed");
+		expect(journal.attentionStage).toBe("state_readback");
+	});
+
+	it("clears the diagnostic stage only after a verified state write", async () => {
+		const journal = await DeviceJournal.open(storage);
+		storage.throwStateWrite = true;
+		await expect(
+			journal.enqueue({ op: "put", path: "notes/a.md", precondition }, bytes),
+		).rejects.toThrow("state write failed");
+		expect(journal.attentionStage).toBe("state_write");
+
+		storage.throwStateWrite = false;
+		await journal.enqueue(
+			{ op: "put", path: "notes/a.md", precondition },
+			bytes,
+		);
+		expect(journal.attentionStage).toBeNull();
 	});
 
 	it("preserves a create-only precondition exactly across a sent retry", async () => {

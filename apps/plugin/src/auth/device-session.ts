@@ -36,6 +36,8 @@ export interface DeviceSessionHost {
 	readonly transport: OAuthTransport;
 	/** Device-scoped persistence that verifies writes before the session uses them. */
 	readonly credentials: CredentialStorage;
+	/** Returns the local label used when registering a new OAuth client. */
+	getDeviceName(): string;
 	/** Returns the journal identity that must match the credential record on restart. */
 	getClientId(): string | null;
 	/** Opens only the constructed authorization URL in the external browser. */
@@ -105,7 +107,7 @@ export class DeviceSession {
 					method: "POST",
 					contentType: "application/json",
 					body: JSON.stringify({
-						client_name: "Obsidian desktop",
+						client_name: this.host.getDeviceName(),
 						redirect_uris: [DEVICE_CALLBACK_URI],
 						grant_types: ["authorization_code", "refresh_token"],
 						response_types: ["code"],

@@ -2,7 +2,8 @@ import type {
 	DevicePrecondition,
 	PendingOperation,
 } from "@obsidian-ai-bridge/protocol";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { DesktopSyncController } from "../src/sync/desktop-sync";
 import {
 	DeviceJournal,
 	type DeviceJournalStorage,
@@ -22,6 +23,11 @@ import {
 	UnsupportedRemoteTextError,
 } from "../src/sync/remote-text";
 import { TextApplyEngine, type TextVault } from "../src/sync/text-apply";
+import {
+	createAc30CaseScripts,
+	createCaseScript,
+	safeCaseResult,
+} from "../tools/desktop-acceptance";
 
 const epoch = "a".repeat(32);
 
@@ -259,6 +265,11 @@ class MemoryRemote implements PublicationRemote {
 		key: string,
 	): Promise<PublicationReceipt> {
 		this.deletes.push({ path, precondition, key });
+		if (this.failure) {
+			const error = this.failure;
+			this.failure = null;
+			throw error;
+		}
 		const rev = precondition.kind === "match" ? precondition.rev + 1 : 2;
 		return {
 			status: 200,
@@ -350,6 +361,40 @@ async function openController(
 }
 
 describe("PublicationController", () => {
+	it("clears prior DELETE metadata before a new attempt", async () => {
+		const { journal, remote, vault } = await openController();
+		const path = "oab-8.8/ac-04/shared.md";
+		await journal.setBase(path, {
+			deleted: false,
+			rev: 1,
+			hash: await digestText("shared baseline"),
+		});
+		await journal.enqueue(
+			{
+				op: "delete",
+				path,
+				precondition: { kind: "match", epoch, rev: 1 },
+			},
+			new Uint8Array(),
+		);
+		remote.failure = new Error("request failed");
+		const diagnostics: unknown[] = [];
+		const controller = new PublicationController(journal, vault, remote, {
+			applyEngine: createApplyEngine(journal, vault, remote),
+			now: () => 1_800_000_000_000,
+			recoverPrecondition: async () => {},
+			onDeleteResponseDiagnostic: (diagnostic) => {
+				diagnostics.push(diagnostic);
+			},
+		});
+
+		await controller.flush();
+
+		expect(diagnostics).toEqual([null]);
+		expect(journal.snapshot().pending_ops).toHaveLength(1);
+		expect(journal.snapshot().pending_ops[0]?.state).toBe("sent");
+	});
+
 	it.each(
 		[false, true].flatMap((changed) =>
 			["assets/renamed.png", "notes/renamed.md"].map((to) => ({ changed, to })),
@@ -2770,6 +2815,462 @@ describe("PublicationController", () => {
 		]);
 		expect(journal.snapshot().pending_ops).toEqual([]);
 		controller.close();
+	});
+
+	it("reports the exact generated AC-30 final-state assertion", async () => {
+		const action = createAc30CaseScripts("/Users/test").action;
+		const start = action.indexOf("const observedType=");
+		const end = action.indexOf("\n}finally{", start);
+		expect(start).toBeGreaterThanOrEqual(0);
+		expect(end).toBeGreaterThan(start);
+		const finalAssertions = action.slice(start, end);
+		const expectedHash = "expected-hash";
+		const defaults = {
+			callCount: 3,
+			retryKey: "original-key",
+			firstKey: "original-key",
+			successorKey: "successor-key",
+			retryPayloadMatchesOriginal: true,
+			successorPayloadMatchesEdited: true,
+			retryStatus: null,
+			firstRevision: 1,
+			retryRevision: 1,
+			successorRevision: 2,
+			retryReceiptETag: "same-etag",
+			firstReceiptETag: "same-etag",
+			successorPrecondition: { kind: "match", epoch: "epoch", rev: 1 },
+			stateBefore: { epoch: "epoch" },
+			authority: { deleted: false, rev: 2, hash: expectedHash },
+			hashText: async () => expectedHash,
+			editedText: "edited bytes",
+			localText: "edited bytes",
+			base: { deleted: false, rev: 2, hash: expectedHash },
+			finalHash: expectedHash,
+			finalState: {
+				pending_ops: [],
+				pending_apply: [],
+				reconciliation: null,
+				attention: [{}, {}, {}],
+			},
+		};
+		const scenarios = [
+			["AC30_ASSERT_FINAL_CALL_COUNT", { callCount: 2 }],
+			["AC30_ASSERT_FINAL_RETRY_KEY", { retryKey: "other-key" }],
+			["AC30_ASSERT_FINAL_SUCCESSOR_KEY", { successorKey: "original-key" }],
+			[
+				"AC30_ASSERT_FINAL_RETRY_PAYLOAD",
+				{ retryPayloadMatchesOriginal: false },
+			],
+			[
+				"AC30_ASSERT_FINAL_SUCCESSOR_PAYLOAD",
+				{ successorPayloadMatchesEdited: false },
+			],
+			["AC30_ASSERT_FINAL_NO_422", { retryStatus: 422 }],
+			["AC30_ASSERT_FINAL_FIRST_REVISION", { firstRevision: 2 }],
+			["AC30_ASSERT_FINAL_RETRY_REVISION", { retryRevision: 2 }],
+			["AC30_ASSERT_SUCCESSOR_REVISION", { successorRevision: 3 }],
+			["AC30_ASSERT_FINAL_RETRY_ETAG", { retryReceiptETag: "other-etag" }],
+			[
+				"AC30_ASSERT_FINAL_PRECONDITION_KIND",
+				{ successorPrecondition: { kind: "absent" } },
+			],
+			[
+				"AC30_ASSERT_FINAL_PRECONDITION_EPOCH",
+				{
+					successorPrecondition: {
+						kind: "match",
+						epoch: "other-epoch",
+						rev: 1,
+					},
+				},
+			],
+			[
+				"AC30_ASSERT_FINAL_PRECONDITION_REVISION",
+				{ successorPrecondition: { kind: "match", epoch: "epoch", rev: 2 } },
+			],
+			[
+				"AC30_ASSERT_FINAL_AUTHORITY_LIVE",
+				{ authority: { deleted: true, rev: 2, hash: expectedHash } },
+			],
+			[
+				"AC30_ASSERT_FINAL_AUTHORITY_REVISION",
+				{ authority: { deleted: false, rev: 3, hash: expectedHash } },
+			],
+			[
+				"AC30_ASSERT_FINAL_AUTHORITY_HASH",
+				{ authority: { deleted: false, rev: 2, hash: "other-hash" } },
+			],
+			["AC30_ASSERT_FINAL_LOCAL_TEXT", { localText: "other bytes" }],
+			["AC30_ASSERT_FINAL_BASE_PRESENT", { base: undefined }],
+			["AC30_ASSERT_FINAL_BASE_LIVE", { base: { deleted: true, rev: 2 } }],
+			[
+				"AC30_ASSERT_FINAL_BASE_REVISION",
+				{ base: { deleted: false, rev: 3, hash: expectedHash } },
+			],
+			[
+				"AC30_ASSERT_FINAL_BASE_HASH",
+				{ base: { deleted: false, rev: 2, hash: "other-hash" } },
+			],
+			["AC30_ASSERT_FINAL_LOCAL_HASH", { finalHash: "other-hash" }],
+			[
+				"AC30_ASSERT_FINAL_PENDING_OPERATIONS",
+				{ finalState: { ...defaults.finalState, pending_ops: [{}] } },
+			],
+			[
+				"AC30_ASSERT_FINAL_PENDING_APPLIES",
+				{ finalState: { ...defaults.finalState, pending_apply: [{}] } },
+			],
+			[
+				"AC30_ASSERT_FINAL_RECONCILIATION",
+				{ finalState: { ...defaults.finalState, reconciliation: {} } },
+			],
+			[
+				"AC30_ASSERT_FINAL_ATTENTION_COUNT",
+				{ finalState: { ...defaults.finalState, attention: [{}, {}, {}, {}] } },
+			],
+		] as const;
+		const bindings = Object.keys(defaults)
+			.map((key) => `const ${key}=__params[${JSON.stringify(key)}];`)
+			.join("\n");
+		const expectedObservations: Record<string, [unknown, unknown]> = {
+			AC30_ASSERT_FINAL_CALL_COUNT: [3, 2],
+			AC30_ASSERT_FINAL_RETRY_KEY: [true, false],
+			AC30_ASSERT_FINAL_SUCCESSOR_KEY: [true, false],
+			AC30_ASSERT_FINAL_RETRY_PAYLOAD: [true, false],
+			AC30_ASSERT_FINAL_SUCCESSOR_PAYLOAD: [true, false],
+			AC30_ASSERT_FINAL_NO_422: [true, false],
+			AC30_ASSERT_FINAL_FIRST_REVISION: [1, 2],
+			AC30_ASSERT_FINAL_RETRY_REVISION: [1, 2],
+			AC30_ASSERT_SUCCESSOR_REVISION: [2, 3],
+			AC30_ASSERT_FINAL_RETRY_ETAG: [true, false],
+			AC30_ASSERT_FINAL_PRECONDITION_KIND: ["match", "absent"],
+			AC30_ASSERT_FINAL_PRECONDITION_EPOCH: [true, false],
+			AC30_ASSERT_FINAL_PRECONDITION_REVISION: [1, 2],
+			AC30_ASSERT_FINAL_AUTHORITY_LIVE: [false, true],
+			AC30_ASSERT_FINAL_AUTHORITY_REVISION: [2, 3],
+			AC30_ASSERT_FINAL_AUTHORITY_HASH: [true, false],
+			AC30_ASSERT_FINAL_LOCAL_TEXT: [true, false],
+			AC30_ASSERT_FINAL_BASE_PRESENT: ["present", "absent"],
+			AC30_ASSERT_FINAL_BASE_LIVE: [false, true],
+			AC30_ASSERT_FINAL_BASE_REVISION: [2, 3],
+			AC30_ASSERT_FINAL_BASE_HASH: [true, false],
+			AC30_ASSERT_FINAL_LOCAL_HASH: [true, false],
+			AC30_ASSERT_FINAL_PENDING_OPERATIONS: [0, 1],
+			AC30_ASSERT_FINAL_PENDING_APPLIES: [0, 1],
+			AC30_ASSERT_FINAL_RECONCILIATION: ["null", "object"],
+			AC30_ASSERT_FINAL_ATTENTION_COUNT: [3, 4],
+		};
+		const observedCodes: unknown[] = [];
+		for (const [code, overrides] of scenarios) {
+			const hostScript = createCaseScript(
+				"AC-30",
+				`${bindings}\n${finalAssertions}`,
+				"caseEvidence.cleanupRan=true;",
+			);
+			const run = new Function("__params", `return ${hostScript}`)({
+				...defaults,
+				...overrides,
+			});
+			const output = await run;
+			const record = JSON.parse(output.slice("OAB8CASE:".length));
+			observedCodes.push(record.failureReason);
+			expect(record.caseEvidence.cleanupRan).toBe(true);
+			const summary = safeCaseResult("AC-30", "controlled", record);
+			expect(summary.ac30FinalAssertion).toEqual({
+				code,
+				expected: expectedObservations[code]?.[0],
+				observed: expectedObservations[code]?.[1],
+			});
+			expect(JSON.stringify(summary)).not.toMatch(
+				/original-key|successor-key|other-key|same-etag|other-etag|expected-hash|other-hash|edited bytes|other bytes|epoch/,
+			);
+		}
+		expect(observedCodes).toEqual(scenarios.map(([code]) => code));
+		const hostScript = createCaseScript(
+			"AC-30",
+			`${bindings}\n${finalAssertions}`,
+			"",
+		);
+		const output = await new Function("__params", `return ${hostScript}`)(
+			defaults,
+		);
+		expect(JSON.parse(output.slice("OAB8CASE:".length))).toMatchObject({
+			status: "passed",
+			cleanupStatus: "passed",
+		});
+	});
+
+	it("runs generated AC-30 through persisted retry timing and preserves the successor revision", async () => {
+		vi.useFakeTimers();
+		vi.setSystemTime(1_800_000_000_000);
+		const storage = new MemoryStorage();
+		/** Wakes the test after storage records retry state. Journal memory updates after this signal. */
+		let markRetryPersisted = () => {};
+		const retryPersisted = new Promise<void>((resolve) => {
+			markRetryPersisted = resolve;
+		});
+		const writeState = storage.writeState.bind(storage);
+		storage.writeState = async (state) => {
+			await writeState(state);
+			const pending = (state as { pending_ops?: PendingOperation[] })
+				.pending_ops;
+			if (pending?.some((operation) => operation.retry_at !== undefined))
+				markRetryPersisted();
+		};
+		const vault = new MemoryVault();
+		const writes: Array<{
+			key: string;
+			text: string;
+			precondition: DevicePrecondition;
+		}> = [];
+		const commits: Array<{ rev: number; text: string }> = [];
+		/** Wakes the test when the first mutation reaches the fake service. */
+		let markFirstWrite = () => {};
+		const firstWrite = new Promise<void>((resolve) => {
+			markFirstWrite = resolve;
+		});
+		const idempotency = new Map<
+			string,
+			{
+				text: string;
+				precondition: DevicePrecondition;
+				receipt: PublicationReceipt;
+			}
+		>();
+		const serviceFiles = new Map<string, { rev: number; text: string }>();
+		const remote: PublicationRemote = {
+			readAuthority: async () => {
+				throw new Error("Unexpected pinned read");
+			},
+			readCurrentAuthority: async (path) => {
+				const file = serviceFiles.get(path);
+				if (!file) throw new SyncTransportError(404, "not_found");
+				return {
+					deleted: false,
+					text: file.text,
+					epoch,
+					rev: file.rev,
+					hash: await digestText(file.text),
+				};
+			},
+			put: async (path, text, precondition, key) => {
+				if (writes.length === 0) markFirstWrite();
+				writes.push({ key, text, precondition: structuredClone(precondition) });
+				const prior = idempotency.get(key);
+				if (prior) {
+					if (
+						prior.text !== text ||
+						JSON.stringify(prior.precondition) !== JSON.stringify(precondition)
+					)
+						throw new SyncTransportError(422, "idempotency_mismatch");
+					return structuredClone(prior.receipt);
+				}
+				const current = serviceFiles.get(path);
+				if (
+					(precondition.kind === "absent" && current) ||
+					(precondition.kind === "match" &&
+						(!current ||
+							precondition.epoch !== epoch ||
+							precondition.rev !== current.rev))
+				)
+					throw new SyncTransportError(412, "precondition_failed");
+				const rev = (current?.rev ?? 0) + 1;
+				const hash = await digestText(text);
+				const receipt: PublicationReceipt = {
+					status: current ? 200 : 201,
+					path,
+					etag: `"${epoch}.${rev}"`,
+					seq: rev,
+					size: new TextEncoder().encode(text).byteLength,
+					hash,
+					deleted: false,
+				};
+				serviceFiles.set(path, { rev, text });
+				commits.push({ rev, text });
+				idempotency.set(key, {
+					text,
+					precondition: structuredClone(precondition),
+					receipt,
+				});
+				return structuredClone(receipt);
+			},
+			delete: async () => {
+				throw new Error("Unexpected delete");
+			},
+			rename: async () => {
+				throw new Error("Unexpected rename");
+			},
+		};
+		const originalPut = remote.put;
+		const journal = await DeviceJournal.open(storage);
+		await journal.resetEpoch(epoch);
+		await journal.setCursor(epoch, 0);
+		const applyEngine = createApplyEngine(journal, vault, remote);
+		const controller = new PublicationController(journal, vault, remote, {
+			applyEngine,
+			now: () => Date.now(),
+			recoverPrecondition: async () => {},
+		});
+		const reconciliation = new ReconciliationController(
+			journal,
+			applyEngine,
+			vault,
+			{
+				manifest: async () => ({
+					epoch,
+					head_seq: 0,
+					next_page: null,
+					entries: [],
+				}),
+				changes: async () => ({ epoch, head_seq: 0, entries: [] }),
+				createText: async () => {
+					throw new Error("Unexpected enrollment create");
+				},
+			},
+		);
+		await journal.recordAttention("oab-8.8/old-1.md", "retained attention");
+		await journal.recordAttention("oab-8.8/old-2.md", "retained attention");
+		await journal.recordAttention("oab-8.8/old-3.md", "retained attention");
+		let desktopSync: DesktopSyncController;
+		desktopSync = new DesktopSyncController({
+			cycle: async () => {
+				await reconciliation.resume();
+				await controller.scan();
+				await controller.flush();
+				await reconciliation.replay();
+			},
+			onEvent: (event) => controller.observe(event),
+			host: {
+				setTimeout: (callback, delay) =>
+					setTimeout(callback, delay) as unknown as number,
+				clearTimeout: (handle) =>
+					clearTimeout(handle as unknown as ReturnType<typeof setTimeout>),
+				setInterval: (callback, delay) =>
+					setInterval(callback, delay) as unknown as number,
+				clearInterval: (handle) =>
+					clearInterval(handle as unknown as ReturnType<typeof setInterval>),
+			},
+		});
+		const target = "/Users/test/vaults/obsidian-ai-bridge-dev-2";
+		const app = {
+			vault: {
+				adapter: { getBasePath: () => target },
+				create: async (path: string, text: string) => {
+					if (!(await vault.create(path, text))) throw new Error("Path exists");
+					await desktopSync.observe({ type: "create", path });
+					return { path };
+				},
+				modify: async (file: { path: string }, text: string) => {
+					vault.files.set(file.path, text);
+					await desktopSync.observe({ type: "modify", path: file.path });
+				},
+				read: async (file: { path: string }) => vault.read(file.path),
+				getAbstractFileByPath: (path: string) =>
+					vault.files.has(path) ? { path } : null,
+			},
+			plugins: {
+				plugins: {
+					"ai-bridge": {
+						journal,
+						composition: { publication: controller },
+						desktopSync,
+						sessionStatus: "connected",
+						syncPaused: false,
+					},
+				},
+			},
+		};
+		const originalText =
+			"# AC-30 response-loss fixture\n\nOriginal immutable payload.\n";
+		const scripts = createAc30CaseScripts("/Users/test");
+		const hostScript = createCaseScript(
+			"AC-30",
+			scripts.action,
+			scripts.cleanup,
+		);
+		try {
+			const run = (
+				new Function("app", `return ${hostScript}`) as (
+					app: unknown,
+				) => Promise<string>
+			)(app);
+			await firstWrite;
+			await retryPersisted;
+			for (let index = 0; index < 20; index += 1) {
+				if (
+					journal
+						.snapshot()
+						.pending_ops.some(
+							(operation: PendingOperation) => operation.retry_at !== undefined,
+						)
+				)
+					break;
+				await Promise.resolve();
+			}
+			const firstOperation = journal
+				.snapshot()
+				.pending_ops.find(
+					(operation: PendingOperation) => operation.state === "sent",
+				);
+			if (!firstOperation || firstOperation.retry_at === undefined)
+				throw new Error("Expected the persisted retry deadline");
+			const savedSentOperation = structuredClone(firstOperation);
+			const savedPayload = await journal.readPayload(
+				firstOperation.payload_ref,
+				firstOperation.payload_hash,
+			);
+			expect(firstOperation.retry_at - Date.now()).toBe(2_000);
+			expect(firstOperation.attempts).toBe(1);
+			expect(savedPayload).toEqual(new TextEncoder().encode(originalText));
+			await vi.advanceTimersByTimeAsync(1_999);
+			expect(writes).toHaveLength(1);
+			expect(
+				journal
+					.snapshot()
+					.pending_ops.find(
+						(operation: PendingOperation) =>
+							operation.key === firstOperation.key,
+					),
+			).toEqual(savedSentOperation);
+			await vi.advanceTimersByTimeAsync(1);
+			const output = await run;
+			const summary = JSON.parse(output.slice("OAB8CASE:".length));
+			expect(summary).toMatchObject({
+				status: "passed",
+				failureStage: null,
+				failureReason: null,
+				cleanupStatus: "passed",
+			});
+			expect(remote.put).toBe(originalPut);
+			expect(writes).toHaveLength(3);
+			expect(writes[0]?.key).toBe(writes[1]?.key);
+			expect(writes[2]?.key).not.toBe(writes[0]?.key);
+			expect(writes.map((write) => write.text)).toEqual([
+				"# AC-30 response-loss fixture\n\nOriginal immutable payload.\n",
+				"# AC-30 response-loss fixture\n\nOriginal immutable payload.\n",
+				"# AC-30 response-loss fixture\n\nOriginal immutable payload.\n\nLocal successor edit.\n",
+			]);
+			expect(writes.map((write) => write.precondition)).toEqual([
+				{ kind: "absent" },
+				{ kind: "absent" },
+				{ kind: "match", epoch, rev: 1 },
+			]);
+			expect(commits.map((commit) => commit.rev)).toEqual([1, 2]);
+			expect(commits[1]?.text).toContain("Local successor edit.");
+			expect(journal.snapshot().pending_ops).toEqual([]);
+			expect(
+				journal.snapshot().base["oab-8.8/ac-30-response-lost-20261104-06.md"],
+			).toMatchObject({
+				deleted: false,
+				rev: 2,
+			});
+		} finally {
+			desktopSync.close();
+			reconciliation.close();
+			controller.close();
+			journal.close();
+			vi.useRealTimers();
+		}
 	});
 
 	it("keeps a sent operation unresolved when close fences an in-flight receipt", async () => {

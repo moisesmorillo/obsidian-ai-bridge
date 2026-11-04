@@ -11,6 +11,8 @@ import type { App, Plugin } from "obsidian";
 /** Non-secret user settings for the desktop enrollment endpoint. */
 export interface AIBridgeSettings {
 	serverUrl: string;
+	/** Local label used to distinguish this device's conflict copies. */
+	deviceName: string;
 }
 
 /** Settings page for enrollment controls and safe connection status. */
@@ -27,6 +29,7 @@ export class AIBridgeSettingTab extends PluginSettingTab {
 		private readonly getSession: () => DeviceSession,
 		private readonly credentials: CredentialStorage,
 		private readonly onServerUrlChange: (url: string) => Promise<void>,
+		private readonly onDeviceNameChange: (name: string) => Promise<void>,
 		private readonly getStatus: () => DeviceSessionStatus,
 		private readonly syncProjection?: () => SyncStatusProjection | null,
 		private readonly syncActions?: SyncStatusActions,
@@ -54,6 +57,24 @@ export class AIBridgeSettingTab extends PluginSettingTab {
 						this.settings.serverUrl = nextUrl;
 					} catch {
 						text.setValue(this.settings.serverUrl);
+					}
+				});
+			});
+		new Setting(containerEl)
+			.setName("Device name")
+			.setDesc("Name used in conflict copies for this device.")
+			.addText((text) => {
+				text
+					.setPlaceholder("Obsidian desktop")
+					.setValue(this.settings.deviceName);
+				text.inputEl.addEventListener("blur", async () => {
+					const nextName = text.getValue().trim();
+					if (!nextName || nextName === this.settings.deviceName) return;
+					try {
+						await this.onDeviceNameChange(nextName);
+						this.settings.deviceName = nextName;
+					} catch {
+						text.setValue(this.settings.deviceName);
 					}
 				});
 			});

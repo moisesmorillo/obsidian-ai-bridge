@@ -162,7 +162,10 @@ import { type AIBridgeSettings, AIBridgeSettingTab } from "../src/settings";
 function createTab() {
 	host.controls.splice(0);
 	host.elements.splice(0);
-	const settings: AIBridgeSettings = { serverUrl: "https://service.test" };
+	const settings: AIBridgeSettings = {
+		serverUrl: "https://service.test",
+		deviceName: "Obsidian desktop",
+	};
 	let status: "connected" | "disconnected" = "connected";
 	const session = {
 		connect: vi.fn(),
@@ -172,7 +175,9 @@ function createTab() {
 		warning: "tokens stored unencrypted on this device",
 	} as CredentialStorage;
 	const updates: string[] = [];
+	const deviceNameUpdates: string[] = [];
 	let rejectUpdate = false;
+	let rejectDeviceNameUpdate = false;
 	const tab = new AIBridgeSettingTab(
 		{} as App,
 		{} as Plugin,
@@ -183,6 +188,11 @@ function createTab() {
 			updates.push(url);
 			if (rejectUpdate) throw new Error("synthetic save failure");
 		},
+		async (name) => {
+			deviceNameUpdates.push(name);
+			if (rejectDeviceNameUpdate)
+				throw new Error("synthetic name save failure");
+		},
 		() => status,
 	);
 	tab.display();
@@ -191,23 +201,35 @@ function createTab() {
 		settings,
 		session,
 		updates,
+		deviceNameUpdates,
 		setStatus: (value: "connected" | "disconnected") => {
 			status = value;
 		},
 		setRejectUpdate: (value: boolean) => {
 			rejectUpdate = value;
 		},
+		setRejectDeviceNameUpdate: (value: boolean) => {
+			rejectDeviceNameUpdate = value;
+		},
 	};
 }
 
 describe("AIBridgeSettingTab", () => {
+	it("renders a device name field for distinct device identity", () => {
+		createTab();
+		const deviceName = host.controls.find((row) => row.name === "Device name");
+		expect(deviceName?.text).not.toBeNull();
+		expect(deviceName?.text?.value).toBe("Obsidian desktop");
+	});
+
 	it("renders safe status and connect and cancel actions", async () => {
 		const test = createTab();
 		expect(host.controls.map((row) => row.name)).toEqual([
 			"Server URL",
+			"Device name",
 			"Device connection",
 		]);
-		expect(host.controls[1]?.buttons.map((button) => button.label)).toEqual([
+		expect(host.controls[2]?.buttons.map((button) => button.label)).toEqual([
 			"Connect",
 			"Cancel",
 		]);
@@ -217,8 +239,8 @@ describe("AIBridgeSettingTab", () => {
 		expect(host.elements.map((element) => element.textContent)).toContain(
 			"tokens stored unencrypted on this device",
 		);
-		await host.controls[1]?.buttons[0]?.onClick?.();
-		host.controls[1]?.buttons[1]?.onClick?.();
+		await host.controls[2]?.buttons[0]?.onClick?.();
+		host.controls[2]?.buttons[1]?.onClick?.();
 		expect(test.session.connect).toHaveBeenCalledOnce();
 		expect(test.session.cancel).toHaveBeenCalledOnce();
 		test.setStatus("disconnected");
@@ -228,6 +250,25 @@ describe("AIBridgeSettingTab", () => {
 		);
 		expect(status?.textContent).toBe("Status: disconnected");
 		expect(status?.textContent).not.toContain("token");
+	});
+
+	it("saves a distinct device name and restores the prior value on failure", async () => {
+		const test = createTab();
+		const input = host.controls[1]?.text;
+		if (!input?.blur)
+			throw new Error("Device name blur handler was not attached");
+		input.value = "  oab-8.8 dev-1  ";
+		await input.blur();
+		expect(test.deviceNameUpdates).toEqual(["oab-8.8 dev-1"]);
+		expect(test.settings.deviceName).toBe("oab-8.8 dev-1");
+		test.setRejectDeviceNameUpdate(true);
+		input.value = "failed device name";
+		await input.blur();
+		expect(input.value).toBe("oab-8.8 dev-1");
+		expect(test.deviceNameUpdates).toEqual([
+			"oab-8.8 dev-1",
+			"failed device name",
+		]);
 	});
 
 	it("saves a changed server origin and restores the prior value on failure", async () => {

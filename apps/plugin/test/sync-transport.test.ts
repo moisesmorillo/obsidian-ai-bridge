@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import { SyncTransport } from "../src/infrastructure/sync-transport";
-import { UnsupportedRemoteTextError } from "../src/sync/remote-text";
+import {
+	SyncTransportError,
+	UnsupportedRemoteTextError,
+} from "../src/sync/remote-text";
 
 /** Captures authenticated transport URLs and returns controlled protocol responses. */
 class ResponseSession {
@@ -24,6 +27,122 @@ class ResponseSession {
 const epoch = "a".repeat(32);
 
 describe("SyncTransport", () => {
+	it("classifies a rejected delete response without retaining raw response data", async () => {
+		const session = new ResponseSession();
+		session.responses.push({
+			status: 400,
+			headers: { etag: `"${epoch}.4"` },
+			text: JSON.stringify({
+				error: "invalid_request",
+				message: "The request is not valid.",
+			}),
+		});
+		const diagnostics: unknown[] = [];
+		const transport = new SyncTransport(
+			"https://service.test",
+			session,
+			undefined,
+			(diagnostic) => diagnostics.push(diagnostic),
+		);
+
+		const error = await transport
+			.delete(
+				"oab-8.8/ac-04/shared.md",
+				{ kind: "match", epoch, rev: 1 },
+				"private-operation-key",
+			)
+			.catch((caught: unknown) => caught);
+
+		expect(error).toBeInstanceOf(SyncTransportError);
+		expect(error).toMatchObject({
+			statusClass: "4xx",
+			code: "invalid_request",
+			responseETagClass: "strong",
+			message: "Sync request failed",
+		});
+		expect(Object.keys(error as object)).not.toContain("text");
+		expect(JSON.stringify(error)).not.toContain("private-operation-key");
+		expect(diagnostics).toEqual([
+			{
+				statusClass: "4xx",
+				errorKind: "invalid_request",
+				responseETagClass: "strong",
+			},
+		]);
+		expect(JSON.stringify(diagnostics)).not.toContain("private-operation-key");
+		expect(JSON.stringify(diagnostics)).not.toContain(
+			"oab-8.8/ac-04/shared.md",
+		);
+	});
+
+	it("captures strong ETag class for a successful delete receipt", async () => {
+		const session = new ResponseSession();
+		session.responses.push({
+			status: 200,
+			headers: { etag: `"${epoch}.2"` },
+			text: JSON.stringify({
+				path: "oab-8.8/ac-04/shared.md",
+				etag: `"${epoch}.2"`,
+				seq: 2,
+				size: 0,
+				hash: "",
+				deleted: true,
+			}),
+		});
+		const diagnostics: unknown[] = [];
+		const transport = new SyncTransport(
+			"https://service.test",
+			session,
+			undefined,
+			(diagnostic) => diagnostics.push(diagnostic),
+		);
+
+		await expect(
+			transport.delete(
+				"oab-8.8/ac-04/shared.md",
+				{ kind: "match", epoch, rev: 1 },
+				"private-operation-key",
+			),
+		).resolves.toMatchObject({ status: 200, deleted: true });
+		expect(diagnostics).toEqual([
+			{
+				statusClass: "2xx",
+				errorKind: null,
+				responseETagClass: "strong",
+			},
+		]);
+	});
+
+	it("redacts a noncanonical response body and classifies a weak ETag", async () => {
+		const session = new ResponseSession();
+		session.responses.push({
+			status: 400,
+			headers: { etag: 'W/"private-value"' },
+			text: JSON.stringify({
+				error: "invalid_request",
+				message: "private token must not appear",
+			}),
+		});
+		const transport = new SyncTransport("https://service.test", session);
+
+		const error = await transport
+			.delete(
+				"oab-8.8/ac-04/shared.md",
+				{ kind: "match", epoch, rev: 1 },
+				"private-operation-key",
+			)
+			.catch((caught: unknown) => caught);
+
+		expect(error).toMatchObject({
+			statusClass: "4xx",
+			code: null,
+			responseETagClass: "weak",
+			message: "Sync request failed",
+		});
+		expect(JSON.stringify(error)).not.toContain("private token");
+		expect(JSON.stringify(error)).not.toContain("private-value");
+	});
+
 	it("reads and validates exact current blob bytes for rename recovery", async () => {
 		const session = new ResponseSession();
 		const bytes = new Uint8Array([0, 254, 7]);
@@ -53,6 +172,88 @@ describe("SyncTransport", () => {
 			hash,
 		});
 		expect(session.calls[0]?.path).toContain("/v1/files/assets/a.png");
+	});
+
+	it("reads current blob authority when Content-Length is absent", async () => {
+		const session = new ResponseSession();
+		const bytes = new Uint8Array([0, 254, 7]);
+		const hash = [
+			...new Uint8Array(await crypto.subtle.digest("SHA-256", bytes.slice())),
+		]
+			.map((byte) => byte.toString(16).padStart(2, "0"))
+			.join("");
+		session.responses.push({
+			status: 200,
+			headers: {
+				etag: `"${epoch}.4"`,
+				"content-type": "application/octet-stream",
+			},
+			text: "",
+			arrayBuffer: bytes.slice().buffer,
+		});
+		const transport = new SyncTransport("https://service.test", session);
+
+		await expect(
+			transport.readCurrentBlobAuthority("assets/a.png"),
+		).resolves.toEqual({ kind: "blob", bytes, epoch, rev: 4, hash });
+	});
+
+	it.each(["", "3x", "02", "2"])(
+		"rejects a present invalid Content-Length %j",
+		async (contentLength) => {
+			const session = new ResponseSession();
+			const bytes = new Uint8Array([0, 254, 7]);
+			session.responses.push({
+				status: 200,
+				headers: {
+					etag: `"${epoch}.4"`,
+					"content-type": "application/octet-stream",
+					"content-length": contentLength,
+				},
+				text: "",
+				arrayBuffer: bytes.slice().buffer,
+			});
+			const transport = new SyncTransport("https://service.test", session);
+
+			await expect(
+				transport.readCurrentBlobAuthority("assets/a.png"),
+			).rejects.toThrow("Current blob authority metadata is invalid");
+		},
+	);
+
+	it("rejects current blob authority without response bytes", async () => {
+		const session = new ResponseSession();
+		session.responses.push({
+			status: 200,
+			headers: {
+				etag: `"${epoch}.4"`,
+				"content-type": "application/octet-stream",
+			},
+			text: "",
+		});
+		const transport = new SyncTransport("https://service.test", session);
+
+		await expect(
+			transport.readCurrentBlobAuthority("assets/a.png"),
+		).rejects.toThrow("Current blob authority metadata is invalid");
+	});
+
+	it("rejects oversized current blob authority without Content-Length", async () => {
+		const session = new ResponseSession();
+		session.responses.push({
+			status: 200,
+			headers: {
+				etag: `"${epoch}.4"`,
+				"content-type": "application/octet-stream",
+			},
+			text: "",
+			arrayBuffer: new ArrayBuffer(25_000_001),
+		});
+		const transport = new SyncTransport("https://service.test", session);
+
+		await expect(
+			transport.readCurrentBlobAuthority("assets/a.png"),
+		).rejects.toThrow("Current blob authority metadata is invalid");
 	});
 
 	it("reads exact pinned text with epoch and revision metadata", async () => {
@@ -508,6 +709,30 @@ describe("SyncTransport", () => {
 		});
 	});
 
+	it("reads pinned blob bytes when Content-Length is absent", async () => {
+		const session = new ResponseSession();
+		const bytes = new Uint8Array([0, 255, 128]);
+		const hash = [
+			...new Uint8Array(await crypto.subtle.digest("SHA-256", bytes.slice())),
+		]
+			.map((byte) => byte.toString(16).padStart(2, "0"))
+			.join("");
+		session.responses.push({
+			status: 200,
+			headers: {
+				etag: `"${epoch}.4"`,
+				"content-type": "application/octet-stream",
+			},
+			text: "",
+			arrayBuffer: bytes.slice().buffer,
+		});
+		const transport = new SyncTransport("https://service.test", session);
+
+		await expect(
+			transport.readPinnedBlob("notes/a.png", epoch, 4, hash),
+		).resolves.toEqual({ bytes, hash, epoch, rev: 4 });
+	});
+
 	it("rejects pinned binary bytes with a bad declared digest", async () => {
 		const session = new ResponseSession();
 		session.responses.push({
@@ -523,6 +748,50 @@ describe("SyncTransport", () => {
 		const transport = new SyncTransport("https://service.test", session);
 		await expect(
 			transport.readPinnedBlob("notes/a.png", epoch, 4, "a".repeat(64)),
+		).rejects.toThrow("Pinned blob response metadata is invalid");
+	});
+
+	it("reads resolved pinned blob bytes when Content-Length is absent", async () => {
+		const session = new ResponseSession();
+		const bytes = new Uint8Array([0, 255, 128]);
+		const hash = [
+			...new Uint8Array(await crypto.subtle.digest("SHA-256", bytes.slice())),
+		]
+			.map((byte) => byte.toString(16).padStart(2, "0"))
+			.join("");
+		session.responses.push({
+			status: 200,
+			headers: {
+				etag: `"${epoch}.4"`,
+				"content-type": "application/octet-stream",
+			},
+			text: "",
+			arrayBuffer: bytes.slice().buffer,
+		});
+		const transport = new SyncTransport("https://service.test", session);
+
+		await expect(
+			transport.readResolvedBlob("notes/a.png", epoch, 4, hash),
+		).resolves.toEqual({ kind: "blob", bytes, hash, epoch, rev: 4 });
+	});
+
+	it("rejects resolved pinned blob bytes with an unexpected hash", async () => {
+		const session = new ResponseSession();
+		const bytes = new Uint8Array([0, 255, 128]);
+		session.responses.push({
+			status: 200,
+			headers: {
+				etag: `"${epoch}.4"`,
+				"content-type": "application/octet-stream",
+				"content-length": String(bytes.byteLength),
+			},
+			text: "",
+			arrayBuffer: bytes.slice().buffer,
+		});
+		const transport = new SyncTransport("https://service.test", session);
+
+		await expect(
+			transport.readResolvedBlob("notes/a.png", epoch, 4, "c".repeat(64)),
 		).rejects.toThrow("Pinned blob response metadata is invalid");
 	});
 
@@ -565,6 +834,67 @@ describe("SyncTransport", () => {
 			epoch,
 			rev: 8,
 		});
+	});
+
+	it("reads current fallback blob bytes when Content-Length is absent", async () => {
+		const session = new ResponseSession();
+		session.responses.push({
+			status: 410,
+			headers: { "content-type": "application/json" },
+			text: JSON.stringify({
+				error: "revision_pruned",
+				message: "This revision is no longer available.",
+			}),
+		});
+		const bytes = new Uint8Array([0, 255, 128]);
+		const hash = [
+			...new Uint8Array(await crypto.subtle.digest("SHA-256", bytes.slice())),
+		]
+			.map((byte) => byte.toString(16).padStart(2, "0"))
+			.join("");
+		session.responses.push({
+			status: 200,
+			headers: {
+				"content-type": "application/octet-stream",
+				etag: `"${epoch}.8"`,
+				"x-vault-epoch": epoch,
+			},
+			text: "",
+			arrayBuffer: bytes.slice().buffer,
+		});
+		const transport = new SyncTransport("https://service.test", session);
+
+		await expect(
+			transport.readResolvedBlob("notes/a.png", epoch, 4, "c".repeat(64)),
+		).resolves.toEqual({ kind: "blob", bytes, hash, epoch, rev: 8 });
+	});
+
+	it("keeps equal-revision fallback bound to the expected hash without Content-Length", async () => {
+		const session = new ResponseSession();
+		session.responses.push({
+			status: 410,
+			headers: { "content-type": "application/json" },
+			text: JSON.stringify({
+				error: "revision_pruned",
+				message: "This revision is no longer available.",
+			}),
+		});
+		const bytes = new Uint8Array([0, 255, 128]);
+		session.responses.push({
+			status: 200,
+			headers: {
+				"content-type": "application/octet-stream",
+				etag: `"${epoch}.4"`,
+				"x-vault-epoch": epoch,
+			},
+			text: "",
+			arrayBuffer: bytes.slice().buffer,
+		});
+		const transport = new SyncTransport("https://service.test", session);
+
+		await expect(
+			transport.readResolvedBlob("notes/a.png", epoch, 4, "c".repeat(64)),
+		).rejects.toThrow("Current blob fallback revision is not newer authority");
 	});
 
 	it("sends binary payload bytes with canonical integrity declarations", async () => {

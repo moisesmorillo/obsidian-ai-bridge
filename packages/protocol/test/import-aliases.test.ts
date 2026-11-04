@@ -205,6 +205,7 @@ describe("workspace import aliases", () => {
 			"build.ts",
 			"vitest.config.ts",
 			"test/**/*.ts",
+			"tools/**/*.ts",
 		]);
 		expect(pluginToolsTsconfig.compilerOptions).toEqual({
 			types: ["bun"],

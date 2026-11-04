@@ -51,12 +51,29 @@ export type EnqueueInput =
 /** Caller-supplied evidence for an explicit server receipt or rejection. */
 export type ResolutionOutcome = { kind: "receipt" } | { kind: "rejection" };
 
+/** Fixed non-secret stage codes for journal persistence and payload verification failures. */
+export const DEVICE_JOURNAL_FAILURE_STAGES = [
+	"payload_write",
+	"payload_read",
+	"payload_hash_error",
+	"payload_hash_mismatch",
+	"state_write",
+	"state_readback",
+	"state_readback_mismatch",
+] as const;
+
+/** Fixed diagnostic stage returned by the local journal. */
+export type DeviceJournalFailureStage =
+	(typeof DEVICE_JOURNAL_FAILURE_STAGES)[number];
+
 /** Serializes confirmed local transitions and releases only hash-verified durable bytes. */
 export class DeviceJournal {
 	/** Last validated state whose full document matched storage read-back. */
 	private state: DeviceState;
 	/** Blocks release after storage failure until a later state write verifies. */
 	private attentionReasonValue: string | null = null;
+	/** Fixed failure boundary for safe diagnostics; cleared only after verified persistence. */
+	private attentionStageValue: DeviceJournalFailureStage | null = null;
 	/** Fences asynchronous work from releasing after this lifecycle closes. */
 	private closed = false;
 	/** Serializes transitions for this journal lifetime. */
@@ -73,6 +90,11 @@ export class DeviceJournal {
 	/** Reports a blocking local persistence or payload-integrity failure until a verified write succeeds. */
 	get attentionReason(): string | null {
 		return this.attentionReasonValue;
+	}
+
+	/** Reports a fixed failure boundary without exposing storage errors or operation identity. */
+	get attentionStage(): DeviceJournalFailureStage | null {
+		return this.attentionStageValue;
 	}
 
 	/** Validates existing state or persists one new device identity before returning. */
@@ -109,11 +131,27 @@ export class DeviceJournal {
 			this.assertOpen();
 			try {
 				await this.storage.writePayload(payloadRef, payload);
-				if ((await digest(await this.storage.readPayload(payloadRef))) !== hash)
-					throw new Error("Payload verification failed");
 			} catch (error) {
-				this.attentionReasonValue = DEVICE_JOURNAL_ATTENTION_REASON;
+				this.markAttention("payload_write");
 				throw error;
+			}
+			let storedPayload: Uint8Array;
+			try {
+				storedPayload = await this.storage.readPayload(payloadRef);
+			} catch (error) {
+				this.markAttention("payload_read");
+				throw error;
+			}
+			let storedHash: string;
+			try {
+				storedHash = await digest(storedPayload);
+			} catch (error) {
+				this.markAttention("payload_hash_error");
+				throw error;
+			}
+			if (storedHash !== hash) {
+				this.markAttention("payload_hash_mismatch");
+				throw new Error("Payload verification failed");
 			}
 			this.assertOpen();
 			const replaceIndex = this.state.pending_ops.findIndex(
@@ -585,11 +623,20 @@ export class DeviceJournal {
 			let bytes: Uint8Array;
 			try {
 				bytes = await this.storage.readPayload(candidate.payload_ref);
-				if ((await digest(bytes)) !== candidate.payload_hash)
-					throw new Error("Payload verification failed");
 			} catch (error) {
-				this.attentionReasonValue = DEVICE_JOURNAL_ATTENTION_REASON;
+				this.markAttention("payload_read");
 				throw error;
+			}
+			let payloadHash: string;
+			try {
+				payloadHash = await digest(bytes);
+			} catch (error) {
+				this.markAttention("payload_hash_error");
+				throw error;
+			}
+			if (payloadHash !== candidate.payload_hash) {
+				this.markAttention("payload_hash_mismatch");
+				throw new Error("Payload verification failed");
 			}
 			this.assertOpen();
 			if (current.state !== "sent")
@@ -609,9 +656,22 @@ export class DeviceJournal {
 		reference: string,
 		expectedHash: string,
 	): Promise<Uint8Array> {
-		const bytes = await this.storage.readPayload(reference);
-		if ((await digest(bytes)) !== expectedHash) {
-			this.attentionReasonValue = DEVICE_JOURNAL_ATTENTION_REASON;
+		let bytes: Uint8Array;
+		try {
+			bytes = await this.storage.readPayload(reference);
+		} catch (error) {
+			this.markAttention("payload_read");
+			throw error;
+		}
+		let actualHash: string;
+		try {
+			actualHash = await digest(bytes);
+		} catch (error) {
+			this.markAttention("payload_hash_error");
+			throw error;
+		}
+		if (actualHash !== expectedHash) {
+			this.markAttention("payload_hash_mismatch");
 			throw new Error("Payload verification failed");
 		}
 		return bytes.slice();
@@ -862,13 +922,22 @@ export class DeviceJournal {
 	private async commit(candidate: DeviceState): Promise<void> {
 		const parsed = DeviceStateSchema.parse(candidate);
 		try {
-			await persistVerified(this.storage, parsed);
+			await persistVerified(this.storage, parsed, (stage) => {
+				this.attentionStageValue = stage;
+			});
 			this.state = parsed;
 			this.attentionReasonValue = null;
+			this.attentionStageValue = null;
 		} catch (error) {
 			this.attentionReasonValue = DEVICE_JOURNAL_ATTENTION_REASON;
 			throw error;
 		}
+	}
+
+	/** Keeps the existing blocking warning and records only a fixed diagnostic code. */
+	private markAttention(stage: DeviceJournalFailureStage): void {
+		this.attentionReasonValue = DEVICE_JOURNAL_ATTENTION_REASON;
+		this.attentionStageValue = stage;
 	}
 
 	/** Orders all state transitions and keeps the queue usable after an action rejects. */
@@ -887,15 +956,29 @@ export class DeviceJournal {
 	}
 }
 
-/** Writes one complete state document and rejects dropped, altered, or unreadable writes. */
+/** Writes a complete state document and lets active journals classify write and read-back failures. */
 async function persistVerified(
 	storage: DeviceJournalStorage,
 	state: DeviceState,
+	onFailure?: (stage: DeviceJournalFailureStage) => void,
 ): Promise<void> {
-	await storage.writeState(state);
-	const readBack = DeviceStateSchema.parse(await storage.readState());
-	if (JSON.stringify(readBack) !== JSON.stringify(state))
+	try {
+		await storage.writeState(state);
+	} catch (error) {
+		onFailure?.("state_write");
+		throw error;
+	}
+	let readBack: DeviceState;
+	try {
+		readBack = DeviceStateSchema.parse(await storage.readState());
+	} catch (error) {
+		onFailure?.("state_readback");
+		throw error;
+	}
+	if (JSON.stringify(readBack) !== JSON.stringify(state)) {
+		onFailure?.("state_readback_mismatch");
 		throw new Error("Device state write did not verify");
+	}
 }
 
 /** Checks source and rename-destination overlap by canonical lowercased NFC path identity. */

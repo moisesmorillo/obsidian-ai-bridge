@@ -110,6 +110,7 @@ export {
 	CurrentEpochRequestSchema,
 	CurrentEpochResultSchema,
 	FileFailureSchema,
+	FileHttpErrorSchema,
 	FileHttpFailureInputSchema,
 	FileHttpFailureSchema,
 	MutationReceiptSchema,

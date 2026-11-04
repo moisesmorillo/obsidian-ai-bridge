@@ -751,6 +751,9 @@ describe("desktop acceptance safety", () => {
 		expect(scripts.action).toContain(
 			'remote.rename(source,destination,{kind:"match",epoch:observedEpoch,rev:sourceBefore.rev}',
 		);
+		expect(scripts.action).toContain(
+			"renameReceipt.status!==200&&renameReceipt.status!==201",
+		);
 		expect(scripts.action).toContain("firstPage.epoch!==observedEpoch");
 		expect(scripts.action).toContain("localSourceHash!==sourceHash");
 		expect(scripts.cleanup).toContain("AC33_CLEANUP_RESTORE_FAILED");

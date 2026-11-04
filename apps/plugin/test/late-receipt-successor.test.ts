@@ -58,6 +58,12 @@ class MemoryVault implements TextVault {
 		return this.files.get(path) ?? null;
 	}
 
+	/** Returns exact UTF-8 bytes for the current text fixture. */
+	async readBinary(path: string): Promise<Uint8Array | null> {
+		const text = this.files.get(path);
+		return text === undefined ? null : new TextEncoder().encode(text);
+	}
+
 	/** Lists visible test paths without inferring deletions. */
 	async list(): Promise<string[]> {
 		return [...this.files.keys()];

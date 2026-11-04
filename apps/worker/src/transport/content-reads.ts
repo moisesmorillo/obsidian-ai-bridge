@@ -89,7 +89,7 @@ export async function readContentResponse(
 				throw new Error("Blob response has no declared byte length");
 			const knownByteLength = Number(contentLength);
 			return ownedReadResponse(
-				blobReadSource(response.body, knownByteLength),
+				blobReadSource(response.body),
 				{ finish },
 				release,
 				response,

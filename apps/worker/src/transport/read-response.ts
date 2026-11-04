@@ -324,16 +324,12 @@ export function jsonReadSource(
 	};
 }
 
-/** Read the selected immutable byte count through a bounded BYOB reader.
- * @param knownByteLength - Exact selected storage bytes before reader release.
- */
+/** Read immutable bytes through a bounded BYOB reader until the stream confirms EOF. */
 export function blobReadSource(
 	body: ReadableStream<Uint8Array>,
-	knownByteLength: number,
 ): ReadResponseSource {
 	const reader = body.getReader({ mode: "byob" });
 	let pending: Promise<ReadableStreamReadResult<Uint8Array>> | undefined;
-	let readBytes = 0;
 	let ended = false;
 	let released = false;
 	/** Release the reader once after EOF or joined cancellation. */
@@ -353,11 +349,6 @@ export function blobReadSource(
 				ended = true;
 				release();
 				return { done: true, value: undefined };
-			}
-			readBytes += item.value.byteLength;
-			if (readBytes === knownByteLength) {
-				ended = true;
-				release();
 			}
 			return { done: false, value: item.value };
 		},

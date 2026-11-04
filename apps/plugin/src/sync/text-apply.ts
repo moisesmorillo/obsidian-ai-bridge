@@ -732,6 +732,13 @@ export class TextApplyEngine {
 		const size = await this.vault.size(change.path);
 		this.assertOpen();
 		const admission = classifyEnrollmentPath(change.path, size ?? 0);
+		if (admission === "unsupported") {
+			await this.attend(
+				change.path,
+				"Local file exceeds the supported apply size",
+			);
+			return;
+		}
 		const preserveLocalBytes = admission === "blob";
 		const readRemoteAsBlob =
 			contentKind === "blob" ||
@@ -1577,6 +1584,19 @@ export class TextApplyEngine {
 	private async resumePending(
 		pending: DeviceState["pending_apply"][number],
 	): Promise<void> {
+		if (pending.change.op !== "rename") {
+			const size = await this.vault.size(pending.change.path);
+			this.assertOpen();
+			if (
+				classifyEnrollmentPath(pending.change.path, size ?? 0) === "unsupported"
+			) {
+				await this.attend(
+					pending.change.path,
+					"Local file exceeds the supported apply size",
+				);
+				return;
+			}
+		}
 		if (pending.step === "named") {
 			const copies = conflictCopiesFor(pending);
 			for (const copy of copies) {

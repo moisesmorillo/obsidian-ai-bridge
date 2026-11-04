@@ -908,6 +908,185 @@ describe("TextApplyEngine", () => {
 		);
 	});
 
+	it.each(["current", "feed"] as const)(
+		"blocks unsupported oversized local content before body reads through %s",
+		async (caller) => {
+			const path = "notes/unsupported-large.md";
+			const localBytes = new Uint8Array(25_000_001).fill(0xa5);
+			const localHash = await hashBytes(localBytes);
+			const previousHash = await hash("confirmed previous content");
+			const remoteText = "remote current content";
+			const remoteHash = await hash(remoteText);
+			const etag = `"${epoch}.2"`;
+			vault.binaryFiles.set(path, localBytes);
+			await journal.resetEpoch(epoch);
+			await journal.setCursor(epoch, 0);
+			await journal.setBase(path, {
+				deleted: false,
+				rev: 1,
+				hash: previousHash,
+			});
+			let textReads = 0;
+			let binaryReads = 0;
+			vault.read = async () => {
+				textReads += 1;
+				return new TextDecoder().decode(localBytes);
+			};
+			vault.readBinary = async () => {
+				binaryReads += 1;
+				return localBytes.slice();
+			};
+			vault.stat = async (source) =>
+				source === path ? { mtime: 10, size: localBytes.byteLength } : null;
+			let remoteReads = 0;
+			const provider: PinnedTextProvider = {
+				read: async () => {
+					remoteReads += 1;
+					return remoteText;
+				},
+			};
+			if (caller === "current") {
+				engine = makeEngine(journal, vault, provider);
+				await expect(
+					engine.applyCurrent(path, {
+						text: remoteText,
+						epoch,
+						rev: 2,
+						hash: remoteHash,
+					}),
+				).rejects.toThrow("Current authority apply needs conflict recovery");
+			} else {
+				const transport = new SyncTransport("https://service.test", {
+					requestResponse: async () => {
+						remoteReads += 1;
+						return {
+							status: 200,
+							headers: { etag, "content-type": "application/json" },
+							text: JSON.stringify({
+								path,
+								etag,
+								hash: remoteHash,
+								size: new TextEncoder().encode(remoteText).byteLength,
+								kind: "text",
+								deleted: false,
+								origin: "remote",
+								updated_at: 2,
+								content: remoteText,
+								offset: 0,
+								length: remoteText.length,
+								truncated: false,
+							}),
+						};
+					},
+				});
+				engine = makeEngine(journal, vault, transport);
+				await engine.apply({ ...change, path, etag, hash: remoteHash });
+			}
+
+			expect(textReads).toBe(0);
+			expect(binaryReads).toBe(0);
+			expect(remoteReads).toBe(0);
+			expect(
+				await hashBytes(vault.binaryFiles.get(path) ?? new Uint8Array()),
+			).toBe(localHash);
+			expect(journal.snapshot().base[path]).toEqual({
+				deleted: false,
+				rev: 1,
+				hash: previousHash,
+			});
+			expect(journal.snapshot().pending_apply).toHaveLength(1);
+			expect(journal.snapshot().attention).toContainEqual(
+				expect.objectContaining({ path }),
+			);
+			expect(journal.snapshot().cursor).toBe(0);
+
+			engine.close();
+			journal.close();
+			journal = await DeviceJournal.open(storage);
+			engine = makeEngine(journal, vault, provider);
+			await engine.resume();
+			expect(textReads).toBe(0);
+			expect(binaryReads).toBe(0);
+			expect(
+				await hashBytes(vault.binaryFiles.get(path) ?? new Uint8Array()),
+			).toBe(localHash);
+			expect(journal.snapshot().base[path]?.rev).toBe(1);
+			expect(journal.snapshot().pending_apply).toHaveLength(1);
+			expect(journal.snapshot().attention).toContainEqual(
+				expect.objectContaining({ path }),
+			);
+			expect(remoteReads).toBe(0);
+		},
+	);
+
+	it("blocks resumed named apply work for unsupported oversized local content", async () => {
+		const path = "notes/resumed-unsupported.md";
+		const localBytes = new Uint8Array(25_000_001).fill(0x5a);
+		const localHash = await hashBytes(localBytes);
+		const row = { ...change, path, hash: await hash("remote resumed text") };
+		vault.binaryFiles.set(path, localBytes);
+		await journal.setBase(path, {
+			deleted: false,
+			rev: 1,
+			hash: await hash("confirmed resumed base"),
+		});
+		await journal.beginApply(row, "text");
+		await journal.updateApply({
+			change: row,
+			step: "named",
+			conflict_copies: [
+				{
+					path: "notes/resumed-unsupported (conflict Test Device 2026-11-04 0000).md",
+					source: path,
+					side: "path",
+					mode: "local",
+					device_name: "Test Device",
+					hash: localHash,
+					kind: "blob",
+					purpose: "conflict",
+				},
+				{
+					path: `.ai-bridge/pre-apply/${localHash}`,
+					source: path,
+					side: "path",
+					mode: "local",
+					device_name: "Test Device",
+					hash: localHash,
+					kind: "blob",
+					purpose: "pre_apply",
+				},
+			],
+		});
+		let textReads = 0;
+		let binaryReads = 0;
+		vault.read = async () => {
+			textReads += 1;
+			return new TextDecoder().decode(localBytes);
+		};
+		vault.readBinary = async () => {
+			binaryReads += 1;
+			return localBytes.slice();
+		};
+		vault.stat = async (source) =>
+			source === path ? { mtime: 10, size: localBytes.byteLength } : null;
+		engine = makeEngine(journal, vault, {
+			read: async () => "remote resumed text",
+		});
+
+		await engine.resume();
+
+		expect(textReads).toBe(0);
+		expect(binaryReads).toBe(0);
+		expect(
+			await hashBytes(vault.binaryFiles.get(path) ?? new Uint8Array()),
+		).toBe(localHash);
+		expect(journal.snapshot().base[path]?.rev).toBe(1);
+		expect(journal.snapshot().pending_apply[0]?.step).toBe("named");
+		expect(journal.snapshot().attention).toContainEqual(
+			expect.objectContaining({ path }),
+		);
+	});
+
 	it("timestamps synthetic current authority before naming a conflict", async () => {
 		const path = "notes/current-authority-conflict.md";
 		const localText = "local version";

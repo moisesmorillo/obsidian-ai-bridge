@@ -672,6 +672,8 @@ export class ReconciliationController {
 		this.assertOpen();
 		this.lastHeadValue = { epoch: page.epoch, head_seq: page.head_seq };
 		if (page.epoch !== state.epoch) return this.runReconciliation();
+		let manifestRows: Map<string, ReconciliationManifestEntry | null> | null =
+			null;
 		for (const entry of page.entries) {
 			this.assertOpen();
 			if (entry.seq <= (this.journal.snapshot().cursor ?? 0)) continue;
@@ -680,14 +682,25 @@ export class ReconciliationController {
 				continue;
 			}
 			if (entry.op === "delete") {
-				const contentKind = await this.confirmedDeleteKind(entry);
-				if (!contentKind) {
+				const revision = parseETag(entry.etag);
+				const base = this.journal.snapshot().base[entry.path];
+				if (base && revision.rev <= base.rev) {
+					await this.journal.setCursor(state.epoch, entry.seq);
+					continue;
+				}
+				manifestRows ??= await this.readDeleteManifest(state.epoch);
+				const classification = this.classifyDelete(entry, manifestRows);
+				if (classification === "superseded") {
+					await this.journal.setCursor(state.epoch, entry.seq);
+					continue;
+				}
+				if (classification === null) {
 					await this.journal.recordAttention(
 						entry.path,
 						"Delete row is not a confirmed manifest revision",
 					);
 				} else {
-					await this.applyChange(entry, contentKind);
+					await this.applyChange(entry, classification);
 				}
 			} else if (entry.hash === "") {
 				await this.journal.recordAttention(
@@ -704,22 +717,41 @@ export class ReconciliationController {
 			await this.journal.setCursor(state.epoch, page.head_seq);
 	}
 
-	/** Confirms a delete's exact revision and kind from the current manifest row. */
-	private async confirmedDeleteKind(
-		change: ReconciliationChangesPage["entries"][number],
-	): Promise<"text" | "blob" | null> {
+	/** Reads one full manifest snapshot so every feed delete shares its authority rows. */
+	private async readDeleteManifest(
+		epoch: string,
+	): Promise<Map<string, ReconciliationManifestEntry | null>> {
+		const rows = new Map<string, ReconciliationManifestEntry | null>();
 		let page = await this.remote.manifest(null);
-		const epoch = this.journal.snapshot().epoch;
 		while (page.epoch === epoch) {
-			const row = page.entries.find((entry) => entry.path === change.path);
-			if (row)
-				return row.etag === change.etag && row.seq === change.seq && row.deleted
-					? row.kind
-					: null;
-			if (page.next_page === null) return null;
+			for (const row of page.entries) {
+				if (rows.has(row.path)) rows.set(row.path, null);
+				else rows.set(row.path, row);
+			}
+			if (page.next_page === null) return rows;
 			page = await this.remote.manifest(page.next_page);
 		}
-		return null;
+		return new Map();
+	}
+
+	/** Separates an exact tombstone, a newer confirmed row, and missing or inconsistent authority. */
+	private classifyDelete(
+		change: ReconciliationChangesPage["entries"][number],
+		rows: Map<string, ReconciliationManifestEntry | null>,
+	): "text" | "blob" | "superseded" | null {
+		const row = rows.get(change.path);
+		if (!row) return null;
+		const changeETag = parseETag(change.etag);
+		const rowETag = parseETag(row.etag);
+		if (
+			rowETag.epoch === changeETag.epoch &&
+			rowETag.rev > changeETag.rev &&
+			row.seq > change.seq
+		)
+			return "superseded";
+		return row.etag === change.etag && row.seq === change.seq && row.deleted
+			? row.kind
+			: null;
 	}
 
 	/** Applies admitted work and records unsupported rows before cursor advance. */

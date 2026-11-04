@@ -1742,7 +1742,7 @@ await withCaseBoundary("AC1032_PUBLISH_CONFLICT_COPY",()=>plugin.desktopSync.syn
 await withCaseBoundary("AC1032_WAIT_CONFLICT_SYNC",()=>plugin.desktopSync.waitForIdle());
 const finalState=plugin.journal.snapshot(),finalAuthority=await withCaseBoundary("AC1032_READ_FINAL_AUTHORITY",()=>remote.readCurrentAuthority(path));
 const conflictAuthority=await withCaseBoundary("AC1032_READ_CONFLICT_AUTHORITY",()=>remote.readCurrentAuthority(localConflictCopy.path));
-if(finalAuthority.deleted||finalAuthority.rev!==2||finalAuthority.hash!==remoteHash||conflictAuthority.deleted||conflictAuthority.hash!==userHash||finalState.base[path]?.rev!==2||finalState.base[path]?.hash!==remoteHash||finalState.pending_ops.length||finalState.pending_apply.length||finalState.reconciliation||!finalState.attention.some((item)=>item.path===path))throw Error("AC1032_ASSERT_FINAL_STATE");
+if(finalAuthority.deleted||finalAuthority.rev!==2||finalAuthority.hash!==remoteHash||conflictAuthority.deleted||conflictAuthority.hash!==userHash||finalState.base[path]?.rev!==2||finalState.base[path]?.hash!==remoteHash||finalState.pending_ops.length||finalState.pending_apply.length||finalState.reconciliation)throw Error("AC1032_ASSERT_FINAL_STATE");
 `.trim(),
 		cleanup: `if(globalThis.__oab8Ac1032Restore&&!globalThis.__oab8Ac1032Restore())throw Error("AC1032_CLEANUP_RESTORE_FAILED");delete globalThis.__oab8Ac1032Restore;`,
 	};

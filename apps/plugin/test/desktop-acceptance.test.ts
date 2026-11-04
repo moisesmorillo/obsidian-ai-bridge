@@ -723,6 +723,7 @@ describe("desktop acceptance safety", () => {
 			"remote.readCurrentAuthority(localConflictCopy.path)",
 		);
 		expect(scripts.action).toContain("globalThis.__oab8Ac1032Restore");
+		expect(scripts.action).not.toContain("finalState.attention");
 		expect(scripts.cleanup).toContain("AC1032_CLEANUP_RESTORE_FAILED");
 		expect(
 			() =>

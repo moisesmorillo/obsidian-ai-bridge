@@ -99,6 +99,7 @@ export {
 	DevicePayloadReferenceSchema,
 	DevicePreconditionSchema,
 	DeviceStateSchema,
+	MAX_PENDING_CONFLICT_COPIES,
 	PendingApplySchema,
 	PendingConflictCopySchema,
 	PendingOperationSchema,

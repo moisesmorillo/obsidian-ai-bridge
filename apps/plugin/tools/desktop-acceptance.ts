@@ -18,11 +18,42 @@ import type { DeleteResponseDiagnostic } from "@plugin/sync/remote-text";
 /** Identifies one authorized desktop vault and the exact path that Obsidian must resolve. */
 export type DesktopVaultId = "dev-1" | "dev-2";
 
-/** Fixed synthetic action checks that may appear in host failure summaries. */
+/** Fixed case and error codes that may appear in host failure summaries. */
 const SAFE_CASE_FAILURE_CODES = [
 	"AC30_PRECONDITION_FAILED",
 	"AC30_FIRST_BOUNDARY_FAILED",
 	"AC30_SUCCESSOR_BOUNDARY_FAILED",
+	"AC30_ASSERT_TARGET_VAULT",
+	"AC30_ASSERT_PLUGIN_CONTROLS",
+	"AC30_ASSERT_INITIAL_STATE",
+	"AC30_ASSERT_FIXTURE_ABSENT",
+	"AC30_ASSERT_REMOTE_CAPABILITIES",
+	"AC30_ASSERT_SERVICE_PATH_ABSENT",
+	"AC30_ASSERT_FIRST_COMMIT_AUTHORITY",
+	"AC30_ASSERT_FIRST_COMMIT_QUEUE",
+	"AC30_ASSERT_LOCAL_EDIT_READBACK",
+	"AC30_ASSERT_SUCCESSOR_REVISION",
+	"AC30_ASSERT_FINAL_INTERCEPTION_RESTORED",
+	"AC30_INJECTED_RESPONSE_LOSS",
+	"AC30_CLEANUP_RESTORE_FAILED",
+	"AC30_TIMEOUT_FIRST_BOUNDARY_WAIT",
+	"AC31_ASSERT_TARGET_VAULT",
+	"AC31_ASSERT_PLUGIN_CONTROLS",
+	"AC31_ASSERT_INITIAL_STATE",
+	"AC31_ASSERT_FIXTURE_ABSENT",
+	"AC31_ASSERT_REMOTE_CAPABILITIES",
+	"AC31_ASSERT_SERVICE_ABSENT",
+	"AC31_ASSERT_INITIAL_REVISION",
+	"AC31_ASSERT_MANIFEST_EPOCH_STABLE",
+	"AC31_ASSERT_MANIFEST_ENTRY_CURRENT",
+	"AC31_ASSERT_STAT_BEFORE_FILE",
+	"AC31_ASSERT_STAT_MTIME_CHANGED",
+	"AC31_ASSERT_RACE_INJECTION_COMPLETE",
+	"AC31_ASSERT_REMOTE_BLOB_UPDATE",
+	"AC31_ASSERT_RACE_SOURCE_EXISTS",
+	"AC31_ASSERT_FINAL_CONFLICT_PRESERVATION",
+	"AC31_CLEANUP_RESTORE_FAILED",
+	"AC31_TIMEOUT_STAT_RACE_INJECTION",
 	"unexpected-assertion-error",
 	"unexpected-type-error",
 	"unexpected-range-error",
@@ -964,7 +995,7 @@ export function createCaseScript(
 			if (failureStage === null) {
 				failureStage = "cleanup";
 				const cleanupReason = classifyFailure(error, "cleanup");
-				failureReason = cleanupReason === "CLEANUP_TIMEOUT" ? cleanupReason : "cleanup-error";
+				failureReason = safeFailureCodes.includes(cleanupReason) ? cleanupReason : "cleanup-error";
 			}
 		}
 		return "OAB8CASE:" + JSON.stringify({ caseId: ${JSON.stringify(caseId)}, status, failureStage, failureReason, cleanupStatus });
@@ -1312,4 +1343,194 @@ if (
 	resolve(process.argv[1]) === fileURLToPath(import.meta.url)
 ) {
 	await runCommand(process.argv.slice(2));
+}
+
+/** Action and cleanup scripts for one bounded real acceptance case. */
+export interface DesktopCaseScripts {
+	/** Case action source with a fixed authorized vault target. */
+	action: string;
+	/** Cleanup source that restores the local transport or adapter interception. */
+	cleanup: string;
+}
+
+/** Builds the recovered AC-30 lost-response action with one code per assertion site. */
+export function createAc30CaseScripts(home = homedir()): DesktopCaseScripts {
+	const target = JSON.stringify(
+		assertAuthorizedVault(
+			"dev-2",
+			resolve(home, "vaults/obsidian-ai-bridge-dev-2"),
+			home,
+		),
+	);
+	return {
+		action: `
+if(app.vault.adapter.getBasePath()!==__AUTHORIZED_TARGET__)throw Error("AC30_ASSERT_TARGET_VAULT");
+const plugin=app.plugins.plugins?.["ai-bridge"];
+if(!plugin?.journal?.snapshot||!plugin.composition?.publication||!plugin.desktopSync||plugin.sessionStatus!=="connected"||plugin.syncPaused!==false)throw Error("AC30_ASSERT_PLUGIN_CONTROLS");
+await plugin.desktopSync.waitForIdle();
+const stateBefore=plugin.journal.snapshot();
+if(stateBefore.pending_ops.length||stateBefore.pending_apply.length||stateBefore.reconciliation||plugin.desktopSync.isBusy)throw Error("AC30_ASSERT_INITIAL_STATE");
+const path="oab-8.8/ac-30-response-lost-20261104-04.md";
+if(app.vault.getAbstractFileByPath(path))throw Error("AC30_ASSERT_FIXTURE_ABSENT");
+const remote=Reflect.get(plugin.composition.publication,"remote");
+if(!remote?.createText||!remote.readCurrentAuthority||globalThis.__oab8Ac30Restore)throw Error("AC30_ASSERT_REMOTE_CAPABILITIES");
+let absent=false;
+try{await remote.readCurrentAuthority(path);}catch(error){absent=typeof error==="object"&&error!==null&&Reflect.get(error,"status")===404;}
+if(!absent)throw Error("AC30_ASSERT_SERVICE_PATH_ABSENT");
+const originalText="# AC-30 response-loss fixture\\n\\nOriginal immutable payload.\\n";
+const editedText=originalText+"\\nLocal successor edit.\\n";
+const originalCreateText=remote.createText;
+let callCount=0;
+let firstReceiptETag=null;
+let retryReceiptETag=null;
+let originalPayloadHash=null;
+let retryPayloadMatchesOriginal=false;
+let firstRevision=null;
+let retryRevision=null;
+let releaseGate=()=>{};
+let markReached=()=>{};
+let timer=null;
+let resolveReached;
+let rejectReached;
+const reached=new Promise((resolve,reject)=>{resolveReached=resolve;rejectReached=reject;});
+const gate=new Promise((resolve)=>{releaseGate=resolve;});
+const failAfterTimeout=()=>rejectReached(new Error("AC30_TIMEOUT_FIRST_BOUNDARY_WAIT"));
+timer=setTimeout(failAfterTimeout,30000);
+markReached=()=>{if(timer!==null){clearTimeout(timer);timer=null;}resolveReached();};
+const hashText=async(text)=>{const digest=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(text));return Array.from(new Uint8Array(digest)).map((byte)=>byte.toString(16).padStart(2,"0")).join("");};
+const wrapper=async function(){
+ const args=arguments;
+ if(args[0]!==path)return originalCreateText.apply(this,args);
+ callCount+=1;
+ const text=args[1];
+ const response=await originalCreateText.apply(this,args);
+ if(callCount===1){
+  originalPayloadHash=await hashText(text);
+  firstReceiptETag=response.etag;
+  const authority=await remote.readCurrentAuthority(path);
+  if(authority.deleted||authority.rev!==1||authority.hash!==originalPayloadHash)throw new Error("AC30_ASSERT_FIRST_COMMIT_AUTHORITY");
+  firstRevision=authority.rev;
+  const pending=plugin.journal.snapshot().pending_ops.filter((operation)=>operation.path===path&&operation.state==="sent"&&operation.op==="put"&&operation.precondition.kind==="absent"&&operation.payload_hash===originalPayloadHash);
+  if(pending.length!==1||Object.prototype.hasOwnProperty.call(plugin.journal.snapshot().base,path))throw new Error("AC30_ASSERT_FIRST_COMMIT_QUEUE");
+  markReached();
+  await gate;
+  throw new Error("AC30_INJECTED_RESPONSE_LOSS");
+ }
+ if(callCount===2){
+  retryPayloadMatchesOriginal=await hashText(text)===originalPayloadHash;
+  const authority=await remote.readCurrentAuthority(path);
+  retryRevision=authority.rev;
+  retryReceiptETag=response.etag;
+ }
+ return response;
+};
+globalThis.__oab8Ac30Restore=()=>{remote.createText=originalCreateText;return remote.createText===originalCreateText;};
+let cycle;
+try{
+ remote.createText=wrapper;
+ const file=await app.vault.create(path,originalText);
+ cycle=plugin.desktopSync.syncNow();
+ await reached;
+ await app.vault.modify(file,editedText);
+ if(await app.vault.read(file)!==editedText)throw new Error("AC30_ASSERT_LOCAL_EDIT_READBACK");
+ releaseGate();
+ try{await cycle;}catch{}
+ await plugin.desktopSync.syncNow();
+ await plugin.desktopSync.waitForIdle();
+ const authority=await remote.readCurrentAuthority(path);
+ const finalState=plugin.journal.snapshot();
+ const fileNow=app.vault.getAbstractFileByPath(path);
+ const localText=fileNow?await app.vault.read(fileNow):null;
+ const finalHash=localText===null?null:await hashText(localText);
+ const base=finalState.base[path];
+ if(callCount!==2||!retryPayloadMatchesOriginal||firstRevision!==1||retryRevision!==1||retryReceiptETag!==firstReceiptETag||authority.deleted||authority.rev!==2||authority.hash!==await hashText(editedText)||localText!==editedText||!base||base.deleted||base.rev!==2||base.hash!==await hashText(editedText)||finalHash!==base.hash||finalState.pending_ops.length||finalState.pending_apply.length||finalState.reconciliation||finalState.attention.length!==3)throw new Error("AC30_ASSERT_SUCCESSOR_REVISION");
+}finally{
+ if(timer!==null)clearTimeout(timer);
+ releaseGate();
+ remote.createText=originalCreateText;
+}
+if(remote.createText!==originalCreateText)throw new Error("AC30_ASSERT_FINAL_INTERCEPTION_RESTORED");
+`.replace("__AUTHORIZED_TARGET__", target),
+		cleanup: `if(globalThis.__oab8Ac30Restore&&!globalThis.__oab8Ac30Restore())throw Error("AC30_CLEANUP_RESTORE_FAILED");delete globalThis.__oab8Ac30Restore;`,
+	};
+}
+
+/** Builds the recovered large Markdown AC-31 blob race action and local cleanup. */
+export function createAc31CaseScripts(home = homedir()): DesktopCaseScripts {
+	const target = JSON.stringify(
+		assertAuthorizedVault(
+			"dev-2",
+			resolve(home, "vaults/obsidian-ai-bridge-dev-2"),
+			home,
+		),
+	);
+	return {
+		action: `
+if(app.vault.adapter.getBasePath()!==__AUTHORIZED_TARGET__)throw Error("AC31_ASSERT_TARGET_VAULT");
+const plugin=app.plugins.plugins?.["ai-bridge"];
+if(!plugin?.journal?.snapshot||!plugin.composition?.publication||!plugin.desktopSync||plugin.sessionStatus!=="connected"||plugin.syncPaused!==false)throw Error("AC31_ASSERT_PLUGIN_CONTROLS");
+await plugin.desktopSync.waitForIdle();
+const stateBefore=plugin.journal.snapshot();
+if(stateBefore.pending_ops.length||stateBefore.pending_apply.length||stateBefore.reconciliation||plugin.desktopSync.isBusy)throw Error("AC31_ASSERT_INITIAL_STATE");
+const path="oab-8.8/ac-31-blob-stat-race-20261104-02.md";
+if(app.vault.getAbstractFileByPath(path))throw Error("AC31_ASSERT_FIXTURE_ABSENT");
+const remote=Reflect.get(plugin.composition.publication,"remote");
+if(!remote?.manifest||!remote.putBlob||!remote.readCurrentBlobAuthority||globalThis.__oab8Ac31Restore)throw Error("AC31_ASSERT_REMOTE_CAPABILITIES");
+let absent=false;
+try{await remote.readCurrentBlobAuthority(path);}catch(error){absent=typeof error==="object"&&error!==null&&Reflect.get(error,"status")===404;}
+if(!absent)throw Error("AC31_ASSERT_SERVICE_ABSENT");
+const makeBytes=(char)=>new TextEncoder().encode("# AC-31 blob stat race fixture\\n\\n"+char.repeat(1100000)+"\\n");
+const baseBytes=makeBytes("A"),remoteBytes=makeBytes("B"),raceBytes=makeBytes("C");
+const hashBytes=async(bytes)=>{const digest=await crypto.subtle.digest("SHA-256",bytes);return Array.from(new Uint8Array(digest)).map((byte)=>byte.toString(16).padStart(2,"0")).join("");};
+const baseHash=await hashBytes(baseBytes),remoteHash=await hashBytes(remoteBytes),raceHash=await hashBytes(raceBytes);
+await app.vault.createBinary(path,baseBytes.buffer.slice(0));
+await plugin.desktopSync.syncNow();
+await plugin.desktopSync.waitForIdle();
+const initial=await remote.readCurrentBlobAuthority(path);
+const afterCreate=plugin.journal.snapshot();
+if(initial.kind!=="blob"||initial.rev!==1||initial.hash!==baseHash||afterCreate.base[path]?.rev!==1||afterCreate.base[path]?.hash!==baseHash||afterCreate.pending_ops.length||afterCreate.pending_apply.length)throw Error("AC31_ASSERT_INITIAL_REVISION");
+let pageToken=null,pageEpoch=null,manifestEntry=null;
+do{const page=await remote.manifest(pageToken);if(pageEpoch!==null&&page.epoch!==pageEpoch)throw Error("AC31_ASSERT_MANIFEST_EPOCH_STABLE");pageEpoch=page.epoch;manifestEntry=page.entries.find((entry)=>entry.path===path)??null;pageToken=manifestEntry?null:page.next_page;}while(pageToken!==null);
+if(!manifestEntry||manifestEntry.deleted||manifestEntry.kind!=="blob"||pageEpoch!==afterCreate.epoch)throw Error("AC31_ASSERT_MANIFEST_ENTRY_CURRENT");
+const adapter=app.vault.adapter,originalStat=adapter.stat;
+let statCalls=0,raceInjected=false,injectionActive=false,mtimeChanged=false,sizeUnchanged=false;
+let resolveInjection,rejectInjection;
+const injection=new Promise((resolve,reject)=>{resolveInjection=resolve;rejectInjection=reject;});
+let timer=setTimeout(()=>rejectInjection(new Error("AC31_TIMEOUT_STAT_RACE_INJECTION")),30000);
+globalThis.__oab8Ac31Restore=()=>{adapter.stat=originalStat;return adapter.stat===originalStat;};
+const wrappedStat=async function(candidatePath){
+ if(candidatePath!==path||raceInjected||injectionActive)return originalStat.call(this,candidatePath);
+ statCalls+=1;
+ if(statCalls!==2)return originalStat.call(this,candidatePath);
+ injectionActive=true;
+ try{const before=await originalStat.call(this,candidatePath);const file=app.vault.getAbstractFileByPath(path);if(!before||!file)throw new Error("AC31_ASSERT_STAT_BEFORE_FILE");await app.vault.modifyBinary(file,raceBytes.buffer.slice(0));const after=await originalStat.call(this,candidatePath);if(!after||before.mtime===after.mtime)throw new Error("AC31_ASSERT_STAT_MTIME_CHANGED");mtimeChanged=true;sizeUnchanged=before.size===after.size;raceInjected=true;if(timer!==null){clearTimeout(timer);timer=null;}resolveInjection();return after;}finally{injectionActive=false;}
+};
+try{
+ adapter.stat=wrappedStat;
+ const updateResponse=await remote.putBlob(path,remoteBytes,remoteHash,{kind:"match",etag:manifestEntry.etag},crypto.randomUUID(),pageEpoch);
+ const serviceUpdate=await remote.readCurrentBlobAuthority(path);
+ if((updateResponse.status!==200&&updateResponse.status!==201)||serviceUpdate.kind!=="blob"||serviceUpdate.rev!==2||serviceUpdate.hash!==remoteHash)throw new Error("AC31_ASSERT_REMOTE_BLOB_UPDATE");
+ try{await plugin.desktopSync.syncNow();}catch{}
+ await injection;
+ try{await plugin.desktopSync.waitForIdle();}catch{}
+}finally{if(timer!==null)clearTimeout(timer);adapter.stat=originalStat;}
+if(adapter.stat!==originalStat||!raceInjected||!mtimeChanged||!sizeUnchanged)throw new Error("AC31_ASSERT_RACE_INJECTION_COMPLETE");
+const raceState=plugin.journal.snapshot();
+const raceFile=app.vault.getAbstractFileByPath(path);
+if(!raceFile)throw new Error("AC31_ASSERT_RACE_SOURCE_EXISTS");
+const raceLocalHash=await hashBytes(new Uint8Array(await app.vault.readBinary(raceFile)));
+const raceCopies=app.vault.getFiles().filter((file)=>file.path.startsWith("oab-8.8/ac-31-blob-stat-race-20261104-02 (conflict"));
+let preservedRaceCopy=false;for(const copy of raceCopies){if(await hashBytes(new Uint8Array(await app.vault.readBinary(copy)))===raceHash)preservedRaceCopy=true;}
+const intermediatePreserved=raceLocalHash===raceHash&&raceCopies.length===1&&preservedRaceCopy&&raceState.base[path]?.rev===1&&raceState.base[path]?.hash===baseHash&&raceState.pending_apply.some((entry)=>entry.change.path===path);
+if(raceState.pending_apply.length)await plugin.desktopSync.syncNow();
+await plugin.desktopSync.waitForIdle();
+const finalState=plugin.journal.snapshot(),finalFile=app.vault.getAbstractFileByPath(path);
+const finalHash=finalFile?await hashBytes(new Uint8Array(await app.vault.readBinary(finalFile))):null;
+const finalCopies=app.vault.getFiles().filter((file)=>file.path.startsWith("oab-8.8/ac-31-blob-stat-race-20261104-02 (conflict"));
+let finalCopyMatches=false;for(const copy of finalCopies){if(await hashBytes(new Uint8Array(await app.vault.readBinary(copy)))===raceHash)finalCopyMatches=true;}
+const authority=await remote.readCurrentBlobAuthority(path);
+if(!intermediatePreserved||!finalFile||finalHash!==remoteHash||authority.rev!==2||authority.hash!==remoteHash||finalCopies.length!==1||!finalCopyMatches||finalState.base[path]?.rev!==2||finalState.base[path]?.hash!==remoteHash||finalState.pending_ops.length||finalState.pending_apply.length||finalState.reconciliation||!finalState.attention.some((item)=>item.path===path))throw new Error("AC31_ASSERT_FINAL_CONFLICT_PRESERVATION");
+`.replace("__AUTHORIZED_TARGET__", target),
+		cleanup: `if(globalThis.__oab8Ac31Restore&&!globalThis.__oab8Ac31Restore())throw Error("AC31_CLEANUP_RESTORE_FAILED");delete globalThis.__oab8Ac31Restore;`,
+	};
 }

@@ -5,6 +5,8 @@ import {
 	assertAuthorizedVault,
 	createAc04BaselineScript,
 	createAc20FixtureScript,
+	createAc30CaseScripts,
+	createAc31CaseScripts,
 	createCaseScript,
 	createInstallScript,
 	dispatchCapturedCallback,
@@ -635,6 +637,127 @@ describe("desktop acceptance safety", () => {
 		});
 		expect(globalThis).toHaveProperty("oab88CleanupRan", true);
 		Reflect.deleteProperty(globalThis, "oab88CleanupRan");
+	});
+
+	it("keeps recovered AC-30 and Markdown AC-31 diagnostics unique", async () => {
+		const ac30 = createAc30CaseScripts("/Users/test");
+		const ac31 = createAc31CaseScripts("/Users/test");
+		for (const scripts of [ac30, ac31]) {
+			const siteCodes = [
+				...scripts.action.matchAll(/throw (?:new )?Error\("([A-Z0-9_]+)"\)/g),
+			].map((match) => match[1]);
+			const cleanupCodes = [
+				...scripts.cleanup.matchAll(/throw (?:new )?Error\("([A-Z0-9_]+)"\)/g),
+			].map((match) => match[1]);
+			expect(new Set(siteCodes).size).toBe(siteCodes.length);
+			expect(new Set(cleanupCodes).size).toBe(cleanupCodes.length);
+			for (const code of [...siteCodes, ...cleanupCodes]) {
+				expect(
+					safeCaseResult("AC-30", "controlled", {
+						status: "failed",
+						failureStage: "action",
+						failureReason: code,
+						cleanupStatus: "passed",
+					}).failureReason,
+				).toBe(code);
+			}
+		}
+		expect(ac31.action).toContain(
+			"oab-8.8/ac-31-blob-stat-race-20261104-02.md",
+		);
+		expect(ac31.action).toContain(
+			"createBinary(path,baseBytes.buffer.slice(0))",
+		);
+		expect(ac31.action).not.toContain(".bin");
+		expect(ac30.action).toContain("AC30_TIMEOUT_FIRST_BOUNDARY_WAIT");
+		expect(ac31.action).toContain("AC31_TIMEOUT_STAT_RACE_INJECTION");
+		expect(ac30.action).not.toMatch(
+			/AC30_(?:PRECONDITION|FIRST_BOUNDARY|SUCCESSOR_BOUNDARY)_FAILED/,
+		);
+		expect(ac31.action).not.toMatch(
+			/AC31_(?:PRECONDITION|STAT_RACE|REMOTE_UPDATE|CONFLICT_PRESERVATION)_FAILED/,
+		);
+
+		/** Executes only the case's generated local assertion path. */
+		const runWithVault = async (
+			caseId: string,
+			action: string,
+			app: unknown,
+			cleanup = "",
+		) => {
+			const hostScript = createCaseScript(caseId, action, cleanup);
+			return (
+				new Function("app", `return ${hostScript}`) as (
+					app: unknown,
+				) => Promise<string>
+			)(app);
+		};
+		const ac30WrongTarget = await runWithVault("AC-30", ac30.action, {
+			vault: { adapter: { getBasePath: () => "/wrong" } },
+		});
+		const ac30MissingPlugin = await runWithVault("AC-30", ac30.action, {
+			vault: { adapter: { getBasePath: () => vaults["dev-2"] } },
+			plugins: { plugins: {} },
+		});
+		const ac31WrongTarget = await runWithVault("AC-31", ac31.action, {
+			vault: { adapter: { getBasePath: () => "/wrong" } },
+		});
+		Reflect.set(globalThis, "__oab8Ac30Restore", () => true);
+		const ac30Cleanup = await runWithVault(
+			"AC-30",
+			ac30.action,
+			{ vault: { adapter: { getBasePath: () => "/wrong" } } },
+			ac30.cleanup,
+		);
+		expect(
+			JSON.parse(ac30Cleanup.slice("OAB8CASE:".length)).cleanupStatus,
+		).toBe("passed");
+		expect(globalThis).not.toHaveProperty("__oab8Ac30Restore");
+		for (const [caseId, cleanupScript, restoreName, cleanupCode] of [
+			[
+				"AC-30",
+				ac30.cleanup,
+				"__oab8Ac30Restore",
+				"AC30_CLEANUP_RESTORE_FAILED",
+			],
+			[
+				"AC-31",
+				ac31.cleanup,
+				"__oab8Ac31Restore",
+				"AC31_CLEANUP_RESTORE_FAILED",
+			],
+		] as const) {
+			Reflect.set(globalThis, restoreName, () => false);
+			const result = await runWithVault(caseId, "", {}, cleanupScript);
+			expect(JSON.parse(result.slice("OAB8CASE:".length))).toMatchObject({
+				failureStage: "cleanup",
+				failureReason: cleanupCode,
+				cleanupStatus: "failed",
+			});
+			Reflect.deleteProperty(globalThis, restoreName);
+		}
+		expect(
+			JSON.parse(ac30WrongTarget.slice("OAB8CASE:".length)).failureReason,
+		).toBe("AC30_ASSERT_TARGET_VAULT");
+		expect(
+			JSON.parse(ac30MissingPlugin.slice("OAB8CASE:".length)).failureReason,
+		).toBe("AC30_ASSERT_PLUGIN_CONTROLS");
+		expect(
+			JSON.parse(ac31WrongTarget.slice("OAB8CASE:".length)).failureReason,
+		).toBe("AC31_ASSERT_TARGET_VAULT");
+		for (const [caseId, timeoutCode] of [
+			["AC-30", "AC30_TIMEOUT_FIRST_BOUNDARY_WAIT"],
+			["AC-31", "AC31_TIMEOUT_STAT_RACE_INJECTION"],
+		] as const) {
+			const timeoutResult = await runWithVault(
+				caseId,
+				`throw new Error("${timeoutCode}")`,
+				{},
+			);
+			expect(
+				JSON.parse(timeoutResult.slice("OAB8CASE:".length)).failureReason,
+			).toBe(timeoutCode);
+		}
 	});
 
 	it("classifies safe unexpected errors without their messages", async () => {

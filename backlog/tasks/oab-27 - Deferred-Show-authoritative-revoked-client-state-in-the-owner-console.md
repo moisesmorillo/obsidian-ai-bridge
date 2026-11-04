@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-10-28T16:48:00Z'
-updated_date: '2026-11-04T22:49:00Z'
+updated_date: '2026-11-04T22:53:00Z'
 labels:
   - deferred
   - owner-console
@@ -54,4 +54,6 @@ Validation: `bun run docs:check` passed. `bun run check` passed lint, docs, all 
 Limits: no deployment, Cloudflare change, provider service access, or vault access occurred. The historic OAB-7.8 Inspector disappearance remains unexplained. This implementation shows durable registry clients after provider cleanup, but does not infer why that historic client listing differed. No provider listing is an authority source, and durable registry state does not prove token currency or expiry.
 
 Task review at cc81e8d964b2e1e4f0c4848fd8211bf31091b495: APPROVE WITH NOTES. No blocker or correctness defect. The reviewer verified canonical durable projections, bounded owner filtering, state labels, denial-before-effects tests, documentation, and cohesive ownership. Non-blocking note: nested state expressions at owner.ts 85–92 and 128–133 reduce audit clarity. Carry this note to whole-branch review for explicit disposition. Active lens probe also found these expressions. Two unrelated throwing-call findings lie outside the changed hunks, so they do not form diff findings. Validation uses worker-reported RED/GREEN and full-check evidence, not a reviewer rerun. No remote CI evidence yet.
+
+Whole-branch review at 6558c244d9e20a30604a5a7970834d3a9dc3cfa9 against main 88e3c89: APPROVE WITH NOTES. Reviewed all eight files, canonical contracts, registry transitions, presentation state matrix, SQL limits, owner filtering, escaping, TSDoc, and denial-before-effects evidence. No blocking or correctness finding. Optional NIT disposition: retain the compact presentation expressions for this PR. Registry and HTML tests plus source review cover their mapping. They neither enforce authority nor own durable transitions. A classifier remains an optional readability change, not missing task behavior. Unchanged throwing-call diagnostics remain outside this diff. git diff --check passed. Worker reports full check with 1,728 tests across 98 files. No live-service, remote CI, coverage, or historical-disappearance proof is claimed. Human review follows.
 <!-- SECTION:NOTES:END -->

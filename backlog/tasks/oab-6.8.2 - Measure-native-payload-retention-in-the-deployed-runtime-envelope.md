@@ -5,7 +5,7 @@ status: Deferred
 assignee:
   - '@pi'
 created_date: 2026-10-20 23:27
-updated_date: '2026-11-04T23:14:00Z'
+updated_date: '2026-11-04T23:15:00Z'
 labels: []
 dependencies: []
 references:
@@ -70,4 +70,6 @@ Keep all four acceptance cases unchecked. AC1 lacks upload, content-path, and di
 Task review: APPROVE WITH NOTES against f559c0e and the observation diff. The reviewer checked raw numeric observations, the probe method, arithmetic, statistical limits, security boundaries, and all four unchecked criteria. Minor status finding closure: return the task from In Progress to Deferred now, as the approved plan directs. Native attribution remains unavailable. The script reads bytes transiently to count them but never prints or saves response content. Parent bun run check completed with exit 0: 1,728 tests across 98 files, lint over 242 files with no fixes, documentation checks, all four workspace type checks, and all three dry-run builds passed. Existing fault tests printed injected exceptions without failed suites. The temporary browser tab no longer exists. No product, configuration, dependency, or test changes form part of this branch.
 
 Whole-branch review: APPROVE at a7b4b7e369f8c6558653cf633f8ad78c22036ab9 against f559c0e. The reviewer checked the complete task diff, raw numeric observations, probe script, relevant source/configuration, original deferral contract, and parent check log. Numeric summaries match. Prior status finding is fixed: Deferred, all four criteria unchecked. The earlier review statement about never reading bodies is rejected because the script reads chunks transiently without printing or saving content. Native-retention evidence stays intentionally deferred. No structural candidate applies to this notes-only branch. git diff --check passed. The reviewer confirmed 1,728 passing tests across 98 files in the parent log, but did not rerun checks or measurements. The Worker build uses dry-run. Other builds use their package-defined commands. Human branch review follows. This notes-only diff does not match automatic deployment path filters.
+
+Owner approved human branch review pn-1fa7c8 with no changes. The observation pass is complete, but native-retention acceptance remains Deferred. Keep all four criteria unchecked. Publish notes-only PR 3. This task update neither changes the product nor triggers Worker deployment through the current automatic path filters. Stop after publication for owner merge. OAB-26 needs its separate identity-transition plan before implementation.
 <!-- SECTION:NOTES:END -->

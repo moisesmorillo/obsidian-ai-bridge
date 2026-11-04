@@ -40,7 +40,7 @@ export interface ReadResponseOwner {
  * Response boundary and hold one bounded chunk until EOF validates the selected length. Durable
  * admission settles before the final write and close. Local capacity releases after response
  * production settles. Consumer cancellation appears at the next write. A stalled read keeps its slot
- * until it settles or the admission deadline ends.
+ * until its read and cleanup settle. Ticket expiry does not release unresolved local capacity.
  * @param knownByteLength - Exact response bytes, or undefined for generic response framing.
  */
 export function ownedReadResponse(
@@ -57,6 +57,8 @@ export function ownedReadResponse(
 	let slotReleased = false;
 	let controllerRef: ReadableStreamController<Uint8Array> | undefined;
 	let fixedWriter: WritableStreamDefaultWriter<Uint8Array> | undefined;
+	let fixedWriterShutdown: Promise<void> | undefined;
+	let fixedPump: Promise<void> | undefined;
 	/** Release local capacity once response production and durable cleanup both settle. */
 	function release(): void {
 		if (slotReleased) return;
@@ -65,7 +67,7 @@ export function ownedReadResponse(
 		controllerRef = undefined;
 		releaseSlot();
 	}
-	/** Join started producer work and settle durable admission without releasing local capacity. */
+	/** Join source reads and cancellation, then settle durable admission without releasing capacity. */
 	function settleOwner(
 		cancel: boolean,
 		completion: AdmissionCompletion,
@@ -97,7 +99,7 @@ export function ownedReadResponse(
 		})();
 		return settlement;
 	}
-	/** Join producer cleanup, settle durable admission, then release local capacity. */
+	/** Join generic response cleanup, settle admission, then release local capacity. */
 	function finish(
 		cancel: boolean,
 		completion: AdmissionCompletion,
@@ -105,16 +107,22 @@ export function ownedReadResponse(
 	): Promise<void> {
 		return settleOwner(cancel, completion, reason).finally(release);
 	}
-	/** Abort response production without freeing capacity over unresolved work. */
+	/** Start one fixed-writer shutdown and retain its promise for release coordination. */
+	function abortFixedWriter(reason: unknown): Promise<void> {
+		const writer = fixedWriter;
+		if (!writer) return Promise.resolve();
+		fixedWriterShutdown ??= abortResponseWriter(writer, reason);
+		return fixedWriterShutdown;
+	}
+	/** Abort response production and join durable cleanup, the pump, and writer shutdown. */
 	function abort() {
 		const reason = signal?.reason;
 		const controller = controllerRef;
-		const writer = fixedWriter;
-		if (writer) {
-			void abortResponseWriter(writer, reason ?? new Error("Read aborted"));
-			void finish(true, "settled", reason).catch((error: unknown) =>
-				abortResponseWriter(writer, error),
-			);
+		if (fixedWriter) {
+			const abortReason = reason ?? new Error("Read aborted");
+			const writerShutdown = abortFixedWriter(abortReason);
+			const durableCleanup = settleOwner(true, "settled", reason);
+			void Promise.allSettled([writerShutdown, durableCleanup, fixedPump]);
 			return;
 		}
 		void finish(true, "settled", reason).then(
@@ -130,8 +138,6 @@ export function ownedReadResponse(
 		const fixed = new FixedLengthStream(knownByteLength);
 		const writer = fixed.writable.getWriter();
 		fixedWriter = writer;
-		signal?.addEventListener("abort", abort, { once: true });
-		if (signal?.aborted) abort();
 		/** Hold one bounded chunk until EOF settles the owner before response completion. */
 		const pump = async (): Promise<void> => {
 			let buffered: Uint8Array | undefined;
@@ -144,8 +150,8 @@ export function ownedReadResponse(
 					pending = undefined;
 				} catch (error) {
 					pending = undefined;
-					await abortResponseWriter(writer, error);
-					await finish(
+					await abortFixedWriter(error);
+					await settleOwner(
 						true,
 						error instanceof ReadBatchFailure || error instanceof ReadAborted
 							? "settled"
@@ -160,17 +166,16 @@ export function ownedReadResponse(
 						const error = new Error(
 							"Response source length did not match its declaration",
 						);
-						await abortResponseWriter(writer, error);
-						await finish(true, "uncertain", error);
+						await abortFixedWriter(error);
+						await settleOwner(true, "uncertain", error);
 						return;
 					}
 					try {
 						await settleOwner(false, "settled");
 						if (buffered) await writer.write(buffered);
 						await writer.close();
-						release();
 					} catch (error) {
-						await finish(true, "settled", error);
+						await settleOwner(true, "settled", error);
 					}
 					return;
 				}
@@ -179,8 +184,8 @@ export function ownedReadResponse(
 					received + item.value.byteLength > knownByteLength
 				) {
 					const error = new Error("Read response source exceeded its limits");
-					await abortResponseWriter(writer, error);
-					await finish(true, "uncertain", error);
+					await abortFixedWriter(error);
+					await settleOwner(true, "uncertain", error);
 					return;
 				}
 				received += item.value.byteLength;
@@ -188,21 +193,38 @@ export function ownedReadResponse(
 					try {
 						await writer.write(buffered);
 					} catch (error) {
-						await finish(true, "settled", error);
+						await settleOwner(true, "settled", error);
 						return;
 					}
 				}
 				buffered = item.value;
 			}
 		};
-		void pump().catch(async (error: unknown) => {
-			await abortResponseWriter(writer, error);
-			try {
-				await finish(true, "uncertain", error);
-			} catch {
-				// The response stream carries the producer fault to its consumer.
-			}
-		});
+		fixedPump = Promise.resolve()
+			.then(pump)
+			.catch(async (error: unknown) => {
+				await abortFixedWriter(error);
+				try {
+					await settleOwner(true, "uncertain", error);
+				} catch {
+					// The response stream carries the producer fault to its consumer.
+				}
+			})
+			.then(async () => {
+				let ownerSettlement: Promise<void> | undefined;
+				let writerShutdown: Promise<void> | undefined;
+				do {
+					ownerSettlement = settlement;
+					writerShutdown = fixedWriterShutdown;
+					await Promise.allSettled([ownerSettlement, writerShutdown]);
+				} while (
+					ownerSettlement !== settlement ||
+					writerShutdown !== fixedWriterShutdown
+				);
+				release();
+			});
+		signal?.addEventListener("abort", abort, { once: true });
+		if (signal?.aborted) abort();
 		return new Response(fixed.readable, init);
 	}
 	const stream = new ReadableStream<Uint8Array>({

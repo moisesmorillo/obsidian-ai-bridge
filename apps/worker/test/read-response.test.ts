@@ -227,8 +227,70 @@ describe("owned read response", () => {
 		expect(released).toBe(false);
 		cleanup.resolve();
 		await Promise.all([read, cancelled]);
-		await Promise.resolve();
+		for (let attempt = 0; attempt < 10 && !released; attempt++)
+			await Promise.resolve();
 		expect(released).toBe(true);
+	});
+	it("keeps the slot until an aborted fixed-body write and shutdown settle", async () => {
+		const eofReached = barrier<void>();
+		const durableSettled = barrier<void>();
+		const signal = new AbortController();
+		const finished: AdmissionCompletion[] = [];
+		let nextChunk = 0;
+		let released = false;
+		const chunks = [new Uint8Array(65_536), new Uint8Array(65_536)];
+		const response = ownedReadResponse(
+			{
+				next: () => {
+					const value = chunks[nextChunk];
+					if (value !== undefined) {
+						nextChunk++;
+						return Promise.resolve({ done: false, value });
+					}
+					eofReached.resolve();
+					return Promise.resolve({ done: true, value: undefined });
+				},
+				cancel: async () => {},
+			},
+			{
+				finish: async (completion) => {
+					finished.push(completion);
+					durableSettled.resolve();
+					return { ok: true };
+				},
+			},
+			() => {
+				released = true;
+			},
+			{ headers: { "Content-Length": "131072" } },
+			signal.signal,
+			131072,
+		);
+		if (!response.body) throw new Error("Read response has no body");
+		const reader = response.body.getReader();
+		void reader.closed.catch(() => undefined);
+		let firstWriteBytes = 0;
+		while (firstWriteBytes < 65_536) {
+			const item = await reader.read();
+			firstWriteBytes += item.value?.byteLength ?? 0;
+		}
+		await Promise.all([eofReached.promise, durableSettled.promise]);
+		await Promise.resolve();
+		signal.abort(new Error("Request aborted"));
+		await Promise.resolve();
+		const retainedWhileWriterShutdownPending = !released;
+		const completionBeforeConsumerShutdown = [...finished];
+		await reader.cancel().catch(() => undefined);
+		for (let attempt = 0; attempt < 10 && !released; attempt++)
+			await Promise.resolve();
+		try {
+			expect(retainedWhileWriterShutdownPending).toBe(true);
+			expect(completionBeforeConsumerShutdown).toEqual(["settled"]);
+			expect(released).toBe(true);
+		} finally {
+			signal.abort();
+			await reader.cancel().catch(() => undefined);
+		}
 	});
 	it("marks a rejected fixed-body cancellation uncertain and keeps the slot through cleanup", async () => {
 		const work = barrier<IteratorResult<Uint8Array>>();

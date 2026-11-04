@@ -2816,6 +2816,151 @@ describe("PublicationController", () => {
 		controller.close();
 	});
 
+	it("reports the exact generated AC-30 final-state assertion", async () => {
+		const action = createAc30CaseScripts("/Users/test").action;
+		const start = action.indexOf("if(callCount!==3");
+		const end = action.indexOf("\n}finally{", start);
+		expect(start).toBeGreaterThanOrEqual(0);
+		expect(end).toBeGreaterThan(start);
+		const finalAssertions = action.slice(start, end);
+		const expectedHash = "expected-hash";
+		const defaults = {
+			callCount: 3,
+			retryKey: "original-key",
+			firstKey: "original-key",
+			successorKey: "successor-key",
+			retryPayloadMatchesOriginal: true,
+			successorPayloadMatchesEdited: true,
+			retryStatus: null,
+			firstRevision: 1,
+			retryRevision: 1,
+			successorRevision: 2,
+			retryReceiptETag: "same-etag",
+			firstReceiptETag: "same-etag",
+			successorPrecondition: { kind: "match", epoch: "epoch", rev: 1 },
+			stateBefore: { epoch: "epoch" },
+			authority: { deleted: false, rev: 2, hash: expectedHash },
+			hashText: async () => expectedHash,
+			editedText: "edited bytes",
+			localText: "edited bytes",
+			base: { deleted: false, rev: 2, hash: expectedHash },
+			finalHash: expectedHash,
+			finalState: {
+				pending_ops: [],
+				pending_apply: [],
+				reconciliation: null,
+				attention: [{}, {}, {}],
+			},
+		};
+		const scenarios = [
+			["AC30_ASSERT_FINAL_CALL_COUNT", { callCount: 2 }],
+			["AC30_ASSERT_FINAL_RETRY_KEY", { retryKey: "other-key" }],
+			["AC30_ASSERT_FINAL_SUCCESSOR_KEY", { successorKey: "original-key" }],
+			[
+				"AC30_ASSERT_FINAL_RETRY_PAYLOAD",
+				{ retryPayloadMatchesOriginal: false },
+			],
+			[
+				"AC30_ASSERT_FINAL_SUCCESSOR_PAYLOAD",
+				{ successorPayloadMatchesEdited: false },
+			],
+			["AC30_ASSERT_FINAL_NO_422", { retryStatus: 422 }],
+			["AC30_ASSERT_FINAL_FIRST_REVISION", { firstRevision: 2 }],
+			["AC30_ASSERT_FINAL_RETRY_REVISION", { retryRevision: 2 }],
+			["AC30_ASSERT_SUCCESSOR_REVISION", { successorRevision: 3 }],
+			["AC30_ASSERT_FINAL_RETRY_ETAG", { retryReceiptETag: "other-etag" }],
+			[
+				"AC30_ASSERT_FINAL_PRECONDITION_KIND",
+				{ successorPrecondition: { kind: "absent" } },
+			],
+			[
+				"AC30_ASSERT_FINAL_PRECONDITION_EPOCH",
+				{
+					successorPrecondition: {
+						kind: "match",
+						epoch: "other-epoch",
+						rev: 1,
+					},
+				},
+			],
+			[
+				"AC30_ASSERT_FINAL_PRECONDITION_REVISION",
+				{ successorPrecondition: { kind: "match", epoch: "epoch", rev: 2 } },
+			],
+			[
+				"AC30_ASSERT_FINAL_AUTHORITY_LIVE",
+				{ authority: { deleted: true, rev: 2, hash: expectedHash } },
+			],
+			[
+				"AC30_ASSERT_FINAL_AUTHORITY_REVISION",
+				{ authority: { deleted: false, rev: 3, hash: expectedHash } },
+			],
+			[
+				"AC30_ASSERT_FINAL_AUTHORITY_HASH",
+				{ authority: { deleted: false, rev: 2, hash: "other-hash" } },
+			],
+			["AC30_ASSERT_FINAL_LOCAL_TEXT", { localText: "other bytes" }],
+			["AC30_ASSERT_FINAL_BASE_PRESENT", { base: undefined }],
+			["AC30_ASSERT_FINAL_BASE_LIVE", { base: { deleted: true, rev: 2 } }],
+			[
+				"AC30_ASSERT_FINAL_BASE_REVISION",
+				{ base: { deleted: false, rev: 3, hash: expectedHash } },
+			],
+			[
+				"AC30_ASSERT_FINAL_BASE_HASH",
+				{ base: { deleted: false, rev: 2, hash: "other-hash" } },
+			],
+			["AC30_ASSERT_FINAL_LOCAL_HASH", { finalHash: "other-hash" }],
+			[
+				"AC30_ASSERT_FINAL_PENDING_OPERATIONS",
+				{ finalState: { ...defaults.finalState, pending_ops: [{}] } },
+			],
+			[
+				"AC30_ASSERT_FINAL_PENDING_APPLIES",
+				{ finalState: { ...defaults.finalState, pending_apply: [{}] } },
+			],
+			[
+				"AC30_ASSERT_FINAL_RECONCILIATION",
+				{ finalState: { ...defaults.finalState, reconciliation: {} } },
+			],
+			[
+				"AC30_ASSERT_FINAL_ATTENTION_COUNT",
+				{ finalState: { ...defaults.finalState, attention: [{}, {}, {}, {}] } },
+			],
+		] as const;
+		const bindings = Object.keys(defaults)
+			.map((key) => `const ${key}=__params[${JSON.stringify(key)}];`)
+			.join("\n");
+		const observedCodes: unknown[] = [];
+		for (const [, overrides] of scenarios) {
+			const hostScript = createCaseScript(
+				"AC-30",
+				`${bindings}\n${finalAssertions}`,
+				"",
+			);
+			const run = new Function("__params", `return ${hostScript}`)({
+				...defaults,
+				...overrides,
+			});
+			const output = await run;
+			const summary = JSON.parse(output.slice("OAB8CASE:".length));
+			observedCodes.push(summary.failureReason);
+		}
+		expect(observedCodes).toEqual(scenarios.map(([code]) => code));
+		const hostScript = createCaseScript(
+			"AC-30",
+			`${bindings}\n${finalAssertions}`,
+			"",
+		);
+		const output = await new Function("__params", `return ${hostScript}`)(
+			defaults,
+		);
+		expect(JSON.parse(output.slice("OAB8CASE:".length))).toMatchObject({
+			status: "passed",
+			cleanupStatus: "passed",
+		});
+	});
+
 	it("runs generated AC-30 through persisted retry timing and preserves the successor revision", async () => {
 		vi.useFakeTimers();
 		vi.setSystemTime(1_800_000_000_000);

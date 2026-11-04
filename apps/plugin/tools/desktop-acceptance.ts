@@ -45,7 +45,32 @@ const SAFE_CASE_FAILURE_CODES = [
 	"AC30_ASSERT_RETRY_AFTER_WAIT_IDENTITY",
 	"AC30_ASSERT_SUCCESSOR_REQUEST",
 	"AC30_ASSERT_LOCAL_EDIT_READBACK",
+	"AC30_ASSERT_FINAL_CALL_COUNT",
+	"AC30_ASSERT_FINAL_RETRY_KEY",
+	"AC30_ASSERT_FINAL_SUCCESSOR_KEY",
+	"AC30_ASSERT_FINAL_RETRY_PAYLOAD",
+	"AC30_ASSERT_FINAL_SUCCESSOR_PAYLOAD",
+	"AC30_ASSERT_FINAL_NO_422",
+	"AC30_ASSERT_FINAL_FIRST_REVISION",
+	"AC30_ASSERT_FINAL_RETRY_REVISION",
 	"AC30_ASSERT_SUCCESSOR_REVISION",
+	"AC30_ASSERT_FINAL_RETRY_ETAG",
+	"AC30_ASSERT_FINAL_PRECONDITION_KIND",
+	"AC30_ASSERT_FINAL_PRECONDITION_EPOCH",
+	"AC30_ASSERT_FINAL_PRECONDITION_REVISION",
+	"AC30_ASSERT_FINAL_AUTHORITY_LIVE",
+	"AC30_ASSERT_FINAL_AUTHORITY_REVISION",
+	"AC30_ASSERT_FINAL_AUTHORITY_HASH",
+	"AC30_ASSERT_FINAL_LOCAL_TEXT",
+	"AC30_ASSERT_FINAL_BASE_PRESENT",
+	"AC30_ASSERT_FINAL_BASE_LIVE",
+	"AC30_ASSERT_FINAL_BASE_REVISION",
+	"AC30_ASSERT_FINAL_BASE_HASH",
+	"AC30_ASSERT_FINAL_LOCAL_HASH",
+	"AC30_ASSERT_FINAL_PENDING_OPERATIONS",
+	"AC30_ASSERT_FINAL_PENDING_APPLIES",
+	"AC30_ASSERT_FINAL_RECONCILIATION",
+	"AC30_ASSERT_FINAL_ATTENTION_COUNT",
 	"AC30_ASSERT_FINAL_INTERCEPTION_RESTORED",
 	"AC30_INJECTED_RESPONSE_LOSS",
 	"AC30_CLEANUP_RESTORE_FAILED",
@@ -1860,7 +1885,32 @@ try{
  const localText=fileNow?await app.vault.read(fileNow):null;
  const finalHash=localText===null?null:await hashText(localText);
  const base=finalState.base[path];
- if(callCount!==3||retryKey!==firstKey||successorKey===firstKey||!retryPayloadMatchesOriginal||!successorPayloadMatchesEdited||retryStatus===422||firstRevision!==1||retryRevision!==1||successorRevision!==2||retryReceiptETag!==firstReceiptETag||successorPrecondition.kind!=="match"||successorPrecondition.epoch!==stateBefore.epoch||successorPrecondition.rev!==1||authority.deleted||authority.rev!==2||authority.hash!==await hashText(editedText)||localText!==editedText||!base||base.deleted||base.rev!==2||base.hash!==await hashText(editedText)||finalHash!==base.hash||finalState.pending_ops.length||finalState.pending_apply.length||finalState.reconciliation||finalState.attention.length!==3)throw new Error("AC30_ASSERT_SUCCESSOR_REVISION");
+ if(callCount!==3)throw new Error("AC30_ASSERT_FINAL_CALL_COUNT");
+ if(retryKey!==firstKey)throw new Error("AC30_ASSERT_FINAL_RETRY_KEY");
+ if(successorKey===firstKey)throw new Error("AC30_ASSERT_FINAL_SUCCESSOR_KEY");
+ if(!retryPayloadMatchesOriginal)throw new Error("AC30_ASSERT_FINAL_RETRY_PAYLOAD");
+ if(!successorPayloadMatchesEdited)throw new Error("AC30_ASSERT_FINAL_SUCCESSOR_PAYLOAD");
+ if(retryStatus===422)throw new Error("AC30_ASSERT_FINAL_NO_422");
+ if(firstRevision!==1)throw new Error("AC30_ASSERT_FINAL_FIRST_REVISION");
+ if(retryRevision!==1)throw new Error("AC30_ASSERT_FINAL_RETRY_REVISION");
+ if(successorRevision!==2)throw new Error("AC30_ASSERT_SUCCESSOR_REVISION");
+ if(retryReceiptETag!==firstReceiptETag)throw new Error("AC30_ASSERT_FINAL_RETRY_ETAG");
+ if(successorPrecondition.kind!=="match")throw new Error("AC30_ASSERT_FINAL_PRECONDITION_KIND");
+ if(successorPrecondition.epoch!==stateBefore.epoch)throw new Error("AC30_ASSERT_FINAL_PRECONDITION_EPOCH");
+ if(successorPrecondition.rev!==1)throw new Error("AC30_ASSERT_FINAL_PRECONDITION_REVISION");
+ if(authority.deleted)throw new Error("AC30_ASSERT_FINAL_AUTHORITY_LIVE");
+ if(authority.rev!==2)throw new Error("AC30_ASSERT_FINAL_AUTHORITY_REVISION");
+ if(authority.hash!==await hashText(editedText))throw new Error("AC30_ASSERT_FINAL_AUTHORITY_HASH");
+ if(localText!==editedText)throw new Error("AC30_ASSERT_FINAL_LOCAL_TEXT");
+ if(!base)throw new Error("AC30_ASSERT_FINAL_BASE_PRESENT");
+ if(base.deleted)throw new Error("AC30_ASSERT_FINAL_BASE_LIVE");
+ if(base.rev!==2)throw new Error("AC30_ASSERT_FINAL_BASE_REVISION");
+ if(base.hash!==await hashText(editedText))throw new Error("AC30_ASSERT_FINAL_BASE_HASH");
+ if(finalHash!==base.hash)throw new Error("AC30_ASSERT_FINAL_LOCAL_HASH");
+ if(finalState.pending_ops.length)throw new Error("AC30_ASSERT_FINAL_PENDING_OPERATIONS");
+ if(finalState.pending_apply.length)throw new Error("AC30_ASSERT_FINAL_PENDING_APPLIES");
+ if(finalState.reconciliation)throw new Error("AC30_ASSERT_FINAL_RECONCILIATION");
+ if(finalState.attention.length!==3)throw new Error("AC30_ASSERT_FINAL_ATTENTION_COUNT");
 }finally{
  if(timer!==null)clearTimeout(timer);
  releaseGate();

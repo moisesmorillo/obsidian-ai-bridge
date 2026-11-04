@@ -68,7 +68,7 @@ class PinnedRevisionRebased extends Error {
 export interface TextApplyOptions {
 	/** Stable display name stored with conflict recovery metadata. */
 	deviceName: string;
-	/** Clock in Unix milliseconds for recovery retention checks. */
+	/** Clock in Unix milliseconds for synthetic observations and recovery retention checks. */
 	now?: () => number;
 }
 
@@ -173,7 +173,7 @@ export class TextApplyEngine {
 					etag: `"${observed.epoch}.${observed.rev}"`,
 					hash: observed.hash,
 					origin: "current_authority",
-					at: 0,
+					at: this.observationTime(),
 				}),
 				isBlob ? "blob" : "text",
 			);
@@ -189,6 +189,11 @@ export class TextApplyEngine {
 			const pending = this.activeJournal.snapshot().pending_apply[0];
 			if (pending) await this.applyWithFallback(pending.change);
 		});
+	}
+
+	/** Returns the configured Unix-millisecond clock for synthetic authority observations. */
+	observationTime(): number {
+		return this.now();
 	}
 
 	/** Fences queued work after plugin unload without claiming host effects were canceled. */

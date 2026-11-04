@@ -444,7 +444,7 @@ export class ReconciliationController {
 			etag: entry.etag,
 			hash: entry.deleted ? "" : entry.hash,
 			origin: "manifest",
-			at: 0,
+			at: this.applyEngine.observationTime(),
 		};
 		await this.applyChange(change, entry.kind);
 		if (epoch !== this.journal.snapshot().epoch)

@@ -1146,6 +1146,88 @@ describe("ReconciliationController", () => {
 		expect(context.journal.snapshot().pending_ops).toEqual([]);
 	});
 
+	it("uses one durable observation time for a hydration conflict across restart", async () => {
+		const path = "notes/hydration-conflict.md";
+		const localText = "local edits";
+		const remoteText = "confirmed remote bytes";
+		const remoteHash = await hash(remoteText);
+		const observedAt = Date.UTC(2026, 10, 4, 12, 34);
+		let now = observedAt;
+		context.vault.files.set(path, localText);
+		context.remote.entries = [
+			{
+				path,
+				etag: formatETag(epoch, 2),
+				seq: 2,
+				hash: remoteHash,
+				kind: "text",
+				deleted: false,
+			},
+		];
+		context.remote.texts.set("2", remoteText);
+		const stopAfterCopy = context.journal.updateApply.bind(context.journal);
+		context.journal.updateApply = async (pending) => {
+			await stopAfterCopy(pending);
+			if (pending.step === "copied")
+				throw new Error("stop after conflict copy");
+		};
+		const engine = new TextApplyEngine(
+			context.journal,
+			context.vault,
+			context.remote,
+			{ deviceName: "test", now: () => now },
+		);
+		context.controller = new ReconciliationController(
+			context.journal,
+			engine,
+			context.vault,
+			context.remote,
+		);
+
+		await expect(context.controller.enroll()).rejects.toThrow(
+			"stop after conflict copy",
+		);
+
+		const pending = context.journal.snapshot().pending_apply[0];
+		if (!pending) throw new Error("Expected durable conflict recovery");
+		const namedPath = pending.conflict_copies?.[0]?.path;
+		expect(pending.change.at).toBe(observedAt);
+		expect(namedPath).toContain("2026-11-04 1234");
+		expect(namedPath).not.toContain("1970");
+		expect(context.vault.files.get(namedPath ?? "")).toBe(localText);
+
+		engine.close();
+		context.journal.close();
+		now = Date.UTC(2030, 0, 1);
+		context.journal = await DeviceJournal.open(context.storage);
+		const restartedEngine = new TextApplyEngine(
+			context.journal,
+			context.vault,
+			context.remote,
+			{ deviceName: "test", now: () => now },
+		);
+		context.controller = new ReconciliationController(
+			context.journal,
+			restartedEngine,
+			context.vault,
+			context.remote,
+		);
+
+		await context.controller.resume();
+
+		expect(context.vault.files.get(path)).toBe(remoteText);
+		expect(context.vault.files.get(namedPath ?? "")).toBe(localText);
+		expect(
+			(await context.vault.list()).filter((file) => file.includes("(conflict")),
+		).toEqual([namedPath]);
+		expect(context.journal.snapshot().base[path]).toEqual({
+			deleted: false,
+			rev: 2,
+			hash: remoteHash,
+		});
+		expect(context.journal.snapshot().pending_apply).toEqual([]);
+	});
+
 	it("hydrates exact binary bytes from a manifest blob row", async () => {
 		const bytes = new Uint8Array([0, 255, 128]);
 		const digest = await crypto.subtle.digest("SHA-256", bytes.slice().buffer);

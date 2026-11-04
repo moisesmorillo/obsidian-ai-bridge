@@ -908,6 +908,42 @@ describe("TextApplyEngine", () => {
 		);
 	});
 
+	it("timestamps synthetic current authority before naming a conflict", async () => {
+		const path = "notes/current-authority-conflict.md";
+		const localText = "local version";
+		const remoteText = "current remote version";
+		const remoteHash = await hash(remoteText);
+		const observedAt = Date.UTC(2026, 10, 4, 12, 34);
+		vault.files.set(path, localText);
+		await journal.resetEpoch(epoch);
+		const updateApply = journal.updateApply.bind(journal);
+		journal.updateApply = async (pending) => {
+			await updateApply(pending);
+			if (pending.step === "named") throw new Error("stop after naming");
+		};
+		engine = makeEngine(
+			journal,
+			vault,
+			{ read: async () => remoteText },
+			{ deviceName: "Test Device", now: () => observedAt },
+		);
+
+		await expect(
+			engine.applyCurrent(path, {
+				text: remoteText,
+				epoch,
+				rev: 2,
+				hash: remoteHash,
+			}),
+		).rejects.toThrow("stop after naming");
+
+		const pending = journal.snapshot().pending_apply[0];
+		if (!pending) throw new Error("Expected saved current authority");
+		expect(pending.change.at).toBe(observedAt);
+		expect(pending.conflict_copies?.[0]?.path).toContain("2026-11-04 1234");
+		expect(pending.conflict_copies?.[0]?.path).not.toContain("1970");
+	});
+
 	it("copies dirty binary bytes before confirming a remote delete", async () => {
 		const previous = new Uint8Array([10, 11]);
 		const local = new Uint8Array([12, 13]);

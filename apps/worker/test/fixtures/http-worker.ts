@@ -167,22 +167,7 @@ const worker = createWorker(
 		return {
 			head: (...args) => store.head(...args),
 			putVerified: (...args) => store.putVerified(...args),
-			read: async (...args) => {
-				const body = await store.read(...args);
-				const reader = body.getReader();
-				return new ReadableStream<Uint8Array>({
-					/** Forward one storage chunk without exposing R2 length metadata. */
-					async pull(controller) {
-						const result = await reader.read();
-						if (result.done) controller.close();
-						else controller.enqueue(result.value);
-					},
-					/** Cancel the real storage reader when the test consumer stops. */
-					cancel(reason) {
-						return reader.cancel(reason);
-					},
-				});
-			},
+			read: (...args) => store.read(...args),
 		};
 	},
 );

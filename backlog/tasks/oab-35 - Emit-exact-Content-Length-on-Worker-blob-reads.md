@@ -5,9 +5,11 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-11-04T02:39:00Z'
-updated_date: '2026-11-04T03:12:00Z'
+updated_date: '2026-11-04T04:53:00Z'
 labels: []
 dependencies: []
+references:
+  - OAB-36
 priority: high
 type: bug
 ordinal: 56000
@@ -31,6 +33,10 @@ The owner blob probe received all 1,100,033 bytes without Content-Length. Plain 
 
 <!-- SECTION:PLAN:BEGIN -->
 Read the owner brief and spec section 5.4. Add runtime regression tests first and capture RED through a success wrapper. Stream selected bytes through FixedLengthStream with the exact length. Run focused tests, docs:check, and check. Complete task and branch reviews. Get owner branch approval, push, create the pull request, and remove only this worktree.
+
+Owner scope extension: preserve fixed-length framing at the final response owner in read-response.ts, with content-reads.ts changes if needed. Add valid BYOB regression and cancellation-failure tests. Prove framing through a direct Worker socket or equivalent boundary with a passing positive control. Run full checks, then scoped review of both blocking findings and TSDoc.
+
+Supervisor decision: use FixedLengthStream as the final blob body. Observe consumer cancellation at the next write after pending source reads settle. Preserve the generic JSON path. Add known-length owner tests, correct blob cancellation expectations, and prove full/range framing through the complete route on a direct Worker socket. Create the named Deferred cancellation task. Repeat both reviews and owner branch review before publication.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -49,4 +55,26 @@ RED repeated with FINAL regression fixture and base production apps/worker/src/t
 Final green checks after repairs: focused blob HTTP tests 38/38; content-read tests 14/14; docs:check passed; bun run check passed. Full check: lint and documentation passed; workspace typechecks passed; tests tooling 56/56, protocol 304/304, plugin 397/397, Worker 649/649 (38 files); protocol, plugin, and Worker builds passed. Wrangler reported an available update warning only. Worker tests emit expected simulated network, client-disconnect, and SQLite failure diagnostics. These did not fail tests.
 
 Follow-up commit: 70991a3 (fix(worker): preserve blob stream cancellation). Working tree is clean. Task remains In Progress for parent review.
+
+Whole-branch review at 989cfc0 requests changes. Final JavaScript wrappers lose native fixed-length framing. Direct Worker socket control emitted length 3 for fixed.readable and no length for the wrapper. The RED fixture lacked BYOB support, so its 500 errors do not isolate framing. Unknown cancellation failures also disappear through allSettled. Owner approved scope extension to transport/read-response.ts, content-reads.ts if needed, and Worker tests. Keep all other limits. Repair both findings and TSDoc before owner branch review.
+
+Scope extension blocked at 989cfc0. Miniflare 5 direct-socket probes showed that direct FixedLengthStream readable cancellation did not reach a pending source read. A zero-byte writer bridge did not expose cancellation. Native pipeTo also did not call source cancellation on output disconnect. Wrapping fixed.readable restores cancellation but drops Content-Length. I restored all experimental code and test edits. No repair commit or full check followed. See /private/tmp/worker-hotfix3-task-report.md for probes, logs, and contract costs. OAB-35 remains In Progress for owner decision.
+
+Scope-extension repair is blocked. Corrected BYOB fixture passes all 38 blob cases against base through SELF.fetch, so prior 500 RED evidence was invalid. Direct Worker socket positive control preserves length only for direct FixedLengthStream.readable. Native zero-byte writer and pipeTo probes did not propagate downstream cancellation to a pending source read. Request-abort-only cleanup would weaken the current contract and was not accepted. Worker restored all experimental code and tests. No scope-extension fix commit exists. Current revision remains 989cfc0 with both branch-review findings open. No PR or deployment. A supported runtime mechanism or explicit contract decision is needed before implementation can continue.
+
+Supervisor supplied hotfix3-cancellation-decision.md. This follows spec lines 313-323, not a spec exception. Consumer cancellation joins started storage reads. The runtime reports cancellation at the next write boundary. Request abort remains an extra early trigger. Keep storage, admission, cleanup, and slot ownership until settlement. Both review findings still need repairs.
+
+Hotfix 3 correction after supervisor review
+
+RED owner tests: On the base owner, `cd apps/worker && bunx vitest run --config vitest.config.ts test/read-response.test.ts` returned exit 1 with 2 failed and 8 passed. Both failures showed source cancellation started before a pending read settled. Log: `/tmp/oab35-read-response-red-final.log`.
+
+Ordering correction: The first direct owner order exposed the response end before durable `finishAdmission` settled. After each consumed SELF.fetch body, SQLite still held one active admission. Four reads filled the limit and the next read returned 429. The supervisor approved separate durable settlement and local slot release. The owner now holds one bounded final chunk until source EOF, settles admission before the final write and close, and releases the local slot after response production settles. Cancellation still waits for the pending read, then cancels the source and joins cleanup.
+
+Focused validation: `cd apps/worker && bunx vitest run --config vitest.config.ts test/read-response.test.ts test/content-reads.test.ts` passed 26/26. `cd apps/worker && bunx vitest run --config vitest.http.config.ts test/http/blobs.test.ts` passed 38/38.
+
+SELF.fetch checks retain exact full and range Content-Length, bytes, and headers. SELF.fetch alone does not prove wire framing. A Miniflare direct-socket probe ran the complete HTTP blob route. Command: `bun build apps/worker/test/fixtures/http-worker.ts --target=browser --external 'cloudflare:*' --outfile=/tmp/oab35-http-worker-bundle.js`, then copy the bundle to `apps/worker/.tmp-oab35-http-worker.js`, run `node /private/tmp/oab35-full-route-framing.mjs`, and remove the temporary bundle. Output: upload 201; full read status 200, Content-Length 4096, 4096 bytes, bytes match; range read status 206, Content-Length 31, 31 bytes, bytes match. Probe output: `/tmp/oab35-direct-socket-probe-final.log`.
+
+Full validation: `bun run docs:check` passed. `bun run check` passed lint, documentation, all typechecks, all tests, and all builds. Test counts: Worker core 654/654 across 38 files; Worker HTTP 122/122; Worker F2 103/103; tooling 56/56; protocol 304/304; plugin 397/397. Wrangler 4.45.0 reported an available update. Worker tests printed expected client-disconnect, network-loss, and injected SQLite failure diagnostics.
+
+OAB-36 already tracks prompt cancellation as Deferred. This task references OAB-36. Do not act on OAB-36 unless its stated trigger occurs. OAB-35 remains In Progress for review.
 <!-- SECTION:NOTES:END -->

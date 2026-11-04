@@ -41,7 +41,9 @@ export function parseBlobDeclaration(
 	return parsed.data;
 }
 
-/** Select authority before storage access, then stream only the selected immutable bytes. */
+/** Select authority before storage access and return the exact selected immutable bytes.
+ * The final response owner applies native fixed-length framing and owns stream cleanup.
+ */
 export async function readBlobResponse(
 	gateway: Pick<BlobVaultGateway, "readBlobMetadata">,
 	store: BlobContentStore,
@@ -97,85 +99,6 @@ export async function readBlobResponse(
 	const body = await store.read(metadata.hash, metadata.size, range);
 	const length =
 		range === undefined ? metadata.size : range.end - range.start + 1;
-	const fixed = new FixedLengthStream(length);
-	const sourceReader = body.getReader();
-	const writer = fixed.writable.getWriter();
-	let sourceStopped = false;
-	let sourceCancellation: Promise<void> | undefined;
-	/** Cancel the real storage reader once and retain its cleanup promise. */
-	function cancelSource(reason: unknown): Promise<void> {
-		if (sourceCancellation) return sourceCancellation;
-		sourceCancellation = sourceReader.cancel(reason).then(() => undefined);
-		return sourceCancellation;
-	}
-	/** Stop storage demand when request cancellation races the response consumer. */
-	function onAbort(): void {
-		sourceStopped = true;
-		void cancelSource(signal?.reason).catch(() => undefined);
-		void writer.abort(signal?.reason).catch(() => undefined);
-	}
-	signal?.addEventListener("abort", onAbort, { once: true });
-	if (signal?.aborted) onAbort();
-	const piping = (async () => {
-		try {
-			while (!sourceStopped) {
-				const item = await sourceReader.read();
-				if (item.done) {
-					await writer.close();
-					return;
-				}
-				await writer.write(item.value);
-			}
-		} catch (error) {
-			try {
-				await writer.abort(error);
-			} catch {
-				// The fixed stream can already be aborted by response cancellation.
-			}
-		} finally {
-			signal?.removeEventListener("abort", onAbort);
-			if (sourceCancellation) await sourceCancellation;
-			sourceReader.releaseLock();
-		}
-	})();
-	void piping.catch(() => {});
-	const reader = fixed.readable.getReader();
-	let reading: Promise<ReadableStreamReadResult<Uint8Array>> | undefined;
-	let cancelled = false;
-	const responseBody = new ReadableStream<Uint8Array>({
-		type: "bytes",
-		/** Forward one fixed-length chunk without holding pull open during cancellation. */
-		pull(controller) {
-			if (reading) return;
-			const current = reader.read();
-			reading = current;
-			void current.then(
-				(result) => {
-					if (reading !== current || cancelled) return;
-					reading = undefined;
-					if (result.done) controller.close();
-					else controller.enqueue(result.value);
-				},
-				(error: unknown) => {
-					if (reading !== current || cancelled) return;
-					reading = undefined;
-					controller.error(error);
-				},
-			);
-		},
-		/** Cancel the storage reader and join the fixed-length stream pump. */
-		async cancel(reason) {
-			cancelled = true;
-			signal?.removeEventListener("abort", onAbort);
-			await Promise.allSettled([
-				cancelSource(reason),
-				writer.abort(reason),
-				reader.cancel(reason),
-				piping,
-				reading,
-			]);
-		},
-	});
 	const headers = new Headers({
 		ETag: metadata.etag,
 		"Cache-Control": "no-transform",
@@ -189,7 +112,7 @@ export async function readBlobResponse(
 			"Content-Range",
 			`bytes ${range.start}-${range.end}/${metadata.size}`,
 		);
-	return new Response(responseBody, {
+	return new Response(body, {
 		status: range === undefined ? 200 : 206,
 		headers,
 	});

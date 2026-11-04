@@ -57,6 +57,17 @@ const SAFE_CASE_FAILURE_CODES = [
 	"AC31_ASSERT_FINAL_CONFLICT_PRESERVATION",
 	"AC31_CLEANUP_RESTORE_FAILED",
 	"AC31_TIMEOUT_STAT_RACE_INJECTION",
+	"AC1032_ASSERT_TARGET_VAULT",
+	"AC1032_ASSERT_PLUGIN_CONTROLS",
+	"AC1032_ASSERT_INITIAL_STATE",
+	"AC1032_ASSERT_FIXTURE_ABSENT",
+	"AC1032_ASSERT_REMOTE_CAPABILITIES",
+	"AC1032_ASSERT_SERVICE_ABSENT",
+	"AC1032_ASSERT_BASELINE",
+	"AC1032_ASSERT_REMOTE_UPDATE",
+	"AC1032_ASSERT_PROCESS_INTERCEPTION",
+	"AC1032_ASSERT_FINAL_STATE",
+	"AC1032_CLEANUP_RESTORE_FAILED",
 	"unexpected-assertion-error",
 	"unexpected-type-error",
 	"unexpected-range-error",
@@ -85,6 +96,18 @@ const SAFE_CASE_FAILURE_BOUNDARIES = [
 	"AC31_SYNC_FINAL_APPLY",
 	"AC31_WAIT_FINAL_IDLE",
 	"AC31_READ_FINAL_AUTHORITY",
+	"AC1032_READ_SERVICE_ABSENCE",
+	"AC1032_SYNC_BASELINE",
+	"AC1032_WAIT_BASELINE_IDLE",
+	"AC1032_READ_BASE_AUTHORITY",
+	"AC1032_MUTATE_REMOTE_TEXT",
+	"AC1032_READ_REMOTE_AUTHORITY",
+	"AC1032_APPLY_REMOTE_CHANGE",
+	"AC1032_WAIT_APPLY_IDLE",
+	"AC1032_PUBLISH_CONFLICT_COPY",
+	"AC1032_WAIT_CONFLICT_SYNC",
+	"AC1032_READ_FINAL_AUTHORITY",
+	"AC1032_READ_CONFLICT_AUTHORITY",
 ] as const;
 
 /** Error classes allowed in diagnostics from a wrapped case operation. */
@@ -1666,5 +1689,61 @@ const authority=await withCaseBoundary("AC31_READ_FINAL_AUTHORITY",()=>remote.re
 if(!intermediatePreserved||!finalFile||finalHash!==remoteHash||authority.rev!==2||authority.hash!==remoteHash||finalCopies.length!==1||!finalCopyMatches||finalState.base[path]?.rev!==2||finalState.base[path]?.hash!==remoteHash||finalState.pending_ops.length||finalState.pending_apply.length||finalState.reconciliation||!finalState.attention.some((item)=>item.path===path))throw new Error("AC31_ASSERT_FINAL_CONFLICT_PRESERVATION");
 `.replace("__AUTHORIZED_TARGET__", target),
 		cleanup: `if(globalThis.__oab8Ac31Restore&&!globalThis.__oab8Ac31Restore())throw Error("AC31_CLEANUP_RESTORE_FAILED");delete globalThis.__oab8Ac31Restore;`,
+	};
+}
+
+/** Builds one controlled AC-10/32 edit race and preserves both service revisions. */
+export function createAc1032CaseScripts(
+	fixturePath = "oab-8.8/ac-10-32-process-race-20261104-01.md",
+): DesktopCaseScripts {
+	const safeFixturePath = PathSchema.parse(fixturePath);
+	if (
+		!safeFixturePath.startsWith("oab-8.8/ac-10-32-process-race-") ||
+		!safeFixturePath.endsWith(".md")
+	)
+		throw new Error("Unauthorized AC-10/32 fixture path");
+	return {
+		action: `
+if(app.vault.adapter.getBasePath()!==${JSON.stringify(authorizedVaults()["dev-2"])})throw Error("AC1032_ASSERT_TARGET_VAULT");
+const plugin=app.plugins.plugins?.["ai-bridge"];
+if(!plugin?.journal?.snapshot||!plugin.composition?.publication||!plugin.desktopSync||plugin.sessionStatus!=="connected"||plugin.syncPaused!==false)throw Error("AC1032_ASSERT_PLUGIN_CONTROLS");
+await plugin.desktopSync.waitForIdle();
+const stateBefore=plugin.journal.snapshot();
+if(stateBefore.pending_ops.length||stateBefore.pending_apply.length||stateBefore.reconciliation||plugin.desktopSync.isBusy)throw Error("AC1032_ASSERT_INITIAL_STATE");
+const path=${JSON.stringify(safeFixturePath)},baseText="# AC-10/32 process race fixture\\n\\nBase revision\\n",remoteText="# AC-10/32 process race fixture\\n\\nRemote revision\\n",userText="# AC-10/32 process race fixture\\n\\nUser edit\\n";
+if(app.vault.getAbstractFileByPath(path))throw Error("AC1032_ASSERT_FIXTURE_ABSENT");
+const remote=Reflect.get(plugin.composition.publication,"remote");
+if(!remote?.put||!remote?.readCurrentAuthority||!remote?.manifest||globalThis.__oab8Ac1032Restore)throw Error("AC1032_ASSERT_REMOTE_CAPABILITIES");
+let absent=false;
+try{await withCaseBoundary("AC1032_READ_SERVICE_ABSENCE",()=>remote.readCurrentAuthority(path));}catch(error){absent=readBoundaryDetails(error)?.status===404;if(!absent)throw error;}
+if(!absent)throw Error("AC1032_ASSERT_SERVICE_ABSENT");
+const hashText=async(text)=>{const digest=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(text));return Array.from(new Uint8Array(digest)).map((byte)=>byte.toString(16).padStart(2,"0")).join("");};
+const baseHash=await hashText(baseText),remoteHash=await hashText(remoteText),userHash=await hashText(userText);
+await app.vault.create(path,baseText);
+await withCaseBoundary("AC1032_SYNC_BASELINE",()=>plugin.desktopSync.syncNow());
+await withCaseBoundary("AC1032_WAIT_BASELINE_IDLE",()=>plugin.desktopSync.waitForIdle());
+const initial=await withCaseBoundary("AC1032_READ_BASE_AUTHORITY",()=>remote.readCurrentAuthority(path));
+const seeded=plugin.journal.snapshot();
+if(initial.deleted||initial.text!==baseText||initial.rev!==1||seeded.base[path]?.rev!==1||seeded.base[path]?.hash!==baseHash||seeded.pending_ops.length||seeded.pending_apply.length)throw Error("AC1032_ASSERT_BASELINE");
+const update=await withCaseBoundary("AC1032_MUTATE_REMOTE_TEXT",()=>remote.put(path,remoteText,{kind:"match",epoch:initial.epoch,rev:initial.rev},crypto.randomUUID(),initial.epoch));
+const updated=await withCaseBoundary("AC1032_READ_REMOTE_AUTHORITY",()=>remote.readCurrentAuthority(path));
+if((update.status!==200&&update.status!==201)||updated.deleted||updated.rev!==2||updated.hash!==remoteHash)throw Error("AC1032_ASSERT_REMOTE_UPDATE");
+const vault=app.vault,originalProcess=vault.process;
+let raceInjected=false,callbackSawUserEdit=false,callbackLeftUserEdit=false;
+globalThis.__oab8Ac1032Restore=()=>{vault.process=originalProcess;return vault.process===originalProcess;};
+const interceptedProcess=async function(file,callback){if(file?.path!==path||raceInjected)return originalProcess.call(this,file,callback);await vault.modify(file,userText);raceInjected=true;const wrapped=(current)=>{callbackSawUserEdit=current===userText;const next=callback(current);callbackLeftUserEdit=callbackSawUserEdit&&next===current;return next;};return originalProcess.call(this,file,wrapped);};
+try{vault.process=interceptedProcess;await withCaseBoundary("AC1032_APPLY_REMOTE_CHANGE",()=>plugin.desktopSync.syncNow());await withCaseBoundary("AC1032_WAIT_APPLY_IDLE",()=>plugin.desktopSync.waitForIdle());}finally{vault.process=originalProcess;}
+if(vault.process!==originalProcess||!raceInjected||!callbackSawUserEdit||!callbackLeftUserEdit)throw Error("AC1032_ASSERT_PROCESS_INTERCEPTION");
+const conflictPrefix=path.slice(0,path.lastIndexOf("."))+" (conflict";
+const localCopies=vault.getFiles().filter((file)=>file.path.startsWith(conflictPrefix));
+let localConflictCopy=null;for(const file of localCopies){if(await hashText(await vault.read(file))===userHash)localConflictCopy=file;}
+if(!localConflictCopy)throw Error("AC1032_ASSERT_PROCESS_INTERCEPTION");
+await withCaseBoundary("AC1032_PUBLISH_CONFLICT_COPY",()=>plugin.desktopSync.syncNow());
+await withCaseBoundary("AC1032_WAIT_CONFLICT_SYNC",()=>plugin.desktopSync.waitForIdle());
+const finalState=plugin.journal.snapshot(),finalAuthority=await withCaseBoundary("AC1032_READ_FINAL_AUTHORITY",()=>remote.readCurrentAuthority(path));
+const conflictAuthority=await withCaseBoundary("AC1032_READ_CONFLICT_AUTHORITY",()=>remote.readCurrentAuthority(localConflictCopy.path));
+if(finalAuthority.deleted||finalAuthority.rev!==2||finalAuthority.hash!==remoteHash||conflictAuthority.deleted||conflictAuthority.hash!==userHash||finalState.base[path]?.rev!==2||finalState.base[path]?.hash!==remoteHash||finalState.pending_ops.length||finalState.pending_apply.length||finalState.reconciliation||!finalState.attention.some((item)=>item.path===path))throw Error("AC1032_ASSERT_FINAL_STATE");
+`.trim(),
+		cleanup: `if(globalThis.__oab8Ac1032Restore&&!globalThis.__oab8Ac1032Restore())throw Error("AC1032_CLEANUP_RESTORE_FAILED");delete globalThis.__oab8Ac1032Restore;`,
 	};
 }

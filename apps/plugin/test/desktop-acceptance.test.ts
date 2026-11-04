@@ -8,6 +8,7 @@ import {
 	createAc20FixtureScript,
 	createAc30CaseScripts,
 	createAc31CaseScripts,
+	createAc1032CaseScripts,
 	createCaseScript,
 	createInstallScript,
 	dispatchCapturedCallback,
@@ -709,6 +710,29 @@ describe("desktop acceptance safety", () => {
 			status: null,
 			code: null,
 		});
+	});
+
+	it("builds an AC-10/32 process-race case with restored interception", () => {
+		const scripts = createAc1032CaseScripts(
+			"oab-8.8/ac-10-32-process-race-20261104-01.md",
+		);
+		expect(scripts.action).toContain("AC1032_ASSERT_TARGET_VAULT");
+		expect(scripts.action).toContain('"AC1032_APPLY_REMOTE_CHANGE"');
+		expect(scripts.action).toContain("callbackSawUserEdit");
+		expect(scripts.action).toContain(
+			"remote.readCurrentAuthority(localConflictCopy.path)",
+		);
+		expect(scripts.action).toContain("globalThis.__oab8Ac1032Restore");
+		expect(scripts.cleanup).toContain("AC1032_CLEANUP_RESTORE_FAILED");
+		expect(
+			() =>
+				new Function(
+					createCaseScript("AC-32", scripts.action, scripts.cleanup),
+				),
+		).not.toThrow();
+		expect(() => createAc1032CaseScripts("oab-8.8/unrelated.md")).toThrow(
+			"Unauthorized AC-10/32 fixture path",
+		);
 	});
 
 	it("keeps recovered AC-30 and Markdown AC-31 diagnostics unique", async () => {

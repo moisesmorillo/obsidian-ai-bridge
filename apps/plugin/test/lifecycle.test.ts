@@ -329,6 +329,33 @@ describe("AIBridgePlugin device-local lifecycle", () => {
 			vi.unstubAllGlobals();
 		}
 	});
+	it("restores a saved Pause before connected startup and waits for Resume", async () => {
+		host.settingsData = { coexistenceMode: true, syncPaused: true };
+		host.saveDataAction = async (data) => {
+			host.settingsData = structuredClone(data);
+		};
+		const plugin = await startConnectedPlugin();
+		try {
+			await settleSyncEffects(plugin);
+			expect(Reflect.get(plugin, "syncPaused")).toBe(true);
+			expect(host.publicationStages).toEqual([]);
+			expect(host.syncCycles).toBe(0);
+			host.syncActions?.resume();
+			await settleSyncEffects(plugin);
+			expect(Reflect.get(plugin, "syncPaused")).toBe(false);
+			expect(host.settingsData).toMatchObject({ syncPaused: false });
+			expect(host.syncCycles).toBeGreaterThan(0);
+			host.syncActions?.pause();
+			await settleSyncEffects(plugin);
+			expect(Reflect.get(plugin, "syncPaused")).toBe(true);
+			expect(host.settingsData).toMatchObject({ syncPaused: true });
+		} finally {
+			plugin.onunload();
+			vi.useRealTimers();
+			vi.unstubAllGlobals();
+		}
+	});
+
 	it("keeps historical work unchanged when capture fences plugin reload", async () => {
 		host.settingsData = { coexistenceMode: true };
 		const plugin = await startConnectedPlugin(false);
@@ -392,7 +419,7 @@ describe("AIBridgePlugin device-local lifecycle", () => {
 			expect(afterReload.base[`${fixture}.icloud`]).toBeUndefined();
 			expect(
 				afterReload.pending_ops.some(
-					(operation) =>
+					(operation: (typeof afterReload.pending_ops)[number]) =>
 						operation.path === `${fixture}.icloud` ||
 						(operation.op === "rename" && operation.to === `${fixture}.icloud`),
 				),
@@ -990,12 +1017,14 @@ describe("AIBridgePlugin device-local lifecycle", () => {
 				serverUrl: "https://obsidian-bridge.mmorillo.dev",
 				deviceName: "oab-8.8 dev-1",
 				coexistenceMode: false,
+				syncPaused: false,
 			},
 		]);
 		expect(Reflect.get(plugin, "settingsValue")).toEqual({
 			serverUrl: "https://obsidian-bridge.mmorillo.dev",
 			deviceName: "oab-8.8 dev-1",
 			coexistenceMode: false,
+			syncPaused: false,
 		});
 		plugin.onunload();
 	});
@@ -1005,6 +1034,7 @@ describe("AIBridgePlugin device-local lifecycle", () => {
 			serverUrl: "https://saved-service.test",
 			deviceName: "oab-8.8 dev-2",
 			coexistenceMode: false,
+			syncPaused: false,
 		};
 		const plugin = new AIBridgePlugin({} as App, {} as PluginManifest);
 		await plugin.onload();
@@ -1012,6 +1042,7 @@ describe("AIBridgePlugin device-local lifecycle", () => {
 			serverUrl: "https://saved-service.test",
 			deviceName: "oab-8.8 dev-2",
 			coexistenceMode: false,
+			syncPaused: false,
 		});
 		plugin.onunload();
 	});

@@ -205,6 +205,7 @@ function createTab() {
 		serverUrl: "https://service.test",
 		deviceName: "Obsidian desktop",
 		coexistenceMode: false,
+		syncPaused: false,
 	};
 	let status: "connected" | "disconnected" = "connected";
 	const session = {

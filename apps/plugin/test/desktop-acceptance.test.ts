@@ -212,6 +212,12 @@ describe("desktop acceptance safety", () => {
 		expect(captureReload.reloadVerification).toContain(
 			'deviceName !== "oab-10.1 dev-1"',
 		);
+		expect(captureReload.reloadVerification).toContain(
+			"AC19_RELOAD_ASSERT_PAUSED",
+		);
+		expect(captureReload.reloadVerification).toContain(
+			'syncStatus?.().state !== "paused"',
+		);
 		expect(captureReload.reloadVerification).toContain("pendingApplyDelta");
 		expect(captureReload.capture).not.toContain("resume()");
 		expect(captureReload.reloadVerification).not.toContain("resume()");

@@ -71,6 +71,7 @@ export default class AIBridgePlugin extends Plugin {
 		serverUrl: DEFAULT_SERVER_URL,
 		deviceName: DEFAULT_DEVICE_NAME,
 		coexistenceMode: false,
+		syncPaused: false,
 	};
 	/** Safe enrollment status shown in settings. */
 	private sessionStatus: DeviceSessionStatus = "disconnected";
@@ -102,6 +103,8 @@ export default class AIBridgePlugin extends Plugin {
 				if (typeof stored.serverUrl === "string")
 					this.settingsValue.serverUrl = stored.serverUrl;
 				this.settingsValue.coexistenceMode = stored.coexistenceMode === true;
+				this.settingsValue.syncPaused = stored.syncPaused === true;
+				this.syncPaused = this.settingsValue.syncPaused;
 				if (
 					typeof stored.deviceName === "string" &&
 					stored.deviceName.trim().length > 0 &&
@@ -231,9 +234,13 @@ export default class AIBridgePlugin extends Plugin {
 						const controller = this.desktopSync;
 						this.syncPauseGeneration += 1;
 						this.syncPaused = true;
+						this.settingsValue.syncPaused = true;
 						controller?.pause();
 						this.settingsTab?.refreshStatus();
-						this.runSyncAction(() => this.disposePausedComposition(controller));
+						this.runSyncAction(async () => {
+							await this.persistSyncPaused(true, this.syncPauseGeneration);
+							await this.disposePausedComposition(controller);
+						});
 					},
 					resume: () => {
 						this.runSyncAction(() => this.resumeSync());
@@ -416,6 +423,32 @@ export default class AIBridgePlugin extends Plugin {
 		const nextSession = this.buildSession(this.settingsValue.serverUrl);
 		this.session = nextSession;
 		return nextSession;
+	}
+
+	/** Saves Pause state in order and ignores stale lifecycle or pause generations. */
+	private persistSyncPaused(
+		paused: boolean,
+		generation: number,
+	): Promise<void> {
+		const lifecycle = this.lifecycleGeneration;
+		const save = this.settingsSaveTail.then(async () => {
+			if (
+				lifecycle !== this.lifecycleGeneration ||
+				generation !== this.syncPauseGeneration
+			)
+				return;
+			await this.saveData({ ...this.settingsValue, syncPaused: paused });
+			if (
+				lifecycle === this.lifecycleGeneration &&
+				generation === this.syncPauseGeneration
+			)
+				this.settingsValue.syncPaused = paused;
+		});
+		this.settingsSaveTail = save.then(
+			() => undefined,
+			() => undefined,
+		);
+		return save;
 	}
 
 	/** Saves the mode change and rejects exit while captured event work remains. */
@@ -614,6 +647,8 @@ export default class AIBridgePlugin extends Plugin {
 				pauseGeneration !== this.syncPauseGeneration
 			)
 				return;
+			await this.persistSyncPaused(false, pauseGeneration);
+			if (pauseGeneration !== this.syncPauseGeneration) return;
 			if (!this.composition) this.composition = this.createSyncComposition();
 			this.vaultSummary = null;
 			this.syncPaused = false;

@@ -15,6 +15,8 @@ export interface AIBridgeSettings {
 	deviceName: string;
 	/** Explicit F4 switch; absent old settings values default to false. */
 	coexistenceMode: boolean;
+	/** Keeps publishing and apply work paused after plugin restart. */
+	syncPaused: boolean;
 }
 
 /** Settings page for enrollment controls and safe connection status. */

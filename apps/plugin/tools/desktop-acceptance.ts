@@ -1982,6 +1982,7 @@ export function createAc19CaptureReloadScripts(
 			return test();
 		};
 		if (!(await waitFor(() => plugin.sessionStatus === "connected" && !plugin.desktopSync.isBusy))) throw new Error("AC19_RELOAD_ASSERT_CONNECTED");
+		if (!plugin.syncPaused || plugin.syncStatus?.().state !== "paused" || plugin.syncActive) throw new Error("AC19_RELOAD_ASSERT_PAUSED");
 		const after = plugin.journal.snapshot();
 		const unchanged = JSON.stringify({ pending_ops: after.pending_ops, pending_apply: after.pending_apply, attention: after.attention }) === JSON.stringify(baseline.history);
 		const confirmationVisible = after.coexistence_confirmations.some((item) => item.id === baseline.confirmationId && item.path === baseline.source);

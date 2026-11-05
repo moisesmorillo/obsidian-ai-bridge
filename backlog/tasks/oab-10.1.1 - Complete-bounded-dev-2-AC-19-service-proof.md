@@ -5,7 +5,7 @@ status: Deferred
 assignee:
   - '@pi'
 created_date: '2026-11-05T16:52:00Z'
-updated_date: '2026-11-05T21:47:00Z'
+updated_date: '2026-11-05T21:57:00Z'
 labels:
   - deferred
   - F4
@@ -19,7 +19,7 @@ ordinal: 60000
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-Trigger: OAB-10.1 merges and the exact-vault Obsidian CLI can return a safe result for the dev-2 service case. The supervisor accepted this external evidence limit for the OAB-10.1 PR on 2026-11-05. Dev-1 capture and reload passed. The bounded dev-2 diagnostic ended at the CLI boundary, with no eval exit record and empty stderr, although a guarded trivial eval passed. Do not repeat the current live case before this trigger. Preserve all historical work and existing synthetic service evidence.
+Live AC-19 service proof remains incomplete after the one bounded case reached the Obsidian CLI timeout. During F4, dev-2 and the real vault share one service vault. Normal service hydration carried the synthetic fixture into the real vault. Live cases are blocked during the trial. Trigger: a second isolated service vault or the end of F4, a host runner that returns safe bounded evidence, and supervisor authorization for another case. The supervisor authorized cleanup of only the P1 fixture through normal dev-2 deletion. The scoped service read confirmed its tombstone at revision 2. Preserve the recorded historical observations. Do not create, change, or rename service files from dev-2 during F4.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
@@ -57,4 +57,10 @@ The single authorized live case started at 2026-11-05T21:44:26.929Z and returned
 Scoped final manifest at 2026-11-05T21:46:06.965Z: one complete page, one read, no retry, identity exit 0, eval exit 0, and empty stderr. Projection covered only the new fixture source and placeholder. Source has one live row at revision 1 whose epoch, revision, and hash match the local base. Placeholder has zero service rows, no base, and no queued operation. Dev-2 remains in Pause with coexistence on, zero operations, zero applies, four attention items, zero confirmations, and exact post-resume baseline identities. No live confirmation result survived the CLI timeout. Criterion 3 remains incomplete. Dev-1 evidence still covers capture and reload only. No real iCloud eviction proof exists.
 
 Deferred trigger: a bounded host runner returns a safe phase checkpoint or case result without the Obsidian CLI timeout, plus supervisor authorization for a new bounded service case. Preserve the current live fixture. The owner-approved plan forbids another case after an uncertain mutation result. This branch can publish the tested acceptance-tool corrections and exact evidence limits, but cannot close AC-19 or OAB-10.1.1.
+
+Supervisor safety decision after the case: dev-2 and the real vault share one service vault. Normal hydration carried the new live fixture into the real vault. No direct personal-vault access ran, but the service write had this cross-device effect. During F4, P1 must not create, change, or rename any service file from dev-2. Live cases need a second isolated service vault or the end of the trial. This decision supersedes the earlier live-fixture preservation instruction and retry trigger.
+
+Supervisor-authorized cleanup: only oab-10.1/dev-2/simulated-eviction-p1-20261105-01.md. Guarded dev-2 disabled coexistence, resumed normal sync, trashed that exact file through the Obsidian Vault API, waited for the normal conditional delete receipt, and entered Pause. The host reported completion at 2026-11-05T21:52:27.455Z, deleted base revision 2, source absent locally, coexistence off, idle, 0 operations, 0 applies, 0 confirmations, and 4 attention items. A complete one-page scoped manifest read at 21:53:04.368Z confirmed one tombstone at revision 2, no live source row, no placeholder row, and authority equal to the local base. It used one service read and no retry. Every cleanup identity and eval call exited 0 with empty stderr. The attention fingerprint remains c9806c50c291706ca4a043e447a8ed27dbbd882f9cf18d5a8a4e26e5e29fd56d. Current state supersedes the earlier live revision 1 observation. The supervisor received the tombstone report. No other fixture cleanup or live case ran.
+
+Whole-branch semantic review at 6f5bc9a approved publication with one non-blocking raw retry-metadata finding. Commit c5d7bd1 separates private retry metadata from safe serialized diagnostics and adds regressions for private text, circular data, BigInt, and throwing getters. Focused tests passed 105/105. Worker docs:check and bun run check passed with 1941 tests and one skipped. The scoped corrective review and human branch review remain pending.
 <!-- SECTION:NOTES:END -->

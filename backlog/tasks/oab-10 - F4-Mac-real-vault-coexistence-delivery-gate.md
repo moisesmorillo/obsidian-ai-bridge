@@ -4,7 +4,7 @@ title: F4 Mac real-vault coexistence delivery gate
 status: In Progress
 assignee: []
 created_date: 2026-10-12 15:13
-updated_date: '2026-11-05T21:47:00Z'
+updated_date: '2026-11-05T21:57:00Z'
 labels:
   - phase-gate
   - F4
@@ -85,4 +85,6 @@ Hydration result: 47 live files equal to the local vault, 0 conflict copies, 0 a
 Observation: during the hydration burst GET /v1/changes returned 429 admission_limited with Retry-After 1 for about one minute (Durable Object per-client live admission limit of 16 while content reads settled). The plugin reported the generic sync failure and recovered on the next cycle. Manifest and file reads kept returning 200. Limits: one device, one Mac, trial window of at most fourteen days from 2026-11-05. OAB-10.1.1 (dev-2 AC-19 service proof) stays open. Dev-2 reported disconnected after the cleanup install and needs a fresh enrollment before OAB-10.1.1.
 
 P1 AC-19 update, 2026-11-05: scoped dev-2 manifest confirms the new fixture remains live at revision 1 with no placeholder service row. Dev-2 remains in Pause, coexistence on, 0 operations, 0 applies, 4 historical attention items, and unchanged attention identities after the authorized preparation. The one service case hit the 60-second CLI timeout, so its durable-confirmation result remains unknown. No repeat ran. OAB-10.1 criterion 6 and OAB-10.1.1 remain incomplete. No personal-vault, other-window, enrollment, journal clearing, or Cloudflare action ran in P1. The F4 gate remains open.
+
+P1 shared-service limit, 2026-11-05: the real vault and dev-2 share one service vault. Normal hydration carried the synthetic P1 fixture into the real vault. The supervisor blocks further dev-2 service creates, changes, and renames during F4. Live cases need a second isolated service vault or the end of the trial. The authorized exact-fixture cleanup published a tombstone at revision 2, verified by scoped manifest at 21:53:04.368Z. Dev-2 remains in Pause with coexistence off, empty queues, no confirmations, and four unchanged attention items. OAB-10.1.1 remains Deferred and AC-19 remains incomplete. No direct personal-vault access ran.
 <!-- SECTION:NOTES:END -->

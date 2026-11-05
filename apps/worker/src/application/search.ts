@@ -55,10 +55,13 @@ export async function readSearch(
 	try {
 		assertReadDemand(signal);
 		const response = await gateway.search(context, parsed, ticketId);
-		if (!response.ok) {
-			await gateway.finishAdmission(context, ticketId, "settled");
-			return { ok: false, failure: response.failure };
-		}
+		if (!response.ok)
+			return {
+				ok: false,
+				failure: response.failure,
+				settle: async () =>
+					gateway.finishAdmission(context, ticketId, "settled"),
+			};
 		assertReadDemand(signal);
 		return createReadSession(gateway, context, ticketId, response.body);
 	} catch (error) {
@@ -67,9 +70,15 @@ export async function readSearch(
 			error instanceof AdmissionDenied ||
 			error instanceof FileOperationDenied
 		) {
-			await gateway.finishAdmission(context, ticketId, "settled");
-			if (error instanceof ReadAborted) throw error;
-			return { ok: false, failure: error.failure };
+			return {
+				ok: false,
+				failure:
+					error instanceof ReadAborted
+						? { kind: "internal_error" }
+						: error.failure,
+				settle: async () =>
+					gateway.finishAdmission(context, ticketId, "settled"),
+			};
 		}
 		throw error;
 	}

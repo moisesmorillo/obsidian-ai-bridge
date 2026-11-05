@@ -8,6 +8,7 @@ import type { BlobContentStore } from "@worker/application/blobs";
 import { FileOperationDenied } from "@worker/application/files";
 import { tryAcquireReadSlot } from "@worker/application/read-budget";
 import { assertReadDemand, ReadAborted } from "@worker/application/read-demand";
+import { settleReadAdmission } from "@worker/application/reads";
 import type { TextVaultGateway } from "@worker/application/text-files";
 import { readBlobResponse } from "@worker/transport/blobs";
 import { fileFailureResponse } from "@worker/transport/mutation-response";
@@ -65,8 +66,12 @@ export async function readContentResponse(
 		const selected = await gateway.readText(identity, selection, ticket);
 		if (!selected.ok) {
 			if (selected.failure.kind !== "not_implemented") {
-				await finish("settled");
 				release();
+				try {
+					await settleReadAdmission(() => finish("settled"));
+				} catch {
+					return fileFailureResponse({ kind: "internal_error" });
+				}
 				return fileFailureResponse(selected.failure);
 			}
 			assertReadDemand(request.signal);
@@ -80,8 +85,12 @@ export async function readContentResponse(
 				request.signal,
 			);
 			if (!response.ok || response.body === null) {
-				await finish("settled");
 				release();
+				try {
+					await settleReadAdmission(() => finish("settled"));
+				} catch {
+					return fileFailureResponse({ kind: "internal_error" });
+				}
 				return response;
 			}
 			const contentLength = response.headers.get("Content-Length");
@@ -114,15 +123,17 @@ export async function readContentResponse(
 	} catch (error) {
 		const known =
 			error instanceof FileOperationDenied || error instanceof AdmissionDenied;
-		try {
-			if (ticket !== undefined)
-				await finish(
-					known || error instanceof ReadAborted ? "settled" : "uncertain",
+		release();
+		if (ticket !== undefined) {
+			try {
+				await settleReadAdmission(() =>
+					finish(
+						known || error instanceof ReadAborted ? "settled" : "uncertain",
+					),
 				);
-		} catch {
-			/* Unknown cleanup keeps the durable ticket at its original deadline. */
-		} finally {
-			release();
+			} catch {
+				return fileFailureResponse({ kind: "internal_error" });
+			}
 		}
 		return fileFailureResponse(
 			known ? error.failure : { kind: "internal_error" },

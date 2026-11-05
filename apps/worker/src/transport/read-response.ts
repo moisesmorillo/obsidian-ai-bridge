@@ -3,12 +3,13 @@ import type {
 	AdmissionFinishResult,
 } from "@obsidian-ai-bridge/protocol";
 import { ReadAborted } from "@worker/application/read-demand";
-import { ReadBatchFailure } from "@worker/application/reads";
+import {
+	ReadBatchFailure,
+	settleReadAdmission,
+} from "@worker/application/reads";
 
 /** Maximum encoded bytes produced by one response demand. */
 const RESPONSE_CHUNK_BYTES = 65_536;
-/** Bound durable settlement without releasing unresolved source work early. */
-const SETTLEMENT_DEADLINE_MS = 5_000;
 
 /** Abort a fixed writer even when its consumer already ended the stream. */
 async function abortResponseWriter(
@@ -38,12 +39,13 @@ export interface ReadResponseOwner {
 
 /**
  * Transfer one read slot and admission to a byte response.
- * Generic responses stay pull-driven. Known-length responses use FixedLengthStream at the final
- * Response boundary and hold one bounded chunk until EOF validates the selected length. Durable
- * admission settles before the final write and close, with a fixed deadline. Local capacity releases
- * after started source work and source cancellation settle, independent of durable settlement and
- * consumer drain. A stalled read keeps its slot until its read and cleanup settle. Ticket expiry does
- * not release unresolved local capacity.
+ * Generic responses stay pull-driven. Positive known lengths use FixedLengthStream at the final
+ * Response boundary and hold one bounded chunk until EOF validates the selected length. Zero-byte
+ * known lengths use a gated byte stream so response status and Content-Length remain intact until
+ * durable settlement succeeds. Settlement uses one fixed deadline. Local capacity releases after
+ * started source work and source cancellation settle, independent of durable settlement and consumer
+ * drain. A stalled read keeps its slot until its read and cleanup settle. Ticket expiry does not
+ * release unresolved local capacity.
  * @param knownByteLength - Exact response bytes, or undefined for generic response framing.
  */
 export function ownedReadResponse(
@@ -98,24 +100,7 @@ export function ownedReadResponse(
 			)
 				? "uncertain"
 				: completion;
-			let timer: ReturnType<typeof setTimeout> | undefined;
-			try {
-				const result = await Promise.race([
-					owner.finish(outcome),
-					new Promise<never>((_, reject) => {
-						timer = setTimeout(() => {
-							console.error("READ_SETTLEMENT_TIMEOUT");
-							reject(new Error("Read settlement timed out"));
-						}, SETTLEMENT_DEADLINE_MS);
-					}),
-				]);
-				if (!result.ok) throw new Error("Read settlement failed");
-			} catch (error) {
-				console.error("READ_SETTLEMENT_FAILED");
-				throw error;
-			} finally {
-				if (timer !== undefined) clearTimeout(timer);
-			}
+			await settleReadAdmission(() => owner.finish(outcome));
 		})();
 		return settlement;
 	}

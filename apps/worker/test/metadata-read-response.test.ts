@@ -119,6 +119,61 @@ function controlledGateway() {
 }
 
 describe("metadata HTTP response demand", () => {
+	it("releases metadata capacity before bounded preparation settlement", async () => {
+		const fixture = controlledGateway();
+		const finishing = barrier<void>();
+		const cleanup = barrier<void>();
+		fixture.gateway.readVault = async () => ({
+			ok: false,
+			failure: { kind: "revoked" },
+		});
+		fixture.gateway.finishAdmission = async (
+			_identity,
+			_ticket,
+			completion,
+		) => {
+			fixture.state.finished.push(completion);
+			finishing.resolve();
+			await cleanup.promise;
+			return { ok: true };
+		};
+		const app = (await import("hono")).Hono;
+		const worker = new app<{ Bindings: Env }>().route(
+			"/v1",
+			createReadRouter(
+				async () => identity,
+				() => fixture.gateway,
+			),
+		);
+		const held = Array.from({ length: 3 }, () => tryAcquireReadSlot());
+		const pending = worker.fetch(
+			new Request("https://metadata.invalid/v1/vault"),
+			{} as Env,
+		);
+		let available: (() => void) | undefined;
+		try {
+			await finishing.promise;
+			available = tryAcquireReadSlot();
+			const response = await Promise.race([
+				pending,
+				new Promise<undefined>((resolve) =>
+					setTimeout(() => resolve(undefined), 6_500),
+				),
+			]);
+			expect(available).toBeTypeOf("function");
+			expect(response?.status).toBe(500);
+			if (response)
+				expect(await response.json()).toMatchObject({
+					error: "internal_error",
+				});
+			expect(fixture.state.finished).toEqual(["settled"]);
+		} finally {
+			cleanup.resolve();
+			available?.();
+			for (const release of held) release?.();
+		}
+		await pending;
+	}, 10_000);
 	it.each([
 		["/v1/vault", "authorize"],
 		["/v1/manifest", "authorize"],
@@ -202,7 +257,9 @@ describe("metadata HTTP response demand", () => {
 			expect(fixture.state.finished).toEqual([]);
 			work.resolve();
 			await finishing.promise;
-			expect(tryAcquireReadSlot()).toBeUndefined();
+			const slotAfterSourceWork = tryAcquireReadSlot();
+			expect(slotAfterSourceWork).toBeTypeOf("function");
+			slotAfterSourceWork?.();
 			cleanup.resolve();
 			const response = await pending;
 			await response.body?.cancel();

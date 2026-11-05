@@ -12,6 +12,7 @@ import {
 import { tryAcquireReadSlot } from "@worker/application/read-budget";
 import { ReadAborted } from "@worker/application/read-demand";
 import type { ReadOutcome } from "@worker/application/reads";
+import { settleReadAdmission } from "@worker/application/reads";
 import type { SearchVaultGateway } from "@worker/application/search";
 import { readSearch } from "@worker/application/search";
 import type { Env } from "@worker/env";
@@ -59,6 +60,13 @@ export function createSearchRouter(
 		}
 		if (!outcome.ok) {
 			release();
+			if (outcome.settle) {
+				try {
+					await settleReadAdmission(outcome.settle);
+				} catch {
+					return failureResponse({ kind: "internal_error" });
+				}
+			}
 			return failureResponse(outcome.failure);
 		}
 		return ownedReadResponse(

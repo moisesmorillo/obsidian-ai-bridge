@@ -23,6 +23,7 @@ import {
 	openManifestRead,
 	ReadBatchFailure,
 	readVault,
+	settleReadAdmission,
 } from "@worker/application/reads";
 import type { Env } from "@worker/env";
 import { decodeAndNormalizePath } from "@worker/transport/path";
@@ -232,6 +233,13 @@ async function produce<T>(
 	}
 	if (!outcome.ok) {
 		releaseSlot();
+		if (outcome.settle) {
+			try {
+				await settleReadAdmission(outcome.settle);
+			} catch {
+				return failureResponse({ kind: "internal_error" });
+			}
+		}
 		return failureResponse(outcome.failure);
 	}
 	return ownedJsonResponse(outcome, releaseSlot, request.signal);
@@ -259,6 +267,13 @@ async function produceLazy<T, M>(
 	}
 	if (!opened.ok) {
 		releaseSlot();
+		if (opened.settle) {
+			try {
+				await settleReadAdmission(opened.settle);
+			} catch {
+				return failureResponse({ kind: "internal_error" });
+			}
+		}
 		return failureResponse(opened.failure);
 	}
 	const session = opened.body;
@@ -266,15 +281,20 @@ async function produceLazy<T, M>(
 	try {
 		first = await session.readBatch();
 	} catch (error) {
+		let completion: "settled" | "uncertain" =
+			error instanceof ReadBatchFailure || error instanceof ReadAborted
+				? "settled"
+				: "uncertain";
 		try {
 			await session.cancel();
-			await session.finish(
-				error instanceof ReadBatchFailure || error instanceof ReadAborted
-					? "settled"
-					: "uncertain",
-			);
-		} finally {
-			releaseSlot();
+		} catch {
+			completion = "uncertain";
+		}
+		releaseSlot();
+		try {
+			await settleReadAdmission(() => session.finish(completion));
+		} catch {
+			return failureResponse({ kind: "internal_error" });
 		}
 		return failureResponse(
 			error instanceof ReadBatchFailure

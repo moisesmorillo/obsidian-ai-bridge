@@ -1,11 +1,11 @@
 ---
 id: OAB-10.3
 title: Prepare owner-only Mac coexistence trial and measurement collection
-status: In Progress
+status: Done
 assignee:
   - '@pi'
 created_date: '2026-11-05T12:48:00Z'
-updated_date: '2026-11-05T15:44:00Z'
+updated_date: '2026-11-05T15:45:00Z'
 labels: []
 dependencies:
   - OAB-10.2
@@ -23,11 +23,11 @@ The supervisor performs real-vault steps for the owner. Agents and subagents nev
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Instructions record supervisor-relayed confirmation of a dated local copy outside iCloud before any real-vault step. The supervisor performs these steps for the owner. Agents never access the real vault.
-- [ ] #2 Instructions cover supervisor installation for the owner, coexistence mode, Mac-only operation, and a trial duration of at most two weeks.
-- [ ] #3 Collection tooling uses service data only and cannot inspect or change the personal vault. Tests cover this boundary and secret-safe output.
-- [ ] #4 Instructions explain attention review, measurements, Pause, empty-queue exit, and supervisor disable or cutover for the owner without cloud resource changes.
-- [ ] #5 The deliverables do not claim completion of the owner trial. OAB-10 retains trial dates, results, attention explanations, and evidence limits.
+- [x] #1 Instructions record supervisor-relayed confirmation of a dated local copy outside iCloud before any real-vault step. The supervisor performs these steps for the owner. Agents never access the real vault.
+- [x] #2 Instructions cover supervisor installation for the owner, coexistence mode, Mac-only operation, and a trial duration of at most two weeks.
+- [x] #3 Collection tooling uses service data only and cannot inspect or change the personal vault. Tests cover this boundary and secret-safe output.
+- [x] #4 Instructions explain attention review, measurements, Pause, empty-queue exit, and supervisor disable or cutover for the owner without cloud resource changes.
+- [x] #5 The deliverables do not claim completion of the owner trial. OAB-10 retains trial dates, results, attention explanations, and evidence limits.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -50,4 +50,12 @@ Published integration uses the public MeasurementResponseSchema and MEASUREMENT_
 Review chain: task review 07777125 examined 72b76d4 with the code-review skill and TypeScript profile. Four minor findings closed at 54c1bc9: optional sample times, shared protocol caps, separate unknown/stale output, and credential permissions. Full branch review eba0a2b4 examined 54c1bc9 against 3bd801b and closed all four. It found B1 feed-only snapshot rejection and N1 missing sample counts for unknown p95. Corrective review 9ce59d8b approves final 317b470 and closes both through the exact mapper, validator, formatter, and regression tests. Structural review found cohesive transport, projection, and credential boundaries. It audited named declarations, useful TSDoc, tests, configuration, and the supervisor guide. The request-availability/coverage matrix and percentile/sample-evidence matrix now retain each distinct state.
 
 Final worker validation after scope cleanup: bun run check exited 0 with 1845 passing tests and 1 skipped, plus lint, docs, type checks, and builds. B1/N1 RED recorded 2 failed and 20 passed before correction. Focused GREEN passed 23 tests. An added Worker test exceeded the assigned scope and the worker restored it exactly to origin/main at 317b470. The final branch has no Worker source or test delta. No live service, vault, backup, browser, install, or Cloudflare action ran. The guide keeps OAB-10.1 controls provisional. The credential reader cannot pin parent directories against replacement, so the procedure limits use to an owner-controlled credential tree. Human branch review remains pending. OAB-10 retains the actual trial and its evidence limits.
+
+Human branch review pn-f8da99 approved b4cefd2 with no requested changes. Criteria 1, 2, 4 and 5 refer to the reviewed supervisor procedure, not trial execution. Criterion 3 has canonical adapter, credential admission, static-error and safe-output regression coverage. Control names remain provisional until OAB-10.1 merges, as the owner brief directs. The approved guide stops activation until the supervisor confirms the safe sequence. OAB-10 retains trial dates, measured results, attention explanations, and limits. This task closes only the reviewed instructions and collection tooling.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Added the supervisor F4 procedure and service-only measurement CLI. The CLI consumes the public protocol export, reads the Access-protected owner measurement operation, and retains explicit units, windows, unknown states, stale flags, and sample evidence. Synthetic regression tests cover the file-access boundary and secret-safe output. Full checks passed with 1845 tests and 1 skipped. Independent task, branch, corrective, and human reviews passed. No live vault or service trial ran. OAB-10 retains trial completion and evidence limits.
+<!-- SECTION:FINAL_SUMMARY:END -->

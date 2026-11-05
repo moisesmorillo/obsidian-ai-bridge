@@ -1,3 +1,4 @@
+import type { DeviceState } from "@obsidian-ai-bridge/protocol";
 import { DeviceJournal } from "@plugin/sync/device-journal";
 import { TextApplyEngine } from "@plugin/sync/text-apply";
 import { TFile, type Vault } from "obsidian";
@@ -133,6 +134,23 @@ async function recoveryHash(bytes: Uint8Array): Promise<string> {
 }
 
 describe("ObsidianTextVault", () => {
+	it("finds both iCloud placeholder names from metadata without reading bytes", async () => {
+		const fake = makeRecoveryHostVault();
+		const vault = new ObsidianTextVault(fake.host as unknown as Vault);
+		fake.hidden.set("notes/a.md.icloud", {
+			bytes: new Uint8Array(),
+			mtime: 1,
+		});
+		expect(await vault.isUnavailable?.("notes/a.md")).toBe(true);
+		fake.hidden.delete("notes/a.md.icloud");
+		fake.hidden.set("notes/.a.md.icloud", {
+			bytes: new Uint8Array(),
+			mtime: 1,
+		});
+		expect(await vault.isUnavailable?.("notes/a.md")).toBe(true);
+		expect(fake.adapter.readBinary).not.toHaveBeenCalled();
+	});
+
 	it("stores and refreshes hidden recovery without indexed Vault files", async () => {
 		const fake = makeRecoveryHostVault();
 		const vault = new ObsidianTextVault(fake.host as unknown as Vault);
@@ -218,7 +236,7 @@ describe("ObsidianTextVault", () => {
 		let state: unknown = null;
 		const journal = await DeviceJournal.open({
 			readState: async () => state,
-			writeState: async (next) => {
+			writeState: async (next: DeviceState) => {
 				state = structuredClone(next);
 			},
 			readPayload: async () => {

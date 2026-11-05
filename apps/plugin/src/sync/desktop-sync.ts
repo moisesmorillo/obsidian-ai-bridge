@@ -30,6 +30,10 @@ export interface DesktopSyncHost {
 export interface DesktopSyncOptions {
 	/** Runs shared recovery, scan, publication, and feed effects as one cycle. */
 	cycle(): Promise<void>;
+	/** Persists high-risk local intent before debounce or Pause can delay admission. */
+	onCaptureEvent?(event: PublicationEvent): Promise<boolean>;
+	/** Blocks cycle and event admission while captured intent awaits an owner decision. */
+	isEffectBlocked?(): boolean;
 	/** Admits explicit local event intent before the next full sync cycle. */
 	onEvent?(event: PublicationEvent): Promise<void>;
 	/** Owns platform timer and foreground-state capabilities. */
@@ -78,7 +82,8 @@ export class DesktopSyncController {
 
 	/** Adds one cycle to the lifecycle queue. Concurrent requests share that queued cycle. */
 	syncNow(): Promise<void> {
-		if (this.closed || this.paused) return Promise.resolve();
+		if (this.closed || this.paused || this.isEffectBlocked())
+			return Promise.resolve();
 		if (this.events.length > 0) {
 			if (this.debounce !== null) this.options.host.clearTimeout(this.debounce);
 			this.debounce = null;
@@ -86,7 +91,7 @@ export class DesktopSyncController {
 		}
 		if (this.cyclePromise) return this.cyclePromise;
 		const run = this.tail.then(async () => {
-			if (this.closed || this.paused) return;
+			if (this.closed || this.paused || this.isEffectBlocked()) return;
 			await this.options.cycle();
 		});
 		this.workActive = true;
@@ -105,8 +110,23 @@ export class DesktopSyncController {
 	}
 
 	/** Saves local event intent in order without running network or apply effects while paused. */
-	observe(event: PublicationEvent): Promise<void> {
-		if (this.closed || isTerminallyExcluded(event)) return Promise.resolve();
+	async observe(event: PublicationEvent): Promise<void> {
+		if (this.closed) return;
+		this.workActive = true;
+		this.options.onStateChanged?.();
+		let captured = false;
+		try {
+			captured = (await this.options.onCaptureEvent?.(event)) ?? false;
+		} catch (error) {
+			this.events.push(event);
+			this.options.onError?.(error);
+			this.options.onStateChanged?.();
+			return;
+		} finally {
+			this.workActive = false;
+			this.options.onStateChanged?.();
+		}
+		if (captured || this.closed || isTerminallyExcluded(event)) return;
 		this.activeSince = Date.now();
 		if (this.paused) {
 			this.events.push(event);
@@ -171,7 +191,12 @@ export class DesktopSyncController {
 
 	/** Routes retained events through the same queue as sync cycles. */
 	private drainEvents(): Promise<void> {
-		if (this.closed || this.paused || this.events.length === 0)
+		if (
+			this.closed ||
+			this.paused ||
+			this.events.length === 0 ||
+			this.isEffectBlocked()
+		)
 			return Promise.resolve();
 		const events = this.events.splice(0);
 		this.workActive = true;
@@ -182,17 +207,21 @@ export class DesktopSyncController {
 			try {
 				if (this.closed || this.paused) return;
 				for (const event of events) {
-					if (this.closed || this.paused) return;
-					await this.options.onEvent?.(event);
+					if (this.closed || this.paused || this.isEffectBlocked()) return;
+					const captured =
+						(await this.options.onCaptureEvent?.(event)) ?? false;
+					if (!captured && !isTerminallyExcluded(event))
+						await this.options.onEvent?.(event);
 					admitted += 1;
 				}
+				if (this.isEffectBlocked()) return;
 				await this.options.cycle();
 			} catch (error) {
 				this.events = [...events.slice(admitted), ...this.events];
 				requeued = true;
 				this.options.onError?.(error);
 			} finally {
-				if ((this.closed || this.paused) && !requeued)
+				if ((this.closed || this.paused || this.isEffectBlocked()) && !requeued)
 					this.events = [...events.slice(admitted), ...this.events];
 				this.workActive = false;
 				this.options.onStateChanged?.();
@@ -219,6 +248,11 @@ export class DesktopSyncController {
 				this.options.onError?.(error),
 			);
 		}, delay);
+	}
+
+	/** Reads the shared capture fence before event and cycle admission. */
+	private isEffectBlocked(): boolean {
+		return this.options.isEffectBlocked?.() ?? false;
 	}
 
 	/** Releases both scheduled callback handles once per close or pause transition. */

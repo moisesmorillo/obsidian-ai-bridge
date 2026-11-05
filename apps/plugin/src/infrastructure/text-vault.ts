@@ -93,6 +93,18 @@ export class ObsidianTextVault implements TextVault {
 		return [...new Set([...visible, ...hidden.files.filter(isRecoveryPath)])];
 	}
 
+	/** Finds exact iCloud placeholder metadata without reading placeholder bytes. */
+	async isUnavailable(path: string): Promise<boolean> {
+		if (await this.isPlaceholderPath(path)) return true;
+		const slash = path.lastIndexOf("/");
+		const directory = slash < 0 ? "" : `${path.slice(0, slash + 1)}`;
+		const name = path.slice(slash + 1);
+		return (
+			(await this.isPlaceholderPath(`${path}.icloud`)) ||
+			(await this.isPlaceholderPath(`${directory}.${name}.icloud`))
+		);
+	}
+
 	/** Returns raw file size without decoding content, or null when the path is absent. */
 	async size(path: string): Promise<number | null> {
 		return this.fileAt(path)?.stat.size ?? null;
@@ -225,6 +237,14 @@ export class ObsidianTextVault implements TextVault {
 	private fileAt(path: string): TFile | null {
 		const file = this.vault.getAbstractFileByPath(path);
 		return file instanceof TFile ? file : null;
+	}
+
+	/** Checks placeholder identity only through adapter metadata. */
+	private async isPlaceholderPath(path: string): Promise<boolean> {
+		return (
+			path.endsWith(".icloud") &&
+			(await this.vault.adapter.stat(path))?.type === "file"
+		);
 	}
 
 	/** Detects a differently spelled path with the same Obsidian sync identity. */

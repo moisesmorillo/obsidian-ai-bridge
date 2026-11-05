@@ -24,6 +24,7 @@ import {
 	DeviceJournal,
 	type DeviceJournalStorage,
 } from "../src/sync/device-journal";
+import { classifyEnrollmentPath } from "../src/sync/enrollment-scope";
 import {
 	PublicationController,
 	type PublicationReceipt,
@@ -38,12 +39,16 @@ import {
 	classifyAc13PreflightFiles,
 	createAc04BaselineScript,
 	createAc13CaseScripts,
+	createAc19CaptureReloadScripts,
+	createAc19CaseScripts,
+	createAc19FixturePaths,
 	createAc20FixtureScript,
 	createAc30CaseScripts,
 	createAc31CaseScripts,
 	createAc33CaseScripts,
 	createAc1032CaseScripts,
 	createCaseScript,
+	createInstallPayloadScripts,
 	createInstallScript,
 	dispatchCapturedCallback,
 	hasCapturedCallback,
@@ -160,6 +165,281 @@ async function hashAcceptanceText(text: string): Promise<string> {
 }
 
 describe("desktop acceptance safety", () => {
+	it("confines AC-19 fixtures to a fresh isolated namespace per authorized vault", () => {
+		const first = createAc19FixturePaths("dev-1");
+		const second = createAc19FixturePaths("dev-2");
+		expect(first.root).toBe("oab-10.1/dev-1");
+		expect(second.root).toBe("oab-10.1/dev-2");
+		expect(first.source).not.toBe(second.source);
+		expect(first.placeholder).toBe(`${first.source}.icloud`);
+		const retry = createAc19FixturePaths(
+			"dev-2",
+			[],
+			"simulated-eviction-retry-2",
+		);
+		expect(retry.source).toBe("oab-10.1/dev-2/simulated-eviction-retry-2.md");
+		expect(() => createAc19FixturePaths("dev-2", [], "../outside")).toThrow(
+			"Invalid AC-19 fixture name",
+		);
+		expect(classifyEnrollmentPath(first.source, 0)).not.toBe("excluded");
+		expect(classifyEnrollmentPath(first.placeholder, 0)).toBe("excluded");
+		expect(() => createAc19FixturePaths("dev-1", [first.source])).toThrow(
+			"AC-19 fixture path already exists",
+		);
+		const scripts = createAc19CaseScripts(
+			"dev-2",
+			vaults["dev-2"],
+			"/Users/test",
+		);
+		expect(scripts.action).toContain(
+			'getBasePath() !== "/Users/test/vaults/obsidian-ai-bridge-dev-2"',
+		);
+		expect(scripts.action).toContain('"oab-10.1/dev-2/simulated-eviction.md"');
+		expect(scripts.action).toContain("initialAttentionCount");
+		expect(scripts.action).toContain(
+			"AC19_ASSERT_CONFIRMATION_AND_UNAVAILABLE",
+		);
+		expect(scripts.action).toContain(
+			"state.unavailable_paths?.includes(source)",
+		);
+		const retryScripts = createAc19CaseScripts(
+			"dev-2",
+			vaults["dev-2"],
+			"/Users/test",
+			"simulated-eviction-retry-2",
+		);
+		expect(retryScripts.action).toContain(
+			'"oab-10.1/dev-2/simulated-eviction-retry-2.md"',
+		);
+		expect(scripts.cleanup).toContain("keepServerState");
+		expect(scripts.cleanup).toContain("settingsTab.syncActions.pause()");
+		expect(scripts.cleanup).toContain("settingsTab.syncActions.resume()");
+		expect(() =>
+			createAc19CaseScripts("dev-1", vaults["dev-1"], "/Users/test"),
+		).toThrow("AC-19 service case requires dev-2");
+		expect(() =>
+			createAc19CaseScripts(
+				"dev-2",
+				"/Users/test/vaults/owner-personal",
+				"/Users/test",
+			),
+		).toThrow("Unauthorized vault target");
+		const captureReload = createAc19CaptureReloadScripts(
+			vaults["dev-1"],
+			"/Users/test",
+		);
+		expect(captureReload.capture).toContain(
+			'getBasePath() !== "/Users/test/vaults/obsidian-ai-bridge-dev"',
+		);
+		expect(captureReload.capture).toContain('deviceName !== "oab-10.1 dev-1"');
+		expect(captureReload.capture).not.toContain("disablePlugin");
+		expect(captureReload.capture).not.toContain("resume()");
+		expect(captureReload.capture).not.toContain(
+			"globalThis.__oab10Ac19Capture",
+		);
+		expect(captureReload.prepareReloadVerification).toContain(
+			".ai-bridge/oab-10.1-dev-1-baseline.json",
+		);
+		expect(captureReload.prepareReloadVerification).toContain("adapter.write");
+		expect(
+			classifyEnrollmentPath(".ai-bridge/oab-10.1-dev-1-baseline.json", 0),
+		).toBe("excluded");
+		expect(captureReload.reloadVerification).toContain(
+			"adapter.read(baselinePath)",
+		);
+		expect(captureReload.reloadVerification).not.toContain(
+			"globalThis.__oab10Ac19Capture",
+		);
+		expect(captureReload.reloadVerification).toContain(
+			'deviceName !== "oab-10.1 dev-1"',
+		);
+		expect(captureReload.reloadVerification).toContain(
+			"AC19_RELOAD_ASSERT_PAUSED",
+		);
+		expect(captureReload.reloadVerification).toContain(
+			'syncStatus?.().state !== "paused"',
+		);
+		expect(captureReload.reloadVerification).toContain("pendingApplyDelta");
+		expect(captureReload.capture).not.toContain("resume()");
+		expect(captureReload.reloadVerification).not.toContain("resume()");
+		expect(
+			() =>
+				new Function(
+					createCaseScript("AC-19", scripts.action, scripts.cleanup),
+				),
+		).not.toThrow();
+		expect(
+			() => new Function(createCaseScript("AC-19", captureReload.capture, "")),
+		).not.toThrow();
+		expect(
+			() =>
+				new Function(
+					createCaseScript(
+						"AC-19",
+						captureReload.prepareReloadVerification,
+						"",
+					),
+				),
+		).not.toThrow();
+		expect(
+			() =>
+				new Function(
+					createCaseScript("AC-19", captureReload.reloadVerification, ""),
+				),
+		).not.toThrow();
+		expect(
+			safeCaseResult("AC-19", "service", {
+				status: "passed",
+				cleanupStatus: "passed",
+				caseEvidence: {
+					ac19: {
+						captureReload: false,
+						attentionUnchanged: true,
+						baselineSynced: true,
+						confirmationVisible: true,
+						placeholderExcluded: true,
+						serviceSourceLive: true,
+						deleteOrRenameOperationCount: 0,
+						initialPendingOperationCount: 0,
+						initialPendingApplyCount: 0,
+						initialAttentionCount: 4,
+						initialConfirmationCount: 0,
+						pendingOperationDelta: 0,
+						pendingApplyDelta: 0,
+						attentionDelta: 0,
+						confirmationDelta: 1,
+						clientId: "private-client-id",
+					},
+				},
+				clientId: "client-result",
+			}),
+		).toMatchObject({
+			caseId: "AC-19",
+			status: "passed",
+			evidence: "service",
+			ac19Evidence: {
+				captureReload: false,
+				attentionUnchanged: true,
+				baselineSynced: true,
+				confirmationVisible: true,
+				placeholderExcluded: true,
+				serviceSourceLive: true,
+				deleteOrRenameOperationCount: 0,
+			},
+		});
+	});
+
+	it.each(
+		[
+			createAc19CaseScripts("dev-2", vaults["dev-2"], "/Users/test"),
+			createAc19CaptureReloadScripts(vaults["dev-1"], "/Users/test"),
+		]
+			.flatMap((scripts) => Object.values(scripts))
+			.flatMap((script) =>
+				[...script.matchAll(/throw new Error\("(AC19_[A-Z0-9_]+)"\)/g)].map(
+					(match) => match[1],
+				),
+			)
+			.filter((label, index, labels) => labels.indexOf(label) === index),
+	)("accepts generated AC-19 failure label %s", (label) => {
+		const output = `OAB8CASE:${JSON.stringify({
+			caseId: "AC-19",
+			status: "failed",
+			failureStage: "action",
+			failureReason: label,
+			cleanupStatus: "passed",
+		})}`;
+		expect(parseSafeCaseResult(output, "AC-19", "service").failureReason).toBe(
+			label,
+		);
+	});
+
+	it("projects AC-19 baseline counts with nonzero historical attention", () => {
+		const scripts = createAc19CaseScripts(
+			"dev-2",
+			vaults["dev-2"],
+			"/Users/test",
+		);
+		expect(scripts.action).toContain("initialAttentionCount");
+		expect(scripts.action).toContain("attentionDelta");
+		expect(scripts.action).toContain("readCurrentAuthority");
+		expect(scripts.action).toContain("JSON.stringify(settled.attention)");
+		expect(scripts.action).not.toContain('syncStatus?.().state !== "settled"');
+		expect(scripts.action).not.toContain("initial.attention?.length");
+		expect(scripts.action).not.toContain("serviceAfter.head_seq");
+		const result = safeCaseResult("AC-19", "service", {
+			status: "passed",
+			cleanupStatus: "passed",
+			caseEvidence: {
+				ac19: {
+					captureReload: false,
+					attentionUnchanged: true,
+					baselineSynced: true,
+					confirmationVisible: true,
+					placeholderExcluded: true,
+					serviceSourceLive: true,
+					deleteOrRenameOperationCount: 0,
+					initialPendingOperationCount: 0,
+					initialPendingApplyCount: 0,
+					initialAttentionCount: 4,
+					initialConfirmationCount: 0,
+					pendingOperationDelta: 0,
+					pendingApplyDelta: 0,
+					attentionDelta: 0,
+					confirmationDelta: 1,
+				},
+			},
+		});
+		expect(result).toMatchObject({
+			status: "passed",
+			ac19Evidence: {
+				initialPendingOperationCount: 0,
+				initialPendingApplyCount: 0,
+				initialAttentionCount: 4,
+				initialConfirmationCount: 0,
+				pendingOperationDelta: 0,
+				pendingApplyDelta: 0,
+				attentionDelta: 0,
+				confirmationDelta: 1,
+			},
+		});
+		const captureReloadResult = safeCaseResult("AC-19", "local", {
+			status: "passed",
+			cleanupStatus: "passed",
+			caseEvidence: {
+				ac19: {
+					captureReload: true,
+					attentionUnchanged: true,
+					baselineSynced: false,
+					confirmationVisible: true,
+					placeholderExcluded: true,
+					serviceSourceLive: null,
+					deleteOrRenameOperationCount: 0,
+					initialPendingOperationCount: 1,
+					initialPendingApplyCount: 1,
+					initialAttentionCount: 2,
+					initialConfirmationCount: 1,
+					pendingOperationDelta: 0,
+					pendingApplyDelta: 0,
+					attentionDelta: 0,
+					confirmationDelta: 0,
+				},
+			},
+		});
+		expect(captureReloadResult).toMatchObject({
+			status: "passed",
+			evidence: "local",
+			ac19Evidence: {
+				captureReload: true,
+				attentionUnchanged: true,
+				serviceSourceLive: null,
+				initialPendingOperationCount: 1,
+				initialPendingApplyCount: 1,
+				initialAttentionCount: 2,
+			},
+		});
+	});
+
 	it("projects only safe AC-04 revision comparison fields", () => {
 		expect(
 			safeAc04BaselineInspection({
@@ -304,6 +584,118 @@ describe("desktop acceptance safety", () => {
 		).toThrow("Unauthorized AC-02 service path");
 	});
 
+	it("splits large install bundles into guarded CLI payloads", () => {
+		const scripts = createInstallPayloadScripts(
+			"dev-1",
+			"/Users/test/vaults/obsidian-ai-bridge-dev",
+			'{"id":"ai-bridge","version":"0.1.0"}',
+			"synthetic bundle ".repeat(80_000),
+			"/Users/test",
+		);
+		expect(scripts.chunks.length).toBeGreaterThan(10);
+		for (const script of [
+			scripts.initialize,
+			...scripts.chunks,
+			scripts.finish,
+			scripts.cleanup,
+		]) {
+			expect(Buffer.byteLength(script)).toBeLessThan(65_536);
+			expect(script).toContain(
+				'adapter.getBasePath() !== "/Users/test/vaults/obsidian-ai-bridge-dev"',
+			);
+			expect(() => new Function(script)).not.toThrow();
+		}
+		expect(scripts.initialize).toContain("OAB8INSTALLINIT:");
+		expect(scripts.finish).toContain("await adapter.write(backup, old)");
+		expect(scripts.cleanup).toContain(
+			'delete globalThis["__oabInstallPayload"]',
+		);
+	});
+
+	it("verifies paused reload state from an excluded local baseline", async () => {
+		const fixture = createAc19FixturePaths("dev-1");
+		const baselinePath = ".ai-bridge/oab-10.1-dev-1-baseline.json";
+		const files = new Map<string, string>();
+		const folders = new Set<string>();
+		const state = {
+			pending_ops: [],
+			pending_apply: [],
+			attention: [],
+			coexistence_confirmations: [
+				{
+					id: "confirmation-id",
+					path: fixture.source,
+					observed_epoch: "a".repeat(32),
+				},
+			],
+			unavailable_paths: [fixture.source],
+			base: {},
+			epoch: "a".repeat(32),
+		};
+		const adapter = {
+			getBasePath: () => vaults["dev-1"],
+			exists: async (path: string) => files.has(path) || folders.has(path),
+			mkdir: async (path: string) => {
+				folders.add(path);
+			},
+			write: async (path: string, content: string) => {
+				files.set(path, content);
+			},
+			read: async (path: string) => {
+				const content = files.get(path);
+				if (content === undefined) throw new Error("missing local baseline");
+				return content;
+			},
+			remove: async (path: string) => {
+				files.delete(path);
+			},
+		};
+		const plugin = {
+			journal: { snapshot: () => state },
+			desktopSync: { isBusy: false },
+			settingsValue: { coexistenceMode: true, deviceName: "oab-10.1 dev-1" },
+			syncPaused: true,
+			syncActive: false,
+			sessionStatus: "connected",
+			syncStatus: () => ({ state: "paused" }),
+		};
+		const app = {
+			vault: {
+				adapter,
+				getAbstractFileByPath: (path: string) =>
+					path === fixture.placeholder ? { path } : null,
+			},
+			plugins: { plugins: { "ai-bridge": plugin } },
+		};
+		const scripts = createAc19CaptureReloadScripts(
+			vaults["dev-1"],
+			"/Users/test",
+		);
+		/** Runs one guarded host script against the synthetic adapter. */
+		const execute = async (action: string) => {
+			const script = new Function(
+				"app",
+				`return ${createCaseScript("AC-19", action, "")}`,
+			) as (app: unknown) => Promise<string>;
+			return script(app);
+		};
+		const prepare = await execute(scripts.prepareReloadVerification);
+		expect(parseSafeCaseResult(prepare, "AC-19", "local").status).toBe(
+			"passed",
+		);
+		expect(files.has(baselinePath)).toBe(true);
+		const verified = await execute(scripts.reloadVerification);
+		expect(parseSafeCaseResult(verified, "AC-19", "local")).toMatchObject({
+			status: "passed",
+			ac19Evidence: {
+				captureReload: true,
+				confirmationDelta: 0,
+				initialConfirmationCount: 1,
+			},
+		});
+		expect(files.has(baselinePath)).toBe(false);
+	});
+
 	it("returns installed artifact hashes after host read-back", () => {
 		const script = createInstallScript(
 			"dev-1",
@@ -388,17 +780,27 @@ describe("desktop acceptance safety", () => {
 				},
 			},
 		};
-		const script = createInstallScript(
+		const scripts = createInstallPayloadScripts(
 			"dev-1",
 			basePath,
 			manifestText,
 			checkedBundle,
 			"/Users/test",
 		);
-		const execute = new Function("app", `return ${script}`) as (
-			app: unknown,
-		) => Promise<string>;
-		const output = await execute(app);
+		await (
+			new Function("app", `return ${scripts.initialize}`) as (
+				app: unknown,
+			) => unknown
+		)(app);
+		for (const chunk of scripts.chunks)
+			await (
+				new Function("app", `return ${chunk}`) as (app: unknown) => unknown
+			)(app);
+		const output = (await (
+			new Function("app", `return ${scripts.finish}`) as (
+				app: unknown,
+			) => unknown
+		)(app)) as string;
 		const expected = {
 			version: "0.1.0",
 			mainSha256: createHash("sha256").update(checkedBundle).digest("hex"),

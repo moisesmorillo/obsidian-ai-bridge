@@ -106,6 +106,98 @@ describe("DesktopSyncController", () => {
 		controller.close();
 	});
 
+	it("captures and suppresses a destructive event before debounce and while paused", async () => {
+		const captured: string[] = [];
+		const admitted: string[] = [];
+		const controller = new DesktopSyncController({
+			cycle: async () => undefined,
+			onCaptureEvent: async (event) => {
+				captured.push(event.path);
+				return event.type === "delete" || event.path.endsWith(".icloud");
+			},
+			onEvent: async (event) => {
+				admitted.push(event.path);
+			},
+			host: {
+				setTimeout: () => 1,
+				clearTimeout: () => undefined,
+				setInterval: () => 2,
+				clearInterval: () => undefined,
+			},
+		});
+		controller.pause();
+		await controller.observe({ type: "delete", path: "captured.md" });
+		await controller.observe({ type: "create", path: "notes/a.md.icloud" });
+		expect(captured).toEqual(["captured.md", "notes/a.md.icloud"]);
+		expect(admitted).toEqual([]);
+		await controller.resume();
+		expect(admitted).toEqual([]);
+		controller.close();
+	});
+
+	it("rechecks current coexistence mode before delayed event admission", async () => {
+		let enabled = false;
+		const captured: string[] = [];
+		const admitted: string[] = [];
+		const timeouts: Array<() => void> = [];
+		const controller = new DesktopSyncController({
+			cycle: async () => undefined,
+			onCaptureEvent: async (event) => {
+				if (!enabled || event.type !== "delete") return false;
+				captured.push(event.path);
+				return true;
+			},
+			onEvent: async (event) => {
+				admitted.push(event.path);
+			},
+			host: {
+				setTimeout: (callback) => {
+					timeouts.push(callback);
+					return timeouts.length;
+				},
+				clearTimeout: () => undefined,
+				setInterval: () => 1,
+				clearInterval: () => undefined,
+			},
+		});
+		await controller.observe({ type: "delete", path: "late.md" });
+		enabled = true;
+		timeouts[0]?.();
+		await controller.waitForIdle();
+		expect(captured).toEqual(["late.md"]);
+		expect(admitted).toEqual([]);
+		controller.close();
+	});
+
+	it("retains later events when capture blocks an active event drain", async () => {
+		let blocked = false;
+		const observed: string[] = [];
+		const controller = new DesktopSyncController({
+			cycle: async () => undefined,
+			isEffectBlocked: () => blocked,
+			onEvent: async (event) => {
+				observed.push(event.path);
+				if (event.path === "first.md") blocked = true;
+			},
+			host: {
+				setTimeout: () => 1,
+				clearTimeout: () => undefined,
+				setInterval: () => 2,
+				clearInterval: () => undefined,
+			},
+		});
+		controller.pause();
+		await controller.observe({ type: "modify", path: "first.md" });
+		await controller.observe({ type: "modify", path: "second.md" });
+		await controller.resume();
+
+		expect(observed).toEqual(["first.md"]);
+		blocked = false;
+		await controller.syncNow();
+		expect(observed).toEqual(["first.md", "second.md"]);
+		controller.close();
+	});
+
 	it("drops terminal invalid paths before they can block valid queued events", async () => {
 		const events: string[] = [];
 		const cycles = vi.fn(async () => undefined);

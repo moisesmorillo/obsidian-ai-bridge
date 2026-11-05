@@ -9,6 +9,8 @@ interface CapturedSyncActions {
 	pause(): void;
 	/** Resumes the active controller after composition setup. */
 	resume(): void;
+	/** Confirms one durable observation and starts its immediate sync cycle. */
+	confirmCoexistence(id: string): void;
 }
 
 const host = vi.hoisted(() => ({
@@ -24,7 +26,10 @@ const host = vi.hoisted(() => ({
 	syncActions: null as CapturedSyncActions | null,
 	saveDataAction: null as ((data: unknown) => Promise<void>) | null,
 	state: null as unknown,
+	payloads: new Map<string, Uint8Array>(),
+	unavailablePaths: new Set<string>(),
 	failSave: false,
+	failLocalSave: false,
 	loadState: null as (() => unknown) | null,
 	vaultListeners: [] as Array<{
 		event: string;
@@ -33,6 +38,7 @@ const host = vi.hoisted(() => ({
 	compositionNames: [] as string[],
 	compositionDisposals: [] as string[],
 	publicationEvents: [] as PublicationEvent[],
+	publicationStages: [] as string[],
 	syncCycles: 0,
 	cycleGate: null as {
 		/** Signals that the controlled synchronization phase reached its wait. */
@@ -80,10 +86,19 @@ vi.mock("obsidian", () => ({
 					if (index >= 0) host.vaultListeners.splice(index, 1);
 				},
 				adapter: {
-					exists: async () => false,
+					stat: async (path: string) =>
+						host.unavailablePaths.has(path)
+							? { type: "file", mtime: 0, size: 0 }
+							: null,
+					exists: async (path: string) => host.payloads.has(path),
 					mkdir: async () => undefined,
-					readBinary: async () => new ArrayBuffer(0),
-					writeBinary: async () => undefined,
+					readBinary: async (path: string) => {
+						const bytes = host.payloads.get(path);
+						return bytes ? bytes.slice().buffer : new ArrayBuffer(0);
+					},
+					writeBinary: async (path: string, value: ArrayBuffer) => {
+						host.payloads.set(path, new Uint8Array(value).slice());
+					},
 				},
 			},
 			loadLocalStorage: (key: string) => {
@@ -93,6 +108,7 @@ vi.mock("obsidian", () => ({
 			},
 			saveLocalStorage: (_key: string, value: unknown) => {
 				host.calls.push("saveLocalStorage");
+				if (host.failLocalSave) throw new Error("local storage write failed");
 				if (!host.failSave) host.state = structuredClone(value);
 			},
 		};
@@ -117,13 +133,18 @@ vi.mock("../src/sync/create-publication", () => ({
 				observe: async (event: PublicationEvent) => {
 					host.publicationEvents.push(structuredClone(event));
 				},
-				scan: async () => undefined,
-				flush: async () => undefined,
+				scan: async () => {
+					host.publicationStages.push("scan");
+				},
+				flush: async () => {
+					host.publicationStages.push("flush");
+				},
 			},
 			reconciliation: {
 				lastHead: null,
 				/** Counts actual controller cycles and waits at a test-selected boundary. */
 				resume: async () => {
+					host.publicationStages.push("resume");
 					host.syncCycles += 1;
 					const gate = host.cycleGate;
 					if (!gate) return;
@@ -133,6 +154,7 @@ vi.mock("../src/sync/create-publication", () => ({
 				},
 				enroll: async () => undefined,
 				replay: async () => {
+					host.publicationStages.push("replay");
 					const gate = host.cycleGate;
 					if (!gate) return;
 					host.cycleGate = null;
@@ -155,7 +177,7 @@ vi.mock("../src/settings", () => ({
 		constructor(...args: unknown[]) {
 			host.serverUrlChange = args[5] as (url: string) => Promise<void>;
 			host.deviceNameChange = args[6] as (name: string) => Promise<void>;
-			host.syncActions = args[9] as CapturedSyncActions;
+			host.syncActions = args[10] as CapturedSyncActions;
 		}
 
 		/** Satisfies the composition status-refresh call. */
@@ -253,12 +275,16 @@ describe("AIBridgePlugin device-local lifecycle", () => {
 		host.syncActions = null;
 		host.saveDataAction = null;
 		host.state = null;
+		host.payloads.clear();
+		host.unavailablePaths.clear();
 		host.failSave = false;
+		host.failLocalSave = false;
 		host.loadState = null;
 		host.vaultListeners.splice(0);
 		host.compositionNames.splice(0);
 		host.compositionDisposals.splice(0);
 		host.publicationEvents.splice(0);
+		host.publicationStages.splice(0);
 		host.syncCycles = 0;
 		host.cycleGate = null;
 	});
@@ -306,6 +332,229 @@ describe("AIBridgePlugin device-local lifecycle", () => {
 			vi.unstubAllGlobals();
 		}
 	});
+	it("restores device-local Pause before startup and saves Resume locally", async () => {
+		host.settingsData = { coexistenceMode: true, syncPaused: true };
+		host.state = {
+			version: 1,
+			device_id: "018f47b2-5c00-7000-8000-000000000001",
+			pending_ops: [],
+			sync_paused: true,
+		};
+		const plugin = await startConnectedPlugin();
+		try {
+			await settleSyncEffects(plugin);
+			expect(Reflect.get(plugin, "syncPaused")).toBe(true);
+			expect(host.publicationStages).toEqual([]);
+			expect(host.syncCycles).toBe(0);
+			host.syncActions?.resume();
+			await settleSyncEffects(plugin);
+			expect(Reflect.get(plugin, "syncPaused")).toBe(false);
+			expect(host.state).toMatchObject({ sync_paused: false });
+			expect(host.settingsData).toEqual({
+				coexistenceMode: true,
+				syncPaused: true,
+			});
+			expect(host.syncCycles).toBeGreaterThan(0);
+			host.syncActions?.pause();
+			await settleSyncEffects(plugin);
+			expect(Reflect.get(plugin, "syncPaused")).toBe(true);
+			expect(host.state).toMatchObject({ sync_paused: true });
+		} finally {
+			plugin.onunload();
+			vi.useRealTimers();
+			vi.unstubAllGlobals();
+		}
+	});
+
+	it("ignores shared Pause settings when no local Pause record exists", async () => {
+		host.settingsData = { coexistenceMode: true, syncPaused: true };
+		const plugin = await startConnectedPlugin();
+		try {
+			await settleSyncEffects(plugin);
+			expect(Reflect.get(plugin, "syncPaused")).toBe(false);
+			expect(host.syncCycles).toBeGreaterThan(0);
+		} finally {
+			plugin.onunload();
+			vi.useRealTimers();
+			vi.unstubAllGlobals();
+		}
+	});
+
+	it("keeps Pause active and reports attention when its local save fails", async () => {
+		const plugin = await startConnectedPlugin();
+		try {
+			host.failLocalSave = true;
+			host.syncActions?.pause();
+			await settleSyncEffects(plugin);
+			expect(Reflect.get(plugin, "syncPaused")).toBe(true);
+			expect(
+				(Reflect.get(plugin, "journal") as DeviceJournal).attentionReason,
+			).toBeTruthy();
+			expect(Reflect.get(plugin, "settingsValue")).not.toHaveProperty(
+				"syncPaused",
+			);
+		} finally {
+			plugin.onunload();
+			vi.useRealTimers();
+			vi.unstubAllGlobals();
+		}
+	});
+
+	it("keeps Resume blocked when its local save fails", async () => {
+		host.state = {
+			version: 1,
+			device_id: "018f47b2-5c00-7000-8000-000000000001",
+			pending_ops: [],
+			sync_paused: true,
+		};
+		const plugin = await startConnectedPlugin();
+		try {
+			host.failLocalSave = true;
+			host.syncActions?.resume();
+			await settleSyncEffects(plugin);
+			expect(Reflect.get(plugin, "syncPaused")).toBe(true);
+			expect(host.syncCycles).toBe(0);
+			expect(
+				(Reflect.get(plugin, "journal") as DeviceJournal).attentionReason,
+			).toBeTruthy();
+		} finally {
+			plugin.onunload();
+			vi.useRealTimers();
+			vi.unstubAllGlobals();
+		}
+	});
+
+	it("does not persist a stale Pause after plugin unload", async () => {
+		const plugin = await startConnectedPlugin();
+		const journal = Reflect.get(plugin, "journal") as DeviceJournal;
+		host.syncActions?.pause();
+		plugin.onunload();
+		await Promise.resolve();
+		await Promise.resolve();
+		expect(journal.snapshot().sync_paused).toBe(false);
+		expect(host.state).toMatchObject({ sync_paused: false });
+	});
+
+	it("keeps historical work unchanged when capture fences plugin reload", async () => {
+		host.settingsData = { coexistenceMode: true };
+		const plugin = await startConnectedPlugin(false);
+		const journal = Reflect.get(plugin, "journal") as DeviceJournal;
+		const epoch = "d".repeat(32);
+		await journal.resetEpoch(epoch);
+		await journal.enqueue(
+			{
+				op: "put",
+				path: "history/queued.md",
+				precondition: { kind: "absent" },
+			},
+			new TextEncoder().encode("historical operation payload"),
+		);
+		await journal.beginApply({
+			seq: 2,
+			op: "put",
+			path: "history/pending-apply.md",
+			etag: `"${epoch}.2"`,
+			hash: "e".repeat(64),
+			origin: "remote",
+			at: 100,
+		});
+		await journal.recordAttention("history/attention.md", "historical blocker");
+		host.syncActions?.pause();
+		const session = Reflect.get(plugin, "session") as DeviceSession;
+		const sessionHost = Reflect.get(session, "host") as DeviceSessionHost;
+		sessionHost.statusChanged("connected");
+		const controller = Reflect.get(
+			plugin,
+			"desktopSync",
+		) as DesktopSyncController;
+		const fixture = "oab-10.1/dev-1/simulated-eviction.md";
+		host.unavailablePaths.add(`${fixture}.icloud`);
+		emitVaultEvent("delete", { path: fixture });
+		await settleController(controller);
+		emitVaultEvent("create", { path: `${fixture}.icloud` });
+		await settleController(controller);
+		const captured = journal.snapshot();
+		const historical = structuredClone({
+			pending_ops: captured.pending_ops,
+			pending_apply: captured.pending_apply,
+			attention: captured.attention,
+		});
+		expect(captured.coexistence_confirmations).toHaveLength(1);
+		expect(captured.unavailable_paths).toContain(fixture);
+		plugin.onunload();
+		host.publicationStages.splice(0);
+		host.syncCycles = 0;
+
+		const reloaded = await startConnectedPlugin();
+		try {
+			await settleSyncEffects(reloaded);
+			const afterReload = (
+				Reflect.get(reloaded, "journal") as DeviceJournal
+			).snapshot();
+			expect(afterReload.coexistence_confirmations).toEqual(
+				captured.coexistence_confirmations,
+			);
+			expect(afterReload.unavailable_paths).toContain(fixture);
+			expect(afterReload.base[`${fixture}.icloud`]).toBeUndefined();
+			expect(
+				afterReload.pending_ops.some(
+					(operation: (typeof afterReload.pending_ops)[number]) =>
+						operation.path === `${fixture}.icloud` ||
+						(operation.op === "rename" && operation.to === `${fixture}.icloud`),
+				),
+			).toBe(false);
+			expect({
+				pending_ops: afterReload.pending_ops,
+				pending_apply: afterReload.pending_apply,
+				attention: afterReload.attention,
+			}).toEqual(historical);
+			expect(host.publicationStages).toEqual([]);
+			expect(host.syncCycles).toBe(0);
+		} finally {
+			reloaded.onunload();
+			vi.useRealTimers();
+			vi.unstubAllGlobals();
+		}
+	});
+
+	it("stops later cycle stages when capture begins during recovery", async () => {
+		host.settingsData = { coexistenceMode: true };
+		const plugin = await startConnectedPlugin();
+		const controller = Reflect.get(
+			plugin,
+			"desktopSync",
+		) as DesktopSyncController;
+		const journal = Reflect.get(plugin, "journal") as DeviceJournal;
+		let startCycle: (() => void) | undefined;
+		let releaseCycle: (() => void) | undefined;
+		const started = new Promise<void>((resolve) => {
+			startCycle = resolve;
+		});
+		const release = new Promise<void>((resolve) => {
+			releaseCycle = resolve;
+		});
+		host.publicationStages.splice(0);
+		host.cycleGate = { started: () => startCycle?.(), wait: release };
+		const cycle = controller.syncNow();
+		await started;
+		try {
+			emitVaultEvent("delete", { path: "notes/captured.md" });
+			for (let turn = 0; turn < 20; turn += 1) {
+				if (journal.snapshot().coexistence_confirmations.length > 0) break;
+				await Promise.resolve();
+			}
+			expect(journal.snapshot().coexistence_confirmations).toHaveLength(1);
+			releaseCycle?.();
+			await cycle;
+			expect(host.publicationStages).toEqual(["resume"]);
+		} finally {
+			releaseCycle?.();
+			plugin.onunload();
+			vi.useRealTimers();
+			vi.unstubAllGlobals();
+		}
+	});
+
 	it("creates a paused controller after connection from a disconnected state", async () => {
 		const plugin = await startConnectedPlugin(false);
 		try {
@@ -846,11 +1095,13 @@ describe("AIBridgePlugin device-local lifecycle", () => {
 			{
 				serverUrl: "https://obsidian-bridge.mmorillo.dev",
 				deviceName: "oab-8.8 dev-1",
+				coexistenceMode: false,
 			},
 		]);
 		expect(Reflect.get(plugin, "settingsValue")).toEqual({
 			serverUrl: "https://obsidian-bridge.mmorillo.dev",
 			deviceName: "oab-8.8 dev-1",
+			coexistenceMode: false,
 		});
 		plugin.onunload();
 	});
@@ -859,13 +1110,17 @@ describe("AIBridgePlugin device-local lifecycle", () => {
 		host.settingsData = {
 			serverUrl: "https://saved-service.test",
 			deviceName: "oab-8.8 dev-2",
+			coexistenceMode: false,
+			syncPaused: true,
 		};
 		const plugin = new AIBridgePlugin({} as App, {} as PluginManifest);
 		await plugin.onload();
 		expect(Reflect.get(plugin, "settingsValue")).toEqual({
 			serverUrl: "https://saved-service.test",
 			deviceName: "oab-8.8 dev-2",
+			coexistenceMode: false,
 		});
+		expect(Reflect.get(plugin, "syncPaused")).toBe(false);
 		plugin.onunload();
 	});
 
@@ -921,6 +1176,25 @@ describe("AIBridgePlugin device-local lifecycle", () => {
 		await expect(syncNow).rejects.toThrow("cycle failed");
 		expect(syncNowCatch).toHaveBeenCalledOnce();
 		expect(host.syncActions).not.toHaveProperty("rebuild");
+		plugin.onunload();
+	});
+
+	it("starts sync after an owner confirms a captured destructive event", async () => {
+		const plugin = new AIBridgePlugin({} as App, {} as PluginManifest);
+		await plugin.onload();
+		const confirm = vi.fn().mockResolvedValue({ key: "operation" });
+		const syncNow = vi.fn().mockResolvedValue(undefined);
+		Reflect.set(plugin, "coexistence", { confirm });
+		Reflect.set(plugin, "desktopSync", {
+			syncNow,
+			/** Satisfies plugin teardown for the controller test double. */
+			close: () => undefined,
+		});
+		host.syncActions?.confirmCoexistence("confirmation");
+		await Promise.resolve();
+		await Promise.resolve();
+		expect(confirm).toHaveBeenCalledWith("confirmation");
+		expect(syncNow).toHaveBeenCalledOnce();
 		plugin.onunload();
 	});
 

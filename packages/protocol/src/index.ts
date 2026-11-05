@@ -81,6 +81,7 @@ export {
 	DeviceTokenResponseSchema,
 } from "@protocol/schemas/device-auth";
 export type {
+	CoexistenceConfirmation,
 	DeviceBaseEntry,
 	DevicePrecondition,
 	DeviceState,
@@ -90,6 +91,7 @@ export type {
 	ReconciliationCheckpoint,
 } from "@protocol/schemas/device-state";
 export {
+	CoexistenceConfirmationSchema,
 	DEVICE_PAYLOAD_DIRECTORY,
 	DeviceAttentionSchema,
 	DeviceBaseEntrySchema,

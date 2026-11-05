@@ -353,6 +353,42 @@ export type PendingApply = z.infer<typeof PendingApplySchema>;
 /** Inferred confirmed local base state for one remote path. */
 export type DeviceBaseEntry = z.infer<typeof DeviceBaseEntrySchema>;
 
+/** Durable owner decision for one explicit local destructive event and its original revision observation. */
+export const CoexistenceConfirmationSchema = z.discriminatedUnion("kind", [
+	z
+		.object({
+			id: DeviceOperationKeySchema,
+			kind: z.literal("delete"),
+			path: DevicePathSchema,
+			observed_epoch: EpochSchema.nullable(),
+			observed_base: DeviceBaseEntrySchema.nullable(),
+			stale_reason: z.string().min(1).optional(),
+			at: z.number().int().nonnegative().safe(),
+		})
+		.strict(),
+	z
+		.object({
+			id: DeviceOperationKeySchema,
+			kind: z.literal("rename"),
+			path: DevicePathSchema,
+			to: DevicePathSchema,
+			observed_epoch: EpochSchema.nullable(),
+			observed_base: DeviceBaseEntrySchema.nullable(),
+			stale_reason: z.string().min(1).optional(),
+			at: z.number().int().nonnegative().safe(),
+		})
+		.strict()
+		.refine((item) => item.path !== item.to, {
+			message: "Rename source and destination must differ",
+			path: ["to"],
+		}),
+]);
+
+/** Inferred persisted confirmation; its observation is evidence, not refreshed authority. */
+export type CoexistenceConfirmation = z.infer<
+	typeof CoexistenceConfirmationSchema
+>;
+
 /** Expected local echo hashes are separate from confirmed base revisions. */
 export const DeviceExpectedWritesSchema = z.record(
 	DevicePathSchema,
@@ -476,6 +512,15 @@ export const DeviceStateSchema = z
 		expected_writes: DeviceExpectedWritesSchema.default({}),
 		reconciliation: ReconciliationCheckpointSchema.nullable().default(null),
 		attention: z.array(DeviceAttentionSchema).default([]),
+		coexistence_confirmations: z
+			.array(CoexistenceConfirmationSchema)
+			.refine(
+				(items) => new Set(items.map((item) => item.id)).size === items.length,
+				"Confirmation ids must be unique",
+			)
+			.default([]),
+		unavailable_paths: z.array(DevicePathSchema).default([]),
+		sync_paused: z.boolean().default(false),
 	})
 	.strict();
 

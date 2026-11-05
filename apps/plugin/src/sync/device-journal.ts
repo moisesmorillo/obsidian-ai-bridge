@@ -1,5 +1,7 @@
 import {
 	ChangeEntrySchema,
+	type CoexistenceConfirmation,
+	CoexistenceConfirmationSchema,
 	DEVICE_PAYLOAD_DIRECTORY,
 	type DeviceBaseEntry,
 	DeviceBaseEntrySchema,
@@ -693,6 +695,20 @@ export class DeviceJournal {
 		});
 	}
 
+	/** Saves device-local Pause state only while its lifecycle and generation remain current. */
+	async setSyncPaused(
+		paused: boolean,
+		isCurrent: () => boolean = () => true,
+	): Promise<void> {
+		return this.serialize(async () => {
+			this.assertOpen();
+			if (!isCurrent()) throw new Error("Pause update is stale");
+			await this.commit(
+				DeviceStateSchema.parse({ ...this.state, sync_paused: paused }),
+			);
+		});
+	}
+
 	/** Resolves sent work with its receipt-produced base. Rename receipts authorize only destination successors, never source successors. */
 	async resolve(
 		key: string,
@@ -894,6 +910,229 @@ export class DeviceJournal {
 					})),
 				],
 			});
+		});
+	}
+
+	/** Captures current authority or keeps an event visible without stale-base authority. */
+	async captureCoexistenceEvent(
+		event:
+			| { type: "delete"; path: string }
+			| { type: "rename"; path: string; to: string },
+		at: number,
+	): Promise<CoexistenceConfirmation> {
+		return this.serialize(async () => {
+			this.assertOpen();
+			const staleBase = this.state.stale_base_paths.includes(event.path);
+			const observed = {
+				id: createUuidV7(),
+				kind: event.type,
+				path: event.path,
+				observed_epoch: staleBase ? null : (this.state.epoch ?? null),
+				observed_base: staleBase ? null : (this.state.base[event.path] ?? null),
+				at,
+				...(staleBase
+					? {
+							stale_reason:
+								"The source base is stale after a vault epoch change.",
+						}
+					: {}),
+			};
+			const item = CoexistenceConfirmationSchema.parse(
+				event.type === "rename" ? { ...observed, to: event.to } : observed,
+			);
+			await this.commit({
+				...this.state,
+				coexistence_confirmations: [
+					...this.state.coexistence_confirmations,
+					item,
+				],
+			});
+			return item;
+		});
+	}
+
+	/** Adds one unavailable path without changing the last observed remote revision. */
+	async markUnavailable(path: string): Promise<void> {
+		return this.serialize(async () => {
+			this.assertOpen();
+			if (this.state.unavailable_paths.includes(path)) return;
+			await this.commit({
+				...this.state,
+				unavailable_paths: [...this.state.unavailable_paths, path],
+			});
+		});
+	}
+
+	/** Clears local placeholder protection only after metadata confirms availability. */
+	async clearUnavailable(path: string): Promise<void> {
+		return this.serialize(async () => {
+			this.assertOpen();
+			await this.commit({
+				...this.state,
+				unavailable_paths: this.state.unavailable_paths.filter(
+					(item) => item !== path,
+				),
+			});
+		});
+	}
+
+	/** Persists one captured destructive event before any publication or apply effects. */
+	async saveCoexistenceConfirmation(
+		confirmation: CoexistenceConfirmation,
+	): Promise<void> {
+		const item = CoexistenceConfirmationSchema.parse(confirmation);
+		return this.serialize(async () => {
+			this.assertOpen();
+			if (this.state.coexistence_confirmations.some(({ id }) => id === item.id))
+				return;
+			await this.commit({
+				...this.state,
+				coexistence_confirmations: [
+					...this.state.coexistence_confirmations,
+					item,
+				],
+			});
+		});
+	}
+
+	/** Keeps stale intent visible with a fixed owner-safe reason until the owner clears it. */
+	async markCoexistenceStale(id: string, reason: string): Promise<void> {
+		return this.serialize(async () => {
+			this.assertOpen();
+			await this.commit({
+				...this.state,
+				coexistence_confirmations: this.state.coexistence_confirmations.map(
+					(item) => (item.id === id ? { ...item, stale_reason: reason } : item),
+				),
+			});
+		});
+	}
+
+	/** Clears one owner decision without changing placeholder protection or remote authority. */
+	async clearCoexistenceConfirmation(id: string): Promise<void> {
+		return this.serialize(async () => {
+			this.assertOpen();
+			await this.commit({
+				...this.state,
+				coexistence_confirmations: this.state.coexistence_confirmations.filter(
+					(item) => item.id !== id,
+				),
+			});
+		});
+	}
+
+	/** Moves only current, non-stale confirmation authority into the durable outgoing queue. */
+	async confirmCoexistence(id: string): Promise<PendingOperation | null> {
+		return this.serialize(async () => {
+			this.assertOpen();
+			const confirmation = this.state.coexistence_confirmations.find(
+				(item) => item.id === id,
+			);
+			if (!confirmation) return null;
+			const base = confirmation.observed_base;
+			if (confirmation.stale_reason) return null;
+			if (
+				this.state.stale_base_paths.includes(confirmation.path) &&
+				confirmation.observed_epoch === this.state.epoch
+			) {
+				await this.commit({
+					...this.state,
+					coexistence_confirmations: this.state.coexistence_confirmations.map(
+						(item) =>
+							item.id === id
+								? {
+										...item,
+										stale_reason:
+											"The source base is stale after a vault epoch change.",
+									}
+								: item,
+					),
+				});
+				return null;
+			}
+			if (!base || base.deleted || !confirmation.observed_epoch) {
+				await this.commit({
+					...this.state,
+					coexistence_confirmations: this.state.coexistence_confirmations.map(
+						(item) =>
+							item.id === id
+								? {
+										...item,
+										stale_reason: "No live source revision was observed.",
+									}
+								: item,
+					),
+				});
+				return null;
+			}
+			if (
+				this.state.epoch !== confirmation.observed_epoch ||
+				!sameBaseEntry(this.state.base[confirmation.path], base)
+			) {
+				await this.commit({
+					...this.state,
+					coexistence_confirmations: this.state.coexistence_confirmations.map(
+						(item) =>
+							item.id === id
+								? {
+										...item,
+										stale_reason: "The observed source revision changed.",
+									}
+								: item,
+					),
+				});
+				return null;
+			}
+			const key = createUuidV7();
+			const payloadRef = `${DEVICE_PAYLOAD_DIRECTORY}${key}`;
+			const payload = new Uint8Array();
+			const hash = await digest(payload);
+			await this.storage.writePayload(payloadRef, payload);
+			const stored = await this.storage.readPayload(payloadRef);
+			if ((await digest(stored)) !== hash)
+				throw new Error("Payload verification failed");
+			const common = {
+				key,
+				payload_hash: hash,
+				payload_ref: payloadRef,
+				created_at: Date.now(),
+				attempts: 0,
+				state: "queued" as const,
+			};
+			const operation = PendingOperationSchema.parse(
+				confirmation.kind === "delete"
+					? {
+							...common,
+							op: "delete",
+							path: confirmation.path,
+							precondition: {
+								kind: "match",
+								epoch: confirmation.observed_epoch,
+								rev: base.rev,
+							},
+						}
+					: {
+							...common,
+							op: "rename",
+							path: confirmation.path,
+							to: confirmation.to,
+							precondition: {
+								kind: "match",
+								epoch: confirmation.observed_epoch,
+								rev: base.rev,
+							},
+							source_hash: base.hash,
+						},
+			);
+			this.assertOpen();
+			await this.commit({
+				...this.state,
+				pending_ops: [...this.state.pending_ops, operation],
+				coexistence_confirmations: this.state.coexistence_confirmations.filter(
+					(item) => item.id !== id,
+				),
+			});
+			return cloneOperation(operation);
 		});
 	}
 

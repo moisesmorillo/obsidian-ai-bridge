@@ -3,6 +3,7 @@ import type {
 	PendingOperation,
 } from "@obsidian-ai-bridge/protocol";
 import { describe, expect, it, vi } from "vitest";
+import { CoexistenceEffectFence } from "../src/sync/coexistence-effect-fence";
 import { DesktopSyncController } from "../src/sync/desktop-sync";
 import {
 	DeviceJournal,
@@ -62,6 +63,7 @@ class MemoryStorage implements DeviceJournalStorage {
 class MemoryVault implements TextVault {
 	readonly files = new Map<string, string>();
 	readonly binaryFiles = new Map<string, Uint8Array>();
+	readonly unavailable = new Set<string>();
 	readonly binaryReads: string[] = [];
 	readonly binaryReadTextDisabled = new Set<string>();
 	readonly binaryCreates: string[] = [];
@@ -74,6 +76,10 @@ class MemoryVault implements TextVault {
 	/** Pauses one vault read to test disposal between observation and a later effect. */
 	beforeRead: ((path: string) => Promise<void>) | null = null;
 	afterTrash: (() => void) | null = null;
+	/** Reports placeholder state without reading path bytes. */
+	async isUnavailable(path: string): Promise<boolean> {
+		return this.unavailable.has(path);
+	}
 	/** Returns exact current text or null for an absent path. */
 	async read(path: string): Promise<string | null> {
 		const beforeRead = this.beforeRead;
@@ -366,6 +372,50 @@ async function openController(
 }
 
 describe("PublicationController", () => {
+	it("finishes one issued mutation but fences later sends after capture", async () => {
+		const { controller, journal, remote, vault } = await openController();
+		let blocked = false;
+		Reflect.set(
+			Reflect.get(controller, "options"),
+			"isEffectBlocked",
+			() => blocked,
+		);
+		vault.files.set("first.md", "first");
+		vault.files.set("second.md", "second");
+		await controller.scan();
+		let markStarted: (() => void) | undefined;
+		let releaseFirst: (() => void) | undefined;
+		const started = new Promise<void>((resolve) => {
+			markStarted = resolve;
+		});
+		const release = new Promise<void>((resolve) => {
+			releaseFirst = resolve;
+		});
+		const calls: string[] = [];
+		const put = remote.put.bind(remote);
+		remote.put = async (...args) => {
+			calls.push(args[0]);
+			if (args[0] === "first.md") {
+				markStarted?.();
+				await release;
+			}
+			return put(...args);
+		};
+
+		const flushing = controller.flush();
+		await started;
+		blocked = true;
+		releaseFirst?.();
+		await flushing;
+
+		expect(calls).toEqual(["first.md"]);
+		expect(journal.snapshot().pending_ops).toHaveLength(1);
+		expect(journal.snapshot().pending_ops[0]).toMatchObject({
+			path: "second.md",
+			state: "queued",
+		});
+	});
+
 	it("clears prior DELETE metadata before a new attempt", async () => {
 		const { journal, remote, vault } = await openController();
 		const path = "oab-8.8/ac-04/shared.md";
@@ -962,6 +1012,163 @@ describe("PublicationController", () => {
 		expect(remote.blobWrites[0]?.key).toBe(queued.key);
 		expect(journal.snapshot().base["notes/image.png"]?.deleted).toBe(false);
 	});
+
+	it("does not restore a startup-missing file when placeholder metadata marks it unavailable", async () => {
+		const { controller, journal, remote, vault } = await openController();
+		await journal.setBase("note.md", {
+			deleted: false,
+			rev: 1,
+			hash: await digestText("remote note"),
+		});
+		vault.unavailable.add("note.md");
+		await controller.scan();
+		expect(vault.creates).toEqual([]);
+		expect(remote.deletes).toEqual([]);
+		expect(journal.snapshot().unavailable_paths).toContain("note.md");
+	});
+
+	it("does not create a startup restore when capture closes admission during its pinned read", async () => {
+		const { controller, journal, remote, vault } = await openController();
+		const path = "note.md";
+		await journal.setBase(path, {
+			deleted: false,
+			rev: 6,
+			hash: "b".repeat(64),
+		});
+		let markReadStarted: (() => void) | undefined;
+		let releaseRead: (() => void) | undefined;
+		const readStarted = new Promise<void>((resolve) => {
+			markReadStarted = resolve;
+		});
+		const readGate = new Promise<void>((resolve) => {
+			releaseRead = resolve;
+		});
+		remote.readAuthority = async (_path, requestEpoch, rev) => {
+			markReadStarted?.();
+			await readGate;
+			return {
+				deleted: false,
+				text: "remote exact bytes",
+				epoch: requestEpoch,
+				rev,
+				hash: "b".repeat(64),
+			};
+		};
+		const fence = new CoexistenceEffectFence(
+			() => journal.snapshot().coexistence_confirmations.length > 0,
+		);
+		Reflect.set(Reflect.get(controller, "options"), "isEffectBlocked", () =>
+			fence.isBlocked(),
+		);
+		const scan = controller.scan();
+		await readStarted;
+		await journal.captureCoexistenceEvent({ type: "delete", path }, 100);
+		releaseRead?.();
+		await scan;
+
+		expect(vault.creates).toEqual([]);
+		expect(vault.files.has(path)).toBe(false);
+		expect(journal.snapshot().expected_writes).toEqual({});
+	});
+
+	it("does not restore startup content when a placeholder appears during its pinned read", async () => {
+		const { controller, journal, remote, vault } = await openController();
+		const path = "note.md";
+		await journal.setBase(path, {
+			deleted: false,
+			rev: 6,
+			hash: "b".repeat(64),
+		});
+		let markReadStarted: (() => void) | undefined;
+		let releaseRead: (() => void) | undefined;
+		const readStarted = new Promise<void>((resolve) => {
+			markReadStarted = resolve;
+		});
+		const readGate = new Promise<void>((resolve) => {
+			releaseRead = resolve;
+		});
+		remote.readAuthority = async (_path, requestEpoch, rev) => {
+			markReadStarted?.();
+			await readGate;
+			return {
+				deleted: false,
+				text: "remote exact bytes",
+				epoch: requestEpoch,
+				rev,
+				hash: "b".repeat(64),
+			};
+		};
+		const scan = controller.scan();
+		await readStarted;
+		vault.unavailable.add(path);
+		releaseRead?.();
+		await scan;
+
+		expect(vault.creates).toEqual([]);
+		expect(vault.files.has(path)).toBe(false);
+		expect(journal.snapshot().expected_writes).toEqual({});
+		expect(journal.snapshot().unavailable_paths).toContain(path);
+	});
+
+	it.each(["text", "binary"] as const)(
+		"does not trash stale rename %s bytes after capture closes admission",
+		async (kind) => {
+			const { controller, journal, vault } = await openController();
+			const path = "source.md";
+			const destination = "destination.md";
+			const content = "moved bytes";
+			const sourceHash = await digestText(content);
+			await journal.setBase(path, {
+				deleted: false,
+				rev: 2,
+				hash: "c".repeat(64),
+			});
+			const operation = await journal.enqueue(
+				{
+					op: "rename",
+					path,
+					to: destination,
+					precondition: { kind: "match", epoch, rev: 1 },
+					source_hash: sourceHash,
+				},
+				new TextEncoder().encode(content),
+			);
+			let blocked = false;
+			Reflect.set(
+				Reflect.get(controller, "options"),
+				"isEffectBlocked",
+				() => blocked,
+			);
+			if (kind === "binary") {
+				const bytes = new TextEncoder().encode(content);
+				vault.binaryFiles.set(destination, bytes);
+				const readBinary = vault.readBinary.bind(vault);
+				let reads = 0;
+				vault.readBinary = async (readPath) => {
+					const result = await readBinary(readPath);
+					if (readPath === destination && ++reads === 2) blocked = true;
+					return result;
+				};
+			} else {
+				vault.files.set(destination, content);
+				vault.binaryReadTextDisabled.add(destination);
+				vault.beforeRead = async (readPath) => {
+					if (readPath === destination) blocked = true;
+				};
+			}
+			const recover = Reflect.get(controller, "recoverStaleRename") as (
+				item: typeof operation,
+			) => Promise<boolean>;
+
+			expect(await recover.call(controller, operation)).toBe(false);
+			expect(vault.files.get(destination)).toBe(
+				kind === "text" ? content : undefined,
+			);
+			expect(vault.binaryFiles.has(destination)).toBe(kind === "binary");
+			expect(vault.trashes).toEqual([]);
+			expect(vault.binaryTrashes).toEqual([]);
+		},
+	);
 
 	it("restores a startup-missing file at the confirmed base without publishing a delete", async () => {
 		const { controller, journal, remote, vault } = await openController();

@@ -8,6 +8,7 @@ let activeElement: HTMLElement | null = null;
 class FakeElement {
 	textContent = "";
 	hidden = false;
+	disabled = false;
 	type = "";
 	readonly children: FakeElement[] = [];
 	private readonly attributes = new Map<string, string>();
@@ -98,6 +99,9 @@ function makeStatus(): SyncStatusProjection {
 	return {
 		state: "pending",
 		attention: [],
+		coexistenceConfirmations: [],
+		coexistenceEnabled: false,
+		unavailablePaths: [],
 		pendingPaths: [],
 		backup: "unknown",
 		capacity: "unknown",
@@ -127,6 +131,8 @@ describe("SyncStatusPanel", () => {
 			openPath: () => undefined,
 			unsupportedFiles: () => [],
 			excludedFiles: () => [],
+			confirmCoexistence: () => undefined,
+			keepServerState: () => undefined,
 		});
 		panel.render(container as unknown as HTMLElement, makeStatus());
 		container.findButton("Show unsupported files")?.focus();
@@ -147,6 +153,8 @@ describe("SyncStatusPanel", () => {
 			openPath: () => undefined,
 			unsupportedFiles: () => [],
 			excludedFiles: () => [],
+			confirmCoexistence: () => undefined,
+			keepServerState: () => undefined,
 		});
 		panel.render(container as unknown as HTMLElement, makeStatus());
 		container.findButton("Pause")?.focus();
@@ -170,6 +178,8 @@ describe("SyncStatusPanel", () => {
 			openPath: () => undefined,
 			unsupportedFiles: () => ["large.md"],
 			excludedFiles: () => [],
+			confirmCoexistence: () => undefined,
+			keepServerState: () => undefined,
 		});
 		panel.render(container as unknown as HTMLElement, makeStatus());
 		const button = container.findButton("Show unsupported files");
@@ -179,6 +189,71 @@ describe("SyncStatusPanel", () => {
 		expect(button?.getAttribute("aria-expanded")).toBe("true");
 		button?.click();
 		expect(button?.getAttribute("aria-expanded")).toBe("false");
+	});
+
+	it("shows safe confirmation actions and the coexistence risk notice", () => {
+		vi.stubGlobal("document", documentStub);
+		const container = new FakeElement("div");
+		const confirmed: string[] = [];
+		const kept: string[] = [];
+		const panel = new SyncStatusPanel({
+			syncNow: () => undefined,
+			pause: () => undefined,
+			resume: () => undefined,
+			reconnect: () => undefined,
+			openPath: () => undefined,
+			unsupportedFiles: () => [],
+			excludedFiles: () => [],
+			confirmCoexistence: (id) => confirmed.push(id),
+			keepServerState: (id) => kept.push(id),
+		});
+		panel.render(container as unknown as HTMLElement, {
+			...makeStatus(),
+			coexistenceEnabled: true,
+			unavailablePaths: ["notes/placeholder.md"],
+			coexistenceConfirmations: [
+				{
+					id: "delete-id",
+					kind: "delete",
+					path: "notes/a.md",
+					observed_epoch: null,
+					observed_base: null,
+					at: 1,
+					unavailable: true,
+					stale: true,
+				},
+				{
+					id: "rename-id",
+					kind: "rename",
+					path: "notes/b.md",
+					to: "notes/c.md",
+					observed_epoch: null,
+					observed_base: null,
+					at: 2,
+					unavailable: false,
+					stale: false,
+				},
+			],
+		});
+		expect(
+			container.children.some((child) =>
+				child.textContent.includes(
+					"iCloud and this plugin write the same files",
+				),
+			),
+		).toBe(true);
+		expect(
+			container.children.some((child) =>
+				child.textContent.includes("notes/placeholder.md: Unavailable"),
+			),
+		).toBe(true);
+		expect(container.findButton("Confirm delete notes/a.md")?.disabled).toBe(
+			true,
+		);
+		container.findButton("Keep server state notes/a.md")?.click();
+		container.findButton("Confirm rename notes/b.md to notes/c.md")?.click();
+		expect(kept).toEqual(["delete-id"]);
+		expect(confirmed).toEqual(["rename-id"]);
 	});
 
 	it("does not render a Rebuild action", () => {
@@ -192,6 +267,8 @@ describe("SyncStatusPanel", () => {
 			openPath: () => undefined,
 			unsupportedFiles: () => [],
 			excludedFiles: () => [],
+			confirmCoexistence: () => undefined,
+			keepServerState: () => undefined,
 		});
 		panel.render(container as unknown as HTMLElement, makeStatus());
 

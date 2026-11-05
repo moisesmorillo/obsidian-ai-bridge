@@ -25,6 +25,40 @@ import type {
 /** Identifies one authorized desktop vault and the exact path that Obsidian must resolve. */
 export type DesktopVaultId = "dev-1" | "dev-2";
 
+/** Isolated local fixture paths for one authorized synthetic AC-19 vault. */
+export interface Ac19FixturePaths {
+	/** Dedicated synthetic directory for the authorized test vault. */
+	root: string;
+	/** Eligible local note path used to seed the remote revision. */
+	source: string;
+	/** Excluded suffix placeholder used only to simulate an iCloud transition. */
+	placeholder: string;
+}
+
+/** Builds one eligible note and one excluded placeholder in an authorized AC-19 vault. */
+export function createAc19FixturePaths(
+	id: DesktopVaultId,
+	existingPaths: readonly string[] = [],
+	fixtureName = "simulated-eviction",
+): Ac19FixturePaths {
+	if (id !== "dev-1" && id !== "dev-2")
+		throw new Error("Unauthorized AC-19 test vault");
+	if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(fixtureName))
+		throw new Error("Invalid AC-19 fixture name");
+	const root = PathSchema.parse(`oab-10.1/${id}`);
+	const source = PathSchema.parse(`${root}/${fixtureName}.md`);
+	const placeholder = PathSchema.parse(`${source}.icloud`);
+	const existing = new Set(existingPaths.map((path) => PathSchema.parse(path)));
+	if (existing.has(source) || existing.has(placeholder))
+		throw new Error("AC-19 fixture path already exists");
+	if (
+		classifyEnrollmentPath(source, 0) === "excluded" ||
+		classifyEnrollmentPath(placeholder, 0) !== "excluded"
+	)
+		throw new Error("Invalid AC-19 fixture scope");
+	return { root, source, placeholder };
+}
+
 /** Final AC-30 checks that may expose one bounded mismatch observation. */
 const AC30_FINAL_ASSERTION_CODES = [
 	"AC30_ASSERT_FINAL_CALL_COUNT",
@@ -88,6 +122,45 @@ const AC30_SAFE_OBSERVATION_STATES = [
 
 /** Fixed failure labels accepted by generated case-result parsing. */
 const SAFE_CASE_FAILURE_CODES = [
+	"AC19_ASSERT_TARGET_VAULT",
+	"AC19_ASSERT_PLUGIN_CONTROLS",
+	"AC19_ASSERT_INITIAL_STATE",
+	"AC19_ASSERT_FIXTURE_COLLISION",
+	"AC19_ASSERT_BASELINE_SYNC",
+	"AC19_ASSERT_CONFIRMATION",
+	"AC19_ASSERT_PLACEHOLDER_EXCLUDED",
+	"AC19_ASSERT_REMOTE_AUTHORITY",
+	"AC19_ASSERT_SERVICE_PATH_ABSENT",
+	"AC19_ASSERT_PAUSE",
+	"AC19_ASSERT_CONFIRMATION_AND_UNAVAILABLE",
+	"AC19_ASSERT_BASELINE_DELTAS",
+	"AC19_ASSERT_SERVICE_UNCHANGED",
+	"AC19_CLEANUP_RESTORE_FAILED",
+	"AC19_CLEANUP_PAUSE_FAILED",
+	"AC19_CLEANUP_CONFIRMATION_MISSING",
+	"AC19_CLEANUP_AUTHORITY_UNKNOWN",
+	"AC19_CLEANUP_PLACEHOLDER_BLOCKED",
+	"AC19_CLEANUP_HISTORICAL_STATE_CHANGED",
+	"AC19_CLEANUP_SERVICE_CHANGED",
+	"AC19_CAPTURE_ASSERT_TARGET_VAULT",
+	"AC19_CAPTURE_ASSERT_PLUGIN_CONTROLS",
+	"AC19_CAPTURE_ASSERT_PAUSED",
+	"AC19_CAPTURE_ASSERT_FIXTURE_COLLISION",
+	"AC19_CAPTURE_ASSERT_INITIAL_STATE",
+	"AC19_CAPTURE_ASSERT_CONFIRMATION",
+	"AC19_CAPTURE_ASSERT_CAPTURE_ONLY",
+	"AC19_CAPTURE_ASSERT_BASELINE_DELTAS",
+	"AC19_BASELINE_ASSERT_TARGET_VAULT",
+	"AC19_BASELINE_ASSERT_PAUSED",
+	"AC19_BASELINE_ASSERT_CAPTURE_STATE",
+	"AC19_BASELINE_ASSERT_ALREADY_PRESENT",
+	"AC19_RELOAD_ASSERT_TARGET_VAULT",
+	"AC19_RELOAD_ASSERT_BASELINE_MISSING",
+	"AC19_RELOAD_ASSERT_BASELINE_INVALID",
+	"AC19_RELOAD_ASSERT_PLUGIN_CONTROLS",
+	"AC19_RELOAD_ASSERT_CONNECTED",
+	"AC19_RELOAD_ASSERT_PAUSED",
+	"AC19_RELOAD_ASSERT_HISTORY_CHANGED",
 	"AC30_PRECONDITION_FAILED",
 	"AC30_FIRST_BOUNDARY_FAILED",
 	"AC30_SUCCESSOR_BOUNDARY_FAILED",
@@ -185,8 +258,14 @@ const SAFE_CASE_FAILURE_CODES = [
 	"CLEANUP_TIMEOUT",
 ] as const;
 
-/** Fixed AC-31 operation boundaries that can appear in case diagnostics. */
+/** Fixed operation boundaries that can appear in safe case diagnostics. */
 const SAFE_CASE_FAILURE_BOUNDARIES = [
+	"AC19_READ_SERVICE_ABSENCE",
+	"AC19_SEED_BASELINE",
+	"AC19_WAIT_DELETE_CAPTURE",
+	"AC19_READ_SERVICE_AUTHORITY",
+	"AC19_RESOLVE_CONFIRMATION",
+	"AC19_RESTORE_SOURCE",
 	"AC31_READ_SERVICE_ABSENCE",
 	"AC31_SYNC_BASELINE",
 	"AC31_WAIT_BASELINE_IDLE",
@@ -297,6 +376,24 @@ export interface DesktopCaseSummary {
 	};
 	/** Private AC-13 before-case hash snapshot write result. */
 	privateSnapshotStatus?: "saved" | "failed" | "unavailable";
+	/** Safe baseline deltas for one synthetic AC-19 case without path or content data. */
+	ac19Evidence?: {
+		captureReload: boolean;
+		attentionUnchanged: boolean;
+		baselineSynced: boolean;
+		confirmationVisible: boolean;
+		placeholderExcluded: boolean;
+		serviceSourceLive: boolean | null;
+		deleteOrRenameOperationCount: number;
+		initialPendingOperationCount: number;
+		initialPendingApplyCount: number;
+		initialAttentionCount: number;
+		initialConfirmationCount: number;
+		pendingOperationDelta: number;
+		pendingApplyDelta: number;
+		attentionDelta: number;
+		confirmationDelta: number;
+	};
 	cleanupStatus: "passed" | "failed" | "unknown";
 }
 
@@ -473,6 +570,75 @@ export function safeCaseResult(
 					controllerResumed: rawControllerResumed,
 				}
 			: undefined;
+	const rawAc19Evidence =
+		caseId === "AC-19" && caseEvidence && typeof caseEvidence === "object"
+			? readRecordProperty(caseEvidence, "ac19").value
+			: null;
+	/** Returns an allowlisted boolean or null when AC-19 evidence is untrusted. */
+	const ac19Boolean = (key: string) => {
+		const value = readRecordProperty(rawAc19Evidence, key).value;
+		return typeof value === "boolean" ? value : null;
+	};
+	/** Returns a bounded integer count or delta without copying host objects. */
+	const ac19Integer = (key: string, allowNegative = false) => {
+		const value = readRecordProperty(rawAc19Evidence, key).value;
+		return Number.isSafeInteger(value) &&
+			(allowNegative
+				? Math.abs(value as number) <= 100_000
+				: (value as number) >= 0 && (value as number) <= 100_000)
+			? (value as number)
+			: null;
+	};
+	const ac19ServiceSourceLive = readRecordProperty(
+		rawAc19Evidence,
+		"serviceSourceLive",
+	).value;
+	const ac19Evidence =
+		ac19Boolean("captureReload") !== null &&
+		ac19Boolean("attentionUnchanged") !== null &&
+		ac19Boolean("baselineSynced") !== null &&
+		ac19Boolean("confirmationVisible") !== null &&
+		ac19Boolean("placeholderExcluded") !== null &&
+		(ac19ServiceSourceLive === null ||
+			typeof ac19ServiceSourceLive === "boolean") &&
+		ac19Integer("deleteOrRenameOperationCount") !== null &&
+		ac19Integer("initialPendingOperationCount") !== null &&
+		ac19Integer("initialPendingApplyCount") !== null &&
+		ac19Integer("initialAttentionCount") !== null &&
+		ac19Integer("initialConfirmationCount") !== null &&
+		ac19Integer("pendingOperationDelta", true) !== null &&
+		ac19Integer("pendingApplyDelta", true) !== null &&
+		ac19Integer("attentionDelta", true) !== null &&
+		ac19Integer("confirmationDelta", true) !== null
+			? {
+					captureReload: ac19Boolean("captureReload") as boolean,
+					attentionUnchanged: ac19Boolean("attentionUnchanged") as boolean,
+					baselineSynced: ac19Boolean("baselineSynced") as boolean,
+					confirmationVisible: ac19Boolean("confirmationVisible") as boolean,
+					placeholderExcluded: ac19Boolean("placeholderExcluded") as boolean,
+					serviceSourceLive: ac19ServiceSourceLive as boolean | null,
+					deleteOrRenameOperationCount: ac19Integer(
+						"deleteOrRenameOperationCount",
+					) as number,
+					initialPendingOperationCount: ac19Integer(
+						"initialPendingOperationCount",
+					) as number,
+					initialPendingApplyCount: ac19Integer(
+						"initialPendingApplyCount",
+					) as number,
+					initialAttentionCount: ac19Integer("initialAttentionCount") as number,
+					initialConfirmationCount: ac19Integer(
+						"initialConfirmationCount",
+					) as number,
+					pendingOperationDelta: ac19Integer(
+						"pendingOperationDelta",
+						true,
+					) as number,
+					pendingApplyDelta: ac19Integer("pendingApplyDelta", true) as number,
+					attentionDelta: ac19Integer("attentionDelta", true) as number,
+					confirmationDelta: ac19Integer("confirmationDelta", true) as number,
+				}
+			: undefined;
 	return {
 		caseId,
 		evidence,
@@ -485,6 +651,7 @@ export function safeCaseResult(
 		...(receiptStatus.success ? { receiptStatus: receiptStatus.data } : {}),
 		...(ac30FinalAssertion ? { ac30FinalAssertion } : {}),
 		...(ac13Cleanup ? { ac13Cleanup } : {}),
+		...(ac19Evidence ? { ac19Evidence } : {}),
 		cleanupStatus,
 	};
 }
@@ -1657,6 +1824,248 @@ export function createAc20FixtureScript(
 	})()`;
 }
 
+/** Guarded action and local recovery for the dev-2 AC-19 service case. */
+export interface Ac19CaseScripts {
+	/** Seeds one fresh source and measures simulated eviction against its baseline. */
+	action: string;
+	/** Restores the synthetic local source and leaves dev-2 paused. */
+	cleanup: string;
+}
+
+/** Builds the dev-2 service case for one unique fixture in the authorized synthetic vault. */
+export function createAc19CaseScripts(
+	id: DesktopVaultId,
+	resolvedPath: string,
+	home = homedir(),
+	fixtureName = "simulated-eviction",
+): Ac19CaseScripts {
+	if (id !== "dev-2") throw new Error("AC-19 service case requires dev-2");
+	const target = assertAuthorizedVault(id, resolvedPath, home);
+	const fixture = createAc19FixturePaths(id, [], fixtureName);
+	const action = `
+		if (app.vault.adapter.getBasePath() !== ${JSON.stringify(target)}) throw new Error("AC19_ASSERT_TARGET_VAULT");
+		const plugin = app.plugins.plugins?.["ai-bridge"];
+		if (!plugin?.journal?.snapshot || !plugin.desktopSync || !plugin.coexistence || !plugin.composition?.publication || !plugin.settingsTab?.syncActions?.pause || !plugin.settingsTab?.syncActions?.resume || !plugin.settingsValue?.coexistenceMode || plugin.settingsValue?.deviceName !== "oab-10.1 dev-2") throw new Error("AC19_ASSERT_PLUGIN_CONTROLS");
+		if (plugin.sessionStatus !== "connected" || plugin.desktopSync.isBusy || plugin.syncPaused || plugin.syncActive) throw new Error("AC19_ASSERT_INITIAL_STATE");
+		const adapter = app.vault.adapter;
+		const source = ${JSON.stringify(fixture.source)};
+		const placeholder = ${JSON.stringify(fixture.placeholder)};
+		if (app.vault.getAbstractFileByPath(source) || await adapter.stat(source) || await adapter.stat(placeholder)) throw new Error("AC19_ASSERT_FIXTURE_COLLISION");
+		const remote = Reflect.get(plugin.composition.publication, "remote");
+		if (!remote?.readCurrentAuthority) throw new Error("AC19_ASSERT_REMOTE_AUTHORITY");
+		let servicePathAbsent = false;
+		try { await withCaseBoundary("AC19_READ_SERVICE_ABSENCE", () => remote.readCurrentAuthority(source)); } catch (error) { servicePathAbsent = readBoundaryDetails(error)?.status === 404; if (!servicePathAbsent) throw error; }
+		if (!servicePathAbsent) throw new Error("AC19_ASSERT_SERVICE_PATH_ABSENT");
+		const initial = plugin.journal.snapshot();
+		if (!initial.epoch || initial.base?.[source] || initial.base?.[placeholder] || initial.pending_ops?.length || initial.pending_apply?.length || initial.coexistence_confirmations?.length) throw new Error("AC19_ASSERT_INITIAL_STATE");
+		const initialCounts = { pendingOperations: initial.pending_ops.length, pendingApplies: initial.pending_apply.length, attention: initial.attention.length, confirmations: initial.coexistence_confirmations.length };
+		ac19Cleanup.initialCounts = initialCounts;
+		ac19Cleanup.initialAttention = structuredClone(initial.attention);
+		ac19Cleanup.remote = remote;
+		ac19Cleanup.started = true;
+		const waitFor = async (test) => {
+			const deadline = Date.now() + 15000;
+			while (Date.now() < deadline) {
+				if (test()) return true;
+				await new Promise((resolve) => window.setTimeout(resolve, 50));
+			}
+			return test();
+		};
+		if (!(await adapter.stat("oab-10.1"))) await adapter.mkdir("oab-10.1");
+		if (!(await adapter.stat(${JSON.stringify(fixture.root)}))) await adapter.mkdir(${JSON.stringify(fixture.root)});
+		const file = await app.vault.create(source, "OAB-10.1 synthetic coexistence fixture\\n");
+		ac19Cleanup.sourceCreated = true;
+		await withCaseBoundary("AC19_SEED_BASELINE", () => plugin.desktopSync.syncNow());
+		await withCaseBoundary("AC19_WAIT_BASELINE_IDLE", () => plugin.desktopSync.waitForIdle());
+		const seeded = plugin.journal.snapshot();
+		const baseline = seeded.base?.[source];
+		if (!baseline || baseline.deleted || !seeded.epoch || seeded.pending_ops.length !== initialCounts.pendingOperations || seeded.pending_apply.length !== initialCounts.pendingApplies || JSON.stringify(seeded.attention) !== JSON.stringify(ac19Cleanup.initialAttention)) throw new Error("AC19_ASSERT_BASELINE_SYNC");
+		const serviceBefore = await withCaseBoundary("AC19_READ_SERVICE_AUTHORITY", () => remote.readCurrentAuthority(source));
+		ac19Cleanup.serviceAuthority = { deleted: serviceBefore.deleted, epoch: serviceBefore.epoch, rev: serviceBefore.rev, hash: serviceBefore.hash };
+		if (serviceBefore.deleted || serviceBefore.epoch !== seeded.epoch || serviceBefore.rev !== baseline.rev || serviceBefore.hash !== baseline.hash) throw new Error("AC19_ASSERT_BASELINE_SYNC");
+		caseEvidence.ac19 = { captureReload: false, attentionUnchanged: false, baselineSynced: true, confirmationVisible: false, placeholderExcluded: false, serviceSourceLive: false, deleteOrRenameOperationCount: 0, initialPendingOperationCount: initialCounts.pendingOperations, initialPendingApplyCount: initialCounts.pendingApplies, initialAttentionCount: initialCounts.attention, initialConfirmationCount: initialCounts.confirmations, pendingOperationDelta: 0, pendingApplyDelta: 0, attentionDelta: 0, confirmationDelta: 0 };
+		plugin.settingsTab.syncActions.pause();
+		ac19Cleanup.pausedByCase = true;
+		if (!(await waitFor(() => plugin.syncPaused && plugin.composition === null))) throw new Error("AC19_ASSERT_PAUSE");
+		await app.vault.trash(file, false);
+		await app.vault.createBinary(placeholder, new ArrayBuffer(0));
+		if (!(await waitFor(() => {
+			const state = plugin.journal.snapshot();
+			return state.coexistence_confirmations?.some((item) => item.path === source) && state.unavailable_paths?.includes(source);
+		}))) throw new Error("AC19_ASSERT_CONFIRMATION_AND_UNAVAILABLE");
+		const captured = plugin.journal.snapshot();
+		const confirmation = captured.coexistence_confirmations.find((item) => item.path === source);
+		const unavailable = captured.unavailable_paths?.includes(source) ?? false;
+		const placeholderExcluded = !Object.prototype.hasOwnProperty.call(captured.base ?? {}, placeholder) && !captured.pending_ops?.some((operation) => operation.path === placeholder || operation.to === placeholder);
+		const deleteOrRenameOperationCount = captured.pending_ops?.filter((operation) => (operation.op === "delete" || operation.op === "rename") && (operation.path === source || operation.to === source)).length ?? 0;
+		if (!confirmation || !unavailable || !placeholderExcluded) throw new Error("AC19_ASSERT_PLACEHOLDER_EXCLUDED");
+		if (!(await waitFor(() => !plugin.desktopSync.isBusy))) throw new Error("AC19_ASSERT_CONFIRMATION");
+		const settled = plugin.journal.snapshot();
+		const serviceAfter = await withCaseBoundary("AC19_READ_SERVICE_AUTHORITY", () => remote.readCurrentAuthority(source));
+		const serviceSourceLive = Boolean(!serviceAfter.deleted && serviceAfter.epoch === serviceBefore.epoch && serviceAfter.rev === serviceBefore.rev && serviceAfter.hash === serviceBefore.hash && deleteOrRenameOperationCount === 0);
+		const attentionUnchanged = JSON.stringify(settled.attention) === JSON.stringify(ac19Cleanup.initialAttention);
+		const deltas = { pendingOperationDelta: settled.pending_ops.length - initialCounts.pendingOperations, pendingApplyDelta: settled.pending_apply.length - initialCounts.pendingApplies, attentionDelta: settled.attention.length - initialCounts.attention, confirmationDelta: settled.coexistence_confirmations.length - initialCounts.confirmations };
+		if (deltas.pendingOperationDelta !== 0 || deltas.pendingApplyDelta !== 0 || deltas.attentionDelta !== 0 || deltas.confirmationDelta !== 1 || !attentionUnchanged || !serviceSourceLive) throw new Error("AC19_ASSERT_BASELINE_DELTAS");
+		caseEvidence.ac19 = { captureReload: false, attentionUnchanged, baselineSynced: true, confirmationVisible: Boolean(confirmation), placeholderExcluded, serviceSourceLive, deleteOrRenameOperationCount, initialPendingOperationCount: initialCounts.pendingOperations, initialPendingApplyCount: initialCounts.pendingApplies, initialAttentionCount: initialCounts.attention, initialConfirmationCount: initialCounts.confirmations, ...deltas };
+	`;
+	const cleanup = `
+		if (app.vault.adapter.getBasePath() !== ${JSON.stringify(target)}) throw new Error("AC19_CLEANUP_RESTORE_FAILED");
+		const plugin = app.plugins.plugins?.["ai-bridge"];
+		if (!plugin?.journal?.snapshot || !plugin.desktopSync || !plugin.coexistence) throw new Error("AC19_CLEANUP_RESTORE_FAILED");
+		if (ac19Cleanup.started && ac19Cleanup.sourceCreated && !ac19Cleanup.pausedByCase) {
+			plugin.settingsTab.syncActions.pause();
+			ac19Cleanup.pausedByCase = true;
+			const pauseDeadline = Date.now() + 15000;
+			while ((!plugin.syncPaused || plugin.composition !== null) && Date.now() < pauseDeadline) await new Promise((resolve) => window.setTimeout(resolve, 50));
+			if (!plugin.syncPaused || plugin.composition !== null) throw new Error("AC19_CLEANUP_PAUSE_FAILED");
+			const sourceFile = app.vault.getAbstractFileByPath(${JSON.stringify(fixture.source)});
+			if (sourceFile) await app.vault.trash(sourceFile, false);
+			if (!app.vault.getAbstractFileByPath(${JSON.stringify(fixture.placeholder)})) await app.vault.createBinary(${JSON.stringify(fixture.placeholder)}, new ArrayBuffer(0));
+			const deadline = Date.now() + 15000;
+			while (!plugin.journal.snapshot().coexistence_confirmations.some((item) => item.path === ${JSON.stringify(fixture.source)}) && Date.now() < deadline) await new Promise((resolve) => window.setTimeout(resolve, 50));
+			if (!plugin.journal.snapshot().coexistence_confirmations.some((item) => item.path === ${JSON.stringify(fixture.source)})) throw new Error("AC19_CLEANUP_CONFIRMATION_MISSING");
+		}
+		if (ac19Cleanup.started && ac19Cleanup.sourceCreated && !ac19Cleanup.serviceAuthority) throw new Error("AC19_CLEANUP_AUTHORITY_UNKNOWN");
+		if (ac19Cleanup.started && ac19Cleanup.sourceCreated) {
+			const placeholder = app.vault.getAbstractFileByPath(${JSON.stringify(fixture.placeholder)});
+			if (placeholder) await app.vault.trash(placeholder, false);
+			const unavailableDeadline = Date.now() + 15000;
+			while (plugin.journal.snapshot().unavailable_paths.includes(${JSON.stringify(fixture.source)}) && Date.now() < unavailableDeadline) await new Promise((resolve) => window.setTimeout(resolve, 50));
+			if (plugin.journal.snapshot().unavailable_paths.includes(${JSON.stringify(fixture.source)})) throw new Error("AC19_CLEANUP_PLACEHOLDER_BLOCKED");
+			for (const item of plugin.journal.snapshot().coexistence_confirmations ?? []) if (item.path === ${JSON.stringify(fixture.source)}) await plugin.coexistence.keepServerState(item.id);
+			if (ac19Cleanup.pausedByCase) {
+				try {
+					plugin.settingsTab.syncActions.resume();
+					const resumeDeadline = Date.now() + 15000;
+					while ((plugin.syncPaused || !plugin.composition || plugin.desktopSync.isBusy) && Date.now() < resumeDeadline) await new Promise((resolve) => window.setTimeout(resolve, 50));
+					await plugin.desktopSync.waitForIdle();
+					if (plugin.syncPaused || !plugin.composition || !app.vault.getAbstractFileByPath(${JSON.stringify(fixture.source)})) throw new Error("AC19_CLEANUP_RESTORE_FAILED");
+					const finalState = plugin.journal.snapshot();
+					if (finalState.pending_ops.length !== ac19Cleanup.initialCounts.pendingOperations || finalState.pending_apply.length !== ac19Cleanup.initialCounts.pendingApplies || JSON.stringify(finalState.attention) !== JSON.stringify(ac19Cleanup.initialAttention) || finalState.coexistence_confirmations.length !== ac19Cleanup.initialCounts.confirmations) throw new Error("AC19_CLEANUP_HISTORICAL_STATE_CHANGED");
+					const finalAuthority = await withCaseBoundary("AC19_READ_SERVICE_AUTHORITY", () => ac19Cleanup.remote.readCurrentAuthority(${JSON.stringify(fixture.source)}));
+					if (finalAuthority.deleted || finalAuthority.epoch !== ac19Cleanup.serviceAuthority.epoch || finalAuthority.rev !== ac19Cleanup.serviceAuthority.rev || finalAuthority.hash !== ac19Cleanup.serviceAuthority.hash) throw new Error("AC19_CLEANUP_SERVICE_CHANGED");
+				} finally {
+					plugin.settingsTab.syncActions.pause();
+					const pauseDeadline = Date.now() + 15000;
+					while ((!plugin.syncPaused || plugin.composition !== null) && Date.now() < pauseDeadline) await new Promise((resolve) => window.setTimeout(resolve, 50));
+					if (!plugin.syncPaused || plugin.composition !== null) throw new Error("AC19_CLEANUP_PAUSE_FAILED");
+					ac19Cleanup.pausedByCase = false;
+				}
+			}
+		}
+	`;
+	return { action, cleanup };
+}
+
+/** Builds dev-1 capture and reload checks around a latest-bundle installation. */
+export interface Ac19CaptureReloadScripts {
+	/** Captures a fresh local deletion while the existing controller stays paused. */
+	capture: string;
+	/** Stores an excluded baseline when capture completed before its runner returned. */
+	prepareReloadVerification: string;
+	/** Checks durable state after the caller installs and enables the new bundle. */
+	reloadVerification: string;
+}
+
+/** Builds guarded dev-1 scripts that never issue a Resume action. */
+export function createAc19CaptureReloadScripts(
+	resolvedPath: string,
+	home = homedir(),
+): Ac19CaptureReloadScripts {
+	const target = assertAuthorizedVault("dev-1", resolvedPath, home);
+	const fixture = createAc19FixturePaths("dev-1");
+	const baselinePath = ".ai-bridge/oab-10.1-dev-1-baseline.json";
+	const capture = `
+		if (app.vault.adapter.getBasePath() !== ${JSON.stringify(target)}) throw new Error("AC19_CAPTURE_ASSERT_TARGET_VAULT");
+		const plugin = app.plugins.plugins?.["ai-bridge"];
+		if (!plugin?.journal?.snapshot || !plugin.desktopSync || !plugin.coexistence || !plugin.settingsValue?.coexistenceMode || plugin.settingsValue?.deviceName !== "oab-10.1 dev-1") throw new Error("AC19_CAPTURE_ASSERT_PLUGIN_CONTROLS");
+		if (plugin.sessionStatus !== "connected" || !plugin.syncPaused || plugin.syncStatus?.().state !== "paused" || plugin.desktopSync.isBusy || plugin.syncActive) throw new Error("AC19_CAPTURE_ASSERT_PAUSED");
+		const source = ${JSON.stringify(fixture.source)};
+		const placeholder = ${JSON.stringify(fixture.placeholder)};
+		const baselinePath = ${JSON.stringify(baselinePath)};
+		const adapter = app.vault.adapter;
+		const fingerprint = async (value) => { const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify(value))); return Array.from(new Uint8Array(digest)).map((byte) => byte.toString(16).padStart(2, "0")).join(""); };
+		if (app.vault.getAbstractFileByPath(source) || await adapter.stat(source) || await adapter.stat(placeholder) || await adapter.exists(baselinePath)) throw new Error("AC19_CAPTURE_ASSERT_FIXTURE_COLLISION");
+		const initial = plugin.journal.snapshot();
+		if (initial.coexistence_confirmations.some((item) => item.path === source) || initial.base?.[source] || initial.base?.[placeholder]) throw new Error("AC19_CAPTURE_ASSERT_INITIAL_STATE");
+		const history = { pending_ops: structuredClone(initial.pending_ops), pending_apply: structuredClone(initial.pending_apply), attention: structuredClone(initial.attention) };
+		const counts = { pendingOperations: history.pending_ops.length, pendingApplies: history.pending_apply.length, attention: history.attention.length, confirmations: initial.coexistence_confirmations.length };
+		const waitFor = async (test) => {
+			const deadline = Date.now() + 15000;
+			while (Date.now() < deadline) { if (test()) return true; await new Promise((resolve) => window.setTimeout(resolve, 50)); }
+			return test();
+		};
+		if (!(await adapter.stat("oab-10.1"))) await adapter.mkdir("oab-10.1");
+		if (!(await adapter.stat(${JSON.stringify(fixture.root)}))) await adapter.mkdir(${JSON.stringify(fixture.root)});
+		const file = await app.vault.create(source, "OAB-10.1 capture-only fixture\\n");
+		await app.vault.trash(file, false);
+		await app.vault.createBinary(placeholder, new ArrayBuffer(0));
+		if (!(await waitFor(() => plugin.journal.snapshot().coexistence_confirmations.some((item) => item.path === source)))) throw new Error("AC19_CAPTURE_ASSERT_CONFIRMATION");
+		const captured = plugin.journal.snapshot();
+		const confirmation = captured.coexistence_confirmations.find((item) => item.path === source);
+		const placeholderExcluded = !Object.prototype.hasOwnProperty.call(captured.base ?? {}, placeholder) && !captured.pending_ops.some((item) => item.path === placeholder || item.to === placeholder);
+		const historyUnchanged = JSON.stringify({ pending_ops: captured.pending_ops, pending_apply: captured.pending_apply, attention: captured.attention }) === JSON.stringify(history);
+		if (!confirmation || !captured.unavailable_paths.includes(source) || !placeholderExcluded || !historyUnchanged) throw new Error("AC19_CAPTURE_ASSERT_CAPTURE_ONLY");
+		const deltas = { pendingOperationDelta: captured.pending_ops.length - counts.pendingOperations, pendingApplyDelta: captured.pending_apply.length - counts.pendingApplies, attentionDelta: captured.attention.length - counts.attention, confirmationDelta: captured.coexistence_confirmations.length - counts.confirmations };
+		if (deltas.pendingOperationDelta !== 0 || deltas.pendingApplyDelta !== 0 || deltas.attentionDelta !== 0 || deltas.confirmationDelta !== 1) throw new Error("AC19_CAPTURE_ASSERT_BASELINE_DELTAS");
+		if (!(await adapter.exists(".ai-bridge"))) await adapter.mkdir(".ai-bridge");
+		const historyFingerprint = await fingerprint({ pending_ops: captured.pending_ops, pending_apply: captured.pending_apply, attention: captured.attention });
+		const confirmationFingerprint = await fingerprint(captured.coexistence_confirmations);
+		const reloadBaseline = { version: 1, source, placeholder, historyFingerprint, confirmationFingerprint, counts: { pendingOperations: captured.pending_ops.length, pendingApplies: captured.pending_apply.length, attention: captured.attention.length, confirmations: captured.coexistence_confirmations.length } };
+		await adapter.write(baselinePath, JSON.stringify(reloadBaseline));
+		caseEvidence.ac19 = { captureReload: false, attentionUnchanged: historyUnchanged, baselineSynced: false, confirmationVisible: true, placeholderExcluded, serviceSourceLive: null, deleteOrRenameOperationCount: 0, initialPendingOperationCount: counts.pendingOperations, initialPendingApplyCount: counts.pendingApplies, initialAttentionCount: counts.attention, initialConfirmationCount: counts.confirmations, ...deltas };
+	`;
+	const prepareReloadVerification = `
+		if (app.vault.adapter.getBasePath() !== ${JSON.stringify(target)}) throw new Error("AC19_BASELINE_ASSERT_TARGET_VAULT");
+		const plugin = app.plugins.plugins?.["ai-bridge"];
+		if (!plugin?.journal?.snapshot || !plugin.settingsValue?.coexistenceMode || plugin.settingsValue?.deviceName !== "oab-10.1 dev-1" || !plugin.syncPaused || plugin.syncStatus?.().state !== "paused" || plugin.syncActive) throw new Error("AC19_BASELINE_ASSERT_PAUSED");
+		const source = ${JSON.stringify(fixture.source)};
+		const placeholder = ${JSON.stringify(fixture.placeholder)};
+		const adapter = app.vault.adapter;
+		const state = plugin.journal.snapshot();
+		const fingerprint = async (value) => { const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify(value))); return Array.from(new Uint8Array(digest)).map((byte) => byte.toString(16).padStart(2, "0")).join(""); };
+		const confirmation = state.coexistence_confirmations.find((item) => item.path === source);
+		if (!confirmation || !state.unavailable_paths.includes(source) || !app.vault.getAbstractFileByPath(placeholder) || app.vault.getAbstractFileByPath(source)) throw new Error("AC19_BASELINE_ASSERT_CAPTURE_STATE");
+		if (await adapter.exists(${JSON.stringify(baselinePath)})) throw new Error("AC19_BASELINE_ASSERT_ALREADY_PRESENT");
+		if (!(await adapter.exists(".ai-bridge"))) await adapter.mkdir(".ai-bridge");
+		const historyFingerprint = await fingerprint({ pending_ops: state.pending_ops, pending_apply: state.pending_apply, attention: state.attention });
+		const confirmationFingerprint = await fingerprint(state.coexistence_confirmations);
+		const reloadBaseline = { version: 1, source, placeholder, historyFingerprint, confirmationFingerprint, counts: { pendingOperations: state.pending_ops.length, pendingApplies: state.pending_apply.length, attention: state.attention.length, confirmations: state.coexistence_confirmations.length } };
+		await adapter.write(${JSON.stringify(baselinePath)}, JSON.stringify(reloadBaseline));
+	`;
+	const reloadVerification = `
+		if (app.vault.adapter.getBasePath() !== ${JSON.stringify(target)}) throw new Error("AC19_RELOAD_ASSERT_TARGET_VAULT");
+		const adapter = app.vault.adapter;
+		const baselinePath = ${JSON.stringify(baselinePath)};
+		if (!(await adapter.exists(baselinePath))) throw new Error("AC19_RELOAD_ASSERT_BASELINE_MISSING");
+		let baseline;
+		try { baseline = JSON.parse(await adapter.read(baselinePath)); } catch { throw new Error("AC19_RELOAD_ASSERT_BASELINE_INVALID"); }
+		if (!baseline || baseline.version !== 1 || baseline.source !== ${JSON.stringify(fixture.source)} || baseline.placeholder !== ${JSON.stringify(fixture.placeholder)} || !/^[a-f0-9]{64}$/.test(baseline.historyFingerprint) || !/^[a-f0-9]{64}$/.test(baseline.confirmationFingerprint) || !baseline.counts || !Number.isSafeInteger(baseline.counts.pendingOperations) || !Number.isSafeInteger(baseline.counts.pendingApplies) || !Number.isSafeInteger(baseline.counts.attention) || !Number.isSafeInteger(baseline.counts.confirmations)) throw new Error("AC19_RELOAD_ASSERT_BASELINE_INVALID");
+		const plugin = app.plugins.plugins?.["ai-bridge"];
+		if (!plugin?.journal?.snapshot || !plugin.desktopSync || !plugin.settingsValue?.coexistenceMode || plugin.settingsValue?.deviceName !== "oab-10.1 dev-1") throw new Error("AC19_RELOAD_ASSERT_PLUGIN_CONTROLS");
+		const waitFor = async (test) => {
+			const deadline = Date.now() + 15000;
+			while (Date.now() < deadline) { if (test()) return true; await new Promise((resolve) => window.setTimeout(resolve, 50)); }
+			return test();
+		};
+		if (!(await waitFor(() => plugin.sessionStatus === "connected" && !plugin.desktopSync.isBusy))) throw new Error("AC19_RELOAD_ASSERT_CONNECTED");
+		if (!plugin.syncPaused || plugin.syncStatus?.().state !== "paused" || plugin.syncActive) throw new Error("AC19_RELOAD_ASSERT_PAUSED");
+		const after = plugin.journal.snapshot();
+		const fingerprint = async (value) => { const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify(value))); return Array.from(new Uint8Array(digest)).map((byte) => byte.toString(16).padStart(2, "0")).join(""); };
+		const historyFingerprint = await fingerprint({ pending_ops: after.pending_ops, pending_apply: after.pending_apply, attention: after.attention });
+		const confirmationFingerprint = await fingerprint(after.coexistence_confirmations);
+		const unchanged = historyFingerprint === baseline.historyFingerprint;
+		const confirmationVisible = after.coexistence_confirmations.some((item) => item.path === baseline.source);
+		const placeholderExcluded = !Object.prototype.hasOwnProperty.call(after.base ?? {}, baseline.placeholder) && !after.pending_ops.some((item) => item.path === baseline.placeholder || item.to === baseline.placeholder);
+		const fixtureOperationCount = after.pending_ops.filter((item) => (item.op === "delete" || item.op === "rename") && (item.path === baseline.source || item.to === baseline.source)).length;
+		const deltas = { pendingOperationDelta: after.pending_ops.length - baseline.counts.pendingOperations, pendingApplyDelta: after.pending_apply.length - baseline.counts.pendingApplies, attentionDelta: after.attention.length - baseline.counts.attention, confirmationDelta: after.coexistence_confirmations.length - baseline.counts.confirmations };
+		if (!unchanged || confirmationFingerprint !== baseline.confirmationFingerprint || !confirmationVisible || !after.unavailable_paths.includes(baseline.source) || !app.vault.getAbstractFileByPath(baseline.placeholder) || !placeholderExcluded || fixtureOperationCount !== 0 || deltas.pendingOperationDelta !== 0 || deltas.pendingApplyDelta !== 0 || deltas.attentionDelta !== 0 || deltas.confirmationDelta !== 0) throw new Error("AC19_RELOAD_ASSERT_HISTORY_CHANGED");
+		caseEvidence.ac19 = { captureReload: true, attentionUnchanged: unchanged, baselineSynced: false, confirmationVisible, placeholderExcluded, serviceSourceLive: null, deleteOrRenameOperationCount: fixtureOperationCount, initialPendingOperationCount: baseline.counts.pendingOperations, initialPendingApplyCount: baseline.counts.pendingApplies, initialAttentionCount: baseline.counts.attention, initialConfirmationCount: baseline.counts.confirmations, ...deltas };
+		await adapter.remove(baselinePath);
+	`;
+	return { capture, prepareReloadVerification, reloadVerification };
+}
+
 /** Adds failure-safe cleanup and returns allowlisted stage and transport diagnostics. */
 export function createCaseScript(
 	caseId: string,
@@ -1684,6 +2093,7 @@ export function createCaseScript(
 		const ac30DiagnosticOperationKinds = ${JSON.stringify(AC30_DIAGNOSTIC_OPERATION_KINDS)};
 		const boundaryDetailsKey = Symbol("case-boundary-details");
 		const caseEvidence = {};
+		const ac19Cleanup = { pausedByCase: false, started: false, sourceCreated: false, initialCounts: null, initialAttention: null, remote: null, serviceAuthority: null };
 		const safeAc30ObservationValue = (value) => {
 			if (typeof value === "boolean" || value === null) return value;
 			if (typeof value === "number" && Number.isSafeInteger(value)) return value;
@@ -2039,15 +2449,56 @@ export async function installScopedPlugin(
 			.update(manifestText, "utf8")
 			.digest("hex"),
 	};
-	const script = createInstallScript(id, target, manifestText, mainText);
-	const installOutput = invokeScopedObsidian(
+	const scripts = createInstallPayloadScripts(
 		id,
-		vaultName,
-		"eval",
-		[`code=${script}`],
-		options,
+		target,
+		manifestText,
+		mainText,
 	);
-	parseInstalledPluginArtifact(installOutput, expected);
+	try {
+		const initializeOutput = invokeScopedObsidian(
+			id,
+			vaultName,
+			"eval",
+			[`code=${scripts.initialize}`],
+			options,
+		);
+		requireInstallMarker(
+			initializeOutput,
+			`OAB8INSTALLINIT:${scripts.sessionId}`,
+		);
+		for (const [index, chunk] of scripts.chunks.entries()) {
+			const chunkOutput = invokeScopedObsidian(
+				id,
+				vaultName,
+				"eval",
+				[`code=${chunk}`],
+				options,
+			);
+			requireInstallMarker(chunkOutput, `OAB8INSTALLCHUNK:${index}`);
+		}
+		const installOutput = invokeScopedObsidian(
+			id,
+			vaultName,
+			"eval",
+			[`code=${scripts.finish}`],
+			options,
+		);
+		parseInstalledPluginArtifact(installOutput, expected);
+	} catch (error) {
+		try {
+			invokeScopedObsidian(
+				id,
+				vaultName,
+				"eval",
+				[`code=${scripts.cleanup}`],
+				options,
+			);
+		} catch {
+			// A target guard still blocks cleanup outside the authorized vault.
+		}
+		throw error;
+	}
 	runScopedObsidian(
 		id,
 		vaultName,
@@ -2078,7 +2529,107 @@ export async function installScopedPlugin(
 	return parseInstalledPluginArtifact(verifyOutput, expected);
 }
 
-/** Creates a host script that preserves differing files and verifies loaded artifact hashes. */
+/** Maximum base64 characters sent in one guarded Obsidian CLI argument. */
+const INSTALL_PAYLOAD_CHUNK_CHARS = 32 * 1024;
+
+/** Ordered host scripts that transfer and install one checked plugin artifact. */
+export interface InstallPayloadScripts {
+	/** Starts one path-bound payload transfer in the active Obsidian process. */
+	initialize: string;
+	/** Appends ordered bounded chunks of the encoded artifact. */
+	chunks: string[];
+	/** Verifies the payload, preserves old files, and installs the checked artifact. */
+	finish: string;
+	/** Removes a partial payload after a failed transfer. */
+	cleanup: string;
+	/** Transfer identity required by each ordered host script. */
+	sessionId: string;
+}
+
+/** Creates small path-guarded host scripts for a large plugin bundle. */
+export function createInstallPayloadScripts(
+	id: DesktopVaultId,
+	target: string,
+	manifestText: string,
+	mainText: string,
+	home = homedir(),
+): InstallPayloadScripts {
+	const authorizedTarget = assertAuthorizedVault(id, target, home);
+	const manifest: unknown = JSON.parse(manifestText);
+	if (
+		!manifest ||
+		typeof manifest !== "object" ||
+		!("id" in manifest) ||
+		manifest.id !== "ai-bridge" ||
+		!("version" in manifest) ||
+		typeof manifest.version !== "string"
+	)
+		throw new Error("Unexpected plugin artifact identity");
+	const sessionId = randomUUID();
+	const sessionKey = "__oabInstallPayload";
+	const targetValue = JSON.stringify(authorizedTarget);
+	const sessionValue = JSON.stringify(sessionId);
+	const keyValue = JSON.stringify(sessionKey);
+	const manifestBase64 = Buffer.from(manifestText, "utf8").toString("base64");
+	const mainBase64 = Buffer.from(mainText, "utf8").toString("base64");
+	const encodedChunks = [
+		...splitInstallPayload(manifestBase64).map((value) => ({
+			kind: "manifest",
+			value,
+		})),
+		...splitInstallPayload(mainBase64).map((value) => ({
+			kind: "main",
+			value,
+		})),
+	];
+	const initialize = `(() => {
+		const adapter = app.vault.adapter;
+		if (adapter.getBasePath() !== ${targetValue}) throw Error("Vault path mismatch");
+		globalThis[${keyValue}] = { sessionId: ${sessionValue}, next: 0, total: ${encodedChunks.length}, manifest: [], main: [] };
+		return "OAB8INSTALLINIT:" + ${sessionValue};
+	})()`;
+	const chunks = encodedChunks.map(
+		(chunk, index) => `(() => {
+		const adapter = app.vault.adapter;
+		if (adapter.getBasePath() !== ${targetValue}) throw Error("Vault path mismatch");
+		const state = globalThis[${keyValue}];
+		if (!state || state.sessionId !== ${sessionValue} || state.next !== ${index}) throw Error("Plugin payload order changed");
+		state.${chunk.kind}.push(${JSON.stringify(chunk.value)});
+		state.next += 1;
+		return "OAB8INSTALLCHUNK:${index}";
+	})()`,
+	);
+	const manifestHash = createHash("sha256")
+		.update(manifestText, "utf8")
+		.digest("hex");
+	const mainHash = createHash("sha256").update(mainText, "utf8").digest("hex");
+	const finish = `(async () => {
+		const adapter = app.vault.adapter;
+		if (adapter.getBasePath() !== ${targetValue}) throw Error("Vault path mismatch");
+		const state = globalThis[${keyValue}];
+		if (!state || state.sessionId !== ${sessionValue} || state.next !== state.total || state.total !== ${encodedChunks.length}) throw Error("Plugin payload is incomplete");
+		const decode = (value) => new TextDecoder().decode(Uint8Array.from(atob(value), (char) => char.charCodeAt(0)));
+		const manifestText = decode(state.manifest.join(""));
+		const bundle = decode(state.main.join(""));
+		const payloadHash = async (text) => Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text)))).map((byte) => byte.toString(16).padStart(2, "0")).join("");
+		if (await payloadHash(manifestText) !== ${JSON.stringify(manifestHash)} || await payloadHash(bundle) !== ${JSON.stringify(mainHash)}) throw Error("Plugin payload hash mismatch");
+		try {
+			${createInstallScriptCore(JSON.stringify(manifest.version))}
+		} finally {
+			delete globalThis[${keyValue}];
+		}
+	})()`;
+	const cleanup = `(() => {
+		const adapter = app.vault.adapter;
+		if (adapter.getBasePath() !== ${targetValue}) throw Error("Vault path mismatch");
+		const state = globalThis[${keyValue}];
+		if (state?.sessionId === ${sessionValue}) delete globalThis[${keyValue}];
+		return "OAB8INSTALLCLEANUP:" + ${sessionValue};
+	})()`;
+	return { initialize, chunks, finish, cleanup, sessionId };
+}
+
+/** Creates a host script that preserves differing plugin files and verifies hashes. */
 export function createInstallScript(
 	id: DesktopVaultId,
 	target: string,
@@ -2097,27 +2648,29 @@ export function createInstallScript(
 		typeof manifest.version !== "string"
 	)
 		throw new Error("Unexpected plugin artifact identity");
-	const expectedVersion = JSON.stringify(manifest.version);
-	/** Encodes plugin text for safe transport as one CLI argument. */
+	/** Encodes small test bundle text for the direct host-script builder. */
 	const base64 = (value: string) =>
 		Buffer.from(value, "utf8").toString("base64");
-	const targetValue = JSON.stringify(authorizedTarget);
-	const manifestValue = JSON.stringify(base64(manifestText));
-	const mainValue = JSON.stringify(base64(mainText));
 	return `(async () => {
 		const adapter = app.vault.adapter;
-		if (adapter.getBasePath() !== ${targetValue}) throw Error("Vault path mismatch");
+		if (adapter.getBasePath() !== ${JSON.stringify(authorizedTarget)}) throw Error("Vault path mismatch");
+		const decode = (value) => new TextDecoder().decode(Uint8Array.from(atob(value), (char) => char.charCodeAt(0)));
+		const manifestText = decode(${JSON.stringify(base64(manifestText))});
+		const bundle = decode(${JSON.stringify(base64(mainText))});
+		${createInstallScriptCore(JSON.stringify(manifest.version))}
+	})()`;
+}
+
+/** Builds shared host-side file preservation and plugin activation steps. */
+function createInstallScriptCore(expectedVersion: string): string {
+	return `
 		const id = "ai-bridge";
 		const directory = ".obsidian/plugins/" + id;
-		const decode = (value) => new TextDecoder().decode(Uint8Array.from(atob(value), (char) => char.charCodeAt(0)));
-		const manifestText = decode(${manifestValue});
 		const manifest = JSON.parse(manifestText);
-		const bundle = decode(${mainValue});
 		if (manifest.id !== id) throw Error("Plugin ID mismatch");
 		manifest.dir = directory;
 		app.plugins.manifests[id] = manifest;
 		if (!(await adapter.exists(directory))) await adapter.mkdir(directory);
-		/** Computes SHA-256 over UTF-8 text for backup and artifact identity. */
 		const hash = async (text) => Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text)))).map((byte) => byte.toString(16).padStart(2, "0")).join("");
 		for (const [name, content] of [["manifest.json", manifestText], ["main.js", bundle]]) {
 			const path = directory + "/" + name;
@@ -2153,7 +2706,25 @@ export function createInstallScript(
 		const installedManifest = await adapter.read(manifestFile);
 		if (installedMain !== bundle || installedManifest !== manifestText) throw Error("Plugin artifact mismatch");
 		return "OAB8INSTALL:" + JSON.stringify({ status: "passed", version: app.plugins.manifests[id].version, mainSha256: await hash(installedMain), manifestSha256: await hash(installedManifest) });
-	})()`;
+	`;
+}
+
+/** Splits one base64 payload into bounded, ordered CLI-safe parts. */
+function splitInstallPayload(value: string): string[] {
+	const chunks: string[] = [];
+	for (
+		let offset = 0;
+		offset < value.length;
+		offset += INSTALL_PAYLOAD_CHUNK_CHARS
+	)
+		chunks.push(value.slice(offset, offset + INSTALL_PAYLOAD_CHUNK_CHARS));
+	return chunks;
+}
+
+/** Rejects a payload script when the host does not return its safe marker. */
+function requireInstallMarker(output: string, expected: string): void {
+	if (!output.includes(expected))
+		throw new Error("Plugin payload transfer failed");
 }
 
 /** Runs the explicit install or vault-path verification command for a test vault. */

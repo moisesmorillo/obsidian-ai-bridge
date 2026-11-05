@@ -15,11 +15,18 @@ interface CapturedButton {
 }
 
 /** One rendered settings row and the controls attached to it. */
+interface CapturedToggle {
+	value: boolean;
+	onChange: ((value: boolean) => Promise<void>) | null;
+}
+
+/** Captured settings row and the controls rendered for its owner decision. */
 interface CapturedSetting {
 	name: string;
 	description: string;
 	text: CapturedText | null;
 	buttons: CapturedButton[];
+	toggles: CapturedToggle[];
 }
 
 /** Safe text element captured from the synthetic settings container. */
@@ -61,7 +68,13 @@ vi.mock("obsidian", () => ({
 
 		/** Starts one captured row for the Obsidian Setting chain. */
 		constructor(_container: HTMLElement) {
-			this.row = { name: "", description: "", text: null, buttons: [] };
+			this.row = {
+				name: "",
+				description: "",
+				text: null,
+				buttons: [],
+				toggles: [],
+			};
 			host.controls.push(this.row);
 		}
 
@@ -98,6 +111,24 @@ vi.mock("obsidian", () => ({
 			};
 			callback(control);
 			this.row.text = captured;
+			return this;
+		}
+
+		/** Captures toggle state and asynchronous change handlers. */
+		addToggle(callback: (toggle: CapturedToggleControl) => void): this {
+			const captured: CapturedToggle = { value: false, onChange: null };
+			const control: CapturedToggleControl = {
+				setValue: (value) => {
+					captured.value = value;
+					return control;
+				},
+				onChange: (handler) => {
+					captured.onChange = handler;
+					return control;
+				},
+			};
+			callback(control);
+			this.row.toggles.push(captured);
 			return this;
 		}
 
@@ -144,6 +175,14 @@ interface CapturedTextControl {
 }
 
 /** Button methods exposed by the mock control to the production settings tab. */
+interface CapturedToggleControl {
+	/** Sets the synthetic toggle value. */
+	setValue(value: boolean): CapturedToggleControl;
+	/** Stores the callback for a user change. */
+	onChange(handler: (value: boolean) => Promise<void>): CapturedToggleControl;
+}
+
+/** Button methods exposed by the mock control to the production settings tab. */
 interface CapturedButtonControl {
 	/** Sets the label shown by the synthetic button. */
 	setButtonText(label: string): CapturedButtonControl;
@@ -165,6 +204,7 @@ function createTab() {
 	const settings: AIBridgeSettings = {
 		serverUrl: "https://service.test",
 		deviceName: "Obsidian desktop",
+		coexistenceMode: false,
 	};
 	let status: "connected" | "disconnected" = "connected";
 	const session = {
@@ -176,6 +216,8 @@ function createTab() {
 	} as CredentialStorage;
 	const updates: string[] = [];
 	const deviceNameUpdates: string[] = [];
+	const coexistenceUpdates: boolean[] = [];
+	let rejectCoexistenceUpdate = false;
 	let rejectUpdate = false;
 	let rejectDeviceNameUpdate = false;
 	const tab = new AIBridgeSettingTab(
@@ -193,6 +235,11 @@ function createTab() {
 			if (rejectDeviceNameUpdate)
 				throw new Error("synthetic name save failure");
 		},
+		async (enabled) => {
+			coexistenceUpdates.push(enabled);
+			if (rejectCoexistenceUpdate)
+				throw new Error("synthetic coexistence save failure");
+		},
 		() => status,
 	);
 	tab.display();
@@ -202,6 +249,10 @@ function createTab() {
 		session,
 		updates,
 		deviceNameUpdates,
+		coexistenceUpdates,
+		setRejectCoexistenceUpdate: (value: boolean) => {
+			rejectCoexistenceUpdate = value;
+		},
 		setStatus: (value: "connected" | "disconnected") => {
 			status = value;
 		},
@@ -215,6 +266,19 @@ function createTab() {
 }
 
 describe("AIBridgeSettingTab", () => {
+	it("defaults coexistence off and restores the saved value after a failed write", async () => {
+		const test = createTab();
+		const row = host.controls.find((item) => item.name === "Coexistence mode");
+		expect(row?.toggles[0]?.value).toBe(false);
+		test.setRejectCoexistenceUpdate(true);
+		await row?.toggles[0]?.onChange?.(true);
+		expect(row?.toggles[0]?.value).toBe(false);
+		test.setRejectCoexistenceUpdate(false);
+		await row?.toggles[0]?.onChange?.(true);
+		expect(test.settings.coexistenceMode).toBe(true);
+		expect(test.coexistenceUpdates).toEqual([true, true]);
+	});
+
 	it("renders a device name field for distinct device identity", () => {
 		createTab();
 		const deviceName = host.controls.find((row) => row.name === "Device name");
@@ -227,9 +291,10 @@ describe("AIBridgeSettingTab", () => {
 		expect(host.controls.map((row) => row.name)).toEqual([
 			"Server URL",
 			"Device name",
+			"Coexistence mode",
 			"Device connection",
 		]);
-		expect(host.controls[2]?.buttons.map((button) => button.label)).toEqual([
+		expect(host.controls[3]?.buttons.map((button) => button.label)).toEqual([
 			"Connect",
 			"Cancel",
 		]);
@@ -239,8 +304,8 @@ describe("AIBridgeSettingTab", () => {
 		expect(host.elements.map((element) => element.textContent)).toContain(
 			"tokens stored unencrypted on this device",
 		);
-		await host.controls[2]?.buttons[0]?.onClick?.();
-		host.controls[2]?.buttons[1]?.onClick?.();
+		await host.controls[3]?.buttons[0]?.onClick?.();
+		host.controls[3]?.buttons[1]?.onClick?.();
 		expect(test.session.connect).toHaveBeenCalledOnce();
 		expect(test.session.cancel).toHaveBeenCalledOnce();
 		test.setStatus("disconnected");

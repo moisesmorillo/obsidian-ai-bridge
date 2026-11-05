@@ -71,7 +71,9 @@ export interface OwnerCleanupExternalCallBudget {
 
 /** Provider cleanup step that spends external KV calls from the owner request budget. */
 export interface ProviderGrantCleanup {
-	/** Delete one page item or the empty grant record, returning true only after full removal. */
+	/** Minimum counted external calls needed to start one cleanup step. */
+	minimumStepCalls: number;
+	/** Delete one page item or the empty grant records, returning true only after full removal. */
 	cleanupStep(
 		grantId: string,
 		ownerSubject: string,
@@ -159,23 +161,36 @@ export async function revokeClient(
 	if (!durable) return null;
 	let cleanupPending = durable.cleanup_pending;
 	for (const grantId of durable.grants) {
+		let grantCleanupComplete = false;
 		try {
-			while (budget.remainingCalls >= 3) {
+			while (budget.remainingCalls >= provider.minimumStepCalls + 1) {
+				const callsBeforeStep = budget.remainingCalls;
 				const complete = await provider.cleanupStep(
 					grantId,
 					ownerSubject,
 					budget,
 				);
-				if (!complete) continue;
+				if (!complete) {
+					if (budget.remainingCalls >= callsBeforeStep) {
+						cleanupPending = true;
+						break;
+					}
+					continue;
+				}
 				if (budget.remainingCalls < 1) {
 					cleanupPending = true;
 					break;
 				}
 				budget.remainingCalls -= 1;
 				await registry.markGrantCleanupComplete(clientId, grantId);
+				grantCleanupComplete = true;
 				break;
 			}
-			if (budget.remainingCalls < 3) cleanupPending = true;
+			if (
+				!grantCleanupComplete &&
+				budget.remainingCalls < provider.minimumStepCalls + 1
+			)
+				cleanupPending = true;
 		} catch {
 			cleanupPending = true;
 		}

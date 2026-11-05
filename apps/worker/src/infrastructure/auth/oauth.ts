@@ -17,6 +17,7 @@ import type {
 } from "@worker/application/clients";
 import type { Env } from "@worker/env";
 import { verifyOwnerAccess } from "@worker/infrastructure/auth/access";
+import { deriveProviderUserId } from "@worker/infrastructure/auth/provider-identity";
 import { Hono } from "hono";
 
 /** OAuth scope vocabulary accepted by this resource. */
@@ -71,7 +72,7 @@ export function createOAuthOptions(
 	});
 	if (!config.success) return null;
 	const origin = config.data.SERVICE_ORIGIN;
-	if (!origin || !env.OAUTH_KV) return null;
+	if (!origin || !config.data.OWNER_SUBJECT || !env.OAUTH_KV) return null;
 	let serviceOrigin: string;
 	try {
 		const parsed = new URL(origin);
@@ -147,15 +148,40 @@ export function createOAuthOptions(
 			if (scope.some((item) => !(SCOPES as readonly string[]).includes(item))) {
 				throw new Error("Unknown scope");
 			}
+			const callbackConfig = LocalAuthConfigurationSchema.safeParse({
+				SERVICE_ORIGIN: callbackEnv.SERVICE_ORIGIN,
+				ACCESS_TEAM_DOMAIN: callbackEnv.ACCESS_TEAM_DOMAIN,
+				ACCESS_AUDIENCE: callbackEnv.ACCESS_AUDIENCE,
+				OWNER_SUBJECT: callbackEnv.OWNER_SUBJECT,
+			});
+			if (!callbackConfig.success)
+				throw new OAuthError("invalid_grant", {
+					description: "Client consent is no longer current",
+				});
+			const ownerSubject = callbackConfig.data.OWNER_SUBJECT;
+			if (
+				!ownerSubject ||
+				callbackConfig.data.SERVICE_ORIGIN !== serviceOrigin ||
+				ownerSubject !== config.data.OWNER_SUBJECT
+			)
+				throw new OAuthError("invalid_grant", {
+					description: "Client consent is no longer current",
+				});
+			const opaqueUserId = await deriveProviderUserId(
+				ownerSubject,
+				serviceOrigin,
+			);
+			if (userId !== opaqueUserId && userId !== ownerSubject)
+				throw new OAuthError("invalid_grant", {
+					description: "Client consent is no longer current",
+				});
 			const generation = props?.generation;
 			const consentId = props?.consent_id;
 			const registry = callbackEnv.VAULTS.get(
-				callbackEnv.VAULTS.idFromName(
-					new URL(callbackEnv.SERVICE_ORIGIN as string).host,
-				),
+				callbackEnv.VAULTS.idFromName(new URL(serviceOrigin).host),
 			);
 			const accepted = await registry.registerClientGrant({
-				owner_subject: userId,
+				owner_subject: ownerSubject,
 				client_id: clientId,
 				grant_id: grantId,
 				generation,
@@ -265,10 +291,15 @@ export function createAuthorizeHandler(): ExportedHandler<Env> {
 				consent.request.clientId,
 				name || "OAuth client",
 			);
+			const ownerIdentity = await deriveProviderUserId(
+				owner.subject,
+				context.env.SERVICE_ORIGIN,
+			);
 			const result = await api.completeAuthorization({
 				request: consent.request,
-				userId: owner.subject,
+				userId: ownerIdentity,
 				metadata: { client_name: name },
+				revokeExistingGrants: false,
 				scope: [...consent.request.scope],
 				props: {
 					client_id: consent.request.clientId,
@@ -296,26 +327,34 @@ export function createProviderGrantCleanup(env: Env): ProviderGrantCleanup {
 	const kv = env.OAUTH_KV;
 	if (!kv) throw new Error("OAuth KV is not configured");
 	return {
-		/** Remove one token at a time, then the grant, without provider-wide page traversal. */
+		minimumStepCalls: 4,
+		/** Remove one token per namespace step, then both grant records. */
 		async cleanupStep(
 			grantId: string,
 			ownerSubject: string,
 			budget: OwnerCleanupExternalCallBudget,
 		): Promise<boolean> {
-			if (budget.remainingCalls < 3) return false;
-			budget.remainingCalls -= 1;
-			const tokens = await kv.list({
-				prefix: `token:${ownerSubject}:${grantId}:`,
-				limit: 1,
-			});
-			const token = tokens.keys[0];
-			if (token) {
+			if (budget.remainingCalls < 4) return false;
+			const origin = env.SERVICE_ORIGIN;
+			if (!origin) throw new Error("OAuth service origin is not configured");
+			const opaqueUserId = await deriveProviderUserId(ownerSubject, origin);
+			for (const userId of [ownerSubject, opaqueUserId]) {
 				budget.remainingCalls -= 1;
-				await kv.delete(token.name);
-				return false;
+				const tokens = await kv.list({
+					prefix: `token:${userId}:${grantId}:`,
+					limit: 1,
+				});
+				const token = tokens.keys[0];
+				if (token) {
+					budget.remainingCalls -= 1;
+					await kv.delete(token.name);
+					return false;
+				}
 			}
-			budget.remainingCalls -= 1;
-			await kv.delete(`grant:${ownerSubject}:${grantId}`);
+			for (const userId of [ownerSubject, opaqueUserId]) {
+				budget.remainingCalls -= 1;
+				await kv.delete(`grant:${userId}:${grantId}`);
+			}
 			return true;
 		},
 	};

@@ -1,7 +1,7 @@
 ---
 id: OAB-10.1.1
 title: Complete bounded dev-2 AC-19 service proof
-status: In Progress
+status: Deferred
 assignee:
   - '@pi'
 created_date: '2026-11-05T16:52:00Z'
@@ -28,7 +28,7 @@ Trigger: OAB-10.1 merges and the exact-vault Obsidian CLI can return a safe resu
 - [x] #2 Use one fresh oab-10.1 fixture in the exact authorized dev-2 vault. Preserve historical queue, apply, and attention identities with baseline-relative assertions.
 - [ ] #3 Confirm one new durable confirmation, placeholder exclusion, and no delete or rename commit for the fixture path. Pause dev-2 after the bounded case.
 - [x] #4 Keep dev-1 paused. Do not resume, reset, clear, or publish its historical work. Record that its live proof covers capture and reload only.
-- [ ] #5 Update OAB-10.1 criterion 6 and OAB-10 gate notes with actual results and remaining limits. Claim no real iCloud eviction proof.
+- [x] #5 Update OAB-10.1 criterion 6 and OAB-10 gate notes with actual results and remaining limits. Claim no real iCloud eviction proof.
 <!-- AC:END -->
 
 ## Implementation Plan

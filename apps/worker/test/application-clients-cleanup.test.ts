@@ -5,8 +5,11 @@ import {
 } from "@worker/application/clients";
 import { describe, expect, it } from "vitest";
 
-/** Build a minimal registry with one durably denied grant for budget tests. */
-function cleanupRegistry(calls: string[]): ClientRegistryGateway {
+/** Build a registry stub with pending grants that cleanup can retire across requests. */
+function cleanupRegistry(
+	calls: string[],
+	pendingGrants: string[] = ["grant"],
+): ClientRegistryGateway {
 	return {
 		/** Reject consent setup because this stub only exercises cleanup. */
 		async beginClientConsent() {
@@ -31,11 +34,17 @@ function cleanupRegistry(calls: string[]): ClientRegistryGateway {
 		/** Record durable denial and expose one grant for provider cleanup. */
 		async revokeClient() {
 			calls.push("deny");
-			return { generation: 2, cleanup_pending: false, grants: ["grant"] };
+			return {
+				generation: 2,
+				cleanup_pending: false,
+				grants: [...pendingGrants],
+			};
 		},
-		/** Record durable cleanup completion after provider cleanup succeeds. */
-		async markGrantCleanupComplete() {
+		/** Retire one pending grant after provider cleanup succeeds. */
+		async markGrantCleanupComplete(_clientId, grantId) {
 			calls.push("complete");
+			const index = pendingGrants.indexOf(grantId);
+			if (index >= 0) pendingGrants.splice(index, 1);
 		},
 		/** Reject CSRF writes because the cleanup use case does not create form state. */
 		async storeOwnerCsrf() {
@@ -98,6 +107,47 @@ describe("client revocation cleanup call reservation", () => {
 		expect(calls).toEqual(["deny", "step"]);
 		expect(result?.cleanup_pending).toBe(true);
 		expect(budget.remainingCalls).toBe(5);
+	});
+
+	it("resumes more than nine empty grants within each request budget", async () => {
+		const calls: string[] = [];
+		const pendingGrants = Array.from(
+			{ length: 11 },
+			(_unused, index) => `grant-${index + 1}`,
+		);
+		const registry = cleanupRegistry(calls, pendingGrants);
+		const provider = cleanupProvider(calls);
+		const firstBudget = { remainingCalls: 48 };
+		firstBudget.remainingCalls -= 1;
+		calls.push("csrf");
+		const first = await revokeClient(
+			registry,
+			provider,
+			"synthetic-owner",
+			"synthetic-client",
+			firstBudget,
+		);
+		expect(calls.filter((call) => call === "step")).toHaveLength(9);
+		expect(calls.filter((call) => call === "complete")).toHaveLength(9);
+		expect(pendingGrants).toEqual(["grant-10", "grant-11"]);
+		expect(first?.cleanup_pending).toBe(true);
+		expect(48 - firstBudget.remainingCalls).toBe(47);
+		expect(firstBudget.remainingCalls).toBe(1);
+
+		const secondBudget = { remainingCalls: 48 };
+		secondBudget.remainingCalls -= 1;
+		calls.push("csrf");
+		const second = await revokeClient(
+			registry,
+			provider,
+			"synthetic-owner",
+			"synthetic-client",
+			secondBudget,
+		);
+		expect(pendingGrants).toEqual([]);
+		expect(second?.cleanup_pending).toBe(false);
+		expect(48 - secondBudget.remainingCalls).toBe(12);
+		expect(secondBudget.remainingCalls).toBe(36);
 	});
 
 	it("reserves and spends the fifth call on durable completion", async () => {

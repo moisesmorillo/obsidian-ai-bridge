@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-10-28T16:48:00Z'
-updated_date: '2026-11-05T00:01:00Z'
+updated_date: '2026-11-05T00:12:00Z'
 labels:
   - deferred
   - privacy
@@ -27,10 +27,8 @@ Trigger: before broader third-party client use, select and test a safe identity 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 New authorization codes and tokens do not expose the owner subject as the provider identity.
+- [ ] #1 New consent flows use an opaque provider identity in authorization codes, access tokens, and refresh tokens. Legacy grants follow the approved compatibility policy.
 - [ ] #2 Tests cover stable owner mapping, token callback matching, provider cleanup, and the documented treatment of existing grants.
-- [ ] #3 New consent flows use an opaque provider identity in authorization codes, access tokens, and refresh tokens. Legacy grants follow the approved compatibility policy.
-- [ ] #4 Tests cover stable owner mapping, token callback matching, provider cleanup, and the documented treatment of existing grants.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -55,4 +53,18 @@ Focused command: `cd apps/worker && bunx vitest run --config vitest.f2.config.ts
 `bun run docs:check` passed. `bun run check` passed lint, docs, type checks, tests, and dry-run builds. Tests passed: tooling 56, protocol 306, plugin 483, Worker suites 660, 122, and 108. Total: 1,735 tests in 100 files. Four workspace type checks passed. Protocol and plugin builds passed. The Worker dry-run build passed. Expected injected network, stream-cancellation, and SQLite errors appeared in test logs.
 
 The approved privacy exception remains: existing legacy codes and grants keep their provider identity through existing expiry or explicit revocation. Legacy refresh can emit another raw-subject-prefixed token. The pseudonym is deterministic and known-input-comparable, not secret or anonymous. KV cleanup is eventually consistent and cannot prove global immediate absence. No deployment, resource change, live-state migration, vault action, new secret, or dependency occurred. OAB-26 remains In Progress and all acceptance criteria remain unchecked for parent review.
+
+Task-review correction, 2026-11-05.
+
+Finding closure: replaced the full acceptance list through repeated `--acceptance-criteria` flags. OAB-26 now has exactly two unchecked criteria. AC #1 uses the approved bounded consent identity and legacy compatibility wording. AC #2 retains the test coverage requirement once. The task remains In Progress.
+
+Finding closure: added a late-token-write integration case. It saves a valid synthetic provider token record, clears both namespace token keys, injects the token after cleanup reads the opaque namespace as empty, then proves the restored token receives `401 revoked` from durable authority. The revocation request uses seven counted calls, within the 48-call limit.
+
+Finding closure: added a provider-list failure integration case. The durable registry denies the grant before the first namespace list fails. The grant remains `revoked: true` and `cleanup_pending: true`. The existing access token receives `401 revoked`. No grant-completion RPC occurs. The request uses three counted calls, within the 48-call limit.
+
+Finding closure: added an 11-grant application budget case. The first request completes nine empty grants, leaves two pending, and uses 47 of 48 calls. The second request completes both remaining grants, reports no pending cleanup, and uses 12 calls. The test confirms bounded progress without a loop or false completion.
+
+These correction tests followed the existing product implementation. No code was deleted to manufacture RED. The original identity helper RED/GREEN history and cleanup chronology exception remain recorded above.
+
+Final correction validation: `cd apps/worker && bunx vitest run --config vitest.f2.config.ts` passed 110 tests in eight files. `cd apps/worker && bunx vitest run --config vitest.config.ts test/application-clients-cleanup.test.ts` passed four tests. `bun run docs:check` passed. `bun run check` passed lint, documentation, four workspace type checks, tests, and dry-run builds. Totals: tooling 56, protocol 306, plugin 483, Worker suites 661, 122, and 110. Total: 1,738 tests in 100 files. No remote CI or live-service action was run.
 <!-- SECTION:NOTES:END -->

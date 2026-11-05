@@ -11,8 +11,10 @@ export interface CredentialFileAccess {
 	lstat(path: string): Promise<{
 		kind: "file" | "directory" | "symlink" | "special";
 		size: number;
+		/** POSIX mode used to reject group or other access below the credential root. */
+		mode: number;
 	}>;
-	/** Reads no more than maxBytes from an opened regular file. */
+	/** Reads a bounded regular file after its opened mode and size pass checks. */
 	readBoundedRegularFile(path: string, maxBytes: number): Promise<string>;
 }
 
@@ -58,9 +60,9 @@ export function assertAccessCookiePath(
 
 /**
  * Reads one bounded regular cookie file and hides filesystem errors and paths.
- * It checks every path component and opens the final file without following links.
- * Parent components are not pinned to open directory handles, so their writers
- * must be trusted during the check and open sequence.
+ * It checks types along the path, rejects group or other access below the dedicated root,
+ * and opens the final file without following links. It does not check ancestor mode bits.
+ * Parent components are not pinned to open directory handles, so their writers must be trusted.
  */
 export async function readAccessCookieFile(
 	path: string,
@@ -68,6 +70,10 @@ export async function readAccessCookieFile(
 	access?: CredentialFileAccess,
 ): Promise<string> {
 	const components = validateCredentialPath(path, credentialRoot);
+	const credentialRootComponentIndex = Math.max(
+		0,
+		resolve(credentialRoot).split(sep).filter(Boolean).length - 1,
+	);
 	const filesystem = access ?? nativeCredentialFileAccess;
 	try {
 		for (let index = 0; index < components.length; index += 1) {
@@ -76,6 +82,11 @@ export async function readAccessCookieFile(
 			if (component.kind === "symlink") throw new Error("unsafe");
 			if (isFile && component.kind !== "file") throw new Error("unsafe");
 			if (!isFile && component.kind !== "directory") throw new Error("unsafe");
+			if (
+				index >= credentialRootComponentIndex &&
+				!hasPrivatePermissions(component.mode)
+			)
+				throw new Error("unsafe");
 			if (isFile && component.size > MAX_CREDENTIAL_BYTES)
 				throw new Error("unsafe");
 		}
@@ -83,6 +94,11 @@ export async function readAccessCookieFile(
 	} catch {
 		throw new Error("Credential file unavailable");
 	}
+}
+
+/** Rejects group or other permission bits on the dedicated credential tree. */
+function hasPrivatePermissions(mode: number): boolean {
+	return (mode & 0o077) === 0;
 }
 
 /** Uses no-follow open flags and a fixed-size read for the real credential file. */
@@ -99,6 +115,7 @@ const nativeCredentialFileAccess: CredentialFileAccess = {
 						? "file"
 						: "special",
 			size: stat.size,
+			mode: stat.mode,
 		};
 	},
 	/** Opens without following the final link and reads at most maxBytes plus one. */
@@ -106,7 +123,12 @@ const nativeCredentialFileAccess: CredentialFileAccess = {
 		const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
 		try {
 			const stat = await file.stat();
-			if (!stat.isFile() || stat.size > maxBytes) throw new Error("unsafe");
+			if (
+				!stat.isFile() ||
+				stat.size > maxBytes ||
+				!hasPrivatePermissions(stat.mode)
+			)
+				throw new Error("unsafe");
 			const chunks: Buffer[] = [];
 			let totalBytes = 0;
 			while (totalBytes <= maxBytes) {

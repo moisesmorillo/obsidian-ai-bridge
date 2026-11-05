@@ -1,3 +1,4 @@
+import { MEASUREMENT_LIMITS } from "@obsidian-ai-bridge/protocol";
 import { collectF4Measurements, formatF4Summary } from "@tooling/f4-collection";
 import { describe, expect, it } from "vitest";
 
@@ -152,7 +153,7 @@ describe("F4 service-only collection", () => {
 			reason: "storage_error",
 		});
 		expect(formatF4Summary(result)).toContain(
-			"Feed response preparation p95: stale (no samples).",
+			"Feed response preparation p95: unknown (stale, no samples).",
 		);
 		expect(formatF4Summary(result)).not.toContain("REST 0");
 	});
@@ -180,5 +181,110 @@ describe("F4 service-only collection", () => {
 				throw new Error("cookie=SECRET");
 			}),
 		).rejects.toThrow("Measurement read failed");
+	});
+
+	it("accepts the public client and latency limits and rejects values above them", async () => {
+		const clients = Array.from(
+			{ length: MEASUREMENT_LIMITS.clients },
+			(_, index) => ({
+				...snapshot.requests.clients[0],
+				id: `client_${index}`,
+				rest: 1,
+				mcp: 0,
+			}),
+		);
+		const maxClientSnapshot = {
+			...snapshot,
+			requests: {
+				...snapshot.requests,
+				count: MEASUREMENT_LIMITS.clients,
+				rest: MEASUREMENT_LIMITS.clients,
+				mcp: 0,
+				clients,
+			},
+		};
+		await expect(
+			collectF4Measurements(async () => maxClientSnapshot),
+		).resolves.toMatchObject({ requests: { clients } });
+		await expect(
+			collectF4Measurements(async () => ({
+				...maxClientSnapshot,
+				requests: {
+					...maxClientSnapshot.requests,
+					count: MEASUREMENT_LIMITS.clients + 1,
+					rest: MEASUREMENT_LIMITS.clients + 1,
+					clients: [...clients, { ...clients[0], id: "client_over_limit" }],
+				},
+			})),
+		).rejects.toThrow("Invalid measurement data");
+
+		const maxLatencySnapshot = {
+			...snapshot,
+			feedLatency: {
+				...snapshot.feedLatency,
+				retainedSamples: MEASUREMENT_LIMITS.latencySamples,
+				totalSamples: MEASUREMENT_LIMITS.latencySamples,
+			},
+		};
+		await expect(
+			collectF4Measurements(async () => maxLatencySnapshot),
+		).resolves.toMatchObject({
+			feedLatency: { retainedSamples: MEASUREMENT_LIMITS.latencySamples },
+		});
+		await expect(
+			collectF4Measurements(async () => ({
+				...maxLatencySnapshot,
+				feedLatency: {
+					...maxLatencySnapshot.feedLatency,
+					retainedSamples: MEASUREMENT_LIMITS.latencySamples + 1,
+					totalSamples: MEASUREMENT_LIMITS.latencySamples + 1,
+				},
+			})),
+		).rejects.toThrow("Invalid measurement data");
+	});
+
+	it("follows changed public measurement limits", async () => {
+		const mutableLimits = MEASUREMENT_LIMITS as unknown as {
+			clients: number;
+			latencySamples: number;
+		};
+		const originalClients = mutableLimits.clients;
+		const originalSamples = mutableLimits.latencySamples;
+		try {
+			mutableLimits.clients = 1;
+			await expect(
+				collectF4Measurements(async () => ({
+					...snapshot,
+					requests: {
+						...snapshot.requests,
+						count: 16,
+						rest: 13,
+						clients: [
+							...snapshot.requests.clients,
+							{
+								...snapshot.requests.clients[0],
+								id: "client_43",
+								rest: 1,
+								mcp: 0,
+							},
+						],
+					},
+				})),
+			).rejects.toThrow("Invalid measurement data");
+			mutableLimits.latencySamples = 1;
+			await expect(
+				collectF4Measurements(async () => ({
+					...snapshot,
+					feedLatency: {
+						...snapshot.feedLatency,
+						retainedSamples: 2,
+						totalSamples: 2,
+					},
+				})),
+			).rejects.toThrow("Invalid measurement data");
+		} finally {
+			mutableLimits.clients = originalClients;
+			mutableLimits.latencySamples = originalSamples;
+		}
 	});
 });

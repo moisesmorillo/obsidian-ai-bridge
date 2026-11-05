@@ -10,23 +10,34 @@ const root = "/synthetic/config/f4";
 function access(
 	files: Record<
 		string,
-		{ kind: "file" | "directory" | "symlink" | "special"; text?: string }
+		{
+			kind: "file" | "directory" | "symlink" | "special";
+			text?: string;
+			mode?: number;
+		}
 	>,
 ) {
 	const visited: string[] = [];
+	const reads: string[] = [];
 	return {
 		visited,
+		reads,
 		/** Returns the synthetic file type without resolving symbolic links. */
 		async lstat(path: string) {
 			visited.push(path);
 			const entry = files[path];
 			if (!entry)
 				throw Object.assign(new Error("missing path"), { code: "ENOENT" });
-			return { kind: entry.kind, size: entry.text?.length ?? 0 };
+			return {
+				kind: entry.kind,
+				size: entry.text?.length ?? 0,
+				mode: entry.mode ?? (entry.kind === "directory" ? 0o700 : 0o600),
+			};
 		},
 		/** Returns synthetic bytes only when they fit the reader's byte limit. */
 		async readBoundedRegularFile(path: string, maxBytes: number) {
 			visited.push(path);
+			reads.push(path);
 			const text = files[path]?.text;
 			if (text === undefined) throw new Error("missing bytes");
 			if (text.length > maxBytes) throw new Error("too large");
@@ -42,10 +53,10 @@ describe("F4 credential file reader", () => {
 		);
 	});
 
-	it("reads only a bounded regular file under the dedicated root", async () => {
+	it("checks dedicated-root modes but does not impose them on home ancestors", async () => {
 		const io = access({
-			"/synthetic": { kind: "directory" },
-			"/synthetic/config": { kind: "directory" },
+			"/synthetic": { kind: "directory", mode: 0o777 },
+			"/synthetic/config": { kind: "directory", mode: 0o777 },
 			"/synthetic/config/f4": { kind: "directory" },
 			"/synthetic/config/f4/access.cookie": {
 				kind: "file",
@@ -87,6 +98,41 @@ describe("F4 credential file reader", () => {
 			"Credential file unavailable",
 		);
 	});
+
+	it.each([
+		["credential root", root, 0o755, "file"],
+		["nested directory", `${root}/nested`, 0o755, "nested-file"],
+		["cookie file", `${root}/access.cookie`, 0o644, "file"],
+	] as const)(
+		"rejects broad permissions on the %s",
+		async (_name, unsafePath, mode, target) => {
+			const filePath =
+				target === "nested-file"
+					? `${root}/nested/access.cookie`
+					: `${root}/access.cookie`;
+			const io = access({
+				"/synthetic": { kind: "directory", mode: 0o777 },
+				"/synthetic/config": { kind: "directory", mode: 0o777 },
+				[root]: {
+					kind: "directory",
+					mode: unsafePath === root ? mode : 0o700,
+				},
+				[`${root}/nested`]: {
+					kind: "directory",
+					mode: unsafePath === `${root}/nested` ? mode : 0o700,
+				},
+				[filePath]: {
+					kind: "file",
+					text: "session=example",
+					mode: unsafePath === filePath ? mode : 0o600,
+				},
+			});
+			await expect(readAccessCookieFile(filePath, root, io)).rejects.toThrow(
+				"Credential file unavailable",
+			);
+			expect(io.reads).toEqual([]);
+		},
+	);
 
 	it("rejects oversized content with a static error", async () => {
 		const io = access({

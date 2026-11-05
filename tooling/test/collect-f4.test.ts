@@ -107,11 +107,55 @@ describe("F4 collection CLI", () => {
 			cookie: "CF_Authorization=header.payload.signature",
 		});
 		expect(context.output).toHaveLength(1);
-		expect(context.output[0]).toContain("Request data: stale (stale)");
+		expect(context.output[0]).toContain("Request data: observed (stale)");
 		expect(context.output[0]).toContain("Client client_42");
 		expect(context.output[0]).toContain("125 ms");
 		expect(context.output[0]).toContain("storage_error");
 		expect(context.output.join("\n")).not.toContain("header.payload.signature");
+	});
+
+	it("accepts sampled responses with omitted optional sample timestamps", async () => {
+		const {
+			first_sample_at: _first,
+			last_sample_at: _last,
+			...feedLatency
+		} = measurementResponse.feed_latency;
+		const context = dependencies(
+			jsonResponse({ ...measurementResponse, feed_latency: feedLatency }),
+		);
+		await expect(
+			runF4CollectionCli(
+				[
+					"--cookie-file",
+					"/synthetic/home/.config/obsidian-ai-bridge/f4/access.cookie",
+				],
+				context.deps,
+			),
+		).resolves.toBe(0);
+		expect(context.output[0]).toContain("125 ms");
+		expect(context.output[0]).toContain("Retained sample times: unknown.");
+		expect(context.errors).toEqual([]);
+
+		const partialBounds = {
+			...measurementResponse,
+			feed_latency: {
+				...measurementResponse.feed_latency,
+				last_sample_at: undefined,
+			},
+		};
+		const partialContext = dependencies(jsonResponse(partialBounds));
+		await expect(
+			runF4CollectionCli(
+				[
+					"--cookie-file",
+					"/synthetic/home/.config/obsidian-ai-bridge/f4/access.cookie",
+				],
+				partialContext.deps,
+			),
+		).resolves.toBe(0);
+		expect(partialContext.output[0]).toContain(
+			"Retained sample times: 2025-11-05T01:10:00.000Z.",
+		);
 	});
 
 	it("keeps equal first and last times when multiple samples share one millisecond", async () => {
@@ -171,9 +215,9 @@ describe("F4 collection CLI", () => {
 				context.deps,
 			),
 		).resolves.toBe(0);
-		expect(context.output[0]).toContain("Request data: stale (stale)");
+		expect(context.output[0]).toContain("Request data: unknown (stale)");
 		expect(context.output[0]).toContain(
-			"Feed response preparation p95: stale (no samples)",
+			"Feed response preparation p95: unknown (stale, no samples)",
 		);
 		expect(context.output[0]).not.toContain("REST 0");
 		expect(context.output[0]).toContain("unknown (storage_error)");

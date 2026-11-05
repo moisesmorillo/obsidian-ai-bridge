@@ -1,3 +1,5 @@
+import { MEASUREMENT_LIMITS } from "@obsidian-ai-bridge/protocol";
+
 /** Safe result freshness state retained from the service response. */
 export type MeasurementStatus = "observed" | "stale" | "unknown";
 
@@ -230,7 +232,7 @@ export async function collectF4Measurements(
 		throw new Error("Invalid measurement data");
 	if (
 		!Array.isArray(requests.clients) ||
-		requests.clients.length > 128 ||
+		requests.clients.length > MEASUREMENT_LIMITS.clients ||
 		requests.clients.some(
 			(client) => !isSafeClient(client, requests.window as Window | null),
 		)
@@ -292,10 +294,11 @@ export async function collectF4Measurements(
 	)
 		throw new Error("Invalid measurement data");
 	if (
-		retainedSamples > 2_048 ||
+		retainedSamples > MEASUREMENT_LIMITS.latencySamples ||
 		retainedSamples > totalSamples ||
 		feed.capExcluded !== totalSamples > retainedSamples ||
-		feed.retainedSampleTimes.length !== Math.min(retainedSamples, 2) ||
+		feed.retainedSampleTimes.length > 2 ||
+		(retainedSamples === 0 && feed.retainedSampleTimes.length > 0) ||
 		(feed.sourceStatus === "observed" &&
 			(feed.p95 === null || retainedSamples === 0)) ||
 		(feed.sourceStatus === "unknown" && feed.p95 !== null) ||
@@ -472,20 +475,19 @@ export function formatF4Summary(summary: SafeF4Measurements): string {
 		summary.requests.rest === null || summary.requests.mcp === null
 			? "unknown"
 			: `REST ${summary.requests.rest}, MCP ${summary.requests.mcp}`;
+	const requestState = `${summary.requests.sourceStatus}${summary.requests.stale ? " (stale)" : ""}`;
+	const feedState = `${summary.feedLatency.sourceStatus}${summary.feedLatency.stale ? " (stale)" : ""}`;
 	const latency =
-		summary.feedLatency.status === "observed" &&
 		summary.feedLatency.p95 !== null
-			? `${summary.feedLatency.p95} ms (nearest-rank, ${summary.feedLatency.retainedSamples}/${summary.feedLatency.totalSamples} retained/total samples${summary.feedLatency.capExcluded ? ", earlier samples excluded by cap" : ""})`
-			: summary.feedLatency.status === "stale" &&
-					(summary.feedLatency.reason === "no_samples" ||
-						summary.feedLatency.retainedSamples === 0)
-				? "stale (no samples)"
-				: summary.feedLatency.status === "unknown" &&
-						summary.feedLatency.reason === "no_samples"
-					? "unknown (no samples)"
-					: summary.feedLatency.p95 === null
-						? summary.feedLatency.status
-						: `${summary.feedLatency.p95} ms (${summary.feedLatency.status})`;
+			? `${summary.feedLatency.p95} ms (nearest-rank, ${summary.feedLatency.retainedSamples}/${summary.feedLatency.totalSamples} retained/total samples${summary.feedLatency.capExcluded ? ", earlier samples excluded by cap" : ""}; ${feedState})`
+			: summary.feedLatency.reason === "no_samples" ||
+					summary.feedLatency.retainedSamples === 0
+				? `${summary.feedLatency.sourceStatus} (${summary.feedLatency.stale ? "stale, " : ""}no samples)`
+				: feedState;
+	const retainedSampleRange =
+		summary.feedLatency.retainedSampleTimes.length > 1
+			? `${summary.feedLatency.retainedSampleTimes[0]} to ${summary.feedLatency.retainedSampleTimes.at(-1)}`
+			: (summary.feedLatency.retainedSampleTimes[0] ?? "unknown");
 	/** Formats one storage value with its explicit unknown reason. */
 	const storageValue = (value: ValueObservation): string =>
 		value.status === "observed"
@@ -494,12 +496,12 @@ export function formatF4Summary(summary: SafeF4Measurements): string {
 	return [
 		`Service measurements: ${summary.serviceStatus}. Coverage: ${summary.coverage}.`,
 		`UTC day window: ${window}. Overall observation: ${observed}.`,
-		`Requests (observed lower bounds): ${requestCounts}${summary.requests.count === null ? "" : ` (${summary.requests.count} total)`}. Request window: ${summary.requests.window ? `${summary.requests.window.start} to ${summary.requests.window.end}` : "unknown"}. Request observations: ${summary.requests.observation ? `${summary.requests.observation.start} to ${summary.requests.observation.end}` : "unknown"}. Request data: ${summary.requests.status}${summary.requests.stale ? " (stale)" : ""}. Client coverage: ${summary.requests.clientCoverage}.`,
+		`Requests (observed lower bounds): ${requestCounts}${summary.requests.count === null ? "" : ` (${summary.requests.count} total)`}. Request window: ${summary.requests.window ? `${summary.requests.window.start} to ${summary.requests.window.end}` : "unknown"}. Request observations: ${summary.requests.observation ? `${summary.requests.observation.start} to ${summary.requests.observation.end}` : "unknown"}. Request data: ${requestState}. Client coverage: ${summary.requests.clientCoverage}.`,
 		...summary.requests.clients.map(
 			(client) =>
 				`Client ${client.id}: REST ${client.rest}, MCP ${client.mcp}. Last feed request ${client.lastFeedRequestAt ?? "unknown"}. Poll interval ${client.pollCadenceIncomplete ? "unknown (out-of-order requests)" : `${client.minPollIntervalMs ?? "unknown"}-${client.maxPollIntervalMs ?? "unknown"} milliseconds`}.`,
 		),
-		`Feed response preparation p95: ${latency}. Window: ${summary.feedLatency.window ? `${summary.feedLatency.window.start} to ${summary.feedLatency.window.end}` : "unknown"}. Retained sample times: ${summary.feedLatency.retainedSampleTimes.length ? `${summary.feedLatency.retainedSampleTimes[0]} to ${summary.feedLatency.retainedSampleTimes.at(-1)}` : "unknown"}. Not end-to-end sync latency. Feed times and intervals do not show event causes or focus state.`,
+		`Feed response preparation p95: ${latency}. Window: ${summary.feedLatency.window ? `${summary.feedLatency.window.start} to ${summary.feedLatency.window.end}` : "unknown"}. Retained sample times: ${retainedSampleRange}. Not end-to-end sync latency. Feed times and intervals do not show event causes or focus state.`,
 		`SQLite allocation: ${storageValue(summary.storage.databaseBytes)}. Deduplicated referenced R2: ${storageValue(summary.storage.referencedBlobBytes)}. These are not bucket allocation or an integrity check.`,
 	].join("\n");
 }

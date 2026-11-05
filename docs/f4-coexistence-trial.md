@@ -40,7 +40,7 @@ Pause stops publishing and applying but retains queues and confirmation items. R
 
 ## Collect service measurements
 
-The supervisor creates `$HOME/.config/obsidian-ai-bridge/f4/access.cookie` outside the repository and vault. Keep the directory private with mode `700` and the file private with mode `600`.
+The supervisor creates `$HOME/.config/obsidian-ai-bridge/f4/access.cookie` outside the repository and vault. Keep the directory private with mode `700` and the file private with mode `600`. The reader rejects group or other permission bits on the credential root, its subdirectories, and the cookie file. It does not check permission modes on ancestors above the dedicated root.
 
 The file holds one line in this exact form, with an optional final line feed:
 

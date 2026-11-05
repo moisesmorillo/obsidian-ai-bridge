@@ -91,6 +91,58 @@ describe("search response ownership", () => {
 		}
 		await pending;
 	}, 10_000);
+	it("keeps invalid_request after abort during completed search preparation", async () => {
+		const started = barrier<void>();
+		const result = barrier<SearchResponse>();
+		const finished: AdmissionCompletion[] = [];
+		const gateway: SearchVaultGateway = {
+			authorize: async (): Promise<AdmissionResult> => ({
+				ok: true,
+				ticket: { id: "1".repeat(32), expires_at: 60_000 },
+			}),
+			search: async () => {
+				started.resolve();
+				return result.promise;
+			},
+			finishAdmission: async (_identity, _ticket, completion) => {
+				finished.push(completion);
+				return { ok: true };
+			},
+		};
+		const worker = new Hono<{ Bindings: Env }>().route(
+			"/",
+			createSearchRouter(
+				async () => ({
+					client_id: "search",
+					grant_id: "grant",
+					scopes: ["vault:read"],
+				}),
+				() => gateway,
+			),
+		);
+		const abort = new AbortController();
+		const pending = worker.fetch(
+			new Request("https://search.invalid/search?q=abc", {
+				signal: abort.signal,
+			}),
+			{} as Env,
+		);
+		await started.promise;
+		abort.abort();
+		result.resolve({
+			ok: true,
+			body: {
+				epoch: "a".repeat(32),
+				results: [],
+				indexed_files: 0,
+				unindexed_large_files: 0,
+			},
+		});
+		const response = await pending;
+		expect(response.status).toBe(400);
+		expect(await response.json()).toMatchObject({ error: "invalid_request" });
+		expect(finished).toEqual(["settled"]);
+	});
 	it("keeps the slot after the data chunk until the consumer requests EOF", async () => {
 		const release = vi.fn();
 		const finish = vi.fn(async () => ({ ok: true as const }));

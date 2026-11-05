@@ -144,7 +144,7 @@ describe("application search", () => {
 		const outcome = await pending;
 		expect(outcome).toMatchObject({
 			ok: false,
-			failure: { kind: "internal_error" },
+			failure: { kind: "invalid_request" },
 		});
 		expect(observed.search).not.toHaveBeenCalled();
 		expect(observed.finishAdmission).not.toHaveBeenCalled();
@@ -184,7 +184,7 @@ describe("application search", () => {
 		const outcome = await pending;
 		expect(outcome).toMatchObject({
 			ok: false,
-			failure: { kind: "internal_error" },
+			failure: { kind: "invalid_request" },
 		});
 		expect(observed.finishAdmission).not.toHaveBeenCalled();
 		if (!outcome.ok && outcome.settle) await outcome.settle();

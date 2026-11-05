@@ -23,7 +23,7 @@ import {
 } from "@worker/transport/read-response";
 import { Hono } from "hono";
 
-/** Register strict literal search and retain the shared read slot through response EOF. */
+/** Register strict literal search and retain the shared read slot while source work remains active. */
 export function createSearchRouter(
 	resolveIdentity: (request: Request) => Promise<AuthorizationContext | null>,
 	resolveVault: (env: Env, request: Request) => SearchVaultGateway,

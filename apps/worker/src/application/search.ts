@@ -74,7 +74,7 @@ export async function readSearch(
 				ok: false,
 				failure:
 					error instanceof ReadAborted
-						? { kind: "internal_error" }
+						? { kind: "invalid_request" }
 						: error.failure,
 				settle: async () =>
 					gateway.finishAdmission(context, ticketId, "settled"),

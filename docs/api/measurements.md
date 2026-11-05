@@ -8,7 +8,11 @@ The request counts are observed lower bounds. The service counts each provider-v
 
 Request observations contain a verified client ID. The service does not infer a device or event source from names, headers, or user-agent values. It retains at most 128 client IDs per UTC day. When this cap fills, it preserves existing IDs, counts totals, marks coverage incomplete, and leaves omitted clients unknown. No zero count is inferred for an unobserved client.
 
-Each daily window starts at UTC midnight and ends at the next UTC midnight. The response gives its bounds, observation start and end, and partial or incomplete coverage. Counts use actual observations, not a daily-rate estimate. The first observation on a new UTC day rotates the aggregate. Earlier data does not appear as a fresh zero. Stale values retain their original windows. Ten minutes without a request observation marks request data stale.
+Each daily window starts at UTC midnight and ends at the next UTC midnight. The response gives its bounds, observation start and end, and partial or incomplete coverage. Counts use actual observations, not a daily-rate estimate. The first observation on a new UTC day rotates the aggregate. Earlier data does not appear as a fresh zero. Stale values retain their original windows.
+
+The aggregate stores the first and latest successful request times separately from the overall observation window. The response includes this request observation window. Feed samples cannot refresh request freshness. Ten minutes without a successful request observation marks request data stale. If no request observation succeeded, request counts, request window, and client rows are unknown.
+
+The Worker can persist request and feed observations out of timestamp order. Same-day observations still update totals. The window start and end keep their minimum and maximum timestamps. The request freshness time keeps the maximum request timestamp. Older feed requests do not move a client cadence time backwards. Samples sort by observation time. The 2,048-sample cap retains the latest samples by timestamp.
 
 ## Feed latency
 

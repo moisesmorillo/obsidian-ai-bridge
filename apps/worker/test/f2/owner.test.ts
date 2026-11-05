@@ -96,6 +96,12 @@ describe("production owner console", () => {
 		expect(await measurements.json()).toMatchObject({
 			status: "unknown",
 			coverage: "unknown",
+			requests: {
+				status: "unknown",
+				count: null,
+				observed_from: null,
+				observed_through: null,
+			},
 			feed_latency: { status: "unknown", p95: null },
 			storage: {
 				database_bytes: { status: "observed" },
@@ -107,7 +113,11 @@ describe("production owner console", () => {
 			{ headers: { "Cf-Access-Jwt-Assertion": assertion } },
 		);
 		expect(summary.headers.get("cache-control")).toBe("no-store");
-		expect(await summary.text()).toContain("Feed response preparation p95");
+		const summaryHtml = await summary.text();
+		expect(summaryHtml).toContain("Feed response preparation p95");
+		expect(summaryHtml).toContain(
+			"Request observation window: unknown to unknown",
+		);
 		const wrongOrigin = await SELF.fetch(
 			"https://other.test/owner/measurements",
 			{ headers: { "Cf-Access-Jwt-Assertion": assertion } },

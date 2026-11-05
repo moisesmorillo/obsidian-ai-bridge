@@ -52,6 +52,8 @@ const MeasurementAggregateFieldsSchema = z
 		day_end: TimestampSchema,
 		observed_from: TimestampSchema,
 		observed_through: TimestampSchema,
+		request_observed_from: TimestampSchema.nullable(),
+		request_observed_through: TimestampSchema.nullable(),
 		coverage_incomplete: z.boolean(),
 		requests_rest: CountSchema,
 		requests_mcp: CountSchema,
@@ -88,7 +90,14 @@ function validateMeasurementAggregate(
 		aggregate.day_end !== aggregate.day_start + 86_400_000 ||
 		aggregate.observed_from < aggregate.day_start ||
 		aggregate.observed_from > aggregate.observed_through ||
-		aggregate.observed_through >= aggregate.day_end
+		aggregate.observed_through >= aggregate.day_end ||
+		(aggregate.request_observed_from === null) !==
+			(aggregate.request_observed_through === null) ||
+		(aggregate.request_observed_from !== null &&
+			aggregate.request_observed_through !== null &&
+			(aggregate.request_observed_from < aggregate.day_start ||
+				aggregate.request_observed_from > aggregate.request_observed_through ||
+				aggregate.request_observed_through > aggregate.observed_through))
 	)
 		ctx.addIssue({
 			code: "custom",
@@ -146,7 +155,9 @@ function validateMeasurementAggregate(
 				message: "client cadence must be internally consistent and in-window",
 			});
 	}
+	const requestCount = aggregate.requests_rest + aggregate.requests_mcp;
 	if (
+		(requestCount === 0) !== (aggregate.request_observed_through === null) ||
 		clientRestCount > aggregate.requests_rest ||
 		clientMcpCount > aggregate.requests_mcp ||
 		(!aggregate.coverage_incomplete &&
@@ -194,6 +205,8 @@ export const MeasurementResponseSchema = z
 			.object({
 				status: z.enum(["observed", "unknown"]),
 				count: CountSchema.nullable(),
+				observed_from: TimestampSchema.nullable(),
+				observed_through: TimestampSchema.nullable(),
 				rest_count: CountSchema.nullable(),
 				mcp_count: CountSchema.nullable(),
 				stale: z.boolean(),

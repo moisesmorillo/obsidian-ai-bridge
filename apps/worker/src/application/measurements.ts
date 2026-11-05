@@ -64,6 +64,8 @@ function emptyAggregate(now: number): MeasurementAggregate {
 		day_end: dayStart + 86_400_000,
 		observed_from: now,
 		observed_through: now,
+		request_observed_from: null,
+		request_observed_through: null,
 		coverage_incomplete: false,
 		requests_rest: 0,
 		requests_mcp: 0,
@@ -73,15 +75,26 @@ function emptyAggregate(now: number): MeasurementAggregate {
 	};
 }
 
-/** Keep same-day state, rotate at the first later-day observation, or reject clock rollback. */
+/** Rotate at a later UTC day and accept reordered observations within the current day. */
 function baseForObservation(
 	current: MeasurementAggregate | null,
 	now: number,
 ): MeasurementAggregate | null {
 	if (!current) return emptyAggregate(now);
-	if (now < current.observed_through) return null;
+	if (now < current.day_start) return null;
 	if (now >= current.day_end) return emptyAggregate(now);
 	return current;
+}
+
+/** Advance the overall window bounds without moving either bound backwards. */
+function advanceObservationWindow(
+	current: MeasurementAggregate,
+	observedAt: number,
+): Pick<MeasurementAggregate, "observed_from" | "observed_through"> {
+	return {
+		observed_from: Math.min(current.observed_from, observedAt),
+		observed_through: Math.max(current.observed_through, observedAt),
+	};
 }
 
 /** Apply one request count while preserving known client rows when the daily cap fills. */
@@ -93,7 +106,18 @@ function addRequest(
 	if (!base) return null;
 	const protocolKey =
 		observation.protocol === "rest" ? "requests_rest" : "requests_mcp";
-	const next = { ...base, observed_through: observation.observed_at };
+	const next = {
+		...base,
+		...advanceObservationWindow(base, observation.observed_at),
+		request_observed_from: Math.min(
+			base.request_observed_from ?? observation.observed_at,
+			observation.observed_at,
+		),
+		request_observed_through: Math.max(
+			base.request_observed_through ?? observation.observed_at,
+			observation.observed_at,
+		),
+	};
 	next[protocolKey] += 1;
 	const existingIndex = base.clients.findIndex(
 		(client) => client.client_id === observation.client_id,
@@ -118,21 +142,23 @@ function addRequest(
 	const client =
 		clients[existingIndex < 0 ? clients.length - 1 : existingIndex];
 	if (observation.feed_request) {
-		const interval =
-			client.last_feed_request_at === null
-				? null
-				: observation.observed_at - client.last_feed_request_at;
-		if (existingIndex >= 0 && interval !== null && interval >= 0) {
-			client.minimum_poll_interval_ms =
-				client.minimum_poll_interval_ms === null
-					? interval
-					: Math.min(client.minimum_poll_interval_ms, interval);
-			client.maximum_poll_interval_ms =
-				client.maximum_poll_interval_ms === null
-					? interval
-					: Math.max(client.maximum_poll_interval_ms, interval);
+		const lastFeedRequestAt = client.last_feed_request_at;
+		if (lastFeedRequestAt === null) {
+			client.last_feed_request_at = observation.observed_at;
+		} else if (observation.observed_at >= lastFeedRequestAt) {
+			const interval = observation.observed_at - lastFeedRequestAt;
+			if (existingIndex >= 0) {
+				client.minimum_poll_interval_ms =
+					client.minimum_poll_interval_ms === null
+						? interval
+						: Math.min(client.minimum_poll_interval_ms, interval);
+				client.maximum_poll_interval_ms =
+					client.maximum_poll_interval_ms === null
+						? interval
+						: Math.max(client.maximum_poll_interval_ms, interval);
+			}
+			client.last_feed_request_at = observation.observed_at;
 		}
-		client.last_feed_request_at = observation.observed_at;
 	}
 	if (observation.protocol === "rest") client.requests_rest += 1;
 	else client.requests_mcp += 1;
@@ -140,7 +166,7 @@ function addRequest(
 	return MeasurementAggregateSchema.parse(next);
 }
 
-/** Add a successful feed preparation sample and evict only the oldest sample above the cap. */
+/** Add a sample by observation time and retain the latest bounded sample window. */
 function addFeedSample(
 	current: MeasurementAggregate | null,
 	observation: FeedPreparationObservation,
@@ -153,11 +179,12 @@ function addFeedSample(
 			observed_at: observation.observed_at,
 			duration_ms: observation.duration_ms,
 		},
-	];
-	if (samples.length > MEASUREMENT_LIMITS.latencySamples) samples.shift();
+	].sort((left, right) => left.observed_at - right.observed_at);
+	if (samples.length > MEASUREMENT_LIMITS.latencySamples)
+		samples.splice(0, samples.length - MEASUREMENT_LIMITS.latencySamples);
 	return MeasurementAggregateSchema.parse({
 		...base,
-		observed_through: observation.observed_at,
+		...advanceObservationWindow(base, observation.observed_at),
 		latency_total_samples: base.latency_total_samples + 1,
 		latency_samples: samples,
 	});
@@ -216,6 +243,8 @@ export function measurementResponse(
 			requests: {
 				status: "unknown",
 				count: null,
+				observed_from: aggregate.request_observed_from,
+				observed_through: aggregate.request_observed_through,
 				rest_count: null,
 				mcp_count: null,
 				stale: true,
@@ -245,6 +274,8 @@ export function measurementResponse(
 			requests: {
 				status: "unknown",
 				count: null,
+				observed_from: null,
+				observed_through: null,
 				rest_count: null,
 				mcp_count: null,
 				stale: true,
@@ -263,8 +294,10 @@ export function measurementResponse(
 	}
 
 	const latestSample = aggregate.latency_samples.at(-1)?.observed_at;
+	const requestObservedAt = aggregate.request_observed_through;
 	const requestStale =
-		now - aggregate.observed_through > MEASUREMENT_STALE_AFTER_MS;
+		requestObservedAt === null ||
+		now - requestObservedAt > MEASUREMENT_STALE_AFTER_MS;
 	const latencyStale =
 		latestSample === undefined ||
 		now - latestSample > MEASUREMENT_STALE_AFTER_MS;
@@ -277,12 +310,14 @@ export function measurementResponse(
 		observed_from: aggregate.observed_from,
 		observed_through: aggregate.observed_through,
 		requests: {
-			status: "observed",
-			count: requestCount,
-			rest_count: aggregate.requests_rest,
-			mcp_count: aggregate.requests_mcp,
+			status: requestObservedAt === null ? "unknown" : "observed",
+			count: requestObservedAt === null ? null : requestCount,
+			observed_from: aggregate.request_observed_from,
+			observed_through: requestObservedAt,
+			rest_count: requestObservedAt === null ? null : aggregate.requests_rest,
+			mcp_count: requestObservedAt === null ? null : aggregate.requests_mcp,
 			stale: requestStale,
-			clients: aggregate.clients,
+			clients: requestObservedAt === null ? [] : aggregate.clients,
 		},
 		feed_latency: {
 			status: latestSample === undefined ? "unknown" : "observed",

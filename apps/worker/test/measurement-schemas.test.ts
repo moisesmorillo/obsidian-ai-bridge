@@ -17,6 +17,8 @@ describe("measurement schemas", () => {
 			requests: {
 				status: "observed",
 				count: 0,
+				observed_from: 1_700_000_000_000,
+				observed_through: 1_700_000_000_000,
 				rest_count: 0,
 				mcp_count: 0,
 				stale: false,
@@ -48,6 +50,8 @@ describe("measurement schemas", () => {
 			day_end: 1_700_092_800_000,
 			observed_from: 1_700_006_400_001,
 			observed_through: 1_700_006_400_002,
+			request_observed_from: 1_700_006_400_001,
+			request_observed_through: 1_700_006_400_001,
 			coverage_incomplete: false,
 			requests_rest: 1,
 			requests_mcp: 0,

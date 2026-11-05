@@ -65,6 +65,29 @@ describe("native Vault measurement storage", () => {
 		});
 	});
 
+	it("persists a request that arrives after its later-timestamp feed sample", async () => {
+		const stub = env.VAULTS.get(env.VAULTS.newUniqueId());
+		await runInDurableObject(stub, (_instance, state) => {
+			const store = new SqliteMeasurementsStore(state.storage);
+			const gateway = createMeasurementGateway(store, () => 1_700_000_000_100);
+			gateway.recordFeedPreparation({
+				client_id: "device-1",
+				observed_at: 1_700_000_000_020,
+				duration_ms: 5,
+			});
+			gateway.recordRequest({
+				client_id: "device-1",
+				protocol: "rest",
+				feed_request: true,
+				observed_at: 1_700_000_000_000,
+			});
+
+			expect(
+				new SqliteMeasurementsStore(state.storage).read()?.requests_rest,
+			).toBe(1);
+		});
+	});
+
 	it("keeps bounded daily state across adapter restart and preserves corrupt metadata", async () => {
 		const stub = env.VAULTS.get(env.VAULTS.newUniqueId());
 		await runInDurableObject(stub, (_instance, state) => {

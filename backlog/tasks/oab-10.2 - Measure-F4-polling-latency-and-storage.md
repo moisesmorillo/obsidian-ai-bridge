@@ -4,7 +4,7 @@ title: Measure F4 polling latency and storage
 status: In Progress
 assignee: []
 created_date: '2026-11-05T12:48:00Z'
-updated_date: '2026-11-05T13:39:00Z'
+updated_date: '2026-11-05T13:58:00Z'
 labels: []
 dependencies:
   - OAB-10.1
@@ -45,4 +45,10 @@ Service implementation evidence for branch feature/oab-10-2-measurements: canoni
 Validation: failing schema test first: `bun run --cwd apps/worker vitest run test/measurement-schemas.test.ts` failed 2 tests because the schemas did not exist. GREEN: the same command passed 2 tests. Failing rollback case: `bun run --cwd apps/worker vitest run test/application-measurements.test.ts` failed because rollback still showed observed values. GREEN after correction: the same command passed. Focused Worker measurement tests passed, including native SQLite references, restart/corrupt state, request boundaries, feed headers, lazy body ownership, and owner Access. `bun run docs:check`, `bun run typecheck`, and `bun run check` passed.
 
 The service tests do not prove plugin display or event classification, real two-test-vault evidence, live Access behavior, or production billing totals. OAB-8.7.1 remains Deferred with its F4 trigger. No vault content, deployment, or Cloudflare resource was accessed or changed. Full command evidence and reviewed file list: `.superpowers/sdd/S2-plan/task-1-report.md`. Keep task In Progress until parent review and the plugin/live criteria are proven.
+
+Review round 1 correction: request freshness uses separate request observation bounds. Feed samples cannot refresh request freshness. Same-day reordered observations update totals without moving timestamps backwards. The owner response shows the request window and keeps missing request data unknown.
+
+RED: `bun run --cwd apps/worker vitest run test/application-measurements.test.ts` failed 4 tests for stale freshness, reordered totals, sample cap order, and unknown requests. `test/vault-measurements.test.ts` failed 1 SQLite ordering test. `test/transport-measurements.test.ts` failed 1 controlled RPC ordering test. Request-window response coverage failed 2 assertions before implementation.
+
+GREEN: Focused measurement tests passed 21 tests in 4 files. Owner tests passed 3 tests. `bun run docs:check` passed. `bun run check` passed, including all workspace tests and dry-run builds. Full evidence: `.superpowers/sdd/S2-plan/task-1-report.md`. The task remains In Progress. Parent review and plugin/live evidence remain open.
 <!-- SECTION:NOTES:END -->

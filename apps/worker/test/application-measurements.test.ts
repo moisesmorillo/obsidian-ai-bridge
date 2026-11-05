@@ -16,6 +16,8 @@ const aggregate: MeasurementAggregate = MeasurementAggregateSchema.parse({
 	day_end: 1_700_092_800_000,
 	observed_from: 1_700_006_400_000,
 	observed_through: 1_700_006_400_100,
+	request_observed_from: 1_700_006_400_000,
+	request_observed_through: 1_700_006_400_100,
 	coverage_incomplete: false,
 	requests_rest: 2,
 	requests_mcp: 0,
@@ -53,6 +55,144 @@ describe("measurement application rules", () => {
 			status: "observed",
 			value: 0,
 		});
+	});
+
+	it("marks request data stale when feed samples continue after request writes stop", () => {
+		const state: { value: MeasurementAggregate | null } = { value: null };
+		const store: MeasurementStore = {
+			/** Keep the in-memory test state unchanged when an observation is rejected. */
+			update(change) {
+				const next = change(state.value);
+				if (next) state.value = next;
+			},
+			read: () => state.value,
+		};
+		const requestAt = 1_700_000_000_000;
+		const sampleAt = requestAt + 700_000;
+		const gateway = createMeasurementGateway(store, () => sampleAt + 100);
+		gateway.recordRequest({
+			client_id: "device-1",
+			protocol: "rest",
+			feed_request: true,
+			observed_at: requestAt,
+		});
+		gateway.recordFeedPreparation({
+			client_id: "device-1",
+			observed_at: sampleAt,
+			duration_ms: 10,
+		});
+
+		const result = gateway.read({
+			database_bytes: { status: "observed", value: 0 },
+			referenced_blob_bytes: { status: "observed", value: 0 },
+		});
+		expect(result.requests.count).toBe(1);
+		expect(result.requests.observed_from).toBe(requestAt);
+		expect(result.requests.observed_through).toBe(requestAt);
+		expect(result.requests.stale).toBe(true);
+		expect(result.feed_latency.stale).toBe(false);
+	});
+
+	it("keeps request counts when a same-day request arrives after its feed sample", () => {
+		const state: { value: MeasurementAggregate | null } = { value: null };
+		const store: MeasurementStore = {
+			/** Keep the in-memory test state unchanged when an observation is rejected. */
+			update(change) {
+				const next = change(state.value);
+				if (next) state.value = next;
+			},
+			read: () => state.value,
+		};
+		const requestAt = 1_700_000_000_100;
+		const sampleAt = requestAt + 20;
+		const gateway = createMeasurementGateway(store, () => sampleAt + 1);
+		gateway.recordFeedPreparation({
+			client_id: "device-1",
+			observed_at: sampleAt,
+			duration_ms: 10,
+		});
+		gateway.recordRequest({
+			client_id: "device-1",
+			protocol: "rest",
+			feed_request: true,
+			observed_at: requestAt,
+		});
+		gateway.recordRequest({
+			client_id: "device-1",
+			protocol: "rest",
+			feed_request: true,
+			observed_at: requestAt - 10,
+		});
+
+		expect(state.value?.requests_rest).toBe(2);
+		expect(state.value?.observed_through).toBe(sampleAt);
+		expect(state.value?.observed_from).toBe(requestAt - 10);
+		expect(state.value?.request_observed_from).toBe(requestAt - 10);
+		expect(state.value?.request_observed_through).toBe(requestAt);
+		expect(state.value?.clients[0]?.last_feed_request_at).toBe(requestAt);
+		expect(state.value?.clients[0]?.minimum_poll_interval_ms).toBeNull();
+	});
+
+	it("keeps the latest latency samples by observation time after reordered arrivals", () => {
+		const state: { value: MeasurementAggregate | null } = { value: null };
+		const store: MeasurementStore = {
+			/** Keep the in-memory test state unchanged when an observation is rejected. */
+			update(change) {
+				const next = change(state.value);
+				if (next) state.value = next;
+			},
+			read: () => state.value,
+		};
+		const sampleAt = 1_700_000_001_000;
+		const gateway = createMeasurementGateway(store, () => sampleAt + 3_000);
+		for (let index = 0; index < MEASUREMENT_LIMITS.latencySamples; index += 1) {
+			gateway.recordFeedPreparation({
+				client_id: "device-1",
+				observed_at: sampleAt + index,
+				duration_ms: index,
+			});
+		}
+		gateway.recordFeedPreparation({
+			client_id: "device-1",
+			observed_at: sampleAt + 500,
+			duration_ms: 5_000,
+		});
+
+		expect(state.value?.latency_total_samples).toBe(2_049);
+		expect(state.value?.latency_samples).toHaveLength(2_048);
+		expect(state.value?.latency_samples[0]?.observed_at).toBe(sampleAt + 1);
+		expect(state.value?.latency_samples.at(-1)?.observed_at).toBe(
+			sampleAt + 2_047,
+		);
+	});
+
+	it("returns unknown request data when no request observation succeeded", () => {
+		const state: { value: MeasurementAggregate | null } = { value: null };
+		const store: MeasurementStore = {
+			/** Keep the in-memory test state unchanged when an observation is rejected. */
+			update(change) {
+				const next = change(state.value);
+				if (next) state.value = next;
+			},
+			read: () => state.value,
+		};
+		const sampleAt = 1_700_000_000_000;
+		const gateway = createMeasurementGateway(store, () => sampleAt + 100);
+		gateway.recordFeedPreparation({
+			client_id: "device-1",
+			observed_at: sampleAt,
+			duration_ms: 5,
+		});
+
+		const result = gateway.read({
+			database_bytes: { status: "observed", value: 0 },
+			referenced_blob_bytes: { status: "observed", value: 0 },
+		});
+		expect(result.requests.status).toBe("unknown");
+		expect(result.requests.count).toBeNull();
+		expect(result.requests.observed_from).toBeNull();
+		expect(result.requests.observed_through).toBeNull();
+		expect(result.requests.stale).toBe(true);
 	});
 
 	it("returns explicit unknown values on clock rollback without losing the window", () => {
@@ -182,7 +322,7 @@ describe("measurement application rules", () => {
 		expect(result.requests.count).toBe(MEASUREMENT_LIMITS.clients + 1);
 	});
 
-	it("does not reset a prior day or accept clock rollback as fresh zero data", () => {
+	it("rotates at a new UTC day and accepts same-day reordered requests", () => {
 		const state: { value: MeasurementAggregate | null } = { value: null };
 		const store: MeasurementStore = {
 			/** Keep the in-memory test state unchanged when an observation is rejected. */
@@ -215,6 +355,17 @@ describe("measurement application rules", () => {
 			observed_at: 1_700_086_399_999,
 		});
 		expect(state.value).not.toBe(priorDay);
-		expect(state.value?.requests_rest).toBe(1);
+		expect(state.value?.requests_rest).toBe(2);
+		expect(state.value?.observed_through).toBe(1_700_086_400_000);
+		expect(
+			measurementResponse(
+				state.value,
+				{
+					database_bytes: { status: "observed", value: 0 },
+					referenced_blob_bytes: { status: "observed", value: 0 },
+				},
+				1_700_086_399_999,
+			).requests.status,
+		).toBe("unknown");
 	});
 });

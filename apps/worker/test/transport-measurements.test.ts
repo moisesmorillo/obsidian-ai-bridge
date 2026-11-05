@@ -1,11 +1,18 @@
-import type { AuthorizationContext } from "@obsidian-ai-bridge/protocol";
+import type {
+	AuthorizationContext,
+	MeasurementAggregate,
+} from "@obsidian-ai-bridge/protocol";
 import type { BlobContentStore } from "@worker/application/blobs";
 import type { HistoryVaultGateway } from "@worker/application/history";
+import {
+	createMeasurementGateway,
+	type MeasurementStore,
+} from "@worker/application/measurements";
 import type { ReadVaultGateway } from "@worker/application/reads";
 import type { SearchVaultGateway } from "@worker/application/search";
 import type { TextVaultGateway } from "@worker/application/text-files";
 import { createWorker } from "@worker/transport/worker";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 const identity: AuthorizationContext = {
 	client_id: "verified-device",
@@ -55,6 +62,95 @@ function emptyFeedGateway(): ReadVaultGateway {
 }
 
 describe("resource router measurement hooks", () => {
+	it("preserves request totals when the later feed RPC writes first", async () => {
+		const requestAt = 1_700_000_000_000;
+		const sampleAt = requestAt + 20;
+		let clockCalls = 0;
+		const clock = vi
+			.spyOn(Date, "now")
+			.mockImplementation(() => (clockCalls++ === 0 ? requestAt : sampleAt));
+		const state: { value: MeasurementAggregate | null } = { value: null };
+		const store: MeasurementStore = {
+			/** Apply the same no-op rule as the transactional SQLite adapter. */
+			update(change) {
+				const next = change(state.value);
+				if (next) state.value = next;
+			},
+			read: () => state.value,
+		};
+		const application = createMeasurementGateway(store, () => sampleAt + 1);
+		/** Signal that transport started the delayed request RPC. */
+		let beginRequestWrite: () => void = () => undefined;
+		/** Apply the delayed request observation after the feed observation. */
+		let releaseRequestWrite: () => void = () => undefined;
+		/** Signal that the successful feed sample reached durable application state. */
+		let markSampleWritten: () => void = () => undefined;
+		const requestWriteStarted = new Promise<void>((resolve) => {
+			beginRequestWrite = resolve;
+		});
+		const sampleWritten = new Promise<void>((resolve) => {
+			markSampleWritten = resolve;
+		});
+		const pending: Promise<unknown>[] = [];
+		const readGateway = emptyFeedGateway();
+		const app = createWorker(
+			async () => identity,
+			() =>
+				readGateway as TextVaultGateway &
+					HistoryVaultGateway &
+					ReadVaultGateway &
+					SearchVaultGateway,
+			() => ({}) as BlobContentStore,
+			() => ({
+				/** Delay request persistence until the test observes the feed write. */
+				recordRequest(observation) {
+					return new Promise<void>((resolve) => {
+						beginRequestWrite();
+						releaseRequestWrite = () => {
+							application.recordRequest(observation);
+							resolve();
+						};
+					});
+				},
+				/** Persist the feed sample before releasing the delayed request write. */
+				recordFeedPreparation(observation) {
+					application.recordFeedPreparation(observation);
+					markSampleWritten();
+				},
+			}),
+		);
+		const executionContext = {
+			/** Retain background RPCs until the test chooses their settlement order. */
+			waitUntil(promise: Promise<unknown>) {
+				pending.push(promise);
+			},
+			/** Match the required Worker execution context contract. */
+			passThroughOnException() {},
+		} as ExecutionContext;
+
+		try {
+			const response = await app.fetch(
+				new Request(
+					"https://service.test/v1/changes?epoch=0123456789abcdef0123456789abcdef&since=0",
+				),
+				{} as never,
+				executionContext,
+			);
+			await requestWriteStarted;
+			await sampleWritten;
+			expect(response.status).toBe(200);
+			expect(response.bodyUsed).toBe(false);
+			expect(state.value?.requests_rest).toBe(0);
+			releaseRequestWrite();
+			await Promise.all(pending);
+			expect(state.value?.requests_rest).toBe(1);
+			expect(state.value?.observed_through).toBe(sampleAt);
+			expect(state.value?.request_observed_through).toBe(requestAt);
+		} finally {
+			clock.mockRestore();
+		}
+	});
+
 	it("records verified feed requests and successful preparation without reading lazy bodies", async () => {
 		const requests: unknown[] = [];
 		const samples: unknown[] = [];

@@ -4,7 +4,7 @@ title: Add plugin coexistence mode and eviction protection
 status: In Progress
 assignee: []
 created_date: '2026-11-05T12:48:00Z'
-updated_date: '2026-11-05T17:04:00Z'
+updated_date: '2026-11-05T17:48:00Z'
 labels: []
 dependencies: []
 documentation:
@@ -72,4 +72,10 @@ I checked guide controls against the UI. Coexistence mode, Pause, and Resume mat
 Supervisor decision, 2026-11-05: Criterion 6 has split evidence. Dev-1 capture, durable confirmation, placeholder exclusion, and reload checks passed with historical fingerprints unchanged. Its non-publication half rests on dev-2 evidence and real-controller tests, not a resumed dev-1 service run. Dev-2 service proof remains pending after the one bounded diagnostic retry failed at the CLI boundary. The supervisor accepts this external evidence limit for this PR and directs review and publication without another live retry. The follow-up trigger is merge plus safe exact-vault CLI case results. This decision does not claim a complete AC-19 pass or F4 gate closure.
 
 Post-review correction: Restored only the unapproved Pause sentence in docs/spec.md. Pause now uses sync_paused in the verified device-local DeviceState journal. The plugin ignores the legacy shared syncPaused setting. Missing local Pause state defaults to normal startup. Tests cover restart, Resume, local save failure, and stale unload. Generated AC-19 service and capture/reload failure labels now pass parser table tests. Criterion 6 remains incomplete. Dev-2 service proof remains pending. OAB-10.1.1 remains Deferred.
+
+Source-safety correction: TextApplyEngine now checks the shared fence and exact affected paths at each local effect admission. Rename effects check both paths. Startup restore and stale-rename cleanup also check the fence and placeholder state immediately before mutation. Refused apply effects clear only a matching expected-write hash and keep pending apply state and base authority. DeviceJournal now keeps post-epoch destructive events visible without pairing a new epoch with a stale base. Confirmation transfer rejects stale-base paths. Status marks those items stale, while Keep server state stays available.
+
+TDD RED: `bun test apps/plugin/test/publication.test.ts apps/plugin/test/device-journal.test.ts apps/plugin/test/sync-status.test.ts apps/plugin/test/text-apply.test.ts` exited 1. All 12 new safety regressions failed before production changes. The direct Bun runner also failed two unrelated tests because its Vitest compatibility layer lacks required APIs.
+
+GREEN: focused Vitest validation passed 269 tests across coexistence, journal, status, publication, apply, and lifecycle files. `bun run docs:check` passed. `bun run check` passed with all type checks, tests, and builds. Plugin tests passed 602 with one skipped. No live vault, host, browser, or network actions occurred. Independent branch review remains pending. Dev-2 AC-19 remains unverified, and OAB-10.1 stays In Progress.
 <!-- SECTION:NOTES:END -->

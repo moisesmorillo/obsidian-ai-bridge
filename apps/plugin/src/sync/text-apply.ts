@@ -433,6 +433,7 @@ export class TextApplyEngine {
 		if (!this.vault.trashBinary)
 			throw new Error("Binary trash capability is unavailable");
 		const trashed = await this.effect(
+			[change.path],
 			() =>
 				this.vault.trashBinary?.(change.path, beforeTrash) ??
 				Promise.resolve(false),
@@ -486,8 +487,10 @@ export class TextApplyEngine {
 			await this.activeJournal.setExpectedWrite(change.path, change.hash);
 			this.assertOpen();
 			const createdPath = await this.effect(
+				[change.path],
 				async () =>
 					(await this.vault.createBinary?.(change.path, remote.bytes)) ?? false,
+				[{ path: change.path, hash: change.hash }],
 			);
 			const created = await this.vault.readBinary(change.path);
 			this.assertOpen();
@@ -651,8 +654,10 @@ export class TextApplyEngine {
 			throw new Error("Binary write capability is unavailable");
 		await this.activeJournal.setExpectedWrite(change.path, change.hash);
 		const written = await this.effect(
+			[change.path],
 			async () =>
 				(await this.vault.modifyBinary?.(change.path, remote.bytes)) ?? false,
+			[{ path: change.path, hash: change.hash }],
 		);
 		if (!written) {
 			await this.activeJournal.clearExpectedWrite(change.path);
@@ -825,7 +830,11 @@ export class TextApplyEngine {
 					return;
 				}
 				await this.activeJournal.setExpectedWrite(change.path, change.hash);
-				await this.effect(() => this.vault.create(change.path, remote));
+				await this.effect(
+					[change.path],
+					() => this.vault.create(change.path, remote),
+					[{ path: change.path, hash: change.hash }],
+				);
 				const createdText = await this.vault.read(change.path);
 				if (createdText === remote) {
 					await this.activeJournal.completeApply(change.path, {
@@ -846,8 +855,10 @@ export class TextApplyEngine {
 			if (clean) {
 				await this.activeJournal.setExpectedWrite(change.path, change.hash);
 				if (
-					await this.effect(() =>
-						this.vault.process(change.path, local, remote),
+					await this.effect(
+						[change.path],
+						() => this.vault.process(change.path, local, remote),
+						[{ path: change.path, hash: change.hash }],
 					)
 				) {
 					await this.activeJournal.completeApply(change.path, {
@@ -881,7 +892,9 @@ export class TextApplyEngine {
 			return;
 		}
 		if (
-			!(await this.effect(() => this.vault.trash(change.path, local))) &&
+			!(await this.effect([change.path], () =>
+				this.vault.trash(change.path, local),
+			)) &&
 			(await this.vault.read(change.path)) !== null
 		)
 			throw new Error("Obsidian trash did not confirm the remote delete");
@@ -1055,9 +1068,11 @@ export class TextApplyEngine {
 				throw new Error("Binary rename effect is unavailable");
 			await this.activeJournal.setExpectedWrite(change.path, change.hash);
 			const moved = await this.effect(
+				[change.from_path, change.path],
 				async () =>
 					this.vault.renameBinary?.(change.from_path, change.path, sourceNow) ??
 					false,
+				[{ path: change.path, hash: change.hash }],
 			);
 			const renamed = await this.vault.readBinary(change.path);
 			this.assertOpen();
@@ -1284,14 +1299,18 @@ export class TextApplyEngine {
 				written =
 					destination === null
 						? await this.effect(
+								[change.path],
 								async () =>
 									this.vault.createBinary?.(change.path, remote.bytes) ?? false,
+								[{ path: change.path, hash: change.hash }],
 							)
 						: this.vault.modifyBinary
 							? await this.effect(
+									[change.path],
 									async () =>
 										this.vault.modifyBinary?.(change.path, remote.bytes) ??
 										false,
+									[{ path: change.path, hash: change.hash }],
 								)
 							: false;
 			}
@@ -1332,7 +1351,7 @@ export class TextApplyEngine {
 			const trashBinary = this.vault.trashBinary;
 			if (!trashBinary)
 				throw new Error("Binary rename source trash is unavailable");
-			const trashed = await this.effect(() =>
+			const trashed = await this.effect([change.from_path, change.path], () =>
 				trashBinary.call(this.vault, change.from_path, source),
 			);
 			const remainingSource = await this.vault.readBinary(change.from_path);
@@ -1428,8 +1447,10 @@ export class TextApplyEngine {
 		) {
 			if (source !== null) {
 				await this.activeJournal.setExpectedWrite(change.path, change.hash);
-				const renamedFile = await this.effect(() =>
-					this.vault.rename(change.from_path, change.path, source),
+				const renamedFile = await this.effect(
+					[change.from_path, change.path],
+					() => this.vault.rename(change.from_path, change.path, source),
+					[{ path: change.path, hash: change.hash }],
 				);
 				if (renamedFile) {
 					const renamed = await this.vault.read(change.path);
@@ -1483,7 +1504,10 @@ export class TextApplyEngine {
 			if (sourcePending) {
 				if (
 					source !== null &&
-					!(await this.confirmLocalTrash(change.from_path, source))
+					!(await this.confirmLocalTrash(change.from_path, source, [
+						change.from_path,
+						change.path,
+					]))
 				) {
 					await this.attend(
 						change.from_path,
@@ -1504,7 +1528,12 @@ export class TextApplyEngine {
 		const current = await this.vault.read(change.path);
 		if (current === remote) {
 			if (sourcePending && source !== null) {
-				if (!(await this.confirmLocalTrash(change.from_path, source))) {
+				if (
+					!(await this.confirmLocalTrash(change.from_path, source, [
+						change.from_path,
+						change.path,
+					]))
+				) {
 					await this.attend(
 						change.from_path,
 						"Obsidian trash did not confirm the rename source",
@@ -1543,7 +1572,12 @@ export class TextApplyEngine {
 			throw new Error("Remote rename destination was not confirmed");
 		}
 		if (sourcePending && source !== null) {
-			if (!(await this.confirmLocalTrash(change.from_path, source))) {
+			if (
+				!(await this.confirmLocalTrash(change.from_path, source, [
+					change.from_path,
+					change.path,
+				]))
+			) {
 				await this.attend(
 					change.from_path,
 					"Obsidian trash did not confirm the rename source",
@@ -1732,7 +1766,9 @@ export class TextApplyEngine {
 				);
 				return;
 			}
-			await this.effect(() => createBinary.call(this.vault, copy.path, source));
+			await this.effect([copy.source, copy.path], () =>
+				createBinary.call(this.vault, copy.path, source),
+			);
 			this.assertOpen();
 			const saved = await readBinary.call(this.vault, copy.path);
 			this.assertOpen();
@@ -1811,6 +1847,7 @@ export class TextApplyEngine {
 									"Recovery retention clock could not be refreshed",
 								);
 							const refreshed = await this.effect(
+								[copy.path],
 								async () =>
 									(await this.vault.modifyBinary?.(copy.path, existingBytes)) ??
 									false,
@@ -1867,6 +1904,7 @@ export class TextApplyEngine {
 					}
 					this.assertOpen();
 					await this.effect(
+						[copy.source, copy.path],
 						async () =>
 							this.vault.createBinary?.(copy.path, sourceBytes) ?? false,
 					);
@@ -1903,7 +1941,9 @@ export class TextApplyEngine {
 							"Local text changed before its conflict copy was saved",
 						);
 				}
-				await this.effect(() => this.vault.create(copy.path, text as string));
+				await this.effect([copy.source, copy.path], () =>
+					this.vault.create(copy.path, text as string),
+				);
 				const saved = await this.vault.read(copy.path);
 				if (saved === null || (await digest(saved)) !== copy.hash)
 					return this.attend(
@@ -1980,7 +2020,7 @@ export class TextApplyEngine {
 					copy.path,
 					"Recovery retention clock could not be refreshed",
 				);
-			const refreshed = await this.effect(() =>
+			const refreshed = await this.effect([copy.path], () =>
 				modifyBinary.call(this.vault, copy.path, saved),
 			);
 			if (!refreshed)
@@ -2069,8 +2109,10 @@ export class TextApplyEngine {
 				throw new Error(
 					"Binary trash capability is unavailable for text replacement",
 				);
-			const trashed = await this.effect(() =>
-				trashBinary.call(this.vault, path, current),
+			const trashed = await this.effect(
+				[path],
+				() => trashBinary.call(this.vault, path, current),
+				[{ path, hash: remoteHash }],
 			);
 			this.assertOpen();
 			const remaining = await readBinary.call(this.vault, path);
@@ -2083,7 +2125,11 @@ export class TextApplyEngine {
 		const existingText = await this.vault.read(path);
 		this.assertOpen();
 		if (existingText === null) {
-			const created = await this.effect(() => this.vault.create(path, remote));
+			const created = await this.effect(
+				[path],
+				() => this.vault.create(path, remote),
+				[{ path, hash: remoteHash }],
+			);
 			this.assertOpen();
 			if (!created) {
 				await this.activeJournal.clearExpectedWrite(path);
@@ -2259,7 +2305,7 @@ export class TextApplyEngine {
 						copy.path,
 						"Recovery retention clock could not be refreshed",
 					);
-				const refreshed = await this.effect(() =>
+				const refreshed = await this.effect([copy.path], () =>
 					modifyBinary.call(this.vault, copy.path, bytes),
 				);
 				if (!refreshed)
@@ -2322,7 +2368,7 @@ export class TextApplyEngine {
 							change.path,
 							"Binary trash capability is unavailable after conflict preservation",
 						);
-					const trashed = await this.effect(() =>
+					const trashed = await this.effect([change.path], () =>
 						trashBinary.call(this.vault, change.path, local),
 					);
 					const remaining = await readBinary.call(this.vault, change.path);
@@ -2444,7 +2490,12 @@ export class TextApplyEngine {
 							change.from_path,
 							"Conflict copy changed during remote apply",
 						);
-					if (!(await this.confirmLocalTrash(change.from_path, source)))
+					if (
+						!(await this.confirmLocalTrash(change.from_path, source, [
+							change.from_path,
+							change.path,
+						]))
+					)
 						return this.attend(
 							change.from_path,
 							"Obsidian trash did not confirm the rename source",
@@ -2527,7 +2578,12 @@ export class TextApplyEngine {
 							change.from_path,
 							"Conflict copy changed during remote apply",
 						);
-					if (!(await this.confirmLocalTrash(change.from_path, source)))
+					if (
+						!(await this.confirmLocalTrash(change.from_path, source, [
+							change.from_path,
+							change.path,
+						]))
+					)
 						return this.attend(
 							change.from_path,
 							"Obsidian trash did not confirm the rename source",
@@ -2571,8 +2627,14 @@ export class TextApplyEngine {
 		await this.activeJournal.setExpectedWrite(path, hash);
 		const applied =
 			expected === null
-				? await this.effect(() => this.vault.create(path, remote))
-				: await this.effect(() => this.vault.process(path, expected, remote));
+				? await this.effect([path], () => this.vault.create(path, remote), [
+						{ path, hash },
+					])
+				: await this.effect(
+						[path],
+						() => this.vault.process(path, expected, remote),
+						[{ path, hash }],
+					);
 		if ((await this.vault.read(path)) === remote) return true;
 		if (!applied) await this.activeJournal.clearExpectedWrite(path);
 		return false;
@@ -2582,8 +2644,9 @@ export class TextApplyEngine {
 	private async confirmLocalTrash(
 		path: string,
 		expected: string,
+		affectedPaths: readonly string[] = [path],
 	): Promise<boolean> {
-		await this.effect(() => this.vault.trash(path, expected));
+		await this.effect(affectedPaths, () => this.vault.trash(path, expected));
 		return (await this.vault.read(path)) === null;
 	}
 
@@ -2795,10 +2858,44 @@ export class TextApplyEngine {
 		);
 	}
 
-	/** Starts one host mutation only while active and fences its stale completion. */
-	private async effect<T>(action: () => Promise<T>): Promise<T> {
+	/** Checks exact paths and the fence before mutation, then clears unissued write echoes on refusal. */
+	private async effect<T>(
+		affectedPaths: readonly string[],
+		action: () => Promise<T>,
+		expectedWritePaths: readonly { path: string; hash: string }[] = [],
+	): Promise<T> {
 		this.assertOpen();
-		if (this.isEffectBlocked()) throw new CoexistenceEffectBlockedError();
+		/** Clears only echoes for writes that this admission has not started. */
+		const clearExpectedWrites = async (): Promise<void> => {
+			for (const expected of expectedWritePaths) {
+				if (
+					this.activeJournal.snapshot().expected_writes[expected.path] ===
+					expected.hash
+				)
+					await this.activeJournal.clearExpectedWrite(expected.path);
+			}
+		};
+		if (this.isEffectBlocked()) {
+			await clearExpectedWrites();
+			throw new CoexistenceEffectBlockedError();
+		}
+		const unavailable = await Promise.all(
+			affectedPaths.map(
+				async (path) => (await this.vault.isUnavailable?.(path)) ?? false,
+			),
+		);
+		const unavailableIndex = unavailable.findIndex(Boolean);
+		if (unavailableIndex >= 0) {
+			const path = affectedPaths[unavailableIndex];
+			if (path) await this.activeJournal.markUnavailable(path);
+			await clearExpectedWrites();
+			throw new Error("Remote apply is blocked by an unavailable path");
+		}
+		this.assertOpen();
+		if (this.isEffectBlocked()) {
+			await clearExpectedWrites();
+			throw new CoexistenceEffectBlockedError();
+		}
 		const result = await action();
 		this.assertOpen();
 		return result;

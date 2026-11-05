@@ -315,6 +315,171 @@ describe("TextApplyEngine", () => {
 		expect(journal.snapshot().pending_apply).toHaveLength(1);
 	});
 
+	it("does not create an absent remote text path when a placeholder appears during the pinned read", async () => {
+		const path = change.path;
+		const remote = "remote bytes";
+		const remoteHash = await hash(remote);
+		const localHash = await hash("previous confirmed bytes");
+		await journal.resetEpoch(epoch);
+		await journal.setBase(path, {
+			deleted: false,
+			rev: 1,
+			hash: localHash,
+		});
+		let markReadStarted: (() => void) | undefined;
+		let releaseRead: (() => void) | undefined;
+		const readStarted = new Promise<void>((resolve) => {
+			markReadStarted = resolve;
+		});
+		const readGate = new Promise<void>((resolve) => {
+			releaseRead = resolve;
+		});
+		engine = makeEngine(journal, vault, {
+			read: async () => {
+				markReadStarted?.();
+				await readGate;
+				return remote;
+			},
+		});
+		const applying = engine.apply({ ...change, hash: remoteHash });
+		await readStarted;
+		vault.unavailable.add(path);
+		releaseRead?.();
+
+		await expect(applying).rejects.toThrow("unavailable");
+		const saved = journal.snapshot();
+		expect(vault.files.has(path)).toBe(false);
+		expect(saved.pending_apply).toHaveLength(1);
+		expect(saved.base[path]).toEqual({
+			deleted: false,
+			rev: 1,
+			hash: localHash,
+		});
+		expect(saved.expected_writes[path]).toBeUndefined();
+		expect(saved.unavailable_paths).toContain(path);
+	});
+
+	it("keeps a pending startup apply when a placeholder appears during its pinned read", async () => {
+		const path = change.path;
+		const remote = "remote bytes";
+		const remoteHash = await hash(remote);
+		const localHash = await hash("previous confirmed bytes");
+		const pendingChange = { ...change, hash: remoteHash };
+		await journal.resetEpoch(epoch);
+		await journal.setBase(path, {
+			deleted: false,
+			rev: 1,
+			hash: localHash,
+		});
+		await journal.beginApply(pendingChange);
+		let markReadStarted: (() => void) | undefined;
+		let releaseRead: (() => void) | undefined;
+		const readStarted = new Promise<void>((resolve) => {
+			markReadStarted = resolve;
+		});
+		const readGate = new Promise<void>((resolve) => {
+			releaseRead = resolve;
+		});
+		engine = makeEngine(journal, vault, {
+			read: async () => {
+				markReadStarted?.();
+				await readGate;
+				return remote;
+			},
+		});
+		const resuming = engine.resume();
+		await readStarted;
+		vault.unavailable.add(path);
+		releaseRead?.();
+
+		await expect(resuming).rejects.toThrow("unavailable");
+		const saved = journal.snapshot();
+		expect(vault.files.has(path)).toBe(false);
+		expect(saved.pending_apply).toHaveLength(1);
+		expect(saved.base[path]).toEqual({
+			deleted: false,
+			rev: 1,
+			hash: localHash,
+		});
+		expect(saved.expected_writes[path]).toBeUndefined();
+	});
+
+	it("does not trash a text delete when a placeholder appears after local read", async () => {
+		const path = change.path;
+		const local = "current local bytes";
+		const localHash = await hash(local);
+		await journal.resetEpoch(epoch);
+		await journal.setBase(path, {
+			deleted: false,
+			rev: 1,
+			hash: localHash,
+		});
+		vault.files.set(path, local);
+		const read = vault.read.bind(vault);
+		vault.read = async (readPath) => {
+			const value = await read(readPath);
+			if (readPath === path) vault.unavailable.add(path);
+			return value;
+		};
+
+		await expect(
+			engine.apply({ ...change, op: "delete", hash: "", etag: `"${epoch}.2"` }),
+		).rejects.toThrow("unavailable");
+		const saved = journal.snapshot();
+		expect(vault.files.get(path)).toBe(local);
+		expect(saved.pending_apply).toHaveLength(1);
+		expect(saved.base[path]).toEqual({
+			deleted: false,
+			rev: 1,
+			hash: localHash,
+		});
+	});
+
+	it.each(["source", "destination"] as const)(
+		"does not rename text when a placeholder appears at the %s path before admission",
+		async (side) => {
+			const source = "notes/rename-source.md";
+			const destination = "notes/rename-destination.md";
+			const local = "renamed bytes";
+			const localHash = await hash(local);
+			await journal.resetEpoch(epoch);
+			await journal.setBase(source, {
+				deleted: false,
+				rev: 1,
+				hash: localHash,
+			});
+			vault.files.set(source, local);
+			const read = vault.read.bind(vault);
+			vault.read = async (readPath) => {
+				const value = await read(readPath);
+				if (readPath === (side === "source" ? source : destination))
+					vault.unavailable.add(readPath);
+				return value;
+			};
+			const rename = {
+				...change,
+				op: "rename" as const,
+				path: destination,
+				from_path: source,
+				from_etag: `"${epoch}.2"`,
+				etag: `"${epoch}.3"`,
+				hash: localHash,
+			};
+
+			await expect(engine.apply(rename)).rejects.toThrow("unavailable");
+			const saved = journal.snapshot();
+			expect(vault.files.get(source)).toBe(local);
+			expect(vault.files.has(destination)).toBe(false);
+			expect(saved.pending_apply).toHaveLength(1);
+			expect(saved.base[source]).toEqual({
+				deleted: false,
+				rev: 1,
+				hash: localHash,
+			});
+			expect(saved.expected_writes[destination]).toBeUndefined();
+		},
+	);
+
 	it("lets one already-issued local apply finish after capture", async () => {
 		let markCreateStarted: (() => void) | undefined;
 		let releaseCreate: (() => void) | undefined;

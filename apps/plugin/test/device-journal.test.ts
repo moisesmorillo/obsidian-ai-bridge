@@ -122,6 +122,57 @@ describe("DeviceJournal", () => {
 		expect(journal.snapshot().pending_ops).toEqual([]);
 	});
 
+	it("captures a post-reset delete without reusing a stale base revision", async () => {
+		const path = "notes/stale-after-reset.md";
+		const oldEpoch = precondition.epoch;
+		const newEpoch = "c".repeat(32);
+		const journal = await DeviceJournal.open(storage);
+		await journal.resetEpoch(oldEpoch);
+		await journal.setBase(path, {
+			deleted: false,
+			rev: 1,
+			hash: "a".repeat(64),
+		});
+		await journal.resetEpoch(newEpoch);
+
+		const item = await journal.captureCoexistenceEvent(
+			{ type: "delete", path },
+			100,
+		);
+
+		expect(item.observed_epoch).toBeNull();
+		expect(item.observed_base).toBeNull();
+		expect(item.stale_reason).toBeTruthy();
+		expect(await journal.confirmCoexistence(item.id)).toBeNull();
+		expect(journal.snapshot().pending_ops).toEqual([]);
+		expect(journal.snapshot().coexistence_confirmations).toHaveLength(1);
+	});
+
+	it("rejects an equal revision from a stale epoch during confirmation transfer", async () => {
+		const path = "notes/equal-revision-after-reset.md";
+		const oldBase = { deleted: false as const, rev: 1, hash: "a".repeat(64) };
+		const newEpoch = "c".repeat(32);
+		const journal = await DeviceJournal.open(storage);
+		await journal.resetEpoch(precondition.epoch);
+		await journal.setBase(path, oldBase);
+		await journal.resetEpoch(newEpoch);
+		const item = {
+			id: "018f47b2-5c00-7000-8000-000000000003",
+			kind: "delete" as const,
+			path,
+			observed_epoch: newEpoch,
+			observed_base: oldBase,
+			at: 100,
+		};
+		await journal.saveCoexistenceConfirmation(item);
+
+		expect(await journal.confirmCoexistence(item.id)).toBeNull();
+		expect(journal.snapshot().pending_ops).toEqual([]);
+		expect(
+			journal.snapshot().coexistence_confirmations[0]?.stale_reason,
+		).toBeTruthy();
+	});
+
 	it("opens a serialized pre-extension journal with its original copy identities", async () => {
 		const path = "assets/pre-extension.png";
 		const localHash = "d".repeat(64);

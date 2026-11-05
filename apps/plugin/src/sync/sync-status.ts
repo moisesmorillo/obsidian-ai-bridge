@@ -123,6 +123,7 @@ export function projectSyncStatus(
 			unavailable: state.unavailable_paths.includes(item.path),
 			stale:
 				item.stale_reason !== undefined ||
+				state.stale_base_paths.includes(item.path) ||
 				item.observed_base === null ||
 				item.observed_epoch !== state.epoch ||
 				!sameObservedBase(state.base[item.path], item.observed_base),

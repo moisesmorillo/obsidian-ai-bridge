@@ -73,6 +73,38 @@ describe("projectSyncStatus", () => {
 		).toBe("pending");
 	});
 
+	it("marks a confirmation stale when its local base belongs to an old epoch", () => {
+		const path = "notes/stale-confirmation.md";
+		const base = { deleted: false as const, rev: 1, hash: "a".repeat(64) };
+		const confirmationState = {
+			...state,
+			base: { [path]: base },
+			stale_base_paths: [path],
+			coexistence_confirmations: [
+				{
+					id: "018f0000-0000-7000-8000-000000000003",
+					kind: "delete" as const,
+					path,
+					observed_epoch: state.epoch ?? null,
+					observed_base: base,
+					at: 1,
+				},
+			],
+		};
+
+		expect(
+			projectSyncStatus({
+				state: confirmationState,
+				session: "connected",
+				head: null,
+				persisted: true,
+				active: false,
+				paused: false,
+				revoked: false,
+			}).coexistenceConfirmations[0]?.stale,
+		).toBe(true);
+	});
+
 	it("does not call a previously confirmed head settled after a failed poll", () => {
 		const input = {
 			state,

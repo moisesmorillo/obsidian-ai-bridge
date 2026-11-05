@@ -604,7 +604,15 @@ export class PublicationController {
 		if (error.status === 412) {
 			await this.options.recoverPrecondition(operation);
 			this.assertOpen();
-			if (operation.op === "rename") await this.recoverStaleRename(operation);
+			if (operation.op === "rename") {
+				try {
+					if (!(await this.recoverStaleRename(operation))) return false;
+				} catch (recoveryError) {
+					if (recoveryError instanceof CoexistenceEffectBlockedError)
+						return false;
+					throw recoveryError;
+				}
+			}
 			const reason =
 				operation.op === "delete"
 					? "Offline delete was cancelled by a newer remote change"
@@ -815,15 +823,15 @@ export class PublicationController {
 		return this.journal.snapshot().base[path]?.deleted === false;
 	}
 
-	/** Restores the remote source and safely removes or republishes the moved destination. */
+	/** Restores the remote source and checks admission before stale-destination trash. */
 	private async recoverStaleRename(
 		operation: Extract<PendingOperation, { op: "rename" }>,
-	): Promise<void> {
+	): Promise<boolean> {
 		if (!operation.source_hash || operation.precondition.kind !== "match")
-			return;
+			return true;
 		const source = this.journal.snapshot().base[operation.path];
 		if (!source || source.deleted || source.rev <= operation.precondition.rev)
-			return;
+			return true;
 		this.assertOpen();
 		const destinationBytes = await this.vault.readBinary?.(operation.to);
 		this.assertOpen();
@@ -833,38 +841,39 @@ export class PublicationController {
 			if (observedHash === operation.source_hash) {
 				const current = await this.vault.readBinary?.(operation.to);
 				this.assertOpen();
-				if (!current) return;
+				if (!current) return true;
 				const currentHash = await digest(current);
 				this.assertOpen();
 				if (currentHash === operation.source_hash) {
 					const trashBinary = this.vault.trashBinary;
 					if (trashBinary) {
+						if (!(await this.admitLocalEffect(operation.to))) return false;
 						await trashBinary.call(this.vault, operation.to, current);
 						this.assertOpen();
 						const remaining = await this.vault.readBinary?.(operation.to);
 						this.assertOpen();
-						if (!remaining) return;
+						if (!remaining) return true;
 					}
 				}
 			}
 			const remaining = await this.vault.readBinary?.(operation.to);
 			this.assertOpen();
 			if (remaining) await this.enqueueBinaryPut(operation.to, remaining);
-			return;
+			return true;
 		}
 		const destination = await this.vault.read(operation.to);
 		this.assertOpen();
-		if (destination === null) return;
+		if (destination === null) return true;
 		if (
 			(await digest(new TextEncoder().encode(destination))) ===
 			operation.source_hash
 		) {
-			this.assertOpen();
+			if (!(await this.admitLocalEffect(operation.to))) return false;
 			await this.vault.trash(operation.to, destination);
 			this.assertOpen();
 			const remaining = await this.vault.read(operation.to);
 			this.assertOpen();
-			if (remaining === null) return;
+			if (remaining === null) return true;
 			if (
 				(await digest(new TextEncoder().encode(remaining))) ===
 				operation.source_hash
@@ -878,9 +887,10 @@ export class PublicationController {
 			this.assertOpen();
 			await this.enqueuePut(operation.to, latest);
 		}
+		return true;
 	}
 
-	/** Restores missing text at its pinned revision without advancing revision authority. */
+	/** Restores missing text at its pinned revision after final fence and path checks. */
 	private async restoreMissing(path: string, rev: number): Promise<void> {
 		this.assertOpen();
 		const state = this.journal.snapshot();
@@ -908,7 +918,8 @@ export class PublicationController {
 			await this.journal.clearExpectedWrite(path);
 			this.assertOpen();
 		}
-		this.assertOpen();
+		if (!(await this.admitLocalEffect(path, { path, hash: remote.hash })))
+			return;
 		const created = await this.vault.create(path, remote.text);
 		if (this.closed) {
 			await this.journal.clearExpectedWrite(path);
@@ -970,10 +981,8 @@ export class PublicationController {
 			this.assertOpen();
 		}
 		this.assertOpen();
-		if (this.isEffectBlocked()) {
-			await this.journal.clearExpectedWrite(path);
+		if (!(await this.admitLocalEffect(path, { path, hash: expectedHash })))
 			return;
-		}
 		let created = false;
 		if (current.kind === "blob") {
 			const createBinary = this.vault.createBinary;
@@ -1221,6 +1230,38 @@ export class PublicationController {
 	/** Reads coexistence authority before admitting another effect. */
 	private isEffectBlocked(): boolean {
 		return this.options.isEffectBlocked?.() ?? false;
+	}
+
+	/** Checks the shared fence and exact path before one local mutation. */
+	private async admitLocalEffect(
+		path: string,
+		expectedWrite?: { path: string; hash: string },
+	): Promise<boolean> {
+		this.assertOpen();
+		/** Clears the pending echo when admission does not start the expected write. */
+		const clearExpectedWrite = async (): Promise<void> => {
+			if (
+				expectedWrite &&
+				this.journal.snapshot().expected_writes[expectedWrite.path] ===
+					expectedWrite.hash
+			)
+				await this.journal.clearExpectedWrite(expectedWrite.path);
+		};
+		if (this.isEffectBlocked()) {
+			await clearExpectedWrite();
+			return false;
+		}
+		if (await this.vault.isUnavailable?.(path)) {
+			await this.journal.markUnavailable(path);
+			await clearExpectedWrite();
+			return false;
+		}
+		this.assertOpen();
+		if (this.isEffectBlocked()) {
+			await clearExpectedWrite();
+			return false;
+		}
+		return true;
 	}
 
 	/** Rejects work after close, including late asynchronous continuations. */

@@ -35,6 +35,7 @@ const host = vi.hoisted(() => ({
 	compositionNames: [] as string[],
 	compositionDisposals: [] as string[],
 	publicationEvents: [] as PublicationEvent[],
+	publicationStages: [] as string[],
 	syncCycles: 0,
 	cycleGate: null as {
 		/** Signals that the controlled synchronization phase reached its wait. */
@@ -82,6 +83,7 @@ vi.mock("obsidian", () => ({
 					if (index >= 0) host.vaultListeners.splice(index, 1);
 				},
 				adapter: {
+					stat: async () => null,
 					exists: async () => false,
 					mkdir: async () => undefined,
 					readBinary: async () => new ArrayBuffer(0),
@@ -119,13 +121,18 @@ vi.mock("../src/sync/create-publication", () => ({
 				observe: async (event: PublicationEvent) => {
 					host.publicationEvents.push(structuredClone(event));
 				},
-				scan: async () => undefined,
-				flush: async () => undefined,
+				scan: async () => {
+					host.publicationStages.push("scan");
+				},
+				flush: async () => {
+					host.publicationStages.push("flush");
+				},
 			},
 			reconciliation: {
 				lastHead: null,
 				/** Counts actual controller cycles and waits at a test-selected boundary. */
 				resume: async () => {
+					host.publicationStages.push("resume");
 					host.syncCycles += 1;
 					const gate = host.cycleGate;
 					if (!gate) return;
@@ -135,6 +142,7 @@ vi.mock("../src/sync/create-publication", () => ({
 				},
 				enroll: async () => undefined,
 				replay: async () => {
+					host.publicationStages.push("replay");
 					const gate = host.cycleGate;
 					if (!gate) return;
 					host.cycleGate = null;
@@ -261,6 +269,7 @@ describe("AIBridgePlugin device-local lifecycle", () => {
 		host.compositionNames.splice(0);
 		host.compositionDisposals.splice(0);
 		host.publicationEvents.splice(0);
+		host.publicationStages.splice(0);
 		host.syncCycles = 0;
 		host.cycleGate = null;
 	});
@@ -308,6 +317,44 @@ describe("AIBridgePlugin device-local lifecycle", () => {
 			vi.unstubAllGlobals();
 		}
 	});
+	it("stops later cycle stages when capture begins during recovery", async () => {
+		host.settingsData = { coexistenceMode: true };
+		const plugin = await startConnectedPlugin();
+		const controller = Reflect.get(
+			plugin,
+			"desktopSync",
+		) as DesktopSyncController;
+		const journal = Reflect.get(plugin, "journal") as DeviceJournal;
+		let startCycle: (() => void) | undefined;
+		let releaseCycle: (() => void) | undefined;
+		const started = new Promise<void>((resolve) => {
+			startCycle = resolve;
+		});
+		const release = new Promise<void>((resolve) => {
+			releaseCycle = resolve;
+		});
+		host.publicationStages.splice(0);
+		host.cycleGate = { started: () => startCycle?.(), wait: release };
+		const cycle = controller.syncNow();
+		await started;
+		try {
+			emitVaultEvent("delete", { path: "notes/captured.md" });
+			for (let turn = 0; turn < 20; turn += 1) {
+				if (journal.snapshot().coexistence_confirmations.length > 0) break;
+				await Promise.resolve();
+			}
+			expect(journal.snapshot().coexistence_confirmations).toHaveLength(1);
+			releaseCycle?.();
+			await cycle;
+			expect(host.publicationStages).toEqual(["resume"]);
+		} finally {
+			releaseCycle?.();
+			plugin.onunload();
+			vi.useRealTimers();
+			vi.unstubAllGlobals();
+		}
+	});
+
 	it("creates a paused controller after connection from a disconnected state", async () => {
 		const plugin = await startConnectedPlugin(false);
 		try {

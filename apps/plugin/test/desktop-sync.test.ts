@@ -169,6 +169,35 @@ describe("DesktopSyncController", () => {
 		controller.close();
 	});
 
+	it("retains later events when capture blocks an active event drain", async () => {
+		let blocked = false;
+		const observed: string[] = [];
+		const controller = new DesktopSyncController({
+			cycle: async () => undefined,
+			isEffectBlocked: () => blocked,
+			onEvent: async (event) => {
+				observed.push(event.path);
+				if (event.path === "first.md") blocked = true;
+			},
+			host: {
+				setTimeout: () => 1,
+				clearTimeout: () => undefined,
+				setInterval: () => 2,
+				clearInterval: () => undefined,
+			},
+		});
+		controller.pause();
+		await controller.observe({ type: "modify", path: "first.md" });
+		await controller.observe({ type: "modify", path: "second.md" });
+		await controller.resume();
+
+		expect(observed).toEqual(["first.md"]);
+		blocked = false;
+		await controller.syncNow();
+		expect(observed).toEqual(["first.md", "second.md"]);
+		controller.close();
+	});
+
 	it("drops terminal invalid paths before they can block valid queued events", async () => {
 		const events: string[] = [];
 		const cycles = vi.fn(async () => undefined);

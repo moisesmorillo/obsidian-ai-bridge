@@ -4,7 +4,7 @@ title: Add plugin coexistence mode and eviction protection
 status: In Progress
 assignee: []
 created_date: '2026-11-05T12:48:00Z'
-updated_date: '2026-11-05T12:52:00Z'
+updated_date: '2026-11-05T14:21:00Z'
 labels: []
 dependencies: []
 documentation:
@@ -40,4 +40,8 @@ Approved plan pn-40b7a0 is /tmp/oab-10-1/2026-11-05-f4-coexistence.md. Do not co
 
 <!-- SECTION:NOTES:BEGIN -->
 Baseline before implementation: bun run check passed at main dbb0481 in the isolated Orca worktree, exit 0. No product code changed. Plan approval remains pending.
+
+Owner decision: Place the coexistence confirmation type and schema in the existing DeviceState exports in packages/protocol/src/index.ts. This replaces the earlier append-only constraint for these two exports so Biome passes. No other exports changed. Reconcile with origin/main at 7abee2c found no competing index exports.
+
+Round-1 review fix: CoexistenceEffectFence blocks later publication, reconciliation writes, and local apply effects after destructive capture. In-flight effects can finish. AC-19 evidence and independent branch review remain pending.
 <!-- SECTION:NOTES:END -->

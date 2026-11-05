@@ -9,6 +9,7 @@ import {
 	parseETag,
 	pathKey,
 } from "@obsidian-ai-bridge/protocol";
+import { CoexistenceEffectBlockedError } from "@plugin/sync/coexistence-effect-fence";
 import type { DeviceJournal } from "@plugin/sync/device-journal";
 import { classifyEnrollmentPath } from "@plugin/sync/enrollment-scope";
 import { UnsupportedRemoteTextError } from "@plugin/sync/remote-text";
@@ -73,6 +74,8 @@ export interface TextApplyOptions {
 	deviceName: string;
 	/** Clock in Unix milliseconds for synthetic observations and recovery retention checks. */
 	now?: () => number;
+	/** Rejects a new local write while a coexistence confirmation blocks effects. */
+	isEffectBlocked?: () => boolean;
 }
 
 /** Current or pinned remote authority returned for one requested epoch and revision. */
@@ -124,6 +127,7 @@ export class TextApplyEngine {
 	private closed = false;
 	private readonly deviceName: string;
 	private readonly now: () => number;
+	private readonly isEffectBlocked: () => boolean;
 
 	/** Binds journal authority to guarded text and byte effects and a pinned-revision reader. */
 	constructor(
@@ -134,6 +138,7 @@ export class TextApplyEngine {
 	) {
 		this.deviceName = options.deviceName.trim();
 		this.now = options.now ?? Date.now;
+		this.isEffectBlocked = options.isEffectBlocked ?? (() => false);
 		if (!this.deviceName) throw new Error("A friendly device name is required");
 	}
 
@@ -2793,6 +2798,7 @@ export class TextApplyEngine {
 	/** Starts one host mutation only while active and fences its stale completion. */
 	private async effect<T>(action: () => Promise<T>): Promise<T> {
 		this.assertOpen();
+		if (this.isEffectBlocked()) throw new CoexistenceEffectBlockedError();
 		const result = await action();
 		this.assertOpen();
 		return result;

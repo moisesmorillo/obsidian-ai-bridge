@@ -285,6 +285,68 @@ describe("TextApplyEngine", () => {
 		Object.assign(change, remoteChange);
 	});
 
+	it("does not start a local apply after capture closes effect admission", async () => {
+		let markReadStarted: (() => void) | undefined;
+		let releaseRead: (() => void) | undefined;
+		let blocked = false;
+		const readStarted = new Promise<void>((resolve) => {
+			markReadStarted = resolve;
+		});
+		const readGate = new Promise<void>((resolve) => {
+			releaseRead = resolve;
+		});
+		const remote = "remote bytes";
+		const remoteHash = await hash(remote);
+		engine = makeEngine(journal, vault, {
+			read: async () => {
+				markReadStarted?.();
+				await readGate;
+				return remote;
+			},
+		});
+		Reflect.set(engine, "isEffectBlocked", () => blocked);
+		const applying = engine.apply({ ...change, hash: remoteHash });
+		await readStarted;
+		blocked = true;
+		releaseRead?.();
+
+		await expect(applying).rejects.toThrow("effect admission");
+		expect(vault.files.has(change.path)).toBe(false);
+		expect(journal.snapshot().pending_apply).toHaveLength(1);
+	});
+
+	it("lets one already-issued local apply finish after capture", async () => {
+		let markCreateStarted: (() => void) | undefined;
+		let releaseCreate: (() => void) | undefined;
+		let blocked = false;
+		const createStarted = new Promise<void>((resolve) => {
+			markCreateStarted = resolve;
+		});
+		const createGate = new Promise<void>((resolve) => {
+			releaseCreate = resolve;
+		});
+		const remote = "remote bytes";
+		const remoteHash = await hash(remote);
+		engine = makeEngine(journal, vault, {
+			read: async () => remote,
+		});
+		Reflect.set(engine, "isEffectBlocked", () => blocked);
+		const create = vault.create.bind(vault);
+		vault.create = async (path, text) => {
+			markCreateStarted?.();
+			await createGate;
+			return create(path, text);
+		};
+		const applying = engine.apply({ ...change, hash: remoteHash });
+		await createStarted;
+		blocked = true;
+		releaseCreate?.();
+
+		await applying;
+		expect(vault.files.get(change.path)).toBe(remote);
+		expect(journal.snapshot().pending_apply).toHaveLength(0);
+	});
+
 	it("blocks local apply effects while the source has an iCloud placeholder", async () => {
 		vault.unavailable.add(change.path);
 		await expect(engine.apply(change)).rejects.toThrow("unavailable");

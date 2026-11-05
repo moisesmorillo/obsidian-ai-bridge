@@ -20,6 +20,8 @@ export interface CreatePublicationOptions {
 	onEventError(error: unknown): void;
 	/** Fires only for a validated 401 revoked response before controller effects resume. */
 	onRevoked?(): void;
+	/** Blocks new publication and local apply effects during owner confirmation. */
+	isEffectBlocked?(): boolean;
 	/** Captures safe DELETE response classes, or clears stale metadata before a retry. */
 	onDeleteResponseDiagnostic?(
 		diagnostic: DeleteResponseDiagnostic | null,
@@ -54,12 +56,14 @@ export function createPublication(
 	const textVault = new ObsidianTextVault(vault);
 	const applyEngine = new TextApplyEngine(journal, textVault, remote, {
 		deviceName,
+		isEffectBlocked: options.isEffectBlocked,
 	});
 	const reconciliation = new ReconciliationController(
 		journal,
 		applyEngine,
 		textVault,
 		remote,
+		options.isEffectBlocked,
 	);
 	const publication = new PublicationController(journal, textVault, remote, {
 		applyEngine,
@@ -67,6 +71,7 @@ export function createPublication(
 		recoverPrecondition: (operation) =>
 			reconciliation.recoverPrecondition(operation),
 		onDeleteResponseDiagnostic: options.onDeleteResponseDiagnostic,
+		isEffectBlocked: options.isEffectBlocked,
 	});
 	const events = options.registerEvents
 		? new VaultEventAdapter(vault, publication, options.onEventError)

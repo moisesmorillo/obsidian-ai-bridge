@@ -1,4 +1,5 @@
 import type { PendingOperation } from "@obsidian-ai-bridge/protocol";
+import type { CoexistenceEffectFence } from "@plugin/sync/coexistence-effect-fence";
 import type { DeviceJournal } from "@plugin/sync/device-journal";
 import { classifyEnrollmentPath } from "@plugin/sync/enrollment-scope";
 import type { PublicationEvent } from "@plugin/sync/publication";
@@ -19,37 +20,51 @@ export class CoexistenceController {
 		private readonly vault: CoexistenceVault,
 		private readonly isEnabled: () => boolean,
 		private readonly now: () => number = Date.now,
+		/** Closes shared effect admission until captured intent reaches durable state. */
+		private readonly effectFence?: CoexistenceEffectFence,
 	) {}
 
 	/** Captures destructive intent before debounce and tracks placeholder transitions. */
 	async observe(event: PublicationEvent): Promise<boolean> {
 		if (!this.isEnabled()) return false;
-		const placeholder = placeholderSource(
-			event.type === "rename" ? event.to : event.path,
-		);
-		const placeholderDetected =
-			placeholder !== null && (await this.vault.isUnavailable(placeholder));
-		if (placeholderDetected && placeholder)
-			await this.journal.markUnavailable(placeholder);
-		else if (
-			placeholder &&
-			this.journal.snapshot().unavailable_paths.includes(placeholder)
-		)
-			await this.journal.clearUnavailable(placeholder);
-		if (event.type === "delete" || event.type === "rename") {
-			if (classifyEnrollmentPath(event.path, 0) === "excluded") return false;
-			await this.journal.captureCoexistenceEvent(event, this.now());
-			if (await this.vault.isUnavailable(event.path))
-				await this.journal.markUnavailable(event.path);
-			return true;
+		const destructive =
+			(event.type === "delete" || event.type === "rename") &&
+			classifyEnrollmentPath(event.path, 0) !== "excluded";
+		const releaseCapture = destructive
+			? this.effectFence?.beginCapture()
+			: undefined;
+		let persisted = false;
+		try {
+			const placeholder = placeholderSource(
+				event.type === "rename" ? event.to : event.path,
+			);
+			const placeholderDetected =
+				placeholder !== null && (await this.vault.isUnavailable(placeholder));
+			if (placeholderDetected && placeholder)
+				await this.journal.markUnavailable(placeholder);
+			else if (
+				placeholder &&
+				this.journal.snapshot().unavailable_paths.includes(placeholder)
+			)
+				await this.journal.clearUnavailable(placeholder);
+			if (event.type === "delete" || event.type === "rename") {
+				if (!destructive) return false;
+				await this.journal.captureCoexistenceEvent(event, this.now());
+				persisted = true;
+				if (await this.vault.isUnavailable(event.path))
+					await this.journal.markUnavailable(event.path);
+				return true;
+			}
+			if (placeholderDetected) return true;
+			if (
+				this.journal.snapshot().unavailable_paths.includes(event.path) &&
+				!(await this.vault.isUnavailable(event.path))
+			)
+				await this.journal.clearUnavailable(event.path);
+			return false;
+		} finally {
+			releaseCapture?.(persisted);
 		}
-		if (placeholderDetected) return true;
-		if (
-			this.journal.snapshot().unavailable_paths.includes(event.path) &&
-			!(await this.vault.isUnavailable(event.path))
-		)
-			await this.journal.clearUnavailable(event.path);
-		return false;
 	}
 
 	/** Transfers only an unchanged observed source into durable outgoing work. */

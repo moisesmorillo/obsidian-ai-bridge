@@ -12,6 +12,10 @@ import { Notice, Plugin } from "@plugin/obsidian-api";
 import { type AIBridgeSettings, AIBridgeSettingTab } from "@plugin/settings";
 import { CoexistenceController } from "@plugin/sync/coexistence";
 import {
+	CoexistenceEffectBlockedError,
+	CoexistenceEffectFence,
+} from "@plugin/sync/coexistence-effect-fence";
+import {
 	createPublication,
 	type PublicationComposition,
 } from "@plugin/sync/create-publication";
@@ -48,6 +52,8 @@ export default class AIBridgePlugin extends Plugin {
 	private vaultEvents: VaultEventAdapter | null = null;
 	/** Captures destructive events and metadata-only placeholder state for this lifecycle. */
 	private coexistence: CoexistenceController | null = null;
+	/** Shared capture and effect-admission authority for one journal lifetime. */
+	private coexistenceEffectFence: CoexistenceEffectFence | null = null;
 	/** Window visibility callback registered only for the active sync composition. */
 	private visibilityHandler: (() => void) | null = null;
 	/** Tracks safe lifecycle presentation independently from the credential status. */
@@ -111,6 +117,10 @@ export default class AIBridgePlugin extends Plugin {
 				return;
 			}
 			this.journal = journal;
+			this.coexistenceEffectFence = new CoexistenceEffectFence(
+				() =>
+					(this.journal?.snapshot().coexistence_confirmations.length ?? 0) > 0,
+			);
 			this.credentials = new ObsidianCredentialStorage(
 				this.app,
 				journal.snapshot().device_id,
@@ -476,6 +486,8 @@ export default class AIBridgePlugin extends Plugin {
 			this.journal,
 			new ObsidianTextVault(this.app.vault),
 			() => this.settingsValue.coexistenceMode,
+			Date.now,
+			this.coexistenceEffectFence ?? undefined,
 		);
 		/** Stops all sync effects while owner confirmation remains durable. */
 		const runCycle = async (): Promise<void> => {
@@ -483,17 +495,24 @@ export default class AIBridgePlugin extends Plugin {
 			this.settingsTab?.refreshStatus();
 			try {
 				const composition = this.composition;
-				if (!composition) return;
-				if (this.journal?.snapshot().coexistence_confirmations.length) return;
+				if (!composition || this.isCoexistenceEffectBlocked()) return;
 				this.syncFailure = null;
-				if (!this.vaultSummary)
+				if (!this.vaultSummary) {
 					this.vaultSummary = await composition.readVaultSummary();
+					if (this.isCoexistenceEffectBlocked()) return;
+				}
 				await composition.reconciliation.resume();
-				if (this.journal?.snapshot().epoch === undefined)
+				if (this.isCoexistenceEffectBlocked()) return;
+				if (this.journal?.snapshot().epoch === undefined) {
 					await composition.reconciliation.enroll();
+					if (this.isCoexistenceEffectBlocked()) return;
+				}
 				await composition.publication.scan();
+				if (this.isCoexistenceEffectBlocked()) return;
 				await composition.publication.flush();
+				if (this.isCoexistenceEffectBlocked()) return;
 				await composition.reconciliation.replay();
+				if (this.isCoexistenceEffectBlocked()) return;
 				const summary = await composition.readVaultSummary();
 				if (
 					this.composition === composition &&
@@ -501,7 +520,8 @@ export default class AIBridgePlugin extends Plugin {
 					!this.syncRevoked
 				)
 					this.vaultSummary = summary;
-			} catch {
+			} catch (error) {
+				if (error instanceof CoexistenceEffectBlockedError) return;
 				this.syncFailure =
 					"Sync request failed. The device will retry on the next cycle.";
 				throw new Error(this.syncFailure);
@@ -512,6 +532,7 @@ export default class AIBridgePlugin extends Plugin {
 		};
 		this.desktopSync = new DesktopSyncController({
 			cycle: runCycle,
+			isEffectBlocked: () => this.isCoexistenceEffectBlocked(),
 			onCaptureEvent: (event) =>
 				this.coexistence?.observe(event) ?? Promise.resolve(false),
 			onEvent: (event) =>
@@ -568,6 +589,7 @@ export default class AIBridgePlugin extends Plugin {
 				onRevoked: () => {
 					this.runSyncAction(() => this.handleRevocation());
 				},
+				isEffectBlocked: () => this.isCoexistenceEffectBlocked(),
 			},
 		);
 	}
@@ -653,6 +675,11 @@ export default class AIBridgePlugin extends Plugin {
 			},
 			this.vaultSummary,
 		);
+	}
+
+	/** Reads the shared journal and capture latch before any later effect admission. */
+	private isCoexistenceEffectBlocked(): boolean {
+		return this.coexistenceEffectFence?.isBlocked() ?? false;
 	}
 
 	/** Reports a fixed safe failure message for one rejected lifecycle action. */

@@ -371,6 +371,50 @@ async function openController(
 }
 
 describe("PublicationController", () => {
+	it("finishes one issued mutation but fences later sends after capture", async () => {
+		const { controller, journal, remote, vault } = await openController();
+		let blocked = false;
+		Reflect.set(
+			Reflect.get(controller, "options"),
+			"isEffectBlocked",
+			() => blocked,
+		);
+		vault.files.set("first.md", "first");
+		vault.files.set("second.md", "second");
+		await controller.scan();
+		let markStarted: (() => void) | undefined;
+		let releaseFirst: (() => void) | undefined;
+		const started = new Promise<void>((resolve) => {
+			markStarted = resolve;
+		});
+		const release = new Promise<void>((resolve) => {
+			releaseFirst = resolve;
+		});
+		const calls: string[] = [];
+		const put = remote.put.bind(remote);
+		remote.put = async (...args) => {
+			calls.push(args[0]);
+			if (args[0] === "first.md") {
+				markStarted?.();
+				await release;
+			}
+			return put(...args);
+		};
+
+		const flushing = controller.flush();
+		await started;
+		blocked = true;
+		releaseFirst?.();
+		await flushing;
+
+		expect(calls).toEqual(["first.md"]);
+		expect(journal.snapshot().pending_ops).toHaveLength(1);
+		expect(journal.snapshot().pending_ops[0]).toMatchObject({
+			path: "second.md",
+			state: "queued",
+		});
+	});
+
 	it("clears prior DELETE metadata before a new attempt", async () => {
 		const { journal, remote, vault } = await openController();
 		const path = "oab-8.8/ac-04/shared.md";

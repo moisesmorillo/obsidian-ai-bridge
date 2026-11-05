@@ -9,6 +9,7 @@ import {
 	parseETag,
 	pathKey,
 } from "@obsidian-ai-bridge/protocol";
+import { CoexistenceEffectBlockedError } from "@plugin/sync/coexistence-effect-fence";
 import type { DeviceJournal } from "@plugin/sync/device-journal";
 import { classifyEnrollmentPath } from "@plugin/sync/enrollment-scope";
 import {
@@ -99,6 +100,8 @@ export interface PublicationOptions {
 	applyEngine: TextApplyEngine;
 	/** Returns current Unix milliseconds for retry and UUID creation decisions. */
 	now(): number;
+	/** Rejects new publication or apply effects while owner intent remains unresolved. */
+	isEffectBlocked?: () => boolean;
 	/** Captures only safe DELETE response classes, or clears the previous attempt. */
 	onDeleteResponseDiagnostic?(
 		diagnostic: DeleteResponseDiagnostic | null,
@@ -124,6 +127,7 @@ export class PublicationController {
 	scan(): Promise<void> {
 		return this.serialize(async () => {
 			this.assertOpen();
+			if (this.isEffectBlocked()) return;
 			const state = this.journal.snapshot();
 			const localPaths = await this.vault.list();
 			this.assertOpen();
@@ -135,6 +139,7 @@ export class PublicationController {
 			);
 			for (const path of localPaths) {
 				this.assertOpen();
+				if (this.isEffectBlocked()) return;
 				if (pendingRenameTargets.has(pathKey(path))) continue;
 				if (await this.vault.isUnavailable?.(path)) {
 					await this.journal.markUnavailable(path);
@@ -163,6 +168,7 @@ export class PublicationController {
 					const base = state.base[path];
 					if (base?.deleted === false && base.hash === hash) continue;
 					if (await this.hasPendingPut(path, hash)) continue;
+					if (this.isEffectBlocked()) return;
 					await this.journal.enqueue(
 						{
 							op: "put",
@@ -202,6 +208,7 @@ export class PublicationController {
 				}
 				if (await this.hasPendingPut(path, hash)) continue;
 				this.assertOpen();
+				if (this.isEffectBlocked()) return;
 				await this.journal.enqueue(
 					{
 						op: "put",
@@ -214,6 +221,7 @@ export class PublicationController {
 				);
 			}
 			for (const [path, base] of Object.entries(state.base)) {
+				if (this.isEffectBlocked()) return;
 				if (base.deleted || canonicalLocalPaths.has(pathKey(path))) continue;
 				if (
 					state.pending_ops.some(
@@ -232,6 +240,7 @@ export class PublicationController {
 				}
 				if (state.unavailable_paths.includes(path))
 					await this.journal.clearUnavailable(path);
+				if (this.isEffectBlocked()) return;
 				await this.restoreMissing(path, base.rev);
 			}
 		});
@@ -245,6 +254,7 @@ export class PublicationController {
 		const observedEpoch = eventState.epoch;
 		return this.serialize(async () => {
 			this.assertOpen();
+			if (this.isEffectBlocked()) return;
 			if (classifyEnrollmentPath(parsed.path, 0) === "excluded") return;
 			if (parsed.type === "create" || parsed.type === "modify") {
 				const size = await this.vault.size(parsed.path);
@@ -277,6 +287,7 @@ export class PublicationController {
 					const current = this.journal.snapshot();
 					const base = current.base[parsed.path];
 					if (base?.deleted === false && base.hash === hash) return;
+					if (this.isEffectBlocked()) return;
 					await this.journal.enqueue(
 						{
 							op: "put",
@@ -352,6 +363,7 @@ export class PublicationController {
 					}
 				if (sentCreate && state.epoch) {
 					this.assertOpen();
+					if (this.isEffectBlocked()) return;
 					await this.journal.enqueue(
 						{
 							op: "delete",
@@ -372,6 +384,7 @@ export class PublicationController {
 			};
 			if (parsed.type === "delete") {
 				this.assertOpen();
+				if (this.isEffectBlocked()) return;
 				await this.journal.enqueue(
 					{ op: "delete", path: parsed.path, precondition },
 					new Uint8Array(),
@@ -380,6 +393,7 @@ export class PublicationController {
 			}
 			if (parsed.type === "rename") {
 				this.assertOpen();
+				if (this.isEffectBlocked()) return;
 				await this.journal.enqueue(
 					{
 						op: "rename",
@@ -398,8 +412,10 @@ export class PublicationController {
 	flush(): Promise<void> {
 		return this.serialize(async () => {
 			this.assertOpen();
+			if (this.isEffectBlocked()) return;
 			const keys = this.journal.snapshot().pending_ops.map((item) => item.key);
 			for (const key of keys) {
+				if (this.isEffectBlocked()) return;
 				const operations = this.journal.snapshot().pending_ops;
 				const operation = operations.find((item) => item.key === key);
 				if (!operation || operation.state === "resolved") continue;
@@ -413,7 +429,7 @@ export class PublicationController {
 						await this.journal.markUnavailable(path);
 						unavailable = true;
 					}
-				if (unavailable) break;
+				if (unavailable || this.isEffectBlocked()) break;
 				if ((operation.retry_at ?? 0) > this.options.now()) continue;
 				const index = operations.findIndex((item) => item.key === key);
 				if (
@@ -442,7 +458,7 @@ export class PublicationController {
 					);
 					break;
 				}
-				if (!(await this.send(operation))) break;
+				if (this.isEffectBlocked() || !(await this.send(operation))) break;
 			}
 		});
 	}
@@ -454,6 +470,7 @@ export class PublicationController {
 
 	/** Applies current rename source state before settlement. Only receipt-produced state can authorize queued successors. */
 	private async send(operation: PendingOperation): Promise<boolean> {
+		if (this.isEffectBlocked()) return false;
 		if (operation.op === "delete")
 			this.options.onDeleteResponseDiagnostic?.(null);
 		const saved = await this.journal.prepareSend(
@@ -463,6 +480,7 @@ export class PublicationController {
 		this.assertOpen();
 		const payload = saved.bytes;
 		try {
+			if (this.isEffectBlocked()) return false;
 			const epoch = this.journal.snapshot().epoch;
 			if (!epoch) throw new Error("Publication needs a confirmed vault epoch");
 			const receipt = await this.dispatch(saved.operation, payload, epoch);
@@ -488,6 +506,7 @@ export class PublicationController {
 			)
 				throw new Error("Mutation receipt identity is invalid");
 			if (saved.operation.op === "rename") {
+				if (this.isEffectBlocked()) return false;
 				this.assertOpen();
 				const source = await this.remote.readCurrentAuthority(
 					saved.operation.path,
@@ -521,6 +540,7 @@ export class PublicationController {
 			return true;
 		} catch (error) {
 			this.assertOpen();
+			if (error instanceof CoexistenceEffectBlockedError) return false;
 			return this.handleFailure(saved.operation, error);
 		}
 	}
@@ -917,6 +937,7 @@ export class PublicationController {
 		epoch: string,
 		base: Extract<DeviceBaseEntry, { deleted: false }>,
 	): Promise<void> {
+		if (this.isEffectBlocked()) return;
 		if (!this.remote.readBlobAuthority) return;
 		const current = await this.remote.readBlobAuthority(
 			path,
@@ -942,12 +963,17 @@ export class PublicationController {
 		if (!this.journal.matchesBase(path, base, epoch)) return;
 		if ((await this.vault.size(path)) !== null) return;
 		this.assertOpen();
+		if (this.isEffectBlocked()) return;
 		await this.journal.setExpectedWrite(path, expectedHash);
 		if (this.closed) {
 			await this.journal.clearExpectedWrite(path);
 			this.assertOpen();
 		}
 		this.assertOpen();
+		if (this.isEffectBlocked()) {
+			await this.journal.clearExpectedWrite(path);
+			return;
+		}
 		let created = false;
 		if (current.kind === "blob") {
 			const createBinary = this.vault.createBinary;
@@ -1026,6 +1052,7 @@ export class PublicationController {
 		}
 		if (await this.hasPendingPut(path, hash)) return;
 		this.assertOpen();
+		if (this.isEffectBlocked()) return;
 		await this.journal.enqueue(
 			{
 				op: "put",
@@ -1054,6 +1081,7 @@ export class PublicationController {
 		const base = state.base[path];
 		const hash = await digest(bytes);
 		this.assertOpen();
+		if (this.isEffectBlocked()) return;
 		if (base?.deleted === false && base.hash === hash) return;
 		if (base && !state.epoch) {
 			await this.journal.recordAttention(
@@ -1188,6 +1216,11 @@ export class PublicationController {
 			() => undefined,
 		);
 		return result;
+	}
+
+	/** Reads coexistence authority before admitting another effect. */
+	private isEffectBlocked(): boolean {
+		return this.options.isEffectBlocked?.() ?? false;
 	}
 
 	/** Rejects work after close, including late asynchronous continuations. */

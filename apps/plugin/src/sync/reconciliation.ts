@@ -9,6 +9,7 @@ import {
 	pathKey,
 	type ReconciliationCheckpoint,
 } from "@obsidian-ai-bridge/protocol";
+import { CoexistenceEffectBlockedError } from "@plugin/sync/coexistence-effect-fence";
 import type { DeviceJournal } from "@plugin/sync/device-journal";
 import { classifyEnrollmentPath } from "@plugin/sync/enrollment-scope";
 import {
@@ -92,6 +93,7 @@ export class ReconciliationController {
 		private readonly applyEngine: TextApplyEngine,
 		private readonly localVault: TextVault,
 		private readonly remote: ReconciliationRemote,
+		private readonly isEffectBlocked: () => boolean = () => false,
 	) {}
 
 	/** Enrolls local-only text and hydrates every confirmed remote manifest row. */
@@ -600,6 +602,7 @@ export class ReconciliationController {
 		}).decode(saved.bytes);
 		try {
 			this.assertOpen();
+			this.assertEffectAdmission();
 			const response = await this.remote.createText(
 				path,
 				payload,
@@ -689,6 +692,7 @@ export class ReconciliationController {
 		)
 			throw new Error("Binary enrollment payload identity changed");
 		try {
+			this.assertEffectAdmission();
 			const receipt = await this.remote.createBlob(
 				path,
 				saved.bytes,
@@ -911,6 +915,11 @@ export class ReconciliationController {
 			() => undefined,
 		);
 		return result;
+	}
+
+	/** Stops a new remote enrollment mutation when owner intent blocks effects. */
+	private assertEffectAdmission(): void {
+		if (this.isEffectBlocked()) throw new CoexistenceEffectBlockedError();
 	}
 
 	/** Rejects work after close without assuming pending network or host effects stopped. */

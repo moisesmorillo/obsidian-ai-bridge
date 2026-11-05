@@ -27,7 +27,7 @@ export type DesktopVaultId = "dev-1" | "dev-2";
 
 /** Isolated local fixture paths for one authorized synthetic AC-19 vault. */
 export interface Ac19FixturePaths {
-	/** Unique directory that preserves all earlier acceptance evidence. */
+	/** Dedicated synthetic directory for the authorized test vault. */
 	root: string;
 	/** Eligible local note path used to seed the remote revision. */
 	source: string;
@@ -35,7 +35,7 @@ export interface Ac19FixturePaths {
 	placeholder: string;
 }
 
-/** Builds a unique eligible note and excluded placeholder under one authorized AC-19 vault. */
+/** Builds one eligible note and one excluded placeholder in an authorized AC-19 vault. */
 export function createAc19FixturePaths(
 	id: DesktopVaultId,
 	existingPaths: readonly string[] = [],

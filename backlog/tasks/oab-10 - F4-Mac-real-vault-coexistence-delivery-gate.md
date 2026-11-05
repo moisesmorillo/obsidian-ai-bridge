@@ -4,7 +4,7 @@ title: F4 Mac real-vault coexistence delivery gate
 status: In Progress
 assignee: []
 created_date: 2026-10-12 15:13
-updated_date: '2026-11-05T12:51:00Z'
+updated_date: '2026-11-05T18:40:00Z'
 labels:
   - phase-gate
   - F4
@@ -61,4 +61,20 @@ Standing authorizations for F4 — supervisor update, 2026-11-05
 The owner said "hazlo tu, no me pidas tantos pasos manuales". The supervisor now acts for the owner on real-vault manual steps. The supervisor reports a dated local copy at ~/vaults/backups/Vault-2026-11-05T124852Z.zip, with a sha256 manifest beside it and verification by extraction. This relay satisfies the dated-copy confirmation condition. No agent verified or accessed the copy or the personal vault.
 
 When OAB-10.3 is ready, the supervisor will install and enable the built plugin in the real vault. This replaces the earlier owner-only actor for these manual steps. Agents and subagents still never read, write, list, open, copy, or inspect the real vault. All other F4 limits remain unchanged.
+
+Bounded dev-2 fixture cleanup, 2026-11-05 UTC. Source main: 91aa62fb1e5e7b82f455c8bfa3422cdf5ac0ccf7. Built and installed plugin 0.1.0 only in dev-2. Client id: j-jAYgxDZ6cyAPVM. Time window: 2026-11-05T18:15:51Z to 2026-11-05T18:34:07Z. Baseline scoped manifest: 58 rows total. OAB-8.8 had 50 live and 4 tombstones. OAB-37 had 1 live and 0 tombstones. OAB-10.1 had 3 live and 0 tombstones. Two folders were moved to Obsidian trash through the Vault API. Fresh scoped observations confirmed 55 tombstones across OAB-8.8 and OAB-37. The last known OAB-10.1 observation showed 3 live rows. No service row was absent as deletion evidence.
+Final device state: connected, paused, coexistence off, 0 pending operations, 0 pending applies, 0 confirmations, and 4 unchanged historical attention items. A private fingerprint matched the baseline. No 412 or new attention item was observed.
+The final scoped manifest read stopped. Two earlier HTTP 200 response texts of 493 and 101 characters failed JSON parsing inside the guarded host. Later sequential diagnostics found an HTTP 200 JSON/object response of 966 bytes that failed JSON parsing, then an HTTP 429 JSON response of 88 bytes that parsed. Content-Length was absent on the HTTP 200 responses, so completeness is unknown. The supported session request failed with its safe generic error. The canonical SyncTransport manifest read failed with SyncTransportError. The failure occurred before helper projection or stdout capture. No raw body was retained. The underlying response cause remains unknown. No full-prefix final proof exists, and no complete cleanup is claimed. OAB-10.1 was not trashed.
+
+Installer state check: after the guarded install, dev-2 was connected and unpaused while coexistence remained on. We paused it before disabling coexistence. The queue, apply, confirmation, and attention counts did not change. We then disabled coexistence and resumed for the authorized cleanup.
+
+Read-only diagnosis stopped at 2026-11-05T18:36:00Z. Dev-2 stayed paused with coexistence off.
+
+The initial vault-operation window ended at 2026-11-05T18:34:07Z. The full read-only diagnosis ended at 2026-11-05T18:36:00Z.
+
+Installer restart limit: while dev-2 was briefly unpaused with coexistence on, its normal cycle could run before the manual pause. The guarded check then showed 0 queues, 0 confirmations, and 4 unchanged attention items. I did not inspect unrelated local content, so any unrelated local changes in that interval remain unverified.
+
+Cleanup authorization: after PR #59 merged, the supervisor explicitly authorized Obsidian trash and conditional publication for only oab-8.8/, oab-37/, and oab-10.1/ in dev-2. This replaces the earlier preservation rule for these three prefixes only. The authorization does not include dev-1, the real vault, backups, oab-7.8/, unrelated content, direct service deletes, or Cloudflare changes.
+
+Exact-prefix evidence: oab-8.8/ has 54 confirmed tombstones, including 4 that existed before cleanup. oab-37/ has 1 confirmed tombstone. Confirmed total: 55. The last complete observation of oab-10.1/ has 3 live rows and 0 tombstones. No trash call ran for that folder. The observations occurred at different times. A fresh complete final manifest for all three prefixes remains unavailable, so this is a partial cleanup record only. The real-vault trial must not use this record as proof of fixture-free enrollment.
 <!-- SECTION:NOTES:END -->

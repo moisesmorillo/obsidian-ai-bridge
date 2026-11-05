@@ -6,6 +6,11 @@ describe("production owner console", () => {
 	it("denies callers without a verified Access identity", async () => {
 		const response = await SELF.fetch("https://service.test/owner/clients");
 		expect(response.status).toBe(401);
+		const measurements = await SELF.fetch(
+			"https://service.test/owner/measurements",
+		);
+		expect(measurements.status).toBe(401);
+		expect(measurements.headers.get("cache-control")).toBe("no-store");
 	});
 
 	it("renders escaped names from the durable registry for verified owner Access", async () => {
@@ -82,6 +87,32 @@ describe("production owner console", () => {
 		});
 		expect(response.status).toBe(200);
 		const html = await response.text();
+		const measurements = await SELF.fetch(
+			"https://service.test/owner/measurements",
+			{ headers: { "Cf-Access-Jwt-Assertion": assertion } },
+		);
+		expect(measurements.status).toBe(200);
+		expect(measurements.headers.get("cache-control")).toBe("no-store");
+		expect(await measurements.json()).toMatchObject({
+			status: "unknown",
+			coverage: "unknown",
+			feed_latency: { status: "unknown", p95: null },
+			storage: {
+				database_bytes: { status: "observed" },
+				referenced_blob_bytes: { status: "observed", value: 0 },
+			},
+		});
+		const summary = await SELF.fetch(
+			"https://service.test/owner/measurements?format=html",
+			{ headers: { "Cf-Access-Jwt-Assertion": assertion } },
+		);
+		expect(summary.headers.get("cache-control")).toBe("no-store");
+		expect(await summary.text()).toContain("Feed response preparation p95");
+		const wrongOrigin = await SELF.fetch(
+			"https://other.test/owner/measurements",
+			{ headers: { "Cf-Access-Jwt-Assertion": assertion } },
+		);
+		expect(wrongOrigin.status).toBe(404);
 		expect(html).toContain("&lt;script&gt;unsafe()&lt;/script&gt;");
 		expect(html).not.toContain("<script>unsafe()");
 		expect(html).toContain("Revoked");

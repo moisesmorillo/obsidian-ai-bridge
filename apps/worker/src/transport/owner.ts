@@ -1,3 +1,7 @@
+import {
+	type MeasurementResponse,
+	MeasurementResponseSchema,
+} from "@obsidian-ai-bridge/protocol";
 import type {
 	ClientRegistryGateway,
 	OwnerCleanupExternalCallBudget,
@@ -30,6 +34,15 @@ export type OwnerRegistryResolver = (
 	request: Request,
 ) => ClientRegistryGateway;
 
+/** Resolve owner-only measurements from the host-selected Vault. */
+export type OwnerMeasurementResolver = (
+	env: Env,
+	request: Request,
+) => {
+	/** Verify owner subject in the Vault before any measurement observation read. */
+	readMeasurements(ownerSubject: string): Promise<MeasurementResponse | null>;
+};
+
 /** Escape provider-controlled and owner-controlled strings before HTML rendering. */
 function escapeHtml(value: string): string {
 	return value.replace(/[&<>"']/g, (character) => {
@@ -56,6 +69,7 @@ function readCookie(request: Request, name: string): string | null {
 /** Return a no-store response with a safely rendered finite client page. */
 export function createOwnerHandler(
 	resolveRegistry: OwnerRegistryResolver,
+	resolveMeasurements?: OwnerMeasurementResolver,
 ): ExportedHandler<Env> {
 	const app = new Hono<{ Bindings: Env }>();
 	app.get("/owner/clients", async (context) => {
@@ -102,7 +116,7 @@ export function createOwnerHandler(
 			? `<a href="/owner/clients?cursor=${encodeURIComponent(page.next_cursor)}">Next page</a>`
 			: "";
 		return new Response(
-			`<!doctype html><html><head><meta charset="utf-8"><title>Owner clients</title></head><body><main><h1>Connected clients</h1><ul>${clientMarkup}</ul>${next}</main></body></html>`,
+			`<!doctype html><html><head><meta charset="utf-8"><title>Owner clients</title></head><body><main><h1>Connected clients</h1><p><a href="/owner/measurements?format=html">Service measurements</a></p><ul>${clientMarkup}</ul>${next}</main></body></html>`,
 			{
 				headers: {
 					"content-type": "text/html; charset=utf-8",
@@ -111,6 +125,35 @@ export function createOwnerHandler(
 				},
 			},
 		);
+	});
+
+	app.get("/owner/measurements", async (context) => {
+		const owner = await verifyOwnerAccess(context.req.raw, context.env);
+		if (!owner) return noStoreText("Unauthorized", 401);
+		if (!isCanonicalOwnerOrigin(context.req.raw, context.env))
+			return noStoreText("Not found", 404);
+		if (!resolveMeasurements) return noStoreText("Unavailable", 503);
+		try {
+			const gateway = resolveMeasurements(context.env, context.req.raw);
+			const response = await gateway.readMeasurements(owner.subject);
+			if (!response) return noStoreText("Forbidden", 403);
+			const parsed = MeasurementResponseSchema.parse(response);
+			if (context.req.query("format") === "html")
+				return new Response(renderMeasurements(parsed), {
+					headers: {
+						"content-type": "text/html; charset=utf-8",
+						"cache-control": "no-store",
+					},
+				});
+			return new Response(JSON.stringify(parsed), {
+				headers: {
+					"content-type": "application/json; charset=utf-8",
+					"cache-control": "no-store",
+				},
+			});
+		} catch {
+			return noStoreText("Unavailable", 503);
+		}
 	});
 
 	app.get("/owner/clients/:clientId/grants", async (context) => {
@@ -222,6 +265,41 @@ export function createOwnerHandler(
 		);
 	});
 	return app;
+}
+
+/** Render units, windows, lower-bound coverage, and unknown or stale labels for owners. */
+function renderMeasurements(response: MeasurementResponse): string {
+	/** Show a numeric storage value or a safe explicit unknown reason. */
+	const display = (value: {
+		status: string;
+		value?: number;
+		reason?: string;
+	}) =>
+		value.status === "observed"
+			? String(value.value)
+			: `Unknown (${value.reason ?? "not observed"})`;
+	const clientRows = response.requests.clients
+		.map(
+			(client) =>
+				`<li>${escapeHtml(client.client_id)}: REST ${client.requests_rest}, MCP ${client.requests_mcp}. Last feed request ${client.last_feed_request_at === null ? "unknown" : new Date(client.last_feed_request_at).toISOString()}. Observed poll interval ${client.minimum_poll_interval_ms ?? "unknown"}–${client.maximum_poll_interval_ms ?? "unknown"} ms.</li>`,
+		)
+		.join("");
+	return `<!doctype html><html><head><meta charset="utf-8"><title>Service measurements</title></head><body><main><h1>Service measurements</h1><p>Requests are observed lower bounds, not billing totals. Client coverage: ${response.coverage}.</p><p>UTC window: ${response.day_start === null ? "Unknown" : `${new Date(response.day_start).toISOString()} to ${new Date(response.day_end ?? response.day_start).toISOString()}`}. Observed from ${response.observed_from === null ? "unknown" : new Date(response.observed_from).toISOString()} through ${response.observed_through === null ? "unknown" : new Date(response.observed_through).toISOString()}.</p><p>REST requests: ${response.requests.rest_count ?? "Unknown"}. MCP requests: ${response.requests.mcp_count ?? "Unknown"}. Request data: ${response.requests.status}, ${response.requests.stale ? "stale" : "fresh"}.</p><p>Feed response preparation p95: ${response.feed_latency.p95 ?? "Unknown"} milliseconds. Boundary: authenticated router entry to successful /v1/changes response headers. This excludes lazy body production, network transfer, plugin apply, and publication delay. Retained samples: ${response.feed_latency.sample_count} of ${response.feed_latency.total_sample_count}. Latency: ${response.feed_latency.status}, ${response.feed_latency.stale ? "stale" : "fresh"}.</p><p>DO SQLite allocated bytes: ${display(response.storage.database_bytes)}. Referenced R2 blob bytes: ${display(response.storage.referenced_blob_bytes)}.</p><h2>Observed clients</h2><ul>${clientRows}</ul><p><a href="/owner/measurements">Measurement JSON</a></p><p><a href="/owner/clients">Connected clients</a></p></main></body></html>`;
+}
+
+/** Return a text response that cannot be stored by a browser or intermediary. */
+function noStoreText(body: string, status: number): Response {
+	return new Response(body, {
+		status,
+		headers: { "cache-control": "no-store" },
+	});
+}
+
+/** Check the canonical service origin before any owner measurement read. */
+function isCanonicalOwnerOrigin(request: Request, env: Env): boolean {
+	return Boolean(
+		env.SERVICE_ORIGIN && new URL(request.url).origin === env.SERVICE_ORIGIN,
+	);
 }
 
 /** Accept state changes only when both the request URL and Origin match configured service origin. */

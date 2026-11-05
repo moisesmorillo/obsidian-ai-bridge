@@ -164,6 +164,21 @@ export {
 	McpUpdateNoteInputSchema,
 	McpUpdateNoteToolSchema,
 } from "@protocol/schemas/mcp";
+export type {
+	FeedPreparationObservation,
+	MeasurementAggregate,
+	MeasurementResponse,
+	OwnerMeasurementsRequest,
+	RequestObservation,
+} from "@protocol/schemas/measurements";
+export {
+	FeedPreparationObservationSchema,
+	MeasurementAggregateSchema,
+	MeasurementClientAggregateSchema,
+	MeasurementResponseSchema,
+	OwnerMeasurementsRequestSchema,
+	RequestObservationSchema,
+} from "@protocol/schemas/measurements";
 export { PathSchema } from "@protocol/schemas/path";
 export {
 	ChangeEntrySchema,

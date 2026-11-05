@@ -4,7 +4,7 @@ title: F4 Mac real-vault coexistence delivery gate
 status: In Progress
 assignee: []
 created_date: 2026-10-12 15:13
-updated_date: '2026-11-05T18:40:00Z'
+updated_date: '2026-11-05T19:47:00Z'
 labels:
   - phase-gate
   - F4
@@ -77,4 +77,10 @@ Installer restart limit: while dev-2 was briefly unpaused with coexistence on, i
 Cleanup authorization: after PR #59 merged, the supervisor explicitly authorized Obsidian trash and conditional publication for only oab-8.8/, oab-37/, and oab-10.1/ in dev-2. This replaces the earlier preservation rule for these three prefixes only. The authorization does not include dev-1, the real vault, backups, oab-7.8/, unrelated content, direct service deletes, or Cloudflare changes.
 
 Exact-prefix evidence: oab-8.8/ has 54 confirmed tombstones, including 4 that existed before cleanup. oab-37/ has 1 confirmed tombstone. Confirmed total: 55. The last complete observation of oab-10.1/ has 3 live rows and 0 tombstones. No trash call ran for that folder. The observations occurred at different times. A fresh complete final manifest for all three prefixes remains unavailable, so this is a partial cleanup record only. The real-vault trial must not use this record as proof of fixture-free enrollment.
+
+F4 trial start, 2026-11-05 about 19:30 UTC, by the supervisor under the owner delegation of 2026-11-05. Build: main 91aa62fb1e5e7b82f455c8bfa3422cdf5ac0ccf7, main.js sha256 prefix b579c10e740c6b81. Installed in the real vault at .obsidian/plugins/ai-bridge with data.json {serverUrl, deviceName Mac Vault, coexistenceMode true, syncPaused true} and enabled in community-plugins.json (backup copy kept outside the vault). Deviation: the installed manifest sets isDesktopOnly true so iCloud cannot load the plugin on mobile devices during F4. Device client id: e12MCRtYZ0t4tb0v. Consent ran in the Orca browser with the owner Access session after the authorize URL was captured inside Obsidian. The obsidian:// callback reached Obsidian. No PIN step was needed.
+
+Hydration result: 47 live files equal to the local vault, 0 conflict copies, 0 attention items, 0 local-only uploads. The three remaining oab-10.1/ fixtures hydrated, were trashed in Obsidian, entered the coexistence confirmation queue (3 delete items, nothing published), were confirmed by the supervisor and published as tombstones. Service after start: 47 live, 58 tombstones, head_seq 178, epoch 634b3987. The real vault is settled at cursor 178. Dated local copy before any real-vault step: Vault-2026-11-05T124852Z.zip with sha256 manifest, verified by extraction (85 files).
+
+Observation: during the hydration burst GET /v1/changes returned 429 admission_limited with Retry-After 1 for about one minute (Durable Object per-client live admission limit of 16 while content reads settled). The plugin reported the generic sync failure and recovered on the next cycle. Manifest and file reads kept returning 200. Limits: one device, one Mac, trial window of at most fourteen days from 2026-11-05. OAB-10.1.1 (dev-2 AC-19 service proof) stays open. Dev-2 reported disconnected after the cleanup install and needs a fresh enrollment before OAB-10.1.1.
 <!-- SECTION:NOTES:END -->

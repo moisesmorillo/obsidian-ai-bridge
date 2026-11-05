@@ -1,18 +1,26 @@
 import type { DeviceState } from "@obsidian-ai-bridge/protocol";
 import { DeviceJournal } from "@plugin/sync/device-journal";
 import { TextApplyEngine } from "@plugin/sync/text-apply";
-import { TFile, type Vault } from "obsidian";
+import { type EventRef, TFile, type Vault } from "obsidian";
 import { describe, expect, it, vi } from "vitest";
 import { ObsidianTextVault } from "../src/infrastructure/text-vault";
+import { VaultEventAdapter } from "../src/infrastructure/vault-events";
 
 /** Provides the exact host methods used by the adapter without a live vault. */
 function makeHostVault() {
 	const file = Object.assign(new TFile(), { path: "notes/a.md" });
 	const contents = new Map([[file.path, "old"]]);
+	const handlers = new Map<string, Set<(...args: unknown[]) => void>>();
+	/** Delivers one host event to every registered test listener. */
+	const emit = (event: string, ...args: unknown[]) => {
+		for (const callback of handlers.get(event) ?? []) callback(...args);
+	};
 	const process = vi.fn(
 		async (_file: TFile, callback: (text: string) => string) => {
-			const next = callback(contents.get(file.path) ?? "");
+			const current = contents.get(file.path) ?? "";
+			const next = callback(current);
 			contents.set(file.path, next);
+			if (next !== current) emit("modify", file);
 			return next;
 		},
 	);
@@ -20,18 +28,22 @@ function makeHostVault() {
 		const created = Object.assign(new TFile(), { path });
 		files.push(created);
 		contents.set(path, text);
+		emit("create", created);
 		return created;
 	});
 	const trash = vi.fn(async (target: TFile, _system: boolean) => {
+		emit("delete", target);
 		contents.delete(target.path);
 		files.splice(files.indexOf(target), 1);
 		return undefined;
 	});
 	const rename = vi.fn(async (target: TFile, path: string) => {
+		const oldPath = target.path;
 		files.splice(files.indexOf(target), 1);
 		contents.set(path, contents.get(target.path) ?? "");
 		contents.delete(target.path);
 		target.path = path;
+		emit("rename", target, oldPath);
 		files.push(target);
 	});
 	const files = [file];
@@ -40,13 +52,37 @@ function makeHostVault() {
 		getAbstractFileByPath: (path: string) =>
 			files.find((candidate) => candidate.path === path) ?? null,
 		read: async (target: TFile) => contents.get(target.path) ?? "",
+		/** Stores one listener and returns the host reference used for disposal. */
+		on: (event: string, callback: (...args: unknown[]) => void) => {
+			const listeners = handlers.get(event) ?? new Set();
+			listeners.add(callback);
+			handlers.set(event, listeners);
+			return { event, callback } as unknown as EventRef;
+		},
+		offref: (reference: EventRef) => {
+			const listener = reference as unknown as {
+				event: string;
+				callback: (...args: unknown[]) => void;
+			};
+			handlers.get(listener.event)?.delete(listener.callback);
+		},
 		process,
 		create,
 		trash,
 		rename,
 		createFolder: async () => undefined,
 	};
-	return { host, contents, create, process, trash, rename, file };
+	return {
+		host,
+		contents,
+		create,
+		process,
+		trash,
+		rename,
+		file,
+		handlers,
+		emit,
+	};
 }
 
 /** Models hidden adapter files separately from indexed Vault files, including retention time and readback faults. */
@@ -134,6 +170,29 @@ async function recoveryHash(bytes: Uint8Array): Promise<string> {
 }
 
 describe("ObsidianTextVault", () => {
+	it("labels visible text mutations at the shared vault event boundary", async () => {
+		const fake = makeHostVault();
+		const origins: Array<string | undefined> = [];
+		const adapter = new VaultEventAdapter(
+			fake.host as unknown as Vault,
+			{
+				observe: async (_event, origin) => {
+					origins.push(origin);
+				},
+			},
+			() => undefined,
+		);
+		const vault = new ObsidianTextVault(fake.host as unknown as Vault);
+
+		expect(await vault.create("notes/new.md", "plugin text")).toBe(true);
+		expect(await vault.create("notes/a.md", "ignored")).toBe(false);
+		fake.emit("create", Object.assign(new TFile(), { path: "notes/a.md" }));
+		await Promise.resolve();
+
+		expect(origins).toEqual(["plugin", undefined]);
+		adapter.dispose();
+	});
+
 	it("finds both iCloud placeholder names from metadata without reading bytes", async () => {
 		const fake = makeRecoveryHostVault();
 		const vault = new ObsidianTextVault(fake.host as unknown as Vault);

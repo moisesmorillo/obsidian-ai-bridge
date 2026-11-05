@@ -109,8 +109,12 @@ export class DesktopSyncController {
 		return shared;
 	}
 
-	/** Saves local event intent in order without running network or apply effects while paused. */
-	async observe(event: PublicationEvent): Promise<void> {
+	/**
+	 * Saves event intent in order without network or apply effects while paused.
+	 * Plugin origin affects only the foreground activity clock. It never changes
+	 * capture, queue admission, debounce, or publication behavior.
+	 */
+	async observe(event: PublicationEvent, origin?: "plugin"): Promise<void> {
 		if (this.closed) return;
 		this.workActive = true;
 		this.options.onStateChanged?.();
@@ -127,7 +131,7 @@ export class DesktopSyncController {
 			this.options.onStateChanged?.();
 		}
 		if (captured || this.closed || isTerminallyExcluded(event)) return;
-		this.activeSince = Date.now();
+		if (origin !== "plugin") this.activeSince = Date.now();
 		if (this.paused) {
 			this.events.push(event);
 			this.options.onStateChanged?.();

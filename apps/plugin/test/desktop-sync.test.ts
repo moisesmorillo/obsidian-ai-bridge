@@ -305,6 +305,40 @@ describe("DesktopSyncController", () => {
 		controller.close();
 	});
 
+	it("keeps plugin events out of the user activity window", async () => {
+		const intervalDelays: number[] = [];
+		const intervalCallbacks: Array<() => void> = [];
+		const clock = vi.spyOn(Date, "now");
+		clock.mockReturnValue(1_000);
+		const controller = new DesktopSyncController({
+			cycle: async () => undefined,
+			host: {
+				setTimeout: () => 1,
+				clearTimeout: () => undefined,
+				setInterval: (callback, delay) => {
+					intervalDelays.push(delay);
+					intervalCallbacks.push(callback);
+					return intervalDelays.length;
+				},
+				clearInterval: () => undefined,
+			},
+		});
+
+		await controller.start();
+		await controller.observe({ type: "modify", path: "plugin.md" }, "plugin");
+		expect(intervalDelays.at(-1)).toBe(60_000);
+		await controller.observe({ type: "modify", path: "user.md" });
+		expect(intervalDelays.at(-1)).toBe(15_000);
+		clock.mockReturnValue(301_001);
+		await controller.observe({ type: "modify", path: "plugin.md" }, "plugin");
+		expect(intervalDelays.at(-1)).toBe(60_000);
+		intervalCallbacks.at(-1)?.();
+		expect(intervalDelays.at(-1)).toBe(60_000);
+
+		controller.close();
+		clock.mockRestore();
+	});
+
 	it("uses the focused-active, idle, hidden, and event debounce budgets", async () => {
 		const intervalDelays: number[] = [];
 		const timeoutDelays: number[] = [];

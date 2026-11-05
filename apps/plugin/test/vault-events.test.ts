@@ -1,7 +1,11 @@
 import type { DevicePrecondition } from "@obsidian-ai-bridge/protocol";
 import type { EventRef, Vault } from "obsidian";
-import { describe, expect, it } from "vitest";
-import { VaultEventAdapter } from "../src/infrastructure/vault-events";
+import { describe, expect, it, vi } from "vitest";
+import {
+	VaultEventAdapter,
+	withPluginVaultMutation,
+} from "../src/infrastructure/vault-events";
+import { DesktopSyncController } from "../src/sync/desktop-sync";
 import type { DeviceJournalStorage } from "../src/sync/device-journal";
 import { DeviceJournal } from "../src/sync/device-journal";
 import {
@@ -108,6 +112,112 @@ class UnusedRemote implements PublicationRemote {
 }
 
 describe("VaultEventAdapter", () => {
+	it("shares plugin origin across adapters for one host vault", async () => {
+		const handlers = new Map<string, Set<(...args: unknown[]) => void>>();
+		const vault = {
+			/** Adds an event listener to the shared in-memory host vault. */
+			on(event: string, callback: (...args: unknown[]) => void) {
+				const listeners = handlers.get(event) ?? new Set();
+				listeners.add(callback);
+				handlers.set(event, listeners);
+				return { event, callback } as EventRef;
+			},
+			/** Removes one callback registered by the production adapter. */
+			offref(reference: EventRef) {
+				const listener = reference as unknown as {
+					event: string;
+					callback: (...args: unknown[]) => void;
+				};
+				handlers.get(listener.event)?.delete(listener.callback);
+			},
+		} as unknown as Vault;
+		const firstOrigins: Array<string | undefined> = [];
+		const secondOrigins: Array<string | undefined> = [];
+		const first = new VaultEventAdapter(
+			vault,
+			{ observe: async (_event, origin) => void firstOrigins.push(origin) },
+			() => undefined,
+		);
+		const second = new VaultEventAdapter(
+			vault,
+			{ observe: async (_event, origin) => void secondOrigins.push(origin) },
+			() => undefined,
+		);
+
+		await withPluginVaultMutation(
+			vault,
+			{ type: "modify", path: "shared.md" },
+			async () => {
+				for (const callback of handlers.get("modify") ?? [])
+					callback({ path: "shared.md" });
+			},
+		);
+		await Promise.resolve();
+
+		expect(firstOrigins).toEqual(["plugin"]);
+		expect(secondOrigins).toEqual(["plugin"]);
+		first.dispose();
+		second.dispose();
+	});
+
+	it("labels only matching plugin events and keeps direct events local", async () => {
+		const handlers = new Map<string, (...args: unknown[]) => void>();
+		const vault = {
+			/** Captures one event callback for deterministic event delivery. */
+			on(event: string, callback: (...args: unknown[]) => void) {
+				handlers.set(event, callback);
+				return { event } as EventRef;
+			},
+			offref: () => undefined,
+		} as unknown as Vault;
+		const observed = vi.fn(
+			async (_event: unknown, _origin?: "local" | "plugin") => undefined,
+		);
+		const adapter = new VaultEventAdapter(
+			vault,
+			{ observe: observed },
+			() => undefined,
+		);
+
+		handlers.get("modify")?.({ path: "note.md" });
+		await withPluginVaultMutation(
+			vault,
+			{ type: "modify", path: "note.md" },
+			async () => {
+				handlers.get("create")?.({ path: "note.md" });
+				handlers.get("modify")?.({ path: "note.md" });
+				handlers.get("modify")?.({ path: "note.md" });
+			},
+		);
+		await withPluginVaultMutation(
+			vault,
+			{ type: "modify", path: "no-op.md" },
+			async () => undefined,
+		);
+		handlers.get("modify")?.({ path: "no-op.md" });
+		await expect(
+			withPluginVaultMutation(
+				vault,
+				{ type: "modify", path: "failed.md" },
+				async () => {
+					throw new Error("failed effect");
+				},
+			),
+		).rejects.toThrow("failed effect");
+		handlers.get("modify")?.({ path: "failed.md" });
+		await Promise.resolve();
+
+		expect(observed.mock.calls.map((call) => call[1])).toEqual([
+			undefined,
+			undefined,
+			"plugin",
+			"plugin",
+			undefined,
+			undefined,
+		]);
+		adapter.dispose();
+	});
+
 	it("routes live modify events into publication and removes listeners on disposal", async () => {
 		const handlers = new Map<string, (...args: unknown[]) => void>();
 		const removed: EventRef[] = [];
@@ -125,7 +235,7 @@ describe("VaultEventAdapter", () => {
 		const journal = await DeviceJournal.open(new MemoryStorage());
 		await journal.resetEpoch(epoch);
 		const textVault = new MemoryVault();
-		const controller = new PublicationController(
+		const publication = new PublicationController(
 			journal,
 			textVault,
 			new UnusedRemote(),
@@ -145,19 +255,120 @@ describe("VaultEventAdapter", () => {
 				recoverPrecondition: async () => {},
 			},
 		);
+		const clock = vi.spyOn(Date, "now").mockReturnValue(1_000);
+		const intervals: number[] = [];
+		const timeouts: Array<() => void> = [];
+		const lifecycle = new DesktopSyncController({
+			cycle: async () => undefined,
+			onEvent: (event) => publication.observe(event),
+			host: {
+				setTimeout: (callback) => {
+					timeouts.push(callback);
+					return timeouts.length;
+				},
+				clearTimeout: () => undefined,
+				setInterval: (_callback, delay) => {
+					intervals.push(delay);
+					return intervals.length;
+				},
+				clearInterval: () => undefined,
+			},
+		});
+		const echoBytes = new TextEncoder().encode("edited from event");
+		const echoDigest = await crypto.subtle.digest("SHA-256", echoBytes);
+		const echoHash = [...new Uint8Array(echoDigest)]
+			.map((byte) => byte.toString(16).padStart(2, "0"))
+			.join("");
+		await journal.setExpectedWrite("note.md", echoHash);
 		const errors: unknown[] = [];
-		const adapter = new VaultEventAdapter(vault, controller, (error) =>
+		const adapter = new VaultEventAdapter(vault, lifecycle, (error) =>
 			errors.push(error),
 		);
 
+		await withPluginVaultMutation(
+			vault,
+			{ type: "modify", path: "note.md" },
+			async () => handlers.get("modify")?.({ path: "note.md" }),
+		);
+		expect(intervals.at(-1)).toBe(60_000);
+		timeouts[0]?.();
+		await lifecycle.waitForIdle();
+		expect(journal.snapshot().expected_writes).toEqual({});
+		expect(journal.snapshot().pending_ops).toHaveLength(0);
+
+		textVault.files.set("note.md", "edited by user");
 		handlers.get("modify")?.({ path: "note.md" });
-		await controller.flush();
+		await Promise.resolve();
+		expect(intervals.at(-1)).toBe(15_000);
+		timeouts[1]?.();
+		await lifecycle.waitForIdle();
 
 		expect([...handlers.keys()]).toContain("modify");
 		expect(errors).toEqual([]);
 		expect(journal.snapshot().pending_ops).toHaveLength(1);
+
+		const concurrentPath = "notes/concurrent.md";
+		textVault.files.set(concurrentPath, "plugin content");
+		await withPluginVaultMutation(
+			vault,
+			{ type: "modify", path: concurrentPath },
+			async () => {
+				handlers.get("modify")?.({ path: concurrentPath });
+				textVault.files.set(concurrentPath, "concurrent user content");
+				handlers.get("modify")?.({ path: concurrentPath });
+			},
+		);
+		await Promise.resolve();
+		expect(intervals.at(-1)).toBe(15_000);
+		timeouts.at(-1)?.();
+		await lifecycle.waitForIdle();
+		expect(
+			journal
+				.snapshot()
+				.pending_ops.filter((operation) => operation.path === concurrentPath),
+		).toHaveLength(1);
+
+		clock.mockReturnValue(301_001);
+		const conflictPath = "notes/conflict Test Device.md";
+		textVault.files.set(conflictPath, "conflict copy bytes");
+		await withPluginVaultMutation(
+			vault,
+			{ type: "create", path: conflictPath },
+			async () => handlers.get("create")?.({ path: conflictPath }),
+		);
+		await Promise.resolve();
+		expect(intervals.at(-1)).toBe(60_000);
+		timeouts.at(-1)?.();
+		await lifecycle.waitForIdle();
+		expect(journal.snapshot().pending_ops).toHaveLength(3);
+
+		const restorePath = "notes/restored.md";
+		const restoreText = "restored bytes";
+		textVault.files.set(restorePath, restoreText);
+		const restoreDigest = await crypto.subtle.digest(
+			"SHA-256",
+			new TextEncoder().encode(restoreText),
+		);
+		const restoreHash = [...new Uint8Array(restoreDigest)]
+			.map((byte) => byte.toString(16).padStart(2, "0"))
+			.join("");
+		await journal.setExpectedWrite(restorePath, restoreHash);
+		await withPluginVaultMutation(
+			vault,
+			{ type: "create", path: restorePath },
+			async () => handlers.get("create")?.({ path: restorePath }),
+		);
+		await Promise.resolve();
+		expect(intervals.at(-1)).toBe(60_000);
+		timeouts.at(-1)?.();
+		await lifecycle.waitForIdle();
+		expect(journal.snapshot().expected_writes).toEqual({});
+		expect(journal.snapshot().pending_ops).toHaveLength(3);
+
 		adapter.dispose();
 		expect(removed).toHaveLength(4);
-		controller.close();
+		lifecycle.close();
+		publication.close();
+		clock.mockRestore();
 	});
 });

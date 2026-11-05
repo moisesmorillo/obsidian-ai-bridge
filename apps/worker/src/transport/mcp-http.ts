@@ -458,6 +458,10 @@ export async function handleMcpHttp(
 		closeServer = () => server.close();
 		await server.connect(transport);
 		const response = await transport.receive(message);
+		if (readOwner?.sourceComplete) {
+			releaseRead?.();
+			releaseRead = undefined;
+		}
 		if (boundaryFailure !== undefined) {
 			await server.close();
 			return ownedHttpFailure(

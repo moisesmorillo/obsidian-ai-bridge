@@ -1,4 +1,5 @@
 import type { AdmissionCompletion } from "@obsidian-ai-bridge/protocol";
+import { tryAcquireReadSlot } from "@worker/application/read-budget";
 import { ReadBatchFailure } from "@worker/application/reads";
 import {
 	encodeJsonChunks,
@@ -18,6 +19,83 @@ function barrier<T>() {
 }
 
 describe("owned read response", () => {
+	it.each([
+		["generic", undefined],
+		["fixed-length", 1],
+		["zero-byte fixed-length", 0],
+	] as const)(
+		"fails %s response when durable settlement resolves with failure",
+		async (_framing, length) => {
+			let emitted = false;
+			const init =
+				length === undefined
+					? undefined
+					: {
+							status: 206,
+							headers: { "Content-Length": String(length) },
+						};
+			const response = ownedReadResponse(
+				{
+					next: async () => {
+						if (length === 1 && !emitted) {
+							emitted = true;
+							return { done: false, value: new Uint8Array([1]) };
+						}
+						return { done: true, value: undefined };
+					},
+					cancel: async () => {},
+				},
+				{
+					finish: async () => ({
+						ok: false,
+						failure: { kind: "revoked" },
+					}),
+				},
+				() => {},
+				init,
+				undefined,
+				length,
+			);
+			if (length !== undefined) {
+				expect(response.status).toBe(206);
+				expect(response.headers.get("Content-Length")).toBe(String(length));
+			}
+			await expect(response.arrayBuffer()).rejects.toThrow();
+		},
+	);
+	it("waits for successful settlement before completing a zero-byte fixed response", async () => {
+		const finishing = barrier<void>();
+		const settlement = barrier<void>();
+		const response = ownedReadResponse(
+			{
+				next: async () => ({ done: true, value: undefined }),
+				cancel: async () => {},
+			},
+			{
+				finish: async () => {
+					finishing.resolve();
+					await settlement.promise;
+					return { ok: true };
+				},
+			},
+			() => {},
+			{ status: 206, headers: { "Content-Length": "0" } },
+			undefined,
+			0,
+		);
+		const reading = response.arrayBuffer();
+		await finishing.promise;
+		let completed = false;
+		void reading.then(() => {
+			completed = true;
+		});
+		await Promise.resolve();
+		expect(completed).toBe(false);
+		settlement.resolve();
+		expect((await reading).byteLength).toBe(0);
+		expect(response.status).toBe(206);
+		expect(response.headers.get("Content-Length")).toBe("0");
+	});
 	it("does not demand data or settle at final enqueue before producer EOF", async () => {
 		let demands = 0;
 		let released = false;
@@ -94,7 +172,7 @@ describe("owned read response", () => {
 		expect(released).toBe(false);
 		work.resolve({ done: true, value: undefined });
 		await finishing.promise;
-		expect(released).toBe(false);
+		expect(released).toBe(true);
 		cleanup.resolve();
 		await Promise.all([read, cancelled]);
 		expect(released).toBe(true);
@@ -154,7 +232,7 @@ describe("owned read response", () => {
 				cancellation.reject(new Error("Cancellation failed"));
 			else cancellation.resolve();
 			await finishing.promise;
-			expect(released).toBe(false);
+			expect(released).toBe(true);
 			cleanup.resolve();
 			await Promise.all([read, cancelled]);
 			expect(finished).toEqual([
@@ -224,13 +302,99 @@ describe("owned read response", () => {
 		cancellation.resolve();
 		await cleanupStarted.promise;
 		expect(finished).toEqual(["settled"]);
-		expect(released).toBe(false);
+		expect(released).toBe(true);
 		cleanup.resolve();
 		await Promise.all([read, cancelled]);
 		for (let attempt = 0; attempt < 10 && !released; attempt++)
 			await Promise.resolve();
 		expect(released).toBe(true);
 	});
+	it.each(["generic", "fixed-length"] as const)(
+		"releases local slots after %s source completion when settlement rejects",
+		async (framing) => {
+			const releases = Array.from({ length: 4 }, () => {
+				const release = tryAcquireReadSlot();
+				if (!release) throw new Error("Expected an available read slot");
+				return release;
+			});
+			const settlement = barrier<void>();
+			let emitted = false;
+			const response = ownedReadResponse(
+				{
+					next: async () => {
+						if (framing === "fixed-length" && !emitted) {
+							emitted = true;
+							return { done: false, value: new Uint8Array([1]) };
+						}
+						return { done: true, value: undefined };
+					},
+					cancel: async () => {},
+				},
+				{
+					finish: () => settlement.promise.then(() => ({ ok: true })),
+				},
+				() => {
+					for (const release of releases) release();
+				},
+				undefined,
+				undefined,
+				framing === "fixed-length" ? 1 : undefined,
+			);
+			const fifth = tryAcquireReadSlot();
+			expect(fifth).toBeUndefined();
+			const reading = response.arrayBuffer();
+			settlement.reject(new Error("durable settlement rejected"));
+			await expect(reading).rejects.toThrow();
+			const reused = tryAcquireReadSlot();
+			try {
+				expect(reused).toBeDefined();
+			} finally {
+				reused?.();
+				for (const release of releases) release();
+			}
+		},
+	);
+	it.each(["generic", "fixed-length"] as const)(
+		"fails a %s response and releases local slots when durable settlement exceeds its deadline",
+		async (framing) => {
+			const releases = Array.from({ length: 4 }, () => {
+				const release = tryAcquireReadSlot();
+				if (!release) throw new Error("Expected an available read slot");
+				return release;
+			});
+			const lateSettlement = barrier<never>();
+			let emitted = false;
+			const response = ownedReadResponse(
+				{
+					next: async () => {
+						if (framing === "fixed-length" && !emitted) {
+							emitted = true;
+							return { done: false, value: new Uint8Array([1]) };
+						}
+						return { done: true, value: undefined };
+					},
+					cancel: async () => {},
+				},
+				{ finish: () => lateSettlement.promise },
+				() => {
+					for (const release of releases) release();
+				},
+				undefined,
+				undefined,
+				framing === "fixed-length" ? 1 : undefined,
+			);
+			try {
+				await expect(response.arrayBuffer()).rejects.toThrow();
+				const available = tryAcquireReadSlot();
+				expect(available).toBeDefined();
+				available?.();
+			} finally {
+				for (const release of releases) release();
+			}
+			lateSettlement.reject(new Error("late private settlement detail"));
+		},
+		10_000,
+	);
 	it("keeps the slot until an aborted fixed-body write and shutdown settle", async () => {
 		const eofReached = barrier<void>();
 		const durableSettled = barrier<void>();
@@ -284,7 +448,7 @@ describe("owned read response", () => {
 		for (let attempt = 0; attempt < 10 && !released; attempt++)
 			await Promise.resolve();
 		try {
-			expect(retainedWhileWriterShutdownPending).toBe(true);
+			expect(retainedWhileWriterShutdownPending).toBe(false);
 			expect(completionBeforeConsumerShutdown).toEqual(["settled"]);
 			expect(released).toBe(true);
 		} finally {
@@ -352,7 +516,7 @@ describe("owned read response", () => {
 		cancelFailure.resolve();
 		await cleanupStarted.promise;
 		expect(finished).toEqual(["uncertain"]);
-		expect(released).toBe(false);
+		expect(released).toBe(true);
 		cleanup.resolve();
 		await read;
 		for (let attempt = 0; attempt < 10 && !released; attempt++)

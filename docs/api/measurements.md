@@ -1,6 +1,6 @@
 # Service measurements API
 
-`GET /owner/measurements` returns bounded service observations to the verified configured owner. It uses Cloudflare Access and returns `Cache-Control: no-store`. The owner console links to `/owner/measurements?format=html` for an accessible summary. The JSON route is the default.
+`GET /owner/measurements` returns bounded service observations to the verified configured owner. It uses Cloudflare Access and returns `Cache-Control: no-store`. The owner console links to `/owner/measurements?format=html` for a browser summary and to `/owner/measurements` for JSON. The JSON route is the default. The browser summary shows each observed client's REST, MCP, and combined request total. An empty client list says that no clients were observed and does not infer zero requests.
 
 ## Measurement boundaries
 
@@ -24,7 +24,7 @@ Client rows show last feed request time and minimum and maximum observed interva
 
 ## Storage observations
 
-`storage.database_bytes` reports physical SQLite allocation at owner-read time. `storage.referenced_blob_bytes` reports the sum of each distinct hash referenced by a live file or a retained nondeleted revision. A repeated hash counts once. Inconsistent sizes for one hash make the referenced-byte value unknown. An empty reference set returns a known zero.
+`storage.database_bytes` reports physical SQLite allocation at owner-read time. `storage.referenced_blob_bytes` reports the sum of each distinct hash referenced by a live file or a retained nondeleted revision. A repeated hash counts once. Inconsistent sizes for one hash make the referenced-byte value unknown. An empty reference set returns a known zero. The browser summary labels these as referenced distinct-blob bytes. They do not describe complete R2 bucket allocation.
 
 These bytes do not report bucket allocation, orphaned R2 objects, or a fresh R2 integrity check. A storage read failure returns an explicit unknown status, never zero.
 

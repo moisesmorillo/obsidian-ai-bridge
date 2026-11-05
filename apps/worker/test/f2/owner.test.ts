@@ -1,5 +1,6 @@
 import { env, runInDurableObject, SELF } from "cloudflare:test";
 import { MEASUREMENT_LIMITS } from "@obsidian-ai-bridge/protocol";
+import { createOwnerHandler } from "@worker/transport/owner";
 import { exportJWK, generateKeyPair, SignJWT } from "jose";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -12,6 +13,12 @@ describe("production owner console", () => {
 		);
 		expect(measurements.status).toBe(401);
 		expect(measurements.headers.get("cache-control")).toBe("no-store");
+		const html = await SELF.fetch(
+			"https://service.test/owner/measurements?format=html",
+			{ headers: { "Cf-Access-Jwt-Assertion": "forged" } },
+		);
+		expect(html.status).toBe(401);
+		expect(html.headers.get("cache-control")).toBe("no-store");
 	});
 
 	it("renders escaped names from the durable registry for verified owner Access", async () => {
@@ -75,25 +82,60 @@ describe("production owner console", () => {
 			ungrantedClientId,
 			"No grant client",
 		);
-		const assertion = await new SignJWT({})
-			.setProtectedHeader({ alg: "RS256", kid: "owner-console" })
-			.setIssuer("https://team.test")
-			.setAudience("synthetic-access-app")
-			.setSubject("synthetic-owner")
-			.setIssuedAt()
-			.setExpirationTime("5m")
-			.sign(pair.privateKey);
+		/** Sign an Access assertion to test owner and non-owner subjects against the same key. */
+		const signAccessAssertion = (subject: string) =>
+			new SignJWT({})
+				.setProtectedHeader({ alg: "RS256", kid: "owner-console" })
+				.setIssuer("https://team.test")
+				.setAudience("synthetic-access-app")
+				.setSubject(subject)
+				.setIssuedAt()
+				.setExpirationTime("5m")
+				.sign(pair.privateKey);
+		const assertion = await signAccessAssertion("synthetic-owner");
+		const nonOwnerAssertion = await signAccessAssertion("different-subject");
+		const nonOwnerMeasurements = await SELF.fetch(
+			"https://service.test/owner/measurements?format=html",
+			{ headers: { "Cf-Access-Jwt-Assertion": nonOwnerAssertion } },
+		);
+		expect(nonOwnerMeasurements.status).toBe(401);
+		expect(nonOwnerMeasurements.headers.get("cache-control")).toBe("no-store");
+		const readMeasurements = vi.fn(async () => null);
+		const ownerHandler = createOwnerHandler(
+			() => {
+				throw new Error("The registry resolver must not run");
+			},
+			() => ({ readMeasurements }),
+		);
+		const ownerFetch = ownerHandler.fetch;
+		if (!ownerFetch) throw new Error("Owner handler has no fetch entry point");
+		const nonOwnerRequest = new Request(
+			"https://service.test/owner/measurements?format=html",
+			{ headers: { "Cf-Access-Jwt-Assertion": nonOwnerAssertion } },
+		) as Request<unknown, IncomingRequestCfProperties>;
+		const blockedMeasurement = await ownerFetch(
+			nonOwnerRequest,
+			env,
+			{} as ExecutionContext,
+		);
+		expect(blockedMeasurement.status).toBe(401);
+		expect(readMeasurements).not.toHaveBeenCalled();
 		const response = await SELF.fetch("https://service.test/owner/clients", {
 			headers: { "Cf-Access-Jwt-Assertion": assertion },
 		});
 		expect(response.status).toBe(200);
+		expect(response.headers.get("content-type")).toContain("text/html");
 		const html = await response.text();
+		expect(html).toContain("/owner/measurements?format=html");
 		const measurements = await SELF.fetch(
 			"https://service.test/owner/measurements",
 			{ headers: { "Cf-Access-Jwt-Assertion": assertion } },
 		);
 		expect(measurements.status).toBe(200);
 		expect(measurements.headers.get("cache-control")).toBe("no-store");
+		expect(measurements.headers.get("content-type")).toContain(
+			"application/json",
+		);
 		expect(await measurements.json()).toMatchObject({
 			status: "unknown",
 			coverage: "unknown",
@@ -113,8 +155,19 @@ describe("production owner console", () => {
 			"https://service.test/owner/measurements?format=html",
 			{ headers: { "Cf-Access-Jwt-Assertion": assertion } },
 		);
-		expect(await emptySummary.text()).toContain(
+		const emptySummaryHtml = await emptySummary.text();
+		expect(emptySummaryHtml).toContain(
 			"Request observation window: unknown to unknown",
+		);
+		expect(emptySummaryHtml).toContain("No observed clients.");
+		expect(emptySummaryHtml).toContain(
+			"Feed response preparation p95: Unknown",
+		);
+		expect(emptySummaryHtml).toContain("Retained samples: 0 of 0.");
+		expect(emptySummaryHtml).toContain("Latency: unknown, stale.");
+		expect(emptySummaryHtml).toContain("Referenced R2 blob bytes: 0.");
+		expect(emptySummaryHtml).toContain(
+			"Referenced R2 bytes count distinct blobs, not total bucket allocation.",
 		);
 		const observedFrom = 1_700_006_400_100;
 		const requestObservedAt = 1_700_006_400_101;
@@ -136,7 +189,7 @@ describe("production owner console", () => {
 				requests_mcp: 0,
 				clients: [
 					{
-						client_id: "device-reordered",
+						client_id: "device-<script>",
 						requests_rest: 1,
 						requests_mcp: 0,
 						last_feed_request_at: requestObservedAt,
@@ -165,12 +218,22 @@ describe("production owner console", () => {
 			{ headers: { "Cf-Access-Jwt-Assertion": assertion } },
 		);
 		expect(summary.headers.get("cache-control")).toBe("no-store");
+		expect(summary.headers.get("content-type")).toContain("text/html");
 		const summaryHtml = await summary.text();
 		expect(summaryHtml).toContain("Feed response preparation p95");
+		expect(summaryHtml).toContain("Client coverage: partial.");
+		expect(summaryHtml).toContain("Request data: observed, stale.");
+		expect(summaryHtml).toContain("Latency: observed, stale.");
+		expect(summaryHtml).toContain("DO SQLite allocated bytes: ");
 		expect(summaryHtml).toContain(
 			`Request observation window: ${new Date(requestObservedAt).toISOString()} to ${new Date(requestObservedAt).toISOString()}`,
 		);
 		expect(summaryHtml).toContain("unknown (out-of-order requests)");
+		expect(summaryHtml).toContain(
+			"device-&lt;script&gt;: REST 1, MCP 0, total 1",
+		);
+		expect(summaryHtml).toContain("Referenced R2 bytes count distinct blobs");
+		expect(summaryHtml).not.toContain("device-<script>");
 		expect(summaryHtml).toContain(
 			`Observed from ${new Date(observedFrom).toISOString()}`,
 		);
@@ -180,8 +243,56 @@ describe("production owner console", () => {
 		expect(summaryHtml).toContain(
 			"Earlier samples were removed by the daily cap.",
 		);
+		const jsonLink = summaryHtml.match(
+			/<a href="([^"]+)">Measurement JSON<\/a>/,
+		);
+		expect(jsonLink?.[1]).toBe("/owner/measurements");
+		const linkedJson = await SELF.fetch(
+			new URL(jsonLink?.[1] ?? "", "https://service.test"),
+			{ headers: { "Cf-Access-Jwt-Assertion": assertion } },
+		);
+		expect(linkedJson.headers.get("content-type")).toContain(
+			"application/json",
+		);
+		expect(linkedJson.status).toBe(200);
+
+		await runInDurableObject(stub, (_instance, state) => {
+			const aggregate = JSON.parse(
+				state.storage.sql
+					.exec<{ value: string }>(
+						"SELECT value FROM meta WHERE key = ?",
+						"service_measurements_v1",
+					)
+					.one().value,
+			) as { coverage_incomplete: boolean };
+			aggregate.coverage_incomplete = true;
+			state.storage.sql.exec(
+				"UPDATE meta SET value = ? WHERE key = ?",
+				JSON.stringify(aggregate),
+				"service_measurements_v1",
+			);
+		});
+		const incompleteSummary = await SELF.fetch(
+			"https://service.test/owner/measurements?format=html",
+			{ headers: { "Cf-Access-Jwt-Assertion": assertion } },
+		);
+		expect(await incompleteSummary.text()).toContain(
+			"Client coverage: unknown.",
+		);
+
+		await runInDurableObject(stub, (_instance, state) => {
+			state.storage.sql.exec("DROP TABLE files");
+		});
+		const unknownStorageSummary = await SELF.fetch(
+			"https://service.test/owner/measurements?format=html",
+			{ headers: { "Cf-Access-Jwt-Assertion": assertion } },
+		);
+		expect(await unknownStorageSummary.text()).toContain(
+			"DO SQLite allocated bytes: Unknown (storage_error).",
+		);
+
 		const wrongOrigin = await SELF.fetch(
-			"https://other.test/owner/measurements",
+			"https://other.test/owner/measurements?format=html",
 			{ headers: { "Cf-Access-Jwt-Assertion": assertion } },
 		);
 		expect(wrongOrigin.status).toBe(404);

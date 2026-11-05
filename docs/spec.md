@@ -547,6 +547,8 @@ A restore **always creates a new vault** (new vault id, new DO). It never import
 
 iCloud Drive remains the owner of the live vault through F4 and F5. Before the plugin touches the real vault, the owner keeps one dated copy of the vault outside iCloud, for example a zip in local storage. No service-side backup is required (owner decision 2026-11-05).
 
+The service holds one vault per host name (`idFromName(host)`), shared by every enrolled device and every test vault. While the real vault is enrolled, a test vault that publishes a file puts that file into the real vault on the next feed. During F4 and later phases, test vaults enrolled in the deployed service must not create, change, rename or delete service files. Live proofs that write need a second service vault or the end of the trial (observed 2026-11-05).
+
 ## 12. Limits, retention and capacity (R9)
 
 | Item | Limit | Behavior at limit |

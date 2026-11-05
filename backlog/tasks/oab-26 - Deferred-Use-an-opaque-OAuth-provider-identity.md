@@ -1,11 +1,11 @@
 ---
 id: OAB-26
 title: 'Deferred: Use an opaque OAuth provider identity'
-status: In Progress
+status: Done
 assignee:
   - '@pi'
 created_date: '2026-10-28T16:48:00Z'
-updated_date: '2026-11-05T00:33:00Z'
+updated_date: '2026-11-05T00:41:00Z'
 labels:
   - deferred
   - privacy
@@ -27,8 +27,8 @@ Trigger: before broader third-party client use, select and test a safe identity 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 New consent flows use an opaque provider identity in authorization codes, access tokens, and refresh tokens. Legacy grants follow the approved compatibility policy.
-- [ ] #2 Tests cover stable owner mapping, token callback matching, provider cleanup, and the documented treatment of existing grants.
+- [x] #1 New consent flows use an opaque provider identity in authorization codes, access tokens, and refresh tokens. Legacy grants follow the approved compatibility policy.
+- [x] #2 Tests cover stable owner mapping, token callback matching, provider cleanup, and the documented treatment of existing grants.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -85,4 +85,12 @@ The tests followed the existing implementation. No product code was removed to m
 Final validation: the complete F2 suite passed 115 tests in eight files. The isolated cleanup suite passed four tests. bun run docs:check passed. bun run check passed lint, documentation, four workspace type checks, 1,743 tests in 100 files, and dry-run builds. Expected injected network, stream-cancellation, and SQLite errors appeared in worker test logs. No live-service or remote CI action ran.
 
 Whole-branch review at 3ff1072 against 88e8898: APPROVE WITH NOTES. Scope: all eight files, identity trust contract, installed provider, legacy lifetime and grant preservation, cleanup call budget and state matrix, TSDoc/API truth, and cohesive adapter/application/durable ownership. Prior task findings were fixed. Final minor direct-coverage finding fixed at b6b6f5a: callback configuration and wrong derived identity rejection, repeated opaque consent preservation, and real-DO legacy code/refresh races. Expiry now advances fake time five seconds and restores timers, so the assertion distinguishes fixed expiry from same-second renewal. Scoped corrective review APPROVE over 3ff1072..b6b6f5a confirms that closure with no new finding. No production source changed in the correction. Latest worker bun run check passed 1,743 tests across 100 files plus lint, docs, four type checks, and builds. git diff --check passed. Reviewers inspected evidence without rerunning checks. No live-service, remote CI, CPU, or native-memory claim applies. Human branch review follows.
+
+Owner approved human branch review pn-d5fc4c with no changes. Both approved acceptance criteria now have direct test and documentation evidence. Earlier chronology exceptions remain recorded, not replaced with false RED claims. This final update changes task metadata only. Publish PR 4 with the exact approved production-change first line, then stop for owner merge. Legacy privacy and eventual KV cleanup remain explicit approved limits.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+New consent uses the approved service-scoped SHA-256 provider identity. Callback mapping accepts only that identity or the exact configured legacy subject and preserves durable raw-owner authority. Fresh consent preserves existing grants. Bounded cleanup covers both namespaces within the 48-call owner budget. Legacy grants retain their identity and existing expiry until explicit revocation or expiry. Tests cover identity/config rejection, repeated consent, legacy compatibility and registration races, fixed expiry, list failure, late writes, and cleanup continuation. Full check passed 1,743 tests plus lint, docs, types, and builds. Task review and whole-branch review findings are fixed. Owner approved pn-d5fc4c without changes. No live-service or resource action occurred.
+<!-- SECTION:FINAL_SUMMARY:END -->

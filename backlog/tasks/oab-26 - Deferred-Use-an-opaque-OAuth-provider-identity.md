@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-10-28T16:48:00Z'
-updated_date: '2026-11-05T00:30:00Z'
+updated_date: '2026-11-05T00:33:00Z'
 labels:
   - deferred
   - privacy
@@ -83,4 +83,6 @@ Finding closure: the legacy expiry test advances fake time by five seconds befor
 The tests followed the existing implementation. No product code was removed to manufacture RED. No product source changed in this correction.
 
 Final validation: the complete F2 suite passed 115 tests in eight files. The isolated cleanup suite passed four tests. bun run docs:check passed. bun run check passed lint, documentation, four workspace type checks, 1,743 tests in 100 files, and dry-run builds. Expected injected network, stream-cancellation, and SQLite errors appeared in worker test logs. No live-service or remote CI action ran.
+
+Whole-branch review at 3ff1072 against 88e8898: APPROVE WITH NOTES. Scope: all eight files, identity trust contract, installed provider, legacy lifetime and grant preservation, cleanup call budget and state matrix, TSDoc/API truth, and cohesive adapter/application/durable ownership. Prior task findings were fixed. Final minor direct-coverage finding fixed at b6b6f5a: callback configuration and wrong derived identity rejection, repeated opaque consent preservation, and real-DO legacy code/refresh races. Expiry now advances fake time five seconds and restores timers, so the assertion distinguishes fixed expiry from same-second renewal. Scoped corrective review APPROVE over 3ff1072..b6b6f5a confirms that closure with no new finding. No production source changed in the correction. Latest worker bun run check passed 1,743 tests across 100 files plus lint, docs, four type checks, and builds. git diff --check passed. Reviewers inspected evidence without rerunning checks. No live-service, remote CI, CPU, or native-memory claim applies. Human branch review follows.
 <!-- SECTION:NOTES:END -->

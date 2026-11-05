@@ -1,11 +1,11 @@
 ---
 id: OAB-37
 title: Prove AC-30 on a fresh desktop fixture
-status: In Progress
+status: Done
 assignee:
   - '@pi'
 created_date: '2026-11-04T18:03:00Z'
-updated_date: '2026-11-05T11:33:00Z'
+updated_date: '2026-11-05T11:34:00Z'
 labels:
   - deferred
 dependencies: []
@@ -106,4 +106,16 @@ Final whole-branch review dfedab9b approves reviewed head 24b60404b173852c021fad
 Structural assessment: the generated scenario owns acceptance assertions, result helpers own privacy boundaries, and production controllers retain synchronization policy. The synthetic service and timers supply mechanics while real journal, apply, publication, reconciliation, and desktop controllers own the tested transitions. Changed named declarations and TSDoc received semantic review. The reviewer ran static Git and whitespace checks, not tests or live actions. It relied on recorded protected-local-inventory and dev-1-exclusion evidence. No coverage report or hosted CI result entered this review.
 
 All independent reviews now approve the branch within the recorded one-live-run and local-inventory limits. The task remains In Progress until the human Plannotator diff review. No source changed after the fresh passing full check or final branch review.
+
+Human branch review pn-4d84d2 approved e2d0637 against origin/main with no requested changes. All independent findings are closed, all four acceptance criteria have evidence, and fresh full checks passed. No source changed after the reviewed revision. Mark OAB-37 Done on this branch before PR publication. The owner merges the PR. This task does not close unrelated F3 evidence gaps or certify cleanup of earlier disposable registrations.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Proved AC-30 in one authorized live dev-2 run on a unique oab-37 fixture. The first PUT and retry returned revision 1 with identical operation, payload, precondition, and complete receipt. A distinct successor returned revision 2 with the confirmed precondition. Final authority, local content, base, empty queues, and method restoration passed. All 51 protected local fixture records remained unchanged. Dev-1 received no access.
+
+Added bounded diagnostics, validated fixture selection, baseline-relative attention checks, failure cleanup coverage, and three active timing regressions after OAB-40 merged. Fresh checks passed 1,783 tests with one skipped, plus lint, docs, types, and builds. Independent task and branch reviews passed. Human review pn-4d84d2 approved without annotations.
+
+Limits: one controlled live run, local protected-inventory proof rather than a complete service audit, owner-manual native enrollment, and unverified earlier disposable-registration state. Dev-2 retains Pause with empty queues and four attention entries. No Cloudflare resource change or deployment ran.
+<!-- SECTION:FINAL_SUMMARY:END -->

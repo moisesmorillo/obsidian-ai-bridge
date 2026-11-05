@@ -1866,7 +1866,7 @@ export function createAc19CaseScripts(
 				try { return await withCaseBoundary(boundary, () => remote.readCurrentAuthority(path)); }
 				catch (error) {
 					if (readBoundaryDetails(error)?.status !== 429 || attempt === 2) throw error;
-					const retryAfter = readBoundaryDetails(error)?.retryAfter;
+					const retryAfter = readBoundaryRetryAfter(error);
 					if (typeof retryAfter !== "string" || retryAfter.length === 0) throw error;
 					const isDeltaSeconds = /^\\d+$/.test(retryAfter);
 					const parsedSeconds = isDeltaSeconds ? Number(retryAfter) : null;
@@ -2123,6 +2123,7 @@ export function createCaseScript(
 		const ac30DiagnosticOperationStates = ${JSON.stringify(AC30_DIAGNOSTIC_OPERATION_STATES)};
 		const ac30DiagnosticOperationKinds = ${JSON.stringify(AC30_DIAGNOSTIC_OPERATION_KINDS)};
 		const boundaryDetailsKey = Symbol("case-boundary-details");
+		const boundaryRetryAfterKey = Symbol("case-boundary-retry-after");
 		const caseEvidence = {};
 		const ac19Cleanup = { pausedByCase: false, started: false, sourceCreated: false, initialCounts: null, initialAttention: null, remote: null, serviceAuthority: null };
 		const safeAc30ObservationValue = (value) => {
@@ -2191,6 +2192,14 @@ export function createCaseScript(
 				return null;
 			}
 		};
+		const readBoundaryRetryAfter = (error) => {
+			try {
+				const value = error && typeof error === "object" ? error[boundaryRetryAfterKey] : null;
+				return typeof value === "string" ? value : null;
+			} catch {
+				return null;
+			}
+		};
 		const withCaseBoundary = async (boundary, operation) => {
 			try {
 				const result = await operation();
@@ -2215,10 +2224,18 @@ export function createCaseScript(
 				}
 				const safeBoundary = safeFailureBoundaries.includes(boundary) ? boundary : null;
 				if (safeBoundary === null) throw error;
+				let retryAfter = null;
+				try {
+					const candidate = error && typeof error === "object" ? error.retryAfter : null;
+					if (typeof candidate === "string" && candidate.length <= 128) retryAfter = candidate;
+				} catch {
+					/* Retry metadata stays unavailable when the host getter fails. */
+				}
 				const wrapped = new Error("Case operation failed");
 				Object.defineProperty(wrapped, boundaryDetailsKey, {
-					value: { boundary: safeBoundary, errorClass, status, code, retryAfter: error && typeof error === "object" ? error.retryAfter ?? null : null },
+					value: { boundary: safeBoundary, errorClass, status, code },
 				});
+				Object.defineProperty(wrapped, boundaryRetryAfterKey, { value: retryAfter });
 				throw wrapped;
 			}
 		};

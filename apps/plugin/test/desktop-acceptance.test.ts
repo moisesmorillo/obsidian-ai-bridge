@@ -79,8 +79,10 @@ type Ac19ReadResponse =
 	| {
 			/** Synthetic HTTP status returned by one explicit service read. */
 			status: number;
-			/** Retry-After header, with missing and null values used as separate cases. */
-			retryAfter?: string | null;
+			/** Untrusted Retry-After value, including values that cannot be serialized. */
+			retryAfter?: unknown;
+			/** Makes the host error getter throw before retry validation. */
+			retryAfterGetterThrows?: boolean;
 	  };
 
 /** Builds one in-memory dev-2 host that simulates resumed eviction and cleanup. */
@@ -148,8 +150,18 @@ function createAc19Host(responses: readonly Ac19ReadResponse[] = []): {
 				name: "SyncTransportError",
 				status: response.status,
 				code: response.status === 404 ? "not_found" : "too_many_requests",
-				retryAfter: response.retryAfter,
 			});
+			if (response.retryAfterGetterThrows)
+				Object.defineProperty(error, "retryAfter", {
+					/** Throws to test safe handling of an invalid host header getter. */
+					get() {
+						throw new Error("private getter text");
+					},
+				});
+			else if (Object.hasOwn(response, "retryAfter"))
+				Object.defineProperty(error, "retryAfter", {
+					value: response.retryAfter,
+				});
 			throw error;
 		},
 		delete: async () => {
@@ -304,7 +316,11 @@ async function runGeneratedAc19(responses: readonly Ac19ReadResponse[] = []) {
 		date: unknown,
 	) => Promise<string>;
 	const output = await execute(host.app, host.window, host.date);
-	return { ...host, result: parseSafeCaseResult(output, "AC-19", "service") };
+	return {
+		...host,
+		output,
+		result: parseSafeCaseResult(output, "AC-19", "service"),
+	};
 }
 
 /** Keeps exact journal state and immutable payload bytes for the AC-30 harness. */
@@ -414,6 +430,46 @@ describe("desktop acceptance safety", () => {
 			expect(result.readPaths).toHaveLength(count);
 			expect(result.waits).toEqual([]);
 			expect(result.result.failureDetails).toMatchObject({ status: 429 });
+		},
+	);
+
+	it.each([
+		{
+			label: "secret text",
+			response: { status: 429, retryAfter: "private-retry-header" },
+			privateText: "private-retry-header",
+		},
+		{
+			label: "circular metadata",
+			response: (() => {
+				const circular: { self?: unknown } = {};
+				circular.self = circular;
+				return { status: 429, retryAfter: circular };
+			})(),
+			privateText: "",
+		},
+		{
+			label: "non-serializable value",
+			response: { status: 429, retryAfter: 9n },
+			privateText: "",
+		},
+		{
+			label: "throwing getter",
+			response: { status: 429, retryAfterGetterThrows: true },
+			privateText: "private getter text",
+		},
+	])(
+		"keeps $label Retry-After metadata out of serialized boundary diagnostics",
+		async ({ response, privateText }) => {
+			const result = await runGeneratedAc19([response]);
+			expect(result.readPaths).toHaveLength(1);
+			expect(result.waits).toEqual([]);
+			expect(result.output).toContain("OAB8CASE:");
+			if (privateText) expect(result.output).not.toContain(privateText);
+			expect(result.result.failureDetails).toMatchObject({
+				status: 429,
+				boundary: "AC19_READ_SERVICE_ABSENCE",
+			});
 		},
 	);
 

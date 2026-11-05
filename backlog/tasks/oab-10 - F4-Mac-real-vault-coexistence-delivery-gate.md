@@ -4,7 +4,7 @@ title: F4 Mac real-vault coexistence delivery gate
 status: In Progress
 assignee: []
 created_date: 2026-10-12 15:13
-updated_date: '2026-11-05T18:38:00Z'
+updated_date: '2026-11-05T18:40:00Z'
 labels:
   - phase-gate
   - F4
@@ -73,4 +73,8 @@ Read-only diagnosis stopped at 2026-11-05T18:36:00Z. Dev-2 stayed paused with co
 The initial vault-operation window ended at 2026-11-05T18:34:07Z. The full read-only diagnosis ended at 2026-11-05T18:36:00Z.
 
 Installer restart limit: while dev-2 was briefly unpaused with coexistence on, its normal cycle could run before the manual pause. The guarded check then showed 0 queues, 0 confirmations, and 4 unchanged attention items. I did not inspect unrelated local content, so any unrelated local changes in that interval remain unverified.
+
+Cleanup authorization: after PR #59 merged, the supervisor explicitly authorized Obsidian trash and conditional publication for only oab-8.8/, oab-37/, and oab-10.1/ in dev-2. This replaces the earlier preservation rule for these three prefixes only. The authorization does not include dev-1, the real vault, backups, oab-7.8/, unrelated content, direct service deletes, or Cloudflare changes.
+
+Exact-prefix evidence: oab-8.8/ has 54 confirmed tombstones, including 4 that existed before cleanup. oab-37/ has 1 confirmed tombstone. Confirmed total: 55. The last complete observation of oab-10.1/ has 3 live rows and 0 tombstones. No trash call ran for that folder. The observations occurred at different times. A fresh complete final manifest for all three prefixes remains unavailable, so this is a partial cleanup record only. The real-vault trial must not use this record as proof of fixture-free enrollment.
 <!-- SECTION:NOTES:END -->

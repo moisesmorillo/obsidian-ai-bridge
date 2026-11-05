@@ -4,7 +4,7 @@ title: Add plugin coexistence mode and eviction protection
 status: In Progress
 assignee: []
 created_date: '2026-11-05T12:48:00Z'
-updated_date: '2026-11-05T17:53:00Z'
+updated_date: '2026-11-05T17:55:00Z'
 labels: []
 dependencies: []
 documentation:
@@ -88,4 +88,6 @@ Final worker validation at source revision 0b22647 passed 269 focused tests, doc
 Criteria 1 through 5 now have code and regression evidence. Criterion 6 remains incomplete under the supervisor decision. Criterion 7 waits for human branch review. OAB-10.1 remains In Progress. No further host or service retry ran during source correction or review.
 
 Human branch review pn-a9d2de approved revision 41dba32 with no changes requested. The independent whole-branch review and scoped correction review close all source findings. Criterion 7 is now checked. Criterion 6 remains incomplete with Deferred OAB-10.1.1 and the supervisor-accepted evidence limit. Publish the reviewed branch without further live retries. Keep OAB-10.1 In Progress until the bounded service proof resolves.
+
+Publication: PR #59 is open at https://github.com/moisesmorillo/obsidian-ai-bridge/pull/59. Human review pn-a9d2de approved the branch. Fresh parent bun run check passed at ee623c2, exit 0, with 1,925 tests passed and 1 skipped, plus lint, documentation, type checks, and builds. No manual deployment ran. The owner merges. OAB-10.1 stays In Progress with criterion 6 incomplete and Deferred OAB-10.1.1. The PR records the accepted evidence limit and the automatic deployment trigger from protocol changes.
 <!-- SECTION:NOTES:END -->

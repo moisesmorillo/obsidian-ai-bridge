@@ -1,7 +1,7 @@
 ---
 id: OAB-8.7.1
 title: Measure cadence for plugin-caused vault events
-status: In Progress
+status: Done
 assignee:
   - '@pi'
 created_date: '2026-11-03T00:36:00Z'
@@ -21,9 +21,9 @@ Trigger: F4 measurement. Plugin-caused vault events reach the lifecycle controll
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Genuine user edits update recent activity and select the 15-second foreground polling cadence.
-- [ ] #2 Plugin-generated events retain echo suppression and do not lose or duplicate durable local intent.
-- [ ] #3 Tests measure event origin, queue admission, echo suppression, and selected cadence.
+- [x] #1 Genuine user edits update recent activity and select the 15-second foreground polling cadence.
+- [x] #2 Plugin-generated events retain echo suppression and do not lose or duplicate durable local intent.
+- [x] #3 Tests measure event origin, queue admission, echo suppression, and selected cadence.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -58,4 +58,12 @@ Deferred coexistence follow-up: OAB-10.6, `Keep plugin remote destructive events
 Final validation and commit details are recorded in the implementation report. No live vault, browser, service, or network action occurred.
 
 Independent review closure at 9b47d26: task review found same-path origin ambiguity. Whole-branch review 81cba589 retained F1 intended-content proof and added F2 proof-dependent admission and teardown. Correction 9b47d26 adds successful effect settlement, conditional acceptance, late-read fallback, and detached cadence updates with lifecycle and activity revision checks. Scoped review 115eb72b closes F1 and F2 with source and regression evidence and gives APPROVE. No actionable source findings remain. Review scope includes changed production and test TypeScript declarations, target evidence, observer contracts, lifecycle policy, task records, and stateful ownership. Origin evidence belongs to the vault tracker. Mutation targets and conditional acceptance belong to the text-vault adapter. Event retention, timers, activity, and teardown belong to DesktopSyncController. Publication keeps durable echo ownership. Post-merge bun run check passed at 9b47d26 with 1984 tests passed and one skipped, plus lint, docs, typechecks, and builds. Real Obsidian read timing remains unverified. OAB-10.6 tracks the separate supervisor-reported coexistence capture defect. Human branch review remains pending.
+
+Human branch review pn-802409 approved 88f5ef8 with no changes requested. Fresh Git fetch confirms origin/main remains bd3fc7a and this branch contains it. All three criteria have focused regression and independent review evidence. Criterion 1 includes both same-path event orders and refused writes. Criterion 2 includes exact echo consumption and durable intent before proof resolution. Criterion 3 includes real controllers with fake host ports and cadence assertions. Correction: the supervisor reported the separate OAB-10.6 observation against b5210f5, not bd3fc7a. OAB-10.6 retains the correct source revision. No live-vault proof or F4 gate completion is claimed.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Measured plugin echo cadence and corrected foreground activity selection with bounded mutation evidence. Genuine edits select 15 seconds. Plugin origin affects cadence only and never delays capture, admission, debounce, or durable publication. F1 and F2 passed independent corrective review. Human branch review pn-802409 approved the branch. Post-merge bun run check passed 1984 tests with one skipped, plus lint, documentation, typechecks, and builds. Real-host event timing remains unverified. Deferred OAB-10.6 tracks plugin destructive events entering coexistence confirmations.
+<!-- SECTION:FINAL_SUMMARY:END -->

@@ -173,6 +173,7 @@ export type {
 } from "@protocol/schemas/measurements";
 export {
 	FeedPreparationObservationSchema,
+	MEASUREMENT_LIMITS,
 	MeasurementAggregateSchema,
 	MeasurementClientAggregateSchema,
 	MeasurementResponseSchema,

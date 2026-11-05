@@ -1,4 +1,5 @@
-import { env, SELF } from "cloudflare:test";
+import { env, runInDurableObject, SELF } from "cloudflare:test";
+import { MEASUREMENT_LIMITS } from "@obsidian-ai-bridge/protocol";
 import { exportJWK, generateKeyPair, SignJWT } from "jose";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -108,6 +109,57 @@ describe("production owner console", () => {
 				referenced_blob_bytes: { status: "observed", value: 0 },
 			},
 		});
+		const emptySummary = await SELF.fetch(
+			"https://service.test/owner/measurements?format=html",
+			{ headers: { "Cf-Access-Jwt-Assertion": assertion } },
+		);
+		expect(await emptySummary.text()).toContain(
+			"Request observation window: unknown to unknown",
+		);
+		const observedFrom = 1_700_006_400_100;
+		const requestObservedAt = 1_700_006_400_101;
+		const firstRetainedSampleAt = 1_700_006_400_102;
+		const retainedSampleCount = MEASUREMENT_LIMITS.latencySamples;
+		const lastRetainedSampleAt =
+			firstRetainedSampleAt + retainedSampleCount - 1;
+		await runInDurableObject(stub, (_instance, state) => {
+			const aggregate = {
+				version: 1,
+				day_start: 1_700_006_400_000,
+				day_end: 1_700_092_800_000,
+				observed_from: observedFrom,
+				observed_through: lastRetainedSampleAt,
+				request_observed_from: requestObservedAt,
+				request_observed_through: requestObservedAt,
+				coverage_incomplete: false,
+				requests_rest: 1,
+				requests_mcp: 0,
+				clients: [
+					{
+						client_id: "device-reordered",
+						requests_rest: 1,
+						requests_mcp: 0,
+						last_feed_request_at: requestObservedAt,
+						minimum_poll_interval_ms: null,
+						maximum_poll_interval_ms: null,
+						poll_cadence_incomplete: true,
+					},
+				],
+				latency_total_samples: retainedSampleCount + 2,
+				latency_samples: Array.from(
+					{ length: retainedSampleCount },
+					(_, index) => ({
+						observed_at: firstRetainedSampleAt + index,
+						duration_ms: index + 1,
+					}),
+				),
+			};
+			state.storage.sql.exec(
+				"INSERT INTO meta (key, value) VALUES (?, ?)",
+				"service_measurements_v1",
+				JSON.stringify(aggregate),
+			);
+		});
 		const summary = await SELF.fetch(
 			"https://service.test/owner/measurements?format=html",
 			{ headers: { "Cf-Access-Jwt-Assertion": assertion } },
@@ -116,7 +168,17 @@ describe("production owner console", () => {
 		const summaryHtml = await summary.text();
 		expect(summaryHtml).toContain("Feed response preparation p95");
 		expect(summaryHtml).toContain(
-			"Request observation window: unknown to unknown",
+			`Request observation window: ${new Date(requestObservedAt).toISOString()} to ${new Date(requestObservedAt).toISOString()}`,
+		);
+		expect(summaryHtml).toContain("unknown (out-of-order requests)");
+		expect(summaryHtml).toContain(
+			`Observed from ${new Date(observedFrom).toISOString()}`,
+		);
+		expect(summaryHtml).toContain(
+			`Retained sample window: ${new Date(firstRetainedSampleAt).toISOString()} to ${new Date(lastRetainedSampleAt).toISOString()}`,
+		);
+		expect(summaryHtml).toContain(
+			"Earlier samples were removed by the daily cap.",
 		);
 		const wrongOrigin = await SELF.fetch(
 			"https://other.test/owner/measurements",

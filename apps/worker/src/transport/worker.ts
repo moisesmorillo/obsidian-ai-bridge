@@ -73,6 +73,7 @@ export function createWorker(
 			resolveMeasurements
 		) {
 			const completedAt = Date.now();
+			if (completedAt < observedAt) return;
 			try {
 				context.executionCtx.waitUntil(
 					Promise.resolve()
@@ -80,7 +81,7 @@ export function createWorker(
 							resolveMeasurements(context.env, request).recordFeedPreparation({
 								client_id: identity.client_id,
 								observed_at: completedAt,
-								duration_ms: Math.max(0, completedAt - observedAt),
+								duration_ms: completedAt - observedAt,
 							}),
 						)
 						.catch(() => undefined),

@@ -6,6 +6,7 @@ import type {
 } from "@obsidian-ai-bridge/protocol";
 import {
 	FeedPreparationObservationSchema,
+	MEASUREMENT_LIMITS,
 	MeasurementAggregateSchema,
 	MeasurementResponseSchema,
 	RequestObservationSchema,
@@ -19,12 +20,6 @@ export interface MeasurementStorage {
 
 /** Ten minutes without a value observation marks that measurement stale. */
 const MEASUREMENT_STALE_AFTER_MS = 10 * 60 * 1000;
-/** Keep only the latest bounded request clients and successful feed samples per UTC day. */
-export const MEASUREMENT_LIMITS = {
-	clients: 128,
-	latencySamples: 2_048,
-} as const;
-
 /** Transactional persistence boundary for the bounded daily aggregate. */
 export interface MeasurementStore {
 	/** Apply a state change atomically. A null result preserves the current durable value. */
@@ -137,6 +132,7 @@ function addRequest(
 				: null,
 			minimum_poll_interval_ms: null,
 			maximum_poll_interval_ms: null,
+			poll_cadence_incomplete: false,
 		});
 	}
 	const client =
@@ -145,9 +141,13 @@ function addRequest(
 		const lastFeedRequestAt = client.last_feed_request_at;
 		if (lastFeedRequestAt === null) {
 			client.last_feed_request_at = observation.observed_at;
-		} else if (observation.observed_at >= lastFeedRequestAt) {
+		} else if (observation.observed_at < lastFeedRequestAt) {
+			client.poll_cadence_incomplete = true;
+			client.minimum_poll_interval_ms = null;
+			client.maximum_poll_interval_ms = null;
+		} else {
 			const interval = observation.observed_at - lastFeedRequestAt;
-			if (existingIndex >= 0) {
+			if (existingIndex >= 0 && !client.poll_cadence_incomplete) {
 				client.minimum_poll_interval_ms =
 					client.minimum_poll_interval_ms === null
 						? interval

@@ -1,10 +1,10 @@
 import {
+	MEASUREMENT_LIMITS,
 	type MeasurementAggregate,
 	MeasurementAggregateSchema,
 } from "@obsidian-ai-bridge/protocol";
 import {
 	createMeasurementGateway,
-	MEASUREMENT_LIMITS,
 	type MeasurementStore,
 	measurementResponse,
 } from "@worker/application/measurements";
@@ -29,6 +29,7 @@ const aggregate: MeasurementAggregate = MeasurementAggregateSchema.parse({
 			last_feed_request_at: 1_700_006_400_100,
 			minimum_poll_interval_ms: 100,
 			maximum_poll_interval_ms: 100,
+			poll_cadence_incomplete: false,
 		},
 	],
 	latency_total_samples: 2,
@@ -230,6 +231,69 @@ describe("measurement application rules", () => {
 		expect(response.storage.database_bytes.status).toBe("unknown");
 	});
 
+	it("marks reordered request cadence unknown while keeping its last time monotonic", () => {
+		const state: { value: MeasurementAggregate | null } = { value: null };
+		const store: MeasurementStore = {
+			/** Keep the in-memory test state unchanged when an observation is rejected. */
+			update(change) {
+				const next = change(state.value);
+				if (next) state.value = next;
+			},
+			read: () => state.value,
+		};
+		const start = 1_700_000_000_000;
+		const gateway = createMeasurementGateway(store);
+		for (const observedAt of [start, start + 60_000, start + 30_000]) {
+			gateway.recordRequest({
+				client_id: "device-1",
+				protocol: "rest",
+				feed_request: true,
+				observed_at: observedAt,
+			});
+		}
+
+		expect(state.value?.clients[0]).toMatchObject({
+			last_feed_request_at: start + 60_000,
+			minimum_poll_interval_ms: null,
+			maximum_poll_interval_ms: null,
+			poll_cadence_incomplete: true,
+		});
+	});
+
+	it("marks cadence unknown when an older request arrives between accepted times", () => {
+		const state: { value: MeasurementAggregate | null } = { value: null };
+		const store: MeasurementStore = {
+			/** Keep the in-memory test state unchanged when an observation is rejected. */
+			update(change) {
+				const next = change(state.value);
+				if (next) state.value = next;
+			},
+			read: () => state.value,
+		};
+		const start = 1_700_000_000_000;
+		const gateway = createMeasurementGateway(store);
+		for (const observedAt of [
+			start,
+			start + 60_000,
+			start + 90_000,
+			start + 30_000,
+		]) {
+			gateway.recordRequest({
+				client_id: "device-1",
+				protocol: "rest",
+				feed_request: true,
+				observed_at: observedAt,
+			});
+		}
+
+		expect(state.value?.clients[0]).toMatchObject({
+			last_feed_request_at: start + 90_000,
+			minimum_poll_interval_ms: null,
+			maximum_poll_interval_ms: null,
+			poll_cadence_incomplete: true,
+		});
+	});
+
 	it("reports feed cadence only after observed feed requests", () => {
 		const state: { value: MeasurementAggregate | null } = { value: null };
 		const store: MeasurementStore = {
@@ -263,6 +327,7 @@ describe("measurement application rules", () => {
 		expect(state.value?.clients[0]).toMatchObject({
 			minimum_poll_interval_ms: 500,
 			maximum_poll_interval_ms: 500,
+			poll_cadence_incomplete: false,
 		});
 	});
 

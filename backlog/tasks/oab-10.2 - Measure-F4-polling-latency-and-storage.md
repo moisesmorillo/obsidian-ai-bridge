@@ -4,7 +4,7 @@ title: Measure F4 polling latency and storage
 status: In Progress
 assignee: []
 created_date: '2026-11-05T12:48:00Z'
-updated_date: '2026-11-05T13:58:00Z'
+updated_date: '2026-11-05T14:27:00Z'
 labels: []
 dependencies:
   - OAB-10.1
@@ -51,4 +51,10 @@ Review round 1 correction: request freshness uses separate request observation b
 RED: `bun run --cwd apps/worker vitest run test/application-measurements.test.ts` failed 4 tests for stale freshness, reordered totals, sample cap order, and unknown requests. `test/vault-measurements.test.ts` failed 1 SQLite ordering test. `test/transport-measurements.test.ts` failed 1 controlled RPC ordering test. Request-window response coverage failed 2 assertions before implementation.
 
 GREEN: Focused measurement tests passed 21 tests in 4 files. Owner tests passed 3 tests. `bun run docs:check` passed. `bun run check` passed, including all workspace tests and dry-run builds. Full evidence: `.superpowers/sdd/S2-plan/task-1-report.md`. The task remains In Progress. Parent review and plugin/live evidence remain open.
+
+Branch correction for B1 and N1-N4.
+
+B1: Reordered feed requests set `poll_cadence_incomplete` and clear min/max intervals for that day. The latest feed timestamp stays monotonic. N1: A negative wall-clock duration adds no latency sample. N2: The aggregate schema constrains request, sample, and client feed times to their windows. Contradictory native state reads as unknown and remains unchanged. N3: Owner HTML shows retained sample bounds and the cap-eviction note. N4: `MEASUREMENT_LIMITS` has one protocol-package owner. Schemas, application code, and cap tests consume it.
+
+RED: `bun run --cwd apps/worker vitest run test/application-measurements.test.ts test/measurement-schemas.test.ts test/transport-measurements.test.ts test/vault-measurements.test.ts` failed 7 tests. The owner test command failed 1 HTML assertion. GREEN: The focused measurement suites passed 27 tests in 4 files. Owner tests passed 3 tests. `bun run docs:check` and `bun run check` passed. Worker tests passed 688. Full evidence: `.superpowers/sdd/S2-plan/task-1-report.md`. Task remains In Progress. Parent scoped review and human branch review remain pending.
 <!-- SECTION:NOTES:END -->

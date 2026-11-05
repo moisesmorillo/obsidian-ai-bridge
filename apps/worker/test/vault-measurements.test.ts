@@ -118,6 +118,47 @@ describe("native Vault measurement storage", () => {
 		});
 	});
 
+	it("returns unknown for contradictory durable windows without rewriting metadata", async () => {
+		const stub = env.VAULTS.get(env.VAULTS.newUniqueId());
+		await runInDurableObject(stub, (_instance, state) => {
+			const store = new SqliteMeasurementsStore(state.storage);
+			const start = 1_700_000_000_000;
+			const gateway = createMeasurementGateway(store, () => start + 201);
+			gateway.recordFeedPreparation({
+				client_id: "device-1",
+				observed_at: start + 100,
+				duration_ms: 5,
+			});
+			gateway.recordFeedPreparation({
+				client_id: "device-1",
+				observed_at: start + 200,
+				duration_ms: 6,
+			});
+			const current = store.read();
+			if (!current) throw new Error("expected a stored measurement aggregate");
+			const contradictory = JSON.stringify({
+				...current,
+				observed_from: start + 150,
+			});
+			state.storage.sql.exec(
+				"UPDATE meta SET value = ? WHERE key = ?",
+				contradictory,
+				"service_measurements_v1",
+			);
+
+			const response = gateway.read(store.readStorage());
+			const preserved = state.storage.sql
+				.exec<{ value: string }>(
+					"SELECT value FROM meta WHERE key = ?",
+					"service_measurements_v1",
+				)
+				.toArray()[0]?.value;
+			expect(response.status).toBe("unknown");
+			expect(response.feed_latency.status).toBe("unknown");
+			expect(preserved).toBe(contradictory);
+		});
+	});
+
 	it("returns unknown when one blob hash has inconsistent observed sizes", async () => {
 		const stub = env.VAULTS.get(env.VAULTS.newUniqueId());
 		await runInDurableObject(stub, (_instance, state) => {

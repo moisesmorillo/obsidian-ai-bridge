@@ -1,4 +1,5 @@
 import {
+	MEASUREMENT_LIMITS,
 	MeasurementAggregateSchema,
 	MeasurementResponseSchema,
 	RequestObservationSchema,
@@ -63,6 +64,7 @@ describe("measurement schemas", () => {
 					last_feed_request_at: null,
 					minimum_poll_interval_ms: null,
 					maximum_poll_interval_ms: null,
+					poll_cadence_incomplete: false,
 				},
 			],
 			latency_total_samples: 0,
@@ -80,6 +82,119 @@ describe("measurement schemas", () => {
 				...valid,
 				latency_total_samples: 0,
 				latency_samples: [{ observed_at: valid.observed_from, duration_ms: 5 }],
+			}).success,
+		).toBe(false);
+	});
+
+	it("rejects samples and requests outside their aggregate observation windows", () => {
+		const valid = {
+			version: 1,
+			day_start: 1_700_006_400_000,
+			day_end: 1_700_092_800_000,
+			observed_from: 1_700_006_400_001,
+			observed_through: 1_700_006_400_002,
+			request_observed_from: 1_700_006_400_001,
+			request_observed_through: 1_700_006_400_001,
+			coverage_incomplete: false,
+			requests_rest: 1,
+			requests_mcp: 0,
+			clients: [
+				{
+					client_id: "device-1",
+					requests_rest: 1,
+					requests_mcp: 0,
+					last_feed_request_at: null,
+					minimum_poll_interval_ms: null,
+					maximum_poll_interval_ms: null,
+					poll_cadence_incomplete: false,
+				},
+			],
+			latency_total_samples: 0,
+			latency_samples: [],
+		};
+		expect(
+			MeasurementAggregateSchema.safeParse({
+				...valid,
+				request_observed_from: valid.observed_from - 1,
+				request_observed_through: valid.observed_from - 1,
+			}).success,
+		).toBe(false);
+		expect(
+			MeasurementAggregateSchema.safeParse({
+				...valid,
+				latency_total_samples: 1,
+				latency_samples: [
+					{ observed_at: valid.observed_from - 1, duration_ms: 5 },
+				],
+			}).success,
+		).toBe(false);
+		expect(
+			MeasurementAggregateSchema.safeParse({
+				...valid,
+				clients: [
+					{
+						...valid.clients[0],
+						last_feed_request_at: valid.observed_through,
+					},
+				],
+			}).success,
+		).toBe(false);
+	});
+
+	it("applies the canonical protocol owner retention limits to aggregate rows", () => {
+		const limits = MEASUREMENT_LIMITS;
+		const valid = {
+			version: 1,
+			day_start: 1_700_006_400_000,
+			day_end: 1_700_092_800_000,
+			observed_from: 1_700_006_400_001,
+			observed_through: 1_700_006_400_002,
+			request_observed_from: 1_700_006_400_001,
+			request_observed_through: 1_700_006_400_001,
+			coverage_incomplete: true,
+			requests_rest: limits.clients + 1,
+			requests_mcp: 0,
+			clients: Array.from({ length: limits.clients }, (_, index) => ({
+				client_id: `device-${index}`,
+				requests_rest: 0,
+				requests_mcp: 0,
+				last_feed_request_at: null,
+				minimum_poll_interval_ms: null,
+				maximum_poll_interval_ms: null,
+				poll_cadence_incomplete: false,
+			})),
+			latency_total_samples: limits.latencySamples,
+			latency_samples: Array.from({ length: limits.latencySamples }, () => ({
+				observed_at: 1_700_006_400_001,
+				duration_ms: 1,
+			})),
+		};
+		expect(MeasurementAggregateSchema.safeParse(valid).success).toBe(true);
+		expect(
+			MeasurementAggregateSchema.safeParse({
+				...valid,
+				clients: [
+					...valid.clients,
+					{
+						client_id: "device-over-limit",
+						requests_rest: 0,
+						requests_mcp: 0,
+						last_feed_request_at: null,
+						minimum_poll_interval_ms: null,
+						maximum_poll_interval_ms: null,
+						poll_cadence_incomplete: false,
+					},
+				],
+			}).success,
+		).toBe(false);
+		expect(
+			MeasurementAggregateSchema.safeParse({
+				...valid,
+				latency_total_samples: limits.latencySamples + 1,
+				latency_samples: [
+					...valid.latency_samples,
+					{ observed_at: 1_700_006_400_001, duration_ms: 1 },
+				],
 			}).success,
 		).toBe(false);
 	});

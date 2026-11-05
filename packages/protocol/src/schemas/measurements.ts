@@ -1,6 +1,12 @@
 import { ClientIdSchema, OwnerSubjectSchema } from "@protocol/schemas/auth";
 import { z } from "zod";
 
+/** Canonical daily retention bounds shared by measurement schemas and services. */
+export const MEASUREMENT_LIMITS = {
+	clients: 128,
+	latencySamples: 2_048,
+} as const;
+
 /** Unix millisecond timestamp used for measurement windows and samples. */
 const TimestampSchema = z.number().int().nonnegative().safe();
 /** Nonnegative safe count or duration used by measurement contracts. */
@@ -32,7 +38,7 @@ export const FeedPreparationObservationSchema = z
 	})
 	.strict();
 
-/** Per-client daily counters and request-cadence evidence stored in SQLite metadata. */
+/** Per-client counters and cadence. Reordered inputs keep the latest time and make interval bounds unknown for the day. */
 export const MeasurementClientAggregateSchema = z
 	.object({
 		client_id: ClientIdSchema,
@@ -41,6 +47,7 @@ export const MeasurementClientAggregateSchema = z
 		last_feed_request_at: TimestampSchema.nullable(),
 		minimum_poll_interval_ms: CountSchema.nullable(),
 		maximum_poll_interval_ms: CountSchema.nullable(),
+		poll_cadence_incomplete: z.boolean(),
 	})
 	.strict();
 
@@ -57,7 +64,9 @@ const MeasurementAggregateFieldsSchema = z
 		coverage_incomplete: z.boolean(),
 		requests_rest: CountSchema,
 		requests_mcp: CountSchema,
-		clients: z.array(MeasurementClientAggregateSchema).max(128),
+		clients: z
+			.array(MeasurementClientAggregateSchema)
+			.max(MEASUREMENT_LIMITS.clients),
 		latency_total_samples: CountSchema,
 		latency_samples: z
 			.array(
@@ -65,7 +74,7 @@ const MeasurementAggregateFieldsSchema = z
 					.object({ observed_at: TimestampSchema, duration_ms: CountSchema })
 					.strict(),
 			)
-			.max(2048),
+			.max(MEASUREMENT_LIMITS.latencySamples),
 	})
 	.strict();
 
@@ -95,7 +104,7 @@ function validateMeasurementAggregate(
 			(aggregate.request_observed_through === null) ||
 		(aggregate.request_observed_from !== null &&
 			aggregate.request_observed_through !== null &&
-			(aggregate.request_observed_from < aggregate.day_start ||
+			(aggregate.request_observed_from < aggregate.observed_from ||
 				aggregate.request_observed_from > aggregate.request_observed_through ||
 				aggregate.request_observed_through > aggregate.observed_through))
 	)
@@ -114,7 +123,7 @@ function validateMeasurementAggregate(
 	for (const sample of aggregate.latency_samples) {
 		if (
 			sample.observed_at < previousSampleAt ||
-			sample.observed_at < aggregate.day_start ||
+			sample.observed_at < aggregate.observed_from ||
 			sample.observed_at > aggregate.observed_through
 		)
 			ctx.addIssue({
@@ -143,11 +152,17 @@ function validateMeasurementAggregate(
 			(client.minimum_poll_interval_ms !== null &&
 				client.maximum_poll_interval_ms !== null &&
 				client.minimum_poll_interval_ms > client.maximum_poll_interval_ms) ||
+			(client.poll_cadence_incomplete &&
+				(client.last_feed_request_at === null ||
+					client.minimum_poll_interval_ms !== null ||
+					client.maximum_poll_interval_ms !== null)) ||
 			(client.last_feed_request_at === null &&
 				client.minimum_poll_interval_ms !== null) ||
 			(client.last_feed_request_at !== null &&
-				(client.last_feed_request_at < aggregate.day_start ||
-					client.last_feed_request_at > aggregate.observed_through))
+				(aggregate.request_observed_from === null ||
+					aggregate.request_observed_through === null ||
+					client.last_feed_request_at < aggregate.request_observed_from ||
+					client.last_feed_request_at > aggregate.request_observed_through))
 		)
 			ctx.addIssue({
 				code: "custom",
@@ -210,7 +225,9 @@ export const MeasurementResponseSchema = z
 				rest_count: CountSchema.nullable(),
 				mcp_count: CountSchema.nullable(),
 				stale: z.boolean(),
-				clients: z.array(MeasurementClientAggregateSchema).max(128),
+				clients: z
+					.array(MeasurementClientAggregateSchema)
+					.max(MEASUREMENT_LIMITS.clients),
 			})
 			.strict(),
 		feed_latency: z

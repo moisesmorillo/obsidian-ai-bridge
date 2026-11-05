@@ -151,6 +151,56 @@ describe("resource router measurement hooks", () => {
 		}
 	});
 
+	it("does not record a zero latency sample after wall-clock rollback", async () => {
+		const clockValues = [1_700_000_000_000, 1_699_999_999_000];
+		const clock = vi
+			.spyOn(Date, "now")
+			.mockImplementation(() => clockValues.shift() ?? 1_700_000_000_000);
+		const samples: unknown[] = [];
+		const pending: Promise<unknown>[] = [];
+		const gateway = emptyFeedGateway();
+		const app = createWorker(
+			async () => identity,
+			() =>
+				gateway as TextVaultGateway &
+					HistoryVaultGateway &
+					ReadVaultGateway &
+					SearchVaultGateway,
+			() => ({}) as BlobContentStore,
+			() => ({
+				recordRequest: () => undefined,
+				/** Collect only feed samples accepted by the clock boundary. */
+				recordFeedPreparation(observation) {
+					samples.push(observation);
+				},
+			}),
+		);
+		const executionContext = {
+			/** Retain background metric writes until the test checks the result. */
+			waitUntil(promise: Promise<unknown>) {
+				pending.push(promise);
+			},
+			/** Match the required Worker execution context contract. */
+			passThroughOnException() {},
+		} as ExecutionContext;
+
+		try {
+			const response = await app.fetch(
+				new Request(
+					"https://service.test/v1/changes?epoch=0123456789abcdef0123456789abcdef&since=0",
+				),
+				{} as never,
+				executionContext,
+			);
+			await Promise.all(pending);
+
+			expect(response.status).toBe(200);
+			expect(samples).toHaveLength(0);
+		} finally {
+			clock.mockRestore();
+		}
+	});
+
 	it("records verified feed requests and successful preparation without reading lazy bodies", async () => {
 		const requests: unknown[] = [];
 		const samples: unknown[] = [];

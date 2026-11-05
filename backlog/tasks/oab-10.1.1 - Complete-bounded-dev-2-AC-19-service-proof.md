@@ -5,7 +5,7 @@ status: Deferred
 assignee:
   - '@pi'
 created_date: '2026-11-05T16:52:00Z'
-updated_date: '2026-11-05T21:58:00Z'
+updated_date: '2026-11-05T21:59:00Z'
 labels:
   - deferred
   - F4
@@ -65,4 +65,6 @@ Supervisor-authorized cleanup: only oab-10.1/dev-2/simulated-eviction-p1-2026110
 Whole-branch semantic review at 6f5bc9a approved publication with one non-blocking raw retry-metadata finding. Commit c5d7bd1 separates private retry metadata from safe serialized diagnostics and adds regressions for private text, circular data, BigInt, and throwing getters. Focused tests passed 105/105. Worker docs:check and bun run check passed with 1941 tests and one skipped. The scoped corrective review and human branch review remain pending.
 
 Scoped corrective semantic review at 176bcc1 closes the raw retry-metadata finding with source and regression evidence. No new fix-diff finding remains. The reviewer confirms the shared-service restriction, revision 2 tombstone, Deferred status, and incomplete AC-19 claims in the task notes. Scope includes the tool, desktop acceptance tests, and accompanying task notes. Structural candidate desktop-acceptance.ts remains mixed but low-risk within the acceptance-tool boundary. Documentation audit covers changed interfaces, process error fields, helper contracts, constructor behavior, and named test helpers. Review limits: synthetic behavior does not prove live host timing. IDE probing reports three existing plugin-alias resolution errors and auxiliary findings in unrelated helpers. Canonical workspace typechecks pass. Human branch review remains pending.
+
+Human branch review pn-7ce188 received owner approval with no changes requested. Final parent publication check at 176bcc1 passed with exit 0. The later change records review closure only. Task remains Deferred because criterion 3 lacks a safe live confirmation result. The fixture tombstone and shared-service restriction remain the current live state. Publish this branch as tooling and evidence-limit work, not as AC-19 closure.
 <!-- SECTION:NOTES:END -->

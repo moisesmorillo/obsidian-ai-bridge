@@ -3,6 +3,20 @@ import { describe, expect, it, vi } from "vitest";
 import { DesktopSyncController } from "../src/sync/desktop-sync";
 import { classifyEnrollmentPath } from "../src/sync/enrollment-scope";
 
+/** Creates a promise whose settlement the test controls. */
+function deferred<T>(): {
+	promise: Promise<T>;
+	/** Settles the promise with the test-selected value. */
+	settle(value: T): void;
+} {
+	/** Receives the test-controlled promise settlement function. */
+	let settle!: (value: T) => void;
+	const promise = new Promise<T>((done) => {
+		settle = done;
+	});
+	return { promise, settle };
+}
+
 describe("DesktopSyncController", () => {
 	it("serializes overlapping triggers and starts one cycle immediately", async () => {
 		let finish: (() => void) | undefined;
@@ -343,6 +357,129 @@ describe("DesktopSyncController", () => {
 
 		controller.close();
 		clock.mockRestore();
+	});
+
+	it("retains events in order and starts debounce before origin proof settles", async () => {
+		const timers: Array<() => void> = [];
+		const delays: number[] = [];
+		const admitted: string[] = [];
+		const proof = deferred<boolean>();
+		const controller = new DesktopSyncController({
+			cycle: async () => undefined,
+			onEvent: async (event) => {
+				admitted.push(event.path);
+			},
+			host: {
+				setTimeout: (callback, delay) => {
+					delays.push(delay);
+					timers.push(callback);
+					return timers.length;
+				},
+				clearTimeout: () => undefined,
+				setInterval: (_callback, delay) => delay,
+				clearInterval: () => undefined,
+			},
+		});
+		await controller.start();
+
+		const firstAdmission = controller.observe(
+			{ type: "modify", path: "first.md" },
+			proof.promise,
+		);
+		await Promise.resolve();
+		expect(delays.at(-1)).toBe(2_000);
+		expect(controller.isBusy).toBe(true);
+		await controller.observe({ type: "modify", path: "second.md" });
+		expect(admitted).toEqual([]);
+		timers.at(-1)?.();
+		await controller.waitForIdle();
+		expect(admitted).toEqual(["first.md", "second.md"]);
+		expect(controller.isBusy).toBe(false);
+
+		proof.settle(true);
+		await firstAdmission;
+		expect(admitted).toEqual(["first.md", "second.md"]);
+		expect(controller.isBusy).toBe(false);
+		controller.close();
+	});
+
+	it("fences deferred cadence proof across pause and resume", async () => {
+		const timers: Array<() => void> = [];
+		const delays: number[] = [];
+		const admitted: string[] = [];
+		const proof = deferred<boolean>();
+		const controller = new DesktopSyncController({
+			cycle: async () => undefined,
+			onEvent: async (event) => {
+				admitted.push(event.path);
+			},
+			host: {
+				setTimeout: (callback) => {
+					timers.push(callback);
+					return timers.length;
+				},
+				clearTimeout: () => undefined,
+				setInterval: (_callback, delay) => {
+					delays.push(delay);
+					return delays.length;
+				},
+				clearInterval: () => undefined,
+			},
+		});
+		await controller.start();
+		controller.pause();
+		const pausedAdmission = controller.observe(
+			{ type: "modify", path: "paused.md" },
+			proof.promise,
+		);
+		await Promise.resolve();
+		expect(timers).toHaveLength(0);
+		expect(controller.isBusy).toBe(true);
+		await controller.resume();
+		expect(admitted).toEqual(["paused.md"]);
+		const intervalsAfterResume = delays.length;
+
+		proof.settle(true);
+		await pausedAdmission;
+		expect(delays).toHaveLength(intervalsAfterResume);
+		expect(controller.isBusy).toBe(false);
+		controller.close();
+	});
+
+	it("does not install cadence timers when proof resolves after close", async () => {
+		const timers: Array<() => void> = [];
+		const delays: number[] = [];
+		const proof = deferred<boolean>();
+		const controller = new DesktopSyncController({
+			cycle: async () => undefined,
+			host: {
+				setTimeout: (callback) => {
+					timers.push(callback);
+					return timers.length;
+				},
+				clearTimeout: () => undefined,
+				setInterval: (_callback, delay) => {
+					delays.push(delay);
+					return delays.length;
+				},
+				clearInterval: () => undefined,
+			},
+		});
+		await controller.start();
+		const closedAdmission = controller.observe(
+			{ type: "modify", path: "closed.md" },
+			proof.promise,
+		);
+		await Promise.resolve();
+		const intervalsBeforeClose = delays.length;
+		controller.close();
+		await controller.waitForIdle();
+		expect(controller.isBusy).toBe(true);
+
+		proof.settle(true);
+		await closedAdmission;
+		expect(delays).toHaveLength(intervalsBeforeClose);
+		expect(controller.isBusy).toBe(true);
 	});
 
 	it("uses the focused-active, idle, hidden, and event debounce budgets", async () => {

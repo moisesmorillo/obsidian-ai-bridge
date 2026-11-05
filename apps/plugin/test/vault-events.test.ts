@@ -164,18 +164,57 @@ describe("VaultEventAdapter", () => {
 		await withPluginVaultMutation(
 			vault,
 			{ type: "modify", path: "shared.md" },
-			async () => {
-				dispatch();
-				dispatch();
-			},
+			async () => dispatch(),
 			{ kind: "text", value: "plugin target" },
 		);
-		await Promise.resolve();
+		await vi.waitFor(() => expect(firstOrigins).toHaveLength(1));
+		dispatch();
+		await vi.waitFor(() => expect(firstOrigins).toHaveLength(2));
 
 		expect(firstOrigins).toEqual([true, false]);
 		expect(secondOrigins).toEqual([true, false]);
 		first.dispose();
 		second.dispose();
+	});
+
+	it("keeps a read that finishes after mutation settlement local", async () => {
+		const handlers = new Map<string, (...args: unknown[]) => void>();
+		/** Releases the read after the mutation marker retires. */
+		let releaseRead: (text: string) => void = () => undefined;
+		const delayedRead = new Promise<string>((resolve) => {
+			releaseRead = resolve;
+		});
+		const vault = {
+			/** Captures one listener for delayed-read regression delivery. */
+			on(event: string, callback: (...args: unknown[]) => void) {
+				handlers.set(event, callback);
+				return { event } as EventRef;
+			},
+			offref: () => undefined,
+			read: async () => delayedRead,
+		} as unknown as Vault;
+		let originProof: Promise<boolean> | undefined;
+		const adapter = new VaultEventAdapter(
+			vault,
+			{
+				observe: async (_event, proof) => {
+					originProof = proof;
+				},
+			},
+			() => undefined,
+		);
+		const file = Object.assign(new TFile(), { path: "late.md" });
+		await withPluginVaultMutation(
+			vault,
+			{ type: "modify", path: "late.md" },
+			async () => handlers.get("modify")?.(file),
+			{ kind: "text", value: "later plugin bytes" },
+		);
+		if (!originProof) throw new Error("Expected an origin proof");
+
+		releaseRead("later plugin bytes");
+		expect(await originProof).toBe(false);
+		adapter.dispose();
 	});
 
 	it("proves only exact targeted bytes and retires missing or failed effects", async () => {
@@ -189,12 +228,11 @@ describe("VaultEventAdapter", () => {
 			offref: () => undefined,
 			read: async () => "plugin bytes",
 		} as unknown as Vault;
-		const origins: boolean[] = [];
-		const observed = vi.fn(
-			async (_event: unknown, proof?: Promise<boolean>) => {
-				origins.push((await proof) ?? false);
-			},
-		);
+		const proofs: Promise<boolean>[] = [];
+		const observed = vi.fn((_event: unknown, proof?: Promise<boolean>) => {
+			proofs.push(proof ?? Promise.resolve(false));
+			return Promise.resolve();
+		});
 		const adapter = new VaultEventAdapter(
 			vault,
 			{ observe: observed },
@@ -209,10 +247,10 @@ describe("VaultEventAdapter", () => {
 			async () => {
 				handlers.get("create")?.(file);
 				handlers.get("modify")?.(file);
-				handlers.get("modify")?.(file);
 			},
 			{ kind: "text", value: "plugin bytes" },
 		);
+		handlers.get("modify")?.(file);
 		await withPluginVaultMutation(
 			vault,
 			{ type: "modify", path: "no-op.md" },
@@ -231,7 +269,14 @@ describe("VaultEventAdapter", () => {
 		handlers.get("modify")?.(Object.assign(new TFile(), { path: "failed.md" }));
 		await Promise.all(observed.mock.results.map((result) => result.value));
 
-		expect(origins).toEqual([false, false, true, false, false, false]);
+		expect(await Promise.all(proofs)).toEqual([
+			false,
+			false,
+			true,
+			false,
+			false,
+			false,
+		]);
 		adapter.dispose();
 	});
 
@@ -304,7 +349,9 @@ describe("VaultEventAdapter", () => {
 				clearInterval: () => undefined,
 			},
 		});
-		const echoBytes = new TextEncoder().encode("edited from event");
+		const echoText = "edited from event";
+		textVault.files.set("note.md", echoText);
+		const echoBytes = new TextEncoder().encode(echoText);
 		const echoDigest = await crypto.subtle.digest("SHA-256", echoBytes);
 		const echoHash = [...new Uint8Array(echoDigest)]
 			.map((byte) => byte.toString(16).padStart(2, "0"))
@@ -321,7 +368,7 @@ describe("VaultEventAdapter", () => {
 			async () => emit("modify", "note.md"),
 			{ kind: "text", value: "edited from event" },
 		);
-		expect(intervals.at(-1)).toBe(60_000);
+		await vi.waitFor(() => expect(intervals.at(-1)).toBe(60_000));
 		timeouts[0]?.();
 		await lifecycle.waitForIdle();
 		expect(journal.snapshot().expected_writes).toEqual({});
@@ -372,7 +419,10 @@ describe("VaultEventAdapter", () => {
 		await withPluginVaultMutation(
 			vault,
 			{ type: "create", path: conflictPath },
-			async () => emit("create", conflictPath),
+			async () => {
+				emit("create", conflictPath);
+				await Promise.resolve();
+			},
 			{ kind: "text", value: "conflict copy bytes" },
 		);
 		await Promise.resolve();
@@ -396,7 +446,10 @@ describe("VaultEventAdapter", () => {
 		await withPluginVaultMutation(
 			vault,
 			{ type: "create", path: restorePath },
-			async () => emit("create", restorePath),
+			async () => {
+				emit("create", restorePath);
+				await Promise.resolve();
+			},
 			{ kind: "text", value: restoreText },
 		);
 		await Promise.resolve();

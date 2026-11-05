@@ -140,6 +140,7 @@ export class ObsidianTextVault implements TextVault {
 					return next;
 				}),
 			{ kind: "text", value: next },
+			() => applied,
 		);
 		return applied;
 	}

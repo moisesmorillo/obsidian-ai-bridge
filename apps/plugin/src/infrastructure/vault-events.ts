@@ -17,12 +17,24 @@ export type PluginMutationTarget =
 	| { kind: "text"; value: string }
 	| { kind: "binary"; value: Uint8Array };
 
-/** One active effect holds exact evidence and claims at most one matching host dispatch. */
+/** Tracks one mutation's evidence until its effect settles. */
 interface PluginEventMarker {
+	/** Number of overlapping host mutations for this event key. */
 	operationCount: number;
+	/** True when overlapping mutations make one origin claim uncertain. */
 	ambiguous: boolean;
+	/** True after one event consumes this mutation's evidence. */
 	claimed: boolean;
+	/** True when no later read can establish this mutation's event bytes. */
+	settled: boolean;
+	/** True only when every wrapped effect and conditional gate accepts. */
+	allEffectsAccepted: boolean;
+	/** Intended visible bytes used only with active-read and effect evidence. */
 	target: PluginMutationTarget | null;
+	/** Resolves after all overlapping mutation effects settle. */
+	settlement: Promise<boolean>;
+	/** Resolves the shared settlement proof once no wrapped effect remains. */
+	resolveSettlement: (accepted: boolean) => void;
 }
 
 /** Shares one event proof with every adapter listener for the same host dispatch. */
@@ -41,30 +53,38 @@ interface VaultOriginTracker {
 /** Shares mutation origin and event delivery state across adapters for each host vault. */
 const vaultOriginTrackers = new WeakMap<Vault, VaultOriginTracker>();
 
-/** Tracks a visible mutation until settlement and records exact intended bytes for event proof. */
+/** Confirms origin only after matching bytes, successful effect settlement, and conditional acceptance. */
 export async function withPluginVaultMutation<T>(
 	vault: Vault,
 	event: PublicationEvent,
 	mutate: () => Promise<T>,
 	target?: PluginMutationTarget,
+	effectAccepted: () => boolean = () => true,
 ): Promise<T> {
 	const tracker = trackerFor(vault);
 	const key = eventKey(event);
 	const previous = tracker.markers.get(key);
-	const marker = previous ?? {
-		operationCount: 0,
-		ambiguous: false,
-		claimed: false,
-		target: target ? copyTarget(target) : null,
-	};
+	const marker = previous ?? createPluginEventMarker(target ?? null);
 	if (marker.operationCount > 0) marker.ambiguous = true;
 	marker.operationCount += 1;
 	tracker.markers.set(key, marker);
+	let accepted = false;
 	try {
-		return await mutate();
+		const result = await mutate();
+		accepted = effectAccepted();
+		return result;
 	} finally {
 		marker.operationCount -= 1;
-		if (marker.operationCount === 0) tracker.markers.delete(key);
+		marker.allEffectsAccepted = marker.allEffectsAccepted && accepted;
+		if (marker.operationCount === 0) {
+			marker.settled = true;
+			tracker.markers.delete(key);
+			marker.resolveSettlement(
+				marker.allEffectsAccepted &&
+					!marker.ambiguous &&
+					marker.target !== null,
+			);
+		}
 	}
 }
 
@@ -104,7 +124,7 @@ function pluginOriginProofFor(
 	return proof;
 }
 
-/** Confirms exact current bytes before consuming one mutation's origin evidence. */
+/** Confirms bytes read before mutation settlement, then checks effect and conditional acceptance. */
 async function verifyMutationTarget(
 	vault: Vault,
 	event: PublicationEvent,
@@ -122,19 +142,52 @@ async function verifyMutationTarget(
 	)
 		return false;
 	try {
-		const matches =
-			marker.target.kind === "text"
-				? (await vault.read(source)) === marker.target.value
-				: equalBytes(
-						new Uint8Array(await vault.readBinary(source)),
-						marker.target.value,
-					);
+		const target = marker.target;
+		let matches: boolean;
+		if (target.kind === "text") {
+			const observation = await vault.read(source).then((value) => ({
+				value,
+				completedBeforeSettlement: !marker.settled,
+			}));
+			matches =
+				observation.completedBeforeSettlement &&
+				observation.value === target.value;
+		} else {
+			const observation = await vault.readBinary(source).then((bytes) => ({
+				value: new Uint8Array(bytes),
+				completedBeforeSettlement: !marker.settled,
+			}));
+			matches =
+				observation.completedBeforeSettlement &&
+				equalBytes(observation.value, target.value);
+		}
 		if (!matches || marker.ambiguous || marker.claimed) return false;
 		marker.claimed = true;
-		return true;
+		return marker.settlement;
 	} catch {
 		return false;
 	}
+}
+
+/** Creates a marker whose final result reflects every overlapping effect. */
+function createPluginEventMarker(
+	target: PluginMutationTarget | null,
+): PluginEventMarker {
+	/** Resolves after every overlapping effect settles. */
+	let resolveSettlement: (accepted: boolean) => void = () => undefined;
+	const settlement = new Promise<boolean>((resolve) => {
+		resolveSettlement = resolve;
+	});
+	return {
+		operationCount: 0,
+		ambiguous: false,
+		claimed: false,
+		settled: false,
+		allEffectsAccepted: true,
+		target: target ? copyTarget(target) : null,
+		settlement,
+		resolveSettlement,
+	};
 }
 
 /** Copies binary targets so later caller changes cannot alter mutation evidence. */

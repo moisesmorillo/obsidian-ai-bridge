@@ -296,6 +296,121 @@ describe("ObsidianTextVault", () => {
 		time.mockRestore();
 	});
 
+	it("keeps a user event local when a conditional process callback refuses it", async () => {
+		const fake = makeHostVault();
+		const intervals: number[] = [];
+		const timeouts: Array<() => void> = [];
+		const admitted: string[] = [];
+		const lifecycle = new DesktopSyncController({
+			cycle: async () => undefined,
+			onEvent: async (event) => {
+				admitted.push(event.path);
+			},
+			host: {
+				setTimeout: (callback) => {
+					timeouts.push(callback);
+					return timeouts.length;
+				},
+				clearTimeout: () => undefined,
+				setInterval: (_callback, delay) => {
+					intervals.push(delay);
+					return intervals.length;
+				},
+				clearInterval: () => undefined,
+			},
+		});
+		const adapter = new VaultEventAdapter(
+			fake.host as unknown as Vault,
+			lifecycle,
+			() => undefined,
+		);
+		const textVault = new ObsidianTextVault(fake.host as unknown as Vault);
+		fake.process.mockImplementation(async (_file, callback) => {
+			fake.contents.set(fake.file.path, "next");
+			fake.emit("modify", fake.file);
+			const current = fake.contents.get(fake.file.path) ?? "";
+			const returned = callback(current);
+			if (returned !== current) {
+				fake.contents.set(fake.file.path, returned);
+				fake.emit("modify", fake.file);
+			}
+			return returned;
+		});
+
+		expect(await textVault.process(fake.file.path, "old", "next")).toBe(false);
+		await vi.waitFor(() => expect(intervals.at(-1)).toBe(15_000));
+		timeouts.at(-1)?.();
+		await lifecycle.waitForIdle();
+		expect(admitted).toEqual([fake.file.path]);
+
+		adapter.dispose();
+		lifecycle.close();
+	});
+
+	it("keeps delayed origin reads local after the mutation settles", async () => {
+		const fake = makeHostVault();
+		const intervals: number[] = [];
+		const timeouts: Array<() => void> = [];
+		const lifecycle = new DesktopSyncController({
+			cycle: async () => undefined,
+			host: {
+				setTimeout: (callback) => {
+					timeouts.push(callback);
+					return timeouts.length;
+				},
+				clearTimeout: () => undefined,
+				setInterval: (_callback, delay) => {
+					intervals.push(delay);
+					return intervals.length;
+				},
+				clearInterval: () => undefined,
+			},
+		});
+		const adapter = new VaultEventAdapter(
+			fake.host as unknown as Vault,
+			lifecycle,
+			() => undefined,
+		);
+		const textVault = new ObsidianTextVault(fake.host as unknown as Vault);
+		/** Releases the origin read after the later plugin write. */
+		let releaseDelayedRead: (bytes: ArrayBuffer) => void = () => undefined;
+		const delayedUserRead = new Promise<ArrayBuffer>((resolve) => {
+			releaseDelayedRead = resolve;
+		});
+		let firstRead = true;
+		fake.readBinary.mockImplementation(async (target) => {
+			if (firstRead) {
+				firstRead = false;
+				return delayedUserRead;
+			}
+			const bytes = fake.binaryContents.get(target.path);
+			return (bytes?.slice() ?? new Uint8Array()).buffer as ArrayBuffer;
+		});
+		const pluginBytes = new TextEncoder().encode("later plugin bytes");
+		const userBytes = new TextEncoder().encode("event-time user bytes");
+		fake.modifyBinary.mockImplementation(async (target, bytes) => {
+			fake.binaryContents.set(target.path, userBytes);
+			fake.contents.set(target.path, new TextDecoder().decode(userBytes));
+			fake.emit("modify", target);
+			const copy = new Uint8Array(bytes.slice(0));
+			fake.binaryContents.set(target.path, copy);
+			fake.contents.set(target.path, new TextDecoder().decode(copy));
+		});
+
+		expect(await textVault.modifyBinary(fake.file.path, pluginBytes)).toBe(
+			true,
+		);
+		const bytesAfterWrite = fake.binaryContents.get(fake.file.path);
+		if (!bytesAfterWrite) throw new Error("Expected written plugin bytes");
+		releaseDelayedRead(bytesAfterWrite.slice().buffer as ArrayBuffer);
+		await vi.waitFor(() => expect(intervals.at(-1)).toBe(15_000));
+		timeouts.at(-1)?.();
+		await lifecycle.waitForIdle();
+
+		adapter.dispose();
+		lifecycle.close();
+	});
+
 	it("labels visible text mutations at the shared vault event boundary", async () => {
 		const fake = makeHostVault();
 		const origins: boolean[] = [];

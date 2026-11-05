@@ -372,6 +372,50 @@ async function openController(
 }
 
 describe("PublicationController", () => {
+	it("retains publication intent while origin proof remains unresolved", async () => {
+		const { controller, journal, vault } = await openController();
+		const path = "notes/pending-origin-proof.md";
+		vault.files.set(path, "user bytes");
+		/** Resolves after the publication queue settles so proof cannot block it. */
+		let resolveProof: (isPlugin: boolean) => void = () => undefined;
+		const proof = new Promise<boolean>((resolve) => {
+			resolveProof = resolve;
+		});
+		let debounce: (() => void) | undefined;
+		let debounceDelay: number | undefined;
+		const lifecycle = new DesktopSyncController({
+			cycle: async () => undefined,
+			onEvent: (event) => controller.observe(event),
+			host: {
+				setTimeout: (callback, delay) => {
+					debounce = callback;
+					debounceDelay = delay;
+					return 1;
+				},
+				clearTimeout: () => undefined,
+				setInterval: () => 2,
+				clearInterval: () => undefined,
+			},
+		});
+
+		const admission = lifecycle.observe({ type: "modify", path }, proof);
+		await Promise.resolve();
+		expect(debounceDelay).toBe(2_000);
+		await admission;
+		debounce?.();
+		await lifecycle.waitForIdle();
+		expect(journal.snapshot().pending_ops).toMatchObject([
+			{ path, state: "queued" },
+		]);
+		expect(lifecycle.isBusy).toBe(false);
+		resolveProof(false);
+		await admission;
+		expect(lifecycle.isBusy).toBe(false);
+
+		lifecycle.close();
+		controller.close();
+	});
+
 	it("finishes one issued mutation but fences later sends after capture", async () => {
 		const { controller, journal, remote, vault } = await openController();
 		let blocked = false;

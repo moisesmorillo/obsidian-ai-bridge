@@ -10,7 +10,7 @@ function isTerminallyExcluded(event: PublicationEvent): boolean {
 	);
 }
 
-/** Resolves true only when exact event-time bytes match one plugin mutation target. */
+/** Resolves whether observed bytes support one accepted plugin effect. */
 export type PluginOriginProof = Promise<boolean>;
 
 /** Host-owned timer functions used to test scheduling without platform globals. */
@@ -59,8 +59,10 @@ export class DesktopSyncController {
 	private activeSince: number | null = null;
 	private cyclePromise: Promise<void> | null = null;
 	private workActive = false;
+	private activityRevision = 0;
+	private lifecycleRevision = 0;
 
-	/** True while a cycle, event debounce, or retained local intent blocks settlement. */
+	/** True while capture, cycle, debounce, or retained intent blocks settlement. Cadence-only proof does not block it. */
 	get isBusy(): boolean {
 		return (
 			this.workActive ||
@@ -113,9 +115,8 @@ export class DesktopSyncController {
 	}
 
 	/**
-	 * Saves event intent in order without network or apply effects while paused.
-	 * Plugin origin affects only the foreground activity clock. It never changes
-	 * capture, queue admission, debounce, or publication behavior.
+	 * Captures, retains, and schedules an event before asynchronous origin proof can finish.
+	 * Proof may revise only this event's activity timestamp in the same lifecycle.
 	 */
 	async observe(
 		event: PublicationEvent,
@@ -129,46 +130,51 @@ export class DesktopSyncController {
 			captured = (await this.options.onCaptureEvent?.(event)) ?? false;
 		} catch (error) {
 			this.events.push(event);
-			this.options.onError?.(error);
-			this.options.onStateChanged?.();
-			return;
-		} finally {
 			this.workActive = false;
 			this.options.onStateChanged?.();
+			this.options.onError?.(error);
+			return;
 		}
-		if (captured || this.closed || isTerminallyExcluded(event)) return;
-		let pluginOrigin = false;
-		if (originProof) {
-			try {
-				pluginOrigin = await originProof;
-			} catch {
-				pluginOrigin = false;
-			}
+		if (captured || this.closed || isTerminallyExcluded(event)) {
+			this.workActive = false;
+			this.options.onStateChanged?.();
+			return;
 		}
-		if (!pluginOrigin) this.activeSince = Date.now();
+
+		const previousActivity = this.activeSince;
+		this.activeSince = Date.now();
+		const activityRevision = ++this.activityRevision;
+		const lifecycleRevision = this.lifecycleRevision;
 		if (this.paused) {
 			this.events.push(event);
-			this.options.onStateChanged?.();
-			return Promise.resolve();
+		} else {
+			this.schedulePolling();
+			if (this.debounce !== null) this.options.host.clearTimeout(this.debounce);
+			this.events.push(event);
+			this.debounce = this.options.host.setTimeout(() => {
+				this.debounce = null;
+				this.options.onStateChanged?.();
+				void this.drainEvents().catch((error: unknown) =>
+					this.options.onError?.(error),
+				);
+			}, 2_000);
 		}
-		this.schedulePolling();
-		if (this.debounce !== null) this.options.host.clearTimeout(this.debounce);
-		this.events.push(event);
-		this.debounce = this.options.host.setTimeout(() => {
-			this.debounce = null;
-			this.options.onStateChanged?.();
-			void this.drainEvents().catch((error: unknown) =>
-				this.options.onError?.(error),
-			);
-		}, 2_000);
+		this.workActive = false;
 		this.options.onStateChanged?.();
-		return Promise.resolve();
+		if (originProof)
+			this.reviseActivityFromProof(
+				originProof,
+				previousActivity,
+				activityRevision,
+				lifecycleRevision,
+			);
 	}
 
 	/** Fences scheduled work while retaining every not-yet-admitted local event. */
 	pause(): void {
 		if (this.closed || this.paused) return;
 		this.paused = true;
+		this.lifecycleRevision += 1;
 		this.clearTimers();
 		this.options.onStateChanged?.();
 	}
@@ -177,6 +183,7 @@ export class DesktopSyncController {
 	async resume(): Promise<void> {
 		if (this.closed) return;
 		this.paused = false;
+		this.lifecycleRevision += 1;
 		this.options.onStateChanged?.();
 		await this.tail;
 		this.started = true;
@@ -204,6 +211,7 @@ export class DesktopSyncController {
 	close(): void {
 		if (this.closed) return;
 		this.closed = true;
+		this.lifecycleRevision += 1;
 		this.clearTimers();
 	}
 
@@ -266,6 +274,31 @@ export class DesktopSyncController {
 				this.options.onError?.(error),
 			);
 		}, delay);
+	}
+
+	/** Revises cadence only when a proof still belongs to the latest local event and lifecycle. */
+	private reviseActivityFromProof(
+		proof: PluginOriginProof,
+		previousActivity: number | null,
+		activityRevision: number,
+		lifecycleRevision: number,
+	): void {
+		void proof
+			.then((isPlugin) => {
+				if (
+					!isPlugin ||
+					this.closed ||
+					this.paused ||
+					this.activityRevision !== activityRevision ||
+					this.lifecycleRevision !== lifecycleRevision
+				)
+					return;
+				this.activeSince = previousActivity;
+				this.activityRevision += 1;
+				this.schedulePolling();
+				this.options.onStateChanged?.();
+			})
+			.catch(() => undefined);
 	}
 
 	/** Reads the shared capture fence before event and cycle admission. */

@@ -26,15 +26,15 @@ export class CoexistenceEffectFence {
 		);
 	}
 
-	/** Closes admission before capture awaits. A failed durable capture keeps the gate closed. */
-	beginCapture(): (persisted: boolean) => void {
+	/** Closes admission before capture awaits. A failed capture keeps the gate closed. */
+	beginCapture(): (succeeded: boolean) => void {
 		this.activeCaptures += 1;
 		let released = false;
-		return (persisted) => {
+		return (succeeded) => {
 			if (released) return;
 			released = true;
 			this.activeCaptures -= 1;
-			if (!persisted) this.failedCapture = true;
+			if (!succeeded) this.failedCapture = true;
 		};
 	}
 }

@@ -115,6 +115,146 @@ class UnusedRemote implements PublicationRemote {
 }
 
 describe("VaultEventAdapter", () => {
+	it("proves an accepted plugin delete for its exact host dispatch", async () => {
+		const handlers = new Map<string, (...args: unknown[]) => void>();
+		const vault = {
+			/** Registers one callback for the in-memory host dispatch. */
+			on(event: string, callback: (...args: unknown[]) => void) {
+				handlers.set(event, callback);
+				return { event } as EventRef;
+			},
+			offref: () => undefined,
+		} as unknown as Vault;
+		const proofs: Promise<boolean>[] = [];
+		const adapter = new VaultEventAdapter(
+			vault,
+			{
+				observe: async (_event, originProof) => {
+					proofs.push(originProof ?? Promise.resolve(false));
+				},
+			},
+			() => undefined,
+		);
+		const source = Object.assign(new TFile(), { path: "deleted.md" });
+		const concurrentUserFile = Object.assign(new TFile(), {
+			path: "deleted.md",
+		});
+		await withPluginVaultMutation(
+			vault,
+			{ type: "delete", path: "deleted.md" },
+			async () => {
+				handlers.get("delete")?.(concurrentUserFile);
+				handlers.get("delete")?.(source);
+			},
+			undefined,
+			() => true,
+			source,
+		);
+
+		handlers.get("delete")?.(concurrentUserFile);
+		await vi.waitFor(() => expect(proofs).toHaveLength(3));
+		expect(await Promise.all(proofs)).toEqual([false, true, false]);
+		adapter.dispose();
+	});
+	it("rejects refused, failed, and overlapping destructive effects", async () => {
+		const handlers = new Map<string, (...args: unknown[]) => void>();
+		const vault = {
+			/** Registers one fake host callback for effect-proof tests. */
+			on(event: string, callback: (...args: unknown[]) => void) {
+				handlers.set(event, callback);
+				return { event } as EventRef;
+			},
+			offref: () => undefined,
+			read: async () => "target bytes",
+		} as unknown as Vault;
+		const proofs: Promise<boolean>[] = [];
+		const adapter = new VaultEventAdapter(
+			vault,
+			{
+				observe: async (_event, proof) => {
+					proofs.push(proof ?? Promise.resolve(false));
+				},
+			},
+			() => undefined,
+		);
+		const refused = Object.assign(new TFile(), { path: "refused.md" });
+		await withPluginVaultMutation(
+			vault,
+			{ type: "delete", path: refused.path },
+			async () => handlers.get("delete")?.(refused),
+			undefined,
+			() => false,
+			refused,
+		);
+		const failed = Object.assign(new TFile(), { path: "failed.md" });
+		await expect(
+			withPluginVaultMutation(
+				vault,
+				{ type: "delete", path: failed.path },
+				async () => {
+					handlers.get("delete")?.(failed);
+					throw new Error("trash failed");
+				},
+				undefined,
+				() => true,
+				failed,
+			),
+		).rejects.toThrow("trash failed");
+		const failedRename = Object.assign(new TFile(), {
+			path: "failed-rename.md",
+		});
+		await expect(
+			withPluginVaultMutation(
+				vault,
+				{
+					type: "rename",
+					path: "old-name.md",
+					to: failedRename.path,
+				},
+				async () => {
+					handlers.get("rename")?.(failedRename, "old-name.md");
+					throw new Error("rename failed");
+				},
+				{ kind: "text", value: "target bytes" },
+				() => true,
+				failedRename,
+			),
+		).rejects.toThrow("rename failed");
+
+		const overlapping = Object.assign(new TFile(), {
+			path: "overlapping.md",
+		});
+		/** Settles the first effect after the overlapping marker is recorded. */
+		let releaseFirst: () => void = () => undefined;
+		const firstEffect = new Promise<void>((resolve) => {
+			releaseFirst = resolve;
+		});
+		const first = withPluginVaultMutation(
+			vault,
+			{ type: "delete", path: overlapping.path },
+			async () => {
+				handlers.get("delete")?.(overlapping);
+				await firstEffect;
+			},
+			undefined,
+			() => true,
+			overlapping,
+		);
+		await vi.waitFor(() => expect(proofs).toHaveLength(4));
+		const second = withPluginVaultMutation(
+			vault,
+			{ type: "delete", path: overlapping.path },
+			async () => undefined,
+			undefined,
+			() => true,
+			overlapping,
+		);
+		releaseFirst();
+		await Promise.all([first, second]);
+		expect(await Promise.all(proofs)).toEqual([false, false, false, false]);
+		adapter.dispose();
+	});
+
 	it("shares plugin origin across adapters for one host vault", async () => {
 		const handlers = new Map<string, Set<(...args: unknown[]) => void>>();
 		const vault = {
@@ -175,6 +315,100 @@ describe("VaultEventAdapter", () => {
 		expect(secondOrigins).toEqual([true, false]);
 		first.dispose();
 		second.dispose();
+	});
+
+	it("proves rename only for the original host object and exact destination bytes", async () => {
+		const handlers = new Map<string, (...args: unknown[]) => void>();
+		const vault = {
+			/** Registers the callback used by this fake host dispatch. */
+			on(event: string, callback: (...args: unknown[]) => void) {
+				handlers.set(event, callback);
+				return { event } as EventRef;
+			},
+			offref: () => undefined,
+			read: async () => "renamed bytes",
+		} as unknown as Vault;
+		const proofs: Promise<boolean>[] = [];
+		const adapter = new VaultEventAdapter(
+			vault,
+			{
+				observe: async (_event, originProof) => {
+					proofs.push(originProof ?? Promise.resolve(false));
+				},
+			},
+			() => undefined,
+		);
+		const source = Object.assign(new TFile(), { path: "new.md" });
+		const concurrentUserFile = Object.assign(new TFile(), {
+			path: "new.md",
+		});
+		await withPluginVaultMutation(
+			vault,
+			{ type: "rename", path: "old.md", to: "new.md" },
+			async () => {
+				handlers.get("rename")?.(concurrentUserFile, "old.md");
+				handlers.get("rename")?.(source, "old.md");
+			},
+			{ kind: "text", value: "renamed bytes" },
+			() => true,
+			source,
+		);
+
+		handlers.get("rename")?.(concurrentUserFile, "old.md");
+		await vi.waitFor(() => expect(proofs).toHaveLength(3));
+		expect(await Promise.all(proofs)).toEqual([false, true, false]);
+		adapter.dispose();
+	});
+
+	it("rejects mismatched and late destructive destination reads", async () => {
+		const handlers = new Map<string, (...args: unknown[]) => void>();
+		/** Completes destination bytes only after the rename effect settles. */
+		let releaseLateRead: (text: string) => void = () => undefined;
+		const lateRead = new Promise<string>((resolve) => {
+			releaseLateRead = resolve;
+		});
+		const vault = {
+			/** Registers one host callback for rename evidence. */
+			on(event: string, callback: (...args: unknown[]) => void) {
+				handlers.set(event, callback);
+				return { event } as EventRef;
+			},
+			offref: () => undefined,
+			read: async (source: TFile) =>
+				source.path === "late.md" ? lateRead : "mismatched bytes",
+		} as unknown as Vault;
+		const proofs: Promise<boolean>[] = [];
+		const adapter = new VaultEventAdapter(
+			vault,
+			{
+				observe: async (_event, proof) => {
+					proofs.push(proof ?? Promise.resolve(false));
+				},
+			},
+			() => undefined,
+		);
+		const mismatched = Object.assign(new TFile(), { path: "wrong.md" });
+		await withPluginVaultMutation(
+			vault,
+			{ type: "rename", path: "old.md", to: mismatched.path },
+			async () => handlers.get("rename")?.(mismatched, "old.md"),
+			{ kind: "text", value: "expected bytes" },
+			() => true,
+			mismatched,
+		);
+		const late = Object.assign(new TFile(), { path: "late.md" });
+		await withPluginVaultMutation(
+			vault,
+			{ type: "rename", path: "late-source.md", to: late.path },
+			async () => handlers.get("rename")?.(late, "late-source.md"),
+			{ kind: "text", value: "late bytes" },
+			() => true,
+			late,
+		);
+		releaseLateRead("late bytes");
+		await vi.waitFor(() => expect(proofs).toHaveLength(2));
+		expect(await Promise.all(proofs)).toEqual([false, false]);
+		adapter.dispose();
 	});
 
 	it("keeps a read that finishes after mutation settlement local", async () => {

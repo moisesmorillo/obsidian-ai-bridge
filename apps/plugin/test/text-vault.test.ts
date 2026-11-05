@@ -1,15 +1,21 @@
 import type { DeviceState } from "@obsidian-ai-bridge/protocol";
-import { DeviceJournal } from "@plugin/sync/device-journal";
-import { TextApplyEngine } from "@plugin/sync/text-apply";
 import { type EventRef, TFile, type Vault } from "obsidian";
 import { describe, expect, it, vi } from "vitest";
 import { ObsidianTextVault } from "../src/infrastructure/text-vault";
 import { VaultEventAdapter } from "../src/infrastructure/vault-events";
+import { CoexistenceController } from "../src/sync/coexistence";
+import { CoexistenceEffectFence } from "../src/sync/coexistence-effect-fence";
 import { DesktopSyncController } from "../src/sync/desktop-sync";
+import { DeviceJournal } from "../src/sync/device-journal";
+import type { PublicationEvent } from "../src/sync/publication";
+import { TextApplyEngine } from "../src/sync/text-apply";
 
 /** Provides the exact host methods used by the adapter without a live vault. */
 function makeHostVault() {
-	const file = Object.assign(new TFile(), { path: "notes/a.md" });
+	const file = Object.assign(new TFile(), {
+		path: "notes/a.md",
+		stat: { size: new TextEncoder().encode("old").byteLength },
+	});
 	const contents = new Map([[file.path, "old"]]);
 	const binaryContents = new Map<string, Uint8Array>();
 	const handlers = new Map<string, Set<(...args: unknown[]) => void>>();
@@ -87,6 +93,10 @@ function makeHostVault() {
 		trash,
 		rename,
 		createFolder: async () => undefined,
+		adapter: {
+			stat: async () => null,
+			list: async () => ({ files: [], folders: [] }),
+		},
 	};
 	return {
 		host,
@@ -180,6 +190,105 @@ function makeRecoveryHostVault() {
 	return { host, hidden, visible, files, directories, controls, adapter };
 }
 
+/** Composes real plugin controllers over the in-memory host without starting timers. */
+async function makeCoexistenceOriginHarness(
+	fake: ReturnType<typeof makeHostVault>,
+	epoch: string,
+	bases: Array<{
+		path: string;
+		rev: number;
+		text: string;
+		bytes?: Uint8Array;
+	}>,
+) {
+	let persisted: unknown = null;
+	const storage = {
+		readState: async () => persisted,
+		writeState: async (state: DeviceState) => {
+			persisted = structuredClone(state);
+		},
+		readPayload: async () => new Uint8Array(),
+		writePayload: async () => undefined,
+	};
+	const journal = await DeviceJournal.open(storage);
+	await journal.resetEpoch(epoch);
+	for (const base of bases)
+		await journal.setBase(base.path, {
+			deleted: false,
+			rev: base.rev,
+			hash: await recoveryHash(
+				base.bytes ?? new TextEncoder().encode(base.text),
+			),
+		});
+	const vault = new ObsidianTextVault(fake.host as unknown as Vault);
+	const fence = new CoexistenceEffectFence(
+		() => journal.snapshot().coexistence_confirmations.length > 0,
+	);
+	const coexistence = new CoexistenceController(
+		journal,
+		vault,
+		() => true,
+		() => 1_000,
+		fence,
+	);
+	const timeouts: Array<() => void> = [];
+	const observedEvents: PublicationEvent[] = [];
+	const originProofs: Promise<boolean>[] = [];
+	const completedObservations: PublicationEvent[] = [];
+	const desktop = new DesktopSyncController({
+		cycle: async () => undefined,
+		onCaptureEvent: (event) => coexistence.observe(event),
+		isEffectBlocked: () => fence.isBlocked(),
+		onEvent: async () => undefined,
+		host: {
+			setTimeout: (callback) => {
+				timeouts.push(callback);
+				return timeouts.length;
+			},
+			clearTimeout: () => undefined,
+			setInterval: () => 1,
+			clearInterval: () => undefined,
+		},
+	});
+	const adapter = new VaultEventAdapter(
+		fake.host as unknown as Vault,
+		{
+			observe: async (event, proof) => {
+				observedEvents.push(event);
+				if (proof) {
+					originProofs.push(proof);
+					coexistence.registerOriginProof(event, proof);
+				}
+				await desktop.observe(event, proof);
+				completedObservations.push(event);
+			},
+		},
+		(error) => {
+			throw error;
+		},
+	);
+	const engine = new TextApplyEngine(
+		journal,
+		vault,
+		{ read: async () => null },
+		{ deviceName: "test", isEffectBlocked: () => fence.isBlocked() },
+	);
+	return {
+		journal,
+		vault,
+		fence,
+		desktop,
+		adapter,
+		engine,
+		timeouts,
+		coexistence,
+		observedEvents,
+		originProofs,
+		completedObservations,
+		reopenJournal: () => DeviceJournal.open(storage),
+	};
+}
+
 /** Computes the canonical hash-addressed recovery identity from exact fixture bytes. */
 async function recoveryHash(bytes: Uint8Array): Promise<string> {
 	const digest = await crypto.subtle.digest("SHA-256", bytes.slice().buffer);
@@ -189,6 +298,444 @@ async function recoveryHash(bytes: Uint8Array): Promise<string> {
 }
 
 describe("ObsidianTextVault", () => {
+	it("keeps remote tombstone apply out of coexistence confirmations", async () => {
+		const fake = makeHostVault();
+		const epoch = "b".repeat(32);
+		const harness = await makeCoexistenceOriginHarness(fake, epoch, [
+			{ path: fake.file.path, rev: 1, text: "old" },
+		]);
+		const apply = {
+			seq: 2,
+			op: "delete" as const,
+			path: fake.file.path,
+			etag: `"${epoch}.2"`,
+			hash: "",
+			origin: "remote" as const,
+			at: 2,
+		};
+
+		await harness.engine.apply(apply);
+		await vi.waitFor(() => expect(harness.fence.isBlocked()).toBe(false));
+
+		expect(harness.journal.snapshot().pending_apply).toEqual([]);
+		expect(harness.journal.snapshot().base[fake.file.path]).toEqual({
+			deleted: true,
+			rev: 2,
+		});
+		expect(harness.journal.snapshot().coexistence_confirmations).toEqual([]);
+		expect(harness.fence.isBlocked()).toBe(false);
+		expect(fake.contents.has(fake.file.path)).toBe(false);
+		harness.adapter.dispose();
+		harness.desktop.close();
+		harness.engine.close();
+		harness.journal.close();
+	});
+
+	it("keeps a binary remote tombstone out of coexistence confirmations", async () => {
+		const fake = makeHostVault();
+		const path = "assets/image.png";
+		const bytes = new Uint8Array([0xff, 0x00, 0x7f]);
+		fake.file.path = path;
+		fake.file.stat = { size: bytes.byteLength } as TFile["stat"];
+		fake.contents.delete("notes/a.md");
+		fake.contents.set(path, "binary fixture");
+		fake.binaryContents.set(path, bytes.slice());
+		const epoch = "a".repeat(32);
+		const harness = await makeCoexistenceOriginHarness(fake, epoch, [
+			{ path, rev: 1, text: "binary fixture", bytes },
+		]);
+
+		await harness.engine.apply(
+			{
+				seq: 2,
+				op: "delete",
+				path,
+				etag: `"${epoch}.2"`,
+				hash: "",
+				origin: "remote",
+				at: 2,
+			},
+			"blob",
+		);
+		await vi.waitFor(() => expect(harness.fence.isBlocked()).toBe(false));
+
+		expect(harness.journal.snapshot().pending_apply).toEqual([]);
+		expect(harness.journal.snapshot().base[path]).toEqual({
+			deleted: true,
+			rev: 2,
+		});
+		expect(harness.journal.snapshot().coexistence_confirmations).toEqual([]);
+		expect(harness.fence.isBlocked()).toBe(false);
+		harness.adapter.dispose();
+		harness.desktop.close();
+		harness.engine.close();
+		harness.journal.close();
+	});
+
+	it("keeps remote rename apply out of coexistence and advances both authorities", async () => {
+		const fake = makeHostVault();
+		const epoch = "c".repeat(32);
+		const hash = await recoveryHash(new TextEncoder().encode("old"));
+		const harness = await makeCoexistenceOriginHarness(fake, epoch, [
+			{ path: fake.file.path, rev: 1, text: "old" },
+		]);
+		const destination = "notes/renamed.md";
+		const rename = {
+			seq: 2,
+			op: "rename" as const,
+			from_path: fake.file.path,
+			path: destination,
+			from_etag: `"${epoch}.2"`,
+			etag: `"${epoch}.3"`,
+			hash,
+			origin: "remote" as const,
+			at: 3,
+		};
+
+		await harness.engine.apply(rename);
+		await vi.waitFor(() => expect(harness.fence.isBlocked()).toBe(false));
+
+		expect(harness.journal.snapshot().pending_apply).toEqual([]);
+		expect(harness.journal.snapshot().base["notes/a.md"]).toEqual({
+			deleted: true,
+			rev: 2,
+		});
+		expect(harness.journal.snapshot().base[destination]).toEqual({
+			deleted: false,
+			rev: 3,
+			hash,
+		});
+		expect(await harness.vault.readBinary(destination)).toEqual(
+			new TextEncoder().encode("old"),
+		);
+		expect(harness.journal.snapshot().coexistence_confirmations).toEqual([]);
+		expect(harness.fence.isBlocked()).toBe(false);
+		harness.adapter.dispose();
+		harness.desktop.close();
+		harness.engine.close();
+		harness.journal.close();
+	});
+	it("captures genuine same-path delete and rename events before debounce", async () => {
+		for (const kind of ["delete", "rename"] as const) {
+			const fake = makeHostVault();
+			const epoch = kind === "delete" ? "8a".repeat(16) : "7b".repeat(16);
+			const harness = await makeCoexistenceOriginHarness(fake, epoch, [
+				{ path: fake.file.path, rev: 4, text: "old" },
+			]);
+			if (kind === "delete") fake.emit("delete", fake.file);
+			else
+				fake.emit(
+					"rename",
+					Object.assign(new TFile(), { path: "notes/user-renamed.md" }),
+					"notes/a.md",
+				);
+			await vi.waitFor(() =>
+				expect(
+					harness.journal.snapshot().coexistence_confirmations,
+				).toHaveLength(1),
+			);
+			const captured = harness.journal.snapshot().coexistence_confirmations[0];
+			expect(captured).toMatchObject({
+				kind,
+				path: "notes/a.md",
+				observed_epoch: epoch,
+				observed_base: {
+					deleted: false,
+					rev: 4,
+					hash: await recoveryHash(new TextEncoder().encode("old")),
+				},
+				at: 1_000,
+			});
+			if (kind === "rename")
+				expect(captured).toMatchObject({ to: "notes/user-renamed.md" });
+			expect(harness.fence.isBlocked()).toBe(true);
+			await expect(
+				harness.engine.apply({
+					seq: 5,
+					op: "delete",
+					path: "notes/a.md",
+					etag: `"${epoch}.5"`,
+					hash: "",
+					origin: "remote",
+					at: 5,
+				}),
+			).rejects.toThrow("Coexistence effect admission is blocked");
+			harness.adapter.dispose();
+			harness.desktop.close();
+			harness.engine.close();
+			harness.journal.close();
+		}
+	});
+
+	describe.each(["delete", "rename"] as const)(
+		"concurrent %s capture under a pending host effect",
+		(kind) => {
+			it.each([
+				{ order: "plugin-first", identity: "same-source" },
+				{ order: "plugin-first", identity: "replacement" },
+				{ order: "user-first", identity: "same-source" },
+				{ order: "user-first", identity: "replacement" },
+			] as const)(
+				"$order with $identity callbacks",
+				async ({ order, identity }) => {
+					const fake = makeHostVault();
+					const sourcePath = fake.file.path;
+					const destination = "notes/remote-name.md";
+					const epoch = kind === "delete" ? "5a".repeat(16) : "6b".repeat(16);
+					const hash = await recoveryHash(new TextEncoder().encode("old"));
+					const base = { deleted: false as const, rev: 1, hash };
+					const harness = await makeCoexistenceOriginHarness(fake, epoch, [
+						{ path: sourcePath, rev: 1, text: "old" },
+					]);
+					const effectStarted = Promise.withResolvers<TFile>();
+					const pluginDispatch = Promise.withResolvers<void>();
+					const pluginDispatched = Promise.withResolvers<void>();
+					const settlement = Promise.withResolvers<void>();
+					const dispatchOrder: string[] = [];
+					const proofResults: Array<boolean | undefined> = [];
+					let applyCompleted = false;
+					let effectCompleted = false;
+
+					/** Sends an independent host callback while the wrapped host call stays pending. */
+					const dispatch = (origin: "plugin" | "user", target: TFile) => {
+						const eventSource =
+							origin === "user" && identity === "replacement"
+								? Object.assign(new TFile(), {
+										path: target.path,
+										stat: target.stat,
+									})
+								: target;
+						if (identity === "same-source") {
+							expect(eventSource).toBe(fake.file);
+							expect(fake.host.getAbstractFileByPath(eventSource.path)).toBe(
+								eventSource,
+							);
+						}
+						dispatchOrder.push(origin);
+						if (kind === "delete") fake.emit("delete", eventSource);
+						else fake.emit("rename", eventSource, sourcePath);
+						const index = harness.originProofs.length - 1;
+						proofResults.push(undefined);
+						void harness.originProofs[index].then((proved) => {
+							proofResults[index] = proved;
+						});
+					};
+					/** Holds plugin dispatch and settlement while the test sends a separate user callback. */
+					const dispatchWhilePending = async (target: TFile) => {
+						effectStarted.resolve(target);
+						await pluginDispatch.promise;
+						dispatch("plugin", target);
+						pluginDispatched.resolve();
+						await settlement.promise;
+						effectCompleted = true;
+					};
+					fake.trash.mockImplementation(async (target) => {
+						await dispatchWhilePending(target);
+						fake.contents.delete(sourcePath);
+						fake.binaryContents.delete(sourcePath);
+						fake.host
+							.getFiles()
+							.splice(fake.host.getFiles().indexOf(target), 1);
+					});
+					fake.rename.mockImplementation(async (target, to) => {
+						fake.contents.set(to, fake.contents.get(sourcePath) ?? "");
+						fake.contents.delete(sourcePath);
+						target.path = to;
+						await dispatchWhilePending(target);
+					});
+					const change =
+						kind === "delete"
+							? {
+									seq: 2,
+									op: "delete" as const,
+									path: sourcePath,
+									etag: `"${epoch}.2"`,
+									hash: "",
+									origin: "remote" as const,
+									at: 2,
+								}
+							: {
+									seq: 2,
+									op: "rename" as const,
+									from_path: sourcePath,
+									path: destination,
+									from_etag: `"${epoch}.2"`,
+									etag: `"${epoch}.3"`,
+									hash,
+									origin: "remote" as const,
+									at: 3,
+								};
+					const apply = harness.engine.apply(change).then(() => {
+						applyCompleted = true;
+					});
+					try {
+						const target = await effectStarted.promise;
+						if (order === "plugin-first") {
+							pluginDispatch.resolve();
+							await pluginDispatched.promise;
+						} else dispatch("user", target);
+						// Finish the first rename read before the second dispatch, not the held host effect.
+						await Promise.resolve();
+						expect(dispatchOrder).toEqual([
+							order === "plugin-first" ? "plugin" : "user",
+						]);
+						expect(effectCompleted).toBe(false);
+						expect(applyCompleted).toBe(false);
+						expect(harness.journal.snapshot().pending_apply).toHaveLength(1);
+						expect(harness.journal.snapshot().base[sourcePath]).toEqual(base);
+						expect(harness.fence.isBlocked()).toBe(true);
+						const firstClaimsEvidence =
+							order === "plugin-first" || identity === "same-source";
+						if (firstClaimsEvidence) {
+							expect(proofResults).toEqual([undefined]);
+							expect(harness.completedObservations).toEqual([]);
+							expect(
+								harness.journal.snapshot().coexistence_confirmations,
+							).toEqual([]);
+						}
+
+						if (order === "plugin-first") dispatch("user", target);
+						else {
+							pluginDispatch.resolve();
+							await pluginDispatched.promise;
+						}
+						await vi.waitFor(() =>
+							expect(harness.completedObservations).toHaveLength(1),
+						);
+						expect(dispatchOrder).toEqual(
+							order === "plugin-first"
+								? ["plugin", "user"]
+								: ["user", "plugin"],
+						);
+						expect(proofResults).toEqual(
+							firstClaimsEvidence ? [undefined, false] : [false, undefined],
+						);
+						expect(effectCompleted).toBe(false);
+						expect(applyCompleted).toBe(false);
+						expect(harness.journal.snapshot().pending_apply).toHaveLength(1);
+						expect(harness.journal.snapshot().base[sourcePath]).toEqual(base);
+						expect(harness.timeouts).toEqual([]);
+						const confirmations =
+							harness.journal.snapshot().coexistence_confirmations;
+						expect(confirmations).toHaveLength(1);
+						expect(confirmations[0]).toEqual({
+							id: expect.any(String),
+							kind,
+							path: sourcePath,
+							...(kind === "rename" ? { to: destination } : {}),
+							observed_epoch: epoch,
+							observed_base: base,
+							at: 1_000,
+						});
+						expect(harness.fence.isBlocked()).toBe(true);
+
+						settlement.resolve();
+						await apply;
+						await vi.waitFor(() =>
+							expect(harness.completedObservations).toHaveLength(2),
+						);
+						expect(await Promise.all(harness.originProofs)).toEqual(
+							firstClaimsEvidence ? [true, false] : [false, true],
+						);
+						expect(effectCompleted).toBe(true);
+						expect(applyCompleted).toBe(true);
+						expect(harness.journal.snapshot().pending_apply).toEqual([]);
+						expect(harness.journal.snapshot().base[sourcePath]).toEqual({
+							deleted: true,
+							rev: 2,
+						});
+						if (kind === "rename") {
+							expect(harness.journal.snapshot().base[destination]).toEqual({
+								deleted: false,
+								rev: 3,
+								hash,
+							});
+							expect(await harness.vault.readBinary(destination)).toEqual(
+								new TextEncoder().encode("old"),
+							);
+						}
+						expect(
+							harness.journal.snapshot().coexistence_confirmations,
+						).toEqual(confirmations);
+						expect(harness.fence.isBlocked()).toBe(true);
+						await harness.coexistence.keepServerState(confirmations[0].id);
+						expect(
+							harness.journal.snapshot().coexistence_confirmations,
+						).toEqual([]);
+						expect(harness.fence.isBlocked()).toBe(false);
+					} finally {
+						pluginDispatch.resolve();
+						settlement.resolve();
+						await apply;
+						harness.adapter.dispose();
+						harness.desktop.close();
+						harness.engine.close();
+						harness.journal.close();
+					}
+				},
+			);
+		},
+	);
+
+	it("preserves handled replay and restart, then captures a later same-path user delete", async () => {
+		const fake = makeHostVault();
+		const epoch = "d".repeat(32);
+		const harness = await makeCoexistenceOriginHarness(fake, epoch, [
+			{ path: fake.file.path, rev: 1, text: "old" },
+		]);
+		harness.desktop.pause();
+		await harness.engine.apply({
+			seq: 2,
+			op: "delete",
+			path: fake.file.path,
+			etag: `"${epoch}.2"`,
+			hash: "",
+			origin: "remote",
+			at: 2,
+		});
+		await vi.waitFor(() => expect(harness.fence.isBlocked()).toBe(false));
+		const handledEvent = harness.observedEvents.find(
+			(event) => event.type === "delete",
+		);
+		if (!handledEvent) throw new Error("Expected the remote delete event");
+		await expect(harness.coexistence.observe(handledEvent)).resolves.toBe(true);
+		expect(harness.journal.snapshot().coexistence_confirmations).toEqual([]);
+		await harness.desktop.resume();
+		const userFile = Object.assign(new TFile(), {
+			path: "notes/a.md",
+			stat: { size: new TextEncoder().encode("later user bytes").byteLength },
+		});
+		fake.contents.set(userFile.path, "later user bytes");
+		fake.host.getFiles().push(userFile);
+		fake.emit("delete", userFile);
+		await vi.waitFor(() =>
+			expect(harness.journal.snapshot().coexistence_confirmations).toHaveLength(
+				1,
+			),
+		);
+		expect(
+			harness.journal.snapshot().coexistence_confirmations[0],
+		).toMatchObject({
+			kind: "delete",
+			path: userFile.path,
+			observed_epoch: epoch,
+			observed_base: { deleted: true, rev: 2 },
+		});
+		expect(harness.fence.isBlocked()).toBe(true);
+		harness.adapter.dispose();
+		harness.desktop.close();
+		harness.engine.close();
+		harness.journal.close();
+
+		const restarted = await harness.reopenJournal();
+		expect(restarted.snapshot().coexistence_confirmations).toHaveLength(1);
+		expect(restarted.snapshot().base["notes/a.md"]).toEqual({
+			deleted: true,
+			rev: 2,
+		});
+		restarted.close();
+	});
+
 	it("keeps same-path user bytes local when a user event arrives before plugin output", async () => {
 		const fake = makeHostVault();
 		const time = vi.spyOn(Date, "now").mockReturnValue(301_001);

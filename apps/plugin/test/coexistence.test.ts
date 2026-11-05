@@ -1,6 +1,7 @@
 import { DeviceStateSchema } from "@obsidian-ai-bridge/protocol";
 import { describe, expect, it } from "vitest";
 import { CoexistenceController } from "../src/sync/coexistence";
+import { CoexistenceEffectFence } from "../src/sync/coexistence-effect-fence";
 import { DeviceJournal } from "../src/sync/device-journal";
 
 const deviceId = "018f47b2-5c00-7000-8000-000000000001";
@@ -59,6 +60,219 @@ describe("coexistence journal schema", () => {
 });
 
 describe("CoexistenceController", () => {
+	it("does not persist a confirmation or latch the fence for a proved event", async () => {
+		let persisted: unknown = null;
+		const journal = await DeviceJournal.open({
+			readState: async () => persisted,
+			writeState: async (state) => {
+				persisted = structuredClone(state);
+			},
+			readPayload: async () => new Uint8Array(),
+			writePayload: async () => undefined,
+		});
+		const fence = new CoexistenceEffectFence(
+			() => journal.snapshot().coexistence_confirmations.length > 0,
+		);
+		const controller = new CoexistenceController(
+			journal,
+			{ isUnavailable: async () => false, size: async () => null },
+			() => true,
+			() => 500,
+			fence,
+		);
+		const event = { type: "delete", path: "notes/a.md" } as const;
+		/** Releases the proof after capture has frozen event authority. */
+		let resolveProof: (result: boolean) => void = () => undefined;
+		const proof = new Promise<boolean>((resolve) => {
+			resolveProof = resolve;
+		});
+		controller.registerOriginProof(event, proof);
+		const observing = controller.observe(event);
+		expect(controller.observe(event)).toBe(observing);
+
+		expect(fence.isBlocked()).toBe(true);
+		expect(journal.snapshot().coexistence_confirmations).toEqual([]);
+		resolveProof(true);
+		await expect(observing).resolves.toBe(true);
+		expect(journal.snapshot().coexistence_confirmations).toEqual([]);
+		expect(fence.isBlocked()).toBe(false);
+		await expect(controller.observe(event)).resolves.toBe(true);
+		expect(journal.snapshot().coexistence_confirmations).toEqual([]);
+		expect(fence.isBlocked()).toBe(false);
+		journal.close();
+	});
+	it("keeps event-time authority when a rejected rename proof spans a base change", async () => {
+		let persisted: unknown = null;
+		let at = 100;
+		const journal = await DeviceJournal.open({
+			readState: async () => persisted,
+			writeState: async (state) => {
+				persisted = structuredClone(state);
+			},
+			readPayload: async () => new Uint8Array(),
+			writePayload: async () => undefined,
+		});
+		const epoch = "f".repeat(32);
+		await journal.resetEpoch(epoch);
+		await journal.setBase("notes/source.md", {
+			deleted: false,
+			rev: 2,
+			hash: "a".repeat(64),
+		});
+		const fence = new CoexistenceEffectFence(
+			() => journal.snapshot().coexistence_confirmations.length > 0,
+		);
+		const controller = new CoexistenceController(
+			journal,
+			{ isUnavailable: async () => false, size: async () => null },
+			() => true,
+			() => at,
+			fence,
+		);
+		const event = {
+			type: "rename",
+			path: "notes/source.md",
+			to: "notes/destination.md",
+		} as const;
+		/** Rejects proof only after the source base advances. */
+		let rejectProof: (error: Error) => void = () => undefined;
+		controller.registerOriginProof(
+			event,
+			new Promise<boolean>((_resolve, reject) => {
+				rejectProof = reject;
+			}),
+		);
+		const observing = controller.observe(event);
+		expect(fence.isBlocked()).toBe(true);
+		at = 900;
+		await journal.setBase("notes/source.md", {
+			deleted: false,
+			rev: 3,
+			hash: "b".repeat(64),
+		});
+		rejectProof(new Error("uncertain host proof"));
+		await expect(observing).resolves.toBe(true);
+
+		const captured = journal.snapshot().coexistence_confirmations[0];
+		expect(captured).toMatchObject({
+			kind: "rename",
+			path: "notes/source.md",
+			to: "notes/destination.md",
+			observed_epoch: epoch,
+			observed_base: { deleted: false, rev: 2, hash: "a".repeat(64) },
+			at: 100,
+		});
+		expect(DeviceStateSchema.safeParse(journal.snapshot()).success).toBe(true);
+		expect(fence.isBlocked()).toBe(true);
+		journal.close();
+	});
+
+	it("keeps the effect fence blocked when uncertain confirmation persistence fails", async () => {
+		let persisted: unknown = null;
+		let failWrites = false;
+		const journal = await DeviceJournal.open({
+			readState: async () => persisted,
+			writeState: async (state) => {
+				if (failWrites) throw new Error("storage write failed");
+				persisted = structuredClone(state);
+			},
+			readPayload: async () => new Uint8Array(),
+			writePayload: async () => undefined,
+		});
+		const fence = new CoexistenceEffectFence(
+			() => journal.snapshot().coexistence_confirmations.length > 0,
+		);
+		const controller = new CoexistenceController(
+			journal,
+			{ isUnavailable: async () => false, size: async () => null },
+			() => true,
+			() => 1,
+			fence,
+		);
+		const event = { type: "delete", path: "notes/a.md" } as const;
+		controller.registerOriginProof(event, Promise.resolve(false));
+		failWrites = true;
+
+		await expect(controller.observe(event)).rejects.toThrow(
+			"storage write failed",
+		);
+		expect(fence.isBlocked()).toBe(true);
+		journal.close();
+	});
+
+	it("preserves an existing confirmation when another event is proved", async () => {
+		let persisted: unknown = null;
+		const journal = await DeviceJournal.open({
+			readState: async () => persisted,
+			writeState: async (state) => {
+				persisted = structuredClone(state);
+			},
+			readPayload: async () => new Uint8Array(),
+			writePayload: async () => undefined,
+		});
+		await journal.resetEpoch("9a".repeat(16));
+		await journal.setBase("notes/old.md", {
+			deleted: false,
+			rev: 1,
+			hash: "c".repeat(64),
+		});
+		const existing = await journal.captureCoexistenceEvent(
+			{ type: "delete", path: "notes/old.md" },
+			10,
+		);
+		const fence = new CoexistenceEffectFence(
+			() => journal.snapshot().coexistence_confirmations.length > 0,
+		);
+		const controller = new CoexistenceController(
+			journal,
+			{ isUnavailable: async () => false, size: async () => null },
+			() => true,
+			() => 20,
+			fence,
+		);
+		const event = { type: "delete", path: "notes/new.md" } as const;
+		controller.registerOriginProof(event, Promise.resolve(true));
+
+		await expect(controller.observe(event)).resolves.toBe(true);
+		expect(journal.snapshot().coexistence_confirmations).toEqual([existing]);
+		expect(fence.isBlocked()).toBe(true);
+		journal.close();
+	});
+
+	it("clears a proved plugin delete without changing confirmation queues", async () => {
+		let persisted: unknown = null;
+		const journal = await DeviceJournal.open({
+			readState: async () => persisted,
+			writeState: async (state) => {
+				persisted = structuredClone(state);
+			},
+			readPayload: async () => new Uint8Array(),
+			writePayload: async () => undefined,
+		});
+		await journal.resetEpoch("d".repeat(32));
+		await journal.setBase("notes/a.md", {
+			deleted: false,
+			rev: 7,
+			hash: "e".repeat(64),
+		});
+		const controller = new CoexistenceController(
+			journal,
+			{ isUnavailable: async () => false, size: async () => null },
+			() => true,
+			() => 500,
+		);
+		const event = { type: "delete", path: "notes/a.md" } as const;
+		controller.registerOriginProof(event, Promise.resolve(true));
+
+		await expect(controller.observe(event)).resolves.toBe(true);
+		expect(journal.snapshot().coexistence_confirmations).toEqual([]);
+		expect(journal.snapshot().base["notes/a.md"]).toEqual({
+			deleted: false,
+			rev: 7,
+			hash: "e".repeat(64),
+		});
+		journal.close();
+	});
 	it("captures exact delete authority and placeholder metadata before event admission", async () => {
 		let persisted: unknown = null;
 		const journal = await DeviceJournal.open({

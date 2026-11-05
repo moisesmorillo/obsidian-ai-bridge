@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-11-05T22:33:00Z'
-updated_date: '2026-11-05T22:40:00Z'
+updated_date: '2026-11-05T22:48:00Z'
 labels: []
 dependencies: []
 parent_task_id: OAB-10
@@ -45,4 +45,8 @@ Implemented the existing HTML measurements page. It shows per-client REST, MCP, 
 RED: `bun run --cwd apps/worker vitest run --config vitest.f2.config.ts test/f2/owner*.test.ts` returned exit 1 because Vitest found no tests through that root-level filter. Correct worker-root run `cd apps/worker && bun vitest run --config vitest.f2.config.ts test/f2/owner.test.ts` failed as intended: 1 failed, 2 passed because the empty-client message was missing. GREEN: same worker-root command passed, 1 file and 3 tests. `bun run docs:check` passed. `bun run check` passed lint, docs, all typechecks, tests (tooling 8 files/91 tests, protocol 17/307, plugin 26/647 passed with 1 skipped, worker full 43/702 plus f2 8/115), and dry-run builds. Existing Worker tests print expected synthetic disconnect and injected SQLite error diagnostics despite passing.
 
 Self-review scope: focused change against e52fad1, including `apps/worker/src/transport/owner.ts`, `apps/worker/test/f2/owner.test.ts`, and `docs/api/measurements.md`. Reviewed HTML escaping, output states and totals, canonical Access/origin checks, response headers, documented protocol meaning, and focused runtime coverage. No changes to schemas, dependencies, cloud resources, vault data, or route policy. No independent review in this worker; parent owns task and branch reviews.
+
+Review round 1 correction: Added a valid signed non-owner Access subject test. The HTML route returns 401 and a handler-level measurement resolver spy remains uncalled. Added a rendered JSON-link assertion, follows that URL, and verifies the default JSON content type/status. Explicit HTML assertions now cover known zero referenced bytes, empty latency and stale labels, observed stale requests and latency, partial then incomplete coverage, unknown storage after a synthetic SQLite read failure, and wrong-origin HTML 404. Existing behavior cases passed when added, as directed. No runtime behavior changed.
+
+Correction validation: `cd apps/worker && bun vitest run --config vitest.f2.config.ts test/f2/owner.test.ts` passed 1 file and 3 tests. `bun run docs:check` passed. `bun run check` passed lint, docs, typechecks, test suites (tooling 8/91, protocol 17/307, plugin 26/647 passed and 1 skipped, worker 43/702 and F2 8/115), and dry-run builds. An initial docs check flagged missing TSDoc on the new named test helper. Added the contract. An initial assertion expected no-store for a request to `other.test`, but Workers test routing returned a platform 404 without reaching the handler. Kept the wrong-origin HTML 404 assertion and removed the invalid cache-header expectation. A formatter check then required formatting, which was applied. Final checks passed. No production behavior change.
 <!-- SECTION:NOTES:END -->

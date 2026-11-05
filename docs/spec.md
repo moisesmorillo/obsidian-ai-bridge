@@ -16,7 +16,7 @@ One Obsidian vault, usable offline on Mac, iPad and iPhone, synchronized through
 
 1. Bidirectional sync of the vault across enrolled Obsidian installations with no designated writer.
 2. MCP access for authorized agents (ChatGPT first; Claude and Claude Code use the same server) to list, read, search, create, update, append, delete and restore notes, with changes arriving in Obsidian automatically.
-3. No silent data loss: exact-revision conditional writes, recoverable history, visible conflicts, independent backup with proven restore.
+3. No silent data loss: exact-revision conditional writes, recoverable history, visible conflicts. iCloud Drive keeps an independent copy of the live vault until cutover (§11).
 4. Cost target: Workers Paid base ($5/month); everything else inside included allowances at the measured vault size.
 
 ### 1.2 Non-goals (v1)
@@ -34,7 +34,7 @@ End-to-end encryption; sync while iOS/iPadOS suspends Obsidian; automatic text m
 | Plan | Workers Paid accepted |
 | Legacy | Repo and git history restarted from scratch; worker `obsidian-bridge.mmorillo.dev`, bucket `obsidian-ai-bridge` and KV wiped; nothing migrated |
 | Conflict policy | **Option B**: the confirmed remote operation stands; pending local content is preserved as a conflict copy at a new path; nothing is resurrected automatically |
-| Backup destination | Private GitHub repository, nightly, via Worker cron |
+| Backup destination | None in v1 (owner decision 2026-11-05). A Cloudflare-native copy is an open option before F6 (§11, §16) |
 | Phase F4 | Kept: real vault on the Mac with iCloud still active, plugin only on the Mac, max two weeks, in *coexistence mode* (§7.10) |
 | Tracking | Backlog.md for tasks and deferred items (label `deferred`); no milestones, no separate roadmap |
 | Agent instructions | One `AGENTS.md` at the repo root; no `CLAUDE.md`, Claude Code reads `AGENTS.md` natively |
@@ -65,7 +65,7 @@ Mac / iPad / iPhone                     ChatGPT / claude.ai / Claude Code
      ├─ /mcp             MCP server (same operations, same authorization)
      ├─ /authorize /token /register   OAuth 2.1 (workers-oauth-provider, grants in KV)
      ├─ /owner/*         owner console (behind Cloudflare Access)
-     └─ cron             nightly export (§11)
+     └─ (no cron: no backup export in v1, §11)
                               ▼
             Durable Object "Vault" (SQLite) — sole authority
             files, revisions, changes, FTS, receipts, clients, revocations
@@ -441,7 +441,7 @@ Included: `**/*.md`, `**/*.canvas`, and attachments with extensions `png jpg jpe
 
 ### 7.9 Status model
 
-States shown per vault and per path in plain language: `disconnected`, `syncing`, `settled`, `pending`, `attention`, `revoked`, `paused`, `backup failed`. `settled` requires: empty `pending_ops`, empty `pending_apply`, `cursor == head_seq` at last poll, state persisted. Every *attention* item has a reason code, the path, and one safe action (open, restore, keep both, dismiss). Controls are keyboard-operable, labelled, and do not rely on color alone.
+States shown per vault and per path in plain language: `disconnected`, `syncing`, `settled`, `pending`, `attention`, `revoked`, `paused`. The `backup failed` state is reserved for a future backup and is not shown in v1 (§11). `settled` requires: empty `pending_ops`, empty `pending_apply`, `cursor == head_seq` at last poll, state persisted. Every *attention* item has a reason code, the path, and one safe action (open, restore, keep both, dismiss). Controls are keyboard-operable, labelled, and do not rely on color alone.
 
 ### 7.10 Coexistence mode (phase F4)
 
@@ -510,6 +510,8 @@ KV propagation is eventually consistent (60 s or more), so the DO is the authori
 
 ## 11. Backup and restore
 
+**Owner decision 2026-11-05: no backup export in v1.** The GitHub export, its cron, its pacing and its verification are not built. iCloud Drive keeps an independent copy of the live vault through F4 and F5, as it does today. Before F6 the owner decides whether a Cloudflare-native copy is needed (§16): a copy to a supplementary R2 bucket, or Durable Object point-in-time recovery. Sections 11.1 to 11.4 stay as the reference design for a restore into a new vault. The epoch rules in §4 and §7.3 do not depend on them. The `exports` and `export_pins` tables stay in the schema and remain empty.
+
 ### 11.1 Consistent cut
 
 A nightly cron (03:00 UTC) only **starts** an export; the work runs inside the DO as a chain of alarms so it is resumable and never depends on one invocation finishing.
@@ -543,7 +545,7 @@ A restore **always creates a new vault** (new vault id, new DO). It never import
 
 ### 11.5 Entry condition for F4 (R6)
 
-Backup repository configured, one export `complete` and verified, and one restore demonstrated per §11.4 **before** the plugin touches the real vault.
+iCloud Drive remains the owner of the live vault through F4 and F5. Before the plugin touches the real vault, the owner keeps one dated copy of the vault outside iCloud, for example a zip in local storage. No service-side backup is required (owner decision 2026-11-05).
 
 ## 12. Limits, retention and capacity (R9)
 
@@ -561,7 +563,7 @@ Backup repository configured, one export `complete` and verified, and one restor
 | R2 blobs | 10 GB free tier | Alert at 4 GB; GC trigger at 1 GB unreferenced (§16) |
 | Worker memory | 128 MB | No full-vault materialization anywhere; exports and hydration stream per file |
 | Polling | §7.4 | *measure* in F4: requests/day per device, p95 feed latency |
-| Export | ≤ 25 MB per Git blob, one at a time; ≤ 50 calls per alarm invocation; ≤ 60 content-creating calls per minute; ≤ 450 per hour | Partial export stays `in progress`; never announced as complete until the ref moves and verification passes; pinned revisions are never pruned |
+| Export | Not built in v1 (§11) | No export runs; the `exports` table stays empty |
 
 Cloudflare lists 10 GB per SQLite Durable Object on Workers Paid and 1 GB on Workers Free. Its [Durable Object limits](https://developers.cloudflare.com/durable-objects/platform/limits/) give these limits. We read this page on 2026-10-17.
 
@@ -599,13 +601,13 @@ Each case is a test (Worker: `@cloudflare/vitest-pool-workers` against the real 
 | AC-04 | A deletes, B edited offline from the same base | Tombstone stands; B's bytes appear as conflict copy on both devices; `path` is trashed on B |
 | AC-05 | A renames X→Y, B edited X offline | Y holds A's bytes everywhere; B's bytes appear as `Y (conflict …)`; X is gone; links rewritten by A arrive as ordinary puts without re-rewriting on B |
 | AC-06 | B deletes while offline, A edited meanwhile | On B's reconnect the delete is dropped; A's bytes appear at `path` on B; *attention* item shown |
-| AC-07 | Restore into empty DO from last export | Current files, an intermediate revision older than the export, and a deleted file are recoverable with matching hashes; old-epoch requests fail before mutating |
+| AC-07 | Restore into empty DO from last export | *Not applicable in v1: no backup (§11).* Current files, an intermediate revision older than the export, and a deleted file are recoverable with matching hashes; old-epoch requests fail before mutating |
 | AC-08 | Owner revokes a client | Next request to the DO fails `401 revoked` within one request, independent of KV propagation; device shows `revoked`, keeps files |
 | AC-09 | Full ChatGPT loop | Read a note; create a note; it appears in Obsidian without manual review; edit in Obsidian; ChatGPT reads the change; concurrent offline edit yields a conflict copy; an interrupted append retried with a key produces one entry |
 | AC-10 | User saves a new edit between hash check and write during apply | `process` callback sees different bytes; nothing written; the user's edit is published; no loss |
 | AC-11 | Local and remote identical bytes, different from base | Base updated; no write; no conflict |
 | AC-12 | Device offline 40 days returns | `cursor_expired` → full reconciliation; remote deletes applied via tombstones; dirty paths become conflict copies; no path treated as a new create |
-| AC-13 | Restore bumped the epoch | Every client re-hydrates; clean files untouched; no duplicates |
+| AC-13 | Restore bumped the epoch | Every client re-hydrates; clean files untouched; no duplicates. *No production trigger in v1: an epoch changes only through a restore (§11). Controlled proof recorded in OAB-8.8.* |
 | AC-14 | Create `Notes/café.md` when `notes/CAFÉ.md` exists; then rename `notes/CAFÉ.md` → `notes/Café.md` | Create returns `409 path_collision` with the existing path; the case-only rename of the same file succeeds |
 | AC-15 | Search examples of §10 | Each returns the expected note with a snippet; two-character query rejected; `AND` matches literally |
 | AC-16 | A 1.5 MB Markdown file | Synced as blob with exact bytes; listed `large: true`; readable by range; absent from search; shown in panel |
@@ -615,7 +617,7 @@ Each case is a test (Worker: `@cloudflare/vitest-pool-workers` against the real 
 | AC-20 | Enrollment of a second device whose vault already has content | Equal files clean; local-only uploaded; remote-only downloaded; differing files keep both via conflict copy; nothing overwritten |
 | AC-21 | Hydration while another client writes | Manifest rows with `seq > head_seq` applied; feed revisits them as no-ops; a pruned pinned revision falls back to current |
 | AC-22 | Append on a tombstoned note; append that would exceed 1 MB | `409 tombstone`; `413 text_too_large`; no partial write |
-| AC-23 | Export fails (GitHub 5xx) mid-chunk | `exports` records failure and step; the next alarm resumes from stored blob SHAs; the ref moves only once; devices show `backup failed` only after 48 h without a complete export |
+| AC-23 | Export fails (GitHub 5xx) mid-chunk | *Not applicable in v1: no backup (§11).* `exports` records failure and step; the next alarm resumes from stored blob SHAs; the ref moves only once; devices show `backup failed` only after 48 h without a complete export |
 | AC-24 | Rename received by a device whose `from` is dirty | Local bytes saved as conflict copy; `to` holds the bytes fetched by `to_rev`; `from` trashed; no device waits for a later `put` |
 | AC-25 | Hydration applied rev 3, feed later replays rev 2 for the same path | Entry ignored because `rev ≤ base.rev`; no write, no conflict |
 | AC-26 | Rename into a path that was tombstoned with 10 prior revisions | `to_rev = 11`; `revisions` has no primary-key collision; history of `to` shows the rename |
@@ -627,16 +629,16 @@ Each case is a test (Worker: `@cloudflare/vitest-pool-workers` against the real 
 | AC-32 | User edits during `process` so the callback refuses the remote write | `base` unchanged; the remote entry is re-evaluated as a conflict against the **current** local bytes; the remote revision is applied at `path` and the local bytes survive as the conflict copy; the entry is never discarded |
 | AC-33 | Hydration read X before a rename and Y after; feed replays the rename | Destination side skipped (`base[Y].rev == to_rev`); source side applied (X trashed, tombstone recorded); no duplicate Y |
 | AC-34 | `create_note`/`append_to_note` prepared before a restore, sent after | `409 epoch_mismatch`; no write |
-| AC-35 | Requests during a restore | The new vault answers `503 importing` until activation; the old vault answers `410 vault_retired` after it; clients switch and re-hydrate by hash; no client ever reads a partial table |
-| AC-36 | Export in progress while a pinned revision reaches 30 days or capacity pressure triggers pruning | Pinned revision survives; export completes with the exact bytes of the cut |
-| AC-37 | Export against a mocked GitHub that returns `403` secondary-limit | Alarm sleeps for `Retry-After`; pacing never exceeds 60/min or 450/h in the test log; export completes |
+| AC-35 | Requests during a restore | *Not applicable in v1: no backup (§11).* The new vault answers `503 importing` until activation; the old vault answers `410 vault_retired` after it; clients switch and re-hydrate by hash; no client ever reads a partial table |
+| AC-36 | Export in progress while a pinned revision reaches 30 days or capacity pressure triggers pruning | *Not applicable in v1: no backup (§11).* Pinned revision survives; export completes with the exact bytes of the cut |
+| AC-37 | Export against a mocked GitHub that returns `403` secondary-limit | *Not applicable in v1: no backup (§11).* Alarm sleeps for `Retry-After`; pacing never exceeds 60/min or 450/h in the test log; export completes |
 | AC-38 | Two clients send the same idempotency key | Two independent receipts; no `422` |
 | AC-39 | Crash after writing a conflict copy but before `copied`; user edits the copy; restart | The edited copy is never overwritten; item goes to *attention*; original path untouched |
 | AC-40 | Feed replays a rename whose `from_rev` is lower than the live `base[from].rev` | Source side ignored; nothing trashed |
-| AC-41 | After a restore the new epoch has `rev 3` where a device held `base.rev 8` | Hash comparison wins; base rewritten; a locally changed file becomes a conflict copy |
-| AC-42 | Restore succeeds, response lost, another client deletes again, retry | `412` on `If-Match`; the note stays deleted |
+| AC-41 | After a restore the new epoch has `rev 3` where a device held `base.rev 8` | *Not applicable in v1: no backup (§11).* Hash comparison wins; base rewritten; a locally changed file becomes a conflict copy |
+| AC-42 | Restore succeeds, response lost, another client deletes again, retry | *Not applicable in v1: no backup (§11).* `412` on `If-Match`; the note stays deleted |
 | AC-43 | Vault at 10,000 files or 2 GB | Next content mutation `507`; reads and deletes continue; panel shows the limit |
-| AC-44 | The same backup is restored twice; a device with a pending edit against the first restored vault switches to the second | The two vaults have different epochs; the pending `If-Match` fails with `epoch_mismatch`; the device re-hydrates by hash and its edit becomes a conflict copy; no silent overwrite |
+| AC-44 | The same backup is restored twice; a device with a pending edit against the first restored vault switches to the second | *Not applicable in v1: no backup (§11).* The two vaults have different epochs; the pending `If-Match` fails with `epoch_mismatch`; the device re-hydrates by hash and its edit becomes a conflict copy; no silent overwrite |
 
 ## 14. Delivery phases
 
@@ -650,10 +652,10 @@ F1 is a server-only gate. Local protocol, real Durable Object, and Worker HTTP t
 | F1 | Worker: DO schema, all `/v1` endpoints, authorize/commit tickets, idempotency, search, limits, revocation table; tests with real DO | F0 | Server portions of AC-01, 03–06, 11, 12, 14, 15, 16, 17, 18, 21, 22, 25, 26, 27, 28, 29, 34, 38, 40, and 43, plus independent task review, human branch review, and actual remote CI |
 | F2 | OAuth (provider + Access), MCP server and tools, owner console (clients, revoke) | F1 | MCP Inspector, Claude Code and ChatGPT web connect; read and write work; AC-08. Owner verifies Developer mode and iPhone availability in their ChatGPT account; result recorded, owner decides on mobile client strategy |
 | F3 | Plugin Desktop: enrollment, hydration, feed, publish, Option B, status panel, Sync now | F2 | Two test vaults on the Mac pass AC-02, 03, 04, 05, 06, 09, 10, 13, 20, 24, 30, 31, 32, 33, 39; AC-09 run against real ChatGPT |
-| F3b | Backup: alarm-driven incremental export to the private backup repo, verification, restore into a new vault | F1 | AC-07, 23, 35, 36, 37, 41, 42, 44 against a synthetic 500-file vault (about one hour of paced export) |
-| F4 | Real vault on the Mac in coexistence mode, plugin only on the Mac | F3 + F3b restore demonstrated | Two weeks max; AC-19; polling and storage measured; no *attention* item unexplained |
+| F3b | Removed: no backup export in v1 (owner decision 2026-11-05, §11) | — | — |
+| F4 | Real vault on the Mac in coexistence mode, plugin only on the Mac | F3 + one dated local copy of the real vault (§11.5) | Two weeks max; AC-19; polling and storage measured; no *attention* item unexplained |
 | F5 | Mobile: plugin installed via BRAT on iPhone and iPad against a **copy** of the vault, then the real one | F4 | AC-03/04/05 across three devices; `secretStorage` behavior recorded per platform; offline edit on iPhone resolves correctly |
-| F6 | Cutover: new local vaults outside iCloud on each device hydrated from the service; iCloud no longer owns the live vault; coexistence mode off | F5 + fresh verified export | Single sync owner per device; AC-13 after a rehearsal restore |
+| F6 | Cutover: new local vaults outside iCloud on each device hydrated from the service; iCloud no longer owns the live vault; coexistence mode off | F5 + owner decision on a Cloudflare-native backup (§11, §16) | Single sync owner per device |
 
 ## 15. Repository and process
 
@@ -697,8 +699,7 @@ Bun workspaces; Hono; `@cloudflare/workers-oauth-provider`; `@modelcontextprotoc
 | Embeddings / semantic search | FTS covers the current vault | Agents miss notes by synonym in real use | `search_notes` returns `rev` and snippets; a second backend plugs behind it |
 | `.obsidian/` settings categories | Not needed to replace iCloud for content | Manual re-configuration becomes a daily cost | Scope is a pattern list |
 | Append under a heading | No agent needs it yet | A concrete agent workflow requires it | `append` is a DO operation |
-| Packed baseline export (one archive upload instead of one blob per item) | Only matters for first exports of large vaults; current vault exports in under an hour | Vault above 5,000 items, or owner unwilling to wait days for a first backup | Export manifest and pins are independent of how items are published |
-| NAS or second storage | Export is already portable | R2 > 10 GB or desire for off-Cloudflare copy beyond GitHub | Blob access behind one `BlobStore` interface; nightly export format |
+| Cloudflare-native backup | iCloud Drive keeps an independent copy until F6 (owner decision 2026-11-05) | Owner request before F6, or iCloud stops owning the live vault | Blob access behind one `BlobStore` interface; a copy to a supplementary R2 bucket or Durable Object point-in-time recovery; §11.1 to 11.4 hold the restore reference design |
 | Windows / Linux | No device | A device exists | No Node/Electron APIs in the plugin |
 | E2E encryption | Would break server-side search and append | Owner requirement changes | None; would be a redesign |
 

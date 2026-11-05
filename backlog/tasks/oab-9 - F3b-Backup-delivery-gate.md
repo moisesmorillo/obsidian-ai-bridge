@@ -1,10 +1,10 @@
 ---
 id: OAB-9
-title: F3b Backup delivery gate
-status: To Do
+title: 'F3b Backup delivery gate (not built: owner decision 2026-11-05)'
+status: Deferred
 assignee: []
-created_date: '2026-10-12 15:13'
-updated_date: '2026-10-13 10:04'
+created_date: 2026-10-12 15:13
+updated_date: '2026-11-05T12:39:00Z'
 labels:
   - phase-gate
   - F3b
@@ -19,17 +19,18 @@ ordinal: 9000
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-Track F3b against docs/spec.md §14. Intent-only; research/decompose when selected; no implementation plan authorized now. Exit: AC-07, 23, 35–37, 41, 42, 44 against synthetic 500-file vault (about one hour paced export). No personal-vault access is authorized by dependency completion.
+Owner decision 2026-11-05: the GitHub export mechanism of docs/spec.md §11 is not built. iCloud Drive keeps an independent copy of the live vault through F4 and F5. Trigger: owner request before F6 for a Cloudflare-native copy, such as a supplementary R2 bucket or Durable Object point-in-time recovery. Research and decompose only when the owner selects it. No personal-vault access follows from this task.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 F1 is complete before F3b starts.
-- [ ] #2 §14 backup exit acceptance cases pass on the synthetic 500-file vault.
+- [ ] #1 The owner selects a Cloudflare-native backup mechanism before F6, and docs/spec.md records its exit cases before implementation.
 <!-- AC:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
 Reconciled after merged F0: this is a committed section14 phase entry/exit gate, not a trigger-based deferred feature or an implementation task. Its original acceptance cases and dependency edges are unchanged. Dependency readiness only permits selection for research and decomposition; it does not authorize implementation, deployment or personal-vault access.
+
+Owner decision 2026-11-05: a GitHub export is too much for this vault. iCloud Drive remains the independent copy, as it does today. The spec change is in PR docs/no-backup-export. OAB-10 and OAB-12 no longer depend on a backup.
 <!-- SECTION:NOTES:END -->

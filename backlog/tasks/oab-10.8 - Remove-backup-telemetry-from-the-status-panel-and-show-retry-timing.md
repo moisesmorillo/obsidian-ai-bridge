@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-11-05T23:18:00Z'
-updated_date: '2026-11-05T23:32:00Z'
+updated_date: '2026-11-05T23:42:00Z'
 labels: []
 dependencies: []
 documentation:
@@ -44,4 +44,6 @@ Owner approved P5-plan.md in Plannotator pn-35be2b. Baseline focused tests passe
 Implementation evidence on branch bugfix/p5-panel-cleanup at reviewed base 091b2b1d82723c03fe78fbfffaf6df5f797ff18d. Focused baseline passed: 3 files, 21 tests, exit 0. TDD RED after test edits: 3 assertions failed and 23 passed across 3 files, exit 1. Focused GREEN: 3 files, 26 tests passed, exit 0. `bun run docs:check` passed. `bun run check` passed lint, docs check, typecheck, tests, and builds. Self-review found no blockers. Controller regressions use DeviceJournal, CoexistenceController, DesktopSyncController, and SyncTransportError. Test evidence does not cover live service timing or a real vault trial. Full report: .superpowers/sdd/P5-plan/task-1-report.md. Task remains In Progress. Do not close acceptance criteria or mark Done.
 
 Commit: 088115c (fix(plugin): clean sync status panel). Final reviewed source revision: 088115c. The worktree has no staged files. The task remains In Progress, with acceptance criteria unchecked.
+
+F1 review correction: Added an integration regression in test/status-panel.test.ts. It reads status from AIBridgePlugin.syncStatus and drives AIBridgePlugin.startSync through the real DesktopSyncController and SyncTransport using synthetic vault, session, timers, and document. It proves no backup property, unknown capacity before sync, measured capacity after a validated summary, a real 429 admission_limited Retry-After 30 failure, panel retry copy, and cleared failure after successful recovery. Focused tests passed: 3 files, 27 tests. `bun run docs:check` passed. Post-merge `bun run check` passed lint, docs check, typecheck, tests, and builds. Task remains In Progress. Acceptance criteria remain unchecked.
 <!-- SECTION:NOTES:END -->

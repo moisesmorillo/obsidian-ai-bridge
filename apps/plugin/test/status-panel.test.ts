@@ -1,4 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { DeviceSession } from "../src/auth/device-session";
+import type { OAuthTransportResponse } from "../src/infrastructure/oauth-transport";
+import AIBridgePlugin from "../src/main";
 import { SyncStatusPanel } from "../src/status-panel";
 import { CoexistenceController } from "../src/sync/coexistence";
 import { DesktopSyncController } from "../src/sync/desktop-sync";
@@ -147,6 +150,19 @@ function projectJournal(journal: Awaited<ReturnType<typeof openJournal>>) {
 		revoked: false,
 		coexistenceEnabled: true,
 	});
+}
+
+/** Builds the synthetic authenticated transport response used by plugin composition tests. */
+function makeTransportResponse(
+	body: unknown,
+	status = 200,
+	extraHeaders: Record<string, string> = {},
+): OAuthTransportResponse {
+	return {
+		status,
+		headers: { "content-type": "application/json", ...extraHeaders },
+		text: JSON.stringify(body),
+	};
 }
 
 afterEach(() => {
@@ -443,6 +459,167 @@ describe("SyncStatusPanel", () => {
 				child.textContent.includes("retry in"),
 			),
 		).toBe(false);
+	});
+
+	it("projects and renders live composition state through a 429 failure and recovery", async () => {
+		vi.stubGlobal("window", {
+			setTimeout: () => 1,
+			clearTimeout: () => undefined,
+			setInterval: () => 2,
+			clearInterval: () => undefined,
+			addEventListener: () => undefined,
+			removeEventListener: () => undefined,
+		});
+		vi.stubGlobal("document", {
+			...documentStub,
+			visibilityState: "visible",
+			hasFocus: () => true,
+			addEventListener: () => undefined,
+			removeEventListener: () => undefined,
+		});
+		const plugin = new AIBridgePlugin({} as never, {} as never);
+		const journal = await openJournal();
+		let rejectNextSummary = true;
+		const session = {
+			requestResponse: async (url: string): Promise<OAuthTransportResponse> => {
+				const path = new URL(url).pathname;
+				if (path === "/v1/vault" && rejectNextSummary) {
+					rejectNextSummary = false;
+					return makeTransportResponse(
+						{
+							error: "admission_limited",
+							message: "The vault cannot accept another operation now.",
+						},
+						429,
+						{ "retry-after": "30" },
+					);
+				}
+				if (path === "/v1/vault")
+					return makeTransportResponse({
+						epoch: "c".repeat(32),
+						head_seq: 0,
+						counts: { live: 0, deleted: 0 },
+						limits: {
+							manifest_page: 256,
+							feed_page: 1000,
+							text_bytes: 1_000_000,
+							blob_bytes: 25_000_000,
+						},
+						capacity: {
+							database_bytes: 512,
+							database_limit_bytes: 2_000_000_000,
+							live_file_limit: 10_000,
+							history_pressure_bytes: 0,
+							referenced_blob_bytes: 0,
+						},
+						attention: [],
+					});
+				if (path === "/v1/manifest")
+					return makeTransportResponse({
+						epoch: "c".repeat(32),
+						head_seq: 0,
+						entries: [],
+						next_page: null,
+					});
+				if (path === "/v1/changes")
+					return makeTransportResponse({
+						epoch: "c".repeat(32),
+						head_seq: 0,
+						entries: [],
+					});
+				throw new Error(`Unexpected status test request: ${path}`);
+			},
+			close: () => undefined,
+		};
+		const vault = {
+			getFiles: () => [],
+			getAbstractFileByPath: () => null,
+			on: () => ({}),
+			offref: () => undefined,
+			adapter: {
+				stat: async () => null,
+				list: async () => ({ files: [], folders: [] }),
+				readBinary: async () => new ArrayBuffer(0),
+				writeBinary: async () => undefined,
+				remove: async () => undefined,
+			},
+		};
+		Reflect.set(plugin, "app", { vault });
+		Reflect.set(plugin, "journal", journal);
+		Reflect.set(plugin, "session", session as unknown as DeviceSession);
+		Reflect.set(plugin, "sessionStatus", "connected");
+		/** Reads the projection created by the real plugin composition owner. */
+		const getStatus = (): SyncStatusProjection | null =>
+			Reflect.apply(
+				Reflect.get(plugin, "syncStatus") as () => SyncStatusProjection | null,
+				plugin,
+				[],
+			);
+		const container = new FakeElement("div");
+		const panel = new SyncStatusPanel({
+			syncNow: () => undefined,
+			pause: () => undefined,
+			resume: () => undefined,
+			reconnect: () => undefined,
+			openPath: () => undefined,
+			unsupportedFiles: () => [],
+			excludedFiles: () => [],
+			confirmCoexistence: () => undefined,
+			keepServerState: () => undefined,
+		});
+		/** Renders the plugin's current composed projection and returns that projection. */
+		const render = () => {
+			const status = getStatus();
+			if (!status) throw new Error("Plugin status projection was unavailable");
+			panel.render(container as unknown as HTMLElement, status);
+			return status;
+		};
+
+		const unknown = render();
+		expect(unknown).not.toHaveProperty("backup");
+		expect(unknown.capacity).toBe("unknown");
+		expect(container.children.map((child) => child.textContent)).toContain(
+			"Capacity: unknown.",
+		);
+		expect(
+			container.children.some((child) => child.textContent.includes("Backup:")),
+		).toBe(false);
+
+		Reflect.apply(Reflect.get(plugin, "startSync") as () => void, plugin, []);
+		const controller = Reflect.get(
+			plugin,
+			"desktopSync",
+		) as DesktopSyncController;
+		await controller.waitForIdle();
+		const failed = render();
+		expect(failed.failure).toEqual({
+			transportClass: "4xx",
+			code: "admission_limited",
+			retryAfterSeconds: "30",
+		});
+		const failureParagraph = container.children.find((child) =>
+			child.textContent.includes("Sync request failed."),
+		);
+		expect(failureParagraph?.textContent).toContain("4xx");
+		expect(failureParagraph?.textContent).toContain("admission_limited");
+		expect(failureParagraph?.textContent).toContain("retry in 30 s");
+
+		await controller.syncNow();
+		const recovered = render();
+		expect(recovered.failure).toBeNull();
+		expect(recovered.capacity).toEqual({ used: 512, limit: 2_000_000_000 });
+		expect(container.children.map((child) => child.textContent)).toContain(
+			"Capacity: 512 of 2000000000 bytes used.",
+		);
+		expect(
+			container.children.some((child) =>
+				child.textContent.includes("retry in"),
+			),
+		).toBe(false);
+		expect(
+			container.children.some((child) => child.textContent.includes("Backup:")),
+		).toBe(false);
+		plugin.onunload();
 	});
 
 	it("shows both coexistence counts when either controller count is non-zero", async () => {

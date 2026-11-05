@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-10-28T16:48:00Z'
-updated_date: '2026-11-05T00:15:00Z'
+updated_date: '2026-11-05T00:30:00Z'
 labels:
   - deferred
   - privacy
@@ -69,4 +69,18 @@ These correction tests followed the existing product implementation. No code was
 Final correction validation: `cd apps/worker && bunx vitest run --config vitest.f2.config.ts` passed 110 tests in eight files. `cd apps/worker && bunx vitest run --config vitest.config.ts test/application-clients-cleanup.test.ts` passed four tests. `bun run docs:check` passed. `bun run check` passed lint, documentation, four workspace type checks, tests, and dry-run builds. Totals: tooling 56, protocol 306, plugin 483, Worker suites 661, 122, and 110. Total: 1,738 tests in 100 files. No remote CI or live-service action was run.
 
 Task review at 407b3da requested corrections. Finding 1, acceptance conflict and duplication: fixed at 4971f2a with exactly two unchecked criteria and the approved bounded wording. Finding 2, missing cleanup cases: fixed with real local KV/DO late-token-write denial and provider-list-failure pending-state tests, plus application continuation over 11 empty grants across two requests. Corrective review APPROVE at 4971f2a, with both findings fixed and no new issue. The 11-grant case uses a stub provider to prove the application budget and continuation, not 11 real KV grants. The late write leaves a token record present but unusable at the DO, not globally absent. Latest worker full check passed 1,738 tests across 100 files, docs, lint, types, and builds. Test chronology exceptions remain explicit. No live-service or remote CI evidence applies. Active lens probe found one URL warning at oauth.ts 181. Review rejected it as a defect because canonical configuration validation and equality checks precede that URL construction.
+
+Whole-branch review correction, 2026-11-05.
+
+Finding closure: expanded the callback rejection test to cover an unrelated raw owner, a different derived owner, a different derived service, and absent, invalid, or changed callback identity configuration. Each rejection asserts zero grant-registration calls.
+
+Finding closure: added repeated opaque consent coverage. The test confirms both issued opaque access tokens still resolve to stored grants and both remain usable after the second consent.
+
+Finding closure: reused the real pinned-provider legacy grant fixture for authorization-code and refresh revocation races. Each flow covers revocation before and after durable registration. Pre-registration denial returns invalid_grant. Post-registration issuance remains denied by durable revocation and cannot refresh again.
+
+Finding closure: the legacy expiry test advances fake time by five seconds before refresh and checks the rotated access-token creation time advanced. A finally block restores real timers. The provider grant expiry remains unchanged.
+
+The tests followed the existing implementation. No product code was removed to manufacture RED. No product source changed in this correction.
+
+Final validation: the complete F2 suite passed 115 tests in eight files. The isolated cleanup suite passed four tests. bun run docs:check passed. bun run check passed lint, documentation, four workspace type checks, 1,743 tests in 100 files, and dry-run builds. Expected injected network, stream-cancellation, and SQLite errors appeared in worker test logs. No live-service or remote CI action ran.
 <!-- SECTION:NOTES:END -->

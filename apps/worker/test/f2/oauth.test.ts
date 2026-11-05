@@ -317,6 +317,64 @@ async function createAuthorizationCode(
 	};
 }
 
+/** Create a pinned-provider legacy code with raw identity and a current durable consent fence. */
+async function createLegacyAuthorizationCode(
+	clientId: string,
+	scope = "vault:read",
+): Promise<{ code: string; verifier: string }> {
+	const { verifier, challenge } = createPkce();
+	const query = new URLSearchParams({
+		response_type: "code",
+		client_id: clientId,
+		redirect_uri: "https://flow.test/callback",
+		scope,
+		state: "legacy-transition-fixture",
+		code_challenge: await challenge,
+		code_challenge_method: "S256",
+		resource: "https://service.test",
+	});
+	const options = requireValue(
+		createOAuthOptions(env, createAuthorizeHandler(), createAuthorizeHandler()),
+		"provider options",
+	);
+	const api = getOAuthApi(options, env);
+	const authRequest = await api.parseAuthRequest(
+		new Request(`https://service.test/authorize?${query}`),
+	);
+	const consent = await api.beginConsent(authRequest);
+	const cookie = consent.headers.get("set-cookie")?.split(";")[0] ?? "";
+	const approved = await api.approveConsent(
+		new Request("https://service.test/authorize/consent", {
+			headers: { cookie },
+		}),
+		consent.handle,
+	);
+	const vault = env.VAULTS.get(env.VAULTS.idFromName("service.test"));
+	const fence = await vault.beginClientConsent(
+		"synthetic-owner",
+		clientId,
+		"Pinned legacy fixture",
+	);
+	const legacyCode = await api.completeAuthorization({
+		request: approved.request,
+		userId: "synthetic-owner",
+		metadata: { client_name: "Pinned legacy fixture" },
+		scope: approved.request.scope,
+		props: {
+			client_id: clientId,
+			generation: fence.generation,
+			consent_id: fence.consent_id,
+		},
+	});
+	return {
+		code: requireValue(
+			new URL(legacyCode.redirectTo).searchParams.get("code"),
+			"legacy authorization code",
+		),
+		verifier,
+	};
+}
+
 /** Pause the real registry RPC before or after its durable transaction for race tests. */
 function holdGrantRegistration(
 	bindings: Env,
@@ -386,6 +444,30 @@ function exchangeRequest(body: URLSearchParams): Request {
 		headers: { "content-type": "application/x-www-form-urlencoded" },
 		body,
 	});
+}
+
+/** Read the provider's creation and expiry timestamps for one synthetic access token. */
+async function readAccessTokenTimes(
+	token: string,
+): Promise<{ createdAt: number; expiresAt: number }> {
+	const [userId, grantId] = token.split(":");
+	const digest = new Uint8Array(
+		await crypto.subtle.digest("SHA-256", new TextEncoder().encode(token)),
+	);
+	const tokenId = Array.from(digest, (byte) =>
+		byte.toString(16).padStart(2, "0"),
+	).join("");
+	const kv = requireValue(env.OAUTH_KV, "OAuth KV binding");
+	const stored = (await kv.get(`token:${userId}:${grantId}:${tokenId}`, {
+		type: "json",
+	})) as { createdAt?: unknown; expiresAt?: unknown } | null;
+	if (
+		!stored ||
+		typeof stored.createdAt !== "number" ||
+		typeof stored.expiresAt !== "number"
+	)
+		throw new Error("Synthetic OAuth token timestamps are missing");
+	return { createdAt: stored.createdAt, expiresAt: stored.expiresAt };
 }
 
 /** Mark one stored access token as expired to test the production token check. */
@@ -495,7 +577,7 @@ describe("production OAuth entry", () => {
 		await response.text();
 	});
 
-	it("rejects an unknown provider identity before durable registration", async () => {
+	it("rejects other provider identities and invalid callback configuration before registration", async () => {
 		let registrations = 0;
 		const vaults = new Proxy(env.VAULTS, {
 			/** Wrap the real stub and count only grant registration calls. */
@@ -541,18 +623,59 @@ describe("production OAuth entry", () => {
 			options.tokenExchangeCallback,
 			"token exchange callback",
 		);
-		await expect(
-			callback({
-				grantType: "authorization_code",
-				clientId: "synthetic-client",
-				grantId: "synthetic-grant",
-				scope: ["vault:read"],
-				requestedScope: ["vault:read"],
-				userId: "synthetic-other-owner",
-				props: { generation: 1, consent_id: "synthetic-consent" },
-				env: guardedEnv,
-			} as Parameters<typeof callback>[0]),
-		).rejects.toMatchObject({ code: "invalid_grant" });
+		const invalidIdentities = [
+			"synthetic-other-owner",
+			await deriveProviderUserId(
+				"synthetic-other-owner",
+				"https://service.test",
+			),
+			await deriveProviderUserId("synthetic-owner", "https://other.test"),
+		];
+		for (const userId of invalidIdentities) {
+			await expect(
+				callback({
+					grantType: "authorization_code",
+					clientId: "synthetic-client",
+					grantId: "synthetic-grant",
+					scope: ["vault:read"],
+					requestedScope: ["vault:read"],
+					userId,
+					props: { generation: 1, consent_id: "synthetic-consent" },
+					env: guardedEnv,
+				} as Parameters<typeof callback>[0]),
+			).rejects.toMatchObject({ code: "invalid_grant" });
+		}
+		const invalidConfigurations: Partial<Env>[] = [
+			{ OWNER_SUBJECT: undefined },
+			{ SERVICE_ORIGIN: "http://service.test" },
+			{ OWNER_SUBJECT: "synthetic-other-owner" },
+			{ SERVICE_ORIGIN: "https://other.test" },
+		];
+		for (const override of invalidConfigurations) {
+			const callbackEnv = new Proxy(guardedEnv, {
+				/** Override one callback configuration value without changing other bindings. */
+				get(target, property) {
+					return property in override
+						? override[property as keyof Env]
+						: Reflect.get(target, property, target);
+				},
+			}) as Env;
+			await expect(
+				callback({
+					grantType: "authorization_code",
+					clientId: "synthetic-client",
+					grantId: "synthetic-grant",
+					scope: ["vault:read"],
+					requestedScope: ["vault:read"],
+					userId: await deriveProviderUserId(
+						"synthetic-owner",
+						"https://service.test",
+					),
+					props: { generation: 1, consent_id: "synthetic-consent" },
+					env: callbackEnv,
+				} as Parameters<typeof callback>[0]),
+			).rejects.toMatchObject({ code: "invalid_grant" });
+		}
 		expect(registrations).toBe(0);
 	});
 
@@ -933,59 +1056,11 @@ describe("production OAuth entry", () => {
 	it("preserves a pinned-provider legacy grant through code exchange and refresh", async () => {
 		const assertion = await ownerAssertion();
 		const client = await registerPublicClient();
-		const { verifier, challenge } = createPkce();
-		const query = new URLSearchParams({
-			response_type: "code",
-			client_id: client.client_id,
-			redirect_uri: "https://flow.test/callback",
-			scope: "vault:read vault:write",
-			state: "legacy-transition",
-			code_challenge: await challenge,
-			code_challenge_method: "S256",
-			resource: "https://service.test",
-		});
-		const options = requireValue(
-			createOAuthOptions(
-				env,
-				createAuthorizeHandler(),
-				createAuthorizeHandler(),
-			),
-			"provider options",
-		);
-		const api = getOAuthApi(options, env);
-		const authRequest = await api.parseAuthRequest(
-			new Request(`https://service.test/authorize?${query}`),
-		);
-		const consent = await api.beginConsent(authRequest);
-		const cookie = consent.headers.get("set-cookie")?.split(";")[0] ?? "";
-		const browserRequest = new Request(
-			"https://service.test/authorize/consent",
-			{
-				headers: { cookie },
-			},
-		);
-		const approved = await api.approveConsent(browserRequest, consent.handle);
-		const vault = env.VAULTS.get(env.VAULTS.idFromName("service.test"));
-		const fence = await vault.beginClientConsent(
-			"synthetic-owner",
+		const legacy = await createLegacyAuthorizationCode(
 			client.client_id,
-			"Pinned legacy fixture",
+			"vault:read vault:write",
 		);
-		const legacyCode = await api.completeAuthorization({
-			request: approved.request,
-			userId: "synthetic-owner",
-			metadata: { client_name: "Pinned legacy fixture" },
-			scope: approved.request.scope,
-			props: {
-				client_id: client.client_id,
-				generation: fence.generation,
-				consent_id: fence.consent_id,
-			},
-		});
-		const code = requireValue(
-			new URL(legacyCode.redirectTo).searchParams.get("code"),
-			"legacy authorization code",
-		);
+		const { code, verifier } = legacy;
 		expect(code.startsWith("synthetic-owner:")).toBe(true);
 		const exchanged = await SELF.fetch("https://service.test/oauth/token", {
 			method: "POST",
@@ -1019,17 +1094,28 @@ describe("production OAuth entry", () => {
 		const originalGrant = (await kv.get(grantKey, { type: "json" })) as {
 			expiresAt: number;
 		};
-		const refreshed = await SELF.fetch("https://service.test/oauth/token", {
-			method: "POST",
-			headers: { "content-type": "application/x-www-form-urlencoded" },
-			body: new URLSearchParams({
-				grant_type: "refresh_token",
-				client_id: client.client_id,
-				refresh_token: legacyTokens.refresh_token,
-				scope: "vault:read",
-				resource: "https://service.test",
-			}),
-		});
+		const originalAccessTimes = await readAccessTokenTimes(
+			legacyTokens.access_token,
+		);
+		const refreshed = await (async () => {
+			vi.useFakeTimers();
+			try {
+				vi.setSystemTime(Date.now() + 5_000);
+				return await SELF.fetch("https://service.test/oauth/token", {
+					method: "POST",
+					headers: { "content-type": "application/x-www-form-urlencoded" },
+					body: new URLSearchParams({
+						grant_type: "refresh_token",
+						client_id: client.client_id,
+						refresh_token: legacyTokens.refresh_token,
+						scope: "vault:read",
+						resource: "https://service.test",
+					}),
+				});
+			} finally {
+				vi.useRealTimers();
+			}
+		})();
 		expect(refreshed.status).toBe(200);
 		const rotated = (await refreshed.json()) as {
 			access_token: string;
@@ -1042,6 +1128,10 @@ describe("production OAuth entry", () => {
 		const refreshedGrant = (await kv.get(grantKey, { type: "json" })) as {
 			expiresAt: number;
 		};
+		const rotatedAccessTimes = await readAccessTokenTimes(rotated.access_token);
+		expect(rotatedAccessTimes.createdAt).toBeGreaterThan(
+			originalAccessTimes.createdAt,
+		);
 		expect(refreshedGrant.expiresAt).toBe(originalGrant.expiresAt);
 		const newConsent = await issueAccessToken(
 			client.client_id,
@@ -1069,6 +1159,41 @@ describe("production OAuth entry", () => {
 		);
 		expect(preservedLegacyAccess.status).toBe(200);
 		await preservedLegacyAccess.text();
+	});
+
+	it("preserves the first opaque grant after repeated consent for one client", async () => {
+		const assertion = await ownerAssertion();
+		const client = await registerPublicClient();
+		const first = await issueAccessToken(
+			client.client_id,
+			assertion,
+			"vault:read",
+		);
+		const second = await issueAccessToken(
+			client.client_id,
+			assertion,
+			"vault:read",
+		);
+		const opaqueIdentity = await deriveProviderUserId(
+			"synthetic-owner",
+			"https://service.test",
+		);
+		expect(first.access_token.startsWith(`${opaqueIdentity}:`)).toBe(true);
+		expect(second.access_token.startsWith(`${opaqueIdentity}:`)).toBe(true);
+		const kv = requireValue(env.OAUTH_KV, "OAuth KV binding");
+		for (const accessToken of [first.access_token, second.access_token]) {
+			const grantId = requireValue(accessToken.split(":")[1], "grant id");
+			expect(
+				await kv.get(`grant:${opaqueIdentity}:${grantId}`, { type: "json" }),
+			).not.toBeNull();
+		}
+		for (const accessToken of [first.access_token, second.access_token]) {
+			const response = await SELF.fetch("https://service.test/v1/vault", {
+				headers: { authorization: `Bearer ${accessToken}` },
+			});
+			expect(response.status).toBe(200);
+			await response.text();
+		}
 	});
 
 	it("requires one explicit consent decision before it consumes the handle", async () => {
@@ -2033,6 +2158,144 @@ describe("production OAuth entry", () => {
 			"invalid_grant",
 		);
 	});
+
+	it.each(["before", "after"] as const)(
+		"preserves legacy authorization-code fencing when revocation occurs %s registration",
+		async (position) => {
+			const assertion = await ownerAssertion();
+			const client = await registerPublicClient();
+			const pending = await createLegacyAuthorizationCode(client.client_id);
+			expect(pending.code.startsWith("synthetic-owner:")).toBe(true);
+			const gate = holdGrantRegistration(env, position);
+			const exchange = productionWorker.fetch(
+				exchangeRequest(
+					new URLSearchParams({
+						grant_type: "authorization_code",
+						client_id: client.client_id,
+						code: pending.code,
+						redirect_uri: "https://flow.test/callback",
+						code_verifier: pending.verifier,
+						resource: "https://service.test",
+					}),
+				),
+				gate.env,
+			);
+			await gate.reached;
+			await revokeOwnerClient(assertion, client.client_id);
+			gate.release();
+			const response = await exchange;
+			if (position === "before") {
+				expect(response.status).toBe(400);
+				expect(((await response.json()) as { error: string }).error).toBe(
+					"invalid_grant",
+				);
+				return;
+			}
+			expect(response.status).toBe(200);
+			const token = (await response.json()) as {
+				access_token: string;
+				refresh_token: string;
+			};
+			expect(token.access_token.startsWith("synthetic-owner:")).toBe(true);
+			const rest = await SELF.fetch("https://service.test/v1/vault", {
+				headers: { authorization: `Bearer ${token.access_token}` },
+			});
+			expect(rest.status).toBe(401);
+			expect(await rest.text()).toContain("revoked");
+			const refresh = await SELF.fetch("https://service.test/oauth/token", {
+				method: "POST",
+				headers: { "content-type": "application/x-www-form-urlencoded" },
+				body: new URLSearchParams({
+					grant_type: "refresh_token",
+					client_id: client.client_id,
+					refresh_token: token.refresh_token,
+					resource: "https://service.test",
+				}),
+			});
+			expect(refresh.status).not.toBe(200);
+		},
+	);
+
+	it.each(["before", "after"] as const)(
+		"preserves legacy refresh fencing when revocation occurs %s registration",
+		async (position) => {
+			const assertion = await ownerAssertion();
+			const client = await registerPublicClient();
+			const pending = await createLegacyAuthorizationCode(client.client_id);
+			const originalResponse = await SELF.fetch(
+				"https://service.test/oauth/token",
+				{
+					method: "POST",
+					headers: {
+						"content-type": "application/x-www-form-urlencoded",
+					},
+					body: new URLSearchParams({
+						grant_type: "authorization_code",
+						client_id: client.client_id,
+						code: pending.code,
+						redirect_uri: "https://flow.test/callback",
+						code_verifier: pending.verifier,
+						resource: "https://service.test",
+					}),
+				},
+			);
+			expect(originalResponse.status).toBe(200);
+			const original = (await originalResponse.json()) as {
+				refresh_token: string;
+			};
+			expect(original.refresh_token.startsWith("synthetic-owner:")).toBe(true);
+			const gate = holdGrantRegistration(env, position);
+			const refresh = productionWorker.fetch(
+				exchangeRequest(
+					new URLSearchParams({
+						grant_type: "refresh_token",
+						client_id: client.client_id,
+						refresh_token: original.refresh_token,
+						resource: "https://service.test",
+					}),
+				),
+				gate.env,
+			);
+			await gate.reached;
+			await revokeOwnerClient(assertion, client.client_id);
+			gate.release();
+			const response = await refresh;
+			if (position === "before") {
+				expect(response.status).toBe(400);
+				expect(((await response.json()) as { error: string }).error).toBe(
+					"invalid_grant",
+				);
+				return;
+			}
+			expect(response.status).toBe(200);
+			const token = (await response.json()) as {
+				access_token: string;
+				refresh_token: string;
+			};
+			expect(token.refresh_token.startsWith("synthetic-owner:")).toBe(true);
+			const rest = await SELF.fetch("https://service.test/v1/vault", {
+				headers: { authorization: `Bearer ${token.access_token}` },
+			});
+			expect(rest.status).toBe(401);
+			expect(await rest.text()).toContain("revoked");
+			const refreshAgain = await SELF.fetch(
+				"https://service.test/oauth/token",
+				{
+					method: "POST",
+					headers: {
+						"content-type": "application/x-www-form-urlencoded",
+					},
+					body: new URLSearchParams({
+						grant_type: "refresh_token",
+						client_id: client.client_id,
+						refresh_token: token.refresh_token,
+						resource: "https://service.test",
+					}),
+				},
+			);
+			expect(refreshAgain.status).not.toBe(200);
+		},
+	);
 
 	it("keeps write-only tokens from reading or deleting", async () => {
 		const assertion = await ownerAssertion();

@@ -101,6 +101,11 @@ class AcceptanceMemoryVault implements TextVault {
 	async read(path: string): Promise<string | null> {
 		return this.files.get(path) ?? null;
 	}
+	/** Reads exact UTF-8 bytes for queued publication validation. */
+	async readBinary(path: string): Promise<Uint8Array | null> {
+		const text = this.files.get(path);
+		return text === undefined ? null : new TextEncoder().encode(text);
+	}
 	/** Lists every synthetic vault path without changing its contents. */
 	async list(): Promise<string[]> {
 		return [...this.files.keys()];
@@ -2087,7 +2092,7 @@ describe("desktop acceptance safety", () => {
 		});
 	});
 
-	// OAB-40 owns feed replay, so keep its three timing regressions skipped until that fix lands.
+	// Covers the OAB-40 feed-replay regression across modify and debounce timing orders.
 	const ac30TimingCases = [
 		{ name: "delayed modify admission", eventDelay: 5_000, holdModifyMs: 0 },
 		{
@@ -2101,7 +2106,7 @@ describe("desktop acceptance safety", () => {
 			holdModifyMs: 2_100,
 		},
 	] as const;
-	it.skip.each(ac30TimingCases)(
+	it.each(ac30TimingCases)(
 		"checks AC-30 feed replay: $name",
 		async (scenario) => {
 			const cases = [scenario] as const;
@@ -2179,6 +2184,11 @@ describe("desktop acceptance safety", () => {
 				let firstPutStarted = () => {};
 				const firstPut = new Promise<void>((resolve) => {
 					firstPutStarted = resolve;
+				});
+				/** Rejects the first-boundary wait when the sync cycle reports an error. */
+				let rejectFirstCycleError = (_error: unknown) => {};
+				const firstCycleError = new Promise<never>((_resolve, reject) => {
+					rejectFirstCycleError = reject;
 				});
 				const remote: PublicationRemote & {
 					manifest: (token: string | null) => Promise<{
@@ -2329,6 +2339,7 @@ describe("desktop acceptance safety", () => {
 						await reconciliation.replay();
 					},
 					onEvent: (event) => publication.observe(event),
+					onError: rejectFirstCycleError,
 					host: {
 						setTimeout: (callback, delay) =>
 							setTimeout(() => {
@@ -2358,6 +2369,8 @@ describe("desktop acceptance safety", () => {
 					scripts.action,
 					scripts.cleanup,
 				);
+				const originalPut = remote.put;
+				let run: Promise<string> | null = null;
 				const host = {
 					vault: {
 						adapter: { getBasePath: () => vaults["dev-2"] },
@@ -2404,13 +2417,14 @@ describe("desktop acceptance safety", () => {
 					},
 				};
 				try {
-					const run = (
+					run = (
 						new Function("app", `return ${hostScript}`) as (
 							app: unknown,
 						) => Promise<string>
 					)(host);
 					await Promise.race([
 						firstPut,
+						firstCycleError,
 						run.then((output) => {
 							throw new Error(output);
 						}),
@@ -2424,6 +2438,8 @@ describe("desktop acceptance safety", () => {
 					}
 					const output = await run;
 					const record = JSON.parse(output.slice("OAB8CASE:".length));
+					expect(remote.put).toBe(originalPut);
+					expect(globalThis).not.toHaveProperty("__oab8Ac30Restore");
 					outcomes.push({
 						name: scenario.name,
 						status: record.status,
@@ -2459,10 +2475,24 @@ describe("desktop acceptance safety", () => {
 					if (scenario.eventDelay > 0)
 						await new Promise((resolve) => setTimeout(resolve, 5_000));
 				} finally {
-					desktopSync.close();
-					reconciliation.close();
-					publication.close();
-					journal.close();
+					releaseModify();
+					try {
+						if (run) await run;
+						await desktopSync.waitForIdle();
+					} finally {
+						const restore = Reflect.get(globalThis, "__oab8Ac30Restore");
+						try {
+							if (typeof restore === "function")
+								Reflect.apply(restore, undefined, []);
+						} finally {
+							remote.put = originalPut;
+							Reflect.deleteProperty(globalThis, "__oab8Ac30Restore");
+							desktopSync.close();
+							reconciliation.close();
+							publication.close();
+							journal.close();
+						}
+					}
 				}
 			}
 
@@ -2515,6 +2545,6 @@ describe("desktop acceptance safety", () => {
 			]);
 			expect(outcomes.every((outcome) => outcome.feedRowsRead > 0)).toBe(true);
 		},
-		30_000,
+		320_000,
 	);
 });

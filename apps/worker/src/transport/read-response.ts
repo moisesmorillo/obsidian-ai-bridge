@@ -62,7 +62,7 @@ export function ownedReadResponse(
 	let fixedWriter: WritableStreamDefaultWriter<Uint8Array> | undefined;
 	let fixedWriterShutdown: Promise<void> | undefined;
 	let fixedPump: Promise<void> | undefined;
-	/** Release local capacity once response production and durable cleanup both settle. */
+	/** Release local capacity after started source work and cancellation settle. */
 	function release(): void {
 		if (slotReleased) return;
 		slotReleased = true;
@@ -100,7 +100,7 @@ export function ownedReadResponse(
 				: completion;
 			let timer: ReturnType<typeof setTimeout> | undefined;
 			try {
-				await Promise.race([
+				const result = await Promise.race([
 					owner.finish(outcome),
 					new Promise<never>((_, reject) => {
 						timer = setTimeout(() => {
@@ -109,6 +109,7 @@ export function ownedReadResponse(
 						}, SETTLEMENT_DEADLINE_MS);
 					}),
 				]);
+				if (!result.ok) throw new Error("Read settlement failed");
 			} catch (error) {
 				console.error("READ_SETTLEMENT_FAILED");
 				throw error;
@@ -118,7 +119,7 @@ export function ownedReadResponse(
 		})();
 		return settlement;
 	}
-	/** Join generic response cleanup, settle admission, then release local capacity. */
+	/** Join source cleanup and bounded settlement, with local capacity released after source cleanup. */
 	function finish(
 		cancel: boolean,
 		completion: AdmissionCompletion,
@@ -154,6 +155,63 @@ export function ownedReadResponse(
 			throw new RangeError(
 				"Known response length must be a non-negative safe integer",
 			);
+		if (knownByteLength === 0) {
+			const headers = new Headers(init?.headers);
+			headers.set("Content-Length", "0");
+			const responseInit: ResponseInit = {
+				status: init?.status,
+				statusText: init?.statusText,
+				headers,
+			};
+			const zeroLengthStream = new ReadableStream<Uint8Array>({
+				type: "bytes",
+				/** Retain the controller for request abort errors before source completion. */
+				start(controller) {
+					controllerRef = controller;
+					signal?.addEventListener("abort", abort, { once: true });
+					if (signal?.aborted) abort();
+				},
+				/** Wait for EOF and durable success before closing the zero-byte response. */
+				async pull(controller) {
+					if (stopping) return;
+					try {
+						pending = source.next();
+						const item = await pending;
+						pending = undefined;
+						if (stopping) return;
+						if (item.done) {
+							await finish(false, "settled");
+							controller.close();
+							if ("byobRequest" in controller)
+								controller.byobRequest?.respond(0);
+							return;
+						}
+						if (item.value.byteLength > 0)
+							throw new Error("Read response source exceeded its limits");
+					} catch (error) {
+						pending = undefined;
+						try {
+							await finish(
+								true,
+								error instanceof ReadBatchFailure ||
+									error instanceof ReadAborted
+									? "settled"
+									: "uncertain",
+								error,
+							);
+						} catch {
+							/* The response stream reports the source or settlement fault. */
+						}
+						controller.error(error);
+					}
+				},
+				/** Join source cancellation before the response can finish. */
+				cancel(reason) {
+					return finish(true, "settled", reason);
+				},
+			});
+			return new Response(zeroLengthStream, responseInit);
+		}
 		const fixed = new FixedLengthStream(knownByteLength);
 		const writer = fixed.writable.getWriter();
 		fixedWriter = writer;

@@ -19,6 +19,83 @@ function barrier<T>() {
 }
 
 describe("owned read response", () => {
+	it.each([
+		["generic", undefined],
+		["fixed-length", 1],
+		["zero-byte fixed-length", 0],
+	] as const)(
+		"fails %s response when durable settlement resolves with failure",
+		async (_framing, length) => {
+			let emitted = false;
+			const init =
+				length === undefined
+					? undefined
+					: {
+							status: 206,
+							headers: { "Content-Length": String(length) },
+						};
+			const response = ownedReadResponse(
+				{
+					next: async () => {
+						if (length === 1 && !emitted) {
+							emitted = true;
+							return { done: false, value: new Uint8Array([1]) };
+						}
+						return { done: true, value: undefined };
+					},
+					cancel: async () => {},
+				},
+				{
+					finish: async () => ({
+						ok: false,
+						failure: { kind: "revoked" },
+					}),
+				},
+				() => {},
+				init,
+				undefined,
+				length,
+			);
+			if (length !== undefined) {
+				expect(response.status).toBe(206);
+				expect(response.headers.get("Content-Length")).toBe(String(length));
+			}
+			await expect(response.arrayBuffer()).rejects.toThrow();
+		},
+	);
+	it("waits for successful settlement before completing a zero-byte fixed response", async () => {
+		const finishing = barrier<void>();
+		const settlement = barrier<void>();
+		const response = ownedReadResponse(
+			{
+				next: async () => ({ done: true, value: undefined }),
+				cancel: async () => {},
+			},
+			{
+				finish: async () => {
+					finishing.resolve();
+					await settlement.promise;
+					return { ok: true };
+				},
+			},
+			() => {},
+			{ status: 206, headers: { "Content-Length": "0" } },
+			undefined,
+			0,
+		);
+		const reading = response.arrayBuffer();
+		await finishing.promise;
+		let completed = false;
+		void reading.then(() => {
+			completed = true;
+		});
+		await Promise.resolve();
+		expect(completed).toBe(false);
+		settlement.resolve();
+		expect((await reading).byteLength).toBe(0);
+		expect(response.status).toBe(206);
+		expect(response.headers.get("Content-Length")).toBe("0");
+	});
 	it("does not demand data or settle at final enqueue before producer EOF", async () => {
 		let demands = 0;
 		let released = false;

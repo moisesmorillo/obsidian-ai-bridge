@@ -1,11 +1,11 @@
 ---
 id: OAB-8
 title: F3 Desktop plugin delivery gate
-status: In Progress
+status: Done
 assignee:
   - '@pi'
 created_date: 2026-10-12 15:13
-updated_date: '2026-10-29T03:33:00Z'
+updated_date: '2026-11-05T11:41:00Z'
 labels:
   - phase-gate
   - F3
@@ -25,9 +25,9 @@ Track F3 against docs/spec.md §14. Intent-only; research/decompose when selecte
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 F2 is complete before F3 starts.
+- [x] #1 F2 is complete before F3 starts.
 - [ ] #2 Every §14 F3 exit case is evidenced using the specified test context.
-- [ ] #3 The device part of AC-08 from decision-1 passes: revoked status stops effects and retains local files and queued work.
+- [x] #3 The device part of AC-08 from decision-1 passes: revoked status stops effects and retains local files and queued work.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -44,4 +44,18 @@ Reconciled after merged F0: this is a committed section14 phase entry/exit gate,
 Owner authorized F3 on 2026-10-28. decision-1 adds the device part of AC-08: revoked status, local files retained, queued work retained. Authorized test vault 1 is ~/vaults/obsidian-ai-bridge-dev. Test vault 2 is ~/vaults/obsidian-ai-bridge-dev-2, copied from test vault 1 on 2026-10-28 with 84 files, including .obsidian. Neither copy came from a read of iCloud in this task. Only these two vaults and the deployed service are authorized. Preserve all oab-7.8/ service evidence. No Cloudflare resource changes.
 
 Standing authorizations for F3 (owner, 2026-10-28). The plugin code under test and its tests may use the deployed service at https://obsidian-bridge.mmorillo.dev with the two test vaults ~/vaults/obsidian-ai-bridge-dev and ~/vaults/obsidian-ai-bridge-dev-2. Write only under these two vaults and only through the plugin code. Never touch the owner's iCloud vault. Device names for live evidence: "oab-<subtask> dev-1" and "oab-<subtask> dev-2". Record only client ids, times and results. Never print tokens or cookies. Never write them to tracked files. A merge to main that touches apps/worker, packages, bun.lock, package.json, mise.toml or deploy.yml deploys the Worker through GitHub Actions. Cloudflare resources belong to OpenTofu in cloudflare-infra. Inside Orca, the built-in browser keeps the owner's Access session and automates the consent page: load the harness-browser skill. Owner-manual steps: the Access PIN login and anything in the ChatGPT account. Session kickoff after AGENTS.md Session start: "Pick the next ready OAB-8 subtask and do it."
+
+Gate closure 2026-11-05 under the owner delegation of 2026-11-03 and the owner order of 2026-11-04 to close F3 after the deferred pass. All ten subtasks OAB-8.1 to OAB-8.10 are Done. The deferred pass closed OAB-27, OAB-29, OAB-30, OAB-31, OAB-32, OAB-33, OAB-37, OAB-39 and OAB-40 through PRs #48 to #53. Current main is 98e2dd9.
+
+Criterion 1: OAB-7 is Done, so F2 was complete before F3 started. Criterion 3: OAB-8.8 criterion 3 records the device part of AC-08 on dev-2. Revoked status stopped effects and retained local files and queued work.
+
+Criterion 2 evidence: OAB-8.8 records AC-02, 03, 04, 05, 06, 10, 20, 24, 31, 32, 33 and 39 on the two Mac test vaults, and AC-09 against real ChatGPT. OAB-37 records one authorized live AC-30 run on dev-2 (PR #53, fixture oab-37/, revision 1 retry equality and revision 2 successor). Controlled AC-13 passed in OAB-8.8 without a service epoch change.
+
+Owner-authorized exceptions. AC-13: the real restore proof stays in Deferred OAB-38 with the F3b trigger. AC-30: the live evidence is one controlled response-loss run, not every network schedule. The three controller timing regressions in apps/plugin/test/desktop-acceptance.test.ts cover the product fix of OAB-40. Criterion 2 stays unchecked because of these two limits. Other Deferred tasks (OAB-13 to OAB-21, OAB-34, OAB-36, OAB-38, OAB-8.7.1, OAB-6.8.2) keep their recorded triggers.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+F3 desktop plugin delivery gate closed on 2026-11-05 after the deferred pass. All ten subtasks are Done. Two Mac test vaults passed AC-02, 03, 04, 05, 06, 10, 20, 24, 31, 32, 33 and 39, real ChatGPT passed AC-09, and the device part of AC-08 passed in OAB-8.8. OAB-37 added one live AC-30 run. Exceptions authorized by the owner: AC-13 real restore proof stays in Deferred OAB-38 (F3b trigger), and AC-30 rests on one controlled live run plus local timing regressions. Criterion 2 stays unchecked for these two limits. The supervisor set Done under the owner delegation. Main is 98e2dd9 and the worker deployment is unchanged by this closure.
+<!-- SECTION:FINAL_SUMMARY:END -->

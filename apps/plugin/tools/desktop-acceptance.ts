@@ -2379,15 +2379,56 @@ export async function installScopedPlugin(
 			.update(manifestText, "utf8")
 			.digest("hex"),
 	};
-	const script = createInstallScript(id, target, manifestText, mainText);
-	const installOutput = invokeScopedObsidian(
+	const scripts = createInstallPayloadScripts(
 		id,
-		vaultName,
-		"eval",
-		[`code=${script}`],
-		options,
+		target,
+		manifestText,
+		mainText,
 	);
-	parseInstalledPluginArtifact(installOutput, expected);
+	try {
+		const initializeOutput = invokeScopedObsidian(
+			id,
+			vaultName,
+			"eval",
+			[`code=${scripts.initialize}`],
+			options,
+		);
+		requireInstallMarker(
+			initializeOutput,
+			`OAB8INSTALLINIT:${scripts.sessionId}`,
+		);
+		for (const [index, chunk] of scripts.chunks.entries()) {
+			const chunkOutput = invokeScopedObsidian(
+				id,
+				vaultName,
+				"eval",
+				[`code=${chunk}`],
+				options,
+			);
+			requireInstallMarker(chunkOutput, `OAB8INSTALLCHUNK:${index}`);
+		}
+		const installOutput = invokeScopedObsidian(
+			id,
+			vaultName,
+			"eval",
+			[`code=${scripts.finish}`],
+			options,
+		);
+		parseInstalledPluginArtifact(installOutput, expected);
+	} catch (error) {
+		try {
+			invokeScopedObsidian(
+				id,
+				vaultName,
+				"eval",
+				[`code=${scripts.cleanup}`],
+				options,
+			);
+		} catch {
+			// A target guard still blocks cleanup outside the authorized vault.
+		}
+		throw error;
+	}
 	runScopedObsidian(
 		id,
 		vaultName,
@@ -2418,7 +2459,107 @@ export async function installScopedPlugin(
 	return parseInstalledPluginArtifact(verifyOutput, expected);
 }
 
-/** Creates a host script that preserves differing files and verifies loaded artifact hashes. */
+/** Maximum base64 characters sent in one guarded Obsidian CLI argument. */
+const INSTALL_PAYLOAD_CHUNK_CHARS = 32 * 1024;
+
+/** Ordered host scripts that transfer and install one checked plugin artifact. */
+export interface InstallPayloadScripts {
+	/** Starts one path-bound payload transfer in the active Obsidian process. */
+	initialize: string;
+	/** Appends ordered bounded chunks of the encoded artifact. */
+	chunks: string[];
+	/** Verifies the payload, preserves old files, and installs the checked artifact. */
+	finish: string;
+	/** Removes a partial payload after a failed transfer. */
+	cleanup: string;
+	/** Transfer identity required by each ordered host script. */
+	sessionId: string;
+}
+
+/** Creates small path-guarded host scripts for a large plugin bundle. */
+export function createInstallPayloadScripts(
+	id: DesktopVaultId,
+	target: string,
+	manifestText: string,
+	mainText: string,
+	home = homedir(),
+): InstallPayloadScripts {
+	const authorizedTarget = assertAuthorizedVault(id, target, home);
+	const manifest: unknown = JSON.parse(manifestText);
+	if (
+		!manifest ||
+		typeof manifest !== "object" ||
+		!("id" in manifest) ||
+		manifest.id !== "ai-bridge" ||
+		!("version" in manifest) ||
+		typeof manifest.version !== "string"
+	)
+		throw new Error("Unexpected plugin artifact identity");
+	const sessionId = randomUUID();
+	const sessionKey = "__oabInstallPayload";
+	const targetValue = JSON.stringify(authorizedTarget);
+	const sessionValue = JSON.stringify(sessionId);
+	const keyValue = JSON.stringify(sessionKey);
+	const manifestBase64 = Buffer.from(manifestText, "utf8").toString("base64");
+	const mainBase64 = Buffer.from(mainText, "utf8").toString("base64");
+	const encodedChunks = [
+		...splitInstallPayload(manifestBase64).map((value) => ({
+			kind: "manifest",
+			value,
+		})),
+		...splitInstallPayload(mainBase64).map((value) => ({
+			kind: "main",
+			value,
+		})),
+	];
+	const initialize = `(() => {
+		const adapter = app.vault.adapter;
+		if (adapter.getBasePath() !== ${targetValue}) throw Error("Vault path mismatch");
+		globalThis[${keyValue}] = { sessionId: ${sessionValue}, next: 0, total: ${encodedChunks.length}, manifest: [], main: [] };
+		return "OAB8INSTALLINIT:" + ${sessionValue};
+	})()`;
+	const chunks = encodedChunks.map(
+		(chunk, index) => `(() => {
+		const adapter = app.vault.adapter;
+		if (adapter.getBasePath() !== ${targetValue}) throw Error("Vault path mismatch");
+		const state = globalThis[${keyValue}];
+		if (!state || state.sessionId !== ${sessionValue} || state.next !== ${index}) throw Error("Plugin payload order changed");
+		state.${chunk.kind}.push(${JSON.stringify(chunk.value)});
+		state.next += 1;
+		return "OAB8INSTALLCHUNK:${index}";
+	})()`,
+	);
+	const manifestHash = createHash("sha256")
+		.update(manifestText, "utf8")
+		.digest("hex");
+	const mainHash = createHash("sha256").update(mainText, "utf8").digest("hex");
+	const finish = `(async () => {
+		const adapter = app.vault.adapter;
+		if (adapter.getBasePath() !== ${targetValue}) throw Error("Vault path mismatch");
+		const state = globalThis[${keyValue}];
+		if (!state || state.sessionId !== ${sessionValue} || state.next !== state.total || state.total !== ${encodedChunks.length}) throw Error("Plugin payload is incomplete");
+		const decode = (value) => new TextDecoder().decode(Uint8Array.from(atob(value), (char) => char.charCodeAt(0)));
+		const manifestText = decode(state.manifest.join(""));
+		const bundle = decode(state.main.join(""));
+		const payloadHash = async (text) => Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text)))).map((byte) => byte.toString(16).padStart(2, "0")).join("");
+		if (await payloadHash(manifestText) !== ${JSON.stringify(manifestHash)} || await payloadHash(bundle) !== ${JSON.stringify(mainHash)}) throw Error("Plugin payload hash mismatch");
+		try {
+			${createInstallScriptCore(JSON.stringify(manifest.version))}
+		} finally {
+			delete globalThis[${keyValue}];
+		}
+	})()`;
+	const cleanup = `(() => {
+		const adapter = app.vault.adapter;
+		if (adapter.getBasePath() !== ${targetValue}) throw Error("Vault path mismatch");
+		const state = globalThis[${keyValue}];
+		if (state?.sessionId === ${sessionValue}) delete globalThis[${keyValue}];
+		return "OAB8INSTALLCLEANUP:" + ${sessionValue};
+	})()`;
+	return { initialize, chunks, finish, cleanup, sessionId };
+}
+
+/** Creates a host script that preserves differing plugin files and verifies hashes. */
 export function createInstallScript(
 	id: DesktopVaultId,
 	target: string,
@@ -2437,27 +2578,29 @@ export function createInstallScript(
 		typeof manifest.version !== "string"
 	)
 		throw new Error("Unexpected plugin artifact identity");
-	const expectedVersion = JSON.stringify(manifest.version);
-	/** Encodes plugin text for safe transport as one CLI argument. */
+	/** Encodes small test bundle text for the direct host-script builder. */
 	const base64 = (value: string) =>
 		Buffer.from(value, "utf8").toString("base64");
-	const targetValue = JSON.stringify(authorizedTarget);
-	const manifestValue = JSON.stringify(base64(manifestText));
-	const mainValue = JSON.stringify(base64(mainText));
 	return `(async () => {
 		const adapter = app.vault.adapter;
-		if (adapter.getBasePath() !== ${targetValue}) throw Error("Vault path mismatch");
+		if (adapter.getBasePath() !== ${JSON.stringify(authorizedTarget)}) throw Error("Vault path mismatch");
+		const decode = (value) => new TextDecoder().decode(Uint8Array.from(atob(value), (char) => char.charCodeAt(0)));
+		const manifestText = decode(${JSON.stringify(base64(manifestText))});
+		const bundle = decode(${JSON.stringify(base64(mainText))});
+		${createInstallScriptCore(JSON.stringify(manifest.version))}
+	})()`;
+}
+
+/** Builds shared host-side file preservation and plugin activation steps. */
+function createInstallScriptCore(expectedVersion: string): string {
+	return `
 		const id = "ai-bridge";
 		const directory = ".obsidian/plugins/" + id;
-		const decode = (value) => new TextDecoder().decode(Uint8Array.from(atob(value), (char) => char.charCodeAt(0)));
-		const manifestText = decode(${manifestValue});
 		const manifest = JSON.parse(manifestText);
-		const bundle = decode(${mainValue});
 		if (manifest.id !== id) throw Error("Plugin ID mismatch");
 		manifest.dir = directory;
 		app.plugins.manifests[id] = manifest;
 		if (!(await adapter.exists(directory))) await adapter.mkdir(directory);
-		/** Computes SHA-256 over UTF-8 text for backup and artifact identity. */
 		const hash = async (text) => Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text)))).map((byte) => byte.toString(16).padStart(2, "0")).join("");
 		for (const [name, content] of [["manifest.json", manifestText], ["main.js", bundle]]) {
 			const path = directory + "/" + name;
@@ -2493,7 +2636,25 @@ export function createInstallScript(
 		const installedManifest = await adapter.read(manifestFile);
 		if (installedMain !== bundle || installedManifest !== manifestText) throw Error("Plugin artifact mismatch");
 		return "OAB8INSTALL:" + JSON.stringify({ status: "passed", version: app.plugins.manifests[id].version, mainSha256: await hash(installedMain), manifestSha256: await hash(installedManifest) });
-	})()`;
+	`;
+}
+
+/** Splits one base64 payload into bounded, ordered CLI-safe parts. */
+function splitInstallPayload(value: string): string[] {
+	const chunks: string[] = [];
+	for (
+		let offset = 0;
+		offset < value.length;
+		offset += INSTALL_PAYLOAD_CHUNK_CHARS
+	)
+		chunks.push(value.slice(offset, offset + INSTALL_PAYLOAD_CHUNK_CHARS));
+	return chunks;
+}
+
+/** Rejects a payload script when the host does not return its safe marker. */
+function requireInstallMarker(output: string, expected: string): void {
+	if (!output.includes(expected))
+		throw new Error("Plugin payload transfer failed");
 }
 
 /** Runs the explicit install or vault-path verification command for a test vault. */

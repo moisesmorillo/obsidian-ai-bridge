@@ -48,6 +48,7 @@ import {
 	createAc33CaseScripts,
 	createAc1032CaseScripts,
 	createCaseScript,
+	createInstallPayloadScripts,
 	createInstallScript,
 	dispatchCapturedCallback,
 	hasCapturedCallback,
@@ -508,6 +509,34 @@ describe("desktop acceptance safety", () => {
 		).toThrow("Unauthorized AC-02 service path");
 	});
 
+	it("splits large install bundles into guarded CLI payloads", () => {
+		const scripts = createInstallPayloadScripts(
+			"dev-1",
+			"/Users/test/vaults/obsidian-ai-bridge-dev",
+			'{"id":"ai-bridge","version":"0.1.0"}',
+			"synthetic bundle ".repeat(80_000),
+			"/Users/test",
+		);
+		expect(scripts.chunks.length).toBeGreaterThan(10);
+		for (const script of [
+			scripts.initialize,
+			...scripts.chunks,
+			scripts.finish,
+			scripts.cleanup,
+		]) {
+			expect(Buffer.byteLength(script)).toBeLessThan(65_536);
+			expect(script).toContain(
+				'adapter.getBasePath() !== "/Users/test/vaults/obsidian-ai-bridge-dev"',
+			);
+			expect(() => new Function(script)).not.toThrow();
+		}
+		expect(scripts.initialize).toContain("OAB8INSTALLINIT:");
+		expect(scripts.finish).toContain("await adapter.write(backup, old)");
+		expect(scripts.cleanup).toContain(
+			'delete globalThis["__oabInstallPayload"]',
+		);
+	});
+
 	it("returns installed artifact hashes after host read-back", () => {
 		const script = createInstallScript(
 			"dev-1",
@@ -592,17 +621,27 @@ describe("desktop acceptance safety", () => {
 				},
 			},
 		};
-		const script = createInstallScript(
+		const scripts = createInstallPayloadScripts(
 			"dev-1",
 			basePath,
 			manifestText,
 			checkedBundle,
 			"/Users/test",
 		);
-		const execute = new Function("app", `return ${script}`) as (
-			app: unknown,
-		) => Promise<string>;
-		const output = await execute(app);
+		await (
+			new Function("app", `return ${scripts.initialize}`) as (
+				app: unknown,
+			) => unknown
+		)(app);
+		for (const chunk of scripts.chunks)
+			await (
+				new Function("app", `return ${chunk}`) as (app: unknown) => unknown
+			)(app);
+		const output = (await (
+			new Function("app", `return ${scripts.finish}`) as (
+				app: unknown,
+			) => unknown
+		)(app)) as string;
 		const expected = {
 			version: "0.1.0",
 			mainSha256: createHash("sha256").update(checkedBundle).digest("hex"),

@@ -197,7 +197,27 @@ describe("desktop acceptance safety", () => {
 		expect(scripts.action).toContain('"oab-10.1/dev-2/simulated-eviction.md"');
 		expect(scripts.action).toContain("initialAttentionCount");
 		expect(scripts.action).toContain(
+			'app.vault.getName() !== "obsidian-ai-bridge-dev-2"',
+		);
+		expect(scripts.action).toContain(
+			'adapter.basePath.endsWith("/vaults/obsidian-ai-bridge-dev-2")',
+		);
+		expect(scripts.action).toContain(
 			"AC19_ASSERT_CONFIRMATION_AND_UNAVAILABLE",
+		);
+		expect(scripts.action).not.toContain("syncActions.pause()");
+		expect(scripts.action).toContain("AC19_ASSERT_RESUMED_SYNC");
+		expect(scripts.action).toContain("sameHistoricalIdentities");
+		expect(scripts.action).toContain("retryAfter");
+		expect(scripts.action).toContain("attempt < 3");
+		expect(scripts.action).toContain(
+			"Date.now() + retryDelay > serviceRetryDeadline",
+		);
+		expect(scripts.action).toContain(
+			"sameHistoricalIdentities(settled.pending_ops, ac19Cleanup.initialOperations)",
+		);
+		expect(scripts.action).toContain(
+			"sameHistoricalIdentities(settled.pending_apply, ac19Cleanup.initialApplies)",
 		);
 		expect(scripts.action).toContain(
 			"state.unavailable_paths?.includes(source)",
@@ -212,6 +232,9 @@ describe("desktop acceptance safety", () => {
 			'"oab-10.1/dev-2/simulated-eviction-retry-2.md"',
 		);
 		expect(scripts.cleanup).toContain("keepServerState");
+		expect(scripts.cleanup).toContain(
+			'app.vault.getName() !== "obsidian-ai-bridge-dev-2"',
+		);
 		expect(scripts.cleanup).toContain("settingsTab.syncActions.pause()");
 		expect(scripts.cleanup).toContain("settingsTab.syncActions.resume()");
 		expect(() =>
@@ -354,6 +377,55 @@ describe("desktop acceptance safety", () => {
 		);
 	});
 
+	it.each([
+		{ name: "wrong vault name", vaultName: "dev", basePath: vaults["dev-2"] },
+		{
+			name: "wrong vault path",
+			vaultName: "obsidian-ai-bridge-dev-2",
+			basePath: "/Users/test/vaults/other",
+		},
+	])(
+		"refuses AC-19 action before effects for $name",
+		async ({ vaultName, basePath }) => {
+			let effects = 0;
+			const scripts = createAc19CaseScripts(
+				"dev-2",
+				vaults["dev-2"],
+				"/Users/test",
+			);
+			const action = createCaseScript("AC-19", scripts.action, "");
+			const app = {
+				vault: {
+					getName: () => vaultName,
+					adapter: { basePath, getBasePath: () => vaults["dev-2"] },
+				},
+				plugins: {
+					plugins: {
+						"ai-bridge": {
+							settingsTab: {
+								syncActions: {
+									pause: () => {
+										effects += 1;
+									},
+								},
+							},
+						},
+					},
+				},
+			};
+			const output = await (
+				new Function("app", `return ${action}`) as (
+					app: unknown,
+				) => Promise<string>
+			)(app);
+			expect(JSON.parse(output.slice("OAB8CASE:".length))).toMatchObject({
+				status: "failed",
+				failureReason: "AC19_ASSERT_TARGET_VAULT",
+			});
+			expect(effects).toBe(0);
+		},
+	);
+
 	it("projects AC-19 baseline counts with nonzero historical attention", () => {
 		const scripts = createAc19CaseScripts(
 			"dev-2",
@@ -493,6 +565,36 @@ describe("desktop acceptance safety", () => {
 		expect(() =>
 			assertAuthorizedVault("dev-3", "/Users/test/vaults/other", "/Users/test"),
 		).toThrow("Unauthorized vault target");
+	});
+
+	it("reports safe CLI process failure details without stderr content", () => {
+		const temp = mkdtempSync(join(tmpdir(), "oab-cli-failure-"));
+		const executable = join(temp, "obsidian");
+		writeFileSync(
+			executable,
+			`#!/bin/sh
+if [ "$2" = "vault" ]; then printf '%s\\n' '${authorizedVaults()["dev-1"]}'; else printf '%s\\n' 'access_token=private-secret' >&2; exit 7; fi
+`,
+			{ mode: 0o700 },
+		);
+		try {
+			let caught: unknown;
+			try {
+				runScopedObsidian("dev-1", "dev", "eval", ["code=0"], { executable });
+			} catch (error) {
+				caught = error;
+			}
+			expect(caught).toMatchObject({
+				message: "Obsidian command failed",
+				exitCode: 7,
+				signal: null,
+				spawnCode: null,
+				stderrClass: "nonempty",
+			});
+			expect(String(caught)).not.toContain("private-secret");
+		} finally {
+			rmSync(temp, { recursive: true, force: true });
+		}
 	});
 
 	it("rejects an invalid vault name before it can run a host command", () => {

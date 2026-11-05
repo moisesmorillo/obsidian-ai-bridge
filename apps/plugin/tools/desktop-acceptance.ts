@@ -132,6 +132,7 @@ const SAFE_CASE_FAILURE_CODES = [
 	"AC19_ASSERT_REMOTE_AUTHORITY",
 	"AC19_ASSERT_SERVICE_PATH_ABSENT",
 	"AC19_ASSERT_PAUSE",
+	"AC19_ASSERT_RESUMED_SYNC",
 	"AC19_ASSERT_CONFIRMATION_AND_UNAVAILABLE",
 	"AC19_ASSERT_BASELINE_DELTAS",
 	"AC19_ASSERT_SERVICE_UNCHANGED",
@@ -262,6 +263,7 @@ const SAFE_CASE_FAILURE_CODES = [
 const SAFE_CASE_FAILURE_BOUNDARIES = [
 	"AC19_READ_SERVICE_ABSENCE",
 	"AC19_SEED_BASELINE",
+	"AC19_WAIT_BASELINE_IDLE",
 	"AC19_WAIT_DELETE_CAPTURE",
 	"AC19_READ_SERVICE_AUTHORITY",
 	"AC19_RESOLVE_CONFIRMATION",
@@ -1824,15 +1826,19 @@ export function createAc20FixtureScript(
 	})()`;
 }
 
-/** Guarded action and local recovery for the dev-2 AC-19 service case. */
+/** Generated host phases for one resumed dev-2 AC-19 service case. */
 export interface Ac19CaseScripts {
-	/** Seeds one fresh source and measures simulated eviction against its baseline. */
+	/** Seeds one fresh source, captures eviction during active sync, and checks scoped publication. */
 	action: string;
-	/** Restores the synthetic local source and leaves dev-2 paused. */
+	/** Restores the synthetic source, compares full historical identities, and leaves dev-2 paused. */
 	cleanup: string;
 }
 
-/** Builds the dev-2 service case for one unique fixture in the authorized synthetic vault. */
+/** Builds guarded dev-2 phases that retain exact vault identity and never pause before eviction.
+ *
+ * The action retries each explicit service read at most three times and preserves historical
+ * journal identities. Cleanup restores the fixture only inside the authorized test vault.
+ */
 export function createAc19CaseScripts(
 	id: DesktopVaultId,
 	resolvedPath: string,
@@ -1843,24 +1849,44 @@ export function createAc19CaseScripts(
 	const target = assertAuthorizedVault(id, resolvedPath, home);
 	const fixture = createAc19FixturePaths(id, [], fixtureName);
 	const action = `
-		if (app.vault.adapter.getBasePath() !== ${JSON.stringify(target)}) throw new Error("AC19_ASSERT_TARGET_VAULT");
-		const plugin = app.plugins.plugins?.["ai-bridge"];
-		if (!plugin?.journal?.snapshot || !plugin.desktopSync || !plugin.coexistence || !plugin.composition?.publication || !plugin.settingsTab?.syncActions?.pause || !plugin.settingsTab?.syncActions?.resume || !plugin.settingsValue?.coexistenceMode || plugin.settingsValue?.deviceName !== "oab-10.1 dev-2") throw new Error("AC19_ASSERT_PLUGIN_CONTROLS");
-		if (plugin.sessionStatus !== "connected" || plugin.desktopSync.isBusy || plugin.syncPaused || plugin.syncActive) throw new Error("AC19_ASSERT_INITIAL_STATE");
 		const adapter = app.vault.adapter;
+		if (app.vault.getName() !== "obsidian-ai-bridge-dev-2" || typeof adapter.basePath !== "string" || !adapter.basePath.endsWith("/vaults/obsidian-ai-bridge-dev-2") || adapter.getBasePath() !== ${JSON.stringify(target)}) throw new Error("AC19_ASSERT_TARGET_VAULT");
+		const plugin = app.plugins.plugins?.["ai-bridge"];
+		if (!plugin?.journal?.snapshot || !plugin.desktopSync || !plugin.coexistence || !plugin.composition?.publication || !plugin.settingsTab?.syncActions?.pause || !plugin.settingsTab?.syncActions?.resume || !plugin.settingsValue?.coexistenceMode) throw new Error("AC19_ASSERT_PLUGIN_CONTROLS");
+		if (plugin.sessionStatus !== "connected" || plugin.desktopSync.isBusy || plugin.syncPaused || plugin.syncActive || !plugin.composition) throw new Error("AC19_ASSERT_INITIAL_STATE");
 		const source = ${JSON.stringify(fixture.source)};
 		const placeholder = ${JSON.stringify(fixture.placeholder)};
 		if (app.vault.getAbstractFileByPath(source) || await adapter.stat(source) || await adapter.stat(placeholder)) throw new Error("AC19_ASSERT_FIXTURE_COLLISION");
 		const remote = Reflect.get(plugin.composition.publication, "remote");
 		if (!remote?.readCurrentAuthority) throw new Error("AC19_ASSERT_REMOTE_AUTHORITY");
 		let servicePathAbsent = false;
-		try { await withCaseBoundary("AC19_READ_SERVICE_ABSENCE", () => remote.readCurrentAuthority(source)); } catch (error) { servicePathAbsent = readBoundaryDetails(error)?.status === 404; if (!servicePathAbsent) throw error; }
+		const serviceRetryDeadline = Date.now() + 10000;
+		const readService = async (boundary, path) => {
+			for (let attempt = 0; attempt < 3; attempt += 1) {
+				try { return await withCaseBoundary(boundary, () => remote.readCurrentAuthority(path)); }
+				catch (error) {
+					if (readBoundaryDetails(error)?.status !== 429 || attempt === 2) throw error;
+					const retryAfter = readBoundaryDetails(error)?.retryAfter;
+					const numericRetryAfter = Number(retryAfter);
+					const retryDelay = Number.isFinite(numericRetryAfter) ? numericRetryAfter * 1000 : Date.parse(retryAfter) - Date.now();
+					if (!Number.isFinite(retryDelay) || retryDelay < 0) throw error;
+					if (Date.now() + retryDelay > serviceRetryDeadline) throw error;
+					await new Promise((resolve) => window.setTimeout(resolve, retryDelay));
+				}
+			}
+			throw new Error("AC19_ASSERT_REMOTE_AUTHORITY");
+		};
+		ac19Cleanup.readService = readService;
+		try { await readService("AC19_READ_SERVICE_ABSENCE", source); } catch (error) { servicePathAbsent = readBoundaryDetails(error)?.status === 404; if (!servicePathAbsent) throw error; }
 		if (!servicePathAbsent) throw new Error("AC19_ASSERT_SERVICE_PATH_ABSENT");
 		const initial = plugin.journal.snapshot();
-		if (!initial.epoch || initial.base?.[source] || initial.base?.[placeholder] || initial.pending_ops?.length || initial.pending_apply?.length || initial.coexistence_confirmations?.length) throw new Error("AC19_ASSERT_INITIAL_STATE");
+		if (!initial.epoch || initial.base?.[source] || initial.base?.[placeholder] || initial.pending_ops.length || initial.pending_apply.length || initial.pending_ops.some((operation) => operation.path === source || operation.to === source || operation.path === placeholder || operation.to === placeholder) || initial.pending_apply.some((apply) => apply.path === source || apply.path === placeholder) || initial.coexistence_confirmations.some((item) => item.path === source || item.path === placeholder)) throw new Error("AC19_ASSERT_INITIAL_STATE");
 		const initialCounts = { pendingOperations: initial.pending_ops.length, pendingApplies: initial.pending_apply.length, attention: initial.attention.length, confirmations: initial.coexistence_confirmations.length };
 		ac19Cleanup.initialCounts = initialCounts;
+		ac19Cleanup.initialOperations = structuredClone(initial.pending_ops);
+		ac19Cleanup.initialApplies = structuredClone(initial.pending_apply);
 		ac19Cleanup.initialAttention = structuredClone(initial.attention);
+		ac19Cleanup.initialConfirmations = structuredClone(initial.coexistence_confirmations);
 		ac19Cleanup.remote = remote;
 		ac19Cleanup.started = true;
 		const waitFor = async (test) => {
@@ -1880,13 +1906,11 @@ export function createAc19CaseScripts(
 		const seeded = plugin.journal.snapshot();
 		const baseline = seeded.base?.[source];
 		if (!baseline || baseline.deleted || !seeded.epoch || seeded.pending_ops.length !== initialCounts.pendingOperations || seeded.pending_apply.length !== initialCounts.pendingApplies || JSON.stringify(seeded.attention) !== JSON.stringify(ac19Cleanup.initialAttention)) throw new Error("AC19_ASSERT_BASELINE_SYNC");
-		const serviceBefore = await withCaseBoundary("AC19_READ_SERVICE_AUTHORITY", () => remote.readCurrentAuthority(source));
+		const serviceBefore = await readService("AC19_READ_SERVICE_AUTHORITY", source);
 		ac19Cleanup.serviceAuthority = { deleted: serviceBefore.deleted, epoch: serviceBefore.epoch, rev: serviceBefore.rev, hash: serviceBefore.hash };
 		if (serviceBefore.deleted || serviceBefore.epoch !== seeded.epoch || serviceBefore.rev !== baseline.rev || serviceBefore.hash !== baseline.hash) throw new Error("AC19_ASSERT_BASELINE_SYNC");
 		caseEvidence.ac19 = { captureReload: false, attentionUnchanged: false, baselineSynced: true, confirmationVisible: false, placeholderExcluded: false, serviceSourceLive: false, deleteOrRenameOperationCount: 0, initialPendingOperationCount: initialCounts.pendingOperations, initialPendingApplyCount: initialCounts.pendingApplies, initialAttentionCount: initialCounts.attention, initialConfirmationCount: initialCounts.confirmations, pendingOperationDelta: 0, pendingApplyDelta: 0, attentionDelta: 0, confirmationDelta: 0 };
-		plugin.settingsTab.syncActions.pause();
-		ac19Cleanup.pausedByCase = true;
-		if (!(await waitFor(() => plugin.syncPaused && plugin.composition === null))) throw new Error("AC19_ASSERT_PAUSE");
+		if (plugin.syncPaused || !plugin.composition || plugin.desktopSync.isBusy) throw new Error("AC19_ASSERT_RESUMED_SYNC");
 		await app.vault.trash(file, false);
 		await app.vault.createBinary(placeholder, new ArrayBuffer(0));
 		if (!(await waitFor(() => {
@@ -1898,21 +1922,23 @@ export function createAc19CaseScripts(
 		const unavailable = captured.unavailable_paths?.includes(source) ?? false;
 		const placeholderExcluded = !Object.prototype.hasOwnProperty.call(captured.base ?? {}, placeholder) && !captured.pending_ops?.some((operation) => operation.path === placeholder || operation.to === placeholder);
 		const deleteOrRenameOperationCount = captured.pending_ops?.filter((operation) => (operation.op === "delete" || operation.op === "rename") && (operation.path === source || operation.to === source)).length ?? 0;
+		const fixtureOperationCount = captured.pending_ops?.filter((operation) => operation.path === source || operation.to === source).length ?? 0;
+		const sameHistoricalIdentities = (left, right) => JSON.stringify(left) === JSON.stringify(right);
 		if (!confirmation || !unavailable || !placeholderExcluded) throw new Error("AC19_ASSERT_PLACEHOLDER_EXCLUDED");
 		if (!(await waitFor(() => !plugin.desktopSync.isBusy))) throw new Error("AC19_ASSERT_CONFIRMATION");
 		const settled = plugin.journal.snapshot();
-		const serviceAfter = await withCaseBoundary("AC19_READ_SERVICE_AUTHORITY", () => remote.readCurrentAuthority(source));
+		const serviceAfter = await readService("AC19_READ_SERVICE_AUTHORITY", source);
 		const serviceSourceLive = Boolean(!serviceAfter.deleted && serviceAfter.epoch === serviceBefore.epoch && serviceAfter.rev === serviceBefore.rev && serviceAfter.hash === serviceBefore.hash && deleteOrRenameOperationCount === 0);
 		const attentionUnchanged = JSON.stringify(settled.attention) === JSON.stringify(ac19Cleanup.initialAttention);
 		const deltas = { pendingOperationDelta: settled.pending_ops.length - initialCounts.pendingOperations, pendingApplyDelta: settled.pending_apply.length - initialCounts.pendingApplies, attentionDelta: settled.attention.length - initialCounts.attention, confirmationDelta: settled.coexistence_confirmations.length - initialCounts.confirmations };
-		if (deltas.pendingOperationDelta !== 0 || deltas.pendingApplyDelta !== 0 || deltas.attentionDelta !== 0 || deltas.confirmationDelta !== 1 || !attentionUnchanged || !serviceSourceLive) throw new Error("AC19_ASSERT_BASELINE_DELTAS");
+		if (deltas.pendingOperationDelta !== 0 || deltas.pendingApplyDelta !== 0 || deltas.attentionDelta !== 0 || deltas.confirmationDelta !== 1 || !attentionUnchanged || !sameHistoricalIdentities(settled.pending_ops, ac19Cleanup.initialOperations) || !sameHistoricalIdentities(settled.pending_apply, ac19Cleanup.initialApplies) || !sameHistoricalIdentities(settled.attention, ac19Cleanup.initialAttention) || !sameHistoricalIdentities(settled.coexistence_confirmations.filter((item) => item.path !== source), ac19Cleanup.initialConfirmations) || fixtureOperationCount !== 0 || !serviceSourceLive) throw new Error("AC19_ASSERT_BASELINE_DELTAS");
 		caseEvidence.ac19 = { captureReload: false, attentionUnchanged, baselineSynced: true, confirmationVisible: Boolean(confirmation), placeholderExcluded, serviceSourceLive, deleteOrRenameOperationCount, initialPendingOperationCount: initialCounts.pendingOperations, initialPendingApplyCount: initialCounts.pendingApplies, initialAttentionCount: initialCounts.attention, initialConfirmationCount: initialCounts.confirmations, ...deltas };
 	`;
 	const cleanup = `
-		if (app.vault.adapter.getBasePath() !== ${JSON.stringify(target)}) throw new Error("AC19_CLEANUP_RESTORE_FAILED");
+		if (app.vault.getName() !== "obsidian-ai-bridge-dev-2" || typeof app.vault.adapter.basePath !== "string" || !app.vault.adapter.basePath.endsWith("/vaults/obsidian-ai-bridge-dev-2") || app.vault.adapter.getBasePath() !== ${JSON.stringify(target)}) throw new Error("AC19_CLEANUP_RESTORE_FAILED");
 		const plugin = app.plugins.plugins?.["ai-bridge"];
 		if (!plugin?.journal?.snapshot || !plugin.desktopSync || !plugin.coexistence) throw new Error("AC19_CLEANUP_RESTORE_FAILED");
-		if (ac19Cleanup.started && ac19Cleanup.sourceCreated && !ac19Cleanup.pausedByCase) {
+		if (ac19Cleanup.started && ac19Cleanup.sourceCreated && !plugin.syncPaused) {
 			plugin.settingsTab.syncActions.pause();
 			ac19Cleanup.pausedByCase = true;
 			const pauseDeadline = Date.now() + 15000;
@@ -1933,7 +1959,7 @@ export function createAc19CaseScripts(
 			while (plugin.journal.snapshot().unavailable_paths.includes(${JSON.stringify(fixture.source)}) && Date.now() < unavailableDeadline) await new Promise((resolve) => window.setTimeout(resolve, 50));
 			if (plugin.journal.snapshot().unavailable_paths.includes(${JSON.stringify(fixture.source)})) throw new Error("AC19_CLEANUP_PLACEHOLDER_BLOCKED");
 			for (const item of plugin.journal.snapshot().coexistence_confirmations ?? []) if (item.path === ${JSON.stringify(fixture.source)}) await plugin.coexistence.keepServerState(item.id);
-			if (ac19Cleanup.pausedByCase) {
+			if (ac19Cleanup.sourceCreated) {
 				try {
 					plugin.settingsTab.syncActions.resume();
 					const resumeDeadline = Date.now() + 15000;
@@ -1941,11 +1967,11 @@ export function createAc19CaseScripts(
 					await plugin.desktopSync.waitForIdle();
 					if (plugin.syncPaused || !plugin.composition || !app.vault.getAbstractFileByPath(${JSON.stringify(fixture.source)})) throw new Error("AC19_CLEANUP_RESTORE_FAILED");
 					const finalState = plugin.journal.snapshot();
-					if (finalState.pending_ops.length !== ac19Cleanup.initialCounts.pendingOperations || finalState.pending_apply.length !== ac19Cleanup.initialCounts.pendingApplies || JSON.stringify(finalState.attention) !== JSON.stringify(ac19Cleanup.initialAttention) || finalState.coexistence_confirmations.length !== ac19Cleanup.initialCounts.confirmations) throw new Error("AC19_CLEANUP_HISTORICAL_STATE_CHANGED");
-					const finalAuthority = await withCaseBoundary("AC19_READ_SERVICE_AUTHORITY", () => ac19Cleanup.remote.readCurrentAuthority(${JSON.stringify(fixture.source)}));
+					if (finalState.pending_ops.length !== ac19Cleanup.initialCounts.pendingOperations || finalState.pending_apply.length !== ac19Cleanup.initialCounts.pendingApplies || JSON.stringify(finalState.pending_ops) !== JSON.stringify(ac19Cleanup.initialOperations) || JSON.stringify(finalState.pending_apply) !== JSON.stringify(ac19Cleanup.initialApplies) || JSON.stringify(finalState.attention) !== JSON.stringify(ac19Cleanup.initialAttention) || JSON.stringify(finalState.coexistence_confirmations) !== JSON.stringify(ac19Cleanup.initialConfirmations)) throw new Error("AC19_CLEANUP_HISTORICAL_STATE_CHANGED");
+					const finalAuthority = await ac19Cleanup.readService("AC19_READ_SERVICE_AUTHORITY", ${JSON.stringify(fixture.source)});
 					if (finalAuthority.deleted || finalAuthority.epoch !== ac19Cleanup.serviceAuthority.epoch || finalAuthority.rev !== ac19Cleanup.serviceAuthority.rev || finalAuthority.hash !== ac19Cleanup.serviceAuthority.hash) throw new Error("AC19_CLEANUP_SERVICE_CHANGED");
 				} finally {
-					plugin.settingsTab.syncActions.pause();
+					if (!plugin.syncPaused) plugin.settingsTab.syncActions.pause();
 					const pauseDeadline = Date.now() + 15000;
 					while ((!plugin.syncPaused || plugin.composition !== null) && Date.now() < pauseDeadline) await new Promise((resolve) => window.setTimeout(resolve, 50));
 					if (!plugin.syncPaused || plugin.composition !== null) throw new Error("AC19_CLEANUP_PAUSE_FAILED");
@@ -2186,7 +2212,7 @@ export function createCaseScript(
 				if (safeBoundary === null) throw error;
 				const wrapped = new Error("Case operation failed");
 				Object.defineProperty(wrapped, boundaryDetailsKey, {
-					value: { boundary: safeBoundary, errorClass, status, code },
+					value: { boundary: safeBoundary, errorClass, status, code, retryAfter: error && typeof error === "object" ? error.retryAfter ?? null : null },
 				});
 				throw wrapped;
 			}
@@ -2331,6 +2357,33 @@ function collectCallbackUrls(value: unknown): string[] {
 	return [...urls];
 }
 
+/** Failed CLI process with safe exit facts and no raw output or credentials. */
+class ObsidianCliError extends Error {
+	/** Exit status, or null when the process did not exit normally. */
+	readonly exitCode: number | null;
+	/** Signal name, or null when no signal stopped the process. */
+	readonly signal: string | null;
+	/** Stable spawn failure code without the raw system message. */
+	readonly spawnCode: string | null;
+	/** Bounded stderr classification without stderr text. */
+	readonly stderrClass: "empty" | "nonempty";
+
+	/** Creates a generic failure message and retains only non-secret process facts. */
+	constructor(result: ReturnType<typeof spawnSync>) {
+		super("Obsidian command failed");
+		this.name = "ObsidianCliError";
+		this.exitCode = typeof result.status === "number" ? result.status : null;
+		this.signal = result.signal ?? null;
+		this.spawnCode =
+			result.error &&
+			"code" in result.error &&
+			typeof result.error.code === "string"
+				? result.error.code
+				: null;
+		this.stderrClass = result.stderr?.length ? "nonempty" : "empty";
+	}
+}
+
 /** Verifies an exact vault path before running a CLI command and captures output internally. */
 function invokeScopedObsidian(
 	id: DesktopVaultId,
@@ -2348,15 +2401,16 @@ function invokeScopedObsidian(
 		[`vault=${vaultName}`, "vault", "info=path"],
 		{ encoding: "utf8", timeout: 15_000 },
 	);
-	if (identity.status !== 0 || identity.stdout.trim() !== target)
+	if (identity.error || identity.status !== 0)
+		throw new ObsidianCliError(identity);
+	if (identity.stdout.trim() !== target)
 		throw new Error("Obsidian resolved an unauthorized vault path");
 	const result = spawnSync(
 		executable,
 		[`vault=${vaultName}`, command, ...args],
 		{ encoding: "utf8", timeout: 60_000 },
 	);
-	if (result.error || result.status !== 0)
-		throw new Error("Obsidian command failed");
+	if (result.error || result.status !== 0) throw new ObsidianCliError(result);
 	return result.stdout;
 }
 

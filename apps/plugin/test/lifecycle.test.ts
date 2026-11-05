@@ -26,6 +26,8 @@ const host = vi.hoisted(() => ({
 	syncActions: null as CapturedSyncActions | null,
 	saveDataAction: null as ((data: unknown) => Promise<void>) | null,
 	state: null as unknown,
+	payloads: new Map<string, Uint8Array>(),
+	unavailablePaths: new Set<string>(),
 	failSave: false,
 	loadState: null as (() => unknown) | null,
 	vaultListeners: [] as Array<{
@@ -83,11 +85,19 @@ vi.mock("obsidian", () => ({
 					if (index >= 0) host.vaultListeners.splice(index, 1);
 				},
 				adapter: {
-					stat: async () => null,
-					exists: async () => false,
+					stat: async (path: string) =>
+						host.unavailablePaths.has(path)
+							? { type: "file", mtime: 0, size: 0 }
+							: null,
+					exists: async (path: string) => host.payloads.has(path),
 					mkdir: async () => undefined,
-					readBinary: async () => new ArrayBuffer(0),
-					writeBinary: async () => undefined,
+					readBinary: async (path: string) => {
+						const bytes = host.payloads.get(path);
+						return bytes ? bytes.slice().buffer : new ArrayBuffer(0);
+					},
+					writeBinary: async (path: string, value: ArrayBuffer) => {
+						host.payloads.set(path, new Uint8Array(value).slice());
+					},
 				},
 			},
 			loadLocalStorage: (key: string) => {
@@ -263,6 +273,8 @@ describe("AIBridgePlugin device-local lifecycle", () => {
 		host.syncActions = null;
 		host.saveDataAction = null;
 		host.state = null;
+		host.payloads.clear();
+		host.unavailablePaths.clear();
 		host.failSave = false;
 		host.loadState = null;
 		host.vaultListeners.splice(0);
@@ -317,6 +329,88 @@ describe("AIBridgePlugin device-local lifecycle", () => {
 			vi.unstubAllGlobals();
 		}
 	});
+	it("keeps historical work unchanged when capture fences plugin reload", async () => {
+		host.settingsData = { coexistenceMode: true };
+		const plugin = await startConnectedPlugin(false);
+		const journal = Reflect.get(plugin, "journal") as DeviceJournal;
+		const epoch = "d".repeat(32);
+		await journal.resetEpoch(epoch);
+		await journal.enqueue(
+			{
+				op: "put",
+				path: "history/queued.md",
+				precondition: { kind: "absent" },
+			},
+			new TextEncoder().encode("historical operation payload"),
+		);
+		await journal.beginApply({
+			seq: 2,
+			op: "put",
+			path: "history/pending-apply.md",
+			etag: `"${epoch}.2"`,
+			hash: "e".repeat(64),
+			origin: "remote",
+			at: 100,
+		});
+		await journal.recordAttention("history/attention.md", "historical blocker");
+		host.syncActions?.pause();
+		const session = Reflect.get(plugin, "session") as DeviceSession;
+		const sessionHost = Reflect.get(session, "host") as DeviceSessionHost;
+		sessionHost.statusChanged("connected");
+		const controller = Reflect.get(
+			plugin,
+			"desktopSync",
+		) as DesktopSyncController;
+		const fixture = "oab-10.1/dev-1/simulated-eviction.md";
+		host.unavailablePaths.add(`${fixture}.icloud`);
+		emitVaultEvent("delete", { path: fixture });
+		await settleController(controller);
+		emitVaultEvent("create", { path: `${fixture}.icloud` });
+		await settleController(controller);
+		const captured = journal.snapshot();
+		const historical = structuredClone({
+			pending_ops: captured.pending_ops,
+			pending_apply: captured.pending_apply,
+			attention: captured.attention,
+		});
+		expect(captured.coexistence_confirmations).toHaveLength(1);
+		expect(captured.unavailable_paths).toContain(fixture);
+		plugin.onunload();
+		host.publicationStages.splice(0);
+		host.syncCycles = 0;
+
+		const reloaded = await startConnectedPlugin();
+		try {
+			await settleSyncEffects(reloaded);
+			const afterReload = (
+				Reflect.get(reloaded, "journal") as DeviceJournal
+			).snapshot();
+			expect(afterReload.coexistence_confirmations).toEqual(
+				captured.coexistence_confirmations,
+			);
+			expect(afterReload.unavailable_paths).toContain(fixture);
+			expect(afterReload.base[`${fixture}.icloud`]).toBeUndefined();
+			expect(
+				afterReload.pending_ops.some(
+					(operation) =>
+						operation.path === `${fixture}.icloud` ||
+						(operation.op === "rename" && operation.to === `${fixture}.icloud`),
+				),
+			).toBe(false);
+			expect({
+				pending_ops: afterReload.pending_ops,
+				pending_apply: afterReload.pending_apply,
+				attention: afterReload.attention,
+			}).toEqual(historical);
+			expect(host.publicationStages).toEqual([]);
+			expect(host.syncCycles).toBe(0);
+		} finally {
+			reloaded.onunload();
+			vi.useRealTimers();
+			vi.unstubAllGlobals();
+		}
+	});
+
 	it("stops later cycle stages when capture begins during recovery", async () => {
 		host.settingsData = { coexistenceMode: true };
 		const plugin = await startConnectedPlugin();

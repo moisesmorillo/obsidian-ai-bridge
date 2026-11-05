@@ -39,6 +39,7 @@ import {
 	classifyAc13PreflightFiles,
 	createAc04BaselineScript,
 	createAc13CaseScripts,
+	createAc19CaptureReloadScripts,
 	createAc19CaseScripts,
 	createAc19FixturePaths,
 	createAc20FixtureScript,
@@ -176,33 +177,80 @@ describe("desktop acceptance safety", () => {
 			"AC-19 fixture path already exists",
 		);
 		const scripts = createAc19CaseScripts(
-			"dev-1",
-			vaults["dev-1"],
+			"dev-2",
+			vaults["dev-2"],
 			"/Users/test",
 		);
 		expect(scripts.action).toContain(
-			'getBasePath() !== "/Users/test/vaults/obsidian-ai-bridge-dev"',
+			'getBasePath() !== "/Users/test/vaults/obsidian-ai-bridge-dev-2"',
 		);
-		expect(scripts.action).toContain('"oab-10.1/dev-1/simulated-eviction.md"');
+		expect(scripts.action).toContain('"oab-10.1/dev-2/simulated-eviction.md"');
+		expect(scripts.action).toContain("initialAttentionCount");
 		expect(scripts.cleanup).toContain("keepServerState");
+		expect(scripts.cleanup).toContain("settingsTab.syncActions.pause()");
+		expect(scripts.cleanup).toContain("settingsTab.syncActions.resume()");
+		expect(() =>
+			createAc19CaseScripts("dev-1", vaults["dev-1"], "/Users/test"),
+		).toThrow("AC-19 service case requires dev-2");
 		expect(() =>
 			createAc19CaseScripts(
-				"dev-1",
+				"dev-2",
 				"/Users/test/vaults/owner-personal",
 				"/Users/test",
 			),
 		).toThrow("Unauthorized vault target");
+		const captureReload = createAc19CaptureReloadScripts(
+			vaults["dev-1"],
+			"/Users/test",
+		);
+		expect(captureReload.capture).toContain(
+			'getBasePath() !== "/Users/test/vaults/obsidian-ai-bridge-dev"',
+		);
+		expect(captureReload.capture).toContain('deviceName !== "oab-10.1 dev-1"');
+		expect(captureReload.capture).not.toContain("disablePlugin");
+		expect(captureReload.capture).not.toContain("resume()");
+		expect(captureReload.reloadVerification).toContain(
+			'deviceName !== "oab-10.1 dev-1"',
+		);
+		expect(captureReload.reloadVerification).toContain("pendingApplyDelta");
+		expect(captureReload.capture).not.toContain("resume()");
+		expect(captureReload.reloadVerification).not.toContain("resume()");
+		expect(
+			() =>
+				new Function(
+					createCaseScript("AC-19", scripts.action, scripts.cleanup),
+				),
+		).not.toThrow();
+		expect(
+			() => new Function(createCaseScript("AC-19", captureReload.capture, "")),
+		).not.toThrow();
+		expect(
+			() =>
+				new Function(
+					createCaseScript("AC-19", captureReload.reloadVerification, ""),
+				),
+		).not.toThrow();
 		expect(
 			safeCaseResult("AC-19", "service", {
 				status: "passed",
 				cleanupStatus: "passed",
 				caseEvidence: {
 					ac19: {
+						captureReload: false,
+						attentionUnchanged: true,
 						baselineSynced: true,
 						confirmationVisible: true,
 						placeholderExcluded: true,
 						serviceSourceLive: true,
 						deleteOrRenameOperationCount: 0,
+						initialPendingOperationCount: 0,
+						initialPendingApplyCount: 0,
+						initialAttentionCount: 4,
+						initialConfirmationCount: 0,
+						pendingOperationDelta: 0,
+						pendingApplyDelta: 0,
+						attentionDelta: 0,
+						confirmationDelta: 1,
 						clientId: "private-client-id",
 					},
 				},
@@ -213,11 +261,99 @@ describe("desktop acceptance safety", () => {
 			status: "passed",
 			evidence: "service",
 			ac19Evidence: {
+				captureReload: false,
+				attentionUnchanged: true,
 				baselineSynced: true,
 				confirmationVisible: true,
 				placeholderExcluded: true,
 				serviceSourceLive: true,
 				deleteOrRenameOperationCount: 0,
+			},
+		});
+	});
+
+	it("projects AC-19 baseline counts with nonzero historical attention", () => {
+		const scripts = createAc19CaseScripts(
+			"dev-2",
+			vaults["dev-2"],
+			"/Users/test",
+		);
+		expect(scripts.action).toContain("initialAttentionCount");
+		expect(scripts.action).toContain("attentionDelta");
+		expect(scripts.action).toContain("readCurrentAuthority");
+		expect(scripts.action).toContain("JSON.stringify(settled.attention)");
+		expect(scripts.action).not.toContain('syncStatus?.().state !== "settled"');
+		expect(scripts.action).not.toContain("initial.attention?.length");
+		expect(scripts.action).not.toContain("serviceAfter.head_seq");
+		const result = safeCaseResult("AC-19", "service", {
+			status: "passed",
+			cleanupStatus: "passed",
+			caseEvidence: {
+				ac19: {
+					captureReload: false,
+					attentionUnchanged: true,
+					baselineSynced: true,
+					confirmationVisible: true,
+					placeholderExcluded: true,
+					serviceSourceLive: true,
+					deleteOrRenameOperationCount: 0,
+					initialPendingOperationCount: 0,
+					initialPendingApplyCount: 0,
+					initialAttentionCount: 4,
+					initialConfirmationCount: 0,
+					pendingOperationDelta: 0,
+					pendingApplyDelta: 0,
+					attentionDelta: 0,
+					confirmationDelta: 1,
+				},
+			},
+		});
+		expect(result).toMatchObject({
+			status: "passed",
+			ac19Evidence: {
+				initialPendingOperationCount: 0,
+				initialPendingApplyCount: 0,
+				initialAttentionCount: 4,
+				initialConfirmationCount: 0,
+				pendingOperationDelta: 0,
+				pendingApplyDelta: 0,
+				attentionDelta: 0,
+				confirmationDelta: 1,
+			},
+		});
+		const captureReloadResult = safeCaseResult("AC-19", "local", {
+			status: "passed",
+			cleanupStatus: "passed",
+			caseEvidence: {
+				ac19: {
+					captureReload: true,
+					attentionUnchanged: true,
+					baselineSynced: false,
+					confirmationVisible: true,
+					placeholderExcluded: true,
+					serviceSourceLive: null,
+					deleteOrRenameOperationCount: 0,
+					initialPendingOperationCount: 1,
+					initialPendingApplyCount: 1,
+					initialAttentionCount: 2,
+					initialConfirmationCount: 0,
+					pendingOperationDelta: 0,
+					pendingApplyDelta: 0,
+					attentionDelta: 0,
+					confirmationDelta: 1,
+				},
+			},
+		});
+		expect(captureReloadResult).toMatchObject({
+			status: "passed",
+			evidence: "local",
+			ac19Evidence: {
+				captureReload: true,
+				attentionUnchanged: true,
+				serviceSourceLive: null,
+				initialPendingOperationCount: 1,
+				initialPendingApplyCount: 1,
+				initialAttentionCount: 2,
 			},
 		});
 	});

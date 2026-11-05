@@ -26,22 +26,31 @@ import type {
 } from "@obsidian-ai-bridge/protocol";
 import {
 	BeginClientConsentRequestSchema,
+	FeedPreparationObservationSchema,
 	ListClientGrantsRequestSchema,
 	ListClientGrantsResultSchema,
 	ListClientsRequestSchema,
 	ListClientsResultSchema,
+	MeasurementResponseSchema,
 	OwnerCsrfConsumeRequestSchema,
+	OwnerMeasurementsRequestSchema,
 	RegisterClientGrantRequestSchema,
 	RenameClientRequestSchema,
+	RequestObservationSchema,
 	RevokeClientRequestSchema,
 } from "@obsidian-ai-bridge/protocol";
 import { AdmissionDenied } from "@worker/application/admission";
 import { FileOperationDenied } from "@worker/application/files";
 import type { ImmutableFileCommand } from "@worker/application/history";
+import {
+	createMeasurementGateway,
+	type MeasurementGateway,
+} from "@worker/application/measurements";
 import type { Env } from "@worker/env";
 import { R2BlobStore } from "@worker/infrastructure/r2/blobs";
 import { SqliteAdmissionAuthority } from "@worker/infrastructure/sqlite/admission";
 import { SqliteClientRegistry } from "@worker/infrastructure/sqlite/clients";
+import { SqliteMeasurementsStore } from "@worker/infrastructure/sqlite/measurements";
 import { SqliteMutationCoordinator } from "@worker/infrastructure/sqlite/mutations";
 import { SqliteReadStore } from "@worker/infrastructure/sqlite/reads";
 import { SqliteRetentionStore } from "@worker/infrastructure/sqlite/retention";
@@ -83,6 +92,8 @@ export class Vault extends DurableObject<Env> {
 	private readonly clientRegistry: SqliteClientRegistry;
 	private readonly mutationCoordinator: SqliteMutationCoordinator;
 	private readonly textStore: SqliteTextStore;
+	private readonly measurementStore: SqliteMeasurementsStore;
+	private readonly measurementGateway: MeasurementGateway;
 	private readonly readStore: SqliteReadStore;
 	private readonly searchStore: SqliteSearchStore;
 	/** Applies one bounded SQLite retention batch for each native alarm. */
@@ -106,6 +117,8 @@ export class Vault extends DurableObject<Env> {
 			Date.now,
 		);
 		this.clientRegistry = new SqliteClientRegistry(ctx.storage, Date.now);
+		this.measurementStore = new SqliteMeasurementsStore(ctx.storage);
+		this.measurementGateway = createMeasurementGateway(this.measurementStore);
 		this.admissionAuthority = new SqliteAdmissionAuthority(ctx.storage, {
 			now: Date.now,
 			newTicketId: () =>
@@ -239,6 +252,36 @@ export class Vault extends DurableObject<Env> {
 	consumeOwnerCsrf(input: unknown): boolean {
 		return this.clientRegistry.consumeOwnerCsrf(
 			OwnerCsrfConsumeRequestSchema.parse(input),
+		);
+	}
+
+	/** Persist one provider-verified resource-router request observation. */
+	async recordMeasurementRequest(input: unknown): Promise<void> {
+		await this.initialization;
+		this.measurementGateway.recordRequest(
+			RequestObservationSchema.parse(input),
+		);
+	}
+
+	/** Persist one successful feed response-preparation sample in milliseconds. */
+	async recordFeedPreparation(input: unknown): Promise<void> {
+		await this.initialization;
+		this.measurementGateway.recordFeedPreparation(
+			FeedPreparationObservationSchema.parse(input),
+		);
+	}
+
+	/** Check the configured owner before reading aggregate or physical storage observations. */
+	async readMeasurements(input: unknown) {
+		const request = OwnerMeasurementsRequestSchema.parse(input);
+		if (
+			!this.env.OWNER_SUBJECT ||
+			request.owner_subject !== this.env.OWNER_SUBJECT
+		)
+			return null;
+		await this.initialization;
+		return MeasurementResponseSchema.parse(
+			this.measurementGateway.read(this.measurementStore.readStorage()),
 		);
 	}
 

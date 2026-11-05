@@ -5,7 +5,7 @@ status: Deferred
 assignee:
   - '@pi'
 created_date: '2026-11-05T16:52:00Z'
-updated_date: '2026-11-05T21:57:00Z'
+updated_date: '2026-11-05T21:58:00Z'
 labels:
   - deferred
   - F4
@@ -63,4 +63,6 @@ Supervisor safety decision after the case: dev-2 and the real vault share one se
 Supervisor-authorized cleanup: only oab-10.1/dev-2/simulated-eviction-p1-20261105-01.md. Guarded dev-2 disabled coexistence, resumed normal sync, trashed that exact file through the Obsidian Vault API, waited for the normal conditional delete receipt, and entered Pause. The host reported completion at 2026-11-05T21:52:27.455Z, deleted base revision 2, source absent locally, coexistence off, idle, 0 operations, 0 applies, 0 confirmations, and 4 attention items. A complete one-page scoped manifest read at 21:53:04.368Z confirmed one tombstone at revision 2, no live source row, no placeholder row, and authority equal to the local base. It used one service read and no retry. Every cleanup identity and eval call exited 0 with empty stderr. The attention fingerprint remains c9806c50c291706ca4a043e447a8ed27dbbd882f9cf18d5a8a4e26e5e29fd56d. Current state supersedes the earlier live revision 1 observation. The supervisor received the tombstone report. No other fixture cleanup or live case ran.
 
 Whole-branch semantic review at 6f5bc9a approved publication with one non-blocking raw retry-metadata finding. Commit c5d7bd1 separates private retry metadata from safe serialized diagnostics and adds regressions for private text, circular data, BigInt, and throwing getters. Focused tests passed 105/105. Worker docs:check and bun run check passed with 1941 tests and one skipped. The scoped corrective review and human branch review remain pending.
+
+Scoped corrective semantic review at 176bcc1 closes the raw retry-metadata finding with source and regression evidence. No new fix-diff finding remains. The reviewer confirms the shared-service restriction, revision 2 tombstone, Deferred status, and incomplete AC-19 claims in the task notes. Scope includes the tool, desktop acceptance tests, and accompanying task notes. Structural candidate desktop-acceptance.ts remains mixed but low-risk within the acceptance-tool boundary. Documentation audit covers changed interfaces, process error fields, helper contracts, constructor behavior, and named test helpers. Review limits: synthetic behavior does not prove live host timing. IDE probing reports three existing plugin-alias resolution errors and auxiliary findings in unrelated helpers. Canonical workspace typechecks pass. Human branch review remains pending.
 <!-- SECTION:NOTES:END -->

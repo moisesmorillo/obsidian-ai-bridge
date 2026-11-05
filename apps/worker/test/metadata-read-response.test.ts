@@ -342,7 +342,9 @@ describe("metadata HTTP response demand", () => {
 			expect(fixture.state.finished).toEqual([]);
 			fixture.release.resolve();
 			await finishing.promise;
-			expect(tryAcquireReadSlot()).toBeUndefined();
+			const slotAfterSourceWork = tryAcquireReadSlot();
+			expect(slotAfterSourceWork).toBeTypeOf("function");
+			slotAfterSourceWork?.();
 			cleanup.resolve();
 			await failed;
 			const free = tryAcquireReadSlot();
@@ -485,7 +487,9 @@ describe("metadata HTTP response demand", () => {
 			expect(fixture.state.finished).toEqual([]);
 			fixture.release.resolve();
 			await finishing.promise;
-			expect(tryAcquireReadSlot()).toBeUndefined();
+			const slotAfterSourceWork = tryAcquireReadSlot();
+			expect(slotAfterSourceWork).toBeTypeOf("function");
+			slotAfterSourceWork?.();
 			cleanup.resolve();
 			await Promise.all([drain, cancelled]);
 			const free = tryAcquireReadSlot();

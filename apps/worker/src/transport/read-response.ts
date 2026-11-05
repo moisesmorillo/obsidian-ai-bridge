@@ -7,6 +7,8 @@ import { ReadBatchFailure } from "@worker/application/reads";
 
 /** Maximum encoded bytes produced by one response demand. */
 const RESPONSE_CHUNK_BYTES = 65_536;
+/** Bound durable settlement without releasing unresolved source work early. */
+const SETTLEMENT_DEADLINE_MS = 5_000;
 
 /** Abort a fixed writer even when its consumer already ended the stream. */
 async function abortResponseWriter(
@@ -38,9 +40,10 @@ export interface ReadResponseOwner {
  * Transfer one read slot and admission to a byte response.
  * Generic responses stay pull-driven. Known-length responses use FixedLengthStream at the final
  * Response boundary and hold one bounded chunk until EOF validates the selected length. Durable
- * admission settles before the final write and close. Local capacity releases after response
- * production settles. Consumer cancellation appears at the next write. A stalled read keeps its slot
- * until its read and cleanup settle. Ticket expiry does not release unresolved local capacity.
+ * admission settles before the final write and close, with a fixed deadline. Local capacity releases
+ * after started source work and source cancellation settle, independent of durable settlement and
+ * consumer drain. A stalled read keeps its slot until its read and cleanup settle. Ticket expiry does
+ * not release unresolved local capacity.
  * @param knownByteLength - Exact response bytes, or undefined for generic response framing.
  */
 export function ownedReadResponse(
@@ -67,7 +70,7 @@ export function ownedReadResponse(
 		controllerRef = undefined;
 		releaseSlot();
 	}
-	/** Join source reads and cancellation, then settle durable admission without releasing capacity. */
+	/** Join source reads and cancellation before capacity release, then bound durable settlement. */
 	function settleOwner(
 		cancel: boolean,
 		completion: AdmissionCompletion,
@@ -84,18 +87,34 @@ export function ownedReadResponse(
 			}
 			const results = await Promise.allSettled([pending, cancellation]);
 			pending = undefined;
-			await owner.finish(
-				results.some(
-					(result) =>
-						result.status === "rejected" &&
-						!(
-							result.reason instanceof ReadBatchFailure ||
-							result.reason instanceof ReadAborted
-						),
-				)
-					? "uncertain"
-					: completion,
-			);
+			release();
+			const outcome = results.some(
+				(result) =>
+					result.status === "rejected" &&
+					!(
+						result.reason instanceof ReadBatchFailure ||
+						result.reason instanceof ReadAborted
+					),
+			)
+				? "uncertain"
+				: completion;
+			let timer: ReturnType<typeof setTimeout> | undefined;
+			try {
+				await Promise.race([
+					owner.finish(outcome),
+					new Promise<never>((_, reject) => {
+						timer = setTimeout(() => {
+							console.error("READ_SETTLEMENT_TIMEOUT");
+							reject(new Error("Read settlement timed out"));
+						}, SETTLEMENT_DEADLINE_MS);
+					}),
+				]);
+			} catch (error) {
+				console.error("READ_SETTLEMENT_FAILED");
+				throw error;
+			} finally {
+				if (timer !== undefined) clearTimeout(timer);
+			}
 		})();
 		return settlement;
 	}
@@ -175,6 +194,7 @@ export function ownedReadResponse(
 						if (buffered) await writer.write(buffered);
 						await writer.close();
 					} catch (error) {
+						await abortFixedWriter(error);
 						await settleOwner(true, "settled", error);
 					}
 					return;

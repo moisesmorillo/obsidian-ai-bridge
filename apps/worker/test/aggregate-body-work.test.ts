@@ -951,7 +951,7 @@ describe("aggregate body ownership", () => {
 				new Request(`https://${hosts[4]}/v1/vault`),
 				env,
 			);
-			expect(refusedDuringCleanup.status).toBe(429);
+			expect(refusedDuringCleanup.status).toBe(200);
 			await refusedDuringCleanup.text();
 			holdFirstReadCleanup = false;
 			finishResume.release();

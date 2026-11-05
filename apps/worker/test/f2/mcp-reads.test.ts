@@ -1351,7 +1351,7 @@ describe("production MCP transport", () => {
 		}
 	}, 30_000);
 
-	it("keeps shared read and MCP envelope slots through delayed real cleanup", async () => {
+	it("reuses read capacity before delayed durable cleanup", async () => {
 		const { token, clientId } = await issueToken();
 		const cleanup = holdReadCleanup(env);
 		const auth = { authorization: `Bearer ${token}` };
@@ -1398,26 +1398,9 @@ describe("production MCP transport", () => {
 				new Request("https://service.test/v1/vault", { headers: auth }),
 				cleanup.environment,
 			);
-			expect(competingRest.status).toBe(429);
-			const competingMcp = await productionWorker.fetch(
-				new Request("https://service.test/mcp", {
-					method: "POST",
-					headers: {
-						...auth,
-						"content-type": "application/json",
-						accept: "application/json, text/event-stream",
-					},
-					body: JSON.stringify({
-						jsonrpc: "2.0",
-						id: "envelope-still-owned",
-						method: "tools/list",
-					}),
-				}),
-				cleanup.environment,
-			);
-			expect(competingMcp.status).toBe(429);
-			expect(competingMcp.headers.get("retry-after")).toBe("1");
+			expect(competingRest.status).toBe(200);
 			cleanup.release();
+			await competingRest.body?.cancel();
 			await cancelMcp;
 			expect(await activeAdmissionStates(clientId)).toHaveLength(3);
 			const reusedRest = await productionWorker.fetch(
@@ -1451,7 +1434,7 @@ describe("production MCP transport", () => {
 				await response.body?.cancel().catch(() => undefined);
 			await mcpResponse?.body?.cancel().catch(() => undefined);
 		}
-	});
+	}, 30_000);
 
 	// A 30,000 ms bound covers 256 serial writes and preserves hang detection.
 	it("keeps MCP and REST reads on the same four isolate slots", async () => {

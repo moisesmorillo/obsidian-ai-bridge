@@ -306,7 +306,9 @@ describe("content read ownership", () => {
 		expect(finished).toEqual([]);
 		cancellation.resolve();
 		await finishing.promise;
-		expect(tryAcquireReadSlot()).toBeUndefined();
+		const slotAfterSourceWork = tryAcquireReadSlot();
+		expect(slotAfterSourceWork).toBeTypeOf("function");
+		slotAfterSourceWork?.();
 		cleanup.resolve();
 		await expect(response.arrayBuffer()).rejects.toThrow();
 		const free = tryAcquireReadSlot();
@@ -419,7 +421,9 @@ describe("content read ownership", () => {
 		cancellation.resolve();
 		await cleanupStarted.promise;
 		expect(finished).toEqual(["settled"]);
-		expect(tryAcquireReadSlot()).toBeUndefined();
+		const availableAfterSourceWork = tryAcquireReadSlot();
+		expect(availableAfterSourceWork).toBeTypeOf("function");
+		availableAfterSourceWork?.();
 		cleanup.resolve();
 		await read;
 		let free: (() => void) | undefined;
@@ -521,7 +525,7 @@ describe("content read ownership", () => {
 			expect(cancellationJoinedFirst).toBe(true);
 			expect(retainedDuringCancellation).toBe(true);
 			expect(uncertainBeforeRelease).toBe(true);
-			expect(retainedDuringCleanup).toBe(true);
+			expect(retainedDuringCleanup).toBe(false);
 			expect(finished).toEqual(["uncertain"]);
 			expect(free).toBeTypeOf("function");
 		} finally {

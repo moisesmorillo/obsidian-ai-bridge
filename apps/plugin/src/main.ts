@@ -584,7 +584,13 @@ export default class AIBridgePlugin extends Plugin {
 		});
 		this.vaultEvents = new VaultEventAdapter(
 			this.app.vault,
-			this.desktopSync,
+			{
+				observe: async (event, originProof) => {
+					if (originProof)
+						this.coexistence?.registerOriginProof(event, originProof);
+					await this.desktopSync?.observe(event, originProof);
+				},
+			},
 			(error) => this.reportSyncFailure(error),
 		);
 		this.visibilityHandler = () => {

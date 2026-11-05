@@ -5,7 +5,7 @@ import type { EventRef, TAbstractFile, Vault } from "obsidian";
 
 /** Host event boundary that routes local intent to the single lifecycle owner. */
 export interface VaultEventObserver {
-	/** Admits every event in order; proof affects activity timing only. */
+	/** Admits each event and carries its bounded origin proof to capture and activity policy. */
 	observe(
 		event: PublicationEvent,
 		originProof?: PluginOriginProof,
@@ -31,6 +31,8 @@ interface PluginEventMarker {
 	allEffectsAccepted: boolean;
 	/** Intended visible bytes used only with active-read and effect evidence. */
 	target: PluginMutationTarget | null;
+	/** Exact host object passed to the accepted destructive effect. */
+	source: TAbstractFile | null;
 	/** Resolves after all overlapping mutation effects settle. */
 	settlement: Promise<boolean>;
 	/** Resolves the shared settlement proof once no wrapped effect remains. */
@@ -53,19 +55,22 @@ interface VaultOriginTracker {
 /** Shares mutation origin and event delivery state across adapters for each host vault. */
 const vaultOriginTrackers = new WeakMap<Vault, VaultOriginTracker>();
 
-/** Confirms origin only after matching bytes, successful effect settlement, and conditional acceptance. */
+/** Tracks one plugin effect so its host event can prove exact origin after effect acceptance. */
 export async function withPluginVaultMutation<T>(
 	vault: Vault,
 	event: PublicationEvent,
 	mutate: () => Promise<T>,
 	target?: PluginMutationTarget,
 	effectAccepted: () => boolean = () => true,
+	source?: TAbstractFile,
 ): Promise<T> {
 	const tracker = trackerFor(vault);
 	const key = eventKey(event);
 	const previous = tracker.markers.get(key);
-	const marker = previous ?? createPluginEventMarker(target ?? null);
+	const marker =
+		previous ?? createPluginEventMarker(target ?? null, source ?? null);
 	if (marker.operationCount > 0) marker.ambiguous = true;
+	if (marker.source !== (source ?? null)) marker.ambiguous = true;
 	marker.operationCount += 1;
 	tracker.markers.set(key, marker);
 	let accepted = false;
@@ -82,7 +87,7 @@ export async function withPluginVaultMutation<T>(
 			marker.resolveSettlement(
 				marker.allEffectsAccepted &&
 					!marker.ambiguous &&
-					marker.target !== null,
+					(marker.target !== null || event.type === "delete"),
 			);
 		}
 	}
@@ -124,7 +129,7 @@ function pluginOriginProofFor(
 	return proof;
 }
 
-/** Confirms bytes read before mutation settlement, then checks effect and conditional acceptance. */
+/** Proves destructive events by source identity and accepted effects, and content events by exact bytes. */
 async function verifyMutationTarget(
 	vault: Vault,
 	event: PublicationEvent,
@@ -135,6 +140,53 @@ async function verifyMutationTarget(
 		!marker ||
 		marker.ambiguous ||
 		marker.claimed ||
+		((event.type === "delete" || event.type === "rename") &&
+			marker.source !== source)
+	)
+		return false;
+	if (event.type === "delete") {
+		if (source.path !== event.path) return false;
+		marker.claimed = true;
+		return marker.settlement;
+	}
+	if (
+		event.type === "rename" &&
+		marker.target &&
+		source instanceof TFile &&
+		source.path === event.to
+	) {
+		try {
+			const target = marker.target;
+			const observation =
+				target.kind === "text"
+					? await vault.read(source).then((value) => ({
+							value,
+							completedBeforeSettlement: !marker.settled,
+						}))
+					: await vault.readBinary(source).then((bytes) => ({
+							value: new Uint8Array(bytes),
+							completedBeforeSettlement: !marker.settled,
+						}));
+			const matches =
+				target.kind === "text"
+					? typeof observation.value === "string" &&
+						observation.value === target.value
+					: observation.value instanceof Uint8Array &&
+						equalBytes(observation.value, target.value);
+			if (
+				!matches ||
+				!observation.completedBeforeSettlement ||
+				marker.ambiguous ||
+				marker.claimed
+			)
+				return false;
+			marker.claimed = true;
+			return marker.settlement;
+		} catch {
+			return false;
+		}
+	}
+	if (
 		!marker.target ||
 		(event.type !== "create" && event.type !== "modify") ||
 		!(source instanceof TFile) ||
@@ -172,6 +224,7 @@ async function verifyMutationTarget(
 /** Creates a marker whose final result reflects every overlapping effect. */
 function createPluginEventMarker(
 	target: PluginMutationTarget | null,
+	source: TAbstractFile | null,
 ): PluginEventMarker {
 	/** Resolves after every overlapping effect settles. */
 	let resolveSettlement: (accepted: boolean) => void = () => undefined;
@@ -185,6 +238,7 @@ function createPluginEventMarker(
 		settled: false,
 		allEffectsAccepted: true,
 		target: target ? copyTarget(target) : null,
+		source,
 		settlement,
 		resolveSettlement,
 	};

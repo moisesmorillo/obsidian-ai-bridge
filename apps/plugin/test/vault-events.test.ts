@@ -115,6 +115,39 @@ class UnusedRemote implements PublicationRemote {
 }
 
 describe("VaultEventAdapter", () => {
+	it("proves an accepted plugin delete for its exact host dispatch", async () => {
+		const handlers = new Map<string, (...args: unknown[]) => void>();
+		const vault = {
+			/** Registers one callback for the in-memory host dispatch. */
+			on(event: string, callback: (...args: unknown[]) => void) {
+				handlers.set(event, callback);
+				return { event } as EventRef;
+			},
+			offref: () => undefined,
+		} as unknown as Vault;
+		let proof: Promise<boolean> | undefined;
+		const adapter = new VaultEventAdapter(
+			vault,
+			{
+				observe: async (_event, originProof) => {
+					proof = originProof;
+				},
+			},
+			() => undefined,
+		);
+		const source = Object.assign(new TFile(), { path: "deleted.md" });
+		await withPluginVaultMutation(
+			vault,
+			{ type: "delete", path: "deleted.md" },
+			async () => handlers.get("delete")?.(source),
+			undefined,
+			() => true,
+			source,
+		);
+
+		expect(await proof).toBe(true);
+		adapter.dispose();
+	});
 	it("shares plugin origin across adapters for one host vault", async () => {
 		const handlers = new Map<string, Set<(...args: unknown[]) => void>>();
 		const vault = {
@@ -175,6 +208,41 @@ describe("VaultEventAdapter", () => {
 		expect(secondOrigins).toEqual([true, false]);
 		first.dispose();
 		second.dispose();
+	});
+
+	it("proves rename only for the original host object and exact destination bytes", async () => {
+		const handlers = new Map<string, (...args: unknown[]) => void>();
+		const vault = {
+			/** Registers the callback used by this fake host dispatch. */
+			on(event: string, callback: (...args: unknown[]) => void) {
+				handlers.set(event, callback);
+				return { event } as EventRef;
+			},
+			offref: () => undefined,
+			read: async () => "renamed bytes",
+		} as unknown as Vault;
+		let proof: Promise<boolean> | undefined;
+		const adapter = new VaultEventAdapter(
+			vault,
+			{
+				observe: async (_event, originProof) => {
+					proof = originProof;
+				},
+			},
+			() => undefined,
+		);
+		const source = Object.assign(new TFile(), { path: "new.md" });
+		await withPluginVaultMutation(
+			vault,
+			{ type: "rename", path: "old.md", to: "new.md" },
+			async () => handlers.get("rename")?.(source, "old.md"),
+			{ kind: "text", value: "renamed bytes" },
+			() => true,
+			source,
+		);
+
+		expect(await proof).toBe(true);
+		adapter.dispose();
 	});
 
 	it("keeps a read that finishes after mutation settlement local", async () => {

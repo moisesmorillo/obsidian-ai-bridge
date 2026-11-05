@@ -59,6 +59,40 @@ describe("coexistence journal schema", () => {
 });
 
 describe("CoexistenceController", () => {
+	it("clears a proved plugin delete without changing confirmation queues", async () => {
+		let persisted: unknown = null;
+		const journal = await DeviceJournal.open({
+			readState: async () => persisted,
+			writeState: async (state) => {
+				persisted = structuredClone(state);
+			},
+			readPayload: async () => new Uint8Array(),
+			writePayload: async () => undefined,
+		});
+		await journal.resetEpoch("d".repeat(32));
+		await journal.setBase("notes/a.md", {
+			deleted: false,
+			rev: 7,
+			hash: "e".repeat(64),
+		});
+		const controller = new CoexistenceController(
+			journal,
+			{ isUnavailable: async () => false, size: async () => null },
+			() => true,
+			() => 500,
+		);
+		const event = { type: "delete", path: "notes/a.md" } as const;
+		controller.registerOriginProof(event, Promise.resolve(true));
+
+		await expect(controller.observe(event)).resolves.toBe(true);
+		expect(journal.snapshot().coexistence_confirmations).toEqual([]);
+		expect(journal.snapshot().base["notes/a.md"]).toEqual({
+			deleted: false,
+			rev: 7,
+			hash: "e".repeat(64),
+		});
+		journal.close();
+	});
 	it("captures exact delete authority and placeholder metadata before event admission", async () => {
 		let persisted: unknown = null;
 		const journal = await DeviceJournal.open({

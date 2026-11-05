@@ -168,8 +168,13 @@ export class ObsidianTextVault implements TextVault {
 		if (!file) return false;
 		const current = await this.readBinary(path);
 		if (!current || !equalBytes(current, expected)) return false;
-		await withPluginVaultMutation(this.vault, { type: "delete", path }, () =>
-			this.vault.trash(file, false),
+		await withPluginVaultMutation(
+			this.vault,
+			{ type: "delete", path },
+			() => this.vault.trash(file, false),
+			undefined,
+			() => this.fileAt(path) !== file,
+			file,
 		);
 		return this.fileAt(path) !== file;
 	}
@@ -178,8 +183,13 @@ export class ObsidianTextVault implements TextVault {
 	async trash(path: string, expected: string): Promise<boolean> {
 		const file = this.fileAt(path);
 		if (!file || (await this.vault.read(file)) !== expected) return false;
-		await withPluginVaultMutation(this.vault, { type: "delete", path }, () =>
-			this.vault.trash(file, false),
+		await withPluginVaultMutation(
+			this.vault,
+			{ type: "delete", path },
+			() => this.vault.trash(file, false),
+			undefined,
+			() => this.fileAt(path) !== file,
+			file,
 		);
 		return this.fileAt(path) !== file;
 	}
@@ -200,6 +210,9 @@ export class ObsidianTextVault implements TextVault {
 			this.vault,
 			{ type: "rename", path: from, to },
 			() => this.vault.rename(source, to),
+			{ kind: "binary", value: expected },
+			() => this.fileAt(from) === null && source.path === to,
+			source,
 		);
 		const moved = await this.readBinary(to);
 		return (
@@ -220,6 +233,9 @@ export class ObsidianTextVault implements TextVault {
 			this.vault,
 			{ type: "rename", path: from, to },
 			() => this.vault.rename(source, to),
+			{ kind: "text", value: expected },
+			() => this.fileAt(from) === null && this.fileAt(to) === source,
+			source,
 		);
 		return this.fileAt(to) === source && this.fileAt(from) === null;
 	}

@@ -1,5 +1,6 @@
 import type { PendingOperation } from "@obsidian-ai-bridge/protocol";
 import type { CoexistenceEffectFence } from "@plugin/sync/coexistence-effect-fence";
+import type { PluginOriginProof } from "@plugin/sync/desktop-sync";
 import type { DeviceJournal } from "@plugin/sync/device-journal";
 import { classifyEnrollmentPath } from "@plugin/sync/enrollment-scope";
 import type { PublicationEvent } from "@plugin/sync/publication";
@@ -14,6 +15,12 @@ export interface CoexistenceVault {
 
 /** Owns durable owner decisions and unavailable-path metadata for coexistence mode. */
 export class CoexistenceController {
+	/** Weakly associates a host dispatch proof without retaining event objects. */
+	private readonly originProofs = new WeakMap<
+		PublicationEvent,
+		PluginOriginProof
+	>();
+
 	/** Binds durable authority to current mode without owning plugin lifecycle. */
 	constructor(
 		private readonly journal: DeviceJournal,
@@ -23,6 +30,11 @@ export class CoexistenceController {
 		/** Closes shared effect admission until captured intent reaches durable state. */
 		private readonly effectFence?: CoexistenceEffectFence,
 	) {}
+
+	/** Associates host-origin evidence with the same event object before desktop admission. */
+	registerOriginProof(event: PublicationEvent, proof: PluginOriginProof): void {
+		this.originProofs.set(event, proof);
+	}
 
 	/** Captures destructive intent before debounce and tracks placeholder transitions. */
 	async observe(event: PublicationEvent): Promise<boolean> {
@@ -35,6 +47,17 @@ export class CoexistenceController {
 			: undefined;
 		let persisted = false;
 		try {
+			const captured = destructive
+				? await this.journal.captureCoexistenceEvent(event, this.now())
+				: null;
+			if (captured) persisted = true;
+			const proof = this.originProofs.get(event);
+			this.originProofs.delete(event);
+			if (captured && proof && (await proof)) {
+				await this.journal.clearCoexistenceConfirmation(captured.id);
+				persisted = false;
+				return true;
+			}
 			const placeholder = placeholderSource(
 				event.type === "rename" ? event.to : event.path,
 			);
@@ -49,8 +72,10 @@ export class CoexistenceController {
 				await this.journal.clearUnavailable(placeholder);
 			if (event.type === "delete" || event.type === "rename") {
 				if (!destructive) return false;
-				await this.journal.captureCoexistenceEvent(event, this.now());
-				persisted = true;
+				if (!captured) {
+					await this.journal.captureCoexistenceEvent(event, this.now());
+					persisted = true;
+				}
 				if (await this.vault.isUnavailable(event.path))
 					await this.journal.markUnavailable(event.path);
 				return true;

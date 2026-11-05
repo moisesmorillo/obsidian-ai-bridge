@@ -1,11 +1,11 @@
 ---
 id: OAB-10.6
 title: Keep plugin remote destructive events out of coexistence confirmations
-status: In Progress
+status: Done
 assignee:
   - '@pi'
 created_date: '2026-11-05T22:05:00Z'
-updated_date: '2026-11-05T23:23:00Z'
+updated_date: '2026-11-05T23:27:00Z'
 labels: []
 dependencies: []
 parent_task_id: OAB-10
@@ -21,10 +21,10 @@ Relayed observation, not independently verified: at origin/main b5210f5, cursor 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Proved plugin remote delete and rename applies do not create owner confirmations.
-- [ ] #2 Genuine user destructive edits, including concurrent same-path edits, still capture before debounce with exact authority.
-- [ ] #3 Replay and restart preserve queues, with no suppression leaks.
-- [ ] #4 Failing controller integration regressions cover these cases, and bun run check passes.
+- [x] #1 Proved plugin remote delete and rename applies do not create owner confirmations.
+- [x] #2 Genuine user destructive edits, including concurrent same-path edits, still capture before debounce with exact authority.
+- [x] #3 Replay and restart preserve queues, with no suppression leaks.
+- [x] #4 Failing controller integration regressions cover these cases, and bun run check passes.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -90,4 +90,12 @@ Local Worker tests print injected network/SQLite diagnostics. The Worker build u
 Self-review uses the code-review skill and TypeScript profile. Origin matching, capture policy, and fence ownership stay unchanged. Parent owns independent scoped review and human review.
 
 OAB-10.6 stays In Progress with unchecked acceptance criteria. Full commands and limits appear in the ignored task-1-report.md and /tmp/oab-10.6/fix-wave-result.md. No evidence document enters the commit.
+
+Final acceptance at 450ee4c: task review found no actionable source issue. Whole-branch review F1 found missing pending-effect interleavings. Correction 450ee4c adds eight destructive concurrency cases. Scoped review closes F1 with no new actionable defect. Stateful owners remain cohesive: vault tracker owns origin evidence, coexistence owns frozen capture and durable fallback, and the shared fence owns effect admission. Review covers new production and test TSDoc, internal declarations, capture authority, mutation acceptance, weak replay state, and queues. Human branch review pn-509ad4 approved 450ee4c with no changes requested. Fresh fetch confirms origin/main remains 091b2b1, which this branch contains. Criteria 1 and 2 have real-controller delete/rename and exact-authority evidence. Criterion 3 has replay, restart, existing-queue, and later same-path intent evidence. Criterion 4 has the original RED regressions, the claimed-guard negative control, 43 focused tests, and full check with 2006 passed and 1 skipped. Tests use fake host ports. Real Obsidian event timing and real-vault behavior remain unverified. No vault or live service access occurred.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Keep proved plugin delete and rename effects outside owner confirmations. Freeze user-event authority before proof waits and preserve uncertain intent through durable confirmation. Shared fencing releases handled events without a suppression latch. Eight pending-effect concurrency cases close review F1. Full check passed 2006 tests with one skipped, plus lint, docs, typechecks, and builds. Human branch review pn-509ad4 approved. Real-host timing remains unverified.
+<!-- SECTION:FINAL_SUMMARY:END -->

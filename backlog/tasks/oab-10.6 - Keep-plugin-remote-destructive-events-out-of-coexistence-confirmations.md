@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-11-05T22:05:00Z'
-updated_date: '2026-11-05T22:42:00Z'
+updated_date: '2026-11-05T23:06:00Z'
 labels: []
 dependencies: []
 parent_task_id: OAB-10
@@ -43,4 +43,13 @@ GREEN: focused event, text-vault, and coexistence tests passed: 24 tests. `bun r
 Full check: `bun run check` passed lint, docs, typecheck, tests, and build. Tooling 91, protocol 307, plugin 650 with 1 skipped, Worker suites 702, 122, and 115 tests passed. Worker tests printed expected injected network and SQLite fault diagnostics.
 Self-review: destructive proof uses exact host object identity and accepted effect. Rename proof also checks target bytes. Weak event association carries proof into capture. Existing content proof remains byte-based. No Worker, protocol, journal, desktop-sync, publication, or live-vault changes.
 Evidence limit: tests use fake host ports. No claim about real Obsidian event timing. Full requested remote-apply and adversarial matrix remain for independent review.
+
+Correction after parent follow-up: the earlier implementation transiently saved then cleared proved confirmations. That path passed `false` to the capture fence and latched it forever. A regression test failed at `fence.isBlocked()` after a proved event (observed true, expected false). Replaced the transient persistence with synchronous frozen authority and paths, proof wait under the fence, then `saveCoexistenceConfirmation` only for uncertain proof. Successful handled events release the fence as success and use weak handled/in-flight event state. Rejected proofs fall back to persistence. Persistence failures keep the fence blocked.
+Supervisor ruling: keep `device-journal.ts` out of scope. Use a private UUIDv7 helper in `coexistence.ts` that matches the journal generator and existing confirmation schema. Do not add a schema or dependency. The actual confirmation persistence test passes the canonical state schema.
+RED evidence: `bun run --cwd apps/plugin vitest run test/coexistence.test.ts -t 'does not persist a confirmation or latch'` failed before the fix because the capture fence remained blocked. An earlier focused test also exposed and fixed fake-host adapter/stat omissions and invalid test epochs.
+Focused GREEN after correction and main merge: `bun run --cwd apps/plugin vitest run test/coexistence.test.ts test/text-vault.test.ts test/vault-events.test.ts` passed 3 files and 37 tests. `bun run docs:check` passed.
+Integration coverage now runs remote text tombstone, binary tombstone, and remote rename through TextApplyEngine, ObsidianTextVault, VaultEventAdapter, DesktopSyncController, CoexistenceController, and the shared effect fence. Tests assert queue and pending-apply state, source and destination revisions, exact destination bytes, and fence outcome. More tests cover concurrent same-path delete and rename dispatch before and after plugin events, refused/failed/overlapping effects, mismatched and late reads, rejected proof, event-time authority across a base change, Pause, replay, restart, an existing confirmation, and later genuine same-path user intent.
+Fetched and merged `origin/main` at 091b2b1 before final validation. The merge brought six upstream files unrelated to this task. No Worker source changes were made by this task. No vault or live service was accessed.
+
+Final post-merge check: `bun run check` passed after origin/main 091b2b1 merged. Plugin: 663 passed, 1 skipped. Tooling: 91 passed. Protocol: 307 passed. Worker suites: 702, 122, and 115 passed. Lint, docs, all typechecks, and build passed. Worker test logs contain expected injected network/request-stream and SQLite fault messages. Focused tests passed 37/37. `git diff --check` passed. The branch includes merge commit 5128ed2. Task status remains In Progress.
 <!-- SECTION:NOTES:END -->

@@ -55,7 +55,10 @@ interface VaultOriginTracker {
 /** Shares mutation origin and event delivery state across adapters for each host vault. */
 const vaultOriginTrackers = new WeakMap<Vault, VaultOriginTracker>();
 
-/** Tracks one plugin effect so its host event can prove exact origin after effect acceptance. */
+/**
+ * Wraps one Vault effect. Destructive proof binds the exact source object and accepted effect.
+ * Rename proof also requires the intended target bytes at the exact destination.
+ */
 export async function withPluginVaultMutation<T>(
 	vault: Vault,
 	event: PublicationEvent,

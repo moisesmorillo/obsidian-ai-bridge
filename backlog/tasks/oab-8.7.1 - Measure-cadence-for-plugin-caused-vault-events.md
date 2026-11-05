@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-11-03T00:36:00Z'
-updated_date: '2026-11-05T22:22:00Z'
+updated_date: '2026-11-05T22:29:00Z'
 labels: []
 dependencies: []
 parent_task_id: OAB-8.7
@@ -56,4 +56,6 @@ Focused GREEN: The four required plugin test files passed 103 tests. `bun run do
 Deferred coexistence follow-up: OAB-10.6, `Keep plugin remote destructive events out of coexistence confirmations`, is Deferred under OAB-10. It records a relayed and unverified report from origin/main bd3fc7a at cursor 180 on 2026-11-05 about 22:05Z. Trigger: the next F4 coexistence correction after OAB-8.7.1 merges. No real vault was accessed.
 
 Final validation and commit details are recorded in the implementation report. No live vault, browser, service, or network action occurred.
+
+Independent review closure at 9b47d26: task review found same-path origin ambiguity. Whole-branch review 81cba589 retained F1 intended-content proof and added F2 proof-dependent admission and teardown. Correction 9b47d26 adds successful effect settlement, conditional acceptance, late-read fallback, and detached cadence updates with lifecycle and activity revision checks. Scoped review 115eb72b closes F1 and F2 with source and regression evidence and gives APPROVE. No actionable source findings remain. Review scope includes changed production and test TypeScript declarations, target evidence, observer contracts, lifecycle policy, task records, and stateful ownership. Origin evidence belongs to the vault tracker. Mutation targets and conditional acceptance belong to the text-vault adapter. Event retention, timers, activity, and teardown belong to DesktopSyncController. Publication keeps durable echo ownership. Post-merge bun run check passed at 9b47d26 with 1984 tests passed and one skipped, plus lint, docs, typechecks, and builds. Real Obsidian read timing remains unverified. OAB-10.6 tracks the separate supervisor-reported coexistence capture defect. Human branch review remains pending.
 <!-- SECTION:NOTES:END -->

@@ -1,4 +1,7 @@
-import type { DevicePrecondition } from "@obsidian-ai-bridge/protocol";
+import type {
+	DevicePrecondition,
+	PendingOperation,
+} from "@obsidian-ai-bridge/protocol";
 import type { EventRef, Vault } from "obsidian";
 import { describe, expect, it, vi } from "vitest";
 import {
@@ -144,18 +147,23 @@ describe("VaultEventAdapter", () => {
 			() => undefined,
 		);
 
+		const file = { path: "shared.md" };
+		/** Sends one host event to every listener before the next dispatch. */
+		const dispatch = () => {
+			for (const callback of handlers.get("modify") ?? []) callback(file);
+		};
 		await withPluginVaultMutation(
 			vault,
 			{ type: "modify", path: "shared.md" },
 			async () => {
-				for (const callback of handlers.get("modify") ?? [])
-					callback({ path: "shared.md" });
+				dispatch();
+				dispatch();
 			},
 		);
 		await Promise.resolve();
 
-		expect(firstOrigins).toEqual(["plugin"]);
-		expect(secondOrigins).toEqual(["plugin"]);
+		expect(firstOrigins).toEqual(["plugin", undefined]);
+		expect(secondOrigins).toEqual(["plugin", undefined]);
 		first.dispose();
 		second.dispose();
 	});
@@ -211,7 +219,7 @@ describe("VaultEventAdapter", () => {
 			undefined,
 			undefined,
 			"plugin",
-			"plugin",
+			undefined,
 			undefined,
 			undefined,
 		]);
@@ -308,6 +316,7 @@ describe("VaultEventAdapter", () => {
 		expect(journal.snapshot().pending_ops).toHaveLength(1);
 
 		const concurrentPath = "notes/concurrent.md";
+		clock.mockReturnValue(301_001);
 		textVault.files.set(concurrentPath, "plugin content");
 		await withPluginVaultMutation(
 			vault,
@@ -325,10 +334,12 @@ describe("VaultEventAdapter", () => {
 		expect(
 			journal
 				.snapshot()
-				.pending_ops.filter((operation) => operation.path === concurrentPath),
+				.pending_ops.filter(
+					(operation: PendingOperation) => operation.path === concurrentPath,
+				),
 		).toHaveLength(1);
 
-		clock.mockReturnValue(301_001);
+		clock.mockReturnValue(602_000);
 		const conflictPath = "notes/conflict Test Device.md";
 		textVault.files.set(conflictPath, "conflict copy bytes");
 		await withPluginVaultMutation(

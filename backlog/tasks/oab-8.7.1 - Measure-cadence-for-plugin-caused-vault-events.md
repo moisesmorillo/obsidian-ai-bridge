@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-11-03T00:36:00Z'
-updated_date: '2026-11-05T21:18:00Z'
+updated_date: '2026-11-05T21:28:00Z'
 labels: []
 dependencies: []
 parent_task_id: OAB-8.7
@@ -45,4 +45,6 @@ Checks: `bun run docs:check` passed. `bun run check` passed lint (263 files), do
 Limits: No real host timing or vault was tested. Delayed host events after mutation settlement classify as local; event admission, capture order, queue intent, and expected-write ownership remain unchanged.
 
 Exact RED command: `set +e; bun run --cwd apps/plugin test test/desktop-sync.test.ts; code=$?; printf 'observed exit code=%s\\n' "$code"; test "$code" -ne 0`. Shell exit was 0 and Vitest exit was 1 on the expected 15000 ms versus 60000 ms assertion. The focused GREEN command passed 4 files and 95 tests after integration coverage.
+
+Follow-up review fix RED: `set +e; bun run --cwd apps/plugin test test/vault-events.test.ts; code=$?; printf 'observed exit code=%s\\n' "$code"; test "$code" -ne 0` exited 0 and recorded Vitest exit 1. The expired same-path user event still selected 60000 ms.\nFollow-up GREEN: the same-path test passes after one exact host event is attributed to a mutation. Other matching events default to local. Shared adapters receive one event classification by source identity and listener count. Overlapping same-key mutations remain ambiguous and local.\nValidation after fix: focused plugin suite passed 4 files and 95 tests. `bun run docs:check` passed. `bun run check` passed lint (263 files), docs, four workspace typechecks, tests (tooling 91, protocol 307, plugin 606 and 1 skipped, Worker runs 688, 122, and 115), and builds. No host or network action occurred.
 <!-- SECTION:NOTES:END -->

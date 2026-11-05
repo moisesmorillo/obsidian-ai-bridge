@@ -1,5 +1,5 @@
 import type { PublicationEvent } from "@plugin/sync/publication";
-import type { EventRef, Vault } from "obsidian";
+import type { EventRef, TAbstractFile, Vault } from "obsidian";
 
 /** Host event boundary that routes local intent to the single lifecycle owner. */
 export interface VaultEventObserver {
@@ -7,8 +7,22 @@ export interface VaultEventObserver {
 	observe(event: PublicationEvent, origin?: "plugin"): Promise<void>;
 }
 
-/** Tracks active mutation calls by host vault identity, event kind, and exact paths. */
-const activePluginEvents = new WeakMap<Vault, Map<string, number>>();
+/** One mutation marker accepts one host event and shares that event with all adapters. */
+interface PluginEventMarker {
+	operationCount: number;
+	ambiguous: boolean;
+	source: TAbstractFile | null;
+	remainingAdapters: number;
+}
+
+/** Owns origin markers and listener counts for one host vault identity. */
+interface VaultOriginTracker {
+	readonly markers: Map<string, PluginEventMarker>;
+	adapterCount: number;
+}
+
+/** Shares mutation origin and event delivery state across adapters for each host vault. */
+const vaultOriginTrackers = new WeakMap<Vault, VaultOriginTracker>();
 
 /** Tracks a visible host mutation until success or failure, then retires its origin marker. */
 export async function withPluginVaultMutation<T>(
@@ -16,26 +30,64 @@ export async function withPluginVaultMutation<T>(
 	event: PublicationEvent,
 	mutate: () => Promise<T>,
 ): Promise<T> {
+	const tracker = trackerFor(vault);
 	const key = eventKey(event);
-	let active = activePluginEvents.get(vault);
-	if (!active) {
-		active = new Map();
-		activePluginEvents.set(vault, active);
-	}
-	active.set(key, (active.get(key) ?? 0) + 1);
+	const previous = tracker.markers.get(key);
+	const marker = previous ?? {
+		operationCount: 0,
+		ambiguous: false,
+		source: null,
+		remainingAdapters: 0,
+	};
+	if (marker.operationCount > 0) marker.ambiguous = true;
+	marker.operationCount += 1;
+	tracker.markers.set(key, marker);
 	try {
 		return await mutate();
 	} finally {
-		const count = active.get(key) ?? 0;
-		if (count <= 1) active.delete(key);
-		else active.set(key, count - 1);
-		if (active.size === 0) activePluginEvents.delete(vault);
+		marker.operationCount -= 1;
+		if (marker.operationCount === 0) tracker.markers.delete(key);
 	}
 }
 
-/** Reads exact in-flight mutation origin without changing event admission or queue intent. */
-function hasPluginOrigin(vault: Vault, event: PublicationEvent): boolean {
-	return activePluginEvents.get(vault)?.get(eventKey(event)) === 1;
+/** Registers one adapter so each event callback receives the same origin classification. */
+function registerAdapter(vault: Vault): void {
+	trackerFor(vault).adapterCount += 1;
+}
+
+/** Releases one adapter from its host vault origin tracker. */
+function unregisterAdapter(vault: Vault): void {
+	const tracker = trackerFor(vault);
+	tracker.adapterCount = Math.max(0, tracker.adapterCount - 1);
+}
+
+/** Classifies one event dispatch while keeping repeated or ambiguous events local. */
+function pluginOriginFor(
+	vault: Vault,
+	event: PublicationEvent,
+	source: TAbstractFile,
+): boolean {
+	const tracker = trackerFor(vault);
+	const marker = tracker.markers.get(eventKey(event));
+	if (!marker || marker.ambiguous) return false;
+	if (marker.source === source && marker.remainingAdapters > 0) {
+		marker.remainingAdapters -= 1;
+		return true;
+	}
+	if (marker.source !== null) return false;
+	marker.source = source;
+	marker.remainingAdapters = Math.max(0, tracker.adapterCount - 1);
+	return true;
+}
+
+/** Creates the vault-local tracker when a mutation or adapter first needs it. */
+function trackerFor(vault: Vault): VaultOriginTracker {
+	let tracker = vaultOriginTrackers.get(vault);
+	if (!tracker) {
+		tracker = { markers: new Map(), adapterCount: 0 };
+		vaultOriginTrackers.set(vault, tracker);
+	}
+	return tracker;
 }
 
 /** Encodes event kind and exact affected paths for vault-local origin matching. */
@@ -56,18 +108,19 @@ export class VaultEventAdapter {
 		private readonly observer: VaultEventObserver,
 		private readonly onError: (error: unknown) => void,
 	) {
+		registerAdapter(vault);
 		this.references.push(
 			vault.on("create", (file) =>
-				this.send({ type: "create", path: file.path }),
+				this.send({ type: "create", path: file.path }, file),
 			),
 			vault.on("modify", (file) =>
-				this.send({ type: "modify", path: file.path }),
+				this.send({ type: "modify", path: file.path }, file),
 			),
 			vault.on("delete", (file) =>
-				this.send({ type: "delete", path: file.path }),
+				this.send({ type: "delete", path: file.path }, file),
 			),
 			vault.on("rename", (file, oldPath) =>
-				this.send({ type: "rename", path: oldPath, to: file.path }),
+				this.send({ type: "rename", path: oldPath, to: file.path }, file),
 			),
 		);
 	}
@@ -77,12 +130,15 @@ export class VaultEventAdapter {
 		if (this.closed) return;
 		this.closed = true;
 		for (const reference of this.references) this.vault.offref(reference);
+		unregisterAdapter(this.vault);
 	}
 
 	/** Reports asynchronous event failures to the composition owner without hiding them. */
-	private send(event: PublicationEvent): void {
+	private send(event: PublicationEvent, source: TAbstractFile): void {
 		if (this.closed) return;
-		const origin = hasPluginOrigin(this.vault, event) ? "plugin" : undefined;
+		const origin = pluginOriginFor(this.vault, event, source)
+			? "plugin"
+			: undefined;
 		void this.observer.observe(event, origin).catch(this.onError);
 	}
 }

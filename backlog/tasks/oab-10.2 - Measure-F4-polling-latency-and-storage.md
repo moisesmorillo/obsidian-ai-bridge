@@ -1,10 +1,10 @@
 ---
 id: OAB-10.2
 title: Measure F4 polling latency and storage
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-11-05T12:48:00Z'
-updated_date: '2026-11-05T14:27:00Z'
+updated_date: '2026-11-05T14:33:00Z'
 labels: []
 dependencies:
   - OAB-10.1
@@ -57,4 +57,12 @@ Branch correction for B1 and N1-N4.
 B1: Reordered feed requests set `poll_cadence_incomplete` and clear min/max intervals for that day. The latest feed timestamp stays monotonic. N1: A negative wall-clock duration adds no latency sample. N2: The aggregate schema constrains request, sample, and client feed times to their windows. Contradictory native state reads as unknown and remains unchanged. N3: Owner HTML shows retained sample bounds and the cap-eviction note. N4: `MEASUREMENT_LIMITS` has one protocol-package owner. Schemas, application code, and cap tests consume it.
 
 RED: `bun run --cwd apps/worker vitest run test/application-measurements.test.ts test/measurement-schemas.test.ts test/transport-measurements.test.ts test/vault-measurements.test.ts` failed 7 tests. The owner test command failed 1 HTML assertion. GREEN: The focused measurement suites passed 27 tests in 4 files. Owner tests passed 3 tests. `bun run docs:check` and `bun run check` passed. Worker tests passed 688. Full evidence: `.superpowers/sdd/S2-plan/task-1-report.md`. Task remains In Progress. Parent scoped review and human branch review remain pending.
+
+Final review: implementation revision 40e6453. Task review and complete branch review used the code-review skill and TypeScript profile. Structural review covered aggregation state policy, canonical schemas, SQLite persistence, Access authority, transport timing, and lazy response ownership. Documentation review covered all changed semantic declarations, owner output, and docs/api/measurements.md. F1 separate request freshness and F2 reordered request totals closed at f5081e4. B1 incorrect reordered cadence, N1 false zero duration, N2 contradictory durable windows, N3 missing HTML sample window, and N4 duplicate limit ownership closed at 40e6453. Each closure has focused tests and a corrective review. No actionable finding remains. Parent bun run check passed on 40e6453 with exit 0. Human branch review pn-5a8de5 approved without changes. Service-only scope completes under the owner brief. AC1 remains unchecked for plugin display. AC3 remains unchecked for local event classification. OAB-8.7.1 stays Deferred with its F4 trigger. AC4 remains unchecked pending the bounded live read after merge. These limits remain with the F4 continuation. No live evidence, production policy, or complete billing claim follows from the tests.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Added Access-protected service measurements with canonical protocol schemas, durable bounded daily request counts by client, p95 feed preparation latency, physical SQLite bytes, and distinct referenced blob bytes. Units, observation windows, partial coverage, stale values, and unknown values remain explicit. Regression tests cover asynchronous ordering, malformed state, caps, resets, stream ownership, and owner authority. Full project check and independent task, branch, corrective, and human reviews passed. Done applies only to the approved service-side deliverable. Plugin display, local event classification, and the two-test-vault live read remain unproven follow-up work.
+<!-- SECTION:FINAL_SUMMARY:END -->

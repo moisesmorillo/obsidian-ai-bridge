@@ -169,7 +169,11 @@ function toF4Snapshot(response: MeasurementResponse) {
 						? false
 						: null,
 			clientCoverage:
-				response.coverage === "unknown" ? "incomplete" : "complete",
+				response.requests.status === "unknown"
+					? "unknown"
+					: response.coverage === "unknown"
+						? "incomplete"
+						: "complete",
 			clients: response.requests.clients.map((client) => ({
 				id: client.client_id,
 				rest: client.requests_rest,

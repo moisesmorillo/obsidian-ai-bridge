@@ -250,7 +250,8 @@ export async function collectF4Measurements(
 	if (
 		(requests.rest !== null && clientRestTotal > requests.rest) ||
 		(requests.mcp !== null && clientMcpTotal > requests.mcp) ||
-		(requests.clientCoverage === "complete" &&
+		(requests.sourceStatus === "observed" &&
+			requests.clientCoverage === "complete" &&
 			(clientRestTotal !== requests.rest || clientMcpTotal !== requests.mcp))
 	)
 		throw new Error("Invalid measurement data");
@@ -479,11 +480,12 @@ export function formatF4Summary(summary: SafeF4Measurements): string {
 	const feedState = `${summary.feedLatency.sourceStatus}${summary.feedLatency.stale ? " (stale)" : ""}`;
 	const latency =
 		summary.feedLatency.p95 !== null
-			? `${summary.feedLatency.p95} ms (nearest-rank, ${summary.feedLatency.retainedSamples}/${summary.feedLatency.totalSamples} retained/total samples${summary.feedLatency.capExcluded ? ", earlier samples excluded by cap" : ""}; ${feedState})`
+			? `${summary.feedLatency.p95} ms (nearest-rank; ${feedState})`
 			: summary.feedLatency.reason === "no_samples" ||
 					summary.feedLatency.retainedSamples === 0
 				? `${summary.feedLatency.sourceStatus} (${summary.feedLatency.stale ? "stale, " : ""}no samples)`
 				: feedState;
+	const sampleEvidence = `${summary.feedLatency.retainedSamples}/${summary.feedLatency.totalSamples} retained/total samples${summary.feedLatency.capExcluded ? ", earlier samples excluded by cap" : ""}`;
 	const retainedSampleRange =
 		summary.feedLatency.retainedSampleTimes.length > 1
 			? `${summary.feedLatency.retainedSampleTimes[0]} to ${summary.feedLatency.retainedSampleTimes.at(-1)}`
@@ -501,7 +503,7 @@ export function formatF4Summary(summary: SafeF4Measurements): string {
 			(client) =>
 				`Client ${client.id}: REST ${client.rest}, MCP ${client.mcp}. Last feed request ${client.lastFeedRequestAt ?? "unknown"}. Poll interval ${client.pollCadenceIncomplete ? "unknown (out-of-order requests)" : `${client.minPollIntervalMs ?? "unknown"}-${client.maxPollIntervalMs ?? "unknown"} milliseconds`}.`,
 		),
-		`Feed response preparation p95: ${latency}. Window: ${summary.feedLatency.window ? `${summary.feedLatency.window.start} to ${summary.feedLatency.window.end}` : "unknown"}. Retained sample times: ${retainedSampleRange}. Not end-to-end sync latency. Feed times and intervals do not show event causes or focus state.`,
+		`Feed response preparation p95: ${latency}. Samples: ${sampleEvidence}. Window: ${summary.feedLatency.window ? `${summary.feedLatency.window.start} to ${summary.feedLatency.window.end}` : "unknown"}. Retained sample times: ${retainedSampleRange}. Not end-to-end sync latency. Feed times and intervals do not show event causes or focus state.`,
 		`SQLite allocation: ${storageValue(summary.storage.databaseBytes)}. Deduplicated referenced R2: ${storageValue(summary.storage.referencedBlobBytes)}. These are not bucket allocation or an integrity check.`,
 	].join("\n");
 }

@@ -158,6 +158,91 @@ describe("F4 collection CLI", () => {
 		);
 	});
 
+	it("accepts the service feed-only snapshot with unknown requests", async () => {
+		const feedOnlyResponse = {
+			...measurementResponse,
+			coverage: "partial",
+			requests: {
+				status: "unknown",
+				count: null,
+				observed_from: null,
+				observed_through: null,
+				rest_count: null,
+				mcp_count: null,
+				stale: true,
+				clients: [],
+			},
+			storage: {
+				database_bytes: { status: "observed", value: 2_048 },
+				referenced_blob_bytes: { status: "observed", value: 4_096 },
+			},
+		};
+		const context = dependencies(jsonResponse(feedOnlyResponse));
+		await expect(
+			runF4CollectionCli(
+				[
+					"--cookie-file",
+					"/synthetic/home/.config/obsidian-ai-bridge/f4/access.cookie",
+				],
+				context.deps,
+			),
+		).resolves.toBe(0);
+		expect(context.output[0]).toContain("Coverage: partial");
+		expect(context.output[0]).toContain(
+			"Requests (observed lower bounds): unknown.",
+		);
+		expect(context.output[0]).toContain("Request data: unknown (stale)");
+		expect(context.output[0]).not.toContain("REST 0");
+		expect(context.output[0]).toContain("125 ms");
+		expect(context.output[0]).toContain("SQLite allocation: 2048 bytes");
+		expect(context.output[0]).toContain(
+			"Deduplicated referenced R2: 4096 bytes",
+		);
+	});
+
+	it("prints retained sample evidence for the service clock-rollback response", async () => {
+		const rollbackResponse = {
+			...measurementResponse,
+			status: "unknown",
+			coverage: "unknown",
+			requests: {
+				status: "unknown",
+				count: null,
+				observed_from: measurementResponse.requests.observed_from,
+				observed_through: measurementResponse.requests.observed_through,
+				rest_count: null,
+				mcp_count: null,
+				stale: true,
+				clients: [],
+			},
+			feed_latency: {
+				...measurementResponse.feed_latency,
+				status: "unknown",
+				sample_count: 2,
+				total_sample_count: 3,
+				p95: null,
+				stale: true,
+			},
+		};
+		const context = dependencies(jsonResponse(rollbackResponse));
+		await expect(
+			runF4CollectionCli(
+				[
+					"--cookie-file",
+					"/synthetic/home/.config/obsidian-ai-bridge/f4/access.cookie",
+				],
+				context.deps,
+			),
+		).resolves.toBe(0);
+		expect(context.output[0]).toContain("Request data: unknown (stale)");
+		expect(context.output[0]).toContain(
+			"Feed response preparation p95: unknown (stale)",
+		);
+		expect(context.output[0]).toContain(
+			"Samples: 2/3 retained/total samples, earlier samples excluded by cap.",
+		);
+	});
+
 	it("keeps equal first and last times when multiple samples share one millisecond", async () => {
 		const response = {
 			...measurementResponse,

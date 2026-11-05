@@ -92,7 +92,7 @@ describe("F4 service-only collection", () => {
 			"Client client_42: REST 12, MCP 3.",
 		);
 		expect(formatF4Summary(result)).toContain(
-			"125 ms (nearest-rank, 10/10 retained/total samples",
+			"125 ms (nearest-rank; observed). Samples: 10/10 retained/total samples",
 		);
 	});
 
@@ -181,6 +181,40 @@ describe("F4 service-only collection", () => {
 				throw new Error("cookie=SECRET");
 			}),
 		).rejects.toThrow("Measurement read failed");
+	});
+
+	it("shows retained samples and cap exclusions when p95 is unknown", async () => {
+		const rollbackSnapshot = {
+			...snapshot,
+			serviceStatus: "unknown" as const,
+			coverage: "unknown" as const,
+			requests: {
+				...snapshot.requests,
+				status: "stale" as const,
+				sourceStatus: "unknown" as const,
+				stale: true,
+				count: null,
+				rest: null,
+				mcp: null,
+				clientCoverage: "unknown" as const,
+				clients: [],
+			},
+			feedLatency: {
+				...snapshot.feedLatency,
+				status: "stale" as const,
+				sourceStatus: "unknown" as const,
+				stale: true,
+				p95: null,
+				retainedSamples: MEASUREMENT_LIMITS.latencySamples,
+				totalSamples: MEASUREMENT_LIMITS.latencySamples + 1,
+				capExcluded: true,
+				reason: "stale" as const,
+			},
+		};
+		const result = await collectF4Measurements(async () => rollbackSnapshot);
+		const summary = formatF4Summary(result);
+		expect(summary).toContain("2048/2049 retained/total samples");
+		expect(summary).toContain("earlier samples excluded by cap");
 	});
 
 	it("accepts the public client and latency limits and rejects values above them", async () => {

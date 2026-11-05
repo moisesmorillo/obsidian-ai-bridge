@@ -4,7 +4,7 @@ title: Add plugin coexistence mode and eviction protection
 status: In Progress
 assignee: []
 created_date: '2026-11-05T12:48:00Z'
-updated_date: '2026-11-05T17:52:00Z'
+updated_date: '2026-11-05T17:53:00Z'
 labels: []
 dependencies: []
 documentation:
@@ -27,7 +27,7 @@ iCloud eviction can emit destructive Obsidian events. F4 needs owner confirmatio
 - [x] #4 The keyboard-accessible panel shows each confirmation, safe actions, and the text and binary residual risks. Pending confirmations prevent settled status.
 - [x] #5 Confirmation preserves the exact observed epoch and revision. A stale confirmation never deletes or renames newer content.
 - [ ] #6 AC-19 passes with simulated eviction on both authorized Mac test vaults. Existing service evidence stays intact.
-- [ ] #7 Failing regressions precede implementation. bun run check, semantic TypeScript reviews, and human branch review pass.
+- [x] #7 Failing regressions precede implementation. bun run check, semantic TypeScript reviews, and human branch review pass.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -86,4 +86,6 @@ The semantic review covered changed production and internal TypeScript declarati
 Final worker validation at source revision 0b22647 passed 269 focused tests, docs:check, and bun run check. The full check passed 1,925 tests with 1 skipped, workspace type checks, lint, and builds. Worker build used dry-run mode. Pi-lens alias resolution remains a diagnostic limit, while canonical type checks pass. docs/spec.md matches origin/main. PR #57 and #58 enter through the upstream merge.
 
 Criteria 1 through 5 now have code and regression evidence. Criterion 6 remains incomplete under the supervisor decision. Criterion 7 waits for human branch review. OAB-10.1 remains In Progress. No further host or service retry ran during source correction or review.
+
+Human branch review pn-a9d2de approved revision 41dba32 with no changes requested. The independent whole-branch review and scoped correction review close all source findings. Criterion 7 is now checked. Criterion 6 remains incomplete with Deferred OAB-10.1.1 and the supervisor-accepted evidence limit. Publish the reviewed branch without further live retries. Keep OAB-10.1 In Progress until the bounded service proof resolves.
 <!-- SECTION:NOTES:END -->

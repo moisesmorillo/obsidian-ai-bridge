@@ -27,6 +27,78 @@ class ResponseSession {
 const epoch = "a".repeat(32);
 
 describe("SyncTransport", () => {
+	it.each([
+		{
+			status: 429,
+			code: "admission_limited",
+			message: "The vault cannot accept another operation now.",
+			retryAfter: "30",
+			statusClass: "4xx",
+		},
+		{
+			status: 401,
+			code: "revoked",
+			message: "The grant no longer allows access.",
+			retryAfter: undefined,
+			statusClass: "4xx",
+		},
+		{
+			status: 401,
+			code: "unauthorized",
+			message: "Authentication is not valid.",
+			retryAfter: undefined,
+			statusClass: "4xx",
+		},
+		{
+			status: 500,
+			code: "internal_error",
+			message: "The service cannot complete the request.",
+			retryAfter: undefined,
+			statusClass: "5xx",
+		},
+	])("keeps canonical failure details for $code", async (failure) => {
+		const session = new ResponseSession();
+		session.responses.push({
+			status: failure.status,
+			headers: failure.retryAfter ? { "retry-after": failure.retryAfter } : {},
+			text: JSON.stringify({ error: failure.code, message: failure.message }),
+		});
+		const onRevoked = vi.fn();
+		const transport = new SyncTransport(
+			"https://service.test",
+			session,
+			onRevoked,
+		);
+
+		const error = await transport.vault().catch((caught: unknown) => caught);
+
+		expect(error).toMatchObject({
+			statusClass: failure.statusClass,
+			code: failure.code,
+			retryAfter: failure.retryAfter ?? null,
+		});
+		expect(onRevoked).toHaveBeenCalledTimes(failure.code === "revoked" ? 1 : 0);
+	});
+
+	it("classifies rejected transport requests without retaining private errors", async () => {
+		const privateValue = "https://private.test/path?token=secret";
+		const session = {
+			requestResponse: async () => {
+				throw new Error(privateValue);
+			},
+		};
+		const transport = new SyncTransport("https://service.test", session);
+
+		const error = await transport.vault().catch((caught: unknown) => caught);
+
+		expect(error).toMatchObject({
+			name: "SyncNetworkError",
+			message: "Sync request failed",
+		});
+		expect(JSON.stringify(error)).not.toContain("private.test");
+		expect(JSON.stringify(error)).not.toContain("secret");
+	});
+
 	it("classifies a rejected delete response without retaining raw response data", async () => {
 		const session = new ResponseSession();
 		session.responses.push({

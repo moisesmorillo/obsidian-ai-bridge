@@ -1,7 +1,8 @@
-import type {
-	CoexistenceConfirmation,
-	DeviceState,
-	VaultReadResult,
+import {
+	type CoexistenceConfirmation,
+	type DeviceState,
+	FileHttpErrorSchema,
+	type VaultReadResult,
 } from "@obsidian-ai-bridge/protocol";
 import type { DeviceJournalFailureStage } from "@plugin/sync/device-journal";
 import type { DeleteResponseDiagnostic } from "@plugin/sync/remote-text";
@@ -11,6 +12,19 @@ export interface RemoteHeadObservation {
 	epoch: string;
 	head_seq: number;
 }
+
+/** Safe network or HTTP metadata shown for one failed sync cycle. */
+export interface SyncFailureDiagnostic {
+	/** Bounded transport class without status numbers or error messages. */
+	transportClass: "4xx" | "5xx" | "network" | "other";
+	/** Canonical protocol code, or null when no validated code exists. */
+	code: FileHttpFailureCode | null;
+	/** Canonical decimal delay in seconds, or null when unavailable. */
+	retryAfterSeconds: string | null;
+}
+
+/** Canonical HTTP failure codes derived from the protocol schema. */
+type FileHttpFailureCode = ReturnType<typeof FileHttpErrorSchema.parse>;
 
 /** Inputs that distinguish durable authority from lifecycle and presentation state. */
 export interface SyncStatusInput {
@@ -28,8 +42,12 @@ export interface SyncStatusInput {
 	deleteResponseDiagnostic?: DeleteResponseDiagnostic | null;
 	/** True while a serialized cycle or event owns synchronization work. */
 	active: boolean;
-	/** Safe recent cycle failure; it blocks settled until a later successful cycle. */
-	failure?: string | null;
+	/** Safe recent cycle failure; it blocks settled until a later complete cycle. */
+	failure?: SyncFailureDiagnostic | null;
+	/** UTC time of the most recent failed cycle in this plugin session. */
+	lastFailureAt?: string | null;
+	/** UTC time of the most recent complete successful cycle in this plugin session. */
+	lastSuccessAt?: string | null;
 	/** True when the user paused effects while queued local intent remains durable. */
 	paused: boolean;
 	/** True only after a validated revocation response fenced the current session. */
@@ -73,7 +91,11 @@ export interface SyncStatusProjection {
 	/** Safe metadata from the latest DELETE response, or null before one. */
 	deleteResponseDiagnostic: DeleteResponseDiagnostic | null;
 	/** Safe latest synchronization failure; it cannot establish settled state. */
-	failure: string | null;
+	failure: SyncFailureDiagnostic | null;
+	/** UTC time of the latest failed cycle in this plugin session. */
+	lastFailureAt: string | null;
+	/** UTC time of the latest complete successful cycle in this plugin session. */
+	lastSuccessAt: string | null;
 	/** Live-file and tombstone counts from the latest validated server summary. */
 	counts: { live: number; deleted: number } | null;
 	/** Capacity warning codes from the latest validated server summary. */
@@ -143,9 +165,35 @@ export function projectSyncStatus(
 		storageFailure: !input.persisted,
 		storageFailureStage: input.storageFailureStage ?? null,
 		deleteResponseDiagnostic: input.deleteResponseDiagnostic ?? null,
-		failure: input.failure ?? null,
+		failure: sanitizeFailure(input.failure ?? null),
+		lastFailureAt: input.lastFailureAt ?? null,
+		lastSuccessAt: input.lastSuccessAt ?? null,
 		counts: remoteSummary ? remoteSummary.counts : null,
 		capacityWarnings: remoteSummary ? [...remoteSummary.attention] : [],
+	};
+}
+
+/** Drops invalid diagnostic fields rather than exposing unchecked error metadata. */
+function sanitizeFailure(
+	failure: SyncFailureDiagnostic | null,
+): SyncFailureDiagnostic | null {
+	if (!failure) return null;
+	const transportClass =
+		failure.transportClass === "4xx" ||
+		failure.transportClass === "5xx" ||
+		failure.transportClass === "network"
+			? failure.transportClass
+			: "other";
+	const parsedCode = FileHttpErrorSchema.safeParse(failure.code);
+	const retryAfterSeconds =
+		typeof failure.retryAfterSeconds === "string" &&
+		/^(?:[1-9]|[1-9][0-9]|[12][0-9]{2}|300)$/.test(failure.retryAfterSeconds)
+			? failure.retryAfterSeconds
+			: null;
+	return {
+		transportClass,
+		code: parsedCode.success ? parsedCode.data : null,
+		retryAfterSeconds,
 	};
 }
 

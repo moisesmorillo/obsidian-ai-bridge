@@ -6,6 +6,10 @@ import {
 import { ObsidianCredentialStorage } from "@plugin/infrastructure/credential-storage";
 import { ObsidianDeviceStorage } from "@plugin/infrastructure/device-storage";
 import { ObsidianOAuthTransport } from "@plugin/infrastructure/oauth-transport";
+import {
+	SyncNetworkError,
+	SyncTransportError,
+} from "@plugin/infrastructure/sync-transport";
 import { ObsidianTextVault } from "@plugin/infrastructure/text-vault";
 import { VaultEventAdapter } from "@plugin/infrastructure/vault-events";
 import { Notice, Plugin } from "@plugin/obsidian-api";
@@ -26,7 +30,10 @@ import {
 } from "@plugin/sync/device-journal";
 import { classifyEnrollmentPath } from "@plugin/sync/enrollment-scope";
 import type { DeleteResponseDiagnostic } from "@plugin/sync/remote-text";
-import { projectSyncStatus } from "@plugin/sync/sync-status";
+import {
+	projectSyncStatus,
+	type SyncFailureDiagnostic,
+} from "@plugin/sync/sync-status";
 import type { App, ObsidianProtocolData, PluginManifest } from "obsidian";
 
 /** Default canonical HTTPS service origin stored as a non-secret plugin setting. */
@@ -62,7 +69,12 @@ export default class AIBridgePlugin extends Plugin {
 	private sessionRestoreComplete = false;
 	private syncActive = false;
 	private syncRevoked = false;
-	private syncFailure: string | null = null;
+	/** Safe active cycle failure, cleared only after a complete successful cycle. */
+	private syncFailure: SyncFailureDiagnostic | null = null;
+	/** UTC failure time retained for this plugin session after recovery. */
+	private lastFailureAt: string | null = null;
+	/** UTC completion time retained for this plugin session. */
+	private lastSuccessAt: string | null = null;
 	/** Safe metadata from the latest DELETE response, retained across pause. */
 	private deleteResponseDiagnostic: DeleteResponseDiagnostic | null = null;
 	private vaultSummary: VaultReadResult | null = null;
@@ -518,7 +530,6 @@ export default class AIBridgePlugin extends Plugin {
 			try {
 				const composition = this.composition;
 				if (!composition || this.isCoexistenceEffectBlocked()) return;
-				this.syncFailure = null;
 				if (!this.vaultSummary) {
 					this.vaultSummary = await composition.readVaultSummary();
 					if (this.isCoexistenceEffectBlocked()) return;
@@ -537,16 +548,19 @@ export default class AIBridgePlugin extends Plugin {
 				if (this.isCoexistenceEffectBlocked()) return;
 				const summary = await composition.readVaultSummary();
 				if (
-					this.composition === composition &&
-					!this.syncPaused &&
-					!this.syncRevoked
+					this.composition !== composition ||
+					this.syncPaused ||
+					this.syncRevoked ||
+					this.isCoexistenceEffectBlocked()
 				)
-					this.vaultSummary = summary;
+					return;
+				this.vaultSummary = summary;
+				this.syncFailure = null;
+				this.lastSuccessAt = new Date(Date.now()).toISOString();
 			} catch (error) {
 				if (error instanceof CoexistenceEffectBlockedError) return;
-				this.syncFailure =
-					"Sync request failed. The device will retry on the next cycle.";
-				throw new Error(this.syncFailure);
+				this.reportSyncFailure(error);
+				throw error;
 			} finally {
 				this.syncActive = false;
 				this.settingsTab?.refreshStatus();
@@ -567,13 +581,13 @@ export default class AIBridgePlugin extends Plugin {
 				isVisible: () =>
 					document.visibilityState === "visible" && document.hasFocus(),
 			},
-			onError: () => this.reportSyncFailure(),
+			onError: (error) => this.reportSyncFailure(error),
 			onStateChanged: () => this.settingsTab?.refreshStatus(),
 		});
 		this.vaultEvents = new VaultEventAdapter(
 			this.app.vault,
 			this.desktopSync,
-			() => this.reportSyncFailure(),
+			(error) => this.reportSyncFailure(error),
 		);
 		this.visibilityHandler = () => {
 			this.runSyncAction(
@@ -603,7 +617,7 @@ export default class AIBridgePlugin extends Plugin {
 			{
 				now: Date.now,
 				registerEvents: false,
-				onEventError: () => this.reportSyncFailure(),
+				onEventError: (error) => this.reportSyncFailure(error),
 				onDeleteResponseDiagnostic: (diagnostic) => {
 					this.deleteResponseDiagnostic = diagnostic;
 					this.settingsTab?.refreshStatus();
@@ -693,6 +707,8 @@ export default class AIBridgePlugin extends Plugin {
 				deleteResponseDiagnostic: this.deleteResponseDiagnostic,
 				active: this.syncActive || (this.desktopSync?.isBusy ?? false),
 				failure: this.syncFailure,
+				lastFailureAt: this.lastFailureAt,
+				lastSuccessAt: this.lastSuccessAt,
 				paused: this.syncPaused,
 				revoked: this.syncRevoked,
 				coexistenceEnabled: this.settingsValue.coexistenceMode,
@@ -706,17 +722,30 @@ export default class AIBridgePlugin extends Plugin {
 		return this.coexistenceEffectFence?.isBlocked() ?? false;
 	}
 
-	/** Reports a fixed safe failure message for one rejected lifecycle action. */
-	private reportSyncFailure(): void {
-		this.syncFailure =
-			"Sync request failed. The device will retry on the next cycle.";
+	/** Projects only known transport metadata and records its plugin-session time. */
+	private reportSyncFailure(error?: unknown): void {
+		let transportClass: SyncFailureDiagnostic["transportClass"] = "other";
+		let code: SyncFailureDiagnostic["code"] = null;
+		let retryAfterSeconds: string | null = null;
+		if (error instanceof SyncTransportError) {
+			transportClass =
+				error.statusClass === "4xx" || error.statusClass === "5xx"
+					? error.statusClass
+					: "other";
+			code = error.code;
+			retryAfterSeconds = error.retryAfter;
+		} else if (error instanceof SyncNetworkError) {
+			transportClass = "network";
+		}
+		this.syncFailure = { transportClass, code, retryAfterSeconds };
+		this.lastFailureAt = new Date(Date.now()).toISOString();
 		this.settingsTab?.refreshStatus();
 	}
 
 	/** Consumes rejected host actions so window and UI callbacks cannot leak rejections. */
 	private runSyncAction(action: () => Promise<void>): void {
 		try {
-			void action().catch(() => this.reportSyncFailure());
+			void action().catch((error: unknown) => this.reportSyncFailure(error));
 		} catch {
 			this.reportSyncFailure();
 		}

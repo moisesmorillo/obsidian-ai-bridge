@@ -109,6 +109,8 @@ function makeStatus(): SyncStatusProjection {
 		storageFailureStage: null,
 		deleteResponseDiagnostic: null,
 		failure: null,
+		lastFailureAt: null,
+		lastSuccessAt: null,
 		counts: null,
 		capacityWarnings: [],
 	};
@@ -254,6 +256,42 @@ describe("SyncStatusPanel", () => {
 		container.findButton("Confirm rename notes/b.md to notes/c.md")?.click();
 		expect(kept).toEqual(["delete-id"]);
 		expect(confirmed).toEqual(["rename-id"]);
+	});
+
+	it("renders bounded diagnostics and UTC cycle times without service measurements", () => {
+		vi.stubGlobal("document", documentStub);
+		const container = new FakeElement("div");
+		const panel = new SyncStatusPanel({
+			syncNow: () => undefined,
+			pause: () => undefined,
+			resume: () => undefined,
+			reconnect: () => undefined,
+			openPath: () => undefined,
+			unsupportedFiles: () => [],
+			excludedFiles: () => [],
+			confirmCoexistence: () => undefined,
+			keepServerState: () => undefined,
+		});
+		panel.render(container as unknown as HTMLElement, {
+			...makeStatus(),
+			failure: {
+				transportClass: "4xx",
+				code: "admission_limited",
+				retryAfterSeconds: "30",
+			},
+			lastFailureAt: "2026-11-09T12:00:00.000Z",
+			lastSuccessAt: "2026-11-09T11:59:00.000Z",
+		});
+
+		const rendered = container.children
+			.map((child) => child.textContent)
+			.join(" ");
+		expect(rendered).toContain("4xx");
+		expect(rendered).toContain("admission_limited");
+		expect(rendered).toContain("30 seconds");
+		expect(rendered).toContain("2026-11-09T12:00:00.000Z");
+		expect(rendered).toContain("2026-11-09T11:59:00.000Z");
+		expect(rendered).not.toContain("Service measurements");
 	});
 
 	it("does not render a Rebuild action", () => {

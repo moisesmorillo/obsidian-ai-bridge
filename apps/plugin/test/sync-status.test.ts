@@ -112,13 +112,17 @@ describe("projectSyncStatus", () => {
 			head: { epoch: "epoch", head_seq: 4 },
 			persisted: true,
 			active: false,
-			failure: "The latest poll failed",
+			failure: {
+				transportClass: "other" as const,
+				code: null,
+				retryAfterSeconds: null,
+			},
 			paused: false,
 			revoked: false,
 		};
 
 		expect(projectSyncStatus(input).state).not.toBe("settled");
-		expect(projectSyncStatus(input).failure).toBe("The latest poll failed");
+		expect(projectSyncStatus(input).failure).toEqual(input.failure);
 	});
 
 	it("projects safe DELETE response classes without raw response values", () => {
@@ -140,6 +144,53 @@ describe("projectSyncStatus", () => {
 
 		expect(projected.state).toBe("paused");
 		expect(projected.deleteResponseDiagnostic).toEqual(diagnostic);
+	});
+
+	it("projects only bounded failure metadata and UTC cycle times", () => {
+		const diagnostic = {
+			transportClass: "4xx" as const,
+			code: "admission_limited" as const,
+			retryAfterSeconds: "30",
+		};
+		const projected = projectSyncStatus({
+			state,
+			session: "connected",
+			head: null,
+			persisted: true,
+			active: false,
+			failure: diagnostic,
+			lastFailureAt: "2026-11-09T12:00:00.000Z",
+			lastSuccessAt: "2026-11-09T11:59:00.000Z",
+			paused: false,
+			revoked: false,
+		});
+
+		expect(projected.failure).toEqual(diagnostic);
+		expect(projected.lastFailureAt).toBe("2026-11-09T12:00:00.000Z");
+		expect(projected.lastSuccessAt).toBe("2026-11-09T11:59:00.000Z");
+	});
+
+	it("drops malformed failure metadata instead of displaying raw values", () => {
+		const projected = projectSyncStatus({
+			state,
+			session: "connected",
+			head: null,
+			persisted: true,
+			active: false,
+			failure: {
+				transportClass: "network",
+				code: "private token",
+				retryAfterSeconds: 30,
+			} as never,
+			paused: false,
+			revoked: false,
+		});
+
+		expect(projected.failure).toEqual({
+			transportClass: "network",
+			code: null,
+			retryAfterSeconds: null,
+		});
 	});
 
 	it("projects a fixed journal failure stage without changing attention", () => {

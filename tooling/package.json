@@ -6,7 +6,11 @@
 		"./vite-aliases": "./vite-aliases.ts"
 	},
 	"scripts": {
+		"collect:f4": "bun collect-f4.ts",
 		"typecheck": "tsc --noEmit -p tsconfig.json",
 		"test": "vitest run --config vitest.config.ts"
+	},
+	"dependencies": {
+		"@obsidian-ai-bridge/protocol": "workspace:*"
 	}
 }

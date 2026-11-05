@@ -55,6 +55,9 @@
     },
     "tooling": {
       "name": "@obsidian-ai-bridge/tooling",
+      "dependencies": {
+        "@obsidian-ai-bridge/protocol": "workspace:*",
+      },
     },
   },
   "packages": {

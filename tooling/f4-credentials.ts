@@ -48,7 +48,20 @@ function validateCredentialPath(
 	];
 }
 
-/** Reads one bounded regular cookie file and hides filesystem errors and paths. */
+/** Rejects a cookie path outside the dedicated root before filesystem access. */
+export function assertAccessCookiePath(
+	path: string,
+	credentialRoot: string,
+): void {
+	validateCredentialPath(path, credentialRoot);
+}
+
+/**
+ * Reads one bounded regular cookie file and hides filesystem errors and paths.
+ * It checks every path component and opens the final file without following links.
+ * Parent components are not pinned to open directory handles, so their writers
+ * must be trusted during the check and open sequence.
+ */
 export async function readAccessCookieFile(
 	path: string,
 	credentialRoot: string,

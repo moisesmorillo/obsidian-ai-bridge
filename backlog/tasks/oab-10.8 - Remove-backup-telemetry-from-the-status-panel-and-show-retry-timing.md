@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-11-05T23:18:00Z'
-updated_date: '2026-11-05T23:42:00Z'
+updated_date: '2026-11-05T23:48:00Z'
 labels: []
 dependencies: []
 documentation:
@@ -46,4 +46,6 @@ Implementation evidence on branch bugfix/p5-panel-cleanup at reviewed base 091b2
 Commit: 088115c (fix(plugin): clean sync status panel). Final reviewed source revision: 088115c. The worktree has no staged files. The task remains In Progress, with acceptance criteria unchecked.
 
 F1 review correction: Added an integration regression in test/status-panel.test.ts. It reads status from AIBridgePlugin.syncStatus and drives AIBridgePlugin.startSync through the real DesktopSyncController and SyncTransport using synthetic vault, session, timers, and document. It proves no backup property, unknown capacity before sync, measured capacity after a validated summary, a real 429 admission_limited Retry-After 30 failure, panel retry copy, and cleared failure after successful recovery. Focused tests passed: 3 files, 27 tests. `bun run docs:check` passed. Post-merge `bun run check` passed lint, docs check, typecheck, tests, and builds. Task remains In Progress. Acceptance criteria remain unchecked.
+
+Review closure: task review accepted production behavior but found F1, a gap in real plugin projection coverage. Correction acf3d2f adds a real AIBridgePlugin, DesktopSyncController, and SyncTransport composition test. Scoped corrective review closed F1. Session-model complete branch review approved acf3d2f against origin/main 54ad88e. No actionable finding remains. Documentation scope covers all changed declarations and test helpers. Structural candidates status-panel.ts and sync-status.ts remain cohesive presentation and projection owners. Parent merged PR #69 through origin/main at 790dd00 and ran bun run check with exit 0. Worker final correction check also passed. Synthetic boundaries do not prove native Obsidian rendering, live service timing, or real-vault behavior.
 <!-- SECTION:NOTES:END -->

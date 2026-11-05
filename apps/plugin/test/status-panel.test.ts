@@ -1,6 +1,13 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SyncStatusPanel } from "../src/status-panel";
-import type { SyncStatusProjection } from "../src/sync/sync-status";
+import { CoexistenceController } from "../src/sync/coexistence";
+import { DesktopSyncController } from "../src/sync/desktop-sync";
+import { DeviceJournal } from "../src/sync/device-journal";
+import { SyncTransportError } from "../src/sync/remote-text";
+import {
+	projectSyncStatus,
+	type SyncStatusProjection,
+} from "../src/sync/sync-status";
 
 let activeElement: HTMLElement | null = null;
 
@@ -103,7 +110,6 @@ function makeStatus(): SyncStatusProjection {
 		coexistenceEnabled: false,
 		unavailablePaths: [],
 		pendingPaths: [],
-		backup: "unknown",
 		capacity: "unknown",
 		storageFailure: false,
 		storageFailureStage: null,
@@ -114,6 +120,33 @@ function makeStatus(): SyncStatusProjection {
 		counts: null,
 		capacityWarnings: [],
 	};
+}
+
+/** Opens a validated in-memory journal for real coexistence controller regressions. */
+async function openJournal() {
+	let persisted: unknown = null;
+	return DeviceJournal.open({
+		readState: async () => persisted,
+		writeState: async (state) => {
+			persisted = structuredClone(state);
+		},
+		readPayload: async () => new Uint8Array(),
+		writePayload: async () => undefined,
+	});
+}
+
+/** Projects durable controller state without granting it remote-head authority. */
+function projectJournal(journal: Awaited<ReturnType<typeof openJournal>>) {
+	return projectSyncStatus({
+		state: journal.snapshot(),
+		session: "connected",
+		head: null,
+		persisted: true,
+		active: false,
+		paused: false,
+		revoked: false,
+		coexistenceEnabled: true,
+	});
 }
 
 afterEach(() => {
@@ -288,7 +321,7 @@ describe("SyncStatusPanel", () => {
 			.join(" ");
 		expect(rendered).toContain("4xx");
 		expect(rendered).toContain("admission_limited");
-		expect(rendered).toContain("30 seconds");
+		expect(rendered).toContain("retry in 30 s");
 		expect(rendered).toContain("2026-11-09T12:00:00.000Z");
 		expect(rendered).toContain("2026-11-09T11:59:00.000Z");
 		expect(rendered).not.toContain("Service measurements");
@@ -321,8 +354,211 @@ describe("SyncStatusPanel", () => {
 			.map((child) => child.textContent)
 			.join(" ");
 		expect(rendered).toContain("network");
+		expect(rendered).not.toContain("retry in");
 		expect(rendered).not.toContain("private.test");
 		expect(rendered).not.toContain("secret");
+	});
+
+	it("renders bounded retry timing from a real failed sync cycle", async () => {
+		vi.stubGlobal("document", documentStub);
+		const container = new FakeElement("div");
+		const failure: { value: SyncTransportError | null } = { value: null };
+		let shouldFail = true;
+		const controller = new DesktopSyncController({
+			cycle: async () => {
+				if (shouldFail)
+					throw new SyncTransportError(429, "admission_limited", null, "30");
+			},
+			host: {
+				setTimeout: () => 1,
+				clearTimeout: () => undefined,
+				setInterval: () => 1,
+				clearInterval: () => undefined,
+			},
+			onError: (error) => {
+				if (error instanceof SyncTransportError) failure.value = error;
+			},
+		});
+		await controller.syncNow().catch(() => undefined);
+		await controller.waitForIdle();
+		if (!failure.value)
+			throw new Error("Sync controller did not report its failure");
+		const status = projectSyncStatus({
+			state: await openJournal().then((journal) => journal.snapshot()),
+			session: "connected",
+			head: null,
+			persisted: true,
+			active: false,
+			failure: {
+				transportClass: "4xx",
+				code: failure.value.code,
+				retryAfterSeconds: failure.value.retryAfter,
+			},
+			paused: false,
+			revoked: false,
+		});
+		new SyncStatusPanel({
+			syncNow: () => undefined,
+			pause: () => undefined,
+			resume: () => undefined,
+			reconnect: () => undefined,
+			openPath: () => undefined,
+			unsupportedFiles: () => [],
+			excludedFiles: () => [],
+			confirmCoexistence: () => undefined,
+			keepServerState: () => undefined,
+		}).render(container as unknown as HTMLElement, status);
+
+		const failureParagraph = container.children.find((child) =>
+			child.textContent.includes("Sync request failed."),
+		);
+		expect(failureParagraph?.textContent).toContain("4xx");
+		expect(failureParagraph?.textContent).toContain("admission_limited");
+		expect(failureParagraph?.textContent).toContain("retry in 30 s");
+		shouldFail = false;
+		await controller.syncNow();
+		const recovered = projectSyncStatus({
+			state: await openJournal().then((journal) => journal.snapshot()),
+			session: "connected",
+			head: null,
+			persisted: true,
+			active: false,
+			failure: null,
+			paused: false,
+			revoked: false,
+		});
+		new SyncStatusPanel({
+			syncNow: () => undefined,
+			pause: () => undefined,
+			resume: () => undefined,
+			reconnect: () => undefined,
+			openPath: () => undefined,
+			unsupportedFiles: () => [],
+			excludedFiles: () => [],
+			confirmCoexistence: () => undefined,
+			keepServerState: () => undefined,
+		}).render(container as unknown as HTMLElement, recovered);
+		expect(
+			container.children.some((child) =>
+				child.textContent.includes("retry in"),
+			),
+		).toBe(false);
+	});
+
+	it("shows both coexistence counts when either controller count is non-zero", async () => {
+		vi.stubGlobal("document", documentStub);
+		const journal = await openJournal();
+		const unavailable = new Set<string>();
+		const controller = new CoexistenceController(
+			journal,
+			{
+				isUnavailable: async (path) => unavailable.has(path),
+				size: async () => null,
+			},
+			() => true,
+			() => 100,
+		);
+		const container = new FakeElement("div");
+		/** Renders the current durable controller state in the panel. */
+		const render = () =>
+			new SyncStatusPanel({
+				syncNow: () => undefined,
+				pause: () => undefined,
+				resume: () => undefined,
+				reconnect: () => undefined,
+				openPath: () => undefined,
+				unsupportedFiles: () => [],
+				excludedFiles: () => [],
+				confirmCoexistence: () => undefined,
+				keepServerState: () => undefined,
+			}).render(container as unknown as HTMLElement, projectJournal(journal));
+		/** Finds the single optional coexistence count paragraph. */
+		const summary = () =>
+			container.children.filter((child) =>
+				child.textContent.startsWith("Coexistence confirmations:"),
+			);
+
+		await controller.observe({ type: "delete", path: "notes/confirm.md" });
+		unavailable.add("notes/placeholder.md");
+		await controller.observe({
+			type: "create",
+			path: "notes/placeholder.md.icloud",
+		});
+		render();
+		expect(summary()).toHaveLength(1);
+		expect(summary()[0]?.textContent).toBe(
+			"Coexistence confirmations: 1. Unavailable paths: 1.",
+		);
+		expect(
+			container.findButton("Confirm delete notes/confirm.md")?.disabled,
+		).toBe(true);
+
+		await controller.keepServerState(
+			journal.snapshot().coexistence_confirmations[0]?.id ?? "missing",
+		);
+		render();
+		expect(summary()).toHaveLength(1);
+		expect(summary()[0]?.textContent).toBe(
+			"Coexistence confirmations: 0. Unavailable paths: 1.",
+		);
+		unavailable.delete("notes/placeholder.md");
+		await controller.observe({
+			type: "create",
+			path: "notes/placeholder.md.icloud",
+		});
+		render();
+		expect(summary()).toHaveLength(0);
+	});
+
+	it("shows confirmation-only counts and clears the summary when durable state clears", async () => {
+		vi.stubGlobal("document", documentStub);
+		const journal = await openJournal();
+		const controller = new CoexistenceController(
+			journal,
+			{ isUnavailable: async () => false, size: async () => null },
+			() => true,
+			() => 100,
+		);
+		const container = new FakeElement("div");
+		/** Renders the current durable controller state in the panel. */
+		const render = () =>
+			new SyncStatusPanel({
+				syncNow: () => undefined,
+				pause: () => undefined,
+				resume: () => undefined,
+				reconnect: () => undefined,
+				openPath: () => undefined,
+				unsupportedFiles: () => [],
+				excludedFiles: () => [],
+				confirmCoexistence: () => undefined,
+				keepServerState: () => undefined,
+			}).render(container as unknown as HTMLElement, projectJournal(journal));
+
+		await controller.observe({
+			type: "rename",
+			path: "notes/a.md",
+			to: "notes/b.md",
+		});
+		render();
+		expect(
+			container.children.filter((child) =>
+				child.textContent.startsWith("Coexistence confirmations:"),
+			),
+		).toHaveLength(1);
+		expect(
+			container.children.find((child) =>
+				child.textContent.startsWith("Coexistence confirmations:"),
+			)?.textContent,
+		).toBe("Coexistence confirmations: 1. Unavailable paths: 0.");
+		await controller.keepServerState(
+			journal.snapshot().coexistence_confirmations[0]?.id ?? "missing",
+		);
+		render();
+		expect(
+			container.children.some((child) =>
+				child.textContent.startsWith("Coexistence confirmations:"),
+			),
+		).toBe(false);
 	});
 
 	it("does not render a Rebuild action", () => {
@@ -342,5 +578,22 @@ describe("SyncStatusPanel", () => {
 		panel.render(container as unknown as HTMLElement, makeStatus());
 
 		expect(container.findButton("Rebuild local index")).toBeNull();
+		expect(
+			container.children.some(
+				(child) => child.textContent === "Capacity: unknown.",
+			),
+		).toBe(true);
+		expect(
+			container.children.some((child) => child.textContent.includes("Backup:")),
+		).toBe(false);
+		panel.render(container as unknown as HTMLElement, {
+			...makeStatus(),
+			capacity: { used: 512, limit: 4096 },
+		});
+		expect(
+			container.children.some(
+				(child) => child.textContent === "Capacity: 512 of 4096 bytes used.",
+			),
+		).toBe(true);
 	});
 });

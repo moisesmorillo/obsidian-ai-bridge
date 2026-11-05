@@ -39,14 +39,21 @@ export class SyncStatusPanel {
 		const heading = document.createElement("h3");
 		heading.textContent = `Sync status: ${status.state}`;
 		container.append(heading);
-		const telemetry = document.createElement("p");
-		telemetry.textContent = `Backup: ${status.backup}. Capacity: ${typeof status.capacity === "string" ? status.capacity : `${status.capacity.used} of ${status.capacity.limit} bytes used`}.`;
-		container.append(telemetry);
+		const capacity = document.createElement("p");
+		capacity.textContent = `Capacity: ${typeof status.capacity === "string" ? status.capacity : `${status.capacity.used} of ${status.capacity.limit} bytes used`}.`;
+		container.append(capacity);
 		if (status.coexistenceEnabled) {
 			const risk = document.createElement("p");
 			risk.textContent =
 				"iCloud and this plugin write the same files. Text hash checks protect concurrent edits. Binary writes have a best-effort protection window.";
 			container.append(risk);
+		}
+		const confirmationCount = status.coexistenceConfirmations.length;
+		const unavailableCount = status.unavailablePaths.length;
+		if (confirmationCount > 0 || unavailableCount > 0) {
+			const coexistenceSummary = document.createElement("p");
+			coexistenceSummary.textContent = `Coexistence confirmations: ${confirmationCount}. Unavailable paths: ${unavailableCount}.`;
+			container.append(coexistenceSummary);
 		}
 		for (const path of status.unavailablePaths) {
 			const unavailable = document.createElement("p");
@@ -98,7 +105,7 @@ export class SyncStatusPanel {
 			const details: string[] = [status.failure.transportClass];
 			if (status.failure.code) details.push(status.failure.code);
 			if (status.failure.retryAfterSeconds)
-				details.push(`retry in ${status.failure.retryAfterSeconds} seconds`);
+				details.push(`retry in ${status.failure.retryAfterSeconds} s`);
 			failure.textContent = `Sync request failed. ${details.join(". ")}.`;
 			container.append(failure);
 		}

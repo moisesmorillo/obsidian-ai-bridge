@@ -146,6 +146,78 @@ describe("projectSyncStatus", () => {
 		expect(projected.deleteResponseDiagnostic).toEqual(diagnostic);
 	});
 
+	it("omits backup telemetry and preserves unknown or measured capacity", () => {
+		const input = {
+			state,
+			session: "connected" as const,
+			head: null,
+			persisted: true,
+			active: false,
+			paused: false,
+			revoked: false,
+		};
+		const unknown = projectSyncStatus(input);
+		expect(unknown).not.toHaveProperty("backup");
+		expect(unknown.capacity).toBe("unknown");
+		expect(
+			projectSyncStatus(input, {
+				epoch: "epoch",
+				head_seq: 4,
+				counts: { live: 2, deleted: 1 },
+				limits: {
+					manifest_page: 256,
+					feed_page: 1000,
+					text_bytes: 1_000_000,
+					blob_bytes: 25_000_000,
+				},
+				capacity: {
+					database_bytes: 512,
+					database_limit_bytes: 2_000_000_000,
+					live_file_limit: 10_000,
+					history_pressure_bytes: 0,
+					referenced_blob_bytes: 0,
+				},
+				attention: [],
+			}).capacity,
+		).toEqual({ used: 512, limit: 2_000_000_000 });
+	});
+
+	it("keeps only retry delays within the inclusive 1 to 300 second range", () => {
+		const input = {
+			state,
+			session: "connected" as const,
+			head: null,
+			persisted: true,
+			active: false,
+			paused: false,
+			revoked: false,
+		};
+		for (const seconds of ["1", "300"]) {
+			expect(
+				projectSyncStatus({
+					...input,
+					failure: {
+						transportClass: "4xx",
+						code: "admission_limited",
+						retryAfterSeconds: seconds,
+					},
+				}).failure?.retryAfterSeconds,
+			).toBe(seconds);
+		}
+		for (const seconds of ["0", "301", "01", "30.5"]) {
+			expect(
+				projectSyncStatus({
+					...input,
+					failure: {
+						transportClass: "4xx",
+						code: "admission_limited",
+						retryAfterSeconds: seconds,
+					},
+				}).failure?.retryAfterSeconds,
+			).toBeNull();
+		}
+	});
+
 	it("projects only bounded failure metadata and UTC cycle times", () => {
 		const diagnostic = {
 			transportClass: "4xx" as const,

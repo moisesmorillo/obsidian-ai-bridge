@@ -1,4 +1,5 @@
 import { DevicePayloadHashSchema, pathKey } from "@obsidian-ai-bridge/protocol";
+import { withPluginVaultMutation } from "@plugin/infrastructure/vault-events";
 import { TFile } from "@plugin/obsidian-api";
 import type { TextVault } from "@plugin/sync/text-apply";
 import type { Vault } from "obsidian";
@@ -48,7 +49,12 @@ export class ObsidianTextVault implements TextVault {
 		await this.ensureParent(path);
 		const copy = bytes.slice();
 		try {
-			await this.vault.createBinary(path, copy.buffer as ArrayBuffer);
+			await withPluginVaultMutation(
+				this.vault,
+				{ type: "create", path },
+				() => this.vault.createBinary(path, copy.buffer as ArrayBuffer),
+				{ kind: "binary", value: bytes },
+			);
 		} catch {
 			return false;
 		}
@@ -79,7 +85,12 @@ export class ObsidianTextVault implements TextVault {
 		const file = this.fileAt(path);
 		if (!file) return false;
 		const copy = bytes.slice();
-		await this.vault.modifyBinary(file, copy.buffer as ArrayBuffer);
+		await withPluginVaultMutation(
+			this.vault,
+			{ type: "modify", path },
+			() => this.vault.modifyBinary(file, copy.buffer as ArrayBuffer),
+			{ kind: "binary", value: bytes },
+		);
 		const written = await this.readBinary(path);
 		return written !== null && equalBytes(written, bytes);
 	}
@@ -119,11 +130,18 @@ export class ObsidianTextVault implements TextVault {
 		const file = this.fileAt(path);
 		if (!file || expected === null) return false;
 		let applied = false;
-		await this.vault.process(file, (current) => {
-			if (current !== expected) return current;
-			applied = true;
-			return next;
-		});
+		await withPluginVaultMutation(
+			this.vault,
+			{ type: "modify", path },
+			() =>
+				this.vault.process(file, (current) => {
+					if (current !== expected) return current;
+					applied = true;
+					return next;
+				}),
+			{ kind: "text", value: next },
+			() => applied,
+		);
 		return applied;
 	}
 
@@ -132,7 +150,12 @@ export class ObsidianTextVault implements TextVault {
 		if (this.fileAt(path) || this.hasPathKeyCollision(path)) return false;
 		await this.ensureParent(path);
 		try {
-			await this.vault.create(path, text);
+			await withPluginVaultMutation(
+				this.vault,
+				{ type: "create", path },
+				() => this.vault.create(path, text),
+				{ kind: "text", value: text },
+			);
 		} catch {
 			return false;
 		}
@@ -145,7 +168,9 @@ export class ObsidianTextVault implements TextVault {
 		if (!file) return false;
 		const current = await this.readBinary(path);
 		if (!current || !equalBytes(current, expected)) return false;
-		await this.vault.trash(file, false);
+		await withPluginVaultMutation(this.vault, { type: "delete", path }, () =>
+			this.vault.trash(file, false),
+		);
 		return this.fileAt(path) !== file;
 	}
 
@@ -153,7 +178,9 @@ export class ObsidianTextVault implements TextVault {
 	async trash(path: string, expected: string): Promise<boolean> {
 		const file = this.fileAt(path);
 		if (!file || (await this.vault.read(file)) !== expected) return false;
-		await this.vault.trash(file, false);
+		await withPluginVaultMutation(this.vault, { type: "delete", path }, () =>
+			this.vault.trash(file, false),
+		);
 		return this.fileAt(path) !== file;
 	}
 
@@ -169,7 +196,11 @@ export class ObsidianTextVault implements TextVault {
 		const bytes = await this.readBinary(from);
 		if (!bytes || !equalBytes(bytes, expected)) return false;
 		await this.ensureParent(to);
-		await this.vault.rename(source, to);
+		await withPluginVaultMutation(
+			this.vault,
+			{ type: "rename", path: from, to },
+			() => this.vault.rename(source, to),
+		);
 		const moved = await this.readBinary(to);
 		return (
 			this.fileAt(from) === null &&
@@ -185,7 +216,11 @@ export class ObsidianTextVault implements TextVault {
 			return false;
 		if ((await this.vault.read(source)) !== expected) return false;
 		await this.ensureParent(to);
-		await this.vault.rename(source, to);
+		await withPluginVaultMutation(
+			this.vault,
+			{ type: "rename", path: from, to },
+			() => this.vault.rename(source, to),
+		);
 		return this.fileAt(to) === source && this.fileAt(from) === null;
 	}
 

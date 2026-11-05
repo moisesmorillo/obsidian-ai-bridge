@@ -1,11 +1,11 @@
 ---
 id: OAB-10.4
 title: Release Worker read slots when durable cleanup does not settle
-status: In Progress
+status: Done
 assignee:
   - '@pi'
 created_date: '2026-11-05T20:19:00Z'
-updated_date: '2026-11-05T21:49:00Z'
+updated_date: '2026-11-05T21:51:00Z'
 labels: []
 dependencies: []
 parent_task_id: OAB-10
@@ -22,10 +22,10 @@ Owner W1 brief, 2026-11-05 about 20:30 UTC: one keep-alive client received persi
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Workers runtime tests first reproduce rejected settlement, unresolved settlement, and client abort before body drain. Each case permits a fifth read within a bounded deadline.
-- [ ] #2 Local slots release after source work ends without an unbounded durable cleanup or consumer shutdown wait. Unresolved source work retains its slot.
-- [ ] #3 Successful response completion still waits for successful durable settlement. A settlement deadline fails the response and logs a safe diagnostic.
-- [ ] #4 bun run check passes. Task and complete branch receive TypeScript semantic review. Owner branch review precedes one PR against main.
+- [x] #1 Workers runtime tests first reproduce rejected settlement, unresolved settlement, and client abort before body drain. Each case permits a fifth read within a bounded deadline.
+- [x] #2 Local slots release after source work ends without an unbounded durable cleanup or consumer shutdown wait. Unresolved source work retains its slot.
+- [x] #3 Successful response completion still waits for successful durable settlement. A settlement deadline fails the response and logs a safe diagnostic.
+- [x] #4 bun run check passes. Task and complete branch receive TypeScript semantic review. Owner branch review precedes one PR against main.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -54,4 +54,12 @@ Scoped review correction OAB-10.4-R1 is closed. RED: search-response test expect
 OAB-10.4-R1 correction committed as ef0cf50 (fix(worker): preserve search abort classification). The working tree has no staged files. The task record remains unstaged.
 
 Complete branch review at 6796a3e found BR-1 preparation paths still held slots through unbounded cleanup and BR-2 omitted the zero-byte framing exception. Commit 02fdd3e corrects both. Scoped corrective review closed both with source-lifetime and shared deadline evidence. That review found R1 search-abort classification drift. Commit ef0cf50 restores invalid_request. Final scoped review approved R1 at ef0cf50. All actionable findings now have evidence-based closure. Final checks passed: docs:check and bun run check, including 702 Worker, 122 integration, and 115 F2 tests. Owner branch diff review remains pending.
+
+Owner approved the complete branch diff in Plannotator pn-606e51 with no changes requested. Plan approval was pn-5bed28. The final code revision ef0cf50 passed bun run check. Complete branch semantic review plus scoped corrective reviews closed every actionable finding. Rebase on origin/main needed no code change. No vault access, production probe, direct deployment, or Cloudflare resource change occurred.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Released local read capacity after source work and source cancellation settle. Shared 5000 ms durable settlement policy covers preparation failures, search, content, metadata, MCP, and streamed responses. Rejection, unsuccessful result, and timeout fail delivery without successful EOF. Regression tests cover blocked cleanup, abort, preparation, empty responses, and preserved search failure classification. docs:check and bun run check passed. Task, branch, and owner reviews complete. Production cause and network-disconnect AbortSignal behavior remain unproven. OAB-36 stays deferred.
+<!-- SECTION:FINAL_SUMMARY:END -->

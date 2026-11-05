@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-11-05T22:05:00Z'
-updated_date: '2026-11-05T23:06:00Z'
+updated_date: '2026-11-05T23:23:00Z'
 labels: []
 dependencies: []
 parent_task_id: OAB-10
@@ -31,6 +31,8 @@ Relayed observation, not independently verified: at origin/main b5210f5, cursor 
 
 <!-- SECTION:PLAN:BEGIN -->
 Plan review: /tmp/oab-10.6/coexistence-origin-plan.md. Extend bounded destructive-effect proof. Preserve capture-time authority before proof waits. Keep uncertain events local and hold the capture fence until a safe result. Add failing real-controller tests, implement through one worker, run bun run check, complete independent task and whole-branch reviews, receive human branch review, and publish one PR.
+
+Final F1 correction: test DELETE and RENAME with plugin-first and user-first dispatch under a held host effect. Include indexed same-source objects and replacement callback objects. Check frozen authority, proof settlement, confirmations, pending apply, and fence release. Preserve production behavior unless a regression proves a defect.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -48,8 +50,44 @@ Correction after parent follow-up: the earlier implementation transiently saved 
 Supervisor ruling: keep `device-journal.ts` out of scope. Use a private UUIDv7 helper in `coexistence.ts` that matches the journal generator and existing confirmation schema. Do not add a schema or dependency. The actual confirmation persistence test passes the canonical state schema.
 RED evidence: `bun run --cwd apps/plugin vitest run test/coexistence.test.ts -t 'does not persist a confirmation or latch'` failed before the fix because the capture fence remained blocked. An earlier focused test also exposed and fixed fake-host adapter/stat omissions and invalid test epochs.
 Focused GREEN after correction and main merge: `bun run --cwd apps/plugin vitest run test/coexistence.test.ts test/text-vault.test.ts test/vault-events.test.ts` passed 3 files and 37 tests. `bun run docs:check` passed.
-Integration coverage now runs remote text tombstone, binary tombstone, and remote rename through TextApplyEngine, ObsidianTextVault, VaultEventAdapter, DesktopSyncController, CoexistenceController, and the shared effect fence. Tests assert queue and pending-apply state, source and destination revisions, exact destination bytes, and fence outcome. More tests cover concurrent same-path delete and rename dispatch before and after plugin events, refused/failed/overlapping effects, mismatched and late reads, rejected proof, event-time authority across a base change, Pause, replay, restart, an existing confirmation, and later genuine same-path user intent.
+Integration coverage now runs remote text tombstone, binary tombstone, and remote rename through TextApplyEngine, ObsidianTextVault, VaultEventAdapter, DesktopSyncController, CoexistenceController, and the shared effect fence. Tests assert queue and pending-apply state, source and destination revisions, exact destination bytes, and fence outcome.
+
+At bfbe9c9, the destructive concurrency tests cover user-first callbacks with replacement objects only. The later adapter callback runs after mutation settlement. The content-change test covers both orders but not destructive capture.
+
+Other tests cover refused, failed, and overlapping effects, mismatched and late reads, and rejected proof. They also cover frozen authority, Pause, replay, restart, existing confirmations, and later same-path intent.
 Fetched and merged `origin/main` at 091b2b1 before final validation. The merge brought six upstream files unrelated to this task. No Worker source changes were made by this task. No vault or live service was accessed.
 
 Final post-merge check: `bun run check` passed after origin/main 091b2b1 merged. Plugin: 663 passed, 1 skipped. Tooling: 91 passed. Protocol: 307 passed. Worker suites: 702, 122, and 115 passed. Lint, docs, all typechecks, and build passed. Worker test logs contain expected injected network/request-stream and SQLite fault messages. Focused tests passed 37/37. `git diff --check` passed. The branch includes merge commit 5128ed2. Task status remains In Progress.
+
+Escalation signal: the prior implementer delivered this task twice without the full concurrency matrix or a named blocker. Global policy escalates only the remaining F1 scope to the session model. Parent retains review, task closure, and publication.
+
+Final F1 correction from bfbe9c9 replaces two cases with eight real-controller cases. The matrix crosses DELETE/RENAME, plugin-first/user-first, and indexed same-source/replacement callback objects. The fake plugin host call emits only its plugin callback.
+
+The test sends the user callback outside that call. Explicit gates keep host settlement pending across both dispatches. Same-source assertions check current Vault index identity at each dispatch.
+
+Rename bytes and destination identity change before dispatch. Delete index removal occurs after release. No test claims real Obsidian event timing.
+
+Each case checks exact epoch, base, paths, and event time. Before settlement, one confirmation persists before debounce while apply, host effect, and one proof stay pending. After settlement, pending apply clears and source/destination bases advance.
+
+The confirmation keeps its original authority after apply completion. The fence stays blocked by that confirmation. It opens after keepServerState clears the confirmation, so no capture latch remains.
+
+Same-source identical callbacks cannot identify their actors. The first callback claims proof and the second creates one exact-authority confirmation. User-first same-source proof results are [true, false], which preserve intent without actor attribution.
+
+Replacement user-first proof results are [false, true]. Plugin-first proof results are [true, false]. The later user capture completes while the plugin proof stays pending.
+
+RED/GREEN exception: the missing matrix passes the existing production implementation on its first run. Preserve that implementation under the approved scope. No new production defect appears.
+
+A temporary negative control disables both claimed-evidence guards. The matrix then reports 4 failed, 4 passed, and 19 skipped, with observed exit 1. The wrapper exits 0 after it checks that failure.
+
+The exact production file returns before validation. This negative control checks regression sensitivity, not an existing source defect. No production source change remains.
+
+Formatting passes with bunx biome check --write apps/plugin/test/text-vault.test.ts. Focused vitest over coexistence.test.ts, text-vault.test.ts, and vault-events.test.ts passes 43 tests in 3 files, exit 0. bun run docs:check passes, exit 0.
+
+bun run check passes lint, docs, typechecks, tests, and builds, exit 0. Counts: tooling 91, protocol 307, plugin 669 with 1 skipped, Worker 702/122/115. Total: 2006 passed, 1 skipped.
+
+Local Worker tests print injected network/SQLite diagnostics. The Worker build uses dry-run. No vault access, live service access, deployment, or dependency change occurs.
+
+Self-review uses the code-review skill and TypeScript profile. Origin matching, capture policy, and fence ownership stay unchanged. Parent owns independent scoped review and human review.
+
+OAB-10.6 stays In Progress with unchecked acceptance criteria. Full commands and limits appear in the ignored task-1-report.md and /tmp/oab-10.6/fix-wave-result.md. No evidence document enters the commit.
 <!-- SECTION:NOTES:END -->

@@ -4,6 +4,7 @@ title: Expose backup export state in the vault summary
 status: Deferred
 assignee: []
 created_date: '2026-11-02T23:31:00Z'
+updated_date: '2026-11-05T22:32:00Z'
 labels:
   - deferred
 dependencies: []
@@ -27,3 +28,9 @@ The public vault summary has no backup export result. The plugin cannot distingu
 - [ ] #2 The plugin shows backup failed for a confirmed failed export and unknown when telemetry is absent.
 - [ ] #3 Tests cover successful, failed, absent, and stale export observations without false settled or healthy claims.
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Archived 2026-11-05: the owner removed the backup export from v1 (spec section 11, PR #55). The vault summary has no backup export state to expose. Reopen only with OAB-9.
+<!-- SECTION:NOTES:END -->

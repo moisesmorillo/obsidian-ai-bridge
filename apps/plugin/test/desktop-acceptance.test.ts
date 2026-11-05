@@ -172,6 +172,15 @@ describe("desktop acceptance safety", () => {
 		expect(second.root).toBe("oab-10.1/dev-2");
 		expect(first.source).not.toBe(second.source);
 		expect(first.placeholder).toBe(`${first.source}.icloud`);
+		const retry = createAc19FixturePaths(
+			"dev-2",
+			[],
+			"simulated-eviction-retry-2",
+		);
+		expect(retry.source).toBe("oab-10.1/dev-2/simulated-eviction-retry-2.md");
+		expect(() => createAc19FixturePaths("dev-2", [], "../outside")).toThrow(
+			"Invalid AC-19 fixture name",
+		);
 		expect(classifyEnrollmentPath(first.source, 0)).not.toBe("excluded");
 		expect(classifyEnrollmentPath(first.placeholder, 0)).toBe("excluded");
 		expect(() => createAc19FixturePaths("dev-1", [first.source])).toThrow(
@@ -187,6 +196,21 @@ describe("desktop acceptance safety", () => {
 		);
 		expect(scripts.action).toContain('"oab-10.1/dev-2/simulated-eviction.md"');
 		expect(scripts.action).toContain("initialAttentionCount");
+		expect(scripts.action).toContain(
+			"AC19_ASSERT_CONFIRMATION_AND_UNAVAILABLE",
+		);
+		expect(scripts.action).toContain(
+			"state.unavailable_paths?.includes(source)",
+		);
+		const retryScripts = createAc19CaseScripts(
+			"dev-2",
+			vaults["dev-2"],
+			"/Users/test",
+			"simulated-eviction-retry-2",
+		);
+		expect(retryScripts.action).toContain(
+			'"oab-10.1/dev-2/simulated-eviction-retry-2.md"',
+		);
 		expect(scripts.cleanup).toContain("keepServerState");
 		expect(scripts.cleanup).toContain("settingsTab.syncActions.pause()");
 		expect(scripts.cleanup).toContain("settingsTab.syncActions.resume()");

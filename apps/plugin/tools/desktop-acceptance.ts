@@ -35,15 +35,18 @@ export interface Ac19FixturePaths {
 	placeholder: string;
 }
 
-/** Builds validated paths under the fresh AC-19 namespace for one approved test vault. */
+/** Builds a unique eligible note and excluded placeholder under one authorized AC-19 vault. */
 export function createAc19FixturePaths(
 	id: DesktopVaultId,
 	existingPaths: readonly string[] = [],
+	fixtureName = "simulated-eviction",
 ): Ac19FixturePaths {
 	if (id !== "dev-1" && id !== "dev-2")
 		throw new Error("Unauthorized AC-19 test vault");
+	if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(fixtureName))
+		throw new Error("Invalid AC-19 fixture name");
 	const root = PathSchema.parse(`oab-10.1/${id}`);
-	const source = PathSchema.parse(`${root}/simulated-eviction.md`);
+	const source = PathSchema.parse(`${root}/${fixtureName}.md`);
 	const placeholder = PathSchema.parse(`${source}.icloud`);
 	const existing = new Set(existingPaths.map((path) => PathSchema.parse(path)));
 	if (existing.has(source) || existing.has(placeholder))
@@ -1799,15 +1802,16 @@ export interface Ac19CaseScripts {
 	cleanup: string;
 }
 
-/** Builds the dev-2 AC-19 case for the exact authorized synthetic vault path. */
+/** Builds the dev-2 service case for one unique fixture in the authorized synthetic vault. */
 export function createAc19CaseScripts(
 	id: DesktopVaultId,
 	resolvedPath: string,
 	home = homedir(),
+	fixtureName = "simulated-eviction",
 ): Ac19CaseScripts {
 	if (id !== "dev-2") throw new Error("AC-19 service case requires dev-2");
 	const target = assertAuthorizedVault(id, resolvedPath, home);
-	const fixture = createAc19FixturePaths(id);
+	const fixture = createAc19FixturePaths(id, [], fixtureName);
 	const action = `
 		if (app.vault.adapter.getBasePath() !== ${JSON.stringify(target)}) throw new Error("AC19_ASSERT_TARGET_VAULT");
 		const plugin = app.plugins.plugins?.["ai-bridge"];
@@ -1855,7 +1859,10 @@ export function createAc19CaseScripts(
 		if (!(await waitFor(() => plugin.syncPaused && plugin.composition === null))) throw new Error("AC19_ASSERT_PAUSE");
 		await app.vault.trash(file, false);
 		await app.vault.createBinary(placeholder, new ArrayBuffer(0));
-		if (!(await waitFor(() => plugin.journal.snapshot().coexistence_confirmations?.some((item) => item.path === source)))) throw new Error("AC19_ASSERT_CONFIRMATION");
+		if (!(await waitFor(() => {
+			const state = plugin.journal.snapshot();
+			return state.coexistence_confirmations?.some((item) => item.path === source) && state.unavailable_paths?.includes(source);
+		}))) throw new Error("AC19_ASSERT_CONFIRMATION_AND_UNAVAILABLE");
 		const captured = plugin.journal.snapshot();
 		const confirmation = captured.coexistence_confirmations.find((item) => item.path === source);
 		const unavailable = captured.unavailable_paths?.includes(source) ?? false;

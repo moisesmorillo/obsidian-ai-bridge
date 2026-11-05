@@ -73,6 +73,240 @@ const vaults = {
 };
 const epoch = "a".repeat(32);
 
+/** One fixed response from the synthetic AC-19 service authority port. */
+type Ac19ReadResponse =
+	| "authority"
+	| {
+			/** Synthetic HTTP status returned by one explicit service read. */
+			status: number;
+			/** Retry-After header, with missing and null values used as separate cases. */
+			retryAfter?: string | null;
+	  };
+
+/** Builds one in-memory dev-2 host that simulates resumed eviction and cleanup. */
+function createAc19Host(responses: readonly Ac19ReadResponse[] = []): {
+	app: unknown;
+	window: { setTimeout: (callback: () => void, delay: number) => number };
+	date: unknown;
+	readPaths: string[];
+	waits: number[];
+	mutations: string[];
+	state: {
+		base: Record<string, { deleted: boolean; rev: number; hash: string }>;
+		pending_ops: unknown[];
+		pending_apply: unknown[];
+		attention: Array<{ id: string; path: string }>;
+		coexistence_confirmations: Array<{ id: string; path: string }>;
+		unavailable_paths: string[];
+		epoch: string;
+	};
+	plugin: Record<string, unknown>;
+} {
+	const source = "oab-10.1/dev-2/simulated-eviction.md";
+	const placeholder = `${source}.icloud`;
+	const files = new Map<string, { path: string }>();
+	const folders = new Set<string>();
+	const readPaths: string[] = [];
+	const waits: number[] = [];
+	const mutations: string[] = [];
+	const now = { value: 1_000_000 };
+	/** Supplies a controllable clock to the generated host script. */
+	const TestDate = class extends Date {
+		/** Returns synthetic host time for retry-deadline tests. */
+		static now(): number {
+			return now.value;
+		}
+	};
+	const liveAuthority = { deleted: false, epoch, rev: 1, hash: "b".repeat(64) };
+	const state = {
+		base: {} as Record<string, { deleted: boolean; rev: number; hash: string }>,
+		pending_ops: [] as unknown[],
+		pending_apply: [] as unknown[],
+		attention: [
+			{ id: "historical-1", path: "oab-10.1/history-1.md" },
+			{ id: "historical-2", path: "oab-10.1/history-2.md" },
+			{ id: "historical-3", path: "oab-10.1/history-3.md" },
+			{ id: "historical-4", path: "oab-10.1/history-4.md" },
+		],
+		coexistence_confirmations: [] as Array<{ id: string; path: string }>,
+		unavailable_paths: [] as string[],
+		epoch,
+	};
+	let serviceAuthority: typeof liveAuthority | null = null;
+	let syncCount = 0;
+	const remote = {
+		readCurrentAuthority: async (path: string) => {
+			readPaths.push(path);
+			const response =
+				responses[readPaths.length - 1] ??
+				(readPaths.length === 1 ? { status: 404 } : "authority");
+			if (response === "authority") {
+				if (!serviceAuthority) throw new Error("Authority was not seeded");
+				return serviceAuthority;
+			}
+			const error = Object.assign(new Error("Synthetic service response"), {
+				name: "SyncTransportError",
+				status: response.status,
+				code: response.status === 404 ? "not_found" : "too_many_requests",
+				retryAfter: response.retryAfter,
+			});
+			throw error;
+		},
+		delete: async () => {
+			mutations.push("delete");
+		},
+		rename: async () => {
+			mutations.push("rename");
+		},
+		put: async () => {
+			mutations.push("put");
+		},
+	};
+	const plugin: {
+		journal: { snapshot: () => typeof state };
+		desktopSync: {
+			isBusy: boolean;
+			syncNow: () => Promise<void>;
+			waitForIdle: () => Promise<void>;
+		};
+		coexistence: { keepServerState: (id: string) => Promise<void> };
+		composition: { publication: { remote: typeof remote } } | null;
+		settingsTab: { syncActions: { pause: () => void; resume: () => void } };
+		settingsValue: { coexistenceMode: boolean };
+		sessionStatus: "connected";
+		syncPaused: boolean;
+		syncActive: boolean;
+	} = {
+		journal: { snapshot: () => structuredClone(state) },
+		desktopSync: {
+			isBusy: false,
+			syncNow: async () => {
+				syncCount += 1;
+				if (syncCount === 1) {
+					state.base[source] = {
+						deleted: false,
+						rev: 1,
+						hash: liveAuthority.hash,
+					};
+					serviceAuthority = liveAuthority;
+				} else if (
+					!files.has(source) &&
+					files.has(placeholder) &&
+					!plugin.syncPaused
+				) {
+					if (plugin.settingsValue.coexistenceMode) {
+						state.coexistence_confirmations.push({
+							id: "fixture-confirmation",
+							path: source,
+						});
+						state.unavailable_paths.push(source);
+					} else {
+						await remote.delete();
+					}
+				}
+			},
+			waitForIdle: async () => {},
+		},
+		coexistence: {
+			keepServerState: async (id: string) => {
+				state.coexistence_confirmations =
+					state.coexistence_confirmations.filter((item) => item.id !== id);
+				state.unavailable_paths = state.unavailable_paths.filter(
+					(path) => path !== source,
+				);
+				files.set(source, { path: source });
+			},
+		},
+		composition: { publication: { remote } },
+		settingsTab: {
+			syncActions: {
+				pause: () => {
+					plugin.syncPaused = true;
+					plugin.composition = null;
+				},
+				resume: () => {
+					plugin.syncPaused = false;
+					plugin.composition = { publication: { remote } };
+				},
+			},
+		},
+		settingsValue: { coexistenceMode: true },
+		sessionStatus: "connected",
+		syncPaused: false,
+		syncActive: false,
+	};
+	const app = {
+		vault: {
+			getName: () => "obsidian-ai-bridge-dev-2",
+			adapter: {
+				basePath: "/Users/test/vaults/obsidian-ai-bridge-dev-2",
+				getBasePath: () => "/Users/test/vaults/obsidian-ai-bridge-dev-2",
+				stat: async (path: string) =>
+					files.get(path) ?? (folders.has(path) ? { path } : null),
+				mkdir: async (path: string) => {
+					folders.add(path);
+				},
+			},
+			getAbstractFileByPath: (path: string) => files.get(path) ?? null,
+			create: async (path: string) => {
+				const file = { path };
+				files.set(path, file);
+				return file;
+			},
+			createBinary: async (path: string) => {
+				files.set(path, { path });
+				await plugin.desktopSync.syncNow();
+			},
+			trash: async (file: { path: string }) => {
+				files.delete(file.path);
+				if (file.path === placeholder)
+					state.unavailable_paths = state.unavailable_paths.filter(
+						(path) => path !== source,
+					);
+			},
+		},
+		plugins: { plugins: { "ai-bridge": plugin } },
+	};
+	return {
+		app,
+		window: {
+			setTimeout: (callback, delay) => {
+				if (delay === 50) now.value += 15000;
+				else {
+					waits.push(delay);
+					now.value += delay;
+				}
+				queueMicrotask(callback);
+				return 1;
+			},
+		},
+		date: TestDate,
+		readPaths,
+		waits,
+		mutations,
+		state,
+		plugin,
+	};
+}
+
+/** Runs generated AC-19 host phases against one synthetic in-memory vault. */
+async function runGeneratedAc19(responses: readonly Ac19ReadResponse[] = []) {
+	const host = createAc19Host(responses);
+	const scripts = createAc19CaseScripts(
+		"dev-2",
+		vaults["dev-2"],
+		"/Users/test",
+	);
+	const script = createCaseScript("AC-19", scripts.action, scripts.cleanup);
+	const execute = new Function("app", "window", "Date", `return ${script}`) as (
+		app: unknown,
+		window: typeof host.window,
+		date: unknown,
+	) => Promise<string>;
+	const output = await execute(host.app, host.window, host.date);
+	return { ...host, result: parseSafeCaseResult(output, "AC-19", "service") };
+}
+
 /** Keeps exact journal state and immutable payload bytes for the AC-30 harness. */
 class MemoryStorage implements DeviceJournalStorage {
 	state: unknown = null;
@@ -165,6 +399,111 @@ async function hashAcceptanceText(text: string): Promise<string> {
 }
 
 describe("desktop acceptance safety", () => {
+	it.each([
+		{ label: "missing", response: { status: 429 }, count: 1 },
+		{ label: "empty", response: { status: 429, retryAfter: "" }, count: 1 },
+		{
+			label: "invalid",
+			response: { status: 429, retryAfter: "soon" },
+			count: 1,
+		},
+	])(
+		"rejects $label Retry-After without an immediate retry",
+		async ({ response, count }) => {
+			const result = await runGeneratedAc19([response]);
+			expect(result.readPaths).toHaveLength(count);
+			expect(result.waits).toEqual([]);
+			expect(result.result.failureDetails).toMatchObject({ status: 429 });
+		},
+	);
+
+	it.each([
+		{ label: "numeric", retryAfter: "2", expectedDelay: 2000 },
+		{ label: "explicit zero", retryAfter: "0", expectedDelay: 0 },
+	])(
+		"honors $label Retry-After before retrying",
+		async ({ retryAfter, expectedDelay }) => {
+			const result = await runGeneratedAc19([
+				{ status: 429, retryAfter },
+				{ status: 404 },
+			]);
+			expect(result.result.status).toBe("passed");
+			expect(result.waits).toEqual([expectedDelay]);
+			expect(result.readPaths).toHaveLength(5);
+		},
+	);
+
+	it("honors HTTP-date Retry-After before retrying", async () => {
+		const result = await runGeneratedAc19([
+			{ status: 429, retryAfter: new Date(1_003_000).toUTCString() },
+			{ status: 404 },
+		]);
+		expect(result.result, JSON.stringify(result.result)).toMatchObject({
+			status: "passed",
+		});
+		expect(result.waits).toEqual([3000]);
+	});
+
+	it("limits each 429 service read to three attempts", async () => {
+		const result = await runGeneratedAc19([
+			{ status: 429, retryAfter: "1" },
+			{ status: 429, retryAfter: "1" },
+			{ status: 429, retryAfter: "1" },
+		]);
+		expect(result.readPaths).toHaveLength(3);
+		expect(result.waits).toEqual([1000, 1000]);
+	});
+
+	it("shares the Retry-After deadline across explicit service reads", async () => {
+		const result = await runGeneratedAc19([
+			{ status: 429, retryAfter: "6" },
+			{ status: 404 },
+			{ status: 429, retryAfter: "5" },
+		]);
+		expect(result.readPaths).toHaveLength(3);
+		expect(result.waits).toEqual([6000]);
+		expect(result.result).toMatchObject({
+			status: "failed",
+			failureDetails: { status: 429, boundary: "AC19_READ_SERVICE_AUTHORITY" },
+		});
+	});
+
+	it("runs resumed simulated eviction without destructive publication or history changes", async () => {
+		const result = await runGeneratedAc19();
+		expect(result.result).toMatchObject({
+			status: "passed",
+			cleanupStatus: "passed",
+			ac19Evidence: {
+				confirmationVisible: true,
+				placeholderExcluded: true,
+				serviceSourceLive: true,
+				deleteOrRenameOperationCount: 0,
+				pendingOperationDelta: 0,
+				pendingApplyDelta: 0,
+				attentionDelta: 0,
+				confirmationDelta: 1,
+			},
+		});
+		expect(result.readPaths).toEqual(
+			Array(4).fill("oab-10.1/dev-2/simulated-eviction.md"),
+		);
+		expect(result.mutations).toEqual([]);
+		expect(result.state.attention).toEqual([
+			{ id: "historical-1", path: "oab-10.1/history-1.md" },
+			{ id: "historical-2", path: "oab-10.1/history-2.md" },
+			{ id: "historical-3", path: "oab-10.1/history-3.md" },
+			{ id: "historical-4", path: "oab-10.1/history-4.md" },
+		]);
+		expect(
+			result.state.base["oab-10.1/dev-2/simulated-eviction.md.icloud"],
+		).toBeUndefined();
+		expect(result.state.pending_ops).toEqual([]);
+		expect(result.state.pending_apply).toEqual([]);
+		expect(result.state.coexistence_confirmations).toEqual([]);
+		expect(result.state.unavailable_paths).toEqual([]);
+		expect(result.plugin.syncPaused).toBe(true);
+	});
+
 	it("confines AC-19 fixtures to a fresh isolated namespace per authorized vault", () => {
 		const first = createAc19FixturePaths("dev-1");
 		const second = createAc19FixturePaths("dev-2");

@@ -1867,8 +1867,13 @@ export function createAc19CaseScripts(
 				catch (error) {
 					if (readBoundaryDetails(error)?.status !== 429 || attempt === 2) throw error;
 					const retryAfter = readBoundaryDetails(error)?.retryAfter;
-					const numericRetryAfter = Number(retryAfter);
-					const retryDelay = Number.isFinite(numericRetryAfter) ? numericRetryAfter * 1000 : Date.parse(retryAfter) - Date.now();
+					if (typeof retryAfter !== "string" || retryAfter.length === 0) throw error;
+					const isDeltaSeconds = /^\\d+$/.test(retryAfter);
+					const parsedSeconds = isDeltaSeconds ? Number(retryAfter) : null;
+					const parsedDate = isDeltaSeconds ? Number.NaN : Date.parse(retryAfter);
+					const validDate = Number.isFinite(parsedDate) && new Date(parsedDate).toUTCString() === retryAfter;
+					if ((!isDeltaSeconds || !Number.isSafeInteger(parsedSeconds)) && !validDate) throw error;
+					const retryDelay = isDeltaSeconds ? Number(parsedSeconds) * 1000 : parsedDate - Date.now();
 					if (!Number.isFinite(retryDelay) || retryDelay < 0) throw error;
 					if (Date.now() + retryDelay > serviceRetryDeadline) throw error;
 					await new Promise((resolve) => window.setTimeout(resolve, retryDelay));

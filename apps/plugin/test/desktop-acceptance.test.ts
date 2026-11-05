@@ -210,6 +210,22 @@ describe("desktop acceptance safety", () => {
 		expect(captureReload.capture).toContain('deviceName !== "oab-10.1 dev-1"');
 		expect(captureReload.capture).not.toContain("disablePlugin");
 		expect(captureReload.capture).not.toContain("resume()");
+		expect(captureReload.capture).not.toContain(
+			"globalThis.__oab10Ac19Capture",
+		);
+		expect(captureReload.prepareReloadVerification).toContain(
+			".ai-bridge/oab-10.1-dev-1-baseline.json",
+		);
+		expect(captureReload.prepareReloadVerification).toContain("adapter.write");
+		expect(
+			classifyEnrollmentPath(".ai-bridge/oab-10.1-dev-1-baseline.json", 0),
+		).toBe("excluded");
+		expect(captureReload.reloadVerification).toContain(
+			"adapter.read(baselinePath)",
+		);
+		expect(captureReload.reloadVerification).not.toContain(
+			"globalThis.__oab10Ac19Capture",
+		);
 		expect(captureReload.reloadVerification).toContain(
 			'deviceName !== "oab-10.1 dev-1"',
 		);
@@ -230,6 +246,16 @@ describe("desktop acceptance safety", () => {
 		).not.toThrow();
 		expect(
 			() => new Function(createCaseScript("AC-19", captureReload.capture, "")),
+		).not.toThrow();
+		expect(
+			() =>
+				new Function(
+					createCaseScript(
+						"AC-19",
+						captureReload.prepareReloadVerification,
+						"",
+					),
+				),
 		).not.toThrow();
 		expect(
 			() =>
@@ -343,11 +369,11 @@ describe("desktop acceptance safety", () => {
 					initialPendingOperationCount: 1,
 					initialPendingApplyCount: 1,
 					initialAttentionCount: 2,
-					initialConfirmationCount: 0,
+					initialConfirmationCount: 1,
 					pendingOperationDelta: 0,
 					pendingApplyDelta: 0,
 					attentionDelta: 0,
-					confirmationDelta: 1,
+					confirmationDelta: 0,
 				},
 			},
 		});
@@ -535,6 +561,90 @@ describe("desktop acceptance safety", () => {
 		expect(scripts.cleanup).toContain(
 			'delete globalThis["__oabInstallPayload"]',
 		);
+	});
+
+	it("verifies paused reload state from an excluded local baseline", async () => {
+		const fixture = createAc19FixturePaths("dev-1");
+		const baselinePath = ".ai-bridge/oab-10.1-dev-1-baseline.json";
+		const files = new Map<string, string>();
+		const folders = new Set<string>();
+		const state = {
+			pending_ops: [],
+			pending_apply: [],
+			attention: [],
+			coexistence_confirmations: [
+				{
+					id: "confirmation-id",
+					path: fixture.source,
+					observed_epoch: "a".repeat(32),
+				},
+			],
+			unavailable_paths: [fixture.source],
+			base: {},
+			epoch: "a".repeat(32),
+		};
+		const adapter = {
+			getBasePath: () => vaults["dev-1"],
+			exists: async (path: string) => files.has(path) || folders.has(path),
+			mkdir: async (path: string) => {
+				folders.add(path);
+			},
+			write: async (path: string, content: string) => {
+				files.set(path, content);
+			},
+			read: async (path: string) => {
+				const content = files.get(path);
+				if (content === undefined) throw new Error("missing local baseline");
+				return content;
+			},
+			remove: async (path: string) => {
+				files.delete(path);
+			},
+		};
+		const plugin = {
+			journal: { snapshot: () => state },
+			desktopSync: { isBusy: false },
+			settingsValue: { coexistenceMode: true, deviceName: "oab-10.1 dev-1" },
+			syncPaused: true,
+			syncActive: false,
+			sessionStatus: "connected",
+			syncStatus: () => ({ state: "paused" }),
+		};
+		const app = {
+			vault: {
+				adapter,
+				getAbstractFileByPath: (path: string) =>
+					path === fixture.placeholder ? { path } : null,
+			},
+			plugins: { plugins: { "ai-bridge": plugin } },
+		};
+		const scripts = createAc19CaptureReloadScripts(
+			vaults["dev-1"],
+			"/Users/test",
+		);
+		/** Runs one guarded host script against the synthetic adapter. */
+		const execute = async (action: string) => {
+			const script = new Function(
+				"app",
+				`return ${createCaseScript("AC-19", action, "")}`,
+			) as (app: unknown) => Promise<string>;
+			return script(app);
+		};
+		const prepare = await execute(scripts.prepareReloadVerification);
+		expect(parseSafeCaseResult(prepare, "AC-19", "local").status).toBe(
+			"passed",
+		);
+		expect(files.has(baselinePath)).toBe(true);
+		const verified = await execute(scripts.reloadVerification);
+		expect(parseSafeCaseResult(verified, "AC-19", "local")).toMatchObject({
+			status: "passed",
+			ac19Evidence: {
+				captureReload: true,
+				confirmationDelta: 0,
+				initialConfirmationCount: 1,
+			},
+		});
+		expect(files.has(baselinePath)).toBe(false);
 	});
 
 	it("returns installed artifact hashes after host read-back", () => {

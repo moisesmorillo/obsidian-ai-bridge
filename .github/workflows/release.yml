@@ -1,0 +1,67 @@
+name: Plugin release
+
+on:
+  push:
+    tags:
+      - 'plugin-v*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: plugin-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: jdx/mise-action@08ae2a091c038e1e05ec6f5115dc5c69d5a2a6b8 # v5.1.2
+        with:
+          version: 2026.10.8
+      - name: Install workspace dependencies
+        run: bun install --frozen-lockfile
+      - name: Validate release metadata
+        env:
+          PLUGIN_RELEASE_TAG: ${{ github.ref_name }}
+        run: bun apps/plugin/tools/release.ts "${PLUGIN_RELEASE_TAG:?Missing release tag}"
+      - name: Check repository and build plugin
+        run: bun run check
+      - name: Publish release
+        shell: bash
+        env:
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+          GITHUB_SHA: ${{ github.sha }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          tag="${GITHUB_REF_NAME:?Missing release tag}"
+          checked_commit="$(git rev-parse HEAD)"
+          if [ "$checked_commit" != "${GITHUB_SHA:?Missing checked commit}" ]; then
+            echo "Checked checkout does not match the tag event commit." >&2
+            exit 1
+          fi
+
+          remote_tag_commit="$(git ls-remote origin "refs/tags/${tag}^{}" "refs/tags/${tag}" | awk 'substr($2, length($2) - 2) == "^{}" { peeled = $1 } substr($2, length($2) - 2) != "^{}" { direct = $1 } END { if (peeled != "") print peeled; else print direct }')"
+          if [ -z "$remote_tag_commit" ] || [ "$remote_tag_commit" != "$checked_commit" ]; then
+            echo "Remote tag does not match the checked commit." >&2
+            exit 1
+          fi
+
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "A release already exists for $tag. Refusing to replace it." >&2
+            exit 1
+          fi
+
+          gh release create "$tag" \
+            --verify-tag \
+            --title "$tag" \
+            --notes "Plugin release $tag." \
+            apps/plugin/dist/manifest.json \
+            apps/plugin/dist/main.js

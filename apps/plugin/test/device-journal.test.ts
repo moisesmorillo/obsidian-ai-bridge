@@ -1,4 +1,7 @@
-import type { PendingOperation } from "@obsidian-ai-bridge/protocol";
+import type {
+	PendingConflictCopy,
+	PendingOperation,
+} from "@obsidian-ai-bridge/protocol";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
 	DEVICE_JOURNAL_ATTENTION_REASON,
@@ -48,6 +51,70 @@ describe("DeviceJournal", () => {
 	let storage: MemoryStorage;
 	beforeEach(() => {
 		storage = new MemoryStorage();
+	});
+
+	it("opens a serialized pre-extension journal with its original copy identities", async () => {
+		const path = "assets/pre-extension.png";
+		const localHash = "d".repeat(64);
+		const oldRecord = JSON.stringify({
+			version: 1,
+			device_id: "018f47b2-5c00-7000-8000-000000000001",
+			pending_ops: [],
+			base: { [path]: { deleted: false, rev: 1, hash: localHash } },
+			pending_apply: [
+				{
+					change: {
+						seq: 2,
+						op: "put",
+						path,
+						etag: `"${precondition.epoch}.2"`,
+						hash: "c".repeat(64),
+						origin: "remote",
+						at: 2,
+					},
+					content_kind: "blob",
+					step: "copied",
+					conflict_copies: [
+						{
+							path: "assets/pre-extension (conflict Device).png",
+							source: path,
+							side: "path",
+							mode: "local",
+							device_name: "Device",
+							hash: localHash,
+							kind: "blob",
+							purpose: "conflict",
+						},
+						{
+							path: `.ai-bridge/pre-apply/${localHash}`,
+							source: path,
+							side: "path",
+							mode: "local",
+							device_name: "Device",
+							hash: localHash,
+							kind: "blob",
+							purpose: "pre_apply",
+						},
+					],
+				},
+			],
+		});
+		storage.state = JSON.parse(oldRecord) as unknown;
+
+		const journal = await DeviceJournal.open(storage);
+		const pending = journal.snapshot().pending_apply[0];
+		expect(pending?.step).toBe("copied");
+		expect(
+			pending?.conflict_copies?.map((copy: PendingConflictCopy) => copy.path),
+		).toEqual([
+			"assets/pre-extension (conflict Device).png",
+			`.ai-bridge/pre-apply/${localHash}`,
+		]);
+		expect(journal.snapshot().base[path]).toEqual({
+			deleted: false,
+			rev: 1,
+			hash: localHash,
+		});
 	});
 
 	it("drops only a queued put after the rename receipt confirms its exact payload hash", async () => {

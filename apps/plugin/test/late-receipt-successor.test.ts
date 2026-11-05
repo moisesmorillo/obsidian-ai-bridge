@@ -58,6 +58,12 @@ class MemoryVault implements TextVault {
 		return this.files.get(path) ?? null;
 	}
 
+	/** Returns exact UTF-8 bytes for the current text fixture. */
+	async readBinary(path: string): Promise<Uint8Array | null> {
+		const text = this.files.get(path);
+		return text === undefined ? null : new TextEncoder().encode(text);
+	}
+
 	/** Lists visible test paths without inferring deletions. */
 	async list(): Promise<string[]> {
 		return [...this.files.keys()];
@@ -244,6 +250,8 @@ describe("late receipt successor authority", () => {
 		await publication.observe({ type: "create", path: "note.md" });
 		await publication.flush();
 		expect(serverRev).toBe(1);
+		now += 3_000;
+		await publication.flush();
 
 		versionText.set(2, "feed revision two");
 		serverRev = 2;
@@ -257,7 +265,6 @@ describe("late receipt successor authority", () => {
 
 		vault.files.set("note.md", "later edit after feed revision two");
 		await publication.observe({ type: "modify", path: "note.md" });
-		now += 3_000;
 		await publication.flush();
 
 		expect(requests.map((request) => request.precondition)).toEqual([

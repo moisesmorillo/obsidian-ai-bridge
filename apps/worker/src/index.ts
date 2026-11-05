@@ -2,6 +2,7 @@ import type { AuthorizationContext } from "@obsidian-ai-bridge/protocol";
 import { AuthorizationContextSchema } from "@obsidian-ai-bridge/protocol";
 import type { ClientRegistryGateway } from "@worker/application/clients";
 import type { HistoryVaultGateway } from "@worker/application/history";
+import type { MeasurementGateway } from "@worker/application/measurements";
 import type { ReadVaultGateway } from "@worker/application/reads";
 import type { SearchVaultGateway } from "@worker/application/search";
 import type { TextVaultGateway } from "@worker/application/text-files";
@@ -75,6 +76,20 @@ function resolveVault(
 	};
 }
 
+/** Select bounded service measurement RPCs for the host-selected Vault. */
+function resolveMeasurements(
+	env: Env,
+	request: Request,
+): Pick<MeasurementGateway, "recordRequest" | "recordFeedPreparation"> {
+	const stub = env.VAULTS.get(env.VAULTS.idFromName(new URL(request.url).host));
+	return {
+		recordRequest: async (...args) =>
+			await stub.recordMeasurementRequest(...args),
+		recordFeedPreparation: async (...args) =>
+			await stub.recordFeedPreparation(...args),
+	};
+}
+
 /** Expose only owner registry capabilities for the host-selected canonical vault. */
 function resolveClientRegistry(
 	env: Env,
@@ -109,7 +124,15 @@ function resolveClientRegistry(
 /** Route Access-protected owner pages and provider consent through one default handler. */
 function createLocalAuthHandler(): ExportedHandler<Env> {
 	const consent = createAuthorizeHandler();
-	const owner = createOwnerHandler(resolveClientRegistry);
+	const owner = createOwnerHandler(resolveClientRegistry, (env, request) => {
+		const stub = env.VAULTS.get(
+			env.VAULTS.idFromName(new URL(request.url).host),
+		);
+		return {
+			readMeasurements: async (ownerSubject) =>
+				await stub.readMeasurements({ owner_subject: ownerSubject }),
+		};
+	});
 	return {
 		/** Route owner pages to verified Access handlers and all other local auth paths to consent. */
 		fetch(request, env, context) {
@@ -151,6 +174,7 @@ const worker = {
 			resolveIdentity,
 			resolveVault,
 			(bindings) => new R2BlobStore(bindings.R2_BUCKET),
+			resolveMeasurements,
 		);
 		const provider = createOAuthWorker(env, api, createLocalAuthHandler());
 		return provider

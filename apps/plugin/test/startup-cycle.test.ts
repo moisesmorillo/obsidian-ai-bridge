@@ -116,6 +116,11 @@ class EnrollmentSession {
 	requests: string[] = [];
 	closed = false;
 	vaultReadCount = 0;
+	vaultFailure: {
+		status: number;
+		body: unknown;
+		headers?: Record<string, string>;
+	} | null = null;
 
 	/** Supplies only the validated responses needed by the real startup cycle. */
 	async requestResponse(
@@ -124,7 +129,12 @@ class EnrollmentSession {
 	): Promise<OAuthTransportResponse> {
 		const path = new URL(url).pathname;
 		this.requests.push(`${options?.method ?? "GET"} ${path}`);
-		if (path === "/v1/vault")
+		if (path === "/v1/vault") {
+			if (this.vaultFailure) {
+				const failure = this.vaultFailure;
+				this.vaultFailure = null;
+				return response(failure.body, failure.status, failure.headers);
+			}
 			return response({
 				epoch,
 				head_seq: 0,
@@ -147,6 +157,7 @@ class EnrollmentSession {
 				},
 				attention: [],
 			});
+		}
 		if (path === "/v1/manifest")
 			return response({ epoch, head_seq: 0, entries: [], next_page: null });
 		if (path === `/v1/files/${localPath}` && options?.method === "PUT") {
@@ -214,6 +225,82 @@ async function hashText(text: string): Promise<string> {
 }
 
 describe("plugin startup enrollment", () => {
+	it("propagates a safe 429 failure through the real cycle and retains times after recovery", async () => {
+		vi.useFakeTimers();
+		vi.setSystemTime(new Date("2026-11-09T12:00:00.000Z"));
+		vi.stubGlobal("window", {
+			setTimeout: () => 1,
+			clearTimeout: () => undefined,
+			setInterval: () => 2,
+			clearInterval: () => undefined,
+			addEventListener: () => undefined,
+			removeEventListener: () => undefined,
+		});
+		vi.stubGlobal("document", {
+			visibilityState: "visible",
+			hasFocus: () => true,
+			addEventListener: () => undefined,
+			removeEventListener: () => undefined,
+		});
+		const plugin = new AIBridgePlugin({} as never, {} as never);
+		const session = new EnrollmentSession();
+		session.vaultFailure = {
+			status: 429,
+			headers: { "retry-after": "30" },
+			body: {
+				error: "admission_limited",
+				message: "The vault cannot accept another operation now.",
+			},
+		};
+		const journal = await DeviceJournal.open(new MemoryJournalStorage());
+		Reflect.set(plugin, "app", { vault: makeVault() });
+		Reflect.set(plugin, "journal", journal);
+		Reflect.set(plugin, "session", session as unknown as DeviceSession);
+		Reflect.set(plugin, "sessionStatus", "connected");
+		Reflect.apply(Reflect.get(plugin, "startSync") as () => void, plugin, []);
+		const controller = Reflect.get(
+			plugin,
+			"desktopSync",
+		) as DesktopSyncController;
+		await controller.waitForIdle();
+
+		/** Reads bounded cycle diagnostics from the real plugin status owner. */
+		const projectStatus = () =>
+			Reflect.apply(
+				Reflect.get(plugin, "syncStatus") as () => never,
+				plugin,
+				[],
+			) as {
+				failure: {
+					transportClass: string;
+					code: string;
+					retryAfterSeconds: string;
+				} | null;
+				lastFailureAt: string | null;
+				lastSuccessAt: string | null;
+			};
+		expect(projectStatus()).toMatchObject({
+			failure: {
+				transportClass: "4xx",
+				code: "admission_limited",
+				retryAfterSeconds: "30",
+			},
+			lastFailureAt: "2026-11-09T12:00:00.000Z",
+		});
+
+		vi.setSystemTime(new Date("2026-11-09T12:01:00.000Z"));
+		await controller.syncNow();
+		expect(projectStatus()).toMatchObject({
+			failure: null,
+			lastFailureAt: "2026-11-09T12:00:00.000Z",
+			lastSuccessAt: "2026-11-09T12:01:00.000Z",
+		});
+
+		plugin.onunload();
+		vi.unstubAllGlobals();
+		vi.useRealTimers();
+	});
+
 	it("establishes a fresh journal epoch before it admits local publication", async () => {
 		vi.stubGlobal("window", {
 			setTimeout: () => 1,

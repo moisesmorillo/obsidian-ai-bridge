@@ -3,7 +3,10 @@ import type {
 	AdmissionFinishResult,
 } from "@obsidian-ai-bridge/protocol";
 import { ReadAborted } from "@worker/application/read-demand";
-import { ReadBatchFailure } from "@worker/application/reads";
+import {
+	ReadBatchFailure,
+	settleReadAdmission,
+} from "@worker/application/reads";
 
 /** Maximum encoded bytes produced by one response demand. */
 const RESPONSE_CHUNK_BYTES = 65_536;
@@ -36,11 +39,13 @@ export interface ReadResponseOwner {
 
 /**
  * Transfer one read slot and admission to a byte response.
- * Generic responses stay pull-driven. Known-length responses use FixedLengthStream at the final
- * Response boundary and hold one bounded chunk until EOF validates the selected length. Durable
- * admission settles before the final write and close. Local capacity releases after response
- * production settles. Consumer cancellation appears at the next write. A stalled read keeps its slot
- * until its read and cleanup settle. Ticket expiry does not release unresolved local capacity.
+ * Generic responses stay pull-driven. Positive known lengths use FixedLengthStream at the final
+ * Response boundary and hold one bounded chunk until EOF validates the selected length. Zero-byte
+ * known lengths use a gated byte stream so response status and Content-Length remain intact until
+ * durable settlement succeeds. Settlement uses one fixed deadline. Local capacity releases after
+ * started source work and source cancellation settle, independent of durable settlement and consumer
+ * drain. A stalled read keeps its slot until its read and cleanup settle. Ticket expiry does not
+ * release unresolved local capacity.
  * @param knownByteLength - Exact response bytes, or undefined for generic response framing.
  */
 export function ownedReadResponse(
@@ -59,7 +64,7 @@ export function ownedReadResponse(
 	let fixedWriter: WritableStreamDefaultWriter<Uint8Array> | undefined;
 	let fixedWriterShutdown: Promise<void> | undefined;
 	let fixedPump: Promise<void> | undefined;
-	/** Release local capacity once response production and durable cleanup both settle. */
+	/** Release local capacity after started source work and cancellation settle. */
 	function release(): void {
 		if (slotReleased) return;
 		slotReleased = true;
@@ -67,7 +72,7 @@ export function ownedReadResponse(
 		controllerRef = undefined;
 		releaseSlot();
 	}
-	/** Join source reads and cancellation, then settle durable admission without releasing capacity. */
+	/** Join source reads and cancellation before capacity release, then bound durable settlement. */
 	function settleOwner(
 		cancel: boolean,
 		completion: AdmissionCompletion,
@@ -84,22 +89,22 @@ export function ownedReadResponse(
 			}
 			const results = await Promise.allSettled([pending, cancellation]);
 			pending = undefined;
-			await owner.finish(
-				results.some(
-					(result) =>
-						result.status === "rejected" &&
-						!(
-							result.reason instanceof ReadBatchFailure ||
-							result.reason instanceof ReadAborted
-						),
-				)
-					? "uncertain"
-					: completion,
-			);
+			release();
+			const outcome = results.some(
+				(result) =>
+					result.status === "rejected" &&
+					!(
+						result.reason instanceof ReadBatchFailure ||
+						result.reason instanceof ReadAborted
+					),
+			)
+				? "uncertain"
+				: completion;
+			await settleReadAdmission(() => owner.finish(outcome));
 		})();
 		return settlement;
 	}
-	/** Join generic response cleanup, settle admission, then release local capacity. */
+	/** Join source cleanup and bounded settlement, with local capacity released after source cleanup. */
 	function finish(
 		cancel: boolean,
 		completion: AdmissionCompletion,
@@ -135,6 +140,63 @@ export function ownedReadResponse(
 			throw new RangeError(
 				"Known response length must be a non-negative safe integer",
 			);
+		if (knownByteLength === 0) {
+			const headers = new Headers(init?.headers);
+			headers.set("Content-Length", "0");
+			const responseInit: ResponseInit = {
+				status: init?.status,
+				statusText: init?.statusText,
+				headers,
+			};
+			const zeroLengthStream = new ReadableStream<Uint8Array>({
+				type: "bytes",
+				/** Retain the controller for request abort errors before source completion. */
+				start(controller) {
+					controllerRef = controller;
+					signal?.addEventListener("abort", abort, { once: true });
+					if (signal?.aborted) abort();
+				},
+				/** Wait for EOF and durable success before closing the zero-byte response. */
+				async pull(controller) {
+					if (stopping) return;
+					try {
+						pending = source.next();
+						const item = await pending;
+						pending = undefined;
+						if (stopping) return;
+						if (item.done) {
+							await finish(false, "settled");
+							controller.close();
+							if ("byobRequest" in controller)
+								controller.byobRequest?.respond(0);
+							return;
+						}
+						if (item.value.byteLength > 0)
+							throw new Error("Read response source exceeded its limits");
+					} catch (error) {
+						pending = undefined;
+						try {
+							await finish(
+								true,
+								error instanceof ReadBatchFailure ||
+									error instanceof ReadAborted
+									? "settled"
+									: "uncertain",
+								error,
+							);
+						} catch {
+							/* The response stream reports the source or settlement fault. */
+						}
+						controller.error(error);
+					}
+				},
+				/** Join source cancellation before the response can finish. */
+				cancel(reason) {
+					return finish(true, "settled", reason);
+				},
+			});
+			return new Response(zeroLengthStream, responseInit);
+		}
 		const fixed = new FixedLengthStream(knownByteLength);
 		const writer = fixed.writable.getWriter();
 		fixedWriter = writer;
@@ -175,6 +237,7 @@ export function ownedReadResponse(
 						if (buffered) await writer.write(buffered);
 						await writer.close();
 					} catch (error) {
+						await abortFixedWriter(error);
 						await settleOwner(true, "settled", error);
 					}
 					return;

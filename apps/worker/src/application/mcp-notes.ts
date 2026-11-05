@@ -17,6 +17,7 @@ import type { LazyReadSession } from "@worker/application/reads";
 import {
 	openHistoryRead,
 	openManifestRead,
+	type ReadAdmissionSettlement,
 	ReadBatchFailure,
 	type ReadVaultGateway,
 } from "@worker/application/reads";
@@ -39,6 +40,8 @@ export type McpNotesGateway = TextVaultGateway &
 export interface McpReadOwner {
 	/** Known application completion, or uncertain work that must keep its deadline. */
 	readonly completion: AdmissionCompletion;
+	/** Show that source preparation ended before the response owner starts. */
+	readonly sourceComplete?: boolean;
 	/** Cancel and join any started read work before owner settlement. */
 	cancel(): Promise<void>;
 	/** Settle after response EOF or cancellation cleanup. */
@@ -112,15 +115,22 @@ async function settleMcpRead<T extends object, Row, Metadata>(
 	};
 }
 
+/** Keep completed preparation settlement with the MCP response owner. */
+function completedMcpReadOwner(settle: ReadAdmissionSettlement): McpReadOwner {
+	return createMcpReadOwner("settled", async () => {}, settle, true);
+}
+
 /** Combine application certainty with response producer completion before durable finish. */
 function createMcpReadOwner(
 	completion: AdmissionCompletion,
 	cancel: () => Promise<void>,
 	finish: (completion: AdmissionCompletion) => Promise<AdmissionFinishResult>,
+	sourceComplete = false,
 ): McpReadOwner {
 	let finished: Promise<AdmissionFinishResult> | undefined;
 	return {
 		completion,
+		sourceComplete,
 		cancel,
 		/** Keep one settlement promise across repeated response callbacks. */
 		finish(responseCompletion) {
@@ -384,7 +394,14 @@ export async function searchMcpNotes(
 		{ query, limit: limit ?? 20 },
 		signal,
 	);
-	if (!result.ok) return { ok: false, failure: result.failure };
+	if (!result.ok)
+		return result.settle
+			? {
+					ok: false,
+					failure: result.failure,
+					owner: completedMcpReadOwner(result.settle),
+				}
+			: { ok: false, failure: result.failure };
 	const epoch = result.body.epoch;
 	const { epoch: _epoch, ...value } = result.body;
 	return {
@@ -413,7 +430,14 @@ export async function historyMcpNote(
 		undefined,
 		signal,
 	);
-	if (!opened.ok) return { ok: false, failure: opened.failure };
+	if (!opened.ok)
+		return opened.settle
+			? {
+					ok: false,
+					failure: opened.failure,
+					owner: completedMcpReadOwner(opened.settle),
+				}
+			: { ok: false, failure: opened.failure };
 	return settleMcpRead(opened.body, async () => {
 		const entries: McpHistoryResult["entries"][number][] = [];
 		for (;;) {

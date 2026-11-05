@@ -79,6 +79,31 @@ describe("application search", () => {
 		expect(observed.finishAdmission).toHaveBeenCalledTimes(1);
 	});
 
+	it("returns a policy failure before its durable settlement resolves", async () => {
+		const observed = makeGateway({ ok: false, failure: { kind: "revoked" } });
+		let releaseCleanup!: () => void;
+		const heldCleanup = new Promise<void>((resolve) => {
+			releaseCleanup = resolve;
+		});
+		observed.finishAdmission.mockImplementation(async () => {
+			await heldCleanup;
+			return { ok: true };
+		});
+		const preparing = readSearch(observed.gateway, context, {
+			query: "abc",
+			limit: 20,
+		});
+		try {
+			const outcome = await Promise.race([
+				preparing,
+				new Promise<null>((resolve) => setTimeout(() => resolve(null), 100)),
+			]);
+			expect(outcome).not.toBeNull();
+			if (outcome && !outcome.ok) expect("settle" in outcome).toBe(true);
+		} finally {
+			releaseCleanup();
+		}
+	});
 	it("does not authorize after a pre-aborted request", async () => {
 		const observed = makeGateway({ ok: true, body });
 		const controller = new AbortController();
@@ -116,8 +141,14 @@ describe("application search", () => {
 		);
 		controller.abort();
 		authorize?.();
-		await expect(pending).rejects.toThrow();
+		const outcome = await pending;
+		expect(outcome).toMatchObject({
+			ok: false,
+			failure: { kind: "invalid_request" },
+		});
 		expect(observed.search).not.toHaveBeenCalled();
+		expect(observed.finishAdmission).not.toHaveBeenCalled();
+		if (!outcome.ok && outcome.settle) await outcome.settle();
 		expect(observed.finishAdmission).toHaveBeenCalledWith(
 			context,
 			ticketId,
@@ -150,7 +181,13 @@ describe("application search", () => {
 		await started;
 		controller.abort();
 		releaseSearch();
-		await expect(pending).rejects.toThrow();
+		const outcome = await pending;
+		expect(outcome).toMatchObject({
+			ok: false,
+			failure: { kind: "invalid_request" },
+		});
+		expect(observed.finishAdmission).not.toHaveBeenCalled();
+		if (!outcome.ok && outcome.settle) await outcome.settle();
 		expect(observed.finishAdmission).toHaveBeenCalledWith(
 			context,
 			ticketId,
@@ -167,14 +204,18 @@ describe("application search", () => {
 		expect(observed.finishAdmission).not.toHaveBeenCalled();
 	});
 
-	it("settles a canonical native policy failure", async () => {
+	it("returns a canonical policy failure with deferred settlement", async () => {
 		const observed = makeGateway({ ok: false, failure: { kind: "revoked" } });
-		await expect(
-			readSearch(observed.gateway, context, { query: "abc", limit: 20 }),
-		).resolves.toEqual({
+		const outcome = await readSearch(observed.gateway, context, {
+			query: "abc",
+			limit: 20,
+		});
+		expect(outcome).toMatchObject({
 			ok: false,
 			failure: { kind: "revoked" },
 		});
+		expect(observed.finishAdmission).not.toHaveBeenCalled();
+		if (!outcome.ok && outcome.settle) await outcome.settle();
 		expect(observed.finishAdmission).toHaveBeenCalledWith(
 			context,
 			ticketId,

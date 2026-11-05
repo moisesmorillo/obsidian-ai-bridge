@@ -960,7 +960,7 @@ describe("production MCP mutation safety", () => {
 	);
 
 	it.each(["beginMutation", "commitText", "commitFileCommand"])(
-		"rechecks durable revocation after the %s preparation seam",
+		"fails response delivery after durable revocation at the %s seam",
 		async (seam) => {
 			const { token, clientId } = await issueToken();
 			const epoch = await epochFor(token);
@@ -1035,7 +1035,7 @@ describe("production MCP mutation safety", () => {
 			}
 			const response = await pending;
 			expect(response.status).toBe(401);
-			expect(await response.text()).toContain("revoked");
+			await expect(response.text()).rejects.toThrow();
 			vi.restoreAllMocks();
 			expect(await published(path)).toEqual(before);
 			const after = await runInDurableObject(rawVault, (_instance, state) =>

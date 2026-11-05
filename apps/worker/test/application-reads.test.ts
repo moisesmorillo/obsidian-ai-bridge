@@ -253,6 +253,36 @@ function changesGateway(rows: ChangeEntry[]) {
 
 /** Drain bounded batches to assert keyset page output through lazy sessions. */
 describe("application bounded read traversal", () => {
+	it("returns a preparation failure while its durable settlement remains pending", async () => {
+		const { gateway } = manifestGateway([]);
+		const cleanup = new Promise<void>((resolve) => {
+			setTimeout(resolve, 100);
+		});
+		let releaseCleanup!: () => void;
+		const heldCleanup = new Promise<void>((resolve) => {
+			releaseCleanup = resolve;
+		});
+		gateway.readVault = async () => ({
+			ok: false,
+			failure: { kind: "revoked" },
+		});
+		gateway.finishAdmission = async () => {
+			await heldCleanup;
+			return { ok: true };
+		};
+		const preparing = openManifestRead(gateway, context);
+		try {
+			const outcome = await Promise.race([preparing, cleanup.then(() => null)]);
+			expect(outcome).not.toBeNull();
+			if (outcome && !outcome.ok) expect("settle" in outcome).toBe(true);
+		} finally {
+			releaseCleanup();
+		}
+		if (await preparing.then((outcome) => !outcome.ok && outcome.settle)) {
+			const outcome = await preparing;
+			if (!outcome.ok && outcome.settle) await outcome.settle();
+		}
+	});
 	it("opens a manifest session before data demand and reads one bounded batch on demand", async () => {
 		const rows = Array.from({ length: 130 }, (_, index) => manifestRow(index));
 		const { gateway, state } = manifestGateway(rows);
@@ -475,10 +505,11 @@ describe("application bounded read traversal", () => {
 		});
 		const { gateway } = manifestGateway([]);
 		const result = await openManifestRead(gateway, context, cursor);
-		expect(result).toEqual({
+		expect(result).toMatchObject({
 			ok: false,
 			failure: { kind: "epoch_mismatch", current_epoch: epoch },
 		});
+		if (!result.ok && result.settle) await result.settle();
 	});
 
 	it("maps malformed, wrong-collection, and wrong-path cursors to invalid request", async () => {
@@ -493,15 +524,17 @@ describe("application bounded read traversal", () => {
 			last_etag: formatETag(epoch, 1),
 		});
 		const wrongKind = await openManifestRead(gateway, context, historyCursor);
-		expect(wrongKind).toEqual({
+		expect(wrongKind).toMatchObject({
 			ok: false,
 			failure: { kind: "invalid_request" },
 		});
+		if (!wrongKind.ok && wrongKind.settle) await wrongKind.settle();
 		const malformed = await openManifestRead(gateway, context, "not-a-cursor");
-		expect(malformed).toEqual({
+		expect(malformed).toMatchObject({
 			ok: false,
 			failure: { kind: "invalid_request" },
 		});
+		if (!malformed.ok && malformed.settle) await malformed.settle();
 		const history = historyGateway([historyRow(1)]);
 		const wrongPathCursor = encodeReadCursor({
 			version: 1,
@@ -518,10 +551,11 @@ describe("application bounded read traversal", () => {
 			"files/history.md",
 			wrongPathCursor,
 		);
-		expect(wrongPath).toEqual({
+		expect(wrongPath).toMatchObject({
 			ok: false,
 			failure: { kind: "invalid_request" },
 		});
+		if (!wrongPath.ok && wrongPath.settle) await wrongPath.settle();
 	});
 
 	it("settles a read when revocation returns between application batches", async () => {

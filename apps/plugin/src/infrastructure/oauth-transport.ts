@@ -1,3 +1,4 @@
+import { DeviceSessionNetworkError } from "@plugin/auth/device-session";
 import { requestUrl } from "@plugin/obsidian-api";
 import type { RequestUrlParam } from "obsidian";
 
@@ -27,17 +28,22 @@ export interface OAuthTransport {
 	): Promise<OAuthTransportResponse>;
 }
 
-/** Uses Obsidian's network API and maps all transport failures to non-sensitive errors. */
+/** Uses Obsidian's request API and marks only rejected host calls as network failures. */
 export class ObsidianOAuthTransport implements OAuthTransport {
 	/** Replaces host exceptions and response bodies with one safe failure message. */
 	async request(
 		url: string,
 		options: Omit<RequestUrlParam, "url"> = {},
 	): Promise<unknown> {
+		let response: Awaited<ReturnType<typeof requestUrl>>;
 		try {
-			const response = await requestUrl({ ...options, url, throw: false });
-			if (response.status < 200 || response.status >= 300)
-				throw new Error("OAuth request failed");
+			response = await requestUrl({ ...options, url, throw: false });
+		} catch {
+			throw new DeviceSessionNetworkError();
+		}
+		if (response.status < 200 || response.status >= 300)
+			throw new Error("OAuth request failed");
+		try {
 			return response.json as unknown;
 		} catch {
 			throw new Error("OAuth request failed");
@@ -49,21 +55,22 @@ export class ObsidianOAuthTransport implements OAuthTransport {
 		url: string,
 		options: Omit<RequestUrlParam, "url"> = {},
 	): Promise<OAuthTransportResponse> {
+		let response: Awaited<ReturnType<typeof requestUrl>>;
 		try {
-			const response = await requestUrl({ ...options, url, throw: false });
-			return {
-				status: response.status,
-				headers: Object.fromEntries(
-					Object.entries(response.headers).map(([name, value]) => [
-						name.toLowerCase(),
-						value,
-					]),
-				),
-				text: response.text,
-				arrayBuffer: response.arrayBuffer,
-			};
+			response = await requestUrl({ ...options, url, throw: false });
 		} catch {
-			throw new Error("OAuth request failed");
+			throw new DeviceSessionNetworkError();
 		}
+		return {
+			status: response.status,
+			headers: Object.fromEntries(
+				Object.entries(response.headers).map(([name, value]) => [
+					name.toLowerCase(),
+					value,
+				]),
+			),
+			text: response.text,
+			arrayBuffer: response.arrayBuffer,
+		};
 	}
 }

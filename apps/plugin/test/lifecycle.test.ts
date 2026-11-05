@@ -40,6 +40,8 @@ const host = vi.hoisted(() => ({
 	publicationEvents: [] as PublicationEvent[],
 	publicationStages: [] as string[],
 	syncCycles: 0,
+	/** Controlled application failure emitted by the real plugin cycle boundary. */
+	cycleFailure: null as Error | null,
 	cycleGate: null as {
 		/** Signals that the controlled synchronization phase reached its wait. */
 		started(): void;
@@ -135,6 +137,7 @@ vi.mock("../src/sync/create-publication", () => ({
 				},
 				scan: async () => {
 					host.publicationStages.push("scan");
+					if (host.cycleFailure) throw host.cycleFailure;
 				},
 				flush: async () => {
 					host.publicationStages.push("flush");
@@ -189,11 +192,13 @@ import type { App, PluginManifest } from "obsidian";
 import {
 	DeviceSession,
 	type DeviceSessionHost,
+	DeviceSessionNetworkError,
 } from "../src/auth/device-session";
 import { VaultEventAdapter } from "../src/infrastructure/vault-events";
 import AIBridgePlugin from "../src/main";
 import { DesktopSyncController } from "../src/sync/desktop-sync";
 import { DeviceJournal } from "../src/sync/device-journal";
+import { SyncTransportError } from "../src/sync/remote-text";
 
 /** Starts a plugin with real controller and vault-event owners. */
 async function startConnectedPlugin(
@@ -286,7 +291,132 @@ describe("AIBridgePlugin device-local lifecycle", () => {
 		host.publicationEvents.splice(0);
 		host.publicationStages.splice(0);
 		host.syncCycles = 0;
+		host.cycleFailure = null;
 		host.cycleGate = null;
+	});
+
+	it.each(["resume", "device-name"] as const)(
+		"preserves 429 diagnostics after %s catches settle",
+		async (recoveryPath) => {
+			const plugin = await startConnectedPlugin();
+			try {
+				/** Reads safe failure fields after plugin and controller catches settle. */
+				const status = () =>
+					Reflect.apply(
+						Reflect.get(plugin, "syncStatus") as () => unknown,
+						plugin,
+						[],
+					) as {
+						failure: {
+							transportClass: string;
+							code: string | null;
+							retryAfterSeconds: string | null;
+						} | null;
+					};
+				const updateName = host.deviceNameChange;
+				const failure = new SyncTransportError(
+					429,
+					"admission_limited",
+					null,
+					"30",
+				);
+				host.cycleFailure = failure;
+				if (recoveryPath === "resume") {
+					host.syncActions?.pause();
+					await settleSyncEffects(plugin);
+					host.syncActions?.resume();
+					await settleSyncEffects(plugin);
+				} else {
+					if (!updateName) throw new Error("Device name callback is missing");
+					await updateName("diagnostic test device");
+					await settleSyncEffects(plugin);
+				}
+
+				expect(status().failure).toEqual({
+					transportClass: "4xx",
+					code: "admission_limited",
+					retryAfterSeconds: "30",
+				});
+			} finally {
+				plugin.onunload();
+				vi.useRealTimers();
+				vi.unstubAllGlobals();
+			}
+		},
+	);
+
+	it("shows a safe host-network failure through the real controller", async () => {
+		const plugin = await startConnectedPlugin();
+		try {
+			const controller = Reflect.get(
+				plugin,
+				"desktopSync",
+			) as DesktopSyncController;
+			host.cycleFailure = new DeviceSessionNetworkError();
+			await controller.syncNow().catch(() => undefined);
+			await controller.waitForIdle();
+			const status = Reflect.apply(
+				Reflect.get(plugin, "syncStatus") as () => unknown,
+				plugin,
+				[],
+			) as { failure: { transportClass: string; code: string | null } | null };
+
+			expect(status.failure).toEqual({
+				transportClass: "network",
+				code: null,
+				retryAfterSeconds: null,
+			});
+			expect(JSON.stringify(status)).not.toContain("private");
+		} finally {
+			plugin.onunload();
+			vi.useRealTimers();
+			vi.unstubAllGlobals();
+		}
+	});
+
+	it("classifies application failures as other and retains session times after recovery", async () => {
+		const plugin = await startConnectedPlugin();
+		try {
+			const controller = Reflect.get(
+				plugin,
+				"desktopSync",
+			) as DesktopSyncController;
+			/** Reads only safe cycle diagnostics from the plugin's live projection. */
+			const status = () =>
+				Reflect.apply(
+					Reflect.get(plugin, "syncStatus") as () => unknown,
+					plugin,
+					[],
+				) as {
+					failure: { transportClass: string } | null;
+					lastFailureAt: string | null;
+					lastSuccessAt: string | null;
+				};
+			vi.setSystemTime(new Date("2026-11-09T12:00:00.000Z"));
+			host.cycleFailure = new Error("private application detail");
+			await controller.syncNow().catch(() => undefined);
+			await controller.waitForIdle();
+			expect(status()).toMatchObject({
+				failure: { transportClass: "other" },
+				lastFailureAt: "2026-11-09T12:00:00.000Z",
+			});
+			expect(JSON.stringify(status())).not.toContain(
+				"private application detail",
+			);
+
+			vi.setSystemTime(new Date("2026-11-09T12:01:00.000Z"));
+			host.cycleFailure = null;
+			await controller.syncNow();
+			expect(status()).toMatchObject({
+				failure: null,
+				lastFailureAt: "2026-11-09T12:00:00.000Z",
+				lastSuccessAt: "2026-11-09T12:01:00.000Z",
+			});
+		} finally {
+			plugin.onunload();
+			vi.useRealTimers();
+			vi.unstubAllGlobals();
+		}
 	});
 
 	it("defers sync until connected credential restore completes", async () => {
@@ -525,6 +655,18 @@ describe("AIBridgePlugin device-local lifecycle", () => {
 			"desktopSync",
 		) as DesktopSyncController;
 		const journal = Reflect.get(plugin, "journal") as DeviceJournal;
+		/** Reads only safe cycle diagnostics from the plugin's live projection. */
+		const status = () =>
+			Reflect.apply(
+				Reflect.get(plugin, "syncStatus") as () => unknown,
+				plugin,
+				[],
+			) as {
+				failure: unknown;
+				lastSuccessAt: string | null;
+			};
+		const lastSuccessAt = status().lastSuccessAt;
+		vi.setSystemTime(new Date("2026-11-10T12:00:00.000Z"));
 		let startCycle: (() => void) | undefined;
 		let releaseCycle: (() => void) | undefined;
 		const started = new Promise<void>((resolve) => {
@@ -547,6 +689,8 @@ describe("AIBridgePlugin device-local lifecycle", () => {
 			releaseCycle?.();
 			await cycle;
 			expect(host.publicationStages).toEqual(["resume"]);
+			expect(status().lastSuccessAt).toBe(lastSuccessAt);
+			expect(status().failure).toBeNull();
 		} finally {
 			releaseCycle?.();
 			plugin.onunload();

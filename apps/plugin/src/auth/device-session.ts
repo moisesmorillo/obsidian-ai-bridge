@@ -23,6 +23,15 @@ const SCOPES = VaultScopeSchema.options;
 /** Maximum in-memory lifetime for one uncompleted browser consent request. */
 const CONSENT_LIFETIME_MS = 10 * 60 * 1000;
 
+/** Host request rejection marker that carries no provider cause or private value. */
+export class DeviceSessionNetworkError extends Error {
+	/** Creates one fixed error while dropping the host rejection cause. */
+	constructor() {
+		super("Network request failed");
+		this.name = "DeviceSessionNetworkError";
+	}
+}
+
 /** Safe enrollment state exposed to settings without credential or callback data. */
 export type DeviceSessionStatus =
 	| "disconnected"
@@ -442,9 +451,10 @@ export class DeviceSession {
 		);
 		try {
 			await refresh;
-		} catch {
+		} catch (error) {
 			if (this.ownsGeneration(generation) && this.credential === current)
 				this.setStatus("reconnect");
+			if (error instanceof DeviceSessionNetworkError) throw error;
 			throw new Error("Reconnect is required");
 		}
 		if (!this.credential) throw new Error("Reconnect is required");

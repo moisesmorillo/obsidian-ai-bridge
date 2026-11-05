@@ -94,13 +94,52 @@ export class ReadBatchFailure extends Error {
 	}
 }
 
-/** Read outcome whose successful branch owns a deferred admission settlement hook. */
+/** Settle a read admission after source work ends. */
+export type ReadAdmissionSettlement = () => Promise<AdmissionFinishResult>;
+
+/** Read outcome with either response ownership or deferred preparation settlement. */
 export type ReadOutcome<T> =
 	| ReadSession<T>
 	| {
 			ok: false;
-			failure: FileFailure;
+			failure: FileFailure | { kind: "internal_error" };
+			settle?: ReadAdmissionSettlement;
 	  };
+
+/** One deadline for every response and preparation settlement path. */
+const READ_SETTLEMENT_DEADLINE_MS = 5_000;
+
+/** Mark the fixed deadline so diagnostics never include a native failure reason. */
+class ReadSettlementTimeout extends Error {}
+
+/** Bound one durable settlement and reject unsuccessful results without exposing details. */
+export async function settleReadAdmission(
+	settle: ReadAdmissionSettlement,
+): Promise<void> {
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	try {
+		const result = await Promise.race([
+			Promise.resolve().then(settle),
+			new Promise<never>((_, reject) => {
+				timer = setTimeout(
+					() => reject(new ReadSettlementTimeout()),
+					READ_SETTLEMENT_DEADLINE_MS,
+				);
+			}),
+		]);
+		if (!result.ok) throw new Error("Read settlement failed");
+	} catch (error) {
+		const timedOut = error instanceof ReadSettlementTimeout;
+		console.error(
+			timedOut ? "READ_SETTLEMENT_TIMEOUT" : "READ_SETTLEMENT_FAILED",
+		);
+		throw new Error(
+			timedOut ? "Read settlement timed out" : "Read settlement failed",
+		);
+	} finally {
+		if (timer !== undefined) clearTimeout(timer);
+	}
+}
 
 /** Read the authorized aggregate summary and return its admission owner to transport. */
 export async function readVault(
@@ -490,31 +529,35 @@ export function createReadSession<T>(
 	};
 }
 
-/** Settle only known policy or validation failures, then return their canonical response. */
-async function finishReadFailure<T>(
+/** Return known policy failure with settlement deferred to the slot-owning transport. */
+function finishReadFailure<T>(
 	gateway: ReadVaultGateway,
 	context: AuthorizationContext,
 	ticketId: string,
 	failure: FileFailure,
-): Promise<ReadOutcome<T>> {
-	await gateway.finishAdmission(context, ticketId, "settled");
-	return { ok: false, failure };
+): ReadOutcome<T> {
+	return {
+		ok: false,
+		failure,
+		settle: async () => gateway.finishAdmission(context, ticketId, "settled"),
+	};
 }
 
-/** Settle known policy failures and local aborts. Unknown faults retain their original durable deadline. */
-async function finishKnownFailure<T>(
+/** Return known failure after source work ends; unknown faults retain their durable deadline. */
+function finishKnownFailure<T>(
 	gateway: ReadVaultGateway,
 	context: AuthorizationContext,
 	ticketId: string,
 	error: unknown,
-): Promise<ReadOutcome<T>> {
-	if (error instanceof ReadAborted) {
-		await gateway.finishAdmission(context, ticketId, "settled");
-		throw error;
-	}
+): ReadOutcome<T> {
+	if (error instanceof ReadAborted)
+		return {
+			ok: false,
+			failure: { kind: "internal_error" },
+			settle: async () => gateway.finishAdmission(context, ticketId, "settled"),
+		};
 	if (!isKnownFailure(error)) throw error;
-	await gateway.finishAdmission(context, ticketId, "settled");
-	return { ok: false, failure: error.failure };
+	return finishReadFailure(gateway, context, ticketId, error.failure);
 }
 
 /** Identify failures with a safe canonical response rather than uncertain storage errors. */

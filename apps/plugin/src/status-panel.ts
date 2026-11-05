@@ -95,8 +95,22 @@ export class SyncStatusPanel {
 		}
 		if (status.failure) {
 			const failure = document.createElement("p");
-			failure.textContent = status.failure;
+			const details: string[] = [status.failure.transportClass];
+			if (status.failure.code) details.push(status.failure.code);
+			if (status.failure.retryAfterSeconds)
+				details.push(`retry in ${status.failure.retryAfterSeconds} seconds`);
+			failure.textContent = `Sync request failed. ${details.join(". ")}.`;
 			container.append(failure);
+		}
+		if (status.lastFailureAt) {
+			const lastFailure = document.createElement("p");
+			lastFailure.textContent = `Last sync failure (UTC): ${status.lastFailureAt}`;
+			container.append(lastFailure);
+		}
+		if (status.lastSuccessAt) {
+			const lastSuccess = document.createElement("p");
+			lastSuccess.textContent = `Last successful sync (UTC): ${status.lastSuccessAt}`;
+			container.append(lastSuccess);
 		}
 		if (status.storageFailure) {
 			const failure = document.createElement("p");

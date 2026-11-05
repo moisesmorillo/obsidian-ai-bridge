@@ -153,7 +153,9 @@ describe("content read ownership", () => {
 			expect(finished).toEqual([]);
 			work.resolve();
 			await finishing.promise;
-			expect(tryAcquireReadSlot()).toBeUndefined();
+			const slotAfterSourceWork = tryAcquireReadSlot();
+			expect(slotAfterSourceWork).toBeTypeOf("function");
+			slotAfterSourceWork?.();
 			cleanup.resolve();
 			const response = await pending;
 			await response.body?.cancel();
@@ -169,6 +171,49 @@ describe("content read ownership", () => {
 			}
 		},
 	);
+	it("releases content capacity before bounded preparation settlement", async () => {
+		const finished: AdmissionCompletion[] = [];
+		const authority = gateway(finished);
+		const settling = barrier<void>();
+		const cleanup = barrier<void>();
+		authority.readText = async () => ({
+			ok: false,
+			failure: { kind: "revoked" },
+		});
+		authority.finishAdmission = async (_identity, _ticket, completion) => {
+			finished.push(completion);
+			settling.resolve();
+			await cleanup.promise;
+			return { ok: true };
+		};
+		const held = Array.from({ length: 3 }, () => tryAcquireReadSlot());
+		const pending = readContentResponse(
+			authority,
+			() => store(async () => new Blob([]).stream()),
+			identity,
+			{ path: "a.bin" },
+			new Request("https://content.invalid/v1/files/a.bin"),
+		);
+		let available: (() => void) | undefined;
+		try {
+			await settling.promise;
+			available = tryAcquireReadSlot();
+			const response = await Promise.race([
+				pending,
+				new Promise<undefined>((resolve) =>
+					setTimeout(() => resolve(undefined), 6_500),
+				),
+			]);
+			expect(available).toBeTypeOf("function");
+			expect(response?.status).toBe(500);
+			expect(finished).toEqual(["settled"]);
+		} finally {
+			cleanup.resolve();
+			available?.();
+			for (const release of held) release?.();
+		}
+		await pending;
+	}, 10_000);
 	it("does not authorize already-aborted content input", async () => {
 		const finished: AdmissionCompletion[] = [];
 		const authority = gateway(finished);
@@ -242,7 +287,9 @@ describe("content read ownership", () => {
 			work.resolve();
 			if (stage !== "authorize") {
 				await finishing.promise;
-				expect(tryAcquireReadSlot()).toBeUndefined();
+				const slotAfterSourceWork = tryAcquireReadSlot();
+				expect(slotAfterSourceWork).toBeTypeOf("function");
+				slotAfterSourceWork?.();
 				cleanup.resolve();
 			}
 			const response = await pending;
@@ -306,7 +353,9 @@ describe("content read ownership", () => {
 		expect(finished).toEqual([]);
 		cancellation.resolve();
 		await finishing.promise;
-		expect(tryAcquireReadSlot()).toBeUndefined();
+		const slotAfterSourceWork = tryAcquireReadSlot();
+		expect(slotAfterSourceWork).toBeTypeOf("function");
+		slotAfterSourceWork?.();
 		cleanup.resolve();
 		await expect(response.arrayBuffer()).rejects.toThrow();
 		const free = tryAcquireReadSlot();
@@ -419,7 +468,9 @@ describe("content read ownership", () => {
 		cancellation.resolve();
 		await cleanupStarted.promise;
 		expect(finished).toEqual(["settled"]);
-		expect(tryAcquireReadSlot()).toBeUndefined();
+		const availableAfterSourceWork = tryAcquireReadSlot();
+		expect(availableAfterSourceWork).toBeTypeOf("function");
+		availableAfterSourceWork?.();
 		cleanup.resolve();
 		await read;
 		let free: (() => void) | undefined;
@@ -521,7 +572,7 @@ describe("content read ownership", () => {
 			expect(cancellationJoinedFirst).toBe(true);
 			expect(retainedDuringCancellation).toBe(true);
 			expect(uncertainBeforeRelease).toBe(true);
-			expect(retainedDuringCleanup).toBe(true);
+			expect(retainedDuringCleanup).toBe(false);
 			expect(finished).toEqual(["uncertain"]);
 			expect(free).toBeTypeOf("function");
 		} finally {

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
 	DeviceSession,
 	type DeviceSessionHost,
+	DeviceSessionNetworkError,
 	type DeviceSessionStatus,
 } from "../src/auth/device-session";
 import type {
@@ -10,6 +11,7 @@ import type {
 	CredentialWriteTransaction,
 } from "../src/infrastructure/credential-storage";
 import type { OAuthTransport } from "../src/infrastructure/oauth-transport";
+import { SyncTransport } from "../src/infrastructure/sync-transport";
 
 const origin = "https://service.test";
 
@@ -78,6 +80,8 @@ class FakeTransport implements OAuthTransport {
 	failTokenRequests = false;
 	tokenType = "Bearer";
 	beforeRefreshResponse: (() => Promise<void>) | null = null;
+	/** Injects one typed host-response failure to test session provenance. */
+	responseFailure: Error | null = null;
 
 	/** Binds synthetic discovery endpoints to one test service origin. */
 	constructor(private readonly serviceOrigin = origin) {}
@@ -91,6 +95,7 @@ class FakeTransport implements OAuthTransport {
 		text: string;
 	}> {
 		this.calls.push({ url, options });
+		if (this.responseFailure) throw this.responseFailure;
 		return {
 			status: 410,
 			headers: { etag: '"epoch.9"', "x-vault-epoch": "epoch" },
@@ -539,6 +544,53 @@ describe("DeviceSession", () => {
 		restarted.setStoredClientId("synthetic-client");
 		await restarted.session.restore();
 		expect(restarted.transport.calls).toHaveLength(0);
+	});
+
+	it("keeps credential persistence failures distinct from network failures in sync transport", async () => {
+		const test = createSession(() => 10_000);
+		test.credentials.value = {
+			service_origin: origin,
+			client_id: "synthetic-client",
+			access_token: "expired-access-token",
+			refresh_token: "synthetic-refresh-token",
+			token_type: "Bearer",
+			expires_at: 10_000,
+			scope: ["vault:read", "vault:write", "vault:delete"],
+		};
+		test.setStoredClientId("synthetic-client");
+		test.credentials.failWrites = true;
+		await test.session.restore();
+		const sync = new SyncTransport(origin, test.session);
+
+		const error = await sync.vault().catch((caught: unknown) => caught);
+
+		expect(error).not.toMatchObject({ name: "SyncNetworkError" });
+		expect(
+			test.transport.calls.filter((call) => call.url.endsWith("/v1/vault")),
+		).toHaveLength(0);
+	});
+
+	it("preserves the verified host-network marker through the real session", async () => {
+		const test = createSession(() => 10_000);
+		test.credentials.value = {
+			service_origin: origin,
+			client_id: "synthetic-client",
+			access_token: "synthetic-access-token",
+			refresh_token: "synthetic-refresh-token",
+			token_type: "Bearer",
+			expires_at: 100_000,
+			scope: ["vault:read", "vault:write", "vault:delete"],
+		};
+		test.setStoredClientId("synthetic-client");
+		await test.session.restore();
+		test.transport.responseFailure = new DeviceSessionNetworkError();
+		const sync = new SyncTransport(origin, test.session);
+
+		const error = await sync.vault().catch((caught: unknown) => caught);
+
+		expect(error).toBeInstanceOf(DeviceSessionNetworkError);
+		expect((error as Error).message).toBe("Network request failed");
+		expect(test.transport.calls.at(-1)?.url).toContain("/v1/vault");
 	});
 
 	it("blocks credentials that do not match the persisted device identity", async () => {

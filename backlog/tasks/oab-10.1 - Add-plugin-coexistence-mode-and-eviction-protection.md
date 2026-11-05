@@ -4,7 +4,7 @@ title: Add plugin coexistence mode and eviction protection
 status: In Progress
 assignee: []
 created_date: '2026-11-05T12:48:00Z'
-updated_date: '2026-11-05T17:48:00Z'
+updated_date: '2026-11-05T17:52:00Z'
 labels: []
 dependencies: []
 documentation:
@@ -21,11 +21,11 @@ iCloud eviction can emit destructive Obsidian events. F4 needs owner confirmatio
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 An explicit coexistence setting defaults off. Local delete and rename events need durable owner confirmation and never auto-publish.
-- [ ] #2 Placeholder files stay excluded. A placeholder transition marks the source unavailable without a remote delete or rename.
-- [ ] #3 Pause retains confirmation and operation queues. Restart retains confirmations. Exit with pending confirmations fails safely.
-- [ ] #4 The keyboard-accessible panel shows each confirmation, safe actions, and the text and binary residual risks. Pending confirmations prevent settled status.
-- [ ] #5 Confirmation preserves the exact observed epoch and revision. A stale confirmation never deletes or renames newer content.
+- [x] #1 An explicit coexistence setting defaults off. Local delete and rename events need durable owner confirmation and never auto-publish.
+- [x] #2 Placeholder files stay excluded. A placeholder transition marks the source unavailable without a remote delete or rename.
+- [x] #3 Pause retains confirmation and operation queues. Restart retains confirmations. Exit with pending confirmations fails safely.
+- [x] #4 The keyboard-accessible panel shows each confirmation, safe actions, and the text and binary residual risks. Pending confirmations prevent settled status.
+- [x] #5 Confirmation preserves the exact observed epoch and revision. A stale confirmation never deletes or renames newer content.
 - [ ] #6 AC-19 passes with simulated eviction on both authorized Mac test vaults. Existing service evidence stays intact.
 - [ ] #7 Failing regressions precede implementation. bun run check, semantic TypeScript reviews, and human branch review pass.
 <!-- AC:END -->
@@ -78,4 +78,12 @@ Source-safety correction: TextApplyEngine now checks the shared fence and exact 
 TDD RED: `bun test apps/plugin/test/publication.test.ts apps/plugin/test/device-journal.test.ts apps/plugin/test/sync-status.test.ts apps/plugin/test/text-apply.test.ts` exited 1. All 12 new safety regressions failed before production changes. The direct Bun runner also failed two unrelated tests because its Vitest compatibility layer lacks required APIs.
 
 GREEN: focused Vitest validation passed 269 tests across coexistence, journal, status, publication, apply, and lifecycle files. `bun run docs:check` passed. `bun run check` passed with all type checks, tests, and builds. Plugin tests passed 602 with one skipped. No live vault, host, browser, or network actions occurred. Independent branch review remains pending. Dev-2 AC-19 remains unverified, and OAB-10.1 stays In Progress.
+
+Final independent review closure: Whole-branch review 73e0bbf0 found R1 direct publication effects, R2 stale-base epoch authority, and R3 late placeholder admission at d028a98. Commit 0b22647 corrects these paths. Scoped review 9e131bd3 closes all three with source and regression evidence and reports no new blocking finding. It retains the accepted external evidence limit in Deferred OAB-10.1.1.
+
+The semantic review covered changed production and internal TypeScript declarations, canonical schemas, event capture, journal authority, Pause persistence, publication and apply admission, status actions, tooling builders, and named test helpers. The journal owns durable authority, the shared fence owns effect admission, and each effect owner checks exact affected paths before mutation. Already-issued host effects can finish.
+
+Final worker validation at source revision 0b22647 passed 269 focused tests, docs:check, and bun run check. The full check passed 1,925 tests with 1 skipped, workspace type checks, lint, and builds. Worker build used dry-run mode. Pi-lens alias resolution remains a diagnostic limit, while canonical type checks pass. docs/spec.md matches origin/main. PR #57 and #58 enter through the upstream merge.
+
+Criteria 1 through 5 now have code and regression evidence. Criterion 6 remains incomplete under the supervisor decision. Criterion 7 waits for human branch review. OAB-10.1 remains In Progress. No further host or service retry ran during source correction or review.
 <!-- SECTION:NOTES:END -->

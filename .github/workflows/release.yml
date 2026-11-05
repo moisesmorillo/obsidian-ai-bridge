@@ -13,10 +13,10 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  release:
+  build:
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -32,12 +32,32 @@ jobs:
         run: bun apps/plugin/tools/release.ts "${PLUGIN_RELEASE_TAG:?Missing release tag}"
       - name: Check repository and build plugin
         run: bun run check
-      - name: Publish release
+      - name: Upload checked plugin assets
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: plugin-release-assets
+          path: |
+            apps/plugin/dist/manifest.json
+            apps/plugin/dist/main.js
+          if-no-files-found: error
+          retention-days: 1
+          overwrite: false
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Verify tag source
         shell: bash
         env:
           GITHUB_REF_NAME: ${{ github.ref_name }}
           GITHUB_SHA: ${{ github.sha }}
-          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
 
@@ -53,7 +73,20 @@ jobs:
             echo "Remote tag does not match the checked commit." >&2
             exit 1
           fi
+      - name: Download checked plugin assets
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: plugin-release-assets
+          path: apps/plugin/dist
+      - name: Publish release
+        shell: bash
+        env:
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
 
+          tag="${GITHUB_REF_NAME:?Missing release tag}"
           if gh release view "$tag" >/dev/null 2>&1; then
             echo "A release already exists for $tag. Refusing to replace it." >&2
             exit 1

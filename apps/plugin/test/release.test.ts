@@ -51,7 +51,20 @@ function checkCommand(): string {
 	return step[1];
 }
 
-/** Extracts the publication shell from the checked-in workflow. */
+/** Extracts the tag-source verification shell from the publish job. */
+function verifyTagShell(): string {
+	const workflow = readFileSync(
+		join(repositoryRoot, ".github/workflows/release.yml"),
+		"utf8",
+	);
+	const step = workflow.match(
+		/- name: Verify tag source\n\s+shell: bash\n\s+env:[\s\S]*?\n\s+run: \|\n((?:\s{10}.+\n|\s*\n)+)/,
+	);
+	if (!step) throw new Error("Tag-source verification shell block not found");
+	return step[1].replace(/^ {10}/gm, "");
+}
+
+/** Extracts the release-creation shell from the checked-in workflow. */
 function publicationShell(): string {
 	const workflow = readFileSync(
 		join(repositoryRoot, ".github/workflows/release.yml"),
@@ -69,6 +82,7 @@ function runPublicationShell(options: {
 	remoteTag?: string;
 	checkedCommit?: string;
 	eventCommit?: string;
+	tagRefKind?: "annotated" | "lightweight";
 	releaseExists?: boolean;
 }): { status: number | null; stderr: string; root: string; log: string } {
 	const root = mkdtempSync(join(tmpdir(), "plugin-publication-"));
@@ -76,26 +90,40 @@ function runPublicationShell(options: {
 	mkdirSync(bin);
 	const log = join(root, "gh.log");
 	writeFileSync(log, "");
-	const gitStub = `#!/bin/sh\ncase "$*" in\n  "ls-remote origin refs/tags/plugin-v0.1.0^{} refs/tags/plugin-v0.1.0") printf '%s\\trefs/tags/plugin-v0.1.0^{}\\n' "${options.remoteTag ?? "checked-commit"}" ;;\n  "rev-parse HEAD") printf '%s\\n' "${options.checkedCommit ?? "checked-commit"}" ;;\n  *) exit 2 ;;\nesac\n`;
+	const remoteCommit = options.remoteTag ?? "checked-commit";
+	const remoteTagLines =
+		options.tagRefKind === "lightweight"
+			? `printf '%s\\trefs/tags/plugin-v0.1.0\\n' "${remoteCommit}"`
+			: `printf '%s\\trefs/tags/plugin-v0.1.0\\n' tag-object; printf '%s\\trefs/tags/plugin-v0.1.0^{}\\n' "${remoteCommit}"`;
+	const gitStub = `#!/bin/sh\ncase "$*" in\n  "ls-remote origin refs/tags/plugin-v0.1.0^{} refs/tags/plugin-v0.1.0") ${remoteTagLines} ;;\n  "rev-parse HEAD") printf '%s\\n' "${options.checkedCommit ?? "checked-commit"}" ;;\n  *) exit 2 ;;\nesac\n`;
 	const ghStub = `#!/bin/sh\nprintf '%s\\n' "$*" >> "$GH_LOG"\nif [ "$1 $2" = "release view" ]; then\n  ${options.releaseExists ? "exit 0" : "exit 1"}\nfi\nif [ "$1 $2" = "release create" ]; then exit 0; fi\nexit 2\n`;
 	writeFileSync(join(bin, "git"), gitStub, { mode: 0o755 });
 	writeFileSync(join(bin, "gh"), ghStub, { mode: 0o755 });
-	const result = spawnSync(
+	const env = {
+		...process.env,
+		PATH: `${bin}:${process.env.PATH}`,
+		GITHUB_REF_NAME: "plugin-v0.1.0",
+		GITHUB_SHA:
+			options.eventCommit ?? options.checkedCommit ?? "checked-commit",
+		GH_LOG: log,
+	};
+	const verify = spawnSync(
 		"bash",
-		["-euo", "pipefail", "-c", publicationShell()],
+		["-euo", "pipefail", "-c", verifyTagShell()],
 		{
 			cwd: root,
 			encoding: "utf8",
-			env: {
-				...process.env,
-				PATH: `${bin}:${process.env.PATH}`,
-				GITHUB_REF_NAME: "plugin-v0.1.0",
-				GITHUB_SHA:
-					options.eventCommit ?? options.checkedCommit ?? "checked-commit",
-				GH_LOG: log,
-			},
+			env,
 		},
 	);
+	const result =
+		verify.status === 0
+			? spawnSync("bash", ["-euo", "pipefail", "-c", publicationShell()], {
+					cwd: root,
+					encoding: "utf8",
+					env,
+				})
+			: verify;
 	return { status: result.status, stderr: result.stderr ?? "", root, log };
 }
 
@@ -166,6 +194,43 @@ describe("plugin release metadata validation", () => {
 });
 
 describe("release workflow publication shell", () => {
+	it("keeps build code read-only and passes only checked plugin artifacts to publication", () => {
+		const workflow = readFileSync(
+			join(repositoryRoot, ".github/workflows/release.yml"),
+			"utf8",
+		);
+		const buildMatch = / {2}build:\n([\s\S]*?)\n {2}publish:\n/.exec(workflow);
+		const publishMatch = / {2}publish:\n([\s\S]*)$/.exec(workflow);
+		const buildJob = buildMatch?.[1] ?? "";
+		const publishJob = publishMatch?.[1] ?? "";
+
+		expect(buildJob).not.toBe("");
+		expect(publishJob).not.toBe("");
+		expect(buildJob).toContain("permissions:\n      contents: read");
+		expect(buildJob).not.toContain("contents: write");
+		expect(buildJob).toContain("bun install --frozen-lockfile");
+		expect(buildJob).toContain("bun run check");
+		expect(buildJob).toContain(
+			"actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9",
+		);
+		expect(buildJob).toContain("if-no-files-found: error");
+		expect(buildJob).toContain("overwrite: false");
+		expect(buildJob).toContain(
+			"path: |\n            apps/plugin/dist/manifest.json\n            apps/plugin/dist/main.js",
+		);
+		expect(publishJob).toContain("needs: build");
+		expect(publishJob).toContain("permissions:\n      contents: write");
+		expect(publishJob).toContain(
+			"actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333",
+		);
+		expect(publishJob).toContain("name: plugin-release-assets");
+		expect(publishJob).toContain("git ls-remote origin");
+		expect(publishJob).toContain("gh release create");
+		expect(publishJob).toContain("apps/plugin/dist/manifest.json");
+		expect(publishJob).toContain("apps/plugin/dist/main.js");
+		expect(publishJob).not.toMatch(/\bbun\b|\bnpm\b|\byarn\b|\bpnpm\b/);
+	});
+
 	it("stops when the repository check command fails", () => {
 		const workflow = readFileSync(
 			join(repositoryRoot, ".github/workflows/release.yml"),
@@ -219,15 +284,31 @@ exit 23
 		}
 	});
 
+	it("accepts a matching direct lightweight tag ref", () => {
+		const result = runPublicationShell({ tagRefKind: "lightweight" });
+		try {
+			expect(result.status, result.stderr).toBe(0);
+			expect(readFileSync(result.log, "utf8")).toContain(
+				"release create plugin-v0.1.0",
+			);
+		} finally {
+			rmSync(result.root, { recursive: true, force: true });
+		}
+	});
+
 	it.each([
 		["a missing remote tag", { remoteTag: "" }],
-		["a tag at another commit", { remoteTag: "other-commit" }],
+		["an annotated tag at another commit", { remoteTag: "other-commit" }],
+		[
+			"a lightweight tag at another commit",
+			{ tagRefKind: "lightweight", remoteTag: "other-commit" },
+		],
 		[
 			"a checkout that differs from the tag event",
 			{ eventCommit: "other-commit" },
 		],
 		["an existing release", { releaseExists: true }],
-	])("refuses publication for %s", (_name, options) => {
+	] as const)("refuses publication for %s", (_name, options) => {
 		const result = runPublicationShell(options);
 		try {
 			expect(result.status).not.toBe(0);

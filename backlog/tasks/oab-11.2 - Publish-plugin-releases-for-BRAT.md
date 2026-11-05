@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-11-05T23:19:00Z'
-updated_date: '2026-11-05T23:35:00Z'
+updated_date: '2026-11-05T23:50:00Z'
 labels: []
 dependencies: []
 parent_task_id: OAB-11
@@ -47,4 +47,14 @@ Parallel F5 preparation follows the owner brief F5A-release.md dated 2026-11-05.
 - Final full check: Biome passed on 266 files; docs check passed; all four workspace type checks passed; tooling tests passed 91, protocol tests passed 307, plugin tests passed 686 with 1 skipped, and worker tests passed 702 + 122 + 115. All builds passed. Worker tests printed expected injected network and SQLite failure diagnostics but all test commands exited 0.
 - The checked branch includes the fast-forward integration of `origin/main` at `54ad88e`, which changed coexistence and vault runtime files. This task made no edits to those files.
 - Evidence limits: release shell tests use local git and non-creating `gh` stubs. No real GitHub release, tag push, remote publication, BRAT install, device test, or mobile trial ran. The owner creates tags and releases only after merge and separate OAB-11 approval.
+
+## Review round 1 corrections
+
+- MAJOR finding closure: the `build` job now has only `contents: read`. Checkout, frozen install, metadata validation, `bun run check`, and artifact upload run only in this job. The dependent `publish` job alone has `contents: write`. It checks out the event commit, verifies the event and remote tag commits, downloads the checked artifact, and runs only release-view/create commands. It runs no repository script, dependency install, or build code. The artifact contains exactly `manifest.json` and `main.js`.
+- MINOR finding closure: publication-shell tests execute the actual tag verification shell. They cover annotated refs, matching lightweight direct refs, mismatched annotated and lightweight commits, missing refs, and event/check-out commit mismatch. The non-creating `gh` stub records no release on every refusal.
+- Before pinning artifact actions, read-only GitHub API checks confirmed `actions/upload-artifact` commit `cf430e030ddbb5b0abf93d22962f4752f3646cd9` and `actions/download-artifact` commit `9000827ccba6bdab643e8b6fd33ac0654aef8333`. Both action manifests identify GitHub as author, use the Node 24 runner, and point to present bundled runtime files. `git ls-remote` confirmed the stable `v7.0.2` and `v8.0.2` tags resolve to those pinned commits.
+- Correction RED: `bun run --cwd apps/plugin test test/release.test.ts` failed the new build/publish permission and artifact contract test against the old single-job workflow. The other 19 tests passed.
+- Correction GREEN: the same focused command passed all 20 tests after the job split and direct lightweight-ref test changes.
+- `bun run docs:check` passed. Final `bun run check` passed after the corrections. Biome checked 266 files; documentation checks and all four workspace type checks passed. Tooling passed 91 tests, protocol passed 307, plugin passed 689 with 1 skipped, and worker passed 702 + 122 + 115. All builds passed. Worker tests printed injected network and SQLite failure diagnostics but exited 0.
+- Review finding limits: no live tag or release was created. Artifact transfer and GitHub release actions were checked by configuration and local stubs, not a live GitHub run. No BRAT install or mobile trial ran. OAB-11.2 remains In Progress.
 <!-- SECTION:NOTES:END -->

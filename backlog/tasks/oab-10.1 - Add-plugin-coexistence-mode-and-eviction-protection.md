@@ -4,7 +4,7 @@ title: Add plugin coexistence mode and eviction protection
 status: In Progress
 assignee: []
 created_date: '2026-11-05T12:48:00Z'
-updated_date: '2026-11-05T17:55:00Z'
+updated_date: '2026-11-05T21:47:00Z'
 labels: []
 dependencies: []
 documentation:
@@ -90,4 +90,6 @@ Criteria 1 through 5 now have code and regression evidence. Criterion 6 remains 
 Human branch review pn-a9d2de approved revision 41dba32 with no changes requested. The independent whole-branch review and scoped correction review close all source findings. Criterion 7 is now checked. Criterion 6 remains incomplete with Deferred OAB-10.1.1 and the supervisor-accepted evidence limit. Publish the reviewed branch without further live retries. Keep OAB-10.1 In Progress until the bounded service proof resolves.
 
 Publication: PR #59 is open at https://github.com/moisesmorillo/obsidian-ai-bridge/pull/59. Human review pn-a9d2de approved the branch. Fresh parent bun run check passed at ee623c2, exit 0, with 1,925 tests passed and 1 skipped, plus lint, documentation, type checks, and builds. No manual deployment ran. The owner merges. OAB-10.1 stays In Progress with criterion 6 incomplete and Deferred OAB-10.1.1. The PR records the accepted evidence limit and the automatic deployment trigger from protocol changes.
+
+Criterion 6 update from P1, 2026-11-05: dev-2 normal sync processed 50 retained create events under explicit supervisor authorization. The original and new baseline each had 0 operations, 0 applies, 4 attention items, and 0 confirmations. Attention identities did not change. One fresh service case used oab-10.1/dev-2/simulated-eviction-p1-20261105-01.md. The CLI reached its 60000 ms timeout and returned no safe case result. Error facts: exitCode 0, spawnCode ETIMEDOUT, no signal, empty stderr. P1 did not repeat the case. Failure-safe Pause and one scoped manifest read passed. At 21:46:06.965Z the fixture had one live revision 1, no placeholder row, and authority equal to the local base. Dev-2 remains in Pause with unchanged new-baseline identities. No durable-confirmation result survived, so criterion 6 remains incomplete. Dev-1 evidence still covers capture and reload only. OAB-10.1.1 retains the bounded-runner follow-up. No real iCloud eviction or complete two-vault pass is claimed.
 <!-- SECTION:NOTES:END -->

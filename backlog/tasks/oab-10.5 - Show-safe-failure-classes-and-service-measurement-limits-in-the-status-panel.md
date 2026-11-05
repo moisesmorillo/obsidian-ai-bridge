@@ -1,10 +1,10 @@
 ---
 id: OAB-10.5
 title: Show safe failure classes and service measurement limits in the status panel
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-11-05T20:57:00Z'
-updated_date: '2026-11-05T22:04:00Z'
+updated_date: '2026-11-05T22:06:00Z'
 labels: []
 dependencies: []
 documentation:
@@ -21,9 +21,9 @@ The F4 trial could not distinguish admission limits from network or credential f
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Sync failure and panel show bounded transport classes, canonical codes, retry seconds, and UTC last failure and success times without private error values.
-- [ ] #2 Service measurements appear only through an existing authorized read path without new secrets. Otherwise task notes state the limit and the panel omits the section.
-- [ ] #3 Real controller and panel tests cover safe failure projection, recovery, and private value exclusion. bun run check and task and branch reviews pass.
+- [x] #1 Sync failure and panel show bounded transport classes, canonical codes, retry seconds, and UTC last failure and success times without private error values.
+- [x] #2 Service measurements appear only through an existing authorized read path without new secrets. Otherwise task notes state the limit and the panel omits the section.
+- [x] #3 Real controller and panel tests cover safe failure projection, recovery, and private value exclusion. bun run check and task and branch reviews pass.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -59,4 +59,12 @@ FIX CHECKS: `bun run docs:check` passed. `bun run check` passed with exit code 0
 Owner decision: production auth/device-session.ts also joins P2 scope. Keep its bounded network marker and refresh-error propagation. Authentication status behavior stays unchanged. Corrective scope confirmation follows commit ba7cbf9 and precedes acceptance.
 
 Reviews: task compliance approved at abbc234. Whole-branch review found two major diagnostic defects. Corrective review at ba7cbf9 confirms both addressed with direct regression evidence and no new fix-wave defect. Documentation scope includes all changed declarations, tests, panel copy, and this task. Structural candidates main.ts, sync-transport.ts, and OAuth/session boundaries retain explicit diagnostic ownership. No hosted CI or live-vault evidence is claimed. Active diagnostics probe returned auxiliary AST findings in existing code. Semantic review found no new defect from those findings.
+
+Final acceptance: human branch review pn-56b1a4 approved without changes. Reviewed implementation ba7cbf9 maps to 45f22c7 after rebase onto b5210f5. Parent bun run check passed on rebased c5c03dc with exit 0, including lint, documentation, types, workspace tests, and dry-run builds. Both major branch findings have explicit regression-backed closures and corrective approval. No actionable finding remains. Service measurements remain absent because device tokens lack owner Access authority. Session-only timestamps are not persisted. No vault or Obsidian window action occurred.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Added bounded sync failure classes, canonical codes, retry seconds, and session-only UTC failure and success times. Real controller, session, transport, and panel tests cover privacy, recovery, Resume, reconfiguration, and credential failure provenance. Project checks, independent reviews, and human diff review passed. Device credentials cannot read owner measurements, so the panel omits that section. No live-vault evidence is claimed.
+<!-- SECTION:FINAL_SUMMARY:END -->

@@ -4,7 +4,7 @@ title: Add plugin coexistence mode and eviction protection
 status: In Progress
 assignee: []
 created_date: '2026-11-05T12:48:00Z'
-updated_date: '2026-11-05T14:21:00Z'
+updated_date: '2026-11-05T14:37:00Z'
 labels: []
 dependencies: []
 documentation:
@@ -44,4 +44,6 @@ Baseline before implementation: bun run check passed at main dbb0481 in the isol
 Owner decision: Place the coexistence confirmation type and schema in the existing DeviceState exports in packages/protocol/src/index.ts. This replaces the earlier append-only constraint for these two exports so Biome passes. No other exports changed. Reconcile with origin/main at 7abee2c found no competing index exports.
 
 Round-1 review fix: CoexistenceEffectFence blocks later publication, reconciliation writes, and local apply effects after destructive capture. In-flight effects can finish. AC-19 evidence and independent branch review remain pending.
+
+AC-19 readiness, read-only, 2026-11-05T14:35:28Z. Exact CLI root checks and in-app adapter path checks passed for both approved test vaults. dev-1 client 2co2-3SyCC3aatQJ was connected, sync status paused, mode off, with 1 queued operation, 1 pending apply, and 2 attention items. dev-2 client j-jAYgxDZ6cyAPVM was connected, sync status paused, mode off, with 0 operations, 0 pending applies, and 4 attention items. Both fixture roots, source files, and placeholders were absent. AC-19 needs settled state, mode on, empty queues, and no attention. No plugin install, service call, journal change, resume, reset, cleanup, browser flow, or real-vault action occurred. Supervisor directed no host mutations while a bounded decision remains open. Full safe results and commands are in /tmp/oab-10-1/implementation-report.md.
 <!-- SECTION:NOTES:END -->

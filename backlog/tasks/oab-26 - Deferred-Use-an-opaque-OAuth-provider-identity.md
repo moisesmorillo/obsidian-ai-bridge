@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-10-28T16:48:00Z'
-updated_date: '2026-11-05T00:12:00Z'
+updated_date: '2026-11-05T00:15:00Z'
 labels:
   - deferred
   - privacy
@@ -67,4 +67,6 @@ Finding closure: added an 11-grant application budget case. The first request co
 These correction tests followed the existing product implementation. No code was deleted to manufacture RED. The original identity helper RED/GREEN history and cleanup chronology exception remain recorded above.
 
 Final correction validation: `cd apps/worker && bunx vitest run --config vitest.f2.config.ts` passed 110 tests in eight files. `cd apps/worker && bunx vitest run --config vitest.config.ts test/application-clients-cleanup.test.ts` passed four tests. `bun run docs:check` passed. `bun run check` passed lint, documentation, four workspace type checks, tests, and dry-run builds. Totals: tooling 56, protocol 306, plugin 483, Worker suites 661, 122, and 110. Total: 1,738 tests in 100 files. No remote CI or live-service action was run.
+
+Task review at 407b3da requested corrections. Finding 1, acceptance conflict and duplication: fixed at 4971f2a with exactly two unchecked criteria and the approved bounded wording. Finding 2, missing cleanup cases: fixed with real local KV/DO late-token-write denial and provider-list-failure pending-state tests, plus application continuation over 11 empty grants across two requests. Corrective review APPROVE at 4971f2a, with both findings fixed and no new issue. The 11-grant case uses a stub provider to prove the application budget and continuation, not 11 real KV grants. The late write leaves a token record present but unusable at the DO, not globally absent. Latest worker full check passed 1,738 tests across 100 files, docs, lint, types, and builds. Test chronology exceptions remain explicit. No live-service or remote CI evidence applies. Active lens probe found one URL warning at oauth.ts 181. Review rejected it as a defect because canonical configuration validation and equality checks precede that URL construction.
 <!-- SECTION:NOTES:END -->

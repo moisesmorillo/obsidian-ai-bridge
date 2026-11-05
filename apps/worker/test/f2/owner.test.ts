@@ -12,6 +12,12 @@ describe("production owner console", () => {
 		);
 		expect(measurements.status).toBe(401);
 		expect(measurements.headers.get("cache-control")).toBe("no-store");
+		const html = await SELF.fetch(
+			"https://service.test/owner/measurements?format=html",
+			{ headers: { "Cf-Access-Jwt-Assertion": "forged" } },
+		);
+		expect(html.status).toBe(401);
+		expect(html.headers.get("cache-control")).toBe("no-store");
 	});
 
 	it("renders escaped names from the durable registry for verified owner Access", async () => {
@@ -87,13 +93,18 @@ describe("production owner console", () => {
 			headers: { "Cf-Access-Jwt-Assertion": assertion },
 		});
 		expect(response.status).toBe(200);
+		expect(response.headers.get("content-type")).toContain("text/html");
 		const html = await response.text();
+		expect(html).toContain("/owner/measurements?format=html");
 		const measurements = await SELF.fetch(
 			"https://service.test/owner/measurements",
 			{ headers: { "Cf-Access-Jwt-Assertion": assertion } },
 		);
 		expect(measurements.status).toBe(200);
 		expect(measurements.headers.get("cache-control")).toBe("no-store");
+		expect(measurements.headers.get("content-type")).toContain(
+			"application/json",
+		);
 		expect(await measurements.json()).toMatchObject({
 			status: "unknown",
 			coverage: "unknown",
@@ -113,8 +124,13 @@ describe("production owner console", () => {
 			"https://service.test/owner/measurements?format=html",
 			{ headers: { "Cf-Access-Jwt-Assertion": assertion } },
 		);
-		expect(await emptySummary.text()).toContain(
+		const emptySummaryHtml = await emptySummary.text();
+		expect(emptySummaryHtml).toContain(
 			"Request observation window: unknown to unknown",
+		);
+		expect(emptySummaryHtml).toContain("No observed clients.");
+		expect(emptySummaryHtml).toContain(
+			"Referenced R2 bytes count distinct blobs, not total bucket allocation.",
 		);
 		const observedFrom = 1_700_006_400_100;
 		const requestObservedAt = 1_700_006_400_101;
@@ -136,7 +152,7 @@ describe("production owner console", () => {
 				requests_mcp: 0,
 				clients: [
 					{
-						client_id: "device-reordered",
+						client_id: "device-<script>",
 						requests_rest: 1,
 						requests_mcp: 0,
 						last_feed_request_at: requestObservedAt,
@@ -165,12 +181,18 @@ describe("production owner console", () => {
 			{ headers: { "Cf-Access-Jwt-Assertion": assertion } },
 		);
 		expect(summary.headers.get("cache-control")).toBe("no-store");
+		expect(summary.headers.get("content-type")).toContain("text/html");
 		const summaryHtml = await summary.text();
 		expect(summaryHtml).toContain("Feed response preparation p95");
 		expect(summaryHtml).toContain(
 			`Request observation window: ${new Date(requestObservedAt).toISOString()} to ${new Date(requestObservedAt).toISOString()}`,
 		);
 		expect(summaryHtml).toContain("unknown (out-of-order requests)");
+		expect(summaryHtml).toContain(
+			"device-&lt;script&gt;: REST 1, MCP 0, total 1",
+		);
+		expect(summaryHtml).toContain("Referenced R2 bytes count distinct blobs");
+		expect(summaryHtml).not.toContain("device-<script>");
 		expect(summaryHtml).toContain(
 			`Observed from ${new Date(observedFrom).toISOString()}`,
 		);

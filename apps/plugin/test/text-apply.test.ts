@@ -43,6 +43,7 @@ class MemoryStorage {
 class MemoryVault implements TextVault {
 	files = new Map<string, string>();
 	binaryFiles = new Map<string, Uint8Array>();
+	unavailable = new Set<string>();
 	sizeOverrides = new Map<string, number>();
 	mtimeByPath = new Map<string, number>();
 	removedRecovery: string[] = [];
@@ -55,6 +56,10 @@ class MemoryVault implements TextVault {
 	refuseTrash: ((path: string) => boolean) | null = null;
 	failNextBinaryModify = false;
 	failBinaryModifyPath: string | null = null;
+	/** Reports synthetic placeholder metadata without reading file bytes. */
+	async isUnavailable(path: string): Promise<boolean> {
+		return this.unavailable.has(path);
+	}
 	/** Reads current text or reports an absent exact path. */
 	async read(path: string): Promise<string | null> {
 		return this.files.get(path) ?? null;
@@ -278,6 +283,13 @@ describe("TextApplyEngine", () => {
 			read: async (_path, _epoch, rev) => (rev === 2 ? remoteText : null),
 		});
 		Object.assign(change, remoteChange);
+	});
+
+	it("blocks local apply effects while the source has an iCloud placeholder", async () => {
+		vault.unavailable.add(change.path);
+		await expect(engine.apply(change)).rejects.toThrow("unavailable");
+		expect(vault.files.has(change.path)).toBe(false);
+		expect(journal.snapshot().pending_apply).toEqual([]);
 	});
 
 	it.each(["apply", "named", "copied", "effect"] as const)(

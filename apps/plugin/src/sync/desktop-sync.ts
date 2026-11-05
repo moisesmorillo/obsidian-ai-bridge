@@ -30,6 +30,8 @@ export interface DesktopSyncHost {
 export interface DesktopSyncOptions {
 	/** Runs shared recovery, scan, publication, and feed effects as one cycle. */
 	cycle(): Promise<void>;
+	/** Persists high-risk local intent before debounce or Pause can delay admission. */
+	onCaptureEvent?(event: PublicationEvent): Promise<boolean>;
 	/** Admits explicit local event intent before the next full sync cycle. */
 	onEvent?(event: PublicationEvent): Promise<void>;
 	/** Owns platform timer and foreground-state capabilities. */
@@ -105,8 +107,18 @@ export class DesktopSyncController {
 	}
 
 	/** Saves local event intent in order without running network or apply effects while paused. */
-	observe(event: PublicationEvent): Promise<void> {
-		if (this.closed || isTerminallyExcluded(event)) return Promise.resolve();
+	async observe(event: PublicationEvent): Promise<void> {
+		if (this.closed) return;
+		this.workActive = true;
+		this.options.onStateChanged?.();
+		let captured = false;
+		try {
+			captured = (await this.options.onCaptureEvent?.(event)) ?? false;
+		} finally {
+			this.workActive = false;
+			this.options.onStateChanged?.();
+		}
+		if (captured || this.closed || isTerminallyExcluded(event)) return;
 		this.activeSince = Date.now();
 		if (this.paused) {
 			this.events.push(event);
@@ -183,7 +195,10 @@ export class DesktopSyncController {
 				if (this.closed || this.paused) return;
 				for (const event of events) {
 					if (this.closed || this.paused) return;
-					await this.options.onEvent?.(event);
+					const captured =
+						(await this.options.onCaptureEvent?.(event)) ?? false;
+					if (!captured && !isTerminallyExcluded(event))
+						await this.options.onEvent?.(event);
 					admitted += 1;
 				}
 				await this.options.cycle();

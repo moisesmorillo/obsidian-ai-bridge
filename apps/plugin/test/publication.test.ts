@@ -62,6 +62,7 @@ class MemoryStorage implements DeviceJournalStorage {
 class MemoryVault implements TextVault {
 	readonly files = new Map<string, string>();
 	readonly binaryFiles = new Map<string, Uint8Array>();
+	readonly unavailable = new Set<string>();
 	readonly binaryReads: string[] = [];
 	readonly binaryReadTextDisabled = new Set<string>();
 	readonly binaryCreates: string[] = [];
@@ -74,6 +75,10 @@ class MemoryVault implements TextVault {
 	/** Pauses one vault read to test disposal between observation and a later effect. */
 	beforeRead: ((path: string) => Promise<void>) | null = null;
 	afterTrash: (() => void) | null = null;
+	/** Reports placeholder state without reading path bytes. */
+	async isUnavailable(path: string): Promise<boolean> {
+		return this.unavailable.has(path);
+	}
 	/** Returns exact current text or null for an absent path. */
 	async read(path: string): Promise<string | null> {
 		const beforeRead = this.beforeRead;
@@ -961,6 +966,20 @@ describe("PublicationController", () => {
 		expect(remote.blobWrites[0]?.bytes).toEqual(new Uint8Array([0, 255, 128]));
 		expect(remote.blobWrites[0]?.key).toBe(queued.key);
 		expect(journal.snapshot().base["notes/image.png"]?.deleted).toBe(false);
+	});
+
+	it("does not restore a startup-missing file when placeholder metadata marks it unavailable", async () => {
+		const { controller, journal, remote, vault } = await openController();
+		await journal.setBase("note.md", {
+			deleted: false,
+			rev: 1,
+			hash: await digestText("remote note"),
+		});
+		vault.unavailable.add("note.md");
+		await controller.scan();
+		expect(vault.creates).toEqual([]);
+		expect(remote.deletes).toEqual([]);
+		expect(journal.snapshot().unavailable_paths).toContain("note.md");
 	});
 
 	it("restores a startup-missing file at the confirmed base without publishing a delete", async () => {

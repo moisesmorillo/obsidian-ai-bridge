@@ -13,6 +13,8 @@ export interface AIBridgeSettings {
 	serverUrl: string;
 	/** Local label used to distinguish this device's conflict copies. */
 	deviceName: string;
+	/** Explicit F4 switch; absent old settings values default to false. */
+	coexistenceMode: boolean;
 }
 
 /** Settings page for enrollment controls and safe connection status. */
@@ -30,6 +32,9 @@ export class AIBridgeSettingTab extends PluginSettingTab {
 		private readonly credentials: CredentialStorage,
 		private readonly onServerUrlChange: (url: string) => Promise<void>,
 		private readonly onDeviceNameChange: (name: string) => Promise<void>,
+		private readonly onCoexistenceModeChange: (
+			enabled: boolean,
+		) => Promise<void>,
 		private readonly getStatus: () => DeviceSessionStatus,
 		private readonly syncProjection?: () => SyncStatusProjection | null,
 		private readonly syncActions?: SyncStatusActions,
@@ -75,6 +80,20 @@ export class AIBridgeSettingTab extends PluginSettingTab {
 						this.settings.deviceName = nextName;
 					} catch {
 						text.setValue(this.settings.deviceName);
+					}
+				});
+			});
+		new Setting(containerEl)
+			.setName("Coexistence mode")
+			.setDesc("Require confirmation before local deletes and renames.")
+			.addToggle((toggle) => {
+				toggle.setValue(this.settings.coexistenceMode);
+				toggle.onChange(async (enabled) => {
+					try {
+						await this.onCoexistenceModeChange(enabled);
+						this.settings.coexistenceMode = enabled;
+					} catch {
+						toggle.setValue(this.settings.coexistenceMode);
 					}
 				});
 			});

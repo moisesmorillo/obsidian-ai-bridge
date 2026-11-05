@@ -31,6 +31,8 @@ export interface TextVault {
 	removeRecoveryCopy?(path: string, expectedHash: string): Promise<boolean>;
 	/** Lists current paths so case-folded and Unicode-key collisions stay visible. */
 	list(): Promise<string[]>;
+	/** Returns true when metadata finds an iCloud placeholder for the exact source path. */
+	isUnavailable?(path: string): Promise<boolean>;
 	/** Returns raw file size without decoding content, or null when the path is absent. */
 	size(path: string): Promise<number | null>;
 	/** Replaces text only when the exact current value still matches expected. */
@@ -221,6 +223,11 @@ export class TextApplyEngine {
 		contentKind?: "text" | "blob",
 	): Promise<void> {
 		this.assertOpen();
+		const affectedPaths =
+			change.op === "rename" ? [change.from_path, change.path] : [change.path];
+		for (const path of affectedPaths)
+			if (await this.vault.isUnavailable?.(path))
+				throw new Error("Remote apply is blocked by an unavailable path");
 		const state = this.activeJournal.snapshot();
 		const pending = state.pending_apply[0];
 		if (pending && pending.change.seq !== change.seq)

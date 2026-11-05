@@ -6,9 +6,11 @@ import {
 import { ObsidianCredentialStorage } from "@plugin/infrastructure/credential-storage";
 import { ObsidianDeviceStorage } from "@plugin/infrastructure/device-storage";
 import { ObsidianOAuthTransport } from "@plugin/infrastructure/oauth-transport";
+import { ObsidianTextVault } from "@plugin/infrastructure/text-vault";
 import { VaultEventAdapter } from "@plugin/infrastructure/vault-events";
 import { Notice, Plugin } from "@plugin/obsidian-api";
 import { type AIBridgeSettings, AIBridgeSettingTab } from "@plugin/settings";
+import { CoexistenceController } from "@plugin/sync/coexistence";
 import {
 	createPublication,
 	type PublicationComposition,
@@ -44,6 +46,8 @@ export default class AIBridgePlugin extends Plugin {
 	private desktopSync: DesktopSyncController | null = null;
 	/** Obsidian event listener owner; every event enters the serialized loop. */
 	private vaultEvents: VaultEventAdapter | null = null;
+	/** Captures destructive events and metadata-only placeholder state for this lifecycle. */
+	private coexistence: CoexistenceController | null = null;
 	/** Window visibility callback registered only for the active sync composition. */
 	private visibilityHandler: (() => void) | null = null;
 	/** Tracks safe lifecycle presentation independently from the credential status. */
@@ -60,6 +64,7 @@ export default class AIBridgePlugin extends Plugin {
 	private settingsValue: AIBridgeSettings = {
 		serverUrl: DEFAULT_SERVER_URL,
 		deviceName: DEFAULT_DEVICE_NAME,
+		coexistenceMode: false,
 	};
 	/** Safe enrollment status shown in settings. */
 	private sessionStatus: DeviceSessionStatus = "disconnected";
@@ -90,6 +95,7 @@ export default class AIBridgePlugin extends Plugin {
 			if (stored && typeof stored === "object") {
 				if (typeof stored.serverUrl === "string")
 					this.settingsValue.serverUrl = stored.serverUrl;
+				this.settingsValue.coexistenceMode = stored.coexistenceMode === true;
 				if (
 					typeof stored.deviceName === "string" &&
 					stored.deviceName.trim().length > 0 &&
@@ -202,7 +208,7 @@ export default class AIBridgePlugin extends Plugin {
 					);
 					return save;
 				},
-
+				(enabled) => this.changeCoexistenceMode(generation, enabled),
 				() => this.sessionStatus,
 				() => this.syncStatus(),
 				{
@@ -230,6 +236,21 @@ export default class AIBridgePlugin extends Plugin {
 					},
 					unsupportedFiles: () => this.filesByScope("unsupported"),
 					excludedFiles: () => this.filesByScope("excluded"),
+					confirmCoexistence: (id) => {
+						this.runSyncAction(async () => {
+							const operation = await this.coexistence?.confirm(id);
+							this.settingsTab?.refreshStatus();
+							if (operation && !this.syncPaused)
+								await this.desktopSync?.syncNow();
+						});
+					},
+					keepServerState: (id) => {
+						this.runSyncAction(async () => {
+							await this.coexistence?.keepServerState(id);
+							this.settingsTab?.refreshStatus();
+							if (!this.syncPaused) await this.desktopSync?.syncNow();
+						});
+					},
 				},
 			);
 			this.addSettingTab(this.settingsTab);
@@ -387,6 +408,34 @@ export default class AIBridgePlugin extends Plugin {
 		return nextSession;
 	}
 
+	/** Saves the mode change and rejects exit while captured event work remains. */
+	private changeCoexistenceMode(
+		lifecycle: number,
+		enabled: boolean,
+	): Promise<void> {
+		const update = ++this.settingsUpdateGeneration;
+		const save = this.settingsSaveTail.then(async () => {
+			if (!this.ownsSettingsUpdate(lifecycle, update))
+				throw new Error("Coexistence setting update is stale");
+			if (
+				!enabled &&
+				(this.journal?.snapshot().coexistence_confirmations.length ||
+					this.desktopSync?.isBusy)
+			)
+				throw new Error("Resolve pending coexistence work before exit");
+			await this.saveData({ ...this.settingsValue, coexistenceMode: enabled });
+			if (!this.ownsSettingsUpdate(lifecycle, update))
+				throw new Error("Coexistence setting update is stale");
+			this.settingsValue.coexistenceMode = enabled;
+			this.settingsTab?.refreshStatus();
+		});
+		this.settingsSaveTail = save.then(
+			() => undefined,
+			() => undefined,
+		);
+		return save;
+	}
+
 	/** Creates a candidate controller without replacing the active session before validation. */
 	private buildSession(serverUrl: string): DeviceSession {
 		if (!this.credentials || !this.journal)
@@ -423,13 +472,19 @@ export default class AIBridgePlugin extends Plugin {
 	private startSync(): void {
 		if (this.desktopSync || !this.journal || !this.session) return;
 		this.composition = this.createSyncComposition();
-		/** Serializes restart recovery, local scan, outgoing work, and feed confirmation. */
+		this.coexistence = new CoexistenceController(
+			this.journal,
+			new ObsidianTextVault(this.app.vault),
+			() => this.settingsValue.coexistenceMode,
+		);
+		/** Stops all sync effects while owner confirmation remains durable. */
 		const runCycle = async (): Promise<void> => {
 			this.syncActive = true;
 			this.settingsTab?.refreshStatus();
 			try {
 				const composition = this.composition;
 				if (!composition) return;
+				if (this.journal?.snapshot().coexistence_confirmations.length) return;
 				this.syncFailure = null;
 				if (!this.vaultSummary)
 					this.vaultSummary = await composition.readVaultSummary();
@@ -457,6 +512,8 @@ export default class AIBridgePlugin extends Plugin {
 		};
 		this.desktopSync = new DesktopSyncController({
 			cycle: runCycle,
+			onCaptureEvent: (event) =>
+				this.coexistence?.observe(event) ?? Promise.resolve(false),
 			onEvent: (event) =>
 				this.composition?.publication.observe(event) ?? Promise.resolve(),
 			host: {
@@ -571,6 +628,7 @@ export default class AIBridgePlugin extends Plugin {
 		this.visibilityHandler = null;
 		this.composition?.dispose();
 		this.vaultEvents = null;
+		this.coexistence = null;
 		this.composition = null;
 		this.vaultSummary = null;
 		return controller;
@@ -591,6 +649,7 @@ export default class AIBridgePlugin extends Plugin {
 				failure: this.syncFailure,
 				paused: this.syncPaused,
 				revoked: this.syncRevoked,
+				coexistenceEnabled: this.settingsValue.coexistenceMode,
 			},
 			this.vaultSummary,
 		);

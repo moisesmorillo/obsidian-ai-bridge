@@ -1,4 +1,5 @@
 import type {
+	CoexistenceConfirmation,
 	DeviceState,
 	VaultReadResult,
 } from "@obsidian-ai-bridge/protocol";
@@ -33,6 +34,8 @@ export interface SyncStatusInput {
 	paused: boolean;
 	/** True only after a validated revocation response fenced the current session. */
 	revoked: boolean;
+	/** Current saved owner setting, which defaults to false for old settings documents. */
+	coexistenceEnabled?: boolean;
 }
 
 /** Plain-language vault state and safe path-specific attention for the status view. */
@@ -49,6 +52,14 @@ export interface SyncStatusProjection {
 		| "backup failed";
 	/** Durable per-path reasons that require a user-visible action. */
 	attention: Array<{ path: string; reason: string; action: "open" }>;
+	/** Durable destructive events awaiting an owner decision. */
+	coexistenceConfirmations: Array<
+		CoexistenceConfirmation & { unavailable: boolean; stale: boolean }
+	>;
+	/** Paths protected by current iCloud placeholder metadata. */
+	unavailablePaths: string[];
+	/** True while the saved owner setting requires the coexistence risk notice. */
+	coexistenceEnabled: boolean;
 	/** Paths with unresolved persisted operations, unique in journal order. */
 	pendingPaths: string[];
 	/** Always unknown because the service contract has no backup-export telemetry. */
@@ -85,6 +96,7 @@ export function projectSyncStatus(
 	else if (
 		state.pending_ops.length === 0 &&
 		state.pending_apply.length === 0 &&
+		state.coexistence_confirmations.length === 0 &&
 		state.reconciliation === null &&
 		input.head !== null &&
 		input.head.epoch === state.epoch &&
@@ -94,6 +106,7 @@ export function projectSyncStatus(
 	else if (
 		state.pending_ops.length > 0 ||
 		state.pending_apply.length > 0 ||
+		state.coexistence_confirmations.length > 0 ||
 		input.head !== null
 	)
 		status = "pending";
@@ -105,6 +118,17 @@ export function projectSyncStatus(
 			reason: item.reason,
 			action: "open",
 		})),
+		coexistenceConfirmations: state.coexistence_confirmations.map((item) => ({
+			...item,
+			unavailable: state.unavailable_paths.includes(item.path),
+			stale:
+				item.stale_reason !== undefined ||
+				item.observed_base === null ||
+				item.observed_epoch !== state.epoch ||
+				!sameObservedBase(state.base[item.path], item.observed_base),
+		})),
+		coexistenceEnabled: input.coexistenceEnabled ?? false,
+		unavailablePaths: [...state.unavailable_paths],
 		pendingPaths: [
 			...new Set(state.pending_ops.map((operation) => operation.path)),
 		],
@@ -122,4 +146,17 @@ export function projectSyncStatus(
 		counts: remoteSummary ? remoteSummary.counts : null,
 		capacityWarnings: remoteSummary ? [...remoteSummary.attention] : [],
 	};
+}
+
+/** Checks that the saved observation still names the current base revision. */
+function sameObservedBase(
+	current: DeviceState["base"][string] | undefined,
+	observed: CoexistenceConfirmation["observed_base"],
+): boolean {
+	if (!current || !observed) return current === observed;
+	return (
+		current.deleted === observed.deleted &&
+		current.rev === observed.rev &&
+		(current.deleted || (!observed.deleted && current.hash === observed.hash))
+	);
 }

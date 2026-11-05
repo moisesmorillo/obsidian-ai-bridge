@@ -24,6 +24,7 @@ import {
 	DeviceJournal,
 	type DeviceJournalStorage,
 } from "../src/sync/device-journal";
+import { classifyEnrollmentPath } from "../src/sync/enrollment-scope";
 import {
 	PublicationController,
 	type PublicationReceipt,
@@ -38,6 +39,8 @@ import {
 	classifyAc13PreflightFiles,
 	createAc04BaselineScript,
 	createAc13CaseScripts,
+	createAc19CaseScripts,
+	createAc19FixturePaths,
 	createAc20FixtureScript,
 	createAc30CaseScripts,
 	createAc31CaseScripts,
@@ -160,6 +163,65 @@ async function hashAcceptanceText(text: string): Promise<string> {
 }
 
 describe("desktop acceptance safety", () => {
+	it("confines AC-19 fixtures to a fresh isolated namespace per authorized vault", () => {
+		const first = createAc19FixturePaths("dev-1");
+		const second = createAc19FixturePaths("dev-2");
+		expect(first.root).toBe("oab-10.1/dev-1");
+		expect(second.root).toBe("oab-10.1/dev-2");
+		expect(first.source).not.toBe(second.source);
+		expect(first.placeholder).toBe(`${first.source}.icloud`);
+		expect(classifyEnrollmentPath(first.source, 0)).not.toBe("excluded");
+		expect(classifyEnrollmentPath(first.placeholder, 0)).toBe("excluded");
+		expect(() => createAc19FixturePaths("dev-1", [first.source])).toThrow(
+			"AC-19 fixture path already exists",
+		);
+		const scripts = createAc19CaseScripts(
+			"dev-1",
+			vaults["dev-1"],
+			"/Users/test",
+		);
+		expect(scripts.action).toContain(
+			'getBasePath() !== "/Users/test/vaults/obsidian-ai-bridge-dev"',
+		);
+		expect(scripts.action).toContain('"oab-10.1/dev-1/simulated-eviction.md"');
+		expect(scripts.cleanup).toContain("keepServerState");
+		expect(() =>
+			createAc19CaseScripts(
+				"dev-1",
+				"/Users/test/vaults/owner-personal",
+				"/Users/test",
+			),
+		).toThrow("Unauthorized vault target");
+		expect(
+			safeCaseResult("AC-19", "service", {
+				status: "passed",
+				cleanupStatus: "passed",
+				caseEvidence: {
+					ac19: {
+						baselineSynced: true,
+						confirmationVisible: true,
+						placeholderExcluded: true,
+						serviceSourceLive: true,
+						deleteOrRenameOperationCount: 0,
+						clientId: "private-client-id",
+					},
+				},
+				clientId: "client-result",
+			}),
+		).toMatchObject({
+			caseId: "AC-19",
+			status: "passed",
+			evidence: "service",
+			ac19Evidence: {
+				baselineSynced: true,
+				confirmationVisible: true,
+				placeholderExcluded: true,
+				serviceSourceLive: true,
+				deleteOrRenameOperationCount: 0,
+			},
+		});
+	});
+
 	it("projects only safe AC-04 revision comparison fields", () => {
 		expect(
 			safeAc04BaselineInspection({

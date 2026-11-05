@@ -53,6 +53,75 @@ describe("DeviceJournal", () => {
 		storage = new MemoryStorage();
 	});
 
+	it("persists coexistence intent and atomically transfers confirmed authority", async () => {
+		const journal = await DeviceJournal.open(storage);
+		await journal.resetEpoch(precondition.epoch);
+		await journal.setBase("notes/a.md", {
+			deleted: false,
+			rev: 4,
+			hash: "a".repeat(64),
+		});
+		const confirmation = {
+			id: "018f47b2-5c00-7000-8000-000000000002",
+			kind: "delete" as const,
+			path: "notes/a.md",
+			observed_epoch: precondition.epoch,
+			observed_base: { deleted: false as const, rev: 4, hash: "a".repeat(64) },
+			at: 100,
+		};
+		await journal.saveCoexistenceConfirmation(confirmation);
+		expect(journal.snapshot().coexistence_confirmations).toEqual([
+			confirmation,
+		]);
+		const operation = await journal.confirmCoexistence(confirmation.id);
+		expect(operation?.precondition).toEqual(precondition);
+		expect(journal.snapshot().coexistence_confirmations).toEqual([]);
+		expect(journal.snapshot().pending_ops).toHaveLength(1);
+	});
+
+	it("retains confirmation when atomic operation transfer cannot verify state", async () => {
+		const journal = await DeviceJournal.open(storage);
+		await journal.resetEpoch(precondition.epoch);
+		await journal.setBase("notes/failed.md", {
+			deleted: false,
+			rev: 4,
+			hash: "a".repeat(64),
+		});
+		const item = await journal.captureCoexistenceEvent(
+			{ type: "delete", path: "notes/failed.md" },
+			100,
+		);
+		storage.failStateWrite = true;
+		await expect(journal.confirmCoexistence(item.id)).rejects.toThrow();
+		expect(journal.snapshot().coexistence_confirmations).toHaveLength(1);
+		expect(journal.snapshot().pending_ops).toEqual([]);
+		storage.failStateWrite = false;
+		expect(await journal.confirmCoexistence(item.id)).not.toBeNull();
+		expect(journal.snapshot().coexistence_confirmations).toEqual([]);
+	});
+
+	it("keeps an old-epoch confirmation visible without refreshing its observed revision", async () => {
+		const journal = await DeviceJournal.open(storage);
+		await journal.resetEpoch(precondition.epoch);
+		await journal.setBase("notes/stale.md", {
+			deleted: false,
+			rev: 4,
+			hash: "a".repeat(64),
+		});
+		const item = await journal.captureCoexistenceEvent(
+			{ type: "delete", path: "notes/stale.md" },
+			100,
+		);
+		await journal.resetEpoch("c".repeat(32));
+		expect(await journal.confirmCoexistence(item.id)).toBeNull();
+		expect(journal.snapshot().coexistence_confirmations[0]).toMatchObject({
+			observed_epoch: precondition.epoch,
+			observed_base: { rev: 4 },
+			stale_reason: "The observed source revision changed.",
+		});
+		expect(journal.snapshot().pending_ops).toEqual([]);
+	});
+
 	it("opens a serialized pre-extension journal with its original copy identities", async () => {
 		const path = "assets/pre-extension.png";
 		const localHash = "d".repeat(64);

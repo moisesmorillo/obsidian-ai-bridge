@@ -25,6 +25,37 @@ import type {
 /** Identifies one authorized desktop vault and the exact path that Obsidian must resolve. */
 export type DesktopVaultId = "dev-1" | "dev-2";
 
+/** Isolated local fixture paths for one authorized synthetic AC-19 vault. */
+export interface Ac19FixturePaths {
+	/** Unique directory that preserves all earlier acceptance evidence. */
+	root: string;
+	/** Eligible local note path used to seed the remote revision. */
+	source: string;
+	/** Excluded suffix placeholder used only to simulate an iCloud transition. */
+	placeholder: string;
+}
+
+/** Builds validated paths under the fresh AC-19 namespace for one approved test vault. */
+export function createAc19FixturePaths(
+	id: DesktopVaultId,
+	existingPaths: readonly string[] = [],
+): Ac19FixturePaths {
+	if (id !== "dev-1" && id !== "dev-2")
+		throw new Error("Unauthorized AC-19 test vault");
+	const root = PathSchema.parse(`oab-10.1/${id}`);
+	const source = PathSchema.parse(`${root}/simulated-eviction.md`);
+	const placeholder = PathSchema.parse(`${source}.icloud`);
+	const existing = new Set(existingPaths.map((path) => PathSchema.parse(path)));
+	if (existing.has(source) || existing.has(placeholder))
+		throw new Error("AC-19 fixture path already exists");
+	if (
+		classifyEnrollmentPath(source, 0) === "excluded" ||
+		classifyEnrollmentPath(placeholder, 0) !== "excluded"
+	)
+		throw new Error("Invalid AC-19 fixture scope");
+	return { root, source, placeholder };
+}
+
 /** Final AC-30 checks that may expose one bounded mismatch observation. */
 const AC30_FINAL_ASSERTION_CODES = [
 	"AC30_ASSERT_FINAL_CALL_COUNT",
@@ -88,6 +119,15 @@ const AC30_SAFE_OBSERVATION_STATES = [
 
 /** Fixed failure labels accepted by generated case-result parsing. */
 const SAFE_CASE_FAILURE_CODES = [
+	"AC19_ASSERT_TARGET_VAULT",
+	"AC19_ASSERT_PLUGIN_CONTROLS",
+	"AC19_ASSERT_INITIAL_STATE",
+	"AC19_ASSERT_FIXTURE_COLLISION",
+	"AC19_ASSERT_BASELINE_SYNC",
+	"AC19_ASSERT_CONFIRMATION",
+	"AC19_ASSERT_PLACEHOLDER_EXCLUDED",
+	"AC19_ASSERT_SERVICE_UNCHANGED",
+	"AC19_CLEANUP_RESTORE_FAILED",
 	"AC30_PRECONDITION_FAILED",
 	"AC30_FIRST_BOUNDARY_FAILED",
 	"AC30_SUCCESSOR_BOUNDARY_FAILED",
@@ -187,6 +227,11 @@ const SAFE_CASE_FAILURE_CODES = [
 
 /** Fixed AC-31 operation boundaries that can appear in case diagnostics. */
 const SAFE_CASE_FAILURE_BOUNDARIES = [
+	"AC19_SEED_BASELINE",
+	"AC19_WAIT_DELETE_CAPTURE",
+	"AC19_READ_SERVICE_AUTHORITY",
+	"AC19_RESOLVE_CONFIRMATION",
+	"AC19_RESTORE_SOURCE",
 	"AC31_READ_SERVICE_ABSENCE",
 	"AC31_SYNC_BASELINE",
 	"AC31_WAIT_BASELINE_IDLE",
@@ -297,6 +342,14 @@ export interface DesktopCaseSummary {
 	};
 	/** Private AC-13 before-case hash snapshot write result. */
 	privateSnapshotStatus?: "saved" | "failed" | "unavailable";
+	/** Safe simulated-eviction evidence without file bytes or operation identities. */
+	ac19Evidence?: {
+		baselineSynced: boolean;
+		confirmationVisible: boolean;
+		placeholderExcluded: boolean;
+		serviceSourceLive: boolean;
+		deleteOrRenameOperationCount: number;
+	};
 	cleanupStatus: "passed" | "failed" | "unknown";
 }
 
@@ -473,6 +526,34 @@ export function safeCaseResult(
 					controllerResumed: rawControllerResumed,
 				}
 			: undefined;
+	const rawAc19Evidence =
+		caseId === "AC-19" && caseEvidence && typeof caseEvidence === "object"
+			? readRecordProperty(caseEvidence, "ac19").value
+			: null;
+	/** Returns a boolean AC-19 observation or null for untrusted values. */
+	const ac19Boolean = (key: string) => {
+		const value = readRecordProperty(rawAc19Evidence, key).value;
+		return typeof value === "boolean" ? value : null;
+	};
+	const ac19OperationCount = readRecordProperty(
+		rawAc19Evidence,
+		"deleteOrRenameOperationCount",
+	).value;
+	const ac19Evidence =
+		ac19Boolean("baselineSynced") !== null &&
+		ac19Boolean("confirmationVisible") !== null &&
+		ac19Boolean("placeholderExcluded") !== null &&
+		ac19Boolean("serviceSourceLive") !== null &&
+		Number.isSafeInteger(ac19OperationCount) &&
+		(ac19OperationCount as number) >= 0
+			? {
+					baselineSynced: ac19Boolean("baselineSynced") as boolean,
+					confirmationVisible: ac19Boolean("confirmationVisible") as boolean,
+					placeholderExcluded: ac19Boolean("placeholderExcluded") as boolean,
+					serviceSourceLive: ac19Boolean("serviceSourceLive") as boolean,
+					deleteOrRenameOperationCount: ac19OperationCount as number,
+				}
+			: undefined;
 	return {
 		caseId,
 		evidence,
@@ -485,6 +566,7 @@ export function safeCaseResult(
 		...(receiptStatus.success ? { receiptStatus: receiptStatus.data } : {}),
 		...(ac30FinalAssertion ? { ac30FinalAssertion } : {}),
 		...(ac13Cleanup ? { ac13Cleanup } : {}),
+		...(ac19Evidence ? { ac19Evidence } : {}),
 		cleanupStatus,
 	};
 }
@@ -1657,6 +1739,88 @@ export function createAc20FixtureScript(
 	})()`;
 }
 
+/** Guarded action and local-only recovery for the two-vault AC-19 fixture. */
+export interface Ac19CaseScripts {
+	/** Seeds and observes one simulated eviction without sending a delete or rename. */
+	action: string;
+	/** Removes the synthetic placeholder, keeps server authority, and resumes sync. */
+	cleanup: string;
+}
+
+/** Builds AC-19 scripts for one exact authorized synthetic vault path. */
+export function createAc19CaseScripts(
+	id: DesktopVaultId,
+	resolvedPath: string,
+	home = homedir(),
+): Ac19CaseScripts {
+	const target = assertAuthorizedVault(id, resolvedPath, home);
+	const fixture = createAc19FixturePaths(id);
+	const action = `
+		if (app.vault.adapter.getBasePath() !== ${JSON.stringify(target)}) throw new Error("AC19_ASSERT_TARGET_VAULT");
+		const plugin = app.plugins.plugins?.["ai-bridge"];
+		if (!plugin?.journal?.snapshot || !plugin.desktopSync || !plugin.coexistence || !plugin.composition?.readVaultSummary || !plugin.settingsValue?.coexistenceMode) throw new Error("AC19_ASSERT_PLUGIN_CONTROLS");
+		if (plugin.sessionStatus !== "connected" || plugin.syncStatus?.().state !== "settled" || plugin.desktopSync.isPaused || plugin.desktopSync.isBusy || plugin.syncPaused || plugin.syncActive) throw new Error("AC19_ASSERT_INITIAL_STATE");
+		const adapter = app.vault.adapter;
+		const source = ${JSON.stringify(fixture.source)};
+		const placeholder = ${JSON.stringify(fixture.placeholder)};
+		if (app.vault.getAbstractFileByPath(source) || await adapter.stat(source) || await adapter.stat(placeholder)) throw new Error("AC19_ASSERT_FIXTURE_COLLISION");
+		const initial = plugin.journal.snapshot();
+		if (!initial.epoch || initial.base?.[source] || initial.base?.[placeholder] || initial.pending_ops?.length || initial.pending_apply?.length || initial.attention?.length || initial.coexistence_confirmations?.length) throw new Error("AC19_ASSERT_INITIAL_STATE");
+		const waitFor = async (test) => {
+			const deadline = Date.now() + 15000;
+			while (Date.now() < deadline) {
+				if (test()) return true;
+				await new Promise((resolve) => window.setTimeout(resolve, 50));
+			}
+			return test();
+		};
+		if (!(await adapter.stat("oab-10.1"))) await adapter.mkdir("oab-10.1");
+		if (!(await adapter.stat(${JSON.stringify(fixture.root)}))) await adapter.mkdir(${JSON.stringify(fixture.root)});
+		const file = await app.vault.create(source, "OAB-10.1 synthetic coexistence fixture\\n");
+		await withCaseBoundary("AC19_SEED_BASELINE", () => plugin.desktopSync.syncNow());
+		const seeded = plugin.journal.snapshot();
+		const baseline = seeded.base?.[source];
+		if (!baseline || baseline.deleted || !seeded.epoch) throw new Error("AC19_ASSERT_BASELINE_SYNC");
+		const serviceBefore = await withCaseBoundary("AC19_READ_SERVICE_AUTHORITY", () => plugin.composition.readVaultSummary());
+		if (serviceBefore.epoch !== seeded.epoch) throw new Error("AC19_ASSERT_BASELINE_SYNC");
+		caseEvidence.ac19 = { baselineSynced: true, confirmationVisible: false, placeholderExcluded: false, serviceSourceLive: false, deleteOrRenameOperationCount: 0 };
+		plugin.desktopSync.pause();
+		ac19Cleanup.pausedByCase = true;
+		await app.vault.trash(file, false);
+		await app.vault.createBinary(placeholder, new ArrayBuffer(0));
+		if (!(await waitFor(() => plugin.journal.snapshot().coexistence_confirmations?.some((item) => item.path === source)))) throw new Error("AC19_ASSERT_CONFIRMATION");
+		const captured = plugin.journal.snapshot();
+		const confirmation = captured.coexistence_confirmations.find((item) => item.path === source);
+		const unavailable = captured.unavailable_paths?.includes(source) ?? false;
+		const placeholderExcluded = !Object.prototype.hasOwnProperty.call(captured.base ?? {}, placeholder) && !captured.pending_ops?.some((operation) => operation.path === placeholder || operation.to === placeholder);
+		const deleteOrRenameOperationCount = captured.pending_ops?.filter((operation) => (operation.op === "delete" || operation.op === "rename") && (operation.path === source || operation.to === source)).length ?? 0;
+		if (!confirmation || !unavailable || !placeholderExcluded) throw new Error("AC19_ASSERT_PLACEHOLDER_EXCLUDED");
+		if (!(await waitFor(() => !plugin.desktopSync.isBusy))) throw new Error("AC19_ASSERT_CONFIRMATION");
+		const settled = plugin.journal.snapshot();
+		const liveBase = settled.base?.[source];
+		const serviceAfter = await withCaseBoundary("AC19_READ_SERVICE_AUTHORITY", () => plugin.composition.readVaultSummary());
+		const serviceSourceLive = Boolean(liveBase && !liveBase.deleted && liveBase.rev === baseline.rev && liveBase.hash === baseline.hash && serviceAfter.epoch === serviceBefore.epoch && serviceAfter.head_seq === serviceBefore.head_seq && deleteOrRenameOperationCount === 0);
+		if (!serviceSourceLive) throw new Error("AC19_ASSERT_SERVICE_UNCHANGED");
+		caseEvidence.ac19 = { baselineSynced: true, confirmationVisible: Boolean(confirmation), placeholderExcluded, serviceSourceLive, deleteOrRenameOperationCount };
+	`;
+	const cleanup = `
+		if (app.vault.adapter.getBasePath() !== ${JSON.stringify(target)}) throw new Error("AC19_CLEANUP_RESTORE_FAILED");
+		const plugin = app.plugins.plugins?.["ai-bridge"];
+		if (!plugin?.journal?.snapshot || !plugin.desktopSync || !plugin.coexistence) throw new Error("AC19_CLEANUP_RESTORE_FAILED");
+		const placeholder = app.vault.getAbstractFileByPath(${JSON.stringify(fixture.placeholder)});
+		if (placeholder) await app.vault.trash(placeholder, false);
+		for (const item of plugin.journal.snapshot().coexistence_confirmations ?? []) if (item.path === ${JSON.stringify(fixture.source)}) await plugin.coexistence.keepServerState(item.id);
+		if (ac19Cleanup.pausedByCase) {
+			await plugin.desktopSync.resume();
+			ac19Cleanup.pausedByCase = false;
+			const deadline = Date.now() + 15000;
+			while (plugin.desktopSync.isBusy && Date.now() < deadline) await new Promise((resolve) => window.setTimeout(resolve, 50));
+			if (plugin.desktopSync.isBusy || !app.vault.getAbstractFileByPath(${JSON.stringify(fixture.source)})) throw new Error("AC19_CLEANUP_RESTORE_FAILED");
+		}
+	`;
+	return { action, cleanup };
+}
+
 /** Adds failure-safe cleanup and returns allowlisted stage and transport diagnostics. */
 export function createCaseScript(
 	caseId: string,
@@ -1684,6 +1848,7 @@ export function createCaseScript(
 		const ac30DiagnosticOperationKinds = ${JSON.stringify(AC30_DIAGNOSTIC_OPERATION_KINDS)};
 		const boundaryDetailsKey = Symbol("case-boundary-details");
 		const caseEvidence = {};
+		const ac19Cleanup = { pausedByCase: false };
 		const safeAc30ObservationValue = (value) => {
 			if (typeof value === "boolean" || value === null) return value;
 			if (typeof value === "number" && Number.isSafeInteger(value)) return value;

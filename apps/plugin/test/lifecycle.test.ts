@@ -9,6 +9,8 @@ interface CapturedSyncActions {
 	pause(): void;
 	/** Resumes the active controller after composition setup. */
 	resume(): void;
+	/** Confirms one durable observation and starts its immediate sync cycle. */
+	confirmCoexistence(id: string): void;
 }
 
 const host = vi.hoisted(() => ({
@@ -155,7 +157,7 @@ vi.mock("../src/settings", () => ({
 		constructor(...args: unknown[]) {
 			host.serverUrlChange = args[5] as (url: string) => Promise<void>;
 			host.deviceNameChange = args[6] as (name: string) => Promise<void>;
-			host.syncActions = args[9] as CapturedSyncActions;
+			host.syncActions = args[10] as CapturedSyncActions;
 		}
 
 		/** Satisfies the composition status-refresh call. */
@@ -846,11 +848,13 @@ describe("AIBridgePlugin device-local lifecycle", () => {
 			{
 				serverUrl: "https://obsidian-bridge.mmorillo.dev",
 				deviceName: "oab-8.8 dev-1",
+				coexistenceMode: false,
 			},
 		]);
 		expect(Reflect.get(plugin, "settingsValue")).toEqual({
 			serverUrl: "https://obsidian-bridge.mmorillo.dev",
 			deviceName: "oab-8.8 dev-1",
+			coexistenceMode: false,
 		});
 		plugin.onunload();
 	});
@@ -859,12 +863,14 @@ describe("AIBridgePlugin device-local lifecycle", () => {
 		host.settingsData = {
 			serverUrl: "https://saved-service.test",
 			deviceName: "oab-8.8 dev-2",
+			coexistenceMode: false,
 		};
 		const plugin = new AIBridgePlugin({} as App, {} as PluginManifest);
 		await plugin.onload();
 		expect(Reflect.get(plugin, "settingsValue")).toEqual({
 			serverUrl: "https://saved-service.test",
 			deviceName: "oab-8.8 dev-2",
+			coexistenceMode: false,
 		});
 		plugin.onunload();
 	});
@@ -921,6 +927,25 @@ describe("AIBridgePlugin device-local lifecycle", () => {
 		await expect(syncNow).rejects.toThrow("cycle failed");
 		expect(syncNowCatch).toHaveBeenCalledOnce();
 		expect(host.syncActions).not.toHaveProperty("rebuild");
+		plugin.onunload();
+	});
+
+	it("starts sync after an owner confirms a captured destructive event", async () => {
+		const plugin = new AIBridgePlugin({} as App, {} as PluginManifest);
+		await plugin.onload();
+		const confirm = vi.fn().mockResolvedValue({ key: "operation" });
+		const syncNow = vi.fn().mockResolvedValue(undefined);
+		Reflect.set(plugin, "coexistence", { confirm });
+		Reflect.set(plugin, "desktopSync", {
+			syncNow,
+			/** Satisfies plugin teardown for the controller test double. */
+			close: () => undefined,
+		});
+		host.syncActions?.confirmCoexistence("confirmation");
+		await Promise.resolve();
+		await Promise.resolve();
+		expect(confirm).toHaveBeenCalledWith("confirmation");
+		expect(syncNow).toHaveBeenCalledOnce();
 		plugin.onunload();
 	});
 

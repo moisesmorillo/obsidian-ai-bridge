@@ -16,6 +16,10 @@ export interface SyncStatusActions {
 	unsupportedFiles(): string[];
 	/** Lists excluded vault paths only after the owner asks to see them. */
 	excludedFiles(): string[];
+	/** Transfers one exact durable observation into the outgoing operation queue. */
+	confirmCoexistence(id: string): void;
+	/** Clears one decision without changing the server or unavailable-path state. */
+	keepServerState(id: string): void;
 }
 
 /** Renders plain-text sync state and labelled actions without owning sync effects. */
@@ -38,6 +42,47 @@ export class SyncStatusPanel {
 		const telemetry = document.createElement("p");
 		telemetry.textContent = `Backup: ${status.backup}. Capacity: ${typeof status.capacity === "string" ? status.capacity : `${status.capacity.used} of ${status.capacity.limit} bytes used`}.`;
 		container.append(telemetry);
+		if (status.coexistenceEnabled) {
+			const risk = document.createElement("p");
+			risk.textContent =
+				"iCloud and this plugin write the same files. Text hash checks protect concurrent edits. Binary writes have a best-effort protection window.";
+			container.append(risk);
+		}
+		for (const path of status.unavailablePaths) {
+			const unavailable = document.createElement("p");
+			unavailable.textContent = `${path}: Unavailable while iCloud holds a placeholder.`;
+			container.append(unavailable);
+		}
+		for (const confirmation of status.coexistenceConfirmations) {
+			const description = document.createElement("p");
+			description.textContent = confirmation.unavailable
+				? `${confirmation.path}: Unavailable while iCloud holds a placeholder.`
+				: confirmation.stale
+					? `${confirmation.path}: ${confirmation.stale_reason ?? "Original revision is no longer current."}`
+					: confirmation.kind === "rename"
+						? `${confirmation.path} to ${confirmation.to}`
+						: confirmation.path;
+			container.append(description);
+			if (confirmation.kind === "delete")
+				this.addButton(
+					container,
+					`Confirm delete ${confirmation.path}`,
+					() => this.actions.confirmCoexistence(confirmation.id),
+					`coexistence-${confirmation.id}`,
+					confirmation.unavailable || confirmation.stale,
+				);
+			else
+				this.addButton(
+					container,
+					`Confirm rename ${confirmation.path} to ${confirmation.to}`,
+					() => this.actions.confirmCoexistence(confirmation.id),
+					`coexistence-${confirmation.id}`,
+					confirmation.unavailable || confirmation.stale,
+				);
+			this.addButton(container, `Keep server state ${confirmation.path}`, () =>
+				this.actions.keepServerState(confirmation.id),
+			);
+		}
 		if (status.counts) {
 			const counts = document.createElement("p");
 			counts.textContent = `Server files: ${status.counts.live} live, ${status.counts.deleted} deleted.`;
@@ -130,12 +175,14 @@ export class SyncStatusPanel {
 		label: string,
 		action: () => void,
 		focusId = label,
+		disabled = false,
 	): void {
 		const button = document.createElement("button");
 		button.type = "button";
 		button.textContent = label;
 		button.setAttribute("aria-label", label);
 		button.setAttribute("data-focus-id", focusId);
+		button.disabled = disabled;
 		button.addEventListener("click", action);
 		container.append(button);
 	}

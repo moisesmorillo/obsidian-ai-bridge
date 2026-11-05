@@ -136,6 +136,12 @@ export class PublicationController {
 			for (const path of localPaths) {
 				this.assertOpen();
 				if (pendingRenameTargets.has(pathKey(path))) continue;
+				if (await this.vault.isUnavailable?.(path)) {
+					await this.journal.markUnavailable(path);
+					continue;
+				}
+				if (state.unavailable_paths.includes(path))
+					await this.journal.clearUnavailable(path);
 				const size = await this.vault.size(path);
 				this.assertOpen();
 				if (size === null) continue;
@@ -220,6 +226,12 @@ export class PublicationController {
 				const current = await this.vault.list();
 				this.assertOpen();
 				if (current.some((item) => pathKey(item) === pathKey(path))) continue;
+				if (await this.vault.isUnavailable?.(path)) {
+					await this.journal.markUnavailable(path);
+					continue;
+				}
+				if (state.unavailable_paths.includes(path))
+					await this.journal.clearUnavailable(path);
 				await this.restoreMissing(path, base.rev);
 			}
 		});
@@ -391,6 +403,17 @@ export class PublicationController {
 				const operations = this.journal.snapshot().pending_ops;
 				const operation = operations.find((item) => item.key === key);
 				if (!operation || operation.state === "resolved") continue;
+				const affected =
+					operation.op === "rename"
+						? [operation.path, operation.to]
+						: [operation.path];
+				let unavailable = false;
+				for (const path of affected)
+					if (await this.vault.isUnavailable?.(path)) {
+						await this.journal.markUnavailable(path);
+						unavailable = true;
+					}
+				if (unavailable) break;
 				if ((operation.retry_at ?? 0) > this.options.now()) continue;
 				const index = operations.findIndex((item) => item.key === key);
 				if (

@@ -4,7 +4,7 @@ title: Show safe failure classes and service measurement limits in the status pa
 status: In Progress
 assignee: []
 created_date: '2026-11-05T20:57:00Z'
-updated_date: '2026-11-05T21:17:00Z'
+updated_date: '2026-11-05T22:04:00Z'
 labels: []
 dependencies: []
 documentation:
@@ -47,4 +47,16 @@ Documentation: `bun run docs:check` passed.
 RED: `bun run --filter @obsidian-ai-bridge/plugin test -- --run test/sync-transport.test.ts test/startup-cycle.test.ts` first showed the plugin cycle replaced the validated 429 diagnostic with `other` in the `runSyncAction` rejection handler. The handler now passes the caught error to projection.
 GREEN: The focused suite passed 84 tests across 5 files. The 429 test uses a real `AIBridgePlugin`, `DesktopSyncController`, and `SyncTransport` with controlled host responses. The lifecycle test checks an arbitrary application failure and an incomplete capture-blocked cycle. The panel test renders the actual `SyncStatusPanel`.
 FULL CHECK: `bun run check` exited 0. Biome passed for 263 files. Documentation passed. All four workspace type checks passed. Tooling tests passed 91, protocol tests passed 307, plugin tests passed 612 with 1 skipped, and worker suites passed 122, 115, and 688 tests. Protocol, plugin, and worker builds passed. Worker tests printed controlled uncaught-exception diagnostics, but all test commands exited 0.
+
+Owner decision after branch review: extend P2 write scope to oauth-transport.ts, oauth-transport.test.ts, and a composed real DeviceSession regression test. Add only a bounded network failure marker at the host boundary. Keep endpoints, credential values, and authentication policy unchanged. Branch findings: Resume catches erase diagnostic metadata. A session rejection does not prove network failure. Both need regression tests and correction before publication.
+
+BRANCH REVIEW FIX RED: `bun run --filter @obsidian-ai-bridge/plugin test -- --run test/lifecycle.test.ts test/startup-cycle.test.ts test/sync-transport.test.ts test/oauth-transport.test.ts test/device-session.test.ts` failed as expected. Resume and device-name reconfiguration both lost `admission_limited` and retry `30`. A real DeviceSession credential-persistence failure was incorrectly marked `SyncNetworkError`. A rejected requestUrl call had only generic OAuth failure text.
+BRANCH REVIEW FIX GREEN: `bun run --filter @obsidian-ai-bridge/plugin test -- --run test/lifecycle.test.ts test/startup-cycle.test.ts test/sync-transport.test.ts test/oauth-transport.test.ts test/device-session.test.ts test/status-panel.test.ts` passed 108 tests in 6 files.
+FINDING CLOSURE — Resume classification: both `resumeSync` and `resumeControllerIfOwned` pass caught errors to `reportSyncFailure`. Real plugin/controller tests exercise Resume and device-name reconfiguration, then inspect final status after all catches settle. Both retain 4xx, `admission_limited`, and retry value 30.
+FINDING CLOSURE — Network provenance: `ObsidianOAuthTransport` creates `DeviceSessionNetworkError` only when the host `requestUrl` call rejects. `DeviceSession` preserves that marker across refresh handling. `SyncTransport` no longer maps all session rejections to network. A composed real DeviceSession test proves credential persistence failure makes no protected request and does not become network. OAuth boundary and plugin/controller tests prove safe network classification without private host detail.
+FIX CHECKS: `bun run docs:check` passed. `bun run check` passed with exit code 0, including lint, docs, all workspace type checks, tests, and builds.
+
+Owner decision: production auth/device-session.ts also joins P2 scope. Keep its bounded network marker and refresh-error propagation. Authentication status behavior stays unchanged. Corrective scope confirmation follows commit ba7cbf9 and precedes acceptance.
+
+Reviews: task compliance approved at abbc234. Whole-branch review found two major diagnostic defects. Corrective review at ba7cbf9 confirms both addressed with direct regression evidence and no new fix-wave defect. Documentation scope includes all changed declarations, tests, panel copy, and this task. Structural candidates main.ts, sync-transport.ts, and OAuth/session boundaries retain explicit diagnostic ownership. No hosted CI or live-vault evidence is claimed. Active diagnostics probe returned auxiliary AST findings in existing code. Semantic review found no new defect from those findings.
 <!-- SECTION:NOTES:END -->

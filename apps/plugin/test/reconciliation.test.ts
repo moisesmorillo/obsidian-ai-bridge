@@ -766,6 +766,336 @@ describe("ReconciliationController", () => {
 		expect(context.journal.snapshot().cursor).toBe(4);
 	});
 
+	it("classifies multiple deletes from one paginated manifest per replay", async () => {
+		await context.journal.resetEpoch(epoch);
+		await context.journal.setCursor(epoch, 4);
+		const text = "inline text to delete";
+		const bytes = new Uint8Array([0, 255, 128]);
+		context.vault.files.set("delete-text.md", text);
+		context.vault.binaryFiles.set("assets/delete-photo.png", bytes);
+		context.vault.binaryFiles.set(
+			"assets/oversized.png",
+			new Uint8Array([1, 2, 3]),
+		);
+		context.vault.fileSizes.set("assets/oversized.png", 25_000_001);
+		for (const [path, rev, hashValue] of [
+			["delete-text.md", 5, await hash(text)],
+			["assets/delete-photo.png", 6, await hashBytes(bytes)],
+			["assets/oversized.png", 7, await hash("oversized remote base")],
+		] as const) {
+			await context.journal.setBase(path, {
+				deleted: false,
+				rev,
+				hash: hashValue,
+			});
+		}
+		context.remote.pages.set(null, {
+			epoch,
+			head_seq: 10,
+			entries: [
+				{
+					path: "delete-text.md",
+					etag: `"${epoch}.8"`,
+					seq: 8,
+					hash: "",
+					kind: "text",
+					deleted: true,
+				},
+			],
+			next_page: "second",
+		});
+		context.remote.pages.set("second", {
+			epoch,
+			head_seq: 10,
+			entries: [
+				{
+					path: "assets/delete-photo.png",
+					etag: `"${epoch}.9"`,
+					seq: 9,
+					hash: "",
+					kind: "blob",
+					deleted: true,
+				},
+				{
+					path: "assets/oversized.png",
+					etag: `"${epoch}.10"`,
+					seq: 10,
+					hash: "",
+					kind: "blob",
+					deleted: true,
+				},
+			],
+			next_page: null,
+		});
+		context.remote.feed.push({
+			epoch,
+			head_seq: 10,
+			entries: [
+				{
+					seq: 8,
+					op: "delete",
+					path: "delete-text.md",
+					etag: `"${epoch}.8"`,
+					hash: "",
+					origin: "remote",
+					at: 8,
+				},
+				{
+					seq: 9,
+					op: "delete",
+					path: "assets/delete-photo.png",
+					etag: `"${epoch}.9"`,
+					hash: "",
+					origin: "remote",
+					at: 9,
+				},
+				{
+					seq: 10,
+					op: "delete",
+					path: "assets/oversized.png",
+					etag: `"${epoch}.10"`,
+					hash: "",
+					origin: "remote",
+					at: 10,
+				},
+			],
+		});
+
+		await context.controller.replay();
+
+		expect(context.remote.manifestCalls).toEqual([null, "second"]);
+		expect(context.vault.files.has("delete-text.md")).toBe(false);
+		expect(context.vault.binaryFiles.has("assets/delete-photo.png")).toBe(
+			false,
+		);
+		expect(context.vault.binaryFiles.get("assets/oversized.png")).toEqual(
+			new Uint8Array([1, 2, 3]),
+		);
+		expect(context.journal.snapshot().base["assets/delete-photo.png"]).toEqual({
+			deleted: true,
+			rev: 9,
+		});
+		expect(context.journal.snapshot().attention).toContainEqual(
+			expect.objectContaining({ path: "assets/oversized.png" }),
+		);
+		expect(context.journal.snapshot().cursor).toBe(10);
+	});
+
+	it("ignores obsolete deletes before reading manifest authority", async () => {
+		await context.journal.resetEpoch(epoch);
+		await context.journal.setCursor(epoch, 4);
+		const newer = "newer confirmed version";
+		context.vault.files.set("recreated.md", newer);
+		await context.journal.setBase("recreated.md", {
+			deleted: false,
+			rev: 9,
+			hash: await hash(newer),
+		});
+		context.remote.feed.push({
+			epoch,
+			head_seq: 8,
+			entries: [
+				{
+					seq: 8,
+					op: "delete",
+					path: "recreated.md",
+					etag: `"${epoch}.8"`,
+					hash: "",
+					origin: "remote",
+					at: 8,
+				},
+			],
+		});
+
+		await context.controller.replay();
+
+		expect(context.remote.manifestCalls).toEqual([]);
+		expect(context.vault.files.get("recreated.md")).toBe(newer);
+		expect(context.journal.snapshot().base.recreated).toBeUndefined();
+		expect(context.journal.snapshot().base["recreated.md"]?.rev).toBe(9);
+		expect(context.journal.snapshot().attention).toEqual([]);
+		expect(context.journal.snapshot().cursor).toBe(8);
+	});
+
+	it("does not apply an older delete after the manifest confirms a recreate", async () => {
+		await context.journal.resetEpoch(epoch);
+		await context.journal.setCursor(epoch, 4);
+		const recreated = "new confirmed content";
+		context.vault.files.set("recreate-after-delete.md", recreated);
+		await context.journal.setBase("recreate-after-delete.md", {
+			deleted: false,
+			rev: 5,
+			hash: await hash(recreated),
+		});
+		context.remote.pages.set(null, {
+			epoch,
+			head_seq: 7,
+			entries: [
+				{
+					path: "recreate-after-delete.md",
+					etag: `"${epoch}.7"`,
+					seq: 7,
+					hash: await hash(recreated),
+					kind: "text",
+					deleted: false,
+				},
+			],
+			next_page: null,
+		});
+		const recreatedHash = await hash(recreated);
+		context.remote.texts.set("7", recreated);
+		context.remote.feed.push({
+			epoch,
+			head_seq: 7,
+			entries: [
+				{
+					seq: 6,
+					op: "delete",
+					path: "recreate-after-delete.md",
+					etag: `"${epoch}.6"`,
+					hash: "",
+					origin: "remote",
+					at: 6,
+				},
+				{
+					seq: 7,
+					op: "put",
+					path: "recreate-after-delete.md",
+					etag: `"${epoch}.7"`,
+					hash: recreatedHash,
+					origin: "remote",
+					at: 7,
+				},
+			],
+		});
+
+		await context.controller.replay();
+
+		expect(context.vault.files.get("recreate-after-delete.md")).toBe(recreated);
+		expect(context.journal.snapshot().base["recreate-after-delete.md"]).toEqual(
+			{
+				deleted: false,
+				rev: 7,
+				hash: recreatedHash,
+			},
+		);
+		expect(context.journal.snapshot().attention).toEqual([]);
+		expect(context.journal.snapshot().cursor).toBe(7);
+	});
+
+	it("does not reuse manifest classification across replay calls", async () => {
+		await context.journal.resetEpoch(epoch);
+		await context.journal.setCursor(epoch, 4);
+		const text = "first confirmed delete";
+		context.vault.files.set("replayed.md", text);
+		await context.journal.setBase("replayed.md", {
+			deleted: false,
+			rev: 5,
+			hash: await hash(text),
+		});
+		const firstRow = {
+			path: "replayed.md",
+			etag: `"${epoch}.6"`,
+			seq: 6,
+			hash: "",
+			kind: "text" as const,
+			deleted: true,
+		};
+		context.remote.pages.set(null, {
+			epoch,
+			head_seq: 6,
+			entries: [firstRow],
+			next_page: null,
+		});
+		context.remote.feed.push({
+			epoch,
+			head_seq: 6,
+			entries: [
+				{
+					seq: 6,
+					op: "delete",
+					path: "replayed.md",
+					etag: firstRow.etag,
+					hash: "",
+					origin: "remote",
+					at: 6,
+				},
+			],
+		});
+		await context.controller.replay();
+
+		await context.journal.setCursor(epoch, 6);
+		const secondRow = { ...firstRow, etag: `"${epoch}.7"`, seq: 7 };
+		context.remote.pages.set(null, {
+			epoch,
+			head_seq: 7,
+			entries: [secondRow],
+			next_page: null,
+		});
+		context.remote.feed.push({
+			epoch,
+			head_seq: 7,
+			entries: [
+				{
+					seq: 7,
+					op: "delete",
+					path: "replayed.md",
+					etag: secondRow.etag,
+					hash: "",
+					origin: "remote",
+					at: 7,
+				},
+			],
+		});
+		await context.controller.replay();
+
+		expect(context.remote.manifestCalls).toEqual([null, null]);
+		expect(context.journal.snapshot().base["replayed.md"]).toEqual({
+			deleted: true,
+			rev: 7,
+		});
+	});
+
+	it("keeps a local file when manifest authority is missing for a delete", async () => {
+		await context.journal.resetEpoch(epoch);
+		await context.journal.setCursor(epoch, 4);
+		context.vault.files.set("unconfirmed-delete.md", "keep until confirmed");
+		await context.journal.setBase("unconfirmed-delete.md", {
+			deleted: false,
+			rev: 5,
+			hash: await hash("keep until confirmed"),
+		});
+		context.remote.feed.push({
+			epoch,
+			head_seq: 6,
+			entries: [
+				{
+					seq: 6,
+					op: "delete",
+					path: "unconfirmed-delete.md",
+					etag: `"${epoch}.6"`,
+					hash: "",
+					origin: "remote",
+					at: 6,
+				},
+			],
+		});
+
+		await context.controller.replay();
+
+		expect(context.remote.manifestCalls).toEqual([null]);
+		expect(context.vault.files.get("unconfirmed-delete.md")).toBe(
+			"keep until confirmed",
+		);
+		expect(context.journal.snapshot().base["unconfirmed-delete.md"]?.rev).toBe(
+			5,
+		);
+		expect(context.journal.snapshot().attention).toContainEqual(
+			expect.objectContaining({ path: "unconfirmed-delete.md" }),
+		);
+		expect(context.journal.snapshot().cursor).toBe(6);
+	});
+
 	it("applies a delete only when the manifest confirms its exact text revision", async () => {
 		const text = "confirmed text delete";
 		context.vault.files.set("deleted.md", text);
@@ -814,6 +1144,88 @@ describe("ReconciliationController", () => {
 			hash: await hashBytes(bytes),
 		});
 		expect(context.journal.snapshot().pending_ops).toEqual([]);
+	});
+
+	it("uses one durable observation time for a hydration conflict across restart", async () => {
+		const path = "notes/hydration-conflict.md";
+		const localText = "local edits";
+		const remoteText = "confirmed remote bytes";
+		const remoteHash = await hash(remoteText);
+		const observedAt = Date.UTC(2026, 10, 4, 12, 34);
+		let now = observedAt;
+		context.vault.files.set(path, localText);
+		context.remote.entries = [
+			{
+				path,
+				etag: formatETag(epoch, 2),
+				seq: 2,
+				hash: remoteHash,
+				kind: "text",
+				deleted: false,
+			},
+		];
+		context.remote.texts.set("2", remoteText);
+		const stopAfterCopy = context.journal.updateApply.bind(context.journal);
+		context.journal.updateApply = async (pending) => {
+			await stopAfterCopy(pending);
+			if (pending.step === "copied")
+				throw new Error("stop after conflict copy");
+		};
+		const engine = new TextApplyEngine(
+			context.journal,
+			context.vault,
+			context.remote,
+			{ deviceName: "test", now: () => now },
+		);
+		context.controller = new ReconciliationController(
+			context.journal,
+			engine,
+			context.vault,
+			context.remote,
+		);
+
+		await expect(context.controller.enroll()).rejects.toThrow(
+			"stop after conflict copy",
+		);
+
+		const pending = context.journal.snapshot().pending_apply[0];
+		if (!pending) throw new Error("Expected durable conflict recovery");
+		const namedPath = pending.conflict_copies?.[0]?.path;
+		expect(pending.change.at).toBe(observedAt);
+		expect(namedPath).toContain("2026-11-04 1234");
+		expect(namedPath).not.toContain("1970");
+		expect(context.vault.files.get(namedPath ?? "")).toBe(localText);
+
+		engine.close();
+		context.journal.close();
+		now = Date.UTC(2030, 0, 1);
+		context.journal = await DeviceJournal.open(context.storage);
+		const restartedEngine = new TextApplyEngine(
+			context.journal,
+			context.vault,
+			context.remote,
+			{ deviceName: "test", now: () => now },
+		);
+		context.controller = new ReconciliationController(
+			context.journal,
+			restartedEngine,
+			context.vault,
+			context.remote,
+		);
+
+		await context.controller.resume();
+
+		expect(context.vault.files.get(path)).toBe(remoteText);
+		expect(context.vault.files.get(namedPath ?? "")).toBe(localText);
+		expect(
+			(await context.vault.list()).filter((file) => file.includes("(conflict")),
+		).toEqual([namedPath]);
+		expect(context.journal.snapshot().base[path]).toEqual({
+			deleted: false,
+			rev: 2,
+			hash: remoteHash,
+		});
+		expect(context.journal.snapshot().pending_apply).toEqual([]);
 	});
 
 	it("hydrates exact binary bytes from a manifest blob row", async () => {
@@ -2517,8 +2929,21 @@ describe("ReconciliationController", () => {
 		expect(context.journal.snapshot().pending_ops[0]?.state).toBe("sent");
 		context = await reopen(context);
 		context.remote.createError = null;
+		const successor = "later local edit";
+		context.vault.files.set("lost.md", successor);
 		await context.controller.resume();
 		expect(context.remote.created).toHaveLength(1);
+		expect(context.vault.files.get("lost.md")).toBe(successor);
+		expect(
+			[...context.vault.files.keys()].filter((path) =>
+				path.includes("conflict"),
+			),
+		).toEqual([]);
+		expect(context.journal.snapshot().base["lost.md"]).toEqual({
+			deleted: false,
+			rev: 2,
+			hash: hashValue,
+		});
 		expect(context.journal.snapshot().pending_ops).toEqual([]);
 	});
 

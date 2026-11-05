@@ -63,6 +63,7 @@ class MemoryVault implements TextVault {
 	readonly files = new Map<string, string>();
 	readonly binaryFiles = new Map<string, Uint8Array>();
 	readonly binaryReads: string[] = [];
+	readonly binaryReadTextDisabled = new Set<string>();
 	readonly binaryCreates: string[] = [];
 	readonly binaryTrashes: string[] = [];
 	readonly sizeOverrides = new Map<string, number>();
@@ -86,10 +87,14 @@ class MemoryVault implements TextVault {
 	async list(): Promise<string[]> {
 		return [...this.files.keys(), ...this.binaryFiles.keys()];
 	}
-	/** Reads an exact binary fixture without decoding its bytes. */
+	/** Reads exact current bytes from binary fixtures or UTF-8 text fixtures. */
 	async readBinary(path: string): Promise<Uint8Array | null> {
 		this.binaryReads.push(path);
-		return this.binaryFiles.get(path)?.slice() ?? null;
+		const bytes = this.binaryFiles.get(path);
+		if (bytes) return bytes.slice();
+		if (this.binaryReadTextDisabled.has(path)) return null;
+		const text = this.files.get(path);
+		return text === undefined ? null : new TextEncoder().encode(text);
 	}
 	/** Creates exact bytes only at an absent path. */
 	async createBinary(path: string, bytes: Uint8Array): Promise<boolean> {
@@ -675,6 +680,8 @@ describe("PublicationController", () => {
 		await controller.observe({ type: "create", path: "note.md" });
 		await controller.flush();
 		expect(serverRev).toBe(1);
+		now += 3_000;
+		await controller.flush();
 		versionText.set(2, "feed revision two");
 		serverRev = 2;
 		serverText = "feed revision two";
@@ -686,7 +693,6 @@ describe("PublicationController", () => {
 		});
 		vault.files.set("note.md", "later edit after feed revision two");
 		await controller.observe({ type: "modify", path: "note.md" });
-		now += 3_000;
 		await controller.flush();
 
 		expect(requests.map((request) => request.precondition)).toEqual([
@@ -787,14 +793,158 @@ describe("PublicationController", () => {
 		expect(journal.snapshot().attention).toEqual([]);
 	});
 
-	it("reports oversized files without reading their bytes", async () => {
-		const { controller, journal, vault } = await openController();
-		vault.binaryFiles.set("notes/huge.pdf", new Uint8Array([0]));
-		vault.sizeOverrides.set("notes/huge.pdf", 25_000_001);
+	it.each([
+		{
+			name: "inline-to-blob",
+			initial: "queued text",
+			current: new Uint8Array(1_000_001).fill(0x61),
+		},
+		{
+			name: "blob-to-inline",
+			initial: new Uint8Array(1_000_001).fill(0x62),
+			current: "\uFEFFfirst line\r\nsecond line\n",
+		},
+	])(
+		"replaces queued $name payload with exact current bytes",
+		async ({ initial, current }) => {
+			const { controller, journal, remote, vault } = await openController();
+			const path = "notes/change.md";
+			if (typeof initial === "string") vault.files.set(path, initial);
+			else vault.binaryFiles.set(path, initial);
+			await controller.scan();
+			const original = journal.snapshot().pending_ops[0];
+			if (!original) throw new Error("Expected a queued payload");
+
+			const binaryReadsBeforeRefresh = vault.binaryReads.length;
+			if (typeof current === "string") {
+				vault.files.set(path, current);
+				vault.binaryFiles.set(path, new TextEncoder().encode(current));
+			} else {
+				vault.files.delete(path);
+				vault.binaryFiles.set(path, current);
+			}
+			await controller.flush();
+
+			const successor = journal.snapshot().pending_ops[0];
+			expect(successor).toMatchObject({
+				state: "queued",
+				precondition: { kind: "absent" },
+			});
+			expect(successor?.key).not.toBe(original.key);
+			expect(vault.binaryReads.length > binaryReadsBeforeRefresh).toBe(true);
+			expect(
+				await journal.readPayload(
+					successor?.payload_ref ?? "",
+					successor?.payload_hash ?? "",
+				),
+			).toEqual(
+				typeof current === "string"
+					? new TextEncoder().encode(current)
+					: current,
+			);
+			expect(remote.writes).toEqual([]);
+			expect(remote.blobWrites).toEqual([]);
+			await controller.flush();
+			if (typeof current === "string") {
+				expect(remote.writes[0]?.text).toBe(current);
+				expect(remote.writes[0]?.key).toBe(successor?.key);
+			} else {
+				expect(remote.blobWrites[0]?.bytes).toEqual(current);
+				expect(remote.blobWrites[0]?.key).toBe(successor?.key);
+			}
+		},
+	);
+
+	it("rejects same-length malformed UTF-8 before queued inline send", async () => {
+		const { controller, journal, remote, vault } = await openController();
+		const path = "notes/invalid.md";
+		vault.binaryFiles.set(path, new Uint8Array(1_000_001).fill(0x61));
 		await controller.scan();
-		expect(vault.binaryReads).not.toContain("notes/huge.pdf");
+		const original = journal.snapshot().pending_ops[0];
+		if (!original) throw new Error("Expected a queued blob payload");
+		const malformed = new Uint8Array([0xed, 0xa0, 0x80]);
+		vault.binaryFiles.set(path, malformed);
+		vault.sizeOverrides.set(path, malformed.byteLength);
+		vault.read = async () => "\uFFFD";
+
+		await controller.flush();
+
+		expect(remote.writes).toEqual([]);
+		expect(remote.blobWrites).toEqual([]);
+		expect(journal.snapshot().pending_ops).toEqual([]);
 		expect(journal.snapshot().attention).toContainEqual(
-			expect.objectContaining({ path: "notes/huge.pdf" }),
+			expect.objectContaining({
+				path,
+				reason: expect.any(String),
+				operation: expect.objectContaining({
+					key: original.key,
+					state: "queued",
+				}),
+			}),
+		);
+		expect(vault.binaryFiles.get(path)).toEqual(malformed);
+	});
+
+	it("uses the confirmed current base for a queued size-transition successor", async () => {
+		const { controller, journal, vault } = await openController();
+		const path = "notes/base-change.md";
+		await journal.setBase(path, {
+			deleted: false,
+			rev: 2,
+			hash: await digestText("older base"),
+		});
+		vault.files.set(path, "initial queued text");
+		await controller.scan();
+		const original = journal.snapshot().pending_ops[0];
+		if (!original) throw new Error("Expected a queued text payload");
+		await journal.setBase(path, {
+			deleted: false,
+			rev: 5,
+			hash: await digestText("current confirmed base"),
+		});
+		const current = new Uint8Array(1_000_001).fill(0x63);
+		vault.files.delete(path);
+		vault.binaryFiles.set(path, current);
+
+		await controller.flush();
+
+		const successor = journal.snapshot().pending_ops[0];
+		expect(original.precondition).toEqual({ kind: "match", epoch, rev: 2 });
+		expect(successor).toMatchObject({
+			state: "queued",
+			precondition: { kind: "match", epoch, rev: 5 },
+		});
+		expect(successor?.key).not.toBe(original.key);
+		expect(
+			await journal.readPayload(
+				successor?.payload_ref ?? "",
+				successor?.payload_hash ?? "",
+			),
+		).toEqual(current);
+	});
+
+	it("stops queued files above 25 MB before reading their body", async () => {
+		const { controller, journal, vault } = await openController();
+		const path = "notes/large.md";
+		const bodyReads: string[] = [];
+		vault.files.set(path, "queued text");
+		await controller.scan();
+		vault.sizeOverrides.set(path, 25_000_001);
+		vault.read = async (readPath) => {
+			bodyReads.push(readPath);
+			return "must not read";
+		};
+		const binaryRead = vault.readBinary.bind(vault);
+		vault.readBinary = async (readPath) => {
+			bodyReads.push(readPath);
+			return binaryRead(readPath);
+		};
+
+		await controller.flush();
+
+		expect(bodyReads).toEqual([]);
+		expect(journal.snapshot().attention).toContainEqual(
+			expect.objectContaining({ path }),
 		);
 	});
 
@@ -2272,6 +2422,7 @@ describe("PublicationController", () => {
 			hash: await digestText(oldText),
 		});
 		vault.files.set("target.md", oldText);
+		vault.binaryReadTextDisabled.add("target.md");
 		const remote: PublicationRemote = {
 			readAuthority: async () => {
 				throw new Error("Unexpected pinned read");
@@ -2539,6 +2690,7 @@ describe("PublicationController", () => {
 			});
 			await journal.setCursor(epoch, cursor);
 			vault.files.set("y.md", destination);
+			if (destination === oldSource) vault.binaryReadTextDisabled.add("y.md");
 			let feedReads = 0;
 			const published: Array<{
 				path: string;
@@ -2733,6 +2885,10 @@ describe("PublicationController", () => {
 			hash: await digestText(oldBase),
 		});
 		vault.files.set("note.md", "sent local bytes");
+		vault.binaryFiles.set(
+			"note.md",
+			new TextEncoder().encode("sent local bytes"),
+		);
 		await controller.scan();
 		remote.failure = new Error("Response was lost");
 		await controller.flush();
@@ -2786,12 +2942,14 @@ describe("PublicationController", () => {
 			() => now,
 		);
 		vault.files.set("note.md", "first bytes");
+		vault.binaryFiles.set("note.md", new TextEncoder().encode("first bytes"));
 		await controller.scan();
 		const original = journal.snapshot().pending_ops[0];
 		if (!original) throw new Error("Expected a queued operation");
 		remote.failure = new Error("Response was lost");
 		await controller.flush();
 		vault.files.set("note.md", "second bytes");
+		vault.binaryFiles.set("note.md", new TextEncoder().encode("second bytes"));
 		await controller.scan();
 
 		const operations = journal.snapshot().pending_ops;

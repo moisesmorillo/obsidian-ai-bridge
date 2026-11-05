@@ -21,10 +21,53 @@ describe("production owner console", () => {
 		);
 		const clientId = `owner-${crypto.randomUUID()}`;
 		const stub = env.VAULTS.get(env.VAULTS.idFromName("service.test"));
-		await stub.beginClientConsent(
+		const consent = await stub.beginClientConsent(
 			"synthetic-owner",
 			clientId,
 			"<script>unsafe()</script>",
+		);
+		const grantId = `grant-${crypto.randomUUID()}`;
+		expect(
+			await stub.registerClientGrant({
+				owner_subject: "synthetic-owner",
+				client_id: clientId,
+				grant_id: grantId,
+				generation: consent.generation,
+				consent_id: consent.consent_id,
+			}),
+		).toBe(true);
+		await stub.revokeClient("synthetic-owner", clientId);
+		const mixedClientId = `mixed-${crypto.randomUUID()}`;
+		const firstConsent = await stub.beginClientConsent(
+			"synthetic-owner",
+			mixedClientId,
+			"Mixed history client",
+		);
+		await stub.registerClientGrant({
+			owner_subject: "synthetic-owner",
+			client_id: mixedClientId,
+			grant_id: `grant-old-${crypto.randomUUID()}`,
+			generation: firstConsent.generation,
+			consent_id: firstConsent.consent_id,
+		});
+		await stub.revokeClient("synthetic-owner", mixedClientId);
+		const secondConsent = await stub.beginClientConsent(
+			"synthetic-owner",
+			mixedClientId,
+			"Mixed history client",
+		);
+		await stub.registerClientGrant({
+			owner_subject: "synthetic-owner",
+			client_id: mixedClientId,
+			grant_id: `grant-new-${crypto.randomUUID()}`,
+			generation: secondConsent.generation,
+			consent_id: secondConsent.consent_id,
+		});
+		const ungrantedClientId = `ungranted-${crypto.randomUUID()}`;
+		await stub.beginClientConsent(
+			"synthetic-owner",
+			ungrantedClientId,
+			"No grant client",
 		);
 		const assertion = await new SignJWT({})
 			.setProtectedHeader({ alg: "RS256", kid: "owner-console" })
@@ -41,6 +84,24 @@ describe("production owner console", () => {
 		const html = await response.text();
 		expect(html).toContain("&lt;script&gt;unsafe()&lt;/script&gt;");
 		expect(html).not.toContain("<script>unsafe()");
+		expect(html).toContain("Revoked");
+		expect(html).toContain("retained grant history");
+		expect(html).toContain("Mixed active and revoked history");
+		expect(html).toContain("No accepted grants");
+		expect(html).not.toContain("synthetic-owner");
+		expect(html).not.toContain("access_token");
+		expect(html).not.toContain("refresh_token");
+		expect(html).not.toContain("client_secret");
+		expect(html).not.toContain("Set-Cookie");
+		const grantsResponse = await SELF.fetch(
+			`https://service.test/owner/clients/${encodeURIComponent(clientId)}/grants`,
+			{ headers: { "Cf-Access-Jwt-Assertion": assertion } },
+		);
+		const grantHtml = await grantsResponse.text();
+		expect(grantHtml).toContain(grantId);
+		expect(grantHtml).toContain("Revoked");
+		expect(grantHtml).toContain("provider cleanup pending");
+		expect(grantHtml).not.toContain("synthetic-owner");
 		const oversized = await SELF.fetch(
 			"https://service.test/owner/clients/unused/rename",
 			{

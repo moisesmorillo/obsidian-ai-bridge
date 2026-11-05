@@ -325,6 +325,136 @@ describe("device journal protocol schemas", () => {
 		).toBe(false);
 	});
 
+	it("accepts bounded repeated blob versions and rejects malformed recovery groups", () => {
+		const path = "assets/photo.png";
+		const remoteHash = "f".repeat(64);
+		const localHashes = ["a".repeat(64), "b".repeat(64), "c".repeat(64)];
+		const plan = {
+			change: {
+				seq: 2,
+				op: "put",
+				path,
+				etag: `"${"b".repeat(32)}.2"`,
+				hash: remoteHash,
+				origin: "remote",
+				at: 2,
+			},
+			content_kind: "blob",
+			step: "copied",
+			conflict_copies: localHashes.flatMap((hash, index) => [
+				{
+					path: `assets/photo (conflict Device version ${index}).png`,
+					source: path,
+					side: "path",
+					mode: "local",
+					device_name: "Device",
+					hash,
+					kind: "blob",
+					purpose: "conflict",
+				},
+				{
+					path: `.ai-bridge/pre-apply/${hash}`,
+					source: path,
+					side: "path",
+					mode: "local",
+					device_name: "Device",
+					hash,
+					kind: "blob",
+					purpose: "pre_apply",
+				},
+			]),
+		};
+		expect(PendingApplySchema.safeParse(plan).success).toBe(true);
+		expect(
+			PendingApplySchema.safeParse({
+				...plan,
+				change: {
+					...plan.change,
+					op: "delete",
+					hash: "",
+				},
+			}).success,
+		).toBe(true);
+		for (const invalid of [
+			{ ...plan, conflict_copies: plan.conflict_copies.slice(0, 5) },
+			{
+				...plan,
+				conflict_copies: [
+					...plan.conflict_copies.slice(0, 2),
+					{ ...plan.conflict_copies[2], hash: "d".repeat(64) },
+					...plan.conflict_copies.slice(3),
+				],
+			},
+			{
+				...plan,
+				conflict_copies: [
+					{ ...plan.conflict_copies[0], source: "assets/other.png" },
+					...plan.conflict_copies.slice(1),
+				],
+			},
+			{
+				...plan,
+				conflict_copies: [
+					{ ...plan.conflict_copies[0], path },
+					...plan.conflict_copies.slice(1),
+				],
+			},
+			{
+				...plan,
+				conflict_copies: [
+					{ ...plan.conflict_copies[0], side: "rename_source" },
+					...plan.conflict_copies.slice(1),
+				],
+			},
+
+			{
+				...plan,
+				conflict_copies: [
+					{ ...plan.conflict_copies[0], mode: "remote" },
+					...plan.conflict_copies.slice(1),
+				],
+			},
+			{
+				...plan,
+				conflict_copies: [
+					...plan.conflict_copies.slice(0, 1),
+					{
+						...plan.conflict_copies[1],
+						path: `.ai-bridge/pre-apply/${"e".repeat(64)}`,
+					},
+					...plan.conflict_copies.slice(2),
+				],
+			},
+			{
+				...plan,
+				conflict_copies: [
+					...plan.conflict_copies,
+					{
+						path: "assets/photo (conflict Device version 3).png",
+						source: path,
+						side: "path",
+						mode: "local",
+						device_name: "Device",
+						hash: "d".repeat(64),
+						kind: "blob",
+						purpose: "conflict",
+					},
+					{
+						path: `.ai-bridge/pre-apply/${"d".repeat(64)}`,
+						source: path,
+						side: "path",
+						mode: "local",
+						device_name: "Device",
+						hash: "d".repeat(64),
+						kind: "blob",
+						purpose: "pre_apply",
+					},
+				],
+			},
+		])
+			expect(PendingApplySchema.safeParse(invalid).success).toBe(false);
+	});
+
 	it("accepts and rejects only recoverable persisted apply state combinations", () => {
 		const put = {
 			seq: 1,

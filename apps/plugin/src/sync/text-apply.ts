@@ -4,6 +4,7 @@ import {
 	type DeviceBaseEntry,
 	DevicePayloadHashSchema,
 	type DeviceState,
+	MAX_PENDING_CONFLICT_COPIES,
 	type PendingConflictCopy,
 	parseETag,
 	pathKey,
@@ -68,7 +69,7 @@ class PinnedRevisionRebased extends Error {
 export interface TextApplyOptions {
 	/** Stable display name stored with conflict recovery metadata. */
 	deviceName: string;
-	/** Clock in Unix milliseconds for recovery retention checks. */
+	/** Clock in Unix milliseconds for synthetic observations and recovery retention checks. */
 	now?: () => number;
 }
 
@@ -173,7 +174,7 @@ export class TextApplyEngine {
 					etag: `"${observed.epoch}.${observed.rev}"`,
 					hash: observed.hash,
 					origin: "current_authority",
-					at: 0,
+					at: this.observationTime(),
 				}),
 				isBlob ? "blob" : "text",
 			);
@@ -189,6 +190,11 @@ export class TextApplyEngine {
 			const pending = this.activeJournal.snapshot().pending_apply[0];
 			if (pending) await this.applyWithFallback(pending.change);
 		});
+	}
+
+	/** Returns the configured Unix-millisecond clock for synthetic authority observations. */
+	observationTime(): number {
+		return this.now();
 	}
 
 	/** Fences queued work after plugin unload without claiming host effects were canceled. */
@@ -563,38 +569,58 @@ export class TextApplyEngine {
 			if (saved) await this.resumePending(saved);
 			return;
 		}
-		const conflictCopy = blobCopies.find((copy) => copy.purpose === "conflict");
-		const recoveryCopy = blobCopies.find(
-			(copy) => copy.purpose === "pre_apply",
+		let copies = blobCopies;
+		let observedConflict = copies.find(
+			(copy) =>
+				copy.purpose === "conflict" &&
+				copy.source === change.path &&
+				copy.hash === observedHash,
 		);
-		if (
-			!recoveryCopy ||
-			recoveryCopy.hash !== observedHash ||
-			recoveryCopy.source !== change.path ||
-			(!conflictCopy && !clean) ||
-			(conflictCopy !== undefined &&
-				(conflictCopy.hash !== observedHash ||
-					conflictCopy.source !== change.path))
-		)
+		let observedRecovery = copies.find(
+			(copy) =>
+				copy.purpose === "pre_apply" &&
+				copy.source === change.path &&
+				copy.hash === observedHash,
+		);
+		if (!observedRecovery || (!observedConflict && !clean)) {
+			const continued = await this.extendBinaryRecovery(
+				change,
+				pending,
+				copies,
+				observed,
+				observedHash,
+				firstStat,
+				secondStat,
+			);
+			if (!continued) return;
+			copies = continued;
+			observedConflict = copies.find(
+				(copy) =>
+					copy.purpose === "conflict" &&
+					copy.source === change.path &&
+					copy.hash === observedHash,
+			);
+			observedRecovery = copies.find(
+				(copy) =>
+					copy.purpose === "pre_apply" &&
+					copy.source === change.path &&
+					copy.hash === observedHash,
+			);
+		}
+		if (!observedRecovery || (!observedConflict && !clean))
 			return this.attend(
 				change.path,
 				"Binary recovery identity changed before apply completed",
 			);
-		const conflictBytes = conflictCopy
-			? await this.vault.readBinary(conflictCopy.path)
-			: null;
-		const recoveryBytes = await this.vault.readBinary(recoveryCopy.path);
-		if (
-			(conflictCopy !== undefined &&
-				(!conflictBytes ||
-					(await digestBytes(conflictBytes)) !== observedHash)) ||
-			!recoveryBytes ||
-			(await digestBytes(recoveryBytes)) !== observedHash
-		)
-			return this.attend(
-				change.path,
-				"Binary recovery bytes are missing or corrupt",
-			);
+		for (const copy of copies) {
+			const saved = await this.vault.readBinary(copy.path);
+			this.assertOpen();
+			if (!saved || (await digestBytes(saved)) !== copy.hash)
+				return this.attend(
+					copy.path,
+					"Binary recovery bytes are missing or corrupt",
+				);
+		}
 		if (!sameStat(firstStat, secondStat))
 			throw new Error(
 				"Binary changed during observation; retry after conflict preservation",
@@ -727,6 +753,13 @@ export class TextApplyEngine {
 		const size = await this.vault.size(change.path);
 		this.assertOpen();
 		const admission = classifyEnrollmentPath(change.path, size ?? 0);
+		if (admission === "unsupported") {
+			await this.attend(
+				change.path,
+				"Local file exceeds the supported apply size",
+			);
+			return;
+		}
 		const preserveLocalBytes = admission === "blob";
 		const readRemoteAsBlob =
 			contentKind === "blob" ||
@@ -1514,6 +1547,141 @@ export class TextApplyEngine {
 		);
 	}
 
+	/**
+	 * Adds a newly observed local blob version to the durable plan without changing earlier copy identities.
+	 * Existing copies must verify before the journal re-enters `named`. The new visible and pre-apply copies
+	 * are persisted before effects, and a changed stat pair always stops before remote replacement.
+	 */
+	private async extendBinaryRecovery(
+		change: ChangeEntry & { op: "put" },
+		pending: DeviceState["pending_apply"][number] | undefined,
+		copies: PendingConflictCopy[],
+		observed: Uint8Array,
+		observedHash: string,
+		firstStat: { mtime: number; size: number } | null,
+		secondStat: { mtime: number; size: number } | null,
+	): Promise<PendingConflictCopy[] | null> {
+		const stat = this.vault.stat;
+		if (
+			!pending ||
+			!this.vault.readBinary ||
+			!this.vault.createBinary ||
+			!stat
+		) {
+			await this.attend(
+				change.path,
+				"Binary recovery capability is unavailable",
+			);
+			return null;
+		}
+		if ((await digestBytes(observed)) !== observedHash) {
+			await this.attend(
+				change.path,
+				"Observed binary bytes do not match their recovery identity",
+			);
+			return null;
+		}
+		for (const copy of copies) {
+			if (copy.kind !== "blob") continue;
+			const saved = await this.vault.readBinary(copy.path);
+			this.assertOpen();
+			if (!saved || (await digestBytes(saved)) !== copy.hash) {
+				await this.attend(
+					copy.path,
+					"Binary recovery bytes are missing or corrupt",
+				);
+				return null;
+			}
+		}
+		const nextCopies = conflictCopiesFor(pending);
+		/** Finds whether one saved plan already covers this source hash and copy purpose. */
+		const hasLocalVersion = (purpose: PendingConflictCopy["purpose"]) =>
+			nextCopies.some(
+				(copy) =>
+					copy.kind === "blob" &&
+					copy.source === change.path &&
+					copy.hash === observedHash &&
+					copy.purpose === purpose,
+			);
+		const addConflict = !hasLocalVersion("conflict");
+		const addPreApply = !hasLocalVersion("pre_apply");
+		if (
+			nextCopies.length + Number(addConflict) + Number(addPreApply) >
+			MAX_PENDING_CONFLICT_COPIES
+		) {
+			await this.attend(
+				change.path,
+				"More local byte versions changed than durable recovery can retain",
+			);
+			return null;
+		}
+		if (addConflict) {
+			const revision = parseETag(change.etag).rev;
+			const conflictPath = recoveryConflictName(
+				change.path,
+				this.deviceName,
+				revision,
+				this.now(),
+				observedHash,
+			);
+			if (!conflictPath) {
+				await this.attend(
+					change.path,
+					"No valid recovery-copy path fits the canonical path limit",
+				);
+				return null;
+			}
+			nextCopies.push({
+				path: conflictPath,
+				source: change.path,
+				side: "path",
+				mode: "local",
+				device_name: this.deviceName,
+				hash: observedHash,
+				kind: "blob",
+				purpose: "conflict",
+			});
+		}
+		if (addPreApply)
+			nextCopies.push({
+				path: `.ai-bridge/pre-apply/${observedHash}`,
+				source: change.path,
+				side: "path",
+				mode: "local",
+				device_name: this.deviceName,
+				hash: observedHash,
+				kind: "blob",
+				purpose: "pre_apply",
+			});
+		await this.activeJournal.rebasePendingApply(change, nextCopies);
+		this.assertOpen();
+		const named = this.activeJournal.snapshot().pending_apply[0];
+		if (!named) throw new Error("Extended binary recovery plan was not saved");
+		await this.persistBinaryConflictCopies(named);
+		this.assertOpen();
+		const copied = this.activeJournal.snapshot().pending_apply[0];
+		if (copied?.step !== "copied") return null;
+		if (!sameStat(firstStat, secondStat))
+			throw new Error(
+				"Binary changed during observation; retry after conflict preservation",
+			);
+		const latest = await this.vault.readBinary(change.path);
+		this.assertOpen();
+		const beforeWrite = await stat.call(this.vault, change.path);
+		this.assertOpen();
+		if (
+			!latest ||
+			(await digestBytes(latest)) !== observedHash ||
+			!sameStat(firstStat, beforeWrite)
+		)
+			throw new Error("Binary changed again during conflict preservation");
+		return (
+			copied.conflict_copies?.filter(
+				(copy): copy is PendingConflictCopy => copy.kind === "blob",
+			) ?? []
+		);
+	}
+
 	/** Saves and verifies every named binary copy before recording the copied step. */
 	private async persistBinaryConflictCopies(
 		pending: DeviceState["pending_apply"][number],
@@ -1568,12 +1736,48 @@ export class TextApplyEngine {
 		this.assertOpen();
 	}
 
-	/** Continues a durable conflict copy before retrying the same pinned remote effect. */
+	/**
+	 * Resumes a named or copied apply only while its local size remains supported.
+	 * Unsupported size records attention and retains pending work without content reads or base advancement.
+	 * Confirmed remote effects advance the base and clear pending work; refused or unsafe effects retain pending work.
+	 */
 	private async resumePending(
 		pending: DeviceState["pending_apply"][number],
 	): Promise<void> {
+		if (pending.change.op !== "rename") {
+			const size = await this.vault.size(pending.change.path);
+			this.assertOpen();
+			if (
+				classifyEnrollmentPath(pending.change.path, size ?? 0) === "unsupported"
+			) {
+				await this.attend(
+					pending.change.path,
+					"Local file exceeds the supported apply size",
+				);
+				return;
+			}
+		}
 		if (pending.step === "named") {
 			const copies = conflictCopiesFor(pending);
+			for (const copy of copies) {
+				if (copy.kind !== "blob") continue;
+				const existingBytes = await this.vault.readBinary?.(copy.path);
+				this.assertOpen();
+				if (existingBytes && (await digestBytes(existingBytes)) !== copy.hash)
+					return this.attend(
+						copy.source,
+						"Binary recovery copy was edited before apply finished",
+					);
+				if (!existingBytes && copy.mode === "local") {
+					const sourceBytes = await this.vault.readBinary?.(copy.source);
+					this.assertOpen();
+					if (!sourceBytes || (await digestBytes(sourceBytes)) !== copy.hash)
+						return this.attend(
+							copy.source,
+							"Local binary changed before its recovery copy was saved",
+						);
+				}
+			}
 			for (const copy of copies) {
 				if (copy.kind === "blob") {
 					if (!this.vault.readBinary || !this.vault.createBinary)
@@ -1723,8 +1927,16 @@ export class TextApplyEngine {
 		copies: PendingConflictCopy[],
 	): Promise<void> {
 		const change = pending.change;
-		const conflict = copies.find((copy) => copy.purpose === "conflict");
-		const recovery = copies.find((copy) => copy.purpose === "pre_apply");
+		const currentBytes = await this.vault.readBinary?.(change.path);
+		this.assertOpen();
+		const currentHash = currentBytes ? await digestBytes(currentBytes) : null;
+		const currentPair = currentHash
+			? copies.filter(
+					(copy) => copy.source === change.path && copy.hash === currentHash,
+				)
+			: [];
+		const conflict = currentPair.find((copy) => copy.purpose === "conflict");
+		const recovery = currentPair.find((copy) => copy.purpose === "pre_apply");
 		const base = this.activeJournal.snapshot().base[change.path];
 		if (
 			!recovery ||
@@ -1735,6 +1947,7 @@ export class TextApplyEngine {
 				change.path,
 				"Inline-text recovery identity is invalid",
 			);
+		const verifiedCopies = new Map<string, Uint8Array>();
 		for (const copy of copies) {
 			const saved = await this.vault.readBinary?.(copy.path);
 			this.assertOpen();
@@ -1743,29 +1956,33 @@ export class TextApplyEngine {
 					copy.path,
 					"Inline-text recovery bytes are missing or corrupt",
 				);
-			if (copy.purpose === "pre_apply") {
-				const modifyBinary = this.vault.modifyBinary;
-				if (!modifyBinary)
-					return this.attend(
-						copy.path,
-						"Recovery retention clock could not be refreshed",
-					);
-				const refreshed = await this.effect(() =>
-					modifyBinary.call(this.vault, copy.path, saved),
+			verifiedCopies.set(copy.path, saved);
+		}
+		for (const copy of copies.filter(
+			(candidate) => candidate.purpose === "pre_apply",
+		)) {
+			const saved = verifiedCopies.get(copy.path);
+			const modifyBinary = this.vault.modifyBinary;
+			if (!saved || !modifyBinary)
+				return this.attend(
+					copy.path,
+					"Recovery retention clock could not be refreshed",
 				);
-				if (!refreshed)
-					return this.attend(
-						copy.path,
-						"Recovery retention clock could not be refreshed",
-					);
-				const verified = await this.vault.readBinary?.(copy.path);
-				this.assertOpen();
-				if (!verified || (await digestBytes(verified)) !== copy.hash)
-					return this.attend(
-						copy.path,
-						"Recovery bytes changed during retention refresh",
-					);
-			}
+			const refreshed = await this.effect(() =>
+				modifyBinary.call(this.vault, copy.path, saved),
+			);
+			if (!refreshed)
+				return this.attend(
+					copy.path,
+					"Recovery retention clock could not be refreshed",
+				);
+			const verified = await this.vault.readBinary?.(copy.path);
+			this.assertOpen();
+			if (!verified || (await digestBytes(verified)) !== copy.hash)
+				return this.attend(
+					copy.path,
+					"Recovery bytes changed during retention refresh",
+				);
 		}
 		let remote: string;
 		if (this.pinnedText.readResolvedBlob) {
@@ -1998,7 +2215,7 @@ export class TextApplyEngine {
 			pending.change.op === "put"
 		) {
 			const binaryCopies = copies.filter((copy) => copy.kind === "blob");
-			if (binaryCopies.length !== 1 && binaryCopies.length !== 2)
+			if (binaryCopies.length === 0)
 				return this.attend(
 					pending.change.path,
 					"Inline-text replacement has incomplete binary recovery identity",
@@ -2009,6 +2226,7 @@ export class TextApplyEngine {
 		if (copies.some((copy) => copy.kind === "blob")) {
 			const change = pending.change;
 			const binaryCopies = copies.filter((copy) => copy.kind === "blob");
+			const verifiedBinaryCopies = new Map<string, Uint8Array>();
 			for (const copy of binaryCopies) {
 				const bytes = await this.vault.readBinary?.(copy.path);
 				this.assertOpen();
@@ -2017,29 +2235,33 @@ export class TextApplyEngine {
 						copy.path,
 						"Binary recovery copy changed during apply",
 					);
-				if (copy.purpose === "pre_apply") {
-					const modifyBinary = this.vault.modifyBinary;
-					if (!modifyBinary)
-						return this.attend(
-							copy.path,
-							"Recovery retention clock could not be refreshed",
-						);
-					const refreshed = await this.effect(() =>
-						modifyBinary.call(this.vault, copy.path, bytes),
+				verifiedBinaryCopies.set(copy.path, bytes);
+			}
+			for (const copy of binaryCopies.filter(
+				(candidate) => candidate.purpose === "pre_apply",
+			)) {
+				const bytes = verifiedBinaryCopies.get(copy.path);
+				const modifyBinary = this.vault.modifyBinary;
+				if (!bytes || !modifyBinary)
+					return this.attend(
+						copy.path,
+						"Recovery retention clock could not be refreshed",
 					);
-					if (!refreshed)
-						return this.attend(
-							copy.path,
-							"Recovery retention clock could not be refreshed",
-						);
-					const saved = await this.vault.readBinary?.(copy.path);
-					this.assertOpen();
-					if (!saved || (await digestBytes(saved)) !== copy.hash)
-						return this.attend(
-							copy.path,
-							"Recovery copy changed while its retention clock refreshed",
-						);
-				}
+				const refreshed = await this.effect(() =>
+					modifyBinary.call(this.vault, copy.path, bytes),
+				);
+				if (!refreshed)
+					return this.attend(
+						copy.path,
+						"Recovery retention clock could not be refreshed",
+					);
+				const saved = await this.vault.readBinary?.(copy.path);
+				this.assertOpen();
+				if (!saved || (await digestBytes(saved)) !== copy.hash)
+					return this.attend(
+						copy.path,
+						"Recovery copy changed while its retention clock refreshed",
+					);
 			}
 			const remoteCopy = binaryCopies.find((copy) => copy.mode === "remote");
 			if (remoteCopy && change.op === "put") {
@@ -2059,23 +2281,24 @@ export class TextApplyEngine {
 				return;
 			}
 			if (change.op === "delete") {
-				const localCopy = binaryCopies.find(
-					(copy) => copy.purpose === "conflict",
-				);
-				if (!localCopy)
-					return this.attend(
-						change.path,
-						"Binary delete has no verified conflict identity",
-					);
 				const readBinary = this.vault.readBinary;
 				if (!readBinary)
 					return this.attend(
 						change.path,
 						"Binary read capability is unavailable after conflict preservation",
 					);
+				const localBytes = await readBinary.call(this.vault, change.path);
+				this.assertOpen();
+				const localHash = localBytes ? await digestBytes(localBytes) : null;
+				const localCopy = binaryCopies.find(
+					(copy) => copy.purpose === "conflict" && copy.hash === localHash,
+				);
 				const local = await readBinary.call(this.vault, change.path);
 				this.assertOpen();
-				if (local && (await digestBytes(local)) !== localCopy.hash)
+				if (
+					local &&
+					(!localCopy || (await digestBytes(local)) !== localCopy.hash)
+				)
 					return this.attend(
 						change.path,
 						"Local binary changed after delete recovery copy",
@@ -2651,6 +2874,33 @@ function conflictCopiesFor(
 			hash: pending.conflict_hash,
 		},
 	];
+}
+
+/** Builds a visible recovery-copy path distinct from prior conflict identities for one new byte hash. */
+function recoveryConflictName(
+	path: string,
+	deviceName: string,
+	rev: number,
+	timestamp: number,
+	hash: string,
+): string | null {
+	const original = conflictName(path, deviceName, rev, timestamp);
+	const slash = original.lastIndexOf("/");
+	const dot = original.lastIndexOf(".");
+	const extensionStart = dot > slash ? dot : original.length;
+	const directory = original.slice(0, slash + 1);
+	const filename = original.slice(slash + 1, extensionStart);
+	const extension = original.slice(extensionStart);
+	const suffix = ` (recovery ${hash.slice(0, 16)})`;
+	const encoder = new TextEncoder();
+	const availableStemBytes =
+		512 - encoder.encode(directory + suffix + extension).byteLength;
+	if (availableStemBytes < 1) return null;
+	let stem = filename;
+	while (stem && encoder.encode(stem).byteLength > availableStemBytes)
+		stem = [...stem].slice(0, -1).join("");
+	if (!stem) return null;
+	return `${directory}${stem}${suffix}${extension}`;
 }
 
 /** Builds the path-bound, revision-stable conflict name used across retries. */

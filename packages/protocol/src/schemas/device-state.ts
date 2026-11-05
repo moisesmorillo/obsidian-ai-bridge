@@ -154,6 +154,9 @@ export const PendingConflictCopySchema = z
 /** Inferred identity for one durably preserved local or remote version. */
 export type PendingConflictCopy = z.infer<typeof PendingConflictCopySchema>;
 
+/** Maximum durable copy identities retained for one apply before the engine pauses for owner action. */
+export const MAX_PENDING_CONFLICT_COPIES = 6;
+
 /** One durable apply step. Clean blob puts can use one confined pre-apply plan without a visible conflict. */
 export const PendingApplySchema = z
 	.object({
@@ -168,7 +171,7 @@ export const PendingApplySchema = z
 		conflict_copies: z
 			.array(PendingConflictCopySchema)
 			.min(1)
-			.max(3)
+			.max(MAX_PENDING_CONFLICT_COPIES)
 			.optional(),
 	})
 	.strict()
@@ -250,18 +253,20 @@ export const PendingApplySchema = z
 				blobCopies[0]?.mode === "local" &&
 				blobCopies[0]?.side === "path" &&
 				blobCopies[0]?.source === pending.change.path;
+			const validLocalPutRecovery =
+				pending.change.op === "put" &&
+				isValidLocalBlobPutRecovery(blobCopies, pending.change.path);
+			const validLocalDeleteRecovery =
+				pending.change.op === "delete" &&
+				isValidLocalBlobPutRecovery(blobCopies, pending.change.path);
 			const validBlobPlans =
 				pending.change.op === "rename"
 					? validRenameBlobPlans
-					: validRemoteBlobCollision ||
-						validCleanPutRecovery ||
-						(blobCopies.length === 2 &&
-							blobCopies.filter((copy) => copy.purpose === "conflict")
-								.length === 1 &&
-							blobCopies.filter((copy) => copy.purpose === "pre_apply")
-								.length === 1 &&
-							blobCopies[0]?.hash === blobCopies[1]?.hash &&
-							blobCopies[0]?.source === blobCopies[1]?.source);
+					: pending.change.op === "delete"
+						? validLocalDeleteRecovery
+						: validRemoteBlobCollision ||
+							validCleanPutRecovery ||
+							validLocalPutRecovery;
 			if (blobCopies.length > 0 && !validBlobPlans)
 				context.addIssue({
 					code: "custom",
@@ -292,6 +297,7 @@ export const PendingApplySchema = z
 										copy.side === "rename_destination")) &&
 								copy.path === `.ai-bridge/pre-apply/${copy.hash}`
 							: copy.purpose === "conflict" &&
+								copy.path !== copy.source &&
 								!copy.path.startsWith(".ai-bridge/pre-apply/");
 					const validRemoteConflict =
 						copy.mode === "remote" &&
@@ -392,6 +398,47 @@ export const ReconciliationCheckpointSchema = z
 				message: "Local scan offset exceeds its saved path list",
 			});
 	});
+
+/** Validates bounded local put plans as hash-matched copy pairs with at most one clean safeguard. */
+function isValidLocalBlobPutRecovery(
+	copies: Array<PendingConflictCopy>,
+	path: string,
+): boolean {
+	if (
+		copies.length < 2 ||
+		copies.some(
+			(copy) =>
+				copy.mode !== "local" ||
+				copy.side !== "path" ||
+				copy.source !== path ||
+				copy.purpose === undefined,
+		)
+	)
+		return false;
+	const versions = new Map<string, PendingConflictCopy[]>();
+	for (const copy of copies) {
+		const group = versions.get(copy.hash) ?? [];
+		group.push(copy);
+		versions.set(copy.hash, group);
+	}
+	let cleanPreApplyOnly = 0;
+	for (const group of versions.values()) {
+		const conflicts = group.filter((copy) => copy.purpose === "conflict");
+		const recoveries = group.filter((copy) => copy.purpose === "pre_apply");
+		if (conflicts.length === 1 && recoveries.length === 1 && group.length === 2)
+			continue;
+		if (
+			conflicts.length === 0 &&
+			recoveries.length === 1 &&
+			group.length === 1
+		) {
+			cleanPreApplyOnly += 1;
+			continue;
+		}
+		return false;
+	}
+	return cleanPreApplyOnly <= 1;
+}
 
 /** Inferred durable manifest traversal and local enrollment progress. */
 export type ReconciliationCheckpoint = z.infer<

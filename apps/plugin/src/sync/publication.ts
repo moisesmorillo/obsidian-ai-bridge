@@ -603,7 +603,7 @@ export class PublicationController {
 		return true;
 	}
 
-	/** Checks queued bytes against current local text and base before first send; sent retries remain untouched. */
+	/** Checks queued bytes against current local bytes and base before first send; sent retries remain untouched. */
 	private async refreshQueuedPut(
 		operation: Extract<PendingOperation, { op: "put" }>,
 	): Promise<"ready" | "skip" | "block"> {
@@ -612,7 +612,12 @@ export class PublicationController {
 			operation.payload_hash,
 		);
 		this.assertOpen();
-		const admission = classifyEnrollmentPath(operation.path, saved.byteLength);
+		const currentSize = await this.vault.size(operation.path);
+		this.assertOpen();
+		const admission =
+			currentSize === null
+				? "text"
+				: classifyEnrollmentPath(operation.path, currentSize);
 		if (admission === "unsupported") {
 			await this.journal.recordAttention(
 				operation.path,
@@ -621,10 +626,43 @@ export class PublicationController {
 			return "block";
 		}
 		const isBlob = admission === "blob";
-		const localBytes = isBlob
-			? await this.vault.readBinary?.(operation.path)
-			: await this.readTextBytes(operation.path);
-		this.assertOpen();
+		let localBytes: Uint8Array | null = null;
+		if (currentSize !== null) {
+			const readBinary = this.vault.readBinary;
+			if (!readBinary) {
+				await this.journal.recordQueuedRejected(
+					operation,
+					"Exact local bytes are unavailable for queued publication",
+				);
+				return "block";
+			}
+			localBytes = await readBinary.call(this.vault, operation.path);
+			this.assertOpen();
+		}
+		if (
+			localBytes &&
+			currentSize !== null &&
+			localBytes.byteLength !== currentSize
+		) {
+			await this.journal.recordQueuedRejected(
+				operation,
+				"Local file changed while publication was queued",
+			);
+			return "block";
+		}
+		if (localBytes && !isBlob) {
+			try {
+				new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
+					localBytes,
+				);
+			} catch {
+				await this.journal.recordQueuedRejected(
+					operation,
+					"Current inline file is not valid UTF-8",
+				);
+				return "block";
+			}
+		}
 		if (localBytes === null || localBytes === undefined) {
 			// Discard this queued PUT only after a confirmed tombstone and visible bytes make it redundant.
 			const state = this.journal.snapshot();
@@ -677,27 +715,26 @@ export class PublicationController {
 			"Local file changed after publication was queued",
 		);
 		this.assertOpen();
-		if (isBlob) {
-			const state = this.journal.snapshot();
-			const base = state.base[operation.path];
-			await this.journal.enqueue(
-				{
-					op: "put",
-					path: operation.path,
-					precondition: base
-						? { kind: "match", epoch: state.epoch ?? "", rev: base.rev }
-						: { kind: "absent" },
-				},
-				localBytes,
-			);
-		} else {
-			await this.enqueuePut(
+		const state = this.journal.snapshot();
+		const currentBase = state.base[operation.path];
+		if (currentBase && !state.epoch) {
+			await this.journal.recordAttention(
 				operation.path,
-				new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
-					localBytes,
-				),
+				"Confirmed base has no vault epoch",
 			);
+			return "block";
 		}
+		await this.journal.enqueue(
+			{
+				op: "put",
+				path: operation.path,
+				precondition:
+					currentBase && state.epoch
+						? { kind: "match", epoch: state.epoch, rev: currentBase.rev }
+						: { kind: "absent" },
+			},
+			localBytes,
+		);
 		return "block";
 	}
 

@@ -42,6 +42,7 @@ type ClientRow = {
 type GrantRow = {
 	grant_id: string;
 	created_at: number;
+	revoked: number;
 	cleanup_pending: number;
 };
 /** SQLite grant identity used for bounded revocation cleanup. */
@@ -156,7 +157,12 @@ export class SqliteClientRegistry {
 		});
 	}
 
-	/** Read one finite owner page with no more than 32 durable grants per client. */
+	/**
+	 * Read a finite owner page from retained registry records.
+	 *
+	 * Active counts exclude durable denial rows. Provider KV is not consulted, so
+	 * these counts do not prove token presence, currency, expiry, or cleanup outcome.
+	 */
 	listClients(ownerSubject: string, cursor?: string): ListClientsResult {
 		const offset = parsePageCursor(cursor);
 		return this.db.transaction((tx) => {
@@ -168,10 +174,18 @@ export class SqliteClientRegistry {
 				sql`SELECT * FROM client_generations WHERE owner_subject = ${ownerSubject} ORDER BY client_id LIMIT ${OWNER_PAGE_SIZE} OFFSET ${offset}`,
 			);
 			const clients = page.map((client) => {
-				const grantCount =
-					tx.all<{ count: number }>(
-						sql`SELECT COUNT(*) AS count FROM client_grants WHERE client_id = ${client.client_id}`,
-					)[0]?.count ?? 0;
+				const grantCounts = tx.all<{
+					retained: number;
+					active: number | null;
+					cleanupPending: number | null;
+				}>(sql`SELECT
+					COUNT(*) AS retained,
+					SUM(CASE WHEN NOT EXISTS (
+						SELECT 1 FROM revoked_grants WHERE revoked_grants.grant_id = client_grants.grant_id
+					) THEN 1 ELSE 0 END) AS active,
+					SUM(cleanup_pending) AS cleanupPending
+				FROM client_grants WHERE client_id = ${client.client_id}`)[0];
+				const grantCount = grantCounts?.retained ?? 0;
 				return {
 					client_id: client.client_id,
 					name: client.name,
@@ -179,6 +193,8 @@ export class SqliteClientRegistry {
 					created_at: client.created_at,
 					last_seen_at: client.last_seen_at,
 					grant_count: grantCount,
+					active_grant_count: grantCounts?.active ?? 0,
+					cleanup_pending_count: grantCounts?.cleanupPending ?? 0,
 					grants: [],
 					grants_cursor: null,
 				};
@@ -191,7 +207,12 @@ export class SqliteClientRegistry {
 		});
 	}
 
-	/** Read one finite page of grant identifiers owned by the selected client. */
+	/**
+	 * Read durable state for one finite page of the selected client's grant history.
+	 *
+	 * Revocation comes from DO denial rows. Cleanup state records provider cleanup
+	 * progress and never removes the retained grant row.
+	 */
 	listClientGrants(
 		ownerSubject: string,
 		clientId: string,
@@ -212,12 +233,18 @@ export class SqliteClientRegistry {
 					sql`SELECT COUNT(*) AS count FROM client_grants WHERE client_id = ${clientId}`,
 				)[0]?.count ?? 0;
 			const grants = tx.all<GrantRow>(
-				sql`SELECT grant_id, created_at, cleanup_pending FROM client_grants WHERE client_id = ${clientId} ORDER BY grant_id LIMIT ${OWNER_PAGE_SIZE} OFFSET ${offset}`,
+				sql`SELECT client_grants.grant_id, client_grants.created_at, client_grants.cleanup_pending,
+					CASE WHEN EXISTS (
+						SELECT 1 FROM revoked_grants WHERE revoked_grants.grant_id = client_grants.grant_id
+					) THEN 1 ELSE 0 END AS revoked
+				FROM client_grants WHERE client_grants.client_id = ${clientId}
+				ORDER BY client_grants.grant_id LIMIT ${OWNER_PAGE_SIZE} OFFSET ${offset}`,
 			);
 			return ListClientGrantsResultSchema.parse({
 				grants: grants.map((grant) => ({
 					grant_id: grant.grant_id,
 					created_at: grant.created_at,
+					revoked: grant.revoked === 1,
 					cleanup_pending: grant.cleanup_pending === 1,
 				})),
 				next_cursor:

@@ -82,8 +82,20 @@ export function createOwnerHandler(
 		);
 		const clientMarkup = page.clients
 			.map((client) => {
+				const stateLabel =
+					client.grant_count === 0
+						? "No accepted grants"
+						: client.active_grant_count === 0
+							? "Revoked"
+							: client.active_grant_count < client.grant_count
+								? "Mixed active and revoked history"
+								: "Active registry grant";
+				const cleanupLabel =
+					client.cleanup_pending_count === 0
+						? "No provider cleanup pending"
+						: `${client.cleanup_pending_count} provider cleanup pending`;
 				const grantLink = `<a href="/owner/clients/${encodeURIComponent(client.client_id)}/grants">View grants (${client.grant_count})</a>`;
-				return `<li><h2>${escapeHtml(client.name || client.client_id)}</h2><p>Client: ${escapeHtml(client.client_id)}</p>${grantLink}<form method="post" action="/owner/clients/${encodeURIComponent(client.client_id)}/rename"><input type="hidden" name="csrf" value="${state}"><label>Name <input name="name" maxlength="80" value="${escapeHtml(client.name)}"></label><button>Rename</button></form><form method="post" action="/owner/clients/${encodeURIComponent(client.client_id)}/revoke"><input type="hidden" name="csrf" value="${state}"><button>Revoke</button></form></li>`;
+				return `<li><h2>${escapeHtml(client.name || client.client_id)}</h2><p>Client: ${escapeHtml(client.client_id)}</p><p>Registry state: ${stateLabel}</p><p>${cleanupLabel}</p><p>Grant counts show retained grant history. Active registry grants do not prove that provider tokens are current or unexpired.</p>${grantLink}<form method="post" action="/owner/clients/${encodeURIComponent(client.client_id)}/rename"><input type="hidden" name="csrf" value="${state}"><label>Name <input name="name" maxlength="80" value="${escapeHtml(client.name)}"></label><button>Rename</button></form><form method="post" action="/owner/clients/${encodeURIComponent(client.client_id)}/revoke"><input type="hidden" name="csrf" value="${state}"><button>Revoke</button></form></li>`;
 			})
 			.join("");
 		const next = page.next_cursor
@@ -112,10 +124,15 @@ export function createOwnerHandler(
 			context.req.query("cursor"),
 		);
 		const grants = page.grants
-			.map(
-				(grant) =>
-					`<li>${escapeHtml(grant.grant_id)}${grant.cleanup_pending ? " (provider cleanup pending)" : ""}</li>`,
-			)
+			.map((grant) => {
+				const grantState = grant.revoked ? "Revoked" : "Active registry grant";
+				const cleanupState = grant.cleanup_pending
+					? "provider cleanup pending"
+					: grant.revoked
+						? "provider cleanup complete"
+						: "provider cleanup not pending";
+				return `<li>${escapeHtml(grant.grant_id)} — ${grantState}, ${cleanupState}</li>`;
+			})
 			.join("");
 		const next = page.next_cursor
 			? `<a href="/owner/clients/${encodeURIComponent(context.req.param("clientId"))}/grants?cursor=${encodeURIComponent(page.next_cursor)}">Next page</a>`

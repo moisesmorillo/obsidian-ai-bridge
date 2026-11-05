@@ -71,7 +71,6 @@ export default class AIBridgePlugin extends Plugin {
 		serverUrl: DEFAULT_SERVER_URL,
 		deviceName: DEFAULT_DEVICE_NAME,
 		coexistenceMode: false,
-		syncPaused: false,
 	};
 	/** Safe enrollment status shown in settings. */
 	private sessionStatus: DeviceSessionStatus = "disconnected";
@@ -103,8 +102,6 @@ export default class AIBridgePlugin extends Plugin {
 				if (typeof stored.serverUrl === "string")
 					this.settingsValue.serverUrl = stored.serverUrl;
 				this.settingsValue.coexistenceMode = stored.coexistenceMode === true;
-				this.settingsValue.syncPaused = stored.syncPaused === true;
-				this.syncPaused = this.settingsValue.syncPaused;
 				if (
 					typeof stored.deviceName === "string" &&
 					stored.deviceName.trim().length > 0 &&
@@ -120,6 +117,7 @@ export default class AIBridgePlugin extends Plugin {
 				return;
 			}
 			this.journal = journal;
+			this.syncPaused = journal.snapshot().sync_paused;
 			this.coexistenceEffectFence = new CoexistenceEffectFence(
 				() =>
 					(this.journal?.snapshot().coexistence_confirmations.length ?? 0) > 0,
@@ -234,7 +232,6 @@ export default class AIBridgePlugin extends Plugin {
 						const controller = this.desktopSync;
 						this.syncPauseGeneration += 1;
 						this.syncPaused = true;
-						this.settingsValue.syncPaused = true;
 						controller?.pause();
 						this.settingsTab?.refreshStatus();
 						this.runSyncAction(async () => {
@@ -425,30 +422,22 @@ export default class AIBridgePlugin extends Plugin {
 		return nextSession;
 	}
 
-	/** Saves Pause state in order and ignores stale lifecycle or pause generations. */
+	/** Saves Pause state in the device journal while lifecycle and generation remain current. */
 	private persistSyncPaused(
 		paused: boolean,
 		generation: number,
 	): Promise<void> {
 		const lifecycle = this.lifecycleGeneration;
-		const save = this.settingsSaveTail.then(async () => {
-			if (
-				lifecycle !== this.lifecycleGeneration ||
-				generation !== this.syncPauseGeneration
-			)
-				return;
-			await this.saveData({ ...this.settingsValue, syncPaused: paused });
-			if (
+		const journal = this.journal;
+		if (!journal)
+			return Promise.reject(new Error("Device journal is unavailable"));
+		return journal.setSyncPaused(
+			paused,
+			() =>
 				lifecycle === this.lifecycleGeneration &&
-				generation === this.syncPauseGeneration
-			)
-				this.settingsValue.syncPaused = paused;
-		});
-		this.settingsSaveTail = save.then(
-			() => undefined,
-			() => undefined,
+				generation === this.syncPauseGeneration &&
+				journal === this.journal,
 		);
-		return save;
 	}
 
 	/** Saves the mode change and rejects exit while captured event work remains. */

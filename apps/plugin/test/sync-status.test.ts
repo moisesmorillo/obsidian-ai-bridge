@@ -16,6 +16,7 @@ const state: DeviceState = {
 	attention: [],
 	coexistence_confirmations: [],
 	unavailable_paths: [],
+	sync_paused: false,
 };
 
 describe("projectSyncStatus", () => {

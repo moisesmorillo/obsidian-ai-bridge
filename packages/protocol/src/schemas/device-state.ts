@@ -520,6 +520,7 @@ export const DeviceStateSchema = z
 			)
 			.default([]),
 		unavailable_paths: z.array(DevicePathSchema).default([]),
+		sync_paused: z.boolean().default(false),
 	})
 	.strict();
 

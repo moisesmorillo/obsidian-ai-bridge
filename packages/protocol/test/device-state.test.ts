@@ -25,6 +25,7 @@ describe("device journal protocol schemas", () => {
 			base: {},
 			expected_writes: {},
 			attention: [],
+			sync_paused: false,
 		});
 		expect(DeviceStateSchema.safeParse(oldState).success).toBe(true);
 		expect(

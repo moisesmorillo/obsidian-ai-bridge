@@ -695,6 +695,20 @@ export class DeviceJournal {
 		});
 	}
 
+	/** Saves device-local Pause state only while its lifecycle and generation remain current. */
+	async setSyncPaused(
+		paused: boolean,
+		isCurrent: () => boolean = () => true,
+	): Promise<void> {
+		return this.serialize(async () => {
+			this.assertOpen();
+			if (!isCurrent()) throw new Error("Pause update is stale");
+			await this.commit(
+				DeviceStateSchema.parse({ ...this.state, sync_paused: paused }),
+			);
+		});
+	}
+
 	/** Resolves sent work with its receipt-produced base. Rename receipts authorize only destination successors, never source successors. */
 	async resolve(
 		key: string,

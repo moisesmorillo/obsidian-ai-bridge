@@ -449,7 +449,7 @@ A setting the owner turns on while iCloud still syncs the same live vault and th
 
 - Local `delete` and `rename` events are **queued for owner confirmation** in the panel; never auto-published. iCloud eviction and placeholder churn therefore cannot publish destructive operations.
 - `*.icloud` placeholders are excluded; a path that flips to a placeholder is treated as "unavailable", not deleted.
-- Pause and exit: a saved *Pause* stops publishing and applying, keeps queues, and remains active after plugin restart until explicit *Resume*; *Exit coexistence* requires an empty confirmation queue and either disabling the plugin or turning the mode off for cutover.
+- Pause and exit: *Pause* stops publishing and applying but keeps queues; *Exit coexistence* requires an empty confirmation queue and either disabling the plugin or turning the mode off for cutover.
 - Residual risk disclosed in the panel: iCloud and the user still write the same files; a concurrent iCloud write during an apply is handled by the hash check for text and is best-effort for binaries.
 
 ## 8. MCP server

@@ -29,6 +29,7 @@ const host = vi.hoisted(() => ({
 	payloads: new Map<string, Uint8Array>(),
 	unavailablePaths: new Set<string>(),
 	failSave: false,
+	failLocalSave: false,
 	loadState: null as (() => unknown) | null,
 	vaultListeners: [] as Array<{
 		event: string;
@@ -107,6 +108,7 @@ vi.mock("obsidian", () => ({
 			},
 			saveLocalStorage: (_key: string, value: unknown) => {
 				host.calls.push("saveLocalStorage");
+				if (host.failLocalSave) throw new Error("local storage write failed");
 				if (!host.failSave) host.state = structuredClone(value);
 			},
 		};
@@ -276,6 +278,7 @@ describe("AIBridgePlugin device-local lifecycle", () => {
 		host.payloads.clear();
 		host.unavailablePaths.clear();
 		host.failSave = false;
+		host.failLocalSave = false;
 		host.loadState = null;
 		host.vaultListeners.splice(0);
 		host.compositionNames.splice(0);
@@ -329,10 +332,13 @@ describe("AIBridgePlugin device-local lifecycle", () => {
 			vi.unstubAllGlobals();
 		}
 	});
-	it("restores a saved Pause before connected startup and waits for Resume", async () => {
+	it("restores device-local Pause before startup and saves Resume locally", async () => {
 		host.settingsData = { coexistenceMode: true, syncPaused: true };
-		host.saveDataAction = async (data) => {
-			host.settingsData = structuredClone(data);
+		host.state = {
+			version: 1,
+			device_id: "018f47b2-5c00-7000-8000-000000000001",
+			pending_ops: [],
+			sync_paused: true,
 		};
 		const plugin = await startConnectedPlugin();
 		try {
@@ -343,17 +349,90 @@ describe("AIBridgePlugin device-local lifecycle", () => {
 			host.syncActions?.resume();
 			await settleSyncEffects(plugin);
 			expect(Reflect.get(plugin, "syncPaused")).toBe(false);
-			expect(host.settingsData).toMatchObject({ syncPaused: false });
+			expect(host.state).toMatchObject({ sync_paused: false });
+			expect(host.settingsData).toEqual({
+				coexistenceMode: true,
+				syncPaused: true,
+			});
 			expect(host.syncCycles).toBeGreaterThan(0);
 			host.syncActions?.pause();
 			await settleSyncEffects(plugin);
 			expect(Reflect.get(plugin, "syncPaused")).toBe(true);
-			expect(host.settingsData).toMatchObject({ syncPaused: true });
+			expect(host.state).toMatchObject({ sync_paused: true });
 		} finally {
 			plugin.onunload();
 			vi.useRealTimers();
 			vi.unstubAllGlobals();
 		}
+	});
+
+	it("ignores shared Pause settings when no local Pause record exists", async () => {
+		host.settingsData = { coexistenceMode: true, syncPaused: true };
+		const plugin = await startConnectedPlugin();
+		try {
+			await settleSyncEffects(plugin);
+			expect(Reflect.get(plugin, "syncPaused")).toBe(false);
+			expect(host.syncCycles).toBeGreaterThan(0);
+		} finally {
+			plugin.onunload();
+			vi.useRealTimers();
+			vi.unstubAllGlobals();
+		}
+	});
+
+	it("keeps Pause active and reports attention when its local save fails", async () => {
+		const plugin = await startConnectedPlugin();
+		try {
+			host.failLocalSave = true;
+			host.syncActions?.pause();
+			await settleSyncEffects(plugin);
+			expect(Reflect.get(plugin, "syncPaused")).toBe(true);
+			expect(
+				(Reflect.get(plugin, "journal") as DeviceJournal).attentionReason,
+			).toBeTruthy();
+			expect(Reflect.get(plugin, "settingsValue")).not.toHaveProperty(
+				"syncPaused",
+			);
+		} finally {
+			plugin.onunload();
+			vi.useRealTimers();
+			vi.unstubAllGlobals();
+		}
+	});
+
+	it("keeps Resume blocked when its local save fails", async () => {
+		host.state = {
+			version: 1,
+			device_id: "018f47b2-5c00-7000-8000-000000000001",
+			pending_ops: [],
+			sync_paused: true,
+		};
+		const plugin = await startConnectedPlugin();
+		try {
+			host.failLocalSave = true;
+			host.syncActions?.resume();
+			await settleSyncEffects(plugin);
+			expect(Reflect.get(plugin, "syncPaused")).toBe(true);
+			expect(host.syncCycles).toBe(0);
+			expect(
+				(Reflect.get(plugin, "journal") as DeviceJournal).attentionReason,
+			).toBeTruthy();
+		} finally {
+			plugin.onunload();
+			vi.useRealTimers();
+			vi.unstubAllGlobals();
+		}
+	});
+
+	it("does not persist a stale Pause after plugin unload", async () => {
+		const plugin = await startConnectedPlugin();
+		const journal = Reflect.get(plugin, "journal") as DeviceJournal;
+		host.syncActions?.pause();
+		plugin.onunload();
+		await Promise.resolve();
+		await Promise.resolve();
+		expect(journal.snapshot().sync_paused).toBe(false);
+		expect(host.state).toMatchObject({ sync_paused: false });
 	});
 
 	it("keeps historical work unchanged when capture fences plugin reload", async () => {
@@ -1017,14 +1096,12 @@ describe("AIBridgePlugin device-local lifecycle", () => {
 				serverUrl: "https://obsidian-bridge.mmorillo.dev",
 				deviceName: "oab-8.8 dev-1",
 				coexistenceMode: false,
-				syncPaused: false,
 			},
 		]);
 		expect(Reflect.get(plugin, "settingsValue")).toEqual({
 			serverUrl: "https://obsidian-bridge.mmorillo.dev",
 			deviceName: "oab-8.8 dev-1",
 			coexistenceMode: false,
-			syncPaused: false,
 		});
 		plugin.onunload();
 	});
@@ -1034,7 +1111,7 @@ describe("AIBridgePlugin device-local lifecycle", () => {
 			serverUrl: "https://saved-service.test",
 			deviceName: "oab-8.8 dev-2",
 			coexistenceMode: false,
-			syncPaused: false,
+			syncPaused: true,
 		};
 		const plugin = new AIBridgePlugin({} as App, {} as PluginManifest);
 		await plugin.onload();
@@ -1042,8 +1119,8 @@ describe("AIBridgePlugin device-local lifecycle", () => {
 			serverUrl: "https://saved-service.test",
 			deviceName: "oab-8.8 dev-2",
 			coexistenceMode: false,
-			syncPaused: false,
 		});
+		expect(Reflect.get(plugin, "syncPaused")).toBe(false);
 		plugin.onunload();
 	});
 

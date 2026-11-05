@@ -329,6 +329,31 @@ describe("desktop acceptance safety", () => {
 		});
 	});
 
+	it.each(
+		[
+			createAc19CaseScripts("dev-2", vaults["dev-2"], "/Users/test"),
+			createAc19CaptureReloadScripts(vaults["dev-1"], "/Users/test"),
+		]
+			.flatMap((scripts) => Object.values(scripts))
+			.flatMap((script) =>
+				[...script.matchAll(/throw new Error\("(AC19_[A-Z0-9_]+)"\)/g)].map(
+					(match) => match[1],
+				),
+			)
+			.filter((label, index, labels) => labels.indexOf(label) === index),
+	)("accepts generated AC-19 failure label %s", (label) => {
+		const output = `OAB8CASE:${JSON.stringify({
+			caseId: "AC-19",
+			status: "failed",
+			failureStage: "action",
+			failureReason: label,
+			cleanupStatus: "passed",
+		})}`;
+		expect(parseSafeCaseResult(output, "AC-19", "service").failureReason).toBe(
+			label,
+		);
+	});
+
 	it("projects AC-19 baseline counts with nonzero historical attention", () => {
 		const scripts = createAc19CaseScripts(
 			"dev-2",

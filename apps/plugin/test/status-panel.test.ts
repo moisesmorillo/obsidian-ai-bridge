@@ -294,6 +294,37 @@ describe("SyncStatusPanel", () => {
 		expect(rendered).not.toContain("Service measurements");
 	});
 
+	it("shows a network class without any host failure detail", () => {
+		vi.stubGlobal("document", documentStub);
+		const container = new FakeElement("div");
+		const panel = new SyncStatusPanel({
+			syncNow: () => undefined,
+			pause: () => undefined,
+			resume: () => undefined,
+			reconnect: () => undefined,
+			openPath: () => undefined,
+			unsupportedFiles: () => [],
+			excludedFiles: () => [],
+			confirmCoexistence: () => undefined,
+			keepServerState: () => undefined,
+		});
+		panel.render(container as unknown as HTMLElement, {
+			...makeStatus(),
+			failure: {
+				transportClass: "network",
+				code: null,
+				retryAfterSeconds: null,
+			},
+		});
+
+		const rendered = container.children
+			.map((child) => child.textContent)
+			.join(" ");
+		expect(rendered).toContain("network");
+		expect(rendered).not.toContain("private.test");
+		expect(rendered).not.toContain("secret");
+	});
+
 	it("does not render a Rebuild action", () => {
 		vi.stubGlobal("document", documentStub);
 		const container = new FakeElement("div");

@@ -91,12 +91,9 @@ describe("SyncTransport", () => {
 
 		const error = await transport.vault().catch((caught: unknown) => caught);
 
-		expect(error).toMatchObject({
-			name: "SyncNetworkError",
-			message: "Sync request failed",
-		});
-		expect(JSON.stringify(error)).not.toContain("private.test");
-		expect(JSON.stringify(error)).not.toContain("secret");
+		expect(error).toBeInstanceOf(Error);
+		expect(error).not.toMatchObject({ name: "SyncNetworkError" });
+		expect((error as Error).message).toBe(privateValue);
 	});
 
 	it("classifies a rejected delete response without retaining raw response data", async () => {

@@ -192,11 +192,13 @@ import type { App, PluginManifest } from "obsidian";
 import {
 	DeviceSession,
 	type DeviceSessionHost,
+	DeviceSessionNetworkError,
 } from "../src/auth/device-session";
 import { VaultEventAdapter } from "../src/infrastructure/vault-events";
 import AIBridgePlugin from "../src/main";
 import { DesktopSyncController } from "../src/sync/desktop-sync";
 import { DeviceJournal } from "../src/sync/device-journal";
+import { SyncTransportError } from "../src/sync/remote-text";
 
 /** Starts a plugin with real controller and vault-event owners. */
 async function startConnectedPlugin(
@@ -291,6 +293,85 @@ describe("AIBridgePlugin device-local lifecycle", () => {
 		host.syncCycles = 0;
 		host.cycleFailure = null;
 		host.cycleGate = null;
+	});
+
+	it.each(["resume", "device-name"] as const)(
+		"preserves 429 diagnostics after %s catches settle",
+		async (recoveryPath) => {
+			const plugin = await startConnectedPlugin();
+			try {
+				/** Reads safe failure fields after plugin and controller catches settle. */
+				const status = () =>
+					Reflect.apply(
+						Reflect.get(plugin, "syncStatus") as () => unknown,
+						plugin,
+						[],
+					) as {
+						failure: {
+							transportClass: string;
+							code: string | null;
+							retryAfterSeconds: string | null;
+						} | null;
+					};
+				const updateName = host.deviceNameChange;
+				const failure = new SyncTransportError(
+					429,
+					"admission_limited",
+					null,
+					"30",
+				);
+				host.cycleFailure = failure;
+				if (recoveryPath === "resume") {
+					host.syncActions?.pause();
+					await settleSyncEffects(plugin);
+					host.syncActions?.resume();
+					await settleSyncEffects(plugin);
+				} else {
+					if (!updateName) throw new Error("Device name callback is missing");
+					await updateName("diagnostic test device");
+					await settleSyncEffects(plugin);
+				}
+
+				expect(status().failure).toEqual({
+					transportClass: "4xx",
+					code: "admission_limited",
+					retryAfterSeconds: "30",
+				});
+			} finally {
+				plugin.onunload();
+				vi.useRealTimers();
+				vi.unstubAllGlobals();
+			}
+		},
+	);
+
+	it("shows a safe host-network failure through the real controller", async () => {
+		const plugin = await startConnectedPlugin();
+		try {
+			const controller = Reflect.get(
+				plugin,
+				"desktopSync",
+			) as DesktopSyncController;
+			host.cycleFailure = new DeviceSessionNetworkError();
+			await controller.syncNow().catch(() => undefined);
+			await controller.waitForIdle();
+			const status = Reflect.apply(
+				Reflect.get(plugin, "syncStatus") as () => unknown,
+				plugin,
+				[],
+			) as { failure: { transportClass: string; code: string | null } | null };
+
+			expect(status.failure).toEqual({
+				transportClass: "network",
+				code: null,
+				retryAfterSeconds: null,
+			});
+			expect(JSON.stringify(status)).not.toContain("private");
+		} finally {
+			plugin.onunload();
+			vi.useRealTimers();
+			vi.unstubAllGlobals();
+		}
 	});
 
 	it("classifies application failures as other and retains session times after recovery", async () => {

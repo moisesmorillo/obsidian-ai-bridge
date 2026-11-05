@@ -23,15 +23,6 @@ import {
 
 export { SyncTransportError } from "@plugin/sync/remote-text";
 
-/** Marks a rejected request at the authenticated transport boundary without its cause. */
-export class SyncNetworkError extends Error {
-	/** Creates a fixed message so host causes cannot cross the plugin boundary. */
-	constructor() {
-		super("Sync request failed");
-		this.name = "SyncNetworkError";
-	}
-}
-
 /** Authenticated response capability consumed without exposing the session credential. */
 export interface SyncResponseSession {
 	/** Sends same-origin requests with session-owned authorization. */
@@ -695,15 +686,10 @@ export class SyncTransport {
 			headers?: Record<string, string>;
 		} = {},
 	): Promise<OAuthTransportResponse> {
-		let response: OAuthTransportResponse;
-		try {
-			response = await this.session.requestResponse(
-				`${this.origin}${path}`,
-				options,
-			);
-		} catch {
-			throw new SyncNetworkError();
-		}
+		const response = await this.session.requestResponse(
+			`${this.origin}${path}`,
+			options,
+		);
 		if (response.status < 200 || response.status >= 300) {
 			let code: CanonicalSyncErrorKind | null = null;
 			let existingPath: string | null = null;

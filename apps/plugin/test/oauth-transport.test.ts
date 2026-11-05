@@ -51,6 +51,35 @@ describe("ObsidianOAuthTransport", () => {
 		});
 	});
 
+	it("marks rejected host requests with bounded network provenance", async () => {
+		const privateDetail = "https://private.test/path?token=secret";
+		requestUrlMock.mockRejectedValueOnce(new Error(privateDetail));
+		const transport = new ObsidianOAuthTransport();
+		const requestResponse = Reflect.get(transport, "requestResponse") as (
+			url: string,
+		) => Promise<unknown>;
+
+		const error = await requestResponse
+			.call(transport, "https://service.test/v1/vault")
+			.catch((caught: unknown) => caught);
+
+		expect(error).toMatchObject({
+			name: "DeviceSessionNetworkError",
+			message: "Network request failed",
+		});
+		expect(String((error as Error).message)).not.toContain("private.test");
+		expect(String((error as Error).message)).not.toContain("secret");
+
+		requestUrlMock.mockRejectedValueOnce(new Error(privateDetail));
+		const tokenError = await transport
+			.request("https://service.test/oauth/token")
+			.catch((caught: unknown) => caught);
+		expect(tokenError).toMatchObject({
+			name: "DeviceSessionNetworkError",
+			message: "Network request failed",
+		});
+	});
+
 	it("hides host errors and non-success response bodies", async () => {
 		const transport = new ObsidianOAuthTransport();
 		requestUrlMock.mockResolvedValue({ status: 400, text: "provider secret" });
@@ -60,6 +89,6 @@ describe("ObsidianOAuthTransport", () => {
 		requestUrlMock.mockRejectedValueOnce("host secret");
 		await expect(
 			transport.request("https://service.test/oauth/token"),
-		).rejects.toThrow("OAuth request failed");
+		).rejects.toThrow("Network request failed");
 	});
 });

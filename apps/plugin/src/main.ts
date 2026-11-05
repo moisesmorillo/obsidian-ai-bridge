@@ -1,15 +1,13 @@
 import type { VaultReadResult } from "@obsidian-ai-bridge/protocol";
 import {
 	DeviceSession,
+	DeviceSessionNetworkError,
 	type DeviceSessionStatus,
 } from "@plugin/auth/device-session";
 import { ObsidianCredentialStorage } from "@plugin/infrastructure/credential-storage";
 import { ObsidianDeviceStorage } from "@plugin/infrastructure/device-storage";
 import { ObsidianOAuthTransport } from "@plugin/infrastructure/oauth-transport";
-import {
-	SyncNetworkError,
-	SyncTransportError,
-} from "@plugin/infrastructure/sync-transport";
+import { SyncTransportError } from "@plugin/infrastructure/sync-transport";
 import { ObsidianTextVault } from "@plugin/infrastructure/text-vault";
 import { VaultEventAdapter } from "@plugin/infrastructure/vault-events";
 import { Notice, Plugin } from "@plugin/obsidian-api";
@@ -422,8 +420,8 @@ export default class AIBridgePlugin extends Plugin {
 			return;
 		try {
 			await controller.resume();
-		} catch {
-			this.reportSyncFailure();
+		} catch (error) {
+			this.reportSyncFailure(error);
 		}
 	}
 
@@ -657,8 +655,8 @@ export default class AIBridgePlugin extends Plugin {
 			this.syncPaused = false;
 			try {
 				await controller.resume();
-			} catch {
-				this.reportSyncFailure();
+			} catch (error) {
+				this.reportSyncFailure(error);
 			}
 			this.settingsTab?.refreshStatus();
 		});
@@ -734,7 +732,7 @@ export default class AIBridgePlugin extends Plugin {
 					: "other";
 			code = error.code;
 			retryAfterSeconds = error.retryAfter;
-		} else if (error instanceof SyncNetworkError) {
+		} else if (error instanceof DeviceSessionNetworkError) {
 			transportClass = "network";
 		}
 		this.syncFailure = { transportClass, code, retryAfterSeconds };

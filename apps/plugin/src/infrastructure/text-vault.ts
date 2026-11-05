@@ -49,8 +49,11 @@ export class ObsidianTextVault implements TextVault {
 		await this.ensureParent(path);
 		const copy = bytes.slice();
 		try {
-			await withPluginVaultMutation(this.vault, { type: "create", path }, () =>
-				this.vault.createBinary(path, copy.buffer as ArrayBuffer),
+			await withPluginVaultMutation(
+				this.vault,
+				{ type: "create", path },
+				() => this.vault.createBinary(path, copy.buffer as ArrayBuffer),
+				{ kind: "binary", value: bytes },
 			);
 		} catch {
 			return false;
@@ -82,8 +85,11 @@ export class ObsidianTextVault implements TextVault {
 		const file = this.fileAt(path);
 		if (!file) return false;
 		const copy = bytes.slice();
-		await withPluginVaultMutation(this.vault, { type: "modify", path }, () =>
-			this.vault.modifyBinary(file, copy.buffer as ArrayBuffer),
+		await withPluginVaultMutation(
+			this.vault,
+			{ type: "modify", path },
+			() => this.vault.modifyBinary(file, copy.buffer as ArrayBuffer),
+			{ kind: "binary", value: bytes },
 		);
 		const written = await this.readBinary(path);
 		return written !== null && equalBytes(written, bytes);
@@ -124,12 +130,16 @@ export class ObsidianTextVault implements TextVault {
 		const file = this.fileAt(path);
 		if (!file || expected === null) return false;
 		let applied = false;
-		await withPluginVaultMutation(this.vault, { type: "modify", path }, () =>
-			this.vault.process(file, (current) => {
-				if (current !== expected) return current;
-				applied = true;
-				return next;
-			}),
+		await withPluginVaultMutation(
+			this.vault,
+			{ type: "modify", path },
+			() =>
+				this.vault.process(file, (current) => {
+					if (current !== expected) return current;
+					applied = true;
+					return next;
+				}),
+			{ kind: "text", value: next },
 		);
 		return applied;
 	}
@@ -139,8 +149,11 @@ export class ObsidianTextVault implements TextVault {
 		if (this.fileAt(path) || this.hasPathKeyCollision(path)) return false;
 		await this.ensureParent(path);
 		try {
-			await withPluginVaultMutation(this.vault, { type: "create", path }, () =>
-				this.vault.create(path, text),
+			await withPluginVaultMutation(
+				this.vault,
+				{ type: "create", path },
+				() => this.vault.create(path, text),
+				{ kind: "text", value: text },
 			);
 		} catch {
 			return false;

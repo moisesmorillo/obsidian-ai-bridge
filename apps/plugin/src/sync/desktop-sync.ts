@@ -10,6 +10,9 @@ function isTerminallyExcluded(event: PublicationEvent): boolean {
 	);
 }
 
+/** Resolves true only when exact event-time bytes match one plugin mutation target. */
+export type PluginOriginProof = Promise<boolean>;
+
 /** Host-owned timer functions used to test scheduling without platform globals. */
 export interface DesktopSyncHost {
 	/** Schedules one-shot work in milliseconds and returns its host handle. */
@@ -114,7 +117,10 @@ export class DesktopSyncController {
 	 * Plugin origin affects only the foreground activity clock. It never changes
 	 * capture, queue admission, debounce, or publication behavior.
 	 */
-	async observe(event: PublicationEvent, origin?: "plugin"): Promise<void> {
+	async observe(
+		event: PublicationEvent,
+		originProof?: PluginOriginProof,
+	): Promise<void> {
 		if (this.closed) return;
 		this.workActive = true;
 		this.options.onStateChanged?.();
@@ -131,7 +137,15 @@ export class DesktopSyncController {
 			this.options.onStateChanged?.();
 		}
 		if (captured || this.closed || isTerminallyExcluded(event)) return;
-		if (origin !== "plugin") this.activeSince = Date.now();
+		let pluginOrigin = false;
+		if (originProof) {
+			try {
+				pluginOrigin = await originProof;
+			} catch {
+				pluginOrigin = false;
+			}
+		}
+		if (!pluginOrigin) this.activeSince = Date.now();
 		if (this.paused) {
 			this.events.push(event);
 			this.options.onStateChanged?.();

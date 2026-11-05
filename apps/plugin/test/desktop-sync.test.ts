@@ -325,12 +325,18 @@ describe("DesktopSyncController", () => {
 		});
 
 		await controller.start();
-		await controller.observe({ type: "modify", path: "plugin.md" }, "plugin");
+		await controller.observe(
+			{ type: "modify", path: "plugin.md" },
+			Promise.resolve(true),
+		);
 		expect(intervalDelays.at(-1)).toBe(60_000);
 		await controller.observe({ type: "modify", path: "user.md" });
 		expect(intervalDelays.at(-1)).toBe(15_000);
 		clock.mockReturnValue(301_001);
-		await controller.observe({ type: "modify", path: "plugin.md" }, "plugin");
+		await controller.observe(
+			{ type: "modify", path: "plugin.md" },
+			Promise.resolve(true),
+		);
 		expect(intervalDelays.at(-1)).toBe(60_000);
 		intervalCallbacks.at(-1)?.();
 		expect(intervalDelays.at(-1)).toBe(60_000);

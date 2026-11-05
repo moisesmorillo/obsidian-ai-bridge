@@ -5,16 +5,30 @@ import { type EventRef, TFile, type Vault } from "obsidian";
 import { describe, expect, it, vi } from "vitest";
 import { ObsidianTextVault } from "../src/infrastructure/text-vault";
 import { VaultEventAdapter } from "../src/infrastructure/vault-events";
+import { DesktopSyncController } from "../src/sync/desktop-sync";
 
 /** Provides the exact host methods used by the adapter without a live vault. */
 function makeHostVault() {
 	const file = Object.assign(new TFile(), { path: "notes/a.md" });
 	const contents = new Map([[file.path, "old"]]);
+	const binaryContents = new Map<string, Uint8Array>();
 	const handlers = new Map<string, Set<(...args: unknown[]) => void>>();
 	/** Delivers one host event to every registered test listener. */
 	const emit = (event: string, ...args: unknown[]) => {
 		for (const callback of handlers.get(event) ?? []) callback(...args);
 	};
+	const readBinary = vi.fn(async (target: TFile) => {
+		const bytes =
+			binaryContents.get(target.path) ??
+			new TextEncoder().encode(contents.get(target.path) ?? "");
+		return bytes.slice().buffer as ArrayBuffer;
+	});
+	const modifyBinary = vi.fn(async (target: TFile, bytes: ArrayBuffer) => {
+		const copy = new Uint8Array(bytes.slice(0));
+		binaryContents.set(target.path, copy);
+		contents.set(target.path, new TextDecoder().decode(copy));
+		emit("modify", target);
+	});
 	const process = vi.fn(
 		async (_file: TFile, callback: (text: string) => string) => {
 			const current = contents.get(file.path) ?? "";
@@ -52,6 +66,8 @@ function makeHostVault() {
 		getAbstractFileByPath: (path: string) =>
 			files.find((candidate) => candidate.path === path) ?? null,
 		read: async (target: TFile) => contents.get(target.path) ?? "",
+		readBinary,
+		modifyBinary,
 		/** Stores one listener and returns the host reference used for disposal. */
 		on: (event: string, callback: (...args: unknown[]) => void) => {
 			const listeners = handlers.get(event) ?? new Set();
@@ -75,8 +91,11 @@ function makeHostVault() {
 	return {
 		host,
 		contents,
+		binaryContents,
 		create,
 		process,
+		readBinary,
+		modifyBinary,
 		trash,
 		rename,
 		file,
@@ -170,14 +189,121 @@ async function recoveryHash(bytes: Uint8Array): Promise<string> {
 }
 
 describe("ObsidianTextVault", () => {
+	it("keeps same-path user bytes local when a user event arrives before plugin output", async () => {
+		const fake = makeHostVault();
+		const time = vi.spyOn(Date, "now").mockReturnValue(301_001);
+		const intervals: number[] = [];
+		const timeouts: Array<() => void> = [];
+		const admitted: string[] = [];
+		const lifecycle = new DesktopSyncController({
+			cycle: async () => undefined,
+			onEvent: async (event) => {
+				admitted.push(event.path);
+			},
+			host: {
+				setTimeout: (callback) => {
+					timeouts.push(callback);
+					return timeouts.length;
+				},
+				clearTimeout: () => undefined,
+				setInterval: (_callback, delay) => {
+					intervals.push(delay);
+					return intervals.length;
+				},
+				clearInterval: () => undefined,
+			},
+		});
+		const errors: unknown[] = [];
+		const adapter = new VaultEventAdapter(
+			fake.host as unknown as Vault,
+			lifecycle,
+			(error) => errors.push(error),
+		);
+		const textVault = new ObsidianTextVault(fake.host as unknown as Vault);
+		/** Signals that the fake host emitted the concurrent user event. */
+		let startMutation: () => void = () => undefined;
+		const mutationStarted = new Promise<void>((resolve) => {
+			startMutation = resolve;
+		});
+		/** Lets the fake plugin effect write its target bytes after the user event. */
+		let releaseMutation: () => void = () => undefined;
+		const holdMutation = new Promise<void>((resolve) => {
+			releaseMutation = resolve;
+		});
+		const pluginBytes = new TextEncoder().encode("plugin target bytes");
+		const userBytes = new TextEncoder().encode("different user bytes");
+		fake.modifyBinary.mockImplementation(async (target, bytes) => {
+			fake.binaryContents.set(target.path, userBytes);
+			fake.contents.set(target.path, new TextDecoder().decode(userBytes));
+			fake.emit("modify", target);
+			startMutation();
+			await holdMutation;
+			const copy = new Uint8Array(bytes.slice(0));
+			fake.binaryContents.set(target.path, copy);
+			fake.contents.set(target.path, new TextDecoder().decode(copy));
+			fake.emit("modify", target);
+		});
+
+		const mutation = textVault.modifyBinary(fake.file.path, pluginBytes);
+		await mutationStarted;
+		await Promise.resolve();
+		expect(intervals.at(-1)).toBe(15_000);
+		timeouts[0]?.();
+		await lifecycle.waitForIdle();
+		expect(admitted).toEqual([fake.file.path]);
+
+		time.mockReturnValue(602_002);
+		releaseMutation();
+		expect(await mutation).toBe(true);
+		await Promise.resolve();
+		expect(intervals.at(-1)).toBe(60_000);
+		timeouts.at(-1)?.();
+		await lifecycle.waitForIdle();
+		expect(admitted).toEqual([fake.file.path, fake.file.path]);
+		expect(errors).toEqual([]);
+
+		time.mockReturnValue(903_003);
+		const pluginFirstBytes = new TextEncoder().encode("second plugin target");
+		const laterUserBytes = new TextEncoder().encode("later user content");
+		fake.modifyBinary.mockImplementation(async (target) => {
+			fake.binaryContents.set(target.path, pluginFirstBytes);
+			fake.contents.set(
+				target.path,
+				new TextDecoder().decode(pluginFirstBytes),
+			);
+			fake.emit("modify", target);
+			fake.binaryContents.set(target.path, laterUserBytes);
+			fake.contents.set(target.path, new TextDecoder().decode(laterUserBytes));
+			fake.emit("modify", target);
+		});
+		expect(await textVault.modifyBinary(fake.file.path, pluginFirstBytes)).toBe(
+			false,
+		);
+		await Promise.resolve();
+		await Promise.resolve();
+		expect(intervals.at(-1)).toBe(15_000);
+		timeouts.at(-1)?.();
+		await lifecycle.waitForIdle();
+		expect(admitted).toEqual([
+			fake.file.path,
+			fake.file.path,
+			fake.file.path,
+			fake.file.path,
+		]);
+
+		adapter.dispose();
+		lifecycle.close();
+		time.mockRestore();
+	});
+
 	it("labels visible text mutations at the shared vault event boundary", async () => {
 		const fake = makeHostVault();
-		const origins: Array<string | undefined> = [];
+		const origins: boolean[] = [];
 		const adapter = new VaultEventAdapter(
 			fake.host as unknown as Vault,
 			{
-				observe: async (_event, origin) => {
-					origins.push(origin);
+				observe: async (_event, originProof) => {
+					origins.push((await originProof) ?? false);
 				},
 			},
 			() => undefined,
@@ -189,7 +315,7 @@ describe("ObsidianTextVault", () => {
 		fake.emit("create", Object.assign(new TFile(), { path: "notes/a.md" }));
 		await Promise.resolve();
 
-		expect(origins).toEqual(["plugin", undefined]);
+		expect(origins).toEqual([true, false]);
 		adapter.dispose();
 	});
 

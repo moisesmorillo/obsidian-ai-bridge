@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-11-05T20:19:00Z'
-updated_date: '2026-11-05T21:13:00Z'
+updated_date: '2026-11-05T21:49:00Z'
 labels: []
 dependencies: []
 parent_task_id: OAB-10
@@ -46,4 +46,12 @@ GREEN evidence: focused read response, aggregate runtime budgets, content reads,
 Final validation: `bun run docs:check` passed. Final `bun run check` passed: Biome lint, docs check, protocol/plugin/worker type checks, 691 Worker Vitest tests in the main run, 122 worker integration tests, 115 F2 tests, and all three builds. The additional final read-response run passed 15 tests, including generic and fixed-length settlement timeout failure. `bun run check` emits expected worker-disconnect and injected SQLite rollback diagnostics from existing fixtures. OAB-36 remains deferred because runtime network disconnect is not proven to produce AbortSignal. Evidence covers Workers runtime tests and dry-run build only, not production causality.
 
 Task review of e4867f0..ceaa89a requested changes. The response ignored resolved ok:false settlement results and one release comment described the old lifetime. Correction 6846a7c adds result validation, generic and fixed response failures, and zero-byte settlement gating. New tests failed before correction. Scoped review of ceaa89a..6846a7c approved both closures. Source-work lifetime, fixed framing, cancellation, safe diagnostics, and TSDoc received semantic review. Final worker checks passed: docs:check and bun run check, including 696 main Worker tests, 122 integration tests, and 115 F2 tests. No production reproduction or network-disconnect AbortSignal proof exists. OAB-36 remains deferred. Branch review and owner diff gate remain pending.
+
+BR-1 and BR-2 corrections are implemented in apps/worker. RED tests failed on unresolved preparation settlement and fifth-slot acquisition. GREEN: focused Worker tests passed 70 tests and F2 MCP read tests passed 17 tests. Final bun run check passed: lint, docs, type checks, test suites (91 tooling, 307 protocol, 602 plugin with 1 skipped, 701 Worker, 122 integration, 115 F2), and builds. bun run docs:check, worker typecheck, and git diff --check passed. Round 2 evidence is in .superpowers/sdd/W1-plan/task-1-report.md. Parent review and task closure remain pending. Production causality and network-disconnect AbortSignal behavior remain unproven.
+
+Scoped review correction OAB-10.4-R1 is closed. RED: search-response test expected HTTP 400 invalid_request after abort during completed search preparation but got HTTP 500. GREEN: test/search-response.test.ts and test/application-search.test.ts passed 10 tests. F2 MCP read tests passed 17 tests. docs:check and final bun run check passed, including 702 Worker tests. The application outcome now preserves invalid_request with deferred bounded settlement. This restores the prior MCP search classification. Search router TSDoc now describes active source-work lifetime. Commit pending. Production causality and AbortSignal limits remain unchanged.
+
+OAB-10.4-R1 correction committed as ef0cf50 (fix(worker): preserve search abort classification). The working tree has no staged files. The task record remains unstaged.
+
+Complete branch review at 6796a3e found BR-1 preparation paths still held slots through unbounded cleanup and BR-2 omitted the zero-byte framing exception. Commit 02fdd3e corrects both. Scoped corrective review closed both with source-lifetime and shared deadline evidence. That review found R1 search-abort classification drift. Commit ef0cf50 restores invalid_request. Final scoped review approved R1 at ef0cf50. All actionable findings now have evidence-based closure. Final checks passed: docs:check and bun run check, including 702 Worker, 122 integration, and 115 F2 tests. Owner branch diff review remains pending.
 <!-- SECTION:NOTES:END -->

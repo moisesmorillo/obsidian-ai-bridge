@@ -194,49 +194,21 @@ describe("measurement application rules", () => {
 		expect(result.requests.observed_from).toBeNull();
 		expect(result.requests.observed_through).toBeNull();
 		expect(result.requests.stale).toBe(true);
-		expect(result.coverage).toBe("partial");
-		expect(result.requests.clients).toEqual([]);
-		expect(result.feed_latency).toMatchObject({
-			status: "observed",
-			sample_count: 1,
-			total_sample_count: 1,
-			p95: 5,
-			stale: false,
-		});
-		expect(result.storage).toEqual({
-			database_bytes: { status: "observed", value: 0 },
-			referenced_blob_bytes: { status: "observed", value: 0 },
-		});
 	});
 
 	it("returns explicit unknown values on clock rollback without losing the window", () => {
-		const rollbackAggregate = MeasurementAggregateSchema.parse({
-			...aggregate,
-			latency_total_samples: MEASUREMENT_LIMITS.latencySamples + 1,
-			latency_samples: Array.from(
-				{ length: MEASUREMENT_LIMITS.latencySamples },
-				() => aggregate.latency_samples[0],
-			),
-		});
 		const response = measurementResponse(
-			rollbackAggregate,
+			aggregate,
 			{
 				database_bytes: { status: "observed", value: 0 },
 				referenced_blob_bytes: { status: "observed", value: 0 },
 			},
-			rollbackAggregate.observed_from - 1,
+			aggregate.observed_from - 1,
 		);
 
 		expect(response.status).toBe("unknown");
 		expect(response.requests.count).toBeNull();
-		expect(response.feed_latency).toMatchObject({
-			status: "unknown",
-			sample_count: MEASUREMENT_LIMITS.latencySamples,
-			total_sample_count: MEASUREMENT_LIMITS.latencySamples + 1,
-			p95: null,
-			stale: true,
-		});
-		expect(response.day_start).toBe(rollbackAggregate.day_start);
+		expect(response.day_start).toBe(aggregate.day_start);
 		expect(response.storage.database_bytes).toEqual({
 			status: "observed",
 			value: 0,

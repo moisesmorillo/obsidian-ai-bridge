@@ -1,11 +1,11 @@
 ---
 id: OAB-11.2
 title: Publish plugin releases for BRAT
-status: In Progress
+status: Done
 assignee:
   - '@pi'
 created_date: '2026-11-05T23:19:00Z'
-updated_date: '2026-11-05T23:50:00Z'
+updated_date: '2026-11-06T02:37:00Z'
 labels: []
 dependencies: []
 parent_task_id: OAB-11
@@ -20,11 +20,11 @@ F5 preparation needs release assets for BRAT on copied mobile vaults. The owner 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A plugin-v<version> tag starts a checked build and publishes manifest.json and main.js as release assets.
-- [ ] #2 The workflow rejects tag, manifest, and compatibility mapping mismatches before publication.
-- [ ] #3 The compatibility map holds the current manifest version and minAppVersion. The manifest keeps isDesktopOnly false.
-- [ ] #4 The release guide explains owner tags, BRAT installation, and the separate mobile trial gate.
-- [ ] #5 Automated release checks and bun run check pass. No tag or release is created during this task.
+- [x] #1 A plugin-v<version> tag starts a checked build and publishes manifest.json and main.js as release assets.
+- [x] #2 The workflow rejects tag, manifest, and compatibility mapping mismatches before publication.
+- [x] #3 The compatibility map holds the current manifest version and minAppVersion. The manifest keeps isDesktopOnly false.
+- [x] #4 The release guide explains owner tags, BRAT installation, and the separate mobile trial gate.
+- [x] #5 Automated release checks and bun run check pass. No tag or release is created during this task.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -57,4 +57,12 @@ Parallel F5 preparation follows the owner brief F5A-release.md dated 2026-11-05.
 - Correction GREEN: the same focused command passed all 20 tests after the job split and direct lightweight-ref test changes.
 - `bun run docs:check` passed. Final `bun run check` passed after the corrections. Biome checked 266 files; documentation checks and all four workspace type checks passed. Tooling passed 91 tests, protocol passed 307, plugin passed 689 with 1 skipped, and worker passed 702 + 122 + 115. All builds passed. Worker tests printed injected network and SQLite failure diagnostics but exited 0.
 - Review finding limits: no live tag or release was created. Artifact transfer and GitHub release actions were checked by configuration and local stubs, not a live GitHub run. No BRAT install or mobile trial ran. OAB-11.2 remains In Progress.
+
+Final review: task correction review and whole-branch review accepted commit 60c37bfccd39fdb8ca13404d81b04bd156f2d403. Both original findings are fixed with permission separation and direct lightweight-ref tests. The whole-branch review covered all six files, declaration documentation, policy ownership, failure paths, artifact layout, and source revision checks. It found no new actionable issue. The reviewer independently ran docs:check and diff whitespace checks. Parent active LSP inspection found no compiler diagnostics. Auxiliary pattern findings concern JSON boundary validation and CLI reporting, not an unhandled parse failure. Human branch review pn-74de0b approved with no changes. Parent fetched origin/main after approval and confirmed 54ad88e remains an ancestor. Acceptance evidence: workflow command and configuration tests cover tag-triggered publication and rejection without remote effects. Compatibility metadata and unchanged mobile manifest match. The owner guide covers release and installation gates. All 20 release tests and the final full check passed. Residual limit: remote tag verification and release creation are separate operations. A privileged tag change between them can change the release target. The owner must not move release tags. No live release or mobile install ran. Clarification of the earlier evidence note: the owner can tag after merge. Separate OAB-11 approval gates mobile trials, not release preparation.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Added a tag-only BRAT release workflow with read-only checks and separate writable publication. Added exact metadata validation, the 0.1.0 compatibility map, 20 release tests, and the owner guide. Final bun run check and independent reviews passed. Human branch review approved. No tag, release, deployment, or vault action ran. Mobile trials remain gated by OAB-11.
+<!-- SECTION:FINAL_SUMMARY:END -->

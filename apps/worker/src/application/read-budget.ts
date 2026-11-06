@@ -7,8 +7,18 @@ export const READ_SLOT_HOLD_DEADLINE_MS = 60_000;
 let activeReadSlots = 0;
 /** Incomplete response leases that reached their deadline in this isolate. */
 let expiredReadSlots = 0;
-/** Opaque process-local identifier used only in owner observations. */
-const isolateId = crypto.randomUUID();
+/** Opaque process-local identifier used only in owner observations, created on first use. */
+let isolateId: string | undefined;
+
+/**
+ * Return the isolate identifier, creating it inside request context.
+ * Workers reject random value generation in the module global scope, so the first
+ * observation request creates the identifier instead of the module evaluation.
+ */
+function currentIsolateId(): string {
+	if (isolateId === undefined) isolateId = crypto.randomUUID();
+	return isolateId;
+}
 
 /** Callable local release handle with a fixed acquisition deadline. */
 export interface ReadSlotLease {
@@ -56,7 +66,7 @@ export async function waitForReadSlotWork<T>(
 /** Return an isolate-local capacity snapshot without durable or client aggregation. */
 export function readSlotCapacitySnapshot(): ReadSlotCapacitySnapshot {
 	return {
-		isolate_id: isolateId,
+		isolate_id: currentIsolateId(),
 		active_slots: activeReadSlots,
 		available_slots: READ_SLOT_LIMIT - activeReadSlots,
 		limit: READ_SLOT_LIMIT,

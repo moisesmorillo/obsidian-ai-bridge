@@ -25,7 +25,7 @@ interface PluginEventMarker {
 	ambiguous: boolean;
 	/** True after one event consumes this mutation's evidence. */
 	claimed: boolean;
-	/** True when no later read can establish this mutation's event bytes. */
+	/** True after every wrapped host effect settles. Create and modify proof requires its read to finish before then. */
 	settled: boolean;
 	/** True only when every wrapped effect and conditional gate accepts. */
 	allEffectsAccepted: boolean;

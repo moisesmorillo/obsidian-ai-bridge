@@ -207,7 +207,7 @@ const ValueObservationSchema = z.discriminatedUnion("status", [
 		.strict(),
 ]);
 
-/** Owner-only bounded daily request, feed preparation, and storage observations. */
+/** Owner-only daily observations plus optional responding Worker isolate capacity. */
 export const MeasurementResponseSchema = z
 	.object({
 		status: z.enum(["observed", "unknown"]),
@@ -248,6 +248,18 @@ export const MeasurementResponseSchema = z
 				referenced_blob_bytes: ValueObservationSchema,
 			})
 			.strict(),
+		/** Process-local counters for the Worker that served this owner request. */
+		worker_isolate: z
+			.object({
+				isolate_id: z.string().min(1).max(128),
+				active_slots: CountSchema,
+				available_slots: CountSchema,
+				limit: CountSchema,
+				expired_count: CountSchema,
+				deadline_ms: CountSchema,
+			})
+			.strict()
+			.optional(),
 	})
 	.strict();
 

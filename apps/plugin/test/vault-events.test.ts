@@ -360,7 +360,49 @@ describe("VaultEventAdapter", () => {
 		adapter.dispose();
 	});
 
-	it("rejects mismatched and late destructive destination reads", async () => {
+	it("accepts an exact rename proof when its destination read settles late", async () => {
+		const handlers = new Map<string, (...args: unknown[]) => void>();
+		/** Releases exact destination bytes after the wrapped host mutation settles. */
+		let releaseRead: (text: string) => void = () => undefined;
+		const delayedRead = new Promise<string>((resolve) => {
+			releaseRead = resolve;
+		});
+		const vault = {
+			/** Registers the callback for the event emitted by the mutation. */
+			on(event: string, callback: (...args: unknown[]) => void) {
+				handlers.set(event, callback);
+				return { event } as EventRef;
+			},
+			offref: () => undefined,
+			read: async () => delayedRead,
+		} as unknown as Vault;
+		const proofs: Promise<boolean>[] = [];
+		const adapter = new VaultEventAdapter(
+			vault,
+			{
+				observe: async (_event, proof) => {
+					proofs.push(proof ?? Promise.resolve(false));
+				},
+			},
+			() => undefined,
+		);
+		const source = Object.assign(new TFile(), { path: "new.md" });
+		const mutation = withPluginVaultMutation(
+			vault,
+			{ type: "rename", path: "old.md", to: source.path },
+			async () => handlers.get("rename")?.(source, "old.md"),
+			{ kind: "text", value: "exact bytes" },
+			() => true,
+			source,
+		);
+		await vi.waitFor(() => expect(proofs).toHaveLength(1));
+		await mutation;
+		releaseRead("exact bytes");
+		expect(await proofs[0]).toBe(true);
+		adapter.dispose();
+	});
+
+	it("rejects mismatched bytes and accepts an exact late destination read", async () => {
 		const handlers = new Map<string, (...args: unknown[]) => void>();
 		/** Completes destination bytes only after the rename effect settles. */
 		let releaseLateRead: (text: string) => void = () => undefined;
@@ -407,7 +449,7 @@ describe("VaultEventAdapter", () => {
 		);
 		releaseLateRead("late bytes");
 		await vi.waitFor(() => expect(proofs).toHaveLength(2));
-		expect(await Promise.all(proofs)).toEqual([false, false]);
+		expect(await Promise.all(proofs)).toEqual([false, true]);
 		adapter.dispose();
 	});
 

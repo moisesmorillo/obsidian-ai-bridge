@@ -432,6 +432,34 @@ describe("AIBridgeSettingTab", () => {
 		expect(link.click()).toBe(false);
 	});
 
+	it("ignores a stale connection failure after a newer action succeeds", async () => {
+		const test = createTab();
+		test.setAuthorizationUrl(null);
+		let rejectFirst!: (reason: Error) => void;
+		const firstConnection = new Promise<string>((_resolve, reject) => {
+			rejectFirst = reject;
+		});
+		vi.mocked(test.session.connect).mockReturnValueOnce(firstConnection);
+		const firstClick = host.controls[3]?.buttons[0]?.onClick?.();
+		test.tab.display();
+		const secondClick = host.controls[3]?.buttons[0]?.onClick?.();
+		test.setAuthorizationUrl("https://auth.test/new-consent");
+		await secondClick;
+		const message = host.elements.find((element) =>
+			element.textContent.includes("Use Open authorization page"),
+		);
+		if (!message)
+			throw new Error("Current authorization instructions were not shown");
+		rejectFirst(new Error("stale connection failure"));
+		await firstClick;
+		expect(message.textContent).toBe(
+			"Use Open authorization page to continue.",
+		);
+		test.setAuthorizationUrl(null);
+		test.tab.refreshStatus();
+		expect(message.textContent).toBe("");
+	});
+
 	it("shows desktop fallback text and restores the pending control after display", async () => {
 		const test = createTab();
 		host.isMobile = false;

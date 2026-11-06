@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-11-05T23:20:00Z'
-updated_date: '2026-11-06T17:48:00Z'
+updated_date: '2026-11-06T17:55:00Z'
 labels:
   - F5
   - Deferred
@@ -50,4 +50,8 @@ M4D implementation: prepared consent URL stays in memory and getAuthorizationUrl
 Review correction test-first record: the prior M4D focused test command passed instead of producing RED, and production edits were already underway. This is the repository test-first exception. In this correction, the RED command was: bun run --cwd apps/plugin test -- settings.test.ts; result=$?; echo OBSERVED_RED_EXIT=$result; test $result -ne 0. It exited 1 because tests found obsolete cancellation instructions and a missing pending link after settings rerender. The GREEN focused command was: bun run --cwd apps/plugin test -- settings.test.ts device-session.test.ts. It passed 37 tests.
 
 Review finding closure: settings tests store and invoke anchor click handlers. A live URL preserves browser default behavior. Cancellation and replacement prevent default. The expired session getter rejects the URL, and the settings link rejects it at the click boundary. A fake-clock test covers session expiry. Separate discovery and registration transport failures return one fixed safe error. Settings refresh clears obsolete instructions after cancellation, callback completion, and expiry. A rerender shows one pending link. Desktop fallback text and exclusion of the consent URL from settings data are covered.
+
+Final review fix: settings gives each rendered view and Connect action a generation. Async success, error, and button restoration act only while the view, action, and session still match. A deferred-promise regression reproduced an old action rejection after a rerender and newer successful authorization. RED showed the old error replacing current instructions. The generation fence preserves the newer message and its expiry cleanup. The action-race finding is closed. OAB-11.4 stays In Progress and device criteria stay unchecked.
+
+Final branch-review finding closed: added a deferred connection test that starts action A, rerenders settings, completes action B with new consent, then rejects A. Before the fix, A replaced B instructions with a safe error. Settings now fence success, error, and finally UI updates using the current view generation, Connect-action generation, and session identity. After correction, the current consent text remains and refresh clears it when consent ends. RED command was bun run --cwd apps/plugin test -- settings.test.ts; result=$?; echo OBSERVED_RED_EXIT=$result; test $result -ne 0 and produced one failing race regression test. GREEN command bun run --cwd apps/plugin test -- settings.test.ts passed 11 tests. Final bun run check passed with 722 plugin tests passed and 1 skipped. Task remains In Progress. Device criteria remain unchecked.
 <!-- SECTION:NOTES:END -->

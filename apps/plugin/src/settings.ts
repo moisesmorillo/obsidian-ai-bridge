@@ -25,6 +25,8 @@ export class AIBridgeSettingTab extends PluginSettingTab {
 	private authorizationElement: HTMLAnchorElement | null = null;
 	private connectionMessage: HTMLElement | null = null;
 	private hasPendingInstructions = false;
+	private settingsGeneration = 0;
+	private connectionActionGeneration = 0;
 
 	/** Binds non-secret settings and controller access to the plugin settings host. */
 	constructor(
@@ -48,6 +50,7 @@ export class AIBridgeSettingTab extends PluginSettingTab {
 	/** Renders one labelled server setting, enrollment action, cancellation, and safe state. */
 	display(): void {
 		const { containerEl } = this;
+		this.settingsGeneration += 1;
 		containerEl.empty();
 		this.authorizationElement = null;
 		containerEl.createEl("h2", { text: "AI Bridge" });
@@ -106,25 +109,51 @@ export class AIBridgeSettingTab extends PluginSettingTab {
 			.setDesc("Connect this Obsidian device with browser authorization.")
 			.addButton((button) =>
 				button.setButtonText("Connect").onClick(async () => {
+					const viewGeneration = this.settingsGeneration;
+					const actionGeneration = ++this.connectionActionGeneration;
+					const session = this.getSession();
 					this.authorizationElement?.remove();
 					this.authorizationElement = null;
 					this.connectionMessage?.setText("");
 					this.hasPendingInstructions = false;
 					button.setDisabled(true);
 					try {
-						await this.getSession().connect();
-						const url = this.getSession().getAuthorizationUrl();
+						await session.connect();
+						if (
+							!this.isCurrentConnectionAction(
+								viewGeneration,
+								actionGeneration,
+								session,
+							)
+						)
+							return;
+						const url = session.getAuthorizationUrl();
 						if (url) {
 							this.renderAuthorizationControl(url);
 							this.showAuthorizationInstructions();
 						}
 					} catch {
-						this.hasPendingInstructions = false;
-						this.connectionMessage?.setText(
-							"Could not start device authorization",
-						);
+						if (
+							this.isCurrentConnectionAction(
+								viewGeneration,
+								actionGeneration,
+								session,
+							)
+						) {
+							this.hasPendingInstructions = false;
+							this.connectionMessage?.setText(
+								"Could not start device authorization",
+							);
+						}
 					} finally {
-						button.setDisabled(false);
+						if (
+							this.isCurrentConnectionAction(
+								viewGeneration,
+								actionGeneration,
+								session,
+							)
+						)
+							button.setDisabled(false);
 					}
 				}),
 			)
@@ -162,6 +191,19 @@ export class AIBridgeSettingTab extends PluginSettingTab {
 			}
 		}
 		this.renderSyncStatus();
+	}
+
+	/** Checks that one async result still owns the current view, action, and session. */
+	private isCurrentConnectionAction(
+		viewGeneration: number,
+		actionGeneration: number,
+		session: DeviceSession,
+	): boolean {
+		return (
+			viewGeneration === this.settingsGeneration &&
+			actionGeneration === this.connectionActionGeneration &&
+			session === this.getSession()
+		);
 	}
 
 	/** Shows instructions that describe the current live authorization link. */

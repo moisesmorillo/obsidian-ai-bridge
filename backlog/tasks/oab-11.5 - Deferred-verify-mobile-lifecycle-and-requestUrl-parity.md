@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-11-05T23:21:00Z'
-updated_date: '2026-11-06T23:04:00Z'
+updated_date: '2026-11-06T23:14:00Z'
 labels:
   - F5
   - Deferred
@@ -62,4 +62,6 @@ Correction: recovery work now records its lifecycle revision. A new resume at a 
 GREEN: the same focused command passed both regressions. `bun run --cwd apps/plugin vitest run` passed 28 files with 735 tests passed and one skipped. `bun run docs:check` passed. Final `bun run check` passed lint, docs, four typechecks, 96 files with 1,835 passed and one skipped, and all builds. Worker failure-injection diagnostics appeared as expected. No timeout change or Worker edit occurred.
 
 The interrupted protocol runtime isolation test left `.protocol-runtime-isolation-z6HLuY/tsconfig.leaky.json`. Its exact test source creates that directory with `mkdtemp` and removes it in `finally`. I confirmed the directory held that test fixture, removed only that directory, and confirmed it was absent. No tracked or other untracked files changed. Correction evidence is appended to `.superpowers/sdd/mobile-lifecycle-plan/task-1-report.md`. Criterion states and task status stay unchanged.
+
+Independent review closure: task review approved 5288a44. Final whole-branch review found F1 obsolete recovery ownership and F2 reversed deferred batches. Correction dd83738 adds lifecycle-keyed recovery and one shared FIFO drain. Scoped review approved final source revision 341feb501ec1eef32db05e08bb65b05c68a33e25, including the merge from origin/main 86c2259. F1 closes with the held-cycle two-transition regression. F2 closes with the two-batch FIFO regression. The review found no new actionable regression. Documentation scope includes changed TypeScript declarations and lifecycle comments. Structural candidates desktop-sync.ts and main.ts retain controller transition ownership and host composition ownership. The merge preserves upstream mobile labels and conflict-copy notices. Standalone bun run check passed after integration. Earlier unchanged runs failed with timeouts and an interrupted-test scratch fixture. Native device scheduling and restart remain unproven. The owner device script remains: airplane mode, edit a note, force-quit Obsidian, reopen, disable airplane mode. Device trigger: device available and BRAT release plugin-v0.1.0 published. Historical tag context: ai-bridge-v0.1.2 replaced the original tag scheme. Criteria 1 and 2 remain open for device evidence, criterion 4 remains deferred, and criterion 5 remains unchecked.
 <!-- SECTION:NOTES:END -->

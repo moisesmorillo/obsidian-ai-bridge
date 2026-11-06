@@ -1,11 +1,11 @@
 ---
 id: OAB-10.1.1
 title: Complete bounded dev-2 AC-19 service proof
-status: Deferred
+status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-11-05T16:52:00Z'
-updated_date: '2026-11-05T21:59:00Z'
+updated_date: '2026-11-06T12:27:00Z'
 labels:
   - deferred
   - F4
@@ -19,7 +19,7 @@ ordinal: 60000
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-Live AC-19 service proof remains incomplete after the one bounded case reached the Obsidian CLI timeout. During F4, dev-2 and the real vault share one service vault. Normal service hydration carried the synthetic fixture into the real vault. Live cases are blocked during the trial. Trigger: a second isolated service vault or the end of F4, a host runner that returns safe bounded evidence, and supervisor authorization for another case. The supervisor authorized cleanup of only the P1 fixture through normal dev-2 deletion. The scoped service read confirmed its tombstone at revision 2. Preserve the recorded historical observations. Do not create, change, or rename service files from dev-2 during F4.
+Complete the one bounded dev-2 AC-19 service proof under the owner exception dated 2026-11-06. The short phase runner returns safe checkpoints across separate CLI evaluations. The completed case proves one durable confirmation, placeholder exclusion, unchanged service authority during eviction, exact-byte restoration, and conditional cleanup. Historical notes retain the earlier timeout and shared-service restriction. The owner exception supersedes that restriction for this P6 case only. No agent accesses the personal vault.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
@@ -34,7 +34,7 @@ Live AC-19 service proof remains incomplete after the one bounded case reached t
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-Plan for review: /tmp/oab-10-1-1/plan.md. Correct the existing acceptance runner with failing tests first. Prove resumed dev-2 eviction with one fresh fixture, scoped service reads, and baseline-relative identity checks. Reuse the connected client unless a guarded recheck proves enrollment is needed. Keep dev-1 paused. Pause dev-2 after the case. Complete checks, task review, branch review, and one PR. No personal-vault or Cloudflare action.
+P6 plan: /tmp/oab-10-1-1-p6/plan.md. Add a tested bounded phase runner. Use one fixed dev-2 fixture under the owner exception. Return short checkpoints and poll separately. Preserve history. Prove one durable confirmation and unchanged service authority. Resolve with keepServerState, restore, publish one conditional cleanup delete, and Pause. Complete checks, task review, branch review, and one PR. No personal-vault access.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -67,4 +67,16 @@ Whole-branch semantic review at 6f5bc9a approved publication with one non-blocki
 Scoped corrective semantic review at 176bcc1 closes the raw retry-metadata finding with source and regression evidence. No new fix-diff finding remains. The reviewer confirms the shared-service restriction, revision 2 tombstone, Deferred status, and incomplete AC-19 claims in the task notes. Scope includes the tool, desktop acceptance tests, and accompanying task notes. Structural candidate desktop-acceptance.ts remains mixed but low-risk within the acceptance-tool boundary. Documentation audit covers changed interfaces, process error fields, helper contracts, constructor behavior, and named test helpers. Review limits: synthetic behavior does not prove live host timing. IDE probing reports three existing plugin-alias resolution errors and auxiliary findings in unrelated helpers. Canonical workspace typechecks pass. Human branch review remains pending.
 
 Human branch review pn-7ce188 received owner approval with no changes requested. Final parent publication check at 176bcc1 passed with exit 0. The later change records review closure only. Task remains Deferred because criterion 3 lacks a safe live confirmation result. The fixture tombstone and shared-service restriction remain the current live state. Publish this branch as tooling and evidence-limit work, not as AC-19 closure.
+
+Owner exception 2026-11-06: one bounded dev-2 service case under oab-10.1/ is authorized during F4. The fixture hydrates into the real vault and is removed by a conditional delete after the proof. The supervisor observes the real vault.
+
+P6 starts under the owner brief dated 2026-11-06. Parallel execution remains authorized. Read-only guarded dev-2 probe at 10:55:04.159Z confirms connected, paused, coexistence off, 0 operations, 0 applies, 4 attention items, and 0 confirmations. No mutation ran. Main e7bb31b includes the remote-delete echo fix. The plan review remains pending.
+
+P6 plan pn-c5dd5d received owner approval. Tooling commits a4c1544 and 4d8c5f3 add short guarded phase evaluations and separate checkpoints. The worker first returned an incomplete delivery, then completed the task on the same model. RED tests preceded implementation. The first task review found CLI argument syntax, restoration API semantics, and late task settlement after Pause. The correction adds exact CLI arguments, exact-byte restoration, confirmation-only keepServerState tests, Pause fences, deadline checks, safe read retry checks, spawn-error handling, and exact baseline authority checks. Corrective review at 4d8c5f3 closes all three findings and approves the tooling. Worker validation passed 19 focused tests, docs:check, and bun run check with 2051 passed and 1 skipped. No alias or configuration change remains.
+
+P6 live case, 2026-11-06T12:23:48.115Z to 12:26:41.406Z, client j-jAYgxDZ6cyAPVM. Every evaluation checked exact dev-2 name, adapter suffix, and absolute path. Preflight: connected, Pause, coexistence off, 0 operations, 0 applies, 4 attention items, 0 confirmations. Attention SHA-256 c9806c50c291706ca4a043e447a8ed27dbbd882f9cf18d5a8a4e26e5e29fd56d. After coexistence enable and Resume, a complete scoped manifest confirmed source and placeholder absence. Normal sync published the single fixed fixture oab-10.1/dev-2/simulated-eviction-p6-20261106-01.md. The baseline phase verified live manifest ETag, epoch, revision, hash, and local base agreement. No second case ran.
+
+P6 capture passed at 12:25:21.374Z. The runner read the durable journal confirmation list and matched it to the snapshot. Exactly one new fixture confirmation and source unavailability appeared. Operations and applies stayed zero. Four attention identities and all unrelated base, queue, apply, and confirmation identities matched the private baseline. Placeholder exclusion passed. The scoped service-captured phase passed at 12:25:36.185Z: source authority stayed unchanged, no delete or rename operation existed for the fixture, and the placeholder had no service row. This proves the bounded simulated case, not real iCloud eviction.
+
+P6 restoration passed at 12:26:00.701Z. The runner removed the synthetic placeholder, restored and checked exact fixture bytes, and used keepServerState only. It never called Confirm. Durable confirmation removal and unchanged service authority passed. Coexistence disable passed. Normal Vault API trash and conditional deletion completed at 12:26:20.814Z. Pause completed at 12:26:31.858Z. The final complete scoped manifest passed at 12:26:41.406Z: fixture tombstone matches the local delete receipt, and the placeholder has no service row. Final counts: 0 operations, 0 applies, 4 unchanged attention items, 0 confirmations. All phase CLI calls returned safe checkpoints without a timeout, unknown result, or admission-limited response. No enrollment, dev-1 action, journal clearing, personal-vault access, or Cloudflare action ran. Dev-1 evidence remains capture and reload only. Whole-branch and human reviews remain pending.
 <!-- SECTION:NOTES:END -->

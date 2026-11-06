@@ -1,16 +1,17 @@
 ---
-id: DRAFT-1
+id: OAB-11.4
 title: 'Deferred: verify mobile enrollment and credential storage'
-status: Draft
+status: To Do
 assignee: []
 created_date: '2026-11-05T23:20:00Z'
-updated_date: '2026-11-05T23:23:00Z'
+updated_date: '2026-11-06T16:52:00Z'
 labels:
   - F5
   - Deferred
 dependencies: []
 parent_task_id: OAB-11
 type: task
+ordinal: 64000
 ---
 
 ## Description
@@ -27,3 +28,9 @@ Trigger: F4 closes and the owner approves the F5 copy-vault scope with an isolat
 - [ ] #4 Android availability and persistence results remain distinct from the Apple F5 exit evidence.
 - [ ] #5 Device labels remain distinct after settings sync without copying journal IDs or credentials between devices.
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Promoted at F4 closure, 2026-11-06. DRAFT-4 still needs isolated service authority from the owner. DRAFT-5 still needs the BRAT release plugin-v0.1.0 and devices.
+<!-- SECTION:NOTES:END -->

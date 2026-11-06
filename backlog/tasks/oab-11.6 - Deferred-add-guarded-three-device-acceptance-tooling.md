@@ -1,15 +1,17 @@
 ---
-id: DRAFT-4
+id: OAB-11.6
 title: 'Deferred: add guarded three-device acceptance tooling'
-status: Draft
+status: To Do
 assignee: []
 created_date: '2026-11-05T23:21:00Z'
+updated_date: '2026-11-06T16:52:00Z'
 labels:
   - F5
   - Deferred
 dependencies: []
 parent_task_id: OAB-11
 type: task
+ordinal: 66000
 ---
 
 ## Description
@@ -27,3 +29,9 @@ Trigger: F4 closes and the owner approves an isolated service authority plus nam
 - [ ] #5 Missing device automation reports a named blocker without weakening the vault guard.
 - [ ] #6 Automated tests cover wrong-target rejection, timeouts, uncertain effects, and cleanup limits.
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Promoted at F4 closure, 2026-11-06. DRAFT-4 still needs isolated service authority from the owner. DRAFT-5 still needs the BRAT release plugin-v0.1.0 and devices.
+<!-- SECTION:NOTES:END -->

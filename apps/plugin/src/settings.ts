@@ -24,6 +24,7 @@ export class AIBridgeSettingTab extends PluginSettingTab {
 	private syncElement: HTMLElement | null = null;
 	private authorizationElement: HTMLAnchorElement | null = null;
 	private connectionMessage: HTMLElement | null = null;
+	private hasPendingInstructions = false;
 
 	/** Binds non-secret settings and controller access to the plugin settings host. */
 	constructor(
@@ -48,6 +49,7 @@ export class AIBridgeSettingTab extends PluginSettingTab {
 	display(): void {
 		const { containerEl } = this;
 		containerEl.empty();
+		this.authorizationElement = null;
 		containerEl.createEl("h2", { text: "AI Bridge" });
 		new Setting(containerEl)
 			.setName("Server URL")
@@ -107,17 +109,17 @@ export class AIBridgeSettingTab extends PluginSettingTab {
 					this.authorizationElement?.remove();
 					this.authorizationElement = null;
 					this.connectionMessage?.setText("");
+					this.hasPendingInstructions = false;
 					button.setDisabled(true);
 					try {
 						await this.getSession().connect();
 						const url = this.getSession().getAuthorizationUrl();
-						if (url) this.renderAuthorizationControl(url);
-						this.connectionMessage?.setText(
-							Platform.isMobile
-								? "Use Open authorization page to continue."
-								: "If no browser appears, use Open authorization page.",
-						);
+						if (url) {
+							this.renderAuthorizationControl(url);
+							this.showAuthorizationInstructions();
+						}
 					} catch {
+						this.hasPendingInstructions = false;
 						this.connectionMessage?.setText(
 							"Could not start device authorization",
 						);
@@ -135,6 +137,11 @@ export class AIBridgeSettingTab extends PluginSettingTab {
 			text: `Status: ${this.getStatus()}`,
 		});
 		this.connectionMessage = containerEl.createEl("p", { text: "" });
+		const pendingUrl = this.getSession().getAuthorizationUrl();
+		if (pendingUrl) {
+			this.renderAuthorizationControl(pendingUrl);
+			this.showAuthorizationInstructions();
+		}
 		this.syncElement = containerEl.createEl("div", {
 			cls: "ai-bridge-sync-status",
 		});
@@ -149,8 +156,22 @@ export class AIBridgeSettingTab extends PluginSettingTab {
 		if (!this.getSession().getAuthorizationUrl()) {
 			this.authorizationElement?.remove();
 			this.authorizationElement = null;
+			if (this.hasPendingInstructions) {
+				this.connectionMessage?.setText("");
+				this.hasPendingInstructions = false;
+			}
 		}
 		this.renderSyncStatus();
+	}
+
+	/** Shows instructions that describe the current live authorization link. */
+	private showAuthorizationInstructions(): void {
+		this.connectionMessage?.setText(
+			Platform.isMobile
+				? "Use Open authorization page to continue."
+				: "If no browser appears, use Open authorization page.",
+		);
+		this.hasPendingInstructions = true;
 	}
 
 	/** Adds a native link whose click opens the live authorization URL directly. */

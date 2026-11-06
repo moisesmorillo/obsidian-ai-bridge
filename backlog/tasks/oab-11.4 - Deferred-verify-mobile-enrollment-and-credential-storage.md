@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-11-05T23:20:00Z'
-updated_date: '2026-11-06T17:38:00Z'
+updated_date: '2026-11-06T17:48:00Z'
 labels:
   - F5
   - Deferred
@@ -46,4 +46,8 @@ Owner authorization, 2026-11-06: F5 copy-vault code work through the supervisor.
 Supervisor device observation, 2026-11-06: after Connect, the owner iPhone shows Status: connecting and Sync status: disconnected, without a browser. Discovery and registration succeeded. This narrows the cause to browser launch after the asynchronous gap. The scope remains launch and visible failure only.
 
 M4D implementation: prepared consent URL stays in memory and getAuthorizationUrl checks the current generation and expiry. Automatic browser launch errors do not clear consent. Settings show a native Open authorization page link, fixed safe preparation errors, and platform-specific instructions. Fake tests prove URL retention, callback completion removal, link attributes, and safe UI messages. Supervisor observation remains: iPhone showed Status: connecting and Sync status: disconnected after Connect, while discovery and registration succeeded. Device acceptance criteria remain unchecked and task stays In Progress. Local fakes do not prove iPhone or iPad browser launch or URI return.
+
+Review correction test-first record: the prior M4D focused test command passed instead of producing RED, and production edits were already underway. This is the repository test-first exception. In this correction, the RED command was: bun run --cwd apps/plugin test -- settings.test.ts; result=$?; echo OBSERVED_RED_EXIT=$result; test $result -ne 0. It exited 1 because tests found obsolete cancellation instructions and a missing pending link after settings rerender. The GREEN focused command was: bun run --cwd apps/plugin test -- settings.test.ts device-session.test.ts. It passed 37 tests.
+
+Review finding closure: settings tests store and invoke anchor click handlers. A live URL preserves browser default behavior. Cancellation and replacement prevent default. The expired session getter rejects the URL, and the settings link rejects it at the click boundary. A fake-clock test covers session expiry. Separate discovery and registration transport failures return one fixed safe error. Settings refresh clears obsolete instructions after cancellation, callback completion, and expiry. A rerender shows one pending link. Desktop fallback text and exclusion of the consent URL from settings data are covered.
 <!-- SECTION:NOTES:END -->

@@ -42,6 +42,8 @@ interface CapturedElement {
 	target?: string;
 	rel?: string;
 	removed?: boolean;
+	/** Captured event handlers for synthetic link events. */
+	listeners: Map<string, ((event: CapturedClickEvent) => void)[]>;
 	/** Marks the synthetic element as removed. */
 	remove(): void;
 	/** Adds a synthetic element event listener. */
@@ -49,6 +51,8 @@ interface CapturedElement {
 		event: string,
 		listener: (event: CapturedClickEvent) => void,
 	): void;
+	/** Sends one synthetic click and returns whether the browser follows the link. */
+	click(): boolean;
 	/** Replaces the visible safe status text. */
 	setText(text: string): void;
 }
@@ -56,10 +60,16 @@ interface CapturedElement {
 const host = vi.hoisted(() => ({
 	controls: [] as CapturedSetting[],
 	elements: [] as CapturedElement[],
+	isMobile: true,
 }));
 
 vi.mock("obsidian", () => ({
-	Platform: { isMobile: true },
+	Platform: {
+		/** Exposes the selected host text mode to the settings module. */
+		get isMobile() {
+			return host.isMobile;
+		},
+	},
 	PluginSettingTab: class {
 		containerEl = {
 			/** Clears rows before the tab renders again. */
@@ -79,8 +89,24 @@ vi.mock("obsidian", () => ({
 					remove() {
 						this.removed = true;
 					},
-					/** Captures no event because these tests inspect attributes only. */
-					addEventListener() {},
+					listeners: new Map<string, ((event: CapturedClickEvent) => void)[]>(),
+					/** Stores the handler so tests can check browser default behavior. */
+					addEventListener(event, listener) {
+						const listeners = this.listeners.get(event) ?? [];
+						listeners.push(listener);
+						this.listeners.set(event, listeners);
+					},
+					/** Runs captured click handlers and reports if default was prevented. */
+					click() {
+						let prevented = false;
+						for (const listener of this.listeners.get("click") ?? [])
+							listener({
+								preventDefault: () => {
+									prevented = true;
+								},
+							});
+						return !prevented;
+					},
 				};
 				host.elements.push(element);
 				return element;
@@ -225,16 +251,20 @@ import { type AIBridgeSettings, AIBridgeSettingTab } from "../src/settings";
 function createTab() {
 	host.controls.splice(0);
 	host.elements.splice(0);
+	host.isMobile = true;
 	const settings: AIBridgeSettings = {
 		serverUrl: "https://service.test",
 		deviceName: "Obsidian desktop",
 		coexistenceMode: false,
 	};
 	let status: "connected" | "disconnected" = "connected";
+	let authorizationUrl: string | null = "https://auth.test/consent";
 	const session = {
 		connect: vi.fn().mockResolvedValue("https://auth.test/consent"),
-		getAuthorizationUrl: vi.fn().mockReturnValue("https://auth.test/consent"),
-		cancel: vi.fn(),
+		getAuthorizationUrl: vi.fn(() => authorizationUrl),
+		cancel: vi.fn(() => {
+			authorizationUrl = null;
+		}),
 	} as unknown as DeviceSession;
 	const credentials = {
 		warning: "tokens stored unencrypted on this device",
@@ -286,6 +316,9 @@ function createTab() {
 		},
 		setRejectDeviceNameUpdate: (value: boolean) => {
 			rejectDeviceNameUpdate = value;
+		},
+		setAuthorizationUrl: (value: string | null) => {
+			authorizationUrl = value;
 		},
 	};
 }
@@ -351,6 +384,69 @@ describe("AIBridgeSettingTab", () => {
 		);
 		expect(status?.textContent).toBe("Status: disconnected");
 		expect(status?.textContent).not.toContain("token");
+	});
+
+	it("removes stale authorization instructions after cancellation", async () => {
+		const test = createTab();
+		await host.controls[3]?.buttons[0]?.onClick?.();
+		const instructions = host.elements.find((element) =>
+			element.textContent.includes("Use Open authorization page"),
+		);
+		test.session.cancel();
+		test.tab.refreshStatus();
+		expect(instructions?.textContent).toBe("");
+		expect(
+			host.elements.find(
+				(element) => element.textContent === "Open authorization page",
+			)?.removed,
+		).toBe(true);
+	});
+
+	it("clears instructions after callback completion or expiry", async () => {
+		for (const reason of ["callback", "expiry"]) {
+			const test = createTab();
+			await host.controls[3]?.buttons[0]?.onClick?.();
+			const instructions = host.elements.find((element) =>
+				element.textContent.includes("Use Open authorization page"),
+			);
+			test.setAuthorizationUrl(null);
+			test.tab.refreshStatus();
+			expect(instructions?.textContent, reason).toBe("");
+		}
+	});
+
+	it("fences link clicks against cancellation, replacement, and expiry", async () => {
+		const test = createTab();
+		await host.controls[3]?.buttons[0]?.onClick?.();
+		const link = host.elements.find(
+			(element) => element.textContent === "Open authorization page",
+		);
+		if (!link) throw new Error("Authorization link was not rendered");
+		expect(link.click()).toBe(true);
+		test.setAuthorizationUrl("https://auth.test/replacement");
+		expect(link.click()).toBe(false);
+		test.setAuthorizationUrl("https://auth.test/consent");
+		test.session.cancel();
+		expect(link.click()).toBe(false);
+		test.setAuthorizationUrl(null);
+		expect(link.click()).toBe(false);
+	});
+
+	it("shows desktop fallback text and restores the pending control after display", async () => {
+		const test = createTab();
+		host.isMobile = false;
+		await host.controls[3]?.buttons[0]?.onClick?.();
+		expect(host.elements.map((element) => element.textContent)).toContain(
+			"If no browser appears, use Open authorization page.",
+		);
+		test.tab.display();
+		expect(
+			host.elements.filter(
+				(element) =>
+					element.textContent === "Open authorization page" && !element.removed,
+			),
+		).toHaveLength(1);
+		expect(JSON.stringify(test.settings)).not.toContain("auth.test/consent");
 	});
 
 	it("shows fixed safe text and restores Connect after preparation fails", async () => {

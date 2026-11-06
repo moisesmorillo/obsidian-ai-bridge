@@ -77,6 +77,8 @@ class MemoryCredentials implements CredentialStorage {
 class FakeTransport implements OAuthTransport {
 	readonly calls: { url: string; options?: Record<string, unknown> }[] = [];
 	discoveryOverride: unknown = null;
+	failDiscovery = false;
+	failRegistration = false;
 	failTokenRequests = false;
 	tokenType = "Bearer";
 	beforeRefreshResponse: (() => Promise<void>) | null = null;
@@ -109,7 +111,9 @@ class FakeTransport implements OAuthTransport {
 		options?: Record<string, unknown>,
 	): Promise<unknown> {
 		this.calls.push({ url, options });
-		if (url.endsWith("oauth-authorization-server"))
+		if (url.endsWith("oauth-authorization-server")) {
+			if (this.failDiscovery)
+				throw new Error("provider discovery body with private detail");
 			return (
 				this.discoveryOverride ?? {
 					issuer: this.serviceOrigin,
@@ -121,8 +125,12 @@ class FakeTransport implements OAuthTransport {
 					code_challenge_methods_supported: ["S256"],
 				}
 			);
-		if (url.endsWith("oauth/register"))
+		}
+		if (url.endsWith("oauth/register")) {
+			if (this.failRegistration)
+				throw new Error("provider registration body with private detail");
 			return { client_id: "synthetic-client" };
+		}
 		if (url.endsWith("oauth/token")) {
 			if (this.failTokenRequests) throw new Error("synthetic exchange failure");
 			const isRefresh = String(options?.body ?? "").includes(
@@ -341,6 +349,31 @@ describe("DeviceSession", () => {
 			test.transport.calls.filter((call) => call.url.endsWith("oauth/token")),
 		).toHaveLength(0);
 		expect(test.credentials.value).toBeNull();
+		expect(test.statuses().at(-1)).toBe("reconnect");
+	});
+
+	it("shows one fixed failure for discovery and registration errors", async () => {
+		const discovery = createSession();
+		discovery.transport.failDiscovery = true;
+		await expect(discovery.session.connect()).rejects.toThrow(
+			"Could not start device authorization",
+		);
+		expect(discovery.statuses().at(-1)).toBe("reconnect");
+		const registration = createSession();
+		registration.transport.failRegistration = true;
+		await expect(registration.session.connect()).rejects.toThrow(
+			"Could not start device authorization",
+		);
+		expect(registration.statuses().at(-1)).toBe("reconnect");
+	});
+
+	it("expires the prepared authorization URL at its in-memory deadline", async () => {
+		let now = 5000;
+		const test = createSession(() => now);
+		const url = await test.session.connect();
+		expect(test.session.getAuthorizationUrl()).toBe(url);
+		now += 10 * 60 * 1000;
+		expect(test.session.getAuthorizationUrl()).toBeNull();
 		expect(test.statuses().at(-1)).toBe("reconnect");
 	});
 

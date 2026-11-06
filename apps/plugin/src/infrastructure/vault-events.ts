@@ -29,7 +29,7 @@ interface PluginEventMarker {
 	settled: boolean;
 	/** True only when every wrapped effect and conditional gate accepts. */
 	allEffectsAccepted: boolean;
-	/** Intended visible bytes used only with active-read and effect evidence. */
+	/** Intended visible bytes used with exact path, source, and effect evidence. */
 	target: PluginMutationTarget | null;
 	/** Exact host object passed to the accepted destructive effect. */
 	source: TAbstractFile | null;
@@ -160,29 +160,16 @@ async function verifyMutationTarget(
 	) {
 		try {
 			const target = marker.target;
-			const observation =
+			const observed =
 				target.kind === "text"
-					? await vault.read(source).then((value) => ({
-							value,
-							completedBeforeSettlement: !marker.settled,
-						}))
-					: await vault.readBinary(source).then((bytes) => ({
-							value: new Uint8Array(bytes),
-							completedBeforeSettlement: !marker.settled,
-						}));
+					? await vault.read(source)
+					: new Uint8Array(await vault.readBinary(source));
 			const matches =
 				target.kind === "text"
-					? typeof observation.value === "string" &&
-						observation.value === target.value
-					: observation.value instanceof Uint8Array &&
-						equalBytes(observation.value, target.value);
-			if (
-				!matches ||
-				!observation.completedBeforeSettlement ||
-				marker.ambiguous ||
-				marker.claimed
-			)
-				return false;
+					? typeof observed === "string" && observed === target.value
+					: observed instanceof Uint8Array &&
+						equalBytes(observed, target.value);
+			if (!matches || marker.ambiguous || marker.claimed) return false;
 			marker.claimed = true;
 			return marker.settlement;
 		} catch {

@@ -1,15 +1,17 @@
 ---
-id: DRAFT-2
+id: OAB-11.5
 title: 'Deferred: verify mobile lifecycle and requestUrl parity'
-status: Draft
+status: To Do
 assignee: []
 created_date: '2026-11-05T23:21:00Z'
+updated_date: '2026-11-06T16:52:00Z'
 labels:
   - F5
   - Deferred
 dependencies: []
 parent_task_id: OAB-11
 type: task
+ordinal: 65000
 ---
 
 ## Description
@@ -26,3 +28,9 @@ Trigger: F4 closes, the owner approves F5 copy-vault work, and enrollment works 
 - [ ] #4 Interrupted uploads, low storage, and 25,000,000-byte transfers fail safely or recover with visible state.
 - [ ] #5 Android observations remain separate from the Apple F5 gate.
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Promoted at F4 closure, 2026-11-06. DRAFT-4 still needs isolated service authority from the owner. DRAFT-5 still needs the BRAT release plugin-v0.1.0 and devices.
+<!-- SECTION:NOTES:END -->

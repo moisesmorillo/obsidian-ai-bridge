@@ -1,15 +1,17 @@
 ---
-id: DRAFT-3
+id: OAB-11.3
 title: 'Deferred: verify iOS placeholder safety in copy vaults'
-status: Draft
+status: To Do
 assignee: []
 created_date: '2026-11-05T23:21:00Z'
+updated_date: '2026-11-06T16:52:00Z'
 labels:
   - F5
   - Deferred
 dependencies: []
 parent_task_id: OAB-11
 type: task
+ordinal: 63000
 ---
 
 ## Description
@@ -26,3 +28,9 @@ Trigger: the owner approves isolated iCloud copy-vault tests after F4. Current d
 - [ ] #4 Any native behavior outside current detection has a failing test before a scoped correction.
 - [ ] #5 Mobile coexistence policy is explicit before any real-vault proposal.
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Promoted at F4 closure, 2026-11-06. DRAFT-4 still needs isolated service authority from the owner. DRAFT-5 still needs the BRAT release plugin-v0.1.0 and devices.
+<!-- SECTION:NOTES:END -->

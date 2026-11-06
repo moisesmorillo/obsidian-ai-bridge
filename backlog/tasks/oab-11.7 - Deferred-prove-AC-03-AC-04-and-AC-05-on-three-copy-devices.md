@@ -1,15 +1,17 @@
 ---
-id: DRAFT-5
+id: OAB-11.7
 title: 'Deferred: prove AC-03 AC-04 and AC-05 on three copy devices'
-status: Draft
+status: To Do
 assignee: []
 created_date: '2026-11-05T23:21:00Z'
+updated_date: '2026-11-06T16:52:00Z'
 labels:
   - F5
   - Deferred
 dependencies: []
 parent_task_id: OAB-11
 type: task
+ordinal: 67000
 ---
 
 ## Description
@@ -28,3 +30,9 @@ Trigger: F4 closes, release artifacts exist, prior mobile compatibility and tool
 - [ ] #6 An offline iPhone edit survives app restart and resolves after network return.
 - [ ] #7 No real-vault access follows from this result. That step needs separate explicit owner authorization.
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Promoted at F4 closure, 2026-11-06. DRAFT-4 still needs isolated service authority from the owner. DRAFT-5 still needs the BRAT release plugin-v0.1.0 and devices.
+<!-- SECTION:NOTES:END -->

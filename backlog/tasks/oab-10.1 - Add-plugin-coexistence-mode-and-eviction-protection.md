@@ -1,10 +1,10 @@
 ---
 id: OAB-10.1
 title: Add plugin coexistence mode and eviction protection
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-11-05T12:48:00Z'
-updated_date: '2026-11-06T14:06:00Z'
+updated_date: '2026-11-06T16:53:00Z'
 labels: []
 dependencies: []
 documentation:
@@ -26,7 +26,7 @@ iCloud eviction can emit destructive Obsidian events. F4 needs owner confirmatio
 - [x] #3 Pause retains confirmation and operation queues. Restart retains confirmations. Exit with pending confirmations fails safely.
 - [x] #4 The keyboard-accessible panel shows each confirmation, safe actions, and the text and binary residual risks. Pending confirmations prevent settled status.
 - [x] #5 Confirmation preserves the exact observed epoch and revision. A stale confirmation never deletes or renames newer content.
-- [ ] #6 AC-19 passes with simulated eviction on both authorized Mac test vaults. Existing service evidence stays intact.
+- [x] #6 AC-19 passes with simulated eviction on both authorized Mac test vaults. Existing service evidence stays intact.
 - [x] #7 Failing regressions precede implementation. bun run check, semantic TypeScript reviews, and human branch review pass.
 <!-- AC:END -->
 
@@ -98,4 +98,12 @@ Criterion 6 safety correction from P1: the real vault shares the service vault w
 Criterion 6 update from P6, 2026-11-06: the owner exception authorized one shared-service dev-2 case. Client j-jAYgxDZ6cyAPVM completed the bounded short-phase run from 12:23:48.115Z to 12:26:41.406Z. Durable journal capture proved exactly one new confirmation and source unavailability, with placeholder exclusion, no queued fixture delete or rename, and unchanged scoped service authority. Restoration used exact fixture bytes and keepServerState only. Normal Vault API trash published a conditional delete. Final scoped manifest confirmed the fixture tombstone and no placeholder service row. Dev-2 reports Pause, coexistence off, 0 operations, 0 applies, 4 unchanged attention identities, and 0 confirmations. This closes the dev-2 evidence gap in OAB-10.1.1. Criterion 6 retains its split evidence limit: dev-1 proves capture and reload only, not resumed service behavior. No complete two-vault service pass or real iCloud eviction proof is claimed.
 
 P6 publication decision after human review pn-21d978: OAB-10.1.1 is Done with all criteria checked. Criterion 6 remains unchecked because dev-1 evidence covers capture and reload only, not resumed service behavior. The new dev-2 service proof closes that device gap but does not establish a complete two-vault service pass. Keep OAB-10.1 In Progress. The supervisor real-vault observation remains in the OAB-10 gate notes.
+
+F4C owner-approved closure, 2026-11-06: criterion 6 now accepts the recorded split evidence. Dev-1 ran capture and reload phases only. Dev-2 completed the full bounded case under the owner exception, as OAB-10.1.1 records. The supervisor reports that the real vault absorbed the fixture create and tombstone without confirmation or attention. The reported replay time differs from the host case time. OAB-10 retains both sources and all limits. This is not a complete two-vault service pass or real iCloud eviction proof. Earlier In Progress notes and unchecked criterion 6 describe the earlier evidence state. The approved F4C plan closes this task with the explicit limit.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Completed coexistence safeguards and split AC-19 evidence. Dev-1 proves capture and reload only. Dev-2 proves the bounded service case under the owner exception. The supervisor reports safe real-vault replay. Existing source tests and reviews retain their recorded results. F4C changes task records only. No complete two-vault service pass or real iCloud eviction proof is claimed.
+<!-- SECTION:FINAL_SUMMARY:END -->

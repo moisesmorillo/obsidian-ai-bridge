@@ -4,7 +4,7 @@ title: Measure F4 polling latency and storage
 status: Done
 assignee: []
 created_date: '2026-11-05T12:48:00Z'
-updated_date: '2026-11-05T14:33:00Z'
+updated_date: '2026-11-06T16:53:00Z'
 labels: []
 dependencies:
   - OAB-10.1
@@ -59,6 +59,8 @@ B1: Reordered feed requests set `poll_cadence_incomplete` and clear min/max inte
 RED: `bun run --cwd apps/worker vitest run test/application-measurements.test.ts test/measurement-schemas.test.ts test/transport-measurements.test.ts test/vault-measurements.test.ts` failed 7 tests. The owner test command failed 1 HTML assertion. GREEN: The focused measurement suites passed 27 tests in 4 files. Owner tests passed 3 tests. `bun run docs:check` and `bun run check` passed. Worker tests passed 688. Full evidence: `.superpowers/sdd/S2-plan/task-1-report.md`. Task remains In Progress. Parent scoped review and human branch review remain pending.
 
 Final review: implementation revision 40e6453. Task review and complete branch review used the code-review skill and TypeScript profile. Structural review covered aggregation state policy, canonical schemas, SQLite persistence, Access authority, transport timing, and lazy response ownership. Documentation review covered all changed semantic declarations, owner output, and docs/api/measurements.md. F1 separate request freshness and F2 reordered request totals closed at f5081e4. B1 incorrect reordered cadence, N1 false zero duration, N2 contradictory durable windows, N3 missing HTML sample window, and N4 duplicate limit ownership closed at 40e6453. Each closure has focused tests and a corrective review. No actionable finding remains. Parent bun run check passed on 40e6453 with exit 0. Human branch review pn-5a8de5 approved without changes. Service-only scope completes under the owner brief. AC1 remains unchecked for plugin display. AC3 remains unchecked for local event classification. OAB-8.7.1 stays Deferred with its F4 trigger. AC4 remains unchecked pending the bounded live read after merge. These limits remain with the F4 continuation. No live evidence, production policy, or complete billing claim follows from the tests.
+
+F4C HTML measurement read, 2026-11-06: daily UTC window 00:00 to the next 00:00. Observed requests from 00:00:46.862Z to 16:45:28.806Z. Partial coverage lists e12MCRtYZ0t4tb0v with 553 REST and j-jAYgxDZ6cyAPVM with 22 REST, both zero MCP. Dev-1 client 2co2-3SyCC3aatQJ is absent. Criterion 4 stays unchecked. Feed preparation p95 is 180 milliseconds from 375 retained of 375 total samples. Sample window: 00:00:47.318Z to 16:45:28.620Z. Requests and latency are observed and fresh. SQLite allocated storage is 3014656 bytes. Distinct referenced R2 blobs total 3310536 bytes. OAB-10 holds the complete safe summary and scope limits. HTML is the evidence. Access worked without a PIN. The cookie was not visible to page JavaScript, and collect:f4 did not run. Criteria 1 and 3 stay unchecked because this page does not prove plugin display or classify genuine and plugin-caused host events. OAB-8.7.1 now says Done, not Deferred. Preserve its F4 trigger, completed controller-test evidence, and real-host timing limit. No full-day rate, billing total, full-trial coverage, end-to-end feed latency, or two-test-vault measurement pass is claimed.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary

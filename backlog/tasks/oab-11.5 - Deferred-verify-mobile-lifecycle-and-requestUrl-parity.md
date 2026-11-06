@@ -4,7 +4,7 @@ title: 'Deferred: verify mobile lifecycle and requestUrl parity'
 status: To Do
 assignee: []
 created_date: '2026-11-05T23:21:00Z'
-updated_date: '2026-11-06T16:52:00Z'
+updated_date: '2026-11-06T21:40:00Z'
 labels:
   - F5
   - Deferred
@@ -33,4 +33,6 @@ Trigger: F4 closes, the owner approves F5 copy-vault work, and enrollment works 
 
 <!-- SECTION:NOTES:BEGIN -->
 Promoted at F4 closure, 2026-11-06. DRAFT-4 still needs isolated service authority from the owner. DRAFT-5 still needs the BRAT release plugin-v0.1.0 and devices.
+
+Device evidence 2026-11-06: on a real iPhone with plugin 0.1.2, an edit made in airplane mode with Obsidian in the foreground was retained. After network return the device applied the newer remote revision at the path and published a conflict copy with the offline bytes. No concurrent cycle or lost operation was observed. App suspension, restart during offline state, and large transfers remain untested.
 <!-- SECTION:NOTES:END -->

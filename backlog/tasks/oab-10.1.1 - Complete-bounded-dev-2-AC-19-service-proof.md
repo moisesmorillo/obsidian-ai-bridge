@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-11-05T16:52:00Z'
-updated_date: '2026-11-06T12:27:00Z'
+updated_date: '2026-11-06T12:31:00Z'
 labels:
   - deferred
   - F4
@@ -79,4 +79,6 @@ P6 live case, 2026-11-06T12:23:48.115Z to 12:26:41.406Z, client j-jAYgxDZ6cyAPVM
 P6 capture passed at 12:25:21.374Z. The runner read the durable journal confirmation list and matched it to the snapshot. Exactly one new fixture confirmation and source unavailability appeared. Operations and applies stayed zero. Four attention identities and all unrelated base, queue, apply, and confirmation identities matched the private baseline. Placeholder exclusion passed. The scoped service-captured phase passed at 12:25:36.185Z: source authority stayed unchanged, no delete or rename operation existed for the fixture, and the placeholder had no service row. This proves the bounded simulated case, not real iCloud eviction.
 
 P6 restoration passed at 12:26:00.701Z. The runner removed the synthetic placeholder, restored and checked exact fixture bytes, and used keepServerState only. It never called Confirm. Durable confirmation removal and unchanged service authority passed. Coexistence disable passed. Normal Vault API trash and conditional deletion completed at 12:26:20.814Z. Pause completed at 12:26:31.858Z. The final complete scoped manifest passed at 12:26:41.406Z: fixture tombstone matches the local delete receipt, and the placeholder has no service row. Final counts: 0 operations, 0 applies, 4 unchanged attention items, 0 confirmations. All phase CLI calls returned safe checkpoints without a timeout, unknown result, or admission-limited response. No enrollment, dev-1 action, journal clearing, personal-vault access, or Cloudflare action ran. Dev-1 evidence remains capture and reload only. Whole-branch and human reviews remain pending.
+
+Whole-branch semantic review approved revision 404e6db against e7bb31b with no actionable finding. The session-model branch reviewer used the code-review skill and TypeScript profile. Review covered all five changed files, named TypeScript declarations, internal builders, checkpoint/process contracts, generated script semantics, named test helpers, and task-note truth. Structural candidates: the phase runner and synthetic host test. Both remain cohesive within the bounded acceptance-tool boundary. The reviewer reconstructed the complete phase, pending task, deadline, Pause, read-retry, durable history, service authority, and cleanup matrix. R1 CLI dispatch, R2 restoration semantics, and R3 late settlement after Pause each have explicit fixed dispositions with source and regression evidence. No alias change remains. Parent and reviewer each ran bun run check at 404e6db with exit 0. The reviewer counted 2051 passed, 1 skipped, 0 failed. Worker build used dry-run only. Review limits: live checkpoints come from the parent, real-vault evidence comes from the supervisor, and no resumed dev-1 service or real iCloud proof exists. Human branch review remains pending.
 <!-- SECTION:NOTES:END -->

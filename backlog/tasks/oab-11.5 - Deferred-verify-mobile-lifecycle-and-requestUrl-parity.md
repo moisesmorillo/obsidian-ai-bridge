@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-11-05T23:21:00Z'
-updated_date: '2026-11-06T23:21:00Z'
+updated_date: '2026-11-06T23:23:00Z'
 labels:
   - F5
   - Deferred
@@ -66,4 +66,6 @@ The interrupted protocol runtime isolation test left `.protocol-runtime-isolatio
 Independent review closure: task review approved 5288a44. Final whole-branch review found F1 obsolete recovery ownership and F2 reversed deferred batches. Correction dd83738 adds lifecycle-keyed recovery and one shared FIFO drain. Scoped review approved final source revision 341feb501ec1eef32db05e08bb65b05c68a33e25, including the merge from origin/main 86c2259. F1 closes with the held-cycle two-transition regression. F2 closes with the two-batch FIFO regression. The review found no new actionable regression. Documentation scope includes changed TypeScript declarations and lifecycle comments. Structural candidates desktop-sync.ts and main.ts retain controller transition ownership and host composition ownership. The merge preserves upstream mobile labels and conflict-copy notices. Standalone bun run check passed after integration. Earlier unchanged runs failed with timeouts and an interrupted-test scratch fixture. Native device scheduling and restart remain unproven. The owner device script remains: airplane mode, edit a note, force-quit Obsidian, reopen, disable airplane mode. Device trigger: device available and BRAT release plugin-v0.1.0 published. Historical tag context: ai-bridge-v0.1.2 replaced the original tag scheme. Criteria 1 and 2 remain open for device evidence, criterion 4 remains deferred, and criterion 5 remains unchecked.
 
 Human branch review pn-856ca4 approved the complete diff with no requested changes. OAB-11.5 stays In Progress because native device criteria remain open. Publication does not claim mobile acceptance.
+
+Publication validation: merged origin/main 5befa35 without conflicts after human approval. The M5 plugin diff stayed unchanged. Full bun run check passed at e8e7ce6 with 2,085 tests passed, one skipped, lint, documentation checks, typechecks, and builds. Worker build remained dry-run only. No native acceptance claim changed.
 <!-- SECTION:NOTES:END -->

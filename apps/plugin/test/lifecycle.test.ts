@@ -15,6 +15,8 @@ interface CapturedSyncActions {
 
 const host = vi.hoisted(() => ({
 	calls: [] as string[],
+	notices: [] as string[],
+	conflictNotice: null as ((path: string) => void) | null,
 	protocolAction: "",
 	protocolHandler: null as
 		| ((params: Record<string, string | "true">) => void)
@@ -56,7 +58,12 @@ vi.mock("obsidian", () => ({
 			return host.calls.includes("mobile-platform");
 		},
 	},
-	Notice: class {},
+	Notice: class {
+		/** Captures the exact visible message for the host wiring test. */
+		constructor(message: string) {
+			host.notices.push(message);
+		}
+	},
 	PluginSettingTab: class {},
 	Setting: class {},
 	requestUrl: () => {
@@ -134,6 +141,10 @@ vi.mock("../src/sync/create-publication", () => ({
 	/** Captures the active label while leaving controller and event lifetimes real. */
 	createPublication: (...args: unknown[]) => {
 		const deviceName = args[4] as string;
+		const options = args[5] as {
+			onConflictCopy?: (path: string) => void;
+		};
+		host.conflictNotice = options.onConflictCopy ?? null;
 		host.compositionNames.push(deviceName);
 		return {
 			publication: {
@@ -180,6 +191,11 @@ vi.mock("../src/sync/create-publication", () => ({
 }));
 
 vi.mock("../src/settings", () => ({
+	/** Resolves invalid saved names to the test host desktop default. */
+	resolveDeviceName: (savedName: unknown) =>
+		typeof savedName === "string" && savedName.trim() && savedName.length <= 80
+			? savedName
+			: "Obsidian desktop",
 	/** Captures settings callbacks without rendering Obsidian controls. */
 	AIBridgeSettingTab: class {
 		/** Captures server, device-name, and sync callbacks from plugin composition. */
@@ -277,6 +293,8 @@ function emitVaultEvent(event: string, ...args: unknown[]): void {
 describe("AIBridgePlugin device-local lifecycle", () => {
 	beforeEach(() => {
 		host.calls.splice(0);
+		host.notices.splice(0);
+		host.conflictNotice = null;
 		host.protocolAction = "";
 		host.protocolHandler = null;
 		host.settingsTab = null;
@@ -617,6 +635,22 @@ describe("AIBridgePlugin device-local lifecycle", () => {
 			expect(
 				(Reflect.get(plugin, "journal") as DeviceJournal).attentionReason,
 			).toBeTruthy();
+		} finally {
+			plugin.onunload();
+			vi.useRealTimers();
+			vi.unstubAllGlobals();
+		}
+	});
+
+	it("shows the fixed conflict notice with the new copy path", async () => {
+		const plugin = await startConnectedPlugin();
+		try {
+			host.conflictNotice?.(
+				"notes/a (conflict Test Device 1970-01-01 0000 r2).md",
+			);
+			expect(host.notices).toEqual([
+				"AI Bridge kept your version as notes/a (conflict Test Device 1970-01-01 0000 r2).md",
+			]);
 		} finally {
 			plugin.onunload();
 			vi.useRealTimers();

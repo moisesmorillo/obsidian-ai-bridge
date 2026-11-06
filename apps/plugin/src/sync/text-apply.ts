@@ -72,6 +72,8 @@ class PinnedRevisionRebased extends Error {
 export interface TextApplyOptions {
 	/** Stable display name stored with conflict recovery metadata. */
 	deviceName: string;
+	/** Calls once for each newly created and byte-verified visible conflict copy. */
+	onConflictCopy?(path: string): void;
 	/** Clock in Unix milliseconds for synthetic observations and recovery retention checks. */
 	now?: () => number;
 	/** Rejects a new local write while a coexistence confirmation blocks effects. */
@@ -128,6 +130,8 @@ export class TextApplyEngine {
 	private readonly deviceName: string;
 	private readonly now: () => number;
 	private readonly isEffectBlocked: () => boolean;
+	/** Host notice callback; failures cannot change durable apply effects. */
+	private readonly onConflictCopy: ((path: string) => void) | undefined;
 
 	/** Binds journal authority to guarded text and byte effects and a pinned-revision reader. */
 	constructor(
@@ -139,6 +143,7 @@ export class TextApplyEngine {
 		this.deviceName = options.deviceName.trim();
 		this.now = options.now ?? Date.now;
 		this.isEffectBlocked = options.isEffectBlocked ?? (() => false);
+		this.onConflictCopy = options.onConflictCopy;
 		if (!this.deviceName) throw new Error("A friendly device name is required");
 	}
 
@@ -1766,7 +1771,7 @@ export class TextApplyEngine {
 				);
 				return;
 			}
-			await this.effect([copy.source, copy.path], () =>
+			const created = await this.effect([copy.source, copy.path], () =>
 				createBinary.call(this.vault, copy.path, source),
 			);
 			this.assertOpen();
@@ -1779,6 +1784,8 @@ export class TextApplyEngine {
 				);
 				return;
 			}
+			if (created && copy.purpose !== "pre_apply")
+				this.notifyConflictCopy(copy.path);
 		}
 		await this.activeJournal.updateApply({ ...pending, step: "copied" });
 		this.assertOpen();
@@ -1903,7 +1910,7 @@ export class TextApplyEngine {
 						sourceBytes = localBytes;
 					}
 					this.assertOpen();
-					await this.effect(
+					const created = await this.effect(
 						[copy.source, copy.path],
 						async () =>
 							this.vault.createBinary?.(copy.path, sourceBytes) ?? false,
@@ -1915,6 +1922,8 @@ export class TextApplyEngine {
 							copy.path,
 							"Binary recovery path contains different bytes",
 						);
+					if (created && copy.purpose !== "pre_apply")
+						this.notifyConflictCopy(copy.path);
 					continue;
 				}
 				const existing = await this.vault.read(copy.path);
@@ -1941,7 +1950,7 @@ export class TextApplyEngine {
 							"Local text changed before its conflict copy was saved",
 						);
 				}
-				await this.effect([copy.source, copy.path], () =>
+				const created = await this.effect([copy.source, copy.path], () =>
 					this.vault.create(copy.path, text as string),
 				);
 				const saved = await this.vault.read(copy.path);
@@ -1950,6 +1959,8 @@ export class TextApplyEngine {
 						copy.path,
 						"Conflict copy path contains different bytes",
 					);
+				if (created && copy.purpose !== "pre_apply")
+					this.notifyConflictCopy(copy.path);
 			}
 			await this.activeJournal.updateApply({ ...pending, step: "copied" });
 		}
@@ -2638,6 +2649,15 @@ export class TextApplyEngine {
 		if ((await this.vault.read(path)) === remote) return true;
 		if (!applied) await this.activeJournal.clearExpectedWrite(path);
 		return false;
+	}
+
+	/** Calls the host notice port without allowing presentation errors to affect apply. */
+	private notifyConflictCopy(path: string): void {
+		try {
+			this.onConflictCopy?.(path);
+		} catch {
+			// Presentation errors do not change durable apply effects.
+		}
 	}
 
 	/** Confirms an observed local path no longer exists after Obsidian trash. */

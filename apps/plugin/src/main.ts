@@ -11,7 +11,11 @@ import { SyncTransportError } from "@plugin/infrastructure/sync-transport";
 import { ObsidianTextVault } from "@plugin/infrastructure/text-vault";
 import { VaultEventAdapter } from "@plugin/infrastructure/vault-events";
 import { Notice, Platform, Plugin } from "@plugin/obsidian-api";
-import { type AIBridgeSettings, AIBridgeSettingTab } from "@plugin/settings";
+import {
+	type AIBridgeSettings,
+	AIBridgeSettingTab,
+	resolveDeviceName,
+} from "@plugin/settings";
 import { CoexistenceController } from "@plugin/sync/coexistence";
 import {
 	CoexistenceEffectBlockedError,
@@ -36,9 +40,6 @@ import type { App, ObsidianProtocolData, PluginManifest } from "obsidian";
 
 /** Default canonical HTTPS service origin stored as a non-secret plugin setting. */
 const DEFAULT_SERVER_URL = "https://obsidian-bridge.mmorillo.dev";
-/** Safe fallback label for settings data that has no local device name. */
-const DEFAULT_DEVICE_NAME = "Obsidian desktop";
-
 /** Owns device-local enrollment and starts serialized synchronization after connection restore. */
 export default class AIBridgePlugin extends Plugin {
 	/** Active journal for this plugin lifecycle, or null when unavailable. */
@@ -79,7 +80,7 @@ export default class AIBridgePlugin extends Plugin {
 	/** Non-secret server and local device labels persisted in this plugin's settings. */
 	private settingsValue: AIBridgeSettings = {
 		serverUrl: DEFAULT_SERVER_URL,
-		deviceName: DEFAULT_DEVICE_NAME,
+		deviceName: resolveDeviceName(undefined),
 		coexistenceMode: false,
 	};
 	/** Safe enrollment status shown in settings. */
@@ -112,12 +113,7 @@ export default class AIBridgePlugin extends Plugin {
 				if (typeof stored.serverUrl === "string")
 					this.settingsValue.serverUrl = stored.serverUrl;
 				this.settingsValue.coexistenceMode = stored.coexistenceMode === true;
-				if (
-					typeof stored.deviceName === "string" &&
-					stored.deviceName.trim().length > 0 &&
-					stored.deviceName.length <= 80
-				)
-					this.settingsValue.deviceName = stored.deviceName;
+				this.settingsValue.deviceName = resolveDeviceName(stored.deviceName);
 			}
 			const journal = await DeviceJournal.open(
 				new ObsidianDeviceStorage(this.app),
@@ -652,6 +648,8 @@ export default class AIBridgePlugin extends Plugin {
 					this.runSyncAction(() => this.handleRevocation());
 				},
 				isEffectBlocked: () => this.isCoexistenceEffectBlocked(),
+				onConflictCopy: (path) =>
+					this.notice(`AI Bridge kept your version as ${path}`),
 			},
 		);
 	}
@@ -787,7 +785,7 @@ export default class AIBridgePlugin extends Plugin {
 			.map((file) => file.path);
 	}
 
-	/** Displays only fixed text and never includes provider data or host error details. */
+	/** Displays fixed message templates with approved conflict-copy paths. It never includes raw provider errors or host error details. */
 	private notice(message: string): void {
 		new Notice(message);
 	}

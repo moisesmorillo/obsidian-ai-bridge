@@ -22,6 +22,8 @@ export interface CreatePublicationOptions {
 	onRevoked?(): void;
 	/** Blocks new publication and local apply effects during owner confirmation. */
 	isEffectBlocked?(): boolean;
+	/** Presents the path of each newly created and verified conflict copy. */
+	onConflictCopy?(path: string): void;
 	/** Captures safe DELETE response classes, or clears stale metadata before a retry. */
 	onDeleteResponseDiagnostic?(
 		diagnostic: DeleteResponseDiagnostic | null,
@@ -57,6 +59,7 @@ export function createPublication(
 	const applyEngine = new TextApplyEngine(journal, textVault, remote, {
 		deviceName,
 		isEffectBlocked: options.isEffectBlocked,
+		onConflictCopy: options.onConflictCopy,
 	});
 	const reconciliation = new ReconciliationController(
 		journal,

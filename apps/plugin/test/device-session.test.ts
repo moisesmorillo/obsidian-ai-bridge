@@ -344,18 +344,18 @@ describe("DeviceSession", () => {
 		expect(test.statuses().at(-1)).toBe("reconnect");
 	});
 
-	it("reports a browser-launch failure without retaining pending consent", async () => {
+	it("retains live consent when automatic browser launch fails", async () => {
 		const test = createSession();
 		test.setBrowserFailure(true);
-		await expect(test.session.connect()).rejects.toThrow();
+		const authorizationUrl = await test.session.connect();
 		expect(test.browserUrl()).toBe("");
-		await expect(
-			test.session.callback({ code: "synthetic-code", state: "any-state" }),
-		).rejects.toThrow();
-		expect(test.statuses().at(-1)).toBe("reconnect");
-		expect(
-			test.transport.calls.filter((call) => call.url.endsWith("oauth/token")),
-		).toHaveLength(0);
+		expect(test.session.getAuthorizationUrl()).toBe(authorizationUrl);
+		const auth = new URL(authorizationUrl);
+		await test.session.callback({
+			code: "synthetic-code",
+			state: auth.searchParams.get("state") ?? "",
+		});
+		expect(test.session.getAuthorizationUrl()).toBeNull();
 	});
 
 	it("exchanges one valid callback and persists device identity", async () => {

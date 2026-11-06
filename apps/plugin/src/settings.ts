@@ -6,7 +6,7 @@ import type { CredentialStorage } from "@plugin/infrastructure/credential-storag
 import { PluginSettingTab, Setting } from "@plugin/obsidian-api";
 import { type SyncStatusActions, SyncStatusPanel } from "@plugin/status-panel";
 import type { SyncStatusProjection } from "@plugin/sync/sync-status";
-import type { App, Plugin } from "obsidian";
+import { type App, Platform, type Plugin } from "obsidian";
 
 /** Non-secret user settings for the desktop enrollment endpoint. */
 export interface AIBridgeSettings {
@@ -22,6 +22,8 @@ export class AIBridgeSettingTab extends PluginSettingTab {
 	/** Current safe status element, or null before the settings page renders. */
 	private statusElement: HTMLElement | null = null;
 	private syncElement: HTMLElement | null = null;
+	private authorizationElement: HTMLAnchorElement | null = null;
+	private connectionMessage: HTMLElement | null = null;
 
 	/** Binds non-secret settings and controller access to the plugin settings host. */
 	constructor(
@@ -102,9 +104,24 @@ export class AIBridgeSettingTab extends PluginSettingTab {
 			.setDesc("Connect this Obsidian device with browser authorization.")
 			.addButton((button) =>
 				button.setButtonText("Connect").onClick(async () => {
+					this.authorizationElement?.remove();
+					this.authorizationElement = null;
+					this.connectionMessage?.setText("");
+					button.setDisabled(true);
 					try {
 						await this.getSession().connect();
+						const url = this.getSession().getAuthorizationUrl();
+						if (url) this.renderAuthorizationControl(url);
+						this.connectionMessage?.setText(
+							Platform.isMobile
+								? "Use Open authorization page to continue."
+								: "If no browser appears, use Open authorization page.",
+						);
 					} catch {
+						this.connectionMessage?.setText(
+							"Could not start device authorization",
+						);
+					} finally {
 						button.setDisabled(false);
 					}
 				}),
@@ -117,6 +134,7 @@ export class AIBridgeSettingTab extends PluginSettingTab {
 		this.statusElement = containerEl.createEl("p", {
 			text: `Status: ${this.getStatus()}`,
 		});
+		this.connectionMessage = containerEl.createEl("p", { text: "" });
 		this.syncElement = containerEl.createEl("div", {
 			cls: "ai-bridge-sync-status",
 		});
@@ -128,7 +146,30 @@ export class AIBridgeSettingTab extends PluginSettingTab {
 	/** Updates the visible status with a fixed enum value and no OAuth response data. */
 	refreshStatus(): void {
 		this.statusElement?.setText(`Status: ${this.getStatus()}`);
+		if (!this.getSession().getAuthorizationUrl()) {
+			this.authorizationElement?.remove();
+			this.authorizationElement = null;
+		}
 		this.renderSyncStatus();
+	}
+
+	/** Adds a native link whose click opens the live authorization URL directly. */
+	private renderAuthorizationControl(url: string): void {
+		this.authorizationElement?.remove();
+		const link = this.containerEl.createEl("a", {
+			text: "Open authorization page",
+		});
+		link.href = url;
+		link.target = "_blank";
+		link.rel = "noopener noreferrer";
+		link.addEventListener("click", (event) => {
+			if (this.getSession().getAuthorizationUrl() !== url) {
+				event.preventDefault();
+				link.remove();
+				this.authorizationElement = null;
+			}
+		});
+		this.authorizationElement = link;
 	}
 
 	/** Refreshes the safe sync projection without exposing transport or credential data. */

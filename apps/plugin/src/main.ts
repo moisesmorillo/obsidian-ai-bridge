@@ -489,7 +489,11 @@ export default class AIBridgePlugin extends Plugin {
 			getDeviceName: () => this.settingsValue.deviceName,
 			getClientId: () => journal.snapshot().client_id ?? null,
 			openBrowser: (url) => {
-				window.open(url, "_blank", "noopener,noreferrer");
+				try {
+					window.open(url, "_blank", "noopener,noreferrer");
+				} catch {
+					// The settings link remains available if the host blocks this call.
+				}
 			},
 			setClientId: (clientId, isCurrent) => {
 				if (!this.journal) throw new Error("Device journal is unavailable");

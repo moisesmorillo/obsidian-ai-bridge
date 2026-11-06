@@ -73,6 +73,8 @@ interface PendingConsent {
 	expiresAt: number;
 	/** Session generation that fences cancellation, reconnect, and unload. */
 	generation: number;
+	/** Authorization URL exposed only while this consent attempt remains live. */
+	authorizationUrl: string;
 }
 
 /** Owns one in-memory PKCE attempt, validated credentials, refresh, and same-origin requests. */
@@ -102,8 +104,8 @@ export class DeviceSession {
 		this.serviceOrigin = parsed.origin;
 	}
 
-	/** Registers a public client and opens browser consent while retaining any old session. */
-	async connect(): Promise<void> {
+	/** Registers a public client and prepares browser consent while retaining any old session. */
+	async connect(): Promise<string> {
 		this.assertOpen();
 		const generation = ++this.generation;
 		this.pending = null;
@@ -144,6 +146,7 @@ export class DeviceSession {
 				tokenEndpoint: discovery.token_endpoint,
 				expiresAt: this.now() + CONSENT_LIFETIME_MS,
 				generation,
+				authorizationUrl: "",
 			};
 			this.pending = pending;
 			const authorization = new URL(discovery.authorization_endpoint);
@@ -158,8 +161,15 @@ export class DeviceSession {
 				resource: this.serviceOrigin,
 			}))
 				authorization.searchParams.set(key, value);
-			this.host.openBrowser(authorization.toString());
+			const authorizationUrl = authorization.toString();
+			pending.authorizationUrl = authorizationUrl;
+			try {
+				this.host.openBrowser(authorizationUrl);
+			} catch {
+				// Manual authorization remains available from the settings control.
+			}
 			this.assertCurrent(generation);
+			return authorizationUrl;
 		} catch {
 			if (generation === this.generation && !this.closed) {
 				this.pending = null;
@@ -184,6 +194,17 @@ export class DeviceSession {
 			this.setStatus("reconnect");
 			throw new Error("Stored device credentials need attention");
 		}
+	}
+
+	/** Returns the live in-memory authorization URL, or clears it after expiry. */
+	getAuthorizationUrl(): string | null {
+		const pending = this.pending;
+		if (!pending || pending.generation !== this.generation) return null;
+		if (this.now() >= pending.expiresAt) {
+			this.finishConsentAsFailed(pending);
+			return null;
+		}
+		return pending.authorizationUrl;
 	}
 
 	/** Cancels pending consent without changing stored credentials or journal operations. */

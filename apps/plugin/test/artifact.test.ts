@@ -30,7 +30,7 @@ describe("production plugin artifact", () => {
 		expect(manifest.id).toBe("ai-bridge");
 		expect(manifest.minAppVersion).toBe("1.13.0");
 		expect(manifest.isDesktopOnly).toBe(false);
-		expect(manifest.version).toBe("0.1.0");
+		expect(manifest.version).toBe("0.1.1");
 		expect(bundle).toMatch(/module\.exports|exports\./);
 
 		const runtimeImports = Object.values(metafile.outputs).flatMap(
@@ -38,7 +38,7 @@ describe("production plugin artifact", () => {
 		);
 		expect(
 			runtimeImports.filter((item) => item.external).map((item) => item.path),
-		).toEqual(["obsidian"]);
+		).toEqual(["obsidian", "obsidian"]);
 		expect(runtimeImports.some((item) => isBuiltin(item.path))).toBe(false);
 		expect(
 			Object.keys(metafile.inputs).some((input) =>

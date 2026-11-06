@@ -29,9 +29,26 @@ interface CapturedSetting {
 	toggles: CapturedToggle[];
 }
 
+/** Prevents the synthetic event default during stale-link checks. */
+interface CapturedClickEvent {
+	/** Records that the browser must not follow the synthetic link. */
+	preventDefault(): void;
+}
+
 /** Safe text element captured from the synthetic settings container. */
 interface CapturedElement {
 	textContent: string;
+	href?: string;
+	target?: string;
+	rel?: string;
+	removed?: boolean;
+	/** Marks the synthetic element as removed. */
+	remove(): void;
+	/** Adds a synthetic element event listener. */
+	addEventListener(
+		event: string,
+		listener: (event: CapturedClickEvent) => void,
+	): void;
 	/** Replaces the visible safe status text. */
 	setText(text: string): void;
 }
@@ -42,6 +59,7 @@ const host = vi.hoisted(() => ({
 }));
 
 vi.mock("obsidian", () => ({
+	Platform: { isMobile: true },
 	PluginSettingTab: class {
 		containerEl = {
 			/** Clears rows before the tab renders again. */
@@ -57,6 +75,12 @@ vi.mock("obsidian", () => ({
 					setText(text) {
 						this.textContent = text;
 					},
+					/** Marks the synthetic element as removed. */
+					remove() {
+						this.removed = true;
+					},
+					/** Captures no event because these tests inspect attributes only. */
+					addEventListener() {},
 				};
 				host.elements.push(element);
 				return element;
@@ -208,7 +232,8 @@ function createTab() {
 	};
 	let status: "connected" | "disconnected" = "connected";
 	const session = {
-		connect: vi.fn(),
+		connect: vi.fn().mockResolvedValue("https://auth.test/consent"),
+		getAuthorizationUrl: vi.fn().mockReturnValue("https://auth.test/consent"),
 		cancel: vi.fn(),
 	} as unknown as DeviceSession;
 	const credentials = {
@@ -305,6 +330,17 @@ describe("AIBridgeSettingTab", () => {
 			"tokens stored unencrypted on this device",
 		);
 		await host.controls[3]?.buttons[0]?.onClick?.();
+		const authorizationLink = host.elements.find(
+			(element) => element.textContent === "Open authorization page",
+		);
+		expect(authorizationLink).toMatchObject({
+			href: "https://auth.test/consent",
+			target: "_blank",
+			rel: "noopener noreferrer",
+		});
+		expect(host.elements.map((element) => element.textContent)).toContain(
+			"Use Open authorization page to continue.",
+		);
 		host.controls[3]?.buttons[1]?.onClick?.();
 		expect(test.session.connect).toHaveBeenCalledOnce();
 		expect(test.session.cancel).toHaveBeenCalledOnce();
@@ -315,6 +351,22 @@ describe("AIBridgeSettingTab", () => {
 		);
 		expect(status?.textContent).toBe("Status: disconnected");
 		expect(status?.textContent).not.toContain("token");
+	});
+
+	it("shows fixed safe text and restores Connect after preparation fails", async () => {
+		const test = createTab();
+		vi.mocked(test.session.connect).mockRejectedValueOnce(
+			new Error("provider body with secret"),
+		);
+		const connect = host.controls[3]?.buttons[0];
+		await connect?.onClick?.();
+		expect(connect?.disabled).toBe(false);
+		expect(host.elements.map((element) => element.textContent)).toContain(
+			"Could not start device authorization",
+		);
+		expect(
+			host.elements.map((element) => element.textContent).join(" "),
+		).not.toContain("provider body");
 	});
 
 	it("saves a distinct device name and restores the prior value on failure", async () => {

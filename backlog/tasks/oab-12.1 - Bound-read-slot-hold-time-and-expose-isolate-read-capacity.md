@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-11-06T22:04:00Z'
-updated_date: '2026-11-06T22:42:00Z'
+updated_date: '2026-11-06T23:04:00Z'
 labels: []
 dependencies: []
 parent_task_id: OAB-12
@@ -47,4 +47,6 @@ Command record. RED ran the focused read-response command with an exit recorder 
 Review round 1 correction. RED added an early-release response expiry test. It failed with expected exit 1 because expired_count stayed at 0. GREEN: cd apps/worker && bun run vitest run --config vitest.config.ts test/read-response.test.ts passed 27 tests. The focused early-release regression passed. bun run docs:check passed. Changed-file Biome check passed. bun run check passed all lint, documentation, type, test, and dry-run build steps. The count now tracks every incomplete lease that reaches its deadline. A prior slot release remains idempotent.
 
 Review round 1 RED command: cd apps/worker && bun run vitest run --config vitest.config.ts test/read-response.test.ts -t 'counts expiry after capacity release'. It recorded exit 1 because the expiry count stayed unchanged. GREEN command: cd apps/worker && bun run vitest run --config vitest.config.ts test/read-response.test.ts passed 27 tests. bun run docs:check and bun run check passed. The check passed 710 Worker tests, 122 HTTP tests, 115 f2 tests, all other workspace tests, type checks, lint, and dry-run builds.
+
+Branch review correction wave from b398c223535aaf736792f182b5744bc1ad9400a8. Added a fixed-length response test that feeds 128 x 65,536-byte chunks to the real fixed-length writer without reading its body. The source calls settle below EOF and remain stable for three timer turns, proving the writer blocks on downstream backpressure. The real read lease then reaches 60,000 ms, releases capacity, increments the expiry count once, and makes a newly acquired slot available. Reading the body after expiry rejects, not EOF. The regression passed without changing read-response implementation code, so the already-green code stayed intact. ReadSlotCapacitySnapshot now derives from NonNullable<MeasurementResponse["worker_isolate"]> via the public protocol package type. RED was not applicable because the existing behavior passed the new regression. GREEN: cd apps/worker && bun run vitest run --config vitest.config.ts test/read-response.test.ts passed 28 tests. bun run biome check apps/worker/src/application/read-budget.ts apps/worker/test/read-response.test.ts and git diff --check passed. bun run docs:check passed. bun run check passed lint, docs, all workspace type checks, 711 Worker tests, 122 HTTP tests, 115 F2 tests, 307 protocol tests, 91 tooling tests, 724 plugin tests with 1 skipped, and dry-run builds. New revision awaits commit.
 <!-- SECTION:NOTES:END -->

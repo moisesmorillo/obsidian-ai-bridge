@@ -161,6 +161,57 @@ describe("owned read response", () => {
 		}
 	});
 
+	it("expires a fixed-length write stalled by an undrained consumer", async () => {
+		vi.useFakeTimers();
+		const expiredBefore = readSlotCapacitySnapshot().expired_count;
+		const lease = tryAcquireReadSlot();
+		if (!lease) throw new Error("Expected an available read slot");
+		const chunk = new Uint8Array(65_536);
+		const chunkCount = 128;
+		let sourceCalls = 0;
+		const response = ownedReadResponse(
+			{
+				next: async () => {
+					const index = sourceCalls++;
+					return index < chunkCount
+						? { done: false, value: chunk }
+						: { done: true, value: undefined };
+				},
+				cancel: async () => {},
+			},
+			{ finish: async () => ({ ok: true }) },
+			lease,
+			{ headers: { "Content-Length": String(chunk.byteLength * chunkCount) } },
+			undefined,
+			chunk.byteLength * chunkCount,
+		);
+		if (!response.body) throw new Error("Read response has no body");
+		const reader = response.body.getReader();
+		void reader.closed.catch(() => undefined);
+		let stableTurns = 0;
+		let previousCalls = -1;
+		for (let turn = 0; turn < 20 && stableTurns < 3; turn++) {
+			await vi.advanceTimersByTimeAsync(1);
+			stableTurns = sourceCalls === previousCalls ? stableTurns + 1 : 0;
+			previousCalls = sourceCalls;
+		}
+		expect(stableTurns).toBeGreaterThanOrEqual(3);
+		expect(sourceCalls).toBeGreaterThan(1);
+		expect(sourceCalls).toBeLessThan(chunkCount + 1);
+		await vi.advanceTimersByTimeAsync(60_000);
+		expect(readSlotCapacitySnapshot().expired_count).toBe(expiredBefore + 1);
+		expect(readSlotCapacitySnapshot().active_slots).toBe(0);
+		const available = tryAcquireReadSlot();
+		try {
+			expect(available).toBeDefined();
+			await expect(reader.read()).rejects.toThrow();
+			expect(readSlotCapacitySnapshot().expired_count).toBe(expiredBefore + 1);
+		} finally {
+			available?.();
+			lease.complete();
+		}
+	});
+
 	it("fails an undrained response at the deadline and rejects late source completion", async () => {
 		vi.useFakeTimers();
 		const release = tryAcquireReadSlot();

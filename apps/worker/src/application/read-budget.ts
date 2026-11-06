@@ -1,3 +1,5 @@
+import type { MeasurementResponse } from "@obsidian-ai-bridge/protocol";
+
 /** Maximum concurrent authoritative read responses in one Worker isolate. */
 export const READ_SLOT_LIMIT = 4;
 /** Maximum time one read lease can retain local capacity, in milliseconds. */
@@ -34,21 +36,10 @@ export interface ReadSlotExpiredResult {
 	kind: "expired";
 }
 
-/** Per-isolate capacity and expiry observations for the responding Worker. */
-export interface ReadSlotCapacitySnapshot {
-	/** Opaque process-local Worker isolate identifier. */
-	isolate_id: string;
-	/** Currently reserved read slots. */
-	active_slots: number;
-	/** Remaining slots from the fixed isolate limit. */
-	available_slots: number;
-	/** Maximum concurrent read slots in this isolate. */
-	limit: number;
-	/** Incomplete response leases that reached their deadline since isolate start. */
-	expired_count: number;
-	/** Fixed lease duration in milliseconds. */
-	deadline_ms: number;
-}
+/** Per-isolate capacity observation from the canonical owner response contract. */
+export type ReadSlotCapacitySnapshot = NonNullable<
+	MeasurementResponse["worker_isolate"]
+>;
 
 /** Race preparation work against the acquisition deadline without cancelling native work. */
 export async function waitForReadSlotWork<T>(

@@ -8,6 +8,7 @@ import { CoexistenceEffectFence } from "../src/sync/coexistence-effect-fence";
 import { DesktopSyncController } from "../src/sync/desktop-sync";
 import { DeviceJournal } from "../src/sync/device-journal";
 import type { PublicationEvent } from "../src/sync/publication";
+import { ReconciliationController } from "../src/sync/reconciliation";
 import { TextApplyEngine } from "../src/sync/text-apply";
 
 /** Provides the exact host methods used by the adapter without a live vault. */
@@ -36,16 +37,20 @@ function makeHostVault() {
 		emit("modify", target);
 	});
 	const process = vi.fn(
-		async (_file: TFile, callback: (text: string) => string) => {
-			const current = contents.get(file.path) ?? "";
+		async (target: TFile, callback: (text: string) => string) => {
+			const current = contents.get(target.path) ?? "";
 			const next = callback(current);
-			contents.set(file.path, next);
-			if (next !== current) emit("modify", file);
+			contents.set(target.path, next);
+			target.stat.size = new TextEncoder().encode(next).byteLength;
+			if (next !== current) emit("modify", target);
 			return next;
 		},
 	);
 	const create = vi.fn(async (path: string, text: string) => {
-		const created = Object.assign(new TFile(), { path });
+		const created = Object.assign(new TFile(), {
+			path,
+			stat: { size: new TextEncoder().encode(text).byteLength },
+		});
 		files.push(created);
 		contents.set(path, text);
 		emit("create", created);
@@ -200,6 +205,11 @@ async function makeCoexistenceOriginHarness(
 		text: string;
 		bytes?: Uint8Array;
 	}>,
+	readPinned: (
+		path: string,
+		epoch: string,
+		rev: number,
+	) => Promise<string | null> = async () => null,
 ) {
 	let persisted: unknown = null;
 	const storage = {
@@ -270,7 +280,7 @@ async function makeCoexistenceOriginHarness(
 	const engine = new TextApplyEngine(
 		journal,
 		vault,
-		{ read: async () => null },
+		{ read: readPinned },
 		{ deviceName: "test", isEffectBlocked: () => fence.isBlocked() },
 	);
 	return {
@@ -370,6 +380,161 @@ describe("ObsidianTextVault", () => {
 		harness.desktop.close();
 		harness.engine.close();
 		harness.journal.close();
+	});
+
+	it("replays remote create, rename, and put without a false coexistence confirmation", async () => {
+		const fake = makeHostVault();
+		const source = "Sin título.md";
+		const destination = "iphone-test-1.md";
+		fake.contents.delete(fake.file.path);
+		fake.host.getFiles().splice(0, 1);
+		const epoch = "f".repeat(32);
+		const content = "edited on iPhone";
+		const emptyHash = await recoveryHash(new Uint8Array());
+		const contentHash = await recoveryHash(new TextEncoder().encode(content));
+		const harness = await makeCoexistenceOriginHarness(
+			fake,
+			epoch,
+			[],
+			async (path, _epoch, rev) => {
+				if (path === source && rev === 1) return "";
+				if (path === destination && rev === 1) return "";
+				if (path === destination && rev === 2) return content;
+				return null;
+			},
+		);
+		await harness.journal.setCursor(epoch, 0);
+		/** Signals that the rename proof started its destination-byte read. */
+		let startOriginRead: () => void = () => undefined;
+		/** Releases destination bytes after the host rename settles. */
+		let releaseOriginRead: (text: string) => void = () => undefined;
+		const originReadStarted = new Promise<void>((resolve) => {
+			startOriginRead = resolve;
+		});
+		const originRead = new Promise<string>((resolve) => {
+			releaseOriginRead = resolve;
+		});
+		let destinationReadHeld = false;
+		const hostRead = fake.host.read;
+		fake.host.read = async (file: TFile) => {
+			if (!destinationReadHeld && file.path === destination) {
+				destinationReadHeld = true;
+				startOriginRead();
+				return originRead;
+			}
+			return hostRead(file);
+		};
+		const entries = [
+			{
+				seq: 1,
+				op: "put" as const,
+				path: source,
+				etag: `"${epoch}.1"`,
+				hash: emptyHash,
+				origin: "remote",
+				at: 1,
+			},
+			{
+				seq: 2,
+				op: "rename" as const,
+				from_path: source,
+				path: destination,
+				from_etag: `"${epoch}.2"`,
+				etag: `"${epoch}.1"`,
+				hash: emptyHash,
+				origin: "remote",
+				at: 2,
+			},
+			{
+				seq: 3,
+				op: "put" as const,
+				path: destination,
+				etag: `"${epoch}.2"`,
+				hash: contentHash,
+				origin: "remote",
+				at: 3,
+			},
+		];
+		const reconciliation = new ReconciliationController(
+			harness.journal,
+			harness.engine,
+			harness.vault,
+			{
+				manifest: async () => ({
+					epoch,
+					head_seq: 3,
+					next_page: null,
+					entries: [],
+				}),
+				changes: async (_epoch, cursor) => ({
+					epoch,
+					head_seq: 3,
+					entries:
+						cursor === 0
+							? entries.slice(0, 1)
+							: cursor === 1
+								? entries.slice(1, 2)
+								: entries.slice(2),
+				}),
+				createText: async () => {
+					throw new Error("Replay must not enroll local content");
+				},
+			},
+			() => harness.fence.isBlocked(),
+		);
+
+		try {
+			await reconciliation.replay();
+			const renamePage = reconciliation.replay();
+			await originReadStarted;
+			await renamePage;
+			expect(
+				fake.rename,
+				JSON.stringify({
+					cursor: harness.journal.snapshot().cursor,
+					entries: harness.observedEvents,
+					paths: fake.host.getFiles().map((file) => file.path),
+				}),
+			).toHaveBeenCalledOnce();
+			expect(harness.journal.snapshot().cursor).toBe(2);
+			expect(harness.journal.snapshot().base[source]).toEqual({
+				deleted: true,
+				rev: 2,
+			});
+			expect(harness.journal.snapshot().base[destination]).toEqual({
+				deleted: false,
+				rev: 1,
+				hash: emptyHash,
+			});
+			expect(harness.journal.snapshot().coexistence_confirmations).toEqual([]);
+			expect(harness.fence.isBlocked()).toBe(true);
+			releaseOriginRead("");
+			await vi.waitFor(() =>
+				expect(harness.completedObservations).toHaveLength(2),
+			);
+			expect(harness.journal.snapshot().coexistence_confirmations).toEqual([]);
+			expect(harness.fence.isBlocked()).toBe(false);
+			await reconciliation.replay();
+
+			expect(fake.host.getAbstractFileByPath(source)).toBeNull();
+			expect(fake.contents.get(destination)).toBe(content);
+			expect(harness.journal.snapshot().pending_apply).toEqual([]);
+			expect(harness.journal.snapshot().coexistence_confirmations).toEqual([]);
+			expect(harness.journal.snapshot().cursor).toBe(3);
+			expect(harness.journal.snapshot().base[destination]).toEqual({
+				deleted: false,
+				rev: 2,
+				hash: contentHash,
+			});
+			expect(harness.fence.isBlocked()).toBe(false);
+		} finally {
+			releaseOriginRead("");
+			reconciliation.close();
+			harness.adapter.dispose();
+			harness.desktop.close();
+			harness.engine.close();
+			harness.journal.close();
+		}
 	});
 
 	it("keeps remote rename apply out of coexistence and advances both authorities", async () => {

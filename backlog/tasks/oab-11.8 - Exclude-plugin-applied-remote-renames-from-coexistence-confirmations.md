@@ -4,7 +4,7 @@ title: Exclude plugin-applied remote renames from coexistence confirmations
 status: In Progress
 assignee: []
 created_date: '2026-11-06T18:23:00Z'
-updated_date: '2026-11-06T18:52:00Z'
+updated_date: '2026-11-06T19:05:00Z'
 labels: []
 dependencies: []
 parent_task_id: OAB-11
@@ -42,4 +42,6 @@ Owner decision: extend write scope to apps/plugin/src/infrastructure/vault-event
 RED: `cd apps/plugin && bun run test -- test/vault-events.test.ts -t 'accepts an exact rename proof when its destination read settles late'` failed before source edits because exact bytes read after settlement returned false. Root cause: `verifyMutationTarget` sampled `marker.settled` after the read and rejected late exact evidence. The fix retains exact source identity, destination path, bytes, ambiguity/claim checks, and accepted settlement. Create/modify still require an active read. Focused suites passed: 3 files, 44 tests. `bun run docs:check` passed. `bun run check` passed with all tests/builds. Full create/rename/put plus cursor integration remains unproven: an attempted gated test timed out before reaching the read. Host fakes do not prove real Obsidian timing. Release metadata is 0.1.2. Parent review remains pending.
 
 Commit: ef081d4. OAB-11.8 remains In Progress because the exact create/rename/put cursor regression and independent reviews remain open.
+
+Follow-up regression passed. A real replay test now uses ReconciliationController, TextApplyEngine, CoexistenceController, DesktopSyncController, and VaultEventAdapter for create Sin título.md, rename to iphone-test-1.md, then put revision 2. It asserts source tombstone and destination revisions, cursor 3, applied content, empty pending apply, zero confirmations, and open fence. A wrapped negative control against the original production vault-events.ts failed at the expected confirmation assertion. The earlier timeout came from gating a post-rename apply read because the fake indexed the renamed file after emitting the event. The corrected gate holds the first exact destination read. bun run check passed after the follow-up. Prior commit ef081d4 was amended to fa10f43 before this follow-up.
 <!-- SECTION:NOTES:END -->

@@ -1576,7 +1576,7 @@ describe("TextApplyEngine", () => {
 			{
 				deviceName: "Test Device",
 				onConflictCopy: (copyPath: string) => notices.push(copyPath),
-			} as TextApplyOptions,
+			},
 		);
 
 		await engine.apply({ ...change, path, hash: remoteHash }, "blob");
@@ -1639,7 +1639,7 @@ describe("TextApplyEngine", () => {
 			deviceName: "Test Device",
 			now: () => now,
 			onConflictCopy: (copyPath: string) => recoveryNotices.push(copyPath),
-		} as TextApplyOptions);
+		});
 		await notifyingEngine.resume();
 		await notifyingEngine.apply(blobChange);
 
@@ -2116,7 +2116,7 @@ describe("TextApplyEngine", () => {
 			{
 				deviceName: "Test Device",
 				onConflictCopy: (copyPath: string) => notices.push(copyPath),
-			} as TextApplyOptions,
+			},
 		);
 
 		await engine.apply(remoteDelete, "blob");
@@ -2725,30 +2725,41 @@ describe("TextApplyEngine", () => {
 			rev: 1,
 			hash: baseHash,
 		});
-		engine = makeEngine(journal, vault, {
-			read: async () => {
-				throw new UnsupportedRemoteTextError(rename.path);
+		const notices: string[] = [];
+		engine = makeEngine(
+			journal,
+			vault,
+			{
+				read: async () => {
+					throw new UnsupportedRemoteTextError(rename.path);
+				},
+				readBlob: async (_path, requestEpoch, rev) => ({
+					bytes: remote.slice(),
+					epoch: requestEpoch,
+					rev,
+					hash: remoteHash,
+				}),
 			},
-			readBlob: async (_path, requestEpoch, rev) => ({
-				bytes: remote.slice(),
-				epoch: requestEpoch,
-				rev,
-				hash: remoteHash,
-			}),
-		});
+			{
+				deviceName: "Test Device",
+				onConflictCopy: (copyPath: string) => notices.push(copyPath),
+			},
+		);
 
 		await engine.apply(rename);
 
 		expect(vault.binaryFiles.has(rename.from_path)).toBe(false);
 		expect(vault.binaryFiles.get(rename.path)).toEqual(remote);
+		const conflictPath =
+			"assets/dirty-source (conflict Test Device 1970-01-01 0000 r2).png";
 		expect(
-			[...vault.binaryFiles.entries()].some(
-				([path, bytes]) =>
-					path.includes("conflict") &&
-					bytes.byteLength === source.byteLength &&
-					bytes.every((byte, index) => byte === source[index]),
-			),
-		).toBe(true);
+			[...vault.binaryFiles.keys()].filter((path) => path.includes("conflict")),
+		).toEqual([conflictPath]);
+		expect(vault.binaryFiles.get(conflictPath)).toEqual(source);
+		expect(notices).toEqual([conflictPath]);
+		expect(
+			notices.some((path) => path.startsWith(".ai-bridge/pre-apply/")),
+		).toBe(false);
 		expect(journal.snapshot().attention).toContainEqual(
 			expect.objectContaining({ path: rename.path }),
 		);
@@ -3160,7 +3171,7 @@ describe("TextApplyEngine", () => {
 			{
 				deviceName: "Test Device",
 				onConflictCopy: (copyPath: string) => reusedCopyNotices.push(copyPath),
-			} as TextApplyOptions,
+			},
 		);
 		await engine.resume();
 		expect(reusedCopyNotices).toEqual([]);
@@ -3743,10 +3754,15 @@ describe("TextApplyEngine", () => {
 		const collidingPath = "notes/CAFÉ.md";
 		vault.files.set(collidingPath, "local collision bytes");
 		const notices: string[] = [];
-		engine = makeEngine(journal, vault, { read: async () => remoteText }, {
-			deviceName: "Test Device",
-			onConflictCopy: (copyPath: string) => notices.push(copyPath),
-		} as TextApplyOptions);
+		engine = makeEngine(
+			journal,
+			vault,
+			{ read: async () => remoteText },
+			{
+				deviceName: "Test Device",
+				onConflictCopy: (copyPath: string) => notices.push(copyPath),
+			},
+		);
 		await engine.apply({ ...change, path: "notes/café.md" });
 		expect(vault.files.get(collidingPath)).toBe("local collision bytes");
 		const copies = [...vault.files.entries()].filter(([path]) =>
@@ -3764,12 +3780,17 @@ describe("TextApplyEngine", () => {
 
 	it("continues conflict apply when the notice callback throws", async () => {
 		vault.files.set("notes/CAFÉ.md", "local collision bytes");
-		engine = makeEngine(journal, vault, { read: async () => remoteText }, {
-			deviceName: "Test Device",
-			onConflictCopy: () => {
-				throw new Error("notice unavailable");
+		engine = makeEngine(
+			journal,
+			vault,
+			{ read: async () => remoteText },
+			{
+				deviceName: "Test Device",
+				onConflictCopy: () => {
+					throw new Error("notice unavailable");
+				},
 			},
-		} as TextApplyOptions);
+		);
 
 		await expect(
 			engine.apply({ ...change, path: "notes/café.md" }),
@@ -3788,10 +3809,15 @@ describe("TextApplyEngine", () => {
 		const create = vault.create.bind(vault);
 		vault.create = async (path, text) =>
 			path.includes("(conflict ") ? false : create(path, text);
-		engine = makeEngine(journal, vault, { read: async () => remoteText }, {
-			deviceName: "Test Device",
-			onConflictCopy: (path: string) => notices.push(path),
-		} as TextApplyOptions);
+		engine = makeEngine(
+			journal,
+			vault,
+			{ read: async () => remoteText },
+			{
+				deviceName: "Test Device",
+				onConflictCopy: (path: string) => notices.push(path),
+			},
+		);
 
 		await engine.apply({ ...change, path: "notes/café.md" });
 
@@ -3985,12 +4011,28 @@ describe("TextApplyEngine", () => {
 			from_path: sourcePath,
 			from_etag: `"${epoch}.2"`,
 		};
-		engine = makeEngine(journal, vault, { read: async () => remoteText });
+		const notices: string[] = [];
+		engine = makeEngine(
+			journal,
+			vault,
+			{ read: async () => remoteText },
+			{
+				deviceName: "Test Device",
+				onConflictCopy: (copyPath: string) => notices.push(copyPath),
+			},
+		);
 		await engine.apply(rename);
 		const conflictFiles = [...vault.files.entries()].filter(([path]) =>
 			path.includes("(conflict "),
 		);
-		expect(conflictFiles).toHaveLength(2);
+		const expectedConflictPaths = [
+			"notes/a (conflict Test Device 1970-01-01 0000 r3).md",
+			"notes/b (conflict Test Device 1970-01-01 0000 r3).md",
+		];
+		expect(conflictFiles.map(([path]) => path).sort()).toEqual(
+			expectedConflictPaths.sort(),
+		);
+		expect(notices).toEqual(expectedConflictPaths);
 		expect(conflictFiles.map(([, text]) => text).sort()).toEqual(
 			[sourceText, destinationText].sort(),
 		);

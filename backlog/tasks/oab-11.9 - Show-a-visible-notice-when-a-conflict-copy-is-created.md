@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-11-06T21:40:00Z'
-updated_date: '2026-11-06T22:40:00Z'
+updated_date: '2026-11-06T22:58:00Z'
 labels: []
 dependencies: []
 parent_task_id: OAB-11
@@ -48,4 +48,9 @@ Implementation evidence (2026-11-06):
 - Limits: no device, personal vault, live service, or deployment test. Keep device criterion open until device available and BRAT release plugin-v0.1.0 published. The task remains In Progress.
 
 Final validation refresh: after adding the exact Notice text wiring test and the dirty-blob notice assertion, `bun --filter @obsidian-ai-bridge/plugin test -- test/lifecycle.test.ts test/settings.test.ts test/text-apply.test.ts` passed (3 files, 153 tests). The latest `bun run docs:check`, `bun run check`, and `git diff --check` all passed. Latest full counts: plugin 728 passed and 1 skipped, protocol 307 passed, tooling 91 passed, worker 702 passed plus isolated groups of 122 and 115 passed. The lifecycle host mock confirmed `AI Bridge kept your version as <path>`.
+
+Review-note follow-up: added exact notice-path and byte-preservation assertions for dirty text rename (two visible copies) and dirty blob rename (one visible copy). The dirty blob test also asserts that no pre-apply path appears in notices. Clarified resolveDeviceName validation and default behavior in TSDoc. Removed redundant TextApplyOptions assertions from focused tests.
+- Initial focused run with new assertions failed because the expected rename paths did not match the existing revision identity. Corrected expectations to match the actual conflict names.
+- Final `bun --filter @obsidian-ai-bridge/plugin test -- test/text-apply.test.ts test/settings.test.ts` passed: 2 files and 120 tests.
+- The first `bun run docs:check && bun run check && git diff --check` shell command timed out at 120 seconds during the full check. `ps` found no active check process. Retried `bun run check && git diff --check` with a 300-second timeout. It passed, including lint, docs, typechecks, tests, and builds. A separate `bun run docs:check` also returned exit 0. Device criterion 1 remains open.
 <!-- SECTION:NOTES:END -->

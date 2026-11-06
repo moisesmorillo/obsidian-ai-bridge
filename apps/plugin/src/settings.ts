@@ -17,7 +17,9 @@ export interface AIBridgeSettings {
 	coexistenceMode: boolean;
 }
 
-/** Keeps valid saved labels byte-for-byte and selects a platform default only for invalid data. */
+/** Accepts a nonblank string up to 80 characters and preserves it exactly.
+ * Otherwise, it selects `Obsidian mobile` on mobile and `Obsidian desktop` elsewhere.
+ */
 export function resolveDeviceName(savedName: unknown): string {
 	if (
 		typeof savedName === "string" &&

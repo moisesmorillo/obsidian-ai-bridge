@@ -2,6 +2,7 @@ import type {
 	AdmissionCompletion,
 	AdmissionFinishResult,
 } from "@obsidian-ai-bridge/protocol";
+import type { ReadSlotLease } from "@worker/application/read-budget";
 import { ReadAborted } from "@worker/application/read-demand";
 import {
 	ReadBatchFailure,
@@ -44,22 +45,30 @@ export interface ReadResponseOwner {
  * known lengths use a gated byte stream so response status and Content-Length remain intact until
  * durable settlement succeeds. Settlement uses one fixed deadline. Local capacity releases after
  * started source work and source cancellation settle, independent of durable settlement and consumer
- * drain. A stalled read keeps its slot until its read and cleanup settle. Ticket expiry does not
- * release unresolved local capacity.
+ * drain. The acquisition lease deadline releases local capacity and errors unfinished responses even
+ * when source or cancellation work remains unresolved. Unknown work keeps durable admission uncertain.
  * @param knownByteLength - Exact response bytes, or undefined for generic response framing.
  */
 export function ownedReadResponse(
 	source: ReadResponseSource,
 	owner: ReadResponseOwner,
-	releaseSlot: () => void,
+	releaseSlot: (() => void) | ReadSlotLease,
 	init?: ResponseInit,
 	signal?: AbortSignal,
 	knownByteLength?: number,
+	deadlineLease?: ReadSlotLease,
 ): Response {
 	let pending: Promise<IteratorResult<Uint8Array>> | undefined;
 	let stopping = false;
 	let settlement: Promise<void> | undefined;
+	let cancellation: Promise<void> | undefined;
 	let slotReleased = false;
+	let expired = false;
+	let deadlineError: Error | undefined;
+	let signalDeadline!: () => void;
+	const deadlinePromise = new Promise<void>((resolve) => {
+		signalDeadline = resolve;
+	});
 	let controllerRef: ReadableStreamController<Uint8Array> | undefined;
 	let fixedWriter: WritableStreamDefaultWriter<Uint8Array> | undefined;
 	let fixedWriterShutdown: Promise<void> | undefined;
@@ -69,8 +78,44 @@ export function ownedReadResponse(
 		if (slotReleased) return;
 		slotReleased = true;
 		signal?.removeEventListener("abort", abort);
-		controllerRef = undefined;
 		releaseSlot();
+	}
+	/** Stop observing the acquisition deadline only after response work completes. */
+	function completeDeadline(): void {
+		if (lease) lease.complete();
+		controllerRef = undefined;
+	}
+	/** Fail the response at its acquisition deadline without joining unknown source work. */
+	function expire(): void {
+		if (expired) return;
+		expired = true;
+		stopping = true;
+		signalDeadline();
+		release();
+		const reason = new Error("Read slot hold deadline exceeded");
+		deadlineError = reason;
+		const controller = controllerRef;
+		controllerRef = undefined;
+		try {
+			controller?.error(reason);
+		} catch {
+			// The response may already be closed when the deadline fires.
+		}
+		if (!settlement) void cancelSource(reason).catch(() => {});
+		void abortFixedWriter(reason);
+	}
+	const lease =
+		deadlineLease ?? ("onExpire" in releaseSlot ? releaseSlot : undefined);
+	if (lease) lease.onExpire(expire);
+	/** Start source cancellation once and observe synchronous throws as promise rejection. */
+	function cancelSource(reason?: unknown): Promise<void> {
+		if (cancellation) return cancellation;
+		try {
+			cancellation = Promise.resolve(source.cancel(reason));
+		} catch (error) {
+			cancellation = Promise.reject(error);
+		}
+		return cancellation;
 	}
 	/** Join source reads and cancellation before capacity release, then bound durable settlement. */
 	function settleOwner(
@@ -81,13 +126,8 @@ export function ownedReadResponse(
 		if (settlement) return settlement;
 		stopping = true;
 		settlement = (async () => {
-			let cancellation: Promise<void> | undefined;
-			try {
-				if (cancel) cancellation = Promise.resolve(source.cancel(reason));
-			} catch (error) {
-				cancellation = Promise.reject(error);
-			}
-			const results = await Promise.allSettled([pending, cancellation]);
+			const cleanup = cancel ? cancelSource(reason) : undefined;
+			const results = await Promise.allSettled([pending, cleanup]);
 			pending = undefined;
 			release();
 			const outcome = results.some(
@@ -110,7 +150,14 @@ export function ownedReadResponse(
 		completion: AdmissionCompletion,
 		reason?: unknown,
 	): Promise<void> {
-		return settleOwner(cancel, completion, reason).finally(release);
+		return settleOwner(
+			cancel,
+			expired ? "uncertain" : completion,
+			reason,
+		).finally(() => {
+			release();
+			completeDeadline();
+		});
 	}
 	/** Start one fixed-writer shutdown and retain its promise for release coordination. */
 	function abortFixedWriter(reason: unknown): Promise<void> {
@@ -153,6 +200,10 @@ export function ownedReadResponse(
 				/** Retain the controller for request abort errors before source completion. */
 				start(controller) {
 					controllerRef = controller;
+					if (expired) {
+						controller.error(deadlineError);
+						return;
+					}
 					signal?.addEventListener("abort", abort, { once: true });
 					if (signal?.aborted) abort();
 				},
@@ -161,9 +212,14 @@ export function ownedReadResponse(
 					if (stopping) return;
 					try {
 						pending = source.next();
-						const item = await pending;
+						const item = await Promise.race([
+							pending,
+							deadlinePromise.then(() => {
+								throw deadlineError;
+							}),
+						]);
 						pending = undefined;
-						if (stopping) return;
+						if (stopping || expired) return;
 						if (item.done) {
 							await finish(false, "settled");
 							controller.close();
@@ -200,6 +256,7 @@ export function ownedReadResponse(
 		const fixed = new FixedLengthStream(knownByteLength);
 		const writer = fixed.writable.getWriter();
 		fixedWriter = writer;
+		if (expired) void abortFixedWriter(deadlineError);
 		/** Hold one bounded chunk until EOF settles the owner before response completion. */
 		const pump = async (): Promise<void> => {
 			let buffered: Uint8Array | undefined;
@@ -208,7 +265,12 @@ export function ownedReadResponse(
 				let item: IteratorResult<Uint8Array>;
 				try {
 					pending = source.next();
-					item = await pending;
+					item = await Promise.race([
+						pending,
+						deadlinePromise.then(() => {
+							throw deadlineError;
+						}),
+					]);
 					pending = undefined;
 				} catch (error) {
 					pending = undefined;
@@ -222,7 +284,7 @@ export function ownedReadResponse(
 					);
 					return;
 				}
-				if (stopping) return;
+				if (stopping || expired) return;
 				if (item.done) {
 					if (received !== knownByteLength) {
 						const error = new Error(
@@ -285,6 +347,7 @@ export function ownedReadResponse(
 					writerShutdown !== fixedWriterShutdown
 				);
 				release();
+				completeDeadline();
 			});
 		signal?.addEventListener("abort", abort, { once: true });
 		if (signal?.aborted) abort();
@@ -295,6 +358,10 @@ export function ownedReadResponse(
 		/** Keep the controller only while response production owns its resources. */
 		start(controller) {
 			controllerRef = controller;
+			if (expired) {
+				controller.error(deadlineError);
+				return;
+			}
 			signal?.addEventListener("abort", abort, { once: true });
 			if (signal?.aborted) abort();
 		},
@@ -303,9 +370,14 @@ export function ownedReadResponse(
 			if (stopping) return;
 			try {
 				pending = source.next();
-				const item = await pending;
+				const item = await Promise.race([
+					pending,
+					deadlinePromise.then(() => {
+						throw deadlineError;
+					}),
+				]);
 				pending = undefined;
-				if (stopping) return;
+				if (stopping || expired) return;
 				if (item.done) {
 					await finish(false, "settled");
 					controller.close();

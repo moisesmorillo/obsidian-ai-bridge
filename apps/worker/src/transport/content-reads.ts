@@ -6,7 +6,10 @@ import {
 import { AdmissionDenied } from "@worker/application/admission";
 import type { BlobContentStore } from "@worker/application/blobs";
 import { FileOperationDenied } from "@worker/application/files";
-import { tryAcquireReadSlot } from "@worker/application/read-budget";
+import {
+	tryAcquireReadSlot,
+	waitForReadSlotWork,
+} from "@worker/application/read-budget";
 import { assertReadDemand, ReadAborted } from "@worker/application/read-demand";
 import { settleReadAdmission } from "@worker/application/reads";
 import type { TextVaultGateway } from "@worker/application/text-files";
@@ -50,23 +53,37 @@ export async function readContentResponse(
 	};
 	try {
 		assertReadDemand(request.signal);
-		const begun = await gateway.authorize(identity, {
-			op: "read",
-			paths: [selection.path],
-			precondition: { kind: "none" },
-			payload_hash: EMPTY_PAYLOAD_HASH,
-			size: 0,
-		});
+		const begunResult = await waitForReadSlotWork(
+			release,
+			gateway.authorize(identity, {
+				op: "read",
+				paths: [selection.path],
+				precondition: { kind: "none" },
+				payload_hash: EMPTY_PAYLOAD_HASH,
+				size: 0,
+			}),
+		);
+		if (begunResult.kind === "expired")
+			return fileFailureResponse({ kind: "internal_error" });
+		const begun = begunResult.value;
 		if (!begun.ok) {
 			release();
+			release.complete();
 			return fileFailureResponse(begun.failure);
 		}
 		ticket = begun.ticket.id;
 		assertReadDemand(request.signal);
-		const selected = await gateway.readText(identity, selection, ticket);
+		const selectedResult = await waitForReadSlotWork(
+			release,
+			gateway.readText(identity, selection, ticket),
+		);
+		if (selectedResult.kind === "expired")
+			return fileFailureResponse({ kind: "internal_error" });
+		const selected = selectedResult.value;
 		if (!selected.ok) {
 			if (selected.failure.kind !== "not_implemented") {
 				release();
+				release.complete();
 				try {
 					await settleReadAdmission(() => finish("settled"));
 				} catch {
@@ -75,17 +92,24 @@ export async function readContentResponse(
 				return fileFailureResponse(selected.failure);
 			}
 			assertReadDemand(request.signal);
-			const response = await readBlobResponse(
-				gateway,
-				store(),
-				identity,
-				selection,
-				request.headers.get("Range"),
-				ticket,
-				request.signal,
+			const responseResult = await waitForReadSlotWork(
+				release,
+				readBlobResponse(
+					gateway,
+					store(),
+					identity,
+					selection,
+					request.headers.get("Range"),
+					ticket,
+					request.signal,
+				),
 			);
+			if (responseResult.kind === "expired")
+				return fileFailureResponse({ kind: "internal_error" });
+			const response = responseResult.value;
 			if (!response.ok || response.body === null) {
 				release();
+				release.complete();
 				try {
 					await settleReadAdmission(() => finish("settled"));
 				} catch {
@@ -124,6 +148,7 @@ export async function readContentResponse(
 		const known =
 			error instanceof FileOperationDenied || error instanceof AdmissionDenied;
 		release();
+		release.complete();
 		if (ticket !== undefined) {
 			try {
 				await settleReadAdmission(() =>

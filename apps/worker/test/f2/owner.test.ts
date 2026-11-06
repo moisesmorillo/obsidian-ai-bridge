@@ -137,6 +137,14 @@ describe("production owner console", () => {
 			"application/json",
 		);
 		expect(await measurements.json()).toMatchObject({
+			worker_isolate: {
+				isolate_id: expect.any(String),
+				active_slots: 0,
+				available_slots: 4,
+				limit: 4,
+				expired_count: expect.any(Number),
+				deadline_ms: 60_000,
+			},
 			status: "unknown",
 			coverage: "unknown",
 			requests: {
@@ -160,6 +168,11 @@ describe("production owner console", () => {
 			"Request observation window: unknown to unknown",
 		);
 		expect(emptySummaryHtml).toContain("No observed clients.");
+		expect(emptySummaryHtml).toContain("Responding Worker isolate");
+		expect(emptySummaryHtml).toContain("limit 4. Hold deadline: 60000 ms.");
+		expect(emptySummaryHtml).toContain(
+			"does not describe other isolates or prove physical source work stopped.",
+		);
 		expect(emptySummaryHtml).toContain(
 			"Feed response preparation p95: Unknown",
 		);

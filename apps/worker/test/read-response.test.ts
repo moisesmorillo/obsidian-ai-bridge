@@ -1,11 +1,15 @@
 import type { AdmissionCompletion } from "@obsidian-ai-bridge/protocol";
-import { tryAcquireReadSlot } from "@worker/application/read-budget";
+import {
+	readSlotCapacitySnapshot,
+	tryAcquireReadSlot,
+	waitForReadSlotWork,
+} from "@worker/application/read-budget";
 import { ReadBatchFailure } from "@worker/application/reads";
 import {
 	encodeJsonChunks,
 	ownedReadResponse,
 } from "@worker/transport/read-response";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 /** Expose explicit work and cleanup barriers without timer ordering. */
 function barrier<T>() {
@@ -19,6 +23,141 @@ function barrier<T>() {
 }
 
 describe("owned read response", () => {
+	afterEach(() => {
+		vi.useRealTimers();
+	});
+
+	it.each(["generic", "fixed-length", "zero-byte"] as const)(
+		"expires a %s response with an unresolved source and releases a fifth slot",
+		async (framing) => {
+			vi.useFakeTimers();
+			const expiredBefore = readSlotCapacitySnapshot().expired_count;
+			const releases = Array.from({ length: 4 }, () => {
+				const release = tryAcquireReadSlot();
+				if (!release) throw new Error("Expected an available read slot");
+				return release;
+			});
+			const sourceStarted = barrier<void>();
+			const never = new Promise<IteratorResult<Uint8Array>>(() => {});
+			const response = ownedReadResponse(
+				{
+					next: () => {
+						sourceStarted.resolve();
+						return never;
+					},
+					cancel: async () => {},
+				},
+				{ finish: async () => ({ ok: true }) },
+				releases[0],
+				undefined,
+				undefined,
+				framing === "fixed-length"
+					? 1
+					: framing === "zero-byte"
+						? 0
+						: undefined,
+			);
+			const reading = response.arrayBuffer().then(
+				() => undefined,
+				(error: unknown) => error,
+			);
+			await sourceStarted.promise;
+			await vi.advanceTimersByTimeAsync(60_000);
+			expect(await reading).toBeInstanceOf(Error);
+			expect(readSlotCapacitySnapshot().expired_count).toBe(expiredBefore + 4);
+			const fifth = tryAcquireReadSlot();
+			try {
+				expect(fifth).toBeDefined();
+			} finally {
+				fifth?.();
+				for (const release of releases) release();
+			}
+		},
+	);
+
+	it("returns an expiry result when response preparation misses its lease", async () => {
+		vi.useFakeTimers();
+		const lease = tryAcquireReadSlot();
+		if (!lease) throw new Error("Expected an available read slot");
+		const result = waitForReadSlotWork(lease, new Promise<string>(() => {}));
+		await vi.advanceTimersByTimeAsync(60_000);
+		expect(await result).toEqual({ kind: "expired" });
+		expect(readSlotCapacitySnapshot().active_slots).toBe(0);
+		const response = ownedReadResponse(
+			{
+				next: async () => ({ done: true, value: undefined }),
+				cancel: async () => {},
+			},
+			{ finish: async () => ({ ok: true }) },
+			lease,
+		);
+		const failed = response.arrayBuffer().then(
+			() => undefined,
+			(error: unknown) => error,
+		);
+		expect(await failed).toBeInstanceOf(Error);
+		lease.complete();
+	});
+
+	it("releases a slot at the deadline when source cancellation never settles", async () => {
+		vi.useFakeTimers();
+		const release = tryAcquireReadSlot();
+		if (!release) throw new Error("Expected an available read slot");
+		const cancelStarted = barrier<void>();
+		const response = ownedReadResponse(
+			{
+				next: async () => {
+					throw new Error("source failed");
+				},
+				cancel: () => {
+					cancelStarted.resolve();
+					return new Promise<void>(() => {});
+				},
+			},
+			{ finish: async () => ({ ok: true }) },
+			release,
+		);
+		const reading = response.arrayBuffer().then(
+			() => undefined,
+			(error: unknown) => error,
+		);
+		await cancelStarted.promise;
+		await vi.advanceTimersByTimeAsync(60_000);
+		expect(await reading).toBeInstanceOf(Error);
+		const available = tryAcquireReadSlot();
+		try {
+			expect(available).toBeDefined();
+		} finally {
+			available?.();
+			release();
+		}
+	});
+
+	it("fails an undrained response at the deadline and rejects late source completion", async () => {
+		vi.useFakeTimers();
+		const release = tryAcquireReadSlot();
+		if (!release) throw new Error("Expected an available read slot");
+		let demands = 0;
+		const response = ownedReadResponse(
+			{
+				next: async () => {
+					demands++;
+					return { done: true, value: undefined };
+				},
+				cancel: async () => {},
+			},
+			{ finish: async () => ({ ok: true }) },
+			release,
+		);
+		if (!response.body) throw new Error("Read response has no body");
+		const reader = response.body.getReader();
+		void reader.closed.catch(() => undefined);
+		await vi.advanceTimersByTimeAsync(60_000);
+		await expect(reader.read()).rejects.toThrow();
+		expect(demands).toBe(0);
+		expect(readSlotCapacitySnapshot().active_slots).toBe(0);
+		release.complete();
+	});
 	it.each([
 		["generic", undefined],
 		["fixed-length", 1],
@@ -98,8 +237,10 @@ describe("owned read response", () => {
 	});
 	it("does not demand data or settle at final enqueue before producer EOF", async () => {
 		let demands = 0;
-		let released = false;
 		const finished: AdmissionCompletion[] = [];
+		vi.useFakeTimers();
+		const release = tryAcquireReadSlot();
+		if (!release) throw new Error("Expected an available read slot");
 		const response = ownedReadResponse(
 			{
 				next: async () => {
@@ -116,9 +257,7 @@ describe("owned read response", () => {
 					return { ok: true };
 				},
 			},
-			() => {
-				released = true;
-			},
+			release,
 		);
 		expect(demands).toBe(0);
 		if (!response.body) throw new Error("Read response has no body");
@@ -126,10 +265,48 @@ describe("owned read response", () => {
 		expect((await reader.read()).done).toBe(false);
 		expect(demands).toBe(1);
 		expect(finished).toEqual([]);
-		expect(released).toBe(false);
+		expect(readSlotCapacitySnapshot().active_slots).toBe(1);
 		expect((await reader.read()).done).toBe(true);
 		expect(finished).toEqual(["settled"]);
-		expect(released).toBe(true);
+		expect(readSlotCapacitySnapshot().active_slots).toBe(0);
+		expect(vi.getTimerCount()).toBe(0);
+	});
+	it("rejects source completion that arrives after the deadline", async () => {
+		vi.useFakeTimers();
+		const work = barrier<IteratorResult<Uint8Array>>();
+		const started = barrier<void>();
+		const release = tryAcquireReadSlot();
+		if (!release) throw new Error("Expected an available read slot");
+		const finished: AdmissionCompletion[] = [];
+		const response = ownedReadResponse(
+			{
+				next: () => {
+					started.resolve();
+					return work.promise;
+				},
+				cancel: async () => {},
+			},
+			{
+				finish: async (completion) => {
+					finished.push(completion);
+					return { ok: true };
+				},
+			},
+			release,
+		);
+		const reader = response.body?.getReader();
+		if (!reader) throw new Error("Read response has no body");
+		const read = reader.read().then(
+			() => undefined,
+			(error: unknown) => error,
+		);
+		await started.promise;
+		await vi.advanceTimersByTimeAsync(60_000);
+		expect(await read).toBeInstanceOf(Error);
+		work.resolve({ done: true, value: undefined });
+		await Promise.resolve();
+		expect(finished).not.toContain("settled");
+		release.complete();
 	});
 	it("joins pending producer work and cancellation before durable cleanup and slot reuse", async () => {
 		const work = barrier<IteratorResult<Uint8Array>>();

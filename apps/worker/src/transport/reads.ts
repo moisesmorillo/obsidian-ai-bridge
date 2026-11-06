@@ -8,7 +8,11 @@ import {
 	encodeFileFailure,
 	ReadQuerySchema,
 } from "@obsidian-ai-bridge/protocol";
-import { tryAcquireReadSlot } from "@worker/application/read-budget";
+import {
+	type ReadSlotLease,
+	tryAcquireReadSlot,
+	waitForReadSlotWork,
+} from "@worker/application/read-budget";
 import { ReadAborted } from "@worker/application/read-demand";
 import type {
 	LazyReadSession,
@@ -217,7 +221,7 @@ async function produce<T>(
 	env: Env,
 	request: Request,
 	identity: AuthorizationContext,
-	releaseSlot: () => void,
+	releaseSlot: ReadSlotLease,
 	resolveVault: (env: Env, request: Request) => ReadVaultGateway,
 	read: (
 		gateway: ReadVaultGateway,
@@ -226,13 +230,21 @@ async function produce<T>(
 ): Promise<Response> {
 	let outcome: ReadOutcome<T>;
 	try {
-		outcome = await read(resolveVault(env, request), identity);
+		const result = await waitForReadSlotWork(
+			releaseSlot,
+			read(resolveVault(env, request), identity),
+		);
+		if (result.kind === "expired")
+			return failureResponse({ kind: "internal_error" });
+		outcome = result.value;
 	} catch {
 		releaseSlot();
+		releaseSlot.complete();
 		return failureResponse({ kind: "internal_error" });
 	}
 	if (!outcome.ok) {
 		releaseSlot();
+		releaseSlot.complete();
 		if (outcome.settle) {
 			try {
 				await settleReadAdmission(outcome.settle);
@@ -250,7 +262,7 @@ async function produceLazy<T, M>(
 	env: Env,
 	request: Request,
 	identity: AuthorizationContext,
-	releaseSlot: () => void,
+	releaseSlot: ReadSlotLease,
 	resolveVault: (env: Env, request: Request) => ReadVaultGateway,
 	read: (
 		gateway: ReadVaultGateway,
@@ -260,13 +272,21 @@ async function produceLazy<T, M>(
 ): Promise<Response> {
 	let opened: ReadOutcome<LazyReadSession<T, M>>;
 	try {
-		opened = await read(resolveVault(env, request), identity);
+		const result = await waitForReadSlotWork(
+			releaseSlot,
+			read(resolveVault(env, request), identity),
+		);
+		if (result.kind === "expired")
+			return failureResponse({ kind: "internal_error" });
+		opened = result.value;
 	} catch {
 		releaseSlot();
+		releaseSlot.complete();
 		return failureResponse({ kind: "internal_error" });
 	}
 	if (!opened.ok) {
 		releaseSlot();
+		releaseSlot.complete();
 		if (opened.settle) {
 			try {
 				await settleReadAdmission(opened.settle);
@@ -279,7 +299,10 @@ async function produceLazy<T, M>(
 	const session = opened.body;
 	let first: ReadBatch<T>;
 	try {
-		first = await session.readBatch();
+		const result = await waitForReadSlotWork(releaseSlot, session.readBatch());
+		if (result.kind === "expired")
+			return failureResponse({ kind: "internal_error" });
+		first = result.value;
 	} catch (error) {
 		let completion: "settled" | "uncertain" =
 			error instanceof ReadBatchFailure || error instanceof ReadAborted
@@ -291,6 +314,7 @@ async function produceLazy<T, M>(
 			completion = "uncertain";
 		}
 		releaseSlot();
+		releaseSlot.complete();
 		try {
 			await settleReadAdmission(() => session.finish(completion));
 		} catch {
@@ -351,7 +375,7 @@ async function* pageChunks<T, M>(
 /** Encode a scalar summary through the same response lifetime and bounded JSON producer. */
 function ownedJsonResponse<T>(
 	session: ReadSession<T>,
-	releaseSlot: () => void,
+	releaseSlot: ReadSlotLease,
 	signal: AbortSignal,
 ): Response {
 	return ownedReadResponse(

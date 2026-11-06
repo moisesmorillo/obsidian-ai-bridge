@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-11-06T21:40:00Z'
-updated_date: '2026-11-06T22:58:00Z'
+updated_date: '2026-11-06T23:04:00Z'
 labels: []
 dependencies: []
 parent_task_id: OAB-11
@@ -53,4 +53,6 @@ Review-note follow-up: added exact notice-path and byte-preservation assertions 
 - Initial focused run with new assertions failed because the expected rename paths did not match the existing revision identity. Corrected expectations to match the actual conflict names.
 - Final `bun --filter @obsidian-ai-bridge/plugin test -- test/text-apply.test.ts test/settings.test.ts` passed: 2 files and 120 tests.
 - The first `bun run docs:check && bun run check && git diff --check` shell command timed out at 120 seconds during the full check. `ps` found no active check process. Retried `bun run check && git diff --check` with a 300-second timeout. It passed, including lint, docs, typechecks, tests, and builds. A separate `bun run docs:check` also returned exit 0. Device criterion 1 remains open.
+
+Branch-review finding closure: fixed MINOR finding “Correct the notice helper documentation” in `apps/plugin/src/main.ts`. The helper documentation now allows fixed message templates with approved conflict-copy paths. It still excludes raw provider errors and host error details. This changes no behavior. `bun run docs:check` and `git diff --check` passed. Keep device criterion 1 open and the task In Progress.
 <!-- SECTION:NOTES:END -->

@@ -767,7 +767,7 @@ export default class AIBridgePlugin extends Plugin {
 			.map((file) => file.path);
 	}
 
-	/** Displays only fixed text and never includes provider data or host error details. */
+	/** Displays fixed message templates with approved conflict-copy paths. It never includes raw provider errors or host error details. */
 	private notice(message: string): void {
 		new Notice(message);
 	}

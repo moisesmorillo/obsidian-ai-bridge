@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-11-06T21:40:00Z'
-updated_date: '2026-11-06T23:04:00Z'
+updated_date: '2026-11-06T23:06:00Z'
 labels: []
 dependencies: []
 parent_task_id: OAB-11
@@ -21,8 +21,8 @@ Owner feedback 2026-11-06 from the iPhone offline conflict run: the owner read t
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [ ] #1 A notice appears on each device when the plugin writes a conflict copy, with the copy path.
-- [ ] #2 The notice does not block sync and does not change conflict naming or bytes.
-- [ ] #3 Tests cover the notice on text and blob conflict copies.
+- [x] #2 The notice does not block sync and does not change conflict naming or bytes.
+- [x] #3 Tests cover the notice on text and blob conflict copies.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -55,4 +55,6 @@ Review-note follow-up: added exact notice-path and byte-preservation assertions 
 - The first `bun run docs:check && bun run check && git diff --check` shell command timed out at 120 seconds during the full check. `ps` found no active check process. Retried `bun run check && git diff --check` with a 300-second timeout. It passed, including lint, docs, typechecks, tests, and builds. A separate `bun run docs:check` also returned exit 0. Device criterion 1 remains open.
 
 Branch-review finding closure: fixed MINOR finding “Correct the notice helper documentation” in `apps/plugin/src/main.ts`. The helper documentation now allows fixed message templates with approved conflict-copy paths. It still excludes raw provider errors and host error details. This changes no behavior. `bun run docs:check` and `git diff --check` passed. Keep device criterion 1 open and the task In Progress.
+
+Review closure at d961ebd: task review found no blocking defect. Rename notice coverage and exact default-name documentation notes were fixed in 3f27c34 and accepted by scoped review. Whole-branch review covered all eight files at 3f27c34 and found one MINOR stale notice-helper comment. d961ebd fixes that comment, and scoped review approves the correction. Review includes semantic TSDoc, callback ownership, copy creation and verification paths, recovery exclusion, and revision authority. Full check passed at the final executable revision. Comment-only correction passes docs:check and diff checks. Criteria 2 and 3 have test evidence. Criterion 1 stays open for device proof. Human branch review remains pending.
 <!-- SECTION:NOTES:END -->

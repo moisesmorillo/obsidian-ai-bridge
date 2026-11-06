@@ -4,7 +4,7 @@ title: Exclude plugin-applied remote renames from coexistence confirmations
 status: Done
 assignee: []
 created_date: '2026-11-06T18:23:00Z'
-updated_date: '2026-11-06T21:03:00Z'
+updated_date: '2026-11-06T21:40:00Z'
 labels: []
 dependencies: []
 parent_task_id: OAB-11
@@ -48,6 +48,8 @@ Follow-up regression passed. A real replay test now uses ReconciliationControlle
 Follow-up regression and CLI evidence committed as a855c1d. The prior timeout is resolved. Acceptance criterion 3 now has exact feed replay and cursor evidence. Reviews remain pending.
 
 Final acceptance at 99da904: task review accepts exact rename proof, local fallback, and feed replay evidence. Its stale settlement comment finding is fixed in 99da904. Whole-branch review approves all seven changed files with no actionable finding. Review covers semantic TSDoc, origin tracker state ownership, exact path/source/content evidence, single claims, failed settlement, frozen revision authority, and effect admission. Human branch review pn-522c19 approves with no changes. Full check at the source/test revision passed: tooling 91, protocol 307, plugin 724 with 1 skipped, Worker 702/122/115. The later comment-only correction passes docs:check and diff checks. Fresh fetch shows no missing origin/main commits. Host fakes do not prove real device timing. No personal vault, live service, or deployment access occurred.
+
+Live proof 2026-11-06 after the owner merged PR #76 and the supervisor released ai-bridge-v0.1.2: an iPhone create, rename and edit sequence reached the Mac real vault at cursor 186 to 191 with zero coexistence confirmations and the effect fence open. The earlier blocked sequence at cursor 184 did not repeat.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary

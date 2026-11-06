@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-11-05T23:20:00Z'
-updated_date: '2026-11-06T17:57:00Z'
+updated_date: '2026-11-06T21:40:00Z'
 labels:
   - F5
   - Deferred
@@ -56,4 +56,6 @@ Final review fix: settings gives each rendered view and Connect action a generat
 Final branch-review finding closed: added a deferred connection test that starts action A, rerenders settings, completes action B with new consent, then rejects A. Before the fix, A replaced B instructions with a safe error. Settings now fence success, error, and finally UI updates using the current view generation, Connect-action generation, and session identity. After correction, the current consent text remains and refresh clears it when consent ends. RED command was bun run --cwd apps/plugin test -- settings.test.ts; result=$?; echo OBSERVED_RED_EXIT=$result; test $result -ne 0 and produced one failing race regression test. GREEN command bun run --cwd apps/plugin test -- settings.test.ts passed 11 tests. Final bun run check passed with 722 plugin tests passed and 1 skipped. Task remains In Progress. Device criteria remain unchecked.
 
 Delivery review, 2026-11-06: reviewed product revision e12b49c00ed7b26817f34ae39f71c35765e3b646. Independent task review approved the corrections. Whole-branch review found one UI action race, and the scoped final review approved its regression test and fence. Documentation review covered changed TypeScript declarations and tests. DeviceSession owns consent generation and expiry. Settings owns presentation and direct link navigation. Both remain cohesive. Worker validation passed bun run docs:check and bun run check. Owner approved plan pn-9acf4e and branch diff pn-d04fcd without changes. Native iPhone and iPad launch and callback remain unproven. The supervisor creates plugin-v0.1.1 only after merge.
+
+Device evidence 2026-11-06: with plugin 0.1.2 on a real iPhone, Connect prepared the consent, the owner tapped Open authorization page, Safari completed the Access PIN and consent, and the obsidian callback returned the device to connected status. Credentials survived app use through the day. iPad and Android remain untested. Criterion 1 stays unchecked until the iPad run.
 <!-- SECTION:NOTES:END -->

@@ -4,7 +4,7 @@ title: F4 Mac real-vault coexistence delivery gate
 status: In Progress
 assignee: []
 created_date: 2026-10-12 15:13
-updated_date: '2026-11-05T21:57:00Z'
+updated_date: '2026-11-06T12:27:00Z'
 labels:
   - phase-gate
   - F4
@@ -87,4 +87,10 @@ Observation: during the hydration burst GET /v1/changes returned 429 admission_l
 P1 AC-19 update, 2026-11-05: scoped dev-2 manifest confirms the new fixture remains live at revision 1 with no placeholder service row. Dev-2 remains in Pause, coexistence on, 0 operations, 0 applies, 4 historical attention items, and unchanged attention identities after the authorized preparation. The one service case hit the 60-second CLI timeout, so its durable-confirmation result remains unknown. No repeat ran. OAB-10.1 criterion 6 and OAB-10.1.1 remain incomplete. No personal-vault, other-window, enrollment, journal clearing, or Cloudflare action ran in P1. The F4 gate remains open.
 
 P1 shared-service limit, 2026-11-05: the real vault and dev-2 share one service vault. Normal hydration carried the synthetic P1 fixture into the real vault. The supervisor blocks further dev-2 service creates, changes, and renames during F4. Live cases need a second isolated service vault or the end of the trial. The authorized exact-fixture cleanup published a tombstone at revision 2, verified by scoped manifest at 21:53:04.368Z. Dev-2 remains in Pause with coexistence off, empty queues, no confirmations, and four unchanged attention items. OAB-10.1.1 remains Deferred and AC-19 remains incomplete. No direct personal-vault access ran.
+
+Owner exception 2026-11-06: one bounded dev-2 service case under oab-10.1/ is authorized during F4. The fixture hydrates into the real vault and is removed by a conditional delete after the proof. The supervisor observes the real vault.
+
+P6 bounded service result, 2026-11-06: under the recorded owner exception, client j-jAYgxDZ6cyAPVM completed one dev-2 case from 12:23:48.115Z to 12:26:41.406Z. It proved one durable confirmation, placeholder exclusion, unchanged live authority during simulated eviction, exact-byte restoration, and keepServerState resolution. Conditional cleanup produced a verified fixture tombstone. Final dev-2 state: Pause, coexistence off, 0 operations, 0 applies, 4 unchanged attention items, 0 confirmations. The placeholder has no service row. No second case or direct personal-vault action ran. AC-19 retains the dev-1 capture/reload-only limit and does not prove real iCloud eviction. The F4 gate stays In Progress.
+
+Supervisor observation relay, supplied 2026-11-06: after P6 cleanup, one real-vault replay for client e12MCRtYZ0t4tb0v moved cursor 180 to 182. The supervisor reports the time as about 2026-11-06T07:28Z. Result: 47 files, no oab-10.1/ file present, 0 confirmations, 0 attention items, and 0 pending applies. The fixture create and tombstone applied in one pass. The OAB-10.6 echo fix held: the plugin-applied delete entered no confirmation queue. This is supervisor evidence only. No agent read or inspected the personal vault. The reported time differs from the P6 host UTC times above. Preserve both observations without an inferred clock conversion.
 <!-- SECTION:NOTES:END -->

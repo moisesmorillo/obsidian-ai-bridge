@@ -24,9 +24,9 @@ export function validatePluginRelease(
 	versions: unknown,
 ): string {
 	const tagMatch =
-		/^plugin-v((?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*))$/.exec(tag);
+		/^ai-bridge-v((?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*))$/.exec(tag);
 	if (!tagMatch)
-		throw new Error("Tag must match plugin-v<major>.<minor>.<patch>");
+		throw new Error("Tag must match ai-bridge-v<major>.<minor>.<patch>");
 
 	const metadata = objectValue(manifest, "Plugin manifest");
 	const version = requireExactVersion(metadata.version, "Manifest version");
@@ -91,7 +91,7 @@ async function runReleaseValidator(): Promise<void> {
 	const tag = process.argv[2];
 	if (!tag || process.argv.length !== 3) {
 		throw new Error(
-			"Usage: bun apps/plugin/tools/release.ts <plugin-v<version>>",
+			"Usage: bun apps/plugin/tools/release.ts <ai-bridge-v<version>>",
 		);
 	}
 	console.log(await validateRepositoryRelease(tag));

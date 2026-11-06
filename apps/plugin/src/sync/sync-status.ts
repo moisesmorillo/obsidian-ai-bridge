@@ -80,8 +80,6 @@ export interface SyncStatusProjection {
 	coexistenceEnabled: boolean;
 	/** Paths with unresolved persisted operations, unique in journal order. */
 	pendingPaths: string[];
-	/** Always unknown because the service contract has no backup-export telemetry. */
-	backup: "unknown";
 	/** Latest validated server database usage and limit, in bytes, or unknown. */
 	capacity: "unknown" | { used: number; limit: number };
 	/** True when journal persistence or payload integrity cannot be verified. */
@@ -155,7 +153,6 @@ export function projectSyncStatus(
 		pendingPaths: [
 			...new Set(state.pending_ops.map((operation) => operation.path)),
 		],
-		backup: "unknown",
 		capacity: remoteSummary
 			? {
 					used: remoteSummary.capacity.database_bytes,

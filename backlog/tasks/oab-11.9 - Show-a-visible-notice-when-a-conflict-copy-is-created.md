@@ -1,9 +1,11 @@
 ---
 id: OAB-11.9
 title: Show a visible notice when a conflict copy is created
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@pi'
 created_date: '2026-11-06T21:40:00Z'
+updated_date: '2026-11-06T22:40:00Z'
 labels: []
 dependencies: []
 parent_task_id: OAB-11
@@ -22,3 +24,28 @@ Owner feedback 2026-11-06 from the iPhone offline conflict run: the owner read t
 - [ ] #2 The notice does not block sync and does not change conflict naming or bytes.
 - [ ] #3 Tests cover the notice on text and blob conflict copies.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Add failing notice assertions for text and blob conflict copies and platform default settings tests. 2. Add the optional apply callback, approved composition pass-through, and Notice host wiring. 3. Select platform defaults only without a valid saved name. 4. Run focused tests, docs:check, and bun run check. 5. Complete task and whole-branch semantic reviews and human branch review. 6. Publish one PR without a version change, remove the worktree, and report. Detailed owner review plan: /private/tmp/M7-conflict-copy-notice-plan.md. Device proof stays open.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Owner authorization dated 2026-11-06 covers F5 copy-vault work through the supervisor. The M7 brief also authorizes minimal main.ts and status-panel.ts edits and the mobile default name. Tests only. No personal vault, live service, release, or device access.
+
+Owner decision: extend write scope to apps/plugin/src/sync/create-publication.ts for the optional notice callback and its pass-through only.
+
+Implementation evidence (2026-11-06):
+- RED: `bun --filter @obsidian-ai-bridge/plugin test -- test/settings.test.ts test/text-apply.test.ts` failed 4 assertions before source edits. Failures covered the missing default helper, missing text/blob notices, and throwing callback behavior.
+- GREEN: the same focused command passed 120 tests.
+- `bunx biome check --write apps/plugin/src/sync/text-apply.ts apps/plugin/src/sync/create-publication.ts apps/plugin/src/main.ts apps/plugin/src/settings.ts apps/plugin/test/text-apply.test.ts apps/plugin/test/settings.test.ts apps/plugin/test/lifecycle.test.ts` passed.
+- `bun run docs:check` passed.
+- `bun run check` passed. Lint and docs passed, all workspace typechecks passed, tests passed (plugin 727 passed and 1 skipped, protocol 307 passed, tooling 91 passed, worker 702 passed plus 122 and 115 isolated checks), and all builds passed. Worker tests print expected disconnected-stream and injected rollback errors while reporting success.
+- Regression evidence covers text and blob path notices, failed copy creation, copy reuse after a named-step restart, hidden pre-apply recovery, throwing notice callback, mobile and desktop defaults, and exact saved-name preservation.
+- Limits: no device, personal vault, live service, or deployment test. Keep device criterion open until device available and BRAT release plugin-v0.1.0 published. The task remains In Progress.
+
+Final validation refresh: after adding the exact Notice text wiring test and the dirty-blob notice assertion, `bun --filter @obsidian-ai-bridge/plugin test -- test/lifecycle.test.ts test/settings.test.ts test/text-apply.test.ts` passed (3 files, 153 tests). The latest `bun run docs:check`, `bun run check`, and `git diff --check` all passed. Latest full counts: plugin 728 passed and 1 skipped, protocol 307 passed, tooling 91 passed, worker 702 passed plus isolated groups of 122 and 115 passed. The lifecycle host mock confirmed `AI Bridge kept your version as <path>`.
+<!-- SECTION:NOTES:END -->

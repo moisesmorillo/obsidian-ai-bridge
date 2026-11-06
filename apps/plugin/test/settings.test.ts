@@ -245,7 +245,11 @@ interface CapturedButtonControl {
 import type { App, Plugin } from "obsidian";
 import type { DeviceSession } from "../src/auth/device-session";
 import type { CredentialStorage } from "../src/infrastructure/credential-storage";
-import { type AIBridgeSettings, AIBridgeSettingTab } from "../src/settings";
+import {
+	type AIBridgeSettings,
+	AIBridgeSettingTab,
+	resolveDeviceName,
+} from "../src/settings";
 
 /** Creates a settings tab with safe synthetic controller and storage effects. */
 function createTab() {
@@ -323,6 +327,20 @@ function createTab() {
 	};
 }
 
+describe("resolveDeviceName", () => {
+	it("uses platform defaults only when the saved name is invalid", () => {
+		host.isMobile = true;
+		expect(resolveDeviceName(undefined)).toBe("Obsidian mobile");
+		expect(resolveDeviceName("  ")).toBe("Obsidian mobile");
+		expect(resolveDeviceName("x".repeat(81))).toBe("Obsidian mobile");
+		expect(resolveDeviceName("Obsidian desktop")).toBe("Obsidian desktop");
+		expect(resolveDeviceName("  iPad  ")).toBe("  iPad  ");
+		host.isMobile = false;
+		expect(resolveDeviceName(null)).toBe("Obsidian desktop");
+		expect(resolveDeviceName("Saved mobile")).toBe("Saved mobile");
+	});
+});
+
 describe("AIBridgeSettingTab", () => {
 	it("defaults coexistence off and restores the saved value after a failed write", async () => {
 		const test = createTab();
@@ -341,6 +359,7 @@ describe("AIBridgeSettingTab", () => {
 		createTab();
 		const deviceName = host.controls.find((row) => row.name === "Device name");
 		expect(deviceName?.text).not.toBeNull();
+		expect(deviceName?.text?.placeholder).toBe("Obsidian mobile");
 		expect(deviceName?.text?.value).toBe("Obsidian desktop");
 	});
 

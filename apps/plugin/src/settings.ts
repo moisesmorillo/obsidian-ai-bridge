@@ -17,6 +17,17 @@ export interface AIBridgeSettings {
 	coexistenceMode: boolean;
 }
 
+/** Keeps valid saved labels byte-for-byte and selects a platform default only for invalid data. */
+export function resolveDeviceName(savedName: unknown): string {
+	if (
+		typeof savedName === "string" &&
+		savedName.trim().length > 0 &&
+		savedName.length <= 80
+	)
+		return savedName;
+	return Platform?.isMobile ? "Obsidian mobile" : "Obsidian desktop";
+}
+
 /** Settings page for enrollment controls and safe connection status. */
 export class AIBridgeSettingTab extends PluginSettingTab {
 	/** Current safe status element, or null before the settings page renders. */
@@ -77,7 +88,7 @@ export class AIBridgeSettingTab extends PluginSettingTab {
 			.setDesc("Name used in conflict copies for this device.")
 			.addText((text) => {
 				text
-					.setPlaceholder("Obsidian desktop")
+					.setPlaceholder(resolveDeviceName(undefined))
 					.setValue(this.settings.deviceName);
 				text.inputEl.addEventListener("blur", async () => {
 					const nextName = text.getValue().trim();

@@ -5,6 +5,7 @@ export type {
 } from "obsidian";
 export {
 	Notice,
+	Platform,
 	Plugin,
 	PluginSettingTab,
 	requestUrl,

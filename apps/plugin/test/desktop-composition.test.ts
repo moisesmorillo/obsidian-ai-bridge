@@ -413,6 +413,164 @@ describe("real publication composition lifecycle fences", () => {
 		},
 	);
 
+	it("recovers a pending apply before replay and retries the same sent request identity", async () => {
+		const clock = vi.spyOn(Date, "now").mockReturnValue(1_800_000_000_000);
+		const recoveryText = "recovered remote bytes";
+		const recoveryHash = await hashText(recoveryText);
+		const payload = new TextEncoder().encode("immutable sent bytes");
+		const payloadHash = await hashText(new TextDecoder().decode(payload));
+		const storage = new MemoryJournalStorage();
+		const journal = await DeviceJournal.open(storage);
+		await journal.resetEpoch(epoch);
+		await journal.setCursor(epoch, 0);
+		await journal.beginApply(
+			{
+				seq: 1,
+				op: "put",
+				path: "notes/recovery.md",
+				etag: `"${epoch}.1"`,
+				hash: recoveryHash,
+				origin: "other-device",
+				at: 1,
+			},
+			"text",
+		);
+		const operation = await journal.enqueue(
+			{ op: "put", path: "notes/sent.md", precondition: { kind: "absent" } },
+			payload,
+		);
+		await journal.prepareSend(operation.key, operation.precondition);
+		const errors: unknown[] = [];
+		const requests: Array<{
+			path: string;
+			method: string;
+			body: string | ArrayBuffer | undefined;
+			headers: Record<string, string> | undefined;
+		}> = [];
+		let publicationAttempts = 0;
+		const session = {
+			/** Returns pending-apply, feed, and mutation responses while recording request identity. */
+			async requestResponse(
+				url: string,
+				options: {
+					method?: string;
+					body?: string | ArrayBuffer;
+					headers?: Record<string, string>;
+				} = {},
+			): Promise<OAuthTransportResponse> {
+				const parsed = new URL(url);
+				requests.push({
+					path: parsed.pathname,
+					method: options.method ?? "GET",
+					body: options.body,
+					headers: options.headers,
+				});
+				if (parsed.pathname === "/v1/changes")
+					return {
+						status: 200,
+						headers: {},
+						text: JSON.stringify({ epoch, head_seq: 0, entries: [] }),
+					};
+				if (parsed.pathname === "/v1/files/notes/recovery.md")
+					return {
+						status: 200,
+						headers: { etag: `"${epoch}.1"` },
+						text: JSON.stringify({
+							path: "notes/recovery.md",
+							etag: `"${epoch}.1"`,
+							hash: recoveryHash,
+							size: new TextEncoder().encode(recoveryText).byteLength,
+							kind: "text",
+							deleted: false,
+							origin: "other-device",
+							updated_at: 1,
+							content: recoveryText,
+							offset: 0,
+							length: recoveryText.length,
+							truncated: false,
+						}),
+					};
+				if (parsed.pathname === "/v1/files/notes/sent.md") {
+					publicationAttempts += 1;
+					if (publicationAttempts === 1)
+						return {
+							status: 503,
+							headers: {},
+							text: JSON.stringify({ error: "temporarily_unavailable" }),
+						};
+					return {
+						status: 201,
+						headers: { etag: `"${epoch}.2"` },
+						text: JSON.stringify({
+							path: "notes/sent.md",
+							etag: `"${epoch}.2"`,
+							seq: 2,
+							hash: payloadHash,
+							size: payload.byteLength,
+							deleted: false,
+						}),
+					};
+				}
+				throw new Error(`Unexpected recovery request: ${parsed.pathname}`);
+			},
+		};
+		const { vault, contents } = makeTextVault();
+		const composition = createPublication(
+			"https://service.test",
+			session as unknown as DeviceSession,
+			journal,
+			vault,
+			"test device",
+			{ now: Date.now, onEventError: () => undefined },
+		);
+		const controller = new DesktopSyncController({
+			cycle: async () => {
+				await composition.reconciliation.resume();
+				await composition.publication.scan();
+				await composition.publication.flush();
+				await composition.reconciliation.replay();
+			},
+			onError: (error) => errors.push(error),
+			host: {
+				setTimeout: () => 1,
+				clearTimeout: () => undefined,
+				setInterval: () => 2,
+				clearInterval: () => undefined,
+			},
+		});
+
+		await controller.start();
+		const sentAfterFailure = journal.snapshot().pending_ops[0];
+		if (!sentAfterFailure?.retry_at)
+			throw new Error("Expected a persisted sent-operation retry deadline");
+		clock.mockReturnValue(sentAfterFailure.retry_at);
+		await controller.syncNow();
+
+		const recoveryRead = requests.findIndex(
+			(request) => request.path === "/v1/files/notes/recovery.md",
+		);
+		const firstSent = requests.findIndex(
+			(request) => request.path === "/v1/files/notes/sent.md",
+		);
+		const secondSent = requests.findIndex(
+			(request, index) =>
+				index > firstSent && request.path === "/v1/files/notes/sent.md",
+		);
+		expect(recoveryRead).toBeGreaterThanOrEqual(0);
+		expect(recoveryRead).toBeLessThan(firstSent);
+		expect(secondSent).toBeGreaterThan(firstSent);
+		expect(requests[secondSent]).toEqual(requests[firstSent]);
+		expect(contents.get("notes/recovery.md")).toBe(recoveryText);
+		expect(journal.snapshot().pending_apply).toEqual([]);
+		expect(journal.snapshot().pending_ops).toEqual([]);
+		expect(errors).toEqual([]);
+
+		controller.close();
+		composition.dispose();
+		journal.close();
+		clock.mockRestore();
+	});
+
 	it("keeps an immutable queued publication when a delayed receipt returns after pause", async () => {
 		const session = new DelayedSession();
 		const { vault, creates } = makeVault();

@@ -47,7 +47,7 @@ export interface DesktopSyncOptions {
 	onStateChanged?(): void;
 }
 
-/** Owns one serialized desktop loop and queues explicit local intent while paused. */
+/** Owns one serialized sync loop and separates host suspension from user Pause. */
 export class DesktopSyncController {
 	private tail: Promise<void> = Promise.resolve();
 	private events: PublicationEvent[] = [];
@@ -55,6 +55,8 @@ export class DesktopSyncController {
 	private debounce: number | null = null;
 	private closed = false;
 	private paused = false;
+	private suspended = false;
+	private recoveryPromise: Promise<void> | null = null;
 	private started = false;
 	private activeSince: number | null = null;
 	private cyclePromise: Promise<void> | null = null;
@@ -87,7 +89,12 @@ export class DesktopSyncController {
 
 	/** Adds one cycle to the lifecycle queue. Concurrent requests share that queued cycle. */
 	syncNow(): Promise<void> {
-		if (this.closed || this.paused || this.isEffectBlocked())
+		if (
+			this.closed ||
+			this.paused ||
+			this.isSuspended() ||
+			this.isEffectBlocked()
+		)
 			return Promise.resolve();
 		if (this.events.length > 0) {
 			if (this.debounce !== null) this.options.host.clearTimeout(this.debounce);
@@ -96,7 +103,13 @@ export class DesktopSyncController {
 		}
 		if (this.cyclePromise) return this.cyclePromise;
 		const run = this.tail.then(async () => {
-			if (this.closed || this.paused || this.isEffectBlocked()) return;
+			if (
+				this.closed ||
+				this.paused ||
+				this.isSuspended() ||
+				this.isEffectBlocked()
+			)
+				return;
 			await this.options.cycle();
 		});
 		this.workActive = true;
@@ -145,7 +158,7 @@ export class DesktopSyncController {
 		this.activeSince = Date.now();
 		const activityRevision = ++this.activityRevision;
 		const lifecycleRevision = this.lifecycleRevision;
-		if (this.paused) {
+		if (this.paused || this.isSuspended()) {
 			this.events.push(event);
 		} else {
 			this.schedulePolling();
@@ -179,23 +192,34 @@ export class DesktopSyncController {
 		this.options.onStateChanged?.();
 	}
 
-	/** Restores polling after old work settles, then replays queued intent or recovery. */
+	/** Clears user Pause, then recovers only after admitted work settles and lifecycle fences remain current. */
 	async resume(): Promise<void> {
 		if (this.closed) return;
-		this.paused = false;
-		this.lifecycleRevision += 1;
-		this.options.onStateChanged?.();
-		await this.tail;
-		this.started = true;
-		this.schedulePolling();
-		const hasEvents = this.events.length > 0;
-		await this.drainEvents();
-		if (!hasEvents) await this.syncNow();
+		if (this.paused) {
+			this.paused = false;
+			this.lifecycleRevision += 1;
+			this.options.onStateChanged?.();
+		}
+		if (this.isSuspended()) return;
+		await this.recoverAfterLifecycleChange();
 	}
 
-	/** Reschedules the host budget and triggers immediate recovery when the window becomes visible. */
+	/** Clears timers while host-suspended and recovers queued work when the host resumes. */
 	visibilityChanged(): Promise<void> {
-		if (this.closed || this.paused) return Promise.resolve();
+		if (this.closed) return Promise.resolve();
+		if (this.options.host.isSuspended?.()) {
+			this.suspend();
+			return Promise.resolve();
+		}
+		if (this.suspended) {
+			this.suspended = false;
+			this.lifecycleRevision += 1;
+			this.options.onStateChanged?.();
+			return this.paused
+				? Promise.resolve()
+				: this.recoverAfterLifecycleChange();
+		}
+		if (this.paused) return Promise.resolve();
 		this.schedulePolling();
 		return this.options.host.isVisible?.() === false
 			? Promise.resolve()
@@ -220,6 +244,7 @@ export class DesktopSyncController {
 		if (
 			this.closed ||
 			this.paused ||
+			this.isSuspended() ||
 			this.events.length === 0 ||
 			this.isEffectBlocked()
 		)
@@ -231,23 +256,36 @@ export class DesktopSyncController {
 			let admitted = 0;
 			let requeued = false;
 			try {
-				if (this.closed || this.paused) return;
+				if (this.closed || this.paused || this.isSuspended()) return;
 				for (const event of events) {
-					if (this.closed || this.paused || this.isEffectBlocked()) return;
+					if (
+						this.closed ||
+						this.paused ||
+						this.isSuspended() ||
+						this.isEffectBlocked()
+					)
+						return;
 					const captured =
 						(await this.options.onCaptureEvent?.(event)) ?? false;
+					if (this.closed || this.paused || this.isSuspended()) return;
 					if (!captured && !isTerminallyExcluded(event))
 						await this.options.onEvent?.(event);
 					admitted += 1;
 				}
-				if (this.isEffectBlocked()) return;
+				if (this.isSuspended() || this.isEffectBlocked()) return;
 				await this.options.cycle();
 			} catch (error) {
 				this.events = [...events.slice(admitted), ...this.events];
 				requeued = true;
 				this.options.onError?.(error);
 			} finally {
-				if ((this.closed || this.paused || this.isEffectBlocked()) && !requeued)
+				if (
+					(this.closed ||
+						this.paused ||
+						this.isSuspended() ||
+						this.isEffectBlocked()) &&
+					!requeued
+				)
 					this.events = [...events.slice(admitted), ...this.events];
 				this.workActive = false;
 				this.options.onStateChanged?.();
@@ -261,7 +299,10 @@ export class DesktopSyncController {
 
 	/** Chooses one poll interval from visibility and recent foreground activity. */
 	private schedulePolling(): void {
-		if (this.closed || this.paused || this.options.host.isSuspended?.()) return;
+		if (this.closed || this.paused || this.isSuspended()) {
+			if (this.suspended) this.clearTimers();
+			return;
+		}
 		if (this.interval !== null) this.options.host.clearInterval(this.interval);
 		const visible = this.options.host.isVisible?.() ?? true;
 		const now = Date.now();
@@ -299,6 +340,53 @@ export class DesktopSyncController {
 				this.options.onStateChanged?.();
 			})
 			.catch(() => undefined);
+	}
+
+	/** Fences timer and effect admission when the host reports automatic suspension. */
+	private isSuspended(): boolean {
+		if (this.options.host.isSuspended?.()) {
+			this.suspend();
+			return true;
+		}
+		return this.suspended;
+	}
+
+	/** Advances the lifecycle fence once and clears owned timers on suspension. */
+	private suspend(): void {
+		if (this.closed || this.suspended) return;
+		this.suspended = true;
+		this.lifecycleRevision += 1;
+		this.clearTimers();
+		this.options.onStateChanged?.();
+	}
+
+	/** Waits for admitted work, then recovers only if Pause, close, or suspension did not win. */
+	private recoverAfterLifecycleChange(): Promise<void> {
+		if (this.closed || this.paused || this.isSuspended())
+			return Promise.resolve();
+		if (this.recoveryPromise) return this.recoveryPromise;
+		const revision = this.lifecycleRevision;
+		const recovery = (async () => {
+			await this.tail;
+			if (
+				this.closed ||
+				this.paused ||
+				this.isSuspended() ||
+				this.lifecycleRevision !== revision
+			)
+				return;
+			this.started = true;
+			this.schedulePolling();
+			const hasEvents = this.events.length > 0;
+			await this.drainEvents();
+			if (!hasEvents) await this.syncNow();
+		})();
+		let sharedRecovery: Promise<void>;
+		sharedRecovery = recovery.finally(() => {
+			if (this.recoveryPromise === sharedRecovery) this.recoveryPromise = null;
+		});
+		this.recoveryPromise = sharedRecovery;
+		return sharedRecovery;
 	}
 
 	/** Reads the shared capture fence before event and cycle admission. */

@@ -531,6 +531,104 @@ describe("DesktopSyncController", () => {
 		controller.close();
 	});
 
+	it("recovers the latest resume after two suspension transitions during one held cycle", async () => {
+		const cycleGate = deferred<void>();
+		const cycleStarted = deferred<void>();
+		const admitted: string[] = [];
+		const intervals: number[] = [];
+		let suspended = false;
+		let cycles = 0;
+		const controller = new DesktopSyncController({
+			cycle: async () => {
+				cycles += 1;
+				if (cycles === 1) {
+					cycleStarted.settle();
+					await cycleGate.promise;
+				}
+			},
+			onEvent: async (event) => {
+				admitted.push(event.path);
+			},
+			host: {
+				setTimeout: () => 1,
+				clearTimeout: () => undefined,
+				setInterval: () => {
+					intervals.push(intervals.length + 1);
+					return intervals.length;
+				},
+				clearInterval: () => undefined,
+				isSuspended: () => suspended,
+			},
+		});
+		const firstCycle = controller.start();
+		await cycleStarted.promise;
+		suspended = true;
+		await controller.visibilityChanged();
+		await controller.observe({ type: "modify", path: "retained.md" });
+		suspended = false;
+		const firstResume = controller.visibilityChanged();
+		suspended = true;
+		await controller.visibilityChanged();
+		suspended = false;
+		const latestResume = controller.visibilityChanged();
+		cycleGate.settle();
+		await Promise.all([firstCycle, firstResume, latestResume]);
+
+		expect(admitted).toEqual(["retained.md"]);
+		expect(intervals).toHaveLength(2);
+		expect(cycles).toBe(2);
+		controller.close();
+	});
+
+	it("preserves retained event order across two batches behind a held cycle", async () => {
+		const cycleGate = deferred<void>();
+		const cycleStarted = deferred<void>();
+		const timeouts: Array<() => void> = [];
+		const admitted: string[] = [];
+		let suspended = false;
+		let cycles = 0;
+		const controller = new DesktopSyncController({
+			cycle: async () => {
+				cycles += 1;
+				if (cycles === 1) {
+					cycleStarted.settle();
+					await cycleGate.promise;
+				}
+			},
+			onEvent: async (event) => {
+				admitted.push(event.path);
+			},
+			host: {
+				setTimeout: (callback) => {
+					timeouts.push(callback);
+					return timeouts.length;
+				},
+				clearTimeout: () => undefined,
+				setInterval: () => 1,
+				clearInterval: () => undefined,
+				isSuspended: () => suspended,
+			},
+		});
+		const firstCycle = controller.start();
+		await cycleStarted.promise;
+		await controller.observe({ type: "modify", path: "A.md" });
+		timeouts[0]?.();
+		await controller.observe({ type: "modify", path: "B.md" });
+		timeouts[1]?.();
+		suspended = true;
+		await controller.visibilityChanged();
+		cycleGate.settle();
+		await firstCycle;
+		await controller.waitForIdle();
+		expect(admitted).toEqual([]);
+
+		suspended = false;
+		await controller.visibilityChanged();
+
+		expect(admitted).toEqual(["A.md", "B.md"]);
+		controller.close();
+	});
+
 	it("keeps automatic suspension separate when visibility returns during user Pause", async () => {
 		let suspended = false;
 		let cycles = 0;

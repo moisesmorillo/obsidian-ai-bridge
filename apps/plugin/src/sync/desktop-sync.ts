@@ -56,7 +56,11 @@ export class DesktopSyncController {
 	private closed = false;
 	private paused = false;
 	private suspended = false;
-	private recoveryPromise: Promise<void> | null = null;
+	private recoveryPromise: {
+		revision: number;
+		promise: Promise<void>;
+	} | null = null;
+	private drainPromise: Promise<void> | null = null;
 	private started = false;
 	private activeSince: number | null = null;
 	private cyclePromise: Promise<void> | null = null;
@@ -249,15 +253,30 @@ export class DesktopSyncController {
 			this.isEffectBlocked()
 		)
 			return Promise.resolve();
-		const events = this.events.splice(0);
+		if (this.drainPromise) return this.drainPromise;
 		this.workActive = true;
 		this.options.onStateChanged?.();
 		const run = this.tail.then(async () => {
-			let admitted = 0;
-			let requeued = false;
+			let cycleNeeded = true;
 			try {
-				if (this.closed || this.paused || this.isSuspended()) return;
-				for (const event of events) {
+				while (true) {
+					while (this.events.length > 0 && this.debounce === null) {
+						if (
+							this.closed ||
+							this.paused ||
+							this.isSuspended() ||
+							this.isEffectBlocked()
+						)
+							return;
+						const event = this.events[0];
+						if (!event) return;
+						const captured =
+							(await this.options.onCaptureEvent?.(event)) ?? false;
+						if (this.closed || this.paused || this.isSuspended()) return;
+						if (!captured && !isTerminallyExcluded(event))
+							await this.options.onEvent?.(event);
+						this.events.shift();
+					}
 					if (
 						this.closed ||
 						this.paused ||
@@ -265,36 +284,28 @@ export class DesktopSyncController {
 						this.isEffectBlocked()
 					)
 						return;
-					const captured =
-						(await this.options.onCaptureEvent?.(event)) ?? false;
-					if (this.closed || this.paused || this.isSuspended()) return;
-					if (!captured && !isTerminallyExcluded(event))
-						await this.options.onEvent?.(event);
-					admitted += 1;
+					if (!cycleNeeded) return;
+					await this.options.cycle();
+					cycleNeeded = false;
+					if (this.events.length === 0 || this.debounce !== null) return;
+					cycleNeeded = true;
 				}
-				if (this.isSuspended() || this.isEffectBlocked()) return;
-				await this.options.cycle();
 			} catch (error) {
-				this.events = [...events.slice(admitted), ...this.events];
-				requeued = true;
 				this.options.onError?.(error);
 			} finally {
-				if (
-					(this.closed ||
-						this.paused ||
-						this.isSuspended() ||
-						this.isEffectBlocked()) &&
-					!requeued
-				)
-					this.events = [...events.slice(admitted), ...this.events];
 				this.workActive = false;
 				this.options.onStateChanged?.();
 			}
 		});
-		this.tail = run.catch((error: unknown) => {
+		let sharedDrain: Promise<void>;
+		sharedDrain = run.finally(() => {
+			if (this.drainPromise === sharedDrain) this.drainPromise = null;
+		});
+		this.drainPromise = sharedDrain;
+		this.tail = sharedDrain.catch((error: unknown) => {
 			this.options.onError?.(error);
 		});
-		return run;
+		return sharedDrain;
 	}
 
 	/** Chooses one poll interval from visibility and recent foreground activity. */
@@ -364,8 +375,9 @@ export class DesktopSyncController {
 	private recoverAfterLifecycleChange(): Promise<void> {
 		if (this.closed || this.paused || this.isSuspended())
 			return Promise.resolve();
-		if (this.recoveryPromise) return this.recoveryPromise;
 		const revision = this.lifecycleRevision;
+		if (this.recoveryPromise?.revision === revision)
+			return this.recoveryPromise.promise;
 		const recovery = (async () => {
 			await this.tail;
 			if (
@@ -383,9 +395,10 @@ export class DesktopSyncController {
 		})();
 		let sharedRecovery: Promise<void>;
 		sharedRecovery = recovery.finally(() => {
-			if (this.recoveryPromise === sharedRecovery) this.recoveryPromise = null;
+			if (this.recoveryPromise?.promise === sharedRecovery)
+				this.recoveryPromise = null;
 		});
-		this.recoveryPromise = sharedRecovery;
+		this.recoveryPromise = { revision, promise: sharedRecovery };
 		return sharedRecovery;
 	}
 

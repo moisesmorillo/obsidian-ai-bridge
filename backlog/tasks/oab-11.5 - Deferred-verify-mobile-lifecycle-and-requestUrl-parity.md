@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-11-05T23:21:00Z'
-updated_date: '2026-11-06T22:42:00Z'
+updated_date: '2026-11-06T23:04:00Z'
 labels:
   - F5
   - Deferred
@@ -54,4 +54,12 @@ Implementation adds a controller-owned host suspension state, guards cycle and e
 Documentation scope: changed TypeScript declarations in desktop-sync.ts, main.ts, obsidian-api.ts, desktop-sync.test.ts, desktop-composition.test.ts, lifecycle.test.ts, and test/obsidian.ts. `bun run docs:check` passed. Structural candidates reviewed: desktop-sync.ts owns lifecycle state, queue admission, timers, and recovery in one controller. main.ts owns host detection and composition-stage fences. No separate policy owner or actionable self-review finding remains.
 
 Final `bun run check` passed: lint, docs, four workspace typechecks, 96 test files with 1,833 passed and 1 skipped, and all builds. Worker fault-injection tests printed expected network and SQLite failure diagnostics while their suites passed. No live service or device action ran. Native iPhone/iPad suspension, restart, and scheduling remain unproven. Criterion 4 stays deferred. Criterion 5 stays unchecked. Criteria 1 and 2 stay unchecked pending exact device evidence. Keep OAB-11.5 In Progress.
+
+Branch-review correction, 2026-11-06: the final branch review reported two MAJOR lifecycle defects. I confirmed both against the committed code before the fix. RED: `bun run --cwd apps/plugin vitest run test/desktop-sync.test.ts -t 'latest resume|two batches behind'` failed 2 tests. The two-transition case admitted no retained event after the second resume. The queued-batch case observed `[B.md, A.md]` instead of `[A.md, B.md]`.
+
+Correction: recovery work now records its lifecycle revision. A new resume at a newer revision starts a separate recovery promise instead of sharing an obsolete one. Event drains now have one active owner and keep not-yet-admitted events in the shared FIFO queue. Pause and close checks remain in place.
+
+GREEN: the same focused command passed both regressions. `bun run --cwd apps/plugin vitest run` passed 28 files with 735 tests passed and one skipped. `bun run docs:check` passed. Final `bun run check` passed lint, docs, four typechecks, 96 files with 1,835 passed and one skipped, and all builds. Worker failure-injection diagnostics appeared as expected. No timeout change or Worker edit occurred.
+
+The interrupted protocol runtime isolation test left `.protocol-runtime-isolation-z6HLuY/tsconfig.leaky.json`. Its exact test source creates that directory with `mkdtemp` and removes it in `finally`. I confirmed the directory held that test fixture, removed only that directory, and confirmed it was absent. No tracked or other untracked files changed. Correction evidence is appended to `.superpowers/sdd/mobile-lifecycle-plan/task-1-report.md`. Criterion states and task status stay unchanged.
 <!-- SECTION:NOTES:END -->

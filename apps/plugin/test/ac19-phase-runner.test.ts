@@ -1,3 +1,4 @@
+import { parseETag } from "@obsidian-ai-bridge/protocol";
 import { describe, expect, it, vi } from "vitest";
 import {
 	AC19_PHASES,
@@ -70,10 +71,29 @@ interface PhaseHost {
 	publicationEffects: string[];
 	/** Replaces only the fixed fixture row to test authority changes. */
 	changeServiceAuthority(): void;
+	/** Settles the synthetic seed create held by a Pause interleaving test. */
+	releaseSeedCreate(): void;
+	/** Counts effects that must not start or repeat across phase boundaries. */
+	effectCalls: {
+		syncNow: number;
+		keepServerState: number;
+		restoreCreate: number;
+	};
+	/** Restore sequence observed through Vault and coexistence APIs. */
+	restoreOrder: string[];
 }
 
 /** Builds one local fake plugin that follows the observed host API shapes. */
-function createPhaseHost(options: { retryAfter?: string } = {}): PhaseHost {
+function createPhaseHost(
+	options: {
+		retryAfter?: string;
+		holdSeedCreate?: boolean;
+		baselineEtag?: string;
+		manifestEtag?: string;
+		placeholderAtBaseline?: boolean;
+		mutationRetryAfter?: string;
+	} = {},
+): PhaseHost {
 	const { source, placeholder } = fixture;
 	const epoch = "a".repeat(32);
 	const hash = "b".repeat(64);
@@ -87,9 +107,18 @@ function createPhaseHost(options: { retryAfter?: string } = {}): PhaseHost {
 		coexistence_confirmations: [],
 		unavailable_paths: [],
 	};
-	const files = new Map<string, { path: string }>();
+	const files = new Map<string, { path: string; text?: string }>();
 	const directories = new Set<string>();
 	const publicationEffects: string[] = [];
+	const effectCalls = { syncNow: 0, keepServerState: 0, restoreCreate: 0 };
+	const restoreOrder: string[] = [];
+	/** Settles the synthetic source create after a Pause interleaving. */
+	let releaseSeedCreate = () => {};
+	const heldSeedCreate = options.holdSeedCreate
+		? new Promise<void>((resolve) => {
+				releaseSeedCreate = resolve;
+			})
+		: Promise.resolve();
 	let manifestReads = 0;
 	let head = 0;
 	let remoteRow: Record<string, unknown> | null = null;
@@ -119,7 +148,48 @@ function createPhaseHost(options: { retryAfter?: string } = {}): PhaseHost {
 				epoch,
 				head_seq: head,
 				next_page: null,
-				entries: remoteRow ? [remoteRow] : [],
+				entries: [
+					...(remoteRow
+						? [
+								{
+									...remoteRow,
+									...(options.manifestEtag
+										? { etag: options.manifestEtag }
+										: {}),
+								},
+							]
+						: []),
+					...(remoteRow && options.placeholderAtBaseline
+						? [
+								{
+									path: placeholder,
+									etag: `"${epoch}.1"`,
+									seq: 1,
+									hash,
+									kind: "binary",
+									deleted: false,
+								},
+							]
+						: []),
+				],
+			};
+		},
+		readCurrent: async (path: string) => {
+			if (path !== source || !remoteRow) throw new Error("path absent");
+			return {
+				epoch,
+				etag: String(remoteRow.etag),
+				deleted: Boolean(remoteRow.deleted),
+			};
+		},
+		readCurrentAuthority: async (path: string) => {
+			if (path !== source || !remoteRow) throw new Error("path absent");
+			const identity = parseETag(String(remoteRow.etag));
+			return {
+				deleted: Boolean(remoteRow.deleted),
+				epoch: identity.epoch,
+				rev: identity.rev,
+				hash: String(remoteRow.hash),
 			};
 		},
 	};
@@ -131,11 +201,21 @@ function createPhaseHost(options: { retryAfter?: string } = {}): PhaseHost {
 	const desktopSync = {
 		isBusy: false,
 		syncNow: async () => {
+			effectCalls.syncNow += 1;
+			if (
+				options.mutationRetryAfter &&
+				files.has(source) &&
+				!state.base[source]
+			)
+				throw Object.assign(new Error("private mutation response"), {
+					status: 429,
+					retryAfter: options.mutationRetryAfter,
+				});
 			if (files.has(source) && !state.base[source]) {
 				state.base[source] = { deleted: false, rev: 1, hash };
 				remoteRow = {
 					path: source,
-					etag: `"${epoch}.1"`,
+					etag: options.baselineEtag ?? `"${epoch}.1"`,
 					seq: 1,
 					hash,
 					kind: "text",
@@ -205,12 +285,10 @@ function createPhaseHost(options: { retryAfter?: string } = {}): PhaseHost {
 		desktopSync,
 		coexistence: {
 			keepServerState: async (id: string) => {
+				effectCalls.keepServerState += 1;
+				restoreOrder.push("keep-server-state");
 				state.coexistence_confirmations =
 					state.coexistence_confirmations.filter((item) => item.id !== id);
-				state.unavailable_paths = state.unavailable_paths.filter(
-					(path) => path !== source,
-				);
-				files.set(source, { path: source });
 			},
 		},
 		settingsTab: {
@@ -239,17 +317,29 @@ function createPhaseHost(options: { retryAfter?: string } = {}): PhaseHost {
 				},
 			},
 			getAbstractFileByPath: (path: string) => files.get(path) ?? null,
-			create: async (path: string, _contents: string) => {
-				const file = { path };
+			create: async (path: string, text: string) => {
+				if (path === source && state.base[source]) {
+					effectCalls.restoreCreate += 1;
+					restoreOrder.push("restore-source");
+				}
+				const file = { path, text };
+				if (path === source && !state.base[source]) await heldSeedCreate;
 				files.set(path, file);
 				return file;
 			},
+			read: async (file: { text?: string }) => file.text ?? "",
 			createBinary: async (path: string, _data: ArrayBuffer) => {
 				files.set(path, { path });
 				await desktopSync.syncNow();
 			},
 			trash: async (file: { path: string }, _system: boolean) => {
 				files.delete(file.path);
+				if (file.path === placeholder) {
+					restoreOrder.push("remove-placeholder");
+					state.unavailable_paths = state.unavailable_paths.filter(
+						(path) => path !== source,
+					);
+				}
 			},
 		},
 		plugins: { plugins: { "ai-bridge": plugin } },
@@ -262,6 +352,12 @@ function createPhaseHost(options: { retryAfter?: string } = {}): PhaseHost {
 			return manifestReads;
 		},
 		publicationEffects,
+		effectCalls,
+		restoreOrder,
+		/** Releases the host's held source create in the Pause regression test. */
+		releaseSeedCreate() {
+			releaseSeedCreate();
+		},
 		/** Changes the fixed fixture authority to test revision mismatch refusal. */
 		changeServiceAuthority() {
 			remoteRow = {
@@ -308,7 +404,7 @@ describe("AC-19 bounded phase runner", () => {
 			expect(script).toContain('getName()!=="obsidian-ai-bridge-dev-2"');
 			expect(script).toContain("adapter.basePath");
 			expect(script).toContain("getBasePath()");
-			expect(script.length).toBeLessThan(9_000);
+			expect(script.length).toBeLessThan(11_000);
 		}
 		expect(generated.evict).toContain("simulated-eviction-p6-20261106-01.md");
 	});
@@ -329,11 +425,13 @@ describe("AC-19 bounded phase runner", () => {
 				? target
 				: `=> OAB8AC19P6:${JSON.stringify({ phase: "preflight", status: "ready", at: 123, clientId: "client-1", attentionHash: "a".repeat(64), counts: { operations: 1, applies: 2, attention: 4, confirmations: 0 }, flags: { paused: true, placeholderExcluded: true }, rawBody: "private body", credential: "secret" })}`,
 		}));
+		const phaseScript = scripts().preflight;
+		const executable = "/test/obsidian";
 		const result = runAc19Phase(
 			"dev-2",
 			"obsidian-ai-bridge-dev-2",
-			scripts().preflight,
-			{ invoke },
+			phaseScript,
+			{ executable, invoke },
 		);
 		expect(result).toMatchObject({
 			phase: "preflight",
@@ -346,6 +444,16 @@ describe("AC-19 bounded phase runner", () => {
 		});
 		expect(JSON.stringify(result)).not.toContain("private body");
 		expect(JSON.stringify(result)).not.toContain("secret");
+		expect(invoke).toHaveBeenNthCalledWith(1, executable, [
+			"vault=obsidian-ai-bridge-dev-2",
+			"vault",
+			"info=path",
+		]);
+		expect(invoke).toHaveBeenNthCalledWith(2, executable, [
+			"vault=obsidian-ai-bridge-dev-2",
+			"eval",
+			`code=${phaseScript}`,
+		]);
 		expect(invoke).toHaveBeenCalledTimes(2);
 	});
 
@@ -362,6 +470,25 @@ describe("AC-19 bounded phase runner", () => {
 			}),
 		).toMatchObject({ phase: "seed", status: "uncertain" });
 		expect(invoke).toHaveBeenCalledTimes(2);
+	});
+
+	it("treats spawn errors and signals as uncertain even when status is zero", () => {
+		for (const processFacts of [{ spawnError: true }, { signal: "SIGTERM" }]) {
+			const invoke = vi.fn((_executable: string, args: readonly string[]) =>
+				args.includes("info=path")
+					? { status: 0, stdout: target }
+					: {
+							status: 0,
+							stdout: 'OAB8AC19P6:{"phase":"seed","status":"passed"}',
+							...processFacts,
+						},
+			);
+			expect(
+				runAc19Phase("dev-2", "obsidian-ai-bridge-dev-2", scripts().seed, {
+					invoke,
+				}),
+			).toMatchObject({ phase: "seed", status: "uncertain" });
+		}
 	});
 
 	it("treats a checkpoint for the wrong phase as uncertain", () => {
@@ -469,6 +596,42 @@ describe("AC-19 bounded phase runner", () => {
 		expect(resumeCalls).toBe(0);
 	});
 
+	it("marks overdue pending work uncertain when status polls arrive", async () => {
+		const host = createPhaseHost({ holdSeedCreate: true });
+		const phaseScripts = scripts();
+		const now = { value: 1_000 };
+		const TestDate = Object.assign(
+			(value?: string | number) =>
+				value === undefined ? new Date() : new Date(value),
+			{ now: () => now.value, parse: Date.parse, UTC: Date.UTC },
+		) as unknown as DateConstructor;
+		for (const phase of [
+			"preflight",
+			"enable-coexistence",
+			"resume",
+			"service-absence",
+		] as const)
+			await completePhase(host.app, phaseScripts[phase], TestDate);
+		await evaluateScript(host.app, phaseScripts.seed, TestDate);
+		now.value = 32_000;
+		const status = await evaluateScript(
+			host.app,
+			phaseScripts.status,
+			TestDate,
+		);
+		expect(status.status).toBe("uncertain");
+		const state = (
+			host.app as {
+				__oabAc19P6: { taskState: string; blockMutations: boolean };
+			}
+		).__oabAc19P6;
+		expect(state).toMatchObject({
+			taskState: "uncertain",
+			blockMutations: true,
+		});
+		host.releaseSeedCreate();
+	});
+
 	it("returns pending while a mutation waits and does not issue it twice", async () => {
 		const state = {
 			epoch: "a".repeat(32),
@@ -574,10 +737,53 @@ describe("AC-19 bounded phase runner", () => {
 		expect(createCalls).toBe(1);
 	});
 
+	it("fences a pending effect after Pause and ignores its late settlement", async () => {
+		const host = createPhaseHost({ holdSeedCreate: true });
+		const phaseScripts = scripts();
+		for (const phase of [
+			"preflight",
+			"enable-coexistence",
+			"resume",
+			"service-absence",
+		] as const)
+			await completePhase(host.app, phaseScripts[phase]);
+		await evaluateScript(host.app, phaseScripts.seed);
+		const paused = await evaluateScript(host.app, phaseScripts.pause);
+		expect(paused.status).toBe("paused");
+		host.releaseSeedCreate();
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		const privateState = (
+			host.app as {
+				__oabAc19P6: {
+					phase: string;
+					taskState: string;
+					result: { status: string };
+				};
+			}
+		).__oabAc19P6;
+		expect(privateState).toMatchObject({
+			phase: "pause",
+			taskState: "paused",
+			result: { status: "paused" },
+		});
+		expect((await evaluateScript(host.app, phaseScripts.status)).status).toBe(
+			"paused",
+		);
+		expect(host.effectCalls.syncNow).toBe(0);
+	});
+
 	it("completes eviction proof, durable confirmation, cleanup, and Pause in order", async () => {
 		const host = createPhaseHost();
 		const phaseScripts = scripts();
 		await reachEviction(host.app, phaseScripts);
+		const privateState = (
+			host.app as { __oabAc19P6: { private: { fixtureBytes: number[] } } }
+		).__oabAc19P6;
+		expect(privateState.private.fixtureBytes).toEqual(
+			Array.from(
+				new TextEncoder().encode("OAB-10.1 synthetic coexistence fixture\n"),
+			),
+		);
 		const captured = await completePhase(host.app, phaseScripts.capture);
 		expect(captured).toMatchObject({
 			status: "passed",
@@ -615,6 +821,15 @@ describe("AC-19 bounded phase runner", () => {
 			deleted: true,
 			rev: 2,
 		});
+		expect(host.effectCalls).toMatchObject({
+			keepServerState: 1,
+			restoreCreate: 1,
+		});
+		expect(host.restoreOrder).toEqual([
+			"remove-placeholder",
+			"restore-source",
+			"keep-server-state",
+		]);
 		expect(host.publicationEffects).toEqual(["put", "confirmation", "delete"]);
 	});
 
@@ -656,6 +871,12 @@ describe("AC-19 bounded phase runner", () => {
 		await new Promise((resolve) => setTimeout(resolve, 0));
 		await evaluateScript(host.app, phaseScripts["service-absence"], TestDate);
 		await new Promise((resolve) => setTimeout(resolve, 0));
+		const status = await evaluateScript(
+			host.app,
+			phaseScripts.status,
+			TestDate,
+		);
+		expect(status).toMatchObject({ status: "pending", retryAfterMs: 3_000 });
 		const limited = await evaluateScript(
 			host.app,
 			phaseScripts["service-absence"],
@@ -671,6 +892,51 @@ describe("AC-19 bounded phase runner", () => {
 		);
 		expect(retried.status).toBe("passed");
 		expect(host.manifestReads).toBe(3);
+	});
+
+	it("does not apply Retry-After admission to a mutation phase", async () => {
+		const host = createPhaseHost({ mutationRetryAfter: "3" });
+		const phaseScripts = scripts();
+		for (const phase of [
+			"preflight",
+			"enable-coexistence",
+			"resume",
+			"service-absence",
+		] as const)
+			await completePhase(host.app, phaseScripts[phase]);
+		await evaluateScript(host.app, phaseScripts.seed);
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		const state = (host.app as { __oabAc19P6: { taskState: string } })
+			.__oabAc19P6;
+		expect(state.taskState).toBe("failed");
+		expect(host.effectCalls.syncNow).toBe(1);
+		expect((await evaluateScript(host.app, phaseScripts.status)).status).toBe(
+			"failed",
+		);
+	});
+
+	it("checks baseline ETag identity and excludes placeholder service rows", async () => {
+		for (const options of [
+			{ baselineEtag: `"${"a".repeat(32)}.2"` },
+			{ manifestEtag: `"${"a".repeat(32)}.2"` },
+			{ placeholderAtBaseline: true },
+		]) {
+			const host = createPhaseHost(options);
+			const phaseScripts = scripts();
+			for (const phase of [
+				"preflight",
+				"enable-coexistence",
+				"resume",
+				"service-absence",
+				"seed",
+			] as const)
+				await completePhase(host.app, phaseScripts[phase]);
+			const baseline = await completePhase(
+				host.app,
+				phaseScripts["service-baseline"],
+			);
+			expect(baseline.status).toBe("failed");
+		}
 	});
 
 	it("does not retry a manifest read with an invalid Retry-After value", async () => {

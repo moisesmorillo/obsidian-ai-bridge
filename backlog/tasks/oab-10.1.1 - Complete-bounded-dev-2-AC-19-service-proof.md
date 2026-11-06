@@ -1,13 +1,12 @@
 ---
 id: OAB-10.1.1
 title: Complete bounded dev-2 AC-19 service proof
-status: In Progress
+status: Done
 assignee:
   - '@pi'
 created_date: '2026-11-05T16:52:00Z'
-updated_date: '2026-11-06T12:31:00Z'
+updated_date: '2026-11-06T14:06:00Z'
 labels:
-  - deferred
   - F4
 dependencies: []
 documentation:
@@ -26,7 +25,7 @@ Complete the one bounded dev-2 AC-19 service proof under the owner exception dat
 <!-- AC:BEGIN -->
 - [x] #1 Record the exact CLI exit status or spawn error, bounded secret-safe stderr, and a guarded dev-2 trivial eval result.
 - [x] #2 Use one fresh oab-10.1 fixture in the exact authorized dev-2 vault. Preserve historical queue, apply, and attention identities with baseline-relative assertions.
-- [ ] #3 Confirm one new durable confirmation, placeholder exclusion, and no delete or rename commit for the fixture path. Pause dev-2 after the bounded case.
+- [x] #3 Confirm one new durable confirmation, placeholder exclusion, and no delete or rename commit for the fixture path. Pause dev-2 after the bounded case.
 - [x] #4 Keep dev-1 paused. Do not resume, reset, clear, or publish its historical work. Record that its live proof covers capture and reload only.
 - [x] #5 Update OAB-10.1 criterion 6 and OAB-10 gate notes with actual results and remaining limits. Claim no real iCloud eviction proof.
 <!-- AC:END -->
@@ -81,4 +80,12 @@ P6 capture passed at 12:25:21.374Z. The runner read the durable journal confirma
 P6 restoration passed at 12:26:00.701Z. The runner removed the synthetic placeholder, restored and checked exact fixture bytes, and used keepServerState only. It never called Confirm. Durable confirmation removal and unchanged service authority passed. Coexistence disable passed. Normal Vault API trash and conditional deletion completed at 12:26:20.814Z. Pause completed at 12:26:31.858Z. The final complete scoped manifest passed at 12:26:41.406Z: fixture tombstone matches the local delete receipt, and the placeholder has no service row. Final counts: 0 operations, 0 applies, 4 unchanged attention items, 0 confirmations. All phase CLI calls returned safe checkpoints without a timeout, unknown result, or admission-limited response. No enrollment, dev-1 action, journal clearing, personal-vault access, or Cloudflare action ran. Dev-1 evidence remains capture and reload only. Whole-branch and human reviews remain pending.
 
 Whole-branch semantic review approved revision 404e6db against e7bb31b with no actionable finding. The session-model branch reviewer used the code-review skill and TypeScript profile. Review covered all five changed files, named TypeScript declarations, internal builders, checkpoint/process contracts, generated script semantics, named test helpers, and task-note truth. Structural candidates: the phase runner and synthetic host test. Both remain cohesive within the bounded acceptance-tool boundary. The reviewer reconstructed the complete phase, pending task, deadline, Pause, read-retry, durable history, service authority, and cleanup matrix. R1 CLI dispatch, R2 restoration semantics, and R3 late settlement after Pause each have explicit fixed dispositions with source and regression evidence. No alias change remains. Parent and reviewer each ran bun run check at 404e6db with exit 0. The reviewer counted 2051 passed, 1 skipped, 0 failed. Worker build used dry-run only. Review limits: live checkpoints come from the parent, real-vault evidence comes from the supervisor, and no resumed dev-1 service or real iCloud proof exists. Human branch review remains pending.
+
+Human branch review pn-21d978 approved db182d6 with no changes requested. This closes the final review gate. The owner-directed final update changes task metadata and notes only. OAB-10.1.1 now satisfies all five criteria. The earlier Deferred state and incomplete dev-2 claims describe the prior P1 record, not the completed P6 case. General shared-service restrictions remain outside the one owner exception.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Completed one bounded dev-2 AC-19 service case with short guarded CLI phases. Durable capture proved one new confirmation, source unavailability, placeholder exclusion, unchanged historical identities, and no destructive fixture publication during eviction. Exact-byte restoration and keepServerState preserved service authority. Normal conditional cleanup produced a verified tombstone, then dev-2 entered Pause with coexistence off, empty operation/apply queues, four unchanged attention items, and zero confirmations. Nineteen focused tests and bun run check passed. Task, whole-branch, and human reviews approved the corrections. Dev-1 remains capture/reload-only. No real iCloud eviction proof, second case, personal-vault access, or deployment is claimed.
+<!-- SECTION:FINAL_SUMMARY:END -->

@@ -3,6 +3,7 @@ export const READ_SLOT_LIMIT = 4;
 /** Maximum time one read lease can retain local capacity, in milliseconds. */
 export const READ_SLOT_HOLD_DEADLINE_MS = 60_000;
 let activeReadSlots = 0;
+/** Incomplete response leases that reached their deadline in this isolate. */
 let expiredReadSlots = 0;
 /** Opaque process-local identifier used only in owner observations. */
 const isolateId = crypto.randomUUID();
@@ -43,7 +44,7 @@ export interface ReadSlotCapacitySnapshot {
 	available_slots: number;
 	/** Maximum concurrent read slots in this isolate. */
 	limit: number;
-	/** Read leases that remained active at their deadline since isolate start. */
+	/** Incomplete response leases that reached their deadline since isolate start. */
 	expired_count: number;
 	/** Fixed lease duration in milliseconds. */
 	deadline_ms: number;
@@ -114,10 +115,8 @@ export function tryAcquireReadSlot(): ReadSlotLease | undefined {
 		if (completed) return;
 		expired = true;
 		signalExpiration();
-		if (!released) {
-			expiredReadSlots += 1;
-			release();
-		}
+		expiredReadSlots += 1;
+		if (!released) release();
 		for (const listener of listeners) listener();
 		listeners.clear();
 	}, READ_SLOT_HOLD_DEADLINE_MS);

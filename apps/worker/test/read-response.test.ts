@@ -75,6 +75,34 @@ describe("owned read response", () => {
 		},
 	);
 
+	it("counts expiry after capacity release and fails the unfinished response once", async () => {
+		vi.useFakeTimers();
+		const expiredBefore = readSlotCapacitySnapshot().expired_count;
+		const lease = tryAcquireReadSlot();
+		if (!lease) throw new Error("Expected an available read slot");
+		lease();
+		lease();
+		expect(readSlotCapacitySnapshot().active_slots).toBe(0);
+		const response = ownedReadResponse(
+			{
+				next: async () => ({ done: true, value: undefined }),
+				cancel: async () => {},
+			},
+			{ finish: async () => ({ ok: true }) },
+			lease,
+		);
+		if (!response.body) throw new Error("Read response has no body");
+		const reader = response.body.getReader();
+		void reader.closed.catch(() => undefined);
+		await vi.advanceTimersByTimeAsync(60_000);
+		await expect(reader.read()).rejects.toThrow();
+		expect(readSlotCapacitySnapshot().active_slots).toBe(0);
+		expect(readSlotCapacitySnapshot().expired_count).toBe(expiredBefore + 1);
+		await vi.advanceTimersByTimeAsync(60_000);
+		expect(readSlotCapacitySnapshot().expired_count).toBe(expiredBefore + 1);
+		lease.complete();
+	});
+
 	it("returns an expiry result when response preparation misses its lease", async () => {
 		vi.useFakeTimers();
 		const lease = tryAcquireReadSlot();

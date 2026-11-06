@@ -44,4 +44,6 @@ RED: `cd apps/plugin && bun run test -- test/vault-events.test.ts -t 'accepts an
 Commit: ef081d4. OAB-11.8 remains In Progress because the exact create/rename/put cursor regression and independent reviews remain open.
 
 Follow-up regression passed. A real replay test now uses ReconciliationController, TextApplyEngine, CoexistenceController, DesktopSyncController, and VaultEventAdapter for create Sin título.md, rename to iphone-test-1.md, then put revision 2. It asserts source tombstone and destination revisions, cursor 3, applied content, empty pending apply, zero confirmations, and open fence. A wrapped negative control against the original production vault-events.ts failed at the expected confirmation assertion. The earlier timeout came from gating a post-rename apply read because the fake indexed the renamed file after emitting the event. The corrected gate holds the first exact destination read. bun run check passed after the follow-up. Prior commit ef081d4 was amended to fa10f43 before this follow-up.
+
+Follow-up regression and CLI evidence committed as a855c1d. The prior timeout is resolved. Acceptance criterion 3 now has exact feed replay and cursor evidence. Reviews remain pending.
 <!-- SECTION:NOTES:END -->

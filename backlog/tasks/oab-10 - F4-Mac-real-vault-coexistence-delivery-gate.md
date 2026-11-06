@@ -4,7 +4,7 @@ title: F4 Mac real-vault coexistence delivery gate
 status: Done
 assignee: []
 created_date: 2026-10-12 15:13
-updated_date: '2026-11-06T16:56:00Z'
+updated_date: '2026-11-06T17:01:00Z'
 labels:
   - phase-gate
   - F4
@@ -104,7 +104,7 @@ Supervisor counts: cursor 179 at 2026-11-05 21:50 UTC, 180 after the OAB-10.6 re
 
 Shared-service finding: the P1 dev-2 fixture reached the real vault at cursor 179 on 2026-11-05 about 21:50 UTC. Test-vault trash published its tombstone and removed the copy. This explains the general shared-service restriction and the one later owner exception. The owner authorized one bounded dev-2 case on 2026-11-06, PR #72, OAB-10.1.1. The supervisor reports one real-vault replay from cursor 180 to 182, with the create and tombstone in one pass. It left zero confirmations and attention items. The plugin-applied delete did not enter confirmation, which confirms the OAB-10.6 echo correction in that observation.
 
-Time limit: the supervisor reports that replay at about 2026-11-06 07:28 UTC. OAB-10.1.1 records the P6 host case at 12:23:48.115Z to 12:26:41.406Z. These times disagree. Retain both sources without an inferred clock conversion or causal timing claim.
+Resolved replay time, supervisor correction after branch review, 2026-11-06: 07:28 was local Mac time, UTC-6, not UTC. The replay occurred at about 13:28 UTC on 2026-11-06, after the P6 host case at 12:23:48.115Z to 12:26:41.406Z. The other supervisor times, 19:30, 21:50, 22:25, 23:35, and 03:10, are UTC. This correction supersedes the earlier 07:28 UTC label and unresolved-time claims in these notes and OAB-10.1. The replay remains supervisor evidence, not an independent agent observation.
 
 AC-19 evidence: OAB-10.1.1 records one completed bounded dev-2 case, client j-jAYgxDZ6cyAPVM. Durable capture proved one confirmation, source unavailability, placeholder exclusion, unchanged service authority, and no fixture delete or rename publication during eviction. Exact-byte restoration and keepServerState preserved authority. Conditional cleanup produced the fixture tombstone. Final dev-2 state was Pause, coexistence off, zero operations, zero applies, four unchanged attention identities, and zero confirmations. Dev-1 proves capture and reload only, not resumed service behavior. Closure accepts this split evidence. No complete two-vault service pass or real iCloud eviction proof follows.
 
@@ -119,6 +119,8 @@ Feed response preparation p95: 180 milliseconds. Samples: 375 retained of 375 to
 Remaining limits: OAB-10.2 criteria 1, 3, and 4 remain unchecked. Plugin display, live event-origin classification, and two-test-vault measurement proof do not follow from this read. OAB-8.7.1 now says Done with controller-test evidence and an unverified real-host timing limit. Preserve its F4 trigger and that history. Do not restore its obsolete Deferred state. No personal-vault inspection, backup inspection, cloud resource change, deployment, release tag, or mobile action ran in F4C. Section 14 matches the recorded bounded result, so docs/spec.md stays unchanged.
 
 F4C validation and review: bun run check passed with exit 0 on the Backlog-only branch based on e56944e. The check covered lint, docs, workspace types, tests, and dry-run builds. Separate assertions passed all five draft text comparisons and the Backlog-only scope check, six checks total. No failing product test applies to these task-record changes. Session-model independent branch review used code-review guidance. The first review covered OAB-11 but stopped before complete coverage. The continuation covered OAB-10, OAB-10.1, OAB-10.2, and all five promoted tasks, and returned PASS with no actionable finding. Documentation scope: changed task metadata, criteria, notes, summaries, and exact draft text. Structural implementation candidates and TypeScript declaration checks do not apply because no executable file changed. Review checked source attribution, dates, privacy, task order, triggers, and accepted evidence limits. No new absolute personal path, token, cookie value, owner subject, or raw response appears in the changes. Human branch review remains pending.
+
+Human branch review pn-ddf888 approved revision 556482a with no changes requested. The supervisor then corrected only the replay time zone. The corrected 13:28 UTC time follows the P6 host case. The agent checked the six-hour conversion and changed no measurement, acceptance limit, vault state, or product code. The owner requested this correction before the PR.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary

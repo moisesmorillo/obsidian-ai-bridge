@@ -52,6 +52,12 @@ const host = vi.hoisted(() => ({
 }));
 
 vi.mock("obsidian", () => ({
+	Platform: {
+		/** Reports the test-selected mobile host without modeling native behavior. */
+		get isMobile() {
+			return host.calls.includes("mobile-platform");
+		},
+	},
 	Notice: class {
 		/** Captures the exact visible message for the host wiring test. */
 		constructor(message: string) {
@@ -437,6 +443,70 @@ describe("AIBridgePlugin device-local lifecycle", () => {
 		}
 	});
 
+	it("suspends a hidden mobile document and recovers when it becomes visible", async () => {
+		host.calls.push("mobile-platform");
+		const plugin = await startConnectedPlugin();
+		try {
+			const controller = Reflect.get(
+				plugin,
+				"desktopSync",
+			) as DesktopSyncController;
+			Object.defineProperty(document, "visibilityState", {
+				configurable: true,
+				value: "hidden",
+			});
+			Reflect.apply(
+				Reflect.get(plugin, "visibilityHandler") as () => void,
+				plugin,
+				[],
+			);
+			await settleController(controller);
+			const cyclesWhileHidden = host.syncCycles;
+			await vi.advanceTimersByTimeAsync(300_000);
+			expect(host.syncCycles).toBe(cyclesWhileHidden);
+
+			Object.defineProperty(document, "visibilityState", {
+				configurable: true,
+				value: "visible",
+			});
+			Reflect.apply(
+				Reflect.get(plugin, "visibilityHandler") as () => void,
+				plugin,
+				[],
+			);
+			await settleSyncEffects(plugin);
+			expect(host.syncCycles).toBe(cyclesWhileHidden + 1);
+		} finally {
+			plugin.onunload();
+			vi.useRealTimers();
+			vi.unstubAllGlobals();
+		}
+	});
+
+	it("keeps the 300-second hidden polling interval on desktop", async () => {
+		const plugin = await startConnectedPlugin();
+		try {
+			Object.defineProperty(document, "visibilityState", {
+				configurable: true,
+				value: "hidden",
+			});
+			Reflect.apply(
+				Reflect.get(plugin, "visibilityHandler") as () => void,
+				plugin,
+				[],
+			);
+			await settleSyncEffects(plugin);
+			const cyclesBeforePoll = host.syncCycles;
+			await vi.advanceTimersByTimeAsync(300_000);
+			await settleSyncEffects(plugin);
+			expect(host.syncCycles).toBeGreaterThan(cyclesBeforePoll);
+		} finally {
+			plugin.onunload();
+			vi.useRealTimers();
+			vi.unstubAllGlobals();
+		}
+	});
+
 	it("defers sync until connected credential restore completes", async () => {
 		vi.stubGlobal("window", {
 			setTimeout: () => 1,
@@ -676,6 +746,47 @@ describe("AIBridgePlugin device-local lifecycle", () => {
 			expect(host.syncCycles).toBe(0);
 		} finally {
 			reloaded.onunload();
+			vi.useRealTimers();
+			vi.unstubAllGlobals();
+		}
+	});
+
+	it("stops starting later recovery stages after mobile suspension", async () => {
+		host.calls.push("mobile-platform");
+		const plugin = await startConnectedPlugin();
+		const controller = Reflect.get(
+			plugin,
+			"desktopSync",
+		) as DesktopSyncController;
+		let startCycle: (() => void) | undefined;
+		let releaseCycle: (() => void) | undefined;
+		const started = new Promise<void>((resolve) => {
+			startCycle = resolve;
+		});
+		const release = new Promise<void>((resolve) => {
+			releaseCycle = resolve;
+		});
+		host.publicationStages.splice(0);
+		host.cycleGate = { started: () => startCycle?.(), wait: release };
+		const cycle = controller.syncNow();
+		await started;
+		try {
+			Object.defineProperty(document, "visibilityState", {
+				configurable: true,
+				value: "hidden",
+			});
+			Reflect.apply(
+				Reflect.get(plugin, "visibilityHandler") as () => void,
+				plugin,
+				[],
+			);
+			releaseCycle?.();
+			await cycle;
+			await settleSyncEffects(plugin);
+			expect(host.publicationStages).toEqual(["resume"]);
+		} finally {
+			releaseCycle?.();
+			plugin.onunload();
 			vi.useRealTimers();
 			vi.unstubAllGlobals();
 		}

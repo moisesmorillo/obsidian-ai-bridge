@@ -1,3 +1,11 @@
+/** Supplies a desktop platform default for tests that do not select mobile. */
+export const Platform = {
+	/** Keeps lifecycle tests from inferring native behavior without an explicit mock. */
+	get isMobile(): boolean {
+		return false;
+	},
+};
+
 /** Text file identity used by host API tests that mock Obsidian Vault methods. */
 export class TFile {
 	/** Binds a test file to its current vault path. */

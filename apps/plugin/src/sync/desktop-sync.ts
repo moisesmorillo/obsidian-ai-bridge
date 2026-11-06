@@ -47,7 +47,7 @@ export interface DesktopSyncOptions {
 	onStateChanged?(): void;
 }
 
-/** Owns one serialized desktop loop and queues explicit local intent while paused. */
+/** Owns one serialized sync loop and separates host suspension from user Pause. */
 export class DesktopSyncController {
 	private tail: Promise<void> = Promise.resolve();
 	private events: PublicationEvent[] = [];
@@ -55,6 +55,12 @@ export class DesktopSyncController {
 	private debounce: number | null = null;
 	private closed = false;
 	private paused = false;
+	private suspended = false;
+	private recoveryPromise: {
+		revision: number;
+		promise: Promise<void>;
+	} | null = null;
+	private drainPromise: Promise<void> | null = null;
 	private started = false;
 	private activeSince: number | null = null;
 	private cyclePromise: Promise<void> | null = null;
@@ -87,7 +93,12 @@ export class DesktopSyncController {
 
 	/** Adds one cycle to the lifecycle queue. Concurrent requests share that queued cycle. */
 	syncNow(): Promise<void> {
-		if (this.closed || this.paused || this.isEffectBlocked())
+		if (
+			this.closed ||
+			this.paused ||
+			this.isSuspended() ||
+			this.isEffectBlocked()
+		)
 			return Promise.resolve();
 		if (this.events.length > 0) {
 			if (this.debounce !== null) this.options.host.clearTimeout(this.debounce);
@@ -96,7 +107,13 @@ export class DesktopSyncController {
 		}
 		if (this.cyclePromise) return this.cyclePromise;
 		const run = this.tail.then(async () => {
-			if (this.closed || this.paused || this.isEffectBlocked()) return;
+			if (
+				this.closed ||
+				this.paused ||
+				this.isSuspended() ||
+				this.isEffectBlocked()
+			)
+				return;
 			await this.options.cycle();
 		});
 		this.workActive = true;
@@ -145,7 +162,7 @@ export class DesktopSyncController {
 		this.activeSince = Date.now();
 		const activityRevision = ++this.activityRevision;
 		const lifecycleRevision = this.lifecycleRevision;
-		if (this.paused) {
+		if (this.paused || this.isSuspended()) {
 			this.events.push(event);
 		} else {
 			this.schedulePolling();
@@ -179,23 +196,34 @@ export class DesktopSyncController {
 		this.options.onStateChanged?.();
 	}
 
-	/** Restores polling after old work settles, then replays queued intent or recovery. */
+	/** Clears user Pause, then recovers only after admitted work settles and lifecycle fences remain current. */
 	async resume(): Promise<void> {
 		if (this.closed) return;
-		this.paused = false;
-		this.lifecycleRevision += 1;
-		this.options.onStateChanged?.();
-		await this.tail;
-		this.started = true;
-		this.schedulePolling();
-		const hasEvents = this.events.length > 0;
-		await this.drainEvents();
-		if (!hasEvents) await this.syncNow();
+		if (this.paused) {
+			this.paused = false;
+			this.lifecycleRevision += 1;
+			this.options.onStateChanged?.();
+		}
+		if (this.isSuspended()) return;
+		await this.recoverAfterLifecycleChange();
 	}
 
-	/** Reschedules the host budget and triggers immediate recovery when the window becomes visible. */
+	/** Clears timers while host-suspended and recovers queued work when the host resumes. */
 	visibilityChanged(): Promise<void> {
-		if (this.closed || this.paused) return Promise.resolve();
+		if (this.closed) return Promise.resolve();
+		if (this.options.host.isSuspended?.()) {
+			this.suspend();
+			return Promise.resolve();
+		}
+		if (this.suspended) {
+			this.suspended = false;
+			this.lifecycleRevision += 1;
+			this.options.onStateChanged?.();
+			return this.paused
+				? Promise.resolve()
+				: this.recoverAfterLifecycleChange();
+		}
+		if (this.paused) return Promise.resolve();
 		this.schedulePolling();
 		return this.options.host.isVisible?.() === false
 			? Promise.resolve()
@@ -220,48 +248,72 @@ export class DesktopSyncController {
 		if (
 			this.closed ||
 			this.paused ||
+			this.isSuspended() ||
 			this.events.length === 0 ||
 			this.isEffectBlocked()
 		)
 			return Promise.resolve();
-		const events = this.events.splice(0);
+		if (this.drainPromise) return this.drainPromise;
 		this.workActive = true;
 		this.options.onStateChanged?.();
 		const run = this.tail.then(async () => {
-			let admitted = 0;
-			let requeued = false;
+			let cycleNeeded = true;
 			try {
-				if (this.closed || this.paused) return;
-				for (const event of events) {
-					if (this.closed || this.paused || this.isEffectBlocked()) return;
-					const captured =
-						(await this.options.onCaptureEvent?.(event)) ?? false;
-					if (!captured && !isTerminallyExcluded(event))
-						await this.options.onEvent?.(event);
-					admitted += 1;
+				while (true) {
+					while (this.events.length > 0 && this.debounce === null) {
+						if (
+							this.closed ||
+							this.paused ||
+							this.isSuspended() ||
+							this.isEffectBlocked()
+						)
+							return;
+						const event = this.events[0];
+						if (!event) return;
+						const captured =
+							(await this.options.onCaptureEvent?.(event)) ?? false;
+						if (this.closed || this.paused || this.isSuspended()) return;
+						if (!captured && !isTerminallyExcluded(event))
+							await this.options.onEvent?.(event);
+						this.events.shift();
+					}
+					if (
+						this.closed ||
+						this.paused ||
+						this.isSuspended() ||
+						this.isEffectBlocked()
+					)
+						return;
+					if (!cycleNeeded) return;
+					await this.options.cycle();
+					cycleNeeded = false;
+					if (this.events.length === 0 || this.debounce !== null) return;
+					cycleNeeded = true;
 				}
-				if (this.isEffectBlocked()) return;
-				await this.options.cycle();
 			} catch (error) {
-				this.events = [...events.slice(admitted), ...this.events];
-				requeued = true;
 				this.options.onError?.(error);
 			} finally {
-				if ((this.closed || this.paused || this.isEffectBlocked()) && !requeued)
-					this.events = [...events.slice(admitted), ...this.events];
 				this.workActive = false;
 				this.options.onStateChanged?.();
 			}
 		});
-		this.tail = run.catch((error: unknown) => {
+		let sharedDrain: Promise<void>;
+		sharedDrain = run.finally(() => {
+			if (this.drainPromise === sharedDrain) this.drainPromise = null;
+		});
+		this.drainPromise = sharedDrain;
+		this.tail = sharedDrain.catch((error: unknown) => {
 			this.options.onError?.(error);
 		});
-		return run;
+		return sharedDrain;
 	}
 
 	/** Chooses one poll interval from visibility and recent foreground activity. */
 	private schedulePolling(): void {
-		if (this.closed || this.paused || this.options.host.isSuspended?.()) return;
+		if (this.closed || this.paused || this.isSuspended()) {
+			if (this.suspended) this.clearTimers();
+			return;
+		}
 		if (this.interval !== null) this.options.host.clearInterval(this.interval);
 		const visible = this.options.host.isVisible?.() ?? true;
 		const now = Date.now();
@@ -299,6 +351,55 @@ export class DesktopSyncController {
 				this.options.onStateChanged?.();
 			})
 			.catch(() => undefined);
+	}
+
+	/** Fences timer and effect admission when the host reports automatic suspension. */
+	private isSuspended(): boolean {
+		if (this.options.host.isSuspended?.()) {
+			this.suspend();
+			return true;
+		}
+		return this.suspended;
+	}
+
+	/** Advances the lifecycle fence once and clears owned timers on suspension. */
+	private suspend(): void {
+		if (this.closed || this.suspended) return;
+		this.suspended = true;
+		this.lifecycleRevision += 1;
+		this.clearTimers();
+		this.options.onStateChanged?.();
+	}
+
+	/** Waits for admitted work, then recovers only if Pause, close, or suspension did not win. */
+	private recoverAfterLifecycleChange(): Promise<void> {
+		if (this.closed || this.paused || this.isSuspended())
+			return Promise.resolve();
+		const revision = this.lifecycleRevision;
+		if (this.recoveryPromise?.revision === revision)
+			return this.recoveryPromise.promise;
+		const recovery = (async () => {
+			await this.tail;
+			if (
+				this.closed ||
+				this.paused ||
+				this.isSuspended() ||
+				this.lifecycleRevision !== revision
+			)
+				return;
+			this.started = true;
+			this.schedulePolling();
+			const hasEvents = this.events.length > 0;
+			await this.drainEvents();
+			if (!hasEvents) await this.syncNow();
+		})();
+		let sharedRecovery: Promise<void>;
+		sharedRecovery = recovery.finally(() => {
+			if (this.recoveryPromise?.promise === sharedRecovery)
+				this.recoveryPromise = null;
+		});
+		this.recoveryPromise = { revision, promise: sharedRecovery };
+		return sharedRecovery;
 	}
 
 	/** Reads the shared capture fence before event and cycle admission. */

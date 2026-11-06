@@ -10,7 +10,7 @@ import { ObsidianOAuthTransport } from "@plugin/infrastructure/oauth-transport";
 import { SyncTransportError } from "@plugin/infrastructure/sync-transport";
 import { ObsidianTextVault } from "@plugin/infrastructure/text-vault";
 import { VaultEventAdapter } from "@plugin/infrastructure/vault-events";
-import { Notice, Plugin } from "@plugin/obsidian-api";
+import { Notice, Platform, Plugin } from "@plugin/obsidian-api";
 import {
 	type AIBridgeSettings,
 	AIBridgeSettingTab,
@@ -527,28 +527,40 @@ export default class AIBridgePlugin extends Plugin {
 			this.settingsTab?.refreshStatus();
 			try {
 				const composition = this.composition;
-				if (!composition || this.isCoexistenceEffectBlocked()) return;
+				if (
+					!composition ||
+					this.isMobileSuspended() ||
+					this.isCoexistenceEffectBlocked()
+				)
+					return;
 				if (!this.vaultSummary) {
 					this.vaultSummary = await composition.readVaultSummary();
-					if (this.isCoexistenceEffectBlocked()) return;
+					if (this.isMobileSuspended() || this.isCoexistenceEffectBlocked())
+						return;
 				}
 				await composition.reconciliation.resume();
-				if (this.isCoexistenceEffectBlocked()) return;
+				if (this.isMobileSuspended() || this.isCoexistenceEffectBlocked())
+					return;
 				if (this.journal?.snapshot().epoch === undefined) {
 					await composition.reconciliation.enroll();
-					if (this.isCoexistenceEffectBlocked()) return;
+					if (this.isMobileSuspended() || this.isCoexistenceEffectBlocked())
+						return;
 				}
 				await composition.publication.scan();
-				if (this.isCoexistenceEffectBlocked()) return;
+				if (this.isMobileSuspended() || this.isCoexistenceEffectBlocked())
+					return;
 				await composition.publication.flush();
-				if (this.isCoexistenceEffectBlocked()) return;
+				if (this.isMobileSuspended() || this.isCoexistenceEffectBlocked())
+					return;
 				await composition.reconciliation.replay();
-				if (this.isCoexistenceEffectBlocked()) return;
+				if (this.isMobileSuspended() || this.isCoexistenceEffectBlocked())
+					return;
 				const summary = await composition.readVaultSummary();
 				if (
 					this.composition !== composition ||
 					this.syncPaused ||
 					this.syncRevoked ||
+					this.isMobileSuspended() ||
 					this.isCoexistenceEffectBlocked()
 				)
 					return;
@@ -578,6 +590,7 @@ export default class AIBridgePlugin extends Plugin {
 				clearInterval: (handle) => window.clearInterval(handle),
 				isVisible: () =>
 					document.visibilityState === "visible" && document.hasFocus(),
+				isSuspended: () => this.isMobileSuspended(),
 			},
 			onError: (error) => this.reportSyncFailure(error),
 			onStateChanged: () => this.settingsTab?.refreshStatus(),
@@ -604,6 +617,11 @@ export default class AIBridgePlugin extends Plugin {
 		if (this.syncPaused) this.desktopSync.pause();
 		else
 			this.runSyncAction(() => this.desktopSync?.start() ?? Promise.resolve());
+	}
+
+	/** Reports automatic suspension for hidden mobile documents, not desktop focus loss. */
+	private isMobileSuspended(): boolean {
+		return Platform.isMobile && document.visibilityState !== "visible";
 	}
 
 	/** Creates one publication and apply composition with the supplied device label. */

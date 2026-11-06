@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@pi'
 created_date: '2026-11-06T22:04:00Z'
-updated_date: '2026-11-06T23:08:00Z'
+updated_date: '2026-11-06T23:37:00Z'
 labels: []
 dependencies: []
 parent_task_id: OAB-12
@@ -53,6 +53,8 @@ Branch review correction wave from b398c223535aaf736792f182b5744bc1ad9400a8. Add
 Final review correction code commit: 05a34cc7ed8cb2ed74e22bb7aed3b10f6cadd6bb. The fixed-writer deadline test and public protocol-derived snapshot type are committed. The task remains In Progress. Worktree was clean with no staged changes after the code commit.
 
 Final review record: reviewed code revision 05a34cc and complete branch through 872e528 against main 17f2666. Independent task review found the early-release expiry counter gap. Commit b398c22 fixed it with RED/GREEN evidence, and scoped review approved closure. Whole-branch review found missing native fixed-writer backpressure proof and duplicate measurement contract ownership. Commit 05a34cc adds the passing runtime regression and derives the snapshot type from the protocol contract. Scoped review f8c4c684 approved both closures. Documentation scope covers lease helpers, response lifetime, route ownership, canonical schema, test helpers, and docs/api/measurements.md. Stateful candidates remain cohesive across lease capacity, response framing, MCP ownership, and protected owner presentation. No actionable finding remains. The owner approved plan pn-4e2c61 and complete branch review pn-6e2e63 without changes. Final worker bun run check passed, including 711 Worker tests, 122 HTTP tests, and 115 F2 tests. Main remains 17f2666 and rebase changed no code. Production stall cause, disconnect signals, and physical native cleanup remain unproven. No live-service, vault, manual deployment, or Cloudflare resource action occurred. CI deployment after merge recycles isolates and clears current stuck capacity.
+
+Hotfix 2026-11-06 (supervisor): the merged PR #79 created the isolate identifier with crypto.randomUUID() in the module global scope. The Workers upload validation rejected the script with 'Disallowed operation called within global scope' and the CI deploy run 42309960187 failed twice. The identifier is now created on first use inside request context. Local verification: the production bundle starts under wrangler dev with the project wrangler version, read-response and owner tests pass, typecheck and docs check pass. The stuck isolate capacity clears with the first successful deploy after this merge.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary

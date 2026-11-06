@@ -93,16 +93,16 @@ function runPublicationShell(options: {
 	const remoteCommit = options.remoteTag ?? "checked-commit";
 	const remoteTagLines =
 		options.tagRefKind === "lightweight"
-			? `printf '%s\\trefs/tags/plugin-v0.1.0\\n' "${remoteCommit}"`
-			: `printf '%s\\trefs/tags/plugin-v0.1.0\\n' tag-object; printf '%s\\trefs/tags/plugin-v0.1.0^{}\\n' "${remoteCommit}"`;
-	const gitStub = `#!/bin/sh\ncase "$*" in\n  "ls-remote origin refs/tags/plugin-v0.1.0^{} refs/tags/plugin-v0.1.0") ${remoteTagLines} ;;\n  "rev-parse HEAD") printf '%s\\n' "${options.checkedCommit ?? "checked-commit"}" ;;\n  *) exit 2 ;;\nesac\n`;
+			? `printf '%s\\trefs/tags/ai-bridge-v0.1.0\\n' "${remoteCommit}"`
+			: `printf '%s\\trefs/tags/ai-bridge-v0.1.0\\n' tag-object; printf '%s\\trefs/tags/ai-bridge-v0.1.0^{}\\n' "${remoteCommit}"`;
+	const gitStub = `#!/bin/sh\ncase "$*" in\n  "ls-remote origin refs/tags/ai-bridge-v0.1.0^{} refs/tags/ai-bridge-v0.1.0") ${remoteTagLines} ;;\n  "rev-parse HEAD") printf '%s\\n' "${options.checkedCommit ?? "checked-commit"}" ;;\n  *) exit 2 ;;\nesac\n`;
 	const ghStub = `#!/bin/sh\nprintf '%s\\n' "$*" >> "$GH_LOG"\nif [ "$1 $2" = "release view" ]; then\n  ${options.releaseExists ? "exit 0" : "exit 1"}\nfi\nif [ "$1 $2" = "release create" ]; then exit 0; fi\nexit 2\n`;
 	writeFileSync(join(bin, "git"), gitStub, { mode: 0o755 });
 	writeFileSync(join(bin, "gh"), ghStub, { mode: 0o755 });
 	const env = {
 		...process.env,
 		PATH: `${bin}:${process.env.PATH}`,
-		GITHUB_REF_NAME: "plugin-v0.1.0",
+		GITHUB_REF_NAME: "ai-bridge-v0.1.0",
 		GITHUB_SHA:
 			options.eventCommit ?? options.checkedCommit ?? "checked-commit",
 		GH_LOG: log,
@@ -138,9 +138,9 @@ describe("plugin release metadata validation", () => {
 	it("accepts a tag that matches the manifest and compatibility map", () => {
 		const root = createMetadataDirectory(manifest, versions);
 		try {
-			const result = runValidator(root, "plugin-v0.1.0");
+			const result = runValidator(root, "ai-bridge-v0.1.0");
 			expect(result.status).toBe(0);
-			expect(String(result.stdout).trim()).toBe("plugin-v0.1.0");
+			expect(String(result.stdout).trim()).toBe("ai-bridge-v0.1.0");
 		} finally {
 			rmSync(root, { recursive: true, force: true });
 		}
@@ -148,21 +148,21 @@ describe("plugin release metadata validation", () => {
 
 	it.each([
 		["wrong prefix", "release-v0.1.0", manifest, versions],
-		["malformed tag version", "plugin-v01.0.0", manifest, versions],
-		["manifest version mismatch", "plugin-v0.2.0", manifest, versions],
-		["missing compatibility entry", "plugin-v0.1.0", manifest, {}],
+		["malformed tag version", "ai-bridge-v01.0.0", manifest, versions],
+		["manifest version mismatch", "ai-bridge-v0.2.0", manifest, versions],
+		["missing compatibility entry", "ai-bridge-v0.1.0", manifest, {}],
 		[
 			"compatibility version mismatch",
-			"plugin-v0.1.0",
+			"ai-bridge-v0.1.0",
 			manifest,
 			{ "0.1.0": "1.14.0" },
 		],
-		["null manifest", "plugin-v0.1.0", null, versions],
-		["malformed manifest fields", "plugin-v0.1.0", { version: 1 }, versions],
-		["null compatibility map", "plugin-v0.1.0", manifest, null],
+		["null manifest", "ai-bridge-v0.1.0", null, versions],
+		["malformed manifest fields", "ai-bridge-v0.1.0", { version: 1 }, versions],
+		["null compatibility map", "ai-bridge-v0.1.0", manifest, null],
 		[
 			"desktop-only manifest",
-			"plugin-v0.1.0",
+			"ai-bridge-v0.1.0",
 			{ ...manifest, isDesktopOnly: true },
 			versions,
 		],
@@ -183,10 +183,10 @@ describe("plugin release metadata validation", () => {
 		const pluginDirectory = join(root, "apps", "plugin");
 		mkdirSync(pluginDirectory, { recursive: true });
 		try {
-			expect(runValidator(root, "plugin-v0.1.0").status).not.toBe(0);
+			expect(runValidator(root, "ai-bridge-v0.1.0").status).not.toBe(0);
 			writeFileSync(join(pluginDirectory, "manifest.json"), "{");
 			writeFileSync(join(pluginDirectory, "versions.json"), "{}");
-			expect(runValidator(root, "plugin-v0.1.0").status).not.toBe(0);
+			expect(runValidator(root, "ai-bridge-v0.1.0").status).not.toBe(0);
 		} finally {
 			rmSync(root, { recursive: true, force: true });
 		}
@@ -269,13 +269,13 @@ exit 23
 		try {
 			expect(result.status, result.stderr).toBe(0);
 			const calls = readFileSync(result.log, "utf8");
-			expect(calls).toContain("release view plugin-v0.1.0");
-			expect(calls).toContain("release create plugin-v0.1.0");
+			expect(calls).toContain("release view ai-bridge-v0.1.0");
+			expect(calls).toContain("release create ai-bridge-v0.1.0");
 			expect(calls).toContain("--verify-tag");
 			expect(calls).toContain("apps/plugin/dist/manifest.json");
 			expect(calls).toContain("apps/plugin/dist/main.js");
 			expect(calls.split("\n")).toContain(
-				"release create plugin-v0.1.0 --verify-tag --title plugin-v0.1.0 --notes Plugin release plugin-v0.1.0. apps/plugin/dist/manifest.json apps/plugin/dist/main.js",
+				"release create ai-bridge-v0.1.0 --verify-tag --title ai-bridge-v0.1.0 --notes Plugin release ai-bridge-v0.1.0. apps/plugin/dist/manifest.json apps/plugin/dist/main.js",
 			);
 			expect(calls).not.toContain("styles.css");
 			expect(calls).not.toContain("--clobber");
@@ -289,7 +289,7 @@ exit 23
 		try {
 			expect(result.status, result.stderr).toBe(0);
 			expect(readFileSync(result.log, "utf8")).toContain(
-				"release create plugin-v0.1.0",
+				"release create ai-bridge-v0.1.0",
 			);
 		} finally {
 			rmSync(result.root, { recursive: true, force: true });

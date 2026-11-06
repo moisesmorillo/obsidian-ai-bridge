@@ -2,7 +2,7 @@
 
 ## Release flow
 
-The owner creates and pushes a tag named `plugin-v<version>` after this change merges. For the current plugin, the tag is `plugin-v0.1.0`. The workflow checks the tag against `apps/plugin/manifest.json` and `apps/plugin/versions.json`, then runs `bun run check`.
+The owner creates and pushes a tag named `ai-bridge-v<version>` after this change merges. For the current plugin, the tag is `ai-bridge-v0.1.0`. The workflow checks the tag against `apps/plugin/manifest.json` and `apps/plugin/versions.json`, then runs `bun run check`.
 
 The check builds `apps/plugin/dist/main.js` and copies the manifest to `apps/plugin/dist/manifest.json`. The workflow creates a GitHub release with those two files. It does not publish `versions.json` as a release asset. The compatibility map stays in the repository.
 

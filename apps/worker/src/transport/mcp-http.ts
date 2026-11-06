@@ -21,7 +21,11 @@ import type {
 	McpReadOwner,
 } from "@worker/application/mcp-notes";
 import { currentMcpEpoch } from "@worker/application/mcp-notes";
-import { tryAcquireReadSlot } from "@worker/application/read-budget";
+import {
+	type ReadSlotLease,
+	tryAcquireReadSlot,
+	waitForReadSlotWork,
+} from "@worker/application/read-budget";
 import type { Env } from "@worker/env";
 import {
 	createMcpServer,
@@ -164,6 +168,7 @@ function encodedResponse(
 	signal: AbortSignal,
 	owner?: McpReadOwner,
 	status = 200,
+	deadlineLease?: ReadSlotLease,
 ): Response {
 	return ownedReadResponse(
 		jsonReadSource(
@@ -180,6 +185,8 @@ function encodedResponse(
 			},
 		},
 		signal,
+		undefined,
+		deadlineLease,
 	);
 }
 
@@ -300,6 +307,7 @@ function ownedHttpFailure(
 	challenge = false,
 	serviceOrigin?: string,
 	owner?: McpReadOwner,
+	deadlineLease?: ReadSlotLease,
 ): Response {
 	return ownedReadResponse(
 		jsonReadSource(
@@ -313,6 +321,8 @@ function ownedHttpFailure(
 			headers: httpFailureHeaders(challenge, serviceOrigin),
 		},
 		signal,
+		undefined,
+		deadlineLease,
 	);
 }
 
@@ -355,7 +365,8 @@ export async function handleMcpHttp(
 	const releaseEnvelope = acquireMcpEnvelope();
 	if (!releaseEnvelope)
 		return new Response(null, { status: 429, headers: { "retry-after": "1" } });
-	let releaseRead: (() => void) | undefined;
+	let releaseRead: ReadSlotLease | undefined;
+	let deadlineLease: ReadSlotLease | undefined;
 	/** Release every isolate slot acquired by this tool request. */
 	const release = () => {
 		releaseRead?.();
@@ -422,6 +433,7 @@ export async function handleMcpHttp(
 				return httpFailure(403, "forbidden_scope", true, env.SERVICE_ORIGIN);
 			}
 			releaseRead = tryAcquireReadSlot();
+			deadlineLease = releaseRead;
 			if (!releaseRead) {
 				releaseEnvelope();
 				return new Response(null, {
@@ -456,8 +468,19 @@ export async function handleMcpHttp(
 		);
 		const transport = new McpJsonTransport(epoch.epoch, inputFailure);
 		closeServer = () => server.close();
-		await server.connect(transport);
-		const response = await transport.receive(message);
+		const processing = (async () => {
+			await server.connect(transport);
+			return transport.receive(message);
+		})();
+		const processed = deadlineLease
+			? await waitForReadSlotWork(deadlineLease, processing)
+			: { kind: "completed" as const, value: await processing };
+		if (processed.kind === "expired") {
+			void server.close().catch(() => undefined);
+			release();
+			return httpFailure(500, "internal_error", false, env.SERVICE_ORIGIN);
+		}
+		const response = processed.value;
 		if (readOwner?.sourceComplete) {
 			releaseRead?.();
 			releaseRead = undefined;
@@ -472,11 +495,13 @@ export async function handleMcpHttp(
 				boundaryFailure !== "revoked",
 				env.SERVICE_ORIGIN,
 				readOwner,
+				deadlineLease,
 			);
 		}
 		if (response === null) {
 			await server.close();
 			release();
+			deadlineLease?.complete();
 			return new Response(null, {
 				status: 202,
 				headers: { "cache-control": "no-store" },
@@ -491,6 +516,7 @@ export async function handleMcpHttp(
 			inputFailure?.kind === "idempotency_key_required"
 				? encodeFileFailure(inputFailure).status
 				: 200,
+			deadlineLease,
 		);
 	} catch (error) {
 		await closeServer?.().catch(() => undefined);
@@ -505,6 +531,7 @@ export async function handleMcpHttp(
 				false,
 				undefined,
 				readOwner,
+				deadlineLease,
 			);
 		if (error instanceof SyntaxError)
 			return ownedHttpFailure(
@@ -515,6 +542,7 @@ export async function handleMcpHttp(
 				false,
 				undefined,
 				readOwner,
+				deadlineLease,
 			);
 		return ownedHttpFailure(
 			500,
@@ -524,6 +552,7 @@ export async function handleMcpHttp(
 			false,
 			undefined,
 			readOwner,
+			deadlineLease,
 		);
 	}
 }

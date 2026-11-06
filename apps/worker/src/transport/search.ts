@@ -9,7 +9,10 @@ import {
 	SearchRequestSchema,
 	searchQueryFailure,
 } from "@obsidian-ai-bridge/protocol";
-import { tryAcquireReadSlot } from "@worker/application/read-budget";
+import {
+	tryAcquireReadSlot,
+	waitForReadSlotWork,
+} from "@worker/application/read-budget";
 import { ReadAborted } from "@worker/application/read-demand";
 import type { ReadOutcome } from "@worker/application/reads";
 import { settleReadAdmission } from "@worker/application/reads";
@@ -44,14 +47,21 @@ export function createSearchRouter(
 			});
 		let outcome: ReadOutcome<SearchResult>;
 		try {
-			outcome = await readSearch(
-				resolveVault(context.env, context.req.raw),
-				identity,
-				parsed.request,
-				context.req.raw.signal,
+			const result = await waitForReadSlotWork(
+				release,
+				readSearch(
+					resolveVault(context.env, context.req.raw),
+					identity,
+					parsed.request,
+					context.req.raw.signal,
+				),
 			);
+			if (result.kind === "expired")
+				return failureResponse({ kind: "internal_error" });
+			outcome = result.value;
 		} catch (error) {
 			release();
+			release.complete();
 			return failureResponse(
 				error instanceof ReadAborted
 					? { kind: "invalid_request" }
@@ -60,6 +70,7 @@ export function createSearchRouter(
 		}
 		if (!outcome.ok) {
 			release();
+			release.complete();
 			if (outcome.settle) {
 				try {
 					await settleReadAdmission(outcome.settle);

@@ -56,7 +56,7 @@ describe("production Worker configuration", () => {
 			},
 		]);
 		expect(config.r2_buckets).toEqual([
-			{ binding: "R2_BUCKET", bucket_name: "oab-f2-immutable-blobs" },
+			{ binding: "R2_BUCKET", bucket_name: "oab-blobs" },
 			{ binding: "BACKUP_BUCKET", bucket_name: "oab-backups" },
 		]);
 		expect(config.triggers?.crons).toEqual(["0 * * * *"]);

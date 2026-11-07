@@ -6,6 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-11-07T13:40:00Z'
+updated_date: '2026-11-07T16:28:00Z'
 labels:
   - infra
   - F6
@@ -30,3 +31,9 @@ Owner order 2026-11-07: remove the historical F2 phase prefix from the Cloudflar
 - [ ] #5 Part B: the old bucket is deleted only after one full day of clean use on the new bucket, through a cloudflare-infra PR with the owner's explicit order.
 - [ ] #6 docs/spec.md, docs/api and wrangler.production.jsonc name the final bucket. No tracked file holds a token value or the owner subject.
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Part B copy done 2026-11-07 11:50 local by the supervisor with two ephemeral R2 tokens created in the dashboard (read-only on the source, read-write on the target, deleted after the switch). Method: aws s3 sync to a local temp dir, local SHA-256 equal to the key for all 48 objects, put-object to oab-blobs with x-amz-checksum-sha256 so R2 keeps the native sha256 evidence the Worker requires, head-object verification of size and checksum for all 48 objects. Totals: 48 objects, 14,783,444 bytes in both buckets. Last hourly snapshot before the switch: 2026-11-07T15:00:37Z. The Worker copy route (S8) was not needed and its branch was dropped.
+<!-- SECTION:NOTES:END -->

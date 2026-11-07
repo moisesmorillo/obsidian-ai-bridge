@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@pi'
 created_date: '2026-11-05T23:21:00Z'
-updated_date: '2026-11-07T04:04:00Z'
+updated_date: '2026-11-07T04:08:00Z'
 labels:
   - F5
   - Deferred
@@ -116,6 +116,8 @@ GREEN: focused tests passed. The plugin suite passed 29 files with 836 tests pas
 Residual limits: fake ports do not prove native storage failure semantics, device memory limits, or remote service idempotency. The changed tests prove client retry identity and fake idempotent receipt handling only. Criterion 4 stays open for device evidence. Task status and acceptance checks remain unchanged.
 
 M9: Rebase preserves supervisor closure under the owner F5 waiver. Earlier In Progress instructions are historical. Device proof for criterion 4 remains absent. Task review approved 7a50b63 and closed both MAJOR findings plus the concurrent-edit restoration finding. Final branch review follows integration.
+
+M9: Final whole-branch review approved 89aa92e against 89a311b. The plugin diff matches task-reviewed source 7a50b63. Both MAJOR findings and the concurrent-edit restoration finding are fixed by tests and shared failure attention. Documentation review covered apply failure declarations and test helpers. TextApplyEngine remains the state-policy owner. Post-rebase bun run check passed. The independent branch reviewer also ran bun run check: 114 test files, 2,188 passed, one skipped, no failures. All configured builds passed, with Worker dry-run only. Failed storage writes retain partial bytes, visible attention, and pending recovery rather than an unsafe automatic restore. Fake ports do not prove native ENOSPC, device memory, actual interrupted network transfers, or service idempotency. Owner waiver closure stays intact. Criterion 4 remains unchecked.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary

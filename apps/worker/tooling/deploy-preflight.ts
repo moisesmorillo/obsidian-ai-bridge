@@ -245,6 +245,8 @@ type MetadataFetch = (
 type MetadataCheckOptions = {
 	timeoutMs?: number;
 	fetchRequest?: MetadataFetch;
+	/** Receives the bounded raw runtime output on failure; tests use it, the deploy preflight does not. */
+	onFailureOutput?: (output: string) => void;
 };
 
 /**
@@ -298,6 +300,7 @@ export async function checkMetadata(
 	if (Date.now() >= deadline) {
 		failure = "wrangler_timeout";
 	}
+	options.onFailureOutput?.(output);
 	throw new Error(failure);
 }
 

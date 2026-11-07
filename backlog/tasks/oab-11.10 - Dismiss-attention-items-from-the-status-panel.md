@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-11-07T02:34:00Z'
-updated_date: '2026-11-07T02:53:00Z'
+updated_date: '2026-11-07T03:05:00Z'
 labels: []
 dependencies: []
 parent_task_id: OAB-11
@@ -48,4 +48,10 @@ Checks: `bunx biome check --write` passed for 11 changed source, test, and versi
 Review: local review found no blocker. Unit tests use in-memory journal storage and host fakes only. No vault or live service was accessed.
 
 Final focused run: `cd apps/plugin && bun run test -- test/device-journal.test.ts test/status-panel.test.ts test/settings.test.ts` passed 3 files and 88 tests. The full `bun run check` passed lint, documentation checks, TypeScript checks, all workspace tests, and all builds after final edits. The worker test runner printed expected injected transport and SQLite errors from negative-control tests, but all worker suites passed.
+
+Branch-review fix: added lifecycle host-fake tests that use the real AIBridgePlugin onload wiring, captured sync actions, runSyncAction, and settings refresh callback. Tests cover individual and bulk dismissal success, durable journal state, preserved owner-action attention, and refresh plus storage warning after injected persistence failure.
+New-test negative control: temporarily skipped the journal.dismissAttention call in the actual main.ts callback. `cd apps/plugin && bun run test -- test/lifecycle.test.ts` failed the direct-dismiss success test and the individual persistence-failure test. The wrapper recorded expected exit 1 and returned 0. I restored main.ts before GREEN.
+GREEN: `cd apps/plugin && bun run test -- test/lifecycle.test.ts test/settings.test.ts test/status-panel.test.ts test/device-journal.test.ts` passed 4 files and 146 tests.
+The original RED evidence used direct `bun test`, not project Vitest. It also reported unrelated Obsidian module errors. Do not treat it as clean RED evidence for those earlier tests. The targeted negative control above is valid evidence for these new host tests.
+`bunx biome check --write apps/plugin/test/lifecycle.test.ts`, `bun run docs:check`, and `bun run check` passed after the fix. The full check passed all workspace type checks, tests, and builds. No vault or live service was run.
 <!-- SECTION:NOTES:END -->

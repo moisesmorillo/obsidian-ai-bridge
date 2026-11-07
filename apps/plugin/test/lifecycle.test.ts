@@ -11,6 +11,10 @@ interface CapturedSyncActions {
 	resume(): void;
 	/** Confirms one durable observation and starts its immediate sync cycle. */
 	confirmCoexistence(id: string): void;
+	/** Dismisses one attention row through the plugin action owner. */
+	dismissAttention(key: string): void;
+	/** Dismisses approved informational rows through the plugin action owner. */
+	dismissInformationalAttention(): void;
 }
 
 const host = vi.hoisted(() => ({
@@ -22,6 +26,7 @@ const host = vi.hoisted(() => ({
 		| ((params: Record<string, string | "true">) => void)
 		| null,
 	settingsTab: null as unknown,
+	statusRefreshes: 0,
 	settingsData: null as unknown,
 	localSettings: null as unknown,
 	localSettingsSave: null as ((value: unknown) => Promise<void>) | null,
@@ -229,8 +234,10 @@ vi.mock("../src/settings", () => ({
 				args[11] as typeof host.settingsSyncPolicyChange;
 		}
 
-		/** Satisfies the composition status-refresh call. */
-		refreshStatus(): void {}
+		/** Counts visible status refreshes from real plugin action callbacks. */
+		refreshStatus(): void {
+			host.statusRefreshes += 1;
+		}
 	},
 }));
 
@@ -242,9 +249,11 @@ import {
 } from "../src/auth/device-session";
 import { VaultEventAdapter } from "../src/infrastructure/vault-events";
 import AIBridgePlugin from "../src/main";
+import { getAttentionKey } from "../src/sync/attention";
 import { DesktopSyncController } from "../src/sync/desktop-sync";
 import { DeviceJournal } from "../src/sync/device-journal";
 import { SyncTransportError } from "../src/sync/remote-text";
+import type { SyncStatusProjection } from "../src/sync/sync-status";
 
 /** Starts a plugin with real controller and vault-event owners. */
 async function startConnectedPlugin(
@@ -314,6 +323,17 @@ function emitVaultEvent(event: string, ...args: unknown[]): void {
 	listener.callback(...args);
 }
 
+/** Reads the status projection owned by the active plugin lifecycle. */
+function currentSyncStatus(plugin: AIBridgePlugin): SyncStatusProjection {
+	const status = Reflect.apply(
+		Reflect.get(plugin, "syncStatus") as () => SyncStatusProjection | null,
+		plugin,
+		[],
+	);
+	if (!status) throw new Error("Plugin status projection is unavailable");
+	return status;
+}
+
 describe("AIBridgePlugin device-local lifecycle", () => {
 	beforeEach(() => {
 		host.calls.splice(0);
@@ -322,6 +342,7 @@ describe("AIBridgePlugin device-local lifecycle", () => {
 		host.protocolAction = "";
 		host.protocolHandler = null;
 		host.settingsTab = null;
+		host.statusRefreshes = 0;
 		host.settingsData = null;
 		host.localSettings = null;
 		host.localSettingsSave = null;
@@ -425,6 +446,110 @@ describe("AIBridgePlugin device-local lifecycle", () => {
 			vi.unstubAllGlobals();
 		}
 	});
+
+	it("dismisses one attention row through the plugin callback and refreshes status", async () => {
+		const plugin = await startConnectedPlugin();
+		try {
+			const journal = Reflect.get(plugin, "journal") as DeviceJournal;
+			await journal.recordAttention("notes/dismiss.md", "Owner review needed");
+			await journal.recordAttention("notes/keep.md", "Keep this attention");
+			const item = journal.snapshot().attention[0];
+			if (!item) throw new Error("Expected an attention item");
+			const key = getAttentionKey(item);
+			const actions = host.syncActions;
+			if (!actions) throw new Error("Plugin sync actions were not registered");
+			const refreshesBefore = host.statusRefreshes;
+
+			actions.dismissAttention(key);
+
+			await vi.waitFor(() =>
+				expect(host.statusRefreshes).toBeGreaterThan(refreshesBefore),
+			);
+			expect(journal.snapshot().attention).toEqual([
+				{ path: "notes/keep.md", reason: "Keep this attention" },
+			]);
+			expect((host.state as { attention: unknown[] }).attention).toEqual(
+				journal.snapshot().attention,
+			);
+			expect(currentSyncStatus(plugin).attention).toHaveLength(1);
+		} finally {
+			plugin.onunload();
+			vi.useRealTimers();
+			vi.unstubAllGlobals();
+		}
+	});
+
+	it("dismisses informational rows through the plugin callback and refreshes status", async () => {
+		const plugin = await startConnectedPlugin();
+		try {
+			const journal = Reflect.get(plugin, "journal") as DeviceJournal;
+			await journal.recordAttention(
+				"notes/info.md",
+				"Local text met newer remote content",
+			);
+			await journal.recordAttention("notes/keep.md", "Owner review needed");
+			const actions = host.syncActions;
+			if (!actions) throw new Error("Plugin sync actions were not registered");
+			const refreshesBefore = host.statusRefreshes;
+
+			actions.dismissInformationalAttention();
+
+			await vi.waitFor(() =>
+				expect(host.statusRefreshes).toBeGreaterThan(refreshesBefore),
+			);
+			expect(journal.snapshot().attention).toEqual([
+				{ path: "notes/keep.md", reason: "Owner review needed" },
+			]);
+			expect((host.state as { attention: unknown[] }).attention).toEqual(
+				journal.snapshot().attention,
+			);
+			expect(currentSyncStatus(plugin).attention).toHaveLength(1);
+		} finally {
+			plugin.onunload();
+			vi.useRealTimers();
+			vi.unstubAllGlobals();
+		}
+	});
+
+	it.each(["individual", "bulk"] as const)(
+		"retains attention and refreshes the storage warning after %s dismissal fails",
+		async (kind) => {
+			const plugin = await startConnectedPlugin();
+			try {
+				const journal = Reflect.get(plugin, "journal") as DeviceJournal;
+				await journal.recordAttention(
+					"notes/failure.md",
+					"Local text met newer remote content",
+				);
+				await journal.recordAttention("notes/owner.md", "Owner review needed");
+				const before = journal.snapshot().attention;
+				const actions = host.syncActions;
+				if (!actions)
+					throw new Error("Plugin sync actions were not registered");
+				const refreshesBefore = host.statusRefreshes;
+				host.failSave = true;
+
+				if (kind === "individual") {
+					const item = before[0];
+					if (!item) throw new Error("Expected attention before failure");
+					actions.dismissAttention(getAttentionKey(item));
+				} else actions.dismissInformationalAttention();
+
+				await vi.waitFor(() =>
+					expect(currentSyncStatus(plugin).storageFailure).toBe(true),
+				);
+				expect(host.statusRefreshes).toBeGreaterThan(refreshesBefore);
+				expect(journal.snapshot().attention).toEqual(before);
+				expect((host.state as { attention: unknown[] }).attention).toEqual(
+					before,
+				);
+			} finally {
+				plugin.onunload();
+				vi.useRealTimers();
+				vi.unstubAllGlobals();
+			}
+		},
+	);
 
 	it("classifies application failures as other and retains session times after recovery", async () => {
 		const plugin = await startConnectedPlugin();

@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: 2026-10-12 15:14
-updated_date: '2026-11-07T05:23:00Z'
+updated_date: '2026-11-07T06:03:00Z'
 labels:
   - deferred
   - trigger-based
@@ -82,4 +82,15 @@ Round-1 review correction (2026-11-07):
 The mixed-content archive test was green on its first run because the completed archive already passed independent extraction and structure checks. This test adds evidence without a production ZIP-writer change. Focused F2 validation passed: 5 tests. `bun run docs:check` passed.
 
 Post-rebase validation (2026-11-07): Rebased on `origin/main` without conflicts. Focused tests passed after rebase: 3 unit test files with 5 tests, plus the F2 packed-export file with 5 tests. Worker typecheck passed. Full `bun run check` passed: lint, docs:check, typechecks, tests, and dry-run builds. Test totals: 2,206 passed and 1 skipped across 121 files. Worker preflight passed with exit code 0 using `bun run --filter @obsidian-ai-bridge/worker preflight`. The first full check found a TypeScript stream-result type mismatch. Inferred the exact reader result type and reran the full check successfully.
+
+Round-2 review correction (2026-11-07):
+- F1: Replaced inline manifest and multipart remainder values with bounded chunk rows. Each chunk stores at most 1,000,000 payload bytes. The store checks encoded keys, scalar fields, and conservative row overhead against the 2,000,000-byte row limit. Native tests cover a completed archive above 5 MiB, chunk row bounds, and a 10,000-file manifest with 512-byte paths.
+- F2: File, pin, and chunk inserts use separate batch sizes derived from the 100-parameter limit. Native tests capture 17 and 35 files and compare every captured path and revision with its pin. The original tests failed at the old insert with “too many SQL variables”.
+- F3: Capture selects current-file metadata with a LEFT JOIN to retained revisions. When a current text revision is absent, the capture transaction copies the exact current payload into source chunks. Tests prune ordinary and pressure history, capture, mutate the live row, then read the original bytes. Both tests failed before the fallback capture was added.
+- F4: Revision metadata queries select a content-presence expression instead of the full revision payload. The query-projection test checks the selected fields, and the range test reads only 64 bytes. No separate pre-fix RED run was recorded for F4.
+- Lost completion: Added a service test where R2 creates the object and loses the completion reply. The next batch finds the exact object key and size, marks completion, and does not submit completion twice.
+- The F1 and F4 regressions landed after their implementation changes were in progress. No pre-fix RED run was recorded for those cases. Their tests remain and pass.
+- Focused validation passed: packed-export native tests (12/12), export service/store tests (3/3), schema upgrade tests (7/7), and Worker typecheck. Documentation now records chunk bounds, parameter-safe writes, retention fallback bytes, and projection behavior. OAB-18 remains In Progress for parent review.
+
+Final round-2 validation (2026-11-07): `bun run docs:check` passed. Worker preflight passed with exit code 0. `bun run check` passed after clearing the new chunk table in test vault setup and updating the generated-DDL count. Results: 2,214 tests passed and 1 skipped across tooling, protocol, plugin, and Worker tests. The check also passed lint, documentation, all workspace typechecks, and dry-run builds. Worktree diff check passed. No live service or vault was used.
 <!-- SECTION:NOTES:END -->

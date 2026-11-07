@@ -1,7 +1,7 @@
 {
 	"version": "6",
 	"dialect": "sqlite",
-	"id": "2add0ada-8c72-471e-8c3d-dfbd89cf4651",
+	"id": "8da4d909-78ec-48cb-84a5-387e0b6b5145",
 	"prevId": "757f1167-b951-4b30-89e9-3c85c89d415c",
 	"tables": {
 		"blob_refs": {
@@ -549,6 +549,58 @@
 				}
 			}
 		},
+		"packed_export_chunks": {
+			"name": "packed_export_chunks",
+			"columns": {
+				"export_id": {
+					"name": "export_id",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true,
+					"autoincrement": false
+				},
+				"kind": {
+					"name": "kind",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true,
+					"autoincrement": false
+				},
+				"ordinal": {
+					"name": "ordinal",
+					"type": "integer",
+					"primaryKey": false,
+					"notNull": true,
+					"autoincrement": false
+				},
+				"data": {
+					"name": "data",
+					"type": "blob",
+					"primaryKey": false,
+					"notNull": true,
+					"autoincrement": false
+				}
+			},
+			"indexes": {},
+			"foreignKeys": {},
+			"compositePrimaryKeys": {
+				"packed_export_chunks_export_id_kind_ordinal_pk": {
+					"columns": ["export_id", "kind", "ordinal"],
+					"name": "packed_export_chunks_export_id_kind_ordinal_pk"
+				}
+			},
+			"uniqueConstraints": {},
+			"checkConstraints": {
+				"packed_export_chunks_kind_check": {
+					"name": "packed_export_chunks_kind_check",
+					"value": "\"packed_export_chunks\".\"kind\" IN ('manifest', 'pending', 'source')"
+				},
+				"packed_export_chunks_data_size_check": {
+					"name": "packed_export_chunks_data_size_check",
+					"value": "length(data) <= 1000000"
+				}
+			}
+		},
 		"packed_export_files": {
 			"name": "packed_export_files",
 			"columns": {
@@ -593,6 +645,13 @@
 					"primaryKey": false,
 					"notNull": true,
 					"autoincrement": false
+				},
+				"source_type": {
+					"name": "source_type",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true,
+					"autoincrement": false
 				}
 			},
 			"indexes": {
@@ -610,7 +669,12 @@
 				}
 			},
 			"uniqueConstraints": {},
-			"checkConstraints": {}
+			"checkConstraints": {
+				"packed_export_files_source_type_check": {
+					"name": "packed_export_files_source_type_check",
+					"value": "\"packed_export_files\".\"source_type\" IN ('revision_text', 'revision_blob', 'snapshot_text', 'snapshot_blob')"
+				}
+			}
 		},
 		"packed_exports": {
 			"name": "packed_exports",
@@ -692,22 +756,15 @@
 					"notNull": true,
 					"autoincrement": false
 				},
-				"pending_part": {
-					"name": "pending_part",
-					"type": "blob",
+				"manifest_size": {
+					"name": "manifest_size",
+					"type": "integer",
 					"primaryKey": false,
 					"notNull": true,
 					"autoincrement": false
 				},
 				"completed_parts": {
 					"name": "completed_parts",
-					"type": "text",
-					"primaryKey": false,
-					"notNull": true,
-					"autoincrement": false
-				},
-				"manifest": {
-					"name": "manifest",
 					"type": "text",
 					"primaryKey": false,
 					"notNull": true,

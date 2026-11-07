@@ -8,7 +8,9 @@ import {
 } from "@worker/application/export";
 import { FileOperationDenied } from "@worker/application/files";
 import { R2PackedArchiveStore } from "@worker/infrastructure/r2/packed-export";
+import { revisionLogicalPayloadBytes } from "@worker/infrastructure/sqlite/capacity";
 import { SqlitePackedExportStore } from "@worker/infrastructure/sqlite/packed-exports";
+import { SqliteRetentionStore } from "@worker/infrastructure/sqlite/retention";
 import { initializeVaultStorage } from "@worker/infrastructure/sqlite/schema";
 import { unzipSync } from "fflate";
 import { describe, expect, it } from "vitest";
@@ -38,6 +40,7 @@ function seedExportText(
 	rev: number,
 	value: string,
 	hash: string,
+	revisionAt = 1,
 ): void {
 	const size = new TextEncoder().encode(value).byteLength;
 	storage.sql.exec(
@@ -51,12 +54,54 @@ function seedExportText(
 		value,
 	);
 	storage.sql.exec(
-		"INSERT INTO revisions (path, rev, hash, size, kind, content, blob_hash, deleted, origin, at) VALUES (?, ?, ?, ?, 'text', ?, NULL, 0, 'test', 1)",
+		"INSERT INTO revisions (path, rev, hash, size, kind, content, blob_hash, deleted, origin, at) VALUES (?, ?, ?, ?, 'text', ?, NULL, 0, 'test', ?)",
 		path,
 		rev,
 		hash,
 		size,
 		value,
+		revisionAt,
+	);
+}
+
+/** Seed current text rows and retained revisions with one bounded recursive insert. */
+function seedExportTextRows(
+	storage: DurableObjectStorage,
+	count: number,
+): void {
+	if (!Number.isSafeInteger(count) || count < 1 || count > 10_000)
+		throw new Error("Invalid export text fixture count");
+	const emptyHash =
+		"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+	storage.sql.exec(
+		"WITH RECURSIVE sequence(value) AS (SELECT 0 UNION ALL SELECT value + 1 FROM sequence WHERE value + 1 < ?), rows(path, ordinal) AS (SELECT printf('file-%05d.md', value), value + 1 FROM sequence) INSERT INTO files (path, path_key, rev, seq, hash, size, kind, content, blob_hash, renamed_to, deleted, updated_at, origin) SELECT path, lower(path), 1, ordinal, ?, 0, 'text', '', NULL, NULL, 0, 1, 'test' FROM rows",
+		count,
+		emptyHash,
+	);
+	storage.sql.exec(
+		"INSERT INTO revisions (path, rev, hash, size, kind, content, blob_hash, deleted, origin, at) SELECT path, rev, hash, size, kind, content, blob_hash, deleted, origin, 1 FROM files WHERE deleted = 0",
+	);
+	storage.sql.exec(
+		"UPDATE meta SET value = ? WHERE key IN ('live_file_count', 'head_seq')",
+		String(count),
+	);
+}
+
+/** Seed the product maximum of current text rows with valid 512-byte paths. */
+function seedMaximumPathExportRows(storage: DurableObjectStorage): void {
+	const count = 10_000;
+	const emptyHash =
+		"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+	storage.sql.exec(
+		"WITH RECURSIVE sequence(value) AS (SELECT 0 UNION ALL SELECT value + 1 FROM sequence WHERE value + 1 < ?), rows(path, ordinal) AS (SELECT printf('%05d', value) || printf('%0507d', 0), value + 1 FROM sequence) INSERT INTO files (path, path_key, rev, seq, hash, size, kind, content, blob_hash, renamed_to, deleted, updated_at, origin) SELECT path, lower(path), 1, ordinal, ?, 0, 'text', '', NULL, NULL, 0, 1, 'test' FROM rows",
+		count,
+		emptyHash,
+	);
+	storage.sql.exec(
+		"INSERT INTO revisions (path, rev, hash, size, kind, content, blob_hash, deleted, origin, at) SELECT path, rev, hash, size, kind, content, blob_hash, deleted, origin, 1 FROM files WHERE deleted = 0",
+	);
+	storage.sql.exec(
+		"UPDATE meta SET value = '10000' WHERE key IN ('live_file_count', 'head_seq')",
 	);
 }
 
@@ -170,6 +215,7 @@ describe("schema-7 packed-export upgrade", () => {
 			const epochBefore = storage.sql
 				.exec("SELECT value FROM meta WHERE key = 'epoch'")
 				.toArray()[0]?.value;
+			storage.sql.exec("DROP TABLE IF EXISTS packed_export_chunks");
 			storage.sql.exec("DROP TABLE IF EXISTS packed_export_files");
 			storage.sql.exec("DROP TABLE IF EXISTS packed_exports");
 			storage.sql.exec(
@@ -197,12 +243,149 @@ describe("schema-7 packed-export upgrade", () => {
 			expect(
 				storage.sql
 					.exec(
-						"SELECT name FROM sqlite_master WHERE name IN ('packed_exports', 'packed_export_files') ORDER BY name",
+						"SELECT name FROM sqlite_master WHERE name IN ('packed_export_chunks', 'packed_exports', 'packed_export_files') ORDER BY name",
 					)
 					.toArray(),
-			).toEqual([{ name: "packed_export_files" }, { name: "packed_exports" }]);
+			).toEqual([
+				{ name: "packed_export_chunks" },
+				{ name: "packed_export_files" },
+				{ name: "packed_exports" },
+			]);
 		});
 	});
+});
+
+describe("packed export after retention", () => {
+	it.each(["ordinary_revisions", "pressure_revisions"] as const)(
+		"captures an authoritative current file after %s pruning and freezes its bytes",
+		async (category) => {
+			const stub = env.VAULTS.get(
+				env.VAULTS.idFromName(
+					`packed-export-pruned-${category}-${crypto.randomUUID()}`,
+				),
+			);
+			await runInDurableObject(stub, async (_instance, state) => {
+				initializeVaultStorage(
+					state.storage,
+					() => "e".repeat(32),
+					() => 1,
+				);
+				const before = "live bytes retained after pruning 🌳\\n";
+				const after = "new current bytes after export\\n";
+				const beforeHash = await hashExportText(before);
+				const afterHash = await hashExportText(after);
+				const now = 40 * 24 * 60 * 60 * 1000;
+				const revisionAt =
+					now -
+					(category === "ordinary_revisions" ? 31 : 8) * 24 * 60 * 60 * 1000;
+				seedExportText(
+					state.storage,
+					"notes/pruned.md",
+					1,
+					before,
+					beforeHash,
+					revisionAt,
+				);
+				state.storage.sql.exec(
+					"UPDATE meta SET value = '1' WHERE key IN ('live_file_count', 'head_seq')",
+				);
+				const revisionBytes = revisionLogicalPayloadBytes({
+					path: "notes/pruned.md",
+					rev: 1,
+					hash: beforeHash,
+					size: new TextEncoder().encode(before).byteLength,
+					kind: "text",
+					content: before,
+					blobHash: null,
+					deleted: 0,
+					origin: "test",
+					at: revisionAt,
+				});
+				state.storage.sql.exec(
+					"UPDATE meta SET value = ? WHERE key IN ('history_revisions_bytes', 'history_pressure_bytes')",
+					String(revisionBytes),
+				);
+				const retention = new SqliteRetentionStore(
+					state.storage,
+					category === "pressure_revisions"
+						? { historyPressureLimitBytes: revisionBytes - 1 }
+						: undefined,
+				);
+				retention.runBatch(now);
+				expect(
+					state.storage.sql
+						.exec(
+							"SELECT 1 FROM revisions WHERE path = ? AND rev = 1",
+							"notes/pruned.md",
+						)
+						.toArray(),
+				).toEqual([]);
+
+				const store = new SqlitePackedExportStore(
+					state.storage,
+					noExportBlobReads(),
+				);
+				const captured = await store.capture(exportCreatedAt, now);
+				state.storage.sql.exec(
+					"UPDATE files SET rev = 2, seq = 2, hash = ?, size = ?, content = ?, updated_at = 2 WHERE path = ?",
+					afterHash,
+					new TextEncoder().encode(after).byteLength,
+					after,
+					"notes/pruned.md",
+				);
+				expect(
+					await store.readSourceRange(
+						captured.id,
+						0,
+						0,
+						new TextEncoder().encode(before).byteLength,
+					),
+				).toEqual(new TextEncoder().encode(before));
+				expect(
+					state.storage.sql
+						.exec(
+							"SELECT rev FROM export_pins WHERE export_id = ?",
+							captured.id,
+						)
+						.toArray(),
+				).toEqual([{ rev: 1 }]);
+			});
+		},
+	);
+});
+
+describe("SQLite packed export parameter bounds", () => {
+	it.each([17, 35])(
+		"captures %i current files across parameter-safe batches and pins each one",
+		async (count) => {
+			const stub = env.VAULTS.get(
+				env.VAULTS.idFromName(
+					`packed-export-parameters-${count}-${crypto.randomUUID()}`,
+				),
+			);
+			await runInDurableObject(stub, async (_instance, state) => {
+				seedExportTextRows(state.storage, count);
+				const store = new SqlitePackedExportStore(
+					state.storage,
+					noExportBlobReads(),
+				);
+				const captured = await store.capture(exportCreatedAt, 10);
+				expect(captured.files).toHaveLength(count);
+				expect(
+					state.storage.sql
+						.exec(
+							"SELECT path, rev FROM export_pins WHERE export_id = ? ORDER BY path",
+							captured.id,
+						)
+						.toArray(),
+				).toEqual(
+					captured.files
+						.map(({ path, rev }) => ({ path, rev }))
+						.sort((left, right) => left.path.localeCompare(right.path)),
+				);
+			});
+		},
+	);
 });
 
 describe("SQLite packed export store", () => {
@@ -364,6 +547,207 @@ describe("SQLite packed export store", () => {
 	});
 });
 
+describe("packed export SQLite row bounds", () => {
+	it("persists a completed archive larger than one R2 part in bounded rows", async () => {
+		const stub = env.VAULTS.get(
+			env.VAULTS.idFromName(`packed-export-row-bounds-${crypto.randomUUID()}`),
+		);
+		const epoch = "f".repeat(32);
+		const bytes = new Uint8Array(5 * 1024 * 1024 + 13).fill(37);
+		const hash = await hashExportBytes(bytes);
+		const key = `backups/${epoch}/${exportCreatedAt}.zip`;
+		const blobs: BlobContentStore = {
+			/** Return the immutable fixture identity for every bounded source read. */
+			async head() {
+				return { hash, size: bytes.byteLength };
+			},
+			/** Reject writes because this archive test uses a read-only source. */
+			async putVerified() {
+				throw new Error("Unexpected blob write");
+			},
+			/** Emit only the requested immutable source range. */
+			async read(_hash, _size, range) {
+				if (!range) throw new Error("Expected a bounded source range");
+				return new ReadableStream<Uint8Array>({
+					/** Return the exact byte window for the ZIP step. */
+					start(controller) {
+						controller.enqueue(bytes.slice(range.start, range.end + 1));
+						controller.close();
+					},
+				});
+			},
+		};
+		await env.R2_BUCKET.delete(key);
+		try {
+			await runInDurableObject(stub, async (_instance, state) => {
+				initializeVaultStorage(
+					state.storage,
+					() => epoch,
+					() => 1,
+				);
+				state.storage.sql.exec(
+					"INSERT INTO files (path, path_key, rev, seq, hash, size, kind, content, blob_hash, renamed_to, deleted, updated_at, origin) VALUES ('assets/large.bin', 'assets/large.bin', 1, 1, ?, ?, 'blob', NULL, ?, NULL, 0, 1, 'test')",
+					hash,
+					bytes.byteLength,
+					hash,
+				);
+				state.storage.sql.exec(
+					"INSERT INTO revisions (path, rev, hash, size, kind, content, blob_hash, deleted, origin, at) VALUES ('assets/large.bin', 1, ?, ?, 'blob', NULL, ?, 0, 'test', 1)",
+					hash,
+					bytes.byteLength,
+					hash,
+				);
+				state.storage.sql.exec(
+					"UPDATE meta SET value = '1' WHERE key IN ('live_file_count', 'head_seq')",
+				);
+				const repository = new SqlitePackedExportStore(state.storage, blobs);
+				const service = new PackedExportService(
+					repository,
+					new R2PackedArchiveStore(env.R2_BUCKET),
+				);
+				expect((await service.start(exportCreatedAt, 1)).status).toBe("queued");
+				let more = true;
+				let batches = 0;
+				while (more) {
+					more = await service.runBatch();
+					batches += 1;
+					const rows = state.storage.sql
+						.exec<{
+							export_id: string;
+							kind: string;
+							ordinal: number;
+							data_bytes: number;
+						}>(
+							"SELECT export_id, kind, ordinal, length(data) AS data_bytes FROM packed_export_chunks ORDER BY kind, ordinal",
+						)
+						.toArray();
+					for (const row of rows) {
+						const logicalRowBytes =
+							new TextEncoder().encode(row.export_id).byteLength +
+							new TextEncoder().encode(row.kind).byteLength +
+							new TextEncoder().encode(String(row.ordinal)).byteLength +
+							row.data_bytes +
+							256;
+						expect(row.data_bytes).toBeLessThanOrEqual(1_000_000);
+						expect(logicalRowBytes).toBeLessThanOrEqual(2_000_000);
+					}
+					if (batches > 20)
+						throw new Error("Large packed archive did not complete");
+				}
+				const [completed] = await repository.listCompleted();
+				expect(completed?.size).toBeGreaterThan(5 * 1024 * 1024);
+			});
+		} finally {
+			await env.R2_BUCKET.delete(key);
+		}
+	});
+});
+
+describe("packed export large manifests", () => {
+	it("stores the maximum long-path manifest in bounded rows and reads it by ranges", async () => {
+		const stub = env.VAULTS.get(
+			env.VAULTS.idFromName(`packed-export-long-paths-${crypto.randomUUID()}`),
+		);
+		await runInDurableObject(stub, async (_instance, state) => {
+			seedMaximumPathExportRows(state.storage);
+			const store = new SqlitePackedExportStore(
+				state.storage,
+				noExportBlobReads(),
+			);
+			const captured = await store.capture(exportCreatedAt, 1);
+			expect(captured.files).toHaveLength(10_000);
+			expect(captured.files[0]?.path).toHaveLength(512);
+			expect(captured.manifestSize).toBeGreaterThan(2_000_000);
+			const rows = state.storage.sql
+				.exec<{
+					export_id: string;
+					kind: string;
+					ordinal: number;
+					data_bytes: number;
+				}>(
+					"SELECT export_id, kind, ordinal, length(data) AS data_bytes FROM packed_export_chunks WHERE export_id = ? AND kind = 'manifest' ORDER BY ordinal",
+					captured.id,
+				)
+				.toArray();
+			expect(rows.length).toBeGreaterThan(2);
+			for (const row of rows) {
+				const logicalRowBytes =
+					new TextEncoder().encode(row.export_id).byteLength +
+					new TextEncoder().encode(row.kind).byteLength +
+					new TextEncoder().encode(String(row.ordinal)).byteLength +
+					row.data_bytes +
+					256;
+				expect(row.data_bytes).toBeLessThanOrEqual(1_000_000);
+				expect(logicalRowBytes).toBeLessThanOrEqual(2_000_000);
+			}
+			const bytes = new Uint8Array(captured.manifestSize);
+			for (let offset = 0; offset < bytes.byteLength; offset += 65_536) {
+				const length = Math.min(65_536, bytes.byteLength - offset);
+				bytes.set(
+					await store.readManifestRange(captured.id, offset, length),
+					offset,
+				);
+			}
+			const manifest = ExportManifestSchema.parse(
+				JSON.parse(new TextDecoder().decode(bytes)),
+			);
+			expect(manifest.files).toHaveLength(10_000);
+			expect(manifest.files[0]?.path).toHaveLength(512);
+			expect(manifest.files.at(-1)?.path).toHaveLength(512);
+		});
+	});
+});
+
+describe("packed export text query projection", () => {
+	it("selects metadata without loading revision content before the bounded substr read", async () => {
+		const stub = env.VAULTS.get(
+			env.VAULTS.idFromName(`packed-export-projection-${crypto.randomUUID()}`),
+		);
+		await runInDurableObject(stub, async (_instance, state) => {
+			const content = "bounded query bytes 🌱".repeat(100);
+			const hash = await hashExportText(content);
+			seedExportText(state.storage, "notes/projection.md", 1, content, hash);
+			state.storage.sql.exec(
+				"UPDATE meta SET value = '1' WHERE key IN ('live_file_count', 'head_seq')",
+			);
+			const queries: string[] = [];
+			const logger = {
+				/** Record Drizzle metadata queries. Raw SQLite range queries bypass this logger. */
+				logQuery(query: string) {
+					queries.push(query);
+				},
+			};
+			const store = new SqlitePackedExportStore(
+				state.storage,
+				noExportBlobReads(),
+				logger,
+			);
+			const captured = await store.capture(exportCreatedAt, 10);
+			const requested = 64;
+			expect(
+				await store.readSourceRange(captured.id, 0, 0, requested),
+			).toHaveLength(requested);
+			const projection = queries
+				.filter(
+					(query) =>
+						query.toLowerCase().includes("revisions") &&
+						query.toLowerCase().includes("case when"),
+				)
+				.at(-1);
+			if (!projection)
+				throw new Error("Packed-export metadata query was not logged");
+			const selected = projection.slice(
+				0,
+				projection.toLowerCase().indexOf(" from "),
+			);
+			expect(selected).not.toMatch(
+				/(?:`revisions`|"revisions")\.(?:`content`|"content")\s*(,|as)/i,
+			);
+			expect(selected).toMatch(/IS\s+NULL/i);
+		});
+	});
+});
+
 describe("packed export source retry", () => {
 	it("retries a failed pinned range at the same cursor and keeps its pin", async () => {
 		const stub = env.VAULTS.get(
@@ -515,6 +899,35 @@ describe("packed export alarm dispatch", () => {
 				);
 				state.storage.sql.exec(
 					"UPDATE meta SET value = '2' WHERE key IN ('live_file_count', 'head_seq')",
+				);
+				const historyBytes =
+					revisionLogicalPayloadBytes({
+						path: "notes/a.md",
+						rev: 1,
+						hash: textHash,
+						size: textBytes.byteLength,
+						kind: "text",
+						content: text,
+						blobHash: null,
+						deleted: 0,
+						origin: "test",
+						at: 1,
+					}) +
+					revisionLogicalPayloadBytes({
+						path: "assets/x.bin",
+						rev: 1,
+						hash: blobHash,
+						size: blobBytes.byteLength,
+						kind: "blob",
+						content: null,
+						blobHash,
+						deleted: 0,
+						origin: "test",
+						at: 1,
+					});
+				state.storage.sql.exec(
+					"UPDATE meta SET value = ? WHERE key IN ('history_revisions_bytes', 'history_pressure_bytes')",
+					String(historyBytes),
 				);
 				const started = await instance.startPackedExport(
 					"synthetic-owner",

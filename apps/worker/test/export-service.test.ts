@@ -17,6 +17,7 @@ const payload = new Uint8Array(5 * 1024 * 1024 + 7).fill(9);
 /** Build a durable repository double that preserves checkpoint compare-and-set behavior. */
 class ExportRepositoryFake implements PackedExportRepository {
 	work: PackedExportWork;
+	manifestBytes: Uint8Array;
 	readBytes = 0;
 	readCalls = 0;
 
@@ -29,6 +30,7 @@ class ExportRepositoryFake implements PackedExportRepository {
 				rev: 3,
 				hash: "b".repeat(64),
 				size: payload.byteLength,
+				sourceType: "revision_blob" as const,
 			},
 		];
 		const file = files[0];
@@ -41,6 +43,7 @@ class ExportRepositoryFake implements PackedExportRepository {
 				{ path: file.path, rev: file.rev, hash: file.hash, size: file.size },
 			],
 		});
+		this.manifestBytes = new TextEncoder().encode(manifest);
 		this.work = {
 			id: "export-id",
 			epoch,
@@ -51,7 +54,7 @@ class ExportRepositoryFake implements PackedExportRepository {
 			objectKey: `backups/${epoch}/${createdAt}.zip`,
 			startedAt: 1,
 			uploadId: null,
-			manifest,
+			manifestSize: this.manifestBytes.byteLength,
 			files,
 			zipState: "",
 			pendingPart: new Uint8Array(),
@@ -72,6 +75,14 @@ class ExportRepositoryFake implements PackedExportRepository {
 	/** Check active state without loading source payload bytes. */
 	async hasActive(): Promise<boolean> {
 		return this.work.status === "queued" || this.work.status === "uploading";
+	}
+	/** Return one exact bounded manifest slice from the seeded JSON member. */
+	async readManifestRange(
+		_id: string,
+		offset: number,
+		length: number,
+	): Promise<Uint8Array> {
+		return this.manifestBytes.slice(offset, offset + length);
 	}
 	/** Return one exact bounded range from the captured test revision. */
 	async readSourceRange(
@@ -147,7 +158,13 @@ class ArchiveStoreFake implements PackedArchiveStore {
 	readonly partAttempts: Array<{ number: number; bytes: Uint8Array }> = [];
 	private failNextPart = true;
 	private readonly sizes = new Map<string, number>();
+	private readonly completedObjects = new Map<string, number>();
 	private completedSize = 0;
+	completeCalls = 0;
+	headCalls = 0;
+
+	/** Configure one completed multipart request to lose its reply after object creation. */
+	constructor(private readonly loseFirstCompletionReply = false) {}
 	/** Start one deterministic upload in the fake bucket. */
 	async create(): Promise<string> {
 		return "upload-id";
@@ -171,19 +188,25 @@ class ArchiveStoreFake implements PackedArchiveStore {
 	}
 	/** Sum accepted part bytes as the completed fake R2 object size. */
 	async complete(
-		_key: string,
+		key: string,
 		_uploadId: string,
 		parts: readonly PackedExportPart[],
 	): Promise<number> {
+		this.completeCalls += 1;
 		this.completedSize = parts.reduce(
 			(total, part) => total + (this.sizes.get(part.etag) ?? 0),
 			0,
 		);
+		this.completedObjects.set(key, this.completedSize);
+		if (this.loseFirstCompletionReply && this.completeCalls === 1)
+			throw new PackedExportStorageFailure();
 		return this.completedSize;
 	}
-	/** Report no existing object before the first successful completion. */
-	async head(): Promise<null> {
-		return null;
+	/** Return exact completed-object evidence to exercise lost-response recovery. */
+	async head(key: string): Promise<{ key: string; size: number } | null> {
+		this.headCalls += 1;
+		const size = this.completedObjects.get(key);
+		return size === undefined ? null : { key, size };
 	}
 	/** Accept abort requests because this fixture stores no native uploads. */
 	async abort(): Promise<void> {}
@@ -212,19 +235,6 @@ describe("resumable packed export service", () => {
 		repository.work = {
 			...repository.work,
 			files: [{ ...original, size: oversizedSize }],
-			manifest: JSON.stringify({
-				epoch,
-				head_seq: 9,
-				created_at: createdAt,
-				files: [
-					{
-						path: original.path,
-						rev: original.rev,
-						hash: original.hash,
-						size: oversizedSize,
-					},
-				],
-			}),
 		};
 		const result = await new PackedExportService(
 			repository,
@@ -280,4 +290,23 @@ describe("resumable packed export service", () => {
 		expect((await reader.read()).done).toBe(true);
 		reader.releaseLock();
 	}, 15_000);
+
+	it("recovers an R2 completion after the first completion reply is lost", async () => {
+		const repository = new ExportRepositoryFake();
+		const archive = new ArchiveStoreFake(true);
+		const service = new PackedExportService(repository, archive);
+		expect((await service.start(createdAt, 2)).status).toBe("queued");
+		let more = true;
+		let batches = 0;
+		while (more) {
+			more = await service.runBatch();
+			batches += 1;
+			if (batches > 32)
+				throw new Error("Lost-completion recovery did not finish");
+		}
+		expect(repository.work.status).toBe("complete");
+		expect(repository.work.size).toBeGreaterThan(5 * 1024 * 1024);
+		expect(archive.completeCalls).toBe(1);
+		expect(archive.headCalls).toBe(2);
+	});
 });

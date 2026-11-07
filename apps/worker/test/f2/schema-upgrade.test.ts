@@ -37,6 +37,7 @@ function preservedStoreState(storage: DurableObjectStorage) {
 
 /** Remove only schema-7 additions to form an exact schema-6 upgrade fixture. */
 function downgradeToSchema6(storage: DurableObjectStorage): void {
+	storage.sql.exec("DROP TABLE IF EXISTS packed_export_chunks");
 	storage.sql.exec("DROP TABLE IF EXISTS packed_export_files");
 	storage.sql.exec("DROP TABLE IF EXISTS packed_exports");
 	storage.sql.exec("DROP TABLE owner_csrf_states");

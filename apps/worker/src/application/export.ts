@@ -32,7 +32,14 @@ export const EXPORT_STEP_SOURCE_BYTES = 1 * 1024 * 1024;
 /** Maximum immutable source reads issued by one native alarm invocation. */
 export const EXPORT_STEP_SOURCE_READS = 16;
 
-/** One captured live path and exact immutable revision used to restore its bytes. */
+/** Selects retained revision bytes or a transaction-frozen live-file fallback. */
+export type PackedExportSourceType =
+	| "revision_text"
+	| "revision_blob"
+	| "snapshot_text"
+	| "snapshot_blob";
+
+/** One captured live path and exact immutable bytes used to restore its cut. */
 export interface PackedExportFile {
 	/** Zero-based snapshot order and matching ZIP source index. */
 	ordinal: number;
@@ -44,6 +51,8 @@ export interface PackedExportFile {
 	hash: string;
 	/** Exact raw payload size in bytes. */
 	size: number;
+	/** Source authority frozen at capture, independent of later retention or mutation. */
+	sourceType: PackedExportSourceType;
 }
 
 /** R2 multipart receipt persisted after an accepted part. */
@@ -64,8 +73,8 @@ export interface PackedExportWork extends ExportOperationResult {
 	startedAt: number;
 	/** Opaque active R2 multipart id, or `null` before upload creation. */
 	uploadId: string | null;
-	/** Canonical serialized manifest member, bounded before ZIP output. */
-	manifest: string;
+	/** Exact encoded manifest byte count, read from bounded SQLite chunks. */
+	manifestSize: number;
 	/** Ordered exact revision metadata for active source reads. */
 	files: readonly PackedExportFile[];
 	/** Serialized ZIP continuation cursor protected by SQLite compare-and-set. */
@@ -94,6 +103,12 @@ export interface PackedExportRepository {
 	nextActive(): Promise<PackedExportWork | null>;
 	/** Check for active work without materializing its manifest or source rows. */
 	hasActive(): Promise<boolean>;
+	/** Read one exact manifest range from bounded SQLite chunks. */
+	readManifestRange(
+		exportId: string,
+		offset: number,
+		length: number,
+	): Promise<Uint8Array>;
 	/** Read one exact immutable source range and settle its stream before return. */
 	readSourceRange(
 		exportId: string,
@@ -265,8 +280,7 @@ export class PackedExportService {
 		let uploadId = work.uploadId;
 		try {
 			const members = archiveMembers(work);
-			const manifestBytes = new TextEncoder().encode(work.manifest);
-			if (manifestBytes.byteLength > MAX_EXPORT_MANIFEST_BYTES)
+			if (work.manifestSize > MAX_EXPORT_MANIFEST_BYTES)
 				throw new PackedExportLimitFailure();
 			const cursor = work.zipState
 				? parseZip32Cursor(work.zipState)
@@ -315,7 +329,11 @@ export class PackedExportService {
 				cursor,
 				async (memberIndex, offset, length) => {
 					if (memberIndex === 0)
-						return manifestBytes.slice(offset, offset + length);
+						return await this.repository.readManifestRange(
+							work.id,
+							offset,
+							length,
+						);
 					try {
 						return await this.repository.readSourceRange(
 							work.id,
@@ -427,11 +445,14 @@ function classifyFailure(error: unknown): ExportFailure {
 
 /** Map captured metadata to ZIP members, with current bytes below `files/`. */
 function archiveMembers(work: PackedExportWork): Zip32Member[] {
-	const manifestSize = new TextEncoder().encode(work.manifest).byteLength;
-	if (manifestSize > MAX_EXPORT_MANIFEST_BYTES)
+	if (
+		!Number.isSafeInteger(work.manifestSize) ||
+		work.manifestSize < 1 ||
+		work.manifestSize > MAX_EXPORT_MANIFEST_BYTES
+	)
 		throw new PackedExportLimitFailure();
 	const members: Zip32Member[] = [
-		{ name: "manifest.json", size: manifestSize },
+		{ name: "manifest.json", size: work.manifestSize },
 		...work.files.map(({ path, size }) => ({ name: `files/${path}`, size })),
 	];
 	if (members.length > MAX_EXPORT_FILE_COUNT + 1)

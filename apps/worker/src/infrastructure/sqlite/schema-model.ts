@@ -17,6 +17,15 @@ import {
 	uniqueIndex,
 } from "drizzle-orm/sqlite-core";
 
+/** Native SQL statement ceilings applied to export snapshot writes. */
+export const SQLITE_BOUND_PARAMETER_LIMIT = 100;
+/** Logical per-row limit accepted by the Worker SQLite capacity contract. */
+export const SQLITE_ROW_BYTE_LIMIT = 2_000_000;
+/** Payload limit for one export checkpoint or manifest chunk. */
+export const PACKED_EXPORT_CHUNK_DATA_BYTES = 1_000_000;
+/** Conservative fixed bytes reserved for chunk-row identifiers and SQLite record encoding. */
+export const PACKED_EXPORT_CHUNK_ROW_OVERHEAD_BYTES = 256;
+
 /** Stores bootstrap identity and counters as canonical strings. Existing-store validation owns their meaning and rejects malformed values without repair. */
 export const meta = sqliteTable(
 	"meta",
@@ -243,9 +252,8 @@ export const packedExports = sqliteTable(
 		size: integer("size"),
 		uploadId: text("upload_id"),
 		zipState: text("zip_state").notNull(),
-		pendingPart: blob("pending_part", { mode: "buffer" }).notNull(),
+		manifestSize: integer("manifest_size").notNull(),
 		completedParts: text("completed_parts").notNull(),
-		manifest: text("manifest").notNull(),
 		error: text("error"),
 	},
 	(table) => [
@@ -268,10 +276,37 @@ export const packedExportFiles = sqliteTable(
 		rev: integer("rev").notNull(),
 		hash: text("hash").notNull(),
 		size: integer("size").notNull(),
+		sourceType: text("source_type").notNull(),
 	},
 	(table) => [
+		check(
+			"packed_export_files_source_type_check",
+			sql`${table.sourceType} IN ('revision_text', 'revision_blob', 'snapshot_text', 'snapshot_blob')`,
+		),
 		primaryKey({ columns: [table.exportId, table.ordinal] }),
 		uniqueIndex("packed_export_files_path").on(table.exportId, table.path),
+	],
+);
+
+/** Stores bounded manifest, pending multipart, and frozen fallback-source bytes. */
+export const packedExportChunks = sqliteTable(
+	"packed_export_chunks",
+	{
+		exportId: text("export_id").notNull(),
+		kind: text("kind").notNull(),
+		ordinal: integer("ordinal").notNull(),
+		data: blob("data", { mode: "buffer" }).notNull(),
+	},
+	(table) => [
+		check(
+			"packed_export_chunks_kind_check",
+			sql`${table.kind} IN ('manifest', 'pending', 'source')`,
+		),
+		check(
+			"packed_export_chunks_data_size_check",
+			sql.raw(`length(data) <= ${PACKED_EXPORT_CHUNK_DATA_BYTES}`),
+		),
+		primaryKey({ columns: [table.exportId, table.kind, table.ordinal] }),
 	],
 );
 
@@ -291,4 +326,5 @@ export const vaultSchema = {
 	mutationClaims,
 	packedExports,
 	packedExportFiles,
+	packedExportChunks,
 };

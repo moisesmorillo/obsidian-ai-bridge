@@ -170,20 +170,26 @@ CREATE TABLE packed_exports (
   id TEXT PRIMARY KEY NOT NULL, epoch TEXT NOT NULL, created_at TEXT NOT NULL,
   head_seq INTEGER NOT NULL, status TEXT NOT NULL, object_key TEXT NOT NULL,
   started_at INTEGER NOT NULL, finished_at INTEGER, size INTEGER, upload_id TEXT,
-  zip_state TEXT NOT NULL, pending_part BLOB NOT NULL, completed_parts TEXT NOT NULL,
-  manifest TEXT NOT NULL, error TEXT,
+  zip_state TEXT NOT NULL, manifest_size INTEGER NOT NULL,
+  completed_parts TEXT NOT NULL, error TEXT,
   CHECK (status IN ('queued','uploading','complete','failed'))
 );
 CREATE UNIQUE INDEX packed_exports_identity ON packed_exports(epoch, created_at);
 CREATE TABLE packed_export_files (
   export_id TEXT NOT NULL, ordinal INTEGER NOT NULL, path TEXT NOT NULL,
   rev INTEGER NOT NULL, hash TEXT NOT NULL, size INTEGER NOT NULL,
+  source_type TEXT NOT NULL CHECK (source_type IN ('revision_text','revision_blob','snapshot_text','snapshot_blob')),
   PRIMARY KEY (export_id, ordinal)
 );
 CREATE UNIQUE INDEX packed_export_files_path ON packed_export_files(export_id, path);
+CREATE TABLE packed_export_chunks (
+  export_id TEXT NOT NULL, kind TEXT NOT NULL CHECK (kind IN ('manifest','pending','source')),
+  ordinal INTEGER NOT NULL, data BLOB NOT NULL CHECK (length(data) <= 1,000,000),
+  PRIMARY KEY (export_id, kind, ordinal)
+);
 ```
 
-The canonical schema version is 8. Versions 1 through 5 fail closed without writes. The service upgrades exact version-6 and version-7 stores in one transaction and rejects other unsupported storage without repair. Version 4 adds `history_revisions_bytes`, `history_receipts_bytes`, `history_changes_bytes`, `history_pressure_bytes`, and `history_reduced` metadata. Version 5 adds `retention_category` and `retention_pruned_feed_seq`. Version 6 adds nullable `files.renamed_to` for the immediate destination of a source rename tombstone. Version 7 adds the owner registry and one-use CSRF tables. Version 8 adds resumable packed-export tables and their unique indexes. Fresh version-8 vaults initialize all history counters and the feed boundary to zero.
+The canonical schema version is 8. Versions 1 through 5 fail closed without writes. The service upgrades exact version-6 and version-7 stores in one transaction and rejects other unsupported storage without repair. Version 4 adds `history_revisions_bytes`, `history_receipts_bytes`, `history_changes_bytes`, `history_pressure_bytes`, and `history_reduced` metadata. Version 5 adds `retention_category` and `retention_pruned_feed_seq`. Version 6 adds nullable `files.renamed_to` for the immediate destination of a source rename tombstone. Version 7 adds the owner registry and one-use CSRF tables. Version 8 adds resumable packed-export tables, bounded payload chunks, and their unique indexes. Fresh version-8 vaults initialize all history counters and the feed boundary to zero.
 
 A rename writes the immediate destination path to the source tombstone in the same transaction as the destination row and change entry. The hint survives feed pruning and remains until a later mutation replaces the source row. Recreate, restore, ordinary delete, and rename to another destination clear or replace any prior hint. Live rows and ordinary delete tombstones have no hint. The hint is diagnostic metadata, not a redirect.
 
@@ -547,10 +553,11 @@ The owner starts packed current-file snapshots from the Access-protected console
 
 The owner starts an export from `/owner/exports`. The server assigns a canonical UTC millisecond timestamp. The epoch and timestamp form the idempotency identity.
 
-1. One SQLite transaction captures the vault `epoch`, `head_seq`, and every current live file's exact `(path, rev, hash, size)`. It writes `manifest.json`, inserts the export row, stores the file rows, and pins every captured revision.
-2. The manifest contains the epoch, head sequence, timestamp, and paths in SQLite binary order. It omits deleted paths, retained history, OAuth grants, and service secrets.
-3. The archive contains `manifest.json` and each current payload at `files/<path>`. Text reads use a bounded SQLite byte range. Blob reads use the captured immutable revision and a bounded R2 range.
-4. Retention keeps every pinned revision until export completion or typed failure. A retry with the same epoch and timestamp returns the existing operation.
+1. One SQLite transaction captures the vault `epoch`, `head_seq`, and every current live file's exact `(path, rev, hash, size)`. It writes the manifest size, source authority, file rows, and revision pins.
+2. If retention removed a current text revision before capture, the transaction copies that current payload into bounded source chunks. Retained text revisions remain the source when present. Blob sources use the exact current content hash and size.
+3. The manifest contains the epoch, head sequence, timestamp, and paths in SQLite binary order. It omits deleted paths, retained history, OAuth grants, and service secrets. The archive contains `manifest.json` and each current payload at `files/<path>`.
+4. Text reads use a bounded range from the retained revision or frozen source chunks. Blob reads use the captured content hash and a bounded R2 range. Metadata queries select content presence and size, not full revision payloads.
+5. Retention keeps every existing pinned revision until export completion or typed failure. A retry with the same epoch and timestamp returns the existing operation.
 
 ### 11.2 Bounded ZIP32 and R2 output
 
@@ -558,6 +565,7 @@ The owner starts an export from `/owner/exports`. The server assigns a canonical
 - The complete encoded archive must fit the 2 GB product envelope and ZIP32 fields. It contains at most 10,000 current files plus the manifest entry.
 - One alarm step emits at most 1 MiB of archive bytes, reads at most 1 MiB of file bytes, and starts at most 16 source ranges. Each file range is at most 64 KiB.
 - R2 uses the existing bucket and fixed 5 MiB multipart parts. The final part can be smaller. SQLite stores the upload id, ZIP cursor, CRC state, byte offsets, accepted part receipts, and bounded remainder after each step.
+- Manifest, pending-part, and frozen-text bytes use chunk rows with at most 1,000,000 payload bytes. The complete estimated row stays below the 2,000,000-byte SQLite row limit. Snapshot inserts use at most 100 SQL parameters per statement.
 - Each cursor update compares the exact observed cursor. An interrupted part can be sent again at the same part number from the same immutable source bytes. Only the final R2 object can become a completed snapshot.
 
 ### 11.3 Owner operations and failures

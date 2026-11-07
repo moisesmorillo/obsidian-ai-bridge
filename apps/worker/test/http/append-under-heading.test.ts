@@ -87,14 +87,43 @@ describe("append under a heading HTTP mutation", () => {
 		expect(await snapshot()).toEqual(before);
 	});
 
-	it("refuses an obsolete ETag without changing the current revision", async () => {
-		await seed(path, "# Tasks\nbody\n", 2);
-		const before = await snapshot();
-		const response = await submit("Tasks", "added", 1);
-		expect(response.status).toBe(412);
-		await response.json();
-		expect(await snapshot()).toEqual(before);
-	});
+	it.each([
+		["read-write", "", "# Tasks\ncurrent\n"],
+		["write-only", "write", undefined],
+	] as const)(
+		"returns scoped current details for a stale %s heading append",
+		async (_label, identity, expectedContent) => {
+			const currentContent = "# Tasks\ncurrent\n";
+			await seed(path, currentContent, 2);
+			const before = await snapshot();
+			const response = await testWorker.fetch(
+				new Request(url, {
+					method: "POST",
+					headers: {
+						...(identity ? { "X-Test-Identity": identity } : {}),
+						"If-Match": formatETag(TEXT_FIXTURE_EPOCH, 1),
+						"Idempotency-Key": "stale-heading-append-key",
+						"Content-Type": "application/json",
+					},
+					body: JSON.stringify({ heading: "Tasks", text: "added" }),
+				}),
+				env,
+			);
+
+			expect(response.status).toBe(412);
+			const failure = await response.json();
+			expect(failure).toMatchObject({
+				error: "precondition_failed",
+				etag: formatETag(TEXT_FIXTURE_EPOCH, 2),
+				hash: await hashContent(currentContent),
+				deleted: false,
+			});
+			if (expectedContent === undefined)
+				expect(failure).not.toHaveProperty("content");
+			else expect(failure).toHaveProperty("content", expectedContent);
+			expect(await snapshot()).toEqual(before);
+		},
+	);
 
 	it("inserts at EOF and ignores heading-shaped lines in fenced code", async () => {
 		await seed(path, "```md\n# Tasks\n```\n# Tasks");
@@ -185,12 +214,50 @@ describe("append under a heading HTTP mutation", () => {
 		);
 	});
 
-	it("rejects oversized results and missing idempotency keys", async () => {
+	it("accepts escaped request text when decoded text and result fit the limit", async () => {
+		await seed(path, "# Tasks\n");
+		const text = "\n".repeat(500_000);
+		const body = JSON.stringify({ heading: "Tasks", text });
+		const bodyBytes = new TextEncoder().encode(body).byteLength;
+		expect(bodyBytes).toBeGreaterThan(1_000_000);
+		expect(bodyBytes).toBeLessThanOrEqual(6_100_000);
+		expect(
+			new TextEncoder().encode(`# Tasks\n${text}`).byteLength,
+		).toBeLessThanOrEqual(1_000_000);
+		const response = await SELF.fetch(url, {
+			method: "POST",
+			headers: {
+				"If-Match": formatETag(TEXT_FIXTURE_EPOCH, 1),
+				"Idempotency-Key": "escaped-heading-append-key",
+				"Content-Type": "application/json",
+			},
+			body,
+		});
+
+		expect(response.status).toBe(200);
+		expect(await response.json()).toMatchObject({
+			path,
+			etag: formatETag(TEXT_FIXTURE_EPOCH, 2),
+			size: 500_008,
+			deleted: false,
+		});
+		const updated = await SELF.fetch(
+			`https://worker.invalid/v1/files/${path}`,
+			{
+				headers: { "X-Vault-Epoch": TEXT_FIXTURE_EPOCH },
+			},
+		);
+		expect(TextReadResponseSchema.parse(await updated.json()).content).toBe(
+			`# Tasks\n${text}`,
+		);
+	});
+
+	it("returns a typed result-size refusal and preserves a missing-key error", async () => {
 		await seed(path, `# Tasks\n${"x".repeat(999_990)}`);
 		const before = await snapshot();
 		const oversized = await submit("Tasks", "0123456789");
 		expect(oversized.status).toBe(413);
-		await oversized.json();
+		expect(await oversized.json()).toMatchObject({ error: "text_too_large" });
 		expect(await snapshot()).toEqual(before);
 		const missingKey = await SELF.fetch(url, {
 			method: "POST",
@@ -231,6 +298,17 @@ function submit(
 		},
 		body: JSON.stringify({ heading, text }),
 	});
+}
+
+/** Hash exact UTF-8 content bytes for expected stale-conflict metadata. */
+async function hashContent(content: string): Promise<string> {
+	const digest = await crypto.subtle.digest(
+		"SHA-256",
+		new TextEncoder().encode(content),
+	);
+	return Array.from(new Uint8Array(digest), (byte) =>
+		byte.toString(16).padStart(2, "0"),
+	).join("");
 }
 
 /** Capture admission and idempotency records for one caller. */

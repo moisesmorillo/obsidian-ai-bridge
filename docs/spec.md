@@ -316,7 +316,7 @@ This boundary does not prove client receipt or release by the last native owner.
 
 Mutation failure responses preserve complete authorized text through bounded JSON chunks. Encoding does not create a complete escaped content string or a complete JSON body. Response reads and encoded chunks stay at or below 65,536 bytes.
 
-Native body reads request at most 65,536 bytes at a time. Inline readers use one fixed 1,000,000-byte allocation and do not retain borrowed chunks. Blob reads and writes use bounded native streams, without a complete blob buffer.
+Native body reads request at most 65,536 bytes at a time. Raw inline text bodies and decoded note text remain limited to 1,000,000 bytes. The REST heading-append JSON body has a separate 6,100,000-byte wire limit for JSON escaping. Inline readers allocate at most their per-request wire limit and do not retain borrowed chunks. Blob reads and writes use bounded native streams, without a complete blob buffer.
 
 Four authoritative reads share separate isolate-local slots across routes, clients, vault hosts, and router instances. The fifth read returns `429 admission_limited` and `Retry-After: 1` before metadata or R2 demand.
 

@@ -9,6 +9,7 @@ import {
 	EpochSchema,
 	FileCommandSchema,
 	IdempotencyKeySchema,
+	MAX_APPEND_UNDER_HEADING_ENCODED_BYTES,
 	OperationDescriptorSchema,
 	parseETag,
 	RenameRequestSchema,
@@ -19,6 +20,7 @@ import { FileOperationDenied } from "@worker/application/files";
 import {
 	executeFileCommand,
 	type HistoryVaultGateway,
+	prepareAppendUnderHeadingIdentity,
 } from "@worker/application/history";
 import type { TextVaultGateway } from "@worker/application/text-files";
 import { readInlineBody } from "@worker/transport/body";
@@ -27,7 +29,7 @@ import {
 	withMutationResponse,
 } from "@worker/transport/mutation-response";
 
-/** Maximum actual UTF-8 request bytes read for any inline history command. */
+/** Maximum actual UTF-8 request bytes for legacy append and other history bodies. */
 const MAX_COMMAND_BYTES = 1_000_000;
 
 /** Request facts validated before admission and deferred body decoding. */
@@ -305,7 +307,11 @@ async function decodeHistoryCommand(
 	path: string,
 	commandRequest: ValidatedHistoryCommandRequest,
 ): Promise<FileCommand> {
-	const bytes = await readInlineBody(request, MAX_COMMAND_BYTES);
+	const bodyLimit =
+		commandRequest.operation === "append-under-heading"
+			? MAX_APPEND_UNDER_HEADING_ENCODED_BYTES
+			: MAX_COMMAND_BYTES;
+	const bytes = await readInlineBody(request, bodyLimit);
 	switch (commandRequest.operation) {
 		case "append":
 			return decodeAppendCommand(
@@ -374,8 +380,9 @@ async function decodeAppendUnderHeadingCommand(
 	}
 	const body = AppendUnderHeadingBodySchema.safeParse(json);
 	if (!body.success) throw new FileOperationDenied({ kind: "invalid_request" });
-	const identity = new TextEncoder().encode(
-		JSON.stringify({ heading: body.data.heading, content: body.data.text }),
+	const identity = await prepareAppendUnderHeadingIdentity(
+		body.data.heading,
+		body.data.text,
 	);
 	const command = FileCommandSchema.safeParse({
 		op: "append",
@@ -384,8 +391,8 @@ async function decodeAppendUnderHeadingCommand(
 			epoch: commandRequest.epoch,
 			paths: [path],
 			precondition: { kind: "match", etag: commandRequest.match },
-			payload_hash: await hashBytes(identity),
-			size: identity.byteLength,
+			payload_hash: identity.payload_hash,
+			size: identity.size,
 		},
 		content: body.data.text,
 		heading: body.data.heading,

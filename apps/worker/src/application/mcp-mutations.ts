@@ -14,7 +14,10 @@ import {
 	TextMutationDescriptorSchema,
 } from "@obsidian-ai-bridge/protocol";
 import type { HistoryVaultGateway } from "@worker/application/history";
-import { executeFileCommand } from "@worker/application/history";
+import {
+	executeFileCommand,
+	prepareAppendUnderHeadingIdentity,
+} from "@worker/application/history";
 import type { McpReadOwner } from "@worker/application/mcp-notes";
 import type { TextVaultGateway } from "@worker/application/text-files";
 import { executeTextMutation } from "@worker/application/text-files";
@@ -200,10 +203,6 @@ export function appendUnderHeadingMcpNote(
 		precondition: { kind: "match", etag: input.etag },
 		epoch,
 	});
-	const contentIdentity = JSON.stringify({
-		heading: input.heading,
-		content: input.text,
-	});
 	return runMutation(
 		gateway,
 		identity,
@@ -212,8 +211,9 @@ export function appendUnderHeadingMcpNote(
 		epoch,
 		responseProduction,
 		async (ownedGateway) => {
-			const prepared = await prepareTextPayload(
-				new TextEncoder().encode(contentIdentity),
+			const payloadIdentity = await prepareAppendUnderHeadingIdentity(
+				input.heading,
+				input.text,
 			);
 			const command: FileCommand = {
 				op: "append",
@@ -222,8 +222,8 @@ export function appendUnderHeadingMcpNote(
 					epoch,
 					paths: [input.path],
 					precondition: { kind: "match", etag: input.etag },
-					payload_hash: prepared.payload_hash,
-					size: prepared.size,
+					payload_hash: payloadIdentity.payload_hash,
+					size: payloadIdentity.size,
 				},
 				content: input.text,
 				heading: input.heading,

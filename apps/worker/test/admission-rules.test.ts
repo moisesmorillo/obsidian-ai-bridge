@@ -469,6 +469,15 @@ describe("admission rules", () => {
 			});
 		},
 	);
+	it("accepts exact-ETag append identity bytes above the decoded text limit", async () => {
+		const headingAppend: OperationIntent = {
+			...append,
+			precondition: { kind: "match", etag: `"${epoch}.1"` },
+		};
+		await expect(
+			prepareOperation(context, { ...headingAppend, size: 1_000_001 }),
+		).resolves.toMatchObject({ intent: { size: 1_000_001 } });
+	});
 	it("accepts append and put declarations at their exact size limits", async () => {
 		await expect(
 			prepareOperation(context, { ...append, size: 1_000_000 }),

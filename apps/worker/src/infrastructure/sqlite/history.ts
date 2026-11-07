@@ -209,6 +209,11 @@ export class SqliteHistoryStore {
 						ticketId,
 						command.key,
 					);
+					this.coordinator.assertPreconditionsInTransaction(
+						tx,
+						context,
+						operation,
+					);
 					const current = tx
 						.select()
 						.from(files)
@@ -235,13 +240,6 @@ export class SqliteHistoryStore {
 				return { ok: false, failure: { kind: "tombstone" } };
 			if (snapshot.kind !== "text" || snapshot.content === null)
 				return { ok: false, failure: { kind: "unsupported_append_kind" } };
-			if (
-				command.heading !== undefined &&
-				(command.intent.precondition.kind !== "match" ||
-					formatETag(command.intent.epoch ?? "", snapshot.rev) !==
-						command.intent.precondition.etag)
-			)
-				return { ok: false, failure: { kind: "precondition_failed" } };
 			const content =
 				command.heading === undefined
 					? snapshot.content + command.content

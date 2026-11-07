@@ -12,6 +12,7 @@ import {
 	RequestAdmissionLeaseSchema,
 	RequestAdmissionResultSchema,
 } from "@protocol/schemas/admission";
+import { MAX_APPEND_UNDER_HEADING_ENCODED_BYTES } from "@protocol/schemas/limits";
 import { describe, expect, it } from "vitest";
 
 const epoch = "0000000000000000000000000000000a";
@@ -132,12 +133,33 @@ describe("admission contracts", () => {
 			}).success,
 		).toBe(true);
 	});
-	it("rejects append declarations above one million bytes", () => {
+	it("accepts heading identity bytes above the decoded text limit", () => {
 		expect(
 			OperationIntentSchema.safeParse({
 				...cases[4],
+				precondition: { kind: "match", etag: `"${epoch}.1"` },
 				payload_hash: hash,
 				size: 1_000_001,
+			}).success,
+		).toBe(true);
+	});
+	it("accepts append identity at its encoded byte limit", () => {
+		expect(
+			OperationIntentSchema.safeParse({
+				...cases[4],
+				precondition: { kind: "match", etag: `"${epoch}.1"` },
+				payload_hash: hash,
+				size: MAX_APPEND_UNDER_HEADING_ENCODED_BYTES,
+			}).success,
+		).toBe(true);
+	});
+	it("rejects append identity above its encoded byte limit", () => {
+		expect(
+			OperationIntentSchema.safeParse({
+				...cases[4],
+				precondition: { kind: "match", etag: `"${epoch}.1"` },
+				payload_hash: hash,
+				size: MAX_APPEND_UNDER_HEADING_ENCODED_BYTES + 1,
 			}).success,
 		).toBe(false);
 	});

@@ -9,6 +9,7 @@ import {
 	type FileFailure,
 	type HistoryRequest,
 	type HistoryResult,
+	MAX_APPEND_UNDER_HEADING_ENCODED_BYTES,
 	type OperationDescriptor,
 	OperationDescriptorSchema,
 	type OperationIntent,
@@ -327,6 +328,15 @@ async function sha256(bytes: Uint8Array): Promise<string> {
 	).join("");
 }
 
+/** Prepare the bounded canonical fingerprint identity for a heading append. */
+export async function prepareAppendUnderHeadingIdentity(
+	heading: string,
+	content: string,
+) {
+	const bytes = appendUnderHeadingIdentityBytes(heading, content);
+	return { payload_hash: await sha256(bytes), size: bytes.byteLength };
+}
+
 /** Freezes parsed command data recursively so caller changes cannot alter async work. */
 function deepFreeze<T>(value: T): DeepReadonly<T> {
 	if (value !== null && typeof value === "object" && !Object.isFrozen(value)) {
@@ -339,14 +349,9 @@ function deepFreeze<T>(value: T): DeepReadonly<T> {
 /** Returns exact canonical command bytes or exact UTF-8 append input bytes. */
 function commandBytes(command: DeepReadonly<FileCommand>): Uint8Array {
 	if (command.op === "append")
-		return new TextEncoder().encode(
-			command.heading === undefined
-				? command.content
-				: JSON.stringify({
-						heading: command.heading,
-						content: command.content,
-					}),
-		);
+		return command.heading === undefined
+			? new TextEncoder().encode(command.content)
+			: appendUnderHeadingIdentityBytes(command.heading, command.content);
 	const body =
 		command.op === "rename"
 			? { to: command.body.to }
@@ -355,6 +360,17 @@ function commandBytes(command: DeepReadonly<FileCommand>): Uint8Array {
 					as_conflict_copy: command.body.as_conflict_copy ?? false,
 				};
 	return new TextEncoder().encode(JSON.stringify(body));
+}
+
+/** Encode the shared canonical identity and enforce its separate wire-size budget. */
+function appendUnderHeadingIdentityBytes(
+	heading: string,
+	content: string,
+): Uint8Array {
+	const bytes = new TextEncoder().encode(JSON.stringify({ heading, content }));
+	if (bytes.byteLength > MAX_APPEND_UNDER_HEADING_ENCODED_BYTES)
+		throw new FileOperationDenied({ kind: "text_too_large" });
+	return bytes;
 }
 
 /** Validated capacity-only source reservation, distinct from a complete operation. */

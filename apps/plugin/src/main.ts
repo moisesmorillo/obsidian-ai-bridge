@@ -7,6 +7,10 @@ import {
 import { ObsidianCredentialStorage } from "@plugin/infrastructure/credential-storage";
 import { ObsidianDeviceStorage } from "@plugin/infrastructure/device-storage";
 import { ObsidianOAuthTransport } from "@plugin/infrastructure/oauth-transport";
+import {
+	readSettingsSyncConfiguration,
+	saveSettingsSyncConfiguration,
+} from "@plugin/infrastructure/settings-sync-storage";
 import { SyncTransportError } from "@plugin/infrastructure/sync-transport";
 import { ObsidianTextVault } from "@plugin/infrastructure/text-vault";
 import { VaultEventAdapter } from "@plugin/infrastructure/vault-events";
@@ -30,7 +34,11 @@ import {
 	DEVICE_JOURNAL_ATTENTION_REASON,
 	DeviceJournal,
 } from "@plugin/sync/device-journal";
-import { classifyEnrollmentPath } from "@plugin/sync/enrollment-scope";
+import {
+	classifyEnrollmentPath,
+	DEFAULT_SETTINGS_SYNC_POLICY,
+	type SettingsSyncPolicy,
+} from "@plugin/sync/enrollment-scope";
 import type { DeleteResponseDiagnostic } from "@plugin/sync/remote-text";
 import {
 	projectSyncStatus,
@@ -40,6 +48,7 @@ import type { App, ObsidianProtocolData, PluginManifest } from "obsidian";
 
 /** Default canonical HTTPS service origin stored as a non-secret plugin setting. */
 const DEFAULT_SERVER_URL = "https://obsidian-bridge.mmorillo.dev";
+
 /** Owns device-local enrollment and starts serialized synchronization after connection restore. */
 export default class AIBridgePlugin extends Plugin {
 	/** Active journal for this plugin lifecycle, or null when unavailable. */
@@ -82,7 +91,10 @@ export default class AIBridgePlugin extends Plugin {
 		serverUrl: DEFAULT_SERVER_URL,
 		deviceName: resolveDeviceName(undefined),
 		coexistenceMode: false,
+		settingsSync: { ...DEFAULT_SETTINGS_SYNC_POLICY },
 	};
+	/** Durable full-manifest duty. Only completed hydration can clear this flag. */
+	private settingsHydrationPending = false;
 	/** Safe enrollment status shown in settings. */
 	private sessionStatus: DeviceSessionStatus = "disconnected";
 	/** Fences asynchronous journal opens when unload or a newer load occurs. */
@@ -95,6 +107,14 @@ export default class AIBridgePlugin extends Plugin {
 	private syncEffectTail: Promise<void> = Promise.resolve();
 	/** Fences a pending resume when the user selects Pause again. */
 	private syncPauseGeneration = 0;
+	/** Holds a transition-owned pause until a mobile host returns to visible state. */
+	private pendingSettingsScopeResume: {
+		lifecycle: number;
+		update: number;
+		controller: DesktopSyncController;
+		composition: PublicationComposition;
+		pauseGeneration: number;
+	} | null = null;
 	/** Safe user-facing reason when local journal initialization cannot proceed. */
 	attentionReason: string | null = null;
 
@@ -115,6 +135,9 @@ export default class AIBridgePlugin extends Plugin {
 				this.settingsValue.coexistenceMode = stored.coexistenceMode === true;
 				this.settingsValue.deviceName = resolveDeviceName(stored.deviceName);
 			}
+			const localSettings = readSettingsSyncConfiguration(this.app);
+			Object.assign(this.settingsValue.settingsSync, localSettings.policy);
+			this.settingsHydrationPending = localSettings.hydrationPending;
 			const journal = await DeviceJournal.open(
 				new ObsidianDeviceStorage(this.app),
 			);
@@ -164,7 +187,7 @@ export default class AIBridgePlugin extends Plugin {
 							throw new Error("Server setting update is stale");
 						const nextSession = this.buildSession(url);
 						try {
-							await this.saveData({ ...this.settingsValue, serverUrl: url });
+							await this.saveSharedSettings({ serverUrl: url });
 						} catch (error) {
 							nextSession.close();
 							throw error;
@@ -203,7 +226,7 @@ export default class AIBridgePlugin extends Plugin {
 								? this.createSyncComposition(name)
 								: null;
 						try {
-							await this.saveData({ ...this.settingsValue, deviceName: name });
+							await this.saveSharedSettings({ deviceName: name });
 						} catch (error) {
 							nextComposition?.dispose();
 							throw error;
@@ -236,6 +259,7 @@ export default class AIBridgePlugin extends Plugin {
 					},
 					pause: () => {
 						const controller = this.desktopSync;
+						this.pendingSettingsScopeResume = null;
 						this.syncPauseGeneration += 1;
 						this.syncPaused = true;
 						controller?.pause();
@@ -272,6 +296,7 @@ export default class AIBridgePlugin extends Plugin {
 						});
 					},
 				},
+				(policy) => this.changeSettingsSyncPolicy(generation, policy),
 			);
 			this.addSettingTab(this.settingsTab);
 		} catch {
@@ -446,6 +471,259 @@ export default class AIBridgePlugin extends Plugin {
 		);
 	}
 
+	/** Confirms that one saved scope transition still owns its lifecycle and may admit effects. */
+	private ownsSettingsScopeTransition(
+		lifecycle: number,
+		update: number,
+		controller: DesktopSyncController,
+		composition: PublicationComposition,
+		pauseGeneration: number,
+	): boolean {
+		return (
+			this.ownsSettingsUpdate(lifecycle, update) &&
+			controller === this.desktopSync &&
+			composition === this.composition &&
+			pauseGeneration === this.syncPauseGeneration &&
+			!this.syncPaused &&
+			!this.syncRevoked &&
+			this.sessionStatus === "connected"
+		);
+	}
+
+	/** Confirms that one saved scope transition may start effects outside host suspension. */
+	private canRunSettingsScopeTransition(
+		lifecycle: number,
+		update: number,
+		controller: DesktopSyncController,
+		composition: PublicationComposition,
+		pauseGeneration: number,
+	): boolean {
+		return (
+			this.ownsSettingsScopeTransition(
+				lifecycle,
+				update,
+				controller,
+				composition,
+				pauseGeneration,
+			) && !this.isMobileSuspended()
+		);
+	}
+
+	/** Resumes a scope transition only after a suspended mobile host becomes visible. */
+	private resumeSettingsScopeAfterVisibility(): Promise<void> {
+		const pending = this.pendingSettingsScopeResume;
+		if (!pending || this.isMobileSuspended()) return Promise.resolve();
+		return this.serializeSyncEffect(async () => {
+			if (
+				this.pendingSettingsScopeResume !== pending ||
+				this.isMobileSuspended()
+			)
+				return;
+			this.pendingSettingsScopeResume = null;
+			if (
+				!this.canRunSettingsScopeTransition(
+					pending.lifecycle,
+					pending.update,
+					pending.controller,
+					pending.composition,
+					pending.pauseGeneration,
+				)
+			)
+				return;
+			await this.resumeControllerIfOwned(
+				pending.controller,
+				pending.composition,
+				true,
+			);
+		});
+	}
+
+	/** Saves only shared non-secret settings. Device consent never enters data.json. */
+	private saveSharedSettings(
+		next: Partial<Omit<AIBridgeSettings, "settingsSync">>,
+	): Promise<void> {
+		const { settingsSync: _localPolicy, ...shared } = this.settingsValue;
+		return this.saveData({ ...shared, ...next });
+	}
+
+	/** Clears the durable duty only after full hydration completes under the same effect owner. */
+	private async hydrateSettingsScope(
+		composition: PublicationComposition,
+		isCurrent: () => boolean,
+	): Promise<boolean> {
+		if (!this.settingsHydrationPending) return true;
+		if (!isCurrent()) return false;
+		const journal = this.journal;
+		if (!journal) throw new Error("Device journal is unavailable");
+		// An old-scope checkpoint can omit rows that the expanded scope now admits.
+		await journal.setReconciliationCheckpoint(null);
+		if (!isCurrent()) return false;
+		await composition.reconciliation.reconcile();
+		if (!isCurrent()) return false;
+		if (journal.snapshot().reconciliation !== null) {
+			// Sent retries can resolve manifest blockers. Queued work must wait for hydration.
+			await composition.publication.flush({ sentOnly: true });
+			return false;
+		}
+		await saveSettingsSyncConfiguration(this.app, {
+			policy: { ...this.settingsValue.settingsSync },
+			hydrationPending: false,
+		});
+		if (!isCurrent()) return false;
+		this.settingsHydrationPending = false;
+		return true;
+	}
+
+	/** Settles scope changes under lifecycle ownership before new effects or resume. */
+	private changeSettingsSyncPolicy(
+		lifecycle: number,
+		policy: SettingsSyncPolicy,
+	): Promise<void> {
+		const update = ++this.settingsUpdateGeneration;
+		this.pendingSettingsScopeResume = null;
+		const save = this.settingsSaveTail.then(() =>
+			this.serializeSyncEffect(async () => {
+				if (!this.ownsSettingsUpdate(lifecycle, update))
+					throw new Error("Settings sync policy update is stale");
+				const controller = this.desktopSync;
+				const composition = this.composition;
+				const pauseGeneration = this.syncPauseGeneration;
+				const shouldResume =
+					controller !== null &&
+					composition !== null &&
+					this.canRunSettingsScopeTransition(
+						lifecycle,
+						update,
+						controller,
+						composition,
+						pauseGeneration,
+					);
+				if (shouldResume) controller.pause();
+				try {
+					await controller?.waitForIdle();
+					if (!this.ownsSettingsUpdate(lifecycle, update))
+						throw new Error("Settings sync policy update is stale");
+					const current = this.settingsValue.settingsSync;
+					const expands =
+						policy.enabled &&
+						((!current.enabled &&
+							(policy.appearance || policy.core || policy.communityPlugins)) ||
+							(policy.appearance && !current.appearance) ||
+							(policy.core && !current.core) ||
+							(policy.communityPlugins && !current.communityPlugins));
+					const hydrationPending = this.settingsHydrationPending || expands;
+					await saveSettingsSyncConfiguration(this.app, {
+						policy: { ...policy },
+						hydrationPending,
+					});
+					this.settingsHydrationPending = hydrationPending;
+				} catch (error) {
+					if (
+						shouldResume &&
+						controller &&
+						composition &&
+						this.canRunSettingsScopeTransition(
+							lifecycle,
+							update,
+							controller,
+							composition,
+							pauseGeneration,
+						)
+					)
+						await this.resumeControllerIfOwned(controller, composition, true);
+					throw error;
+				}
+				if (!this.ownsSettingsUpdate(lifecycle, update))
+					throw new Error("Settings sync policy update is stale");
+				Object.assign(this.settingsValue.settingsSync, policy);
+				this.vaultSummary = null;
+				if (
+					shouldResume &&
+					controller &&
+					composition &&
+					this.canRunSettingsScopeTransition(
+						lifecycle,
+						update,
+						controller,
+						composition,
+						pauseGeneration,
+					)
+				) {
+					try {
+						const hydrated = await this.hydrateSettingsScope(composition, () =>
+							this.canRunSettingsScopeTransition(
+								lifecycle,
+								update,
+								controller,
+								composition,
+								pauseGeneration,
+							),
+						);
+						if (
+							hydrated &&
+							this.canRunSettingsScopeTransition(
+								lifecycle,
+								update,
+								controller,
+								composition,
+								pauseGeneration,
+							)
+						)
+							await composition.publication.scan();
+						if (
+							hydrated &&
+							this.canRunSettingsScopeTransition(
+								lifecycle,
+								update,
+								controller,
+								composition,
+								pauseGeneration,
+							)
+						)
+							await composition.publication.flush();
+					} catch (error) {
+						this.reportSyncFailure(error);
+					}
+				}
+				if (shouldResume && controller && composition) {
+					if (
+						this.canRunSettingsScopeTransition(
+							lifecycle,
+							update,
+							controller,
+							composition,
+							pauseGeneration,
+						)
+					)
+						await this.resumeControllerIfOwned(controller, composition, true);
+					else if (
+						this.ownsSettingsScopeTransition(
+							lifecycle,
+							update,
+							controller,
+							composition,
+							pauseGeneration,
+						) &&
+						this.isMobileSuspended()
+					)
+						this.pendingSettingsScopeResume = {
+							lifecycle,
+							update,
+							controller,
+							composition,
+							pauseGeneration,
+						};
+				}
+				this.settingsTab?.refreshStatus();
+			}),
+		);
+		this.settingsSaveTail = save.then(
+			() => undefined,
+			() => undefined,
+		);
+		return save;
+	}
+
 	/** Saves the mode change and rejects exit while captured event work remains. */
 	private changeCoexistenceMode(
 		lifecycle: number,
@@ -461,7 +739,7 @@ export default class AIBridgePlugin extends Plugin {
 					this.desktopSync?.isBusy)
 			)
 				throw new Error("Resolve pending coexistence work before exit");
-			await this.saveData({ ...this.settingsValue, coexistenceMode: enabled });
+			await this.saveSharedSettings({ coexistenceMode: enabled });
 			if (!this.ownsSettingsUpdate(lifecycle, update))
 				throw new Error("Coexistence setting update is stale");
 			this.settingsValue.coexistenceMode = enabled;
@@ -516,10 +794,14 @@ export default class AIBridgePlugin extends Plugin {
 		this.composition = this.createSyncComposition();
 		this.coexistence = new CoexistenceController(
 			this.journal,
-			new ObsidianTextVault(this.app.vault),
+			new ObsidianTextVault(
+				this.app.vault,
+				() => this.settingsValue.settingsSync,
+			),
 			() => this.settingsValue.coexistenceMode,
 			Date.now,
 			this.coexistenceEffectFence ?? undefined,
+			this.settingsValue.settingsSync,
 		);
 		/** Stops all sync effects while owner confirmation remains durable. */
 		const runCycle = async (): Promise<void> => {
@@ -538,6 +820,17 @@ export default class AIBridgePlugin extends Plugin {
 					if (this.isMobileSuspended() || this.isCoexistenceEffectBlocked())
 						return;
 				}
+				const hydrated = await this.hydrateSettingsScope(
+					composition,
+					() =>
+						this.composition === composition &&
+						!this.syncPaused &&
+						!this.syncRevoked &&
+						this.sessionStatus === "connected" &&
+						!this.isMobileSuspended() &&
+						!this.isCoexistenceEffectBlocked(),
+				);
+				if (!hydrated) return;
 				await composition.reconciliation.resume();
 				if (this.isMobileSuspended() || this.isCoexistenceEffectBlocked())
 					return;
@@ -581,8 +874,23 @@ export default class AIBridgePlugin extends Plugin {
 			isEffectBlocked: () => this.isCoexistenceEffectBlocked(),
 			onCaptureEvent: (event) =>
 				this.coexistence?.observe(event) ?? Promise.resolve(false),
-			onEvent: (event) =>
-				this.composition?.publication.observe(event) ?? Promise.resolve(),
+			settingsPolicy: this.settingsValue.settingsSync,
+			onEvent: async (event) => {
+				const composition = this.composition;
+				if (!composition) throw new Error("Sync composition is unavailable");
+				const hydrated = await this.hydrateSettingsScope(
+					composition,
+					() =>
+						this.composition === composition &&
+						!this.syncPaused &&
+						!this.syncRevoked &&
+						this.sessionStatus === "connected" &&
+						!this.isMobileSuspended() &&
+						!this.isCoexistenceEffectBlocked(),
+				);
+				if (!hydrated) throw new Error("Settings hydration waits for recovery");
+				await composition.publication.observe(event);
+			},
 			host: {
 				setTimeout: (callback, delay) => window.setTimeout(callback, delay),
 				clearTimeout: (handle) => window.clearTimeout(handle),
@@ -605,11 +913,13 @@ export default class AIBridgePlugin extends Plugin {
 				},
 			},
 			(error) => this.reportSyncFailure(error),
+			this.settingsValue.settingsSync,
 		);
 		this.visibilityHandler = () => {
-			this.runSyncAction(
-				() => this.desktopSync?.visibilityChanged() ?? Promise.resolve(),
-			);
+			this.runSyncAction(async () => {
+				await this.desktopSync?.visibilityChanged();
+				await this.resumeSettingsScopeAfterVisibility();
+			});
 		};
 		document.addEventListener("visibilitychange", this.visibilityHandler);
 		window.addEventListener("focus", this.visibilityHandler);
@@ -648,6 +958,7 @@ export default class AIBridgePlugin extends Plugin {
 					this.runSyncAction(() => this.handleRevocation());
 				},
 				isEffectBlocked: () => this.isCoexistenceEffectBlocked(),
+				settingsPolicy: this.settingsValue.settingsSync,
 				onConflictCopy: (path) =>
 					this.notice(`AI Bridge kept your version as ${path}`),
 			},
@@ -701,6 +1012,7 @@ export default class AIBridgePlugin extends Plugin {
 
 	/** Closes timer, event, and application owners before any session replacement. */
 	private releaseSyncOwners(): DesktopSyncController | null {
+		this.pendingSettingsScopeResume = null;
 		const controller = this.desktopSync;
 		controller?.close();
 		this.vaultEvents?.dispose();
@@ -780,7 +1092,12 @@ export default class AIBridgePlugin extends Plugin {
 		return this.app.vault
 			.getFiles()
 			.filter(
-				(file) => classifyEnrollmentPath(file.path, file.stat.size) === scope,
+				(file) =>
+					classifyEnrollmentPath(
+						file.path,
+						file.stat.size,
+						this.settingsValue.settingsSync,
+					) === scope,
 			)
 			.map((file) => file.path);
 	}

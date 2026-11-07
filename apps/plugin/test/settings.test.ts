@@ -17,6 +17,7 @@ interface CapturedButton {
 /** One rendered settings row and the controls attached to it. */
 interface CapturedToggle {
 	value: boolean;
+	disabled: boolean;
 	onChange: ((value: boolean) => Promise<void>) | null;
 }
 
@@ -166,10 +167,18 @@ vi.mock("obsidian", () => ({
 
 		/** Captures toggle state and asynchronous change handlers. */
 		addToggle(callback: (toggle: CapturedToggleControl) => void): this {
-			const captured: CapturedToggle = { value: false, onChange: null };
+			const captured: CapturedToggle = {
+				value: false,
+				disabled: false,
+				onChange: null,
+			};
 			const control: CapturedToggleControl = {
 				setValue: (value) => {
 					captured.value = value;
+					return control;
+				},
+				setDisabled: (disabled) => {
+					captured.disabled = disabled;
 					return control;
 				},
 				onChange: (handler) => {
@@ -228,6 +237,8 @@ interface CapturedTextControl {
 interface CapturedToggleControl {
 	/** Sets the synthetic toggle value. */
 	setValue(value: boolean): CapturedToggleControl;
+	/** Sets the synthetic disabled state. */
+	setDisabled(disabled: boolean): CapturedToggleControl;
 	/** Stores the callback for a user change. */
 	onChange(handler: (value: boolean) => Promise<void>): CapturedToggleControl;
 }
@@ -260,6 +271,12 @@ function createTab() {
 		serverUrl: "https://service.test",
 		deviceName: "Obsidian desktop",
 		coexistenceMode: false,
+		settingsSync: {
+			enabled: false,
+			appearance: true,
+			core: true,
+			communityPlugins: true,
+		},
 	};
 	let status: "connected" | "disconnected" = "connected";
 	let authorizationUrl: string | null = "https://auth.test/consent";
@@ -276,6 +293,13 @@ function createTab() {
 	const updates: string[] = [];
 	const deviceNameUpdates: string[] = [];
 	const coexistenceUpdates: boolean[] = [];
+	const settingsPolicyUpdates: Array<{
+		enabled: boolean;
+		appearance: boolean;
+		core: boolean;
+		communityPlugins: boolean;
+	}> = [];
+	let rejectSettingsPolicyUpdate = false;
 	let rejectCoexistenceUpdate = false;
 	let rejectUpdate = false;
 	let rejectDeviceNameUpdate = false;
@@ -300,6 +324,13 @@ function createTab() {
 				throw new Error("synthetic coexistence save failure");
 		},
 		() => status,
+		undefined,
+		undefined,
+		async (policy) => {
+			settingsPolicyUpdates.push({ ...policy });
+			if (rejectSettingsPolicyUpdate)
+				throw new Error("synthetic settings policy save failure");
+		},
 	);
 	tab.display();
 	return {
@@ -309,6 +340,10 @@ function createTab() {
 		updates,
 		deviceNameUpdates,
 		coexistenceUpdates,
+		settingsPolicyUpdates,
+		setRejectSettingsPolicyUpdate: (value: boolean) => {
+			rejectSettingsPolicyUpdate = value;
+		},
 		setRejectCoexistenceUpdate: (value: boolean) => {
 			rejectCoexistenceUpdate = value;
 		},
@@ -355,6 +390,44 @@ describe("AIBridgeSettingTab", () => {
 		expect(test.coexistenceUpdates).toEqual([true, true]);
 	});
 
+	it("defaults the settings master off and saves each category switch", async () => {
+		const test = createTab();
+		const master = host.controls.find(
+			(row) => row.name === "Sync settings categories",
+		);
+		const appearance = host.controls.find((row) => row.name === "Appearance");
+		const core = host.controls.find((row) => row.name === "Core");
+		const plugins = host.controls.find(
+			(row) => row.name === "Community plugins",
+		);
+		expect(master?.toggles[0]).toMatchObject({ value: false, disabled: false });
+		expect(appearance?.toggles[0]).toMatchObject({
+			value: true,
+			disabled: true,
+		});
+		expect(core?.toggles[0]).toMatchObject({ value: true, disabled: true });
+		expect(plugins?.toggles[0]).toMatchObject({ value: true, disabled: true });
+		await master?.toggles[0]?.onChange?.(true);
+		expect(test.settings.settingsSync.enabled).toBe(true);
+		expect(test.settingsPolicyUpdates[0]).toEqual({
+			enabled: true,
+			appearance: true,
+			core: true,
+			communityPlugins: true,
+		});
+	});
+
+	it("restores the settings master after a failed save", async () => {
+		const test = createTab();
+		const master = host.controls.find(
+			(row) => row.name === "Sync settings categories",
+		);
+		test.setRejectSettingsPolicyUpdate(true);
+		await master?.toggles[0]?.onChange?.(true);
+		expect(master?.toggles[0]?.value).toBe(false);
+		expect(test.settings.settingsSync.enabled).toBe(false);
+	});
+
 	it("renders a device name field for distinct device identity", () => {
 		createTab();
 		const deviceName = host.controls.find((row) => row.name === "Device name");
@@ -370,6 +443,10 @@ describe("AIBridgeSettingTab", () => {
 			"Device name",
 			"Coexistence mode",
 			"Device connection",
+			"Sync settings categories",
+			"Appearance",
+			"Core",
+			"Community plugins",
 		]);
 		expect(host.controls[3]?.buttons.map((button) => button.label)).toEqual([
 			"Connect",

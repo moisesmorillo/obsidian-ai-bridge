@@ -5,13 +5,19 @@ import {
 	DevicePayloadHashSchema,
 	type DeviceState,
 	MAX_PENDING_CONFLICT_COPIES,
+	PathSchema,
 	type PendingConflictCopy,
 	parseETag,
 	pathKey,
 } from "@obsidian-ai-bridge/protocol";
 import { CoexistenceEffectBlockedError } from "@plugin/sync/coexistence-effect-fence";
 import type { DeviceJournal } from "@plugin/sync/device-journal";
-import { classifyEnrollmentPath } from "@plugin/sync/enrollment-scope";
+import {
+	classifyEnrollmentPath,
+	DEFAULT_SETTINGS_SYNC_POLICY,
+	type SettingsSyncPolicy,
+	settingsConflictExtension,
+} from "@plugin/sync/enrollment-scope";
 import { UnsupportedRemoteTextError } from "@plugin/sync/remote-text";
 
 /** Application-owned guarded text and byte effects without Obsidian SDK types. */
@@ -22,10 +28,19 @@ export interface TextVault {
 	readBinary?(path: string): Promise<Uint8Array | null>;
 	/** Returns mtime and size from the host adapter for a binary race guard. */
 	stat?(path: string): Promise<{ mtime: number; size: number } | null>;
-	/** Creates exact bytes only when the exact path and path key are absent. */
-	createBinary?(path: string, bytes: Uint8Array): Promise<boolean>;
+	/** Guards byte creation against observed collisions. Settings adapters report races but cannot exclude unobserved writes. */
+	createBinary?(
+		path: string,
+		bytes: Uint8Array,
+		onSettingsRace?: (observed: Uint8Array | null) => Promise<void>,
+	): Promise<boolean>;
 	/** Replaces current bytes after the caller completes its host stat guard. */
-	modifyBinary?(path: string, bytes: Uint8Array): Promise<boolean>;
+	modifyBinary?(
+		path: string,
+		bytes: Uint8Array,
+		expected?: Uint8Array,
+		onSettingsRace?: (observed: Uint8Array | null) => Promise<void>,
+	): Promise<boolean>;
 	/** Moves exact observed binary bytes to Obsidian trash without decoding them. */
 	trashBinary?(path: string, expected: Uint8Array): Promise<boolean>;
 	/** Removes only a hash-verified file under the pre-apply recovery directory. */
@@ -78,6 +93,8 @@ export interface TextApplyOptions {
 	now?: () => number;
 	/** Rejects a new local write while a coexistence confirmation blocks effects. */
 	isEffectBlocked?: () => boolean;
+	/** Policy applied before remote bytes can enter local settings paths. */
+	settingsPolicy?: SettingsSyncPolicy;
 }
 
 /** Current or pinned remote authority returned for one requested epoch and revision. */
@@ -130,6 +147,8 @@ export class TextApplyEngine {
 	private readonly deviceName: string;
 	private readonly now: () => number;
 	private readonly isEffectBlocked: () => boolean;
+	/** Policy used to reject disabled settings paths at every apply boundary. */
+	private readonly settingsPolicy: SettingsSyncPolicy;
 	/** Host notice callback; failures cannot change durable apply effects. */
 	private readonly onConflictCopy: ((path: string) => void) | undefined;
 
@@ -143,6 +162,8 @@ export class TextApplyEngine {
 		this.deviceName = options.deviceName.trim();
 		this.now = options.now ?? Date.now;
 		this.isEffectBlocked = options.isEffectBlocked ?? (() => false);
+		this.settingsPolicy =
+			options.settingsPolicy ?? DEFAULT_SETTINGS_SYNC_POLICY;
 		this.onConflictCopy = options.onConflictCopy;
 		if (!this.deviceName) throw new Error("A friendly device name is required");
 	}
@@ -150,6 +171,7 @@ export class TextApplyEngine {
 	/** Validates and applies one immutable remote entry without discarding newer local bytes. */
 	apply(change: ChangeEntry, contentKind?: "text" | "blob"): Promise<void> {
 		const parsed = ChangeEntrySchema.parse(structuredClone(change));
+		if (this.isSettingsPathDisabled(parsed.path)) return Promise.resolve();
 		return this.serialize(async () => {
 			await this.pruneRecoveryCopies();
 			await this.applyWithFallback(parsed, contentKind);
@@ -167,6 +189,7 @@ export class TextApplyEngine {
 			| Extract<ResolvedPinnedBlob, { kind: "blob" }>,
 	): Promise<void> {
 		const observed = structuredClone(authority);
+		if (this.isSettingsPathDisabled(path)) return Promise.resolve();
 		return this.serialize(async () => {
 			const pending = this.activeJournal.snapshot().pending_apply[0];
 			if (pending) await this.applyWithFallback(pending.change);
@@ -482,7 +505,9 @@ export class TextApplyEngine {
 				throw new Error("Binary create precondition changed");
 			const collision = (await this.vault.list()).find(
 				(current) =>
-					current !== change.path && pathKey(current) === pathKey(change.path),
+					current !== change.path &&
+					PathSchema.safeParse(current).success &&
+					pathKey(current) === pathKey(change.path),
 			);
 			this.assertOpen();
 			if (collision) {
@@ -494,12 +519,24 @@ export class TextApplyEngine {
 			const createdPath = await this.effect(
 				[change.path],
 				async () =>
-					(await this.vault.createBinary?.(change.path, remote.bytes)) ?? false,
+					(await this.vault.createBinary?.(
+						change.path,
+						remote.bytes,
+						(observed) =>
+							this.preserveSettingsWriteRace(change, [
+								remote.bytes,
+								...(observed ? [observed] : []),
+							]),
+					)) ?? false,
 				[{ path: change.path, hash: change.hash }],
 			);
 			const created = await this.vault.readBinary(change.path);
 			this.assertOpen();
-			if (created && (await digestBytes(created)) === change.hash) {
+			if (
+				createdPath &&
+				created &&
+				(await digestBytes(created)) === change.hash
+			) {
 				await this.activeJournal.completeApply(change.path, {
 					deleted: false,
 					rev: identity.rev,
@@ -507,11 +544,15 @@ export class TextApplyEngine {
 				});
 				return;
 			}
+			if (created && change.path.startsWith(".obsidian/"))
+				await this.preserveSettingsWriteRace(change, [remote.bytes, created]);
 			await this.activeJournal.clearExpectedWrite(change.path);
 			this.assertOpen();
 			const lateCollision = (await this.vault.list()).find(
 				(current) =>
-					current !== change.path && pathKey(current) === pathKey(change.path),
+					current !== change.path &&
+					PathSchema.safeParse(current).success &&
+					pathKey(current) === pathKey(change.path),
 			);
 			this.assertOpen();
 			if (!createdPath && lateCollision) {
@@ -537,6 +578,14 @@ export class TextApplyEngine {
 			const changed = await this.vault.readBinary(change.path);
 			this.assertOpen();
 			if (!changed) throw new Error("Changed binary disappeared during apply");
+			if (change.path.startsWith(".obsidian/")) {
+				await this.preserveSettingsWriteRace(change, [
+					local,
+					changed,
+					remote.bytes,
+				]);
+				throw new Error("Settings changed during observation");
+			}
 			observed = changed;
 		}
 		const observedHash = await digestBytes(observed);
@@ -653,15 +702,33 @@ export class TextApplyEngine {
 			!latest ||
 			(await digestBytes(latest)) !== observedHash ||
 			!sameStat(beforeWrite, await this.vault.stat(change.path))
-		)
+		) {
+			if (change.path.startsWith(".obsidian/"))
+				await this.preserveSettingsWriteRace(change, [
+					local,
+					observed,
+					remote.bytes,
+					...(latest ? [latest] : []),
+				]);
 			throw new Error("Binary changed again during conflict preservation");
+		}
 		if (!this.vault.modifyBinary)
 			throw new Error("Binary write capability is unavailable");
 		await this.activeJournal.setExpectedWrite(change.path, change.hash);
 		const written = await this.effect(
 			[change.path],
 			async () =>
-				(await this.vault.modifyBinary?.(change.path, remote.bytes)) ?? false,
+				(await this.vault.modifyBinary?.(
+					change.path,
+					remote.bytes,
+					observed,
+					(current) =>
+						this.preserveSettingsWriteRace(change, [
+							observed,
+							remote.bytes,
+							...(current ? [current] : []),
+						]),
+				)) ?? false,
 			[{ path: change.path, hash: change.hash }],
 		);
 		if (!written) {
@@ -671,6 +738,12 @@ export class TextApplyEngine {
 		const readBack = await this.vault.readBinary(change.path);
 		this.assertOpen();
 		if (!readBack || (await digestBytes(readBack)) !== change.hash) {
+			if (change.path.startsWith(".obsidian/"))
+				await this.preserveSettingsWriteRace(change, [
+					observed,
+					remote.bytes,
+					...(readBack ? [readBack] : []),
+				]);
 			await this.activeJournal.clearExpectedWrite(change.path);
 			throw new Error("Binary read-back did not match remote bytes");
 		}
@@ -684,6 +757,41 @@ export class TextApplyEngine {
 				change.path,
 				"Local binary bytes were preserved as a conflict copy",
 			);
+	}
+
+	/** Saves every observed settings version outside config before reporting a guarded-write race. */
+	private async preserveSettingsWriteRace(
+		change: ChangeEntry,
+		versions: Uint8Array[],
+	): Promise<void> {
+		if (!change.path.startsWith(".obsidian/")) return;
+		await this.activeJournal.recordAttention(
+			change.path,
+			"Settings changed during guarded write. Observed versions need review",
+		);
+		for (const bytes of versions) {
+			const hash = await digestBytes(bytes);
+			const path = recoveryConflictName(
+				change.path,
+				this.deviceName,
+				parseETag(change.etag).rev,
+				change.at,
+				hash,
+			);
+			if (!path)
+				throw new Error("Settings conflict path exceeds the path limit");
+			const existing = await this.vault.readBinary?.(path);
+			this.assertOpen();
+			if (existing && (await digestBytes(existing)) === hash) continue;
+			const created = await this.effect(
+				[path],
+				() => this.vault.createBinary?.(path, bytes) ?? Promise.resolve(false),
+			);
+			const saved = await this.vault.readBinary?.(path);
+			if (!created || !saved || (await digestBytes(saved)) !== hash)
+				throw new Error("Settings race conflict copy did not verify");
+			this.notifyConflictCopy(path);
+		}
 	}
 
 	/** Preserves local blob bytes for inline authority and resumes existing copy identities without naming them again. */
@@ -764,6 +872,14 @@ export class TextApplyEngine {
 		await this.resumePending(named);
 	}
 
+	/** Holds remote settings changes while their local category is disabled. */
+	private isSettingsPathDisabled(path: string): boolean {
+		return (
+			path.startsWith(".obsidian/") &&
+			classifyEnrollmentPath(path, 0, this.settingsPolicy) === "excluded"
+		);
+	}
+
 	/** Selects local byte preservation independently of remote kind before guarded put or delete effects. */
 	private async applyPathChange(
 		change: Extract<ChangeEntry, { op: "put" | "delete" }>,
@@ -774,7 +890,11 @@ export class TextApplyEngine {
 		const remoteRev = parseETag(change.etag).rev;
 		const size = await this.vault.size(change.path);
 		this.assertOpen();
-		const admission = classifyEnrollmentPath(change.path, size ?? 0);
+		const admission = classifyEnrollmentPath(
+			change.path,
+			size ?? 0,
+			this.settingsPolicy,
+		);
 		if (admission === "unsupported") {
 			await this.attend(
 				change.path,
@@ -1273,7 +1393,11 @@ export class TextApplyEngine {
 				const destinationSize = await this.vault.size(change.path);
 				this.assertOpen();
 				if (
-					classifyEnrollmentPath(change.path, destinationSize ?? 0) === "blob"
+					classifyEnrollmentPath(
+						change.path,
+						destinationSize ?? 0,
+						this.settingsPolicy,
+					) === "blob"
 				) {
 					written = await this.replacePreservedBytesWithText(
 						change.path,
@@ -1306,15 +1430,32 @@ export class TextApplyEngine {
 						? await this.effect(
 								[change.path],
 								async () =>
-									this.vault.createBinary?.(change.path, remote.bytes) ?? false,
+									this.vault.createBinary?.(
+										change.path,
+										remote.bytes,
+										(observed) =>
+											this.preserveSettingsWriteRace(change, [
+												remote.bytes,
+												...(observed ? [observed] : []),
+											]),
+									) ?? false,
 								[{ path: change.path, hash: change.hash }],
 							)
 						: this.vault.modifyBinary
 							? await this.effect(
 									[change.path],
 									async () =>
-										this.vault.modifyBinary?.(change.path, remote.bytes) ??
-										false,
+										this.vault.modifyBinary?.(
+											change.path,
+											remote.bytes,
+											destination,
+											(observed) =>
+												this.preserveSettingsWriteRace(change, [
+													destination,
+													remote.bytes,
+													...(observed ? [observed] : []),
+												]),
+										) ?? false,
 									[{ path: change.path, hash: change.hash }],
 								)
 							: false;
@@ -1327,6 +1468,12 @@ export class TextApplyEngine {
 				(await digestBytes(writtenBytes)) !== change.hash
 			) {
 				await this.activeJournal.clearExpectedWrite(change.path);
+				if (change.path.startsWith(".obsidian/") && remote.kind === "blob")
+					await this.preserveSettingsWriteRace(change, [
+						remote.bytes,
+						...(destination ? [destination] : []),
+						...(writtenBytes ? [writtenBytes] : []),
+					]);
 				throw new Error("Binary rename destination was not confirmed");
 			}
 		}
@@ -1415,9 +1562,17 @@ export class TextApplyEngine {
 		this.assertOpen();
 		if (
 			(sourcePending &&
-				classifyEnrollmentPath(change.from_path, sourceSize ?? 0) === "blob") ||
+				classifyEnrollmentPath(
+					change.from_path,
+					sourceSize ?? 0,
+					this.settingsPolicy,
+				) === "blob") ||
 			(destinationPending &&
-				classifyEnrollmentPath(change.path, destinationSize ?? 0) === "blob")
+				classifyEnrollmentPath(
+					change.path,
+					destinationSize ?? 0,
+					this.settingsPolicy,
+				) === "blob")
 		) {
 			await this.applyBlobRename(change, state);
 			return;
@@ -1799,11 +1954,16 @@ export class TextApplyEngine {
 	private async resumePending(
 		pending: DeviceState["pending_apply"][number],
 	): Promise<void> {
+		if (this.isSettingsPathDisabled(pending.change.path)) return;
 		if (pending.change.op !== "rename") {
 			const size = await this.vault.size(pending.change.path);
 			this.assertOpen();
 			if (
-				classifyEnrollmentPath(pending.change.path, size ?? 0) === "unsupported"
+				classifyEnrollmentPath(
+					pending.change.path,
+					size ?? 0,
+					this.settingsPolicy,
+				) === "unsupported"
 			) {
 				await this.attend(
 					pending.change.path,
@@ -2873,7 +3033,9 @@ export class TextApplyEngine {
 		return (
 			(await this.vault.list()).find(
 				(candidate) =>
-					candidate !== path && pathKey(candidate) === pathKey(path),
+					candidate !== path &&
+					PathSchema.safeParse(candidate).success &&
+					pathKey(candidate) === pathKey(path),
 			) ?? null
 		);
 	}
@@ -3040,12 +3202,23 @@ function conflictName(
 	rev: number,
 	timestamp: number,
 ): string {
-	const slash = path.lastIndexOf("/");
-	const directory = slash < 0 ? "" : path.slice(0, slash + 1);
-	const filename = slash < 0 ? path : path.slice(slash + 1);
+	const isSettingsPath = path.startsWith(".obsidian/");
+	const conflictSource = isSettingsPath
+		? path.slice(".obsidian/".length).replaceAll("/", " — ")
+		: path;
+	const slash = conflictSource.lastIndexOf("/");
+	const directory = isSettingsPath
+		? "AI Bridge settings conflicts/"
+		: slash < 0
+			? ""
+			: conflictSource.slice(0, slash + 1);
+	const filename = slash < 0 ? conflictSource : conflictSource.slice(slash + 1);
 	const dot = filename.lastIndexOf(".");
 	const stem = dot <= 0 ? filename : filename.slice(0, dot);
-	const extension = dot <= 0 ? "" : filename.slice(dot);
+	const sourceExtension = dot <= 0 ? "" : filename.slice(dot);
+	const extension = isSettingsPath
+		? settingsConflictExtension(sourceExtension)
+		: sourceExtension;
 	const time = new Date(timestamp)
 		.toISOString()
 		.slice(0, 16)

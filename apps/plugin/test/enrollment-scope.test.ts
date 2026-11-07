@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { classifyEnrollmentPath } from "../src/sync/enrollment-scope";
+import {
+	classifyEnrollmentPath,
+	DEFAULT_SETTINGS_SYNC_POLICY,
+} from "../src/sync/enrollment-scope";
 
 describe("classifyEnrollmentPath", () => {
 	it.each([
@@ -44,5 +47,85 @@ describe("classifyEnrollmentPath", () => {
 		["../outside.md", 24, "excluded"],
 	] as const)("classifies %s", (path, size, expected) => {
 		expect(classifyEnrollmentPath(path, size)).toBe(expected);
+	});
+});
+
+describe("settings category enrollment", () => {
+	it("keeps selected settings excluded while the master switch is off", () => {
+		expect(
+			classifyEnrollmentPath(".obsidian/appearance.json", 12, {
+				...DEFAULT_SETTINGS_SYNC_POLICY,
+				appearance: true,
+			}),
+		).toBe("excluded");
+	});
+
+	it.each([
+		[".obsidian/appearance.json", "appearance"],
+		[".obsidian/themes/Minimal/theme.css", "appearance"],
+		[".obsidian/snippets/custom.css", "appearance"],
+		[".obsidian/app.json", "core"],
+		[".obsidian/core-plugins.json", "core"],
+		[".obsidian/hotkeys.json", "core"],
+		[".obsidian/types.json", "core"],
+		[".obsidian/community-plugins.json", "communityPlugins"],
+		[".obsidian/plugins/tasks/manifest.json", "communityPlugins"],
+		[".obsidian/plugins/tasks/main.js", "communityPlugins"],
+		[".obsidian/plugins/tasks/styles.css", "communityPlugins"],
+		[".obsidian/plugins/tasks/data.json", "communityPlugins"],
+	] as const)(
+		"admits %s only when its %s category is enabled",
+		(path, category) => {
+			const policy = {
+				...DEFAULT_SETTINGS_SYNC_POLICY,
+				enabled: true,
+				[category]: true,
+			};
+			expect(classifyEnrollmentPath(path, 12, policy)).toBe("blob");
+			expect(
+				classifyEnrollmentPath(path, 12, {
+					...policy,
+					[category]: false,
+				}),
+			).toBe("excluded");
+		},
+	);
+
+	it.each([
+		".obsidian/themes/Example/.DS_Store",
+		".obsidian/themes/Example/font.icloud",
+		".obsidian/plugins/AI-BRIDGE/main.js",
+		".obsidian/PLUGINS/AI-BRIDGE/data.json",
+		".obsidian/workspace.json",
+		".obsidian/workspace-mobile.json",
+		".obsidian/plugins/ai-bridge/data.json",
+		".obsidian/cache/cache.db",
+		".obsidian/cache2/cache.db",
+		".obsidian/graph.json",
+		".obsidian/plugins/tasks/node_modules/pkg/main.js",
+	] as const)("always excludes %s", (path) => {
+		expect(
+			classifyEnrollmentPath(path, 12, {
+				...DEFAULT_SETTINGS_SYNC_POLICY,
+				enabled: true,
+				appearance: true,
+				core: true,
+				communityPlugins: true,
+			}),
+		).toBe("excluded");
+	});
+
+	it("preserves exact JavaScript and CSS bytes within the blob limit", () => {
+		const policy = {
+			...DEFAULT_SETTINGS_SYNC_POLICY,
+			enabled: true,
+			communityPlugins: true,
+		};
+		expect(
+			classifyEnrollmentPath(".obsidian/plugins/x/main.js", 25_000_000, policy),
+		).toBe("blob");
+		expect(
+			classifyEnrollmentPath(".obsidian/plugins/x/main.js", 25_000_001, policy),
+		).toBe("unsupported");
 	});
 });

@@ -11,7 +11,11 @@ import {
 } from "@obsidian-ai-bridge/protocol";
 import { CoexistenceEffectBlockedError } from "@plugin/sync/coexistence-effect-fence";
 import type { DeviceJournal } from "@plugin/sync/device-journal";
-import { classifyEnrollmentPath } from "@plugin/sync/enrollment-scope";
+import {
+	classifyEnrollmentPath,
+	DEFAULT_SETTINGS_SYNC_POLICY,
+	type SettingsSyncPolicy,
+} from "@plugin/sync/enrollment-scope";
 import {
 	SyncTransportError,
 	UnsupportedRemoteTextError,
@@ -81,6 +85,7 @@ export class ReconciliationController {
 	private tail: Promise<void> = Promise.resolve();
 	private closed = false;
 	private lastHeadValue: { epoch: string; head_seq: number } | null = null;
+	private readonly settingsPolicy: SettingsSyncPolicy;
 
 	/** Latest validated feed head. Null means no successful feed response exists. */
 	get lastHead(): { epoch: string; head_seq: number } | null {
@@ -94,7 +99,10 @@ export class ReconciliationController {
 		private readonly localVault: TextVault,
 		private readonly remote: ReconciliationRemote,
 		private readonly isEffectBlocked: () => boolean = () => false,
-	) {}
+		settingsPolicy: SettingsSyncPolicy = DEFAULT_SETTINGS_SYNC_POLICY,
+	) {
+		this.settingsPolicy = settingsPolicy;
+	}
 
 	/** Enrolls local-only text and hydrates every confirmed remote manifest row. */
 	enroll(): Promise<void> {
@@ -464,13 +472,17 @@ export class ReconciliationController {
 	): Promise<boolean> {
 		if (this.hasUnresolvedSentOperation([entry.path], rejectedOperationKey))
 			return false;
-		const remoteAdmission = classifyEnrollmentPath(entry.path, 0);
+		const remoteAdmission = classifyEnrollmentPath(
+			entry.path,
+			0,
+			this.settingsPolicy,
+		);
 		if (remoteAdmission === "excluded") return true;
 		const localSize = await this.localVault.size(entry.path);
 		const localAdmission =
 			localSize === null
 				? remoteAdmission
-				: classifyEnrollmentPath(entry.path, localSize);
+				: classifyEnrollmentPath(entry.path, localSize, this.settingsPolicy);
 		if (localAdmission === "excluded") return true;
 		if (localAdmission === "unsupported") {
 			await this.journal.recordAttention(
@@ -553,7 +565,7 @@ export class ReconciliationController {
 		const size = await this.localVault.size(path);
 		this.assertOpen();
 		if (size === null) return;
-		const admission = classifyEnrollmentPath(path, size);
+		const admission = classifyEnrollmentPath(path, size, this.settingsPolicy);
 		if (admission === "excluded") return;
 		if (admission === "unsupported") {
 			await this.journal.recordAttention(
@@ -757,7 +769,10 @@ export class ReconciliationController {
 		for (const entry of page.entries) {
 			this.assertOpen();
 			if (entry.seq <= (this.journal.snapshot().cursor ?? 0)) continue;
-			if (classifyEnrollmentPath(entry.path, 0) === "excluded") {
+			if (
+				classifyEnrollmentPath(entry.path, 0, this.settingsPolicy) ===
+				"excluded"
+			) {
 				await this.journal.setCursor(state.epoch, entry.seq);
 				continue;
 			}
@@ -866,7 +881,11 @@ export class ReconciliationController {
 		contentKind?: "text" | "blob",
 	): Promise<void> {
 		const size = await this.localVault.size(change.path);
-		const admission = classifyEnrollmentPath(change.path, size ?? 0);
+		const admission = classifyEnrollmentPath(
+			change.path,
+			size ?? 0,
+			this.settingsPolicy,
+		);
 		if (admission === "excluded") return;
 		if (admission === "unsupported") {
 			await this.journal.skipApplyForAttention(

@@ -11,7 +11,11 @@ import {
 } from "@obsidian-ai-bridge/protocol";
 import { CoexistenceEffectBlockedError } from "@plugin/sync/coexistence-effect-fence";
 import type { DeviceJournal } from "@plugin/sync/device-journal";
-import { classifyEnrollmentPath } from "@plugin/sync/enrollment-scope";
+import {
+	classifyEnrollmentPath,
+	DEFAULT_SETTINGS_SYNC_POLICY,
+	type SettingsSyncPolicy,
+} from "@plugin/sync/enrollment-scope";
 import {
 	type DeleteResponseDiagnostic,
 	SyncTransportError,
@@ -108,6 +112,8 @@ export interface PublicationOptions {
 	): void;
 	/** Replays feed rows and persists accepted cursors. A direct rename-source read does not advance the cursor. */
 	recoverPrecondition(operation: PendingOperation): Promise<void>;
+	/** One device-local category policy shared by every admission site. */
+	settingsPolicy?: SettingsSyncPolicy;
 }
 
 /** Serializes startup detection, live event admission, immutable sends, and safe restore. */
@@ -150,7 +156,11 @@ export class PublicationController {
 				const size = await this.vault.size(path);
 				this.assertOpen();
 				if (size === null) continue;
-				const admission = classifyEnrollmentPath(path, size);
+				const admission = classifyEnrollmentPath(
+					path,
+					size,
+					this.options.settingsPolicy ?? DEFAULT_SETTINGS_SYNC_POLICY,
+				);
 				if (admission === "excluded") continue;
 				if (admission === "unsupported") {
 					await this.journal.recordAttention(
@@ -222,6 +232,14 @@ export class PublicationController {
 			}
 			for (const [path, base] of Object.entries(state.base)) {
 				if (this.isEffectBlocked()) return;
+				if (
+					classifyEnrollmentPath(
+						path,
+						0,
+						this.options.settingsPolicy ?? DEFAULT_SETTINGS_SYNC_POLICY,
+					) === "excluded"
+				)
+					continue;
 				if (base.deleted || canonicalLocalPaths.has(pathKey(path))) continue;
 				if (
 					state.pending_ops.some(
@@ -255,12 +273,23 @@ export class PublicationController {
 		return this.serialize(async () => {
 			this.assertOpen();
 			if (this.isEffectBlocked()) return;
-			if (classifyEnrollmentPath(parsed.path, 0) === "excluded") return;
+			if (
+				classifyEnrollmentPath(
+					parsed.path,
+					0,
+					this.options.settingsPolicy ?? DEFAULT_SETTINGS_SYNC_POLICY,
+				) === "excluded"
+			)
+				return;
 			if (parsed.type === "create" || parsed.type === "modify") {
 				const size = await this.vault.size(parsed.path);
 				this.assertOpen();
 				if (size === null) return;
-				const admission = classifyEnrollmentPath(parsed.path, size);
+				const admission = classifyEnrollmentPath(
+					parsed.path,
+					size,
+					this.options.settingsPolicy ?? DEFAULT_SETTINGS_SYNC_POLICY,
+				);
 				if (admission === "excluded") return;
 				if (admission === "unsupported") {
 					await this.journal.recordAttention(
@@ -318,7 +347,11 @@ export class PublicationController {
 			if (parsed.type === "rename") {
 				const size = await this.vault.size(parsed.to);
 				this.assertOpen();
-				const admission = classifyEnrollmentPath(parsed.to, size ?? 0);
+				const admission = classifyEnrollmentPath(
+					parsed.to,
+					size ?? 0,
+					this.options.settingsPolicy ?? DEFAULT_SETTINGS_SYNC_POLICY,
+				);
 				if (admission === "excluded") return;
 				if (admission === "unsupported") {
 					await this.journal.recordAttention(
@@ -408,8 +441,8 @@ export class PublicationController {
 		});
 	}
 
-	/** Sends currently eligible operations in order without waiting through retry delays. */
-	flush(): Promise<void> {
+	/** Sends eligible operations without retry waits. Hydration recovery can restrict dispatch to immutable sent work. */
+	flush(options: { sentOnly?: boolean } = {}): Promise<void> {
 		return this.serialize(async () => {
 			this.assertOpen();
 			if (this.isEffectBlocked()) return;
@@ -419,6 +452,7 @@ export class PublicationController {
 				const operations = this.journal.snapshot().pending_ops;
 				const operation = operations.find((item) => item.key === key);
 				if (!operation || operation.state === "resolved") continue;
+				if (options.sentOnly && operation.state !== "sent") continue;
 				const affected =
 					operation.op === "rename"
 						? [operation.path, operation.to]
@@ -431,6 +465,11 @@ export class PublicationController {
 					}
 				if (unavailable || this.isEffectBlocked()) break;
 				if ((operation.retry_at ?? 0) > this.options.now()) continue;
+				if (
+					operation.state === "queued" &&
+					this.hasDisabledSettingsPath(operation)
+				)
+					continue;
 				const index = operations.findIndex((item) => item.key === key);
 				if (
 					operations
@@ -461,6 +500,19 @@ export class PublicationController {
 				if (this.isEffectBlocked() || !(await this.send(operation))) break;
 			}
 		});
+	}
+
+	/** Holds an unsent settings mutation until its category is enabled again. */
+	private hasDisabledSettingsPath(operation: PendingOperation): boolean {
+		const policy = this.options.settingsPolicy ?? DEFAULT_SETTINGS_SYNC_POLICY;
+		return [
+			operation.path,
+			...(operation.op === "rename" ? [operation.to] : []),
+		].some(
+			(path) =>
+				path.startsWith(".obsidian/") &&
+				classifyEnrollmentPath(path, 0, policy) === "excluded",
+		);
 	}
 
 	/** Stops new event work and blocks later effects after awaits. It cannot cancel an effect already started. */
@@ -552,7 +604,23 @@ export class PublicationController {
 		epoch: string,
 	): Promise<PublicationReceipt> {
 		if (operation.op === "put") {
-			if (classifyEnrollmentPath(operation.path, bytes.byteLength) === "blob") {
+			const policy =
+				this.options.settingsPolicy ?? DEFAULT_SETTINGS_SYNC_POLICY;
+			const currentAdmission = classifyEnrollmentPath(
+				operation.path,
+				bytes.byteLength,
+				policy,
+			);
+			const sentSettingsAdmission =
+				operation.state === "sent"
+					? classifyEnrollmentPath(operation.path, bytes.byteLength, {
+							enabled: true,
+							appearance: true,
+							core: true,
+							communityPlugins: true,
+						})
+					: "excluded";
+			if (currentAdmission === "blob" || sentSettingsAdmission === "blob") {
 				if (!this.remote.putBlob)
 					throw new Error(
 						"Blob publication is not supported by this transport",
@@ -668,7 +736,11 @@ export class PublicationController {
 		const admission =
 			currentSize === null
 				? "text"
-				: classifyEnrollmentPath(operation.path, currentSize);
+				: classifyEnrollmentPath(
+						operation.path,
+						currentSize,
+						this.options.settingsPolicy ?? DEFAULT_SETTINGS_SYNC_POLICY,
+					);
 		if (admission === "unsupported") {
 			await this.journal.recordAttention(
 				operation.path,
@@ -1039,7 +1111,11 @@ export class PublicationController {
 		bytes: Uint8Array,
 	): Promise<void> {
 		this.assertOpen();
-		const admission = classifyEnrollmentPath(path, bytes.byteLength);
+		const admission = classifyEnrollmentPath(
+			path,
+			bytes.byteLength,
+			this.options.settingsPolicy ?? DEFAULT_SETTINGS_SYNC_POLICY,
+		);
 		if (admission === "unsupported") {
 			await this.journal.recordAttention(
 				path,
@@ -1119,7 +1195,11 @@ export class PublicationController {
 		const size = await this.vault.size(path);
 		this.assertOpen();
 		if (size === null) return null;
-		const admission = classifyEnrollmentPath(path, size);
+		const admission = classifyEnrollmentPath(
+			path,
+			size,
+			this.options.settingsPolicy ?? DEFAULT_SETTINGS_SYNC_POLICY,
+		);
 		if (admission === "excluded") return null;
 		if (admission === "unsupported") {
 			await this.journal.recordAttention(

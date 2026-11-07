@@ -4,6 +4,10 @@ import { SyncTransport } from "@plugin/infrastructure/sync-transport";
 import { ObsidianTextVault } from "@plugin/infrastructure/text-vault";
 import { VaultEventAdapter } from "@plugin/infrastructure/vault-events";
 import type { DeviceJournal } from "@plugin/sync/device-journal";
+import {
+	DEFAULT_SETTINGS_SYNC_POLICY,
+	type SettingsSyncPolicy,
+} from "@plugin/sync/enrollment-scope";
 import { PublicationController } from "@plugin/sync/publication";
 import { ReconciliationController } from "@plugin/sync/reconciliation";
 import type { DeleteResponseDiagnostic } from "@plugin/sync/remote-text";
@@ -22,6 +26,8 @@ export interface CreatePublicationOptions {
 	onRevoked?(): void;
 	/** Blocks new publication and local apply effects during owner confirmation. */
 	isEffectBlocked?(): boolean;
+	/** Shared per-device policy for all settings path admission sites. */
+	settingsPolicy?: SettingsSyncPolicy;
 	/** Presents the path of each newly created and verified conflict copy. */
 	onConflictCopy?(path: string): void;
 	/** Captures safe DELETE response classes, or clears stale metadata before a retry. */
@@ -55,10 +61,12 @@ export function createPublication(
 		options.onRevoked,
 		options.onDeleteResponseDiagnostic,
 	);
-	const textVault = new ObsidianTextVault(vault);
+	const settingsPolicy = options.settingsPolicy ?? DEFAULT_SETTINGS_SYNC_POLICY;
+	const textVault = new ObsidianTextVault(vault, () => settingsPolicy);
 	const applyEngine = new TextApplyEngine(journal, textVault, remote, {
 		deviceName,
 		isEffectBlocked: options.isEffectBlocked,
+		settingsPolicy,
 		onConflictCopy: options.onConflictCopy,
 	});
 	const reconciliation = new ReconciliationController(
@@ -67,6 +75,7 @@ export function createPublication(
 		textVault,
 		remote,
 		options.isEffectBlocked,
+		settingsPolicy,
 	);
 	const publication = new PublicationController(journal, textVault, remote, {
 		applyEngine,
@@ -75,9 +84,15 @@ export function createPublication(
 			reconciliation.recoverPrecondition(operation),
 		onDeleteResponseDiagnostic: options.onDeleteResponseDiagnostic,
 		isEffectBlocked: options.isEffectBlocked,
+		settingsPolicy,
 	});
 	const events = options.registerEvents
-		? new VaultEventAdapter(vault, publication, options.onEventError)
+		? new VaultEventAdapter(
+				vault,
+				publication,
+				options.onEventError,
+				settingsPolicy,
+			)
 		: null;
 	let disposed = false;
 	return {

@@ -1,5 +1,10 @@
 import { TFile } from "@plugin/obsidian-api";
 import type { PluginOriginProof } from "@plugin/sync/desktop-sync";
+import {
+	classifyEnrollmentPath,
+	DEFAULT_SETTINGS_SYNC_POLICY,
+	type SettingsSyncPolicy,
+} from "@plugin/sync/enrollment-scope";
 import type { PublicationEvent } from "@plugin/sync/publication";
 import type { EventRef, TAbstractFile, Vault } from "obsidian";
 
@@ -270,6 +275,19 @@ function eventKey(event: PublicationEvent): string {
 		: JSON.stringify([event.type, event.path]);
 }
 
+/** Registers the raw host event, whose callback supplies one affected path. */
+function registerRawListener(
+	vault: Vault,
+	callback: (path: unknown) => void,
+): EventRef {
+	// SAFETY: Vault events inherit Events.on(string), even though the public Vault overload omits raw.
+	const rawEvents = vault as unknown as {
+		/** Registers the raw path callback through the inherited string event listener. */
+		on(name: string, callback: (...data: unknown[]) => unknown): EventRef;
+	};
+	return rawEvents.on("raw", (path) => callback(path));
+}
+
 /** Routes explicit Obsidian file events into one lifecycle admission queue. */
 export class VaultEventAdapter {
 	private readonly references: EventRef[] = [];
@@ -280,6 +298,7 @@ export class VaultEventAdapter {
 		private readonly vault: Vault,
 		private readonly observer: VaultEventObserver,
 		private readonly onError: (error: unknown) => void,
+		private readonly settingsPolicy: SettingsSyncPolicy = DEFAULT_SETTINGS_SYNC_POLICY,
 	) {
 		registerAdapter(vault);
 		this.references.push(
@@ -295,6 +314,7 @@ export class VaultEventAdapter {
 			vault.on("rename", (file, oldPath) =>
 				this.send({ type: "rename", path: oldPath, to: file.path }, file),
 			),
+			registerRawListener(vault, (path) => this.sendRawSettingsEvent(path)),
 		);
 	}
 
@@ -304,6 +324,31 @@ export class VaultEventAdapter {
 		this.closed = true;
 		for (const reference of this.references) this.vault.offref(reference);
 		unregisterAdapter(this.vault);
+	}
+
+	/** Captures existing settings files from raw events because Vault indexing omits them. */
+	private sendRawSettingsEvent(path: unknown): void {
+		if (
+			this.closed ||
+			typeof path !== "string" ||
+			classifyEnrollmentPath(path, 0, this.settingsPolicy) !== "blob"
+		)
+			return;
+		const event: PublicationEvent = { type: "modify", path };
+		if (trackerFor(this.vault).markers.has(eventKey(event))) return;
+		void this.vault.adapter
+			.stat(path)
+			.then((stat) => {
+				if (
+					this.closed ||
+					stat?.type !== "file" ||
+					classifyEnrollmentPath(path, stat.size, this.settingsPolicy) !==
+						"blob"
+				)
+					return;
+				return this.observer.observe(event);
+			})
+			.catch(this.onError);
 	}
 
 	/** Reports asynchronous event failures to the composition owner without hiding them. */

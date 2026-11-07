@@ -737,9 +737,78 @@ describe("VaultEventAdapter", () => {
 		expect(journal.snapshot().pending_ops).toHaveLength(3);
 
 		adapter.dispose();
-		expect(removed).toHaveLength(4);
+		expect(removed).toHaveLength(5);
 		lifecycle.close();
 		publication.close();
 		clock.mockRestore();
+	});
+
+	it("captures selected unindexed settings changes from safe raw events", async () => {
+		const handlers = new Map<string, (...args: unknown[]) => void>();
+		const files = new Map<string, { type: string; size: number }>([
+			[".obsidian/app.json", { type: "file", size: 8 }],
+		]);
+		const statFailures = new Set<string>();
+		const statPaths: string[] = [];
+		const vault = {
+			/** Captures named and raw callbacks for safe settings event tests. */
+			on(event: string, callback: (...args: unknown[]) => void) {
+				handlers.set(event, callback);
+				return { event } as EventRef;
+			},
+			offref: () => undefined,
+			adapter: {
+				stat: async (path: string) => {
+					statPaths.push(path);
+					if (statFailures.has(path)) throw new Error("synthetic stat failure");
+					return files.get(path) ?? null;
+				},
+			},
+		} as unknown as Vault;
+		const observed: string[] = [];
+		const errors: unknown[] = [];
+		const adapter = new VaultEventAdapter(
+			vault,
+			{
+				observe: async (event) => {
+					observed.push(`${event.type}:${event.path}`);
+				},
+			},
+			(error) => errors.push(error),
+			{
+				enabled: true,
+				appearance: false,
+				core: true,
+				communityPlugins: false,
+			},
+		);
+
+		handlers.get("raw")?.(".obsidian/app.json");
+		await vi.waitFor(() =>
+			expect(observed).toEqual(["modify:.obsidian/app.json"]),
+		);
+		expect(statPaths).toEqual([".obsidian/app.json"]);
+		handlers.get("raw")?.(".obsidian/hotkeys.json");
+		handlers.get("raw")?.(".obsidian/workspace.json");
+		await Promise.resolve();
+		expect(observed).toEqual(["modify:.obsidian/app.json"]);
+		expect(statPaths).toEqual([".obsidian/app.json", ".obsidian/hotkeys.json"]);
+		await withPluginVaultMutation(
+			vault,
+			{ type: "modify", path: ".obsidian/app.json" },
+			async () => handlers.get("raw")?.(".obsidian/app.json"),
+			{ kind: "binary", value: new Uint8Array([1]) },
+		);
+		expect(statPaths).toHaveLength(2);
+		statFailures.add(".obsidian/app.json");
+		handlers.get("raw")?.(".obsidian/app.json");
+		await vi.waitFor(() => expect(errors).toHaveLength(1));
+		expect(statPaths).toHaveLength(3);
+		statFailures.clear();
+		adapter.dispose();
+		handlers.get("raw")?.(".obsidian/app.json");
+		await Promise.resolve();
+		expect(observed).toEqual(["modify:.obsidian/app.json"]);
+		expect(statPaths).toHaveLength(3);
 	});
 });

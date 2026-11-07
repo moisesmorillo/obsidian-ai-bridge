@@ -1,6 +1,16 @@
-import { DevicePayloadHashSchema, pathKey } from "@obsidian-ai-bridge/protocol";
+import {
+	DevicePayloadHashSchema,
+	PathSchema,
+	pathKey,
+} from "@obsidian-ai-bridge/protocol";
 import { withPluginVaultMutation } from "@plugin/infrastructure/vault-events";
 import { TFile } from "@plugin/obsidian-api";
+import {
+	classifyEnrollmentPath,
+	DEFAULT_SETTINGS_SYNC_POLICY,
+	type SettingsSyncPolicy,
+	shouldTraverseSettingsDirectory,
+} from "@plugin/sync/enrollment-scope";
 import type { TextVault } from "@plugin/sync/text-apply";
 import type { Vault } from "obsidian";
 
@@ -9,8 +19,12 @@ const RECOVERY_DIRECTORY = ".ai-bridge/pre-apply";
 
 /** Uses Vault effects for visible files and adapter effects for confined hidden recovery bytes. */
 export class ObsidianTextVault implements TextVault {
-	/** Binds the host vault whose text effects this adapter guards. */
-	constructor(private readonly vault: Vault) {}
+	/** Binds the host vault and the settings policy used for unindexed config files. */
+	constructor(
+		private readonly vault: Vault,
+		private readonly settingsPolicy: () => SettingsSyncPolicy = () =>
+			DEFAULT_SETTINGS_SYNC_POLICY,
+	) {}
 
 	/** Reads a Markdown-like text file by exact vault path, or returns null when absent. */
 	async read(path: string): Promise<string | null> {
@@ -20,6 +34,13 @@ export class ObsidianTextVault implements TextVault {
 
 	/** Reads exact bytes from a current file without text decoding. */
 	async readBinary(path: string): Promise<Uint8Array | null> {
+		if (path.startsWith(".obsidian/")) {
+			if (!this.isSettingsPath(path)) return null;
+			const stat = await this.vault.adapter.stat(path);
+			return stat?.type === "file"
+				? new Uint8Array(await this.vault.adapter.readBinary(path))
+				: null;
+		}
 		if (path.startsWith(".ai-bridge/")) {
 			if (
 				!isRecoveryPath(path) ||
@@ -34,6 +55,8 @@ export class ObsidianTextVault implements TextVault {
 
 	/** Returns adapter mtime and size for a file. Invalid hidden paths and absent files return null. */
 	async stat(path: string): Promise<{ mtime: number; size: number } | null> {
+		if (path.startsWith(".obsidian/") && !this.isSettingsPath(path))
+			return null;
 		if (path.startsWith(".ai-bridge/") && !isRecoveryPath(path)) return null;
 		const stat = await this.vault.adapter.stat(path);
 		return stat?.type === "file"
@@ -41,8 +64,58 @@ export class ObsidianTextVault implements TextVault {
 			: null;
 	}
 
-	/** Creates visible bytes without collisions, or reuses equal hidden recovery bytes without replacement. */
-	async createBinary(path: string, bytes: Uint8Array): Promise<boolean> {
+	/** Guards settings creation with stat and hash checks, not atomic exclusion. Reports observed races before failure. */
+	async createBinary(
+		path: string,
+		bytes: Uint8Array,
+		onSettingsRace?: (observed: Uint8Array | null) => Promise<void>,
+	): Promise<boolean> {
+		if (path.startsWith(".obsidian/")) {
+			if (!this.isSettingsPath(path)) return false;
+			if (await this.vault.adapter.stat(path)) {
+				await onSettingsRace?.(await this.readBinary(path));
+				return false;
+			}
+			const key = pathKey(path);
+			if (
+				(await this.listSettingsPaths()).some(
+					(current) =>
+						current !== path &&
+						PathSchema.safeParse(current).success &&
+						pathKey(current) === key,
+				)
+			)
+				return false;
+			await this.ensureAdapterParent(path);
+			if (await this.vault.adapter.stat(path)) {
+				await onSettingsRace?.(await this.readBinary(path));
+				return false;
+			}
+			try {
+				await withPluginVaultMutation(
+					this.vault,
+					{ type: "create", path },
+					() =>
+						this.vault.adapter.writeBinary(
+							path,
+							bytes.slice().buffer as ArrayBuffer,
+						),
+					{ kind: "binary", value: bytes },
+				);
+			} catch {
+				await onSettingsRace?.(await this.readBinary(path));
+				return false;
+			}
+			const created = await this.readBinary(path);
+			if (
+				!created ||
+				(await digestBytes(created)) !== (await digestBytes(bytes))
+			) {
+				await onSettingsRace?.(created);
+				return false;
+			}
+			return true;
+		}
 		if (path.startsWith(".ai-bridge/"))
 			return this.writeRecoveryCopy(path, bytes, false);
 		if (this.fileAt(path) || this.hasPathKeyCollision(path)) return false;
@@ -78,8 +151,59 @@ export class ObsidianTextVault implements TextVault {
 		return (await this.vault.adapter.stat(path)) === null;
 	}
 
-	/** Replaces visible bytes or refreshes equal hidden recovery bytes. The engine owns mutation admission and stat guards. */
-	async modifyBinary(path: string, bytes: Uint8Array): Promise<boolean> {
+	/** Checks observed settings bytes before replacement, then hashes read-back bytes. Unobserved adapter races remain possible. */
+	async modifyBinary(
+		path: string,
+		bytes: Uint8Array,
+		expected?: Uint8Array,
+		onSettingsRace?: (observed: Uint8Array | null) => Promise<void>,
+	): Promise<boolean> {
+		if (path.startsWith(".obsidian/")) {
+			if (!this.isSettingsPath(path)) return false;
+			if ((await this.vault.adapter.stat(path))?.type !== "file") {
+				await onSettingsRace?.(await this.readBinary(path));
+				return false;
+			}
+			const previous = await this.readBinary(path);
+			if (!previous || (expected && !equalBytes(previous, expected))) {
+				await onSettingsRace?.(previous);
+				return false;
+			}
+			const beforeWrite = await this.vault.adapter.stat(path);
+			const latest = await this.readBinary(path);
+			if (
+				beforeWrite?.type !== "file" ||
+				!latest ||
+				!equalBytes(latest, expected ?? previous)
+			) {
+				await onSettingsRace?.(latest);
+				return false;
+			}
+			try {
+				await withPluginVaultMutation(
+					this.vault,
+					{ type: "modify", path },
+					() =>
+						this.vault.adapter.writeBinary(
+							path,
+							bytes.slice().buffer as ArrayBuffer,
+						),
+					{ kind: "binary", value: bytes },
+				);
+			} catch {
+				await onSettingsRace?.(await this.readBinary(path));
+				return false;
+			}
+			const written = await this.readBinary(path);
+			if (
+				!written ||
+				(await digestBytes(written)) !== (await digestBytes(bytes))
+			) {
+				await onSettingsRace?.(written);
+				return false;
+			}
+			return true;
+		}
 		if (path.startsWith(".ai-bridge/"))
 			return this.writeRecoveryCopy(path, bytes, true);
 		const file = this.fileAt(path);
@@ -98,10 +222,17 @@ export class ObsidianTextVault implements TextVault {
 	/** Lists indexed files and confined hidden recovery files so engine cleanup can inspect their retention times. */
 	async list(): Promise<string[]> {
 		const visible = this.vault.getFiles().map((file) => file.path);
+		const settingsFiles = await this.listSettingsFiles();
 		if ((await this.vault.adapter.stat(RECOVERY_DIRECTORY))?.type !== "folder")
-			return visible;
+			return [...new Set([...visible, ...settingsFiles])];
 		const hidden = await this.vault.adapter.list(RECOVERY_DIRECTORY);
-		return [...new Set([...visible, ...hidden.files.filter(isRecoveryPath)])];
+		return [
+			...new Set([
+				...visible,
+				...settingsFiles,
+				...hidden.files.filter(isRecoveryPath),
+			]),
+		];
 	}
 
 	/** Finds exact iCloud placeholder metadata without reading placeholder bytes. */
@@ -118,6 +249,11 @@ export class ObsidianTextVault implements TextVault {
 
 	/** Returns raw file size without decoding content, or null when the path is absent. */
 	async size(path: string): Promise<number | null> {
+		if (path.startsWith(".obsidian/")) {
+			if (!this.isSettingsPath(path)) return null;
+			const stat = await this.vault.adapter.stat(path);
+			return stat?.type === "file" ? stat.size : null;
+		}
 		return this.fileAt(path)?.stat.size ?? null;
 	}
 
@@ -164,6 +300,27 @@ export class ObsidianTextVault implements TextVault {
 
 	/** Moves exact observed binary bytes to Obsidian trash without text decoding. */
 	async trashBinary(path: string, expected: Uint8Array): Promise<boolean> {
+		if (path.startsWith(".obsidian/")) {
+			if (!this.isSettingsPath(path)) return false;
+			const adapter = this.vault.adapter;
+			const observed = await adapter.stat(path);
+			if (observed?.type !== "file") return false;
+			const current = await this.readBinary(path);
+			if (!current || !equalBytes(current, expected)) return false;
+			const beforeTrash = await adapter.stat(path);
+			if (
+				beforeTrash?.type !== "file" ||
+				beforeTrash.mtime !== observed.mtime ||
+				beforeTrash.size !== observed.size
+			)
+				return false;
+			const latest = await this.readBinary(path);
+			if (!latest || !equalBytes(latest, expected)) return false;
+			await withPluginVaultMutation(this.vault, { type: "delete", path }, () =>
+				adapter.trashLocal(path),
+			);
+			return (await adapter.stat(path)) === null;
+		}
 		const file = this.fileAt(path);
 		if (!file) return false;
 		const current = await this.readBinary(path);
@@ -284,6 +441,56 @@ export class ObsidianTextVault implements TextVault {
 		return written !== null && equalBytes(written, bytes);
 	}
 
+	/** Lists exact selected settings files through the adapter because the Vault index omits them. */
+	private async listSettingsFiles(): Promise<string[]> {
+		if (!this.settingsPolicy().enabled) return [];
+		return (await this.listSettingsPaths()).filter((path) =>
+			this.isSettingsPath(path),
+		);
+	}
+
+	/** Traverses relevant settings trees and retains valid excluded spellings for collision checks. */
+	private async listSettingsPaths(): Promise<string[]> {
+		const root = await this.vault.adapter.stat(".obsidian");
+		if (root?.type !== "folder") return [];
+		const pending = [".obsidian"];
+		const files: string[] = [];
+		while (pending.length > 0) {
+			const directory = pending.pop();
+			if (!directory) continue;
+			const listing = await this.vault.adapter.list(directory);
+			files.push(
+				...listing.files.filter((path) => PathSchema.safeParse(path).success),
+			);
+			pending.push(
+				...listing.folders.filter((path) =>
+					shouldTraverseSettingsDirectory(path, this.settingsPolicy()),
+				),
+			);
+		}
+		return files;
+	}
+
+	/** Returns whether the canonical policy admits this settings path. */
+	private isSettingsPath(path: string): boolean {
+		return classifyEnrollmentPath(path, 0, this.settingsPolicy()) === "blob";
+	}
+
+	/** Creates missing adapter folders in order without replacing any existing entry. */
+	private async ensureAdapterParent(path: string): Promise<void> {
+		const slash = path.lastIndexOf("/");
+		if (slash < 0) return;
+		const parts = path.slice(0, slash).split("/");
+		let current = "";
+		for (const part of parts) {
+			current = current ? `${current}/${part}` : part;
+			const stat = await this.vault.adapter.stat(current);
+			if (stat?.type === "folder") continue;
+			if (stat) throw new Error("Settings parent path is not a folder");
+			await this.vault.adapter.mkdir(current);
+		}
+	}
+
 	/** Returns only a real Obsidian file at one exact indexed path. */
 	private fileAt(path: string): TFile | null {
 		const file = this.vault.getAbstractFileByPath(path);
@@ -303,7 +510,12 @@ export class ObsidianTextVault implements TextVault {
 		const key = pathKey(path);
 		return this.vault
 			.getFiles()
-			.some((file) => file.path !== path && pathKey(file.path) === key);
+			.some(
+				(file) =>
+					file.path !== path &&
+					PathSchema.safeParse(file.path).success &&
+					pathKey(file.path) === key,
+			);
 	}
 
 	/** Creates missing parent folders without replacing an existing folder. */

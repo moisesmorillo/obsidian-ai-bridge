@@ -6,7 +6,11 @@ import type {
 import type { CoexistenceEffectFence } from "@plugin/sync/coexistence-effect-fence";
 import type { PluginOriginProof } from "@plugin/sync/desktop-sync";
 import type { DeviceJournal } from "@plugin/sync/device-journal";
-import { classifyEnrollmentPath } from "@plugin/sync/enrollment-scope";
+import {
+	classifyEnrollmentPath,
+	DEFAULT_SETTINGS_SYNC_POLICY,
+	type SettingsSyncPolicy,
+} from "@plugin/sync/enrollment-scope";
 import type { PublicationEvent } from "@plugin/sync/publication";
 
 /** Frozen event-time authority and affected paths used if destructive proof is uncertain. */
@@ -86,6 +90,7 @@ export class CoexistenceController {
 		private readonly now: () => number = Date.now,
 		/** Closes shared effect admission until proof handles the event or intent persists. */
 		private readonly effectFence?: CoexistenceEffectFence,
+		private readonly settingsPolicy: SettingsSyncPolicy = DEFAULT_SETTINGS_SYNC_POLICY,
 	) {}
 
 	/** Associates host-origin evidence with the same event object before desktop admission. */
@@ -119,7 +124,7 @@ export class CoexistenceController {
 		if (!this.isEnabled()) return false;
 		const destructive =
 			(event.type === "delete" || event.type === "rename") &&
-			classifyEnrollmentPath(event.path, 0) !== "excluded";
+			classifyEnrollmentPath(event.path, 0, this.settingsPolicy) !== "excluded";
 		const releaseCapture = destructive
 			? this.effectFence?.beginCapture()
 			: undefined;
@@ -204,7 +209,9 @@ export class CoexistenceController {
 			return null;
 		}
 		if (item.kind === "rename") {
-			if (classifyEnrollmentPath(item.to, 0) === "excluded") {
+			if (
+				classifyEnrollmentPath(item.to, 0, this.settingsPolicy) === "excluded"
+			) {
 				await this.journal.markCoexistenceStale(
 					id,
 					"The rename destination is excluded from synchronization.",

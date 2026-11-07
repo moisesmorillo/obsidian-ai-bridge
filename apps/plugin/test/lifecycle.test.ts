@@ -23,8 +23,18 @@ const host = vi.hoisted(() => ({
 		| null,
 	settingsTab: null as unknown,
 	settingsData: null as unknown,
+	localSettings: null as unknown,
+	localSettingsSave: null as ((value: unknown) => Promise<void>) | null,
 	serverUrlChange: null as ((url: string) => Promise<void>) | null,
 	deviceNameChange: null as ((name: string) => Promise<void>) | null,
+	settingsSyncPolicyChange: null as
+		| ((policy: {
+				enabled: boolean;
+				appearance: boolean;
+				core: boolean;
+				communityPlugins: boolean;
+		  }) => Promise<void>)
+		| null,
 	syncActions: null as CapturedSyncActions | null,
 	saveDataAction: null as ((data: unknown) => Promise<void>) | null,
 	state: null as unknown,
@@ -32,6 +42,7 @@ const host = vi.hoisted(() => ({
 	unavailablePaths: new Set<string>(),
 	failSave: false,
 	failLocalSave: false,
+	failSettingsSave: false,
 	loadState: null as (() => unknown) | null,
 	vaultListeners: [] as Array<{
 		event: string;
@@ -118,10 +129,17 @@ vi.mock("obsidian", () => ({
 			},
 			loadLocalStorage: (key: string) => {
 				if (key.includes(":credential:")) return null;
+				if (key.includes(":settings-sync:")) return host.localSettings;
 				host.calls.push("loadLocalStorage");
 				return host.loadState ? host.loadState() : host.state;
 			},
 			saveLocalStorage: (_key: string, value: unknown) => {
+				if (_key.includes(":settings-sync:")) {
+					if (host.failLocalSave || host.failSettingsSave)
+						throw new Error("local storage write failed");
+					host.localSettings = structuredClone(value);
+					return host.localSettingsSave?.(value);
+				}
 				host.calls.push("saveLocalStorage");
 				if (host.failLocalSave) throw new Error("local storage write failed");
 				if (!host.failSave) host.state = structuredClone(value);
@@ -150,6 +168,7 @@ vi.mock("../src/sync/create-publication", () => ({
 			publication: {
 				/** Captures explicit events admitted by the real controller. */
 				observe: async (event: PublicationEvent) => {
+					host.publicationStages.push("observe");
 					host.publicationEvents.push(structuredClone(event));
 				},
 				scan: async () => {
@@ -162,6 +181,9 @@ vi.mock("../src/sync/create-publication", () => ({
 			},
 			reconciliation: {
 				lastHead: null,
+				reconcile: async () => {
+					host.publicationStages.push("reconcile");
+				},
 				/** Counts actual controller cycles and waits at a test-selected boundary. */
 				resume: async () => {
 					host.publicationStages.push("resume");
@@ -203,6 +225,8 @@ vi.mock("../src/settings", () => ({
 			host.serverUrlChange = args[5] as (url: string) => Promise<void>;
 			host.deviceNameChange = args[6] as (name: string) => Promise<void>;
 			host.syncActions = args[10] as CapturedSyncActions;
+			host.settingsSyncPolicyChange =
+				args[11] as typeof host.settingsSyncPolicyChange;
 		}
 
 		/** Satisfies the composition status-refresh call. */
@@ -299,8 +323,11 @@ describe("AIBridgePlugin device-local lifecycle", () => {
 		host.protocolHandler = null;
 		host.settingsTab = null;
 		host.settingsData = null;
+		host.localSettings = null;
+		host.localSettingsSave = null;
 		host.serverUrlChange = null;
 		host.deviceNameChange = null;
+		host.settingsSyncPolicyChange = null;
 		host.syncActions = null;
 		host.saveDataAction = null;
 		host.state = null;
@@ -308,6 +335,7 @@ describe("AIBridgePlugin device-local lifecycle", () => {
 		host.unavailablePaths.clear();
 		host.failSave = false;
 		host.failLocalSave = false;
+		host.failSettingsSave = false;
 		host.loadState = null;
 		host.vaultListeners.splice(0);
 		host.compositionNames.splice(0);
@@ -1370,6 +1398,415 @@ describe("AIBridgePlugin device-local lifecycle", () => {
 		expect(Reflect.get(plugin, "session")).toBeNull();
 	});
 
+	it("settles the active cycle before changing policy and fully hydrating new scope", async () => {
+		const plugin = new AIBridgePlugin({} as App, {} as PluginManifest);
+		await plugin.onload();
+		const events: string[] = [];
+		let releaseIdle: (() => void) | undefined;
+		const idle = new Promise<void>((resolve) => {
+			releaseIdle = resolve;
+		});
+		const controller = {
+			close: () => events.push("close"),
+			pause: () => events.push("pause"),
+			waitForIdle: async () => {
+				events.push("wait");
+				await idle;
+			},
+			resume: async () => {
+				events.push("resume");
+			},
+		};
+		Reflect.set(plugin, "desktopSync", controller);
+		Reflect.set(plugin, "sessionStatus", "connected");
+		Reflect.set(plugin, "composition", {
+			reconciliation: { reconcile: async () => events.push("reconcile") },
+			publication: {
+				scan: async () => events.push("scan"),
+				flush: async () => events.push("flush"),
+			},
+			dispose: () => events.push("dispose"),
+		});
+		const settings = Reflect.get(plugin, "settingsValue") as {
+			settingsSync: {
+				enabled: boolean;
+				appearance: boolean;
+				core: boolean;
+				communityPlugins: boolean;
+			};
+		};
+		const policy = {
+			enabled: true,
+			appearance: true,
+			core: false,
+			communityPlugins: true,
+		};
+		const transition = Reflect.get(plugin, "changeSettingsSyncPolicy").call(
+			plugin,
+			Reflect.get(plugin, "lifecycleGeneration"),
+			policy,
+		);
+		await Promise.resolve();
+		await Promise.resolve();
+		expect(settings.settingsSync.enabled).toBe(false);
+		expect(events).toEqual(["pause", "wait"]);
+		releaseIdle?.();
+		await transition;
+		expect(settings.settingsSync).toEqual(policy);
+		expect(events).toEqual([
+			"pause",
+			"wait",
+			"reconcile",
+			"scan",
+			"flush",
+			"resume",
+		]);
+		plugin.onunload();
+	});
+
+	it.each(["pause", "mobile-suspension", "revocation"] as const)(
+		"blocks settings scope effects when %s occurs during persistence",
+		async (interruption) => {
+			const plugin = new AIBridgePlugin({} as App, {} as PluginManifest);
+			await plugin.onload();
+			const events: string[] = [];
+			let releaseSave: (() => void) | undefined;
+			let markSaveStarted: (() => void) | undefined;
+			const saveStarted = new Promise<void>((resolve) => {
+				markSaveStarted = resolve;
+			});
+			const saveGate = new Promise<void>((resolve) => {
+				releaseSave = resolve;
+			});
+			host.localSettingsSave = async () => {
+				markSaveStarted?.();
+				await saveGate;
+			};
+			const controller = {
+				close: () => events.push("close"),
+				pause: () => events.push("pause"),
+				waitForIdle: async () => undefined,
+				resume: async () => events.push("resume"),
+			};
+			const composition = {
+				reconciliation: {
+					reconcile: async () => events.push("reconcile"),
+				},
+				publication: {
+					scan: async () => events.push("scan"),
+					flush: async () => events.push("flush"),
+				},
+				dispose: () => events.push("dispose"),
+			};
+			Reflect.set(plugin, "desktopSync", controller);
+			Reflect.set(plugin, "sessionStatus", "connected");
+			Reflect.set(plugin, "composition", composition);
+			const update = host.settingsSyncPolicyChange;
+			if (!update)
+				throw new Error("Settings sync policy callback was not registered");
+			const transition = update({
+				enabled: true,
+				appearance: false,
+				core: true,
+				communityPlugins: true,
+			});
+			await saveStarted;
+
+			if (interruption === "pause") host.syncActions?.pause();
+			if (interruption === "mobile-suspension") {
+				host.calls.push("mobile-platform");
+				vi.stubGlobal("document", { visibilityState: "hidden" });
+			}
+			if (interruption === "revocation")
+				Reflect.set(plugin, "syncRevoked", true);
+			releaseSave?.();
+			await transition;
+			await settleSyncEffects(plugin);
+
+			expect(events).not.toContain("reconcile");
+			expect(events).not.toContain("scan");
+			expect(events).not.toContain("flush");
+			expect(events).not.toContain("resume");
+			expect(Reflect.get(plugin, "settingsValue")).toMatchObject({
+				settingsSync: {
+					enabled: true,
+					appearance: false,
+					core: true,
+					communityPlugins: true,
+				},
+			});
+			if (interruption === "mobile-suspension") {
+				vi.stubGlobal("document", { visibilityState: "visible" });
+				await Reflect.get(plugin, "resumeSettingsScopeAfterVisibility").call(
+					plugin,
+				);
+				expect(events).toContain("resume");
+			}
+			plugin.onunload();
+			vi.unstubAllGlobals();
+		},
+	);
+
+	it("keeps consent local when two devices share plugin settings", async () => {
+		const first = new AIBridgePlugin({} as App, {} as PluginManifest);
+		await first.onload();
+		const policy = {
+			enabled: true,
+			appearance: true,
+			core: true,
+			communityPlugins: true,
+		};
+		await host.settingsSyncPolicyChange?.(policy);
+		const firstLocal = structuredClone(host.localSettings);
+		expect(firstLocal).toMatchObject({ policy, hydrationPending: true });
+		host.settingsData = { settingsSync: policy };
+		first.onunload();
+		host.state = null;
+		host.localSettings = null;
+		const second = new AIBridgePlugin({} as App, {} as PluginManifest);
+		await second.onload();
+		expect(Reflect.get(second, "settingsValue").settingsSync.enabled).toBe(
+			false,
+		);
+		second.onunload();
+		host.localSettings = firstLocal;
+		const restoredFirst = new AIBridgePlugin({} as App, {} as PluginManifest);
+		await restoredFirst.onload();
+		expect(
+			Reflect.get(restoredFirst, "settingsValue").settingsSync.enabled,
+		).toBe(true);
+		restoredFirst.onunload();
+	});
+
+	it.each([
+		["pause", false],
+		["disconnection", false],
+		["suspension", false],
+		["persistence-pause", false],
+		["pause", true],
+		["disconnection", true],
+		["suspension", true],
+		["persistence-pause", true],
+	] as const)(
+		"retains scope hydration across %s with restart=%s before normal work",
+		async (interruption, restart) => {
+			const plugin = await startConnectedPlugin();
+			const journal = Reflect.get(plugin, "journal") as DeviceJournal;
+			await journal.resetEpoch("f".repeat(32));
+			await journal.setCursor("f".repeat(32), 100);
+			if (interruption === "pause") host.syncActions?.pause();
+			if (interruption === "disconnection")
+				Reflect.set(plugin, "sessionStatus", "disconnected");
+			if (interruption === "suspension") {
+				host.calls.push("mobile-platform");
+				vi.stubGlobal("document", {
+					visibilityState: "hidden",
+					removeEventListener: () => undefined,
+				});
+			}
+			if (interruption === "persistence-pause")
+				host.localSettingsSave = async () => {
+					host.syncActions?.pause();
+				};
+			await host.settingsSyncPolicyChange?.({
+				enabled: true,
+				appearance: true,
+				core: true,
+				communityPlugins: true,
+			});
+			expect(host.localSettings).toMatchObject({ hydrationPending: true });
+			host.localSettingsSave = null;
+			host.publicationStages.splice(0);
+			host.calls.splice(0);
+			let restored = plugin;
+			if (restart) {
+				plugin.onunload();
+				await settleSyncEffects(plugin);
+				restored = await startConnectedPlugin();
+			} else {
+				vi.stubGlobal("document", {
+					visibilityState: "visible",
+					hasFocus: () => true,
+					removeEventListener: () => undefined,
+				});
+				Reflect.set(plugin, "sessionStatus", "connected");
+				host.syncActions?.resume();
+				await settleSyncEffects(plugin);
+			}
+			if (Reflect.get(restored, "syncPaused")) {
+				host.syncActions?.resume();
+				await settleSyncEffects(restored);
+			}
+			expect(host.publicationStages[0]).toBe("reconcile");
+			expect(host.publicationStages).toContain("scan");
+			expect(host.localSettings).toMatchObject({ hydrationPending: false });
+			restored.onunload();
+		},
+	);
+
+	it("starts a full scope pass instead of resuming a checkpoint from the old scope", async () => {
+		const plugin = await startConnectedPlugin();
+		host.syncActions?.pause();
+		await settleSyncEffects(plugin);
+		const journal = Reflect.get(plugin, "journal") as DeviceJournal;
+		const epoch = "f".repeat(32);
+		await journal.resetEpoch(epoch);
+		await journal.setCursor(epoch, 100);
+		await journal.setReconciliationCheckpoint({
+			epoch,
+			head_seq: 100,
+			stage: "local",
+			page_token: null,
+			page_number: 1,
+			local_paths: [],
+			local_index: 0,
+			pending_paths: [],
+			remote_paths: [],
+		});
+		await host.settingsSyncPolicyChange?.({
+			enabled: true,
+			appearance: true,
+			core: true,
+			communityPlugins: true,
+		});
+		const composition = Reflect.get(plugin, "createSyncComposition").call(
+			plugin,
+		);
+		composition.reconciliation.reconcile = async () => {
+			expect(journal.snapshot().reconciliation).toBeNull();
+			host.publicationStages.push("full-manifest");
+		};
+		Reflect.set(plugin, "composition", composition);
+		host.publicationStages.splice(0);
+		host.syncActions?.resume();
+		await settleSyncEffects(plugin);
+		expect(host.publicationStages[0]).toBe("full-manifest");
+		expect(host.localSettings).toMatchObject({ hydrationPending: false });
+		plugin.onunload();
+	});
+
+	it("retains the scope duty when reconciliation returns with an incomplete checkpoint", async () => {
+		const plugin = await startConnectedPlugin();
+		host.syncActions?.pause();
+		await settleSyncEffects(plugin);
+		await host.settingsSyncPolicyChange?.({
+			enabled: true,
+			appearance: true,
+			core: true,
+			communityPlugins: true,
+		});
+		expect(host.localSettings).toMatchObject({ hydrationPending: true });
+		const journal = Reflect.get(plugin, "journal") as DeviceJournal;
+		await settleSyncEffects(plugin);
+		const composition = Reflect.get(plugin, "createSyncComposition").call(
+			plugin,
+		);
+		composition.reconciliation.reconcile = async () => {
+			const epoch = "f".repeat(32);
+			await journal.resetEpoch(epoch);
+			await journal.setReconciliationCheckpoint({
+				epoch,
+				head_seq: 100,
+				stage: "manifest",
+				page_token: null,
+				page_number: 0,
+				local_paths: [],
+				local_index: 0,
+				pending_paths: [".obsidian/app.json"],
+				remote_paths: [".obsidian/app.json"],
+			});
+		};
+		composition.publication.flush = async (options: { sentOnly?: boolean }) => {
+			expect(options).toEqual({ sentOnly: true });
+			host.publicationStages.push("retry-sent");
+		};
+		Reflect.set(plugin, "composition", composition);
+		host.publicationStages.splice(0);
+		host.syncActions?.resume();
+		await settleSyncEffects(plugin);
+		expect(host.localSettings).toMatchObject({ hydrationPending: true });
+		expect(host.publicationStages).not.toContain("scan");
+		expect(host.publicationStages).toContain("retry-sent");
+		plugin.onunload();
+	});
+
+	it("hydrates before retained event admission after a paused scope expansion", async () => {
+		const plugin = await startConnectedPlugin();
+		host.syncActions?.pause();
+		await settleSyncEffects(plugin);
+		await host.settingsSyncPolicyChange?.({
+			enabled: true,
+			appearance: true,
+			core: true,
+			communityPlugins: true,
+		});
+		const controller = Reflect.get(
+			plugin,
+			"desktopSync",
+		) as DesktopSyncController;
+		await controller.observe({ type: "modify", path: ".obsidian/app.json" });
+		host.publicationStages.splice(0);
+		host.syncActions?.resume();
+		await settleSyncEffects(plugin);
+		expect(host.publicationStages[0]).toBe("reconcile");
+		expect(host.publicationStages).toContain("observe");
+		plugin.onunload();
+	});
+
+	it("keeps the hydration duty when its completion save fails", async () => {
+		const plugin = await startConnectedPlugin(false);
+		await host.settingsSyncPolicyChange?.({
+			enabled: true,
+			appearance: true,
+			core: true,
+			communityPlugins: true,
+		});
+		plugin.onunload();
+		host.publicationStages.splice(0);
+		host.failSettingsSave = true;
+		const restored = await startConnectedPlugin();
+		expect(host.publicationStages).not.toContain("scan");
+		expect(Reflect.get(restored, "settingsHydrationPending")).toBe(true);
+		restored.onunload();
+	});
+
+	it("persists settings sync switches with the master opt-in policy", async () => {
+		const plugin = new AIBridgePlugin({} as App, {} as PluginManifest);
+		await plugin.onload();
+		const saved: unknown[] = [];
+		host.localSettingsSave = async (data) => {
+			saved.push(structuredClone(data));
+		};
+		const update = host.settingsSyncPolicyChange;
+		if (!update)
+			throw new Error("Settings sync policy callback was not registered");
+		await update({
+			enabled: true,
+			appearance: true,
+			core: false,
+			communityPlugins: true,
+		});
+		expect(saved[0]).toEqual(
+			expect.objectContaining({
+				policy: {
+					enabled: true,
+					appearance: true,
+					core: false,
+					communityPlugins: true,
+				},
+			}),
+		);
+		expect(Reflect.get(plugin, "settingsValue")).toMatchObject({
+			settingsSync: {
+				enabled: true,
+				appearance: true,
+				core: false,
+				communityPlugins: true,
+			},
+		});
+		plugin.onunload();
+	});
+
 	it("persists the local device name with existing non-secret settings", async () => {
 		const plugin = new AIBridgePlugin({} as App, {} as PluginManifest);
 		await plugin.onload();
@@ -1391,6 +1828,12 @@ describe("AIBridgePlugin device-local lifecycle", () => {
 			serverUrl: "https://obsidian-bridge.mmorillo.dev",
 			deviceName: "oab-8.8 dev-1",
 			coexistenceMode: false,
+			settingsSync: {
+				enabled: false,
+				appearance: true,
+				core: true,
+				communityPlugins: true,
+			},
 		});
 		plugin.onunload();
 	});
@@ -1408,6 +1851,12 @@ describe("AIBridgePlugin device-local lifecycle", () => {
 			serverUrl: "https://saved-service.test",
 			deviceName: "oab-8.8 dev-2",
 			coexistenceMode: false,
+			settingsSync: {
+				enabled: false,
+				appearance: true,
+				core: true,
+				communityPlugins: true,
+			},
 		});
 		expect(Reflect.get(plugin, "syncPaused")).toBe(false);
 		plugin.onunload();

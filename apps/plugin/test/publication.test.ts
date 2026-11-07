@@ -9,6 +9,7 @@ import {
 	DeviceJournal,
 	type DeviceJournalStorage,
 } from "../src/sync/device-journal";
+import type { SettingsSyncPolicy } from "../src/sync/enrollment-scope";
 import {
 	PublicationController,
 	type PublicationRead,
@@ -336,6 +337,7 @@ function createApplyEngine(
 	journal: DeviceJournal,
 	vault: TextVault,
 	remote: PublicationRemote,
+	settingsPolicy?: SettingsSyncPolicy,
 ): TextApplyEngine {
 	return new TextApplyEngine(
 		journal,
@@ -349,7 +351,7 @@ function createApplyEngine(
 				return authority.deleted ? null : authority.text;
 			},
 		},
-		{ deviceName: "Test Device" },
+		{ deviceName: "Test Device", settingsPolicy },
 	);
 }
 
@@ -360,18 +362,176 @@ async function openController(
 	remote = new MemoryRemote(),
 	now: () => number = () => 1_800_000_000_000,
 	recoverPrecondition: () => Promise<void> = async () => {},
+	settingsPolicy?: SettingsSyncPolicy,
 ) {
 	const journal = await DeviceJournal.open(storage);
 	await journal.resetEpoch(epoch);
 	const controller = new PublicationController(journal, vault, remote, {
-		applyEngine: createApplyEngine(journal, vault, remote),
+		applyEngine: createApplyEngine(journal, vault, remote, settingsPolicy),
 		now,
 		recoverPrecondition,
+		settingsPolicy,
 	});
 	return { controller, journal, remote, storage, vault };
 }
 
 describe("PublicationController", () => {
+	it("publishes first-enable settings as absent-precondition creates and holds disabled categories", async () => {
+		const policy: SettingsSyncPolicy = {
+			enabled: true,
+			appearance: true,
+			core: true,
+			communityPlugins: false,
+		};
+		const { controller, journal, remote, vault } = await openController(
+			new MemoryStorage(),
+			new MemoryVault(),
+			new MemoryRemote(),
+			() => 1_800_000_000_000,
+			async () => {},
+			policy,
+		);
+		const path = ".obsidian/app.json";
+		vault.binaryFiles.set(path, new Uint8Array([0, 255, 7]));
+		await controller.scan();
+		const queued = journal
+			.snapshot()
+			.pending_ops.find((item: PendingOperation) => item.path === path);
+		expect(queued).toMatchObject({ op: "put", state: "queued", path });
+
+		policy.core = false;
+		await controller.flush();
+		expect(remote.blobWrites).toHaveLength(0);
+		expect(
+			journal
+				.snapshot()
+				.pending_ops.find((item: PendingOperation) => item.path === path)
+				?.state,
+		).toBe("queued");
+
+		policy.core = true;
+		await controller.flush();
+		expect(remote.blobWrites).toHaveLength(1);
+		expect(remote.blobWrites[0]).toMatchObject({
+			path,
+			precondition: { kind: "absent" },
+		});
+		controller.close();
+	});
+
+	it("does not read or restore a missing settings base while its category is disabled", async () => {
+		const policy: SettingsSyncPolicy = {
+			enabled: false,
+			appearance: true,
+			core: true,
+			communityPlugins: true,
+		};
+		const { controller, journal, remote, vault } = await openController(
+			new MemoryStorage(),
+			new MemoryVault(),
+			new MemoryRemote(),
+			undefined,
+			async () => {},
+			policy,
+		);
+		const readAuthority = vi.spyOn(remote, "readAuthority");
+		const path = ".obsidian/app.json";
+		await journal.setBase(path, {
+			deleted: false,
+			rev: 1,
+			hash: await digestBytesForTest(new Uint8Array([1, 2])),
+		});
+
+		await controller.scan();
+
+		expect(readAuthority).not.toHaveBeenCalled();
+		expect(vault.creates).toEqual([]);
+		expect(vault.binaryCreates).toEqual([]);
+		controller.close();
+	});
+
+	it("retries only immutable sent work while scope hydration blocks queued work", async () => {
+		let now = 1_800_000_000_000;
+		const { controller, journal, vault, remote } = await openController(
+			new MemoryStorage(),
+			new MemoryVault(),
+			new MemoryRemote(),
+			() => now,
+		);
+		let fail = true;
+		const put = remote.put.bind(remote);
+		remote.put = async (...args) => {
+			if (fail) throw new SyncTransportError(503, null, null, "2");
+			return put(...args);
+		};
+		vault.files.set("sent.md", "sent bytes");
+		await controller.scan();
+		await controller.flush();
+		const sent = journal.snapshot().pending_ops[0];
+		if (sent?.state !== "sent") throw new Error("Expected immutable sent work");
+		vault.files.set("queued.md", "queued bytes");
+		await controller.scan();
+		fail = false;
+		now = sent.retry_at ?? now + 2_000;
+		await controller.flush({ sentOnly: true });
+		expect(remote.writes.map((write) => write.path)).toEqual(["sent.md"]);
+		expect(journal.snapshot().pending_ops).toContainEqual(
+			expect.objectContaining({ path: "queued.md", state: "queued" }),
+		);
+		controller.close();
+	});
+
+	it("retries sent non-UTF8 settings blobs after category disable with the original bytes", async () => {
+		let now = 1_800_000_000_000;
+		const policy: SettingsSyncPolicy = {
+			enabled: true,
+			appearance: true,
+			core: true,
+			communityPlugins: true,
+		};
+		const { controller, journal, remote, vault } = await openController(
+			new MemoryStorage(),
+			new MemoryVault(),
+			new MemoryRemote(),
+			() => now,
+			async () => {},
+			policy,
+		);
+		const path = ".obsidian/themes/Dark/theme.css";
+		const bytes = new Uint8Array([0xff, 0x00, 0x80, 0x0a]);
+		const attempts: Array<{ bytes: Uint8Array; key: string }> = [];
+		const putBlob = remote.putBlob.bind(remote);
+		remote.putBlob = async (
+			target,
+			payload,
+			hash,
+			precondition,
+			key,
+			requestEpoch,
+		) => {
+			attempts.push({ bytes: payload.slice(), key });
+			if (attempts.length === 1)
+				throw new SyncTransportError(503, null, null, "2");
+			return putBlob(target, payload, hash, precondition, key, requestEpoch);
+		};
+		vault.binaryFiles.set(path, bytes.slice());
+		await controller.scan();
+		await controller.flush();
+		const sent = journal.snapshot().pending_ops[0];
+		if (!sent) throw new Error("Expected the settings blob to remain sent");
+		policy.enabled = false;
+		now = sent.retry_at ?? now + 2_000;
+
+		await controller.flush();
+
+		expect(attempts).toHaveLength(2);
+		expect(attempts.map((attempt) => attempt.bytes)).toEqual([bytes, bytes]);
+		expect(attempts[1]?.key).toBe(sent.key);
+		expect(remote.writes).toEqual([]);
+		expect(journal.snapshot().pending_ops).toEqual([]);
+		controller.close();
+	});
+
 	it("retains publication intent while origin proof remains unresolved", async () => {
 		const { controller, journal, vault } = await openController();
 		const path = "notes/pending-origin-proof.md";

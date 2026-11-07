@@ -3,8 +3,8 @@ id: OAB-14
 title: 'Deferred: WebSocket push from DO'
 status: Deferred
 assignee: []
-created_date: '2026-10-12 15:14'
-updated_date: '2026-10-13 10:04'
+created_date: 2026-10-12 15:14
+updated_date: '2026-11-07T03:35:00Z'
 labels:
   - deferred
   - trigger-based
@@ -29,4 +29,12 @@ Deferred per docs/spec.md §16 because 15–60 second polling is sufficient for 
 
 <!-- SECTION:NOTES:BEGIN -->
 Reconciled after merged F0: this section16 feature has no committed delivery phase. Preserve the exact trigger and seam in the description; no trigger is evidenced and no future acceptance case is completed by this classification. The seam is a preservation obligation, not proof of an implemented feature. Reopen for research and reviewed planning only when the documented trigger is evidenced; no fake blocking dependency is added.
+
+Overnight decision, 2026-11-06 (local UTC-6): not started.
+
+The trigger is not met.
+
+This needs a large change to the sync loop and Durable Object.
+
+Keep Deferred.
 <!-- SECTION:NOTES:END -->

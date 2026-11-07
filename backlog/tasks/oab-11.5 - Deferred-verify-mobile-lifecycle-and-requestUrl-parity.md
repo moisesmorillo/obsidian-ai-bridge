@@ -1,11 +1,11 @@
 ---
 id: OAB-11.5
 title: 'Deferred: verify mobile lifecycle and requestUrl parity'
-status: In Progress
+status: Done
 assignee:
   - '@pi'
 created_date: '2026-11-05T23:21:00Z'
-updated_date: '2026-11-07T00:12:00Z'
+updated_date: '2026-11-07T03:35:00Z'
 labels:
   - F5
   - Deferred
@@ -70,4 +70,30 @@ Human branch review pn-856ca4 approved the complete diff with no requested chang
 Publication validation: merged origin/main 5befa35 without conflicts after human approval. The M5 plugin diff stayed unchanged. Full bun run check passed at e8e7ce6 with 2,085 tests passed, one skipped, lint, documentation checks, typechecks, and builds. Worker build remained dry-run only. No native acceptance claim changed.
 
 Device evidence 2026-11-06 evening, plugin 0.1.3 with PR #80: on the iPhone the owner enabled airplane mode, edited iphone-test-1.md, force-quit Obsidian, reopened it and restored the network. The edit published as revision 6, reached the Mac (cursor 200) and the iPad, with no loss and no conflict copy. This evidences criterion 2 on one device. Criterion 1 and larger transfers remain unobserved on devices.
+
+Owner and supervisor report, 2026-11-06 (local UTC-6), recorded after cutover.
+
+These are reported observations, not new agent tests.
+
+An offline iPhone edit survived force-quit, published after reconnection, and reached Mac and iPad.
+
+An iPhone image reached the Mac with identical bytes.
+
+The iPad synced through Tailscale after PR #79 and #82.
+Limits for unchecked criteria:
+- AC1: no direct two-mobile serialized-cycle scheduling observation.
+- AC2: iPhone restart recovery is evidenced, but the complete suspension and immutable-sent recovery case is not.
+- AC3: reported text and image parity do not prove every conditional header or native 401, 412, and 429 path.
+- AC4: interrupted uploads, low storage, and transfers near 25 MB lack device proof.
+
+Session M9 owns tonight's code work.
+- AC5: no Android observations.
+
+Apple evidence does not prove Android behavior.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Closed under the owner F5 real-use waiver. Offline iPhone restart and byte-identical image transfer are reported. All compound criteria retain their limits.
+<!-- SECTION:FINAL_SUMMARY:END -->

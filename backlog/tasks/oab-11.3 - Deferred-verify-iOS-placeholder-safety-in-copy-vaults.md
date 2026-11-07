@@ -1,10 +1,10 @@
 ---
 id: OAB-11.3
 title: 'Deferred: verify iOS placeholder safety in copy vaults'
-status: To Do
+status: Deferred
 assignee: []
 created_date: '2026-11-05T23:21:00Z'
-updated_date: '2026-11-06T16:52:00Z'
+updated_date: '2026-11-07T03:35:00Z'
 labels:
   - F5
   - Deferred
@@ -33,4 +33,18 @@ Trigger: the owner approves isolated iCloud copy-vault tests after F4. Current d
 
 <!-- SECTION:NOTES:BEGIN -->
 Promoted at F4 closure, 2026-11-06. DRAFT-4 still needs isolated service authority from the owner. DRAFT-5 still needs the BRAT release plugin-v0.1.0 and devices.
+
+Owner and supervisor report, 2026-11-06 (local UTC-6), recorded after cutover.
+
+These are reported observations, not new agent tests.
+
+Not applicable after cutover: no device keeps an iCloud vault as a live vault.
+
+The iCloud vault remains frozen as a backup copy.
+
+No placeholder behavior is proven.
+
+Trigger: a device keeps an iCloud vault.
+
+Keep this task Deferred and all criteria unchecked.
 <!-- SECTION:NOTES:END -->

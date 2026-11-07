@@ -1,11 +1,11 @@
 ---
 id: OAB-11.4
 title: 'Deferred: verify mobile enrollment and credential storage'
-status: In Progress
+status: Done
 assignee:
   - '@pi'
 created_date: '2026-11-05T23:20:00Z'
-updated_date: '2026-11-07T00:12:00Z'
+updated_date: '2026-11-07T03:35:00Z'
 labels:
   - F5
   - Deferred
@@ -23,7 +23,7 @@ Trigger: F4 closes and the owner approves the F5 copy-vault scope with an isolat
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Native browser consent returns through the registered URI on iPhone and iPad without direct callback injection.
+- [x] #1 Native browser consent returns through the registered URI on iPhone and iPad without direct callback injection.
 - [ ] #2 State mismatch, replay, expiry, wrong-vault return, and process loss reject safely and allow a fresh connection.
 - [ ] #3 Per-platform records show app and OS versions, capability presence, write verification, restart persistence, and the fallback warning without secret values.
 - [ ] #4 Android availability and persistence results remain distinct from the Apple F5 exit evidence.
@@ -60,4 +60,27 @@ Delivery review, 2026-11-06: reviewed product revision e12b49c00ed7b26817f34ae39
 Device evidence 2026-11-06: with plugin 0.1.2 on a real iPhone, Connect prepared the consent, the owner tapped Open authorization page, Safari completed the Access PIN and consent, and the obsidian callback returned the device to connected status. Credentials survived app use through the day. iPad and Android remain untested. Criterion 1 stays unchecked until the iPad run.
 
 Device evidence 2026-11-06 evening: the owner enrolled an iPad (fresh local vault, BRAT ai-bridge-v0.1.2, then 0.1.3) through the Open authorization page link and the Access PIN. The device registered with the former default name 'Obsidian desktop' before the owner set 'iPad'; PR #78 now defaults to 'Obsidian mobile' on mobile. Hydration stalled at 32 of 50 files while the iPad used a Tailscale VPN and completed at once with the VPN off. Cause and fix: OAB-12.1 (read slot hold deadline, PR #79 and #82). With the fix deployed the iPad syncs on Tailscale again. iPhone and iPad enrollment is now evidenced; Android remains untested.
+
+Owner and supervisor report, 2026-11-06 (local UTC-6), recorded after cutover.
+
+These are reported observations, not new agent tests.
+
+Native enrollment through the authorization link and Access PIN succeeded on iPhone and iPad.
+
+This completes criterion 1 without callback injection.
+
+Three active clients remain: Mac, iPhone, and iPad.
+Limits for unchecked criteria:
+- AC2: no full native mismatch, replay, expiry, wrong-vault, and process-loss rejection matrix.
+- AC3: no complete per-platform app/OS inventory, credential capability, write verification, restart, and fallback-warning record.
+- AC4: no Android device or persistence probe.
+
+Android remains separate from Apple evidence.
+- AC5: distinct labels after settings sync are reported, but journal-ID and credential isolation lacks complete device proof.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Closed on owner-reported Apple enrollment and the F5 waiver. AC1 is evidenced. AC2 through AC5 retain explicit device limits.
+<!-- SECTION:FINAL_SUMMARY:END -->

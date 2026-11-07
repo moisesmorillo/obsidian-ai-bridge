@@ -4,7 +4,7 @@ title: Prove AC-13 through an actual F3b restore
 status: Deferred
 assignee: []
 created_date: '2026-11-04T18:04:00Z'
-updated_date: '2026-11-05T12:39:00Z'
+updated_date: '2026-11-07T03:35:00Z'
 labels:
   - deferred
   - F3b
@@ -40,4 +40,10 @@ Trigger: a backup and restore flow exists (OAB-9, owner decision before F6) and 
 
 <!-- SECTION:NOTES:BEGIN -->
 Owner decision 2026-11-05: no backup export in v1, so no restore flow exists. The trigger now points to OAB-9.
+
+Overnight decision, 2026-11-06 (local UTC-6): not started.
+
+F3b is not built by owner decision, so an actual F3b restore flow does not exist.
+
+Keep Deferred.
 <!-- SECTION:NOTES:END -->

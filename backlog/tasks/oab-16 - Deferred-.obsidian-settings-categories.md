@@ -1,10 +1,10 @@
 ---
 id: OAB-16
 title: Sync .obsidian settings categories
-status: In Progress
+status: Done
 assignee: []
 created_date: 2026-10-12 15:14
-updated_date: '2026-11-07T02:10:00Z'
+updated_date: '2026-11-07T03:35:00Z'
 labels: []
 dependencies: []
 documentation:
@@ -61,4 +61,30 @@ The final reviewed feature commits rebased without conflicts onto origin/main 8d
 Final integration check at 9803b18 on origin/main 8dbd702: bun run check exited 0. Vitest groups report 2165 passed, 1 skipped, 0 failed. Lint, docs, typechecks, tests, and builds all passed. The parent read the terminal summary. No service deployment or vault action occurred. The final branch review in Plannotator follows this check.
 
 Owner branch review pn-05c9d7 approved the complete branch against origin/main with no changes requested. The review includes the explicit R1 non-atomic write limit and open external criteria. Publish one PR, keep OAB-16 In Progress, remove this worktree, and stop. No release or deployment authority follows from this approval.
+
+Owner and supervisor report, 2026-11-06 (local UTC-6), recorded after cutover.
+
+These are reported observations, not new agent tests.
+
+Settings sync from plugin 0.1.4 ran on Mac, iPhone, and iPad.
+
+Expected conflict copies appeared in AI Bridge settings conflicts/ and the owner deleted them.
+
+This supplies real-use settings evidence beside the existing raw-event tests.
+
+The earlier canceled-device and unpublished-release statements are historical, not current limits.
+AC3 limit: the report does not prove raw-event capture in the named Mac dev vault.
+
+Keep AC3 unchecked.
+AC6 limit: the report does not identify desktop-only plugins or prove their harmless behavior on mobile.
+
+Keep AC6 unchecked.
+
+The documented non-atomic settings-write limit remains unchanged.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Closed on released three-device settings sync with expected conflict copies. AC3 lacks named dev-vault capture proof. AC6 lacks desktop-only plugin proof.
+<!-- SECTION:FINAL_SUMMARY:END -->

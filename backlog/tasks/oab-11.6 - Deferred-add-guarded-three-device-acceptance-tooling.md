@@ -4,7 +4,7 @@ title: 'Deferred: add guarded three-device acceptance tooling'
 status: To Do
 assignee: []
 created_date: '2026-11-05T23:21:00Z'
-updated_date: '2026-11-06T16:52:00Z'
+updated_date: '2026-11-07T03:35:00Z'
 labels:
   - F5
   - Deferred
@@ -34,4 +34,14 @@ Trigger: F4 closes and the owner approves an isolated service authority plus nam
 
 <!-- SECTION:NOTES:BEGIN -->
 Promoted at F4 closure, 2026-11-06. DRAFT-4 still needs isolated service authority from the owner. DRAFT-5 still needs the BRAT release plugin-v0.1.0 and devices.
+
+Owner and supervisor report, 2026-11-06 (local UTC-6), recorded after cutover.
+
+These are reported observations, not new agent tests.
+
+The F5 real-use waiver does not build guarded acceptance tooling.
+
+It still needs isolated service authority and named disposable vaults.
+
+Keep To Do without live-service authority.
 <!-- SECTION:NOTES:END -->

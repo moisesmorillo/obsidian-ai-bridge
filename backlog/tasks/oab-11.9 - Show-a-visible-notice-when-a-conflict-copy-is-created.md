@@ -1,11 +1,11 @@
 ---
 id: OAB-11.9
 title: Show a visible notice when a conflict copy is created
-status: In Progress
+status: Done
 assignee:
   - '@pi'
 created_date: '2026-11-06T21:40:00Z'
-updated_date: '2026-11-06T23:06:00Z'
+updated_date: '2026-11-07T03:35:00Z'
 labels: []
 dependencies: []
 parent_task_id: OAB-11
@@ -59,4 +59,25 @@ Branch-review finding closure: fixed MINOR finding “Correct the notice helper 
 Review closure at d961ebd: task review found no blocking defect. Rename notice coverage and exact default-name documentation notes were fixed in 3f27c34 and accepted by scoped review. Whole-branch review covered all eight files at 3f27c34 and found one MINOR stale notice-helper comment. d961ebd fixes that comment, and scoped review approves the correction. Review includes semantic TSDoc, callback ownership, copy creation and verification paths, recovery exclusion, and revision authority. Full check passed at the final executable revision. Comment-only correction passes docs:check and diff checks. Criteria 2 and 3 have test evidence. Criterion 1 stays open for device proof. Human branch review remains pending.
 
 Human branch review pn-f2bbe5 approved the complete branch without changes. The task stays In Progress because real-device notice visibility remains unproven. No version bump occurred.
+
+Owner and supervisor report, 2026-11-06 (local UTC-6), recorded after cutover.
+
+These are reported observations, not new agent tests.
+
+Visible conflict copies converged on all devices.
+
+Settings conflicts appeared in AI Bridge settings conflicts/ and the owner deleted them.
+
+Attention dismissal and the Open fix shipped in 0.1.5, PR #88.
+
+The owner dismissed old attention items on both mobiles.
+AC1 limit: the report does not explicitly prove the creation-time notice and its copy path on each device.
+
+Conflict-file visibility and attention dismissal are distinct evidence.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Closed under the owner real-use decision. AC2 and AC3 retain their test evidence. AC1 stays unchecked without explicit device notice proof.
+<!-- SECTION:FINAL_SUMMARY:END -->

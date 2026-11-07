@@ -4,7 +4,7 @@ title: Watch daily use for seven days after cutover
 status: In Progress
 assignee: []
 created_date: '2026-11-07T00:15:00Z'
-updated_date: '2026-11-07T00:21:00Z'
+updated_date: '2026-11-07T03:35:00Z'
 labels:
   - F6
 dependencies: []
@@ -41,4 +41,21 @@ Keep the frozen folder and dated zip for at least 30 days from cutover, except a
 
 <!-- SECTION:NOTES:BEGIN -->
 Watch start: reported cutover at about 2026-11-07T00:20Z. Daily checks remain open. The completed Mac cutover and backup facts belong to OAB-12 notes. No daily check or three-device post-cutover convergence proof comes from that report.
+
+Owner and supervisor report, 2026-11-06 (local UTC-6), recorded after cutover.
+
+These are reported observations, not new agent tests.
+
+Day 1, local 2026-11-06 to 2026-11-07: no unexplained attention was reported.
+
+Cursor 262 and 47 files remained after the owner's test cleanup.
+
+Old attention items were dismissed on both mobiles after 0.1.5, PR #88.
+Limits: the report gives no exact daily check time, client IDs, or separate confirmation/failure counts for every device.
+
+It does not prove seven days, all-device post-cutover exchange, rollback, or completed retention.
+
+All criteria stay unchecked.
+
+Keep In Progress.
 <!-- SECTION:NOTES:END -->

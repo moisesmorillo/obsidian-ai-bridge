@@ -4,7 +4,7 @@ title: F6 Cutover delivery gate
 status: In Progress
 assignee: []
 created_date: 2026-10-12 15:13
-updated_date: '2026-11-07T00:21:00Z'
+updated_date: '2026-11-07T03:35:00Z'
 labels:
   - phase-gate
   - F6
@@ -24,7 +24,7 @@ Track F6 against docs/spec.md §14. The supervisor reports completed Mac cutover
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 F5 is complete and the owner decision on a backup (OAB-9) is recorded before cutover.
+- [x] #1 F5 is complete and the owner decision on a backup (OAB-9) is recorded before cutover.
 - [ ] #2 Cutover exit conditions are evidenced.
 <!-- AC:END -->
 
@@ -99,4 +99,43 @@ Revised decomposition:
 - Keep the dated zip and frozen copy for 30 days from cutover, through at least 2026-12-07T00:20Z.
 - The rollback rule remains: preserve later edits, pause all bridge clients, and reopen the frozen iCloud vault with its plugin disabled.
 - Keep one sync owner per restored live vault. The frozen copy lacks post-cutover edits.
+
+Owner and supervisor report, 2026-11-06 (local UTC-6), recorded after cutover.
+
+These are reported observations, not new agent tests.
+
+The owner accepts real use on Mac, iPhone, and iPad instead of the exact OAB-11.7 scripts for F5 closure.
+
+The scripts did not run.
+
+The owner selected a dated zip plus the frozen iCloud vault before cutover.
+
+Keep both for 30 days, through at least 2026-12-07T00:20Z.
+
+The frozen copy lacks later edits and service revision history.
+
+No zip restore test or Cloudflare-native backup exists.
+
+OAB-12.7 stays Deferred until the owner selects a design.
+
+Reported cutover at about 2026-11-07T00:20Z:
+- A fresh dated zip was made outside iCloud.
+- The plugin in the iCloud vault was disabled at cursor 200 with empty queues.
+- A new local Mac vault outside iCloud hydrated 51 files.
+
+All 51 hashes matched the iCloud copy.
+- New client Mac enrolled with coexistence off through the Orca internal browser, without a PIN.
+- The iCloud vault stays frozen.
+
+Test vaults were removed from the Mac and their clients revoked.
+- The owner console now has three active clients: Mac, iPhone, and iPad.
+This record follows the reported cutover.
+
+It supersedes earlier open-waiver, open-backup-choice, and unchecked-AC1 statements.
+
+AC1 is checked under the owner waiver and backup choice.
+
+AC2 stays unchecked for OAB-12.6.
+
+One day does not prove seven successful days.
 <!-- SECTION:NOTES:END -->

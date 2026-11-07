@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@pi'
 created_date: 2026-10-12 15:14
-updated_date: '2026-11-07T06:06:00Z'
+updated_date: '2026-11-07T06:24:00Z'
 labels:
   - deferred
   - trigger-based
@@ -95,6 +95,8 @@ Round-2 review correction (2026-11-07):
 Final round-2 validation (2026-11-07): `bun run docs:check` passed. Worker preflight passed with exit code 0. `bun run check` passed after clearing the new chunk table in test vault setup and updating the generated-DDL count. Results: 2,214 tests passed and 1 skipped across tooling, protocol, plugin, and Worker tests. The check also passed lint, documentation, all workspace typechecks, and dry-run builds. Worktree diff check passed. No live service or vault was used.
 
 Review closure: task review at 65203af approved transient-source retry and independent ZIP extraction fixes. Whole-branch review at 65203af found SQLite row limits, SQL binding limits, pruned current revisions, and unbounded metadata projections. Scoped correction review at dab7a53 approved all four with native regression evidence. The lost-completion recovery test also passes. Full check: 2214 tests pass, one skipped. Worker preflight passes. Production CPU duration and account tier remain unverified. No live service access, deployment, or Cloudflare resource change occurred.
+
+PR #93 CI timeout correction (run 42345536013): Ubuntu exceeded Vitest default 15,000 ms, with an observed duration of about 17,910 ms, only for the fixed-size multipart ZIP budget test. The test performs ZIP generation over a 5 MiB+7-byte fixture and verifies the source budgets, multipart boundary, retry, and completed output. The timeout was too short for this CPU-heavy test on the CI runner. Increased only this test timeout to 60,000 ms, matching the approved allowance and leaving its fixture and assertions unchanged. This is test-runner allowance, not a production CPU-budget claim. fflate remains a worker devDependency: repository search found its only reference in apps/worker/test/f2/packed-export-schema-upgrade.test.ts and none in apps/worker/src.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary

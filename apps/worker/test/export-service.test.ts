@@ -289,7 +289,7 @@ describe("resumable packed export service", () => {
 		expect(chunk.value?.byteLength).toBe(download?.size);
 		expect((await reader.read()).done).toBe(true);
 		reader.releaseLock();
-	}, 15_000);
+	}, 60_000);
 
 	it("recovers an R2 completion after the first completion reply is lost", async () => {
 		const repository = new ExportRepositoryFake();

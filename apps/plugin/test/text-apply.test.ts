@@ -285,6 +285,43 @@ describe("TextApplyEngine", () => {
 		Object.assign(change, remoteChange);
 	});
 
+	it("restores the prior text and records attention after an ENOSPC partial write", async () => {
+		const path = change.path;
+		const original = "known local bytes";
+		const originalHash = await hash(original);
+		vault.files.set(path, original);
+		journal = await seedBase(path, originalHash, storage, journal);
+		const remoteHash = await hash(remoteText);
+		let writeAttempts = 0;
+		vault.process = async (target, expected, next) => {
+			writeAttempts += 1;
+			if (writeAttempts === 1) {
+				expect(target).toBe(path);
+				expect(expected).toBe(original);
+				vault.files.set(target, next.slice(0, 4));
+				throw Object.assign(new Error("disk full"), { code: "ENOSPC" });
+			}
+			if (vault.files.get(target) !== expected) return false;
+			vault.files.set(target, next);
+			return true;
+		};
+		engine = makeEngine(journal, vault, {
+			read: async () => remoteText,
+		});
+
+		await expect(
+			engine.apply({ ...change, hash: remoteHash }),
+		).rejects.toMatchObject({
+			code: "ENOSPC",
+		});
+
+		expect(vault.files.get(path)).toBe(original);
+		expect(journal.snapshot().pending_apply).toHaveLength(1);
+		expect(journal.snapshot().attention).toContainEqual(
+			expect.objectContaining({ path }),
+		);
+	});
+
 	it("does not start a local apply after capture closes effect admission", async () => {
 		let markReadStarted: (() => void) | undefined;
 		let releaseRead: (() => void) | undefined;

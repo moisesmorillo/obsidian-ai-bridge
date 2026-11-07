@@ -212,6 +212,37 @@ describe("SyncTransport", () => {
 		expect(JSON.stringify(error)).not.toContain("private-value");
 	});
 
+	it("round trips a maximum-size blob without changing any byte", async () => {
+		const session = new ResponseSession();
+		const source = new Uint8Array(25_000_000);
+		for (let index = 0; index < source.byteLength; index += 1)
+			source[index] = index % 251;
+		const hash = [
+			...new Uint8Array(await crypto.subtle.digest("SHA-256", source)),
+		]
+			.map((byte) => byte.toString(16).padStart(2, "0"))
+			.join("");
+		session.responses.push({
+			status: 200,
+			headers: {
+				etag: `"${epoch}.4"`,
+				"content-type": "application/octet-stream",
+				"content-length": String(source.byteLength),
+			},
+			text: "",
+			arrayBuffer: source.buffer.slice(0) as ArrayBuffer,
+		});
+		const transport = new SyncTransport("https://service.test", session);
+
+		const result = await transport.readCurrentBlobAuthority("assets/max.png");
+
+		expect(result.bytes.byteLength).toBe(source.byteLength);
+		expect(result.bytes.every((byte, index) => byte === source[index])).toBe(
+			true,
+		);
+		expect(result.hash).toBe(hash);
+	}, 20_000);
+
 	it("reads and validates exact current blob bytes for rename recovery", async () => {
 		const session = new ResponseSession();
 		const bytes = new Uint8Array([0, 254, 7]);

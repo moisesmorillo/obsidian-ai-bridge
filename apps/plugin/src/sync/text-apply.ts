@@ -979,13 +979,32 @@ export class TextApplyEngine {
 				base?.deleted === false && (await digest(local)) === base.hash;
 			if (clean) {
 				await this.activeJournal.setExpectedWrite(change.path, change.hash);
-				if (
-					await this.effect(
+				let writeConfirmed = false;
+				try {
+					writeConfirmed = await this.effect(
 						[change.path],
 						() => this.vault.process(change.path, local, remote),
 						[{ path: change.path, hash: change.hash }],
-					)
-				) {
+					);
+				} catch (error) {
+					const partial = await this.vault.read(change.path);
+					if (partial !== null && partial !== local) {
+						try {
+							await this.effect([change.path], () =>
+								this.vault.process(change.path, partial, local),
+							);
+						} catch {
+							// Pending apply and attention retain the failed recovery state.
+						}
+					}
+					await this.activeJournal.clearExpectedWrite(change.path);
+					await this.activeJournal.recordAttention(
+						change.path,
+						"Remote text apply failed and needs recovery",
+					);
+					throw error;
+				}
+				if (writeConfirmed) {
 					await this.activeJournal.completeApply(change.path, {
 						deleted: false,
 						rev: remoteRev,

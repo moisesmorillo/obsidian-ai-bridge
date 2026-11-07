@@ -359,7 +359,7 @@ export function createOwnerHandler(
 			return new Response(
 				renderBlobGcPage({
 					csrf: state,
-					bucketName: "oab-blobs",
+					bucketName: "Unknown (R2_BUCKET binding)",
 					preview,
 					status,
 				}),

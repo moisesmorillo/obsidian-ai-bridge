@@ -188,13 +188,13 @@ describe("owner page rendering", () => {
 			coverage: "partial",
 			day_start: Date.UTC(2026, 10, 7),
 			day_end: Date.UTC(2026, 10, 8),
-			observed_from: Date.UTC(2026, 10, 7, 1),
-			observed_through: Date.UTC(2026, 10, 7, 2),
+			observed_from: null,
+			observed_through: null,
 			requests: {
 				status: "observed",
 				count: 12,
-				observed_from: Date.UTC(2026, 10, 7, 1),
-				observed_through: Date.UTC(2026, 10, 7, 2),
+				observed_from: null,
+				observed_through: null,
 				rest_count: 8,
 				mcp_count: 4,
 				stale: true,
@@ -203,7 +203,7 @@ describe("owner page rendering", () => {
 						client_id: "client&lt;&amp;",
 						requests_rest: 8,
 						requests_mcp: 4,
-						last_feed_request_at: Date.UTC(2026, 10, 7, 1),
+						last_feed_request_at: null,
 						minimum_poll_interval_ms: null,
 						maximum_poll_interval_ms: null,
 						poll_cadence_incomplete: true,
@@ -216,8 +216,8 @@ describe("owner page rendering", () => {
 				sample_count: 2,
 				total_sample_count: 3,
 				p95: null,
-				first_sample_at: Date.UTC(2026, 10, 7, 1),
-				last_sample_at: Date.UTC(2026, 10, 7, 2),
+				first_sample_at: null,
+				last_sample_at: null,
 				stale: false,
 			},
 			storage: {
@@ -233,11 +233,15 @@ describe("owner page rendering", () => {
 				deadline_ms: 1000,
 			},
 		});
-		expect(html).toMatchSnapshot();
 		expect(html).toContain("Unknown (storage_error)");
 		expect(html).toContain("Fresh or stale");
+		expect(html).toContain("Request observation window: Unknown to Unknown.");
+		expect(html).toContain("Retained sample window: Unknown to Unknown.");
+		expect(html).toContain("<td>Unknown</td>");
+		expect(html).toContain("unknown (out-of-order requests)");
 		expect(html).toContain("/owner/measurements");
 		expect(html).toContain("Earlier samples were removed by the daily cap.");
+		expect(html).toMatchSnapshot();
 	});
 
 	it("renders export forms, completed links, retained summary, and empty failures", () => {
@@ -288,7 +292,7 @@ describe("owner page rendering", () => {
 	it("renders blob cleanup safety, current phase, form, and unavailable inventory", () => {
 		const html = renderBlobGcPage({
 			csrf: "gc-csrf",
-			bucketName: "oab-blobs",
+			bucketName: "Unknown (R2_BUCKET binding)",
 			preview: null,
 			status: {
 				phase: "deleting",
@@ -298,11 +302,35 @@ describe("owner page rendering", () => {
 				failure: "blob_gc_unavailable",
 			},
 		});
-		expect(html).toMatchSnapshot();
 		expect(html).toContain("unavailable");
+		expect(html).toContain("Dry run unavailable.");
+		expect(html).toContain("Bucket: Unknown (R2_BUCKET binding).");
 		expect(html).toContain("Backups are excluded");
 		expect(html).toContain("mark fence protects published blobs");
 		expect(html).toContain('<form method="post" action="/owner/blob-gc">');
 		expect(html).toContain('<input type="hidden" name="csrf" value="gc-csrf">');
+		expect(html).toMatchSnapshot();
+	});
+
+	it.each([
+		["idle", "Inventory"],
+		["marking", "Mark"],
+		["deleting", "Delete"],
+	] as const)("highlights %s blob cleanup phase", (phase, step) => {
+		const html = renderBlobGcPage({
+			csrf: "phase-csrf",
+			bucketName: "Unknown (R2_BUCKET binding)",
+			preview: null,
+			status: {
+				phase,
+				marked_count: 0,
+				marked_bytes: 0,
+				delete_state: "idle",
+				failure: null,
+			},
+		});
+		expect(html).toContain(
+			`<li class="collection-step step-current" aria-current="step">${step}</li>`,
+		);
 	});
 });

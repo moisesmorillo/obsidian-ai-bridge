@@ -19,7 +19,7 @@ export interface MeasurementsPageViewModel
 /** Format one timestamp as UTC or preserve the explicit unknown state. */
 function displayTimestamp(value: number | null | undefined): string {
 	return value === null || value === undefined
-		? "unknown"
+		? "Unknown"
 		: new Date(value).toISOString();
 }
 

@@ -232,7 +232,7 @@ describe("production owner console", () => {
 		);
 		const emptySummaryHtml = await emptySummary.text();
 		expect(emptySummaryHtml).toContain(
-			"Request observation window: unknown to unknown",
+			"Request observation window: Unknown to Unknown",
 		);
 		expect(emptySummaryHtml).toContain("No observed clients.");
 		expect(emptySummaryHtml).toContain("Responding Worker isolate");

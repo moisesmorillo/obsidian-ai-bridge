@@ -24,7 +24,7 @@ export async function syncCompatibilityVersion(
 		exactVersion(value, `Compatibility map entry ${key}`);
 	}
 	versions[version] = minimum;
-	await writeFile(versionsPath, `${JSON.stringify(versions, null, 2)}\n`);
+	await writeFile(versionsPath, `${JSON.stringify(versions, null, "\t")}\n`);
 }
 
 /** Confirms a plain JSON object before release metadata reads or writes. */

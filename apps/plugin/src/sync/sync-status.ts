@@ -4,6 +4,11 @@ import {
 	FileHttpErrorSchema,
 	type VaultReadResult,
 } from "@obsidian-ai-bridge/protocol";
+import type { DeviceAttention } from "@plugin/sync/attention";
+import {
+	getAttentionKey,
+	isInformationalAttention,
+} from "@plugin/sync/attention";
 import type { DeviceJournalFailureStage } from "@plugin/sync/device-journal";
 import type { DeleteResponseDiagnostic } from "@plugin/sync/remote-text";
 
@@ -68,8 +73,14 @@ export interface SyncStatusProjection {
 		| "revoked"
 		| "paused"
 		| "backup failed";
-	/** Durable per-path reasons that require a user-visible action. */
-	attention: Array<{ path: string; reason: string; action: "open" }>;
+	/** Durable per-path reasons with stable journal identity for safe actions. */
+	attention: Array<
+		Pick<DeviceAttention, "path" | "reason"> & {
+			key: string;
+			informational: boolean;
+			action: "open";
+		}
+	>;
 	/** Durable destructive events awaiting an owner decision. */
 	coexistenceConfirmations: Array<
 		CoexistenceConfirmation & { unavailable: boolean; stale: boolean }
@@ -134,8 +145,10 @@ export function projectSyncStatus(
 	return {
 		state: status,
 		attention: state.attention.map((item) => ({
+			key: getAttentionKey(item),
 			path: item.path,
 			reason: item.reason,
+			informational: isInformationalAttention(item),
 			action: "open",
 		})),
 		coexistenceConfirmations: state.coexistence_confirmations.map((item) => ({

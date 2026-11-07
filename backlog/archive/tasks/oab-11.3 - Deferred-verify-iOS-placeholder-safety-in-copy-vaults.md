@@ -4,7 +4,7 @@ title: 'Deferred: verify iOS placeholder safety in copy vaults'
 status: Deferred
 assignee: []
 created_date: '2026-11-05T23:21:00Z'
-updated_date: '2026-11-07T03:35:00Z'
+updated_date: '2026-11-07T13:02:00Z'
 labels:
   - F5
   - Deferred
@@ -47,4 +47,6 @@ No placeholder behavior is proven.
 Trigger: a device keeps an iCloud vault.
 
 Keep this task Deferred and all criteria unchecked.
+
+Not applicable 2026-11-07: no device keeps an iCloud vault after the F6 cutover. The iCloud vault is frozen with the plugin disabled. Archived. Restore if a device enrolls an iCloud vault again.
 <!-- SECTION:NOTES:END -->

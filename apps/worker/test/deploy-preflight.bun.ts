@@ -1,9 +1,16 @@
 /// <reference types="bun" />
 
 import { strict as assert } from "node:assert";
-import type { ChildProcess } from "node:child_process";
-import { EventEmitter } from "node:events";
-import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { type ChildProcess, spawn as spawnProcess } from "node:child_process";
+import { EventEmitter, once } from "node:events";
+import {
+	mkdir,
+	mkdtemp,
+	readdir,
+	readFile,
+	rm,
+	writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
@@ -12,16 +19,40 @@ import {
 	checkMetadata,
 	createSanitizedEnvironment,
 	createTemporaryRoot,
+	filterLocalCompatibilityFlags,
+	safePreflightFailure,
 	startLocalWorker,
 	stopLocalWorker,
-} from "../tooling/deploy-preflight";
-import { classifyWranglerFailure } from "../tooling/wrangler-failure";
+} from "@worker/../tooling/deploy-preflight";
+import { classifyWranglerFailure } from "@worker/../tooling/wrangler-failure";
 
 /** Run the assertions for deploy failure classification and startup preflight tools. */
 async function main(): Promise<void> {
 	assert.deepEqual(
 		classifyWranglerFailure("Disallowed operation called within global scope"),
-		["worker_global_scope_error"],
+		["Disallowed operation called within global scope"],
+	);
+	assert.deepEqual(
+		classifyWranglerFailure("Authentication error: account id and token"),
+		["Authentication error"],
+	);
+	assert.deepEqual(
+		classifyWranglerFailure("No such compatibility flag: unsafe-flag"),
+		["No such compatibility flag"],
+	);
+	assert.deepEqual(
+		classifyWranglerFailure("Script startup exceeded 1 second"),
+		["Script startup exceeded"],
+	);
+	assert.deepEqual(classifyWranglerFailure("request timed out"), [
+		"wrangler_timeout",
+	]);
+	assert.deepEqual(
+		filterLocalCompatibilityFlags([
+			"unhandled_rejection_after_microtask_checkpoint",
+			"nodejs_compat",
+		]),
+		["nodejs_compat"],
 	);
 	assert.deepEqual(classifyWranglerFailure("ordinary Wrangler error"), [
 		"unknown_wrangler_failure",
@@ -30,14 +61,30 @@ async function main(): Promise<void> {
 		classifyWranglerFailure(
 			"Disallowed operation called within global scope\nRequest timed out",
 		),
-		["worker_global_scope_error", "wrangler_timeout"],
+		["Disallowed operation called within global scope", "wrangler_timeout"],
 	);
 
 	const unsafe =
 		"https://user:secret@example.test/opaque/id?token=hidden\n" +
-		"Authorization: Bearer secret-body\n\u001b[31mDisallowed operation called within global scope\u001b[0m";
+		"Authorization: Bearer secret-body\n\u001b[31mDisallowed operation called within global scope\u001b[0m " +
+		"lowercase_token_secret_id";
 	const labels = classifyWranglerFailure(unsafe);
-	assert.deepEqual(labels, ["worker_global_scope_error"]);
+	assert.deepEqual(labels, ["Disallowed operation called within global scope"]);
+	assert.deepEqual(classifyWranglerFailure("private_token_secret_lowercase"), [
+		"unknown_wrangler_failure",
+	]);
+	assert.deepEqual(
+		safePreflightFailure(new Error("private_token_secret_lowercase")),
+		["unknown_wrangler_failure"],
+	);
+	assert.deepEqual(
+		safePreflightFailure(
+			new Error(
+				"Disallowed operation called within global scope token=private_secret",
+			),
+		),
+		["Disallowed operation called within global scope"],
+	);
 	assert.equal(labels.join("\n").includes(unsafe), false);
 	assert.equal(labels.join("\n").includes("example.test"), false);
 	assert.equal(labels.join("\n").includes("secret"), false);
@@ -47,6 +94,7 @@ async function main(): Promise<void> {
 	);
 	assert.equal(safeEnvironment.CLOUDFLARE_API_TOKEN, undefined);
 	assert.equal(safeEnvironment.OWNER_SUBJECT, undefined);
+	assert.equal(safeEnvironment.CLOUDFLARE_LOAD_DEV_VARS_FROM_DOT_ENV, "false");
 
 	const child = Object.assign(new EventEmitter(), {
 		exitCode: null,
@@ -86,26 +134,39 @@ async function main(): Promise<void> {
 	exitedOutput.write("Disallowed operation called within global scope");
 	await assert.rejects(
 		checkMetadata(exitedChild, 12345),
-		/worker_global_scope_error/,
+		/Disallowed operation called within global scope/,
 	);
 
 	const runtimeRoot = createTemporaryRoot();
 	try {
+		const localConfigDirectory = join(runtimeRoot, "local-config");
+		await mkdir(localConfigDirectory, { recursive: true, mode: 0o700 });
+		await writeFile(
+			join(localConfigDirectory, ".env"),
+			"DOTENV_MARKER=must-not-load\n",
+		);
 		const bundle = join(runtimeRoot, "healthy.js");
 		await writeFile(
 			bundle,
-			'export default { fetch() { return new Response("ok", { status: 200 }); } };',
+			'export default { fetch(_request, env) { return new Response("ok", { status: env.DOTENV_MARKER ? 503 : 200 }); } };',
 		);
 		const port = await availablePort();
 		const worker = startLocalWorker(runtimeRoot, bundle, port);
 		const localConfig = JSON.parse(
-			await readFile(join(runtimeRoot, "wrangler.local.jsonc"), "utf8"),
+			await readFile(
+				join(localConfigDirectory, "wrangler.local.jsonc"),
+				"utf8",
+			),
 		) as {
 			account_id?: string;
 			vars: { SERVICE_ORIGIN: string; OWNER_SUBJECT: string };
 		};
 		assert.equal(localConfig.account_id, undefined);
 		assert.equal(localConfig.vars.SERVICE_ORIGIN, `https://127.0.0.1:${port}`);
+		assert.deepEqual((await readdir(localConfigDirectory)).sort(), [
+			".env",
+			"wrangler.local.jsonc",
+		]);
 		assert.equal(localConfig.vars.OWNER_SUBJECT, "preflight-test-owner");
 		try {
 			await checkMetadata(worker, port, { timeoutMs: 30_000 });
@@ -127,13 +188,52 @@ async function main(): Promise<void> {
 		try {
 			await assert.rejects(
 				checkMetadata(forbiddenWorker, forbiddenPort, { timeoutMs: 30_000 }),
-				/worker_global_scope_error/,
+				/Disallowed operation called within global scope/,
 			);
 		} finally {
 			await stopLocalWorker(forbiddenWorker);
 		}
 	} finally {
 		await rm(runtimeRoot, { recursive: true, force: true });
+	}
+
+	const processGroupLeader = spawnProcess(
+		"node",
+		[
+			"-e",
+			`const { spawn } = require("node:child_process"); const child = spawn(process.execPath, ["-e", "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000)"] , { stdio: "ignore" }); process.stdout.write(String(child.pid)); setTimeout(() => process.exit(0), 25);`,
+		],
+		{ detached: true, stdio: ["ignore", "pipe", "ignore"] },
+	);
+	let descendantText = "";
+	processGroupLeader.stdout?.on("data", (chunk: Buffer) => {
+		descendantText += chunk.toString("utf8");
+	});
+	try {
+		await once(processGroupLeader, "close");
+		const descendantPid = Number(descendantText);
+		assert.ok(descendantPid > 0);
+		let descendantRunning = true;
+		try {
+			process.kill(descendantPid, 0);
+		} catch {
+			descendantRunning = false;
+		}
+		assert.equal(descendantRunning, true);
+		await stopLocalWorker(processGroupLeader);
+		descendantRunning = true;
+		try {
+			process.kill(descendantPid, 0);
+		} catch {
+			descendantRunning = false;
+		}
+		assert.equal(descendantRunning, false);
+	} finally {
+		try {
+			process.kill(-(processGroupLeader.pid ?? 0), "SIGKILL");
+		} catch {
+			// The process group can already be gone after successful cleanup.
+		}
 	}
 
 	const temporaryRootBefore = (await readdir(tmpdir())).filter((entry) =>
@@ -186,7 +286,10 @@ async function main(): Promise<void> {
 			{ cwd: join(import.meta.dir, ".."), stdout: "pipe", stderr: "pipe" },
 		);
 		assert.equal(result.exitCode, 0, "classifier CLI failed");
-		assert.equal(result.stdout.toString().trim(), "worker_global_scope_error");
+		assert.equal(
+			result.stdout.toString().trim(),
+			"Disallowed operation called within global scope",
+		);
 		await writeFile(output, result.stdout);
 		const rendered = await readFile(output, "utf8");
 		assert.equal(rendered.includes("example.test"), false);

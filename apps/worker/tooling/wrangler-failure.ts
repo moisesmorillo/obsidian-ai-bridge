@@ -3,20 +3,36 @@ import { readFile } from "node:fs/promises";
 /** Fixed Wrangler failure signatures in the order used by preflight and deploy logs. */
 const failureClasses = [
 	{
-		label: "worker_global_scope_error",
+		label: "Disallowed operation called within global scope",
 		pattern: /Disallowed operation called within global scope/,
 	},
-	{ label: "wrangler_timeout", pattern: /(?:timed out|timeout)/i },
 	{
-		label: "wrangler_authentication_error",
-		pattern: /(?:authentication|unauthorized|invalid api token)/i,
+		label: "Authentication error",
+		pattern:
+			/(?:authentication error|authentication failed|unauthorized|invalid api token)/i,
 	},
+	{
+		label: "No such compatibility flag",
+		pattern: /No such compatibility flag/i,
+	},
+	{
+		label: "Script startup exceeded",
+		pattern: /Script startup exceeded/i,
+	},
+	{ label: "wrangler_timeout", pattern: /(?:timed out|timeout|ETIMEDOUT)/i },
 ] as const;
 /** Safe fallback label for output that has no known failure signature. */
 const unknownFailure = "unknown_wrangler_failure";
 
+/** Union of the fixed class names that may appear in preflight or deploy logs. */
+type WranglerFailureLabel =
+	| (typeof failureClasses)[number]["label"]
+	| typeof unknownFailure;
+
 /** Return fixed failure labels without exposing Wrangler output. */
-export function classifyWranglerFailure(output: string): string[] {
+export function classifyWranglerFailure(
+	output: string,
+): WranglerFailureLabel[] {
 	const ansiEscape = String.fromCharCode(27);
 	const ansiSequence = new RegExp(`${ansiEscape}\\[[0-?]*[ -/]*[@-~]`, "g");
 	const safeText = output.replace(ansiSequence, "");

@@ -1,6 +1,7 @@
 import { type ChildProcess, spawn, spawnSync } from "node:child_process";
 import {
 	chmodSync,
+	mkdirSync,
 	mkdtempSync,
 	readFileSync,
 	rmSync,
@@ -22,6 +23,14 @@ const outputLimit = 64 * 1024;
 const timeoutMs = 30_000;
 /** Maximum time allowed for the credential-free production dry-run build, in milliseconds. */
 const buildTimeoutMs = 120_000;
+/** Compatibility flag unsupported by the pinned local runtime only. */
+const unsupportedLocalCompatibilityFlag =
+	"unhandled_rejection_after_microtask_checkpoint";
+
+/** Remove only the compatibility flag rejected by pinned local workerd. */
+export function filterLocalCompatibilityFlags(flags: string[]): string[] {
+	return flags.filter((flag) => flag !== unsupportedLocalCompatibilityFlag);
+}
 
 /** Return a private temporary root with isolated Wrangler state and home directories. */
 export function createTemporaryRoot(): string {
@@ -40,6 +49,7 @@ export function createSanitizedEnvironment(root: string): NodeJS.ProcessEnv {
 		WRANGLER_SEND_METRICS: "false",
 		CI: "true",
 		NO_COLOR: "1",
+		CLOUDFLARE_LOAD_DEV_VARS_FROM_DOT_ENV: "false",
 	};
 }
 
@@ -112,7 +122,9 @@ export function startLocalWorker(
 	port: number,
 ): ChildProcess {
 	const origin = `https://127.0.0.1:${port}`;
-	const configPath = join(root, "wrangler.local.jsonc");
+	const configDirectory = join(root, "local-config");
+	mkdirSync(configDirectory, { recursive: true, mode: 0o700 });
+	const configPath = join(configDirectory, "wrangler.local.jsonc");
 	const config: {
 		account_id?: string;
 		main: string;
@@ -122,7 +134,9 @@ export function startLocalWorker(
 	delete config.account_id;
 	config.main = bundle;
 	// Pinned local workerd rejects this production flag. The production config stays unchanged.
-	config.compatibility_flags = [];
+	config.compatibility_flags = filterLocalCompatibilityFlags(
+		config.compatibility_flags,
+	);
 	config.vars = {
 		SERVICE_ORIGIN: origin,
 		OWNER_SUBJECT: "preflight-test-owner",
@@ -155,7 +169,7 @@ export function startLocalWorker(
 	);
 }
 
-/** Stop Wrangler and its local runtime group before removing their temporary state. */
+/** Stop the Wrangler process group before removing its temporary state. */
 export async function stopLocalWorker(child: ChildProcess): Promise<void> {
 	if (!child.pid) return;
 	const pid = child.pid;
@@ -167,36 +181,31 @@ export async function stopLocalWorker(child: ChildProcess): Promise<void> {
 			child.kill(signal);
 		}
 	};
-	/** Report whether Node recorded a normal or signal-based child exit. */
-	const isExited = (): boolean =>
-		child.exitCode !== null || child.signalCode !== null;
-	if (isExited()) {
-		sendSignal("SIGTERM");
-		return;
-	}
-	const exited = new Promise<void>((resolveExit) => {
-		child.once("exit", () => resolveExit());
-	});
+	/** Check whether any process still belongs to the Wrangler group. */
+	const processGroupExists = (): boolean => {
+		try {
+			process.kill(-pid, 0);
+			return true;
+		} catch (error) {
+			return !(
+				error instanceof Error &&
+				"code" in error &&
+				error.code === "ESRCH"
+			);
+		}
+	};
+	/** Wait for group members to exit for a bounded period. */
+	const waitForGroupExit = async (timeoutMs: number): Promise<boolean> => {
+		const deadline = Date.now() + timeoutMs;
+		while (processGroupExists() && Date.now() < deadline)
+			await new Promise((resolveWait) => setTimeout(resolveWait, 25));
+		return !processGroupExists();
+	};
 	sendSignal("SIGTERM");
-	let timer: ReturnType<typeof setTimeout> | undefined;
-	await Promise.race([
-		exited,
-		new Promise<void>((resolveTimeout) => {
-			timer = setTimeout(resolveTimeout, 2_000);
-		}),
-	]);
-	if (timer) clearTimeout(timer);
-	if (!isExited()) {
-		sendSignal("SIGKILL");
-		let killTimer: ReturnType<typeof setTimeout> | undefined;
-		await Promise.race([
-			exited,
-			new Promise<void>((resolveTimeout) => {
-				killTimer = setTimeout(resolveTimeout, 2_000);
-			}),
-		]);
-		if (killTimer) clearTimeout(killTimer);
-	}
+	if (await waitForGroupExit(2_000)) return;
+	sendSignal("SIGKILL");
+	if (!(await waitForGroupExit(2_000)))
+		throw new Error("unknown_wrangler_failure");
 }
 
 /** Supply the loopback request function used by the metadata deadline check. */
@@ -268,9 +277,21 @@ export async function checkMetadata(
 	throw new Error(failure);
 }
 
+/** Convert an arbitrary preflight error to the canonical fixed failure labels. */
+export function safePreflightFailure(error: unknown): string[] {
+	return classifyWranglerFailure(error instanceof Error ? error.message : "");
+}
+
 /** Build and run the production bundle locally, then remove all temporary files and state. */
 async function main(): Promise<void> {
-	const root = createTemporaryRoot();
+	let root: string;
+	try {
+		root = createTemporaryRoot();
+	} catch (error) {
+		console.error(safePreflightFailure(error).join("\n"));
+		process.exitCode = 1;
+		return;
+	}
 	let child: ChildProcess | undefined;
 	try {
 		const outputDirectory = runBuild(root);
@@ -279,15 +300,25 @@ async function main(): Promise<void> {
 		child = startLocalWorker(root, bundle, port);
 		await checkMetadata(child, port);
 	} catch (error) {
-		const failure =
-			error instanceof Error && /^[a-z_]+(?:\n[a-z_]+)*$/.test(error.message)
-				? error.message
-				: classifyWranglerFailure(String(error)).join("\n");
+		const failure = safePreflightFailure(error).join("\n");
 		console.error(failure);
 		process.exitCode = 1;
 	} finally {
-		if (child) await stopLocalWorker(child);
-		rmSync(root, { recursive: true, force: true });
+		let cleanupFailed = false;
+		try {
+			if (child) await stopLocalWorker(child);
+		} catch {
+			cleanupFailed = true;
+		}
+		try {
+			rmSync(root, { recursive: true, force: true });
+		} catch {
+			cleanupFailed = true;
+		}
+		if (cleanupFailed) {
+			console.error(classifyWranglerFailure("").join("\n"));
+			process.exitCode = 1;
+		}
 	}
 }
 

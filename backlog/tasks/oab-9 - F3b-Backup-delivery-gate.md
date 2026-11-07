@@ -1,10 +1,10 @@
 ---
 id: OAB-9
 title: 'F3b Backup delivery gate (not built: owner decision 2026-11-05)'
-status: Deferred
+status: Done
 assignee: []
 created_date: 2026-10-12 15:13
-updated_date: '2026-11-07T03:35:00Z'
+updated_date: '2026-11-07T13:06:00Z'
 labels:
   - phase-gate
   - F3b
@@ -24,7 +24,7 @@ Owner decision 2026-11-05: the GitHub export mechanism of docs/spec.md §11 is n
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The owner selects a Cloudflare-native backup mechanism before F6, and docs/spec.md records its exit cases before implementation.
+- [x] #1 The owner selects a Cloudflare-native backup mechanism before F6, and docs/spec.md records its exit cases before implementation.
 <!-- AC:END -->
 
 ## Implementation Notes
@@ -53,4 +53,12 @@ Not started tonight.
 F3b remains Deferred and is not built by the 2026-11-05 owner decision.
 
 The cutover backup choice does not implement export or restore.
+
+Owner decision 2026-11-07: the packed baseline export (OAB-18, PR #93) is the Cloudflare-native backup mechanism. docs/spec.md §11 and docs/packed-export-restore.md record the restore procedure and exit cases. Gate closed as satisfied by OAB-18. Scheduled exports stay in the §16 row 'Historical backup and automatic export schedule'.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Closed by owner decision: OAB-18 packed baseline export is the backup mechanism.
+<!-- SECTION:FINAL_SUMMARY:END -->

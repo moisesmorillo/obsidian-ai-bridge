@@ -1,10 +1,10 @@
 ---
 id: OAB-38
 title: Prove AC-13 through an actual F3b restore
-status: Deferred
+status: Done
 assignee: []
 created_date: '2026-11-04T18:04:00Z'
-updated_date: '2026-11-07T03:35:00Z'
+updated_date: '2026-11-07T13:06:00Z'
 labels:
   - deferred
   - F3b
@@ -46,4 +46,12 @@ Overnight decision, 2026-11-06 (local UTC-6): not started.
 F3b is not built by owner decision, so an actual F3b restore flow does not exist.
 
 Keep Deferred.
+
+Owner waiver 2026-11-07: the owner accepts the repeated device enrollments (iPhone, iPad, Mac after cutover) as proof of hydration from the service and closes this task. No epoch-changing restore ran. Criteria 1 to 4 stay unchecked by evidence. Reopen if an epoch-changing restore is required.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Closed by owner waiver after three-device enrollment proof. No epoch-changing restore ran.
+<!-- SECTION:FINAL_SUMMARY:END -->

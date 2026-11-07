@@ -1,10 +1,10 @@
 ---
 id: OAB-11.6
 title: 'Deferred: add guarded three-device acceptance tooling'
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-11-05T23:21:00Z'
-updated_date: '2026-11-07T03:35:00Z'
+updated_date: '2026-11-07T13:06:00Z'
 labels:
   - F5
   - Deferred
@@ -44,4 +44,12 @@ The F5 real-use waiver does not build guarded acceptance tooling.
 It still needs isolated service authority and named disposable vaults.
 
 Keep To Do without live-service authority.
+
+Owner waiver 2026-11-07: three devices (Mac, iPhone, iPad) run the plugin in daily use after the F6 cutover. The owner closes this tooling task as not needed. Criteria stay unchecked by evidence.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Closed by owner waiver: three devices in daily use replace guarded acceptance tooling.
+<!-- SECTION:FINAL_SUMMARY:END -->

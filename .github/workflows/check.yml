@@ -18,4 +18,5 @@ jobs:
         with:
           version: 2026.10.8
       - run: bun install --frozen-lockfile
+      - run: bun run --filter '@obsidian-ai-bridge/worker' preflight
       - run: bun run check

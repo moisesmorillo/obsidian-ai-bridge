@@ -1,9 +1,14 @@
 import type {
+	BlobGcPreview,
+	BlobGcStatus,
 	ExportOperationResult,
 	ExportSnapshot,
 	MeasurementResponse,
 } from "@obsidian-ai-bridge/protocol";
 import {
+	BlobGcOperationFailureSchema,
+	BlobGcPreviewSchema,
+	BlobGcStatusSchema,
 	EpochSchema,
 	ExportSnapshotsSchema,
 	MeasurementResponseSchema,
@@ -72,6 +77,19 @@ export type OwnerExportResolver = (
 	): Promise<{ body: ReadableStream<Uint8Array>; size: number } | null>;
 };
 
+/** Resolve owner-only preview, status, and bounded execution for blob collection. */
+export type OwnerBlobGcResolver = (
+	env: Env,
+	request: Request,
+) => {
+	/** Measure reclaimable objects without changing durable marks. */
+	preview(ownerSubject: string): Promise<BlobGcPreview | null>;
+	/** Return durable phase and mark measurement for the verified owner. */
+	status(ownerSubject: string): Promise<BlobGcStatus | null>;
+	/** Start or advance one bounded confirmed collection batch. */
+	collect(ownerSubject: string): Promise<BlobGcStatus | null>;
+};
+
 /** Escape provider-controlled and owner-controlled strings before HTML rendering. */
 function escapeHtml(value: string): string {
 	return value.replace(/[&<>"']/g, (character) => {
@@ -120,6 +138,7 @@ export function createOwnerHandler(
 	resolveRegistry: OwnerRegistryResolver,
 	resolveMeasurements?: OwnerMeasurementResolver,
 	resolveExports?: OwnerExportResolver,
+	resolveBlobGc?: OwnerBlobGcResolver,
 ): ExportedHandler<Env> {
 	const app = new Hono<{ Bindings: Env }>();
 	app.get("/owner/clients", async (context) => {
@@ -170,7 +189,7 @@ export function createOwnerHandler(
 			? `<a href="/owner/clients?cursor=${encodeURIComponent(page.next_cursor)}">Next page</a>`
 			: "";
 		return new Response(
-			`<!doctype html><html><head><meta charset="utf-8"><title>Owner clients</title></head><body><main><h1>Connected clients</h1><p><a href="/owner/measurements?format=html">Service measurements</a></p><ul>${clientMarkup}</ul>${next}</main></body></html>`,
+			`<!doctype html><html><head><meta charset="utf-8"><title>Owner clients</title></head><body><main><h1>Connected clients</h1><p><a href="/owner/measurements?format=html">Service measurements</a> <a href="/owner/blob-gc">Collect unreferenced blobs</a></p><ul>${clientMarkup}</ul>${next}</main></body></html>`,
 			{
 				headers: {
 					"content-type": "text/html; charset=utf-8",
@@ -292,6 +311,114 @@ export function createOwnerHandler(
 			});
 		} catch {
 			return noStoreText("Unavailable", 503);
+		}
+	});
+
+	app.get("/owner/blob-gc", async (context) => {
+		const owner = await verifyOwnerAccess(context.req.raw, context.env);
+		if (!owner) return noStoreText("Unauthorized", 401);
+		if (!isCanonicalOwnerOrigin(context.req.raw, context.env))
+			return noStoreText("Not found", 404);
+		if (!resolveBlobGc) return noStoreText("Unavailable", 503);
+		try {
+			const gateway = resolveBlobGc(context.env, context.req.raw);
+			const [observedPreview, observedStatus] = await Promise.all([
+				gateway.preview(owner.subject),
+				gateway.status(owner.subject),
+			]);
+			if (!observedPreview || !observedStatus)
+				return noStoreText("Forbidden", 403);
+			const preview = BlobGcPreviewSchema.parse(observedPreview);
+			const status = BlobGcStatusSchema.parse(observedStatus);
+			const browserId =
+				readCookie(context.req.raw, OWNER_BROWSER_COOKIE) ??
+				crypto.randomUUID();
+			if (!isUuid(browserId)) return noStoreText("Unauthorized", 401);
+			const state = crypto.randomUUID();
+			await storeOwnerCsrf(resolveRegistry(context.env, context.req.raw), {
+				owner_subject: owner.subject,
+				browser_id: browserId,
+				state,
+				expires_at: Date.now() + OWNER_STATE_TTL_MS,
+			});
+			const deleteMessage =
+				status.delete_state === "unknown"
+					? "Delete outcome is unknown. Marks and publication remain blocked. An owner retry cannot clear this claim."
+					: status.delete_state === "active"
+						? "A delete request is active. Its claim stays until R2 reports settlement."
+						: "";
+			const failure =
+				status.failure === null
+					? "No collection failure."
+					: "Collection failed. Marks remain for a retry.";
+			return new Response(
+				`<!doctype html><html><head><meta charset="utf-8"><title>Blob garbage collection</title></head><body><main><h1>Blob garbage collection</h1><p>Dry run: ${preview.count} unreferenced blobs, ${preview.bytes} reclaimable bytes.</p><p>Run phase: ${status.phase}. Marked blobs: ${status.marked_count}. Marked bytes: ${status.marked_bytes}. ${deleteMessage} ${failure}</p><form method="post" action="/owner/blob-gc"><input type="hidden" name="csrf" value="${state}"><button>Confirm or continue blob collection</button></form><p>Each request and alarm handles one bounded batch. Backups are excluded.</p></main></body></html>`,
+				{
+					headers: {
+						"content-type": "text/html; charset=utf-8",
+						"cache-control": "no-store",
+						"set-cookie": `${OWNER_BROWSER_COOKIE}=${browserId}; Secure; HttpOnly; SameSite=Strict; Path=/; Max-Age=600`,
+					},
+				},
+			);
+		} catch {
+			return Response.json(
+				BlobGcOperationFailureSchema.parse({
+					kind: "blob_gc_unavailable",
+					retry_after_seconds: 1,
+				}),
+				{
+					status: 503,
+					headers: { "cache-control": "no-store", "retry-after": "1" },
+				},
+			);
+		}
+	});
+
+	app.post("/owner/blob-gc", async (context) => {
+		if (!isSameOrigin(context.req.raw, context.env))
+			return noStoreText("Forbidden", 403);
+		const owner = await verifyOwnerAccess(context.req.raw, context.env);
+		if (!owner) return noStoreText("Unauthorized", 401);
+		if (!resolveBlobGc) return noStoreText("Unavailable", 503);
+		const form = await readForm(context.req.raw);
+		if (!form) return noStoreText("Invalid owner form", 400);
+		const browserId = readCookie(context.req.raw, OWNER_BROWSER_COOKIE);
+		if (!browserId || !isUuid(browserId) || !isUuid(form.state))
+			return noStoreText("Invalid owner form", 400);
+		const registry = resolveRegistry(context.env, context.req.raw);
+		const accepted = await consumeOwnerCsrf(registry, {
+			owner_subject: owner.subject,
+			browser_id: browserId,
+			state: form.state,
+			now: Date.now(),
+		});
+		if (!accepted) return noStoreText("Invalid owner form", 403);
+		try {
+			const observedStatus = await resolveBlobGc(
+				context.env,
+				context.req.raw,
+			).collect(owner.subject);
+			if (!observedStatus) return noStoreText("Forbidden", 403);
+			BlobGcStatusSchema.parse(observedStatus);
+			return new Response(null, {
+				status: 303,
+				headers: {
+					location: `${context.env.SERVICE_ORIGIN}/owner/blob-gc`,
+					"cache-control": "no-store",
+				},
+			});
+		} catch {
+			return Response.json(
+				BlobGcOperationFailureSchema.parse({
+					kind: "blob_gc_unavailable",
+					retry_after_seconds: 1,
+				}),
+				{
+					status: 503,
+					headers: { "cache-control": "no-store", "retry-after": "1" },
+				},
+			);
 		}
 	});
 

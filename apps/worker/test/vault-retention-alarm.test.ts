@@ -140,6 +140,45 @@ describe("Vault retention alarm lifecycle", () => {
 		});
 	});
 
+	it("does not poll an unresolved durable blob delete claim", async () => {
+		const stub = env.VAULTS.get(env.VAULTS.newUniqueId());
+		await runInDurableObject(stub, async (instance, state) => {
+			const owner = "55555555-5555-4555-8555-555555555555";
+			state.storage.sql.exec(
+				"UPDATE meta SET value = 'deleting' WHERE key = 'blob_gc_phase'",
+			);
+			state.storage.sql.exec(
+				"UPDATE meta SET value = '11111111-1111-4111-8111-111111111111' WHERE key = 'blob_gc_run_id'",
+			);
+			state.storage.sql.exec(
+				"UPDATE meta SET value = ? WHERE key = 'blob_gc_delete_owner'",
+				owner,
+			);
+			state.storage.sql.exec(
+				"UPDATE meta SET value = 'unknown' WHERE key = 'blob_gc_delete_state'",
+			);
+			state.storage.sql.exec(
+				"INSERT INTO blob_gc(hash,size,marked_at) VALUES (?,4,1)",
+				"a".repeat(64),
+			);
+			const before = Date.now();
+
+			await instance.alarm();
+
+			const after = Date.now();
+			const nextAlarm = await state.storage.getAlarm();
+			expect(
+				new Set([
+					expectedNextNightlyDeadline(before),
+					expectedNextNightlyDeadline(after),
+				]),
+			).toContain(nextAlarm);
+			expect(
+				state.storage.sql.exec("SELECT hash FROM blob_gc").toArray(),
+			).toEqual([{ hash: "a".repeat(64) }]);
+		});
+	});
+
 	it("keeps rows and durable progress intact after a native maintenance fault", async () => {
 		const stub = env.VAULTS.get(env.VAULTS.newUniqueId());
 		await runInDurableObject(stub, async (instance, state) => {

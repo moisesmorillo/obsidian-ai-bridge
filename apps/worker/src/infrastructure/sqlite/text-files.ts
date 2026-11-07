@@ -53,6 +53,7 @@ import {
 import { SqliteHistoryStore } from "@worker/infrastructure/sqlite/history";
 import type { SqliteMutationCoordinator } from "@worker/infrastructure/sqlite/mutations";
 import {
+	blobGc,
 	blobRefs,
 	changes,
 	files,
@@ -221,6 +222,12 @@ export class SqliteTextStore {
 			payload_hash: operationIntent.payload_hash,
 			size: operationIntent.size,
 		});
+		const gcGeneration = this.capturePublicationFence(declaration.payload_hash);
+		if (gcGeneration === null)
+			return {
+				ok: false,
+				failure: { kind: "blob_gc_in_progress", retry_after_seconds: 1 },
+			};
 		let evidence: BlobEvidence | undefined;
 		try {
 			evidence = await this.ports.blobStore.head(declaration.payload_hash);
@@ -244,14 +251,44 @@ export class SqliteTextStore {
 		if (!Number.isSafeInteger(now))
 			return { ok: false, failure: { kind: "invalid_request" } };
 		try {
-			return this.coordinator.commit(context, operation, ticketId, key, (tx) =>
-				publishBlob(tx, context, operationIntent, now),
+			return this.coordinator.commit(
+				context,
+				operation,
+				ticketId,
+				key,
+				(tx) => {
+					assertBlobGcPublicationFence(
+						tx,
+						declaration.payload_hash,
+						gcGeneration,
+					);
+					return publishBlob(tx, context, operationIntent, now);
+				},
 			);
 		} catch (error) {
 			if (error instanceof FileOperationDenied)
 				return { ok: false, failure: error.failure };
 			throw error;
 		}
+	}
+
+	/** Capture the generation fence and reject an already marked hash before R2 metadata I/O. */
+	private capturePublicationFence(hash: string): number | null {
+		return this.db.transaction((tx) => {
+			const marked = tx
+				.select({ hash: blobGc.hash })
+				.from(blobGc)
+				.where(eq(blobGc.hash, hash))
+				.all()[0];
+			if (marked) return null;
+			return parseBlobGcGeneration(
+				tx
+					.select({ value: meta.value })
+					.from(meta)
+					.where(eq(meta.key, "blob_gc_generation"))
+					.all()[0]?.value,
+			);
+		});
 	}
 
 	/** Reserve rename source capacity before the body reveals its destination. */
@@ -510,7 +547,50 @@ export class SqliteTextStore {
 	}
 }
 
-/** Write one revision, feed row, file head, counters, and Markdown search row in the coordinator transaction. */
+/** Reject a blob publish when collection changed authority after its R2 HEAD evidence. */
+function assertBlobGcPublicationFence(
+	tx: VaultTransaction,
+	hash: string,
+	observedGeneration: number,
+): void {
+	const marked = tx
+		.select({ hash: blobGc.hash })
+		.from(blobGc)
+		.where(eq(blobGc.hash, hash))
+		.all()[0];
+	const current = parseBlobGcGeneration(
+		tx
+			.select({ value: meta.value })
+			.from(meta)
+			.where(eq(meta.key, "blob_gc_generation"))
+			.all()[0]?.value,
+	);
+	if (marked || current !== observedGeneration)
+		throw new FileOperationDenied({
+			kind: "blob_gc_in_progress",
+			retry_after_seconds: 1,
+		});
+}
+
+/** Parse a canonical, nonnegative publication-fence generation from metadata. */
+function parseBlobGcGeneration(value: string | undefined): number {
+	const generation = Number(value);
+	if (
+		value === undefined ||
+		!Number.isSafeInteger(generation) ||
+		generation < 0 ||
+		String(generation) !== value
+	)
+		throw new Error("Invalid blob-GC publication generation");
+	return generation;
+}
+
+/** Write one blob revision only inside the exact ticket and final collection-fence transaction.
+ *
+ * The caller must verify the candidate hash's HEAD evidence and recheck its observed
+ * collection generation here. This function retains the exact hash in current state,
+ * retained history, and the historical `blob_refs` registry.
+ */
 function publishBlob(
 	tx: VaultTransaction,
 	context: AuthorizationContext,

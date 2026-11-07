@@ -35,8 +35,10 @@ function preservedStoreState(storage: DurableObjectStorage) {
 	};
 }
 
-/** Remove only schema-7 additions to form an exact schema-6 upgrade fixture. */
+/** Remove all later schema additions to form an exact schema-6 upgrade fixture. */
 function downgradeToSchema6(storage: DurableObjectStorage): void {
+	storage.sql.exec("DROP TABLE IF EXISTS blob_gc");
+	storage.sql.exec("DELETE FROM meta WHERE key LIKE 'blob_gc_%'");
 	storage.sql.exec("DROP TABLE IF EXISTS packed_export_chunks");
 	storage.sql.exec("DROP TABLE IF EXISTS packed_export_files");
 	storage.sql.exec("DROP TABLE IF EXISTS packed_exports");
@@ -115,7 +117,7 @@ describe("schema-6 owner registry upgrade", () => {
 				storage.sql
 					.exec("SELECT value FROM meta WHERE key = 'schema_version'")
 					.toArray()[0]?.value,
-			).toBe("8");
+			).toBe("9");
 			expect(
 				storage.sql
 					.exec("SELECT value FROM meta WHERE key = 'epoch'")
@@ -123,8 +125,19 @@ describe("schema-6 owner registry upgrade", () => {
 			).toBe(beforeEpoch);
 			expect(preservedStoreState(storage)).toEqual({
 				...before,
-				metadata: before.metadata.map((row) =>
-					row.key === "schema_version" ? { ...row, value: "8" } : row,
+				metadata: [
+					...before.metadata.map((row) =>
+						row.key === "schema_version" ? { ...row, value: "9" } : row,
+					),
+					{ key: "blob_gc_cursor", value: "" },
+					{ key: "blob_gc_delete_owner", value: "" },
+					{ key: "blob_gc_delete_state", value: "" },
+					{ key: "blob_gc_failure", value: "" },
+					{ key: "blob_gc_generation", value: "0" },
+					{ key: "blob_gc_run_id", value: "" },
+					{ key: "blob_gc_phase", value: "idle" },
+				].sort((left, right) =>
+					String(left.key).localeCompare(String(right.key)),
 				),
 			});
 			expect(

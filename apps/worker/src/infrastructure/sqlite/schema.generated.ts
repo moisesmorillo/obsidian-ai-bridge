@@ -22,4 +22,5 @@ export const RELATIONAL_SCHEMA_STATEMENTS = [
 	"CREATE UNIQUE INDEX `packed_export_files_path` ON `packed_export_files` (`export_id`,`path`);",
 	"CREATE TABLE `packed_exports` (\n\t`id` text PRIMARY KEY NOT NULL,\n\t`epoch` text NOT NULL,\n\t`created_at` text NOT NULL,\n\t`head_seq` integer NOT NULL,\n\t`status` text NOT NULL,\n\t`object_key` text NOT NULL,\n\t`started_at` integer NOT NULL,\n\t`finished_at` integer,\n\t`size` integer,\n\t`upload_id` text,\n\t`zip_state` text NOT NULL,\n\t`manifest_size` integer NOT NULL,\n\t`completed_parts` text NOT NULL,\n\t`error` text,\n\tCONSTRAINT \"packed_exports_status_check\" CHECK(\"packed_exports\".\"status\" IN ('queued', 'uploading', 'complete', 'failed'))\n);",
 	"CREATE UNIQUE INDEX `packed_exports_identity` ON `packed_exports` (`epoch`,`created_at`);",
+	"CREATE TABLE `blob_gc` (\n\t`hash` text PRIMARY KEY NOT NULL,\n\t`size` integer NOT NULL,\n\t`marked_at` integer NOT NULL\n);",
 ] as const;

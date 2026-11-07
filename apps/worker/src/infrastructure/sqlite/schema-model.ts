@@ -220,6 +220,17 @@ export const blobRefs = sqliteTable(
 	(table) => [primaryKey({ columns: [table.hash] })],
 );
 
+/** Holds hashes fenced from publication until their exact R2 delete succeeds. */
+export const blobGc = sqliteTable(
+	"blob_gc",
+	{
+		hash: text("hash").notNull(),
+		size: integer("size").notNull(),
+		markedAt: integer("marked_at").notNull(),
+	},
+	(table) => [primaryKey({ columns: [table.hash] })],
+);
+
 /** Reserves the frozen export bookkeeping fields. Nullable fields do not prove completion or success. Bootstrap does not interpret export progress. */
 export const exports = sqliteTable(
 	"exports",
@@ -321,6 +332,7 @@ export const vaultSchema = {
 	clients,
 	revokedGrants,
 	blobRefs,
+	blobGc,
 	exports,
 	operationAdmissions,
 	mutationClaims,

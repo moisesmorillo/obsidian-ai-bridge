@@ -2,6 +2,7 @@ import {
 	AdmissionFailureSchema,
 	RequestAdmissionLeaseSchema,
 } from "@protocol/schemas/admission";
+import { BlobGcFailureSchema } from "@protocol/schemas/blob-gc";
 import { FullTextContentSchema } from "@protocol/schemas/content";
 import { EpochSchema, ETagSchema } from "@protocol/schemas/etag";
 import { PathSchema } from "@protocol/schemas/path";
@@ -30,6 +31,7 @@ export const FileFailureSchema = z.union([
 	z.object({ kind: z.literal("query_too_long") }).strict(),
 	z.object({ kind: z.literal("cursor_expired") }).strict(),
 	z.object({ kind: z.literal("blob_integrity_mismatch") }).strict(),
+	BlobGcFailureSchema,
 	z
 		.object({
 			kind: z.literal("blob_storage_unavailable"),
@@ -109,6 +111,7 @@ export const FileHttpErrorSchema = z.enum([
 	"blob_too_large",
 	"blob_integrity_mismatch",
 	"blob_storage_unavailable",
+	"blob_gc_in_progress",
 	"idempotency_mismatch",
 	"admission_limited",
 	"not_implemented",
@@ -145,6 +148,7 @@ export const FILE_HTTP_MESSAGES = Object.freeze({
 	blob_too_large: "The blob is larger than the size limit.",
 	blob_integrity_mismatch: "The blob does not match its declared identity.",
 	blob_storage_unavailable: "Blob storage cannot verify this request now.",
+	blob_gc_in_progress: "Blob collection changed. Retry the operation.",
 	idempotency_mismatch: "This key belongs to a different operation.",
 	admission_limited: "The vault cannot accept another operation now.",
 	not_implemented: "The service does not support this operation.",
@@ -203,6 +207,7 @@ export const FILE_HTTP_STATUSES = Object.freeze({
 	blob_too_large: 413,
 	blob_integrity_mismatch: 422,
 	blob_storage_unavailable: 503,
+	blob_gc_in_progress: 503,
 	idempotency_mismatch: 422,
 	admission_limited: 429,
 	not_implemented: 501,
@@ -359,6 +364,7 @@ export const FileHttpFailureSchema = z
 		if (
 			(result.body.error === "admission_limited" ||
 				result.body.error === "blob_storage_unavailable" ||
+				result.body.error === "blob_gc_in_progress" ||
 				result.body.error === "importing") &&
 			!hasRetryAfter
 		) {
@@ -369,6 +375,7 @@ export const FileHttpFailureSchema = z
 		}
 		if (
 			(result.body.error === "blob_storage_unavailable" ||
+				result.body.error === "blob_gc_in_progress" ||
 				result.body.error === "importing") &&
 			retryAfter !== undefined &&
 			!/^(?:[1-9]|[1-9][0-9]|[12][0-9]{2}|300)$/.test(retryAfter)
@@ -381,6 +388,7 @@ export const FileHttpFailureSchema = z
 		if (
 			result.body.error !== "admission_limited" &&
 			result.body.error !== "blob_storage_unavailable" &&
+			result.body.error !== "blob_gc_in_progress" &&
 			result.body.error !== "importing" &&
 			hasRetryAfter
 		) {

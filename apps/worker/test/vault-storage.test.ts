@@ -57,7 +57,7 @@ describe("Vault SQLite persistence", () => {
 		expect(ftsDdl).toContain(
 			"tokenize = 'trigram case_sensitive 0 remove_diacritics 1'",
 		);
-		expect(RELATIONAL_SCHEMA_STATEMENTS).toHaveLength(22);
+		expect(RELATIONAL_SCHEMA_STATEMENTS).toHaveLength(23);
 	});
 
 	it("initializes the frozen schema and canonical metadata", async () => {
@@ -101,6 +101,9 @@ describe("Vault SQLite persistence", () => {
 			);
 			expect(EpochSchema.safeParse(data.epoch).success).toBe(true);
 			expect(data.head_seq).toBe("0");
+			expect(data.blob_gc_run_id).toBe("");
+			expect(data.blob_gc_delete_owner).toBe("");
+			expect(data.blob_gc_delete_state).toBe("");
 			expect(data.live_file_count).toBe("0");
 			expect(data.history_revisions_bytes).toBe("0");
 			expect(data.history_receipts_bytes).toBe("0");
@@ -113,6 +116,19 @@ describe("Vault SQLite persistence", () => {
 			expect(new TextEncoder().encode(SCHEMA).byteLength).toBeLessThanOrEqual(
 				8192,
 			);
+		});
+	});
+
+	it("rejects malformed durable blob-GC metadata without repairing it", async () => {
+		const stub = env.VAULTS.get(env.VAULTS.newUniqueId());
+		await runInDurableObject(stub, (_instance, state) => {
+			state.storage.sql.exec(
+				"UPDATE meta SET value = '01' WHERE key = 'blob_gc_generation'",
+			);
+			expect(() =>
+				initializeVaultStorage(state.storage, createEpoch, () => 1),
+			).toThrow("Invalid blob-GC metadata");
+			expect(metadata(state.storage).blob_gc_generation).toBe("01");
 		});
 	});
 

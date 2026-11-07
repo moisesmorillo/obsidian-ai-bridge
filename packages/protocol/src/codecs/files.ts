@@ -55,6 +55,7 @@ export function encodeFileFailure(
 	if (
 		failure.kind === "admission_limited" ||
 		failure.kind === "blob_storage_unavailable" ||
+		failure.kind === "blob_gc_in_progress" ||
 		failure.kind === "importing"
 	) {
 		result.headers = {

@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-11-05T23:21:00Z'
-updated_date: '2026-11-06T23:23:00Z'
+updated_date: '2026-11-07T00:12:00Z'
 labels:
   - F5
   - Deferred
@@ -68,4 +68,6 @@ Independent review closure: task review approved 5288a44. Final whole-branch rev
 Human branch review pn-856ca4 approved the complete diff with no requested changes. OAB-11.5 stays In Progress because native device criteria remain open. Publication does not claim mobile acceptance.
 
 Publication validation: merged origin/main 5befa35 without conflicts after human approval. The M5 plugin diff stayed unchanged. Full bun run check passed at e8e7ce6 with 2,085 tests passed, one skipped, lint, documentation checks, typechecks, and builds. Worker build remained dry-run only. No native acceptance claim changed.
+
+Device evidence 2026-11-06 evening, plugin 0.1.3 with PR #80: on the iPhone the owner enabled airplane mode, edited iphone-test-1.md, force-quit Obsidian, reopened it and restored the network. The edit published as revision 6, reached the Mac (cursor 200) and the iPad, with no loss and no conflict copy. This evidences criterion 2 on one device. Criterion 1 and larger transfers remain unobserved on devices.
 <!-- SECTION:NOTES:END -->

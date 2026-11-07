@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-11-05T23:20:00Z'
-updated_date: '2026-11-06T21:40:00Z'
+updated_date: '2026-11-07T00:12:00Z'
 labels:
   - F5
   - Deferred
@@ -58,4 +58,6 @@ Final branch-review finding closed: added a deferred connection test that starts
 Delivery review, 2026-11-06: reviewed product revision e12b49c00ed7b26817f34ae39f71c35765e3b646. Independent task review approved the corrections. Whole-branch review found one UI action race, and the scoped final review approved its regression test and fence. Documentation review covered changed TypeScript declarations and tests. DeviceSession owns consent generation and expiry. Settings owns presentation and direct link navigation. Both remain cohesive. Worker validation passed bun run docs:check and bun run check. Owner approved plan pn-9acf4e and branch diff pn-d04fcd without changes. Native iPhone and iPad launch and callback remain unproven. The supervisor creates plugin-v0.1.1 only after merge.
 
 Device evidence 2026-11-06: with plugin 0.1.2 on a real iPhone, Connect prepared the consent, the owner tapped Open authorization page, Safari completed the Access PIN and consent, and the obsidian callback returned the device to connected status. Credentials survived app use through the day. iPad and Android remain untested. Criterion 1 stays unchecked until the iPad run.
+
+Device evidence 2026-11-06 evening: the owner enrolled an iPad (fresh local vault, BRAT ai-bridge-v0.1.2, then 0.1.3) through the Open authorization page link and the Access PIN. The device registered with the former default name 'Obsidian desktop' before the owner set 'iPad'; PR #78 now defaults to 'Obsidian mobile' on mobile. Hydration stalled at 32 of 50 files while the iPad used a Tailscale VPN and completed at once with the VPN off. Cause and fix: OAB-12.1 (read slot hold deadline, PR #79 and #82). With the fix deployed the iPad syncs on Tailscale again. iPhone and iPad enrollment is now evidenced; Android remains untested.
 <!-- SECTION:NOTES:END -->

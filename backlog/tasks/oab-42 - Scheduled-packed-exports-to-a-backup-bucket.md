@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-11-07T13:12:00Z'
-updated_date: '2026-11-07T13:40:00Z'
+updated_date: '2026-11-07T13:46:00Z'
 labels:
   - F6
   - backup
@@ -67,6 +67,8 @@ Duplicate Cron delivery must not create two snapshots.
 Failed work must appear without a download link.
 Missing or invalid service origin must not select a different vault.
 Separate archive writes must not change blob publication or garbage collection.
+
+Final review result: stop implementation and publish a draft PR under the owner blocker rule. F1 and F2 need correction before merge. F3 remains a non-blocking availability issue. Keep acceptance criteria unchecked until the blockers close.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -87,4 +89,6 @@ Review finding closure for reviewer revision 247fb0b: corrected the three stale 
 Validation after correction: bun run docs:check passed with exit 0. bun run check passed with exit 0. Tooling 91 tests, protocol 314 tests, Worker 1,017 tests, and plugin 836 tests passed. One plugin test was skipped. Workspace typechecks and builds passed.
 
 Supervisor report: owner applied cloudflare-infra PR #20 and oab-backups exists. This is reported evidence only. I did not check or change Cloudflare resources.
+
+Final branch review at 47871ef: REQUEST CHANGES. This supersedes the earlier task-review statement about no blockers. The documentation finding at 247fb0b is closed. F1 MAJOR stays open: existing completed archives and multipart upload IDs belong to R2_BUCKET, but new wiring uses only BACKUP_BUCKET. Existing completed downloads can fail. Existing uploads can retry forever and prevent later scheduled exports. No agent examined production records. A compatibility path or explicit migration prerequisite needs tests for both legacy states. F2 MAJOR stays open: 1,908 output steps at one minute each take about 31.8 hours for a near-2 GB archive. Infra aborts multipart uploads after 24 hours. Expired upload IDs remain retryable and can block future exports. Continuation timing and expired-upload recovery need controlled-clock tests. F3 MINOR stays open: lifecycle-deleted archives retain completed SQLite records and owner download links. Availability-aware listing needs a missing-object test. The owner brief directs a draft PR when a real blocker appears. Keep OAB-42 In Progress and publish this branch as a draft. No readiness claim or live-vault test follows from passing automated checks. Review scope covered the full 21-file diff, export admission and recovery, bucket wiring, owner rendering, tests, and documentation. Static diff checks passed. The reviewer did not repeat worker checks or inspect Cloudflare. Supervisor reports owner applied infra PR #20 and the bucket exists.
 <!-- SECTION:NOTES:END -->

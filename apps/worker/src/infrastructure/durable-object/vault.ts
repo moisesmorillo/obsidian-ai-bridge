@@ -82,6 +82,8 @@ function nativeReadFailure(error: unknown): {
 
 /** Delay between bounded maintenance batches after an alarm finds more work. */
 const RETENTION_CONTINUATION_MS = 60_000;
+/** Delay before the next bounded packed-export alarm step. */
+const EXPORT_CONTINUATION_MS = 1_000;
 /** UTC hour for the next full retention cycle after a batch completes. */
 const RETENTION_NIGHTLY_HOUR_UTC = 3;
 
@@ -197,9 +199,11 @@ export class Vault extends DurableObject<Env> {
 			const gcMore =
 				gcStatus.phase !== "idle" && gcStatus.delete_state === "idle";
 			await this.ctx.storage.setAlarm(
-				retention.more || exportsPending || gcMore
-					? now + RETENTION_CONTINUATION_MS
-					: nextRetentionNightly(now),
+				exportsPending
+					? now + EXPORT_CONTINUATION_MS
+					: retention.more || gcMore
+						? now + RETENTION_CONTINUATION_MS
+						: nextRetentionNightly(now),
 			);
 		} catch (error) {
 			await this.ctx.storage.setAlarm(now + RETENTION_CONTINUATION_MS);

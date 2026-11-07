@@ -2,7 +2,7 @@
 
 A packed baseline contains the current live file set at one immutable cut. It does not contain deleted paths, retained history, client grants, or service import state. The archive does not replace the service vault or change its epoch.
 
-The Worker creates a packed baseline every hour. Owner requests can start another baseline. Scheduled and owner-started archives use the `oab-backups` R2 bucket and keys under `backups/`. The `cloudflare-infra` lifecycle rule deletes those objects after 15 days and aborts incomplete multipart uploads after seven days. The Worker does not prune archives. Failed exports appear on `/owner/exports` without download links. If a completed archive is missing at download time, the response directs the owner to `/owner/exports` to create a new export.
+The Worker creates a packed baseline every hour. Owner requests can start another baseline. Each alarm step writes or reads up to 1 MiB using source ranges of up to 64 KiB. Pending exports schedule another step after one second, so a snapshot of N MiB takes at least about N seconds, plus source-range and service latency. Scheduled and owner-started archives use the `oab-backups` R2 bucket and keys under `backups/`. The `cloudflare-infra` lifecycle rule deletes those objects after 15 days and aborts incomplete multipart uploads after seven days. The Worker does not prune archives. Failed exports appear on `/owner/exports` without download links. If a completed archive is missing at download time, the response directs the owner to `/owner/exports` to create a new export.
 
 ## Download and verify
 

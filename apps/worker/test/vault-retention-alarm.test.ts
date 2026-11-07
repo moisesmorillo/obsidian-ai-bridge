@@ -70,8 +70,73 @@ function seedExpiredFeed(
 	);
 }
 
+/** Install local service fakes that return selected alarm work states. */
+function setAlarmWork(
+	instance: object,
+	work: { retentionMore?: boolean; exportsPending?: boolean; gcMore?: boolean },
+): void {
+	Reflect.set(instance, "retentionStore", {
+		runBatch: () => ({ more: work.retentionMore ?? false }),
+	});
+	Reflect.set(instance, "packedExportService", {
+		runBatch: async () => work.exportsPending ?? false,
+	});
+	Reflect.set(instance, "blobGcService", {
+		collectBatch: async () => ({
+			phase: work.gcMore ? "marking" : "idle",
+			delete_state: "idle",
+		}),
+	});
+}
+
 /** Run actual Vault alarm delivery against native SQLite retention. */
 describe("Vault retention alarm lifecycle", () => {
+	it.each([
+		["an export alone", { exportsPending: true }, 1_000],
+		[
+			"an export with retention and GC work",
+			{ exportsPending: true, retentionMore: true, gcMore: true },
+			1_000,
+		],
+		["retention work alone", { retentionMore: true }, 60_000],
+		["GC work alone", { gcMore: true }, 60_000],
+	])(
+		"schedules %s at its continuation interval",
+		async (_case, work, expectedDelay) => {
+			const stub = env.VAULTS.get(env.VAULTS.newUniqueId());
+			await runInDurableObject(stub, async (instance, state) => {
+				setAlarmWork(instance, work);
+				const before = Date.now();
+
+				await instance.alarm();
+
+				const after = Date.now();
+				const nextAlarm = await state.storage.getAlarm();
+				expect(nextAlarm).not.toBeNull();
+				expect(nextAlarm).toBeGreaterThanOrEqual(before + expectedDelay);
+				expect(nextAlarm).toBeLessThanOrEqual(after + expectedDelay);
+			});
+		},
+	);
+
+	it("keeps the nightly alarm when no export, retention, or GC work remains", async () => {
+		const stub = env.VAULTS.get(env.VAULTS.newUniqueId());
+		await runInDurableObject(stub, async (instance, state) => {
+			setAlarmWork(instance, {});
+			const before = Date.now();
+
+			await instance.alarm();
+
+			const after = Date.now();
+			const deadlinesDuringAlarm = new Set([
+				expectedNextNightlyDeadline(before),
+				expectedNextNightlyDeadline(after),
+			]);
+			expect([...deadlinesDuringAlarm]).toContain(
+				await state.storage.getAlarm(),
+			);
+		});
+	});
 	it.each([
 		[
 			"the final minute before 03:00 UTC",
@@ -187,9 +252,14 @@ describe("Vault retention alarm lifecycle", () => {
 				"UPDATE meta SET value = '0' WHERE key = 'history_changes_bytes'",
 			);
 
+			const before = Date.now();
 			await expect(instance.alarm()).rejects.toThrow(
 				"Invalid logical history metadata",
 			);
+			const after = Date.now();
+			const retryAlarm = await state.storage.getAlarm();
+			expect(retryAlarm).toBeGreaterThanOrEqual(before + 60_000);
+			expect(retryAlarm).toBeLessThanOrEqual(after + 60_000);
 
 			expect(
 				state.storage.sql.exec("SELECT seq FROM changes").toArray(),

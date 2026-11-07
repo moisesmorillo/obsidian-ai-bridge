@@ -31,6 +31,11 @@ export const EXPORT_STEP_OUTPUT_BYTES = 1 * 1024 * 1024;
 export const EXPORT_STEP_SOURCE_BYTES = 1 * 1024 * 1024;
 /** Maximum immutable source reads issued by one native alarm invocation. */
 export const EXPORT_STEP_SOURCE_READS = 16;
+/** Stable event name for nonterminal typed storage retries. */
+const PACKED_EXPORT_STORAGE_RETRY_EVENT = "packed_export_storage_retry";
+/** Stable event name for a lost durable checkpoint compare-and-set. */
+const PACKED_EXPORT_CHECKPOINT_CAS_MISS_EVENT =
+	"packed_export_checkpoint_cas_miss";
 
 /** Selects retained revision bytes or a transaction-frozen live-file fallback. */
 export type PackedExportSourceType =
@@ -298,6 +303,7 @@ export class PackedExportService {
 		const work = await this.repository.nextActive();
 		if (!work) return;
 		let uploadId = work.uploadId;
+		let stepKind = "advance";
 		try {
 			const members = archiveMembers(work);
 			if (work.manifestSize > MAX_EXPORT_MANIFEST_BYTES)
@@ -306,6 +312,7 @@ export class PackedExportService {
 				? parseZip32Cursor(work.zipState)
 				: createZip32Cursor(members, MAX_EXPORT_ARCHIVE_BYTES);
 			if (!uploadId) {
+				stepKind = "create";
 				uploadId = await this.archive.create(work.objectKey);
 				if (
 					!(await this.repository.attachUpload(
@@ -322,12 +329,14 @@ export class PackedExportService {
 				if (work.pendingPart.byteLength > 0) {
 					if (work.pendingPart.byteLength >= EXPORT_PART_BYTES)
 						throw new Error("Packed export remainder exceeds its limit");
+					stepKind = "put";
 					const part = await this.archive.putPart(
 						work.objectKey,
 						uploadId,
 						work.completedParts.length + 1,
 						work.pendingPart,
 					);
+					stepKind = "checkpoint_final_remainder";
 					const saved = await this.repository.checkpoint(
 						work.id,
 						work.zipState,
@@ -337,9 +346,22 @@ export class PackedExportService {
 							completedParts: [...work.completedParts, part],
 						},
 					);
-					if (!saved) return;
+					if (!saved) {
+						console.warn(
+							JSON.stringify({
+								event_name: PACKED_EXPORT_CHECKPOINT_CAS_MISS_EVENT,
+								export_id: work.id,
+								step_kind: stepKind,
+								error_name: "CheckpointCasMiss",
+								error_message:
+									"Packed export checkpoint compare-and-set did not save",
+							}),
+						);
+						return;
+					}
 					return;
 				}
+				stepKind = "complete";
 				await this.completeArchive(work, uploadId, cursor.archiveOffset);
 				return;
 			}
@@ -348,6 +370,7 @@ export class PackedExportService {
 				members,
 				cursor,
 				async (memberIndex, offset, length) => {
+					stepKind = "read";
 					if (memberIndex === 0)
 						return await this.repository.readManifestRange(
 							work.id,
@@ -387,6 +410,7 @@ export class PackedExportService {
 				(isZip32Complete(step.cursor) && combined.byteLength > 0)
 			) {
 				const partSize = Math.min(combined.byteLength, EXPORT_PART_BYTES);
+				stepKind = "put";
 				const part = await this.archive.putPart(
 					work.objectKey,
 					uploadId,
@@ -396,14 +420,38 @@ export class PackedExportService {
 				completedParts.push(part);
 				pendingPart = combined.slice(partSize);
 			}
+			stepKind = "checkpoint_step";
 			const saved = await this.repository.checkpoint(work.id, work.zipState, {
 				zipState: JSON.stringify(step.cursor),
 				pendingPart,
 				completedParts,
 			});
-			if (!saved) return;
+			if (!saved) {
+				console.warn(
+					JSON.stringify({
+						event_name: PACKED_EXPORT_CHECKPOINT_CAS_MISS_EVENT,
+						export_id: work.id,
+						step_kind: stepKind,
+						error_name: "CheckpointCasMiss",
+						error_message:
+							"Packed export checkpoint compare-and-set did not save",
+					}),
+				);
+				return;
+			}
 		} catch (error) {
-			if (error instanceof PackedExportStorageFailure) return;
+			if (error instanceof PackedExportStorageFailure) {
+				console.warn(
+					JSON.stringify({
+						event_name: PACKED_EXPORT_STORAGE_RETRY_EVENT,
+						export_id: work.id,
+						step_kind: stepKind,
+						error_name: "PackedExportStorageFailure",
+						error_message: error.message,
+					}),
+				);
+				return;
+			}
 			await this.failWork(work, uploadId, classifyFailure(error));
 		}
 	}

@@ -547,7 +547,7 @@ KV propagation is eventually consistent (60 s or more), so the DO is the authori
 
 ## 11. Backup and restore
 
-The Access-protected owner console starts packed current-file snapshots. A Workers Cron Trigger also starts one export each hour at `0 * * * *`. Both write archives to the dedicated R2 bucket `oab-backups`; blob payloads remain in `oab-immutable-blobs`. The `cloudflare-infra` lifecycle rule deletes objects under `backups/` after 15 days and aborts incomplete multipart uploads after one day. Worker code does not prune archives. The separate `exports` table remains reserved for the former GitHub design. `packed_exports`, `packed_export_files`, and `export_pins` store resumable baseline work.
+The Access-protected owner console starts packed current-file snapshots. A Workers Cron Trigger also starts one export each hour at `0 * * * *`. Both write archives to the dedicated R2 bucket `oab-backups`; blob payloads remain in `oab-immutable-blobs`. The `cloudflare-infra` lifecycle rule deletes objects under `backups/` after 15 days and aborts incomplete multipart uploads after seven days. Worker code does not prune archives. The separate `exports` table remains reserved for the former GitHub design. `packed_exports`, `packed_export_files`, and `export_pins` store resumable baseline work.
 
 ### 11.1 Consistent current-file cut
 
@@ -571,7 +571,7 @@ The owner starts an export from `/owner/exports`. The server assigns a canonical
 ### 11.3 Owner operations and failures
 
 - `GET /owner/exports` lists completed snapshot timestamps and byte sizes, plus failed timestamps and safe failure kinds. `POST /owner/exports` starts an export through an Access-protected, same-origin, one-use CSRF form.
-- `GET /owner/exports/{epoch}/{created_at}/download` streams only a completed R2 object whose stored size matches SQLite. Incomplete and failed exports have no download link.
+- `GET /owner/exports/{epoch}/{created_at}/download` streams only a completed R2 object whose stored size matches SQLite. Incomplete and failed exports have no download link. A missing archive returns a no-store 404 that directs the owner to `/owner/exports` to create a new export.
 - A missing pinned source or an exact archive limit failure records a typed failure, aborts a known incomplete multipart upload, and releases pins after source reads settle.
 - R2 storage faults leave the durable cursor active. The next alarm retries the same output step. A lost multipart-completion response is checked against the exact R2 key and size before SQLite marks completion.
 - Local tests validate byte, range, and output bounds. Production CPU duration and account-tier measurements remain evidence limits. They do not change the local step ceilings.
@@ -731,7 +731,7 @@ Bun workspaces; Hono; `@cloudflare/workers-oauth-provider`; `@modelcontextprotoc
 
 ## 16. Deferred (tracked in Backlog.md, label `deferred`)
 
-Hourly current-file backups use the `oab-backups` R2 bucket. The infra lifecycle rule retains `backups/` objects for 15 days. Worker code does not prune this bucket.
+Hourly current-file backups use the `oab-backups` R2 bucket. The infra lifecycle rule retains `backups/` objects for 15 days and aborts incomplete multipart uploads after seven days. Worker code does not prune this bucket.
 
 | Item | Why not now | Trigger to reopen | Seam preserved in v1 |
 | --- | --- | --- | --- |
@@ -739,7 +739,7 @@ Hourly current-file backups use the `oab-backups` R2 bucket. The infra lifecycle
 | WebSocket push from DO | 15–60 s polling is enough for one owner | Measured latency complaint or request cost > 50% of allowance | Feed is `seq`-based; push only says "new seq", pull unchanged |
 | Embeddings / semantic search | FTS covers the current vault | Agents miss notes by synonym in real use | `search_notes` returns `rev` and snippets; a second backend plugs behind it |
 | `.obsidian/` settings categories | Triggered 2026-11-06 because manual re-configuration became a daily cost | Device proof: device available and BRAT release plugin-v0.1.0 published. Current code target: 0.1.4, with no release authorization. | Implemented in §7.1. Consent and hydration duties stay device-local. The master switch defaults off. Guarded writes retain the documented unobserved-version race. Device proof remains open. |
-| Historical backup history | Packed baselines contain current files only | Owner requires retained revisions or service-side historical restore | Hourly current-file archives use `oab-backups` for 15 days. Service-side import and historical export remain unbuilt. |
+| Historical backup history | Packed baselines contain current files only | Owner requires retained revisions or service-side historical restore | Hourly current-file archives use `oab-backups` for 15 days. Incomplete multipart uploads expire after seven days. Service-side import and historical export remain unbuilt. |
 | Windows / Linux | No device | A device exists | No Node/Electron APIs in the plugin |
 | E2E encryption | Would break server-side search and append | Owner requirement changes | None; would be a redesign |
 

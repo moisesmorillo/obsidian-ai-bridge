@@ -309,7 +309,11 @@ export function createOwnerHandler(
 				epoch.data,
 				identity.data.created_at,
 			);
-			if (!archive) return noStoreText("Not found", 404);
+			if (!archive)
+				return noStoreText(
+					"This packed export is no longer available. Return to /owner/exports to create a new export.",
+					404,
+				);
 			return new Response(archive.body, {
 				headers: {
 					"cache-control": "no-store",

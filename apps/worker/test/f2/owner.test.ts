@@ -413,7 +413,7 @@ describe("production owner console", () => {
 
 	afterEach(() => vi.unstubAllGlobals());
 
-	it("lists, starts, and streams only completed packed exports for the verified owner", async () => {
+	it("lists, starts, streams, and explains when a completed archive is missing", async () => {
 		const pair = await generateKeyPair("RS256");
 		const jwk = await exportJWK(pair.publicKey);
 		vi.stubGlobal(
@@ -445,16 +445,20 @@ describe("production owner console", () => {
 			size: null,
 			failure: null,
 		}));
-		const download = vi.fn(async () => ({
-			body: new ReadableStream<Uint8Array>({
-				/** Emit the fixed four-byte archive used by the download test. */
-				start(controller) {
-					controller.enqueue(new Uint8Array([1, 2, 3, 4]));
-					controller.close();
-				},
-			}),
-			size: 4,
-		}));
+		let archiveAvailable = true;
+		const download = vi.fn(async () => {
+			if (!archiveAvailable) return null;
+			return {
+				body: new ReadableStream<Uint8Array>({
+					/** Emit the fixed four-byte archive used by the download test. */
+					start(controller) {
+						controller.enqueue(new Uint8Array([1, 2, 3, 4]));
+						controller.close();
+					},
+				}),
+				size: 4,
+			};
+		});
 		const csrfStates = new Map<string, { owner: string; browser: string }>();
 		const registry = {
 			/** Save one test CSRF state bound to its owner and browser. */
@@ -568,6 +572,20 @@ describe("production owner console", () => {
 			1, 2, 3, 4,
 		]);
 		expect(download).toHaveBeenCalledWith("synthetic-owner", epoch, createdAt);
+
+		archiveAvailable = false;
+		const unavailable = await ownerFetch(
+			new Request(new URL(downloadUrl ?? "", "https://service.test"), {
+				headers,
+			}) as Request<unknown, IncomingRequestCfProperties>,
+			ownerEnv,
+			{} as ExecutionContext,
+		);
+		expect(unavailable.status).toBe(404);
+		expect(await unavailable.text()).toContain(
+			"This packed export is no longer available. Return to /owner/exports to create a new export.",
+		);
+		expect(unavailable.headers.get("cache-control")).toBe("no-store");
 	});
 
 	it("rejects state changes from a different origin before processing the form", async () => {

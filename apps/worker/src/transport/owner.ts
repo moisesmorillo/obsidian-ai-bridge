@@ -31,6 +31,8 @@ import { readSlotCapacitySnapshot } from "@worker/application/read-budget";
 import type { Env } from "@worker/env";
 import { verifyOwnerAccess } from "@worker/infrastructure/auth/access";
 import { createProviderGrantCleanup } from "@worker/infrastructure/auth/oauth";
+import { renderClientsPage } from "@worker/transport/owner-pages/clients";
+import { renderGrantsPage } from "@worker/transport/owner-pages/grants";
 import { Hono } from "hono";
 
 /** Browser cookie that binds one-use owner form state to this browser. */
@@ -163,41 +165,29 @@ export function createOwnerHandler(
 			owner.subject,
 			context.req.query("cursor"),
 		);
-		const clientMarkup = page.clients
-			.map((client) => {
-				const stateLabel =
-					client.grant_count === 0
-						? "No accepted grants"
-						: client.active_grant_count === 0
-							? "Revoked"
-							: client.active_grant_count < client.grant_count
-								? "Mixed active and revoked history"
-								: "Active registry grant";
-				const cleanupLabel =
-					client.cleanup_pending_count === 0
-						? "No provider cleanup pending"
-						: `${client.cleanup_pending_count} provider cleanup pending`;
-				const removeForm =
-					client.generation > 0 && client.active_grant_count === 0
-						? `<form method="post" action="/owner/clients/${encodeURIComponent(client.client_id)}/remove"><input type="hidden" name="csrf" value="${state}"><button${client.cleanup_pending_count > 0 ? " disabled" : ""}>Remove</button></form>${client.cleanup_pending_count > 0 ? "<p>Use Revoke to complete provider cleanup before removal.</p>" : ""}`
-						: "";
-				const grantLink = `<a href="/owner/clients/${encodeURIComponent(client.client_id)}/grants">View grants (${client.grant_count})</a>`;
-				return `<li><h2>${escapeHtml(client.name || client.client_id)}</h2><p>Client: ${escapeHtml(client.client_id)}</p><p>Registry state: ${stateLabel}</p><p>${cleanupLabel}</p><p>Grant counts show retained grant history. Active registry grants do not prove that provider tokens are current or unexpired.</p>${grantLink}<form method="post" action="/owner/clients/${encodeURIComponent(client.client_id)}/rename"><input type="hidden" name="csrf" value="${state}"><label>Name <input name="name" maxlength="80" value="${escapeHtml(client.name)}"></label><button>Rename</button></form><form method="post" action="/owner/clients/${encodeURIComponent(client.client_id)}/revoke"><input type="hidden" name="csrf" value="${state}"><button>Revoke</button></form>${removeForm}</li>`;
-			})
-			.join("");
-		const next = page.next_cursor
-			? `<a href="/owner/clients?cursor=${encodeURIComponent(page.next_cursor)}">Next page</a>`
-			: "";
-		return new Response(
-			`<!doctype html><html><head><meta charset="utf-8"><title>Owner clients</title></head><body><main><h1>Connected clients</h1><p><a href="/owner/measurements?format=html">Service measurements</a> <a href="/owner/blob-gc">Collect unreferenced blobs</a></p><ul>${clientMarkup}</ul>${next}</main></body></html>`,
-			{
-				headers: {
-					"content-type": "text/html; charset=utf-8",
-					"cache-control": "no-store",
-					"set-cookie": `${OWNER_BROWSER_COOKIE}=${browserId}; Secure; HttpOnly; SameSite=Strict; Path=/; Max-Age=600`,
-				},
+		const html = renderClientsPage({
+			csrf: state,
+			nextCursor: page.next_cursor,
+			encodedCursor: page.next_cursor
+				? encodeURIComponent(page.next_cursor)
+				: null,
+			clients: page.clients.map((client) => ({
+				clientId: escapeHtml(client.client_id),
+				encodedId: encodeURIComponent(client.client_id),
+				name: escapeHtml(client.name),
+				generation: client.generation,
+				grantCount: client.grant_count,
+				activeGrantCount: client.active_grant_count,
+				cleanupPendingCount: client.cleanup_pending_count,
+			})),
+		});
+		return new Response(html, {
+			headers: {
+				"content-type": "text/html; charset=utf-8",
+				"cache-control": "no-store",
+				"set-cookie": `${OWNER_BROWSER_COOKIE}=${browserId}; Secure; HttpOnly; SameSite=Strict; Path=/; Max-Age=600`,
 			},
-		);
+		});
 	});
 
 	app.get("/owner/exports", async (context) => {
@@ -477,29 +467,26 @@ export function createOwnerHandler(
 			context.req.param("clientId"),
 			context.req.query("cursor"),
 		);
-		const grants = page.grants
-			.map((grant) => {
-				const grantState = grant.revoked ? "Revoked" : "Active registry grant";
-				const cleanupState = grant.cleanup_pending
-					? "provider cleanup pending"
-					: grant.revoked
-						? "provider cleanup complete"
-						: "provider cleanup not pending";
-				return `<li>${escapeHtml(grant.grant_id)} — ${grantState}, ${cleanupState}</li>`;
-			})
-			.join("");
-		const next = page.next_cursor
-			? `<a href="/owner/clients/${encodeURIComponent(context.req.param("clientId"))}/grants?cursor=${encodeURIComponent(page.next_cursor)}">Next page</a>`
-			: "";
-		return new Response(
-			`<!doctype html><html><body><main><h1>Client grants</h1><ul>${grants}</ul>${next}</main></body></html>`,
-			{
-				headers: {
-					"content-type": "text/html; charset=utf-8",
-					"cache-control": "no-store",
-				},
+		const clientId = context.req.param("clientId");
+		const html = renderGrantsPage({
+			clientId: escapeHtml(clientId),
+			encodedClientId: encodeURIComponent(clientId),
+			nextCursor: page.next_cursor,
+			encodedCursor: page.next_cursor
+				? encodeURIComponent(page.next_cursor)
+				: null,
+			grants: page.grants.map((grant) => ({
+				grantId: escapeHtml(grant.grant_id),
+				revoked: grant.revoked,
+				cleanupPending: grant.cleanup_pending,
+			})),
+		});
+		return new Response(html, {
+			headers: {
+				"content-type": "text/html; charset=utf-8",
+				"cache-control": "no-store",
 			},
-		);
+		});
 	});
 
 	app.post("/owner/clients/:clientId/rename", async (context) => {

@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-11-07T21:08:00Z'
-updated_date: '2026-11-07T21:30:00Z'
+updated_date: '2026-11-07T21:52:00Z'
 labels:
   - worker
   - ui
@@ -68,6 +68,18 @@ Check escaping at the handler boundary and URL encoding for hostile identifiers.
 - [ ] Remove the worktree, report the PR URL, and stop.
 
 Final scope: Keep measurements, exports, and blob collection markup unchanged for phase 2, as the owner brief allows. The shared shell and stylesheet serve clients and grants in this branch. Task and branch reviews completed. Scoped review accepted F1, F2, and F3. AC4 and AC5 have test and source evidence. AC1 remains open for inline styling on every owner page. AC2 and AC3 remain outside this phase.
+
+## Phase 3: Consent page
+Goal: Apply the approved design to consent without behavior changes.
+Owner decisions: The owner skips Plannotator. Reuse OWNER_CONSOLE_CSS without edits. Show scope ids alone when protocol descriptions do not exist. Omit Requested on unless provider metadata supplies it. No live requests, dependencies, deployment, or vault access.
+- [ ] Add failing renderer snapshots and exact form-contract tests. Cover escaped metadata, known scopes, and optional request time.
+- [ ] Add consent.ts as a pure renderer with an escaped view model and shared tokens. Keep auth types outside the renderer.
+- [ ] Replace only the HTML construction in oauth.ts. Preserve validation, hidden fields, form action and method, names, values, and response headers.
+- [ ] Run focused render and OAuth tests, docs:check, bun run check, and Worker preflight. Commit implementation.
+- [ ] Complete independent task and whole-branch reviews. Record revision, findings, documentation scope, checks, and limits.
+- [ ] Rebase onto origin/main. Push one PR with the mandated first body line. Remove the worktree and report the URL.
+Review focus: HTML escaping, exact form contracts, no invented scope descriptions or timestamps, token reuse, narrow edit boundaries, and phone overflow.
+Allowed changes: oauth.ts, new owner-pages/consent.ts, consent tests and snapshots, and this task through the CLI. Do not edit other owner pages, workflows, or plugin tooling.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -80,4 +92,8 @@ Phase 1 implementation uses pure clients and grants renderers with escaped view-
 Branch-review fix closures at cc287667caf133e1f3a3525bc51eac0500cc46ed: F1 closed by focused table-driven tests for No accepted grants, Revoked, Mixed active and revoked history, Active registry grant, and Remove absent/enabled/disabled. Tests assert CSRF field counts and values, POST actions, Rename/Revoke/Remove button text, name input, and maxlength. Focused render suite passed 5/5, owner.test passed 4/4, owner-cleanup.test passed 6/6. F2 closed by asserting base .owner-layout flex-wrap:wrap and adding that declaration while retaining 390px and 16px rules. Focused render suite passed 5/5. F3 closed by asserting grants output marks Clients with aria-current=location and updating renderOwnerShell TSDoc to describe page or containing-section selection. Updated snapshots; focused render suite passed 5/5. docs:check passed. bun run check passed, including lint, type checks, all suites, and dry-run build. Worker preflight passed (exit 0). Task remains In Progress for phases 2 and 3.
 
 Review closure: task review and whole-branch review used the code-review skill and TypeScript profile. Whole-branch revision: cc287667caf133e1f3a3525bc51eac0500cc46ed. Scoped review accepted all three fixes at 36d3488af564b7c3943ee27ae3cbdc18a9d4bae7. F1: five focused render tests cover all labels and Remove outcomes. F2: base flex wrapping has a direct CSS assertion. F3: grants select Clients with current-location semantics and a direct assertion. No open finding remains. Documentation scope: new renderer declarations, local view models, shell contract, CSS constant, handler mappings, and docs/api/f2.md token table. Structural candidates: owner.ts remains mixed but low-risk within this visual change. Page renderers, shell, and CSS each remain cohesive. Registry mutation policy remains unchanged. Limits: CSS assertions replace a 390px browser test. No browser, contrast measurement, live service call, deployment, or vault access occurred. The new stylesheet serves clients and grants only. AC1 stays unchecked because every owner page includes later phases. AC2 and AC3 remain open. Rebased onto origin/main 586008f after the plugin release changes. A content-preserving merge retains the original remote task seed commit, so publication needs no force-push. Final project check and Worker preflight follow on the rebased tree.
+
+Phase 3 RED evidence: `cd apps/worker && bunx vitest run --config vitest.config.ts test/consent-page.test.ts` failed as expected because `@worker/transport/owner-pages/consent` did not exist. It reported 0 tests and one failed suite. Focused existing OAuth baseline: `bun test apps/worker/test/f2/oauth.test.ts` could not load `cloudflare:test` under bun test. The first baseline command used an unmatched glob and was invalid. Vitest unit config baseline is pending dependency/runtime setup.
+
+Phase 3 implementation: Added the pure consent renderer and replaced only OAuth HTML assembly. The view model carries escaped client, host, redirect URI, scopes, handle, and optional request time. It reuses protocol scope ids and the shared stylesheet. RED: the new render test failed because the module did not exist. GREEN: `cd apps/worker && bunx vitest run --config vitest.config.ts test/consent-page.test.ts test/owner-pages.test.ts` passed 8 tests. `cd apps/worker && bunx vitest run --config vitest.f2.config.ts test/f2/oauth.test.ts` passed 32 tests. This Vitest command is the valid OAuth baseline; the earlier `bun test` command could not load `cloudflare:test`. `bun run docs:check` passed. `bun run check` passed: lint, docs, typecheck, tests, and dry-run builds exited 0. Test suites passed: Worker unit 54 files/761 tests, HTTP 9/132, F2 10/142, protocol 19/314, tooling 9/101, plugin 30/838 with 1 skipped. Worker tests printed expected injected failure and disconnect diagnostics but passed. `bun run --filter '@obsidian-ai-bridge/worker' preflight` passed with exit 0. Self-review found no actionable issue. No live requests or Cloudflare changes.
 <!-- SECTION:NOTES:END -->

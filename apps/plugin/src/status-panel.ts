@@ -20,6 +20,10 @@ export interface SyncStatusActions {
 	confirmCoexistence(id: string): void;
 	/** Clears one decision without changing the server or unavailable-path state. */
 	keepServerState(id: string): void;
+	/** Requests durable removal of one exact attention item. */
+	dismissAttention(key: string): void;
+	/** Requests durable removal of exact informational attention reasons only. */
+	dismissInformationalAttention(): void;
 }
 
 /** Renders plain-text sync state and labelled actions without owning sync effects. */
@@ -154,7 +158,17 @@ export class SyncStatusPanel {
 			this.addButton(container, `Open ${item.path}`, () =>
 				this.actions.openPath(item.path),
 			);
+			this.addButton(
+				container,
+				`Dismiss ${item.path}: ${item.reason}`,
+				() => this.actions.dismissAttention(item.key),
+				`dismiss-${item.key}`,
+			);
 		}
+		if (status.attention.some((item) => item.informational))
+			this.addButton(container, "Dismiss all informational attention", () =>
+				this.actions.dismissInformationalAttention(),
+			);
 		if (activeFocusId) {
 			const replacement = Array.from(container.querySelectorAll("button")).find(
 				(button) => button.getAttribute("data-focus-id") === activeFocusId,

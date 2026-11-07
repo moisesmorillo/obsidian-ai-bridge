@@ -16,6 +16,10 @@ import {
 	parseETag,
 	pathKey,
 } from "@obsidian-ai-bridge/protocol";
+import {
+	getAttentionKey,
+	isInformationalAttention,
+} from "@plugin/sync/attention";
 
 /** User-safe attention text used when local journal storage cannot be verified. */
 export const DEVICE_JOURNAL_ATTENTION_REASON =
@@ -509,6 +513,32 @@ export class DeviceJournal {
 				...this.state,
 				attention: [...attention, { path, reason }],
 			});
+		});
+	}
+
+	/** Removes only the current attention item that matches this stable identity. */
+	async dismissAttention(key: string): Promise<void> {
+		return this.serialize(async () => {
+			this.assertOpen();
+			const index = this.state.attention.findIndex(
+				(item) => getAttentionKey(item) === key,
+			);
+			if (index === -1) return;
+			const attention = [...this.state.attention];
+			attention.splice(index, 1);
+			await this.commit({ ...this.state, attention });
+		});
+	}
+
+	/** Removes only entries whose exact reason is informational, preserving owner-action items. */
+	async dismissInformationalAttention(): Promise<void> {
+		return this.serialize(async () => {
+			this.assertOpen();
+			const attention = this.state.attention.filter(
+				(item) => !isInformationalAttention(item),
+			);
+			if (attention.length === this.state.attention.length) return;
+			await this.commit({ ...this.state, attention });
 		});
 	}
 

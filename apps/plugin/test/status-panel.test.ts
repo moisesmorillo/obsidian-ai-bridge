@@ -1,3 +1,4 @@
+import { TFile } from "obsidian";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { DeviceSession } from "../src/auth/device-session";
 import type { OAuthTransportResponse } from "../src/infrastructure/oauth-transport";
@@ -171,6 +172,101 @@ afterEach(() => {
 });
 
 describe("SyncStatusPanel", () => {
+	it("shows stable dismiss actions for each attention item and bulk dismissal", () => {
+		vi.stubGlobal("document", documentStub);
+		const container = new FakeElement("div");
+		const dismissed: string[] = [];
+		let dismissAll = 0;
+		const panel = new SyncStatusPanel({
+			syncNow: () => undefined,
+			pause: () => undefined,
+			resume: () => undefined,
+			reconnect: () => undefined,
+			openPath: () => undefined,
+			unsupportedFiles: () => [],
+			excludedFiles: () => [],
+			confirmCoexistence: () => undefined,
+			keepServerState: () => undefined,
+			dismissAttention: (key) => dismissed.push(key),
+			dismissInformationalAttention: () => dismissAll++,
+		});
+		panel.render(container as unknown as HTMLElement, {
+			...makeStatus(),
+			attention: [
+				{
+					key: "stable-key-1",
+					path: "notes/a.md",
+					reason: "reason",
+					informational: true,
+					action: "open",
+				},
+				{
+					key: "stable-key-2",
+					path: "notes/a.md",
+					reason: "other",
+					informational: false,
+					action: "open",
+				},
+			],
+		});
+
+		container.findButton("Dismiss notes/a.md: reason")?.click();
+		container.findButton("Dismiss all informational attention")?.click();
+
+		expect(dismissed).toEqual(["stable-key-1"]);
+		expect(dismissAll).toBe(1);
+	});
+
+	it("opens only the indexed TFile through an Obsidian leaf", async () => {
+		const plugin = new AIBridgePlugin({} as never, {} as never);
+		const file = Object.assign(new TFile(), { path: "notes/indexed.md" });
+		const opened: unknown[] = [];
+		let createLeaf = false;
+		Reflect.set(plugin, "app", {
+			vault: { getAbstractFileByPath: () => file },
+			workspace: {
+				getLeaf: (newLeaf: boolean) => {
+					createLeaf = newLeaf;
+					return { openFile: async (value: unknown) => opened.push(value) };
+				},
+			},
+		});
+
+		await Reflect.apply(Reflect.get(plugin, "openAttentionPath"), plugin, [
+			file.path,
+		]);
+
+		expect(createLeaf).toBe(true);
+		expect(opened).toEqual([file]);
+	});
+
+	it.each([
+		[".obsidian/plugins/test.md", "config"],
+		["notes/missing.md", "missing"],
+		["notes/folder", "folder"],
+	])("shows a safe Open notice for %s", async (path) => {
+		const plugin = new AIBridgePlugin({} as never, {} as never);
+		const notices: string[] = [];
+		const opened: unknown[] = [];
+		Reflect.set(plugin, "app", {
+			vault: {
+				getAbstractFileByPath: (candidate: string) =>
+					candidate === "notes/folder" ? { children: [] } : null,
+			},
+			workspace: {
+				getLeaf: () => ({
+					openFile: async (file: unknown) => opened.push(file),
+				}),
+			},
+		});
+		Reflect.set(plugin, "notice", (message: string) => notices.push(message));
+		await Reflect.apply(Reflect.get(plugin, "openAttentionPath"), plugin, [
+			path,
+		]);
+
+		expect(notices).toEqual([expect.stringContaining(path)]);
+		expect(opened).toEqual([]);
+	});
 	it("keeps the active action focused after a status refresh", () => {
 		vi.stubGlobal("document", documentStub);
 		const container = new FakeElement("div");
@@ -184,6 +280,8 @@ describe("SyncStatusPanel", () => {
 			excludedFiles: () => [],
 			confirmCoexistence: () => undefined,
 			keepServerState: () => undefined,
+			dismissAttention: () => undefined,
+			dismissInformationalAttention: () => undefined,
 		});
 		panel.render(container as unknown as HTMLElement, makeStatus());
 		container.findButton("Show unsupported files")?.focus();
@@ -206,6 +304,8 @@ describe("SyncStatusPanel", () => {
 			excludedFiles: () => [],
 			confirmCoexistence: () => undefined,
 			keepServerState: () => undefined,
+			dismissAttention: () => undefined,
+			dismissInformationalAttention: () => undefined,
 		});
 		panel.render(container as unknown as HTMLElement, makeStatus());
 		container.findButton("Pause")?.focus();
@@ -231,6 +331,8 @@ describe("SyncStatusPanel", () => {
 			excludedFiles: () => [],
 			confirmCoexistence: () => undefined,
 			keepServerState: () => undefined,
+			dismissAttention: () => undefined,
+			dismissInformationalAttention: () => undefined,
 		});
 		panel.render(container as unknown as HTMLElement, makeStatus());
 		const button = container.findButton("Show unsupported files");
@@ -257,6 +359,8 @@ describe("SyncStatusPanel", () => {
 			excludedFiles: () => [],
 			confirmCoexistence: (id) => confirmed.push(id),
 			keepServerState: (id) => kept.push(id),
+			dismissAttention: () => undefined,
+			dismissInformationalAttention: () => undefined,
 		});
 		panel.render(container as unknown as HTMLElement, {
 			...makeStatus(),
@@ -320,6 +424,8 @@ describe("SyncStatusPanel", () => {
 			excludedFiles: () => [],
 			confirmCoexistence: () => undefined,
 			keepServerState: () => undefined,
+			dismissAttention: () => undefined,
+			dismissInformationalAttention: () => undefined,
 		});
 		panel.render(container as unknown as HTMLElement, {
 			...makeStatus(),
@@ -356,6 +462,8 @@ describe("SyncStatusPanel", () => {
 			excludedFiles: () => [],
 			confirmCoexistence: () => undefined,
 			keepServerState: () => undefined,
+			dismissAttention: () => undefined,
+			dismissInformationalAttention: () => undefined,
 		});
 		panel.render(container as unknown as HTMLElement, {
 			...makeStatus(),
@@ -423,6 +531,8 @@ describe("SyncStatusPanel", () => {
 			excludedFiles: () => [],
 			confirmCoexistence: () => undefined,
 			keepServerState: () => undefined,
+			dismissAttention: () => undefined,
+			dismissInformationalAttention: () => undefined,
 		}).render(container as unknown as HTMLElement, status);
 
 		const failureParagraph = container.children.find((child) =>
@@ -453,6 +563,8 @@ describe("SyncStatusPanel", () => {
 			excludedFiles: () => [],
 			confirmCoexistence: () => undefined,
 			keepServerState: () => undefined,
+			dismissAttention: () => undefined,
+			dismissInformationalAttention: () => undefined,
 		}).render(container as unknown as HTMLElement, recovered);
 		expect(
 			container.children.some((child) =>
@@ -566,6 +678,8 @@ describe("SyncStatusPanel", () => {
 			excludedFiles: () => [],
 			confirmCoexistence: () => undefined,
 			keepServerState: () => undefined,
+			dismissAttention: () => undefined,
+			dismissInformationalAttention: () => undefined,
 		});
 		/** Renders the plugin's current composed projection and returns that projection. */
 		const render = () => {
@@ -648,6 +762,8 @@ describe("SyncStatusPanel", () => {
 				excludedFiles: () => [],
 				confirmCoexistence: () => undefined,
 				keepServerState: () => undefined,
+				dismissAttention: () => undefined,
+				dismissInformationalAttention: () => undefined,
 			}).render(container as unknown as HTMLElement, projectJournal(journal));
 		/** Finds the single optional coexistence count paragraph. */
 		const summary = () =>
@@ -709,6 +825,8 @@ describe("SyncStatusPanel", () => {
 				excludedFiles: () => [],
 				confirmCoexistence: () => undefined,
 				keepServerState: () => undefined,
+				dismissAttention: () => undefined,
+				dismissInformationalAttention: () => undefined,
 			}).render(container as unknown as HTMLElement, projectJournal(journal));
 
 		await controller.observe({
@@ -751,6 +869,8 @@ describe("SyncStatusPanel", () => {
 			excludedFiles: () => [],
 			confirmCoexistence: () => undefined,
 			keepServerState: () => undefined,
+			dismissAttention: () => undefined,
+			dismissInformationalAttention: () => undefined,
 		});
 		panel.render(container as unknown as HTMLElement, makeStatus());
 

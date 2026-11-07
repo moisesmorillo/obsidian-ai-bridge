@@ -1,0 +1,51 @@
+---
+id: OAB-11.10
+title: Dismiss attention items from the status panel
+status: In Progress
+assignee:
+  - '@pi'
+created_date: '2026-11-07T02:34:00Z'
+updated_date: '2026-11-07T02:53:00Z'
+labels: []
+dependencies: []
+parent_task_id: OAB-11
+type: feature
+ordinal: 77000
+---
+
+## Description
+
+<!-- SECTION:DESCRIPTION:BEGIN -->
+Old informational entries keep Sync status at attention after conflict recovery. The owner requested dismissal from the plugin panel on 2026-11-06.
+<!-- SECTION:DESCRIPTION:END -->
+
+## Acceptance Criteria
+<!-- AC:BEGIN -->
+- [ ] #1 Each attention entry has Dismiss next to Open. Dismissal removes only that journal entry durably, without changes to files, operations, confirmations, or conflict copies.
+- [ ] #2 Dismiss all removes only conflict-copy-preserved, local-change-after-queued-publication, and local-text-met-newer-remote-content entries. Owner-action entries remain.
+- [ ] #3 Sync status returns to settled when no attention entry or pending queue remains.
+- [ ] #4 A dismissed entry returns only through a new event.
+- [ ] #5 Tests cover individual dismissal, the informational filter, reload persistence, and settled status.
+- [ ] #6 Open uses indexed TFile opening only. Config-directory, missing, and folder paths show a Notice without note creation. Desktop reveal uses only a supported API.
+<!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Add failing journal, panel, settings, safe Open, and status tests. 2. Add schema-derived attention identity and exact informational policy. 3. Add serialized journal dismissal and wire controls with status refresh. 4. Replace link opening with indexed TFile opening and safe path Notices. 5. Bump plugin to 0.1.5. 6. Run focused tests, docs:check, and bun run check. 7. Complete task and branch semantic reviews, then human branch review. 8. Push one PR, remove the worktree, and report. Owner plan: /private/tmp/M8-attention-dismiss-plan.md.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Owner authorization dated 2026-11-06: F5 code-first work through the supervisor. This task uses unit tests and fakes only. No vault access or live service cases. Scope: plugin source, plugin tests, manifest, versions, and this task. Plugin release version: 0.1.5.
+
+Supervisor scope extension: fix the attention Open action in main.ts in this PR. Link resolution can create a note for an unindexed .obsidian path and report Folder already exists. Use indexed TFile opening only. Never create missing paths. The installed public Obsidian declarations expose no system file-manager reveal API.
+
+RED: `bun test apps/plugin/test/device-journal.test.ts apps/plugin/test/status-panel.test.ts apps/plugin/test/settings.test.ts` exited 1 before implementation. The new journal assertions failed because attention keys and dismissal operations did not exist. The same direct Bun command also loaded plugin tests outside Vitest and produced unrelated Obsidian module errors.
+GREEN: `cd apps/plugin && bun run test -- test/device-journal.test.ts test/status-panel.test.ts test/settings.test.ts` passed 3 files and 87 tests.
+Checks: `bunx biome check --write` passed for 11 changed source, test, and version files. `bun run docs:check` passed. `bun run check` passed lint, docs, typecheck, all tests, and builds.
+Review: local review found no blocker. Unit tests use in-memory journal storage and host fakes only. No vault or live service was accessed.
+
+Final focused run: `cd apps/plugin && bun run test -- test/device-journal.test.ts test/status-panel.test.ts test/settings.test.ts` passed 3 files and 88 tests. The full `bun run check` passed lint, documentation checks, TypeScript checks, all workspace tests, and all builds after final edits. The worker test runner printed expected injected transport and SQLite errors from negative-control tests, but all worker suites passed.
+<!-- SECTION:NOTES:END -->

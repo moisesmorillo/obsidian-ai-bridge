@@ -14,7 +14,7 @@ import {
 import { SyncTransportError } from "@plugin/infrastructure/sync-transport";
 import { ObsidianTextVault } from "@plugin/infrastructure/text-vault";
 import { VaultEventAdapter } from "@plugin/infrastructure/vault-events";
-import { Notice, Platform, Plugin } from "@plugin/obsidian-api";
+import { Notice, Platform, Plugin, TFile } from "@plugin/obsidian-api";
 import {
 	type AIBridgeSettings,
 	AIBridgeSettingTab,
@@ -276,7 +276,25 @@ export default class AIBridgePlugin extends Plugin {
 						void this.session?.connect().catch(() => undefined);
 					},
 					openPath: (path) => {
-						void this.app.workspace.openLinkText(path, "", true);
+						void this.openAttentionPath(path);
+					},
+					dismissAttention: (key) => {
+						this.runSyncAction(async () => {
+							try {
+								await this.journal?.dismissAttention(key);
+							} finally {
+								this.settingsTab?.refreshStatus();
+							}
+						});
+					},
+					dismissInformationalAttention: () => {
+						this.runSyncAction(async () => {
+							try {
+								await this.journal?.dismissInformationalAttention();
+							} finally {
+								this.settingsTab?.refreshStatus();
+							}
+						});
 					},
 					unsupportedFiles: () => this.filesByScope("unsupported"),
 					excludedFiles: () => this.filesByScope("excluded"),
@@ -1028,6 +1046,24 @@ export default class AIBridgePlugin extends Plugin {
 		this.composition = null;
 		this.vaultSummary = null;
 		return controller;
+	}
+
+	/** Opens only an indexed file outside Obsidian configuration paths. */
+	private async openAttentionPath(path: string): Promise<void> {
+		if (path === ".obsidian" || path.startsWith(".obsidian/")) {
+			this.notice(`Cannot open configuration path: ${path}`);
+			return;
+		}
+		try {
+			const file = this.app.vault.getAbstractFileByPath(path);
+			if (!(file instanceof TFile)) {
+				this.notice(`Cannot open missing or non-file path: ${path}`);
+				return;
+			}
+			await this.app.workspace.getLeaf(true).openFile(file);
+		} catch {
+			this.notice(`Could not open path: ${path}`);
+		}
 	}
 
 	/** Projects only verified journal data and validated feed observations. */

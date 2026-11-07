@@ -1,4 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
+import { getAttentionKey } from "../src/sync/attention";
+import { DeviceJournal } from "../src/sync/device-journal";
+import { projectSyncStatus } from "../src/sync/sync-status";
 
 /** Captured text input and callback used by the settings control mock. */
 interface CapturedText {
@@ -377,6 +380,40 @@ describe("resolveDeviceName", () => {
 });
 
 describe("AIBridgeSettingTab", () => {
+	it("returns the sync projection to settled after durable attention dismissal", async () => {
+		let state: unknown = null;
+		const journal = await DeviceJournal.open({
+			readState: async () => state,
+			writeState: async (next) => {
+				state = structuredClone(next);
+			},
+			readPayload: async () => new Uint8Array(),
+			writePayload: async () => undefined,
+		});
+		await journal.resetEpoch("e".repeat(32));
+		await journal.setCursor("e".repeat(32), 0);
+		await journal.recordAttention(
+			"notes/a.md",
+			"Local text met newer remote content",
+		);
+		const attention = journal.snapshot().attention[0];
+		if (!attention) throw new Error("Expected attention item before dismissal");
+		const key = getAttentionKey(attention);
+
+		await journal.dismissAttention(key);
+		const projection = projectSyncStatus({
+			state: journal.snapshot(),
+			session: "connected",
+			head: { epoch: "e".repeat(32), head_seq: 0 },
+			persisted: true,
+			active: false,
+			paused: false,
+			revoked: false,
+		});
+
+		expect(projection.state).toBe("settled");
+		expect(projection.attention).toEqual([]);
+	});
 	it("defaults coexistence off and restores the saved value after a failed write", async () => {
 		const test = createTab();
 		const row = host.controls.find((item) => item.name === "Coexistence mode");

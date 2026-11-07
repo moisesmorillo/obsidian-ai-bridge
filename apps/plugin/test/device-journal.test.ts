@@ -3,6 +3,7 @@ import type {
 	PendingOperation,
 } from "@obsidian-ai-bridge/protocol";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { getAttentionKey } from "../src/sync/attention";
 import {
 	DEVICE_JOURNAL_ATTENTION_REASON,
 	DeviceJournal,
@@ -48,6 +49,121 @@ const bytes = new TextEncoder().encode("immutable content");
 const precondition = { kind: "match" as const, epoch: "b".repeat(32), rev: 4 };
 
 describe("DeviceJournal", () => {
+	it("dismisses one stable attention key durably without changing synchronization data", async () => {
+		const journal = await DeviceJournal.open(storage);
+		const first = await journal.enqueue(
+			{ op: "put", path: "notes/a.md", precondition },
+			bytes,
+		);
+		await journal.recordQueuedRejected(first, "reason one");
+		const second = await journal.enqueue(
+			{ op: "put", path: "notes/a.md", precondition },
+			bytes,
+		);
+		await journal.recordQueuedRejected(second, "reason two");
+		await journal.enqueue(
+			{ op: "put", path: "notes/queued.md", precondition },
+			bytes,
+		);
+		const before = journal.snapshot();
+		const payloadsBefore = [...storage.payloads].map(([path, value]) => [
+			path,
+			[...value],
+		]);
+		const firstAttention = before.attention[0];
+		if (!firstAttention) throw new Error("Expected first attention item");
+		const key = getAttentionKey(firstAttention);
+
+		await journal.dismissAttention(key);
+		const reopened = await DeviceJournal.open(storage);
+
+		const after = reopened.snapshot();
+		expect(after.attention).toEqual([before.attention[1]]);
+		expect({ ...after, attention: before.attention }).toEqual(before);
+		expect(
+			[...storage.payloads].map(([path, value]) => [path, [...value]]),
+		).toEqual(payloadsBefore);
+	});
+
+	it("removes only one entry when persisted attention contains duplicate keys", async () => {
+		const journal = await DeviceJournal.open(storage);
+		await journal.recordAttention("notes/a.md", "reason");
+		const state = journal.snapshot();
+		const item = state.attention[0];
+		if (!item) throw new Error("Expected attention item to duplicate");
+		storage.state = { ...state, attention: [item, item] };
+		const reopened = await DeviceJournal.open(storage);
+
+		await reopened.dismissAttention(getAttentionKey(item));
+
+		expect(reopened.snapshot().attention).toEqual([item]);
+	});
+
+	it("dismisses only exact informational reasons and ignores stale keys", async () => {
+		const journal = await DeviceJournal.open(storage);
+		await journal.recordAttention(
+			"notes/a.md",
+			"Local text met newer remote content",
+		);
+		await journal.recordAttention(
+			"notes/b.md",
+			"Local binary bytes were preserved as a conflict copy",
+		);
+		await journal.recordAttention(
+			"notes/c.md",
+			"Local file changed after publication was queued",
+		);
+		await journal.recordAttention(
+			"notes/d.md",
+			"Local text met newer remote content ",
+		);
+		await journal.recordAttention("notes/a.md", "Owner must review this path");
+		await journal.dismissAttention("stale-key");
+		await journal.dismissInformationalAttention();
+
+		expect(journal.snapshot().attention).toEqual([
+			{ path: "notes/d.md", reason: "Local text met newer remote content " },
+			{ path: "notes/a.md", reason: "Owner must review this path" },
+		]);
+	});
+
+	it("allows a later journal event to restore a dismissed entry", async () => {
+		const journal = await DeviceJournal.open(storage);
+		await journal.recordAttention("notes/a.md", "reason");
+		const firstAttention = journal.snapshot().attention[0];
+		if (!firstAttention)
+			throw new Error("Expected attention item before dismissal");
+		await journal.dismissAttention(getAttentionKey(firstAttention));
+		await journal.recordAttention("notes/a.md", "reason");
+
+		expect(journal.snapshot().attention).toEqual([
+			{ path: "notes/a.md", reason: "reason" },
+		]);
+	});
+
+	it("does not report dismissal when verified state persistence fails", async () => {
+		const journal = await DeviceJournal.open(storage);
+		await journal.recordAttention("notes/a.md", "reason");
+		storage.failStateWrite = true;
+		const firstAttention = journal.snapshot().attention[0];
+		if (!firstAttention)
+			throw new Error("Expected attention item before failed write");
+
+		await expect(
+			journal.dismissAttention(getAttentionKey(firstAttention)),
+		).rejects.toThrow();
+		expect(
+			projectSyncStatus({
+				state: journal.snapshot(),
+				session: "connected",
+				head: null,
+				persisted: journal.attentionReason === null,
+				active: false,
+				paused: false,
+				revoked: false,
+			}).state,
+		).toBe("attention");
+	});
 	let storage: MemoryStorage;
 	beforeEach(() => {
 		storage = new MemoryStorage();

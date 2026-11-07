@@ -5,7 +5,7 @@ status: Deferred
 assignee:
   - '@pi'
 created_date: 2026-10-20 23:27
-updated_date: '2026-11-07T13:33:00Z'
+updated_date: '2026-11-07T13:38:00Z'
 labels: []
 dependencies: []
 references:
@@ -59,6 +59,8 @@ Checklist
 - [ ] Parent rebases, pushes, opens the PR, removes the worktree, reports the URL, and stops.
 
 Review focus: local-only storage, synthetic identity, cap compliance, process identity, sample coverage, route limits, cancellation outcomes, reproduction limits, and unchecked acceptance claims.
+
+Parent completion: independent task review and final whole-branch review are complete. The final reviewer approved the corrected notes. Parent fetched origin and confirmed the branch is current with origin/main. Publish the notes-only PR, remove the worktree, report its URL, and stop.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -282,6 +284,8 @@ The config omits compatibility flags. Identify the `workerd` process that serves
 Validation evidence: the completed earlier `bun run check` exited 0. It checked lint on 302 files, docs, workspace types, 2,254 tests across 126 files with one skip, and three dry-run builds. This prose-only correction did not rerun the full check. `git diff --check` will run for this correction before commit.
 
 Acceptance: all four criteria remain unchecked. Keep status Deferred. Local RSS is not a deployed runtime envelope or native release bound. The 32 MiB limit is payload/application accounting only. It does not count native copies and does not show active application memory.
+
+Final branch review: APPROVE at 61832c54dcf9274424e71aa34351c7d4493114f9 against origin/main f72db9c. The reviewer examined both commits, raw local samples, scripts, server logs, production observations, and the task record. R1 closes the incomplete report, not the historical cap violation. R2 closes the mixed-run byte figures. R3 closes the missing phase and sample-gap context. R4 closes the false reproduction claim through explicit limits. No actionable finding remains. No TypeScript declaration or structural candidate changed. The reviewer ran git diff --check and confirmed a clean tree. The review used existing check evidence and did not repeat tests or workloads. All four acceptance criteria stay unchecked and the task stays Deferred. The owner brief waives human review gates for this scope. Parent publication follows. No production content operation or resource change occurred.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary

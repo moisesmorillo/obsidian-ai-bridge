@@ -7,6 +7,7 @@
  */
 import { sql } from "drizzle-orm";
 import {
+	blob,
 	check,
 	index,
 	integer,
@@ -227,6 +228,53 @@ export const exports = sqliteTable(
 	(table) => [primaryKey({ columns: [table.id] })],
 );
 
+/** Persists one resumable packed export and its ZIP32/multipart checkpoint. The partial part is under 5 MiB. */
+export const packedExports = sqliteTable(
+	"packed_exports",
+	{
+		id: text("id").notNull(),
+		epoch: text("epoch").notNull(),
+		createdAt: text("created_at").notNull(),
+		headSeq: integer("head_seq").notNull(),
+		status: text("status").notNull(),
+		objectKey: text("object_key").notNull(),
+		startedAt: integer("started_at").notNull(),
+		finishedAt: integer("finished_at"),
+		size: integer("size"),
+		uploadId: text("upload_id"),
+		zipState: text("zip_state").notNull(),
+		pendingPart: blob("pending_part", { mode: "buffer" }).notNull(),
+		completedParts: text("completed_parts").notNull(),
+		manifest: text("manifest").notNull(),
+		error: text("error"),
+	},
+	(table) => [
+		check(
+			"packed_exports_status_check",
+			sql`${table.status} IN ('queued', 'uploading', 'complete', 'failed')`,
+		),
+		uniqueIndex("packed_exports_identity").on(table.epoch, table.createdAt),
+		primaryKey({ columns: [table.id] }),
+	],
+);
+
+/** Captures current-file metadata under one export identity while export_pins preserve exact revisions. */
+export const packedExportFiles = sqliteTable(
+	"packed_export_files",
+	{
+		exportId: text("export_id").notNull(),
+		ordinal: integer("ordinal").notNull(),
+		path: text("path").notNull(),
+		rev: integer("rev").notNull(),
+		hash: text("hash").notNull(),
+		size: integer("size").notNull(),
+	},
+	(table) => [
+		primaryKey({ columns: [table.exportId, table.ordinal] }),
+		uniqueIndex("packed_export_files_path").on(table.exportId, table.path),
+	],
+);
+
 /** Gives the synchronous Drizzle adapter its canonical relational models. Engine-specific FTS remains outside this model collection. */
 export const vaultSchema = {
 	meta,
@@ -241,4 +289,6 @@ export const vaultSchema = {
 	exports,
 	operationAdmissions,
 	mutationClaims,
+	packedExports,
+	packedExportFiles,
 };

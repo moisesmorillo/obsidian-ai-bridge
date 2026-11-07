@@ -6,6 +6,7 @@ import type {
 	AuthorizationContext,
 	CurrentEpochOperation,
 	CurrentEpochResult,
+	ExportOperationResult,
 	FileFailure,
 	HistoryRequest,
 	HistoryUpperResponse,
@@ -40,6 +41,7 @@ import {
 	RevokeClientRequestSchema,
 } from "@obsidian-ai-bridge/protocol";
 import { AdmissionDenied } from "@worker/application/admission";
+import { PackedExportService } from "@worker/application/export";
 import { FileOperationDenied } from "@worker/application/files";
 import type { ImmutableFileCommand } from "@worker/application/history";
 import {
@@ -48,10 +50,12 @@ import {
 } from "@worker/application/measurements";
 import type { Env } from "@worker/env";
 import { R2BlobStore } from "@worker/infrastructure/r2/blobs";
+import { R2PackedArchiveStore } from "@worker/infrastructure/r2/packed-export";
 import { SqliteAdmissionAuthority } from "@worker/infrastructure/sqlite/admission";
 import { SqliteClientRegistry } from "@worker/infrastructure/sqlite/clients";
 import { SqliteMeasurementsStore } from "@worker/infrastructure/sqlite/measurements";
 import { SqliteMutationCoordinator } from "@worker/infrastructure/sqlite/mutations";
+import { SqlitePackedExportStore } from "@worker/infrastructure/sqlite/packed-exports";
 import { SqliteReadStore } from "@worker/infrastructure/sqlite/reads";
 import { SqliteRetentionStore } from "@worker/infrastructure/sqlite/retention";
 import {
@@ -98,6 +102,8 @@ export class Vault extends DurableObject<Env> {
 	private readonly searchStore: SqliteSearchStore;
 	/** Applies one bounded SQLite retention batch for each native alarm. */
 	private readonly retentionStore: SqliteRetentionStore;
+	/** Captures pinned export cuts and advances bounded ZIP output through native alarms. */
+	private readonly packedExportService: PackedExportService;
 
 	/**
 	 * The constructor creates fresh storage or validates existing storage synchronously in one transaction.
@@ -139,9 +145,17 @@ export class Vault extends DurableObject<Env> {
 			this.admissionAuthority,
 		);
 		this.retentionStore = new SqliteRetentionStore(ctx.storage);
+		this.packedExportService = new PackedExportService(
+			new SqlitePackedExportStore(ctx.storage, new R2BlobStore(env.R2_BUCKET)),
+			new R2PackedArchiveStore(env.R2_BUCKET),
+		);
 		this.initialization = ctx.blockConcurrencyWhile(async () => {
-			if ((await ctx.storage.getAlarm()) === null)
-				await ctx.storage.setAlarm(nextRetentionNightly(Date.now()));
+			const alarm = await ctx.storage.getAlarm();
+			const exportPending = await this.packedExportService.hasPending();
+			if (alarm === null || exportPending)
+				await ctx.storage.setAlarm(
+					exportPending ? Date.now() + 1 : nextRetentionNightly(Date.now()),
+				);
 		});
 		this.textStore = new SqliteTextStore(
 			ctx.storage,
@@ -154,15 +168,61 @@ export class Vault extends DurableObject<Env> {
 		);
 	}
 
-	/** Run one retention transaction and schedule continuation or the next nightly cycle.
-	 * A future export owner must join this native alarm dispatch and choose its next deadline.
-	 */
+	/** Run one retention and export batch, then schedule continuation or the next nightly cycle. */
 	async alarm(): Promise<void> {
 		await this.initialization;
 		const now = Date.now();
-		const result = this.retentionStore.runBatch(now);
-		await this.ctx.storage.setAlarm(
-			result.more ? now + RETENTION_CONTINUATION_MS : nextRetentionNightly(now),
+		try {
+			const retention = this.retentionStore.runBatch(now);
+			const exportsPending = await this.packedExportService.runBatch();
+			await this.ctx.storage.setAlarm(
+				retention.more || exportsPending
+					? now + RETENTION_CONTINUATION_MS
+					: nextRetentionNightly(now),
+			);
+		} catch (error) {
+			await this.ctx.storage.setAlarm(now + RETENTION_CONTINUATION_MS);
+			throw error;
+		}
+	}
+
+	/** Start one Access-authorized idempotent export and request its first alarm step. */
+	async startPackedExport(
+		ownerSubject: string,
+		createdAt: string,
+	): Promise<ExportOperationResult | null> {
+		if (!this.isConfiguredOwner(ownerSubject)) return null;
+		await this.initialization;
+		const result = await this.packedExportService.start(createdAt, Date.now());
+		if (result.status === "queued" || result.status === "uploading")
+			await this.ctx.storage.setAlarm(Date.now() + 1);
+		return result;
+	}
+
+	/** List completed archives for the verified owner without exposing bucket keys. */
+	async listPackedExports(
+		ownerSubject: string,
+	): Promise<ExportOperationResult[] | null> {
+		if (!this.isConfiguredOwner(ownerSubject)) return null;
+		await this.initialization;
+		return [...(await this.packedExportService.list())];
+	}
+
+	/** Stream one completed owner archive only when its export status and size match. */
+	async getPackedExportDownload(
+		ownerSubject: string,
+		epoch: string,
+		createdAt: string,
+	): Promise<{ body: ReadableStream<Uint8Array>; size: number } | null> {
+		if (!this.isConfiguredOwner(ownerSubject)) return null;
+		await this.initialization;
+		return this.packedExportService.getDownload(`${epoch}:${createdAt}`);
+	}
+
+	/** Match the verified Access subject to the one configured owner identity. */
+	private isConfiguredOwner(ownerSubject: string): boolean {
+		return Boolean(
+			this.env.OWNER_SUBJECT && ownerSubject === this.env.OWNER_SUBJECT,
 		);
 	}
 

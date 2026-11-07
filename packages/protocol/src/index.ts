@@ -119,6 +119,21 @@ export {
 	ReconciliationCheckpointSchema,
 } from "@protocol/schemas/device-state";
 export { EpochSchema, ETagSchema } from "@protocol/schemas/etag";
+export type {
+	ExportFailure,
+	ExportManifest,
+	ExportOperationResult,
+	ExportSnapshot,
+} from "@protocol/schemas/export";
+export {
+	ExportFailureSchema,
+	ExportManifestSchema,
+	ExportOperationResultSchema,
+	ExportSnapshotSchema,
+	ExportSnapshotsSchema,
+	MAX_EXPORT_FILE_COUNT,
+	OwnerExportRequestSchema,
+} from "@protocol/schemas/export";
 export {
 	CurrentEpochOperationSchema,
 	CurrentEpochRequestSchema,

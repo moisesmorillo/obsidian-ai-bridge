@@ -35,11 +35,12 @@ describe("production Worker configuration", () => {
 		expect(productionConfigText).not.toContain("custom_domain");
 	});
 
-	it("binds the Vault, OAuth KV, and immutable R2 bucket", () => {
+	it("binds the Vault, OAuth KV, blob and backup R2 buckets, and hourly Cron", () => {
 		const config = productionConfig as {
 			durable_objects?: { bindings?: Array<Record<string, unknown>> };
 			kv_namespaces?: Array<Record<string, unknown>>;
 			r2_buckets?: Array<Record<string, unknown>>;
+			triggers?: { crons?: string[] };
 			migrations?: Array<Record<string, unknown>>;
 		};
 
@@ -56,7 +57,9 @@ describe("production Worker configuration", () => {
 		]);
 		expect(config.r2_buckets).toEqual([
 			{ binding: "R2_BUCKET", bucket_name: "oab-f2-immutable-blobs" },
+			{ binding: "BACKUP_BUCKET", bucket_name: "oab-backups" },
 		]);
+		expect(config.triggers?.crons).toEqual(["0 * * * *"]);
 		expect(config.migrations).toContainEqual({
 			tag: "v1",
 			new_sqlite_classes: ["Vault"],

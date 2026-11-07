@@ -39,7 +39,7 @@ import {
 	vaultSchema,
 } from "@worker/infrastructure/sqlite/schema-model";
 import type { Logger } from "drizzle-orm";
-import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import {
 	type DrizzleSqliteDODatabase,
 	drizzle,
@@ -81,8 +81,28 @@ export class SqlitePackedExportStore implements PackedExportRepository {
 		this.db = drizzle(storage, { schema: vaultSchema, logger });
 	}
 
-	/** Capture head, manifest metadata, snapshot rows, and revision pins atomically. */
+	/** Capture one timestamp-keyed snapshot, or return its existing durable row. */
 	async capture(createdAt: string, now: number): Promise<PackedExportWork> {
+		const work = await this.captureExclusive(createdAt, now, false);
+		if (!work)
+			throw new Error("Packed export reservation was unexpectedly skipped");
+		return work;
+	}
+
+	/** Capture only when no queued or uploading export owns this vault. */
+	captureWhenIdle(
+		createdAt: string,
+		now: number,
+	): Promise<PackedExportWork | null> {
+		return this.captureExclusive(createdAt, now, true);
+	}
+
+	/** Capture one snapshot atomically or skip when another active export owns the vault. */
+	private async captureExclusive(
+		createdAt: string,
+		now: number,
+		skipWhenBusy: boolean,
+	): Promise<PackedExportWork | null> {
 		if (!Number.isSafeInteger(now) || now < 0)
 			throw new Error("Invalid packed export start time");
 		return this.db.transaction((tx) => {
@@ -100,6 +120,14 @@ export class SqlitePackedExportStore implements PackedExportRepository {
 				)
 				.all()[0];
 			if (existing) return loadWork(tx, existing);
+			const active = tx
+				.select()
+				.from(packedExports)
+				.where(inArray(packedExports.status, ["queued", "uploading"]))
+				.orderBy(asc(packedExports.startedAt))
+				.limit(1)
+				.all()[0];
+			if (active) return skipWhenBusy ? null : loadWork(tx, active);
 
 			const captured = tx
 				.select({
@@ -639,8 +667,8 @@ export class SqlitePackedExportStore implements PackedExportRepository {
 		});
 	}
 
-	/** List every completed archive in newest-first order without exposing object keys. */
-	async listCompleted(): Promise<readonly ExportOperationResult[]> {
+	/** List durable export outcomes in newest-first order without exposing object keys. */
+	async listResults(): Promise<readonly ExportOperationResult[]> {
 		return this.db
 			.select({
 				epoch: packedExports.epoch,
@@ -650,19 +678,25 @@ export class SqlitePackedExportStore implements PackedExportRepository {
 				error: packedExports.error,
 			})
 			.from(packedExports)
-			.where(eq(packedExports.status, "complete"))
-			.orderBy(asc(packedExports.finishedAt))
+			.where(inArray(packedExports.status, ["complete", "failed"]))
+			.orderBy(desc(packedExports.startedAt))
 			.all()
-			.reverse()
-			.map(({ epoch, created_at, size }) =>
+			.map(({ epoch, created_at, status, size, error }) =>
 				ExportOperationResultSchema.parse({
 					epoch,
 					created_at,
-					status: "complete",
+					status,
 					size,
-					failure: null,
+					failure: error ? ExportFailureSchema.parse({ kind: error }) : null,
 				}),
 			);
+	}
+
+	/** List completed outcomes for storage-level callers that need only downloadable rows. */
+	async listCompleted(): Promise<readonly ExportOperationResult[]> {
+		return (await this.listResults()).filter(
+			(result) => result.status === "complete",
+		);
 	}
 
 	/** Return the R2 key and final size only for one completed export row. */

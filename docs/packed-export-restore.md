@@ -2,10 +2,12 @@
 
 A packed baseline contains the current live file set at one immutable cut. It does not contain deleted paths, retained history, client grants, or service import state. The archive does not replace the service vault or change its epoch.
 
+The Worker creates a packed baseline every hour. Owner requests can start another baseline. Scheduled and owner-started archives use the `oab-backups` R2 bucket and keys under `backups/`. The `cloudflare-infra` lifecycle rule deletes those objects after 15 days and aborts incomplete multipart uploads after one day. The Worker does not prune archives. Failed exports appear on `/owner/exports` without download links.
+
 ## Download and verify
 
 1. Open `/owner/exports` while signed in through Cloudflare Access.
-2. Start an export. Wait for its timestamp and byte size to appear under **Completed snapshots**.
+2. Wait for a completed export. Confirm its timestamp and byte size under **Completed snapshots**.
 3. Download that snapshot. An incomplete export does not have a download link.
 4. Extract the ZIP into a new empty staging directory. Use an extractor that rejects absolute paths, `..` path segments, duplicate paths, and paths outside the staging directory.
 5. Read `manifest.json`. Check its epoch, head sequence, timestamp, path order, and file count. The `files` array lists each archived path, exact revision, SHA-256 hash, and byte size.

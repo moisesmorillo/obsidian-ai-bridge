@@ -497,6 +497,13 @@ describe("production owner console", () => {
 						size: 4,
 						failure: null,
 					},
+					{
+						epoch,
+						created_at: "2026-11-06T03:00:00.000Z",
+						status: "failed",
+						size: null,
+						failure: { kind: "export_source_unavailable" },
+					},
 				],
 				/** Return the bounded archive stream for the protected download test. */
 				download,
@@ -517,6 +524,9 @@ describe("production owner console", () => {
 		expect(page.headers.get("cache-control")).toBe("no-store");
 		const html = await page.text();
 		expect(html).toContain("Completed snapshots");
+		expect(html).toContain("Failed exports");
+		expect(html).toContain("export_source_unavailable");
+		expect(html.match(/\/download/g)).toHaveLength(1);
 		const downloadUrl = html.match(/href="([^"]+\/download)"/)?.[1];
 		expect(downloadUrl).toContain("/owner/exports/");
 		const cookie = page.headers.get("set-cookie")?.split(";", 1)[0];

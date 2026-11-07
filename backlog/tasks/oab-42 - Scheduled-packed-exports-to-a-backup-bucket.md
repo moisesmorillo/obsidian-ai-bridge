@@ -1,9 +1,11 @@
 ---
 id: OAB-42
 title: Scheduled packed exports to a backup bucket
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@pi'
 created_date: '2026-11-07T13:12:00Z'
+updated_date: '2026-11-07T13:34:00Z'
 labels:
   - F6
   - backup
@@ -27,3 +29,56 @@ Owner order 2026-11-07: run the packed baseline export every hour and retain 15 
 - [ ] #4 Retention is an R2 lifecycle rule in cloudflare-infra, 15 days on backups/, not Worker code. The infra PR merges before the Worker PR.
 - [ ] #5 Tests cover the scheduled handler, the skip when busy, the binding selection, and the failure record. bun run check green. Worker preflight green.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+# Scheduled exports implementation plan
+
+Goal: Create hourly packed snapshots in the separate backup bucket.
+Architecture: The Worker Cron Trigger selects the canonical SERVICE_ORIGIN host and calls the Vault export service. Existing alarms advance ZIP work.
+Spec: docs/spec.md sections 11 and 16, plus the S5 owner brief.
+
+## Owner decisions
+- Use Cron Trigger 0 * * * * and BACKUP_BUCKET for oab-backups.
+- Keep blob reads and GC on R2_BUCKET. Keep backups/<epoch>/<createdAt>.zip.
+- Infra PR #20 owns the 15-day backups/ lifecycle. Add no Worker pruning.
+- Use the scheduled event timestamp as the export identity. Skip queued or uploading work and record that result.
+- Keep export failure details in durable records visible on the owner exports page.
+- Use only unit tests, runtime fakes, and local preflight. No deployed service or vault access.
+- The unattended owner order replaces plan and branch browser gates.
+- Change only export-related wiring, tests, and documentation. Necessary binding types and deployment configurations belong to that wiring.
+
+## Task 1: Scheduled packed exports
+- [ ] Read existing export capture, concurrency, alarm, owner rendering, and runtime test contracts.
+- [ ] Add failing tests for Cron forwarding, canonical host selection, busy skip, failure visibility, and isolated bucket selection.
+- [ ] Run those tests and record their actual failing assertions before implementation.
+- [ ] Add scheduled Vault entry and Worker handler. Preserve exact snapshot cuts and existing upload retries.
+- [ ] Bind archives to BACKUP_BUCKET in local and production configuration. Keep all blob operations on R2_BUCKET.
+- [ ] Show failed export records on the owner page without download links. Keep protocol shapes canonical.
+- [ ] Update restore guidance and spec sections 11 and 16. Correct conflicting destination summary text.
+- [ ] Run focused tests, bun run docs:check, bun run check, and Worker preflight.
+- [ ] Commit implementation and report evidence. Complete task review, then whole-branch review.
+- [ ] Rebase on origin/main, push, and create one PR with the infra PR #20 dependency first.
+
+## Review focus
+Concurrent owner and Cron starts must not create two active exports.
+Duplicate Cron delivery must not create two snapshots.
+Failed work must appear without a download link.
+Missing or invalid service origin must not select a different vault.
+Separate archive writes must not change blob publication or garbage collection.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Owner decision: a busy scheduled attempt emits a structured scheduled_export_skipped event with reason export_already_running and the scheduled timestamp. It does not create a failed export or change protocol statuses. The log omits owner identity and payload data.
+
+RED evidence before implementation: the owner page test failed because HTML omitted Failed exports and export_source_unavailable. The scheduled handler tests failed because scheduled was undefined. The backup-store test failed because BACKUP_BUCKET was unavailable. Results: owner test 1 failed of 4, scheduled and backup tests 3 failed of 3.
+
+TDD exception: the exact SQLite concurrent-admission integration test was added after implementation. It now runs owner and Cron starts concurrently against the real Durable Object and asserts one persisted export.
+
+Dependencies: bun install --frozen-lockfile installed locked dependencies. No live service or Cloudflare resource access.
+
+Final validation: bun run docs:check passed. bun run check passed with exit 0. Tooling: 8 files and 91 tests passed. Protocol: 19 files and 314 tests passed. Worker: 71 files and 1,017 tests passed. Plugin: 29 files and 836 tests passed, with 1 skipped. All workspace typechecks and builds passed. Worker dry-run build showed both R2 bindings. bun run --filter @obsidian-ai-bridge/worker preflight passed with exit 0 and local runtime simulation. No live service or Cloudflare resources were used. Review found no blockers. Production application still depends on cloudflare-infra PR #20 to create oab-backups before Worker release.
+<!-- SECTION:NOTES:END -->

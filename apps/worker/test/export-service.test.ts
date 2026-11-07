@@ -66,6 +66,12 @@ class ExportRepositoryFake implements PackedExportRepository {
 	async capture(): Promise<PackedExportWork> {
 		return this.work;
 	}
+	/** Refuse a second active export during a scheduled start. */
+	async captureWhenIdle(): Promise<PackedExportWork | null> {
+		const active =
+			this.work.status === "queued" || this.work.status === "uploading";
+		return active ? null : this.work;
+	}
 	/** Return work only while its durable state remains active. */
 	async nextActive(): Promise<PackedExportWork | null> {
 		return this.work.status === "complete" || this.work.status === "failed"
@@ -139,8 +145,8 @@ class ExportRepositoryFake implements PackedExportRepository {
 		this.work = { ...this.work, status: "failed", size: null, failure };
 	}
 	/** Return only the completed row used by owner listing tests. */
-	async listCompleted() {
-		return this.work.status === "complete" ? [this.work] : [];
+	async listResults() {
+		return [this.work];
 	}
 	/** Return the exact key and size only after completion. */
 	async getCompletedArchive(

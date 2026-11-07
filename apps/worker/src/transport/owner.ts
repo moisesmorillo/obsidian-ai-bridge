@@ -67,7 +67,7 @@ export type OwnerExportResolver = (
 		ownerSubject: string,
 		createdAt: string,
 	): Promise<ExportOperationResult | null>;
-	/** List completed snapshots without exposing private R2 object keys. */
+	/** List export outcomes without exposing private R2 object keys. */
 	list(ownerSubject: string): Promise<readonly ExportOperationResult[] | null>;
 	/** Stream a completed archive only for its exact completed owner record. */
 	download(
@@ -211,6 +211,9 @@ export function createOwnerHandler(
 			const results = await gateway.list(owner.subject);
 			if (!results) return noStoreText("Forbidden", 403);
 			const snapshots = completedSnapshots(results);
+			const failedExports = results.filter(
+				(result) => result.status === "failed",
+			);
 			const browserId =
 				readCookie(context.req.raw, OWNER_BROWSER_COOKIE) ??
 				crypto.randomUUID();
@@ -228,8 +231,14 @@ export function createOwnerHandler(
 						`<li>${escapeHtml(snapshot.created_at)} — ${snapshot.size} bytes — <a href="${escapeHtml(snapshot.download_url)}">Download ZIP</a></li>`,
 				)
 				.join("");
+			const failures = failedExports
+				.map(
+					(result) =>
+						`<li>${escapeHtml(result.created_at)} — ${escapeHtml(result.failure?.kind ?? "unknown")}</li>`,
+				)
+				.join("");
 			return new Response(
-				`<!doctype html><html><head><meta charset="utf-8"><title>Packed exports</title></head><body><main><h1>Packed baseline exports</h1><form method="post" action="/owner/exports"><input type="hidden" name="csrf" value="${state}"><button>Create current baseline export</button></form><h2>Completed snapshots</h2><ul>${rows || "<li>No completed exports.</li>"}</ul><p>Only completed snapshots can be downloaded.</p></main></body></html>`,
+				`<!doctype html><html><head><meta charset="utf-8"><title>Packed exports</title></head><body><main><h1>Packed baseline exports</h1><form method="post" action="/owner/exports"><input type="hidden" name="csrf" value="${state}"><button>Create current baseline export</button></form><h2>Completed snapshots</h2><ul>${rows || "<li>No completed exports.</li>"}</ul><h2>Failed exports</h2><ul>${failures || "<li>No failed exports.</li>"}</ul><p>Only completed snapshots can be downloaded.</p></main></body></html>`,
 				{
 					headers: {
 						"content-type": "text/html; charset=utf-8",

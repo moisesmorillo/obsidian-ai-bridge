@@ -4,6 +4,7 @@ import type { Vault } from "@worker/infrastructure/durable-object/vault";
 interface WorkerBindings {
 	VAULTS: DurableObjectNamespace<Vault>;
 	R2_BUCKET: R2Bucket;
+	BACKUP_BUCKET: R2Bucket;
 	OAUTH_KV?: KVNamespace;
 	SERVICE_ORIGIN?: string;
 	ACCESS_TEAM_DOMAIN?: string;

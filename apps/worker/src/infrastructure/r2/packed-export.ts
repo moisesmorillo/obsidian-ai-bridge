@@ -7,9 +7,9 @@ import {
 	PackedExportStorageFailure,
 } from "@worker/application/export";
 
-/** R2 adapter for durable ZIP multipart output in the existing bucket. */
+/** R2 adapter for durable ZIP multipart output in the dedicated backup bucket. */
 export class R2PackedArchiveStore implements PackedArchiveStore {
-	/** Bind the existing vault bucket without creating a new Cloudflare resource. */
+	/** Bind the dedicated archive bucket without creating a new Cloudflare resource. */
 	constructor(private readonly bucket: R2Bucket) {}
 
 	/** Start one multipart upload and return its opaque resume id. */

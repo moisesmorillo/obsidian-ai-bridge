@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@pi'
 created_date: '2026-11-07T00:13:00Z'
-updated_date: '2026-11-07T01:27:00Z'
+updated_date: '2026-11-07T01:55:00Z'
 labels: []
 dependencies: []
 parent_task_id: OAB-12
@@ -49,6 +49,12 @@ Final branch review reopened R4. Wrangler 4.45.0 parses the global --env-file op
 Final validation details: bun test/deploy-preflight.bun.ts returned exit 0. bun run docs:check returned exit 0. From apps/worker, env -i PATH="<inherited PATH>" bun run preflight returned exit 0. bun run check returned exit 0 with 2,091 passing Vitest tests, one skipped test, passing Bun assertions, and passing dry-run builds. git diff --check returned exit 0. The fake launch tests prove both command argument lists use --env-file /dev/null and both receive the allowlisted environment. A runtime fixture with fake .env values remains untested because the safety guard blocked fixture creation. No alternate fixture was created.
 
 Final review closure: whole-branch reviewer dc7e6892 reviewed 4b6bc04..78764f3 and reopened R4. Commit c49abd5 fixes the global dotenv path. Scoped reviewer e3f6c578 approved R4 and found no fix-range regression. All prior findings remain fixed. Documentation review covered all new tooling declarations, test helpers, workflow messages, and this task. Structural review found one cohesive startup flow with separate failure-class ownership. Active diagnostics showed tooling-pattern notices only, with no TypeScript server error. Owner approved plan pn-e0aea4 and complete branch review pn-aee822 without changes. No product code, production config, dependency, vault, live service, deployment, or Cloudflare resource changed. Local startup does not prove production permissions or deploy success. The hostile-dotenv runtime fixture remains a stated coverage limit. An exploratory worker probe printed ambient environment data. Reports and task notes contain no values, and the parent stopped that method.
+
+Owner CI2 brief continues PR #86 after Ubuntu CI failure. Keep the approved scope and branch. Trace local runtime reloads, add a regression, and test isolated runtime paths. No vault, live service, deployment, or Cloudflare resource action.
+
+CI2 root-cause investigation: pinned Wrangler 4.45.0 with --no-bundle watches entry.moduleRoot recursively; resolveEntry sets moduleRoot to the main bundle directory when config base_dir is unset. The healthy Bun fixture put its bundle directly in the runtime root, so the watcher also observed sibling local-config, state, home, config, and cache writes. CI output showed repeated reloads until timeout. Regression RED: the fixture-layout assertion failed because dirname(healthy.js) equaled runtimeRoot. Fix: place healthy and global-call fixture bundles under runtimeRoot/worker-input, outside all writable runtime paths. GREEN: focused bun test/deploy-preflight.bun.ts passed. bun run check passed on macOS with lint, docs, typecheck, all tests, and builds. This local host does not verify the Linux watcher behavior; parent owns CI rerun. No workflow security, production code/config, credentials, vault, live service, deployment, or Cloudflare resources changed.
+
+CI2 closure: Ubuntu CI run 42326403686 passed for ac47c82, including production preflight and bun run check. The isolated fixture input directory fixes the Linux reload loop. Scoped reviewer 62f29e68 approved 97a1e0c..ac47c82. Final branch reviewer f5b008cd approved 4b6bc04..ac47c82 and confirmed all six earlier findings remain fixed. Documentation and structural review found no issue. Active LSP probe found no errors in the changed test. The correction only changes fixture layout and adds its regression assertion, so the prior owner branch approval pn-aee822 still applies. No production code, workflow, failure label, dependency, vault, live service, deployment, or Cloudflare resource changed. Production permission and deployment proof remain outside this task.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary

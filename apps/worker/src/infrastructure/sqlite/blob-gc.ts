@@ -4,6 +4,7 @@ import type {
 	BlobGcRepository,
 } from "@worker/application/blob-gc";
 import type { VaultTransaction } from "@worker/infrastructure/sqlite/admission";
+import { isBlobGcRunId } from "@worker/infrastructure/sqlite/blob-gc-id";
 import {
 	blobGc,
 	files,
@@ -50,18 +51,20 @@ export class SqliteBlobGcStore implements BlobGcRepository {
 		return { count, bytes };
 	}
 
-	/** Start a confirmed inventory only when no earlier run remains active. */
+	/** Start a confirmed inventory with a new identity when no earlier run remains active. */
 	async start(): Promise<void> {
 		this.db.transaction((tx) => {
 			if (readMeta(tx, "blob_gc_phase") !== "idle") return;
 			writeMeta(tx, "blob_gc_phase", "marking");
 			writeMeta(tx, "blob_gc_cursor", "");
+			writeMeta(tx, "blob_gc_run_id", crypto.randomUUID());
 			writeMeta(tx, "blob_gc_failure", "");
 		});
 	}
 
-	/** Read the durable phase and opaque R2 continuation cursor. */
+	/** Read the durable run identity, phase, and opaque R2 continuation cursor. */
 	async runState(): Promise<{
+		runId: string | null;
 		phase: BlobGcStatus["phase"];
 		cursor: string | null;
 	}> {
@@ -69,81 +72,51 @@ export class SqliteBlobGcStore implements BlobGcRepository {
 			const phase = readMeta(tx, "blob_gc_phase");
 			if (phase !== "idle" && phase !== "marking" && phase !== "deleting")
 				throw new Error("Invalid blob-GC phase");
+			const runId = readMeta(tx, "blob_gc_run_id");
+			if (
+				(phase === "idle" && runId !== "") ||
+				(phase !== "idle" && !isBlobGcRunId(runId))
+			)
+				throw new Error("Invalid blob-GC run identity");
 			const cursor = readMeta(tx, "blob_gc_cursor");
 			return {
+				runId: phase === "idle" ? null : runId,
 				phase,
 				cursor: phase === "marking" && cursor !== "" ? cursor : null,
 			};
 		});
 	}
 
-	/** Advance the inventory cursor or move to durable-mark deletion. */
-	async advance(cursor: string | null): Promise<void> {
-		this.db.transaction((tx) => {
-			if (readMeta(tx, "blob_gc_phase") !== "marking") return;
-			writeMeta(tx, "blob_gc_cursor", cursor ?? "");
-			if (cursor === null) writeMeta(tx, "blob_gc_phase", "deleting");
-		});
-	}
-
-	/** Mark a persisted active claim unknown when a new Durable Object instance starts. */
-	markInterruptedDeleteUnknown(): void {
+	/** Persist failure only while the failed inventory page still owns the current state. */
+	async recordInventoryFailure(
+		runId: string,
+		cursor: string | null,
+	): Promise<void> {
 		this.db.transaction((tx) => {
 			if (
-				readMeta(tx, "blob_gc_delete_owner") !== "" &&
-				readMeta(tx, "blob_gc_delete_state") === "active"
+				readMeta(tx, "blob_gc_phase") !== "marking" ||
+				readMeta(tx, "blob_gc_run_id") !== runId ||
+				readMeta(tx, "blob_gc_cursor") !== (cursor ?? "")
 			)
-				writeMeta(tx, "blob_gc_delete_state", "unknown");
-		});
-	}
-
-	/** Hold one durable delete claim without a timeout across the full R2 request. */
-	async claimDeleteBatch(
-		owner: string,
-	): Promise<readonly BlobGcObject[] | null> {
-		if (
-			!/^([0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/.test(
-				owner,
-			)
-		)
-			throw new Error("Invalid blob-GC delete owner");
-		return this.db.transaction((tx) => {
-			if (
-				readMeta(tx, "blob_gc_phase") !== "deleting" ||
-				readMeta(tx, "blob_gc_delete_owner") !== ""
-			)
-				return null;
-			writeMeta(tx, "blob_gc_delete_owner", owner);
-			writeMeta(tx, "blob_gc_delete_state", "active");
-			return tx
-				.select({ hash: blobGc.hash, size: blobGc.size })
-				.from(blobGc)
-				.orderBy(blobGc.hash)
-				.limit(SQLITE_BLOB_GC_BATCH_SIZE)
-				.all();
-		});
-	}
-
-	/** Keep a typed failure and release only the caller's settled delete claim. */
-	async recordFailure(owner?: string): Promise<void> {
-		this.db.transaction((tx) => {
-			if (owner !== undefined) {
-				if (readMeta(tx, "blob_gc_delete_owner") !== owner) return;
-				writeMeta(tx, "blob_gc_delete_owner", "");
-				writeMeta(tx, "blob_gc_delete_state", "");
-			}
+				return;
 			writeMeta(tx, "blob_gc_failure", "blob_gc_unavailable");
 		});
 	}
 
-	/** Clear a prior retry failure after a later batch succeeds. */
-	async clearFailure(): Promise<void> {
-		this.db.transaction((tx) => writeMeta(tx, "blob_gc_failure", ""));
-	}
-
-	/** Recheck reachability and persist marks atomically before object deletion. */
-	async mark(objects: readonly BlobGcObject[]): Promise<void> {
-		this.db.transaction((tx) => {
+	/** Apply references and advance only when the observed run, phase, and cursor still match. */
+	async markAndAdvance(
+		runId: string,
+		cursor: string | null,
+		objects: readonly BlobGcObject[],
+		nextCursor: string | null,
+	): Promise<boolean> {
+		return this.db.transaction((tx) => {
+			if (
+				readMeta(tx, "blob_gc_phase") !== "marking" ||
+				readMeta(tx, "blob_gc_run_id") !== runId ||
+				readMeta(tx, "blob_gc_cursor") !== (cursor ?? "")
+			)
+				return false;
 			const markedAt = Date.now();
 			let inserted = 0;
 			for (
@@ -176,6 +149,55 @@ export class SqliteBlobGcStore implements BlobGcRepository {
 				}
 			}
 			if (inserted > 0) incrementGeneration(tx);
+			writeMeta(tx, "blob_gc_cursor", nextCursor ?? "");
+			if (nextCursor === null) writeMeta(tx, "blob_gc_phase", "deleting");
+			writeMeta(tx, "blob_gc_failure", "");
+			return true;
+		});
+	}
+
+	/** Mark a persisted active claim unknown when a new Durable Object instance starts. */
+	markInterruptedDeleteUnknown(): void {
+		this.db.transaction((tx) => {
+			if (
+				readMeta(tx, "blob_gc_delete_owner") !== "" &&
+				readMeta(tx, "blob_gc_delete_state") === "active"
+			)
+				writeMeta(tx, "blob_gc_delete_state", "unknown");
+		});
+	}
+
+	/** Hold one durable delete claim without a timeout across the full R2 request. */
+	async claimDeleteBatch(
+		owner: string,
+	): Promise<readonly BlobGcObject[] | null> {
+		if (!isBlobGcRunId(owner)) throw new Error("Invalid blob-GC delete owner");
+		return this.db.transaction((tx) => {
+			if (
+				readMeta(tx, "blob_gc_phase") !== "deleting" ||
+				readMeta(tx, "blob_gc_delete_owner") !== ""
+			)
+				return null;
+			writeMeta(tx, "blob_gc_delete_owner", owner);
+			writeMeta(tx, "blob_gc_delete_state", "active");
+			return tx
+				.select({ hash: blobGc.hash, size: blobGc.size })
+				.from(blobGc)
+				.orderBy(blobGc.hash)
+				.limit(SQLITE_BLOB_GC_BATCH_SIZE)
+				.all();
+		});
+	}
+
+	/** Keep a typed failure and release only the caller's settled delete claim. */
+	async recordFailure(owner?: string): Promise<void> {
+		this.db.transaction((tx) => {
+			if (owner !== undefined) {
+				if (readMeta(tx, "blob_gc_delete_owner") !== owner) return;
+				writeMeta(tx, "blob_gc_delete_owner", "");
+				writeMeta(tx, "blob_gc_delete_state", "");
+			}
+			writeMeta(tx, "blob_gc_failure", "blob_gc_unavailable");
 		});
 	}
 
@@ -204,6 +226,7 @@ export class SqliteBlobGcStore implements BlobGcRepository {
 			if (removed) incrementGeneration(tx);
 			writeMeta(tx, "blob_gc_delete_owner", "");
 			writeMeta(tx, "blob_gc_delete_state", "");
+			writeMeta(tx, "blob_gc_failure", "");
 		});
 	}
 
@@ -218,6 +241,7 @@ export class SqliteBlobGcStore implements BlobGcRepository {
 				throw new Error("Blob-GC run cannot finish before delete settlement");
 			writeMeta(tx, "blob_gc_phase", "idle");
 			writeMeta(tx, "blob_gc_cursor", "");
+			writeMeta(tx, "blob_gc_run_id", "");
 			writeMeta(tx, "blob_gc_failure", "");
 			writeMeta(tx, "blob_gc_delete_owner", "");
 			writeMeta(tx, "blob_gc_delete_state", "");
@@ -272,19 +296,19 @@ export class SqliteBlobGcStore implements BlobGcRepository {
 		if (hashes.length === 0) return new Set();
 		const values = new Set<string>();
 		for (const row of tx
-			.select({ hash: files.blobHash })
+			.selectDistinct({ hash: files.blobHash })
 			.from(files)
 			.where(and(eq(files.deleted, 0), inArray(files.blobHash, hashes)))
 			.all())
 			if (row.hash) values.add(row.hash);
 		for (const row of tx
-			.select({ hash: revisions.blobHash })
+			.selectDistinct({ hash: revisions.blobHash })
 			.from(revisions)
 			.where(inArray(revisions.blobHash, hashes))
 			.all())
 			if (row.hash) values.add(row.hash);
 		for (const row of tx
-			.select({ hash: packedExportFiles.hash })
+			.selectDistinct({ hash: packedExportFiles.hash })
 			.from(packedExportFiles)
 			.innerJoin(
 				packedExports,

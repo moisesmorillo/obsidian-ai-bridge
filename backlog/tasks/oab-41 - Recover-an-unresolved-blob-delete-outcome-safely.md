@@ -4,6 +4,7 @@ title: Recover an unresolved blob delete outcome safely
 status: Deferred
 assignee: []
 created_date: '2026-11-07T07:14:00Z'
+updated_date: '2026-11-07T07:44:00Z'
 labels:
   - deferred
   - trigger-based
@@ -19,7 +20,7 @@ ordinal: 78000
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-A durable delete claim blocks publication after process loss during an unknown R2 delete outcome. Recovery must preserve the blob publication fence and must not rely on elapsed time or an owner retry alone.
+A durable delete claim blocks publication after process loss during an unknown R2 delete outcome. Recovery must preserve the blob publication fence and must not rely on elapsed time or an owner retry alone. Trigger: provider conditional-delete fencing or trustworthy settlement evidence becomes available.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria

@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: 2026-10-12 15:14
-updated_date: '2026-11-07T07:21:00Z'
+updated_date: '2026-11-07T07:44:00Z'
 labels:
   - deferred
   - trigger-based
@@ -64,4 +64,6 @@ Review fix round 1: Added a non-expiring durable blob_gc_delete_owner claim befo
 Alarm scheduling fix: A run with an unresolved durable delete claim does not schedule repeated GC continuation alarms. The owner page shows the held claim and the batch stays fenced. Normal completion schedules the next batch after the current request settles. The preview remains capped at 32 pages.
 
 Parent ruling: accept a fail-closed claim when the R2 delete outcome is unknown. The API reports delete_state unknown. Marks and publication remain fenced. Elapsed time or an owner retry cannot clear the claim. Known settled success or failure supports idempotent reruns. OAB-41, Recover an unresolved blob delete outcome safely, tracks recovery when conditional-delete fencing or trustworthy provider settlement evidence becomes available.
+
+Round 2 review fixes: Inventory pages now carry a durable run identity and expected cursor. SQLite checks run identity, marking phase, and cursor in the same transaction that marks references and advances progress. Stale inventory results and stale inventory failures cannot change completed or newer runs, including a newer run at the same initial cursor. Reachability queries select distinct hashes, so result rows cannot exceed candidate hashes. Added duplicate-heavy retained-revision and active-export tests with result-cardinality and binding assertions. Partial-delete evidence uses two keys, removes one before a simulated error, verifies all marks and failure remain, then retries both keys to completion.
 <!-- SECTION:NOTES:END -->

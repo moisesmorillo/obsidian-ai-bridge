@@ -134,6 +134,7 @@ describe("schema-6 owner registry upgrade", () => {
 					{ key: "blob_gc_delete_state", value: "" },
 					{ key: "blob_gc_failure", value: "" },
 					{ key: "blob_gc_generation", value: "0" },
+					{ key: "blob_gc_run_id", value: "" },
 					{ key: "blob_gc_phase", value: "idle" },
 				].sort((left, right) =>
 					String(left.key).localeCompare(String(right.key)),

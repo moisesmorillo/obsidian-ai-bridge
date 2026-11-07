@@ -1,4 +1,5 @@
 import { EpochSchema } from "@obsidian-ai-bridge/protocol";
+import { isBlobGcRunId } from "@worker/infrastructure/sqlite/blob-gc-id";
 import { RELATIONAL_SCHEMA_STATEMENTS } from "@worker/infrastructure/sqlite/schema.generated";
 import { meta, vaultSchema } from "@worker/infrastructure/sqlite/schema-model";
 import { sql } from "drizzle-orm";
@@ -7,7 +8,7 @@ import {
 	drizzle,
 } from "drizzle-orm/durable-sqlite";
 
-/** Persisted schema version; version 9 adds GC marks, delete claims, and typed outcome state. */
+/** Persisted schema version; version 9 adds GC marks, run IDs, delete claims, and typed outcome state. */
 export const SCHEMA_VERSION = 9;
 
 /** Narrow FTS5 DDL unsupported by the relational model and kept at its engine-specific seam. */
@@ -243,6 +244,7 @@ function createFreshVault(
 		.values([
 			{ key: "schema_version", value: String(SCHEMA_VERSION) },
 			{ key: "blob_gc_generation", value: "0" },
+			{ key: "blob_gc_run_id", value: "" },
 			{ key: "blob_gc_phase", value: "idle" },
 			{ key: "blob_gc_cursor", value: "" },
 			{ key: "blob_gc_delete_owner", value: "" },
@@ -326,6 +328,7 @@ function upgradeSchema8(tx: VaultTransaction): void {
 	tx.insert(meta)
 		.values([
 			{ key: "blob_gc_generation", value: "0" },
+			{ key: "blob_gc_run_id", value: "" },
 			{ key: "blob_gc_phase", value: "idle" },
 			{ key: "blob_gc_cursor", value: "" },
 			{ key: "blob_gc_delete_owner", value: "" },
@@ -459,20 +462,21 @@ function validateBlobGcMetadata(metadata: ReadonlyMap<string, string>): void {
 	const generation = metadata.get("blob_gc_generation");
 	const phase = metadata.get("blob_gc_phase");
 	const cursor = metadata.get("blob_gc_cursor");
+	const runId = metadata.get("blob_gc_run_id");
 	const deleteOwner = metadata.get("blob_gc_delete_owner");
 	const deleteState = metadata.get("blob_gc_delete_state");
 	const failure = metadata.get("blob_gc_failure");
 	if (
 		!isCanonicalSafeInteger(generation ?? "", true) ||
 		(phase !== "idle" && phase !== "marking" && phase !== "deleting") ||
+		(phase === "idle" ? runId !== "" : !isBlobGcRunId(runId ?? "")) ||
 		cursor === undefined ||
 		new TextEncoder().encode(cursor).byteLength > 16_000 ||
 		(deleteOwner === ""
 			? deleteState !== ""
 			: phase !== "deleting" ||
-				!/^([0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/.test(
-					deleteOwner ?? "",
-				) ||
+				deleteOwner === undefined ||
+				!isBlobGcRunId(deleteOwner) ||
 				(deleteState !== "active" && deleteState !== "unknown")) ||
 		(failure !== "" && failure !== "blob_gc_unavailable") ||
 		(phase !== "marking" && cursor !== "")

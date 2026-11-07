@@ -35,24 +35,28 @@ export interface BlobGcRepository {
 	preview(objects: readonly BlobGcObject[]): Promise<BlobGcPreview>;
 	/** Start a confirmed inventory only when no earlier run is active. */
 	start(): Promise<void>;
-	/** Return the durable phase and current R2 cursor. */
+	/** Return the durable run identity, phase, and current R2 cursor. */
 	runState(): Promise<{
+		runId: string | null;
 		phase: BlobGcStatus["phase"];
 		cursor: string | null;
 	}>;
-	/** Store the next cursor or move to deletion after the final page. */
-	advance(cursor: string | null): Promise<void>;
+	/** Apply one inventory page only while its run, phase, and cursor remain current. */
+	markAndAdvance(
+		runId: string,
+		cursor: string | null,
+		objects: readonly BlobGcObject[],
+		nextCursor: string | null,
+	): Promise<boolean>;
+	/** Record failure only if the inventory run and cursor still match. */
+	recordInventoryFailure(runId: string, cursor: string | null): Promise<void>;
 	/** Claim one durable delete batch without a timeout, or return null while another owner holds it. */
 	claimDeleteBatch(owner: string): Promise<readonly BlobGcObject[] | null>;
 	/** Record a failure and release only the caller's claim after its R2 request settles. */
 	recordFailure(owner?: string): Promise<void>;
-	/** Clear a prior retry failure after a later batch succeeds. */
-	clearFailure(): Promise<void>;
-	/** Mark one page's currently unreachable objects atomically. */
-	mark(objects: readonly BlobGcObject[]): Promise<void>;
-	/** Clear exact marks and release their delete claim in one transaction. */
+	/** Clear exact marks, clear settled failure state, and release the claim in one transaction. */
 	clear(objects: readonly BlobGcObject[], owner: string): Promise<void>;
-	/** Finish a run after the final durable mark is cleared by this owner. */
+	/** Finish after this owner clears the final mark and failure state atomically. */
 	finish(owner: string): Promise<void>;
 	/** Report current phase, delete claim, failure, and durable mark count and bytes. */
 	status(): Promise<BlobGcStatus>;
@@ -113,17 +117,16 @@ export class BlobGcService {
 			return BlobGcStatusSchema.parse(await this.repository.status());
 		try {
 			if (state.phase === "marking") {
+				if (state.runId === null) throw new BlobGcUnavailable();
 				const page = await this.objects.list(state.cursor);
-				const objects = validateObjects(page.objects);
-				for (
-					let offset = 0;
-					offset < objects.length;
-					offset += BLOB_GC_BATCH_SIZE
-				)
-					await this.repository.mark(
-						objects.slice(offset, offset + BLOB_GC_BATCH_SIZE),
-					);
-				await this.repository.advance(validateCursor(page.cursor));
+				const applied = await this.repository.markAndAdvance(
+					state.runId,
+					state.cursor,
+					validateObjects(page.objects),
+					validateCursor(page.cursor),
+				);
+				if (!applied)
+					return BlobGcStatusSchema.parse(await this.repository.status());
 			} else if (state.phase === "deleting") {
 				const owner = crypto.randomUUID();
 				const claimed = await this.repository.claimDeleteBatch(owner);
@@ -136,14 +139,14 @@ export class BlobGcService {
 						await this.objects.delete(marked.map(({ hash }) => hash));
 						await this.repository.clear(marked, owner);
 					}
-					await this.repository.clearFailure();
 				} catch {
 					await this.repository.recordFailure(owner);
 				}
 			}
-			if (state.phase !== "deleting") await this.repository.clearFailure();
 		} catch {
-			await this.repository.recordFailure();
+			if (state.phase === "marking" && state.runId !== null)
+				await this.repository.recordInventoryFailure(state.runId, state.cursor);
+			else await this.repository.recordFailure();
 		}
 		return BlobGcStatusSchema.parse(await this.repository.status());
 	}

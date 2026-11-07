@@ -361,8 +361,15 @@ describe("native blob publication", () => {
 					const repository = new SqliteBlobGcStore(fixture.storage);
 					const candidate = [{ hash: payload_hash, size: 4 }];
 					await repository.start();
-					await repository.mark(candidate);
-					await repository.advance(null);
+					const run = await repository.runState();
+					if (run.runId === null)
+						throw new Error("GC start did not assign a run identity");
+					await repository.markAndAdvance(
+						run.runId,
+						run.cursor,
+						candidate,
+						null,
+					);
 					const alarmService = new BlobGcService(repository, objectStore);
 					const alarmRun = alarmService.collectBatch();
 					pendingRuns.push(alarmRun);
@@ -434,8 +441,10 @@ describe("native blob publication", () => {
 				capability.head = async () => {
 					const candidate = [{ hash: payload_hash, size: 4 }];
 					await gc.start();
-					await gc.mark(candidate);
-					await gc.advance(null);
+					const run = await gc.runState();
+					if (run.runId === null)
+						throw new Error("GC start did not assign a run identity");
+					await gc.markAndAdvance(run.runId, run.cursor, candidate, null);
 					const owner = "44444444-4444-4444-8444-444444444444";
 					await gc.claimDeleteBatch(owner);
 					await gc.clear(candidate, owner);

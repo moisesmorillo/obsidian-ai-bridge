@@ -148,6 +148,9 @@ describe("Vault retention alarm lifecycle", () => {
 				"UPDATE meta SET value = 'deleting' WHERE key = 'blob_gc_phase'",
 			);
 			state.storage.sql.exec(
+				"UPDATE meta SET value = '11111111-1111-4111-8111-111111111111' WHERE key = 'blob_gc_run_id'",
+			);
+			state.storage.sql.exec(
 				"UPDATE meta SET value = ? WHERE key = 'blob_gc_delete_owner'",
 				owner,
 			);

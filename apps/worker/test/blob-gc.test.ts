@@ -4,32 +4,38 @@ import { describe, expect, it, vi } from "vitest";
 const hash = "a".repeat(64);
 
 describe("blob garbage collection", () => {
-	it("keeps durable marks when R2 deletion fails", async () => {
-		const marked = [{ hash, size: 13 }];
+	it("keeps all marks after partial R2 deletion and completes a safe retry", async () => {
+		const marked = [
+			{ hash, size: 13 },
+			{ hash: "b".repeat(64), size: 17 },
+		];
+		const remainingObjects = new Set(marked.map(({ hash }) => hash));
 		let failure: "blob_gc_unavailable" | null = null;
+		let attempts = 0;
 		const repository = {
 			preview: vi.fn(async () => ({ count: 0, bytes: 0 })),
 			start: vi.fn(),
 			runState: vi.fn(async () => ({
+				runId: "11111111-1111-4111-8111-111111111111",
 				phase: "deleting" as const,
 				cursor: null,
 			})),
-			advance: vi.fn(),
-			claimDeleteBatch: vi.fn(async () => marked),
+			markAndAdvance: vi.fn(async () => true),
+			recordInventoryFailure: vi.fn(),
+			claimDeleteBatch: vi.fn(async () => [...marked]),
 			recordFailure: vi.fn(async () => {
 				failure = "blob_gc_unavailable";
 			}),
-			clearFailure: vi.fn(async () => {
+			clear: vi.fn(async (objects: typeof marked) => {
+				const hashes = new Set(objects.map(({ hash }) => hash));
+				for (let index = marked.length - 1; index >= 0; index -= 1)
+					if (hashes.has(marked[index]?.hash ?? "")) marked.splice(index, 1);
 				failure = null;
-			}),
-			mark: vi.fn(),
-			clear: vi.fn(async () => {
-				marked.length = 0;
 			}),
 			status: vi.fn(async () => ({
 				phase: "deleting" as const,
 				marked_count: marked.length,
-				marked_bytes: 13,
+				marked_bytes: marked.reduce((sum, object) => sum + object.size, 0),
 				delete_state: "idle" as const,
 				failure,
 			})),
@@ -37,20 +43,38 @@ describe("blob garbage collection", () => {
 		};
 		const storage = {
 			list: vi.fn(async () => ({ objects: [], cursor: null })),
-			delete: vi.fn(async () => {
-				throw new Error("synthetic R2 failure");
+			delete: vi.fn(async (hashes: readonly string[]) => {
+				attempts += 1;
+				if (attempts === 1) {
+					remainingObjects.delete(hashes[0] ?? "");
+					throw new Error("synthetic partial R2 failure");
+				}
+				for (const objectHash of hashes) remainingObjects.delete(objectHash);
 			}),
 		};
 		const service = new BlobGcService(repository, storage);
 
 		expect(await service.collectBatch()).toMatchObject({
 			phase: "deleting",
-			marked_count: 1,
+			marked_count: 2,
+			marked_bytes: 30,
 			failure: "blob_gc_unavailable",
 		});
-		expect(marked).toHaveLength(1);
+		expect(remainingObjects).toEqual(new Set([marked[1]?.hash]));
+		expect(marked).toHaveLength(2);
 		expect(repository.clear).not.toHaveBeenCalled();
 		expect(repository.recordFailure).toHaveBeenCalledOnce();
+
+		expect(await service.collectBatch()).toMatchObject({
+			phase: "deleting",
+			marked_count: 0,
+			marked_bytes: 0,
+			delete_state: "idle",
+			failure: null,
+		});
+		expect(remainingObjects).toEqual(new Set());
+		expect(storage.delete).toHaveBeenCalledTimes(2);
+		expect(repository.clear).toHaveBeenCalledOnce();
 	});
 
 	it("excludes overlapping owner and alarm deletes through full settlement", async () => {
@@ -63,10 +87,12 @@ describe("blob garbage collection", () => {
 			preview: vi.fn(async () => ({ count: 0, bytes: 0 })),
 			start: vi.fn(),
 			runState: vi.fn(async () => ({
+				runId: "11111111-1111-4111-8111-111111111111",
 				phase: "deleting" as const,
 				cursor: null,
 			})),
-			advance: vi.fn(),
+			markAndAdvance: vi.fn(async () => true),
+			recordInventoryFailure: vi.fn(),
 			claimDeleteBatch: vi.fn(async (owner: string) => {
 				if (deleteOwner !== "") return null;
 				deleteOwner = owner;
@@ -75,8 +101,6 @@ describe("blob garbage collection", () => {
 			recordFailure: vi.fn(async (owner?: string) => {
 				if (owner === deleteOwner) deleteOwner = "";
 			}),
-			clearFailure: vi.fn(async () => undefined),
-			mark: vi.fn(),
 			clear: vi.fn(async (_objects, owner: string) => {
 				if (owner !== deleteOwner) throw new Error("delete claim changed");
 				marked.length = 0;
@@ -129,12 +153,15 @@ describe("blob garbage collection", () => {
 		const repository = {
 			preview: vi.fn(async () => ({ count: 0, bytes: 0 })),
 			start: vi.fn(),
-			runState: vi.fn(async () => ({ phase: "idle" as const, cursor: null })),
-			advance: vi.fn(),
+			runState: vi.fn(async () => ({
+				runId: null,
+				phase: "idle" as const,
+				cursor: null,
+			})),
+			markAndAdvance: vi.fn(async () => true),
+			recordInventoryFailure: vi.fn(),
 			claimDeleteBatch: vi.fn(async () => null),
 			recordFailure: vi.fn(),
-			clearFailure: vi.fn(),
-			mark: vi.fn(),
 			clear: vi.fn(),
 			finish: vi.fn(),
 			status: vi.fn(async () => ({
@@ -165,13 +192,16 @@ describe("blob garbage collection", () => {
 				}),
 			),
 			start: vi.fn(),
-			runState: vi.fn(async () => ({ phase: "idle" as const, cursor: null })),
-			advance: vi.fn(),
+			runState: vi.fn(async () => ({
+				runId: null,
+				phase: "idle" as const,
+				cursor: null,
+			})),
+			markAndAdvance: vi.fn(async () => true),
+			recordInventoryFailure: vi.fn(),
 			claimDeleteBatch: vi.fn(async () => null),
 			recordFailure: vi.fn(),
-			clearFailure: vi.fn(),
 			finish: vi.fn(),
-			mark: vi.fn(),
 			clear: vi.fn(),
 			status: vi.fn(async () => ({
 				phase: "idle" as const,
@@ -192,7 +222,7 @@ describe("blob garbage collection", () => {
 
 		expect(await service.preview()).toEqual({ count: 1, bytes: 13 });
 		expect(repository.preview).toHaveBeenCalledWith([{ hash, size: 13 }]);
-		expect(repository.mark).not.toHaveBeenCalled();
+		expect(repository.markAndAdvance).not.toHaveBeenCalled();
 		expect(repository.clear).not.toHaveBeenCalled();
 		expect(storage.delete).not.toHaveBeenCalled();
 	});

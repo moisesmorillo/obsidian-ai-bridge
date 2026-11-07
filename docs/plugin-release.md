@@ -8,7 +8,9 @@ The release workflow checks out the exact tag. It writes the compatibility entry
 
 The publish job installs the pinned Bun toolchain on its own runner. On a retry, it compares existing release assets byte for byte with the checked assets. It skips matching assets, uploads missing assets, and stops if any existing asset differs. This lets a partial publish retry reach compatibility recording without replacing a published file.
 
-After publication, the workflow fetches fresh `main` and writes the exact tag entry while preserving every other entry. The writer does not replace a conflicting entry for the same version. The workflow retries a rejected `main` push against fresh `main` up to three times. If branch policy still blocks the push, it opens a chore PR. An existing open chore PR for that version makes a rerun succeed without creating a duplicate. A chore commit does not release a new plugin version. The workflow does not read a newer main manifest to derive an older tag's compatibility entry.
+After publication, the workflow fetches fresh `main` and writes the exact tag entry while preserving every other entry. The writer does not replace a conflicting entry for the same version. The workflow retries a rejected `main` push against fresh `main` up to three times. If branch policy still blocks the push, it opens a chore PR. An existing open chore PR for that version makes a rerun succeed without creating a duplicate.
+
+If PR creation fails after the fallback branch push, a rerun validates and reuses that branch. It does not change the branch. If the branch contains unrelated changes or a different compatibility map, the workflow stops and reports the conflict. A chore commit does not release a new plugin version. The workflow does not read a newer main manifest to derive an older tag's compatibility entry.
 
 The owner can still push a matching tag by hand. That workflow checks the exact remote tag commit before it adds assets. Never move or reuse a published tag. The workflow token does not start another workflow from a Release Please tag or release. The same-run job performs the plugin build and asset upload instead.
 

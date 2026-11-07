@@ -4,7 +4,7 @@ title: Make the plugin compatibility map release-safe
 status: In Progress
 assignee: []
 created_date: '2026-11-07T21:33:00Z'
-updated_date: '2026-11-07T21:51:00Z'
+updated_date: '2026-11-07T22:03:00Z'
 labels:
   - ci
   - release
@@ -60,4 +60,9 @@ Local Git workflow test confirmed that the tag manifest updates fresh main, pres
 
 Round 1 fixes: the publish job now installs the pinned mise toolchain. Retry publication checks existing assets byte for byte, skips exact matches, uploads missing assets, and rejects mismatches. Fake-GH shell tests cover matches, mismatch, and partial upload. A local bare Git test blocks main pushes and confirms the chore branch and PR command.
 Focused GREEN: plugin release tests passed (28); tooling release test passed (8). `bun run docs:check` passed. `bun run check` passed all checks, 2,285 tests, one skipped test, and builds. No live calls.
+
+Final branch review F1 fix: when no open PR exists, the workflow validates a remote fallback branch before reuse. It requires the expected single chore commit, only the compatibility-map path, and the exact map derived from current main. Conflicting branches stop without changes.
+Test `reuses a matching fallback branch after PR failure and refuses unrelated changes` reproduced non-fast-forward on RED, then passed on GREEN. Fake GitHub and local bare Git confirm retry creates the missing PR with the same branch hash and rejects unrelated edits. No live calls.
+
+F1 validation also confirms full Git history is available before the workflow checks ancestry. Final focused runs passed: plugin release tests 28, tooling release test 8. `bun run docs:check` passed. `bun run check` passed with private TMPDIR: lint, docs, typecheck, 2,290 tests, one skipped test, and builds. No live calls.
 <!-- SECTION:NOTES:END -->

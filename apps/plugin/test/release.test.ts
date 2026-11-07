@@ -306,6 +306,7 @@ describe("release workflow publication shell", () => {
 		);
 		expect(publishJob).toContain("needs: build");
 		expect(publishJob).toContain("permissions:\n      contents: write");
+		expect(publishJob).toContain("fetch-depth: 0");
 		expect(publishJob).toContain(
 			"jdx/mise-action@08ae2a091c038e1e05ec6f5115dc5c69d5a2a6b8",
 		);
@@ -508,7 +509,7 @@ exit 2
 		}
 	});
 
-	it("opens a chore PR when main rejects compatibility pushes", () => {
+	it("reuses a matching fallback branch after PR failure and refuses unrelated changes", () => {
 		const root = mkdtempSync(join(tmpdir(), "plugin-compatibility-pr-"));
 		const remote = join(root, "origin.git");
 		const seed = join(root, "seed");
@@ -551,44 +552,97 @@ done
 		const ghLog = join(root, "gh.log");
 		mkdirSync(bin);
 		writeFileSync(ghLog, "");
+		const failureMarker = join(root, "first-pr-failure");
 		writeFileSync(
 			join(bin, "gh"),
-			'#!/bin/sh\nprintf \'%s\\n\' "$*" >> "$GH_LOG"\nif [ "$1 $2" = "pr list" ]; then exit 0; fi\nif [ "$1 $2" = "pr create" ]; then exit 0; fi\nexit 2\n',
+			`#!/bin/sh
+printf '%s\\n' "$*" >> "$GH_LOG"
+if [ "$1 $2" = "pr list" ]; then exit 0; fi
+if [ "$1 $2" = "pr create" ]; then
+  if [ ! -f "$GH_FAILURE_MARKER" ]; then touch "$GH_FAILURE_MARKER"; exit 1; fi
+  exit 0
+fi
+exit 2
+`,
 			{ mode: 0o755 },
 		);
 
+		const recordEnvironment = {
+			...process.env,
+			PATH: `${bin}:${process.env.PATH}`,
+			RELEASE_TAG: "ai-bridge-v0.1.0",
+			GH_TOKEN: "fake-token",
+			GH_LOG: ghLog,
+			GH_FAILURE_MARKER: failureMarker,
+		};
 		try {
-			const result = spawnSync(
+			const firstRun = spawnSync(
 				"bash",
 				["-euo", "pipefail", "-c", compatibilityRecordShell()],
-				{
-					cwd: checkout,
-					encoding: "utf8",
-					env: {
-						...process.env,
-						PATH: `${bin}:${process.env.PATH}`,
-						RELEASE_TAG: "ai-bridge-v0.1.0",
-						GH_TOKEN: "fake-token",
-						GH_LOG: ghLog,
-					},
-				},
+				{ cwd: checkout, encoding: "utf8", env: recordEnvironment },
 			);
-			expect(result.status, String(result.stderr)).toBe(0);
+			expect(firstRun.status).not.toBe(0);
+			const branchRef = "refs/heads/chore/plugin-compatibility-0.1.0";
+			const branchHashBeforeRetry = runGit(remote, "rev-parse", branchRef);
+			const retry = spawnSync(
+				"bash",
+				["-euo", "pipefail", "-c", compatibilityRecordShell()],
+				{ cwd: checkout, encoding: "utf8", env: recordEnvironment },
+			);
+			expect(retry.status, String(retry.stderr)).toBe(0);
+			expect(String(retry.stderr)).not.toMatch(/non-fast-forward|fetch first/);
+			expect(runGit(remote, "rev-parse", branchRef)).toBe(
+				branchHashBeforeRetry,
+			);
 			const branchMap = JSON.parse(
-				runGit(
-					remote,
-					"show",
-					"chore/plugin-compatibility-0.1.0:apps/plugin/versions.json",
-				),
+				runGit(remote, "show", `${branchRef}:apps/plugin/versions.json`),
 			);
 			expect(branchMap).toEqual({ "0.1.0": "1.13.0" });
 			const ghCalls = readFileSync(ghLog, "utf8");
 			expect(ghCalls).toContain(
 				"pr list --state open --head chore/plugin-compatibility-0.1.0",
 			);
-			expect(ghCalls).toContain(
-				"pr create --base main --head chore/plugin-compatibility-0.1.0",
+			expect(ghCalls.match(/pr create --base main/g)).toHaveLength(2);
+
+			const conflictCheckout = join(root, "conflict-checkout");
+			runGit(
+				root,
+				"clone",
+				"--branch",
+				"chore/plugin-compatibility-0.1.0",
+				remote,
+				conflictCheckout,
 			);
+			runGit(conflictCheckout, "config", "user.name", "Test Agent");
+			runGit(conflictCheckout, "config", "user.email", "test@example.com");
+			writeFileSync(join(conflictCheckout, "unrelated.txt"), "do not replace");
+			runGit(conflictCheckout, "add", "unrelated.txt");
+			runGit(conflictCheckout, "commit", "-m", "unrelated branch change");
+			runGit(
+				conflictCheckout,
+				"push",
+				"origin",
+				"HEAD:refs/heads/chore/plugin-compatibility-0.1.0",
+			);
+			const conflictingBranchHash = runGit(remote, "rev-parse", branchRef);
+			const createCallsBeforeConflict = readFileSync(ghLog, "utf8").match(
+				/\bpr create --base main\b/g,
+			);
+			const conflictRun = spawnSync(
+				"bash",
+				["-euo", "pipefail", "-c", compatibilityRecordShell()],
+				{ cwd: checkout, encoding: "utf8", env: recordEnvironment },
+			);
+			expect(conflictRun.status).not.toBe(0);
+			expect(String(conflictRun.stderr)).toContain(
+				"has changes that do not match this release entry",
+			);
+			expect(runGit(remote, "rev-parse", branchRef)).toBe(
+				conflictingBranchHash,
+			);
+			expect(
+				readFileSync(ghLog, "utf8").match(/\bpr create --base main\b/g),
+			).toHaveLength(createCallsBeforeConflict?.length ?? 0);
 		} finally {
 			rmSync(root, { recursive: true, force: true });
 		}

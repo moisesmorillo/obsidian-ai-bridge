@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-11-07T13:12:00Z'
-updated_date: '2026-11-07T13:34:00Z'
+updated_date: '2026-11-07T13:40:00Z'
 labels:
   - F6
   - backup
@@ -81,4 +81,10 @@ TDD exception: the exact SQLite concurrent-admission integration test was added 
 Dependencies: bun install --frozen-lockfile installed locked dependencies. No live service or Cloudflare resource access.
 
 Final validation: bun run docs:check passed. bun run check passed with exit 0. Tooling: 8 files and 91 tests passed. Protocol: 19 files and 314 tests passed. Worker: 71 files and 1,017 tests passed. Plugin: 29 files and 836 tests passed, with 1 skipped. All workspace typechecks and builds passed. Worker dry-run build showed both R2 bindings. bun run --filter @obsidian-ai-bridge/worker preflight passed with exit 0 and local runtime simulation. No live service or Cloudflare resources were used. Review found no blockers. Production application still depends on cloudflare-infra PR #20 to create oab-backups before Worker release.
+
+Review finding closure for reviewer revision 247fb0b: corrected the three stale statements. The architecture diagram now shows the hourly scheduled trigger and owner-started export. docs/api/f2.md names the dedicated BACKUP_BUCKET for scheduled and owner exports. PackedExportService constructor TSDoc names the dedicated backup-bucket adapter for owner and scheduled exports. No protocol or runtime behavior changed.
+
+Validation after correction: bun run docs:check passed with exit 0. bun run check passed with exit 0. Tooling 91 tests, protocol 314 tests, Worker 1,017 tests, and plugin 836 tests passed. One plugin test was skipped. Workspace typechecks and builds passed.
+
+Supervisor report: owner applied cloudflare-infra PR #20 and oab-backups exists. This is reported evidence only. I did not check or change Cloudflare resources.
 <!-- SECTION:NOTES:END -->

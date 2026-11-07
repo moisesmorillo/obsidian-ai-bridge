@@ -65,7 +65,7 @@ Mac / iPad / iPhone                     ChatGPT / claude.ai / Claude Code
      ├─ /mcp             MCP server (same operations, same authorization)
      ├─ /authorize /token /register   OAuth 2.1 (workers-oauth-provider, grants in KV)
      ├─ /owner/*         owner console (behind Cloudflare Access)
-     └─ (no cron: owner starts a packed baseline in the console; Vault alarms resume it, §11)
+     └─ (hourly scheduled trigger starts a packed baseline; the owner console can also start one; Vault alarms resume work, §11)
                               ▼
             Durable Object "Vault" (SQLite) — sole authority
             files, revisions, changes, FTS, receipts, clients, revocations

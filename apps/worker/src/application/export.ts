@@ -208,7 +208,7 @@ export class PackedExportSourceFailure extends Error {
 export class PackedExportService {
 	private activeStep: Promise<void> | null = null;
 
-	/** Bind one durable snapshot authority and the existing-bucket archive adapter. */
+	/** Bind the snapshot authority and dedicated backup-bucket adapter for owner and scheduled exports. */
 	constructor(
 		private readonly repository: PackedExportRepository,
 		private readonly archive: PackedArchiveStore,

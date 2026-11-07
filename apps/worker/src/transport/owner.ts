@@ -31,8 +31,11 @@ import { readSlotCapacitySnapshot } from "@worker/application/read-budget";
 import type { Env } from "@worker/env";
 import { verifyOwnerAccess } from "@worker/infrastructure/auth/access";
 import { createProviderGrantCleanup } from "@worker/infrastructure/auth/oauth";
+import { renderBlobGcPage } from "@worker/transport/owner-pages/blob-gc";
 import { renderClientsPage } from "@worker/transport/owner-pages/clients";
+import { renderExportsPage } from "@worker/transport/owner-pages/exports";
 import { renderGrantsPage } from "@worker/transport/owner-pages/grants";
+import { renderMeasurementsPage } from "@worker/transport/owner-pages/measurements";
 import { Hono } from "hono";
 
 /** Browser cookie that binds one-use owner form state to this browser. */
@@ -215,28 +218,37 @@ export function createOwnerHandler(
 				state,
 				expires_at: Date.now() + OWNER_STATE_TTL_MS,
 			});
-			const rows = snapshots
-				.map(
-					(snapshot) =>
-						`<li>${escapeHtml(snapshot.created_at)} — ${snapshot.size} bytes — <a href="${escapeHtml(snapshot.download_url)}">Download ZIP</a></li>`,
-				)
-				.join("");
-			const failures = failedExports
-				.map(
-					(result) =>
-						`<li>${escapeHtml(result.created_at)} — ${escapeHtml(result.failure?.kind ?? "unknown")}</li>`,
-				)
-				.join("");
-			return new Response(
-				`<!doctype html><html><head><meta charset="utf-8"><title>Packed exports</title></head><body><main><h1>Packed baseline exports</h1><form method="post" action="/owner/exports"><input type="hidden" name="csrf" value="${state}"><button>Create current baseline export</button></form><h2>Completed snapshots</h2><ul>${rows || "<li>No completed exports.</li>"}</ul><h2>Failed exports</h2><ul>${failures || "<li>No failed exports.</li>"}</ul><p>Only completed snapshots can be downloaded.</p></main></body></html>`,
-				{
-					headers: {
-						"content-type": "text/html; charset=utf-8",
-						"cache-control": "no-store",
-						"set-cookie": `${OWNER_BROWSER_COOKIE}=${browserId}; Secure; HttpOnly; SameSite=Strict; Path=/; Max-Age=600`,
-					},
+			const nextRun = new Date(Date.now());
+			nextRun.setUTCHours(nextRun.getUTCHours() + 1, 0, 0, 0);
+			const html = renderExportsPage({
+				csrf: state,
+				nextRun: nextRun.toISOString(),
+				lastSnapshot:
+					snapshots[0] === undefined
+						? null
+						: escapeHtml(snapshots[0].created_at),
+				retainedCount: snapshots.length === 0 ? null : snapshots.length,
+				totalBytes:
+					snapshots.length === 0
+						? null
+						: snapshots.reduce((total, snapshot) => total + snapshot.size, 0),
+				snapshots: snapshots.map((snapshot) => ({
+					createdAt: escapeHtml(snapshot.created_at),
+					size: snapshot.size,
+					downloadUrl: escapeHtml(snapshot.download_url),
+				})),
+				failedExports: failedExports.map((result) => ({
+					createdAt: escapeHtml(result.created_at),
+					failure: escapeHtml(result.failure?.kind ?? "unknown"),
+				})),
+			});
+			return new Response(html, {
+				headers: {
+					"content-type": "text/html; charset=utf-8",
+					"cache-control": "no-store",
+					"set-cookie": `${OWNER_BROWSER_COOKIE}=${browserId}; Secure; HttpOnly; SameSite=Strict; Path=/; Max-Age=600`,
 				},
-			);
+			});
 		} catch {
 			return noStoreText("Unavailable", 503);
 		}
@@ -344,18 +356,13 @@ export function createOwnerHandler(
 				state,
 				expires_at: Date.now() + OWNER_STATE_TTL_MS,
 			});
-			const deleteMessage =
-				status.delete_state === "unknown"
-					? "Delete outcome is unknown. Marks and publication remain blocked. An owner retry cannot clear this claim."
-					: status.delete_state === "active"
-						? "A delete request is active. Its claim stays until R2 reports settlement."
-						: "";
-			const failure =
-				status.failure === null
-					? "No collection failure."
-					: "Collection failed. Marks remain for a retry.";
 			return new Response(
-				`<!doctype html><html><head><meta charset="utf-8"><title>Blob garbage collection</title></head><body><main><h1>Blob garbage collection</h1><p>Dry run: ${preview.count} unreferenced blobs, ${preview.bytes} reclaimable bytes.</p><p>Run phase: ${status.phase}. Marked blobs: ${status.marked_count}. Marked bytes: ${status.marked_bytes}. ${deleteMessage} ${failure}</p><form method="post" action="/owner/blob-gc"><input type="hidden" name="csrf" value="${state}"><button>Confirm or continue blob collection</button></form><p>Each request and alarm handles one bounded batch. Backups are excluded.</p></main></body></html>`,
+				renderBlobGcPage({
+					csrf: state,
+					bucketName: "oab-blobs",
+					preview,
+					status,
+				}),
 				{
 					headers: {
 						"content-type": "text/html; charset=utf-8",
@@ -440,12 +447,30 @@ export function createOwnerHandler(
 				worker_isolate: readSlotCapacitySnapshot(),
 			});
 			if (context.req.query("format") === "html")
-				return new Response(renderMeasurements(parsed), {
-					headers: {
-						"content-type": "text/html; charset=utf-8",
-						"cache-control": "no-store",
+				return new Response(
+					renderMeasurementsPage({
+						...parsed,
+						requests: {
+							...parsed.requests,
+							clients: parsed.requests.clients.map((client) => ({
+								...client,
+								client_id: escapeHtml(client.client_id),
+							})),
+						},
+						worker_isolate: parsed.worker_isolate
+							? {
+									...parsed.worker_isolate,
+									isolate_id: escapeHtml(parsed.worker_isolate.isolate_id),
+								}
+							: undefined,
+					}),
+					{
+						headers: {
+							"content-type": "text/html; charset=utf-8",
+							"cache-control": "no-store",
+						},
 					},
-				});
+				);
 			return new Response(JSON.stringify(parsed), {
 				headers: {
 					"content-type": "application/json; charset=utf-8",
@@ -598,32 +623,6 @@ export function createOwnerHandler(
 		);
 	});
 	return app;
-}
-
-/** Render units, windows, lower-bound coverage, and unknown or stale labels for owners. */
-function renderMeasurements(response: MeasurementResponse): string {
-	/** Show a numeric storage value or a safe explicit unknown reason. */
-	const display = (value: {
-		status: string;
-		value?: number;
-		reason?: string;
-	}) =>
-		value.status === "observed"
-			? String(value.value)
-			: `Unknown (${value.reason ?? "not observed"})`;
-	const clientRows = response.requests.clients
-		.map(
-			(client) =>
-				`<li>${escapeHtml(client.client_id)}: REST ${client.requests_rest}, MCP ${client.requests_mcp}, total ${client.requests_rest + client.requests_mcp}. Last feed request ${client.last_feed_request_at === null ? "unknown" : new Date(client.last_feed_request_at).toISOString()}. Observed poll interval ${client.poll_cadence_incomplete ? "unknown (out-of-order requests)" : `${client.minimum_poll_interval_ms ?? "unknown"}–${client.maximum_poll_interval_ms ?? "unknown"} ms`}.</li>`,
-		)
-		.join("");
-	const clientList =
-		clientRows || "<li>No observed clients. No zero counts are inferred.</li>";
-	const isolate = response.worker_isolate;
-	const isolateSummary = isolate
-		? `<p>Responding Worker isolate ${escapeHtml(isolate.isolate_id)}: ${isolate.active_slots} active read slots, ${isolate.available_slots} available, limit ${isolate.limit}. Hold deadline: ${isolate.deadline_ms} ms. Incomplete read responses that reached the lease deadline since isolate start: ${isolate.expired_count}. This isolate-local observation resets on restart and does not describe other isolates or prove physical source work stopped.</p>`
-		: "<p>Responding Worker isolate capacity: unknown.</p>";
-	return `<!doctype html><html><head><meta charset="utf-8"><title>Service measurements</title></head><body><main><h1>Service measurements</h1>${isolateSummary}<p>Requests are observed lower bounds, not billing totals. Client coverage: ${response.coverage}.</p><p>UTC window: ${response.day_start === null ? "Unknown" : `${new Date(response.day_start).toISOString()} to ${new Date(response.day_end ?? response.day_start).toISOString()}`}. Observed from ${response.observed_from === null ? "unknown" : new Date(response.observed_from).toISOString()} through ${response.observed_through === null ? "unknown" : new Date(response.observed_through).toISOString()}.</p><p>REST requests: ${response.requests.rest_count ?? "Unknown"}. MCP requests: ${response.requests.mcp_count ?? "Unknown"}. Request data: ${response.requests.status}, ${response.requests.stale ? "stale" : "fresh"}. Request observation window: ${response.requests.observed_from === null ? "unknown" : new Date(response.requests.observed_from).toISOString()} to ${response.requests.observed_through === null ? "unknown" : new Date(response.requests.observed_through).toISOString()}.</p><p>Feed response preparation p95: ${response.feed_latency.p95 ?? "Unknown"} milliseconds. Boundary: authenticated router entry to successful /v1/changes response headers. This excludes lazy body production, network transfer, plugin apply, and publication delay. Retained samples: ${response.feed_latency.sample_count} of ${response.feed_latency.total_sample_count}. Retained sample window: ${response.feed_latency.first_sample_at === undefined || response.feed_latency.first_sample_at === null ? "unknown" : new Date(response.feed_latency.first_sample_at).toISOString()} to ${response.feed_latency.last_sample_at === undefined || response.feed_latency.last_sample_at === null ? "unknown" : new Date(response.feed_latency.last_sample_at).toISOString()}. ${response.feed_latency.total_sample_count > response.feed_latency.sample_count ? "Earlier samples were removed by the daily cap." : "No samples were removed by the daily cap."} Latency: ${response.feed_latency.status}, ${response.feed_latency.stale ? "stale" : "fresh"}.</p><p>DO SQLite allocated bytes: ${display(response.storage.database_bytes)}. Referenced R2 blob bytes: ${display(response.storage.referenced_blob_bytes)}. Referenced R2 bytes count distinct blobs, not total bucket allocation.</p><h2>Observed clients</h2><ul>${clientList}</ul><p><a href="/owner/measurements">Measurement JSON</a></p><p><a href="/owner/clients">Connected clients</a></p></main></body></html>`;
 }
 
 /** Return a text response that cannot be stored by a browser or intermediary. */

@@ -1,5 +1,8 @@
+import { renderBlobGcPage } from "@worker/transport/owner-pages/blob-gc";
 import { renderClientsPage } from "@worker/transport/owner-pages/clients";
+import { renderExportsPage } from "@worker/transport/owner-pages/exports";
 import { renderGrantsPage } from "@worker/transport/owner-pages/grants";
+import { renderMeasurementsPage } from "@worker/transport/owner-pages/measurements";
 import { renderOwnerShell } from "@worker/transport/owner-pages/shell";
 import { OWNER_CONSOLE_CSS } from "@worker/transport/owner-pages/tokens.css";
 import { describe, expect, it } from "vitest";
@@ -177,5 +180,129 @@ describe("owner page rendering", () => {
 				grants: [],
 			}),
 		).toContain("No grants.");
+	});
+
+	it("renders measurements with explicit unknowns and preserved measurement facts", () => {
+		const html = renderMeasurementsPage({
+			status: "observed",
+			coverage: "partial",
+			day_start: Date.UTC(2026, 10, 7),
+			day_end: Date.UTC(2026, 10, 8),
+			observed_from: Date.UTC(2026, 10, 7, 1),
+			observed_through: Date.UTC(2026, 10, 7, 2),
+			requests: {
+				status: "observed",
+				count: 12,
+				observed_from: Date.UTC(2026, 10, 7, 1),
+				observed_through: Date.UTC(2026, 10, 7, 2),
+				rest_count: 8,
+				mcp_count: 4,
+				stale: true,
+				clients: [
+					{
+						client_id: "client&lt;&amp;",
+						requests_rest: 8,
+						requests_mcp: 4,
+						last_feed_request_at: Date.UTC(2026, 10, 7, 1),
+						minimum_poll_interval_ms: null,
+						maximum_poll_interval_ms: null,
+						poll_cadence_incomplete: true,
+					},
+				],
+			},
+			feed_latency: {
+				status: "observed",
+				unit: "milliseconds",
+				sample_count: 2,
+				total_sample_count: 3,
+				p95: null,
+				first_sample_at: Date.UTC(2026, 10, 7, 1),
+				last_sample_at: Date.UTC(2026, 10, 7, 2),
+				stale: false,
+			},
+			storage: {
+				database_bytes: { status: "unknown", reason: "storage_error" },
+				referenced_blob_bytes: { status: "observed", value: 2048 },
+			},
+			worker_isolate: {
+				isolate_id: "isolate-1",
+				active_slots: 2,
+				available_slots: 2,
+				limit: 4,
+				expired_count: 1,
+				deadline_ms: 1000,
+			},
+		});
+		expect(html).toMatchSnapshot();
+		expect(html).toContain("Unknown (storage_error)");
+		expect(html).toContain("Fresh or stale");
+		expect(html).toContain("/owner/measurements");
+		expect(html).toContain("Earlier samples were removed by the daily cap.");
+	});
+
+	it("renders export forms, completed links, retained summary, and empty failures", () => {
+		const html = renderExportsPage({
+			csrf: "export-csrf",
+			nextRun: "2026-11-07T18:00:00.000Z",
+			lastSnapshot: "2026-11-07T17:00:00.000Z",
+			retainedCount: 1,
+			totalBytes: 1024,
+			snapshots: [
+				{
+					createdAt: "2026-11-07T17:00:00.000Z",
+					size: 1024,
+					downloadUrl:
+						"/owner/exports/epoch%2Fone/2026-11-07T17%3A00%3A00.000Z/download",
+				},
+			],
+			failedExports: [],
+		});
+		expect(html).toMatchSnapshot();
+		expect(html).toContain('<form method="post" action="/owner/exports">');
+		expect(html).toContain(
+			'<input type="hidden" name="csrf" value="export-csrf">',
+		);
+		expect(html).toContain(
+			'href="/owner/exports/epoch%2Fone/2026-11-07T17%3A00%3A00.000Z/download"',
+		);
+		expect(html).toContain("No failed exports.");
+		const failed = renderExportsPage({
+			csrf: "failed-csrf",
+			nextRun: "2026-11-07T18:00:00.000Z",
+			lastSnapshot: null,
+			retainedCount: null,
+			totalBytes: null,
+			snapshots: [],
+			failedExports: [
+				{
+					createdAt: "2026-11-07T16:00:00.000Z",
+					failure: "export_source_unavailable",
+				},
+			],
+		});
+		expect(failed).toContain("export_source_unavailable");
+		expect(failed).not.toContain("Retained completed snapshots");
+		expect(failed).toContain("No completed exports.");
+	});
+
+	it("renders blob cleanup safety, current phase, form, and unavailable inventory", () => {
+		const html = renderBlobGcPage({
+			csrf: "gc-csrf",
+			bucketName: "oab-blobs",
+			preview: null,
+			status: {
+				phase: "deleting",
+				marked_count: 2,
+				marked_bytes: 512,
+				delete_state: "unknown",
+				failure: "blob_gc_unavailable",
+			},
+		});
+		expect(html).toMatchSnapshot();
+		expect(html).toContain("unavailable");
+		expect(html).toContain("Backups are excluded");
+		expect(html).toContain("mark fence protects published blobs");
+		expect(html).toContain('<form method="post" action="/owner/blob-gc">');
+		expect(html).toContain('<input type="hidden" name="csrf" value="gc-csrf">');
 	});
 });

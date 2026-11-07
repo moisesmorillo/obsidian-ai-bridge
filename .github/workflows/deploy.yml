@@ -63,7 +63,12 @@ jobs:
             :
           else
             deploy_status=$?
-            echo "Wrangler deployment failed. Raw output was withheld." >&2
+            echo "Wrangler deployment failed. Safe failure labels follow." >&2
+            if bun tooling/wrangler-failure.ts "$output_file"; then
+              :
+            else
+              echo "unknown_wrangler_failure"
+            fi
             exit "$deploy_status"
           fi
 

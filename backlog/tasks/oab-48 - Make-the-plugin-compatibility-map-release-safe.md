@@ -4,7 +4,7 @@ title: Make the plugin compatibility map release-safe
 status: In Progress
 assignee: []
 created_date: '2026-11-07T21:33:00Z'
-updated_date: '2026-11-07T21:42:00Z'
+updated_date: '2026-11-07T21:51:00Z'
 labels:
   - ci
   - release
@@ -57,4 +57,7 @@ Missing tag map entry, exact tag mismatch, conflicting historical entry, newer m
 RED: focused plugin tests observed 1 failure (23 passed). Tooling tests observed 2 failures (6 passed).
 GREEN: focused plugin tests passed (25); tooling tests passed (8). `bun run docs:check` passed. `bun run check` passed lint, docs, typecheck, 2,282 tests, one skipped test, and builds.
 Local Git workflow test confirmed that the tag manifest updates fresh main, preserves newer main metadata, and supports an idempotent rerun. No live release, tag, deployment, vault, or service access.
+
+Round 1 fixes: the publish job now installs the pinned mise toolchain. Retry publication checks existing assets byte for byte, skips exact matches, uploads missing assets, and rejects mismatches. Fake-GH shell tests cover matches, mismatch, and partial upload. A local bare Git test blocks main pushes and confirms the chore branch and PR command.
+Focused GREEN: plugin release tests passed (28); tooling release test passed (8). `bun run docs:check` passed. `bun run check` passed all checks, 2,285 tests, one skipped test, and builds. No live calls.
 <!-- SECTION:NOTES:END -->

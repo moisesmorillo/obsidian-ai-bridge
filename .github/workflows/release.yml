@@ -63,6 +63,9 @@ jobs:
         with:
           ref: ${{ inputs.tag || github.ref_name }}
           persist-credentials: true
+      - uses: jdx/mise-action@08ae2a091c038e1e05ec6f5115dc5c69d5a2a6b8 # v5.1.2
+        with:
+          version: 2026.10.8
       - name: Verify tag source
         shell: bash
         env:
@@ -95,7 +98,21 @@ jobs:
           set -euo pipefail
           tag="${RELEASE_TAG:?Missing release tag}"
           if gh release view "$tag" >/dev/null 2>&1; then
-            gh release upload "$tag" apps/plugin/dist/manifest.json apps/plugin/dist/main.js
+            assets="$(gh release view "$tag" --json assets --jq '.assets[].name')"
+            download_dir="$(mktemp -d)"
+            trap 'rm -rf "$download_dir"' EXIT
+            for file in apps/plugin/dist/manifest.json apps/plugin/dist/main.js; do
+              name="$(basename "$file")"
+              if printf '%s\n' "$assets" | grep -Fxq "$name"; then
+                gh release download "$tag" --pattern "$name" --dir "$download_dir"
+                if ! cmp -s "$file" "$download_dir/$name"; then
+                  echo "Published asset ${name} differs from the checked release asset." >&2
+                  exit 1
+                fi
+              else
+                gh release upload "$tag" "$file"
+              fi
+            done
           else
             gh release create "$tag" \
               --verify-tag \
@@ -143,7 +160,7 @@ jobs:
           if git diff --quiet -- apps/plugin/versions.json; then exit 0; fi
           git add apps/plugin/versions.json
           git commit -m "chore(plugin): record compatibility for ${release_version}"
-          git push origin "HEAD:${branch}"
+          git push origin "HEAD:refs/heads/${branch}"
           gh pr create \
             --base main \
             --head "$branch" \

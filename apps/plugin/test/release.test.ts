@@ -104,19 +104,73 @@ function runPublicationShell(options: {
 	eventCommit?: string;
 	tagRefKind?: "annotated" | "lightweight";
 	releaseExists?: boolean;
+	existingAssets?: {
+		manifest?: "matching" | "mismatched";
+		main?: "matching" | "mismatched";
+	};
 }): { status: number | null; stderr: string; root: string; log: string } {
 	const root = mkdtempSync(join(tmpdir(), "plugin-publication-"));
 	const bin = join(root, "bin");
 	mkdirSync(bin);
 	const log = join(root, "gh.log");
+	const assetDirectory = join(root, "release-assets");
+	mkdirSync(assetDirectory);
 	writeFileSync(log, "");
+	mkdirSync(join(root, "apps/plugin/dist"), { recursive: true });
+	writeFileSync(join(root, "apps/plugin/dist/manifest.json"), "manifest-bytes");
+	writeFileSync(join(root, "apps/plugin/dist/main.js"), "main-bytes");
+	for (const [name, asset] of Object.entries(options.existingAssets ?? {})) {
+		if (!asset) continue;
+		const file = name === "manifest" ? "manifest.json" : "main.js";
+		writeFileSync(
+			join(assetDirectory, file),
+			asset === "matching" ? `${name}-bytes` : `wrong-${name}-bytes`,
+		);
+	}
 	const remoteCommit = options.remoteTag ?? "checked-commit";
 	const remoteTagLines =
 		options.tagRefKind === "lightweight"
 			? `printf '%s\\trefs/tags/ai-bridge-v0.1.0\\n' "${remoteCommit}"`
 			: `printf '%s\\trefs/tags/ai-bridge-v0.1.0\\n' tag-object; printf '%s\\trefs/tags/ai-bridge-v0.1.0^{}\\n' "${remoteCommit}"`;
 	const gitStub = `#!/bin/sh\ncase "$*" in\n  "ls-remote origin refs/tags/ai-bridge-v0.1.0^{} refs/tags/ai-bridge-v0.1.0") ${remoteTagLines} ;;\n  "rev-parse HEAD") printf '%s\\n' "${options.checkedCommit ?? "checked-commit"}" ;;\n  *) exit 2 ;;\nesac\n`;
-	const ghStub = `#!/bin/sh\nprintf '%s\\n' "$*" >> "$GH_LOG"\nif [ "$1 $2" = "release view" ]; then\n  ${options.releaseExists ? "exit 0" : "exit 1"}\nfi\nif [ "$1 $2" = "release upload" ] || [ "$1 $2" = "release create" ]; then exit 0; fi\nexit 2\n`;
+	const existingNames = Object.entries(options.existingAssets ?? {})
+		.filter(([, asset]) => asset !== undefined)
+		.map(([name]) => (name === "manifest" ? "manifest.json" : "main.js"))
+		.map((name) => `printf '%s\\n' '${name}'`)
+		.join("; ");
+	const ghStub = `#!/bin/sh
+printf '%s\\n' "$*" >> "$GH_LOG"
+if [ "$1 $2" = "release view" ]; then
+  if [ "$4" = "--json" ]; then
+    ${existingNames}
+    exit 0
+  fi
+  ${options.releaseExists ? "exit 0" : "exit 1"}
+fi
+if [ "$1 $2" = "release download" ]; then
+  shift 3
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --pattern) name="$2"; shift 2 ;;
+      --dir) target="$2"; shift 2 ;;
+      *) shift ;;
+    esac
+  done
+  cp "$GH_ASSET_DIR/$name" "$target/$name"
+  exit 0
+fi
+if [ "$1 $2" = "release upload" ]; then
+  shift 3
+  for file in "$@"; do
+    name="$(basename "$file")"
+    if [ -e "$GH_ASSET_DIR/$name" ]; then echo "asset already exists" >&2; exit 1; fi
+    cp "$file" "$GH_ASSET_DIR/$name"
+  done
+  exit 0
+fi
+if [ "$1 $2" = "release create" ]; then exit 0; fi
+exit 2
+`;
 	writeFileSync(join(bin, "git"), gitStub, { mode: 0o755 });
 	writeFileSync(join(bin, "gh"), ghStub, { mode: 0o755 });
 	const env = {
@@ -127,6 +181,7 @@ function runPublicationShell(options: {
 		GITHUB_SHA:
 			options.eventCommit ?? options.checkedCommit ?? "checked-commit",
 		GH_LOG: log,
+		GH_ASSET_DIR: assetDirectory,
 	};
 	const verify = spawnSync(
 		"bash",
@@ -252,6 +307,12 @@ describe("release workflow publication shell", () => {
 		expect(publishJob).toContain("needs: build");
 		expect(publishJob).toContain("permissions:\n      contents: write");
 		expect(publishJob).toContain(
+			"jdx/mise-action@08ae2a091c038e1e05ec6f5115dc5c69d5a2a6b8",
+		);
+		expect(publishJob.indexOf("jdx/mise-action")).toBeLessThan(
+			publishJob.indexOf("Record published compatibility entry on main"),
+		);
+		expect(publishJob).toContain(
 			"actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333",
 		);
 		expect(publishJob).toContain("name: plugin-release-assets");
@@ -338,8 +399,70 @@ exit 23
 		runGit(seed, "push", "origin", "main", "--tags");
 		spawnSync("git", ["clone", remote, checkout], { encoding: "utf8" });
 		runGit(checkout, "checkout", "ai-bridge-v0.1.0");
+		const bin = join(root, "bin");
+		const assets = join(root, "assets");
+		const ghLog = join(root, "gh.log");
+		mkdirSync(bin);
+		mkdirSync(assets);
+		mkdirSync(join(checkout, "apps/plugin/dist"), { recursive: true });
+		const tagManifest = JSON.stringify({
+			version: "0.1.0",
+			minAppVersion: "1.13.0",
+		});
+		writeFileSync(
+			join(checkout, "apps/plugin/dist/manifest.json"),
+			tagManifest,
+		);
+		writeFileSync(join(checkout, "apps/plugin/dist/main.js"), "checked-main");
+		writeFileSync(join(assets, "manifest.json"), tagManifest);
+		writeFileSync(join(assets, "main.js"), "checked-main");
+		writeFileSync(
+			join(bin, "gh"),
+			`#!/bin/sh
+printf '%s\\n' "$*" >> "$GH_LOG"
+if [ "$1 $2" = "release view" ]; then
+  if [ "$4" = "--json" ]; then printf 'manifest.json\\nmain.js\\n'; fi
+  exit 0
+fi
+if [ "$1 $2" = "release download" ]; then
+  shift 3
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --pattern) name="$2"; shift 2 ;;
+      --dir) target="$2"; shift 2 ;;
+      *) shift ;;
+    esac
+  done
+  cp "$GH_ASSET_DIR/$name" "$target/$name"
+  exit 0
+fi
+if [ "$1 $2" = "release upload" ]; then exit 0; fi
+exit 2
+`,
+			{ mode: 0o755 },
+		);
+		writeFileSync(ghLog, "");
 
 		try {
+			const publication = spawnSync(
+				"bash",
+				["-euo", "pipefail", "-c", publicationShell()],
+				{
+					cwd: checkout,
+					encoding: "utf8",
+					env: {
+						...process.env,
+						PATH: `${bin}:${process.env.PATH}`,
+						RELEASE_TAG: "ai-bridge-v0.1.0",
+						GH_LOG: ghLog,
+						GH_ASSET_DIR: assets,
+					},
+				},
+			);
+			expect(publication.status, String(publication.stderr)).toBe(0);
+			expect(readFileSync(ghLog, "utf8")).toContain(
+				"release download ai-bridge-v0.1.0 --pattern manifest.json",
+			);
 			const result = spawnSync(
 				"bash",
 				["-euo", "pipefail", "-c", compatibilityRecordShell()],
@@ -385,6 +508,92 @@ exit 23
 		}
 	});
 
+	it("opens a chore PR when main rejects compatibility pushes", () => {
+		const root = mkdtempSync(join(tmpdir(), "plugin-compatibility-pr-"));
+		const remote = join(root, "origin.git");
+		const seed = join(root, "seed");
+		const checkout = join(root, "checkout");
+		mkdirSync(seed);
+		runGit(root, "init", "--bare", "--initial-branch=main", remote);
+		runGit(seed, "init", "--initial-branch=main");
+		runGit(seed, "config", "user.name", "Test Agent");
+		runGit(seed, "config", "user.email", "test@example.com");
+		mkdirSync(join(seed, "apps/plugin/tools"), { recursive: true });
+		writeFileSync(
+			join(seed, "apps/plugin/tools/release-versions.ts"),
+			readFileSync(
+				join(repositoryRoot, "apps/plugin/tools/release-versions.ts"),
+				"utf8",
+			),
+		);
+		writeFileSync(
+			join(seed, "apps/plugin/manifest.json"),
+			JSON.stringify({ version: "0.1.0", minAppVersion: "1.13.0" }),
+		);
+		writeFileSync(join(seed, "apps/plugin/versions.json"), "{}\n");
+		runGit(seed, "add", ".");
+		runGit(seed, "commit", "-m", "tag source");
+		runGit(seed, "tag", "ai-bridge-v0.1.0");
+		runGit(seed, "remote", "add", "origin", remote);
+		runGit(seed, "push", "origin", "main", "--tags");
+		writeFileSync(
+			join(remote, "hooks/pre-receive"),
+			`#!/bin/sh
+while read old new ref; do
+  if [ "$ref" = "refs/heads/main" ]; then echo protected >&2; exit 1; fi
+done
+`,
+			{ mode: 0o755 },
+		);
+		spawnSync("git", ["clone", remote, checkout], { encoding: "utf8" });
+		runGit(checkout, "checkout", "ai-bridge-v0.1.0");
+		const bin = join(root, "bin");
+		const ghLog = join(root, "gh.log");
+		mkdirSync(bin);
+		writeFileSync(ghLog, "");
+		writeFileSync(
+			join(bin, "gh"),
+			'#!/bin/sh\nprintf \'%s\\n\' "$*" >> "$GH_LOG"\nif [ "$1 $2" = "pr list" ]; then exit 0; fi\nif [ "$1 $2" = "pr create" ]; then exit 0; fi\nexit 2\n',
+			{ mode: 0o755 },
+		);
+
+		try {
+			const result = spawnSync(
+				"bash",
+				["-euo", "pipefail", "-c", compatibilityRecordShell()],
+				{
+					cwd: checkout,
+					encoding: "utf8",
+					env: {
+						...process.env,
+						PATH: `${bin}:${process.env.PATH}`,
+						RELEASE_TAG: "ai-bridge-v0.1.0",
+						GH_TOKEN: "fake-token",
+						GH_LOG: ghLog,
+					},
+				},
+			);
+			expect(result.status, String(result.stderr)).toBe(0);
+			const branchMap = JSON.parse(
+				runGit(
+					remote,
+					"show",
+					"chore/plugin-compatibility-0.1.0:apps/plugin/versions.json",
+				),
+			);
+			expect(branchMap).toEqual({ "0.1.0": "1.13.0" });
+			const ghCalls = readFileSync(ghLog, "utf8");
+			expect(ghCalls).toContain(
+				"pr list --state open --head chore/plugin-compatibility-0.1.0",
+			);
+			expect(ghCalls).toContain(
+				"pr create --base main --head chore/plugin-compatibility-0.1.0",
+			);
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("verifies the remote tag and creates a release with only plugin assets", () => {
 		const result = runPublicationShell({});
 		try {
@@ -417,13 +626,59 @@ exit 23
 		}
 	});
 
-	it("adds checked assets to an existing release without replacing assets", () => {
-		const result = runPublicationShell({ releaseExists: true });
+	it("accepts matching existing assets on a release retry without replacing them", () => {
+		const result = runPublicationShell({
+			releaseExists: true,
+			existingAssets: { manifest: "matching", main: "matching" },
+		});
 		try {
 			expect(result.status, result.stderr).toBe(0);
 			const calls = readFileSync(result.log, "utf8");
-			expect(calls).toContain("release upload ai-bridge-v0.1.0");
+			expect(calls).toContain(
+				"release download ai-bridge-v0.1.0 --pattern manifest.json",
+			);
+			expect(calls).toContain(
+				"release download ai-bridge-v0.1.0 --pattern main.js",
+			);
+			expect(calls).not.toContain("release upload");
 			expect(calls).not.toContain("release create");
+			expect(calls).not.toContain("--clobber");
+		} finally {
+			rmSync(result.root, { recursive: true, force: true });
+		}
+	});
+
+	it("rejects an existing asset whose bytes differ from the checked build", () => {
+		const result = runPublicationShell({
+			releaseExists: true,
+			existingAssets: { manifest: "mismatched", main: "matching" },
+		});
+		try {
+			expect(result.status).not.toBe(0);
+			const calls = readFileSync(result.log, "utf8");
+			expect(calls).toContain(
+				"release download ai-bridge-v0.1.0 --pattern manifest.json",
+			);
+			expect(calls).not.toContain("release upload");
+		} finally {
+			rmSync(result.root, { recursive: true, force: true });
+		}
+	});
+
+	it("uploads only the missing asset when an existing asset matches", () => {
+		const result = runPublicationShell({
+			releaseExists: true,
+			existingAssets: { manifest: "matching" },
+		});
+		try {
+			expect(result.status, result.stderr).toBe(0);
+			const calls = readFileSync(result.log, "utf8");
+			expect(calls).toContain(
+				"release download ai-bridge-v0.1.0 --pattern manifest.json",
+			);
+			expect(calls).toContain(
+				"release upload ai-bridge-v0.1.0 apps/plugin/dist/main.js",
+			);
 			expect(calls).not.toContain("--clobber");
 		} finally {
 			rmSync(result.root, { recursive: true, force: true });

@@ -102,7 +102,7 @@ describe("Vault retention alarm lifecycle", () => {
 		["GC work alone", { gcMore: true }, 60_000],
 	])(
 		"schedules %s at its continuation interval",
-		async (_case, work, maxDelay) => {
+		async (_case, work, expectedDelay) => {
 			const stub = env.VAULTS.get(env.VAULTS.newUniqueId());
 			await runInDurableObject(stub, async (instance, state) => {
 				setAlarmWork(instance, work);
@@ -110,10 +110,11 @@ describe("Vault retention alarm lifecycle", () => {
 
 				await instance.alarm();
 
+				const after = Date.now();
 				const nextAlarm = await state.storage.getAlarm();
 				expect(nextAlarm).not.toBeNull();
-				expect(nextAlarm).toBeGreaterThanOrEqual(before);
-				expect(nextAlarm).toBeLessThanOrEqual(before + maxDelay);
+				expect(nextAlarm).toBeGreaterThanOrEqual(before + expectedDelay);
+				expect(nextAlarm).toBeLessThanOrEqual(after + expectedDelay);
 			});
 		},
 	);

@@ -8,7 +8,8 @@ import {
 	PackedExportService,
 	PackedExportStorageFailure,
 } from "@worker/application/export";
-import { describe, expect, it } from "vitest";
+import { createZip32Cursor } from "@worker/application/export-zip";
+import { describe, expect, it, vi } from "vitest";
 
 const epoch = "a".repeat(32);
 const createdAt = "2026-11-07T03:00:00.000Z";
@@ -20,6 +21,7 @@ class ExportRepositoryFake implements PackedExportRepository {
 	manifestBytes: Uint8Array;
 	readBytes = 0;
 	readCalls = 0;
+	checkpointMiss = false;
 
 	/** Seed one queued export with a stable manifest and immutable payload. */
 	constructor() {
@@ -113,7 +115,7 @@ class ExportRepositoryFake implements PackedExportRepository {
 			completedParts: readonly PackedExportPart[];
 		},
 	): Promise<boolean> {
-		if (this.work.zipState !== observed) return false;
+		if (this.checkpointMiss || this.work.zipState !== observed) return false;
 		this.work = { ...this.work, status: "uploading", ...checkpoint };
 		return true;
 	}
@@ -162,17 +164,21 @@ class ExportRepositoryFake implements PackedExportRepository {
 class ArchiveStoreFake implements PackedArchiveStore {
 	readonly partSizes: number[] = [];
 	readonly partAttempts: Array<{ number: number; bytes: Uint8Array }> = [];
-	private failNextPart = true;
 	private readonly sizes = new Map<string, number>();
 	private readonly completedObjects = new Map<string, number>();
 	private completedSize = 0;
 	completeCalls = 0;
 	headCalls = 0;
+	failCreate = false;
 
-	/** Configure one completed multipart request to lose its reply after object creation. */
-	constructor(private readonly loseFirstCompletionReply = false) {}
-	/** Start one deterministic upload in the fake bucket. */
+	/** Configure test failures at the create, part, and completion boundaries. */
+	constructor(
+		private readonly loseFirstCompletionReply = false,
+		private failNextPart = true,
+	) {}
+	/** Start one deterministic upload or fail with the sanitized storage error. */
 	async create(): Promise<string> {
+		if (this.failCreate) throw new PackedExportStorageFailure();
 		return "upload-id";
 	}
 	/** Record every attempt and fail once to prove same-part retry behavior. */
@@ -296,6 +302,131 @@ describe("resumable packed export service", () => {
 		expect((await reader.read()).done).toBe(true);
 		reader.releaseLock();
 	}, 60_000);
+
+	it("logs a safe retry event when archive creation fails and keeps the export pending", async () => {
+		const repository = new ExportRepositoryFake();
+		repository.work = {
+			...repository.work,
+			objectKey: "backups/secret-object-key",
+		};
+		const archive = new ArchiveStoreFake();
+		archive.failCreate = true;
+		const service = new PackedExportService(repository, archive);
+		const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+		try {
+			await service.start(createdAt, 2);
+			const originalCursor = repository.work.zipState;
+
+			const more = await service.runBatch();
+
+			expect(more).toBe(true);
+			expect(repository.work.status).toBe("queued");
+			expect(repository.work.failure).toBeNull();
+			expect(repository.work.zipState).toBe(originalCursor);
+			expect(warn).toHaveBeenCalledTimes(1);
+			const event = JSON.parse(String(warn.mock.calls[0]?.[0]));
+			expect(event).toEqual({
+				event_name: "packed_export_storage_retry",
+				export_id: "export-id",
+				step_kind: "create",
+				error_name: "PackedExportStorageFailure",
+				error_message: "Packed archive storage is temporarily unavailable",
+			});
+			const serializedEvent = String(warn.mock.calls[0]?.[0]);
+			expect(serializedEvent).not.toContain("secret-object-key");
+			expect(serializedEvent).not.toContain("upload-id");
+			expect(serializedEvent).not.toContain("bytes");
+		} finally {
+			warn.mockRestore();
+		}
+	});
+
+	it("logs a safe checkpoint CAS miss when an advanced cursor loses its race", async () => {
+		const repository = new ExportRepositoryFake();
+		repository.work = {
+			...repository.work,
+			objectKey: "backups/secret-object-key",
+		};
+		repository.checkpointMiss = true;
+		const service = new PackedExportService(repository, new ArchiveStoreFake());
+		const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+		try {
+			await service.start(createdAt, 2);
+			const originalCursor = repository.work.zipState;
+
+			const more = await service.runBatch();
+
+			expect(more).toBe(true);
+			expect(repository.work.status).toBe("queued");
+			expect(repository.work.failure).toBeNull();
+			expect(repository.work.zipState).toBe(originalCursor);
+			expect(warn).toHaveBeenCalledTimes(1);
+			const event = JSON.parse(String(warn.mock.calls[0]?.[0]));
+			expect(event).toEqual({
+				event_name: "packed_export_checkpoint_cas_miss",
+				export_id: "export-id",
+				step_kind: "checkpoint_step",
+				error_name: "CheckpointCasMiss",
+				error_message: "Packed export checkpoint compare-and-set did not save",
+			});
+			const serializedEvent = String(warn.mock.calls[0]?.[0]);
+			expect(serializedEvent).not.toContain("secret-object-key");
+			expect(serializedEvent).not.toContain("upload-id");
+			expect(serializedEvent).not.toContain("bytes");
+		} finally {
+			warn.mockRestore();
+		}
+	});
+
+	it("logs a safe checkpoint CAS miss for the final multipart remainder", async () => {
+		const repository = new ExportRepositoryFake();
+		const archive = new ArchiveStoreFake(false, false);
+		const service = new PackedExportService(repository, archive);
+		const cursor = createZip32Cursor([
+			{ name: "files/notes/a.md", size: payload.byteLength },
+		]);
+		cursor.phase = "done";
+		cursor.archiveOffset = 123;
+		repository.work = {
+			...repository.work,
+			status: "uploading",
+			objectKey: "backups/secret-object-key",
+			uploadId: "secret-upload-id",
+			zipState: JSON.stringify(cursor),
+			pendingPart: new TextEncoder().encode("secret-payload-bytes"),
+		};
+		repository.checkpointMiss = true;
+		const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+		try {
+			const originalCursor = repository.work.zipState;
+
+			const more = await service.runBatch();
+
+			expect(more).toBe(true);
+			expect(repository.work.status).toBe("uploading");
+			expect(repository.work.failure).toBeNull();
+			expect(repository.work.zipState).toBe(originalCursor);
+			expect(repository.work.pendingPart).toEqual(
+				new TextEncoder().encode("secret-payload-bytes"),
+			);
+			expect(warn).toHaveBeenCalledTimes(1);
+			const event = JSON.parse(String(warn.mock.calls[0]?.[0]));
+			expect(event).toEqual({
+				event_name: "packed_export_checkpoint_cas_miss",
+				export_id: "export-id",
+				step_kind: "checkpoint_final_remainder",
+				error_name: "CheckpointCasMiss",
+				error_message: "Packed export checkpoint compare-and-set did not save",
+			});
+			const serializedEvent = String(warn.mock.calls[0]?.[0]);
+			expect(serializedEvent).not.toContain("secret-object-key");
+			expect(serializedEvent).not.toContain("secret-upload-id");
+			expect(serializedEvent).not.toContain("secret-payload-bytes");
+			expect(serializedEvent).not.toContain("bytes");
+		} finally {
+			warn.mockRestore();
+		}
+	});
 
 	it("recovers an R2 completion after the first completion reply is lost", async () => {
 		const repository = new ExportRepositoryFake();

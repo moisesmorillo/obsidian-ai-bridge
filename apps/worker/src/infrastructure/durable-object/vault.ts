@@ -173,7 +173,7 @@ export class Vault extends DurableObject<Env> {
 			if (alarm === null || exportPending || gcPending)
 				await ctx.storage.setAlarm(
 					exportPending || gcPending
-						? Date.now() + EXPORT_CONTINUATION_MS
+						? Date.now() + 1
 						: nextRetentionNightly(Date.now()),
 				);
 		});
@@ -221,7 +221,7 @@ export class Vault extends DurableObject<Env> {
 		const result = await this.packedExportService.start(createdAt, Date.now());
 		if (!result) return null;
 		if (result.status === "queued" || result.status === "uploading")
-			await this.ctx.storage.setAlarm(Date.now() + EXPORT_CONTINUATION_MS);
+			await this.ctx.storage.setAlarm(Date.now() + 1);
 		return result;
 	}
 
@@ -236,7 +236,7 @@ export class Vault extends DurableObject<Env> {
 			true,
 		);
 		if (result?.status === "queued" || result?.status === "uploading")
-			await this.ctx.storage.setAlarm(Date.now() + EXPORT_CONTINUATION_MS);
+			await this.ctx.storage.setAlarm(Date.now() + 1);
 		return result;
 	}
 

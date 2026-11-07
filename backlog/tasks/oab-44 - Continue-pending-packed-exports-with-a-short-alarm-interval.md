@@ -4,7 +4,7 @@ title: Continue pending packed exports with a short alarm interval
 status: In Progress
 assignee: []
 created_date: '2026-11-07T15:17:00Z'
-updated_date: '2026-11-07T15:25:00Z'
+updated_date: '2026-11-07T15:35:00Z'
 labels:
   - worker
   - F6
@@ -27,6 +27,7 @@ Owner order 2026-11-07: the hourly packed export advances 1 MiB per alarm step, 
 - [ ] #2 A unit test proves the alarm interval selection for pending export, pending retention, pending GC, and idle.
 - [ ] #3 docs/packed-export-restore.md or docs/spec.md states the expected snapshot duration for the current step budgets.
 - [ ] #4 bun run check green and Worker preflight green before the PR.
+- [ ] #5 Retryable PackedExportStorageFailure and checkpoint CAS-miss paths emit structured console error or warning JSON events. Each event includes the event name, export id, step kind, error name, and safe error message. Tests prove both paths emit events without bytes or secret keys.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -60,6 +61,8 @@ Review focus
 - Idle keeps the next 03:00 UTC alarm.
 - The catch path keeps its 60-second retry.
 - Export budgets and storage behavior stay unchanged.
+
+Supervisor scope addition: add safe structured retry events in apps/worker/src/application/export.ts and tests in apps/worker/test/export-service.test.ts. Use stable event names, export id, step kind, and safe error name/message. Cover both checkpoint CAS-miss branches. Do not log provider details, object keys, upload ids, or payload bytes. Write failing event tests first. Preserve retry semantics, then run focused tests and the full check and Worker preflight. The two existing review corrections remain in scope.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -68,4 +71,14 @@ Review focus
 RED before implementation: `cd apps/worker && bunx vitest run --config vitest.config.ts test/vault-retention-alarm.test.ts` failed as expected. The export-alone and export-with-retention-and-GC cases each scheduled 60,000 ms and failed the 1,000 ms upper bound. The other 9 tests passed. An initial malformed focused command and a wrong-root test path also failed before the valid RED command; neither ran test cases.
 
 GREEN after implementation: `cd apps/worker && bunx vitest run --config vitest.config.ts test/vault-retention-alarm.test.ts` passed (1 file, 11 tests). `bun run docs:check` passed (exit 0). `bun run check` passed (exit 0): Biome, docs check, all package typechecks, tests (2,263 passed, 1 skipped), and builds. Expected local fake-driven Worker stream/rollback error diagnostics appeared during passing Worker tests. `bun run --filter '@obsidian-ai-bridge/worker' preflight` passed (exit 0). `git diff --check` passed (exit 0). Review found no blockers. Scope stayed in Vault alarm interval scheduling, tests, and one packed-export duration documentation line. No live service calls, vault access, Cloudflare resource changes, or deployment.
+
+Supervisor scope decision: add diagnostics for the two silent retry paths because the first scheduled export remained active after 28 minutes. This is a supervisor report, not an agent observation. No live call follows from this scope addition.
+
+Review finding closures and correction: The earlier note that scope stayed inside alarm scheduling was inaccurate. Commit b1f87f4 changed constructor startup and both export-start delays to 1,000 ms. This correction restores all three to `Date.now() + 1`. `EXPORT_CONTINUATION_MS` now applies only in `alarm()`. Finding 1 is fixed.
+
+Finding 2 is fixed. Interval tests now require `nextAlarm >= before + expectedDelay` and `nextAlarm <= after + expectedDelay`. A negative control changed maintenance scheduling to 1 ms. Retention and GC interval cases failed the lower bound as expected. The implementation was restored, and all 11 focused alarm tests passed.
+
+Supervisor scope addition: AC #5 adds safe JSON warning events for typed storage retry and both checkpoint CAS-miss branches. New tests first failed because the events were absent (3 tests failed, 3 existing tests passed). GREEN tests assert event name, export id, step kind, safe error identity and message, pending state, unchanged cursor, and no archive key, upload id, or payload bytes in the event.
+
+Validation after all changes: focused export/alarm tests passed (2 files, 17 tests). `bun run docs:check` passed, exit 0. `bun run check` passed, exit 0, with 2,266 tests passed and 1 skipped. Worker preflight passed, exit 0. `git diff --check` passed. The first full check found import ordering in the new test. Biome fixed it, and the final full check passed. Synthetic Worker stream and rollback diagnostics appeared during passing tests. No live service, vault, Cloudflare, or deployment action occurred.
 <!-- SECTION:NOTES:END -->

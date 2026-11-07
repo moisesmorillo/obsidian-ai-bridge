@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-11-07T18:44:00Z'
-updated_date: '2026-11-07T19:07:00Z'
+updated_date: '2026-11-07T19:15:00Z'
 labels:
   - ci
   - release
@@ -85,4 +85,12 @@ Review correction at revision 8ef4faf3cd9db7ca33e4a3ba1a62d5ef07c3679f:
 - GREEN: the same focused test passed, 4 tests. Final `bun run check` passed, including 9 tooling test files/96 tests, 19 protocol files/314 tests, 52 Worker files/753 tests plus 9 files/132 tests and 10 files/142 tests, and 30 plugin files/838 passed/1 skipped.
 - Final Worker preflight passed: `bun run --filter '@obsidian-ai-bridge/worker' preflight`.
 - No live calls, deployment, tag creation, vault access, or Cloudflare changes occurred. Parent owns re-review.
+
+Whole-branch review correction at revision 1df0c34567e5b8f6a13270089c292db548ad4791:
+- Closed finding [MAJOR] Bootstrap version assertions blocked future release PRs. The live release manifest now compares with the plugin manifest version and Worker package version. No current version literals remain in these live metadata checks. The fixed bootstrap SHA check and release policy assertions remain.
+- Added synthetic version fixtures derived from current metadata. Tests accept plugin-only, Worker-only, and combined future patch bumps without changing tracked release metadata. Plugin or Worker release-manifest mismatches fail the alignment assertion.
+- RED: the mismatch cases failed because the future-version helper did not increment versions. Corrected the helper to increment the patch suffix. GREEN: `bun run --filter '@obsidian-ai-bridge/tooling' test -- tooling/test/release-please-config.test.ts` passed, 9 tests.
+- Final `bun run docs:check` passed. Final `bun run check` passed: tooling 101 tests, protocol 314 tests, Worker 753 plus 132 and 142 tests, plugin 838 passed and 1 skipped. Type checks and builds passed.
+- Final Worker preflight passed: `bun run --filter '@obsidian-ai-bridge/worker' preflight`.
+- No tracked release metadata changed. No live call, deployment, tag, push, vault access, or Cloudflare change occurred. Parent owns scoped re-review.
 <!-- SECTION:NOTES:END -->

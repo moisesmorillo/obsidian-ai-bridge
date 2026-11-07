@@ -9,17 +9,44 @@ function workflowText(path: string): string {
 	);
 }
 
+/** Checks that Release Please versions match each component's authoritative package metadata. */
+function expectVersionAlignment(
+	releaseManifest: { "apps/plugin": string; "apps/worker": string },
+	pluginManifest: { version: string },
+	workerPackage: { version: string },
+): void {
+	expect(releaseManifest["apps/plugin"]).toBe(pluginManifest.version);
+	expect(releaseManifest["apps/worker"]).toBe(workerPackage.version);
+}
+
+/** Increments a metadata version's patch part to form a future-release fixture. */
+function nextPatchVersion(version: string): string {
+	return version.replace(/\d+$/, (patch) => String(Number(patch) + 1));
+}
+
 describe("Release Please configuration", () => {
-	it("bootstraps both components at their approved versions and main revision", () => {
+	it("matches current component metadata and checks the bootstrap revision", () => {
 		const config = JSON.parse(
 			readFileSync(
 				new URL("../../release-please-config.json", import.meta.url),
 				"utf8",
 			),
 		);
-		const manifest = JSON.parse(
+		const releaseManifest = JSON.parse(
 			readFileSync(
 				new URL("../../.release-please-manifest.json", import.meta.url),
+				"utf8",
+			),
+		);
+		const pluginManifest = JSON.parse(
+			readFileSync(
+				new URL("../../apps/plugin/manifest.json", import.meta.url),
+				"utf8",
+			),
+		);
+		const workerPackage = JSON.parse(
+			readFileSync(
+				new URL("../../apps/worker/package.json", import.meta.url),
 				"utf8",
 			),
 		);
@@ -27,17 +54,7 @@ describe("Release Please configuration", () => {
 			"eec41e68778e0d9e674d8e40c80b7c28e9ef80ed",
 		);
 		expect(config["separate-pull-requests"]).toBe(true);
-		expect(manifest).toEqual({
-			"apps/plugin": "0.1.6",
-			"apps/worker": "0.1.0",
-		});
-		const workerPackage = JSON.parse(
-			readFileSync(
-				new URL("../../apps/worker/package.json", import.meta.url),
-				"utf8",
-			),
-		);
-		expect(workerPackage.version).toBe("0.1.0");
+		expectVersionAlignment(releaseManifest, pluginManifest, workerPackage);
 		expect(config.packages["apps/plugin"]).toMatchObject({
 			component: "ai-bridge",
 			"release-type": "node",
@@ -56,6 +73,86 @@ describe("Release Please configuration", () => {
 			jsonpath: "$.version",
 		});
 	});
+
+	it.each(["plugin-only", "worker-only", "both"] as const)(
+		"accepts future %s version bumps when component metadata matches",
+		(change) => {
+			const releaseManifest = JSON.parse(
+				readFileSync(
+					new URL("../../.release-please-manifest.json", import.meta.url),
+					"utf8",
+				),
+			);
+			const pluginManifest = JSON.parse(
+				readFileSync(
+					new URL("../../apps/plugin/manifest.json", import.meta.url),
+					"utf8",
+				),
+			);
+			const workerPackage = JSON.parse(
+				readFileSync(
+					new URL("../../apps/worker/package.json", import.meta.url),
+					"utf8",
+				),
+			);
+			const pluginVersion = nextPatchVersion(pluginManifest.version);
+			const workerVersion = nextPatchVersion(workerPackage.version);
+			const nextReleaseManifest = { ...releaseManifest };
+			const nextPluginManifest = { ...pluginManifest };
+			const nextWorkerPackage = { ...workerPackage };
+
+			if (change === "plugin-only" || change === "both") {
+				nextReleaseManifest["apps/plugin"] = pluginVersion;
+				nextPluginManifest.version = pluginVersion;
+			}
+			if (change === "worker-only" || change === "both") {
+				nextReleaseManifest["apps/worker"] = workerVersion;
+				nextWorkerPackage.version = workerVersion;
+			}
+
+			expectVersionAlignment(
+				nextReleaseManifest,
+				nextPluginManifest,
+				nextWorkerPackage,
+			);
+		},
+	);
+
+	it.each(["plugin", "worker"] as const)(
+		"rejects a future %s release manifest mismatch",
+		(component) => {
+			const releaseManifest = JSON.parse(
+				readFileSync(
+					new URL("../../.release-please-manifest.json", import.meta.url),
+					"utf8",
+				),
+			);
+			const pluginManifest = JSON.parse(
+				readFileSync(
+					new URL("../../apps/plugin/manifest.json", import.meta.url),
+					"utf8",
+				),
+			);
+			const workerPackage = JSON.parse(
+				readFileSync(
+					new URL("../../apps/worker/package.json", import.meta.url),
+					"utf8",
+				),
+			);
+			const mismatchedManifest = { ...releaseManifest };
+			mismatchedManifest[`apps/${component}`] = nextPatchVersion(
+				releaseManifest[`apps/${component}`],
+			);
+
+			expect(() =>
+				expectVersionAlignment(
+					mismatchedManifest,
+					pluginManifest,
+					workerPackage,
+				),
+			).toThrow();
+		},
+	);
 
 	it("runs each release follow-up in the same workflow and syncs plugin PR metadata", () => {
 		const workflow = workflowText("release-please.yml");

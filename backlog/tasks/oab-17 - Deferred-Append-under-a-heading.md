@@ -1,14 +1,12 @@
 ---
 id: OAB-17
 title: Append under a heading
-status: In Progress
+status: Done
 assignee:
   - '@pi'
 created_date: 2026-10-12 15:14
-updated_date: '2026-11-07T03:41:00Z'
-labels:
-  - deferred
-  - trigger-based
+updated_date: '2026-11-07T04:48:00Z'
+labels: []
 dependencies: []
 documentation:
   - docs/spec.md
@@ -23,34 +21,29 @@ The owner triggered spec section 16 through daily notes and task lines under fix
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 One Durable Object operation appends UTF-8 text under a named heading against the exact observed revision. Success creates one revision and feed entry.
-- [ ] #2 Match trimmed heading text exactly at any level. First match wins. A missing heading returns a typed failure without a write.
-- [ ] #3 Accept an idempotency key. Replays return the same result.
-- [ ] #4 REST and MCP expose exact ETag input and new ETag output. Document the MCP tool beside existing tools.
-- [ ] #5 Tests cover stale revision refusal, missing heading, replay, UTF-8, CRLF, heading at EOF, and feed publication.
-- [ ] #6 No plugin change.
+- [x] #1 One Durable Object operation appends UTF-8 text under a named heading against the exact observed revision. Success creates one revision and feed entry.
+- [x] #2 Match trimmed heading text exactly at any level. First match wins. A missing heading returns a typed failure without a write.
+- [x] #3 Accept an idempotency key. Replays return the same result.
+- [x] #4 REST and MCP expose exact ETag input and new ETag output. Document the MCP tool beside existing tools.
+- [x] #5 Tests cover stale revision refusal, missing heading, replay, UTF-8, CRLF, heading at EOF, and feed publication.
+- [x] #6 No plugin change.
 <!-- AC:END -->
 
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-Goal: Add conditional append under a heading for the owner daily-note workflow.
-Architecture: Keep canonical request and result schemas in protocol. Use one Durable Object operation and the existing text publication authority. Keep end-of-note append unchanged.
-Spec: docs/spec.md section 16 and the W5 owner brief.
-Owner decisions: Use an exact observed ETag. Match trimmed heading text, case-sensitive, at any level. First match wins. Insert at the end of that section before the next heading of equal or lower level. Preserve existing text bytes and line endings. Ignore fenced code headings. Use existing mutation policy and limits. No new dependency.
-Task 1:
-- [ ] Read the current history, text mutation, MCP, REST, and Durable Object owners.
-- [ ] Write failing tests for all six criteria. Record the expected RED result without a failed shell task.
-- [ ] Add protocol append request/result schemas and final index exports.
-- [ ] Add application append.ts and a final Vault method. Use existing exact-revision publication and receipt behavior.
-- [ ] Add the REST route at the end of its list. Expose the MCP tool with canonical schemas.
-- [ ] Document input, output, errors, heading boundaries, newline rules, and receipt retention beside existing tools.
-- [ ] Run focused tests, docs:check, bun run check, and Worker preflight. Commit the task.
-Review focus: duplicate headings, heading-like code, mixed line endings, stale-revision races, replay after intervening edits. Tests must cover each.
-Constraints: Edit only the owner file list and OAB-17. No owner.ts, read-response.ts, blob, plugin, live service, vault, or Cloudflare changes. Report a file-boundary blocker instead of widening scope.
-Parent acceptance: Independent task review, complete branch review, final rebase on origin/main, preflight before push, one PR, worktree removal.
-
-Supervisor scope decision: Use the real semantic owners in transport/mcp.ts, application/mcp-mutations.ts, infrastructure/sqlite/text-files.ts, application/text-files.ts or history.ts, and transport/files.ts. The original brief files remain allowed. Select other behavior owners when needed. Do not stop for file-scope questions tonight. Continue on this branch and update existing PR 89. Run tests first, the complete check, and Worker preflight. Push and mark PR 89 ready after reviews.
+Goal: Add conditional append under a heading for daily notes.
+Owner decisions: Exact ETag and idempotency key. First exact trimmed ATX heading wins. Append before the next equal-or-lower heading. Preserve source bytes and line endings. Ignore fenced code headings. No new dependency.
+- [x] Read current mutation, MCP, REST, admission, and SQLite history owners.
+- [x] Write failing route tests before implementation.
+- [x] Add canonical protocol schemas, result and failure shapes, and exports.
+- [x] Extend existing history command and SQLite publisher. Keep legacy append unchanged.
+- [x] Expose REST and MCP through their actual semantic owners.
+- [x] Document contracts, heading rules, errors, and encoded limits.
+- [x] Run focused tests, docs checks, full check, and Worker preflight.
+- [x] Complete task review, whole-branch review, and scoped corrective reviews.
+- [ ] Rebase onto current origin/main, run integration checks, publish existing PR 89, and remove worktree.
+Supervisor scope decision supersedes original file limits. Use actual behavior owners. No live service, vault, Obsidian, Cloudflare, plugin, or deployment change.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -65,4 +58,12 @@ Blocked before tests or source edits: the MCP registry and handlers are in apps/
 Parent validation: bun run check and Worker preflight exited 0 on baseline 877d037 with task-only changes. No feature test exists. Keep all acceptance criteria unchecked. Publish a draft PR for the file-scope blocker under the overnight order. Resume only after the owner expands the source boundary to the real MCP and SQLite owners.
 
 The supervisor grants the real semantic owners and resolves the earlier file-boundary blocker. Continue implementation under the existing unattended plan. Preserve the live-service and vault restrictions.
+
+Implementation and reviews: 13c4e7d added conditional heading append with route-first RED evidence. Task review found missing-key authority ordering. The corrective regression failed with 428 instead of 401, then passed after the authority check. Whole-branch review at d6c791d found F1 incomplete stale conflict details and F2 encoded JSON size handling. Commit d0324e2 fixes both with regression tests. Independent scoped review approves both fixes and reports no correction regression. Current semantic scope covers protocol schemas, immutable command identity, transport validation, pure heading parser, SQLite snapshot and publication, receipts, scoped conflict data, tests, and API/spec documentation. Existing admission and publication owners retain authority and atomicity. Shared heading identity owns encoded byte policy. Latest worker check reports 2199 passed and one skipped, with Worker preflight exit 0. No external runtime proof or deployment follows.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Add exact-ETag append under the first matching heading through REST and MCP. Reuse admission, receipts, and atomic revision/feed publication. Tests cover stale conflicts and scoped content, replay after later edits, heading selection, UTF-8, CRLF, EOF, escaped JSON, size refusal, and revocation. Full check and Worker preflight passed. Independent reviews close all actionable findings. No plugin or live service change.
+<!-- SECTION:FINAL_SUMMARY:END -->

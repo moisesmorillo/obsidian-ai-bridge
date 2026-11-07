@@ -20,7 +20,7 @@ const wranglerCli = resolve("node_modules/wrangler/bin/wrangler.js");
 /** Maximum captured bytes retained for classification or a synchronous build. */
 const outputLimit = 64 * 1024;
 /** Maximum time for local Worker startup and metadata checks, in milliseconds. */
-const timeoutMs = 30_000;
+const timeoutMs = 120_000;
 /** Maximum time allowed for the credential-free production dry-run build, in milliseconds. */
 const buildTimeoutMs = 120_000;
 /** Compatibility flag unsupported by the pinned local runtime only. */

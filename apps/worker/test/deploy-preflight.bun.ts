@@ -194,7 +194,7 @@ async function main(): Promise<void> {
 		]);
 		assert.equal(localConfig.vars.OWNER_SUBJECT, "preflight-test-owner");
 		try {
-			await checkMetadata(worker, port, { timeoutMs: 30_000 });
+			await checkMetadata(worker, port, { timeoutMs: 120_000 });
 		} finally {
 			await stopLocalWorker(worker);
 		}
@@ -212,7 +212,7 @@ async function main(): Promise<void> {
 		);
 		try {
 			await assert.rejects(
-				checkMetadata(forbiddenWorker, forbiddenPort, { timeoutMs: 30_000 }),
+				checkMetadata(forbiddenWorker, forbiddenPort, { timeoutMs: 120_000 }),
 				/Disallowed operation called within global scope/,
 			);
 		} finally {

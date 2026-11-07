@@ -173,7 +173,7 @@ async function main(): Promise<void> {
 		const bundle = join(runtimeRoot, "healthy.js");
 		await writeFile(
 			bundle,
-			'export default { fetch(_request, env) { return new Response("ok", { status: env.DOTENV_MARKER ? 503 : 200 }); } };',
+			'export class Vault { fetch() { return new Response("vault"); } }\nexport default { fetch(_request, env) { return new Response("ok", { status: env.DOTENV_MARKER ? 503 : 200 }); } };',
 		);
 		const port = await availablePort();
 		const worker = startLocalWorker(runtimeRoot, bundle, port);
@@ -206,7 +206,7 @@ async function main(): Promise<void> {
 		const forbiddenBundle = join(runtimeRoot, "forbidden.js");
 		await writeFile(
 			forbiddenBundle,
-			'crypto.randomUUID(); export default { fetch() { return new Response("ok"); } };',
+			'crypto.randomUUID(); export class Vault { fetch() { return new Response("vault"); } }\nexport default { fetch() { return new Response("ok"); } };',
 		);
 		const forbiddenPort = await availablePort();
 		const forbiddenWorker = startLocalWorker(

@@ -4,7 +4,7 @@ title: Prompt cancellation of pending storage reads for fixed-length bodies
 status: In Progress
 assignee: []
 created_date: '2026-11-04T04:11:00Z'
-updated_date: '2026-11-07T03:39:00Z'
+updated_date: '2026-11-07T03:46:00Z'
 labels: []
 dependencies: []
 references:
@@ -75,4 +75,10 @@ No production fix was justified. Existing settlement ownership remains: pending 
 Added two runtime limitation tests in `apps/worker/test/read-response.test.ts`. Focused validation passed: owner/content/blob tests 115/115, HTTP blob tests 38/38. Full `bun run docs:check` passed. `bun run check` passed lint, documentation, typechecks, all tests, and builds. Test totals: Worker core 713, Worker HTTP 122, Worker F2 121, tooling 91, protocol 307, plugin 828 passed and 1 skipped. Worker tests printed expected simulated cancellation, network-loss, and SQLite failure diagnostics. Worker preflight passed.
 
 AC evidence: #1 remains unchecked because no supported early signal or direct network disconnect proof exists. #2 is checked based on pending-read/source-cancel ordering and unknown-cancellation uncertainty tests. #3 is checked based on full/range native framing tests and passing HTTP blob cases. Task stays In Progress for independent review. No live service, vault, Cloudflare change, deployment, or dependency change.
+
+Branch review finding closure
+
+The MINOR finding about repeated source work is addressed. The request-signal test now emits one bounded byte, waits on a barrier for the next source result, then returns EOF. It asserts exactly two source calls, no owner settlement before the barrier resolves, and only the `settled` owner outcome. This excludes the previous accidental overlength path. The Request remains synthetic and does not prove real client disconnect behavior.
+
+Final validation: `bunx vitest run --config vitest.config.ts test/read-response.test.ts` passed 30/30. `bun run docs:check` passed. `bun run check` passed with Worker core 713, Worker HTTP 122, Worker F2 121, tooling 91, protocol 307, and plugin 828 passed with 1 skipped. Worker preflight passed. Expected simulated cancellation, network-loss, and SQLite failure diagnostics appeared. OAB-36 remains In Progress. No live resource action occurred.
 <!-- SECTION:NOTES:END -->

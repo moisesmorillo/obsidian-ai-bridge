@@ -565,53 +565,58 @@ describe("owned read response", () => {
 			await Promise.resolve();
 		expect(released).toBe(true);
 	});
-	it("consumer cancellation does not abort the request signal while a fixed read waits", async () => {
+	it("consumer cancellation does not abort the request signal during a pending fixed read", async () => {
 		const requestController = new AbortController();
 		const request = new Request("https://read.invalid", {
 			signal: requestController.signal,
 		});
-		const work = barrier<IteratorResult<Uint8Array>>();
-		const started = barrier<void>();
-		const cancelStarted = barrier<void>();
-		const cancelled = barrier<void>();
-		let sourceCancelled = false;
+		const nextChunk = barrier<IteratorResult<Uint8Array>>();
+		const nextStarted = barrier<void>();
+		const finished: AdmissionCompletion[] = [];
+		let calls = 0;
 		let released = false;
 		const response = ownedReadResponse(
 			{
 				next: () => {
-					started.resolve();
-					return work.promise;
+					calls++;
+					if (calls === 1)
+						return Promise.resolve({
+							done: false,
+							value: new Uint8Array([1]),
+						});
+					nextStarted.resolve();
+					return nextChunk.promise;
 				},
-				cancel: () => {
-					sourceCancelled = true;
-					cancelStarted.resolve();
-					return cancelled.promise;
+				cancel: async () => {},
+			},
+			{
+				finish: async (completion) => {
+					finished.push(completion);
+					return { ok: true };
 				},
 			},
-			{ finish: async () => ({ ok: true }) },
 			() => {
 				released = true;
 			},
-			undefined,
+			{ headers: { "Content-Length": "1" } },
 			request.signal,
-			3,
+			1,
 		);
 		if (!response.body) throw new Error("Read response has no body");
 		const reader = response.body.getReader();
 		const reading = reader.read().catch(() => undefined);
-		await started.promise;
+		await nextStarted.promise;
 		const cancellation = reader.cancel();
 		await Promise.resolve();
 		const signalAbortedAfterConsumerCancellation = request.signal.aborted;
-		const sourceCancelledBeforeReadSettled = sourceCancelled;
-		work.resolve({ done: false, value: new Uint8Array([1, 2, 3]) });
-		await cancelStarted.promise;
-		expect(signalAbortedAfterConsumerCancellation).toBe(false);
-		expect(sourceCancelledBeforeReadSettled).toBe(false);
+		expect(finished).toEqual([]);
 		expect(released).toBe(false);
-		cancelled.resolve();
+		nextChunk.resolve({ done: true, value: undefined });
 		await Promise.all([reading, cancellation]);
+		expect(signalAbortedAfterConsumerCancellation).toBe(false);
 		expect(request.signal.aborted).toBe(false);
+		expect(calls).toBe(2);
+		expect(finished).toEqual(["settled"]);
 		expect(released).toBe(true);
 	});
 

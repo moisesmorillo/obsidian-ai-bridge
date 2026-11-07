@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-11-07T02:34:00Z'
-updated_date: '2026-11-07T03:05:00Z'
+updated_date: '2026-11-07T03:08:00Z'
 labels: []
 dependencies: []
 parent_task_id: OAB-11
@@ -21,12 +21,12 @@ Old informational entries keep Sync status at attention after conflict recovery.
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Each attention entry has Dismiss next to Open. Dismissal removes only that journal entry durably, without changes to files, operations, confirmations, or conflict copies.
-- [ ] #2 Dismiss all removes only conflict-copy-preserved, local-change-after-queued-publication, and local-text-met-newer-remote-content entries. Owner-action entries remain.
-- [ ] #3 Sync status returns to settled when no attention entry or pending queue remains.
-- [ ] #4 A dismissed entry returns only through a new event.
-- [ ] #5 Tests cover individual dismissal, the informational filter, reload persistence, and settled status.
-- [ ] #6 Open uses indexed TFile opening only. Config-directory, missing, and folder paths show a Notice without note creation. Desktop reveal uses only a supported API.
+- [x] #1 Each attention entry has Dismiss next to Open. Dismissal removes only that journal entry durably, without changes to files, operations, confirmations, or conflict copies.
+- [x] #2 Dismiss all removes only conflict-copy-preserved, local-change-after-queued-publication, and local-text-met-newer-remote-content entries. Owner-action entries remain.
+- [x] #3 Sync status returns to settled when no attention entry or pending queue remains.
+- [x] #4 A dismissed entry returns only through a new event.
+- [x] #5 Tests cover individual dismissal, the informational filter, reload persistence, and settled status.
+- [x] #6 Open uses indexed TFile opening only. Config-directory, missing, and folder paths show a Notice without note creation. Desktop reveal uses only a supported API.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -54,4 +54,6 @@ New-test negative control: temporarily skipped the journal.dismissAttention call
 GREEN: `cd apps/plugin && bun run test -- test/lifecycle.test.ts test/settings.test.ts test/status-panel.test.ts test/device-journal.test.ts` passed 4 files and 146 tests.
 The original RED evidence used direct `bun test`, not project Vitest. It also reported unrelated Obsidian module errors. Do not treat it as clean RED evidence for those earlier tests. The targeted negative control above is valid evidence for these new host tests.
 `bunx biome check --write apps/plugin/test/lifecycle.test.ts`, `bun run docs:check`, and `bun run check` passed after the fix. The full check passed all workspace type checks, tests, and builds. No vault or live service was run.
+
+Semantic review closure: task review at ac5e262 found no functional defect and one MINOR host-wiring test gap. Whole-branch review at ac5e262 confirmed the same bounded gap. Commit 5749b4e adds direct lifecycle host tests for individual and bulk success and persistence failure. Scoped TypeScript corrective review approved the fix with no new finding. Review scope covers all changed implementation, tests, version files, TSDoc, and this task. DeviceJournal owns serialized state transitions. The panel owns presentation. main.ts owns host wiring and safe indexed-file opening. No competing protocol schema or bulk policy exists. Latest validation: focused Vitest 146 passed. Full check passed lint, docs, all workspace type checks, tests, and builds. Plugin: 828 passed, 1 skipped. No live-vault or device proof is claimed. Human branch review is next.
 <!-- SECTION:NOTES:END -->

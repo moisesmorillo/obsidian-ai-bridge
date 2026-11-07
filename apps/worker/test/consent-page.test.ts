@@ -59,5 +59,24 @@ describe("consent page rendering", () => {
 		expect(html).toContain(
 			'<button class="consent-deny" name="decision" value="deny">Deny</button>',
 		);
+		const decisionValues = Array.from(
+			html.matchAll(
+				/<button\b[^>]*name="decision"[^>]*value="(approve|deny)"/g,
+			),
+			(match) => match[1],
+		);
+		expect(decisionValues).toEqual(["approve", "deny"]);
+		expect(html).toContain(
+			".consent-actions{display:flex;justify-content:flex-end;gap:10px}",
+		);
+		expect(html).toContain(".consent-deny{order:0;");
+		expect(html).toContain(
+			'.consent-actions button[name="decision"][value="approve"]{order:1',
+		);
+		expect(html).toContain(
+			"@media(max-width:560px){body.consent-page{padding:16px}",
+		);
+		expect(html).toContain(".consent-actions{flex-direction:column}");
+		expect(html).toContain(".consent-actions button{width:100%}");
 	});
 });

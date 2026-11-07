@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-11-07T21:08:00Z'
-updated_date: '2026-11-07T21:52:00Z'
+updated_date: '2026-11-07T22:02:00Z'
 labels:
   - worker
   - ui
@@ -96,4 +96,6 @@ Review closure: task review and whole-branch review used the code-review skill a
 Phase 3 RED evidence: `cd apps/worker && bunx vitest run --config vitest.config.ts test/consent-page.test.ts` failed as expected because `@worker/transport/owner-pages/consent` did not exist. It reported 0 tests and one failed suite. Focused existing OAuth baseline: `bun test apps/worker/test/f2/oauth.test.ts` could not load `cloudflare:test` under bun test. The first baseline command used an unmatched glob and was invalid. Vitest unit config baseline is pending dependency/runtime setup.
 
 Phase 3 implementation: Added the pure consent renderer and replaced only OAuth HTML assembly. The view model carries escaped client, host, redirect URI, scopes, handle, and optional request time. It reuses protocol scope ids and the shared stylesheet. RED: the new render test failed because the module did not exist. GREEN: `cd apps/worker && bunx vitest run --config vitest.config.ts test/consent-page.test.ts test/owner-pages.test.ts` passed 8 tests. `cd apps/worker && bunx vitest run --config vitest.f2.config.ts test/f2/oauth.test.ts` passed 32 tests. This Vitest command is the valid OAuth baseline; the earlier `bun test` command could not load `cloudflare:test`. `bun run docs:check` passed. `bun run check` passed: lint, docs, typecheck, tests, and dry-run builds exited 0. Test suites passed: Worker unit 54 files/761 tests, HTTP 9/132, F2 10/142, protocol 19/314, tooling 9/101, plugin 30/838 with 1 skipped. Worker tests printed expected injected failure and disconnect diagnostics but passed. `bun run --filter '@obsidian-ai-bridge/worker' preflight` passed with exit 0. Self-review found no actionable issue. No live requests or Cloudflare changes.
+
+Branch review F1 closure: Kept the Approve button first in DOM order so Enter in the client-name field submits `decision=approve`. CSS order places Deny left of Approve on desktop. The mobile column places Deny above Approve. Updated the consent snapshot. RED: `cd apps/worker && bunx vitest run --config vitest.config.ts test/consent-page.test.ts` failed because the rendered button order was `deny`, then `approve`, instead of the required `approve`, then `deny`. GREEN: `cd apps/worker && bunx vitest run --config vitest.config.ts test/consent-page.test.ts test/owner-pages.test.ts` passed 8 tests. `cd apps/worker && bunx vitest run --config vitest.f2.config.ts test/f2/oauth.test.ts` passed 32 tests. The form contract test now asserts submit order, exact form fields, desktop CSS order, and mobile stack order. `bun run docs:check` passed. `bun run check` passed. Worker unit tests passed 761/761, HTTP passed 132/132, and F2 passed 142/142. Protocol passed 314/314, tooling passed 101/101, and plugin passed 838 with 1 skipped. Worker preflight passed with exit 0. Worktree had no unrelated lockfile change. OAB-47 remains In Progress.
 <!-- SECTION:NOTES:END -->

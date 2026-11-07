@@ -4,7 +4,7 @@ title: Sync .obsidian settings categories
 status: In Progress
 assignee: []
 created_date: 2026-10-12 15:14
-updated_date: '2026-11-07T02:04:00Z'
+updated_date: '2026-11-07T02:05:00Z'
 labels: []
 dependencies: []
 documentation:
@@ -57,4 +57,6 @@ Independent task review and corrective review closed the raw callback, disabled-
 Acceptance: criteria 1, 2, 4, 5, and 7 have unit or integration-fake evidence and documentation. Criterion 4 retains the explicit R1 write limit. Criterion 3 stays unchecked because the supervisor canceled Mac-vault proof. Criterion 6 stays unchecked because owner mobile proof needs a future authorized release and device session. Revoked dev clients and closed dev vaults must not resume. The historical plugin-v0.1.0 trigger grants no current action authority. Earlier parent planning used guarded read-only dev-2 capability probes before the restriction. The parent made no vault writes or service calls. Workers used tests and fakes only. This clarifies the earlier note that said no such action occurred.
 
 The final reviewed feature commits rebased without conflicts onto origin/main 8dbd702. Equivalent current revisions are 7188fde, 3fee604, and f83a06e. The parent will run the complete check on this integration before publication. OAB-16 remains In Progress.
+
+Final integration check at 9803b18 on origin/main 8dbd702: bun run check exited 0. Vitest groups report 2165 passed, 1 skipped, 0 failed. Lint, docs, typechecks, tests, and builds all passed. The parent read the terminal summary. No service deployment or vault action occurred. The final branch review in Plannotator follows this check.
 <!-- SECTION:NOTES:END -->

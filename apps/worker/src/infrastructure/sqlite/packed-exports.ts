@@ -323,7 +323,13 @@ export class SqlitePackedExportStore implements PackedExportRepository {
 			let total = 0;
 			try {
 				while (total < length) {
-					const { done, value } = await reader.read();
+					let item: ReadableStreamReadResult<Uint8Array>;
+					try {
+						item = await reader.read();
+					} catch {
+						throw new PackedExportStorageFailure();
+					}
+					const { done, value } = item;
 					if (done || !value || value.byteLength > length - total)
 						throw new PackedExportSourceFailure();
 					chunks.push(value);
@@ -337,8 +343,9 @@ export class SqlitePackedExportStore implements PackedExportRepository {
 			return concatenate(chunks, total);
 		} catch (error) {
 			if (
-				error instanceof FileOperationDenied &&
-				error.failure.kind === "blob_storage_unavailable"
+				error instanceof PackedExportStorageFailure ||
+				(error instanceof FileOperationDenied &&
+					error.failure.kind === "blob_storage_unavailable")
 			)
 				throw new PackedExportStorageFailure();
 			throw new PackedExportSourceFailure();

@@ -1,12 +1,16 @@
 import { env, runInDurableObject } from "cloudflare:test";
+import { ExportManifestSchema } from "@obsidian-ai-bridge/protocol";
 import type { BlobContentStore } from "@worker/application/blobs";
 import {
+	PackedExportService,
 	PackedExportSourceFailure,
 	PackedExportStorageFailure,
 } from "@worker/application/export";
 import { FileOperationDenied } from "@worker/application/files";
+import { R2PackedArchiveStore } from "@worker/infrastructure/r2/packed-export";
 import { SqlitePackedExportStore } from "@worker/infrastructure/sqlite/packed-exports";
 import { initializeVaultStorage } from "@worker/infrastructure/sqlite/schema";
+import { unzipSync } from "fflate";
 import { describe, expect, it } from "vitest";
 
 const exportCreatedAt = "2026-11-07T03:00:00.000Z";
@@ -54,6 +58,88 @@ function seedExportText(
 		size,
 		value,
 	);
+}
+
+/** Verify stored ZIP records, central-directory offsets, data descriptors, and CRC values. */
+function verifyStoredZipStructure(
+	archive: Uint8Array,
+	members: Readonly<Record<string, Uint8Array>>,
+): void {
+	const view = new DataView(
+		archive.buffer,
+		archive.byteOffset,
+		archive.byteLength,
+	);
+	const endOffset = archive.byteLength - 22;
+	if (view.getUint32(endOffset, true) !== 0x0605_4b50)
+		throw new Error("Missing ZIP end record");
+	const count = view.getUint16(endOffset + 10, true);
+	const directorySize = view.getUint32(endOffset + 12, true);
+	const directoryOffset = view.getUint32(endOffset + 16, true);
+	if (directoryOffset + directorySize !== endOffset)
+		throw new Error(
+			"ZIP central directory offsets do not match the end record",
+		);
+	let offset = directoryOffset;
+	const decoder = new TextDecoder();
+	for (let index = 0; index < count; index += 1) {
+		if (view.getUint32(offset, true) !== 0x0201_4b50)
+			throw new Error("Missing ZIP central-directory record");
+		const crc = view.getUint32(offset + 16, true);
+		const compressedSize = view.getUint32(offset + 20, true);
+		const size = view.getUint32(offset + 24, true);
+		const nameLength = view.getUint16(offset + 28, true);
+		const extraLength = view.getUint16(offset + 30, true);
+		const commentLength = view.getUint16(offset + 32, true);
+		const localOffset = view.getUint32(offset + 42, true);
+		const name = decoder.decode(
+			archive.subarray(offset + 46, offset + 46 + nameLength),
+		);
+		const expected = members[name];
+		if (!expected) throw new Error(`Unexpected ZIP member: ${name}`);
+		if (
+			localOffset >= directoryOffset ||
+			view.getUint32(localOffset, true) !== 0x0403_4b50
+		)
+			throw new Error(`Invalid local-header offset for ${name}`);
+		const localNameLength = view.getUint16(localOffset + 26, true);
+		const localExtraLength = view.getUint16(localOffset + 28, true);
+		const localName = decoder.decode(
+			archive.subarray(localOffset + 30, localOffset + 30 + localNameLength),
+		);
+		if (
+			localName !== name ||
+			compressedSize !== expected.byteLength ||
+			size !== expected.byteLength
+		)
+			throw new Error(`ZIP member metadata differs for ${name}`);
+		const dataOffset = localOffset + 30 + localNameLength + localExtraLength;
+		const descriptorOffset = dataOffset + compressedSize;
+		if (
+			view.getUint32(descriptorOffset, true) !== 0x0807_4b50 ||
+			view.getUint32(descriptorOffset + 4, true) !== crc ||
+			view.getUint32(descriptorOffset + 8, true) !== size ||
+			view.getUint32(descriptorOffset + 12, true) !== size ||
+			crc32ForTest(expected) !== crc
+		)
+			throw new Error(`ZIP CRC or data descriptor differs for ${name}`);
+		offset += 46 + nameLength + extraLength + commentLength;
+	}
+	if (offset !== directoryOffset + directorySize)
+		throw new Error("ZIP central-directory size differs from its records");
+	if (Object.keys(members).length !== count)
+		throw new Error("ZIP member count differs from extracted files");
+}
+
+/** Calculate standard CRC-32 independently of the production ZIP encoder. */
+function crc32ForTest(bytes: Uint8Array): number {
+	let crc = 0xffff_ffff;
+	for (const byte of bytes) {
+		crc ^= byte;
+		for (let bit = 0; bit < 8; bit += 1)
+			crc = crc & 1 ? (crc >>> 1) ^ 0xedb8_8320 : crc >>> 1;
+	}
+	return (crc ^ 0xffff_ffff) >>> 0;
 }
 
 /** Provide a blob capability that rejects use in this text-only test. */
@@ -262,43 +348,233 @@ describe("SQLite packed export store", () => {
 			await expect(
 				store.readSourceRange(captured.id, 0, 1, 3),
 			).rejects.toBeInstanceOf(PackedExportSourceFailure);
+			blobs.head = async () => ({ hash, size: bytes.byteLength });
+			blobs.read = async () =>
+				new ReadableStream<Uint8Array>({
+					/** Emit a short immutable range to model source truncation. */
+					start(controller) {
+						controller.enqueue(new Uint8Array([9]));
+						controller.close();
+					},
+				});
+			await expect(
+				store.readSourceRange(captured.id, 0, 1, 3),
+			).rejects.toBeInstanceOf(PackedExportSourceFailure);
 		});
 	});
 });
 
+describe("packed export source retry", () => {
+	it("retries a failed pinned range at the same cursor and keeps its pin", async () => {
+		const stub = env.VAULTS.get(
+			env.VAULTS.idFromName(`packed-export-retry-${crypto.randomUUID()}`),
+		);
+		const epoch = "d".repeat(32);
+		const bytes = new Uint8Array([7, 0, 255, 13, 42]);
+		const hash = await hashExportBytes(bytes);
+		const key = `backups/${epoch}/${exportCreatedAt}.zip`;
+		const ranges: Array<{ start: number; end: number }> = [];
+		let failNextRead = true;
+		const blobs: BlobContentStore = {
+			/** Return exact pinned hash and size evidence before each range. */
+			async head() {
+				return { hash, size: bytes.byteLength };
+			},
+			/** Reject writes because the export retry test reads one captured blob. */
+			async putVerified() {
+				throw new Error("Unexpected blob write");
+			},
+			/** Fail one source stream, then emit the requested immutable range. */
+			async read(_hash, _size, range) {
+				if (!range) throw new Error("Expected a bounded blob range");
+				ranges.push(range);
+				if (failNextRead) {
+					failNextRead = false;
+					return new ReadableStream<Uint8Array>({
+						/** Reject once to model a transient R2 source read failure. */
+						start(controller) {
+							controller.error(new Error("Transient R2 range failure"));
+						},
+					});
+				}
+				return new ReadableStream<Uint8Array>({
+					/** Emit the exact pinned byte range on retry. */
+					start(controller) {
+						controller.enqueue(bytes.slice(range.start, range.end + 1));
+						controller.close();
+					},
+				});
+			},
+		};
+		await env.R2_BUCKET.delete(key);
+		try {
+			await runInDurableObject(stub, async (_instance, state) => {
+				initializeVaultStorage(
+					state.storage,
+					() => epoch,
+					() => 1,
+				);
+				state.storage.sql.exec(
+					"INSERT INTO files (path, path_key, rev, seq, hash, size, kind, content, blob_hash, renamed_to, deleted, updated_at, origin) VALUES ('assets/x.bin', 'assets/x.bin', 1, 1, ?, ?, 'blob', NULL, ?, NULL, 0, 1, 'test')",
+					hash,
+					bytes.byteLength,
+					hash,
+				);
+				state.storage.sql.exec(
+					"INSERT INTO revisions (path, rev, hash, size, kind, content, blob_hash, deleted, origin, at) VALUES ('assets/x.bin', 1, ?, ?, 'blob', NULL, ?, 0, 'test', 1)",
+					hash,
+					bytes.byteLength,
+					hash,
+				);
+				state.storage.sql.exec(
+					"UPDATE meta SET value = '1' WHERE key IN ('live_file_count', 'head_seq')",
+				);
+				const repository = new SqlitePackedExportStore(state.storage, blobs);
+				const service = new PackedExportService(
+					repository,
+					new R2PackedArchiveStore(env.R2_BUCKET),
+				);
+				expect((await service.start(exportCreatedAt, 1)).status).toBe("queued");
+				const initial = await repository.nextActive();
+				if (!initial) throw new Error("Queued export disappeared");
+
+				await service.runBatch();
+				const afterFailure = await repository.nextActive();
+				expect(afterFailure?.status).toBe("uploading");
+				expect(afterFailure?.zipState).toBe(initial.zipState);
+				expect(afterFailure?.pendingPart).toEqual(initial.pendingPart);
+				expect(
+					state.storage.sql
+						.exec("SELECT rev FROM export_pins WHERE export_id = ?", initial.id)
+						.toArray(),
+				).toEqual([{ rev: 1 }]);
+
+				await service.runBatch();
+				const afterRetry = await repository.nextActive();
+				expect(afterRetry?.zipState).not.toBe(initial.zipState);
+				expect(ranges).toEqual([
+					{ start: 0, end: bytes.byteLength - 1 },
+					{ start: 0, end: bytes.byteLength - 1 },
+				]);
+				expect(
+					state.storage.sql
+						.exec("SELECT rev FROM export_pins WHERE export_id = ?", initial.id)
+						.toArray(),
+				).toEqual([{ rev: 1 }]);
+
+				await service.runBatch();
+				expect(
+					(await repository.listCompleted()).map(({ status }) => status),
+				).toEqual(["complete"]);
+				expect(
+					state.storage.sql
+						.exec("SELECT * FROM export_pins WHERE export_id = ?", initial.id)
+						.toArray(),
+				).toEqual([]);
+			});
+		} finally {
+			await env.R2_BUCKET.delete(key);
+		}
+	});
+});
+
 describe("packed export alarm dispatch", () => {
-	it("continues queued work and exposes only the completed R2 object", async () => {
+	it("exports mixed text and blob files and validates the completed ZIP independently", async () => {
 		const stub = env.VAULTS.get(
 			env.VAULTS.idFromName(`packed-export-alarm-${crypto.randomUUID()}`),
 		);
-		const result = await runInDurableObject(stub, async (instance, state) => {
-			const started = await instance.startPackedExport(
-				"synthetic-owner",
-				"2026-11-07T03:00:00.000Z",
-			);
-			expect(started?.status).toBe("queued");
-			const alarm = await state.storage.getAlarm();
-			expect(alarm).not.toBeNull();
-			await instance.alarm();
-			const afterFirstStep =
-				await instance.listPackedExports("synthetic-owner");
-			expect(afterFirstStep).toEqual([]);
-			await instance.alarm();
-			const snapshots = await instance.listPackedExports("synthetic-owner");
-			expect(snapshots?.[0]?.status).toBe("complete");
-			if (!started) throw new Error("Owner export did not start");
-			return started.epoch;
+		const text = "packed text bytes 🌱\n";
+		const textBytes = new TextEncoder().encode(text);
+		const textHash = await hashExportBytes(textBytes);
+		const blobBytes = new TextEncoder().encode(
+			`independent archive blob ${crypto.randomUUID()}`,
+		);
+		const blobHash = await hashExportBytes(blobBytes);
+		const blobKey = `blobs/${blobHash}`;
+		const createdAt = "2026-11-07T03:00:00.000Z";
+		await env.R2_BUCKET.put(blobKey, blobBytes, {
+			sha256: Uint8Array.from(blobHash.match(/.{2}/g) ?? [], (byte) =>
+				Number.parseInt(byte, 16),
+			),
 		});
-		const archive = await stub.getPackedExportDownload(
-			"synthetic-owner",
-			result,
-			"2026-11-07T03:00:00.000Z",
-		);
-		if (!archive) throw new Error("Completed export has no archive stream");
-		const bytes = new Uint8Array(
-			await new Response(archive.body).arrayBuffer(),
-		);
-		expect(bytes.byteLength).toBe(archive.size);
-		expect(new DataView(bytes.buffer).getUint32(0, true)).toBe(0x04034b50);
+		let archiveKey: string | undefined;
+		try {
+			const result = await runInDurableObject(stub, async (instance, state) => {
+				seedExportText(state.storage, "notes/a.md", 1, text, textHash);
+				state.storage.sql.exec(
+					"INSERT INTO files (path, path_key, rev, seq, hash, size, kind, content, blob_hash, renamed_to, deleted, updated_at, origin) VALUES ('assets/x.bin', 'assets/x.bin', 1, 2, ?, ?, 'blob', NULL, ?, NULL, 0, 1, 'test')",
+					blobHash,
+					blobBytes.byteLength,
+					blobHash,
+				);
+				state.storage.sql.exec(
+					"INSERT INTO revisions (path, rev, hash, size, kind, content, blob_hash, deleted, origin, at) VALUES ('assets/x.bin', 1, ?, ?, 'blob', NULL, ?, 0, 'test', 1)",
+					blobHash,
+					blobBytes.byteLength,
+					blobHash,
+				);
+				state.storage.sql.exec(
+					"UPDATE meta SET value = '2' WHERE key IN ('live_file_count', 'head_seq')",
+				);
+				const started = await instance.startPackedExport(
+					"synthetic-owner",
+					createdAt,
+				);
+				expect(started?.status).toBe("queued");
+				if (!started) throw new Error("Owner export did not start");
+				archiveKey = `backups/${started.epoch}/${createdAt}.zip`;
+				expect(await state.storage.getAlarm()).not.toBeNull();
+				await instance.alarm();
+				expect(await instance.listPackedExports("synthetic-owner")).toEqual([]);
+				await instance.alarm();
+				const snapshots = await instance.listPackedExports("synthetic-owner");
+				expect(snapshots?.[0]?.status).toBe("complete");
+				const archive = await instance.getPackedExportDownload(
+					"synthetic-owner",
+					started.epoch,
+					createdAt,
+				);
+				if (!archive) throw new Error("Completed export has no archive stream");
+				return {
+					epoch: started.epoch,
+					bytes: new Uint8Array(await new Response(archive.body).arrayBuffer()),
+					size: archive.size,
+				};
+			});
+			expect(result.bytes.byteLength).toBe(result.size);
+			const files = unzipSync(result.bytes);
+			expect(Object.keys(files).sort()).toEqual([
+				"files/assets/x.bin",
+				"files/notes/a.md",
+				"manifest.json",
+			]);
+			const manifestBytes = files["manifest.json"];
+			if (!manifestBytes) throw new Error("ZIP manifest is missing");
+			const manifest = ExportManifestSchema.parse(
+				JSON.parse(new TextDecoder().decode(manifestBytes)),
+			);
+			expect(manifest.epoch).toBe(result.epoch);
+			expect(manifest.created_at).toBe(createdAt);
+			expect(manifest.files).toEqual([
+				{
+					path: "assets/x.bin",
+					rev: 1,
+					hash: blobHash,
+					size: blobBytes.byteLength,
+				},
+				{
+					path: "notes/a.md",
+					rev: 1,
+					hash: textHash,
+					size: textBytes.byteLength,
+				},
+			]);
+			expect(files["files/assets/x.bin"]).toEqual(blobBytes);
+			expect(files["files/notes/a.md"]).toEqual(textBytes);
+			verifyStoredZipStructure(result.bytes, files);
+		} finally {
+			await env.R2_BUCKET.delete(blobKey);
+			if (archiveKey) await env.R2_BUCKET.delete(archiveKey);
+		}
 	});
 });

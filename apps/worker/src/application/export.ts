@@ -323,7 +323,8 @@ export class PackedExportService {
 							offset,
 							length,
 						);
-					} catch {
+					} catch (error) {
+						if (error instanceof PackedExportStorageFailure) throw error;
 						throw new PackedExportSourceFailure();
 					}
 				},

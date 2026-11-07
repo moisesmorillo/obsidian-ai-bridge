@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-11-07T21:08:00Z'
-updated_date: '2026-11-07T21:18:00Z'
+updated_date: '2026-11-07T21:26:00Z'
 labels:
   - worker
   - ui
@@ -74,4 +74,6 @@ Check escaping at the handler boundary and URL encoding for hostile identifiers.
 Scope: owner brief S10 covers phase 1 only. The owner skips Plannotator for this branch. No live service calls or Cloudflare changes. No new dependency.
 
 Phase 1 implementation uses pure clients and grants renderers with escaped view-model values. Added CSS token and responsive assertions plus HTML snapshots. RED: focused render suite failed because owner page modules did not exist (exit 1). GREEN: focused render suite, F2 owner suite, docs:check, bun run check, and Worker preflight passed. Known limit: measurements, exports, and blob-GC keep their existing markup in phase 1; later phases remain open.
+
+Branch-review fix closures at cc287667caf133e1f3a3525bc51eac0500cc46ed: F1 closed by focused table-driven tests for No accepted grants, Revoked, Mixed active and revoked history, Active registry grant, and Remove absent/enabled/disabled. Tests assert CSRF field counts and values, POST actions, Rename/Revoke/Remove button text, name input, and maxlength. Focused render suite passed 5/5, owner.test passed 4/4, owner-cleanup.test passed 6/6. F2 closed by asserting base .owner-layout flex-wrap:wrap and adding that declaration while retaining 390px and 16px rules. Focused render suite passed 5/5. F3 closed by asserting grants output marks Clients with aria-current=location and updating renderOwnerShell TSDoc to describe page or containing-section selection. Updated snapshots; focused render suite passed 5/5. docs:check passed. bun run check passed, including lint, type checks, all suites, and dry-run build. Worker preflight passed (exit 0). Task remains In Progress for phases 2 and 3.
 <!-- SECTION:NOTES:END -->

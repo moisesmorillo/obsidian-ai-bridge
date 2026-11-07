@@ -22,6 +22,9 @@ describe("owner page rendering", () => {
 			"--danger: #FF9B9B",
 		])
 			expect(OWNER_CONSOLE_CSS).toContain(token);
+		expect(OWNER_CONSOLE_CSS).toContain(
+			".owner-layout{display:flex;flex-wrap:wrap",
+		);
 		expect(OWNER_CONSOLE_CSS).toContain("max-width: 390px");
 		expect(OWNER_CONSOLE_CSS).toContain("overflow-x:auto");
 		expect(OWNER_CONSOLE_CSS).toContain("padding:16px");
@@ -62,19 +65,109 @@ describe("owner page rendering", () => {
 		).toContain("No connected clients.");
 	});
 
-	it("renders grant states, encoded pagination, and empty state", () => {
-		expect(
-			renderGrantsPage({
-				clientId: "id&lt;&amp;",
-				encodedClientId: "id%3C%26",
-				nextCursor: "a&b",
-				encodedCursor: "a%26b",
-				grants: [
-					{ grantId: "grant&lt;&amp;", revoked: false, cleanupPending: false },
-					{ grantId: "grant-2", revoked: true, cleanupPending: true },
+	it("covers every client label and Remove form outcome", () => {
+		const cases = [
+			{
+				label: "No accepted grants",
+				generation: 0,
+				grantCount: 0,
+				activeGrantCount: 0,
+				cleanupPendingCount: 0,
+				remove: "absent",
+			},
+			{
+				label: "Revoked",
+				generation: 1,
+				grantCount: 1,
+				activeGrantCount: 0,
+				cleanupPendingCount: 0,
+				remove: "enabled",
+			},
+			{
+				label: "Mixed active and revoked history",
+				generation: 2,
+				grantCount: 2,
+				activeGrantCount: 1,
+				cleanupPendingCount: 0,
+				remove: "absent",
+			},
+			{
+				label: "Active registry grant",
+				generation: 1,
+				grantCount: 1,
+				activeGrantCount: 1,
+				cleanupPendingCount: 0,
+				remove: "absent",
+			},
+			{
+				label: "Revoked",
+				generation: 1,
+				grantCount: 1,
+				activeGrantCount: 0,
+				cleanupPendingCount: 1,
+				remove: "disabled",
+			},
+		] as const;
+		for (const row of cases) {
+			const html = renderClientsPage({
+				csrf: "csrf-test",
+				nextCursor: null,
+				encodedCursor: null,
+				clients: [
+					{
+						clientId: "client-1",
+						encodedId: "client-1",
+						name: "Client",
+						generation: row.generation,
+						grantCount: row.grantCount,
+						activeGrantCount: row.activeGrantCount,
+						cleanupPendingCount: row.cleanupPendingCount,
+					},
 				],
-			}),
-		).toMatchSnapshot();
+			});
+			expect(html).toContain(`Registry state: ${row.label}`);
+			expect(html).toContain(
+				'<input type="hidden" name="csrf" value="csrf-test">',
+			);
+			expect(html).toContain(
+				'<form method="post" action="/owner/clients/client-1/rename">',
+			);
+			expect(html).toContain(
+				'<label>Name <input name="name" maxlength="80" value="Client"></label>',
+			);
+			expect(html).toContain(
+				'<form method="post" action="/owner/clients/client-1/revoke">',
+			);
+			expect(html).toContain(">Rename</button>");
+			expect(html).toContain(">Revoke</button>");
+			const removeForm =
+				'<form method="post" action="/owner/clients/client-1/remove"><input type="hidden" name="csrf" value="csrf-test"><button';
+			if (row.remove === "absent") expect(html).not.toContain(removeForm);
+			if (row.remove === "enabled")
+				expect(html).toContain(`${removeForm}>Remove</button></form>`);
+			if (row.remove === "disabled")
+				expect(html).toContain(`${removeForm} disabled>Remove</button></form>`);
+			expect(html.match(/name="csrf" value="csrf-test"/g)).toHaveLength(
+				row.remove === "absent" ? 2 : 3,
+			);
+		}
+	});
+
+	it("renders grant states, encoded pagination, and empty state", () => {
+		const grantsHtml = renderGrantsPage({
+			clientId: "id&lt;&amp;",
+			encodedClientId: "id%3C%26",
+			nextCursor: "a&b",
+			encodedCursor: "a%26b",
+			grants: [
+				{ grantId: "grant&lt;&amp;", revoked: false, cleanupPending: false },
+				{ grantId: "grant-2", revoked: true, cleanupPending: true },
+			],
+		});
+		expect(grantsHtml).toContain(
+			'<a href="/owner/clients" aria-current="location">Clients</a>',
+		);
+		expect(grantsHtml).toMatchSnapshot();
 		expect(
 			renderGrantsPage({
 				clientId: "empty",

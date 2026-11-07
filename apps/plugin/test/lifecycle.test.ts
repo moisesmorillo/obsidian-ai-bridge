@@ -25,6 +25,14 @@ const host = vi.hoisted(() => ({
 	settingsData: null as unknown,
 	serverUrlChange: null as ((url: string) => Promise<void>) | null,
 	deviceNameChange: null as ((name: string) => Promise<void>) | null,
+	settingsSyncPolicyChange: null as
+		| ((policy: {
+				enabled: boolean;
+				appearance: boolean;
+				core: boolean;
+				communityPlugins: boolean;
+		  }) => Promise<void>)
+		| null,
 	syncActions: null as CapturedSyncActions | null,
 	saveDataAction: null as ((data: unknown) => Promise<void>) | null,
 	state: null as unknown,
@@ -203,6 +211,8 @@ vi.mock("../src/settings", () => ({
 			host.serverUrlChange = args[5] as (url: string) => Promise<void>;
 			host.deviceNameChange = args[6] as (name: string) => Promise<void>;
 			host.syncActions = args[10] as CapturedSyncActions;
+			host.settingsSyncPolicyChange =
+				args[11] as typeof host.settingsSyncPolicyChange;
 		}
 
 		/** Satisfies the composition status-refresh call. */
@@ -301,6 +311,7 @@ describe("AIBridgePlugin device-local lifecycle", () => {
 		host.settingsData = null;
 		host.serverUrlChange = null;
 		host.deviceNameChange = null;
+		host.settingsSyncPolicyChange = null;
 		host.syncActions = null;
 		host.saveDataAction = null;
 		host.state = null;
@@ -1370,6 +1381,109 @@ describe("AIBridgePlugin device-local lifecycle", () => {
 		expect(Reflect.get(plugin, "session")).toBeNull();
 	});
 
+	it("settles the active cycle before changing policy and fully hydrating new scope", async () => {
+		const plugin = new AIBridgePlugin({} as App, {} as PluginManifest);
+		await plugin.onload();
+		const events: string[] = [];
+		let releaseIdle: (() => void) | undefined;
+		const idle = new Promise<void>((resolve) => {
+			releaseIdle = resolve;
+		});
+		const controller = {
+			close: () => events.push("close"),
+			pause: () => events.push("pause"),
+			waitForIdle: async () => {
+				events.push("wait");
+				await idle;
+			},
+			resume: async () => {
+				events.push("resume");
+			},
+		};
+		Reflect.set(plugin, "desktopSync", controller);
+		Reflect.set(plugin, "sessionStatus", "connected");
+		Reflect.set(plugin, "composition", {
+			reconciliation: { reconcile: async () => events.push("reconcile") },
+			publication: {
+				scan: async () => events.push("scan"),
+				flush: async () => events.push("flush"),
+			},
+			dispose: () => events.push("dispose"),
+		});
+		const settings = Reflect.get(plugin, "settingsValue") as {
+			settingsSync: {
+				enabled: boolean;
+				appearance: boolean;
+				core: boolean;
+				communityPlugins: boolean;
+			};
+		};
+		const policy = {
+			enabled: true,
+			appearance: true,
+			core: false,
+			communityPlugins: true,
+		};
+		const transition = Reflect.get(plugin, "changeSettingsSyncPolicy").call(
+			plugin,
+			Reflect.get(plugin, "lifecycleGeneration"),
+			policy,
+		);
+		await Promise.resolve();
+		await Promise.resolve();
+		expect(settings.settingsSync.enabled).toBe(false);
+		expect(events).toEqual(["pause", "wait"]);
+		releaseIdle?.();
+		await transition;
+		expect(settings.settingsSync).toEqual(policy);
+		expect(events).toEqual([
+			"pause",
+			"wait",
+			"reconcile",
+			"scan",
+			"flush",
+			"resume",
+		]);
+		plugin.onunload();
+	});
+
+	it("persists settings sync switches with the master opt-in policy", async () => {
+		const plugin = new AIBridgePlugin({} as App, {} as PluginManifest);
+		await plugin.onload();
+		const saved: unknown[] = [];
+		host.saveDataAction = async (data) => {
+			saved.push(structuredClone(data));
+		};
+		const update = host.settingsSyncPolicyChange;
+		if (!update)
+			throw new Error("Settings sync policy callback was not registered");
+		await update({
+			enabled: true,
+			appearance: true,
+			core: false,
+			communityPlugins: true,
+		});
+		expect(saved).toEqual([
+			expect.objectContaining({
+				settingsSync: {
+					enabled: true,
+					appearance: true,
+					core: false,
+					communityPlugins: true,
+				},
+			}),
+		]);
+		expect(Reflect.get(plugin, "settingsValue")).toMatchObject({
+			settingsSync: {
+				enabled: true,
+				appearance: true,
+				core: false,
+				communityPlugins: true,
+			},
+		});
+		plugin.onunload();
+	});
+
 	it("persists the local device name with existing non-secret settings", async () => {
 		const plugin = new AIBridgePlugin({} as App, {} as PluginManifest);
 		await plugin.onload();
@@ -1385,12 +1499,24 @@ describe("AIBridgePlugin device-local lifecycle", () => {
 				serverUrl: "https://obsidian-bridge.mmorillo.dev",
 				deviceName: "oab-8.8 dev-1",
 				coexistenceMode: false,
+				settingsSync: {
+					enabled: false,
+					appearance: true,
+					core: true,
+					communityPlugins: true,
+				},
 			},
 		]);
 		expect(Reflect.get(plugin, "settingsValue")).toEqual({
 			serverUrl: "https://obsidian-bridge.mmorillo.dev",
 			deviceName: "oab-8.8 dev-1",
 			coexistenceMode: false,
+			settingsSync: {
+				enabled: false,
+				appearance: true,
+				core: true,
+				communityPlugins: true,
+			},
 		});
 		plugin.onunload();
 	});
@@ -1408,6 +1534,12 @@ describe("AIBridgePlugin device-local lifecycle", () => {
 			serverUrl: "https://saved-service.test",
 			deviceName: "oab-8.8 dev-2",
 			coexistenceMode: false,
+			settingsSync: {
+				enabled: false,
+				appearance: true,
+				core: true,
+				communityPlugins: true,
+			},
 		});
 		expect(Reflect.get(plugin, "syncPaused")).toBe(false);
 		plugin.onunload();

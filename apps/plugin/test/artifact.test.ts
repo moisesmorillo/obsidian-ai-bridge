@@ -30,7 +30,7 @@ describe("production plugin artifact", () => {
 		expect(manifest.id).toBe("ai-bridge");
 		expect(manifest.minAppVersion).toBe("1.13.0");
 		expect(manifest.isDesktopOnly).toBe(false);
-		expect(manifest.version).toBe("0.1.3");
+		expect(manifest.version).toBe("0.1.4");
 		expect(bundle).toMatch(/module\.exports|exports\./);
 
 		const runtimeImports = Object.values(metafile.outputs).flatMap(

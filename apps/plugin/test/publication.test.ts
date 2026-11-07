@@ -9,6 +9,7 @@ import {
 	DeviceJournal,
 	type DeviceJournalStorage,
 } from "../src/sync/device-journal";
+import type { SettingsSyncPolicy } from "../src/sync/enrollment-scope";
 import {
 	PublicationController,
 	type PublicationRead,
@@ -336,6 +337,7 @@ function createApplyEngine(
 	journal: DeviceJournal,
 	vault: TextVault,
 	remote: PublicationRemote,
+	settingsPolicy?: SettingsSyncPolicy,
 ): TextApplyEngine {
 	return new TextApplyEngine(
 		journal,
@@ -349,7 +351,7 @@ function createApplyEngine(
 				return authority.deleted ? null : authority.text;
 			},
 		},
-		{ deviceName: "Test Device" },
+		{ deviceName: "Test Device", settingsPolicy },
 	);
 }
 
@@ -360,18 +362,63 @@ async function openController(
 	remote = new MemoryRemote(),
 	now: () => number = () => 1_800_000_000_000,
 	recoverPrecondition: () => Promise<void> = async () => {},
+	settingsPolicy?: SettingsSyncPolicy,
 ) {
 	const journal = await DeviceJournal.open(storage);
 	await journal.resetEpoch(epoch);
 	const controller = new PublicationController(journal, vault, remote, {
-		applyEngine: createApplyEngine(journal, vault, remote),
+		applyEngine: createApplyEngine(journal, vault, remote, settingsPolicy),
 		now,
 		recoverPrecondition,
+		settingsPolicy,
 	});
 	return { controller, journal, remote, storage, vault };
 }
 
 describe("PublicationController", () => {
+	it("publishes first-enable settings as absent-precondition creates and holds disabled categories", async () => {
+		const policy: SettingsSyncPolicy = {
+			enabled: true,
+			appearance: true,
+			core: true,
+			communityPlugins: false,
+		};
+		const { controller, journal, remote, vault } = await openController(
+			new MemoryStorage(),
+			new MemoryVault(),
+			new MemoryRemote(),
+			() => 1_800_000_000_000,
+			async () => {},
+			policy,
+		);
+		const path = ".obsidian/app.json";
+		vault.binaryFiles.set(path, new Uint8Array([0, 255, 7]));
+		await controller.scan();
+		const queued = journal
+			.snapshot()
+			.pending_ops.find((item: PendingOperation) => item.path === path);
+		expect(queued).toMatchObject({ op: "put", state: "queued", path });
+
+		policy.core = false;
+		await controller.flush();
+		expect(remote.blobWrites).toHaveLength(0);
+		expect(
+			journal
+				.snapshot()
+				.pending_ops.find((item: PendingOperation) => item.path === path)
+				?.state,
+		).toBe("queued");
+
+		policy.core = true;
+		await controller.flush();
+		expect(remote.blobWrites).toHaveLength(1);
+		expect(remote.blobWrites[0]).toMatchObject({
+			path,
+			precondition: { kind: "absent" },
+		});
+		controller.close();
+	});
+
 	it("retains publication intent while origin proof remains unresolved", async () => {
 		const { controller, journal, vault } = await openController();
 		const path = "notes/pending-origin-proof.md";

@@ -1,5 +1,25 @@
 import { classifyFilePath, PathSchema } from "@obsidian-ai-bridge/protocol";
 
+/** Per-device opt-in switches for the three supported Obsidian settings categories. */
+export interface SettingsSyncPolicy {
+	/** Master gate; category switches have no effect while false. */
+	enabled: boolean;
+	/** Includes appearance.json, themes, and snippets. */
+	appearance: boolean;
+	/** Includes the four core settings files. */
+	core: boolean;
+	/** Includes plugin manifests, code, styles, and data. */
+	communityPlugins: boolean;
+}
+
+/** Safe persisted defaults. Devices must opt in before any settings path is admitted. */
+export const DEFAULT_SETTINGS_SYNC_POLICY: SettingsSyncPolicy = {
+	enabled: false,
+	appearance: true,
+	core: true,
+	communityPlugins: true,
+};
+
 /** Server-matched raw-byte ceiling for inline Markdown and Canvas enrollment. */
 const INLINE_TEXT_LIMIT_BYTES = 1_000_000;
 /** Maximum raw file size accepted by the blob protocol. */
@@ -28,6 +48,7 @@ const ATTACHMENT_EXTENSIONS = new Set([
 export function classifyEnrollmentPath(
 	path: string,
 	size: number,
+	settingsPolicy: SettingsSyncPolicy = DEFAULT_SETTINGS_SYNC_POLICY,
 ): "text" | "blob" | "excluded" | "unsupported" {
 	if (
 		!PathSchema.safeParse(path).success ||
@@ -36,8 +57,15 @@ export function classifyEnrollmentPath(
 	)
 		return "excluded";
 	const segments = path.split("/");
+	if (segments[0] === ".obsidian") {
+		if (isHardExcludedSettingsPath(segments)) return "excluded";
+		const category = settingsCategory(segments);
+		if (!settingsPolicy.enabled || !category || !settingsPolicy[category])
+			return "excluded";
+		return size > BLOB_LIMIT_BYTES ? "unsupported" : "blob";
+	}
 	if (
-		[".obsidian", ".trash", ".ai-bridge"].includes(segments[0] ?? "") ||
+		[".trash", ".ai-bridge"].includes(segments[0] ?? "") ||
 		segments.at(-1) === ".DS_Store" ||
 		segments.at(-1)?.toLowerCase().endsWith(".icloud")
 	)
@@ -50,4 +78,51 @@ export function classifyEnrollmentPath(
 	const extension = path.slice(path.lastIndexOf(".") + 1).toLowerCase();
 	if (!ATTACHMENT_EXTENSIONS.has(extension)) return "excluded";
 	return size > BLOB_LIMIT_BYTES ? "unsupported" : "blob";
+}
+
+/** Returns the enabled category for one exact supported settings path shape. */
+function settingsCategory(
+	segments: string[],
+): keyof Omit<SettingsSyncPolicy, "enabled"> | null {
+	const relative = segments.slice(1);
+	if (
+		relative.length === 1 &&
+		[
+			"appearance.json",
+			"app.json",
+			"core-plugins.json",
+			"hotkeys.json",
+			"types.json",
+			"community-plugins.json",
+		].includes(relative[0] ?? "")
+	)
+		return relative[0] === "appearance.json"
+			? "appearance"
+			: relative[0] === "community-plugins.json"
+				? "communityPlugins"
+				: "core";
+	if (relative[0] === "themes" || relative[0] === "snippets")
+		return relative.length > 1 ? "appearance" : null;
+	if (
+		relative[0] === "plugins" &&
+		relative.length === 3 &&
+		["manifest.json", "main.js", "styles.css", "data.json"].includes(
+			relative[2] ?? "",
+		)
+	)
+		return "communityPlugins";
+	return null;
+}
+
+/** Keeps workspace, AI Bridge, cache, graph, and dependency trees outside all categories. */
+function isHardExcludedSettingsPath(segments: string[]): boolean {
+	const relative = segments.slice(1);
+	const first = relative[0] ?? "";
+	return (
+		/^workspace.*\\.json$/i.test(first) ||
+		first === "graph.json" ||
+		first.startsWith("cache") ||
+		(relative[0] === "plugins" && relative[1] === "ai-bridge") ||
+		relative.includes("node_modules")
+	);
 }

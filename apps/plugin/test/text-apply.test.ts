@@ -4200,6 +4200,79 @@ describe("TextApplyEngine", () => {
 		});
 	});
 
+	it("does not apply a remote settings entry while its category is disabled", async () => {
+		const path = ".obsidian/app.json";
+		const localBytes = new Uint8Array([3, 0, 255]);
+		vault.binaryFiles.set(path, localBytes.slice());
+		await journal.resetEpoch(epoch);
+		engine = makeEngine(
+			journal,
+			vault,
+			{
+				read: async () => {
+					throw new Error("Disabled settings must not read remote bytes");
+				},
+			},
+			{
+				deviceName: "Test Device",
+				settingsPolicy: {
+					enabled: true,
+					appearance: false,
+					core: false,
+					communityPlugins: false,
+				},
+			},
+		);
+
+		await engine.apply(
+			{ ...change, path, hash: await hash("remote bytes") },
+			"blob",
+		);
+
+		expect(vault.binaryFiles.get(path)).toEqual(localBytes);
+		expect(journal.snapshot().pending_apply).toEqual([]);
+	});
+
+	it("preserves different first-enable settings outside .obsidian with their byte suffix", async () => {
+		const path = ".obsidian/plugins/tasks/main.js";
+		const localBytes = new Uint8Array([0, 255, 7]);
+		const remoteBytes = new Uint8Array([9, 0, 250]);
+		const remoteHash = await hashBytes(remoteBytes);
+		vault.binaryFiles.set(path, localBytes.slice());
+		await journal.resetEpoch(epoch);
+		const policy = {
+			enabled: true,
+			appearance: false,
+			core: false,
+			communityPlugins: true,
+		};
+		engine = makeEngine(
+			journal,
+			vault,
+			{
+				read: async () => null,
+				readResolvedBlob: async () => ({
+					kind: "blob",
+					bytes: remoteBytes.slice(),
+					epoch,
+					rev: 2,
+					hash: remoteHash,
+				}),
+			},
+			{ deviceName: "Test Device", settingsPolicy: policy },
+		);
+
+		await engine.apply({ ...change, path, hash: remoteHash }, "blob");
+
+		expect(vault.binaryFiles.get(path)).toEqual(remoteBytes);
+		const conflict = [...vault.binaryFiles.entries()].find(([candidate]) =>
+			candidate.startsWith("AI Bridge settings conflicts/"),
+		);
+		expect(conflict?.[0]).toMatch(/\.js\.txt$/);
+		expect(conflict?.[1]).toEqual(localBytes);
+		expect(conflict?.[0]).not.toContain(".obsidian/");
+	});
+
 	it("preserves bytes changed before the atomic process callback", async () => {
 		vault.files.set(change.path, "base bytes");
 		journal = await seedBase(

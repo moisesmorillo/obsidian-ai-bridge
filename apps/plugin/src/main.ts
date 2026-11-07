@@ -30,7 +30,11 @@ import {
 	DEVICE_JOURNAL_ATTENTION_REASON,
 	DeviceJournal,
 } from "@plugin/sync/device-journal";
-import { classifyEnrollmentPath } from "@plugin/sync/enrollment-scope";
+import {
+	classifyEnrollmentPath,
+	DEFAULT_SETTINGS_SYNC_POLICY,
+	type SettingsSyncPolicy,
+} from "@plugin/sync/enrollment-scope";
 import type { DeleteResponseDiagnostic } from "@plugin/sync/remote-text";
 import {
 	projectSyncStatus,
@@ -40,6 +44,32 @@ import type { App, ObsidianProtocolData, PluginManifest } from "obsidian";
 
 /** Default canonical HTTPS service origin stored as a non-secret plugin setting. */
 const DEFAULT_SERVER_URL = "https://obsidian-bridge.mmorillo.dev";
+
+/** Narrows a saved settings document without trusting its runtime keys. */
+function isUnknownRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** Rehydrates only known boolean switches and preserves safe defaults for older settings. */
+function normalizeSettingsSyncPolicy(value: unknown): SettingsSyncPolicy {
+	if (!isUnknownRecord(value)) return { ...DEFAULT_SETTINGS_SYNC_POLICY };
+	const saved = value;
+	return {
+		enabled: saved.enabled === true,
+		appearance:
+			typeof saved.appearance === "boolean"
+				? saved.appearance
+				: DEFAULT_SETTINGS_SYNC_POLICY.appearance,
+		core:
+			typeof saved.core === "boolean"
+				? saved.core
+				: DEFAULT_SETTINGS_SYNC_POLICY.core,
+		communityPlugins:
+			typeof saved.communityPlugins === "boolean"
+				? saved.communityPlugins
+				: DEFAULT_SETTINGS_SYNC_POLICY.communityPlugins,
+	};
+}
 /** Owns device-local enrollment and starts serialized synchronization after connection restore. */
 export default class AIBridgePlugin extends Plugin {
 	/** Active journal for this plugin lifecycle, or null when unavailable. */
@@ -82,6 +112,7 @@ export default class AIBridgePlugin extends Plugin {
 		serverUrl: DEFAULT_SERVER_URL,
 		deviceName: resolveDeviceName(undefined),
 		coexistenceMode: false,
+		settingsSync: { ...DEFAULT_SETTINGS_SYNC_POLICY },
 	};
 	/** Safe enrollment status shown in settings. */
 	private sessionStatus: DeviceSessionStatus = "disconnected";
@@ -114,6 +145,9 @@ export default class AIBridgePlugin extends Plugin {
 					this.settingsValue.serverUrl = stored.serverUrl;
 				this.settingsValue.coexistenceMode = stored.coexistenceMode === true;
 				this.settingsValue.deviceName = resolveDeviceName(stored.deviceName);
+				this.settingsValue.settingsSync = normalizeSettingsSyncPolicy(
+					stored.settingsSync,
+				);
 			}
 			const journal = await DeviceJournal.open(
 				new ObsidianDeviceStorage(this.app),
@@ -272,6 +306,7 @@ export default class AIBridgePlugin extends Plugin {
 						});
 					},
 				},
+				(policy) => this.changeSettingsSyncPolicy(generation, policy),
 			);
 			this.addSettingTab(this.settingsTab);
 		} catch {
@@ -446,6 +481,54 @@ export default class AIBridgePlugin extends Plugin {
 		);
 	}
 
+	/** Settles the active cycle before a new settings policy can admit or block effects. */
+	private changeSettingsSyncPolicy(
+		lifecycle: number,
+		policy: SettingsSyncPolicy,
+	): Promise<void> {
+		const update = ++this.settingsUpdateGeneration;
+		const save = this.settingsSaveTail.then(async () => {
+			if (!this.ownsSettingsUpdate(lifecycle, update))
+				throw new Error("Settings sync policy update is stale");
+			const controller = this.desktopSync;
+			const shouldResume =
+				controller !== null &&
+				this.sessionStatus === "connected" &&
+				!this.syncPaused &&
+				!this.syncRevoked;
+			controller?.pause();
+			await controller?.waitForIdle();
+			if (!this.ownsSettingsUpdate(lifecycle, update))
+				throw new Error("Settings sync policy update is stale");
+			try {
+				await this.saveData({ ...this.settingsValue, settingsSync: policy });
+			} catch (error) {
+				if (shouldResume) await controller?.resume();
+				throw error;
+			}
+			Object.assign(this.settingsValue.settingsSync, policy);
+			this.vaultSummary = null;
+			try {
+				const composition = this.composition;
+				if (composition) {
+					await composition.reconciliation.reconcile();
+					await composition.publication.scan();
+					await composition.publication.flush();
+				}
+			} catch (error) {
+				this.reportSyncFailure(error);
+			}
+			if (shouldResume && controller === this.desktopSync)
+				await controller?.resume();
+			this.settingsTab?.refreshStatus();
+		});
+		this.settingsSaveTail = save.then(
+			() => undefined,
+			() => undefined,
+		);
+		return save;
+	}
+
 	/** Saves the mode change and rejects exit while captured event work remains. */
 	private changeCoexistenceMode(
 		lifecycle: number,
@@ -516,10 +599,14 @@ export default class AIBridgePlugin extends Plugin {
 		this.composition = this.createSyncComposition();
 		this.coexistence = new CoexistenceController(
 			this.journal,
-			new ObsidianTextVault(this.app.vault),
+			new ObsidianTextVault(
+				this.app.vault,
+				() => this.settingsValue.settingsSync,
+			),
 			() => this.settingsValue.coexistenceMode,
 			Date.now,
 			this.coexistenceEffectFence ?? undefined,
+			this.settingsValue.settingsSync,
 		);
 		/** Stops all sync effects while owner confirmation remains durable. */
 		const runCycle = async (): Promise<void> => {
@@ -581,6 +668,7 @@ export default class AIBridgePlugin extends Plugin {
 			isEffectBlocked: () => this.isCoexistenceEffectBlocked(),
 			onCaptureEvent: (event) =>
 				this.coexistence?.observe(event) ?? Promise.resolve(false),
+			settingsPolicy: this.settingsValue.settingsSync,
 			onEvent: (event) =>
 				this.composition?.publication.observe(event) ?? Promise.resolve(),
 			host: {
@@ -605,6 +693,7 @@ export default class AIBridgePlugin extends Plugin {
 				},
 			},
 			(error) => this.reportSyncFailure(error),
+			this.settingsValue.settingsSync,
 		);
 		this.visibilityHandler = () => {
 			this.runSyncAction(
@@ -648,6 +737,7 @@ export default class AIBridgePlugin extends Plugin {
 					this.runSyncAction(() => this.handleRevocation());
 				},
 				isEffectBlocked: () => this.isCoexistenceEffectBlocked(),
+				settingsPolicy: this.settingsValue.settingsSync,
 				onConflictCopy: (path) =>
 					this.notice(`AI Bridge kept your version as ${path}`),
 			},
@@ -780,7 +870,12 @@ export default class AIBridgePlugin extends Plugin {
 		return this.app.vault
 			.getFiles()
 			.filter(
-				(file) => classifyEnrollmentPath(file.path, file.stat.size) === scope,
+				(file) =>
+					classifyEnrollmentPath(
+						file.path,
+						file.stat.size,
+						this.settingsValue.settingsSync,
+					) === scope,
 			)
 			.map((file) => file.path);
 	}

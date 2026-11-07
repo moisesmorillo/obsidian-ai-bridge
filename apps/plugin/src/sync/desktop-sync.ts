@@ -1,12 +1,19 @@
-import { classifyEnrollmentPath } from "@plugin/sync/enrollment-scope";
+import {
+	classifyEnrollmentPath,
+	DEFAULT_SETTINGS_SYNC_POLICY,
+	type SettingsSyncPolicy,
+} from "@plugin/sync/enrollment-scope";
 import type { PublicationEvent } from "@plugin/sync/publication";
 
 /** Excludes canonical path failures before they enter the retry queue. */
-function isTerminallyExcluded(event: PublicationEvent): boolean {
+function isTerminallyExcluded(
+	event: PublicationEvent,
+	settingsPolicy: SettingsSyncPolicy,
+): boolean {
 	return (
-		classifyEnrollmentPath(event.path, 0) === "excluded" ||
+		classifyEnrollmentPath(event.path, 0, settingsPolicy) === "excluded" ||
 		(event.type === "rename" &&
-			classifyEnrollmentPath(event.to, 0) === "excluded")
+			classifyEnrollmentPath(event.to, 0, settingsPolicy) === "excluded")
 	);
 }
 
@@ -41,6 +48,8 @@ export interface DesktopSyncOptions {
 	onEvent?(event: PublicationEvent): Promise<void>;
 	/** Owns platform timer and foreground-state capabilities. */
 	host: DesktopSyncHost;
+	/** Shared path policy for terminal event admission. */
+	settingsPolicy?: SettingsSyncPolicy;
 	/** Receives fixed-policy failures without forcing a successful cycle. */
 	onError?(error: unknown): void;
 	/** Refreshes presentation when local intent or lifecycle activity changes. */
@@ -152,7 +161,14 @@ export class DesktopSyncController {
 			this.options.onError?.(error);
 			return;
 		}
-		if (captured || this.closed || isTerminallyExcluded(event)) {
+		if (
+			captured ||
+			this.closed ||
+			isTerminallyExcluded(
+				event,
+				this.options.settingsPolicy ?? DEFAULT_SETTINGS_SYNC_POLICY,
+			)
+		) {
 			this.workActive = false;
 			this.options.onStateChanged?.();
 			return;
@@ -273,7 +289,13 @@ export class DesktopSyncController {
 						const captured =
 							(await this.options.onCaptureEvent?.(event)) ?? false;
 						if (this.closed || this.paused || this.isSuspended()) return;
-						if (!captured && !isTerminallyExcluded(event))
+						if (
+							!captured &&
+							!isTerminallyExcluded(
+								event,
+								this.options.settingsPolicy ?? DEFAULT_SETTINGS_SYNC_POLICY,
+							)
+						)
 							await this.options.onEvent?.(event);
 						this.events.shift();
 					}

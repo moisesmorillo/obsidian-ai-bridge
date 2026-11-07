@@ -387,6 +387,56 @@ describe("ReconciliationController", () => {
 		context = await setup();
 	});
 
+	it("hydrates newly enabled settings from the manifest after the cursor passed its feed row", async () => {
+		const path = ".obsidian/app.json";
+		const bytes = new Uint8Array([0, 255, 7]);
+		const hashValue = await hashBytes(bytes);
+		context.remote.entries = [
+			{
+				path,
+				etag: formatETag(epoch, 2),
+				seq: 2,
+				hash: hashValue,
+				kind: "blob",
+				deleted: false,
+			},
+		];
+		context.remote.blobPaths.add(path);
+		context.remote.blobs.set(2, bytes.slice());
+		await context.journal.resetEpoch(epoch);
+		await context.journal.setCursor(epoch, 4);
+		const policy = {
+			enabled: true,
+			appearance: false,
+			core: true,
+			communityPlugins: false,
+		};
+		const engine = new TextApplyEngine(
+			context.journal,
+			context.vault,
+			context.remote,
+			{ deviceName: "test", settingsPolicy: policy },
+		);
+		context.controller = new ReconciliationController(
+			context.journal,
+			engine,
+			context.vault,
+			context.remote,
+			() => false,
+			policy,
+		);
+
+		await context.controller.reconcile();
+
+		expect(context.vault.binaryFiles.get(path)).toEqual(bytes);
+		expect(context.journal.snapshot().base[path]).toEqual({
+			deleted: false,
+			rev: 2,
+			hash: hashValue,
+		});
+		expect(context.journal.snapshot().cursor).toBe(4);
+	});
+
 	it("runs generated AC-13 recovery and reports real controller cleanup failure", async () => {
 		const eligiblePaths = [
 			"oab-8.8/controlled-one.md",

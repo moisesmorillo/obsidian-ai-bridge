@@ -5,6 +5,7 @@ import type {
 import type { CredentialStorage } from "@plugin/infrastructure/credential-storage";
 import { PluginSettingTab, Setting } from "@plugin/obsidian-api";
 import { type SyncStatusActions, SyncStatusPanel } from "@plugin/status-panel";
+import type { SettingsSyncPolicy } from "@plugin/sync/enrollment-scope";
 import type { SyncStatusProjection } from "@plugin/sync/sync-status";
 import { type App, Platform, type Plugin } from "obsidian";
 
@@ -15,6 +16,8 @@ export interface AIBridgeSettings {
 	deviceName: string;
 	/** Explicit F4 switch; absent old settings values default to false. */
 	coexistenceMode: boolean;
+	/** Device-local settings category scope; the master gate defaults off. */
+	settingsSync: SettingsSyncPolicy;
 }
 
 /** Accepts a nonblank string up to 80 characters and preserves it exactly.
@@ -56,6 +59,9 @@ export class AIBridgeSettingTab extends PluginSettingTab {
 		private readonly getStatus: () => DeviceSessionStatus,
 		private readonly syncProjection?: () => SyncStatusProjection | null,
 		private readonly syncActions?: SyncStatusActions,
+		private readonly onSettingsSyncPolicyChange: (
+			policy: SettingsSyncPolicy,
+		) => Promise<void> = async () => undefined,
 	) {
 		super(app, plugin);
 	}
@@ -175,6 +181,7 @@ export class AIBridgeSettingTab extends PluginSettingTab {
 					.setButtonText("Cancel")
 					.onClick(() => this.getSession().cancel()),
 			);
+		this.renderSettingsSyncControls(containerEl);
 		this.statusElement = containerEl.createEl("p", {
 			text: `Status: ${this.getStatus()}`,
 		});
@@ -190,6 +197,60 @@ export class AIBridgeSettingTab extends PluginSettingTab {
 		this.renderSyncStatus();
 		if (this.credentials.warning)
 			containerEl.createEl("p", { text: this.credentials.warning });
+	}
+
+	/** Renders the master opt-in and category switches with persisted failure rollback. */
+	private renderSettingsSyncControls(containerEl: HTMLElement): void {
+		new Setting(containerEl)
+			.setName("Sync settings categories")
+			.setDesc(
+				"Every device must opt in. Reload Obsidian after settings sync changes.",
+			)
+			.addToggle((toggle) => {
+				toggle.setValue(this.settings.settingsSync.enabled);
+				toggle.onChange(async (enabled) => {
+					const next = { ...this.settings.settingsSync, enabled };
+					try {
+						await this.onSettingsSyncPolicyChange(next);
+						Object.assign(this.settings.settingsSync, next);
+						this.settingsGeneration += 1;
+						this.display();
+					} catch {
+						toggle.setValue(this.settings.settingsSync.enabled);
+					}
+				});
+			});
+		this.renderSettingsCategory(containerEl, "Appearance", "appearance");
+		this.renderSettingsCategory(containerEl, "Core", "core");
+		this.renderSettingsCategory(
+			containerEl,
+			"Community plugins",
+			"communityPlugins",
+		);
+	}
+
+	/** Persists one category switch and keeps subcategory controls inert behind the master gate. */
+	private renderSettingsCategory(
+		containerEl: HTMLElement,
+		name: string,
+		category: keyof Omit<SettingsSyncPolicy, "enabled">,
+	): void {
+		new Setting(containerEl)
+			.setName(name)
+			.setDesc("Sync this category only while Sync settings categories is on.")
+			.addToggle((toggle) => {
+				toggle.setValue(this.settings.settingsSync[category]);
+				toggle.setDisabled(!this.settings.settingsSync.enabled);
+				toggle.onChange(async (enabled) => {
+					const next = { ...this.settings.settingsSync, [category]: enabled };
+					try {
+						await this.onSettingsSyncPolicyChange(next);
+						Object.assign(this.settings.settingsSync, next);
+					} catch {
+						toggle.setValue(this.settings.settingsSync[category]);
+					}
+				});
+			});
 	}
 
 	/** Updates the visible status with a fixed enum value and no OAuth response data. */

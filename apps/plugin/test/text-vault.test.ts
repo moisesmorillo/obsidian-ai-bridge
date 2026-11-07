@@ -308,6 +308,49 @@ async function recoveryHash(bytes: Uint8Array): Promise<string> {
 }
 
 describe("ObsidianTextVault", () => {
+	it("reads and writes exact selected unindexed settings bytes through the adapter", async () => {
+		const fake = makeRecoveryHostVault();
+		fake.directories.add(".obsidian");
+		fake.directories.add(".obsidian/plugins");
+		fake.directories.add(".obsidian/plugins/test");
+		const initial = new Uint8Array([0, 255, 7]);
+		fake.hidden.set(".obsidian/plugins/test/main.js", {
+			bytes: initial.slice(),
+			mtime: 1,
+		});
+		const policy = {
+			enabled: true,
+			appearance: false,
+			core: false,
+			communityPlugins: true,
+		};
+		const vault = new ObsidianTextVault(
+			fake.host as unknown as Vault,
+			() => policy,
+		);
+		const observed = await vault.readBinary(".obsidian/plugins/test/main.js");
+		expect(observed).toEqual(initial);
+		expect(await vault.list()).toContain(".obsidian/plugins/test/main.js");
+		expect(
+			await vault.createBinary(".obsidian/plugins/test/MAIN.js", initial),
+		).toBe(false);
+
+		const replacement = new Uint8Array([255, 0, 9]);
+		expect(
+			await vault.modifyBinary(".obsidian/plugins/test/main.js", replacement),
+		).toBe(true);
+		expect(await vault.readBinary(".obsidian/plugins/test/main.js")).toEqual(
+			replacement,
+		);
+		expect(
+			await vault.createBinary(".obsidian/plugins/test/data.json", initial),
+		).toBe(true);
+		expect(await vault.readBinary(".obsidian/plugins/test/data.json")).toEqual(
+			initial,
+		);
+		expect(await vault.readBinary(".obsidian/workspace.json")).toBeNull();
+	});
+
 	it("keeps remote tombstone apply out of coexistence confirmations", async () => {
 		const fake = makeHostVault();
 		const epoch = "b".repeat(32);

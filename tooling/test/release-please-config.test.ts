@@ -208,7 +208,7 @@ describe("Release Please configuration", () => {
 			).toBe(true);
 			if (includeWorkerRelease)
 				expect(actionOutputs.workerCreated).toBe("true");
-			expect(syncJob).toContain('startswith("apps/plugin/")');
+			expect(syncJob).toContain('endswith("--components--ai-bridge")');
 		},
 	);
 });

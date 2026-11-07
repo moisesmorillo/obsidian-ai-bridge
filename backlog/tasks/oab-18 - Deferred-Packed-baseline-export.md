@@ -1,11 +1,11 @@
 ---
 id: OAB-18
 title: Packed baseline export
-status: In Progress
+status: Done
 assignee:
   - '@pi'
 created_date: 2026-10-12 15:14
-updated_date: '2026-11-07T06:03:00Z'
+updated_date: '2026-11-07T06:06:00Z'
 labels:
   - deferred
   - trigger-based
@@ -23,12 +23,12 @@ Owner order activates packed snapshots after the owner left iCloud. Save a resto
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Stream a ZIP with bounded memory and no whole-vault byte buffer.
-- [ ] #2 Define the manifest and owner operation shapes in packages/protocol.
-- [ ] #3 Enforce owner-only access, browser CSRF checks, and Access-protected downloads.
-- [ ] #4 Make each epoch and UTC timestamp export idempotent.
-- [ ] #5 Test text and blob files, R2 failures, and snapshot listing.
-- [ ] #6 List snapshot time and size in the console and document a new-vault restore procedure.
+- [x] #1 Stream a ZIP with bounded memory and no whole-vault byte buffer.
+- [x] #2 Define the manifest and owner operation shapes in packages/protocol.
+- [x] #3 Enforce owner-only access, browser CSRF checks, and Access-protected downloads.
+- [x] #4 Make each epoch and UTC timestamp export idempotent.
+- [x] #5 Test text and blob files, R2 failures, and snapshot listing.
+- [x] #6 List snapshot time and size in the console and document a new-vault restore procedure.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -93,4 +93,12 @@ Round-2 review correction (2026-11-07):
 - Focused validation passed: packed-export native tests (12/12), export service/store tests (3/3), schema upgrade tests (7/7), and Worker typecheck. Documentation now records chunk bounds, parameter-safe writes, retention fallback bytes, and projection behavior. OAB-18 remains In Progress for parent review.
 
 Final round-2 validation (2026-11-07): `bun run docs:check` passed. Worker preflight passed with exit code 0. `bun run check` passed after clearing the new chunk table in test vault setup and updating the generated-DDL count. Results: 2,214 tests passed and 1 skipped across tooling, protocol, plugin, and Worker tests. The check also passed lint, documentation, all workspace typechecks, and dry-run builds. Worktree diff check passed. No live service or vault was used.
+
+Review closure: task review at 65203af approved transient-source retry and independent ZIP extraction fixes. Whole-branch review at 65203af found SQLite row limits, SQL binding limits, pruned current revisions, and unbounded metadata projections. Scoped correction review at dab7a53 approved all four with native regression evidence. The lost-completion recovery test also passes. Full check: 2214 tests pass, one skipped. Worker preflight passes. Production CPU duration and account tier remain unverified. No live service access, deployment, or Cloudflare resource change occurred.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Added resumable owner-only packed snapshots in the existing R2 bucket. Canonical manifests capture exact live revisions and bytes. Bounded multipart batches, chunked SQLite state, protected downloads, timestamp replay, and retention-safe source capture preserve the snapshot. Native tests cover mixed archives, retries, platform bounds, pruning, and completion recovery. Task and whole-branch review findings are closed. Restore guidance covers a new local vault, not service import.
+<!-- SECTION:FINAL_SUMMARY:END -->

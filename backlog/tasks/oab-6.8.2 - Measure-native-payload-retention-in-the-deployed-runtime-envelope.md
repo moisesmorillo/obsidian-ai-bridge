@@ -5,7 +5,7 @@ status: Deferred
 assignee:
   - '@pi'
 created_date: 2026-10-20 23:27
-updated_date: '2026-11-07T03:35:00Z'
+updated_date: '2026-11-07T13:22:00Z'
 labels: []
 dependencies: []
 references:
@@ -35,7 +35,29 @@ Trigger: measure native retention in a real deployment when OAB-6.8 runtime-enve
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-Execute approved S3 item 3 with existing-deployment read paths only. Inspect available telemetry and auth without creating clients or grants. Observe concurrency 1, 2, and 4 with at most three repetitions, slow consumption, and cancellation. Bound each request at 30 seconds. Record response bytes, time, status, runtime facts, and limits in task notes. Do not upload, deploy, change resources, or infer native memory from timing. Leave unmet criteria open and return the task to Deferred when native attribution is unavailable. Review the notes and publish PR 3 if task changes need a branch.
+S4 local native-retention measurement
+
+Goal: record local workerd RSS observations without production content operations, then keep deployed native-retention claims deferred.
+Spec: docs/spec.md sections 6.5 and 12. The S4 brief supersedes prior read-only-only workload instructions.
+
+Owner decisions
+- Production work is limited to the parent-run existing Access GET observations. No enrollment, token, OAuth client, content request, upload, resource change, or deployment.
+- Local load uses Wrangler `dev --local`, a temporary config without the unsupported compatibility flag, the unchanged synthetic HTTP fixture, isolated persistence, and loopback only.
+- Use real application HTTP routes, Vault DO RPCs, and local R2. Payloads stay within route limits and the 32 MiB application allowance.
+- Keep scripts and samples outside the tracked tree. No production source, dependency, test fixture, or configuration changes.
+- Keep all acceptance criteria unchecked unless evidence proves them. Return the task to Deferred.
+- Do not push or open a PR in this run.
+
+Checklist
+- [x] Inspect local bootstrap composition and production telemetry observations.
+- [x] Run upload, RPC result, slow-consumption, and cancellation requests at concurrency 1, 2, and 4. Record the preliminary cancellation admission failure and isolated repetitions.
+- [x] Sample the identified local workerd RSS at a fixed cadence. Record phases, sample gaps, peaks, post-workload observations, and limits.
+- [x] Record runtime and compatibility settings. Separate payload byte counts from process RSS and unavailable attribution.
+- [x] Run `bun run check`. No retained tooling requires Worker preflight.
+- [ ] Parent reviewer gate remains external to this worker task.
+- [x] Commit only the permitted OAB-6.8.2 task update. Do not push or open a PR.
+
+Review focus: local-only storage, synthetic identity, process identity, sample coverage, route limits, cancellation outcomes, RPC attribution, and unchecked acceptance claims.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -80,4 +102,65 @@ This needs live measurements and authorized native telemetry.
 The overnight scope allows tests and fakes only.
 
 Keep Deferred.
+
+S4 local measurement and production observation, 2026-11-07 UTC. Status: intentionally Deferred. All four acceptance criteria remain unchecked.
+
+## Runtime and composition
+
+Production read-only observation was run by the parent under the owner-approved Orca Access session. This worker did not access production, Cloudflare remote resources, personal vaults, or external services. The local load run used only `127.0.0.1` and separate Wrangler persistence under `/tmp`.
+
+Local composition used the real application Worker routes, the unchanged `apps/worker/test/fixtures/http-worker.ts` synthetic identity and real Vault Durable Object RPC adapter, local SQLite, and local R2 emulation. The fixture supplied fixed synthetic client/grant identities with `vault:read`, `vault:write`, and `vault:delete`. No credential or OAuth flow was used. The alternate local config set `main` to `test/fixtures/http-worker.ts`, configured only local `VAULTS` and local R2 bindings, used compatibility date `2025-07-12`, and omitted all compatibility flags. The normal production config still names `unhandled_rejection_after_microtask_checkpoint`; no tracked production config or source changed.
+
+Pinned local versions: Wrangler `4.45.0`; workerd `1.20251011.0`; Bun `1.4.4`; Node `v26.13.0`. A first bootstrap attempt with the globally installed Wrangler `4.156.2` / workerd `1.20261102.1` failed during DO initialization with `Unexpected vault table: __miniflare_do_name`. The package-pinned Wrangler `4.45.0` composition started and served the application successfully. This runtime difference limits comparison to the project-pinned local runtime, not a current deployed engine.
+
+## Local workload and measurement method
+
+Each workload used actual HTTP upload or read routes backed by DO RPC and local R2 where applicable. Workload groups ran at concurrency 1, 2, and 4, with three successful repetitions per mode and concurrency. Modes were: binary upload (`PUT /v1/files/*.bin`, 1,500,000 bytes, status 201); inline RPC result (`GET /v1/files/*.md`, 900,000 ASCII content bytes in the response, status 200); slow blob consumption (`GET /v1/files/*.bin`, 1,500,000 bytes, 15 ms delay between body reads, status 200); and cancellation (`GET /v1/files/*.bin`, read one chunk, then cancel the client reader, status 200). Inline content was below the 1,000,000-byte text route limit. Binary payloads were below the 25,000,000-byte route limit. Peak concurrent application payload accounting was at most 4 × 1,500,000 = 6,000,000 bytes, below 32 MiB. This accounting is not RSS and does not include protocol or native copies. The response content and binary bodies were not logged.
+
+The upload, RPC-result, and slow-consumption groups ran in one local workerd process. A separate fixed-cadence sampler used `ps -p <identified-workerd-pid> -o rss=,etime=` every 250 ms. It positively identified the workerd serving the local port, PID `77286`. The raw samples contain 295 readings from `2026-11-07T13:13:25.816Z` through `13:14:44.254Z`. Observed gaps were 254–275 ms, median 267 ms. Baseline before seed/workload: 42,912 KiB. Observed peak: 50,608 KiB. The last observed post-workload sample was 50,608 KiB; RSS stayed about 50,544–50,608 KiB during the extended idle observation. No native release time can be inferred from a process RSS plateau.
+
+Cancellation reads did not release enough local read admission for repeated runs in the same local state. An initial concurrency-2 batch after prior cancellation requests returned HTTP 429 for one request. To measure the requested concurrency levels without hidden carryover, each of the three reported cancellation repetitions at concurrency 1, 2, and 4 used a new local Wrangler process and isolated `/tmp` persistence directory. All 21 reported requests returned HTTP 200. The separate cancellation sweep recorded 144 RSS samples across nine local workerd processes; measured range was 2,448–44,560 KiB, with a 250 ms target cadence. One process startup had a 2.49 s sample gap. These restart-separated RSS readings are not comparable as a single-process baseline/release series.
+
+Per-request elapsed summaries (median / maximum milliseconds; nearest rank is not used):
+
+| Mode | Concurrency | Requests | Bytes per request | Status | Median / max ms |
+| --- | ---: | ---: | ---: | --- | ---: |
+| Upload | 1 | 3 | 1,500,000 | 201 | 32.120 / 35.829 |
+| Upload | 2 | 6 | 1,500,000 | 201 | 36.667 / 45.862 |
+| Upload | 4 | 12 | 1,500,000 | 201 | 43.614 / 53.829 |
+| Inline RPC result | 1 | 3 | 900,000 content bytes | 200 | 39.229 / 47.707 |
+| Inline RPC result | 2 | 6 | 900,000 content bytes | 200 | 28.074 / 49.686 |
+| Inline RPC result | 4 | 12 | 900,000 content bytes | 200 | 56.207 / 82.059 |
+| Slow blob read | 1 | 3 | 1,500,000 | 200 | 713.620 / 815.986 |
+| Slow blob read | 2 | 6 | 1,500,000 | 200 | 786.435 / 891.290 |
+| Slow blob read | 4 | 12 | 1,500,000 | 200 | 846.308 / 935.532 |
+| Cancel after first chunk | 1 | 3 | 28,672; 36,864; 53,248 | 200 | 8.148 / 8.411 |
+| Cancel after first chunk | 2 | 6 | 65,536; 57,344; 65,536; 65,536; 65,536; 40,960 | 200 | 11.252 / 13.195 |
+| Cancel after first chunk | 4 | 12 | 65,536; 36,864; 49,152; 53,248; 65,536; 12,288; 24,576; 32,768; 65,536; 16,384; 24,576; 32,768 | 200 | 15.765 / 16.695 |
+
+The successful upload/RPC/slow/cancel workloads ran in 3 repetitions at each requested concurrency. A preliminary same-process cancellation attempt also ran at concurrency 2 and returned one 429; it is reported as a setup finding, not included in the three isolated-state cancellation repetitions. The actual request response bytes or consumed bytes are payload accounting only, not simultaneous memory. Cancellation client byte counts show only the first chunk consumed, not network transfer, server cancellation propagation, or release of native owners.
+
+## Production read-only observations supplied by parent
+
+At about 13:08 UTC, `/owner/measurements` JSON reported partial fresh daily coverage from UTC day `1794009600000` to `1794096000000`, observed interval `1794009607451`–`1794056688925`, 965 REST requests, 0 MCP requests, and 4 daily telemetry clients. Feed response preparation p95 was 152 ms with 476/476 retained samples. DO SQLite allocated bytes were 3,170,304 and referenced R2 blob bytes were 14,783,444. Those values describe storage counters, not memory. Two page reads observed separate responding isolate IDs with 0 active reads, 4 available slots, 4-slot limit, 60,000 ms deadline, and 0 expired reads. `/owner/clients` showed 3 current clients, each with one active registry grant and no cleanup pending. The four daily telemetry clients and three current registry clients are different sets.
+
+The production configuration source declares compatibility date `2025-07-12` and flag `unhandled_rejection_after_microtask_checkpoint`. These source settings do not identify the deployed engine build. Production pages expose no native buffers, transport-retained RPC results, native response fragments, heap, RSS, native release timing, or total process memory. Feed timings exclude lazy body production, network transfer, plugin apply, and publication delay. Isolate counters reset on restart and do not cover all isolates. No production load experiment occurred.
+
+## Accounting, acceptance, and limits
+
+Payload bytes and RSS were recorded as separate measures. Local RSS is total observed workerd process RSS. It cannot attribute application-owned data, native buffers, transport-retained RPC results, response fragments, allocator retention, or GC. The production storage counters also do not measure runtime memory. The local RSS numbers are not the deployed runtime envelope and are not a native release bound. The 32 MiB figure remains an application-only allowance and does not establish total platform headroom.
+
+Keep all acceptance criteria unchecked. AC1 requires deployed native-retention evidence, which neither read-only production telemetry nor local synthetic requests provide. AC2 asks to separate five memory categories that these interfaces and process samples do not expose. AC3 lacks a deployed engine version, native memory peaks, and native release evidence. AC4 cannot use these local observations to set a deployed total-memory envelope. Remaining trigger: owner-authorized deployed workload plus native telemetry that measures the missing categories and release observations.
+
+## Reproduction artifacts and commands
+
+No measurement tooling or tests remain in the tracked tree. Raw artifacts and temporary scripts are under `/tmp`: `/tmp/oab-s4-workload.mjs`, `/tmp/oab-s4-cancel.mjs`, `/tmp/oab-s4-cancel-once.mjs`, `/tmp/oab-s4-cancel-sweep.sh`, `/tmp/oab-s4-results.csv`, `/tmp/oab-s4-phases.csv`, `/tmp/oab-s4-rss.csv`, `/tmp/oab-s4-cancel-restarts.csv`, `/tmp/oab-s4-cancel-restarts-rss.csv`, `/tmp/oab-s4-cancel-restarts-phases.csv`, and `/tmp/oab-s4-wrangler*.log`.
+
+To repeat with fresh local state, create `apps/worker/wrangler.s4-local.jsonc` with name `oab-s4-local-only`, compatibility date `2025-07-12`, main `test/fixtures/http-worker.ts`, DO binding `VAULTS` to `Vault`, local R2 binding `R2_BUCKET` named `oab-s4-local-only`, and migration tag `v1` with new SQLite class `Vault`. Do not copy compatibility flags. From `apps/worker`, run `./node_modules/.bin/wrangler dev --local --config wrangler.s4-local.jsonc --persist-to /tmp/oab-s4-local-state --ip 127.0.0.1 --port 18787 --inspector-port 19387 --show-interactive-dev-session false`. Identify only the `workerd` whose command line has `socket-addr=entry=127.0.0.1:18787`, sample its RSS using `ps` every 250 ms, and run `node /tmp/oab-s4-workload.mjs`. Cancellation repetitions need fresh local processes and separate persistence paths as shown in `/tmp/oab-s4-cancel-sweep.sh`. Stop local processes and remove the alternate config after use. Never add the alternate config to Git.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Completed the local S4 workload against real application HTTP routes, Durable Object RPCs, and local R2 with synthetic identity. Captured raw workerd RSS and added parent-supplied production read-only observations. All four acceptance criteria remain unchecked because neither source provides production native-memory attribution or a release bound. The task remains Deferred until owner-authorized native telemetry and workload evidence exist.
+<!-- SECTION:FINAL_SUMMARY:END -->

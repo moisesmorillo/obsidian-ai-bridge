@@ -323,13 +323,9 @@ export class SqlitePackedExportStore implements PackedExportRepository {
 			let total = 0;
 			try {
 				while (total < length) {
-					let item: ReadableStreamReadResult<Uint8Array>;
-					try {
-						item = await reader.read();
-					} catch {
+					const { done, value } = await reader.read().catch(() => {
 						throw new PackedExportStorageFailure();
-					}
-					const { done, value } = item;
+					});
 					if (done || !value || value.byteLength > length - total)
 						throw new PackedExportSourceFailure();
 					chunks.push(value);

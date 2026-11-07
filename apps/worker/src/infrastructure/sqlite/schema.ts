@@ -7,8 +7,8 @@ import {
 	drizzle,
 } from "drizzle-orm/durable-sqlite";
 
-/** Persisted schema version; version 7 adds owner registry and browser-state tables. */
-export const SCHEMA_VERSION = 7;
+/** Persisted schema version; version 8 adds resumable packed-export state. */
+export const SCHEMA_VERSION = 8;
 
 /** Narrow FTS5 DDL unsupported by the relational model and kept at its engine-specific seam. */
 const FTS_SCHEMA = `CREATE VIRTUAL TABLE files_fts USING fts5(
@@ -23,15 +23,34 @@ const OWNER_REGISTRY_SCHEMA = [
 	`CREATE TABLE owner_csrf_states (state TEXT PRIMARY KEY NOT NULL, owner_subject TEXT NOT NULL, browser_id TEXT NOT NULL, expires_at INTEGER NOT NULL);`,
 ] as const;
 
-/** Frozen bootstrap DDL, including F2 owner tables. */
+/** Relational DDL introduced only by schema 8. */
+const PACKED_EXPORT_SCHEMA = RELATIONAL_SCHEMA_STATEMENTS.filter((statement) =>
+	/^CREATE\s+(?:UNIQUE\s+)?(?:TABLE|INDEX)\s+[`"]?packed_export/.test(
+		statement,
+	),
+);
+
+/** Schema-7 relational DDL excludes the additive schema-8 export tables and indexes. */
+const RELATIONAL_SCHEMA_7 = RELATIONAL_SCHEMA_STATEMENTS.filter(
+	(statement) => !PACKED_EXPORT_SCHEMA.includes(statement),
+);
+
+/** Frozen schema-7 bootstrap DDL, including F2 owner tables. */
+const SCHEMA_7 = [
+	...RELATIONAL_SCHEMA_7,
+	FTS_SCHEMA,
+	...OWNER_REGISTRY_SCHEMA,
+].join("\n");
+
+/** Frozen schema-6 DDL used only to validate an exact supported upgrade source. */
+const SCHEMA_6 = [...RELATIONAL_SCHEMA_7, FTS_SCHEMA].join("\n");
+
+/** Current bootstrap DDL includes every versioned relational migration and owner table. */
 export const SCHEMA = [
 	...RELATIONAL_SCHEMA_STATEMENTS,
 	FTS_SCHEMA,
 	...OWNER_REGISTRY_SCHEMA,
 ].join("\n");
-
-/** Historical schema-6 DDL used only to validate an exact supported upgrade source. */
-const SCHEMA_6 = [...RELATIONAL_SCHEMA_STATEMENTS, FTS_SCHEMA].join("\n");
 
 /** Platform catalog table used to persist native Durable Object alarm state. */
 const ALARM_METADATA_TABLE = "_cf_METADATA";
@@ -98,7 +117,7 @@ function isCanonicalSafeInteger(value: string, nonNegative: boolean): boolean {
 }
 
 /**
- * Creates a fresh schema-7 vault, upgrades an exact schema-6 store, or validates schema 7.
+ * Creates a fresh schema-8 vault, upgrades exact schema-6 or schema-7 stores, or validates schema 8.
  * Older and unsupported stores fail without repair, replacement, or epoch changes.
  * All DDL and initial metadata writes run synchronously in one Durable SQLite transaction.
  * @param storage - The native storage belonging to this vault Durable Object.
@@ -149,13 +168,17 @@ export function initializeVaultStorage(
 			readAndValidateMetadata(tx, "6");
 			validateExpectedObjects(actualObjects, SCHEMA_6);
 			upgradeSchema6(tx);
-			readAndValidateMetadata(tx, String(SCHEMA_VERSION));
-			const upgradedObjects = new Map(
-				tx
-					.all<CatalogObject>("SELECT type, name, sql FROM sqlite_master")
-					.map((object) => [object.name, object]),
-			);
-			validateExpectedObjects(upgradedObjects, SCHEMA);
+			validateCurrentSchema(tx, SCHEMA_7, "7");
+			upgradeSchema7(tx);
+			validateCurrentSchema(tx, SCHEMA, String(SCHEMA_VERSION));
+			return;
+		}
+		if (version === "7") {
+			rejectUnexpectedCatalogObjects(catalogObjects, tableKinds, SCHEMA_7);
+			readAndValidateMetadata(tx, "7");
+			validateExpectedObjects(actualObjects, SCHEMA_7);
+			upgradeSchema7(tx);
+			validateCurrentSchema(tx, SCHEMA, String(SCHEMA_VERSION));
 			return;
 		}
 		rejectUnexpectedCatalogObjects(catalogObjects, tableKinds, SCHEMA);
@@ -255,9 +278,30 @@ function readSchemaVersion(tx: VaultTransaction): string {
 /** Upgrade one exact schema-6 store without changing its epoch or existing rows. */
 function upgradeSchema6(tx: VaultTransaction): void {
 	for (const statement of OWNER_REGISTRY_SCHEMA) tx.run(sql.raw(statement));
+	tx.run(sql`UPDATE meta SET value = '7' WHERE key = 'schema_version'`);
+}
+
+/** Upgrade one exact schema-7 store with packed-export tables and no identity changes. */
+function upgradeSchema7(tx: VaultTransaction): void {
+	for (const statement of PACKED_EXPORT_SCHEMA) tx.run(sql.raw(statement));
 	tx.run(
 		sql`UPDATE meta SET value = ${String(SCHEMA_VERSION)} WHERE key = 'schema_version'`,
 	);
+}
+
+/** Validate catalog objects and metadata after one atomic version upgrade. */
+function validateCurrentSchema(
+	tx: VaultTransaction,
+	schema: string,
+	version: string,
+): void {
+	readAndValidateMetadata(tx, version);
+	const actualObjects = new Map(
+		tx
+			.all<CatalogObject>("SELECT type, name, sql FROM sqlite_master")
+			.map((object) => [object.name, object]),
+	);
+	validateExpectedObjects(actualObjects, schema);
 }
 
 /** Parse controlled frozen DDL to compare exact catalog names, kinds, and definitions. */

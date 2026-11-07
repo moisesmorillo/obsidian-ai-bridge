@@ -12,6 +12,9 @@ export function clearTestVault(storage: DurableObjectStorage): void {
 		for (const statement of [
 			"DROP TABLE IF EXISTS mutation_claims",
 			"DROP TABLE IF EXISTS operation_admissions",
+			"DROP TABLE IF EXISTS packed_export_chunks",
+			"DROP TABLE IF EXISTS packed_export_files",
+			"DROP TABLE IF EXISTS packed_exports",
 			"DROP TABLE IF EXISTS export_pins",
 			"DROP TABLE IF EXISTS owner_csrf_states",
 			"DROP TABLE IF EXISTS client_grants",

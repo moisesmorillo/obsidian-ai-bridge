@@ -34,7 +34,7 @@ End-to-end encryption; sync while iOS/iPadOS suspends Obsidian; automatic text m
 | Plan | Workers Paid accepted |
 | Legacy | Repo and git history restarted from scratch; worker `obsidian-bridge.mmorillo.dev`, bucket `obsidian-ai-bridge` and KV wiped; nothing migrated |
 | Conflict policy | **Option B**: the confirmed remote operation stands; pending local content is preserved as a conflict copy at a new path; nothing is resurrected automatically |
-| Backup destination | None in v1 (owner decision 2026-11-05). A Cloudflare-native copy is an open option before F6 (§11, §16) |
+| Backup destination | Packed current-file snapshots in the existing private R2 bucket after owner activation (§11). Historical exports and automatic schedule remain out of scope |
 | Phase F4 | Kept: real vault on the Mac with iCloud still active, plugin only on the Mac, max two weeks, in *coexistence mode* (§7.10) |
 | Tracking | Backlog.md for tasks and deferred items (label `deferred`); no milestones, no separate roadmap |
 | Agent instructions | One `AGENTS.md` at the repo root; no `CLAUDE.md`, Claude Code reads `AGENTS.md` natively |
@@ -65,7 +65,7 @@ Mac / iPad / iPhone                     ChatGPT / claude.ai / Claude Code
      ├─ /mcp             MCP server (same operations, same authorization)
      ├─ /authorize /token /register   OAuth 2.1 (workers-oauth-provider, grants in KV)
      ├─ /owner/*         owner console (behind Cloudflare Access)
-     └─ (no cron: no backup export in v1, §11)
+     └─ (no cron: owner starts a packed baseline in the console; Vault alarms resume it, §11)
                               ▼
             Durable Object "Vault" (SQLite) — sole authority
             files, revisions, changes, FTS, receipts, clients, revocations
@@ -93,7 +93,7 @@ Mac / iPad / iPhone                     ChatGPT / claude.ai / Claude Code
 
 ### 5.1 Identity
 
-- **Vault epoch** (`epoch`): a **random 128-bit generation id** (32 hex chars) assigned when a vault is created and again by every restore (§11.4). It is never derived from a previous epoch, so two restores of the same backup never share ETags. Every ETag and every feed cursor carries it. A mismatch means "re-hydrate".
+- **Vault epoch** (`epoch`): a **random 128-bit generation id** (32 hex chars) assigned when a vault is created and again by every service-vault restore (§11.4). A local packed-baseline restore does not change the service epoch. It is never derived from a previous epoch, so two service restores of the same backup never share ETags. Every ETag and every feed cursor carries it. A mismatch means "re-hydrate".
 - **Path**: Unicode NFC, forward slashes, no leading slash, no `.`/`..` segments, no control characters, ≤ 512 bytes, ≤ 32 segments. `path_key = toLowerCase(NFC(path))` using JavaScript Unicode case mapping. **Uniqueness is on `path_key` among non-deleted rows**, because APFS on macOS/iOS is case-insensitive by default. A rename that changes only case keeps the same `path_key` and is allowed.
 - **Revision** (`rev`, integer): per-path, strictly increasing for the lifetime of the vault, **never reset** across delete/recreate. A recreated path continues from its tombstone's rev. A rename assigns the destination `to_rev = max(last rev ever recorded for to, 0) + 1`; it never inherits the source's numbering, so `(path, rev)` stays unique in `revisions`. The source gets a tombstone `from_rev = from.rev + 1`.
 - **ETag**: `"<epoch>.<rev>"` (quoted string). `If-Match` and `If-None-Match` use it. **Every client-facing surface (REST, MCP, feed, manifest) exchanges ETags, never bare `rev`**, so an operation formed before a restore is rejected by epoch everywhere.
@@ -165,9 +165,31 @@ CREATE TABLE revoked_grants (grant_id TEXT PRIMARY KEY, at INTEGER NOT NULL);   
 
 CREATE TABLE blob_refs (hash TEXT PRIMARY KEY, size INTEGER NOT NULL, first_ref_at INTEGER NOT NULL);
 CREATE TABLE exports (id TEXT PRIMARY KEY, started_at INTEGER, finished_at INTEGER, status TEXT, head_seq INTEGER, calls_this_hour INTEGER, hour_started_at INTEGER, commit_sha TEXT, error TEXT);
+
+CREATE TABLE packed_exports (
+  id TEXT PRIMARY KEY NOT NULL, epoch TEXT NOT NULL, created_at TEXT NOT NULL,
+  head_seq INTEGER NOT NULL, status TEXT NOT NULL, object_key TEXT NOT NULL,
+  started_at INTEGER NOT NULL, finished_at INTEGER, size INTEGER, upload_id TEXT,
+  zip_state TEXT NOT NULL, manifest_size INTEGER NOT NULL,
+  completed_parts TEXT NOT NULL, error TEXT,
+  CHECK (status IN ('queued','uploading','complete','failed'))
+);
+CREATE UNIQUE INDEX packed_exports_identity ON packed_exports(epoch, created_at);
+CREATE TABLE packed_export_files (
+  export_id TEXT NOT NULL, ordinal INTEGER NOT NULL, path TEXT NOT NULL,
+  rev INTEGER NOT NULL, hash TEXT NOT NULL, size INTEGER NOT NULL,
+  source_type TEXT NOT NULL CHECK (source_type IN ('revision_text','revision_blob','snapshot_text','snapshot_blob')),
+  PRIMARY KEY (export_id, ordinal)
+);
+CREATE UNIQUE INDEX packed_export_files_path ON packed_export_files(export_id, path);
+CREATE TABLE packed_export_chunks (
+  export_id TEXT NOT NULL, kind TEXT NOT NULL CHECK (kind IN ('manifest','pending','source')),
+  ordinal INTEGER NOT NULL, data BLOB NOT NULL CHECK (length(data) <= 1,000,000),
+  PRIMARY KEY (export_id, kind, ordinal)
+);
 ```
 
-The canonical schema version is 6. Versions 1 through 5 fail closed without writes. The service does not migrate or repair unsupported storage. Version 4 adds `history_revisions_bytes`, `history_receipts_bytes`, `history_changes_bytes`, `history_pressure_bytes`, and `history_reduced` metadata. Version 5 adds `retention_category` and `retention_pruned_feed_seq`. Version 6 adds nullable `files.renamed_to` for the immediate destination of a source rename tombstone. Fresh version-6 vaults initialize all history counters and the feed boundary to zero. Existing stores need an explicit future migration and receive no backfill or repair in this version.
+The canonical schema version is 8. Versions 1 through 5 fail closed without writes. The service upgrades exact version-6 and version-7 stores in one transaction and rejects other unsupported storage without repair. Version 4 adds `history_revisions_bytes`, `history_receipts_bytes`, `history_changes_bytes`, `history_pressure_bytes`, and `history_reduced` metadata. Version 5 adds `retention_category` and `retention_pruned_feed_seq`. Version 6 adds nullable `files.renamed_to` for the immediate destination of a source rename tombstone. Version 7 adds the owner registry and one-use CSRF tables. Version 8 adds resumable packed-export tables, bounded payload chunks, and their unique indexes. Fresh version-8 vaults initialize all history counters and the feed boundary to zero.
 
 A rename writes the immediate destination path to the source tombstone in the same transaction as the destination row and change entry. The hint survives feed pruning and remains until a later mutation replaces the source row. Recreate, restore, ordinary delete, and rename to another destination clear or replace any prior hint. Live rows and ordinary delete tombstones have no hint. The hint is diagnostic metadata, not a redirect.
 
@@ -455,7 +477,7 @@ Included: `**/*.md`, `**/*.canvas`, and attachments with extensions `png jpg jpe
 
 ### 7.9 Status model
 
-States shown per vault and per path in plain language: `disconnected`, `syncing`, `settled`, `pending`, `attention`, `revoked`, `paused`. The `backup failed` state is reserved for a future backup and is not shown in v1 (§11). `settled` requires: empty `pending_ops`, empty `pending_apply`, `cursor == head_seq` at last poll, state persisted. Every *attention* item has a reason code, the path, and one safe action (open, restore, keep both, dismiss). Controls are keyboard-operable, labelled, and do not rely on color alone.
+States shown per vault and per path in plain language: `disconnected`, `syncing`, `settled`, `pending`, `attention`, `revoked`, `paused`. The plugin does not show backup progress. The owner console lists completed packed snapshots under §11. `settled` requires: empty `pending_ops`, empty `pending_apply`, `cursor == head_seq` at last poll, state persisted. Every *attention* item has a reason code, the path, and one safe action (open, restore, keep both, dismiss). Controls are keyboard-operable, labelled, and do not rely on color alone.
 
 ### 7.10 Coexistence mode (phase F4)
 
@@ -525,42 +547,42 @@ KV propagation is eventually consistent (60 s or more), so the DO is the authori
 
 ## 11. Backup and restore
 
-**Owner decision 2026-11-05: no backup export in v1.** The GitHub export, its cron, its pacing and its verification are not built. iCloud Drive keeps an independent copy of the live vault through F4 and F5, as it does today. Before F6 the owner decides whether a Cloudflare-native copy is needed (§16): a copy to a supplementary R2 bucket, or Durable Object point-in-time recovery. Sections 11.1 to 11.4 stay as the reference design for a restore into a new vault. The epoch rules in §4 and §7.3 do not depend on them. The `exports` and `export_pins` tables stay in the schema and remain empty.
+The owner starts packed current-file snapshots from the Access-protected console. The Worker uses the existing private R2 bucket. It does not create Cloudflare resources or run a scheduled export. The separate `exports` table remains reserved for the former GitHub design. `packed_exports`, `packed_export_files`, and `export_pins` store resumable baseline work.
 
-### 11.1 Consistent cut
+### 11.1 Consistent current-file cut
 
-A nightly cron (03:00 UTC) only **starts** an export; the work runs inside the DO as a chain of alarms so it is resumable and never depends on one invocation finishing.
+The owner starts an export from `/owner/exports`. The server assigns a canonical UTC millisecond timestamp. The epoch and timestamp form the idempotency identity.
 
-1. In one DO transaction: create an `exports` row and an **export manifest**: `epoch`, `head_seq`, every `files` row including tombstones, and the list of retained `(path, rev)` revisions and referenced blob hashes **not yet present in the backup repository** (the DO keeps `backup_state` keyed by **`(epoch, path, rev)`** plus blob hashes already pushed; a new epoch starts an empty `backup_state`, and exports and pins from the previous epoch are abandoned). The manifest is written to SQLite as the export's immutable work list, and every `(path, rev)` it references is inserted into `export_pins`. **Pruning (§12) never removes a pinned revision**, whether by age or by capacity pressure. Pins are released when the export reaches `complete` or is abandoned; an export older than **14 days** is abandoned, its pins released, and a fresh export started from the current state.
-2. Everything the manifest points to is immutable and, thanks to the pins, guaranteed to exist until the export ends. The cut is therefore consistent regardless of how long publishing takes.
+1. One SQLite transaction captures the vault `epoch`, `head_seq`, and every current live file's exact `(path, rev, hash, size)`. It writes the manifest size, source authority, file rows, and revision pins.
+2. If retention removed a current text revision before capture, the transaction copies that current payload into bounded source chunks. Retained text revisions remain the source when present. Blob sources use the exact current content hash and size.
+3. The manifest contains the epoch, head sequence, timestamp, and paths in SQLite binary order. It omits deleted paths, retained history, OAuth grants, and service secrets. The archive contains `manifest.json` and each current payload at `files/<path>`.
+4. Text reads use a bounded range from the retained revision or frozen source chunks. Blob reads use the captured content hash and a bounded R2 range. Metadata queries select content presence and size, not full revision payloads.
+5. Retention keeps every existing pinned revision until export completion or typed failure. A retry with the same epoch and timestamp returns the existing operation.
 
-### 11.2 Destination and publishing (incremental Git)
+### 11.2 Bounded ZIP32 and R2 output
 
-- A **dedicated private GitHub repository** (`obsidian-vault-backup`), separate from the code repo so BRAT releases and backups never mix. Token: fine-grained, contents read/write on that repo only.
-- Layout in the repo: `manifest.json`, `files/<path>` (current content), `revisions/<path>/<rev>` (retained history), `blobs/<hash>`, `clients.json`. OAuth grants are **not** exported; after a disaster clients re-authorize.
-- Publishing is **incremental** through the Git Data API: create one git blob per new or changed item (≤ 25 MB each, streamed one at a time), create a tree from the previous commit's tree plus the changes, create the commit, then **update `refs/heads/main`** (`PATCH /git/refs/heads/main`). The commit is not published until the ref moves; a crash before that leaves an orphan commit, and the next run re-creates the tree.
-- Rate limits: GitHub's secondary limit for **content-creating requests** is 500 per hour and about 80 per minute. Blob, tree, commit and ref calls are all content-creating. The DO therefore paces at **≤ 450 content-creating calls per hour and ≤ 60 per minute**, tracked in `exports.calls_this_hour`, and reacts to `403`/`429` with `Retry-After` by sleeping the alarm. Each alarm invocation does at most 50 calls and re-arms itself one minute later. The DO stores the blob SHAs created so far.
-- Duration: a first export needs roughly `ceil(items / 450)` hours, where items = files + retained revisions + blobs. For the measured vault (under 100 items) that is under one hour. At the v1 envelope (10,000 files, bounded history) the worst case is about four days, inside the 14-day abandonment window. An abandoned export does not lose its work: before creating a blob, the next export checks whether that content SHA already exists in the backup repository (a read call, outside the content-creating limit) and reuses it. A packed-baseline alternative is listed in §16. Subrequest limits per invocation are never approached.
-- Failure: any error is recorded in `exports` with the step and retried on the next alarm with backoff (5 min → 1 h). An export is `complete` only after the ref update and verification. Every plugin shows `backup failed` when the last complete export is older than 48 hours **and no export is in progress**, and `backup in progress (N%)` otherwise. Maximum expected loss between complete exports: 24 hours of changes once the baseline exists.
+- The encoder writes store-only ZIP32 entries. It rejects unsafe paths and calculates exact local headers, data descriptors, central-directory entries, and end records before R2 output starts.
+- The complete encoded archive must fit the 2 GB product envelope and ZIP32 fields. It contains at most 10,000 current files plus the manifest entry.
+- One alarm step emits at most 1 MiB of archive bytes, reads at most 1 MiB of file bytes, and starts at most 16 source ranges. Each file range is at most 64 KiB.
+- R2 uses the existing bucket and fixed 5 MiB multipart parts. The final part can be smaller. SQLite stores the upload id, ZIP cursor, CRC state, byte offsets, accepted part receipts, and bounded remainder after each step.
+- Manifest, pending-part, and frozen-text bytes use chunk rows with at most 1,000,000 payload bytes. The complete estimated row stays below the 2,000,000-byte SQLite row limit. Snapshot inserts use at most 100 SQL parameters per statement.
+- Each cursor update compares the exact observed cursor. An interrupted part can be sent again at the same part number from the same immutable source bytes. Only the final R2 object can become a completed snapshot.
 
-### 11.3 Verification
+### 11.3 Owner operations and failures
 
-After the ref update, the DO reads back the commit's `manifest.json` and compares its hash with the manifest it produced; mismatch → `backup failed`. Weekly, the same check runs against the latest commit.
+- `GET /owner/exports` lists completed snapshot timestamps and byte sizes. `POST /owner/exports` starts an export through an Access-protected, same-origin, one-use CSRF form.
+- `GET /owner/exports/{epoch}/{created_at}/download` streams only a completed R2 object whose stored size matches SQLite. Incomplete and failed exports have no download link.
+- A missing pinned source or an exact archive limit failure records a typed failure, aborts a known incomplete multipart upload, and releases pins after source reads settle.
+- R2 storage faults leave the durable cursor active. The next alarm retries the same output step. A lost multipart-completion response is checked against the exact R2 key and size before SQLite marks completion.
+- Local tests validate byte, range, and output bounds. Production CPU duration and account-tier measurements remain evidence limits. They do not change the local step ceilings.
 
-### 11.4 Restore (`POST /owner/import`, Cloudflare Access only)
+### 11.4 Restore a new local vault
 
-A restore **always creates a new vault** (new vault id, new DO). It never imports over a live vault, so there is no staging, no lock on the live data and no doubled storage.
-
-1. The owner picks a backup commit. The Worker creates the new DO with `meta.state = importing`; any client request to it gets `503 importing` until activation.
-2. Alarm-driven, resumable batches read the commit tree, write blobs to R2 and fill the new DO's tables. Progress is stored per batch; a crash resumes.
-3. Activation: when the manifest hash verifies, one transaction sets `epoch` to a **fresh random generation id**, writes `changes` (one synthetic entry per current row), rebuilds `files_fts`, sets `state = ready`. The old vault's DO is set to `state = retired`: every request to it answers `410 vault_retired` with the new vault id.
-4. Each plugin, on `410 vault_retired`, switches its vault id (same credentials, same grants: grants are bound to the owner, not the vault id) and re-hydrates per §7.3 under the new epoch: equal hashes stay clean, different hashes become conflict copies, nothing local is lost.
-5. The retired vault is kept read-only for 30 days, then deleted by the owner from the console.
-6. Acceptance (AC-07): restore from the last export, then read an intermediate revision older than the export and a deleted file, verifying hashes; a device with a local edit ends with that edit as a conflict copy.
+The owner follows [Restore a packed baseline into a new local vault](packed-export-restore.md). This procedure verifies each path, byte size, and SHA-256 hash before copying files into a new empty local vault outside iCloud Drive. It does not import a server vault, reset an epoch, restore deleted paths, or restore revision history. A separate service-side import remains out of scope.
 
 ### 11.5 Entry condition for F4 (R6)
 
-iCloud Drive remains the owner of the live vault through F4 and F5. Before the plugin touches the real vault, the owner keeps one dated copy of the vault outside iCloud, for example a zip in local storage. No service-side backup is required (owner decision 2026-11-05).
+iCloud Drive remains the owner of the live vault through F4 and F5. Before the plugin touches the real vault, the owner keeps one dated copy of the vault outside iCloud, for example a zip in local storage. The packed service snapshot is an extra recovery copy after owner activation.
 
 The service holds one vault per host name (`idFromName(host)`), shared by every enrolled device and every test vault. While the real vault is enrolled, a test vault that publishes a file puts that file into the real vault on the next feed. During F4 and later phases, test vaults enrolled in the deployed service must not create, change, rename or delete service files. Live proofs that write need a second service vault or the end of the trial (observed 2026-11-05).
 
@@ -580,7 +602,7 @@ The service holds one vault per host name (`idFromName(host)`), shared by every 
 | R2 blobs | 10 GB free tier | Alert at 4 GB; GC trigger at 1 GB unreferenced (§16) |
 | Worker memory | 128 MB | No full-vault materialization anywhere; exports and hydration stream per file |
 | Polling | §7.4 | *measure* in F4: requests/day per device, p95 feed latency |
-| Export | Not built in v1 (§11) | No export runs; the `exports` table stays empty |
+| Packed baseline | 2 GB exact encoded archive, 10,000 current files, 1 MiB output and source-byte step, 16 source ranges per alarm | Owner-started in the console. R2 multipart faults resume from the stored cursor. Terminal limit or source faults block download. |
 
 Cloudflare lists 10 GB per SQLite Durable Object on Workers Paid and 1 GB on Workers Free. Its [Durable Object limits](https://developers.cloudflare.com/durable-objects/platform/limits/) give these limits. We read this page on 2026-10-17.
 
@@ -618,13 +640,13 @@ Each case is a test (Worker: `@cloudflare/vitest-pool-workers` against the real 
 | AC-04 | A deletes, B edited offline from the same base | Tombstone stands; B's bytes appear as conflict copy on both devices; `path` is trashed on B |
 | AC-05 | A renames X→Y, B edited X offline | Y holds A's bytes everywhere; B's bytes appear as `Y (conflict …)`; X is gone; links rewritten by A arrive as ordinary puts without re-rewriting on B |
 | AC-06 | B deletes while offline, A edited meanwhile | On B's reconnect the delete is dropped; A's bytes appear at `path` on B; *attention* item shown |
-| AC-07 | Restore into empty DO from last export | *Not applicable in v1: no backup (§11).* Current files, an intermediate revision older than the export, and a deleted file are recoverable with matching hashes; old-epoch requests fail before mutating |
+| AC-07 | Restore a packed baseline into a new local vault | The owner verifies manifest paths, sizes, and SHA-256 hashes, then copies current files into an empty local vault. Deleted paths and revision history are not in the archive. |
 | AC-08 | Owner revokes a client | Next request to the DO fails `401 revoked` within one request, independent of KV propagation; device shows `revoked`, keeps files |
 | AC-09 | Full ChatGPT loop | Read a note; create a note; it appears in Obsidian without manual review; edit in Obsidian; ChatGPT reads the change; concurrent offline edit yields a conflict copy; an interrupted append retried with a key produces one entry |
 | AC-10 | User saves a new edit between hash check and write during apply | `process` callback sees different bytes; nothing written; the user's edit is published; no loss |
 | AC-11 | Local and remote identical bytes, different from base | Base updated; no write; no conflict |
 | AC-12 | Device offline 40 days returns | `cursor_expired` → full reconciliation; remote deletes applied via tombstones; dirty paths become conflict copies; no path treated as a new create |
-| AC-13 | Restore bumped the epoch | Every client re-hydrates; clean files untouched; no duplicates. *No production trigger in v1: an epoch changes only through a restore (§11). Controlled proof recorded in OAB-8.8.* |
+| AC-13 | Service-vault restore bumped the epoch | Every client re-hydrates. Clean files remain untouched. No duplicates occur. *No production trigger exists in v1. A service-vault restore changes the epoch (§11). Controlled proof is recorded in OAB-8.8.* |
 | AC-14 | Create `Notes/café.md` when `notes/CAFÉ.md` exists; then rename `notes/CAFÉ.md` → `notes/Café.md` | Create returns `409 path_collision` with the existing path; the case-only rename of the same file succeeds |
 | AC-15 | Search examples of §10 | Each returns the expected note with a snippet; two-character query rejected; `AND` matches literally |
 | AC-16 | A 1.5 MB Markdown file | Synced as blob with exact bytes; listed `large: true`; readable by range; absent from search; shown in panel |
@@ -634,7 +656,7 @@ Each case is a test (Worker: `@cloudflare/vitest-pool-workers` against the real 
 | AC-20 | Enrollment of a second device whose vault already has content | Equal files clean; local-only uploaded; remote-only downloaded; differing files keep both via conflict copy; nothing overwritten |
 | AC-21 | Hydration while another client writes | Manifest rows with `seq > head_seq` applied; feed revisits them as no-ops; a pruned pinned revision falls back to current |
 | AC-22 | Append on a tombstoned note; append that would exceed 1 MB | `409 tombstone`; `413 text_too_large`; no partial write |
-| AC-23 | Export fails (GitHub 5xx) mid-chunk | *Not applicable in v1: no backup (§11).* `exports` records failure and step; the next alarm resumes from stored blob SHAs; the ref moves only once; devices show `backup failed` only after 48 h without a complete export |
+| AC-23 | R2 rejects a multipart part or loses its completion reply | The export remains active at its exact cursor. The next alarm retries the same part or verifies the completed R2 key and size. No incomplete object is downloadable. |
 | AC-24 | Rename received by a device whose `from` is dirty | Local bytes saved as conflict copy; `to` holds the bytes fetched by `to_rev`; `from` trashed; no device waits for a later `put` |
 | AC-25 | Hydration applied rev 3, feed later replays rev 2 for the same path | Entry ignored because `rev ≤ base.rev`; no write, no conflict |
 | AC-26 | Rename into a path that was tombstoned with 10 prior revisions | `to_rev = 11`; `revisions` has no primary-key collision; history of `to` shows the rename |
@@ -646,16 +668,16 @@ Each case is a test (Worker: `@cloudflare/vitest-pool-workers` against the real 
 | AC-32 | User edits during `process` so the callback refuses the remote write | `base` unchanged; the remote entry is re-evaluated as a conflict against the **current** local bytes; the remote revision is applied at `path` and the local bytes survive as the conflict copy; the entry is never discarded |
 | AC-33 | Hydration read X before a rename and Y after; feed replays the rename | Destination side skipped (`base[Y].rev == to_rev`); source side applied (X trashed, tombstone recorded); no duplicate Y |
 | AC-34 | `create_note`/`append_to_note` prepared before a restore, sent after | `409 epoch_mismatch`; no write |
-| AC-35 | Requests during a restore | *Not applicable in v1: no backup (§11).* The new vault answers `503 importing` until activation; the old vault answers `410 vault_retired` after it; clients switch and re-hydrate by hash; no client ever reads a partial table |
-| AC-36 | Export in progress while a pinned revision reaches 30 days or capacity pressure triggers pruning | *Not applicable in v1: no backup (§11).* Pinned revision survives; export completes with the exact bytes of the cut |
-| AC-37 | Export against a mocked GitHub that returns `403` secondary-limit | *Not applicable in v1: no backup (§11).* Alarm sleeps for `Retry-After`; pacing never exceeds 60/min or 450/h in the test log; export completes |
+| AC-35 | Requests during a service-side restore | *Not applicable: this feature restores local files only.* The packed export does not create or activate a service vault. |
+| AC-36 | Export in progress while a pinned revision reaches 30 days or capacity pressure triggers pruning | The exact pinned revision survives until the export completes or records a typed terminal failure. |
+| AC-37 | Export against R2 when a multipart call fails | The export keeps its durable cursor and the existing Vault alarm schedules a retry. The test checks the retry at the same part number. |
 | AC-38 | Two clients send the same idempotency key | Two independent receipts; no `422` |
 | AC-39 | Crash after writing a conflict copy but before `copied`; user edits the copy; restart | The edited copy is never overwritten; item goes to *attention*; original path untouched |
 | AC-40 | Feed replays a rename whose `from_rev` is lower than the live `base[from].rev` | Source side ignored; nothing trashed |
-| AC-41 | After a restore the new epoch has `rev 3` where a device held `base.rev 8` | *Not applicable in v1: no backup (§11).* Hash comparison wins; base rewritten; a locally changed file becomes a conflict copy |
-| AC-42 | Restore succeeds, response lost, another client deletes again, retry | *Not applicable in v1: no backup (§11).* `412` on `If-Match`; the note stays deleted |
+| AC-41 | After a service-vault restore the new epoch has `rev 3` where a device held `base.rev 8` | *Not applicable in v1. No service-vault restore exists (§11).* Hash comparison wins. The client rewrites its base. A locally changed file becomes a conflict copy |
+| AC-42 | Service-vault restore succeeds, response lost, another client deletes again, retry | *Not applicable in v1. No service-vault restore exists (§11).* `412` on `If-Match` keeps the note deleted |
 | AC-43 | Vault at 10,000 files or 2 GB | Next content mutation `507`; reads and deletes continue; panel shows the limit |
-| AC-44 | The same backup is restored twice; a device with a pending edit against the first restored vault switches to the second | *Not applicable in v1: no backup (§11).* The two vaults have different epochs; the pending `If-Match` fails with `epoch_mismatch`; the device re-hydrates by hash and its edit becomes a conflict copy; no silent overwrite |
+| AC-44 | The same backup is restored twice; a device with a pending edit against the first restored vault switches to the second | *Not applicable in v1. No service-vault restore exists (§11).* The two vaults have different epochs. The pending `If-Match` fails with `epoch_mismatch`. The device re-hydrates by hash. Its edit becomes a conflict copy. No silent overwrite occurs |
 
 ## 14. Delivery phases
 
@@ -669,10 +691,10 @@ F1 is a server-only gate. Local protocol, real Durable Object, and Worker HTTP t
 | F1 | Worker: DO schema, all `/v1` endpoints, authorize/commit tickets, idempotency, search, limits, revocation table; tests with real DO | F0 | Server portions of AC-01, 03–06, 11, 12, 14, 15, 16, 17, 18, 21, 22, 25, 26, 27, 28, 29, 34, 38, 40, and 43, plus independent task review, human branch review, and actual remote CI |
 | F2 | OAuth (provider + Access), MCP server and tools, owner console (clients, revoke) | F1 | MCP Inspector, Claude Code and ChatGPT web connect; read and write work; AC-08. Owner verifies Developer mode and iPhone availability in their ChatGPT account; result recorded, owner decides on mobile client strategy |
 | F3 | Plugin Desktop: enrollment, hydration, feed, publish, Option B, status panel, Sync now | F2 | Two test vaults on the Mac pass AC-02, 03, 04, 05, 06, 09, 10, 13, 20, 24, 30, 31, 32, 33, 39; AC-09 run against real ChatGPT |
-| F3b | Removed: no backup export in v1 (owner decision 2026-11-05, §11) | — | — |
+| F3b | Removed: plugin-side backup history or recurring export schedule | — | — |
 | F4 | Real vault on the Mac in coexistence mode, plugin only on the Mac | F3 + one dated local copy of the real vault (§11.5) | Two weeks max; AC-19; polling and storage measured; no *attention* item unexplained |
 | F5 | Mobile: plugin installed via BRAT on iPhone and iPad against a **copy** of the vault, then the real one | F4 | AC-03/04/05 across three devices; `secretStorage` behavior recorded per platform; offline edit on iPhone resolves correctly |
-| F6 | Cutover: new local vaults outside iCloud on each device hydrated from the service; iCloud no longer owns the live vault; coexistence mode off | F5 + owner decision on a Cloudflare-native backup (§11, §16) | Single sync owner per device |
+| F6 | Cutover: new local vaults outside iCloud on each device hydrated from the service; iCloud no longer owns the live vault; coexistence mode off | F5 + owner review of the packed baseline console and restore procedure (§11) | Single sync owner per device |
 
 ## 15. Repository and process
 
@@ -715,7 +737,7 @@ Bun workspaces; Hono; `@cloudflare/workers-oauth-provider`; `@modelcontextprotoc
 | WebSocket push from DO | 15–60 s polling is enough for one owner | Measured latency complaint or request cost > 50% of allowance | Feed is `seq`-based; push only says "new seq", pull unchanged |
 | Embeddings / semantic search | FTS covers the current vault | Agents miss notes by synonym in real use | `search_notes` returns `rev` and snippets; a second backend plugs behind it |
 | `.obsidian/` settings categories | Triggered 2026-11-06 because manual re-configuration became a daily cost | Device proof: device available and BRAT release plugin-v0.1.0 published. Current code target: 0.1.4, with no release authorization. | Implemented in §7.1. Consent and hydration duties stay device-local. The master switch defaults off. Guarded writes retain the documented unobserved-version race. Device proof remains open. |
-| Cloudflare-native backup | iCloud Drive keeps an independent copy until F6 (owner decision 2026-11-05) | Owner request before F6, or iCloud stops owning the live vault | Blob access behind one `BlobStore` interface; a copy to a supplementary R2 bucket or Durable Object point-in-time recovery; §11.1 to 11.4 hold the restore reference design |
+| Historical backup and automatic export schedule | Packed baselines contain current files only and start on owner request | Owner requires revision history or unattended snapshots | The current exporter uses immutable file pins and the existing R2 bucket. Service-side import and historical export remain unbuilt. |
 | Windows / Linux | No device | A device exists | No Node/Electron APIs in the plugin |
 | E2E encryption | Would break server-side search and append | Owner requirement changes | None; would be a redesign |
 

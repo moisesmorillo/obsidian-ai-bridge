@@ -57,7 +57,7 @@ describe("Vault SQLite persistence", () => {
 		expect(ftsDdl).toContain(
 			"tokenize = 'trigram case_sensitive 0 remove_diacritics 1'",
 		);
-		expect(RELATIONAL_SCHEMA_STATEMENTS).toHaveLength(17);
+		expect(RELATIONAL_SCHEMA_STATEMENTS).toHaveLength(22);
 	});
 
 	it("initializes the frozen schema and canonical metadata", async () => {

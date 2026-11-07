@@ -37,6 +37,9 @@ function preservedStoreState(storage: DurableObjectStorage) {
 
 /** Remove only schema-7 additions to form an exact schema-6 upgrade fixture. */
 function downgradeToSchema6(storage: DurableObjectStorage): void {
+	storage.sql.exec("DROP TABLE IF EXISTS packed_export_chunks");
+	storage.sql.exec("DROP TABLE IF EXISTS packed_export_files");
+	storage.sql.exec("DROP TABLE IF EXISTS packed_exports");
 	storage.sql.exec("DROP TABLE owner_csrf_states");
 	storage.sql.exec("DROP TABLE client_grants");
 	storage.sql.exec("DROP TABLE client_consents");
@@ -112,7 +115,7 @@ describe("schema-6 owner registry upgrade", () => {
 				storage.sql
 					.exec("SELECT value FROM meta WHERE key = 'schema_version'")
 					.toArray()[0]?.value,
-			).toBe("7");
+			).toBe("8");
 			expect(
 				storage.sql
 					.exec("SELECT value FROM meta WHERE key = 'epoch'")
@@ -121,7 +124,7 @@ describe("schema-6 owner registry upgrade", () => {
 			expect(preservedStoreState(storage)).toEqual({
 				...before,
 				metadata: before.metadata.map((row) =>
-					row.key === "schema_version" ? { ...row, value: "7" } : row,
+					row.key === "schema_version" ? { ...row, value: "8" } : row,
 				),
 			});
 			expect(

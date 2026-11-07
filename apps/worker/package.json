@@ -20,8 +20,9 @@
 	"devDependencies": {
 		"@cloudflare/vitest-plugin": "1.4.0",
 		"@cloudflare/workers-types": "4.20251014.0",
+		"@obsidian-ai-bridge/tooling": "workspace:*",
 		"drizzle-kit": "0.31.11",
-		"wrangler": "4.45.0",
-		"@obsidian-ai-bridge/tooling": "workspace:*"
+		"fflate": "0.8.2",
+		"wrangler": "4.45.0"
 	}
 }

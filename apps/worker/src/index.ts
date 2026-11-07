@@ -13,6 +13,7 @@ import {
 	readVerifiedAuthorization,
 } from "@worker/infrastructure/auth/oauth";
 import { R2BlobStore } from "@worker/infrastructure/r2/blobs";
+import type { OwnerExportResolver } from "@worker/transport/owner";
 import { createOwnerHandler } from "@worker/transport/owner";
 import { createWorker } from "@worker/transport/worker";
 
@@ -123,18 +124,35 @@ function resolveClientRegistry(
 	};
 }
 
+/** Expose only owner snapshot operations for the host-selected canonical vault. */
+function resolveExports(
+	env: Env,
+	request: Request,
+): ReturnType<OwnerExportResolver> {
+	const stub = env.VAULTS.get(env.VAULTS.idFromName(new URL(request.url).host));
+	return {
+		start: async (...args) => await stub.startPackedExport(...args),
+		list: async (...args) => await stub.listPackedExports(...args),
+		download: async (...args) => await stub.getPackedExportDownload(...args),
+	};
+}
+
 /** Route Access-protected owner pages and provider consent through one default handler. */
 function createLocalAuthHandler(): ExportedHandler<Env> {
 	const consent = createAuthorizeHandler();
-	const owner = createOwnerHandler(resolveClientRegistry, (env, request) => {
-		const stub = env.VAULTS.get(
-			env.VAULTS.idFromName(new URL(request.url).host),
-		);
-		return {
-			readMeasurements: async (ownerSubject) =>
-				await stub.readMeasurements({ owner_subject: ownerSubject }),
-		};
-	});
+	const owner = createOwnerHandler(
+		resolveClientRegistry,
+		(env, request) => {
+			const stub = env.VAULTS.get(
+				env.VAULTS.idFromName(new URL(request.url).host),
+			);
+			return {
+				readMeasurements: async (ownerSubject) =>
+					await stub.readMeasurements({ owner_subject: ownerSubject }),
+			};
+		},
+		resolveExports,
+	);
 	return {
 		/** Route owner pages to verified Access handlers and all other local auth paths to consent. */
 		fetch(request, env, context) {

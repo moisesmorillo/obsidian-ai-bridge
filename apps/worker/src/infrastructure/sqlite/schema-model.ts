@@ -7,6 +7,7 @@
  */
 import { sql } from "drizzle-orm";
 import {
+	blob,
 	check,
 	index,
 	integer,
@@ -15,6 +16,15 @@ import {
 	text,
 	uniqueIndex,
 } from "drizzle-orm/sqlite-core";
+
+/** Native SQL statement ceilings applied to export snapshot writes. */
+export const SQLITE_BOUND_PARAMETER_LIMIT = 100;
+/** Logical per-row limit accepted by the Worker SQLite capacity contract. */
+export const SQLITE_ROW_BYTE_LIMIT = 2_000_000;
+/** Payload limit for one export checkpoint or manifest chunk. */
+export const PACKED_EXPORT_CHUNK_DATA_BYTES = 1_000_000;
+/** Conservative fixed bytes reserved for chunk-row identifiers and SQLite record encoding. */
+export const PACKED_EXPORT_CHUNK_ROW_OVERHEAD_BYTES = 256;
 
 /** Stores bootstrap identity and counters as canonical strings. Existing-store validation owns their meaning and rejects malformed values without repair. */
 export const meta = sqliteTable(
@@ -227,6 +237,79 @@ export const exports = sqliteTable(
 	(table) => [primaryKey({ columns: [table.id] })],
 );
 
+/** Persists one resumable packed export and its ZIP32/multipart checkpoint. The partial part is under 5 MiB. */
+export const packedExports = sqliteTable(
+	"packed_exports",
+	{
+		id: text("id").notNull(),
+		epoch: text("epoch").notNull(),
+		createdAt: text("created_at").notNull(),
+		headSeq: integer("head_seq").notNull(),
+		status: text("status").notNull(),
+		objectKey: text("object_key").notNull(),
+		startedAt: integer("started_at").notNull(),
+		finishedAt: integer("finished_at"),
+		size: integer("size"),
+		uploadId: text("upload_id"),
+		zipState: text("zip_state").notNull(),
+		manifestSize: integer("manifest_size").notNull(),
+		completedParts: text("completed_parts").notNull(),
+		error: text("error"),
+	},
+	(table) => [
+		check(
+			"packed_exports_status_check",
+			sql`${table.status} IN ('queued', 'uploading', 'complete', 'failed')`,
+		),
+		uniqueIndex("packed_exports_identity").on(table.epoch, table.createdAt),
+		primaryKey({ columns: [table.id] }),
+	],
+);
+
+/** Captures current-file metadata under one export identity while export_pins preserve exact revisions. */
+export const packedExportFiles = sqliteTable(
+	"packed_export_files",
+	{
+		exportId: text("export_id").notNull(),
+		ordinal: integer("ordinal").notNull(),
+		path: text("path").notNull(),
+		rev: integer("rev").notNull(),
+		hash: text("hash").notNull(),
+		size: integer("size").notNull(),
+		sourceType: text("source_type").notNull(),
+	},
+	(table) => [
+		check(
+			"packed_export_files_source_type_check",
+			sql`${table.sourceType} IN ('revision_text', 'revision_blob', 'snapshot_text', 'snapshot_blob')`,
+		),
+		primaryKey({ columns: [table.exportId, table.ordinal] }),
+		uniqueIndex("packed_export_files_path").on(table.exportId, table.path),
+	],
+);
+
+/** Stores bounded manifest, pending multipart, and frozen fallback-source bytes. */
+export const packedExportChunks = sqliteTable(
+	"packed_export_chunks",
+	{
+		exportId: text("export_id").notNull(),
+		kind: text("kind").notNull(),
+		ordinal: integer("ordinal").notNull(),
+		data: blob("data", { mode: "buffer" }).notNull(),
+	},
+	(table) => [
+		check(
+			"packed_export_chunks_kind_check",
+			sql`${table.kind} IN ('manifest', 'pending', 'source')`,
+		),
+		check(
+			"packed_export_chunks_data_size_check",
+			sql.raw(`length(data) <= ${PACKED_EXPORT_CHUNK_DATA_BYTES}`),
+		),
+		primaryKey({ columns: [table.exportId, table.kind, table.ordinal] }),
+	],
+);
+
 /** Gives the synchronous Drizzle adapter its canonical relational models. Engine-specific FTS remains outside this model collection. */
 export const vaultSchema = {
 	meta,
@@ -241,4 +324,7 @@ export const vaultSchema = {
 	exports,
 	operationAdmissions,
 	mutationClaims,
+	packedExports,
+	packedExportFiles,
+	packedExportChunks,
 };

@@ -3,34 +3,37 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { readdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import {
+	mergeRelationalMigrations,
+	type RelationalMigration,
+	relationalSchemaDefinitions,
+} from "@worker/infrastructure/sqlite/migration-chain";
 
 const migrationDirectory = "./drizzle";
 const generatedModule = "./src/infrastructure/sqlite/schema.generated.ts";
 const checkOnly = process.argv.includes("--check");
 
 /**
- * Read the only supported version-0 lowercase SQL artifact by filename and UTF-8 contents.
- * This validates one initial artifact, not the migration chain.
+ * Read every sequential Drizzle relational migration as UTF-8 SQL.
  *
- * @param directory - Directory that contains the generated migration artifact.
- * @returns Its filename and decoded SQL contents.
- * @throws If the directory has multiple, missing, or unsupported SQL artifacts, or file access fails.
+ * @param directory - Directory that contains the versioned migration chain.
+ * @returns Ordered migration filenames and SQL bodies.
+ * @throws If files are missing, misnumbered, malformed, or inaccessible.
  */
-async function readInitialMigration(directory: string): Promise<{
-	name: string;
-	sql: string;
-}> {
-	const files = (await readdir(directory)).filter((name) =>
-		name.endsWith(".sql"),
+async function readRelationalMigrations(
+	directory: string,
+): Promise<RelationalMigration[]> {
+	const files = (await readdir(directory))
+		.filter((name) => name.endsWith(".sql"))
+		.sort();
+	const migrations = await Promise.all(
+		files.map(async (name) => ({
+			name,
+			sql: await readFile(join(directory, name), "utf8"),
+		})),
 	);
-	if (files.length !== 1 || !/^0000_[a-z0-9_]+\.sql$/.test(files[0] ?? "")) {
-		throw new Error(
-			`Expected only the version-0 initial relational DDL artifact; found ${files.join(", ") || "none"}`,
-		);
-	}
-	const name = files[0];
-	if (!name) throw new Error("Initial generated vault DDL file is missing");
-	return { name, sql: await readFile(join(directory, name), "utf8") };
+	mergeRelationalMigrations(migrations);
+	return migrations;
 }
 
 /**
@@ -49,7 +52,8 @@ function formatGeneratedModule(source: string): string {
 	);
 }
 
-const checkedInMigration = await readInitialMigration(migrationDirectory);
+const checkedInMigrations = await readRelationalMigrations(migrationDirectory);
+const checkedInDefinitions = relationalSchemaDefinitions(checkedInMigrations);
 if (checkOnly) {
 	const temporaryDirectory = mkdtempSync(join(tmpdir(), "oab-vault-schema-"));
 	const temporaryConfigDirectory = mkdtempSync(
@@ -66,11 +70,14 @@ if (checkOnly) {
 			["generate", "--config", temporaryConfig],
 			{ encoding: "utf8", stdio: "pipe" },
 		);
-		const currentModelMigration =
-			await readInitialMigration(temporaryDirectory);
-		if (currentModelMigration.sql !== checkedInMigration.sql) {
+		const currentModelMigrations =
+			await readRelationalMigrations(temporaryDirectory);
+		const currentModelDefinitions = relationalSchemaDefinitions(
+			currentModelMigrations,
+		);
+		if (!sameDefinitions(currentModelDefinitions, checkedInDefinitions)) {
 			throw new Error(
-				"Drizzle model differs from the versioned initial DDL; run bun run db:generate and review the result",
+				"Drizzle model differs from the versioned relational migration chain; run bun run db:generate and review the result",
 			);
 		}
 	} finally {
@@ -79,15 +86,12 @@ if (checkOnly) {
 	}
 }
 
-const statements = checkedInMigration.sql
-	.split("--> statement-breakpoint")
-	.map((statement) => statement.trim())
-	.filter(Boolean);
+const statements = mergeRelationalMigrations(checkedInMigrations);
 if (statements.length === 0) {
 	throw new Error("Generated vault DDL contains no statements");
 }
 
-const source = `/** Generated from Drizzle Kit's versioned initial migration; do not edit. */\nexport const RELATIONAL_SCHEMA_STATEMENTS = ${JSON.stringify(statements, null, 2)} as const;\n`;
+const source = `/** Generated from the Drizzle Kit relational migration chain; do not edit. */\nexport const RELATIONAL_SCHEMA_STATEMENTS = ${JSON.stringify(statements, null, 2)} as const;\n`;
 const output = formatGeneratedModule(source);
 if (checkOnly) {
 	const current = await readFile(generatedModule, "utf8");
@@ -98,4 +102,15 @@ if (checkOnly) {
 	}
 } else {
 	await writeFile(generatedModule, output);
+}
+
+/** Compare every normalized relational object definition without relying on statement order. */
+function sameDefinitions(
+	left: Map<string, string>,
+	right: Map<string, string>,
+): boolean {
+	if (left.size !== right.size) return false;
+	for (const [name, definition] of left)
+		if (right.get(name) !== definition) return false;
+	return true;
 }

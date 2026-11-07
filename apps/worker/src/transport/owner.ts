@@ -1,6 +1,13 @@
+import type {
+	ExportOperationResult,
+	ExportSnapshot,
+	MeasurementResponse,
+} from "@obsidian-ai-bridge/protocol";
 import {
-	type MeasurementResponse,
+	EpochSchema,
+	ExportSnapshotsSchema,
 	MeasurementResponseSchema,
+	OwnerExportRequestSchema,
 } from "@obsidian-ai-bridge/protocol";
 import type {
 	ClientRegistryGateway,
@@ -45,6 +52,26 @@ export type OwnerMeasurementResolver = (
 	readMeasurements(ownerSubject: string): Promise<MeasurementResponse | null>;
 };
 
+/** Resolve owner-only snapshot creation, listing, and streamed download capabilities. */
+export type OwnerExportResolver = (
+	env: Env,
+	request: Request,
+) => {
+	/** Start or replay one timestamp-keyed export for the verified owner. */
+	start(
+		ownerSubject: string,
+		createdAt: string,
+	): Promise<ExportOperationResult | null>;
+	/** List completed snapshots without exposing private R2 object keys. */
+	list(ownerSubject: string): Promise<readonly ExportOperationResult[] | null>;
+	/** Stream a completed archive only for its exact completed owner record. */
+	download(
+		ownerSubject: string,
+		epoch: string,
+		createdAt: string,
+	): Promise<{ body: ReadableStream<Uint8Array>; size: number } | null>;
+};
+
 /** Escape provider-controlled and owner-controlled strings before HTML rendering. */
 function escapeHtml(value: string): string {
 	return value.replace(/[&<>"']/g, (character) => {
@@ -68,10 +95,31 @@ function readCookie(request: Request, name: string): string | null {
 	return null;
 }
 
+/** Select completed export rows and build Access-protected download links. */
+function completedSnapshots(
+	results: readonly ExportOperationResult[],
+): ExportSnapshot[] {
+	return ExportSnapshotsSchema.parse(
+		results.flatMap((result) =>
+			result.status === "complete" && result.size !== null
+				? [
+						{
+							epoch: result.epoch,
+							created_at: result.created_at,
+							size: result.size,
+							download_url: `/owner/exports/${encodeURIComponent(result.epoch)}/${encodeURIComponent(result.created_at)}/download`,
+						},
+					]
+				: [],
+		),
+	);
+}
+
 /** Return a no-store response with a safely rendered finite client page. */
 export function createOwnerHandler(
 	resolveRegistry: OwnerRegistryResolver,
 	resolveMeasurements?: OwnerMeasurementResolver,
+	resolveExports?: OwnerExportResolver,
 ): ExportedHandler<Env> {
 	const app = new Hono<{ Bindings: Env }>();
 	app.get("/owner/clients", async (context) => {
@@ -131,6 +179,120 @@ export function createOwnerHandler(
 				},
 			},
 		);
+	});
+
+	app.get("/owner/exports", async (context) => {
+		const owner = await verifyOwnerAccess(context.req.raw, context.env);
+		if (!owner) return noStoreText("Unauthorized", 401);
+		if (!isCanonicalOwnerOrigin(context.req.raw, context.env))
+			return noStoreText("Not found", 404);
+		if (!resolveExports) return noStoreText("Unavailable", 503);
+		try {
+			const gateway = resolveExports(context.env, context.req.raw);
+			const results = await gateway.list(owner.subject);
+			if (!results) return noStoreText("Forbidden", 403);
+			const snapshots = completedSnapshots(results);
+			const browserId =
+				readCookie(context.req.raw, OWNER_BROWSER_COOKIE) ??
+				crypto.randomUUID();
+			if (!isUuid(browserId)) return noStoreText("Unauthorized", 401);
+			const state = crypto.randomUUID();
+			await storeOwnerCsrf(resolveRegistry(context.env, context.req.raw), {
+				owner_subject: owner.subject,
+				browser_id: browserId,
+				state,
+				expires_at: Date.now() + OWNER_STATE_TTL_MS,
+			});
+			const rows = snapshots
+				.map(
+					(snapshot) =>
+						`<li>${escapeHtml(snapshot.created_at)} — ${snapshot.size} bytes — <a href="${escapeHtml(snapshot.download_url)}">Download ZIP</a></li>`,
+				)
+				.join("");
+			return new Response(
+				`<!doctype html><html><head><meta charset="utf-8"><title>Packed exports</title></head><body><main><h1>Packed baseline exports</h1><form method="post" action="/owner/exports"><input type="hidden" name="csrf" value="${state}"><button>Create current baseline export</button></form><h2>Completed snapshots</h2><ul>${rows || "<li>No completed exports.</li>"}</ul><p>Only completed snapshots can be downloaded.</p></main></body></html>`,
+				{
+					headers: {
+						"content-type": "text/html; charset=utf-8",
+						"cache-control": "no-store",
+						"set-cookie": `${OWNER_BROWSER_COOKIE}=${browserId}; Secure; HttpOnly; SameSite=Strict; Path=/; Max-Age=600`,
+					},
+				},
+			);
+		} catch {
+			return noStoreText("Unavailable", 503);
+		}
+	});
+
+	app.post("/owner/exports", async (context) => {
+		if (!isSameOrigin(context.req.raw, context.env))
+			return noStoreText("Forbidden", 403);
+		const owner = await verifyOwnerAccess(context.req.raw, context.env);
+		if (!owner) return noStoreText("Unauthorized", 401);
+		if (!resolveExports) return noStoreText("Unavailable", 503);
+		const form = await readForm(context.req.raw);
+		if (!form) return noStoreText("Invalid owner form", 400);
+		const browserId = readCookie(context.req.raw, OWNER_BROWSER_COOKIE);
+		if (!browserId || !isUuid(browserId) || !isUuid(form.state))
+			return noStoreText("Invalid owner form", 400);
+		const registry = resolveRegistry(context.env, context.req.raw);
+		const accepted = await consumeOwnerCsrf(registry, {
+			owner_subject: owner.subject,
+			browser_id: browserId,
+			state: form.state,
+			now: Date.now(),
+		});
+		if (!accepted) return noStoreText("Invalid owner form", 403);
+		try {
+			const gateway = resolveExports(context.env, context.req.raw);
+			const request = OwnerExportRequestSchema.parse({
+				created_at: new Date().toISOString(),
+			});
+			const result = await gateway.start(owner.subject, request.created_at);
+			if (!result) return noStoreText("Forbidden", 403);
+			return new Response(null, {
+				status: 303,
+				headers: {
+					location: `${context.env.SERVICE_ORIGIN}/owner/exports`,
+					"cache-control": "no-store",
+				},
+			});
+		} catch {
+			return noStoreText("Unavailable", 503);
+		}
+	});
+
+	app.get("/owner/exports/:epoch/:createdAt/download", async (context) => {
+		const owner = await verifyOwnerAccess(context.req.raw, context.env);
+		if (!owner) return noStoreText("Unauthorized", 401);
+		if (!isCanonicalOwnerOrigin(context.req.raw, context.env))
+			return noStoreText("Not found", 404);
+		if (!resolveExports) return noStoreText("Unavailable", 503);
+		const epoch = EpochSchema.safeParse(context.req.param("epoch"));
+		const identity = OwnerExportRequestSchema.safeParse({
+			created_at: context.req.param("createdAt"),
+		});
+		if (!epoch.success || !identity.success)
+			return noStoreText("Not found", 404);
+		try {
+			const gateway = resolveExports(context.env, context.req.raw);
+			const archive = await gateway.download(
+				owner.subject,
+				epoch.data,
+				identity.data.created_at,
+			);
+			if (!archive) return noStoreText("Not found", 404);
+			return new Response(archive.body, {
+				headers: {
+					"cache-control": "no-store",
+					"content-type": "application/zip",
+					"content-length": String(archive.size),
+					"content-disposition": `attachment; filename="packed-baseline-${epoch.data}-${identity.data.created_at.replace(/[:.]/g, "-")}.zip"`,
+				},
+			});
+		} catch {
+			return noStoreText("Unavailable", 503);
+		}
 	});
 
 	app.get("/owner/measurements", async (context) => {

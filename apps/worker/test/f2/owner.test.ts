@@ -1,5 +1,6 @@
 import { env, runInDurableObject, SELF } from "cloudflare:test";
 import { MEASUREMENT_LIMITS } from "@obsidian-ai-bridge/protocol";
+import type { ClientRegistryGateway } from "@worker/application/clients";
 import { createOwnerHandler } from "@worker/transport/owner";
 import { exportJWK, generateKeyPair, SignJWT } from "jose";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -345,6 +346,153 @@ describe("production owner console", () => {
 	});
 
 	afterEach(() => vi.unstubAllGlobals());
+
+	it("lists, starts, and streams only completed packed exports for the verified owner", async () => {
+		const pair = await generateKeyPair("RS256");
+		const jwk = await exportJWK(pair.publicKey);
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async () =>
+				Response.json({
+					keys: [{ ...jwk, kid: "owner-console", alg: "RS256", use: "sig" }],
+				}),
+			),
+		);
+		const ownerEnv = {
+			...env,
+			ACCESS_TEAM_DOMAIN: `https://team-${crypto.randomUUID()}.test`,
+		};
+		const assertion = await new SignJWT({})
+			.setProtectedHeader({ alg: "RS256", kid: "owner-console" })
+			.setIssuer(ownerEnv.ACCESS_TEAM_DOMAIN)
+			.setAudience("synthetic-access-app")
+			.setSubject("synthetic-owner")
+			.setIssuedAt()
+			.setExpirationTime("5m")
+			.sign(pair.privateKey);
+		const createdAt = "2026-11-07T03:00:00.000Z";
+		const epoch = "a".repeat(32);
+		const started = vi.fn(async (_owner: string, timestamp: string) => ({
+			epoch,
+			created_at: timestamp,
+			status: "queued" as const,
+			size: null,
+			failure: null,
+		}));
+		const download = vi.fn(async () => ({
+			body: new ReadableStream<Uint8Array>({
+				/** Emit the fixed four-byte archive used by the download test. */
+				start(controller) {
+					controller.enqueue(new Uint8Array([1, 2, 3, 4]));
+					controller.close();
+				},
+			}),
+			size: 4,
+		}));
+		const csrfStates = new Map<string, { owner: string; browser: string }>();
+		const registry = {
+			/** Save one test CSRF state bound to its owner and browser. */
+			async storeOwnerCsrf(input: {
+				owner_subject: string;
+				browser_id: string;
+				state: string;
+			}) {
+				csrfStates.set(input.state, {
+					owner: input.owner_subject,
+					browser: input.browser_id,
+				});
+			},
+			/** Consume only the exact saved owner, browser, and state tuple. */
+			async consumeOwnerCsrf(input: {
+				owner_subject: string;
+				browser_id: string;
+				state: string;
+			}) {
+				const saved = csrfStates.get(input.state);
+				csrfStates.delete(input.state);
+				return (
+					saved?.owner === input.owner_subject &&
+					saved.browser === input.browser_id
+				);
+			},
+		} as unknown as ClientRegistryGateway;
+		const handler = createOwnerHandler(
+			() => registry,
+			undefined,
+			() => ({
+				/** Return the requested idempotent test operation. */
+				start: started,
+				/** Return one completed row for owner snapshot rendering. */
+				list: async () => [
+					{
+						epoch,
+						created_at: createdAt,
+						status: "complete",
+						size: 4,
+						failure: null,
+					},
+				],
+				/** Return the bounded archive stream for the protected download test. */
+				download,
+			}),
+		);
+		const ownerFetch = handler.fetch;
+		if (!ownerFetch) throw new Error("Owner handler has no fetch entry point");
+		const headers = { "Cf-Access-Jwt-Assertion": assertion };
+		const page = await ownerFetch(
+			new Request("https://service.test/owner/exports", { headers }) as Request<
+				unknown,
+				IncomingRequestCfProperties
+			>,
+			ownerEnv,
+			{} as ExecutionContext,
+		);
+		expect(page.status).toBe(200);
+		expect(page.headers.get("cache-control")).toBe("no-store");
+		const html = await page.text();
+		expect(html).toContain("Completed snapshots");
+		const downloadUrl = html.match(/href="([^"]+\/download)"/)?.[1];
+		expect(downloadUrl).toContain("/owner/exports/");
+		const cookie = page.headers.get("set-cookie")?.split(";", 1)[0];
+		const state = html.match(/name="csrf" value="([^"]+)"/)?.[1];
+		if (!cookie || !state)
+			throw new Error("Owner export form lacks its browser state");
+		const form = await ownerFetch(
+			new Request("https://service.test/owner/exports", {
+				method: "POST",
+				headers: {
+					...headers,
+					cookie,
+					origin: "https://service.test",
+					"content-type": "application/x-www-form-urlencoded",
+				},
+				body: new URLSearchParams({ csrf: state }),
+			}) as Request<unknown, IncomingRequestCfProperties>,
+			ownerEnv,
+			{} as ExecutionContext,
+		);
+		expect(form.status).toBe(303);
+		expect(started).toHaveBeenCalledWith(
+			"synthetic-owner",
+			expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/),
+		);
+		const response = await ownerFetch(
+			new Request(new URL(downloadUrl ?? "", "https://service.test"), {
+				headers,
+			}) as Request<unknown, IncomingRequestCfProperties>,
+			ownerEnv,
+			{} as ExecutionContext,
+		);
+		expect(response.status).toBe(200);
+		expect(response.headers.get("content-type")).toBe("application/zip");
+		expect(response.headers.get("content-disposition")).toContain(
+			"attachment;",
+		);
+		expect(Array.from(new Uint8Array(await response.arrayBuffer()))).toEqual([
+			1, 2, 3, 4,
+		]);
+		expect(download).toHaveBeenCalledWith("synthetic-owner", epoch, createdAt);
+	});
 
 	it("rejects state changes from a different origin before processing the form", async () => {
 		const response = await SELF.fetch(

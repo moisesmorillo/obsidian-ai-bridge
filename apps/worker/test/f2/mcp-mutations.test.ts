@@ -251,6 +251,49 @@ describe("production MCP mutation safety", () => {
 		});
 	});
 
+	it("appends under the exact MCP heading with its observed ETag and receipt", async () => {
+		const { token, clientId } = await issueToken();
+		const epoch = await epochFor(token);
+		const path = `Agents/heading-${crypto.randomUUID()}.md`;
+		const created = await receipt(
+			await call(token, "create_note", {
+				path,
+				epoch,
+				content: "# Main\r\n## Tasks\r\nold\r\n## Tasks\r\nother\r\n",
+			}),
+		);
+		const result = await receipt(
+			await call(token, "append_under_heading", {
+				path,
+				heading: " Tasks ",
+				text: "追加",
+				etag: created.etag,
+				idempotency_key: "mcp-heading-append-01",
+			}),
+		);
+		expect(parseETag(result.etag)).toEqual({ epoch, rev: 2 });
+		expect(await note(token, path)).toMatchObject({
+			etag: result.etag,
+			content: "# Main\r\n## Tasks\r\nold\r\n追加\r\n## Tasks\r\nother\r\n",
+		});
+		const afterAppend = await published(path);
+		expect(afterAppend.changes).toEqual([
+			expect.objectContaining({ op: "put", rev: 1, origin: clientId }),
+			expect.objectContaining({ op: "put", rev: 2, origin: clientId }),
+		]);
+		const reader = await issueToken("vault:read");
+		const denied = await call(reader.token, "append_under_heading", {
+			path,
+			heading: "Tasks",
+			text: "denied",
+			etag: result.etag,
+			idempotency_key: "mcp-heading-append-denied",
+		});
+		expect(denied.status).toBe(403);
+		expect(await denied.text()).toContain("forbidden_scope");
+		expect(await published(path)).toEqual(afterAppend);
+	});
+
 	it("accepts the worst-case escaped note envelope within the canonical wire limit", async () => {
 		const reader = await issueToken();
 		const { token, clientId } = await issueToken("vault:write");

@@ -1,5 +1,6 @@
 import {
 	EMPTY_PAYLOAD_HASH,
+	type FileCommand,
 	FileCommandSchema,
 	formatETag,
 	IdempotencyKeySchema,
@@ -47,10 +48,38 @@ async function appendCommand(path: string, content: string, rawKey: string) {
 	};
 }
 
+/** Build a canonical exact-revision append command for one heading section. */
+async function headingAppendCommand(
+	path: string,
+	text: string,
+	rawKey: string,
+): Promise<Extract<FileCommand, { op: "append" }>> {
+	const identity = new TextEncoder().encode(
+		JSON.stringify({ heading: "Tasks", content: text }),
+	);
+	return {
+		op: "append",
+		intent: {
+			op: "append",
+			epoch: TEXT_FIXTURE_EPOCH,
+			paths: [path],
+			precondition: {
+				kind: "match",
+				etag: formatETag(TEXT_FIXTURE_EPOCH, 1),
+			},
+			payload_hash: await hashBytes(new TextDecoder().decode(identity)),
+			size: identity.byteLength,
+		},
+		content: text,
+		heading: "Tasks",
+		key: IdempotencyKeySchema.parse(rawKey),
+	};
+}
+
 /** Reserve and authorize an append through the native admission owner. */
 async function authorizeAppend(
 	fixture: TextStoreFixture,
-	command: Awaited<ReturnType<typeof appendCommand>>,
+	command: Extract<FileCommand, { op: "append" }>,
 ): Promise<string> {
 	const reservation = await fixture.coordinator.beginMutation(
 		TEXT_FIXTURE_CONTEXT,
@@ -117,6 +146,82 @@ async function authorizePutForRace(
 }
 
 describe("native append commands", () => {
+	it("refuses one stale heading append after concurrent candidates observe the same ETag", async () => {
+		await withTextStore(async (fixture) => {
+			const path = "notes/heading-append-race.md";
+			const initial = "# Tasks\nbody\n";
+			await seedLiveTextState(fixture.storage, { path, content: initial });
+			const first = await headingAppendCommand(
+				path,
+				"one",
+				"heading-race-key-01",
+			);
+			const second = await headingAppendCommand(
+				path,
+				"two",
+				"heading-race-key-02",
+			);
+			const firstTicket = await authorizeAppend(fixture, first);
+			const secondTicket = await authorizeAppend(fixture, second);
+			let arrivals = 0;
+			/** Release both digest candidates after they observe the same revision. */
+			let release = () => {};
+			const barrier = new Promise<void>((resolve) => {
+				release = resolve;
+			});
+			const digest = crypto.subtle.digest.bind(crypto.subtle);
+			const spy = vi
+				.spyOn(crypto.subtle, "digest")
+				.mockImplementation(async (algorithm, data) => {
+					const candidate = new TextDecoder().decode(data);
+					if (candidate === `${initial}one` || candidate === `${initial}two`) {
+						arrivals += 1;
+						if (arrivals === 2) release();
+						await barrier;
+					}
+					return digest(algorithm, data);
+				});
+			let results: Awaited<
+				ReturnType<typeof fixture.store.commitFileCommand>
+			>[];
+			try {
+				results = await Promise.all([
+					fixture.store.commitFileCommand(
+						TEXT_FIXTURE_CONTEXT,
+						first.intent,
+						firstTicket,
+						first,
+						first.key,
+					),
+					fixture.store.commitFileCommand(
+						TEXT_FIXTURE_CONTEXT,
+						second.intent,
+						secondTicket,
+						second,
+						second.key,
+					),
+				]);
+			} finally {
+				spy.mockRestore();
+			}
+			expect(
+				results
+					.map((result) => (result.ok ? "ok" : result.failure.kind))
+					.sort(),
+			).toEqual(["ok", "precondition_failed"]);
+			expect(
+				fixture.storage.sql
+					.exec("SELECT rev, content FROM files WHERE path = ?", path)
+					.toArray(),
+			).toHaveLength(1);
+			expect(
+				fixture.storage.sql
+					.exec("SELECT rev FROM files WHERE path = ?", path)
+					.toArray(),
+			).toEqual([{ rev: 2 }]);
+		});
+	});
+
 	it("retries a candidate after two real native append commits interleave", async () => {
 		await withTextStore(async (fixture) => {
 			const path = "notes/interleaved-append.md";

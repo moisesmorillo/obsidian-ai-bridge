@@ -5,6 +5,7 @@ import type {
 	RenameReservation,
 } from "@obsidian-ai-bridge/protocol";
 import {
+	AppendUnderHeadingBodySchema,
 	EpochSchema,
 	FileCommandSchema,
 	IdempotencyKeySchema,
@@ -43,6 +44,13 @@ type ValidatedHistoryCommandRequest =
 			descriptor: OperationDescriptor;
 			epoch: string;
 			key: string | undefined;
+	  }
+	| {
+			operation: "append-under-heading";
+			descriptor: OperationDescriptor;
+			match: string;
+			epoch: string;
+			key: string;
 	  }
 	| {
 			operation: "restore";
@@ -157,6 +165,44 @@ async function validateHistoryCommandRequest(
 				},
 			};
 		}
+		case "append-under-heading": {
+			if (!match || !key)
+				return {
+					ok: false,
+					response: errorResponse({
+						kind: key ? "invalid_request" : "idempotency_key_required",
+					}),
+				};
+			let epoch: string;
+			try {
+				epoch = parseETag(match).epoch;
+			} catch {
+				return {
+					ok: false,
+					response: errorResponse({ kind: "invalid_request" }),
+				};
+			}
+			if (epochHeader !== null && epochHeader !== epoch)
+				return {
+					ok: false,
+					response: errorResponse({ kind: "invalid_request" }),
+				};
+			const candidate = OperationDescriptorSchema.safeParse({
+				op: "append",
+				paths: [path],
+				precondition: { kind: "match", etag: match },
+				epoch,
+			});
+			if (!candidate.success)
+				return {
+					ok: false,
+					response: errorResponse({ kind: "invalid_request" }),
+				};
+			return {
+				ok: true,
+				request: { operation, descriptor: candidate.data, match, epoch, key },
+			};
+		}
 		case "append": {
 			const epoch = epochHeader ?? undefined;
 			if (epoch === undefined || !EpochSchema.safeParse(epoch).success) {
@@ -261,6 +307,8 @@ async function decodeHistoryCommand(
 				commandRequest.epoch,
 				commandRequest.key,
 			);
+		case "append-under-heading":
+			return decodeAppendUnderHeadingCommand(bytes, path, commandRequest);
 		case "rename":
 			return decodeRenameCommand(bytes, path, commandRequest);
 		case "restore":
@@ -296,6 +344,45 @@ async function decodeAppendCommand(
 		intent,
 		content,
 		key,
+	});
+	if (!command.success)
+		throw new FileOperationDenied({ kind: "invalid_request" });
+	return command.data;
+}
+
+/** Bind the strict heading request and its exact ETag to the existing append receipt authority. */
+async function decodeAppendUnderHeadingCommand(
+	bytes: Uint8Array,
+	path: string,
+	commandRequest: Extract<
+		ValidatedHistoryCommandRequest,
+		{ operation: "append-under-heading" }
+	>,
+): Promise<FileCommand> {
+	let json: unknown;
+	try {
+		json = parseCommandJson(bytes);
+	} catch {
+		throw new FileOperationDenied({ kind: "invalid_request" });
+	}
+	const body = AppendUnderHeadingBodySchema.safeParse(json);
+	if (!body.success) throw new FileOperationDenied({ kind: "invalid_request" });
+	const identity = new TextEncoder().encode(
+		JSON.stringify({ heading: body.data.heading, content: body.data.text }),
+	);
+	const command = FileCommandSchema.safeParse({
+		op: "append",
+		intent: {
+			op: "append",
+			epoch: commandRequest.epoch,
+			paths: [path],
+			precondition: { kind: "match", etag: commandRequest.match },
+			payload_hash: await hashBytes(identity),
+			size: identity.byteLength,
+		},
+		content: body.data.text,
+		heading: body.data.heading,
+		key: commandRequest.key,
 	});
 	if (!command.success)
 		throw new FileOperationDenied({ kind: "invalid_request" });

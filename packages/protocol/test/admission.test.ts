@@ -268,20 +268,21 @@ describe("admission contracts", () => {
 			{ op: "rename", paths: ["a", "b"], precondition: { kind: "absent" } },
 		],
 		[
-			"append with revision precondition",
-			{
-				op: "append",
-				epoch,
-				paths: ["a"],
-				precondition: { kind: "match", etag: `"${epoch}.1"` },
-			},
-		],
-		[
 			"restore with no precondition",
 			{ op: "restore", paths: ["a"], precondition: { kind: "none" } },
 		],
 	] as const)("rejects $0", (_label, invalid) => {
 		expect(OperationDescriptorSchema.safeParse(invalid).success).toBe(false);
+	});
+	it("accepts the exact ETag precondition for a heading append", () => {
+		expect(
+			OperationDescriptorSchema.safeParse({
+				op: "append",
+				epoch,
+				paths: ["a"],
+				precondition: { kind: "match", etag: `"${epoch}.1"` },
+			}).success,
+		).toBe(true);
 	});
 	it("requires an explicit epoch for put", () => {
 		expect(

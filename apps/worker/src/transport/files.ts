@@ -236,14 +236,20 @@ export function createFileRouter(
 }
 
 /** Find a literal command suffix before decoding the source path exactly once. */
-function fileCommandFromPath(
-	pathname: string,
-):
-	| { path: string | undefined; operation: "rename" | "append" | "restore" }
+function fileCommandFromPath(pathname: string):
+	| {
+			path: string | undefined;
+			operation: "rename" | "append" | "append-under-heading" | "restore";
+	  }
 	| undefined {
 	const prefix = "/v1/files/";
 	if (!pathname.startsWith(prefix)) return undefined;
-	for (const operation of ["rename", "append", "restore"] as const) {
+	for (const operation of [
+		"rename",
+		"append-under-heading",
+		"append",
+		"restore",
+	] as const) {
 		const suffix = `:${operation}`;
 		if (!pathname.endsWith(suffix)) continue;
 		return {

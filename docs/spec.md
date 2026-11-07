@@ -304,7 +304,7 @@ Unknown storage or authority results retain admission until its original deadlin
 - Fingerprint binds `epoch`, client id, operation type, path(s), precondition (`If-Match`/`If-None-Match`), and `sha256(payload)`. Reusing a key with a different fingerprint is rejected.
 - Acceptance window: key timestamp must be within `[now − 25 days, now + 5 minutes]`. Receipts are retained **30 days**. Therefore no key can be accepted as new after its receipt could have expired, and clocks up to 5 minutes fast are tolerated. Beyond that the client is told `operation_expired` and shows the operation as *attention*; it never retries with different bytes under the same key.
 - Concurrency: a key seen while its first request is still in flight returns `409 idempotency_in_progress`; the DO's single-threaded transaction makes this a short window.
-- MCP: `append_to_note` **requires** `idempotency_key` in its input schema; the other mutating tools accept it optionally and are protected by their `etag`/create-only preconditions. No server heuristic de-duplicates appends.
+- MCP: `append_to_note` and `append_under_heading` **require** `idempotency_key` in their input schemas; other mutating tools may accept it optionally and use their `etag` or create-only preconditions. No server heuristic de-duplicates appends.
 
 ### 6.5 Request limits
 
@@ -468,7 +468,7 @@ A setting the owner turns on while iCloud still syncs the same live vault and th
 
 ## 8. MCP server
 
-Transport: Streamable HTTP at `/mcp`. Auth: Bearer token from §9; resource metadata (RFC 9728) and authorization server metadata (RFC 8414) published. Every tool result includes the current `epoch`; `create_note` and `append_to_note` require it as an argument because they carry no `etag`. Server `instructions` (sent in `initialize`) describe the vault conventions: default folder `Agents/`, daily log path, frontmatter minimum (`created`, `source`), "search before create", "pass `etag` from `read_note` to `update_note`", "always generate a fresh `idempotency_key` (any unique string) for `append_to_note` and reuse the same key only when retrying the same append".
+Transport: Streamable HTTP at `/mcp`. Auth: Bearer token from §9; resource metadata (RFC 9728) and authorization server metadata (RFC 8414) published. Every tool result includes the current `epoch`; `create_note` and `append_to_note` require it as an argument because they carry no `etag`. `append_under_heading` requires the exact `etag` from the observed note revision. Server `instructions` (sent in `initialize`) describe the vault conventions: default folder `Agents/`, daily log path, frontmatter minimum (`created`, `source`), "search before create", "pass `etag` from `read_note` to `update_note` and `append_under_heading`", "always generate a fresh `idempotency_key` (any unique string) for each append and reuse that key only when retrying the same request".
 
 | Tool | Scope | Arguments | Returns |
 | --- | --- | --- | --- |
@@ -478,6 +478,7 @@ Transport: Streamable HTTP at `/mcp`. Auth: Bearer token from §9; resource meta
 | `create_note` | write | `path`, `content`, `epoch`, `idempotency_key?` | `etag`. Create-only; `409` if exists (includes existing `etag`); `409 epoch_mismatch` if `epoch` is stale |
 | `update_note` | write | `path`, `content`, `etag`, `idempotency_key?` | new `etag`. `412` with current `etag` (and content, since MCP agents hold `read`) on mismatch |
 | `append_to_note` | write | `path`, `text`, `epoch`, **`idempotency_key` (required)** | new `etag`. `409` on tombstone; `409 epoch_mismatch` if stale; `413` if result > 1 MB |
+| `append_under_heading` | write | `path`, `heading`, `text`, exact `etag`, **`idempotency_key` (required)** | new `etag`. First trimmed, case-sensitive heading match outside fenced code; missing heading refuses without a revision |
 | `delete_note` | delete | `path`, `etag` | tombstone `etag` |
 | `get_history` | read | `path` | retained revisions |
 | `restore_note` | write | `path`, `source_etag`, `current_etag`, `as_conflict_copy?` | new `etag`. `412` if `current_etag` is stale |
@@ -714,7 +715,6 @@ Bun workspaces; Hono; `@cloudflare/workers-oauth-provider`; `@modelcontextprotoc
 | WebSocket push from DO | 15–60 s polling is enough for one owner | Measured latency complaint or request cost > 50% of allowance | Feed is `seq`-based; push only says "new seq", pull unchanged |
 | Embeddings / semantic search | FTS covers the current vault | Agents miss notes by synonym in real use | `search_notes` returns `rev` and snippets; a second backend plugs behind it |
 | `.obsidian/` settings categories | Triggered 2026-11-06 because manual re-configuration became a daily cost | Device proof: device available and BRAT release plugin-v0.1.0 published. Current code target: 0.1.4, with no release authorization. | Implemented in §7.1. Consent and hydration duties stay device-local. The master switch defaults off. Guarded writes retain the documented unobserved-version race. Device proof remains open. |
-| Append under a heading | No agent needs it yet | A concrete agent workflow requires it | `append` is a DO operation |
 | Cloudflare-native backup | iCloud Drive keeps an independent copy until F6 (owner decision 2026-11-05) | Owner request before F6, or iCloud stops owning the live vault | Blob access behind one `BlobStore` interface; a copy to a supplementary R2 bucket or Durable Object point-in-time recovery; §11.1 to 11.4 hold the restore reference design |
 | Windows / Linux | No device | A device exists | No Node/Electron APIs in the plugin |
 | E2E encryption | Would break server-side search and append | Owner requirement changes | None; would be a redesign |

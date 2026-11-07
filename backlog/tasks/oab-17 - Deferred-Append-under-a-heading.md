@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: 2026-10-12 15:14
-updated_date: '2026-11-07T03:37:00Z'
+updated_date: '2026-11-07T03:41:00Z'
 labels:
   - deferred
   - trigger-based
@@ -49,6 +49,8 @@ Task 1:
 Review focus: duplicate headings, heading-like code, mixed line endings, stale-revision races, replay after intervening edits. Tests must cover each.
 Constraints: Edit only the owner file list and OAB-17. No owner.ts, read-response.ts, blob, plugin, live service, vault, or Cloudflare changes. Report a file-boundary blocker instead of widening scope.
 Parent acceptance: Independent task review, complete branch review, final rebase on origin/main, preflight before push, one PR, worktree removal.
+
+Supervisor scope decision: Use the real semantic owners in transport/mcp.ts, application/mcp-mutations.ts, infrastructure/sqlite/text-files.ts, application/text-files.ts or history.ts, and transport/files.ts. The original brief files remain allowed. Select other behavior owners when needed. Do not stop for file-scope questions tonight. Continue on this branch and update existing PR 89. Run tests first, the complete check, and Worker preflight. Push and mark PR 89 ready after reviews.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -61,4 +63,6 @@ The owner W5 brief and COMMON-NIGHT order authorize unattended planning and impl
 Blocked before tests or source edits: the MCP registry and handlers are in apps/worker/src/transport/mcp.ts, not mcp-http.ts. SQLite publication is in apps/worker/src/infrastructure/sqlite/text-files.ts, outside the allowed files. Atomic heading resolution and publication cannot be added safely through the allowed appends without adding separate unapproved paths. See /private/tmp/oab17-worker-report.md for exact evidence and required scope change.
 
 Parent validation: bun run check and Worker preflight exited 0 on baseline 877d037 with task-only changes. No feature test exists. Keep all acceptance criteria unchecked. Publish a draft PR for the file-scope blocker under the overnight order. Resume only after the owner expands the source boundary to the real MCP and SQLite owners.
+
+The supervisor grants the real semantic owners and resolves the earlier file-boundary blocker. Continue implementation under the existing unattended plan. Preserve the live-service and vault restrictions.
 <!-- SECTION:NOTES:END -->

@@ -338,7 +338,15 @@ function deepFreeze<T>(value: T): DeepReadonly<T> {
 
 /** Returns exact canonical command bytes or exact UTF-8 append input bytes. */
 function commandBytes(command: DeepReadonly<FileCommand>): Uint8Array {
-	if (command.op === "append") return new TextEncoder().encode(command.content);
+	if (command.op === "append")
+		return new TextEncoder().encode(
+			command.heading === undefined
+				? command.content
+				: JSON.stringify({
+						heading: command.heading,
+						content: command.content,
+					}),
+		);
 	const body =
 		command.op === "rename"
 			? { to: command.body.to }

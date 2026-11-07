@@ -702,6 +702,7 @@ describe("production MCP transport", () => {
 			"create_note",
 			"update_note",
 			"append_to_note",
+			"append_under_heading",
 			"delete_note",
 			"restore_note",
 			"list_notes",

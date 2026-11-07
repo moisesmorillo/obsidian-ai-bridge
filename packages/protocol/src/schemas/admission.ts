@@ -29,7 +29,7 @@ export const AuthorizationContextSchema = z.object({
 		.transform((scopes) => [...scopes].sort()),
 });
 
-/** Operation metadata validated before a request body is read. */
+/** Operation metadata validated before body reads; append supports legacy unconditioned and exact-ETag modes. */
 export const OperationDescriptorSchema = z
 	.object({
 		op: z.enum(["read", "put", "delete", "rename", "append", "restore"]),
@@ -56,7 +56,7 @@ export const OperationDescriptorSchema = z
 			put: ["absent", "match"],
 			delete: ["match"],
 			rename: ["match"],
-			append: ["none"],
+			append: ["none", "match"],
 			restore: ["match"],
 		};
 		if (!preconditions[descriptor.op].includes(descriptor.precondition.kind)) {

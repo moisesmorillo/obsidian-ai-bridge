@@ -26,6 +26,17 @@ export {
 	VaultScopeSchema,
 } from "@protocol/schemas/admission";
 export type {
+	AppendUnderHeadingRequest,
+	AppendUnderHeadingResult,
+} from "@protocol/schemas/append";
+export {
+	AppendHeadingTextSchema,
+	AppendUnderHeadingBodySchema,
+	AppendUnderHeadingRequestSchema,
+	AppendUnderHeadingResultSchema,
+	AppendUnderHeadingToolSchema,
+} from "@protocol/schemas/append";
+export type {
 	BeginClientConsentRequest,
 	BeginClientConsentResult,
 	ListClientGrantsResult,

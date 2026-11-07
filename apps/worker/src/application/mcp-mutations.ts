@@ -1,5 +1,6 @@
 import {
 	type AdmissionCompletion,
+	type AppendUnderHeadingRequest,
 	type AuthorizationContext,
 	type FileCommand,
 	type FileFailure,
@@ -182,6 +183,61 @@ export function updateMcpNote(
 				undefined,
 				responseProduction,
 			),
+	);
+}
+
+/** Append text below a heading only at the exact ETag and retain the shared mutation receipt. */
+export function appendUnderHeadingMcpNote(
+	gateway: McpMutationGateway,
+	identity: AuthorizationContext,
+	input: AppendUnderHeadingRequest,
+	responseProduction: Promise<void>,
+) {
+	const epoch = parseETag(input.etag).epoch;
+	const descriptor = OperationDescriptorSchema.parse({
+		op: "append",
+		paths: [input.path],
+		precondition: { kind: "match", etag: input.etag },
+		epoch,
+	});
+	const contentIdentity = JSON.stringify({
+		heading: input.heading,
+		content: input.text,
+	});
+	return runMutation(
+		gateway,
+		identity,
+		"vault:write",
+		"append",
+		epoch,
+		responseProduction,
+		async (ownedGateway) => {
+			const prepared = await prepareTextPayload(
+				new TextEncoder().encode(contentIdentity),
+			);
+			const command: FileCommand = {
+				op: "append",
+				intent: {
+					op: "append",
+					epoch,
+					paths: [input.path],
+					precondition: { kind: "match", etag: input.etag },
+					payload_hash: prepared.payload_hash,
+					size: prepared.size,
+				},
+				content: input.text,
+				heading: input.heading,
+				key: input.idempotency_key,
+			};
+			return executeFileCommand(
+				ownedGateway,
+				identity,
+				descriptor,
+				input.idempotency_key,
+				async () => command,
+				responseProduction,
+			);
+		},
 	);
 }
 

@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-11-07T13:12:00Z'
-updated_date: '2026-11-07T13:46:00Z'
+updated_date: '2026-11-07T14:19:00Z'
 labels:
   - F6
   - backup
@@ -91,4 +91,6 @@ Validation after correction: bun run docs:check passed with exit 0. bun run chec
 Supervisor report: owner applied cloudflare-infra PR #20 and oab-backups exists. This is reported evidence only. I did not check or change Cloudflare resources.
 
 Final branch review at 47871ef: REQUEST CHANGES. This supersedes the earlier task-review statement about no blockers. The documentation finding at 247fb0b is closed. F1 MAJOR stays open: existing completed archives and multipart upload IDs belong to R2_BUCKET, but new wiring uses only BACKUP_BUCKET. Existing completed downloads can fail. Existing uploads can retry forever and prevent later scheduled exports. No agent examined production records. A compatibility path or explicit migration prerequisite needs tests for both legacy states. F2 MAJOR stays open: 1,908 output steps at one minute each take about 31.8 hours for a near-2 GB archive. Infra aborts multipart uploads after 24 hours. Expired upload IDs remain retryable and can block future exports. Continuation timing and expired-upload recovery need controlled-clock tests. F3 MINOR stays open: lifecycle-deleted archives retain completed SQLite records and owner download links. Availability-aware listing needs a missing-object test. The owner brief directs a draft PR when a real blocker appears. Keep OAB-42 In Progress and publish this branch as a draft. No readiness claim or live-vault test follows from passing automated checks. Review scope covered the full 21-file diff, export admission and recovery, bucket wiring, owner rendering, tests, and documentation. Static diff checks passed. The reviewer did not repeat worker checks or inspect Cloudflare. Supervisor reports owner applied infra PR #20 and the bucket exists.
+
+Supervisor decisions: owner reports zero completed packed exports in production. Do not add migration code. A missing pre-switch archive must return a clear owner-visible download failure. Infra PR #21 extends incomplete multipart lifetime to seven days. The owner merges that PR before this Worker PR. Record the seven-day limit in documentation. These decisions replace the draft-only blocker plan. The supervisor authorizes one force-with-lease push after rebase, because the remote branch contains only the original task commit. Conflict resolution retained the current task notes. Rebase omitted the duplicate original task-file commit.
 <!-- SECTION:NOTES:END -->

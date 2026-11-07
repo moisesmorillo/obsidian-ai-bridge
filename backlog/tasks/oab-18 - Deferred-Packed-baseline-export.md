@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: 2026-10-12 15:14
-updated_date: '2026-11-07T05:21:00Z'
+updated_date: '2026-11-07T05:23:00Z'
 labels:
   - deferred
   - trigger-based
@@ -80,4 +80,6 @@ Round-1 review correction (2026-11-07):
 - Added owner export routes and behavior to `docs/api/f2.md`.
 
 The mixed-content archive test was green on its first run because the completed archive already passed independent extraction and structure checks. This test adds evidence without a production ZIP-writer change. Focused F2 validation passed: 5 tests. `bun run docs:check` passed.
+
+Post-rebase validation (2026-11-07): Rebased on `origin/main` without conflicts. Focused tests passed after rebase: 3 unit test files with 5 tests, plus the F2 packed-export file with 5 tests. Worker typecheck passed. Full `bun run check` passed: lint, docs:check, typechecks, tests, and dry-run builds. Test totals: 2,206 passed and 1 skipped across 121 files. Worker preflight passed with exit code 0 using `bun run --filter @obsidian-ai-bridge/worker preflight`. The first full check found a TypeScript stream-result type mismatch. Inferred the exact reader result type and reran the full check successfully.
 <!-- SECTION:NOTES:END -->

@@ -494,10 +494,38 @@ describe("PublicationController", () => {
 		vault.binaryFiles.set(path, source.slice());
 		const originalPut = remote.putBlob.bind(remote);
 		let attempts = 0;
-		remote.putBlob = async (...args) => {
+		let committedReceipt: PublicationReceipt | null = null;
+		const attempted = new Map<string, Uint8Array>();
+		remote.putBlob = async (
+			target,
+			bytes,
+			hashValue,
+			condition,
+			key,
+			requestEpoch,
+		) => {
 			attempts += 1;
-			if (attempts === 1) throw new Error("upload aborted midway");
-			return originalPut(...args);
+			attempted.set(key, bytes.slice());
+			if (attempts === 1) {
+				committedReceipt = await originalPut(
+					target,
+					bytes,
+					hashValue,
+					condition,
+					key,
+					requestEpoch,
+				);
+				throw new Error("upload response aborted after commit");
+			}
+			if (committedReceipt) return committedReceipt;
+			return originalPut(
+				target,
+				bytes,
+				hashValue,
+				condition,
+				key,
+				requestEpoch,
+			);
 		};
 
 		await controller.scan();
@@ -525,6 +553,12 @@ describe("PublicationController", () => {
 			remote.blobWrites[0]?.bytes.every(
 				(byte, index) => byte === savedBytes[index],
 			),
+		).toBe(true);
+		expect(attempted.size).toBe(1);
+		expect(
+			attempted
+				.get(originalKey ?? "")
+				?.every((byte, index) => byte === savedBytes[index]),
 		).toBe(true);
 		expect(journal.snapshot().pending_ops).toEqual([]);
 		controller.close();

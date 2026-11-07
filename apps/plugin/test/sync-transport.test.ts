@@ -222,20 +222,57 @@ describe("SyncTransport", () => {
 		]
 			.map((byte) => byte.toString(16).padStart(2, "0"))
 			.join("");
+		const etag = `"${epoch}.4"`;
+		session.responses.push({
+			status: 201,
+			headers: { etag },
+			text: JSON.stringify({
+				path: "assets/max.png",
+				etag,
+				seq: 7,
+				hash,
+				size: source.byteLength,
+				deleted: false,
+			}),
+		});
 		session.responses.push({
 			status: 200,
 			headers: {
-				etag: `"${epoch}.4"`,
+				etag,
 				"content-type": "application/octet-stream",
 				"content-length": String(source.byteLength),
 			},
 			text: "",
-			arrayBuffer: source.buffer.slice(0) as ArrayBuffer,
+			arrayBuffer: new ArrayBuffer(0),
 		});
 		const transport = new SyncTransport("https://service.test", session);
 
+		await transport.putBlob(
+			"assets/max.png",
+			source,
+			hash,
+			{ kind: "absent" },
+			"large-blob-key",
+			epoch,
+		);
+		const uploadBody = session.calls[0]?.options?.body as ArrayBuffer;
+		session.responses[0] = {
+			status: 200,
+			headers: {
+				etag,
+				"content-type": "application/octet-stream",
+				"content-length": String(source.byteLength),
+			},
+			text: "",
+			arrayBuffer: uploadBody,
+		};
+
 		const result = await transport.readCurrentBlobAuthority("assets/max.png");
 
+		expect(uploadBody.byteLength).toBe(source.byteLength);
+		expect(
+			new Uint8Array(uploadBody).every((byte, index) => byte === source[index]),
+		).toBe(true);
 		expect(result.bytes.byteLength).toBe(source.byteLength);
 		expect(result.bytes.every((byte, index) => byte === source[index])).toBe(
 			true,

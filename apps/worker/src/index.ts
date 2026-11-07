@@ -140,6 +140,26 @@ function resolveExports(
 	};
 }
 
+/** Return the host only for the exact canonical HTTPS service origin. */
+function canonicalServiceHost(origin: string | undefined): string | null {
+	if (!origin) return null;
+	try {
+		const parsed = new URL(origin);
+		if (
+			parsed.protocol !== "https:" ||
+			parsed.origin !== origin ||
+			parsed.username ||
+			parsed.password ||
+			parsed.search ||
+			parsed.hash
+		)
+			return null;
+		return parsed.host;
+	} catch {
+		return null;
+	}
+}
+
 /** Expose only owner-authenticated bounded garbage-collection operations. */
 function resolveBlobGc(
 	env: Env,
@@ -222,6 +242,22 @@ const worker = {
 						headers: { "cache-control": "no-store" },
 					}),
 				);
+	},
+	/** Start one timestamp-keyed export on the canonical host Vault only. */
+	async scheduled(controller: ScheduledController, env: Env): Promise<void> {
+		const host = canonicalServiceHost(env.SERVICE_ORIGIN);
+		if (!host || !Number.isSafeInteger(controller.scheduledTime)) return;
+		const createdAt = new Date(controller.scheduledTime).toISOString();
+		const stub = env.VAULTS.get(env.VAULTS.idFromName(host));
+		const result = await stub.startScheduledPackedExport(createdAt);
+		if (!result)
+			console.info(
+				JSON.stringify({
+					event: "scheduled_export_skipped",
+					reason: "export_already_running",
+					created_at: createdAt,
+				}),
+			);
 	},
 };
 

@@ -7,6 +7,7 @@ import {
 	PackedExportStorageFailure,
 } from "@worker/application/export";
 import { FileOperationDenied } from "@worker/application/files";
+import type { Env } from "@worker/env";
 import { R2PackedArchiveStore } from "@worker/infrastructure/r2/packed-export";
 import { revisionLogicalPayloadBytes } from "@worker/infrastructure/sqlite/capacity";
 import { SqlitePackedExportStore } from "@worker/infrastructure/sqlite/packed-exports";
@@ -419,6 +420,9 @@ describe("SQLite packed export store", () => {
 			);
 			const captured = await store.capture(exportCreatedAt, 100);
 			expect(captured.status).toBe("queued");
+			expect(
+				await store.captureWhenIdle("2026-11-07T04:00:00.000Z", 101),
+			).toBeNull();
 			expect(captured.files.map(({ rev }) => rev)).toEqual([1]);
 			expect(
 				state.storage.sql
@@ -453,6 +457,13 @@ describe("SQLite packed export store", () => {
 			expect((await store.capture(exportCreatedAt, 300)).failure?.kind).toBe(
 				"export_source_unavailable",
 			);
+			expect(await store.listResults()).toContainEqual({
+				epoch: captured.epoch,
+				created_at: exportCreatedAt,
+				status: "failed",
+				size: null,
+				failure: { kind: "export_source_unavailable" },
+			});
 			expect(
 				state.storage.sql
 					.exec("SELECT * FROM export_pins WHERE export_id = ?", captured.id)
@@ -606,7 +617,7 @@ describe("packed export SQLite row bounds", () => {
 				const repository = new SqlitePackedExportStore(state.storage, blobs);
 				const service = new PackedExportService(
 					repository,
-					new R2PackedArchiveStore(env.R2_BUCKET),
+					new R2PackedArchiveStore((env as Env).BACKUP_BUCKET),
 				);
 				expect((await service.start(exportCreatedAt, 1)).status).toBe("queued");
 				let more = true;
@@ -819,7 +830,7 @@ describe("packed export source retry", () => {
 				const repository = new SqlitePackedExportStore(state.storage, blobs);
 				const service = new PackedExportService(
 					repository,
-					new R2PackedArchiveStore(env.R2_BUCKET),
+					new R2PackedArchiveStore((env as Env).BACKUP_BUCKET),
 				);
 				expect((await service.start(exportCreatedAt, 1)).status).toBe("queued");
 				const initial = await repository.nextActive();
@@ -990,7 +1001,34 @@ describe("packed export alarm dispatch", () => {
 			verifyStoredZipStructure(result.bytes, files);
 		} finally {
 			await env.R2_BUCKET.delete(blobKey);
-			if (archiveKey) await env.R2_BUCKET.delete(archiveKey);
+			if (archiveKey) await (env as Env).BACKUP_BUCKET.delete(archiveKey);
 		}
+	});
+});
+
+describe("scheduled packed export admission", () => {
+	it("keeps owner and scheduled starts within one active vault export", async () => {
+		const stub = env.VAULTS.get(
+			env.VAULTS.idFromName(`scheduled-export-${crypto.randomUUID()}`),
+		);
+		await runInDurableObject(stub, async (vault, state) => {
+			const starts = await Promise.all([
+				vault.startScheduledPackedExport("2026-11-07T04:00:00.000Z"),
+				vault.startPackedExport("synthetic-owner", "2026-11-07T05:00:00.000Z"),
+			]);
+			expect(starts.some((result) => result?.status === "queued")).toBe(true);
+			const persisted = state.storage.sql
+				.exec<{ created_at: string }>("SELECT created_at FROM packed_exports")
+				.toArray();
+			expect(persisted).toHaveLength(1);
+			expect([
+				"2026-11-07T04:00:00.000Z",
+				"2026-11-07T05:00:00.000Z",
+			]).toContain(persisted[0]?.created_at);
+			const skipped = await vault.startScheduledPackedExport(
+				"2026-11-07T06:00:00.000Z",
+			);
+			expect(skipped).toBeNull();
+		});
 	});
 });

@@ -34,7 +34,7 @@ End-to-end encryption; sync while iOS/iPadOS suspends Obsidian; automatic text m
 | Plan | Workers Paid accepted |
 | Legacy | Repo and git history restarted from scratch; worker `obsidian-bridge.mmorillo.dev`, bucket `obsidian-ai-bridge` and KV wiped; nothing migrated |
 | Conflict policy | **Option B**: the confirmed remote operation stands; pending local content is preserved as a conflict copy at a new path; nothing is resurrected automatically |
-| Backup destination | Packed current-file snapshots in the existing private R2 bucket after owner activation (§11). Historical exports and automatic schedule remain out of scope |
+| Backup destination | Hourly packed current-file snapshots in the dedicated `oab-backups` R2 bucket. Infra deletes `backups/` objects after 15 days (§11) |
 | Phase F4 | Kept: real vault on the Mac with iCloud still active, plugin only on the Mac, max two weeks, in *coexistence mode* (§7.10) |
 | Tracking | Backlog.md for tasks and deferred items (label `deferred`); no milestones, no separate roadmap |
 | Agent instructions | One `AGENTS.md` at the repo root; no `CLAUDE.md`, Claude Code reads `AGENTS.md` natively |
@@ -65,7 +65,7 @@ Mac / iPad / iPhone                     ChatGPT / claude.ai / Claude Code
      ├─ /mcp             MCP server (same operations, same authorization)
      ├─ /authorize /token /register   OAuth 2.1 (workers-oauth-provider, grants in KV)
      ├─ /owner/*         owner console (behind Cloudflare Access)
-     └─ (no cron: owner starts a packed baseline in the console; Vault alarms resume it, §11)
+     └─ (hourly scheduled trigger starts a packed baseline; the owner console can also start one; Vault alarms resume work, §11)
                               ▼
             Durable Object "Vault" (SQLite) — sole authority
             files, revisions, changes, FTS, receipts, clients, revocations
@@ -547,11 +547,11 @@ KV propagation is eventually consistent (60 s or more), so the DO is the authori
 
 ## 11. Backup and restore
 
-The owner starts packed current-file snapshots from the Access-protected console. The Worker uses the existing private R2 bucket. It does not create Cloudflare resources or run a scheduled export. The separate `exports` table remains reserved for the former GitHub design. `packed_exports`, `packed_export_files`, and `export_pins` store resumable baseline work.
+The Access-protected owner console starts packed current-file snapshots. A Workers Cron Trigger also starts one export each hour at `0 * * * *`. Both write archives to the dedicated R2 bucket `oab-backups`; blob payloads remain in `oab-immutable-blobs`. The `cloudflare-infra` lifecycle rule deletes objects under `backups/` after 15 days and aborts incomplete multipart uploads after seven days. Worker code does not prune archives. The separate `exports` table remains reserved for the former GitHub design. `packed_exports`, `packed_export_files`, and `export_pins` store resumable baseline work.
 
 ### 11.1 Consistent current-file cut
 
-The owner starts an export from `/owner/exports`. The server assigns a canonical UTC millisecond timestamp. The epoch and timestamp form the idempotency identity.
+The owner starts an export from `/owner/exports`. The server assigns a canonical UTC millisecond timestamp. The epoch and timestamp form the idempotency identity. The Cron Trigger uses its scheduled timestamp as that identity. If queued or uploading work owns the vault, a scheduled attempt skips and emits a structured `scheduled_export_skipped` event. One SQLite transaction prevents concurrent owner and Cron starts from creating separate active exports.
 
 1. One SQLite transaction captures the vault `epoch`, `head_seq`, and every current live file's exact `(path, rev, hash, size)`. It writes the manifest size, source authority, file rows, and revision pins.
 2. If retention removed a current text revision before capture, the transaction copies that current payload into bounded source chunks. Retained text revisions remain the source when present. Blob sources use the exact current content hash and size.
@@ -564,14 +564,14 @@ The owner starts an export from `/owner/exports`. The server assigns a canonical
 - The encoder writes store-only ZIP32 entries. It rejects unsafe paths and calculates exact local headers, data descriptors, central-directory entries, and end records before R2 output starts.
 - The complete encoded archive must fit the 2 GB product envelope and ZIP32 fields. It contains at most 10,000 current files plus the manifest entry.
 - One alarm step emits at most 1 MiB of archive bytes, reads at most 1 MiB of file bytes, and starts at most 16 source ranges. Each file range is at most 64 KiB.
-- R2 uses the existing bucket and fixed 5 MiB multipart parts. The final part can be smaller. SQLite stores the upload id, ZIP cursor, CRC state, byte offsets, accepted part receipts, and bounded remainder after each step.
+- Archive R2 writes use `BACKUP_BUCKET` and fixed 5 MiB multipart parts. The final part can be smaller. SQLite stores the upload id, ZIP cursor, CRC state, byte offsets, accepted part receipts, and bounded remainder after each step.
 - Manifest, pending-part, and frozen-text bytes use chunk rows with at most 1,000,000 payload bytes. The complete estimated row stays below the 2,000,000-byte SQLite row limit. Snapshot inserts use at most 100 SQL parameters per statement.
 - Each cursor update compares the exact observed cursor. An interrupted part can be sent again at the same part number from the same immutable source bytes. Only the final R2 object can become a completed snapshot.
 
 ### 11.3 Owner operations and failures
 
-- `GET /owner/exports` lists completed snapshot timestamps and byte sizes. `POST /owner/exports` starts an export through an Access-protected, same-origin, one-use CSRF form.
-- `GET /owner/exports/{epoch}/{created_at}/download` streams only a completed R2 object whose stored size matches SQLite. Incomplete and failed exports have no download link.
+- `GET /owner/exports` lists completed snapshot timestamps and byte sizes, plus failed timestamps and safe failure kinds. `POST /owner/exports` starts an export through an Access-protected, same-origin, one-use CSRF form.
+- `GET /owner/exports/{epoch}/{created_at}/download` streams only a completed R2 object whose stored size matches SQLite. Incomplete and failed exports have no download link. A missing archive returns a no-store 404 that directs the owner to `/owner/exports` to create a new export.
 - A missing pinned source or an exact archive limit failure records a typed failure, aborts a known incomplete multipart upload, and releases pins after source reads settle.
 - R2 storage faults leave the durable cursor active. The next alarm retries the same output step. A lost multipart-completion response is checked against the exact R2 key and size before SQLite marks completion.
 - Local tests validate byte, range, and output bounds. Production CPU duration and account-tier measurements remain evidence limits. They do not change the local step ceilings.
@@ -582,7 +582,7 @@ The owner follows [Restore a packed baseline into a new local vault](packed-expo
 
 ### 11.5 Entry condition for F4 (R6)
 
-iCloud Drive remains the owner of the live vault through F4 and F5. Before the plugin touches the real vault, the owner keeps one dated copy of the vault outside iCloud, for example a zip in local storage. The packed service snapshot is an extra recovery copy after owner activation.
+iCloud Drive remains the owner of the live vault through F4 and F5. Before the plugin touches the real vault, the owner keeps one dated copy of the vault outside iCloud, for example a zip in local storage. Hourly packed service snapshots provide an extra recovery copy.
 
 The service holds one vault per host name (`idFromName(host)`), shared by every enrolled device and every test vault. While the real vault is enrolled, a test vault that publishes a file puts that file into the real vault on the next feed. During F4 and later phases, test vaults enrolled in the deployed service must not create, change, rename or delete service files. Live proofs that write need a second service vault or the end of the trial (observed 2026-11-05).
 
@@ -602,7 +602,7 @@ The service holds one vault per host name (`idFromName(host)`), shared by every 
 | R2 blobs | 10 GB free tier | Alert at 4 GB; GC trigger at 1 GB unreferenced (§16) |
 | Worker memory | 128 MB | No full-vault materialization anywhere; exports and hydration stream per file |
 | Polling | §7.4 | *measure* in F4: requests/day per device, p95 feed latency |
-| Packed baseline | 2 GB exact encoded archive, 10,000 current files, 1 MiB output and source-byte step, 16 source ranges per alarm | Owner-started in the console. R2 multipart faults resume from the stored cursor. Terminal limit or source faults block download. |
+| Packed baseline | 2 GB exact encoded archive, 10,000 current files, 1 MiB output and source-byte step, 16 source ranges per alarm | Owner-started or scheduled hourly. Archives use `oab-backups`; infra removes `backups/` objects after 15 days. R2 multipart faults resume from the stored cursor. Terminal limit or source faults block download. |
 
 Cloudflare lists 10 GB per SQLite Durable Object on Workers Paid and 1 GB on Workers Free. Its [Durable Object limits](https://developers.cloudflare.com/durable-objects/platform/limits/) give these limits. We read this page on 2026-10-17.
 
@@ -731,13 +731,15 @@ Bun workspaces; Hono; `@cloudflare/workers-oauth-provider`; `@modelcontextprotoc
 
 ## 16. Deferred (tracked in Backlog.md, label `deferred`)
 
+Hourly current-file backups use the `oab-backups` R2 bucket. The infra lifecycle rule retains `backups/` objects for 15 days and aborts incomplete multipart uploads after seven days. Worker code does not prune this bucket.
+
 | Item | Why not now | Trigger to reopen | Seam preserved in v1 |
 | --- | --- | --- | --- |
 | Blob garbage collection | Initially deferred because orphan detection could race new references during Durable Object I/O | Owner activation through OAB-13; no 1 GB threshold gates the owner action | Implemented in OAB-13. Inventory R2 `blobs/`, then check live files, retained revisions, and active packed-export sources. Transactionally mark candidates, reject stale or marked publication evidence, delete exact marked keys, and clear marks only after R2 confirms deletion. An unresolved post-restart outcome stays fenced and appears as `unknown`. An owner retry cannot clear it. Recover only with settlement or fencing evidence (OAB-41). Never list or delete `backups/`. See [Blob garbage collection API](api/blob-gc.md). |
 | WebSocket push from DO | 15–60 s polling is enough for one owner | Measured latency complaint or request cost > 50% of allowance | Feed is `seq`-based; push only says "new seq", pull unchanged |
 | Embeddings / semantic search | FTS covers the current vault | Agents miss notes by synonym in real use | `search_notes` returns `rev` and snippets; a second backend plugs behind it |
 | `.obsidian/` settings categories | Triggered 2026-11-06 because manual re-configuration became a daily cost | Device proof: device available and BRAT release plugin-v0.1.0 published. Current code target: 0.1.4, with no release authorization. | Implemented in §7.1. Consent and hydration duties stay device-local. The master switch defaults off. Guarded writes retain the documented unobserved-version race. Device proof remains open. |
-| Historical backup and automatic export schedule | Packed baselines contain current files only and start on owner request | Owner requires revision history or unattended snapshots | The current exporter uses immutable file pins and the existing R2 bucket. Service-side import and historical export remain unbuilt. |
+| Historical backup history | Packed baselines contain current files only | Owner requires retained revisions or service-side historical restore | Hourly current-file archives use `oab-backups` for 15 days. Incomplete multipart uploads expire after seven days. Service-side import and historical export remain unbuilt. |
 | Windows / Linux | No device | A device exists | No Node/Electron APIs in the plugin |
 | E2E encryption | Would break server-side search and append | Owner requirement changes | None; would be a redesign |
 

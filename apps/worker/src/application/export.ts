@@ -97,8 +97,13 @@ export interface PackedExportCheckpoint {
 
 /** SQLite authority for a pinned current-file snapshot and its durable checkpoints. */
 export interface PackedExportRepository {
-	/** Capture manifest metadata and insert all revision pins in one transaction. */
+	/** Capture one immutable cut, with idempotency and active-work admission in one transaction. */
 	capture(createdAt: string, now: number): Promise<PackedExportWork>;
+	/** Capture a snapshot only when no queued or uploading export owns the vault. */
+	captureWhenIdle(
+		createdAt: string,
+		now: number,
+	): Promise<PackedExportWork | null>;
 	/** Load the oldest queued or uploading export with its pinned file list. */
 	nextActive(): Promise<PackedExportWork | null>;
 	/** Check for active work without materializing its manifest or source rows. */
@@ -140,15 +145,15 @@ export interface PackedExportRepository {
 		observedZipState: string,
 		failure: ExportFailure,
 	): Promise<void>;
-	/** List completed export states in newest-first order. */
-	listCompleted(): Promise<readonly ExportOperationResult[]>;
+	/** List durable export outcomes in newest-first order for the owner page. */
+	listResults(): Promise<readonly ExportOperationResult[]>;
 	/** Return key and exact size only when its export row is complete. */
 	getCompletedArchive(
 		exportId: string,
 	): Promise<{ key: string; size: number } | null>;
 }
 
-/** Existing R2 bucket capability for bounded multipart archive writes. */
+/** Dedicated R2 backup-bucket capability for bounded multipart archive writes. */
 export interface PackedArchiveStore {
 	/** Start one multipart upload for the deterministic snapshot key. */
 	create(key: string): Promise<string>;
@@ -203,15 +208,30 @@ export class PackedExportSourceFailure extends Error {
 export class PackedExportService {
 	private activeStep: Promise<void> | null = null;
 
-	/** Bind one durable snapshot authority and the existing-bucket archive adapter. */
+	/** Bind the snapshot authority and dedicated backup-bucket adapter for owner and scheduled exports. */
 	constructor(
 		private readonly repository: PackedExportRepository,
 		private readonly archive: PackedArchiveStore,
 	) {}
 
-	/** Start or replay the epoch-and-timestamp export without reading file payload bytes. */
-	async start(createdAt: string, now: number): Promise<ExportOperationResult> {
-		const work = await this.repository.capture(createdAt, now);
+	/** Start or replay the export with one exclusive active-work reservation. */
+	start(createdAt: string, now: number): Promise<ExportOperationResult>;
+	/** Skip creation when another export owns the vault, for scheduled starts only. */
+	start(
+		createdAt: string,
+		now: number,
+		skipWhenBusy: true,
+	): Promise<ExportOperationResult | null>;
+	/** Capture or replay one timestamp identity after the repository's atomic active-work check. */
+	async start(
+		createdAt: string,
+		now: number,
+		skipWhenBusy = false,
+	): Promise<ExportOperationResult | null> {
+		const work = skipWhenBusy
+			? await this.repository.captureWhenIdle(createdAt, now)
+			: await this.repository.capture(createdAt, now);
+		if (!work) return null;
 		if (work.status === "queued" || work.status === "uploading") {
 			try {
 				createZip32Cursor(archiveMembers(work), MAX_EXPORT_ARCHIVE_BYTES);
@@ -251,9 +271,9 @@ export class PackedExportService {
 		return (await this.repository.nextActive()) !== null;
 	}
 
-	/** List only completed exports so partial output is never available to download. */
+	/** List completed and failed terminal outcomes without exposing archive keys. */
 	async list(): Promise<readonly ExportOperationResult[]> {
-		return (await this.repository.listCompleted()).map((item) =>
+		return (await this.repository.listResults()).map((item) =>
 			ExportOperationResultSchema.parse(item),
 		);
 	}

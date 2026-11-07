@@ -154,7 +154,7 @@ export class Vault extends DurableObject<Env> {
 		this.retentionStore = new SqliteRetentionStore(ctx.storage);
 		this.packedExportService = new PackedExportService(
 			new SqlitePackedExportStore(ctx.storage, new R2BlobStore(env.R2_BUCKET)),
-			new R2PackedArchiveStore(env.R2_BUCKET),
+			new R2PackedArchiveStore(env.BACKUP_BUCKET),
 		);
 		const blobGcRepository = new SqliteBlobGcStore(ctx.storage);
 		blobGcRepository.markInterruptedDeleteUnknown();
@@ -215,7 +215,23 @@ export class Vault extends DurableObject<Env> {
 		if (!this.isConfiguredOwner(ownerSubject)) return null;
 		await this.initialization;
 		const result = await this.packedExportService.start(createdAt, Date.now());
+		if (!result) return null;
 		if (result.status === "queued" || result.status === "uploading")
+			await this.ctx.storage.setAlarm(Date.now() + 1);
+		return result;
+	}
+
+	/** Start one scheduled export only when no queued or uploading export owns the vault. */
+	async startScheduledPackedExport(
+		createdAt: string,
+	): Promise<ExportOperationResult | null> {
+		await this.initialization;
+		const result = await this.packedExportService.start(
+			createdAt,
+			Date.now(),
+			true,
+		);
+		if (result?.status === "queued" || result?.status === "uploading")
 			await this.ctx.storage.setAlarm(Date.now() + 1);
 		return result;
 	}

@@ -5,6 +5,7 @@
 	"compatibility_flags": ["unhandled_rejection_after_microtask_checkpoint"],
 	"main": "src/index.ts",
 	"workers_dev": false,
+	"triggers": { "crons": ["0 * * * *"] },
 	"preview_urls": false,
 	"vars": {
 		"SERVICE_ORIGIN": "https://obsidian-bridge.mmorillo.dev",
@@ -21,7 +22,8 @@
 		}
 	],
 	"r2_buckets": [
-		{ "binding": "R2_BUCKET", "bucket_name": "oab-f2-immutable-blobs" }
+		{ "binding": "R2_BUCKET", "bucket_name": "oab-f2-immutable-blobs" },
+		{ "binding": "BACKUP_BUCKET", "bucket_name": "oab-backups" }
 	],
 	"migrations": [{ "tag": "v1", "new_sqlite_classes": ["Vault"] }]
 }

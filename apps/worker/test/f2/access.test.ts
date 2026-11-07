@@ -8,6 +8,7 @@ function makeEnv(overrides: Partial<Env> = {}): Env {
 	return {
 		VAULTS: {} as Env["VAULTS"],
 		R2_BUCKET: {} as Env["R2_BUCKET"],
+		BACKUP_BUCKET: {} as Env["BACKUP_BUCKET"],
 		ACCESS_TEAM_DOMAIN: "https://team.example",
 		ACCESS_AUDIENCE: "access-app-test",
 		OWNER_SUBJECT: "owner-test",

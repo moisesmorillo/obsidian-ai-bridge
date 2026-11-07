@@ -843,7 +843,7 @@ function insertExportChunks(
 					exportId,
 					kind,
 					ordinal,
-					data: data as typeof packedExportChunks.$inferSelect.data,
+					data,
 				})),
 			)
 			.run();

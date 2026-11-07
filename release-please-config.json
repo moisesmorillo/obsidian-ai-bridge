@@ -1,0 +1,28 @@
+{
+	"$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+	"bootstrap-sha": "eec41e68778e0d9e674d8e40c80b7c28e9ef80ed",
+	"separate-pull-requests": true,
+	"packages": {
+		"apps/plugin": {
+			"component": "ai-bridge",
+			"release-type": "node",
+			"include-component-in-tag": true,
+			"tag-separator": "-",
+			"package-name": "@obsidian-ai-bridge/plugin",
+			"extra-files": [
+				{
+					"type": "json",
+					"path": "apps/plugin/manifest.json",
+					"jsonpath": "$.version"
+				}
+			]
+		},
+		"apps/worker": {
+			"component": "worker",
+			"release-type": "node",
+			"include-component-in-tag": true,
+			"tag-separator": "-",
+			"package-name": "@obsidian-ai-bridge/worker"
+		}
+	}
+}

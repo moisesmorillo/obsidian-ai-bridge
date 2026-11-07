@@ -727,7 +727,7 @@ Conventions: English in the repo; Conventional Commits; Biome formatting; Zod sc
 
 ### 15.3 Tooling
 
-Bun workspaces; Hono; `@cloudflare/workers-oauth-provider`; `@modelcontextprotocol/server`; Zod; Biome; Vitest with `@cloudflare/vitest-pool-workers`; Wrangler; esbuild for the plugin; BRAT for beta installs; Release Please optional later.
+Bun workspaces; Hono; `@cloudflare/workers-oauth-provider`; `@modelcontextprotocol/server`; Zod; Biome; Vitest with `@cloudflare/vitest-pool-workers`; Wrangler; esbuild for the plugin; BRAT for beta installs; Release Please for plugin and Worker releases.
 
 ## 16. Deferred (tracked in Backlog.md, label `deferred`)
 

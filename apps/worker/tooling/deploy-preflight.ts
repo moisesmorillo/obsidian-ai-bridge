@@ -39,10 +39,13 @@ export function createTemporaryRoot(): string {
 	return root;
 }
 
-/** Build the only child environment allowed to reach the local Wrangler process. */
-export function createSanitizedEnvironment(root: string): NodeJS.ProcessEnv {
+/** Build an allowlisted environment for a Wrangler child process. */
+export function createSanitizedEnvironment(
+	root: string,
+	inheritedEnvironment: NodeJS.ProcessEnv = process.env,
+): NodeJS.ProcessEnv {
 	return {
-		PATH: process.env.PATH,
+		PATH: inheritedEnvironment.PATH,
 		HOME: join(root, "home"),
 		XDG_CONFIG_HOME: join(root, "config"),
 		XDG_CACHE_HOME: join(root, "cache"),
@@ -53,28 +56,67 @@ export function createSanitizedEnvironment(root: string): NodeJS.ProcessEnv {
 	};
 }
 
-/** Run Wrangler with bounded captured output and no inherited credentials or dotenv files. */
-function runBuild(root: string): string {
-	const outputDirectory = join(root, "bundle");
-	const build = spawnSync(
-		"node",
-		[
+/** Build the credential-free Wrangler dry-run launch. */
+export function createBuildLaunch(
+	root: string,
+	inheritedEnvironment: NodeJS.ProcessEnv = process.env,
+): { args: string[]; environment: NodeJS.ProcessEnv } {
+	return {
+		args: [
 			wranglerCli,
 			"deploy",
 			"--dry-run",
 			"--config",
 			"wrangler.production.jsonc",
 			"--outdir",
-			outputDirectory,
+			join(root, "bundle"),
+			"--env-file",
+			"/dev/null",
 		],
-		{
-			cwd: workerDirectory,
-			env: createSanitizedEnvironment(root),
-			encoding: "utf8",
-			maxBuffer: outputLimit,
-			timeout: buildTimeoutMs,
-		},
-	);
+		environment: createSanitizedEnvironment(root, inheritedEnvironment),
+	};
+}
+
+/** Build the local Wrangler dev launch with an empty global dotenv file. */
+export function createLocalWorkerLaunch(
+	root: string,
+	port: number,
+	inheritedEnvironment: NodeJS.ProcessEnv = process.env,
+): { args: string[]; environment: NodeJS.ProcessEnv } {
+	return {
+		args: [
+			wranglerCli,
+			"dev",
+			"--config",
+			join(root, "local-config", "wrangler.local.jsonc"),
+			"--local",
+			"--no-bundle",
+			"--ip",
+			"127.0.0.1",
+			"--port",
+			String(port),
+			"--local-protocol",
+			"https",
+			"--persist-to",
+			join(root, "state"),
+			"--env-file",
+			"/dev/null",
+		],
+		environment: createSanitizedEnvironment(root, inheritedEnvironment),
+	};
+}
+
+/** Run Wrangler with bounded output and an explicit empty global dotenv input. */
+function runBuild(root: string): string {
+	const outputDirectory = join(root, "bundle");
+	const launch = createBuildLaunch(root);
+	const build = spawnSync("node", launch.args, {
+		cwd: workerDirectory,
+		env: launch.environment,
+		encoding: "utf8",
+		maxBuffer: outputLimit,
+		timeout: buildTimeoutMs,
+	});
 	if (build.error || build.status !== 0) {
 		throw new Error(
 			classifyWranglerFailure(
@@ -115,7 +157,7 @@ export async function availablePort(): Promise<number> {
 	return port;
 }
 
-/** Start Node Wrangler against a temporary config with local-only bindings and persistence. */
+/** Start Node Wrangler with local bindings, persistence, and an empty global dotenv file. */
 export function startLocalWorker(
 	root: string,
 	bundle: string,
@@ -142,31 +184,13 @@ export function startLocalWorker(
 		OWNER_SUBJECT: "preflight-test-owner",
 	};
 	writeFileSync(configPath, JSON.stringify(config));
-	return spawn(
-		"node",
-		[
-			wranglerCli,
-			"dev",
-			"--config",
-			configPath,
-			"--local",
-			"--no-bundle",
-			"--ip",
-			"127.0.0.1",
-			"--port",
-			String(port),
-			"--local-protocol",
-			"https",
-			"--persist-to",
-			join(root, "state"),
-		],
-		{
-			cwd: workerDirectory,
-			env: createSanitizedEnvironment(root),
-			stdio: ["ignore", "pipe", "pipe"],
-			detached: true,
-		},
-	);
+	const launch = createLocalWorkerLaunch(root, port);
+	return spawn("node", launch.args, {
+		cwd: workerDirectory,
+		env: launch.environment,
+		stdio: ["ignore", "pipe", "pipe"],
+		detached: true,
+	});
 }
 
 /** Stop the Wrangler process group before removing its temporary state. */

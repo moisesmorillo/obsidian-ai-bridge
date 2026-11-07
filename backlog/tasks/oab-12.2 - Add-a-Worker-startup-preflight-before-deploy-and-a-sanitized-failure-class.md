@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-11-07T00:13:00Z'
-updated_date: '2026-11-07T01:07:00Z'
+updated_date: '2026-11-07T01:24:00Z'
 labels: []
 dependencies: []
 parent_task_id: OAB-12
@@ -43,4 +43,8 @@ Planning probes: baseline bun run check passed. Dry-run production bundle succee
 Owner approved plan pn-e0aea4. Supervisor override: no use of any vault or live service. Both dev vault clients are revoked. This CI task uses only tests, fakes, and isolated loopback runtime. Implementer commit c4b4943 adds preflight and failure labels. Reported RED: missing classifier and checkMetadata imports failed with observed exit 1 before implementation. Reported GREEN: focused Bun script tests, docs:check, actual credential-free preflight, and bun run check passed. Full check covered 2085 passing Vitest tests and one skipped test plus Bun script assertions. Task review is active. Local startup does not prove production resource permissions or deployment success.
 
 Task corrective review 6eae6234 approved c5f4c69 after c4b4943. Closed all six findings: preserve supported flags, classifier-only safe output, exact fixed known classes, explicit dotenv isolation, bounded descendant process cleanup, and scoped tooling imports. Regressions first failed for flag filtering, exact class text, safe error output, and descendant cleanup. Focused Bun tests, docs:check, env -i PATH="$PATH" bun run preflight, and bun run check then passed. No product code changed. Rebased without conflict onto origin/main 4b6bc04. New code head f988360. Worker validates combined code before final review. Import decision: retain @worker/../tooling because no direct Worker tooling alias exists. No alias configuration changed.
+
+Final branch review reopened R4. Wrangler 4.45.0 parses the global --env-file option, defaults to .env and .env.local in cwd, then assigns loadDotEnv output to process.env. CLOUDFLARE_LOAD_DEV_VARS_FROM_DOT_ENV=false controls only the Worker binding loader. Both build and dev preflight launches now pass --env-file /dev/null and retain the sanitized child environment. Bun assertions cover both launch argument lists and fake inherited token and owner values. The safety guard blocked creation of a fake .env fixture. No alternate fixture was made. The hostile-dotenv runtime fixture remains an evidence limit. No vault, live-service, owner credential, deployment, or Cloudflare resource action occurred.
+
+Final validation details: bun test/deploy-preflight.bun.ts returned exit 0. bun run docs:check returned exit 0. From apps/worker, env -i PATH="<inherited PATH>" bun run preflight returned exit 0. bun run check returned exit 0 with 2,091 passing Vitest tests, one skipped test, passing Bun assertions, and passing dry-run builds. git diff --check returned exit 0. The fake launch tests prove both command argument lists use --env-file /dev/null and both receive the allowlisted environment. A runtime fixture with fake .env values remains untested because the safety guard blocked fixture creation. No alternate fixture was created.
 <!-- SECTION:NOTES:END -->

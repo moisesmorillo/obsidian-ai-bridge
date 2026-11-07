@@ -17,7 +17,8 @@ import { PassThrough } from "node:stream";
 import {
 	availablePort,
 	checkMetadata,
-	createSanitizedEnvironment,
+	createBuildLaunch,
+	createLocalWorkerLaunch,
 	createTemporaryRoot,
 	filterLocalCompatibilityFlags,
 	safePreflightFailure,
@@ -89,12 +90,36 @@ async function main(): Promise<void> {
 	assert.equal(labels.join("\n").includes("example.test"), false);
 	assert.equal(labels.join("\n").includes("secret"), false);
 
-	const safeEnvironment = createSanitizedEnvironment(
+	const fakeParentEnvironment = {
+		PATH: "/test/bin",
+		CLOUDFLARE_API_TOKEN: "fake-test-token",
+		OWNER_SUBJECT: "fake-test-owner",
+	};
+	const buildLaunch = createBuildLaunch(
 		"/private/preflight-state",
+		fakeParentEnvironment,
 	);
-	assert.equal(safeEnvironment.CLOUDFLARE_API_TOKEN, undefined);
-	assert.equal(safeEnvironment.OWNER_SUBJECT, undefined);
-	assert.equal(safeEnvironment.CLOUDFLARE_LOAD_DEV_VARS_FROM_DOT_ENV, "false");
+	assert.deepEqual(buildLaunch.args.slice(-2), ["--env-file", "/dev/null"]);
+	assert.equal(buildLaunch.environment.PATH, "/test/bin");
+	assert.equal(buildLaunch.environment.CLOUDFLARE_API_TOKEN, undefined);
+	assert.equal(buildLaunch.environment.OWNER_SUBJECT, undefined);
+	assert.equal(
+		buildLaunch.environment.CLOUDFLARE_LOAD_DEV_VARS_FROM_DOT_ENV,
+		"false",
+	);
+	const devLaunch = createLocalWorkerLaunch(
+		"/private/preflight-state",
+		12345,
+		fakeParentEnvironment,
+	);
+	assert.deepEqual(devLaunch.args.slice(-2), ["--env-file", "/dev/null"]);
+	assert.equal(devLaunch.environment.PATH, "/test/bin");
+	assert.equal(devLaunch.environment.CLOUDFLARE_API_TOKEN, undefined);
+	assert.equal(devLaunch.environment.OWNER_SUBJECT, undefined);
+	assert.equal(
+		devLaunch.environment.CLOUDFLARE_LOAD_DEV_VARS_FROM_DOT_ENV,
+		"false",
+	);
 
 	const child = Object.assign(new EventEmitter(), {
 		exitCode: null,

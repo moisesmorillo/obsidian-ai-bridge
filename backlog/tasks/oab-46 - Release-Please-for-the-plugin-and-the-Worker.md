@@ -1,11 +1,11 @@
 ---
 id: OAB-46
 title: Release Please for the plugin and the Worker
-status: In Progress
+status: Done
 assignee:
   - '@pi'
 created_date: '2026-11-07T18:44:00Z'
-updated_date: '2026-11-07T19:15:00Z'
+updated_date: '2026-11-07T19:17:00Z'
 labels:
   - ci
   - release
@@ -24,11 +24,11 @@ Owner order 2026-11-07: add Release Please to the monorepo so each component pub
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 On push to main, Release Please opens or updates one release PR per changed component with changelog and version bump. Components without changes get no PR.
-- [ ] #2 Merging the plugin release PR creates tag ai-bridge-v<version> and the GitHub Release with main.js and manifest.json, inside the same workflow run. package.json, manifest.json and versions.json agree and release.ts validation passes.
-- [ ] #3 Merging the worker release PR creates tag worker-v<version> and deploys the Worker with the existing preflight and owner-only guard. Push to main no longer deploys by itself.
-- [ ] #4 Tests cover the versions.json sync step and the deployment config. bun run check green. Workflow files validated with actionlint or an equivalent offline check if available without a new runtime dependency.
-- [ ] #5 docs/plugin-release.md and the Worker deployment docs describe the new flow. Backlog notes record the bootstrap versions.
+- [x] #1 On push to main, Release Please opens or updates one release PR per changed component with changelog and version bump. Components without changes get no PR.
+- [x] #2 Merging the plugin release PR creates tag ai-bridge-v<version> and the GitHub Release with main.js and manifest.json, inside the same workflow run. package.json, manifest.json and versions.json agree and release.ts validation passes.
+- [x] #3 Merging the worker release PR creates tag worker-v<version> and deploys the Worker with the existing preflight and owner-only guard. Push to main no longer deploys by itself.
+- [x] #4 Tests cover the versions.json sync step and the deployment config. bun run check green. Workflow files validated with actionlint or an equivalent offline check if available without a new runtime dependency.
+- [x] #5 docs/plugin-release.md and the Worker deployment docs describe the new flow. Backlog notes record the bootstrap versions.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -61,6 +61,8 @@ Update an existing Release Please GitHub Release with checked assets instead of 
 ## Review focus
 Check separate component PR outputs, absent outputs, existing release assets, tag source identity, token-trigger limits, PR update idempotence, and bot actor deploy refusal.
 No live calls, deployment, tag creation, personal vault access, or Cloudflare changes.
+
+Completion: all implementation, tests, documentation, task review, and branch review steps completed. Parent accepted both finding closures. Publication follows with the owner-requested PR.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -93,4 +95,12 @@ Whole-branch review correction at revision 1df0c34567e5b8f6a13270089c292db548ad4
 - Final `bun run docs:check` passed. Final `bun run check` passed: tooling 101 tests, protocol 314 tests, Worker 753 plus 132 and 142 tests, plugin 838 passed and 1 skipped. Type checks and builds passed.
 - Final Worker preflight passed: `bun run --filter '@obsidian-ai-bridge/worker' preflight`.
 - No tracked release metadata changed. No live call, deployment, tag, push, vault access, or Cloudflare change occurred. Parent owns scoped re-review.
+
+Final review acceptance: task review and whole-branch review completed. Both MAJOR findings received fixes and scoped approval. Final reviewed code revision: 9a625cb23ba5b6780e8da1b7e44d1e0e06ba1578. Documentation scope: plugin release guide, Worker deployment section, spec tooling statement, and TypeScript declaration contracts. Review found cohesive release orchestration, reusable build/publication and deployment ownership, and compatibility-map tooling. Final validation evidence appears above. git diff --check passed. No open actionable findings remain. Limits: no live workflow execution, no actionlint, and future-version regression cases use synthetic metadata. Owner explicitly excluded live calls. Acceptance checks describe offline implementation and test evidence, not observed production releases. Rebase on origin/main made no changes.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Added manifest-mode component release PRs, same-run reusable release workflows, tested plugin compatibility-map synchronization, and release documentation. Final local checks and Worker preflight passed. Independent reviews closed two release-flow defects. Production behavior remains untested because the owner excluded live calls. Owner must allow Actions PR creation and retain deployment secrets. Non-owner Worker release merges need owner dispatch.
+<!-- SECTION:FINAL_SUMMARY:END -->

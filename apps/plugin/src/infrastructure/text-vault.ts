@@ -248,6 +248,27 @@ export class ObsidianTextVault implements TextVault {
 
 	/** Moves exact observed binary bytes to Obsidian trash without text decoding. */
 	async trashBinary(path: string, expected: Uint8Array): Promise<boolean> {
+		if (path.startsWith(".obsidian/")) {
+			if (!this.isSettingsPath(path)) return false;
+			const adapter = this.vault.adapter;
+			const observed = await adapter.stat(path);
+			if (observed?.type !== "file") return false;
+			const current = await this.readBinary(path);
+			if (!current || !equalBytes(current, expected)) return false;
+			const beforeTrash = await adapter.stat(path);
+			if (
+				beforeTrash?.type !== "file" ||
+				beforeTrash.mtime !== observed.mtime ||
+				beforeTrash.size !== observed.size
+			)
+				return false;
+			const latest = await this.readBinary(path);
+			if (!latest || !equalBytes(latest, expected)) return false;
+			await withPluginVaultMutation(this.vault, { type: "delete", path }, () =>
+				adapter.trashLocal(path),
+			);
+			return (await adapter.stat(path)) === null;
+		}
 		const file = this.fileAt(path);
 		if (!file) return false;
 		const current = await this.readBinary(path);

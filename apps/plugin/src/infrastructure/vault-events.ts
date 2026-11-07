@@ -275,17 +275,17 @@ function eventKey(event: PublicationEvent): string {
 		: JSON.stringify([event.type, event.path]);
 }
 
-/** Registers the undocumented raw host event with values narrowed by its caller. */
+/** Registers the raw host event, whose callback supplies one affected path. */
 function registerRawListener(
 	vault: Vault,
-	callback: (operation: unknown, path: unknown) => void,
+	callback: (path: unknown) => void,
 ): EventRef {
 	// SAFETY: Vault events inherit Events.on(string), even though the public Vault overload omits raw.
 	const rawEvents = vault as unknown as {
-		/** Registers the host's undocumented raw event through its inherited string listener. */
+		/** Registers the raw path callback through the inherited string event listener. */
 		on(name: string, callback: (...data: unknown[]) => unknown): EventRef;
 	};
-	return rawEvents.on("raw", (operation, path) => callback(operation, path));
+	return rawEvents.on("raw", (path) => callback(path));
 }
 
 /** Routes explicit Obsidian file events into one lifecycle admission queue. */
@@ -314,9 +314,7 @@ export class VaultEventAdapter {
 			vault.on("rename", (file, oldPath) =>
 				this.send({ type: "rename", path: oldPath, to: file.path }, file),
 			),
-			registerRawListener(vault, (operation, path) =>
-				this.sendRawSettingsEvent(operation, path),
-			),
+			registerRawListener(vault, (path) => this.sendRawSettingsEvent(path)),
 		);
 	}
 
@@ -329,15 +327,14 @@ export class VaultEventAdapter {
 	}
 
 	/** Captures existing settings files from raw events because Vault indexing omits them. */
-	private sendRawSettingsEvent(operation: unknown, path: unknown): void {
+	private sendRawSettingsEvent(path: unknown): void {
 		if (
 			this.closed ||
-			(operation !== "create" && operation !== "modify") ||
 			typeof path !== "string" ||
-			classifyEnrollmentPath(path, 0, this.settingsPolicy) === "excluded"
+			classifyEnrollmentPath(path, 0, this.settingsPolicy) !== "blob"
 		)
 			return;
-		const event: PublicationEvent = { type: operation, path };
+		const event: PublicationEvent = { type: "modify", path };
 		if (trackerFor(this.vault).markers.has(eventKey(event))) return;
 		void this.vault.adapter
 			.stat(path)

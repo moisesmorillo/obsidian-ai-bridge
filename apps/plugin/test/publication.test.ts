@@ -419,6 +419,88 @@ describe("PublicationController", () => {
 		controller.close();
 	});
 
+	it("does not read or restore a missing settings base while its category is disabled", async () => {
+		const policy: SettingsSyncPolicy = {
+			enabled: false,
+			appearance: true,
+			core: true,
+			communityPlugins: true,
+		};
+		const { controller, journal, remote, vault } = await openController(
+			new MemoryStorage(),
+			new MemoryVault(),
+			new MemoryRemote(),
+			undefined,
+			async () => {},
+			policy,
+		);
+		const readAuthority = vi.spyOn(remote, "readAuthority");
+		const path = ".obsidian/app.json";
+		await journal.setBase(path, {
+			deleted: false,
+			rev: 1,
+			hash: await digestBytesForTest(new Uint8Array([1, 2])),
+		});
+
+		await controller.scan();
+
+		expect(readAuthority).not.toHaveBeenCalled();
+		expect(vault.creates).toEqual([]);
+		expect(vault.binaryCreates).toEqual([]);
+		controller.close();
+	});
+
+	it("retries sent non-UTF8 settings blobs after category disable with the original bytes", async () => {
+		let now = 1_800_000_000_000;
+		const policy: SettingsSyncPolicy = {
+			enabled: true,
+			appearance: true,
+			core: true,
+			communityPlugins: true,
+		};
+		const { controller, journal, remote, vault } = await openController(
+			new MemoryStorage(),
+			new MemoryVault(),
+			new MemoryRemote(),
+			() => now,
+			async () => {},
+			policy,
+		);
+		const path = ".obsidian/themes/Dark/theme.css";
+		const bytes = new Uint8Array([0xff, 0x00, 0x80, 0x0a]);
+		const attempts: Array<{ bytes: Uint8Array; key: string }> = [];
+		const putBlob = remote.putBlob.bind(remote);
+		remote.putBlob = async (
+			target,
+			payload,
+			hash,
+			precondition,
+			key,
+			requestEpoch,
+		) => {
+			attempts.push({ bytes: payload.slice(), key });
+			if (attempts.length === 1)
+				throw new SyncTransportError(503, null, null, "2");
+			return putBlob(target, payload, hash, precondition, key, requestEpoch);
+		};
+		vault.binaryFiles.set(path, bytes.slice());
+		await controller.scan();
+		await controller.flush();
+		const sent = journal.snapshot().pending_ops[0];
+		if (!sent) throw new Error("Expected the settings blob to remain sent");
+		policy.enabled = false;
+		now = sent.retry_at ?? now + 2_000;
+
+		await controller.flush();
+
+		expect(attempts).toHaveLength(2);
+		expect(attempts.map((attempt) => attempt.bytes)).toEqual([bytes, bytes]);
+		expect(attempts[1]?.key).toBe(sent.key);
+		expect(remote.writes).toEqual([]);
+		expect(journal.snapshot().pending_ops).toEqual([]);
+		controller.close();
+	});
+
 	it("retains publication intent while origin proof remains unresolved", async () => {
 		const { controller, journal, vault } = await openController();
 		const path = "notes/pending-origin-proof.md";

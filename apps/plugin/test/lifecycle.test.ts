@@ -1447,6 +1447,89 @@ describe("AIBridgePlugin device-local lifecycle", () => {
 		plugin.onunload();
 	});
 
+	it.each(["pause", "mobile-suspension", "revocation"] as const)(
+		"blocks settings scope effects when %s occurs during persistence",
+		async (interruption) => {
+			const plugin = new AIBridgePlugin({} as App, {} as PluginManifest);
+			await plugin.onload();
+			const events: string[] = [];
+			let releaseSave: (() => void) | undefined;
+			let markSaveStarted: (() => void) | undefined;
+			const saveStarted = new Promise<void>((resolve) => {
+				markSaveStarted = resolve;
+			});
+			const saveGate = new Promise<void>((resolve) => {
+				releaseSave = resolve;
+			});
+			host.saveDataAction = async () => {
+				markSaveStarted?.();
+				await saveGate;
+			};
+			const controller = {
+				close: () => events.push("close"),
+				pause: () => events.push("pause"),
+				waitForIdle: async () => undefined,
+				resume: async () => events.push("resume"),
+			};
+			const composition = {
+				reconciliation: {
+					reconcile: async () => events.push("reconcile"),
+				},
+				publication: {
+					scan: async () => events.push("scan"),
+					flush: async () => events.push("flush"),
+				},
+				dispose: () => events.push("dispose"),
+			};
+			Reflect.set(plugin, "desktopSync", controller);
+			Reflect.set(plugin, "sessionStatus", "connected");
+			Reflect.set(plugin, "composition", composition);
+			const update = host.settingsSyncPolicyChange;
+			if (!update)
+				throw new Error("Settings sync policy callback was not registered");
+			const transition = update({
+				enabled: true,
+				appearance: false,
+				core: true,
+				communityPlugins: true,
+			});
+			await saveStarted;
+
+			if (interruption === "pause") host.syncActions?.pause();
+			if (interruption === "mobile-suspension") {
+				host.calls.push("mobile-platform");
+				vi.stubGlobal("document", { visibilityState: "hidden" });
+			}
+			if (interruption === "revocation")
+				Reflect.set(plugin, "syncRevoked", true);
+			releaseSave?.();
+			await transition;
+			await settleSyncEffects(plugin);
+
+			expect(events).not.toContain("reconcile");
+			expect(events).not.toContain("scan");
+			expect(events).not.toContain("flush");
+			expect(events).not.toContain("resume");
+			expect(Reflect.get(plugin, "settingsValue")).toMatchObject({
+				settingsSync: {
+					enabled: true,
+					appearance: false,
+					core: true,
+					communityPlugins: true,
+				},
+			});
+			if (interruption === "mobile-suspension") {
+				vi.stubGlobal("document", { visibilityState: "visible" });
+				await Reflect.get(plugin, "resumeSettingsScopeAfterVisibility").call(
+					plugin,
+				);
+				expect(events).toContain("resume");
+			}
+			plugin.onunload();
+			vi.unstubAllGlobals();
+		},
+	);
+
 	it("persists settings sync switches with the master opt-in policy", async () => {
 		const plugin = new AIBridgePlugin({} as App, {} as PluginManifest);
 		await plugin.onload();

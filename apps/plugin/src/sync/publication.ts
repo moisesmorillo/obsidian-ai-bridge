@@ -232,6 +232,14 @@ export class PublicationController {
 			}
 			for (const [path, base] of Object.entries(state.base)) {
 				if (this.isEffectBlocked()) return;
+				if (
+					classifyEnrollmentPath(
+						path,
+						0,
+						this.options.settingsPolicy ?? DEFAULT_SETTINGS_SYNC_POLICY,
+					) === "excluded"
+				)
+					continue;
 				if (base.deleted || canonicalLocalPaths.has(pathKey(path))) continue;
 				if (
 					state.pending_ops.some(
@@ -595,13 +603,23 @@ export class PublicationController {
 		epoch: string,
 	): Promise<PublicationReceipt> {
 		if (operation.op === "put") {
-			if (
-				classifyEnrollmentPath(
-					operation.path,
-					bytes.byteLength,
-					this.options.settingsPolicy ?? DEFAULT_SETTINGS_SYNC_POLICY,
-				) === "blob"
-			) {
+			const policy =
+				this.options.settingsPolicy ?? DEFAULT_SETTINGS_SYNC_POLICY;
+			const currentAdmission = classifyEnrollmentPath(
+				operation.path,
+				bytes.byteLength,
+				policy,
+			);
+			const sentSettingsAdmission =
+				operation.state === "sent"
+					? classifyEnrollmentPath(operation.path, bytes.byteLength, {
+							enabled: true,
+							appearance: true,
+							core: true,
+							communityPlugins: true,
+						})
+					: "excluded";
+			if (currentAdmission === "blob" || sentSettingsAdmission === "blob") {
 				if (!this.remote.putBlob)
 					throw new Error(
 						"Blob publication is not supported by this transport",

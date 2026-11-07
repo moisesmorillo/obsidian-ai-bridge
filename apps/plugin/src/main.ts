@@ -126,6 +126,14 @@ export default class AIBridgePlugin extends Plugin {
 	private syncEffectTail: Promise<void> = Promise.resolve();
 	/** Fences a pending resume when the user selects Pause again. */
 	private syncPauseGeneration = 0;
+	/** Holds a transition-owned pause until a mobile host returns to visible state. */
+	private pendingSettingsScopeResume: {
+		lifecycle: number;
+		update: number;
+		controller: DesktopSyncController;
+		composition: PublicationComposition;
+		pauseGeneration: number;
+	} | null = null;
 	/** Safe user-facing reason when local journal initialization cannot proceed. */
 	attentionReason: string | null = null;
 
@@ -270,6 +278,7 @@ export default class AIBridgePlugin extends Plugin {
 					},
 					pause: () => {
 						const controller = this.desktopSync;
+						this.pendingSettingsScopeResume = null;
 						this.syncPauseGeneration += 1;
 						this.syncPaused = true;
 						controller?.pause();
@@ -481,47 +490,193 @@ export default class AIBridgePlugin extends Plugin {
 		);
 	}
 
-	/** Settles the active cycle before a new settings policy can admit or block effects. */
+	/** Confirms that one saved scope transition still owns its lifecycle and may admit effects. */
+	private ownsSettingsScopeTransition(
+		lifecycle: number,
+		update: number,
+		controller: DesktopSyncController,
+		composition: PublicationComposition,
+		pauseGeneration: number,
+	): boolean {
+		return (
+			this.ownsSettingsUpdate(lifecycle, update) &&
+			controller === this.desktopSync &&
+			composition === this.composition &&
+			pauseGeneration === this.syncPauseGeneration &&
+			!this.syncPaused &&
+			!this.syncRevoked &&
+			this.sessionStatus === "connected"
+		);
+	}
+
+	/** Confirms that one saved scope transition may start effects outside host suspension. */
+	private canRunSettingsScopeTransition(
+		lifecycle: number,
+		update: number,
+		controller: DesktopSyncController,
+		composition: PublicationComposition,
+		pauseGeneration: number,
+	): boolean {
+		return (
+			this.ownsSettingsScopeTransition(
+				lifecycle,
+				update,
+				controller,
+				composition,
+				pauseGeneration,
+			) && !this.isMobileSuspended()
+		);
+	}
+
+	/** Resumes a scope transition only after a suspended mobile host becomes visible. */
+	private resumeSettingsScopeAfterVisibility(): Promise<void> {
+		const pending = this.pendingSettingsScopeResume;
+		if (!pending || this.isMobileSuspended()) return Promise.resolve();
+		return this.serializeSyncEffect(async () => {
+			if (
+				this.pendingSettingsScopeResume !== pending ||
+				this.isMobileSuspended()
+			)
+				return;
+			this.pendingSettingsScopeResume = null;
+			if (
+				!this.canRunSettingsScopeTransition(
+					pending.lifecycle,
+					pending.update,
+					pending.controller,
+					pending.composition,
+					pending.pauseGeneration,
+				)
+			)
+				return;
+			await this.resumeControllerIfOwned(
+				pending.controller,
+				pending.composition,
+				true,
+			);
+		});
+	}
+
+	/** Settles scope changes under lifecycle ownership before new effects or resume. */
 	private changeSettingsSyncPolicy(
 		lifecycle: number,
 		policy: SettingsSyncPolicy,
 	): Promise<void> {
 		const update = ++this.settingsUpdateGeneration;
-		const save = this.settingsSaveTail.then(async () => {
-			if (!this.ownsSettingsUpdate(lifecycle, update))
-				throw new Error("Settings sync policy update is stale");
-			const controller = this.desktopSync;
-			const shouldResume =
-				controller !== null &&
-				this.sessionStatus === "connected" &&
-				!this.syncPaused &&
-				!this.syncRevoked;
-			controller?.pause();
-			await controller?.waitForIdle();
-			if (!this.ownsSettingsUpdate(lifecycle, update))
-				throw new Error("Settings sync policy update is stale");
-			try {
-				await this.saveData({ ...this.settingsValue, settingsSync: policy });
-			} catch (error) {
-				if (shouldResume) await controller?.resume();
-				throw error;
-			}
-			Object.assign(this.settingsValue.settingsSync, policy);
-			this.vaultSummary = null;
-			try {
+		this.pendingSettingsScopeResume = null;
+		const save = this.settingsSaveTail.then(() =>
+			this.serializeSyncEffect(async () => {
+				if (!this.ownsSettingsUpdate(lifecycle, update))
+					throw new Error("Settings sync policy update is stale");
+				const controller = this.desktopSync;
 				const composition = this.composition;
-				if (composition) {
-					await composition.reconciliation.reconcile();
-					await composition.publication.scan();
-					await composition.publication.flush();
+				const pauseGeneration = this.syncPauseGeneration;
+				const shouldResume =
+					controller !== null &&
+					composition !== null &&
+					this.canRunSettingsScopeTransition(
+						lifecycle,
+						update,
+						controller,
+						composition,
+						pauseGeneration,
+					);
+				if (shouldResume) controller.pause();
+				try {
+					await controller?.waitForIdle();
+					if (!this.ownsSettingsUpdate(lifecycle, update))
+						throw new Error("Settings sync policy update is stale");
+					await this.saveData({ ...this.settingsValue, settingsSync: policy });
+				} catch (error) {
+					if (
+						shouldResume &&
+						controller &&
+						composition &&
+						this.canRunSettingsScopeTransition(
+							lifecycle,
+							update,
+							controller,
+							composition,
+							pauseGeneration,
+						)
+					)
+						await this.resumeControllerIfOwned(controller, composition, true);
+					throw error;
 				}
-			} catch (error) {
-				this.reportSyncFailure(error);
-			}
-			if (shouldResume && controller === this.desktopSync)
-				await controller?.resume();
-			this.settingsTab?.refreshStatus();
-		});
+				if (!this.ownsSettingsUpdate(lifecycle, update))
+					throw new Error("Settings sync policy update is stale");
+				Object.assign(this.settingsValue.settingsSync, policy);
+				this.vaultSummary = null;
+				if (
+					shouldResume &&
+					controller &&
+					composition &&
+					this.canRunSettingsScopeTransition(
+						lifecycle,
+						update,
+						controller,
+						composition,
+						pauseGeneration,
+					)
+				) {
+					try {
+						await composition.reconciliation.reconcile();
+						if (
+							this.canRunSettingsScopeTransition(
+								lifecycle,
+								update,
+								controller,
+								composition,
+								pauseGeneration,
+							)
+						)
+							await composition.publication.scan();
+						if (
+							this.canRunSettingsScopeTransition(
+								lifecycle,
+								update,
+								controller,
+								composition,
+								pauseGeneration,
+							)
+						)
+							await composition.publication.flush();
+					} catch (error) {
+						this.reportSyncFailure(error);
+					}
+				}
+				if (shouldResume && controller && composition) {
+					if (
+						this.canRunSettingsScopeTransition(
+							lifecycle,
+							update,
+							controller,
+							composition,
+							pauseGeneration,
+						)
+					)
+						await this.resumeControllerIfOwned(controller, composition, true);
+					else if (
+						this.ownsSettingsScopeTransition(
+							lifecycle,
+							update,
+							controller,
+							composition,
+							pauseGeneration,
+						) &&
+						this.isMobileSuspended()
+					)
+						this.pendingSettingsScopeResume = {
+							lifecycle,
+							update,
+							controller,
+							composition,
+							pauseGeneration,
+						};
+				}
+				this.settingsTab?.refreshStatus();
+			}),
+		);
 		this.settingsSaveTail = save.then(
 			() => undefined,
 			() => undefined,
@@ -696,9 +851,10 @@ export default class AIBridgePlugin extends Plugin {
 			this.settingsValue.settingsSync,
 		);
 		this.visibilityHandler = () => {
-			this.runSyncAction(
-				() => this.desktopSync?.visibilityChanged() ?? Promise.resolve(),
-			);
+			this.runSyncAction(async () => {
+				await this.desktopSync?.visibilityChanged();
+				await this.resumeSettingsScopeAfterVisibility();
+			});
 		};
 		document.addEventListener("visibilitychange", this.visibilityHandler);
 		window.addEventListener("focus", this.visibilityHandler);
@@ -791,6 +947,7 @@ export default class AIBridgePlugin extends Plugin {
 
 	/** Closes timer, event, and application owners before any session replacement. */
 	private releaseSyncOwners(): DesktopSyncController | null {
+		this.pendingSettingsScopeResume = null;
 		const controller = this.desktopSync;
 		controller?.close();
 		this.vaultEvents?.dispose();

@@ -144,8 +144,9 @@ function makeRecoveryHostVault() {
 		}),
 		readBinary: vi.fn(async (path: string) => {
 			const entry = hidden.get(path);
-			if (!entry) throw new Error("Hidden file is absent");
-			return entry.bytes.slice().buffer;
+			const bytes = entry?.bytes ?? visible.get(path);
+			if (!bytes) throw new Error("Adapter file is absent");
+			return bytes.slice().buffer;
 		}),
 		writeBinary: vi.fn(async (path: string, bytes: ArrayBuffer) => {
 			hidden.set(path, {
@@ -156,13 +157,18 @@ function makeRecoveryHostVault() {
 			});
 		}),
 		list: vi.fn(async (path: string) => ({
-			files: [...hidden.keys()].filter((file) => file.startsWith(`${path}/`)),
+			files: [...hidden.keys(), ...visible.keys()].filter((file) =>
+				file.startsWith(`${path}/`),
+			),
 			folders: [...directories].filter((folder) =>
 				folder.startsWith(`${path}/`),
 			),
 		})),
 		remove: vi.fn(async (path: string) => {
 			if (!controls.refuseRemove) hidden.delete(path);
+		}),
+		trashLocal: vi.fn(async (path: string) => {
+			visible.delete(path);
 		}),
 	};
 	const host = {
@@ -187,8 +193,10 @@ function makeRecoveryHostVault() {
 		modifyBinary: vi.fn(async (file: TFile, bytes: ArrayBuffer) => {
 			visible.set(file.path, new Uint8Array(bytes.slice(0)));
 		}),
-		createFolder: vi.fn(async () => {
-			throw new Error("Hidden folders need the adapter");
+		createFolder: vi.fn(async (path: string) => {
+			if (path.startsWith(".ai-bridge/"))
+				throw new Error("Hidden folders need the adapter");
+			directories.add(path);
 		}),
 		adapter,
 	};
@@ -308,6 +316,136 @@ async function recoveryHash(bytes: Uint8Array): Promise<string> {
 }
 
 describe("ObsidianTextVault", () => {
+	it("applies a remote settings delete through guarded local adapter trash", async () => {
+		const fake = makeRecoveryHostVault();
+		fake.directories.add(".obsidian");
+		const path = ".obsidian/app.json";
+		const bytes = new Uint8Array([0, 255, 4]);
+		fake.visible.set(path, bytes.slice());
+		const policy = {
+			enabled: true,
+			appearance: true,
+			core: true,
+			communityPlugins: true,
+		};
+		const vault = new ObsidianTextVault(
+			fake.host as unknown as Vault,
+			() => policy,
+		);
+		let state: unknown = null;
+		const journal = await DeviceJournal.open({
+			readState: async () => state,
+			writeState: async (next: DeviceState) => {
+				state = structuredClone(next);
+			},
+			readPayload: async () => new Uint8Array(),
+			writePayload: async () => undefined,
+		});
+		const epoch = "c".repeat(32);
+		await journal.resetEpoch(epoch);
+		await journal.setBase(path, {
+			deleted: false,
+			rev: 1,
+			hash: await recoveryHash(bytes),
+		});
+		const engine = new TextApplyEngine(
+			journal,
+			vault,
+			{ read: async () => null },
+			{ deviceName: "test", settingsPolicy: policy },
+		);
+
+		await engine.apply(
+			{
+				seq: 2,
+				op: "delete",
+				path,
+				etag: `"${epoch}.2"`,
+				hash: "",
+				origin: "remote",
+				at: 2,
+			},
+			"blob",
+		);
+
+		expect(fake.adapter.trashLocal).toHaveBeenCalledWith(path);
+		expect(fake.visible.has(path)).toBe(false);
+		expect(journal.snapshot().base[path]).toEqual({ deleted: true, rev: 2 });
+		expect(journal.snapshot().pending_apply).toEqual([]);
+		engine.close();
+		journal.close();
+	});
+
+	it("keeps changed settings bytes as a conflict when a remote delete arrives", async () => {
+		const fake = makeRecoveryHostVault();
+		fake.directories.add(".obsidian");
+		const path = ".obsidian/app.json";
+		const confirmed = new Uint8Array([0, 255, 4]);
+		const local = new Uint8Array([0, 255, 5]);
+		fake.visible.set(path, local.slice());
+		const policy = {
+			enabled: true,
+			appearance: true,
+			core: true,
+			communityPlugins: true,
+		};
+		const vault = new ObsidianTextVault(
+			fake.host as unknown as Vault,
+			() => policy,
+		);
+		let state: unknown = null;
+		const journal = await DeviceJournal.open({
+			readState: async () => state,
+			writeState: async (next: DeviceState) => {
+				state = structuredClone(next);
+			},
+			readPayload: async () => new Uint8Array(),
+			writePayload: async () => undefined,
+		});
+		const epoch = "d".repeat(32);
+		await journal.resetEpoch(epoch);
+		await journal.setBase(path, {
+			deleted: false,
+			rev: 1,
+			hash: await recoveryHash(confirmed),
+		});
+		const engine = new TextApplyEngine(
+			journal,
+			vault,
+			{ read: async () => null },
+			{ deviceName: "test", settingsPolicy: policy },
+		);
+
+		await engine.apply(
+			{
+				seq: 2,
+				op: "delete",
+				path,
+				etag: `"${epoch}.2"`,
+				hash: "",
+				origin: "remote",
+				at: 2,
+			},
+			"blob",
+		);
+
+		expect(fake.adapter.trashLocal).toHaveBeenCalledWith(path);
+		expect(fake.visible.has(path)).toBe(false);
+		expect(
+			[...fake.visible].some(
+				([copyPath, bytes]) =>
+					copyPath.startsWith("AI Bridge settings conflicts/") &&
+					bytes.every((byte, index) => byte === local[index]),
+			),
+		).toBe(true);
+		expect(journal.snapshot().base[path]).toEqual({ deleted: true, rev: 2 });
+		expect(journal.snapshot().attention).toContainEqual(
+			expect.objectContaining({ path }),
+		);
+		engine.close();
+		journal.close();
+	});
+
 	it("reads and writes exact selected unindexed settings bytes through the adapter", async () => {
 		const fake = makeRecoveryHostVault();
 		fake.directories.add(".obsidian");

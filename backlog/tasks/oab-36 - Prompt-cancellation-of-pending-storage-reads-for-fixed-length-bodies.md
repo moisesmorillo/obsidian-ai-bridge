@@ -1,10 +1,10 @@
 ---
 id: OAB-36
 title: Prompt cancellation of pending storage reads for fixed-length bodies
-status: In Progress
+status: Deferred
 assignee: []
 created_date: '2026-11-04T04:11:00Z'
-updated_date: '2026-11-07T03:46:00Z'
+updated_date: '2026-11-07T03:47:00Z'
 labels: []
 dependencies: []
 references:
@@ -57,6 +57,8 @@ Steps
 - [x] Run focused tests, bun run docs:check, bun run check, and Worker preflight.
 - [ ] Review the task diff and complete branch with the code-review TypeScript profile.
 - [ ] Record evidence against each criterion. Rebase, push, open the PR, remove the worktree.
+
+Completion: the task review, whole-branch review, and scoped finding review are complete. All actionable findings are closed. Publication follows against main. The early-signal feature remains Deferred.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -81,4 +83,8 @@ Branch review finding closure
 The MINOR finding about repeated source work is addressed. The request-signal test now emits one bounded byte, waits on a barrier for the next source result, then returns EOF. It asserts exactly two source calls, no owner settlement before the barrier resolves, and only the `settled` owner outcome. This excludes the previous accidental overlength path. The Request remains synthetic and does not prove real client disconnect behavior.
 
 Final validation: `bunx vitest run --config vitest.config.ts test/read-response.test.ts` passed 30/30. `bun run docs:check` passed. `bun run check` passed with Worker core 713, Worker HTTP 122, Worker F2 121, tooling 91, protocol 307, and plugin 828 passed with 1 skipped. Worker preflight passed. Expected simulated cancellation, network-loss, and SQLite failure diagnostics appeared. OAB-36 remains In Progress. No live resource action occurred.
+
+Independent review: task review approved 540d69b. Whole-branch review accepted the evidence-only scope with one MINOR test-path finding. Commit 545eb27 fixed that finding. Scoped corrective review confirmed closure. Reviewed scope: two runtime tests, their response ownership contract, and task notes. No named semantic declarations changed. Reviews were static and used worker check evidence. Real network disconnect remains unproven.
+
+Final decision: retain Deferred status and the existing trigger. Criterion 1 stays unchecked. Criteria 2 and 3 retain their test evidence. No production change or new dependency. The supervisor also let the task extend its file scope if needed. No extension was needed.
 <!-- SECTION:NOTES:END -->

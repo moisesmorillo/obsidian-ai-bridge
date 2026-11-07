@@ -44,7 +44,7 @@ jobs:
           RELEASE_PRS: ${{ needs.release-please.outputs.pull-requests }}
         run: |
           set -eu
-          branch="$(printf '%s' "${RELEASE_PRS:-[]}" | jq -r '.[] | select(any(.files[]; startswith("apps/plugin/"))) | .headBranchName' | head -n 1)"
+          branch="$(printf '%s' "${RELEASE_PRS:-[]}" | jq -r '.[] | select(.headBranchName | endswith("--components--ai-bridge")) | .headBranchName' | head -n 1)"
           if [ -z "$branch" ]; then
             echo "branch=" >> "$GITHUB_OUTPUT"
           else

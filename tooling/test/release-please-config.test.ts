@@ -67,9 +67,10 @@ describe("Release Please configuration", () => {
 			"include-component-in-tag": true,
 			"tag-separator": "-",
 		});
+		// Release Please resolves extra-file paths relative to the package path.
 		expect(config.packages["apps/plugin"]["extra-files"]).toContainEqual({
 			type: "json",
-			path: "apps/plugin/manifest.json",
+			path: "manifest.json",
 			jsonpath: "$.version",
 		});
 	});

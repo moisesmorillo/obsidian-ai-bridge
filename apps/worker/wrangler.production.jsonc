@@ -23,7 +23,7 @@
 		}
 	],
 	"r2_buckets": [
-		{ "binding": "R2_BUCKET", "bucket_name": "oab-f2-immutable-blobs" },
+		{ "binding": "R2_BUCKET", "bucket_name": "oab-blobs" },
 		{ "binding": "BACKUP_BUCKET", "bucket_name": "oab-backups" }
 	],
 	"migrations": [{ "tag": "v1", "new_sqlite_classes": ["Vault"] }]

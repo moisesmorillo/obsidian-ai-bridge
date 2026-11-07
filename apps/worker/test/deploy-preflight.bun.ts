@@ -12,7 +12,7 @@ import {
 	writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { PassThrough } from "node:stream";
 import {
 	availablePort,
@@ -170,7 +170,14 @@ async function main(): Promise<void> {
 			join(localConfigDirectory, ".env"),
 			"DOTENV_MARKER=must-not-load\n",
 		);
-		const bundle = join(runtimeRoot, "healthy.js");
+		const workerInputDirectory = join(runtimeRoot, "worker-input");
+		await mkdir(workerInputDirectory, { mode: 0o700 });
+		const bundle = join(workerInputDirectory, "healthy.js");
+		assert.notEqual(
+			dirname(bundle),
+			runtimeRoot,
+			"Worker inputs must use a watcher root outside writable runtime paths",
+		);
 		await writeFile(
 			bundle,
 			'export class Vault { fetch() { return new Response("vault"); } }\nexport default { fetch(_request, env) { return new Response("ok", { status: env.DOTENV_MARKER ? 503 : 200 }); } };',
@@ -203,7 +210,7 @@ async function main(): Promise<void> {
 			await stopLocalWorker(worker);
 		}
 
-		const forbiddenBundle = join(runtimeRoot, "forbidden.js");
+		const forbiddenBundle = join(workerInputDirectory, "forbidden.js");
 		await writeFile(
 			forbiddenBundle,
 			'crypto.randomUUID(); export class Vault { fetch() { return new Response("vault"); } }\nexport default { fetch() { return new Response("ok"); } };',

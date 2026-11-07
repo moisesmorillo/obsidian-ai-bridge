@@ -1,4 +1,4 @@
 {
-	"apps/plugin": "0.1.6",
+	"apps/plugin": "0.2.0",
 	"apps/worker": "0.1.0"
 }

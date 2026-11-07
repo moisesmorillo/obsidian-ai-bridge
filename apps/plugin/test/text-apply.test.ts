@@ -285,6 +285,208 @@ describe("TextApplyEngine", () => {
 		Object.assign(change, remoteChange);
 	});
 
+	it("keeps partial text visible and records attention after an ENOSPC write", async () => {
+		const path = change.path;
+		const original = "known local bytes";
+		const originalHash = await hash(original);
+		vault.files.set(path, original);
+		journal = await seedBase(path, originalHash, storage, journal);
+		const remoteHash = await hash(remoteText);
+		let writeAttempts = 0;
+		vault.process = async (target, expected, next) => {
+			writeAttempts += 1;
+			if (writeAttempts === 1) {
+				expect(target).toBe(path);
+				expect(expected).toBe(original);
+				vault.files.set(target, next.slice(0, 4));
+				throw Object.assign(new Error("disk full"), { code: "ENOSPC" });
+			}
+			if (vault.files.get(target) !== expected) return false;
+			vault.files.set(target, next);
+			return true;
+		};
+		engine = makeEngine(journal, vault, {
+			read: async () => remoteText,
+		});
+
+		await expect(
+			engine.apply({ ...change, hash: remoteHash }),
+		).rejects.toMatchObject({
+			code: "ENOSPC",
+		});
+
+		expect(vault.files.get(path)).toBe("remo");
+		expect(journal.snapshot().pending_apply).toHaveLength(1);
+		expect(journal.snapshot().attention).toContainEqual(
+			expect.objectContaining({ path }),
+		);
+	});
+
+	it("records attention and clears echo state without a risky recovery read", async () => {
+		const path = change.path;
+		const original = "known local bytes";
+		const originalHash = await hash(original);
+		vault.files.set(path, original);
+		journal = await seedBase(path, originalHash, storage, journal);
+		let readsAfterFailure = 0;
+		vault.process = async () => {
+			throw Object.assign(new Error("disk full"), { code: "ENOSPC" });
+		};
+		const read = vault.read.bind(vault);
+		vault.read = async (target) => {
+			if (target === path && journal.snapshot().expected_writes[path]) {
+				readsAfterFailure += 1;
+				throw new Error("recovery read failed");
+			}
+			return read(target);
+		};
+		engine = makeEngine(journal, vault, { read: async () => remoteText });
+
+		await expect(
+			engine.apply({ ...change, hash: await hash(remoteText) }),
+		).rejects.toThrow("disk full");
+
+		expect(readsAfterFailure).toBe(0);
+		expect(journal.snapshot().pending_apply).toHaveLength(1);
+		expect(journal.snapshot().expected_writes[path]).toBeUndefined();
+		expect(journal.snapshot().attention).toContainEqual(
+			expect.objectContaining({ path }),
+		);
+	});
+
+	it("does not restore an observed user edit after a failed text write", async () => {
+		const path = change.path;
+		const original = "known local bytes";
+		const userEdit = "new user bytes";
+		const originalHash = await hash(original);
+		vault.files.set(path, original);
+		journal = await seedBase(path, originalHash, storage, journal);
+		/** Releases the injected failed write after the test changes the file. */
+		let releaseFailedWrite = () => {};
+		/** Signals that the fake write left partial bytes before it fails. */
+		let markFailedWrite = () => {};
+		const failedWrite = new Promise<void>((resolve) => {
+			markFailedWrite = resolve;
+		});
+		const waitForRelease = new Promise<void>((resolve) => {
+			releaseFailedWrite = resolve;
+		});
+		vault.process = async (target) => {
+			vault.files.set(target, "partial bytes");
+			markFailedWrite();
+			await waitForRelease;
+			throw Object.assign(new Error("disk full"), { code: "ENOSPC" });
+		};
+		engine = makeEngine(journal, vault, { read: async () => remoteText });
+
+		const applying = engine.apply({ ...change, hash: await hash(remoteText) });
+		await failedWrite;
+		vault.files.set(path, userEdit);
+		releaseFailedWrite();
+		await expect(applying).rejects.toMatchObject({ code: "ENOSPC" });
+
+		expect(vault.files.get(path)).toBe(userEdit);
+		expect(journal.snapshot().attention).toContainEqual(
+			expect.objectContaining({ path }),
+		);
+	});
+
+	it("records attention and recovery after ENOSPC on text create", async () => {
+		const path = change.path;
+		vault.create = async (target, _text) => {
+			vault.files.set(target, "partial remote text");
+			return false;
+		};
+		engine = makeEngine(journal, vault, { read: async () => remoteText });
+
+		await engine.apply({ ...change, hash: await hash(remoteText) });
+
+		expect(journal.snapshot().pending_apply).toHaveLength(0);
+		expect(journal.snapshot().base[path]).toMatchObject({ deleted: false });
+		expect(journal.snapshot().attention).toContainEqual(
+			expect.objectContaining({ path }),
+		);
+		expect(vault.files.get(path)).toBe(remoteText);
+		expect(
+			[...vault.files.entries()].some(
+				([name, value]) => name !== path && value === "partial remote text",
+			),
+		).toBe(true);
+	});
+
+	it("records attention and recovery after ENOSPC on binary create", async () => {
+		const path = "assets/enospc-create.png";
+		const partial = new Uint8Array([1, 2]);
+		const remote = new Uint8Array([3, 4, 5]);
+		const remoteHash = await hashBytes(remote);
+		vault.createBinary = async (target) => {
+			vault.binaryFiles.set(target, partial.slice());
+			return false;
+		};
+		engine = makeEngine(journal, vault, {
+			read: async () => null,
+			readBlob: async (_target, requestEpoch, rev) => ({
+				bytes: remote,
+				epoch: requestEpoch,
+				rev,
+				hash: remoteHash,
+			}),
+		});
+
+		await expect(
+			engine.apply({ ...change, path, hash: remoteHash }, "blob"),
+		).rejects.toThrow("Binary create was not confirmed");
+
+		expect(journal.snapshot().pending_apply).toHaveLength(1);
+		expect(journal.snapshot().expected_writes[path]).toBeUndefined();
+		expect(journal.snapshot().attention).toContainEqual(
+			expect.objectContaining({ path }),
+		);
+		expect(vault.binaryFiles.get(path)).toEqual(partial);
+	});
+
+	it("records attention and recovery after ENOSPC on binary modify", async () => {
+		const path = "assets/enospc-modify.png";
+		const base = new Uint8Array([1, 1, 1]);
+		const partial = new Uint8Array([2, 2]);
+		const remote = new Uint8Array([3, 3, 3]);
+		const baseHash = await hashBytes(base);
+		const remoteHash = await hashBytes(remote);
+		vault.binaryFiles.set(path, base.slice());
+		await journal.setBase(path, { deleted: false, rev: 1, hash: baseHash });
+		const modify = vault.modifyBinary.bind(vault);
+		vault.modifyBinary = async (target, bytes) => {
+			if (target === path) {
+				vault.binaryFiles.set(target, partial.slice());
+				throw Object.assign(new Error("disk full"), { code: "ENOSPC" });
+			}
+			return modify(target, bytes);
+		};
+		engine = makeEngine(journal, vault, {
+			read: async () => null,
+			readBlob: async (_target, requestEpoch, rev) => ({
+				bytes: remote,
+				epoch: requestEpoch,
+				rev,
+				hash: remoteHash,
+			}),
+		});
+
+		await expect(
+			engine.apply({ ...change, path, hash: remoteHash }, "blob"),
+		).rejects.toMatchObject({ code: "ENOSPC" });
+
+		expect(journal.snapshot().pending_apply).toHaveLength(1);
+		expect(journal.snapshot().expected_writes[path]).toBeUndefined();
+		expect(journal.snapshot().attention).toContainEqual(
+			expect.objectContaining({ path }),
+		);
+		expect(vault.binaryFiles.get(path)).toEqual(partial);
+		expect(vault.binaryFiles.get(`.ai-bridge/pre-apply/${baseHash}`)).toEqual(
+			base,
+		);
+	});
+
 	it("does not start a local apply after capture closes effect admission", async () => {
 		let markReadStarted: (() => void) | undefined;
 		let releaseRead: (() => void) | undefined;

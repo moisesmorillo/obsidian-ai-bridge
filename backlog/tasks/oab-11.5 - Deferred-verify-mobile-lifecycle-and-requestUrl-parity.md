@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@pi'
 created_date: '2026-11-05T23:21:00Z'
-updated_date: '2026-11-07T03:35:00Z'
+updated_date: '2026-11-07T04:08:00Z'
 labels:
   - F5
   - Deferred
@@ -34,6 +34,15 @@ Trigger: F4 closes, the owner approves F5 copy-vault work, and enrollment works 
 
 <!-- SECTION:PLAN:BEGIN -->
 Plan review: /tmp/oab-11-5/mobile-lifecycle-plan.md. Add failing lifecycle admission tests, keep one controller queue, separate automatic suspension from user Pause, and preserve ordered durable recovery. Request shared main.ts wiring and lifecycle-test permission through the plan gate. Complete code proofs for criteria 1 and 2. Record reported native transport evidence without extending it to unreported error cases. Defer criterion 4 and leave criterion 5 unchecked. After approval, use one implementer, task review, final branch review, bun run check, human diff review, and one pull request. Keep device criteria open.
+
+M9: Criterion 4 transfer safety.
+1. Add fake-port tests for aborted blob upload, ENOSPC apply, and a 25,000,000-byte exact-byte round trip.
+2. Record failing assertions before implementation. Keep tests for existing safe behavior without changing safe code.
+3. Change only publication.ts, text-apply.ts, or sync-transport.ts where tests show a defect.
+4. Set plugin version 0.1.6, add its versions.json entry, and change the artifact test assertion.
+5. Run focused tests, bun run docs:check, and bun run check. Complete task and branch semantic reviews.
+6. Append M9 evidence notes. Keep criterion 4 open for device evidence. Rebase, push, open the PR, and remove the worktree.
+Owner decisions: Use existing fakes and no new dependencies. Use one large payload and an explicit test timeout. No live service or device action. Owner overnight order removes human review gates.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -90,6 +99,25 @@ Session M9 owns tonight's code work.
 - AC5: no Android observations.
 
 Apple evidence does not prove Android behavior.
+
+M9: Criterion 4 unit-test evidence.
+RED: `bun run --cwd apps/plugin vitest run test/text-apply.test.ts -t 'ENOSPC partial write'` failed because the fake adapter left partial text (`remo`) after ENOSPC. Added guarded restoration from the observed partial text to the prior text, cleared expected-write state, recorded attention, and retained pending apply. GREEN: the same command passed. The fake adapter mutates before throwing and supports a later conditional restore, so it does not assume atomic failure.\nThe interrupted blob upload test uses the existing publication fakes and checks durable sent state, immutable payload bytes, same operation key on retry, one successful publication, and completion. Correct retry timing uses the existing 2-second policy. First correct-timing run passed without a production change; this is the safe-behavior test-first exception. GREEN: `bun run --cwd apps/plugin vitest run test/publication.test.ts -t 'interrupted upload'` passed.\nThe 25,000,000-byte test uses one payload allocation, SHA-256, length and per-byte equality checks, and a 20-second test timeout. It passed immediately, so no transport change was needed. GREEN: `bun run --cwd apps/plugin vitest run test/sync-transport.test.ts -t 'maximum-size blob'` passed in under one second.\nVersion: plugin manifest and artifact assertion now use 0.1.6. `apps/plugin/versions.json` maps 0.1.6 to Obsidian 1.13.0.\nDocumentation scope: changed no named production declarations except existing apply flow. The added semantic exception handling has no new declaration contract. Tests use existing test structure and documented helpers. `bun run docs:check` passed. Review candidates: text-apply.ts owns guarded apply effects; publication and transport policy remain unchanged. No new policy owner, protocol shape, dependency, or transport behavior was added.\nValidation: `bun run --cwd apps/plugin biome check --write src/sync/text-apply.ts test/publication.test.ts test/text-apply.test.ts test/sync-transport.test.ts test/artifact.test.ts` passed. `bun run check` passed lint, docs, all four typechecks, 29 plugin test files (831 passed, 1 skipped), 17 protocol files (307 passed), 8 tooling files (91 passed), worker tests (711 + 122 + 121 passed), and builds. Worker fault-injection diagnostics were expected.\nNo live service, device, personal vault, or Cloudflare action ran. These tests prove simulated retry and local restore behavior only. Interrupted device uploads, actual ENOSPC behavior on Obsidian storage, and large transfers on devices remain open. Keep OAB-11.5 In Progress and criterion 4 open for device evidence.
+
+M9: Follow-up. The upload retry test now compares every byte sent on retry with the immutable journal payload. No scope extension was needed. The task notes were appended through the Backlog CLI.
+
+M9 corrective review, 2026-11-07. The reviewer found missing visible attention after a recovery read failure, missing recovery attention for create and binary-write failures, and a possible overwrite of a user edit observed during recovery. `text-apply.ts` owns these apply-state transitions, so no scope extension was needed.
+
+RED: focused tests failed on the prior implementation. They showed a recovery-read error replacing the original ENOSPC failure before attention and echo clearing, the create and binary paths missing attention or echo clearing, and the old restore attempt changing bytes observed after the failed write. Changed the policy to avoid a post-failure content read or restore. The apply keeps observed bytes in place, keeps pending recovery, clears the expected-write echo, and records safe attention for ENOSPC and explicit failed transfer confirmations. Text create partial bytes follow the existing conflict-copy recovery and now record attention before that recovery.
+
+Added recovery-read avoidance, user-edit interleaving, text create partial-write, binary create partial-write, and binary modify partial-write regressions. Binary modify checks that the original bytes remain in the hash-addressed pre-apply copy. Transfer failure handling does not mark injected recovery pauses or successful rebases as attention. The upload fake now commits once, loses its response, and returns the cached receipt for the same operation key on retry. It verifies exact retry bytes and one publication. The 25,000,000-byte transport test now checks exact upload and download bytes with one payload and a 20-second timeout.
+
+GREEN: focused tests passed. The plugin suite passed 29 files with 836 tests passed and one skipped. `bun run docs:check` passed. `bun run check` passed lint, docs, all workspace typechecks, 836 plugin tests, 307 protocol tests, 91 tooling tests, Worker suites of 711, 122, and 121 tests, and builds. Worker fault injection diagnostics were expected. No live service, device, personal vault, or Cloudflare action ran.
+
+Residual limits: fake ports do not prove native storage failure semantics, device memory limits, or remote service idempotency. The changed tests prove client retry identity and fake idempotent receipt handling only. Criterion 4 stays open for device evidence. Task status and acceptance checks remain unchanged.
+
+M9: Rebase preserves supervisor closure under the owner F5 waiver. Earlier In Progress instructions are historical. Device proof for criterion 4 remains absent. Task review approved 7a50b63 and closed both MAJOR findings plus the concurrent-edit restoration finding. Final branch review follows integration.
+
+M9: Final whole-branch review approved 89aa92e against 89a311b. The plugin diff matches task-reviewed source 7a50b63. Both MAJOR findings and the concurrent-edit restoration finding are fixed by tests and shared failure attention. Documentation review covered apply failure declarations and test helpers. TextApplyEngine remains the state-policy owner. Post-rebase bun run check passed. The independent branch reviewer also ran bun run check: 114 test files, 2,188 passed, one skipped, no failures. All configured builds passed, with Worker dry-run only. Failed storage writes retain partial bytes, visible attention, and pending recovery rather than an unsafe automatic restore. Fake ports do not prove native ENOSPC, device memory, actual interrupted network transfers, or service idempotency. Owner waiver closure stays intact. Criterion 4 remains unchecked.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary

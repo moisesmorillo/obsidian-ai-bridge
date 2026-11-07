@@ -481,6 +481,89 @@ describe("PublicationController", () => {
 		controller.close();
 	});
 
+	it("retains and retries an immutable blob after an interrupted upload", async () => {
+		let now = 1_800_000_000_000;
+		const { controller, journal, remote, vault } = await openController(
+			undefined,
+			undefined,
+			undefined,
+			() => now,
+		);
+		const path = "assets/interrupted-upload.png";
+		const source = new Uint8Array([0, 1, 2, 255]);
+		vault.binaryFiles.set(path, source.slice());
+		const originalPut = remote.putBlob.bind(remote);
+		let attempts = 0;
+		let committedReceipt: PublicationReceipt | null = null;
+		const attempted = new Map<string, Uint8Array>();
+		remote.putBlob = async (
+			target,
+			bytes,
+			hashValue,
+			condition,
+			key,
+			requestEpoch,
+		) => {
+			attempts += 1;
+			attempted.set(key, bytes.slice());
+			if (attempts === 1) {
+				committedReceipt = await originalPut(
+					target,
+					bytes,
+					hashValue,
+					condition,
+					key,
+					requestEpoch,
+				);
+				throw new Error("upload response aborted after commit");
+			}
+			if (committedReceipt) return committedReceipt;
+			return originalPut(
+				target,
+				bytes,
+				hashValue,
+				condition,
+				key,
+				requestEpoch,
+			);
+		};
+
+		await controller.scan();
+		await controller.flush();
+		const sent = journal.snapshot().pending_ops[0];
+		expect(sent).toMatchObject({ state: "sent", path, attempts: 1 });
+		const savedBytes = await journal.readPayload(
+			sent?.payload_ref ?? "",
+			sent?.payload_hash ?? "",
+		);
+		expect(savedBytes.byteLength).toBe(source.byteLength);
+		expect(savedBytes.every((byte, index) => byte === source[index])).toBe(
+			true,
+		);
+		const originalKey = sent?.key;
+		now += 2_000;
+
+		await controller.flush();
+
+		expect(attempts).toBe(2);
+		expect(remote.blobWrites).toHaveLength(1);
+		expect(remote.blobWrites[0]?.key).toBe(originalKey);
+		expect(remote.blobWrites[0]?.bytes.byteLength).toBe(savedBytes.byteLength);
+		expect(
+			remote.blobWrites[0]?.bytes.every(
+				(byte, index) => byte === savedBytes[index],
+			),
+		).toBe(true);
+		expect(attempted.size).toBe(1);
+		expect(
+			attempted
+				.get(originalKey ?? "")
+				?.every((byte, index) => byte === savedBytes[index]),
+		).toBe(true);
+		expect(journal.snapshot().pending_ops).toEqual([]);
+		controller.close();
+	});
+
 	it("retries sent non-UTF8 settings blobs after category disable with the original bytes", async () => {
 		let now = 1_800_000_000_000;
 		const policy: SettingsSyncPolicy = {

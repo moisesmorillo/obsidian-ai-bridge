@@ -212,6 +212,74 @@ describe("SyncTransport", () => {
 		expect(JSON.stringify(error)).not.toContain("private-value");
 	});
 
+	it("round trips a maximum-size blob without changing any byte", async () => {
+		const session = new ResponseSession();
+		const source = new Uint8Array(25_000_000);
+		for (let index = 0; index < source.byteLength; index += 1)
+			source[index] = index % 251;
+		const hash = [
+			...new Uint8Array(await crypto.subtle.digest("SHA-256", source)),
+		]
+			.map((byte) => byte.toString(16).padStart(2, "0"))
+			.join("");
+		const etag = `"${epoch}.4"`;
+		session.responses.push({
+			status: 201,
+			headers: { etag },
+			text: JSON.stringify({
+				path: "assets/max.png",
+				etag,
+				seq: 7,
+				hash,
+				size: source.byteLength,
+				deleted: false,
+			}),
+		});
+		session.responses.push({
+			status: 200,
+			headers: {
+				etag,
+				"content-type": "application/octet-stream",
+				"content-length": String(source.byteLength),
+			},
+			text: "",
+			arrayBuffer: new ArrayBuffer(0),
+		});
+		const transport = new SyncTransport("https://service.test", session);
+
+		await transport.putBlob(
+			"assets/max.png",
+			source,
+			hash,
+			{ kind: "absent" },
+			"large-blob-key",
+			epoch,
+		);
+		const uploadBody = session.calls[0]?.options?.body as ArrayBuffer;
+		session.responses[0] = {
+			status: 200,
+			headers: {
+				etag,
+				"content-type": "application/octet-stream",
+				"content-length": String(source.byteLength),
+			},
+			text: "",
+			arrayBuffer: uploadBody,
+		};
+
+		const result = await transport.readCurrentBlobAuthority("assets/max.png");
+
+		expect(uploadBody.byteLength).toBe(source.byteLength);
+		expect(
+			new Uint8Array(uploadBody).every((byte, index) => byte === source[index]),
+		).toBe(true);
+		expect(result.bytes.byteLength).toBe(source.byteLength);
+		expect(result.bytes.every((byte, index) => byte === source[index])).toBe(
+			true,
+		);
+		expect(result.hash).toBe(hash);
+	}, 20_000);
+
 	it("reads and validates exact current blob bytes for rename recovery", async () => {
 		const session = new ResponseSession();
 		const bytes = new Uint8Array([0, 254, 7]);

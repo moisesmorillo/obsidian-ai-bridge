@@ -237,17 +237,52 @@ export class TextApplyEngine {
 		this.closed = true;
 	}
 
-	/** Repeats one accepted entry after the journal commits a pruned-revision replacement. */
+	/** Repeats rebased work and records durable attention for transfer failures. */
 	private async applyWithFallback(
 		change: ChangeEntry,
 		contentKind?: "text" | "blob",
 	): Promise<void> {
+		let activeChange = change;
 		try {
-			await this.applyEntry(change, contentKind);
+			try {
+				await this.applyEntry(change, contentKind);
+			} catch (error) {
+				if (!(error instanceof PinnedRevisionRebased)) throw error;
+				activeChange = error.change;
+				await this.applyEntry(activeChange, contentKind);
+			}
 		} catch (error) {
-			if (!(error instanceof PinnedRevisionRebased)) throw error;
-			await this.applyEntry(error.change, contentKind);
+			await this.recordApplyFailure(activeChange, error);
+			throw error;
 		}
+	}
+
+	/** Clears echo expectations and records attention for failed storage effects. */
+	private async recordApplyFailure(
+		change: ChangeEntry,
+		error: unknown,
+	): Promise<void> {
+		const transferFailure =
+			error instanceof Error &&
+			(("code" in error && error.code === "ENOSPC") ||
+				[
+					"Remote create was not confirmed",
+					"Binary create was not confirmed",
+					"Binary write was not confirmed",
+					"Binary read-back did not match remote bytes",
+				].includes(error.message));
+		if (!transferFailure) return;
+		const state = this.activeJournal.snapshot();
+		const revision = parseETag(change.etag).rev;
+		if ((state.base[change.path]?.rev ?? 0) >= revision) return;
+		const affectedPaths =
+			change.op === "rename" ? [change.from_path, change.path] : [change.path];
+		for (const path of affectedPaths)
+			await this.activeJournal.clearExpectedWrite(path);
+		await this.activeJournal.recordAttention(
+			change.path,
+			"Remote apply failed and needs recovery",
+		);
 	}
 
 	/** Runs one accepted entry or continues its persisted conflict step. */
@@ -970,22 +1005,25 @@ export class TextApplyEngine {
 					return;
 				}
 				await this.activeJournal.clearExpectedWrite(change.path);
-				if (createdText !== null)
+				if (createdText !== null) {
+					await this.activeJournal.recordAttention(
+						change.path,
+						"Remote text create was not confirmed; local bytes need review",
+					);
 					await this.startConflict(change, change.path, createdText);
-				else throw new Error("Remote create was not confirmed");
+				} else throw new Error("Remote create was not confirmed");
 				return;
 			}
 			const clean =
 				base?.deleted === false && (await digest(local)) === base.hash;
 			if (clean) {
 				await this.activeJournal.setExpectedWrite(change.path, change.hash);
-				if (
-					await this.effect(
-						[change.path],
-						() => this.vault.process(change.path, local, remote),
-						[{ path: change.path, hash: change.hash }],
-					)
-				) {
+				const writeConfirmed = await this.effect(
+					[change.path],
+					() => this.vault.process(change.path, local, remote),
+					[{ path: change.path, hash: change.hash }],
+				);
+				if (writeConfirmed) {
 					await this.activeJournal.completeApply(change.path, {
 						deleted: false,
 						rev: remoteRev,

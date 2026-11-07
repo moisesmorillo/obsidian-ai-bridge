@@ -4,7 +4,7 @@ title: 'Deferred: Cloudflare-native backup after cutover'
 status: Deferred
 assignee: []
 created_date: '2026-11-07T00:15:00Z'
-updated_date: '2026-11-07T00:21:00Z'
+updated_date: '2026-11-07T13:02:00Z'
 labels:
   - F6
   - deferred
@@ -28,3 +28,9 @@ Trigger: owner request after cutover. Consider a copy to a supplementary R2 buck
 - [ ] #3 Before implementation, the selected design defines recoverable content, revision history, retention, failure visibility, and a restore test.
 - [ ] #4 OAB-9 and docs/spec.md §11 and §16 agree with the owner decision before implementation. No duplicate backup mechanism enters scope.
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Superseded 2026-11-07: OAB-18 packed baseline export (PR #93) delivers the Cloudflare-native backup after cutover. Restore procedure: docs/packed-export-restore.md. Archived as duplicate.
+<!-- SECTION:NOTES:END -->

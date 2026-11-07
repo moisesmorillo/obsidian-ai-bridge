@@ -18,6 +18,7 @@ import type {
 import type { Env } from "@worker/env";
 import { verifyOwnerAccess } from "@worker/infrastructure/auth/access";
 import { deriveProviderUserId } from "@worker/infrastructure/auth/provider-identity";
+import { renderConsentPage } from "@worker/transport/owner-pages/consent";
 import { Hono } from "hono";
 
 /** OAuth scope vocabulary accepted by this resource. */
@@ -233,7 +234,14 @@ export function createAuthorizeHandler(): ExportedHandler<Env> {
 				return context.text("Invalid authorization request", 400);
 			const description = await api.describeConsent(authRequest);
 			const consent = await api.beginConsent(authRequest);
-			const html = `<!doctype html><html><body><main><h1>Authorize ${escapeHtml(description.clientName)}</h1><p>Application: ${escapeHtml(description.clientName)}</p><p>Redirect URI: ${escapeHtml(description.redirectUri)}</p><ul>${description.scope.map((scope) => `<li>${escapeHtml(scope)}</li>`).join("")}</ul><form method="post" action="/authorize/consent"><input type="hidden" name="handle" value="${escapeHtml(consent.handle)}"><label>Client name <input name="client_name" maxlength="80"></label><button name="decision" value="approve">Approve</button><button name="decision" value="deny">Deny</button></form></main></body></html>`;
+			const html = renderConsentPage({
+				clientName: escapeHtml(description.clientName),
+				host: escapeHtml(new URL(context.env.SERVICE_ORIGIN).host),
+				redirectUri: escapeHtml(description.redirectUri),
+				requestedOn: null,
+				scopes: description.scope.map(escapeHtml),
+				handle: escapeHtml(consent.handle),
+			});
 			return new Response(html, {
 				headers: new Headers([
 					["content-type", "text/html; charset=utf-8"],

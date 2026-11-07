@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-11-07T21:08:00Z'
-updated_date: '2026-11-07T21:30:00Z'
+updated_date: '2026-11-07T22:03:00Z'
 labels:
   - worker
   - ui
@@ -25,7 +25,7 @@ Owner order 2026-11-07: restyle every Worker HTML page with the approved design 
 <!-- AC:BEGIN -->
 - [ ] #1 Phase 1: a tokens stylesheet module exists with the approved palette and is served inline on every owner page. Clients and grants pages render with the new shell. Render functions are pure and covered by HTML snapshot tests. Existing owner tests stay green.
 - [ ] #2 Phase 2: measurements, exports and blob-gc pages use the shell and components. Numbers, links, forms and CSRF behave as before.
-- [ ] #3 Phase 3: the consent page uses the same tokens and a centered card. Approve and Deny keep their names and semantics.
+- [x] #3 Phase 3: the consent page uses the same tokens and a centered card. Approve and Deny keep their names and semantics.
 - [x] #4 Phone width: the sidebar becomes a horizontal chip bar, cards stack, tables scroll horizontally. Checked with a DOM test at 390px or an equivalent assertion on the CSS.
 - [x] #5 No new dependency, no external request from the pages, no inline event handlers. bun run check and Worker preflight green.
 <!-- AC:END -->
@@ -68,6 +68,18 @@ Check escaping at the handler boundary and URL encoding for hostile identifiers.
 - [ ] Remove the worktree, report the PR URL, and stop.
 
 Final scope: Keep measurements, exports, and blob collection markup unchanged for phase 2, as the owner brief allows. The shared shell and stylesheet serve clients and grants in this branch. Task and branch reviews completed. Scoped review accepted F1, F2, and F3. AC4 and AC5 have test and source evidence. AC1 remains open for inline styling on every owner page. AC2 and AC3 remain outside this phase.
+
+## Phase 3: Consent page
+Goal: Apply the approved design to consent without behavior changes.
+Owner decisions: The owner skips Plannotator. Reuse OWNER_CONSOLE_CSS without edits. Show scope ids alone when protocol descriptions do not exist. Omit Requested on unless provider metadata supplies it. No live requests, dependencies, deployment, or vault access.
+- [ ] Add failing renderer snapshots and exact form-contract tests. Cover escaped metadata, known scopes, and optional request time.
+- [ ] Add consent.ts as a pure renderer with an escaped view model and shared tokens. Keep auth types outside the renderer.
+- [ ] Replace only the HTML construction in oauth.ts. Preserve validation, hidden fields, form action and method, names, values, and response headers.
+- [ ] Run focused render and OAuth tests, docs:check, bun run check, and Worker preflight. Commit implementation.
+- [ ] Complete independent task and whole-branch reviews. Record revision, findings, documentation scope, checks, and limits.
+- [ ] Rebase onto origin/main. Push one PR with the mandated first body line. Remove the worktree and report the URL.
+Review focus: HTML escaping, exact form contracts, no invented scope descriptions or timestamps, token reuse, narrow edit boundaries, and phone overflow.
+Allowed changes: oauth.ts, new owner-pages/consent.ts, consent tests and snapshots, and this task through the CLI. Do not edit other owner pages, workflows, or plugin tooling.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -80,4 +92,12 @@ Phase 1 implementation uses pure clients and grants renderers with escaped view-
 Branch-review fix closures at cc287667caf133e1f3a3525bc51eac0500cc46ed: F1 closed by focused table-driven tests for No accepted grants, Revoked, Mixed active and revoked history, Active registry grant, and Remove absent/enabled/disabled. Tests assert CSRF field counts and values, POST actions, Rename/Revoke/Remove button text, name input, and maxlength. Focused render suite passed 5/5, owner.test passed 4/4, owner-cleanup.test passed 6/6. F2 closed by asserting base .owner-layout flex-wrap:wrap and adding that declaration while retaining 390px and 16px rules. Focused render suite passed 5/5. F3 closed by asserting grants output marks Clients with aria-current=location and updating renderOwnerShell TSDoc to describe page or containing-section selection. Updated snapshots; focused render suite passed 5/5. docs:check passed. bun run check passed, including lint, type checks, all suites, and dry-run build. Worker preflight passed (exit 0). Task remains In Progress for phases 2 and 3.
 
 Review closure: task review and whole-branch review used the code-review skill and TypeScript profile. Whole-branch revision: cc287667caf133e1f3a3525bc51eac0500cc46ed. Scoped review accepted all three fixes at 36d3488af564b7c3943ee27ae3cbdc18a9d4bae7. F1: five focused render tests cover all labels and Remove outcomes. F2: base flex wrapping has a direct CSS assertion. F3: grants select Clients with current-location semantics and a direct assertion. No open finding remains. Documentation scope: new renderer declarations, local view models, shell contract, CSS constant, handler mappings, and docs/api/f2.md token table. Structural candidates: owner.ts remains mixed but low-risk within this visual change. Page renderers, shell, and CSS each remain cohesive. Registry mutation policy remains unchanged. Limits: CSS assertions replace a 390px browser test. No browser, contrast measurement, live service call, deployment, or vault access occurred. The new stylesheet serves clients and grants only. AC1 stays unchecked because every owner page includes later phases. AC2 and AC3 remain open. Rebased onto origin/main 586008f after the plugin release changes. A content-preserving merge retains the original remote task seed commit, so publication needs no force-push. Final project check and Worker preflight follow on the rebased tree.
+
+Phase 3 RED evidence: `cd apps/worker && bunx vitest run --config vitest.config.ts test/consent-page.test.ts` failed as expected because `@worker/transport/owner-pages/consent` did not exist. It reported 0 tests and one failed suite. Focused existing OAuth baseline: `bun test apps/worker/test/f2/oauth.test.ts` could not load `cloudflare:test` under bun test. The first baseline command used an unmatched glob and was invalid. Vitest unit config baseline is pending dependency/runtime setup.
+
+Phase 3 implementation: Added the pure consent renderer and replaced only OAuth HTML assembly. The view model carries escaped client, host, redirect URI, scopes, handle, and optional request time. It reuses protocol scope ids and the shared stylesheet. RED: the new render test failed because the module did not exist. GREEN: `cd apps/worker && bunx vitest run --config vitest.config.ts test/consent-page.test.ts test/owner-pages.test.ts` passed 8 tests. `cd apps/worker && bunx vitest run --config vitest.f2.config.ts test/f2/oauth.test.ts` passed 32 tests. This Vitest command is the valid OAuth baseline; the earlier `bun test` command could not load `cloudflare:test`. `bun run docs:check` passed. `bun run check` passed: lint, docs, typecheck, tests, and dry-run builds exited 0. Test suites passed: Worker unit 54 files/761 tests, HTTP 9/132, F2 10/142, protocol 19/314, tooling 9/101, plugin 30/838 with 1 skipped. Worker tests printed expected injected failure and disconnect diagnostics but passed. `bun run --filter '@obsidian-ai-bridge/worker' preflight` passed with exit 0. Self-review found no actionable issue. No live requests or Cloudflare changes.
+
+Branch review F1 closure: Kept the Approve button first in DOM order so Enter in the client-name field submits `decision=approve`. CSS order places Deny left of Approve on desktop. The mobile column places Deny above Approve. Updated the consent snapshot. RED: `cd apps/worker && bunx vitest run --config vitest.config.ts test/consent-page.test.ts` failed because the rendered button order was `deny`, then `approve`, instead of the required `approve`, then `deny`. GREEN: `cd apps/worker && bunx vitest run --config vitest.config.ts test/consent-page.test.ts test/owner-pages.test.ts` passed 8 tests. `cd apps/worker && bunx vitest run --config vitest.f2.config.ts test/f2/oauth.test.ts` passed 32 tests. The form contract test now asserts submit order, exact form fields, desktop CSS order, and mobile stack order. `bun run docs:check` passed. `bun run check` passed. Worker unit tests passed 761/761, HTTP passed 132/132, and F2 passed 142/142. Protocol passed 314/314, tooling passed 101/101, and plugin passed 838 with 1 skipped. Worker preflight passed with exit 0. Worktree had no unrelated lockfile change. OAB-47 remains In Progress.
+
+Phase 3 review closure: task reviewer approved 2e60be5. Whole-branch review examined 2e60be5 against da71681 and found F1: reversed DOM button order changed implicit Enter submission to denial. Fix d4308e6 restores Approve first in DOM order and uses CSS for visual order. A failing default-submit test preceded the fix. Scoped review closed F1 at d4308e6 with direct DOM-order, CSS, and snapshot evidence. No finding remains open. Documentation scope: consent view model, escaped fields, optional time, and renderer contract. Structural assessment: consent.ts is cohesive presentation code. oauth.ts remains mixed but low-risk, with unchanged provider state transitions. Final checks: focused render 8/8, OAuth 32/32, docs:check, bun run check, and Worker preflight passed. Review limits: no browser visual test, contrast measurement, live call, deployment, or vault access. AC3 is complete. Task stays In Progress as instructed. Unrelated generated lockfile metadata remains in a named Git stash outside this branch.
 <!-- SECTION:NOTES:END -->

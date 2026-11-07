@@ -66,6 +66,17 @@ async function epochFor(token: string): Promise<string> {
 	return McpListNotesResultSchema.parse(result.structuredContent).epoch;
 }
 
+/** Hash exact UTF-8 content bytes for expected conflict metadata. */
+async function hashContent(content: string): Promise<string> {
+	const digest = await crypto.subtle.digest(
+		"SHA-256",
+		new TextEncoder().encode(content),
+	);
+	return Array.from(new Uint8Array(digest), (byte) =>
+		byte.toString(16).padStart(2, "0"),
+	).join("");
+}
+
 /** Assert canonical failure identity, current epoch, and no second content representation. */
 async function failure(response: Response, epoch: string, code: string) {
 	const result = await toolResult(response);
@@ -249,6 +260,174 @@ describe("production MCP mutation safety", () => {
 			etag: recreated.etag,
 			content: "recreated",
 		});
+	});
+
+	it("appends under the exact MCP heading with its observed ETag and receipt", async () => {
+		const { token, clientId } = await issueToken();
+		const epoch = await epochFor(token);
+		const path = `Agents/heading-${crypto.randomUUID()}.md`;
+		const created = await receipt(
+			await call(token, "create_note", {
+				path,
+				epoch,
+				content: "# Main\r\n## Tasks\r\nold\r\n## Tasks\r\nother\r\n",
+			}),
+		);
+		const result = await receipt(
+			await call(token, "append_under_heading", {
+				path,
+				heading: " Tasks ",
+				text: "追加",
+				etag: created.etag,
+				idempotency_key: "mcp-heading-append-01",
+			}),
+		);
+		expect(parseETag(result.etag)).toEqual({ epoch, rev: 2 });
+		expect(await note(token, path)).toMatchObject({
+			etag: result.etag,
+			content: "# Main\r\n## Tasks\r\nold\r\n追加\r\n## Tasks\r\nother\r\n",
+		});
+		const afterAppend = await published(path);
+		expect(afterAppend.changes).toEqual([
+			expect.objectContaining({ op: "put", rev: 1, origin: clientId }),
+			expect.objectContaining({ op: "put", rev: 2, origin: clientId }),
+		]);
+		const reader = await issueToken("vault:read");
+		const denied = await call(reader.token, "append_under_heading", {
+			path,
+			heading: "Tasks",
+			text: "denied",
+			etag: result.etag,
+			idempotency_key: "mcp-heading-append-denied",
+		});
+		expect(denied.status).toBe(403);
+		expect(await denied.text()).toContain("forbidden_scope");
+		expect(await published(path)).toEqual(afterAppend);
+	});
+
+	it.each([
+		["read-write", "vault:read vault:write", true],
+		["write-only", "vault:write", false],
+	] as const)(
+		"returns scoped current details for a stale %s heading append",
+		async (_label, scopes, includesContent) => {
+			const { token } = await issueToken(scopes);
+			const reader =
+				scopes === "vault:write"
+					? (await issueToken("vault:read")).token
+					: token;
+			const epoch = await epochFor(reader);
+			const path = `Agents/stale-heading-${crypto.randomUUID()}.md`;
+			const original = await receipt(
+				await call(token, "create_note", {
+					path,
+					epoch,
+					content: "# Tasks\nold\n",
+				}),
+			);
+			const currentContent = "# Tasks\ncurrent\n";
+			const current = await receipt(
+				await call(token, "update_note", {
+					path,
+					etag: original.etag,
+					content: currentContent,
+				}),
+			);
+			const before = await published(path);
+			const response = await call(token, "append_under_heading", {
+				path,
+				heading: "Tasks",
+				text: "stale",
+				etag: original.etag,
+				idempotency_key: "stale-heading-append-key",
+			});
+			const conflict = await failure(response, epoch, "precondition_failed");
+
+			expect(conflict).toMatchObject({
+				etag: current.etag,
+				hash: await hashContent(currentContent),
+				deleted: false,
+			});
+			if (includesContent)
+				expect(conflict).toHaveProperty("content", currentContent);
+			else expect(conflict).not.toHaveProperty("content");
+			expect(await published(path)).toEqual(before);
+		},
+	);
+
+	it("accepts escaped heading text and replays its receipt after a later edit", async () => {
+		const { token } = await issueToken();
+		const epoch = await epochFor(token);
+		const path = `Agents/escaped-heading-${crypto.randomUUID()}.md`;
+		const created = await receipt(
+			await call(token, "create_note", { path, epoch, content: "# Tasks\n" }),
+		);
+		const text = "\n".repeat(500_000);
+		const args = {
+			path,
+			heading: "Tasks",
+			text,
+			etag: created.etag,
+			idempotency_key: "escaped-mcp-heading-key",
+		};
+		const envelope = {
+			jsonrpc: "2.0",
+			id: 1,
+			method: "tools/call",
+			params: { name: "append_under_heading", arguments: args },
+		};
+		const envelopeBytes = new TextEncoder().encode(JSON.stringify(envelope));
+		expect(envelopeBytes.byteLength).toBeGreaterThan(1_000_000);
+		expect(envelopeBytes.byteLength).toBeLessThanOrEqual(6_100_000);
+		const identityBytes = new TextEncoder().encode(
+			JSON.stringify({ heading: "Tasks", content: text }),
+		);
+		expect(identityBytes.byteLength).toBeGreaterThan(1_000_000);
+		expect(identityBytes.byteLength).toBeLessThanOrEqual(6_100_000);
+		const appended = await receipt(await postMcp(token, envelope));
+		expect((await published(path)).files).toEqual([
+			expect.objectContaining({ size: 500_008, content: `# Tasks\n${text}` }),
+		]);
+		const edited = await receipt(
+			await call(token, "update_note", {
+				path,
+				etag: appended.etag,
+				content: "later edit",
+			}),
+		);
+		const afterEdit = await published(path);
+		expect(await receipt(await postMcp(token, envelope))).toEqual(appended);
+		expect(await published(path)).toEqual(afterEdit);
+		expect(await note(token, path)).toMatchObject({
+			etag: edited.etag,
+			content: "later edit",
+		});
+	});
+
+	it("returns a typed failure when heading append output exceeds the text limit", async () => {
+		const { token } = await issueToken();
+		const epoch = await epochFor(token);
+		const path = `Agents/oversized-heading-${crypto.randomUUID()}.md`;
+		const currentContent = `# Tasks\n${"x".repeat(999_990)}`;
+		const current = await receipt(
+			await call(token, "create_note", {
+				path,
+				epoch,
+				content: currentContent,
+			}),
+		);
+		const before = await published(path);
+		const response = await call(token, "append_under_heading", {
+			path,
+			heading: "Tasks",
+			text: "0123456789",
+			etag: current.etag,
+			idempotency_key: "oversized-heading-result-key",
+		});
+
+		expect(response.status).toBe(200);
+		await failure(response, epoch, "text_too_large");
+		expect(await published(path)).toEqual(before);
 	});
 
 	it("accepts the worst-case escaped note envelope within the canonical wire limit", async () => {

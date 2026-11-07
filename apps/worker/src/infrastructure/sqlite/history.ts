@@ -20,6 +20,7 @@ import {
 	type ImmutableFileCommand,
 	prepareHistoryCommand,
 } from "@worker/application/history";
+import { appendTextUnderHeading } from "@worker/application/text-files";
 import {
 	assertPolicyInTransaction,
 	type VaultTransaction,
@@ -208,6 +209,11 @@ export class SqliteHistoryStore {
 						ticketId,
 						command.key,
 					);
+					this.coordinator.assertPreconditionsInTransaction(
+						tx,
+						context,
+						operation,
+					);
 					const current = tx
 						.select()
 						.from(files)
@@ -234,7 +240,16 @@ export class SqliteHistoryStore {
 				return { ok: false, failure: { kind: "tombstone" } };
 			if (snapshot.kind !== "text" || snapshot.content === null)
 				return { ok: false, failure: { kind: "unsupported_append_kind" } };
-			const content = snapshot.content + command.content;
+			const content =
+				command.heading === undefined
+					? snapshot.content + command.content
+					: appendTextUnderHeading(
+							snapshot.content,
+							command.heading,
+							command.content,
+						);
+			if (content === undefined)
+				return { ok: false, failure: { kind: "heading_not_found" } };
 			const bytes = new TextEncoder().encode(content);
 			if (bytes.byteLength > 1_000_000)
 				return { ok: false, failure: { kind: "text_too_large" } };

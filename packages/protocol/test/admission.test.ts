@@ -12,6 +12,7 @@ import {
 	RequestAdmissionLeaseSchema,
 	RequestAdmissionResultSchema,
 } from "@protocol/schemas/admission";
+import { MAX_APPEND_UNDER_HEADING_ENCODED_BYTES } from "@protocol/schemas/limits";
 import { describe, expect, it } from "vitest";
 
 const epoch = "0000000000000000000000000000000a";
@@ -132,12 +133,33 @@ describe("admission contracts", () => {
 			}).success,
 		).toBe(true);
 	});
-	it("rejects append declarations above one million bytes", () => {
+	it("accepts heading identity bytes above the decoded text limit", () => {
 		expect(
 			OperationIntentSchema.safeParse({
 				...cases[4],
+				precondition: { kind: "match", etag: `"${epoch}.1"` },
 				payload_hash: hash,
 				size: 1_000_001,
+			}).success,
+		).toBe(true);
+	});
+	it("accepts append identity at its encoded byte limit", () => {
+		expect(
+			OperationIntentSchema.safeParse({
+				...cases[4],
+				precondition: { kind: "match", etag: `"${epoch}.1"` },
+				payload_hash: hash,
+				size: MAX_APPEND_UNDER_HEADING_ENCODED_BYTES,
+			}).success,
+		).toBe(true);
+	});
+	it("rejects append identity above its encoded byte limit", () => {
+		expect(
+			OperationIntentSchema.safeParse({
+				...cases[4],
+				precondition: { kind: "match", etag: `"${epoch}.1"` },
+				payload_hash: hash,
+				size: MAX_APPEND_UNDER_HEADING_ENCODED_BYTES + 1,
 			}).success,
 		).toBe(false);
 	});
@@ -268,20 +290,21 @@ describe("admission contracts", () => {
 			{ op: "rename", paths: ["a", "b"], precondition: { kind: "absent" } },
 		],
 		[
-			"append with revision precondition",
-			{
-				op: "append",
-				epoch,
-				paths: ["a"],
-				precondition: { kind: "match", etag: `"${epoch}.1"` },
-			},
-		],
-		[
 			"restore with no precondition",
 			{ op: "restore", paths: ["a"], precondition: { kind: "none" } },
 		],
 	] as const)("rejects $0", (_label, invalid) => {
 		expect(OperationDescriptorSchema.safeParse(invalid).success).toBe(false);
+	});
+	it("accepts the exact ETag precondition for a heading append", () => {
+		expect(
+			OperationDescriptorSchema.safeParse({
+				op: "append",
+				epoch,
+				paths: ["a"],
+				precondition: { kind: "match", etag: `"${epoch}.1"` },
+			}).success,
+		).toBe(true);
 	});
 	it("requires an explicit epoch for put", () => {
 		expect(

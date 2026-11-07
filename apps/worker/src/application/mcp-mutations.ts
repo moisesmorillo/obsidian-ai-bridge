@@ -1,5 +1,6 @@
 import {
 	type AdmissionCompletion,
+	type AppendUnderHeadingRequest,
 	type AuthorizationContext,
 	type FileCommand,
 	type FileFailure,
@@ -13,7 +14,10 @@ import {
 	TextMutationDescriptorSchema,
 } from "@obsidian-ai-bridge/protocol";
 import type { HistoryVaultGateway } from "@worker/application/history";
-import { executeFileCommand } from "@worker/application/history";
+import {
+	executeFileCommand,
+	prepareAppendUnderHeadingIdentity,
+} from "@worker/application/history";
 import type { McpReadOwner } from "@worker/application/mcp-notes";
 import type { TextVaultGateway } from "@worker/application/text-files";
 import { executeTextMutation } from "@worker/application/text-files";
@@ -182,6 +186,58 @@ export function updateMcpNote(
 				undefined,
 				responseProduction,
 			),
+	);
+}
+
+/** Append text below a heading only at the exact ETag and retain the shared mutation receipt. */
+export function appendUnderHeadingMcpNote(
+	gateway: McpMutationGateway,
+	identity: AuthorizationContext,
+	input: AppendUnderHeadingRequest,
+	responseProduction: Promise<void>,
+) {
+	const epoch = parseETag(input.etag).epoch;
+	const descriptor = OperationDescriptorSchema.parse({
+		op: "append",
+		paths: [input.path],
+		precondition: { kind: "match", etag: input.etag },
+		epoch,
+	});
+	return runMutation(
+		gateway,
+		identity,
+		"vault:write",
+		"append",
+		epoch,
+		responseProduction,
+		async (ownedGateway) => {
+			const payloadIdentity = await prepareAppendUnderHeadingIdentity(
+				input.heading,
+				input.text,
+			);
+			const command: FileCommand = {
+				op: "append",
+				intent: {
+					op: "append",
+					epoch,
+					paths: [input.path],
+					precondition: { kind: "match", etag: input.etag },
+					payload_hash: payloadIdentity.payload_hash,
+					size: payloadIdentity.size,
+				},
+				content: input.text,
+				heading: input.heading,
+				key: input.idempotency_key,
+			};
+			return executeFileCommand(
+				ownedGateway,
+				identity,
+				descriptor,
+				input.idempotency_key,
+				async () => command,
+				responseProduction,
+			);
+		},
 	);
 }
 

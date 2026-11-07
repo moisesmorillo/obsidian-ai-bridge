@@ -12,6 +12,8 @@ import type {
 	McpSearchNotesInput,
 } from "@obsidian-ai-bridge/protocol";
 import {
+	AppendUnderHeadingRequestSchema,
+	AppendUnderHeadingToolSchema,
 	encodeFileFailure,
 	McpAppendToNoteInputSchema,
 	McpAppendToNoteToolSchema,
@@ -45,6 +47,7 @@ import type {
 } from "@worker/application/mcp-mutations";
 import {
 	appendMcpNote,
+	appendUnderHeadingMcpNote,
 	createMcpNote,
 	deleteMcpNote,
 	restoreMcpNote,
@@ -68,7 +71,7 @@ const MCP_INSTRUCTIONS = [
 	"Use Agents/ for agent notes and Agents/Log/YYYY-MM-DD.md for daily logs.",
 	"New notes need frontmatter with created and source fields.",
 	"Search before you create a note.",
-	"Pass the exact ETag from read_note to update_note.",
+	"Pass the exact ETag from read_note to update_note and append_under_heading.",
 	"Always generate a fresh idempotency key for each append. Reuse that key only to retry the same append with the same text. Receipts last 30 days. A retry after receipt expiry can append the text again.",
 ].join(" ");
 
@@ -77,6 +80,7 @@ const MCP_MUTATION_SCOPES = new Map<string, "vault:write" | "vault:delete">([
 	["create_note", "vault:write"],
 	["update_note", "vault:write"],
 	["append_to_note", "vault:write"],
+	["append_under_heading", "vault:write"],
 	["delete_note", "vault:delete"],
 	["restore_note", "vault:write"],
 ]);
@@ -133,12 +137,14 @@ export function mutationInputFailure(
 				? McpUpdateNoteInputSchema
 				: name === "append_to_note"
 					? McpAppendToNoteInputSchema
-					: undefined;
+					: name === "append_under_heading"
+						? AppendUnderHeadingRequestSchema
+						: undefined;
 	if (!schema) return undefined;
 	const parsed = schema.safeParse(input);
 	if (parsed.success) return undefined;
 	if (
-		name === "append_to_note" &&
+		(name === "append_to_note" || name === "append_under_heading") &&
 		(typeof input !== "object" ||
 			input === null ||
 			!("idempotency_key" in input))
@@ -298,6 +304,28 @@ export function createMcpServer(
 					mutationGateway,
 					identity,
 					McpAppendToNoteInputSchema.parse(input),
+					responseProduction,
+				),
+			),
+	);
+	server.registerTool(
+		"append_under_heading",
+		{
+			description:
+				"Append UTF-8 text under the first exact heading at the supplied ETag. Reuse its key only to retry the same request.",
+			inputSchema: fromJsonSchema(
+				AppendUnderHeadingToolSchema as JsonSchemaType,
+			),
+			outputSchema: fromJsonSchema(
+				McpMutationOutputToolSchema as JsonSchemaType,
+			),
+		},
+		async (input: unknown) =>
+			mutationCall("append_under_heading", () =>
+				appendUnderHeadingMcpNote(
+					mutationGateway,
+					identity,
+					AppendUnderHeadingRequestSchema.parse(input),
 					responseProduction,
 				),
 			),

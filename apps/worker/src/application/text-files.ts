@@ -63,6 +63,96 @@ export interface TextVaultGateway extends BlobVaultGateway {
 	): Promise<TextReadResult>;
 }
 
+/** One original line and its exact terminator from a Markdown source string. */
+type MarkdownSourceLine = Readonly<{
+	text: string;
+	ending: string;
+	start: number;
+}>;
+
+/** A parsed ATX heading outside any fenced code block. */
+type MarkdownHeading = Readonly<{ level: number; text: string }>;
+
+/**
+ * Insert text at the end of the first exact heading section without normalizing source bytes.
+ * Returns undefined when no matching ATX heading exists outside fenced code.
+ */
+export function appendTextUnderHeading(
+	content: string,
+	heading: string,
+	text: string,
+): string | undefined {
+	const wanted = heading.trim();
+	if (!wanted) return undefined;
+	const lines: MarkdownSourceLine[] = [];
+	let offset = 0;
+	while (offset < content.length) {
+		const match = /([^\r\n]*)(\r\n|\n|\r|$)/y;
+		match.lastIndex = offset;
+		const found = match.exec(content);
+		if (!found) break;
+		lines.push({ text: found[1] ?? "", ending: found[2] ?? "", start: offset });
+		offset = match.lastIndex;
+		if (found[2] === "") break;
+	}
+	const headings: (MarkdownHeading | undefined)[] = [];
+	let fence: { marker: "`" | "~"; length: number } | undefined;
+	for (const line of lines) {
+		const fenceMatch = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line.text);
+		if (fence !== undefined) {
+			if (
+				fenceMatch &&
+				fenceMatch[1]?.[0] === fence.marker &&
+				(fenceMatch[1]?.length ?? 0) >= fence.length &&
+				/^\s*$/.test(fenceMatch[2] ?? "")
+			)
+				fence = undefined;
+			headings.push(undefined);
+			continue;
+		}
+		if (fenceMatch) {
+			const marker = fenceMatch[1]?.[0];
+			if (marker === "`" || marker === "~")
+				fence = { marker, length: fenceMatch[1]?.length ?? 3 };
+			headings.push(undefined);
+			continue;
+		}
+		const match = /^ {0,3}(#{1,6})(?:[ \t]+(.*)|[ \t]*)$/.exec(line.text);
+		if (!match) {
+			headings.push(undefined);
+			continue;
+		}
+		const value = (match[2] ?? "").replace(/[ \t]+#+[ \t]*$/, "").trim();
+		headings.push({ level: match[1]?.length ?? 1, text: value });
+	}
+	const first = headings.findIndex((item) => item?.text === wanted);
+	if (first < 0) return undefined;
+	let insertion = content.length;
+	for (let index = first + 1; index < headings.length; index += 1) {
+		const item = headings[index];
+		if (item && item.level <= (headings[first]?.level ?? 1)) {
+			insertion = lines[index]?.start ?? content.length;
+			break;
+		}
+	}
+	let lineEnding = "\n";
+	const boundaryIndex =
+		insertion === content.length
+			? lines.length
+			: lines.findIndex((line) => line.start === insertion);
+	for (let index = boundaryIndex - 1; index >= first; index -= 1) {
+		const ending = lines[index]?.ending;
+		if (ending) {
+			lineEnding = ending;
+			break;
+		}
+	}
+	if (insertion < content.length)
+		return `${content.slice(0, insertion)}${text}${lineEnding}${content.slice(insertion)}`;
+	const prefix = /(?:\r\n|\n|\r)$/.test(content) ? "" : lineEnding;
+	return `${content}${prefix}${text}`;
+}
+
 /**
  * Reserve PUT capacity before body demand, then authorize and publish the exact mutation.
  * Optional response production retains that capacity after operation cleanup. DELETE does not acquire a body slot.

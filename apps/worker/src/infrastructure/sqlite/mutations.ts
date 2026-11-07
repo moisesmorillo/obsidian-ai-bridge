@@ -373,6 +373,15 @@ export class SqliteMutationCoordinator {
 		);
 	}
 
+	/** Check scoped current revision details inside an existing snapshot transaction. */
+	assertPreconditionsInTransaction(
+		tx: VaultTransaction,
+		context: AuthorizationContext,
+		operation: PreparedOperation,
+	): void {
+		this.admissions.assertPreconditionsInTransaction(tx, context, operation);
+	}
+
 	/** Recheck current policy and active ticket before a blob adapter performs asynchronous metadata I/O. */
 	preflight(
 		context: AuthorizationContext,

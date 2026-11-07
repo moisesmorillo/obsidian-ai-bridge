@@ -5,9 +5,11 @@ import type {
 	RenameReservation,
 } from "@obsidian-ai-bridge/protocol";
 import {
+	AppendUnderHeadingBodySchema,
 	EpochSchema,
 	FileCommandSchema,
 	IdempotencyKeySchema,
+	MAX_APPEND_UNDER_HEADING_ENCODED_BYTES,
 	OperationDescriptorSchema,
 	parseETag,
 	RenameRequestSchema,
@@ -18,6 +20,7 @@ import { FileOperationDenied } from "@worker/application/files";
 import {
 	executeFileCommand,
 	type HistoryVaultGateway,
+	prepareAppendUnderHeadingIdentity,
 } from "@worker/application/history";
 import type { TextVaultGateway } from "@worker/application/text-files";
 import { readInlineBody } from "@worker/transport/body";
@@ -26,7 +29,7 @@ import {
 	withMutationResponse,
 } from "@worker/transport/mutation-response";
 
-/** Maximum actual UTF-8 request bytes read for any inline history command. */
+/** Maximum actual UTF-8 request bytes for legacy append and other history bodies. */
 const MAX_COMMAND_BYTES = 1_000_000;
 
 /** Request facts validated before admission and deferred body decoding. */
@@ -43,6 +46,13 @@ type ValidatedHistoryCommandRequest =
 			descriptor: OperationDescriptor;
 			epoch: string;
 			key: string | undefined;
+	  }
+	| {
+			operation: "append-under-heading";
+			descriptor: OperationDescriptor;
+			match: string;
+			epoch: string;
+			key: string;
 	  }
 	| {
 			operation: "restore";
@@ -157,6 +167,51 @@ async function validateHistoryCommandRequest(
 				},
 			};
 		}
+		case "append-under-heading": {
+			if (!key) {
+				const authority = await gateway.getCurrentEpoch(identity, "append");
+				if (!authority.ok)
+					return { ok: false, response: errorResponse(authority.failure) };
+				return {
+					ok: false,
+					response: errorResponse({ kind: "idempotency_key_required" }),
+				};
+			}
+			if (!match)
+				return {
+					ok: false,
+					response: errorResponse({ kind: "invalid_request" }),
+				};
+			let epoch: string;
+			try {
+				epoch = parseETag(match).epoch;
+			} catch {
+				return {
+					ok: false,
+					response: errorResponse({ kind: "invalid_request" }),
+				};
+			}
+			if (epochHeader !== null && epochHeader !== epoch)
+				return {
+					ok: false,
+					response: errorResponse({ kind: "invalid_request" }),
+				};
+			const candidate = OperationDescriptorSchema.safeParse({
+				op: "append",
+				paths: [path],
+				precondition: { kind: "match", etag: match },
+				epoch,
+			});
+			if (!candidate.success)
+				return {
+					ok: false,
+					response: errorResponse({ kind: "invalid_request" }),
+				};
+			return {
+				ok: true,
+				request: { operation, descriptor: candidate.data, match, epoch, key },
+			};
+		}
 		case "append": {
 			const epoch = epochHeader ?? undefined;
 			if (epoch === undefined || !EpochSchema.safeParse(epoch).success) {
@@ -252,7 +307,11 @@ async function decodeHistoryCommand(
 	path: string,
 	commandRequest: ValidatedHistoryCommandRequest,
 ): Promise<FileCommand> {
-	const bytes = await readInlineBody(request, MAX_COMMAND_BYTES);
+	const bodyLimit =
+		commandRequest.operation === "append-under-heading"
+			? MAX_APPEND_UNDER_HEADING_ENCODED_BYTES
+			: MAX_COMMAND_BYTES;
+	const bytes = await readInlineBody(request, bodyLimit);
 	switch (commandRequest.operation) {
 		case "append":
 			return decodeAppendCommand(
@@ -261,6 +320,8 @@ async function decodeHistoryCommand(
 				commandRequest.epoch,
 				commandRequest.key,
 			);
+		case "append-under-heading":
+			return decodeAppendUnderHeadingCommand(bytes, path, commandRequest);
 		case "rename":
 			return decodeRenameCommand(bytes, path, commandRequest);
 		case "restore":
@@ -296,6 +357,46 @@ async function decodeAppendCommand(
 		intent,
 		content,
 		key,
+	});
+	if (!command.success)
+		throw new FileOperationDenied({ kind: "invalid_request" });
+	return command.data;
+}
+
+/** Bind the strict heading request and its exact ETag to the existing append receipt authority. */
+async function decodeAppendUnderHeadingCommand(
+	bytes: Uint8Array,
+	path: string,
+	commandRequest: Extract<
+		ValidatedHistoryCommandRequest,
+		{ operation: "append-under-heading" }
+	>,
+): Promise<FileCommand> {
+	let json: unknown;
+	try {
+		json = parseCommandJson(bytes);
+	} catch {
+		throw new FileOperationDenied({ kind: "invalid_request" });
+	}
+	const body = AppendUnderHeadingBodySchema.safeParse(json);
+	if (!body.success) throw new FileOperationDenied({ kind: "invalid_request" });
+	const identity = await prepareAppendUnderHeadingIdentity(
+		body.data.heading,
+		body.data.text,
+	);
+	const command = FileCommandSchema.safeParse({
+		op: "append",
+		intent: {
+			op: "append",
+			epoch: commandRequest.epoch,
+			paths: [path],
+			precondition: { kind: "match", etag: commandRequest.match },
+			payload_hash: identity.payload_hash,
+			size: identity.size,
+		},
+		content: body.data.text,
+		heading: body.data.heading,
+		key: commandRequest.key,
 	});
 	if (!command.success)
 		throw new FileOperationDenied({ kind: "invalid_request" });

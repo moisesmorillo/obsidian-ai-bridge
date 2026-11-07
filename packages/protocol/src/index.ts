@@ -26,6 +26,17 @@ export {
 	VaultScopeSchema,
 } from "@protocol/schemas/admission";
 export type {
+	AppendUnderHeadingRequest,
+	AppendUnderHeadingResult,
+} from "@protocol/schemas/append";
+export {
+	AppendHeadingTextSchema,
+	AppendUnderHeadingBodySchema,
+	AppendUnderHeadingRequestSchema,
+	AppendUnderHeadingResultSchema,
+	AppendUnderHeadingToolSchema,
+} from "@protocol/schemas/append";
+export type {
 	BeginClientConsentRequest,
 	BeginClientConsentResult,
 	ListClientGrantsResult,
@@ -135,6 +146,7 @@ export {
 	RestoreRequestSchema,
 } from "@protocol/schemas/history";
 export { IdempotencyKeySchema } from "@protocol/schemas/idempotency";
+export { MAX_APPEND_UNDER_HEADING_ENCODED_BYTES } from "@protocol/schemas/limits";
 export {
 	McpAppendToNoteInputSchema,
 	McpAppendToNoteToolSchema,

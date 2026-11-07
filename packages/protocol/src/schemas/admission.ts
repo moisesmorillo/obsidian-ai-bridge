@@ -1,6 +1,7 @@
 import { parseETag } from "@protocol/codecs/etag";
 import { FullTextContentSchema } from "@protocol/schemas/content";
 import { EpochSchema, ETagSchema } from "@protocol/schemas/etag";
+import { MAX_APPEND_UNDER_HEADING_ENCODED_BYTES } from "@protocol/schemas/limits";
 import { PathSchema } from "@protocol/schemas/path";
 import { z } from "zod";
 
@@ -29,7 +30,7 @@ export const AuthorizationContextSchema = z.object({
 		.transform((scopes) => [...scopes].sort()),
 });
 
-/** Operation metadata validated before a request body is read. */
+/** Operation metadata validated before body reads; append supports legacy unconditioned and exact-ETag modes. */
 export const OperationDescriptorSchema = z
 	.object({
 		op: z.enum(["read", "put", "delete", "rename", "append", "restore"]),
@@ -56,7 +57,7 @@ export const OperationDescriptorSchema = z
 			put: ["absent", "match"],
 			delete: ["match"],
 			rename: ["match"],
-			append: ["none"],
+			append: ["none", "match"],
 			restore: ["match"],
 		};
 		if (!preconditions[descriptor.op].includes(descriptor.precondition.kind)) {
@@ -86,7 +87,7 @@ export const AdmissionSizeFailureKindSchema = z.enum([
 	"blob_too_large",
 ]);
 
-/** Operation metadata with a lowercase SHA-256 payload hash and byte size. */
+/** Operation metadata with a payload hash and mode-specific append byte size. */
 export const OperationIntentSchema = OperationDescriptorSchema.safeExtend({
 	payload_hash: z.string().regex(/^[0-9a-f]{64}$/),
 	size: z.number().int().nonnegative().safe(),
@@ -99,14 +100,21 @@ export const OperationIntentSchema = OperationDescriptorSchema.safeExtend({
 		) {
 			ctx.addIssue({ code: "custom", message: "payload must be empty" });
 		}
-		if (intent.op === "append" && intent.size > 1_000_000) {
-			ctx.addIssue({
-				code: "custom",
-				params: {
-					admissionFailure: AdmissionSizeFailureKindSchema.enum.text_too_large,
-				},
-				message: "append input too large",
-			});
+		if (intent.op === "append") {
+			const maxAppendBytes =
+				intent.precondition.kind === "match"
+					? MAX_APPEND_UNDER_HEADING_ENCODED_BYTES
+					: 1_000_000;
+			if (intent.size > maxAppendBytes) {
+				ctx.addIssue({
+					code: "custom",
+					params: {
+						admissionFailure:
+							AdmissionSizeFailureKindSchema.enum.text_too_large,
+					},
+					message: "append input too large",
+				});
+			}
 		}
 		if (intent.op === "put" && intent.size > 25_000_000) {
 			ctx.addIssue({

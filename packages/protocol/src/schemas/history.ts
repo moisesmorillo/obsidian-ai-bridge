@@ -1,5 +1,6 @@
 import { parseETag } from "@protocol/codecs/etag";
 import { OperationIntentSchema } from "@protocol/schemas/admission";
+import { AppendHeadingTextSchema } from "@protocol/schemas/append";
 import { FullTextContentSchema } from "@protocol/schemas/content";
 import { EpochSchema, ETagSchema } from "@protocol/schemas/etag";
 import { MutationReceiptSchema } from "@protocol/schemas/files";
@@ -87,7 +88,7 @@ export const HistoryResultSchema = z
 		}
 	});
 
-/** Strict history commands paired with canonical admission metadata. */
+/** Strict history commands bound to their canonical descriptor and append input identity. */
 export const FileCommandSchema = z.discriminatedUnion("op", [
 	z
 		.object({
@@ -114,13 +115,16 @@ export const FileCommandSchema = z.discriminatedUnion("op", [
 			op: z.literal("append"),
 			intent: OperationIntentSchema.safeExtend({ op: z.literal("append") }),
 			content: FullTextContentSchema,
+			heading: AppendHeadingTextSchema.optional(),
 			key: IdempotencyKeySchema,
 		})
 		.strict()
 		.superRefine((command, ctx) => {
 			if (
 				command.intent.paths.length !== 1 ||
-				command.intent.precondition.kind !== "none" ||
+				(command.heading === undefined
+					? command.intent.precondition.kind !== "none"
+					: command.intent.precondition.kind !== "match") ||
 				command.intent.epoch === undefined
 			) {
 				ctx.addIssue({

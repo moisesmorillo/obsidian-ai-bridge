@@ -1,11 +1,11 @@
 ---
 id: OAB-11.10
 title: Dismiss attention items from the status panel
-status: In Progress
+status: Done
 assignee:
   - '@pi'
 created_date: '2026-11-07T02:34:00Z'
-updated_date: '2026-11-07T03:08:00Z'
+updated_date: '2026-11-07T03:11:00Z'
 labels: []
 dependencies: []
 parent_task_id: OAB-11
@@ -56,4 +56,12 @@ The original RED evidence used direct `bun test`, not project Vitest. It also re
 `bunx biome check --write apps/plugin/test/lifecycle.test.ts`, `bun run docs:check`, and `bun run check` passed after the fix. The full check passed all workspace type checks, tests, and builds. No vault or live service was run.
 
 Semantic review closure: task review at ac5e262 found no functional defect and one MINOR host-wiring test gap. Whole-branch review at ac5e262 confirmed the same bounded gap. Commit 5749b4e adds direct lifecycle host tests for individual and bulk success and persistence failure. Scoped TypeScript corrective review approved the fix with no new finding. Review scope covers all changed implementation, tests, version files, TSDoc, and this task. DeviceJournal owns serialized state transitions. The panel owns presentation. main.ts owns host wiring and safe indexed-file opening. No competing protocol schema or bulk policy exists. Latest validation: focused Vitest 146 passed. Full check passed lint, docs, all workspace type checks, tests, and builds. Plugin: 828 passed, 1 skipped. No live-vault or device proof is claimed. Human branch review is next.
+
+Human branch review pn-b31fb0 approved the complete branch without changes. All six criteria have unit or host-fake test evidence. No device acceptance criterion exists in this task. The owner retains all device and release actions.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Added durable individual and informational-only bulk attention dismissal. Dismissal changes only attention, preserves synchronization authority, and survives reload. Replaced unsafe link opening with indexed TFile opening and path Notices. Set plugin version 0.1.5. Focused tests passed 146 tests. Full check passed, with 828 plugin tests and one skip. Task review, whole-branch review, scoped corrective review, and human branch review approved the change. No vault, live service, deployment, or release action occurred.
+<!-- SECTION:FINAL_SUMMARY:END -->

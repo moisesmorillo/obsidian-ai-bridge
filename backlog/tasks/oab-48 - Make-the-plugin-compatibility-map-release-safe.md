@@ -4,7 +4,7 @@ title: Make the plugin compatibility map release-safe
 status: In Progress
 assignee: []
 created_date: '2026-11-07T21:33:00Z'
-updated_date: '2026-11-07T22:05:00Z'
+updated_date: '2026-11-07T22:44:00Z'
 labels:
   - ci
   - release
@@ -68,4 +68,8 @@ F1 validation also confirms full Git history is available before the workflow ch
 
 Final review: reviewed da71681..6b28890. Bun setup and asset retry findings closed. Fix c6cce4b adds fallback branch reuse after a failed PR request. Scoped review found a remaining blocker: if main adds another compatibility entry before retry, the expected map uses current main and rejects the valid older fallback branch. The merge-base file diff itself excludes later main changes. No unsafe overwrite occurs, but recovery stops. A further correction must validate the fallback commit against its own parent and check current-main compatibility separately. Add a local regression with failed PR creation, then a new main map entry, then retry. Owner brief directs a draft PR for real blockers. AC1 remains unchecked. No more implementation in this session after the final review fix wave.
 Validation: bun run check passed after rebase with private TMPDIR. Final worker check at c6cce4b passed 2290 tests with one skip, lint, docs, typecheck, and builds. One earlier shared-TMPDIR check failed in unchanged Worker deploy-preflight.bun.ts because a concurrent temporary directory disappeared. No Worker edits, dependencies, live service calls, tags, releases, or deployments.
+
+Final blocker fix: the workflow now compares the fallback map with its own parent plus the tag entry. It separately checks that current main accepts the tag entry without conflict. Later main entries no longer reject a valid fallback branch. Conflicting main maps and unrelated fallback branch changes still stop without branch edits.
+RED: `bun run --filter '@obsidian-ai-bridge/plugin' test -- test/release.test.ts` observed 1 failing regression test and 23 passed tests. GREEN: plugin release tests passed (28), tooling release test passed (8), and `bun run docs:check` passed. The test `reuses a fallback branch after main moves and refuses unrelated changes` checks the failed PR retry, later main entry, unchanged fallback hash, conflict refusal, and unrelated branch refusal.
+`bun run check` passed with private TMPDIR. Lint, docs, typecheck, builds, and 2,290 tests passed. One test was skipped. No live calls.
 <!-- SECTION:NOTES:END -->

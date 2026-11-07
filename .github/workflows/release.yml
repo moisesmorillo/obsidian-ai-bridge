@@ -164,19 +164,26 @@ jobs:
               "${branch_ref}:refs/remotes/origin/${branch}"
             branch_tip="origin/${branch}"
             merge_base="$(git merge-base origin/main "$branch_tip")"
+            branch_parent="$(git rev-parse "${branch_tip}^")"
             changed_files="$(git diff --name-only "$merge_base" "$branch_tip")"
             branch_commits="$(git rev-list --count "${merge_base}..${branch_tip}")"
             branch_subject="$(git log -1 --format=%s "$branch_tip")"
-            expected_map="$(mktemp)"
+            branch_parent_map="$(mktemp)"
+            expected_branch_map="$(mktemp)"
             branch_map="$(mktemp)"
-            trap 'rm -f "$manifest" "$expected_map" "$branch_map"' EXIT
-            git show origin/main:apps/plugin/versions.json > "$expected_map"
-            bun apps/plugin/tools/release-versions.ts "$manifest" "$expected_map"
+            current_main_map="$(mktemp)"
+            trap 'rm -f "$manifest" "$branch_parent_map" "$expected_branch_map" "$branch_map" "$current_main_map"' EXIT
+            git show "${branch_parent}:apps/plugin/versions.json" > "$branch_parent_map"
+            cp "$branch_parent_map" "$expected_branch_map"
+            bun apps/plugin/tools/release-versions.ts "$manifest" "$expected_branch_map"
             git show "${branch_tip}:apps/plugin/versions.json" > "$branch_map"
-            if [ "$changed_files" != "apps/plugin/versions.json" ] ||
+            git show origin/main:apps/plugin/versions.json > "$current_main_map"
+            bun apps/plugin/tools/release-versions.ts "$manifest" "$current_main_map"
+            if [ "$branch_parent" != "$merge_base" ] ||
+              [ "$changed_files" != "apps/plugin/versions.json" ] ||
               [ "$branch_commits" != 1 ] ||
               [ "$branch_subject" != "$commit_message" ] ||
-              ! cmp -s "$expected_map" "$branch_map"; then
+              ! cmp -s "$expected_branch_map" "$branch_map"; then
               echo "Fallback branch ${branch} has changes that do not match this release entry." >&2
               exit 1
             fi

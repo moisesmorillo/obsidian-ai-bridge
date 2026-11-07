@@ -509,7 +509,7 @@ exit 2
 		}
 	});
 
-	it("reuses a matching fallback branch after PR failure and refuses unrelated changes", () => {
+	it("reuses a fallback branch after main moves and refuses unrelated changes", () => {
 		const root = mkdtempSync(join(tmpdir(), "plugin-compatibility-pr-"));
 		const remote = join(root, "origin.git");
 		const seed = join(root, "seed");
@@ -537,15 +537,14 @@ exit 2
 		runGit(seed, "tag", "ai-bridge-v0.1.0");
 		runGit(seed, "remote", "add", "origin", remote);
 		runGit(seed, "push", "origin", "main", "--tags");
-		writeFileSync(
-			join(remote, "hooks/pre-receive"),
-			`#!/bin/sh
+		const protectedMainHook = `#!/bin/sh
 while read old new ref; do
   if [ "$ref" = "refs/heads/main" ]; then echo protected >&2; exit 1; fi
 done
-`,
-			{ mode: 0o755 },
-		);
+`;
+		writeFileSync(join(remote, "hooks/pre-receive"), protectedMainHook, {
+			mode: 0o755,
+		});
 		spawnSync("git", ["clone", remote, checkout], { encoding: "utf8" });
 		runGit(checkout, "checkout", "ai-bridge-v0.1.0");
 		const bin = join(root, "bin");
@@ -584,6 +583,26 @@ exit 2
 			expect(firstRun.status).not.toBe(0);
 			const branchRef = "refs/heads/chore/plugin-compatibility-0.1.0";
 			const branchHashBeforeRetry = runGit(remote, "rev-parse", branchRef);
+			rmSync(join(remote, "hooks/pre-receive"));
+			const mainCheckout = join(root, "main-checkout");
+			runGit(root, "clone", remote, mainCheckout);
+			runGit(mainCheckout, "config", "user.name", "Test Agent");
+			runGit(mainCheckout, "config", "user.email", "test@example.com");
+			writeFileSync(
+				join(mainCheckout, "apps/plugin/versions.json"),
+				JSON.stringify({ "0.2.0": "1.14.0" }),
+			);
+			runGit(mainCheckout, "add", "apps/plugin/versions.json");
+			runGit(
+				mainCheckout,
+				"commit",
+				"-m",
+				"record another compatibility entry",
+			);
+			runGit(mainCheckout, "push", "origin", "HEAD:refs/heads/main");
+			writeFileSync(join(remote, "hooks/pre-receive"), protectedMainHook, {
+				mode: 0o755,
+			});
 			const retry = spawnSync(
 				"bash",
 				["-euo", "pipefail", "-c", compatibilityRecordShell()],
@@ -598,6 +617,10 @@ exit 2
 				runGit(remote, "show", `${branchRef}:apps/plugin/versions.json`),
 			);
 			expect(branchMap).toEqual({ "0.1.0": "1.13.0" });
+			const currentMainMap = JSON.parse(
+				runGit(remote, "show", "main:apps/plugin/versions.json"),
+			);
+			expect(currentMainMap).toEqual({ "0.2.0": "1.14.0" });
 			const ghCalls = readFileSync(ghLog, "utf8");
 			expect(ghCalls).toContain(
 				"pr list --state open --head chore/plugin-compatibility-0.1.0",
@@ -643,6 +666,38 @@ exit 2
 			expect(
 				readFileSync(ghLog, "utf8").match(/\bpr create --base main\b/g),
 			).toHaveLength(createCallsBeforeConflict?.length ?? 0);
+
+			rmSync(join(remote, "hooks/pre-receive"));
+			writeFileSync(
+				join(mainCheckout, "apps/plugin/versions.json"),
+				JSON.stringify({
+					"0.1.0": "1.12.0",
+					"0.2.0": "1.14.0",
+				}),
+			);
+			runGit(mainCheckout, "add", "apps/plugin/versions.json");
+			runGit(
+				mainCheckout,
+				"commit",
+				"-m",
+				"conflict with published release entry",
+			);
+			runGit(mainCheckout, "push", "origin", "HEAD:refs/heads/main");
+			writeFileSync(join(remote, "hooks/pre-receive"), protectedMainHook, {
+				mode: 0o755,
+			});
+			const conflictingMainRun = spawnSync(
+				"bash",
+				["-euo", "pipefail", "-c", compatibilityRecordShell()],
+				{ cwd: checkout, encoding: "utf8", env: recordEnvironment },
+			);
+			expect(conflictingMainRun.status).not.toBe(0);
+			expect(String(conflictingMainRun.stderr)).toContain(
+				"conflicts with manifest minAppVersion",
+			);
+			expect(runGit(remote, "rev-parse", branchRef)).toBe(
+				conflictingBranchHash,
+			);
 		} finally {
 			rmSync(root, { recursive: true, force: true });
 		}

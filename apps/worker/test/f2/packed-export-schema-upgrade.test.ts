@@ -13,10 +13,42 @@ import { revisionLogicalPayloadBytes } from "@worker/infrastructure/sqlite/capac
 import { SqlitePackedExportStore } from "@worker/infrastructure/sqlite/packed-exports";
 import { SqliteRetentionStore } from "@worker/infrastructure/sqlite/retention";
 import { initializeVaultStorage } from "@worker/infrastructure/sqlite/schema";
+import { packedExportChunks } from "@worker/infrastructure/sqlite/schema-model";
 import { unzipSync } from "fflate";
 import { describe, expect, it } from "vitest";
 
 const exportCreatedAt = "2026-11-07T03:00:00.000Z";
+
+describe("packed export chunk byte mapping", () => {
+	it("maps ArrayBuffer and Uint8Array values without Buffer or copies", () => {
+		const originalBuffer = globalThis.Buffer;
+		Reflect.deleteProperty(globalThis, "Buffer");
+		try {
+			const bytes = new Uint8Array([90, 1, 2, 91]);
+			const view = bytes.subarray(1, 3);
+			const arrayBuffer = view.buffer.slice(
+				view.byteOffset,
+				view.byteOffset + view.byteLength,
+			);
+			const column = packedExportChunks.data;
+			const fromArrayBuffer = column.mapFromDriverValue(arrayBuffer);
+			const fromView = column.mapFromDriverValue(view);
+			const toDriver = column.mapToDriverValue(view);
+			expect(column.getSQLType()).toBe("blob");
+			if (
+				!(fromArrayBuffer instanceof Uint8Array) ||
+				!(fromView instanceof Uint8Array)
+			)
+				throw new Error("Packed export chunk mapper did not return Uint8Array");
+			expect(fromArrayBuffer).toEqual(new Uint8Array([1, 2]));
+			expect(fromArrayBuffer.buffer).toBe(arrayBuffer);
+			expect(fromView).toBe(view);
+			expect(toDriver).toBe(view);
+		} finally {
+			globalThis.Buffer = originalBuffer;
+		}
+	});
+});
 
 /** Return a lowercase SHA-256 digest for the immutable text fixture. */
 async function hashExportText(value: string): Promise<string> {
@@ -393,6 +425,69 @@ describe("SQLite packed export parameter bounds", () => {
 });
 
 describe("SQLite packed export store", () => {
+	it("round trips packed export chunks without a global Buffer", async () => {
+		const stub = env.VAULTS.get(
+			env.VAULTS.idFromName(`packed-export-no-buffer-${crypto.randomUUID()}`),
+		);
+		await runInDurableObject(stub, async (_instance, state) => {
+			initializeVaultStorage(
+				state.storage,
+				() => "b".repeat(32),
+				() => 1,
+			);
+			const source = "checkpoint bytes stay in the frozen source";
+			const sourceBytes = new TextEncoder().encode(source);
+			seedExportText(
+				state.storage,
+				"notes/no-buffer.md",
+				1,
+				source,
+				await hashExportBytes(sourceBytes),
+			);
+			state.storage.sql.exec(
+				"UPDATE meta SET value = '1' WHERE key IN ('live_file_count', 'head_seq')",
+			);
+			const store = new SqlitePackedExportStore(
+				state.storage,
+				noExportBlobReads(),
+			);
+			const originalBuffer = globalThis.Buffer;
+			Reflect.deleteProperty(globalThis, "Buffer");
+			try {
+				const captured = await store.capture(exportCreatedAt, 100);
+				expect((await store.nextActive())?.id).toBe(captured.id);
+				const manifest = await store.readManifestRange(
+					captured.id,
+					0,
+					captured.manifestSize,
+				);
+				expect(new TextDecoder().decode(manifest)).toContain(
+					'"path":"notes/no-buffer.md"',
+				);
+				expect(
+					await store.readSourceRange(
+						captured.id,
+						0,
+						0,
+						sourceBytes.byteLength,
+					),
+				).toEqual(sourceBytes);
+				expect(
+					await store.checkpoint(captured.id, "", {
+						zipState: "cursor-no-buffer",
+						pendingPart: new Uint8Array([0, 8, 255, 1]),
+						completedParts: [],
+					}),
+				).toBe(true);
+				expect((await store.nextActive())?.pendingPart).toEqual(
+					new Uint8Array([0, 8, 255, 1]),
+				);
+			} finally {
+				globalThis.Buffer = originalBuffer;
+			}
+		});
+	});
+
 	it("pins one immutable cut and rejects stale checkpoint writes", async () => {
 		const stub = env.VAULTS.get(
 			env.VAULTS.idFromName(`packed-export-store-${crypto.randomUUID()}`),

@@ -7,8 +7,8 @@
  */
 import { sql } from "drizzle-orm";
 import {
-	blob,
 	check,
+	customType,
 	index,
 	integer,
 	primaryKey,
@@ -299,6 +299,17 @@ export const packedExportFiles = sqliteTable(
 	],
 );
 
+/** Maps SQLite blob driver bytes to Uint8Array without copying or changing the SQL type. */
+const packedExportChunkData = customType<{
+	data: Uint8Array;
+	driverData: ArrayBuffer | Uint8Array;
+}>({
+	dataType: () => "blob",
+	toDriver: (value) => value,
+	fromDriver: (value) =>
+		value instanceof ArrayBuffer ? new Uint8Array(value) : value,
+});
+
 /** Stores bounded manifest, pending multipart, and frozen fallback-source bytes. */
 export const packedExportChunks = sqliteTable(
 	"packed_export_chunks",
@@ -306,7 +317,7 @@ export const packedExportChunks = sqliteTable(
 		exportId: text("export_id").notNull(),
 		kind: text("kind").notNull(),
 		ordinal: integer("ordinal").notNull(),
-		data: blob("data", { mode: "buffer" }).notNull(),
+		data: packedExportChunkData("data").notNull(),
 	},
 	(table) => [
 		check(

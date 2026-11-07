@@ -2,17 +2,17 @@
 
 ## Release flow
 
-The owner creates and pushes a tag named `ai-bridge-v<version>` after this change merges. For the current plugin, the tag is `ai-bridge-v0.1.0`. The workflow checks the tag against `apps/plugin/manifest.json` and `apps/plugin/versions.json`, then runs `bun run check`.
+Release Please checks Conventional Commits on `main` and opens or updates a release PR for each changed component. The plugin component uses tag `ai-bridge-v<version>`. Its PR updates `apps/plugin/package.json`, `manifest.json`, and the compatibility map. The workflow syncs `versions.json` on the plugin release PR branch and preserves all earlier entries.
 
-The check builds `apps/plugin/dist/main.js` and copies the manifest to `apps/plugin/dist/manifest.json`. The workflow creates a GitHub release with those two files. It does not publish `versions.json` as a release asset. The compatibility map stays in the repository.
+Merging the plugin release PR creates its tag and GitHub Release. The same workflow run checks out that tag, validates the release metadata, runs `bun run check`, and uploads only `main.js` and `manifest.json` to the Release Please release. Existing release assets are not replaced. A duplicate asset name fails the upload and needs owner review.
 
-When a plugin version or minimum Obsidian version changes, update both `manifest.json` and the matching entry in `versions.json`. Use exact `major.minor.patch` numbers. Keep `isDesktopOnly` false for the mobile release. Merge the metadata change before the owner creates its matching tag.
+The owner can still push a matching tag by hand. That workflow checks the exact remote tag commit before it adds assets. Never move or reuse a published tag. The workflow token does not start another workflow from a Release Please tag or release. The same-run job performs the plugin build and asset upload instead.
 
-The workflow rejects invalid metadata, failed checks, a tag that points to another commit, and a tag with an existing release. It does not replace release assets. If validation or a check fails, correct the source and merge a new change. Do not move or reuse a published tag. If a release already exists, make a new plugin version and tag. The owner creates all release tags. This task does not create a tag or release.
+Release PR synchronization uses the workflow token to push the compatibility map to the PR branch. Repository settings must allow GitHub Actions to write contents and pull requests. The bot-created commit does not trigger a separate pull-request workflow. If branch policy or token permissions block the push, the release PR needs an owner update before merge.
 
 ## Install from BRAT
 
-BRAT installs releases from `moisesmorillo/obsidian-ai-bridge`. The plugin needs Obsidian `1.13.0` or later for version `0.1.0`. In BRAT, add `moisesmorillo/obsidian-ai-bridge` as a beta plugin and select the required release if BRAT does not select it automatically. Enable AI Bridge after installation.
+BRAT installs releases from `moisesmorillo/obsidian-ai-bridge`. The plugin needs the Obsidian version in its manifest. In BRAT, add the repository as a beta plugin and select the required release if BRAT does not select it automatically. Enable AI Bridge after installation.
 
 ## Mobile trial gate
 

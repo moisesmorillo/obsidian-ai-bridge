@@ -13,6 +13,21 @@ const productionConfig = JSON.parse(productionConfigText) as Record<
 >;
 
 describe("production Worker configuration", () => {
+	it("deploys only from a release event or an owner dispatch", () => {
+		const workflow = readFileSync(
+			new URL("../../.github/workflows/deploy.yml", import.meta.url),
+			"utf8",
+		);
+		expect(workflow).toContain("workflow_call:");
+		expect(workflow).toContain("workflow_dispatch:");
+		expect(workflow).not.toContain("  push:");
+		expect(workflow).toContain(
+			"github.actor == github.repository_owner && github.triggering_actor == github.repository_owner",
+		);
+		expect(workflow).toContain(
+			"bun run --filter '@obsidian-ai-bridge/worker' preflight",
+		);
+	});
 	it("uses the production Worker name, canonical origin, and disabled alternate routes", () => {
 		expect(productionConfig.name).toBe("obsidian-ai-bridge");
 		expect(productionConfig.account_id).toBe(

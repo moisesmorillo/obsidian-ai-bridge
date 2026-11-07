@@ -1,16 +1,7 @@
 name: Deploy F2 Worker
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - apps/worker/**
-      - packages/**
-      - bun.lock
-      - package.json
-      - mise.toml
-      - .github/workflows/deploy.yml
+  workflow_call:
   workflow_dispatch:
 
 permissions:
@@ -33,6 +24,8 @@ jobs:
           version: 2026.10.8
       - name: Install workspace dependencies
         run: bun install --frozen-lockfile
+      - name: Run Worker preflight
+        run: bun run --filter '@obsidian-ai-bridge/worker' preflight
       - name: Deploy Worker
         working-directory: apps/worker
         env:

@@ -96,13 +96,14 @@ function runPublicationShell(options: {
 			? `printf '%s\\trefs/tags/ai-bridge-v0.1.0\\n' "${remoteCommit}"`
 			: `printf '%s\\trefs/tags/ai-bridge-v0.1.0\\n' tag-object; printf '%s\\trefs/tags/ai-bridge-v0.1.0^{}\\n' "${remoteCommit}"`;
 	const gitStub = `#!/bin/sh\ncase "$*" in\n  "ls-remote origin refs/tags/ai-bridge-v0.1.0^{} refs/tags/ai-bridge-v0.1.0") ${remoteTagLines} ;;\n  "rev-parse HEAD") printf '%s\\n' "${options.checkedCommit ?? "checked-commit"}" ;;\n  *) exit 2 ;;\nesac\n`;
-	const ghStub = `#!/bin/sh\nprintf '%s\\n' "$*" >> "$GH_LOG"\nif [ "$1 $2" = "release view" ]; then\n  ${options.releaseExists ? "exit 0" : "exit 1"}\nfi\nif [ "$1 $2" = "release create" ]; then exit 0; fi\nexit 2\n`;
+	const ghStub = `#!/bin/sh\nprintf '%s\\n' "$*" >> "$GH_LOG"\nif [ "$1 $2" = "release view" ]; then\n  ${options.releaseExists ? "exit 0" : "exit 1"}\nfi\nif [ "$1 $2" = "release upload" ] || [ "$1 $2" = "release create" ]; then exit 0; fi\nexit 2\n`;
 	writeFileSync(join(bin, "git"), gitStub, { mode: 0o755 });
 	writeFileSync(join(bin, "gh"), ghStub, { mode: 0o755 });
 	const env = {
 		...process.env,
 		PATH: `${bin}:${process.env.PATH}`,
 		GITHUB_REF_NAME: "ai-bridge-v0.1.0",
+		RELEASE_TAG: "ai-bridge-v0.1.0",
 		GITHUB_SHA:
 			options.eventCommit ?? options.checkedCommit ?? "checked-commit",
 		GH_LOG: log,
@@ -225,6 +226,7 @@ describe("release workflow publication shell", () => {
 		);
 		expect(publishJob).toContain("name: plugin-release-assets");
 		expect(publishJob).toContain("git ls-remote origin");
+		expect(publishJob).toContain("gh release upload");
 		expect(publishJob).toContain("gh release create");
 		expect(publishJob).toContain("apps/plugin/dist/manifest.json");
 		expect(publishJob).toContain("apps/plugin/dist/main.js");
@@ -296,6 +298,19 @@ exit 23
 		}
 	});
 
+	it("adds checked assets to an existing release without replacing assets", () => {
+		const result = runPublicationShell({ releaseExists: true });
+		try {
+			expect(result.status, result.stderr).toBe(0);
+			const calls = readFileSync(result.log, "utf8");
+			expect(calls).toContain("release upload ai-bridge-v0.1.0");
+			expect(calls).not.toContain("release create");
+			expect(calls).not.toContain("--clobber");
+		} finally {
+			rmSync(result.root, { recursive: true, force: true });
+		}
+	});
+
 	it.each([
 		["a missing remote tag", { remoteTag: "" }],
 		["an annotated tag at another commit", { remoteTag: "other-commit" }],
@@ -307,7 +322,6 @@ exit 23
 			"a checkout that differs from the tag event",
 			{ eventCommit: "other-commit" },
 		],
-		["an existing release", { releaseExists: true }],
 	] as const)("refuses publication for %s", (_name, options) => {
 		const result = runPublicationShell(options);
 		try {

@@ -1,11 +1,11 @@
 ---
 id: OAB-12.2
 title: Add a Worker startup preflight before deploy and a sanitized failure class
-status: In Progress
+status: Done
 assignee:
   - '@pi'
 created_date: '2026-11-07T00:13:00Z'
-updated_date: '2026-11-07T01:24:00Z'
+updated_date: '2026-11-07T01:27:00Z'
 labels: []
 dependencies: []
 parent_task_id: OAB-12
@@ -20,11 +20,11 @@ PR #79 passed checks but failed deployment because module evaluation called cryp
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Every PR starts the production bundle in the local Workers runtime. Module evaluation errors fail the check and print the exact known error class.
-- [ ] #2 Wrangler deploy failures print only fixed known failure labels. Logs never include raw lines, URLs, ids, tokens, or response bodies.
-- [ ] #3 The startup preflight needs no Cloudflare credentials and makes no Cloudflare resource change.
-- [ ] #4 The local preflight documents and drops the unsupported unhandled_rejection_after_microtask_checkpoint flag in a temporary config, or proves local support.
-- [ ] #5 bun run check passes. Task, branch, and owner reviews pass.
+- [x] #1 Every PR starts the production bundle in the local Workers runtime. Module evaluation errors fail the check and print the exact known error class.
+- [x] #2 Wrangler deploy failures print only fixed known failure labels. Logs never include raw lines, URLs, ids, tokens, or response bodies.
+- [x] #3 The startup preflight needs no Cloudflare credentials and makes no Cloudflare resource change.
+- [x] #4 The local preflight documents and drops the unsupported unhandled_rejection_after_microtask_checkpoint flag in a temporary config, or proves local support.
+- [x] #5 bun run check passes. Task, branch, and owner reviews pass.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -47,4 +47,12 @@ Task corrective review 6eae6234 approved c5f4c69 after c4b4943. Closed all six f
 Final branch review reopened R4. Wrangler 4.45.0 parses the global --env-file option, defaults to .env and .env.local in cwd, then assigns loadDotEnv output to process.env. CLOUDFLARE_LOAD_DEV_VARS_FROM_DOT_ENV=false controls only the Worker binding loader. Both build and dev preflight launches now pass --env-file /dev/null and retain the sanitized child environment. Bun assertions cover both launch argument lists and fake inherited token and owner values. The safety guard blocked creation of a fake .env fixture. No alternate fixture was made. The hostile-dotenv runtime fixture remains an evidence limit. No vault, live-service, owner credential, deployment, or Cloudflare resource action occurred.
 
 Final validation details: bun test/deploy-preflight.bun.ts returned exit 0. bun run docs:check returned exit 0. From apps/worker, env -i PATH="<inherited PATH>" bun run preflight returned exit 0. bun run check returned exit 0 with 2,091 passing Vitest tests, one skipped test, passing Bun assertions, and passing dry-run builds. git diff --check returned exit 0. The fake launch tests prove both command argument lists use --env-file /dev/null and both receive the allowlisted environment. A runtime fixture with fake .env values remains untested because the safety guard blocked fixture creation. No alternate fixture was created.
+
+Final review closure: whole-branch reviewer dc7e6892 reviewed 4b6bc04..78764f3 and reopened R4. Commit c49abd5 fixes the global dotenv path. Scoped reviewer e3f6c578 approved R4 and found no fix-range regression. All prior findings remain fixed. Documentation review covered all new tooling declarations, test helpers, workflow messages, and this task. Structural review found one cohesive startup flow with separate failure-class ownership. Active diagnostics showed tooling-pattern notices only, with no TypeScript server error. Owner approved plan pn-e0aea4 and complete branch review pn-aee822 without changes. No product code, production config, dependency, vault, live service, deployment, or Cloudflare resource changed. Local startup does not prove production permissions or deploy success. The hostile-dotenv runtime fixture remains a stated coverage limit. An exploratory worker probe printed ambient environment data. Reports and task notes contain no values, and the parent stopped that method.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Added production-bundle startup validation to every PR check. Node Wrangler runs locally with private temporary state, fixed deadlines, loopback HTTPS, no inherited credentials, and an explicit empty global dotenv input. The local config omits only the unsupported compatibility flag. Startup and deploy failures print fixed known error classes without raw Wrangler lines. Focused regressions, credential-free preflight, docs check, full check, semantic reviews, and owner reviews passed. Full check reported 2091 passing Vitest tests and one skip, plus passing Bun assertions. The runtime hostile-dotenv fixture remains untested because the safety guard blocked its creation. No product or Cloudflare resource change occurred.
+<!-- SECTION:FINAL_SUMMARY:END -->

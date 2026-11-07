@@ -1,10 +1,10 @@
 ---
 id: OAB-44
 title: Continue pending packed exports with a short alarm interval
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-11-07T15:17:00Z'
-updated_date: '2026-11-07T15:35:00Z'
+updated_date: '2026-11-07T15:39:00Z'
 labels:
   - worker
   - F6
@@ -23,11 +23,11 @@ Owner order 2026-11-07: the hourly packed export advances 1 MiB per alarm step, 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A pending export reschedules the alarm with a short interval (about 1 s), not 60 s. Retention and GC continuation keep 60 s.
-- [ ] #2 A unit test proves the alarm interval selection for pending export, pending retention, pending GC, and idle.
-- [ ] #3 docs/packed-export-restore.md or docs/spec.md states the expected snapshot duration for the current step budgets.
-- [ ] #4 bun run check green and Worker preflight green before the PR.
-- [ ] #5 Retryable PackedExportStorageFailure and checkpoint CAS-miss paths emit structured console error or warning JSON events. Each event includes the event name, export id, step kind, error name, and safe error message. Tests prove both paths emit events without bytes or secret keys.
+- [x] #1 A pending export reschedules the alarm with a short interval (about 1 s), not 60 s. Retention and GC continuation keep 60 s.
+- [x] #2 A unit test proves the alarm interval selection for pending export, pending retention, pending GC, and idle.
+- [x] #3 docs/packed-export-restore.md or docs/spec.md states the expected snapshot duration for the current step budgets.
+- [x] #4 bun run check green and Worker preflight green before the PR.
+- [x] #5 Retryable PackedExportStorageFailure and checkpoint CAS-miss paths emit structured console error or warning JSON events. Each event includes the event name, export id, step kind, error name, and safe error message. Tests prove both paths emit events without bytes or secret keys.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -81,4 +81,12 @@ Finding 2 is fixed. Interval tests now require `nextAlarm >= before + expectedDe
 Supervisor scope addition: AC #5 adds safe JSON warning events for typed storage retry and both checkpoint CAS-miss branches. New tests first failed because the events were absent (3 tests failed, 3 existing tests passed). GREEN tests assert event name, export id, step kind, safe error identity and message, pending state, unchanged cursor, and no archive key, upload id, or payload bytes in the event.
 
 Validation after all changes: focused export/alarm tests passed (2 files, 17 tests). `bun run docs:check` passed, exit 0. `bun run check` passed, exit 0, with 2,266 tests passed and 1 skipped. Worker preflight passed, exit 0. `git diff --check` passed. The first full check found import ordering in the new test. Biome fixed it, and the final full check passed. Synthetic Worker stream and rollback diagnostics appeared during passing tests. No live service, vault, Cloudflare, or deployment action occurred.
+
+Final branch review approved ac3649430e6b849161f1846b4e14210cf4031c71 against origin/main 27550de. Both task-review findings are fixed. Review covered all six changed files, scheduling policy ownership, retry state, safe diagnostic fields, tests, and duration documentation. No actionable finding remains. The worker then confirmed the final rebased tree: bun run check passed with 2,266 tests passed and 1 skipped, exit 0. Worker preflight passed, exit 0. The worktree and diff checks were clean. No live duration, vault, or production-capacity test ran, as ordered.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Pending exports continue after one second. Retention and GC keep 60-second continuation, and idle scheduling remains nightly. Startup delays, catch behavior, and export budgets stay unchanged. Safe JSON warnings expose retryable storage failures and both checkpoint CAS misses. Regression tests cover deadline selection, event fields, preserved retry state, and sensitive-value exclusion. Full check and Worker preflight pass. Branch review approves the code. Actual production duration remains unverified.
+<!-- SECTION:FINAL_SUMMARY:END -->

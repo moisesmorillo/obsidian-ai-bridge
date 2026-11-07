@@ -24,6 +24,8 @@ export const MAX_OAUTH_GRANTS = 8_192;
 export const MAX_PENDING_CONSENTS = 1_024;
 /** Provider consent records expire at the same ten-minute bound as their browser handle. */
 const CONSENT_TTL_MS = 10 * 60 * 1_000;
+/** Never-consented registrations become stale after 24 hours, in milliseconds. */
+const STALE_CLIENT_AGE_MS = 24 * 60 * 60 * 1_000;
 /** Maximum provider grants selected for cleanup by one owner request. */
 export const MAX_GRANT_CLEANUP_BATCH = 16;
 /** Maximum returned clients or grants in one owner page. */
@@ -171,7 +173,13 @@ export class SqliteClientRegistry {
 					sql`SELECT COUNT(*) AS count FROM client_generations WHERE owner_subject = ${ownerSubject}`,
 				)[0]?.count ?? 0;
 			const page = tx.all<ClientRow>(
-				sql`SELECT * FROM client_generations WHERE owner_subject = ${ownerSubject} ORDER BY client_id LIMIT ${OWNER_PAGE_SIZE} OFFSET ${offset}`,
+				sql`SELECT * FROM client_generations WHERE owner_subject = ${ownerSubject}
+					ORDER BY CASE
+						WHEN EXISTS (SELECT 1 FROM client_grants WHERE client_grants.client_id = client_generations.client_id
+							AND NOT EXISTS (SELECT 1 FROM revoked_grants WHERE revoked_grants.grant_id = client_grants.grant_id)) THEN 0
+						WHEN NOT EXISTS (SELECT 1 FROM client_grants WHERE client_grants.client_id = client_generations.client_id) THEN 1
+						ELSE 2 END, client_id
+					LIMIT ${OWNER_PAGE_SIZE} OFFSET ${offset}`,
 			);
 			const clients = page.map((client) => {
 				const grantCounts = tx.all<{
@@ -252,6 +260,53 @@ export class SqliteClientRegistry {
 						? `v1:${offset + grants.length}`
 						: null,
 			});
+		});
+	}
+
+	/**
+	 * Delete revoked registry records atomically, but retain durable grant denials.
+	 * A positive generation records revocation. Active grants or pending cleanup prevent deletion.
+	 * Vault files, revisions, changes, and receipts remain outside this operation.
+	 */
+	removeClient(ownerSubject: string, clientId: string): boolean {
+		return this.db.transaction((tx) => {
+			const removable = tx.all<{
+				client_id: string;
+			}>(sql`SELECT client_id FROM client_generations
+				WHERE client_id = ${clientId} AND owner_subject = ${ownerSubject} AND generation > 0
+				AND NOT EXISTS (SELECT 1 FROM client_grants WHERE client_id = ${clientId}
+					AND (cleanup_pending = 1 OR NOT EXISTS (
+						SELECT 1 FROM revoked_grants WHERE revoked_grants.grant_id = client_grants.grant_id
+					)))`)[0];
+			if (!removable) return false;
+			tx.run(sql`DELETE FROM client_consents WHERE client_id = ${clientId}`);
+			tx.run(sql`DELETE FROM client_grants WHERE client_id = ${clientId}`);
+			tx.run(
+				sql`DELETE FROM client_generations WHERE client_id = ${clientId} AND owner_subject = ${ownerSubject}`,
+			);
+			return true;
+		});
+	}
+
+	/**
+	 * Delete owner registrations older than 24 hours only without accepted grants or current consent.
+	 * Both deletes share one transaction. The registry clock sets the age and consent boundaries.
+	 */
+	sweepStaleClients(ownerSubject: string): void {
+		const now = this.now();
+		this.db.transaction((tx) => {
+			tx.run(sql`DELETE FROM client_consents WHERE client_id IN (
+				SELECT client_id FROM client_generations WHERE owner_subject = ${ownerSubject}
+				AND created_at < ${now - STALE_CLIENT_AGE_MS}
+				AND NOT EXISTS (SELECT 1 FROM client_grants WHERE client_grants.client_id = client_generations.client_id)
+				AND NOT EXISTS (SELECT 1 FROM client_consents WHERE client_consents.client_id = client_generations.client_id
+					AND created_at > ${now - CONSENT_TTL_MS})
+			)`);
+			tx.run(sql`DELETE FROM client_generations WHERE owner_subject = ${ownerSubject}
+				AND created_at < ${now - STALE_CLIENT_AGE_MS}
+				AND NOT EXISTS (SELECT 1 FROM client_grants WHERE client_grants.client_id = client_generations.client_id)
+				AND NOT EXISTS (SELECT 1 FROM client_consents WHERE client_consents.client_id = client_generations.client_id
+					AND created_at > ${now - CONSENT_TTL_MS})`);
 		});
 	}
 

@@ -10,6 +10,7 @@ import {
 	consumeOwnerCsrf,
 	listClientGrants,
 	listClients,
+	removeClient,
 	renameClient,
 	revokeClient,
 	storeOwnerCsrf,
@@ -109,8 +110,12 @@ export function createOwnerHandler(
 					client.cleanup_pending_count === 0
 						? "No provider cleanup pending"
 						: `${client.cleanup_pending_count} provider cleanup pending`;
+				const removeForm =
+					client.generation > 0 && client.active_grant_count === 0
+						? `<form method="post" action="/owner/clients/${encodeURIComponent(client.client_id)}/remove"><input type="hidden" name="csrf" value="${state}"><button${client.cleanup_pending_count > 0 ? " disabled" : ""}>Remove</button></form>${client.cleanup_pending_count > 0 ? "<p>Use Revoke to complete provider cleanup before removal.</p>" : ""}`
+						: "";
 				const grantLink = `<a href="/owner/clients/${encodeURIComponent(client.client_id)}/grants">View grants (${client.grant_count})</a>`;
-				return `<li><h2>${escapeHtml(client.name || client.client_id)}</h2><p>Client: ${escapeHtml(client.client_id)}</p><p>Registry state: ${stateLabel}</p><p>${cleanupLabel}</p><p>Grant counts show retained grant history. Active registry grants do not prove that provider tokens are current or unexpired.</p>${grantLink}<form method="post" action="/owner/clients/${encodeURIComponent(client.client_id)}/rename"><input type="hidden" name="csrf" value="${state}"><label>Name <input name="name" maxlength="80" value="${escapeHtml(client.name)}"></label><button>Rename</button></form><form method="post" action="/owner/clients/${encodeURIComponent(client.client_id)}/revoke"><input type="hidden" name="csrf" value="${state}"><button>Revoke</button></form></li>`;
+				return `<li><h2>${escapeHtml(client.name || client.client_id)}</h2><p>Client: ${escapeHtml(client.client_id)}</p><p>Registry state: ${stateLabel}</p><p>${cleanupLabel}</p><p>Grant counts show retained grant history. Active registry grants do not prove that provider tokens are current or unexpired.</p>${grantLink}<form method="post" action="/owner/clients/${encodeURIComponent(client.client_id)}/rename"><input type="hidden" name="csrf" value="${state}"><label>Name <input name="name" maxlength="80" value="${escapeHtml(client.name)}"></label><button>Rename</button></form><form method="post" action="/owner/clients/${encodeURIComponent(client.client_id)}/revoke"><input type="hidden" name="csrf" value="${state}"><button>Revoke</button></form>${removeForm}</li>`;
 			})
 			.join("");
 		const next = page.next_cursor
@@ -224,6 +229,41 @@ export function createOwnerHandler(
 			))
 		)
 			return context.text("Client not found", 404);
+		return Response.redirect(
+			`${context.env.SERVICE_ORIGIN}/owner/clients`,
+			303,
+		);
+	});
+
+	app.post("/owner/clients/:clientId/remove", async (context) => {
+		if (!isSameOrigin(context.req.raw, context.env))
+			return context.text("Forbidden", 403);
+		const owner = await verifyOwnerAccess(context.req.raw, context.env);
+		if (!owner) return context.text("Unauthorized", 401);
+		const form = await readForm(context.req.raw);
+		if (!form) return context.text("Invalid owner form", 400);
+		const browserId = readCookie(context.req.raw, OWNER_BROWSER_COOKIE);
+		if (!browserId || !isUuid(browserId) || !isUuid(form.state))
+			return context.text("Invalid owner form", 400);
+		const registry = resolveRegistry(context.env, context.req.raw);
+		const accepted = await consumeOwnerCsrf(registry, {
+			owner_subject: owner.subject,
+			browser_id: browserId,
+			state: form.state,
+			now: Date.now(),
+		});
+		if (!accepted) return context.text("Invalid owner form", 403);
+		if (
+			!(await removeClient(
+				registry,
+				owner.subject,
+				context.req.param("clientId"),
+			))
+		)
+			return context.text(
+				"Client removal needs revocation and complete provider cleanup",
+				409,
+			);
 		return Response.redirect(
 			`${context.env.SERVICE_ORIGIN}/owner/clients`,
 			303,

@@ -19,6 +19,14 @@ function cleanupRegistry(
 		async registerClientGrant() {
 			throw new Error("Not used by cleanup tests");
 		},
+		/** Reject removal because these tests cover provider cleanup only. */
+		async removeClient() {
+			throw new Error("Not used by cleanup tests");
+		},
+		/** Reject stale cleanup because these tests do not render the console. */
+		async sweepStaleClients() {
+			throw new Error("Not used by cleanup tests");
+		},
 		/** Reject client listing because cleanup tests do not read owner pages. */
 		async listClients() {
 			throw new Error("Not used by cleanup tests");

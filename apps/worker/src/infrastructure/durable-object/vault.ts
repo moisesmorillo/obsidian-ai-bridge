@@ -212,6 +212,26 @@ export class Vault extends DurableObject<Env> {
 		);
 	}
 
+	/** Remove revoked registry records while preserving grant denials and vault history. */
+	removeClient(ownerSubject: string, clientId: string): boolean {
+		const request = RevokeClientRequestSchema.parse({
+			owner_subject: ownerSubject,
+			client_id: clientId,
+		});
+		return this.clientRegistry.removeClient(
+			request.owner_subject,
+			request.client_id,
+		);
+	}
+
+	/** Sweep stale owner registrations without deleting accepted grants or current consent. */
+	sweepStaleClients(ownerSubject: string): void {
+		const request = ListClientsRequestSchema.parse({
+			owner_subject: ownerSubject,
+		});
+		this.clientRegistry.sweepStaleClients(request.owner_subject);
+	}
+
 	/** Rename one client owned by the verified subject. */
 	renameClient(ownerSubject: string, clientId: string, name: string): boolean {
 		const request = RenameClientRequestSchema.parse({

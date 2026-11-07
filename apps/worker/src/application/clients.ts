@@ -19,6 +19,10 @@ export interface ClientRegistryGateway {
 		generation: number;
 		consent_id: string;
 	}): Promise<boolean>;
+	/** Delete an owner client only after durable revocation and complete provider cleanup. */
+	removeClient(ownerSubject: string, clientId: string): Promise<boolean>;
+	/** Delete registrations older than 24 hours with no grants or current consent. */
+	sweepStaleClients(ownerSubject: string): Promise<void>;
 	/** Read a finite client page from the selected vault. */
 	listClients(
 		ownerSubject: string,
@@ -117,12 +121,22 @@ export async function consumeOwnerCsrf(
 	return registry.consumeOwnerCsrf(input);
 }
 
-/** List a bounded page of clients from the selected vault registry. */
+/** Remove a revoked client without deleting vault content or durable grant denials. */
+export async function removeClient(
+	registry: ClientRegistryGateway,
+	ownerSubject: string,
+	clientId: string,
+): Promise<boolean> {
+	return registry.removeClient(ownerSubject, clientId);
+}
+
+/** Sweep stale registrations before reading a bounded owner page. */
 export async function listClients(
 	registry: ClientRegistryGateway,
 	ownerSubject: string,
 	cursor?: string,
 ): Promise<ListClientsResult> {
+	await registry.sweepStaleClients(ownerSubject);
 	return registry.listClients(ownerSubject, cursor);
 }
 

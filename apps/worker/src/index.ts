@@ -101,6 +101,8 @@ function resolveClientRegistry(
 			await stub.beginClientConsent(...args),
 		registerClientGrant: async (...args) =>
 			await stub.registerClientGrant(...args),
+		removeClient: async (...args) => await stub.removeClient(...args),
+		sweepStaleClients: async (...args) => await stub.sweepStaleClients(...args),
 		listClients: async (...args) => await stub.listClients(...args),
 		listClientGrants: async (...args) => await stub.listClientGrants(...args),
 		renameClient: async (...args) => await stub.renameClient(...args),

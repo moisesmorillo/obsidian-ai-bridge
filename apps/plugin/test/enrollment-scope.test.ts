@@ -92,6 +92,10 @@ describe("settings category enrollment", () => {
 	);
 
 	it.each([
+		".obsidian/themes/Example/.DS_Store",
+		".obsidian/themes/Example/font.icloud",
+		".obsidian/plugins/AI-BRIDGE/main.js",
+		".obsidian/PLUGINS/AI-BRIDGE/data.json",
 		".obsidian/workspace.json",
 		".obsidian/workspace-mobile.json",
 		".obsidian/plugins/ai-bridge/data.json",

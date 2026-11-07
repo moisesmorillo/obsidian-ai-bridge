@@ -1,10 +1,15 @@
-import { DevicePayloadHashSchema, pathKey } from "@obsidian-ai-bridge/protocol";
+import {
+	DevicePayloadHashSchema,
+	PathSchema,
+	pathKey,
+} from "@obsidian-ai-bridge/protocol";
 import { withPluginVaultMutation } from "@plugin/infrastructure/vault-events";
 import { TFile } from "@plugin/obsidian-api";
 import {
 	classifyEnrollmentPath,
 	DEFAULT_SETTINGS_SYNC_POLICY,
 	type SettingsSyncPolicy,
+	shouldTraverseSettingsDirectory,
 } from "@plugin/sync/enrollment-scope";
 import type { TextVault } from "@plugin/sync/text-apply";
 import type { Vault } from "obsidian";
@@ -59,20 +64,33 @@ export class ObsidianTextVault implements TextVault {
 			: null;
 	}
 
-	/** Creates visible bytes without collisions, or reuses equal hidden recovery bytes without replacement. */
-	async createBinary(path: string, bytes: Uint8Array): Promise<boolean> {
+	/** Guards settings creation with stat and hash checks, not atomic exclusion. Reports observed races before failure. */
+	async createBinary(
+		path: string,
+		bytes: Uint8Array,
+		onSettingsRace?: (observed: Uint8Array | null) => Promise<void>,
+	): Promise<boolean> {
 		if (path.startsWith(".obsidian/")) {
-			if (!this.isSettingsPath(path) || (await this.vault.adapter.stat(path)))
+			if (!this.isSettingsPath(path)) return false;
+			if (await this.vault.adapter.stat(path)) {
+				await onSettingsRace?.(await this.readBinary(path));
 				return false;
+			}
 			const key = pathKey(path);
 			if (
 				(await this.listSettingsPaths()).some(
-					(current) => current !== path && pathKey(current) === key,
+					(current) =>
+						current !== path &&
+						PathSchema.safeParse(current).success &&
+						pathKey(current) === key,
 				)
 			)
 				return false;
 			await this.ensureAdapterParent(path);
-			if (await this.vault.adapter.stat(path)) return false;
+			if (await this.vault.adapter.stat(path)) {
+				await onSettingsRace?.(await this.readBinary(path));
+				return false;
+			}
 			try {
 				await withPluginVaultMutation(
 					this.vault,
@@ -85,10 +103,18 @@ export class ObsidianTextVault implements TextVault {
 					{ kind: "binary", value: bytes },
 				);
 			} catch {
+				await onSettingsRace?.(await this.readBinary(path));
 				return false;
 			}
 			const created = await this.readBinary(path);
-			return created !== null && equalBytes(created, bytes);
+			if (
+				!created ||
+				(await digestBytes(created)) !== (await digestBytes(bytes))
+			) {
+				await onSettingsRace?.(created);
+				return false;
+			}
+			return true;
 		}
 		if (path.startsWith(".ai-bridge/"))
 			return this.writeRecoveryCopy(path, bytes, false);
@@ -125,16 +151,34 @@ export class ObsidianTextVault implements TextVault {
 		return (await this.vault.adapter.stat(path)) === null;
 	}
 
-	/** Replaces visible bytes or refreshes equal hidden recovery bytes. The engine owns mutation admission and stat guards. */
-	async modifyBinary(path: string, bytes: Uint8Array): Promise<boolean> {
+	/** Checks observed settings bytes before replacement, then hashes read-back bytes. Unobserved adapter races remain possible. */
+	async modifyBinary(
+		path: string,
+		bytes: Uint8Array,
+		expected?: Uint8Array,
+		onSettingsRace?: (observed: Uint8Array | null) => Promise<void>,
+	): Promise<boolean> {
 		if (path.startsWith(".obsidian/")) {
-			if (
-				!this.isSettingsPath(path) ||
-				(await this.vault.adapter.stat(path))?.type !== "file"
-			)
+			if (!this.isSettingsPath(path)) return false;
+			if ((await this.vault.adapter.stat(path))?.type !== "file") {
+				await onSettingsRace?.(await this.readBinary(path));
 				return false;
+			}
 			const previous = await this.readBinary(path);
-			if (!previous) return false;
+			if (!previous || (expected && !equalBytes(previous, expected))) {
+				await onSettingsRace?.(previous);
+				return false;
+			}
+			const beforeWrite = await this.vault.adapter.stat(path);
+			const latest = await this.readBinary(path);
+			if (
+				beforeWrite?.type !== "file" ||
+				!latest ||
+				!equalBytes(latest, expected ?? previous)
+			) {
+				await onSettingsRace?.(latest);
+				return false;
+			}
 			try {
 				await withPluginVaultMutation(
 					this.vault,
@@ -147,10 +191,18 @@ export class ObsidianTextVault implements TextVault {
 					{ kind: "binary", value: bytes },
 				);
 			} catch {
+				await onSettingsRace?.(await this.readBinary(path));
 				return false;
 			}
 			const written = await this.readBinary(path);
-			return written !== null && equalBytes(written, bytes);
+			if (
+				!written ||
+				(await digestBytes(written)) !== (await digestBytes(bytes))
+			) {
+				await onSettingsRace?.(written);
+				return false;
+			}
+			return true;
 		}
 		if (path.startsWith(".ai-bridge/"))
 			return this.writeRecoveryCopy(path, bytes, true);
@@ -397,7 +449,7 @@ export class ObsidianTextVault implements TextVault {
 		);
 	}
 
-	/** Lists all adapter-visible settings files so excluded spellings still fence collisions. */
+	/** Traverses relevant settings trees and retains valid excluded spellings for collision checks. */
 	private async listSettingsPaths(): Promise<string[]> {
 		const root = await this.vault.adapter.stat(".obsidian");
 		if (root?.type !== "folder") return [];
@@ -407,8 +459,14 @@ export class ObsidianTextVault implements TextVault {
 			const directory = pending.pop();
 			if (!directory) continue;
 			const listing = await this.vault.adapter.list(directory);
-			files.push(...listing.files);
-			pending.push(...listing.folders);
+			files.push(
+				...listing.files.filter((path) => PathSchema.safeParse(path).success),
+			);
+			pending.push(
+				...listing.folders.filter((path) =>
+					shouldTraverseSettingsDirectory(path, this.settingsPolicy()),
+				),
+			);
 		}
 		return files;
 	}
@@ -452,7 +510,12 @@ export class ObsidianTextVault implements TextVault {
 		const key = pathKey(path);
 		return this.vault
 			.getFiles()
-			.some((file) => file.path !== path && pathKey(file.path) === key);
+			.some(
+				(file) =>
+					file.path !== path &&
+					PathSchema.safeParse(file.path).success &&
+					pathKey(file.path) === key,
+			);
 	}
 
 	/** Creates missing parent folders without replacing an existing folder. */

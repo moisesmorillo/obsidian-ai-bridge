@@ -450,6 +450,37 @@ describe("PublicationController", () => {
 		controller.close();
 	});
 
+	it("retries only immutable sent work while scope hydration blocks queued work", async () => {
+		let now = 1_800_000_000_000;
+		const { controller, journal, vault, remote } = await openController(
+			new MemoryStorage(),
+			new MemoryVault(),
+			new MemoryRemote(),
+			() => now,
+		);
+		let fail = true;
+		const put = remote.put.bind(remote);
+		remote.put = async (...args) => {
+			if (fail) throw new SyncTransportError(503, null, null, "2");
+			return put(...args);
+		};
+		vault.files.set("sent.md", "sent bytes");
+		await controller.scan();
+		await controller.flush();
+		const sent = journal.snapshot().pending_ops[0];
+		if (sent?.state !== "sent") throw new Error("Expected immutable sent work");
+		vault.files.set("queued.md", "queued bytes");
+		await controller.scan();
+		fail = false;
+		now = sent.retry_at ?? now + 2_000;
+		await controller.flush({ sentOnly: true });
+		expect(remote.writes.map((write) => write.path)).toEqual(["sent.md"]);
+		expect(journal.snapshot().pending_ops).toContainEqual(
+			expect.objectContaining({ path: "queued.md", state: "queued" }),
+		);
+		controller.close();
+	});
+
 	it("retries sent non-UTF8 settings blobs after category disable with the original bytes", async () => {
 		let now = 1_800_000_000_000;
 		const policy: SettingsSyncPolicy = {

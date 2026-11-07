@@ -1,4 +1,8 @@
-import { classifyFilePath, PathSchema } from "@obsidian-ai-bridge/protocol";
+import {
+	classifyFilePath,
+	PathSchema,
+	pathKey,
+} from "@obsidian-ai-bridge/protocol";
 
 /** Per-device opt-in switches for the three supported Obsidian settings categories. */
 export interface SettingsSyncPolicy {
@@ -57,19 +61,19 @@ export function classifyEnrollmentPath(
 	)
 		return "excluded";
 	const segments = path.split("/");
-	if (segments[0] === ".obsidian") {
-		if (isHardExcludedSettingsPath(segments)) return "excluded";
-		const category = settingsCategory(segments);
-		if (!settingsPolicy.enabled || !category || !settingsPolicy[category])
-			return "excluded";
-		return size > BLOB_LIMIT_BYTES ? "unsupported" : "blob";
-	}
 	if (
 		[".trash", ".ai-bridge"].includes(segments[0] ?? "") ||
 		segments.at(-1) === ".DS_Store" ||
 		segments.at(-1)?.toLowerCase().endsWith(".icloud")
 	)
 		return "excluded";
+	if (segments[0] === ".obsidian") {
+		if (isHardExcludedSettingsPath(pathKey(path).split("/"))) return "excluded";
+		const category = settingsCategory(segments);
+		if (!settingsPolicy.enabled || !category || !settingsPolicy[category])
+			return "excluded";
+		return size > BLOB_LIMIT_BYTES ? "unsupported" : "blob";
+	}
 	const kind = classifyFilePath(path);
 	if (kind === "markdown" || kind === "canvas") {
 		if (size > BLOB_LIMIT_BYTES) return "unsupported";
@@ -119,10 +123,34 @@ function isHardExcludedSettingsPath(segments: string[]): boolean {
 	const relative = segments.slice(1);
 	const first = relative[0] ?? "";
 	return (
-		/^workspace.*\\.json$/i.test(first) ||
+		/^workspace.*\.json$/i.test(first) ||
 		first === "graph.json" ||
 		first.startsWith("cache") ||
 		(relative[0] === "plugins" && relative[1] === "ai-bridge") ||
 		relative.includes("node_modules")
 	);
+}
+
+/** Admits only directories that can contain selected settings. Identity checks retain valid case collisions. */
+export function shouldTraverseSettingsDirectory(
+	path: string,
+	policy: SettingsSyncPolicy,
+): boolean {
+	if (!policy.enabled || !PathSchema.safeParse(path).success) return false;
+	const segments = pathKey(path).split("/");
+	if (segments[0] !== ".obsidian" || isHardExcludedSettingsPath(segments))
+		return false;
+	if (segments.length === 1) return true;
+	if (segments[1] === "themes" || segments[1] === "snippets")
+		return policy.appearance;
+	return (
+		policy.communityPlugins && segments[1] === "plugins" && segments.length <= 3
+	);
+}
+
+/** Adds a text suffix when a visible settings recovery path has no supported content extension. */
+export function settingsConflictExtension(extension: string): string {
+	return classifyEnrollmentPath(`recovery${extension}`, 0) === "excluded"
+		? `${extension}.txt`
+		: extension;
 }

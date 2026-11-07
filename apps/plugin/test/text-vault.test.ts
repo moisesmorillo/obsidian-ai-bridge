@@ -316,6 +316,211 @@ async function recoveryHash(bytes: Uint8Array): Promise<string> {
 }
 
 describe("ObsidianTextVault", () => {
+	it.each([
+		"before-create",
+		"after-create",
+		"before-replace",
+		"after-replace",
+		"failed-create",
+		"failed-replace",
+		"observation-replace",
+		"before-rename-create",
+		"after-rename-create",
+		"before-rename-replace",
+		"after-rename-replace",
+	] as const)(
+		"preserves observed settings versions at %s with overwrite-capable writes",
+		async (interleaving) => {
+			const fake = makeRecoveryHostVault();
+			fake.directories.add(".obsidian");
+			const path = ".obsidian/app.json";
+			const original = new Uint8Array([1, 2]);
+			const competing = new Uint8Array([7, 8]);
+			const remote = new Uint8Array([3, 4]);
+			const replacing = interleaving.endsWith("replace");
+			if (replacing) fake.hidden.set(path, { bytes: original, mtime: 1 });
+			const policy = {
+				enabled: true,
+				appearance: true,
+				core: true,
+				communityPlugins: true,
+			};
+			const vault = new ObsidianTextVault(
+				fake.host as unknown as Vault,
+				() => policy,
+			);
+			let state: unknown = null;
+			const journal = await DeviceJournal.open({
+				readState: async () => state,
+				writeState: async (next: DeviceState) => {
+					state = structuredClone(next);
+				},
+				readPayload: async () => new Uint8Array(),
+				writePayload: async () => undefined,
+			});
+			const epoch = "e".repeat(32);
+			await journal.resetEpoch(epoch);
+			if (replacing)
+				await journal.setBase(path, {
+					deleted: false,
+					rev: 1,
+					hash: await recoveryHash(original),
+				});
+			const engine = new TextApplyEngine(
+				journal,
+				vault,
+				{
+					read: async () => null,
+					readResolvedBlob: async () => ({
+						kind: "blob",
+						bytes: remote,
+						epoch,
+						rev: 2,
+						hash: await recoveryHash(remote),
+					}),
+				},
+				{ deviceName: "test", settingsPolicy: policy },
+			);
+			const stat = fake.adapter.stat.getMockImplementation();
+			const write = fake.adapter.writeBinary.getMockImplementation();
+			if (!stat || !write) throw new Error("Missing adapter methods");
+			let armed = true;
+			if (interleaving === "observation-replace") {
+				const stat = vault.stat.bind(vault);
+				let calls = 0;
+				vi.spyOn(vault, "stat").mockImplementation(async (target) => {
+					if (target === path && ++calls === 2)
+						fake.hidden.set(path, { bytes: competing, mtime: 2 });
+					return stat(target);
+				});
+			} else if (interleaving.startsWith("before")) {
+				// The adapter entry is the last boundary before its own target stat.
+				/** Inserts a competing version at the adapter entry, before its final guard. */
+				const insertCompeting = (target: string) => {
+					if (target === path && armed) {
+						armed = false;
+						fake.hidden.set(path, { bytes: competing, mtime: 2 });
+					}
+				};
+				if (replacing) {
+					const effect = vault.modifyBinary.bind(vault);
+					vi.spyOn(vault, "modifyBinary").mockImplementation(
+						async (...args: Parameters<typeof effect>) => {
+							insertCompeting(args[0]);
+							return effect(...args);
+						},
+					);
+				} else {
+					const effect = vault.createBinary.bind(vault);
+					vi.spyOn(vault, "createBinary").mockImplementation(
+						async (...args: Parameters<typeof effect>) => {
+							insertCompeting(args[0]);
+							return effect(...args);
+						},
+					);
+				}
+			} else {
+				fake.adapter.writeBinary.mockImplementation(async (target, bytes) => {
+					await write(target, bytes);
+					if (target === path && armed) {
+						armed = false;
+						fake.hidden.set(path, { bytes: competing, mtime: 2 });
+						if (interleaving.startsWith("failed"))
+							throw new Error("Write failed after its effect");
+					}
+				});
+			}
+			await expect(
+				engine.apply(
+					{
+						seq: 2,
+						...(interleaving.includes("rename")
+							? {
+									op: "rename" as const,
+									from_path: ".obsidian/hotkeys.json",
+									from_etag: `"${epoch}.1"`,
+								}
+							: { op: "put" as const }),
+						path,
+						etag: `"${epoch}.2"`,
+						hash: await recoveryHash(remote),
+						origin: "remote",
+						at: 2,
+					},
+					"blob",
+				),
+			).rejects.toThrow();
+			const copies = [...fake.visible].filter(([name]) =>
+				name.startsWith("AI Bridge settings conflicts/"),
+			);
+			for (const bytes of replacing
+				? [original, competing, remote]
+				: [competing, remote]) {
+				expect(
+					copies.some(
+						([, copy]) =>
+							copy.length === bytes.length &&
+							copy.every((byte, index) => byte === bytes[index]),
+					),
+				).toBe(true);
+			}
+			expect(journal.snapshot().base[path]?.rev).not.toBe(2);
+			expect(journal.snapshot().attention).toContainEqual(
+				expect.objectContaining({ path }),
+			);
+			engine.close();
+			journal.close();
+		},
+	);
+
+	it("prunes excluded trees and ignores invalid collision candidates", async () => {
+		const fake = makeRecoveryHostVault();
+		for (const path of [
+			".obsidian",
+			".obsidian/plugins",
+			".obsidian/plugins/test",
+			".obsidian/plugins/test/node_modules",
+			".obsidian/cache",
+			".obsidian/irrelevant",
+		])
+			fake.directories.add(path);
+		const deep = `.obsidian/plugins/test/node_modules/${"nested/".repeat(40)}file.js`;
+		fake.hidden.set(deep, { bytes: new Uint8Array([1]), mtime: 1 });
+		fake.hidden.set(`.obsidian/${"x".repeat(520)}`, {
+			bytes: new Uint8Array([1]),
+			mtime: 1,
+		});
+		const list = fake.adapter.list.getMockImplementation();
+		if (!list) throw new Error("Missing adapter listing");
+		fake.adapter.list.mockImplementation(async (path) => {
+			if (
+				path.includes("node_modules") ||
+				path === ".obsidian/cache" ||
+				path === ".obsidian/irrelevant"
+			)
+				throw new Error("Excluded directory cannot be listed");
+			return list(path);
+		});
+		const vault = new ObsidianTextVault(fake.host as unknown as Vault, () => ({
+			enabled: true,
+			appearance: true,
+			core: true,
+			communityPlugins: true,
+		}));
+		expect(
+			await vault.createBinary(".obsidian/app.json", new Uint8Array([2])),
+		).toBe(true);
+		expect(await vault.list()).not.toContain(deep);
+		fake.hidden.set(".obsidian/APP.json", {
+			bytes: new Uint8Array([3]),
+			mtime: 1,
+		});
+		fake.hidden.delete(".obsidian/app.json");
+		expect(
+			await vault.createBinary(".obsidian/app.json", new Uint8Array([2])),
+		).toBe(false);
+	});
+
 	it("applies a remote settings delete through guarded local adapter trash", async () => {
 		const fake = makeRecoveryHostVault();
 		fake.directories.add(".obsidian");

@@ -441,8 +441,8 @@ export class PublicationController {
 		});
 	}
 
-	/** Sends currently eligible operations in order without waiting through retry delays. */
-	flush(): Promise<void> {
+	/** Sends eligible operations without retry waits. Hydration recovery can restrict dispatch to immutable sent work. */
+	flush(options: { sentOnly?: boolean } = {}): Promise<void> {
 		return this.serialize(async () => {
 			this.assertOpen();
 			if (this.isEffectBlocked()) return;
@@ -452,6 +452,7 @@ export class PublicationController {
 				const operations = this.journal.snapshot().pending_ops;
 				const operation = operations.find((item) => item.key === key);
 				if (!operation || operation.state === "resolved") continue;
+				if (options.sentOnly && operation.state !== "sent") continue;
 				const affected =
 					operation.op === "rename"
 						? [operation.path, operation.to]

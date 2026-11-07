@@ -5,6 +5,7 @@ import {
 	DevicePayloadHashSchema,
 	type DeviceState,
 	MAX_PENDING_CONFLICT_COPIES,
+	PathSchema,
 	type PendingConflictCopy,
 	parseETag,
 	pathKey,
@@ -15,6 +16,7 @@ import {
 	classifyEnrollmentPath,
 	DEFAULT_SETTINGS_SYNC_POLICY,
 	type SettingsSyncPolicy,
+	settingsConflictExtension,
 } from "@plugin/sync/enrollment-scope";
 import { UnsupportedRemoteTextError } from "@plugin/sync/remote-text";
 
@@ -26,10 +28,19 @@ export interface TextVault {
 	readBinary?(path: string): Promise<Uint8Array | null>;
 	/** Returns mtime and size from the host adapter for a binary race guard. */
 	stat?(path: string): Promise<{ mtime: number; size: number } | null>;
-	/** Creates exact bytes only when the exact path and path key are absent. */
-	createBinary?(path: string, bytes: Uint8Array): Promise<boolean>;
+	/** Guards byte creation against observed collisions. Settings adapters report races but cannot exclude unobserved writes. */
+	createBinary?(
+		path: string,
+		bytes: Uint8Array,
+		onSettingsRace?: (observed: Uint8Array | null) => Promise<void>,
+	): Promise<boolean>;
 	/** Replaces current bytes after the caller completes its host stat guard. */
-	modifyBinary?(path: string, bytes: Uint8Array): Promise<boolean>;
+	modifyBinary?(
+		path: string,
+		bytes: Uint8Array,
+		expected?: Uint8Array,
+		onSettingsRace?: (observed: Uint8Array | null) => Promise<void>,
+	): Promise<boolean>;
 	/** Moves exact observed binary bytes to Obsidian trash without decoding them. */
 	trashBinary?(path: string, expected: Uint8Array): Promise<boolean>;
 	/** Removes only a hash-verified file under the pre-apply recovery directory. */
@@ -494,7 +505,9 @@ export class TextApplyEngine {
 				throw new Error("Binary create precondition changed");
 			const collision = (await this.vault.list()).find(
 				(current) =>
-					current !== change.path && pathKey(current) === pathKey(change.path),
+					current !== change.path &&
+					PathSchema.safeParse(current).success &&
+					pathKey(current) === pathKey(change.path),
 			);
 			this.assertOpen();
 			if (collision) {
@@ -506,12 +519,24 @@ export class TextApplyEngine {
 			const createdPath = await this.effect(
 				[change.path],
 				async () =>
-					(await this.vault.createBinary?.(change.path, remote.bytes)) ?? false,
+					(await this.vault.createBinary?.(
+						change.path,
+						remote.bytes,
+						(observed) =>
+							this.preserveSettingsWriteRace(change, [
+								remote.bytes,
+								...(observed ? [observed] : []),
+							]),
+					)) ?? false,
 				[{ path: change.path, hash: change.hash }],
 			);
 			const created = await this.vault.readBinary(change.path);
 			this.assertOpen();
-			if (created && (await digestBytes(created)) === change.hash) {
+			if (
+				createdPath &&
+				created &&
+				(await digestBytes(created)) === change.hash
+			) {
 				await this.activeJournal.completeApply(change.path, {
 					deleted: false,
 					rev: identity.rev,
@@ -519,11 +544,15 @@ export class TextApplyEngine {
 				});
 				return;
 			}
+			if (created && change.path.startsWith(".obsidian/"))
+				await this.preserveSettingsWriteRace(change, [remote.bytes, created]);
 			await this.activeJournal.clearExpectedWrite(change.path);
 			this.assertOpen();
 			const lateCollision = (await this.vault.list()).find(
 				(current) =>
-					current !== change.path && pathKey(current) === pathKey(change.path),
+					current !== change.path &&
+					PathSchema.safeParse(current).success &&
+					pathKey(current) === pathKey(change.path),
 			);
 			this.assertOpen();
 			if (!createdPath && lateCollision) {
@@ -549,6 +578,14 @@ export class TextApplyEngine {
 			const changed = await this.vault.readBinary(change.path);
 			this.assertOpen();
 			if (!changed) throw new Error("Changed binary disappeared during apply");
+			if (change.path.startsWith(".obsidian/")) {
+				await this.preserveSettingsWriteRace(change, [
+					local,
+					changed,
+					remote.bytes,
+				]);
+				throw new Error("Settings changed during observation");
+			}
 			observed = changed;
 		}
 		const observedHash = await digestBytes(observed);
@@ -665,15 +702,33 @@ export class TextApplyEngine {
 			!latest ||
 			(await digestBytes(latest)) !== observedHash ||
 			!sameStat(beforeWrite, await this.vault.stat(change.path))
-		)
+		) {
+			if (change.path.startsWith(".obsidian/"))
+				await this.preserveSettingsWriteRace(change, [
+					local,
+					observed,
+					remote.bytes,
+					...(latest ? [latest] : []),
+				]);
 			throw new Error("Binary changed again during conflict preservation");
+		}
 		if (!this.vault.modifyBinary)
 			throw new Error("Binary write capability is unavailable");
 		await this.activeJournal.setExpectedWrite(change.path, change.hash);
 		const written = await this.effect(
 			[change.path],
 			async () =>
-				(await this.vault.modifyBinary?.(change.path, remote.bytes)) ?? false,
+				(await this.vault.modifyBinary?.(
+					change.path,
+					remote.bytes,
+					observed,
+					(current) =>
+						this.preserveSettingsWriteRace(change, [
+							observed,
+							remote.bytes,
+							...(current ? [current] : []),
+						]),
+				)) ?? false,
 			[{ path: change.path, hash: change.hash }],
 		);
 		if (!written) {
@@ -683,6 +738,12 @@ export class TextApplyEngine {
 		const readBack = await this.vault.readBinary(change.path);
 		this.assertOpen();
 		if (!readBack || (await digestBytes(readBack)) !== change.hash) {
+			if (change.path.startsWith(".obsidian/"))
+				await this.preserveSettingsWriteRace(change, [
+					observed,
+					remote.bytes,
+					...(readBack ? [readBack] : []),
+				]);
 			await this.activeJournal.clearExpectedWrite(change.path);
 			throw new Error("Binary read-back did not match remote bytes");
 		}
@@ -696,6 +757,41 @@ export class TextApplyEngine {
 				change.path,
 				"Local binary bytes were preserved as a conflict copy",
 			);
+	}
+
+	/** Saves every observed settings version outside config before reporting a guarded-write race. */
+	private async preserveSettingsWriteRace(
+		change: ChangeEntry,
+		versions: Uint8Array[],
+	): Promise<void> {
+		if (!change.path.startsWith(".obsidian/")) return;
+		await this.activeJournal.recordAttention(
+			change.path,
+			"Settings changed during guarded write. Observed versions need review",
+		);
+		for (const bytes of versions) {
+			const hash = await digestBytes(bytes);
+			const path = recoveryConflictName(
+				change.path,
+				this.deviceName,
+				parseETag(change.etag).rev,
+				change.at,
+				hash,
+			);
+			if (!path)
+				throw new Error("Settings conflict path exceeds the path limit");
+			const existing = await this.vault.readBinary?.(path);
+			this.assertOpen();
+			if (existing && (await digestBytes(existing)) === hash) continue;
+			const created = await this.effect(
+				[path],
+				() => this.vault.createBinary?.(path, bytes) ?? Promise.resolve(false),
+			);
+			const saved = await this.vault.readBinary?.(path);
+			if (!created || !saved || (await digestBytes(saved)) !== hash)
+				throw new Error("Settings race conflict copy did not verify");
+			this.notifyConflictCopy(path);
+		}
 	}
 
 	/** Preserves local blob bytes for inline authority and resumes existing copy identities without naming them again. */
@@ -1334,15 +1430,32 @@ export class TextApplyEngine {
 						? await this.effect(
 								[change.path],
 								async () =>
-									this.vault.createBinary?.(change.path, remote.bytes) ?? false,
+									this.vault.createBinary?.(
+										change.path,
+										remote.bytes,
+										(observed) =>
+											this.preserveSettingsWriteRace(change, [
+												remote.bytes,
+												...(observed ? [observed] : []),
+											]),
+									) ?? false,
 								[{ path: change.path, hash: change.hash }],
 							)
 						: this.vault.modifyBinary
 							? await this.effect(
 									[change.path],
 									async () =>
-										this.vault.modifyBinary?.(change.path, remote.bytes) ??
-										false,
+										this.vault.modifyBinary?.(
+											change.path,
+											remote.bytes,
+											destination,
+											(observed) =>
+												this.preserveSettingsWriteRace(change, [
+													destination,
+													remote.bytes,
+													...(observed ? [observed] : []),
+												]),
+										) ?? false,
 									[{ path: change.path, hash: change.hash }],
 								)
 							: false;
@@ -1355,6 +1468,12 @@ export class TextApplyEngine {
 				(await digestBytes(writtenBytes)) !== change.hash
 			) {
 				await this.activeJournal.clearExpectedWrite(change.path);
+				if (change.path.startsWith(".obsidian/") && remote.kind === "blob")
+					await this.preserveSettingsWriteRace(change, [
+						remote.bytes,
+						...(destination ? [destination] : []),
+						...(writtenBytes ? [writtenBytes] : []),
+					]);
 				throw new Error("Binary rename destination was not confirmed");
 			}
 		}
@@ -2914,7 +3033,9 @@ export class TextApplyEngine {
 		return (
 			(await this.vault.list()).find(
 				(candidate) =>
-					candidate !== path && pathKey(candidate) === pathKey(path),
+					candidate !== path &&
+					PathSchema.safeParse(candidate).success &&
+					pathKey(candidate) === pathKey(path),
 			) ?? null
 		);
 	}
@@ -3095,10 +3216,9 @@ function conflictName(
 	const dot = filename.lastIndexOf(".");
 	const stem = dot <= 0 ? filename : filename.slice(0, dot);
 	const sourceExtension = dot <= 0 ? "" : filename.slice(dot);
-	const extension =
-		isSettingsPath && [".js", ".css"].includes(sourceExtension.toLowerCase())
-			? `${sourceExtension}.txt`
-			: sourceExtension;
+	const extension = isSettingsPath
+		? settingsConflictExtension(sourceExtension)
+		: sourceExtension;
 	const time = new Date(timestamp)
 		.toISOString()
 		.slice(0, 16)

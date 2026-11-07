@@ -1,10 +1,10 @@
 ---
 id: OAB-48
 title: Make the plugin compatibility map release-safe
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-11-07T21:33:00Z'
-updated_date: '2026-11-07T22:44:00Z'
+updated_date: '2026-11-07T22:47:00Z'
 labels:
   - ci
   - release
@@ -23,7 +23,7 @@ Incident 2026-11-07: the plugin release PR #110 merged without the versions.json
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The release-plugin workflow succeeds on a tag whose versions.json lacks the entry, publishes main.js and manifest.json, and records the entry on main with a chore commit.
+- [x] #1 The release-plugin workflow succeeds on a tag whose versions.json lacks the entry, publishes main.js and manifest.json, and records the entry on main with a chore commit.
 - [x] #2 The sync-plugin-compatibility job is removed or made idempotent with a documented retry. No workflow step depends on a release PR branch that may already be merged.
 - [x] #3 Tests cover the writer, the validator and the workflow expectations. docs/plugin-release.md describes the flow.
 - [x] #4 bun run check green. No new dependency.
@@ -72,4 +72,14 @@ Validation: bun run check passed after rebase with private TMPDIR. Final worker 
 Final blocker fix: the workflow now compares the fallback map with its own parent plus the tag entry. It separately checks that current main accepts the tag entry without conflict. Later main entries no longer reject a valid fallback branch. Conflicting main maps and unrelated fallback branch changes still stop without branch edits.
 RED: `bun run --filter '@obsidian-ai-bridge/plugin' test -- test/release.test.ts` observed 1 failing regression test and 23 passed tests. GREEN: plugin release tests passed (28), tooling release test passed (8), and `bun run docs:check` passed. The test `reuses a fallback branch after main moves and refuses unrelated changes` checks the failed PR retry, later main entry, unchanged fallback hash, conflict refusal, and unrelated branch refusal.
 `bun run check` passed with private TMPDIR. Lint, docs, typecheck, builds, and 2,290 tests passed. One test was skipped. No live calls.
+
+Supervisor authorized one force-with-lease push and a further recovery correction. Commit 24aabba validates the fallback map against its own parent, then validates current main separately. The local Git test covers a later main entry, unchanged fallback hash, unrelated branch edits, and conflicting main entries. Scoped review approved 24aabba and closed the remaining finding. Main advanced after the authorized force push. Merge current origin/main instead of a second history rewrite so the next push stays fast-forward.
+
+Final validation after integration with origin/main be8cd0c: bun run check passed with a private TMPDIR, including lint, docs, types, all tests, and builds. No live GitHub release or protection test. Reviewers approved all corrections. The local Git and fake-GitHub tests provide acceptance evidence.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Implemented option A. The tag build writes its compatibility entry before strict validation. Asset publication accepts matching bytes, uploads missing assets, and rejects mismatches. Compatibility recording preserves newer main metadata and uses a validated fallback branch after push or PR failure. Removed release-PR synchronization. Local regression tests and the full check passed. Reviewers approved all fixes. No new dependency, live service test, tag, release, or deployment.
+<!-- SECTION:FINAL_SUMMARY:END -->

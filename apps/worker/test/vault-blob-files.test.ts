@@ -7,6 +7,7 @@ import {
 } from "@obsidian-ai-bridge/protocol";
 import type { BlobStore } from "@worker/application/blobs";
 import { R2BlobStore } from "@worker/infrastructure/r2/blobs";
+import { SqliteBlobGcStore } from "@worker/infrastructure/sqlite/blob-gc";
 import {
 	captureTextStoreState,
 	seedLiveTextState,
@@ -224,6 +225,11 @@ describe("native blob publication", () => {
 						.toArray(),
 				).toEqual([{ path: destination, kind: "blob", blob_hash: hash }]);
 				expect(
+					await new SqliteBlobGcStore(fixture.storage).preview([
+						{ hash, size: 4 },
+					]),
+				).toEqual({ count: 0, bytes: 0 });
+				expect(
 					await fixture.store.readBlobMetadata(TEXT_FIXTURE_CONTEXT, {
 						path: source,
 						epoch: TEXT_FIXTURE_EPOCH,
@@ -288,6 +294,11 @@ describe("native blob publication", () => {
 						.exec("SELECT hash, size FROM blob_refs")
 						.toArray(),
 				).toEqual([{ hash, size: 4 }]);
+				expect(
+					await new SqliteBlobGcStore(fixture.storage).preview([
+						{ hash, size: 4 },
+					]),
+				).toEqual({ count: 0, bytes: 0 });
 				expect(head).toHaveBeenCalledTimes(1);
 			},
 			undefined,
@@ -324,6 +335,58 @@ describe("native blob publication", () => {
 			},
 			undefined,
 			store,
+		);
+	});
+
+	it("rejects delayed HEAD evidence after a complete mark-and-clear cycle", async () => {
+		const payload_hash = "f".repeat(64);
+		const capability = blobStore({ hash: payload_hash, size: 4 });
+		await withTextStore(
+			async (fixture) => {
+				const gc = new SqliteBlobGcStore(fixture.storage);
+				capability.head = async () => {
+					const candidate = [{ hash: payload_hash, size: 4 }];
+					await gc.mark(candidate);
+					await gc.clear(candidate);
+					return { hash: payload_hash, size: 4 };
+				};
+				const intent = {
+					op: "put" as const,
+					epoch: TEXT_FIXTURE_EPOCH,
+					paths: ["attachments/delayed-head.pdf"],
+					precondition: { kind: "absent" as const },
+					payload_hash,
+					size: 4,
+				};
+				const lease = await fixture.store.beginMutation(
+					TEXT_FIXTURE_CONTEXT,
+					intent,
+				);
+				if (!lease.ok) throw new Error(`Reserve failed: ${lease.failure.kind}`);
+				const ticket = await fixture.admissions.authorize(
+					TEXT_FIXTURE_CONTEXT,
+					intent,
+					lease.lease.admission_id,
+				);
+				if (!ticket.ok)
+					throw new Error(`Authorize failed: ${ticket.failure.kind}`);
+
+				const result = await fixture.store.commitBlob(
+					TEXT_FIXTURE_CONTEXT,
+					intent,
+					ticket.ticket.id,
+				);
+
+				expect(result).toMatchObject({
+					ok: false,
+					failure: { kind: "blob_gc_in_progress", retry_after_seconds: 1 },
+				});
+				expect(
+					fixture.storage.sql.exec("SELECT path FROM files").toArray(),
+				).toEqual([]);
+			},
+			undefined,
+			capability,
 		);
 	});
 

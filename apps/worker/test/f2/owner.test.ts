@@ -9,6 +9,9 @@ describe("production owner console", () => {
 	it("denies callers without a verified Access identity", async () => {
 		const response = await SELF.fetch("https://service.test/owner/clients");
 		expect(response.status).toBe(401);
+		const blobGc = await SELF.fetch("https://service.test/owner/blob-gc");
+		expect(blobGc.status).toBe(401);
+		expect(blobGc.headers.get("cache-control")).toBe("no-store");
 		const measurements = await SELF.fetch(
 			"https://service.test/owner/measurements",
 		);
@@ -121,6 +124,65 @@ describe("production owner console", () => {
 		);
 		expect(blockedMeasurement.status).toBe(401);
 		expect(readMeasurements).not.toHaveBeenCalled();
+		const csrfRegistry = {
+			storeOwnerCsrf: vi.fn(async () => undefined),
+			consumeOwnerCsrf: vi.fn(async () => true),
+		} as unknown as ClientRegistryGateway;
+		const previewBlobGc = vi.fn(async () => ({ count: 2, bytes: 17 }));
+		const statusBlobGc = vi.fn(async () => ({
+			phase: "idle" as const,
+			marked_count: 0,
+			marked_bytes: 0,
+			failure: null,
+		}));
+		const collectBlobGc = vi.fn(async () => ({
+			phase: "marking" as const,
+			marked_count: 1,
+			marked_bytes: 9,
+			failure: null,
+		}));
+		const gcHandler = createOwnerHandler(
+			() => csrfRegistry,
+			undefined,
+			undefined,
+			() => ({
+				preview: previewBlobGc,
+				status: statusBlobGc,
+				collect: collectBlobGc,
+			}),
+		);
+		if (!gcHandler.fetch)
+			throw new Error("Owner GC handler has no fetch entry point");
+		const gcResponse = await gcHandler.fetch(
+			new Request("https://service.test/owner/blob-gc", {
+				headers: { "Cf-Access-Jwt-Assertion": assertion },
+			}) as Request<unknown, IncomingRequestCfProperties>,
+			env,
+			{} as ExecutionContext,
+		);
+		expect(gcResponse.status).toBe(200);
+		const gcHtml = await gcResponse.text();
+		expect(gcHtml).toContain("2 unreferenced blobs, 17 reclaimable bytes");
+		const state = gcHtml.match(/name="csrf" value="([^"]+)"/)?.[1];
+		const cookie = gcResponse.headers.get("set-cookie")?.split(";")[0];
+		if (!state || !cookie) throw new Error("Owner GC form lacks CSRF state");
+		const confirmed = await gcHandler.fetch(
+			new Request("https://service.test/owner/blob-gc", {
+				method: "POST",
+				headers: {
+					"Cf-Access-Jwt-Assertion": assertion,
+					Origin: "https://service.test",
+					Cookie: cookie,
+					"Content-Type": "application/x-www-form-urlencoded",
+				},
+				body: new URLSearchParams({ csrf: state }),
+			}) as Request<unknown, IncomingRequestCfProperties>,
+			env,
+			{} as ExecutionContext,
+		);
+		expect(confirmed.status).toBe(303);
+		expect(csrfRegistry.consumeOwnerCsrf).toHaveBeenCalledOnce();
+		expect(collectBlobGc).toHaveBeenCalledWith("synthetic-owner");
 		const response = await SELF.fetch("https://service.test/owner/clients", {
 			headers: { "Cf-Access-Jwt-Assertion": assertion },
 		});

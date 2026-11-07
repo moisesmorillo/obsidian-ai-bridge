@@ -7,8 +7,8 @@ import {
 	drizzle,
 } from "drizzle-orm/durable-sqlite";
 
-/** Persisted schema version; version 8 adds resumable packed-export state. */
-export const SCHEMA_VERSION = 8;
+/** Persisted schema version; version 9 adds durable blob-collection marks. */
+export const SCHEMA_VERSION = 9;
 
 /** Narrow FTS5 DDL unsupported by the relational model and kept at its engine-specific seam. */
 const FTS_SCHEMA = `CREATE VIRTUAL TABLE files_fts USING fts5(
@@ -30,14 +30,29 @@ const PACKED_EXPORT_SCHEMA = RELATIONAL_SCHEMA_STATEMENTS.filter((statement) =>
 	),
 );
 
-/** Schema-7 relational DDL excludes the additive schema-8 export tables and indexes. */
+/** Relational DDL introduced by schema 9 for durable blob-GC marks. */
+const BLOB_GC_SCHEMA = RELATIONAL_SCHEMA_STATEMENTS.filter((statement) =>
+	/^CREATE\s+(?:UNIQUE\s+)?(?:TABLE|INDEX)\s+[`"]?blob_gc/.test(statement),
+);
+
+/** Schema-7 DDL excludes the later packed-export and blob-GC objects. */
 const RELATIONAL_SCHEMA_7 = RELATIONAL_SCHEMA_STATEMENTS.filter(
-	(statement) => !PACKED_EXPORT_SCHEMA.includes(statement),
+	(statement) =>
+		!PACKED_EXPORT_SCHEMA.includes(statement) &&
+		!BLOB_GC_SCHEMA.includes(statement),
 );
 
 /** Frozen schema-7 bootstrap DDL, including F2 owner tables. */
 const SCHEMA_7 = [
 	...RELATIONAL_SCHEMA_7,
+	FTS_SCHEMA,
+	...OWNER_REGISTRY_SCHEMA,
+].join("\n");
+
+/** Exact schema-8 catalog before the additive blob-GC table. */
+const SCHEMA_8 = [
+	...RELATIONAL_SCHEMA_7,
+	...PACKED_EXPORT_SCHEMA,
 	FTS_SCHEMA,
 	...OWNER_REGISTRY_SCHEMA,
 ].join("\n");
@@ -170,6 +185,8 @@ export function initializeVaultStorage(
 			upgradeSchema6(tx);
 			validateCurrentSchema(tx, SCHEMA_7, "7");
 			upgradeSchema7(tx);
+			validateCurrentSchema(tx, SCHEMA_8, "8");
+			upgradeSchema8(tx);
 			validateCurrentSchema(tx, SCHEMA, String(SCHEMA_VERSION));
 			return;
 		}
@@ -178,6 +195,16 @@ export function initializeVaultStorage(
 			readAndValidateMetadata(tx, "7");
 			validateExpectedObjects(actualObjects, SCHEMA_7);
 			upgradeSchema7(tx);
+			validateCurrentSchema(tx, SCHEMA_8, "8");
+			upgradeSchema8(tx);
+			validateCurrentSchema(tx, SCHEMA, String(SCHEMA_VERSION));
+			return;
+		}
+		if (version === "8") {
+			rejectUnexpectedCatalogObjects(catalogObjects, tableKinds, SCHEMA_8);
+			readAndValidateMetadata(tx, "8");
+			validateExpectedObjects(actualObjects, SCHEMA_8);
+			upgradeSchema8(tx);
 			validateCurrentSchema(tx, SCHEMA, String(SCHEMA_VERSION));
 			return;
 		}
@@ -215,6 +242,10 @@ function createFreshVault(
 	tx.insert(meta)
 		.values([
 			{ key: "schema_version", value: String(SCHEMA_VERSION) },
+			{ key: "blob_gc_generation", value: "0" },
+			{ key: "blob_gc_phase", value: "idle" },
+			{ key: "blob_gc_cursor", value: "" },
+			{ key: "blob_gc_failure", value: "" },
 			{ key: "epoch", value: epoch },
 			{ key: "head_seq", value: "0" },
 			{ key: "created_at", value: String(createdAt) },
@@ -284,9 +315,21 @@ function upgradeSchema6(tx: VaultTransaction): void {
 /** Upgrade one exact schema-7 store with packed-export tables and no identity changes. */
 function upgradeSchema7(tx: VaultTransaction): void {
 	for (const statement of PACKED_EXPORT_SCHEMA) tx.run(sql.raw(statement));
-	tx.run(
-		sql`UPDATE meta SET value = ${String(SCHEMA_VERSION)} WHERE key = 'schema_version'`,
-	);
+	tx.run(sql`UPDATE meta SET value = '8' WHERE key = 'schema_version'`);
+}
+
+/** Add blob-GC marks and their generation fence to one exact schema-8 vault. */
+function upgradeSchema8(tx: VaultTransaction): void {
+	for (const statement of BLOB_GC_SCHEMA) tx.run(sql.raw(statement));
+	tx.insert(meta)
+		.values([
+			{ key: "blob_gc_generation", value: "0" },
+			{ key: "blob_gc_phase", value: "idle" },
+			{ key: "blob_gc_cursor", value: "" },
+			{ key: "blob_gc_failure", value: "" },
+		])
+		.run();
+	tx.run(sql`UPDATE meta SET value = '9' WHERE key = 'schema_version'`);
 }
 
 /** Validate catalog objects and metadata after one atomic version upgrade. */
@@ -404,6 +447,24 @@ function readAndValidateMetadata(tx: VaultTransaction, version: string): void {
 		throw new Error("Invalid logical history metadata");
 	if (!isCanonicalSafeInteger(metadata.get("created_at") ?? "", false))
 		throw new Error("Invalid vault creation time");
+	if (version === String(SCHEMA_VERSION)) validateBlobGcMetadata(metadata);
+}
+
+/** Validate the durable GC phase and cursor without rewriting interrupted work. */
+function validateBlobGcMetadata(metadata: ReadonlyMap<string, string>): void {
+	const generation = metadata.get("blob_gc_generation");
+	const phase = metadata.get("blob_gc_phase");
+	const cursor = metadata.get("blob_gc_cursor");
+	const failure = metadata.get("blob_gc_failure");
+	if (
+		!isCanonicalSafeInteger(generation ?? "", true) ||
+		(phase !== "idle" && phase !== "marking" && phase !== "deleting") ||
+		cursor === undefined ||
+		new TextEncoder().encode(cursor).byteLength > 16_000 ||
+		(failure !== "" && failure !== "blob_gc_unavailable") ||
+		(phase !== "marking" && cursor !== "")
+	)
+		throw new Error("Invalid blob-GC metadata");
 }
 
 /**

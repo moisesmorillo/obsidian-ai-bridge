@@ -215,6 +215,8 @@ describe("schema-7 packed-export upgrade", () => {
 			const epochBefore = storage.sql
 				.exec("SELECT value FROM meta WHERE key = 'epoch'")
 				.toArray()[0]?.value;
+			storage.sql.exec("DROP TABLE IF EXISTS blob_gc");
+			storage.sql.exec("DELETE FROM meta WHERE key LIKE 'blob_gc_%'");
 			storage.sql.exec("DROP TABLE IF EXISTS packed_export_chunks");
 			storage.sql.exec("DROP TABLE IF EXISTS packed_export_files");
 			storage.sql.exec("DROP TABLE IF EXISTS packed_exports");
@@ -234,7 +236,7 @@ describe("schema-7 packed-export upgrade", () => {
 				storage.sql
 					.exec("SELECT value FROM meta WHERE key = 'schema_version'")
 					.toArray()[0]?.value,
-			).toBe("8");
+			).toBe("9");
 			expect(
 				storage.sql
 					.exec("SELECT value FROM meta WHERE key = 'epoch'")
@@ -243,10 +245,11 @@ describe("schema-7 packed-export upgrade", () => {
 			expect(
 				storage.sql
 					.exec(
-						"SELECT name FROM sqlite_master WHERE name IN ('packed_export_chunks', 'packed_exports', 'packed_export_files') ORDER BY name",
+						"SELECT name FROM sqlite_master WHERE name IN ('blob_gc', 'packed_export_chunks', 'packed_exports', 'packed_export_files') ORDER BY name",
 					)
 					.toArray(),
 			).toEqual([
+				{ name: "blob_gc" },
 				{ name: "packed_export_chunks" },
 				{ name: "packed_export_files" },
 				{ name: "packed_exports" },

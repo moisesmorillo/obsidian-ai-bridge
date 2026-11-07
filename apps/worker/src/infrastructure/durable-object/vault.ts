@@ -4,6 +4,8 @@ import type {
 	AdmissionFinishResult,
 	AdmissionResult,
 	AuthorizationContext,
+	BlobGcPreview,
+	BlobGcStatus,
 	CurrentEpochOperation,
 	CurrentEpochResult,
 	ExportOperationResult,
@@ -41,6 +43,7 @@ import {
 	RevokeClientRequestSchema,
 } from "@obsidian-ai-bridge/protocol";
 import { AdmissionDenied } from "@worker/application/admission";
+import { BlobGcService } from "@worker/application/blob-gc";
 import { PackedExportService } from "@worker/application/export";
 import { FileOperationDenied } from "@worker/application/files";
 import type { ImmutableFileCommand } from "@worker/application/history";
@@ -49,9 +52,11 @@ import {
 	type MeasurementGateway,
 } from "@worker/application/measurements";
 import type { Env } from "@worker/env";
+import { R2BlobGcStore } from "@worker/infrastructure/r2/blob-gc";
 import { R2BlobStore } from "@worker/infrastructure/r2/blobs";
 import { R2PackedArchiveStore } from "@worker/infrastructure/r2/packed-export";
 import { SqliteAdmissionAuthority } from "@worker/infrastructure/sqlite/admission";
+import { SqliteBlobGcStore } from "@worker/infrastructure/sqlite/blob-gc";
 import { SqliteClientRegistry } from "@worker/infrastructure/sqlite/clients";
 import { SqliteMeasurementsStore } from "@worker/infrastructure/sqlite/measurements";
 import { SqliteMutationCoordinator } from "@worker/infrastructure/sqlite/mutations";
@@ -104,6 +109,8 @@ export class Vault extends DurableObject<Env> {
 	private readonly retentionStore: SqliteRetentionStore;
 	/** Captures pinned export cuts and advances bounded ZIP output through native alarms. */
 	private readonly packedExportService: PackedExportService;
+	/** Marks unreachable blobs before bounded R2 deletion and publication-fence changes. */
+	private readonly blobGcService: BlobGcService;
 
 	/**
 	 * The constructor creates fresh storage or validates existing storage synchronously in one transaction.
@@ -149,12 +156,19 @@ export class Vault extends DurableObject<Env> {
 			new SqlitePackedExportStore(ctx.storage, new R2BlobStore(env.R2_BUCKET)),
 			new R2PackedArchiveStore(env.R2_BUCKET),
 		);
+		this.blobGcService = new BlobGcService(
+			new SqliteBlobGcStore(ctx.storage),
+			new R2BlobGcStore(env.R2_BUCKET),
+		);
 		this.initialization = ctx.blockConcurrencyWhile(async () => {
 			const alarm = await ctx.storage.getAlarm();
 			const exportPending = await this.packedExportService.hasPending();
-			if (alarm === null || exportPending)
+			const gcPending = (await this.blobGcService.status()).phase !== "idle";
+			if (alarm === null || exportPending || gcPending)
 				await ctx.storage.setAlarm(
-					exportPending ? Date.now() + 1 : nextRetentionNightly(Date.now()),
+					exportPending || gcPending
+						? Date.now() + 1
+						: nextRetentionNightly(Date.now()),
 				);
 		});
 		this.textStore = new SqliteTextStore(
@@ -175,8 +189,9 @@ export class Vault extends DurableObject<Env> {
 		try {
 			const retention = this.retentionStore.runBatch(now);
 			const exportsPending = await this.packedExportService.runBatch();
+			const gcStatus = await this.blobGcService.collectBatch();
 			await this.ctx.storage.setAlarm(
-				retention.more || exportsPending
+				retention.more || exportsPending || gcStatus.phase !== "idle"
 					? now + RETENTION_CONTINUATION_MS
 					: nextRetentionNightly(now),
 			);
@@ -217,6 +232,30 @@ export class Vault extends DurableObject<Env> {
 		if (!this.isConfiguredOwner(ownerSubject)) return null;
 		await this.initialization;
 		return this.packedExportService.getDownload(`${epoch}:${createdAt}`);
+	}
+
+	/** Preview reclaimable blobs without creating or changing durable collection marks. */
+	async previewBlobGc(ownerSubject: string): Promise<BlobGcPreview | null> {
+		if (!this.isConfiguredOwner(ownerSubject)) return null;
+		await this.initialization;
+		return this.blobGcService.preview();
+	}
+
+	/** Return the verified owner's current durable collection phase and mark totals. */
+	async readBlobGcStatus(ownerSubject: string): Promise<BlobGcStatus | null> {
+		if (!this.isConfiguredOwner(ownerSubject)) return null;
+		await this.initialization;
+		return this.blobGcService.status();
+	}
+
+	/** Start or continue one explicitly confirmed collection batch and schedule its next alarm. */
+	async collectBlobGcBatch(ownerSubject: string): Promise<BlobGcStatus | null> {
+		if (!this.isConfiguredOwner(ownerSubject)) return null;
+		await this.initialization;
+		const status = await this.blobGcService.startBatch();
+		if (status.phase !== "idle")
+			await this.ctx.storage.setAlarm(Date.now() + RETENTION_CONTINUATION_MS);
+		return status;
 	}
 
 	/** Match the verified Access subject to the one configured owner identity. */

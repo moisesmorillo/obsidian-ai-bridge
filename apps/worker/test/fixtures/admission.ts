@@ -21,6 +21,7 @@ export function clearTestVault(storage: DurableObjectStorage): void {
 			"DROP TABLE IF EXISTS client_consents",
 			"DROP TABLE IF EXISTS client_generations",
 			"DROP TABLE IF EXISTS revoked_grants",
+			"DROP TABLE IF EXISTS blob_gc",
 			"DROP TABLE IF EXISTS blob_refs",
 			"DROP TABLE IF EXISTS exports",
 			"DROP TABLE IF EXISTS receipts",

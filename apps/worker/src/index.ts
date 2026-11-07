@@ -13,7 +13,10 @@ import {
 	readVerifiedAuthorization,
 } from "@worker/infrastructure/auth/oauth";
 import { R2BlobStore } from "@worker/infrastructure/r2/blobs";
-import type { OwnerExportResolver } from "@worker/transport/owner";
+import type {
+	OwnerBlobGcResolver,
+	OwnerExportResolver,
+} from "@worker/transport/owner";
 import { createOwnerHandler } from "@worker/transport/owner";
 import { createWorker } from "@worker/transport/worker";
 
@@ -137,6 +140,19 @@ function resolveExports(
 	};
 }
 
+/** Expose only owner-authenticated bounded garbage-collection operations. */
+function resolveBlobGc(
+	env: Env,
+	request: Request,
+): ReturnType<OwnerBlobGcResolver> {
+	const stub = env.VAULTS.get(env.VAULTS.idFromName(new URL(request.url).host));
+	return {
+		preview: async (...args) => await stub.previewBlobGc(...args),
+		status: async (...args) => await stub.readBlobGcStatus(...args),
+		collect: async (...args) => await stub.collectBlobGcBatch(...args),
+	};
+}
+
 /** Route Access-protected owner pages and provider consent through one default handler. */
 function createLocalAuthHandler(): ExportedHandler<Env> {
 	const consent = createAuthorizeHandler();
@@ -152,6 +168,7 @@ function createLocalAuthHandler(): ExportedHandler<Env> {
 			};
 		},
 		resolveExports,
+		resolveBlobGc,
 	);
 	return {
 		/** Route owner pages to verified Access handlers and all other local auth paths to consent. */

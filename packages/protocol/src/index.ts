@@ -69,6 +69,18 @@ export {
 	RevokeClientResultSchema,
 	ServiceOriginSchema,
 } from "@protocol/schemas/auth";
+export type {
+	BlobGcFailure,
+	BlobGcOperationFailure,
+	BlobGcPreview,
+	BlobGcStatus,
+} from "@protocol/schemas/blob-gc";
+export {
+	BlobGcFailureSchema,
+	BlobGcOperationFailureSchema,
+	BlobGcPreviewSchema,
+	BlobGcStatusSchema,
+} from "@protocol/schemas/blob-gc";
 export type { ByteRangeSelection } from "@protocol/schemas/blobs";
 export {
 	BlobAuthorizationResultSchema,

@@ -15,6 +15,13 @@
 			"when": 1794023707968,
 			"tag": "0001_misty_cerise",
 			"breakpoints": true
+		},
+		{
+			"idx": 2,
+			"version": "6",
+			"when": 1794031916869,
+			"tag": "0002_skinny_gunslinger",
+			"breakpoints": true
 		}
 	]
 }

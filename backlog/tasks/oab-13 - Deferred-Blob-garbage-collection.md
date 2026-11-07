@@ -1,11 +1,11 @@
 ---
 id: OAB-13
 title: Blob garbage collection
-status: In Progress
+status: Done
 assignee:
   - '@pi'
 created_date: 2026-10-12 15:14
-updated_date: '2026-11-07T07:44:00Z'
+updated_date: '2026-11-07T08:00:00Z'
 labels:
   - deferred
   - trigger-based
@@ -23,12 +23,12 @@ Owner order activates blob garbage collection as a stacked change after packed b
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Preview unreferenced blob count and bytes before an explicit owner-confirmed run.
-- [ ] #2 Mark unreferenced hashes in one SQLite transaction and reject publication of marked hashes with a typed retry failure.
-- [ ] #3 Delete only marked blobs/ objects and clear marks only after confirmed deletion.
-- [ ] #4 Keep marks and a visible typed failure after partial R2 deletion failure.
-- [ ] #5 Make reruns idempotent and preserve live files, retained revisions, active export sources, and backups/.
-- [ ] #6 Show reclaimable bytes in the owner console and test race, partial failure, retry, and owner access.
+- [x] #1 Preview unreferenced blob count and bytes before an explicit owner-confirmed run.
+- [x] #2 Mark unreferenced hashes in one SQLite transaction and reject publication of marked hashes with a typed retry failure.
+- [x] #3 Delete only marked blobs/ objects and clear marks only after confirmed deletion.
+- [x] #4 Keep marks and a visible typed failure after partial R2 deletion failure.
+- [x] #5 Make reruns idempotent and preserve live files, retained revisions, active export sources, and backups/.
+- [x] #6 Show reclaimable bytes in the owner console and test race, partial failure, retry, and owner access.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -66,4 +66,12 @@ Alarm scheduling fix: A run with an unresolved durable delete claim does not sch
 Parent ruling: accept a fail-closed claim when the R2 delete outcome is unknown. The API reports delete_state unknown. Marks and publication remain fenced. Elapsed time or an owner retry cannot clear the claim. Known settled success or failure supports idempotent reruns. OAB-41, Recover an unresolved blob delete outcome safely, tracks recovery when conditional-delete fencing or trustworthy provider settlement evidence becomes available.
 
 Round 2 review fixes: Inventory pages now carry a durable run identity and expected cursor. SQLite checks run identity, marking phase, and cursor in the same transaction that marks references and advances progress. Stale inventory results and stale inventory failures cannot change completed or newer runs, including a newer run at the same initial cursor. Reachability queries select distinct hashes, so result rows cannot exceed candidate hashes. Added duplicate-heavy retained-revision and active-export tests with result-cardinality and binding assertions. Partial-delete evidence uses two keys, removes one before a simulated error, verifies all marks and failure remain, then retries both keys to completion.
+
+Review closure: task review found overlapping deletion and SQL binding overflow. Scoped review at e2ec00b closed both. Whole-branch review found stale inventory authority and unbounded duplicate-reference results. Scoped review at 9b2afc8 approved both corrections and partial multi-key delete regression coverage. Native tests cover old-run completion, cursor reuse, distinct reachability, publication races, restart claims, and SQL binding ceilings. Full check: 2235 tests pass, one skipped. Worker preflight passes. OAB-41 intentionally defers unknown-outcome recovery until provider settlement or conditional-fence evidence exists. Preview remains limited to 32 R2 pages. No live service test, vault access, deployment, or resource change occurred.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Added owner preview and confirmed blob collection with transactional reachability marks. Durable deletion claims and publication generation checks prevent destructive races. Atomic run and cursor checks reject stale inventory. Distinct query results and bounded binding batches preserve runtime limits. Partial deletion keeps marks for safe retry. Unknown outcomes remain fail-closed under OAB-41. Task and whole-branch review findings are closed with regression evidence.
+<!-- SECTION:FINAL_SUMMARY:END -->

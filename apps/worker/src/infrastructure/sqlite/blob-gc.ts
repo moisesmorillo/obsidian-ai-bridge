@@ -16,8 +16,8 @@ import {
 import { and, eq, inArray, or, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/durable-sqlite";
 
-/** Maximum candidate hashes bound to any one SQLite statement. */
-const SQLITE_BLOB_GC_BATCH_SIZE = 100;
+/** Reserve four fixed predicates so each reachability statement stays below 100 bindings. */
+const SQLITE_BLOB_GC_BATCH_SIZE = 96;
 
 /** Persists marked blob hashes and derives reachability from authoritative reference owners. */
 export class SqliteBlobGcStore implements BlobGcRepository {
@@ -86,11 +86,54 @@ export class SqliteBlobGcStore implements BlobGcRepository {
 		});
 	}
 
-	/** Keep a typed visible failure after an R2 inventory or deletion fault. */
-	async recordFailure(): Promise<void> {
-		this.db.transaction((tx) =>
-			writeMeta(tx, "blob_gc_failure", "blob_gc_unavailable"),
-		);
+	/** Mark a persisted active claim unknown when a new Durable Object instance starts. */
+	markInterruptedDeleteUnknown(): void {
+		this.db.transaction((tx) => {
+			if (
+				readMeta(tx, "blob_gc_delete_owner") !== "" &&
+				readMeta(tx, "blob_gc_delete_state") === "active"
+			)
+				writeMeta(tx, "blob_gc_delete_state", "unknown");
+		});
+	}
+
+	/** Hold one durable delete claim without a timeout across the full R2 request. */
+	async claimDeleteBatch(
+		owner: string,
+	): Promise<readonly BlobGcObject[] | null> {
+		if (
+			!/^([0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/.test(
+				owner,
+			)
+		)
+			throw new Error("Invalid blob-GC delete owner");
+		return this.db.transaction((tx) => {
+			if (
+				readMeta(tx, "blob_gc_phase") !== "deleting" ||
+				readMeta(tx, "blob_gc_delete_owner") !== ""
+			)
+				return null;
+			writeMeta(tx, "blob_gc_delete_owner", owner);
+			writeMeta(tx, "blob_gc_delete_state", "active");
+			return tx
+				.select({ hash: blobGc.hash, size: blobGc.size })
+				.from(blobGc)
+				.orderBy(blobGc.hash)
+				.limit(SQLITE_BLOB_GC_BATCH_SIZE)
+				.all();
+		});
+	}
+
+	/** Keep a typed failure and release only the caller's settled delete claim. */
+	async recordFailure(owner?: string): Promise<void> {
+		this.db.transaction((tx) => {
+			if (owner !== undefined) {
+				if (readMeta(tx, "blob_gc_delete_owner") !== owner) return;
+				writeMeta(tx, "blob_gc_delete_owner", "");
+				writeMeta(tx, "blob_gc_delete_state", "");
+			}
+			writeMeta(tx, "blob_gc_failure", "blob_gc_unavailable");
+		});
 	}
 
 	/** Clear a prior retry failure after a later batch succeeds. */
@@ -136,20 +179,11 @@ export class SqliteBlobGcStore implements BlobGcRepository {
 		});
 	}
 
-	/** Read no more than one SQL-bounded deletion page of durable marks. */
-	async marked(): Promise<readonly BlobGcObject[]> {
-		return this.db
-			.select({ hash: blobGc.hash, size: blobGc.size })
-			.from(blobGc)
-			.orderBy(blobGc.hash)
-			.limit(SQLITE_BLOB_GC_BATCH_SIZE)
-			.all();
-	}
-
-	/** Remove only exact marks after R2 confirms deletion, and advance the publication fence. */
-	async clear(objects: readonly BlobGcObject[]): Promise<void> {
-		if (objects.length === 0) return;
+	/** Clear exact marks and release the delete claim in the same transaction. */
+	async clear(objects: readonly BlobGcObject[], owner: string): Promise<void> {
 		this.db.transaction((tx) => {
+			if (readMeta(tx, "blob_gc_delete_owner") !== owner)
+				throw new Error("Blob-GC delete claim changed before settlement");
 			let removed = false;
 			for (const object of objects) {
 				const current = tx
@@ -168,19 +202,29 @@ export class SqliteBlobGcStore implements BlobGcRepository {
 				removed = true;
 			}
 			if (removed) incrementGeneration(tx);
+			writeMeta(tx, "blob_gc_delete_owner", "");
+			writeMeta(tx, "blob_gc_delete_state", "");
 		});
 	}
 
-	/** Measure durable pending marks without materializing the complete inventory. */
-	async finish(): Promise<void> {
+	/** Finish only when this delete owner holds the fence and no marks remain. */
+	async finish(owner: string): Promise<void> {
 		this.db.transaction((tx) => {
+			if (
+				readMeta(tx, "blob_gc_phase") !== "deleting" ||
+				readMeta(tx, "blob_gc_delete_owner") !== owner ||
+				tx.select({ hash: blobGc.hash }).from(blobGc).limit(1).all().length > 0
+			)
+				throw new Error("Blob-GC run cannot finish before delete settlement");
 			writeMeta(tx, "blob_gc_phase", "idle");
 			writeMeta(tx, "blob_gc_cursor", "");
 			writeMeta(tx, "blob_gc_failure", "");
+			writeMeta(tx, "blob_gc_delete_owner", "");
+			writeMeta(tx, "blob_gc_delete_state", "");
 		});
 	}
 
-	/** Report current phase, failure, and durable mark count and byte total. */
+	/** Report phase, delete state, failure, and durable mark totals. */
 	async status(): Promise<BlobGcStatus> {
 		return this.db.transaction((tx) => {
 			const row = tx
@@ -196,10 +240,25 @@ export class SqliteBlobGcStore implements BlobGcRepository {
 			const failure = readMeta(tx, "blob_gc_failure");
 			if (failure !== "" && failure !== "blob_gc_unavailable")
 				throw new Error("Invalid blob-GC failure");
+			const deleteOwner = readMeta(tx, "blob_gc_delete_owner");
+			const deleteState = readMeta(tx, "blob_gc_delete_state");
+			if (
+				(deleteOwner === "" && deleteState !== "") ||
+				(deleteOwner !== "" &&
+					deleteState !== "active" &&
+					deleteState !== "unknown")
+			)
+				throw new Error("Invalid blob-GC delete state");
 			return {
 				phase,
 				marked_count: row?.count ?? 0,
 				marked_bytes: row?.bytes ?? 0,
+				delete_state:
+					deleteOwner === ""
+						? "idle"
+						: deleteState === "active"
+							? "active"
+							: "unknown",
 				failure: failure === "" ? null : failure,
 			};
 		});

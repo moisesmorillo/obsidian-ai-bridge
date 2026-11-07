@@ -130,6 +130,8 @@ describe("schema-6 owner registry upgrade", () => {
 						row.key === "schema_version" ? { ...row, value: "9" } : row,
 					),
 					{ key: "blob_gc_cursor", value: "" },
+					{ key: "blob_gc_delete_owner", value: "" },
+					{ key: "blob_gc_delete_state", value: "" },
 					{ key: "blob_gc_failure", value: "" },
 					{ key: "blob_gc_generation", value: "0" },
 					{ key: "blob_gc_phase", value: "idle" },

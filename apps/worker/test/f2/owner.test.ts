@@ -130,15 +130,17 @@ describe("production owner console", () => {
 		} as unknown as ClientRegistryGateway;
 		const previewBlobGc = vi.fn(async () => ({ count: 2, bytes: 17 }));
 		const statusBlobGc = vi.fn(async () => ({
-			phase: "idle" as const,
-			marked_count: 0,
-			marked_bytes: 0,
+			phase: "deleting" as const,
+			marked_count: 1,
+			marked_bytes: 9,
+			delete_state: "unknown" as const,
 			failure: null,
 		}));
 		const collectBlobGc = vi.fn(async () => ({
 			phase: "marking" as const,
 			marked_count: 1,
 			marked_bytes: 9,
+			delete_state: "idle" as const,
 			failure: null,
 		}));
 		const gcHandler = createOwnerHandler(
@@ -163,6 +165,8 @@ describe("production owner console", () => {
 		expect(gcResponse.status).toBe(200);
 		const gcHtml = await gcResponse.text();
 		expect(gcHtml).toContain("2 unreferenced blobs, 17 reclaimable bytes");
+		expect(gcHtml).toContain("Delete outcome is unknown.");
+		expect(gcHtml).toContain("An owner retry cannot clear this claim.");
 		const state = gcHtml.match(/name="csrf" value="([^"]+)"/)?.[1];
 		const cookie = gcResponse.headers.get("set-cookie")?.split(";")[0];
 		if (!state || !cookie) throw new Error("Owner GC form lacks CSRF state");

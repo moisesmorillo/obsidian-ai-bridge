@@ -341,12 +341,18 @@ export function createOwnerHandler(
 				state,
 				expires_at: Date.now() + OWNER_STATE_TTL_MS,
 			});
+			const deleteMessage =
+				status.delete_state === "unknown"
+					? "Delete outcome is unknown. Marks and publication remain blocked. An owner retry cannot clear this claim."
+					: status.delete_state === "active"
+						? "A delete request is active. Its claim stays until R2 reports settlement."
+						: "";
 			const failure =
 				status.failure === null
 					? "No collection failure."
-					: "Collection failed. Existing marks remain for a retry.";
+					: "Collection failed. Marks remain for a retry.";
 			return new Response(
-				`<!doctype html><html><head><meta charset="utf-8"><title>Blob garbage collection</title></head><body><main><h1>Blob garbage collection</h1><p>Dry run: ${preview.count} unreferenced blobs, ${preview.bytes} reclaimable bytes.</p><p>Run phase: ${status.phase}. Marked blobs: ${status.marked_count}. Marked bytes: ${status.marked_bytes}. ${failure}</p><form method="post" action="/owner/blob-gc"><input type="hidden" name="csrf" value="${state}"><button>Confirm or continue blob collection</button></form><p>Each request and alarm handles one bounded batch. Backups are excluded.</p></main></body></html>`,
+				`<!doctype html><html><head><meta charset="utf-8"><title>Blob garbage collection</title></head><body><main><h1>Blob garbage collection</h1><p>Dry run: ${preview.count} unreferenced blobs, ${preview.bytes} reclaimable bytes.</p><p>Run phase: ${status.phase}. Marked blobs: ${status.marked_count}. Marked bytes: ${status.marked_bytes}. ${deleteMessage} ${failure}</p><form method="post" action="/owner/blob-gc"><input type="hidden" name="csrf" value="${state}"><button>Confirm or continue blob collection</button></form><p>Each request and alarm handles one bounded batch. Backups are excluded.</p></main></body></html>`,
 				{
 					headers: {
 						"content-type": "text/html; charset=utf-8",

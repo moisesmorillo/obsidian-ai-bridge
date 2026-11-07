@@ -15,6 +15,7 @@ describe("blob garbage collection", () => {
 				cursor: null,
 			})),
 			advance: vi.fn(),
+			claimDeleteBatch: vi.fn(async () => marked),
 			recordFailure: vi.fn(async () => {
 				failure = "blob_gc_unavailable";
 			}),
@@ -22,7 +23,6 @@ describe("blob garbage collection", () => {
 				failure = null;
 			}),
 			mark: vi.fn(),
-			marked: vi.fn(async () => marked),
 			clear: vi.fn(async () => {
 				marked.length = 0;
 			}),
@@ -30,6 +30,7 @@ describe("blob garbage collection", () => {
 				phase: "deleting" as const,
 				marked_count: marked.length,
 				marked_bytes: 13,
+				delete_state: "idle" as const,
 				failure,
 			})),
 			finish: vi.fn(),
@@ -52,22 +53,95 @@ describe("blob garbage collection", () => {
 		expect(repository.recordFailure).toHaveBeenCalledOnce();
 	});
 
+	it("excludes overlapping owner and alarm deletes through full settlement", async () => {
+		const marked = [{ hash, size: 13 }];
+		let deleteOwner = "";
+		let resolveFirstDelete: (() => void) | undefined;
+		let resolveSecondDelete: (() => void) | undefined;
+		let objectPresent = false;
+		const repository = {
+			preview: vi.fn(async () => ({ count: 0, bytes: 0 })),
+			start: vi.fn(),
+			runState: vi.fn(async () => ({
+				phase: "deleting" as const,
+				cursor: null,
+			})),
+			advance: vi.fn(),
+			claimDeleteBatch: vi.fn(async (owner: string) => {
+				if (deleteOwner !== "") return null;
+				deleteOwner = owner;
+				return [...marked];
+			}),
+			recordFailure: vi.fn(async (owner?: string) => {
+				if (owner === deleteOwner) deleteOwner = "";
+			}),
+			clearFailure: vi.fn(async () => undefined),
+			mark: vi.fn(),
+			clear: vi.fn(async (_objects, owner: string) => {
+				if (owner !== deleteOwner) throw new Error("delete claim changed");
+				marked.length = 0;
+				deleteOwner = "";
+			}),
+			status: vi.fn(async () => ({
+				phase: "deleting" as const,
+				marked_count: marked.length,
+				marked_bytes: marked.length * 13,
+				delete_state:
+					deleteOwner === "" ? ("idle" as const) : ("active" as const),
+				failure: null,
+			})),
+			finish: vi.fn(),
+		};
+		const storage = {
+			list: vi.fn(async () => ({ objects: [], cursor: null })),
+			delete: vi.fn(async () => {
+				const call = storage.delete.mock.calls.length;
+				await new Promise<void>((resolve) => {
+					if (call === 1) resolveFirstDelete = resolve;
+					else resolveSecondDelete = resolve;
+				});
+				objectPresent = false;
+			}),
+		};
+		const service = new BlobGcService(repository, storage);
+		const alarmRun = service.collectBatch();
+		try {
+			await vi.waitFor(() => expect(storage.delete).toHaveBeenCalledOnce());
+			const ownerRun = service.collectBatch();
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			expect(storage.delete).toHaveBeenCalledOnce();
+
+			resolveFirstDelete?.();
+			await alarmRun;
+			objectPresent = true;
+			resolveSecondDelete?.();
+			await ownerRun;
+
+			expect(objectPresent).toBe(true);
+			expect(repository.clear).toHaveBeenCalledOnce();
+		} finally {
+			resolveFirstDelete?.();
+			resolveSecondDelete?.();
+		}
+	});
+
 	it("does not start collection without an owner confirmation", async () => {
 		const repository = {
 			preview: vi.fn(async () => ({ count: 0, bytes: 0 })),
 			start: vi.fn(),
 			runState: vi.fn(async () => ({ phase: "idle" as const, cursor: null })),
 			advance: vi.fn(),
+			claimDeleteBatch: vi.fn(async () => null),
 			recordFailure: vi.fn(),
 			clearFailure: vi.fn(),
 			mark: vi.fn(),
-			marked: vi.fn(async () => []),
 			clear: vi.fn(),
 			finish: vi.fn(),
 			status: vi.fn(async () => ({
 				phase: "idle" as const,
 				marked_count: 0,
 				marked_bytes: 0,
+				delete_state: "idle" as const,
 				failure: null,
 			})),
 		};
@@ -93,16 +167,17 @@ describe("blob garbage collection", () => {
 			start: vi.fn(),
 			runState: vi.fn(async () => ({ phase: "idle" as const, cursor: null })),
 			advance: vi.fn(),
+			claimDeleteBatch: vi.fn(async () => null),
 			recordFailure: vi.fn(),
 			clearFailure: vi.fn(),
 			finish: vi.fn(),
 			mark: vi.fn(),
-			marked: vi.fn(async () => []),
 			clear: vi.fn(),
 			status: vi.fn(async () => ({
 				phase: "idle" as const,
 				marked_count: 0,
 				marked_bytes: 0,
+				delete_state: "idle" as const,
 				failure: null,
 			})),
 		};

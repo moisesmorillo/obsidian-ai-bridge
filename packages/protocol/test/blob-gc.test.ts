@@ -18,9 +18,14 @@ describe("blob garbage collection contracts", () => {
 				phase: "deleting",
 				marked_count: 1,
 				marked_bytes: 8,
+				delete_state: "unknown",
 				failure: "blob_gc_unavailable",
 			}),
-		).toMatchObject({ phase: "deleting", marked_count: 1 });
+		).toMatchObject({
+			phase: "deleting",
+			marked_count: 1,
+			delete_state: "unknown",
+		});
 	});
 
 	it("exposes marked-publication refusal as a typed retryable file failure", () => {

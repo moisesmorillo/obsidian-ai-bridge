@@ -156,14 +156,18 @@ export class Vault extends DurableObject<Env> {
 			new SqlitePackedExportStore(ctx.storage, new R2BlobStore(env.R2_BUCKET)),
 			new R2PackedArchiveStore(env.R2_BUCKET),
 		);
+		const blobGcRepository = new SqliteBlobGcStore(ctx.storage);
+		blobGcRepository.markInterruptedDeleteUnknown();
 		this.blobGcService = new BlobGcService(
-			new SqliteBlobGcStore(ctx.storage),
+			blobGcRepository,
 			new R2BlobGcStore(env.R2_BUCKET),
 		);
 		this.initialization = ctx.blockConcurrencyWhile(async () => {
 			const alarm = await ctx.storage.getAlarm();
 			const exportPending = await this.packedExportService.hasPending();
-			const gcPending = (await this.blobGcService.status()).phase !== "idle";
+			const gcStatus = await this.blobGcService.status();
+			const gcPending =
+				gcStatus.phase !== "idle" && gcStatus.delete_state === "idle";
 			if (alarm === null || exportPending || gcPending)
 				await ctx.storage.setAlarm(
 					exportPending || gcPending
@@ -190,8 +194,10 @@ export class Vault extends DurableObject<Env> {
 			const retention = this.retentionStore.runBatch(now);
 			const exportsPending = await this.packedExportService.runBatch();
 			const gcStatus = await this.blobGcService.collectBatch();
+			const gcMore =
+				gcStatus.phase !== "idle" && gcStatus.delete_state === "idle";
 			await this.ctx.storage.setAlarm(
-				retention.more || exportsPending || gcStatus.phase !== "idle"
+				retention.more || exportsPending || gcMore
 					? now + RETENTION_CONTINUATION_MS
 					: nextRetentionNightly(now),
 			);
@@ -253,7 +259,7 @@ export class Vault extends DurableObject<Env> {
 		if (!this.isConfiguredOwner(ownerSubject)) return null;
 		await this.initialization;
 		const status = await this.blobGcService.startBatch();
-		if (status.phase !== "idle")
+		if (status.phase !== "idle" && status.delete_state === "idle")
 			await this.ctx.storage.setAlarm(Date.now() + RETENTION_CONTINUATION_MS);
 		return status;
 	}

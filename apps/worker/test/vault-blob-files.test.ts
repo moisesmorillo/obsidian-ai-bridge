@@ -5,6 +5,7 @@ import {
 	IdempotencyKeySchema,
 	RenameReservationSchema,
 } from "@obsidian-ai-bridge/protocol";
+import { BlobGcService } from "@worker/application/blob-gc";
 import type { BlobStore } from "@worker/application/blobs";
 import { R2BlobStore } from "@worker/infrastructure/r2/blobs";
 import { SqliteBlobGcStore } from "@worker/infrastructure/sqlite/blob-gc";
@@ -338,6 +339,92 @@ describe("native blob publication", () => {
 		);
 	});
 
+	it("prevents an overlapping alarm delete from removing a newly published blob", async () => {
+		const payload_hash = "e".repeat(64);
+		const capability = blobStore({ hash: payload_hash, size: 4 });
+		const deleteReleases: Array<() => void> = [];
+		const pendingRuns: Promise<unknown>[] = [];
+		let objectPresent = true;
+		const deleteObjects = vi.fn(async () => {
+			await new Promise<void>((resolve) => {
+				deleteReleases.push(resolve);
+			});
+			objectPresent = false;
+		});
+		const objectStore = {
+			list: async () => ({ objects: [], cursor: null }),
+			delete: deleteObjects,
+		};
+		await withTextStore(
+			async (fixture) => {
+				try {
+					const repository = new SqliteBlobGcStore(fixture.storage);
+					const candidate = [{ hash: payload_hash, size: 4 }];
+					await repository.start();
+					await repository.mark(candidate);
+					await repository.advance(null);
+					const alarmService = new BlobGcService(repository, objectStore);
+					const alarmRun = alarmService.collectBatch();
+					pendingRuns.push(alarmRun);
+					await vi.waitFor(() => expect(deleteObjects).toHaveBeenCalledOnce());
+
+					const ownerService = new BlobGcService(
+						new SqliteBlobGcStore(fixture.storage),
+						objectStore,
+					);
+					const ownerRun = ownerService.collectBatch();
+					pendingRuns.push(ownerRun);
+					await new Promise((resolve) => setTimeout(resolve, 0));
+					expect(await repository.status()).toMatchObject({
+						delete_state: "active",
+						marked_count: 1,
+					});
+
+					deleteReleases[0]?.();
+					await alarmRun;
+					objectPresent = true;
+					deleteReleases[1]?.();
+					await ownerRun;
+					const intent = {
+						op: "put" as const,
+						epoch: TEXT_FIXTURE_EPOCH,
+						paths: ["attachments/recreated.pdf"],
+						precondition: { kind: "absent" as const },
+						payload_hash,
+						size: 4,
+					};
+					const lease = await fixture.store.beginMutation(
+						TEXT_FIXTURE_CONTEXT,
+						intent,
+					);
+					if (!lease.ok)
+						throw new Error(`Reserve failed: ${lease.failure.kind}`);
+					const ticket = await fixture.admissions.authorize(
+						TEXT_FIXTURE_CONTEXT,
+						intent,
+						lease.lease.admission_id,
+					);
+					if (!ticket.ok)
+						throw new Error(`Authorize failed: ${ticket.failure.kind}`);
+					expect(
+						await fixture.store.commitBlob(
+							TEXT_FIXTURE_CONTEXT,
+							intent,
+							ticket.ticket.id,
+						),
+					).toMatchObject({ ok: true });
+					expect(deleteObjects).toHaveBeenCalledOnce();
+					expect(objectPresent).toBe(true);
+				} finally {
+					for (const release of deleteReleases) release();
+					await Promise.allSettled(pendingRuns);
+				}
+			},
+			undefined,
+			capability,
+		);
+	});
+
 	it("rejects delayed HEAD evidence after a complete mark-and-clear cycle", async () => {
 		const payload_hash = "f".repeat(64);
 		const capability = blobStore({ hash: payload_hash, size: 4 });
@@ -346,8 +433,12 @@ describe("native blob publication", () => {
 				const gc = new SqliteBlobGcStore(fixture.storage);
 				capability.head = async () => {
 					const candidate = [{ hash: payload_hash, size: 4 }];
+					await gc.start();
 					await gc.mark(candidate);
-					await gc.clear(candidate);
+					await gc.advance(null);
+					const owner = "44444444-4444-4444-8444-444444444444";
+					await gc.claimDeleteBatch(owner);
+					await gc.clear(candidate, owner);
 					return { hash: payload_hash, size: 4 };
 				};
 				const intent = {

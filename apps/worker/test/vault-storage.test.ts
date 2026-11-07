@@ -101,6 +101,8 @@ describe("Vault SQLite persistence", () => {
 			);
 			expect(EpochSchema.safeParse(data.epoch).success).toBe(true);
 			expect(data.head_seq).toBe("0");
+			expect(data.blob_gc_delete_owner).toBe("");
+			expect(data.blob_gc_delete_state).toBe("");
 			expect(data.live_file_count).toBe("0");
 			expect(data.history_revisions_bytes).toBe("0");
 			expect(data.history_receipts_bytes).toBe("0");

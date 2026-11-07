@@ -24,12 +24,13 @@ export const BlobGcOperationFailureSchema = z
 	})
 	.strict();
 
-/** Durable collection phase, visible failure, and exact mark count and byte total. */
+/** Durable phase and mark totals with a typed delete state and visible failure. */
 export const BlobGcStatusSchema = z
 	.object({
 		phase: z.enum(["idle", "marking", "deleting"]),
 		marked_count: z.number().int().nonnegative().safe(),
 		marked_bytes: z.number().int().nonnegative().safe(),
+		delete_state: z.enum(["idle", "active", "unknown"]),
 		failure: z.enum(["blob_gc_unavailable"]).nullable(),
 	})
 	.strict();

@@ -7,7 +7,7 @@ import {
 	drizzle,
 } from "drizzle-orm/durable-sqlite";
 
-/** Persisted schema version; version 9 adds durable blob-collection marks. */
+/** Persisted schema version; version 9 adds GC marks, delete claims, and typed outcome state. */
 export const SCHEMA_VERSION = 9;
 
 /** Narrow FTS5 DDL unsupported by the relational model and kept at its engine-specific seam. */
@@ -132,7 +132,7 @@ function isCanonicalSafeInteger(value: string, nonNegative: boolean): boolean {
 }
 
 /**
- * Creates a fresh schema-8 vault, upgrades exact schema-6 or schema-7 stores, or validates schema 8.
+ * Creates a fresh schema-9 vault, upgrades exact schema-6 through schema-8 stores, or validates schema 9.
  * Older and unsupported stores fail without repair, replacement, or epoch changes.
  * All DDL and initial metadata writes run synchronously in one Durable SQLite transaction.
  * @param storage - The native storage belonging to this vault Durable Object.
@@ -245,6 +245,8 @@ function createFreshVault(
 			{ key: "blob_gc_generation", value: "0" },
 			{ key: "blob_gc_phase", value: "idle" },
 			{ key: "blob_gc_cursor", value: "" },
+			{ key: "blob_gc_delete_owner", value: "" },
+			{ key: "blob_gc_delete_state", value: "" },
 			{ key: "blob_gc_failure", value: "" },
 			{ key: "epoch", value: epoch },
 			{ key: "head_seq", value: "0" },
@@ -326,6 +328,8 @@ function upgradeSchema8(tx: VaultTransaction): void {
 			{ key: "blob_gc_generation", value: "0" },
 			{ key: "blob_gc_phase", value: "idle" },
 			{ key: "blob_gc_cursor", value: "" },
+			{ key: "blob_gc_delete_owner", value: "" },
+			{ key: "blob_gc_delete_state", value: "" },
 			{ key: "blob_gc_failure", value: "" },
 		])
 		.run();
@@ -450,17 +454,26 @@ function readAndValidateMetadata(tx: VaultTransaction, version: string): void {
 	if (version === String(SCHEMA_VERSION)) validateBlobGcMetadata(metadata);
 }
 
-/** Validate the durable GC phase and cursor without rewriting interrupted work. */
+/** Validate GC phase, cursor, and delete ownership/outcome without repairing persisted state. */
 function validateBlobGcMetadata(metadata: ReadonlyMap<string, string>): void {
 	const generation = metadata.get("blob_gc_generation");
 	const phase = metadata.get("blob_gc_phase");
 	const cursor = metadata.get("blob_gc_cursor");
+	const deleteOwner = metadata.get("blob_gc_delete_owner");
+	const deleteState = metadata.get("blob_gc_delete_state");
 	const failure = metadata.get("blob_gc_failure");
 	if (
 		!isCanonicalSafeInteger(generation ?? "", true) ||
 		(phase !== "idle" && phase !== "marking" && phase !== "deleting") ||
 		cursor === undefined ||
 		new TextEncoder().encode(cursor).byteLength > 16_000 ||
+		(deleteOwner === ""
+			? deleteState !== ""
+			: phase !== "deleting" ||
+				!/^([0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/.test(
+					deleteOwner ?? "",
+				) ||
+				(deleteState !== "active" && deleteState !== "unknown")) ||
 		(failure !== "" && failure !== "blob_gc_unavailable") ||
 		(phase !== "marking" && cursor !== "")
 	)

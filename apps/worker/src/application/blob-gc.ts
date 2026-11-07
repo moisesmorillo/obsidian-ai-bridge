@@ -42,19 +42,19 @@ export interface BlobGcRepository {
 	}>;
 	/** Store the next cursor or move to deletion after the final page. */
 	advance(cursor: string | null): Promise<void>;
-	/** Record a typed storage failure while retaining all pending marks. */
-	recordFailure(): Promise<void>;
-	/** Clear a prior failure after a later batch succeeds. */
+	/** Claim one durable delete batch without a timeout, or return null while another owner holds it. */
+	claimDeleteBatch(owner: string): Promise<readonly BlobGcObject[] | null>;
+	/** Record a failure and release only the caller's claim after its R2 request settles. */
+	recordFailure(owner?: string): Promise<void>;
+	/** Clear a prior retry failure after a later batch succeeds. */
 	clearFailure(): Promise<void>;
 	/** Mark one page's currently unreachable objects atomically. */
 	mark(objects: readonly BlobGcObject[]): Promise<void>;
-	/** Return a bounded page of durable marks. */
-	marked(): Promise<readonly BlobGcObject[]>;
-	/** Clear only the exact marks whose object deletes succeeded. */
-	clear(objects: readonly BlobGcObject[]): Promise<void>;
-	/** Finish a run after the final durable mark is cleared. */
-	finish(): Promise<void>;
-	/** Report current phase, failure, and durable mark count and bytes. */
+	/** Clear exact marks and release their delete claim in one transaction. */
+	clear(objects: readonly BlobGcObject[], owner: string): Promise<void>;
+	/** Finish a run after the final durable mark is cleared by this owner. */
+	finish(owner: string): Promise<void>;
+	/** Report current phase, delete claim, failure, and durable mark count and bytes. */
 	status(): Promise<BlobGcStatus>;
 }
 
@@ -125,14 +125,23 @@ export class BlobGcService {
 					);
 				await this.repository.advance(validateCursor(page.cursor));
 			} else if (state.phase === "deleting") {
-				const marked = validateObjects(await this.repository.marked());
-				if (marked.length === 0) await this.repository.finish();
-				else {
-					await this.objects.delete(marked.map(({ hash }) => hash));
-					await this.repository.clear(marked);
+				const owner = crypto.randomUUID();
+				const claimed = await this.repository.claimDeleteBatch(owner);
+				if (claimed === null)
+					return BlobGcStatusSchema.parse(await this.repository.status());
+				try {
+					const marked = validateObjects(claimed);
+					if (marked.length === 0) await this.repository.finish(owner);
+					else {
+						await this.objects.delete(marked.map(({ hash }) => hash));
+						await this.repository.clear(marked, owner);
+					}
+					await this.repository.clearFailure();
+				} catch {
+					await this.repository.recordFailure(owner);
 				}
 			}
-			await this.repository.clearFailure();
+			if (state.phase !== "deleting") await this.repository.clearFailure();
 		} catch {
 			await this.repository.recordFailure();
 		}

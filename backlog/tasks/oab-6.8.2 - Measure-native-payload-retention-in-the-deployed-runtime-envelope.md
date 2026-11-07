@@ -5,7 +5,7 @@ status: Deferred
 assignee:
   - '@pi'
 created_date: 2026-10-20 23:27
-updated_date: '2026-11-07T13:22:00Z'
+updated_date: '2026-11-07T13:33:00Z'
 labels: []
 dependencies: []
 references:
@@ -35,29 +35,30 @@ Trigger: measure native retention in a real deployment when OAB-6.8 runtime-enve
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-S4 local native-retention measurement
+S4 local native-retention measurement and parent publication
 
-Goal: record local workerd RSS observations without production content operations, then keep deployed native-retention claims deferred.
-Spec: docs/spec.md sections 6.5 and 12. The S4 brief supersedes prior read-only-only workload instructions.
+Goal: document local workerd RSS observations without production content operations. Keep deployed native-retention acceptance deferred.
+Spec: docs/spec.md sections 6.5 and 12. The S4 owner brief controls the workload and safety limits.
 
 Owner decisions
-- Production work is limited to the parent-run existing Access GET observations. No enrollment, token, OAuth client, content request, upload, resource change, or deployment.
-- Local load uses Wrangler `dev --local`, a temporary config without the unsupported compatibility flag, the unchanged synthetic HTTP fixture, isolated persistence, and loopback only.
-- Use real application HTTP routes, Vault DO RPCs, and local R2. Payloads stay within route limits and the 32 MiB application allowance.
-- Keep scripts and samples outside the tracked tree. No production source, dependency, test fixture, or configuration changes.
-- Keep all acceptance criteria unchecked unless evidence proves them. Return the task to Deferred.
-- Do not push or open a PR in this run.
+- Production observation stays limited to the parent-run existing Access GET pages. No enrollment, token, OAuth client, content request, upload, resource change, or deployment.
+- Local load uses Wrangler `dev --local`, temporary config without the unsupported compatibility flag, the unchanged synthetic HTTP fixture, isolated persistence, and loopback only.
+- Use real application HTTP routes, Vault DO RPCs, and local R2. Stay within route limits and the 32 MiB application allowance.
+- Keep scripts and samples outside Git. Make no production source, dependency, fixture, or configuration change.
+- Keep all acceptance criteria unchecked and the task Deferred.
+- Worker updates task notes and commits. Parent handles review, rebase, push, publication, and worktree removal.
 
 Checklist
-- [x] Inspect local bootstrap composition and production telemetry observations.
-- [x] Run upload, RPC result, slow-consumption, and cancellation requests at concurrency 1, 2, and 4. Record the preliminary cancellation admission failure and isolated repetitions.
-- [x] Sample the identified local workerd RSS at a fixed cadence. Record phases, sample gaps, peaks, post-workload observations, and limits.
-- [x] Record runtime and compatibility settings. Separate payload byte counts from process RSS and unavailable attribution.
-- [x] Run `bun run check`. No retained tooling requires Worker preflight.
-- [ ] Parent reviewer gate remains external to this worker task.
-- [x] Commit only the permitted OAB-6.8.2 task update. Do not push or open a PR.
+- [x] Inspect local bootstrap and parent production observations.
+- [x] Record the actual upload, RPC, slow-read, and cancellation attempts. Record cap violations without more workloads.
+- [x] Record workerd RSS samples, phase timestamps, sample misses, workload-window peak, idle peak, and limits.
+- [x] Record runtime settings and separate payload byte counts from RSS.
+- [x] Run `bun run check`; all suites and builds passed.
+- [x] Commit the worker task-note correction.
+- [ ] Parent performs the independent task and branch review.
+- [ ] Parent rebases, pushes, opens the PR, removes the worktree, reports the URL, and stops.
 
-Review focus: local-only storage, synthetic identity, process identity, sample coverage, route limits, cancellation outcomes, RPC attribution, and unchecked acceptance claims.
+Review focus: local-only storage, synthetic identity, cap compliance, process identity, sample coverage, route limits, cancellation outcomes, reproduction limits, and unchecked acceptance claims.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -157,10 +158,134 @@ Keep all acceptance criteria unchecked. AC1 requires deployed native-retention e
 No measurement tooling or tests remain in the tracked tree. Raw artifacts and temporary scripts are under `/tmp`: `/tmp/oab-s4-workload.mjs`, `/tmp/oab-s4-cancel.mjs`, `/tmp/oab-s4-cancel-once.mjs`, `/tmp/oab-s4-cancel-sweep.sh`, `/tmp/oab-s4-results.csv`, `/tmp/oab-s4-phases.csv`, `/tmp/oab-s4-rss.csv`, `/tmp/oab-s4-cancel-restarts.csv`, `/tmp/oab-s4-cancel-restarts-rss.csv`, `/tmp/oab-s4-cancel-restarts-phases.csv`, and `/tmp/oab-s4-wrangler*.log`.
 
 To repeat with fresh local state, create `apps/worker/wrangler.s4-local.jsonc` with name `oab-s4-local-only`, compatibility date `2025-07-12`, main `test/fixtures/http-worker.ts`, DO binding `VAULTS` to `Vault`, local R2 binding `R2_BUCKET` named `oab-s4-local-only`, and migration tag `v1` with new SQLite class `Vault`. Do not copy compatibility flags. From `apps/worker`, run `./node_modules/.bin/wrangler dev --local --config wrangler.s4-local.jsonc --persist-to /tmp/oab-s4-local-state --ip 127.0.0.1 --port 18787 --inspector-port 19387 --show-interactive-dev-session false`. Identify only the `workerd` whose command line has `socket-addr=entry=127.0.0.1:18787`, sample its RSS using `ps` every 250 ms, and run `node /tmp/oab-s4-workload.mjs`. Cancellation repetitions need fresh local processes and separate persistence paths as shown in `/tmp/oab-s4-cancel-sweep.sh`. Stop local processes and remove the alternate config after use. Never add the alternate config to Git.
+
+S4 review corrections, 2026-11-07 UTC. This addendum supersedes the earlier cancellation totals, byte summary, RSS peak statement, and reproduction claims. No new workload or server ran during this correction.
+
+## Evidence-based closure for review findings
+
+### R1 — hard repetition-cap violation
+
+The S4 brief set a maximum of three repetitions for each workload and concurrency. The cancellation runs exceeded that cap. This is a hard-cap violation. Do not treat it as a setup allowance or excuse it. No more workloads ran during correction.
+
+The upload, inline RPC-result, and slow-consumption modes each ran three batches at concurrency 1, 2, and 4. Each mode had 21 requests: 3 at concurrency 1, 6 at concurrency 2, and 12 at concurrency 4. All recorded requests returned 201 for upload or 200 for reads.
+
+Cancellation attempts across all executions:
+
+| Concurrency | Batches attempted | Requests attempted | HTTP 200 | HTTP 429 | Brief cap |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | 9 | 9 | 9 | 0 | 3 requests |
+| 2 | 5 | 10 | 8 | 2 | 3 batches / 6 requests |
+| 4 | 3 | 12 | 12 | 0 | 3 batches / 12 requests |
+
+Concurrency 1 ran three requests in the first shared-state workload, three more in `oab-s4-cancel.mjs`, and three in the isolated-process sweep. Concurrency 2 ran one two-request batch in the first workload, one two-request batch in `oab-s4-cancel.mjs`, then three two-request isolated batches. Concurrency 4 ran only the three isolated batches. The cap was exceeded by six requests at concurrency 1 and by two batches, four requests, at concurrency 2. Concurrency 4 stayed within its cap.
+
+Complete cancellation request inventory follows. Byte counts are bytes read before client cancellation. Times are client elapsed milliseconds. `Not recorded` means the failing request does not appear in a request CSV. Wrangler logs show its 429 response.
+
+| Execution | Concurrency | Rep | Request | Status | Bytes | Elapsed ms | Evidence |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| First shared-state workload | 1 | 1 | 0 | 200 | 53,248 | 17.871 | results CSV |
+| First shared-state workload | 1 | 2 | 0 | 200 | 36,864 | 14.767 | results CSV |
+| First shared-state workload | 1 | 3 | 0 | 200 | 28,672 | 13.561 | results CSV |
+| First shared-state workload | 2 | 1 | 0 | 429 | Not recorded | Not recorded | Wrangler log; request CSV omits failed request |
+| First shared-state workload | 2 | 1 | 1 | 200 | 16,384 | 16.205 | results CSV |
+| Second shared-state script | 1 | 1 | 0 | 200 | 57,344 | 8.371 | cancel-results CSV |
+| Second shared-state script | 1 | 2 | 0 | 200 | 65,536 | 21.349 | cancel-results CSV |
+| Second shared-state script | 1 | 3 | 0 | 200 | 28,672 | 20.596 | cancel-results CSV |
+| Second shared-state script | 2 | 2 | 0 | 200 | 61,440 | 17.718 | cancel-results CSV |
+| Second shared-state script | 2 | 2 | 1 | 429 | 0 | 20.175 | cancel-results CSV and Wrangler log |
+| Isolated process | 1 | 1 | 0 | 200 | 45,056 | 8.411 | restart results CSV |
+| Isolated process | 1 | 2 | 0 | 200 | 61,440 | 8.148 | restart results CSV |
+| Isolated process | 1 | 3 | 0 | 200 | 61,440 | 8.142 | restart results CSV |
+| Isolated process | 2 | 1 | 0 | 200 | 65,536 | 9.889 | restart results CSV |
+| Isolated process | 2 | 1 | 1 | 200 | 57,344 | 13.195 | restart results CSV |
+| Isolated process | 2 | 2 | 0 | 200 | 65,536 | 9.548 | restart results CSV |
+| Isolated process | 2 | 2 | 1 | 200 | 65,536 | 12.658 | restart results CSV |
+| Isolated process | 2 | 3 | 0 | 200 | 65,536 | 9.860 | restart results CSV |
+| Isolated process | 2 | 3 | 1 | 200 | 40,960 | 12.614 | restart results CSV |
+| Isolated process | 4 | 1 | 0 | 200 | 65,536 | 10.294 | restart results CSV |
+| Isolated process | 4 | 1 | 1 | 200 | 36,864 | 16.620 | restart results CSV |
+| Isolated process | 4 | 1 | 2 | 200 | 49,152 | 16.645 | restart results CSV |
+| Isolated process | 4 | 1 | 3 | 200 | 53,248 | 16.695 | restart results CSV |
+| Isolated process | 4 | 2 | 0 | 200 | 65,536 | 9.813 | restart results CSV |
+| Isolated process | 4 | 2 | 1 | 200 | 12,288 | 15.466 | restart results CSV |
+| Isolated process | 4 | 2 | 2 | 200 | 24,576 | 15.472 | restart results CSV |
+| Isolated process | 4 | 2 | 3 | 200 | 32,768 | 15.523 | restart results CSV |
+| Isolated process | 4 | 3 | 0 | 200 | 65,536 | 10.091 | restart results CSV |
+| Isolated process | 4 | 3 | 1 | 200 | 16,384 | 16.008 | restart results CSV |
+| Isolated process | 4 | 3 | 2 | 200 | 24,576 | 16.009 | restart results CSV |
+| Isolated process | 4 | 3 | 3 | 200 | 32,768 | 16.068 | restart results CSV |
+
+The first shared-state concurrency-2 failure is absent from `/tmp/oab-s4-results.csv`; the log records one 429. The second failure appears in `/tmp/oab-s4-cancel-results.csv`. The inventory counts both failures. No failed request body was consumed.
+
+### R2 — corrected cancellation byte and timing summaries
+
+The earlier summary mixed shared-state byte counts with isolated-run elapsed times. Ignore its cancellation rows. This table uses only the isolated-process sweep rows for those summaries.
+
+| Concurrency | Isolated requests | Statuses | Bytes by request order | Median / max elapsed ms |
+| ---: | ---: | --- | --- | ---: |
+| 1 | 3 | 200 × 3 | 45,056; 61,440; 61,440 | 8.148 / 8.411 |
+| 2 | 6 | 200 × 6 | 65,536; 57,344; 65,536; 65,536; 65,536; 40,960 | 11.252 / 13.195 |
+| 4 | 12 | 200 × 12 | 65,536; 36,864; 49,152; 53,248; 65,536; 12,288; 24,576; 32,768; 65,536; 16,384; 24,576; 32,768 | 15.765 / 16.695 |
+
+The shared-state cancellation attempts remain separate in the inventory above. Their byte counts do not describe the isolated-process runs.
+
+### R3 — phase-linked RSS peaks and missed samples
+
+The 295-sample primary RSS file covers `13:13:25.816Z`–`13:14:44.254Z`, with 254–275 ms gaps and a 267 ms median. Baseline was 42,912 KiB before seed completion at `13:13:27.982Z`.
+
+The maximum sample inside a complete, timestamped workload phase was 49,664 KiB at `13:13:46.887Z`, during cancellation concurrency 1, repetition 1 (`13:13:46.874Z`–`13:13:46.893Z`). The next maximum, 49,904 KiB at `13:13:47.966Z`, fell between the last complete phase end (`13:13:47.725Z`) and the incomplete concurrency-2 phase start (`13:13:48.127Z`). The concurrency-2 phase has no end marker because the script stopped after the 429.
+
+The first sample after that failed phase start was 50,544 KiB at `13:13:48.232Z`. The later idle-window maximum was 50,608 KiB at `13:14:27.439Z`. The idle maximum is not a workload peak and does not measure retention during active requests. Post-event samples stayed between 50,544 and 50,608 KiB through `13:14:44.254Z`; this does not prove release or non-release.
+
+The 250 ms sampler missed many short phases. Upload batches lasted 7–58 ms. Samples fell inside only 2 of 9 upload batches and 3 of 9 inline RPC-result batches. Thus 13 of those 18 batches had no in-phase RSS sample. All nine slow-read batches had 2–4 samples each. Only one of the three first-script concurrency-1 cancellation phases had an in-phase sample. The failed concurrency-2 cancellation phase lacks an end marker and has no sample before its failed response. These gaps limit every phase peak.
+
+The separate cancellation sweep recorded 144 samples from nine processes, with a 2,448–44,560 KiB range and one 2.49-second startup gap. Those processes used separate persistence. Their values do not form one baseline-to-release series and do not repair the primary phase gaps.
+
+### R4 — reproduction limits and command sequence
+
+The retained files do not exactly reproduce the recorded cancellation sweep. `/tmp/oab-s4-workload.mjs` runs shared-state cancellation and stops on the first 429. `/tmp/oab-s4-cancel.mjs` repeats concurrency 1, then stops at concurrency 2 repetition 2 after another 429. The captured restart phase file contains nine processes, but the retained `/tmp/oab-s4-cancel-sweep.sh` now lists only concurrency 1 repetition 3, concurrency 2 repetitions 1–3, and concurrency 4 repetitions 1–3. Its contents do not match all captured concurrency-1 repetitions. It also contains a checkout-specific absolute path, which is not copied here.
+
+The exact original cancellation sweep script was not retained. The records do not show the edits made between attempts. The full cancellation run cannot be exactly reproduced from the retained scripts. A new exact sweep would need a repo-relative working-directory command and an explicit list of all nine `(concurrency, repetition)` pairs, each with its own persistence directory. This is a reproduction correction only. It was not run, and no workload or server ran during this review correction.
+
+Useful local-only setup commands are:
+
+```sh
+cat > apps/worker/wrangler.s4-local.jsonc <<'EOF'
+{
+  "name": "oab-s4-local-only",
+  "compatibility_date": "2025-07-12",
+  "main": "test/fixtures/http-worker.ts",
+  "durable_objects": {
+    "bindings": [{ "name": "VAULTS", "class_name": "Vault" }]
+  },
+  "r2_buckets": [{ "binding": "R2_BUCKET", "bucket_name": "oab-s4-local-only" }],
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Vault"] }]
+}
+EOF
+cd apps/worker
+./node_modules/.bin/wrangler dev --local \
+  --config wrangler.s4-local.jsonc \
+  --persist-to /tmp/oab-s4-local-state \
+  --ip 127.0.0.1 --port 18787 --inspector-port 19387 \
+  --show-interactive-dev-session false
+```
+
+The config omits compatibility flags. Identify the `workerd` process that serves port `18787`, then sample it with `ps` every 250 ms. The original workload command was `node /tmp/oab-s4-workload.mjs`. Do not rerun it as-is: its shared-state cancellation phase failed at concurrency 2. The isolated helper command was `node /tmp/oab-s4-cancel-once.mjs <concurrency> <repetition>` while its local server was available. The exact original wrapper script and its manual edits were not retained. The current sweep script needs a repo-relative path and all nine `(concurrency, repetition)` pairs to match the recorded phases. These examples describe earlier runs; no corrected script ran. Any new measurement needs owner approval.
+
+## Review closure summary
+
+- R1 closed in notes only: disclose the full repeated request inventory and hard-cap violation. No attempt was made to undo or excuse it.
+- R2 closed in notes only: replace the mixed cancellation summary with consistent isolated-run rows and list shared-state attempts separately.
+- R3 closed in notes only: report the in-phase sampled maximum, between-phase sample, first post-event sample, later idle maximum, phase times, and sample misses.
+- R4 closed in notes only: state that retained scripts do not reproduce the complete capture, list the mismatch and manual edits needed, and give the local-only command sequence. No unrun correction is claimed.
+
+Validation evidence: the completed earlier `bun run check` exited 0. It checked lint on 302 files, docs, workspace types, 2,254 tests across 126 files with one skip, and three dry-run builds. This prose-only correction did not rerun the full check. `git diff --check` will run for this correction before commit.
+
+Acceptance: all four criteria remain unchecked. Keep status Deferred. Local RSS is not a deployed runtime envelope or native release bound. The 32 MiB limit is payload/application accounting only. It does not count native copies and does not show active application memory.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
-Completed the local S4 workload against real application HTTP routes, Durable Object RPCs, and local R2 with synthetic identity. Captured raw workerd RSS and added parent-supplied production read-only observations. All four acceptance criteria remain unchecked because neither source provides production native-memory attribution or a release bound. The task remains Deferred until owner-authorized native telemetry and workload evidence exist.
+Corrected the S4 notes after task review. The notes now disclose the cancellation hard-cap violation, enumerate all recorded attempts and failures, separate consistent result sets, link RSS samples to phases and gaps, and state reproduction limits. The task remains Deferred with all four criteria unchecked. Parent review and publication remain pending.
 <!-- SECTION:FINAL_SUMMARY:END -->

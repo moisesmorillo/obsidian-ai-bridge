@@ -1,9 +1,10 @@
 ---
 id: OAB-48
 title: Make the plugin compatibility map release-safe
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-11-07T21:33:00Z'
+updated_date: '2026-11-07T21:42:00Z'
 labels:
   - ci
   - release
@@ -27,3 +28,33 @@ Incident 2026-11-07: the plugin release PR #110 merged without the versions.json
 - [ ] #3 Tests cover the writer, the validator and the workflow expectations. docs/plugin-release.md describes the flow.
 - [ ] #4 bun run check green. No new dependency.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+## Goal
+Make plugin releases independent of release PR compatibility-map races.
+
+## Owner decisions
+Use option A from OAB-48. No Plannotator gates, live calls, releases, tags, Worker edits, or new dependencies. Keep exact tag-to-manifest validation. Use the workflow token for the post-publication chore commit. If main rejects the push, preserve the entry through a chore PR. Do not change git identity in this session.
+
+## Implementation
+- [ ] Add regression tests in the three named test files. Prove missing tag entries work after the writer, strict tag validation stays intact, and workflow order preserves tag metadata.
+- [ ] Run the focused tests and record the expected failures before production edits.
+- [ ] Write the tag compatibility entry before validation in release.yml. Build and publish only checked assets. Record the published tag entry on fresh main without replacing its manifest or losing earlier entries. Handle duplicate runs and rejected pushes safely.
+- [ ] Remove sync-plugin-compatibility from release-please.yml and grant the reusable workflow the needed PR permission.
+- [ ] Update release.ts and release-versions.ts only where the contract needs it. Update docs/plugin-release.md with ordering, retries, and fallback limits.
+- [ ] Run focused tests, docs checks, and bun run check. Complete independent task and branch reviews. Correct each actionable finding.
+- [ ] Rebase on origin/main. Close OAB-48 with local evidence and live-test limits. Push and open one PR against main. Remove the worktree and report the URL.
+
+## Review focus
+Missing tag map entry, exact tag mismatch, conflicting historical entry, newer main manifest, concurrent main changes, retry after publication, and token or branch-policy rejection.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+RED: focused plugin tests observed 1 failure (23 passed). Tooling tests observed 2 failures (6 passed).
+GREEN: focused plugin tests passed (25); tooling tests passed (8). `bun run docs:check` passed. `bun run check` passed lint, docs, typecheck, 2,282 tests, one skipped test, and builds.
+Local Git workflow test confirmed that the tag manifest updates fresh main, preserves newer main metadata, and supports an idempotent rerun. No live release, tag, deployment, vault, or service access.
+<!-- SECTION:NOTES:END -->

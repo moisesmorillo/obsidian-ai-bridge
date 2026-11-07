@@ -23,6 +23,13 @@ export async function syncCompatibilityVersion(
 		exactVersion(key, "Compatibility map version");
 		exactVersion(value, `Compatibility map entry ${key}`);
 	}
+	const existingMinimum = versions[version];
+	if (existingMinimum !== undefined && existingMinimum !== minimum) {
+		throw new Error(
+			`Compatibility map entry ${version} conflicts with manifest minAppVersion`,
+		);
+	}
+	if (existingMinimum === minimum) return;
 	versions[version] = minimum;
 	await writeFile(versionsPath, `${JSON.stringify(versions, null, "\t")}\n`);
 }

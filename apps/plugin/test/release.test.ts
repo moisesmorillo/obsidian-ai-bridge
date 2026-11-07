@@ -77,6 +77,26 @@ function publicationShell(): string {
 	return step[1].replace(/^ {10}/gm, "");
 }
 
+/** Extracts the post-publication compatibility update shell from the workflow. */
+function compatibilityRecordShell(): string {
+	const workflow = readFileSync(
+		join(repositoryRoot, ".github/workflows/release.yml"),
+		"utf8",
+	);
+	const step = workflow.match(
+		/- name: Record published compatibility entry on main\n\s+shell: bash\n\s+env:[\s\S]*?\n\s+run: \|\n((?:\s{10}.+\n|\s*\n)+)/,
+	);
+	if (!step) throw new Error("Compatibility recording shell block not found");
+	return step[1].replace(/^ {10}/gm, "");
+}
+
+/** Runs a git command in a fixture repository and returns its successful output. */
+function runGit(cwd: string, ...args: string[]): string {
+	const result = spawnSync("git", args, { cwd, encoding: "utf8" });
+	if (result.status !== 0) throw new Error(result.stderr);
+	return result.stdout.trim();
+}
+
 /** Runs workflow publication commands against non-creating local command stubs. */
 function runPublicationShell(options: {
 	remoteTag?: string;
@@ -136,12 +156,22 @@ describe("plugin release metadata validation", () => {
 	};
 	const versions = { "0.1.0": "1.13.0" };
 
-	it("accepts a tag that matches the manifest and compatibility map", () => {
-		const root = createMetadataDirectory(manifest, versions);
+	it("accepts a tag after the tag manifest writes its missing compatibility entry", () => {
+		const root = createMetadataDirectory(manifest, {});
 		try {
-			const result = runValidator(root, "ai-bridge-v0.1.0");
-			expect(result.status).toBe(0);
-			expect(String(result.stdout).trim()).toBe("ai-bridge-v0.1.0");
+			const result = spawnSync(
+				"bun",
+				[
+					join(repositoryRoot, "apps/plugin/tools/release-versions.ts"),
+					join(root, "apps/plugin/manifest.json"),
+					join(root, "apps/plugin/versions.json"),
+				],
+				{ cwd: root, encoding: "utf8" },
+			);
+			expect(result.status, result.stderr).toBe(0);
+			const validation = runValidator(root, "ai-bridge-v0.1.0");
+			expect(validation.status, String(validation.stderr)).toBe(0);
+			expect(String(validation.stdout).trim()).toBe("ai-bridge-v0.1.0");
 		} finally {
 			rmSync(root, { recursive: true, force: true });
 		}
@@ -230,7 +260,8 @@ describe("release workflow publication shell", () => {
 		expect(publishJob).toContain("gh release create");
 		expect(publishJob).toContain("apps/plugin/dist/manifest.json");
 		expect(publishJob).toContain("apps/plugin/dist/main.js");
-		expect(publishJob).not.toMatch(/\bbun\b|\bnpm\b|\byarn\b|\bpnpm\b/);
+		const publication = publicationShell();
+		expect(publication).not.toMatch(/\bbun\b|\bnpm\b|\byarn\b|\bpnpm\b/);
 	});
 
 	it("stops when the repository check command fails", () => {
@@ -261,6 +292,94 @@ exit 23
 				env: { ...process.env, PATH: `${bin}:${process.env.PATH}` },
 			});
 			expect(result.status).toBe(23);
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("records the tag manifest entry on fresh main after publication", () => {
+		const root = mkdtempSync(join(tmpdir(), "plugin-compatibility-main-"));
+		const remote = join(root, "origin.git");
+		const seed = join(root, "seed");
+		const checkout = join(root, "checkout");
+		mkdirSync(seed);
+		runGit(root, "init", "--bare", "--initial-branch=main", remote);
+		runGit(seed, "init", "--initial-branch=main");
+		runGit(seed, "config", "user.name", "Test Agent");
+		runGit(seed, "config", "user.email", "test@example.com");
+		mkdirSync(join(seed, "apps/plugin"), { recursive: true });
+		writeFileSync(
+			join(seed, "apps/plugin/manifest.json"),
+			JSON.stringify({ version: "0.1.0", minAppVersion: "1.13.0" }),
+		);
+		writeFileSync(join(seed, "apps/plugin/versions.json"), "{}\n");
+		mkdirSync(join(seed, "apps/plugin/tools"), { recursive: true });
+		writeFileSync(
+			join(seed, "apps/plugin/tools/release-versions.ts"),
+			readFileSync(
+				join(repositoryRoot, "apps/plugin/tools/release-versions.ts"),
+				"utf8",
+			),
+		);
+		runGit(seed, "add", ".");
+		runGit(seed, "commit", "-m", "tag source");
+		runGit(seed, "tag", "ai-bridge-v0.1.0");
+		writeFileSync(
+			join(seed, "apps/plugin/manifest.json"),
+			JSON.stringify({ version: "0.2.0", minAppVersion: "1.14.0" }),
+		);
+		writeFileSync(
+			join(seed, "apps/plugin/versions.json"),
+			JSON.stringify({ "0.0.9": "1.12.0" }),
+		);
+		runGit(seed, "add", ".");
+		runGit(seed, "commit", "-m", "newer main manifest");
+		runGit(seed, "remote", "add", "origin", remote);
+		runGit(seed, "push", "origin", "main", "--tags");
+		spawnSync("git", ["clone", remote, checkout], { encoding: "utf8" });
+		runGit(checkout, "checkout", "ai-bridge-v0.1.0");
+
+		try {
+			const result = spawnSync(
+				"bash",
+				["-euo", "pipefail", "-c", compatibilityRecordShell()],
+				{
+					cwd: checkout,
+					encoding: "utf8",
+					env: {
+						...process.env,
+						RELEASE_TAG: "ai-bridge-v0.1.0",
+						GH_TOKEN: "fake-token",
+					},
+				},
+			);
+			expect(result.status, result.stderr).toBe(0);
+			const pushedMap = JSON.parse(
+				runGit(remote, "show", "main:apps/plugin/versions.json"),
+			);
+			expect(pushedMap).toEqual({
+				"0.0.9": "1.12.0",
+				"0.1.0": "1.13.0",
+			});
+			expect(runGit(remote, "log", "-1", "--format=%s", "main")).toBe(
+				"chore(plugin): record compatibility for 0.1.0",
+			);
+			const firstMainCommit = runGit(remote, "rev-parse", "main");
+			const rerun = spawnSync(
+				"bash",
+				["-euo", "pipefail", "-c", compatibilityRecordShell()],
+				{
+					cwd: checkout,
+					encoding: "utf8",
+					env: {
+						...process.env,
+						RELEASE_TAG: "ai-bridge-v0.1.0",
+						GH_TOKEN: "fake-token",
+					},
+				},
+			);
+			expect(rerun.status, String(rerun.stderr)).toBe(0);
+			expect(runGit(remote, "rev-parse", "main")).toBe(firstMainCommit);
 		} finally {
 			rmSync(root, { recursive: true, force: true });
 		}

@@ -155,7 +155,7 @@ describe("Release Please configuration", () => {
 		},
 	);
 
-	it("runs each release follow-up in the same workflow and syncs plugin PR metadata", () => {
+	it("runs release follow-ups without syncing a mutable release PR branch", () => {
 		const workflow = workflowText("release-please.yml");
 		expect(workflow).toContain(
 			"googleapis/release-please-action@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071",
@@ -168,47 +168,20 @@ describe("Release Please configuration", () => {
 		);
 		expect(workflow).toContain("uses: ./.github/workflows/release.yml");
 		expect(workflow).toContain("uses: ./.github/workflows/deploy.yml");
-		expect(workflow).toContain('git push origin "HEAD:$BRANCH"');
-		expect(workflow).toContain("release-versions.ts");
+		expect(workflow).not.toContain("sync-plugin-compatibility:");
+		expect(workflow).not.toContain("release-versions.ts");
 	});
 
-	it.each([
-		["an absent plugin release output with a plugin PR", undefined, false],
-		["a Worker release and a plugin PR in the same run", "true", true],
-	])(
-		"starts compatibility sync for %s",
-		(_case, workerCreated, includeWorkerRelease) => {
-			const workflow = workflowText("release-please.yml");
-			const syncJob =
-				/sync-plugin-compatibility:\n([\s\S]*?)\n {2}release-plugin:/.exec(
-					workflow,
-				)?.[1] ?? "";
-			const expectedGate = `if: \${{ needs.release-please.outputs.pull-requests != '' && needs.release-please.outputs.pull-requests != '[]' && needs.release-please.result == 'success' }}`;
-			const actionOutputs = {
-				pluginCreated: undefined,
-				workerCreated: includeWorkerRelease ? workerCreated : undefined,
-				pullRequests: JSON.stringify([
-					{
-						headBranchName: "release-plugin",
-						files: ["apps/plugin/manifest.json"],
-					},
-				]),
-			};
+	it("writes the tag compatibility entry before validation, build, and publication", () => {
+		const workflow = workflowText("release.yml");
+		const writePosition = workflow.indexOf("release-versions.ts");
+		const validatePosition = workflow.indexOf("Validate release metadata");
+		const checkPosition = workflow.indexOf("Check repository and build plugin");
+		const publishPosition = workflow.indexOf("Publish release");
 
-			expect(syncJob).toContain(expectedGate);
-			expect(syncJob).not.toContain("plugin-created == 'false'");
-			expect(actionOutputs.pluginCreated).toBeUndefined();
-			expect(actionOutputs.pullRequests).not.toBe("[]");
-			expect(JSON.parse(actionOutputs.pullRequests)[0].files).toContain(
-				"apps/plugin/manifest.json",
-			);
-			expect(
-				actionOutputs.pullRequests !== "" &&
-					actionOutputs.pullRequests !== "[]",
-			).toBe(true);
-			if (includeWorkerRelease)
-				expect(actionOutputs.workerCreated).toBe("true");
-			expect(syncJob).toContain('endswith("--components--ai-bridge")');
-		},
-	);
+		expect(writePosition).toBeGreaterThanOrEqual(0);
+		expect(writePosition).toBeLessThan(validatePosition);
+		expect(validatePosition).toBeLessThan(checkPosition);
+		expect(checkPosition).toBeLessThan(publishPosition);
+	});
 });

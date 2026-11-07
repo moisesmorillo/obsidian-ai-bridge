@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-11-07T18:44:00Z'
-updated_date: '2026-11-07T18:58:00Z'
+updated_date: '2026-11-07T19:07:00Z'
 labels:
   - ci
   - release
@@ -77,4 +77,12 @@ Implementation evidence, 2026-11-07:
 - Bootstrap: plugin `0.1.6`, Worker `0.1.0`, main SHA `eec41e68778e0d9e674d8e40c80b7c28e9ef80ed`. No runtime dependency was added.
 - Worker deploy retains owner actor checks. A non-owner merge can create a release but cannot deploy. The owner must dispatch deploy.yml on main. Bot branch updates need repository Actions write permission.
 - No live service call, deployment, tag, vault access, or Cloudflare change occurred.
+
+Review correction at revision 8ef4faf3cd9db7ca33e4a3ba1a62d5ef07c3679f:
+- Closed finding [MAJOR] Plugin compatibility sync depended on plugin-created being false. The verified Release Please action omits false for unreleased components, so the old condition skipped the sync.
+- The job now starts when `pull-requests` output is nonempty and not `[]`, independent of plugin-created. Its step still selects only PRs with files under `apps/plugin/`.
+- Added RED cases for a missing plugin-created output with a plugin PR, and a Worker release plus plugin PR in one run. RED: `bun run --filter '@obsidian-ai-bridge/tooling' test -- tooling/test/release-please-config.test.ts` failed at the old workflow gate in both cases.
+- GREEN: the same focused test passed, 4 tests. Final `bun run check` passed, including 9 tooling test files/96 tests, 19 protocol files/314 tests, 52 Worker files/753 tests plus 9 files/132 tests and 10 files/142 tests, and 30 plugin files/838 passed/1 skipped.
+- Final Worker preflight passed: `bun run --filter '@obsidian-ai-bridge/worker' preflight`.
+- No live calls, deployment, tag creation, vault access, or Cloudflare changes occurred. Parent owns re-review.
 <!-- SECTION:NOTES:END -->

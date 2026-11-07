@@ -73,4 +73,44 @@ describe("Release Please configuration", () => {
 		expect(workflow).toContain('git push origin "HEAD:$BRANCH"');
 		expect(workflow).toContain("release-versions.ts");
 	});
+
+	it.each([
+		["an absent plugin release output with a plugin PR", undefined, false],
+		["a Worker release and a plugin PR in the same run", "true", true],
+	])(
+		"starts compatibility sync for %s",
+		(_case, workerCreated, includeWorkerRelease) => {
+			const workflow = workflowText("release-please.yml");
+			const syncJob =
+				/sync-plugin-compatibility:\n([\s\S]*?)\n {2}release-plugin:/.exec(
+					workflow,
+				)?.[1] ?? "";
+			const expectedGate = `if: \${{ needs.release-please.outputs.pull-requests != '' && needs.release-please.outputs.pull-requests != '[]' && needs.release-please.result == 'success' }}`;
+			const actionOutputs = {
+				pluginCreated: undefined,
+				workerCreated: includeWorkerRelease ? workerCreated : undefined,
+				pullRequests: JSON.stringify([
+					{
+						headBranchName: "release-plugin",
+						files: ["apps/plugin/manifest.json"],
+					},
+				]),
+			};
+
+			expect(syncJob).toContain(expectedGate);
+			expect(syncJob).not.toContain("plugin-created == 'false'");
+			expect(actionOutputs.pluginCreated).toBeUndefined();
+			expect(actionOutputs.pullRequests).not.toBe("[]");
+			expect(JSON.parse(actionOutputs.pullRequests)[0].files).toContain(
+				"apps/plugin/manifest.json",
+			);
+			expect(
+				actionOutputs.pullRequests !== "" &&
+					actionOutputs.pullRequests !== "[]",
+			).toBe(true);
+			if (includeWorkerRelease)
+				expect(actionOutputs.workerCreated).toBe("true");
+			expect(syncJob).toContain('startswith("apps/plugin/")');
+		},
+	);
 });

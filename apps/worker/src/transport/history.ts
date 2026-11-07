@@ -166,12 +166,19 @@ async function validateHistoryCommandRequest(
 			};
 		}
 		case "append-under-heading": {
-			if (!match || !key)
+			if (!key) {
+				const authority = await gateway.getCurrentEpoch(identity, "append");
+				if (!authority.ok)
+					return { ok: false, response: errorResponse(authority.failure) };
 				return {
 					ok: false,
-					response: errorResponse({
-						kind: key ? "invalid_request" : "idempotency_key_required",
-					}),
+					response: errorResponse({ kind: "idempotency_key_required" }),
+				};
+			}
+			if (!match)
+				return {
+					ok: false,
+					response: errorResponse({ kind: "invalid_request" }),
 				};
 			let epoch: string;
 			try {

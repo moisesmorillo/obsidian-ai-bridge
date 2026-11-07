@@ -5,6 +5,7 @@ import {
 } from "@obsidian-ai-bridge/protocol";
 import { initializeVaultStorage } from "@worker/infrastructure/sqlite/schema";
 import { clearTestVault } from "@worker/test-fixtures/admission";
+import testWorker from "@worker/test-fixtures/http-worker";
 import {
 	seedLiveTextState,
 	TEXT_FIXTURE_EPOCH,
@@ -152,6 +153,38 @@ describe("append under a heading HTTP mutation", () => {
 		);
 	});
 
+	it("checks Durable Object revocation before a missing key failure", async () => {
+		const stub = env.VAULTS.get(env.VAULTS.idFromName("worker.invalid"));
+		await runInDurableObject(stub, (_instance, state) => {
+			state.storage.sql.exec(
+				"INSERT INTO revoked_grants(grant_id, at) VALUES (?, ?)",
+				"http-revoked-grant",
+				10,
+			);
+		});
+		const before = await snapshot();
+		const beforeAdmission = await snapshotAdmission("http-revoked-client");
+		const response = await testWorker.fetch(
+			new Request(url, {
+				method: "POST",
+				headers: {
+					"X-Test-Identity": "revoked",
+					"If-Match": formatETag(TEXT_FIXTURE_EPOCH, 1),
+					"Content-Type": "application/json",
+				},
+				body: JSON.stringify({ heading: "Tasks", text: "denied" }),
+			}),
+			env,
+		);
+
+		expect(response.status).toBe(401);
+		expect(await response.json()).toMatchObject({ error: "revoked" });
+		expect(await snapshot()).toEqual(before);
+		expect(await snapshotAdmission("http-revoked-client")).toEqual(
+			beforeAdmission,
+		);
+	});
+
 	it("rejects oversized results and missing idempotency keys", async () => {
 		await seed(path, `# Tasks\n${"x".repeat(999_990)}`);
 		const before = await snapshot();
@@ -198,6 +231,25 @@ function submit(
 		},
 		body: JSON.stringify({ heading, text }),
 	});
+}
+
+/** Capture admission and idempotency records for one caller. */
+async function snapshotAdmission(clientId: string) {
+	const stub = env.VAULTS.get(env.VAULTS.idFromName("worker.invalid"));
+	return runInDurableObject(stub, (_instance, state) => ({
+		admissions: state.storage.sql
+			.exec(
+				"SELECT * FROM operation_admissions WHERE client_id = ? ORDER BY id",
+				clientId,
+			)
+			.toArray(),
+		claims: state.storage.sql
+			.exec(
+				"SELECT * FROM mutation_claims WHERE client_id = ? ORDER BY client_id, key",
+				clientId,
+			)
+			.toArray(),
+	}));
 }
 
 /** Read durable rows that must stay unchanged after a rejected operation. */

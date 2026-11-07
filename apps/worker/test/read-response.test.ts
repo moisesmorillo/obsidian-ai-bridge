@@ -565,6 +565,98 @@ describe("owned read response", () => {
 			await Promise.resolve();
 		expect(released).toBe(true);
 	});
+	it("consumer cancellation does not abort the request signal while a fixed read waits", async () => {
+		const requestController = new AbortController();
+		const request = new Request("https://read.invalid", {
+			signal: requestController.signal,
+		});
+		const work = barrier<IteratorResult<Uint8Array>>();
+		const started = barrier<void>();
+		const cancelStarted = barrier<void>();
+		const cancelled = barrier<void>();
+		let sourceCancelled = false;
+		let released = false;
+		const response = ownedReadResponse(
+			{
+				next: () => {
+					started.resolve();
+					return work.promise;
+				},
+				cancel: () => {
+					sourceCancelled = true;
+					cancelStarted.resolve();
+					return cancelled.promise;
+				},
+			},
+			{ finish: async () => ({ ok: true }) },
+			() => {
+				released = true;
+			},
+			undefined,
+			request.signal,
+			3,
+		);
+		if (!response.body) throw new Error("Read response has no body");
+		const reader = response.body.getReader();
+		const reading = reader.read().catch(() => undefined);
+		await started.promise;
+		const cancellation = reader.cancel();
+		await Promise.resolve();
+		const signalAbortedAfterConsumerCancellation = request.signal.aborted;
+		const sourceCancelledBeforeReadSettled = sourceCancelled;
+		work.resolve({ done: false, value: new Uint8Array([1, 2, 3]) });
+		await cancelStarted.promise;
+		expect(signalAbortedAfterConsumerCancellation).toBe(false);
+		expect(sourceCancelledBeforeReadSettled).toBe(false);
+		expect(released).toBe(false);
+		cancelled.resolve();
+		await Promise.all([reading, cancellation]);
+		expect(request.signal.aborted).toBe(false);
+		expect(released).toBe(true);
+	});
+
+	it("does not settle FixedLengthStream writer.closed while the source read waits", async () => {
+		const fixed = new FixedLengthStream(3);
+		const writer = fixed.writable.getWriter();
+		const reader = fixed.readable.getReader();
+		const sourceRead = barrier<IteratorResult<Uint8Array>>();
+		let sourceReadSettled = false;
+		let writerClosedSettled = false;
+		const next = sourceRead.promise.then((item) => {
+			sourceReadSettled = true;
+			return item;
+		});
+		const producing = next
+			.then(async (item) => {
+				if (!item.done) await writer.write(item.value);
+			})
+			.catch(() => {});
+		void writer.closed.then(
+			() => {
+				writerClosedSettled = true;
+			},
+			() => {
+				writerClosedSettled = true;
+			},
+		);
+		const pendingRead = reader.read();
+		const consumerCancellation = reader.cancel();
+		await Promise.resolve();
+		await Promise.resolve();
+		const closedBeforeSourceSettled = writerClosedSettled;
+		const sourceSettledBeforeCancellation = sourceReadSettled;
+		sourceRead.resolve({ done: false, value: new Uint8Array([1, 2, 3]) });
+		await Promise.allSettled([
+			pendingRead,
+			consumerCancellation,
+			next,
+			producing,
+		]);
+		expect(closedBeforeSourceSettled).toBe(false);
+		expect(sourceSettledBeforeCancellation).toBe(false);
+		expect(writerClosedSettled).toBe(true);
+	});
+
 	it.each(["generic", "fixed-length"] as const)(
 		"releases local slots after %s source completion when settlement rejects",
 		async (framing) => {

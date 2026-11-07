@@ -4,7 +4,7 @@ title: Make the plugin compatibility map release-safe
 status: In Progress
 assignee: []
 created_date: '2026-11-07T21:33:00Z'
-updated_date: '2026-11-07T22:03:00Z'
+updated_date: '2026-11-07T22:05:00Z'
 labels:
   - ci
   - release
@@ -24,9 +24,9 @@ Incident 2026-11-07: the plugin release PR #110 merged without the versions.json
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [ ] #1 The release-plugin workflow succeeds on a tag whose versions.json lacks the entry, publishes main.js and manifest.json, and records the entry on main with a chore commit.
-- [ ] #2 The sync-plugin-compatibility job is removed or made idempotent with a documented retry. No workflow step depends on a release PR branch that may already be merged.
-- [ ] #3 Tests cover the writer, the validator and the workflow expectations. docs/plugin-release.md describes the flow.
-- [ ] #4 bun run check green. No new dependency.
+- [x] #2 The sync-plugin-compatibility job is removed or made idempotent with a documented retry. No workflow step depends on a release PR branch that may already be merged.
+- [x] #3 Tests cover the writer, the validator and the workflow expectations. docs/plugin-release.md describes the flow.
+- [x] #4 bun run check green. No new dependency.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -65,4 +65,7 @@ Final branch review F1 fix: when no open PR exists, the workflow validates a rem
 Test `reuses a matching fallback branch after PR failure and refuses unrelated changes` reproduced non-fast-forward on RED, then passed on GREEN. Fake GitHub and local bare Git confirm retry creates the missing PR with the same branch hash and rejects unrelated edits. No live calls.
 
 F1 validation also confirms full Git history is available before the workflow checks ancestry. Final focused runs passed: plugin release tests 28, tooling release test 8. `bun run docs:check` passed. `bun run check` passed with private TMPDIR: lint, docs, typecheck, 2,290 tests, one skipped test, and builds. No live calls.
+
+Final review: reviewed da71681..6b28890. Bun setup and asset retry findings closed. Fix c6cce4b adds fallback branch reuse after a failed PR request. Scoped review found a remaining blocker: if main adds another compatibility entry before retry, the expected map uses current main and rejects the valid older fallback branch. The merge-base file diff itself excludes later main changes. No unsafe overwrite occurs, but recovery stops. A further correction must validate the fallback commit against its own parent and check current-main compatibility separately. Add a local regression with failed PR creation, then a new main map entry, then retry. Owner brief directs a draft PR for real blockers. AC1 remains unchecked. No more implementation in this session after the final review fix wave.
+Validation: bun run check passed after rebase with private TMPDIR. Final worker check at c6cce4b passed 2290 tests with one skip, lint, docs, typecheck, and builds. One earlier shared-TMPDIR check failed in unchanged Worker deploy-preflight.bun.ts because a concurrent temporary directory disappeared. No Worker edits, dependencies, live service calls, tags, releases, or deployments.
 <!-- SECTION:NOTES:END -->

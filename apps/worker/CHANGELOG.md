@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.1](https://github.com/moisesmorillo/obsidian-ai-bridge/compare/worker-v0.4.0...worker-v0.4.1) (2026-11-08)
+
+
+### Bug Fixes
+
+* **worker:** inject the Worker version into the owner shell ([#123](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/123)) ([ceab8cc](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/ceab8cc3b7128d23e88a9b18c1608256b6d8ca26))
+
 ## [0.4.0](https://github.com/moisesmorillo/obsidian-ai-bridge/compare/worker-v0.3.0...worker-v0.4.0) (2026-11-08)
 
 

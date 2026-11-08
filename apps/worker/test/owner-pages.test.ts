@@ -15,23 +15,34 @@ import { OWNER_CONSOLE_CSS } from "@worker/transport/owner-pages/tokens.css";
 import { describe, expect, it } from "vitest";
 
 describe("owner page rendering", () => {
-	it("contains the approved palette and responsive phone layout", () => {
-		for (const token of [
-			"--bg:#080506",
-			"--wine-900:#1A0810",
-			"--wine-700:#4E0E1F",
-			"--wine-500:#962042",
-			"--wine-300:#F29AB4",
-			"--copper:#E08A5F",
-			"--copper-light:#F0AB8A",
-			"--copper-dark:#B86038",
-			"--text:#F2ECEA",
-			"--text-strong:#FAF4F0",
-			"--text-soft:#D2BDC1",
-			"--text-muted:#AE8F96",
-			"--danger:#FF9B9B",
-		])
-			expect(OWNER_CONSOLE_CSS).toContain(token);
+	it("uses the approved palette only in root tokens and keeps responsive layout", () => {
+		const root = OWNER_CONSOLE_CSS.match(/:root\{([^}]*)\}/)?.[1] ?? "";
+		const tokens = Object.fromEntries(
+			[...root.matchAll(/(--[\w-]+):(#(?:[\da-fA-F]{3}){1,2})/g)].map(
+				([, name, value]) => [name, value],
+			),
+		);
+		expect(tokens).toMatchObject({
+			"--base": "#191724",
+			"--surface": "#1f1d2e",
+			"--overlay": "#26233a",
+			"--muted": "#6e6a86",
+			"--subtle": "#908caa",
+			"--text": "#e0def4",
+			"--love": "#eb6f92",
+			"--gold": "#f6c177",
+			"--rose": "#ebbcba",
+			"--pine": "#31748f",
+			"--foam": "#9ccfd8",
+			"--iris": "#c4a7e7",
+			"--highlight-low": "#21202e",
+			"--highlight-med": "#403d52",
+			"--highlight-high": "#524f67",
+		});
+		const outsideRoot = OWNER_CONSOLE_CSS.replace(/:root\{[^}]*\}/, "");
+		expect(outsideRoot).not.toMatch(/#[\da-fA-F]{3,8}\b|rgba?\(/);
+		expect(outsideRoot).not.toContain("radial-gradient");
+		expect(outsideRoot).not.toContain("background-attachment:fixed");
 		expect(OWNER_CONSOLE_CSS).toContain(
 			".owner-layout{display:flex;flex-wrap:wrap",
 		);
@@ -43,6 +54,69 @@ describe("owner page rendering", () => {
 		expect(OWNER_CONSOLE_CSS).toContain("padding:20px 22px");
 		expect(OWNER_CONSOLE_CSS).toContain("padding:14px 18px");
 		expect(OWNER_CONSOLE_CSS).toContain("grid-template-columns:1fr");
+	});
+
+	it("maps semantic state classes to the approved palette", () => {
+		expect(OWNER_CONSOLE_CSS).toContain(
+			".chip-stale{color:var(--gold);border-color:color-mix(in srgb,var(--gold) 45%,transparent)}",
+		);
+		expect(OWNER_CONSOLE_CSS).toContain(
+			".chip-fresh{color:var(--foam);border-color:var(--foam)}",
+		);
+	});
+
+	it("protects iris agent text from the later stat-value color rule", () => {
+		expect(OWNER_CONSOLE_CSS).toContain(
+			".stat-value.kind-agent{color:var(--iris)}",
+		);
+	});
+
+	it("applies surface and overlay backgrounds to the sidebar and about panel", () => {
+		expect(OWNER_CONSOLE_CSS).toContain(
+			".owner-sidebar{flex:1 1 240px;max-width:256px;padding:24px 0 24px 24px;background:var(--surface)}",
+		);
+		expect(OWNER_CONSOLE_CSS).toContain(
+			".about-panel{background:var(--overlay)}",
+		);
+	});
+
+	it("meets WCAG contrast targets from declared palette tokens", () => {
+		const root = OWNER_CONSOLE_CSS.match(/:root\{([^}]*)\}/)?.[1] ?? "";
+		const tokens = Object.fromEntries(
+			[...root.matchAll(/(--[\w-]+):(#(?:[\da-fA-F]{3}){1,2})/g)].map(
+				([, name, value]) => [name, value],
+			),
+		);
+		/** Compute relative luminance from a declared six-digit CSS token. */
+		const luminance = (hex: string): number => {
+			const channels = hex
+				.match(/[\da-fA-F]{2}/g)
+				?.map((part) => Number.parseInt(part, 16) / 255);
+			if (channels?.length !== 3) throw new Error(`Invalid color ${hex}`);
+			const linear = channels.map((channel) =>
+				channel <= 0.04045
+					? channel / 12.92
+					: ((channel + 0.055) / 1.055) ** 2.4,
+			);
+			return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2];
+		};
+		/** Compute the WCAG contrast ratio for two parsed palette tokens. */
+		const contrast = (foreground: string, background: string): number => {
+			const values = [luminance(foreground), luminance(background)].sort(
+				(a, b) => b - a,
+			);
+			return (values[0] + 0.05) / (values[1] + 0.05);
+		};
+		for (const background of ["--base", "--surface", "--overlay"])
+			expect(
+				contrast(tokens["--text"], tokens[background]),
+			).toBeGreaterThanOrEqual(4.5);
+		expect(
+			contrast(tokens["--subtle"], tokens["--surface"]),
+		).toBeGreaterThanOrEqual(4.5);
+		expect(contrast(tokens["--base"], tokens["--rose"])).toBeGreaterThanOrEqual(
+			4.5,
+		);
 	});
 
 	it("renders escaped service metadata in the shared owner shell", () => {
@@ -232,6 +306,33 @@ describe("owner page rendering", () => {
 		expect(grantsHtml).toContain("Clients / Display name");
 		expect(grantsHtml).toContain("2026-11-08 00:00 UTC");
 		expect(grantsHtml).toContain("Unknown</td>");
+		expect(grantsHtml).toContain('<p class="stat-value">Unknown</p>');
+		const agentHtml = renderGrantsPage({
+			clientId: "agent-id",
+			clientName: "Agent client",
+			clientKind: "agent",
+			activeGrantCount: 0,
+			cleanupPendingCount: 0,
+			encodedClientId: "agent-id",
+			nextCursor: null,
+			encodedCursor: null,
+			grants: [],
+		});
+		const deviceHtml = renderGrantsPage({
+			clientId: "device-id",
+			clientName: "Device client",
+			clientKind: "device",
+			activeGrantCount: 0,
+			cleanupPendingCount: 0,
+			encodedClientId: "device-id",
+			nextCursor: null,
+			encodedCursor: null,
+			grants: [],
+		});
+		expect(agentHtml).toContain('<p class="stat-value kind-agent">agent</p>');
+		expect(deviceHtml).toContain(
+			'<p class="stat-value kind-device">device</p>',
+		);
 		expect(grantsHtml).toMatchSnapshot();
 		expect(
 			renderGrantsPage({
@@ -249,7 +350,7 @@ describe("owner page rendering", () => {
 	});
 
 	it("renders measurements with explicit unknowns and preserved measurement facts", () => {
-		const html = renderMeasurementsPage({
+		const view: Parameters<typeof renderMeasurementsPage>[0] = {
 			status: "observed",
 			coverage: "partial",
 			day_start: Date.UTC(2026, 10, 7),
@@ -298,9 +399,15 @@ describe("owner page rendering", () => {
 				expired_count: 1,
 				deadline_ms: 1000,
 			},
-		});
+		};
+		const html = renderMeasurementsPage(view);
 		expect(html).toContain("Unknown (storage_error)");
-		expect(html).toContain("Stale");
+		expect(html).toContain('<span class="chip chip-stale">Stale</span>');
+		const freshHtml = renderMeasurementsPage({
+			...view,
+			requests: { ...view.requests, stale: false },
+		});
+		expect(freshHtml).toContain('<span class="chip chip-fresh">Fresh</span>');
 		expect(html).toContain("3.2 MB");
 		expect(html).toContain("156 ms");
 		expect(html).toContain("About these numbers");
@@ -392,20 +499,23 @@ describe("owner page rendering", () => {
 		["idle", "Inventory"],
 		["marking", "Mark"],
 		["deleting", "Delete"],
-	] as const)("highlights %s blob cleanup phase", (phase, step) => {
-		const html = renderBlobGcPage({
-			csrf: "phase-csrf",
-			preview: null,
-			status: {
-				phase,
-				marked_count: 0,
-				marked_bytes: 0,
-				delete_state: "idle",
-				failure: null,
-			},
-		});
-		expect(html).toContain(
-			`<li class="collection-step step-current" aria-current="step">${step}</li>`,
-		);
-	});
+	] as const)(
+		"highlights %s blob cleanup phase",
+		(phase: "idle" | "marking" | "deleting", step: string) => {
+			const html = renderBlobGcPage({
+				csrf: "phase-csrf",
+				preview: null,
+				status: {
+					phase,
+					marked_count: 0,
+					marked_bytes: 0,
+					delete_state: "idle",
+					failure: null,
+				},
+			});
+			expect(html).toContain(
+				`<li class="collection-step step-current" aria-current="step">${step}</li>`,
+			);
+		},
+	);
 });

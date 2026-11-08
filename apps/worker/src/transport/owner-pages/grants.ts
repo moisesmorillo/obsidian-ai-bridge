@@ -26,6 +26,12 @@ export interface GrantsPageViewModel {
 
 /** Render one grants page without changing registry state or eligibility rules. */
 export function renderGrantsPage(view: GrantsPageViewModel): string {
+	const kindClass =
+		view.clientKind === "agent"
+			? " kind-agent"
+			: view.clientKind === "device"
+				? " kind-device"
+				: "";
 	const rows = view.grants
 		.map((grant) => {
 			const state = grant.revoked ? "Revoked" : "Active";
@@ -40,6 +46,6 @@ export function renderGrantsPage(view: GrantsPageViewModel): string {
 	const next = view.nextCursor
 		? `<a href="/owner/clients/${view.encodedClientId}/grants?cursor=${view.encodedCursor}">Next page</a>`
 		: "";
-	const content = `<div><p class="breadcrumb">Clients / ${view.clientName}</p><h1>Client grants</h1></div><section class="identity-grid" aria-label="Client identity"><article class="card"><p class="label">Client id</p><p class="stat-value">${view.clientId}</p></article><article class="card"><p class="label">Kind</p><p class="stat-value">${view.clientKind}</p></article><article class="card"><p class="label">Active grants</p><p class="stat-value">${view.activeGrantCount === null ? "Unknown" : formatCount(view.activeGrantCount)}</p></article><article class="card"><p class="label">Cleanup pending</p><p class="stat-value">${view.cleanupPendingCount === null ? "Unknown" : formatCount(view.cleanupPendingCount)}</p></article></section><section class="panel"><div class="table-scroll"><table><thead><tr><th>Grant</th><th>Granted (UTC)</th><th>State</th><th>Cleanup</th></tr></thead><tbody>${rows}</tbody></table></div>${rows ? "" : "<p>No grants.</p>"}</section>${next}`;
+	const content = `<div><p class="breadcrumb">Clients / ${view.clientName}</p><h1>Client grants</h1></div><section class="identity-grid" aria-label="Client identity"><article class="card"><p class="label">Client id</p><p class="stat-value">${view.clientId}</p></article><article class="card"><p class="label">Kind</p><p class="stat-value${kindClass}">${view.clientKind}</p></article><article class="card"><p class="label">Active grants</p><p class="stat-value">${view.activeGrantCount === null ? "Unknown" : formatCount(view.activeGrantCount)}</p></article><article class="card"><p class="label">Cleanup pending</p><p class="stat-value">${view.cleanupPendingCount === null ? "Unknown" : formatCount(view.cleanupPendingCount)}</p></article></section><section class="panel"><div class="table-scroll"><table><thead><tr><th>Grant</th><th>Granted (UTC)</th><th>State</th><th>Cleanup</th></tr></thead><tbody>${rows}</tbody></table></div>${rows ? "" : "<p>No grants.</p>"}</section>${next}`;
 	return renderOwnerShell("grants", content, view.service);
 }

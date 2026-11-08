@@ -2,6 +2,7 @@ import { env, runInDurableObject, SELF } from "cloudflare:test";
 import { MEASUREMENT_LIMITS } from "@obsidian-ai-bridge/protocol";
 import type { ClientRegistryGateway } from "@worker/application/clients";
 import { createOwnerHandler } from "@worker/transport/owner";
+import { WORKER_VERSION } from "@worker/transport/owner-pages/version";
 import { exportJWK, generateKeyPair, SignJWT } from "jose";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -194,6 +195,9 @@ describe("production owner console", () => {
 		expect(response.headers.get("content-type")).toContain("text/html");
 		const html = await response.text();
 		expect(html).toContain("/owner/measurements?format=html");
+		expect(html).toContain(
+			`<span class="label">Worker</span> ${WORKER_VERSION}</p>`,
+		);
 		const measurements = await SELF.fetch(
 			"https://service.test/owner/measurements",
 			{ headers: { "Cf-Access-Jwt-Assertion": assertion } },

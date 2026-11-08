@@ -15,23 +15,34 @@ import { OWNER_CONSOLE_CSS } from "@worker/transport/owner-pages/tokens.css";
 import { describe, expect, it } from "vitest";
 
 describe("owner page rendering", () => {
-	it("contains the approved palette and responsive phone layout", () => {
-		for (const token of [
-			"--bg:#080506",
-			"--wine-900:#1A0810",
-			"--wine-700:#4E0E1F",
-			"--wine-500:#962042",
-			"--wine-300:#F29AB4",
-			"--copper:#E08A5F",
-			"--copper-light:#F0AB8A",
-			"--copper-dark:#B86038",
-			"--text:#F2ECEA",
-			"--text-strong:#FAF4F0",
-			"--text-soft:#D2BDC1",
-			"--text-muted:#AE8F96",
-			"--danger:#FF9B9B",
-		])
-			expect(OWNER_CONSOLE_CSS).toContain(token);
+	it("uses the approved palette only in root tokens and keeps responsive layout", () => {
+		const root = OWNER_CONSOLE_CSS.match(/:root\{([^}]*)\}/)?.[1] ?? "";
+		const tokens = Object.fromEntries(
+			[...root.matchAll(/(--[\w-]+):(#(?:[\da-fA-F]{3}){1,2})/g)].map(
+				([, name, value]) => [name, value],
+			),
+		);
+		expect(tokens).toMatchObject({
+			"--base": "#191724",
+			"--surface": "#1f1d2e",
+			"--overlay": "#26233a",
+			"--muted": "#6e6a86",
+			"--subtle": "#908caa",
+			"--text": "#e0def4",
+			"--love": "#eb6f92",
+			"--gold": "#f6c177",
+			"--rose": "#ebbcba",
+			"--pine": "#31748f",
+			"--foam": "#9ccfd8",
+			"--iris": "#c4a7e7",
+			"--highlight-low": "#21202e",
+			"--highlight-med": "#403d52",
+			"--highlight-high": "#524f67",
+		});
+		const outsideRoot = OWNER_CONSOLE_CSS.replace(/:root\{[^}]*\}/, "");
+		expect(outsideRoot).not.toMatch(/#[\da-fA-F]{3,8}\b|rgba?\(/);
+		expect(outsideRoot).not.toContain("radial-gradient");
+		expect(outsideRoot).not.toContain("background-attachment:fixed");
 		expect(OWNER_CONSOLE_CSS).toContain(
 			".owner-layout{display:flex;flex-wrap:wrap",
 		);
@@ -43,6 +54,46 @@ describe("owner page rendering", () => {
 		expect(OWNER_CONSOLE_CSS).toContain("padding:20px 22px");
 		expect(OWNER_CONSOLE_CSS).toContain("padding:14px 18px");
 		expect(OWNER_CONSOLE_CSS).toContain("grid-template-columns:1fr");
+	});
+
+	it("meets WCAG contrast targets from declared palette tokens", () => {
+		const root = OWNER_CONSOLE_CSS.match(/:root\{([^}]*)\}/)?.[1] ?? "";
+		const tokens = Object.fromEntries(
+			[...root.matchAll(/(--[\w-]+):(#(?:[\da-fA-F]{3}){1,2})/g)].map(
+				([, name, value]) => [name, value],
+			),
+		);
+		/** Compute relative luminance from a declared six-digit CSS token. */
+		const luminance = (hex: string): number => {
+			const channels = hex
+				.match(/[\da-fA-F]{2}/g)
+				?.map((part) => Number.parseInt(part, 16) / 255);
+			if (!channels || channels.length !== 3)
+				throw new Error(`Invalid color ${hex}`);
+			const linear = channels.map((channel) =>
+				channel <= 0.04045
+					? channel / 12.92
+					: ((channel + 0.055) / 1.055) ** 2.4,
+			);
+			return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2];
+		};
+		/** Compute the WCAG contrast ratio for two parsed palette tokens. */
+		const contrast = (foreground: string, background: string): number => {
+			const values = [luminance(foreground), luminance(background)].sort(
+				(a, b) => b - a,
+			);
+			return (values[0] + 0.05) / (values[1] + 0.05);
+		};
+		for (const background of ["--base", "--surface", "--overlay"])
+			expect(
+				contrast(tokens["--text"], tokens[background]),
+			).toBeGreaterThanOrEqual(4.5);
+		expect(
+			contrast(tokens["--subtle"], tokens["--surface"]),
+		).toBeGreaterThanOrEqual(4.5);
+		expect(contrast(tokens["--base"], tokens["--rose"])).toBeGreaterThanOrEqual(
+			4.5,
+		);
 	});
 
 	it("renders escaped service metadata in the shared owner shell", () => {
@@ -392,7 +443,10 @@ describe("owner page rendering", () => {
 		["idle", "Inventory"],
 		["marking", "Mark"],
 		["deleting", "Delete"],
-	] as const)("highlights %s blob cleanup phase", (phase, step) => {
+	] as const)("highlights %s blob cleanup phase", (phase:
+		| "idle"
+		| "marking"
+		| "deleting", step: string) => {
 		const html = renderBlobGcPage({
 			csrf: "phase-csrf",
 			preview: null,

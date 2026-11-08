@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-11-08T02:45:00Z'
-updated_date: '2026-11-08T03:02:00Z'
+updated_date: '2026-11-08T03:09:00Z'
 labels:
   - worker
   - design
@@ -49,6 +49,9 @@ The owner supplied the exact palette and mappings in brief S15. No Moon or Dawn 
 
 ## Review focus
 Check consent CSS overrides, 12px meaningful labels, attention and fresh chips, agent kind text, and snapshot-only color changes. No external requests, web fonts, inline event handlers, or Cloudflare changes.
+
+## Owner authorization update
+The supervisor permits class-only attributes in measurements.ts, clients.ts, grants.ts, and consent.ts. Use chip-fresh, chip-stale, kind-agent, and kind-device only where the rendered value supports that meaning. Preserve all other markup and behavior. Install dependencies with bun install --frozen-lockfile before checks. Correct useOptionalChain and formatting through bun run lint. Add failing semantic color tests, apply gold to Stale, foam to Fresh, and iris to agent kind. Update snapshots and token documentation. Run contrast tests, bun run check, and Worker preflight. Get one whole-branch review. Mark PR 126 ready, close OAB-49 with evidence notes, remove the worktree, report, and stop.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -69,4 +72,14 @@ Added regression assertions before implementation fixes. No tests ran for this c
 For this correction, changed-file Biome checks passed for tokens.css.ts, consent.ts, owner-pages.test.ts, and consent-page.test.ts. `bun run docs:check` passed. Snapshot comparison confirmed consent HTML outside its stylesheet stayed unchanged. `git diff --check` passed. The full check, focused tests, and Worker preflight remain incomplete.
 
 Final review: whole-branch review examined 7c750b2 against main. Corrective review examined 7c750b2..3d33a93. Findings 1, 2, and 4 are fixed: consent snapshot matches styles with unchanged non-style HTML, Deny interaction paint stays secondary, and sidebar/about-panel backgrounds match the brief. Semantic selectors and incomplete validation remain open. Review permits draft publication only, not merge approval. The owner blocker rule governs publication. Task remains In Progress.
+
+Supervisor-authorized semantic selector completion: finding 3 is now closed under the explicit markup-class authorization. measurements.ts assigns chip-stale or chip-fresh from the existing stale boolean. grants.ts adds kind-agent or kind-device only for the matching lowercase values. Unknown remains unclassed. Shared CSS maps stale to gold, fresh to foam, and agent kind to iris. clients.ts and consent.ts have no kind or freshness value that supports these classes, so their markup stays unchanged. F2 token documentation now describes all three applied mappings. No copy, routes, layout, forms, CSRF, headers, or behavior changed.
+
+TDD evidence: RED command `cd apps/worker && ../../node_modules/.bin/vitest run --config vitest.config.ts test/owner-pages.test.ts test/consent-page.test.ts` exited 1 with 6 failures and 12 passes. The new agent/device and fresh/stale class assertions failed as expected. The same command after fixes and deliberate snapshot updates passed 2 test files and 19 tests. Contrast assertions ran in owner-pages.test.ts, and consent-page.test.ts ran in the same focused suite. An intermediate focused run found five stale owner-page snapshots. The `--update` run updated the affected snapshots and passed 19 tests.
+
+Lint: First `bun run lint` found one useOptionalChain warning and formatter changes in owner-pages.test.ts. Both were corrected. The next `bun run lint` passed across 320 files with no diagnostics. Changed-file Biome checks also passed.
+
+Checks: `bun run docs:check` passed. `bun run check` passed. It reported tooling 9 files/100 tests, protocol 19/314, plugin 30/844 passed and 1 skipped, Worker main 54/772, Worker HTTP 9/132, Worker F2 10/142. Worker dry-run builds passed. `bun run --filter '@obsidian-ai-bridge/worker' preflight` passed. No live service call or deployment was run.
+
+Historical review closure: consent snapshot, Deny interaction paint, sidebar/about backgrounds, and gold/foam/iris token documentation findings remain fixed. The previously open semantic selector finding is fixed by this authorization. Validation blockers from missing Wrangler and root lint diagnostics are superseded: dependencies are installed and current checks pass. OAB-49 remains In Progress as instructed.
 <!-- SECTION:NOTES:END -->

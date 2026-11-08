@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-11-07T21:08:00Z'
-updated_date: '2026-11-07T22:03:00Z'
+updated_date: '2026-11-07T22:26:00Z'
 labels:
   - worker
   - ui
@@ -23,8 +23,8 @@ Owner order 2026-11-07: restyle every Worker HTML page with the approved design 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Phase 1: a tokens stylesheet module exists with the approved palette and is served inline on every owner page. Clients and grants pages render with the new shell. Render functions are pure and covered by HTML snapshot tests. Existing owner tests stay green.
-- [ ] #2 Phase 2: measurements, exports and blob-gc pages use the shell and components. Numbers, links, forms and CSRF behave as before.
+- [x] #1 Phase 1: a tokens stylesheet module exists with the approved palette and is served inline on every owner page. Clients and grants pages render with the new shell. Render functions are pure and covered by HTML snapshot tests. Existing owner tests stay green.
+- [x] #2 Phase 2: measurements, exports and blob-gc pages use the shell and components. Numbers, links, forms and CSRF behave as before.
 - [x] #3 Phase 3: the consent page uses the same tokens and a centered card. Approve and Deny keep their names and semantics.
 - [x] #4 Phone width: the sidebar becomes a horizontal chip bar, cards stack, tables scroll horizontally. Checked with a DOM test at 390px or an equivalent assertion on the CSS.
 - [x] #5 No new dependency, no external request from the pages, no inline event handlers. bun run check and Worker preflight green.
@@ -80,6 +80,34 @@ Owner decisions: The owner skips Plannotator. Reuse OWNER_CONSOLE_CSS without ed
 - [ ] Rebase onto origin/main. Push one PR with the mandated first body line. Remove the worktree and report the URL.
 Review focus: HTML escaping, exact form contracts, no invented scope descriptions or timestamps, token reuse, narrow edit boundaries, and phone overflow.
 Allowed changes: oauth.ts, new owner-pages/consent.ts, consent tests and snapshots, and this task through the CLI. Do not edit other owner pages, workflows, or plugin tooling.
+
+## Phase 2 implementation plan
+Goal: Restyle measurements, exports, and blob cleanup without behavior changes.
+Architecture: Pure render functions consume escaped view models. Handlers keep authorization, validation, escaping, CSRF, response headers, and gateway calls.
+Tech stack: Existing TypeScript, CSS string, Vitest, and snapshots.
+Spec: Owner brief S12-console-phase2.md, COMMON-NIGHT.md, S10-console-foundation.md, docs/spec.md, and docs/api/f2.md.
+
+### Owner decisions
+The owner skips Plannotator and authorizes implementation and publication without another gate. Keep tokens unchanged. Extend shell section selection and shared component rules only as needed. No dependencies, external requests, live calls, vault access, or Cloudflare changes. Keep OAB-47 In Progress.
+Default: Derive export cards from listed completed snapshots. Calculate the next UTC hour from server time. Do not invent unavailable inventory or storage capacities. Unknown measurements show Unknown. Unavailable inventory stays visibly unavailable. Bars show observations without invented capacity percentages.
+
+### Task 1: Complete the three phase 2 pages
+Files: owner-pages/{measurements.ts,exports.ts,blob-gc.ts,shell.ts,tokens.css.ts}, transport/owner.ts, test/owner-pages.test.ts and its snapshots. No OAuth, workflows, or plugin changes.
+- [ ] Add snapshots and form, CSRF, download URL, unknown, stale, failed, empty, and unavailable-state assertions. Run tests before implementation and record RED.
+- [ ] Add documented renderMeasurementsPage, renderExportsPage, and renderBlobGcPage functions with escaped view models. Extend active shell sections. Preserve existing measurement facts and safety messages.
+- [ ] Add stat cards, storage bars, four slot segments, export tables, collection steps, and safety panels with existing tokens.
+- [ ] Replace only the three HTML render paths in owner.ts. Keep routes, JSON, statuses, headers, POST logic, and CSRF unchanged.
+- [ ] Run focused page and F2 owner tests, docs:check, bun run check, and Worker preflight. Commit.
+
+### Review focus
+Preserve measurement coverage, windows, latency boundary, retained samples, and isolate limitations. Check escaping and encoded download links. Check empty and failed exports. Check all collection phases, delete claims, failures, unavailable inventory, and safety text. Do not imply unknown capacity is zero.
+
+### Acceptance and publication
+- [ ] Independent task review with code-review skill and TypeScript profile. Resolve findings.
+- [ ] Rebase on origin/main. Complete a whole-branch review on the session model.
+- [ ] Record revision, documentation scope, structural candidates, actual checks, limits, and finding closures through the CLI. Keep the parent task In Progress.
+- [ ] Push and open one PR against main. First body line: OAB-47 phase 2: visual only, no behavior change.
+- [ ] Remove the worktree, report the PR URL, and stop.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -100,4 +128,28 @@ Phase 3 implementation: Added the pure consent renderer and replaced only OAuth 
 Branch review F1 closure: Kept the Approve button first in DOM order so Enter in the client-name field submits `decision=approve`. CSS order places Deny left of Approve on desktop. The mobile column places Deny above Approve. Updated the consent snapshot. RED: `cd apps/worker && bunx vitest run --config vitest.config.ts test/consent-page.test.ts` failed because the rendered button order was `deny`, then `approve`, instead of the required `approve`, then `deny`. GREEN: `cd apps/worker && bunx vitest run --config vitest.config.ts test/consent-page.test.ts test/owner-pages.test.ts` passed 8 tests. `cd apps/worker && bunx vitest run --config vitest.f2.config.ts test/f2/oauth.test.ts` passed 32 tests. The form contract test now asserts submit order, exact form fields, desktop CSS order, and mobile stack order. `bun run docs:check` passed. `bun run check` passed. Worker unit tests passed 761/761, HTTP passed 132/132, and F2 passed 142/142. Protocol passed 314/314, tooling passed 101/101, and plugin passed 838 with 1 skipped. Worker preflight passed with exit 0. Worktree had no unrelated lockfile change. OAB-47 remains In Progress.
 
 Phase 3 review closure: task reviewer approved 2e60be5. Whole-branch review examined 2e60be5 against da71681 and found F1: reversed DOM button order changed implicit Enter submission to denial. Fix d4308e6 restores Approve first in DOM order and uses CSS for visual order. A failing default-submit test preceded the fix. Scoped review closed F1 at d4308e6 with direct DOM-order, CSS, and snapshot evidence. No finding remains open. Documentation scope: consent view model, escaped fields, optional time, and renderer contract. Structural assessment: consent.ts is cohesive presentation code. oauth.ts remains mixed but low-risk, with unchanged provider state transitions. Final checks: focused render 8/8, OAuth 32/32, docs:check, bun run check, and Worker preflight passed. Review limits: no browser visual test, contrast measurement, live call, deployment, or vault access. AC3 is complete. Task stays In Progress as instructed. Unrelated generated lockfile metadata remains in a named Git stash outside this branch.
+
+Scope: OAB-47 phase 2 follows S12. Tokens remain unchanged. No dependency, live service call, Cloudflare change, deployment, or vault access occurred. OAB-47 remains In Progress.
+
+Phase 1 remains complete on the merged base. Its clients and grants renderers, shell, CSS, snapshot tests, review closures, and validation evidence remain as previously recorded.
+
+Phase 2 adds pure escaped-view-model renderers for measurements, exports, and blob cleanup. The owner handler changes only these HTML render paths. Routes, statuses, response headers, JSON output, POST behavior, CSRF fields, and form actions remain unchanged. Measurement facts and safety statements remain visible. Unknown values do not display as zero. CSS token values remain unchanged.
+
+RED: Added imports and tests, then ran bun test apps/worker/test/owner-pages.test.ts with a recorded expected nonzero exit. It failed with exit 1 because the three renderer modules did not exist. GREEN: bun test apps/worker/test/owner-pages.test.ts passed 8 tests and 6 snapshots. The F2 suite passed 4 tests with the configured Vitest runner. The initial F2 baseline attempt used Bun and failed to resolve cloudflare:test.
+
+Validation: bun run docs:check passed. bun run check passed. It included lint, docs, all type checks, 761 Worker tests, 142 F2 tests, 132 HTTP tests, 838 plugin tests with 1 skipped, 314 protocol tests, 101 tooling tests, and dry-run builds. Worker preflight passed with exit 0. Existing Worker test runs printed expected cancellation and injected SQLite error diagnostics.
+
+Self-review scope: Reviewed the phase 2 working-tree diff against its base, all new declarations, renderer call sites, escaping boundaries, response behavior, measurement facts, export actions and download links, blob safety statements, and token changes. No actionable finding remains.
+
+Limits: Blob status exposes idle, marking, and deleting, with no separate clear phase. Idle highlights Inventory because the GET also runs preview. Clear stays visible without a false phase claim. The inventory schema does not report page counts, so the page states that explicitly. No browser review or live request occurred.
+
+Corrective review RED: focused owner-page Vitest tests fail on the requested Unknown timestamp labels and honest R2 binding label. Expected phase tests pass for all three renderer states. No route, authorization, or Bun lock changes made.
+
+Corrective review GREEN: owner page Vitest suite passed 11 tests. F2 owner Vitest suite passed 4 tests after its rendered Unknown expectation changed. The measurements renderer displays Unknown for absent timestamps. Tests preserve Unknown (storage_error) and measurement safety text. Blob renderer tests cover unavailable dry-run text and the Unknown (R2_BUCKET binding) label. Direct phase tests cover idle to Inventory, marking to Mark, and deleting to Delete. Handler inspection confirms null preview or status still returns 403 Forbidden. The pure renderer still supports null preview, but the route does not expose that state. This route limitation preserves the owner authorization contract. The handler does not claim a physical R2 bucket name or add a config field. docs:check passed. bun run check passed, including 764 Worker tests, 142 F2 tests, 132 HTTP tests, 838 plugin tests with 1 skipped, 314 protocol tests, 101 tooling tests, type checks, lint, and dry-run builds. Worker preflight passed. Corrective self-review confirmed unchanged 403 handling, routes, headers, POST, and CSRF behavior. No Cloudflare config or bun.lock changes.
+
+Phase 2 final review: code-review task review examined ec06881. Whole-branch review examined 14cff5625f2502a0e1f7072ecd8c00d0a890e8fc against main da71681 and returned APPROVE WITH NOTES. No blocking finding remains. F1 disposition: retain the existing null-result 403 authorization contract. The pure renderer supports unavailable inventory, but the current gateway has no distinct listing-unavailable result. This is a presentation limit under the owner order to preserve routes and statuses, not a new authorization defect. A future gateway contract change can expose this state. F2 fixed: the handler shows Unknown (R2_BUCKET binding), with a renderer assertion. Phase tests cover idle, marking, and deleting. The protocol has no separate Clear phase. Documentation audit covered three view models, three render functions, two measurement helpers, shell, CSS constant, and changed handler mappings. No material declaration gap remains. Structural candidates: owner.ts stays mixed but low-risk. Renderers, shell, and stylesheet stay cohesive. Durable state policy stays in existing owners. Validation: worker output confirms 11 focused page tests, 4 F2 owner tests, docs:check, bun run check, and Worker preflight passed. Parent inspected the recorded check output. The static reviewer ran git diff --check successfully but did not repeat tests. No browser, contrast measurement, live request, hosted CI proof, deployment, or vault access. Restored detailed phase 1 notes. Unrelated setup lock metadata remains in a named Git stash and does not ship. AC1 and AC2 now have render and regression evidence. Keep OAB-47 In Progress for phase 3.
+
+Rebase integration after be8cd0c: the consent renderer still embeds OWNER_CONSOLE_CSS. The focused consent test reproduced one snapshot mismatch. Snapshot comparison confirms identical markup outside style and identical consent-specific CSS. Only the shared OWNER_CONSOLE_CSS portion changed. Updated only consent-page.test.ts.snap for the shared phase 2 stylesheet. No product source, consent test, token, OAuth, or other snapshot files changed. The parent range-diff confirms both product commits remain unchanged. OAB-47 remains In Progress. Focused consent and owner-page suites passed 14 tests. bun run check passed, including 767 Worker tests, 142 F2 tests, 132 HTTP tests, 838 plugin tests with 1 skipped, 314 protocol tests, 101 tooling tests, lint, type checks, documentation checks, and dry-run builds. Worker preflight passed with exit 0. Snapshot delta validation passed. No external requests occurred.
+
+Scoped integration review approved 5bacd50ea1d88b5eff1cf76599497ed5148d0c79. Only the consent snapshot and task notes changed. Consent markup and consent-specific CSS remain identical. Shared CSS matches the reviewed phase 2 additions. Product commits remain unchanged after rebase. No new finding remains. Focused consent and owner page tests passed 14 tests. The worker ran bun run check and Worker preflight successfully after the snapshot fix. Phase 3 merged through PR 115. OAB-47 stays In Progress under the explicit owner order.
 <!-- SECTION:NOTES:END -->

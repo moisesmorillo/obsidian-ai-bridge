@@ -2,7 +2,7 @@ import { OWNER_CONSOLE_CSS } from "@worker/transport/owner-pages/tokens.css";
 
 /** Build the shared owner frame and mark the active page or containing section. */
 export function renderOwnerShell(
-	active: "clients" | "grants",
+	active: "clients" | "grants" | "measurements" | "exports" | "blob-gc",
 	content: string,
 ): string {
 	const links = [

@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-11-07T21:08:00Z'
-updated_date: '2026-11-08T01:08:00Z'
+updated_date: '2026-11-08T01:24:00Z'
 labels:
   - worker
   - ui
@@ -216,4 +216,6 @@ Phase 4 final review closure: Task review examined 5c58809. Whole-branch review 
 Documentation scope: changed page view models, format units, UTC formatting, shell metadata authority and escaping, build-time version, negotiation helpers, and internal handler metadata lookup. Structural candidates: owner.ts remains mixed but low-risk. Existing application and SQLite owners retain state and mutation policy. Renderers, shell, CSS, version module, and formatters keep presentation ownership. Bounded metadata lookup examines at most 32 client pages. Missing metadata stays Unknown.
 Final source validation at 36e9b32: page tests 12/12 and owner tests 4/4 passed. bun run docs:check, bun run check, Worker preflight, and diff check passed. Full suites: Worker unit 768, HTTP 132, F2 142, protocol 314, tooling 100, plugin 844 passed and 1 skipped. Total 2300 passed, 1 skipped, 0 failed. Lint, type checks, documentation checks, and dry-run builds passed. Parent inspected raw worker output. Rebase on unchanged origin/main changed nothing. Reviewer checks did not repeat worker suites.
 Limits: No browser visual test, contrast measurement, live call, vault access, deployment, Cloudflare change, or external page request occurred. Client kind remains Unknown because canonical registry types lack that fact. No current handler has an authoritative current vault epoch, so the shell omits it. Summary cards label listed-page scope. Historical export epochs do not claim the current epoch. Keep OAB-47 In Progress under the owner order. Publication follows these reviews.
+
+2026-11-08 01:40 UTC supervisor: phase 4 merged as PR #121, released as worker 0.4.0 and live. Main Check failed after the release because owner-pages tests held the literal 0.3.0 version. Fix branch fix/owner-shell-version injects workerVersion through OwnerServiceMetadata. Exception noted: the fix PR was opened by the supervisor outside a pi session.
 <!-- SECTION:NOTES:END -->

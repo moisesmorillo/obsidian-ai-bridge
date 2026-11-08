@@ -1,11 +1,11 @@
 ---
 id: OAB-47
 title: 'Owner console redesign: Bordeaux and copper'
-status: In Progress
+status: Done
 assignee:
   - '@pi'
 created_date: '2026-11-07T21:08:00Z'
-updated_date: '2026-11-08T01:24:00Z'
+updated_date: '2026-11-08T02:38:00Z'
 labels:
   - worker
   - ui
@@ -218,4 +218,6 @@ Final source validation at 36e9b32: page tests 12/12 and owner tests 4/4 passed.
 Limits: No browser visual test, contrast measurement, live call, vault access, deployment, Cloudflare change, or external page request occurred. Client kind remains Unknown because canonical registry types lack that fact. No current handler has an authoritative current vault epoch, so the shell omits it. Summary cards label listed-page scope. Historical export epochs do not claim the current epoch. Keep OAB-47 In Progress under the owner order. Publication follows these reviews.
 
 2026-11-08 01:40 UTC supervisor: phase 4 merged as PR #121, released as worker 0.4.0 and live. Main Check failed after the release because owner-pages tests held the literal 0.3.0 version. Fix branch fix/owner-shell-version injects workerVersion through OwnerServiceMetadata. Exception noted: the fix PR was opened by the supervisor outside a pi session.
+
+Closed 2026-11-08 02:30 UTC by the supervisor under the standing authorization. Four phases merged: #113, #115, #116, #121, plus version fix #123. Live as worker 0.4.1. Owner reviewed the live console and accepted it. Known limits: client kind renders Unknown because the registry stores no kind field. The shell omits the vault epoch because handlers have no authoritative value. Both are candidates for a later task if the owner wants them.
 <!-- SECTION:NOTES:END -->

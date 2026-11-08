@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-11-08T02:45:00Z'
-updated_date: '2026-11-08T03:00:00Z'
+updated_date: '2026-11-08T03:02:00Z'
 labels:
   - worker
   - design
@@ -67,4 +67,6 @@ Safe partial palette work and whole-branch review corrections are committed. OAB
 Added regression assertions before implementation fixes. No tests ran for this correction. Earlier focused command `bun run --filter '@obsidian-ai-bridge/worker' test -- owner-pages.test.ts` stopped before Vitest because apps/worker/node_modules/wrangler/bin/wrangler.js was missing. The earlier root `bun run check` failed at lint with 52 errors and 2 informational diagnostics, as the branch-review report corrected. Worker preflight also failed because Wrangler was missing.
 
 For this correction, changed-file Biome checks passed for tokens.css.ts, consent.ts, owner-pages.test.ts, and consent-page.test.ts. `bun run docs:check` passed. Snapshot comparison confirmed consent HTML outside its stylesheet stayed unchanged. `git diff --check` passed. The full check, focused tests, and Worker preflight remain incomplete.
+
+Final review: whole-branch review examined 7c750b2 against main. Corrective review examined 7c750b2..3d33a93. Findings 1, 2, and 4 are fixed: consent snapshot matches styles with unchanged non-style HTML, Deny interaction paint stays secondary, and sidebar/about-panel backgrounds match the brief. Semantic selectors and incomplete validation remain open. Review permits draft publication only, not merge approval. The owner blocker rule governs publication. Task remains In Progress.
 <!-- SECTION:NOTES:END -->

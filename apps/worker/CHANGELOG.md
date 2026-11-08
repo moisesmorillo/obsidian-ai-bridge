@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.0](https://github.com/moisesmorillo/obsidian-ai-bridge/compare/worker-v0.4.1...worker-v0.5.0) (2026-11-08)
+
+
+### Features
+
+* **worker:** switch the owner console to the Rosé Pine palette ([#126](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/126)) ([a0780aa](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/a0780aa72d0575c11b0aa2ea6e7387597e3d8b42))
+
 ## [0.4.1](https://github.com/moisesmorillo/obsidian-ai-bridge/compare/worker-v0.4.0...worker-v0.4.1) (2026-11-08)
 
 

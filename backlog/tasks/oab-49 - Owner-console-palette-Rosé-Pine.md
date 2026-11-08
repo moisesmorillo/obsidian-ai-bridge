@@ -1,11 +1,11 @@
 ---
 id: OAB-49
 title: 'Owner console palette: Rosé Pine'
-status: In Progress
+status: Done
 assignee:
   - '@pi'
 created_date: '2026-11-08T02:45:00Z'
-updated_date: '2026-11-08T03:16:00Z'
+updated_date: '2026-11-08T03:17:00Z'
 labels:
   - worker
   - design
@@ -22,10 +22,10 @@ Replace the Bordeaux and copper palette of the owner console and the consent pag
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Every color in apps/worker/src/transport/owner-pages/tokens.css.ts and consent.ts comes from a CSS custom property declared once on :root. No hex or rgba literal remains outside the :root block except alpha variants built from a documented token.
-- [ ] #2 Tokens map to Rosé Pine main: base #191724, surface #1f1d2e, overlay #26233a, muted #6e6a86, subtle #908caa, text #e0def4, love #eb6f92, gold #f6c177, rose #ebbcba, pine #31748f, foam #9ccfd8, iris #c4a7e7, highlight low #21202e, med #403d52, high #524f67. Rose is the single accent for primary buttons, active status dots and highlighted cards. Gold marks attention chips. Love marks danger. Pine marks borders of storage bars and slot segments. Background is flat base.
-- [ ] #3 Text contrast: body text on base, surface and overlay reaches WCAG AA 4.5:1. Primary button ink on rose reaches 4.5:1. A test computes the contrast ratios from the token values.
-- [ ] #4 Snapshots updated deliberately. Tests that asserted the old colors assert the new tokens. docs/api/f2.md token table updated. bun run check and Worker preflight green.
+- [x] #1 Every color in apps/worker/src/transport/owner-pages/tokens.css.ts and consent.ts comes from a CSS custom property declared once on :root. No hex or rgba literal remains outside the :root block except alpha variants built from a documented token.
+- [x] #2 Tokens map to Rosé Pine main: base #191724, surface #1f1d2e, overlay #26233a, muted #6e6a86, subtle #908caa, text #e0def4, love #eb6f92, gold #f6c177, rose #ebbcba, pine #31748f, foam #9ccfd8, iris #c4a7e7, highlight low #21202e, med #403d52, high #524f67. Rose is the single accent for primary buttons, active status dots and highlighted cards. Gold marks attention chips. Love marks danger. Pine marks borders of storage bars and slot segments. Background is flat base.
+- [x] #3 Text contrast: body text on base, surface and overlay reaches WCAG AA 4.5:1. Primary button ink on rose reaches 4.5:1. A test computes the contrast ratios from the token values.
+- [x] #4 Snapshots updated deliberately. Tests that asserted the old colors assert the new tokens. docs/api/f2.md token table updated. bun run check and Worker preflight green.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -86,4 +86,12 @@ Historical review closure: consent snapshot, Deny interaction paint, sidebar/abo
 Corrective review closure for the agent-kind cascade finding: `.kind-agent` had equal specificity to the later `.stat-value` rule. Added regression assertion `protects iris agent text from the later stat-value color rule` for the bounded `.stat-value.kind-agent{color:var(--iris)}` selector. Before the CSS fix, `bun run --filter '@obsidian-ai-bridge/worker' test -- owner-pages.test.ts` failed that assertion as expected. Vitest reported 1 failed and 772 passed tests in its main suite. Changed only the selector specificity. The renderer markup remains unchanged. Updated five owner-page snapshots for the stylesheet change. The focused direct Vitest run passed 2 files and 20 tests.
 
 Final code validation after the selector fix: `bun run lint` passed across 320 files. `bun run docs:check` passed. `bun run check` passed typecheck, all tests, and dry-run builds. Test counts: tooling 9 files/100 tests; protocol 19/314; plugin 30/844 passed and 1 skipped; Worker main 54/773; Worker HTTP 9/132; Worker F2 10/142. `bun run --filter '@obsidian-ai-bridge/worker' preflight` passed. No markup, route, form, CSRF, header, copy, or behavior changed. This closes the cascade finding from the branch review. OAB-49 remains In Progress for parent review. No publication or task closure was performed.
+
+Final acceptance: whole-branch review at 8d513e2 found the agent-kind cascade defect. Correction 3385e8f uses .stat-value.kind-agent with higher specificity. Scoped corrective review approved that fix and closed all prior findings. All acceptance criteria now pass. Earlier draft blockers and failed checks are historical, not current. The supervisor authorized class-only renderer changes. Final code checks and Worker preflight passed, as recorded above. No live calls or deployments occurred.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Changed owner console and consent colors to Rosé Pine main. Added authorized Fresh/Stale and agent/device classes without behavior changes. Updated snapshots and token documentation. Tests compute contrast from actual CSS tokens. Final lint, documentation check, full check, focused tests, and Worker preflight passed. Whole-branch review and corrective review closed all findings. PR 126 is ready for owner review.
+<!-- SECTION:FINAL_SUMMARY:END -->

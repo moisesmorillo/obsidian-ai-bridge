@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.1](https://github.com/moisesmorillo/obsidian-ai-bridge/compare/ai-bridge-v0.2.0...ai-bridge-v0.2.1) (2026-11-08)
+
+
+### Bug Fixes
+
+* **release:** make plugin compatibility tag-safe ([#117](https://github.com/moisesmorillo/obsidian-ai-bridge/issues/117)) ([7c51ed6](https://github.com/moisesmorillo/obsidian-ai-bridge/commit/7c51ed62284f2c2f9fc80aff2fb497d6f35a6f81))
+
 ## [0.2.0](https://github.com/moisesmorillo/obsidian-ai-bridge/compare/ai-bridge-v0.1.6...ai-bridge-v0.2.0) (2026-11-07)
 
 

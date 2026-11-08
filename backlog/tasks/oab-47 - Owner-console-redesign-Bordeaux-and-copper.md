@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-11-07T21:08:00Z'
-updated_date: '2026-11-08T00:49:00Z'
+updated_date: '2026-11-08T00:57:00Z'
 labels:
   - worker
   - ui
@@ -199,4 +199,10 @@ TDD: focused page and owner integration tests were added before implementation a
 Validation: `bun run docs:check` passed. `bun run check` passed after lint, docs, type checks, all tests, and dry-run builds. Totals: Worker unit 768/768, Worker HTTP 132/132, Worker F2 142/142, protocol 314/314, tooling 100/100, plugin 844 passed and 1 skipped. Worker preflight passed. `git diff --check` passed. Worker tests printed expected injected failure and disconnect diagnostics.
 
 Self-review used the code-review skill and TypeScript profile on the full phase 4 working-tree diff against base 79cf6ae. No actionable finding remains. Candidates: owner.ts stays mixed but low risk in this presentation scope; route policy, CSRF, and mutation eligibility remain in existing owners. Formatters, renderers, shell, and stylesheet remain cohesive. Limits: no browser visual check, contrast measurement, live request, vault access, deployment, Cloudflare change, or external request occurred. OAB-47 remains In Progress for remaining phases.
+
+Corrective review finding OAB47-P4-01: Fixed in the follow-up commit. The original parser accepted `text/html/extra` as `text/html` and accepted malformed q assignments. Added full media-type component validation. Reject extra slash components, malformed q values, duplicate q parameters, and q parameters with extra equals signs. Added production owner-route regression coverage for those cases, a browser Accept value, q=0 specificity, and explicit format overrides. Updated OwnerServiceMetadata TSDoc to define the raw host and epoch values and shell escaping.
+
+RED: `cd apps/worker && bunx vitest run --config vitest.f2.config.ts test/f2/owner.test.ts` failed with exit 1 because `text/html/extra` returned HTML instead of JSON. GREEN: the focused owner suite passed 4/4 after the correction.
+
+Follow-up validation passed: `bun run docs:check`; `bun run check`; `bun run --filter '@obsidian-ai-bridge/worker' preflight`; `git diff --check`. Full check totals: Worker unit 768, HTTP 132, F2 142, protocol 314, tooling 100, plugin 844 passed and 1 skipped. Lint, docs, type checks, and dry-run builds passed. Worker tests printed expected disconnect and injected SQLite failure diagnostics. Parent scoped re-review is pending. OAB-47 remains In Progress.
 <!-- SECTION:NOTES:END -->

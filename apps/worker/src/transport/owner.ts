@@ -178,26 +178,37 @@ interface OwnerAcceptRange {
 	quality: number;
 }
 
-/** Parse valid media ranges and ignore malformed entries without widening them. */
+/** Parse complete media ranges and ignore malformed entries without widening them. */
 function parseOwnerAccept(header: string | null): OwnerAcceptRange[] {
 	if (!header?.trim()) return [];
 	const ranges: OwnerAcceptRange[] = [];
 	for (const entry of header.toLowerCase().split(",")) {
 		const [mediaType = "", ...parameters] = entry.trim().split(";");
-		const [type = "", subtype = ""] = mediaType.trim().split("/");
-		if (!type || !subtype || (type === "*" && subtype !== "*")) continue;
+		const mediaParts = mediaType.trim().split("/");
+		if (mediaParts.length !== 2) continue;
+		const [type = "", subtype = ""] = mediaParts.map((part) => part.trim());
+		const validMediaRange =
+			(type === "*" && subtype === "*") ||
+			(type !== "*" &&
+				/^[!#$%&'+.^_`|~0-9a-z-]+$/.test(type) &&
+				(subtype === "*" || /^[!#$%&'+.^_`|~0-9a-z-]+$/.test(subtype)));
+		if (!validMediaRange) continue;
 		let quality = 1;
+		let qualitySeen = false;
 		let valid = true;
 		for (const parameter of parameters) {
-			const [name, value] = parameter.trim().split("=", 2);
-			if (name !== "q") continue;
+			const [name = "", ...values] = parameter.trim().split("=");
+			if (name.trim() !== "q") continue;
+			const value = values.length === 1 ? values[0]?.trim() : undefined;
 			if (
+				qualitySeen ||
 				value === undefined ||
 				!/^(?:0(?:\.\d{0,3})?|1(?:\.0{0,3})?)$/.test(value)
 			) {
 				valid = false;
 				break;
 			}
+			qualitySeen = true;
 			quality = Number(value);
 		}
 		if (valid) ranges.push({ type, subtype, quality });

@@ -228,6 +228,15 @@ describe("production owner console", () => {
 		});
 		for (const [query, accept, expectedType] of [
 			["", "text/html, application/json", "application/json"],
+			[
+				"",
+				"text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+				"text/html",
+			],
+			["", "text/html/extra", "application/json"],
+			["", "text/html;q=1=garbage", "application/json"],
+			["", "text/html;q=0.1;q=0.9", "application/json"],
+			["", "text/html;q=0.1234", "application/json"],
 			["", "text/html;q=0.9, application/json;q=0.8", "text/html"],
 			["", "text/html;q=0, application/json;q=1", "application/json"],
 			["", "text/*;q=0.9, application/json;q=0.8", "text/html"],
@@ -235,8 +244,8 @@ describe("production owner console", () => {
 			["", "application/json;q=0, */*;q=0.8", "text/html"],
 			["", "text/html;q=2, application/json;q=0.8", "application/json"],
 			["", "*/*", "application/json"],
-			["?format=html", "application/json", "text/html"],
-			["?format=json", "text/html", "application/json"],
+			["?format=html", "text/html/extra", "text/html"],
+			["?format=json", "text/html;q=1=garbage", "application/json"],
 		] as const) {
 			const negotiated = await SELF.fetch(
 				`https://service.test/owner/measurements${query}`,

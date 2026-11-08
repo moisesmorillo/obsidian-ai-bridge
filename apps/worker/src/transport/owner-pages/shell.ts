@@ -1,9 +1,11 @@
 import { OWNER_CONSOLE_CSS } from "@worker/transport/owner-pages/tokens.css";
 import { WORKER_VERSION } from "@worker/transport/owner-pages/version";
 
-/** Optional service facts known to the current owner handler. */
+/** Raw optional service facts. The shell escapes every value before HTML output. */
 export interface OwnerServiceMetadata {
+	/** Host from SERVICE_ORIGIN, including its port when one is set. */
 	serviceHost?: string;
+	/** Current epoch for the selected vault when the handler can prove it. */
 	vaultEpoch?: string;
 }
 

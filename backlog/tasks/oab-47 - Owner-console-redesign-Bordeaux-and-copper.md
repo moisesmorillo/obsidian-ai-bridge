@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@pi'
 created_date: '2026-11-07T21:08:00Z'
-updated_date: '2026-11-08T00:57:00Z'
+updated_date: '2026-11-08T01:06:00Z'
 labels:
   - worker
   - ui
@@ -205,4 +205,10 @@ Corrective review finding OAB47-P4-01: Fixed in the follow-up commit. The origin
 RED: `cd apps/worker && bunx vitest run --config vitest.f2.config.ts test/f2/owner.test.ts` failed with exit 1 because `text/html/extra` returned HTML instead of JSON. GREEN: the focused owner suite passed 4/4 after the correction.
 
 Follow-up validation passed: `bun run docs:check`; `bun run check`; `bun run --filter '@obsidian-ai-bridge/worker' preflight`; `git diff --check`. Full check totals: Worker unit 768, HTTP 132, F2 142, protocol 314, tooling 100, plugin 844 passed and 1 skipped. Lint, docs, type checks, and dry-run builds passed. Worker tests printed expected disconnect and injected SQLite failure diagnostics. Parent scoped re-review is pending. OAB-47 remains In Progress.
+
+Corrective review finding OAB47-P4-02: Fixed. The Measurement JSON link now targets `/owner/measurements?format=json`. The production owner test follows the rendered link with a browser-style Accept header that prefers HTML. It asserts JSON content type, status, the exact forced-format URL, and full response equality with an independent canonical `?format=json` response. Equality includes `worker_isolate`. The measurement snapshot changed only for this link. OAB47-P4-01 remains fixed.
+
+RED: `cd apps/worker && bunx vitest run --config vitest.f2.config.ts test/f2/owner.test.ts` failed with exit 1 because the old link returned `text/html; charset=utf-8` with the browser Accept header. GREEN: `cd apps/worker && bunx vitest run --config vitest.config.ts test/owner-pages.test.ts` passed 12/12 and updated one snapshot. `cd apps/worker && bunx vitest run --config vitest.f2.config.ts test/f2/owner.test.ts` passed 4/4. The response body matched the independent canonical response in full.
+
+Follow-up validation passed: `bun run docs:check`, `bun run check`, `bun run --filter '@obsidian-ai-bridge/worker' preflight`, and `git diff --check`. Full check totals: Worker unit 768, HTTP 132, F2 142, protocol 314, tooling 100, plugin 844 passed and 1 skipped. Lint, docs, type checks, and dry-run builds passed. Worker tests printed expected disconnect and injected SQLite failure diagnostics. Parent scoped re-review is pending. OAB-47 remains In Progress.
 <!-- SECTION:NOTES:END -->

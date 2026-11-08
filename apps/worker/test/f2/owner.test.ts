@@ -226,13 +226,11 @@ describe("production owner console", () => {
 				referenced_blob_bytes: { status: "observed", value: 0 },
 			},
 		});
+		const browserAccept =
+			"text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7";
 		for (const [query, accept, expectedType] of [
 			["", "text/html, application/json", "application/json"],
-			[
-				"",
-				"text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
-				"text/html",
-			],
+			["", browserAccept, "text/html"],
 			["", "text/html/extra", "application/json"],
 			["", "text/html;q=1=garbage", "application/json"],
 			["", "text/html;q=0.1;q=0.9", "application/json"],
@@ -350,15 +348,34 @@ describe("production owner console", () => {
 		const jsonLink = summaryHtml.match(
 			/<a href="([^"]+)">Measurement JSON<\/a>/,
 		);
-		expect(jsonLink?.[1]).toBe("/owner/measurements");
+		expect(jsonLink?.[1]).toBe("/owner/measurements?format=json");
 		const linkedJson = await SELF.fetch(
 			new URL(jsonLink?.[1] ?? "", "https://service.test"),
-			{ headers: { "Cf-Access-Jwt-Assertion": assertion } },
+			{
+				headers: {
+					"Cf-Access-Jwt-Assertion": assertion,
+					Accept: browserAccept,
+				},
+			},
 		);
 		expect(linkedJson.headers.get("content-type")).toContain(
 			"application/json",
 		);
 		expect(linkedJson.status).toBe(200);
+		expect(jsonLink?.[1]).toBe("/owner/measurements?format=json");
+		const canonicalJson = await SELF.fetch(
+			"https://service.test/owner/measurements?format=json",
+			{
+				headers: {
+					"Cf-Access-Jwt-Assertion": assertion,
+					Accept: browserAccept,
+				},
+			},
+		);
+		expect(canonicalJson.headers.get("content-type")).toContain(
+			"application/json",
+		);
+		expect(await linkedJson.json()).toEqual(await canonicalJson.json());
 
 		await runInDurableObject(stub, (_instance, state) => {
 			const aggregate = JSON.parse(
